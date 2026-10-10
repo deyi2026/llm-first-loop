@@ -1,0 +1,140 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261010-release-v0-6-29",
+  "summary": "v0.6.29 发布 PR：浏览器目标精确寻址三选一与未命中候选回执（EVO-20261010-1e06d6b4）+ experiences 中文标题落盘修复 + web_search 词典降级回执标注（EVO-20261010-528ab2f3）+ lfl-daily-02 收尾 + 版本面四文件对齐 0.6.29",
+  "components": [
+    {
+      "component_id": "browser-exact-addressing",
+      "paths": [
+        "src/llm_loop/browser/perception.py",
+        "src/llm_loop/tools/builtin/browser_semantic_operation.py",
+        "src/llm_loop/tools/registry.py",
+        "docs/SMC-BROWSER-PHASE1-SCHEMA-v0.1.json",
+        "tests/unit/test_browser_bounded_semantic_operation_v01.py",
+        "tests/unit/test_browser_exact_addressing_evo_20261010_1e06d6b4.py",
+        "tests/unit/test_browser_receipt_diff_summary.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "浏览器感知/操作寻址层（browser_perceive 语义对象投影 + browser_operate 单派发）",
+      "disposition": "目标解析入口替换为三选一互斥寻址（raw name 字节精确 / name_normalized 确定性归一 / grounding_ref 复用），混合形态与空值确定性拒绝；未命中回执有界候选清单，废除 fuzzy/最新命中重绑",
+      "evidence": [
+        "CHANGELOG.md v0.6.29 浏览器目标精确寻址条目",
+        "tests/unit/test_browser_exact_addressing_evo_20261010_1e06d6b4.py"
+      ],
+      "verification_level": "本地单测 + 远端 CI 三件套（pytest/ruff/pyright）门禁复核",
+      "model_evidence_veto_recovery_exit": "身份未命中不抛异常不重试，回执有界候选清单供模型重新寻址；确定性拒绝（混合形态/空值）直接在回执可观察",
+      "rollback_route": "Revert 对应提交序列（ab4fd70a5 + 5d744c808），恢复旧目标解析入口",
+      "declaration_id": "browser-addressing-authority"
+    },
+    {
+      "component_id": "experiences-cjk-slug",
+      "paths": [
+        "src/llm_loop/experiences/store.py",
+        "tests/unit/test_experience_store_durability.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "经验库落盘（experiences store）",
+      "disposition": "sanitize_slug Unicode 感知修复：中文标题不再塌缩为同日 untitled 冲突；空 slug 兜底 untitled-{title_sha256 前 8 位}；同日同 slug 拒写契约不变",
+      "evidence": [
+        "CHANGELOG.md v0.6.29 经验落盘中文标题修复条目",
+        "experiences/EXPERIENCE-20261010-sanitize-slug-中文标题修复真实验证-同日中文经验不再塌缩冲突.md"
+      ],
+      "verification_level": "本地回归测试 15 passed + 上线当晚真实使用面验证（同日两条中文标题经验均落盘、与遗留 untitled 共存）+ 远端 CI 三件套",
+      "model_evidence_veto_recovery_exit": "不涉及（纯数据层命名修复，无控制机制）",
+      "rollback_route": "Revert 9e8f3abd9"
+    },
+    {
+      "component_id": "web-search-dict-fallback-annotation",
+      "paths": [
+        "src/llm_loop/tools/builtin/web_search.py",
+        "tests/unit/test_web_m48.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "web_search 工具回执层",
+      "disposition": "bing general 通道词典站结果占比检测 + 回执标注 degraded_backend=bing_dictionary_fallback 与改写建议；不改返回结构、不拦截，词条意图 query 豁免",
+      "evidence": [
+        "CHANGELOG.md v0.6.29 web_search 词典降级条目",
+        "experiences/EXPERIENCE-20261010-web-search-词典降级标注真实验证-普通单词触发bing词条结果.md"
+      ],
+      "verification_level": "本地单测 31/31（test_web_m48）+ 上线当晚真实降级样本回执验证 + 远端 CI 三件套",
+      "model_evidence_veto_recovery_exit": "不涉及（回执标注为咨询性信息，不拦截不改变返回结构）",
+      "rollback_route": "Revert 692aef752"
+    },
+    {
+      "component_id": "promotion-daily02-finalize",
+      "paths": [
+        "docs/promotion/20261010-lfl-daily-02.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "推广材料（LFL daily 系列）",
+      "disposition": "纯文档收尾：版本说明更新至 v0.6.28 已发布并修复段落错位",
+      "evidence": [
+        "docs/promotion/20261010-lfl-daily-02.md"
+      ],
+      "verification_level": "远端 CI 安全扫描 + 三件套门禁复核",
+      "model_evidence_veto_recovery_exit": "不涉及",
+      "rollback_route": "Revert 5a61d19be"
+    },
+    {
+      "component_id": "release-version-surface",
+      "paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "README.en.md",
+        "pyproject.toml",
+        "src/llm_loop/web/routes.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "发布版本面",
+      "disposition": "pyproject / web SERVICE_VERSION / README（中英）/ CHANGELOG 对齐 0.6.29，版本一致性测试约束",
+      "evidence": [
+        "CHANGELOG.md"
+      ],
+      "verification_level": "本地版本一致性测试 2 passed + 远端 CI 三件套",
+      "model_evidence_veto_recovery_exit": "不涉及",
+      "rollback_route": "Revert 13638c4f7，版本面回退 0.6.28"
+    },
+    {
+      "component_id": "submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261010-release-v0-6-29.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交审查（机械 presence/coverage）",
+      "disposition": "本 PR 的提交清单自身（含自身路径的完整覆盖）",
+      "evidence": [
+        "scripts/check_architecture_submission.py"
+      ],
+      "verification_level": "本地预跑 check_architecture_submission.py + 远端 CI A.5 门禁",
+      "model_evidence_veto_recovery_exit": "不涉及",
+      "rollback_route": "随本 PR revert"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "browser-addressing-authority",
+      "g1": {
+        "necessity": "寻址走模糊/最新命中会在页面变化后静默漂移到错误对象，绕过 grounding/version/single-dispatch 防线；EVO-20261010-1e06d6b4 要求寻址键确定性可复现"
+      },
+      "g2": {
+        "authority_owner": "既有 browser grounding/version 单派发管线（browser_perceive / browser_operate）",
+        "relationship": "reuse",
+        "non_duplication": "不新增寻址层：替换既有目标解析入口的匹配键集合为三选一互斥，复用同一 world-version retention 与 post-capture 契约"
+      },
+      "g3": {
+        "model_evidence": [
+          "commit ab4fd70a5 单测 test_browser_exact_addressing_evo_20261010_1e06d6b4.py（混合形态/空值确定性拒绝、归一键确定性）",
+          "未命中回执的有界候选清单直接在工具回执可观察"
+        ],
+        "recovery_or_reason": "未命中不抛异常不重试，回执候选清单供模型重新寻址；确定性拒绝路径可从回执直接复原"
+      },
+      "g4": {
+        "rollback": "Revert ab4fd70a5 与 5d744c808，恢复旧目标解析入口",
+        "verification": [
+          "tests/unit/test_browser_exact_addressing_evo_20261010_1e06d6b4.py",
+          "远端 CI 三件套门禁"
+        ]
+      }
+    }
+  ]
+}
