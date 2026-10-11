@@ -72,6 +72,7 @@
   "top_level_units": {
     "_doc": "P0-3 扩张冻结：src/llm_loop 下新增顶层包/能力文件必须在此登记（guard(r9) 前缀提交）或入 exemptions；plane 归属引 AUDIT-20261007 §2.1/§2.2",
     "packages": {
+      "assurance": "Mission（仅隔离实验：Task-owned Reviewer/STOP/恢复原型；无生产 Fleet/Effect/ReviewGate 授权，默认 NO-GO）",
       "core": "kernel-candidate（跨面聚合根）",
       "tools": "Action",
       "introspection": "Epistemic",
@@ -138,6 +139,9 @@
   "durability_registry": {
     "_doc": "Durable Run Contract 写入面登记：AST 扫描 src/llm_loop 中明确 filesystem 写入原语；每个候选文件必须归入一个 surface（tier=T1/T2/T3，status=conform|migrate|partial|observe）或 write_exemptions。登记只证明已分类，不自动证明符合 tier；新增登记必须走 guard(r9) 可见提交。",
     "surfaces": {
+      "assurance_p1_review_request_staging": {"tier":"T2","status":"partial","owner":"assurance-experimental","paths":["src/llm_loop/assurance/p1_review_supervisor.py"],"rationale":"P1 仅隔离 Task-owned Reviewer 候选/会话/spec 与 sandbox profile 文件：部分 atomic JSON fsync+replace+dir fsync，但原候选 write_bytes 和创建目录未形成完整持久栅栏；只有 provider-free P1 真 SIGKILL 负例，默认 NO-GO，不能据此认定 Task/外部副作用已恢复。"},
+      "assurance_p1_review_receipt": {"tier":"T2","status":"partial","owner":"assurance-experimental","paths":["src/llm_loop/assurance/p1_review_worker.py"],"rationale":"P1 离线 FakeLLM Reviewer 结果 JSON 经 O_EXCL tmp、file fsync、replace、dir fsync 落盘；该数据来自未受信模型，只有结构性回执，不是独立可信审查门或生产释放资格，保持 partial 与 default-off。"},
+      "assurance_p112_offline_executor_candidate": {"tier":"T2","status":"partial","owner":"assurance-experimental","paths":["src/llm_loop/assurance/p112_offline_vertical.py"],"rationale":"P1.12 offline-only Executor LoopEngine 的封闭写入工具：O_EXCL + file fsync + dir fsync，一次性局部候选写盘；Reviewer 与 local gate 对照其 sha。没有真实双模型 Provider 或生产发布授权、没有断电恢复实验，明确保持 T2 partial / default-off。"},
       "browser_action_receipts": {"tier":"T1","status":"observe","owner":"browser","paths":["src/llm_loop/browser/action.py"],"rationale":"浏览器动作 receipt/grounding 落盘，属于可重放审计事实。"},
       "browser_perception_store": {"tier":"T2","status":"observe","owner":"browser","paths":["src/llm_loop/browser/perception.py"],"rationale":"浏览器 perception/session/diff 状态为可覆盖状态文件。"},
       "cache_guard_audit": {"tier":"T1","status":"observe","owner":"cache_guard","paths":["src/llm_loop/cache_guard/guard.py"],"rationale":"cache guard 结果以追加审计记录落盘。"},
