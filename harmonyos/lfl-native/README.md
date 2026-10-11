@@ -85,6 +85,22 @@ contract requires a future authenticated platform caller and backend durable
 admission receipt; real `EXECUTE` remains disabled. See
 `docs/harmonyos/A2A-QUALIFICATION-20261011.md`.
 
+**Updated 2026-10-11:** A separate OpenHarmony 26.0.0 Release SDK
+(`26.0.0.38`) was found under `~/Library/OpenHarmony/Sdk/26.0.0`.
+The probe now also accepts this SDK layout:
+
+```sh
+node harmonyos/lfl-native/scripts/probe-a2a-sdk.mjs \
+  ~/Library/OpenHarmony/Sdk/26.0.0
+```
+
+It confirms the Release OpenHarmony SDK, but returns exit **2** because it
+does **not** include Huawei HMS Agent Framework Kit A2A declarations.
+`AgentExtensionAbility` belongs to the separate Ability Kit API24+
+surface. The installed DevEco Studio application under `/Applications`
+still reports Beta1 build 26.0.0.461; do not confuse either of these SDK
+roots with a verified `createA2AServer` compiler or running service.
+
 An **offline-only** backend CAS record implementation was subsequently
 added to `src/llm_loop/web/a2a_task_admission.py`. It preserves exact
 human request bytes and returns an idempotent receipt after durable

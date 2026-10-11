@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inspectA2aSurface } from '../scripts/probe-a2a-sdk.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { inspectA2aSurface, inspectA2aSdk } from '../scripts/probe-a2a-sdk.mjs';
 
 const releaseSymbols =
   'createA2AServer TaskState AgentOperation RequestContext updateStatus addArtifact TaskArtifactParam';
@@ -33,4 +36,27 @@ test('partial A2A declaration fails closed even if kit mentions it', () => {
   const result = inspectA2aSurface('createA2AServer TaskState', kitExport, '', manifest);
   assert.equal(result.a2aTypesQualified, false);
   assert.ok(result.missingSymbols.includes('addArtifact'));
+});
+
+test('separate OpenHarmony Release SDK is not treated as installed HMS A2A', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lfl-oh-release-'));
+  try {
+    const ets = join(root, 'ets');
+    mkdirSync(join(ets, 'api'), {recursive:true});
+    writeFileSync(join(ets, 'oh-uni-package.json'), JSON.stringify({
+      apiVersion:'26',releaseType:'Release',version:'26.0.0.38'
+    }));
+    writeFileSync(join(ets, 'api', '@ohos.app.agent.AgentExtensionAbility.d.ts'),
+      'declare class AgentExtensionAbility { onData(): void; }');
+    const result = inspectA2aSdk(root);
+    assert.equal(result.openHarmonySdkVersion, '26.0.0.38');
+    assert.equal(result.openHarmonySdkReleaseType, 'Release');
+    assert.equal(result.agentExtensionPresent, true);
+    assert.equal(result.hmsAgentFrameworkKitInstalled, false);
+    assert.equal(result.a2aDeclarationPresent, false);
+    assert.equal(result.a2aTypesQualified, false);
+    assert.equal(result.developerEntitlement, 'not_verified_offline');
+  } finally {
+    rmSync(root, {recursive:true,force:true});
+  }
 });

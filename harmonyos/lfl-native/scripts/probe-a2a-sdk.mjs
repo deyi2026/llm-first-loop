@@ -8,13 +8,35 @@ function readText(path) {
 
 export function inspectA2aSdk(input) {
   const root = resolve(input);
-  const ets = join(root, 'hms', 'ets');
-  const manifestText = readText(join(ets, 'uni-package.json'));
-  const api = readText(join(ets, 'api', '@hms.ai.A2A.d.ts'));
-  const kit = readText(join(ets, 'kits', '@kit.AgentFrameworkKit.d.ts'));
-  const ability = readText(join(root, 'openharmony', 'ets', 'api',
-    '@ohos.app.agent.AgentExtensionAbility.d.ts'));
-  return inspectA2aSurface(api, kit, ability, manifestText);
+  // DevEco may bundle the HMS and OpenHarmony components in a default SDK
+  // tree. An OpenHarmony 26 Release downloaded to user Library is a SEPARATE
+  // component and must never be represented as HMS A2A support.
+  const hmsEts = join(root, 'hms', 'ets');
+  const sdkOhEts = join(root, 'openharmony', 'ets');
+  const userOhEts = join(root, 'ets');
+  const openEts = existsSync(join(sdkOhEts, 'api')) ? sdkOhEts :
+    (existsSync(join(userOhEts, 'oh-uni-package.json')) ? userOhEts : '');
+  const manifestText = readText(join(hmsEts, 'uni-package.json'));
+  const api = readText(join(hmsEts, 'api', '@hms.ai.A2A.d.ts'));
+  const kit = readText(join(hmsEts, 'kits', '@kit.AgentFrameworkKit.d.ts'));
+  const ability = openEts ? readText(join(openEts, 'api',
+    '@ohos.app.agent.AgentExtensionAbility.d.ts')) : '';
+  const report = inspectA2aSurface(api, kit, ability, manifestText);
+  let openManifest = {};
+  try {
+    openManifest = JSON.parse(openEts ?
+      readText(join(openEts, 'oh-uni-package.json')) || '{}' : '{}');
+  } catch {
+    openManifest = {};
+  }
+  return {
+    ...report,
+    hmsAgentFrameworkKitInstalled: kit.length > 0,
+    openHarmonySdkVersion: openManifest.version ?? null,
+    openHarmonySdkReleaseType: openManifest.releaseType ?? null,
+    openHarmonySdkApi: openManifest.apiVersion ?? null,
+    abilityKitAgentExtensionQualifiedByTypes: ability.includes('class AgentExtensionAbility')
+  };
 }
 
 export function inspectA2aSurface(api, kit, ability, manifestText) {
@@ -46,7 +68,8 @@ export function inspectA2aSurface(api, kit, ability, manifestText) {
 if (process.argv[1]?.endsWith('probe-a2a-sdk.mjs')) {
   const sdkRoot = process.argv[2];
   if (!sdkRoot) {
-    process.stderr.write('usage: node probe-a2a-sdk.mjs <sdk-default-root>\n');
+    process.stderr.write(
+      'usage: node probe-a2a-sdk.mjs <sdk-default-root-or-OpenHarmony-version-root>\n');
     process.exitCode = 2;
   } else {
     const report = inspectA2aSdk(sdkRoot);
