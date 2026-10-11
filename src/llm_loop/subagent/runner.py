@@ -28,6 +28,7 @@ from llm_loop.core.message import (
     ToolResultStatus,
 )
 from llm_loop.core.run_context import (
+    WaitBudget,
     child_cancel_event,
     child_wait_budget_used,
     current_model_label,
@@ -1363,7 +1364,9 @@ class SubAgentRunner:
                     else None
                 )
                 _cancel_tok = child_cancel_event.set(cancel_event)
-                _wait_tok = child_wait_budget_used.set(0.0)
+                # EVO-20261012-32e89b46: 注入共享载体（值语义 set 会随每次派发
+                # copy_context() 快照丢失，累计恒归零）。
+                _wait_tok = child_wait_budget_used.set(WaitBudget())
                 try:
                     try:
                         result = self._run_reserved_child(

@@ -16,7 +16,11 @@ from __future__ import annotations
 import time
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.core.run_context import child_cancel_event, child_wait_budget_used
+from llm_loop.core.run_context import (
+    WaitBudget,
+    child_cancel_event,
+    child_wait_budget_used,
+)
 
 MAX_SINGLE_WAIT_S = 120.0
 MAX_TOTAL_WAIT_S = 600.0
@@ -76,7 +80,8 @@ class WaitTool:
                 tool_name=self.name,
             )
 
-        used = float(child_wait_budget_used.get())
+        carrier = child_wait_budget_used.get()
+        used = float(carrier.used) if isinstance(carrier, WaitBudget) else 0.0
         remaining = MAX_TOTAL_WAIT_S - used
         if seconds > remaining:
             return ToolResult(
@@ -104,7 +109,9 @@ class WaitTool:
             time.sleep(min(_CANCEL_POLL_INTERVAL_S, max(0.0, deadline - now)))
 
         waited = seconds - max(0.0, deadline - time.monotonic())
-        child_wait_budget_used.set(used + waited)
+        # 载体原位累加：跨 copy_context 派发快照持久（EVO-20261012-32e89b46）。
+        if isinstance(carrier, WaitBudget):
+            carrier.used = used + waited
         if cancelled:
             return ToolResult(
                 status=ToolResultStatus.BLOCKED,
