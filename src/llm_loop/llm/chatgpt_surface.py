@@ -731,10 +731,14 @@ class ChatGPTSurface:
 
     def _owned_context(self) -> Any:
         contexts = list(self._browser.contexts)
-        if len(contexts) != 1:
-            raise BrowserSurfaceLeaseError(
-                f"dedicated ChatGPT browser requires exactly one context; got {len(contexts)}"
-            )
+        if not contexts:
+            raise BrowserSurfaceLeaseError("ChatGPT browser has no context")
+        # Playwright over CDP reports the default browsing context first.
+        # Ownership is the leased target id, not context cardinality: the old
+        # exactly-one-context rule silently broke whenever the user opened an
+        # incognito window in the daily browser (an extra context).  Extra
+        # contexts must not block owned-page recreation; always create in the
+        # default context.
         return contexts[0]
 
     def _find_target(self, target_id: str) -> Any | None:
@@ -803,14 +807,38 @@ class ChatGPTSurface:
             f"{timeout_s:g}s{detail}"
         )
 
+    def _load_recoverable_lease(self) -> BrowserSurfaceLease | None:
+        """Load the durable lease, treating an unreadable/corrupt one as absent.
+
+        The configured Project identity is the durable authority; the lease
+        file is a recoverable cache of target/conversation routing state.
+        Disk damage, manual edits, or format drift must not permanently poison
+        the surface: report, discard, and let ``open()`` recreate the owned
+        page plus a fresh lease through the no-lease path.  A *readable* lease
+        that names a different Project stays fail-closed (config drift needs
+        human eyes, not silent overwrite).
+        """
+        if not self.lease_store.exists():
+            return None
+        try:
+            lease = self.lease_store.load()
+        except BrowserSurfaceLeaseError as exc:
+            logger.warning(
+                "chatgpt-web surface: surface lease unreadable (%s); "
+                "recreating owned page from configured project root",
+                exc,
+            )
+            return None
+        if lease.project_ref != self.project_ref or lease.project_url != self.project_url:
+            raise BrowserSurfaceLeaseError("surface lease Project identity mismatch")
+        return lease
+
     def open(self) -> Any:
         self._pw = self._start_playwright()
         try:
             self._browser = self._pw.chromium.connect_over_cdp(self.endpoint)
-            if self.lease_store.exists():
-                lease = self.lease_store.load()
-                if lease.project_ref != self.project_ref or lease.project_url != self.project_url:
-                    raise BrowserSurfaceLeaseError("surface lease Project identity mismatch")
+            lease = self._load_recoverable_lease()
+            if lease is not None:
                 page = self._find_target(lease.target_id)
                 if page is not None:
                     expected_url = lease.conversation_url or self.project_url

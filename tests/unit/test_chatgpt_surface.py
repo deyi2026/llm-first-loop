@@ -7,6 +7,7 @@ import pytest
 
 from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_surface import (
+    BrowserSurfaceLease,
     BrowserSurfaceLeaseError,
     BrowserSurfaceLeaseStore,
     ChatGPTSessionBindingStore,
@@ -673,3 +674,62 @@ def test_reopen_dead_page_recovers_runtime_closed_tab(tmp_path):
 
     third = surface.reopen_dead_page()
     assert third is second
+
+
+def test_unreadable_lease_recreates_owned_page_instead_of_poisoning(tmp_path):
+    # Layer-1 grill: a corrupt lease file used to raise out of open() and
+    # permanently block the surface (the recovery path re-reads the same file).
+    (tmp_path / BrowserSurfaceLeaseStore.FILE).write_text("{ not json", encoding="utf-8")
+    context = _Context([_Page("user-tab", CONVERSATION_URL)])
+    surface, _pw = _surface(tmp_path, context, recovery_conversation_id=CONVERSATION_ID)
+
+    page = surface.open()
+    lease = surface.snapshot_identity()
+
+    assert context.created == 1
+    assert page.url == CONVERSATION_URL
+    assert lease.target_id == page.target_id
+    reloaded = BrowserSurfaceLeaseStore(tmp_path).load()
+    assert reloaded.target_id == page.target_id
+    assert reloaded.project_ref == PROJECT_REF
+
+
+def test_identity_mismatched_lease_stays_fail_closed(tmp_path):
+    store = BrowserSurfaceLeaseStore(tmp_path)
+    store.save(
+        BrowserSurfaceLease.new(
+            project_ref="g-p-other-project",
+            project_url="https://chatgpt.com/g/g-p-other-project/project",
+            profile_label="fixture-profile",
+            target_id="foreign-target",
+        )
+    )
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+
+    with pytest.raises(BrowserSurfaceLeaseError, match="Project identity mismatch"):
+        surface.open()
+    assert context.created == 0
+
+
+def test_extra_user_context_does_not_block_owned_page_recreation(tmp_path):
+    # Grill: the user's daily browser grows a second context (e.g. an incognito
+    # window); recreation must still create the owned page in the default one.
+    seeding = _Context()
+    seed_surface, _seed_pw = _surface(tmp_path, seeding)
+    seed_surface.open()
+    seed_surface.close()
+    assert seeding.created == 1
+
+    default = _Context([_Page("unrelated-user-tab", "https://chatgpt.com/")], target_prefix="default")
+    incognito = _Context([], target_prefix="incognito")
+    surface, pw = _surface(tmp_path, default)
+    pw.chromium.browser.contexts.append(incognito)
+
+    page = surface.open()
+    lease = surface.snapshot_identity()
+
+    assert default.created == 1
+    assert incognito.created == 0
+    assert lease.target_id == page.target_id
+    assert lease.target_id != "unrelated-user-tab"
