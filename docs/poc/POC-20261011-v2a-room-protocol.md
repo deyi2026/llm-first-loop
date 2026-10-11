@@ -52,3 +52,12 @@
 - V1（档案全链路）、V3（child context_usage 父可查性）、V5（tags 过滤）未测
 - V2b 附带：心跳 child 超过租约 expires_at（~17 分钟）是否被回收——需 >17min 长测
 - 多 child 并发房间（3 bot × 3 轮）与 [PASS]/@/seq 协议细节、凭据防线三检查点——属完整 POC gate 2/3，本轮仅机制验证
+
+## 2026-10-12 增补：租约长测尝试失败 + effect fence 发现（均带工具回执）
+
+- **目的与方法**：测心跳 child 跨 expires_at(≈spawn+17min) 的回收行为，计划用 `execute_command(sleep 95)` 拉长心跳节律。**方法被运行时否决**，原问题未取得证据。
+- **新事实1 [实测]**：child 的 execute_command 全量被拒，原文「effect authority 丢失（run lease fenced），命令拒绝执行」——lease-test child（subagent_d8257ebc4cc3）13/13，probe child（subagent_45a7fc9a569e）1/1。父 run 活跃期间 child 无效果面。机制出处：`DESIGN-20261001-model-invocation-history-replay-safety.md`（effect-authority fence 执行时现算）。
+- **新事实2 [实测·围栏广度探针]**：execute_command=fenced；**spawn_subagent=成功**（grandchild subagent_a06862b57716 实际启动 depth=1，任务为即输出即结算；祖父级无 handle 读权「仅直接 parent 可以读取该 child handle」，topology active_children=none 无残留）；send_feishu_message=被 confirm=false 二次确认门先拒（child 自传 confirm=true 的行为**未测**，开放项）；event_stream=正常。
+- **新事实3 [实测]**：租约时间戳复测：spawn 00:05:47 → lease expires_at 00:23:07（≈+17.3 min），与 V2a 事实#7 一致；child 正常结算后 lease state=settled、expired=false。
+- **新事实4 [实测]**：child 无墙钟等待原语 → 心跳自然轮转 ≈10–15s/轮（lease-test 14 轮 218,225 in；probe 5 轮 80,296 in），等待成本 ≈64–96K in/min/bot。
+- **处置**：>17min 行为改为设计性规避（Mode-L 房间墙钟 ≤12 min 硬顶），结论与双形态设计见 `DESIGN-20261012-persistent-bot-team-v2.md` §2/§4/§6。
