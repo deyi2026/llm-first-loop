@@ -700,6 +700,7 @@ def _redacted_error(exc: BaseException, source_root: Path | None = None) -> str:
             if remote:
                 replacements.append(remote)
         except Exception:
+            # 脱敏增强步骤失败时保留基础脱敏，避免因增强失败泄露原文
             pass
         for value in replacements:
             if value:

@@ -128,6 +128,7 @@ def test_agents_tree_lists_sessions(client):
         sess.parent_id = sid
         engine.session.save(sess)
     except Exception:
+        # 测试夹具：子代理会话的 parent_id 回写不可用不影响本用例的树渲染断言
         pass
     r = cli.get("/api/v1/agents/tree")
     assert r.status_code == 200

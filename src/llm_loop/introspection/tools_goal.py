@@ -357,6 +357,7 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             if _ts:
                 lines.append(_ts)
         except Exception:  # noqa: BLE001
+            # 任务图摘要属附加信息（DESIGN-20260828 明示 fail-open）：读取失败不得让 get_goal 整体失败
             pass
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", "get_goal")
 

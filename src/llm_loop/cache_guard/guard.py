@@ -466,6 +466,7 @@ class PromptGuard:
             self._last_result_shape.pop(session_id, None)
             self._last_cache_health.pop(session_id, None)
         except Exception:  # noqa: BLE001
+            # reset_session 只为切换模型/会话回收窗口状态：AttributeError/KeyError 不得让调用方的会话切换失败
             pass
 
     def record_result(

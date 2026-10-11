@@ -61,6 +61,7 @@ def load_corpus(max_docs=100000):
                     if len(docs) >= max_docs:
                         break
         except Exception:
+            # 归档缺失/不可读时跳过该来源，A/B 语料允许部分可用
             pass
         if len(docs) >= max_docs:
             break

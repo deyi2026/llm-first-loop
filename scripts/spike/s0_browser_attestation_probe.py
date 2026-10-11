@@ -19,6 +19,7 @@ Prints one JSON object (probe facts). Exit 0 = probe ran; 2 = Chrome failed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -134,7 +135,10 @@ def main() -> int:
         argv.append("--headless=new")
     argv.append("about:blank")
 
-    chrome_log = tempfile.NamedTemporaryFile(prefix="s0-chrome-", suffix=".log", delete=False)
+    # 句柄必须跨 Popen 生命周期保持打开（finally 里 close），故不用 with
+    chrome_log = tempfile.NamedTemporaryFile(  # noqa: SIM115
+        prefix="s0-chrome-", suffix=".log", delete=False
+    )
     proc = subprocess.Popen(argv, stdout=chrome_log, stderr=subprocess.STDOUT, start_new_session=True)
     facts: dict = {
         "variant": {
@@ -186,11 +190,10 @@ def main() -> int:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
             proc.wait(timeout=5)
-        except Exception:
-            try:
+        except Exception:  # noqa: BLE001 — 收尾路径：SIGTERM 失败才补 SIGKILL
+            with contextlib.suppress(Exception):
+                # 二者皆失败也要让原本的结果/异常传出
                 os.killpg(proc.pid, signal.SIGKILL)
-            except Exception:
-                pass
         shutil.rmtree(profile, ignore_errors=True)
         chrome_log.close()
         os.unlink(chrome_log.name)

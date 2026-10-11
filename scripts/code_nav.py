@@ -161,6 +161,7 @@ def find_langserver(root: str) -> str | None:
             if os.path.exists(shared):
                 return shared
     except Exception:
+        # pyright 探测失败回退下一个候选，导航不因探测失败中断
         pass
     from shutil import which
 
@@ -191,6 +192,7 @@ def langserver_metadata(root: str, path: str | None) -> dict[str, str | None]:
             if path_real == shared:
                 source = "git_common_root_venv"
     except Exception:
+        # 来源标注是诊断附加值：git 探测失败时按未知来源继续
         pass
 
     version = None
@@ -208,6 +210,7 @@ def langserver_metadata(root: str, path: str | None) -> dict[str, str | None]:
                 raw_version = proc.stdout.strip() or proc.stderr.strip()
                 version = raw_version.splitlines()[0] if raw_version else None
         except Exception:
+            # 版本槽位为观测附加值：探测失败保持 None，不影响定位主路径
             pass
 
     return {"source": source, "pyright_version": version}

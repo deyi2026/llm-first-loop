@@ -122,6 +122,7 @@ class CodeArtsDispatchTool:
 
             session_id = current_session_id.get() or ""
         except Exception:  # noqa: BLE001
+            # 会话 ID 仅用于审计关联：run_context 未装配/循环导入时按空值继续派发
             pass
 
         # R1 effect fence: 远端 dispatch 即副作用提交点。lease 权威丢失

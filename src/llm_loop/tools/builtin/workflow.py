@@ -426,6 +426,7 @@ class WorkflowRunTool:
 
                 session_id = current_session_id.get() or ""
             except Exception:  # noqa: BLE001
+                # 会话 ID 仅用于审计关联：run_context 不可用时按空值继续远端派发
                 pass
             # R1 effect fence: 远端 dispatch 即副作用提交点（同 codearts_dispatch）。
             from llm_loop.core.tool_execution_journal import (
