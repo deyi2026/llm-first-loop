@@ -1,3 +1,4 @@
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -335,6 +336,190 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     telemetry_a = store.read_events("session-a")
     assert [row["event"] for row in telemetry_a].count("restore_succeeded") == 2
     assert [row["event"] for row in telemetry_a].count("exchange_committed") == 3
+
+
+def test_surface_owned_transport_alerts_when_stable_prefix_changes_within_segment(
+    tmp_path,
+    caplog,
+):
+    new_conversations = iter(["conversation-a"])
+    staged_diagnostics = {
+        "a1": {"stable_prefix_sha256": "1" * 64, "stable_prefix_chars": 100},
+        "a2": {"stable_prefix_sha256": "1" * 64, "stable_prefix_chars": 100},
+        "a3": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+        "a4": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+    }
+
+    class Surface:
+        active: str | None = None
+
+        def reset_to_project_root(self):
+            self.active = None
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            self.active = conversation_id
+
+        def bind_conversation(self, binding):
+            return SimpleNamespace(
+                conversation_id=binding.conversation_id,
+                conversation_url=f"https://chatgpt.com/g/project/c/{binding.conversation_id}",
+            )
+
+        def close(self):
+            pass
+
+    surface = Surface()
+
+    class Adapter:
+        def ensure_reasoning_effort(self, effort, **_kwargs):
+            pass
+
+        def observe_identity(self):
+            return SimpleNamespace(conversation_id=surface.active)
+
+    class Inner:
+        last_prefix_diagnostics: dict | None = None
+
+        def rebind(self):
+            pass
+
+        def exchange(self, request, *, timeout_s=None):
+            if surface.active is None:
+                surface.active = next(new_conversations)
+            self.last_prefix_diagnostics = staged_diagnostics[request["request_id"]]
+            return {"request_id": request["request_id"]}
+
+        def close(self):
+            pass
+
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=surface,
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=1_000_000,
+    )
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "model": "web-gpt",
+        "messages": [{"role": "user", "content": "x"}],
+        "tools": [],
+    }
+
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.chatgpt_web"):
+        for request_id in ("a1", "a2", "a3", "a4"):
+            transport.exchange(
+                {**base, "request_id": request_id, "_lfl_session_id": "session-a"}
+            )
+
+    telemetry = store.read_events("session-a")
+    assert [row["event"] for row in telemetry].count("exchange_committed") == 4
+    alerts = [row for row in telemetry if row["event"] == "stable_prefix_changed"]
+    assert len(alerts) == 1
+    assert alerts[0]["segment_seq"] == 1
+    assert alerts[0]["conversation_id"] == "conversation-a"
+    assert alerts[0]["previous_stable_prefix_sha256"] == "1" * 64
+    assert alerts[0]["stable_prefix_sha256"] == "2" * 64
+    assert alerts[0]["previous_stable_prefix_chars"] == 100
+    assert alerts[0]["stable_prefix_chars"] == 120
+    assert any(
+        "stable prefix changed within conversation" in record.message
+        for record in caplog.records
+    )
+
+
+def test_surface_owned_transport_prefix_alert_rebaselines_on_segment_rollover(tmp_path):
+    new_conversations = iter(["conversation-a", "conversation-b"])
+    staged_diagnostics = {
+        "a1": {"stable_prefix_sha256": "1" * 64, "stable_prefix_chars": 100},
+        "a2": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+        "a3": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+    }
+
+    class Surface:
+        active: str | None = None
+
+        def reset_to_project_root(self):
+            self.active = None
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            self.active = conversation_id
+
+        def bind_conversation(self, binding):
+            return SimpleNamespace(
+                conversation_id=binding.conversation_id,
+                conversation_url=f"https://chatgpt.com/g/project/c/{binding.conversation_id}",
+            )
+
+        def close(self):
+            pass
+
+    surface = Surface()
+
+    class Adapter:
+        def ensure_reasoning_effort(self, effort, **_kwargs):
+            pass
+
+        def observe_identity(self):
+            return SimpleNamespace(conversation_id=surface.active)
+
+    class Inner:
+        last_prefix_diagnostics: dict | None = None
+
+        def rebind(self):
+            pass
+
+        def exchange(self, request, *, timeout_s=None):
+            if surface.active is None:
+                surface.active = next(new_conversations)
+            self.last_prefix_diagnostics = staged_diagnostics[request["request_id"]]
+            return {"request_id": request["request_id"]}
+
+        def close(self):
+            pass
+
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "model": "web-gpt",
+        "tools": [],
+        "_lfl_session_id": "session-a",
+    }
+    big = {**base, "messages": [{"role": "user", "content": "x" * 400}]}
+    small = {**base, "messages": [{"role": "user", "content": "y"}]}
+    # a1 fits segment 1, a2 must roll over (2 x big > big + small), and a3
+    # then fits segment 2 exactly, so the hash change a1 -> a2 crosses the
+    # rollover boundary while a2 -> a3 stays inside one conversation.
+    budget = _SurfaceOwnedTransport._request_chars({**big, "request_id": "a1"}) + len(
+        ChatGPTWebPageTransport._render_request({**small, "request_id": "a3"})
+    )
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=surface,
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=budget,
+    )
+
+    transport.exchange({**big, "request_id": "a1"})
+    transport.exchange({**big, "request_id": "a2"})
+    transport.exchange({**small, "request_id": "a3"})
+
+    telemetry = store.read_events("session-a")
+    rollovers = [row for row in telemetry if row["event"] == "segment_rollover"]
+    assert len(rollovers) == 1
+    assert rollovers[0]["reason"] == "cumulative_request_chars"
+    assert not [row for row in telemetry if row["event"] == "stable_prefix_changed"]
+    assert [row["event"] for row in telemetry].count("exchange_committed") == 3
+    binding = store.load("session-a")
+    assert binding is not None
+    assert binding.conversation_id == "conversation-b"
+    assert binding.segment_seq == 2
+    assert binding.segment_request_count == 2
+    assert binding.total_request_count == 3
 
 
 def test_surface_owned_transport_records_restore_failure_without_exchange(tmp_path):
