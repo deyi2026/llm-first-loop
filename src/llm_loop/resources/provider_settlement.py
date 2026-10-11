@@ -21,6 +21,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
 
 
@@ -316,7 +317,6 @@ class ProviderCallSettlementJournal:
         session_id = _require_text("session_id", session_id)
         idempotency_key = _require_text("idempotency_key", idempotency_key)
         owner_ref = _require_text("owner_ref", owner_ref)
-        from llm_loop.core.run_context import current_run_generation
 
         origin_run_generation = str(current_run_generation.get() or "")
         call_id = _call_id(session_id, idempotency_key, origin_run_generation)

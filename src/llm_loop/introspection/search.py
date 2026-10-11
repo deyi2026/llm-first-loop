@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from llm_loop.core.run_context import workspace_base
 from llm_loop.introspection.rule_index import RuleIndex
 from llm_loop.timekeeping import system_local_now
 
@@ -450,7 +451,6 @@ class RecordSearcher:
             if callable(self._workspace_scope_resolver):
                 scope = str(self._workspace_scope_resolver() or "")
             else:
-                from llm_loop.core.run_context import workspace_base
 
                 scope = workspace_base()
             try:
@@ -494,7 +494,6 @@ class RecordSearcher:
         if callable(self._workspace_scope_resolver):
             scope = str(self._workspace_scope_resolver() or "")
         else:
-            from llm_loop.core.run_context import workspace_base
 
             scope = workspace_base()
         raw = str(query or "").strip()

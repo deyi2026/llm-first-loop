@@ -40,6 +40,10 @@ from llm_loop.core.run_context import (
     current_model_label as current_model_label_ctx,
 )
 from llm_loop.core.run_context import (
+    current_session_id,
+    workspace_base,
+)
+from llm_loop.core.run_context import (
     current_session_id as current_session_id_ctx,
 )
 from llm_loop.core.run_context import (
@@ -734,7 +738,6 @@ def build_engine(
     evidence_ledger: Any | None = None
     evidence_owner_resolver: Callable[[], Any] | None = None
     if settings.evidence_mode in {"shadow", "enforce"}:
-        from llm_loop.core.run_context import current_session_id, workspace_base
         from llm_loop.memory.evidence import (
             BlobStore,
             EvidenceCapture,

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import workspace_base
 
 _MAX_FILES = 20
 
@@ -70,7 +71,6 @@ class PresentFilesTool:
         if len(files) > _MAX_FILES:
             return self._fail(f"单次至多声明 {_MAX_FILES} 个文件（收到 {len(files)} 个）")
 
-        from llm_loop.core.run_context import workspace_base
 
         base = Path(workspace_base()).resolve()
         facts: list[dict[str, Any]] = []

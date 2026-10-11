@@ -27,7 +27,13 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
-from llm_loop.core.run_context import current_run_generation, current_session_id
+from llm_loop.core.run_context import (
+    current_evidence_enforce_enabled,
+    current_evidence_shadow_enabled,
+    current_run_generation,
+    current_session_id,
+    current_tool_discovery_scope,
+)
 from llm_loop.knowledge.injection_ledger import append_row
 from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.eligibility import runtime_tool_health
@@ -507,7 +513,6 @@ class ToolRegistry:
         ``search_archive`` recovery after this method returns True.
         """
         try:
-            from llm_loop.core.run_context import current_session_id
 
             session_id = str(current_session_id.get() or "")
         except Exception:  # noqa: BLE001 — archive mutation requires exact owner
@@ -1545,11 +1550,6 @@ class ToolRegistry:
 
         # P0-5: 超时包裹的内层线程同样传播上下文（current_session_id 等）——
         # 工具 execute 本体在内层线程执行，缺传播则 contextvar 读到空串
-        from llm_loop.core.run_context import (
-            current_evidence_enforce_enabled,
-            current_evidence_shadow_enabled,
-            current_session_id,
-        )
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         capture_enabled = (
@@ -1863,7 +1863,6 @@ class GetToolSchemaTool:
 
     def execute(self, **kwargs) -> Any:
         from llm_loop.core.message import ToolResult, ToolResultStatus
-        from llm_loop.core.run_context import current_tool_discovery_scope
 
         name = str(kwargs.get("tool_name", "")).strip()
         if not name:

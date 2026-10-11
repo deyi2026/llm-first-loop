@@ -14,6 +14,8 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
+from llm_loop.core.run_context import current_run_generation
+
 _FAILURES = frozenset({"failure", "error", "timeout"})
 _HIGH_RISK = re.compile(
     r"(deploy|publish|release|production|rm\s+-|delete|chmod|sudo|"
@@ -370,7 +372,6 @@ def project_execution_knowledge(
         sid = str(getattr(sess, "session_id", "") or "")
         # A re-admitted run of the same persisted turn is a distinct execution
         # generation. Never borrow the prior run's dedupe keys or failure latch.
-        from llm_loop.core.run_context import current_run_generation
 
         generation = str(current_run_generation.get() or "")
         run_ref = (

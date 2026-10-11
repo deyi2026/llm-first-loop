@@ -25,6 +25,10 @@ from llm_loop.codearts.models import (
     ResultStatus,
 )
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import (
+    current_evidence_enforce_enabled,
+    current_evidence_shadow_enabled,
+)
 from llm_loop.event_log.model import EVENT_CODEARTS_COLLECTED
 from llm_loop.event_log.store import EventStore
 
@@ -102,10 +106,6 @@ class ResultCollector:
         # tool execution, returning a locally truncated string would destroy the exact
         # observation before the shared capture-before-projection layer can persist it.
         # Keep the legacy byte cap only for direct/ungoverned collector callers.
-        from llm_loop.core.run_context import (
-            current_evidence_enforce_enabled,
-            current_evidence_shadow_enabled,
-        )
 
         original_bytes = len(final_answer.encode("utf-8"))
         governed_capture = bool(

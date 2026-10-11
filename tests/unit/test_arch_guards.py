@@ -1161,10 +1161,10 @@ def test_durability_write_candidate_synthetic_negative(tmp_path):
 # 口径：`except (Exception|BaseException)` 的 body 仅一条 `pass` 时，必须带
 # 原因说明注释——注释写清「为什么这里必须 fail-open」，而不是复述代码。
 # 扫描面 = src/tests/scripts（与 ruff 全树一致）。现状（HEAD 4f12265cc）共
-# 53 处、全部已带原因，故本守卫零容忍、不设基线（仅函数尺寸等可调数值才需
-# 数据外置；这里是布尔门，"登记现存 53" 由 SILENT_SWALLOW_MIN_SITES 只增不减承载）。
+# 51 处、全部已带原因，故本守卫零容忍、不设基线（仅函数尺寸等可调数值才需
+# 数据外置；这里是布尔门，"登记现存 51" 由 SILENT_SWALLOW_MIN_SITES 只增不减承载）。
 SCAN_ROOTS = ("src", "tests", "scripts")
-SILENT_SWALLOW_MIN_SITES = 53
+SILENT_SWALLOW_MIN_SITES = 51
 
 
 def _iter_py_rels(root: Path) -> list[str]:

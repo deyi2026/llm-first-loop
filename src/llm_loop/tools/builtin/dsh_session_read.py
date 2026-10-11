@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_evidence_enforce_enabled, workspace_base
 from llm_loop.runtime.resolver import business_config_snapshot
 from llm_loop.workspace.store import workspace_key
 
@@ -78,7 +79,6 @@ class DshSessionReadTool:
     def execute(self, **kwargs) -> ToolResult:
         workspace = str(kwargs.get("workspace", "") or "").strip()
         if not workspace:
-            from llm_loop.core.run_context import workspace_base
 
             workspace = workspace_base()
         session_id = str(kwargs.get("session_id", "") or "").strip()
@@ -244,7 +244,6 @@ class DshSessionReadTool:
         if not parts:
             parts.append("（无可提取事件，或关键词无匹配）")
         joined = "\n".join(parts)
-        from llm_loop.core.run_context import current_evidence_enforce_enabled
 
         if len(joined) > _MAX_OUTPUT_CHARS and not current_evidence_enforce_enabled.get():
             joined = joined[:_MAX_OUTPUT_CHARS] + "\n…[摘要截断]…"

@@ -23,6 +23,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from llm_loop.core.run_context import (
+    current_run_generation,
+    current_session_id,
+    current_workspace_root,
+)
 from llm_loop.resources import task_budget_knowledge_profile as knowledge_profile
 from llm_loop.resources.task_budget_contracts import (
     BudgetDimension,
@@ -117,11 +122,6 @@ class TaskBudgetExecution:
             raise TaskBudgetDeniedError("member_identity_mismatch")
         if _finite_time(self.store._clock()) >= snapshot["grant"]["deadline_epoch_s"]:
             raise TaskBudgetDeniedError("deadline_expired")
-        from llm_loop.core.run_context import (
-            current_run_generation,
-            current_session_id,
-            current_workspace_root,
-        )
 
         # The I2/I3 context is an offline attachment, not a signed ingress
         # grant. Nevertheless, any ambient real Run binding must agree with

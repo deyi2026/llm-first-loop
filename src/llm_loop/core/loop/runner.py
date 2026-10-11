@@ -31,6 +31,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.runtime.resolver import business_config_snapshot
 
 logger = logging.getLogger(__name__)
@@ -833,7 +834,6 @@ class BackgroundRunner:
             ctx = contextvars.copy_context()
 
             def _run() -> Any:
-                from llm_loop.core.run_context import current_run_generation
 
                 generation_token = current_run_generation.set(handle.run_generation)
                 run_kwargs: dict[str, Any] = {}

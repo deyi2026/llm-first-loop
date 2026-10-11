@@ -13,6 +13,7 @@ import os
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_model_label
 from llm_loop.experiences.store import ExperiencePersistError
 from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.methods.store import MethodCommitUncertainError, MethodPersistError
@@ -247,7 +248,6 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
     doc = store.get(ref[11:])
     if doc is None:
         return _method_failure("refine_experience", "[refine_experience] 未找到指定经验；未记录使用声明")
-    from llm_loop.core.run_context import current_model_label
 
     try:
         entry = store.record_use(
@@ -370,7 +370,6 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
     if not freshness_action_ok(description, body):
         return _method_failure(tool_name, FRESHNESS_ACTION_ERR)
     try:
-        from llm_loop.core.run_context import current_model_label
 
         episode_ref = str(host.current_episode_ref() or "")
         if not episode_ref.startswith("episode:"):
@@ -404,7 +403,6 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
     if not method_ref or not decision:
         return _method_failure(tool_name, "[参数错误] record_use 需要 method_ref/use_decision")
     try:
-        from llm_loop.core.run_context import current_model_label
 
         episode_ref = str(host.current_episode_ref() or "")
         if not episode_ref.startswith("episode:"):

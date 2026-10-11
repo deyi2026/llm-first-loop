@@ -27,6 +27,14 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
+from llm_loop.core.run_context import (
+    current_model_label,
+    current_run_generation,
+    current_session_id,
+    current_tool_discovery_scope,
+    current_workspace_root,
+    workspace_base,
+)
 from llm_loop.core.runtime_params import HARD_CAP_MAX_ITERATIONS
 from llm_loop.core.session import Session, SessionStore
 from llm_loop.core.subagent_delivery import SubAgentDeliveryJournal
@@ -459,7 +467,6 @@ class SubAgentRunner:
 
         terminal-but-unread result 不是完成门槛：模型可自行决定是否读取 child 结果。
         """
-        from llm_loop.core.run_context import current_run_generation
 
         target_generation = str(run_generation or current_run_generation.get() or "")
         with self._children_guard:
@@ -490,7 +497,6 @@ class SubAgentRunner:
         parent→direct active child、child→direct active parent；self/sibling/
         grandparent/grandchild/unknown/dead target 均拒绝。
         """
-        from llm_loop.core.run_context import current_session_id
 
         sender_id = current_session_id.get()
         body = str(content or "").strip()
@@ -641,7 +647,6 @@ class SubAgentRunner:
         """
         if not parent_session_id:
             return 0
-        from llm_loop.core.run_context import current_run_generation
 
         target_generation = str(run_generation or origin_run_generation or current_run_generation.get() or "")
         with self._children_guard:
@@ -689,7 +694,6 @@ class SubAgentRunner:
         """同步登记 active child topology；调用者负责最终 ``_finalize_child``。"""
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
         generation = uuid.uuid4().hex
-        from llm_loop.core.run_context import current_run_generation
 
         parent_run_generation = str(current_run_generation.get() or "")
         cancel_event = threading.Event()
@@ -980,7 +984,6 @@ class SubAgentRunner:
         startup_state: dict[str, object] | None = None,
     ) -> SubAgentResult:
         """在已登记的 child sid 上执行迷你循环；不负责 topology cleanup。"""
-        from llm_loop.core.run_context import current_model_label, current_session_id
 
         # copy_context() in start()/recursive calls already carries the parent's
         # current_tool_discovery_scope. Do not overwrite it with a child-specific
@@ -1147,7 +1150,6 @@ class SubAgentRunner:
         """原子保留一个 background handle 槽位；容量只约束并发资源，不判断任务。"""
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
         generation = uuid.uuid4().hex
-        from llm_loop.core.run_context import current_run_generation
 
         parent_run_generation = str(current_run_generation.get() or "")
         cancel_event = threading.Event()
@@ -1199,7 +1201,6 @@ class SubAgentRunner:
                 "detail": f"递归深度超限（已达上限 {self.max_depth}）",
             }
 
-        from llm_loop.core.run_context import current_model_label, current_session_id
 
         requested_model = str(model or "").strip()
         inherited_model = (
@@ -1368,7 +1369,6 @@ class SubAgentRunner:
 
     def result_current(self, child_id: str, wait_seconds: float = 0.0) -> tuple[bool, str, dict]:
         """Query a direct child from local handle or durable generation-scoped facts."""
-        from llm_loop.core.run_context import current_session_id
 
         requester = current_session_id.get()
         sid = str(child_id or "").strip()
@@ -1532,7 +1532,6 @@ class SubAgentRunner:
 
     def settle_current(self, child_id: str) -> bool:
         """在 terminal receipt 已成功构造后，由 direct parent ACK settlement。"""
-        from llm_loop.core.run_context import current_session_id
 
         requester = current_session_id.get()
         sid = str(child_id or "").strip()
@@ -1603,7 +1602,6 @@ class SubAgentRunner:
         返回 (ok, detail, result)。所有拒绝路径都显式说明剩余预算或过期事实，
         并指向 spawn_subagent 重新开一个新 child；不隐式新开会话。
         """
-        from llm_loop.core.run_context import current_model_label, current_session_id
 
         requester = current_session_id.get()
         sid = str(child_id or "").strip()
@@ -1782,7 +1780,6 @@ class SubAgentRunner:
                 depth=depth,
             )
 
-        from llm_loop.core.run_context import current_model_label, current_session_id
 
         requested_model = str(model or "").strip()
         inherited_model = (
@@ -1960,7 +1957,6 @@ class SubAgentRunner:
             # lazy=True preserves executable JSON-schema structure while removing long
             # descriptions/examples, so capability is retained without paying full token cost.
             schemas = self.registry.schemas(lazy=True)
-            from llm_loop.core.run_context import current_tool_discovery_scope
             from llm_loop.tools.eligibility import runtime_tool_health
 
             scope = current_tool_discovery_scope.get()
@@ -2159,7 +2155,6 @@ class SubAgentRunner:
                 # Explicit parent scope is an authorization boundary and must survive
                 # hallucinated/unadvertised tool calls. With scope=None, registry/tool
                 # implementations own callability and safety; child identity adds no penalty.
-                from llm_loop.core.run_context import current_tool_discovery_scope
 
                 scope = current_tool_discovery_scope.get()
                 if not execution_id:
@@ -2199,7 +2194,6 @@ class SubAgentRunner:
                     else:
                         executed = True
                         try:
-                            from llm_loop.core.run_context import current_workspace_root
 
                             with self._tool_journal.effect_context(
                                 session_id=sess.session_id,
@@ -2315,7 +2309,6 @@ class SubAgentRunner:
         """
         if self.artifact_store is None or not msgs:
             return "", 0, 0
-        from llm_loop.core.run_context import workspace_base
 
         rows: list[dict[str, object]] = []
         for message_index, msg in enumerate(msgs):
@@ -2384,7 +2377,6 @@ class SubAgentRunner:
 
     def _inherit_parent_context(self, context: str) -> str:
         """Expose exact parent context as retrieval-only; never auto-inline parent turns."""
-        from llm_loop.core.run_context import current_session_id
 
         parent_sid = current_session_id.get()
         if not parent_sid:

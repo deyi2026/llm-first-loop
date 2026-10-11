@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.introspection.tools_model import (
     MODEL_CATALOG_TOOL_DEF,
@@ -26,7 +27,6 @@ def _resolve_binding(ctx: Any):
     if resolver is None:
         return None
     try:
-        from llm_loop.core.run_context import current_session_id
 
         sid = current_session_id.get()
         if not sid:

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.external_execution import ExternalExecutionJournal
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -162,7 +163,6 @@ class JobRegistry:
         command_sha256 = hashlib.sha256(command.encode("utf-8", "replace")).hexdigest()
         pid = int(getattr(proc, "pid", 0) or 0)
         pgid = self._process_group(proc)
-        from llm_loop.core.run_context import current_run_generation
 
         origin_run_generation = str(current_run_generation.get() or "")
         launch = None

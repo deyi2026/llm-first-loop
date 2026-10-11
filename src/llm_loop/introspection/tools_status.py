@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_evidence_shadow_enabled
+from llm_loop.core.run_context import current_session_id as _sid_var
 from llm_loop.introspection.search import (
     _VALID_KINDS,
     InvalidSearchKindError,
@@ -255,7 +257,6 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
     # M19 FIX-03: 8000 字符静默截断如实标注（标注拼接在截断段之后，保证标注可见）
     # EVO-20260826: 默认精简视图后截断罕见（仅当单维度本身极大），保留作安全网。
     if len(text) > 8000:
-        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
@@ -282,7 +283,6 @@ def current_session_id(ctx: Any) -> str:
     本会话（ctx.session_id 为环境回退，跨会话并发时其值为最后写入者，不可信）。
     """
     try:
-        from llm_loop.core.run_context import current_session_id as _sid_var
 
         sid = _sid_var.get()
         if sid:
@@ -301,7 +301,6 @@ def bound_session_id() -> str:
     helper and fail closed when it returns an empty string.
     """
     try:
-        from llm_loop.core.run_context import current_session_id as _sid_var
 
         return str(_sid_var.get() or "")
     except Exception:  # noqa: BLE001 — missing execution context is explicit unknown
@@ -871,7 +870,6 @@ def _finalize_search_records(
         )
     if degraded or skipped:
         content += "\n" + _diag_section(len(result))
-    from llm_loop.core.run_context import current_evidence_shadow_enabled
 
     raw_content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(raw_lines)
     return ToolResult(

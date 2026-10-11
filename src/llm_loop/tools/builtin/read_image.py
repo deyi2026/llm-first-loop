@@ -13,6 +13,7 @@ import struct
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import workspace_base
 
 # 图片扩展名 → mime（与 web/routes.py 上传通道一致）
 _EXT_MIME = {
@@ -114,7 +115,6 @@ class ReadImageTool:
             )
         p = Path(path).expanduser()
         if not p.is_absolute():
-            from llm_loop.core.run_context import workspace_base
 
             p = Path(workspace_base()) / p
         if not p.exists() or not p.is_file():

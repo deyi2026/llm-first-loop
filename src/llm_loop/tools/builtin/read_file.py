@@ -6,6 +6,11 @@ import logging
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import (
+    current_evidence_shadow_enabled,
+    current_session_id,
+    workspace_base,
+)
 from llm_loop.tools.safety import link_shaped_paths
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
@@ -130,7 +135,6 @@ class ReadFileTool:
         p = Path(path).expanduser()
         # 工作区跟随: 相对路径基于当前工作区根（无工作区 → 进程 cwd，零回归）
         if not p.is_absolute():
-            from llm_loop.core.run_context import workspace_base
 
             p = Path(workspace_base()) / p
         # T5b: symlink 透明标注（读放行，信息不隐藏；写路径在 edit_file 拒绝）
@@ -203,7 +207,6 @@ class ReadFileTool:
             # 元信息首行提供路径/总行数/选定范围；正文保持真实字节直到统一 hard cap。
             meta = f"[read_file] {p} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
             content = meta + "\n" + numbered + note + _link_note
-            from llm_loop.core.run_context import current_evidence_shadow_enabled
 
             raw_observation = content if current_evidence_shadow_enabled.get() else None
             # EVO-20260823-12be9cac: 成功翻转 + 登记正帧（存在 + 元数据，查询时 stat 对账）
@@ -256,11 +259,6 @@ class ReadFileTool:
                 tool_name=self.name,
                 error_type="SnapshotUnavailable",
             )
-        from llm_loop.core.run_context import (
-            current_evidence_shadow_enabled,
-            current_session_id,
-            workspace_base,
-        )
         from llm_loop.core.tool_execution_journal import current_tool_effect_binding
 
         scope = workspace_base()
@@ -363,7 +361,6 @@ class ReadFileTool:
                 tool_name=self.name,
                 error_type="ArtifactStoreUnavailable",
             )
-        from llm_loop.core.run_context import current_evidence_shadow_enabled, workspace_base
 
         scope = workspace_base()
         try:

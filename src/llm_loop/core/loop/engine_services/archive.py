@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from llm_loop.core.message import Message
+from llm_loop.core.run_context import current_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,6 @@ class ArchiveService:
 
     def _archive_feedback_session(self, session_id: str):
         """archive故障反馈优先复用当前run的token-bound Session；run外仍从磁盘加载。"""
-        from llm_loop.core.run_context import current_session_id
 
         if current_session_id.get() == session_id:
             try:

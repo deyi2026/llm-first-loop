@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from llm_loop.core.run_context import workspace_base
 
 MANIFEST_VERSION = 1
 MAX_READ_ANCHORS = 48
@@ -202,7 +203,6 @@ def file_version_still_matches(arguments: dict[str, Any], version_token: str) ->
     if len(parts) != 3:
         return False
     try:
-        from llm_loop.core.run_context import workspace_base
 
         p = Path(path).expanduser()
         if not p.is_absolute():

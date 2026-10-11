@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import workspace_base
 
 
 class ReadAttachmentTool:
@@ -54,7 +55,6 @@ class ReadAttachmentTool:
                 tool_name=self.name,
                 error_type="InvalidAttachmentRef",
             )
-        from llm_loop.core.run_context import workspace_base
 
         scope = str(Path(workspace_base()).expanduser().resolve())
         try:

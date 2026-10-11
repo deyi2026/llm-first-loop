@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 
 MAX_STEPS = 6
 
@@ -420,14 +421,8 @@ class WorkflowRunTool:
                 context_summary=ctx,
                 timeout_budget=TimeoutBudget(exec_s=budget * 60 if budget else 1800),
             )
-            session_id = ""
-            try:
-                from llm_loop.core.run_context import current_session_id
-
-                session_id = current_session_id.get() or ""
-            except Exception:  # noqa: BLE001
-                # 会话 ID 仅用于审计关联：run_context 不可用时按空值继续远端派发
-                pass
+            # 会话 ID 仅用于审计关联；run_context 已模块级导入（无环），无需防御性 try
+            session_id = current_session_id.get() or ""
             # R1 effect fence: 远端 dispatch 即副作用提交点（同 codearts_dispatch）。
             from llm_loop.core.tool_execution_journal import (
                 current_effect_mutation_authority,
