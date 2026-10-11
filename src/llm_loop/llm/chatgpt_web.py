@@ -449,6 +449,15 @@ class _SurfaceOwnedTransport:
         # a bounded transport segment keyed by the authoritative LFL session.
         # Reuse improves operator manageability; rollover prevents unbounded
         # accumulation of repeated full LFL snapshots in provider-owned history.
+        # Runtime target-death self-heal first: if the leased tab was closed
+        # while this long-lived surface was idle (user closes the tab, browser
+        # drops the target), every later goto on the dead handle raises
+        # TargetClosedError forever — without this the transport cannot recover
+        # without a process restart.  A live page handle passes through
+        # untouched; a dead one is recreated from the durable lease and the
+        # adapter is handed the replacement page.
+        page = self.surface.reopen_dead_page()
+        self.adapter.rebind_page(page)
         session_binding, request_chars = self._prepare_session_binding(request)
         requested_effort = str(
             request.get("_reasoning_effort") or self.reasoning_effort

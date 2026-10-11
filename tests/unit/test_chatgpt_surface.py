@@ -628,3 +628,48 @@ def test_closed_exact_target_is_replaced_without_selecting_same_url_duplicate(tm
     assert after.target_id == replacement.target_id
     assert duplicate.closed is False
     assert replacement.fronted == 0
+
+
+def test_open_recovers_when_leased_tab_closes_during_route_restore(tmp_path):
+    """16:12-style race: the leased tab dies between _find_target and goto."""
+
+    class _DyingPage(_Page):
+        def goto(self, url, *, wait_until, timeout):
+            self.closed = True
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    surface.open()
+    leased_target = surface.snapshot_identity().target_id
+    surface.close()
+
+    dying = _DyingPage(leased_target, "https://chatgpt.com/c/stale-route")
+    context2 = _Context([dying], target_prefix="revived")
+    surface2, _pw2 = _surface(tmp_path, context2)
+
+    page = surface2.open()
+    lease = surface2.snapshot_identity()
+
+    assert page is not dying
+    assert page.target_id.startswith("revived-")
+    assert lease.target_id == page.target_id
+    assert lease.target_id != leased_target
+
+
+def test_reopen_dead_page_recovers_runtime_closed_tab(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    first = surface.open()
+    assert surface.page is first
+
+    first.closed = True
+
+    second = surface.reopen_dead_page()
+    assert second is not first
+    assert surface.page is second
+    lease = surface.snapshot_identity()
+    assert lease.target_id == second.target_id
+
+    third = surface.reopen_dead_page()
+    assert third is second

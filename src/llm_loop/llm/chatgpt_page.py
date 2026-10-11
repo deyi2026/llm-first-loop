@@ -174,6 +174,15 @@ class ChatGPTPageAdapter:
         self.profile_label = profile_label
         self.project_name = project_name
 
+    def rebind_page(self, page: Any) -> None:
+        """Point this adapter at a replacement owned page.
+
+        Used after ChatGPTSurface.reopen_dead_page() replaces a dead owned
+        target: the transport keeps one adapter for its lifetime, so surface
+        recovery must hand it the freshly recreated page handle.
+        """
+        self._page = page
+
     @property
     def project_composer(self) -> str | None:
         if not self.project_name:

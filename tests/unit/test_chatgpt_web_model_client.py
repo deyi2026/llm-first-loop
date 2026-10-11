@@ -202,6 +202,9 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
     events: list[str] = []
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         def reset_to_project_root(self):
             events.append("reset")
 
@@ -212,6 +215,9 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
             events.append("surface-close")
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             events.append(f"reasoning:{effort}")
 
@@ -259,6 +265,9 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     new_conversations = iter(["conversation-a", "conversation-b"])
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -282,6 +291,9 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             events.append(f"reasoning:{effort}")
 
@@ -351,6 +363,9 @@ def test_surface_owned_transport_alerts_when_stable_prefix_changes_within_segmen
     }
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -371,6 +386,9 @@ def test_surface_owned_transport_alerts_when_stable_prefix_changes_within_segmen
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             pass
 
@@ -439,6 +457,9 @@ def test_surface_owned_transport_prefix_alert_rebaselines_on_segment_rollover(tm
     }
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -459,6 +480,9 @@ def test_surface_owned_transport_prefix_alert_rebaselines_on_segment_rollover(tm
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             pass
 
@@ -534,6 +558,9 @@ def test_surface_owned_transport_records_restore_failure_without_exchange(tmp_pa
     called = {"exchange": 0}
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         def reset_to_project_root(self):
             raise AssertionError("existing binding should attempt restore")
 
@@ -544,6 +571,9 @@ def test_surface_owned_transport_records_restore_failure_without_exchange(tmp_pa
             return None
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
@@ -585,6 +615,9 @@ def test_surface_owned_transport_rolls_segment_at_request_cap(tmp_path):
     new_conversations = iter(["conversation-1", "conversation-2"])
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -605,6 +638,9 @@ def test_surface_owned_transport_rolls_segment_at_request_cap(tmp_path):
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
@@ -654,6 +690,9 @@ def test_surface_owned_transport_rolls_segment_at_cumulative_char_budget(tmp_pat
     new_conversations = iter(["conversation-1", "conversation-2"])
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -674,6 +713,9 @@ def test_surface_owned_transport_rolls_segment_at_cumulative_char_budget(tmp_pat
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
@@ -1026,3 +1068,49 @@ def test_chatgpt_web_request_size_guard_fails_before_browser_send_and_is_overflo
     assert caught.value.limit_chars == 100
     assert caught.value.observed_chars > caught.value.limit_chars
     assert is_overflow_error(caught.value) is True
+
+
+def test_surface_owned_transport_rebinds_adapter_after_surface_revival():
+    """A dead owned tab must be revived and the adapter rebound before any
+    page interaction, instead of failing every exchange until restart."""
+
+    rebound: list[object] = []
+    events: list[str] = []
+
+    class Surface:
+        def reopen_dead_page(self):
+            events.append("reopen")
+            return "page-2"
+
+        def reset_to_project_root(self):
+            events.append("reset")
+
+        def bind_conversation(self, binding):
+            events.append("bind")
+            return None
+
+    class Adapter:
+        def rebind_page(self, page):
+            rebound.append(page)
+
+        def ensure_reasoning_effort(self, effort, **_kwargs):
+            events.append(f"reasoning:{effort}")
+
+        def observe_identity(self):
+            return type("Binding", (), {"conversation_id": "conversation-x"})()
+
+    class Inner:
+        def rebind(self):
+            events.append("rebind")
+
+        def exchange(self, request, *, timeout_s=None):
+            events.append(f"exchange:{request['request_id']}")
+            return {"request_id": request["request_id"]}
+
+    transport = _SurfaceOwnedTransport(Inner(), surface=Surface(), adapter=Adapter())
+    assert transport.exchange({"request_id": "r1"}) == {"request_id": "r1"}
+
+    assert rebound == ["page-2"]
+    assert events.index("reopen") == 0
+    assert events.index("reset") == 1
+    assert events[:2] == ["reopen", "reset"]
