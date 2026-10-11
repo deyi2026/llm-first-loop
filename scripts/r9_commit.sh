@@ -16,6 +16,7 @@
 # R9_COMMIT_LOCK_TIMEOUT（默认 900s）+ trap 释放防死锁。
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+source scripts/r9_probe_cleanup.sh
 
 MSG="${1:?用法: bash scripts/r9_commit.sh \"<commit message>\"}"
 
@@ -118,7 +119,27 @@ REGISTRY="tests/guards/external_red_registry.json"
 FIXTURE_MANIFEST="tests/guards/fixture_manifest.json"
 GATE_LOG="$(mktemp /tmp/r9_gate.XXXXXX)"
 PROBE_WT="$(mktemp -d /tmp/r9probe.XXXXXX)"
-trap 'if [ -n "${LOCK_HOLDER_PID:-}" ]; then kill "$LOCK_HOLDER_PID" 2>/dev/null || true; fi; flock -u 9 2>/dev/null || true; if [ -n "${PROBE_WT:-}" ] && git worktree list --porcelain | grep -qF "$PROBE_WT"; then git worktree remove --force "$PROBE_WT" > /dev/null 2>&1 || true; fi; if [ -n "${GATE_LOG:-}" ]; then cp "$GATE_LOG" /tmp/r9_gate_last.log 2>/dev/null || true; rm -f "$GATE_LOG"; fi' EXIT
+# Git lists physical paths (e.g. /private/tmp on macOS), not symlink aliases.
+PROBE_WT="$(cd "$PROBE_WT" && pwd -P)"
+r9_cleanup_exit() {
+  local result="$1"
+  if [ -n "${LOCK_HOLDER_PID:-}" ]; then kill "$LOCK_HOLDER_PID" 2>/dev/null || true; fi
+  flock -u 9 2>/dev/null || true
+  if [ -n "${PROBE_WT:-}" ]; then
+    if ! r9_cleanup_probe "$PROBE_WT"; then
+      if [ "$result" -eq 0 ]; then result=1; fi
+    fi
+  fi
+  if [ -n "${GATE_LOG:-}" ]; then
+    if ! cp "$GATE_LOG" "${R9_GATE_RECEIPT_FILE:-/tmp/r9_gate_last.log}"; then
+      echo "R9 gate receipt archive failed: $GATE_LOG" >&2
+      if [ "$result" -eq 0 ]; then result=1; fi
+    fi
+    rm -f "$GATE_LOG" || true
+  fi
+  exit "$result"
+}
+trap 'r9_cleanup_exit $?' EXIT
 git worktree add --detach "$PROBE_WT" "$PROBE" > /dev/null 2>&1 || { echo "❌ PROBE 隔离检出失败（$PROBE_WT）" >&2; exit 1; }
 # Gate 0 项2：fixture 版本化校验（PROBE 树内 manifest 对本体 hash 逐项校验）
 if [ -f "$PROBE_WT/$FIXTURE_MANIFEST" ]; then

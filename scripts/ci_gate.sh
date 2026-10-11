@@ -116,6 +116,7 @@ export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-4}"
 echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (full test selection unchanged)"
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 if "$PY" -m pytest --dist loadfile -n auto -q >"$GATE_OUT" 2>&1; then
+  cat "$GATE_OUT"
   echo "（xdist 全量绿）"
 else
   # xdist 假红降级（D-B2-09，第四轮审查采纳）：红 → serial 单点复核——
@@ -131,7 +132,9 @@ else
   fi
   n_files="$(echo "$fail_files" | wc -l | tr -d ' ')"
   echo "── xdist 红（${n_files} 文件）→ serial 单点复核（D-B2-09 降级流程）──"
+  cat "$GATE_OUT"
   if "$PY" -m pytest $fail_files -q >"$GATE_SER" 2>&1; then  # shellcheck disable=SC2086
+    cat "$GATE_SER"
     echo "⚠️ serial 复核绿 = xdist 分布假红（不阻断；文件清单如下，登记观察）"
     echo "$fail_files"
   else
