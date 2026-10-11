@@ -2,6 +2,11 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.30 — 经验使用声明账本化 + 知识库 use 硬门双源（2026-10-11）
+
+- **经验使用声明落账（EVO-20261011-945fc53c 方案A+B）**：`refine_experience(action=record_use)` 从"只回执不落账"升级为真值源账本 `experiences/usage.jsonl`——与 method 侧同构的跨进程 flock + fsync + 单调水位（`.usage_watermark.json`），追加失败如实 FAILURE（fail-closed，不降级）；新增 `ExperienceStore.record_use/usage_entries/check_usage_integrity`；`knowledge_runtime` 事件流降级为观察通道。一次性迁移脚本 `scripts/migrate_experience_usage_ledger.py` 回放历史 6 条声明（含 2026-10-10 的 4 条），幂等键 `knowledge_event_key` 可安全重跑。
+- **知识库 use 硬门双源（EVO-20261011-d6b04567 方案C）**：`method_use_gate` 通过路径扩展为 method/experience 双源（各自 usage.jsonl 按 session_id 归属）；`task_update(method_no_contact=...)` 语义澄清为知识库级（方法库与经验库均未接触），描述与 goal 提示同步；审计兼容注明：2026-10-11 前历史 `false` 只表示"未显式声明无方法库接触"，不蕴含经验库证据。方案权衡（D）：不做 record_use 账本化与门禁硬绑定（保持方法/经验两层独立）。
+
 ## v0.6.29 — 浏览器精确寻址 + 中文经验落盘修复 + web_search 词典降级标注（2026-10-10）
 
 - **浏览器目标精确寻址三选一（EVO-20261010-1e06d6b4，commit ab4fd70a5）**：`browser_operate` 目标寻址三种形态——raw name 字节精确（kind+name）、确定性归一键（kind+name_normalized，零宽剥离/空白折叠）、grounding_ref 复用（受 world-version retention 约束）；混合形态或空值确定性拒绝。身份未命中回执有界候选清单替代旧 fuzzy 重绑，杜绝最新匹配静默漂移。

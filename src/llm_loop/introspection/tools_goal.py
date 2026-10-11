@@ -34,10 +34,12 @@ CREATE_GOAL_TOOL_DEF: dict = {
             "method_use_gate": {
                 "type": "boolean",
                 "description": (
-                    "goal 级方法 use 硬门（EVO-20260923-618f7fd1 ②，默认 false）。开启后: "
-                    "本 goal 下 evidence_required 任务 →done 前，需本会话至少一条 "
-                    "method_manage(action=record_use) 或 task_update(method_no_contact=true) "
-                    "显式声明。何时用: 用户明确要求强化方法回记纪律的长任务。"
+                    "goal 级知识库 use 硬门（EVO-20260923-618f7fd1 ② / EVO-20261011-d6b04567 "
+                    "双源化，默认 false）。开启后: 本 goal 下 evidence_required 任务 →done 前，"
+                    "需本会话至少一条 method_manage(action=record_use) 或 "
+                    "refine_experience(action=record_use) 回记，或 task_update("
+                    "method_no_contact=true) 显式声明（知识库级语义）。"
+                    "何时用: 用户明确要求强化知识库回记纪律的长任务。"
                 ),
             },
             "spec_change_ref": {

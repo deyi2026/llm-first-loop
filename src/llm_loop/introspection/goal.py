@@ -49,8 +49,9 @@ class Goal:
     checkpoints: list[dict] = field(default_factory=list)  # [{ts, what, evidence, path, next}]
     completed_at: str = ""
     blocked_reason: str = ""
-    # EVO-20260923-618f7fd1 ②: goal 级方法 use 硬门开关（默认关）；
-    # 开启后 evidence_required 任务 →done 需本会话至少一条 record_use 或显式声明
+    # EVO-20260923-618f7fd1 ② / EVO-20261011-d6b04567: goal 级知识库 use 硬门开关
+    # （默认关）；开启后 evidence_required 任务 →done 需本会话至少一条
+    # method/experience record_use 或显式 method_no_contact 声明
     method_use_gate: bool = False
     # EVO-20261002-daa84575: spec 吸收源声明（可选；惯例 .codeartsdoer/specs/<id>/ 路径）。
     # 声明后 complete 须过 spec_archive 归档门（归档清单或显式不适用）；

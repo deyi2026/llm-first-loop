@@ -137,6 +137,9 @@ class KnowledgeRun:
                     "hydration_observed": str(args.get("method_ref") or "") in self._hydrated_refs,
                 })
             elif name == "refine_experience" and args.get("action") == "record_use":
+                # EVO-20261011-945fc53c：experience 使用声明的真值源是
+                # experiences/usage.jsonl（store.record_use 落账）；本事件流降级为
+                # 观察通道，仅作审计对照，不作为“已回记”的判定依据。
                 content = str(getattr(message, "content", "") or "").removeprefix(f"[状态: {status}] ")
                 if not content.startswith("[refine_experience] use declaration\n"):
                     continue
