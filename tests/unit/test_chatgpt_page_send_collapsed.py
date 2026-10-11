@@ -10,7 +10,6 @@ from llm_loop.llm.chatgpt_page import (
     PageMessage,
 )
 
-
 FULL_PROMPT = (
     "[lfl-model/request] head ... long snapshot ... tail request_id=lfl-model-0005"
 )

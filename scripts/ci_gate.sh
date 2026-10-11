@@ -28,7 +28,7 @@ ROOT="$(pwd)"
 # 2) PYTHONPATH 前置本树 src——任何 worktree/旧主区运行 ci_gate，被测代码恒为本树。
 PY="${PY:-$ROOT/.venv/bin/python}"
 if [[ ! -x "$PY" ]]; then
-  MAIN_WT="$(git worktree list --porcelain | head -1 | cut -d' ' -f2)"
+  MAIN_WT="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
   [[ -x "$MAIN_WT/.venv/bin/python" ]] && PY="$MAIN_WT/.venv/bin/python"
 fi
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -85,7 +85,7 @@ fi
 # not its dist (which could be stale or from a different commit). Never
 # fetch dependencies from the network at a release qualification gate.
 if [[ ! -d "$ROOT/webui/node_modules" ]]; then
-  MAIN_WT="$(git worktree list --porcelain | head -1 | cut -d' ' -f2)"
+  MAIN_WT="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
   if [[ ! -d "$MAIN_WT/webui/node_modules" ]]; then
     echo "❌ CI WebUI dependencies unavailable; preinstall pinned dependencies offline before gate" >&2
     exit 1
