@@ -273,6 +273,14 @@ class OfflineReviewProcess:
 class OfflineReviewSupervisor:
     """Experiment-only Task-owned process launcher, not production entrypoint."""
 
+    # 显式类级注解：__init__ 含条件 raise 守卫，属性赋值位于分支之后；
+    # 在部分环境下 pyright 对该形态的推断会退化为 partial（OfflineReviewSupervisor*），
+    # 显式声明使 self.root/control/owner/denied_read_roots 的类型不依赖推断。
+    root: Path
+    control: TaskControlStore
+    owner: str
+    denied_read_roots: tuple[Path, ...]
+
     def __init__(
         self, root: Path | str, control: TaskControlStore, owner: str,
         *, denied_read_roots: tuple[Path, ...],
