@@ -730,6 +730,8 @@ class ChatGPTSurface:
         return target_id
 
     def _owned_context(self) -> Any:
+        if self._browser is None:
+            raise BrowserSurfaceLeaseError("ChatGPT browser is not connected")
         contexts = list(self._browser.contexts)
         if not contexts:
             raise BrowserSurfaceLeaseError("ChatGPT browser has no context")
@@ -742,6 +744,8 @@ class ChatGPTSurface:
         return contexts[0]
 
     def _find_target(self, target_id: str) -> Any | None:
+        if self._browser is None:
+            raise BrowserSurfaceLeaseError("ChatGPT browser is not connected")
         for context in self._browser.contexts:
             for page in context.pages:
                 try:
@@ -836,7 +840,10 @@ class ChatGPTSurface:
     def open(self) -> Any:
         self._pw = self._start_playwright()
         try:
-            self._browser = self._pw.chromium.connect_over_cdp(self.endpoint)
+            browser = self._pw.chromium.connect_over_cdp(self.endpoint)
+            if browser is None:
+                raise BrowserSurfaceLeaseError("CDP connect_over_cdp returned no browser")
+            self._browser = browser
             lease = self._load_recoverable_lease()
             if lease is not None:
                 page = self._find_target(lease.target_id)

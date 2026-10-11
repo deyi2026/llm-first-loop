@@ -733,3 +733,65 @@ def test_extra_user_context_does_not_block_owned_page_recreation(tmp_path):
     assert incognito.created == 0
     assert lease.target_id == page.target_id
     assert lease.target_id != "unrelated-user-tab"
+
+
+def test_stale_lease_with_no_connected_browser_fails_closed(tmp_path):
+    # P0-2: pyright reads self._browser as Optional because __init__ sets None
+    # and close() resets it.  If the methods are reached with no connected
+    # browser, the failure must be a domain error, not an opaque
+    # AttributeError('NoneType' object has no attribute 'contexts').
+    store = BrowserSurfaceLeaseStore(tmp_path)
+    store.save(
+        BrowserSurfaceLease.new(
+            project_ref=PROJECT_REF,
+            project_url=PROJECT_URL,
+            profile_label="fixture-profile",
+            target_id="stale-leased-target",
+        )
+    )
+    assert store.exists()
+
+    surface, _pw = _surface(tmp_path, _Context())
+    surface._browser = None  # contract violation under test
+
+    with pytest.raises(
+        BrowserSurfaceLeaseError, match="ChatGPT browser is not connected"
+    ):
+        surface._find_target("stale-leased-target")
+
+    with pytest.raises(
+        BrowserSurfaceLeaseError, match="ChatGPT browser is not connected"
+    ):
+        surface._owned_context()
+
+
+def test_cdp_connect_returning_no_browser_fails_closed(tmp_path):
+    # P0-2 / C-1: a connect implementation that returns None instead of raising
+    # must fail at the causal point, not leave _browser as None for the next
+    # consumer.
+    store = BrowserSurfaceLeaseStore(tmp_path)
+    store.save(
+        BrowserSurfaceLease.new(
+            project_ref=PROJECT_REF,
+            project_url=PROJECT_URL,
+            profile_label="fixture-profile",
+            target_id="stale-leased-target",
+        )
+    )
+
+    context = _Context()
+    surface, pw = _surface(tmp_path, context)
+
+    def _returns_none(endpoint):
+        assert endpoint == "http://127.0.0.1:9229"
+        return None
+
+    pw.chromium.connect_over_cdp = _returns_none
+
+    with pytest.raises(
+        BrowserSurfaceLeaseError, match="CDP connect_over_cdp returned no browser"
+    ):
+        surface.open()
+    assert surface._browser is None
+    assert surface.page is None
+    assert context.created == 0
