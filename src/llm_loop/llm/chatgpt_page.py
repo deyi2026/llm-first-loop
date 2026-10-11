@@ -163,6 +163,11 @@ class ChatGPTPageAdapter:
     WEB_SEARCH_CITATION_SELECTOR = '[data-testid="chatgpt-citation"]'
     MODEL_BUTTON = "选择 ChatGPT 模型"
     STRENGTH_MENUITEM = "强度"
+    # ChatGPT 2026-10 UI collapses long rendered user turns behind this
+    # expander; the collapsed mount truncates the text before the trailing
+    # request_id token, starving strict send confirmation.
+    EXPAND_TURN_LABEL = "显示更多"
+    MAX_TURN_EXPANSION_ATTEMPTS = 3
 
     def __init__(self, page: Any, *, profile_label: str, project_name: str | None = None):
         self._page = page
@@ -537,6 +542,7 @@ class ChatGPTPageAdapter:
             confirm_timeout_s if confirm_timeout_s is not None else timeout_s
         )
         deadline = time.monotonic() + confirmation_budget_s
+        expansion_attempts = 0
         while time.monotonic() < deadline:
             self._page.wait_for_timeout(poll_ms)
             try:
@@ -556,6 +562,23 @@ class ChatGPTPageAdapter:
             content_matches = latest_content == expected_content
             token_matches = bool(expected_token) and expected_token in latest_content
             if not (content_matches or token_matches):
+                # ChatGPT 2026-10 UI can mount the just-submitted long user
+                # turn collapsed behind the 显示更多 expander.  The collapsed
+                # render truncates before the trailing request_id token, so
+                # strict equality/token confirmation starves for the whole
+                # budget even though the send landed and the model replied
+                # (observed 2026-10-11: lfl-model-0005).  Expand the collapsed
+                # turn (bounded) and re-read on the next poll.
+                if (
+                    expansion_attempts < self.MAX_TURN_EXPANSION_ATTEMPTS
+                    and latest_content.endswith(self.EXPAND_TURN_LABEL)
+                ):
+                    expansion_attempts += 1
+                    try:
+                        self._expand_latest_collapsed_turn()
+                    except Exception as exc:
+                        if not _is_navigation_transient(exc):
+                            raise
                 continue
 
             # Long ChatGPT conversations virtualize old DOM turns.  A newly
@@ -588,6 +611,16 @@ class ChatGPTPageAdapter:
         raise PageContractError(
             f"send was not confirmed within {confirmation_budget_s:g}s"
         )
+
+    def _expand_latest_collapsed_turn(self) -> bool:
+        """Click the last visible 显示更多 expander (DOM order ≈ latest turn)."""
+        buttons = self._page.get_by_role("button", name=self.EXPAND_TURN_LABEL)
+        for index in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(index)
+            if button.is_visible():
+                button.click()
+                return True
+        return False
 
     def wait_for_assistant_completion(
         self,
