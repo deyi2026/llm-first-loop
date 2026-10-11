@@ -2,14 +2,17 @@
 
 > 范围：从只读代码审查到本轮 6 个提交的全部工作
 > 生成时间：2026-10-11 22:30 (+08:00)
-> 被审查仓库：`/Users/yyj/Project/llm-first-loop-mirror`（全程只对该仓库做必要写入，从未新建无关文件）
-> 本报告只写有真实证据的内容；未验证之处一律显式标注「未验证 / 无覆盖」
+> 被审查仓库：`<repository>`（全程只对该仓库做必要写入，从未新建无关文件）
+> 复核修订：2026-10-11。B–F 保留原执行过程；历史门禁数字不能冒充最终候选树结果。后续修复与证据见 I 节。
+> 未验证之处显式标注；原作者报告与独立复核证据分开表述。
 
 ---
 
 ## A. 执行摘要
 
-本轮从一次**只读代码审查**出发，最终在 `llm-first-loop-mirror` 上落地 **6 个提交**（**4 个 `fix(r9):` + 2 个 `guard(r9):`**；其中 `9ac1740e5` 为含 P0-1 的合并 `fix`），修掉了三类问题：**门禁基建阻断**（`ci_gate.sh` 因 `pipefail` + 管道早关而 SIGPIPE 自杀，导致整个仓库无法提交）、**诊断工具误报**（ruff 缓存不可写被报成 `runner crashed`）、**代码级缺陷与债务**（`chatgpt_surface` 的 `_browser` Optional 崩溃面、17 处无原因说明的静默异常、75 处 `run_context` inline import 及其失效防御层）。结果：**`main` 当前全绿** —— ruff 棘轮 `exit 0`（historical=67 → current=46）、pyright 棘轮 `exit 0`（45 → 21）、`ci_gate.sh` 五步全过、`tests/unit/test_arch_guards.py` 25 passed、定向回归 195 passed、全量 pytest 一度达到 **8592 passed / 0 failed**。`main` 现处于**本地领先远端 205 个提交、未 push** 的状态，工作区已跟踪改动为 0。**尚未做**：Q1-Q5 五项口径/结构决策、残留 11 个 PROBE worktree 与 1 个 2026-09-25 旧 stash 的处置、13 个 >1500 行文件拆分、剩余 inline import 的 (c) 类清理。
+DHS 本轮落地 **6 个提交**（4 个 `fix(r9):`、2 个 `guard(r9):`），修复门禁 SIGPIPE、诊断缓存误报、浏览器未连接防御，并清理 `run_context` inline import。原报告记录的 **8592 passed** 属于历史运行，不能直接绑定到最终 `0d2574d66`。独立复核在该 HEAD 上通过 102 条定向测试及 pyright 棘轮（historical=45、current=21、new=0、resolved=24）。
+
+以实际上游 **`lfl/main=fb77cf1c0`** 为准，原主分支 `0d2574d66` 领先 **16**、落后 **0**；205 是相对 legacy `origin/main` 的比较，不能称为当前上游领先数。复核发现提交包装器仍有 PROBE 清理 SIGPIPE、静默异常守卫误判与数量下限问题，本次在隔离分支补修。冻结历史债账本保持不变，`assurance/` 默认关闭契约继续保留；大文件拆分、剩余 inline import、豁免清单专项复核和旧 stash 处置不在本次最小收尾范围内。
 
 ---
 
@@ -26,7 +29,7 @@
 | 5 | `a48094102` | `guard(r9): 新增静默异常吞没守卫（except+单条 pass 必须带原因说明）` | `tests/unit/test_arch_guards.py`（1） | `150 insertions` | `guard(r9):`（规则④） | 机检 PASS（1 file）→ ci_gate EXIT=0（PROBE=d7f33846f）→ 提交 |
 | 6 | `0d2574d66` | `guard(r9): run_context inline import 提升为模块级 + 静默吞没常量随动（混合提交）` | 35 文件（34 源文件 + `tests/unit/test_arch_guards.py`） | `86 insertions, 120 deletions` | `guard(r9):`（规则④；混合提交经用户裁决） | 机检 PASS（35 files，五规则全过）→ ci_gate EXIT=0（PROBE=d42de2228）→ 提交 |
 
-**注**：提交 1 的通道虽是 `fix(r9):`，但它按用户裁决做过一次**合并**（原计划「①门禁修复 ②P0-1」两个提交，因棘轮是全树判定 + P0-1 未入树会在 `[1/5]` 被 `BLOCK NEW` 拦下，改为合并）。提交 6 同理为混合提交。
+**注**：提交 1 的通道虽是 `fix(r9):`，但它按用户裁决做过一次**合并**（原计划「①门禁修复 ②P0-1」两个提交，因棘轮是全树判定 + P0-1 未入树会在 `[1/5]` 被 `BLOCK NEW` 拦下，改为合并）。提交 6 也是经用户裁决的混合提交；但「必须混合」的技术解释经复核不成立，见 D-4。
 
 ---
 
@@ -35,7 +38,7 @@
 ### C-1　P0-1：ruff `BLOCK NEW`（唯一 lint 硬阻断）
 
 - **问题**：`tests/unit/test_chatgpt_page_send_collapsed.py:1` `I001 Import block is un-sorted or un-formatted`。棘轮判定 `new=1` 并 `BLOCK NEW`。
-- **根因**：该文件在本地 HEAD（`2059e84d4`）但不存在于 `origin/main`，历史债基线里没有它；实际违规是 import 块后**多了一个空行**（双空行 → 单空行），import 顺序本身是对的。
+- **根因**：该诊断不在冻结历史债账本的允许集合内，因此属于新增诊断；相对某个远端是否存在该文件不是棘轮判据。实际违规是 import 块后**多了一个空行**（双空行 → 单空行），import 顺序本身是对的。
 - **改动**：`ruff check --fix` 该文件 → 删除 1 个空行（纯格式，零行为变化）。
 - **验收证据**：
   ```
@@ -75,7 +78,7 @@
   ```bash
   MAIN_WT="$(git worktree list --porcelain | head -1 | cut -d' ' -f2)"
   ```
-  脚本头部 `set -euo pipefail`；`head -1` 读完首行即关闭管道 → `git` 写端收 **SIGPIPE**（exit 141）→ `pipefail` 判失败 → `set -e` 在打印 `═══ [1/5]` 之前**杀掉整个脚本**（这解释了日志 0 字节）。本仓 `git worktree list --porcelain` 现输出 102 个 worktree / 18299 字节，必然触发。
+  脚本头部 `set -euo pipefail`；`head -1` 读完首行即关闭管道 → `git` 写端收 **SIGPIPE**（exit 141）→ `pipefail` 判失败 → `set -e` 在打印 `═══ [1/5]` 之前**杀掉整个脚本**（这解释了日志 0 字节）。原执行时该列表为 102 个 worktree / 18299 字节，实测触发；是否收到 SIGPIPE 还受调度与管道缓冲影响，不能仅凭字节数断言必然发生。
   **注意**：这不是「输出超 64KB 缓冲」——真实机制是**读端提前关闭**。对照实验：`awk 'NR==1{...;exit}'` 同样 141，`sed` 读完整管道则 0。
 - **改动（两行）**：
   ```diff
@@ -128,7 +131,7 @@
 - **改动**：
   - **A 类（17 处注释）**：为无理由的处补原因注释（写「为什么必须 fail-open」，非复述代码）。含 `s0_browser_attestation_probe.py` 的 2 处**既有** ruff 债务（`SIM115` 加 noqa + 说明；`SIM105` 改 `contextlib.suppress`）——因棘轮要求「改动文件零诊断」必须一并清偿。
   - **B 类（0 处收窄）**：判定**两处都不该收窄**（见下）。
-  - **守卫**：`tests/unit/test_arch_guards.py` 新增 4 条用例（含合成树 4 样本语义断言 + 显式负例），规则 = 「`except(Exception|BaseException)` 且 body 仅一条 `pass` 时，handler 源码段内必须有注释，去掉 `noqa` 代号后仍 ≥3 字符」；扫描面 `src/tests/scripts`；**零容忍、不设新基线文件**，存量下限由 `SILENT_SWALLOW_MIN_SITES` 承载。
+  - **守卫**：`tests/unit/test_arch_guards.py` 新增 4 条用例（含合成树 4 样本语义断言 + 显式负例），规则 = 「`except(Exception|BaseException)` 且 body 仅一条 `pass` 时，handler 源码段内必须有注释，去掉 `noqa` 代号后仍 ≥3 字符」；扫描面 `src/tests/scripts`；**零容忍、不设新基线文件**，原实现以 `SILENT_SWALLOW_MIN_SITES` 固定存量下限；本次复核已删除该数量规则，因为它阻碍合理消除吞没点且不能证明语义正确（见 D-4、I）。
 - **B 类 0 收窄的判定与理由**（用户要求「无法证明上层能处理就不收窄」）：
   - 两处候选：`tools/builtin/codearts_dispatch.py:121`、`tools/builtin/workflow.py:425`。
   - 决定性事实：`run_context.py:19-21` 的 `current_session_id` 是 **`ContextVar(default="")`**，`.get()` **永不抛 `LookupError`** → 上次建议的 `except LookupError` **永远捕不到任何东西**。
@@ -191,11 +194,13 @@
 - **经过**：为对照「修复前 pyright 行为」，我执行 `git stash push -- scripts/check_static_diagnostics.py`。该文件**已 commit、无未暂存改动** → `git stash` **什么都没存**；紧接着的 `git stash pop` 于是弹出了**栈顶旧 stash**（`stash@{0}`，2026-09-25，38 文件「annotation-only 注释审阅」改动）→ 工作区被灌入 27 个 staged `M` + 11 个 `UU` 冲突。
 - **根因**：本仓 stash 栈是**共享的历史栈**（当时 11 条），`pop` 永远取栈顶，不会分辨「你刚 push 的那条」。
 - **恢复**：取证（`git stash show --name-only` 与脏文件清单 diff **完全一致 38=38**，且该 stash **仍在列表、hash `02a4c25a` 未变**——pop 因冲突未 drop）→ `git reset` 清索引 → `git checkout -- <那 38 个文件>` 从 HEAD 取回。复核：已跟踪改动 0、`stash@{0}` = `02a4c25a` 原值、38 文件内容完整、无 `<<<<<<<` 残留、HEAD 未变。
-- **结论（已写入长期记忆）**：**该仓库禁止使用 `git stash push/pop`**；需要旧版本对照一律 `git show <rev>:<path>` 取到 /tmp 再运行。**无数据丢失**。
+- **结论**：共享仓库对照旧版本使用 `git show <rev>:<path>` 或隔离 worktree，避免 `git stash push/pop`。能够确认的是 stash 对象仍在、恢复后已跟踪树干净；没有事故前完整共享工作区快照，不能据此证明其他协作者的未提交内容均无损失。
 
-### D-4　常量 `SILENT_SWALLOW_MIN_SITES` 由我（守卫作者）自己下调（治理点）
+### D-4　数量下限不是语义护栏，混合提交并非技术必需
 
-`SILENT_SWALLOW_MIN_SITES` 是我在 `a48094102` 刚加的守卫常量；`0d2574d66` 又由我把 53 → 51。形式上属**「作者自证本次防护调整」**，与该仓库防篡改精神（守卫文件修改走 `guard(r9)` + 独立复核）存在张力。本批因**tier0 暂存树自洽 与 规则④ 正面相撞**（下调常量的提交必须同时含把 count 降下来的源码改动，故必修成混合提交），经用户显式裁决接受。**此点应由后续复核者独立检查**：确认 51 与实际 count 一致、且下调是「消除失效防御」而非「放宽基线」。
+原守卫以 `SILENT_SWALLOW_MIN_SITES` 要求宽捕获加单条 `pass` 的数量不少于 53，随后降为 51。这个下限会阻止合法删除吞没点，却允许同数量的点位替换，不能保证覆盖或异常处理正确。**将下限先降为 51 时，旧树 53 仍满足 `53 >= 51`**，所以「守卫调整必须与源码删除混合提交」的解释不成立；原混合提交可作为已裁决的执行选择记录，不能写成门禁强制要求。
+
+本次删除数量下限及其测试，保留无原因说明零容忍规则，并用 AST 精确匹配 `Exception`、`BaseException`、`builtins.Exception`、`builtins.BaseException` 及包含这些项的异常元组，避免把 `CustomException` 等名称误算成宽异常。注释守卫仅检查解释的存在，不宣称解释正确或替代行为回归；异常处理的业务语义须由对应行为测试与评审验证。
 
 ### D-5　依赖图脚本第一版 bug（误报 35 文件已模块级导入）
 
@@ -213,17 +218,17 @@
 
 | # | 事项 | 现状与需要谁定 |
 |---|---|---|
-| Q1 | **棘轮基线以谁为准**：本地 `main` vs `origin/main` | 本地领先远端 205 提交；基线记 `origin_head=500ee8f3eff0`（既非 HEAD 也非当前远端）。决定 `historical/current/new/resolved` 是否可解释 |
+| Q1 | **冻结历史债基线（已澄清）** | 权威设计 `docs/DESIGN-20261008-r9-static-diagnostic-ratchet.md` 固定批准版本 gen201 `500ee8f3eff0`；`origin_head` 是来源提交字段，不是当前 Git remote。刷新 ref 不改账本或诊断口径；本次不重建、不放宽基线 |
 | Q2 | **是否复核 `external_red_registry.json` 的 90 条豁免** | 首次审查的 24F/13E 涉及 12 个测试文件，**全部不在**该豁免清单内；仓库规则要求「逐批销号、非永久遮罩」 |
 | Q3 | **是否拆分 13 个 >1500 行文件、优先哪 1-2 个** | 见下表；热文件拆分与在飞演进线冲突风险高 |
-| Q4 | **`assurance/` 接入还是退役、deadline** | 约 2948 行、全 src 引用数 **0**（自述「not connected to production runtime」），其 7 个测试在 `testpaths=["tests"]` 内**每次全量都在跑** |
+| Q4 | **`assurance/` 默认关闭契约（保留）** | 13 个源码文件 / 2948 行，8 个测试文件 / 60 个测试函数。生产引用为 0 由 `test_assurance_integration_offline_only.py` 明确约束；不是退役证据，也不授权接入生产 |
 | Q5 | ~~P0-2 A/B~~ | **已裁决 A 并落地**（`42886bb30`），不再挂起 |
-| R1 | **残留 11 个 `/tmp/r9probe.*` worktree** | **更正此前报告**：不是 4 个，是 **11 个**（每次门禁运行新建、失败/成功路径未清）。它们在 `git worktree list` 中注册着，且**本身贡献了 `git worktree list` 的输出体量**（与 C-3 的 SIGPIPE 触发面相关）。处置需用户决定 |
+| R1 | **11 个历史 PROBE 的处置** | 根因在 `r9_commit.sh` 清理路径仍使用 `grep -q`；本次补修并在归档提交引用、审计产物和复查后清理。实际处置回执见 I 节 |
 | R2 | **2026-09-25 旧 stash `02a4c25a`（38 文件）** | 仍原样保留在 `stash@{0}`（栈内共 11 条）。内容为「pre-web-restart: comment-review edits（annotation-only）」。处置需用户决定（本人不是其作者） |
 | R3 | **剩余 inline import** | 普查 760 处中，(c) 类（可选依赖/延迟加载等）与其它 llm_loop 模块的 inline import **未纳入**本批；后续批次必须先做 D-6 的 monkeypatch 扫描 |
 | R4 | **13 个 >1500 行文件** | 见下表，需定拆分批次 |
 | R5 | **`.env.example` 权限与体积** | 已 tracked、`chmod 600`、19388 字节（与 `.env` 的 18983 字节同量级）。**全程未读其内容**。建议人工确认只含占位符 |
-| R6 | **未 push（本地领先 205 提交）** | 是否 push、由谁决定、是否先同步 `origin/main`（远端仍停在 `74ea92522`，2026-10-09） |
+| R6 | **主分支未 push（相对上游领先 16）** | 复核快照：`lfl/main=fb77cf1c0`、主分支 `0d2574d66`、ahead=16 / behind=0；legacy `origin/main` 不作为当前上游。本次不 push，不合并主分支 |
 
 **13 个 >1500 行 `.py`（当前实测，含本轮增幅）**
 
@@ -268,10 +273,10 @@
 
 ---
 
-## G. 当前状态快照
+## G. 原主分支历史快照（不是修复分支当前状态）
 
 ```
-仓库:        /Users/yyj/Project/llm-first-loop-mirror
+仓库:        <repository>
 HEAD:        0d2574d66  guard(r9): run_context inline import 提升为模块级 + 静默吞没常量随动（混合提交）
 已跟踪改动:  0（工作区干净）
 未跟踪:      262（全部为后台演进资产：data/methods/**、docs/promotion/**、experiences/**）
@@ -279,8 +284,9 @@ HEAD:        0d2574d66  guard(r9): run_context inline import 提升为模块级 
 stash@{0}:   02a4c25a145b484942c5e0d6e4236b54bf74ea49（2026-09-25 旧条目，未动）
 stash 总数:  11
 remote:      lfl  https://github.com/deyi2026/llm-first-loop.git（未改动）
-origin/main: 74ea92522（2026-10-09，未刷新）
-未 push:     205 个提交（origin/main..HEAD）
+lfl/main:    fb77cf1c0716e952cbd53ea669329968a8311a26（独立核对远端与本地缓存一致）
+origin/main: 74ea92522（legacy 仓库，不是当前上游）
+未 push:     相对 lfl/main 领先 16、落后 0；相对 legacy origin/main 的 205 不作上游口径
 残留 probe:  11 个 /tmp/r9probe.*（已注册在 git worktree list）
 
 质量门禁（提交后复验）:
@@ -296,6 +302,34 @@ origin/main: 74ea92522（2026-10-09，未刷新）
 
 - **全量 pytest 在本地当前树的最新数字**：最后一次全量运行是沙箱放开后（`8592 passed`）与 CI gate PROBE 内的 `（xdist 全量绿）`。**未**在 `0d2574d66` 上单独再跑一次完整全量并记录数字——但 `ci_gate` 的全量步骤已在该提交的 PROBE 树内全绿。
 - **`path_registry` 那条隔离契约分支**：3 个用例覆盖「`workspace_base` 抛错 → `_registry_file` 抛 `RuntimeError`」，**有测试覆盖**。反例是 P1-4 的 B 类两处 —— 它们的 `except` 分支**无任何测试覆盖**（声明为无覆盖，不是「验证过了」）。
-- **`assurance/` 是否真的无人依赖**：证据是 `grep` 全 src 引用数为 0 + 其自述。**未**做运行期动态验证（如运行时模块加载追踪）。
+- **`assurance/`**：默认关闭、禁止生产接入有显式离线契约测试支持；未做生产运行期加载追踪。静态引用为 0 不能推出产品能力无人需要或应退役。
 - **`.env.example` 与凭据清单报告**：**全程未读内容**，只核对文件名与权限位。
-- 本报告中所有「机检 PASS / ci_gate EXIT=0 / 棘轮 exit 0」均来自各步骤真实输出；未做任何推测性陈述。
+- B–F 的原执行数字来自 DHS 报告，独立复核只背书其实际重跑及留存回执。门禁通过不等于生产运行验证；本次未进行生产 provider 调用、服务重启或发布。
+
+## I. 独立复核后的最小收尾（2026-10-11）
+
+本节记录本次实际执行，不替代 B–F 的历史过程。隔离分支为 `fix/r9-review-closure-20261011`，基点为 `0d2574d66`。主分支 HEAD 未变，未合并、未 push、未重启服务，未调用生产 provider。
+
+| 提交 | 责任 | 验证 |
+|---|---|---|
+| `d63e0c525` | PROBE 清理消费完整列表、精确归属匹配、临时路径规范化；失败明确返回；保存完整门禁输出 | 完整隔离门禁 EXIT=0；全量 8590 passed / 146 skipped |
+| `ffdca427a` | 删除吞没数量下限，精确匹配标准宽异常与元组，补误判负例 | 完整隔离门禁 EXIT=0；全量 8594 passed / 146 skipped / 0 failed |
+
+**回归依据**：新增清理辅助函数前 4 条用例失败，修复后通过；宽异常名称误判负例在旧实现为 3 failed / 2 passed，修复后通过。补齐退出码行为后，清理、架构守卫和静态诊断的组合定向运行 **52 passed**。Shell 语法、改动文件 Ruff 和 `git diff --check` 均通过。
+
+**最终代码候选的绑定证据**：
+
+- PROBE 提交：`8b543c1b6de7101ef4e135377d7143c5b2a173ec`。
+- 实际代码提交：`ffdca427a35bcb5f8998f0307041184557adda6c`。
+- 两者 tree 相同：`a7af048b983d96641e8dee20d664615361a371d1`，已用 Git 核对。
+- tier0：318 passed；全量：8594 passed, 146 skipped, 13 warnings in 108.02s；静默吞没报告抽验：1 passed, 28 deselected。
+- Ruff：historical=67、current=46、new=0、resolved=21、changed_file_diagnostics=0。
+- Pyright：historical=45、current=21、new=0、resolved=24、changed_file_diagnostics=0。
+- 完整日志：`data/audit/r9-review-closure-20261011/guard-gate.log`，SHA-256 `0fa0c35502c2b17b842eacacfea63788e685c67fb6d04f8830bd487a6d669191`。
+- 代码回执：`data/audit/r9-review-closure-20261011/code-gate-receipts.json`，包含两组 PROBE、实际提交、tree、汇总及日志摘要。
+
+**历史 PROBE 清理**：原 11 个全部逐一复查无未提交改动、HEAD 未变、无关联进程、无锁且忽略文件清单未变后删除。每个 HEAD 保留在 `refs/archive/r9-probe-20261011/<probe-name>`；非缓存审计产物已归档，并核对归档成员及 SHA-256。清单为 `probe-inventory.json`、`probe-preserved.json`、`probe-cleanup-results.json`，归档在同一审计目录的 `legacy-probe-archives/`。两个代码提交完成后，已注册 PROBE 为 0。
+
+**保存边界**：审计目录保留原始日志、清单和归档，不加入 Git 提交；本节记录可审阅的哈希与结果。文档提交也走完整 R9 门禁，其最终提交与候选树绑定写入同目录 `final-receipt.json`，避免在被测试文档内循环嵌入其自身提交 SHA。
+
+**共享状态**：`stash@{0}=02a4c25a145b484942c5e0d6e4236b54bf74ea49`，栈总数 11，保持不变；原主分支仍为 `0d2574d669b8bf92875cfe6afb01b47dbdb3ab65`。冻结账本与外部红豁免不变。assurance 保持默认关闭；未证明生产运行正确，未完成部署验收。
