@@ -470,6 +470,24 @@ class ChatGPTPageAdapter:
             out.append(PageCodeBlock(language=language, text=(body or "").strip()))
         return out
 
+    def observe_latest_assistant_raw_text(self) -> str:
+        """Raw innerText of the latest assistant turn, uncanonicalized.
+
+        ChatGPT occasionally renders the model reply's
+        ```` ```lfl-model-response ```` fence as a literal plain-text
+        paragraph (``P.TextBase-*``) instead of a CodeBlock component, so
+        :meth:`observe_latest_code_blocks` reports no rendered blocks even
+        though the fenced protocol payload is fully present in the turn
+        text.  This accessor exposes that raw text for the transport's
+        literal-fence fallback harvest; whitespace is preserved because the
+        fenced JSON body may span multiple lines.
+        """
+        assistants = self._page.get_by_role("heading", name=self.ASSISTANT_HEADING)
+        if assistants.count() == 0:
+            return ""
+        root = assistants.last.locator("xpath=..")
+        return root.inner_text() or ""
+
     def _visible_composer(self, *, timeout_s: float = 3.0, poll_ms: int = 100) -> Any:
         names: list[str] = []
         if self.project_composer:
