@@ -2,10 +2,21 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.31 — 子代理 E4/E5 原语 + wait 累计预算修复 + chatgpt-web/r9 批次（2026-10-12）
+
+- **E4 子代理 requires 程序级强制白名单（EVO-20261012-bb3022f4，commit 842c24309）**：`spawn_subagent` 的 `requires.tools` 从元数据声明升级为程序级强制——子会话工具发现面与执行面均截断到声明集；声明超出父执行域在启动前确定性拒绝（授权只降不升，fail-fast）；默认从子代理工具面剔除 spawn_subagent 防递归舰队（`CHILD_SPAWN_GRANT` 配置白名单显式授予）；成功回执携带 `tool_scope` 透明化实际生效白名单。此前 V2a POC 实测证伪了“requires 仅声明”假设（bf3566b45）。
+- **E5 子代理 wait 只读等待原语（EVO-20261012-65475c5a，commit 842c24309）**：1..120s 确定性阻塞，等待期零模型调用；父会话取消 ≤0.5s 唤醒；每子会话累计 ≤600s 预算。心跳/轮询等待期以它替代多轮空转（Mode-L 空闲成本 ~64-96K in/min 降频 4-10 倍）。验证：单测 7462 passed + 专项 12 项。
+- **E5 累计预算跨 registry 派发快照丢失修复（EVO-20261012-32e89b46，commit 3d5a6eb94）**：`child_wait_budget_used` 从 ContextVar 值语义改为共享可变载体 WaitBudget（与 child_cancel_event 同模式）——registry 每次工具派发 `copy_context()` 拍快照，值 set 写入副本即弃，live 实测连续 wait 回执累计恒为单次值、600s 累计上限形同虚设。修复后预算随派发边界原子传递，并新增经 `registry.execute` 真实派发路径的回归测试（直调单测测不出 copy_context 边界——上轮 E2E 暴露的系统性盲区）。已随全舰队（web/feishu/learning）重启部署验证。
+- **chatgpt-web 稳定性批次（10-11）**：会话段内稳定前缀变化告警（d3518d8ab）；发送确认时展开折叠长回合（2059e84d4）；字面 lfl-model-response 围栏作纯文本回退收割（8128e71dc）；运行时关闭的自有标签页自愈不重启（2b7e932d0）；surface 租约恢复对损坏与额外上下文加固（35da887ea）；surface 未连接时 fail-closed 抛租赁错误（42886bb30）。
+- **离线双代理保证门默认关（0b8cfa370）**：offline dual-agent gate 集成进主链路，默认关闭。
+- **r9 守卫与门禁批次（10-11）**：静默异常吞没守卫——except+单条 pass 必须带原因说明（a48094102/f5799c467/0d2574d66）；诊断棘轮不再把缓存不可写误报为 runner crashed（4f12265cc）；ci_gate 管道早关导致的门禁基建失败修复并清零 ruff BLOCK NEW（9ac1740e5）。
+- **版本面**：pyproject / web SERVICE_VERSION / README（中英）/ CHANGELOG 全表面对齐 0.6.31（版本一致性测试约束）。
+
 ## v0.6.30 — 经验使用声明账本化 + 知识库 use 硬门双源（2026-10-11）
 
 - **经验使用声明落账（EVO-20261011-945fc53c 方案A+B）**：`refine_experience(action=record_use)` 从"只回执不落账"升级为真值源账本 `experiences/usage.jsonl`——与 method 侧同构的跨进程 flock + fsync + 单调水位（`.usage_watermark.json`），追加失败如实 FAILURE（fail-closed，不降级）；新增 `ExperienceStore.record_use/usage_entries/check_usage_integrity`；`knowledge_runtime` 事件流降级为观察通道。一次性迁移脚本 `scripts/migrate_experience_usage_ledger.py` 回放历史 6 条声明（含 2026-10-10 的 4 条），幂等键 `knowledge_event_key` 可安全重跑。
 - **知识库 use 硬门双源（EVO-20261011-d6b04567 方案C）**：`method_use_gate` 通过路径扩展为 method/experience 双源（各自 usage.jsonl 按 session_id 归属）；`task_update(method_no_contact=...)` 语义澄清为知识库级（方法库与经验库均未接触），描述与 goal 提示同步；审计兼容注明：2026-10-11 前历史 `false` 只表示"未显式声明无方法库接触"，不蕴含经验库证据。方案权衡（D）：不做 record_use 账本化与门禁硬绑定（保持方法/经验两层独立）。
+- **补记（同日早间提交，初版条目未列）**：runner SSE GC 清理允许重入 registry guard（75bb2b5c3，2026-10-11）。
 
 ## v0.6.29 — 浏览器精确寻址 + 中文经验落盘修复 + web_search 词典降级标注（2026-10-10）
 
