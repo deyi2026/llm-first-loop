@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -74,11 +77,44 @@ def normalize(tool: str, payload: Any, root: Path) -> collections.Counter[tuple[
     return result
 
 
-def run_analyzer(root: Path, python: str, tool: str) -> tuple[str, collections.Counter[tuple[str, str, str, str]]]:
+@contextlib.contextmanager
+def analyzer_cache_dir() -> Any:
+    """Yield a guaranteed-writable cache dir for the analyzer subprocesses.
+
+    ruff refuses to start when its cache dir is unwritable (exit 2 with
+    "Failed to initialize cache"), and an inherited RUFF_CACHE_DIR pointing at
+    a read-only mount surfaces as ``runner crashed`` — an environment problem
+    reported as an analyzer crash, hiding the real diagnostics.  A private
+    temp cache keeps the measurement identical (cache contents never change
+    diagnostics) while removing the unwritable-path failure mode.  The
+    environment is never silently swallowed: when even the platform temp area
+    is unwritable we fail with an explicit, actionable message.
+    """
+    path: str | None = None
+    try:
+        path = tempfile.mkdtemp(prefix="lfl-ratchet-cache-")
+    except OSError as exc:
+        raise RuntimeError(
+            "no writable cache directory for ruff/pyright: tempfile.mkdtemp "
+            f"failed ({exc}); set TMPDIR (or RUFF_CACHE_DIR) to a writable path"
+        ) from exc
+    try:
+        yield path
+    finally:
+        with contextlib.suppress(OSError):
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def run_analyzer(
+    root: Path, python: str, tool: str, cache_dir: str | None = None,
+) -> tuple[str, collections.Counter[tuple[str, str, str, str]]]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(root / "src") + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
+    if cache_dir is not None:
+        env["RUFF_CACHE_DIR"] = cache_dir
+        env["PYRIGHT_PYTHON_CACHE_DIR"] = cache_dir
     version_cmd = [python, "-m", tool, "--version"]
     version_run = subprocess.run(version_cmd, cwd=root, env=env, capture_output=True, text=True, timeout=30)
     if version_run.returncode:
@@ -215,11 +251,16 @@ def main() -> int:
     baseline = json.loads(raw)
     validate_baseline(root, baseline, raw, TOOLS, frozen_sha256=FROZEN_BASELINE_SHA256)
     python = sys.executable
-    version, current = run_analyzer(root, python, args.tool)
+    with analyzer_cache_dir() as cache_dir:
+        version, current = run_analyzer(root, python, args.tool, cache_dir=cache_dir)
     expected_version = baseline["versions"][args.tool]
     print(f"ratchet analyzer {args.tool}: actual={version} frozen={expected_version}")
     if version != expected_version:
-        raise ValueError(f"{args.tool} analyzer version drift: actual={version!r} frozen={expected_version!r}")
+        raise ValueError(
+            f"{args.tool} analyzer version drift: actual={version!r} frozen={expected_version!r} "
+            "— the frozen ledger was measured with the pinned toolchain; restore it with "
+            "`uv sync --frozen --extra dev` before re-running this gate (do not edit the baseline)"
+        )
     old = deserialize(baseline["diagnostics"][args.tool])
     changed = changed_python_paths(root)
     new, resolved, touched = evaluate(current, old, changed)
