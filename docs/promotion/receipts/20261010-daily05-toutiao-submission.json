@@ -1,0 +1,24 @@
+{
+  "schema": "lfl-promotion-new-submission/1",
+  "status": "CMS_REVIEW_PENDING",
+  "observed_at_utc": "2026-10-10T15:56:46.800037+00:00",
+  "platform": "今日头条",
+  "publisher": "LFL-AGENT",
+  "article_id": "7695067455462441507",
+  "title": "浏览器AI操作成功，交付文件为什么还错？",
+  "platform_reported_post_time": "2026-10-10 23:56 Asia/Shanghai",
+  "cms_link": "https://mp.toutiao.com/profile_v4/graphic/preview?enter_from=mp_group_management&pgc_id=7695067455462441507",
+  "cms_text": "浏览器AI操作成功，交付文件为什么还错？\n10-10 23:56\n审核中\n修改\n删除作品",
+  "submission_clicks": 1,
+  "prepublication_receipt": "docs/promotion/receipts/20261010-daily05-toutiao-prepublish.json",
+  "lfl_review_receipt": "docs/promotion/receipts/20261010-daily05-audit.json",
+  "review_sha256": {
+    "docs/promotion/20261010-lfl-daily-05.md": "c712dc43a5e8198ed3491cc46e0b477f216339e46b6aa2b734252adfe0c5d9eb",
+    "docs/promotion/img/fig19-browser-grading.png": "8a01adcacd5753099de884788370098eb5a0cbe8f203a43b998797655b054e4a",
+    "docs/promotion/img/fig20-browser-artifact-gates.png": "4fab44b3e78da7d7636f43af510a0f53a4bf17a7b60131fd567b2afe3c0dd27f",
+    "docs/promotion/img/fig21-browser-receipts.png": "42db912ebcf257abb844501bde7dc1f82eefefde3afbf8095f3d72a33e12df59"
+  },
+  "public_url_verified": false,
+  "new_public_distinct_topic_increment": 0,
+  "notes": "Only one official confirm-submit click performed. CMS record proves acceptance, not public readback. Do not resubmit; monitor same ID. D04 separate older published topic."
+}

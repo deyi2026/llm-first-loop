@@ -1,0 +1,62 @@
+{
+  "issue": "第 8 期 · 提醒发了，事情却没人接",
+  "track": "B型 场景痛点（去 AI 字开头，无具体事件）",
+  "submitted_at": "2026-10-11T21:39:02+08:00",
+  "pgc_id": "7695403879906738703",
+  "platform_status_at_submit": "审核中",
+  "verified_in": "mp.toutiao.com 文章管理列表，卡片文本实见「提醒发了，事情却没人接 10-11 21:39 审核中」",
+  "public_verification": null,
+  "md_sha256": "8baffab943e36a7921f6cba452d7e45e2450a5344ae1bd0805fcfd3fc06ac12a",
+  "html_sha256": "8fba01d658e3168c6f265a0826f97d897893e4c912a155aee816f27bb298e093",
+  "prepublish_gate": {
+    "title": "提醒发了，事情却没人接",
+    "title_len": 11,
+    "words": 3255,
+    "body_chars": 3506,
+    "real_images": 3,
+    "images_loaded": 3,
+    "image_dims": [
+      "1000x470",
+      "1000x430",
+      "1000x470"
+    ],
+    "h1_total": 0,
+    "empty_h1": 0,
+    "captions_nonempty": 3,
+    "leftover_placeholder": 0
+  },
+  "audit": {
+    "verdict": "PASS",
+    "by": "independent subagent subagent_8a7c2eecc415",
+    "p0": 0,
+    "p1": 0,
+    "p2": 3,
+    "p2_applied": [
+      "schedule.py 引文行号 1-4 -> 3-4",
+      "schedule_delivery.py 引文行号 105-108 -> 105-107",
+      "「永久性的拒绝」-> 「当前版本里没有开关的无条件拒绝」（移除超出代码可证范围的措辞）"
+    ],
+    "p2_declined": [
+      "「最近半年」—— 属经验性表述，不构成可证伪事实断言，保留"
+    ]
+  },
+  "known_gap": "图片为 1000px 宽（上期为 1200x720），平台显示无差异但与上期规格不一致",
+  "publish_mechanics_confirmed": [
+    "确认发布按钮被 TEXTAREA.byte-textarea.inner-input 覆盖，elementFromPoint 不命中按钮；元素级 .click() 生效",
+    "正文粘贴后 h1_total=0（fixup_html.py 后处理生效）"
+  ],
+  "ai_declaration": {
+    "label": "引用AI",
+    "checked": true,
+    "applied_at": "2026-10-11T22:05+08:00",
+    "method": "编辑页 /graphic/publish?from=edit&pgc_id=7695403879906738703，label 点击勾选后点「发布」",
+    "resubmission_state": "修改审核中 -> 已过审（22:09 列表实见「已发布」，展现 12）",
+    "persistence_verified": "22:11 重开同一编辑页，引用AI checkbox.checked === true"
+  },
+  "caption_defect": {
+    "status": "UNRESOLVED",
+    "detail": "第 3 条图注（fig30）在发布前守门为非空，但编辑页读回为空；22:06 重新填入并保存、22:09 修改过审后，22:11 再读仍为空。",
+    "scope": "08（fig30）与 09（fig32）均复现，均为最后一张图的描述",
+    "content_intact": "正文 3506 字 / 3 图 1000x470,1000x430,1000x470 均未受损"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "platform": "今日头条",
+  "issue": "第 7 期",
+  "title": "让三个 AI 分工，出错的是哪一个？",
+  "title_len": 18,
+  "pgc_id": "7695222260822491648",
+  "submit_time": "2026-10-11 09:53 (北京时间)",
+  "status_after_submit": "审核中",
+  "preview_url": "https://mp.toutiao.com/profile_v4/graphic/preview?enter_from=mp_group_management&pgc_id=7695222260822491648",
+  "article": "docs/promotion/20261011-lfl-daily-07.md",
+  "article_sha256": "cbe9c8fdc29ff1046dd9ec64e5ef48c3cf0d905d3396fb4cc215a6f8cf0ec2c7",
+  "research": "docs/promotion/20261011-research-07.md",
+  "research_sha256": "a150125a33d4891aabd5f03f614a956c0284f9c8bc8faeff3740004de624ebf6",
+  "audit": "docs/promotion/receipts/20261011-daily07-audit.json (PASS, 3 轮 FAIL→FAIL→PASS, 13 项问题闭环)",
+  "prepublish_gate": {
+    "title_le_30": true,
+    "words": 3349,
+    "visible_images": 3,
+    "image_size": "1200x720 all complete",
+    "image_captions": 3,
+    "leftover_placeholders": 0,
+    "cover": "三图封面 152x120 x3",
+    "boundary_statements_kept": [
+      "没有独立复现",
+      "不构成多 Agent 的通用方案"
+    ],
+    "text_vs_source": "逐行一致（仅平台图块标签『编辑/搜图』与 HTML 转义还原差异）"
+  },
+  "figures": [
+    "fig25-multi-agent-ecosystem.png",
+    "fig26-error-propagation.png",
+    "fig27-subagent-settlement.png"
+  ],
+  "image_upload_path": "本轮图片面板入口无响应，改用编辑器内『带 image/png 文件的 ClipboardEvent 粘贴』由平台完成上传并返回 CDN 地址（有效替代路径）",
+  "first_declare_checkbox": "未勾选",
+  "sources": {
+    "arxiv": [
+      "2610.12436 (2026-10-08)",
+      "2610.11600 (2026-10-08)",
+      "2610.10126 (2026-10-07)",
+      "2610.12375 (2026-10-08, 仅作 83% 数字的正确归属)"
+    ],
+    "lfl_anchors": [
+      "src/llm_loop/subagent/runner.py:83-93",
+      "runner.py:132",
+      "runner.py:287/297",
+      "src/llm_loop/tools/registry.py:129"
+    ]
+  },
+  "public_verification": "pending（审核中）",
+  "receipt_at": "2026-10-11T09:54+08:00"
+}

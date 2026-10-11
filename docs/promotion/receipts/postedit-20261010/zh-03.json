@@ -1,0 +1,13 @@
+{
+  "url": "https://zhuanlan.zhihu.com/p/2092334918437230422",
+  "title": "程序不是大脑，但程序也不该是哑巴：llm-first-loop 的架构哲学",
+  "images": 4,
+  "observed_at_utc": "2026-10-10T15:02:39.482570+00:00",
+  "previous_normalized_sha256": "d6035d5f21c42694cdcbf72d00928911eebc04659649a1eb362256e19d78ede5",
+  "current_normalized_sha256": "2ed341e769f1f70aec4c09ddb23de5673c01eecc0c1b0a6bac9f06663d3cb488",
+  "text_unchanged": false,
+  "expected_unmodified_duplicate": false,
+  "status": "PASS",
+  "txt_sha256": "2330b3782d9af58bb143760578d4466ddad06a530792d21c7dc2d949690af9e4",
+  "html_sha256": "8cedddca24422b57f77a17cf0b1de5a4f068abe3cdebfb5d6f5eb916b05a30d5"
+}

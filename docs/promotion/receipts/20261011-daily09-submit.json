@@ -1,0 +1,54 @@
+{
+  "issue": "第 9 期 · AI 都不敢生成这种图",
+  "track": "A型 蹭热点（2026-10-11 头条热榜第 2）",
+  "submitted_at": "2026-10-11T21:47:00+08:00",
+  "pgc_id": "7695406258093818408",
+  "platform_status_at_submit": "审核中",
+  "verified_in": "mp.toutiao.com 文章管理列表刷新后实见「AI 都不敢生成这种图 10-11 21:47 审核中」",
+  "public_verification": null,
+  "md_sha256": "99a251f2f35c7f9430ea1410586f172ae3fadd928893ccafb91832129287e1e1",
+  "html_sha256": "664257967b7837f771cc10738990c65edaea74ceea5cbfe1d5cb68cff9a0e144",
+  "hot_topic_source": "快科技 2026-10-11（腾讯新闻转载）报道胖东来梦之城工地实拍；网友称『AI都不敢生成这种图』",
+  "prepublish_gate": {
+    "title": "AI 都不敢生成这种图",
+    "title_len": 11,
+    "words": 3172,
+    "body_chars": 3442,
+    "paras": 79,
+    "real_images": 2,
+    "images_loaded": 2,
+    "image_dims": [
+      "1000x500",
+      "1000x520"
+    ],
+    "h1_total": 0,
+    "empty_h1": 0,
+    "captions_nonempty": 2,
+    "leftover_placeholder": 0
+  },
+  "audit": {
+    "verdict": "PASS",
+    "by": "independent subagent subagent_49cc2c7320dd",
+    "p0": 0,
+    "p1": 0,
+    "p2": 3,
+    "p2_applied": [
+      "fig32 纵轴刻度与象限标注对调（E1/E3 上下颠倒）—— 已改绘图脚本重出图",
+      "E1 释义超出源码标签（『可被任何人任何时候重跑得到同样结果』读作实测保证）—— 已改为明示是对分级标签的理解",
+      "『两个身份类的绑定漂移检查』偏松（dual_root_identity 实为根身份不可解析）—— 已分别点明"
+    ],
+    "note": "子代理因 lease fenced 未能核验 SHA，已由父代理 shasum 独立核验一致"
+  },
+  "known_gap": "图片为 1000px 宽，与上期 1200x720 规格不一致",
+  "ai_declaration": {
+    "label": "引用AI",
+    "checked": true,
+    "applied_at": "2026-10-11T22:07+08:00",
+    "resubmission_state": "修改审核中（22:08 列表实见）",
+    "persistence_verified": null
+  },
+  "caption_defect": {
+    "status": "UNRESOLVED",
+    "detail": "第 2 条（末条）图注编辑页读回为空，已重新填入并提交；尚未过审，持久化未验证。"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "url": "https://www.toutiao.com/article/7694988135675085327/",
+  "title": "程序不是大脑，但程序也不该是哑巴：LFL 架构哲学",
+  "images": 4,
+  "observed_at_utc": "2026-10-10T15:02:47.667145+00:00",
+  "previous_normalized_sha256": "d6035d5f21c42694cdcbf72d00928911eebc04659649a1eb362256e19d78ede5",
+  "current_normalized_sha256": "2ed341e769f1f70aec4c09ddb23de5673c01eecc0c1b0a6bac9f06663d3cb488",
+  "text_unchanged": false,
+  "expected_unmodified_duplicate": false,
+  "status": "PASS",
+  "txt_sha256": "ca4fc004174f3601a485609ad3a0946dbd2a0fb6c07f7493702869da839369fb",
+  "html_sha256": "924412d3d9bd99a26cfaae5f912593c6e837c94b52ebacaca8bab4cbad63ada8"
+}

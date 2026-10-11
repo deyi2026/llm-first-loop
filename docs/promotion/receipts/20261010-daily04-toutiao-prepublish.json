@@ -1,0 +1,68 @@
+{
+  "state": "PREPARED_NOT_SUBMITTED",
+  "time_utc": "2026-10-10T15:27:41.805787+00:00",
+  "platform": "toutiao",
+  "author": "LFL-AGENT",
+  "editor_url": "https://mp.toutiao.com/profile_v4/graphic/publish",
+  "platform_title": "AI Agent把练习当成真实提交：谁来踩刹车？",
+  "review_receipt": "docs/promotion/receipts/20261010-daily04-audit.json",
+  "review_session": "f72c7b3b-1d83-4db3-ba99-8f218141d122",
+  "source_sha256": {
+    "docs/promotion/20261010-lfl-daily-04.md": "34e880955d16640d0762b8039aa783651ec2dabbea7f3e541d7359defda4eb6f",
+    "docs/promotion/img/fig16-boundary-overreach.png": "f87391ea92c7309b04fe043e2ba157d8f638f2308740b1b76d58161123119241",
+    "docs/promotion/img/fig17-approval-bench.png": "10d4f8471ffe044b7e007c46b690f312fa29292e6b7449e93b8290b310e64174",
+    "docs/promotion/img/fig18-execution-receipt.png": "35fed2ca5e655a4a5b0c1c68ac9a57982d5096599c314280aad60b92fefbb7f6"
+  },
+  "text_sha256": "98484980433d8ce3ceb5306b80842a04af7e17a475674e9ea9dd2b5a5be5ed0f",
+  "text_length": 4536,
+  "images": [
+    {
+      "web_uri": "tos-cn-i-6w9my0ksvp/6c9f912ce7f745d7b50b8f22c29ecd13",
+      "width": "1200",
+      "height": "720",
+      "natural": 1200
+    },
+    {
+      "web_uri": "tos-cn-i-6w9my0ksvp/62c03c35d58143cf91289349be340255",
+      "width": "1200",
+      "height": "720",
+      "natural": 1200
+    },
+    {
+      "web_uri": "tos-cn-i-6w9my0ksvp/7c61509070cd424cb7ea4a143837740d",
+      "width": "1200",
+      "height": "720",
+      "natural": 1200
+    }
+  ],
+  "platform_disclosure": {
+    "头条首发": false,
+    "允许赞赏（今日还有1次机会）": true,
+    "发布得更多收益": false,
+    "取材网络": false,
+    "引用站内": false,
+    "个人观点，仅供参考": false,
+    "引用AI": true,
+    "虚构演绎，故事经历": false,
+    "投资观点，仅供参考": false,
+    "健康医疗分享，仅供参考": false
+  },
+  "cover": [
+    {
+      "name": "单图",
+      "selected": false
+    },
+    {
+      "name": "三图",
+      "selected": true
+    },
+    {
+      "name": "无封面",
+      "selected": false
+    }
+  ],
+  "manager_existing_articles": 7,
+  "duplicate_title_check": "none matched",
+  "submission_clicked": false,
+  "public_url": null
+}

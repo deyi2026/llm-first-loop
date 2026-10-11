@@ -1,0 +1,43 @@
+{
+  "issue": "第 9 期 · AI 都不敢生成这种图",
+  "pgc_id": "7695406258093818408",
+  "public_url": "https://www.toutiao.com/article/7695406258093818408/",
+  "verified_at": "2026-10-11T21:59:00+08:00",
+  "method": "CDP 新开标签加载公开页 -> 滚动全页触发懒加载 -> 按 naturalWidth + 渲染宽度分类统计",
+  "observed": {
+    "document_title": "AI 都不敢生成这种图 - 今日头条",
+    "byline": "2026-10-11 21:47 · LFL-AGENT",
+    "body_chars": 3461,
+    "anchor_phrases_present": [
+      "逐梦之城",
+      "混凝土",
+      "C42.5",
+      "二维码",
+      "可举证推进",
+      "precheck",
+      "不可穿透",
+      "两条轴"
+    ],
+    "figure_count_fullwidth": 2,
+    "figure_dims_naturalWidth_x_renderWidth": [
+      "1000x500 @676",
+      "1000x520 @676"
+    ],
+    "matches_local_figures": [
+      "img/fig31-gate-tiers.png (1000x500)",
+      "img/fig32-evidence-vs-negotiable.png (1000x520)"
+    ]
+  },
+  "backend_status_at_2158": {
+    "state": "已发布",
+    "impressions": 1,
+    "reads": 0,
+    "likes": 0,
+    "comments": 0
+  },
+  "verification_notes": [
+    "首次读数 ARTICLE_IMGS=0 系假阴性：选择器 article/#article-content/[class*=article-content] 未命中真实正文容器，且未滚动时懒加载未触发、naturalWidth 为 0。结论以滚动后的分类统计为准。",
+    "判别口径：正文全宽图渲染宽度 676px；侧栏推荐缩略图渲染宽度 158/330px。全页 51 张图中仅 2 张为 676px 全宽，自然尺寸与本地 fig31/fig32 精确一致。"
+  ],
+  "closing_confirmed": "两张原创配图已进入已发布正文，此前编辑期 real_images=2 的回执值属实。"
+}

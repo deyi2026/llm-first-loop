@@ -1,0 +1,45 @@
+{
+  "audit": "20261011-daily07",
+  "verdict": "PASS",
+  "auditor": "independent subagent subagent_c0488e1c1d83 (3 rounds: FAIL -> FAIL -> PASS)",
+  "article": "docs/promotion/20261011-lfl-daily-07.md",
+  "article_sha256": "cbe9c8fdc29ff1046dd9ec64e5ef48c3cf0d905d3396fb4cc215a6f8cf0ec2c7",
+  "research": "docs/promotion/20261011-research-07.md",
+  "research_sha256": "a150125a33d4891aabd5f03f614a956c0284f9c8bc8faeff3740004de624ebf6",
+  "figures": [
+    "fig25-multi-agent-ecosystem.png",
+    "fig26-error-propagation.png",
+    "fig27-subagent-settlement.png"
+  ],
+  "blocking_found_and_fixed": [
+    "P0-1 83% interrupted runs 张冠李戴挂到 2610.12436（实属 arXiv:2610.12375 OnTrack，SWE-bench+abort），已改为正确归属并加分界句",
+    "P0-2 生态安全论文被转述为通用协作论文且弱化「阈值以下衰退」，已按摘要重写",
+    "P0-3 把 error propagation 跨篇外推到 2610.12436，句已删",
+    "P0-4 「只看拓扑」抹掉带标签轨迹先验且隐去未超 gpt-5.4 基线 0.372，已补 MAScope 全套数字与两条边界",
+    "P0-5 「一半模型一半结构」伪量化，已改定性",
+    "P1-6 三篇「共同指向」→「分属不同问题，谁也没替谁背书」",
+    "P1-7 「顶层文档」实为 src/llm_loop/tools/registry.py:129 的工具描述",
+    "P1-8 settlement 漏 unknown（runner.py:297），已改为三态",
+    "P2-9 2610.10126 日期 2026-10-08 → 2026-10-07",
+    "P2-10 「拓扑为已知前提」与论文相反（TSE 从缺标签轨迹重建）",
+    "P1-a/P1-b 两处悬空交叉引用 第一节/上一节 → 第二节",
+    "P2-c fig25 标题与横轴改为生态安全口径",
+    "P2-d 三篇 → 上述几篇"
+  ],
+  "verified_anchors": [
+    "runner.py:83-93 outcome 不变量",
+    "runner.py:132 fleet_lease_ttl_seconds=900.0",
+    "runner.py 2421 行 / __init__.py 4 行",
+    "registry.py:129 subagent_result 描述",
+    "runner.py:287 与 :297 settlement 三态",
+    "三图均 1200x720 且标注为示意图"
+  ],
+  "sources": [
+    "arXiv 2610.12436 (2026-10-08)",
+    "arXiv 2610.11600 (2026-10-08)",
+    "arXiv 2610.10126 (2026-10-07)",
+    "arXiv 2610.12375 OnTrack (2026-10-08)"
+  ],
+  "figures_note": "三张图均由本文原创绘制，不含实验数据；视觉核验中出现的『arXiv 2610 编号不存在』为模型误判，本环境日期为 2026-10，该编号已由 arXiv API 实证",
+  "audited_at": "2026-10-11T09:50+08:00"
+}

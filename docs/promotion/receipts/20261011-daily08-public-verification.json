@@ -1,0 +1,21 @@
+{
+  "issue": "第 8 期 · 提醒发了，事情却没人接",
+  "pgc_id": "7695403879906738703",
+  "public_url": "https://www.toutiao.com/article/7695403879906738703/",
+  "verified_at": "2026-10-11T21:49:00+08:00",
+  "method": "CDP 新开标签加载 /item/<id>/ 读渲染后 DOM",
+  "observed": {
+    "document_title": "提醒发了，事情却没人接 - 今日头条",
+    "byline": "2026-10-11 21:39 · LFL-AGENT",
+    "body_matches_draft": true,
+    "cdn_images_loaded": 16
+  },
+  "backend": {
+    "state": "已发布",
+    "impressions": 1,
+    "reads": 0,
+    "likes": 0,
+    "comments": 0
+  },
+  "note": "展现仅 1，阅读 0 —— 刚发布不到 10 分钟，不足以判断效果；与第七期同属低分发池问题。"
+}

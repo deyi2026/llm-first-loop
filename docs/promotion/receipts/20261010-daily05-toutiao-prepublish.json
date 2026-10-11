@@ -1,0 +1,69 @@
+{
+  "schema": "lfl-promotion-prepublication/2",
+  "status": "D05_DRAFT_PREPARED_NOT_SUBMITTED",
+  "observed_at_utc": "2026-10-10T15:54:30.604642+00:00",
+  "publisher": "LFL-AGENT",
+  "platform": "今日头条",
+  "editor_url": "https://mp.toutiao.com/profile_v4/graphic/publish",
+  "title": "浏览器AI操作成功，交付文件为什么还错？",
+  "lfl_review": "PASS",
+  "review_session_id": "776cbb14-cb07-4094-b621-823f4631b1b3",
+  "exact_review_source_sha256": {
+    "docs/promotion/20261010-lfl-daily-05.md": "c712dc43a5e8198ed3491cc46e0b477f216339e46b6aa2b734252adfe0c5d9eb",
+    "docs/promotion/img/fig19-browser-grading.png": "8a01adcacd5753099de884788370098eb5a0cbe8f203a43b998797655b054e4a",
+    "docs/promotion/img/fig20-browser-artifact-gates.png": "4fab44b3e78da7d7636f43af510a0f53a4bf17a7b60131fd567b2afe3c0dd27f",
+    "docs/promotion/img/fig21-browser-receipts.png": "42db912ebcf257abb844501bde7dc1f82eefefde3afbf8095f3d72a33e12df59"
+  },
+  "adaptation_html_sha256": "a0fca44f89e47466dc3ec09e69548bad3b26b4aede5dccd57dd1c2df7ddd55c2",
+  "draft_text_sha256": "013d0c84d2cb02ae8018ed707ca06dad0aeaf3a58053c91b96893fb99579c58d",
+  "draft_character_count": 3182,
+  "draft_images": [
+    {
+      "uri": "tos-cn-i-6w9my0ksvp/f757e7d55b5e4a66b05912184bf5693f",
+      "width": "1200",
+      "height": "720",
+      "naturalWidth": 1200
+    },
+    {
+      "uri": "tos-cn-i-6w9my0ksvp/4185e2dfeb0d4b7fac4bddf50e21ce53",
+      "width": "1200",
+      "height": "720",
+      "naturalWidth": 1200
+    },
+    {
+      "uri": "tos-cn-i-6w9my0ksvp/cb6678e8ba8947a891e4ca053423758a",
+      "width": "1200",
+      "height": "720",
+      "naturalWidth": 1200
+    }
+  ],
+  "draft_works_settings": {
+    "头条首发": false,
+    "发布得更多收益": false,
+    "取材网络": false,
+    "引用站内": false,
+    "个人观点，仅供参考": false,
+    "引用AI": true,
+    "虚构演绎，故事经历": false,
+    "投资观点，仅供参考": false,
+    "健康医疗分享，仅供参考": false
+  },
+  "draft_cover": [
+    {
+      "name": "单图",
+      "on": false
+    },
+    {
+      "name": "三图",
+      "on": true
+    },
+    {
+      "name": "无封面",
+      "on": false
+    }
+  ],
+  "duplicate_same_title_found": false,
+  "publication_submitted": false,
+  "public_url": null,
+  "limitations": "2026-10 Odysseys2 project page: forthcoming paper, new grader human validation insufficient, self-reported results; no independent benchmark claim. Publishing title shortened and editorial candidate label removed without modifying LFL-reviewed source."
+}

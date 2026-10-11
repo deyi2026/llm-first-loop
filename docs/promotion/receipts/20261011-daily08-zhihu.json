@@ -1,0 +1,19 @@
+{
+  "issue": "第八期 · 提醒发了，事情却没人接",
+  "platform": "知乎专栏",
+  "url": "https://zhuanlan.zhihu.com/p/2092739969639102248",
+  "published_at": "2026-10-11 22:20",
+  "verified_at": "2026-10-11T22:21:00+08:00",
+  "public_observed": {
+    "h1": "提醒发了，事情却没人接",
+    "author": "yyj",
+    "byline": "发布于 2026-10-11 22:20・广东・包含 AI 辅助创作 作者对内容负责",
+    "h2": 6,
+    "article_images": 3,
+    "chars": 3644
+  },
+  "creation_declaration": "包含 AI 辅助创作 作者对内容负责",
+  "degradation": "行内加粗丢失（知乎粘贴净化丢弃 <b>/<strong>，仅 h2 标题、blockquote、hr 保留）；文本与图片内容无损",
+  "md_sha256": "8baffab943e36a7921f6cba452d7e45e2450a5344ae1bd0805fcfd3fc06ac12a",
+  "method": "docs/promotion/_zhpub.py（bringToFront→Range全选+Backspace清空→ClipboardEvent粘贴→图片ClipboardEvent粘贴→创作声明→发布）"
+}

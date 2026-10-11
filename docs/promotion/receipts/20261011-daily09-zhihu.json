@@ -1,0 +1,19 @@
+{
+  "issue": "第九期 · AI 都不敢生成这种图",
+  "platform": "知乎专栏",
+  "url": "https://zhuanlan.zhihu.com/p/2092741427319068055",
+  "published_at": "2026-10-11 22:21",
+  "verified_at": "2026-10-11T22:22:00+08:00",
+  "public_observed": {
+    "h1": "AI 都不敢生成这种图",
+    "author": "yyj",
+    "byline": "发布于 2026-10-11 22:21・广东・包含 AI 辅助创作 作者对内容负责",
+    "h2": 6,
+    "article_images": 2,
+    "chars": 3508
+  },
+  "creation_declaration": "包含 AI 辅助创作 作者对内容负责",
+  "degradation": "同 08：行内加粗丢失",
+  "md_sha256": "99a251f2f35c7f9430ea1410586f172ae3fadd928893ccafb91832129287e1e1",
+  "method": "docs/promotion/_zhpub.py"
+}

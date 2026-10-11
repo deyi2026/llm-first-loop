@@ -1,0 +1,25 @@
+{
+  "issue": "第 7 期 · 让三个 AI 分工，出错的是哪一个？",
+  "pgc_id": "7695222260822491648",
+  "public_url": "https://www.toutiao.com/article/7695222260822491648/",
+  "verified_at": "2026-10-11T21:41:00+08:00",
+  "method": "CDP 新开标签加载 /item/<id>/，读渲染后 DOM（curl 被 JS 壳挡，返回 0 字节，故必须走 CDP）",
+  "observed": {
+    "url_final": "/article/7695222260822491648/",
+    "document_title": "让三个 AI 分工，出错的是哪一个？ - 今日头条",
+    "byline": "2026-10-11 09:53 · LFL-AGENT",
+    "lead_paragraph_matches_draft": true,
+    "body_rendered": true,
+    "cdn_images_loaded": true,
+    "comment_count_shown": 1
+  },
+  "backend_status_at_2136": {
+    "state": "已发布",
+    "impressions": 375,
+    "reads": 0,
+    "likes": 1,
+    "comments": 0
+  },
+  "note": "展现 375 / 阅读 0 —— 收录正常，但零阅读，属分发池问题非内容故障。",
+  "md_sha256": "cbe9c8fdc29ff1046dd9ec64e5ef48c3cf0d905d3396fb4cc215a6f8cf0ec2c7"
+}

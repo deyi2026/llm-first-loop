@@ -1,0 +1,23 @@
+{
+  "schema": "lfl-promotion-publication-inventory/1",
+  "observation_date": "2026-10-10",
+  "observation_timezone": "Asia/Shanghai",
+  "evidence_kind": "read-only public pages and logged-in Zhihu creator article listing",
+  "article_content_hash_method": "SHA256 over all whitespace-stripped text of selected article content element, not the original markdown hash; short hashes below are diagnostic and not source equivalence proof",
+  "canonical_reviewed_sources": {
+    "daily-01": {"path": "docs/promotion/revisions/20261010/daily-01-r3.md", "sha256": "d091672322f575e53d0a0fda71e29d98525608afa039798365295861038bedb5", "review": "PASS"},
+    "daily-02": {"path": "docs/promotion/revisions/20261010/daily-02-r3.md", "sha256": "597e97181923a400476b8bae78c429c7184b24d3ab23a6e33e937f12f5eefb9d", "review": "PASS"},
+    "daily-03": {"path": "docs/promotion/revisions/20261010/daily-03-r2.md", "sha256": "7b3b6a7537ba39e0e73cafda8a88daa8d01ab0888354c7b2381315af6b14a4f0", "review": "PASS"}
+  },
+  "published_pages": [
+    {"platform": "zhihu", "topic": "daily-02", "url": "https://zhuanlan.zhihu.com/p/2092313733624238657", "title": "AI 说我改进了一下，你信吗？——拆开 Agent 自我进化里的自证陷阱", "content_length_no_whitespace": 6176, "content_sha256_prefix": "347e0cdf0bd0bc5e9553", "image_count": 5, "contains_unverified_AACL_acceptance": true, "candidate_canonical": true, "online_reviewed_revision_synced": false},
+    {"platform": "zhihu", "topic": "daily-02", "url": "https://zhuanlan.zhihu.com/p/2092310847452463615", "title": "AI 说我改进了一下，你信吗？——拆开 Agent 自我进化里的自证陷阱", "content_length_no_whitespace": 9705, "content_sha256_prefix": "c0992ef29ca6f0757b10", "image_count": 8, "contains_unverified_AACL_acceptance": true, "duplicate_of_canonical_candidate": "https://zhuanlan.zhihu.com/p/2092313733624238657", "issue": "The first 6176 whitespace-stripped characters exactly match the other post, then 3529 additional characters repeat the article from its introduction; do not delete without explicit permission.", "online_reviewed_revision_synced": false},
+    {"platform": "zhihu", "topic": "daily-03", "url": "https://zhuanlan.zhihu.com/p/2092334918437230422", "title": "程序不是大脑，但程序也不该是哑巴：llm-first-loop 的架构哲学", "content_length_no_whitespace": 8643, "contains_outdated_v0_6_27": true, "online_reviewed_revision_synced": false},
+    {"platform": "toutiao", "topic": "daily-01", "url": "https://www.toutiao.com/article/7694948729350111759/", "title": "当大模型开始记住自己：开源框架 LFL", "content_length_no_whitespace": 6622, "contains_outdated_v0_6_27": true, "online_reviewed_revision_synced": false},
+    {"platform": "toutiao", "topic": "daily-02", "url": "https://www.toutiao.com/article/7694972102780240418/", "title": "AI说我改进了一下，你信吗？", "content_length_no_whitespace": 6323, "contains_unverified_AACL_acceptance": true, "online_reviewed_revision_synced": false},
+    {"platform": "toutiao", "topic": "daily-03", "url": "https://www.toutiao.com/article/7694988135675085327/", "title": "程序不是大脑，但程序也不该是哑巴：LFL 架构哲学", "content_length_no_whitespace": 8643, "content_sha256_prefix": "d6035d5f21c42694cdcb", "candidate_canonical": true, "contains_outdated_v0_6_27": true, "online_reviewed_revision_synced": false},
+    {"platform": "toutiao", "topic": "daily-03", "url": "https://www.toutiao.com/article/7694991672115053071/", "title": "程序不是大脑，但程序也不该是哑巴", "content_length_no_whitespace": 8643, "content_sha256_prefix": "d6035d5f21c42694cdcb", "duplicate_of_canonical_candidate": "https://www.toutiao.com/article/7694988135675085327/", "issue": "Whitespace-stripped article bodies are byte-identical, only surrounding title and timestamp differ; do not delete without explicit permission.", "online_reviewed_revision_synced": false}
+  ],
+  "note": "Seven exact individual public URLs confirmed, representing three distinct topics. This work did not publish, modify or delete any public article. Reviewed revision PASS does not imply these older live contents are accurate.",
+  "next_step": "Back up original post content and review platform edit capabilities; update chosen canonical posts in-place to approved text/images; verify before any cleanup; do not delete other duplicates without explicit approval."
+}
