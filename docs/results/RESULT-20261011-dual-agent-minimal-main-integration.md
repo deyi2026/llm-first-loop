@@ -31,7 +31,10 @@
 - 集成分支新 main 上的真实 Docker、双 Agent 主链、STOP/Fleet、TaskBudget 相关测试：**149 passed / 0 failed（26.71s）**，Pinned P1.8 image 与试验容器清理核验 PASS。
 - 默认 OFF 静态隔离守卫、R9 持久化写入审计、包归属审计：**3 passed / 0 failed**。
 - Ruff/Pyright 对移植源码及主测试 **0 新诊断**。
-- **正式全量 R9 和最终 commit/fast-forward 验收：尚待执行，不能提前声明通过。**
+- 集成源码和测试提交：`0b8cfa37027713062b5a86e57528c79a7d6acf23`，30 文件，工作树干净，Git 差异检查和敏感扫描 PASS。
+- **正式全量 R9：实际 Exit 0，完整链路 PASS**，机器记录 `/tmp/lfl-dual-agent-integration-r9.log`。Ruff historical=67/current=49/new=0；Pyright historical=45/current=24/new=0；环境声明扫描 826 个测试文件、遗漏 0；Tier0 **310 passed / 8414 deselected / 3 warnings**；完整 xdist 全量绿；最后架构守卫 1 passed / 20 deselected。
+- 全量 CI 原脚本不保留 xdist 整体的精确 passed 数，因此不把 Tier0 310 算成整个项目的通过总数。
+- 最终合并前再次确认最新 main 仍是 `d3518d8ab47eecf860de06ed6466c229ce684041`、是上述集成提交的祖先、主工作树已跟踪文件无改动（既有用户数据下的未跟踪文件不操作）。
 
 ## 4. 主分支合入条件
 
