@@ -64,6 +64,16 @@ current_tool_discovery_scope: contextvars.ContextVar[frozenset[str] | None] = (
     contextvars.ContextVar("llm_loop_current_tool_discovery_scope", default=None)
 )
 
+# EVO-20261012-65475c5a (E5): child 会话内的取消事件与等待预算。
+# runner 在 child context 内注入（父会话保持 None/0.0，互不影响）；
+# wait 工具读取它们实现「可取消的只读等待 + 每 child 累计上限」。
+child_cancel_event: contextvars.ContextVar[object | None] = (
+    contextvars.ContextVar("llm_loop_child_cancel_event", default=None)
+)
+child_wait_budget_used: contextvars.ContextVar[float] = (
+    contextvars.ContextVar("llm_loop_child_wait_budget_used", default=0.0)
+)
+
 # ERC R0/Phase2 shadow only: tools preserve their pre-trim observation only when an explicit
 # registry shadow hook is installed. Default false keeps legacy memory/runtime behavior unchanged.
 current_evidence_shadow_enabled: contextvars.ContextVar[bool] = contextvars.ContextVar(

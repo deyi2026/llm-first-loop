@@ -135,6 +135,11 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "subagent_result": "查询/短暂等待自己的直接 child；completed 才代表子任务成功结算。",
     "subagent_lease": "读取子代理 fleet 租约磁盘事实（lease/settlement，expires_at/expired）；只读，不含接管语义。",
     "agent_followup": "对已终止的直接 child 有界续话（同会话保留上下文，每 child≤2 次/父会话≤4 次/15 分钟窗口）。",
+    "wait": (
+        "只读墙钟等待（E5, EVO-20261012-65475c5a）：确定性阻塞 1..120 秒，等待期间零模型"
+        "调用；父取消 ≤0.5s 唤醒；每 child 会话累计 ≤600s。心跳/轮询等待期用它替代"
+        "多轮空转调用。"
+    ),
     "fix_loop": "原子编排检查→定位→子代理修复→重跑的有界修复循环。",
     "workflow_run": "编排 parallel/pipeline/DAG 子任务；按依赖执行并传递前序结果。",
     "dsh_task": "在隔离进程/会话中委派 DeepSeek Harness 任务；不会自动继承当前会话历史。",

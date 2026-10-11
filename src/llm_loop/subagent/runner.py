@@ -28,6 +28,8 @@ from llm_loop.core.message import (
     ToolResultStatus,
 )
 from llm_loop.core.run_context import (
+    child_cancel_event,
+    child_wait_budget_used,
     current_model_label,
     current_run_generation,
     current_session_id,
@@ -55,6 +57,10 @@ from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
 # 子代理不维护第二套静态工具能力表。父执行域由 current_tool_discovery_scope
 # 继承；None=完整 registry，显式集合=不得扩权。工具自身继续承担授权/安全边界。
+# EVO-20261012-bb3022f4 (E4): spawn 声明的 requires.tools 升级为程序级强制
+# 白名单（见 _compute_child_tool_scope）：child 的发现面与执行面都被截断到
+# 声明集（≤ 父 scope，只降不升）；spawn_subagent 默认从 child 面剔除（防递归
+# 舰队），显式授予走 CHILD_SPAWN_GRANT 配置白名单。
 
 MAX_DEPTH = 3
 MAX_ITERATIONS = HARD_CAP_MAX_ITERATIONS
@@ -118,6 +124,30 @@ class _SubAgentHandle:
     activity_event: threading.Event = field(default_factory=threading.Event, repr=False)
     seen_reports: int = 0
     thread: threading.Thread | None = field(default=None, repr=False)
+
+
+def child_spawn_grant_allowed() -> bool:
+    """EVO-20261012-bb3022f4 (E4): CHILD_SPAWN_GRANT 授予判断（模块级单一来源）.
+
+    - ""（默认）= 未授予：child 工具面剔除 spawn_subagent（防递归舰队）；
+    - "*" = 全量授予；
+    - 逗号分隔 parent session_id = 精确授予该父会话的 child；
+    - 配置读取失败保守视为未授予。
+    """
+    raw = ""
+    try:
+        from llm_loop.config import load_settings
+
+        raw = str(getattr(load_settings(), "child_spawn_grant", "") or "").strip()
+    except Exception:  # noqa: BLE001 — 配置读取失败保守视为未授予
+        return False
+    if not raw:
+        return False
+    if raw == "*":
+        return True
+    parent_sid = str(current_session_id.get() or "")
+    entries = {e.strip() for e in raw.split(",") if e.strip()}
+    return bool(parent_sid) and parent_sid in entries
 
 
 class SubAgentRunner:
@@ -986,9 +1016,10 @@ class SubAgentRunner:
         """在已登记的 child sid 上执行迷你循环；不负责 topology cleanup。"""
 
         # copy_context() in start()/recursive calls already carries the parent's
-        # current_tool_discovery_scope. Do not overwrite it with a child-specific
-        # whitelist: delegation may preserve but must never silently shrink/expand an
-        # explicit parent scope. None therefore remains the full registered tool plane.
+        # current_tool_discovery_scope. EVO-20261012-bb3022f4 (E4): start() 现在
+        # 在 _inside_context 内将其覆盖为 requires.tools 强制白名单（≤ 父 scope，
+        # 只降不升；spawn_subagent 默认剔除）。本迷你循环不重复设置，仅继承该值；
+        # 递归 spawn 的合法性由 runner.start 的 _compute_child_tool_scope 统一裁决。
         old_ctx_sid = current_session_id.get()
         _depth_tok = _CURRENT_SUBAGENT_DEPTH.set(depth)
         _model_tok = current_model_label.set(model_label) if model_label else None
@@ -1181,6 +1212,48 @@ class SubAgentRunner:
             self.session_store.save(sess)
         return sid, cancel_event, sess, handle
 
+    def _child_spawn_grant_allowed(self) -> bool:
+        """E4: CHILD_SPAWN_GRANT 授予判断（模块级实现的薄包装）。"""
+        return child_spawn_grant_allowed()
+
+    def _compute_child_tool_scope(
+        self, required_tools: list[str] | None
+    ) -> tuple[frozenset[str] | None, str]:
+        """E4 child 工具面计算：requires.tools 声明即程序级强制白名单。
+
+        规则（EVO-20261012-bb3022f4）：
+        - 声明了 required_tools → child scope = 声明集；声明超出父 scope 直接拒绝
+          （授权只降不升，fail-fast 而非静默截断）；
+        - 未声明 → 继承父 scope（父 None = 全量 registry 面）；
+        - spawn_subagent 默认从 child 面剔除（防递归舰队），显式授予走
+          CHILD_SPAWN_GRANT 白名单；未授予且原本为 None 的面转为「全量 -
+          spawn_subagent」的显式集合。
+        返回 (child_scope, refusal_detail)；refusal 非空 = 拒绝启动。
+        """
+        parent_scope = current_tool_discovery_scope.get()
+        if required_tools is not None:
+            req = frozenset(
+                t for t in (str(x).strip() for x in required_tools) if t
+            )
+            if parent_scope is not None:
+                overflow = sorted(req - set(parent_scope))
+                if overflow:
+                    return None, (
+                        "requires.tools 声明超出父执行域（授权只降不升）: "
+                        + ", ".join(overflow)
+                    )
+            base: set[str] | None = set(req)
+        else:
+            base = None if parent_scope is None else set(parent_scope)
+        if self._child_spawn_grant_allowed():
+            return (frozenset(base) if base is not None else None), ""
+        if base is None:
+            try:
+                base = set(self.registry.names())
+            except Exception:  # noqa: BLE001 — names 派生失败时保守返回 None（全量）
+                return None, ""
+        return frozenset(base - {"spawn_subagent"}), ""
+
     def start(
         self,
         task: str,
@@ -1190,6 +1263,7 @@ class SubAgentRunner:
         inherit: bool = False,
         acceptance: list[str] | None = None,
         model: str = "",
+        required_tools: list[str] | None = None,
     ) -> dict:
         """启动 background child 并立即返回 handle snapshot，不等待 child 结算。"""
         if depth >= self.max_depth:
@@ -1199,6 +1273,18 @@ class SubAgentRunner:
                 "state": "refused",
                 "depth": depth,
                 "detail": f"递归深度超限（已达上限 {self.max_depth}）",
+            }
+
+        # EVO-20261012-bb3022f4 (E4): requires.tools 声明即程序级强制白名单，
+        # 在预留任何 child 资源前计算并拒绝（fail-fast，不静默截断）。
+        child_scope, scope_refusal = self._compute_child_tool_scope(required_tools)
+        if scope_refusal:
+            return {
+                "accepted": False,
+                "child_id": "",
+                "state": "refused",
+                "depth": depth,
+                "detail": scope_refusal,
             }
 
 
@@ -1267,45 +1353,62 @@ class SubAgentRunner:
 
         def _worker() -> None:
             def _inside_context() -> None:
+                # EVO-20261012-bb3022f4/65475c5a (E4/E5): child 会话专属 contextvar
+                # 注入——只影响本 child 线程（caller_ctx 为 copy_context 的副本）：
+                #   - E4: 工具发现面/执行面截断到 requires.tools 强制白名单；
+                #   - E5: cancel_event 与 wait 累计预算暴露给 wait 工具。
+                _scope_tok = (
+                    current_tool_discovery_scope.set(child_scope)
+                    if child_scope is not None
+                    else None
+                )
+                _cancel_tok = child_cancel_event.set(cancel_event)
+                _wait_tok = child_wait_budget_used.set(0.0)
                 try:
-                    result = self._run_reserved_child(
-                        sid=sid,
-                        sess=sess,
-                        task=task,
-                        context=context,
-                        depth=depth,
-                        max_rounds=max_rounds,
-                        acceptance=acceptance,
-                        cancel_event=cancel_event,
-                        startup_event=startup_event,
-                        startup_state=startup_state,
-                        llm_client=child_llm,
-                        model_label=child_model_label,
-                    )
-                except BaseException as exc:  # noqa: BLE001 — background thread 必须形成真实 terminal
-                    if not startup_event.is_set():
-                        startup_state.update(
-                            {"ok": False, "detail": f"startup_exception:{type(exc).__name__}"}
-                        )
-                        startup_event.set()
-                    with self._children_guard:
-                        generation = self._local_generation_by_child.get(sid, "")
-                    durable_result = (
-                        self._delivery_journal.result(sid, generation) if generation else None
-                    )
-                    result = (
-                        self._result_from_payload(durable_result.payload)
-                        if durable_result is not None
-                        else SubAgentResult(
-                            final_answer=(
-                                f"[状态: failure] 子代理后台执行异常: "
-                                f"{type(exc).__name__}: {exc}"
-                            ),
-                            outcome="failed",
+                    try:
+                        result = self._run_reserved_child(
+                            sid=sid,
+                            sess=sess,
+                            task=task,
+                            context=context,
                             depth=depth,
+                            max_rounds=max_rounds,
+                            acceptance=acceptance,
+                            cancel_event=cancel_event,
+                            startup_event=startup_event,
+                            startup_state=startup_state,
+                            llm_client=child_llm,
+                            model_label=child_model_label,
                         )
-                    )
-                self._finalize_child(sid, parent_sid, result)
+                    except BaseException as exc:  # noqa: BLE001 — background thread 必须形成真实 terminal
+                        if not startup_event.is_set():
+                            startup_state.update(
+                                {"ok": False, "detail": f"startup_exception:{type(exc).__name__}"}
+                            )
+                            startup_event.set()
+                        with self._children_guard:
+                            generation = self._local_generation_by_child.get(sid, "")
+                        durable_result = (
+                            self._delivery_journal.result(sid, generation) if generation else None
+                        )
+                        result = (
+                            self._result_from_payload(durable_result.payload)
+                            if durable_result is not None
+                            else SubAgentResult(
+                                final_answer=(
+                                    f"[状态: failure] 子代理后台执行异常: "
+                                    f"{type(exc).__name__}: {exc}"
+                                ),
+                                outcome="failed",
+                                depth=depth,
+                            )
+                        )
+                    self._finalize_child(sid, parent_sid, result)
+                finally:
+                    if _scope_tok is not None:
+                        current_tool_discovery_scope.reset(_scope_tok)
+                    child_cancel_event.reset(_cancel_tok)
+                    child_wait_budget_used.reset(_wait_tok)
 
             caller_ctx.run(_inside_context)
 
@@ -1364,6 +1467,11 @@ class SubAgentRunner:
             "state": "running",
             "depth": depth,
             "model": child_model_label,
+            "tool_scope": (
+                "full(excluding spawn_subagent)"
+                if child_scope is None
+                else ",".join(sorted(child_scope))
+            ),
             "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
         }
 

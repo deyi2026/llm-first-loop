@@ -136,6 +136,7 @@ from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
+from llm_loop.tools.builtin.wait import WaitTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
@@ -2341,6 +2342,8 @@ def build_engine(
     registry.add_session_cancel_hook(subagent_runner.cancel_parent)
     registry.add_async_obligation_hook(subagent_runner.pending_obligations)
     registry.register(SpawnSubAgentTool(subagent_runner))
+    # E5, EVO-20261012-65475c5a: child 只读墙钟等待原语（可取消 + 每 child 累计预算）。
+    registry.register(WaitTool())
     # Agent Communication Contract：统一 agent↔agent 通信 + 显式 child result 查询。
     # 旧 subagent_report 公共工具已退休，不保留第二套投递路径。
     registry.register(AgentMessageTool(subagent_runner))
