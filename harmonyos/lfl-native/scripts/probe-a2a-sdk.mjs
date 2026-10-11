@@ -43,12 +43,27 @@ export function inspectA2aSurface(api, kit, ability, manifestText) {
   let manifest = {};
   try { manifest = JSON.parse(manifestText || '{}'); } catch { manifest = {}; }
   const required = [
-    'createA2AServer', 'TaskState', 'AgentOperation',
+    'createA2AServer', 'TaskState', 'OnDataCallback', 'Server',
     'RequestContext', 'updateStatus', 'addArtifact', 'TaskArtifactParam'
   ];
   const missingSymbols = required.filter(name => !api.includes(name));
   const a2aDeclarationPresent = api.length > 0;
-  const kitA2aExportPresent = kit.includes('A2A') && kit.includes('@hms.ai.A2A');
+  const kitA2aExportPresent = kit.includes('@hms.ai.A2A') &&
+    kit.includes('createA2AServer') && kit.includes('OnDataCallback') &&
+    kit.includes('Server');
+  // Freeze the *actual* installed Release SDK's callable surface. A list of
+  // identifiers alone could match comments or an unrelated legacy interface.
+  const releaseFactoryPresent = api.includes(
+    'export function createA2AServer(agentCard: common.AgentCard, onData: OnDataCallback, want?: Want): Server;'
+  );
+  const releaseCallbackPresent = api.includes(
+    'export type OnDataCallback = (method: string, context: RequestContext) => void;'
+  );
+  const releaseStatusArtifactPresent = api.includes(
+    'updateStatus(taskId: string, status: TaskStatus): void;'
+  ) && api.includes(
+    'addArtifact(taskId: string, taskArtifactParam: TaskArtifactParam): void;'
+  );
   return {
     sdkVersion: manifest.version ?? null,
     sdkApi: manifest.apiVersion ?? null,
@@ -57,8 +72,12 @@ export function inspectA2aSurface(api, kit, ability, manifestText) {
     kitA2aExportPresent,
     missingSymbols,
     agentExtensionPresent: ability.includes('class AgentExtensionAbility'),
+    releaseFactoryPresent,
+    releaseCallbackPresent,
+    releaseStatusArtifactPresent,
     a2aTypesQualified: a2aDeclarationPresent && kitA2aExportPresent &&
-      missingSymbols.length === 0,
+      missingSymbols.length === 0 &&
+      releaseFactoryPresent && releaseCallbackPresent && releaseStatusArtifactPresent,
     developerEntitlement: 'not_verified_offline',
     deviceA2aRuntime: 'not_verified_offline',
     platformA2aDispatch: 'not_verified_offline'

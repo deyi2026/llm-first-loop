@@ -68,9 +68,9 @@ See `CONTRACT.md` for normative boundary and unresolved A2A requirements.
 
 ## A2A development gate (separate from this SSE client)
 
-The public Huawei API 26+ documentation contains a Beta A2A server API, but
-the installed **26.0.0.23 Beta1** SDK does not include `@hms.ai.A2A.d.ts`.
-Before attempting native server registration, execute this **read-only** gate:
+The current DevEco Studio application has HMS **26.0.0.105 Release** SDK,
+including the actual `@hms.ai.A2A.d.ts` factory declarations. Before
+attempting native server registration, run this **read-only** type gate:
 
 ```sh
 node harmonyos/lfl-native/scripts/probe-a2a-sdk.mjs \
@@ -78,14 +78,16 @@ node harmonyos/lfl-native/scripts/probe-a2a-sdk.mjs \
 node --test harmonyos/lfl-native/test/*.test.mjs
 ```
 
-The observed gate result is exit **2**, i.e. no complete local A2A type
-surface. The `A2ATaskContract.ts` import in the App is only an **offline
-compile and identity-mapping proof**, not a registered A2A service. This
-contract requires a future authenticated platform caller and backend durable
-admission receipt; real `EXECUTE` remains disabled. See
+The current Release type gate returns **exit 0**, and `hvigor assembleHap`
+typechecks the SDK's real `createA2AServer` call in
+`entry/src/main/ets/bridge/NativeA2aCompileProbe.ets`, producing an
+unsigned HAP. The compile probe is **never invoked** and creates no live
+service. `A2ATaskContract.ts` is still an offline identity mapping;
+real `EXECUTE` remains disabled pending authenticated host principals,
+durable Task-to-Run handoff and system authorization. See
 `docs/harmonyos/A2A-QUALIFICATION-20261011.md`.
 
-**Updated 2026-10-11:** A separate OpenHarmony 26.0.0 Release SDK
+**Historical SDK observation (before the IDE update):** A separate OpenHarmony 26.0.0 Release SDK
 (`26.0.0.38`) was found under `~/Library/OpenHarmony/Sdk/26.0.0`.
 The probe now also accepts this SDK layout:
 
@@ -97,9 +99,9 @@ node harmonyos/lfl-native/scripts/probe-a2a-sdk.mjs \
 It confirms the Release OpenHarmony SDK, but returns exit **2** because it
 does **not** include Huawei HMS Agent Framework Kit A2A declarations.
 `AgentExtensionAbility` belongs to the separate Ability Kit API24+
-surface. The installed DevEco Studio application under `/Applications`
-still reports Beta1 build 26.0.0.461; do not confuse either of these SDK
-roots with a verified `createA2AServer` compiler or running service.
+surface. At that time the DevEco Studio application reported Beta1 build
+26.0.0.461; the later IDE update provided HMS 26.0.0.105 Release separately.
+The compiler proof does **not** establish a running A2A server.
 
 An **offline-only** backend CAS record implementation was subsequently
 added to `src/llm_loop/web/a2a_task_admission.py`. It preserves exact

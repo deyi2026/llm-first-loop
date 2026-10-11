@@ -1,5 +1,6 @@
 import { LflTransport } from '../bridge/LflTransport';
 import { A2aTaskBindings } from '../bridge/A2ATaskContract';
+import { NativeA2aCompileProbe } from '../bridge/NativeA2aCompileProbe';
 import {
   LflEvent, artifactCandidates, cancellationPayload, historyAnswer,
   resumeDecision, resumePayload
@@ -23,6 +24,8 @@ struct Index {
   // Offline type-check only: NO native A2A server registration. This guard is
   // deliberately unarmed without trusted host identity + backend CAS receipts.
   private a2aContract: A2aTaskBindings = new A2aTaskBindings();
+  // Typechecked at build time only; does not create or start an A2A server.
+  private a2aSdkCompileProbe: NativeA2aCompileProbe = new NativeA2aCompileProbe();
 
   private process(event: LflEvent): void {
     const row = event.data;

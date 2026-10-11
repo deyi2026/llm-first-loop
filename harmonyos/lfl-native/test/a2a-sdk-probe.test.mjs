@@ -5,9 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectA2aSurface, inspectA2aSdk } from '../scripts/probe-a2a-sdk.mjs';
 
-const releaseSymbols =
-  'createA2AServer TaskState AgentOperation RequestContext updateStatus addArtifact TaskArtifactParam';
-const kitExport = "import { A2A } from '@hms.ai.A2A'; export { A2A };";
+const releaseSymbols = [
+  'export type OnDataCallback = (method: string, context: RequestContext) => void;',
+  'export function createA2AServer(agentCard: common.AgentCard, onData: OnDataCallback, want?: Want): Server;',
+  'export enum TaskState { WORKING = 1 }',
+  'export interface Server {',
+  'updateStatus(taskId: string, status: TaskStatus): void;',
+  'addArtifact(taskId: string, taskArtifactParam: TaskArtifactParam): void;',
+  '}'
+].join('\n');
+const kitExport = "import { createA2AServer, OnDataCallback, Server } from '@hms.ai.A2A'; export { createA2AServer, OnDataCallback, Server };";
 const manifest = JSON.stringify({apiVersion:'26', version:'26.fixture', releaseType:'Beta'});
 
 test('missing A2A SDK declaration remains unqualified', () => {
@@ -36,6 +43,23 @@ test('partial A2A declaration fails closed even if kit mentions it', () => {
   const result = inspectA2aSurface('createA2AServer TaskState', kitExport, '', manifest);
   assert.equal(result.a2aTypesQualified, false);
   assert.ok(result.missingSymbols.includes('addArtifact'));
+});
+
+test('old enum-style callback and changed factory signature must not pass current Release gate', () => {
+  const enumStyle = releaseSymbols.replace(
+    '(method: string, context: RequestContext)',
+    '(operation: AgentOperation, context: RequestContext)'
+  );
+  const result = inspectA2aSurface(enumStyle, kitExport, '', manifest);
+  assert.equal(result.a2aTypesQualified, false);
+  assert.equal(result.releaseCallbackPresent, false);
+  const changedFactory = releaseSymbols.replace(
+    'onData: OnDataCallback', 'onData: string'
+  );
+  assert.equal(
+    inspectA2aSurface(changedFactory, kitExport, '', manifest).a2aTypesQualified,
+    false
+  );
 });
 
 test('separate OpenHarmony Release SDK is not treated as installed HMS A2A', () => {

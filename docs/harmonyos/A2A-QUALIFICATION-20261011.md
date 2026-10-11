@@ -1,10 +1,50 @@
 # LFL HarmonyOS A2A — API26 qualification and Task identity contract
 
 Date: 2026-10-11. Branch: `feat/harmonyos-native-agent-poc-20261011`.
-Status: **SDK-native A2A NO-GO (not installed/qualified); offline mapping PASS.**
-This is read-only SDK research plus isolated offline code, not a live A2A deployment.
+Status: **HMS SDK Release type gate and compile-only A2A factory PASS;
+real A2A registration, signed device, and task dispatch NOT QUALIFIED.**
+This records successive SDK states; historical Beta1 NO-GO snapshots below
+must not be treated as the current qualification status.
 
-## Updated Release installation audit (2026-10-11, 08:48 local)
+## Latest DevEco Studio Release verification (2026-10-11)
+
+- DevEco application at `/Applications/DevEco-Studio.app`: build
+  `DS-261.23567.138.36.2600851`, replacing Beta1 `2600461`.
+- Embedded `hms/ets/uni-package.json`: API26, `releaseType=Release`,
+  `version=26.0.0.105`, replacing the previous Beta1 `26.0.0.23`.
+- Installed `hms/ets/api/@hms.ai.A2A.d.ts` **exists** and declares
+  `createA2AServer(agentCard: common.AgentCard, onData: OnDataCallback, want?: Want): Server`.
+  Its `OnDataCallback` takes `(method: string, context: RequestContext)`.
+  `Server` declares `updateStatus` and `addArtifact`, and
+  `@kit.AgentFrameworkKit.d.ts` exports the factory and related types.
+- The former checker incorrectly required an `AgentOperation` enum from
+  an earlier API-description snapshot. The **actual installed Release
+  contract uses the string method callback**; the corrected gate checks
+  the real factory, callback, status and artifact signatures.
+- Read-only `node harmonyos/lfl-native/scripts/probe-a2a-sdk.mjs
+  /Applications/DevEco-Studio.app/Contents/sdk/default`: **exit 0**,
+  `a2aTypesQualified=true`, `missingSymbols=[]`, all three
+  Release-specific signature checks true.
+- The isolated App includes
+  `entry/src/main/ets/bridge/NativeA2aCompileProbe.ets`, which imports
+  actual HMS Kit types and has a compile-checked method that would call
+  `createA2AServer` **only if it were ever explicitly invoked**.
+  `Index.ets` constructs an inert probe object but does not call that
+  method; no native server has been created, started or registered.
+- Actual **API26 Release** `hvigor assembleHap` exit **0**,
+  `BUILD SUCCESSFUL in 3 s 949 ms`, **34 executed / 0 up-to-date**,
+  including `CompileArkTS` and `PackageHap`. The output is an
+  **unsigned/uninstalled** HAP, with a missing signing profile warning and
+  one template `EntryAbility` exception-handling warning.
+- Host Node protocol/SDK tests after correcting the gate: **28/28 PASS**.
+  This and successful compilation are not a real phone/Xiaoyi A2A test.
+
+**Latest verdict: GO for qualified offline code-only A2A adapter development;
+NO-GO for live A2A EXECUTE/CANCEL, unverified host principal, real user
+payload, signing and system registration.** The backend durable Task CAS
+primitive is still offline-only and has no privileged HTTP dispatch route.
+
+## Historical Release OpenHarmony component audit (before IDE update)
 
 The user has installed a genuine **OpenHarmony 26.0.0 Release SDK**, but it is
 not interchangeable with a Huawei HMS A2A Kit distribution:
@@ -35,7 +75,7 @@ same probe on the old DevEco embedded `default` root also returns exit **2**.
 The revised dual-layout probe and its regression test were executed on the
 real installed SDK, and the total host suite passed **27/27**.
 
-**Decision:** The user-installed Release component is real, but a native HMS
+**Historical decision (superseded by latest SDK above):** The user-installed Release component is real, but a native HMS
 `createA2AServer` compilation remains **NO-GO**. Install/enable the matching
 official **HMS Agent Framework Kit** A2A declarations through an authorized
 SDK distribution and re-run the exact type gate. Do not fabricate declarations,
@@ -48,7 +88,7 @@ Official API references:
 - https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/js-apis-inner-application-agenthostproxy
 - https://developer.huawei.com/consumer/en/doc/harmonyos-releases/deveco-studio-new-features-2600
 
-## Authority and observed facts
+## Historical Beta1 authority and observed facts (superseded)
 
 1. Huawei Agent Framework Kit public API difference record (updated 2026-07-28):
    https://developer.huawei.com/consumer/cn/doc/doccenter-release-notes/js-apidiff-agentframeworkkit-7002
@@ -86,7 +126,7 @@ node harmonyos/lfl-native/scripts/probe-a2a-sdk.mjs \
   /Applications/DevEco-Studio.app/Contents/sdk/default
 ```
 
-Observed exit code **2**. `a2aTypesQualified=false` because the HMS A2A
+Historical Beta1 observed exit code **2**. `a2aTypesQualified=false` because the HMS A2A
 declaration and Kit export are absent; the capability probe does not inspect
 secrets or account identifiers, install SDK components, or contact a provider.
 Even a future exit **0** means only that the local type surface appears
