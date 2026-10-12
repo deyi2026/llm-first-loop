@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -29,6 +30,8 @@ from llm_loop.browser.perception import (
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_wait import BrowserWaitObjectTool
+
+logger = logging.getLogger(__name__)
 
 _MAX_CLAUSES = 8
 _IDENTITY_KEYS = {"kind", "role", "name", "name_normalized"}
@@ -1251,7 +1254,6 @@ class BrowserSemanticOperationTool:
         # （external_unknown 面）。登记失败不阻断操作（观测面 fail-open）。
         # D6：target 只含动词+目标标识（url/name 截断），不含页面正文。
         try:
-            from llm_loop.core.loop.side_effects import SideEffectRegistry
             from llm_loop.core.run_context import current_session_id
 
             self._register_mutation_side_effects(clauses, current_session_id.get() or "")
