@@ -21,6 +21,18 @@ def _store(tmp_path):
     return ScheduleStore(str(tmp_path / "sched.json"))
 
 
+@pytest.fixture(autouse=True)
+def _restore_global_predicates():
+    """P2-8 卫生修复：本文件用桩谓词覆写进程级注册表（含 factory 登记的生产求值器），
+    用例结束后必须恢复原注册表，防同进程其他测试（如 factory 装配类）被污染。"""
+    from llm_loop.core import scheduler as _sched
+
+    saved = dict(_sched._EVENT_PREDICATES)
+    yield
+    _sched._EVENT_PREDICATES.clear()
+    _sched._EVENT_PREDICATES.update(saved)
+
+
 def _entry(store, sid):
     for d in store.list():
         if d["sid"] == sid:

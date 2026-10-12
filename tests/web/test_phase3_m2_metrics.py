@@ -164,7 +164,7 @@ def test_metrics_endpoint_after_live_interject(build_test_engine):
 
 
 # ── 对照数据采集：3 run 样本 → reports/phase3/m2/metrics.json ──────
-def test_m2_capture_three_runs(build_test_engine):
+def test_m2_capture_three_runs(build_test_engine, tmp_path):
     """采集 M1+M2 代码下的三口径样本（对照表数据源；断言仅机械健全性）."""
     import json
     from pathlib import Path
@@ -192,7 +192,12 @@ def test_m2_capture_three_runs(build_test_engine):
     engine.runner = runner
     client = TestClient(build_app(engine=engine))
     sid = engine.session.create()
-    out = Path(__file__).resolve().parents[2] / "reports" / "phase3" / "m2"
+    # P2-8 卫生修复：默认写 tmp（全量测试不再弄脏工作树）；显式设 PHASE3_REPORT_DIR
+    # 时写仓库内报告目录（对照表数据源采集，见 docs/phase3-m2-metrics.md）。
+    import os
+
+    env_dir = os.environ.get("PHASE3_REPORT_DIR", "")
+    out = Path(env_dir) if env_dir else tmp_path / "m2"
     out.mkdir(parents=True, exist_ok=True)
     try:
         for i in range(3):

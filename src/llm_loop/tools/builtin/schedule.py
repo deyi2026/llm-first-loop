@@ -106,6 +106,8 @@ class ScheduleTool:
                     "先到者触发唤醒，后到者只记录不重放。要求 wake=true（谓词不携带授权语义，"
                     "授权仍由当前真人 run 的 wake_grant 链独占）且不可用于周期条目。"
                     "示例：后台 job 完成即唤醒，最多等 after 秒兜底。"
+                    "可用性（终审 P2-7 留痕）：当前生产装配仅登记 job_terminal 求值器；"
+                    "generation_reached/action_settled 尚无生产求值器，登记前会回退为纯超时唤醒（一次性告警）。"
                 ),
             },
             "predicate_ref": {

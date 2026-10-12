@@ -1,0 +1,89 @@
+{
+  "scenario": "S01",
+  "title": "长工具运行中插话（主路径）",
+  "ran_under": "M1-in-progress",
+  "started_at": "2026-10-13T06:00:55",
+  "steps": [],
+  "wall": {
+    "run_started": 1791842455.161,
+    "tool_running": 1791842455.19,
+    "interject_accepted": 1791842455.214,
+    "run_done": 1791842457.728
+  },
+  "dur_ms": {
+    "t_enqueue_ack_ms": 22.5,
+    "t_interject_ack_ms": 1.7,
+    "interject_requested_at_minus_created_at_ms": 2.0,
+    "received_at_minus_created_at_ms": 2484.3,
+    "terminal_at_minus_created_at_ms": 2484.3
+  },
+  "obs": {
+    "tool_running_at_enqueue": true,
+    "run_generation_present": true,
+    "tool_still_running_at_interject": true,
+    "run_final_event": "done",
+    "item_terminal_state": "interject_received",
+    "session_hits": [
+      {
+        "role": "user",
+        "metadata_keys": [
+          "attachments",
+          "human_interjection",
+          "human_turn_queue_id",
+          "ingress_channel",
+          "ingress_entry",
+          "origin_layer",
+          "program_origin"
+        ],
+        "content_head": "改用方案B，不要等了"
+      }
+    ],
+    "model_visibility": {
+      "seen_at": [
+        {
+          "call_index": 1,
+          "msg_index": 4,
+          "role": "user"
+        }
+      ],
+      "llm_call_count": 2
+    },
+    "final_answer": "final-after-tool"
+  },
+  "endpoints": {
+    "POST /queue": {
+      "status": 202,
+      "body": {
+        "queue_id": "q_2fbdd62a1520",
+        "position": 1,
+        "item": {
+          "queue_id": "q_2fbdd62a1520",
+          "session_id": "83ee68ec-0447-45a3-8488-88e75225b49d",
+          "message": "改用方案B，不要等了",
+          "attachments": [],
+          "attachment_facts": [],
+          "model": null,
+          "model_change": false,
+          "reasoning_effort": null,
+          "reasoning_mode": "auto",
+          "created_at": 1791842455.2115579,
+          "status": "queued",
+          "grade": "queued",
+          "grade_reason": ""
+        }
+      }
+    },
+    "POST /queue/interject": {
+      "status": 202,
+      "body": {
+        "ok": true,
+        "queue_id": "q_2fbdd62a1520",
+        "state": "interject_pending",
+        "grade": "accepted",
+        "grade_reason": "受理≠生效：已进入 live run 信箱；生效分级见 GET /api/v1/chat/queue/item"
+      }
+    }
+  },
+  "finished_at": "2026-10-13T06:00:57",
+  "status": "ok"
+}

@@ -961,6 +961,15 @@
           "src/llm_loop/tools/safety.py"
         ],
         "rationale": "工具安全拦截/决策写入审计面，按追加事实登记。"
+      },
+      "side_effect_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/loop/side_effects.py"
+        ],
+        "rationale": "T2 已实施（Phase3 M3 终审 P1-4 对齐 ScheduleStore/human_turn_queue 跨进程纪律）：side_effects.json 持久化走 flock（OSError fail-closed）+ 重读合并 + tempfile O_EXCL + os.replace，replace 前=definitely_not_committed 回滚内存；锁文件 <path>.lock。登记失败 fail-open 不阻断工具（观测面）；停止路径同类。验收=tests/unit/test_phase3_m3_side_effects.py"
       }
     },
     "write_exemptions": {
