@@ -2529,20 +2529,17 @@ def _find_suggestion(store: Any, evo_id: str) -> dict | None:
     return None
 
 
-@router.get("/api/v1/sessions/{session_id}/stats")
-def session_stats(session_id: str, request: Request) -> Any:
-    """会话统计（M59，对齐 DSH 统计栏）：轮/步/tokens/缓存命中/耗时聚合.
+def _stats_for_loaded_session(engine: Any, session_id: str, sess: Any) -> dict[str, Any]:
+    """One session only: no implicit parent/child cost mixing or semantic role guess.
 
     双源聚合（只读，不触发 run）：
     - turns/steps：会话消息计数（assistant/tool）
     - tokens/耗时/缓存：优先从 request.usage 事件聚合（消息 payload 不含统计字段，
       message.appended 只存基础字段；request.usage 有 tokens_in/out/cache_hit/耗时）。
       事件缺失时回退消息字段（内存态兼容）。
+    - SubAgent 独立 child：实际物理成本来自 provider.transport.settled，
+      而非逻辑回答次数；hidden retry 也计入。
     """
-    engine = _engine_from(request)
-    sess = engine.session.load(session_id)
-    if sess is None:
-        return UTF8JSONResponse(status_code=404, content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"})
     msgs = getattr(sess, "messages", []) or []
     turns = steps = 0
     for m in msgs:
@@ -2558,6 +2555,7 @@ def session_stats(session_id: str, request: Request) -> Any:
     ttft_sum = 0.0
     ttft_n = 0
     usage_events = 0
+    events = []
     event_store = getattr(engine.session, "_event_store", None)
     if event_store is not None and getattr(event_store, "enabled", False):
         try:
@@ -2584,6 +2582,7 @@ def session_stats(session_id: str, request: Request) -> Any:
                     ttft_sum += ttft
                     ttft_n += 1
         except Exception:  # noqa: BLE001 — 事件读取失败回退消息字段（fail-open）
+            events = []
             usage_events = 0
     if usage_events == 0:
         # 回退：消息字段（内存态会话有统计字段；event_log replay 无则如实 0）
@@ -2612,7 +2611,7 @@ def session_stats(session_id: str, request: Request) -> Any:
         }
         for _mdl, _b in sorted(by_model.items())
     }
-    return {
+    result: dict[str, Any] = {
         "turns": turns,
         "steps": steps,
         "tokens_in": tokens_in,
@@ -2625,6 +2624,89 @@ def session_stats(session_id: str, request: Request) -> Any:
         "ttft_avg_ms": round(ttft_sum / ttft_n, 1) if ttft_n else 0.0,
         "tok_s": tok_s,
     }
+    parent_id = str(getattr(sess, "parent_id", "") or "")
+    is_subagent = bool(parent_id and session_id.startswith("subagent_"))
+    result["agent_scope"] = {
+        "kind": "subagent" if is_subagent else "session",
+        "parent_session_id": parent_id if is_subagent else None,
+    }
+    result["usage_source"] = "request.usage" if usage_events else "message_legacy"
+    if is_subagent:
+        from llm_loop.core.provider_transport_usage_stats import (
+            summarize_physical_provider_usage,
+        )
+
+        # Reuse the exact same append-only snapshot already read for request.usage:
+        # double reads could combine inconsistent accounting boundaries mid-run.
+        physical = summarize_physical_provider_usage(events)
+        result["physical_provider_usage"] = physical
+        if physical is not None:
+            result.update(
+                tokens_in=physical["input_tokens"],
+                tokens_out=physical["output_tokens"],
+                cache_hit=physical["cached_input_tokens"],
+                cache_hit_rate=physical["cache_hit_rate"],
+                by_model={
+                    name: {
+                        "tokens_in": value["input_tokens"],
+                        "cache_hit": value["cached_input_tokens"],
+                        "cache_hit_rate": value["cache_hit_rate"],
+                    }
+                    for name, value in physical["by_model"].items()
+                },
+                llm_ms=physical["transport_duration_ms"],
+                tok_s=(
+                    round(physical["output_tokens"] / (physical["transport_duration_ms"] / 1000), 1)
+                    if physical["transport_duration_ms"] > 0 else 0.0
+                ),
+                usage_source=physical["usage_source"],
+            )
+        else:
+            # Legacy child messages often serialize all token/cache fields as
+            # zero even with real Provider usage; "unknown" is not "all miss".
+            result["cache_hit_rate"] = None
+            result["usage_source"] = "unavailable"
+    return result
+
+
+@router.get("/api/v1/sessions/{session_id}/stats")
+def session_stats(
+    session_id: str, request: Request, child_id: str | None = None,
+) -> Any:
+    """Read-only per-agent usage; exact child_id optionally compares two scopes.
+
+    A child is not labelled Reviewer without a trusted role declaration.
+    No auto-enumeration, semantic guessing, or charge aggregation across agents.
+    """
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"},
+        )
+    sess = engine.session.load(session_id)
+    result = _stats_for_loaded_session(engine, session_id, sess)
+    if child_id is not None:
+        if (
+            not child_id.startswith("subagent_")
+            or not engine.session.exists(child_id)
+        ):
+            return UTF8JSONResponse(
+                status_code=404, content={"error": "child_session_not_found"},
+            )
+        child = engine.session.load(child_id)
+        if child.parent_id != session_id:
+            return UTF8JSONResponse(
+                status_code=404, content={"error": "child_session_not_found"},
+            )
+        child_stats = _stats_for_loaded_session(engine, child_id, child)
+        result["agent_comparison"] = {
+            "parent": dict(result),
+            "child": child_stats,
+            "child_session_id": child_id,
+            "reviewer_role": "unverified",
+        }
+    return result
 
 @router.get("/api/v1/interop/messages")
 def list_interop_messages(request: Request) -> dict:

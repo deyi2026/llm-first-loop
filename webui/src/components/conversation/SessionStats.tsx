@@ -6,7 +6,9 @@ interface SessionStats {
   tokens_in: number;
   tokens_out: number;
   cache_hit: number;
-  cache_hit_rate: number;
+  cache_hit_rate: number | null;
+  usage_source: string;
+  agent_scope: "subagent" | "session";
   llm_ms: number;
   tool_ms: number;
   ttft_avg_ms: number;
@@ -27,7 +29,14 @@ function normalizeSessionStats(value: unknown): SessionStats | null {
     tokens_in: finiteNumber(raw.tokens_in),
     tokens_out: finiteNumber(raw.tokens_out),
     cache_hit: finiteNumber(raw.cache_hit),
-    cache_hit_rate: finiteNumber(raw.cache_hit_rate),
+    // "usage not reported" is not a 0%-hit sample.
+    cache_hit_rate: typeof raw.cache_hit_rate === "number" && Number.isFinite(raw.cache_hit_rate)
+      ? raw.cache_hit_rate : null,
+    usage_source: typeof raw.usage_source === "string" ? raw.usage_source : "unknown",
+    agent_scope:
+      typeof raw.agent_scope === "object" && raw.agent_scope !== null
+      && (raw.agent_scope as Record<string, unknown>).kind === "subagent"
+        ? "subagent" : "session",
     llm_ms: finiteNumber(raw.llm_ms),
     tool_ms: finiteNumber(raw.tool_ms),
     ttft_avg_ms: finiteNumber(raw.ttft_avg_ms),
@@ -80,19 +89,21 @@ export function SessionStats({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="v2-session-stats" data-testid="session-stats">
-      <span>{stats.turns} 轮 · {stats.steps} 步</span>
+      <span>{stats.agent_scope === "subagent" ? "子代理 · " : ""}{stats.turns} 轮 · {stats.steps} 步</span>
       <span className="v2-stats-sep">|</span>
       <span>LLM {fmtMs(stats.llm_ms)} · 工具 {fmtMs(stats.tool_ms)}</span>
       <span className="v2-stats-sep">|</span>
       <span>首 token 平均 {(stats.ttft_avg_ms / 1000).toFixed(1)}s · {stats.tok_s} tok/s</span>
       <span className="v2-stats-sep">|</span>
       <span
-        className={stats.cache_hit_rate >= 90 ? "v2-stats-ok" : "v2-stats-warn"}
+        className={stats.cache_hit_rate === null ? "" : stats.cache_hit_rate >= 90 ? "v2-stats-ok" : "v2-stats-warn"}
         // EVO-20260818（spec §5.4.1-1，grill-me Q6）: 口径标注——本处为会话累计口径；
         // 命中率权威口径为"会话近 10 次窗口"（architecture_status.cache_guard.recent_hit_rate）
-        title={"会话累计口径（tokens_hit/tokens_in）；命中率权威口径为近 10 次窗口（architecture_status.cache_guard）"}
+        title={stats.agent_scope === "subagent"
+          ? "子代理独立物理 Provider 回执（含隐藏重试），不与父会话混计；未上报不等于零命中"
+          : "会话累计口径（tokens_hit/tokens_in）；命中率权威口径为近 10 次窗口（architecture_status.cache_guard）"}
       >
-        缓存命中 {stats.cache_hit_rate}%（累计）
+        缓存命中 {stats.cache_hit_rate === null ? "未上报" : stats.cache_hit_rate + "%"}（累计）
       </span>
       <span className="v2-stats-sep">|</span>
       <span>输入 {fmtTok(stats.tokens_in)} tok · 输出 {fmtTok(stats.tokens_out)} tok</span>
