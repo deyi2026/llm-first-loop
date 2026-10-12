@@ -1,39 +1,39 @@
 {
   "ok": true,
-  "session_id": "65e9f915-5ad2-4451-9ab4-8b1063dfd893",
+  "session_id": "091e56f6-20c5-4397-8ccf-1842b88e8f85",
   "n": 3,
   "items": [
     {
-      "queue_id": "q_b3db024638af",
+      "queue_id": "q_039408b52a34",
+      "grade": "applied",
+      "t_ack_ms": 2.1,
+      "t_persist_ms": 1984.4,
+      "t_effect_ms": 1986.5,
+      "t_applied_ms": 1989.2
+    },
+    {
+      "queue_id": "q_dff16af73f42",
+      "grade": "applied",
+      "t_ack_ms": 2.4,
+      "t_persist_ms": 2002.6,
+      "t_effect_ms": 2005.0,
+      "t_applied_ms": 2007.3
+    },
+    {
+      "queue_id": "q_cbafd2962ab6",
       "grade": "applied",
       "t_ack_ms": 2.0,
-      "t_persist_ms": 1974.8,
-      "t_effect_ms": 1976.8,
-      "t_applied_ms": 1978.9
-    },
-    {
-      "queue_id": "q_d4b97c0811a2",
-      "grade": "applied",
-      "t_ack_ms": 1.9,
-      "t_persist_ms": 2000.7,
-      "t_effect_ms": 2002.6,
-      "t_applied_ms": 2010.7
-    },
-    {
-      "queue_id": "q_b89d29c34e75",
-      "grade": "applied",
-      "t_ack_ms": 4.4,
-      "t_persist_ms": 1997.3,
-      "t_effect_ms": 2001.7,
-      "t_applied_ms": 2004.0
+      "t_persist_ms": 2003.5,
+      "t_effect_ms": 2005.4,
+      "t_applied_ms": 2007.8
     }
   ],
-  "p50_t_ack_ms": 2.0,
-  "p95_t_ack_ms": 4.4,
-  "p50_t_persist_ms": 1997.3,
-  "p95_t_persist_ms": 2000.7,
-  "p50_t_effect_ms": 2001.7,
-  "p95_t_effect_ms": 2002.6,
-  "p50_t_applied_ms": 2004.0,
-  "p95_t_applied_ms": 2010.7
+  "p50_t_ack_ms": 2.1,
+  "p95_t_ack_ms": 2.4,
+  "p50_t_persist_ms": 2002.6,
+  "p95_t_persist_ms": 2003.5,
+  "p50_t_effect_ms": 2005.0,
+  "p95_t_effect_ms": 2005.4,
+  "p50_t_applied_ms": 2007.3,
+  "p95_t_applied_ms": 2007.8
 }
