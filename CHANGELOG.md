@@ -12,6 +12,7 @@
 - **r9 守卫与门禁批次（10-11）**：静默异常吞没守卫——except+单条 pass 必须带原因说明（a48094102/f5799c467/0d2574d66）；诊断棘轮不再把缓存不可写误报为 runner crashed（4f12265cc）；ci_gate 管道早关导致的门禁基建失败修复并清零 ruff BLOCK NEW（9ac1740e5）。
 - **版本面**：pyproject / web SERVICE_VERSION / README（中英）/ CHANGELOG 全表面对齐 0.6.31（版本一致性测试约束）。
 - **公开库 CI 适配（2026-10-12 追记）**：rule-presence 账本契约测试在无内部治理目录（`.codeartsdoer`）的开源分发环境条件跳过（对齐 test_docs_sync 既有口径）——首轮公开库快照 CI 因该目录不随库分发而 FileNotFoundError 误报失败。
+- **提权闭环安全批次（10-12 追记，523d8b5f6/73e09586d/c8163f8bf/deff8b620，尚未进公开快照）**：EscalationStore 状态/审计/锁文件全面 owner-only 0600——`O_NOFOLLOW` 打开 + fstat 校验（regular/本人 uid/nlink=1，防符号链接与硬链接替换），遗留 0644 文件在打开的描述符上读前收紧；状态损坏从 fail-open"按空处理"改为 fail-closed 拒绝覆盖（防篡改重置审批记录）；审批令牌不写入审计日志；新状态以随机名 `O_CREAT|O_EXCL|O_NOFOLLOW` 0600 创建 + fsync + 原子 replace（消除 0644 临时文件暴露批准令牌的窗口，且对 durability 写扫描器可见）；Web 审批请求 schema `extra="forbid"` 拒绝一切未声明字段（含管理员密码——Web 审批是任务决定而非 OS 密码收集 API，字段被拒后被拦命令不执行）。设计文档明确 LFL 审批与 macOS 原生管理员授权两层不可互代。已随全舰队部署（web gen239 / feishu / learning，git a691955f1）。
 
 ## v0.6.30 — 经验使用声明账本化 + 知识库 use 硬门双源（2026-10-11）
 
