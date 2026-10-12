@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import workspace_base
 
 
 class SearchFilesTool:
@@ -92,23 +93,27 @@ class SearchFilesTool:
                 tool_name=self.name,
             )
 
-        # 搜索根解析：默认项目根；显式 root 允许外部工作区（如 /tmp 评测目录），
-        # 但拒绝敏感/系统目录（防御纵深：防 .env/.ssh 等密钥文件被便捷扫描）。
-        # __file__ = src/llm_loop/tools/builtin/search_files.py → 上 5 级 = 项目根
-        project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
+        # 搜索根必须与 read_file / execute_command 使用同一个实时工作区。
+        # 受管 Web 的 __file__ 位于不可变 .releases/<sha>/src，
+        # docs / experiences / data 等真实工作区内容则在 runtime_root。
+        # 不能把代码包位置错误当作工作区根而触发 HOME 越权误判。
+        project_root = Path(workspace_base()).expanduser().resolve()
+        home = Path.home().resolve()
+        trusted_workspace = project_root != home and project_root not in home.parents
         if root:
-            base = (project_root / root).resolve()
-            if not base.exists():
-                base = Path(root).resolve()
+            # Absolute roots remain absolute; relative roots are *always*
+            # relative to the bound workspace, never to the process cwd.
+            base = (project_root / Path(root).expanduser()).resolve()
             # 敏感目录黑名单（解析后路径前缀匹配；命中即拒，防越权扫密钥）
-            home = Path.home().resolve()
             _sensitive_prefixes = (
                 home,  # 家目录整体（含 .ssh/.aws/.env 等）
                 Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
                 Path("/var/root"), Path("/private/etc"), Path("/private/var/root"),
             )
             try:
-                base.relative_to(project_root)  # 项目内 → 直接放行
+                if not trusted_workspace:
+                    raise ValueError("HOME or ancestor is not a trusted workspace")
+                base.relative_to(project_root)  # 真实工作区内 → 直接放行
             except ValueError:
                 for sp in _sensitive_prefixes:
                     try:
@@ -130,6 +135,13 @@ class SearchFilesTool:
                 )
         else:
             base = project_root
+            if not trusted_workspace:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[越权拒绝] 工作区根过宽，禁止直接搜索家目录或其上层",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
 
         if not base.is_dir():
             return ToolResult(
@@ -166,6 +178,10 @@ class SearchFilesTool:
                     dirnames[:] = [d for d in dirnames if d not in _ignore_dirs]
                     for fn in filenames:
                         fp = Path(dirpath) / fn
+                        # os.walk does not follow directory links by default;
+                        # likewise, never follow a file link outside the root.
+                        if fp.is_symlink():
+                            continue
                         rel = fp.relative_to(base)
                         if pattern and not (fnmatch.fnmatch(fn, pattern) or rel.match(pattern)):
                             continue
@@ -194,6 +210,8 @@ class SearchFilesTool:
                 for dirpath, dirnames, filenames in os.walk(base):
                     dirnames[:] = [d for d in dirnames if d not in _ignore_dirs]
                     for fn in filenames:
+                        if (Path(dirpath) / fn).is_symlink():
+                            continue
                         # 审查低危修复: 匹配相对路径（支持 '**/models/*.py' 等路径模式），
                         # 原实现只匹配 basename（'src/x.py' 模式永远不中）
                         rel = (Path(dirpath) / fn).relative_to(base)

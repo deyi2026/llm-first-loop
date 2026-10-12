@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
+
+from llm_loop.core.run_context import current_workspace_root
 from llm_loop.tools.builtin.search_files import SearchFilesTool
 
 
@@ -128,3 +132,106 @@ def test_invalid_max_results_type():
     r = tool.execute(pattern="*.py", max_results="not-a-number")
     assert r.status.value == "failure"
     assert "参数错误" in r.content
+
+
+def test_managed_release_searches_real_runtime_workspace(monkeypatch, tmp_path):
+    """Managed source under .releases must not reject the runtime's ordinary directories."""
+    module = importlib.import_module("llm_loop.tools.builtin.search_files")
+    simulated_home = tmp_path / "home" / "owner"
+    workspace = simulated_home / "Project" / "lfl"
+    (workspace / "docs" / "promotion" / "receipts").mkdir(parents=True)
+    (workspace / "docs" / "governance").mkdir(parents=True)
+    (workspace / "experiences").mkdir()
+    (workspace / "data" / "methods").mkdir(parents=True)
+    (workspace / "docs" / "promotion" / "receipts" / "20261012-check.json").write_text("{}")
+    (workspace / "experiences" / "experience.md").write_text("experience")
+    (workspace / "data" / "methods" / "method.md").write_text("method")
+    (workspace / "docs" / "session-notes-20261012.md").write_text("session notes")
+    (workspace / "docs" / "ai_rules.md").write_text("card-lifecycle")
+
+    module_path = workspace / ".releases" / "gen999" / "src" / "llm_loop" / "tools" / "builtin" / "search_files.py"
+    monkeypatch.setattr(module, "__file__", str(module_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: simulated_home))
+    ctx = current_workspace_root.set(str(workspace))
+    try:
+        tool = SearchFilesTool()
+        cases = (
+            ("docs/promotion/receipts", "*20261012*", "20261012-check.json"),
+            ("experiences", "*", "experience.md"),
+            ("data/methods", "*", "method.md"),
+            ("docs", "*session-notes*", "session-notes-20261012.md"),
+        )
+        for subdir, pattern, expected in cases:
+            r = tool.execute(root=str(workspace / subdir), pattern=pattern, max_results=1)
+            assert r.status.value == "success", (subdir, r.content)
+            assert expected in r.content
+        r = tool.execute(root=str(workspace / "docs"), pattern="ai_rules.md", content="card-lifecycle")
+        assert r.status.value == "success" and "ai_rules.md:1:" in r.content
+        r = tool.execute(root="experiences", pattern="experience.md")
+        assert r.status.value == "success" and "experience.md" in r.content
+        r = tool.execute(pattern="*session-notes*")
+        assert r.status.value == "success" and "docs/session-notes-20261012.md" in r.content
+
+        # A missing subdirectory is not a permission denial.
+        r = tool.execute(root=str(workspace / "docs" / "governance" / "card-audit"), pattern="*")
+        assert r.status.value == "failure" and "[目录不存在]" in r.content
+        # A real external HOME root must remain disallowed.
+        r = tool.execute(root=str(simulated_home), pattern="*")
+        assert r.status.value == "failure" and "[越权拒绝]" in r.content
+    finally:
+        current_workspace_root.reset(ctx)
+
+
+def test_unbounded_home_context_cannot_whitelist_entire_home(monkeypatch, tmp_path):
+    """Even a misconfigured workspace pointing at HOME cannot search HOME recursively."""
+    home = tmp_path / "owner"
+    home.mkdir()
+    (home / "normal.txt").write_text("visible")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    ctx = current_workspace_root.set(str(home))
+    try:
+        tool = SearchFilesTool()
+        for arg in ({"pattern": "*"}, {"root": str(home), "pattern": "*"}):
+            r = tool.execute(**arg)
+            assert r.status.value == "failure" and "[越权拒绝]" in r.content
+    finally:
+        current_workspace_root.reset(ctx)
+
+
+def test_search_never_uses_process_cwd_as_fallback_for_relative_root(monkeypatch, tmp_path):
+    """A nonexistent workspace-relative path must not resolve to an unrelated cwd."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    (outside / "receipt_only").mkdir(parents=True)
+    (outside / "receipt_only" / "match.txt").write_text("match")
+    monkeypatch.chdir(outside)
+    token = current_workspace_root.set(str(workspace))
+    try:
+        tool = SearchFilesTool()
+        r = tool.execute(root="receipt_only", pattern="match.txt")
+        assert r.status.value == "failure"
+        assert "[目录不存在]" in r.content
+        # Existing explicit absolute-root behavior still works outside HOME.
+        r = tool.execute(root=str(outside / "receipt_only"), pattern="match.txt")
+        assert r.status.value == "success" and "match.txt" in r.content
+    finally:
+        current_workspace_root.reset(token)
+
+
+def test_search_does_not_follow_linked_files_outside_the_search_root(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "other"
+    outside.mkdir()
+    (outside / "outside.txt").write_text("outside_marker")
+    (workspace / "linked.txt").symlink_to(outside / "outside.txt")
+    (workspace / "normal.txt").write_text("normal_marker")
+    tool = SearchFilesTool()
+    by_name = tool.execute(root=str(workspace), pattern="*.txt")
+    assert by_name.status.value == "success"
+    assert "normal.txt" in by_name.content
+    assert "linked.txt" not in by_name.content
+    by_content = tool.execute(root=str(workspace), content="outside_marker")
+    assert by_content.status.value == "success"
+    assert "无匹配" in by_content.content
