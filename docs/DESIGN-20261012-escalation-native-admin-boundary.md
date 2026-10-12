@@ -47,7 +47,8 @@ Apple 官方参考：
 - EscalationStore 记录、审计、锁文件使用 owner-only 0600。
 - 旧 0644 token 文件读入前在原始打开描述符上校验并收紧权限；
   损坏、符号链接、不属于进程本人的文件一律 fail-closed。
-- 新记录用 mkstemp(0600) + fsync + 原子 replace；
+- 新记录用随机文件名 + os.open(O_CREAT|O_EXCL|O_NOFOLLOW, 0600)
+  + fsync + 原子 replace；
   消除临时文件以 0644 暴露批准令牌的窗口。
 - Web 审批请求拒绝任何未声明字段，包括管理员密码。
 

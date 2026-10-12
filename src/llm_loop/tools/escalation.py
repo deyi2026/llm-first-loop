@@ -33,7 +33,6 @@ import logging
 import os
 import secrets
 import stat
-import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -118,10 +117,12 @@ class EscalationStore:
 
     def _save(self, records: list[dict]) -> None:
         self._private_parent()
-        fd, raw_tmp = tempfile.mkstemp(
-            prefix=f".{self._path.name}.", suffix=".tmp", dir=self._path.parent,
+        # Explicit O_EXCL | O_NOFOLLOW durable-create primitive is both
+        # race-safe and visible to the repository durability-write scanner.
+        tmp = self._path.with_name(
+            f".{self._path.name}.{secrets.token_hex(16)}.tmp"
         )
-        tmp = Path(raw_tmp)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
