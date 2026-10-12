@@ -465,6 +465,29 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+## 规则二十九：方法/经验用后负反馈必须在当前任务收口前闭环（RULE-AI-29，用户指示 2026-10-12）
+
+**规则**：使用 method/experience 卡片后发现不适配、误导或时效过期时，必须在**当前任务收口（最终答复 / goal complete）前**完成对应负反馈处置；任务内已明确判定的当场处置，不等收口。RULE-AI-18 管"用前核适用性"，本条管"用后交账"——不做用后反馈，下一次任务继续踩同一个坑。
+
+1. **触发情形**（任一即触发）：
+   - (a) **不适配**：实际使用与卡片适用边界不符（条件不满足）；
+   - (b) **误导**：按卡片步骤执行走错路或引入返工（内容错误）；
+   - (c) **时效过期**：卡片引用的 source/版本已变化，freshness 需刷新。
+2. **分级处置**：
+   - **记录（保底义务）**：所有实际使用（含正反馈）落 `record_use(use_decision=applied/adapted/not_applicable/rejected)`；method 池用 `method_manage`，experience 池用 `refine_experience`；
+   - **修正优化（首选）**：可修复的过时/不准 → `method_manage(refine/annotate_freshness)` 或 `refine_experience` 补充修正，能改不弃；
+   - **弃用（核验后）**：前提错误 → `method_manage(transition=invalidate)`；方法仍真但不再适用或已被更好方法替代 → `transition=retire`；experience 池 → `refine_experience(invalidate)`；均须注 root_cause。
+3. **证据要求**：修正与弃用必须携带本次任务的实际观察（evidence_refs / 回执），不接受"感觉不对"。**"我用不上" ≠ "它错了"**：仅不适配且无证据表明卡片本身有错 → `record_use(not_applicable)+note` 保留给其他场景，不得升级为弃用（与 `docs/governance/card-lifecycle.md` R3 三轴"禁止混判"一致）。
+4. **时限**：最迟在当前任务收口（最终答复 / goal complete）前完成；任务内已明确判定的当场处置（衔接 card-lifecycle R3"任何使用现场发现前提不成立 ⇒ 当场走事实轴"，本条把该纪律升格为 SoT 行为规则并扩展覆盖三轴全量负反馈，含非失效类的记录与修正）。
+5. **Learning Plane 兜底（非替代）**：会话后 ReflectionRun 扫描本会话 `record_use` 负反馈中卡片侧未处置的条目，产出修正候选或纳入周检清单——模型义务在前，程序兜底在后；经验积累管理（卡片库 active/hold/retired/invalidated 视图、超期未刷新清单）为 learning 通道演进项，独立立项，不阻塞本条行为义务。
+
+**程序角色**：无新增。现有工具契约（`refine_experience` / `method_manage`）已支撑全部动作；本条是行为义务与时机的 SoT 化，不引入强制门。
+
+**正例**：method 卡步骤在新版工具下失效 → 任务内 `record_use(rejected)` + `annotate_freshness` 标失效版本 + 提 refine 修正，收口前完成。
+**反例**：用过时 method 卡绕路后任务答复但零处置；发现误导但 `invalidate` 不带 evidence；仅不适用就 `invalidate`（混淆 not_applicable 与 invalid）。
+
+---
+
 ## 配置扩展（2026-09-03 agency-first 修订）
 
 Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。

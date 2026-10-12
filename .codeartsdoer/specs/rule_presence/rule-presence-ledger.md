@@ -8,11 +8,11 @@
 
 | 字段 | 值 |
 |---|---|
-| `generated_at` | 2026-10-12（重新盘点：RULE-AI-27 入库补登记，EVO-20261012-e29ead3c；2026-09-23 盘点后 `_BASE_PROMPT` 因 SOUL 前置逐字钉入变更，hash 随之更新） |
+| `generated_at` | 2026-10-12（重新盘点：RULE-AI-28 台账补登 + RULE-AI-29 入库，EVO-20261012-19f88338；同日早前盘点：RULE-AI-27 入库补登记，EVO-20261012-e29ead3c） |
 | `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
 | `lite_version` | 19 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 31（实测 2026-10-12；RULE-AI-00~27（缺 21）见 §2.3，附则/子规则/方法层见 §2.4） |
+| `records` | 33（实测 2026-10-12；RULE-AI-00~29（21 编号空缺，SoT :333 说明）见 §2，附则/子规则/方法层见 §2.4） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |
@@ -37,7 +37,7 @@
 
 > **结论**：`_BASE_PROMPT` 对 A 组（终止性/收口）**零承载**，对 B 组仅承载"按需检索经验/方法"这一发现入口，**未承载触发时机**。
 
-### M2 hydration `record_kind` 计数（`data/audit/injection_ledger.jsonl`，只读）
+### M2 hydration `record_kind` 计数（`data/audit/injection_ledger.jsonl`，只读；基线 2026-09-23 盘点时点，运行时自然增长，当前值见 §5）
 
 | `record_kind` | count |
 |---|---|
@@ -106,6 +106,8 @@
 | RULE-AI-25 | 委派回传/编排规模上下文经济纪律（SoT + lite v19 按需水合） | 在库未注入 | EVO-20260923-6c3aa564（2026-09-23 人工批准）新增：中间产物正文不进编排者上下文，回传默认结论+stable ref+短摘要≤200字符；模型行为纪律，无工具契约承载 |
 | RULE-AI-26 | 时间标注统一宿主本地时区（SoT 2026-09-29 用户指示） | 在库未注入 | 时间权威锚=宿主本地时钟：程序层 `system_local_now()`（timekeeping），模型层消息头 `[message_time system_local=…]`；行为纪律（不推 UTC/不猜时区/不迁移旧时区），程序承载位=timekeeping 契约+消息头锚点，无 universal prompt 注入 |
 | RULE-AI-27 | 任务理解章程——可证伪回显、授权隔离、纠偏即记账（SoT 2026-10-12） | 在库未注入 | EVO-20261012-e29ead3c（2026-10-12 人工批准）新增：出章程显式触发四条件+触发原因外化、可证伪验收、未纠≠认可、授权隔离（章程确认不得作为授权依据）、修订路径封闭+继承、验收条目落 Goal/task、纠偏即记账、敏感值不落章、防压缩后重放；模型行为纪律，无工具契约承载 |
+| RULE-AI-28 | 三道审查闸——代码全量测试前/文章发布前/push 前独立子代理审查（SoT 2026-10-12） | 在库未注入 | EVO-20261012（用户指示 2026-10-12，入库提交 30ece512e）新增：三类高成本/难撤回动作前独立审查子代理 PASS 为必要条件，审查者与执行者分离；三态 verdict（PASS/REVISE/BLOCK）+ 回执落盘；豁免三类（用户豁免/纯文案/既有回执且 SHA 未变）如实记录；与知识体系持续优化循环衔接；行为纪律，无工具契约承载。**台账本次补登**（并行会话入库时漏登，EVO-20261012-19f88338 连带处置） |
+| RULE-AI-29 | 方法/经验用后负反馈必须在当前任务收口前闭环（SoT 2026-10-12） | 在库未注入 | EVO-20261012-19f88338（2026-10-12 人工批准）新增：触发三情形（不适配/误导/时效过期）+ 三级处置（record_use 保底 / refine·annotate_freshness 修正首选 / invalidate·retire 核验后弃用）+ 证据要求（"我用不上"≠"它错了"，not_applicable 不得升级弃用）+ 收口时限（明确判定当场处置）+ Learning Plane 兜底非替代；模型行为纪律，工具契约已支撑，无新增程序角色 |
 
 > RULE-AI-22 同时出现在 §2.2（B3 子缺口：discover→hydrate 触发时机）与本节（主条款设计性零注入），二者不冲突：本特性只补"触发时机"子语义，不改主条款。
 
@@ -153,6 +155,7 @@
 | 改动后回归：全量 `tests/unit` | **EXIT=0（全绿，无新增红）** |
 | 重新盘点（2026-09-23）：lite v18→v19 / RULE-AI-25 入库补登记 | 触发 §6 条件 2；`rule_presence_audit.py` 实测 `records=28`、`base_prompt_hash=8934d96c3f25` 未变、hydration `memory/memory_extract=18/18`；`test_rule_presence_contract.py` 18/18 绿 |
 | 重新盘点（2026-10-12）：RULE-AI-27 入库补登记 | EVO-20261012-e29ead3c（人工批准）执行；`rule_presence_audit.py` 实测 `records=31`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677`、lite v19 未变；`test_ledger_covers_all_sot_rules` 修复后绿（详见本轮回归记录） |
+| 重新盘点（2026-10-12）：RULE-AI-28 台账补登 + RULE-AI-29 入库 | EVO-20261012-19f88338（人工批准）执行；`rule_presence_audit.py` 实测 `records=33`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677` 未变、lite v19 未变（hydration kind 计数为运行时数据自然增长：memory/memory_extract=70/70、method=24，非本次改动所致）；`test_ledger_covers_all_sot_rules` 覆盖 28/29 后绿 |
 | 已知红处置 | 无新增已知红；既有已知红仍为"修复 或 显式接受"，**未扩基线** |
 
 ## 6. 重新盘点触发条件
