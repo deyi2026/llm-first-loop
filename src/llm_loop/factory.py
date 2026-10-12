@@ -35,6 +35,7 @@ from llm_loop.browser.profile_policy import ack_digest, annotation_for, evaluate
 from llm_loop.config import Settings
 from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
+from llm_loop.core.loop.side_effects import SideEffectRegistry
 from llm_loop.core.message import ToolResult
 from llm_loop.core.run_context import (
     current_model_label as current_model_label_ctx,
@@ -50,7 +51,10 @@ from llm_loop.core.run_context import (
     workspace_base as runtime_workspace_base,
 )
 from llm_loop.core.schedule_delivery import ScheduleWakeDelivery
-from llm_loop.core.scheduler import ScheduleStore  # 2026-08-27 BUGFIX: 共享实例装配
+from llm_loop.core.scheduler import (
+    ScheduleStore,  # 2026-08-27 BUGFIX: 共享实例装配
+    register_event_predicate,
+)
 from llm_loop.core.session import SessionStore, _validate_session_id
 from llm_loop.feedback.honesty import delete_feedback_for_session
 from llm_loop.feedback.validator import DeclarationValidator
@@ -733,14 +737,11 @@ def build_engine(
     # Phase3 M3（G3）：副作用登记面（只登记不撤销；撤销仍走上面的既有 hook）。
     # 生产装配启用；tests/conftest.py 装配不 configure（内存模式），差异由
     # M3 测试显式对齐（M0 报告审查修订版 §4「装配一致性」项）。
-    from llm_loop.core.loop.side_effects import SideEffectRegistry
-
     SideEffectRegistry.instance().configure(str(settings.data_dir))
 
     # Phase3 M4（G4）：登记 job_terminal 事件谓词求值器（只读 snapshot，无副作用）。
     # generation_reached/action_settled 属闭集但求值器由对应服务的运行时登记；
     # 未登记时 fail-safe 回退超时分支（scheduler._predicate_satisfied）。
-    from llm_loop.core.scheduler import register_event_predicate
 
     def _job_terminal(job_id: str) -> bool:
         snap = _job_registry.snapshot(str(job_id)) or {}
