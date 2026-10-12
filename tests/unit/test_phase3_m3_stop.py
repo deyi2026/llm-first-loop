@@ -352,13 +352,16 @@ def test_p1_3_stop_record_freshness_and_lazy_settle(build_test_engine, tmp_path)
 def test_p1_4_cross_instance_merge(tmp_path):
     """P1-4 回归：两个实例同文件交替写——A 的登记不被 B 整文件覆盖丢失."""
     d = str(tmp_path / "se")
-    a = SideEffectRegistry(); a.configure(d)
-    b = SideEffectRegistry(); b.configure(d)
+    a = SideEffectRegistry()
+    a.configure(d)
+    b = SideEffectRegistry()
+    b.configure(d)
     a.register("s1", "execute_command", "job:j1 cmd:sleep", "process_bg", revocable=True)
     b.register("s2", "dsh_task", "job:j2 task:t", "dsh_bg", revocable=True)
     a.register("s1", "browser_operate", "click:x", "browser_mutation", revocable=False)
     # 用第三个实例重读：三行全在（旧版此处只剩 b 的最后一写或 a 的覆盖）
-    c = SideEffectRegistry(); c.configure(d)
+    c = SideEffectRegistry()
+    c.configure(d)
     assert len(c.snapshot("s1")) == 2 and len(c.snapshot("s2")) == 1
 
 
