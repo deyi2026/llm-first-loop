@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import copy
 import logging
@@ -534,10 +535,8 @@ class BackgroundRunner:
             except Exception:  # noqa: BLE001 — 工具硬取消失败仍保留循环 cancelled 标志
                 logger.warning("后台 run 工具取消失败（fail-open）: session=%s", session_id, exc_info=True)
         if _se is not None:
-            try:
+            with contextlib.suppress(Exception):  # noqa: BLE001 — 观测面 fail-open
                 _se.record_stop_dispatched(session_id, _se.settle_session_stopped(session_id))
-            except Exception:  # noqa: BLE001
-                pass
         return True
 
     def is_cancelled(self, session_id: str) -> bool:
