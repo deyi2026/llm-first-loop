@@ -130,7 +130,7 @@ def test_four_states_bg_job_revocable(build_test_engine, tmp_path):
 def test_external_unknown_and_confirm(build_test_engine, tmp_path):
     """不可撤销副作用（浏览器 mutation 类）：external_unknown 可枚举 → 人工 confirm（无 TTL）."""
     engine, _fake = build_test_engine([{"content": "ok"}])
-    se = _se(tmp_path)
+    _se(tmp_path)
     sid = engine.session.create()
     runner = BackgroundRunner(engine)
     engine.runner = runner
@@ -303,7 +303,7 @@ def test_p1_3_stop_record_freshness_and_lazy_settle(build_test_engine, tmp_path)
     )
     from llm_loop.tools.builtin.execute_command import ExecuteCommandTool  # noqa: F401
 
-    se = _se(tmp_path)
+    _se(tmp_path)
     engine.registry.add_session_cancel_hook(JobRegistry.instance().cancel_session)
     sid = engine.session.create()
     runner = BackgroundRunner(engine)
