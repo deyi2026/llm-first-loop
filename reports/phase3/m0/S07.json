@@ -2,7 +2,7 @@
   "scenario": "S07",
   "title": "预算 CAS 失败注入（存量测试证据）",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-13T06:01:07",
+  "started_at": "2026-10-13T06:27:32",
   "steps": [],
   "wall": {},
   "dur_ms": {},
@@ -15,9 +15,9 @@
     "returncode": 0,
     "tail": [
       "............                                                             [100%]",
-      "12 passed in 8.25s"
+      "12 passed in 7.77s"
     ]
   },
-  "finished_at": "2026-10-13T06:01:16",
+  "finished_at": "2026-10-13T06:27:41",
   "status": "ok"
 }

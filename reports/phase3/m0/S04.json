@@ -2,43 +2,43 @@
   "scenario": "S04",
   "title": "停止后台 execute_command job",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-13T06:01:03",
+  "started_at": "2026-10-13T06:27:28",
   "steps": [],
   "wall": {
-    "job_terminal_observed": 1791842463.12
+    "job_terminal_observed": 1791844048.48
   },
   "dur_ms": {
-    "cancel_session_call_ms": 0.3,
-    "stop_to_terminal_observed_ms": 0.4
+    "cancel_session_call_ms": 0.2,
+    "stop_to_terminal_observed_ms": 0.2
   },
   "obs": {
     "assembly": "production_fair: session_cancel_hook registered (factory.py:731)",
-    "bg_start_result_head": "[后台任务已启动] job_id=job-2db5037feb474f12bd01 status=running\n命令: sleep 30\n用 job_output(job_id=job-2db5037feb474f12bd01) 查询输出；如用户明确要求终止，再按取消意图处理。",
+    "bg_start_result_head": "[后台任务已启动] job_id=job-1 status=running\n命令: sleep 30\n用 job_output(job_id=job-1) 查询输出；如用户明确要求终止，再按取消意图处理。",
     "job_state_before_stop": {
       "state": "running"
     },
     "cancel_session_count": 1,
     "job_state_after_stop": {
-      "job_id": "job-2db5037feb474f12bd01",
-      "session_id": "7bdcbc77-56df-4773-acbd-4bfd662c0f72",
+      "job_id": "job-1",
+      "session_id": "86afb303-42c6-4281-aa16-87dafeb21e4e",
       "origin_run_generation": "",
-      "workspace_root": "/private/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/pytest-of-yyj/pytest-4782/test_s04_stop_background_job0",
+      "workspace_root": "/private/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/pytest-of-yyj/pytest-4793/test_s04_stop_background_job0",
       "executor": "execute_command",
       "state": "killed",
       "exit_code": null,
       "killed": true,
-      "cancel_requested": true,
+      "cancel_requested": false,
       "local_handle": true,
-      "durable": true,
+      "durable": false,
       "state_durable": false,
       "auto_reclaim": false,
       "output": [],
       "command": "sleep 30",
-      "started_at": 1791842463.118187,
+      "started_at": 1791844048.478975,
       "finished_at": null
     }
   },
   "endpoints": {},
-  "finished_at": "2026-10-13T06:01:03",
+  "finished_at": "2026-10-13T06:27:28",
   "status": "ok"
 }

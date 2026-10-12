@@ -2,7 +2,7 @@
   "scenario": "S03",
   "title": "临界竞态：run 运行中错代 / run 结束后插话",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-13T06:00:57",
+  "started_at": "2026-10-13T06:27:23",
   "steps": [],
   "wall": {},
   "dur_ms": {},
@@ -12,8 +12,8 @@
     "after_end_status": 409,
     "after_end_error": "interject_no_live_run",
     "queue_states_end": {
-      "q_2d4ab9fef20a": "queued",
-      "q_5b88f69d5b31": "queued"
+      "q_3c7c6f676e2d": "queued",
+      "q_e18be961721a": "queued"
     }
   },
   "endpoints": {
@@ -34,6 +34,6 @@
       }
     }
   },
-  "finished_at": "2026-10-13T06:01:03",
+  "finished_at": "2026-10-13T06:27:28",
   "status": "ok"
 }
