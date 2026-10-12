@@ -737,6 +737,19 @@ def build_engine(
 
     SideEffectRegistry.instance().configure(str(settings.data_dir))
 
+    # Phase3 M4（G4）：登记 job_terminal 事件谓词求值器（只读 snapshot，无副作用）。
+    # generation_reached/action_settled 属闭集但求值器由对应服务的运行时登记；
+    # 未登记时 fail-safe 回退超时分支（scheduler._predicate_satisfied）。
+    from llm_loop.core.scheduler import register_event_predicate
+
+    def _job_terminal(job_id: str) -> bool:
+        snap = _job_registry.snapshot(str(job_id)) or {}
+        return str(snap.get("state", "")).lower() in {
+            "done", "killed", "error", "cancelled", "exited", "finished",
+        }
+
+    register_event_predicate("job_terminal", _job_terminal)
+
     # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
     # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs
     # capture-before-projection and emits a bounded recovery capsule.

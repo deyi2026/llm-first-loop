@@ -51,6 +51,43 @@ WAKE_DEFERRED = object()
 _WAKE_GRANT_LOCK = threading.Lock()
 _WAKE_GRANTS: dict[tuple[str, str], Any] = {}
 
+# ── Phase3 M4（G4）：事件谓词闭集与登记（白名单扩展点）──────────────────
+# 扩展流程：先扩 EVENT_PREDICATE_KINDS（代码评审门），再 register_event_predicate
+# 登记求值器。求值器契约：fn(ref: str) -> bool；异常一律按 False（fail-safe 回退
+# 到超时分支，不阻断调度主链路）。求值只读外部状态，不得有副作用。
+EVENT_PREDICATE_KINDS = frozenset({"job_terminal", "generation_reached", "action_settled"})
+_EVENT_PREDICATES: dict[str, Callable[[str], bool]] = {}
+_EVENT_PREDICATE_LOCK = threading.Lock()
+_EVENT_PREDICATE_WARNED: set[str] = set()
+
+
+def register_event_predicate(kind: str, evaluator: Callable[[str], bool]) -> str:
+    """登记事件谓词求值器；闭集外 kind 拒绝（ValueError）。返回 kind。"""
+    if kind not in EVENT_PREDICATE_KINDS:
+        raise ValueError(f"event predicate kind not in closed set: {kind}")
+    with _EVENT_PREDICATE_LOCK:
+        _EVENT_PREDICATES[kind] = evaluator
+    return kind
+
+
+def _predicate_satisfied(entry: ScheduleEntry) -> bool:
+    """求值条目谓词；未登记/异常按未满足（fail-safe 到超时分支）。"""
+    kind = entry.event_predicate
+    if not kind:
+        return False
+    with _EVENT_PREDICATE_LOCK:
+        fn = _EVENT_PREDICATES.get(kind)
+    if fn is None:
+        if kind not in _EVENT_PREDICATE_WARNED:
+            _EVENT_PREDICATE_WARNED.add(kind)
+            logger.warning("event predicate kind 未登记求值器，回退超时分支: %s", kind)
+        return False
+    try:
+        return bool(fn(entry.predicate_ref))
+    except Exception:  # noqa: BLE001 — 求值器异常 fail-safe
+        logger.warning("event predicate 求值异常，回退超时分支 kind=%s", kind, exc_info=True)
+        return False
+
 
 class ScheduleEntry:
     """单条提醒."""
@@ -79,6 +116,11 @@ class ScheduleEntry:
         scheduled_trigger_at: float | None = None,
         wake_delivery_state: str = "scheduled",
         wake_wait_reason: str = "",
+        event_predicate: str = "",
+        predicate_ref: str = "",
+        armed: bool = False,
+        event_won: str = "",
+        event_fired_at: float = 0.0,
     ) -> None:
         self.sid = sid
         self.message = message
@@ -104,6 +146,13 @@ class ScheduleEntry:
         self.subject_refs: list[dict] = [
             dict(r) for r in (subject_refs or []) if isinstance(r, dict)
         ]
+        # Phase3 M4（G4）：事件谓词唤醒。armed=True 表示等待「事件先于超时」；
+        # 谓词不携带授权语义（D8）——授权仍由 wake_grant 委派链独占。
+        self.event_predicate = str(event_predicate or "")
+        self.predicate_ref = str(predicate_ref or "")
+        self.armed = bool(armed) and bool(self.event_predicate)
+        self.event_won = str(event_won or "")
+        self.event_fired_at = float(event_fired_at or 0.0)
 
     def to_dict(self) -> dict:
         d = {
@@ -131,6 +180,15 @@ class ScheduleEntry:
         # 仅非空时含键：不带 refs 的条目形态与现状逐字一致（回归项）
         if self.subject_refs:
             d["subject_refs"] = [dict(r) for r in self.subject_refs]
+        # Phase3 M4：谓词字段只在设置时写入（回归安全：老数据回读/快照零变化）
+        if self.event_predicate:
+            d["event_predicate"] = self.event_predicate
+            d["predicate_ref"] = self.predicate_ref
+            d["armed"] = self.armed
+        if self.event_won:
+            d["event_won"] = self.event_won
+        if self.event_fired_at:
+            d["event_fired_at"] = self.event_fired_at
         return d
 
     @classmethod
@@ -159,6 +217,11 @@ class ScheduleEntry:
             subject_refs=[
                 dict(r) for r in (d.get("subject_refs") or []) if isinstance(r, dict)
             ],
+            event_predicate=str(d.get("event_predicate", "") or ""),
+            predicate_ref=str(d.get("predicate_ref", "") or ""),
+            armed=bool(d.get("armed", False)),
+            event_won=str(d.get("event_won", "") or ""),
+            event_fired_at=float(d.get("event_fired_at", 0.0) or 0.0),
         )
 
 
@@ -570,9 +633,25 @@ class ScheduleStore:
         session_id: str = "", wake_grant: Any = None,
         goal_id: str = "", goal_generation: str = "",
         subject_refs: list | None = None,
+        event_predicate: str = "",
+        predicate_ref: str = "",
     ) -> str:
-        """新增提醒；返回 sid."""
+        """新增提醒；返回 sid.
+
+        Phase3 M4（G4）：event_predicate 要求 ①wake=True（谓词不携带授权语义，
+        授权仍由 wake_grant 委派链独占，D8）②非重复条目（armed 一次性语义）。
+        违反即 ValueError——失败在落盘之前，不留半登记状态。
+        """
         trigger = at if at is not None else time.time() + max(0.0, after)
+        if event_predicate:
+            if not wake:
+                raise ValueError("event_predicate requires wake=True (D8: 谓词不携带授权语义)")
+            if repeat_interval:
+                raise ValueError("event_predicate requires non-repeating entry (armed 一次性)")
+            if event_predicate not in EVENT_PREDICATE_KINDS:
+                raise ValueError(f"event_predicate not in closed set: {event_predicate}")
+            if not predicate_ref:
+                raise ValueError("event_predicate requires predicate_ref")
         sid = f"sched-{uuid.uuid4().hex[:8]}"
         entry = ScheduleEntry(
             sid=sid, message=message, trigger_at=trigger,
@@ -582,6 +661,9 @@ class ScheduleStore:
             goal_id=goal_id,
             goal_generation=goal_generation,
             subject_refs=subject_refs,
+            event_predicate=event_predicate,
+            predicate_ref=predicate_ref,
+            armed=bool(event_predicate),  # M4：登记即 armed，一次性即焚
         )
         # Capability must exist before the persisted entry becomes claimable. This removes
         # the after=0 window where a scheduler could see wake=True but no grant yet.
@@ -824,8 +906,21 @@ class ScheduleStore:
                         e.wake_wait_reason = ""
                         self._set_wake_grant(e.sid, grant)
                         logger.info("wake delegation recovered before due sid=%s", e.sid)
-                if e.trigger_at > now:
+                # Phase3 M4（G4）：事件谓词竞速。
+                # 谓词分支先判（armed 且谓词满足）→ 提前 claim 且同 tick 双真时
+                # 事件确定性取胜；超时分支（trigger_at 已到、谓词未满足）→ armed
+                # 即焚，事件后到只记录不唤醒。竞速判定= flock 内字段翻转（CAS
+                # 语义），不比较墙钟（D3）；armed 一次性即焚：事件重放/重复求值
+                # 不会造成二次唤醒。
+                if e.armed and _predicate_satisfied(e):
+                    e.event_won = e.event_won or "event"
+                    e.event_fired_at = e.event_fired_at or now
+                    e.armed = False
+                elif e.trigger_at > now:
                     continue
+                elif e.armed:
+                    e.armed = False
+                    e.event_won = e.event_won or "timeout"
                 if e.lease_owner and e.lease_until > now:
                     continue
                 if (

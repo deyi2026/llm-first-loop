@@ -98,6 +98,20 @@ class ScheduleTool:
                     "required": ["type", "id"],
                 },
             },
+            "event_predicate": {
+                "type": "string",
+                "enum": ["job_terminal", "generation_reached", "action_settled"],
+                "description": (
+                    "Phase3 M4：事件谓词唤醒（闭集枚举）。与 after/at 超时构成双通道竞速——"
+                    "先到者触发唤醒，后到者只记录不重放。要求 wake=true（谓词不携带授权语义，"
+                    "授权仍由当前真人 run 的 wake_grant 链独占）且不可用于周期条目。"
+                    "示例：后台 job 完成即唤醒，最多等 after 秒兜底。"
+                ),
+            },
+            "predicate_ref": {
+                "type": "string",
+                "description": "谓词对象引用（job_id / 目标 generation 值 / action_id），与 event_predicate 配套必填。",
+            },
         },
         "required": ["message"],
     }
@@ -125,6 +139,8 @@ class ScheduleTool:
             max_count = int(kwargs.get("max_count", 1) or 1)
             wake = bool(kwargs.get("wake", False))
             subject_refs_raw = kwargs.get("subject_refs") or []
+            event_predicate = str(kwargs.get("event_predicate", "") or "").strip()
+            predicate_ref = str(kwargs.get("predicate_ref", "") or "").strip()
         except (TypeError, ValueError) as exc:
             # 审查低危修复: 参数类型转换异常如实返回 FAILURE（原实现直接外抛）
             return ToolResult(
@@ -275,6 +291,15 @@ class ScheduleTool:
                 wake_grant=wake_grant, goal_id=wake_goal_id,
                 goal_generation=wake_goal_generation,
                 subject_refs=subject_refs,
+                event_predicate=event_predicate,
+                predicate_ref=predicate_ref,
+            )
+        except ValueError as exc:  # M4：闭集/授权约束在落盘前拒绝
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=f"[schedule] 参数约束拒绝：{exc}",
+                tool_call_id="",
+                tool_name=self.name,
             )
         except ScheduleCommitUncertainError as exc:
             return ToolResult(
