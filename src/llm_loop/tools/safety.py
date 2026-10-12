@@ -512,6 +512,81 @@ _WRITE_MARKERS = (
 )
 
 
+def _readonly_inspection_command(command: str) -> bool | None:
+    """Conservative, shell-aware admission for ordinary source inspection.
+
+    The legacy substring guard rejected harmless searches for words such as
+    "rm " or "chmod" and had no support for rg / git show / git grep /
+    git ls-files.  Recognize only explicit inspection commands here; do not
+    try to authorize arbitrary shell syntax or subprocess-capable options.
+    None delegates unrelated commands to the existing legacy rule.
+    """
+    if not command or any(x in command for x in ("\n", "\r", "\x00", "\x60", "$")):
+        return False if command.lstrip().startswith(("rg ", "grep ", "git ")) else None
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return False if command.lstrip().startswith(("rg ", "grep ", "git ")) else None
+    if not tokens or tokens[0] not in {"rg", "grep", "git"}:
+        return None
+
+    # Only an explicit pipe into head/tail is allowed.  Reject chained
+    # commands, redirections, conditional shells, process substitutions, etc.
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token == "|":
+            if not segments[-1]:
+                return False
+            segments.append([])
+        elif token and all(ch in ";&|<>" for ch in token):
+            return False
+        else:
+            segments[-1].append(token)
+    if not segments[-1]:
+        return False
+    first = segments[0]
+    if first[0] == "rg":
+        # ripgrep --pre executes an arbitrary external preprocessor.
+        if any(
+            flag in {"--pre", "--pre-glob"}
+            or flag.startswith(("--pre=", "--pre-glob="))
+            for flag in first[1:]
+        ):
+            return False
+    elif first[0] == "git":
+        idx = 1
+        if len(first) > idx and first[idx] == "--no-pager":
+            idx += 1
+        if len(first) <= idx or first[idx] not in {"show", "grep", "ls-files"}:
+            return None
+        subcmd = first[idx]
+        arguments = first[idx + 1:]
+        if any(
+            opt in {"--ext-diff", "--textconv", "--open-files-in-pager"}
+            or opt.startswith(("--ext-diff=", "--textconv=", "--open-files-in-pager="))
+            for opt in arguments
+        ):
+            return False
+        # git grep's -O launches the specified pager/program.
+        if subcmd == "grep" and any(arg == "-O" or arg.startswith("-O") for arg in arguments):
+            return False
+        # git show supports writing to an output file and external diff tools.
+        if subcmd == "show" and any(
+            arg == "--output" or arg.startswith(("-o", "--output="))
+            for arg in arguments
+        ):
+            return False
+    # grep itself searches content; a quoted match pattern containing command
+    # names is not an instruction to execute those commands.
+
+    return all(
+        tail[0] in {"head", "tail"} for tail in segments[1:]
+    )
+
+
 def is_readonly_command(command: str) -> bool:
     """判定命令是否只读（EXEC_MODE=readonly 时放行只读，拦截写类）.
 
@@ -522,6 +597,9 @@ def is_readonly_command(command: str) -> bool:
     cmd = command.strip().lstrip()
     if not cmd:
         return False
+    inspection = _readonly_inspection_command(cmd)
+    if inspection is not None:
+        return inspection
     if cmd.startswith(_READONLY_PREFIXES):
         # 只读命令 + 无写标记 → 放行
         return not any(m in command for m in _WRITE_MARKERS)
