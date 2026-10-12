@@ -8,11 +8,11 @@
 
 | 字段 | 值 |
 |---|---|
-| `generated_at` | 2026-09-23（重新盘点：lite v18→v19 / RULE-AI-25 入库，§6 条件 2 触发；`base_prompt_hash` 未变） |
-| `base_prompt_hash` | `8934d96c3f25`（`sha256(_BASE_PROMPT)[:12]`，M1 实测） |
+| `generated_at` | 2026-10-12（重新盘点：RULE-AI-27 入库补登记，EVO-20261012-e29ead3c；2026-09-23 盘点后 `_BASE_PROMPT` 因 SOUL 前置逐字钉入变更，hash 随之更新） |
+| `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
 | `lite_version` | 19 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 28（RULE-AI-00~25 共 25 条，缺 21；+ 附则/子规则/方法层 3 条） |
+| `records` | 31（实测 2026-10-12；RULE-AI-00~27（缺 21）见 §2.3，附则/子规则/方法层见 §2.4） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |
@@ -105,6 +105,7 @@
 | RULE-AI-23 | 授权来源判定 | 在库未注入 | 短回复最近绑定；历史提议不得自我授权 |
 | RULE-AI-25 | 委派回传/编排规模上下文经济纪律（SoT + lite v19 按需水合） | 在库未注入 | EVO-20260923-6c3aa564（2026-09-23 人工批准）新增：中间产物正文不进编排者上下文，回传默认结论+stable ref+短摘要≤200字符；模型行为纪律，无工具契约承载 |
 | RULE-AI-26 | 时间标注统一宿主本地时区（SoT 2026-09-29 用户指示） | 在库未注入 | 时间权威锚=宿主本地时钟：程序层 `system_local_now()`（timekeeping），模型层消息头 `[message_time system_local=…]`；行为纪律（不推 UTC/不猜时区/不迁移旧时区），程序承载位=timekeeping 契约+消息头锚点，无 universal prompt 注入 |
+| RULE-AI-27 | 任务理解章程——可证伪回显、授权隔离、纠偏即记账（SoT 2026-10-12） | 在库未注入 | EVO-20261012-e29ead3c（2026-10-12 人工批准）新增：出章程显式触发四条件+触发原因外化、可证伪验收、未纠≠认可、授权隔离（章程确认不得作为授权依据）、修订路径封闭+继承、验收条目落 Goal/task、纠偏即记账、敏感值不落章、防压缩后重放；模型行为纪律，无工具契约承载 |
 
 > RULE-AI-22 同时出现在 §2.2（B3 子缺口：discover→hydrate 触发时机）与本节（主条款设计性零注入），二者不冲突：本特性只补"触发时机"子语义，不改主条款。
 
@@ -151,6 +152,7 @@
 | 改动后回归：新增 `test_rule_presence_contract.py` | 18 passed |
 | 改动后回归：全量 `tests/unit` | **EXIT=0（全绿，无新增红）** |
 | 重新盘点（2026-09-23）：lite v18→v19 / RULE-AI-25 入库补登记 | 触发 §6 条件 2；`rule_presence_audit.py` 实测 `records=28`、`base_prompt_hash=8934d96c3f25` 未变、hydration `memory/memory_extract=18/18`；`test_rule_presence_contract.py` 18/18 绿 |
+| 重新盘点（2026-10-12）：RULE-AI-27 入库补登记 | EVO-20261012-e29ead3c（人工批准）执行；`rule_presence_audit.py` 实测 `records=31`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677`、lite v19 未变；`test_ledger_covers_all_sot_rules` 修复后绿（详见本轮回归记录） |
 | 已知红处置 | 无新增已知红；既有已知红仍为"修复 或 显式接受"，**未扩基线** |
 
 ## 6. 重新盘点触发条件
