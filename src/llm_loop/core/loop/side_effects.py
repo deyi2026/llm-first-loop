@@ -203,10 +203,8 @@ class SideEffectRegistry:
             rec = self._stops.setdefault(session_id, {})
             rec["requested_at"] = _now()
             rec["reason"] = reason[:120]
-            try:
-                self._save()
-            except SideEffectError:
-                pass  # fail-open：停止主链路优先，记录尽力而为
+            with contextlib.suppress(SideEffectError):
+                self._save()  # fail-open：停止主链路优先，记录尽力而为
 
     def record_stop_dispatched(self, session_id: str, stopped: int) -> None:
         with self._lock:
