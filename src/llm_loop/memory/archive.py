@@ -13,8 +13,11 @@ summary/chars/original。
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import uuid
@@ -25,6 +28,14 @@ from pathlib import Path
 
 from llm_loop.timekeeping import system_local_now
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX retains process-local locking
+    fcntl = None  # type: ignore[assignment]
+
+_ARCHIVE_PROCESS_LOCK = threading.RLock()
+_LOCK_FILENAME = ".__archive_store.lock"
+_DIR_FSYNC_ATTEMPTS = 3
 _PATH_TOKEN_RE = re.compile(r"[\w./\\\-]+")
 _FILE_EXT_RE = re.compile(r"\.\w{1,8}$")
 _URL_RE = re.compile(r"https?://\S+")
@@ -32,6 +43,83 @@ _URL_RE = re.compile(r"https?://\S+")
 
 def _now() -> str:
     return system_local_now().isoformat()
+
+
+class ArchivePersistError(OSError):
+    """Archive mutation is confirmed not to have reached a durable commit."""
+
+
+class ArchiveCommitUncertainError(OSError):
+    """Archive bytes might be visible despite an unconfirmed durability fence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        path: Path,
+        operation: str,
+        expected_sha256: str,
+        visible_state: str,
+    ) -> None:
+        super().__init__(message)
+        self.path = path
+        self.operation = operation
+        self.expected_sha256 = expected_sha256
+        self.visible_state = visible_state
+
+
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _bytes_visible(path: Path, expected: bytes) -> str:
+    try:
+        return "matches" if path.read_bytes() == expected else "mismatch"
+    except OSError:
+        return "unreadable"
+
+
+def _fsync_parent_or_uncertain(
+    path: Path, expected: bytes, *, operation: str,
+    directories: tuple[Path, ...] | None = None,
+) -> None:
+    for directory in directories or (path.parent,):
+        last_error: OSError | None = None
+        for _ in range(_DIR_FSYNC_ATTEMPTS):
+            try:
+                _fsync_directory(directory)
+                break
+            except OSError as exc:
+                last_error = exc
+        else:
+            raise ArchiveCommitUncertainError(
+                f"Archive {operation} visible but directory fsync unconfirmed: {last_error}",
+                path=path, operation=operation,
+                expected_sha256=hashlib.sha256(expected).hexdigest(),
+                visible_state=_bytes_visible(path, expected),
+            )
+
+
+def _atomic_replace_bytes(path: Path, payload: bytes, *, operation: str) -> None:
+    """Atomic segment or derived-index replacement (caller holds store lock)."""
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise ArchivePersistError(f"Archive {operation} not committed: {exc}") from exc
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+    _fsync_parent_or_uncertain(path, payload, operation=operation)
 
 
 @dataclass
@@ -155,6 +243,34 @@ class ArchiveStore:
         # EVO-20260922 增量统计缓存: sid → {seg_path: ((mtime_ns, size), count, chars)}
         # （读路径并发依赖 CPython dict 原子操作；最坏情形=并发重复扫描一次，不损正确性）
         self._stats_cache: dict[str, dict[str, tuple[tuple[int, int], int, int]]] = {}
+
+    @contextlib.contextmanager
+    def _writer_guard(self):
+        """One physical writer across ArchiveStore instances and processes.
+
+        Acquisition errors fail-closed. Exceptions from the mutation inside
+        yield retain their original typed outcome.
+        """
+        with _ARCHIVE_PROCESS_LOCK, self._mutation_lock:
+            if fcntl is None:
+                yield
+                return
+            fd: int | None = None
+            try:
+                fd = os.open(self._dir / _LOCK_FILENAME, os.O_CREAT | os.O_RDWR, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except OSError as exc:
+                if fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+                raise ArchivePersistError(f"Archive writer lock unavailable: {exc}") from exc
+            try:
+                yield
+            finally:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                with contextlib.suppress(OSError):
+                    os.close(fd)
 
     def add_post_save_hook(self, hook: Callable[[ArchiveEntry], None]) -> None:
         """Register a fail-open observer invoked after a durable archive append."""
@@ -299,18 +415,37 @@ class ArchiveStore:
     def delete_session(self, session_id: str) -> int:
         """物理删除精确sid全部base/legacy/new segments及sidecar索引。"""
         session_id = _validate_session_id(session_id)
+        with self._writer_guard():
+            return self._delete_session_locked(session_id)
+
+    def _delete_session_locked(self, session_id: str) -> int:
+        """Do not race session deletion against append/summary/GC writers."""
         removed = 0
+        touched_dirs: set[Path] = set()
         for segment in self._segment_paths(session_id):
             idx = self._index_path(segment)
             if idx.exists():
                 idx.unlink()
                 removed += 1
+                touched_dirs.add(idx.parent)
             if segment.exists():
                 segment.unlink()
                 removed += 1
+                touched_dirs.add(segment.parent)
         seg_dir = self._segments_dir(session_id)
         if seg_dir.exists():
             seg_dir.rmdir()  # 非空说明存在未知sidecar/段，必须失败而非误报物理删除完成
+            touched_dirs.add(self._dir)
+            touched_dirs.discard(seg_dir)
+        for directory in sorted(touched_dirs):
+            try:
+                _fsync_directory(directory)
+            except OSError as exc:
+                raise ArchiveCommitUncertainError(
+                    f"Archive deletion visible but directory fsync unconfirmed: {exc}",
+                    path=self._dir, operation="delete_session",
+                    expected_sha256="", visible_state="unconfirmed",
+                ) from exc
         return removed
 
     def _append_path(self, session_id: str) -> Path:
@@ -371,17 +506,71 @@ class ArchiveStore:
             summary_source=summary_source_override or "deterministic",
             reasoning_content=reasoning_content,
         )
-        with self._mutation_lock:
+        with self._writer_guard():
             p = self._append_path(session_id)  # T3b: 超阈值开新段
             p.parent.mkdir(parents=True, exist_ok=True)
             # T3c: 二进制追加取字节偏移（sidecar 索引定位用），UTF-8 无 BOM 下偏移稳定
             line_bytes = (json.dumps(entry.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
-            with p.open("ab") as f:
-                offset = f.tell()
-                f.write(line_bytes)
+            offset = self._append_primary_locked(p, line_bytes, entry.id)
             self._index_append(p, offset, entry)
         self._notify_post_save(entry)
         return entry
+
+    def _append_primary_locked(self, path: Path, line: bytes, entry_id: str) -> int:
+        """Durably append source bytes before derived index and observer effects.
+
+        On a failed append/fsync, roll back only the new tail while holding the
+        store lock. A failed rollback reports uncertain, never safe-to-retry.
+        The append itself remains T1: one complete JSONL line, not a T2 RMW.
+        """
+        created = not path.exists()
+        try:
+            with path.open("ab") as f:
+                offset = f.tell()
+                try:
+                    written = f.write(line)
+                    if written != len(line):
+                        raise OSError("short archive append")
+                    f.flush()
+                    os.fsync(f.fileno())
+                except OSError as exc:
+                    try:
+                        f.truncate(offset)
+                        f.flush()
+                        os.fsync(f.fileno())
+                        if os.fstat(f.fileno()).st_size != offset:
+                            raise OSError("tail rollback size mismatch")
+                    except OSError as rollback_error:
+                        raise ArchiveCommitUncertainError(
+                            f"Archive append failed and rollback unconfirmed: {exc}; {rollback_error}",
+                            path=path, operation="archive_append",
+                            expected_sha256=hashlib.sha256(line).hexdigest(),
+                            visible_state=self._append_visible(path, offset, line),
+                        ) from rollback_error
+                    raise ArchivePersistError(f"Archive append rolled back: {exc}") from exc
+        except (ArchivePersistError, ArchiveCommitUncertainError):
+            raise
+        except OSError as exc:
+            raise ArchivePersistError(f"Archive append not started: {exc}") from exc
+        if created:
+            # New segment file and potentially a new .segments directory are
+            # directory entries; both fences matter for restart visibility.
+            expected = line  # first entry of this new file
+            dirs = (path.parent, self._dir) if path.parent != self._dir else (self._dir,)
+            _fsync_parent_or_uncertain(
+                path, expected, operation=f"archive_append:{entry_id}", directories=dirs,
+            )
+        return offset
+
+    @staticmethod
+    def _append_visible(path: Path, offset: int, line: bytes) -> str:
+        try:
+            with path.open("rb") as f:
+                f.seek(offset)
+                actual = f.read(len(line))
+            return "matches" if actual == line else "mismatch"
+        except OSError:
+            return "unreadable"
 
     # ── T3c sidecar 索引：写入/读取 ──
 
@@ -405,6 +594,8 @@ class ArchiveStore:
             }
             with idx.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
         except OSError:
             logger = logging.getLogger(__name__)
             logger.warning("档案索引写失败（fail-open，检索回退全文扫描）: %s", idx)
@@ -415,6 +606,11 @@ class ArchiveStore:
         扫描段内每行，按与 _index_append 一致的 rec 格式写出索引（覆盖式重建，幂等）。
         损坏行跳过（fail-open）；返回成功索引的条目数。
         """
+        with self._writer_guard():
+            return self._rebuild_segment_index_locked(segment)
+
+    def _rebuild_segment_index_locked(self, segment: Path) -> int:
+        """Atomic derived index rebuild; primary segment remains authoritative."""
         idx = self._index_path(segment)
         count = 0
         try:
@@ -449,7 +645,8 @@ class ArchiveStore:
                         lines_out.append(json.dumps(rec, ensure_ascii=False))
                         count += 1
                     offset += len(raw)
-            idx.write_text("\n".join(lines_out) + ("\n" if lines_out else ""), encoding="utf-8")
+            payload = ("\n".join(lines_out) + ("\n" if lines_out else "")).encode("utf-8")
+            _atomic_replace_bytes(idx, payload, operation="index_rebuild")
         except OSError:
             logger = logging.getLogger(__name__)
             logger.warning("档案索引重建失败（fail-open）: %s", segment)
@@ -479,7 +676,7 @@ class ArchiveStore:
                 f.seek(offset)
                 raw = f.readline()
             return raw.decode("utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError, ValueError, TypeError):
             return None
 
     def search(
@@ -520,13 +717,20 @@ class ArchiveStore:
             idx = self._index_path(p)
             if idx.exists():
                 # 快速通道：索引预筛（含 role/tool_name 过滤）
-                for offset, _rec in self._index_scan(idx, q, role, tool_name):
+                for offset, rec in self._index_scan(idx, q, role, tool_name):
                     line = self._line_at(p, offset)
                     if line is None:
                         continue
                     try:
                         entry = json.loads(line)
                     except json.JSONDecodeError:
+                        continue
+                    if (
+                        str(entry.get("id") or "") != str(rec.get("id") or "")
+                        or entry.get("session_id", session_id) != session_id
+                    ):
+                        # A lagging index offset must never supply another
+                        # entry's canonical content or satisfy limit early.
                         continue
                     eid = entry.get("id", "")
                     if eid in seen_ids:
@@ -579,7 +783,10 @@ class ArchiveStore:
                     ).lower()
                     if q and q not in hay:
                         continue
-                    out.append((rec.get("offset", 0), rec))
+                    offset = rec.get("offset")
+                    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+                        continue  # corrupted derived offset; full scan recovers
+                    out.append((offset, rec))
         except OSError:
             return []  # 索引读失败 → 全文补齐兜底
         return out
@@ -690,9 +897,18 @@ class ArchiveStore:
                             if raw is None:
                                 continue
                             try:
-                                return json.loads(raw)
+                                indexed_entry = json.loads(raw)
                             except json.JSONDecodeError:
-                                return None
+                                continue
+                            # Sidecar is derived and may lag a segment rewrite.
+                            # Its offset must never authorize a different entry.
+                            if (
+                                indexed_entry.get("tool_call_id") == tool_call_id
+                                and indexed_entry.get("session_id", session_id) == session_id
+                                and str(indexed_entry.get("id") or "") == str(rec.get("id") or "")
+                            ):
+                                return indexed_entry
+                            # Continue to canonical linear scan on stale offset.
                 except OSError:
                     pass  # 索引读失败 → 回退全文扫描
             with p.open("r", encoding="utf-8") as f:
@@ -803,7 +1019,7 @@ class ArchiveStore:
         P3: 与 append 串行化物理 segment mutation；旧 run 的合法历史回填可以
         继续完成，但绝不能用旧 read snapshot 覆盖新 run 已追加的事实。
         """
-        with self._mutation_lock:
+        with self._writer_guard():
             p = self._entry_session_path(entry_id)
             if p is None:
                 return False
@@ -831,8 +1047,19 @@ class ArchiveStore:
                         found = True
                     out.append(json.dumps(entry, ensure_ascii=False))
                 if found:
-                    p.write_text("\n".join(out) + "\n", encoding="utf-8")
+                    payload = ("\n".join(out) + "\n").encode("utf-8")
+                    _atomic_replace_bytes(p, payload, operation="update_summary")
+                    # Index is reconstructible; if its rebuild fails,
+                    # canonical source is still usable through full scan.
+                    self._rebuild_segment_index_locked(p)
                 return found
+            except ArchiveCommitUncertainError as exc:
+                logging.getLogger(__name__).warning(
+                    "档案摘要提交结果不确定，禁止盲重放，先 exact readback: "
+                    "path=%s sha256=%s visible=%s",
+                    exc.path, exc.expected_sha256, exc.visible_state,
+                )
+                return False  # existing bool fail-open contract, no false durability claim
             except OSError:
                 return False
 
@@ -866,6 +1093,13 @@ class ArchiveStore:
         if max_entries <= 0 and ttl_days <= 0:
             return {"pruned_files": 0, "pruned_entries": 0}
 
+        # The complete read/plan/replace cycle must exclude concurrent
+        # append and summary backfill, including other service processes.
+        with self._writer_guard():
+            return self._cleanup_locked(max_entries=max_entries, ttl_days=ttl_days)
+
+    def _cleanup_locked(self, *, max_entries: int, ttl_days: int) -> dict:
+        """Best-effort per-file pruning under the store-wide writer lease."""
         import logging
 
         total_pruned = 0
@@ -910,7 +1144,6 @@ class ArchiveStore:
                             except (TypeError, ValueError):
                                 recorded_at = None
                             if recorded_at is not None and recorded_at < cutoff_at:
-                                total_pruned += 1
                                 continue
                         kept.append(line)
                     per_seg[p] = kept
@@ -925,26 +1158,38 @@ class ArchiveStore:
                             break
                         if len(lines) <= to_drop:
                             to_drop -= len(lines)
-                            total_pruned += len(lines)
                             per_seg[p] = []
                         else:
                             per_seg[p] = lines[to_drop:]
-                            total_pruned += to_drop
                             to_drop = 0
                 # 写回/删除空段（与原始行数一致则零改动）
                 for p, kept in per_seg.items():
                     if len(kept) == orig_counts[p]:
                         continue
                     if kept:
-                        p.write_text("\n".join(kept) + "\n", encoding="utf-8")
-                        self.rebuild_segment_index(p)
+                        _atomic_replace_bytes(
+                            p, ("\n".join(kept) + "\n").encode("utf-8"),
+                            operation="cleanup_rewrite",
+                        )
+                        self._rebuild_segment_index_locked(p)
                     else:
-                        p.unlink(missing_ok=True)
                         self._index_path(p).unlink(missing_ok=True)
+                        p.unlink(missing_ok=True)
+                        try:
+                            _fsync_directory(p.parent)
+                        except OSError as exc:
+                            raise ArchiveCommitUncertainError(
+                                f"Archive cleanup deletion visible but dir fsync unconfirmed: {exc}",
+                                path=p, operation="cleanup_delete",
+                                expected_sha256="",
+                                visible_state="absent" if not p.exists() else "present",
+                            ) from exc
+                    total_pruned += max(0, orig_counts[p] - len(kept))
                     pruned_files += 1
                 seg_dir = self._segments_dir(sid)
                 if seg_dir.is_dir() and not any(seg_dir.iterdir()):
                     seg_dir.rmdir()
+                    _fsync_directory(self._dir)
             except Exception as exc:  # noqa: BLE001 — 单会话清理失败 fail-open
                 logging.getLogger(__name__).warning("档案 GC 失败（fail-open）: %s: %s", sid, exc)
                 continue
