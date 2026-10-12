@@ -8,6 +8,8 @@ solution: |
   规避（未验证）：填完后把焦点移回首条描述再提交；或发布前只对前 N-1 条断言 captions_nonempty，最后一条单列为已知不可持久化项。
   
   当前性验证：下次发布后，打开 https://mp.toutiao.com/profile_v4/graphic/publish?from=edit&pgc_id=<新PGC>，执行 document.querySelectorAll('textarea.pgc-img-caption-ipt') 并读每条 .value；应见最后一条为空字符串＝缺陷仍在；三条均非空＝已修复，本卡应转 invalidated。
+  
+  【2026-10-12 复核：缺陷仍在】第 10 期（PGC 7695739521175568939）与第 11 期（PGC 7695740310252421675）同会话再现，STATUS-20261012.md 已记为 known_gap，不再为它反复推送审核。本卡维持 active。
 evidence: "第 08 期 pgc 7695403879906738703：发布前守门 captions_nonempty=3（receipts/20261011-daily08-submit.json）；22:04 from=edit 页读回 caps[2]=\"\"；22:06 用 Input.insertText 重填并复读确认三条非空后保存；22:09 列表实见「已发布 展现12」即修改已过审；22:11 重开同一编辑页 caps[2] 仍为 \"\"。第 09 期 pgc 7695406258093818408 独立复现 caps[1] 为空。同会话对照组：同页「引用AI」用 label.click() 保存后持久化成立，证明非保存链路整体失效。"
 tags: [今日头条, 发布流水线, 图片描述, 持久化缺陷, 收口核对]
 source: {}

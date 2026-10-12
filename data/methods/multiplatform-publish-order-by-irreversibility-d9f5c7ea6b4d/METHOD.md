@@ -6,8 +6,11 @@ status: candidate
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:9f3f9ab8-30d9-4a2d-9f58-148054503778:1077:59dab84e9a0b2b7d36bd
 created_at: 2026-10-10T18:11:06.469958+08:00
-updated_at: 2026-10-10T18:11:06.469958+08:00
+updated_at: 2026-10-12T20:05:00+08:00
 ---
+
+> ⚠️ **本卡 discriminator 中「知乎发布即不可回滚」的结论已被推翻，应使用修订版 method:multiplatform-publish-order-by-irreversibility-8a3eb6cf2ab5。**
+> 原因：本卡用 `/edit/{id}` 探测知乎编辑入口得到 404/重定向，据此判不可回滚。2026-10-12 用平台真实路由 `/p/{id}/edit` 实测已发布文章可编辑并更新成功（回执 `receipts/20261012-daily10-submit.json` tail_fix_round）。URL 形式猜错直接翻转了不可逆性判断。本卡仅留作「如何误判不可逆性」的反例，不作为排序决策依据。
 # 多平台发布的顺序决策：把不可逆的放在最后
 
 ## Trigger
