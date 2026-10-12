@@ -11,6 +11,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.core.prompt import _BASE_PROMPT, build_system_prompt
 from llm_loop.introspection.registry_introspection import _SEARCH_RECORDS_TOOL_DEF
@@ -22,6 +24,7 @@ from tests.unit.test_err1210_recovery import _mk
 
 _ROOT = Path(__file__).resolve().parents[2]
 _LEDGER_MD = _ROOT / ".codeartsdoer" / "specs" / "rule_presence" / "rule-presence-ledger.md"
+_LEDGER_AVAILABLE = _LEDGER_MD.is_file()  # 账本为内部治理文档，开源仓库不含（同 test_docs_sync specs 口径）
 
 _BASELINE_SEARCH_RECORDS_COMPACT = 390
 _SLIM_PREFIX_HASH_12 = "5aeea16c7677"  # SOUL.MD 前置逐字钉入(1117 chars, 用户指令 2026-10-09); 前值 55cd98cf0928(645, EVO-20261009-0ffcaad8); 更早 66b4523a06e7(547, EVO-20261003-8b053766)
@@ -276,6 +279,7 @@ def test_audit_marks_undeterminable() -> None:
     assert all(v == "无法判定" for v in audit.slimming_gate_status(None).values())
 
 
+@pytest.mark.skipif(not _LEDGER_AVAILABLE, reason="rule-presence 账本为内部治理文档，开源仓库不含（同 test_docs_sync specs 口径）")
 def test_ledger_covers_all_sot_rules() -> None:
     sot = (_ROOT / "docs" / "ai_rules.md").read_text(encoding="utf-8")
     refs = _sot_rule_refs(sot)

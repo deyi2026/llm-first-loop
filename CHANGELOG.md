@@ -11,6 +11,7 @@
 - **离线双代理保证门默认关（0b8cfa370）**：offline dual-agent gate 集成进主链路，默认关闭。
 - **r9 守卫与门禁批次（10-11）**：静默异常吞没守卫——except+单条 pass 必须带原因说明（a48094102/f5799c467/0d2574d66）；诊断棘轮不再把缓存不可写误报为 runner crashed（4f12265cc）；ci_gate 管道早关导致的门禁基建失败修复并清零 ruff BLOCK NEW（9ac1740e5）。
 - **版本面**：pyproject / web SERVICE_VERSION / README（中英）/ CHANGELOG 全表面对齐 0.6.31（版本一致性测试约束）。
+- **公开库 CI 适配（2026-10-12 追记）**：rule-presence 账本契约测试在无内部治理目录（`.codeartsdoer`）的开源分发环境条件跳过（对齐 test_docs_sync 既有口径）——首轮公开库快照 CI 因该目录不随库分发而 FileNotFoundError 误报失败。
 
 ## v0.6.30 — 经验使用声明账本化 + 知识库 use 硬门双源（2026-10-11）
 
