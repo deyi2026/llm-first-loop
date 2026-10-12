@@ -8,3 +8,8 @@
   ../m1_rerun/。01:5x 起的修正版 S03/S04/S05 重跑记录（stop 路径语义与
   pre-M1 等价，M1 未触碰 cancel 链路）写入本目录并标注 ran_under=M1。
 - 教训：基线输出目录已参数化（PHASE3_REPORT_DIR），重跑不再默认覆盖。
+
+- 02:05 追记：一次运行时部署防护的自动 stash（phase3-wip-foreign）把 M1 版
+  S01–S12 记录短暂带回本目录，已清理回 m1_rerun/；本目录保留 README 与
+  S03/S04/S05（01:53 生产装配修正重跑，ran_under=M1-in-progress，stop 路径
+  语义与 pre-M1 等价）。

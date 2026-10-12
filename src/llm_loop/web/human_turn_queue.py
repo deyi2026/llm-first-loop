@@ -550,3 +550,61 @@ class HumanTurnQueue:
             terminals = [it for it in self._items if it not in actives]
             self._items = actives + terminals[-keep_n:]
             self._save()
+
+    # ── Phase3 M2（G2）：插话三口径时延聚合（只读，不产生写副作用）──
+
+    @staticmethod
+    def _pct(sorted_vals: list[float], p: float) -> float | None:
+        """最近邻序法百分位（机械可复算；n=0 → None，不造数）."""
+        if not sorted_vals:
+            return None
+        k = max(1, min(len(sorted_vals), int((p * len(sorted_vals) + 0.999999) // 1)))
+        return sorted_vals[k - 1]
+
+    def aggregate_interject_metrics(self, session_id: str) -> dict[str, Any]:
+        """三口径时延（ms）+ P50/P95（Phase3 §7.1，端侧零改动）.
+
+        口径（全部由已有时间戳机械推导，无墙钟注入）：
+        - t_ack_ms    = interject_requested_at - created_at（入队→HTTP 受理）
+        - t_persist_ms= received_at - interject_requested_at（受理→进入会话历史，
+                        含轮边界等待与 session 写盘；即「回执≠生效」的差值本体）
+        - t_effect_ms = received_at - created_at（入队→生效端到端）
+        - t_applied_ms= applied_at - created_at（入队→首个动作；未 applied 无值）
+        只统计 interject_received* 终态项；denied/requeued 不混入（口径含混即失真）。
+        """
+        rows: list[dict[str, Any]] = []
+        with self._lock:
+            items = [dict(it) for it in self._items]
+        for it in items:
+            if it.get("session_id") != session_id:
+                continue
+            if it.get("status") != "interject_received":
+                continue
+            c = it.get("created_at")
+            a = it.get("interject_requested_at")
+            r = it.get("received_at")
+            if not (c and a and r):
+                continue
+            row: dict[str, Any] = {
+                "queue_id": it.get("queue_id"),
+                "grade": self._public(it).get("grade"),
+                "t_ack_ms": round((a - c) * 1000, 1),
+                "t_persist_ms": round((r - a) * 1000, 1),
+                "t_effect_ms": round((r - c) * 1000, 1),
+                "t_applied_ms": (
+                    round((it["applied_at"] - c) * 1000, 1) if it.get("applied_at") else None
+                ),
+            }
+            rows.append(row)
+        out: dict[str, Any] = {
+            "session_id": session_id,
+            "n": len(rows),
+            "items": rows,
+        }
+        for key in ("t_ack_ms", "t_persist_ms", "t_effect_ms", "t_applied_ms"):
+            vals = sorted(
+                row[key] for row in rows if row.get(key) is not None
+            )
+            out[f"p50_{key}"] = self._pct(vals, 0.50)
+            out[f"p95_{key}"] = self._pct(vals, 0.95)
+        return out

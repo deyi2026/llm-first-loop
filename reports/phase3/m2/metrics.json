@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "session_id": "432f79f4-2dd2-4ef5-80c5-207600d37223",
+  "n": 3,
+  "items": [
+    {
+      "queue_id": "q_9bd3bbecff3d",
+      "grade": "applied",
+      "t_ack_ms": 1.8,
+      "t_persist_ms": 1980.7,
+      "t_effect_ms": 1982.5,
+      "t_applied_ms": 1984.8
+    },
+    {
+      "queue_id": "q_fbb8e76a2d6d",
+      "grade": "applied",
+      "t_ack_ms": 2.0,
+      "t_persist_ms": 1999.9,
+      "t_effect_ms": 2001.9,
+      "t_applied_ms": 2004.1
+    },
+    {
+      "queue_id": "q_7bf9e867d55b",
+      "grade": "applied",
+      "t_ack_ms": 1.9,
+      "t_persist_ms": 1994.7,
+      "t_effect_ms": 1996.6,
+      "t_applied_ms": 1998.8
+    }
+  ],
+  "p50_t_ack_ms": 1.9,
+  "p95_t_ack_ms": 2.0,
+  "p50_t_persist_ms": 1994.7,
+  "p95_t_persist_ms": 1999.9,
+  "p50_t_effect_ms": 1996.6,
+  "p95_t_effect_ms": 2001.9,
+  "p50_t_applied_ms": 1998.8,
+  "p95_t_applied_ms": 2004.1
+}
