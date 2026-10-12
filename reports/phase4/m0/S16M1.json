@@ -1,0 +1,58 @@
+{
+  "scenario": "S16M1",
+  "n": 5,
+  "samples": [
+    {
+      "tag": "S16M1-1",
+      "t_effect_ms": 25.3,
+      "elapsed_s": 0.85,
+      "final": "done",
+      "item_status": "interject_received",
+      "skipped_receipts": 1,
+      "no_cancel_synthesis": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16M1-2",
+      "t_effect_ms": 45.4,
+      "elapsed_s": 0.83,
+      "final": "done",
+      "item_status": "interject_received",
+      "skipped_receipts": 1,
+      "no_cancel_synthesis": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16M1-3",
+      "t_effect_ms": 45.6,
+      "elapsed_s": 0.82,
+      "final": "done",
+      "item_status": "interject_received",
+      "skipped_receipts": 1,
+      "no_cancel_synthesis": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16M1-4",
+      "t_effect_ms": 37.6,
+      "elapsed_s": 0.83,
+      "final": "done",
+      "item_status": "interject_received",
+      "skipped_receipts": 1,
+      "no_cancel_synthesis": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16M1-5",
+      "t_effect_ms": 15.0,
+      "elapsed_s": 0.83,
+      "final": "done",
+      "item_status": "interject_received",
+      "skipped_receipts": 1,
+      "no_cancel_synthesis": true,
+      "model_saw_interject": true
+    }
+  ],
+  "t_effect_p50_ms": 37.6,
+  "ran_under": "M1-gap-harvest"
+}

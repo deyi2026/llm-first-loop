@@ -1,0 +1,78 @@
+{
+  "scenario": "S16",
+  "title": "空窗插话：第二次 LLM 调用（final 生成窗口 1.5s）期间注入",
+  "ran_under": "M0-baseline",
+  "started_at": "2026-10-13T07:31:42",
+  "samples": [
+    {
+      "tag": "S16-1",
+      "llm_window_s": 1.5,
+      "window_open_perf": 3699428.027,
+      "inject_perf": 3699428.082,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "t_effect_ms": 1428.5,
+      "t_ack_ms": 2.0,
+      "cbf_recorded": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16-2",
+      "llm_window_s": 1.5,
+      "window_open_perf": 3699429.774,
+      "inject_perf": 3699429.829,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "t_effect_ms": 1426.3,
+      "t_ack_ms": 2.0,
+      "cbf_recorded": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16-3",
+      "llm_window_s": 1.5,
+      "window_open_perf": 3699431.544,
+      "inject_perf": 3699431.597,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "t_effect_ms": 1424.4,
+      "t_ack_ms": 2.0,
+      "cbf_recorded": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16-4",
+      "llm_window_s": 1.5,
+      "window_open_perf": 3699433.278,
+      "inject_perf": 3699433.333,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "t_effect_ms": 1430.6,
+      "t_ack_ms": 2.1,
+      "cbf_recorded": true,
+      "model_saw_interject": true
+    },
+    {
+      "tag": "S16-5",
+      "llm_window_s": 1.5,
+      "window_open_perf": 3699435.021,
+      "inject_perf": 3699435.076,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "t_effect_ms": 1429.3,
+      "t_ack_ms": 1.8,
+      "cbf_recorded": true,
+      "model_saw_interject": true
+    }
+  ],
+  "obs": {
+    "expectation": "现状：终答结算边界消费（CBF）→ t_effect ≈ 生成窗口剩余 ≈1.4s 量级",
+    "all_final_done": true,
+    "all_received": true
+  },
+  "finished_at": "2026-10-13T07:31:50",
+  "status": "ok",
+  "n": 5,
+  "t_effect_p50_ms": 1428.5,
+  "t_effect_p95_ms": 1430.6
+}

@@ -1,0 +1,152 @@
+{
+  "scenario": "S15",
+  "title": "竞速如实：sleep 1.5 + 1.45s 注入（剩余 ~50ms 边界）",
+  "ran_under": "M0-baseline",
+  "started_at": "2026-10-13T07:31:32",
+  "samples": [
+    {
+      "tag": "S15-1",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 1.5"
+      },
+      "inject_delay_s": 1.45,
+      "tool_started_perf": 3699418.56,
+      "inject_perf": 3699420.013,
+      "tool_done_perf": 3699420.07,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847894.495997,
+      "received_at": 1791847894.51092,
+      "t_effect_ms": 14.9,
+      "t_ack_ms": 2.3,
+      "model_saw_interject": true,
+      "llm_call_count": 2,
+      "tool_done_after_inject_ms": 57.0,
+      "received_minus_tooldone_ms": -42.1,
+      "branch": "natural_first"
+    },
+    {
+      "tag": "S15-2",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 1.5"
+      },
+      "inject_delay_s": 1.45,
+      "tool_started_perf": 3699420.103,
+      "inject_perf": 3699421.553,
+      "tool_done_perf": 3699421.614,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847896.045227,
+      "received_at": 1791847896.05603,
+      "t_effect_ms": 10.8,
+      "t_ack_ms": 3.2,
+      "model_saw_interject": true,
+      "llm_call_count": 2,
+      "tool_done_after_inject_ms": 61.0,
+      "received_minus_tooldone_ms": -50.2,
+      "branch": "natural_first"
+    },
+    {
+      "tag": "S15-3",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 1.5"
+      },
+      "inject_delay_s": 1.45,
+      "tool_started_perf": 3699421.654,
+      "inject_perf": 3699423.11,
+      "tool_done_perf": 3699423.166,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847897.574375,
+      "received_at": 1791847897.6052969,
+      "t_effect_ms": 30.9,
+      "t_ack_ms": 2.0,
+      "model_saw_interject": true,
+      "llm_call_count": 2,
+      "tool_done_after_inject_ms": 56.0,
+      "received_minus_tooldone_ms": -25.1,
+      "branch": "natural_first(noise_band)"
+    },
+    {
+      "tag": "S15-4",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 1.5"
+      },
+      "inject_delay_s": 1.45,
+      "tool_started_perf": 3699423.199,
+      "inject_perf": 3699424.653,
+      "tool_done_perf": 3699424.713,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847899.1444008,
+      "received_at": 1791847899.1523578,
+      "t_effect_ms": 8.0,
+      "t_ack_ms": 3.4,
+      "model_saw_interject": true,
+      "llm_call_count": 2,
+      "tool_done_after_inject_ms": 60.0,
+      "received_minus_tooldone_ms": -52.0,
+      "branch": "natural_first"
+    },
+    {
+      "tag": "S15-5",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 1.5"
+      },
+      "inject_delay_s": 1.45,
+      "tool_started_perf": 3699424.755,
+      "inject_perf": 3699426.209,
+      "tool_done_perf": 3699426.262,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847900.6888692,
+      "received_at": 1791847900.703827,
+      "t_effect_ms": 15.0,
+      "t_ack_ms": 2.0,
+      "model_saw_interject": true,
+      "llm_call_count": 2,
+      "tool_done_after_inject_ms": 53.0,
+      "received_minus_tooldone_ms": -38.0,
+      "branch": "natural_first(noise_band)"
+    },
+    {
+      "tag": "S15-6",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 1.5"
+      },
+      "inject_delay_s": 1.45,
+      "tool_started_perf": 3699426.295,
+      "inject_perf": 3699427.75,
+      "tool_done_perf": 3699427.806,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847902.214047,
+      "received_at": 1791847902.243382,
+      "t_effect_ms": 29.3,
+      "t_ack_ms": 2.0,
+      "model_saw_interject": true,
+      "llm_call_count": 2,
+      "tool_done_after_inject_ms": 56.0,
+      "received_minus_tooldone_ms": -26.7,
+      "branch": "natural_first(noise_band)"
+    }
+  ],
+  "obs": {
+    "branch_counts": {
+      "natural_first": 3,
+      "natural_first(noise_band)": 3
+    },
+    "expectation": "M0 现状无打断判定通道 → 应全部 natural_first，如实记录"
+  },
+  "finished_at": "2026-10-13T07:31:42",
+  "status": "ok",
+  "n": 6,
+  "t_effect_p50_ms": 14.9,
+  "t_effect_p95_ms": 30.9
+}

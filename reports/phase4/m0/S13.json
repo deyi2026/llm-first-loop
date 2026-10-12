@@ -1,0 +1,108 @@
+{
+  "scenario": "S13",
+  "title": "在途打断基线：2.0s 长工具 + 0.3s 注入",
+  "ran_under": "M0-baseline",
+  "started_at": "2026-10-13T07:31:12",
+  "samples": [
+    {
+      "tag": "S13-1",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 2.0"
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699398.305,
+      "inject_perf": 3699398.609,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847873.0729501,
+      "received_at": 1791847874.752639,
+      "t_effect_ms": 1679.7,
+      "t_ack_ms": 2.4,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S13-2",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 2.0"
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699400.326,
+      "inject_perf": 3699400.626,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847875.089269,
+      "received_at": 1791847876.778424,
+      "t_effect_ms": 1689.2,
+      "t_ack_ms": 2.2,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S13-3",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 2.0"
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699402.355,
+      "inject_perf": 3699402.66,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847877.1210492,
+      "received_at": 1791847878.806748,
+      "t_effect_ms": 1685.7,
+      "t_ack_ms": 1.9,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S13-4",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 2.0"
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699404.378,
+      "inject_perf": 3699404.683,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847879.175333,
+      "received_at": 1791847880.829706,
+      "t_effect_ms": 1654.4,
+      "t_ack_ms": 3.1,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S13-5",
+      "tool": "execute_command",
+      "tool_args": {
+        "command": "sleep 2.0"
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699406.414,
+      "inject_perf": 3699406.718,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847881.210272,
+      "received_at": 1791847882.86431,
+      "t_effect_ms": 1654.0,
+      "t_ack_ms": 3.5,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    }
+  ],
+  "obs": {
+    "expectation": "现状：t_effect ≈ 2.0 − 0.3 ≈ 1.7s 量级（工具自然完成后轮转消费）",
+    "all_final_done": true,
+    "all_received": true
+  },
+  "finished_at": "2026-10-13T07:31:22",
+  "status": "ok",
+  "n": 5,
+  "t_effect_p50_ms": 1679.7,
+  "t_effect_p95_ms": 1689.2
+}

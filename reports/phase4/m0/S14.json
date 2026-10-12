@@ -1,0 +1,108 @@
+{
+  "scenario": "S14",
+  "title": "不可中断保守：revocable=False 工具 + 0.3s 注入",
+  "ran_under": "M0-baseline",
+  "started_at": "2026-10-13T07:31:22",
+  "samples": [
+    {
+      "tag": "S14-1",
+      "tool": "phase4_locked_sleep",
+      "tool_args": {
+        "seconds": 2.0
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699408.436,
+      "inject_perf": 3699408.741,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847883.200403,
+      "received_at": 1791847884.87987,
+      "t_effect_ms": 1679.5,
+      "t_ack_ms": 1.8,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S14-2",
+      "tool": "phase4_locked_sleep",
+      "tool_args": {
+        "seconds": 2.0
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699410.451,
+      "inject_perf": 3699410.754,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847885.278285,
+      "received_at": 1791847886.89435,
+      "t_effect_ms": 1616.1,
+      "t_ack_ms": 2.0,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S14-3",
+      "tool": "phase4_locked_sleep",
+      "tool_args": {
+        "seconds": 2.0
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699412.482,
+      "inject_perf": 3699412.783,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847887.265829,
+      "received_at": 1791847888.9252758,
+      "t_effect_ms": 1659.4,
+      "t_ack_ms": 2.8,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S14-4",
+      "tool": "phase4_locked_sleep",
+      "tool_args": {
+        "seconds": 2.0
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699414.508,
+      "inject_perf": 3699414.808,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847889.295638,
+      "received_at": 1791847890.949451,
+      "t_effect_ms": 1653.8,
+      "t_ack_ms": 2.6,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    },
+    {
+      "tag": "S14-5",
+      "tool": "phase4_locked_sleep",
+      "tool_args": {
+        "seconds": 2.0
+      },
+      "inject_delay_s": 0.3,
+      "tool_started_perf": 3699416.531,
+      "inject_perf": 3699416.836,
+      "final_event": "done",
+      "item_status": "interject_received",
+      "created_at": 1791847891.2981372,
+      "received_at": 1791847892.97491,
+      "t_effect_ms": 1676.8,
+      "t_ack_ms": 2.1,
+      "model_saw_interject": true,
+      "llm_call_count": 2
+    }
+  ],
+  "obs": {
+    "expectation": "现状：与 S13 同（无打断机制）；M2 后必须保持自然边界（保守等待）",
+    "all_final_done": true,
+    "all_received": true
+  },
+  "finished_at": "2026-10-13T07:31:32",
+  "status": "ok",
+  "n": 5,
+  "t_effect_p50_ms": 1659.4,
+  "t_effect_p95_ms": 1679.5
+}
