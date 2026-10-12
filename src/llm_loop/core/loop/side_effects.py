@@ -156,10 +156,8 @@ class SideEffectRegistry:
                 if it.get("id") == eff_id and not it.get("settled_at"):
                     it["settled_at"] = _now()
                     it["settle_reason"] = reason[:60]
-                    try:
+                    with contextlib.suppress(SideEffectError):
                         self._save()
-                    except SideEffectError:
-                        pass
                     return True
             return False
 
@@ -177,10 +175,8 @@ class SideEffectRegistry:
                     it["settle_reason"] = reason[:60]
                     n += 1
             if n:
-                try:
+                with contextlib.suppress(SideEffectError):
                     self._save()
-                except SideEffectError:
-                    pass
         return n
 
     def confirm_external(self, eff_id: str, confirmed_by: str, note: str = "") -> bool:
@@ -191,10 +187,8 @@ class SideEffectRegistry:
                     it["confirmed_at"] = _now()
                     it["confirmed_by"] = str(confirmed_by)[:60]
                     it["confirm_note"] = str(note)[:200]
-                    try:
+                    with contextlib.suppress(SideEffectError):
                         self._save()
-                    except SideEffectError:
-                        pass
                     return True
             return False
 
@@ -219,20 +213,16 @@ class SideEffectRegistry:
             rec = self._stops.setdefault(session_id, {})
             rec["dispatched_stopped_at"] = _now()
             rec["dispatched_stopped_count"] = int(stopped)
-            try:
+            with contextlib.suppress(SideEffectError):
                 self._save()
-            except SideEffectError:
-                pass
 
     def record_local_terminated(self, session_id: str) -> None:
         """run 本地终态时刻（runner done/error 出口写入；精确终止侧口径）."""
         with self._lock:
             rec = self._stops.setdefault(session_id, {})
             rec["terminated_at"] = _now()
-            try:
+            with contextlib.suppress(SideEffectError):
                 self._save()
-            except SideEffectError:
-                pass
 
     def stop_record(self, session_id: str) -> dict[str, Any]:
         with self._lock:
