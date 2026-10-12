@@ -139,97 +139,829 @@
   "durability_registry": {
     "_doc": "Durable Run Contract 写入面登记：AST 扫描 src/llm_loop 中明确 filesystem 写入原语；每个候选文件必须归入一个 surface（tier=T1/T2/T3，status=conform|migrate|partial|observe）或 write_exemptions。登记只证明已分类，不自动证明符合 tier；新增登记必须走 guard(r9) 可见提交。",
     "surfaces": {
-      "assurance_p1_review_request_staging": {"tier":"T2","status":"partial","owner":"assurance-experimental","paths":["src/llm_loop/assurance/p1_review_supervisor.py"],"rationale":"P1 仅隔离 Task-owned Reviewer 候选/会话/spec 与 sandbox profile 文件：部分 atomic JSON fsync+replace+dir fsync，但原候选 write_bytes 和创建目录未形成完整持久栅栏；只有 provider-free P1 真 SIGKILL 负例，默认 NO-GO，不能据此认定 Task/外部副作用已恢复。"},
-      "assurance_p1_review_receipt": {"tier":"T2","status":"partial","owner":"assurance-experimental","paths":["src/llm_loop/assurance/p1_review_worker.py"],"rationale":"P1 离线 FakeLLM Reviewer 结果 JSON 经 O_EXCL tmp、file fsync、replace、dir fsync 落盘；该数据来自未受信模型，只有结构性回执，不是独立可信审查门或生产释放资格，保持 partial 与 default-off。"},
-      "assurance_p112_offline_executor_candidate": {"tier":"T2","status":"partial","owner":"assurance-experimental","paths":["src/llm_loop/assurance/p112_offline_vertical.py"],"rationale":"P1.12 offline-only Executor LoopEngine 的封闭写入工具：O_EXCL + file fsync + dir fsync，一次性局部候选写盘；Reviewer 与 local gate 对照其 sha。没有真实双模型 Provider 或生产发布授权、没有断电恢复实验，明确保持 T2 partial / default-off。"},
-      "browser_action_receipts": {"tier":"T1","status":"observe","owner":"browser","paths":["src/llm_loop/browser/action.py"],"rationale":"浏览器动作 receipt/grounding 落盘，属于可重放审计事实。"},
-      "browser_perception_store": {"tier":"T2","status":"observe","owner":"browser","paths":["src/llm_loop/browser/perception.py"],"rationale":"浏览器 perception/session/diff 状态为可覆盖状态文件。"},
-      "cache_guard_audit": {"tier":"T1","status":"observe","owner":"cache_guard","paths":["src/llm_loop/cache_guard/guard.py"],"rationale":"cache guard 结果以追加审计记录落盘。"},
-      "cache_health_audit": {"tier":"T1","status":"observe","owner":"core","paths":["src/llm_loop/core/cache_health.py"],"rationale":"cache health 运行遥测为追加型审计事实。"},
-      "interop_mailbox": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/loop/engine_services/interop.py"],"rationale":"interop inbox/done 文件承载跨运行状态转移。"},
-      "tool_reachability_telemetry": {"tier":"T1","status":"observe","owner":"core","paths":["src/llm_loop/core/loop/engine_services/tool_reachability.py"],"rationale":"tool reachability 投影/执行遥测以追加日志持久化。"},
-      "err1210_snapshots": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/loop/err1210.py"],"rationale":"1210 恢复快照是可覆盖诊断/恢复状态文件。"},
-      "run_event_sidecars": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/loop/events.py"],"rationale":"长答案与 inflight native sidecar 是恢复相关状态文件。"},
-      "hotcard_state": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/loop/hotcard.py"],"rationale":"hotcard 为当前运行状态快照，采用覆盖式文件语义。"},
-      "injection_span_ledger": {"tier":"T1","status":"observe","owner":"core","paths":["src/llm_loop/core/loop/injection_span.py"],"rationale":"injection span/defer 事实主要以追加 ledger 形式落盘。"},
-      "schedule_store": {"tier":"T2","status":"conform","owner":"core","paths":["src/llm_loop/core/scheduler.py"],"rationale":"T2 已实施：POSIX flock OSError fail-closed；tmp O_EXCL+file fsync+replace，replace 后仅重试目录 fsync；replace 前失败=definitely_not_committed 并回滚内存，replace 后 fsync 耗尽=commit_outcome_uncertain+flock 内 exact readback，内部 lifecycle 只在 visible_state=matches 时 reconcile、不盲重放。普通 notify 用 sid+count 稳定 effect identity；无 fcntl 时仅进程内兼容 fallback。验收=tests/unit/test_schedule_durability.py + schedule/interop caller regressions。"},
-      "session_store": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/session.py"],"rationale":"SessionStore 持久会话与 summary/backup 状态，按覆盖式状态文件分类。"},
-      "tool_execution_journal": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/tool_execution_journal.py"],"rationale":"工具执行 journal 含可恢复结算状态，按状态文件语义登记。"},
-      "trace_leak_quarantine": {"tier":"T2","status":"observe","owner":"core","paths":["src/llm_loop/core/trace_leak/leak_events.py"],"rationale":"trace leak quarantine 产物承载隔离后的恢复/审计状态。"},
-      "wake_authorization_store": {"tier":"T2","status":"conform","owner":"core","paths":["src/llm_loop/core/trace_leak/wake_authority.py"],"rationale":"DRC 已核：0600+flock+tmp+file fsync+replace+directory fsync+签名/tombstone。"},
-      "event_store": {"tier":"T1","status":"conform","owner":"event_log","paths":["src/llm_loop/event_log/store.py","src/llm_loop/event_log/rotate.py"],"rationale":"DRC 已核：锁+O_APPEND 单行+读侧尾部截断容错+seq。"},
-      "experience_store": {"tier":"T2","status":"conform","owner":"experiences","paths":["src/llm_loop/experiences/store.py"],"rationale":"2026-10-08 T2 迁移完成：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent；update_status=单写者 RMW+os.replace；均含目录 fsync fence 与 definitely_not_committed/commit_outcome_uncertain 分型+exact readback（test_experience_store_durability.py 12 例故障注入）。"},
-      "extensions_store": {"tier":"T2","status":"conform","owner":"extensions","paths":["src/llm_loop/extensions/store.py"],"rationale":"P1-A（DESIGN-20261009 §5.3/§9.1）：installed.json 单一写路径=flock 独占+expected_revision CAS（RevisionConflictError=晚到提交失败）+tmp+file fsync+os.replace+读回校验（失败=CommitUncertainError 不假装成功）；目录 fsync OSError 降级尽力而为（未做 fsync 耗尽故障注入，如实标注）；packages/ 不可变副本与 instances/ PLUGIN_DATA 为安装布局写。验收=tests/unit/test_extensions_store.py（CAS 冲突/顺序提交/T21 数据保留/敏感拒绝/损坏读拒绝）。"},
-      "browser_attestation_state": {"tier":"T2","status":"observe","owner":"factory","paths":["src/llm_loop/factory.py"],"rationale":"factory 装配期 browser attestation 通过临时文件覆盖持久化。"},
-      "service_exit_audit": {"tier":"T1","status":"observe","owner":"delivery","paths":["src/llm_loop/feishu/__init__.py","src/llm_loop/web/__init__.py"],"rationale":"Web/Feishu 退出原因以追加审计日志记录。"},
-      "feishu_bridge_state": {"tier":"T2","status":"observe","owner":"feishu","paths":["src/llm_loop/feishu/bridge.py"],"rationale":"Feishu interrupted/dedup 等桥接状态存在覆盖式持久化。"},
-      "feishu_audit": {"tier":"T1","status":"observe","owner":"feishu","paths":["src/llm_loop/feishu/handlers.py","src/llm_loop/feishu/rest.py"],"rationale":"Feishu handler/rest 审计行为为 JSONL 追加事实。"},
-      "feishu_session_map": {"tier":"T2","status":"observe","owner":"feishu","paths":["src/llm_loop/feishu/session_map.py"],"rationale":"会话映射是跨重启需要保留的覆盖式状态。"},
-      "fleet_store": {"tier":"T2","status":"conform","owner":"fleet","paths":["src/llm_loop/fleet/store.py"],"rationale":"DRC 已核：跨进程锁+tmp+replace；目录 fsync 为后续增强。"},
-      "evolution_store": {"tier":"T2","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/evolution.py"],"rationale":"evolution ledger 同时追加并重写生命周期状态，按 T2 管理。"},
-      "loop_signals": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/loop_signals.py"],"rationale":"loop signals 为运行审计/诊断追加事实。"},
-      "process_version_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/proc_version.py"],"rationale":"进程版本/变更记录用于运行身份审计。"},
-      "architecture_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/status.py"],"rationale":"architecture status 审计文件以追加记录为主。"},
-      "handoff_store": {"tier":"T2","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/tools_handoff.py"],"rationale":"handoff.md 是显式连续性工件，并同步进入 ArchiveStore。"},
-      "dsh_plugin_cache": {"tier":"T2","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/tools_skill_dsh.py"],"rationale":"DSH 插件发现缓存为可覆盖 TTL 状态，失败 fail-open。"},
-      "chatgpt_surface_state": {"tier":"T2","status":"observe","owner":"llm","paths":["src/llm_loop/llm/chatgpt_surface.py"],"rationale":"ChatGPT binding/lease/history 含跨进程锁与覆盖式状态。"},
-      "llm_diagnostic_audit": {"tier":"T1","status":"observe","owner":"llm","paths":["src/llm_loop/llm/client.py"],"rationale":"LLM 调用诊断/归档日志为追加型可观测事实。"},
-      "archive_store": {"tier":"T2","status":"conform","owner":"memory","paths":["src/llm_loop/memory/archive.py"],"rationale":"2026-10-08 Fleet T2 批次3（本地候选）：原文 JSONL append 独立 T1，经全局进程 RLock+POSIX flock 单写者、每条 flush/file fsync、首次建段目录 fsync；追加失败锁内 truncate 尾部并 fsync，回滚不确定显式 ArchiveCommitUncertainError 且禁止盲重放。摘要与 GC 原文段重写为锁内重读→tmp(O_EXCL)+file fsync→os.replace+directory fsync，分段提交 T2/typed ArchivePersistError或CommitUncertainError+exact SHA/readback；GC/summary 继续保持既有 fail-open API 不冒充整个跨段事务。delete_session 同 writer 锁和删后目录 fsync（失败不假报已完成）。derived .idx sidecar 追加/rebuild 可重建，rebuild 原子替换、失败全文 fallback；检索按canonical id/tool_call_id/session_id复核索引offset。专项 tests/unit/test_archive_store_durability.py 与 archive_index/segments/GC 相邻回归。无 fcntl 时仅进程内锁不声称跨进程 T2。"},
-      "attachment_store": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/attachments.py"],"rationale":"附件原件/提取状态跨运行保存；尚未核为严格内容寻址 T3。"},
-      "legacy_evidence_inventory": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/evidence_legacy.py"],"rationale":"legacy evidence inventory 通过临时文件替换维护可变清单。"},
-      "embedding_cache": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/retriever.py"],"rationale":"embedding cache 跨运行复用且采用锁/临时文件更新。"},
-      "memory_store": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/store.py"],"rationale":"MemoryStore 索引/条目为跨运行可变持久状态。"},
-      "learning_journal": {"tier":"T1","status":"observe","owner":"methods","paths":["src/llm_loop/methods/learning_journal.py"],"rationale":"LearningJournal 使用 O_APPEND 追加学习任务事实。"},
-      "method_store": {"tier":"T2","status":"conform","owner":"methods","paths":["src/llm_loop/methods/store.py"],"rationale":"2026-10-08 Fleet T2 批次2：Method 卡片 save_candidate/seed_overlay=锁内 invisible staging + file fsync + directory atomic rename + dir fsync；update_status/annotate_freshness=锁内单写者 RMW + O_EXCL tmp + file fsync + replace + dir fsync；MethodPersistError/MethodCommitUncertainError typed + exact readback，不确定禁止盲重放；model-facing registry 明确分型。qualification/usage 等 JSONL 保留独立 T1 append 契约（追加 fsync + 单写者锁），annotation/blocked journal best-effort 不作为权限源。test_method_store_durability.py 故障注入/并发。"},
-      "backup_store": {"tier":"T2","status":"conform","owner":"recovery","paths":["src/llm_loop/recovery/backup.py"],"rationale":"T2 已实施（Fleet 批次1，2026-10-08）：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent（绝不静默覆盖：同 id 同 payload 幂等，异 payload FileExistsError 先到保留）；mark_recovered=单写者 RMW+os.replace，保持 bool 契约不抛穿调用方，replace 前=definitely_not_committed(False 原文件保真)，目录 fsync 耗尽=commit_outcome_uncertain→持锁 exact readback reconcile；delete_source/cleanup 共用 store flock，删除后 best-effort 目录 fsync（删除不 durable 属保守面）。typed 异常为 OSError 子类，channel except Exception 吸收面不变。验收=tests/unit/test_backup_store_durability.py 13 例故障注入 + fail_open 回归。"},
-      "content_digest_cache": {"tier":"T2","status":"observe","owner":"resources","paths":["src/llm_loop/resources/content_digest.py"],"rationale":"content digest 跨运行缓存使用临时文件/原子提交语义。"},
-      "task_budget_root_ledger": {"tier":"T2","status":"conform","owner":"resources","paths":["src/llm_loop/resources/task_budget_store.py"],"rationale":"2026-10-09 I0/I1 独立离线根预算存储：每 root 跨进程 flock+revision CAS，目录首次创建后 fsync parent，tmp(O_EXCL)+file fsync+os.replace+dir fsync；replace 前 TaskBudgetPersistError、replace 后 TaskBudgetCommitUncertainError+精确 readback 并禁止盲重放；JSON/策略身份损坏 fail-closed，Run/wake 共享 root balance；tests/unit/test_task_budget_store.py 含跨进程、持久故障注入。仅 T2 文件持久契约 conform，不代表 Provider/Tool 物理执行或真实 GLM 预算已接线。"},
-      "task_budget_operator_approval_audit": {"tier":"T2","status":"partial","owner":"resources","paths":["src/llm_loop/resources/task_budget_operator_service.py"],"rationale":"2026-10-09 I5-H：签发前先对(session,event)建立O_EXCL + file fsync + dir fsync的once-only栅栏，再追加T1 approvals.jsonl且fsync，写入/落盘不确定时保留已存在identity永久deny，不重复签发。混合T2+T1、未证明真实powerloss/跨UID/跨部署审计重放，保持partial，绝不声称生产授权持久资格；tests/unit/test_task_budget_operator_recovery.py验证并发、fsync失败和启动后拒绝。"},
-      "task_budget_human_approval_mailbox": {"tier":"T2","status":"partial","owner":"resources","paths":["src/llm_loop/resources/task_budget_operator_mailbox.py"],"rationale":"2026-10-09 I5-H：独立操作员终端逐事件哈希确认后，以 O_EXCL 写入一次性 op1 审批证明，写后file fsync + chmod 0640 + file fsync + 目录fsync，写中断不删除也不自动再次签名；可信Web只读邮箱需真实OS角色+SGID组ACL、无symlink/hardlink与取消栅栏。隔离测试仅为同UID模拟成功路径，真实跨账户部署/重启恢复/ACL资格未过，标partial。"},
-      "admission_barrier_state": {"tier":"T2","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/admission_barrier.py"],"rationale":"admission barrier 含审计与原子状态文件，影响运行准入。"},
-      "knowledge_health_receipts": {"tier":"T1","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/knowledge_health.py"],"rationale":"knowledge health 恢复回执属于追加/证据型运行记录。"},
-      "runtime_manifest": {"tier":"T2","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/manifest.py"],"rationale":"runtime manifest 是服务身份/配置的覆盖式状态快照。"},
-      "service_control_state": {"tier":"T2","status":"conform","owner":"runtime","paths":["src/llm_loop/runtime/service_control.py"],"rationale":"T2 已实施（2026-10-08，复用 ScheduleStore durability contract）：desired-state 与 service-control action 落盘统一走 _atomic_json 两阶段写路径（tmp O_EXCL+file fsync+os.replace，replace 前有界重试整 payload；replace 后仅重试目录 fsync，绝不重写/重命名）。outcome 分型：replace 前=definitely_not_committed；目录 fsync 耗尽=commit_outcome_uncertain+持 state lease readback。desired CAS 由 expected_generation 阻断盲重放；action transition 对 uncertain+visible_state=matches 再做完整 ServiceControlAction exact readback，仅 exact match 才继续 barrier/event 后置 effects，不重写 action；mismatch/unreadable fail-closed。accepted 建 barrier、terminal release、running→failed keep barrier 语义均有故障注入钉住。验收=tests/unit/test_service_control_durability.py（12 项）+ service_control 相邻回归。"},
-      "worktree_registry": {"tier":"T2","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/worktree_registry.py"],"rationale":"worktree registry 为可覆盖状态并带 guard audit。"},
-      "task_quality_cache": {"tier":"T2","status":"observe","owner":"task_quality","paths":["src/llm_loop/task_quality/dep_graph.py"],"rationale":"依赖图缓存跨调用复用，虽 fail-open 仍属于显式持久 cache surface。"},
-      "browser_semantic_receipts": {"tier":"T2","status":"observe","owner":"tools","paths":["src/llm_loop/tools/builtin/browser_semantic_operation.py"],"rationale":"browser semantic operation receipt 通过原子覆盖保存。"},
-      "dsh_task_audit": {"tier":"T1","status":"observe","owner":"tools","paths":["src/llm_loop/tools/builtin/dsh_task.py"],"rationale":"dsh_task 含临时探针，但也持久追加 data/audit/dsh_tasks.jsonl，故按 T1 审计 surface 登记。"},
-      "job_registry": {"tier":"T2","status":"observe","owner":"tools","paths":["src/llm_loop/tools/builtin/job_registry.py"],"rationale":"后台 job registry 以文件保存跨轮次任务状态。"},
-      "smx_snapshot_store": {"tier":"T2","status":"observe","owner":"tools","paths":["src/llm_loop/tools/builtin/smx_perceive.py"],"rationale":"SMX perceive snapshot 以 session JSON 覆盖保存。"},
-      "escalation_store": {"tier":"T2","status":"observe","owner":"tools","paths":["src/llm_loop/tools/escalation.py"],"rationale":"escalation records 同时维护状态文件与审计日志，按 T2 登记。"},
-      "path_registry": {"tier":"T2","status":"observe","owner":"tools","paths":["src/llm_loop/tools/path_registry.py"],"rationale":"路径注册表通过锁+临时文件更新可变状态。"},
-      "provider_admin_config": {"tier":"T2","status":"observe","owner":"web","paths":["src/llm_loop/web/provider_admin.py"],"rationale":"provider admin 对受管配置执行锁定/原子文件写入。"},
-      "workspace_artifacts": {"tier":"T3","status":"observe","owner":"workspace","paths":["src/llm_loop/workspace/artifacts.py"],"rationale":"workspace artifact/blob 使用原子字节写入；按不可变工件方向登记，具体内容寻址保证待专项核验。"},
-      "workspace_store": {"tier":"T2","status":"observe","owner":"workspace","paths":["src/llm_loop/workspace/store.py"],"rationale":"WorkspaceStore 通过锁、临时文件、replace/fsync 保存可变工作区状态。"},
-      "codearts_audit": {"tier":"T1","status":"observe","owner":"codearts","paths":["src/llm_loop/codearts/audit.py"],"rationale":"CodeArts 调度/执行审计采用追加记录，属于运行事实日志。"},
-      "semantic_state_store": {"tier":"T2","status":"observe","owner":"cognitive","paths":["src/llm_loop/cognitive/state.py"],"rationale":"SemanticStateStore 使用锁、临时文件和目录 fsync 保存跨运行状态。"},
-      "cognitive_telemetry": {"tier":"T1","status":"observe","owner":"cognitive","paths":["src/llm_loop/cognitive/telemetry.py"],"rationale":"Cognitive telemetry 以追加 JSONL 形式记录运行事实。"},
-      "runtime_param_audit": {"tier":"T1","status":"observe","owner":"core","paths":["src/llm_loop/core/runtime_params.py"],"rationale":"运行参数调整记录采用追加日志，承担审计而非状态覆写。"},
-      "honesty_feedback_store": {"tier":"T2","status":"observe","owner":"feedback","paths":["src/llm_loop/feedback/honesty.py"],"rationale":"honesty feedback 同时含追加记录与锁内原子压缩/重写，按较强 T2 登记。"},
-      "selfheal_feedback": {"tier":"T1","status":"observe","owner":"feedback","paths":["src/llm_loop/feedback/loop_feedback.py"],"rationale":"self-heal feedback 以追加 JSONL 记录闭环事实。"},
-      "declaration_check_audit": {"tier":"T1","status":"observe","owner":"feedback","paths":["src/llm_loop/feedback/validator.py"],"rationale":"declaration validator 将判定事实追加到审计日志。"},
-      "feishu_compensation_store": {"tier":"T2","status":"observe","owner":"feishu","paths":["src/llm_loop/feishu/compensation.py"],"rationale":"补偿记录既追加又会原子压缩/改写，属于跨运行可变状态。"},
-      "self_correction_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/corrections.py"],"rationale":"self-correction 结果以追加审计日志持久化。"},
-      "self_eval_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/evaluator.py"],"rationale":"self-eval 报告以追加运行审计记录保存。"},
-      "evolution_exec_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/evolution_exec.py"],"rationale":"evolution 执行回执以追加 JSONL 审计事实保存。"},
-      "goal_store": {"tier":"T2","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/goal.py"],"rationale":"GoalStore 使用锁、临时文件与目录 fsync 保存 durable Goal 状态。"},
-      "task_store": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/task_store.py"],"rationale":"TaskStore 当前以锁保护的追加记录保存 Task/frontier 事实。"},
-      "feishu_outbound_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/tools_feishu_outbound.py"],"rationale":"Feishu outbound 工具调用结果进入追加审计日志。"},
-      "model_tool_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/tools_model.py"],"rationale":"模型工具切换/修正行为进入 self-correction 追加审计。"},
-      "playwright_tool_audit": {"tier":"T1","status":"observe","owner":"introspection","paths":["src/llm_loop/introspection/tools_playwright.py","src/llm_loop/introspection/tools_playwright_exec.py"],"rationale":"Playwright 兼容工具将动作/执行事实追加到审计文件。"},
-      "injection_ledger": {"tier":"T1","status":"observe","owner":"knowledge","paths":["src/llm_loop/knowledge/injection_ledger.py"],"rationale":"knowledge injection ledger 为追加型注入事实记录。"},
-      "episode_store": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/episode.py"],"rationale":"EpisodeStore 含原子状态文件与追加 episode 数据，按较强 T2 登记。"},
-      "evidence_blob_store": {"tier":"T3","status":"conform","owner":"memory","paths":["src/llm_loop/memory/evidence.py"],"rationale":"DRC 已核：内容寻址 blob 使用 exclusive temp+fsync+replace+directory fsync。"},
-      "evidence_ledger_store": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/evidence.py"],"rationale":"同文件内 EvidenceLedgerStore 维护 record/state 元数据；与 T3 blob 分面登记，避免以 blob 合规外推 ledger。"},
-      "extractor_state": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/extractor.py"],"rationale":"memory extractor 存在跨运行提取状态/缓存写入，先按 T2 observe 登记。"},
-      "multiquery_shadow_audit": {"tier":"T1","status":"observe","owner":"memory","paths":["src/llm_loop/memory/multiquery_shadow.py"],"rationale":"multiquery shadow 仅记录影子测量/诊断追加事实。"},
-      "synopsis_records": {"tier":"T2","status":"observe","owner":"memory","paths":["src/llm_loop/memory/synopsis.py"],"rationale":"SynopsisStore 的 records 元数据是可变/可替换状态，按 T2 登记。"},
-      "synopsis_blobs": {"tier":"T3","status":"observe","owner":"memory","paths":["src/llm_loop/memory/synopsis.py"],"rationale":"SynopsisStore 同文件维护 immutable content-addressed source snapshots，单独按 T3 分面。"},
-      "chatgpt_binding_notifications": {"tier":"T1","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/chatgpt_binding_notifications.py"],"rationale":"ChatGPT binding 通知/回执以追加事实形式持久化。"},
-      "learning_idle_state": {"tier":"T2","status":"observe","owner":"runtime","paths":["src/llm_loop/runtime/learning_idle.py"],"rationale":"Learning idle 协调包含跨进程锁/状态文件，影响服务准入。"},
-      "task_quality_audit": {"tier":"T1","status":"observe","owner":"task_quality","paths":["src/llm_loop/task_quality/fix_loop.py"],"rationale":"fix-loop 将轮次/状态/细节持久化为任务质量审计记录。"},
-      "tool_registry_audit": {"tier":"T1","status":"observe","owner":"tools","paths":["src/llm_loop/tools/registry.py"],"rationale":"ToolRegistry 中的写入用于工具执行/诊断持久事实，先按 T1 observe 登记。"},
-      "tool_safety_audit": {"tier":"T1","status":"observe","owner":"tools","paths":["src/llm_loop/tools/safety.py"],"rationale":"工具安全拦截/决策写入审计面，按追加事实登记。"}
+      "assurance_p1_review_request_staging": {
+        "tier": "T2",
+        "status": "partial",
+        "owner": "assurance-experimental",
+        "paths": [
+          "src/llm_loop/assurance/p1_review_supervisor.py"
+        ],
+        "rationale": "P1 仅隔离 Task-owned Reviewer 候选/会话/spec 与 sandbox profile 文件：部分 atomic JSON fsync+replace+dir fsync，但原候选 write_bytes 和创建目录未形成完整持久栅栏；只有 provider-free P1 真 SIGKILL 负例，默认 NO-GO，不能据此认定 Task/外部副作用已恢复。"
+      },
+      "assurance_p1_review_receipt": {
+        "tier": "T2",
+        "status": "partial",
+        "owner": "assurance-experimental",
+        "paths": [
+          "src/llm_loop/assurance/p1_review_worker.py"
+        ],
+        "rationale": "P1 离线 FakeLLM Reviewer 结果 JSON 经 O_EXCL tmp、file fsync、replace、dir fsync 落盘；该数据来自未受信模型，只有结构性回执，不是独立可信审查门或生产释放资格，保持 partial 与 default-off。"
+      },
+      "assurance_p112_offline_executor_candidate": {
+        "tier": "T2",
+        "status": "partial",
+        "owner": "assurance-experimental",
+        "paths": [
+          "src/llm_loop/assurance/p112_offline_vertical.py"
+        ],
+        "rationale": "P1.12 offline-only Executor LoopEngine 的封闭写入工具：O_EXCL + file fsync + dir fsync，一次性局部候选写盘；Reviewer 与 local gate 对照其 sha。没有真实双模型 Provider 或生产发布授权、没有断电恢复实验，明确保持 T2 partial / default-off。"
+      },
+      "browser_action_receipts": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "browser",
+        "paths": [
+          "src/llm_loop/browser/action.py"
+        ],
+        "rationale": "浏览器动作 receipt/grounding 落盘，属于可重放审计事实。"
+      },
+      "browser_perception_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "browser",
+        "paths": [
+          "src/llm_loop/browser/perception.py"
+        ],
+        "rationale": "浏览器 perception/session/diff 状态为可覆盖状态文件。"
+      },
+      "cache_guard_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "cache_guard",
+        "paths": [
+          "src/llm_loop/cache_guard/guard.py"
+        ],
+        "rationale": "cache guard 结果以追加审计记录落盘。"
+      },
+      "cache_health_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/cache_health.py"
+        ],
+        "rationale": "cache health 运行遥测为追加型审计事实。"
+      },
+      "interop_mailbox": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/loop/engine_services/interop.py"
+        ],
+        "rationale": "interop inbox/done 文件承载跨运行状态转移。"
+      },
+      "tool_reachability_telemetry": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/loop/engine_services/tool_reachability.py"
+        ],
+        "rationale": "tool reachability 投影/执行遥测以追加日志持久化。"
+      },
+      "err1210_snapshots": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/loop/err1210.py"
+        ],
+        "rationale": "1210 恢复快照是可覆盖诊断/恢复状态文件。"
+      },
+      "run_event_sidecars": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/loop/events.py"
+        ],
+        "rationale": "长答案与 inflight native sidecar 是恢复相关状态文件。"
+      },
+      "hotcard_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/loop/hotcard.py"
+        ],
+        "rationale": "hotcard 为当前运行状态快照，采用覆盖式文件语义。"
+      },
+      "injection_span_ledger": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/loop/injection_span.py"
+        ],
+        "rationale": "injection span/defer 事实主要以追加 ledger 形式落盘。"
+      },
+      "schedule_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/scheduler.py"
+        ],
+        "rationale": "T2 已实施：POSIX flock OSError fail-closed；tmp O_EXCL+file fsync+replace，replace 后仅重试目录 fsync；replace 前失败=definitely_not_committed 并回滚内存，replace 后 fsync 耗尽=commit_outcome_uncertain+flock 内 exact readback，内部 lifecycle 只在 visible_state=matches 时 reconcile、不盲重放。普通 notify 用 sid+count 稳定 effect identity；无 fcntl 时仅进程内兼容 fallback。验收=tests/unit/test_schedule_durability.py + schedule/interop caller regressions。"
+      },
+      "session_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/session.py"
+        ],
+        "rationale": "SessionStore 持久会话与 summary/backup 状态，按覆盖式状态文件分类。"
+      },
+      "tool_execution_journal": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/tool_execution_journal.py"
+        ],
+        "rationale": "工具执行 journal 含可恢复结算状态，按状态文件语义登记。"
+      },
+      "trace_leak_quarantine": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/trace_leak/leak_events.py"
+        ],
+        "rationale": "trace leak quarantine 产物承载隔离后的恢复/审计状态。"
+      },
+      "wake_authorization_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/trace_leak/wake_authority.py"
+        ],
+        "rationale": "DRC 已核：0600+flock+tmp+file fsync+replace+directory fsync+签名/tombstone。"
+      },
+      "event_store": {
+        "tier": "T1",
+        "status": "conform",
+        "owner": "event_log",
+        "paths": [
+          "src/llm_loop/event_log/store.py",
+          "src/llm_loop/event_log/rotate.py"
+        ],
+        "rationale": "DRC 已核：锁+O_APPEND 单行+读侧尾部截断容错+seq。"
+      },
+      "experience_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "experiences",
+        "paths": [
+          "src/llm_loop/experiences/store.py"
+        ],
+        "rationale": "2026-10-08 T2 迁移完成：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent；update_status=单写者 RMW+os.replace；均含目录 fsync fence 与 definitely_not_committed/commit_outcome_uncertain 分型+exact readback（test_experience_store_durability.py 12 例故障注入）。"
+      },
+      "extensions_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "extensions",
+        "paths": [
+          "src/llm_loop/extensions/store.py"
+        ],
+        "rationale": "P1-A（DESIGN-20261009 §5.3/§9.1）：installed.json 单一写路径=flock 独占+expected_revision CAS（RevisionConflictError=晚到提交失败）+tmp+file fsync+os.replace+读回校验（失败=CommitUncertainError 不假装成功）；目录 fsync OSError 降级尽力而为（未做 fsync 耗尽故障注入，如实标注）；packages/ 不可变副本与 instances/ PLUGIN_DATA 为安装布局写。验收=tests/unit/test_extensions_store.py（CAS 冲突/顺序提交/T21 数据保留/敏感拒绝/损坏读拒绝）。"
+      },
+      "browser_attestation_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "factory",
+        "paths": [
+          "src/llm_loop/factory.py"
+        ],
+        "rationale": "factory 装配期 browser attestation 通过临时文件覆盖持久化。"
+      },
+      "service_exit_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "delivery",
+        "paths": [
+          "src/llm_loop/feishu/__init__.py",
+          "src/llm_loop/web/__init__.py"
+        ],
+        "rationale": "Web/Feishu 退出原因以追加审计日志记录。"
+      },
+      "feishu_bridge_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "feishu",
+        "paths": [
+          "src/llm_loop/feishu/bridge.py"
+        ],
+        "rationale": "Feishu interrupted/dedup 等桥接状态存在覆盖式持久化。"
+      },
+      "feishu_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "feishu",
+        "paths": [
+          "src/llm_loop/feishu/handlers.py",
+          "src/llm_loop/feishu/rest.py"
+        ],
+        "rationale": "Feishu handler/rest 审计行为为 JSONL 追加事实。"
+      },
+      "feishu_session_map": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "feishu",
+        "paths": [
+          "src/llm_loop/feishu/session_map.py"
+        ],
+        "rationale": "会话映射是跨重启需要保留的覆盖式状态。"
+      },
+      "fleet_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "fleet",
+        "paths": [
+          "src/llm_loop/fleet/store.py"
+        ],
+        "rationale": "DRC 已核：跨进程锁+tmp+replace；目录 fsync 为后续增强。"
+      },
+      "evolution_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/evolution.py"
+        ],
+        "rationale": "evolution ledger 同时追加并重写生命周期状态，按 T2 管理。"
+      },
+      "loop_signals": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/loop_signals.py"
+        ],
+        "rationale": "loop signals 为运行审计/诊断追加事实。"
+      },
+      "process_version_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/proc_version.py"
+        ],
+        "rationale": "进程版本/变更记录用于运行身份审计。"
+      },
+      "architecture_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/status.py"
+        ],
+        "rationale": "architecture status 审计文件以追加记录为主。"
+      },
+      "handoff_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/tools_handoff.py"
+        ],
+        "rationale": "handoff.md 是显式连续性工件，并同步进入 ArchiveStore。"
+      },
+      "dsh_plugin_cache": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/tools_skill_dsh.py"
+        ],
+        "rationale": "DSH 插件发现缓存为可覆盖 TTL 状态，失败 fail-open。"
+      },
+      "chatgpt_surface_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "llm",
+        "paths": [
+          "src/llm_loop/llm/chatgpt_surface.py"
+        ],
+        "rationale": "ChatGPT binding/lease/history 含跨进程锁与覆盖式状态。"
+      },
+      "llm_diagnostic_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "llm",
+        "paths": [
+          "src/llm_loop/llm/client.py"
+        ],
+        "rationale": "LLM 调用诊断/归档日志为追加型可观测事实。"
+      },
+      "archive_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/archive.py"
+        ],
+        "rationale": "2026-10-08 Fleet T2 批次3（本地候选）：原文 JSONL append 独立 T1，经全局进程 RLock+POSIX flock 单写者、每条 flush/file fsync、首次建段目录 fsync；追加失败锁内 truncate 尾部并 fsync，回滚不确定显式 ArchiveCommitUncertainError 且禁止盲重放。摘要与 GC 原文段重写为锁内重读→tmp(O_EXCL)+file fsync→os.replace+directory fsync，分段提交 T2/typed ArchivePersistError或CommitUncertainError+exact SHA/readback；GC/summary 继续保持既有 fail-open API 不冒充整个跨段事务。delete_session 同 writer 锁和删后目录 fsync（失败不假报已完成）。derived .idx sidecar 追加/rebuild 可重建，rebuild 原子替换、失败全文 fallback；检索按canonical id/tool_call_id/session_id复核索引offset。专项 tests/unit/test_archive_store_durability.py 与 archive_index/segments/GC 相邻回归。无 fcntl 时仅进程内锁不声称跨进程 T2。"
+      },
+      "attachment_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/attachments.py"
+        ],
+        "rationale": "附件原件/提取状态跨运行保存；尚未核为严格内容寻址 T3。"
+      },
+      "legacy_evidence_inventory": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/evidence_legacy.py"
+        ],
+        "rationale": "legacy evidence inventory 通过临时文件替换维护可变清单。"
+      },
+      "embedding_cache": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/retriever.py"
+        ],
+        "rationale": "embedding cache 跨运行复用且采用锁/临时文件更新。"
+      },
+      "memory_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/store.py"
+        ],
+        "rationale": "MemoryStore 索引/条目为跨运行可变持久状态。"
+      },
+      "learning_journal": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "methods",
+        "paths": [
+          "src/llm_loop/methods/learning_journal.py"
+        ],
+        "rationale": "LearningJournal 使用 O_APPEND 追加学习任务事实。"
+      },
+      "method_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "methods",
+        "paths": [
+          "src/llm_loop/methods/store.py"
+        ],
+        "rationale": "2026-10-08 Fleet T2 批次2：Method 卡片 save_candidate/seed_overlay=锁内 invisible staging + file fsync + directory atomic rename + dir fsync；update_status/annotate_freshness=锁内单写者 RMW + O_EXCL tmp + file fsync + replace + dir fsync；MethodPersistError/MethodCommitUncertainError typed + exact readback，不确定禁止盲重放；model-facing registry 明确分型。qualification/usage 等 JSONL 保留独立 T1 append 契约（追加 fsync + 单写者锁），annotation/blocked journal best-effort 不作为权限源。test_method_store_durability.py 故障注入/并发。"
+      },
+      "backup_store": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "recovery",
+        "paths": [
+          "src/llm_loop/recovery/backup.py"
+        ],
+        "rationale": "T2 已实施（Fleet 批次1，2026-10-08）：save=store flock+tmp(O_EXCL)+file fsync+os.link 原子 create-if-absent（绝不静默覆盖：同 id 同 payload 幂等，异 payload FileExistsError 先到保留）；mark_recovered=单写者 RMW+os.replace，保持 bool 契约不抛穿调用方，replace 前=definitely_not_committed(False 原文件保真)，目录 fsync 耗尽=commit_outcome_uncertain→持锁 exact readback reconcile；delete_source/cleanup 共用 store flock，删除后 best-effort 目录 fsync（删除不 durable 属保守面）。typed 异常为 OSError 子类，channel except Exception 吸收面不变。验收=tests/unit/test_backup_store_durability.py 13 例故障注入 + fail_open 回归。"
+      },
+      "content_digest_cache": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "resources",
+        "paths": [
+          "src/llm_loop/resources/content_digest.py"
+        ],
+        "rationale": "content digest 跨运行缓存使用临时文件/原子提交语义。"
+      },
+      "task_budget_root_ledger": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "resources",
+        "paths": [
+          "src/llm_loop/resources/task_budget_store.py"
+        ],
+        "rationale": "2026-10-09 I0/I1 独立离线根预算存储：每 root 跨进程 flock+revision CAS，目录首次创建后 fsync parent，tmp(O_EXCL)+file fsync+os.replace+dir fsync；replace 前 TaskBudgetPersistError、replace 后 TaskBudgetCommitUncertainError+精确 readback 并禁止盲重放；JSON/策略身份损坏 fail-closed，Run/wake 共享 root balance；tests/unit/test_task_budget_store.py 含跨进程、持久故障注入。仅 T2 文件持久契约 conform，不代表 Provider/Tool 物理执行或真实 GLM 预算已接线。"
+      },
+      "task_budget_operator_approval_audit": {
+        "tier": "T2",
+        "status": "partial",
+        "owner": "resources",
+        "paths": [
+          "src/llm_loop/resources/task_budget_operator_service.py"
+        ],
+        "rationale": "2026-10-09 I5-H：签发前先对(session,event)建立O_EXCL + file fsync + dir fsync的once-only栅栏，再追加T1 approvals.jsonl且fsync，写入/落盘不确定时保留已存在identity永久deny，不重复签发。混合T2+T1、未证明真实powerloss/跨UID/跨部署审计重放，保持partial，绝不声称生产授权持久资格；tests/unit/test_task_budget_operator_recovery.py验证并发、fsync失败和启动后拒绝。"
+      },
+      "task_budget_human_approval_mailbox": {
+        "tier": "T2",
+        "status": "partial",
+        "owner": "resources",
+        "paths": [
+          "src/llm_loop/resources/task_budget_operator_mailbox.py"
+        ],
+        "rationale": "2026-10-09 I5-H：独立操作员终端逐事件哈希确认后，以 O_EXCL 写入一次性 op1 审批证明，写后file fsync + chmod 0640 + file fsync + 目录fsync，写中断不删除也不自动再次签名；可信Web只读邮箱需真实OS角色+SGID组ACL、无symlink/hardlink与取消栅栏。隔离测试仅为同UID模拟成功路径，真实跨账户部署/重启恢复/ACL资格未过，标partial。"
+      },
+      "admission_barrier_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/admission_barrier.py"
+        ],
+        "rationale": "admission barrier 含审计与原子状态文件，影响运行准入。"
+      },
+      "knowledge_health_receipts": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/knowledge_health.py"
+        ],
+        "rationale": "knowledge health 恢复回执属于追加/证据型运行记录。"
+      },
+      "runtime_manifest": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/manifest.py"
+        ],
+        "rationale": "runtime manifest 是服务身份/配置的覆盖式状态快照。"
+      },
+      "service_control_state": {
+        "tier": "T2",
+        "status": "conform",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/service_control.py"
+        ],
+        "rationale": "T2 已实施（2026-10-08，复用 ScheduleStore durability contract）：desired-state 与 service-control action 落盘统一走 _atomic_json 两阶段写路径（tmp O_EXCL+file fsync+os.replace，replace 前有界重试整 payload；replace 后仅重试目录 fsync，绝不重写/重命名）。outcome 分型：replace 前=definitely_not_committed；目录 fsync 耗尽=commit_outcome_uncertain+持 state lease readback。desired CAS 由 expected_generation 阻断盲重放；action transition 对 uncertain+visible_state=matches 再做完整 ServiceControlAction exact readback，仅 exact match 才继续 barrier/event 后置 effects，不重写 action；mismatch/unreadable fail-closed。accepted 建 barrier、terminal release、running→failed keep barrier 语义均有故障注入钉住。验收=tests/unit/test_service_control_durability.py（12 项）+ service_control 相邻回归。"
+      },
+      "worktree_registry": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/worktree_registry.py"
+        ],
+        "rationale": "worktree registry 为可覆盖状态并带 guard audit。"
+      },
+      "task_quality_cache": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "task_quality",
+        "paths": [
+          "src/llm_loop/task_quality/dep_graph.py"
+        ],
+        "rationale": "依赖图缓存跨调用复用，虽 fail-open 仍属于显式持久 cache surface。"
+      },
+      "browser_semantic_receipts": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/builtin/browser_semantic_operation.py"
+        ],
+        "rationale": "browser semantic operation receipt 通过原子覆盖保存。"
+      },
+      "dsh_task_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/builtin/dsh_task.py"
+        ],
+        "rationale": "dsh_task 含临时探针，但也持久追加 data/audit/dsh_tasks.jsonl，故按 T1 审计 surface 登记。"
+      },
+      "job_registry": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/builtin/job_registry.py"
+        ],
+        "rationale": "后台 job registry 以文件保存跨轮次任务状态。"
+      },
+      "smx_snapshot_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/builtin/smx_perceive.py"
+        ],
+        "rationale": "SMX perceive snapshot 以 session JSON 覆盖保存。"
+      },
+      "escalation_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/escalation.py"
+        ],
+        "rationale": "escalation records 同时维护状态文件与审计日志，按 T2 登记。"
+      },
+      "path_registry": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/path_registry.py"
+        ],
+        "rationale": "路径注册表通过锁+临时文件更新可变状态。"
+      },
+      "provider_admin_config": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "web",
+        "paths": [
+          "src/llm_loop/web/provider_admin.py"
+        ],
+        "rationale": "provider admin 对受管配置执行锁定/原子文件写入。"
+      },
+      "workspace_artifacts": {
+        "tier": "T3",
+        "status": "observe",
+        "owner": "workspace",
+        "paths": [
+          "src/llm_loop/workspace/artifacts.py"
+        ],
+        "rationale": "workspace artifact/blob 使用原子字节写入；按不可变工件方向登记，具体内容寻址保证待专项核验。"
+      },
+      "workspace_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "workspace",
+        "paths": [
+          "src/llm_loop/workspace/store.py"
+        ],
+        "rationale": "WorkspaceStore 通过锁、临时文件、replace/fsync 保存可变工作区状态。"
+      },
+      "codearts_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "codearts",
+        "paths": [
+          "src/llm_loop/codearts/audit.py"
+        ],
+        "rationale": "CodeArts 调度/执行审计采用追加记录，属于运行事实日志。"
+      },
+      "semantic_state_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "cognitive",
+        "paths": [
+          "src/llm_loop/cognitive/state.py"
+        ],
+        "rationale": "SemanticStateStore 使用锁、临时文件和目录 fsync 保存跨运行状态。"
+      },
+      "cognitive_telemetry": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "cognitive",
+        "paths": [
+          "src/llm_loop/cognitive/telemetry.py"
+        ],
+        "rationale": "Cognitive telemetry 以追加 JSONL 形式记录运行事实。"
+      },
+      "runtime_param_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "core",
+        "paths": [
+          "src/llm_loop/core/runtime_params.py"
+        ],
+        "rationale": "运行参数调整记录采用追加日志，承担审计而非状态覆写。"
+      },
+      "honesty_feedback_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "feedback",
+        "paths": [
+          "src/llm_loop/feedback/honesty.py"
+        ],
+        "rationale": "honesty feedback 同时含追加记录与锁内原子压缩/重写，按较强 T2 登记。"
+      },
+      "selfheal_feedback": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "feedback",
+        "paths": [
+          "src/llm_loop/feedback/loop_feedback.py"
+        ],
+        "rationale": "self-heal feedback 以追加 JSONL 记录闭环事实。"
+      },
+      "declaration_check_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "feedback",
+        "paths": [
+          "src/llm_loop/feedback/validator.py"
+        ],
+        "rationale": "declaration validator 将判定事实追加到审计日志。"
+      },
+      "feishu_compensation_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "feishu",
+        "paths": [
+          "src/llm_loop/feishu/compensation.py"
+        ],
+        "rationale": "补偿记录既追加又会原子压缩/改写，属于跨运行可变状态。"
+      },
+      "self_correction_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/corrections.py"
+        ],
+        "rationale": "self-correction 结果以追加审计日志持久化。"
+      },
+      "self_eval_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/evaluator.py"
+        ],
+        "rationale": "self-eval 报告以追加运行审计记录保存。"
+      },
+      "evolution_exec_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/evolution_exec.py"
+        ],
+        "rationale": "evolution 执行回执以追加 JSONL 审计事实保存。"
+      },
+      "goal_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/goal.py"
+        ],
+        "rationale": "GoalStore 使用锁、临时文件与目录 fsync 保存 durable Goal 状态。"
+      },
+      "task_store": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/task_store.py"
+        ],
+        "rationale": "TaskStore 当前以锁保护的追加记录保存 Task/frontier 事实。"
+      },
+      "feishu_outbound_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/tools_feishu_outbound.py"
+        ],
+        "rationale": "Feishu outbound 工具调用结果进入追加审计日志。"
+      },
+      "model_tool_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/tools_model.py"
+        ],
+        "rationale": "模型工具切换/修正行为进入 self-correction 追加审计。"
+      },
+      "playwright_tool_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/tools_playwright.py",
+          "src/llm_loop/introspection/tools_playwright_exec.py"
+        ],
+        "rationale": "Playwright 兼容工具将动作/执行事实追加到审计文件。"
+      },
+      "injection_ledger": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "knowledge",
+        "paths": [
+          "src/llm_loop/knowledge/injection_ledger.py"
+        ],
+        "rationale": "knowledge injection ledger 为追加型注入事实记录。"
+      },
+      "episode_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/episode.py"
+        ],
+        "rationale": "EpisodeStore 含原子状态文件与追加 episode 数据，按较强 T2 登记。"
+      },
+      "evidence_blob_store": {
+        "tier": "T3",
+        "status": "conform",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/evidence.py"
+        ],
+        "rationale": "DRC 已核：内容寻址 blob 使用 exclusive temp+fsync+replace+directory fsync。"
+      },
+      "evidence_ledger_store": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/evidence.py"
+        ],
+        "rationale": "同文件内 EvidenceLedgerStore 维护 record/state 元数据；与 T3 blob 分面登记，避免以 blob 合规外推 ledger。"
+      },
+      "extractor_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/extractor.py"
+        ],
+        "rationale": "memory extractor 存在跨运行提取状态/缓存写入，先按 T2 observe 登记。"
+      },
+      "multiquery_shadow_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/multiquery_shadow.py"
+        ],
+        "rationale": "multiquery shadow 仅记录影子测量/诊断追加事实。"
+      },
+      "synopsis_records": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/synopsis.py"
+        ],
+        "rationale": "SynopsisStore 的 records 元数据是可变/可替换状态，按 T2 登记。"
+      },
+      "synopsis_blobs": {
+        "tier": "T3",
+        "status": "observe",
+        "owner": "memory",
+        "paths": [
+          "src/llm_loop/memory/synopsis.py"
+        ],
+        "rationale": "SynopsisStore 同文件维护 immutable content-addressed source snapshots，单独按 T3 分面。"
+      },
+      "chatgpt_binding_notifications": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/chatgpt_binding_notifications.py"
+        ],
+        "rationale": "ChatGPT binding 通知/回执以追加事实形式持久化。"
+      },
+      "learning_idle_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/learning_idle.py"
+        ],
+        "rationale": "Learning idle 协调包含跨进程锁/状态文件，影响服务准入。"
+      },
+      "task_quality_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "task_quality",
+        "paths": [
+          "src/llm_loop/task_quality/fix_loop.py"
+        ],
+        "rationale": "fix-loop 将轮次/状态/细节持久化为任务质量审计记录。"
+      },
+      "tool_registry_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/registry.py"
+        ],
+        "rationale": "ToolRegistry 中的写入用于工具执行/诊断持久事实，先按 T1 observe 登记。"
+      },
+      "tool_safety_audit": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/safety.py"
+        ],
+        "rationale": "工具安全拦截/决策写入审计面，按追加事实登记。"
+      }
     },
     "write_exemptions": {
       "src/llm_loop/eval/oracle_1210.py": "评测命令显式生成 report.json/report.md；属于测试/评测输出工件，不是运行态恢复 SoT。",
@@ -239,7 +971,8 @@
       "src/llm_loop/web/fs_tree.py": "Web 文件树操作直接修改用户选择的 workspace 文件/目录，属于外部文件效果而非内部 runtime SoT。",
       "src/llm_loop/web/routes.py": "Web route 中的写入主要是用户上传/预览等 workspace 交付文件效果，不作为内部 durability surface。",
       "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。",
-      "src/llm_loop/extensions/sources.py": "P2-B（§5.2）源获取仅写 fetch 临时目录与解包目标（git 浅克隆、HTTP 下载 sink、zip/tar 解包、临时归档产物），属一次性外部文件效果与缓存，不是内部 durable 状态 SoT；插件安装态写入仍由 extensions/store.py 单一持久面负责。"
+      "src/llm_loop/extensions/sources.py": "P2-B（§5.2）源获取仅写 fetch 临时目录与解包目标（git 浅克隆、HTTP 下载 sink、zip/tar 解包、临时归档产物），属一次性外部文件效果与缓存，不是内部 durable 状态 SoT；插件安装态写入仍由 extensions/store.py 单一持久面负责。",
+      "src/llm_loop/methods/learning_plane.py": "learning admission heartbeat：观测信号（state/reason/queued 节拍，20s 节流，tmp+os.replace 原子写，fail-open debug 日志），不承载恢复态 payload，非 durable SoT（同 learning_runtime.py lockfile 先例）。"
     }
   }
 }

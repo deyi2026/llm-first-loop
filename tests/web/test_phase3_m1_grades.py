@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -262,7 +261,7 @@ def test_d2_commit_outcome_uncertain(tmp_path, monkeypatch):
         hq.enqueue("s", "内容A")
     assert ei.value.stage == "commit_outcome_uncertain"
     # 内存态已含新项但磁盘未变——不允许任何一侧被假设为真值
-    monkeypatch.setattr(htq_mod.os, "replace", os_replace_real := __import__("os").replace)
+    # （monkeypatch 在测试收尾自动恢复 os.replace，无需手工复原）
     hq2 = HumanTurnQueue(str(tmp_path / "q"))
     msgs = [it["message"] for it in hq2.snapshot_items()]
     assert msgs == []  # 磁盘侧未提交（如实：unknown 的两侧分别可查）

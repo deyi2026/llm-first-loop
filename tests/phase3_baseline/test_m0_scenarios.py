@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -231,9 +232,8 @@ def test_s01_interject_during_long_tool(build_test_engine):
         rec.obs("item_terminal_state", item.get("status"))
         ts = item
         for k in ("created_at", "interject_requested_at", "received_at", "terminal_at"):
-            if ts.get(k):
-                if "created_at" in ts and k != "created_at":
-                    rec.dur(f"{k}_minus_created_at_ms", (ts[k] - ts["created_at"]) * 1000)
+            if ts.get(k) and "created_at" in ts and k != "created_at":
+                rec.dur(f"{k}_minus_created_at_ms", (ts[k] - ts["created_at"]) * 1000)
 
         rec.obs("session_hits", _session_hits(engine, sid, INTERJECT_TEXT))
         rec.obs("model_visibility", _model_saw_text(fake, INTERJECT_TEXT))
@@ -397,10 +397,9 @@ def test_s04_stop_background_job(build_test_engine):
         rec.obs("job_state_after_stop", snap1)
     finally:
         if job_id:
-            try:
+            # 清理尽力而为：不影响基线记录落盘（fail-open）
+            with contextlib.suppress(Exception):
                 JobRegistry.instance().cancel_session(sid)
-            except Exception:  # noqa: BLE001
-                pass
         rec.write()
 
 
@@ -446,7 +445,6 @@ def test_s05_stop_side_effect_blindspot(build_test_engine):
     engine.registry.register(tool)
     runner = BackgroundRunner(engine)
     engine.runner = runner
-    client = TestClient(build_app(engine=engine))
     sid = engine.session.create()
     try:
         _h, q = runner.start(sid, "触发副作用工具")
