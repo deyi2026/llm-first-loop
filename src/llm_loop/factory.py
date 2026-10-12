@@ -180,6 +180,20 @@ def _run_mode_hidden(run_mode: str) -> set[str]:
     return _RUN_MODE_HIDDEN_TOOLS.get(run_mode, set())
 
 
+def job_terminal_predicate(job_id: str) -> bool:
+    """job_terminal 事件谓词（只读 snapshot，无副作用；Phase3 M4）.
+
+    终态词表=事实源实际值域（job_registry.py 本地：completed/failed/killed；
+    external_execution.py durable 另有 orphaned）。终审 P0-2：初版用
+    done/error/cancelled/exited/finished 等臆测词，交集仅 killed——
+    正常完成的事件唤醒在生产永不触发。
+    """
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    snap = JobRegistry.instance().snapshot(str(job_id)) or {}
+    return str(snap.get("state", "")).lower() in {"completed", "failed", "killed", "orphaned"}
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -739,17 +753,8 @@ def build_engine(
     # M3 测试显式对齐（M0 报告审查修订版 §4「装配一致性」项）。
     SideEffectRegistry.instance().configure(str(settings.data_dir))
 
-    # Phase3 M4（G4）：登记 job_terminal 事件谓词求值器（只读 snapshot，无副作用）。
-    # generation_reached/action_settled 属闭集但求值器由对应服务的运行时登记；
-    # 未登记时 fail-safe 回退超时分支（scheduler._predicate_satisfied）。
-
-    def _job_terminal(job_id: str) -> bool:
-        snap = _job_registry.snapshot(str(job_id)) or {}
-        return str(snap.get("state", "")).lower() in {
-            "done", "killed", "error", "cancelled", "exited", "finished",
-        }
-
-    register_event_predicate("job_terminal", _job_terminal)
+    # Phase3 M4（G4）：登记 job_terminal 事件谓词求值器（模块级定义，可测）。
+    register_event_predicate("job_terminal", job_terminal_predicate)
 
     # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
     # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs

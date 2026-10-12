@@ -776,6 +776,38 @@ class BrowserSemanticOperationTool:
             raise BrowserSemanticOperationContractError("clause_must_be_object")
         return [dict(item) for item in raw]
 
+    # Phase3 M3（G4 审查 P0-1 修复）：clauses 是 dict 列表（_validate_clauses 契约），
+    # 本方法必须用 .get 而非 getattr 访问——初版 getattr 对 dict 恒缺省，登记变死代码。
+    # target 取 args.url（navigate）或 target 标识（click 等），D6：不含页面正文。
+    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select"})
+
+    @classmethod
+    def _register_mutation_side_effects(cls, clauses: list[dict], session_id: str) -> int:
+        """把本请求中的 mutation 子句登记进副作用面；返回登记数（观测面 fail-open 由调用方兜底）."""
+        from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+        n = 0
+        for cl in clauses:
+            verb = str(cl.get("verb", "") or "")
+            if verb not in cls._MUTATION_SE_VERBS:
+                continue
+            args = cl.get("args") or {}
+            raw_tgt = args.get("url") or cl.get("target") or cl.get("name") or ""
+            if isinstance(raw_tgt, dict):
+                # target 是结构化寻址对象：取可读标识（name/url/kind），D6：不序列化整个对象
+                raw_tgt = raw_tgt.get("name") or raw_tgt.get("url") or raw_tgt.get("kind") or ""
+            tgt = raw_tgt
+            SideEffectRegistry.instance().register(
+                session_id,
+                "browser_operate",
+                f"{verb}:{str(tgt)[:80]}",
+                "browser_mutation",
+                revocable=False,
+                detail="不可自动撤销；停止后须人工核验页面态",
+            )
+            n += 1
+        return n
+
     @classmethod
     def _short_target_to_clause_target(cls, raw: Any) -> dict[str, Any]:
         if not isinstance(raw, dict):
@@ -1222,21 +1254,9 @@ class BrowserSemanticOperationTool:
             from llm_loop.core.loop.side_effects import SideEffectRegistry
             from llm_loop.core.run_context import current_session_id
 
-            _se_verbs = {"navigate", "click", "set_text", "append_text", "select"}
-            for _cl in clauses:
-                _v = str(getattr(_cl, "verb", "") or "")
-                if _v in _se_verbs:
-                    _tgt = getattr(_cl, "url", None) or getattr(_cl, "name", None) or ""
-                    SideEffectRegistry.instance().register(
-                        current_session_id.get() or "",
-                        "browser_operate",
-                        f"{_v}:{str(_tgt)[:80]}",
-                        "browser_mutation",
-                        revocable=False,
-                        detail="不可自动撤销；停止后须人工核验页面态",
-                    )
+            self._register_mutation_side_effects(clauses, current_session_id.get() or "")
         except Exception:  # noqa: BLE001 — 副作用登记是观测面，失败不得阻断浏览器操作
-            pass
+            logger.warning("browser 副作用登记失败（观测面 fail-open）", exc_info=True)
         receipt = self._base_receipt()
 
         def finalize() -> dict[str, Any]:

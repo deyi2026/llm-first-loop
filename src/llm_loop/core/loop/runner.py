@@ -525,7 +525,8 @@ class BackgroundRunner:
             from llm_loop.core.loop.side_effects import SideEffectRegistry
 
             _se = SideEffectRegistry.instance()
-            _se.record_stop_requested(session_id, reason)
+            # P1-3：停止记录绑定 run 代次（stop_run_generation 入档，供审计与新鲜度判定）
+            _se.record_stop_requested(session_id, reason, run_generation=run_generation)
         except Exception:  # noqa: BLE001
             _se = None
         cancel_session = getattr(registry, "cancel_session", None)
@@ -548,12 +549,25 @@ class BackgroundRunner:
             return session_id in self._sync_cancelled
 
     @staticmethod
-    def _note_local_terminated(session_id: str) -> None:
+    def _clear_stale_stop_record(session_id: str) -> None:
+        """Phase3 G3（终审 P1-3）：新 run 启动即清空旧停止记录——
+        停止记录的语义属于「被停止的那个 run」，不能被下一轮误读."""
+        try:
+            from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+            SideEffectRegistry.instance().clear_stops(session_id)
+        except Exception:  # noqa: BLE001 — 观测面 fail-open
+            logger.warning("clear_stops 失败（fail-open）", exc_info=True)
+
+    @staticmethod
+    def _note_local_terminated(session_id: str, run_generation: str | None = None) -> None:
         """Phase3 G3：run 本地终态时刻（done/error 出口；F5 双口径的终止侧数据点）."""
         try:
             from llm_loop.core.loop.side_effects import SideEffectRegistry
 
-            SideEffectRegistry.instance().record_local_terminated(session_id)
+            SideEffectRegistry.instance().record_local_terminated(
+                session_id, run_generation=run_generation
+            )
         except Exception:  # noqa: BLE001 — 观测面 fail-open
             pass
 
@@ -795,6 +809,8 @@ class BackgroundRunner:
                 # _bus 在锁内赋值，避免unsubscribe观察到半初始化handle。
                 bus = EventBus()
                 handle._bus = bus
+                # Phase3 G3（终审 P1-3）：新 run 启动即作废旧停止记录（锁内，先于线程）
+                self._clear_stale_stop_record(session_id)
         finally:
             if workspace_guard is not None:
                 workspace_guard.release()
@@ -906,7 +922,7 @@ class BackgroundRunner:
                 handle.status = "done"
                 handle.finished_at = time.time()
                 self._registry.pop(session_id, None)
-            self._note_local_terminated(session_id)
+            self._note_local_terminated(session_id, run_generation=handle.run_generation)
             bus.close()
         except Exception as exc:  # noqa: BLE001 — 后台异常如实广播，不泄漏线程
             logger.exception("后台 run 失败: session=%s", session_id)
@@ -926,7 +942,7 @@ class BackgroundRunner:
                 handle.error = err
                 handle.finished_at = time.time()
                 self._registry.pop(session_id, None)
-            self._note_local_terminated(session_id)
+            self._note_local_terminated(session_id, run_generation=handle.run_generation)
             bus.close()
         finally:
             self._worker_idents.discard(threading.get_ident())

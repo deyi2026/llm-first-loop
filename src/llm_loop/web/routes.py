@@ -2224,8 +2224,10 @@ def chat_stop_state_confirm(payload: StopConfirmRequest, request: Request) -> Re
     """Phase3 G3：external_unknown 人工确认登记（幂等；无 TTL 自动确认，D5）."""
     from llm_loop.core.loop.side_effects import SideEffectRegistry
 
+    # P2-5：确认必须通过会话归属校验（会话 A 不能确认会话 B 的副作用）
     ok = SideEffectRegistry.instance().confirm_external(
-        payload.effect_id, payload.confirmed_by, payload.note
+        payload.effect_id, payload.confirmed_by, payload.note,
+        session_id=payload.session_id,
     )
     if not ok:
         return UTF8JSONResponse(

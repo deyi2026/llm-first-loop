@@ -226,9 +226,11 @@ def test_grade_cbf_at_final_gate(build_test_engine):
     item = _item(_hq_of(client, engine), sid, qid)
     assert item["status"] == "interject_received"
     assert item.get("cbf_at"), f"cbf 未触发: {item}"
-    assert item["grade"] == "applied"  # cbf 后续跑至终答 → applied 优先
-    # 生效点即结算边界拦截本身（继续一轮 = 该消息产生的作用），机械上比终答更早更准
-    assert item.get("applied_detail") == "continued_before_final_gate"
+    # 终审 P1-2 修正后的语义：结算边界拦截只兑现 cbf（拦截本身=决策改变）；
+    # applied 由续跑轮的真实出口兑现——本场景续跑直接给终答（无工具派发），
+    # 终答出口触发 applied，detail=final_answer_after_interjection。
+    assert item["grade"] == "applied"
+    assert item.get("applied_detail") == "final_answer_after_interjection"
     runner.cancel(sid)
 
 

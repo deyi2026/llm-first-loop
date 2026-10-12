@@ -144,7 +144,9 @@ def _background_note_active(engine: Any, session_id: str, round_no: int) -> None
             logger.debug("runner.note_active 失败（忽略）", exc_info=True)
 
 
-def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list[str]:
+def _consume_live_interjections(
+    engine: Any, session_id: str, sess: Any, *, at_final_gate: bool = False
+) -> list[str]:
     """Persist pending genuine-human steer messages at a safe model-round boundary.
 
     The Web thread only queues frozen facts into the active RunHandle.  This function
@@ -236,17 +238,16 @@ def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list
                 f"queue_id={queue_id}; turn_ref={len(sess.messages) - 1}",
             )
         # Phase3 G1 applied/cbf 回执 stash（fail-open，不变量 6）：applied 在首个
-        # 工具派发或终答出口由 _fire_interject_applied 触发；cbf pending 仅当本行
-        # 是终答结算边界消费的行才被该检查点触发——每次消费调用先重置 pending，
-        # 轮边界消费不会误触发 CBF 分级。
+        # 工具派发或终答出口由 _fire_interject_applied 触发；cbf 仅在终答结算
+        # 边界消费（at_final_gate=True）时 stash——轮边界消费的行不该被后续
+        # gate 误触发 CBF 分级；同批多行的回执全部保留（审查 P2-2：不再逐行重置）。
         try:
             rs = engine._run_state()
-            rs.interject_cbf_pending = []
             if callable(row.get("_on_applied")):
                 rs.interject_applied_callbacks.append(
                     {"queue_id": queue_id, "cb": row["_on_applied"]}
                 )
-            if callable(row.get("_on_cbf")):
+            if at_final_gate and callable(row.get("_on_cbf")):
                 rs.interject_cbf_pending.append(
                     {"queue_id": queue_id, "cb": row["_on_cbf"]}
                 )
@@ -255,11 +256,14 @@ def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list
     return accepted_texts
 
 
-def _fire_interject_applied(engine: Any, detail: str, *, also_cbf: bool = False) -> int:
+def _fire_interject_applied(
+    engine: Any, detail: str, *, also_cbf: bool = False, fire_applied: bool = True
+) -> int:
     """G1 applied/CBF 回执触发点（Phase3 §7.1 机械判据）.
 
     调用点：首个工具派发（tool_dispatched_round=N）、终答出口
-    （final_answer_after_interjection）、终答结算边界（also_cbf=True）。
+    （final_answer_after_interjection）、终答结算边界（also_cbf=True 且
+    fire_applied=False——拦截只兑现 cbf，applied 留给续跑轮真实出口）。
     回执失败一律 fail-open（不变量 6）；detail 不含插话正文（D6）。
     取消路径不触发——未被决策采用即不标 applied（诚实优先）。
     """
@@ -268,7 +272,10 @@ def _fire_interject_applied(engine: Any, detail: str, *, also_cbf: bool = False)
         rs = engine._run_state()
     except Exception:  # noqa: BLE001 — 无活跃 run 状态时静默放弃回执
         return 0
-    targets, rs.interject_applied_callbacks = rs.interject_applied_callbacks, []
+    if fire_applied:
+        targets, rs.interject_applied_callbacks = rs.interject_applied_callbacks, []
+    else:
+        targets = []
     for ent in targets:
         cb = ent.get("cb")
         qid = str(ent.get("queue_id") or "")
@@ -719,6 +726,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # cross-run blocked/prewarm/no-progress 决策状态。
         _bucket = self._run_state()
         _bucket.fallback_receipt = None
+        # Phase3 G1 审查 P1-1：run 入口清空插话回执桶（per-session 桶字段跨 run
+        # 保留——上一 run 残留回调若不清，会在下一 run 的首个工具派发点被误触发，
+        # 把未被本 run 决策采用的插话误标 applied）。与 fallback_receipt 同款纪律。
+        _bucket.interject_applied_callbacks = []
+        _bucket.interject_cbf_pending = []
         self._routing._begin_run_routing_epoch()
         _bucket.stagnation_state = {
             "fp": None,
@@ -2414,7 +2426,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 # no-tool response is only terminal if the mailbox is still empty at the
                 # settlement boundary; otherwise continue the same run so the next model
                 # decision includes the newly persisted genuine-human turn.
-                _late_interjected = _consume_live_interjections(self, session_id, sess)
+                _late_interjected = _consume_live_interjections(
+                    self, session_id, sess, at_final_gate=True
+                )
                 if _late_interjected:
                     _nonempty_interjected = [row for row in _late_interjected if row.strip()]
                     if _nonempty_interjected:
@@ -2425,9 +2439,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             "continued_before_final",
                             f"round={rounds}; count={len(_late_interjected)}",
                         )
-                    # Phase3 G1：本次消费即终答结算边界拦截，触发 cbf 回执分级
+                    # Phase3 G1（审查 P1-2 修正）：本次消费是终答结算边界拦截——
+                    # 只触发 cbf 回执（拦截本身即决策改变：run 从「要终答」变为
+                    # 「继续」）。applied 不在此处触发：其回调保留在 stash，由续跑
+                    # 轮的真实出口（首个工具派发/终答出口）触发；若续跑被取消或
+                    # 出错，则不标 applied（未被后续决策采用，诚实优先）。
                     _fire_interject_applied(
-                        self, "continued_before_final_gate", also_cbf=True
+                        self, "continued_before_final_gate", also_cbf=True, fire_applied=False
                     )
                     final_answer = ""
                     resp = None
