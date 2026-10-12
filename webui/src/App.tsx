@@ -181,10 +181,10 @@ export function App() {
         <TopBar onToggleSidebar={toggleSidebar} onShowFiles={showConversationFiles} />
         {mainView === "chat" ? <InteropNotice /> : null}
         {mainView === "learning" ? (
-          <>
+          <div className="v2-learning-view" data-testid="learning-view">
             <LearningPanel />
             <KnowledgePanel />
-          </>
+          </div>
         ) : mainView === "services" ? (
           <ServicesPanel />
         ) : (

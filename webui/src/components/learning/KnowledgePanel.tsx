@@ -25,6 +25,7 @@ const METHOD_STATUS_LABELS: Record<string, string> = {
   hold: "暂停",
   invalidated: "已失效",
   retired: "已退役",
+  teacher: "teacher（教学参考）", // EVO-20261013-2: 补齐 store 合法状态，避免裸英文回退
 };
 
 const METHOD_TRANSITIONS: { value: MethodTransition; label: string }[] = [
@@ -141,14 +142,29 @@ export function KnowledgePanel() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [expError, setExpError] = useState("");
+  const [mthError, setMthError] = useState("");
 
   const refresh = useCallback(async () => {
-    const [exp, mth] = await Promise.all([
+    // EVO-20261013-2: 读取失败与空库分开呈现（fetch 失败抛错），错误不再伪装成"无匹配"
+    const [expRes, mthRes] = await Promise.allSettled([
       fetchExperienceCatalog(query, expStatus, 150),
       fetchMethodInventory(query, methodStatus, 150),
     ]);
-    setExperiences(exp);
-    setMethods(mth);
+    if (expRes.status === "fulfilled") {
+      setExperiences(expRes.value);
+      setExpError("");
+    } else {
+      setExperiences(null);
+      setExpError(expRes.reason instanceof Error ? expRes.reason.message : String(expRes.reason));
+    }
+    if (mthRes.status === "fulfilled") {
+      setMethods(mthRes.value);
+      setMthError("");
+    } else {
+      setMethods(null);
+      setMthError(mthRes.reason instanceof Error ? mthRes.reason.message : String(mthRes.reason));
+    }
     setLoading(false);
   }, [query, expStatus, methodStatus]);
 
@@ -237,6 +253,10 @@ export function KnowledgePanel() {
           <div className="v2-knowledge-list">
             {loading ? (
               <div className="v2-knowledge-empty">读取经验库…</div>
+            ) : expError ? (
+              <div className="v2-knowledge-empty" data-testid="exp-load-error">
+                经验库读取失败（{expError}）— 服务异常或未就绪，非空库；30s 后自动重试
+              </div>
             ) : (experiences?.records.length ?? 0) === 0 ? (
               <div className="v2-knowledge-empty">无匹配经验</div>
             ) : (
@@ -257,6 +277,10 @@ export function KnowledgePanel() {
           <div className="v2-knowledge-list">
             {loading ? (
               <div className="v2-knowledge-empty">读取方法库…</div>
+            ) : mthError ? (
+              <div className="v2-knowledge-empty" data-testid="mth-load-error">
+                方法库读取失败（{mthError}）— 服务异常或未就绪，非空库；30s 后自动重试
+              </div>
             ) : (methods?.records.length ?? 0) === 0 ? (
               <div className="v2-knowledge-empty">无匹配方法</div>
             ) : (

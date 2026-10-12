@@ -64,6 +64,15 @@ function stateLabel(state: string): string {
   return labels[state] ?? state;
 }
 
+// EVO-20261013-2: candidate_ref 不只指向 method（memory-extract 等也走 saved），
+// 按前缀如实标注产物类型，不再一律写 "Method candidate"。
+function refLabel(ref: string): string {
+  if (ref.startsWith("method:")) return "Method candidate";
+  if (ref.startsWith("memory-extract:")) return "记忆抽取产物";
+  if (ref.startsWith("experience:")) return "经验条目";
+  return "产物引用";
+}
+
 function JobCard({ job }: { job: LearningJobInfo }) {
   const facts = job.trigger_facts ?? {};
   return (
@@ -83,7 +92,7 @@ function JobCard({ job }: { job: LearningJobInfo }) {
       </div>
       {job.candidate_ref ? (
         <div className="v2-learning-result">
-          <span>Method candidate</span><code>{job.candidate_ref}</code>
+          <span>{refLabel(job.candidate_ref)}</span><code>{job.candidate_ref}</code>
         </div>
       ) : null}
       {job.reason ? <div className="v2-learning-reason">{job.reason}</div> : null}
@@ -155,11 +164,16 @@ export function LearningPanel() {
       </header>
       <section className="v2-learning-summary">
         <div><span>模型</span><strong>{worker.model_ref || "—"}</strong></div>
-        <div><span>排队</span><strong>{status.counts.queued ?? 0}</strong></div>
+        <div title="全 journal 口径：当前排队中的任务总数"><span>排队</span><strong>{status.counts.queued ?? 0}</strong></div>
         <div><span>学习中</span><strong>{status.counts.started ?? 0}</strong></div>
         <div><span>已生成</span><strong>{status.counts.saved ?? 0}</strong></div>
         <div><span>失败</span><strong>{status.counts.failed ?? 0}</strong></div>
       </section>
+      {status.observability_errors?.length ? (
+        <div className="v2-learning-reason" data-testid="journal-error">
+          ⚠ journal 读取部分失败（{status.observability_errors.join("、")}）：上方数字/任务列表可能缺失，与正常状态不同
+        </div>
+      ) : null}
       <section className="v2-learning-backpressure" data-testid="learning-backpressure">
         <div className="v2-learning-bp-row">
           <div className="v2-learning-bp-item">
@@ -195,7 +209,7 @@ export function LearningPanel() {
                 {admissionState === "blocked"
                   ? admissionReasonLabel(admission.reason)
                   : admission.queued != null
-                    ? `心跳 ${admission.age_seconds ?? 0}s 前 · 在队 ${admission.queued}`
+                    ? `心跳 ${admission.age_seconds ?? 0}s 前 · 在队 ${admission.queued}（心跳时点口径）`
                     : ""}
                 {admission.since && admissionState === "blocked"
                   ? ` · 已持续 ${durationLabel((admission.ts ?? 0) - admission.since)}`

@@ -555,6 +555,8 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
     engine = _engine_from(request)
     journal = getattr(engine, "learning_journal", None)
     jobs = []
+    # EVO-20261013-2: journal 读取失败仍 fail-open，但显式暴露降级信号（不再伪装成全 0/空）
+    observability_errors: list[str] = []
     if journal is not None:
         try:
             for job in journal.recent_jobs(limit=limit):
@@ -578,6 +580,7 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
                 )
         except Exception:  # noqa: BLE001 - observability must never break chat serving
             logger.warning("learning status journal read failed", exc_info=True)
+            observability_errors.append("jobs")
 
     # 全历史口径（EVO 2026-09-24）：terminal 态单调累计（saved 不再随窗口滚动回退），
     # in-flight 态即当前在飞；count_states 不可得时 fail-open 回退窗口口径。
@@ -587,6 +590,7 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
             counts = dict(journal.count_states())
         except Exception:  # noqa: BLE001 - observability must never break chat serving
             logger.warning("learning status count_states failed", exc_info=True)
+            observability_errors.append("count_states")
     if not counts:
         for row in jobs:
             state = str(row.get("state") or "unknown")
@@ -604,6 +608,9 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
             if pid > 0:
                 try:
                     os.kill(pid, 0)
+                    running = True
+                except PermissionError:
+                    # EPERM：进程存在但属主不同，不能据此判定未运行（EVO-20261013-2）
                     running = True
                 except OSError:
                     running = False
@@ -630,6 +637,7 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
             oldest_queued = journal.oldest_queued()
         except Exception:  # noqa: BLE001 - observability must never break chat serving
             logger.warning("learning status oldest_queued failed", exc_info=True)
+            observability_errors.append("oldest_queued")
 
     admission: dict[str, Any] = {"present": False}
     heartbeat_path = data_dir / "runtime" / "learning_admission.json"
@@ -657,6 +665,7 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
             requeue_stats = journal.requeue_stats()
         except Exception:  # noqa: BLE001 - observability must never break chat serving
             logger.warning("learning status requeue_stats failed", exc_info=True)
+            observability_errors.append("requeue_stats")
 
     return JSONResponse(
         {
@@ -668,6 +677,7 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
             "oldest_queued": oldest_queued,
             "admission": admission,
             "requeue_stats": requeue_stats,
+            "observability_errors": observability_errors,  # EVO-20261013-2: 降级信号，空列表=读取正常
         }
     )
 

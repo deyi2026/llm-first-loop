@@ -123,6 +123,7 @@ export interface LearningStatusInfo {
   oldest_queued?: LearningOldestQueued | null;
   admission?: LearningAdmission;
   requeue_stats?: LearningRequeueStats;
+  observability_errors?: string[]; // EVO-20261013-2: journal 读取失败降级信号（缺省/空=正常）
 }
 
 export async function fetchLearningStatus(limit = 50): Promise<LearningStatusInfo | null> {
@@ -175,18 +176,21 @@ export interface MethodInventory {
   records: MethodCardInfo[];
 }
 
+// EVO-20261013-2: 目录读取失败改抛错（此前返回 null，KnowledgePanel 会把
+// 503/500/网络失败伪装成"无匹配"空库）；错误与空库由此可区分。
 export async function fetchExperienceCatalog(
   query = "",
   status = "",
   limit = 100
-): Promise<ExperienceCatalog | null> {
+): Promise<ExperienceCatalog> {
   const params = new URLSearchParams({ limit: String(Math.min(limit, 500)) });
   if (query) params.set("query", query);
   if (status) params.set("status", status);
   const { status: code, data } = await api<ExperienceCatalog>(
     `/api/v1/knowledge/experiences?${params.toString()}`
   );
-  return code === 200 && data && Array.isArray(data.records) ? data : null;
+  if (code === 200 && data && Array.isArray(data.records)) return data;
+  throw new Error(code === 0 ? "网络请求失败" : `HTTP ${code}`);
 }
 
 export async function fetchExperienceDetail(id: string): Promise<ExperienceRecordInfo | null> {
@@ -211,14 +215,15 @@ export async function fetchMethodInventory(
   query = "",
   status = "",
   limit = 100
-): Promise<MethodInventory | null> {
+): Promise<MethodInventory> {
   const params = new URLSearchParams({ limit: String(Math.min(limit, 500)) });
   if (query) params.set("query", query);
   if (status) params.set("status", status);
   const { status: code, data } = await api<MethodInventory>(
     `/api/v1/knowledge/methods?${params.toString()}`
   );
-  return code === 200 && data && Array.isArray(data.records) ? data : null;
+  if (code === 200 && data && Array.isArray(data.records)) return data;
+  throw new Error(code === 0 ? "网络请求失败" : `HTTP ${code}`);
 }
 
 export type MethodTransition = "qualify" | "activate" | "hold" | "invalidate" | "retire" | "reopen";
