@@ -136,7 +136,7 @@ def test_external_unknown_and_confirm(build_test_engine, tmp_path):
     engine.runner = runner
     client = TestClient(build_app(engine=engine))
     try:
-        eff = se.register(
+        eff = SideEffectRegistry.instance().register(
             sid, "browser_operate", "click:提交按钮", "browser_mutation",
             revocable=False, detail="不可自动撤销",
         )
