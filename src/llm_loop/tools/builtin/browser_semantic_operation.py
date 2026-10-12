@@ -1235,7 +1235,7 @@ class BrowserSemanticOperationTool:
                         revocable=False,
                         detail="不可自动撤销；停止后须人工核验页面态",
                     )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — 副作用登记是观测面，失败不得阻断浏览器操作
             pass
         receipt = self._base_receipt()
 
