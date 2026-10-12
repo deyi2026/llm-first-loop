@@ -63,6 +63,20 @@ class ChatRequest(BaseModel):
         return self
 
 
+class ChatGPTBindingGcRequest(BaseModel):
+    """Explicit orphan-binding GC request.
+
+    GC is never automatic and never applies to an existing LFL Session. The
+    caller must echo the binding's observed updated_at value so a stale plan
+    cannot remove a binding that resumed activity.
+    """
+
+    session_id: str = Field(min_length=1, max_length=128)
+    expected_updated_at: str = Field(min_length=1, max_length=128)
+    min_age_days: int = Field(default=30, ge=1, le=3650)
+    confirm: bool = Field(default=False)
+
+
 class ChatResponse(BaseModel):
     """对话响应（LoopResult 七字段如实透传, M51 增 model_used）."""
     session_id: str
@@ -477,6 +491,10 @@ class HumanFileObserveRequest(BaseModel):
 
 class EscalationReviewRequest(BaseModel):
     """web 提权审批（POST /api/v1/escalation/review，EVO-20260923-c58a0bb1 提权闭环）."""
+
+    # Web approval is a task decision, NOT an OS-password collection API.
+    # Reject accidental credential payloads rather than silently ignoring them.
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=6, description="提权申请 ID（ESC-xxx）")
     decision: str = Field(pattern="^(approved|denied)$", description="approved / denied")

@@ -12,6 +12,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,7 @@ from .local_runtime_admin import router as local_runtime_router
 from .provider_routes import router as provider_admin_router
 from .schemas import (
     ChatCancelRequest,
+    ChatGPTBindingGcRequest,
     ChatRequest,
     ChatResponse,
     ErrorResponse,
@@ -94,6 +96,13 @@ router.include_router(local_runtime_router)
 def _attachment_store(engine: Any) -> AttachmentStore:
     data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
     return AttachmentStore(data_dir)
+
+
+def _chatgpt_binding_store(engine: Any):
+    from llm_loop.llm.chatgpt_surface import ChatGPTSessionBindingStore
+
+    data_dir = Path(getattr(getattr(engine, "settings", None), "data_dir", "./data"))
+    return ChatGPTSessionBindingStore(data_dir / "chatgpt-web-provider" / "sessions")
 
 
 def _binding_age_seconds(updated_at: str, *, now: datetime | None = None) -> float:
@@ -516,7 +525,7 @@ router.include_router(file_router)
 from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.6.31"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
+SERVICE_VERSION = "0.6.32"  # T7: 语义化版本；由版本一致性测试约束与 pyproject 同步
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -1980,7 +1989,7 @@ def list_models(request: Request) -> dict:
             control_supported = (
                 control in {"thinking_type", "chat_template", "always_on_effort"}
                 or (control == "legacy" and bool(getattr(mspec, "thinking", False)))
-                # Browser surface models are provider-owned rather than API-field
+                # ChatGPT Web is browser/provider-owned rather than API-field
                 # controlled, but it exposes a qualified visible five-level
                 # effort selector.  When the model explicitly declares those
                 # levels, LFL Web may offer request-local effort selection; the
@@ -1996,7 +2005,13 @@ def list_models(request: Request) -> dict:
                     "id": model_ref,
                     "provider": pid,
                     "model": mid,
-                    "display_name": None,
+                    "display_name": (
+                        "网页版 GPT"
+                        if model_ref == "chatgpt-web/web-gpt"
+                        else "DeepSeek 网页版"
+                        if model_ref == "deepseek-web/web-deepseek"
+                        else None
+                    ),
                     "context": int(getattr(mspec, "context", 0) or 0),
                     "max_input_tokens": getattr(mspec, "max_input_tokens", None)
                     or getattr(spec, "max_input_tokens", None),
@@ -2682,6 +2697,233 @@ def get_shared_current(request: Request) -> JSONResponse:
     engine = _engine_from(request)
     current = engine.session.get_shared_current()
     return JSONResponse({"current": current})
+
+
+@router.get("/api/v1/sessions/{session_id}/provider-binding")
+def get_session_provider_binding(
+    session_id: str,
+    request: Request,
+    history_limit: int = Query(default=50, ge=1, le=200),
+) -> JSONResponse:
+    """Read one session's ChatGPT Web transport binding and segment history.
+
+    This is an observability surface only. It does not change routing or grant
+    the provider conversation any context authority.
+    """
+
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={
+                "error": "session_not_found",
+                "detail": session_not_found_message(session_id),
+            },
+        )
+    meta = engine.session.get_meta(session_id)
+    meta_status = str(getattr(meta, "status", "unknown") or "unknown")
+    store = _chatgpt_binding_store(engine)
+    binding = store.load(session_id)
+    policy = {
+        "automatic_gc": False,
+        "eligible_only_when_session_missing": True,
+        "default_min_age_days": 30,
+        "requires_confirm": True,
+        "requires_expected_updated_at": True,
+    }
+    if binding is None:
+        return UTF8JSONResponse(
+            content={
+                "provider": "chatgpt-web",
+                "bound": False,
+                "session_id": session_id,
+                "session_status": meta_status,
+                "history": [],
+                "lifecycle": {
+                    "session_exists": True,
+                    "session_status": meta_status,
+                    "gc_eligible": False,
+                    "gc_reason": "session_exists",
+                },
+                "gc_policy": policy,
+            }
+        )
+    return UTF8JSONResponse(
+        content={
+            "provider": "chatgpt-web",
+            "bound": True,
+            "session_id": session_id,
+            "session_status": meta_status,
+            "binding": asdict(binding),
+            "history": store.read_history(session_id, limit=history_limit),
+            "lifecycle": _binding_lifecycle(
+                engine,
+                session_id,
+                binding.updated_at,
+                min_age_days=30,
+            ),
+            "gc_policy": policy,
+        }
+    )
+
+
+@router.get("/api/v1/chatgpt-web/bindings/gc-plan")
+def chatgpt_binding_gc_plan(
+    request: Request,
+    min_age_days: int = Query(default=30, ge=1, le=3650),
+) -> JSONResponse:
+    """Return a read-only GC plan for ChatGPT Web bindings.
+
+    Existing LFL sessions are never eligible, including archived sessions.
+    Only bindings whose LFL session was physically deleted can become orphan
+    candidates, and they must also satisfy the minimum age.
+    """
+
+    engine = _engine_from(request)
+    store = _chatgpt_binding_store(engine)
+    rows: list[dict[str, Any]] = []
+    for binding in store.list_bindings():
+        lifecycle = _binding_lifecycle(
+            engine,
+            binding.lfl_session_id,
+            binding.updated_at,
+            min_age_days=min_age_days,
+        )
+        rows.append(
+            {
+                "session_id": binding.lfl_session_id,
+                "updated_at": binding.updated_at,
+                "segment_seq": binding.segment_seq,
+                "total_request_count": binding.total_request_count,
+                "history_count": len(
+                    store.read_history(binding.lfl_session_id, limit=500)
+                ),
+                **lifecycle,
+            }
+        )
+    return UTF8JSONResponse(
+        content={
+            "provider": "chatgpt-web",
+            "automatic_gc": False,
+            "min_age_days": min_age_days,
+            "binding_count": len(rows),
+            "eligible_count": sum(1 for row in rows if row["gc_eligible"]),
+            "items": rows,
+        }
+    )
+
+
+@router.get("/api/v1/chatgpt-web/bindings/health")
+def chatgpt_binding_health(request: Request) -> JSONResponse:
+    """Aggregate prompt-neutral ChatGPT binding metrics and operational alerts."""
+
+    from llm_loop.llm.chatgpt_web import CHATGPT_WEB_SEGMENT_BUDGET_RATIO
+    from llm_loop.runtime.chatgpt_binding_health import inspect_chatgpt_binding_health
+
+    engine = _engine_from(request)
+    settings = getattr(engine, "settings", None)
+    max_request_chars = max(
+        1,
+        int(getattr(settings, "chatgpt_web_max_request_chars", 150_000) or 150_000),
+    )
+    segment_max_chars = max(
+        1,
+        int(max_request_chars * CHATGPT_WEB_SEGMENT_BUDGET_RATIO),
+    )
+    content = inspect_chatgpt_binding_health(
+        _chatgpt_binding_store(engine),
+        engine.session,
+        segment_max_chars=segment_max_chars,
+        min_gc_age_days=30,
+    )
+    notifier = getattr(request.app.state, "chatgpt_binding_alert_notifier", None)
+    if notifier is None:
+        content["notification_outlet"] = {
+            "delivery": "macos_system_notification",
+            "status": "not_running",
+            "push_severities": ["warning", "critical"],
+        }
+    else:
+        try:
+            content["notification_outlet"] = notifier.snapshot()
+        except Exception as exc:  # noqa: BLE001 - health endpoint stays readable
+            content["notification_outlet"] = {
+                "delivery": "macos_system_notification",
+                "status": "snapshot_failed",
+                "error_type": type(exc).__name__,
+                "push_severities": ["warning", "critical"],
+            }
+    return UTF8JSONResponse(content=content)
+
+
+@router.post("/api/v1/chatgpt-web/bindings/gc")
+def chatgpt_binding_gc(
+    payload: ChatGPTBindingGcRequest,
+    request: Request,
+) -> JSONResponse:
+    """Explicitly delete one aged orphan binding with optimistic concurrency."""
+
+    if not payload.confirm:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={
+                "error": "confirmation_required",
+                "detail": "ChatGPT binding GC requires confirm=true.",
+            },
+        )
+    engine = _engine_from(request)
+    store = _chatgpt_binding_store(engine)
+    binding = store.load(payload.session_id)
+    if binding is None:
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "binding_not_found", "detail": "Binding does not exist."},
+        )
+    if binding.updated_at != payload.expected_updated_at:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "error": "binding_changed",
+                "detail": "Binding changed after the GC plan; refresh and retry.",
+            },
+        )
+    lifecycle = _binding_lifecycle(
+        engine,
+        payload.session_id,
+        binding.updated_at,
+        min_age_days=payload.min_age_days,
+    )
+    if not lifecycle["gc_eligible"]:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "error": "binding_not_eligible",
+                "detail": lifecycle["gc_reason"],
+                "lifecycle": lifecycle,
+            },
+        )
+    deleted = store.delete_if_unchanged(
+        session_id=payload.session_id,
+        expected_updated_at=payload.expected_updated_at,
+    )
+    if not deleted:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "error": "binding_changed",
+                "detail": "Binding changed while GC was executing; nothing was deleted.",
+            },
+        )
+    return UTF8JSONResponse(
+        content={
+            "status": "deleted",
+            "provider": "chatgpt-web",
+            "session_id": payload.session_id,
+            "expected_updated_at": payload.expected_updated_at,
+        }
+    )
+
+
 @router.post(
     "/api/v1/sessions/{session_id}/pin",
     response_model=None,
