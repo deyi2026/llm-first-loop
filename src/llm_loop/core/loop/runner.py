@@ -464,6 +464,33 @@ class BackgroundRunner:
             h.interjections.clear()
             return rows
 
+    def interjections_pending(self, session_id: str) -> bool:
+        """Phase4 CK-A 到达真值（只读 peek）：当前 run mailbox 是否有待消费插话.
+
+        与 take_interjections 同守 _guard；代次一致性同源（enqueue 只在
+        status=running 且 run_generation 校验通过时入列，mailbox 条目即当前代次
+        真值）。零拷贝、不消费、无写路径；session 单写者纪律不变（只读）。
+        打断/收割判定谓词唯一事实源（docs/phase4-effect-latency-design.md §4.2）；
+        本方法异常如实上抛，调用侧按 §4.4 保守降级（peek 失败不收割）。
+        """
+        with self._guard:
+            h = self._registry.get(session_id)
+            if h is None or h.status != "running":
+                return False
+            return bool(h.interjections)
+
+    def requeue_interjections_front(self, session_id: str, rows: list[dict[str, Any]]) -> None:
+        """Phase4 §4.4 消费故障恢复：未完成持久化的行按原序回插 mailbox 头.
+
+        仅由消费链路在行级持久化失败时调用（同 _guard 原子回插）；ack 未触发
+        的行由持久队列条目（hq）保持必达语义，本回插保持当前 run 内的次序。
+        """
+        with self._guard:
+            h = self._registry.get(session_id)
+            if h is None or h.status != "running":
+                return
+            h.interjections[:0] = [dict(r) for r in rows]
+
     @staticmethod
     def acknowledge_interjection(payload: dict[str, Any]) -> None:
         """Best-effort transport acknowledgement after the engine persisted the steer."""

@@ -68,6 +68,10 @@ class _RunState:
     # 该检查点随后触发。
     interject_applied_callbacks: list[dict[str, Any]] = field(default_factory=list)
     interject_cbf_pending: list[dict[str, Any]] = field(default_factory=list)
+    # Phase4 M1 间隙收割（§4.2 CK-A 尾段）：序列间隙消费点（tool_cycle 间隙检查）
+    # 收割并消费成功的插话文本。轮首消费时合并进 user_text 辅助视图后清空
+    # （单读单清）；仅 engine 工作线程写入（会话单写者纪律不变）。
+    interject_harvest_user_texts: list[str] = field(default_factory=list)
     last_breakdown: Any = None
     last_build_info: Any = None
     # 2026-09-03 cache-boundary P1: provider cache window 是跨 run、按 session 的事实。

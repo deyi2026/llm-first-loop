@@ -47,6 +47,7 @@ from llm_loop.core.message import (
     Message,
     MessageSource,
     RecoverabilityStatus,
+    ToolCall,
     ToolResult,
     ToolResultStatus,
 )
@@ -309,6 +310,7 @@ class ToolCycleService:
             else:
                 physical_calls.append(call)
 
+        gap_skipped: list[ToolCall] = []
         if not physical_calls:
             results = list(continuity_results)
         else:
@@ -321,25 +323,24 @@ class ToolCycleService:
                 calls=physical_calls,
                 workspace_root=current_workspace_root.get(),
             ):
-                try:
-                    physical_results = self._host.registry.execute_many(
-                        physical_calls, on_result=persist_finished
-                    )
-                except TypeError as exc:
-                    # Legacy duck-typed registries may reject the new kwarg before entering
-                    # their method body; retrying that specific signature mismatch is safe.
-                    if "on_result" not in str(exc):
-                        raise
-                    physical_results = self._host.registry.execute_many(physical_calls)
-                    for call, result in zip(physical_calls, physical_results, strict=False):
-                        persist_finished(call, result)
+                physical_results, gap_skipped = self._execute_segments_with_gap_check(
+                    sess, physical_calls, persist_finished
+                )
+            # Phase4 M1：skipped 回执合成与消费点后移至 _execute_tools 回执落盘
+            # 之后（审查 P2-1/P2-5：消除"声明+skip 已落盘而已执行回执未落盘"的
+            # 中段崩溃孤儿窗口，并使消息序为 声明→已执行回执→skip→插话）。
             results = [*continuity_results, *physical_results]
         by_id = {r.tool_call_id: r for r in results if r.tool_call_id}
         ordered = [
             pre_results.get(call.id) or by_id.get(call.id)
             for call in allowed_calls
         ]
-        return [r for r in ordered if r is not None], wal_messages, wal_result_sha
+        return (
+            [r for r in ordered if r is not None],
+            wal_messages,
+            wal_result_sha,
+            gap_skipped,
+        )
 
     def _execute_tools(
         self,
@@ -484,14 +485,24 @@ class ToolCycleService:
                 # A convergence observation is not an execution fence.  If the model
                 # names a concrete tool, execute that tool under the normal registry/WAL
                 # safety layers instead of forcing a convergence_decide detour.
-                allowed_results, _wal_messages, _wal_result_sha = self._execute_allowed_with_wal(
-                    sess, valid_calls, _execution_ids, rounds
+                allowed_results, _wal_messages, _wal_result_sha, _gap_skipped = (
+                    self._execute_allowed_with_wal(
+                        sess, valid_calls, _execution_ids, rounds
+                    )
                 )
                 results = list(allowed_results)
-                # 对账不变量: 声明数 == 结果数（缺失 → 合成取消，防孤儿声明落盘）
-                if len(results) != len(valid_calls):
+                # 对账不变量: 声明数 == 结果数 + 间隙跳过数（缺失 → 合成取消，
+                # 防孤儿声明落盘）。gap_skipped 的回执已由
+                # _synthesize_skipped_for_interjection 直写（消息+octet），不进
+                # 结果列表（status=None 无法走 _record_single_receipt 的五态路径）。
+                if len(results) + len(_gap_skipped) != len(valid_calls):
                     executed_ids = {r.tool_call_id for r in results if r.tool_call_id}
-                    missing = [tc for tc in valid_calls if tc.id not in executed_ids]
+                    skipped_ids = {tc.id for tc in _gap_skipped}
+                    missing = [
+                        tc
+                        for tc in valid_calls
+                        if tc.id not in executed_ids and tc.id not in skipped_ids
+                    ]
                     if missing:
                         self._synthesize_cancelled(
                             sess, missing, executed_ids=set(), round_index=rounds)
@@ -501,8 +512,14 @@ class ToolCycleService:
                             len(results),
                             len(missing),
                         )
+                # Phase4 M1: 按 id 配对（gap_skipped 造成的中位缺失不再错位配对；
+                # 无跳过时与原 zip 位置配对等价——ordered 保持 allowed_calls 序）。
+                _results_by_id = {r.tool_call_id: r for r in results if r.tool_call_id}
                 recorded_results: list[tuple[Any, Any]] = []
-                for tc, result in zip(valid_calls, results, strict=False):
+                for tc in valid_calls:
+                    result = _results_by_id.get(tc.id)
+                    if result is None:
+                        continue
                     self._record_single_receipt(
                         sess,
                         tc,
@@ -526,6 +543,16 @@ class ToolCycleService:
                     logger.warning(
                         "tool_result 前会话快照持久化失败（fail-open）", exc_info=True
                     )
+
+                if _gap_skipped:
+                    # Phase4 M1 间隙收割（§4.2 CK-A 尾段）：已执行回执落盘后，
+                    # 剩余未开始调用逐条回执 skipped_for_interjection → 轮内直接
+                    # 进入消费点 → 下一轮派发。时序后移消除无 WAL 部署的孤儿
+                    # 窗口（审查 P2-1）并固定消息序（P2-5）。
+                    self._synthesize_skipped_for_interjection(
+                        sess, _gap_skipped, round_index=rounds
+                    )
+                    self._consume_gap_interjections(sess)
 
                 # UI terminal facts are emitted only after every receipt in this execution
                 # batch has been recorded and the batch persistence boundary was attempted.
@@ -759,6 +786,125 @@ class ToolCycleService:
                 else None
             ),
         )
+
+    def _gap_interjections_pending(self, sess) -> bool:
+        """Phase4 M1 间隙检查点谓词：mailbox 真值 peek（CK-A；§4.4 fail-open）.
+
+        runner 未启用/属性缺失 → False（无收割路径）；peek 异常 → 保守降级
+        False（不收割不阻断，退化为轮首/终答边界消费）。
+        """
+        runner = getattr(self._host, "runner", None)
+        if runner is None or not getattr(runner, "enabled", False):
+            return False
+        try:
+            return bool(runner.interjections_pending(sess.session_id))
+        except Exception:  # noqa: BLE001 — §4.4 peek 失败保守降级
+            logger.warning(
+                "interjections_pending peek failed (fail-open, no harvest)", exc_info=True
+            )
+            return False
+
+    def _execute_segments_with_gap_check(
+        self, sess, physical_calls, persist_finished
+    ) -> tuple[list[ToolResult], list[ToolCall]]:
+        """Segmented execution with Phase4 M1 gap checkpoints (§4.2 CK-A 尾段).
+
+        物理序与 registry.execute_many 单批语义一致：只读并行批在前、变更调用
+        串行在后（同 ``_READONLY_TOOLS`` 分类）。间隙检查点仅在"无在途工具"
+        的物理边界：序列头（派发前）与每段之间——只读批内部为并发在途，不插
+        检查。peek 非空 → 停止派发剩余段并返回待跳过清单（由调用方合成
+        skipped_for_interjection 回执并进入消费点）。
+        """
+        readonly_names = getattr(self._host.registry, "_READONLY_TOOLS", frozenset())
+        readonly_seg = [c for c in physical_calls if c.name in readonly_names]
+        mutating = [c for c in physical_calls if c.name not in readonly_names]
+        segments: list[list[ToolCall]] = []
+        if readonly_seg:
+            segments.append(readonly_seg)
+        segments.extend([c] for c in mutating)
+        executed: list[ToolResult] = []
+        for idx, seg in enumerate(segments):
+            # 每个物理边界（含序列头——覆盖 LLM 调用期间到达的轮间隙插话）
+            # 均为无在途工具时刻，执行间隙检查。
+            if self._gap_interjections_pending(sess):
+                remaining: list[ToolCall] = []
+                for later in segments[idx:]:
+                    remaining.extend(later)
+                return executed, remaining
+            try:
+                seg_results = self._host.registry.execute_many(
+                    seg, on_result=persist_finished
+                )
+            except TypeError as exc:
+                # Legacy duck-typed registries may reject the new kwarg before entering
+                # their method body; retrying that specific signature mismatch is safe.
+                if "on_result" not in str(exc):
+                    raise
+                seg_results = self._host.registry.execute_many(seg)
+                for call, result in zip(seg, seg_results, strict=False):
+                    persist_finished(call, result)
+            executed.extend(seg_results)
+        return executed, []
+
+    def _synthesize_skipped_for_interjection(
+        self, sess, skipped_calls: list[ToolCall], *, round_index: int
+    ) -> None:
+        """M1 间隙收割：剩余未开始调用逐条回执 skipped_for_interjection.
+
+        形态对齐 _synthesize_cancelled（Message 无 status、octet 如实 duration/
+        result 双 null、随会话落盘）；差异仅在事实：调用未开始、因间隙收割
+        跳过、无副作用。声明数=结果数+取消数+跳过数对账成立。
+        """
+        for tc in skipped_calls:
+            content = (
+                f"[序列间隙收割] 工具 '{tc.name}' 在派发前跳过"
+                f"（skipped_for_interjection=true; reason_code=skipped_for_interjection; "
+                f"auto_reexecuted=false）：收到用户新插话，序列在间隙点收割，"
+                f"该调用未开始、无副作用；请基于新输入重新规划。"
+            )
+            skip_msg = Message(
+                role="tool",
+                content=content,
+                tool_call_id=tc.id,
+                tool_name=tc.name,
+                source=MessageSource.SYSTEM,
+            )
+            sess.messages.append(skip_msg)
+            self._host._append_message_event(sess, skip_msg)
+            self._host._record_action(
+                "action.tool_loop", "skipped_for_interjection", tc.name
+            )
+            record_tool_octet(
+                session_id=sess.session_id,
+                round_index=round_index,
+                tool_call_id=tc.id,
+                tool_name=tc.name,
+                args=tc.arguments if isinstance(tc.arguments, dict) else {},
+                status="skipped",
+                duration_ms=None,
+                result_content=None,
+                reason_code="skipped_for_interjection",
+            )
+
+    def _consume_gap_interjections(self, sess) -> int:
+        """M1 间隙收割：轮内直接进入消费点（轮首消费逻辑提前复用，§4.2）.
+
+        take→ingress 守卫→持久化→ack 链路与 _consume_live_interjections 同源
+        （含行级持久化失败的回插+传播恢复，见其 docstring）；user_text 对齐经
+        run_state.interject_harvest_user_texts 暂存，由下一轮轮首合并。
+        延迟导入避免 engine↔service 环引。
+        """
+        from llm_loop.core.loop.engine import _consume_live_interjections
+
+        accepted = _consume_live_interjections(self._host, sess.session_id, sess)
+        if accepted:
+            self._host._run_state().interject_harvest_user_texts.extend(accepted)
+            self._host._record_action(
+                "tool_cycle.gap_harvest",
+                "interjection_consumed",
+                f"accepted={len(accepted)}",
+            )
+        return len(accepted)
 
     def _synthesize_cancelled(self, sess, calls, *,
                               executed_ids: set[str], round_index: int) -> None:

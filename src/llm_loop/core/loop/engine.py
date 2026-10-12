@@ -163,7 +163,7 @@ def _consume_live_interjections(
         return []
 
     accepted_texts: list[str] = []
-    for row in rows:
+    for _row_idx, row in enumerate(rows):
         text = str(row.get("message") or "")
         metadata: dict[str, Any] = {}
         raw_attachments = row.get("attachment_facts")
@@ -222,9 +222,19 @@ def _consume_live_interjections(
         except Exception:  # noqa: BLE001 - invariant diagnostics must not invent a denial
             logger.warning("interjection metadata invariant check failed (fail-open)", exc_info=True)
 
-        sess.messages.append(msg)
-        engine._append_message_event(sess, msg)
-        engine.session.save(sess)
+        try:
+            sess.messages.append(msg)
+            engine._append_message_event(sess, msg)
+            engine.session.save(sess)
+        except Exception:
+            # Phase4 §4.4 消费故障恢复（M1 审查 P1-1）：持久化失败的行与其后
+            # 未处理行按原序回插 mailbox 头；ack 未触发 → 持久队列条目保持必达；
+            # 异常按轮首同款语义传播使 run 可见失败（不静默丢行）。
+            with contextlib.suppress(Exception):
+                _requeue = getattr(runner, "requeue_interjections_front", None)
+                if callable(_requeue):
+                    _requeue(session_id, rows[_row_idx:])
+            raise
         engine._run_state().current_turn_ref = len(sess.messages) - 1
         engine._run_state().active_run_ingress_message = msg
         accepted_texts.append(text)
@@ -1054,6 +1064,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 final_answer = _CANCELLED_ANSWER
                 break
             _interjected = _consume_live_interjections(self, session_id, sess)
+            # Phase4 M1 间隙收割（§4.2）：序列间隙消费点已收割的文本在此合并进
+            # user_text 辅助视图（单读单清；与轮首消费同口径，不改写原始入语）。
+            with contextlib.suppress(Exception):
+                _harvest_bucket = self._run_state().interject_harvest_user_texts
+                if _harvest_bucket:
+                    _interjected = [*_harvest_bucket, *_interjected]
+                    _harvest_bucket.clear()
             if _interjected:
                 # user_text is used by model-visible tool projection/routing in addition to
                 # Session history. Keep that auxiliary view aligned with the newest genuine
