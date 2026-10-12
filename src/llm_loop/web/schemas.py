@@ -492,6 +492,10 @@ class HumanFileObserveRequest(BaseModel):
 class EscalationReviewRequest(BaseModel):
     """web 提权审批（POST /api/v1/escalation/review，EVO-20260923-c58a0bb1 提权闭环）."""
 
+    # Web approval is a task decision, NOT an OS-password collection API.
+    # Reject accidental credential payloads rather than silently ignoring them.
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(min_length=6, description="提权申请 ID（ESC-xxx）")
     decision: str = Field(pattern="^(approved|denied)$", description="approved / denied")
     note: str = Field(default="", max_length=500, description="审批备注（拒绝理由等，AI 侧可见）")
