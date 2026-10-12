@@ -8,8 +8,6 @@
 """
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from llm_loop.core.scheduler import (
@@ -106,9 +104,9 @@ def test_closed_set_and_authorization_guards(tmp_path):
     with pytest.raises(ValueError):  # 周期条目拒绝（armed 一次性）
         store.add("x", after=1, repeat_interval=5, wake=True, wake_grant=object(),
                   event_predicate="job_terminal", predicate_ref="r")
-    assert EVENT_PREDICATE_KINDS == {
+    assert {
         "job_terminal", "generation_reached", "action_settled",
-    }
+    } == EVENT_PREDICATE_KINDS
 
 
 def test_roundtrip_and_regression_shape(tmp_path):
