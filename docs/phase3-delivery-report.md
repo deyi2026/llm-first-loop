@@ -109,3 +109,15 @@
 ### 7.1 终局验收判定
 
 五项里程碑验收门（设计 §6）：M0 无损基线 ✅（m4_final2 S01–S12）、M1 分级回执 ✅（m1 tests + S01/S02/S07）、M2 机械口径 ✅（m2 tests + metrics.json + S03/S04）、M3 可枚举+授权不变 ✅（m3 tests + S05/S06 + confirm 人工）、M4 恰一次唤醒 ✅（m4 tests + S08/S09：8a/8b/8c 覆盖）。D1–D6 红线全程无违反（终审 D3/D5 独立确认）。
+
+## 8. 发布验证记录（2026-10-13 06:2x–06:3x，线上）
+
+**发布**：终局修复链（c028134aa 代码 + 台账提交 = 运行时 git_head `0f6fad29a66d6672922553e59c03212c1c101893`）publish 为 desired generation **246**，restart action_id `svc-b48e6558b4ee4cf0bab49132fa3e58b3`（target=all）于 06:24:44 succeeded。status 复核：web/feishu/learning 三服务 succeeded，web pid=94658 存活，`matches_desired_generation=true`（desired_git_head=git_head=0f6fad29a）。证据：evidence://v1/47a440f2980829d66b52ee6031b936d43059621ccbdcff9b01a7ebd9a2eb0c3d
+
+**冒烟（部署代码=当前树，HEAD=0f6fad29a）**：`pytest tests/phase3_baseline/test_m0_scenarios.py + tests/unit/test_phase3_m4_predicates.py + test_phase3_m3_stop.py + tests/web/test_phase3_m1_grades.py + test_phase3_m2_metrics.py -v` → **38 passed / 0 failed**（52.49s），含 M0 12 场景（S01–S12）全绿。证据：evidence://v1/f83c87c8f709dcaf315f8c8cb6d9ae9e72f37c3309d1765f0e37304005a11f49
+
+**P0×2 生效核验（线上代码）**
+- P0-2 job_terminal 谓词：test_phase3_m4_predicates.py 5/5 PASSED（8a 事件先到即唤醒、8b 超时先到 armed 即焚、8c 同 tick 确定性、闭集/授权守卫、回归形状）+ test_p0_2_factory_predicate_real_job_states PASSED（真实 JobRegistry：running→False、终态→True）。不再纯超时降级 ✅
+- P0-1 浏览器副作用登记：test_p0_1_browser_registration_dict_clauses PASSED（生产契约 dict clauses：click/navigate 登记 `browser_mutation`+`revocable=False`，snapshot 只读不登记）+ test_external_unknown_and_confirm PASSED；终局快照 m4_final2/S05.json side_effect 观测字段在位（side_effect_started / finished_before_run_done / finished_eventually / total_side_effect_duration_ms≈4319ms）✅
+
+**判定**：发布验证通过。
