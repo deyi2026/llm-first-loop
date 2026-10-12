@@ -10,13 +10,19 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from llm_loop.core.message import ToolCall, ToolResultStatus
-from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.escalation import EscalationRequestTool, EscalationWaitTool
+from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
+from llm_loop.web.schemas import EscalationReviewRequest
 
 _CMD = "rm -rf " + "/etc/foo-unit-test"  # 系统目录子树 → 会被灾难硬阻断
 _CMD_ALT = "rm -rf " + "/etc/bar-unit-test"
@@ -37,6 +43,68 @@ def _approved_token(store: EscalationStore, command: str = _CMD) -> tuple[str, s
     pub, reason = store.decide(rid, "approved", note="ok")
     assert pub is not None, reason
     return rid, store.get(rid)["token"]
+
+
+def test_approval_token_and_audit_are_owner_private_at_every_write(tmp_path, monkeypatch):
+    """New state, audit, lock and intermediate replace must never be 0644."""
+    from llm_loop.tools import escalation as module
+
+    source_replace = module.os.replace
+    seen_modes = []
+
+    def checked_replace(source, target):
+        seen_modes.append(stat.S_IMODE(os.stat(source).st_mode))
+        return source_replace(source, target)
+
+    monkeypatch.setattr(module.os, "replace", checked_replace)
+    initial_umask = os.umask(0o022)
+    try:
+        s = _store(tmp_path)
+        _rid, token = _approved_token(s)
+    finally:
+        os.umask(initial_umask)
+    paths = [s._path, s._log_path, s._lock_path]
+    assert all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in paths)
+    assert seen_modes and set(seen_modes) == {0o600}
+    assert token not in s._log_path.read_text(encoding="utf-8")
+
+
+def test_existing_world_readable_approval_file_migrates_before_read(tmp_path):
+    s = _store(tmp_path)
+    rid, token = _approved_token(s)
+    s._path.chmod(0o644)
+    assert s.get(rid)["token"] == token
+    assert stat.S_IMODE(s._path.stat().st_mode) == 0o600
+
+
+def test_corrupted_or_symlinked_approval_store_cannot_be_reset(tmp_path):
+    s = _store(tmp_path)
+    s._path.parent.mkdir(parents=True, exist_ok=True)
+    s._path.write_text("invalid JSON", encoding="utf-8")
+    original = s._path.read_bytes()
+    with pytest.raises(ValueError, match="refusing overwrite"):
+        s.create(tool_name="execute_command", command=_CMD, justification="x" * 20)
+    assert s._path.read_bytes() == original
+
+    s._path.unlink()
+    target = tmp_path / "separate-private.json"
+    target.write_text("[]", encoding="utf-8")
+    target.chmod(0o600)
+    s._path.symlink_to(target)
+    with pytest.raises(OSError):
+        s.get("any")
+    assert target.read_text(encoding="utf-8") == "[]"
+
+
+def test_web_review_contract_refuses_administrator_password_fields():
+    assert EscalationReviewRequest(
+        id="ESC-test-123", decision="approved",
+    ).decision == "approved"
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        EscalationReviewRequest.model_validate({
+            "id": "ESC-test-123", "decision": "approved",
+            "administrator_password": "must never enter this API",
+        })
 
 
 # ── Store 生命周期 ──
@@ -90,7 +158,6 @@ def test_consume_single_use_and_binding(tmp_path):
 def test_token_expiry(tmp_path):
     s = _store(tmp_path)
     rid, _tok = _approved_token(s)
-    full = s.get(rid)
 
     def _expire(records):
         for r in records:
@@ -177,9 +244,7 @@ def test_registry_block_hint_then_single_use(tmp_path):
     assert r2.status == ToolResultStatus.BLOCKED
     assert "提权令牌无效" in r2.content
     # 真实执行验证（写盘内容核对）
-    from pathlib import Path as _P
-
-    assert _P("/tmp/esc-bypass-ran.txt").read_text().strip() == "esc-bypass-ran"
+    assert Path("/tmp/esc-bypass-ran.txt").read_text().strip() == "esc-bypass-ran"
 
 
 def test_registry_valid_token_executes_for_real(tmp_path):
@@ -193,9 +258,7 @@ def test_registry_valid_token_executes_for_real(tmp_path):
         ToolCall(id="t-e2e2", name="execute_command", arguments={"command": _STUB_CMD, "escalation_token": tok})
     )
     assert r.status == ToolResultStatus.SUCCESS
-    from pathlib import Path as _P
-
-    assert _P("/tmp/esc-bypass-ran.txt").read_text().strip() == "esc-bypass-ran"
+    assert Path("/tmp/esc-bypass-ran.txt").read_text().strip() == "esc-bypass-ran"
 
 
 def test_registry_without_store_zero_regression(tmp_path):
