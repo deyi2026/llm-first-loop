@@ -2555,6 +2555,7 @@ def _stats_for_loaded_session(engine: Any, session_id: str, sess: Any) -> dict[s
     ttft_sum = 0.0
     ttft_n = 0
     usage_events = 0
+    events = []
     event_store = getattr(engine.session, "_event_store", None)
     if event_store is not None and getattr(event_store, "enabled", False):
         try:
@@ -2581,6 +2582,7 @@ def _stats_for_loaded_session(engine: Any, session_id: str, sess: Any) -> dict[s
                     ttft_sum += ttft
                     ttft_n += 1
         except Exception:  # noqa: BLE001 — 事件读取失败回退消息字段（fail-open）
+            events = []
             usage_events = 0
     if usage_events == 0:
         # 回退：消息字段（内存态会话有统计字段；event_log replay 无则如实 0）
@@ -2634,12 +2636,9 @@ def _stats_for_loaded_session(engine: Any, session_id: str, sess: Any) -> dict[s
             summarize_physical_provider_usage,
         )
 
-        physical = None
-        if event_store is not None and getattr(event_store, "enabled", False):
-            try:
-                physical = summarize_physical_provider_usage(event_store.read(session_id))
-            except Exception:  # noqa: BLE001 — telemetry unavailable must not invent 0% hit
-                physical = None
+        # Reuse the exact same append-only snapshot already read for request.usage:
+        # double reads could combine inconsistent accounting boundaries mid-run.
+        physical = summarize_physical_provider_usage(events)
         result["physical_provider_usage"] = physical
         if physical is not None:
             result.update(
@@ -2660,7 +2659,7 @@ def _stats_for_loaded_session(engine: Any, session_id: str, sess: Any) -> dict[s
                     round(physical["output_tokens"] / (physical["transport_duration_ms"] / 1000), 1)
                     if physical["transport_duration_ms"] > 0 else 0.0
                 ),
-                usage_source="provider.transport.settled",
+                usage_source=physical["usage_source"],
             )
         else:
             # Legacy child messages often serialize all token/cache fields as

@@ -134,3 +134,23 @@ def test_child_comparison_refuses_unrelated_parent_and_unknown_cache(build_test_
     child_stats = client.get(f"/api/v1/sessions/{child_id}/stats").json()
     assert child_stats["cache_hit_rate"] is None
     assert child_stats["usage_source"] == "unavailable"
+
+
+def test_child_opened_without_settlement_is_not_a_zero_hit_sample(
+    build_test_engine, tmp_path,
+):
+    engine, _ = build_test_engine([])
+    engine.session._event_store = EventStore(tmp_path / "events")
+    parent_id = engine.session.create()
+    child_id = "subagent_" + uuid4().hex[:12]
+    engine.session.save(Session(session_id=child_id, parent_id=parent_id))
+    assert engine.session._event_store.append(child_id, "provider.transport.opened", {
+        "call_id": "pcall:pending", "attempt_id": "pattempt:pending",
+        "provider_id": "glm", "model_id": "glm-5.3",
+        "started_at": 20.0,
+    }) is not None
+    d = _make_client(engine).get(f"/api/v1/sessions/{child_id}/stats").json()
+    assert d["usage_source"] == "provider.transport.settled+opened"
+    assert d["cache_hit_rate"] is None
+    assert d["physical_provider_usage"]["physical_attempts"] == 0
+    assert d["physical_provider_usage"]["opened_unsettled_attempts"] == 1
