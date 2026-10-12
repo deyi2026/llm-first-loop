@@ -13,12 +13,13 @@ from __future__ import annotations
 import json
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType, EventReporter
 from llm_loop.timekeeping import system_local_now
 
@@ -123,7 +124,6 @@ class ToolHistoryItem:
 def _bound_session_id() -> str:
     """Best-effort factual execution binding for observability records."""
     try:
-        from llm_loop.core.run_context import current_session_id
 
         return str(current_session_id.get() or "")
     except Exception:  # noqa: BLE001 — observability attribution must stay fail-open
@@ -194,7 +194,6 @@ class ArchitectureStatusProvider:
         if self.enabled:
             # P0-5: 按 contextvar 会话分桶（无上下文 → 全局桶）；并发 run 各记各的
             try:
-                from llm_loop.core.run_context import current_session_id
 
                 sid = current_session_id.get()
             except Exception:  # noqa: BLE001 — 上下文不可用落全局桶（零回归）
@@ -209,7 +208,6 @@ class ArchitectureStatusProvider:
             with self._phases_guard:
                 return self._phases.get(session_id, "idle")
         try:
-            from llm_loop.core.run_context import current_session_id
 
             ctx_sid = current_session_id.get()
         except Exception:  # noqa: BLE001
@@ -230,7 +228,6 @@ class ArchitectureStatusProvider:
         # action_trace.jsonl 的 session_id 字段恒为空（生产归因断裂）
         if not session_id:
             try:
-                from llm_loop.core.run_context import current_session_id
 
                 session_id = current_session_id.get()
             except Exception:  # noqa: BLE001 — contextvar 未设按空处理
@@ -958,7 +955,7 @@ _SNAPSHOT_DIMENSIONS: frozenset[str] = frozenset({
 
 
 # 2026-08-20: 维度参数鲁棒归一化（EVO-20260820-6857bf41 修复）
-def _normalize_dimensions(dimensions, known: set[str]) -> list[str] | None:
+def _normalize_dimensions(dimensions, known: Set[str]) -> list[str] | None:
     """把 dimensions 归一化为合法维度名列表；全部非法/缺失 → None（回落全量）.
 
     处理: list / JSON 数组字符串（"["x","y"]"，含截断残缺）/ 逗号空白串 / 其他类型。

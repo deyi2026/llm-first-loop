@@ -730,14 +730,22 @@ class ChatGPTSurface:
         return target_id
 
     def _owned_context(self) -> Any:
+        if self._browser is None:
+            raise BrowserSurfaceLeaseError("ChatGPT browser is not connected")
         contexts = list(self._browser.contexts)
-        if len(contexts) != 1:
-            raise BrowserSurfaceLeaseError(
-                f"dedicated ChatGPT browser requires exactly one context; got {len(contexts)}"
-            )
+        if not contexts:
+            raise BrowserSurfaceLeaseError("ChatGPT browser has no context")
+        # Playwright over CDP reports the default browsing context first.
+        # Ownership is the leased target id, not context cardinality: the old
+        # exactly-one-context rule silently broke whenever the user opened an
+        # incognito window in the daily browser (an extra context).  Extra
+        # contexts must not block owned-page recreation; always create in the
+        # default context.
         return contexts[0]
 
     def _find_target(self, target_id: str) -> Any | None:
+        if self._browser is None:
+            raise BrowserSurfaceLeaseError("ChatGPT browser is not connected")
         for context in self._browser.contexts:
             for page in context.pages:
                 try:
@@ -803,14 +811,41 @@ class ChatGPTSurface:
             f"{timeout_s:g}s{detail}"
         )
 
+    def _load_recoverable_lease(self) -> BrowserSurfaceLease | None:
+        """Load the durable lease, treating an unreadable/corrupt one as absent.
+
+        The configured Project identity is the durable authority; the lease
+        file is a recoverable cache of target/conversation routing state.
+        Disk damage, manual edits, or format drift must not permanently poison
+        the surface: report, discard, and let ``open()`` recreate the owned
+        page plus a fresh lease through the no-lease path.  A *readable* lease
+        that names a different Project stays fail-closed (config drift needs
+        human eyes, not silent overwrite).
+        """
+        if not self.lease_store.exists():
+            return None
+        try:
+            lease = self.lease_store.load()
+        except BrowserSurfaceLeaseError as exc:
+            logger.warning(
+                "chatgpt-web surface: surface lease unreadable (%s); "
+                "recreating owned page from configured project root",
+                exc,
+            )
+            return None
+        if lease.project_ref != self.project_ref or lease.project_url != self.project_url:
+            raise BrowserSurfaceLeaseError("surface lease Project identity mismatch")
+        return lease
+
     def open(self) -> Any:
         self._pw = self._start_playwright()
         try:
-            self._browser = self._pw.chromium.connect_over_cdp(self.endpoint)
-            if self.lease_store.exists():
-                lease = self.lease_store.load()
-                if lease.project_ref != self.project_ref or lease.project_url != self.project_url:
-                    raise BrowserSurfaceLeaseError("surface lease Project identity mismatch")
+            browser = self._pw.chromium.connect_over_cdp(self.endpoint)
+            if browser is None:
+                raise BrowserSurfaceLeaseError("CDP connect_over_cdp returned no browser")
+            self._browser = browser
+            lease = self._load_recoverable_lease()
+            if lease is not None:
                 page = self._find_target(lease.target_id)
                 if page is not None:
                     expected_url = lease.conversation_url or self.project_url
@@ -825,10 +860,20 @@ class ChatGPTSurface:
                             # URL matching to choose a different tab here.
                             page.goto(expected_url, wait_until="commit", timeout=15_000)
                         self._wait_for_page_context(page, expected_url=expected_url)
-                    except BrowserSurfaceLeaseError:
+                    except Exception as exc:
                         is_closed = getattr(page, "is_closed", None)
                         if not (callable(is_closed) and is_closed()):
                             raise
+                        # The leased tab can be closed between _find_target and the
+                        # route restore (Playwright then raises TargetClosedError),
+                        # or while waiting for its execution context.  A dead owned
+                        # target is equivalent to a missing one: recover through the
+                        # owned-page recreation path below instead of failing open().
+                        logger.warning(
+                            "chatgpt-web surface: leased target closed during route "
+                            "restore (%s); recreating owned page",
+                            type(exc).__name__,
+                        )
                         page = None
                 if page is not None:
                     self.page = page
@@ -992,6 +1037,26 @@ class ChatGPTSurface:
         if self.lease is None:
             raise BrowserSurfaceLeaseError("surface is not open")
         return self.lease
+
+    def reopen_dead_page(self) -> Any:
+        """Replace a runtime-dead owned page handle without dropping the lease.
+
+        When the leased tab is closed while the surface is already open (the
+        user closes the tab, or the browser drops the target), the in-memory
+        page handle is dead but the durable lease still names the old target.
+        ``close()`` only clears in-memory state, so a fresh ``open()`` will not
+        find the dead target and recreates the owned page through the lease
+        recovery path.  A live page handle is returned untouched.
+        """
+        page = self.page
+        is_closed = getattr(page, "is_closed", None)
+        if page is not None and callable(is_closed) and not is_closed():
+            return page
+        logger.warning(
+            "chatgpt-web surface: owned page handle is dead; reopening surface"
+        )
+        self.close()
+        return self.open()
 
     def close(self) -> None:
         self.page = None

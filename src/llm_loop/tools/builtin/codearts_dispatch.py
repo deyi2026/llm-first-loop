@@ -12,6 +12,7 @@ from typing import Any
 from llm_loop.codearts.models import DispatchTask, Priority, RiskLevel, TimeoutBudget
 from llm_loop.codearts.scheduler import CodeArtsScheduler
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 
 
 class CodeArtsDispatchTool:
@@ -116,13 +117,8 @@ class CodeArtsDispatchTool:
         )
 
         # 会话 ID 经 contextvar 优先 + 显式注入回退
-        session_id = ""
-        try:
-            from llm_loop.core.run_context import current_session_id
-
-            session_id = current_session_id.get() or ""
-        except Exception:  # noqa: BLE001
-            pass
+        # 会话 ID 仅用于审计关联；run_context 已模块级导入（无环），无需防御性 try
+        session_id = current_session_id.get() or ""
 
         # R1 effect fence: 远端 dispatch 即副作用提交点。lease 权威丢失
         # （过期/被接管）时拒绝发起远端任务，fail-closed。

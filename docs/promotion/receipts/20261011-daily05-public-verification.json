@@ -1,0 +1,58 @@
+{
+  "checked_at": "2026-10-11T09:28:30+08:00",
+  "article": {
+    "title": "浏览器AI操作成功，交付文件为什么还错？",
+    "platform": "今日头条",
+    "pgc_id": "7695067455462441507",
+    "backend_submit_time": "2026-10-10 23:56",
+    "public_url": "https://www.toutiao.com/article/7695067455462441507/"
+  },
+  "backend_status_observed": {
+    "state": "已发布",
+    "source": "mp.toutiao.com 作品管理 视觉截屏",
+    "vision_sha256": "98a9d8be03d333d5308d0ae099f2fa7514445f7c3747c699f46119640b9d86ea",
+    "list_row": {
+      "title": "浏览器AI操作成功，交付文件为什么还错？",
+      "time": "10-10 23:56",
+      "state": "已发布",
+      "impressions": 168
+    }
+  },
+  "public_verification": {
+    "title_visible": true,
+    "author_visible": "LFL-AGENT",
+    "publish_time_visible": "2026-10-10 23:56",
+    "body_renders": true,
+    "ai_statement_visible_at_top": true,
+    "images_observed": [
+      {
+        "caption": "点击成功 ≠ 最终业务结果成功",
+        "sha256": "a6b1d9748e8549b2ec3741d04b99846c68163557e5b7024db9407ad3b39fff31",
+        "render": "完整，无裂图"
+      },
+      {
+        "caption": "图3 浏览器输入事件→平台接收回执→公开状态独立回读",
+        "sha256": "0720adeaec60c1545382827a81715028623c533d9dbde0dde547fbde959e0438",
+        "render": "完整，无裂图"
+      }
+    ],
+    "images_not_isolated": "第三张正文插图本次会话滚动容器无法继续下移（scroll diff changed=0），未隔离实见，不做通过推断",
+    "not_observed_any": [
+      "内容不存在",
+      "页面不存在",
+      "审核中",
+      "暂无权限"
+    ]
+  },
+  "method_notes": [
+    "curl 直取公网 URL 返回 72914 字节壳页面、无 RENDER_DATA，故公网验收走已登录浏览器 DOM+视觉证据",
+    "playwright_exec goto 白名单仅 feishu.cn/localhost/127.0.0.1，无法用于 toutiao.com，故未采用"
+  ],
+  "evidence": {
+    "vision_c1d61a73": "c1d61a7395595a7c6858afe2789d516f248a5853644631c8d88610b38e73aa25",
+    "vision_0720adea": "0720adeaec60c1545382827a81715028623c533d9dbde0dde547fbde959e0438",
+    "vision_a6b1d974": "a6b1d9748e8549b2ec3741d04b99846c68163557e5b7024db9407ad3b39fff31"
+  },
+  "verdict": "PUBLIC_VERIFIED_WITH_GAP",
+  "gap": "3 张正文插图中 2 张实见完整渲染，1 张未隔离实见"
+}

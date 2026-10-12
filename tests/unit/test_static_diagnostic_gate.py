@@ -6,6 +6,7 @@ import collections
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -186,3 +187,30 @@ def test_changed_files_include_newly_added_code(tmp_path: Path) -> None:
     path.parent.mkdir()
     path.write_text("value = 1\n")
     assert "scripts/brand_new.py" in gate.changed_python_paths(tmp_path)
+
+
+def test_unwritable_analyzer_cache_env_does_not_crash_main(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1-1: an inherited read-only cache path must not surface as `runner crashed`.
+
+    ruff exits 2 with "Failed to initialize cache" when RUFF_CACHE_DIR points at
+    an unwritable path; before the fix that reached the top-level handler as
+    `runner crashed`, hiding the real diagnostics.  main() now injects a private
+    writable temp cache, so the same broken environment still yields the normal
+    verdict (0 for an untouched tree).
+    """
+    monkeypatch.setenv("RUFF_CACHE_DIR", "/proc/nonexistent")
+    monkeypatch.setattr(sys, "argv", ["check_static_diagnostics.py", "--tool", "ruff"])
+    assert gate.main() == 0
+
+
+def test_analyzer_version_drift_reports_uv_sync_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gate, "run_analyzer", lambda root, python, tool, cache_dir=None: ("ruff 0.0.0-bogus", collections.Counter())
+    )
+    monkeypatch.setattr(sys, "argv", ["check_static_diagnostics.py", "--tool", "ruff"])
+    with pytest.raises(ValueError, match="uv sync --frozen"):
+        gate.main()

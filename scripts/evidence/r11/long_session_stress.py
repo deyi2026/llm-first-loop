@@ -208,6 +208,7 @@ def start_server(mode: str, port: int) -> tuple[subprocess.Popen[bytes], Any]:
             if health.get("status") == "ok":
                 return proc, log
         except Exception:
+            # 就绪轮询：连接被拒=N 秒内未就绪，继续下一轮；进程早退由上方 poll 显式抛错
             pass
         time.sleep(0.5)
     raise RuntimeError(f"R11 {mode} web did not become healthy; see {log_path}")

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
-from llm_loop.core.run_context import current_run_generation
+from llm_loop.core.run_context import current_run_generation, current_workspace_root
 from llm_loop.core.session import Session, SessionStore, _validate_session_id
 from llm_loop.event_log.model import build_message_payload
 
@@ -854,7 +854,6 @@ class ToolExecutionJournal:
                         )
                 elif state.get("started"):
                     result_sha = ""
-                    from llm_loop.core.run_context import current_workspace_root
 
                     effect = self.effect_snapshot(
                         session_id,

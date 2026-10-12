@@ -148,12 +148,18 @@ class ChatGPTWebPageTransport:
                 "ChatGPT native Web Search detected during LFL model call"
             )
         blocks = self.adapter.observe_latest_code_blocks()
-        if len(blocks) != 1 or blocks[0].language != self.RESPONSE_FENCE:
+        response_text: str | None = None
+        candidates = [b for b in blocks if b.language == self.RESPONSE_FENCE]
+        if len(candidates) == 1:
+            response_text = candidates[0].text
+        else:
+            response_text = self._harvest_literal_response_fence(len(blocks))
+        if response_text is None:
             raise ChatGPTModelProtocolError(
                 "ChatGPT model call must return exactly one lfl-model-response fenced block"
             )
         try:
-            value = json.loads(blocks[0].text)
+            value = json.loads(response_text)
         except json.JSONDecodeError as exc:
             raise ChatGPTModelProtocolError(f"invalid lfl-model-response JSON: {exc}") from exc
         if not isinstance(value, dict):
@@ -169,6 +175,73 @@ class ChatGPTWebPageTransport:
         """Re-anchor the transport after the owned tab starts a fresh outer thread."""
         self.binding = binding or self.adapter.observe_identity()
         return self.binding
+
+    def _harvest_literal_response_fence(self, rendered_block_count: int) -> str | None:
+        """Fallback harvest: parse the literal response fence from turn innerText.
+
+        ChatGPT occasionally renders the reply's ```lfl-model-response fence
+        as plain text instead of a CodeBlock component; the payload is then
+        only recoverable from the latest assistant turn's raw innerText.
+        Returns None whenever the literal fallback cannot yield exactly one
+        closed response fence so the caller fails closed.
+        """
+        raw_text_reader = getattr(self.adapter, "observe_latest_assistant_raw_text", None)
+        if raw_text_reader is None:  # test doubles / older adapters
+            return None
+        try:
+            raw_text = raw_text_reader()
+        except Exception as exc:
+            logger.warning(
+                "chatgpt-web literal %s fallback raw-text read failed: %s",
+                self.RESPONSE_FENCE,
+                exc,
+            )
+            return None
+        bodies = self._parse_literal_response_fence(raw_text or "")
+        if len(bodies) == 1:
+            logger.info(
+                "chatgpt-web harvest fallback: parsed literal %s fence (rendered_code_blocks=%d)",
+                self.RESPONSE_FENCE,
+                rendered_block_count,
+            )
+            return bodies[0]
+        logger.warning(
+            "chatgpt-web harvest rejected: rendered_code_blocks=%d literal_%s_fences=%d",
+            rendered_block_count,
+            self.RESPONSE_FENCE,
+            len(bodies),
+        )
+        return None
+
+    @classmethod
+    def _parse_literal_response_fence(cls, raw_text: str) -> list[str]:
+        """Extract closed literal ```<RESPONSE_FENCE> bodies from raw turn text.
+
+        Unclosed fences (truncated replies) are dropped so the caller fails
+        closed instead of harvesting a partial JSON payload.
+        """
+        bodies: list[str] = []
+        opener = "```" + cls.RESPONSE_FENCE
+        lines = raw_text.splitlines()
+        total = len(lines)
+        index = 0
+        while index < total:
+            if not lines[index].strip().startswith(opener):
+                index += 1
+                continue
+            index += 1
+            body: list[str] = []
+            closed = False
+            while index < total:
+                if lines[index].strip() == "```":
+                    closed = True
+                    index += 1
+                    break
+                body.append(lines[index])
+                index += 1
+            if closed:
+                bodies.append("\n".join(body).strip())
+        return bodies
 
     @staticmethod
     def _wire_request(request: dict[str, Any]) -> dict[str, Any]:

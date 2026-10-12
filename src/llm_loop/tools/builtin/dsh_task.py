@@ -30,7 +30,11 @@ from contextlib import suppress
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.core.run_context import current_session_id
+from llm_loop.core.run_context import (
+    current_evidence_enforce_enabled,
+    current_session_id,
+    workspace_base,
+)
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -151,7 +155,6 @@ class DshTaskTool:
             return self._fail(kwargs, "缺少必填参数 task（任务文本）")
         cwd = str(kwargs.get("cwd", "") or "").strip()
         if not cwd:
-            from llm_loop.core.run_context import workspace_base
 
             cwd = workspace_base()
         timeout_s = float(kwargs.get("timeout_s") or _DEFAULT_TIMEOUT_S)
@@ -432,7 +435,6 @@ class DshTaskTool:
     @staticmethod
     def _clip(text: str) -> str:
         text = text or ""
-        from llm_loop.core.run_context import current_evidence_enforce_enabled
 
         if current_evidence_enforce_enabled.get() or len(text) <= _MAX_OUTPUT_CHARS:
             return text

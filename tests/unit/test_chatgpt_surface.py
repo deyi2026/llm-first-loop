@@ -7,6 +7,7 @@ import pytest
 
 from llm_loop.llm.chatgpt_page import PageBinding
 from llm_loop.llm.chatgpt_surface import (
+    BrowserSurfaceLease,
     BrowserSurfaceLeaseError,
     BrowserSurfaceLeaseStore,
     ChatGPTSessionBindingStore,
@@ -628,3 +629,169 @@ def test_closed_exact_target_is_replaced_without_selecting_same_url_duplicate(tm
     assert after.target_id == replacement.target_id
     assert duplicate.closed is False
     assert replacement.fronted == 0
+
+
+def test_open_recovers_when_leased_tab_closes_during_route_restore(tmp_path):
+    """16:12-style race: the leased tab dies between _find_target and goto."""
+
+    class _DyingPage(_Page):
+        def goto(self, url, *, wait_until, timeout):
+            self.closed = True
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    surface.open()
+    leased_target = surface.snapshot_identity().target_id
+    surface.close()
+
+    dying = _DyingPage(leased_target, "https://chatgpt.com/c/stale-route")
+    context2 = _Context([dying], target_prefix="revived")
+    surface2, _pw2 = _surface(tmp_path, context2)
+
+    page = surface2.open()
+    lease = surface2.snapshot_identity()
+
+    assert page is not dying
+    assert page.target_id.startswith("revived-")
+    assert lease.target_id == page.target_id
+    assert lease.target_id != leased_target
+
+
+def test_reopen_dead_page_recovers_runtime_closed_tab(tmp_path):
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+    first = surface.open()
+    assert surface.page is first
+
+    first.closed = True
+
+    second = surface.reopen_dead_page()
+    assert second is not first
+    assert surface.page is second
+    lease = surface.snapshot_identity()
+    assert lease.target_id == second.target_id
+
+    third = surface.reopen_dead_page()
+    assert third is second
+
+
+def test_unreadable_lease_recreates_owned_page_instead_of_poisoning(tmp_path):
+    # Layer-1 grill: a corrupt lease file used to raise out of open() and
+    # permanently block the surface (the recovery path re-reads the same file).
+    (tmp_path / BrowserSurfaceLeaseStore.FILE).write_text("{ not json", encoding="utf-8")
+    context = _Context([_Page("user-tab", CONVERSATION_URL)])
+    surface, _pw = _surface(tmp_path, context, recovery_conversation_id=CONVERSATION_ID)
+
+    page = surface.open()
+    lease = surface.snapshot_identity()
+
+    assert context.created == 1
+    assert page.url == CONVERSATION_URL
+    assert lease.target_id == page.target_id
+    reloaded = BrowserSurfaceLeaseStore(tmp_path).load()
+    assert reloaded.target_id == page.target_id
+    assert reloaded.project_ref == PROJECT_REF
+
+
+def test_identity_mismatched_lease_stays_fail_closed(tmp_path):
+    store = BrowserSurfaceLeaseStore(tmp_path)
+    store.save(
+        BrowserSurfaceLease.new(
+            project_ref="g-p-other-project",
+            project_url="https://chatgpt.com/g/g-p-other-project/project",
+            profile_label="fixture-profile",
+            target_id="foreign-target",
+        )
+    )
+    context = _Context()
+    surface, _pw = _surface(tmp_path, context)
+
+    with pytest.raises(BrowserSurfaceLeaseError, match="Project identity mismatch"):
+        surface.open()
+    assert context.created == 0
+
+
+def test_extra_user_context_does_not_block_owned_page_recreation(tmp_path):
+    # Grill: the user's daily browser grows a second context (e.g. an incognito
+    # window); recreation must still create the owned page in the default one.
+    seeding = _Context()
+    seed_surface, _seed_pw = _surface(tmp_path, seeding)
+    seed_surface.open()
+    seed_surface.close()
+    assert seeding.created == 1
+
+    default = _Context([_Page("unrelated-user-tab", "https://chatgpt.com/")], target_prefix="default")
+    incognito = _Context([], target_prefix="incognito")
+    surface, pw = _surface(tmp_path, default)
+    pw.chromium.browser.contexts.append(incognito)
+
+    page = surface.open()
+    lease = surface.snapshot_identity()
+
+    assert default.created == 1
+    assert incognito.created == 0
+    assert lease.target_id == page.target_id
+    assert lease.target_id != "unrelated-user-tab"
+
+
+def test_stale_lease_with_no_connected_browser_fails_closed(tmp_path):
+    # P0-2: pyright reads self._browser as Optional because __init__ sets None
+    # and close() resets it.  If the methods are reached with no connected
+    # browser, the failure must be a domain error, not an opaque
+    # AttributeError('NoneType' object has no attribute 'contexts').
+    store = BrowserSurfaceLeaseStore(tmp_path)
+    store.save(
+        BrowserSurfaceLease.new(
+            project_ref=PROJECT_REF,
+            project_url=PROJECT_URL,
+            profile_label="fixture-profile",
+            target_id="stale-leased-target",
+        )
+    )
+    assert store.exists()
+
+    surface, _pw = _surface(tmp_path, _Context())
+    surface._browser = None  # contract violation under test
+
+    with pytest.raises(
+        BrowserSurfaceLeaseError, match="ChatGPT browser is not connected"
+    ):
+        surface._find_target("stale-leased-target")
+
+    with pytest.raises(
+        BrowserSurfaceLeaseError, match="ChatGPT browser is not connected"
+    ):
+        surface._owned_context()
+
+
+def test_cdp_connect_returning_no_browser_fails_closed(tmp_path):
+    # P0-2 / C-1: a connect implementation that returns None instead of raising
+    # must fail at the causal point, not leave _browser as None for the next
+    # consumer.
+    store = BrowserSurfaceLeaseStore(tmp_path)
+    store.save(
+        BrowserSurfaceLease.new(
+            project_ref=PROJECT_REF,
+            project_url=PROJECT_URL,
+            profile_label="fixture-profile",
+            target_id="stale-leased-target",
+        )
+    )
+
+    context = _Context()
+    surface, pw = _surface(tmp_path, context)
+
+    def _returns_none(endpoint):
+        assert endpoint == "http://127.0.0.1:9229"
+        return None
+
+    pw.chromium.connect_over_cdp = _returns_none
+
+    with pytest.raises(
+        BrowserSurfaceLeaseError, match="CDP connect_over_cdp returned no browser"
+    ):
+        surface.open()
+    assert surface._browser is None
+    assert surface.page is None
+    assert context.created == 0

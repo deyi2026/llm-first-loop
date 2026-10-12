@@ -14,6 +14,8 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
+from llm_loop.core.run_context import current_run_generation
+
 _FAILURES = frozenset({"failure", "error", "timeout"})
 _HIGH_RISK = re.compile(
     r"(deploy|publish|release|production|rm\s+-|delete|chmod|sudo|"
@@ -137,6 +139,9 @@ class KnowledgeRun:
                     "hydration_observed": str(args.get("method_ref") or "") in self._hydrated_refs,
                 })
             elif name == "refine_experience" and args.get("action") == "record_use":
+                # EVO-20261011-945fc53c：experience 使用声明的真值源是
+                # experiences/usage.jsonl（store.record_use 落账）；本事件流降级为
+                # 观察通道，仅作审计对照，不作为“已回记”的判定依据。
                 content = str(getattr(message, "content", "") or "").removeprefix(f"[状态: {status}] ")
                 if not content.startswith("[refine_experience] use declaration\n"):
                     continue
@@ -367,7 +372,6 @@ def project_execution_knowledge(
         sid = str(getattr(sess, "session_id", "") or "")
         # A re-admitted run of the same persisted turn is a distinct execution
         # generation. Never borrow the prior run's dedupe keys or failure latch.
-        from llm_loop.core.run_context import current_run_generation
 
         generation = str(current_run_generation.get() or "")
         run_ref = (

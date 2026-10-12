@@ -130,6 +130,7 @@ def _probe_axis_change(session_id: str, base_fp: str, tools_fp: str) -> None:
             "cache_prefix_axis_change axis=%s session=%s", axis, session_id
         )
     except Exception:  # noqa: BLE001
+        # 前缀轴变化仅用于缓存可观测性：埋点/统计异常不得阻断 prompt 组装
         pass
 
 

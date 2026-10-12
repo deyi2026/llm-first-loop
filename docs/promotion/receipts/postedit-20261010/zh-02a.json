@@ -1,0 +1,13 @@
+{
+  "url": "https://zhuanlan.zhihu.com/p/2092313733624238657",
+  "title": "AI 说\"我改进了一下\"，你信吗？——拆开 Agent 自我进化里的\"自证陷阱\"",
+  "images": 5,
+  "observed_at_utc": "2026-10-10T15:02:35.412123+00:00",
+  "previous_normalized_sha256": "347e0cdf0bd0bc5e955340ca35e459f1a0f55fcb95a189f69140aadd0777b6e4",
+  "current_normalized_sha256": "475b138a6e1c797d1761195914a30d949b962aadd6e9e1785b8e1e8f2e0f9219",
+  "text_unchanged": false,
+  "expected_unmodified_duplicate": false,
+  "status": "PASS",
+  "txt_sha256": "bf58d587b4a8a176feca13ab8f46b0ca4a5d40a124519a2c1e8e08f3063c7f54",
+  "html_sha256": "08896b49e61e29dcc250acd61b2969bd1538fdd05bffe63cb89c1469494fb0f8"
+}

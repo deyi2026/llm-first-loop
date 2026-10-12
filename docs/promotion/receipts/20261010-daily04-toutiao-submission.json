@@ -1,0 +1,23 @@
+{
+  "schema": "lfl-promotion-platform-submission-receipt/1",
+  "captured_at_utc": "2026-10-10T15:39:35.792539+00:00",
+  "editorial_review": "PASS",
+  "source_review_receipt": "docs/promotion/receipts/20261010-daily04-audit.json",
+  "prepublish_receipt": "docs/promotion/receipts/20261010-daily04-toutiao-prepublish.json",
+  "platform": "今日头条",
+  "publisher": "LFL-AGENT",
+  "platform_title": "AI Agent把练习当成真实提交：谁来踩刹车？",
+  "platform_article_id": "7695059357230187008",
+  "platform_record_time_local": "2026-10-10 23:29 Asia/Shanghai",
+  "submission_action_count": 1,
+  "platform_submit_response": "提交成功",
+  "author_manager_url": "https://mp.toutiao.com/profile_v4/manage/content/all?enter_from=left_menu",
+  "author_preview_url": "https://mp.toutiao.com/profile_v4/graphic/preview?enter_from=mp_group_management&pgc_id=7695059357230187008",
+  "author_reported_status": "审核中",
+  "status_observed_at_local": "2026-10-10 23:38 Asia/Shanghai",
+  "public_article_url": null,
+  "public_readback_verified": false,
+  "unique_new_article_publication_count": 0,
+  "do_not_resubmit": true,
+  "next_steps": "Wait for official site to show 已发布 and independently open exact public page to check title, body, links and 3 figures, then record public URL. If rejected, inspect the reason and resubmit only after fresh editorial review and authorized edit."
+}

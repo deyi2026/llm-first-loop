@@ -201,6 +201,7 @@ class _PingTimeoutDowngradeFilter(logging.Filter):
                 record.levelname = logging.getLevelName(logging.WARNING)
                 type(self).count += 1
         except Exception:  # noqa: BLE001
+            # 日志 Filter 必须永不抛异常，否则一条畸形 record 会中断整个 logging 管线
             pass
         return True
 
@@ -714,6 +715,7 @@ class _WsConnector:
             if hasattr(client, "on_reconnected"):
                 client.on_reconnected = _on_reconnected
         except Exception:  # noqa: BLE001
+            # SDK 钩子挂接为尽力而为：mock/异常 __setattr__ 不得阻断飞书桥启动
             pass
 
     def _sdk_lock_held_s(self, client: Any) -> float | None:

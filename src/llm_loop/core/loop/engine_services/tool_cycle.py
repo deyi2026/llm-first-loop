@@ -50,6 +50,7 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
+from llm_loop.core.run_context import current_workspace_root
 from llm_loop.introspection.status import ToolHistoryItem
 from llm_loop.llm.client import LLMResponse, StreamDelta, ToolResultInfo, ToolRoundInfo
 from llm_loop.runtime.tool_octet import record_tool_octet
@@ -311,7 +312,6 @@ class ToolCycleService:
         if not physical_calls:
             results = list(continuity_results)
         else:
-            from llm_loop.core.run_context import current_workspace_root
 
             effect_journal = self._host._tool_execution_journal()
             with effect_journal.effect_bindings(

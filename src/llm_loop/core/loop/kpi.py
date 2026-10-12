@@ -10,6 +10,8 @@ run.end 统一落盘（响应式, 不推送 LLM——方案第 7 条）。fail-o
 
 from __future__ import annotations
 
+from llm_loop.core.run_context import current_model_label
+
 
 class _KpiMixin:
     """run 级 KPI 统计（注入治理前后对比基线）."""
@@ -43,19 +45,16 @@ class _KpiMixin:
     # ── 模型标签上下文（EVO-20260822-b3e7105e 注入逻辑, 抽离自 engine 防膨胀）──
     def _save_model_label_ctx(self) -> str:
         """run 入口保存当前模型标签（恢复用）."""
-        from llm_loop.core.run_context import current_model_label
 
         return current_model_label.get()
 
     def _set_model_label_ctx(self, planned_label: str) -> None:
         """每轮 planned_label 注入 contextvar——工具输出分层按模型预算联动."""
-        from llm_loop.core.run_context import current_model_label
 
         current_model_label.set(planned_label)
 
     def _restore_model_label_ctx(self, prev: str) -> None:
         """run 结束恢复模型标签（finally 路径）."""
-        from llm_loop.core.run_context import current_model_label
 
         current_model_label.set(prev)
 

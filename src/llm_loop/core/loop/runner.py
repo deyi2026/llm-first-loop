@@ -31,6 +31,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.runtime.resolver import business_config_snapshot
 
 logger = logging.getLogger(__name__)
@@ -386,7 +387,11 @@ class BackgroundRunner:
         self._engine = engine
         self.enabled = enabled
         self._registry: dict[str, RunHandle] = {}
-        self._guard = threading.Lock()
+        # Cyclic GC can finalize a suspended Web SSE generator while this thread
+        # owns the registry guard (e.g. in cancel_reason). Its finally block calls
+        # unsubscribe, which re-enters this guard. Keep cross-thread exclusion but
+        # allow that same-thread cleanup instead of deadlocking all status queries.
+        self._guard = threading.RLock()
         self._worker_idents: set[int] = set()  # 后台工作线程 ident（自调用 run_stream 放行）
         # 会话级同步取消登记（sid→reason）：飞书同步 run（engine.run 直驱，登记于
         # engine._sync_active）不在 registry，/stop 经此落取消标记；生命周期与 run
@@ -829,7 +834,6 @@ class BackgroundRunner:
             ctx = contextvars.copy_context()
 
             def _run() -> Any:
-                from llm_loop.core.run_context import current_run_generation
 
                 generation_token = current_run_generation.set(handle.run_generation)
                 run_kwargs: dict[str, Any] = {}

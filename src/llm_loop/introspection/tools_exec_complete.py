@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id as _bound_sid
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,6 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
     owner_session_id = ""
     if found:
         try:
-            from llm_loop.core.run_context import current_session_id as _bound_sid
 
             owner_session_id = str(_bound_sid.get() or "")
         except Exception:  # noqa: BLE001 — owner 语义缺失必须 fail-closed

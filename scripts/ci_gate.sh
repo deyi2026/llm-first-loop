@@ -28,7 +28,7 @@ ROOT="$(pwd)"
 # 2) PYTHONPATH 前置本树 src——任何 worktree/旧主区运行 ci_gate，被测代码恒为本树。
 PY="${PY:-$ROOT/.venv/bin/python}"
 if [[ ! -x "$PY" ]]; then
-  MAIN_WT="$(git worktree list --porcelain | head -1 | cut -d' ' -f2)"
+  MAIN_WT="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
   [[ -x "$MAIN_WT/.venv/bin/python" ]] && PY="$MAIN_WT/.venv/bin/python"
 fi
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -85,7 +85,7 @@ fi
 # not its dist (which could be stale or from a different commit). Never
 # fetch dependencies from the network at a release qualification gate.
 if [[ ! -d "$ROOT/webui/node_modules" ]]; then
-  MAIN_WT="$(git worktree list --porcelain | head -1 | cut -d' ' -f2)"
+  MAIN_WT="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
   if [[ ! -d "$MAIN_WT/webui/node_modules" ]]; then
     echo "❌ CI WebUI dependencies unavailable; preinstall pinned dependencies offline before gate" >&2
     exit 1
@@ -116,6 +116,7 @@ export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-4}"
 echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (full test selection unchanged)"
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 if "$PY" -m pytest --dist loadfile -n auto -q >"$GATE_OUT" 2>&1; then
+  cat "$GATE_OUT"
   echo "（xdist 全量绿）"
 else
   # xdist 假红降级（D-B2-09，第四轮审查采纳）：红 → serial 单点复核——
@@ -131,7 +132,9 @@ else
   fi
   n_files="$(echo "$fail_files" | wc -l | tr -d ' ')"
   echo "── xdist 红（${n_files} 文件）→ serial 单点复核（D-B2-09 降级流程）──"
+  cat "$GATE_OUT"
   if "$PY" -m pytest $fail_files -q >"$GATE_SER" 2>&1; then  # shellcheck disable=SC2086
+    cat "$GATE_SER"
     echo "⚠️ serial 复核绿 = xdist 分布假红（不阻断；文件清单如下，登记观察）"
     echo "$fail_files"
   else

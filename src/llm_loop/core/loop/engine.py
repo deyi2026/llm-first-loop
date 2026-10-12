@@ -71,12 +71,9 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt_eligibility import LEGACY_PROGRAM_FINAL_MARKER
 from llm_loop.core.recent_continuity import attach_recent_continuity_anchor
 from llm_loop.core.reference_injection import is_active_run_ingress_message
-from llm_loop.core.run_context import (
-    current_reasoning_effort as _current_reasoning_effort,
-)
-from llm_loop.core.run_context import (
-    current_reasoning_mode as _current_reasoning_mode,
-)
+from llm_loop.core.run_context import current_reasoning_effort as _current_reasoning_effort
+from llm_loop.core.run_context import current_reasoning_mode as _current_reasoning_mode
+from llm_loop.core.run_context import current_round_no
 from llm_loop.core.session import SessionStore, first_human_ingress_channel
 from llm_loop.core.trace_leak import leak_events
 from llm_loop.core.trace_leak.invariant import (
@@ -980,7 +977,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # CR-R1.1（审查项7）: 轮次入 contextvar——cognitive telemetry 等 build 期
             # 组件归因 round 用（此前 packet_compile 的 round 恒 0）
             with contextlib.suppress(Exception):
-                from llm_loop.core.run_context import current_round_no
 
                 current_round_no.set(rounds)
             _background_note_active(self, session_id, rounds)

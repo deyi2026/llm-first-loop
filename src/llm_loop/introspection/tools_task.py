@@ -97,9 +97,11 @@ TASK_UPDATE_TOOL_DEF: dict = {
             "method_no_contact": {
                 "type": "boolean",
                 "description": (
-                    "显式声明：本任务未接触方法库（EVO-20260923-618f7fd1 ②）。仅当 goal 开启 "
-                    "method_use_gate 且本会话确无 record_use 时，evidence_required 任务 →done 的"
-                    "替代通过路径。误报会被 usage.jsonl 审计对照发现。"
+                    "显式声明：本任务未接触知识库（方法库与经验库；EVO-20260923-618f7fd1 ② / "
+                    "EVO-20261011-d6b04567 语义澄清）。仅当 goal 开启 method_use_gate 且本会话 "
+                    "确无 method/experience 任一 record_use 时，evidence_required 任务 →done 的"
+                    "替代通过路径。误报会被 usage.jsonl 审计对照发现（2026-10-11 前历史记录的 "
+                    "false 只表示“未显式声明无方法库接触”，不蕴含经验库证据）。"
                 ),
             },
         },
@@ -190,11 +192,14 @@ def _method_use_gate_check(
     target: str,
     args: dict,
 ) -> str | None:
-    """EVO-20260923-618f7fd1 ②: goal 级方法 use 硬门（默认关，fail-open）。
+    """EVO-20260923-618f7fd1 ② + EVO-20261011-d6b04567: goal 级知识库 use 硬门（默认关，fail-open）。
 
     开启条件（全部满足才检查）: goal.method_use_gate=true 且 task.evidence_required
-    且目标状态为 done。通过路径: 本会话至少一条 record_use（usage.jsonl 按
-    session_id 归属，旧条目无 session_id 不匹配）或显式 method_no_contact=true 声明。
+    且目标状态为 done。通过路径: 本会话至少一条 record_use（method/experience 双源，
+    各自 usage.jsonl 按 session_id 归属，旧条目无 session_id 不匹配）或显式
+    method_no_contact=true 声明（知识库级语义：方法库与经验库均未接触）。
+    审计兼容: 2026-10-11 前的历史 method_no_contact=false 只表示“未显式声明无方法库
+    接触”，不蕴含经验库证据；跨该时点的审计对照按此分界解读。
     门禁是配置项而非完整性防线：任何读取异常一律放行（返回 None）。
     """
     if target != "done" or bool(args.get("method_no_contact", False)):
@@ -217,11 +222,20 @@ def _method_use_gate_check(
         has_use = any(str(e.get("session_id", "") or "") == sid for e in store.usage_entries())
         if has_use:
             return None
+        experience_store = getattr(host, "experience_store", None)
+        if experience_store is not None:
+            has_experience_use = any(
+                str(e.get("session_id", "") or "") == sid
+                for e in experience_store.usage_entries()
+            )
+            if has_experience_use:
+                return None
         return (
-            "[方法 use 硬门] goal={} 已开启 method_use_gate：evidence_required 任务 "
-            "{} →done 前，需本会话至少一条 method_manage(action=record_use) 回记；"
-            "若本任务确未接触方法库，以 task_update(method_no_contact=true) 显式声明。"
-        ).format(goal_id, task_id)
+            f"[知识库 use 硬门] goal={goal_id} 已开启 method_use_gate：evidence_required 任务 "
+            f"{task_id} →done 前，需本会话至少一条 method_manage(action=record_use) 或 "
+            "refine_experience(action=record_use) 回记；若本任务确未接触知识库"
+            "（方法库/经验库），以 task_update(method_no_contact=true) 显式声明。"
+        )
     except Exception:  # noqa: BLE001 — fail-open：门禁是配置项，读取异常放行
         return None
 

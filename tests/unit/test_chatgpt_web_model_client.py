@@ -1,3 +1,4 @@
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -201,6 +202,9 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
     events: list[str] = []
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         def reset_to_project_root(self):
             events.append("reset")
 
@@ -211,6 +215,9 @@ def test_surface_owned_transport_starts_every_exchange_from_fresh_outer_thread()
             events.append("surface-close")
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             events.append(f"reasoning:{effort}")
 
@@ -258,6 +265,9 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     new_conversations = iter(["conversation-a", "conversation-b"])
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -281,6 +291,9 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             events.append(f"reasoning:{effort}")
 
@@ -337,6 +350,202 @@ def test_surface_owned_transport_reuses_per_lfl_session_and_switches_without_cro
     assert [row["event"] for row in telemetry_a].count("exchange_committed") == 3
 
 
+def test_surface_owned_transport_alerts_when_stable_prefix_changes_within_segment(
+    tmp_path,
+    caplog,
+):
+    new_conversations = iter(["conversation-a"])
+    staged_diagnostics = {
+        "a1": {"stable_prefix_sha256": "1" * 64, "stable_prefix_chars": 100},
+        "a2": {"stable_prefix_sha256": "1" * 64, "stable_prefix_chars": 100},
+        "a3": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+        "a4": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+    }
+
+    class Surface:
+        def reopen_dead_page(self):
+            return None
+
+        active: str | None = None
+
+        def reset_to_project_root(self):
+            self.active = None
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            self.active = conversation_id
+
+        def bind_conversation(self, binding):
+            return SimpleNamespace(
+                conversation_id=binding.conversation_id,
+                conversation_url=f"https://chatgpt.com/g/project/c/{binding.conversation_id}",
+            )
+
+        def close(self):
+            pass
+
+    surface = Surface()
+
+    class Adapter:
+        def rebind_page(self, _page):
+            return None
+
+        def ensure_reasoning_effort(self, effort, **_kwargs):
+            pass
+
+        def observe_identity(self):
+            return SimpleNamespace(conversation_id=surface.active)
+
+    class Inner:
+        last_prefix_diagnostics: dict | None = None
+
+        def rebind(self):
+            pass
+
+        def exchange(self, request, *, timeout_s=None):
+            if surface.active is None:
+                surface.active = next(new_conversations)
+            self.last_prefix_diagnostics = staged_diagnostics[request["request_id"]]
+            return {"request_id": request["request_id"]}
+
+        def close(self):
+            pass
+
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=surface,
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=1_000_000,
+    )
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "model": "web-gpt",
+        "messages": [{"role": "user", "content": "x"}],
+        "tools": [],
+    }
+
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.chatgpt_web"):
+        for request_id in ("a1", "a2", "a3", "a4"):
+            transport.exchange(
+                {**base, "request_id": request_id, "_lfl_session_id": "session-a"}
+            )
+
+    telemetry = store.read_events("session-a")
+    assert [row["event"] for row in telemetry].count("exchange_committed") == 4
+    alerts = [row for row in telemetry if row["event"] == "stable_prefix_changed"]
+    assert len(alerts) == 1
+    assert alerts[0]["segment_seq"] == 1
+    assert alerts[0]["conversation_id"] == "conversation-a"
+    assert alerts[0]["previous_stable_prefix_sha256"] == "1" * 64
+    assert alerts[0]["stable_prefix_sha256"] == "2" * 64
+    assert alerts[0]["previous_stable_prefix_chars"] == 100
+    assert alerts[0]["stable_prefix_chars"] == 120
+    assert any(
+        "stable prefix changed within conversation" in record.message
+        for record in caplog.records
+    )
+
+
+def test_surface_owned_transport_prefix_alert_rebaselines_on_segment_rollover(tmp_path):
+    new_conversations = iter(["conversation-a", "conversation-b"])
+    staged_diagnostics = {
+        "a1": {"stable_prefix_sha256": "1" * 64, "stable_prefix_chars": 100},
+        "a2": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+        "a3": {"stable_prefix_sha256": "2" * 64, "stable_prefix_chars": 120},
+    }
+
+    class Surface:
+        def reopen_dead_page(self):
+            return None
+
+        active: str | None = None
+
+        def reset_to_project_root(self):
+            self.active = None
+
+        def restore_conversation(self, *, conversation_id, conversation_url):
+            self.active = conversation_id
+
+        def bind_conversation(self, binding):
+            return SimpleNamespace(
+                conversation_id=binding.conversation_id,
+                conversation_url=f"https://chatgpt.com/g/project/c/{binding.conversation_id}",
+            )
+
+        def close(self):
+            pass
+
+    surface = Surface()
+
+    class Adapter:
+        def rebind_page(self, _page):
+            return None
+
+        def ensure_reasoning_effort(self, effort, **_kwargs):
+            pass
+
+        def observe_identity(self):
+            return SimpleNamespace(conversation_id=surface.active)
+
+    class Inner:
+        last_prefix_diagnostics: dict | None = None
+
+        def rebind(self):
+            pass
+
+        def exchange(self, request, *, timeout_s=None):
+            if surface.active is None:
+                surface.active = next(new_conversations)
+            self.last_prefix_diagnostics = staged_diagnostics[request["request_id"]]
+            return {"request_id": request["request_id"]}
+
+        def close(self):
+            pass
+
+    store = ChatGPTSessionBindingStore(tmp_path / "sessions")
+    base = {
+        "protocol": MODEL_PROTOCOL,
+        "model": "web-gpt",
+        "tools": [],
+        "_lfl_session_id": "session-a",
+    }
+    big = {**base, "messages": [{"role": "user", "content": "x" * 400}]}
+    small = {**base, "messages": [{"role": "user", "content": "y"}]}
+    # a1 fits segment 1, a2 must roll over (2 x big > big + small), and a3
+    # then fits segment 2 exactly, so the hash change a1 -> a2 crosses the
+    # rollover boundary while a2 -> a3 stays inside one conversation.
+    budget = _SurfaceOwnedTransport._request_chars({**big, "request_id": "a1"}) + len(
+        ChatGPTWebPageTransport._render_request({**small, "request_id": "a3"})
+    )
+    transport = _SurfaceOwnedTransport(
+        Inner(),
+        surface=surface,
+        adapter=Adapter(),
+        session_store=store,
+        project_ref="project",
+        segment_max_chars=budget,
+    )
+
+    transport.exchange({**big, "request_id": "a1"})
+    transport.exchange({**big, "request_id": "a2"})
+    transport.exchange({**small, "request_id": "a3"})
+
+    telemetry = store.read_events("session-a")
+    rollovers = [row for row in telemetry if row["event"] == "segment_rollover"]
+    assert len(rollovers) == 1
+    assert rollovers[0]["reason"] == "cumulative_request_chars"
+    assert not [row for row in telemetry if row["event"] == "stable_prefix_changed"]
+    assert [row["event"] for row in telemetry].count("exchange_committed") == 3
+    binding = store.load("session-a")
+    assert binding is not None
+    assert binding.conversation_id == "conversation-b"
+    assert binding.segment_seq == 2
+    assert binding.segment_request_count == 2
+    assert binding.total_request_count == 3
+
+
 def test_surface_owned_transport_records_restore_failure_without_exchange(tmp_path):
     store = ChatGPTSessionBindingStore(tmp_path / "sessions")
     binding = store.get_or_create(session_id="session-a", project_ref="project")
@@ -349,6 +558,9 @@ def test_surface_owned_transport_records_restore_failure_without_exchange(tmp_pa
     called = {"exchange": 0}
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         def reset_to_project_root(self):
             raise AssertionError("existing binding should attempt restore")
 
@@ -359,6 +571,9 @@ def test_surface_owned_transport_records_restore_failure_without_exchange(tmp_pa
             return None
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
@@ -400,6 +615,9 @@ def test_surface_owned_transport_rolls_segment_at_request_cap(tmp_path):
     new_conversations = iter(["conversation-1", "conversation-2"])
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -420,6 +638,9 @@ def test_surface_owned_transport_rolls_segment_at_request_cap(tmp_path):
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
@@ -469,6 +690,9 @@ def test_surface_owned_transport_rolls_segment_at_cumulative_char_budget(tmp_pat
     new_conversations = iter(["conversation-1", "conversation-2"])
 
     class Surface:
+        def reopen_dead_page(self):
+            return None
+
         active: str | None = None
 
         def reset_to_project_root(self):
@@ -489,6 +713,9 @@ def test_surface_owned_transport_rolls_segment_at_cumulative_char_budget(tmp_pat
     surface = Surface()
 
     class Adapter:
+        def rebind_page(self, _page):
+            return None
+
         def ensure_reasoning_effort(self, effort, **_kwargs):
             return None
 
@@ -627,6 +854,144 @@ def test_page_transport_uses_turn_budget_for_post_click_send_confirmation():
     assert sent[0]["confirm_timeout_s"] == 120.0
 
 
+class _PlainTextInputAdapter:
+    """Page-adapter double whose latest assistant turn renders as plain text."""
+
+    def __init__(self, raw_turn_text: str, rendered_blocks: list | None = None):
+        self.raw_turn_text = raw_turn_text
+        self.rendered_blocks = rendered_blocks or []
+        self.raw_text_reads = 0
+        self.binding = PageBinding(
+            profile_label="fixture",
+            url="https://chatgpt.com/g/project/c/conversation",
+            title="fixture",
+            project_ref="project",
+            conversation_id="conversation",
+        )
+
+    def require_binding(self, observed):
+        assert observed == self.binding
+
+    def observe_generation(self):
+        return SimpleNamespace(assistant_count=0, latest_assistant_identity=None)
+
+    def send_text(self, text, **kwargs):
+        return SimpleNamespace(
+            conversation_id="conversation",
+            user_message_identity="user-1",
+        )
+
+    def wait_for_assistant_completion(self, *_args, **_kwargs):
+        return SimpleNamespace(streaming=False)
+
+    def observe_native_tool_activity(self):
+        return SimpleNamespace(latest_assistant_citation_count=0)
+
+    def observe_latest_code_blocks(self):
+        return self.rendered_blocks
+
+    def observe_latest_assistant_raw_text(self):
+        self.raw_text_reads += 1
+        return self.raw_turn_text
+
+
+_RESPONSE_BODY = (
+    '{"protocol":"lfl-model/0.1","request_id":"r1",'
+    '"content":"ok","tool_calls":[],"finish_reason":"stop"}'
+)
+
+
+def _exchange_with(adapter):
+    transport = ChatGPTWebPageTransport(
+        adapter,
+        binding=adapter.binding,
+        turn_timeout_s=120.0,
+        send_timeout_s=30.0,
+    )
+    return transport.exchange(
+        {
+            "protocol": MODEL_PROTOCOL,
+            "request_id": "r1",
+            "model": "web-gpt",
+            "messages": [{"role": "user", "content": "x"}],
+            "tools": [],
+        },
+        timeout_s=120.0,
+    )
+
+
+def test_page_transport_falls_back_to_literal_fence_when_reply_rendered_as_plain_text():
+    adapter = _PlainTextInputAdapter(
+        "ChatGPT said:\n```lfl-model-response\n" + _RESPONSE_BODY + "\n```\n",
+    )
+
+    response = _exchange_with(adapter)
+
+    assert response["content"] == "ok"
+    assert adapter.raw_text_reads == 1
+
+
+def test_page_transport_falls_back_to_literal_multiline_fence_from_raw_turn_text():
+    pretty_body = (
+        "{\n"
+        '  "protocol": "lfl-model/0.1",\n'
+        '  "request_id": "r1",\n'
+        '  "content": "line1\\nline2",\n'
+        '  "tool_calls": [],\n'
+        '  "finish_reason": "stop"\n'
+        "}\n"
+    )
+    adapter = _PlainTextInputAdapter(
+        "```lfl-model-response\n" + pretty_body + "```",
+    )
+
+    response = _exchange_with(adapter)
+
+    assert response["content"] == "line1\nline2"
+
+
+def test_page_transport_fails_closed_when_plain_text_reply_has_no_literal_fence():
+    adapter = _PlainTextInputAdapter("just prose, no protocol payload")
+
+    with pytest.raises(ChatGPTModelProtocolError, match="exactly one lfl-model-response"):
+        _exchange_with(adapter)
+    assert adapter.raw_text_reads == 1
+
+
+def test_page_transport_fails_closed_on_multiple_literal_response_fences():
+    adapter = _PlainTextInputAdapter(
+        "```lfl-model-response\n" + _RESPONSE_BODY + "\n```\n"
+        "```lfl-model-response\n" + _RESPONSE_BODY + "\n```\n",
+    )
+
+    with pytest.raises(ChatGPTModelProtocolError, match="exactly one lfl-model-response"):
+        _exchange_with(adapter)
+
+
+def test_page_transport_prefers_rendered_code_block_over_literal_fallback():
+    adapter = _PlainTextInputAdapter(
+        raw_turn_text="```lfl-model-response\n{\"content\":\"stale\"}\n```",
+        rendered_blocks=[
+            SimpleNamespace(language="lfl-model-response", text=_RESPONSE_BODY),
+        ],
+    )
+
+    response = _exchange_with(adapter)
+
+    assert response["content"] == "ok"
+    assert adapter.raw_text_reads == 0
+
+
+def test_page_transport_ignores_unclosed_and_request_fences_in_literal_fallback():
+    bodies = ChatGPTWebPageTransport._parse_literal_response_fence(
+        "```lfl-model-request\n{\"ignored\":true}\n```\n"
+        "```lfl-model-response\n" + _RESPONSE_BODY + "\n```\n"
+        "```lfl-model-response\n{\"truncated\":"
+    )
+
+    assert bodies == [_RESPONSE_BODY]
+
+
 def test_chatgpt_web_wire_keeps_stable_tools_before_dynamic_dialogue_and_request_id():
     base = {
         "protocol": MODEL_PROTOCOL,
@@ -703,3 +1068,49 @@ def test_chatgpt_web_request_size_guard_fails_before_browser_send_and_is_overflo
     assert caught.value.limit_chars == 100
     assert caught.value.observed_chars > caught.value.limit_chars
     assert is_overflow_error(caught.value) is True
+
+
+def test_surface_owned_transport_rebinds_adapter_after_surface_revival():
+    """A dead owned tab must be revived and the adapter rebound before any
+    page interaction, instead of failing every exchange until restart."""
+
+    rebound: list[object] = []
+    events: list[str] = []
+
+    class Surface:
+        def reopen_dead_page(self):
+            events.append("reopen")
+            return "page-2"
+
+        def reset_to_project_root(self):
+            events.append("reset")
+
+        def bind_conversation(self, binding):
+            events.append("bind")
+            return None
+
+    class Adapter:
+        def rebind_page(self, page):
+            rebound.append(page)
+
+        def ensure_reasoning_effort(self, effort, **_kwargs):
+            events.append(f"reasoning:{effort}")
+
+        def observe_identity(self):
+            return type("Binding", (), {"conversation_id": "conversation-x"})()
+
+    class Inner:
+        def rebind(self):
+            events.append("rebind")
+
+        def exchange(self, request, *, timeout_s=None):
+            events.append(f"exchange:{request['request_id']}")
+            return {"request_id": request["request_id"]}
+
+    transport = _SurfaceOwnedTransport(Inner(), surface=Surface(), adapter=Adapter())
+    assert transport.exchange({"request_id": "r1"}) == {"request_id": "r1"}
+
+    assert rebound == ["page-2"]
+    assert events.index("reopen") == 0
+    assert events.index("reset") == 1
+    assert events[:2] == ["reopen", "reset"]

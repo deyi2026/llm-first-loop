@@ -29,6 +29,10 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import (
+    current_evidence_enforce_enabled,
+    current_evidence_shadow_enabled,
+)
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
@@ -778,10 +782,6 @@ class WebFetchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        from llm_loop.core.run_context import (
-            current_evidence_enforce_enabled,
-            current_evidence_shadow_enabled,
-        )
 
         raw_observation = body if current_evidence_shadow_enabled.get() else None
         if not full and len(body) > max_chars and not current_evidence_enforce_enabled.get():

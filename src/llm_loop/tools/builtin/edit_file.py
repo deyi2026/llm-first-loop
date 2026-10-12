@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_evidence_shadow_enabled, workspace_base
 from llm_loop.tools.safety import link_shaped_paths
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 from llm_loop.workspace.file_service import FileEditResult, FileService, FileServiceError
@@ -174,7 +175,6 @@ class EditFileTool:
         """T5b symlink 写防护（fail-closed，R9-IMM-04 三态化）."""
         path = Path(path_str)
         if not path.is_absolute():
-            from llm_loop.core.run_context import workspace_base
 
             path = Path(workspace_base()) / path
         probe = link_shaped_paths(path)
@@ -233,7 +233,6 @@ class EditFileTool:
                 "版本化写入要求 durable effect journal；当前记录设施不可用，本次未写入。",
                 "EffectPreparedUnavailable",
             )
-        from llm_loop.core.run_context import workspace_base
 
         try:
             result = self._file_service.edit(
@@ -364,7 +363,6 @@ class EditFileTool:
                 )
                 visible_content += "\n" + contract_line
                 raw_content += "\n" + contract_line
-            from llm_loop.core.run_context import current_evidence_shadow_enabled
 
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
@@ -429,7 +427,6 @@ class EditFileTool:
             )
             visible_content += "\n" + contract_line
             raw_content += "\n" + contract_line
-        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         post = result.post_baseline
         assert post is not None

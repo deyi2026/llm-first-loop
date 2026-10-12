@@ -1,0 +1,75 @@
+{
+  "status": "PUBLIC_VERIFIED",
+  "platform": "今日头条",
+  "publisher": "LFL-AGENT",
+  "title": "AI Agent把练习当成真实提交：谁来踩刹车？",
+  "public_url": "https://www.toutiao.com/article/7695059357230187008/",
+  "article_id": "7695059357230187008",
+  "published_at": "2026-10-10 23:29 Asia/Shanghai (site display)",
+  "verified_at": "2026-10-10T23:45:39.018385+08:00",
+  "review_session_id": "f72c7b3b-1d83-4db3-ba99-8f218141d122",
+  "review": "PASS",
+  "reviewed_sha256": {
+    "docs/promotion/20261010-lfl-daily-04.md": "34e880955d16640d0762b8039aa783651ec2dabbea7f3e541d7359defda4eb6f",
+    "docs/promotion/img/fig16-boundary-overreach.png": "f87391ea92c7309b04fe043e2ba157d8f638f2308740b1b76d58161123119241",
+    "docs/promotion/img/fig17-approval-bench.png": "10d4f8471ffe044b7e007c46b690f312fa29292e6b7449e93b8290b310e64174",
+    "docs/promotion/img/fig18-execution-receipt.png": "35fed2ca5e655a4a5b0c1c68ac9a57982d5096599c314280aad60b92fefbb7f6"
+  },
+  "prepublish_receipt": "docs/promotion/receipts/20261010-daily04-toutiao-prepublish.json",
+  "public_article_text_sha256": "10311b2fff8edbf5529d48ad976f0bf8421ec6e3f722ac316a04aec5714706bb",
+  "public_article_chars": 4498,
+  "public_images": [
+    {
+      "web_uri": "tos-cn-i-6w9my0ksvp/6c9f912ce7f745d7b50b8f22c29ecd13",
+      "natural_width": 1200,
+      "natural_height": 720,
+      "width": "1200",
+      "height": "720",
+      "loaded": true,
+      "src_host": "p0-private.toutiao.com"
+    },
+    {
+      "web_uri": "tos-cn-i-6w9my0ksvp/62c03c35d58143cf91289349be340255",
+      "natural_width": 1200,
+      "natural_height": 720,
+      "width": "1200",
+      "height": "720",
+      "loaded": true,
+      "src_host": "p0-private.toutiao.com"
+    },
+    {
+      "web_uri": "tos-cn-i-6w9my0ksvp/7c61509070cd424cb7ea4a143837740d",
+      "natural_width": 1200,
+      "natural_height": 720,
+      "width": "1200",
+      "height": "720",
+      "loaded": true,
+      "src_host": "p0-private.toutiao.com"
+    }
+  ],
+  "public_h1": [
+    "AI Agent把练习当成真实提交：谁来踩刹车？",
+    "一、最容易被忽视的失误：好心做完了，却做到了不该做的地方",
+    "二、另一份研究揭示：自动批准，常常同时放行了效率和危险",
+    "三、为什么“我已经说过不要提交了”仍然不够？",
+    "四、LFL 给出的不是“保证永不犯错”，而是几个能检查的程序切面",
+    "五、从一篇新闻带走三个实用建议"
+  ],
+  "content_confirmations": [
+    "HarnessSecurity-Bench",
+    "77.1%",
+    "95.4%",
+    "29.2%",
+    "95.6%",
+    "GLM-5.2",
+    "github.com/deyi2026/llm-first-loop",
+    "Anthropic",
+    "图 1：",
+    "图 2：",
+    "图 3："
+  ],
+  "cms_record": "AI Agent把练习当成真实提交：谁来踩刹车？\n10-10 23:29\n已发布\n展现 0阅读 0点赞 0评论 0\n查看数据\n查看评论\n修改\n更多",
+  "cms_href": "https://www.toutiao.com/item/7695059357230187008/?enter_from=mp_group_management",
+  "verified_distinct_original_topics_count_this_batch": 1,
+  "caveat": "Public article evaluated in logged-in Chrome public-page UI; direct static HTTP body lacks SPA article text. Image loading verified after scrolling each figure into viewport. Same article across websites counts once."
+}

@@ -17,7 +17,11 @@ from contextlib import suppress
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.core.run_context import current_session_id
+from llm_loop.core.run_context import (
+    current_evidence_shadow_enabled,
+    current_session_id,
+    workspace_base,
+)
 from llm_loop.tools.builtin.job_registry import JobDurabilityError, JobLimitExceeded, JobRegistry
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
@@ -296,7 +300,6 @@ class ExecuteCommandTool:
         run_bg = bool(kwargs.get("run_in_background", False))
         # 工作区跟随: 未显式指定 workdir 时默认当前工作区根（无工作区 → 进程 cwd，零回归）
         if workdir is None:
-            from llm_loop.core.run_context import workspace_base
 
             workdir = workspace_base()
         try:
@@ -489,7 +492,6 @@ class ExecuteCommandTool:
         _cmd_preview = " ".join(command.split()[:8]) if command else "?"
         _out_lines = len(content.splitlines())
         content = f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]\n{content}"
-        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         raw_observation = content if current_evidence_shadow_enabled.get() else None
 

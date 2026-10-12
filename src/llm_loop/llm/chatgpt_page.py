@@ -163,11 +163,25 @@ class ChatGPTPageAdapter:
     WEB_SEARCH_CITATION_SELECTOR = '[data-testid="chatgpt-citation"]'
     MODEL_BUTTON = "选择 ChatGPT 模型"
     STRENGTH_MENUITEM = "强度"
+    # ChatGPT 2026-10 UI collapses long rendered user turns behind this
+    # expander; the collapsed mount truncates the text before the trailing
+    # request_id token, starving strict send confirmation.
+    EXPAND_TURN_LABEL = "显示更多"
+    MAX_TURN_EXPANSION_ATTEMPTS = 3
 
     def __init__(self, page: Any, *, profile_label: str, project_name: str | None = None):
         self._page = page
         self.profile_label = profile_label
         self.project_name = project_name
+
+    def rebind_page(self, page: Any) -> None:
+        """Point this adapter at a replacement owned page.
+
+        Used after ChatGPTSurface.reopen_dead_page() replaces a dead owned
+        target: the transport keeps one adapter for its lifetime, so surface
+        recovery must hand it the freshly recreated page handle.
+        """
+        self._page = page
 
     @property
     def project_composer(self) -> str | None:
@@ -465,6 +479,24 @@ class ChatGPTPageAdapter:
             out.append(PageCodeBlock(language=language, text=(body or "").strip()))
         return out
 
+    def observe_latest_assistant_raw_text(self) -> str:
+        """Raw innerText of the latest assistant turn, uncanonicalized.
+
+        ChatGPT occasionally renders the model reply's
+        ```` ```lfl-model-response ```` fence as a literal plain-text
+        paragraph (``P.TextBase-*``) instead of a CodeBlock component, so
+        :meth:`observe_latest_code_blocks` reports no rendered blocks even
+        though the fenced protocol payload is fully present in the turn
+        text.  This accessor exposes that raw text for the transport's
+        literal-fence fallback harvest; whitespace is preserved because the
+        fenced JSON body may span multiple lines.
+        """
+        assistants = self._page.get_by_role("heading", name=self.ASSISTANT_HEADING)
+        if assistants.count() == 0:
+            return ""
+        root = assistants.last.locator("xpath=..")
+        return root.inner_text() or ""
+
     def _visible_composer(self, *, timeout_s: float = 3.0, poll_ms: int = 100) -> Any:
         names: list[str] = []
         if self.project_composer:
@@ -537,6 +569,7 @@ class ChatGPTPageAdapter:
             confirm_timeout_s if confirm_timeout_s is not None else timeout_s
         )
         deadline = time.monotonic() + confirmation_budget_s
+        expansion_attempts = 0
         while time.monotonic() < deadline:
             self._page.wait_for_timeout(poll_ms)
             try:
@@ -556,6 +589,23 @@ class ChatGPTPageAdapter:
             content_matches = latest_content == expected_content
             token_matches = bool(expected_token) and expected_token in latest_content
             if not (content_matches or token_matches):
+                # ChatGPT 2026-10 UI can mount the just-submitted long user
+                # turn collapsed behind the 显示更多 expander.  The collapsed
+                # render truncates before the trailing request_id token, so
+                # strict equality/token confirmation starves for the whole
+                # budget even though the send landed and the model replied
+                # (observed 2026-10-11: lfl-model-0005).  Expand the collapsed
+                # turn (bounded) and re-read on the next poll.
+                if (
+                    expansion_attempts < self.MAX_TURN_EXPANSION_ATTEMPTS
+                    and latest_content.endswith(self.EXPAND_TURN_LABEL)
+                ):
+                    expansion_attempts += 1
+                    try:
+                        self._expand_latest_collapsed_turn()
+                    except Exception as exc:
+                        if not _is_navigation_transient(exc):
+                            raise
                 continue
 
             # Long ChatGPT conversations virtualize old DOM turns.  A newly
@@ -588,6 +638,16 @@ class ChatGPTPageAdapter:
         raise PageContractError(
             f"send was not confirmed within {confirmation_budget_s:g}s"
         )
+
+    def _expand_latest_collapsed_turn(self) -> bool:
+        """Click the last visible 显示更多 expander (DOM order ≈ latest turn)."""
+        buttons = self._page.get_by_role("button", name=self.EXPAND_TURN_LABEL)
+        for index in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(index)
+            if button.is_visible():
+                button.click()
+                return True
+        return False
 
     def wait_for_assistant_completion(
         self,

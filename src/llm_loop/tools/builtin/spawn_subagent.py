@@ -8,6 +8,7 @@ LLM 自主拆解复杂任务 → 启动非阻塞子代理（独立会话隔离 +
 from __future__ import annotations
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.subagent.runner import child_spawn_grant_allowed
 
 
 class SpawnSubAgentTool:
@@ -20,10 +21,14 @@ class SpawnSubAgentTool:
         "何时不用: 任务简单直接处理时；子任务依赖父上下文大量状态时。"
         "启动成功后可用 agent_message(target_id=child_id, ...) 中途纠偏；"
         "用 subagent_result(child_id, wait_seconds=...) 查询/等待报告与最终结果。"
-        "注意: 子代理继承父代理当前工具执行域；父域完整时 child 可用完整已注册工具面，"
-        "父域显式受限时 child 不得扩权。各工具自身安全/授权/并发写保护继续生效。"
+        "注意: 子代理继承父代理当前工具执行域（授权只降不升）。"
+        "requires.tools 一旦声明即程序级强制白名单（EVO-20261012-bb3022f4）：child 的"
+        "工具发现面与执行面都被截断到声明集，调用声明外工具由运行时确定性拒绝；"
+        "声明超出父执行域时 spawn 直接拒绝。spawn_subagent 默认不在 child 工具面"
+        "（防递归舰队；如需真正分层舰队需运维以 CHILD_SPAWN_GRANT 显式授予）。"
+        "各工具自身安全/授权/并发写保护继续生效。"
         "递归深度由程序计算，上限 3，超限会拒绝。"
-        "requires 可显式声明能力需求（工具/网络/文件系统/会话连续性），缺口在 child 启动前拒绝。"
+        "requires.network/fs/session_continuity 为能力需求声明，缺口在 child 启动前拒绝。"
         "spawn 成功只代表 child 已启动，不代表子任务完成；最终 outcome 以 subagent_result 为准。"
     )
     parameters = {
@@ -65,7 +70,11 @@ class SpawnSubAgentTool:
                     "tools": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "子任务必需的具体工具名（程序在 child 启动前比对允许工具集）",
+                        "description": (
+                            "强制白名单（EVO-20261012-bb3022f4）：child 的工具面被程序截断到"
+                            "该集合（只降不升，超出父执行域直接拒绝）；调用声明外工具由"
+                            "运行时确定性拒绝。请把子任务真正需要的工具列全。"
+                        ),
                     },
                     "network": {
                         "type": "boolean",
@@ -81,9 +90,12 @@ class SpawnSubAgentTool:
                     },
                 },
                 "description": (
-                    "能力需求显式声明（可选，EVO-20260914-1eb26afa）：程序在 child 启动前"
-                    "比对执行面能力矩阵，缺口即在启动前拒绝并给出替代执行面提示（只提前"
-                    "'必然失败'，不放宽任何授权边界）。不声明则不比对，行为与既有完全一致。"
+                    "能力需求显式声明（可选，EVO-20260914-1eb26afa + EVO-20261012-bb3022f4）："
+                    "tools=强制白名单（child 工具面截断到声明集，程序级拦截）；"
+                    "network/fs/session_continuity 在 child 启动前比对执行面能力矩阵，"
+                    "缺口即在启动前拒绝并给出替代执行面提示（只提前'必然失败'，"
+                    "不放宽任何授权边界）。不声明则 child 继承父执行域"
+                    "（spawn_subagent 除外，默认防递归）。"
                 ),
             },
         },
@@ -141,8 +153,19 @@ class SpawnSubAgentTool:
                 tool_name=self.name,
             )
         if reqs is not None and reqs.declared():
+            # EVO-20261012-bb3022f4 (E4): 矩阵比对基准 = child 实际可见面 =
+            # 父有效 scope（父 None = 全量 registry），未授予时先剔除 spawn_subagent
+            # （child 面默认禁递归 spawn，防声明出永远不可用的工具）。
             try:
-                allowed_names = list(self._runner.registry.names())
+                from llm_loop.core.run_context import current_tool_discovery_scope
+
+                _parent_scope = current_tool_discovery_scope.get()
+                if _parent_scope is not None:
+                    allowed_names = sorted(_parent_scope)
+                else:
+                    allowed_names = list(self._runner.registry.names())
+                if not child_spawn_grant_allowed():
+                    allowed_names = [n for n in allowed_names if n != "spawn_subagent"]
             except Exception:  # noqa: BLE001 — 矩阵派生失败不拦截既有行为
                 allowed_names = None
             caps = local_subagent_capability(allowed_names)
@@ -167,6 +190,8 @@ class SpawnSubAgentTool:
                 )
 
         try:
+            # E4 (EVO-20261012-bb3022f4): 声明的 requires.tools 作为强制白名单
+            # 传入 runner——child 的发现面与执行面都被程序截断到该集合。
             started = self._runner.start(
                 task=task,
                 context=context,
@@ -174,6 +199,9 @@ class SpawnSubAgentTool:
                 inherit=inherit,
                 acceptance=acceptance,
                 model=model,
+                required_tools=(
+                    list(reqs.tools) if reqs is not None and reqs.tools else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(
@@ -195,9 +223,15 @@ class SpawnSubAgentTool:
             )
 
         child_id = str(started.get("child_id", ""))
+        tool_scope = str(started.get("tool_scope", "") or "")
         parts = [
             f"[状态: success] child_state=running child_id={child_id} "
             f"depth={started.get('depth', depth)} model={started.get('model', '') or 'legacy_default'}",
+            (
+                f"tool_scope={tool_scope}（E4 强制白名单：声明外调用将被运行时确定性拒绝）"
+                if tool_scope
+                else ""
+            ),
             "子代理已在后台启动；本回执不是任务结算。",
             f"中途纠偏: agent_message(target_id='{child_id}', content='...')",
             f"查询/等待: subagent_result(child_id='{child_id}', wait_seconds=0..30)",

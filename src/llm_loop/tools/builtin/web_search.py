@@ -20,6 +20,7 @@ from urllib.parse import quote_plus
 import httpx
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_evidence_shadow_enabled
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
@@ -365,7 +366,6 @@ class WebSearchTool:
         if errors:
             lines.append(f"[降级记录] 部分源失败: {'; '.join(errors)}")
         content = "\n".join(lines)
-        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         raw_observation = content if current_evidence_shadow_enabled.get() else None
         return ToolResult(
@@ -492,7 +492,6 @@ class WebSearchTool:
                 tool_name=self.name,
             )
         raw_content = "\n".join(raw_lines)
-        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         raw_observation = raw_content if current_evidence_shadow_enabled.get() else None
         content = "\n".join(lines)

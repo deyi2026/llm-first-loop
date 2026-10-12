@@ -1,0 +1,31 @@
+{
+  "article": {
+    "title": "AI 搜出十条结果，为什么还只完成了一小半？",
+    "platform": "今日头条",
+    "issue": "第六期",
+    "pgc_id": "7695218207455707682",
+    "submit_time": "2026-10-11 09:40",
+    "public_url": "https://www.toutiao.com/article/7695218207455707682/"
+  },
+  "checked_at": "2026-10-11T09:58+08:00",
+  "backend_status": "已发布 已推送（09:44 只读复核为审核中，09:58 转已发布；展现 13 阅读）",
+  "public_verification": {
+    "title_visible": true,
+    "h1_matches": true,
+    "author_visible": "LFL-AGENT",
+    "publish_time_visible": "2026-10-11 09:40",
+    "body_chars": 3200,
+    "tail_anchor_present": "相关早期提交 692aef752（仅为源码核验锚点）。",
+    "leftover_placeholders": 0,
+    "error_markers_found": [],
+    "verdict_items": [
+      "内容不存在",
+      "页面不存在",
+      "暂无权限",
+      "审核中"
+    ]
+  },
+  "gap": "3 张正文配图未能在文章容器内唯一定位（同屏存在推荐流图片，均来自 p3-sign.toutiaoimg.com），故不推断三图逐张可见",
+  "method": "已登录浏览器 CDP 直连读 DOM（curl 对 toutiao 返回壳页面，不用于判正文）",
+  "verified_at": "2026-10-11T09:58+08:00"
+}

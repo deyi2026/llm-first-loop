@@ -44,6 +44,9 @@ CHATGPT_WEB_DISPLAY_NAME = "网页版 GPT"
 CHATGPT_WEB_SEGMENT_MAX_REQUESTS = 8
 CHATGPT_WEB_SEGMENT_BUDGET_RATIO = 0.75
 CHATGPT_WEB_REASONING_READY_TIMEOUT_S = 20.0
+# Bounded in-memory cross-round stable-prefix baselines: one row per LFL
+# session served by this client, oldest evicted FIFO.
+_PREFIX_BASELINE_MAX_SESSIONS = 256
 
 
 class ChatGPTModelTransport(Protocol):
@@ -296,6 +299,10 @@ class _SurfaceOwnedTransport:
         self.segment_max_requests = max(1, int(segment_max_requests or 1))
         self.reasoning_effort = reasoning_effort
         self._closed = False
+        # Cross-round stable-prefix fingerprint per LFL session.  Comparison is
+        # scoped to one segment because a rollover opens a fresh outer
+        # conversation where prefix continuity cannot carry over anyway.
+        self._prefix_baselines: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _request_chars(request: dict[str, Any]) -> int:
@@ -317,6 +324,63 @@ class _SurfaceOwnedTransport:
             recorder(binding, event=event, **facts)
         except Exception:  # noqa: BLE001 - observability must not block model traffic
             logger.warning("ChatGPT transport telemetry record failed", exc_info=True)
+
+    def _note_stable_prefix(self, binding: Any) -> None:
+        """Compare the LFL-owned stable prefix across committed rounds.
+
+        Provider-side prefix reuse is unobservable from LFL (the inner
+        transport's diagnostics carry ``authoritative: False``), but the stable
+        prefix itself — preamble, protocol, model, tools — is fully LFL-owned.
+        Rounds committed to the same segment share one outer conversation, so a
+        changed ``stable_prefix_sha256`` between them is an observable fact:
+        LFL itself invalidated whatever same-conversation prefix reuse the
+        provider might otherwise perform.  A rollover opens a fresh
+        conversation and simply re-baselines, so no alert fires there.
+        """
+
+        diagnostics = getattr(self.inner, "last_prefix_diagnostics", None)
+        if binding is None or not isinstance(diagnostics, Mapping):
+            return
+        sha = str(diagnostics.get("stable_prefix_sha256") or "")
+        if not sha:
+            return
+        chars = int(diagnostics.get("stable_prefix_chars") or 0)
+        session_id = str(getattr(binding, "lfl_session_id", "") or "")
+        if not session_id:
+            return
+        snapshot = {
+            "segment_seq": int(getattr(binding, "segment_seq", 0) or 0),
+            "stable_prefix_sha256": sha,
+            "stable_prefix_chars": chars,
+        }
+        previous = self._prefix_baselines.get(session_id)
+        self._prefix_baselines[session_id] = snapshot
+        if len(self._prefix_baselines) > _PREFIX_BASELINE_MAX_SESSIONS:
+            self._prefix_baselines.pop(next(iter(self._prefix_baselines)))
+        if (
+            previous is None
+            or previous["segment_seq"] != snapshot["segment_seq"]
+            or previous["stable_prefix_sha256"] == sha
+        ):
+            return
+        logger.warning(
+            "chatgpt-web stable prefix changed within conversation "
+            "session=%s conversation=%s previous=%s current=%s chars=%d->%d",
+            session_id,
+            str(getattr(binding, "conversation_id", "") or ""),
+            previous["stable_prefix_sha256"][:12],
+            sha[:12],
+            previous["stable_prefix_chars"],
+            chars,
+        )
+        self._record_transport_event(
+            binding,
+            event="stable_prefix_changed",
+            previous_stable_prefix_sha256=previous["stable_prefix_sha256"],
+            stable_prefix_sha256=sha,
+            previous_stable_prefix_chars=previous["stable_prefix_chars"],
+            stable_prefix_chars=chars,
+        )
 
     def _prepare_session_binding(
         self,
@@ -385,6 +449,15 @@ class _SurfaceOwnedTransport:
         # a bounded transport segment keyed by the authoritative LFL session.
         # Reuse improves operator manageability; rollover prevents unbounded
         # accumulation of repeated full LFL snapshots in provider-owned history.
+        # Runtime target-death self-heal first: if the leased tab was closed
+        # while this long-lived surface was idle (user closes the tab, browser
+        # drops the target), every later goto on the dead handle raises
+        # TargetClosedError forever — without this the transport cannot recover
+        # without a process restart.  A live page handle passes through
+        # untouched; a dead one is recreated from the durable lease and the
+        # adapter is handed the replacement page.
+        page = self.surface.reopen_dead_page()
+        self.adapter.rebind_page(page)
         session_binding, request_chars = self._prepare_session_binding(request)
         requested_effort = str(
             request.get("_reasoning_effort") or self.reasoning_effort
@@ -416,6 +489,7 @@ class _SurfaceOwnedTransport:
                     conversation_url=lease.conversation_url,
                     request_chars=request_chars,
                 )
+            self._note_stable_prefix(session_binding)
         return response
 
     def close(self) -> None:

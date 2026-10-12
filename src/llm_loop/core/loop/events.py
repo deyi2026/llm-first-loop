@@ -31,6 +31,7 @@ from llm_loop.core.interruption_resume import (
 )
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.reference_injection import is_human_user_message
+from llm_loop.core.run_context import current_run_generation
 from llm_loop.core.session import _validate_session_id
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.event_log.model import build_message_payload
@@ -976,7 +977,6 @@ class _EventsMixin:
         """
         if not text_full and not reasoning_full and not provider_replay and not tool_call_drafts:
             return "", 0, 0
-        from llm_loop.core.run_context import current_run_generation
 
         origin_run_generation = str(current_run_generation.get() or "")
         active_generation = getattr(getattr(self, "session", None), "active_run_generation", None)
@@ -1066,7 +1066,6 @@ class _EventsMixin:
 
     def _clear_inflight_native_state(self, session_id: str) -> None:
         """Best-effort cleanup after a later completed run supersedes crash state."""
-        from llm_loop.core.run_context import current_run_generation
 
         origin_run_generation = str(current_run_generation.get() or "")
         active_generation = getattr(getattr(self, "session", None), "active_run_generation", None)

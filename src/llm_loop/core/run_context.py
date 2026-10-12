@@ -64,6 +64,29 @@ current_tool_discovery_scope: contextvars.ContextVar[frozenset[str] | None] = (
     contextvars.ContextVar("llm_loop_current_tool_discovery_scope", default=None)
 )
 
+# EVO-20261012-65475c5a (E5): child 会话内的取消事件与等待预算。
+# runner 在 child context 内注入（父会话保持 None，互不影响）；
+# wait 工具读取它们实现「可取消的只读等待 + 每 child 累计上限」。
+child_cancel_event: contextvars.ContextVar[object | None] = (
+    contextvars.ContextVar("llm_loop_child_cancel_event", default=None)
+)
+# EVO-20261012-32e89b46: 累计预算改为共享可变载体。旧实现 ContextVar[float] 的
+# set() 写入 registry 每次派发 copy_context() 拍出的副本即弃（live 实测：连续
+# wait 回执累计恒为单次值，600s 累计上限形同虚设）。与 cancel_event 同模式：
+# contextvar 只携带对象引用（引用跨副本共享），本体跨调用持久，wait 原位累加。
+child_wait_budget_used: contextvars.ContextVar[object | None] = (
+    contextvars.ContextVar("llm_loop_child_wait_budget_used", default=None)
+)
+
+
+class WaitBudget:
+    """每 child 会话一个的 wait 累计预算载体（runner 注入，wait 原位累加）."""
+
+    __slots__ = ("used",)
+
+    def __init__(self, used: float = 0.0) -> None:
+        self.used = float(used)
+
 # ERC R0/Phase2 shadow only: tools preserve their pre-trim observation only when an explicit
 # registry shadow hook is installed. Default false keeps legacy memory/runtime behavior unchanged.
 current_evidence_shadow_enabled: contextvars.ContextVar[bool] = contextvars.ContextVar(

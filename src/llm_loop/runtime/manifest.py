@@ -169,6 +169,7 @@ def _provider_info(
         models = prov.get("models") or {}
         info["model_meta"] = (models.get(mname or model_ref, {}) if isinstance(models, dict) else {})
     except Exception:
+        # 来源缺失/格式损坏时保持事实为空，绝不伪造更低的（更宽松的）来源
         pass  # source missing/malformed: leave facts empty rather than invent a lower source.
     return info
 

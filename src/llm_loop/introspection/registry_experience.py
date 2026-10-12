@@ -13,6 +13,8 @@ import os
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_model_label
+from llm_loop.experiences.store import ExperiencePersistError
 from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.methods.store import MethodCommitUncertainError, MethodPersistError
 
@@ -92,7 +94,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
 
 _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "refine_experience",
-    "description": "经验生命周期和使用声明入口。archive/invalidate/restore 显式流转；record_use 只声明 applied/adapted/not_applicable/rejected，回执经既有工具事件保存，不修改原卡、不自动验证或晋级。experience_id 推荐 stable experience:<id>；声明不是任务收益证明。",
+    "description": "经验生命周期和使用声明入口。archive/invalidate/restore 显式流转；record_use 声明 applied/adapted/not_applicable/rejected 并落账到经验使用账本 experiences/usage.jsonl（EVO-20261011-945fc53c，锁+fsync+水位，真值源；落账失败如实 FAILURE），事件流仅观察通道。不修改原卡、不自动验证或晋级。experience_id 推荐 stable experience:<id>；声明不是任务收益证明。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -208,7 +210,7 @@ def _run_refine_experience(args: dict, host: RegistryHost) -> ToolResult:
     from llm_loop.introspection.tools_experience import run_refine_experience
 
     if args.get("action") == "record_use":
-        return _experience_use_declaration(args, store)
+        return _experience_use_declaration(args, store, host)
 
     content = run_refine_experience(
         store,
@@ -224,8 +226,13 @@ def _run_refine_experience(args: dict, host: RegistryHost) -> ToolResult:
     return ToolResult(status=status, content=content, tool_call_id="", tool_name="refine_experience")
 
 
-def _experience_use_declaration(args: dict, store: Any) -> ToolResult:
-    """Return a model-authored declaration; normal tool persistence is the ledger."""
+def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> ToolResult:
+    """EVO-20261011-945fc53c 方案A：使用声明落账 usage ledger（真值源）.
+
+    回执仍带完整 payload（追加 ledger_recorded/ledger_ts/session_id 字段），
+    knowledge_runtime 的事件流降级为观察通道——账本落账失败时本工具必须
+    如实 FAILURE，不得回退为“只回执不落账”（诚实优先，fail-closed）。
+    """
     ref = str(args.get("experience_id") or "").strip()
     decision = str(args.get("use_decision") or "")
     note = args.get("note") or ""
@@ -241,12 +248,35 @@ def _experience_use_declaration(args: dict, store: Any) -> ToolResult:
     doc = store.get(ref[11:])
     if doc is None:
         return _method_failure("refine_experience", "[refine_experience] 未找到指定经验；未记录使用声明")
+
+    try:
+        entry = store.record_use(
+            ref[11:],
+            use_decision=decision,
+            note=note,
+            evidence_refs=evidence,
+            episode_ref=str(getattr(host, "current_episode_ref", lambda: "")() or ""),
+            session_id=str(getattr(host, "current_session_id", lambda: "")() or ""),
+            model=str(current_model_label.get() or ""),
+        )
+    except ExperiencePersistError as exc:
+        return _method_failure(
+            "refine_experience",
+            f"[refine_experience] 使用声明账本写入确定未提交: {exc}；声明未生效，可重试",
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        return _method_failure(
+            "refine_experience",
+            f"[refine_experience] 使用声明账本写入失败: {type(exc).__name__}: {exc}",
+        )
     payload = {
         "schema": "experience-use/v1", "ref": ref, "decision": decision,
         "record_kind": doc.record_kind, "verification_state": doc.verification_state,
         "status": doc.status, "note": note, "evidence_refs": evidence,
         "document_projection_sha256": hashlib.sha256(doc.to_md().encode()).hexdigest(),
         "authority": "model_declared", "task_benefit": "not_evaluated",
+        "ledger_recorded": True, "ledger_ts": entry.get("ts", ""),
+        "session_id": entry.get("session_id", ""), "episode_ref": entry.get("episode_ref", ""),
     }
     return ToolResult(
         status=ToolResultStatus.SUCCESS, tool_call_id="", tool_name="refine_experience",
@@ -340,7 +370,6 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
     if not freshness_action_ok(description, body):
         return _method_failure(tool_name, FRESHNESS_ACTION_ERR)
     try:
-        from llm_loop.core.run_context import current_model_label
 
         episode_ref = str(host.current_episode_ref() or "")
         if not episode_ref.startswith("episode:"):
@@ -374,7 +403,6 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
     if not method_ref or not decision:
         return _method_failure(tool_name, "[参数错误] record_use 需要 method_ref/use_decision")
     try:
-        from llm_loop.core.run_context import current_model_label
 
         episode_ref = str(host.current_episode_ref() or "")
         if not episode_ref.startswith("episode:"):

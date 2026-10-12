@@ -1155,3 +1155,166 @@ def test_durability_write_candidate_synthetic_negative(tmp_path):
     assert _durability_write_candidate_files(tmp_path / "src") == {
         "src/llm_loop/runtime/new_store.py"
     }
+
+
+# ── 静默异常吞没守卫（P1-4）────────────────────────────────────────────────
+# 口径：`except (Exception|BaseException)` 的 body 仅一条 `pass` 时，必须带
+# 原因说明注释——注释写清「为什么这里必须 fail-open」，而不是复述代码。
+# 扫描面 = src/tests/scripts（与 ruff 全树一致）。仅检查明确的宽捕获 + 单条 pass
+# 是否带说明，不判断说明的语义正确性。删除/收窄吞没不受总数量下限阻挡；
+# 具体 fallback 的保留应由其行为回归测试证明，不能用全仓总数替代。
+SCAN_ROOTS = ("src", "tests", "scripts")
+
+
+def _iter_py_rels(root: Path) -> list[str]:
+    rels: list[str] = []
+    for prefix in SCAN_ROOTS:
+        base = root / prefix
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*.py")):
+            if "__pycache__" not in str(p):
+                rels.append(p.relative_to(root).as_posix())
+    return rels
+
+
+def _catches_all(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return True  # 裸 except
+    return _is_broad_exception_type(handler.type)
+
+
+def _is_broad_exception_type(node: ast.expr) -> bool:
+    names = {"Exception", "BaseException"}
+    if isinstance(node, ast.Name):
+        return node.id in names
+    if isinstance(node, ast.Attribute):
+        return isinstance(node.value, ast.Name) and node.value.id == "builtins" and node.attr in names
+    if isinstance(node, ast.Tuple):
+        return any(_is_broad_exception_type(item) for item in node.elts)
+    return False
+
+
+def _handler_has_reason(handler: ast.ExceptHandler, lines: list[str]) -> bool:
+    """原因说明 = handler 源码段内有注释，且去掉 `noqa` 代号后仍有 ≥3 字符内容。"""
+    first = handler.body[0]
+    end = getattr(first, "end_lineno", first.lineno) or first.lineno
+    segment = "\n".join(lines[handler.lineno - 1:end])
+    comments = [c.strip() for c in re.findall(r"#\s*([^\n]+)", segment)]
+    if not comments:
+        return False
+    stripped = re.sub(r"noqa[:\s]*[A-Z0-9,\s]*", "", " ".join(comments), flags=re.I)
+    return len(stripped.strip(" —-:：")) >= 3
+
+
+def _scan_swallows(rels: list[str], source_of: Any) -> tuple[list[str], int]:
+    """返回 (无原因说明的位置清单, 单条 pass 吞异常总处数)。
+
+    `source_of(rel)` 提供源码文本：真实树走守卫读源口径（D-07 外部漂移回退
+    HEAD），合成树直读文件。
+    """
+    offenders: list[str] = []
+    total = 0
+    for rel in rels:
+        try:
+            source = source_of(rel)
+            tree = ast.parse(source)
+        except Exception:  # noqa: BLE001 — 语法错误由 lint/CI 负责，守卫不重复报错
+            continue
+        lines = source.splitlines()
+        for handler in ast.walk(tree):
+            if not isinstance(handler, ast.ExceptHandler):
+                continue
+            if not _catches_all(handler):
+                continue
+            if len(handler.body) != 1 or not isinstance(handler.body[0], ast.Pass):
+                continue
+            total += 1
+            if not _handler_has_reason(handler, lines):
+                offenders.append(f"{rel}:{handler.lineno}")
+    return offenders, total
+
+
+def _rel_source_real(rel: str) -> str:
+    return _read_source(rel)
+
+
+@functools.lru_cache(maxsize=1)
+def _scan_swallows_real() -> tuple[tuple[str, ...], int]:
+    return tuple(_scan_swallows(_iter_py_rels(ROOT), _rel_source_real))  # type: ignore[return-value]
+
+
+def test_no_silent_exception_swallow() -> None:
+    """零容忍：src/tests/scripts 内不允许存在无原因说明的静默异常吞没。"""
+    offenders, _total = _scan_swallows_real()
+    assert not offenders, (
+        "静默异常吞没（except Exception: pass 无原因说明）："
+        + ", ".join(offenders)
+        + " —— 要么写成 `except Exception:  # noqa: BLE001 — <为什么必须 fail-open>`，"
+        "要么收窄为具体异常类型"
+    )
+
+
+def _synthetic_tree(tmp_path: Path) -> Path:
+    """合成树：a/b 违规（裸 except、仅 noqa），c/d 合规（带原因、已收窄）。"""
+    bad = tmp_path / "src"
+    bad.mkdir(parents=True)
+    (bad / "a.py").write_text(
+        "def f():\n    try:\n        return 1\n    except Exception:\n        pass\n",
+        encoding="utf-8",
+    )
+    (bad / "b.py").write_text(
+        "def g():\n    try:\n        return 1\n"
+        "    except BaseException:  # noqa: BLE001\n        pass\n",
+        encoding="utf-8",
+    )
+    (bad / "c.py").write_text(
+        "def h():\n    try:\n        return 1\n"
+        "    except Exception:  # noqa: BLE001 — 埋点失败不影响主路径\n        pass\n",
+        encoding="utf-8",
+    )
+    (bad / "d.py").write_text(
+        "def i():\n    try:\n        return 1\n    except ValueError:\n        pass\n",
+        encoding="utf-8",
+    )
+    return bad
+
+
+def test_silent_swallow_rule_semantics(tmp_path: Path) -> None:
+    """规则语义：裸 except / 仅 noqa 违规；带原因说明、已收窄类型均不违规。"""
+    _synthetic_tree(tmp_path)
+    rels = [f"src/{n}" for n in ("a.py", "b.py", "c.py", "d.py")]
+    offenders, total = _scan_swallows(rels, lambda rel: (tmp_path / rel).read_text(encoding="utf-8"))
+    assert offenders == ["src/a.py:4", "src/b.py:4"], f"规则判定不符预期: {offenders}"
+    assert total == 3, f"仅单条 pass 的三处应计入总数: {total}"
+
+
+def test_silent_swallow_guard_fails_on_new_violation(tmp_path: Path) -> None:
+    """负例自验：新写的无说明 `except Exception: pass` 必须被守卫拦下。"""
+    _synthetic_tree(tmp_path)
+    offenders, _ = _scan_swallows(
+        ["src/a.py"], lambda rel: (tmp_path / rel).read_text(encoding="utf-8")
+    )
+    assert offenders, "违规样本未被拦下——守卫失效"
+    (tmp_path / "src" / "clean_ok.py").write_text(
+        "def f():\n    try:\n        return 1\n"
+        "    except Exception:  # noqa: BLE001 — 埋点失败不得阻断主流程\n        pass\n",
+        encoding="utf-8",
+    )
+    offenders_clean, _ = _scan_swallows(
+        ["src/clean_ok.py"], lambda rel: (tmp_path / rel).read_text(encoding="utf-8")
+    )
+    assert offenders_clean == []
+
+
+@pytest.mark.parametrize("exception_type, broad", [
+    ("CustomException", False),
+    ("SpecificBaseException", False),
+    ("(KeyError, CustomException)", False),
+    ("builtins.Exception", True),
+    ("(ValueError, BaseException)", True),
+])
+def test_broad_exception_match_uses_exact_type_names(exception_type, broad):
+    source = f"try:\n    f()\nexcept {exception_type}:\n    pass\n"
+    handler = ast.parse(source).body[0].handlers[0]
+    assert _catches_all(handler) is broad

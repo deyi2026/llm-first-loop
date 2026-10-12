@@ -1,0 +1,13 @@
+{
+  "url": "https://www.toutiao.com/article/7694948729350111759/",
+  "title": "当大模型开始记住自己：开源框架 LFL",
+  "images": 2,
+  "observed_at_utc": "2026-10-10T15:02:41.520734+00:00",
+  "previous_normalized_sha256": "21a3013dbf0a04865fc9caac4844c32021c2e84c1f1b883c0430ce32c6d1e012",
+  "current_normalized_sha256": "e1e0c8b26bcc3cef47b6f15cb0d1b17e2b809c60aec41b2a58c7b046d18188a5",
+  "text_unchanged": false,
+  "expected_unmodified_duplicate": false,
+  "status": "PASS",
+  "txt_sha256": "bcb8f09b8bac1fe7511961770baaf49b2b390e52fa91ca68a368961b886b91d2",
+  "html_sha256": "e363e223a5f3749cba9db825bc32fa7d3021456c11e86433a828aa1a694ea36a"
+}

@@ -10,6 +10,7 @@ ExperienceSearchOutcome 承载结果 + 诊断四要素；last_experience_diagnos
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -781,6 +782,208 @@ class ExperienceStore:
                 temp.unlink(missing_ok=True)
             self._fsync_dir_or_uncertain(path, payload, path.name.removesuffix(".md"))
         return True
+
+    # ------------------------------------------------------------------
+    # Usage ledger (EVO-20261011-945fc53c 方案A): experience 使用声明真值源
+    # ------------------------------------------------------------------
+
+    def record_use(
+        self,
+        experience_id: str,
+        *,
+        use_decision: str,
+        note: str = "",
+        evidence_refs: list[str] | None = None,
+        episode_ref: str = "",
+        session_id: str = "",
+        model: str = "",
+    ) -> dict:
+        """追加一条模型声明的经验使用记录（observability 账本）.
+
+        与 MethodStore.record_use 同构语义：只落账、不修改卡片、不证明任务收益。
+        写入在跨进程 flock 内完成：追加 JSONL 一行 + fsync + 刷新单调水位
+        (experiences/.usage_watermark.json)。确定未提交时抛 ExperiencePersistError，
+        调用方必须如实失败——不得把使用声明降级为“只回执不落账”（诚实优先）。
+        """
+        doc = self.get(experience_id)
+        if doc is None:
+            raise FileNotFoundError(experience_id)
+        clean_decision = str(use_decision).strip()
+        if clean_decision not in {"applied", "adapted", "not_applicable", "rejected"}:
+            raise ValueError(
+                "use_decision must be one of applied|adapted|not_applicable|rejected"
+            )
+        entry = {
+            "schema": "experience-use/v1",
+            "ts": system_local_now().isoformat(),
+            "experience_ref": f"experience:{experience_id.removesuffix('.md')}",
+            "id": experience_id.removesuffix(".md"),
+            "record_kind": doc.record_kind,
+            "verification_state": doc.verification_state,
+            "status": doc.status,
+            "use_decision": clean_decision,
+            "note": str(note).strip()[:2000],
+            "evidence_refs": [
+                str(v).strip()[:256] for v in (evidence_refs or []) if str(v).strip()
+            ],
+            "document_projection_sha256": _payload_sha256(doc.to_md()),
+            "episode_ref": str(episode_ref).strip()[:256],
+            "session_id": str(session_id).strip()[:128],
+            "model": str(model).strip()[:256],
+            "application_proven": clean_decision in {"applied", "adapted"},
+            "authority": "model_declared",
+            "task_benefit": "not_evaluated",
+        }
+        self._append_usage_entry(entry)
+        return entry
+
+    def record_migrated_entry(self, entry: dict) -> dict:
+        """方案B 一次性迁移专用：回放历史 event_stream 声明.
+
+        幂等键 knowledge_event_key：账本中已存在同键条目时静默跳过（可安全重跑）。
+        """
+        for key in ("ts", "experience_ref", "use_decision", "knowledge_event_key"):
+            if not str(entry.get(key) or "").strip():
+                raise ValueError(f"migrated entry missing required field: {key}")
+        if entry["use_decision"] not in {
+            "applied",
+            "adapted",
+            "not_applicable",
+            "rejected",
+        }:
+            raise ValueError("migrated entry use_decision invalid")
+        entry.setdefault("schema", "experience-use/v1")
+        entry.setdefault("note", "")
+        entry.setdefault("evidence_refs", [])
+        entry.setdefault("migrated_from", "event_stream")
+        self._append_usage_entry(entry, dedupe_key="knowledge_event_key")
+        return entry
+
+    def usage_ledger_path(self) -> Path:
+        return self._dir / "usage.jsonl"
+
+    def _append_usage_entry(self, entry: dict, *, dedupe_key: str = "") -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        path = self.usage_ledger_path()
+        with self._file_lock():
+            if dedupe_key:
+                dedupe_value = str(entry.get(dedupe_key) or "")
+                for row in self._iter_usage_entries():
+                    if str(row.get(dedupe_key) or "") == dedupe_value:
+                        return  # 幂等：该历史声明已回放过
+            try:
+                with path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n"
+                    )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except OSError as exc:
+                raise ExperiencePersistError(
+                    f"经验使用账本追加失败(确定未提交): {exc}"
+                ) from exc
+            self._refresh_usage_watermark_locked()
+
+    def _iter_usage_entries(self) -> Iterator[dict]:
+        path = self.usage_ledger_path()
+        if not path.is_file():
+            return
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "[经验库] 使用账本存在不可解析行，已跳过（前80字符）: %s",
+                            line[:80],
+                        )
+        except OSError:
+            return
+
+    def usage_entries(self, experience_ref: str = "", *, limit: int = 200) -> list[dict]:
+        """读取使用声明账本（refine_experience.record_use 的真值源）.
+
+        读取面 fail-open：账本缺失/不可读返回空列表（调用方不得据此推断“无使用”）。
+        默认倒序（最新在前），limit 上限 200。
+        """
+        ref = str(experience_ref or "").strip()
+        if ref and not ref.startswith("experience:"):
+            ref = f"experience:{ref}"
+        rows: list[dict] = []
+        for row in self._iter_usage_entries():
+            if ref and str(row.get("experience_ref") or "") != ref:
+                continue
+            rows.append(row)
+        rows.reverse()
+        return rows[: max(0, min(int(limit), 200))]
+
+    def _count_usage_lines(self) -> int:
+        path = self.usage_ledger_path()
+        if not path.is_file():
+            return 0
+        count = 0
+        try:
+            with path.open("rb") as handle:
+                for raw in handle:
+                    if raw.strip():
+                        count += 1
+        except OSError:
+            return 0
+        return count
+
+    def _read_usage_watermark(self) -> int:
+        wm_path = self._dir / ".usage_watermark.json"
+        try:
+            return int(
+                json.loads(wm_path.read_text(encoding="utf-8")).get("count", 0)
+            )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return 0
+
+    def _refresh_usage_watermark_locked(self) -> None:
+        """单调水位：只增不减，用于检测外部删除（lost>0）而非写入门禁."""
+        wm_path = self._dir / ".usage_watermark.json"
+        try:
+            count = max(self._read_usage_watermark(), self._count_usage_lines())
+            payload = json.dumps(
+                {"count": count, "ts": system_local_now().isoformat()}, sort_keys=True
+            )
+            with wm_path.open("w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError as exc:  # watermark 是观察指标，不是写入门禁
+            logger.warning("usage watermark refresh failed (non-fatal): %s", exc)
+
+    def check_usage_integrity(self) -> dict:
+        """账本 vs 水位漂移报告（同 MethodStore.check_ledger_integrity 语义）."""
+        wm_path = self._dir / ".usage_watermark.json"
+        try:
+            watermark = json.loads(wm_path.read_text(encoding="utf-8"))
+            watermark_count = int(watermark.get("count", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {"monitored": False, "lost": 0}
+        current = self._count_usage_lines()
+        lost = max(watermark_count - current, 0)
+        report: dict = {
+            "monitored": True,
+            "lost": lost,
+            "watermark_count": watermark_count,
+            "current_count": current,
+            "watermark_ts": str(watermark.get("ts", "")),
+        }
+        if lost:
+            logger.error(
+                "[经验库] 使用账本丢失 %d 条 (watermark=%d current=%d)",
+                lost,
+                watermark_count,
+                current,
+            )
+        return report
 
     def _safe_path(self, experience_id: str) -> Path | None:
         """构造安全路径（限定 experiences/ 内，防穿越）。"""
