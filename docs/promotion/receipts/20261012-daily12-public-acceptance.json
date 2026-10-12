@@ -1,0 +1,32 @@
+{
+  "issue": "第 12 期 · 公网验收",
+  "accepted_at": "2026-10-13T00:28~00:33+08:00",
+  "toutiao": {
+    "url": "https://www.toutiao.com/article/7695813464698225195/",
+    "status": "已发布 (非审核中; 内容管理列表状态=已发布, 公网页可访问)",
+    "title_verified": "两个 Agent 一写一审，311 项测试才揪出一个符号错",
+    "author_verified": "LFL-AGENT",
+    "body_verified": "3749 字符(公网口径), 含 LFL 原创科普·第十二期 头段 / 311 / 72 / 尾注开源项目话题段",
+    "figures_verified": [
+      {"natural": "1000x708", "src": "p3-sign.toutiaoimg.com/tos-cn-i-axegupay5k/5b47b1a40ebc48...", "loaded": true, "cls": "pgc-img"},
+      {"natural": "1000x690", "src": "p3-sign.toutiaoimg.com/tos-cn-i-6w9my0ksvp/9fc3e5ed1bd544...", "loaded": true, "cls": "pgc-img"}
+    ],
+    "ai_declaration_verified": "页面文本含『作品声明：内容由AI生成』",
+    "stray_fig_check": "无裸 fig 段"
+  },
+  "zhihu": {
+    "url": "https://zhuanlan.zhihu.com/p/2093134864233115651",
+    "status": "已发布 (公网可访问)",
+    "title_verified": "两个 Agent 一写一审，311 项测试才揪出一个符号错",
+    "author_verified": "yyj (meta[itemprop=name] 与作者区一致)",
+    "body_verified": "3686 字符, 含头段/311/72/尾段话题",
+    "figures_verified": [
+      {"natural": "1000x708", "src": "pic3.zhimg.com/80/v2-132cf9753b5601b0027a7213a3f20e3..."},
+      {"natural": "1000x690", "src": "pica.zhimg.com/80/v2-04a8d0fb24ac2a7258020788d6371dd..."}
+    ],
+    "ai_declaration_verified": "页面 body 含『包含 AI 辅助创作』",
+    "stray_fig_check": "无裸 fig 段"
+  },
+  "cross_platform": "两平台同一稿件(一稿两站), 标题/正文/两图/AI声明全部核验; 未算作两个主题",
+  "final_manuscript_sha256_unchanged": "edf14a07c6386df9d39413e8a853c6bf1f9cea8de58c27b4ee620ebb1677ee43"
+}

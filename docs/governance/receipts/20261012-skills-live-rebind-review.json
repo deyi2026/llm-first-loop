@@ -1,0 +1,52 @@
+{
+ "gate": "code",
+ "rule": "RULE-AI-28",
+ "date": "2026-10-12T23:15+08:00",
+ "subject": "skills 跟随主工作树（linked sidecar 免 publish 即入注册表）",
+ "reviewer": "subagent_3fdd5946aad3（独立，只读）",
+ "verdict": "PASS",
+ "findings": {
+  "p0": 0,
+  "p1": 0,
+  "p2": 4
+ },
+ "p2_applied": [
+  {
+   "id": "P2-2",
+   "item": "explicit_sidecar_state 测试补 skills_dir 指向主工作树断言"
+  },
+  {
+   "id": "P2-4",
+   "item": "新增测试加 loader 判别性 pin（live-skill 可见/snapshot-skill 不可见）"
+  }
+ ],
+ "p2_declined": [
+  {
+   "id": "P2-1",
+   "item": "linked_worktree=True 但 common_root=None 的回退分支",
+   "reason": "该组合不可达（True 蕴含 common_root 非 None），fail-closed assert 可观测；加静默回退反而掩盖配置错误"
+  }
+ ],
+ "p2_noaction": [
+  {
+   "id": "P2-3",
+   "item": "文档边界说明",
+   "reason": "已在模块 docstring 与规则文本载明"
+  }
+ ],
+ "artifact_sha256": {
+  "src/llm_loop/runtime/paths.py": "8b4ea1af385420a7b91726de3b8f9b22a35f4ad604cbc5479c148f5bc5009b7e",
+  "src/llm_loop/config.py": "f99e2cf348980054c73ee5ec22bab750d24550b66b59edf379f16faf6cd426dd",
+  "tests/unit/test_runtime_paths.py": "2ce6c247db8118ea867d65fcafd5917a65bddd3b9c0baa538c164f1037e5fe1e"
+ },
+ "verification": {
+  "targeted": "tests/unit/test_runtime_paths.py 7 passed（含新增 test_skills_follow_primary_worktree_from_linked_sidecar_without_publish）",
+  "full_ab_baseline": {
+   "with_change": "287 failed, 6860 passed, 127 skipped, 27 collection errors (356.65s)",
+   "without_change": "287 failed, 6859 passed, 127 skipped, 27 collection errors (357.35s)",
+   "conclusion": "失败集合完全一致=预存环境依赖缺失（lark_oapi/reportlab/Crypto 等）；本次改动净增 1 passed（新测试），零新增失败"
+  }
+ },
+ "commit": "ad5bb66c9",
+ "rollout_boundary": "运行中 harness 进程的 skills_dir 在启动时已解析（快照）；修复自下一次运行时重启起生效。重启前子代理仍可直接 read_file 工作区 skill。"
+}

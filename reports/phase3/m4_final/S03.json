@@ -1,0 +1,39 @@
+{
+  "scenario": "S03",
+  "title": "临界竞态：run 运行中错代 / run 结束后插话",
+  "ran_under": "M1-in-progress",
+  "started_at": "2026-10-13T02:25:57",
+  "steps": [],
+  "wall": {},
+  "dur_ms": {},
+  "obs": {
+    "wrong_gen_status": 409,
+    "run_done_before_interject": "done",
+    "after_end_status": 409,
+    "after_end_error": "interject_no_live_run",
+    "queue_states_end": {
+      "q_75ce80e142b2": "queued",
+      "q_70db4aa922a7": "queued"
+    }
+  },
+  "endpoints": {
+    "interject_wrong_gen": {
+      "status": 409,
+      "body": {
+        "ok": false,
+        "error": "interject_run_changed",
+        "detail": "当前任务已变化；消息仍保留在普通排队中"
+      }
+    },
+    "interject_after_run_end": {
+      "status": 409,
+      "body": {
+        "ok": false,
+        "error": "interject_no_live_run",
+        "detail": "当前会话没有可接收插话的运行任务；消息仍保留在排队中"
+      }
+    }
+  },
+  "finished_at": "2026-10-13T02:26:02",
+  "status": "ok"
+}

@@ -1,0 +1,44 @@
+{
+  "issue": "第 12 期 · 两个 Agent 一写一审，311 项测试才揪出一个符号错",
+  "review_type": "independent_review_by_isolated_subagent",
+  "reviewed_at": "2026-10-12T23:54:08+08:00 ~ 2026-10-13T00:01+08:00",
+  "manuscript": {
+    "path": "docs/promotion/20261012-lfl-daily-12.md",
+    "sha256_claimed": "edf14a07c6386df9d39413e8a853c6bf1f9cea8de58c27b4ee620ebb1677ee43",
+    "sha256_reviewer_independent": "edf14a07c6386df9d39413e8a853c6bf1f9cea8de58c27b4ee620ebb1677ee43 (via read_file snapshot sha256, tool-layer computed; reviewer shell was fenced so shasum CLI rerun unavailable)",
+    "sha256_parent_session_shasum": "edf14a07c6386df9d39413e8a853c6bf1f9cea8de58c27b4ee620ebb1677ee43 (父会话 sha256sum 复算一致, 2026-10-12T23:52)",
+    "match": true,
+    "size_bytes": 10536
+  },
+  "reviewer": {
+    "child_id": "subagent_ededcfc39950",
+    "session_independence": "spawn_subagent(inherit=false), 全新隔离会话, 非正文编写者会话, 无本会话上下文继承",
+    "model_requested": "glm-5.3 (spawn 参数, 程序回执与事件流均记录)",
+    "model_selfreported": "Claude/Anthropic (子代理自述, 自称无法自证子版本)",
+    "model_note": "两处记录存在差异且无法进一步裁决（子代理内部路由日志不可读）；两种说法均非 DeepSeek。用户要求『优先 GLM-5.3、不要 DeepSeek』——spawn 显式指定 glm-5.3, 实际身份差异如实披露。",
+    "tool_whitelist_e4": ["read_file", "read_image", "search_files", "execute_command", "web_search", "web_fetch"],
+    "actual_invocations": "12 rounds / 22 tool calls: execute_command x4 (全部被 run-lease fence 拒绝, 零 shell 命令实际执行), read_file x6, read_image x3, search_files x4, web_fetch x3",
+    "read_only_guarantee": "Reviewer 全程只读; 未写入/修改/删除任何文件, 无 git 操作, 无发布/投稿行为 (与其自述一致, 且 E4 白名单不含写工具)"
+  },
+  "verdict": "PASS",
+  "p0": [],
+  "p1": [],
+  "p2": [
+    {"id": "P2-1", "issue": "HTML 版引用链接为纯文本、图注段为占位（图从 HTML 移除）", "resolution": "符合既定发布流程：平台编辑器手动上传插图、尾注链接按平台规则处理（与 D10/D11 同流程）；接受不改"},
+    {"id": "P2-2", "issue": "Reviewer 视觉转写对 fig37 第三框『原始回执/原始批执』与底部『未知状态拒绝/拒收』两次结果不一，shell 被围栏无法跑 PIL/OCR", "resolution": "父会话补办：PIL 裁剪 2x 放大精读裁定为『…执行权与原始回执』『默认 OFF，未知状态拒收』；与正文 L54『一律拒收或标记 UNKNOWN』一致；无错误，已关闭"},
+    {"id": "P2-3", "issue": "标题未含『离线实验』限定", "resolution": "审稿人自判不构成误导性冲突（正文 L60 明确披露 FakeLLM 驱动）；标题已 29 字无加字空间；接受不改"},
+    {"id": "P2-4", "issue": "L5『重叠』严格为『相接』；L76 8/8 未注明含按预期拦截的反向场景", "resolution": "润色级，PASS 不阻塞；改动将变更 SHA 并触发新一轮独立复审，收益/风险不成比例；维持 PASS 原稿，记录备将来修订"}
+  ],
+  "fact_check_summary": {
+    "numbers": "311=11静态+300种子 / 311/311 / 239/311+72失败(239+72=311自洽) / 0/311 / 8/8八类场景逐条对应 / 149 passed 0 failed / R9 exit 0 / 标题29字 —— 全部在 RESULT-20261011 三文件与 CHANGELOG 找到出处",
+    "division_of_labor": "FakeLLM 驱动离线双Agent主链(vertical-slice L51) / P1.8 PASS_BOUNDED 漏检(evidence-gate L28) / Host 真实Docker独立oracle 311用例(evidence-gate L9) —— 表述准确，无夸大生产能力（三重边界：结构审查≠语义正确、局部离线通过、不可宣称生产发布资格）",
+    "links_verified_by_reviewer": ["https://developers.openai.com/api/docs/guides/agents/orchestration (标题 Orchestration and handoffs; agents-as-tools vs handoff 区分与正文逐点吻合)", "https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/ (Sequential/Concurrent/Handoff/Group Chat/Magentic 与『串行、并行、交接等』吻合)", "https://github.com/deyi2026/llm-first-loop (可达, README Version 0.6.32 与正文一致)"],
+    "tailnote_and_ai_note": "L104 含『项目自测/非外部独立benchmark/非生产上线』三重声明 + 『本文由 AI 辅助撰写，作者对内容负责』 ✓"
+  },
+  "parent_session_supplementary_verification": {
+    "pil_pixel_bounds": "fig37 1000x708 nonwhite x[52..948] y[46..661] margin L52/R51/T46/B46; fig38 1000x690 nonwhite x[52..948] y[46..642] margin L52/R51/T46/B47; 均无出界无贴边, 与 preflight nonwhite_bounds 一致",
+    "html_stray_fig_scan": "grep fig3[78] 计数 0, 无裸 fig 段",
+    "title_len": 29, "cjk_chars": 2552, "nonspace_chars": 4029
+  },
+  "gate_conclusion": "独立审稿 PASS 成立（0 P0 / 0 P1 / 4 P2 全部处置或记录）；正文 SHA 未变化, 无需返工复审；授权进入发布阶段"
+}

@@ -1,0 +1,39 @@
+{
+  "review_at": "2026-10-12T21:06:50+08:00",
+  "reviewer": "dsh independent subagent",
+  "plan_doc": "docs/promotion/PLAN-20261012-I3-schedule-rebet.md",
+  "verdict": "PASS",
+  "checks": [
+    {
+      "item": "§7.1",
+      "result": "PASS",
+      "actual": "message 以「【LFL 推广·」开头的条目恰 3 条（sched-fd3ffce9 / sched-491ad00b / sched-2a53c151）；旧 3 sid（sched-59e9b7eb / sched-f703fcec / sched-fee8805c）在 data/schedule.json 全文与条目列表中均不存在。文件共 7 条 entry。"
+    },
+    {
+      "item": "§7.2",
+      "result": "PASS",
+      "actual": "三条推广班次：早 08:00 sched-fd3ffce9 trigger_at=1791849600.0 → 2026-10-13 08:00:00+08:00；sched-491ad00b trigger_at=1791867600.0 → 2026-10-13 13:00:00+08:00；sched-2a53c151 trigger_at=1791892800.0 → 2026-10-13 20:00:00+08:00。三条 repeat_interval=86400.0、max_count=60、count=0；scheduled_trigger_at 与 trigger_at 一致。"
+    },
+    {
+      "item": "§7.3",
+      "result": "PASS",
+      "actual": "三条消息均含「RESEARCH-20261011-traffic §五」与「#话题标签」；len 分别为 1554 / 1191 / 1242，均 ≤4000。"
+    },
+    {
+      "item": "§7.4",
+      "result": "PASS",
+      "actual": "三条推广班次 wake 全为 false（sched-fd3ffce9/491ad00b/2a53c151 wake=false）。范围内无 wake=true 的推广条目。"
+    },
+    {
+      "item": "§7.5",
+      "result": "PASS",
+      "actual": "从 PLAN §3 代码块提取的追加块（从「【标题与标签规范」到第一个「】」含全部换行）len=263，与文档围栏内容逐字节相等。按 trigger_at 对齐旧条目后，新消息 == 备份旧消息全文 + '\\n' + 追加块，严格字符串相等：08:00 1554==1554、13:00 1191==1191、20:00 1242==1242，既有文字零改动、零截断。"
+    },
+    {
+      "item": "§7.6",
+      "result": "PASS",
+      "actual": "docs/promotion/receipts/20261012-I3-schedule-backup.json 可 JSON 反序列化（1 个对象、entries 数组 3 条），含旧 3 sid（sched-59e9b7eb/f703fcec/fee8805c）及各自消息原文（len 1290/927/978），另含 pre_change_file_sha256 与备份时间。"
+    }
+  ],
+  "notes": "只读后置审，未修改 PLAN、data/schedule.json 或备份 JSON 任一被复核对象。所有判据以文件实际内容机械核对为准，未采信执行方声称。§7.5 采用严格字符串相等（非仅“前缀相等”字面），三对新旧消息全部逐字节一致，无偏差。补充观察（不影响判定）：schedule.json 实有 7 条 entry，含 3 条推广班次 + 4 条无关条目（FR-1 T+7d、FR-1 T+28d 为 wake=true 一次性；每周入库 wake=false；EVO 回看 wake=false），与 PLAN §2/§7.4 声明一致，不在本次检查范围。§7.2 中 PLAN 措辞为 next_trigger，磁盘实际字段名为 trigger_at/scheduled_trigger_at，取值一致。"
+}

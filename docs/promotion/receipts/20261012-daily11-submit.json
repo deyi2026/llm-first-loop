@@ -1,0 +1,83 @@
+{
+ "issue": "第 11 期 · 我给 AI 子代理设了白名单，它转头就生了个孙代理",
+ "track": "A型同热点锚 × 权限功能事实（POC C5+增测、v0.6.31 E4/E5、v0.6.32 提权安全批次）",
+ "pgc_id": "7695740310252421675",
+ "submitted_at": "2026-10-12T19:26+08:00",
+ "platform_status_flow": [
+  "19:26 审核中",
+  "19:31 引用AI 勾选重提交→修改审核中"
+ ],
+ "md_sha256_timeline": {
+  "初审送审版": "ec5589cbe20a0c4d（前缀）",
+  "审稿REVISE后（新SHA）": "c59cfa8f4ee8ea1ad90dec0486cc512e15edaabe274a6cf858ec3ee634dea831（父代理 shasum 补核一致，审稿人执行面被围栏拦下由我补办）",
+  "窄复审": "PASS（subagent_bf6482609d68，10/10 落地+新增扫描无错误）",
+  "PASS后图注alt修复（figNN→示意文案）": "607df8ff7c87c8115cde569f2c22b28cfe72903b26492963165f2a49e7341d6f"
+ },
+ "audit": {
+  "verdict": "REVISE（1P0+3P1+7P2）→修订→PASS",
+  "p0": [
+   "降频倍数夸大：『十分之一到四十分之一』→按 CHANGELOG 口径改『降频 4-10 倍/账单降到四分之一到十分之一』"
+  ],
+  "p1_applied": [
+   "删除未测的『写文件围栏』并标注 DESIGN 开放项",
+   "『六个只读工具』精确化（execute_command 在列但被运行期围栏拦住）",
+   "尾注矛盾修正"
+  ],
+  "p2_applied": [
+   "6 万→6.4 万",
+   "fig35『不要越权』→实测原句『不要自行结算』",
+   "孙代无残留归因（探针即结算，非运行时清退）",
+   "符号链接→符号/硬链接+TOCTOU",
+   "confirm=false 精确化",
+   "第四节衔接句"
+  ]
+ },
+ "prepublish_gate": {
+  "title_len": 25,
+  "words": 2437,
+  "real_images": 2,
+  "loaded": 2,
+  "dims": [
+   "1000x636",
+   "1000x640"
+  ],
+  "h1": 0,
+  "stray_fig_paras": "2→编辑器内 execCommand 删除后 0",
+  "caps_nonempty": 2
+ },
+ "figures": {
+  "fig35": "四道防线（围栏/纪律/审计/处置）",
+  "fig36": "审批链四道锁",
+  "generator": "figures/_d11.py",
+  "PIL_margins": "L52 R51 T46 B43-49"
+ },
+ "known_gap": "编辑页最后一张图描述持久化问题同上（gate 时为 2，发布后待复核）；fig36 锁一文案为『禁跟随符号链接』未同步『硬链接』措辞——复审判定机制仍准确（nlink=1 拦硬链接），记录不改",
+ "ai_declaration": {
+  "label": "引用AI",
+  "checked": true,
+  "applied_at": "2026-10-12T19:31+08:00",
+  "resubmission_state": "修改审核中"
+ },
+ "zhihu": {
+  "id": "2093063534351488286",
+  "url": "https://zhuanlan.zhihu.com/p/2093063534351488286",
+  "published_at": "2026-10-12T19:41+08:00",
+  "declaration": "包含 AI 辅助创作（/write 页发布前直接选好，一次成功）"
+ },
+ "public_verification": {
+  "toutiao_1944": {
+   "title": "✓",
+   "tail_anchor": true,
+   "chars": 2570,
+   "imgs_loaded": 2,
+   "stray_fig": 0,
+   "ai_note": true
+  },
+  "zhihu_1941": {
+   "imgs": 2,
+   "h2": 6,
+   "declaration": "发布前已设"
+  }
+ },
+ "leftover": "知乎空草稿 2093061130285475016（误建无正文）删除未成功，需手动删"
+}

@@ -1,0 +1,68 @@
+{
+ "purpose": "DESIGN-20261012-card-lifecycle-governance-v1 §6.1 I1-I4 执行回执原文（P2-8 落盘补办）",
+ "extracted_at": "2026-10-12T22:4x+08:00",
+ "source": "data/event_logs/fe0e1465-7509-459e-8792-eaaf6d7269f5/3.jsonl（父会话事件日志，逐条按 seq 机械提取，未改写内容）",
+ "related": [
+  "docs/promotion/receipts/20261012-I3-review.json",
+  "docs/promotion/receipts/20261012-I3-schedule-backup.json",
+  "data/schedule.json.pre-I3-backup"
+ ],
+ "receipts": {
+  "I1a-card-lifecycle-create": {
+   "session_id": "fe0e1465-7509-459e-8792-eaaf6d7269f5",
+   "seq": 14244,
+   "ts": "2026-10-12T21:12:57.974663+08:00",
+   "role": "tool",
+   "tool": "execute_command",
+   "content": "[状态: success] [命令] mkdir -p docs/governance && cat > docs/governance/card-lifecycle.md << [退出码 0] [输出 10 行]\n--- 写入结果 ---\n     123 docs/governance/card-lifecycle.md\n# 卡片生命周期治理（操作版）\n\n- 生效：2026-10-12（Asia/Shanghai）\n- 依据：`docs/design/DESIGN-20261012-card-lifecycle-governance-v1.md` §3（需求）与 §5（补充），本文是其**可执行落地版**；设计动机、拷问过程、背景症状见原设计。\n- 管辖：`experiences/`（experience/lesson）与 `data/methods/`（方法卡）的创建、收口、失效、周检、写前量化。\n- 不管：单张卡片内容的对错判断本身；推广文章选题与发布流程。\n\n## 0. 单一真值与指称纪律"
+  },
+  "I1b-ai-rules-pointer": {
+   "session_id": "fe0e1465-7509-459e-8792-eaaf6d7269f5",
+   "seq": 14278,
+   "ts": "2026-10-12T21:13:08.669677+08:00",
+   "role": "tool",
+   "tool": "edit_file",
+   "content": "[状态: success] [修改完成并已校验] docs/ai_rules.md\n替换 1 处，变更 +4/-0 行（原子写入，写后复读一致）。\n```diff\n--- a/ai_rules.md\n+++ b/ai_rules.md\n@@ -476,2 +476,6 @@\n | 规则 22 检索时序纪律（锚定当下/聚焦优先/双闸） | 新增承载（非 v8 迁移项；2026-09-04 用户批准由经验升格） | SoT 正文承载；时间/相关性判断不做 universal 运维 SOP，工具 schema 在实际检索点提供最小 JIT 提示 |\n | 规则 23 当前任务/授权来源 | GLOBAL KERNEL + LITE v13 + SoT | 当前用户指令/短回复最近绑定属于所有模型都必须知道的最小任务授权不变量；universal 仅保抽象 192-char 静态 kernel，Goal/checkpoint 等运维细节只留 full SoT，不加程序语义分类器 |\n+\n+## 卡片生命周期治理指针（2026-10-12 append-only）\n+\n+> 知识卡（experience / method）的创建门、收口转化、失效分级、周检、写前量化，操作规范见 **`docs/governance/card-lifecycle.md`**；设计依据与动机见 `docs/design/DESIGN-20261012-card-lifecycle-governance-v1.md`。本文件不复制其内容，只挂指针，避免规则正文膨胀。\n```\n[artifact] ref=artifact://v1/a568480c7e3f4fb787b0c613fd46464d path=docs/ai_rules.md sha256=07bc85b8c0368c59e569bde609327fe43d6d93b976ca497f666cf86acbfbdce5 size_bytes=64571 identity=immutable_snapshot task_applicability=not_evaluated\n[file_contract] version=1 precondition_checked=true expected_snapshot_ref=artifact://v1/50df4516cfda4fb18e59296a18ebfd8b receipt_state=recorded"
+  },
+  "I2-method-candidate": {
+   "session_id": "fe0e1465-7509-459e-8792-eaaf6d7269f5",
+   "seq": 14479,
+   "ts": "2026-10-12T21:15:42.607104+08:00",
+   "role": "tool",
+   "tool": "method_manage",
+   "content": "[状态: success] [save_method_candidate] method:candidate-d04bd939ef69 status=candidate content_hash=842c5bced28497b5e18a1bf83b63c4af6f1dcb568962610fc5d4c3f824b27080"
+  },
+  "I3a-schedule-0800-b2ad1cdf": {
+   "session_id": "fe0e1465-7509-459e-8792-eaaf6d7269f5",
+   "seq": 14842,
+   "ts": "2026-10-12T21:19:31.381268+08:00",
+   "role": "tool",
+   "tool": "schedule",
+   "content": "[状态: success] [schedule] 已注册提醒 sched-b2ad1cdf: '【LFL 推广·早班 08:00】执行当期推广（每天 3 篇中的第 1 篇）。\n\n第 1 步·只读前置检查：先读 docs/promotion/STATUS-*.md（取最近一份）核对上一批文章的真实状态；若有\"审核中\"的 PGC ID，只读复核其平台状态——转已发布则补做公网实见验收并落回执，绝不重复提交同稿。\n\n第 2 步·调研：arXiv API 检索近两周 Agent 记忆/自我进化/工具安全新论文（通用搜索引擎对技术查询噪声大，不用它取论文）。头条热榜 API（hot-board）看当前有没有可蹭的 AI 相关热点，有则优先 A 型蹭事件选题。\n\n第 3 步·选题：优先用 PLAN-20261011-new-original-topics.md 里尚未发布的 D 主题，避免与已发稿重复。\n\n第 4 步·写稿：中文长文 → docs/promotion/YYYYMMDD-lfl-daily-NN.md，md2html.py 转 HTML（三级标题会被头条塌缩成一级，改用 <p><strong>）。图片 alt 必须写图注文案（不要用 figNN 代号），转换后双重校验：md 图片数==HTML <img 标签数，且 grep '<p>fig' 零残段。\n【写前量化（R5）：写作时同步写伴生 ledger docs/promotion/YYYYMMDD-daily-NN-sources.md，行格式「正文数值 | 出处（文件:行 或 回执路径） | 观测时间」，覆盖正文一切可核数值（约/近/超也算）；ledger 不进发布正文（md2html 只转主文件，天然隔离）。审计改法：正则抽正文数值→逐条对 ledger（缺行=REVISE）→随机抽 2 条实开来源复核】\n\n第 5 步·配图：figures/_draw.py 生成 3-5 张信息图到 img/，用 read_image 验排版（文字溢出/重叠要实测宽度）。canvas 高度必须按最底部元素实际下缘设定（PIL 边界检查必跑）。\n\n第 6 步·审阅：交独立子 agent 审事实与合规——源文件数须排除 __init__.py、硬边界类别数、commit 数、未发布功能必须标注、论文数据不得夸大并写出论文自述局限。\n【审稿范围必须覆盖非正文段：标题/尾注/图注】\n【专扫两类内容级夸大：(a) 未测防护不得写成已验证——写\"设计中/未验证\"并标注出处；(b) 实测区间不得取端点放大成单值，保留区间】\nREVISE 则修完再发。\n\n第 7 步·发布：CDP 直连 127.0.0.1:9229。正文用 ClipboardEvent('paste') 注入（Cmd+V 无效）；图片 setFileInputFiles 后必须点\"确定\"；插图用 setStartBefore(段落锚点) 避开空 <h1>；图片描述用 Input.insertText 才持久化；标题 ≤30 字。\n知乎走 /write 新建（合成 paste 可用）；编辑已发布内容走 /p/{id}/edit（只认 Input.insertText，合成 paste 无效）。\n\n第 8 步·收口核对：字数、img 数、空 h1 数、描述非空数、作品管理页出现文章卡片且状态符合预期。\n\n【发布后若发现文字级缺陷，走各平台编辑页修正，不要重发新帖。补丁后必须 grep「新串 ≥1 且旧串 =0」复核，不得把\"脚本跑了\"当\"改成了\"】\n\n若头条登录态失效或出现未预期校验失败：停下并如实上报，不要换账号、不要换平台绕过、不要谎报已发布。\n【标题与标签规范（I3 重注新增；标题/标签两条依据 RESEARCH-20261011-traffic §五）：\n- 标题禁以「AI/人工智能/大模型/智能体/Agent」等抽象词开头；以具体名词/场景/数字开头，须含反差或读者切身损失；≤30 字。（§五）\n- 发布必须带至少 1 个 #话题标签；收口时登记每篇「标题首词/字数/标签数」，随当日 STATUS 落盘。（§五）\n- 选题 A 型（蹭事件/反常现象）与 B 型（场景痛点）轮换，不连续两篇同构；纯技术科普不作为默认首选。（I3 运营化约定，非 §五 原文）】'（at 2026-10-13T08:00:00（每 86400.0s，最多 60 次）；到点仅发送通知）。"
+  },
+  "I3b-schedule-1300-7a8224e2": {
+   "session_id": "fe0e1465-7509-459e-8792-eaaf6d7269f5",
+   "seq": 14877,
+   "ts": "2026-10-12T21:20:07.696127+08:00",
+   "role": "tool",
+   "tool": "schedule",
+   "content": "[状态: success] [schedule] 已注册提醒 sched-7a8224e2: '【LFL 推广·午班 13:00】执行当期推广（每天 3 篇中的第 2 篇）。\n\n先读 docs/promotion/STATUS-*.md（取最近一份）核对今天早班那篇的真实状态；若\"审核中\"则只读复核、不重复提交。\n\n调研走 arXiv API（近两周 Agent 记忆/自我进化/工具安全），通用搜索引擎不用它取论文。头条热榜 API 看有没有可蹭 AI 热点。选题优先用 PLAN-20261011-new-original-topics.md 里尚未发布的主题，避开今天已写的稿。\n\n写稿：中文长文 → docs/promotion/YYYYMMDD-lfl-daily-NN.md，md2html.py 转 HTML（三级标题改用 <p><strong>）。图片 alt 写图注文案，转换后校验 md 图片数==HTML img 数 且 grep '<p>fig' 零残段。\n【写前量化（R5）：写作时同步写伴生 ledger docs/promotion/YYYYMMDD-daily-NN-sources.md，行格式「正文数值 | 出处（文件:行 或 回执路径） | 观测时间」，覆盖正文一切可核数值（约/近/超也算）；ledger 不进发布正文（md2html 只转主文件，天然隔离）。审计改法：正则抽正文数值→逐条对 ledger（缺行=REVISE）→随机抽 2 条实开来源复核】\n配图：figures/_draw.py 生成 3-5 张信息图，read_image 验排版（canvas 高度按最底部元素实际下缘设定）。\n审阅：交独立子 agent 审事实与合规（源文件数排除 __init__.py、硬边界类别数、commit 数、未发布功能标注、论文数据不夸大并写出自述局限）。\n【审稿范围必须覆盖非正文段：标题/尾注/图注】\n【专扫两类内容级夸大：(a) 未测防护不得写成已验证；(b) 实测区间不得取端点放大成单值】\n发布：CDP 127.0.0.1:9229，正文 ClipboardEvent('paste') 注入，图片 setFileInputFiles 后点\"确定\"，插图 setStartBefore 避开空 <h1>，图片描述用 Input.insertText，标题 ≤30 字。知乎走 /write；编辑已发布内容走 /p/{id}/edit（只认 Input.insertText）。\n收口：字数/img 数/空 h1 数/描述非空数核对 + 作品管理页状态。\n\n【发布后文字级缺陷走编辑页修正，补丁后 grep「新串≥1 旧串=0」复核】\n登录态失效或未预期校验失败：停下如实上报，不换账号、不换平台、不谎报已发布。\n【标题与标签规范（I3 重注新增；标题/标签两条依据 RESEARCH-20261011-traffic §五）：\n- 标题禁以「AI/人工智能/大模型/智能体/Agent」等抽象词开头；以具体名词/场景/数字开头，须含反差或读者切身损失；≤30 字。（§五）\n- 发布必须带至少 1 个 #话题标签；收口时登记每篇「标题首词/字数/标签数」，随当日 STATUS 落盘。（§五）\n- 选题 A 型（蹭事件/反常现象）与 B 型（场景痛点）轮换，不连续两篇同构；纯技术科普不作为默认首选。（I3 运营化约定，非 §五 原文）】'（at 2026-10-13T13:00:00（每 86400.0s，最多 60 次）；到点仅发送通知）。"
+  },
+  "I3c-schedule-2000-12065b8a": {
+   "session_id": "fe0e1465-7509-459e-8792-eaaf6d7269f5",
+   "seq": 14879,
+   "ts": "2026-10-12T21:20:07.696698+08:00",
+   "role": "tool",
+   "tool": "schedule",
+   "content": "[状态: success] [schedule] 已注册提醒 sched-12065b8a: '【LFL 推广·晚班 20:00】执行当期推广（每天 3 篇中的第 3 篇），并收口当日。\n\n先读 docs/promotion/STATUS-*.md（取最近一份），核对今天早/午两篇真实状态；\"审核中\"的只读复核其平台状态，转已发布则补公网实见验收落回执，绝不重复提交。\n\n调研走 arXiv API（近两周 Agent 记忆/自我进化/工具安全），通用搜索引擎不用它取论文。头条热榜 API 看有没有可蹭 AI 热点。选题用 PLAN-20261011-new-original-topics.md 里尚未发布的主题，避开今天已写的两稿。\n\n写稿：中文长文 → docs/promotion/YYYYMMDD-lfl-daily-NN.md，md2html.py 转 HTML（三级标题改用 <p><strong>）。图片 alt 写图注文案，转换后校验 md 图片数==HTML img 数 且 grep '<p>fig' 零残段。\n【写前量化（R5）：写作时同步写伴生 ledger docs/promotion/YYYYMMDD-daily-NN-sources.md，行格式「正文数值 | 出处（文件:行 或 回执路径） | 观测时间」，覆盖正文一切可核数值（约/近/超也算）；ledger 不进发布正文（md2html 只转主文件，天然隔离）。审计改法：正则抽正文数值→逐条对 ledger（缺行=REVISE）→随机抽 2 条实开来源复核】\n配图：figures/_draw.py 生成 3-5 张信息图，read_image 验排版。\n审阅：交独立子 agent 审事实与合规（源文件数排除 __init__.py、硬边界类别数、commit 数、未发布功能标注、论文数据不夸大并写出自述局限）。\n【审稿范围必须覆盖非正文段：标题/尾注/图注】\n【专扫两类内容级夸大：(a) 未测防护不得写成已验证；(b) 实测区间不得取端点放大成单值】\n发布：CDP 127.0.0.1:9229，正文 ClipboardEvent('paste') 注入，图片 setFileInputFiles 后点\"确定\"，插图 setStartBefore 避开空 <h1>，图片描述用 Input.insertText，标题 ≤30 字。知乎走 /write；编辑已发布内容走 /p/{id}/edit（只认 Input.insertText）。\n【教训收口（R2，先于 STATUS 落盘）：扫当日工作笔记，按「教训=重做会避免一次已发生失败的运作规则」判定 → R1 同款检索去重 → save_experience(record_kind=lesson) 入库，命中已有卡改 record_use(adapted) 不重复建卡。当日 STATUS 必含一行：教训入库：<id 列表> / 0 条 / 未执行-原因】\n收口：核对字数/img 数/空 h1 数、作品管理页状态；把当日 3 篇状态写入 docs/promotion/STATUS-YYYYMMDD.md 落盘。\n\n【发布后文字级缺陷走编辑页修正，补丁后 grep「新串≥1 旧串=0」复核】\n登录态失效或未预期校验失败：停下如实上报，不换账号、不换平台、不谎报已发布。\n【标题与标签规范（I3 重注新增；标题/标签两条依据 RESEARCH-20261011-traffic §五）：\n- 标题禁以「AI/人工智能/大模型/智能体/Agent」等抽象词开头；以具体名词/场景/数字开头，须含反差或读者切身损失；≤30 字。（§五）\n- 发布必须带至少 1 个 #话题标签；收口时登记每篇「标题首词/字数/标签数」，随当日 STATUS 落盘。（§五）\n- 选题 A 型（蹭事件/反常现象）与 B 型（场景痛点）轮换，不连续两篇同构；纯技术科普不作为默认首选。（I3 运营化约定，非 §五 原文）】'（at 2026-10-13T20:00:00（每 86400.0s，最多 60 次）；到点仅发送通知）。"
+  },
+  "I4-schedule-weekly-25a96c69": {
+   "session_id": "fe0e1465-7509-459e-8792-eaaf6d7269f5",
+   "seq": 14903,
+   "ts": "2026-10-12T21:20:32.585901+08:00",
+   "role": "tool",
+   "tool": "schedule",
+   "content": "[状态: success] [schedule] 已注册提醒 sched-25a96c69: '【知识卡周检】按 docs/governance/card-lifecycle.md §R4 执行本周卡片审计（不修改任何卡内容判断，只核证据与状态）。\n\n一、组抽样池（上限 8 张，风险导向）：\n1) 近 14 天被 record_use 引用、或在当日工作笔记/STATUS 里被提及的卡——全部入池；\n2) (c)/Verification 段核验点最久未跑的卡——至多 3 张；\n3) 随机兜底——2 张。\n池来源：experiences/ 与 data/methods/ 全量清单（search_records kind=experience / method）。\n\n二、逐张跑核验点（卡片正文里的命令/路径/URL，核其期望结果是否仍成立），逐卡在产物里写一行：\n`卡id | 核验点 | 证据摘录 | 结论`\n产物：docs/governance/card-audit/YYYY-MM-DD.md（目录不存在则创建，append-only 按日一档）。\n硬格式：无证据摘录的\"通过\"行 ⇒ 本次审计整体无效，必须重跑。\n\n三、发现前提失效（URL 404 双采样≥10min / API 字段不存在 / 代码行为与卡描述冲突附 文件:行 摘录）：\n当场走 §R3 事实轴 invalidate(evidence_refs, note)，需要则落替代卡（method 用 parent_ref，experience 正文互指）。\n\"缺第二任务类型 qualification\"不是失效理由，走 method_manage 不碰失效。\n已失效的卡只补 record_use 不重复 invalidate（幂等）。\n顺带补齐三段式/六段式模板（不回填存量卡之外的改动）。\n\n四、走样判据：连续 6 周审计\"零发现且零失效\" ⇒ 触发校准警报（审计在走过场），需重新校准抽样池或阈值，并在当周产物顶部显式记录该警报。\n\n五、产物落盘后，在当晚 20:53 的周知识资产入库提醒所辖批次里一并入库（git add docs/governance/card-audit/ 不单独 commit，等入库提醒统一收）。若当日 20:53 入库未发生，自行 commit 本目录。\n\n提醒若已腐烂（本消息中的时间/路径与当前 docs/governance/card-lifecycle.md §R4 不符）：以 card-lifecycle.md 现文为准并如实上报偏差，本提醒消息不作为权威。'（at 2026-10-15T20:00:00（每 604800.0s，最多 52 次）；到点仅发送通知）。"
+  }
+ }
+}

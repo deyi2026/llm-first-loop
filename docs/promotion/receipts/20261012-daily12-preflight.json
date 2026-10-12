@@ -1,0 +1,54 @@
+{
+  "schema": "lfl.promotion_draft_preflight/v1",
+  "issue": "D12",
+  "title": "两个 Agent 一写一审，311 项测试才揪出一个符号错",
+  "title_length": 29,
+  "article_file": "docs/promotion/20261012-lfl-daily-12.md",
+  "article_sha256": "edf14a07c6386df9d39413e8a853c6bf1f9cea8de58c27b4ee620ebb1677ee43",
+  "html_file": "docs/promotion/20261012-lfl-daily-12.html",
+  "html_sha256": "8e5b9727f3703a0aaffb55eca956a4978c355dac61ac21025d691c0a9500ceaa",
+  "figures": [
+    {
+      "path": "docs/promotion/img/fig37-dual-agent-roles.png",
+      "sha256": "9336077ac3c3cb1b98ac7d92dbe04438d5ddba18e4999107962958be3b0eaf49",
+      "dimensions": [
+        1000,
+        708
+      ],
+      "nonwhite_bounds": [
+        52,
+        46,
+        949,
+        662
+      ]
+    },
+    {
+      "path": "docs/promotion/img/fig38-boundary-test.png",
+      "sha256": "10c4811049c5f38bd995f8c7f5fcab2beb9fae1f79269a9fefd8d2bf7bdf9b61",
+      "dimensions": [
+        1000,
+        690
+      ],
+      "nonwhite_bounds": [
+        52,
+        46,
+        949,
+        643
+      ]
+    }
+  ],
+  "static_gates": {
+    "title": true,
+    "two_original_figures": true,
+    "files_exist": true,
+    "canvas_bounds": true,
+    "html_has_no_h1_or_stray_markdown": true,
+    "critical_limitations_disclosed": true
+  },
+  "independent_lfl_review": "NOT_RUN",
+  "reason": "LFL Web UI independent review initiation was blocked by platform safety check; no bypass",
+  "publication_status": "NOT_SUBMITTED",
+  "public_url": null,
+  "count_as_new_public_theme": false,
+  "repo_changes": "only new D12 draft/figures/preflight; no git commit/restart/push"
+}

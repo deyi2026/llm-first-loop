@@ -1,0 +1,76 @@
+{
+  "scenario": "S02",
+  "title": "空闲插话（无 live run）",
+  "ran_under": "M1-in-progress",
+  "started_at": "2026-10-13T02:25:57",
+  "steps": [],
+  "wall": {},
+  "dur_ms": {},
+  "obs": {
+    "interject_status": 409,
+    "interject_error_code": "interject_no_live_run",
+    "item_state_after_failed_interject": [
+      "queued"
+    ],
+    "queue_untouched": true
+  },
+  "endpoints": {
+    "POST /queue": {
+      "status": 202,
+      "body": {
+        "queue_id": "q_7818b0b0a3e8",
+        "position": 1,
+        "item": {
+          "queue_id": "q_7818b0b0a3e8",
+          "session_id": "1d154c4a-5c4b-4737-831b-f368e5ae6eff",
+          "message": "有人在吗",
+          "attachments": [],
+          "attachment_facts": [],
+          "model": null,
+          "model_change": false,
+          "reasoning_effort": null,
+          "reasoning_mode": "auto",
+          "created_at": 1791829557.283664,
+          "status": "queued",
+          "grade": "queued",
+          "grade_reason": ""
+        }
+      }
+    },
+    "POST /queue/interject": {
+      "status": 409,
+      "body": {
+        "ok": false,
+        "error": "interject_no_live_run",
+        "detail": "当前会话没有可接收插话的运行任务；消息仍保留在排队中"
+      }
+    },
+    "GET /queue": {
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "queue_id": "q_7818b0b0a3e8",
+            "session_id": "1d154c4a-5c4b-4737-831b-f368e5ae6eff",
+            "message": "有人在吗",
+            "attachments": [],
+            "attachment_facts": [],
+            "model": null,
+            "model_change": false,
+            "reasoning_effort": null,
+            "reasoning_mode": "auto",
+            "created_at": 1791829557.283664,
+            "status": "queued",
+            "grade": "queued",
+            "grade_reason": ""
+          }
+        ],
+        "count": 1,
+        "queued": 1,
+        "claimed": 0
+      }
+    }
+  },
+  "finished_at": "2026-10-13T02:25:57",
+  "status": "ok"
+}

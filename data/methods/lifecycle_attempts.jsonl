@@ -1,0 +1,1 @@
+{"detail": "distinct pass task_type count=0 (<2)", "episode_ref": "", "event": "lifecycle_transition_attempt", "journal_persisted": true, "method_ref": "method:locate-project-env-before-symptom-workarounds-f7dd29f1718b", "method_status": "hold", "missing_fact": "cross_task_type_qualification", "requested": "active", "result": "blocked", "ts": "2026-10-12T23:34:34.935620+08:00"}

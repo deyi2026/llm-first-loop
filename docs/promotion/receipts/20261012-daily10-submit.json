@@ -1,0 +1,92 @@
+{
+ "issue": "第 10 期 · 让三个 AI 住进一个房间：等待会死，空闲烧钱",
+ "track": "A型蹭热点（Kimi K3「Swarm 智能体集群」官网宣传，厂商自述）× 功能事实（三 Bot 房间 v2 8/8 gate）",
+ "pgc_id": "7695739521175568939",
+ "submitted_at": "2026-10-12T19:21+08:00",
+ "platform_status_flow": [
+  "19:21 审核中",
+  "19:26 已发布 已推送",
+  "19:33 残段修复重提交→修改审核中"
+ ],
+ "md_sha256_timeline": {
+  "初审送审版(2791字)": "62b42b47 段前缀（fig 引语为 figNN 的初始稿）",
+  "审稿REVISE后(2814字)": "8f501ffa78a4ff2dc6782173e9a94efae704f8ab1f352132e16474fbfec25e26",
+  "窄复审": "PASS（subagent_b0ad3e85f7e3，8/8 落地+SHA 一致+3 非阻断观察）",
+  "PASS后按复审观察B/A顺手修（尾注绝对化/fig34注记）": "aec087bcf225c0160b93bd3ce86d9dc9d0b5023152a8e036a7539d799521ae8b"
+ },
+ "audit": {
+  "verdict": "REVISE→修订→PASS",
+  "reviewer": "subagent_e00e429e3cac（全量）+ subagent_b0ad3e85f7e3（窄复审）",
+  "p1": [
+   "fig33 引语含任何记录中不存在的句子「等待下一条消息」（初稿 md 与图脚本双处）——已改为 POC 原文「进入等待循环，不再调用工具」"
+  ],
+  "p2_applied": [
+   "上个月→这几天",
+   "绝对化『不是估算』改为实测/估算二分",
+   "心跳每轮 15.6–17.6K 改 15.6–18.8K 四样本口径",
+   "『主动扩大任务范围』改为有据例证",
+   "意译加引号改原文标注 effect authority 丢失",
+   "尾注『不含实验数据』矛盾修正",
+   "元宝补（同为官网自述）"
+  ]
+ },
+ "prepublish_gate": {
+  "title": "让三个 AI 住进一个房间：等待会死，空闲烧钱",
+  "title_len": 23,
+  "words": 2580,
+  "real_images": 2,
+  "loaded": 2,
+  "dims": [
+   "1000x520",
+   "1000x596"
+  ],
+  "h1": 0,
+  "empty_h1": 0,
+  "caps_nonempty": 2,
+  "stray_fig_paras": 2
+ },
+ "post_publish_correction": {
+  "issue": "发布后发现正文残留 <p>fig33</p>/<p>fig34</p> 两段——根因：md2html 不处理 ![]() 图片语法，把 alt 文本当正文；昨日 08/09 未中招是因其 alt 文本恰为图注",
+  "action": "19:33 编辑页 execCommand('delete') 删除两残段，paras 43→41、chars 2752→2742、两图完好，重新提交",
+  "residual_risk": "无（stray_left=0）"
+ },
+ "known_gap": "编辑页读回最后一张图描述为空（caps=1）——与昨日 08/09 一致的平台侧不持久化缺陷，已两次实证，本轮不再反复推送审核",
+ "ai_declaration": {
+  "label": "引用AI",
+  "checked": true,
+  "applied_at": "2026-10-12T19:31+08:00",
+  "resubmission_state": "修改审核中"
+ },
+ "figures": {
+  "fig33": "心跳协议（纯文本=结算）",
+  "fig34": "两种房间形态成本（150–200万 vs 40–50万）",
+  "generator": "figures/_d10.py",
+  "PIL_margins": "L52 R51-52 T46 B19-24"
+ },
+ "zhihu": {
+  "id": "2093062481019249824",
+  "url": "https://zhuanlan.zhihu.com/p/2093062481019249824",
+  "published_at": "2026-10-12T19:33+08:00",
+  "declaration": "包含 AI 辅助创作 作者对内容负责（发布后补设并更新，19:38 生效）"
+ },
+ "tail_fix_round": {
+  "issue": "窄复审观察B（尾注绝对化）声称已修但未落盘：补丁串与实际文本差两字，断言失败被误读为成功，错误措辞随 19:21/19:33 两版上线",
+  "discovered": "19:44 公网验收追查磁盘 md 时 grep 实证旧文案仍在，自查流程失败",
+  "fix": "19:46 三方同修：md（grep 复核 新1旧0，SHA 8eec390c…）+ 头条编辑页 insertText 替换（2756字）+ 知乎编辑页同法（更新成功）",
+  "lesson": "写后必须 grep/shasum 复核，不能把『脚本跑了』当『改成了』"
+ },
+ "public_verification": {
+  "toutiao_1944": {
+   "title": "✓",
+   "chars": 2762,
+   "imgs_loaded": 2,
+   "stray_fig": 0
+  },
+  "zhihu_1947": {
+   "imgs": 2,
+   "h2": 5,
+   "declaration": "已设",
+   "tail_note": "已二次修正"
+  }
+ }
+}

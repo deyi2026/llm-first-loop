@@ -1,0 +1,41 @@
+{
+  "issue": "第 12 期 · 两个 Agent 一写一审，311 项测试才揪出一个符号错",
+  "gate": "independent_review PASS (docs/promotion/receipts/20261012-daily12-review.json), 正文 SHA256=edf14a07c6386df9d39413e8a853c6bf1f9cea8de58c27b4ee620ebb1677ee43 发布全程未变",
+  "submitted_at": "2026-10-13T00:08 (头条) / 2026-10-13T00:25 (知乎)",
+  "toutiao": {
+    "platform": "今日头条",
+    "author_account": "LFL-AGENT (创作者后台真实登录态)",
+    "article_url": "https://www.toutiao.com/article/7695813464698225195/",
+    "pgc_id": "7695813464698225195",
+    "title": "两个 Agent 一写一审，311 项测试才揪出一个符号错",
+    "title_len": 29,
+    "body_paras": 47,
+    "body_chars": 3877,
+    "figures": [
+      {"file": "fig37-dual-agent-roles.png", "natural_size": "1000x708", "uploaded_src": "image-tt-private.toutiaoimg.com (上传回执), 公网 p3-sign.toutiaoimg.com/tos-cn-i-axegupay5k/5b47b1a40ebc48...", "position": "示意：双 Agent 的职责分离 段后"},
+      {"file": "fig38-boundary-test.png", "natural_size": "1000x690", "uploaded_src": "公网 p3-sign.toutiaoimg.com/tos-cn-i-6w9my0ksvp/9fc3e5ed1bd544...", "position": "示意：一个小于号如何让结构审查漏检 段后"}
+    ],
+    "ai_declaration": "作品声明区勾选「引用AI」, 发布后公网页显示『作品声明：内容由AI生成』",
+    "pre_publish_gate": "标题29字≤30 ✓ 正文47段3877字 ✓ 两图已上传且尺寸核对 ✓ 无裸fig段 ✓ 尾注含开源项目话题 ✓ 引用AI已勾 ✓",
+    "status_at_submit": "审核中 (10-13 00:08)",
+    "status_now": "已发布 (内容管理列表实见)"
+  },
+  "zhihu": {
+    "platform": "知乎专栏",
+    "author_account": "yyj (浏览器真实登录态)",
+    "article_url": "https://zhuanlan.zhihu.com/p/2093134864233115651",
+    "title": "两个 Agent 一写一审，311 项测试才揪出一个符号错",
+    "body_chars": 3686,
+    "figures": [
+      {"file": "fig37-dual-agent-roles.png", "natural_size": "1000x708", "public_src": "https://pic3.zhimg.com/80/v2-132cf9753b5601b0027a7213a3f20e3...", "position": "锚点块后第1块 (img_pos=7=锚点6+1)"},
+      {"file": "fig38-boundary-test.png", "natural_size": "1000x690", "public_src": "https://pica.zhimg.com/80/v2-04a8d0fb24ac2a7258020788d6371dd...", "position": "锚点块后第1块 (img_pos=17=锚点16+1)"}
+    ],
+    "ai_declaration": "发布后经编辑页补设创作声明「包含 AI 辅助创作 作者对内容负责」并点击「更新」保存; 公网页 body 含该声明文本",
+    "status": "已发布 (第 8 篇创作, 公网可访问)"
+  },
+  "one_draft_two_platforms": "同一主题 D12 各投稿一次: 头条 1 次 + 知乎 1 次; 未在任何平台重复投稿",
+  "known_leftovers": [
+    "知乎存在两个已废弃草稿: 2093061130285475016 (D11 遗留) 与 2093131339784531997 (本次插图调试遗留, 内容为测试残段), 均未发布; creator/content/draft 页导航失败未清理, 留待后续处理"
+  ],
+  "ops_note": "头条编辑器(ProseMirror): execCommand insertText 逐段+ClipboardEvent paste 图片; 知乎编辑器(Draft.js): insertText+真实键盘Enter分块(部分段落合并为同一块, 渲染为换行), 图片经 input[accept^='image/webp'] 的 DOM.setFileInputFiles(CDP)+真实鼠标点击锚点块行尾定位插入; 期间一次选区异常导致正文被清空, 经清空重灌恢复, 最终结构经验证完整"
+}
