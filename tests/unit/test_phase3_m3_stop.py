@@ -359,7 +359,6 @@ def test_p1_4_cross_instance_merge(tmp_path):
     a.register("s1", "browser_operate", "click:x", "browser_mutation", revocable=False)
     # 用第三个实例重读：三行全在（旧版此处只剩 b 的最后一写或 a 的覆盖）
     c = SideEffectRegistry(); c.configure(d)
-    ids = {it["id"] for it in c.snapshot("s1")} | {it["id"] for it in c.snapshot("s2")}
     assert len(c.snapshot("s1")) == 2 and len(c.snapshot("s2")) == 1
 
 
