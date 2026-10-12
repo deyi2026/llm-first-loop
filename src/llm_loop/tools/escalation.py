@@ -30,7 +30,10 @@ import fcntl
 import hashlib
 import json
 import logging
+import os
 import secrets
+import stat
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -65,31 +68,73 @@ class EscalationStore:
         self._log_path = self._path.parent / "escalation_log.jsonl"
 
     # ── 基础 IO ──
+    @staticmethod
+    def _private_fd(path: Path, flags: int) -> int:
+        """Open only an owner-controlled, non-symlink file, mode 0600.
+
+        Pre-existing 0644 records are repaired on the opened inode before
+        reading their potentially live approval token.
+        """
+        fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+            ):
+                raise PermissionError("escalation file ownership/type invalid")
+            if stat.S_IMODE(info.st_mode) & 0o077:
+                os.fchmod(fd, 0o600)
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def _private_parent(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        info = self._path.parent.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o022
+        ):
+            raise PermissionError("escalation audit directory not owner-controlled")
+
     def _load(self) -> list[dict]:
         try:
-            raw = self._path.read_text(encoding="utf-8")
+            fd = self._private_fd(self._path, os.O_RDONLY)
         except FileNotFoundError:
             return []
-        except OSError:
-            logger.warning("提权存储读取失败（按空处理）", exc_info=True)
-            return []
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            raw = f.read()
         try:
             data = json.loads(raw or "[]")
-            return data if isinstance(data, list) else []
-        except json.JSONDecodeError:
-            # 损坏 → 保守丢弃（fail-open 到"无历史请求"，不影响新请求）
-            logger.exception("提权存储 JSON 损坏（按空处理）")
-            return []
+        except json.JSONDecodeError as exc:
+            raise ValueError("escalation state corrupt; refusing overwrite") from exc
+        if not isinstance(data, list):
+            raise ValueError("escalation state not a list; refusing overwrite")
+        return data
 
     def _save(self, records: list[dict]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(self._path)
+        self._private_parent()
+        fd, raw_tmp = tempfile.mkstemp(
+            prefix=f".{self._path.name}.", suffix=".tmp", dir=self._path.parent,
+        )
+        tmp = Path(raw_tmp)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(records, ensure_ascii=False, indent=1))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _log(self, event: str, rec: dict, extra: dict | None = None) -> None:
         try:
-            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._private_parent()
             line = {
                 "ts": _now(),
                 "event": event,
@@ -100,15 +145,21 @@ class EscalationStore:
             }
             if extra:
                 line.update(extra)
-            with self._log_path.open("a", encoding="utf-8") as f:
+            with os.fdopen(
+                self._private_fd(self._log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT),
+                "a", encoding="utf-8",
+            ) as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
         except OSError:
             logger.warning("提权审计写失败（不影响主流程）", exc_info=True)
 
     def _mutate(self, fn) -> list[dict]:
         """锁内 读-改-写（flock 跨进程 + 进程锁跨线程）。"""
-        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with _PROC_LOCK, self._lock_path.open("a") as lf:
+        self._private_parent()
+        with _PROC_LOCK, os.fdopen(
+            self._private_fd(self._lock_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT),
+            "a", encoding="utf-8",
+        ) as lf:
             fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
             try:
                 records = self._load()
