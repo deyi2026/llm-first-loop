@@ -2,6 +2,15 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.32 — 提权闭环安全批次公开披露（2026-10-12）
+
+- **一次性审批令牌 owner-private（commit 523d8b5f6）**：提权审批私有状态文件写入收紧为 owner-only——`O_NOFOLLOW` + 打开后 fstat 校验（regular file、本人 uid、nlink=1），杜绝符号/硬链接替换读取审批令牌的 TOCTOU 窗口；遗留 0644 权限文件读取前在已打开描述符上原地收紧；状态文件损坏从"按空处理"（可被篡改重置审批记录）改为 fail-closed 拒绝覆盖。
+- **原子替换消除临时文件暴露（commit c8163f8bf）**：审批状态原子替换的临时文件改为随机名 `O_CREAT|O_EXCL|O_NOFOLLOW` 0600 + fsync + replace，消除 0644 临时文件窗口期内批准令牌对其他本地用户可读的风险，并保持对持久化 registry 的可见性。
+- **Web 审批表单拒密码字段（commit 523d8b5f6）**：审批入参 schema 收紧 `extra="forbid"`，审批路径不接受也不回显密码类字段；校验失败时被拦截命令不执行。
+- **两层权限边界澄清（docs，commit deff8b620）**：LFL 提权审批只解除灾难性命令安全硬阻断这一道内部门，不等价于操作系统管理员授权——后者由 macOS 原生认证对话框独立把关，二者不可互相替代。
+- **质量收尾**：consume 路径 `except ValueError` 补原因注释对齐静默异常吞没守卫（过期时间戳损坏不阻断消费，由工具名/命令哈希强绑定校验兜底）；新增 protected 状态迁移、损坏不可重置、密码字段拒绝、审计日志不含令牌等 16 用例（tests/unit/test_escalation.py）。
+- **版本面**：pyproject / web SERVICE_VERSION / README（中英）/ CHANGELOG 对齐 0.6.32；公开库快照自 v0.6.31 增量同步（含 ci-public rule-presence 测试在开源分发环境条件跳过修复，commit 555dd11cc）。
+
 ## v0.6.31 — 子代理 E4/E5 原语 + wait 累计预算修复 + chatgpt-web/r9 批次（2026-10-12）
 
 - **E4 子代理 requires 程序级强制白名单（EVO-20261012-bb3022f4，commit 842c24309）**：`spawn_subagent` 的 `requires.tools` 从元数据声明升级为程序级强制——子会话工具发现面与执行面均截断到声明集；声明超出父执行域在启动前确定性拒绝（授权只降不升，fail-fast）；默认从子代理工具面剔除 spawn_subagent 防递归舰队（`CHILD_SPAWN_GRANT` 配置白名单显式授予）；成功回执携带 `tool_scope` 透明化实际生效白名单。此前 V2a POC 实测证伪了“requires 仅声明”假设（bf3566b45）。

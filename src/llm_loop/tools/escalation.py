@@ -322,7 +322,7 @@ class EscalationStore:
                         self._log("token_expired", hit)
                         reason = f"令牌已过期（{exp}）"
                         return records
-                except ValueError:
+                except ValueError:  # 过期时间戳格式损坏不阻断消费：跳过过期判定，由下方工具名/命令哈希强绑定校验兜底（fail-closed 不依赖该字段）
                     pass
             if hit.get("tool_name") != tool_name:
                 reason = f"令牌绑定的工具是 {hit.get('tool_name')}，不是 {tool_name}"
