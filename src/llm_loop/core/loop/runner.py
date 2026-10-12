@@ -517,12 +517,27 @@ class BackgroundRunner:
                     session_id, run_generation,
                 )
         registry = getattr(self._engine, "registry", None)
+        # Phase3 M3（G3）：停止记录（requested/dispatched_stopped 双时间戳；
+        # 登记失败 fail-open，不影响既有停止主链路）
+        _se = None
+        try:
+            from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+            _se = SideEffectRegistry.instance()
+            _se.record_stop_requested(session_id, reason)
+        except Exception:  # noqa: BLE001
+            _se = None
         cancel_session = getattr(registry, "cancel_session", None)
         if callable(cancel_session):
             try:
                 cancel_session(session_id, run_generation=run_generation)
             except Exception:  # noqa: BLE001 — 工具硬取消失败仍保留循环 cancelled 标志
                 logger.warning("后台 run 工具取消失败（fail-open）: session=%s", session_id, exc_info=True)
+        if _se is not None:
+            try:
+                _se.record_stop_dispatched(session_id, _se.settle_session_stopped(session_id))
+            except Exception:  # noqa: BLE001
+                pass
         return True
 
     def is_cancelled(self, session_id: str) -> bool:
@@ -532,6 +547,16 @@ class BackgroundRunner:
             if h is not None:
                 return h.cancelled
             return session_id in self._sync_cancelled
+
+    @staticmethod
+    def _note_local_terminated(session_id: str) -> None:
+        """Phase3 G3：run 本地终态时刻（done/error 出口；F5 双口径的终止侧数据点）."""
+        try:
+            from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+            SideEffectRegistry.instance().record_local_terminated(session_id)
+        except Exception:  # noqa: BLE001 — 观测面 fail-open
+            pass
 
     def cancel_reason(self, session_id: str) -> str:
         """该会话取消原因（""=未取消；engine 检查点原因捕获数据源，双路径同构）."""
@@ -882,6 +907,7 @@ class BackgroundRunner:
                 handle.status = "done"
                 handle.finished_at = time.time()
                 self._registry.pop(session_id, None)
+            self._note_local_terminated(session_id)
             bus.close()
         except Exception as exc:  # noqa: BLE001 — 后台异常如实广播，不泄漏线程
             logger.exception("后台 run 失败: session=%s", session_id)
@@ -901,6 +927,7 @@ class BackgroundRunner:
                 handle.error = err
                 handle.finished_at = time.time()
                 self._registry.pop(session_id, None)
+            self._note_local_terminated(session_id)
             bus.close()
         finally:
             self._worker_idents.discard(threading.get_ident())

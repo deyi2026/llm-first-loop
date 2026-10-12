@@ -378,6 +378,22 @@ class ExecuteCommandTool:
                         tool_name=self.name,
                     )
                 JobRegistry.instance().start_readers(job_id)
+                # Phase3 M3（G3）：后台 job 是可回收副作用，登记进副作用面
+                # （停止语义=JobRegistry cancel hook 已回收；revocable=True）。
+                # D6：target 只含 job_id+命令头，不含输出/正文。
+                try:
+                    from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+                    SideEffectRegistry.instance().register(
+                        _sid,
+                        "execute_command",
+                        f"job:{job_id} cmd:{command[:80]}",
+                        "process_bg",
+                        revocable=True,
+                        detail="停止路径: JobRegistry.cancel_session hook (factory)",
+                    )
+                except Exception:  # noqa: BLE001 — 登记失败不阻断工具（观测面 fail-open）
+                    pass
                 return ToolResult(
                     status=ToolResultStatus.SUCCESS,
                     content=f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"

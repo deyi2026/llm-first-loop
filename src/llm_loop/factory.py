@@ -730,6 +730,13 @@ def build_engine(
     )
     registry.add_session_cancel_hook(_job_registry.cancel_session)
 
+    # Phase3 M3（G3）：副作用登记面（只登记不撤销；撤销仍走上面的既有 hook）。
+    # 生产装配启用；tests/conftest.py 装配不 configure（内存模式），差异由
+    # M3 测试显式对齐（M0 报告审查修订版 §4「装配一致性」项）。
+    from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+    SideEffectRegistry.instance().configure(str(settings.data_dir))
+
     # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
     # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs
     # capture-before-projection and emits a bounded recovery capsule.

@@ -1215,6 +1215,28 @@ class BrowserSemanticOperationTool:
             clauses = self._validate_clauses(request["clauses"])
         else:
             raise BrowserSemanticOperationContractError("operation_fields_mismatch")
+        # Phase3 M3（G3）：浏览器 mutation 是不可自动撤销的外部副作用
+        # （external_unknown 面）。登记失败不阻断操作（观测面 fail-open）。
+        # D6：target 只含动词+目标标识（url/name 截断），不含页面正文。
+        try:
+            from llm_loop.core.loop.side_effects import SideEffectRegistry
+            from llm_loop.core.run_context import current_session_id
+
+            _se_verbs = {"navigate", "click", "set_text", "append_text", "select"}
+            for _cl in clauses:
+                _v = str(getattr(_cl, "verb", "") or "")
+                if _v in _se_verbs:
+                    _tgt = getattr(_cl, "url", None) or getattr(_cl, "name", None) or ""
+                    SideEffectRegistry.instance().register(
+                        current_session_id.get() or "",
+                        "browser_operate",
+                        f"{_v}:{str(_tgt)[:80]}",
+                        "browser_mutation",
+                        revocable=False,
+                        detail="不可自动撤销；停止后须人工核验页面态",
+                    )
+        except Exception:  # noqa: BLE001
+            pass
         receipt = self._base_receipt()
 
         def finalize() -> dict[str, Any]:

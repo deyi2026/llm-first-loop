@@ -302,6 +302,20 @@ class DshTaskTool:
                 tool_name=self.name,
             )
         JobRegistry.instance().start_readers(job_id)
+        # Phase3 M3（G3）：dsh 后台任务登记为可回收副作用（同 execute_command）。
+        try:
+            from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+            SideEffectRegistry.instance().register(
+                _sid,
+                "dsh_task",
+                f"job:{job_id} task:{task[:60]}",
+                "dsh_bg",
+                revocable=True,
+                detail="停止路径: JobRegistry.cancel_session hook (factory)",
+            )
+        except Exception:  # noqa: BLE001 — 登记失败不阻断工具（观测面 fail-open）
+            pass
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=(

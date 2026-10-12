@@ -24,6 +24,7 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
+from pydantic import BaseModel, Field
 
 from llm_loop.core.loop.runner import (
     QueuedIngressDurabilityError,
@@ -2176,6 +2177,63 @@ def queue_interject_metrics(session_id: str, request: Request) -> Response:
     hq = _human_turn_queue(request)
     return UTF8JSONResponse(
         status_code=200, content={"ok": True, **hq.aggregate_interject_metrics(session_id)}
+    )
+
+
+@router.get("/api/v1/chat/stop-state")
+def chat_stop_state(session_id: str, request: Request) -> Response:
+    """Phase3 G3 只读端点：停止四态组合查询（requested/dispatched_stopped/local_terminated）.
+
+    - 空清单显式返回 no_known_external_side_effects=true（不静默空数组歧义）。
+    - external_unknown 可枚举：工具+目标+发起时间+人工核验指引；
+      禁 TTL 自动转 confirmed（D5）——确认只走 POST /confirm 人工登记。
+    - 状态由真实时间戳组合而来（查询面，非状态机迁移）；run_alive 由
+      runner 句柄（后台）+同步活跃登记（双路径，同 cancel 语义）判定。
+    """
+    from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+    engine = _engine_from(request)
+    runner = getattr(engine, "runner", None)
+
+    def _run_alive() -> bool:
+        if runner is None:
+            return False
+        try:
+            if runner.get_handle(session_id) is not None:
+                return True
+            return bool(runner.is_sync_active(session_id))
+        except Exception:  # noqa: BLE001 — 查询面不放大异常
+            return False
+
+    se = SideEffectRegistry.instance()
+    return UTF8JSONResponse(
+        status_code=200,
+        content={"ok": True, **se.stop_state(session_id, run_alive=_run_alive)},
+    )
+
+
+class StopConfirmRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    effect_id: str = Field(min_length=1)
+    confirmed_by: str = Field(min_length=1, max_length=60)
+    note: str = Field(default="", max_length=200)
+
+
+@router.post("/api/v1/chat/stop-state/confirm")
+def chat_stop_state_confirm(payload: StopConfirmRequest, request: Request) -> Response:
+    """Phase3 G3：external_unknown 人工确认登记（幂等；无 TTL 自动确认，D5）."""
+    from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+    ok = SideEffectRegistry.instance().confirm_external(
+        payload.effect_id, payload.confirmed_by, payload.note
+    )
+    if not ok:
+        return UTF8JSONResponse(
+            status_code=404, content={"ok": False, "error": "side_effect_not_found"}
+        )
+    return UTF8JSONResponse(
+        status_code=200,
+        content={"ok": True, "effect_id": payload.effect_id, "confirmed_by": payload.confirmed_by},
     )
 
 
