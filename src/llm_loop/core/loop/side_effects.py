@@ -27,8 +27,9 @@ import os
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _FILENAME = "side_effects.json"
 _VERSION = 1
