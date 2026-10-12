@@ -1,0 +1,26 @@
+{
+  "scenario": "S05",
+  "title": "无 terminate_session 的副作用工具：run 停止后工具仍活",
+  "ran_under": "M1-in-progress",
+  "started_at": "2026-10-13T01:50:40",
+  "steps": [],
+  "wall": {
+    "side_effect_started": 1791827440.038
+  },
+  "dur_ms": {
+    "runner_cancel_ms": 0.0,
+    "cancel_to_run_done_ms": 4022.8
+  },
+  "obs": {
+    "tool_has_terminate_session": false,
+    "runner_cancel_returned": true,
+    "run_final_event": "done",
+    "side_effect_finished_before_run_done": true,
+    "run_done_waited_for_tool": true,
+    "side_effect_finished_eventually": true,
+    "total_side_effect_duration_ms": 4327.789458446205
+  },
+  "endpoints": {},
+  "finished_at": "2026-10-13T01:50:44",
+  "status": "ok"
+}

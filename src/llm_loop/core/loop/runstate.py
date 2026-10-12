@@ -62,6 +62,12 @@ class _RunState:
     convergence_boundary_pending: bool = False
     convergence_boundary_evidence: dict[str, Any] = field(default_factory=dict)
     exhaustion_decision_used: bool = False  # 轮次耗尽决策轮一次性标志（2026-08-15）
+    # Phase3 M1 插话分级回执（G1）：engine 工作线程在消费点 stash 的 applied/cbf
+    # 回执回调（fail-open，回执失败不阻断主链路——不变量 6）。每次消费调用
+    # 重置 pending 集合；仅终答前检查（continued_before_final）消费的行会被
+    # 该检查点随后触发。
+    interject_applied_callbacks: list[dict[str, Any]] = field(default_factory=list)
+    interject_cbf_pending: list[dict[str, Any]] = field(default_factory=list)
     last_breakdown: Any = None
     last_build_info: Any = None
     # 2026-09-03 cache-boundary P1: provider cache window 是跨 run、按 session 的事实。

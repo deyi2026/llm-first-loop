@@ -1,0 +1,22 @@
+{
+  "scenario": "S09",
+  "title": "wake 重启恢复（存量测试证据）",
+  "started_at": "2026-10-13T01:49:43",
+  "steps": [],
+  "wall": {},
+  "dur_ms": {},
+  "obs": {
+    "verdict": "pass"
+  },
+  "endpoints": {},
+  "evidence": {
+    "cmd": "pytest tests/unit/test_schedule_restart_recovery.py tests/unit/test_schedule_durability.py",
+    "returncode": 0,
+    "tail": [
+      "....................................................                     [100%]",
+      "52 passed in 2.96s"
+    ]
+  },
+  "finished_at": "2026-10-13T01:49:47",
+  "status": "ok"
+}

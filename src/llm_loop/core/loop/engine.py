@@ -193,6 +193,22 @@ def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list
             )
             if verdict.action is GuardAction.DENY:
                 logger.warning("interjection ingress denied: sid=%s qid=%s", session_id, queue_id)
+                # Phase3 G1 denied 分级（D5 前同形路径：被拒项此前静默滞留 pending，
+                # 最终被 reaper 误标为 interject_run_ended，与孤儿不可区分）。
+                # 回执回调 fail-open（不变量 6）；原因取守卫 verdict 摘要，不打正文（D6）。
+                _deny_reason = str(getattr(verdict, "reason", "") or "ingress_denied")[:120]
+                _cb = row.get("_on_denied")
+                if callable(_cb):
+                    try:
+                        _cb(_deny_reason)
+                    except Exception:  # noqa: BLE001 — 回执失败不得阻断消费循环
+                        logger.warning("interjection denied-receipt failed (fail-open)", exc_info=True)
+                with contextlib.suppress(Exception):
+                    engine._record_action(
+                        "human.interjection",
+                        "denied",
+                        f"queue_id={queue_id}; reason={_deny_reason}",
+                    )
                 continue
             msg = verdict.message
         except ImportError:  # pragma: no cover - same fail-open assembly rule as run ingress
@@ -219,7 +235,68 @@ def _consume_live_interjections(engine: Any, session_id: str, sess: Any) -> list
                 "received",
                 f"queue_id={queue_id}; turn_ref={len(sess.messages) - 1}",
             )
+        # Phase3 G1 applied/cbf 回执 stash（fail-open，不变量 6）：applied 在首个
+        # 工具派发或终答出口由 _fire_interject_applied 触发；cbf pending 仅当本行
+        # 是终答结算边界消费的行才被该检查点触发——每次消费调用先重置 pending，
+        # 轮边界消费不会误触发 CBF 分级。
+        try:
+            rs = engine._run_state()
+            rs.interject_cbf_pending = []
+            if callable(row.get("_on_applied")):
+                rs.interject_applied_callbacks.append(
+                    {"queue_id": queue_id, "cb": row["_on_applied"]}
+                )
+            if callable(row.get("_on_cbf")):
+                rs.interject_cbf_pending.append(
+                    {"queue_id": queue_id, "cb": row["_on_cbf"]}
+                )
+        except Exception:  # noqa: BLE001 — 回执 stash 失败不得阻断消费
+            logger.warning("interjection receipt stash failed (fail-open)", exc_info=True)
     return accepted_texts
+
+
+def _fire_interject_applied(engine: Any, detail: str, *, also_cbf: bool = False) -> int:
+    """G1 applied/CBF 回执触发点（Phase3 §7.1 机械判据）.
+
+    调用点：首个工具派发（tool_dispatched_round=N）、终答出口
+    （final_answer_after_interjection）、终答结算边界（also_cbf=True）。
+    回执失败一律 fail-open（不变量 6）；detail 不含插话正文（D6）。
+    取消路径不触发——未被决策采用即不标 applied（诚实优先）。
+    """
+    fired = 0
+    try:
+        rs = engine._run_state()
+    except Exception:  # noqa: BLE001 — 无活跃 run 状态时静默放弃回执
+        return 0
+    targets, rs.interject_applied_callbacks = rs.interject_applied_callbacks, []
+    for ent in targets:
+        cb = ent.get("cb")
+        qid = str(ent.get("queue_id") or "")
+        if callable(cb):
+            try:
+                cb(detail)
+                fired += 1
+            except Exception:  # noqa: BLE001
+                logger.warning("interjection applied-receipt failed (fail-open)", exc_info=True)
+        with contextlib.suppress(Exception):
+            engine._record_action(
+                "human.interjection", "applied", f"queue_id={qid}; {detail}"
+            )
+    if also_cbf:
+        cbs, rs.interject_cbf_pending = rs.interject_cbf_pending, []
+        for ent in cbs:
+            cb = ent.get("cb")
+            qid = str(ent.get("queue_id") or "")
+            if callable(cb):
+                try:
+                    cb(detail)
+                except Exception:  # noqa: BLE001
+                    logger.warning("interjection cbf-receipt failed (fail-open)", exc_info=True)
+            with contextlib.suppress(Exception):
+                engine._record_action(
+                    "human.interjection", "continued_before_final", f"queue_id={qid}"
+                )
+    return fired
 
 
 # M53 拆分: _json_dumps_args/_tool_args_summary → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
@@ -2348,6 +2425,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             "continued_before_final",
                             f"round={rounds}; count={len(_late_interjected)}",
                         )
+                    # Phase3 G1：本次消费即终答结算边界拦截，触发 cbf 回执分级
+                    _fire_interject_applied(
+                        self, "continued_before_final_gate", also_cbf=True
+                    )
                     final_answer = ""
                     resp = None
                     continue
@@ -2458,10 +2539,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                     "discrepancy",
                                     verification_note[:200],
                                 )
+                # Phase3 G1 applied 判据①：终答出口（非取消路径完成终答；取消路径
+                # 不触发——未被决策采用即不标 applied，诚实优先）。
+                _fire_interject_applied(self, "final_answer_after_interjection")
                 break
 
             # ── 行动：执行工具（tool_calls）──
             # M53 拆分: 工具段 → _ToolExecMixin._execute_tools（yield from 保持 tool_round 外泄次序）
+            # Phase3 G1 applied 判据②：首个工具派发（包含插话消息的模型决策产生了动作）。
+            _fire_interject_applied(self, f"tool_dispatched_round={rounds}")
             yield from self._tool_cycle._execute_tools(resp, sess, rounds, tool_trace)
 
             # P0-B: after durable tool receipts, evaluate only mechanical convergence

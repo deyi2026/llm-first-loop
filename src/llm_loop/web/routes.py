@@ -50,7 +50,7 @@ from llm_loop.workspace.store import (
 
 from .attachments import AttachmentError, AttachmentStore
 from .attachments import workspace_scope as attachment_workspace_scope
-from .human_turn_queue import HumanTurnQueue
+from .human_turn_queue import HumanTurnQueue, QueuePersistError
 from .local_runtime_admin import router as local_runtime_router
 from .provider_routes import router as provider_admin_router
 from .schemas import (
@@ -620,6 +620,43 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
         except Exception:  # noqa: BLE001
             worker["manifest_error"] = True
 
+    # EVO-20261013 队列可观测性：排队数之外的三个显化维度——
+    # ① 最老排队任务等待时长（积压严重度）② worker 准入状态心跳（为什么不动）
+    # ③ requeue 原因统计（慢性抢占史）。全部只读、fail-open。
+    oldest_queued: dict[str, Any] | None = None
+    if journal is not None:
+        try:
+            oldest_queued = journal.oldest_queued()
+        except Exception:  # noqa: BLE001 - observability must never break chat serving
+            logger.warning("learning status oldest_queued failed", exc_info=True)
+
+    admission: dict[str, Any] = {"present": False}
+    heartbeat_path = data_dir / "runtime" / "learning_admission.json"
+    if heartbeat_path.is_file():
+        try:
+            heartbeat = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+            hb_ts = float(heartbeat.get("ts") or 0.0)
+            admission = {
+                "present": True,
+                "state": str(heartbeat.get("state") or "unknown"),
+                "reason": str(heartbeat.get("reason") or "") or None,
+                "since": heartbeat.get("since"),
+                "ts": heartbeat.get("ts"),
+                "queued": int(heartbeat.get("queued") or 0),
+                # 心跳新鲜度：worker 存活但 >60s 未刷新按 stale 呈现（不误判为阻塞）
+                "age_seconds": round(max(0.0, time.time() - hb_ts), 1) if hb_ts else None,
+                "stale": bool(hb_ts and (time.time() - hb_ts) > 60.0),
+            }
+        except Exception:  # noqa: BLE001
+            admission = {"present": False, "parse_error": True}
+
+    requeue_stats: dict[str, Any] = {}
+    if journal is not None:
+        try:
+            requeue_stats = journal.requeue_stats()
+        except Exception:  # noqa: BLE001 - observability must never break chat serving
+            logger.warning("learning status requeue_stats failed", exc_info=True)
+
     return JSONResponse(
         {
             "enabled": bool(getattr(settings, "learning_plane_enabled", False)),
@@ -627,6 +664,9 @@ def learning_status(request: Request, limit: int = Query(default=50, ge=1, le=20
             "worker": worker,
             "counts": counts,
             "jobs": jobs,
+            "oldest_queued": oldest_queued,
+            "admission": admission,
+            "requeue_stats": requeue_stats,
         }
     )
 
@@ -1701,16 +1741,27 @@ def queue_enqueue(payload: QueueEnqueueRequest, request: Request) -> Response:
             content={"error": "invalid_attachment" if isinstance(exc, AttachmentError) else "workspace_busy", "detail": str(exc)},
         )
     hq = _human_turn_queue(request)
-    item = hq.enqueue(
-        payload.session_id,
-        payload.message,
-        attachments=[ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in payload.attachments],
-        model=payload.model,
-        model_change=payload.model_change,
-        reasoning_effort=payload.reasoning_effort,
-        reasoning_mode=payload.reasoning_mode,
-        attachment_facts=attachment_facts,
-    )
+    try:
+        item = hq.enqueue(
+            payload.session_id,
+            payload.message,
+            attachments=[ref.model_dump() if hasattr(ref, "model_dump") else dict(ref) for ref in payload.attachments],
+            model=payload.model,
+            model_change=payload.model_change,
+            reasoning_effort=payload.reasoning_effort,
+            reasoning_mode=payload.reasoning_mode,
+            attachment_facts=attachment_facts,
+        )
+    except QueuePersistError as exc:
+        # Phase3 D2 二分：持久化失败分级透出（不静默吞、不假装成功；503 如实标注）
+        return UTF8JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "error": f"queue_persist_{exc.stage}",
+                "detail": f"排队持久化失败（{exc.stage}）：{exc}"[:200],
+            },
+        )
     active = hq.list_active(payload.session_id)
     position = sum(1 for it in active if it.get("status") == "queued")
     return UTF8JSONResponse(
@@ -1778,9 +1829,21 @@ def queue_interject(payload: QueueInterjectRequest, request: Request) -> Respons
 
     hq = _human_turn_queue(request)
     # run_generation 记入认领事实，供 QueueServerFallback 巡检判孤儿回收
-    item = hq.claim_interject(
-        payload.session_id, payload.queue_id, run_generation=actual_run_generation
-    )
+    try:
+        item = hq.claim_interject(
+            payload.session_id, payload.queue_id, run_generation=actual_run_generation
+        )
+    except QueuePersistError as exc:
+        # Phase3 D2：认领未落盘 ⇒ 队列项必然仍为 queued（definitely_not_committed）
+        # 或无法裁决（commit_outcome_uncertain）——一律 503 如实透出，不降级重试。
+        return UTF8JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "error": f"queue_persist_{exc.stage}",
+                "detail": f"插话认领持久化失败（{exc.stage}）：{exc}"[:200],
+            },
+        )
     if item is None:
         return UTF8JSONResponse(
             status_code=409,
@@ -1803,11 +1866,33 @@ def queue_interject(payload: QueueInterjectRequest, request: Request) -> Respons
             "_on_received": lambda: hq.mark_interject_received(
                 payload.session_id, payload.queue_id
             ),
+            # Phase3 G1 分级回执（全部 fail-open，回执失败不阻断主链路）：
+            # denied=ingress 守卫拒绝；applied=含插话决策产生首个动作或改变终答；
+            # cbf=终答结算边界拦截续跑。正文不出现在任何回执/日志（D6）。
+            "_on_denied": lambda reason: hq.mark_interject_denied(
+                payload.session_id, payload.queue_id, reason
+            ),
+            "_on_applied": lambda detail: hq.record_interject_applied(
+                payload.session_id, payload.queue_id, detail
+            ),
+            "_on_cbf": lambda detail: hq.record_interject_cbf(
+                payload.session_id, payload.queue_id, detail
+            ),
         },
         expected_run_generation=payload.run_generation,
     )
     if not accepted:
-        hq.release_interject(payload.session_id, payload.queue_id)
+        try:
+            hq.release_interject(payload.session_id, payload.queue_id)
+        except QueuePersistError as exc:
+            return UTF8JSONResponse(
+                status_code=503,
+                content={
+                    "ok": False,
+                    "error": f"queue_persist_{exc.stage}",
+                    "detail": f"回滚排队持久化失败（{exc.stage}）：{exc}"[:200],
+                },
+            )
         return UTF8JSONResponse(
             status_code=409,
             content={
@@ -1818,7 +1903,31 @@ def queue_interject(payload: QueueInterjectRequest, request: Request) -> Respons
         )
     return UTF8JSONResponse(
         status_code=202,
-        content={"ok": True, "queue_id": payload.queue_id, "state": "interject_pending"},
+        content={
+            "ok": True,
+            "queue_id": payload.queue_id,
+            "state": "interject_pending",
+            "grade": "accepted",
+            "grade_reason": "受理≠生效：已进入 live run 信箱；生效分级见 GET /api/v1/chat/queue/item",
+        },
+    )
+
+
+@router.get("/api/v1/chat/queue/item")
+def queue_item_grade(session_id: str, queue_id: str, request: Request) -> Response:
+    """Phase3 G1 只读端点：单个排队项的分级回执（含终态项；零写副作用）.
+
+    grade 全集：queued/requeued/accepted(受理≠生效)/received/applied/
+    continued_before_final/denied(含 deny_reason)/cancelled。机械派生，
+    不做语义判断；消息必达语义不变（M0 报告 S02/S03/S11/S12 回归保障）。
+    """
+    hq = _human_turn_queue(request)
+    for it in hq.snapshot_items():
+        if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+            return UTF8JSONResponse(status_code=200, content={"ok": True, "item": it})
+    return UTF8JSONResponse(
+        status_code=404,
+        content={"ok": False, "error": "queue_item_not_found"},
     )
 
 

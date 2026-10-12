@@ -40,6 +40,20 @@ def _now() -> float:
     return time.time()
 
 
+class QueuePersistError(RuntimeError):
+    """持久化失败分级（Phase3 D2 二分，对齐 schedule 的同名取舍）.
+
+    stage:
+      - ``definitely_not_committed``：临时文件写入失败，目标文件必然未变；
+      - ``commit_outcome_uncertain``：rename 失败，内存态与磁盘态无法裁决。
+    调用方（Web 端点）必须以 503 + 错误码如实透出，不得静默吞掉或假装成功。
+    """
+
+    def __init__(self, stage: str, detail: str = "") -> None:
+        super().__init__(f"human turn queue persist {stage}: {detail}")
+        self.stage = stage
+
+
 class HumanTurnQueue:
     """会话级 human turn 队列（进程内单实例 + JSON 文件持久化）.
 
@@ -92,15 +106,26 @@ class HumanTurnQueue:
     def _save(self) -> None:
         payload = {"version": QUEUE_VERSION, "items": self._items}
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=QUEUE_FILENAME, suffix=".tmp")
+        tmp = None
         try:
+            fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=QUEUE_FILENAME, suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
+        except BaseException as exc:
+            if tmp:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            # D2 二分（Phase3 §4.4，对齐 schedule 持久化分级）：临时文件创建/写入
+            # 失败 ⇒ 目标文件必然未变 ⇒ definitely_not_committed；磁盘上无半写状态。
+            raise QueuePersistError("definitely_not_committed", str(exc)) from exc
+        try:
             os.replace(tmp, self._path)
-        except BaseException:
+        except BaseException as exc:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            raise
+            # D2 二分：rename 失败时内存态已更新而磁盘旧文件可能已被替换或未替换，
+            # 调用方不得假设任何一侧 ⇒ commit_outcome_uncertain（如实标注，不假装闭环）。
+            raise QueuePersistError("commit_outcome_uncertain", str(exc)) from exc
 
     # ------------------------------------------------------------------ 内部
 
@@ -185,8 +210,31 @@ class HumanTurnQueue:
 
     @staticmethod
     def _public(it: dict[str, Any]) -> dict[str, Any]:
-        """对外视图：剥离内部 _seq."""
-        return {k: v for k, v in it.items() if not k.startswith("_")}
+        """对外视图：剥离内部 _seq；附 Phase3 G1 分级回执派生字段.
+
+        grade 优先级（机械判据，不做语义判断）：
+        denied > requeued > applied > continued_before_final > received >
+        accepted(=interject_pending 受理≠生效) > queued > cancelled/completed/failed。
+        """
+        view = {k: v for k, v in it.items() if not k.startswith("_")}
+        status = str(view.get("status") or "")
+        if status == "interject_denied":
+            grade, reason = "denied", str(view.get("deny_reason") or "")
+        elif status == "queued" and view.get("requeued_from"):
+            grade, reason = "requeued", str(view.get("requeued_from"))
+        elif view.get("applied_at"):
+            grade, reason = "applied", str(view.get("applied_detail") or "")
+        elif view.get("cbf_at"):
+            grade, reason = "continued_before_final", str(view.get("cbf_detail") or "")
+        elif status == "interject_received":
+            grade, reason = "received", ""
+        elif status == "interject_pending":
+            grade, reason = "accepted", "受理≠生效：已进入 live run 信箱，等待轮边界"
+        else:
+            grade, reason = status or "unknown", ""
+        view["grade"] = grade
+        view["grade_reason"] = reason
+        return view
 
     # ------------------------------------------------------------------ 公开 API
 
@@ -346,6 +394,59 @@ class HumanTurnQueue:
                     it["status"] = "interject_received"
                     it["received_at"] = _now()
                     it["terminal_at"] = it["received_at"]
+                    self._save()
+                    return True
+            return False
+
+    def mark_interject_denied(
+        self, session_id: str, queue_id: str, reason: str = "ingress_denied"
+    ) -> bool:
+        """G1 denied 终态：ingress 守卫拒绝（此前被拒项静默滞留 pending 后被
+        reaper 误标为 interject_run_ended 回滚，与孤儿无法区分）.
+
+        仅 interject_pending 可达（与 mark_interject_received 同一 CAS 形态）；
+        终态 interject_denied + deny_reason，不回滚排队（守卫拒绝=不可投递）。
+        """
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "interject_pending":
+                        return False
+                    it["status"] = "interject_denied"
+                    it["deny_reason"] = reason
+                    it["denied_at"] = _now()
+                    it["terminal_at"] = it["denied_at"]
+                    self._save()
+                    return True
+            return False
+
+    def record_interject_applied(
+        self, session_id: str, queue_id: str, detail: str = ""
+    ) -> bool:
+        """G1 applied 事实：包含该消息的模型决策产生了首个动作（工具派发）或
+        因插话改变了终答。机械判据（Phase3 §7.1），非状态迁移——在
+        interject_received 终态上追加 applied_at/applied_detail（幂等：首个
+        事实生效，后续不覆盖）。"""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "interject_received" or it.get("applied_at"):
+                        return False
+                    it["applied_at"] = _now()
+                    it["applied_detail"] = detail
+                    self._save()
+                    return True
+            return False
+
+    def record_interject_cbf(self, session_id: str, queue_id: str, detail: str = "") -> bool:
+        """G1 continued_before_final 事实：终答结算边界拦截到的插话续跑."""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "interject_received" or it.get("cbf_at"):
+                        return False
+                    it["cbf_at"] = _now()
+                    it["cbf_detail"] = detail
                     self._save()
                     return True
             return False

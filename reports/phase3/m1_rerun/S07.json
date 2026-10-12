@@ -1,0 +1,22 @@
+{
+  "scenario": "S07",
+  "title": "预算 CAS 失败注入（存量测试证据）",
+  "started_at": "2026-10-13T01:49:35",
+  "steps": [],
+  "wall": {},
+  "dur_ms": {},
+  "obs": {
+    "verdict": "pass"
+  },
+  "endpoints": {},
+  "evidence": {
+    "cmd": "pytest tests/unit/test_task_budget_transport_stop.py",
+    "returncode": 0,
+    "tail": [
+      "............                                                             [100%]",
+      "12 passed in 7.21s"
+    ]
+  },
+  "finished_at": "2026-10-13T01:49:43",
+  "status": "ok"
+}

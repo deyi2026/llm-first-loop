@@ -1,0 +1,22 @@
+{
+  "scenario": "S08",
+  "title": "wake 一次性（存量测试证据）",
+  "started_at": "2026-10-13T01:49:43",
+  "steps": [],
+  "wall": {},
+  "dur_ms": {},
+  "obs": {
+    "verdict": "pass"
+  },
+  "endpoints": {},
+  "evidence": {
+    "cmd": "pytest tests/unit/test_schedule_wake.py tests/unit/test_wake_jobs_projection.py",
+    "returncode": 0,
+    "tail": [
+      ".................................                                        [100%]",
+      "33 passed in 0.26s"
+    ]
+  },
+  "finished_at": "2026-10-13T01:49:43",
+  "status": "ok"
+}
