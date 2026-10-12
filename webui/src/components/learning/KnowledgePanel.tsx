@@ -1,0 +1,272 @@
+import { useCallback, useEffect, useState } from "react";
+
+import {
+  fetchExperienceCatalog,
+  fetchMethodInventory,
+  setExperienceLifecycle,
+  setMethodTransition,
+  type ExperienceCatalog,
+  type ExperienceRecordInfo,
+  type MethodCardInfo,
+  type MethodInventory,
+  type MethodTransition,
+} from "../../core/api";
+
+const EXPERIENCE_STATUS_LABELS: Record<string, string> = {
+  active: "生效中",
+  archived: "已归档",
+  invalid: "已失效",
+};
+
+const METHOD_STATUS_LABELS: Record<string, string> = {
+  candidate: "候选",
+  qualified: "已验证",
+  active: "启用",
+  hold: "暂停",
+  invalidated: "已失效",
+  retired: "已退役",
+};
+
+const METHOD_TRANSITIONS: { value: MethodTransition; label: string }[] = [
+  { value: "qualify", label: "转已验证" },
+  { value: "activate", label: "启用" },
+  { value: "hold", label: "暂停" },
+  { value: "invalidate", label: "失效" },
+  { value: "retire", label: "退役" },
+  { value: "reopen", label: "重开为候选" },
+];
+
+type KnowledgeTab = "experiences" | "methods";
+
+function ExperienceCard({
+  record,
+  onAction,
+  busy,
+}: {
+  record: ExperienceRecordInfo;
+  onAction: (id: string, action: "archive" | "invalidate" | "restore") => void;
+  busy: boolean;
+}) {
+  const id = record.experience_ref || record.experience_id || "";
+  return (
+    <article className="v2-knowledge-card" data-testid="experience-card">
+      <header>
+        <strong>{record.summary}</strong>
+        <span className={`v2-knowledge-badge ${record.status}`}>
+          {EXPERIENCE_STATUS_LABELS[record.status] ?? record.status}
+        </span>
+      </header>
+      <p className="v2-knowledge-desc">{record.scenario}</p>
+      <div className="v2-knowledge-meta">
+        {record.record_kind ? <span>{record.record_kind === "lesson" ? "lesson" : "experience"}</span> : null}
+        {record.verification_state ? <span>{record.verification_state}</span> : null}
+        {record.updated_at ? <span>{record.updated_at.slice(0, 10)}</span> : null}
+      </div>
+      {(record.tags ?? []).length > 0 ? (
+        <div className="v2-knowledge-tags">
+          {(record.tags ?? []).slice(0, 6).map((tag) => (
+            <span key={tag}>{tag}</span>
+          ))}
+        </div>
+      ) : null}
+      <footer className="v2-knowledge-actions">
+        <code title={id}>{id.slice(-24)}</code>
+        {record.status === "active" ? (
+          <>
+            <button disabled={busy} onClick={() => onAction(id, "archive")}>归档</button>
+            <button disabled={busy} className="danger" onClick={() => onAction(id, "invalidate")}>失效</button>
+          </>
+        ) : (
+          <button disabled={busy} onClick={() => onAction(id, "restore")}>恢复生效</button>
+        )}
+      </footer>
+    </article>
+  );
+}
+
+function MethodCard({
+  card,
+  onTransition,
+  busy,
+}: {
+  card: MethodCardInfo;
+  onTransition: (id: string, transition: MethodTransition) => void;
+  busy: boolean;
+}) {
+  const id = card.method_ref || card.id || "";
+  const [pending, setPending] = useState<MethodTransition | "">("");
+  return (
+    <article className="v2-knowledge-card" data-testid="method-card">
+      <header>
+        <strong>{card.name || card.id}</strong>
+        <span className={`v2-knowledge-badge ${card.status}`}>
+          {METHOD_STATUS_LABELS[card.status] ?? card.status}
+        </span>
+      </header>
+      <p className="v2-knowledge-desc">{card.description}</p>
+      <div className="v2-knowledge-meta">
+        {card.source_model ? <span>{card.source_model}</span> : null}
+        {card.ts ? <span>{card.ts.slice(0, 10)}</span> : null}
+        {card.last_signal_age_days != null ? <span>最近信号 {card.last_signal_age_days}d 前</span> : null}
+      </div>
+      <footer className="v2-knowledge-actions">
+        <code title={id}>{id.slice(-28)}</code>
+        <select value={pending} onChange={(e) => setPending(e.target.value as MethodTransition | "")}>
+          <option value="">流转…</option>
+          {METHOD_TRANSITIONS.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}</option>
+          ))}
+        </select>
+        <button
+          disabled={busy || !pending}
+          onClick={() => {
+            if (pending) onTransition(id, pending);
+            setPending("");
+          }}
+        >
+          应用
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+export function KnowledgePanel() {
+  const [tab, setTab] = useState<KnowledgeTab>("experiences");
+  const [experiences, setExperiences] = useState<ExperienceCatalog | null>(null);
+  const [methods, setMethods] = useState<MethodInventory | null>(null);
+  const [expStatus, setExpStatus] = useState("");
+  const [methodStatus, setMethodStatus] = useState("");
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    const [exp, mth] = await Promise.all([
+      fetchExperienceCatalog(query, expStatus, 150),
+      fetchMethodInventory(query, methodStatus, 150),
+    ]);
+    setExperiences(exp);
+    setMethods(mth);
+    setLoading(false);
+  }, [query, expStatus, methodStatus]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void refresh(), 30000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  const doExperienceAction = async (id: string, action: "archive" | "invalidate" | "restore") => {
+    if (!window.confirm(`确认对经验 ${id.slice(-20)} 执行 ${action}？`)) return;
+    setBusy(true);
+    setMessage(null);
+    const result = await setExperienceLifecycle(id, action);
+    setBusy(false);
+    if (result.ok) {
+      setMessage({ kind: "ok", text: `已${action === "archive" ? "归档" : action === "invalidate" ? "失效" : "恢复"} → ${result.status}` });
+    } else {
+      setMessage({ kind: "err", text: result.detail || result.error || "操作失败" });
+    }
+    void refresh();
+  };
+
+  const doMethodTransition = async (id: string, transition: MethodTransition) => {
+    if (!window.confirm(`确认对方法 ${id.slice(-24)} 执行 ${transition}？（受门禁校验，非法流转会被拒绝）`)) return;
+    setBusy(true);
+    setMessage(null);
+    const result = await setMethodTransition(id, transition);
+    setBusy(false);
+    if (result.ok) {
+      setMessage({ kind: "ok", text: `流转成功 → ${result.status}` });
+    } else {
+      setMessage({ kind: "err", text: result.detail || result.error || "流转被拒绝" });
+    }
+    void refresh();
+  };
+
+  const statusChips = (counts: Record<string, number>, current: string, onSelect: (s: string) => void) => {
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return (
+      <div className="v2-knowledge-chips">
+        <button className={!current ? "on" : ""} onClick={() => onSelect("")}>
+          全部 {entries.reduce((sum, [, n]) => sum + n, 0)}
+        </button>
+        {entries.map(([status, n]) => (
+          <button key={status} className={current === status ? "on" : ""} onClick={() => onSelect(status)}>
+            {(tab === "experiences" ? EXPERIENCE_STATUS_LABELS[status] : METHOD_STATUS_LABELS[status]) ?? status} {n}
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <section className="v2-knowledge-panel" data-testid="knowledge-panel">
+      <header className="v2-knowledge-header">
+        <div>
+          <h2>📚 知识管理</h2>
+          <p>经验库与方法库全生命周期视图 · 与模型工具同一 store 路径与门禁</p>
+        </div>
+        <nav className="v2-knowledge-tabs">
+          <button className={tab === "experiences" ? "on" : ""} onClick={() => setTab("experiences")}>
+            经验 {experiences ? `(${Object.values(experiences.counts).reduce((a, b) => a + b, 0)})` : ""}
+          </button>
+          <button className={tab === "methods" ? "on" : ""} onClick={() => setTab("methods")}>
+            方法 {methods ? `(${Object.values(methods.counts).reduce((a, b) => a + b, 0)})` : ""}
+          </button>
+        </nav>
+      </header>
+      <div className="v2-knowledge-toolbar">
+        <input
+          type="search"
+          placeholder={tab === "experiences" ? "按标题/场景/标签搜索…" : "按 id/名称/描述搜索…"}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <button onClick={() => void refresh()} disabled={busy}>刷新</button>
+      </div>
+      {message ? <div className={`v2-knowledge-message ${message.kind}`}>{message.text}</div> : null}
+      {tab === "experiences" ? (
+        <>
+          {experiences ? statusChips(experiences.counts, expStatus, setExpStatus) : null}
+          <div className="v2-knowledge-list">
+            {loading ? (
+              <div className="v2-knowledge-empty">读取经验库…</div>
+            ) : (experiences?.records.length ?? 0) === 0 ? (
+              <div className="v2-knowledge-empty">无匹配经验</div>
+            ) : (
+              experiences?.records.map((record) => (
+                <ExperienceCard
+                  key={record.experience_ref || record.experience_id || record.summary}
+                  record={record}
+                  onAction={(id, action) => void doExperienceAction(id, action)}
+                  busy={busy}
+                />
+              ))
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {methods ? statusChips(methods.counts, methodStatus, setMethodStatus) : null}
+          <div className="v2-knowledge-list">
+            {loading ? (
+              <div className="v2-knowledge-empty">读取方法库…</div>
+            ) : (methods?.records.length ?? 0) === 0 ? (
+              <div className="v2-knowledge-empty">无匹配方法</div>
+            ) : (
+              methods?.records.map((card) => (
+                <MethodCard key={card.id} card={card} onTransition={(id, t) => void doMethodTransition(id, t)} busy={busy} />
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

@@ -78,6 +78,33 @@ export interface LearningJobInfo {
   trigger_facts?: Record<string, unknown>;
 }
 
+export interface LearningOldestQueued {
+  job_id: string;
+  kind: string;
+  session_id: string;
+  source_model: string;
+  created_at: number;
+  wait_seconds: number;
+}
+
+export interface LearningAdmission {
+  present: boolean;
+  state?: string;
+  reason?: string | null;
+  since?: number | null;
+  ts?: number | null;
+  queued?: number;
+  age_seconds?: number | null;
+  stale?: boolean;
+}
+
+export interface LearningRequeueStats {
+  total: Record<string, number>;
+  recent: Record<string, number>;
+  recent_window_s: number;
+  last_event_ts: number;
+}
+
 export interface LearningStatusInfo {
   enabled: boolean;
   producer_only: boolean;
@@ -93,6 +120,9 @@ export interface LearningStatusInfo {
   };
   counts: Record<string, number>;
   jobs: LearningJobInfo[];
+  oldest_queued?: LearningOldestQueued | null;
+  admission?: LearningAdmission;
+  requeue_stats?: LearningRequeueStats;
 }
 
 export async function fetchLearningStatus(limit = 50): Promise<LearningStatusInfo | null> {
@@ -100,6 +130,108 @@ export async function fetchLearningStatus(limit = 50): Promise<LearningStatusInf
     `/api/v1/learning/status?limit=${Math.max(1, Math.min(limit, 200))}`
   );
   return status === 200 && Array.isArray(data.jobs) ? data : null;
+}
+
+// ── EVO-20261013 知识管理视图（经验/方法全生命周期） ───────────────────────
+
+export interface ExperienceRecordInfo {
+  experience_ref?: string;
+  experience_id?: string;
+  summary: string;
+  scenario: string;
+  solution: string;
+  root_cause?: string;
+  status: string;
+  record_kind?: string;
+  verification_state?: string;
+  tags?: string[];
+  evidence?: string;
+  created_at?: string;
+  updated_at?: string;
+  body?: string;
+}
+
+export interface ExperienceCatalog {
+  counts: Record<string, number>;
+  records: ExperienceRecordInfo[];
+  diagnostics?: Record<string, unknown>;
+}
+
+export interface MethodCardInfo {
+  id: string;
+  method_ref?: string;
+  name?: string;
+  description?: string;
+  status: string;
+  source_model?: string;
+  ts?: string;
+  qualification?: Record<string, unknown>;
+  last_signal_age_days?: number | null;
+  freshness?: Record<string, unknown>;
+}
+
+export interface MethodInventory {
+  counts: Record<string, number>;
+  records: MethodCardInfo[];
+}
+
+export async function fetchExperienceCatalog(
+  query = "",
+  status = "",
+  limit = 100
+): Promise<ExperienceCatalog | null> {
+  const params = new URLSearchParams({ limit: String(Math.min(limit, 500)) });
+  if (query) params.set("query", query);
+  if (status) params.set("status", status);
+  const { status: code, data } = await api<ExperienceCatalog>(
+    `/api/v1/knowledge/experiences?${params.toString()}`
+  );
+  return code === 200 && data && Array.isArray(data.records) ? data : null;
+}
+
+export async function fetchExperienceDetail(id: string): Promise<ExperienceRecordInfo | null> {
+  const { status, data } = await api<ExperienceRecordInfo>(
+    `/api/v1/knowledge/experiences/${encodeURIComponent(id)}`
+  );
+  return status === 200 ? data : null;
+}
+
+export async function setExperienceLifecycle(
+  id: string,
+  action: "archive" | "invalidate" | "restore"
+): Promise<{ ok: boolean; status?: string; error?: string; detail?: string }> {
+  const { status, data } = await api<{ status?: string; error?: string; detail?: string }>(
+    `/api/v1/knowledge/experiences/${encodeURIComponent(id)}/lifecycle?action=${action}`,
+    { method: "POST" }
+  );
+  return status === 200 ? { ok: true, status: data?.status } : { ok: false, error: data?.error, detail: data?.detail };
+}
+
+export async function fetchMethodInventory(
+  query = "",
+  status = "",
+  limit = 100
+): Promise<MethodInventory | null> {
+  const params = new URLSearchParams({ limit: String(Math.min(limit, 500)) });
+  if (query) params.set("query", query);
+  if (status) params.set("status", status);
+  const { status: code, data } = await api<MethodInventory>(
+    `/api/v1/knowledge/methods?${params.toString()}`
+  );
+  return code === 200 && data && Array.isArray(data.records) ? data : null;
+}
+
+export type MethodTransition = "qualify" | "activate" | "hold" | "invalidate" | "retire" | "reopen";
+
+export async function setMethodTransition(
+  id: string,
+  transition: MethodTransition
+): Promise<{ ok: boolean; status?: string; error?: string; detail?: string }> {
+  const { status, data } = await api<{ status?: string; error?: string; detail?: string }>(
+    `/api/v1/knowledge/methods/${encodeURIComponent(id)}/transition?transition=${transition}`,
+    { method: "POST" }
+  );
+  return status === 200 ? { ok: true, status: data?.status } : { ok: false, error: data?.error, detail: data?.detail };
 }
 
 // ── TASK-005: 受管服务 desired/live/stable 身份视图 ──────────────────────────

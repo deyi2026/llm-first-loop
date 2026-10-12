@@ -754,6 +754,46 @@ class MethodStore:
             result.append(card)
         return result
 
+    def inventory(
+        self,
+        query: str = "",
+        limit: int = 200,
+        *,
+        status: str = "",
+    ) -> dict[str, Any]:
+        """管理/可观测性目录：全生命周期状态分组 + 记录列表（含 retired/invalidated）.
+
+        与 list()（检索视图，跳过 retired）不同，inventory 面向 web 管理页：
+        所有状态同列并带 status 徽标，供人工审视与生命周期流转。只读、
+        关键词子串匹配（id/name/description）、按 ts 倒序；counts 为全量
+        统计（不受 query/limit 影响），无语义排序与零信号衰减。
+        """
+        needle = query.strip().lower()
+        counts: dict[str, int] = {}
+        entries: list[dict[str, Any]] = []
+        for path in self._iter_paths():
+            record = self._load_path(path)
+            if record is None:
+                continue
+            record_status = str(record.status or "unknown")
+            counts[record_status] = counts.get(record_status, 0) + 1
+            if status and record_status != status:
+                continue
+            if needle:
+                haystack = self._normalized_search_text(
+                    f"{record.method_id} {record.method_ref} {record.name} {record.description}"
+                )
+                if needle not in haystack:
+                    continue
+            card = record.card()
+            self._attach_last_signal_age(card, record)
+            entries.append(card)
+        entries.sort(
+            key=lambda item: (str(item.get("ts") or ""), str(item.get("id") or "")),
+            reverse=True,
+        )
+        return {"counts": counts, "records": entries[: max(0, limit)]}
+
     @staticmethod
     def semantic_candidate(record: MethodRecord) -> dict[str, Any]:
         return {

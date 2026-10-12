@@ -22,10 +22,13 @@ Power boundaries (by design, not by convention):
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from llm_loop.methods.learning_journal import LearningJob, LearningJournal
@@ -77,6 +80,7 @@ class LearningPlane:
         preempt_poll_s: float = 0.25,
         restart_admission_blocked: Callable[[], Any] | None = None,
         model_override: str = "",
+        admission_heartbeat_path: Path | None = None,
     ) -> None:
         self._journal = journal
         self._episode_store = episode_store
@@ -102,6 +106,14 @@ class LearningPlane:
         # 自然排空，供空闲门观察）。None = 未接线（旧行为）。
         self._restart_admission_blocked = restart_admission_blocked
         self._last_barrier_reason: str | None = None
+        # EVO-20261013 队列可观测性：worker 每循环落盘准入状态心跳，
+        # web 状态页只读展示“排队为什么不动”。None = 不落盘（旧行为）。
+        self._admission_heartbeat_path = (
+            Path(admission_heartbeat_path) if admission_heartbeat_path else None
+        )
+        self._hb_key: tuple[str, str] | None = None
+        self._hb_since: float = time.time()
+        self._hb_last_write = 0.0
 
     # ---------- lifecycle ----------
 
@@ -225,6 +237,40 @@ class LearningPlane:
 
     # ---------- worker loop ----------
 
+    def _write_admission_heartbeat(self, state: str, reason: str | None, queued: int) -> None:
+        """Persist per-cycle admission state for the read-only web 状态页.
+
+        Throttled: immediate write on state/reason change, 20s refresh otherwise.
+        Atomic (tmp+rename) so the web process never reads a partial file. Any
+        write failure is fail-open: observability must never impair the plane.
+        """
+        path = self._admission_heartbeat_path
+        if path is None:
+            return
+        now = time.time()
+        key = (state, reason or "")
+        if key == self._hb_key and (now - self._hb_last_write) < 20.0:
+            return
+        if key != self._hb_key:
+            self._hb_since = now
+            self._hb_key = key
+        payload = {
+            "ts": now,
+            "pid": os.getpid(),
+            "state": state,
+            "reason": reason or "",
+            "since": self._hb_since,
+            "queued": int(queued),
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+            self._hb_last_write = now
+        except Exception:  # noqa: BLE001 - observability only, fail-open
+            logger.debug("learning admission heartbeat write failed", exc_info=True)
+
     def _run_loop(self) -> None:
         while not self._stop.is_set():
             try:
@@ -232,6 +278,7 @@ class LearningPlane:
             except Exception:  # noqa: BLE001
                 jobs = []
             if not jobs:
+                self._write_admission_heartbeat("idle", None, 0)
                 self._stop.wait(self._poll_interval_s)
                 continue
             progressed = False
@@ -248,7 +295,14 @@ class LearningPlane:
                         logger.warning(
                             "learning job %s mark_failed failed", job.job_id, exc_info=True
                         )
-            if not progressed:
+            if progressed:
+                # 本循环确有任务被受理/终态化：队列在排水。
+                self._write_admission_heartbeat("draining", None, len(jobs))
+            else:
+                # runnable 全员未获准入：jobs[0] 为最老任务，其阻塞原因即队首
+                # 代表原因（门槛与 created_at 单调，对全队列成立或仅队首受限）。
+                reason = self._admission_block_reason(jobs[0]) or "governor_or_transport"
+                self._write_admission_heartbeat("blocked", reason, len(jobs))
                 self._stop.wait(self._poll_interval_s)
 
     def _effective_model(self, source_model: str) -> str:
@@ -258,14 +312,27 @@ class LearningPlane:
     def _resolve_model(self, source_model: str):
         return self._model_resolver(self._effective_model(source_model))
 
-    def _try_execute(self, job: LearningJob) -> bool:
+    def _admission_block_reason(self, job: LearningJob) -> str | None:
+        """First admission gate holding ``job``; shared by execution and observability.
+
+        Gate order (unchanged behavior): straggler drain → foreground priority →
+        service restart barrier → quiet window. A single reason string lets the
+        状态页 answer "排队为什么不动" without duplicating gate logic.
+        """
         if self._straggler_busy():
-            return False  # an abandoned reflection still drains; never stack transports
+            return "straggler_draining"  # an abandoned reflection still drains; never stack transports
         if self.foreground_busy():
-            return False  # foreground wins; leave queued, no busy-wait
-        if self._service_barrier_reason() is not None:
-            return False  # learning 重启已受理：新任务不准入，等屏障释放自动恢复
+            return "foreground_busy"  # foreground wins; leave queued, no busy-wait
+        barrier = self._service_barrier_reason()
+        if barrier is not None:
+            return f"service_barrier:{barrier}"  # learning 重启已受理：等屏障释放自动恢复
         if not self._quiet_elapsed(job):
+            return "quiet_window"
+        return None
+
+    def _try_execute(self, job: LearningJob) -> bool:
+        # 四道准入门收敛为单一 reason 供执行与心跳共用（顺序与语义不变）。
+        if self._admission_block_reason(job) is not None:
             return False
         try:
             request = self._resource_request(job)

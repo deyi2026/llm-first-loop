@@ -2128,6 +2128,11 @@ def build_engine(
                 restart_admission_blocked=lambda: task_admission_barrier(
                     Path(settings.data_dir).expanduser(), "learning_job"
                 ),
+                admission_heartbeat_path=(
+                    Path(settings.data_dir).expanduser()
+                    / "runtime"
+                    / "learning_admission.json"
+                ),
                 # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL → Settings.
                 # learning_model）：学习提取/反思走独立模型（如 flash），
                 # 缺省回落会话 source_model（行为不变）。

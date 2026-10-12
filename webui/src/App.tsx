@@ -6,6 +6,7 @@ import { TopBar } from "./components/layout/TopBar";
 import { RightPanel } from "./components/layout/RightPanel";
 import { Conversation } from "./components/conversation/Conversation";
 import { LearningPanel } from "./components/learning/LearningPanel";
+import { KnowledgePanel } from "./components/learning/KnowledgePanel";
 import { ServicesPanel } from "./components/services/ServicesPanel";
 import { initEventStream } from "./core/events";
 import { probeSessionCapabilities } from "./core/capabilities";
@@ -180,7 +181,10 @@ export function App() {
         <TopBar onToggleSidebar={toggleSidebar} onShowFiles={showConversationFiles} />
         {mainView === "chat" ? <InteropNotice /> : null}
         {mainView === "learning" ? (
-          <LearningPanel />
+          <>
+            <LearningPanel />
+            <KnowledgePanel />
+          </>
         ) : mainView === "services" ? (
           <ServicesPanel />
         ) : (

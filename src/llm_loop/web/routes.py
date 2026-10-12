@@ -681,6 +681,239 @@ def _evolution_store_from(engine: Any) -> Any | None:
     return getattr(ctx, "evolution_store", None)
 
 
+# ---------- EVO-20261013 知识管理视图（经验/方法全生命周期） ----------
+
+
+def _knowledge_stores(engine: Any) -> tuple[Any | None, Any | None]:
+    """解析生产 ExperienceStore/MethodStore authority（factory 装配在 corrections registry）."""
+    corrections = getattr(engine, "corrections", None)
+    return (
+        getattr(corrections, "_experience_store", None),
+        getattr(corrections, "_method_store", None),
+    )
+
+
+_EXPERIENCE_LIFECYCLE_TARGETS = {
+    # 与模型工具 run_refine_experience 的 action_map 完全一致（invalidate → invalid）
+    "archive": "archived",
+    "invalidate": "invalid",
+    "restore": "active",
+}
+
+
+def _normalize_experience_ref(experience_ref: str) -> str:
+    """Normalize public `experience:`/`.md` forms to the store's canonical stem."""
+    value = str(experience_ref or "").strip()
+    if value.startswith("experience:"):
+        value = value.split(":", 1)[1].strip()
+    if value.endswith(".md"):
+        value = value[:-3]
+    return value
+
+_METHOD_TRANSITION_TARGETS = {
+    "qualify": "qualified",
+    "activate": "active",
+    "hold": "hold",
+    "invalidate": "invalidated",
+    "retire": "retired",
+    "reopen": "candidate",
+}
+
+
+@router.get("/api/v1/knowledge/experiences")
+def knowledge_experiences(
+    request: Request,
+    query: str = Query(default=""),
+    status: str = Query(default=""),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Response:
+    """经验库管理视图：全生命周期状态分组 + 列表（含 archived/invalidated，只读）."""
+    engine = _engine_from(request)
+    store, _ = _knowledge_stores(engine)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=503, content={"error": "experience_store_unavailable"}
+        )
+    try:
+        view = store.catalog(query=query.strip(), limit=limit, status=status.strip())
+    except Exception as exc:  # noqa: BLE001 - 管理视图不可得时如实 5xx
+        logger.warning("knowledge experiences catalog failed: %s", type(exc).__name__, exc_info=True)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "experience_catalog_failed", "detail": f"{type(exc).__name__}: {exc}"},
+        )
+    return UTF8JSONResponse(view)
+
+
+@router.get("/api/v1/knowledge/experiences/{experience_id}")
+def knowledge_experience_detail(request: Request, experience_id: str) -> Response:
+    """单条经验详情：hydrated 卡 + 正文（只读，供管理页展开审阅）."""
+    engine = _engine_from(request)
+    store, _ = _knowledge_stores(engine)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=503, content={"error": "experience_store_unavailable"}
+        )
+    stem = _normalize_experience_ref(experience_id)
+    if not stem:
+        return UTF8JSONResponse(status_code=422, content={"error": "invalid_experience_id"})
+    try:
+        doc = store.get(stem)
+    except Exception as exc:  # noqa: BLE001
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "experience_get_failed", "detail": f"{type(exc).__name__}: {exc}"},
+        )
+    if doc is None:
+        return UTF8JSONResponse(status_code=404, content={"error": "experience_not_found"})
+    record = store.to_hydrated_record(stem, doc)
+    record["body"] = doc.body
+    return UTF8JSONResponse(record)
+
+
+@router.post("/api/v1/knowledge/experiences/{experience_id}/lifecycle")
+def knowledge_experience_lifecycle(
+    request: Request, experience_id: str, action: str = Query(default="")
+) -> Response:
+    """经验生命周期操作（人工管理权威）：archive/invalidate/restore.
+
+    复用模型工具同一条 store.update_status 路径，状态语义与审计留痕一致；
+    非法 action 显式 4xx，不静默吞错。
+    """
+    engine = _engine_from(request)
+    store, _ = _knowledge_stores(engine)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=503, content={"error": "experience_store_unavailable"}
+        )
+    target = _EXPERIENCE_LIFECYCLE_TARGETS.get((action or "").strip().lower())
+    if target is None:
+        return UTF8JSONResponse(
+            status_code=422,
+            content={
+                "error": "invalid_action",
+                "detail": f"action must be one of {sorted(_EXPERIENCE_LIFECYCLE_TARGETS)}",
+            },
+        )
+    stem = _normalize_experience_ref(experience_id)
+    if not stem:
+        return UTF8JSONResponse(status_code=422, content={"error": "invalid_experience_id"})
+    try:
+        updated = store.update_status(stem, target)
+    except Exception as exc:  # noqa: BLE001 - store 拒绝/IO 失败如实上报
+        logger.warning("knowledge experience lifecycle failed: %s", type(exc).__name__, exc_info=True)
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "error": "experience_lifecycle_failed",
+                "detail": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    if not updated:
+        return UTF8JSONResponse(status_code=404, content={"error": "experience_not_found"})
+    doc = store.get(stem)
+    return UTF8JSONResponse(
+        {
+            "experience_id": stem,
+            "action": (action or "").strip().lower(),
+            "status": getattr(doc, "status", target),
+        }
+    )
+
+
+@router.get("/api/v1/knowledge/methods")
+def knowledge_methods(
+    request: Request,
+    query: str = Query(default=""),
+    status: str = Query(default=""),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Response:
+    """方法库管理视图：全生命周期状态分组 + 列表（含 retired/invalidated，只读）."""
+    engine = _engine_from(request)
+    _, store = _knowledge_stores(engine)
+    if store is None:
+        return UTF8JSONResponse(status_code=503, content={"error": "method_store_unavailable"})
+    try:
+        view = store.inventory(query=query.strip(), limit=limit, status=status.strip())
+    except Exception as exc:  # noqa: BLE001 - 管理视图不可得时如实 5xx
+        logger.warning("knowledge methods inventory failed: %s", type(exc).__name__, exc_info=True)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "method_inventory_failed", "detail": f"{type(exc).__name__}: {exc}"},
+        )
+    return UTF8JSONResponse(view)
+
+
+@router.get("/api/v1/knowledge/methods/{method_id}")
+def knowledge_method_detail(request: Request, method_id: str) -> Response:
+    """单条方法详情：hydrated 卡 + qualification/use 信号（只读，供管理页展开审阅）."""
+    engine = _engine_from(request)
+    _, store = _knowledge_stores(engine)
+    if store is None:
+        return UTF8JSONResponse(status_code=503, content={"error": "method_store_unavailable"})
+    if not method_id.startswith("method:"):
+        method_id = f"method:{method_id}"
+    try:
+        record = store.get(method_id)
+    except Exception as exc:  # noqa: BLE001
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "method_get_failed", "detail": f"{type(exc).__name__}: {exc}"},
+        )
+    if record is None:
+        return UTF8JSONResponse(status_code=404, content={"error": "method_not_found"})
+    hydrated = record.hydrated()
+    store._attach_last_signal_age(hydrated, record)
+    hydrated["qualification_entries"] = store.qualification_entries(method_id)
+    hydrated["freshness"] = store.freshness(method_id)
+    return UTF8JSONResponse(hydrated)
+
+
+@router.post("/api/v1/knowledge/methods/{method_id}/transition")
+def knowledge_method_transition(
+    request: Request, method_id: str, transition: str = Query(default="")
+) -> Response:
+    """方法生命周期流转（人工管理权威）：qualify/activate/hold/invalidate/retire/reopen.
+
+    复用模型工具同一 store.update_status 路径与门禁（activate 需 ≥2 类任务 pass
+    qualification；invalidate/retire 需处置依据），非法流转 store 层拒绝并如实 409。
+    """
+    engine = _engine_from(request)
+    _, store = _knowledge_stores(engine)
+    if store is None:
+        return UTF8JSONResponse(status_code=503, content={"error": "method_store_unavailable"})
+    target = _METHOD_TRANSITION_TARGETS.get((transition or "").strip().lower())
+    if target is None:
+        return UTF8JSONResponse(
+            status_code=422,
+            content={
+                "error": "invalid_transition",
+                "detail": f"transition must be one of {sorted(_METHOD_TRANSITION_TARGETS)}",
+            },
+        )
+    if not method_id.startswith("method:"):
+        method_id = f"method:{method_id}"
+    try:
+        store.update_status(method_id, target)
+    except Exception as exc:  # noqa: BLE001 - 门禁拒绝/IO 失败如实上报
+        logger.warning("knowledge method transition failed: %s", type(exc).__name__, exc_info=True)
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "error": "method_transition_failed",
+                "detail": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    record = store.get(method_id)
+    return UTF8JSONResponse(
+        {
+            "method_id": method_id,
+            "transition": (transition or "").strip().lower(),
+            "status": getattr(record, "status", target),
+        }
+    )
+
+
 def _web_data_dir(engine: Any) -> Path:
     """Resolve Web route storage from the already-resolved engine settings authority."""
     return Path(getattr(getattr(engine, "settings", None), "data_dir", "./data")).expanduser().resolve()
@@ -1928,6 +2161,21 @@ def queue_item_grade(session_id: str, queue_id: str, request: Request) -> Respon
     return UTF8JSONResponse(
         status_code=404,
         content={"ok": False, "error": "queue_item_not_found"},
+    )
+
+
+@router.get("/api/v1/chat/queue/metrics")
+def queue_interject_metrics(session_id: str, request: Request) -> Response:
+    """Phase3 G2 只读端点：插话三口径时延聚合（t_ack/t_persist/t_effect/t_applied）.
+
+    - P50/P95 为最近邻序法（机械可复算）；n=0 → p50/p95=null，不造数。
+    - 只统计 interject_received 终态项；denied/requeued 不混入（口径含混即失真）。
+    - 本端点零写副作用；与 M0 基线（S01：t_ack≈2ms vs t_effect≈2493ms）同口径，
+      可直接对照「回执≠生效」的差值演化。
+    """
+    hq = _human_turn_queue(request)
+    return UTF8JSONResponse(
+        status_code=200, content={"ok": True, **hq.aggregate_interject_metrics(session_id)}
     )
 
 

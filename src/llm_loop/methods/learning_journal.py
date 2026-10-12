@@ -87,6 +87,9 @@ class LearningJournal:
         self._max_attempts = max(1, int(max_attempts))
         self._candidate_lookup = candidate_lookup or (lambda _job_id: None)
         self._lock = threading.Lock()
+        # EVO-20261013 队列可观测性：requeue 统计的 (mtime_ns, size) 缓存，
+        # 供 web 状态页 5s 轮询免于每次全量重扫 append-only journal。
+        self._requeue_cache: tuple[Any, dict[str, int], dict[str, int], float] | None = None
 
     # ---------- event log primitives ----------
 
@@ -308,6 +311,70 @@ class LearningJournal:
             state = str(job.state or "unknown")
             counts[state] = counts.get(state, 0) + 1
         return counts
+
+    def oldest_queued(self) -> dict[str, Any] | None:
+        """Oldest currently-queued job (queue-backpressure observability).
+
+        The web 状态页 uses wait_seconds to make chronic starvation visible:
+        "排队 36" alone cannot distinguish fresh backlog from hours-old stalls.
+        """
+        oldest: LearningJob | None = None
+        for job in self._snapshot().values():
+            if str(job.state) != "queued":
+                continue
+            if oldest is None or float(job.created_at) < float(oldest.created_at):
+                oldest = job
+        if oldest is None:
+            return None
+        return {
+            "job_id": oldest.job_id,
+            "kind": oldest.kind,
+            "session_id": oldest.session_id,
+            "source_model": oldest.source_model,
+            "created_at": oldest.created_at,
+            "wait_seconds": round(max(0.0, time.time() - float(oldest.created_at)), 1),
+        }
+
+    def requeue_stats(self, window_s: float = 86400.0) -> dict[str, Any]:
+        """Counts of `requeued` events by reason: all-history + recent window.
+
+        Raw-event view over the append-only journal (the folded job state keeps
+        only the latest reason per job). Cached against (mtime_ns, size) so the
+        5s observability poll does not rescan the journal on every request.
+        """
+        now = time.time()
+        try:
+            st = self._path.stat()
+            key: Any = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None
+        with self._lock:
+            cached = self._requeue_cache
+            if key is not None and cached is not None and cached[0] == key:
+                total, recent, last_ts = cached[1], cached[2], cached[3]
+            else:
+                total: dict[str, int] = {}
+                recent: dict[str, int] = {}
+                last_ts = 0.0
+                for evt in self._read_events():
+                    if str(evt.get("event")) != "requeued":
+                        continue
+                    reason = str(evt.get("reason") or "unknown")
+                    total[reason] = total.get(reason, 0) + 1
+                    ts = float(evt.get("ts") or 0.0)
+                    if ts > last_ts:
+                        last_ts = ts
+                    if now - ts <= window_s:
+                        recent[reason] = recent.get(reason, 0) + 1
+                self._requeue_cache = (
+                    (key, total, recent, last_ts) if key is not None else None
+                )
+        return {
+            "total": total,
+            "recent": recent,
+            "recent_window_s": window_s,
+            "last_event_ts": last_ts,
+        }
 
     # ---------- transitions (append-only) ----------
 

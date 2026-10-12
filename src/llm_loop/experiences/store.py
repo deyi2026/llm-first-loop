@@ -340,6 +340,53 @@ class ExperienceStore:
         """
         return self.search_outcome(query, limit, record_kind=record_kind).records
 
+    def catalog(
+        self,
+        query: str = "",
+        limit: int = 200,
+        *,
+        status: str = "",
+    ) -> dict[str, Any]:
+        """管理/可观测性目录：全生命周期状态分组 + 记录列表（含 inactive）.
+
+        与 search_outcome（检索视图，隐藏非 active 文档）不同，catalog 面向
+        web 管理页：archived/invalidated/superseded 同样列出并带 status 徽标，
+        供人工审视与生命周期操作。只读、关键词子串匹配、无语义排序；
+        记录按文件名倒序（≈创建时间倒序），counts 为全量统计（不受 query/limit 影响）。
+        """
+        self._reset_diagnostics()
+        counts: dict[str, int] = {}
+        records: list[dict] = []
+        skipped = 0
+        scan_error: str | None = None
+        try:
+            paths = sorted(self._dir.glob("EXPERIENCE-*.md"), reverse=True)
+        except OSError as exc:  # 与 search_outcome 同形：目录级失败如实上报诊断态
+            paths = []
+            scan_error = str(exc)
+        for path in paths:
+            try:
+                doc = ExperienceDocument.from_md(path.read_text(encoding="utf-8"))
+            except Exception as exc:  # noqa: BLE001 — 单文档坏档跳过并计数
+                skipped += 1
+                _skip_trace(path.name, exc)
+                continue
+            doc_status = str(doc.status or "active")
+            counts[doc_status] = counts.get(doc_status, 0) + 1
+            if status and doc_status != status:
+                continue
+            record = self.to_hydrated_record(path.stem, doc)
+            if query:
+                haystack = f"{record.get('summary', '')} {record.get('scenario', '')} {' '.join(record.get('tags') or [])}"
+                if query.lower() not in haystack.lower():
+                    continue
+            if len(records) < limit:
+                records.append(record)
+        self._last_diagnostics["scanned"] = len(paths)
+        self._last_diagnostics["skipped"] = skipped
+        self._last_diagnostics["scan_error"] = scan_error
+        return {"counts": counts, "records": records, "diagnostics": self._last_diagnostics}
+
     def search_outcome(
         self,
         query: str = "",
