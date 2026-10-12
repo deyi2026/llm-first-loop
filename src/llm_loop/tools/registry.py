@@ -1262,6 +1262,7 @@ class ToolRegistry:
         {
             "read_file",
             "read_attachment",
+            "search_files",
             "web_fetch",
             "architecture_status",
             "search_archive",
