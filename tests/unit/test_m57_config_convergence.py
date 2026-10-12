@@ -1,0 +1,193 @@
+"""M57/M58 配置面收敛 测试（AI 可查可调，替代 env 硬编码约束）.
+
+覆盖:
+- RuntimeParams.memory_top_k / extract_interval_msgs 动态优先（strategy 生效）/ 越界回退默认
+- adjust_strategy 白名单含 memory_top_k / extract_interval_msgs（可调 + 越界拒绝）
+- architecture_status snapshot 展示 runtime_params（注入后可见）
+- loop 消费两项参数走 runtime（动态优先）
+"""
+
+from __future__ import annotations
+
+from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.runtime_params import RuntimeParams
+from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
+
+
+def test_runtime_params_memory_top_k_dynamic_priority(fake_settings):
+    """memory_top_k 动态优先（strategy 生效值），未调整回退 settings 默认."""
+    runtime = RuntimeParams(fake_settings)
+    assert runtime.memory_top_k == fake_settings.memory_top_k  # 默认兜底
+    runtime._strategy["memory_top_k"] = 10  # noqa: SLF001 — 测试直接写策略
+    assert runtime.memory_top_k == 10
+
+
+def test_runtime_params_memory_top_k_out_of_range_falls_back(fake_settings):
+    """越界动态值校验失败 → 回退默认（不采用）."""
+    runtime = RuntimeParams(fake_settings)
+    runtime._strategy["memory_top_k"] = 999  # noqa: SLF001 — 超出范围 (1,50)
+    assert runtime.memory_top_k == fake_settings.memory_top_k
+
+
+def test_adjust_strategy_memory_top_k_whitelist():
+    """adjust_strategy 白名单含 memory_top_k：可调 + 越界拒绝."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    # 合法
+    r = reg.execute("adjust_strategy", {"strategy": {"memory_top_k": 12}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert ctx.strategy["memory_top_k"] == 12
+    # 越界
+    r2 = reg.execute("adjust_strategy", {"strategy": {"memory_top_k": 0}})
+    assert r2.status == ToolResultStatus.FAILURE
+
+
+def test_status_snapshot_runtime_params():
+    """architecture_status snapshot 支持注入 runtime_params（M57；未注入向后兼容 None）."""
+    from llm_loop.introspection.status import ArchitectureStatusProvider
+
+    status = ArchitectureStatusProvider(audit_dir=None, enabled=True)
+    assert status.snapshot()["context_usage"]["runtime_params"] is None
+
+    status.set_runtime_params_fn(lambda: {"max_iterations": 30, "memory_top_k": 12})
+    snap = status.snapshot()
+    assert snap["context_usage"]["runtime_params"] == {
+        "max_iterations": 30,
+        "memory_top_k": 12,
+    }
+
+
+def test_loop_consumes_runtime_memory_top_k(build_test_engine, fake_settings):
+    """loop 消费 memory_top_k 走 runtime（动态优先；未调整回退 settings）."""
+    engine, _ = build_test_engine([])
+    assert engine._runtime_memory_top_k() == fake_settings.memory_top_k
+    engine.runtime._strategy["memory_top_k"] = 7  # noqa: SLF001 — 测试直接写策略
+    assert engine._runtime_memory_top_k() == 7
+
+
+# ── M58: extract_interval_msgs 白名单扩展 ──
+
+
+def test_runtime_params_extract_interval_dynamic(fake_settings):
+    """extract_interval_msgs 动态优先 + 越界回退默认."""
+    default = getattr(fake_settings, "extract_interval_msgs", 20)
+    runtime = RuntimeParams(fake_settings)
+    assert runtime.extract_interval_msgs == default
+    runtime._strategy["extract_interval_msgs"] = 50  # noqa: SLF001 — 合法范围 (5,200)
+    assert runtime.extract_interval_msgs == 50
+    runtime._strategy["extract_interval_msgs"] = 9999  # noqa: SLF001 — 越界
+    assert runtime.extract_interval_msgs == default
+
+
+def test_adjust_strategy_extract_interval_whitelist():
+    """adjust_strategy 白名单含 extract_interval_msgs：可调 + 越界拒绝."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    r = reg.execute("adjust_strategy", {"strategy": {"extract_interval_msgs": 40}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert ctx.strategy["extract_interval_msgs"] == 40
+    r2 = reg.execute("adjust_strategy", {"strategy": {"extract_interval_msgs": 3}})
+    assert r2.status == ToolResultStatus.FAILURE
+
+
+def test_loop_consumes_runtime_extract_interval(build_test_engine, fake_settings):
+    """loop 消费 extract_interval_msgs 走 runtime（动态优先）."""
+    default = getattr(fake_settings, "extract_interval_msgs", 20)
+    engine, _ = build_test_engine([])
+    assert engine._runtime_extract_interval() == default
+    engine.runtime._strategy["extract_interval_msgs"] = 60  # noqa: SLF001 — 测试直接写策略
+    assert engine._runtime_extract_interval() == 60
+
+
+# ── M59: retrieve_semantic_top_k 白名单扩展 ──
+
+
+def test_runtime_params_retrieve_semantic_top_k_dynamic(fake_settings):
+    """retrieve_semantic_top_k 动态优先 + 越界回退默认."""
+    default = getattr(fake_settings, "retrieve_semantic_top_k", 20)
+    runtime = RuntimeParams(fake_settings)
+    assert runtime.retrieve_semantic_top_k == default
+    runtime._strategy["retrieve_semantic_top_k"] = 35  # noqa: SLF001 — 合法范围 (1,100)
+    assert runtime.retrieve_semantic_top_k == 35
+    runtime._strategy["retrieve_semantic_top_k"] = 9999  # noqa: SLF001 — 越界
+    assert runtime.retrieve_semantic_top_k == default
+
+
+def test_adjust_strategy_retrieve_semantic_top_k_whitelist():
+    """adjust_strategy 白名单含 retrieve_semantic_top_k：可调 + 越界拒绝."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    r = reg.execute("adjust_strategy", {"strategy": {"retrieve_semantic_top_k": 45}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert ctx.strategy["retrieve_semantic_top_k"] == 45
+    r2 = reg.execute("adjust_strategy", {"strategy": {"retrieve_semantic_top_k": 0}})
+    assert r2.status == ToolResultStatus.FAILURE
+
+
+def test_adjust_strategy_receipt_has_effective_chain():
+    """EVO-20260918-8417246d: 成功回执带"生效链"（档位+压制方），模型可感知
+    值由哪层决定，不再是无上下文裸数."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    # 绿：申请值未打满白名单上限
+    r = reg.execute("adjust_strategy", {"strategy": {"memory_top_k": 12}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "生效链" in r.content
+    assert "memory_top_k: 12（绿｜申请值生效" in r.content
+    # 红：打满白名单上限 → 显式标注被压制
+    ctx2 = CorrectionContext()
+    reg2 = CorrectionToolRegistry(ctx2)
+    whitelist_max = ctx2.strategy_whitelist["memory_top_k"]["max"]
+    r2 = reg2.execute("adjust_strategy", {"strategy": {"memory_top_k": whitelist_max}})
+    assert r2.status == ToolResultStatus.SUCCESS
+    assert "红｜被白名单硬上限压制" in r2.content
+    # 黄：history_budget 恒标黄（provider 层仍可能在引擎侧收敛）
+    ctx3 = CorrectionContext()
+    reg3 = CorrectionToolRegistry(ctx3)
+    hb_max = ctx3.strategy_whitelist["history_budget"]["max"]
+    r3 = reg3.execute("adjust_strategy", {"strategy": {"history_budget": hb_max // 2}})
+    assert r3.status == ToolResultStatus.SUCCESS
+    assert "history_budget" in r3.content and "黄｜" in r3.content
+    assert "以守卫/回执 budget= 为准" in r3.content
+
+
+def test_semantic_retriever_dynamic_top_k_provider():
+    """SemanticRetriever.set_top_k_provider 动态生效（未注入用构造值；异常回退）."""
+    from llm_loop.memory.retriever import SemanticRetriever
+
+    r = SemanticRetriever(embedder=None, semantic_top_k=20)
+    assert r._semantic_top_k() == 20  # 未注入 → 构造值
+    r.set_top_k_provider(lambda: 7)
+    assert r._semantic_top_k() == 7  # 动态生效
+    r.set_top_k_provider(lambda: 0)  # 非法值 → 回退构造值
+    assert r._semantic_top_k() == 20
+    r.set_top_k_provider(lambda: (_ for _ in ()).throw(RuntimeError("boom")))  # 异常回退
+    assert r._semantic_top_k() == 20
+
+
+# ── EVO-20260923-5342bf75: reasoning_effort 主循环推理档位白名单 ──
+
+
+def test_adjust_strategy_reasoning_effort_whitelist():
+    """adjust_strategy 白名单含 reasoning_effort：枚举档位可调 + 非法值拒绝."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    # 合法档位（字符串枚举）
+    for tier in ("low", "medium", "high", "max"):
+        r = reg.execute("adjust_strategy", {"strategy": {"reasoning_effort": tier}})
+        assert r.status == ToolResultStatus.SUCCESS, tier
+        assert ctx.strategy["reasoning_effort"] == tier
+    # 非法枚举 / 错误类型 → 拒绝
+    for bad in ("ultra", "", 3):
+        r2 = reg.execute("adjust_strategy", {"strategy": {"reasoning_effort": bad}})
+        assert r2.status == ToolResultStatus.FAILURE, bad
+
+
+def test_adjust_strategy_reasoning_effort_receipt_green_chain():
+    """字符串枚举档位生效链为绿（无数值上限概念，申请档位即生效）."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    r = reg.execute("adjust_strategy", {"strategy": {"reasoning_effort": "medium"}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "生效链" in r.content
+    assert "reasoning_effort: medium（绿｜申请档位生效" in r.content

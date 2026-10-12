@@ -1,0 +1,571 @@
+"""Learning Plane: durable queue consumer running ReflectionRuns off the task plane.
+
+Power boundaries (by design, not by convention):
+
+- Task plane owns the user session; this module never touches it.
+- Foreground always wins: any active run (in-process registry or cross-process
+  ``*.run.lock``) makes learning yield (requeue, never busy-wait).  As of P0-B
+  this includes mid-call preemption: an in-flight reflection is abandoned and
+  requeued once the foreground barrier activates mid-call; the abandoned
+  provider call still settles itself with its real mechanical outcome, but it
+  never touches the journal, MethodStore, or governor after abandonment.
+- A ReflectionRun has no user channel, no normal agent tools, no hidden CoT.
+  The model only receives one hydrated episode snapshot and returns a closed
+  JSON schema; the single write path is MethodStore.save_candidate with
+  runtime-derived provenance (real episode ref + learning job ref).
+- Fail-open: any error marks the job failed and leaves the user plane untouched.
+- P0-C (2026-09-18): the queue also carries ``kind=memory_extract`` jobs
+  (MemoryExtractor interval scheduling). They run under the same admission,
+  foreground-barrier and preemption semantics; execution is delegated to the
+  wired MemoryExtractor (see ``_run_memory_extract_job``).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from collections.abc import Callable
+from typing import Any
+
+from llm_loop.methods.learning_journal import LearningJob, LearningJournal
+from llm_loop.methods.reflection import MethodDiscovery, reflect_on_episode
+from llm_loop.resources.contracts import (
+    AdmissionOutcome,
+    AdmissionRequest,
+    ExecutionClass,
+    ResourceKey,
+    ResourceScopeKind,
+    ServicePriority,
+)
+from llm_loop.resources.governor import ResourceGovernor
+from llm_loop.resources.provider_calls import ProviderCallCoordinator, ResourceAdmissionError
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallOutcome,
+    ProviderCallPurpose,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class LearningPlane:
+    """Background consumer of the durable learning queue.
+
+    Started once per process by the factory; the thread is a daemon so it never
+    blocks shutdown. All state transitions go through LearningJournal, which
+    makes post-crash reconciliation exact: a job whose terminal event is
+    missing is simply re-run; a job that already produced a candidate is
+    terminal and never reflected again.
+    """
+
+    def __init__(
+        self,
+        *,
+        journal: LearningJournal,
+        episode_store: Any,
+        method_store: Any,
+        engine: Any,
+        model_resolver: Callable[[str], Any],
+        resource_governor: ResourceGovernor,
+        resource_target_resolver: Callable[[str], tuple[str, str]],
+        provider_call_coordinator: ProviderCallCoordinator | None = None,
+        memory_extractor: Any | None = None,
+        method_discovery: MethodDiscovery | None = None,
+        poll_interval_s: float = 5.0,
+        quiet_period_s: float = 15.0,
+        preempt_poll_s: float = 0.25,
+        restart_admission_blocked: Callable[[], Any] | None = None,
+        model_override: str = "",
+    ) -> None:
+        self._journal = journal
+        self._episode_store = episode_store
+        self._method_store = method_store
+        self._engine = engine
+        self._model_resolver = model_resolver
+        self._resource_governor = resource_governor
+        self._resource_target_resolver = resource_target_resolver
+        self._provider_call_coordinator = provider_call_coordinator
+        self._memory_extractor = memory_extractor  # P0-C: kind=memory_extract 执行体
+        self._method_discovery = method_discovery
+        self._poll_interval_s = max(1.0, float(poll_interval_s))
+        # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL）：覆盖 source_model，
+        # 缺省空 = 行为不变。资源目标与客户端解析统一走 _effective_model。
+        self._model_override = str(model_override or "").strip()
+        self._quiet_period_s = max(0.0, float(quiet_period_s))
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._preempt_poll_s = max(0.01, float(preempt_poll_s))
+        # Abandoned reflection threads; mutated only by the learning thread.
+        self._stragglers: list[threading.Thread] = []
+        # 缺口②进程内准入：learning 屏障存在时新任务不准入（存量在飞任务
+        # 自然排空，供空闲门观察）。None = 未接线（旧行为）。
+        self._restart_admission_blocked = restart_admission_blocked
+        self._last_barrier_reason: str | None = None
+
+    # ---------- lifecycle ----------
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run_loop, name="lfl-learning-plane", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self, timeout_s: float = 5.0) -> None:
+        self._stop.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=timeout_s)
+
+    # ---------- admission ----------
+
+    def foreground_busy(self) -> bool:
+        """Compatibility view of the Governor's mechanical foreground barrier."""
+        return self._resource_governor.higher_priority_active(
+            ServicePriority.P3_BACKGROUND_LEARNING
+        )
+
+    def _service_barrier_reason(self) -> str | None:
+        """Active learning-service restart barrier (缺口②进程内准入), or None.
+
+        与 ``service_restart_barrier`` 同为 fail-open：探测异常按无屏障处
+        理——learning 自身故障不得把退避变成永久停摆；屏障由释放单点撤销，
+        消失后本方法返回 None，消费自动恢复，无需人工干预。
+        """
+        if self._restart_admission_blocked is None:
+            return None
+        try:
+            barrier = self._restart_admission_blocked()
+        except Exception:  # noqa: BLE001 - probe is fail-open
+            logger.warning("learning admission barrier probe failed", exc_info=True)
+            return None
+        if barrier is None:
+            self._last_barrier_reason = None
+            return None
+        reason = f"{getattr(barrier, 'service', 'learning')}:{getattr(barrier, 'operation_id', '?')}"
+        if reason != self._last_barrier_reason:
+            logger.info("learning admission held by restart barrier %s", reason)
+            self._last_barrier_reason = reason
+        return reason
+
+    def _track_straggler(self, worker: threading.Thread) -> None:
+        """Track an abandoned reflection thread until it drains."""
+        self._stragglers.append(worker)
+
+    def _straggler_busy(self) -> bool:
+        """Whether an abandoned reflection is still draining.
+
+        Only the learning thread mutates ``_stragglers``; abandoned workers
+        never touch shared state, so no lock is needed.  While a straggler is
+        alive, no new learning transport starts: preemption must not stack
+        reflection calls on a runtime whose claimed concurrency was one.
+        """
+        self._stragglers = [t for t in self._stragglers if t.is_alive()]
+        return any(self._stragglers)
+
+    def _resource_request(self, job: LearningJob) -> AdmissionRequest:
+        """Build the Learning lease request, sharing a qualified local runtime key.
+
+        RG-2 first asks the provider-call coordinator for a live local runtime
+        resource. If no such fact exists (cloud, unknown local runtime, probe
+        failure), the RG-1 process-local Learning lane remains the exact fallback.
+        """
+        provider_id, model_id = self._resource_target_resolver(
+                self._effective_model(job.source_model)
+            )
+        request_id = f"learning:{job.job_id}:attempt:{job.attempt + 1}"
+        owner_ref = f"learning:{job.job_id}"
+        coordinator = self._provider_call_coordinator
+        if coordinator is not None:
+            try:
+                client = self._resolve_model(job.source_model)
+                shared = coordinator.build_request_for_client(
+                    client,
+                    execution_class=ExecutionClass.BACKGROUND_LEARNING,
+                    service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+                    owner_ref=owner_ref,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    request_id=request_id,
+                )
+            except ResourceAdmissionError:
+                raise
+            except Exception:  # noqa: BLE001 - legacy/unqualified probes preserve RG-1 fallback
+                shared = None
+            if shared is not None:
+                return shared
+
+        key = ResourceKey(
+            provider_id=provider_id,
+            scope_kind=ResourceScopeKind.RUNTIME,
+            scope_id=f"rg1-learning-process:{model_id}",
+        )
+        self._resource_governor.set_concurrency_limit(key, 1)
+        return AdmissionRequest(
+            request_id=request_id,
+            owner_ref=owner_ref,
+            execution_class=ExecutionClass.BACKGROUND_LEARNING,
+            service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+            provider_id=provider_id,
+            model_id=model_id,
+            resource_keys=(key,),
+            submitted_at=time.time(),
+        )
+
+    def _quiet_elapsed(self, job: LearningJob) -> bool:
+        try:
+            created = float(job.created_at or 0)
+        except (TypeError, ValueError):
+            created = 0.0
+        if created <= 0:
+            return True
+        return (time.time() - created) >= self._quiet_period_s
+
+    # ---------- worker loop ----------
+
+    def _run_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                jobs = self._journal.runnable_jobs()
+            except Exception:  # noqa: BLE001
+                jobs = []
+            if not jobs:
+                self._stop.wait(self._poll_interval_s)
+                continue
+            progressed = False
+            for job in jobs:
+                if self._stop.is_set():
+                    return
+                try:
+                    progressed = self._try_execute(job) or progressed
+                except Exception:  # noqa: BLE001 - learning is fail-open
+                    logger.warning("learning job %s crashed fail-open", job.job_id, exc_info=True)
+                    try:
+                        self._journal.mark_failed(job.job_id, "worker_exception")
+                    except Exception:  # noqa: BLE001
+                        logger.warning(
+                            "learning job %s mark_failed failed", job.job_id, exc_info=True
+                        )
+            if not progressed:
+                self._stop.wait(self._poll_interval_s)
+
+    def _effective_model(self, source_model: str) -> str:
+        """学习通道实际使用的模型引用（override 优先，缺省回落 source_model）."""
+        return self._model_override or str(source_model or "")
+
+    def _resolve_model(self, source_model: str):
+        return self._model_resolver(self._effective_model(source_model))
+
+    def _try_execute(self, job: LearningJob) -> bool:
+        if self._straggler_busy():
+            return False  # an abandoned reflection still drains; never stack transports
+        if self.foreground_busy():
+            return False  # foreground wins; leave queued, no busy-wait
+        if self._service_barrier_reason() is not None:
+            return False  # learning 重启已受理：新任务不准入，等屏障释放自动恢复
+        if not self._quiet_elapsed(job):
+            return False
+        try:
+            request = self._resource_request(job)
+        except ValueError as exc:
+            # EVO-20260928-e312b78f 队头阻塞修复：model_ref 无法解析
+            # （provider 已下线等）是 registry.resolve 抛出的确定性
+            # ValueError，此类 job 永不可运行；若照旧 fail-open 留队且
+            # 不消耗 attempt，会按 created_at 永久占住 runnable_jobs 的
+            # 最老窗口、饿死后续任务（2026-09-28 实证：22 个 legacy job
+            # 堵死 29 个健康任务积压一天）。终态化放行队列，reason 落
+            # 未解析的模型引用供审计。
+            logger.warning(
+                "learning job %s target unresolvable, cancelling: %s", job.job_id, exc
+            )
+            try:
+                self._journal.cancel(
+                    job.job_id,
+                    f"model_unresolved:{self._effective_model(job.source_model)}",
+                )
+            except Exception:  # noqa: BLE001 - fail-open
+                logger.warning(
+                    "learning job %s cancel failed", job.job_id, exc_info=True
+                )
+            return False
+        except Exception:  # noqa: BLE001 - unresolved target yields without consuming an attempt
+            logger.warning("learning job %s resource target unavailable", job.job_id, exc_info=True)
+            return False
+
+        decision = self._resource_governor.try_acquire(request)
+        if decision.outcome is not AdmissionOutcome.ADMITTED or decision.lease is None:
+            return False
+        lease = decision.lease
+        try:
+            try:
+                self._journal.mark_admitted(job.job_id)
+            except Exception:  # noqa: BLE001
+                return False
+            if self.foreground_busy():  # re-check between admission and start
+                self._journal.mark_requeued(job.job_id, "foreground_arrived")
+                return False
+            if self._service_barrier_reason() is not None:
+                self._journal.mark_requeued(job.job_id, "service_restart_barrier")
+                return False
+
+            # P0-C: memory-extraction jobs share admission/foreground semantics,
+            # but delegate execution to the wired MemoryExtractor.
+            if str(getattr(job, "kind", "reflection")) == "memory_extract":
+                return self._run_memory_extract_job(job, request)
+
+            entry = self._episode_store.get(job.session_id, job.source_episode_ref)
+            if entry is None:
+                # 2026-09-22 毒任务修复：episode 查找失败也必须消耗 attempt
+                # （先 started 再 failed）——否则 attempt 恒 0，due-scan 对
+                # failed&&attempt<max 无限重投，毒任务打满 CPU + journal 滚胀。
+                self._journal.mark_started(job.job_id)
+                self._journal.mark_failed(job.job_id, "episode_not_found")
+                return True
+            settings = getattr(self._engine, "settings", None)
+            timeout_s = float(getattr(settings, "method_reflection_timeout_s", 120.0) or 120.0)
+            client = self._resolve_model(job.source_model)
+            final_answer = ""
+            for row in reversed(entry.get("messages") or []):
+                if str(row.get("role")) == "assistant":
+                    final_answer = str(row.get("content") or "")
+                    break
+            coordinator = self._provider_call_coordinator
+            if self.foreground_busy():  # final check immediately before authority/transport
+                self._journal.mark_requeued(job.job_id, "foreground_arrived")
+                return False
+            if self._service_barrier_reason() is not None:
+                self._journal.mark_requeued(job.job_id, "service_restart_barrier")
+                return False
+            if coordinator is not None:
+                expected_generation = (
+                    self._resource_governor.concurrency_limit_generation(request.resource_keys[0])
+                    if len(request.resource_keys) == 1
+                    else None
+                )
+                try:
+                    coordinator.revalidate_request_for_client(
+                        client, request, expected_generation=expected_generation
+                    )
+                except ResourceAdmissionError:
+                    self._journal.mark_requeued(job.job_id, "resource_authority_changed")
+                    return False
+            self._journal.mark_started(job.job_id)
+            result: dict[str, Any] = {}
+
+            def _run_reflection() -> None:
+                """Worker: owns this attempt's provider-call lifecycle.
+
+                On preemption the learning thread stops waiting, but this
+                worker still settles its shadow call with the real mechanical
+                outcome and never touches journal, MethodStore, or governor.
+                """
+                provider_call = None
+                transport_started = False
+                try:
+                    provider_call = (
+                        coordinator.open_shadow_call_for_client(
+                            client,
+                            session_id=job.session_id,
+                            idempotency_key=f"learning:{job.job_id}:attempt:{job.attempt + 1}",
+                            owner_ref=f"learning:{job.job_id}",
+                            execution_class=ExecutionClass.BACKGROUND_LEARNING,
+                            service_priority=ServicePriority.P3_BACKGROUND_LEARNING,
+                            purpose=ProviderCallPurpose.LEARNING,
+                        )
+                        if coordinator is not None
+                        else None
+                    )
+                    site_scope = (
+                        coordinator.bind_shadow_call_site(
+                            provider_call,
+                            client,
+                            attempt_kind=ProviderAttemptKind.PRIMARY,
+                            site_index=0,
+                        )
+                        if coordinator is not None
+                        else None
+                    )
+                    transport_started = True
+                    if site_scope is None:
+                        result["outcome"] = reflect_on_episode(
+                            llm_client=client,
+                            store=self._method_store,
+                            episode_entry=entry,
+                            trigger_facts=dict(job.trigger_facts or {}),
+                            tool_trace=[],
+                            run_end_reason=str((job.trigger_facts or {}).get("run_end_reason", "")),
+                            final_answer=final_answer,
+                            timeout_s=timeout_s,
+                            method_discovery=self._method_discovery,
+                        )
+                    else:
+                        with site_scope:
+                            result["outcome"] = reflect_on_episode(
+                                llm_client=client,
+                                store=self._method_store,
+                                episode_entry=entry,
+                                trigger_facts=dict(job.trigger_facts or {}),
+                                tool_trace=[],
+                                run_end_reason=str(
+                                    (job.trigger_facts or {}).get("run_end_reason", "")
+                                ),
+                                final_answer=final_answer,
+                                timeout_s=timeout_s,
+                                method_discovery=self._method_discovery,
+                            )
+                except BaseException as exc:  # noqa: BLE001 - transported to the learning thread
+                    result["error"] = exc
+                finally:
+                    if coordinator is not None and provider_call is not None:
+                        outcome = result.get("outcome")
+                        if outcome is not None:
+                            if not outcome.attempted:
+                                call_outcome = ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
+                            elif outcome.reason == "reflection_call_failed":
+                                call_outcome = ProviderCallOutcome.ERROR
+                            else:
+                                call_outcome = ProviderCallOutcome.SUCCESS
+                        elif transport_started:
+                            call_outcome = ProviderCallOutcome.ERROR
+                        else:
+                            call_outcome = ProviderCallOutcome.BLOCKED_BEFORE_TRANSPORT
+                        coordinator.settle_shadow_call(provider_call, call_outcome)
+
+            worker = threading.Thread(
+                target=_run_reflection,
+                name=f"lfl-learning-reflect:{job.job_id}",
+                daemon=True,
+            )
+            worker.start()
+            preempted = False
+            while True:
+                worker.join(self._preempt_poll_s)
+                if not worker.is_alive():
+                    break
+                if self.foreground_busy():  # foreground always wins, mid-call included
+                    preempted = True
+                    break
+            if preempted:
+                # Yield immediately: abandon the reflection worker (it settles
+                # itself), requeue the job, and let ``finally`` release the
+                # lease so any waiting foreground admission proceeds now.
+                self._track_straggler(worker)
+                self._journal.mark_requeued(job.job_id, "preempted_by_foreground")
+                return False
+            if "error" in result:
+                raise result["error"]
+            outcome = result["outcome"]
+            method_discovery_diagnostics = getattr(
+                outcome, "method_discovery_diagnostics", None
+            )
+            if method_discovery_diagnostics is not None:
+                logger.info(
+                    "learning job %s method discovery: %s",
+                    job.job_id,
+                    method_discovery_diagnostics,
+                )
+            if outcome.candidate_payload is not None:  # reason == schema_ok
+                try:
+                    record = self._method_store.save_candidate(
+                        name=str(outcome.candidate_payload.get("name", "")),
+                        description=str(outcome.candidate_payload.get("description", "")),
+                        body=str(outcome.candidate_payload.get("body", "")),
+                        source_model=job.source_model,
+                        source_episode_refs=[job.source_episode_ref],
+                        evidence_refs=[f"learning:{job.job_id}"],
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "learning job %s candidate save failed", job.job_id, exc_info=True
+                    )
+                    self._journal.mark_failed(job.job_id, "candidate_save_failed")
+                    return True
+                self._journal.mark_saved(job.job_id, record.method_ref)
+                return True
+            if not outcome.attempted:
+                # structural: disabled / core method missing / empty material — terminal "none"
+                self._journal.mark_none(job.job_id, outcome.reason or "not_attempted")
+                return True
+            if outcome.reason == "reflection_call_failed":
+                self._journal.mark_failed(job.job_id, outcome.reason)
+                return True
+            # model returned decision=none, non-JSON, or schema-invalid payload
+            self._journal.mark_none(job.job_id, outcome.reason[:200] or "no_candidate")
+            return True
+        finally:
+            self._resource_governor.release(lease)
+
+    def _run_memory_extract_job(self, job: LearningJob, request: Any) -> bool:
+        """P0-C: run a kind=memory_extract job in the settled, foreground-free lane.
+
+        Semantics mirror the reflection path: the worker owns the attempt
+        (MemoryExtractor opens and settles its own shadow call for the actual
+        transport), mid-call preemption abandons the worker (tracked as a
+        straggler), requeues the job and lets ``finally`` release the lease.
+        An abandoned extraction may still complete its memory write — that
+        write path is late-write-safe (version snapshot +
+        promote-only-if-observed) and content-fingerprint deduped, so a
+        requeued rerun cannot create duplicate memory entries.
+        """
+        extractor = self._memory_extractor
+        if extractor is None:
+            self._journal.mark_failed(job.job_id, "memory_extractor_not_wired")
+            return True
+        self._journal.mark_started(job.job_id)
+        coordinator = self._provider_call_coordinator
+        if coordinator is not None:
+            expected_generation = (
+                self._resource_governor.concurrency_limit_generation(request.resource_keys[0])
+                if len(request.resource_keys) == 1
+                else None
+            )
+            try:
+                client = self._resolve_model(job.source_model)
+                coordinator.revalidate_request_for_client(
+                    client, request, expected_generation=expected_generation
+                )
+            except ResourceAdmissionError:
+                self._journal.mark_requeued(job.job_id, "resource_authority_changed")
+                return False
+        result: dict[str, Any] = {}
+
+        def _run_extract() -> None:
+            try:
+                result["outcome"] = extractor.extract_session(job.session_id, trigger="interval")
+            except BaseException as exc:  # noqa: BLE001 - transported to the learning thread
+                result["error"] = exc
+
+        worker = threading.Thread(
+            target=_run_extract,
+            name=f"lfl-memory-extract:{job.job_id}",
+            daemon=True,
+        )
+        worker.start()
+        preempted = False
+        while True:
+            worker.join(self._preempt_poll_s)
+            if not worker.is_alive():
+                break
+            if self.foreground_busy():  # foreground always wins, mid-call included
+                preempted = True
+                break
+        if preempted:
+            self._track_straggler(worker)
+            self._journal.mark_requeued(job.job_id, "preempted_by_foreground")
+            return False
+        if "error" in result:
+            raise result["error"]
+        outcome = result["outcome"]
+        entries_n = len(getattr(outcome, "entries", None) or [])
+        skipped = int(getattr(outcome, "skipped_duplicates", 0) or 0)
+        if entries_n > 0:
+            # candidate_ref is an opaque pointer here: memory entries live in
+            # MemoryStore (deposit_path=extract); the journal keeps the count.
+            self._journal.mark_saved(
+                job.job_id, f"memory-extract:{job.session_id}:entries={entries_n}"
+            )
+        else:
+            self._journal.mark_none(job.job_id, f"no_new_entries; skipped_duplicates={skipped}")
+        return True

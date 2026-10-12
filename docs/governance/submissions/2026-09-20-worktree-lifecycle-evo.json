@@ -1,0 +1,44 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "2026-09-20-worktree-lifecycle-evo",
+  "summary": "EVO-20260920-47e815f1（已批准 executing）三档落地：worktree 生命周期治理工具（A/B/C 吸收度分类回收 + 临时路径 TTL sidecar + PR 合并后等价分支提示）、零 LLM/零网络测试、closeout playbook 固化。均为新增文件；无运行时控制机械，纯运维 CLI 手动调用。附 method 卡（exact-ref-first-lookup，本会话 method_manage 记录）。",
+  "components": [
+    {
+      "component_id": "worktree-lifecycle-tooling",
+      "paths": [
+        "scripts/worktree_lifecycle.py",
+        "tests/scripts/test_worktree_lifecycle.py",
+        "docs/PLAYBOOK-worktree-lifecycle-v1.md",
+        "docs/governance/submissions/2026-09-20-worktree-lifecycle-evo.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "scripts/（独立运维 CLI，人工/agent 手动调用，无运行时集成）",
+      "disposition": "EVO-20260920-47e815f1 全档实现：T1 audit --delete-ab（dirty=0 强制、SKIP_DIRTY 保护）、T2 register/triage（rescue 分支先保底再注销、REQUIRES_MANUAL 不强删）、T3 merge-hint（patch-id 等价提示删除，在岗分支排除）。实机验证：audit A=0/B=0/C=29 与手工审计一致；merge-hint 清理 119 个等时副本分支（内容全在 main，抽查 4/5 零提交+1 空 diff 合并）",
+      "evidence": [
+        "evolution_suggestions.jsonl EVO-20260920-47e815f1 status=executing（人工 web 面板批准 2026-09-20T12:04+08）",
+        "pytest tests/scripts/test_worktree_lifecycle.py 7 passed（含 SKIP_DIRTY/REQUIRES_MANUAL/rescue 保底路径）",
+        "实机回执：removed=0 skipped=0 A=0 B=0 C=29；deletable=119 已删后 deletable=0"
+      ],
+      "verification_level": "CI_Green + ruff/pyright clean + 单测 7 passed + 实机只读审计一致性",
+      "model_evidence_veto_recovery_exit": "非控制机械：无模型 veto 交互；删除类操作全部要求 dirty=0/等价判定前置",
+      "rollback_route": "git revert 单提交；脚本无状态（sidecar jsonl 可直接删除），已删分支内容均已在 main"
+    },
+    {
+      "component_id": "method-card-exact-ref-first-lookup",
+      "paths": [
+        "data/methods/exact-ref-first-lookup-when-artifact-declares-canonical-ids-f3ee251bab11/METHOD.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "data/methods（知识记录）",
+      "disposition": "本会话验证经验沉淀：artifact 源声明 canonical ids 时优先 exact-ref 直取而非全文扫描（避免 read_evidence 分页与投影截断），来源 episode 32d694c9 收尾链路",
+      "evidence": [
+        "method_manage save_candidate 回执 2026-09-20T04:03Z",
+        "episode:delegated:32d694c9-dbcd-4dc8-a941-0885c617868c（收尾会话）"
+      ],
+      "verification_level": "结构自检（六段结构完整）；未跑独立 qualification",
+      "model_evidence_veto_recovery_exit": "非控制机械：纯知识卡",
+      "rollback_route": "method_manage invalidate + git revert"
+    }
+  ],
+  "declarations": []
+}

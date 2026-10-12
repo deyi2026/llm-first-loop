@@ -1,0 +1,179 @@
+{
+  "artifacts": {
+    "execution-manifest.json": {
+      "bytes": 56013,
+      "sha256": "51eda5453ea387600930bfd7791cf53943338705d430cf7bd0eba88edda05b8c"
+    },
+    "plan.json": {
+      "bytes": 1279,
+      "sha256": "54551033ca4e4204152bafeaaaf8f1108b75d90e5f0f14010342f8cc04e93833"
+    },
+    "qualification-gate.json": {
+      "bytes": 1505,
+      "sha256": "5fb15a135f7460446a5f2bb88b264d4ce62a2242a01786582b96452169d5dbd1"
+    },
+    "results.jsonl": {
+      "bytes": 30453,
+      "sha256": "8535114ac74a9cb6df35169a02f80737b459540965a27c49990c199e55577703"
+    }
+  },
+  "comparison_to_mf53": {
+    "browser_arg_chars": {
+      "change_pct": -32.7,
+      "mf53": 3170,
+      "mf531": 2134
+    },
+    "browser_result_chars": {
+      "change_pct": -21.3,
+      "mf53": 94903,
+      "mf531": 74674
+    },
+    "cache_hit_tokens": {
+      "change_pct": -23.3,
+      "mf53": 533863,
+      "mf531": 409324
+    },
+    "delta_only": {
+      "change_pct": 50.0,
+      "mf53": 2,
+      "mf531": 3
+    },
+    "delta_to_hydrate": {
+      "change_pct": null,
+      "mf53": 0,
+      "mf531": 0
+    },
+    "delta_to_hydrate_then_snapshot": {
+      "change_pct": -100.0,
+      "mf53": 4,
+      "mf531": 0
+    },
+    "delta_to_snapshot": {
+      "change_pct": 25.0,
+      "mf53": 8,
+      "mf531": 10
+    },
+    "first_browser_call_contract_valid": {
+      "change_pct": -50.0,
+      "mf53": 6,
+      "mf531": 3
+    },
+    "ground_probe_amplification": {
+      "change_pct": null,
+      "mf53": 0,
+      "mf531": 1
+    },
+    "operation_calls": {
+      "change_pct": 0.0,
+      "mf53": 14,
+      "mf531": 14
+    },
+    "perceive_calls": {
+      "change_pct": -27.6,
+      "mf53": 29,
+      "mf531": 21
+    },
+    "perceive_tool_failures": {
+      "change_pct": -62.5,
+      "mf53": 8,
+      "mf531": 3
+    },
+    "protocol_repair_episodes": {
+      "change_pct": -62.5,
+      "mf53": 8,
+      "mf531": 3
+    },
+    "read_evidence_calls": {
+      "change_pct": -21.7,
+      "mf53": 23,
+      "mf531": 18
+    },
+    "rounds": {
+      "change_pct": -16.2,
+      "mf53": 68,
+      "mf531": 57
+    },
+    "task_pass": {
+      "change_pct": -16.7,
+      "mf53": 6,
+      "mf531": 5
+    },
+    "tokens_in": {
+      "change_pct": -23.7,
+      "mf53": 632206,
+      "mf531": 482204
+    },
+    "tokens_out": {
+      "change_pct": -39.3,
+      "mf53": 11741,
+      "mf531": 7126
+    }
+  },
+  "experiment_git_head": "05f171514c5378bb72ad989b37ca358f0008845d",
+  "failure_taxonomy": {
+    "ground_probe_ambiguous_target": 1,
+    "old_nested_condition_or_hydrate_projection_limit_repairs": 0,
+    "perceive_capability_routing_misuse": 3,
+    "task_failure_row": "fill_submit-r2",
+    "task_failures": 1
+  },
+  "gate": {
+    "automatic_retry_true": 0,
+    "complete_rows": 6,
+    "diagnostics": {
+      "browser_arg_chars": 2134,
+      "browser_result_chars": 74674,
+      "cache_hit_tokens": 409324,
+      "delta_only": 3,
+      "delta_to_hydrate": 0,
+      "delta_to_hydrate_then_snapshot": 0,
+      "delta_to_snapshot": 10,
+      "operation_calls": 14,
+      "perceive_calls": 21,
+      "perceive_diff_calls": 0,
+      "perceive_hydrate_calls": 1,
+      "perceive_snapshot_calls": 12,
+      "perceive_wait_calls": 6,
+      "read_evidence_calls": 18,
+      "rounds": 57,
+      "tokens_in": 482204,
+      "tokens_out": 7126
+    },
+    "direct_atomic_browser_calls": 0,
+    "duplicate_successful_mutations": 0,
+    "expected_rows": 6,
+    "first_browser_call_contract_valid": 3,
+    "first_browser_call_contract_valid_required": 6,
+    "get_tool_schema_calls": 0,
+    "ground_probe_amplification": 1,
+    "infra_valid": true,
+    "model_no_fallback": true,
+    "operation_automatic_retry_true": 0,
+    "operation_tool_errors": 0,
+    "operation_tool_failures": 0,
+    "operation_unparsed_results": 0,
+    "pass": false,
+    "per_task_pass": {
+      "click_commit": 2,
+      "delayed_wait": 2,
+      "fill_submit": 1
+    },
+    "per_task_pass_required": 2,
+    "perceive_tool_errors": 0,
+    "perceive_tool_failures": 3,
+    "protocol_repair_episodes": 3,
+    "schema": "smc.browser_cognition_preserving_actuation_mf531.v0.1.gate",
+    "security_agent_spawned": false,
+    "surface_exact": true,
+    "task_completion_violations": 0,
+    "task_pass": 5,
+    "task_pass_required": 6,
+    "undeclared_boundary_continuations": 0
+  },
+  "implementation_commit": "1cb9ad2bddd8b44ca31dd38ff1b30c9dd42c01e0",
+  "mf6_deferred": true,
+  "next_phase": "MF-5.3.2 read-only interface audit: capability routing salience + actionable-object perception projection; no production change before checkpoint",
+  "result_root": "evals/browser_smc_cognition_preserving_actuation_mf531/results/MF531-ORNITH-v0.1-MEASURED-05f17151",
+  "schema": "smc.browser_cognition_preserving_actuation_mf531.v0.1.result_summary",
+  "status": "COMPLETE_NOT_QUALIFIED"
+}

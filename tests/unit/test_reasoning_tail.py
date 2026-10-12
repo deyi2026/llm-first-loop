@@ -1,0 +1,267 @@
+"""M66 思考链瘦身（reasoning_tail）测试.
+
+历史中仅保留最近 N 轮 assistant 思考链（reasoning_content）；更早轮次提交时省略
+（内容/工具调用完整保留，仅提交视图瘦身）；最近一轮 THK-04 回传不受影响。
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from llm_loop.core.history import build_history_messages
+from llm_loop.core.loop.build import _reasoning_tail_for
+from llm_loop.core.message import Message, MessageSource
+from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
+
+
+def _assistant_msgs(n: int = 3) -> list[Message]:
+    return [
+        Message(
+            role="assistant",
+            content=f"A{i}",
+            reasoning_content=f"R{i}",
+            source=MessageSource.SYSTEM,
+        )
+        for i in range(1, n + 1)
+    ]
+
+
+def _assistant_dicts(out: list[dict]) -> list[dict]:
+    return [m for m in out if m.get("role") == "assistant"]
+
+
+def test_reasoning_tail_keeps_recent_only():
+    """reasoning_tail=2: 仅最近 2 轮保留思考链，更早轮省略（内容完整保留）."""
+    out = build_history_messages(_assistant_msgs(3), "", max_chars=10**6, reasoning_tail=2)
+    dicts = _assistant_dicts(out)
+    assert len(dicts) == 3
+    assert dicts[0].get("reasoning_content") is None  # 最旧轮省略
+    assert dicts[1]["reasoning_content"] == "R2"
+    assert dicts[2]["reasoning_content"] == "R3"
+    # 内容完整保留（不丢事实）
+    assert [m["content"] for m in dicts] == ["A1", "A2", "A3"]
+
+
+def test_reasoning_tail_zero_keeps_all():
+    """reasoning_tail=0: 全部保留（向后兼容）."""
+    out = build_history_messages(_assistant_msgs(3), "", max_chars=10**6, reasoning_tail=0)
+    dicts = _assistant_dicts(out)
+    assert [m.get("reasoning_content") for m in dicts] == ["R1", "R2", "R3"]
+
+
+def test_reasoning_tail_default_keep_all():
+    """默认 reasoning_tail=0（全保留，capability-first）：3 轮历史思考链全部保留.
+
+    T-P0-1-1（2026-08-27）: 默认值 2→0——缓存命中不得以裁剪思考链为代价。
+    """
+    out = build_history_messages(_assistant_msgs(3), "", max_chars=10**6)
+    dicts = _assistant_dicts(out)
+    assert dicts[0]["reasoning_content"] == "R1"
+    assert dicts[1]["reasoning_content"] == "R2"
+
+
+def test_reasoning_tail_recent_round_with_tool_calls_kept():
+    """最近轮带 tool_calls 的思考链必须保留（M20 THK-04: 携带 tools 必须回传）."""
+    msgs = _assistant_msgs(3)
+    msgs[-1] = Message(
+        role="assistant",
+        content="A3",
+        reasoning_content="R3",
+        source=MessageSource.SYSTEM,
+        tool_calls=[{"id": "c1", "name": "read_file", "arguments": {"path": "x"}}],
+    )
+    out = build_history_messages(msgs, "", max_chars=10**6, reasoning_tail=1)
+    dicts = _assistant_dicts(out)
+    # 最近轮（带 tool_calls）reasoning 保留；更早轮省略
+    assert dicts[-1]["reasoning_content"] == "R3"
+    assert dicts[-1].get("tool_calls") is not None
+    assert dicts[0].get("reasoning_content") is None
+
+
+def _registry(
+    provider_id: str,
+    base_url: str,
+    *,
+    model_id: str = "m",
+    thinking: bool = True,
+    reasoning_split: bool = False,
+    reasoning_replay: str = "configured",
+) -> ProviderRegistry:
+    return ProviderRegistry(
+        providers={
+            provider_id: ProviderSpec(
+                id=provider_id,
+                base_url=base_url,
+                api_key_env="",
+                models={
+                    model_id: ModelSpec(
+                        thinking=thinking,
+                        reasoning_split=reasoning_split,
+                        reasoning_replay=reasoning_replay,
+                    )
+                },
+                default_model=model_id,
+            )
+        }
+    )
+
+
+def test_reasoning_policy_binds_selected_local_provider_not_global_default() -> None:
+    settings = SimpleNamespace(reasoning_tail=0, llm_base_url="https://api.deepseek.com/v1")
+    registry = _registry("local", "http://localhost:1234/v1")
+    # Local/unknown protocols have no affirmative requirement to discard model
+    # reasoning. Agency-first therefore preserves the configured policy rather
+    # than inventing a locality-based strip rule.
+    assert _reasoning_tail_for(
+        settings, resolved_label="local/m", registry_snapshot=registry
+    ) == 0
+
+
+
+def test_reasoning_policy_explicit_none_strips_history_without_locality_guess() -> None:
+    settings = SimpleNamespace(reasoning_tail=0, llm_base_url="https://api.deepseek.com/v1")
+    registry = _registry(
+        "cognilocal", "https://loopback-gateway.invalid/v1", reasoning_replay="none"
+    )
+    assert _reasoning_tail_for(
+        settings, resolved_label="cognilocal/m", registry_snapshot=registry
+    ) == -2
+
+
+def test_reasoning_policy_explicit_tool_calls_and_full_override_configured() -> None:
+    settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
+    tool_registry = _registry(
+        "p", "https://provider.invalid/v1", reasoning_replay="tool_calls"
+    )
+    full_registry = _registry(
+        "p", "https://provider.invalid/v1", reasoning_replay="full"
+    )
+    assert _reasoning_tail_for(
+        settings, resolved_label="p/m", registry_snapshot=tool_registry
+    ) == -1
+    assert _reasoning_tail_for(
+        settings, resolved_label="p/m", registry_snapshot=full_registry
+    ) == 0
+
+def test_reasoning_policy_binds_selected_deepseek_not_global_local() -> None:
+    settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
+    registry = _registry("deepseek", "https://api.deepseek.com/v1")
+    # DeepSeek requests carrying tools require the historical reasoning replay.
+    assert _reasoning_tail_for(
+        settings, resolved_label="deepseek/m", registry_snapshot=registry
+    ) == 0
+
+
+def test_reasoning_policy_glm_preserves_historical_reasoning() -> None:
+    settings = SimpleNamespace(reasoning_tail=0, llm_base_url="http://localhost:1234/v1")
+    registry = _registry("glm", "https://open.bigmodel.cn/api/coding/paas/v4")
+    assert _reasoning_tail_for(
+        settings, resolved_label="glm/m", registry_snapshot=registry
+    ) == 0
+
+
+def test_reasoning_policy_minimax_thinking_off_is_prompt_neutral() -> None:
+    settings = SimpleNamespace(reasoning_tail=0, llm_base_url="https://api.deepseek.com/v1")
+    registry = _registry("minimax", "https://api.minimax.chat/v1", thinking=False)
+    # thinking=false means this model is not known to require interleaved replay;
+    # it does not prove that historical reasoning must be destroyed. Preserve the
+    # configured neutral policy unless a provider contract requires otherwise.
+    assert _reasoning_tail_for(
+        settings, resolved_label="minimax/m", registry_snapshot=registry
+    ) == 0
+
+
+def test_reasoning_policy_minimax_thinking_on_preserves_interleaved_state() -> None:
+    settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
+    registry = _registry("minimax", "https://api.minimax.chat/v1", thinking=True)
+    assert _reasoning_tail_for(
+        settings, resolved_label="minimax/m", registry_snapshot=registry
+    ) == 0
+
+
+def test_reasoning_policy_minimax_reasoning_split_requires_full_replay() -> None:
+    """Structured M3 reasoning_details replay is protocol state, not optional prompt prose."""
+    settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
+    registry = _registry(
+        "minimax",
+        "https://api.minimax.chat/v1",
+        thinking=False,
+        reasoning_split=True,
+    )
+    assert _reasoning_tail_for(
+        settings, resolved_label="minimax/m", registry_snapshot=registry
+    ) == 0
+
+
+def test_reasoning_policy_unknown_provider_fails_safe_to_configured_policy() -> None:
+    settings = SimpleNamespace(reasoning_tail=3, llm_base_url="http://localhost:1234/v1")
+    registry = _registry("futurecloud", "https://future.invalid/v1")
+    assert _reasoning_tail_for(
+        settings, resolved_label="futurecloud/m", registry_snapshot=registry
+    ) == 3
+
+
+def test_tool_call_only_projection_helper_preserves_tool_protocol_reasoning() -> None:
+    msgs = [
+        Message(
+            role="assistant",
+            content="historical final",
+            reasoning_content="OLD-FINAL-REASONING",
+            source=MessageSource.USER,
+        ),
+        Message(
+            role="assistant",
+            content="",
+            reasoning_content="TOOL-ROUND-REASONING",
+            source=MessageSource.USER,
+            tool_calls=[{"id": "c1", "name": "read_file", "arguments": {"path": "x"}}],
+        ),
+    ]
+    out = build_history_messages(msgs, "", max_chars=10**6, reasoning_tail=-1)
+    assistants = _assistant_dicts(out)
+    assert assistants[0].get("reasoning_content") is None
+    assert assistants[1]["reasoning_content"] == "TOOL-ROUND-REASONING"
+
+
+def test_build_uses_actual_selected_provider_snapshot(build_test_engine) -> None:
+    engine, _fake = build_test_engine([])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.messages = [
+        Message(role="user", content="Q", source=MessageSource.USER),
+        Message(
+            role="assistant",
+            content="A",
+            reasoning_content="HISTORICAL-REASONING",
+            source=MessageSource.USER,
+            model_used="legacy/model",
+        ),
+    ]
+
+    # Global/default endpoint points at DeepSeek, but this build actually targets
+    # local. Provider selection must not invent a reasoning-deletion policy.
+    object.__setattr__(engine.settings, "llm_base_url", "https://api.deepseek.com/v1")
+    local_registry = _registry("local", "http://localhost:1234/v1")
+    local = engine._build_llm_messages(
+        sess,
+        [],
+        max_chars=100_000,
+        planned_label="local/m",
+        registry_snapshot=local_registry,
+    )
+    local_assistant = next(m for m in local if m.get("role") == "assistant")
+    assert local_assistant["reasoning_content"] == "HISTORICAL-REASONING"
+
+    # Flip the global/default endpoint to local.  The selected DeepSeek provider must
+    # still preserve reasoning because its tool protocol owns the replay requirement.
+    object.__setattr__(engine.settings, "llm_base_url", "http://localhost:1234/v1")
+    deepseek_registry = _registry("deepseek", "https://api.deepseek.com/v1")
+    deepseek = engine._build_llm_messages(
+        sess,
+        [],
+        max_chars=100_000,
+        planned_label="deepseek/m",
+        registry_snapshot=deepseek_registry,
+    )
+    deepseek_assistant = next(m for m in deepseek if m.get("role") == "assistant")
+    assert deepseek_assistant["reasoning_content"] == "HISTORICAL-REASONING"

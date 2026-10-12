@@ -1,0 +1,214 @@
+// Web V2：对话相关类型（与后端 /api/v1 契约对齐）
+
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  /** Mechanical execution status when the backend has it (e.g. done.tool_calls). */
+  status?: string;
+}
+
+export type ToolActivityStatus =
+  | "running"
+  | "completed"
+  | "success"
+  | "failure"
+  | "error"
+  | "blocked"
+  | "unauthorized"
+  | "timeout"
+  | "cancelled"
+  | "interrupted"
+  | "unknown";
+
+export interface ToolRoundEvent {
+  tool_call_id?: string;
+  tool_name?: string;
+  round_index?: number;
+  args_summary?: string;
+}
+
+export interface ToolResultEvent {
+  tool_call_id?: string;
+  tool_name?: string;
+  status?: string;
+  duration_ms?: number | null;
+  /** Mechanical result size only; result text remains in the existing detailed tool surface. */
+  result_chars?: number | null;
+}
+
+export interface ToolActivity {
+  id: string;
+  name: string;
+  status: ToolActivityStatus;
+  roundIndex?: number;
+  argsSummary?: string;
+  arguments?: Record<string, unknown>;
+  resultContent?: string;
+  durationMs?: number;
+  resultChars?: number;
+}
+
+/**
+ * UI-only high-level run phase.  This is deliberately mechanical and must not
+ * contain or derive hidden chain-of-thought text.
+ */
+export type ProgressStage =
+  | "preparing"
+  | "analyzing"
+  | "tool"
+  | "integrating"
+  | "answering"
+  | "recovering";
+
+export interface ToolCallDelta {
+  id?: string;
+  name?: string;
+  arguments_delta?: string;
+}
+
+export interface AttachmentFact {
+  ref: string;
+  filename: string;
+  content_type?: string;
+  media_type?: string;
+  size_bytes?: number;
+  sha256?: string;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant" | "tool" | "system";
+  /** 持久化会话中的绝对消息索引；仅历史 API 返回，乐观/流式消息为空 */
+  sourceIndex?: number;
+  content: string;
+  attachments?: AttachmentFact[];
+  reasoningContent?: string | null;
+  toolCalls?: ToolCallInfo[] | null;
+  /** UI-only projection of tool lifecycle; never persisted back into session history. */
+  toolActivities?: ToolActivity[];
+  /** UI-only high-level progress projection for a live run. */
+  progressStage?: ProgressStage;
+  /** Last mechanical progress event timestamp (ms since epoch), used for local heartbeat. */
+  progressUpdatedAt?: number | null;
+  toolCallId?: string | null;
+  toolName?: string | null;
+  /** Exact persisted tool-result status for role=tool history rows. */
+  toolStatus?: string | null;
+  toolDurationMs?: number | null;
+  note?: string | null;
+  /** 服务端消息时间戳（epoch 秒）；展示时按浏览器/操作系统本地时区转换 */
+  ts?: number;
+  /** 流式进行中标记（展示用，不落库） */
+  streaming?: boolean;
+  /** 流式开始时刻（等待时长展示；仅流式占位符使用） */
+  streamStartedAt?: number | null;
+  /** M51: 实际生成模型标签（provider/model，页脚显示） */
+  model_used?: string;
+  /** M52: 本轮 run 累计 prompt tokens */
+  tokens_in?: number;
+  /** M52: 本轮 run 累计 completion tokens */
+  tokens_out?: number;
+  /** M58: 本轮 run 前缀缓存命中 token（页脚命中率显示） */
+  tokens_cache_hit?: number;
+}
+
+export interface ChatDoneData {
+  session_id?: string;
+  final_answer?: string;
+  tool_calls?: ToolCallInfo[];
+  reasoning_content?: string | null;
+  truncated?: boolean;
+  history_compacted?: boolean;
+  provider_output_truncated?: boolean;
+  run_incomplete?: boolean;
+  projection_validator_failed?: boolean;
+  projection_rebuilt?: boolean;
+  projection_cannot_fit?: boolean;
+  verification_note?: string | null;
+  model_used?: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  tokens_cache_hit?: number;
+  fallback_receipt?: Record<string, string> | null;
+  reasoning_mode?: string;
+  reasoning_capable?: boolean;
+  reasoning_control?: string;
+  reasoning_supported?: boolean;
+  reasoning_effective?: boolean;
+  reasoning_tokens?: number | null;
+}
+
+export interface HistoryMessage {
+  index?: number;
+  role: string;
+  content: string;
+  attachments?: AttachmentFact[];
+  reasoning_content?: string | null;
+  tool_call_id?: string | null;
+  tool_name?: string | null;
+  status?: string | null;
+  duration_ms?: number | null;
+  tool_calls?: ToolCallInfo[];
+  model_used?: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  tokens_cache_hit?: number;
+  fallback_receipt?: Record<string, string> | null;
+  reasoning_mode?: string | null;
+  reasoning_capable?: boolean | null;
+  reasoning_control?: string | null;
+  reasoning_supported?: boolean | null;
+  reasoning_effective?: boolean | null;
+  reasoning_tokens?: number | null;
+  ts?: number;
+  [key: string]: unknown;
+}
+
+export interface HistoryResponse {
+  messages: HistoryMessage[];
+  has_more: boolean;
+  /** Explicit read outcome: false means the caller must preserve known state. */
+  ok?: boolean;
+  error?: string;
+}
+
+export interface ModelEntry {
+  id: string;
+  [key: string]: unknown;
+}
+
+export interface UploadResult {
+  status: string;
+  content_type?: string;
+  result_text?: string;
+  detail?: string;
+  attachment_ref?: string;
+  size_bytes?: number;
+  sha256?: string;
+  excerpt?: string;
+}
+
+export interface StreamOutcome {
+  ok: boolean;
+  errorType: "network" | "http" | "engine" | null;
+  // error 字段：后端结构化错误码（如 session_busy——队列 relay 竞态识别用）
+  error: { detail?: string; error?: string } | null;
+  data: ChatDoneData | null;
+}
+
+/** Human Turn 排队/插入项（后端 durable 事实冻结形态） */
+export interface QueueItem {
+  queue_id: string;
+  session_id: string;
+  message: string;
+  /** 服务端 opaque 引用（与 /chat 请求同格式） */
+  attachments: { ref: string }[];
+  model: string | null;
+  model_change?: boolean;
+  reasoning_effort: string | null;
+  reasoning_mode: string;
+  attachment_facts: AttachmentFact[];
+  status: "queued" | "claimed" | "interject_pending" | "interject_received";
+  created_at: number;
+  [key: string]: unknown;
+}

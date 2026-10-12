@@ -1,0 +1,1960 @@
+"""ToolRegistry：注册/发现/执行（design.md §2.2.2.2 / §2.1.3.3 机制二）.
+
+核心循环只依赖本类接口（FR-TOOL-03）；execute 统一执行包裹:
+参数校验 → 灾难性安全校验 → 真实执行（带超时）→ 五态如实构造。
+"""
+
+from __future__ import annotations
+
+import contextlib
+import copy
+import json
+import logging
+import re
+import threading
+import time
+import traceback
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_CARD
+from llm_loop.core.message import (
+    Message,
+    MessageSource,
+    RecoverabilityStatus,
+    ToolCall,
+    ToolResult,
+    ToolResultStatus,
+)
+from llm_loop.core.run_context import (
+    current_evidence_enforce_enabled,
+    current_evidence_shadow_enabled,
+    current_run_generation,
+    current_session_id,
+    current_tool_discovery_scope,
+)
+from llm_loop.knowledge.injection_ledger import append_row
+from llm_loop.timekeeping import system_local_now
+from llm_loop.tools.eligibility import runtime_tool_health
+from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
+from llm_loop.tools.safety import CatastrophicGuard
+
+logger = logging.getLogger(__name__)
+
+# Machine validators present in the current built-in full-schema inventory and
+# required for a truthful first-call contract. Keep this list evidence-based:
+# a new validator keyword needs a provider-compatibility/prefix audit instead
+# of silently widening the stable lazy prefix.
+_LAZY_SCHEMA_VALIDATION_KEYS = ("minimum", "maximum", "maxLength")
+
+
+# Provider-facing compact descriptions for the current built-in tool surface.
+#
+# This is intentionally NOT a tool-eligibility/routing table: every registered tool
+# remains present and keeps the same executable parameter skeleton.  The compact
+# string only removes repeated strategy prose ("when to use / when not / failure
+# advice") from the stable provider prefix while retaining capability and any
+# load-bearing authorization/protocol fact.  Full descriptions remain available via
+# ``schemas(lazy=False)`` / exact ``get_tool_schema``.
+_COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "read_evidence": "仅接受 evidence:// 引用；普通文件用 read_file。分页恢复已取得证据；range_type=text_char 表示 Unicode 字符，line 表示 Evidence 行；start 为 0-based；limit 为正整数请求量，server 每页最多投影 4000，超出机械限幅并回执 next_start；不重新执行原工具。freshness/currentness 仅指 source 版本，不判断内容对当前任务是否适用。",
+    "search_evidence": "检索当前会话已持久化 Evidence，返回片段与稳定 EvidenceRef；不重新执行 source。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
+    "search_archive": "兼容检索历史/归档 Evidence，返回稳定 ref；全文用 read_evidence。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
+    "list_evidence": "列出当前会话 Evidence、acquired_at 与稳定 ref；scope=recent/recovery。freshness 仅表示 source 版本状态，不判断任务适用性。",
+    "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录/关键词定位用 search_files。若后续计划 edit_file，必须本次 snapshot=true 取得 snapshot_ref。",
+    "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
+    "smx_perceive": "smx 感知层（opt-in）：wait 用 satisfied=true/false/null+sample_count/observer_error_count；snapshot 绑定 scope/content_sha256；diff 给 comparable/field_completeness；wait/snapshot/diff 另附 nested smc canonical projection；receipt raw grounding 标 canonical=false；只感知不执行。",
+    "browser_perceive": "Browser只读感知：snapshot当前host-bound page、hydrate精确ref、diff精确snapshots、wait页面ready/URL或已观察对象state/text；对象属性含 name(原样) 与 name_normalized(确定性归一，EVO-20261010-1e06d6b4，供 browser_operate 第二寻址键)；page wait机械绑定当前host-bound page，对象wait要求exact grounding_ref；运行时拥有轮询节奏/默认超时；不导航、不mutation、不fuzzy/latest/rebind/retry/完成判断。",
+    "browser_wait_scope": "Browser 只读 scope wait：传当前 observation 的 exact scope_ref + property/operator/value + timeout_ms/interval_ms；property 仅 scope 类。工具机械编译 schema/domain/target=scope_ref 后轮询；不 mutation/retry/latest/rebind，不判断任务完成。",
+    "browser_wait_object": "Browser 只读 object wait：传当前 SemanticObject GroundingRef（object_ref）+ property/operator/value + timeout_ms/interval_ms；工具 exact hydrate 并机械派生 Semantic ID/scope；不名称匹配/fallback/retry/latest/rebind，不判断任务完成。",
+    "browser_wait_scope_url": "Browser只读URL等待：exact scope_ref + operator(eq|contains|prefix|suffix) + string value；程序固定property=url与target=scope_ref，不retry/latest/rebind。",
+    "browser_wait_scope_ready": "Browser只读文档就绪等待：exact主页面/文档scope_ref + state(loading|interactive|complete)；程序固定document_ready_state eq，不retry/latest/rebind。",
+    "browser_wait_scope_count": "Browser只读对象计数等待：exact scope_ref + operator(eq|ge|le) + integer count>=0；程序固定property=object_count，不retry/latest/rebind。",
+    "browser_wait_object_state": "Browser只读对象状态等待：exact object_ref + state property + boolean value；程序exact hydrate并固定operator=eq，不名称匹配/retry/rebind。",
+    "browser_wait_object_text": "Browser只读对象文本等待：exact object_ref + property(name|value_text) + string operator/value；程序exact hydrate，不名称匹配/retry/rebind。",
+    "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
+    "browser_semantic_execute": "Browser低层语义执行：exact GroundingRef/resource_ref + verb/args；内部编译scope/version/action_id并single-dispatch。ActionReceipt已有post-capture/diff；仅需更广语义或证据不完整时再snapshot；不retry/rebind/完成判断。",
+    "browser_operate": "Browser操作：一次调用一个已决定mutation；do=navigate/click/set_text/append_text/select/scroll，target三选一寻址(EVO-20261010-1e06d6b4)：exact kind+name(+role)｜kind+name_normalized(snapshot暴露的零宽剥离/空白折叠归一形式)｜grounding_ref(先前snapshot/未命中候选清单，受retention约束)；identity未命中回执有界候选清单；wait属于browser_perceive；程序只做ground/version/single-dispatch/post-capture；不fuzzy/rebind/retry/完成判断。",
+    "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
+    "present_files": "声明已存在的输出文件为最终交付物（对齐 DSH present）：写入完成→最终答复前调用；Web 出产物面板可点击打开/预览；execute_command 创建的产物必须显式声明；工作区内、全有或全无。",
+    "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
+    "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
+    "execute_command": "在本地 shell 执行命令并返回 stdout/stderr；每次为独立进程，灾难性命令由硬安全边界阻断。",
+    "service_control": "共享Web/Feishu/Learning生命周期控制：status只读；publish发布新desired deployment（自动以当前代做CAS+干净git树+webui产物hash绑定）；restart异步走desired-state绑定的official restart（expected_generation可省略，缺省取当前代）；终态failed动作留下的屏障可被新restart接管（自恢复）。",
+    "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
+    "job_kill": "终止仍在运行的 execute_command 后台任务。",
+    "search_files": "按文件名/glob 或内容搜索当前工作区；默认排除 .tmp-ci/.backup/.worktrees 等旁路副本，需审这些副本时显式 root 到对应目录。pattern+content 表示先限定文件再搜内容。root 只接受搜索根目录，不能填文件路径；查单个已知文件内容用 root=<父目录> + pattern=<文件名> + content=<关键词>，或直接 read_file。path 只做精确存在/stat，不执行内容搜索。",
+    "schedule": "注册一次或周期提醒；wake 仅是当前真人 run 签发的一次性同会话续跑，不可递归唤醒。",
+    "schedule_cancel": "按 schedule 返回的 sid 取消已注册提醒。",
+    "web_fetch": "抓取 URL 并提取网页正文；反爬/JS 壳失败会如实返回 recovery 信息。",
+    "web_search": "搜索网络并返回结构化标题/URL/来源；支持 general/scholar/code/auto channel。",
+    "get_goal": "读取当前 durable Goal 与最近 checkpoints；只返回已记录事实，不替模型决定下一步。",
+    "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
+    "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
+    "search_records": "按 kind/query 检索记录。kind=method 时普通词（如 navigate）做 discovery；动手前先做有界 method 搜索（limit<=5）：失败重试、编辑冲突、超时、浏览器定位、验证纪律；简单明确任务不必机械搜索；仅把检索结果返回的完整 method:<id> stable ref 原样用于 exact hydration，不要猜 method:<关键词>。episode=已解决/退休片段，非当前任务；experience/lesson 分开 discovery，共用 stable experience:<id> 精确水合；kind=synopsis 返回模型自写摘要轻量卡和 stable ref，完整摘要/原文用 source_synopsis；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文。历史适用性由模型判断。停滞/事实不足/需规则依据时按需水合，非每轮强制、不强制顺序。",
+    "event_stream": "按时间顺序读取运行事件；默认仅当前 session 且保留 session_id，跨会话审计必须显式 scope=workspace。",
+    "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",
+    "adjust_strategy": "调整白名单运行参数 max_iterations/timeout_s/history_budget，受全局硬上限约束。",
+    "retry_tool": "用给定参数重新执行指定工具，仍经过完整安全、校验与超时包裹。",
+    "refresh_config": "重载 provider/model registry 等运行配置；共享默认 client 的启动 contract 仍需重启才变化。",
+    "save_experience": "保存显式分型的 experience/lesson；正向 experience 必须声明 verified+evidence，成功返回 stable experience:<id>。",
+    "refine_experience": "归档/失效/恢复 experience；stable experience:<id> 可直接作为标识。",
+    "submit_evolution": "提交结构化架构演进建议供人工审阅；硬安全/授权/协议边界只能建议，不可自行放宽；人工审批可显式 exec_override 授权后自动执行（方案A EVO-20260929）。",
+    "evolution_complete": "登记 executing 演进建议已执行并验证；尚未完成时不得登记。",
+    "generate_evolution_template": "根据现有改进证据生成结构化演进建议模板。",
+    "create_goal": "创建可跨会话持续追踪的 durable Goal；适合长任务。",
+    "checkpoint_goal": "记录 Goal 的里程碑变化、证据、影响路径与确切下一步。",
+    "update_goal": "更新 Goal 状态；complete 需过终局证据门（任务图收口 + evidence verified；空任务图需自报 evidence_refs 过校验，EVO-20260923-6bcc4880）；blocked 必须有当前事实依据。",
+    "self_evaluate": "基于运行证据生成成功率、效率、诚实性、停滞与异常等自评并持久化。",
+    "send_feishu_message": "向飞书发送文本/卡片；仅在用户明确要求且 outbound、白名单与限速允许时执行。",
+    "create_feishu_doc": "创建飞书文档并返回 doc_id/URL；受飞书 outbound 配置与权限约束。",
+    "send_feishu_attachment": "向飞书发送本地文件/文档附件；受用户授权、白名单、限速与文件存在性约束。",
+    "code_review": "按正确性、安全、性能、测试与回归维度审查代码。",
+    "grill_me": "对待实施方案做追问式设计评审，暴露边界与遗漏。",
+    "stop_slop": "检查并清理文本中的套话、空话、过度强调与虚假精确。",
+    "handoff_now": "生成结构化本地 handoff 文档，供长任务跨会话接管。",
+    "brainstorm_design": "对复杂问题进行多视角方案 brainstorm 与评分。",
+    "tdd_red_green": "执行 TDD red→green 循环以实现明确规格。",
+    "design_review": "用多角色视角审查设计文档并输出问题与建议。",
+    "record_skill": "把结构化操作序列生成可复用 SKILL.md 模板。",
+    "skill_list": "列出 skills/ 中可用外部 Skill 的名称与简述。遇到格式转换/PDF、特定站点抓取、运维诊断等可能已有专业工作流的任务，若准备自己用 execute_command 探测或拼装流程，先用本工具发现候选；是否加载/采用仍由模型根据当前任务判断。",
+    "skill_load": "按 skill_list 已发现或已知稳定名称加载外部 Skill 全文到当前执行上下文；加载不代表该 Skill 必然适用于当前任务。",
+    "task_create": "在已存在的活动 Goal 下创建 durable Task；goal_id 用 get_goal 当前事实，不得猜。无活动 Goal 先 get_goal/create_goal；dependencies 只能引用同 Goal 已存在 task_id；acceptance 必填。",
+    "task_update": "推进 durable Task；pending→in_progress/cancelled/failed；不能直接 pending→done；in_progress→done/blocked/cancelled/failed；blocked→in_progress/cancelled/failed；failed→in_progress。→blocked 要 blocked_reason；evidence_required 的 →done 要 evidence_refs；done 重开要当前用户授权+confirm=true。",
+    "model_catalog": (
+        "列出可用 provider/model、context、reasoning contract、成本档及当前会话模型；"
+        "询问当前模型/身份时用本工具核验 LFL 路由事实，request.model 或外层网页模型身份不能替代工具回执。"
+    ),
+    "switch_model": "切换当前会话模型或恢复 default；按当前 registry 精确解析 provider/model。",
+    "recover_from_backup": "从已存在备份恢复未落盘数据；冲突、损坏或不存在会如实失败。",
+    "playwright_test": "生成并执行隔离 Playwright E2E 场景，返回截图与 pass/fail。",
+    "playwright_exec": "执行给定 Python Playwright 脚本，用于需要浏览器交互/JS 的验证。",
+    "spawn_subagent": "非阻塞启动隔离子代理并返回 child_id；父代理可继续当前 run。",
+    "agent_message": "向直接 parent 或仍运行的直接 child 发消息；sender 由运行时确定，不能指定。",
+    "subagent_result": "查询/短暂等待自己的直接 child；completed 才代表子任务成功结算。",
+    "subagent_lease": "读取子代理 fleet 租约磁盘事实（lease/settlement，expires_at/expired）；只读，不含接管语义。",
+    "agent_followup": "对已终止的直接 child 有界续话（同会话保留上下文，每 child≤2 次/父会话≤4 次/15 分钟窗口）。",
+    "wait": (
+        "只读墙钟等待（E5, EVO-20261012-65475c5a）：确定性阻塞 1..120 秒，等待期间零模型"
+        "调用；父取消 ≤0.5s 唤醒；每 child 会话累计 ≤600s。心跳/轮询等待期用它替代"
+        "多轮空转调用。"
+    ),
+    "fix_loop": "原子编排检查→定位→子代理修复→重跑的有界修复循环。",
+    "workflow_run": "编排 parallel/pipeline/DAG 子任务；按依赖执行并传递前序结果。",
+    "dsh_task": "在隔离进程/会话中委派 DeepSeek Harness 任务；不会自动继承当前会话历史。",
+    "dsh_session_read": "读取 DSH 最近 session 的事件日志，查看中间推理、工具调用与结果。",
+}
+
+# Lazy schema normally strips parameter prose. Keep only parameter-local mechanical
+# facts whose omission has a reproduced first-call failure and whose compact form has
+# a positive real-model A/B. This is not a strategy/routing table: it does not hide
+# tools, choose tools, or change execution semantics.
+_COMPACT_PARAMETER_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "browser_wait_scope": {
+        "scope_ref": "来自当前 Browser observation 的 exact scope_ref；工具机械令 Predicate target=scope_ref，不自动替换为 latest。",
+    },
+    "browser_wait_object": {
+        "object_ref": "来自当前 Browser observation 的 exact SemanticObject.grounding_ref；工具只 exact hydrate，不按名称查找或 rebind。",
+    },
+    "browser_wait_scope_url": {
+        "scope_ref": "来自当前 Browser observation 的 exact scope_ref；程序固定 Predicate target=scope_ref。",
+    },
+    "browser_wait_scope_ready": {
+        "scope_ref": "来自当前主页面/文档 observation 的 exact scope_ref；程序读取固定 document.readyState 感知事实。",
+    },
+    "browser_wait_scope_count": {
+        "scope_ref": "来自当前 Browser observation 的 exact scope_ref；count 是非负整数。",
+    },
+    "browser_wait_object_state": {
+        "object_ref": "当前 SemanticObject.grounding_ref；value 是 JSON boolean，不是字符串 true/false。",
+    },
+    "browser_wait_object_text": {
+        "object_ref": "当前 SemanticObject.grounding_ref；value 是字符串。",
+    },
+    "browser_semantic_execute": {
+        "target_ref": "先 snapshot；对象动作=当前 SemanticObject.grounding_ref；navigate=当前 snapshot result 的 resource_ref；必须 exact；不要把 URL/名称/scope_ref 当 target_ref。",
+        "args": "click={}；fill={text,mode} mode=replace|append；select={value}；navigate={url}；scroll={delta_pages}。",
+    },
+    "list_evidence": {
+        "limit": "整数 1..20；单次最多 20。用户要更多时本轮也不得超过 20。",
+    },
+    "search_evidence": {
+        "limit": "整数 1..20；单次最多 20。用户要更多时本轮也不得超过 20。",
+    },
+    "task_update": {
+        "status": (
+            "目标状态。若当前 task=pending，只能先转 in_progress/cancelled/failed，不能直接 done；"
+            "in_progress 才可转 done/blocked/cancelled/failed；blocked/failed 可回 in_progress。"
+        ),
+    },
+}
+
+
+def _tool_guidance_mode(raw: str = "off") -> str:
+    """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态）.
+
+    建议源四类: _FAILURE_GUIDANCE / ToolRecoveryAdvice.render() / guidance_extra /
+    _DISTILL_GUIDANCE。typed recovery 分类与 metadata["tool_recovery"]（failure_class
+    输入面，B 包熔断计数依赖）全路径保留，不受本开关影响。
+
+    - "on":        四源照旧投影
+    - "shadow":    建议文本照旧投影 + 记 shadow 观测事件（不进上下文，观测期对账）
+    - "off"（默认，R9-P0-01 批 2/3 切换 2026-09-01，前置=C 包 shadow 期指标达标）:
+                  四源模型可见 chars=0（enforce 态）
+    """
+    mode = str(raw or "off").strip().lower()
+    return mode if mode in {"on", "shadow", "off"} else "off"
+
+
+def _emit_guidance_shadow_event(
+    *, tool: str, status: str, source: str, chars: int, failure_class: str = ""
+) -> None:
+    """C-1.1 shadow 观测事件（fail-open；不进上下文，供观测期对账）."""
+    with contextlib.suppress(Exception):
+        logger.info(
+            "event=tool_guidance_shadow tool=%s status=%s source=%s chars=%d failure_class=%s",
+            tool, status, source, chars, failure_class,
+        )
+
+
+# EVO-20260917-abdb3247 P0: 知识注入观测（零模型可见行为变化；KNOWLEDGE_INJECTION_LEDGER=0 关闭）
+_HYDRATION_TOOLS = frozenset({"search_records", "skill_load"})
+
+
+def _ledger_session_id() -> str:
+    """P1 归因窗口按 session 划分所需的机械归属（fail-open，取不到则空串）."""
+    try:
+        return str(current_session_id.get() or "")
+    except Exception:  # noqa: BLE001 - 观测字段永不阻断主路径
+        return ""
+
+
+def _ledger_receipt_pointer(*, tool: str, status: str, source: str, chars: int) -> None:
+    """登记"建议文本实际进入模型可见正文"的时刻（on/shadow 模式；off 态不触发）."""
+    with contextlib.suppress(Exception):
+        append_row(
+            kind="receipt_pointer",
+            tool=tool,
+            status=status,
+            source=source,
+            chars=chars,
+            session_id=_ledger_session_id(),
+        )
+
+
+# P1: 从水合回执正文提取 stable ref 字面（机械正则；观测字段，不改投影）
+_HYDRATION_REF_RE = re.compile(
+    r"(?:experience|lesson|method|memory|episode|rule|synopsis):[A-Za-z0-9][A-Za-z0-9_\-/:.]*"
+)
+
+
+def _extract_hydration_refs(content: object, *, limit: int = 8) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for m in _HYDRATION_REF_RE.findall(str(content or "")):
+        ref = m[:120]
+        if ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+        if len(refs) >= limit:
+            break
+    return refs
+
+
+def _observe_knowledge_hydration(call: ToolCall, result: ToolResult) -> None:
+    """登记知识水合调用（search_records/skill_load 成功执行；fail-open）."""
+    with contextlib.suppress(Exception):
+        status = str(getattr(result.status, "value", "") or "")
+        if status not in {"success", "ok"}:
+            return
+        args = getattr(call, "arguments", None)
+        if not isinstance(args, dict):
+            args = {}
+        session_id = _ledger_session_id()
+        if (getattr(result, "tool_name", "") or getattr(call, "name", "")) == "search_records":
+            append_row(
+                kind="hydration",
+                tool="search_records",
+                status=status,
+                record_kind=str(args.get("kind", ""))[:32],
+                query=str(args.get("query", ""))[:120],
+                session_id=session_id,
+                refs=_extract_hydration_refs(getattr(result, "content", "")),
+            )
+        else:
+            append_row(
+                kind="hydration",
+                tool="skill_load",
+                status=status,
+                skill=str(args.get("name", ""))[:64],
+                session_id=session_id,
+            )
+
+# execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
+PreExecuteHook = Callable[[ToolCall], None]
+EvidenceShadowHook = Callable[[ToolCall, ToolResult], None]
+EvidenceManifestProvider = Callable[[int], str]
+EvidenceHistoryCaptureHook = Callable[[str, Message, int | None, str | None], str | None]
+SessionCancelHook = Callable[..., Any]
+AsyncObligationHook = Callable[..., list[dict[str, Any]]]
+
+
+class ToolRegistry:
+    """工具注册表：注册/发现/执行（统一执行包裹）."""
+
+    def __init__(
+        self,
+        *,
+        safety_guard: CatastrophicGuard | None = None,
+        tool_timeout_s: float = 60.0,
+        max_output_chars: int = 100000,
+        archive_store: Any | None = None,
+        failure_guidance_enabled: bool = True,
+        tool_guidance_mode: str = "off",
+        # EVO-d78b270c: 经验库（MemoryStore）注入——失败回执按错误关键词检索
+        # procedure 经验条目，命中则注入【已验解法】段（None = 无经验库，零回归）
+        memory_store: Any | None = None,
+        # EVO-20260810-2549e9b6: EXEC_MODE 命令分级（默认空 = 不启用，生产由 factory 显式装配 blocked）
+        exec_mode: str = "",
+        exec_allowlist: str = "",
+        # T5a(2026-08-14): 人工审批回调（None = 拦截即拒绝 fail-closed，零回归）
+        # 回调签名: (tool_name, args_summary) -> bool（True=人工批准放行 / False=拒绝）
+        # 仅 EXEC_MODE 拦截路径触发。灾难性硬阻断走提权闭环（escalation_store，
+        # EVO-20260923 用户批准: escalation_request → web 人工审批 → 一次性令牌定向放行）。
+        approval_callback: Callable[[str, str], bool] | None = None,
+        # T5a: 审批审计落盘路径（None = 不落盘；含时间/工具/参数摘要/决策，不含密钥）
+        approval_audit_path: str | Path | None = None,
+        # P0-1(2026-08-15): 阻断审计目录（默认守卫落盘 safety_blocks.jsonl；
+        # 仅 safety_guard 未显式注入时生效；None = 不落盘，零回归）
+        safety_audit_dir: str | Path | None = None,
+        # 提权闭环存储（None = 未装配，灾难硬阻断保持纯 fail-closed，零回归）
+        escalation_store: Any | None = None,
+        # task_quality 路径 A（2026-08-17）: 参数预检层（None = 关闭，零回归；
+        # 注入后 execute 步骤 1 后、安全检查前执行预检，失败返回字段级引导反馈）
+        precheck_layer: Any | None = None,
+        # P0-A: narrow shared Web/Feishu lifecycle ownership fence. This does not
+        # make execute_command globally readonly.
+        managed_service_guard: Any | None = None,
+    ) -> None:
+        self._tools: dict[str, Any] = {}
+        self._lock = threading.Lock()
+        # 后台 Stop 的会话定向取消：不同 session 共享 registry/tool 实例，
+        # 因此活跃执行必须按 current_session_id 分桶，禁止全局 terminate 误杀其他会话。
+        self._active_exec_guard = threading.Lock()
+        # P3: session alone is not sufficient once a timed-out/long-running tool from A1
+        # can outlive its parent and A2 starts on the same session.  Keep the exact origin
+        # run generation with each live future so Stop/finalization cannot claim A1 work.
+        self._active_exec: dict[str, list[tuple[Any, Any, str]]] = {}
+        self.safety = safety_guard or CatastrophicGuard(audit_dir=safety_audit_dir)
+        self.tool_timeout_s = tool_timeout_s
+        self.max_output_chars = max_output_chars
+        self.failure_guidance_enabled = failure_guidance_enabled
+        self.tool_guidance_mode = _tool_guidance_mode(tool_guidance_mode)
+        self._memory_store = memory_store  # EVO-d78b270c: 经验库（fail-open 零回归）
+        self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
+        self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
+        self._pre_execute_hooks: list[PreExecuteHook] = []
+        # 工具回执后观察者（B 最小闭环：故障台账）。与 pre-hook 对称的零侵入挂点，
+        # 在 execute() 真实执行收口处对最终 ToolResult 通知；观察者自身 fail-open。
+        self._post_result_observers: list[Callable[[str, ToolResult], None]] = []
+        # 会话级长期资源取消钩子。与 _active_exec 不同，这类资源可能在创建它的
+        # 工具已经返回后仍继续存在（例如 nonblocking subagent handle）。Stop 必须
+        # 仍能按 parent session 精确触达，不能依赖“创建工具当前仍 active”。
+        self._session_cancel_hooks: list[SessionCancelHook] = []
+        self._async_obligation_hooks: list[AsyncObligationHook] = []
+        # ERC Phase2 shadow and Phase3 enforce are mutually exclusive.  ``off`` means both
+        # are None and preserves the exact legacy path.
+        self._evidence_shadow_hook: EvidenceShadowHook | None = None
+        self._evidence_enforcer: Any | None = None
+        self._evidence_source_resolver: Any | None = None
+        self._evidence_manifest_provider: EvidenceManifestProvider | None = None
+        self._evidence_history_capture_hook: EvidenceHistoryCaptureHook | None = None
+        # R05/T05: production may explicitly allow exact read_file ranges up to the
+        # real tool hard cap. None deliberately preserves the historical generic 5K
+        # Evidence projection used by frozen/manual qualification harnesses.
+        self._exact_read_projection_budget_chars: int | None = None
+        self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
+        self._managed_service_guard = managed_service_guard
+        self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
+        self._escalation_store = escalation_store  # EscalationStore（提权闭环，None=零回归）
+        # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
+        self._pipeline: Any = None
+        # T5a: 人工审批通道（None = 拦截即拒；set_approval_callback 运行时注入）
+        self._approval_callback = approval_callback
+        self._approval_audit_path = Path(approval_audit_path) if approval_audit_path else None
+
+    def set_approval_callback(self, callback: Callable[[str, str], bool] | None) -> None:
+        """运行时注入/移除人工审批回调（CLI 交互模式装配；web/feishu 不注入 → fail-closed）."""
+        self._approval_callback = callback
+
+    def _approval_log(self, decision: str, tool_name: str, summary: str) -> None:
+        """审批审计落盘（fail-open：审计失败不阻断执行；不写密钥/完整参数）."""
+        if self._approval_audit_path is None:
+            return
+        try:
+            self._approval_audit_path.parent.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": time.time(),
+                "decision": decision,  # approved / rejected / no_callback
+                "tool": tool_name,
+                "args_summary": summary[:300],
+            }
+            with self._approval_audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            logger.warning("审批审计写失败（fail-open）: %s", self._approval_audit_path)
+
+    @property
+    def evidence_mode(self) -> str:
+        if self._evidence_enforcer is not None:
+            return "enforce"
+        if self._evidence_shadow_hook is not None:
+            return "shadow"
+        return "off"
+
+    def set_evidence_shadow_hook(self, hook: EvidenceShadowHook | None) -> None:
+        """Install/remove the ERC shadow observer without changing model-visible output."""
+        if hook is not None and self._evidence_enforcer is not None:
+            raise RuntimeError("evidence shadow/enforce modes are mutually exclusive")
+        self._evidence_shadow_hook = hook
+
+    @staticmethod
+    def _lock_pipeline_for_evidence_enforce(pipeline: Any) -> None:
+        pipeline_enabled = bool(
+            pipeline is not None and getattr(getattr(pipeline, "config", None), "enabled", False)
+        )
+        if not pipeline_enabled:
+            return
+        lock = getattr(pipeline, "lock_for_evidence_enforce", None)
+        if not callable(lock):
+            raise RuntimeError(
+                "enabled tool pipeline lacks Evidence enforce compatibility contract"
+            )
+        lock()
+
+    def set_evidence_enforcer(self, enforcer: Any | None) -> None:
+        """Install/remove the Phase3 capture-before-projection enforcer."""
+        if enforcer is not None and self._evidence_shadow_hook is not None:
+            raise RuntimeError("evidence shadow/enforce modes are mutually exclusive")
+        if enforcer is not None:
+            self._lock_pipeline_for_evidence_enforce(self._pipeline)
+        self._evidence_enforcer = enforcer
+
+    def set_evidence_source_resolver(self, resolver: Any | None) -> None:
+        """Install/remove the enforce-only Evidence-aware source resolver."""
+        self._evidence_source_resolver = resolver
+
+    def set_evidence_manifest_provider(self, provider: EvidenceManifestProvider | None) -> None:
+        self._evidence_manifest_provider = provider
+
+    def evidence_recovery_manifest(self, *, limit: int = 8) -> str:
+        if self._evidence_manifest_provider is None:
+            return ""
+        return self._evidence_manifest_provider(limit)
+
+    def set_evidence_history_capture_hook(self, hook: EvidenceHistoryCaptureHook | None) -> None:
+        self._evidence_history_capture_hook = hook
+
+    @property
+    def evidence_history_capture_enabled(self) -> bool:
+        return self._evidence_history_capture_hook is not None
+
+    def capture_archived_message(
+        self,
+        *,
+        session_id: str,
+        message: Message,
+        msg_seq: int | None,
+        archive_id: str | None = None,
+    ) -> str | None:
+        if self._evidence_history_capture_hook is None:
+            return None
+        return self._evidence_history_capture_hook(session_id, message, msg_seq, archive_id)
+
+    def set_exact_read_projection_budget(self, budget_chars: int | None) -> None:
+        """Configure the exact read_file projection budget for production assembly.
+
+        ``None`` keeps the historical generic Evidence budget.  A positive explicit
+        value lets the factory bind exact file reads to the runtime's real output cap
+        without changing frozen/manual Evidence harness semantics.
+        """
+        if budget_chars is not None and budget_chars <= 0:
+            raise ValueError("exact read projection budget must be > 0")
+        self._exact_read_projection_budget_chars = budget_chars
+
+    def _evidence_projection_budget(self, tool_name: str | None = None) -> int:
+        """Return the model-visible Evidence projection budget for one tool result.
+
+        ``read_file`` already has an explicit source-range contract: the selected range is
+        the requested observation and its provider-facing description promises that range
+        verbatim until the registry's real per-result hard cap. Applying the generic 5K
+        Evidence excerpt budget after that read can hide middle lines the model explicitly
+        requested. Keep capture-before-projection, but let read_file use the existing hard
+        cap. Other tools retain the bounded 5K Evidence projection.
+        """
+        if tool_name == "read_file" and self._exact_read_projection_budget_chars is not None:
+            return max(
+                128,
+                min(self.max_output_chars, self._exact_read_projection_budget_chars),
+            )
+        return max(128, min(self.max_output_chars, 5000))
+
+    def set_pipeline(self, pipeline: Any) -> None:
+        """装配工具执行瀑布（EVO-20260813-9ced1f4c + ERC R12）.
+
+        pipeline 为 None 或 config.enabled=False 时主链路行为完全不变。Evidence enforce
+        可与 registry 已明确定义顺序的 materialize/monotonic-guard 子集共存；pre/post
+        hook 顺序尚未定义，因此由 pipeline Evidence lock 在装配期 fail-closed。
+        """
+        if self._evidence_enforcer is not None:
+            self._lock_pipeline_for_evidence_enforce(pipeline)
+        self._pipeline = pipeline
+
+    def _archive_oversize_output(self, call: ToolCall, full_content: str) -> bool:
+        """Persist the exact oversized result; return whether recovery is real.
+
+        The return value is model-honesty authority: callers may only claim
+        ``search_archive`` recovery after this method returns True.
+        """
+        try:
+
+            session_id = str(current_session_id.get() or "")
+        except Exception:  # noqa: BLE001 — archive mutation requires exact owner
+            session_id = ""
+        if self._archive_store is None or not session_id:
+            return False
+        try:
+            self._archive_store.archive(
+                session_id,
+                role="tool",
+                source="tool",
+                content=full_content,
+                tool_name=call.name,
+                tool_call_id=call.id,
+                status="oversize",
+            )
+            return True
+        except Exception:
+            logger.warning("超长结果另存失败（fail-open）", exc_info=True)
+            return False
+
+    # ── 注册 / 发现 ──
+    def register(self, tool: Any) -> None:
+        """注册工具（启动时装配）.
+
+        R1(2026-08-14): 同对象重复注册（装配路径基础工具与修正工具集重名）→ 静默去重；
+        不同实现的重名覆盖仍告警（防未来静默覆盖）。
+        """
+        with self._lock:
+            existing = self._tools.get(tool.name)
+            if existing is tool:
+                return  # 同对象重复注册：静默（零回归）
+            if existing is not None:
+                import logging
+
+                logging.getLogger(__name__).warning("工具重名覆盖: %s", tool.name)
+            self._tools[tool.name] = tool
+
+    def unregister(self, name: str) -> bool:
+        """卸载工具（EVO-20260814-488e7ef7: 注册即回滚，Cordis reversible effects）.
+
+        返回是否真的移除（不存在返回 False，不抛异常）。卸载后：
+        - execute(name) → 工具不存在 → 如实构造 failure（fail-closed，安全）
+        - 可重新 register 同名工具（热更新/演进回滚通道）
+        guard 规则（MonotonicGuard）为独立对象，不随工具卸载清理；但工具已不存在时
+        guard.check 不再可达（execute 先查工具存在性），无残留风险。
+        """
+        with self._lock:
+            existed = name in self._tools
+            if existed:
+                del self._tools[name]
+            return existed
+
+    def dispose(self) -> int:
+        """批量卸载全部工具（EVO-20260814-488e7ef7，Cordis disposer 语义）.
+
+        供测试隔离 / teardown（避免测试注册污染后续用例）。返回卸载数量。
+        幂等：已空时返回 0。
+        """
+        with self._lock:
+            n = len(self._tools)
+            self._tools.clear()
+            return n
+
+    def get(self, name: str) -> Any:
+        with self._lock:
+            tool = self._tools.get(name)
+        if tool is None:
+            raise KeyError(f"工具不存在: {name}")
+        return tool
+
+    def names(self) -> list[str]:
+        with self._lock:
+            return sorted(self._tools)
+
+    def _track_active(self, session_id: str, future: Any, tool: Any) -> None:
+        if not session_id:
+            return
+        generation = str(current_run_generation.get() or "")
+        with self._active_exec_guard:
+            self._active_exec.setdefault(session_id, []).append((future, tool, generation))
+
+    def _untrack_active(self, session_id: str, future: Any) -> None:
+        if not session_id:
+            return
+        with self._active_exec_guard:
+            entries = self._active_exec.get(session_id, [])
+            kept = [entry for entry in entries if entry[0] is not future]
+            if kept:
+                self._active_exec[session_id] = kept
+            else:
+                self._active_exec.pop(session_id, None)
+
+    def cancel_session(self, session_id: str, *, run_generation: str = "") -> int:
+        """尽力取消指定会话/运行代次正在执行的工具，不触碰其他 owner。
+
+        future.cancel() 仅能取消尚未开始的线程任务；运行中的外部进程必须由工具
+        提供 ``terminate_session(session_id)`` 才会被硬终止。刻意不回退到无参数
+        terminate()，因为工具实例跨会话共享，全局终止可能误杀别的会话。
+        """
+        effective_generation = str(run_generation or current_run_generation.get() or "")
+        with self._active_exec_guard:
+            all_entries = list(self._active_exec.get(session_id, []))
+            entries = [
+                entry
+                for entry in all_entries
+                if not effective_generation or entry[2] == effective_generation
+            ]
+        seen_tools: set[int] = set()
+        for future, tool, _origin_generation in entries:
+            future.cancel()
+            ident = id(tool)
+            if ident in seen_tools:
+                continue
+            seen_tools.add(ident)
+            terminate_session = getattr(tool, "terminate_session", None)
+            if callable(terminate_session):
+                try:
+                    self._call_session_owner_hook(
+                        terminate_session,
+                        session_id,
+                        run_generation=effective_generation,
+                    )
+                except Exception:  # noqa: BLE001 — Stop 是 best-effort，失败仍由循环取消标志收尾
+                    logger.warning(
+                        "会话工具终止失败（fail-open）: session=%s tool=%s",
+                        session_id,
+                        getattr(tool, "name", type(tool).__name__),
+                        exc_info=True,
+                    )
+        hook_hits = 0
+        for hook in list(self._session_cancel_hooks):
+            try:
+                hit = self._call_session_owner_hook(
+                    hook,
+                    session_id,
+                    run_generation=effective_generation,
+                )
+                if isinstance(hit, bool):
+                    hook_hits += int(hit)
+                elif isinstance(hit, int):
+                    hook_hits += max(0, hit)
+            except Exception:  # noqa: BLE001 — Stop 仍是 best-effort，单 hook 不得阻断其它取消
+                logger.warning(
+                    "会话资源取消钩子失败（fail-open）: session=%s hook=%r",
+                    session_id,
+                    hook,
+                    exc_info=True,
+                )
+        return len(entries) + hook_hits
+
+    @staticmethod
+    def _call_session_owner_hook(hook: Any, session_id: str, *, run_generation: str) -> Any:
+        """Call a lifecycle hook with generation when its declared surface supports it.
+
+        Signature inspection avoids using an internal ``TypeError`` from the hook body as a
+        false signal that the hook is legacy.  Unknown signatures keep the historical
+        single-argument call rather than guessing authority.
+        """
+        import inspect
+
+        try:
+            params = inspect.signature(hook).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "run_generation" in params:
+            return hook(session_id, run_generation=run_generation)
+        if "origin_run_generation" in params:
+            return hook(session_id, origin_run_generation=run_generation)
+        return hook(session_id)
+
+    def schemas(self, lazy: bool = False) -> list[dict]:
+        """生成 LLM tools 参数（JSON Schema，约束 C4）.
+
+        EVO-d5db88d9: lazy=True 时返回精简可执行 Schema（name + compact description
+        + 参数骨架）。参数骨架始终保留首调所需 type/enum/properties/items/required，
+        不要求模型先调用 get_tool_schema；完整说明仍可按需读取。
+        默认 lazy=False 全量注入（零回归，当前工具规模推荐）。
+
+        EVO-20260903-20152277: 枚举型参数合法取值在投递层前置暴露。lazy 路径
+        在机器可读 parameters 中保留 enum，不再把同一约束复制进 description（避免
+        双真值与前缀膨胀）；只有 index-only 路径因 parameters 无 properties，才在
+        description 内保留紧凑枚举摘要。
+        """
+        with self._lock:
+            if lazy:
+                defs = [
+                    {
+                        "name": t.name,
+                        "description": self._compact_description(t),
+                        "parameters": self._lazy_parameters(t),
+                    }
+                    for t in self._tools.values()
+                ]
+            else:
+                defs = [
+                    {"name": t.name, "description": t.description, "parameters": t.parameters}
+                    for t in self._tools.values()
+                ]
+        return defs
+
+    @staticmethod
+    def _compact_description(t: Any) -> str:
+        """Shorten stable provider-prefix prose without changing tool capability.
+
+        Built-ins use reviewed compact contracts.  Future/plugin tools remain callable
+        with a bounded description rather than being hidden merely because no curated
+        entry exists.  A tool may provide ``compact_description`` as an explicit
+        override.  Full descriptions are untouched on ``schemas(lazy=False)``.
+        """
+        explicit = getattr(t, "compact_description", None)
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()[:160]
+        name = str(getattr(t, "name", "") or "")
+        known = _COMPACT_TOOL_DESCRIPTIONS.get(name)
+        if known is not None:
+            return known
+        return str(getattr(t, "description", "") or "")[:120]
+
+    @staticmethod
+    def _enum_summary(params: dict, max_chars: int = 240) -> str:
+        """枚举型参数合法取值摘要（EVO-20260903-20152277）.
+
+        扫描 properties 中带 enum 的字段，生成紧凑摘要，如
+        "枚举: trigger(periodic|milestone|anomaly|manual); priority(high|medium|low)"。
+        超长截断（max_chars 上限，尾部加 …），无枚举返回空串。
+        """
+        props = (params or {}).get("properties", {}) or {}
+        parts: list[str] = []
+        for name, spec in props.items():
+            if not isinstance(spec, dict):
+                continue
+            enum_vals = spec.get("enum")
+            if not isinstance(enum_vals, list) or not enum_vals:
+                continue
+            parts.append(f"{name}({'|'.join(str(v) for v in enum_vals)})")
+        if not parts:
+            return ""
+        summary = "枚举: " + "; ".join(parts)
+        if len(summary) > max_chars:
+            summary = summary[:max_chars].rstrip(";：: ") + "…"
+        return summary
+
+    @staticmethod
+    def _lazy_schema_skeleton(spec: dict) -> dict:
+        """递归保留可执行 JSON Schema 结构，删除说明性大文本。
+
+        lazy 的目标是省掉 description/examples 等说明性文本，不是删掉模型首调所需的
+        机器事实。保留 type/enum/properties/items/required，并保留当前已审计 full-schema
+        库实际使用的 minimum/maximum/maxLength；其它 validator 出现时须先做 provider
+        兼容与 prefix 成本审计，再扩本稳定集合。
+        """
+        if not isinstance(spec, dict):
+            return {}
+        out: dict = {}
+        schema_type = spec.get("type")
+        if schema_type:
+            out["type"] = schema_type
+        enum_vals = spec.get("enum")
+        if isinstance(enum_vals, list) and enum_vals:
+            out["enum"] = list(enum_vals)
+        for key in _LAZY_SCHEMA_VALIDATION_KEYS:
+            if key in spec:
+                out[key] = spec[key]
+        props = spec.get("properties")
+        if isinstance(props, dict):
+            out["properties"] = {
+                str(name): ToolRegistry._lazy_schema_skeleton(child)
+                for name, child in props.items()
+                if isinstance(child, dict)
+            }
+        items = spec.get("items")
+        if isinstance(items, dict):
+            out["items"] = ToolRegistry._lazy_schema_skeleton(items)
+        required = spec.get("required")
+        if isinstance(required, list) and required:
+            out["required"] = [str(name) for name in required]
+        return out
+
+    @staticmethod
+    def _lazy_parameters(t) -> dict:
+        """lazy 参数骨架：默认稳定投影；复杂工具可显式提供首调闭合 schema。"""
+        explicit = getattr(t, "lazy_parameters", None)
+        if isinstance(explicit, dict) and explicit:
+            return copy.deepcopy(explicit)
+        params = getattr(t, "parameters", {}) or {}
+        skeleton = ToolRegistry._lazy_schema_skeleton(params)
+        if not skeleton:
+            return {"type": "object", "properties": {}}
+        skeleton.setdefault("type", "object")
+        skeleton.setdefault("properties", {})
+        name = str(getattr(t, "name", "") or "")
+        compact_param_desc = _COMPACT_PARAMETER_DESCRIPTIONS.get(name, {})
+        properties = skeleton.get("properties")
+        if isinstance(properties, dict):
+            for param_name, description in compact_param_desc.items():
+                spec = properties.get(param_name)
+                if isinstance(spec, dict) and description.strip():
+                    spec["description"] = description.strip()
+        return skeleton
+
+    def index_schemas(self, desc_chars: int = 80) -> list[dict]:
+        """分层前缀 PoC（GOAL-20260829-7483e375 T2）索引模式.
+
+        name + desc_chars 截断描述 + required 字段名（并入 description 尾部，
+        parameters 用合法最小 schema {"type":"object"} —— 不用非标准键，
+        规避 provider 参数校验拒绝（ERR-1210 风险））。
+        设计依据: docs/local/DESIGN-PREFIX-LAYERED-20260829.md（样本实验证明
+        lazy 200 字符截断仍占 61%，80 字符两级设计方可达标）。
+        """
+        defs: list[dict] = []
+        with self._lock:
+            for t in self._tools.values():
+                params = getattr(t, "parameters", {}) or {}
+                required = list(params.get("required", []))
+                enum_note = self._enum_summary(params, max_chars=80)
+                # EVO-20260903-20152277: 枚举摘要计入预算（截断让位），保持 ≤ desc_chars 量级
+                budget = desc_chars - (len(enum_note) + 3) if enum_note else desc_chars
+                desc = (t.description or "")[:max(0, budget)]
+                if required:
+                    desc = f"{desc} | 必填: {', '.join(required)}"
+                if enum_note:
+                    desc = f"{desc} | {enum_note}" if desc else enum_note
+                defs.append(
+                    {"name": t.name, "description": desc, "parameters": {"type": "object"}}
+                )
+        return defs
+
+    def add_pre_execute_hook(self, hook: PreExecuteHook) -> None:
+        """注册执行前钩子（如架构自省动作轨迹采集，零侵入）."""
+        self._pre_execute_hooks.append(hook)
+
+    def add_post_result_observer(self, observer: Callable[[str, ToolResult], None]) -> None:
+        """注册回执后观察者（如工具故障台账）。
+
+        observer(tool_name, result)；仅在 execute() 真实执行的两个收口点调用
+        （正常结果 / 执行异常结果），前置拦截（安全阻断/参数校验）不经过。
+        观察者异常 fail-open（warning），绝不改变工具回执本身。
+        """
+        self._post_result_observers.append(observer)
+
+    def _notify_result_observers(self, name: str, result: ToolResult) -> None:
+        for _obs in self._post_result_observers:
+            try:
+                _obs(name, result)
+            except Exception:  # noqa: BLE001 — 观察者 fail-open
+                logger.warning("post_result observer 异常（fail-open）", exc_info=True)
+
+    def add_session_cancel_hook(self, hook: SessionCancelHook) -> None:
+        """注册会话级长期资源取消钩子（如 parent→background child 级联）."""
+        if hook not in self._session_cancel_hooks:
+            self._session_cancel_hooks.append(hook)
+
+    def add_async_obligation_hook(self, hook: AsyncObligationHook) -> None:
+        """注册结构化并发未结算事实源；仅用于正常 final 前生命周期完整性检查。"""
+        if hook not in self._async_obligation_hooks:
+            self._async_obligation_hooks.append(hook)
+
+    def async_obligations(
+        self, session_id: str, *, run_generation: str = ""
+    ) -> list[dict[str, Any]]:
+        """收集指定 session/run 尚未 terminal 的异步子资源；异常源 fail-open。"""
+        target_generation = str(run_generation or current_run_generation.get() or "")
+        out: list[dict[str, Any]] = []
+        for hook in list(self._async_obligation_hooks):
+            try:
+                rows = self._call_session_owner_hook(
+                    hook,
+                    session_id,
+                    run_generation=target_generation,
+                ) or []
+                out.extend(row for row in rows if isinstance(row, dict))
+            except Exception:  # noqa: BLE001 — observability/lifecycle source fail-open
+                logger.warning(
+                    "异步 obligation 查询失败（fail-open）: session=%s hook=%r",
+                    session_id,
+                    hook,
+                    exc_info=True,
+                )
+        return out
+
+    # ── 执行包裹 ──
+    def _preblock(self, call: ToolCall, result: ToolResult) -> ToolResult:
+        """前置拦截入账（EVO-20260924-40755734 A-①）.
+
+        安全硬阻断/提权令牌无效/参数校验/工具隔离等执行前拒绝同样进工具回执
+        故障台账——观察者收口点之前 return 的失败不再绕过 exception_log。
+        """
+        self._notify_result_observers(call.name, result)
+        return result
+
+    def execute(self, call: ToolCall) -> ToolResult:
+        """统一执行包裹: 校验 → 安全 → 执行 → 五态如实构造.
+
+        设计: design.md §2.1.3.3 机制二 —— 工具自身只写业务逻辑，
+        参数/安全/超时/状态构造统一在此完成。
+        """
+        start = time.perf_counter()
+
+        # 0. tool_call_id 有效性（约束 C1，由循环保证；此处兜底）
+        if not call.id:
+            return self._preblock(
+                call,
+                ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[参数错误] 工具调用缺少 tool_call_id，无法绑定执行。请重新声明（程序不会伪造执行）。",
+                    tool_call_id="",
+                    tool_name=call.name,
+                    duration_ms=0.0,
+                ),
+            )
+
+        # I3 opt-in deny at the *physical Registry* (before optional
+        # prechecks/escalation-token consumption). Empty allowlist means
+        # real deny-all, not "hide the model schema and hope".
+        from llm_loop.resources.task_budget_dispatch import active_task_budget
+        from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+
+        budget = active_task_budget()
+        if budget is not None:
+            try:
+                budget.assert_tool_allowed(call.name)
+            except TaskBudgetDeniedError as exc:
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[任务预算硬阻断] {exc.reason}; tool execution not started",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                    ),
+                )
+
+        try:
+            tool = self.get(call.name)
+        except KeyError:
+            return self._result(
+                ToolResultStatus.FAILURE,
+                call,
+                f"[工具不存在] 未注册的工具 '{call.name}'。可用工具: {', '.join(self.names())}",
+                duration_ms=0.0,
+            )
+
+        # 1. 参数最小防御（T38: 仅非 dict 报错；类型偏差交 AI 自主更正 + 工具容错执行）
+        if not isinstance(call.arguments, dict):
+            return self._result(
+                ToolResultStatus.FAILURE,
+                call,
+                f"[参数错误] 参数必须为 JSON 对象，收到 {type(call.arguments).__name__}。正确用法示例: {json.dumps(tool.parameters, ensure_ascii=False)[:400]}",
+                duration_ms=0.0,
+            )
+
+        # R8.7: runtime health + deterministic preflight happen before real execution.
+        # Hidden/quarantined schemas may still be referenced by stale model context; the
+        # execution boundary independently enforces health and returns typed recovery.
+        from llm_loop.tools.recovery import health_quarantine_advice, web_fetch_preflight
+
+        health = runtime_tool_health(call.name)
+        if not health.available:
+            advice = health_quarantine_advice(
+                call.name, health.reason_code, health.preferred_next
+            )
+            return self._preblock(
+                call,
+                ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        f"[工具隔离] {call.name} 当前运行前置不满足 "
+                        f"({health.reason_code})，本次未执行。"
+                    ),
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                    recovery_advice=advice,
+                ),
+            )
+
+        if call.name == "web_fetch":
+            advice = web_fetch_preflight(str(call.arguments.get("url", "") or ""))
+            if advice is not None:
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.FAILURE,
+                        content="[预检路由] 已识别为专用抓取路径，本次未执行通用 web_fetch 网络请求。",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                        recovery_advice=advice,
+                    ),
+                )
+
+        # 1.5 task_quality 路径 A（2026-08-17）: 参数预检（安全检查前，失败拦截不执行）
+        # 缺省 None 零回归；schema 缺失/异常 fail-open 放行。
+        precheck = getattr(self, "precheck_layer", None)
+        if precheck is not None:
+            try:
+                pre_result = precheck.check(call.arguments, tool.parameters)
+                if not pre_result.valid:
+                    return self._result(
+                        ToolResultStatus.FAILURE,
+                        call,
+                        pre_result.to_guidance_feedback(),
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
+            except Exception:  # noqa: BLE001 — 预检异常 fail-open（不阻断主循环）
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "参数预检执行异常（fail-open 放行）: %s", call.name, exc_info=True
+                )
+
+        # EVO-20260813-9ced1f4c: 参数物化边界（瀑布，默认关闭零回归）
+        # 无损 JSON 物化 + 深冻结，防策略检查后被篡改；失败 → 拒绝调用（宁严勿松）
+        pipeline = self._pipeline
+        if pipeline is not None and pipeline.config.enabled and pipeline.config.materialize:
+            from llm_loop.tools.pipeline import materialize_lossless_json
+
+            try:
+                materialized = materialize_lossless_json(call.arguments)
+            except MaterializationError as exc:
+                return self._result(
+                    ToolResultStatus.FAILURE,
+                    call,
+                    f"[参数拒绝] 参数无法无损物化（{exc}），已拒绝调用（物化边界，宁严勿松）",
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
+            # 物化副本替换原参数（roundtrip 独立副本防引用篡改；普通 dict 供执行）
+            call = ToolCall(id=call.id, name=call.name, arguments=materialized)
+
+        # 2. 灾难性安全校验（FR-SAFE-01；仅可破坏工具）
+        #    EVO-20260923 提权闭环: 人工批准的一次性令牌可定向放行本层
+        #    （令牌绑定工具名+命令 SHA256，单次有效；EXEC_MODE 与共享服务
+        #    边界独立于令牌，仍按各自规则裁决）。
+        if self._is_destructive_tool(call.name):
+            blocked = self.safety.guard(call.name, call.arguments)
+            if blocked:
+                token = str(call.arguments.get("escalation_token", "") or "")
+                if token and self._escalation_store is not None:
+                    command = str(call.arguments.get("command", "") or "")
+                    rec, reject_reason = self._escalation_store.consume(token, call.name, command)
+                    if rec is not None:
+                        logger.info(
+                            "[提权放行] %s 请求 %s 人工批准令牌已消耗（单次）",
+                            call.name,
+                            rec.get("id", ""),
+                        )
+                        blocked = None
+                    else:
+                        return self._preblock(
+                            call,
+                            ToolResult(
+                                status=ToolResultStatus.BLOCKED,
+                                content=(
+                                    f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
+                                    f"如仍必要请重新 escalation_request 提交申请。"
+                                ),
+                                tool_call_id=call.id,
+                                tool_name=call.name,
+                                error_detail=f"escalation token rejected: {reject_reason}",
+                                duration_ms=0.0,
+                            ),
+                        )
+            if blocked:
+                escalate_hint = (
+                    " 如确属必要: escalation_request 提交提权申请（web 弹窗人工审批），"
+                    "批准后凭一次性令牌重发同一命令。"
+                    if self._escalation_store is not None
+                    else ""
+                )
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[安全硬阻断] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        error_detail=f"判定依据: {blocked.evidence}",
+                        duration_ms=0.0,
+                    ),
+                )
+
+        # P0-A shared-service lifecycle ownership fence. It is intentionally
+        # independent of EXEC_MODE/approval: generic-shell approval never mints
+        # shared Web/Feishu lifecycle authority.
+        if call.name == "execute_command" and self._managed_service_guard is not None:
+            command = str(call.arguments.get("command", "") or "")
+            decision = self._managed_service_guard.guard(command)
+            if decision is not None and decision.blocked:
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[共享服务控制权拦截] {decision.reason}",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        error_detail=(
+                            "managed_services=" + ",".join(decision.services)
+                            if decision.services
+                            else "managed_service_lifecycle"
+                        ),
+                        duration_ms=0.0,
+                    ),
+                )
+
+        # 2.5 EXEC_MODE 命令分级校验（EVO-20260810-2549e9b6 + 20260814 fail-closed 覆盖所有破坏性工具）
+        if self._is_destructive_tool(call.name):
+            blocked = self._check_exec_mode(call.name, call.arguments)
+            if blocked:
+                # T5a: 人工审批通道——有回调且人工批准 → 放行继续执行；
+                # 无回调 / 拒绝 / 回调异常 → 拦截（fail-closed，灾难性安全硬阻断不可审批）
+                if self._approval_callback is not None:
+                    summary = json.dumps(call.arguments, ensure_ascii=False)
+                    try:
+                        approved = bool(self._approval_callback(call.name, summary))
+                    except Exception:  # noqa: BLE001 — 回调异常 fail-closed 拒绝
+                        approved = False
+                    self._approval_log("approved" if approved else "rejected", call.name, summary)
+                    if approved:
+                        logger.info("人工审批通过: %s", call.name)
+                    else:
+                        return self._preblock(
+                            call,
+                            ToolResult(
+                                status=ToolResultStatus.BLOCKED,
+                                content=f"[权限拦截] {blocked}（人工审批未通过）",
+                                tool_call_id=call.id,
+                                tool_name=call.name,
+                                error_detail="EXEC_MODE 限制，人工审批拒绝该操作",
+                                duration_ms=0.0,
+                            ),
+                        )
+                else:
+                    self._approval_log(
+                        "no_callback", call.name, json.dumps(call.arguments, ensure_ascii=False)
+                    )
+                    return self._preblock(
+                        call,
+                        ToolResult(
+                            status=ToolResultStatus.BLOCKED,
+                            content=f"[权限拦截] {blocked}",
+                            tool_call_id=call.id,
+                            tool_name=call.name,
+                            error_detail="EXEC_MODE 限制，该操作需人工执行",
+                            duration_ms=0.0,
+                        ),
+                    )
+
+        # EVO-20260813-9ced1f4c: 单调守卫（瀑布，默认关闭零回归）
+        # 守卫拒绝 → BLOCKED（与灾难性安全同语义）；守卫只收紧不放松（fail-closed）
+        if (
+            pipeline is not None
+            and pipeline.config.enabled
+            and pipeline.config.guard
+            and pipeline._guard is not None
+        ):
+            reason = pipeline._guard.check(call.name)
+            if reason is not None:
+                return self._result(
+                    ToolResultStatus.BLOCKED,
+                    call,
+                    f"[单调守卫] 工具 '{call.name}' 被拒绝: {reason}",
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
+
+        # 3. 执行前钩子（架构自省动作轨迹）
+        for hook in self._pre_execute_hooks:
+            try:
+                hook(call)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "pre_execute hook 异常（fail-open）", exc_info=True
+                )
+
+        # 4. 真实执行（带超时控制）
+        try:
+            from llm_loop.resources.task_budget_dispatch import checked_tool_dispatch
+
+            with checked_tool_dispatch(call.name, arguments=call.arguments) as budget_outcome:
+                result = self._run_with_timeout(tool, call)
+                budget_outcome["complete"] = result.status != ToolResultStatus.TIMEOUT
+            duration_ms = (time.perf_counter() - start) * 1000
+            result.duration_ms = duration_ms
+            # EVO-20260813-9ced1f4c: post 快照（不可变 result + post 钩子，默认关闭零回归）
+            if pipeline is not None and pipeline.config.enabled and pipeline._post_hooks:
+                snapshot = ImmutableResult(
+                    tool_name=call.name,
+                    status=getattr(result, "status", "unknown"),
+                    content=getattr(result, "content", ""),
+                    duration_ms=duration_ms,
+                    meta={"pipeline": True, "guard_checked": pipeline.config.guard},
+                )
+                # EVO-20260814-39a10097: post hook waterfall（block/replace）
+                snapshot = pipeline.run_post_hooks(snapshot)
+                if snapshot.status == ToolResultStatus.BLOCKED.value:
+                    _blocked = ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=snapshot.content,
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        duration_ms=duration_ms,
+                    )
+                    self._notify_result_observers(call.name, _blocked)
+                    return _blocked
+                if snapshot.content != getattr(result, "content", ""):
+                    result.content = snapshot.content  # replace 回写
+                    with contextlib.suppress(ValueError):
+                        result.status = ToolResultStatus(snapshot.status)  # 未知 status 保持原样
+            self._notify_result_observers(call.name, result)
+            return self._attach_typed_recovery(result)
+        except TaskBudgetDeniedError as exc:
+            return self._preblock(
+                call,
+                ToolResult(
+                    status=ToolResultStatus.BLOCKED,
+                    content=f"[任务预算硬阻断] {exc.reason}; tool not dispatched",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — 如实构造异常结果
+            result = ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=f"[执行异常] {type(exc).__name__}: {exc}",
+                tool_call_id=call.id,
+                tool_name=call.name,
+                error_type=type(exc).__name__,
+                error_detail=traceback.format_exc(limit=5),
+                duration_ms=(time.perf_counter() - start) * 1000,
+            )
+            self._notify_result_observers(call.name, result)
+            return self._attach_typed_recovery(result)
+
+    # EVO-20260810-750e985a: 工具并发控制
+    _EVIDENCE_CONTROL_TOOLS = frozenset(
+        {"read_evidence", "search_evidence", "list_evidence", "search_archive", "read_attachment", "source_synopsis"}
+    )
+
+    _READONLY_TOOLS = frozenset(
+        {
+            "read_file",
+            "read_attachment",
+            "web_fetch",
+            "architecture_status",
+            "search_archive",
+            "search_records",
+            "read_evidence",
+            "search_evidence",
+            "list_evidence",
+        }
+    )
+    _READONLY_MAX_WORKERS = 4
+
+    def execute_many(
+        self,
+        calls: list[ToolCall],
+        *,
+        on_result: Callable[[ToolCall, ToolResult], None] | None = None,
+    ) -> list[ToolResult]:
+        """批量执行工具调用：只读并行 / 修改串行 / 结果按声明顺序回写.
+
+        只读工具（read_file/web_fetch/架构检索类，无副作用）同一轮并行执行以降低延迟；
+        修改类工具（写文件/执行命令/调整策略等，可能有副作用）强制串行，避免并发竞争；
+        所有 toolResult 严格按传入声明顺序回写（保持模型对工具执行时序的理解，约束 C4）。
+        """
+        readonly = [c for c in calls if c.name in self._READONLY_TOOLS]
+        mutating = [c for c in calls if c.name not in self._READONLY_TOOLS]
+        by_id: dict[str, ToolResult] = {}
+
+        if readonly:
+            import concurrent.futures
+            import contextvars
+
+            # P0-5: 逐任务复制当前上下文（含 current_session_id）到池线程——
+            # 只读工具（search_archive/architecture_status 等）在池线程内仍能
+            # 定位本会话，跨会话并发不串台（审计发现 #7 修复）。
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(readonly), self._READONLY_MAX_WORKERS)
+            ) as pool:
+                futures = {
+                    pool.submit(contextvars.copy_context().run, self.execute, c): c
+                    for c in readonly
+                }
+                for fut in concurrent.futures.as_completed(futures):
+                    call = futures[fut]
+                    result = fut.result()
+                    if on_result is not None:
+                        try:
+                            on_result(call, result)
+                        except Exception:  # noqa: BLE001 — WAL/observer failure must not lose result
+                            logger.warning("execute_many on_result hook failed (fail-open)", exc_info=True)
+                    by_id[result.tool_call_id or call.id] = result
+
+        for c in mutating:
+            result = self.execute(c)
+            if on_result is not None:
+                try:
+                    on_result(c, result)
+                except Exception:  # noqa: BLE001 — WAL/observer failure must not lose result
+                    logger.warning("execute_many on_result hook failed (fail-open)", exc_info=True)
+            by_id[result.tool_call_id or c.id] = result
+
+        # 防御性取值（防程序错误向 AI 传导）: 执行路径若未能把结果写入 by_id
+        # （键错位/结果丢失），不得抛 KeyError 中断整轮，而应构造 [程序异常]
+        # 占位结果如实回执，交由 AI 自主决策重试/换路径。
+        return [
+            by_id.get(c.id)
+            or ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[程序异常] 工具执行结果丢失（execute_many 索引未命中 "
+                    f"tool_call_id={c.id}，工具 '{c.name}'）"
+                ),
+                tool_call_id=c.id,
+                tool_name=c.name,
+            )
+            for c in calls
+        ]
+
+    @staticmethod
+    def _attach_typed_recovery(result: ToolResult) -> ToolResult:
+        if result.recovery_advice is not None:
+            return result
+        try:
+            from llm_loop.tools.recovery import classify_tool_recovery
+
+            result.recovery_advice = classify_tool_recovery(result)
+        except Exception:  # noqa: BLE001 — guidance failure must not block tool truth
+            logger.warning("typed tool recovery classification failed (fail-open)", exc_info=True)
+        return result
+
+    def _result(
+        self, status: ToolResultStatus, call: ToolCall, content: str, *, duration_ms: float
+    ) -> ToolResult:
+        result = ToolResult(
+            status=status,
+            content=content,
+            tool_call_id=call.id,
+            tool_name=call.name,
+            duration_ms=duration_ms,
+        )
+        # Rule-first: production default LFL_TOOL_GUIDANCE=off means historical
+        # experience has no model authority.  Do not even query/mutate the experience
+        # store in that mode; explicit on/shadow remain compatibility/experiment paths.
+        if (
+            self.tool_guidance_mode != "off"
+            and status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT)
+        ):
+            result.guidance_extra = self._inject_experience_guidance(result)
+        result = self._attach_typed_recovery(result)
+        # EVO-20260924-40755734 A-①: _result 承载的前置拦截（工具不存在/参数校验/
+        # 预检失败/物化失败/单调守卫）同样入故障台账（观察者收口点之前的失败不再绕过）。
+        self._notify_result_observers(call.name, result)
+        return result
+
+    def _inject_experience_guidance(self, result: ToolResult) -> str:
+        """按错误关键词检索经验库，命中 procedure 条目则提取【已验解法】段.
+
+        fail-open: 无经验库/检索异常/未命中 → 返回空串（零回归，默认模板照常）。
+        """
+        store = self._memory_store
+        if store is None or not result.content:
+            return ""
+        # 错误关键词: tool_name + error_detail/content 分词（2-40 字符有效词）
+        _sep_re = re.compile(r"[\\s,;:：，。；、/|()\"'\[\]]+")
+        kws: list[str] = []
+        if result.tool_name:
+            kws.append(result.tool_name)
+        detail = result.error_detail or result.content or ""
+        for tok in re.split(_sep_re, detail):
+            tok = tok.strip()
+            if 2 <= len(tok) <= 40:
+                kws.append(tok)
+        if len(kws) < 2:
+            return ""
+        try:
+            hits = store.search(kws, top_k=3)
+        except Exception:  # noqa: BLE001 — 经验检索失败降级默认模板
+            return ""
+
+        for h in hits:
+            content = str(getattr(h, "content", "") or "")
+            if getattr(h, "type", "") == "procedure" and "已验解法" in content:
+                solution = self._extract_solution_section(content)
+                if solution:
+                    # SkillZip ReZip 借鉴（执行感知反馈环）:
+                    # 1) 记录本次注入使用时间（执行感知，供后续失效判定）
+                    try:
+                        h.guidance_used_at = system_local_now().isoformat()
+                        # 2) 若该经验已累计风险（注入后同场景仍失败）→ 附带风险提示，让 AI 谨慎参考
+                        risk = int(getattr(h, "guidance_risk", 0) or 0)
+                        # 参考边界 + 时效标注（后缀式, 保留 [经验参考] 标准前缀）:
+                        # 让 AI 把经验当"历史参考"而非"当前推荐", 需要时自行用工具核验
+                        # （RULE-AI-12/07: 判断归 AI, 程序只给事实）
+                        created = str(getattr(h, "created_at", "") or "")[:10]
+                        suffix = (
+                            f"（经验创建于 {created}，历史记录仅参考，当前是否适用请用工具核验）"
+                            if created
+                            else "（历史记录仅参考，当前是否适用请用工具核验）"
+                        )
+                        if risk >= 2:
+                            return (
+                                f"[经验参考] {solution}{suffix}\n"
+                                f"[经验风险] 该经验已被注入 {risk} 次但同场景仍失败，"
+                                f"建议谨慎参考或换用其他方法（执行感知反馈环标记）"
+                            )
+                        return f"[经验参考] {solution}{suffix}"
+                    except Exception:  # noqa: BLE001 — 记录失败不影响注入
+                        return f"[经验参考] {solution}"
+        # 2026-08-18 失败→经验沉淀闭环（B）: 失败且经验库无命中 → 提示 AI 主动沉淀
+        # （对齐 RULE-AI-05 记忆沉淀；仅提示不强制，决策归 AI。零回归：仅失败路径追加提示）
+        try:
+            if store is not None and not hits:
+                return (
+                    "[经验沉淀提示] 本次工具失败无经验库命中。若你定位了根因/解法，"
+                    "可用 save_experience 沉淀（跨会话复用，避免同类失败重复踩坑）。"
+                )
+        except Exception:  # noqa: BLE001 — 提示失败零影响
+            pass
+        return ""
+
+    @staticmethod
+    def _extract_solution_section(content: str) -> str:
+        """提取 procedure 条目的【已验解法】段（到 实证/反例/触发标签 前的正文）."""
+        marker = "已验解法"
+        idx = content.find(marker)
+        if idx < 0:
+            return ""
+        start = idx + len(marker)
+        # 跳过冒号与空白
+        while start < len(content) and content[start] in ":： \n\t":
+            start += 1
+        end = len(content)
+        for stop in ("\n实证", "\n反例", "\n触发标签"):
+            pos = content.find(stop, start)
+            if pos != -1:
+                end = min(end, pos)
+        return content[start:end].strip()
+
+    # 2026-08-15 截断信号强化（用户需求）：行动指引统一文案——摘要/截断回执均附。
+    # 程序只发信号不替 AI 摘要（RULE-AI-00）：提炼与纳入最终总结由 AI 完成。
+    # EVO-20260820-be72efb1 建议②（截断高亮）: 截断/摘要回执附诚实性高亮——缺失部分
+    # 未核验, 禁止基于摘要推断"已完成/成功", 需 search_archive 取回原文核验后再声明。
+    _DISTILL_GUIDANCE = (
+        "行动指引：中部/被省略内容不在当前上下文——继续推理前，请先把可见要点与"
+        "待核实缺口提炼记录（写入你的推理链或 [[memory]] 记忆块），最终总结时请纳入"
+        "这些要点与缺口说明。\n"
+        "⚠️ 截断高亮：本回执已截断/摘要化，缺失部分数据未核验——请勿基于摘要断言"
+        "“已完成/成功”，需用 search_archive 取回原文核验后再如实声明（RULE-AI-12）。"
+    )
+
+    def _distill_guidance_or_empty(self) -> str:
+        """R8.24-C C-D2: _DISTILL_GUIDANCE 受 LFL_TOOL_GUIDANCE 三态控制.
+
+        off=enforce 态模型可见 chars=0（元任务建议退出）；shadow=照旧投影 + 观测事件。
+        """
+        guidance = ToolRegistry._DISTILL_GUIDANCE
+        mode = self.tool_guidance_mode
+        if mode == "off":
+            return ""
+        if mode == "shadow":
+            _emit_guidance_shadow_event(
+                tool="", status="", source="distill_guidance", chars=len(guidance)
+            )
+        return guidance
+
+    def _is_destructive_tool(self, name: str) -> bool:
+        """是否具备破坏能力的工具（需过灾难性安全校验）."""
+        return name in {"execute_command", "delete_file", "write_file", "edit_file", "append_file"}
+
+    def _check_exec_mode(self, name: str, args: dict) -> str:
+        """EXEC_MODE 校验（EVO-20260814 fail-closed 增强）.
+
+        blocked 全禁 / readonly 只读 / allowlist 白名单 / 空 = 不启用。
+        fail-closed 语义: 显式启用分级时，未匹配任何放行规则 → 拒绝（不静默放行）。
+        覆盖所有破坏性工具（execute_command + write_file/edit_file/delete_file/append_file），
+        不限于 execute_command（修 readonly/blocked 下写文件工具绕过分级的 fail-open 缺口）。
+
+        Returns:
+            空串 = 放行；非空串 = 拦截原因。
+        """
+        if not self.exec_mode:
+            return ""  # 未启用分级（默认兼容，零回归）
+
+        if self.exec_mode == "blocked":
+            return "当前 EXEC_MODE=blocked，AI 不可执行变更类操作（shell/写文件，需人工执行）"
+
+        if name == "execute_command":
+            command = str(args.get("command", "") or "").strip()
+            if not command:
+                return "缺少命令"
+            if self.exec_mode == "readonly":
+                from llm_loop.tools.safety import is_readonly_command
+
+                if not is_readonly_command(command):
+                    return (
+                        "当前 EXEC_MODE=readonly，仅放行只读命令（该命令涉及写/变更，需人工执行）"
+                    )
+                return ""
+            if self.exec_mode == "allowlist":
+                for prefix in self.exec_allowlist:
+                    if command.startswith(prefix):
+                        return ""
+                return "命令不在白名单（EXEC_ALLOWLIST），需人工执行"
+        else:
+            # 写文件类工具（edit_file/write_file/delete_file/append_file）
+            if self.exec_mode == "readonly":
+                return f"当前 EXEC_MODE=readonly，禁止写文件类操作（{name}），需人工执行"
+            if self.exec_mode == "allowlist":
+                if name in self.exec_allowlist:
+                    return ""
+                return f"工具 {name} 不在白名单（EXEC_ALLOWLIST），需人工执行"
+        return "未知 EXEC_MODE"
+
+    def _run_with_timeout(self, tool: Any, call: ToolCall) -> ToolResult:
+        """真实执行 + 超时控制 + 输出截断标注."""
+        # ERC R9: resolve probeable source requests from verified-current covering Evidence
+        # before physical I/O. This is state/coverage resolution, not repeat suppression.
+        if self._evidence_enforcer is not None and self._evidence_source_resolver is not None:
+            try:
+                reused = self._evidence_source_resolver.resolve(call)
+            except Exception:  # noqa: BLE001 - resolution failure must not hide source truth
+                logger.warning(
+                    "Evidence source resolver 异常（fail-open 执行 source）", exc_info=True
+                )
+                reused = None
+            if reused is not None:
+                return reused
+        # execute_command 可传 shell=True 场景由工具自身处理；
+        # 此处统一超时控制（工具 execute 同步阻塞，用线程 + join 兜底）
+        import concurrent.futures
+        import contextvars
+
+        # P0-5: 超时包裹的内层线程同样传播上下文（current_session_id 等）——
+        # 工具 execute 本体在内层线程执行，缺传播则 contextvar 读到空串
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        capture_enabled = (
+            self._evidence_shadow_hook is not None or self._evidence_enforcer is not None
+        )
+        shadow_token = current_evidence_shadow_enabled.set(capture_enabled)
+        enforce_token = current_evidence_enforce_enabled.set(self._evidence_enforcer is not None)
+        from llm_loop.core.tool_execution_journal import (
+            activate_effect_binding_for_call,
+            revoke_effect_binding_for_call,
+        )
+
+        try:
+            with activate_effect_binding_for_call(call.id):
+                tool_context = contextvars.copy_context()
+        finally:
+            current_evidence_enforce_enabled.reset(enforce_token)
+            current_evidence_shadow_enabled.reset(shadow_token)
+        future = pool.submit(tool_context.run, tool.execute, **call.arguments)
+        active_session_id = current_session_id.get()
+        self._track_active(active_session_id, future, tool)
+        # Compound/orchestration tools can own a stronger internal bound (for example
+        # spawn_subagent has bounded rounds and each nested LLM/tool call has its own
+        # timeout). Applying the atomic-tool 60s wrapper to them is factually unsafe:
+        # ThreadPoolExecutor cannot kill a running worker, so the parent can return
+        # TIMEOUT while the compound tool continues producing side effects. A tool may
+        # explicitly set ``registry_timeout_s = None`` to opt out of this outer timeout.
+        _registry_timeout = getattr(tool, "registry_timeout_s", self.tool_timeout_s)
+        timeout_s = None if _registry_timeout is None else float(_registry_timeout)
+        try:
+            result = future.result() if timeout_s is None else future.result(timeout=timeout_s)
+        except concurrent.futures.TimeoutError:
+            # P3: revoke the shared effect capability before TIMEOUT becomes visible.
+            # If the worker is already inside the tiny physical commit window this waits
+            # for that window to close, so no mutation can occur *after* timeout return.
+            revoke_effect_binding_for_call(call.id)
+            # P1-5(审计发现 #11): 超时即放弃等待，让"超时"按时返回——
+            # ① future.cancel()（运行中任务取消无效，尽力而为）;
+            # ② 调用工具暴露的 terminate() 钩子（execute_command 整树杀子进程，
+            #    其余工具无钩子则跳过）;
+            # ③ shutdown(wait=False) 立即返回——原 with 块退出会 shutdown(wait=True)
+            #    卡到工具自行结束，超时名存实亡（耗时 = 工具时长）。
+            # 残余如实标注: 工作线程非 daemon 无法强杀，无钩子工具残余线程最多存活
+            # 到工具自身超时/自然结束（期间解释器退出会被其阻塞等待）。
+            future.cancel()
+            terminate_session = getattr(tool, "terminate_session", None)
+            terminate = getattr(tool, "terminate", None)
+            if active_session_id and callable(terminate_session):
+                with contextlib.suppress(Exception):
+                    terminate_session(active_session_id)
+            elif callable(terminate):
+                with contextlib.suppress(Exception):
+                    terminate()
+            pool.shutdown(wait=False, cancel_futures=True)
+            return ToolResult(
+                status=ToolResultStatus.TIMEOUT,
+                content=f"[执行超时] 工具 '{call.name}' 超过 {timeout_s:.0f}s 未完成",
+                tool_call_id=call.id,
+                tool_name=call.name,
+                partial_output=None,
+            )
+        except BaseException:
+            # 工具异常路径：线程已结束，防御性 wait=False 防意外挂起
+            future.cancel()
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            self._untrack_active(active_session_id, future)
+        # 正常完成：线程已结束，等待回收（不泄漏）
+        pool.shutdown(wait=True)
+        if not isinstance(result, ToolResult):
+            # 工具直接返回文本/原始值时包装为 success（如实），继续走统一输出分层
+            result = ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=str(result),
+                tool_call_id=call.id,
+                tool_name=call.name,
+            )
+        # Recovery control-plane tools read already-captured Evidence.  Re-capturing their own
+        # bounded outputs would create recursive ledger noise ("read Evidence -> new Evidence").
+        if self._evidence_enforcer is not None and call.name in self._EVIDENCE_CONTROL_TOOLS:
+            if result.tool_call_id != call.id:
+                result.tool_call_id = call.id
+            if not result.tool_name:
+                result.tool_name = call.name
+            return result
+
+        # ERC Phase3 enforce: tool returned an unprojected observation.  Durable capture must
+        # happen before any model-visible projection; the enforcer also emits the recovery capsule.
+        if self._evidence_enforcer is not None:
+            result = self._evidence_enforcer.apply(
+                call,
+                result,
+                budget_chars=self._evidence_projection_budget(call.name),
+                temperature="hot",
+            )
+            if result.tool_call_id != call.id:
+                result.tool_call_id = call.id
+            if not result.tool_name:
+                result.tool_name = call.name
+            if call.name == "read_file":
+                result.source_resolution_mode = "source_execution"
+                result.source_execution_performed = True
+            return result
+
+        # ERC Phase2 shadow dual-write: observe the pre-Registry-projection result.
+        # Any capture failure is recoverability degradation only; it must never rewrite action truth.
+        if self._evidence_shadow_hook is not None:
+            try:
+                self._evidence_shadow_hook(call, result)
+            except Exception:  # noqa: BLE001 - shadow capture is deliberately fail-open
+                logger.warning(
+                    "evidence shadow capture failed (action result preserved)", exc_info=True
+                )
+
+        # EVO-20260917-abdb3247 P0: 知识水合观测（成功执行时登记；fail-open，不改投影）
+        if (getattr(result, "tool_name", "") or call.name) in _HYDRATION_TOOLS:
+            _observe_knowledge_hydration(call, result)
+
+        # Rule-first tool-result projection: exact bytes stay model-visible until the
+        # real per-result hard cap. Crossing that cap triggers exact archival when
+        # available, then truthful truncation; there is no soft/local summary policy.
+        if len(result.content) > self.max_output_chars:
+            full = result.content
+            archived = self._archive_oversize_output(call, full)
+            recovery = (
+                "完整内容已另存至压缩档案，可用 search_archive 检索找回"
+                if archived
+                else "完整内容未成功归档；被截断部分当前没有 archive 恢复路径"
+            )
+            result.content = (
+                full[: self.max_output_chars]
+                + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}）]；"
+                + recovery
+                + "…\n"
+                + self._distill_guidance_or_empty()
+            )
+        # 约束 C1 绑定: 工具返回的 tool_call_id 必须等于声明 id（空/不一致都纠正为
+        # call.id，防 execute_many 索引键错位导致 KeyError 中断整轮）
+        if result.tool_call_id != call.id:
+            result.tool_call_id = call.id
+        if not result.tool_name:
+            result.tool_name = call.name
+        return result
+
+
+_FAILURE_GUIDANCE = {
+    "failure": "可选项（判断归你）[RULE-AI-02/07]: 先按本次 status/error 检查参数/路径/网络与当前工具 schema/参数；需要完整 schema 用 get_tool_schema。当前事实不足或复用已验路径时，再按需 search_records(kind=experience/memory)/search_docs；禁止逐个试错探测。",
+    "error": "可选项（判断归你）[RULE-AI-02/07]: 先按本次 error 与当前工具 schema/参数检查；需要完整 schema 用 get_tool_schema。当前事实不足或复用已验路径时，再按需 search_records(kind=experience/memory)/search_docs。",
+    "timeout": "可选项（判断归你）: 先结合本次 timeout 与当前工具/网络事实判断；可有界重试（如增大超时）或换更轻量方案。",
+}
+
+
+def tool_result_to_message(
+    result: ToolResult,
+    *,
+    failure_guidance_enabled: bool = True,
+    # 阶段4-A: 经验注入独立开关（None=跟随主开关；子代理用 True 可仅注入经验不注入默认模板）
+    experience_guidance_enabled: bool | None = None,
+    tool_guidance_mode: str = "off",
+) -> Message:
+    """ToolResult → tool 消息（如实承载状态，T21: content 前置状态标注）.
+
+    M41: 失败回执追加引导段（错误类型 + 建议换用工具/重试，衔接 RULE-AI-02/07），
+    BLOCKED 不加引导（灾难性拦截语义，不做任何诱导）。五态语义零改动。
+    约束 C2: content 非空；AI 视角: AI 无需推断执行状态。
+    R8.24-C C-D2: 三建议源（render()/_FAILURE_GUIDANCE/guidance_extra）受
+    LFL_TOOL_GUIDANCE 三态控制（on=现状/shadow=照旧投影+观测事件/off=chars=0）；
+    typed recovery 分类与 metadata["tool_recovery"] 全路径保留（B 包熔断计数
+    的 failure_class 输入面不受开关影响）。
+    """
+    status_label = result.status.value if result.status else "unknown"
+    content = (
+        f"[状态: {status_label}] {result.content}"
+        if result.content.strip()
+        else f"[{result.tool_name} 执行{status_label}]（无输出）"
+    )
+    typed_recovery = result.recovery_advice
+    _advisory = ""
+    if failure_guidance_enabled and typed_recovery is not None:
+        render = getattr(typed_recovery, "render", None)
+        if callable(render):
+            _advisory = str(render())
+    elif failure_guidance_enabled and result.status and result.status.value in _FAILURE_GUIDANCE:
+        _advisory = _FAILURE_GUIDANCE[result.status.value]
+    # EVO-d78b270c: 经验驱动注入（独立于默认模板；开启引导时带出，未命中为空串零回归）
+    # 阶段4-A: experience_guidance_enabled 独立开关（None 跟随主开关；子代理可仅开经验）
+    exp_enabled = (
+        failure_guidance_enabled
+        if experience_guidance_enabled is None
+        else experience_guidance_enabled
+    )
+    _experience = ""
+    if exp_enabled and result.guidance_extra and typed_recovery is None:
+        _experience = result.guidance_extra
+    # R8.24-C C-1.1: 程序建议层三态投影（off=enforce: 建议文本不进模型可见正文）
+    _mode = _tool_guidance_mode(tool_guidance_mode)
+    if _mode != "off":
+        if _mode == "shadow":
+            if _advisory:
+                _failure_class = ""
+                if typed_recovery is not None:
+                    _fc = getattr(typed_recovery, "failure_class", "")
+                    _failure_class = str(_fc or "")
+                _emit_guidance_shadow_event(
+                    tool=result.tool_name or "",
+                    status=status_label,
+                    source="typed_recovery_or_failure_guidance",
+                    chars=len(_advisory),
+                    failure_class=_failure_class,
+                )
+            if _experience:
+                _emit_guidance_shadow_event(
+                    tool=result.tool_name or "",
+                    status=status_label,
+                    source="guidance_extra",
+                    chars=len(_experience),
+                )
+        if _advisory:
+            content += "\n" + _advisory
+            _ledger_receipt_pointer(
+                tool=result.tool_name or "",
+                status=status_label,
+                source="typed_recovery" if typed_recovery is not None else "failure_guidance",
+                chars=len(_advisory),
+            )
+        if _experience:
+            content += "\n" + _experience
+            _ledger_receipt_pointer(
+                tool=result.tool_name or "",
+                status=status_label,
+                source="guidance_extra",
+                chars=len(_experience),
+            )
+    metadata: dict = {}
+    # Preserve the same recoverability/provenance facts as ToolResult.to_message().
+    # ToolCycle uses this helper, so dropping them here made durable Evidence
+    # invisible to later provider-view lifecycle projection.  These remain
+    # metadata-only and do not enter the provider wire by themselves.
+    if result.recoverability_status is not RecoverabilityStatus.NOT_CONFIGURED:
+        metadata["recoverability_status"] = result.recoverability_status.value
+        if result.evidence_ref:
+            metadata["evidence_ref"] = result.evidence_ref
+        if result.evidence_representation is not None:
+            metadata["evidence_representation"] = result.evidence_representation
+        if result.evidence_projection_complete is not None:
+            metadata["evidence_projection_complete"] = result.evidence_projection_complete
+    if result.source_resolution_mode is not None:
+        metadata["source_resolution_mode"] = result.source_resolution_mode
+    if result.source_execution_performed is not None:
+        metadata["source_execution_performed"] = result.source_execution_performed
+    if result.evidence_source_label is not None:
+        metadata["evidence_source_label"] = result.evidence_source_label
+    if result.evidence_coverage_label is not None:
+        metadata["evidence_coverage_label"] = result.evidence_coverage_label
+    if result.evidence_origin_facts is not None:
+        metadata["evidence_origin_facts"] = dict(result.evidence_origin_facts)
+    if result.short_circuit_kind is not None:
+        metadata["short_circuit_kind"] = result.short_circuit_kind
+    if result.result_fingerprint is not None:
+        metadata["result_fingerprint"] = result.result_fingerprint
+    if typed_recovery is not None:
+        to_dict = getattr(typed_recovery, "to_dict", None)
+        if callable(to_dict):
+            metadata["tool_recovery"] = to_dict()
+    if result.verification_receipts:
+        metadata["verification_receipts"] = list(result.verification_receipts)
+    if result.subagent_settlement is not None:
+        metadata["subagent_settlement"] = dict(result.subagent_settlement)
+    if result.artifact_facts:
+        metadata["artifact_facts"] = [dict(fact) for fact in result.artifact_facts]
+    if result.capability_requirements:
+        # Internal producer fact. G6-v2 may attach turn-scoped boundary metadata in
+        # ToolCycleService; Message.metadata itself never goes on the provider wire.
+        metadata["capability_requirements"] = list(result.capability_requirements)
+    return Message(
+        role="tool",
+        content=content,
+        source=MessageSource.TOOL,
+        tool_call_id=result.tool_call_id,
+        status=result.status,
+        tool_name=result.tool_name,
+        error_detail=result.error_detail,
+        metadata=metadata,
+    )
+
+
+class GetToolSchemaTool:
+    """按需读取工具完整 Schema（EVO-d5db88d9 懒加载配套工具）.
+
+    lazy 模式（TOOL_SCHEMA_LAZY=1）下 LLM 只见精简索引，需要调用某工具时
+    先调用本工具获取完整 JSON Schema（参数格式/必填/说明），再发起真实调用。
+    """
+
+    name = "get_tool_schema"
+    description = (
+        "获取/发现工具 Schema。精确名返回完整定义；tool_name='*' 列目录；'?关键词' 搜索目录。"
+        "何时用: 当前 CORE 工具不足或不确定参数时按需发现，再加载精确 Schema。"
+        "何时不用: 已确知可见工具参数时直接调用。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "tool_name": {"type": "string", "description": "要查询的工具名（如 read_file）"},
+        },
+        "required": ["tool_name"],
+    }
+
+    def __init__(self, registry: ToolRegistry) -> None:
+        self._registry = registry
+
+    def execute(self, **kwargs) -> Any:
+        from llm_loop.core.message import ToolResult, ToolResultStatus
+
+        name = str(kwargs.get("tool_name", "")).strip()
+        if not name:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] 缺少必填参数 'tool_name'（要查询的工具名）",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if name == "*" or name.lower() == "list" or name.startswith("?"):
+            query = name[1:].strip().lower() if name.startswith("?") else ""
+
+            rows: list[str] = []
+            scope = current_tool_discovery_scope.get()
+            names = self._registry.names()
+            if scope is not None:
+                names = [tool_name for tool_name in names if tool_name in scope]
+            for tool_name in names:
+                tool_obj = self._registry.get(tool_name)
+                desc = str(getattr(tool_obj, "description", "") or "").replace("\n", " ")
+                hay = f"{tool_name} {desc}".lower()
+                if query and query not in hay:
+                    continue
+                health = runtime_tool_health(tool_name)
+                rows.append(f"- {tool_name} [{health.state}] — {desc[:100]}")
+            if not rows:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[工具目录] 未找到匹配 '{query}' 的工具。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            title = "[工具目录]" if not query else f"[工具搜索] query={query}"
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=title + "\n" + "\n".join(rows),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+        scope = current_tool_discovery_scope.get()
+        if scope is not None and name not in scope:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    f"[当前执行域不可用] 工具 '{name}' 不在当前可调用集合。"
+                    f"当前集合: {', '.join(sorted(scope))}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+        try:
+            tool = self._registry.get(name)
+        except KeyError:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[工具不存在] 未找到工具 '{name}'。可用工具: {', '.join(self._registry.names())}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        import json
+
+        schema = json.dumps(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        health = runtime_tool_health(name)
+        health_note = ""
+        if not health.available:
+            health_note = (
+                f"[runtime_health=quarantined reason={health.reason_code}]\n"
+                f"[preferred_next={','.join(health.preferred_next) or 'none'}]\n"
+            )
+
+        # P1-B: exact lookup is schema discovery only. A healthy registered tool is
+        # already callable on the stable provider surface; discovery never grants a
+        # promotion or permission. Runtime-unhealthy state is reported as a fact above.
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=health_note + f"工具 '{name}' 完整 Schema:\n{schema}",
+            tool_call_id="",
+            tool_name=self.name,
+        )

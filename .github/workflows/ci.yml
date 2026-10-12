@@ -1,0 +1,82 @@
+# T7(2026-08-14): CI 三件套门禁 + nightly 真实评测
+#
+# - push/PR: pytest（非 real_llm）+ ruff/pyright 历史债 ratchet 门禁（2026-10-08 与本地 ci_gate 统一口径；零触网零 LLM 消费）
+# - 每日 20:00 UTC（北京 04:00）: real_llm 冒烟 + 评测集真实运行
+# - key 策略（2026-08-14 用户决策 A）: 默认不配置 secrets——nightly 无 key 时自动跳过
+#   （不误报）；评测集在本地运行（`python scripts/run_eval.py`，读项目 .env，key 不上传）。
+#   如需 CI 自动化评测，自行配置 DEEPSEEK_API_KEY secret（注意配额消耗与平台信任权衡）。
+# - workflow_dispatch 可手动触发 nightly（含真实 LLM 消费，注意配额）
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+jobs:
+  security-scan:
+    name: 安全扫描（敏感/私密/错误文件拦截）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 全树安全扫描（data/.env/密钥/绝对路径/大文件）
+        run: bash scripts/git_security_scan.sh --tree
+
+  test:
+    name: 门禁（pytest + ruff + pyright）
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the peer-scorecard contract tests pin exact subject
+      # commits (e.g. 832b4dfaa) that are ancestors of PR heads but absent
+      # from a depth-1 checkout. Same shallow-clone ambiguity already
+      # documented in architecture-review.yml.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+      - name: 安装依赖（uv.lock 冻结环境，与本地 ci_gate 同一面）
+        run: uv sync --frozen --extra dev
+      - name: ruff
+        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool ruff
+      - name: pyright
+        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool pyright
+      - name: pytest（非真实 LLM）
+        run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm"
+
+  nightly-real:
+    name: nightly 真实 LLM 冒烟 + 评测集
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: 无 key 时跳过（不误报）
+        id: keycheck
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ] && [ -z "$LLM_API_KEY" ]; then
+            echo "未配置 LLM API key（仓库 secrets），跳过 nightly 真实评测"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: real_llm 冒烟
+        if: steps.keycheck.outputs.skip != 'true'
+        run: python -m pytest tests/integration/test_real_llm_smoke.py tests/integration/test_real_llm_exec_smoke.py -m real_llm -q
+      - name: 评测集真实运行（指标落盘）
+        if: steps.keycheck.outputs.skip != 'true'
+        run: python scripts/run_eval.py --output docs/metrics/eval_ci

@@ -1,0 +1,14 @@
+{
+ "external_state_base": "/tmp/lfl-sb-v3-natural-v2-e347fe3fa",
+ "files": {
+  "PREREG.md": "a6bca0019775aec7f1e70580c77498d5498e734bbb14699d69dd74a6f8af0235",
+  "plan.json": "87a139717c51e2fa4e0317f19df991a0300da49e96552a354a4e9cd6d8d32a86",
+  "protocol.py": "62a4f41509a10fd42694fc4356c61708b5059d2f36f97474e0f82b9ef5453ef8",
+  "run_next.py": "1d2b37b840e5a4dfe3aaf1c9464b08282fd0213e584cc544d7a27af26c36fc92",
+  "worker.py": "3fde242722f145edaeb35ba310bf2d47a5579098c0463d25018a388337ee5489"
+ },
+ "formal_cells": 44,
+ "knowledge_health_fixture": "PASS",
+ "provider_calls_at_freeze": 0,
+ "schema": "subject-binding-v3-natural-v2-freeze/v1"
+}

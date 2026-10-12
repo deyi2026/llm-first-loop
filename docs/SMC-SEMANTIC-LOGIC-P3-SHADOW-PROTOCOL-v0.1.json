@@ -1,0 +1,163 @@
+{
+  "schema": "smc.semantic_logic_p3_shadow_protocol.v0.1",
+  "status": "frozen_shadow_only",
+  "baseline_main": "ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+  "fresh_replay_anchor": "dc344a1669cfa1954019e6677bceba7701c54db3",
+  "rulepack_id": "smc.browser.p2-core.v0.1",
+  "rulepack_hash": "5809347c62aa8a8b1856eff1bab0f11b9d98a57b0aedaef103e8ee2470f776a3",
+  "authority": "shadow_only",
+  "production_consumed": false,
+  "provider_visible_change": false,
+  "mutation_authority_change": false,
+  "hidden_recapture_for_shadow": false,
+  "comparison_contract": {
+    "same_observation_only": true,
+    "mismatch_is_red": true,
+    "semantic_normalization_forbidden": true,
+    "opaque_identity_exclusion_only": true,
+    "required_shadow_result_fields": [
+      "fixture_id",
+      "gate_id",
+      "baseline_ref",
+      "oracle_result_hash",
+      "shadow_result_hash",
+      "equivalent",
+      "mismatch_paths",
+      "derivation_refs"
+    ]
+  },
+  "promotion_metrics": {
+    "false_closure_max": 0,
+    "silent_rebind_max": 0,
+    "unknown_to_false_max": 0,
+    "proof_coverage_min": 1.0
+  },
+  "required_categories": [
+    "reorder",
+    "replacement",
+    "duplicate_identity",
+    "navigation",
+    "frame_generation",
+    "dom_ax_conflict",
+    "virtualized_list",
+    "partial_coverage",
+    "stale_ref",
+    "version_mismatch",
+    "non_idempotent_mutation",
+    "receipt_revision"
+  ],
+  "cases": [
+    {
+      "fixture_id": "P3-grounding-exact-compile",
+      "gate_id": "P3-GROUNDING-01",
+      "category": "grounding",
+      "oracle_ref": "tests/unit/test_smc_browser_semantic_execute_v01.py::test_compiler_derives_object_action_from_exact_grounding_ref_only",
+      "shadow_rules": ["browser.grounding.exact-binding", "browser.action.fixed-contract"],
+      "allowed_opaque_fields": ["action.action_id", "action.scope_ref", "action.target_id", "action.expected_version"]
+    },
+    {
+      "fixture_id": "P3-reorder-object-continuity",
+      "gate_id": "P3-VERSION-REORDER",
+      "category": "reorder",
+      "oracle_ref": "tests/unit/test_smc_browser_version_pressure_v01.py::test_object_scope_ignores_unrelated_same_document_change_but_pressure_is_visible",
+      "shadow_rules": ["core.version.assess-precondition"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-replacement-no-rebind",
+      "gate_id": "P3-VERSION-REPLACEMENT",
+      "category": "replacement",
+      "oracle_ref": "tests/unit/test_smc_browser_action_v01.py::test_same_name_replacement_never_rebinds",
+      "shadow_rules": ["core.version.assess-precondition"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-duplicate-identity-no-fusion",
+      "gate_id": "P3-IDENTITY-AMBIGUOUS",
+      "category": "duplicate_identity",
+      "oracle_ref": "tests/unit/test_smc_browser_perception_v01.py::test_dom_ax_identity_mapping_ambiguity_never_force_fuses",
+      "shadow_rules": ["core.identity.ambiguity-no-fusion"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-navigation-document-generation",
+      "gate_id": "P3-VERSION-NAVIGATION",
+      "category": "navigation",
+      "oracle_ref": "tests/unit/test_smc_browser_version_pressure_v01.py::test_document_generation_change_is_stale_not_same_name_rebind",
+      "shadow_rules": ["core.version.assess-precondition"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-frame-generation-no-continuity",
+      "gate_id": "P3-SCOPE-FRAME-GENERATION",
+      "category": "frame_generation",
+      "oracle_ref": "tests/unit/test_smc_browser_perception_v01.py::test_document_and_frame_generation_changes_invalidate_old_identity",
+      "shadow_rules": ["core.scope.descendant-closure", "core.scope.target-relation"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-dom-ax-conflict-unresolved",
+      "gate_id": "P3-CONFLICT-DOM-AX",
+      "category": "dom_ax_conflict",
+      "oracle_ref": "tests/unit/test_smc_browser_perception_v01.py::test_dom_ax_field_conflict_becomes_null_with_source_grounding",
+      "shadow_rules": ["core.conflict.canonicalize-unresolved"],
+      "allowed_opaque_fields": ["conflict.source_observations.grounding_ref"]
+    },
+    {
+      "fixture_id": "P3-partial-coverage-absence",
+      "gate_id": "P3-PREDICATE-PARTIAL-ABSENCE",
+      "category": "partial_coverage",
+      "oracle_ref": "tests/unit/test_smc_browser_predicate_wait_v01.py::test_missing_stable_object_can_prove_absence_only_with_complete_coverage",
+      "shadow_rules": ["core.coverage.derive-status", "browser.predicate.bind-selected-condition", "browser.predicate.evaluate"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-virtualized-lower-bound-count",
+      "gate_id": "P3-PREDICATE-LOWER-BOUND",
+      "category": "virtualized_list",
+      "oracle_ref": "tests/unit/test_smc_browser_predicate_wait_v01.py::test_object_count_uses_lower_bound_logic_under_incomplete_coverage",
+      "shadow_rules": ["core.coverage.derive-status", "browser.predicate.bind-selected-condition", "browser.predicate.evaluate"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-stale-grounding-expired",
+      "gate_id": "P3-GROUNDING-EXPIRED",
+      "category": "stale_ref",
+      "oracle_ref": "tests/unit/test_smc_browser_perception_v01.py::test_grounding_is_integrity_bound_session_scoped_and_expires",
+      "shadow_rules": ["browser.grounding.exact-binding"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-version-target-changed",
+      "gate_id": "P3-VERSION-MISMATCH",
+      "category": "version_mismatch",
+      "oracle_ref": "tests/unit/test_smc_browser_version_pressure_v01.py::test_object_scope_detects_target_change_same_generation",
+      "shadow_rules": ["core.version.assess-precondition"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-duplicate-action-single-dispatch",
+      "gate_id": "P3-RECEIPT-DUPLICATE",
+      "category": "non_idempotent_mutation",
+      "oracle_ref": "tests/unit/test_smc_browser_action_v01.py::test_duplicate_action_id_never_dispatches_twice",
+      "shadow_rules": ["core.receipt.validate-sequence", "core.receipt.validate-dispatch-invariants"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-receipt-running-terminal",
+      "gate_id": "P3-RECEIPT-REVISION",
+      "category": "receipt_revision",
+      "oracle_ref": "tests/unit/test_smc_browser_action_v01.py::test_fresh_exact_guard_dispatches_once_and_appends_running_terminal_receipts",
+      "shadow_rules": ["core.receipt.validate-sequence", "core.receipt.validate-dispatch-invariants"],
+      "allowed_opaque_fields": []
+    },
+    {
+      "fixture_id": "P3-transport-ambiguity-no-retry",
+      "gate_id": "P3-RECEIPT-AMBIGUITY",
+      "category": "non_idempotent_mutation",
+      "oracle_ref": "tests/unit/test_smc_browser_action_v01.py::test_transport_ambiguity_after_partial_effect_reports_observed_side_effect_without_replay",
+      "shadow_rules": ["core.receipt.validate-sequence", "core.receipt.validate-dispatch-invariants"],
+      "allowed_opaque_fields": []
+    }
+  ]
+}

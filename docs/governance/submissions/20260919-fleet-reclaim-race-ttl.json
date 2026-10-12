@@ -1,0 +1,91 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-reclaim-race-ttl",
+  "summary": "Round-2 fleet knife, measured: fuse reclaim into one atomic critical section (supersede + mint successor) so racing reclaims can never leave a phantom second active lease; add CAS crash recovery via expected_generation (exactly one winner, losers get LeaseConflictError); refuse acquire on a live active lease; declare optional lease ttl_seconds with renew_lease and the only time-licensed takeover path reclaim_if_expired (unexpired/expiry-free leases refuse with LeaseActiveError so live takeover stays an explicit operator reclaim); fuse project/workspace find-or-create against coordinator-boot TOCTOU.",
+  "components": [
+    {
+      "component_id": "fleet-store-race-ttl-control",
+      "paths": [
+        "src/llm_loop/fleet/store.py",
+        "src/llm_loop/fleet/coordinator.py",
+        "src/llm_loop/fleet/__init__.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "durable fleet registry lease lifecycle (disk-only authority under the existing cross-process fcntl lock)",
+      "disposition": "ADMIT as the round-2 tranche of the already-declared fleet control machinery. The program owns only mechanical race/expiry facts: lease generations, atomic supersede, CAS, declared expiries. Whether to take over a live unexpired lease stays a model/operator decision (refused mechanically).",
+      "evidence": [
+        "Round-1 reclaim was two lock steps (supersede, then a separate acquire): two racing reclaims could interleave so the second acquire minted a fresh active generation on top of an active lease, leaving two active leases in durable state.",
+        "acquire_lease accepted a live active current without superseding it - a silent takeover hole.",
+        "WorkerLease had no expiry fact at all; a crashed worker's workspace could only be recovered at the same run boundary by begin_run, never by another owner on a time basis.",
+        "ProjectCoordinator boot used get->create TOCTOU for the project record: two concurrent coordinators crashed the loser with KeyError (observed as a deadlocked test barrier, reproduced deterministically)."
+      ],
+      "verification_level": "RED-first race/expiry suite (real filesystem, real elapsed time, thread hammer via separate flock descriptors, cross-process subprocess hammer), adjacent fleet gates, Ruff, Pyright, full non-real_llm pytest, A.5 self-check",
+      "model_evidence_veto_recovery_exit": "Every refusal is a typed mechanical fact (LeaseConflictError / LeaseActiveError with remaining-seconds or no-expiry reason). An operator can still take over any live lease through the explicit reclaim path; reclaim_if_expired only licenses takeover by declared expiry, never by semantic judgment. Coordinator recover() exposes expires_at and expired as facts for model/operator judgment.",
+      "rollback_route": "Revert the single implementation commit. expires_at is an additive optional field: old readers ignore it, new readers tolerate its absence, and no persistent data migration is required.",
+      "declaration_id": "fleet-store-race-ttl-control"
+    },
+    {
+      "component_id": "fleet-race-ttl-tests",
+      "paths": [
+        "tests/unit/test_fleet_reclaim_race_and_ttl.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "round-2 deterministic race/expiry regression suite",
+      "disposition": "ADMIT as deterministic tests only; they own no runtime authority and encode mechanical invariants (single active, CAS single-winner, exactly-once fenced settlement, real-time expiry).",
+      "evidence": [
+        "Thread hammer (8 threads x 25 rounds through separate FleetStore file descriptors) and a 6-process subprocess hammer both assert exactly one active lease and monotonic generations.",
+        "TTL tests use real sleeps and real wall-clock expiry, no patched clock.",
+        "The coordinator-boot TOCTOU was first observed as this suite's begin_run race test deadlocking; the fix moved find-or-create under one lock."
+      ],
+      "verification_level": "Focused suite plus adjacent fleet gates and full non-real_llm pytest",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical behavior and can be revised independently of production state.",
+      "rollback_route": "Revert together with the implementation if the tranche is abandoned."
+    },
+    {
+      "component_id": "fleet-reclaim-race-ttl-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-reclaim-race-ttl.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 remains a mechanical presence/coverage gate.",
+      "evidence": [
+        "Manifest partitions the exact base-to-candidate changed-path set and declares the single control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before any publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and promotion.",
+      "rollback_route": "Revert together with the tranche."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "fleet-store-race-ttl-control",
+      "g1": {
+        "necessity": "Round-1 lease lifecycle could violate its own single-authority invariant under real concurrency: a two-phase reclaim left phantom active generations, acquire silently stacked on a live lease, coordinator boot raced on project creation, and no expiry fact existed so an over-due lease could never be recycled mechanically - each hole forced either wrong durable state or a semantic guess by whoever recovered next."
+      },
+      "g2": {
+        "authority_owner": "the existing durable fleet registry: state.json re-read under the existing cross-process fcntl lock in FleetStore",
+        "relationship": "reuse",
+        "non_duplication": "No new store, controller, daemon, or clock authority. Reclaim/renew/reclaim_if_expired reuse the same lock, the same state file, the same lease generation fencing, and the same exactly-once settlement; ttl_seconds is a declared field on the existing WorkerLease, and expiry is computed from the existing module clock."
+      },
+      "g3": {
+        "model_evidence": [
+          "thread hammer through separate flock descriptors: exactly one active lease per workspace, monotonic generations",
+          "cross-process subprocess hammer: same invariants under real fcntl serialization",
+          "CAS recovery race: one winner lease, seven LeaseConflictError losers, loser settlement fenced",
+          "real-time TTL facts: unexpired refusal with remaining seconds, expiry pass, renewal extension, fenced renewal, expiry-free refusal"
+        ],
+        "recovery_or_reason": "Every refusal carries its mechanical reason. Live-lease takeover without a time fact remains available only through the explicit reclaim path (operator decision), and recover() exposes expires_at/expired so a model or human can judge before acting."
+      },
+      "g4": {
+        "rollback": "Revert the single implementation commit; expires_at is optional and additive, old and new state files stay mutually readable, no data migration.",
+        "verification": [
+          "RED-first: suite failed against round-1 store (missing typed errors, phantom-active hammer, boot TOCTOU deadlock)",
+          "GREEN: full race/expiry suite passes on the fused implementation",
+          "adjacent fleet gates (reclaim gate, project coordinator) stay green",
+          "Ruff, Pyright, full non-real_llm pytest, local A.5 self-gate before push"
+        ]
+      }
+    }
+  ]
+}

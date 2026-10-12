@@ -1,0 +1,44 @@
+[
+  {
+    "arm": "peer_capability_quality_projection",
+    "index": 1,
+    "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "repeat": 1,
+    "task_id": "click_commit"
+  },
+  {
+    "arm": "peer_capability_quality_projection",
+    "index": 2,
+    "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+    "repeat": 1,
+    "task_id": "fill_submit"
+  },
+  {
+    "arm": "peer_capability_quality_projection",
+    "index": 3,
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 1,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "peer_capability_quality_projection",
+    "index": 4,
+    "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+    "repeat": 2,
+    "task_id": "delayed_wait"
+  },
+  {
+    "arm": "peer_capability_quality_projection",
+    "index": 5,
+    "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+    "repeat": 2,
+    "task_id": "fill_submit"
+  },
+  {
+    "arm": "peer_capability_quality_projection",
+    "index": 6,
+    "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+    "repeat": 2,
+    "task_id": "click_commit"
+  }
+]

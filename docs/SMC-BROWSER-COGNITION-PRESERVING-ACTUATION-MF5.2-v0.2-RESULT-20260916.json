@@ -1,0 +1,43 @@
+{
+  "artifacts": {
+    "execution-manifest.json": "50de33c632497a834d6b05d88ed7ac29f437b7e1370b024bb48e6ca1ed9e084a",
+    "plan.json": "77eb31a252fd551ebcd6774cd4bd9f4c19a36f8e44cd8e665e0f4f53931f5418",
+    "qualification-gate.json": "cd2441a257b9a67dbc401d72632ca9bb49cfa4ee01d92715ee8253bd8d0d066f",
+    "results.jsonl": "8078186441b8a29cab92485e05fdb9d7cdcd62c05157c3efc15f060a39cfc1f5"
+  },
+  "experiment_git_head": "bfac4cdede492ad5c0f8d28680eaa6759a0cd884",
+  "failure_taxonomy": {
+    "short_target_fields_mismatch": 16,
+    "steps_count_out_of_bounds": 1,
+    "wait_until_not_supported": 1
+  },
+  "first_operation_contract_valid": 5,
+  "gate_pass": false,
+  "get_tool_schema_calls": 2,
+  "implementation_commit": "ab99aac3d6287a485f4d45646287242bc6a6ab07",
+  "multi_action_calls": 0,
+  "next": "MF-5.3 read-only perceive+actuate / single-action-first / scope-wait architecture audit",
+  "operation_calls": 53,
+  "operation_tool_errors": 0,
+  "operation_tool_failures": 18,
+  "per_task_pass": {
+    "click_commit": 1,
+    "delayed_wait": 0,
+    "fill_submit": 2
+  },
+  "protocol_repair_episodes": 20,
+  "read_evidence_calls": 17,
+  "safety": {
+    "automatic_retry": 0,
+    "fallback": 0,
+    "hidden_atomic_calls": 0,
+    "task_completion_violations": 0,
+    "undeclared_boundary_continuations": 0
+  },
+  "schema": "smc.browser_cognition_preserving_actuation_mf52.v0.2.result_summary",
+  "single_action_calls": 52,
+  "status": "complete_not_qualified",
+  "target_not_found_halts": 14,
+  "task_pass": 3,
+  "task_required": 6
+}

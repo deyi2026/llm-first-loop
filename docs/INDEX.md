@@ -1,0 +1,25 @@
+# docs 文档导航（INDEX）
+
+> **公开面原则（2026-08-14 确立）**：**非必要文档不公开**——公开仓库只保留
+> 运行必需 + 面向使用者的文档；开发过程文档（specs/阶段设计/评估/验收报告/
+> 经验记录/内部变更日志）一律本地保留，不随开源仓库分发。
+
+## 文档清单
+
+| 文档 | 说明 |
+|:---|:---|
+| `ai_rules.md` | **AI 自主规则唯一真相源（SoT）**，内嵌于 system prompt，`test_ai_rules_sync` 防漂移——运行必需 |
+| `ANALYSIS-20260827-evidence-canary-rollout.md` | Evidence 生产启用 Canary 方案（批次2 设计稿）：C0 shadow→C1 镜像 enforce→C2 主区默认化，R12 前提核验+6 观察指标+硬回退条件 |
+| `ROADMAP-B-20260814.md` | 开源框架化路线图（面向使用者的项目方向说明） |
+| `api.md` | 公共 API 参考（装配/引擎/会话/工具/Web/CLI/扩展点） |
+| `configuration.md` | 配置参考（分组配置表 + 常见坑速查） |
+| `feishu_render_matrix.md` | 飞书渲染支持矩阵（markdown 特性支持范围 + 降级预案） |
+| `development_methodology.md` | AI 驱动开发方法论（SoT 先行/如实记录/零回归/评测纪律） |
+| `event_sourcing.md` | 事件溯源设计（单一真相源 + 迁移/回滚指南） |
+| `eval_scenarios.md` | 评测集贡献指南（场景 schema + 判定注册 + 30 分钟新增路径 + PR 验收） |
+| `README.md` | 项目入口（功能/快速开始/CLI/配置） |
+
+## 更新约定
+
+- 新增/移除 docs 文档时同步更新本索引。
+- 新增文档先自问：**对使用者是否必要？** 是开发过程记录 → 留本地，不提交。

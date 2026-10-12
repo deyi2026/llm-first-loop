@@ -1,0 +1,220 @@
+"""AI 自主修正类工具注册（T2，design §2.1.2-5.2）.
+
+承载: adjust_strategy / retry_tool / refresh_config
+边界校验（白名单/范围/非破坏性）+ 审计落盘，FR-SAFE-01 不可绕过。
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.introspection.registry_host import RegistryHost
+
+_ADJUST_STRATEGY_TOOL_DEF: dict[str, Any] = {
+    "name": "adjust_strategy",
+    "description": "调整后续循环策略参数（白名单: max_iterations/timeout_s/history_budget/memory_top_k/extract_interval_msgs/retrieve_semantic_top_k/precheck_enabled/fix_loop_enabled/reasoning_effort）。reasoning_effort 为主循环推理档位（字符串枚举 low/medium/high/max，EVO-20260923-5342bf75）：机械阶段可自降档、复杂任务可升档；未调整时沿用 run 启动档。何时用: 发现循环参数不合理时（异常率偏高/停滞/预算占用逼近上限，可先经 architecture_status 自查）；任务复杂度变化需匹配推理开销时调 reasoning_effort。何时不用: 需要重试失败工具用 retry_tool；需重载配置用 refresh_config；切换模型/会话模型用 switch_model。失败对策: 参数非法/超出全局硬上限（500）会如实返回失败原因，请按引导更正参数。不可修改安全边界配置。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "strategy": {"type": "object", "description": "要调整的参数 dict"}
+        },
+        "required": ["strategy"],
+    },
+}
+
+_RETRY_TOOL_DEF: dict[str, Any] = {
+    "name": "retry_tool",
+    "description": "对指定工具按提供参数重新执行（重新走完整执行包裹，含安全校验与超时）。何时用: 工具上次失败、且失败属瞬态（网络超时/上游 5xx）或参数已更正时重试。何时不用: 连续同参失败应停止重试、换路径（见停滞自主调整）；需调整策略参数用 adjust_strategy。失败对策: 重试仍失败会如实返回失败回执，请基于失败信息调整参数或换路径继续尝试一次；仍失败再如实说明。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "tool_name": {"type": "string"},
+            "arguments": {"type": "object"},
+        },
+        "required": ["tool_name", "arguments"],
+    },
+}
+
+_REFRESH_CONFIG_TOOL_DEF: dict[str, Any] = {
+    "name": "refresh_config",
+    "description": "重载程序自身配置。providers.json / MODEL_PROVIDERS 模型目录会原子切换，新的 override/fallback/独立 summary client 可即时使用新 registry；默认路由的共享 client 与其启动 provider/model contract（含 api_key/base_url/model/协议/context/max_tokens/reasoning/tool-choice 元数据）为避免在途请求观察半新半旧状态，不做原地热改，相关变化需重启进程生效。其余 Settings 也按启动装配冻结；运行参数（max_iterations/timeout_s/history_budget 白名单）用 adjust_strategy 即时调整。何时用: 模型目录变更后需要让非默认动态路由使用新 registry，或检查配置差异。何时不用: 期望仅靠本工具热换默认路由 client 时不要误判为已生效。失败对策: 重载失败会如实返回原因并保持旧 registry/client。",
+    "parameters": {"type": "object", "properties": {}},
+}
+
+
+def tool_defs() -> list[dict]:
+    return [_ADJUST_STRATEGY_TOOL_DEF, _RETRY_TOOL_DEF, _REFRESH_CONFIG_TOOL_DEF]
+
+
+def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
+    if name == "adjust_strategy":
+        return _run_adjust_strategy(args, host)
+    if name == "retry_tool":
+        return _run_retry(args, host)
+    if name == "refresh_config":
+        return _run_refresh(host)
+    return None
+
+
+def _run_adjust_strategy(args: dict, host: RegistryHost) -> ToolResult:
+    proposed = args.get("strategy")
+    if not isinstance(proposed, dict) or not proposed:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 'strategy' 必须为非空 JSON 对象，如 {\"max_iterations\": 30}",
+            tool_call_id="",
+            tool_name="adjust_strategy",
+        )
+    whitelist = host.ctx.strategy_whitelist
+    for key, val in proposed.items():
+        spec = whitelist.get(key)
+        if spec is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数越界] 参数 '{key}' 不在白名单内（可选: {', '.join(whitelist)}）。注意安全边界配置不可修改（FR-SAFE-01）。",
+                tool_call_id="",
+                tool_name="adjust_strategy",
+            )
+        if spec["type"] == "integer" and not (isinstance(val, int) and not isinstance(val, bool)):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] '{key}' 需要整数，收到 {type(val).__name__}",
+                tool_call_id="",
+                tool_name="adjust_strategy",
+            )
+        if spec["type"] == "number" and not isinstance(val, (int, float)):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] '{key}' 需要数值，收到 {type(val).__name__}",
+                tool_call_id="",
+                tool_name="adjust_strategy",
+            )
+        if spec["type"] == "string":
+            # EVO-20260923-5342bf75: 字符串枚举档位（如 reasoning_effort），跳过数值范围检查
+            enum_vals = spec.get("enum") or []
+            if not (isinstance(val, str) and val in enum_vals):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[参数错误] '{key}' 需为枚举值 {'/'.join(enum_vals)}，收到 {val!r}",
+                    tool_call_id="",
+                    tool_name="adjust_strategy",
+                )
+            continue
+        if not (spec["min"] <= val <= spec["max"]):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数越界] '{key}' 需在 [{spec['min']}, {spec['max']}] 范围内，收到 {val}",
+                tool_call_id="",
+                tool_name="adjust_strategy",
+            )
+    runtime = host.ctx.runtime
+    if runtime is not None and not runtime.can_adjust():
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[参数调整频次超限] 事实: 本轮回合参数调整已达上限（"
+                f"{runtime.adjust_count()} 次，PARAM-03）。"
+                "原因: 防止参数抖动影响循环稳定。"
+                "建议: 下轮再调，或收敛为一次综合调整；不阻断你继续其他决策。"
+            ),
+            tool_call_id="",
+            tool_name="adjust_strategy",
+        )
+    before = dict(host.ctx.strategy)
+    host.ctx.strategy.update(proposed)
+    if runtime is not None:
+        runtime.record_adjust_multi(proposed)
+    host.audit("adjust_strategy", proposed, "success")
+    diffs = ", ".join(f"{k}: {before.get(k, '<默认>')} → {v}" for k, v in proposed.items())
+    chain = _effective_chain_lines(proposed, whitelist)
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=(
+            f"[已生效] 循环策略已更新: {{{diffs}}}（生效范围: 当前 run 起全部后续轮次）。\n"
+            f"生效链:\n{chain}"
+            f"当前生效值: {json.dumps(host.current_params(), ensure_ascii=False)}"
+        ),
+        tool_call_id="",
+        tool_name="adjust_strategy",
+    )
+
+
+def _effective_chain_lines(proposed: dict, whitelist: dict) -> str:
+    """生效链回执（EVO-20260918-8417246d, 2026-09-18 人工批准执行）.
+
+    按 key 输出机械可判定的压制层与档位（绿=申请值生效 / 红=被白名单硬上限
+    压制；history_budget 因 provider 层仍可能在引擎侧收敛而恒标黄），使模型
+    能感知"值由哪层决定"，不再把回执数值当成无上下文的裸数。
+    """
+    lines: list[str] = []
+    for key, val in proposed.items():
+        spec = whitelist.get(key) or {}
+        if spec.get("type") == "string":
+            # EVO-20260923-5342bf75: 枚举档位无数值上限概念，申请值即生效（绿）
+            lines.append(f"- {key}: {val}（绿｜申请档位生效，枚举 {'/'.join(spec.get('enum') or [])}）")
+            continue
+        max_cap = spec.get("max")
+        if max_cap is not None and val >= max_cap:
+            tier, note = "红", f"被白名单硬上限压制（上限 {max_cap}，已打满）"
+        elif key == "history_budget":
+            tier = "黄"
+            note = (
+                "申请值生效（白名单上限 "
+                f"{max_cap}）；provider 层（模型窗口−输出预留）仍可能在引擎侧进一步收敛"
+                "——实际预算以守卫/回执 budget= 为准"
+            )
+        else:
+            tier, note = "绿", f"申请值生效（白名单上限 {max_cap}）"
+        lines.append(f"- {key}: {val}（{tier}｜{note}）")
+    return "\n".join(lines) + "\n"
+
+
+def _run_retry(args: dict, host: RegistryHost) -> ToolResult:
+    tool_name = str(args.get("tool_name", "")).strip()
+    arguments = args.get("arguments") or {}
+    if not tool_name:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 缺少 'tool_name'（要重试的工具名）",
+            tool_call_id="",
+            tool_name="retry_tool",
+        )
+    if not isinstance(arguments, dict):
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 'arguments' 必须为 JSON 对象",
+            tool_call_id="",
+            tool_name="retry_tool",
+        )
+    retry_executor = host.ctx.retry_executor
+    if retry_executor is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[重试不可用] 重试执行器未装配（主程序未注入 retry_executor）",
+            tool_call_id="",
+            tool_name="retry_tool",
+        )
+    result = retry_executor(tool_name, arguments)
+    host.audit("retry_tool", {"tool_name": tool_name, "arguments": arguments}, result.status.value)
+    return result
+
+
+def _run_refresh(host: RegistryHost) -> ToolResult:
+    refresh_executor = host.ctx.refresh_executor
+    if refresh_executor is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[重载不可用] 配置重载执行器未装配",
+            tool_call_id="",
+            tool_name="refresh_config",
+        )
+    detail = refresh_executor()
+    host.audit("refresh_config", {}, "success")
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=f"[已重载] {detail}",
+        tool_call_id="",
+        tool_name="refresh_config",
+    )

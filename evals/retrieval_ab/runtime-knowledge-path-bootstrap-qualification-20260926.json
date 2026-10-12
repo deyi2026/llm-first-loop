@@ -1,0 +1,95 @@
+{
+  "schema": "runtime-knowledge-path-bootstrap-qualification/v1",
+  "result": "PASS_ISOLATED",
+  "base_head": "22ff47ce6f56acf103066ce65d6baf73ec549406",
+  "production_generation": 117,
+  "root_cause": "runtime manifest hydrates Knowledge path keys from runtime-root .env, while load_settings process bootstrap previously did not; linked-worktree engine therefore inferred canonical mutable paths and quarantined on legacy divergence although manifest reported healthy.",
+  "pre_apply_path_env": {
+    "EXPERIENCES_DIR": null,
+    "METHODS_DIR": null,
+    "METHOD_SEED_DIR": null,
+    "SKILLS_DIR": null,
+    "DOCS_DIR": null
+  },
+  "post_apply_path_env": {
+    "EXPERIENCES_DIR": null,
+    "METHODS_DIR": null,
+    "METHOD_SEED_DIR": null,
+    "SKILLS_DIR": null,
+    "DOCS_DIR": null
+  },
+  "engine_binding": {
+    "code_root": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926",
+    "git_common_root": "<runtime_root>",
+    "data_dir": "<runtime_root>/data",
+    "data_dir_source": "git_common_root",
+    "data_dir_auto_rebind": true,
+    "explicit_sidecar_state": false,
+    "state_root": "<runtime_root>",
+    "state_root_source": "data_dir_parent",
+    "experiences_dir": "<runtime_root>/experiences",
+    "experiences_source": "explicit_env",
+    "methods_dir": "<runtime_root>/data/methods",
+    "methods_source": "explicit_env",
+    "method_seed_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/methods",
+    "skills_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/skills",
+    "docs_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/docs",
+    "legacy_experiences_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/experiences",
+    "legacy_methods_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/data/methods",
+    "auto_rebind_applied": true
+  },
+  "engine_health": {
+    "status": "healthy",
+    "writes_enabled": true,
+    "reasons": []
+  },
+  "manifest_binding": {
+    "code_root": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926",
+    "git_common_root": "<runtime_root>",
+    "data_dir": "<runtime_root>/data",
+    "data_dir_source": "supplied",
+    "data_dir_auto_rebind": false,
+    "explicit_sidecar_state": false,
+    "state_root": "<runtime_root>",
+    "state_root_source": "data_dir_parent",
+    "experiences_dir": "<runtime_root>/experiences",
+    "experiences_source": "explicit_env",
+    "methods_dir": "<runtime_root>/data/methods",
+    "methods_source": "explicit_env",
+    "method_seed_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/methods",
+    "skills_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/skills",
+    "docs_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/docs",
+    "legacy_experiences_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/experiences",
+    "legacy_methods_dir": "<runtime_root>/.worktrees/runtime-knowledge-path-bootstrap-20260926/data/methods",
+    "auto_rebind_applied": false
+  },
+  "manifest_health": {
+    "status": "healthy",
+    "writes_enabled": true,
+    "reasons": []
+  },
+  "parity": {
+    "experience_path_equal": true,
+    "method_path_equal": true,
+    "experience_source_equal": true,
+    "method_source_equal": true,
+    "healthy_writable_both": true
+  },
+  "behavior_contract": {
+    "process_env_none_reads_runtime_dotenv_paths": true,
+    "explicit_mapping_remains_hermetic": true,
+    "method_store_guard_not_bypassed": true,
+    "knowledge_health_rules_unchanged": true
+  },
+  "tests": {
+    "focused_bootstrap": 2,
+    "broad_adjacent": 118,
+    "ruff": "PASS",
+    "pyright_errors": 0,
+    "git_diff_check": "PASS",
+    "runtime_env_access_gate": "PASS"
+  },
+  "production_changed": false,
+  "reflection_job_state_before_deploy": "failed attempt=4 candidate_save_failed; no automatic retry pending",
+  "memory_job_state": "saved attempt=4; recovered and closed"
+}

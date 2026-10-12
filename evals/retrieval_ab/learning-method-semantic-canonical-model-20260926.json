@@ -1,0 +1,157 @@
+{
+  "summary": {
+    "off": {
+      "rows": 3,
+      "target_dup": 2,
+      "candidate_rows": 0,
+      "build_s": 0.057,
+      "p50_s": 17.13,
+      "max_s": 21.56,
+      "embedding_delta_calls": 0,
+      "embedding_delta_texts": 0,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      }
+    },
+    "on": {
+      "rows": 3,
+      "target_dup": 1,
+      "candidate_rows": 0,
+      "build_s": 0.17,
+      "p50_s": 17.31,
+      "max_s": 18.54,
+      "embedding_delta_calls": 4,
+      "embedding_delta_texts": 10,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      }
+    }
+  },
+  "rows": [
+    {
+      "arm": "off",
+      "semantic_on": false,
+      "id": "root-cause",
+      "target": "method:method-root-cause",
+      "target_dup": false,
+      "reason": "none",
+      "candidate": false,
+      "elapsed_s": 21.56,
+      "method_discovery_diagnostics": {
+        "semantic_requested": false,
+        "semantic_effective": false
+      }
+    },
+    {
+      "arm": "off",
+      "semantic_on": false,
+      "id": "repo-api",
+      "target": "method:method-repo-api-discovery",
+      "target_dup": true,
+      "reason": "dup:method-repo-api-discovery",
+      "candidate": false,
+      "elapsed_s": 10.09,
+      "method_discovery_diagnostics": {
+        "semantic_requested": false,
+        "semantic_effective": false
+      }
+    },
+    {
+      "arm": "off",
+      "semantic_on": false,
+      "id": "ab",
+      "target": "method:method-ab-experiment",
+      "target_dup": true,
+      "reason": "dup:method-ab-experiment — 本集问题（agent 策略 A/B 中避免 cache/session/模型驻留污染）与该方法触发条件完全一致，答案内容（锁唯一自变量、隔离跨 run 状态、先证机制再评收益）也与其机制重合，属换措辞重复；且 tool trace 为空、无可见绕路摩擦，不存在新的可判别事实可提炼。",
+      "candidate": false,
+      "elapsed_s": 17.13,
+      "method_discovery_diagnostics": {
+        "semantic_requested": false,
+        "semantic_effective": false
+      }
+    },
+    {
+      "arm": "on",
+      "semantic_on": true,
+      "id": "root-cause",
+      "target": "method:method-root-cause",
+      "target_dup": false,
+      "reason": "none",
+      "candidate": false,
+      "elapsed_s": 14.92,
+      "method_discovery_diagnostics": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "scope": "method",
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 76.491,
+        "query_embedding_ms": 16.857,
+        "semantic_hit_count": 7,
+        "keyword_hit_count": 5,
+        "fused_hit_count": 6,
+        "candidate_missing_count": 0,
+        "canonical_hydration_failures": 0,
+        "prewarm_scheduled": false,
+        "related_method_count": 6
+      }
+    },
+    {
+      "arm": "on",
+      "semantic_on": true,
+      "id": "repo-api",
+      "target": "method:method-repo-api-discovery",
+      "target_dup": false,
+      "reason": "none",
+      "candidate": false,
+      "elapsed_s": 18.54,
+      "method_discovery_diagnostics": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "scope": "method",
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 119.934,
+        "query_embedding_ms": 50.498,
+        "semantic_hit_count": 7,
+        "keyword_hit_count": 5,
+        "fused_hit_count": 6,
+        "candidate_missing_count": 0,
+        "canonical_hydration_failures": 0,
+        "prewarm_scheduled": false,
+        "related_method_count": 6
+      }
+    },
+    {
+      "arm": "on",
+      "semantic_on": true,
+      "id": "ab",
+      "target": "method:method-ab-experiment",
+      "target_dup": true,
+      "reason": "dup:method-ab-experiment — 本集用户问题（agent 策略 A/B 中隔离 cache/session/模型驻留污染）与最终答案（冻结唯一自变量、隔离跨 run 状态、先证机制触发再评任务收益）与现有 method-ab-experiment 卡的触发条件和机制完全相同，仅是措辞复述；且本集无可观察的绕路/搜索空间扩散痕迹可供蒸馏新判别器。",
+      "candidate": false,
+      "elapsed_s": 17.31,
+      "method_discovery_diagnostics": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "scope": "method",
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 113.239,
+        "query_embedding_ms": 49.782,
+        "semantic_hit_count": 7,
+        "keyword_hit_count": 7,
+        "fused_hit_count": 6,
+        "candidate_missing_count": 0,
+        "canonical_hydration_failures": 0,
+        "prewarm_scheduled": false,
+        "related_method_count": 6
+      }
+    }
+  ]
+}

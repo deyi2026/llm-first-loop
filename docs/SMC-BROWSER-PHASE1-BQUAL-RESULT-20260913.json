@@ -1,0 +1,51 @@
+{
+  "schema": "smc.browser_phase1_bqual_result.v0.1",
+  "date": "2026-09-13",
+  "baseline": "2a44814bb3878817fbef2f25cf4741ec61e32588",
+  "implementation_commit": "a1a659e375dc8436eb71c30cb182f9651693a8ae",
+  "status": "QUALIFIED",
+  "gates": {
+    "B0": "PASS", "B1": "PASS", "B2": "PASS", "B3": "PASS", "B4": "PASS",
+    "B5": "PASS", "B6": "PASS", "B7": "PASS", "B8": "PASS", "B9": "PASS",
+    "B10": "PASS", "B11": "PASS", "B12": "PASS", "B13": "PASS", "B14": "PASS"
+  },
+  "r3": {
+    "phase1_required_count": 30,
+    "deterministic_pass_count": 30,
+    "covered": [
+      "R3-01", "R3-02", "R3-03", "R3-04", "R3-05", "R3-06", "R3-07", "R3-08",
+      "R3-09", "R3-10", "R3-11", "R3-12", "R3-13", "R3-15", "R3-16", "R3-17",
+      "R3-18", "R3-19", "R3-20", "R3-21", "R3-22", "R3-23", "R3-24", "R3-25",
+      "R3-26", "R3-27", "R3-28", "R3-30", "R3-31", "R3-32"
+    ],
+    "deferred": ["R3-14", "R3-29"]
+  },
+  "contract_corrections": {
+    "scroll_target_kinds": ["semantic_object"],
+    "root_scroll": "future_scope_or_resource_version_contract_required",
+    "strict_snapshot_semantics_preserved": true
+  },
+  "live": {
+    "navigation": {"result": "PASS", "sha256": "81168752968887f26dbb741033bf97d6fcbea25730a79d3d8da4e09f9edf0c80"},
+    "semantic_diff": {"result": "PASS", "sha256": "b0af595c5c392de494b243127f9ca60ae57624fd9f19a2dd04370680dd475915"},
+    "predicate_wait": {"result": "PASS", "sha256": "41b7ca20d9bbc938b4c0254660fddc16a15c78aac56da1f7eff90bae01732828"},
+    "version_pressure": {"result": "PASS", "sha256": "51268ff3b5b9e31a92a167425a18746e01310749fa4b3b0f3c19dd2613d2d2ae"},
+    "action_receipt": {"behavior": "18/18", "safety": "8/8", "sha256": "4946123962727323fb1c04ee537f390d179eb26e874a7f463e95adfd0c321808"}
+  },
+  "repo": {
+    "expanded_adjacency": "186 PASS",
+    "whole_tree_security_files": 1668,
+    "ruff": "PASS",
+    "env_pin": "545/0",
+    "pyright": "0 errors / 0 warnings / 0 informations",
+    "tier0": "PASS",
+    "full_xdist": "PASS",
+    "arch_guard": "PASS",
+    "ci_gate_exit": 0
+  },
+  "non_claims": [
+    "root_level_scroll", "event_driven_wait", "wait_cancellation", "exhaustive_boundary_detection",
+    "native_permission_ui", "vision_only_actionability", "automatic_recovery_or_retry",
+    "locator_or_target_fallback", "task_completion_judgement", "model_ab_quality"
+  ]
+}

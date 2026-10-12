@@ -1,0 +1,853 @@
+"""cache_guard 规则引擎（7 类规则 A-G——前缀稳定工程保证）.
+
+校验输入（请求组装后、发送前）:
+- system_text: 本次 system prompt（str）
+- system_baseline: 该会话稳定基线（首次无则建立）
+- messages: 提交消息序列（list[dict]——role/content）
+- tools_schema: 工具定义（list[dict]）
+- meta: {session_id, provider, model, run_round, compress_count_this_run}
+
+决策:
+- ALLOW: 放行（无规则命中）
+- BLOCK: 拦截（可修复/隐私——调用方决定：修复或终止）
+- WARN: 记录 + 提示（fail-open——不阻断）
+
+审计: data/audit/guarded_requests.jsonl（全量请求——账单对账闭合）
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from llm_loop.core.message import dict_wire_chars
+from llm_loop.llm.errors import LLMError
+from llm_loop.runtime.resolver import business_config_snapshot
+from llm_loop.timekeeping import system_local_now
+
+logger = logging.getLogger(__name__)
+
+# ── 规则配置（初始保守——可调） ──
+_SYSTEM_DIFF_WARN_THRESHOLD = 40  # system 相对基线变化字符数（超→WARN）
+_TOOL_RESULT_MAX_CHARS = 200_000  # 单条工具结果上限（超→WARN 归档提示）
+_COMPRESS_STORM_PER_RUN = 10  # 单 run 压缩次数上限（超→WARN）
+# 规则 F（2026-08-18 用户反馈'不应出去的'）：提交体积占比——
+# 消息总字符 / 预算 > 阈值 → BLOCK（先压缩 checkpoint 或换会话——避免注定低命中的请求出去）
+_SUBMIT_RATIO_BLOCK = 0.95  # >95% 预算 → BLOCK（强制先决策）
+_SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
+# 规则 G（2026-08-18 用户反馈：'低命中'应拦截——命中是结果——需响应回馈闭环）：
+# 会话近期命中率 < 阈值且样本足够 → BLOCK（前缀不稳定——先压缩 checkpoint/换会话）
+# 阈值 env 化（拷问④——2026-08-18）: 可用 CACHE_GUARD_* 覆盖
+# P1-A: import-time business values come from one immutable file-backed snapshot.
+_CACHE_GUARD_CONFIG = business_config_snapshot("cache_guard")
+
+# D'-1.1（R8.24 D-D3）: 性能类 BLOCK 分类改造开关——on=性能 BLOCK 保留 /
+# enforce（默认，R9-P0-01 批 3/3 切换 2026-09-01，前置=D'-1.3 齐备性判读通过）=
+# 性能类退出 BLOCK 仅 WARN（记录 would_block 观测事件；对照基线 25 次
+# submit_ratio BLOCK 场景；可整体回滚）。
+# 【硬 BLOCK 清单——D-D3 五类保留，不受本开关影响】:
+#   1. privacy/safety（_check_privacy——API key/私钥/敏感 env 泄漏）
+#   2. provider wire invalid
+#   3. 真实 context window 超限
+#   4. 用户成本硬限
+#   5. safety 类拦截
+# 性能类理由（低命中/体积占比）不构成阻断——代价由 cost/observability 面承接。
+class _PerfBlockModeView:
+    """Resolve perf_block_mode from the current runtime config at decision time.
+
+    Tests may still monkeypatch the module-level _PERF_BLOCK_MODE with a plain
+    string, preserving the existing explicit on/enforce override seam.
+    """
+
+    def _value(self) -> str:
+        current = business_config_snapshot("cache_guard")
+        return (
+            current.get(
+                "CACHE_GUARD_PERF_BLOCK",
+                _CACHE_GUARD_CONFIG.get("CACHE_GUARD_PERF_BLOCK", "enforce"),
+            )
+            .strip()
+            .lower()
+        )
+
+    def __eq__(self, other: object) -> bool:
+        return self._value() == other
+
+    def __repr__(self) -> str:
+        return repr(self._value())
+
+
+_PERF_BLOCK_MODE: str | _PerfBlockModeView = _PerfBlockModeView()
+# D'-1.1 核对结论（2026-08-31）: 规则 G（_check_hit_rate）全路径 WARN-only
+# （low_hit_rate_ttl / low_hit_rate_compressing / low_hit_rate_provider 三分支均
+# 无 BLOCK verdict——_HIT_RATE_BLOCK 仅作阈值比较）；规则 A（system_stability）/
+# 规则 D（compress_storm）核对为 WARN-only。性能 BLOCK 仅存于规则 F submit_ratio
+# 非 breaker 分支，由 _PERF_BLOCK_MODE 管控。
+_HIT_RATE_BLOCK = float(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_BLOCK", "0.30"))
+# 2026-08-18 用户反馈（'78% 也是低的'）: WARN 阈值 0.50 → 0.85——低于预期的命中
+# （工具轮/前缀微变化）也应提示 AI（'命中低于预期——注意前缀稳定性'）；BLOCK 保持 0.30
+# （真异常才拦——防误伤工具轮正常场景）
+_HIT_RATE_WARN = float(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_WARN", "0.85"))
+# 任务2（2026-08-25 §5.2）: WARN 阈值按会话规模自适应——小型会话正常命中率物理性
+# 低于大型稳定会话（前缀建立中），固定 0.85 会导致小会话持续误 WARN 刷屏（"WARN 阈值
+# 不敏感"问题）。自适应分段: tokens_in 越大 → 期望命中率越高 → 阈值越高。
+_ADAPTIVE_ENABLED = bool(int(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_WARN_ADAPTIVE", "1")))
+_WARN_TIERS: list[list[float]] = json.loads(
+    _CACHE_GUARD_CONFIG.get(
+        "CACHE_GUARD_HIT_WARN_TIERS",
+        '[[30000,0.65],[80000,0.75],[200000,0.80]]',
+    )
+)
+_HIT_SAMPLE_MIN = int(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_HIT_SAMPLE", "3"))
+
+
+def _adaptive_warn_threshold(tokens_in: int) -> float:
+    """按会话规模（最近一次 tokens_in）分段查表返回 WARN 阈值.
+
+    分段（默认）: <30K→0.65；30K≤x<80K→0.75；80K≤x<200K→0.80；≥200K 或
+    tier 耗尽→_HIT_RATE_WARN（0.85）。规模越大前缀越稳定 → 期望命中率越高。
+    """
+    thr = _HIT_RATE_WARN
+    for _tokens_thr, _warn in _WARN_TIERS:
+        if tokens_in < _tokens_thr:
+            thr = float(_warn)
+            break
+    return thr
+# 逃生（拷问③——2026-08-18）: 连续 BLOCK N 次后自动降级 WARN（防死锁——AI 不处理时
+# 不无限拦截；降级后 AI 可行动）
+_BLOCK_ESCAPE_MAX = int(_CACHE_GUARD_CONFIG.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
+# EVO-20260818（实测）: provider 前缀缓存 TTL（秒）——MiniMax 约 130s 失效
+# （间隔 134s 即全 miss，剩 128 tokens 特征最小命中）; 请求间隔超 TTL 的低命中属
+# 缓存过期（provider 侧行为）→ 规则 G 降级 WARN 不 BLOCK（防误拦，grill-me 2.3 实证落地）
+_CACHE_TTL_S: dict[str, int] = {
+    "minimax": 90,     # 实测 ~130s，保守下限
+    "deepseek": 7200,  # 官方数小时
+    "kimi": 300,
+    "openai": 300,
+}
+_DEFAULT_CACHE_TTL_S = 300
+
+
+def _cache_ttl_for(provider: str) -> int:
+    """按 provider 匹配缓存 TTL（子串匹配，未知回退默认 300s）."""
+    p = (provider or "").lower()
+    for key, ttl in _CACHE_TTL_S.items():
+        if key in p:
+            return ttl
+    return _DEFAULT_CACHE_TTL_S
+_SENSITIVE_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
+    re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),  # GitHub token
+    re.compile(r"BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY"),  # 私钥
+]
+_SENSITIVE_ENV_NAMES = {"DEEPSEEK_API_KEY", "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "KIMI_API_KEY", "MINIMAX_API_KEY"}
+
+
+@dataclass
+class GuardDecision:
+    verdict: str  # ALLOW / BLOCK / WARN
+    rule: str = ""  # 命中的规则 id
+    detail: str = ""
+    audit: dict = field(default_factory=dict)
+
+    @property
+    def allowed(self) -> bool:
+        return self.verdict != "BLOCK"
+
+
+def _stable_fp(system_text: str) -> str:
+    return hashlib.sha256(system_text.encode("utf-8")).hexdigest()
+
+
+def _check_system_stability(system_text: str, baseline: str | None) -> GuardDecision | None:
+    """规则 A: system 稳定性——与基线 diff（超阈值 WARN）.
+
+    DSH 借鉴（2026-08-18 拷问产出）: checkpoint rejection 语义的轻量版——
+    发送前检测前缀漂移 → 提示（AI 决策：接受断点 or 先压缩 checkpoint 再发）.
+    """
+    if not baseline:
+        return None  # 首次——建立基线（无基线不判）
+    if system_text == baseline:
+        return None  # 字节一致——稳定 ✓
+    # 变化量（简化：长度差 + 内容差）
+    diff = abs(len(system_text) - len(baseline))
+    if diff >= _SYSTEM_DIFF_WARN_THRESHOLD:
+        return GuardDecision(
+            verdict="WARN",
+            rule="system_stability",
+            detail=(
+                f"system 相对基线变化 {diff} 字符（缓存前缀将失效——开发变更/动态注入？）。"
+                "DSH 语义：可先触发压缩 checkpoint（前缀重建）再发——或接受本次断点（下次恢复稳定）"
+            ),
+        )
+    return None
+
+
+def _check_injection_discipline(messages: list[dict]) -> GuardDecision | None:
+    """规则 B: 注入纪律——非首位 system 消息（中间注入/重排→前缀断）.
+
+    2026-08-18 system 静态化后: 提交层非首个 system 自动转 user——正常路径不触发。
+    保留为【防御性】规则: 若未来某处绕过转 user（直接塞 system 进序列）仍告警——
+    防前缀破坏回归（对齐 DSH: system 主体必须字节静态——注入一律独立消息）。
+    """
+    for i, m in enumerate(messages):
+        if m.get("role") == "system" and i != 0:
+            return GuardDecision(
+                verdict="WARN",
+                rule="injection_discipline",
+                detail=f"第 {i} 条消息是 system（非首位——中间注入/重排——前缀断风险；提交层应已转 user）",
+            )
+    return None
+
+
+def _check_tool_results(messages: list[dict]) -> GuardDecision | None:
+    """规则 C: 工具结果体积——超长未归档（提示 WARN）."""
+    for m in messages:
+        if m.get("role") == "tool":
+            c = m.get("content") or ""
+            if len(c) > _TOOL_RESULT_MAX_CHARS:
+                return GuardDecision(
+                    verdict="WARN",
+                    rule="tool_result_size",
+                    detail=f"工具结果 {len(c):,} 字符 > {_TOOL_RESULT_MAX_CHARS:,}（建议先归档再提交——前缀体积）",
+                )
+    return None
+
+
+def _check_compress_storm(meta: dict) -> GuardDecision | None:
+    """规则 D: 窗口漂移——单 run 压缩次数（压缩风暴→前缀持续断）."""
+    n = int(meta.get("compress_count_this_run") or 0)
+    if n > _COMPRESS_STORM_PER_RUN:
+        return GuardDecision(
+            verdict="WARN",
+            rule="compress_storm",
+            detail=f"本 run 已压缩 {n} 次（>{_COMPRESS_STORM_PER_RUN}——窗口持续漂移——前缀持续断）",
+        )
+    return None
+
+
+def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | None:
+    """规则 F（2026-08-18）: 提交体积占比——历史接近预算上限时注定低命中（压缩在即）.
+
+    DSH checkpoint rejection 语义的完整版：发送前检查"前缀可持久性"——
+    占比 >95% 预算 → BLOCK（先压缩 checkpoint / 换会话——再发）；
+    >85% → WARN（提示接近超限——AI 决策提前处理）。
+    P0 压缩风暴熔断协调（2026-08-25）: breaker 冻结期（breaker_active）程序压缩
+    已冻结，超限载荷由 engine 前置 context_pressure 管控（安全水位 = 0.95 与
+    本规则 BLOCK 阈值对齐）——此处 BLOCK 降级 WARN，避免"禁压缩 + 禁提交"双拦死锁。
+
+    口径修正（breaking change, EVO-20260918-be2ff060, 2026-09-18 人工批准执行）:
+    分子原按 content-only 计（len(content)）——assistant 消息带大量 tool_calls /
+    reasoning_content 时被低估，ratio 失真、该拦不拦（与 2026-08-26 压缩器
+    content 口径事故同型）。现改用准绳 core.message.dict_wire_chars（wire 口径：
+    content + reasoning + tool_calls 参数），与压缩预算（history._wire_size /
+    _dict_wire_size）同口径。**行为变化：ratio 普遍升高，85%/95% 阈值触发更早
+    ——这正是修正目的（阈值语义首次真正成立），阈值数值无需变更。**
+    """
+    budget = int(meta.get("history_budget") or 0)
+    if budget <= 0:
+        return None
+    total_chars = sum(dict_wire_chars(m) for m in messages)
+    ratio = total_chars / budget
+    if ratio > _SUBMIT_RATIO_BLOCK:
+        # D'-1.1（R8.24 D-D3）: enforce 态性能类退出 BLOCK——breaker_active 三分支
+        # （None/True/False）降级语义收编统一为 WARN + would_block 观测（性能类理由
+        # 不阻断，低命中全价代价由 cost/observability 面承接）；on 态保持现状三分支
+        # （逐字节一致，可整体回滚）。
+        if _PERF_BLOCK_MODE == "enforce":
+            _ba = meta.get("breaker_active")
+            logger.info(
+                "event=guard.would_block rule=submit_ratio_perf ratio=%.4f chars=%d budget=%d breaker_active=%r",
+                ratio,
+                total_chars,
+                budget,
+                _ba,
+            )
+            return GuardDecision(
+                verdict="WARN",
+                rule="submit_ratio_perf",
+                detail=(
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    f"（>{_SUBMIT_RATIO_BLOCK*100:.0f}%——历史接近上限，本次请求可能低命中全价；"
+                    f"性能类不阻断仅观测记录，breaker_active={_ba!r}）"
+                ),
+                audit={"would_block": True, "ratio": round(ratio, 4)},
+            )
+        # 任务3（§5.9）: breaker_active=None（传递丢失）——无法确认冻结期状态，
+        # 保守降级 WARN（防"禁压缩 + 禁提交"双拦死锁：宁可放行让 breaker 的
+        # context_pressure 前置管控，也不在传递链断裂时双重拦截）。
+        if meta.get("breaker_active") is None:
+            return GuardDecision(
+                verdict="WARN",
+                rule="submit_ratio_breaker_missing",
+                detail=(
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    "（>95%——但 breaker_active 标志传递丢失（None），无法确认熔断冻结期；"
+                    "降级 WARN 防双拦死锁，超限载荷由前置 context_pressure 管控）"
+                ),
+            )
+        if meta.get("breaker_active"):
+            return GuardDecision(
+                verdict="WARN",
+                rule="submit_ratio_breaker",
+                detail=(
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    "（>95%——但压缩风暴熔断冻结期，压缩已由 breaker 冻结；超限载荷"
+                    "由前置 context_pressure 管控，本条降级 WARN 防双拦死锁）"
+                ),
+            )
+        return GuardDecision(
+            verdict="BLOCK",
+            rule="submit_ratio",
+            detail=(
+                f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                f"（>{_SUBMIT_RATIO_BLOCK*100:.0f}%——压缩在即——本次请求注定低命中全价）。"
+                "建议：先压缩 checkpoint 或换新会话再发（DSH checkpoint rejection 语义）"
+            ),
+        )
+    if ratio > _SUBMIT_RATIO_WARN:
+        return GuardDecision(
+            verdict="WARN",
+            rule="submit_ratio",
+            detail=f"提交占比 {ratio*100:.0f}%（>{_SUBMIT_RATIO_WARN*100:.0f}%——接近超限——建议提前压缩/换会话）",
+        )
+    return None
+
+
+def _check_privacy(messages: list[dict], system_text: str) -> GuardDecision | None:
+    """规则 E: 隐私泄漏——API key/私钥/敏感 env 值进 prompt（硬拦截）.
+
+    【D-D3 硬 BLOCK 清单成员——绝对保留】: privacy/safety 拦截不受
+    CACHE_GUARD_PERF_BLOCK 开关影响（D'-1.1 性能类退出只作用于性能面——本函数
+    一行不动；D-G5 对照断言一票否决项）。
+    """
+    blob = system_text + "\n" + "\n".join(str(m.get("content") or "") for m in messages[:3])
+    for pat in _SENSITIVE_PATTERNS:
+        if pat.search(blob):
+            return GuardDecision(
+                verdict="BLOCK",
+                rule="privacy_leak",
+                detail=f"检测到敏感模式 {pat.pattern[:20]}…（API key/私钥泄漏——拦截）",
+            )
+    # 敏感 env 值比对
+    for name in _SENSITIVE_ENV_NAMES:
+        val = os.environ.get(name, "")
+        if val and len(val) > 8 and val in blob:
+            return GuardDecision(
+                verdict="BLOCK",
+                rule="privacy_leak",
+                detail=f"prompt 含环境变量 {name} 的值（泄漏——拦截）",
+            )
+    return None
+
+
+def _resolve_audit_path(audit_file: str | Path | None) -> Path:
+    """Resolve the audit file without consulting mutable process business config.
+
+    Production clients bind this from resolved ``Settings.data_dir``. The repository
+    path is compatibility-only for direct/test construction.
+    """
+    if audit_file:
+        return Path(audit_file)
+    return Path(__file__).resolve().parents[3] / "data" / "audit" / "guarded_requests.jsonl"
+
+
+def validate_request(
+    *,
+    system_text: str,
+    messages: list[dict],
+    baseline: str | None = None,
+    meta: dict | None = None,
+    audit_file: str | Path | None = None,
+) -> GuardDecision:
+    """请求前校验（唯一出入口核心）——7 类规则（A-F 本函数主循环校验；规则 G 命中率
+    由 PromptGuard.check 闭环调用，因需 _hit_win 状态）——fail-open（校验失败不阻断）.
+
+    审计: 全量请求记录（guarded_requests.jsonl——账单对账闭合；token 回执经
+    PromptGuard.record_result 追加对账行，spec §4.3-2）。
+    """
+    meta = meta or {}
+    decision = GuardDecision(verdict="ALLOW")
+    try:
+        for check in (
+            lambda: _check_system_stability(system_text, baseline),
+            lambda: _check_injection_discipline(messages),
+            lambda: _check_tool_results(messages),
+            lambda: _check_compress_storm(meta),
+            lambda: _check_submit_ratio(messages, meta),
+            lambda: _check_privacy(messages, system_text),
+        ):
+            r = check()
+            if r is None:
+                continue
+            # 优先级: BLOCK > WARN（首条命中记录——ALLOW 继续）
+            if r.verdict == "BLOCK":
+                decision = r
+                break
+            if decision.verdict == "ALLOW":
+                decision = r
+    except Exception:  # noqa: BLE001 — fail-open
+        logger.warning("cache_guard 校验异常（fail-open 放行）", exc_info=True)
+        decision = GuardDecision(verdict="ALLOW", detail="guard 异常 fail-open")
+
+    # 审计落盘（全量——对账闭合；token 回执经 record_result 追加对账行）
+    # D'-1.1: 规则侧观测字段（would_block/ratio——性能类 shadow 对照清单数据源）
+    # 随规则决策带进出口审计（其余键零变化）。
+    _rule_audit = decision.audit or {}
+    decision.audit = {
+        "ts": system_local_now().isoformat(),
+        "session_id": meta.get("session_id", ""),
+        "provider": meta.get("provider", "openai-compat"),
+        "model": meta.get("model", ""),
+        "run_round": meta.get("run_round"),
+        "system_fp": _stable_fp(system_text)[:16],
+        "messages": len(messages),
+        "tools": len(meta.get("tools", []) or []),
+        "verdict": decision.verdict,
+        "rule": decision.rule,
+        "detail": decision.detail,
+        **{k: _rule_audit[k] for k in ("would_block", "ratio") if k in _rule_audit},
+    }
+    try:
+        path = _resolve_audit_path(audit_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(decision.audit, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 — 审计失败不影响决策
+        logger.debug("cache_guard 审计写入失败（fail-open）")
+    return decision
+
+
+class CacheGuardBlockedError(LLMError):
+    """cache_guard BLOCK 专用异常（拷问⑥——2026-08-18）: 与普通 LLM 错误区分——
+
+    engine 直接如实反馈 AI（不重试/不走 overflow reinject——重试同样被拦=浪费循环）.
+    """
+
+
+class PromptGuard:
+    """MCP 出入口的进程内接口（校验 + 基线维护 + 命中率闭环）——MCP server 复用本类."""
+
+    def __init__(
+        self, audit_file: str | Path | None = None, *, hit_telemetry: bool = True
+    ) -> None:
+        # EVO-20260818（spec §6.2-6，grill-me 2.2）: 规则 G 命中回执开关——lms-chat 等本地
+        # 推理无命中回执（client 三字段兜底后仍恒 0）→ False 时规则 G 不判定防误拦。
+        self.hit_telemetry = hit_telemetry
+        self._baselines: dict[str, str] = {}  # session_id → system fp
+        self.audit_file = audit_file
+        # 规则 G: 会话级命中率窗口（近 N 次请求的 hit/in——响应回馈）
+        self._hit_win: dict[str, list[tuple[int, int, float]]] = {}  # session → [(in, hit, ts)...]
+        # 请求发送前记录纯机械 shape，响应回执到达时用于判断“可比 transition”。
+        # 这只改变 compute telemetry/告警归因，不参与模型策略或缓存 admission。
+        self._pending_request_shape: dict[str, dict] = {}
+        self._last_result_shape: dict[str, dict] = {}
+        self._last_cache_health: dict[str, dict] = {}
+        # 逃生（拷问③）: 每会话连续 BLOCK 计数——达上限自动降级 WARN
+        self._block_streak: dict[str, int] = {}
+        # provider client 可跨多个模型复用；模型游标必须按 session 隔离。
+        self._last_model_by_session: dict[str, str] = {}
+
+    def reset_session(self, session_id: str) -> None:
+        """重置会话状态（拷问②——模型切换/换会话时调用）——清窗口/基线/逃生计数. """
+        try:
+            self._hit_win.pop(session_id, None)
+            self._baselines.pop(session_id, None)
+            self._block_streak.pop(session_id, None)
+            self._last_model_by_session.pop(session_id, None)
+            self._pending_request_shape.pop(session_id, None)
+            self._last_result_shape.pop(session_id, None)
+            self._last_cache_health.pop(session_id, None)
+        except Exception:  # noqa: BLE001
+            # reset_session 只为切换模型/会话回收窗口状态：AttributeError/KeyError 不得让调用方的会话切换失败
+            pass
+
+    def record_result(
+        self,
+        session_id: str,
+        tokens_in: int,
+        tokens_hit: int,
+        *,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
+        """响应后回馈（闭环）——记录该会话本次请求的命中——规则 G 数据源.
+
+        EVO-20260818（spec §4.3-2，grill-me 2.1）: 同步追加审计对账行（tokens_in/tokens_hit/
+        provider/model——命中率事后复算与账单对账闭合）。fail-open：记录失败不影响请求。
+        """
+        try:
+            if tokens_in <= 0:
+                return
+            win = self._hit_win.setdefault(session_id, [])
+            # EVO-20260818: 元组加时间戳（TTL 过期判定——间隔 > provider 缓存 TTL）
+            result_ts = time.time()
+            win.append((tokens_in, tokens_hit, result_ts))
+            if len(win) > 10:
+                del win[:-10]  # 窗口最近 10 次
+            shape = self._pending_request_shape.pop(session_id, None)
+            previous = self._last_result_shape.get(session_id)
+            health = self._classify_cache_transition(
+                previous=previous, current=shape, tokens_in=tokens_in, tokens_hit=tokens_hit,
+                result_ts=result_ts,
+            )
+            self._last_cache_health[session_id] = health
+            if shape is not None:
+                self._last_result_shape[session_id] = {
+                    **shape, "tokens_in": tokens_in, "tokens_hit": tokens_hit,
+                    "result_ts": result_ts,
+                }
+            # 对账行（append-only；与发送行经 ts/session_id 关联）
+            row = {
+                "ts": system_local_now().isoformat(),
+                "event": "llm_result",
+                "session_id": session_id,
+                "provider": provider or "openai-compat",
+                "model": model,
+                "tokens_in": tokens_in,
+                "tokens_hit": tokens_hit,
+                "cache_health": health,
+            }
+            path = _resolve_audit_path(self.audit_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001
+            logger.debug("guard record_result 失败（fail-open）")
+
+    @staticmethod
+    def _classify_cache_transition(
+        *, previous: dict | None, current: dict | None, tokens_in: int, tokens_hit: int,
+        result_ts: float
+    ) -> dict:
+        """用机械可比条件判断 absolute cache-hit 是否真实回退。
+
+        ratio 保留为成本/展示事实；regression 必须是同 run 连续轮、同
+        provider/model/stable_prefix_fp/cache_prefix_epoch/compaction_epoch、未过 TTL
+        且 prompt 非收缩。这些均复用既有 request.usage compute facts。
+        """
+        base = {
+            "status": "unknown",
+            "reason": "insufficient_shape",
+            "comparable_transition": False,
+            "absolute_hit_delta": None,
+        }
+        if previous is None or current is None:
+            return base
+        prev_round = previous.get("run_round")
+        cur_round = current.get("run_round")
+        if not isinstance(prev_round, int) or not isinstance(cur_round, int):
+            return base
+        if cur_round != prev_round + 1:
+            return {**base, "status": "warmup", "reason": "new_run_or_nonconsecutive_round"}
+        prev_ts = float(previous.get("result_ts") or 0.0)
+        provider = str(current.get("provider") or "")
+        if prev_ts > 0 and result_ts - prev_ts > _cache_ttl_for(provider):
+            return {**base, "status": "warmup", "reason": "provider_ttl"}
+        for key in ("provider", "model"):
+            if current.get(key) != previous.get(key):
+                return {**base, "status": "warmup", "reason": f"{key}_changed"}
+        current_fp = str(current.get("stable_prefix_fp") or "")
+        previous_fp = str(previous.get("stable_prefix_fp") or "")
+        if not current_fp or not previous_fp:
+            return base
+        if current_fp != previous_fp:
+            return {**base, "status": "warmup", "reason": "stable_prefix_changed"}
+        for key in ("cache_prefix_epoch", "compaction_epoch"):
+            cur_epoch = current.get(key)
+            prev_epoch = previous.get(key)
+            if not isinstance(cur_epoch, int) or not isinstance(prev_epoch, int):
+                return base
+            if cur_epoch != prev_epoch:
+                return {**base, "status": "warmup", "reason": f"{key}_changed"}
+        prev_in = int(previous.get("tokens_in") or 0)
+        prev_hit = int(previous.get("tokens_hit") or 0)
+        if tokens_in < prev_in:
+            return {**base, "status": "warmup", "reason": "prompt_shrink"}
+        delta = tokens_hit - prev_hit
+        return {
+            "status": "regression" if delta < 0 else "healthy",
+            "reason": "absolute_hit_regression" if delta < 0 else "absolute_hit_non_decrease",
+            "comparable_transition": True,
+            "absolute_hit_delta": delta,
+        }
+
+    def _recent_hit_rate(self, session_id: str) -> float | None:
+        """该会话近期命中率（窗口样本不足返回 None——不判）. """
+        win = self._hit_win.get(session_id) or []
+        if len(win) < _HIT_SAMPLE_MIN:
+            return None
+        ti = sum(i for i, _, _ in win)
+        hi = sum(h for _, h, _ in win)
+        return (hi / ti) if ti > 0 else None
+
+    def snapshot(self, session_id: str = "") -> dict:
+        """cache_guard 状态快照（spec §5.4.1-2，供 architecture_status 注入）.
+
+        EVO-20260818（grill-me 2.7）: session_id 空 = 最近活跃会话 + 聚合信息
+        （多会话下按会话展示由调用方传 session_id）；hit_telemetry=False 时
+        recent_hit_rate 恒 None 且 telemetry="n/a"（规则 G 停用）。
+        """
+        try:
+            sid = session_id
+            if session_id and session_id not in self._hit_win:
+                recent = None
+                win_size = 0
+            else:
+                sid = session_id or (
+                    max(self._hit_win, key=lambda s: len(self._hit_win[s]))
+                    if self._hit_win
+                    else ""
+                )
+                win = self._hit_win.get(sid) or []
+                recent = self._recent_hit_rate(sid) if sid else None
+                win_size = len(win)
+            return {
+                "recent_hit_rate": recent if self.hit_telemetry else None,
+                "cache_health": self._last_cache_health.get(sid) if sid else None,
+                "hit_win_size": win_size,
+                "block_streak": dict(self._block_streak),
+                "baselines_count": len(self._baselines),
+                "sessions_count": len(self._hit_win),
+                "telemetry": "on" if self.hit_telemetry else "n/a",
+                "config": {
+                    "hit_block": _HIT_RATE_BLOCK,
+                    "hit_warn": _HIT_RATE_WARN,
+                    "hit_sample_min": _HIT_SAMPLE_MIN,
+                    "block_escape_max": _BLOCK_ESCAPE_MAX,
+                },
+            }
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("guard snapshot 异常（fail-open）")
+            return {}
+
+    def _get_warn_threshold(self, session_id: str) -> float:
+        """任务2（§5.2）: 按会话规模取 WARN 阈值——启用自适应时查分段表，
+        禁用 / 窗口不可用时回退固定 _HIT_RATE_WARN（零回归）."""
+        try:
+            if not _ADAPTIVE_ENABLED:
+                return _HIT_RATE_WARN
+            win = self._hit_win.get(session_id) or []
+            if not win:
+                return _HIT_RATE_WARN
+            return _adaptive_warn_threshold(int(win[-1][0]))
+        except Exception:  # noqa: BLE001 — fail-open
+            return _HIT_RATE_WARN
+
+    def _check_hit_rate(
+        self, session_id: str, compress_count: int = 0, provider: str = ""
+    ) -> GuardDecision | None:
+        """规则 G: 近期命中率低 → 拦截——但【区分冷启动 vs 持续异常】.
+
+        2026-08-18 用户反馈（'第一条新信息命中率肯定低'）:
+        - 冷启动（前缀在构建——in 递增）低命中 = 预期——不拦（WARN）
+        - 2026-08-27 实证修正：tokens_in 相近只能证明尺寸相近，不能证明字节前缀稳定；
+          provider 冷缓存/TTL淘汰/分片也会产生该形态，因此无结构漂移证据时不得 BLOCK。
+        EVO-20260818（spec §5.3.1-2 f，grill-me Q3）: 压缩轮（compress_count>0，in 骤降）
+        不判冷启动——压缩后低命中按前缀稳定规则正常裁决（头部保留时前缀应稳定）。
+        EVO-20260818（grill-me 2.3 实证）: 请求间隔 > provider 缓存 TTL（MiniMax ~130s 实测）
+        → 低命中属缓存过期（provider 侧行为）——降级 WARN 不 BLOCK（防误拦）。
+        """
+        if not self.hit_telemetry:
+            return None  # EVO-20260818（spec §6.2-6）: 无命中回执的 provider（lms-chat）不判
+        win = self._hit_win.get(session_id) or []
+        latest_health = self._last_cache_health.get(session_id) or {}
+        # 两次机械可比请求已经足够证明 absolute-hit 回退；不能再受旧 ratio 窗口
+        # 的 3-sample 门限制，否则最早的真实回归会被静默一轮。
+        if latest_health.get("status") == "regression":
+            delta = latest_health.get("absolute_hit_delta")
+            return GuardDecision(
+                verdict="WARN",
+                rule="cache_hit_regression",
+                detail=(
+                    "可比请求间绝对 cache-hit tokens 回退"
+                    f"（delta={delta}）；stable_prefix/epochs/model/provider 均保持可比"
+                ),
+            )
+        if len(win) < _HIT_SAMPLE_MIN:
+            return None  # ratio 样本不足（含新会话第一条）——不判
+        rate = self._recent_hit_rate(session_id)
+        if rate is None:
+            return None
+        # 前缀稳定性：最近两次请求的 in 是否相近（±15%——同前缀应命中）
+        last_in = [i for i, _, _ in win[-2:]]
+        prefix_stable = (
+            len(last_in) == 2
+            and last_in[1] > 0
+            and abs(last_in[1] - last_in[0]) / last_in[1] < 0.15
+        )
+        # TTL 过期判定: 最近两次请求间隔 > provider 缓存 TTL
+        ttl_gap_s: float | None = None
+        if len(win) >= 2:
+            _t1 = win[-2][2]
+            _t2 = win[-1][2]
+            if _t1 and _t2:
+                _gap = _t2 - _t1
+                _ttl = _cache_ttl_for(provider)
+                if _gap > _ttl:
+                    ttl_gap_s = _gap
+        if rate < _HIT_RATE_BLOCK:
+            if ttl_gap_s is not None:
+                # 缓存 TTL 过期（间隔超 provider 缓存寿命）——预期 miss，不拦
+                return GuardDecision(
+                    verdict="WARN",
+                    rule="low_hit_rate_ttl",
+                    detail=(
+                        f"该会话近期命中率 {rate*100:.0f}%（低命中）——请求间隔 "
+                        f"{ttl_gap_s:.0f}s 超 {_cache_ttl_for(provider)}s 缓存 TTL"
+                        f"（{provider or 'provider'} 侧缓存已过期，属预期；短间隔请求将恢复命中）"
+                    ),
+                )
+            if compress_count > 0:
+                # P0 修复（2026-08-25 实测 MiniMax/DeepSeek）: 压缩轮低命中 = 前缀物理
+                # 断（折叠/归档改写历史，设计内，EVO-20260824 渐进折叠承认的代价）——
+                # BLOCK 会阻止压缩轮提交 → 缓存永远无法回温 → 会话死锁（实测 guard G
+                # 连续 BLOCK，会话零进展）。降级 WARN（与 TTL 过期同语义：预期 miss），
+                # 提交成功即回温；压缩后持续低命中才属异常（前缀漂移/风暴——breaker 管）。
+                return GuardDecision(
+                    verdict="WARN",
+                    rule="low_hit_rate_compressing",
+                    detail=(
+                        f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%"
+                        "——本轮为压缩轮，历史被改写、命中低属预期——提交成功即回温；"
+                        "压缩轮后持续低命中再排查前缀漂移/风暴）"
+                    ),
+                )
+            # 2026-08-27 生产实证：tokens_in 相近 != 字节前缀稳定。
+            # GLM-Flash 在 tools/system/params/既有消息哈希均稳定时仍可出现 provider-side
+            # 0-hit；若在这里 BLOCK，会切断后续预热请求，形成“低命中 -> 永久不可用”自锁。
+            # 因此没有结构漂移证据时，无论 in 是否相近均只 WARN。prefix_stable 只用于
+            # 诊断说明，不再作为阻断证据。
+            return GuardDecision(
+                verdict="WARN",
+                rule="low_hit_rate_provider",
+                detail=(
+                    f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%——"
+                    + (
+                        "最近两次 tokens_in 相近，但尺寸相近不能证明字节前缀稳定；"
+                        if prefix_stable
+                        else ""
+                    )
+                    + "可能为 provider 冷缓存/TTL淘汰/分片路由，允许请求继续以完成缓存预热；"
+                    "若伴随 system/tools/payload 指纹变化或 context.compressed，再按结构漂移排查）"
+                ),
+            )
+        # 任务2（§5.2）: WARN 阈值按会话规模自适应（BLOCK 阈值不参与自适应）
+        _warn_thr = self._get_warn_threshold(session_id)
+        if rate < _warn_thr:
+            _last_in = win[-1][0] if win else 0
+            return GuardDecision(
+                verdict="WARN",
+                rule="low_hit_rate",
+                detail=(
+                    f"该会话近期命中率 {rate*100:.0f}%（<{_warn_thr*100:.0f}%——"
+                    f"自适应阈值，当前 tokens_in≈{_last_in}）"
+                ),
+            )
+        return None
+
+    def check(
+        self,
+        *,
+        session_id: str,
+        system_text: str,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        run_round: int | None = None,
+        compress_count_this_run: int = 0,
+        history_budget: int = 0,
+        provider: str = "",
+        model: str = "",
+        breaker_active: bool | None = None,  # P0（2026-08-25）: 压缩风暴熔断冻结期标志
+        stable_prefix_fp: str = "",
+        cache_prefix_epoch: int | None = None,
+        compaction_epoch: int | None = None,
+        # 任务3（§5.9）: None=engine 未传递该标志（传递丢失）——不同于 False（非冻结期
+        # 正常传递）。None 时规则 F 降级 WARN（防"禁压缩+禁提交"双拦死锁）。
+    ) -> GuardDecision:
+        previous_model = self._last_model_by_session.get(session_id)
+        if model and previous_model and previous_model != model:
+            self.reset_session(session_id)
+        if model:
+            self._last_model_by_session[session_id] = model
+        tools_payload = tools or []
+        self._pending_request_shape[session_id] = {
+            "run_round": run_round,
+            "provider": provider or "openai-compat",
+            "model": model,
+            "stable_prefix_fp": stable_prefix_fp,
+            "cache_prefix_epoch": cache_prefix_epoch,
+            "compaction_epoch": compaction_epoch,
+        }
+        baseline = self._baselines.get(session_id)
+        decision = validate_request(
+            system_text=system_text,
+            messages=messages,
+            baseline=baseline,
+            meta={
+                "session_id": session_id,
+                # EVO-20260818（spec §4.3-2）: 真实 provider/model（调用方传入；
+                # 默认兜底 openai-compat 零回归——消除硬编码）
+                "provider": provider or "openai-compat",
+                "model": model,
+                "run_round": run_round,
+                "tools": tools_payload,
+                "breaker_active": breaker_active,
+                "compress_count_this_run": compress_count_this_run,
+                "history_budget": history_budget,
+            },
+            audit_file=self.audit_file,
+        )
+        # 规则 G: 低命中拦截（优先级高于普通 WARN——命中是结果闭环）
+        if decision.verdict == "ALLOW" or decision.verdict == "WARN":
+            hit_d = self._check_hit_rate(
+                session_id,
+                compress_count=compress_count_this_run,
+                provider=provider,  # TTL 过期判定（MiniMax ~130s 等）
+            )
+            if hit_d is not None and (
+                hit_d.verdict == "BLOCK"
+                or (hit_d.verdict == "WARN" and decision.verdict == "ALLOW")
+            ):
+                # P0 压缩风暴熔断协调（2026-08-25）: breaker 冻结/恢复期低命中属
+                # 风暴后遗症（恢复需提交成功才能回温）——BLOCK 降级 WARN，防与
+                # breaker 的 context_pressure/逃生轮互锁（双拦死锁）。
+                if hit_d.verdict == "BLOCK" and breaker_active:
+                    hit_d = GuardDecision(
+                        verdict="WARN",
+                        rule="low_hit_rate_breaker",
+                        detail=(
+                            "压缩风暴熔断期低命中 BLOCK 降级 WARN（breaker 管控恢复，"
+                            "提交成功才能回温前缀——不再重复拦截）"
+                        ),
+                    )
+                elif hit_d.verdict == "BLOCK":
+                    # 逃生（拷问③）: 连续 BLOCK 达上限 → 降级 WARN（防死锁——AI 不处理时
+                    # 不无限拦截——AI 可行动（压缩/换会话）后重试）
+                    streak = self._block_streak.get(session_id, 0) + 1
+                    self._block_streak[session_id] = streak
+                    if streak > _BLOCK_ESCAPE_MAX:
+                        hit_d = GuardDecision(
+                            verdict="WARN",
+                            rule="low_hit_rate_escape",
+                            detail=(
+                                f"连续 {streak} 次 BLOCK 后自动降级 WARN（逃生——"
+                                "避免死锁；请尽快压缩 checkpoint/换会话恢复命中）"
+                            ),
+                        )
+                else:
+                    self._block_streak[session_id] = 0
+                decision = hit_d
+        elif decision.verdict == "ALLOW":
+            self._block_streak[session_id] = 0
+        # 基线维护：ALLOW 且无 WARN（system 稳定）时更新基线；有 WARN 不动（下次继续检测）
+        if decision.verdict == "ALLOW":
+            self._baselines[session_id] = system_text
+        return decision

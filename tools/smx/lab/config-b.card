@@ -1,0 +1,11 @@
+# B 组（treatment）通用开场卡
+# 提示：与 A 组卡的唯一差异是下面这 4 行（作为混杂因子如实记录）。
+使用你现有的工具完成下方任务。工作目录即当前目录。
+所有要求以任务卡正文为准；完成或无法完成时如实汇报，不要伪造产物。
+
+本机另有工具 `python3 /Users/yyj/Project/llm-first-loop-mirror/tools/smx/smx.py`（绝对路径，直接可用），可用可不用：
+- `python3 /Users/yyj/Project/llm-first-loop-mirror/tools/smx/smx.py exec '你的命令'`：执行并给出退出码链 + 文件系统变更摘要；
+- `python3 /Users/yyj/Project/llm-first-loop-mirror/tools/smx/smx.py bg '长命令'`（返回 run_id，稍后 `collect RUN_ID` 收尾取回执）；
+- `python3 /Users/yyj/Project/llm-first-loop-mirror/tools/smx/smx.py wait --file-exists PATH | --file-gone PATH | --file-contains PATH TEXT | --port-open N --timeout S`。
+
+任务正文见本卡之后追加的 tasks/T*/task.md 全文。

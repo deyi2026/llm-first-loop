@@ -1,0 +1,33 @@
+{
+  "schema": "smc.browser_subject_smoke_v01.plan",
+  "fixture": "smc_ground_truth_server.v1.1",
+  "fixture_amendment_required": {
+    "gap": "navigate has no server-side observable for a third-party driver: GETs are unlogged, /state records only POST /event",
+    "change": [
+      "log PAGE_ROUTES GETs as {seq, path, server_ts}; expose as /state snapshot key 'visits'",
+      "manifest route field 'expected_visits' (navigate family only)",
+      "FIXTURE_ID -> smc_ground_truth_server.v1.1; extend the self-check"
+    ],
+    "gt_v01_compatibility": "judge reads events only; additive snapshot key changes nothing for the existing runner"
+  },
+  "manifest_is_plan_source": true,
+  "arm": "smc",
+  "model_ref": "cognilocal/ornith-1.5-35b-a3b-mlx",
+  "clause_families": [
+    "name_pollution",
+    "ambiguity_halt",
+    "scoped_scroll",
+    "cross_route_navigate",
+    "typed_wait_param"
+  ],
+  "rows": 5,
+  "repeats": 1,
+  "row_wall_s_cap": 420,
+  "gate": {
+    "rows_complete": 5,
+    "infra_valid": "no WORKER_ERROR/TIMEOUT/fallback/surface mismatch on any row",
+    "judge_executed": "5/5",
+    "oracle_pass_min": 1
+  },
+  "notes": "Expectations live in GET /manifest; effects only in GET /state (plus the v1.1 visits key for navigate). Prompts are frozen protocol content that names the target object as the task statement; expected ids/kinds/counts never appear in prompts. Nothing else route-specific is frozen here."
+}

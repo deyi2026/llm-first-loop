@@ -1,0 +1,192 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-runtime-config-p1-fresh-main",
+  "summary": "Fresh-main rebuild of file-backed RuntimeConfig plus P1-A/P1-B typed immutable runtime policy on e5bfe249, excluding historical R05/memory lineage while preserving later main capabilities.",
+  "components": [
+    {
+      "component_id": "runtime-config-fresh-main-control",
+      "paths": [
+        ".gitignore",
+        "runtime.toml.example",
+        "scripts/audit_runtime_env.py",
+        "src/llm_loop/cache_guard/guard.py",
+        "src/llm_loop/config.py",
+        "src/llm_loop/core/cache_health.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/history.py",
+        "src/llm_loop/core/interop_watch.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/engine_services/interop.py",
+        "src/llm_loop/core/loop/engine_services/interrupted_capture.py",
+        "src/llm_loop/core/loop/engine_services/nonconvergence_guard.py",
+        "src/llm_loop/core/loop/engine_services/tool_cycle.py",
+        "src/llm_loop/core/loop/injection_span.py",
+        "src/llm_loop/core/loop/runner.py",
+        "src/llm_loop/core/prompt_build/stages/history_budget_prep.py",
+        "src/llm_loop/core/prompt_build/stages/history_pipeline.py",
+        "src/llm_loop/core/prompt_build/stages/history_projection.py",
+        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
+        "src/llm_loop/core/prompt_build/stages/trace_isolation.py",
+        "src/llm_loop/core/scheduler.py",
+        "src/llm_loop/core/session.py",
+        "src/llm_loop/core/trace_leak/leak_events.py",
+        "src/llm_loop/core/trace_leak/user_ingress_guard.py",
+        "src/llm_loop/eval/oracle_1210.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/feishu/bridge.py",
+        "src/llm_loop/feishu/compensation.py",
+        "src/llm_loop/feishu/cross_sync.py",
+        "src/llm_loop/introspection/loop_signals.py",
+        "src/llm_loop/introspection/tools_feishu_outbound.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/llm/pool.py",
+        "src/llm_loop/runtime/identity.py",
+        "src/llm_loop/runtime/launch.py",
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/runtime/resolver.py",
+        "src/llm_loop/runtime/tool_octet.py",
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/tools/builtin/dsh_session_read.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/builtin/job_registry.py",
+        "src/llm_loop/tools/evidence_enforce.py",
+        "src/llm_loop/tools/registry.py",
+        "src/llm_loop/tools/sandbox.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "runtime configuration resolution, immutable Settings injection, and mechanical runtime policy consumers",
+      "disposition": "ADMIT as startup-resolved mechanical configuration authority; no task-semantic or completion authority is introduced.",
+      "evidence": [
+        "Fresh-main AST inventory was recomputed from exact e5bfe249: 245 direct accesses / 40 module-import reads before rebuild, then 204/40 after P0, 164/0 after P1-A, and 126/0 after P1-B.",
+        "P1-B removes direct reads for the historical nine tool-runtime keys and the fresh-main LFL_NONCONV_FUSE_* controls while preserving NonconvergenceFuse and AgentFollowup behavior.",
+        "Dirty-state whole-tree Ruff, Pyright 0/0/0, env-pin 579/0, security, tier0, full xdist, guard-report, and scripts/ci_gate.sh all passed before qualification metadata was authored."
+      ],
+      "verification_level": "fresh-main focused/adjacent regression + AST env inventory + whole-tree static/security/full CI + branch-wide A.5 exact diff coverage + committed-state rerun",
+      "model_evidence_veto_recovery_exit": "Program logic owns only configuration provenance, typed values, path ownership and hard mechanical runtime parameters. The model retains semantic task judgment; invalid/missing configuration is surfaced as explicit evidence and operators can correct runtime.toml or revert.",
+      "rollback_route": "Revert or abandon the fresh branch commits and return to exact e5bfe249; this phase performs no durable application-data migration.",
+      "declaration_id": "runtime-config-fresh-main-control"
+    },
+    {
+      "component_id": "runtime-config-fresh-main-qualification-harness",
+      "paths": [
+        "scripts/evidence/_capsule_pin.py",
+        "scripts/evidence/r10/runner.py",
+        "scripts/evidence/r4/runner.py",
+        "scripts/evidence/r7/runner.py",
+        "scripts/evidence/r7v2/runner.py",
+        "scripts/evidence/r8/runner.py",
+        "tests/fixtures/runtime_env_access_baseline.json",
+        "tests/test_nonconvergence_fuse.py",
+        "tests/unit/test_breaker_pressure_narrowing.py",
+        "tests/unit/test_cache_block_reclassification.py",
+        "tests/unit/test_cache_breaker_engine.py",
+        "tests/unit/test_cache_compaction_replay_fidelity.py",
+        "tests/unit/test_channel_whitelist_guard.py",
+        "tests/unit/test_cognitive_compiler.py",
+        "tests/unit/test_compact_observability_r817.py",
+        "tests/unit/test_compaction_runtime_sot.py",
+        "tests/unit/test_cr_r1_mode.py",
+        "tests/unit/test_dsh_session_read.py",
+        "tests/unit/test_evidence_enforce.py",
+        "tests/unit/test_evidence_pipeline_integration.py",
+        "tests/unit/test_experience_guidance.py",
+        "tests/unit/test_factory.py",
+        "tests/unit/test_interop_inject.py",
+        "tests/unit/test_job_registry.py",
+        "tests/unit/test_llm_client_close.py",
+        "tests/unit/test_m41.py",
+        "tests/unit/test_r824_final_gates.py",
+        "tests/unit/test_route_context.py",
+        "tests/unit/test_runtime_config_p0.py",
+        "tests/unit/test_runtime_config_p1_import_time.py",
+        "tests/unit/test_runtime_config_p1_paths.py",
+        "tests/unit/test_runtime_env_access_gate.py",
+        "tests/unit/test_runtime_zero_prompt.py",
+        "tests/unit/test_sandbox.py",
+        "tests/unit/test_schedule_wake.py",
+        "tests/unit/test_selective_evidence_s1.py",
+        "tests/unit/test_skillzip_feedback.py",
+        "tests/unit/test_tool_eligibility_r87.py",
+        "tests/unit/test_tool_result_factualization.py",
+        "tests/unit/test_tool_working_set_projection.py",
+        "tests/unit/test_trace_leak_quarantine.py",
+        "tests/unit/test_trace_leak_regression.py",
+        "tests/unit/test_truncation_guidance.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic qualification tests and frozen Evidence replay harnesses",
+      "disposition": "ADMIT as verification-only adaptation to explicit configuration injection; production authority is unchanged.",
+      "evidence": [
+        "All 33 changed test files plus R4/R7/R7v2/R8/R10 frozen Evidence runner tests passed together (473/473).",
+        "Historical Evidence runners now explicitly construct capsule_mode=on instead of mutating process env; the old _capsule_pin helper is deleted."
+      ],
+      "verification_level": "focused and adjacent deterministic pytest plus full repository CI",
+      "model_evidence_veto_recovery_exit": "Tests and replay harnesses assert mechanical contracts only; they do not decide task meaning or runtime admission beyond existing deterministic gates.",
+      "rollback_route": "Revert the qualification-harness changes together with the runtime-config implementation if the branch is rejected."
+    },
+    {
+      "component_id": "runtime-config-fresh-main-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-runtime-config-p1-fresh-main.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "local qualification record",
+      "disposition": "ADMIT as factual record of measured fresh-main inputs and pre-commit verification; it does not create runtime authority.",
+      "evidence": [
+        "The qualification record freezes exact base identity, measured env counts, excluded lineage, preserved main capabilities, focused test counts, and dirty-state CI facts."
+      ],
+      "verification_level": "human/model review of exact recorded facts plus committed-state gate rerun",
+      "model_evidence_veto_recovery_exit": "The record can be corrected or rejected by review and is not consulted by runtime execution.",
+      "rollback_route": "Delete or revert the qualification record with no runtime effect."
+    },
+    {
+      "component_id": "runtime-config-fresh-main-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-runtime-config-p1-fresh-main.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as mechanical branch-diff coverage metadata only.",
+      "evidence": [
+        "The A.5 checker compares this manifest against exact Git changed-path facts and explicitly leaves semantic_quality and classification_truth not evaluated."
+      ],
+      "verification_level": "synthetic index-tree base-to-head coverage before commit plus real e5bfe249-to-HEAD coverage after commit",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend classification or reject the branch; this record does not infer architecture truth from source.",
+      "rollback_route": "Revert the submission record together with the branch if review rejects it."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "runtime-config-fresh-main-control",
+      "g1": {
+        "necessity": "Stable dual-root runtime operation requires one startup-resolved non-secret configuration authority; leaving business policy distributed across ambient process env permits cross-run drift and hidden mutable state."
+      },
+      "g2": {
+        "authority_owner": "RuntimeConfig resolution plus immutable Settings and existing runtime identity/path ownership",
+        "relationship": "reuse",
+        "non_duplication": "The rebuild reuses existing config/path identity boundaries and injects resolved values into consumers; it does not add a second task-policy, evidence, completion, routing, or model authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "runtime.toml provenance and ignored stale-shell facts",
+          "AST direct-env inventory and ratchet failures",
+          "closed-schema parse errors",
+          "explicit consumer-level mechanical settings"
+        ],
+        "recovery_or_reason": "Correct the operator-owned runtime.toml, use the explicit override boundary where intended, or revert the branch. No hidden semantic fallback is added."
+      },
+      "g4": {
+        "rollback": "Abandon/revert the fresh branch to e5bfe249; no persistent user data is migrated by this phase.",
+        "verification": [
+          "fresh baseline and phase-by-phase env inventory",
+          "module-import direct reads reduced 40 to 0",
+          "historical nine plus fresh Nonconvergence direct env controls removed",
+          "focused and 473-case adjacent pytest",
+          "whole-tree Ruff/Pyright/security/env-pin/tier0/xdist/guard-report",
+          "branch-wide A.5 exact-path coverage before and after commit"
+        ]
+      }
+    }
+  ]
+}

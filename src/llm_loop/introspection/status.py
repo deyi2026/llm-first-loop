@@ -1,0 +1,980 @@
+"""架构状态采集/查询/上报 ArchitectureStatusProvider（design.md §2.1.4.2/2.1.4.3）.
+
+八维架构运行状态模型:
+1. current_phase 2. action_trace 3. tool_history 4. message_flow
+5. memory_state 6. context_usage 7. exception_log 8. architecture_config
+
+零侵入采集（循环事件附带完成，不新增 LLM 往返）+ 如实聚合（状态层禁止伪装）。
+审计落盘: action_trace.jsonl / exception_log.jsonl。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import threading
+from collections.abc import Callable, Set
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.run_context import current_session_id
+from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType, EventReporter
+from llm_loop.timekeeping import system_local_now
+
+
+def _now() -> str:
+    return system_local_now().isoformat()
+
+
+def _model_fact_integrity(
+    model_window: object, breakdown: object, budget: object
+) -> dict[str, object]:
+    """Compare independent current-run model labels without inferring semantics."""
+
+    window = model_window if isinstance(model_window, dict) else {}
+    breakdown_map = breakdown if isinstance(breakdown, dict) else {}
+    budget_map = budget if isinstance(budget, dict) else {}
+    labels = {
+        "model_window": str(window.get("label") or ""),
+        "breakdown": str(breakdown_map.get("model") or ""),
+        "budget": str(budget_map.get("model") or ""),
+    }
+    scope = str(window.get("scope") or "")
+    if scope != "current_run":
+        return {
+            "status": "not_current_run",
+            "healthy": None,
+            "scope": scope or "unknown",
+            "labels": labels,
+        }
+    if not all(labels.values()):
+        return {
+            "status": "unknown",
+            "healthy": None,
+            "scope": scope,
+            "labels": labels,
+        }
+    consistent = len(set(labels.values())) == 1
+    return {
+        "status": "consistent" if consistent else "mismatch",
+        "healthy": consistent,
+        "scope": scope,
+        "labels": labels,
+    }
+
+
+@dataclass
+class ActionTraceItem:
+    """动作轨迹条目（AI 可溯源）."""
+
+    ts: str
+    phase: str
+    action_type: str
+    detail: str
+    session_id: str = ""
+    # 路由三元组（spec 5.3.1 / 6.4）：标识不可得时显式 unknown，禁止缺列
+    instance: str = "unknown"
+    zone: str = "unknown"
+    route: str = "unknown"
+
+    def to_dict(self) -> dict:
+        return {
+            "ts": self.ts,
+            "phase": self.phase,
+            "action_type": self.action_type,
+            "detail": self.detail,
+            # CR-R1 6.1: 补 session_id（dataclass 已有字段，to_dict 此前漏写；
+            # 旧 trace 行缺此字段，读侧 .get() null 容忍）
+            "session_id": self.session_id,
+            # 路由三元组尾部追加（spec 6.4.4）：不动既有五字段位置契约
+            "instance": self.instance,
+            "zone": self.zone,
+            "route": self.route,
+        }
+
+
+@dataclass
+class ExceptionLogItem:
+    """异常记录条目（AI 可溯源）."""
+
+    ts: str
+    phase: str
+    error_type: str
+    error_message: str
+    reported: bool = False
+    resolved: bool = False
+    session_id: str = ""
+
+
+@dataclass
+class ToolHistoryItem:
+    """工具调用历史条目（八维状态维度 3）."""
+
+    name: str
+    arguments: dict
+    status: ToolResultStatus
+    summary: str
+    duration_ms: float = 0.0
+    ts: str = ""
+    session_id: str = ""
+
+
+def _bound_session_id() -> str:
+    """Best-effort factual execution binding for observability records."""
+    try:
+
+        return str(current_session_id.get() or "")
+    except Exception:  # noqa: BLE001 — observability attribution must stay fail-open
+        return ""
+
+
+class ArchitectureStatusProvider:
+    """架构状态采集/查询/上报（AI-serving，design.md §2.1.4）."""
+
+    # A-④（EVO-20260924-40755734）: 同 (phase, error_type) 签名达阈值记 repeat 台账+事件（每签名一次）
+    TOOL_FAULT_REPEAT_THRESHOLD = 3
+
+    def __init__(
+        self,
+        *,
+        audit_dir: str | Path | None = None,
+        cooldown_s: float = 60.0,
+        enabled: bool = True,
+        config_status: Callable[[], dict] | None = None,
+        archive_stats_fn: Callable[[], dict] | None = None,
+        memory_stats_fn: Callable[[], dict] | None = None,  # M18 AA10: 记忆统计（补真实数据）
+        workspace_changed_fn: Callable[[], dict | None] | None = None,  # P1-12: 工作区变更检测
+        route_fn: Callable[[], dict] | None = None,  # spec 5.3.1: 路由三元组回调（D6 注入）
+    ) -> None:
+        self.enabled = enabled
+        self.reporter = EventReporter(cooldown_s=cooldown_s)
+        self._config_status = config_status or (lambda: {})
+        self._archive_stats_fn = archive_stats_fn  # T23: 压缩档案统计
+        self._memory_stats_fn = memory_stats_fn  # M18 AA10: 记忆统计（未注入如实标注）
+        self._workspace_changed_fn = workspace_changed_fn  # P1-12: 工作区变更（guard 检测）
+        self._route_fn = route_fn  # spec 5.3.1: 路由三元组（未注入 → unknown，fail-open）
+        self._audit_dir = Path(audit_dir) if audit_dir else None
+
+        self._current_phase: str = "idle"
+        # P0-5(2026-08-15): 阶段按会话分桶（并发 run 不互改对方 current_phase；
+        # _current_phase 保留为"最近写入值"兼容快照缺省路径）
+        self._phases: dict[str, str] = {}
+        self._phases_guard = threading.Lock()
+        self._action_trace: list[ActionTraceItem] = []
+        self._tool_history: list[ToolHistoryItem] = []
+        self._message_flow: list[dict] = []
+        self._exception_log: list[ExceptionLogItem] = []
+        # A-④（EVO-20260924-40755734）: 同形态故障签名计数与已提醒集
+        self._tool_fault_counts: dict[tuple[str, str], int] = {}
+        self._tool_fault_alerted: set[tuple[str, str]] = set()
+        self._last_exception_ts: float = 0.0
+        self._llm_rounds = 0
+        self._llm_rounds_by_session: dict[str, int] = {}
+        # R2/A6(2026-08-14): 程序故障计数（fail-open 事件聚合，AI 经 architecture_status 感知
+        # "程序故障率"——程序故障本身对 AI 可见可应对，对齐 RULE-AI-04）
+        self._program_faults: dict[str, int] = {}
+        # M49（design §5.4）: 当前降级状态（None = 未处于降级; dict = 最近一次降级）
+        self._fallback_state: dict | None = None
+        # T4（spec.md 5.3.1）: 待办聚合回调（纯聚合无判断，AI 一站式感知系统待办）
+        self._pending_actions_fn: Callable[[], dict] | None = None
+        # P2-2: 备份状态回调（AI 经 architecture_status.recovery 感知待恢复备份）
+        self._recovery_status_fn: Callable[[], dict] | None = None
+        self._knowledge_health_fn: Callable[[], dict] | None = None
+        # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照回调（未注入 → None 零回归）
+        self._cache_health_fn: Callable[[], dict | None] | None = None
+        self._cache_guard_fn: Callable[[str], dict | None] | None = None  # session 透传（grill-me Q11）
+        self._request_usage_fn: Callable[[], dict | None] | None = None
+        self._causality_fn: Callable[[str], dict | None] | None = None
+        self._local_runtime_fn: Callable[[], dict] | None = None
+
+    # ── 采集（循环事件附带调用，零侵入）──
+    def record_phase(self, phase: str) -> None:
+        if self.enabled:
+            # P0-5: 按 contextvar 会话分桶（无上下文 → 全局桶）；并发 run 各记各的
+            try:
+
+                sid = current_session_id.get()
+            except Exception:  # noqa: BLE001 — 上下文不可用落全局桶（零回归）
+                sid = ""
+            with self._phases_guard:
+                self._phases[sid] = phase
+                self._current_phase = phase  # 兼容：最近写入值
+
+    def _phase_for(self, session_id: str = "") -> str:
+        """快照取阶段：会话桶优先 → 全局桶 → 最近写入值（如实回退链）."""
+        if session_id:
+            with self._phases_guard:
+                return self._phases.get(session_id, "idle")
+        try:
+
+            ctx_sid = current_session_id.get()
+        except Exception:  # noqa: BLE001
+            ctx_sid = ""
+        with self._phases_guard:
+            for key in (session_id, ctx_sid, ""):
+                if key and key in self._phases:
+                    return self._phases[key]
+            return self._current_phase
+
+    def record_action(
+        self, phase: str, action_type: str, detail: str, session_id: str = ""
+    ) -> None:
+        if not self.enabled:
+            return
+        # CR-R1.1（审查项7）: session_id 缺省时自动读 current_session_id contextvar
+        # （对齐 record_phase 模式）——此前 _ActionMixin 调用链不传 sid，导致
+        # action_trace.jsonl 的 session_id 字段恒为空（生产归因断裂）
+        if not session_id:
+            try:
+
+                session_id = current_session_id.get()
+            except Exception:  # noqa: BLE001 — contextvar 未设按空处理
+                session_id = ""
+        route = self._route_triple()
+        item = ActionTraceItem(
+            ts=_now(),
+            phase=phase,
+            action_type=action_type,
+            detail=detail,
+            session_id=session_id,
+            instance=route["instance"],
+            zone=route["zone"],
+            route=route["route"],
+        )
+        self._action_trace.append(item)
+        self._write_audit("action_trace.jsonl", item.to_dict())
+
+    def _route_triple(self) -> dict:
+        """路由三元组快照（spec 5.3.1）：route_fn 缺省/异常 → 全 unknown（fail-open，主审计不丢）."""
+        triple = {"instance": "unknown", "zone": "unknown", "route": "unknown"}
+        if self._route_fn is None:
+            return triple
+        try:
+            snap = self._route_fn() or {}
+            for key in triple:
+                val = snap.get(key)
+                if isinstance(val, str) and val:
+                    triple[key] = val
+        except Exception:  # noqa: BLE001 — spec 5.3.3-2：降级写 unknown，主记录不丢
+            pass
+        return triple
+
+    def record_tool_history(self, item: ToolHistoryItem) -> None:
+        if self.enabled:
+            if not item.session_id:
+                item.session_id = _bound_session_id()
+            self._tool_history.append(item)
+            self._tool_history = self._tool_history[-200:]  # 防膨胀
+
+    def record_message(
+        self,
+        role: str,
+        source: str,
+        chars: int,
+        note: str | None = None,
+        *,
+        session_id: str = "",
+    ) -> None:
+        if self.enabled:
+            self._message_flow.append(
+                {
+                    "role": role,
+                    "source": source,
+                    "chars": chars,
+                    "note": note,
+                    "session_id": session_id or _bound_session_id(),
+                }
+            )
+            self._message_flow = self._message_flow[-100:]
+
+    def record_llm_round(self) -> None:
+        if self.enabled:
+            self._llm_rounds += 1
+            sid = _bound_session_id()
+            if sid:
+                self._llm_rounds_by_session[sid] = self._llm_rounds_by_session.get(sid, 0) + 1
+
+    def record_program_fault(self, kind: str) -> None:
+        """R2/A6: 程序故障计数（fail-open 事件聚合，kind 如 memory/session_persist/event_write/llm_call）.
+
+        供 engine 各 fail-open 点调用；自身 fail-open（异常不影响主流程）；
+        计数供 architecture_status.program_faults 展示（AI 可感知程序故障率）。
+        """
+        try:
+            if self.enabled:
+                self._program_faults[kind] = self._program_faults.get(kind, 0) + 1
+        except Exception:  # noqa: BLE001 — 计数失败 fail-open
+            pass
+
+    def record_exception(self, phase: str, exc: Exception, *, session_id: str = "") -> None:
+        if not self.enabled:
+            return
+        session_id = session_id or _bound_session_id()
+        item = ExceptionLogItem(
+            ts=_now(),
+            phase=phase,
+            error_type=type(exc).__name__,
+            error_message=str(exc)[:500],
+            session_id=session_id,
+        )
+        self._exception_log.append(item)
+        self._exception_log = self._exception_log[-100:]
+        self._write_audit(
+            "exception_log.jsonl",
+            {
+                "ts": item.ts,
+                "phase": item.phase,
+                "error_type": item.error_type,
+                "error_message": item.error_message,
+            },
+        )
+
+    def record_tool_fault(
+        self, tool: str, outcome: str, detail: str, *, session_id: str = ""
+    ) -> None:
+        """工具回执故障台账（B 最小闭环，EVO 工具故障可追溯）.
+
+        非 SUCCESS 回执与 "done 但空输出" 由 registry post_result observer 统一送入；
+        与 record_exception 同构落盘（ts/phase/error_type/error_message），
+        phase=tool.<name>、error_type=tool_<outcome>，search_records(kind=exception_log)
+        既有检索路径零改动可查。自身 fail-open：台账失败绝不影响工具主流程。
+        """
+        try:
+            if not self.enabled:
+                return
+            item = ExceptionLogItem(
+                ts=_now(),
+                phase=f"tool.{tool}",
+                error_type=f"tool_{outcome}",
+                error_message=str(detail)[:500],
+                session_id=session_id or _bound_session_id(),
+            )
+            self._exception_log.append(item)
+            self._exception_log = self._exception_log[-100:]
+            self._write_audit(
+                "exception_log.jsonl",
+                {
+                    "ts": item.ts,
+                    "phase": item.phase,
+                    "error_type": item.error_type,
+                    "error_message": item.error_message,
+                },
+            )
+            # A-④（EVO-20260924-40755734）: 同形态故障 ≥N 次自动提醒（L4）——
+            # 每 (phase, error_type) 签名首个达到阈值的时刻记一条 repeat 台账 +
+            # report_event 走既有冷却通道；不新增 prompt 注入路径（可检索/有事件）。
+            sig = (item.phase, item.error_type)
+            count = self._tool_fault_counts.get(sig, 0) + 1
+            self._tool_fault_counts[sig] = count
+            if count >= self.TOOL_FAULT_REPEAT_THRESHOLD and sig not in self._tool_fault_alerted:
+                self._tool_fault_alerted.add(sig)
+                self._write_audit(
+                    "exception_log.jsonl",
+                    {
+                        "ts": _now(),
+                        "phase": item.phase,
+                        "error_type": "tool_fault_repeat",
+                        "error_message": f"同形态故障达 {count} 次（阈值 {self.TOOL_FAULT_REPEAT_THRESHOLD}）: {item.error_message[:300]}",
+                    },
+                )
+                self.report_event(
+                    ArchitectureEvent(
+                        event_type=ArchitectureEventType.EXCEPTION,
+                        fact=f"{item.phase} 同形态故障 {count} 次（{item.error_type}）",
+                        reason="工具回执故障重复形态达到提醒阈值",
+                        suggestion="search_records(kind=exception_log) 查该签名完整记录并定位根因",
+                    )
+                )
+        except Exception:  # noqa: BLE001 — 台账 fail-open
+            pass
+
+    # ── 上报（推送通道，design.md §2.1.4.3）──
+    def report_event(self, event: ArchitectureEvent) -> bool:
+        """尝试上报事件；通过冷却则返回 True（调用方决定注入消息）."""
+        if not self.enabled:
+            return False
+        return self.reporter.should_report(event)
+
+    def build_report_message(self, event: ArchitectureEvent):
+        return self.reporter.build_message(event)
+
+    def _process_versions(self) -> dict:
+        """进程代码版本一致性（EVO-20260811-f94e5306）；读取失败如实标注."""
+        try:
+            from llm_loop.introspection.proc_version import get_process_versions
+
+            return get_process_versions()
+        except Exception as exc:  # noqa: BLE001 — 读取失败如实标注（fail-open）
+            return {"note": f"读取失败: {type(exc).__name__}: {exc}"}
+
+    def _memory_stats(self) -> dict:
+        """记忆统计（M18 AA10: 补真实数据；未注入/读取失败如实标注，不伪造）."""
+        if self._memory_stats_fn is None:
+            return {"note": "memory_state 暂不可用（未注入统计）", "entries_hint": None}
+        try:
+            return self._memory_stats_fn()
+        except Exception as exc:  # noqa: BLE001 — 读取失败如实标注（fail-open，DFX-REL-09）
+            return {
+                "note": f"读取失败: {type(exc).__name__}: {exc}",
+                "entries_hint": None,
+            }
+
+    # ── M49（design §5.4）: 模型降级状态（architecture_status 可见） ──
+    def record_fallback(
+        self, from_model: str, to_model: str, reason: str, *, session_id: str = ""
+    ) -> None:
+        """记录一次模型降级（仅保留最近一次,供 architecture_status 可见）.
+
+        Args:
+            from_model: 原模型引用（"provider/model" 或裸模型名）
+            to_model: 降级后模型引用
+            reason: 失败原因（"429 限流" / "网络不可达" / "5xx 上游错误" 等,设计原则 2 如实反馈）
+            session_id: 当前会话 ID（关联降级事件与会话）
+        """
+        if not self.enabled:
+            return
+        self._fallback_state = {
+            "ts": _now(),
+            "from": from_model,
+            "to": to_model,
+            "reason": reason,
+            "session_id": session_id,
+        }
+
+    def clear_fallback(self) -> None:
+        """清除降级状态（下次成功调用 default 模型后由调用方调用; 当前仅在 loop.run 出口自动调用）."""
+        if not self.enabled:
+            return
+        self._fallback_state = None
+
+    def _fallback_status(self) -> dict:
+        """降级状态摘要（architecture_status 维度, 有则显示, 无则 null/None）.
+
+        Returns:
+            dict: 含 from/to/reason/ts 字段；未处于降级态时各字段为 None
+        """
+        st = getattr(self, "_fallback_state", None)
+        if not st:
+            return {
+                "active": False,
+                "from": None,
+                "to": None,
+                "reason": None,
+                "ts": None,
+            }
+        return {
+            "active": True,
+            "from": st.get("from"),
+            "to": st.get("to"),
+            "reason": st.get("reason"),
+            "ts": st.get("ts"),
+        }
+
+    def _pending_actions(self) -> dict:
+        """T4: 待办聚合（纯聚合无判断，spec.md 5.3.1 / design.md §2.2.2.2）.
+
+        回调注入 → 调用回调返回聚合 dict（计数 + hint，无决策）；
+        未注入 → {"note": "数据源未注入"}（向后兼容）；
+        回调异常 → 计数字段 null + note 标注原因（fail-open 不伪造 0）。
+        """
+        fn = getattr(self, "_pending_actions_fn", None)
+        if fn is None:
+            return {"note": "数据源未注入"}
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — 聚合失败如实标注（fail-open）
+            return {
+                "executing_evolutions": None,
+                "pending_reviews": None,
+                "pending_self_evals": None,
+                "hint": None,
+                "note": f"待办聚合失败（{type(exc).__name__}: {exc}）",
+            }
+
+    def _recovery_status(self) -> dict:
+        """P2-2: 备份状态感知（spec.md 5.3.1 规则 4 / design §2.3.2.7）.
+
+        回调注入 → 调用回调返回备份状态 dict（pending_count/oldest_backup_at/by_type）；
+        未注入 → {"note": "数据源未注入"}（向后兼容）；
+        回调异常 → 如实标注原因（fail-open 不伪造为零）。
+        """
+        fn = getattr(self, "_recovery_status_fn", None)
+        if fn is None:
+            return {"note": "数据源未注入"}
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — 状态查询失败如实标注（fail-open）
+            return {
+                "pending_count": None,
+                "oldest_backup_at": None,
+                "by_type": {"session": None, "memory_stats": None},
+                "note": f"备份状态读取失败（{type(exc).__name__}: {exc}）",
+            }
+
+    # ── 查询（拉取通道）──
+    def set_model_context_fn(self, fn) -> None:
+        """注入当前模型窗口查询回调（M56 B5：AI 可查窗口后自主决策压缩）.
+
+        fn() -> dict | None，如 {"label": "deepseek/deepseek-v4-flash", "context": 131072}；
+        未注入 → snapshot 中 model_window 为 None（向后兼容）。
+        """
+        self._model_context_fn = fn
+
+    def set_runtime_params_fn(self, fn) -> None:
+        """注入运行时参数快照查询回调（M57 配置面收敛：AI 可查 adjust_strategy 生效值）.
+
+        fn() -> dict，如 {"max_iterations": 30, "memory_top_k": 12}；
+        未注入 → snapshot 中 runtime_params 为 None（向后兼容）。
+        """
+        self._runtime_params_fn = fn
+
+    def set_context_breakdown_fn(self, fn) -> None:
+        """注入上下文占用分解回调（R1: AI 经 architecture_status 可见组件级占用）.
+
+        fn() -> dict | None；未注入 → snapshot 中 breakdown 为 None（向后兼容）。
+        """
+        self._context_breakdown_fn = fn
+
+    def set_budget_fn(self, fn) -> None:
+        """注入有效历史预算归因回调（EVO-20260827-ed4c1350 P0-B）.
+
+        fn() -> dict | None，如 {"effective_budget": 300000, "limited_by":
+        "provider_budget", "configured_global_budget": 1000000, ...}；
+        未注入 → snapshot 中 budget 为 None（向后兼容）。
+        """
+        self._budget_fn = fn
+
+    def set_request_usage_fn(self, fn) -> None:
+        """注入最近一次真实 provider usage/context/cache 观测回调。
+
+        仅供 architecture_status 按需读取，不参与 prompt 构造或策略判断。
+        """
+        self._request_usage_fn = fn
+
+    def set_causality_fn(self, fn) -> None:
+        """Inject a read-only, on-demand per-session causal diagnostic callback."""
+        self._causality_fn = fn
+
+    def set_local_runtime_fn(self, fn) -> None:
+        """Inject read-only local-runtime facts; queried only on explicit dimension request."""
+
+        self._local_runtime_fn = fn
+
+    def set_pending_actions_fn(self, fn) -> None:
+        """注入待办聚合回调（T4: AI 一站式感知系统待办，纯聚合无判断）.
+
+        fn() -> dict，如 {"executing_evolutions": 2, "pending_reviews": 1,
+        "pending_self_evals": 0, "hint": "...", "note": None}；
+        未注入 → snapshot 中 pending_actions 为 {"note": "数据源未注入"}（向后兼容）。
+        """
+        self._pending_actions_fn = fn
+
+    def set_recovery_status_fn(self, fn) -> None:
+        """注入备份状态查询回调（P2-2: AI 经 architecture_status.recovery 感知）.
+
+        fn() -> dict，如 {"pending_count": 2, "oldest_backup_at": "...",
+        "by_type": {"session": 1, "memory_stats": 1}, "note": None}；
+        未注入 → snapshot 中 recovery 为 {"note": "数据源未注入"}（向后兼容）。
+        """
+        self._recovery_status_fn = fn
+
+
+    def set_knowledge_health_fn(self, fn) -> None:
+        """Inject prompt-neutral Knowledge/Activation-store health facts."""
+        self._knowledge_health_fn = fn
+
+    def _knowledge_health_snapshot(self) -> dict:
+        fn = self._knowledge_health_fn
+        if fn is None:
+            return {"status": "unknown", "writes_enabled": False, "note": "数据源未注入"}
+        try:
+            value = fn()
+            return value if isinstance(value, dict) else {
+                "status": "unknown", "writes_enabled": False, "note": "健康源返回非对象"
+            }
+        except Exception as exc:  # noqa: BLE001 — mutation safety requires visible fail-closed state
+            return {
+                "status": "unknown",
+                "writes_enabled": False,
+                "note": f"Knowledge健康读取失败（{type(exc).__name__}: {exc}）",
+            }
+
+    def set_cache_health_fn(self, fn) -> None:
+        """注入 cache_health 快照回调（EVO-20260818 spec §5.4.1-2）.
+
+        fn() -> dict | None（CacheHealthMonitor.snapshot）；未注入 → context_usage.cache_health
+        为 None（向后兼容）。与既有 set_context_breakdown_fn 同构。
+        """
+        self._cache_health_fn = fn
+
+    def set_cache_guard_fn(self, fn) -> None:
+        """注入 cache_guard 快照回调（EVO-20260818 spec §5.4.1-2，grill-me Q11）.
+
+        fn(session_id: str) -> dict | None（PromptGuard.snapshot——窗口 per-session，
+        snapshot() 透传当前会话，空串=最近活跃会话聚合）；未注入 → 字段 None。
+        """
+        self._cache_guard_fn = fn
+
+    def snapshot(self, session_id: str = "", dimensions: list[str] | None = None) -> dict:
+        """构造八维状态快照（紧凑 JSON，维度可按需裁剪）.
+
+        部分维度不可用时如实标注（不伪造状态）。
+        EVO-20260922 filter-first（P0）: dimensions 归一化提前到构建之前，
+        仅构建被请求的维度——旧实现全量构建 avail 后才过滤，带 dimensions 的
+        查询也照付昂贵维度（archive 全库统计/knowledge_health/pending_actions/
+        recovery 等）的全额成本。归一化契约不变（见 _normalize_dimensions）。
+        """
+        # EVO-20260818/2026-08-20 防御归一化: dimensions 可能被模型传成字符串/残缺 JSON
+        # （JSON 字符串优先解析 → 逗号/空白拆分 → 过滤到已知维度集 → 全部非法回落全量）。
+        requested = _normalize_dimensions(dimensions, _SNAPSHOT_DIMENSIONS)
+
+        def _wants(name: str) -> bool:
+            # None = 全量回落；否则仅构建被请求维度
+            return requested is None or name in requested
+
+        model_window = None
+        runtime_params = None
+        breakdown = None
+        budget = None
+        model_fact_integrity = None
+        if _wants("context_usage"):
+            fn = getattr(self, "_model_context_fn", None)
+            if fn is not None:
+                try:
+                    model_window = fn()
+                except Exception:  # noqa: BLE001 — 窗口查询失败如实标注 None（fail-open）
+                    model_window = None
+            fn2 = getattr(self, "_runtime_params_fn", None)
+            if fn2 is not None:
+                try:
+                    runtime_params = fn2()
+                except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
+                    runtime_params = None
+            breakdown_fn = getattr(self, "_context_breakdown_fn", None)
+            if breakdown_fn is not None:
+                try:
+                    breakdown = breakdown_fn()
+                except Exception:  # noqa: BLE001 — missing fact stays unknown
+                    breakdown = None
+            budget_fn = getattr(self, "_budget_fn", None)
+            if budget_fn is not None:
+                try:
+                    budget = budget_fn()
+                except Exception:  # noqa: BLE001 — missing fact stays unknown
+                    budget = None
+            model_fact_integrity = _model_fact_integrity(model_window, breakdown, budget)
+        # causality/local_runtime 维持 on-demand 门控；归一化提前后按 requested 判断
+        # （与旧 raw-string 判断语义等价：None=全量=占位，显式请求才实算）
+        _causality = (
+            self._causality_snapshot(session_id)
+            if (requested is not None and "causality" in requested)
+            else {"available": self._causality_fn is not None, "on_demand": True}
+        )
+        _local_runtime = (
+            self._local_runtime_snapshot()
+            if (requested is not None and "local_runtime" in requested)
+            else {"available": self._local_runtime_fn is not None, "on_demand": True}
+        )
+        current_session_scope = bool(session_id)
+        # Model-facing current-session self-inspection is an exact identity boundary.
+        # Unbound/process-global facts are operational facts, not current-task facts; callers
+        # that need them must request the explicit runtime scope (snapshot without session_id).
+        action_trace = [
+            a
+            for a in self._action_trace
+            if not current_session_scope or a.session_id == session_id
+        ][-30:]
+        tool_history = [
+            t
+            for t in self._tool_history
+            if not current_session_scope or t.session_id == session_id
+        ][-20:]
+        message_flow = [
+            row
+            for row in self._message_flow
+            if not current_session_scope or str(row.get("session_id") or "") == session_id
+        ][-20:]
+        exception_log = [
+            e
+            for e in self._exception_log
+            if not current_session_scope or e.session_id == session_id
+        ][-10:]
+        avail: dict = {}
+        if _wants("current_phase"):
+            avail["current_phase"] = self._phase_for(session_id)
+        if _wants("action_trace"):
+            avail["action_trace"] = [a.to_dict() for a in action_trace]
+        if _wants("tool_history"):
+            avail["tool_history"] = [
+                {
+                    "name": t.name,
+                    "arguments": t.arguments,
+                    "status": t.status.value,
+                    "summary": t.summary[:120],
+                    "duration_ms": round(t.duration_ms, 1),
+                    "session_id": t.session_id,
+                }
+                for t in tool_history
+            ]
+        if _wants("message_flow"):
+            avail["message_flow"] = message_flow
+        if _wants("memory_state"):
+            avail["memory_state"] = self._memory_stats()
+        if _wants("context_usage"):
+            avail["context_usage"] = {
+                "llm_rounds": (
+                    self._llm_rounds_by_session.get(session_id, 0)
+                    if current_session_scope
+                    else self._llm_rounds
+                ),
+                "action_trace_count": len(action_trace),
+                "archive": self._archive_stats_fn() if self._archive_stats_fn else None,
+                # M56 B5（ANALYSIS-20260811）: 当前模型窗口（AI 可查后自主决策压缩）
+                "model_window": model_window,
+                "model_fact_integrity": model_fact_integrity,
+                # M57 配置面收敛: adjust_strategy 当前生效值（AI 可查可验证）
+                "runtime_params": runtime_params,
+                # R1: 组件级占用分解（AI 每轮可见，自主决策压缩/切换/开新会话）
+                "breakdown": breakdown,
+                # EVO-20260827-ed4c1350（P0-B）: 有效预算全口径归因（消除
+                # 1M/300K/200K 三口径误读——AI 直接见 effective + limited_by）
+                "budget": budget,
+                "last_request": (
+                    self._request_usage_fn()
+                    if self._request_usage_fn is not None
+                    else None
+                ),
+                # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照（fail-open——
+                # 回调异常字段置 None 不抛穿 architecture_status）
+                "cache_health": self._cache_health_snapshot(),
+                "cache_guard": self._cache_guard_snapshot(session_id),
+                "records_hint": "完整历史运行记录可用 search_records 检索（不限于内存窗口）",
+            }
+        if _wants("exception_log"):
+            avail["exception_log"] = [
+                {
+                    "phase": e.phase,
+                    "error_type": e.error_type,
+                    "error_message": e.error_message,
+                    "session_id": e.session_id,
+                }
+                for e in exception_log
+            ]
+        if _wants("architecture_config"):
+            avail["architecture_config"] = self._config_status()
+        # 2026-08-20 P2 规则版本信号: 读 docs/ai_rules.lite.md 头部 version（AI 感知版本变化→重读）
+        if _wants("rules_version"):
+            avail["rules_version"] = _rules_version()
+        # P1-12(2026-08-16): 工作区变更检测（guard 检测 .env/providers.json/src/skills 变化
+        # 后写 flag → AI 经 architecture_status 自查可见; None = 无变更/未配置）
+        if _wants("workspace_changed"):
+            avail["workspace_changed"] = (
+                self._workspace_changed_fn() if self._workspace_changed_fn else None
+            )
+        if _wants("process_versions"):
+            avail["process_versions"] = self._process_versions()  # EVO-20260811-f94e5306
+        # M49（design §5.4）: 当前降级状态（有则显示，含 from/to/reason/ts; 无则全 None）
+        if _wants("model_fallback"):
+            avail["model_fallback"] = self._fallback_status()
+        # T4（spec.md 5.3.1）: 待办聚合（纯聚合无判断，AI 一站式感知系统待办）
+        if _wants("pending_actions"):
+            avail["pending_actions"] = self._pending_actions()
+        # P2-2: 备份状态（AI 经 architecture_status.recovery 感知待恢复备份）
+        if _wants("recovery"):
+            avail["recovery"] = self._recovery_status()
+        if _wants("knowledge_health"):
+            avail["knowledge_health"] = self._knowledge_health_snapshot()
+        if _wants("causality"):
+            avail["causality"] = _causality
+        if _wants("local_runtime"):
+            avail["local_runtime"] = _local_runtime
+        # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
+        if _wants("program_faults"):
+            avail["program_faults"] = dict(self._program_faults)
+        # 全部非法/缺失（requested=None）→ 回落全量（模型拿到可用快照而非假错误）；
+        # 部分合法 → 只返回所请求维度，未知项保持 unavailable 标记（信息性保留）。
+        if requested is None:
+            return avail
+        out: dict = {}
+        for d in requested:
+            out[d] = avail.get(
+                d,
+                {
+                    "unavailable": f"维度 '{d}' 暂不可用",
+                    "available_dimensions": sorted(_SNAPSHOT_DIMENSIONS),
+                },
+            )
+        return out
+
+    def _causality_snapshot(self, session_id: str) -> dict | None:
+        fn = self._causality_fn
+        if fn is None:
+            return {"available": False, "note": "causality source not injected"}
+        try:
+            return fn(session_id)
+        except Exception:  # noqa: BLE001 — diagnosis is read-only/fail-open
+            return {"available": True, "status": "read_failed"}
+
+    def _local_runtime_snapshot(self) -> dict:
+        fn = self._local_runtime_fn
+        if fn is None:
+            return {"available": False, "status": "unknown", "note": "source not injected"}
+        try:
+            value = fn()
+            return value if isinstance(value, dict) else {
+                "available": False,
+                "status": "unknown",
+                "note": "source returned non-object",
+            }
+        except Exception:  # noqa: BLE001 - diagnostics are fail-open and never authorize mutation
+            return {"available": False, "status": "unknown", "note": "read_failed"}
+
+    # ── 缓存快照辅助（fail-open）──
+    def _cache_health_snapshot(self) -> dict | None:
+        fn = self._cache_health_fn
+        if fn is None:
+            return None
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 — 回调异常如实置 None
+            return None
+
+    def _cache_guard_snapshot(self, session_id: str) -> dict | None:
+        fn = self._cache_guard_fn
+        if fn is None:
+            return None
+        try:
+            return fn(session_id)
+        except Exception:  # noqa: BLE001 — 回调异常如实置 None
+            return None
+
+    # ── 工具 ──
+    def _write_audit(self, filename: str, record: dict) -> None:
+        if self._audit_dir is None:
+            return
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            with (self._audit_dir / filename).open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            # T39: 审计失败至少日志 warning（不静默 pass，不影响主循环）
+            import logging
+
+            logging.getLogger(__name__).warning("审计写入失败（fail-open）: %s", exc)
+
+    def append_audit_line(self, filename: str, record: dict) -> None:
+        """薄公共 audit append 入口（M2-G1.1 tool_octet sink 接线用）.
+
+        委托既有 _write_audit——audit_dir 解析/mkdir/O_APPEND/序列化/异常策略
+        单一 SoT 不变；本方法仅暴露实例级调用面供 factory 装配注入，不承载新逻辑。
+        """
+        self._write_audit(filename, record)
+
+
+def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
+    """P1-3: 按 TTL 清理审计 JSONL 条目（启动时调用一次，防无限增长，fail-open）.
+
+    逐行过滤：ts 早于 cutoff 的条目删除（有 ts 的按 ts 判，无 ts/损坏行保守保留）。
+    返回 {"pruned_files": N, "pruned_entries": N}；ttl_days<=0 空操作。
+    """
+    if ttl_days <= 0:
+        return {"pruned_files": 0, "pruned_entries": 0}
+    import logging
+    from datetime import timedelta
+
+    d = Path(audit_dir)
+    if not d.exists():
+        return {"pruned_files": 0, "pruned_entries": 0}
+    cutoff = system_local_now() - timedelta(days=ttl_days)
+    total = 0
+    files = 0
+    for p in sorted(d.glob("*.jsonl")):
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()
+            kept: list[str] = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    ts = json.loads(line).get("ts", "")
+                    if isinstance(ts, str) and ts:
+                        recorded_at = datetime.fromisoformat(ts)
+                        if recorded_at.tzinfo is None:
+                            recorded_at = recorded_at.astimezone()
+                        if recorded_at < cutoff:
+                            total += 1
+                            continue
+                except (json.JSONDecodeError, AttributeError, TypeError, ValueError) as exc:
+                    # fail-open：无法解析的行保守保留
+                    logging.getLogger(__name__).debug("审计行解析失败，保守保留（fail-open）: %s", exc)
+                kept.append(line)
+            if len(kept) < len(lines):
+                if kept:
+                    p.write_text("\n".join(kept) + "\n", encoding="utf-8")
+                else:
+                    p.unlink(missing_ok=True)
+                files += 1
+        except Exception:  # noqa: BLE001 — 单文件清理失败 fail-open
+            logging.getLogger(__name__).warning(
+                "审计清理失败（fail-open）: %s", p, exc_info=True
+            )
+            continue
+    return {"pruned_files": files, "pruned_entries": total}
+
+
+# 2026-08-20 P2: 规则文件版本读取（fail-open，读取失败返回 ""）
+def _rules_version() -> str:
+    """读 docs/ai_rules.lite.md 头部 version=N；失败/缺失返回空串.
+
+    根目录基于本模块位置推导（不受 DATA_DIR/测试隔离影响）。
+    """
+    try:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        p = root / "docs" / "ai_rules.lite.md"
+        for line in p.read_text(encoding="utf-8").splitlines()[:3]:
+            if "version=" in line:
+                return line.split("version=", 1)[1].split("；")[0].split(";")[0].strip()
+    except Exception:  # noqa: BLE001 — fail-open
+        pass
+    return ""
+
+
+# EVO-20260922 filter-first: snapshot 维度全集（与 snapshot() 内 avail 键一一对应，
+# 新增维度须两处同步；tests/unit/test_status_filter_first.py 有键集一致性守卫）
+_SNAPSHOT_DIMENSIONS: frozenset[str] = frozenset({
+    "current_phase", "action_trace", "tool_history", "message_flow",
+    "memory_state", "context_usage", "exception_log", "architecture_config",
+    "rules_version", "workspace_changed", "process_versions", "model_fallback",
+    "pending_actions", "recovery", "knowledge_health", "causality",
+    "local_runtime", "program_faults",
+})
+
+
+# 2026-08-20: 维度参数鲁棒归一化（EVO-20260820-6857bf41 修复）
+def _normalize_dimensions(dimensions, known: Set[str]) -> list[str] | None:
+    """把 dimensions 归一化为合法维度名列表；全部非法/缺失 → None（回落全量）.
+
+    处理: list / JSON 数组字符串（"["x","y"]"，含截断残缺）/ 逗号空白串 / 其他类型。
+    """
+    if isinstance(dimensions, str):
+        d = dimensions.strip()
+        try:  # JSON 数组字符串（含残缺: json.loads 失败则退逗号拆分）
+            parsed = json.loads(d)
+            dimensions = parsed if isinstance(parsed, list) else [parsed]
+        except Exception:  # noqa: BLE001
+            dimensions = re.split(r"[,\s]+", d)
+    if not isinstance(dimensions, list):
+        return None
+    out = [re.sub(r'^[\[\"\s]+|[\"\]\s]+$', '', str(x)) for x in dimensions]
+    out = [x for x in out if x]
+    if not out:
+        return None
+    # 部分合法 → 返回全部清洗项（未知项由调用方标注 unavailable，信息性保留）；
+    # 全部非法 → None（回落全量，避免"维度 'garbage' 暂不可用"假错误）
+    if any(d in known for d in out):
+        return out
+    return None

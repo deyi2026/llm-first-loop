@@ -1,0 +1,69 @@
+{
+  "schema": "smc.browser.peer_capability_routing_replay.v0.1",
+  "source": {
+    "qualification": "MF534-ORNITH-v0.1-MEASURED-03d012b5",
+    "run_id": "03-delayed_wait-r1-peer-capability-quality-projection",
+    "evidence_kind": "historical_frozen_artifact",
+    "model_rerun": false,
+    "session_sha256": "66073a98e48674612afceb6551bfe4cd713c0c00d165066af18ad41e7a081d29"
+  },
+  "task_oracle_pass": true,
+  "tool_calls": [
+    {
+      "index": 1,
+      "name": "browser_perceive",
+      "status": "failure",
+      "arg_keys": ["action", "url"],
+      "perceive_action": "navigate",
+      "args_sha256": "b7ca36408758afd035c0e073e5d425e9e1cbed59831d379786faaa61712e1180"
+    },
+    {
+      "index": 2,
+      "name": "browser_operate",
+      "status": "success",
+      "arg_keys": ["do", "url"],
+      "operation_do": "navigate",
+      "args_sha256": "ec091841badd4e60e451cc50478b9632b4f591adb40cfa635d80c850dcfcd226"
+    },
+    {
+      "index": 3,
+      "name": "browser_perceive",
+      "status": "success",
+      "arg_keys": ["action", "kind", "state", "within_ms"],
+      "perceive_action": "wait",
+      "args_sha256": "ce1f477b3cec8a6155109b5052157e6ec027d69eb14dcc4bb6883659b5362347"
+    },
+    {
+      "index": 4,
+      "name": "browser_perceive",
+      "status": "success",
+      "arg_keys": ["action", "projection_limit"],
+      "perceive_action": "snapshot",
+      "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483"
+    },
+    {
+      "index": 5,
+      "name": "browser_operate",
+      "status": "success",
+      "arg_keys": ["do", "target"],
+      "operation_do": "click",
+      "args_sha256": "8e1100634095344ba5e972649b86979d99bd0fcba664f00ce27992a3052f4915"
+    },
+    {
+      "index": 6,
+      "name": "browser_perceive",
+      "status": "success",
+      "arg_keys": ["action", "field", "grounding_ref", "kind", "match", "text", "within_ms"],
+      "perceive_action": "wait",
+      "args_sha256": "e4c45d669fc18cc046a3c3869b6c3d057fa901d450809588493456c84634a8db"
+    },
+    {
+      "index": 7,
+      "name": "browser_perceive",
+      "status": "success",
+      "arg_keys": ["action", "projection_limit"],
+      "perceive_action": "snapshot",
+      "args_sha256": "0d94bcbd3a144f955b3c3b679dc1bd47cbf889aa909e0c171120ed537646d483"
+    }
+  ]
+}

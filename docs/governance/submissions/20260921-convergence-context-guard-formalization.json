@@ -1,0 +1,393 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260921-convergence-context-guard-formalization",
+  "summary": "Land the convergence-context-guard fix line (9 commits, head 6cd809f0 'fix: isolate context and fence convergence lifecycle') together with the already-deployed runtime line 87a971ade deltas that never reached official main (method-learning plane, service admission barrier, LFRT local-runtime panel, method/experience records, docs), plus the merge of lfl/main 7b7cb721 which brought only the two existing A.5 manifests (#56/#57). The runtime checkout has been serving 87a971ade since the 2026-09-21 11:34 restart receipt; this submission formalizes that running state onto main and adds the convergence boundary machinery on top. No deployment action is part of this submission itself.",
+  "components": [
+    {
+      "component_id": "convergence-boundary-authority",
+      "paths": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/engine_services/convergence_boundary.py",
+        "src/llm_loop/core/loop/engine_services/tool_cycle.py",
+        "src/llm_loop/core/loop/runstate.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/tools/builtin/convergence_decide.py",
+        "tests/unit/test_convergence_boundary.py",
+        "tests/unit/test_err1214_human_wire.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "core loop convergence lifecycle and context isolation",
+      "disposition": "ADMIT: introduce an explicit convergence boundary service plus a convergence_decide builtin; the engine fences the tool cycle so non-convergence-decide calls are pruned before WAL declaration while a boundary is pending, runstate tracks the boundary phase, and factory wires the boundary into the engine build; ERR1214 human-wire coverage asserts interjections survive extreme compaction byte-for-byte.",
+      "evidence": [
+        "tests/unit/test_convergence_boundary.py PASS on PR head",
+        "tests/unit/test_err1214_human_wire.py PASS (interjection byte-exact under extreme compaction)",
+        "ruff PASS; focused 102-test gate PASS in venv on 6cd809f0"
+      ],
+      "verification_level": "focused deterministic tests + full repository CI on PR head",
+      "model_evidence_veto_recovery_exit": "No model semantic authority added; boundary transitions are mechanical lifecycle states and the convergence_decide tool only records the model's explicit terminal decision. Failures surface through existing engine errors.",
+      "rollback_route": "Revert the convergence-context-guard commit range; runtime rollback requires a new service-control generation.",
+      "declaration_id": "decl-convergence-boundary"
+    },
+    {
+      "component_id": "introspection-scope-and-attribution",
+      "paths": [
+        "src/llm_loop/introspection/goal.py",
+        "src/llm_loop/introspection/registry_introspection.py",
+        "src/llm_loop/introspection/status.py",
+        "src/llm_loop/introspection/tools_status.py",
+        "tests/unit/test_introspection.py",
+        "tests/unit/test_model_attribution.py",
+        "tests/unit/test_cache_status_injection.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "runtime introspection projections (goal/status/tool/event-stream scope)",
+      "disposition": "ADMIT: event-stream scope enum defaults to current_session so runtime callers must opt into workspace scope explicitly; status/model-attribution projections report the resolved provider/model and cache-injection state truthfully per call.",
+      "evidence": [
+        "tests/unit/test_introspection.py PASS",
+        "tests/unit/test_model_attribution.py PASS",
+        "tests/unit/test_cache_status_injection.py PASS"
+      ],
+      "verification_level": "focused deterministic tests + full repository CI",
+      "model_evidence_veto_recovery_exit": "Read-only projections; no model authority. Misreporting would fail the same deterministic assertions.",
+      "rollback_route": "Revert introspection commit range; projections degrade to prior schema without runtime authority change.",
+      "declaration_id": "decl-introspection-scope"
+    },
+    {
+      "component_id": "schedule-goal-binding",
+      "paths": [
+        "src/llm_loop/core/scheduler.py",
+        "src/llm_loop/tools/builtin/schedule.py",
+        "tests/unit/test_schedule_wake.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "scheduler wake/reminder authority",
+      "disposition": "ADMIT: ScheduleEntry carries goal_id and goal_generation so a scheduled wake re-binds to the durable goal generation that issued it instead of an ambiguous session-scoped identity.",
+      "evidence": [
+        "tests/unit/test_schedule_wake.py PASS"
+      ],
+      "verification_level": "focused deterministic tests + full repository CI",
+      "model_evidence_veto_recovery_exit": "Mechanical identity binding; no model judgment involved.",
+      "rollback_route": "Revert scheduler/schedule commit range; entries fall back to prior binding fields.",
+      "declaration_id": "decl-schedule-goal-binding"
+    },
+    {
+      "component_id": "method-learning-plane",
+      "paths": [
+        "src/llm_loop/learning_runtime.py",
+        "src/llm_loop/methods/learning_journal.py",
+        "src/llm_loop/methods/learning_plane.py",
+        "src/llm_loop/runtime/learning_idle.py",
+        "tests/unit/test_learning_idle.py",
+        "tests/unit/test_learning_plane_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "method/experience learning plane (idle-time admission)",
+      "disposition": "ADMIT (formalization of deployed line): the learning plane admits method/experience learning during idle windows through an explicit admission barrier instead of inline during runs; learning_runtime assembles the plane and the journal records durable outcomes.",
+      "evidence": [
+        "tests/unit/test_learning_plane_admission.py PASS",
+        "tests/unit/test_learning_idle.py PASS",
+        "deployed runtime receipt 2026-09-21 11:34 git_head 87a971ade serves this line"
+      ],
+      "verification_level": "focused deterministic tests + full repository CI",
+      "model_evidence_veto_recovery_exit": "Learning records keep verification_state typing; promotion never grants runtime authority without model-declared use records. Plane admission is mechanical scheduling.",
+      "rollback_route": "Disable learning plane via runtime config or revert the learning commit range; runtime rollback via new service-control generation.",
+      "declaration_id": "decl-method-learning-plane"
+    },
+    {
+      "component_id": "service-admission-barrier",
+      "paths": [
+        "src/llm_loop/feishu/bridge.py",
+        "src/llm_loop/runtime/admission_barrier.py",
+        "src/llm_loop/runtime/service_control.py",
+        "src/llm_loop/web/local_runtime_admin.py",
+        "src/llm_loop/web/routes.py",
+        "tests/fixtures/runtime_env_access_baseline.json",
+        "tests/unit/test_service_admission_barrier.py",
+        "tests/unit/test_service_identity_view.py",
+        "tests/unit/test_task_admission_registry.py",
+        "tests/web/test_chat_restart_barrier.py",
+        "tests/web/test_local_runtime_admin.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "service lifecycle admission (restart barrier, generation authority)",
+      "disposition": "ADMIT (formalization of deployed line): restart/service mutations pass an admission barrier bound to exact deployment generation; web/feishu surfaces expose identity-gated runtime admin views instead of free mutation routes.",
+      "evidence": [
+        "tests/unit/test_service_admission_barrier.py PASS",
+        "tests/web/test_chat_restart_barrier.py PASS",
+        "tests/unit/test_task_admission_registry.py PASS",
+        "deployed runtime receipt 2026-09-21 11:34 git_head 87a971ade"
+      ],
+      "verification_level": "focused deterministic tests + full repository CI",
+      "model_evidence_veto_recovery_exit": "Admission is mechanical generation/identity matching; no model authority. Denials are explicit errors.",
+      "rollback_route": "Revert admission commit range; service control falls back to prior generation checks already on main.",
+      "declaration_id": "decl-service-admission"
+    },
+    {
+      "component_id": "webui-lfrt-local-runtime-panel",
+      "paths": [
+        ".env.example",
+        "pyproject.toml",
+        "src/llm_loop/resources/lfrt_runtime.py",
+        "webui/src/components/layout/LocalRuntimePanel.tsx",
+        "webui/src/components/layout/ProviderManager.tsx",
+        "webui/src/core/api.ts",
+        "webui/src/local-runtime-panel.test.tsx",
+        "webui/src/tokens/conversation.css"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "webui local-runtime (LFRT) panel and model listing",
+      "disposition": "ADMIT (formalization of deployed line): optional LFRT CLI-backed local-model panel gated by LFL_LFRT_CLI; version bump 0.6.14→0.6.15 records the release carrying it.",
+      "evidence": [
+        "webui/src/local-runtime-panel.test.tsx PASS",
+        "deployed runtime receipt 2026-09-21 11:34 git_head 87a971ade"
+      ],
+      "verification_level": "webui unit suite + full repository CI",
+      "model_evidence_veto_recovery_exit": "UI-only surface; backend admission barrier remains authoritative.",
+      "rollback_route": "Unset LFL_LFRT_CLI or revert panel commit range; no runtime authority depends on the panel."
+    },
+    {
+      "component_id": "learning-records-bulk",
+      "paths": [
+        "data/methods/async-receipt-not-outcome-check-action-record-fix-named-blocker-129c637edfb9/METHOD.md",
+        "data/methods/attribute-degradation-to-per-round-prefix-producers-3f8e96b65171/METHOD.md",
+        "data/methods/bare-id-state-reconcile-before-transition-retry-588019de930e/METHOD.md",
+        "data/methods/binding-drift-preflight-before-gated-service-mutation-e6f2166d36f7/METHOD.md",
+        "data/methods/binding-identity-gate-before-destructive-ops-9e1d9ef8f671/METHOD.md",
+        "data/methods/cas-zero-current-conflict-means-store-path-mismatch-9e82e969dbdb/METHOD.md",
+        "data/methods/claim-by-claim-authoritative-state-audit-6785f55f3b95/METHOD.md",
+        "data/methods/claim-literal-anchored-two-sided-verification-337b9ae43101/METHOD.md",
+        "data/methods/close-on-proven-content-equivalence-and-split-blocked-identity-70bfd78c6e13/METHOD.md",
+        "data/methods/config-mismatch-resolution-chain-before-repo-search-e57b1fdeb8f9/METHOD.md",
+        "data/methods/content-digest-equivalence-over-identity-reproduction-e1ad1f052b50/METHOD.md",
+        "data/methods/deterministic-404-is-an-answer-pivot-to-canonical-candidate-daaa7d2b6d35/METHOD.md",
+        "data/methods/exact-id-locate-store-backing-file-by-scoped-find-not-wide-grep-7b1f386ab61c/METHOD.md",
+        "data/methods/follow-deliverable-declared-next-step-before-history-sweep-c240a19d8177/METHOD.md",
+        "data/methods/follow-existing-instruction-contracts-before-broad-discovery-b5abb650bcdf/METHOD.md",
+        "data/methods/follow-process-provenance-before-path-guessing-491e9b2f03c8/METHOD.md",
+        "data/methods/follow-record-provenance-map-before-broad-grep-cad93ee1503d/METHOD.md",
+        "data/methods/identity-check-before-reenumeration-1348df6535d1/METHOD.md",
+        "data/methods/live-pid-first-runtime-lookup-abefca85b64f/METHOD.md",
+        "data/methods/live-service-self-route-discovery-before-guess-or-recall-bd6b7da3387e/METHOD.md",
+        "data/methods/partial-visibility-timeline-before-code-hunt-e230a4ce2626/METHOD.md",
+        "data/methods/paste-robust-one-line-command-handoff-a416b1dd5d73/METHOD.md",
+        "data/methods/path-reanchor-before-broad-search-084dd311daa0/METHOD.md",
+        "data/methods/permission-block-terminal-verify-and-handoff-8f8b97f91802/METHOD.md",
+        "data/methods/port-named-artifact-live-truth-first-d81bc21f2ade/METHOD.md",
+        "data/methods/prior-round-citation-to-commit-provenance-before-doc-sweeps-7d95c13d2fa6/METHOD.md",
+        "data/methods/probe-attach-target-endpoint-before-automation-717ea9067afe/METHOD.md",
+        "data/methods/query-receipts-by-action-class-not-history-replay-a8dba3e9e172/METHOD.md",
+        "data/methods/read-named-producer-before-occurrence-sweep-1ce2e3af4d75/METHOD.md",
+        "data/methods/read-raise-site-first-then-live-producer-contract-diff-cc2a82160b31/METHOD.md",
+        "data/methods/reanchor-task-layer-from-user-correction-aa0fa05e506e/METHOD.md",
+        "data/methods/repair-suspect-identifier-before-broad-search-48193282c9a5/METHOD.md",
+        "data/methods/repo-artifact-facts-via-structured-tree-api-ffea8bd416ad/METHOD.md",
+        "data/methods/requirements-first-three-axis-suitability-triage-88cee8448aea/METHOD.md",
+        "data/methods/resolve-operational-params-from-pipeline-mechanism-not-value-sweep-f64e334cb9b8/METHOD.md",
+        "data/methods/route-article-claims-to-primary-sources-before-broad-search-0ed9248a3179/METHOD.md",
+        "data/methods/runtime-switch-manager-docs-before-build-enumeration-691f22a6e92d/METHOD.md",
+        "data/methods/session-evidence-before-broad-search-14dfe01a6c75/METHOD.md",
+        "data/methods/shape-preserving-edit-verified-through-canonical-parser-daf743642de4/METHOD.md",
+        "data/methods/state-ledger-first-incremental-ops-d161d4f28c80/METHOD.md",
+        "data/methods/state-record-first-for-stateful-command-params-2ec22b820b16/METHOD.md",
+        "data/methods/stop-after-authoritative-self-eval-6738b36de0da/METHOD.md",
+        "data/methods/symbol-anchored-discovery-from-authoritative-record-5d918f856541/METHOD.md",
+        "data/methods/timestamp-align-status-flag-with-artifact-mtime-before-restart-verdict-9842c70519c5/METHOD.md",
+        "data/methods/trace-symptom-literal-through-ui-to-error-code-606326fe00d7/METHOD.md",
+        "data/methods/treat-parse-errors-as-query-dialect-declaration-7d2608f1f873/METHOD.md",
+        "data/methods/treat-polluted-retrieval-as-source-class-verdict-7274d4444032/METHOD.md",
+        "data/methods/ui-option-gap-trace-renderer-to-registry-3916eaa3b88d/METHOD.md",
+        "data/methods/verbatim-quote-provenance-first-for-wrong-system-suspicion-e503040634b6/METHOD.md",
+        "data/methods/verify-active-pointer-before-deleting-old-version-0b130c190942/METHOD.md",
+        "data/methods/verify-at-located-artifact-stop-keyword-discovery-a359455d9a32/METHOD.md",
+        "data/methods/verify-call-site-wiring-before-predicting-events-3bbadf6f0b85/METHOD.md",
+        "data/methods/verify-hypothesis-against-artifact-contract-8576f48ceeef/METHOD.md",
+        "data/methods/verify-tool-binding-identity-before-explanation-search-0c189d3fefdf/METHOD.md",
+        "experiences/EXPERIENCE-20260920-cdp-gmail.md",
+        "experiences/EXPERIENCE-20260920-github-com-443-git-data-api-pr.md",
+        "experiences/EXPERIENCE-20260920-headless.md",
+        "experiences/EXPERIENCE-20260920-lfl-prompt.md",
+        "experiences/EXPERIENCE-20260920-lfl-sha.md",
+        "experiences/EXPERIENCE-20260920-lfrt-fixture-default-config-runtime-files.md",
+        "experiences/EXPERIENCE-20260920-schedule-wake-grant-owner.md",
+        "experiences/EXPERIENCE-20260920-service-control-restart-deployment-binding-failed.md",
+        "experiences/EXPERIENCE-20260920-wake-grant-run-timer.md",
+        "experiences/EXPERIENCE-20260920-web-fixture-lfrt-run-sse-domcontentloaded.md",
+        "experiences/EXPERIENCE-20260921-flock-macos.md",
+        "experiences/EXPERIENCE-20260921-venv-staged.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "durable method/experience records",
+      "disposition": "ADMIT: durable METHOD.md/EXPERIENCE records produced by the deployed learning plane since the line diverged; repository artifacts only.",
+      "evidence": [
+        "records generated by deployed learning plane on runtime line 87a971ade",
+        "file-level review: no secrets, no executable authority"
+      ],
+      "verification_level": "repository CI (security scan) on PR head",
+      "model_evidence_veto_recovery_exit": "Records carry verification_state typing and never mutate runtime behavior by themselves.",
+      "rollback_route": "Remove record directories; no runtime dependency."
+    },
+    {
+      "component_id": "project-docs",
+      "paths": [
+        "README.md",
+        "README.en.md",
+        "CHANGELOG.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "project documentation",
+      "disposition": "ADMIT: README/CHANGELOG updates describing the learning plane, admission barrier, LFRT panel and convergence guard behavior.",
+      "evidence": [
+        "documentation-only diff review"
+      ],
+      "verification_level": "repository CI",
+      "model_evidence_veto_recovery_exit": "Docs only; no runtime authority.",
+      "rollback_route": "Revert docs; no runtime effect."
+    },
+    {
+      "component_id": "a5-20260921-convergence-context-guard",
+      "paths": [
+        "docs/governance/submissions/20260921-convergence-context-guard-formalization.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 submission manifest",
+      "disposition": "ADMIT: this manifest, partitioning the exact changed-path set of the PR diff for mechanical A.5 review.",
+      "evidence": [
+        "scripts/check_architecture_submission.py --base 7b7cb721 --head <PR head> PASS"
+      ],
+      "verification_level": "A.5 gate on PR head",
+      "model_evidence_veto_recovery_exit": "Manifest only; no runtime authority.",
+      "rollback_route": "Revert manifest together with the submission it describes."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-convergence-boundary",
+      "g1": {
+        "necessity": "Convergence lifecycle previously had no explicit boundary: tool calls could be declared into the WAL after the model had already signaled terminal intent, and extreme compaction could drop interjected human turns. A mechanical boundary plus fenced tool cycle is required so terminal intent, WAL declaration order, and human interjection preservation are invariants rather than conventions."
+      },
+      "g2": {
+        "authority_owner": "ConvergenceBoundaryService (engine_services/convergence_boundary.py) owns boundary state; the engine/tool_cycle consult it before dispatch and before WAL declaration; convergence_decide is the single builtin allowed across a pending boundary.",
+        "relationship": "new_authority",
+        "non_duplication": "Not a replacement: prior run finalization paths remain; the boundary adds the missing lifecycle authority and does not duplicate recovery_controller or run_finalizer responsibilities (those act after run end; the boundary acts during the terminal window)."
+      },
+      "g3": {
+        "model_evidence": [
+          "not_applicable: deterministic lifecycle machinery; tests assert state transitions, WAL prune order, and byte-exact interjection survival without model judgment"
+        ],
+        "recovery_or_reason": "Boundary violations fail closed: non-decide calls are pruned with explicit error events; recovery re-enters the normal loop path."
+      },
+      "g4": {
+        "rollback": "Revert the convergence guard commit range; deployed rollback must publish a prior clean code root as a new service-control generation.",
+        "verification": [
+          "tests/unit/test_convergence_boundary.py PASS",
+          "tests/unit/test_err1214_human_wire.py PASS",
+          "ruff + focused 102-test venv gate PASS",
+          "full repository CI on PR head"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-introspection-scope",
+      "g1": {
+        "necessity": "Runtime introspection previously defaulted event-stream queries to workspace scope, letting a session-less caller observe cross-session history; the default must be current-session with explicit opt-in, and status projections must attribute the actually-resolved provider/model."
+      },
+      "g2": {
+        "authority_owner": "Introspection modules own their projection schemas; scope enum default moves into the introspection layer with runtime call sites updated to pass explicit scope.",
+        "relationship": "replace",
+        "non_duplication": "Replaces implicit workspace-wide default rather than adding a second scope authority; no parallel projection surface is introduced."
+      },
+      "g3": {
+        "model_evidence": [
+          "not_applicable: projection correctness is asserted by deterministic tests"
+        ],
+        "recovery_or_reason": "Wrong scope resolves to explicit empty/explicit error rather than silent cross-session leak."
+      },
+      "g4": {
+        "rollback": "Revert introspection commit range; projections degrade to prior schema.",
+        "verification": [
+          "tests/unit/test_introspection.py PASS",
+          "tests/unit/test_model_attribution.py PASS",
+          "tests/unit/test_cache_status_injection.py PASS",
+          "full repository CI on PR head"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-schedule-goal-binding",
+      "g1": {
+        "necessity": "Scheduled wakes were bound to session-scoped identity, losing the durable goal generation that issued them; a wake must re-bind to goal_id+goal_generation."
+      },
+      "g2": {
+        "authority_owner": "Scheduler owns ScheduleEntry schema; schedule builtin passes goal identity through; goal store resolution unchanged.",
+        "relationship": "reuse",
+        "non_duplication": "Extends the existing scheduler authority with goal binding fields; no new scheduling subsystem."
+      },
+      "g3": {
+        "model_evidence": [
+          "not_applicable: mechanical identity binding asserted by tests"
+        ],
+        "recovery_or_reason": "Unresolvable goal generation makes the wake a no-op with explicit log, never a session takeover."
+      },
+      "g4": {
+        "rollback": "Revert scheduler commit range; entries fall back to prior fields.",
+        "verification": [
+          "tests/unit/test_schedule_wake.py PASS",
+          "full repository CI on PR head"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-method-learning-plane",
+      "g1": {
+        "necessity": "Method/experience learning ran inline with request handling, coupling learning latency to run latency and racing admission; an idle-time admission plane is required (deployed since the 87a971ade runtime line; formalized here)."
+      },
+      "g2": {
+        "authority_owner": "learning_runtime assembles the plane; learning_idle schedules idle windows; admission barrier gates plane start; journal records outcomes durably.",
+        "relationship": "new_authority",
+        "non_duplication": "Does not duplicate service admission barrier (that governs lifecycle mutations); plane admission governs learning work only."
+      },
+      "g3": {
+        "model_evidence": [
+          "learning records persist verification_state and model-declared use decisions; promotion requires recorded qualification, keeping model judgment outside runtime authority"
+        ],
+        "recovery_or_reason": "Plane failures degrade to skipped learning windows with explicit journal entries; runs continue unaffected."
+      },
+      "g4": {
+        "rollback": "Disable via runtime config or revert learning commit range; deployed rollback requires new service-control generation.",
+        "verification": [
+          "tests/unit/test_learning_plane_admission.py PASS",
+          "tests/unit/test_learning_idle.py PASS",
+          "deployed runtime receipt 2026-09-21 11:34 git_head 87a971ade",
+          "full repository CI on PR head"
+        ]
+      }
+    },
+    {
+      "declaration_id": "decl-service-admission",
+      "g1": {
+        "necessity": "Service restart/mutation previously validated only loosely, allowing generation-drifted restarts; admission must bind to exact deployment generation with identity-gated admin surfaces (deployed since the 87a971ade line; formalized here)."
+      },
+      "g2": {
+        "authority_owner": "Admission barrier + service_control own generation matching; web/feishu routes delegate all mutations through it.",
+        "relationship": "reuse",
+        "non_duplication": "Strengthens the existing generation authority instead of adding a parallel one; baseline fixture pins env access surface."
+      },
+      "g3": {
+        "model_evidence": [
+          "not_applicable: mechanical generation/identity matching asserted by deterministic tests"
+        ],
+        "recovery_or_reason": "Denied admissions return explicit errors; no silent fallback path."
+      },
+      "g4": {
+        "rollback": "Revert admission commit range to prior generation checks already on main.",
+        "verification": [
+          "tests/unit/test_service_admission_barrier.py PASS",
+          "tests/web/test_chat_restart_barrier.py PASS",
+          "tests/unit/test_task_admission_registry.py PASS",
+          "deployed runtime receipt 2026-09-21 11:34 git_head 87a971ade",
+          "full repository CI on PR head"
+        ]
+      }
+    }
+  ]
+}

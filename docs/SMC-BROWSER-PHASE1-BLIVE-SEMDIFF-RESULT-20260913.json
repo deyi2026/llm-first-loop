@@ -1,0 +1,107 @@
+{
+  "schema": "smc.browser_live_semantic_diff_result.v0.1",
+  "stage": "B-LIVE-SEMDIFF",
+  "status": "PASS",
+  "date": "2026-09-13",
+  "baseline_commit": "97f1c2a3f9227c4f38ec056ba27d6cdc3d174ade",
+  "production_implementation_commit": "160b73d2b31f44c11510124feeac897db48fd6aa",
+  "qualification_tip": "65dcdb2e4f8166c0c51471e86a9d5159903ff604",
+  "formal_live_result_sha256": "b0af595c5c392de494b243127f9ca60ae57624fd9f19a2dd04370680dd475915",
+  "environment": {
+    "browser": "Google Chrome 152.0.7977.84",
+    "mock_keychain": true,
+    "password_store_basic": true,
+    "llm_invoked": false,
+    "services_restarted": false
+  },
+  "implementation_hashes": {
+    "scripts/qualification/smc_browser_live_semantic_diff.py": "dbad23359b7960f79a2a8ab9204fad35588b5bf7c3103dcfdac99c4617d6cd04",
+    "src/llm_loop/browser/perception.py": "bb74a1134bf286c493af93b25e449adcad24dc6abc462c02e7578027f2506d5a",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "22ad3c4e6ccee82706d3a93698dc3c2cdf52c07fac306e915f1464e70e1c47f2",
+    "tests/unit/test_smc_browser_perception_v01.py": "81b1c1ac24974f7c6104ac6df5810685870e3bcbacf906f24413c7ec0d9c10d9",
+    "tests/unit/test_smc_browser_semantic_diff_v01.py": "aecf792498a2114114967619917005786ff01ff6554b98910f6b131d8ee30de7"
+  },
+  "model_surface": {
+    "browser_perceive_actions": [
+      "snapshot",
+      "hydrate",
+      "diff"
+    ],
+    "diff_args": [
+      "from_version",
+      "to_version"
+    ],
+    "mutation_visible": false,
+    "recapture_during_diff": false,
+    "name_or_role_identity_matching": false
+  },
+  "semantic_diff_contract": {
+    "diff_semantics": "snapshot_pair_net",
+    "same_document_exact_semantic_id_comparison": true,
+    "document_generation_change_incomparable": true,
+    "frame_document_generation_change_incomparable": true,
+    "incomplete_observation_created_removed_unknown": true,
+    "snapshot_local_ax_identity_excluded_from_world_create_remove": true,
+    "identity_partial_reason": "identity_unstable_objects",
+    "full_list_ref_exact_hydration": true,
+    "diff_grounding_session_fenced": true,
+    "diff_grounding_integrity_checked": true
+  },
+  "formal_live": {
+    "status": "PASS",
+    "behavior_checks_passed": 15,
+    "behavior_checks_total": 15,
+    "safety_checks_passed": 5,
+    "safety_checks_total": 5,
+    "checks": {
+      "full_list_ref_exact_hydration": "PASS",
+      "no_op_identity_partial_explicit": "PASS",
+      "no_op_net_diff_empty": "PASS",
+      "reload_diff_incomparable": "PASS",
+      "reload_does_not_mass_diff": "PASS",
+      "replacement_new_created": "PASS",
+      "replacement_not_name_rebound": "PASS",
+      "replacement_old_removed": "PASS",
+      "same_document_comparable": "PASS",
+      "same_document_identity_partial_explicit": "PASS",
+      "same_document_scope_same": "PASS",
+      "stable_field_change_observed": "PASS",
+      "stable_identity_preserved": "PASS",
+      "truncated_created_removed_unknown": "PASS",
+      "truncated_field_completeness_false": "PASS"
+    },
+    "safety": {
+      "basic_password_store_enabled": "PASS",
+      "mock_keychain_enabled": "PASS",
+      "model_surface_has_no_mutation": "PASS",
+      "production_host_exact_target_bound": "PASS",
+      "security_agent_not_spawned": "PASS"
+    }
+  },
+  "verification": {
+    "direct_tests": "57/57 PASS",
+    "expanded_adjacent_tests": "148/148 PASS",
+    "ruff": "PASS",
+    "py_compile": "PASS",
+    "src_pyright": "0 errors / 0 warnings / 0 informations",
+    "env_pin": "540 test files / 0 violations",
+    "tier0": "PASS",
+    "full_pytest": "PASS",
+    "full_ci_gate": "exit 0",
+    "whole_tree_security": "1650 files PASS"
+  },
+  "observed_live_findings": {
+    "snapshot_local_ax_cards_exist": true,
+    "snapshot_local_cards_are_not_silently_matched": true,
+    "button_text_can_be_projected_as_separate_ax_text_cards": true,
+    "stable_dom_button_state_enabled_change_observed": true
+  },
+  "not_claimed": {
+    "predicate_wait": "NOT_STARTED",
+    "staleness_version_pressure": "NOT_STARTED",
+    "mutation_dispatch": "NOT_STARTED",
+    "action_receipt": "NOT_STARTED",
+    "cross_url_page_navigate": "NOT_QUALIFIED",
+    "vision_phase2": "DEFERRED"
+  }
+}

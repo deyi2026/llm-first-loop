@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM-First Loop Chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="app">
+    <button id="sidebar-toggle" aria-label="打开会话列表">☰</button>
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <h1>LLM-First Loop</h1>
+        <span id="status-badge" class="status-badge">检测中</span>
+      </div>
+      <!-- EVO-20260923 工作区管理条：显式切换/打开/注销（注册表不再被动积累临时目录） -->
+      <div id="workspace-bar" aria-label="工作区管理">
+        <select id="workspace-select" title="切换工作区（会话列表与工具根跟随）" aria-label="当前工作区"></select>
+        <button id="workspace-add-btn" class="btn-secondary" title="打开目录：注册为新工作区并切换">＋</button>
+        <button id="workspace-del-btn" class="btn-secondary" title="注销选中工作区（当前工作区不可注销；会话数据保留，可随时重新打开）">🗑</button>
+      </div>
+      <button id="new-session-btn" class="btn-primary">+ 新会话</button>
+      <input id="search-input" type="text" placeholder="搜索会话..." aria-label="搜索会话">
+      <ul id="session-list" aria-label="会话列表"></ul>
+    </aside>
+    <main id="chat-area">
+      <div id="messages" aria-label="对话消息"></div>
+      <div id="input-bar">
+        <input type="file" id="file-input" multiple accept=".txt,.md,.json,.csv,.log,.py,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp" hidden aria-label="上传附件">
+        <div id="input-main">
+          <div id="cmd-suggest" class="cmd-suggest" hidden aria-label="快捷命令候选"></div>
+          <div id="input-model-row" class="input-model-row">
+            <label class="model-label" for="model-select">模型</label>
+            <select id="model-select" title="切换模型（对下一条消息生效）" aria-label="切换模型"></select>
+            <span id="token-stats" class="token-stats" title="本次页面会话 token 累计（刷新页面清零）"></span>
+          </div>
+          <div id="input-row">
+            <textarea id="message-input" rows="1" placeholder="输入消息，Enter 发送（Shift+Enter 换行）；/ 开头查看快捷命令" aria-label="消息输入"></textarea>
+            <button id="send-btn" class="btn-primary">发送</button>
+          </div>
+          <div id="input-tools">
+            <button id="clear-btn" class="btn-secondary" title="清除上下文（等同 /clear，旧会话保留可查看）">🗑</button>
+            <button id="upload-btn" class="btn-secondary" title="上传附件（图片/文本/PDF/docx）">📎</button>
+            <div id="cmd-hint" title="点击快捷填入命令">命令 <span class="cmd-chip" data-cmd="/new">/new</span><span class="cmd-chip" data-cmd="/clear">/clear</span><span class="cmd-chip" data-cmd="/model">/model</span><span class="cmd-chip" data-cmd="/help">/help</span></div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <div id="sidebar-scrim"></div>
+  </div>
+  <script src="/static/marked.min.js"></script>
+  <script src="/static/modules/state.js"></script>
+  <script src="/static/modules/markdown-math.js"></script>
+  <script src="/static/modules/tool-render.js"></script>
+  <script src="/static/modules/message-render.js"></script>
+  <script src="/static/modules/stream-chat.js"></script>
+  <script src="/static/modules/app-core.js"></script>
+  <script src="/static/modules/responsive.js"></script>
+  <script src="/static/modules/session-list.js"></script>
+  <script src="/static/modules/workspace-bar.js"></script>
+  <script src="/static/modules/command-upload-model.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

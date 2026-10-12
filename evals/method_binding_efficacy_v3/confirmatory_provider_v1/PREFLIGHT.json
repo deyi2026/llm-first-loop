@@ -1,0 +1,31 @@
+{
+ "schema": "subject-binding-v3-confirmatory-preflight/v1",
+ "rows": 4,
+ "all_healthy": true,
+ "identities": [
+  {
+   "model": "strong",
+   "arm": "C0",
+   "model_used": "deepseek/deepseek-v4-flash",
+   "binding": false
+  },
+  {
+   "model": "strong",
+   "arm": "C1",
+   "model_used": "deepseek/deepseek-v4-flash",
+   "binding": true
+  },
+  {
+   "model": "weak",
+   "arm": "C0",
+   "model_used": "cognilocal/qwen3.8-flash-next",
+   "binding": false
+  },
+  {
+   "model": "weak",
+   "arm": "C1",
+   "model_used": "cognilocal/qwen3.8-flash-next",
+   "binding": true
+  }
+ ]
+}

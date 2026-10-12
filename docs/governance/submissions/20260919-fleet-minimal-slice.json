@@ -1,0 +1,151 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-minimal-slice",
+  "summary": "Fleet minimal vertical slice plus ProjectCoordinator run-boundary wiring: three mechanical identities (ProjectRecord, ExecutionWorkspace, WorkerLease) with disk-as-single-authority state, CAS reclaim, stale-generation fail-closed fencing and exactly-once settlement; SubAgentRunner acquires the lease at the run boundary (crashed generation superseded on next begin), records fenced facts, settles exactly once at a real terminal, and stays completely fleet-free when no coordinator is injected.",
+  "components": [
+    {
+      "component_id": "fleet-registry-control",
+      "paths": [
+        "src/llm_loop/fleet/__init__.py",
+        "src/llm_loop/fleet/store.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "fleet mechanical identity plane (project/workspace/lease registry)",
+      "disposition": "ADMIT. Mechanical ownership facts only: closed-schema state.json, fcntl cross-process lock, atomic replace writes, CAS reclaim, stale-generation fencing, exactly-once settlement. It answers only 'may this physical worker commit side effects/results for this generation'; no task importance, capability ranking, continuation, completion or result-quality judgment is encoded.",
+      "evidence": [
+        "Every write re-reads disk under the lock, so an old coordinator's in-memory handle can never win against a newer generation written by another process.",
+        "Commit 84d4fb13e includes the RED-first TDD chain; focused suite 5/5 green; full ci_gate chain green in isolated worktree with cloned venv and cleaned env."
+      ],
+      "verification_level": "Focused fleet suite + full committed-state ci_gate (ruff + env-pin + pyright + tier0 + full xdist) in isolated worktree",
+      "model_evidence_veto_recovery_exit": "All records are inspectable JSON on disk; when/how to reclaim stays with the coordinator/model (no liveness policy in code); every rejection is a typed exception carrying the mechanical reason.",
+      "rollback_route": "Revert 84d4fb13e; the module owns no persistent data outside its fleet directory and nothing else imports it yet.",
+      "declaration_id": "fleet-registry-control"
+    },
+    {
+      "component_id": "fleet-gate-tests",
+      "paths": [
+        "tests/unit/test_fleet_reclaim_gate.py",
+        "tests/unit/test_fleet_project_coordinator.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic crash/reclaim Gate tests",
+      "disposition": "ADMIT as tests only; they pin the fencing/exactly-once contracts and own no runtime authority.",
+      "evidence": [
+        "The 10-step Gate runs as one deterministic chain plus four focused unit tests (closed identity tuple, fail-closed unknown parents, forged stale handle, persisted JSON layout).",
+        "Coordinator/wiring tests (RED first, import failure before implementation): standalone lifecycle + crash->reclaim fencing + settled-workspace rejection; child run settles outcome on disk; simulated crash leaves a durable active lease that a fresh coordinator reclaims to generation 2; no-coordinator runner creates no fleet state."
+      ],
+      "verification_level": "Focused suite green inside full ci_gate",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical behavior; revisable independently.",
+      "rollback_route": "Revert with the implementation."
+    },
+    {
+      "component_id": "fleet-slice-design-doc",
+      "paths": [
+        "docs/DESIGN-20260919-fleet-minimal-slice.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "design record",
+      "disposition": "ADMIT as a factual design record; runtime does not consume it.",
+      "evidence": [
+        "Documents scope, mechanism, the Gate and explicit non-goals (no scheduling, no capability routing, no liveness policy, no network layer)."
+      ],
+      "verification_level": "A.5 path coverage",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend the record without runtime effect.",
+      "rollback_route": "Revert/delete with no runtime effect."
+    },
+    {
+      "component_id": "a5-manifest",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-minimal-slice.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations for the fleet slice.",
+      "evidence": [
+        "Partitions the exact 59d0791fe...HEAD changed-path set (7 paths + this manifest)."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains the authority for classification truth.",
+      "rollback_route": "Revert together with the slice metadata."
+    },
+    {
+      "component_id": "fleet-run-boundary-wiring",
+      "paths": [
+        "src/llm_loop/fleet/coordinator.py",
+        "src/llm_loop/subagent/runner.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "ProjectCoordinator runtime adapter + SubAgentRunner run-boundary injection",
+      "disposition": "ADMIT. ProjectCoordinator maps run lifecycle to store primitives only (begin=acquire/reclaim-supersede, fact=fenced append, finish=exactly-once settle, recovery=disk reads); SubAgentRunner accepts an optional coordinator. Default None keeps every fleet behavior off (explicit opt-in/exit); rejection at the boundary is fail-closed with a typed reason; fenced late settlement is logged, never masking the child result.",
+      "evidence": [
+        "begin_run on an active lease (crashed predecessor) issues an explicit reclaim (generation+1, provenance on disk) instead of silently forking generations.",
+        "test_child_crash_leaves_active_lease_then_reclaim_fences: simulated crash leaves one active lease and zero settlements; fresh coordinator reclaims to generation 2.",
+        "test_runner_without_coordinator_has_no_fleet_state: default runner creates no fleet directory.",
+        "Focused fleet suites 11/11 plus subagent/run-generation/state-lifetime adjacent suites: 0 failures."
+      ],
+      "verification_level": "Focused RED-first tests + adjacent subagent suites + Ruff/Pyright on the changed tree",
+      "model_evidence_veto_recovery_exit": "Injection is the sole switch: not wiring a coordinator restores historical behavior exactly; all fleet records stay inspectable JSON; when to reclaim a live lease remains a model/operator decision (crashed-lease supersede is mechanical).",
+      "rollback_route": "Revert the wiring commit; coordinator and runner changes are self-contained and no other module imports ProjectCoordinator.",
+      "declaration_id": "fleet-run-boundary-wiring"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "fleet-registry-control",
+      "g1": {
+        "necessity": "SubAgent/worker execution previously had no mechanical answer to 'which physical worker may commit results for the current generation', so a crashed worker's late writes could race a replacement worker — a physical-ownership fact the model cannot verify from outside."
+      },
+      "g2": {
+        "authority_owner": "new fleet mechanical identity plane (src/llm_loop/fleet), reusing service_control store conventions (closed schema, fcntl lock, atomic replace)",
+        "relationship": "new_authority",
+        "non_duplication": "Does not duplicate service_control deployment binding (services vs execution workspaces), job_registry (local background jobs), or subagent_topology (child sessions); it adds the missing workspace-generation fencing authority only."
+      },
+      "g3": {
+        "model_evidence": [
+          "inspectable state.json/facts JSONL per workspace",
+          "typed FencedError/SettlementError carrying mechanical reasons",
+          "Gate test receipts covering recover/reclaim/late-write/late-result/duplicate-settlement/restart"
+        ],
+        "recovery_or_reason": "Any coordinator can rebuild full state from disk; nothing is held only in memory; revert removes the whole authority with no data migration."
+      },
+      "g4": {
+        "rollback": "Revert 84d4fb13e and the manifest; no other module imports fleet yet.",
+        "verification": [
+          "RED-first: module absent made the Gate fail at import before implementation",
+          "focused fleet suite 5/5 PASS",
+          "Ruff PASS / Pyright 0/0/0",
+          "full committed-state ci_gate chain PASS in isolated worktree (cleaned env, cloned venv)"
+        ]
+      }
+    },
+    {
+      "declaration_id": "fleet-run-boundary-wiring",
+      "g1": {
+        "necessity": "The store could prove generation ownership, but child execution had no point where that proof was enforced: a run started, mutated, and finished with no mechanical binding between the executing worker and the generation allowed to commit. The run boundary is the only place such a fact can be checked without judging task semantics."
+      },
+      "g2": {
+        "authority_owner": "fleet store generation/fencing authority (src/llm_loop/fleet/store.py)",
+        "relationship": "reuse",
+        "non_duplication": "ProjectCoordinator adds no new store, lock, schema or policy; it composes existing store primitives (acquire/reclaim/record_fact/settle/current_lease) behind run-boundary semantics. SubAgentRunner gains one optional constructor dependency; no scheduler, liveness timer, retry policy or capability router is introduced."
+      },
+      "g3": {
+        "model_evidence": [
+          "per-child workspace under a deterministic physical root; facts JSONL records run_started/run_settled with depth and runner owner",
+          "typed SettlementError at a settled-workspace begin and FencedError on superseded-generation writes",
+          "crash test receipt: active lease persists with zero settlements; reclaim yields generation 2",
+          "no-coordinator test receipt: no fleet directory created"
+        ],
+        "recovery_or_reason": "Any next coordinator rebuilds the run's state from disk (recover()); reverting the wiring commit removes the entire boundary behavior with no data migration because the fleet directory is disposable coordination state."
+      },
+      "g4": {
+        "rollback": "Revert the wiring commit; default construction path (no coordinator) was never changed, so nothing else needs migration.",
+        "verification": [
+          "RED-first: tests failed at import (no coordinator module) before implementation",
+          "focused: test_fleet_project_coordinator 6/6 + test_fleet_reclaim_gate 5/5 PASS",
+          "adjacent: subagent/run_generation/agent_followup/state_lifetime/provider_call*/origin_metadata selections 0 failures",
+          "Ruff All checks passed; Pyright 0 errors on changed modules"
+        ]
+      }
+    }
+  ]
+}

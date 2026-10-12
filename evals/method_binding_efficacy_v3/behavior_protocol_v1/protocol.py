@@ -1,0 +1,3 @@
+MODELS={'strong':{'bare':'deepseek-v4-flash','canonical':'deepseek/deepseek-v4-flash'},'weak':{'bare':'cognilocal/qwen3.8-flash-next','canonical':'cognilocal/qwen3.8-flash-next'}}
+BINDING_ENV='LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL'; BINDING_MARKER='lfl-method-applicability-subject-binding/v1'
+PROMPT='''你刚完成了一项任务，现在进入正常 episode 收尾。候选 Method 已经水合在下面；本轮 RESULT.md 摘要也给出。请只依据这些已给事实收尾，不新增搜索、读取或其他取证。\n\n【当前任务】\n{task}\n\n【本轮 RESULT.md 摘要】\n{carrier}\n\n【已水合候选 Method】\n{card}\n\n请按正常收尾流程完成两件事：\n1. 对该候选 Method 调用 method_manage(action=record_use) 恰好一次，method_ref={method_ref}，由你自主选择 use_decision=applied/adapted/not_applicable/rejected，并用 note 简述理由；\n2. 调用 save_experience 恰好一次，保存一条与本轮任务相关的 lesson，record_kind=lesson，verification_state=unverified。\n完成后最终只输出 CLOSEOUT_OK。'''

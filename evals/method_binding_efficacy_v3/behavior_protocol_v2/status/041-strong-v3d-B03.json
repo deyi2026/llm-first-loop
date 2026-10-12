@@ -1,0 +1,19 @@
+{
+ "state": "terminal",
+ "row": {
+  "ordinal": 41,
+  "row_id": "strong:v3d-B03:C0:natural-v2",
+  "model": "strong",
+  "arm": "C0",
+  "case_id": "v3d-B03",
+  "family": "same_object_different_action"
+ },
+ "attempts": [
+  {
+   "attempt": 0,
+   "rc": 0,
+   "healthy": true
+  }
+ ],
+ "mechanically_healthy": true
+}

@@ -1,0 +1,452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llmfirstloop.local/schema/smc-semantic-logic-p0-v0.1.json",
+  "title": "SMC Semantic Logic P0 closed schema v0.1",
+  "description": "Docs/shadow-only schema. Validation does not confer production authority.",
+  "oneOf": [
+    {"$ref": "#/$defs/fact"},
+    {"$ref": "#/$defs/rule"},
+    {"$ref": "#/$defs/derivation"},
+    {"$ref": "#/$defs/shadow_result"},
+    {"$ref": "#/$defs/fixture_manifest"}
+  ],
+  "$defs": {
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "string_array": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "domain": {"$ref": "#/$defs/non_empty_string"},
+        "scope_ref": {"type": ["string", "null"]},
+        "observed_version": {"type": ["string", "null"]},
+        "snapshot_id": {"type": ["string", "null"]},
+        "sensor_contract_ref": {"type": ["string", "null"]}
+      },
+      "required": [
+        "domain",
+        "scope_ref",
+        "observed_version",
+        "snapshot_id",
+        "sensor_contract_ref"
+      ]
+    },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "complete": {"type": "boolean"},
+        "reasons": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "required": ["complete", "reasons"]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "observed",
+            "mechanically_derived",
+            "runtime_authority",
+            "model_asserted"
+          ]
+        },
+        "source": {"type": ["string", "null"]},
+        "grounding_ref": {"type": ["string", "null"]},
+        "observed_version": {"type": ["string", "null"]},
+        "derivation_ref": {"type": ["string", "null"]},
+        "rule_ref": {"type": ["string", "null"]},
+        "input_fact_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "grounding_ref",
+        "observed_version",
+        "derivation_ref",
+        "rule_ref",
+        "input_fact_refs"
+      ],
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "observed"}}},
+          "then": {
+            "properties": {
+              "source": {"type": "string", "minLength": 1},
+              "grounding_ref": {"type": "string", "minLength": 1},
+              "observed_version": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "mechanically_derived"}}},
+          "then": {
+            "properties": {
+              "derivation_ref": {"type": "string", "minLength": 1},
+              "rule_ref": {"type": "string", "minLength": 1},
+              "input_fact_refs": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "fact"},
+        "schema": {"const": "smc.semantic_fact.v0.1"},
+        "fact_id": {"$ref": "#/$defs/non_empty_string"},
+        "domain": {"$ref": "#/$defs/non_empty_string"},
+        "subject": {"$ref": "#/$defs/non_empty_string"},
+        "predicate": {"$ref": "#/$defs/non_empty_string"},
+        "value": {},
+        "value_type": {
+          "type": "string",
+          "enum": ["null", "boolean", "integer", "number", "string", "object", "array", "reference"]
+        },
+        "truth_state": {
+          "type": "string",
+          "enum": ["asserted", "unknown", "conflict", "not_applicable"]
+        },
+        "context": {"$ref": "#/$defs/context"},
+        "observation_completeness": {"$ref": "#/$defs/completeness"},
+        "projection_complete": {"type": ["boolean", "null"]},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      },
+      "required": [
+        "kind",
+        "schema",
+        "fact_id",
+        "domain",
+        "subject",
+        "predicate",
+        "value",
+        "value_type",
+        "truth_state",
+        "context",
+        "observation_completeness",
+        "projection_complete",
+        "provenance"
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "rule"},
+        "schema": {"const": "smc.semantic_rule.v0.1"},
+        "rule_id": {"$ref": "#/$defs/non_empty_string"},
+        "rule_version": {"$ref": "#/$defs/non_empty_string"},
+        "rulepack_id": {"$ref": "#/$defs/non_empty_string"},
+        "domain": {"$ref": "#/$defs/non_empty_string"},
+        "authority_class": {
+          "type": "string",
+          "enum": [
+            "observation_projection",
+            "mechanical_derivation",
+            "execution_precondition_fact",
+            "runtime_authority",
+            "model_semantic",
+            "candidate_only"
+          ]
+        },
+        "input_predicates": {"$ref": "#/$defs/string_array"},
+        "output_predicates": {"$ref": "#/$defs/string_array"},
+        "closed_world_requirements": {"$ref": "#/$defs/string_array"},
+        "source_refs": {"$ref": "#/$defs/string_array"},
+        "fixture_refs": {"$ref": "#/$defs/string_array"},
+        "rule_hash": {"$ref": "#/$defs/sha256"},
+        "status": {
+          "type": "string",
+          "enum": [
+            "candidate",
+            "deterministic_tested",
+            "shadow_qualified",
+            "authority_eligible",
+            "active",
+            "superseded",
+            "retired"
+          ]
+        },
+        "production_consumed": {"type": "boolean"}
+      },
+      "required": [
+        "kind",
+        "schema",
+        "rule_id",
+        "rule_version",
+        "rulepack_id",
+        "domain",
+        "authority_class",
+        "input_predicates",
+        "output_predicates",
+        "closed_world_requirements",
+        "source_refs",
+        "fixture_refs",
+        "rule_hash",
+        "status",
+        "production_consumed"
+      ]
+    },
+    "derivation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "derivation"},
+        "schema": {"const": "smc.derivation_record.v0.1"},
+        "derivation_id": {"$ref": "#/$defs/non_empty_string"},
+        "rule_ref": {"$ref": "#/$defs/non_empty_string"},
+        "rule_hash": {"$ref": "#/$defs/sha256"},
+        "input_fact_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "output_fact_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "result": {
+          "type": "string",
+          "enum": ["derived", "indeterminate", "conflict", "not_applicable", "rejected"]
+        },
+        "reason": {"type": ["string", "null"]}
+      },
+      "required": [
+        "kind",
+        "schema",
+        "derivation_id",
+        "rule_ref",
+        "rule_hash",
+        "input_fact_refs",
+        "output_fact_refs",
+        "context_refs",
+        "result",
+        "reason"
+      ]
+    },
+    "shadow_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "shadow_result"},
+        "schema": {"const": "smc.semantic_shadow_result.v0.1"},
+        "fixture_id": {"$ref": "#/$defs/non_empty_string"},
+        "gate_id": {"$ref": "#/$defs/non_empty_string"},
+        "baseline_ref": {"$ref": "#/$defs/non_empty_string"},
+        "comparison_mode": {
+          "type": "string",
+          "enum": ["byte_exact", "closed_field_exact", "opaque_identity_isomorphic"]
+        },
+        "oracle_result_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "shadow_result_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "equivalent": {"type": "boolean"},
+        "mismatch_paths": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "derivation_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "required": [
+        "kind",
+        "schema",
+        "fixture_id",
+        "gate_id",
+        "baseline_ref",
+        "comparison_mode",
+        "oracle_result_hash",
+        "shadow_result_hash",
+        "equivalent",
+        "mismatch_paths",
+        "derivation_refs"
+      ]
+    },
+    "fixture_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fixture_id": {"$ref": "#/$defs/non_empty_string"},
+        "source_fixture": {"$ref": "#/$defs/non_empty_string"},
+        "oracle_nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "comparison_mode": {
+          "type": "string",
+          "enum": ["byte_exact", "closed_field_exact", "opaque_identity_isomorphic"]
+        },
+        "allowed_opaque_fields": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "input_summary": {"$ref": "#/$defs/non_empty_string"},
+        "expected_assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"}
+        },
+        "forbidden_assertions": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "required": [
+        "fixture_id",
+        "source_fixture",
+        "oracle_nodes",
+        "comparison_mode",
+        "allowed_opaque_fields",
+        "input_summary",
+        "expected_assertions",
+        "forbidden_assertions"
+      ]
+    },
+    "fixture_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gate_id": {
+          "type": "string",
+          "enum": ["S1", "S2", "S3", "S4", "S5"]
+        },
+        "name": {"$ref": "#/$defs/non_empty_string"},
+        "rule_classes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/fixture_case"}
+        }
+      },
+      "required": ["gate_id", "name", "rule_classes", "cases"]
+    },
+    "source_hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/non_empty_string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "required": ["path", "sha256"]
+    },
+    "focused_suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "collected_tests": {"type": "integer", "minimum": 1},
+        "passed_tests": {"type": "integer", "minimum": 1},
+        "status": {"const": "pass"},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/non_empty_string"},
+          "uniqueItems": true
+        }
+      },
+      "required": ["collected_tests", "passed_tests", "status", "files"]
+    },
+    "fixture_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"const": "fixture_manifest"},
+        "schema": {"const": "smc.semantic_logic_fixture_manifest.v0.1"},
+        "status": {"const": "p0_frozen_shadow_only"},
+        "production_consumed": {"const": false},
+        "provider_visible_change": {"const": false},
+        "mutation_authority_change": {"const": false},
+        "baseline_git_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "baseline_ref": {"$ref": "#/$defs/non_empty_string"},
+        "source_hashes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/source_hash"}
+        },
+        "focused_suite": {"$ref": "#/$defs/focused_suite"},
+        "opaque_identity_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "raw_output_byte_determinism_claimed": {"const": false},
+            "reason": {"$ref": "#/$defs/non_empty_string"},
+            "p1_requirement": {"$ref": "#/$defs/non_empty_string"}
+          },
+          "required": [
+            "raw_output_byte_determinism_claimed",
+            "reason",
+            "p1_requirement"
+          ]
+        },
+        "gates": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {"$ref": "#/$defs/fixture_gate"}
+        },
+        "adversarial_obligations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"},
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind",
+        "schema",
+        "status",
+        "production_consumed",
+        "provider_visible_change",
+        "mutation_authority_change",
+        "baseline_git_sha",
+        "baseline_ref",
+        "source_hashes",
+        "focused_suite",
+        "opaque_identity_policy",
+        "gates",
+        "adversarial_obligations"
+      ]
+    }
+  }
+}

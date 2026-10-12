@@ -1,0 +1,125 @@
+{
+  "schema": "smc.browser_phase1_bperception_result.v0.1",
+  "date": "2026-09-13",
+  "baseline_head": "fec0c7740252b58be98c166dc1b592ceddd2ce4d",
+  "implementation_head": "c95fd46eff948fb75e689d401f9d125049c7601e",
+  "status": "qualified_adapter_not_runtime_activated",
+  "rulings": {
+    "read_only_perception_adapter": "PASS_DETERMINISTIC",
+    "closed_schema_wire_conformance": "PASS",
+    "scope_generation_identity": "PASS_DETERMINISTIC",
+    "multi_sensor_c28_honesty": "PASS_DETERMINISTIC",
+    "grounding_integrity_retention_hydration": "PASS_DETERMINISTIC",
+    "playwright_read_only_capture_backend": "PASS_DETERMINISTIC_FAKE_CDP",
+    "runtime_host_activation": "NOT_ACTIVE",
+    "factory_model_surface_registration": "NOT_REGISTERED",
+    "live_dom_ax_browser_qualification": "NOT_TESTED",
+    "browser_mutation": "NOT_IMPLEMENTED",
+    "automatic_protocol_retry": "disabled_v0.1",
+    "phase2_vision_actionability": "DEFERRED",
+    "phase3_native_ui": "DEFERRED"
+  },
+  "implementation_artifacts": {
+    "src/llm_loop/browser/__init__.py": "a3120928e03625f40f6b9ce531f326bec13d16e31f95ce883bf51e4403b196ef",
+    "src/llm_loop/browser/perception.py": "c948f73269f6614e7db15913b0dfc49c112d9705b2063f84873d6928a345957f",
+    "src/llm_loop/tools/builtin/browser_perceive.py": "50a0c19713ef64b4b374c8441d63db2562b5cd037d08283667e9dac801fc7f06",
+    "tests/fixtures/smc_browser_perception_v01.json": "aadbf6077451824f96d9042bbe2c3cd2c6547dbc3b565bf682ba4765b0882dbb",
+    "tests/unit/test_smc_browser_perception_v01.py": "42bc0e36a33dd66cd92e32f9d9d1a3c918b77cde1b4199b6f4723caaec9f5c73"
+  },
+  "surface": {
+    "tool_class": "BrowserPerceiveTool",
+    "tool_name": "browser_perceive",
+    "actions": ["snapshot", "hydrate"],
+    "parameters": ["action", "projection_limit", "grounding_ref"],
+    "factory_registered": false,
+    "live_browser_host": false,
+    "legacy_playwright_direct_model_surface": false,
+    "mutation_actions": [],
+    "model_calls": false,
+    "real_browser_calls": false,
+    "service_restarts": false
+  },
+  "playwright_backend": {
+    "mode": "already_bound_page_read_only",
+    "cdp_methods": [
+      "Target.getTargetInfo",
+      "Page.getFrameTree",
+      "DOMSnapshot.captureSnapshot",
+      "Accessibility.getFullAXTree"
+    ],
+    "navigation": false,
+    "script_evaluation": false,
+    "selector_input": false,
+    "url_identity_fallback": false
+  },
+  "deterministic_r3": {
+    "covered_count": 20,
+    "covered": [
+      "R3-01", "R3-02", "R3-03", "R3-04", "R3-05", "R3-06", "R3-07", "R3-08",
+      "R3-09", "R3-10", "R3-11", "R3-12", "R3-13", "R3-15", "R3-16", "R3-27",
+      "R3-28", "R3-30", "R3-31", "R3-32"
+    ],
+    "remaining_nondeferred_count": 10,
+    "remaining_nondeferred": [
+      "R3-17", "R3-18", "R3-19", "R3-20", "R3-21",
+      "R3-22", "R3-23", "R3-24", "R3-25", "R3-26"
+    ],
+    "deferred": ["R3-14", "R3-29"]
+  },
+  "qualification_gates": {
+    "B0": {"status": "PARTIAL", "reason": "closed read-only SMC surface exists and legacy surface is isolated, but no live host/factory activation"},
+    "B1": {"status": "PASS_DETERMINISTIC", "reason": "page/document/frame/runtime generation and parentage are explicit"},
+    "B2": {"status": "PASS_DETERMINISTIC", "reason": "WorldSnapshot, integrity grounding, completeness and projection separation are implemented"},
+    "B3": {"status": "PASS_DETERMINISTIC", "reason": "task-invariant identity continuity, replacement and restart invalidation are tested"},
+    "B4": {"status": "PASS_DETERMINISTIC", "reason": "DOM/AX C28 conflicts preserve source facts and unresolved canonical fields become null"},
+    "B5": {"status": "NOT_APPLICABLE_BPERCEPTION", "reason": "SemanticDiff is a later phase"},
+    "B6": {"status": "NOT_APPLICABLE_BPERCEPTION", "reason": "mutation SemanticAction verbs are not implemented"},
+    "B7": {"status": "NOT_APPLICABLE_BPERCEPTION", "reason": "mutation TOCTOU/version dispatch is not implemented"},
+    "B8": {"status": "PASS_PERCEPTION_ONLY", "reason": "automatic protocol retry remains disabled_v0.1; mutation idempotency/atomicity is not exercised"},
+    "B9": {"status": "NOT_APPLICABLE_BPERCEPTION", "reason": "ActionReceipt lifecycle is a later phase"},
+    "B10": {"status": "NOT_APPLICABLE_BPERCEPTION", "reason": "Predicate execution is a later phase"},
+    "B11": {"status": "PASS_PERCEPTION_SUBSET", "reason": "shadow/canvas/cross-origin/sensor blind spots are explicit; action boundary events are not in scope"},
+    "B12": {"status": "PASS", "reason": "no selector/backend locator/strategy/completion/recovery fields enter the model-facing surface"},
+    "B13": {"status": "PARTIAL", "reason": "20/30 non-deferred R3 obligations have deterministic perception fixtures; R3-17..26 remain"},
+    "B14": {"status": "PASS", "reason": "implementation commit passed committed-state focused/static/security/full repo qualification"}
+  },
+  "validation": {
+    "direct_tests": "44/44 PASS",
+    "expanded_adjacent_tests": "133/133 PASS",
+    "expanded_breakdown": {
+      "bperception": 44,
+      "bspec": 21,
+      "smc_contract": 15,
+      "smx_perception": 25,
+      "lazy_schema": 14,
+      "arch_guards": 14
+    },
+    "ruff": "PASS",
+    "py_compile": "PASS",
+    "pyright": "0 errors / 0 warnings / 0 informations",
+    "diff_check": "PASS",
+    "privacy_scan": "PASS",
+    "security": "PASS (1636 files, committed implementation)",
+    "full_ci_gate": {
+      "status": "PASS",
+      "exit_code": 0,
+      "ruff": "PASS",
+      "env_pin": "537 test files / 0 undeclared dependents",
+      "src_pyright": "0 errors / 0 warnings / 0 informations",
+      "tier0": "PASS",
+      "xdist_full": "PASS"
+    }
+  },
+  "non_claims": [
+    "runtime_browser_host_active",
+    "browser_perceive_factory_registered",
+    "live_external_site_dom_ax_qualified",
+    "browser_mutation_implemented",
+    "semantic_diff_implemented",
+    "predicate_execution_implemented",
+    "action_receipt_implemented",
+    "vision_actionability_qualified",
+    "native_browser_chrome_or_os_ui_qualified"
+  ],
+  "recommended_next_phase": "B-HOST: opt-in persistent read-only current-page host/attach contract and real local DOM+AX capture qualification before any mutation"
+}

@@ -1,0 +1,153 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-runtime-config-c0-proof-startup",
+  "summary": "C0-A corrects the runtime-env proof gate so hidden alias/helper/import-time/dynamic-secret debt cannot false-green; C0-B routes official Web/Feishu startup through the existing canonical runtime snapshot while preserving rollout-safe PID detection.",
+  "components": [
+    {
+      "component_id": "runtime-config-c0a-proof-gate-control",
+      "paths": [
+        "scripts/audit_runtime_env.py",
+        "tests/fixtures/runtime_env_access_baseline.json",
+        "tests/unit/test_runtime_env_access_gate.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "repository runtime-environment proof inventory and one-way CI ratchet",
+      "disposition": "ADMIT as mechanical source-shape/provenance proof machinery; it reports and ratchets environment access but does not decide task semantics or runtime completion.",
+      "evidence": [
+        "Old proof output 126 direct / 0 import-time was mechanically incomplete because os aliases and literal env-helper call sites were not represented.",
+        "Corrected inventory reports 134 physical direct accesses, 150 effective observations, 5 helper-projected module-import reads, and 6 dynamic-secret signatures.",
+        "C0-A committed-state focused 11/11 and full ci_gate passed on exact 472bfd47."
+      ],
+      "verification_level": "TDD proof fixtures + exact AST inventory + one-way ratchets + committed-state full repository CI",
+      "model_evidence_veto_recovery_exit": "Gate failures expose exact mechanical signatures/classes for review; developers may migrate the access or explicitly review the baseline. The gate never infers task relevance or model behavior.",
+      "rollback_route": "Revert C0-A to formal base 32a9a266; this proof-layer change has no production runtime mutation.",
+      "declaration_id": "runtime-config-c0a-proof-gate-control"
+    },
+    {
+      "component_id": "runtime-config-c0b-startup-sot-control",
+      "paths": [
+        "scripts/restart_mirror.sh"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "official Web/Feishu process startup and canonical runtime configuration handoff",
+      "disposition": "ADMIT as mechanical startup wiring that reuses the existing runtime.launch resolver/identity/manifest boundary; process lifecycle remains in the restart script and task semantics remain model-owned.",
+      "evidence": [
+        "Formal restart previously spawned llm_loop.web/feishu directly, bypassing runtime.launch and permitting manifest/Settings configuration split-brain under conflicting sources.",
+        "Conflict fixture proves runtime.launch projects runtime.toml precedence into real load_settings while the manifest reports the same source/value provenance.",
+        "PID fallback recognizes both legacy direct-entry and canonical runtime.launch argv forms so first rollout and rollback cannot silently lose process ownership."
+      ],
+      "verification_level": "TDD restart contract + conflicting source fixture + restart/resolver/manifest/Feishu adjacency + committed-state full repository CI",
+      "model_evidence_veto_recovery_exit": "Startup logs, runtime manifest provenance, ignored-shell facts, listener/heartbeat PIDs, and restart receipts remain inspectable mechanical evidence. Operators can select the prior exact code root and restart through the same dual-root mechanism.",
+      "rollback_route": "Return Web/Feishu code_root to exact 32a9a266 through the established rollbackable dual-root restart path; no persistent data migration is required.",
+      "declaration_id": "runtime-config-c0b-startup-sot-control"
+    },
+    {
+      "component_id": "runtime-config-c0-qualification-tests",
+      "paths": [
+        "tests/unit/test_runtime_env_audit_truth.py",
+        "tests/unit/test_runtime_startup_sot.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic C0 truth and startup qualification fixtures",
+      "disposition": "ADMIT as verification-only coverage of scanner truth, config precedence, Settings/manifest coherence, and rollout-safe argv detection.",
+      "evidence": [
+        "C0-A truth probes were RED against the old scanner then GREEN after the proof fix.",
+        "C0-B startup gate was RED against the direct restart entry and GREEN after canonical runtime.launch wiring.",
+        "C0-B focused/adjacent suite closed 72/72 PASS."
+      ],
+      "verification_level": "deterministic pytest plus full repository CI",
+      "model_evidence_veto_recovery_exit": "Tests assert mechanical contracts only and have no runtime authority.",
+      "rollback_route": "Revert together with the corresponding C0 implementation if the review line is rejected."
+    },
+    {
+      "component_id": "runtime-config-c0-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260916-runtime-config-c0-proof-startup.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "C0 qualification evidence record",
+      "disposition": "ADMIT as a factual local qualification record; runtime does not consult it.",
+      "evidence": [
+        "Record freezes exact base/C0-A/C0-B identities, corrected inventory, TDD evidence, committed-state gates, non-interference, boundaries, and rollback."
+      ],
+      "verification_level": "exact Git/evidence review plus branch-wide A.5 coverage",
+      "model_evidence_veto_recovery_exit": "Reviewers may correct or reject the record without changing runtime behavior.",
+      "rollback_route": "Delete or revert the qualification record with no runtime effect."
+    },
+    {
+      "component_id": "runtime-config-c0-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260916-runtime-config-c0-proof-startup.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations only.",
+      "evidence": [
+        "The A.5 checker validates closed shape and exact path partition while leaving semantic_quality and classification_truth not evaluated."
+      ],
+      "verification_level": "synthetic staged-tree check followed by exact committed base-to-head A.5 gate",
+      "model_evidence_veto_recovery_exit": "Human/model review remains responsible for classification truth and may amend or reject this metadata.",
+      "rollback_route": "Revert the submission record together with the review line."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "runtime-config-c0a-proof-gate-control",
+      "g1": {
+        "necessity": "P1-C migration needs a mechanically complete baseline and one-way ratchet; a scanner that misses aliases or helper-call import reads can report false convergence and cannot safely prove debt reduction."
+      },
+      "g2": {
+        "authority_owner": "runtime-env AST proof inventory plus its reviewed baseline ratchet",
+        "relationship": "reuse",
+        "non_duplication": "C0-A repairs the existing proof surface rather than adding another runtime configuration source or semantic policy engine."
+      },
+      "g3": {
+        "model_evidence": [
+          "exact direct/helper/module-import signatures",
+          "per-key access classes including dynamic-secret boundaries",
+          "ratchet failure details showing newly introduced or expanded signatures"
+        ],
+        "recovery_or_reason": "Migrate the direct access to typed startup configuration or explicitly review a true bootstrap/secret/debug boundary and update the baseline. Existing debt is visible rather than silently normalized away."
+      },
+      "g4": {
+        "rollback": "Revert C0-A to 32a9a266; no production process or persistent data is changed by the scanner/gate.",
+        "verification": [
+          "five TDD RED proof cases against the old scanner",
+          "corrected 134 direct / 150 effective / 5 import-time / 6 dynamic-secret inventory",
+          "C0-A focused 11/11",
+          "C0-A full committed-state ci_gate and security scan"
+        ]
+      }
+    },
+    {
+      "declaration_id": "runtime-config-c0b-startup-sot-control",
+      "g1": {
+        "necessity": "A file-backed configuration SoT is not authoritative if the official service restart path can bypass its resolver and let manifest provenance diverge from the Settings consumed by the real Engine."
+      },
+      "g2": {
+        "authority_owner": "existing llm_loop.runtime.launch + resolver/identity/manifest pipeline",
+        "relationship": "reuse",
+        "non_duplication": "C0-B only routes the official process manager through the existing canonical launch boundary; it does not create a second resolver, model-policy layer, or secret store."
+      },
+      "g3": {
+        "model_evidence": [
+          "runtime-launch config source/provenance summary",
+          "runtime_manifest identity/config_sources",
+          "ignored stale-shell facts",
+          "restart receipt plus Web listener / Feishu heartbeat process identity"
+        ],
+        "recovery_or_reason": "Correct runtime.toml or the compatibility source, or roll back to the prior exact code root. Failures remain visible through startup logs/manifest/receipt rather than semantic fallback."
+      },
+      "g4": {
+        "rollback": "Select exact prior code_root 32a9a266 and use the established dual-root restart path; C0-B performs no application-data migration.",
+        "verification": [
+          "runtime.toml vs .env vs stale-shell conflict fixture with real load_settings",
+          "manifest and Settings source/value coherence",
+          "legacy plus canonical argv PID fallback coverage",
+          "C0-B focused/adjacent 72/72",
+          "C0-B full committed-state ci_gate and security scan"
+        ]
+      }
+    }
+  ]
+}

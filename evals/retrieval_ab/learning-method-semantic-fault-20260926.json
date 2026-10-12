@@ -1,0 +1,95 @@
+{
+  "build_ms": 172.2,
+  "rows": [
+    {
+      "query_kind": "ab",
+      "refs": [
+        "method:method-ab-experiment",
+        "method:method-root-cause",
+        "method:method-self-distill",
+        "method:method-repo-api-discovery",
+        "method:method-semantic-operation",
+        "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4"
+      ],
+      "statuses": [
+        "active",
+        "active",
+        "active",
+        "active",
+        "active",
+        "active"
+      ],
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "primary_to_hash",
+        "semantic_latency_ms": 112.671,
+        "query_embedding_ms": 5.495,
+        "embedding_queue_wait_ms": null,
+        "embedding_encode_ms": null,
+        "embedding_http_ms": 5.458,
+        "embedding_transport_error": "http_503",
+        "candidate_missing_count": 7,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 7,
+        "keyword_hit_count": 5,
+        "fused_hit_count": 6,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      },
+      "ms": 261.4
+    },
+    {
+      "query_kind": "repo-api",
+      "refs": [
+        "method:method-repo-api-discovery",
+        "method:method-self-distill",
+        "method:method-root-cause",
+        "method:fresh-read-authoritative-record-before-finality-claim-35fe91da2cd4",
+        "method:method-ab-experiment",
+        "method:method-semantic-operation"
+      ],
+      "statuses": [
+        "active",
+        "active",
+        "active",
+        "active",
+        "active",
+        "active"
+      ],
+      "diag": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "semantic_fallback_reason": "primary_to_hash",
+        "semantic_latency_ms": 92.65,
+        "query_embedding_ms": 5.409,
+        "embedding_queue_wait_ms": null,
+        "embedding_encode_ms": null,
+        "embedding_http_ms": 5.378,
+        "embedding_transport_error": "http_503",
+        "candidate_missing_count": 0,
+        "cache_files_refreshed": 0,
+        "prewarm_scheduled": false,
+        "background_prewarm_inflight": false,
+        "last_prewarm_count": 0,
+        "last_prewarm_ms": 0.0,
+        "last_cache_flush_ms": 0.0,
+        "last_prewarm_error": "",
+        "semantic_hit_count": 7,
+        "keyword_hit_count": 2,
+        "fused_hit_count": 6,
+        "scope": "method",
+        "canonical_hydration_failures": 0,
+        "eligible_method_count": 7
+      },
+      "ms": 235.7
+    }
+  ]
+}

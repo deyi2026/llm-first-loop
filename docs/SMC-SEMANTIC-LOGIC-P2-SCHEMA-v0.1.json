@@ -1,0 +1,325 @@
+{
+  "$defs": {
+    "nonempty": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "red_case": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "expected_engine_status": {
+          "enum": [
+            "complete",
+            "rejected"
+          ]
+        },
+        "expected_relations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbidden_relations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "gate_id": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "group": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "semantic",
+            "engine",
+            "authority",
+            "bounds",
+            "determinism"
+          ]
+        },
+        "oracle_fixture_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "gate_id",
+        "group",
+        "kind",
+        "description",
+        "expected_engine_status",
+        "expected_relations",
+        "forbidden_relations",
+        "oracle_fixture_ref"
+      ],
+      "type": "object"
+    },
+    "rule": {
+      "additionalProperties": false,
+      "properties": {
+        "authority_class": {
+          "enum": [
+            "mechanical_derivation",
+            "execution_precondition_fact"
+          ]
+        },
+        "closed_world_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "evaluator_op": {
+          "enum": [
+            "grounding_exact_binding",
+            "action_fixed_contract",
+            "scope_descendant_closure",
+            "scope_target_relation",
+            "canonicalize_source_conflict",
+            "derive_coverage_status",
+            "separate_completeness",
+            "identity_ambiguity_no_fusion",
+            "predicate_bind_selected_condition",
+            "predicate_evaluate",
+            "version_assess",
+            "receipt_sequence_validate",
+            "receipt_dispatch_invariants"
+          ]
+        },
+        "fixture_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "group": {
+          "enum": [
+            "G1_grounding",
+            "G2_scope",
+            "G3_completeness_conflict",
+            "G4_predicate",
+            "G5_version_receipt"
+          ]
+        },
+        "input_predicates": {
+          "items": {
+            "$ref": "#/$defs/nonempty"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "kind": {
+          "const": "rule"
+        },
+        "output_predicates": {
+          "items": {
+            "$ref": "#/$defs/nonempty"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "production_consumed": {
+          "const": false
+        },
+        "rule_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "rule_id": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "rule_version": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "rulepack_id": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "schema": {
+          "const": "smc.semantic_rule.v0.1"
+        },
+        "source_refs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "status": {
+          "const": "candidate"
+        }
+      },
+      "required": [
+        "kind",
+        "schema",
+        "rule_id",
+        "rule_version",
+        "rulepack_id",
+        "domain",
+        "group",
+        "evaluator_op",
+        "authority_class",
+        "input_predicates",
+        "output_predicates",
+        "closed_world_requirements",
+        "dependencies",
+        "source_refs",
+        "fixture_refs",
+        "status",
+        "production_consumed",
+        "rule_hash"
+      ],
+      "type": "object"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "$id": "https://llmfirstloop.local/schema/smc-p2-design-v0.1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Shadow-only P2 design assets; validation confers no production authority.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "const": "shadow_only"
+        },
+        "baseline": {
+          "const": "54f1ed8c6c0b4cf71ca4b2bd39970df31d2e2ed5"
+        },
+        "domain": {
+          "const": "browser"
+        },
+        "engine_profile": {
+          "type": "object"
+        },
+        "group_order": {
+          "type": "array"
+        },
+        "hash_contract": {
+          "type": "object"
+        },
+        "phase": {
+          "const": "P2-design"
+        },
+        "production_consumed": {
+          "const": false
+        },
+        "rulepack_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "rulepack_id": {
+          "const": "smc.browser.p2-core.v0.1"
+        },
+        "rulepack_version": {
+          "const": "0.1"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/rule"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "schema": {
+          "const": "smc.rulepack.v0.1"
+        },
+        "source_refs": {
+          "type": "array"
+        },
+        "status": {
+          "const": "candidate"
+        }
+      },
+      "required": [
+        "schema",
+        "rulepack_id",
+        "rulepack_version",
+        "domain",
+        "phase",
+        "status",
+        "authority",
+        "production_consumed",
+        "baseline",
+        "engine_profile",
+        "group_order",
+        "rules",
+        "hash_contract",
+        "source_refs",
+        "rulepack_hash"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "const": "54f1ed8c6c0b4cf71ca4b2bd39970df31d2e2ed5"
+        },
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/red_case"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "counts": {
+          "type": "object"
+        },
+        "production_consumed": {
+          "const": false
+        },
+        "requirements": {
+          "type": "object"
+        },
+        "rulepack_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "rulepack_id": {
+          "const": "smc.browser.p2-core.v0.1"
+        },
+        "schema": {
+          "const": "smc.p2_red_gate_manifest.v0.1"
+        },
+        "status": {
+          "const": "design_frozen"
+        }
+      },
+      "required": [
+        "schema",
+        "status",
+        "production_consumed",
+        "baseline",
+        "rulepack_id",
+        "rulepack_hash",
+        "cases",
+        "counts",
+        "requirements"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "SMC Semantic Logic P2 design schema v0.1"
+}

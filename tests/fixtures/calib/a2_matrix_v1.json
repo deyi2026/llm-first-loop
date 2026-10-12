@@ -1,0 +1,484 @@
+{
+  "version": "A2-MATRIX-v1",
+  "randomization_seed": 202608261030,
+  "providers": [
+    "minimax",
+    "deepseek"
+  ],
+  "variants": [
+    "B0-Baseline",
+    "B1-Contract",
+    "B2-Full-Slim-v1",
+    "B3-Full-Reference"
+  ],
+  "seed_ids": [
+    "G01",
+    "G02",
+    "G03",
+    "G04",
+    "G05",
+    "G06",
+    "G07",
+    "G08"
+  ],
+  "rows": [
+    {
+      "run_id": "A2-001",
+      "provider": "minimax",
+      "seed": "G08",
+      "variant": "B3-Full-Reference",
+      "block_seq": 1
+    },
+    {
+      "run_id": "A2-002",
+      "provider": "minimax",
+      "seed": "G08",
+      "variant": "B0-Baseline",
+      "block_seq": 2
+    },
+    {
+      "run_id": "A2-003",
+      "provider": "minimax",
+      "seed": "G06",
+      "variant": "B3-Full-Reference",
+      "block_seq": 3
+    },
+    {
+      "run_id": "A2-004",
+      "provider": "minimax",
+      "seed": "G02",
+      "variant": "B1-Contract",
+      "block_seq": 4
+    },
+    {
+      "run_id": "A2-005",
+      "provider": "minimax",
+      "seed": "G01",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 5
+    },
+    {
+      "run_id": "A2-006",
+      "provider": "minimax",
+      "seed": "G02",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 6
+    },
+    {
+      "run_id": "A2-007",
+      "provider": "minimax",
+      "seed": "G04",
+      "variant": "B1-Contract",
+      "block_seq": 7
+    },
+    {
+      "run_id": "A2-008",
+      "provider": "minimax",
+      "seed": "G03",
+      "variant": "B3-Full-Reference",
+      "block_seq": 8
+    },
+    {
+      "run_id": "A2-009",
+      "provider": "minimax",
+      "seed": "G02",
+      "variant": "B0-Baseline",
+      "block_seq": 9
+    },
+    {
+      "run_id": "A2-010",
+      "provider": "minimax",
+      "seed": "G04",
+      "variant": "B0-Baseline",
+      "block_seq": 10
+    },
+    {
+      "run_id": "A2-011",
+      "provider": "minimax",
+      "seed": "G05",
+      "variant": "B1-Contract",
+      "block_seq": 11
+    },
+    {
+      "run_id": "A2-012",
+      "provider": "minimax",
+      "seed": "G01",
+      "variant": "B0-Baseline",
+      "block_seq": 12
+    },
+    {
+      "run_id": "A2-013",
+      "provider": "minimax",
+      "seed": "G03",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 13
+    },
+    {
+      "run_id": "A2-014",
+      "provider": "minimax",
+      "seed": "G08",
+      "variant": "B1-Contract",
+      "block_seq": 14
+    },
+    {
+      "run_id": "A2-015",
+      "provider": "minimax",
+      "seed": "G04",
+      "variant": "B3-Full-Reference",
+      "block_seq": 15
+    },
+    {
+      "run_id": "A2-016",
+      "provider": "minimax",
+      "seed": "G01",
+      "variant": "B1-Contract",
+      "block_seq": 16
+    },
+    {
+      "run_id": "A2-017",
+      "provider": "minimax",
+      "seed": "G06",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 17
+    },
+    {
+      "run_id": "A2-018",
+      "provider": "minimax",
+      "seed": "G07",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 18
+    },
+    {
+      "run_id": "A2-019",
+      "provider": "minimax",
+      "seed": "G07",
+      "variant": "B1-Contract",
+      "block_seq": 19
+    },
+    {
+      "run_id": "A2-020",
+      "provider": "minimax",
+      "seed": "G03",
+      "variant": "B1-Contract",
+      "block_seq": 20
+    },
+    {
+      "run_id": "A2-021",
+      "provider": "minimax",
+      "seed": "G05",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 21
+    },
+    {
+      "run_id": "A2-022",
+      "provider": "minimax",
+      "seed": "G06",
+      "variant": "B0-Baseline",
+      "block_seq": 22
+    },
+    {
+      "run_id": "A2-023",
+      "provider": "minimax",
+      "seed": "G07",
+      "variant": "B0-Baseline",
+      "block_seq": 23
+    },
+    {
+      "run_id": "A2-024",
+      "provider": "minimax",
+      "seed": "G07",
+      "variant": "B3-Full-Reference",
+      "block_seq": 24
+    },
+    {
+      "run_id": "A2-025",
+      "provider": "minimax",
+      "seed": "G05",
+      "variant": "B0-Baseline",
+      "block_seq": 25
+    },
+    {
+      "run_id": "A2-026",
+      "provider": "minimax",
+      "seed": "G01",
+      "variant": "B3-Full-Reference",
+      "block_seq": 26
+    },
+    {
+      "run_id": "A2-027",
+      "provider": "minimax",
+      "seed": "G06",
+      "variant": "B1-Contract",
+      "block_seq": 27
+    },
+    {
+      "run_id": "A2-028",
+      "provider": "minimax",
+      "seed": "G03",
+      "variant": "B0-Baseline",
+      "block_seq": 28
+    },
+    {
+      "run_id": "A2-029",
+      "provider": "minimax",
+      "seed": "G04",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 29
+    },
+    {
+      "run_id": "A2-030",
+      "provider": "minimax",
+      "seed": "G02",
+      "variant": "B3-Full-Reference",
+      "block_seq": 30
+    },
+    {
+      "run_id": "A2-031",
+      "provider": "minimax",
+      "seed": "G08",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 31
+    },
+    {
+      "run_id": "A2-032",
+      "provider": "minimax",
+      "seed": "G05",
+      "variant": "B3-Full-Reference",
+      "block_seq": 32
+    },
+    {
+      "run_id": "A2-033",
+      "provider": "deepseek",
+      "seed": "G04",
+      "variant": "B3-Full-Reference",
+      "block_seq": 1
+    },
+    {
+      "run_id": "A2-034",
+      "provider": "deepseek",
+      "seed": "G01",
+      "variant": "B3-Full-Reference",
+      "block_seq": 2
+    },
+    {
+      "run_id": "A2-035",
+      "provider": "deepseek",
+      "seed": "G03",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 3
+    },
+    {
+      "run_id": "A2-036",
+      "provider": "deepseek",
+      "seed": "G06",
+      "variant": "B3-Full-Reference",
+      "block_seq": 4
+    },
+    {
+      "run_id": "A2-037",
+      "provider": "deepseek",
+      "seed": "G03",
+      "variant": "B3-Full-Reference",
+      "block_seq": 5
+    },
+    {
+      "run_id": "A2-038",
+      "provider": "deepseek",
+      "seed": "G05",
+      "variant": "B0-Baseline",
+      "block_seq": 6
+    },
+    {
+      "run_id": "A2-039",
+      "provider": "deepseek",
+      "seed": "G07",
+      "variant": "B1-Contract",
+      "block_seq": 7
+    },
+    {
+      "run_id": "A2-040",
+      "provider": "deepseek",
+      "seed": "G07",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 8
+    },
+    {
+      "run_id": "A2-041",
+      "provider": "deepseek",
+      "seed": "G02",
+      "variant": "B1-Contract",
+      "block_seq": 9
+    },
+    {
+      "run_id": "A2-042",
+      "provider": "deepseek",
+      "seed": "G06",
+      "variant": "B1-Contract",
+      "block_seq": 10
+    },
+    {
+      "run_id": "A2-043",
+      "provider": "deepseek",
+      "seed": "G01",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 11
+    },
+    {
+      "run_id": "A2-044",
+      "provider": "deepseek",
+      "seed": "G08",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 12
+    },
+    {
+      "run_id": "A2-045",
+      "provider": "deepseek",
+      "seed": "G02",
+      "variant": "B0-Baseline",
+      "block_seq": 13
+    },
+    {
+      "run_id": "A2-046",
+      "provider": "deepseek",
+      "seed": "G07",
+      "variant": "B0-Baseline",
+      "block_seq": 14
+    },
+    {
+      "run_id": "A2-047",
+      "provider": "deepseek",
+      "seed": "G08",
+      "variant": "B0-Baseline",
+      "block_seq": 15
+    },
+    {
+      "run_id": "A2-048",
+      "provider": "deepseek",
+      "seed": "G05",
+      "variant": "B3-Full-Reference",
+      "block_seq": 16
+    },
+    {
+      "run_id": "A2-049",
+      "provider": "deepseek",
+      "seed": "G06",
+      "variant": "B0-Baseline",
+      "block_seq": 17
+    },
+    {
+      "run_id": "A2-050",
+      "provider": "deepseek",
+      "seed": "G06",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 18
+    },
+    {
+      "run_id": "A2-051",
+      "provider": "deepseek",
+      "seed": "G05",
+      "variant": "B1-Contract",
+      "block_seq": 19
+    },
+    {
+      "run_id": "A2-052",
+      "provider": "deepseek",
+      "seed": "G02",
+      "variant": "B3-Full-Reference",
+      "block_seq": 20
+    },
+    {
+      "run_id": "A2-053",
+      "provider": "deepseek",
+      "seed": "G08",
+      "variant": "B1-Contract",
+      "block_seq": 21
+    },
+    {
+      "run_id": "A2-054",
+      "provider": "deepseek",
+      "seed": "G04",
+      "variant": "B0-Baseline",
+      "block_seq": 22
+    },
+    {
+      "run_id": "A2-055",
+      "provider": "deepseek",
+      "seed": "G01",
+      "variant": "B0-Baseline",
+      "block_seq": 23
+    },
+    {
+      "run_id": "A2-056",
+      "provider": "deepseek",
+      "seed": "G02",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 24
+    },
+    {
+      "run_id": "A2-057",
+      "provider": "deepseek",
+      "seed": "G08",
+      "variant": "B3-Full-Reference",
+      "block_seq": 25
+    },
+    {
+      "run_id": "A2-058",
+      "provider": "deepseek",
+      "seed": "G07",
+      "variant": "B3-Full-Reference",
+      "block_seq": 26
+    },
+    {
+      "run_id": "A2-059",
+      "provider": "deepseek",
+      "seed": "G04",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 27
+    },
+    {
+      "run_id": "A2-060",
+      "provider": "deepseek",
+      "seed": "G01",
+      "variant": "B1-Contract",
+      "block_seq": 28
+    },
+    {
+      "run_id": "A2-061",
+      "provider": "deepseek",
+      "seed": "G05",
+      "variant": "B2-Full-Slim-v1",
+      "block_seq": 29
+    },
+    {
+      "run_id": "A2-062",
+      "provider": "deepseek",
+      "seed": "G03",
+      "variant": "B0-Baseline",
+      "block_seq": 30
+    },
+    {
+      "run_id": "A2-063",
+      "provider": "deepseek",
+      "seed": "G04",
+      "variant": "B1-Contract",
+      "block_seq": 31
+    },
+    {
+      "run_id": "A2-064",
+      "provider": "deepseek",
+      "seed": "G03",
+      "variant": "B1-Contract",
+      "block_seq": 32
+    }
+  ],
+  "secondary_review_runs": [
+    "A2-012",
+    "A2-014",
+    "A2-031",
+    "A2-032",
+    "A2-035",
+    "A2-038",
+    "A2-057",
+    "A2-064"
+  ]
+}

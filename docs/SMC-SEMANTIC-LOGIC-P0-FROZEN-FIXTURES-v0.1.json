@@ -1,0 +1,572 @@
+{
+  "kind": "fixture_manifest",
+  "schema": "smc.semantic_logic_fixture_manifest.v0.1",
+  "status": "p0_frozen_shadow_only",
+  "production_consumed": false,
+  "provider_visible_change": false,
+  "mutation_authority_change": false,
+  "baseline_git_sha": "19e253edfe4d3fcbeb268830b90d00fd273a6262",
+  "baseline_ref": "main@19e253edfe4d3fcbeb268830b90d00fd273a6262",
+  "source_hashes": [
+    {
+      "path": "src/llm_loop/browser/perception.py",
+      "sha256": "ea412f300036451fea9bc448d887d7d9cbb47be89fcc40d1284989f9a9c3bf29"
+    },
+    {
+      "path": "src/llm_loop/browser/predicate.py",
+      "sha256": "44a1e395ac869d464e95584335de7fd362d80e0ede852faa13b7557855007343"
+    },
+    {
+      "path": "src/llm_loop/browser/action.py",
+      "sha256": "01404c0b919fa7caa51ea4a85f012cb4b1307a7a47cd2b11180bc272c17d0777"
+    },
+    {
+      "path": "src/llm_loop/tools/builtin/browser_wait.py",
+      "sha256": "cf8c4830c0233df80920f6ee9d2ea8a414fd8a7558bdfb1d421770248fcd77f8"
+    },
+    {
+      "path": "src/llm_loop/tools/builtin/browser_semantic_execute.py",
+      "sha256": "920f2f794b0f6a2ea8481fa2f7bc5e71091e8fa71353e62125d94f08557c1008"
+    },
+    {
+      "path": "src/llm_loop/tools/builtin/smx_perceive.py",
+      "sha256": "2c018b97d3518afcaee8ae485d1787115b862b9e2b6c885441ced533637e8198"
+    },
+    {
+      "path": "src/llm_loop/workspace/file_service.py",
+      "sha256": "ace0bbf33084bd9dc5c99e79fb40b7a5b3b518c90e6e3722de79970ff9424fd9"
+    },
+    {
+      "path": "tests/fixtures/smc_browser_perception_v01.json",
+      "sha256": "aadbf6077451824f96d9042bbe2c3cd2c6547dbc3b565bf682ba4765b0882dbb"
+    },
+    {
+      "path": "tests/unit/test_smc_browser_perception_v01.py",
+      "sha256": "1fed1653c1c7e8fd86aa0404132f457bc1123a1e13c949e7ac0829cc1d950571"
+    },
+    {
+      "path": "tests/unit/test_smc_browser_semantic_diff_v01.py",
+      "sha256": "ef9b30ca62d4c6649092e5e420490b29f5b73aa4c7bc04257a656c862516e628"
+    },
+    {
+      "path": "tests/unit/test_smc_browser_predicate_wait_v01.py",
+      "sha256": "211c0cf61f6335b1478dd1dbe024fe18bcc3fdabc427d772ebee7fe15a3ddf8f"
+    },
+    {
+      "path": "tests/unit/test_smc_browser_version_pressure_v01.py",
+      "sha256": "f51949e930d68cf63102aacd3ec6fb20358fd8507cdf362b977d3fad62419be1"
+    },
+    {
+      "path": "tests/unit/test_smc_browser_action_v01.py",
+      "sha256": "8a2507183578121f6bb5c8fe5882642b973a73cd5b36c8919360818ae4e27432"
+    },
+    {
+      "path": "tests/unit/test_smc_browser_semantic_execute_v01.py",
+      "sha256": "2835cb6419d360086eb6f92ae70eea42c15baa05c81646d9471ab231462975fe"
+    },
+    {
+      "path": "docs/SMC-CONTRACT-v0.1.md",
+      "sha256": "d6f489bd7357303c1948c5bef3510b25503eb9c4bcdbf2c43b1724331bb957e3"
+    },
+    {
+      "path": "docs/SMC-BROWSER-PHASE1-PROFILE-v0.1.md",
+      "sha256": "3ecf1a1c95dcffc4c7ed5e46c81b30d203ee1231089e6e8385a0712c67a64d78"
+    },
+    {
+      "path": "docs/SMC-BROWSER-PHASE1-SCHEMA-v0.1.json",
+      "sha256": "b688227b65fda26a26a67a642e98951e06ca39f89562e03c2cf8a1384d0bfb87"
+    }
+  ],
+  "focused_suite": {
+    "collected_tests": 119,
+    "passed_tests": 119,
+    "status": "pass",
+    "files": [
+      "tests/unit/test_smc_browser_action_v01.py",
+      "tests/unit/test_smc_browser_perception_v01.py",
+      "tests/unit/test_smc_browser_predicate_wait_v01.py",
+      "tests/unit/test_smc_browser_semantic_diff_v01.py",
+      "tests/unit/test_smc_browser_semantic_execute_v01.py",
+      "tests/unit/test_smc_browser_version_pressure_v01.py"
+    ]
+  },
+  "opaque_identity_policy": {
+    "raw_output_byte_determinism_claimed": false,
+    "reason": "Browser snapshot IDs, opaque scope/GroundingRefs, runtime nonce and timestamps are intentionally runtime-bound; the frozen oracle is semantic/relational rather than raw-byte identity.",
+    "p1_requirement": "Use a deterministic identity/clock harness or a strict relation-preserving bijection for declared opaque identity fields only; semantic values, reason codes, completeness, source facts, version relations and receipt order may not be normalized away."
+  },
+  "gates": [
+    {
+      "gate_id": "S1",
+      "name": "Grounding Closure",
+      "rule_classes": [
+        "grounding_exactness",
+        "scope_derivation",
+        "version_binding",
+        "semantic_action_fixed_fields"
+      ],
+      "cases": [
+        {
+          "fixture_id": "S1-object-grounding-compile",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_semantic_execute_v01.py::test_compiler_derives_object_action_from_exact_grounding_ref_only"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "snapshot.snapshot_id",
+            "scope_ref",
+            "target_id",
+            "target_ref",
+            "grounding_ref",
+            "expected_version",
+            "action_id"
+          ],
+          "input_summary": "Snapshot base fixture, select exact Submit SemanticObject.grounding_ref, semantic request verb=click,args={}.",
+          "expected_assertions": [
+            "exact GroundingRef hydrates the same SemanticObject",
+            "target_id equals hydrated SemanticObject.id",
+            "scope_ref equals hydrated SemanticObject.scope_ref",
+            "expected_version equals hydrated SemanticObject.observed_version",
+            "version_scope equals object",
+            "schema/domain/operation/idempotency/atomicity/version-precondition fixed fields match current canonical compiler",
+            "same exact semantic request derives the same action_id within the same observation identity"
+          ],
+          "forbidden_assertions": [
+            "choose target by name similarity",
+            "recapture current page to repair a stale ref",
+            "silently replace the supplied target_ref"
+          ]
+        },
+        {
+          "fixture_id": "S1-resource-grounding-compile",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_semantic_execute_v01.py::test_snapshot_exposes_exact_resource_ref_that_hydrates_session_scoped",
+            "tests/unit/test_smc_browser_semantic_execute_v01.py::test_compiler_derives_navigation_from_resource_ref"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "snapshot.snapshot_id",
+            "resource_ref",
+            "scope_ref",
+            "target_id",
+            "expected_version",
+            "action_id"
+          ],
+          "input_summary": "Snapshot base fixture, use exact snapshot resource_ref with verb=navigate.",
+          "expected_assertions": [
+            "resource_ref hydrates a page resource grounding",
+            "scope_ref equals exact page scope",
+            "target_id equals page scope_ref",
+            "expected_version equals source snapshot version",
+            "version_scope equals resource"
+          ],
+          "forbidden_assertions": [
+            "accept URL as target_ref",
+            "accept object GroundingRef as navigate resource_ref"
+          ]
+        },
+        {
+          "fixture_id": "S1-grounding-fail-closed",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_semantic_execute_v01.py::test_compiler_rejects_cross_session_and_wrong_projection_without_dispatch",
+            "tests/unit/test_smc_browser_perception_v01.py::test_grounding_is_integrity_bound_session_scoped_and_expires",
+            "tests/unit/test_smc_browser_perception_v01.py::test_grounding_integrity_tamper_becomes_unavailable_not_silent_refetch"
+          ],
+          "comparison_mode": "closed_field_exact",
+          "allowed_opaque_fields": [],
+          "input_summary": "Wrong-session, wrong-projection, expired or integrity-tampered exact references.",
+          "expected_assertions": [
+            "cross-session grounding is unauthorized",
+            "wrong grounding projection kind is rejected",
+            "expired grounding remains expired",
+            "integrity-tampered grounding becomes unavailable/integrity_error",
+            "no physical mutation dispatch occurs"
+          ],
+          "forbidden_assertions": [
+            "silent refetch",
+            "silent latest-version substitution",
+            "silent similar-object rebind"
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "S2",
+      "name": "C28 Source Conflict",
+      "rule_classes": [
+        "source_qualified_fact",
+        "unresolved_conflict",
+        "identity_mapping_ambiguity"
+      ],
+      "cases": [
+        {
+          "fixture_id": "S2-dom-ax-field-conflict",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#conflict",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_perception_v01.py::test_dom_ax_field_conflict_becomes_null_with_source_grounding"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "snapshot.snapshot_id",
+            "SemanticObject.id",
+            "scope_ref",
+            "grounding_ref"
+          ],
+          "input_summary": "Same physical Save button: DOM enabled=true, AX enabled=false.",
+          "expected_assertions": [
+            "canonical state.enabled is null",
+            "one state.enabled conflict exists",
+            "conflict resolution equals unresolved",
+            "derivation_basis is null",
+            "observations retain both dom and ax source/value/GroundingRef"
+          ],
+          "forbidden_assertions": [
+            "prefer DOM by default",
+            "prefer AX by default",
+            "drop either source observation"
+          ]
+        },
+        {
+          "fixture_id": "S2-identity-fusion-ambiguity",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#fusion_ambiguity",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_perception_v01.py::test_dom_ax_identity_mapping_ambiguity_never_force_fuses"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "snapshot.snapshot_id",
+            "SemanticObject.id",
+            "scope_ref",
+            "grounding_ref"
+          ],
+          "input_summary": "One DOM physical identity maps to two AX candidates.",
+          "expected_assertions": [
+            "identity mapping conflict remains unresolved",
+            "ambiguous observations remain source-qualified",
+            "objects are not force-fused"
+          ],
+          "forbidden_assertions": [
+            "choose first AX candidate",
+            "choose most similar AX candidate",
+            "collapse ambiguous identities into one canonical object"
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "S3",
+      "name": "Predicate Honesty",
+      "rule_classes": [
+        "unknown_not_false",
+        "coverage_required_for_negative",
+        "lower_bound_witness"
+      ],
+      "cases": [
+        {
+          "fixture_id": "S3-absence-complete-vs-partial",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base + derived submit-removed complete/partial captures",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_predicate_wait_v01.py::test_missing_stable_object_can_prove_absence_only_with_complete_coverage"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "snapshot_id",
+            "scope_ref",
+            "target",
+            "objects_ref"
+          ],
+          "input_summary": "Previously grounded stable Submit target is removed; compare complete capture with DOM-truncated partial capture.",
+          "expected_assertions": [
+            "complete relevant coverage can derive observed exists=false",
+            "negative Predicate is satisfied under complete coverage",
+            "partial coverage yields result=indeterminate",
+            "partial coverage yields observed_value=null"
+          ],
+          "forbidden_assertions": [
+            "derive absence from partial coverage",
+            "map unknown to false"
+          ]
+        },
+        {
+          "fixture_id": "S3-unknown-or-unstable-identity",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base + snapshot-local AX extension",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_predicate_wait_v01.py::test_invented_or_snapshot_local_identity_never_turns_into_false_absence",
+            "tests/unit/test_smc_browser_predicate_wait_v01.py::test_unobserved_object_field_is_indeterminate_not_false"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "snapshot_id",
+            "scope_ref",
+            "target",
+            "objects_ref"
+          ],
+          "input_summary": "Invented target, snapshot-local unstable target, and unobserved object property.",
+          "expected_assertions": [
+            "invented identity absence is indeterminate",
+            "snapshot-local identity absence is indeterminate",
+            "unobserved property is indeterminate"
+          ],
+          "forbidden_assertions": [
+            "unknown identity implies absent",
+            "unobserved property implies false"
+          ]
+        },
+        {
+          "fixture_id": "S3-lower-bound-object-count",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base with dom.truncated=true",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_predicate_wait_v01.py::test_object_count_uses_lower_bound_logic_under_incomplete_coverage"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "snapshot_id",
+            "scope_ref",
+            "target",
+            "objects_ref"
+          ],
+          "input_summary": "Object observation is incomplete but contains positive witnesses.",
+          "expected_assertions": [
+            "observed object count is a valid lower bound",
+            "ge predicate can be satisfied when observed lower bound is already decisive",
+            "non-decisive le/eq claim remains indeterminate"
+          ],
+          "forbidden_assertions": [
+            "treat lower bound as exact count",
+            "declare complete coverage"
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "S4",
+      "name": "Version and Staleness",
+      "rule_classes": [
+        "version_precondition",
+        "identity_continuity",
+        "no_silent_rebind"
+      ],
+      "cases": [
+        {
+          "fixture_id": "S4-object-same-generation-changed",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base + Submit.enabled=false",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_version_pressure_v01.py::test_object_scope_detects_target_change_same_generation"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "expected_version",
+            "observed_version",
+            "scope_ref",
+            "target_id",
+            "pressure.*"
+          ],
+          "input_summary": "Same stable Submit identity in a newer same-document observation changes enabled state.",
+          "expected_assertions": [
+            "result equals stale",
+            "reason equals object_changed_same_generation",
+            "comparable equals true",
+            "automatic_refresh_performed equals false",
+            "silent_rebind_performed equals false"
+          ],
+          "forbidden_assertions": [
+            "match because target name is unchanged",
+            "silently update expected_version"
+          ]
+        },
+        {
+          "fixture_id": "S4-object-unchanged-new-observation",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base -> reorder",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_version_pressure_v01.py::test_object_scope_ignores_unrelated_same_document_change_but_pressure_is_visible"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "expected_version",
+            "observed_version",
+            "scope_ref",
+            "target_id",
+            "pressure.*"
+          ],
+          "input_summary": "Same stable object is mechanically unchanged across a newer comparable observation.",
+          "expected_assertions": [
+            "result equals match",
+            "reason equals object_unchanged_new_observation",
+            "pressure.present equals true",
+            "comparable equals true"
+          ],
+          "forbidden_assertions": [
+            "snapshot inequality alone makes object scope stale"
+          ]
+        },
+        {
+          "fixture_id": "S4-document-generation-change",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base -> navigate",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_version_pressure_v01.py::test_document_generation_change_is_stale_not_same_name_rebind"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "expected_version",
+            "observed_version",
+            "scope_ref",
+            "target_id",
+            "pressure.*"
+          ],
+          "input_summary": "Navigation changes document generation while a same-name Submit exists in the new document.",
+          "expected_assertions": [
+            "result equals stale",
+            "reason equals document_generation_changed",
+            "comparable equals false",
+            "target_id remains the original semantic target",
+            "silent_rebind_performed equals false"
+          ],
+          "forbidden_assertions": [
+            "rebind to new same-name Submit",
+            "treat new document as comparable old object state"
+          ]
+        },
+        {
+          "fixture_id": "S4-incomplete-missing-target",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base + target removed + dom.truncated=true",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_version_pressure_v01.py::test_incomplete_observation_does_not_turn_missing_target_into_stale",
+            "tests/unit/test_smc_browser_version_pressure_v01.py::test_expired_expected_version_is_indeterminate_not_silently_refreshed"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "expected_version",
+            "observed_version",
+            "scope_ref",
+            "target_id",
+            "pressure.*"
+          ],
+          "input_summary": "Missing target under incomplete observation plus expired expected-version adversary.",
+          "expected_assertions": [
+            "incomplete missing target yields indeterminate/target_not_observed_incomplete",
+            "expired expected version yields indeterminate/expected_version_expired",
+            "automatic_refresh_performed equals false"
+          ],
+          "forbidden_assertions": [
+            "missing target under partial observation is stale",
+            "expired version silently refreshes"
+          ]
+        }
+      ]
+    },
+    {
+      "gate_id": "S5",
+      "name": "Receipt Monotonicity and Single Dispatch",
+      "rule_classes": [
+        "append_only_revision",
+        "single_dispatch",
+        "no_automatic_mutation_retry"
+      ],
+      "cases": [
+        {
+          "fixture_id": "S5-running-terminal-sequence",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_action_v01.py::test_fresh_exact_guard_dispatches_once_and_appends_running_terminal_receipts"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "action_id",
+            "receipt_id",
+            "before_version",
+            "after_version",
+            "grounding_refs.*",
+            "observed_effects.diff_ref"
+          ],
+          "input_summary": "Fresh exact click action on stable Submit target.",
+          "expected_assertions": [
+            "exactly one physical dispatch occurs",
+            "receipt sequence is [1,2]",
+            "receipt statuses are [running,ok]",
+            "running after_version is null",
+            "terminal preserves running before_version",
+            "automatic_retry_performed equals false"
+          ],
+          "forbidden_assertions": [
+            "overwrite running receipt with terminal receipt",
+            "status ok means task complete"
+          ]
+        },
+        {
+          "fixture_id": "S5-duplicate-action-id",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_action_v01.py::test_duplicate_action_id_never_dispatches_twice",
+            "tests/unit/test_smc_browser_semantic_execute_v01.py::test_execute_preserves_single_dispatch_and_dedups_same_exact_request"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "action_id",
+            "receipt_id",
+            "before_version",
+            "after_version",
+            "grounding_refs.*"
+          ],
+          "input_summary": "Repeat one already-reserved exact semantic action/action_id.",
+          "expected_assertions": [
+            "second exact action is rejected as duplicate_action_id",
+            "receipt sequence extends monotonically to 3",
+            "physical dispatch count remains 1",
+            "duplicate stops before a second pre-dispatch capture in semantic_execute path"
+          ],
+          "forbidden_assertions": [
+            "retry duplicate physical action",
+            "reuse receipt_seq"
+          ]
+        },
+        {
+          "fixture_id": "S5-transport-ambiguity-no-replay",
+          "source_fixture": "tests/fixtures/smc_browser_perception_v01.json#base + post-dispatch changed observation",
+          "oracle_nodes": [
+            "tests/unit/test_smc_browser_action_v01.py::test_transport_ambiguity_after_partial_effect_reports_observed_side_effect_without_replay"
+          ],
+          "comparison_mode": "opaque_identity_isomorphic",
+          "allowed_opaque_fields": [
+            "action_id",
+            "receipt_id",
+            "before_version",
+            "after_version",
+            "grounding_refs.*",
+            "observed_effects.diff_ref"
+          ],
+          "input_summary": "Physical dispatch may have taken effect but acknowledgement is lost; post-observation detects a change.",
+          "expected_assertions": [
+            "terminal status equals failed",
+            "physical dispatch count equals 1",
+            "automatic_retry_performed equals false",
+            "dispatch_outcome_ambiguous is retained in completeness reasons",
+            "observed diff may be retained as provisional effect"
+          ],
+          "forbidden_assertions": [
+            "automatic mutation replay",
+            "discard observed partial effect because transport status is failed"
+          ]
+        }
+      ]
+    }
+  ],
+  "adversarial_obligations": [
+    "closed_world_absence_must_not_collapse_unknown_to_false",
+    "source_conflict_must_not_silently_prioritize_one_sensor",
+    "stale_or_expired_grounding_must_not_silently_refresh",
+    "same_name_replacement_must_not_rebind_identity",
+    "cross_version_facts_must_keep_explicit_context",
+    "projection_incompleteness_must_not_change_observation_completeness",
+    "hydrate_must_not_repair_original_sensor_blindness",
+    "model_authored_rule_must_not_self_promote_to_authority",
+    "semantic_rule_output_must_not_mint_runtime_permission_or_effect_authority",
+    "future_rule_closure_must_be_bounded_and_cycle_safe",
+    "receipt_ok_must_not_become_task_complete",
+    "transport_ambiguity_must_not_trigger_hidden_mutation_retry",
+    "provenance_must_not_require_persisting_sensitive_plaintext",
+    "cross_domain_core_rules_must_not_erase_domain_specific_physical_semantics"
+  ]
+}

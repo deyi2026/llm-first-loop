@@ -1,0 +1,700 @@
+"""Web 流式端点测试（spec 5.2 / design §2.4.2 / tasks 2.6）.
+
+断言:
+1. POST /api/v1/chat/stream 输出 answer_delta* → done 事件序列
+2. done.data 含完整九字段
+3. 引擎异常 → error 事件（不伪造 done）
+4. ChatResponse 九字段零改动（schemas.py 对比）
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from unittest import mock
+
+import pytest
+from fastapi.testclient import TestClient
+
+from llm_loop.core.loop import LoopResult
+from llm_loop.web import build_app
+from llm_loop.web.routes import _apply_session_model_override
+from tests.unit.test_stream_equivalence import StreamingFakeLLM
+
+
+def test_resume_without_background_runner_never_executes_placeholder(build_test_engine):
+    """resume is subscription-only; direct-run fallback must never become human ingress."""
+    engine, fake = build_test_engine([{"content": "must-not-run"}])
+    sid = engine.session.create()
+    client = TestClient(build_app(engine=engine))
+
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={
+            "message": "（恢复连接）",
+            "session_id": sid,
+            "resume": True,
+            "run_generation": "no-active-run",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert '"type": "error"' in resp.text
+    assert "no_active_run" in resp.text
+    assert len(fake.calls) == 0
+
+CHAT_RESPONSE_FIELDS = [
+    "session_id",
+    "final_answer",
+    "verification_note",
+    "rounds",
+    "tool_calls",
+    "truncated",
+    "history_compacted",
+    "provider_output_truncated",
+    "run_incomplete",
+    "projection_validator_failed",
+    "projection_rebuilt",
+    "projection_cannot_fit",
+    "model_used",
+    "fallback_receipt",
+    "tokens_in",
+    "tokens_out",
+    "tokens_cache_hit",
+    "reasoning_content",
+    "reasoning_mode",
+    "reasoning_capable",
+    "reasoning_control",
+    "reasoning_supported",
+    "reasoning_effective",
+    "reasoning_tokens",
+]
+
+
+def _make_client(engine):
+    return TestClient(build_app(engine=engine))
+
+
+def _parse_sse(text: str) -> list[dict]:
+    events = []
+    for block in text.split("\n\n"):
+        for line in block.split("\n"):
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+    return events
+
+
+@pytest.mark.parametrize("delivery", ["sync", "stream", "background"])
+def test_completion_facts_survive_every_delivery_path(build_test_engine, delivery):
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+    result = LoopResult(
+        session_id=sid, final_answer="context pressure", truncated=True,
+        history_compacted=True, provider_output_truncated=False, run_incomplete=True,
+        projection_validator_failed=True, projection_rebuilt=False, projection_cannot_fit=True,
+    )
+    client = _make_client(engine)
+    endpoint = "/api/v1/chat" if delivery == "sync" else "/api/v1/chat/stream"
+    if delivery == "sync":
+        with mock.patch.object(engine, "_run_with_acquired", return_value=result):
+            response = client.post(endpoint, json={"message": "hi", "session_id": sid})
+    elif delivery == "stream":
+        engine.runner = None
+
+        def _return_result(*_args, **_kwargs):
+            if False:
+                yield None
+            return result
+
+        with mock.patch.object(engine, "_run_stream_with_acquired", side_effect=_return_result):
+            response = client.post(endpoint, json={"message": "hi", "session_id": sid})
+    else:
+        import queue
+        from types import SimpleNamespace
+
+        from llm_loop.core.loop.runner import BackgroundRunner
+
+        engine.runner = BackgroundRunner(engine, enabled=True)
+        q = queue.Queue()
+        q.put({"type": "done", "result": result})
+        handle = SimpleNamespace(run_generation="test-generation")
+        with (
+            mock.patch.object(engine.runner, "start", return_value=(handle, q)),
+            mock.patch.object(engine.runner, "unsubscribe"),
+        ):
+            response = client.post(endpoint, json={"message": "hi", "session_id": sid})
+    assert response.status_code == 200
+    data = response.json() if delivery == "sync" else next(
+        event["data"] for event in _parse_sse(response.text) if event["type"] == "done"
+    )
+    for field in (
+        "truncated", "history_compacted", "provider_output_truncated", "run_incomplete",
+        "projection_validator_failed", "projection_rebuilt", "projection_cannot_fit",
+    ):
+        assert data[field] is getattr(result, field), (delivery, field)
+
+
+def test_chat_stream_resume_requires_run_generation_at_schema_boundary(build_test_engine):
+    engine, fake = build_test_engine([{"content": "must-not-run"}])
+    sid = engine.session.create()
+    client = _make_client(engine)
+
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "（恢复连接）", "session_id": sid, "resume": True},
+    )
+
+    assert resp.status_code == 422
+    assert len(fake.calls) == 0
+
+
+def test_chat_stream_resume_rejects_stale_run_generation_before_subscribe(build_test_engine):
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+
+    class _ResumeRunner:
+        enabled = True
+
+        def __init__(self) -> None:
+            self.start_calls = 0
+
+        def get_handle(self, session_id):
+            return {
+                "session_id": session_id,
+                "run_generation": "generation-current",
+                "status": "running",
+                "started_at": 1.0,
+            }
+
+        def start(self, *args, **kwargs):
+            self.start_calls += 1
+            raise AssertionError("stale resume must be rejected before runner.start")
+
+    runner = _ResumeRunner()
+    engine.runner = runner
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={
+            "message": "（恢复连接）",
+            "session_id": sid,
+            "resume": True,
+            "run_generation": "generation-stale",
+        },
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "run_generation_mismatch"
+    assert resp.json()["actual_run_generation"] == "generation-current"
+    assert runner.start_calls == 0
+
+
+def test_chat_stream_initial_background_run_emits_generation_before_model_deltas(build_test_engine):
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("hello")
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert events[0]["type"] == "run_started"
+    generation = events[0]["data"]["run_generation"]
+    assert isinstance(generation, str) and generation
+    assert events[-1]["type"] == "done"
+
+
+def test_background_request_meta_receipt_binds_exact_run_generation(
+    build_test_engine, tmp_path
+):
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.event_log.store import EventStore
+
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("receipt-background")
+    event_store = EventStore(tmp_path / "receipt-events")
+    engine._event_store = event_store  # noqa: SLF001 - wire real audit sink for integration
+    engine.session._event_store = event_store  # noqa: SLF001 - keep session/event dual track aligned
+    engine.runner = BackgroundRunner(engine, enabled=True)
+
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "identity receipt"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    started = next(event["data"] for event in events if event["type"] == "run_started")
+    done = next(event["data"] for event in events if event["type"] == "done")
+    meta = next(
+        event for event in event_store.read(done["session_id"]) if event.type == "request.meta"
+    )
+    receipt = meta.payload["run_integrity_receipt"]
+
+    assert receipt["run_generation_state"] == "bound"
+    assert receipt["background_run_generation"] == started["run_generation"]
+    assert receipt["origin_ingress_channel"] == "web"
+    assert receipt["current_ingress_channel"] == "web"
+    assert receipt["current_ingress_entry"] == "web"
+    assert receipt["workspace_epoch"] == engine._workspace_epoch  # noqa: SLF001
+
+
+def test_chat_stream_emits_deltas_then_done(build_test_engine):
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("你好世界")
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    events = _parse_sse(resp.text)
+    assert events, "无事件输出"
+    assert events[0]["type"] == "answer_delta"
+    assert events[-1]["type"] == "done"
+    joined = "".join(e["data"]["data"] for e in events if e["type"] == "answer_delta")
+    done = events[-1]["data"]
+    assert joined == "你好世界"
+    assert done["final_answer"] == "你好世界"
+
+
+def test_chat_stream_done_has_complete_runtime_fields(build_test_engine):
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("回答")
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    events = _parse_sse(resp.text)
+    done = events[-1]["data"]
+    for f in CHAT_RESPONSE_FIELDS:
+        assert f in done, f"done.data 缺字段 {f}"
+
+
+def test_chat_stream_engine_error(build_test_engine):
+    def boom(_calls):
+        raise RuntimeError("fake engine failure")
+
+    engine, _ = build_test_engine([boom])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "x"})
+    events = _parse_sse(resp.text)
+    assert events[-1]["type"] == "error"
+    assert "fake engine failure" in events[-1]["data"]["detail"]
+
+
+def test_chat_response_schema_unchanged():
+    from pathlib import Path
+
+    schemas = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "llm_loop"
+        / "web"
+        / "schemas.py"
+    ).read_text(encoding="utf-8")
+    for f in CHAT_RESPONSE_FIELDS:
+        assert f in schemas, f"ChatResponse 缺字段 {f}"
+
+
+class TestFrontendStreamConsumption:
+    """前端真流式消费静态断言（tasks 2.7）."""
+
+    def test_stream_chat_request_defined(self, app_js_src: str):
+        assert "async function streamChatRequest" in app_js_src
+        assert 'fetch("/api/v1/chat/stream"' in app_js_src
+        assert "getReader" in app_js_src
+        assert "answer_delta" in app_js_src
+
+
+def test_chat_stream_background_runner_mode(build_test_engine):
+    """审查 P2: 装配后台 runner 时流式端点走订阅路径（done 终态正常送达）."""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("后台回答")
+    from llm_loop.core.loop.runner import BackgroundRunner
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert events and events[-1]["type"] == "done", f"后台模式无 done 终态: {events[-1] if events else 'empty'}"
+    done = events[-1]["data"]
+    assert done["final_answer"] == "后台回答"
+
+
+def test_chat_stream_done_and_next_turn_do_not_wait_for_learning_reflection(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """User critical path ends before a deliberately blocked ReflectionRun."""
+    from dataclasses import replace
+
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.memory.episode import EpisodeStore
+    from llm_loop.methods.learning_journal import LearningJournal
+    from llm_loop.methods.learning_plane import LearningPlane
+    from llm_loop.methods.reflection import ReflectionOutcome
+    from llm_loop.methods.store import MethodStore
+    from llm_loop.resources.foreground import ForegroundActivityProbe
+    from llm_loop.resources.governor import ResourceGovernor
+
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("第一轮")
+    episode_store = EpisodeStore(tmp_path / "episodes")
+    method_store = MethodStore(tmp_path / "methods")
+    journal = LearningJournal(tmp_path / "learning" / "journal.jsonl")
+    engine.episode_store = episode_store
+    engine.learning_journal = journal
+    engine.settings = replace(
+        engine.settings,
+        method_reflection_mode="auto",
+        method_reflection_min_rounds=1,
+        method_reflection_min_tools=999,
+        method_reflection_min_failures=999,
+    )
+    runner = BackgroundRunner(engine, enabled=True)
+    engine.runner = runner
+
+    reflection_started = threading.Event()
+    release_reflection = threading.Event()
+
+    def blocked_reflection(**_kwargs):
+        reflection_started.set()
+        assert release_reflection.wait(5), "reflection release timeout"
+        return ReflectionOutcome(attempted=True, triggered=True, reason="test_none")
+
+    monkeypatch.setattr("llm_loop.methods.learning_plane.reflect_on_episode", blocked_reflection)
+    foreground_probe = ForegroundActivityProbe(engine, engine.settings.sessions_dir)
+    resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
+    plane = LearningPlane(
+        journal=journal,
+        episode_store=episode_store,
+        method_store=method_store,
+        engine=engine,
+        model_resolver=lambda _model: object(),
+        resource_governor=resource_governor,
+        resource_target_resolver=lambda _model: ("test-provider", "test-model"),
+        poll_interval_s=1.0,
+        quiet_period_s=0.0,
+    )
+    engine.learning_plane = plane
+    plane.start()
+    client = _make_client(engine)
+    sid = engine.session.create()
+
+    try:
+        first_started = time.monotonic()
+        first = client.post("/api/v1/chat/stream", json={"message": "one", "session_id": sid})
+        first_elapsed = time.monotonic() - first_started
+        first_events = _parse_sse(first.text)
+        assert first_events[-1]["type"] == "done"
+        assert first_events[-1]["data"]["final_answer"] == "第一轮"
+        assert first_elapsed < 4.0, "SSE done should not wait for the blocked ReflectionRun"
+
+        assert reflection_started.wait(3), "LearningPlane did not start queued reflection"
+        assert not release_reflection.is_set(), "reflection must still be blocked after SSE done"
+
+        # The Learning run owns no user Session lease.  A genuine next turn on
+        # the same Session must still complete while reflection is blocked.
+        engine.llm_pool.default_client = StreamingFakeLLM("第二轮")
+        second = client.post("/api/v1/chat/stream", json={"message": "two", "session_id": sid})
+        second_events = _parse_sse(second.text)
+        assert second_events[-1]["type"] == "done"
+        assert second_events[-1]["data"]["final_answer"] == "第二轮"
+        assert not release_reflection.is_set()
+    finally:
+        release_reflection.set()
+        deadline = time.time() + 4
+        while time.time() < deadline:
+            first_job = next(iter(journal._snapshot().values()), None)
+            if first_job is not None and first_job.state in {"none", "saved", "failed"}:
+                break
+            time.sleep(0.02)
+        plane.stop()
+
+
+def test_chat_stream_background_disabled_fallback(build_test_engine):
+    """审查 P2: runner disabled → 回退旧直驱（done 仍正常）."""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("直驱回答")
+    from llm_loop.core.loop.runner import BackgroundRunner
+    engine.runner = BackgroundRunner(engine, enabled=False)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    events = _parse_sse(resp.text)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"]["final_answer"] == "直驱回答"
+
+
+def test_chat_stream_busy_does_not_persist_model_override(build_test_engine):
+    """后台 run 拒绝 busy 请求时必须零副作用：不得修改会话模型 override。"""
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+
+    class _BusyRunner:
+        enabled = True
+
+        def start(
+            self, session_id, message, model=None, reasoning_effort=None, *,
+            reasoning_mode=None, resume=False, before_start=None, expected_workspace_epoch=None,
+            ingress=None,
+        ):
+            return None, None
+
+        def get_handle(self, session_id):
+            return {"session_id": session_id, "status": "running", "started_at": 1.0}
+
+        def unsubscribe(self, session_id, q):
+            return None
+
+    engine.runner = _BusyRunner()
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "busy", "session_id": sid, "model": "fake-model"},
+    )
+    assert "session_busy" in resp.text
+    assert engine.session.load(sid).model_override is None
+
+
+def test_chat_stream_accepted_persists_canonical_model_override(build_test_engine):
+    """真正接单的后台流仍持久化 Web 模型选择，供飞书/CLI 后续共享。"""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("ok")
+    for pid in list(engine.llm_pool._provider_cache):
+        engine.llm_pool._provider_cache[pid] = engine.llm_pool.default_client
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    sid = engine.session.create()
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    expected = f"{pid}/{mid}"
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={
+            "message": "hi",
+            "session_id": sid,
+            "model": "fake-model",
+            "model_change": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert _parse_sse(resp.text)[-1]["type"] == "done"
+    assert engine.session.load(sid).model_override == expected
+
+
+def test_stale_web_model_snapshot_cannot_overwrite_session_switch_model_authority():
+    """A repeated payload.model snapshot is not an implicit model-change command."""
+    session = type("SessionStub", (), {})()
+    session.model_override = "glm/glm-5.3-flash"
+
+    _apply_session_model_override(session, "glm/glm-5.3", explicit_change=False)
+
+    assert session.model_override == "glm/glm-5.3-flash"
+
+
+def test_web_model_snapshot_cannot_create_session_authority_without_explicit_change():
+    """A session with no override must stay untouched until the human changes model."""
+    session = type("SessionStub", (), {})()
+    session.model_override = None
+
+    _apply_session_model_override(session, "glm/glm-5.3", explicit_change=False)
+
+    assert session.model_override is None
+
+
+def test_explicit_web_model_change_can_replace_session_model_authority():
+    session = type("SessionStub", (), {})()
+    session.model_override = "glm/glm-5.3-flash"
+
+    _apply_session_model_override(session, "glm/glm-5.3", explicit_change=True)
+
+    assert session.model_override == "glm/glm-5.3"
+
+
+class _EffortRecordingLLM(StreamingFakeLLM):
+    def __init__(self, content: str) -> None:
+        super().__init__(content)
+        self.efforts_seen: list[str] = []
+
+    def chat_stream(self, messages, tools, *, timeout_s=None, model=None):
+        from llm_loop.core.run_context import current_reasoning_effort
+
+        self.efforts_seen.append(current_reasoning_effort.get())
+        return super().chat_stream(messages, tools, timeout_s=timeout_s, model=model)
+
+
+def test_chat_stream_reasoning_effort_reaches_background_runner(build_test_engine):
+    engine, _ = build_test_engine([])
+    recorder = _EffortRecordingLLM("后台 effort")
+    engine.llm_pool.default_client = recorder
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "reasoning_effort": "low"},
+    )
+    assert _parse_sse(resp.text)[-1]["type"] == "done"
+    assert recorder.efforts_seen == ["low"]
+    assert recorder.reasoning_effort == "high", "请求 override 不得改共享 client 默认"
+
+
+def test_chat_stream_reasoning_effort_reaches_direct_fallback(build_test_engine):
+    engine, _ = build_test_engine([])
+    recorder = _EffortRecordingLLM("直驱 effort")
+    engine.llm_pool.default_client = recorder
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=False)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "reasoning_effort": "medium"},
+    )
+    assert _parse_sse(resp.text)[-1]["type"] == "done"
+    assert recorder.efforts_seen == ["medium"]
+    assert recorder.reasoning_effort == "high"
+
+
+def test_chat_stream_new_session_wins_over_session_id(build_test_engine):
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("新会话")
+    old_sid = engine.session.create()
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "session_id": old_sid, "new_session": True},
+    )
+    done = _parse_sse(resp.text)[-1]["data"]
+    assert done["session_id"] != old_sid
+    assert engine.session.get_shared_current() == done["session_id"]
+
+
+def test_chat_stream_new_session_is_born_with_explicit_model_not_foreign_shared_model(
+    build_test_engine, monkeypatch
+):
+    """流式入口也必须在 create 时使用本请求显式模型，不能记录其他 tab 的 authority。"""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("fresh")
+    for pid in list(engine.llm_pool._provider_cache):
+        engine.llm_pool._provider_cache[pid] = engine.llm_pool.default_client
+    old_sid = engine.session.create(model_override="foreign/tab-model")
+    engine.session.set_shared_current(old_sid)
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    expected = f"{pid}/{mid}"
+
+    created_overrides: list[str | None] = []
+    original_create = engine.session.create
+
+    def capture_create(*args, **kwargs):
+        created_overrides.append(kwargs.get("model_override"))
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(engine.session, "create", capture_create)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "new_session": True, "model": "fake-model"},
+    )
+    done = _parse_sse(resp.text)[-1]["data"]
+
+    assert created_overrides == [expected]
+    assert engine.session.load(done["session_id"]).model_override == expected
+
+
+def test_chat_stream_cross_process_busy_has_no_model_side_effect(build_test_engine):
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.core.session import SessionStore
+
+    engine, _ = build_test_engine([])
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001 — 模拟另一服务进程
+    client = _make_client(engine)
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        resp = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "busy", "session_id": sid, "model": "fake-model"},
+        )
+    events = _parse_sse(resp.text)
+    assert events[-1]["type"] == "error"
+    assert events[-1]["data"]["error"] == "session_busy"
+    assert engine.session.load(sid).model_override is None
+
+
+def test_chat_stream_direct_cross_process_busy_has_no_model_side_effect(build_test_engine):
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.core.session import SessionStore
+
+    engine, _ = build_test_engine([])
+    engine.runner = BackgroundRunner(engine, enabled=False)
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001
+    client = _make_client(engine)
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        resp = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "busy", "session_id": sid, "model": "fake-model"},
+        )
+    events = _parse_sse(resp.text)
+    assert events[-1]["type"] == "error"
+    assert events[-1]["data"]["error"] == "session_busy"
+    assert engine.session.load(sid).model_override is None
+
+
+def test_chat_stream_rejects_session_if_workspace_changes_before_background_admission(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """session在A解析后、runner.start前切到B时必须拒绝，不能把A的sid带入B。"""
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine, _ = build_test_engine([])
+    workspace_a = tmp_path / "epoch-a"
+    workspace_b = tmp_path / "epoch-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    engine.set_workspace(str(workspace_a), "epoch-a")
+    sid = engine.session.create()
+    root_a = engine.session.root
+
+    runner = BackgroundRunner(engine, enabled=True)
+    engine.runner = runner
+    original_start = runner.start
+    switched = False
+
+    def switch_then_start(*args, **kwargs):
+        nonlocal switched
+        if not switched:
+            engine.set_workspace(str(workspace_b), "epoch-b")
+            switched = True
+        return original_start(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "start", switch_then_start)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "must-not-cross-workspace", "session_id": sid},
+    )
+    events = _parse_sse(resp.text)
+
+    assert switched is True
+    assert events[-1]["type"] == "error"
+    assert events[-1]["data"]["error"] == "workspace_changed"
+    assert (root_a / f"{sid}.json").exists()
+    assert not (engine.settings.sessions_dir / "epoch-b" / f"{sid}.json").exists()
+
+
+def test_chat_stream_rejects_cli_origin_session_before_run(build_test_engine):
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    engine, fake = build_test_engine([{"content": "probe-ok"}, {"content": "must-not-run"}])
+    sid = engine.session.create()
+    engine.run(sid, "probe", ingress=issue_ingress("cli"))
+    calls_before = len(fake.calls)
+
+    response = _make_client(engine).post(
+        "/api/v1/chat/stream",
+        json={"message": "web turn", "session_id": sid},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "session_ingress_mismatch"
+    assert len(fake.calls) == calls_before

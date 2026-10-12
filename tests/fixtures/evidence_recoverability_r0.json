@@ -1,0 +1,22 @@
+{
+  "version": "R0-v1.1",
+  "contract_sha256": {
+    "spec": "97c22518487f06321531d3ec9261060199ed483306ffa55663b6b20ba6d94771",
+    "design": "95243f1c4cf1afa2391a8f9e106f3f097c599e6c18ba1761db8b9a4a78afa19b"
+  },
+  "provider_calls_allowed": false,
+  "cases": [
+    {"id": "R0-1", "phase": 5, "name": "large_observation_cross_compression_recovery", "oracle": ["stable_evidence_ref", "queryless_recovery", "exact_middle_hydration", "source_execution_count_1"]},
+    {"id": "R0-2", "phase": 1, "name": "blob_identity_not_evidence_identity", "oracle": ["same_bytes_same_blob_ref", "different_owner_different_evidence_ref", "different_capture_different_evidence_ref"]},
+    {"id": "R0-3", "phase": 1, "name": "owner_authorization", "oracle": ["cross_owner_read_denied", "cross_owner_list_hidden", "blob_ref_not_model_credential"]},
+    {"id": "R0-4", "phase": 4, "name": "unicode_hydration_and_pagination", "oracle": ["text_char_exact", "line_exact", "bounded_limit", "next_start", "range_sha256"]},
+    {"id": "R0-5", "phase": 1, "name": "queryless_recovery_manifest", "oracle": ["recent_manifest_from_durable_ledger", "bounded_manifest", "no_query_required"]},
+    {"id": "R0-6", "phase": 4, "name": "source_kind_freshness", "oracle": ["file_probeable", "command_snapshot_only", "web_volatile", "runtime_versioned_or_unknown"]},
+    {"id": "R0-7", "phase": 3, "name": "side_effect_action_truth_survives_capture_failure", "oracle": ["action_success", "recoverability_failed", "no_automatic_rerun"]},
+    {"id": "R0-8", "phase": 4, "name": "search_gold_semantics", "oracle": ["default_and", "explicit_or", "quoted_phrase", "middle_match_visible", "owner_isolation"]},
+    {"id": "R0-9", "phase": 5, "name": "provider_switch_evidence_invariance", "oracle": ["raw_projection_may_differ", "authorized_evidence_set_equal", "manifest_refs_equal"]},
+    {"id": "R0-10", "phase": 6, "name": "legacy_ownership_and_shared_blob_gc", "oracle": ["proven_owner_migrates", "orphan_not_model_visible", "shared_blob_survives_first_owner_delete", "zero_ref_blob_deletable"]},
+    {"id": "R0-11", "phase": 3, "name": "temperature_representation_orthogonality", "oracle": ["hot_does_not_force_full", "large_hot_can_excerpt_with_ref"]},
+    {"id": "R0-12", "phase": 0, "name": "non_target_guardrails", "oracle": ["no_action_guard", "no_prompt_patch", "no_fixed_summary_activation", "no_semantic_heuristic", "no_real_provider"]}
+  ]
+}

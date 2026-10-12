@@ -1,0 +1,336 @@
+{
+  "authority": {
+    "dispatch_retry_admission_impact": false,
+    "hidden_recapture_for_shadow": false,
+    "mutation_authority_change": false,
+    "production_consumed": false,
+    "provider_visible_change": false,
+    "routing_or_tool_selection_impact": false,
+    "semantic_logic": "shadow_only",
+    "task_or_goal_completion_authority": false
+  },
+  "branch": "feature/smc-semantic-logic-p3-shadow-20260917",
+  "date": "2026-09-17",
+  "formal_main_base": "ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+  "fresh_main_replay_qualification": {
+    "browser_p1_plus_p2_focused_tests_passed": 298,
+    "full_ci_env_pin_scanned_test_files": 603,
+    "full_ci_env_pin_undeclared": 0,
+    "full_ci_gate": "PASS",
+    "full_ci_xdist": "PASS",
+    "git_diff_check": "PASS",
+    "historical_p2_report_299_note": "Historical P2 result recorded 299/299 expanded adjacency but did not freeze the exact command or identity of the additional single test. Fresh-main qualification used the exact reconstructable 298-test set and later a stronger 375-test combined regression; no 299th test was invented.",
+    "p1_p2_broad_tests_passed": 252,
+    "production_semantic_logic_consumers": 0,
+    "pyright_src_errors": 0,
+    "pyright_src_warnings": 0,
+    "python_node_syntax": "PASS",
+    "ruff": "PASS"
+  },
+  "fresh_p0_p2_replay_anchor": "dc344a1669cfa1954019e6677bceba7701c54db3",
+  "next_boundary": "P4 Semantic Compiler A/B requires a separate owner decision after this P3 completion checkpoint; P5 is the first selective authority-cutover phase.",
+  "non_effects": [
+    "no production semantic_logic consumer",
+    "no Factory registration or runtime wiring",
+    "no provider-visible change",
+    "no physical Browser/CDP dispatch outside deterministic qualification fakes",
+    "no routing/tool-selection/retry/admission/task-completion impact",
+    "no deployment",
+    "no Web/Feishu/8901 restart",
+    "no model start or switch",
+    "no main merge or main mutation",
+    "no P3 remote push"
+  ],
+  "old_p2_final_evidence_anchor": "99169c695d0d121ac15e07c4ec674410836fa282",
+  "old_p2_remote_review_branch": "review/smc-semantic-logic-p2-20260917",
+  "p3_qualification_anchor": "1891c7e1b2959abfdeb9a064e54916de26c54c1a",
+  "p3_qualification_evidence": {
+    "combined_browser_p1_p2_p3_tests": {
+      "passed": 375,
+      "total": 375
+    },
+    "focused_p3_tests": {
+      "passed": 4,
+      "total": 4
+    },
+    "full_ci_env_pin_scanned_test_files": 604,
+    "full_ci_env_pin_undeclared": 0,
+    "full_ci_gate_on_qualification_anchor": "PASS",
+    "full_ci_xdist": "PASS",
+    "git_diff_check": "PASS",
+    "production_semantic_logic_consumers": 0,
+    "pyright_qualification_errors": 0,
+    "pyright_qualification_warnings": 0,
+    "pyright_src_errors": 0,
+    "pyright_src_warnings": 0,
+    "ruff_new_files": "PASS",
+    "whole_tree_security": "PASS",
+    "whole_tree_security_files": 1994
+  },
+  "p3_shadow": {
+    "authority": "shadow_only",
+    "cases": [
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_semantic_execute_v01.py::test_compiler_derives_object_action_from_exact_grounding_ref_only@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "grounding",
+        "derivation_refs": [
+          "browser.action.fixed-contract@0.1",
+          "browser.grounding.exact-binding@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-grounding-exact-compile",
+        "gate_id": "P3-GROUNDING-01",
+        "mismatch_paths": [],
+        "oracle_result_hash": "4cc806f25d2e7a35e08f4ec29fd17f3db86d9485610cc682d4db2fc370b339fa",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "4cc806f25d2e7a35e08f4ec29fd17f3db86d9485610cc682d4db2fc370b339fa",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_version_pressure_v01.py::test_object_scope_ignores_unrelated_same_document_change_but_pressure_is_visible@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "reorder",
+        "derivation_refs": [
+          "core.version.assess-precondition@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-reorder-object-continuity",
+        "gate_id": "P3-VERSION-REORDER",
+        "mismatch_paths": [],
+        "oracle_result_hash": "a1bc5c2d4c2787238c720f79ad7d63cdf4dbcf22772d8eacc93f47fbd6777b42",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "a1bc5c2d4c2787238c720f79ad7d63cdf4dbcf22772d8eacc93f47fbd6777b42",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_action_v01.py::test_same_name_replacement_never_rebinds@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "replacement",
+        "derivation_refs": [
+          "core.version.assess-precondition@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-replacement-no-rebind",
+        "gate_id": "P3-VERSION-REPLACEMENT",
+        "mismatch_paths": [],
+        "oracle_result_hash": "dfa21e2ad397e0755984085e6739447a2d2f96798b29063ab75d41ecb12c6ee7",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "dfa21e2ad397e0755984085e6739447a2d2f96798b29063ab75d41ecb12c6ee7",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_perception_v01.py::test_dom_ax_identity_mapping_ambiguity_never_force_fuses@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "duplicate_identity",
+        "derivation_refs": [
+          "core.identity.ambiguity-no-fusion@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-duplicate-identity-no-fusion",
+        "gate_id": "P3-IDENTITY-AMBIGUOUS",
+        "mismatch_paths": [],
+        "oracle_result_hash": "2618be3510fe68390079673cbcd71feb53aa88b7ce644460bc5f7715a64a4a41",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "2618be3510fe68390079673cbcd71feb53aa88b7ce644460bc5f7715a64a4a41",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_version_pressure_v01.py::test_document_generation_change_is_stale_not_same_name_rebind@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "navigation",
+        "derivation_refs": [
+          "core.version.assess-precondition@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-navigation-document-generation",
+        "gate_id": "P3-VERSION-NAVIGATION",
+        "mismatch_paths": [],
+        "oracle_result_hash": "1eec75357b07c3dda759d3833f915e271a2b620856c243948c1dbd8081a0eea9",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "1eec75357b07c3dda759d3833f915e271a2b620856c243948c1dbd8081a0eea9",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_perception_v01.py::test_document_and_frame_generation_changes_invalidate_old_identity@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "frame_generation",
+        "derivation_refs": [
+          "core.scope.target-relation@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-frame-generation-no-continuity",
+        "gate_id": "P3-SCOPE-FRAME-GENERATION",
+        "mismatch_paths": [],
+        "oracle_result_hash": "6d9632ebbdf0a38f66c6ad8a0643b5eacc36b555090ef61c2c283e315c0cf449",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "6d9632ebbdf0a38f66c6ad8a0643b5eacc36b555090ef61c2c283e315c0cf449",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_perception_v01.py::test_dom_ax_field_conflict_becomes_null_with_source_grounding@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "dom_ax_conflict",
+        "derivation_refs": [
+          "core.conflict.canonicalize-unresolved@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-dom-ax-conflict-unresolved",
+        "gate_id": "P3-CONFLICT-DOM-AX",
+        "mismatch_paths": [],
+        "oracle_result_hash": "592ca93757448cc01dda86b62f3dd49158a7ae88343f210b6ed079962fc92c40",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "592ca93757448cc01dda86b62f3dd49158a7ae88343f210b6ed079962fc92c40",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_predicate_wait_v01.py::test_missing_stable_object_can_prove_absence_only_with_complete_coverage@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "partial_coverage",
+        "derivation_refs": [
+          "browser.predicate.evaluate@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-partial-coverage-absence",
+        "gate_id": "P3-PREDICATE-PARTIAL-ABSENCE",
+        "mismatch_paths": [],
+        "oracle_result_hash": "865afe955b6d203ad94ae75b51a8eec089cb77a76b466ffc27ac8f313f4f6afb",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "865afe955b6d203ad94ae75b51a8eec089cb77a76b466ffc27ac8f313f4f6afb",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_predicate_wait_v01.py::test_object_count_uses_lower_bound_logic_under_incomplete_coverage@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "virtualized_list",
+        "derivation_refs": [
+          "browser.predicate.evaluate@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-virtualized-lower-bound-count",
+        "gate_id": "P3-PREDICATE-LOWER-BOUND",
+        "mismatch_paths": [],
+        "oracle_result_hash": "485cdee8db609fdfd5e06b4b348afab6ecb7d6d39b908469fe0ba41bf557c30f",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "485cdee8db609fdfd5e06b4b348afab6ecb7d6d39b908469fe0ba41bf557c30f",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_perception_v01.py::test_grounding_is_integrity_bound_session_scoped_and_expires@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "stale_ref",
+        "derivation_refs": [
+          "browser.grounding.exact-binding@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-stale-grounding-expired",
+        "gate_id": "P3-GROUNDING-EXPIRED",
+        "mismatch_paths": [],
+        "oracle_result_hash": "c8d76e4d75f70c2f23941f4eeeb4d57d3f658a001d2bce9eda3d8fc4c393fcb2",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "c8d76e4d75f70c2f23941f4eeeb4d57d3f658a001d2bce9eda3d8fc4c393fcb2",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_version_pressure_v01.py::test_object_scope_detects_target_change_same_generation@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "version_mismatch",
+        "derivation_refs": [
+          "core.version.assess-precondition@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-version-target-changed",
+        "gate_id": "P3-VERSION-MISMATCH",
+        "mismatch_paths": [],
+        "oracle_result_hash": "18c107caf782efecb6845245ba9cdcabef95a50179066fef5106dd7de123dac3",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "18c107caf782efecb6845245ba9cdcabef95a50179066fef5106dd7de123dac3",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_action_v01.py::test_duplicate_action_id_never_dispatches_twice@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "non_idempotent_mutation",
+        "derivation_refs": [
+          "core.receipt.validate-dispatch-invariants@0.1",
+          "core.receipt.validate-sequence@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-duplicate-action-single-dispatch",
+        "gate_id": "P3-RECEIPT-DUPLICATE",
+        "mismatch_paths": [],
+        "oracle_result_hash": "bb88f28132b11fc024bf5fc8f8cd25245d863471ca397d1f12fd536a40ecba39",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "bb88f28132b11fc024bf5fc8f8cd25245d863471ca397d1f12fd536a40ecba39",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_action_v01.py::test_fresh_exact_guard_dispatches_once_and_appends_running_terminal_receipts@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "receipt_revision",
+        "derivation_refs": [
+          "core.receipt.validate-dispatch-invariants@0.1",
+          "core.receipt.validate-sequence@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-receipt-running-terminal",
+        "gate_id": "P3-RECEIPT-REVISION",
+        "mismatch_paths": [],
+        "oracle_result_hash": "bf83b9fa44770e8eb0b22fd60396c3534bbbfc0c6d1bdeb3f0b894abdd1ae832",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "bf83b9fa44770e8eb0b22fd60396c3534bbbfc0c6d1bdeb3f0b894abdd1ae832",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      },
+      {
+        "baseline_ref": "tests/unit/test_smc_browser_action_v01.py::test_transport_ambiguity_after_partial_effect_reports_observed_side_effect_without_replay@ddd108a2e05897cf4d72cd920e1d7c00a5786a7e",
+        "category": "non_idempotent_mutation",
+        "derivation_refs": [
+          "core.receipt.validate-dispatch-invariants@0.1",
+          "core.receipt.validate-sequence@0.1"
+        ],
+        "equivalent": true,
+        "false_closure": 0,
+        "fixture_id": "P3-transport-ambiguity-no-retry",
+        "gate_id": "P3-RECEIPT-AMBIGUITY",
+        "mismatch_paths": [],
+        "oracle_result_hash": "2e317cff12df2e823f4f43a4f19e054616c5f3d47a038354b8aa11353e385359",
+        "proof_coverage": 1.0,
+        "shadow_result_hash": "2e317cff12df2e823f4f43a4f19e054616c5f3d47a038354b8aa11353e385359",
+        "silent_rebind": 0,
+        "unknown_to_false": 0
+      }
+    ],
+    "metrics": {
+      "case_count": 14,
+      "equivalent_count": 14,
+      "false_closure": 0,
+      "proof_coverage": 1.0,
+      "silent_rebind": 0,
+      "unknown_to_false": 0
+    },
+    "production_consumed": false,
+    "rulepack_hash": "5809347c62aa8a8b1856eff1bab0f11b9d98a57b0aedaef103e8ee2470f776a3",
+    "schema": "smc.semantic_logic_p3_shadow_result.v0.1",
+    "status": "PASS"
+  },
+  "phase": "P3 Shadow Qualification",
+  "rulepack": {
+    "rulepack_hash": "5809347c62aa8a8b1856eff1bab0f11b9d98a57b0aedaef103e8ee2470f776a3",
+    "rulepack_id": "smc.browser.p2-core.v0.1"
+  },
+  "schema": "smc.semantic_logic_p3_result.v0.1",
+  "status": "PASS"
+}

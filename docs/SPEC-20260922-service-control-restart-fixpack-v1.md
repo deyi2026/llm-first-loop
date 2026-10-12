@@ -1,0 +1,146 @@
+# SPEC：service_control 准入屏障与重启链路修复包 v1
+
+| 项 | 值 |
+|---|---|
+| 状态 | draft-for-review（事实已核验，方案待人工评审） |
+| 定稿时间 | 2026-09-22 08:11 本地（00:11 UTC），会话 fc0ed66c |
+| 事实核验窗口 | 2026-09-22 00:00–00:11 UTC（代码行号、回执文件、audit 日志、进程状态） |
+| 影响代码 | `src/llm_loop/runtime/service_control.py`、`scripts/restart_mirror.sh`、runbook 文档、告警/审计层 |
+| 部署基线 | worktree `deploy-p0a-gen63-20260922` @ `2ff8efb0b`（含 PR #61）；live 已运行 gen63，stable 回执停在 gen62 |
+
+---
+
+## 1. 背景与事故时间线
+
+2026-09-22 晨间的"消息持久化排队不解除"表象，经核验为多个独立缺陷在同一时间窗口叠加。时间线（UTC；本地 = UTC+8）：
+
+| 时刻 | 事件 | 证据 |
+|---|---|---|
+| 09-14 | knowledge health 守卫上线：legacy/canonical store 分叉时 fail-closed 拒绝 | 守卫逻辑 |
+| 09-21 03:58 | 知识库（experiences/、data/methods/）进 git 跟踪（87a971ade）；此后干净部署 worktree 自带 legacy store 快照 | git log |
+| 09-21 03:55 | cli 宿主进程（pid 13872）启动，此后未重启，跑旧代码 87a971ade | process_versions |
+| 09-21 07:33 | 部署预检 aborted：`code_root_source=env-residue`，指向 `compaction-merge-20260916` 残留 | data/audit/restart_preflight.log |
+| 09-21 11:52 | gen60 restart（svc-af12055…）失败：执行前 binding 校验，desired 87a971ade ≠ actual b735e0d6f，worktree dirty；正常转 failed，无 keep | svc-af12055…json |
+| 09-21 22:48（本地 06:48） | gen63 restart（svc-089833…，mcp-console-p0a-gen63-deploy）失败：`restart_mirror rc=1`，knowledge 预检拒 dual-root 分叉；action 终态 failed，屏障 keep | svc-089833…json；service_control.py:1351-1360 |
+| 09-22 07:45 | 操作员在两份 .env 显式补 `EXPERIENCES_DIR`/`METHODS_DIR` canonical 绑定；knowledge_health 转 healthy | 主根 .env:203-204 + worktree .env:4-5 |
+| 09-22 07:47 | 操作员走脚本直连路径重启成功，gen63 live 上线；**不写 durable 回执、不清理旧 action 屏障** | stable 回执仍 gen62 |
+| 09-22 07:49 | 用户消息撞屏障，收到持久化排队回执（svc-0898…） | 会话记录；actions 目录 mtime 停在 07:01 |
+| 09-22 07:51 | 屏障目录被第三方清空（force_release 与 rm 不可区分，无审计留痕）；排队窗口实际约 2 分钟 | service-control-barriers/ 空目录；全仓无其他变动 |
+
+**定性修正（相对最初叙述）**：
+1. 屏障未释放不是"失败路径漏写"，而是**刻意的 fail-closed 遇上失明的失败语义**——脚本已落带阶段标记的 receipt（`knowledge_preflight_failed` 等），worker 只消费 rc、不读 receipt，无法区分"预检失败（零物理副作用）"与"中途失败（stop 可能已发生）"，于是统一 keep。§8.3 docstring 本身要求 "release when the transition proves no physical side effects started"——证明文件已存在，控制面没消费。
+2. gen63 重启失败的根因是**两条各自正确的规则的组合缺陷**：knowledge 守卫（拒绝静默选择 store 赢家）× 知识库进 git（干净 worktree 必带 legacy 快照）⇒ dual-root 部署必触发分叉。gen63 是知识库进 git 后第一次 dual-root 部署。守卫无错，缺的是 runbook 未写 operator 显式声明出口。
+
+## 2. 已核验事实（F 系）
+
+- **F1** `service_control.py:1351-1360`：`rc != 0` 显式 `release_barriers="keep"`，注释写明"物理脚本已执行：停止可能已发生，屏障按 §8.3 fail-closed 保留，恢复路径是操作员覆盖 CLI"。
+- **F2** `restart_mirror.sh:816-855`：precheck 失败分支严格串行——`_write_receipt <target> "1" "<标记>"` 后立即 `exit 1`，任何 `_stop_*` 调用都在其后 ⇒ 四个 precheck 标记（`webui_artifact_preflight_failed` / `service_control_binding_failed` / `active_run_precheck_failed` / `knowledge_preflight_failed`）可证明**零物理副作用**。带 `port=`/`web_stopped=` detail 的 receipt 与无 receipt 一律可能有副作用。
+- **F3** `service_control.py:1411-1414`：`release_barriers` 按服务粒度释放的机制已存在并已投入使用。
+- **F4** `service_control.py:431-502`：`accept_restart` 遇屏障冲突直接抛拒绝、不建 action 文件 ⇒ 准入拒绝零持久化痕迹。
+- **F5** `service_control.py:368`：`_reap_stale_waiting_actions_unlocked` 只回收 waiting 态超时动作；**终态 failed + keep 不在任何回收路径上**。
+- **F6** `service_control.py:1322-1335`：gen60 型失败走执行前 binding 校验，正常转 failed 无 keep ⇒ 反向坐实 rc≠0 分支是唯一屏障泄漏口。
+- **F7** `restart_mirror.sh:852-878`：restart 作用域仅 web/feishu/learning；执行 service_control 的 cli 宿主不在作用域内。
+- **F8** 释放竞态：`_mark_action`→`update_action` 走 store lease（`service-control.lock` + atomic JSON），failed 转换与屏障释放在同一临界区串行 ⇒ 内生路径安全；07:51 的清除是外生绕锁。
+- **F9** 混跑兼容：脚本先升——旧 worker 不读 receipt，行为不变；worker 先升——旧脚本失败无 receipt→keep，行为不变；回滚=回退 worker。风险单向收敛。
+- **F10** `_knowledge_preflight`（restart_mirror.sh:776 附近）已有用 `env -u` scrub DATA_DIR 系环境变量的先例，可照搬至根解析层。
+
+## 3. 问题清单（P 系）
+
+| # | 问题 | 严重度 | 证据 |
+|---|---|---|---|
+| P1 | rc≠0 无条件 keep + receipt 不被消费，"预检失败（无副作用）"与"中途失败（有副作用）"不可区分 | P0 | F1/F2 |
+| P2 | 终态 failed + keep 的屏障无租约、无 TTL、无回收方，release 仅认 owner | P0 | F5 |
+| P3 | 外生屏障清除零审计：force_release 与 rm 不可区分（07:51 事件） | P1 | F8 |
+| P4 | 直连重启成功不写 durable 回执：stable 停 gen62，identity 视图长期报"未达期望代" | P1 | 时间线 07:47 |
+| P5 | runbook 缺 dual-root store 绑定步骤（EXPERIENCES_DIR/METHODS_DIR 仅出现在 api.md 配置表），gen64 原样复现 | P0 | docs 全文搜索 |
+| P6 | cli 宿主进程不在 restart 作用域：gen63 线 pid 13872 跑 09-21 03:55 的 87a971ade，code_current=false，workspace_dirty=true——**不重启宿主，R1/R3 即死代码** | P0 | F7 |
+| P7 | 准入拒绝零留痕：撞墙几次、谁在撞，事后无从知晓 | P1 | F4 |
+| P8 | 失败动作积压不过期：gen60 svc-af12055 至今占"失败待处理"投影位，早被 gen63 live 取代 | P2 | pending_actions 回执 |
+| P9 | ambient CODE_ROOT env 残留污染预检（07:33 aborted 根因，指向 compaction-merge-20260916） | P1 | audit 日志 |
+
+## 4. 修复项（修订版，6 项）
+
+### P0
+
+**R1｜worker 消费 receipt**（←P1/P2）
+- `rc≠0` 时读取 `_write_receipt` 落点：命中 4 个 precheck 标记（F2 白名单）→ `release_barriers=release`（机制已在 F3 存在）；其余标记 / 无 receipt / **receipt 存在但解析失败** → keep。
+- 测试：四标记矩阵 × 三分支（release / keep / 解析失败 keep），落 `tests/unit/test_service_admission_barrier.py`（现无此用例）。
+
+**R2｜gen64 部署序列**（←P5/P6）
+1. 显式重启 cli 宿主进程，验收 `code_current=true`；
+2. runbook 补 dual-root store 绑定步骤（两份 .env 的 `EXPERIENCES_DIR`/`METHODS_DIR` canonical 声明）；
+3. 部署预检校验 store 配置键存在且可写，缺失即 fail。
+
+### P1
+
+**R3｜可观测闭环**（←P3/P4/P7）
+- 告警四条：① live/stable 回执代差；② 终态 action 仍残留屏障；③ 屏障目录发生非 action 驱动的变动；④ waiting 非终态超时。
+- `force_release` 强制 reason + append-only 审计；
+- 准入拒绝写 append-only log（不建 action 文件，避免污染 reaper 的 waiting 语义）。
+
+**R4｜env 卫生**（←P9）
+- 根解析层拒绝并告警 ambient CODE_ROOT 残留；实现照搬 `_knowledge_preflight` 的 `env -u` scrub 先例（F10）；顺带清理 `compaction-merge-20260916` 残留源。
+
+### P2
+
+**R5｜失败动作 supersession**（←P8）：新代 succeeded 后将旧代 failed 标记 superseded，或投影仅显示 ≥ 当前 desired 代的动作。
+
+**R6｜identity 视图自动探测 live 代**（←P4）：标记 stale 回执。采用探测方案（只读），不强迫直连路径背负 durable 写入义务。
+
+## 5. 设计裁决记录（拷问 A–E）
+
+| 疑点 | 裁决 |
+|---|---|
+| A. receipt 写入时序与信任边界 | 白名单从 1 个标记扩到 4 个（F2 严格串行证明零副作用）；补"解析失败→keep"约束 |
+| B. 孤儿屏障与排队饥饿 | reaper 已覆盖 waiting 态（F5）；真正泄漏源是终态 failed+keep——恰好 R1 堵住唯一泄漏口；reaper 触发条件（超时阈值/租约重入）落地时核实 |
+| C. 07:49 排队动作终态 | 准入即拒绝、零持久化（F4）→ 引出 P7，并入 R3 |
+| D. 释放竞态 | 内生路径同临界区串行安全（F8）；要堵的是外生绕锁 → R3 审计 |
+| E. 混跑兼容与回滚 | 双向安全、回滚单向（F9） |
+
+## 6. 实现约束
+
+- `_write_receipt` 的确切路径契约：脚本与 worker 两侧共享常量，禁止靠路径猜测发现。
+- reaper（service_control.py:368）触发条件需在 R1 落地时核实，决定 R3 第④条告警是否已有兜底。
+
+## 7. 部署顺序与回滚
+
+**顺序：脚本 → runbook → cli 宿主重启（最后）。** 宿主重启必须收尾，使其一次性吃进全部改动。
+
+**回滚：回退 worker（cli 宿主）。** 混跑期任一顺序行为均等价于现状（F9），风险单向收敛。
+
+## 8. 验收清单
+
+- [x] R1：四标记矩阵 × 三分支单测通过（test_service_admission_barrier.py）——4b8bb9d41，38 passed（含 R2 增补后复跑）
+- [~] R2：代码/文档/测试已落地（R2.2 runbook §13 + R2.3 `--check-binding` 部署预检，含单测）；**余 R2.1 gen64 部署时显式重启 cli 宿主并验收 `code_current=true`**（部署序列最后一步，操作员执行）
+- [x] R3（瘦身版，§6 决议）：② 终态 action 持屏障 → identity 视图 `terminal_action_barrier` 硬信号（含 missing/unreadable 分支）；force_release append-only 审计（`data/audit/service_barrier_forces.jsonl`，含 previous_owner）；准入拒绝 append-only（`data/audit/service_admission_rejections.jsonl`，fail-open，web chat/stream/queue + feishu 四入口接线）——28+ 用例
+- [x] R4：T0-A3 扩展为双根来源判定（CODE_ROOT+RUNTIME_ROOT，`_runtime_root_source_check`）；受控路径（`build_restart_plan`）显式注入两个 CONFIRMED；测试注入残留 RUNTIME_ROOT 验证 abort+audit（`var=` 字段）——7 用例。残留源 `.worktrees/compaction-merge-20260916`（deploy/20260916-anchor-integration）经查含未合并提交 `1cb76d0d9`（不在任何远程分支），**不可自动删除**，依赖预检防线拦截
+- [x] R5：投影只读过滤——`_scan_failed_service_actions` 在 desired 存在且 `action.gen < desired.gen` 时剔除旧代失败动作（不 mutate 文件）；desired 缺失/同代失败保持原行为——6 用例
+- [x] R6：identity 视图 live 侧 `matches_desired_generation`（git_head+pid_alive 探测）；stable 侧落后时 `lag_generations`/`stale`/`note`（live 已达期望代才标 stale；不进 restart_required）——4 用例
+
+### 8.1 实施记录（2026-09-22）
+
+- R3–R6/R4 在 R1/R2 之后同线落地（experiment/mem-citations-20260922）；worktree `.worktrees/service-control-fixpack-20260922` 提交，合并基线 9204b9473。
+- 裁剪：R3③ 降级为巡检动作（不在本包）；R3④ 砍（reaper 已覆盖）；R3① 并入 R6（代差从告警降为完整性事实）。
+- 并行协调：落地期间主仓工作区被 citations 任务切至 `fix/mem-citations-index-anchor`，本包改在独立 worktree 归位，主仓现场已清空还原。
+
+### 8.2 简化包 S1–S3（2026-09-22 下午，dsh；叠加于本修复包之上，线性含 R1–R6）
+
+- **S1（3d8a4d0d2）中止路径回执义务**：12:57/13:20 两次 aborted 实证本包 R4 的设计缺陷——A3 abort 发生在脚本头部（`_write_receipt` 定义之前），不写回执 → R1 按"无回执 fail-closed"keep 三道屏障 → 死窗复发。受控 dual-root 形态（code=worktree、runtime=主根）与残留同形态，旧控制器（无 CONFIRMED）× 新脚本（R4 必查）= 确定性砖死。修复：根检查移至预检链末端（case 之前全只读），中止路径统一落白名单标记 `root_source_aborted` / `dual_root_rejected`，R1 白名单 4→6。
+- **S2（96a0d3d65）同仓族降级为告警+verify 裁决**：四态来源——同 Git 仓族（linked worktree）→ 告警+审计 `outcome=deferred-to-verify` 放行，裁决移交部署绑定核验（P0-A 字节级，worker lifecycle lease 内复核）；异仓族/无 Git 身份 → 维持硬拒。**残余边界（有意接受）**：直连路径的同仓残留（07:33 compaction-merge 型）从入口拒降为放行+dual-root 校验+audit deferred 痕迹；S3 把直连降为应急通道后常态暴露面缩小。「部署后必须显式重启 cli 宿主」从硬前提降为行为收敛建议（R2.1 相应降级）。
+- **S3（001dd82cb）restart 子命令**：`service_control restart --data-dir data [--target] [--requester]` 一条命令 = 受理（屏障原子建立）+ worker 内联（物理重启+核验+终态回执）；直连 restart_mirror.sh 退为应急通道。从根源消除 P4 的 stable-落后场景（直连常态使用消失），R6 的 stale 标记退化为应急通道使用时的兜底。
+- **实战验证（gen65）**：14:40 `svc-df9693`（operator-deploy-gen65）预检失败 `knowledge_preflight_failed` → R1/S1 消费白名单回执，屏障自动释放，无死窗；14:40:40 `svc-37ce12`（retry）succeeded gen65 rc=0 verify=ok 三服务。首次真实运行按设计工作。
+- gen65 live = simplify-restart 线（001dd82cb），线性包含本包 R1–R6 全部提交；本文件所在线顶端 bb8e81ac4（webui services 面板时区统一渲染，修复 live(+0800)/stable(+00:00) 同屏不可比导致的 14:53 误读）待 gen66 部署生效。
+
+### 8.2-S4 自主重启闭环（2026-09-22 下午二，dsh；叠加于 S1–S3 之上）
+
+**事故（gen66 首次重启失败，svc-8011bb79）**：15:11 操作员发布 gen66（79360a2d7，webui 15:08 build）；15:12 `service_control restart`（inline，requester=`operator-gen66-webui-clock`）失败——`restart_mirror rc=-13; receipt=rc=0!=-13`。根因：S3 的 inline CLI 把**调用方自身的 stdio 管道**交给 restart_mirror；调用会话（dsh bash）读端先死，bash 在写输出瞬间被 SIGPIPE 杀死（Python returncode=-13），发生在停止 web 之后、回执之前。盘上 14:41 的陈旧 rc=0 回执 scope 恰为 all，卡在 rc 比对（`rc=0!=-13`）；屏障按 §8.3 fail-closed keep，web 停后未起，且 `accept_restart` 屏障冲突拒绝新动作——**模型无自恢复路径**，15:18 操作员 force-release 三屏障 + 重启方恢复（svc-c5c2e924，verify=ok gen66 三服务）。回执/manifests/worker 日志（inline 路径不写 worker 日志）为证。
+
+| 项 | 内容 | 不变量 |
+|---|---|---|
+| **S4a** durable stdio | 物理重启子进程 `stdin=DEVNULL`，stdout/stderr 落 `data/service-control-restart-logs/<action_id>.log`（append，含 attempt 头），rc≠0 的 action detail 追加 `log=` 指向该文件 | 物理重启的 rc/输出不受调用方 stdio 生死影响；rc 恒为脚本自身退出状态 |
+| **S4b** 屏障接管 | `accept_restart` 屏障冲突时查 owner 动作：已终态（failed/succeeded）→ `AdmissionBarrierRegistry.adopt` 原子换 owner（tmp+rename，无准入窗口），append-only 审计 `data/audit/service_barrier_adoptions.jsonl`（含 previous_owner）；非终态/未知/corrupt owner → 维持 fail-closed 拒绝 | §8.3 docstring 承诺的 "follow-up operation handles them" 机制化；活操作仍互斥 |
+| **S4c** 模型侧 publish | `ServiceControlTool` 增加 `publish`（code_root + expected_generation CAS）；复用 CLI 全部机械边界（build_deployment：tracked-clean + webui dist 树 hash；compare_and_swap：CAS+租约）；runtime_root 按 data_dir 契约推导，不接受调用点自选。shell 围栏不动（CLI publish/worker/barriers* 仍 operator-only，模型走工具） | LFL 可自主走完 build→publish→restart→verify 闭环；程序仍只保事实与边界（identity/hash/CAS），不裁决语义 |
+
+- 治理对照（准入不对称）：S4b/S4c 均为模型 agency 放大（自恢复、自部署），无新增启发式裁决门；S4a 为纯机械耐久性修复。
+- 回归：`tests/unit/test_service_control_autonomous_restart.py`（8 例；S4a 用例在修复前确定性复现 `rc=-13; receipt=absent`）。
+- 残余边界（有意接受）：模型 publish 可指向任意干净 git 树（与操作员 CLI 同权）——desired-deployment 的语义选择权按治理北极星归模型/操作员，机械绑定核验（P0-A.1 lease 内字节级）不变。

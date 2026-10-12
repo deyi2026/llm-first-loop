@@ -1,0 +1,26 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261010-promotion-daily02-r2",
+  "summary": "lfl-daily-02 推广材料修订 r2：fig10 重绘 + 排版调整（纯文档资产，无控制机制）",
+  "components": [
+    {
+      "component_id": "promotion-materials-r2",
+      "paths": [
+        "docs/governance/submissions/20261010-promotion-daily02-r2.json",
+        "docs/promotion/20261010-lfl-daily-02.md",
+        "docs/promotion/figures/_d2.py",
+        "docs/promotion/img/fig10-weak-model-ab.png"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "推广材料（LFL daily 系列）",
+      "disposition": "纯文档修订，非控制机制",
+      "evidence": [
+        "docs/promotion/20261010-lfl-daily-02.md"
+      ],
+      "verification_level": "远端 CI 安全扫描 + 三件套门禁复核",
+      "model_evidence_veto_recovery_exit": "不涉及",
+      "rollback_route": "Revert this PR"
+    }
+  ],
+  "declarations": []
+}

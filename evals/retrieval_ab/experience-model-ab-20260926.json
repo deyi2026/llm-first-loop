@@ -1,0 +1,520 @@
+{
+  "summary": {
+    "repeats": 2,
+    "rows": 20,
+    "off_correct": 10,
+    "on_correct": 10,
+    "rows_per_arm": 10,
+    "only_one_exact_search": 20,
+    "fallback_rows": 0,
+    "server_error_delta": 0,
+    "server_queue_after": {
+      "active": false,
+      "foreground_waiters": 0,
+      "background_waiters": 0,
+      "active_queue": 0
+    }
+  },
+  "rows": [
+    {
+      "arm": "off",
+      "repeat": 1,
+      "id": "M1",
+      "class": "ordering_gain",
+      "target": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "readonly 工具都卡住但 execute_command 正常，怎么判断是线程池阻塞还是服务挂了"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 5.09
+    },
+    {
+      "arm": "off",
+      "repeat": 1,
+      "id": "M2",
+      "class": "positive",
+      "target": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "换 embedding 模型前为什么裸向量对比不够"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 10.15
+    },
+    {
+      "arm": "off",
+      "repeat": 1,
+      "id": "M3",
+      "class": "typed_positive",
+      "target": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "lesson",
+            "limit": 5,
+            "query": "我能不能直接用 service_control CLI 的 restart 子命令"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 7.52
+    },
+    {
+      "arm": "off",
+      "repeat": 1,
+      "id": "M4",
+      "class": "lexical_control",
+      "target": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "glm provider 缓存 TTL 300s"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 5.92
+    },
+    {
+      "arm": "off",
+      "repeat": 1,
+      "id": "M5",
+      "class": "noise",
+      "target": "NONE",
+      "correct": true,
+      "answer": "NONE",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "供应商 SLA 赔偿退款条款"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 6.65
+    },
+    {
+      "arm": "off",
+      "repeat": 2,
+      "id": "M1",
+      "class": "ordering_gain",
+      "target": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "readonly 工具都卡住但 execute_command 正常，怎么判断是线程池阻塞还是服务挂了"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 6.57
+    },
+    {
+      "arm": "off",
+      "repeat": 2,
+      "id": "M2",
+      "class": "positive",
+      "target": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "换 embedding 模型前为什么裸向量对比不够"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 7.74
+    },
+    {
+      "arm": "off",
+      "repeat": 2,
+      "id": "M3",
+      "class": "typed_positive",
+      "target": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "lesson",
+            "limit": 5,
+            "query": "我能不能直接用 service_control CLI 的 restart 子命令"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 7.36
+    },
+    {
+      "arm": "off",
+      "repeat": 2,
+      "id": "M4",
+      "class": "lexical_control",
+      "target": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "glm provider 缓存 TTL 300s"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 2.81
+    },
+    {
+      "arm": "off",
+      "repeat": 2,
+      "id": "M5",
+      "class": "noise",
+      "target": "NONE",
+      "correct": true,
+      "answer": "NONE",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "供应商 SLA 赔偿退款条款"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 6.19
+    },
+    {
+      "arm": "on",
+      "repeat": 1,
+      "id": "M1",
+      "class": "ordering_gain",
+      "target": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "readonly 工具都卡住但 execute_command 正常，怎么判断是线程池阻塞还是服务挂了"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 3.71
+    },
+    {
+      "arm": "on",
+      "repeat": 1,
+      "id": "M2",
+      "class": "positive",
+      "target": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "换 embedding 模型前为什么裸向量对比不够"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 9.91
+    },
+    {
+      "arm": "on",
+      "repeat": 1,
+      "id": "M3",
+      "class": "typed_positive",
+      "target": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "lesson",
+            "limit": 5,
+            "query": "我能不能直接用 service_control CLI 的 restart 子命令"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 3.56
+    },
+    {
+      "arm": "on",
+      "repeat": 1,
+      "id": "M4",
+      "class": "lexical_control",
+      "target": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "glm provider 缓存 TTL 300s"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 3.54
+    },
+    {
+      "arm": "on",
+      "repeat": 1,
+      "id": "M5",
+      "class": "noise",
+      "target": "NONE",
+      "correct": true,
+      "answer": "NONE",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "供应商 SLA 赔偿退款条款"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 6.63
+    },
+    {
+      "arm": "on",
+      "repeat": 2,
+      "id": "M1",
+      "class": "ordering_gain",
+      "target": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260922-readonly-vs-vs-hang",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "readonly 工具都卡住但 execute_command 正常，怎么判断是线程池阻塞还是服务挂了"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 9.55
+    },
+    {
+      "arm": "on",
+      "repeat": 2,
+      "id": "M2",
+      "class": "positive",
+      "target": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260916-embedding-provider-2-bug",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "换 embedding 模型前为什么裸向量对比不够"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 7.99
+    },
+    {
+      "arm": "on",
+      "repeat": 2,
+      "id": "M3",
+      "class": "typed_positive",
+      "target": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260919-service-control-cli-restart",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "lesson",
+            "limit": 5,
+            "query": "我能不能直接用 service_control CLI 的 restart 子命令"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 4.36
+    },
+    {
+      "arm": "on",
+      "repeat": 2,
+      "id": "M4",
+      "class": "lexical_control",
+      "target": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "correct": true,
+      "answer": "experience:EXPERIENCE-20260918-glm-provider-ttl-300s",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "glm provider 缓存 TTL 300s"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 3.14
+    },
+    {
+      "arm": "on",
+      "repeat": 2,
+      "id": "M5",
+      "class": "noise",
+      "target": "NONE",
+      "correct": true,
+      "answer": "NONE",
+      "rounds": 2,
+      "model_used": "glm/glm-5.3",
+      "fallback_used": false,
+      "tool_calls": [
+        {
+          "name": "search_records",
+          "status": "success",
+          "arguments": {
+            "kind": "experience",
+            "limit": 5,
+            "query": "供应商 SLA 赔偿退款条款"
+          }
+        }
+      ],
+      "only_one_exact_search": true,
+      "elapsed_s": 6.54
+    }
+  ]
+}

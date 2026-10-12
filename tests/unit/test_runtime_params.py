@@ -1,0 +1,195 @@
+"""单元测试: RuntimeParams 动态参数（T50 / FR-AUTO-PARAM-01/02/03）."""
+
+from __future__ import annotations
+
+import dataclasses
+
+from llm_loop.config import Settings
+from llm_loop.core.runtime_params import RuntimeParams
+
+
+def _settings() -> Settings:
+    return Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        max_iterations=20,
+        llm_timeout_s=120.0,
+        history_max_chars=80000,
+    )
+
+
+def test_dynamic_priority_over_static():
+    """动态值（strategy）优先于静态默认（PARAM-01 接线）."""
+    s = _settings()
+    rp = RuntimeParams(s, strategy={"max_iterations": 30})
+    assert rp.max_iterations == 30
+    assert rp.llm_timeout_s == 120.0  # 未调整参数用静态
+
+
+def test_untouched_returns_static():
+    """未调整 → 静态兜底（P0 零回归）."""
+    s = _settings()
+    rp = RuntimeParams(s)
+    assert rp.max_iterations == 20
+    assert rp.history_max_chars == 80000
+
+
+def test_unconfigured_history_budget_remains_none_until_explicit_override():
+    """None 是“无独立全局 cap”，RuntimeParams 不得偷换成 100K。"""
+    s = dataclasses.replace(_settings(), history_max_chars=None)
+    shared: dict = {}
+    rp = RuntimeParams(s, strategy=shared)
+    assert rp.history_max_chars is None
+    assert rp.current()["history_budget"] is None
+    shared["history_budget"] = 180000
+    assert rp.history_max_chars == 180000
+
+
+def test_hard_cap_applied():
+    """越界动态值（>HARD_CAP 500）拒绝生效 → 回退静态默认（防 AI 调参失控）."""
+    s = _settings()
+    rp = RuntimeParams(s, strategy={"max_iterations": 9999})
+    assert rp.max_iterations == 20  # 9999 > 500 无效 → 回退静态
+
+
+def test_invalid_dynamic_ignored():
+    """越界/非法动态值 → 忽略回退静态."""
+    s = _settings()
+    rp = RuntimeParams(s, strategy={"max_iterations": 2, "timeout_s": 1})
+    assert rp.max_iterations == 20  # 2 < min 5 → 回退
+    assert rp.llm_timeout_s == 120.0
+
+
+def test_is_overridden_tracks_explicit_adjust():
+    """is_overridden: 仅显式调整过的参数为 True（区分静态默认与 per-call 覆盖）.
+
+    真实路径: adjust_strategy 直接改共享 strategy dict（registry_correction 侧
+    ctx.strategy.update），RuntimeParams 与 ctx 共享同一 dict 引用.
+    """
+    s = _settings()
+    shared: dict = {}
+    rp = RuntimeParams(s, strategy=shared)
+    assert rp.is_overridden("timeout_s") is False
+    assert rp.is_overridden("max_iterations") is False
+    # 模拟 adjust_strategy 工具写入（共享 dict）
+    shared["timeout_s"] = 300
+    assert rp.is_overridden("timeout_s") is True
+    assert rp.is_overridden("max_iterations") is False
+    assert rp.llm_timeout_s == 300.0
+    # reset 回滚（从 strategy 删除）后恢复未覆盖态
+    rp.reset("timeout_s")
+    assert rp.is_overridden("timeout_s") is False
+    assert rp.llm_timeout_s == 120.0
+
+
+def test_adjust_count_and_budget():
+    """单轮调整频次预算（PARAM-03）."""
+    s = _settings()
+    rp = RuntimeParams(s)
+    rp.set_max_adjust_per_round(2)
+    rp.record_adjust_multi({"max_iterations": 30})
+    rp.record_adjust_multi({"timeout_s": 200})
+    assert rp.can_adjust() is False  # 已用满
+    rp.reset_round()
+    assert rp.can_adjust() is True
+
+
+def test_reset_and_persist(tmp_path):
+    """reset 回滚 + 持久化可检索（PARAM-06; M18 AA3: 参数不跨进程恢复，历史可检索保留）."""
+    s = _settings()
+    rp = RuntimeParams(s)
+    rp.set_persist_path(tmp_path / "param_adjust_history.jsonl")
+    rp.record_adjust_multi({"max_iterations": 40})
+    # 持久化文件存在
+    assert (tmp_path / "param_adjust_history.jsonl").exists()
+    # M18 AA3: restore_last 已移除（hasattr False）
+    assert not hasattr(rp, "restore_last")
+    # 历史可检索（DFX-MNT-05）: 新实例可读历史但参数不回滚（重启回默认）
+    rp2 = RuntimeParams(s)
+    rp2.set_persist_path(tmp_path / "param_adjust_history.jsonl")
+    assert rp2.max_iterations == 20  # 重启回默认（不跨进程恢复）
+    history = rp2.load_history()
+    assert len(history) == 1
+    assert history[0]["key"] == "max_iterations"
+    assert history[0]["after"] == 40
+    # reset 回滚
+    rp2.record_adjust_multi({"max_iterations": 40})
+    rp2.reset("max_iterations")
+    assert rp2.max_iterations == 20
+
+
+def test_current_snapshot():
+    s = _settings()
+    rp = RuntimeParams(s, strategy={"max_iterations": 35})
+    snap = rp.current()
+    assert snap["max_iterations"] == 35
+    assert snap["timeout_s"] == 120.0
+
+
+def test_task_quality_switches():
+    """D3: task_quality 开关白名单（0/1）与默认关闭."""
+    from types import SimpleNamespace
+
+    from llm_loop.core.runtime_params import RuntimeParams
+
+    s = SimpleNamespace(precheck_enabled=False, fix_loop_enabled=False)
+    shared: dict = {}
+    rp = RuntimeParams(s, strategy=shared)
+    assert rp.precheck_enabled is False
+    assert rp.fix_loop_enabled is False
+    # 模拟 adjust_strategy 写入共享 dict
+    shared["precheck_enabled"] = True
+    shared["fix_loop_enabled"] = True
+    assert rp.precheck_enabled is True
+    assert rp.fix_loop_enabled is True
+
+
+# ── EVO-20260923-5342bf75: 主循环推理档位（reasoning_effort）──
+
+
+def test_reasoning_effort_untouched_returns_none():
+    """未调整 → None（循环不覆盖，client 沿用 run 启动 latch 档）."""
+    rp = RuntimeParams(_settings())
+    assert rp.reasoning_effort is None
+    assert rp.current()["reasoning_effort"] is None
+    assert rp.is_overridden("reasoning_effort") is False
+
+
+def test_reasoning_effort_enum_dynamic_priority():
+    """显式调整 → 动态档位生效（共享 dict 实时反映，模拟 adjust_strategy）."""
+    shared: dict = {}
+    rp = RuntimeParams(_settings(), strategy=shared)
+    shared["reasoning_effort"] = "low"
+    assert rp.reasoning_effort == "low"
+    assert rp.current()["reasoning_effort"] == "low"
+    assert rp.is_overridden("reasoning_effort") is True
+    # 档位可再调整（机械阶段降档后复杂任务升档）
+    shared["reasoning_effort"] = "max"
+    assert rp.reasoning_effort == "max"
+
+
+def test_reasoning_effort_invalid_values_ignored():
+    """非法值（越界枚举/错误类型）拒绝生效 → 回退 None（防失控）."""
+    for bad in ("ultra", "MAX", "", None, 3, True):
+        rp = RuntimeParams(_settings(), strategy={"reasoning_effort": bad})
+        assert rp.reasoning_effort is None, bad
+
+
+def test_reasoning_effort_reset_restores_none():
+    """reset 清除动态档 → 回到未覆盖态（engine 据此恢复启动档基线）."""
+    shared: dict = {}
+    rp = RuntimeParams(_settings(), strategy=shared)
+    shared["reasoning_effort"] = "medium"
+    assert rp.reasoning_effort == "medium"
+    rp.reset("reasoning_effort")
+    assert rp.reasoning_effort is None
+
+
+def test_strategy_whitelist_carries_reasoning_effort():
+    """adjust_strategy 白名单与 RuntimeParams 校验保持一致（枚举四档）."""
+    from llm_loop.introspection.corrections import CorrectionContext
+
+    spec = CorrectionContext().strategy_whitelist.get("reasoning_effort")
+    assert spec is not None and spec.get("type") == "string"
+    assert set(spec.get("enum") or []) == {"low", "medium", "high", "max"}

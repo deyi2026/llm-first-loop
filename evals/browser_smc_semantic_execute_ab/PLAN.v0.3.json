@@ -1,0 +1,53 @@
+{
+  "plan": [
+    {
+      "arm": "semantic_execute",
+      "index": 1,
+      "pair_block": 1,
+      "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+      "repeat": 1,
+      "task_id": "click_commit"
+    },
+    {
+      "arm": "full_action",
+      "index": 2,
+      "pair_block": 1,
+      "prompt_template_sha256": "823e7cb25a1f2f234412564a93ed221956bdbcb4214aff1d67a78fd9296c6f2d",
+      "repeat": 1,
+      "task_id": "click_commit"
+    },
+    {
+      "arm": "semantic_execute",
+      "index": 3,
+      "pair_block": 2,
+      "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+      "repeat": 1,
+      "task_id": "fill_submit"
+    },
+    {
+      "arm": "full_action",
+      "index": 4,
+      "pair_block": 2,
+      "prompt_template_sha256": "d80607ace4193874d8b7deddc2988f8b6562443b99b54455e48163cc4a6ff9e2",
+      "repeat": 1,
+      "task_id": "fill_submit"
+    },
+    {
+      "arm": "full_action",
+      "index": 5,
+      "pair_block": 3,
+      "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+      "repeat": 1,
+      "task_id": "delayed_wait"
+    },
+    {
+      "arm": "semantic_execute",
+      "index": 6,
+      "pair_block": 3,
+      "prompt_template_sha256": "eb99aac9458104ca12770d07ce1886f9d3bd76f8955ce9b5135de33b476ae694",
+      "repeat": 1,
+      "task_id": "delayed_wait"
+    }
+  ],
+  "plan_sha256": "8f3bab36fdd4836a1bc5e27a1256b944d43c17ce3d51e3678924af2cf10dc8d0"
+}

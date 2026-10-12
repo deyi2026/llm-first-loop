@@ -1,0 +1,30 @@
+{
+  "schema": "evidence-r10-frozen-v1",
+  "created_at": "2026-08-26T12:48:55.235112+00:00",
+  "artifacts": {
+    "docs/RECOVERABILITY-R10-PRE-REGISTRATION-v1.md": "8260521f4bd3f5863d61437dbf233ace16f49718b26c9ccd8d82cb6da507e2ae",
+    "docs/RECOVERABILITY-R10-FROZEN-v1.md": "0756db3979d4646bf3446fcbd46a0c69314767e905f7b958021ee6deca2eb62c",
+    "docs/RECOVERABILITY-R9-RESULT-v1.md": "8594669aa56bbadcb0b06228059b1e07d16a75f55fab680681ecd3ff4f067259",
+    ".codeartsdoer/specs/ev_recov/spec-r9-source-resolution-addendum.md": "21f39189571de593270d300f46fb2fc8513359a6eab39f763f45e23114906162",
+    ".codeartsdoer/specs/ev_recov/design-r9-source-resolution-addendum.md": "c813729ec8c444cc1b34ed7ca00c378cfd110b2d58c6e8ebc34d57401eefd3b5",
+    "scripts/evidence/r10/fixtures.py": "8e4ea40fd6874cd31a1f00ab04f36faae46c4acdacb29c692b59512a0625d38b",
+    "scripts/evidence/r10/build_artifacts.py": "14eeb04807bdb97ae1fab4ccf22514fddfb31635f3839b8fc3dcbc366b9d6491",
+    "scripts/evidence/r10/runner.py": "5d97a3a19a4b80a48d370205efeb3a1490ccb8bc1fb3d076cf0c96094344d1b5",
+    "scripts/evidence/r10/score.py": "856e1cc6238aafe64059ba26e16bcc795e844ddcf53a6e1b30826f5ca639287c",
+    "tests/unit/test_evidence_r10_runner.py": "157bfd942e4b9596ea6cc95f73ccf97212978b82f68ff6628789ed128ccb8197",
+    "tests/fixtures/evidence_r10/fixtures_v1.json": "cb80551a09d6b9d9df8da07205a47d709bc8f903e62a9d5e6d4a47189dcf36dc",
+    "tests/fixtures/evidence_r10/matrix_v1.json": "44eb44caeaa61ac326239c016dd8c7828a805b1c746c802dfb500b19405fe01a",
+    "data/audit/evidence_r10/provider_snapshot_v1.json": "b23c41f3a55f1cf07b0f76822e3e5c60f5a53516eebfbfb5f804f035f0498aa4",
+    "src/llm_loop/tools/evidence_source_resolver.py": "656a6dceee075eb69b080a0b982251ec85c62b0bd60e66944dced7615d8dc5da",
+    "src/llm_loop/core/message.py": "9752835ea3dd7f42a5a47ef29a24ee33d869c3d64ca381e15d087f0f4555221b",
+    "src/llm_loop/tools/builtin/read_file.py": "b16e61944181e84ea323efe6d0fa9cce39c56590d77786545954adec05f1e181",
+    "src/llm_loop/tools/source_recovery_contract.py": "3b36fd5ebbe6082cb1ee134bf16e1b1b98000a9595954f40d96c2c24307c39e7",
+    "src/llm_loop/tools/registry.py": "6c35b35c9750fc35c0040b483ef9e725b662b5ce9ae48318b3d34dee53ae38da",
+    "src/llm_loop/factory.py": "d3e8357907e27660837f9db50d195f7040480344c1eb776c52c49c372bee3e29",
+    "src/llm_loop/tools/evidence_enforce.py": "15092cadfc2bce9e6c340d249d2c6a3d68b0fbc4b899b64f9656fb39f6dcb6ff",
+    "src/llm_loop/tools/evidence_tools.py": "a4407ab27861fb4d32c1ed8a64ef55cdb053c6efdaf729bee371f9bf57293487",
+    "src/llm_loop/memory/evidence.py": "706120777747fad9a23ea428b330bb77fe4f575c12374015f1ad6a7579f6c9f1",
+    "scripts/evidence/r4/runner.py": "dc0bf273adc72d365dd050762bcb70db3076f6e5b3dd076d3f4270de8352c6e5",
+    "data/providers.json": "a5e6221a344d08d37c0135931762e95e9371c4073d9dd1cd33903e3599a4a874"
+  }
+}

@@ -1,0 +1,1258 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f5f6f8;
+  color: #1f2328;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---------- 左侧栏 ---------- */
+#sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #1e2532;
+  color: #d8dee9;
+  padding: 12px;
+  gap: 10px;
+}
+
+#sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#sidebar-header h1 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.status-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #3a4557;
+  color: #aab4c4;
+}
+
+.status-badge.ok {
+  background: #1e7a3c;
+  color: #e8f5e9;
+}
+
+.status-badge.err {
+  background: #8a2c2c;
+  color: #ffe9e9;
+}
+
+.btn-primary {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
+}
+
+.btn-primary:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+#search-input {
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: #2a3344;
+  color: #e8edf5;
+  font-size: 13px;
+  outline: none;
+}
+
+#search-input::placeholder {
+  color: #8a94a6;
+}
+
+#session-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-item {
+  padding: 10px;
+  border-radius: 8px;
+  background: #2a3344;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.session-item:hover {
+  background: #364155;
+}
+
+.session-item.active {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.session-item .session-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item .session-meta {
+  font-size: 11px;
+  color: #8a94a6;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item.active .session-meta {
+  color: #dbe6ff;
+}
+
+.session-del {
+  float: right;
+  border: none;
+  background: transparent;
+  color: #8a94a6;
+  font-size: 13px;
+  cursor: pointer;
+  display: none;
+}
+
+.session-item:hover .session-del {
+  display: inline;
+}
+
+.session-del:hover {
+  color: #f87171;
+}
+
+/* M56 置顶按钮 + 来源标签 */
+.session-pin {
+  float: right;
+  border: none;
+  background: transparent;
+  color: #8a94a6;
+  font-size: 13px;
+  cursor: pointer;
+  display: none;
+  padding: 0 2px;
+  line-height: 1.2;
+}
+
+.session-item:hover .session-pin {
+  display: inline;
+}
+
+.session-pin:hover {
+  color: #fbbf24;
+}
+
+.session-pin.pinned {
+  display: inline;
+  color: #fbbf24;
+}
+
+.session-item.active .session-pin.pinned {
+  color: #fde68a;
+}
+
+.session-channel {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 3px;
+  background: rgba(147, 197, 253, 0.2);
+  color: #93c5fd;
+  vertical-align: middle;
+}
+
+.session-item.active .session-channel {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+/* ---------- 右侧聊天区 ---------- */
+#chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.message {
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: #3b82f6;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-bottom-left-radius: 4px;
+}
+
+.message.error {
+  align-self: flex-start;
+  background: #fff1f1;
+  border: 1px solid #f8c6c6;
+  color: #8a2c2c;
+}
+
+.message .msg-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8a94a6;
+}
+
+.message.loading::after {
+  content: "…";
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0.3; }
+}
+
+#input-bar {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 12px 20px 14px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+#input-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#input-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+/* 2026-08-17: 模型选择独立行（从 input-tools 移出，输入框上方，避免与工具按钮挤在一起） */
+.input-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.input-model-row select {
+  max-width: 260px;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+}
+
+.input-model-row .model-label {
+  margin-left: 2px;
+  color: #6b7280;
+}
+
+.input-model-row .token-stats {
+  margin-left: 4px;
+}
+
+/* 消息时间戳（消息内小灰字，右下角；assistant/user 均可用） */
+.msg-time {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: #9ca3af;
+  text-align: right;
+  user-select: none;
+}
+
+.message.user .msg-time {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+#message-input {
+  flex: 1;
+  resize: none;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  line-height: 1.5;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+#message-input:focus {
+  border-color: #3b82f6;
+}
+
+#input-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+#input-tools .btn-secondary {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.model-label {
+  margin-left: 2px;
+  color: #6b7280;
+}
+
+/* M52: token 用量累计（输入区模型选择旁）*/
+.token-stats {
+  color: #9ca3af;
+  font-size: 11px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+#model-select {
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2328;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 220px;
+}
+
+#model-select:focus {
+  border-color: #3b82f6;
+}
+
+#cmd-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 11px;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cmd-chip:hover {
+  background: #e5e7eb;
+}
+
+.cmd-suggest {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: calc(100% - 6px);
+  z-index: 30;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.cmd-suggest-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.cmd-suggest-item:hover,
+.cmd-suggest-item.active {
+  background: #f0f7ff;
+}
+
+.cmd-suggest-item .cmd-name {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+.cmd-suggest-item .cmd-desc {
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Markdown 渲染样式（M38） ---------- */
+.message.assistant {
+  white-space: normal; /* MD 渲染后由 HTML 布局，不再 pre-wrap */
+}
+
+.message.user {
+  white-space: normal; /* M47: 用户消息也渲染 MD，同样由 HTML 布局 */
+}
+
+/* 用户气泡内 MD 元素适配（蓝底白字，深色底内容反色） */
+.message.user h1, .message.user h2, .message.user h3,
+.message.user h4, .message.user h5, .message.user h6 {
+  margin: 10px 0 6px;
+  line-height: 1.3;
+}
+
+.message.user h1 { font-size: 18px; }
+.message.user h2 { font-size: 16px; }
+.message.user h3 { font-size: 15px; }
+.message.user h4, .message.user h5, .message.user h6 { font-size: 14px; }
+
+.message.user p {
+  margin: 6px 0;
+}
+
+.message.user ul, .message.user ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.message.user li {
+  margin: 2px 0;
+}
+
+.message.user blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid #93c5fd;
+  color: #dbeafe;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 0 6px 6px 0;
+}
+
+.message.user code {
+  font-family: "SF Mono", "Menlo", "Consolas", "Courier New", monospace;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.message.user pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f3f4f6;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.message.user pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 13px;
+}
+
+.message.user a {
+  color: #bfdbfe;
+  text-decoration: underline;
+}
+
+.message.user table {
+  margin: 8px 0;
+  border-collapse: collapse;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+
+.message.user th, .message.user td {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.message.user th {
+  background: rgba(255, 255, 255, 0.2);
+  font-weight: 600;
+}
+
+.message.user hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.4);
+  margin: 10px 0;
+}
+
+.message.user img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+.message.assistant h1, .message.assistant h2, .message.assistant h3,
+.message.assistant h4, .message.assistant h5, .message.assistant h6 {
+  margin: 10px 0 6px;
+  line-height: 1.3;
+}
+
+.message.assistant h1 { font-size: 18px; }
+.message.assistant h2 { font-size: 16px; }
+.message.assistant h3 { font-size: 15px; }
+.message.assistant h4, .message.assistant h5, .message.assistant h6 { font-size: 14px; }
+
+.message.assistant p {
+  margin: 6px 0;
+}
+
+.message.assistant ul, .message.assistant ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.message.assistant li {
+  margin: 2px 0;
+}
+
+.message.assistant blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid #d1d5db;
+  color: #4b5563;
+  background: #f9fafb;
+  border-radius: 0 6px 6px 0;
+}
+
+.message.assistant code {
+  font-family: "SF Mono", "Menlo", "Consolas", "Courier New", monospace;
+  font-size: 13px;
+  background: #f3f4f6;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.message.assistant pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #1e2532;
+  color: #e8edf5;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.message.assistant pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 13px;
+}
+
+.message.assistant a {
+  color: #3b82f6;
+  text-decoration: underline;
+}
+
+.message.assistant table {
+  margin: 8px 0;
+  border-collapse: collapse;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+
+.message.assistant th, .message.assistant td {
+  border: 1px solid #d1d5db;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.message.assistant th {
+  background: #f3f4f6;
+  font-weight: 600;
+}
+
+.message.assistant hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 10px 0;
+}
+
+.message.assistant img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* ---------- 上传/复制/命令（M39） ---------- */
+.btn-secondary {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f2328;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-secondary:hover {
+  background: #f3f4f6;
+}
+
+#chat-area.dragover {
+  outline: 2px dashed #3b82f6;
+  outline-offset: -4px;
+}
+
+.attachment-bubble {
+  align-self: flex-start;
+  background: #f0f7ff;
+  border: 1px solid #bcd7f7;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #1f2328;
+  max-width: 78%;
+}
+
+.attachment-bubble .att-name {
+  font-weight: 600;
+}
+
+.attachment-bubble .att-meta {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.message-wrap {
+  position: relative;
+  max-width: 78%;
+  width: fit-content;
+  align-self: flex-start;
+}
+
+.message-wrap.user-wrap {
+  align-self: flex-end;
+}
+
+.message-wrap .message {
+  max-width: 100%;
+}
+
+.copy-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  border: none;
+  background: rgba(31, 35, 40, 0.08);
+  color: #4b5563;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.copy-btn-left {
+  right: auto;
+  left: 6px;
+}
+
+.copy-btn:hover {
+  background: rgba(31, 35, 40, 0.16);
+}
+
+.copy-btn.copied {
+  background: #1e7a3c;
+  color: #fff;
+}
+
+.code-block-wrap {
+  position: relative;
+  margin: 8px 0;
+}
+
+.code-block-wrap pre {
+  margin: 0;
+  padding-top: 32px;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.code-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.code-copy-btn.copied {
+  background: #1e7a3c;
+  color: #fff;
+}
+
+.cmd-tip {
+  align-self: flex-start;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #4b5563;
+  white-space: pre-wrap;
+}
+
+/* ---------- P2-1 工具调用链折叠样式（M49） ---------- */
+.tool-call-chain {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.tool-call-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tool-call-toggle:hover {
+  background: rgba(31, 35, 40, 0.06);
+}
+
+.tool-call-detail {
+  border-top: 1px solid #eef0f3;
+  padding: 4px 10px 8px;
+}
+
+.tool-call-item {
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.tool-call-item:last-child {
+  border-bottom: none;
+}
+
+.tool-call-name {
+  display: inline-block;
+  background: #e8edf5;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.tool-call-detail-text {
+  margin-top: 4px;
+  color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+/* ── M52: 异常醒目 + 完整原文 ── */
+.tool-call-toggle-error {
+  color: #c0392b;
+  border-color: #e6b8b3;
+  background: #fdf1f0;
+}
+.tool-call-toggle-error:hover {
+  background: #fbe4e2;
+}
+.tool-call-full-btn {
+  display: inline-block;
+  margin: 4px 0 4px 8px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #2456a6;
+  background: #eef4fd;
+  border: 1px solid #c3d7f2;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tool-call-full-btn:hover:not(:disabled) {
+  background: #ddeafa;
+}
+.tool-call-full-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.tool-call-full-text {
+  border-top: 1px dashed #d0d7de;
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+/* ---------- P3-1 工具调用↔回执配对卡片（复用 .tool-call-chain 视觉语言） ---------- */
+.tool-pair-card {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.tool-pair-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tool-pair-toggle:hover {
+  background: rgba(31, 35, 40, 0.06);
+}
+
+.tool-pair-toggle-error {
+  color: #c0392b;
+  border-color: #e6b8b3;
+  background: #fdf1f0;
+}
+
+.tool-pair-toggle-error:hover {
+  background: #fbe4e2;
+}
+
+.tool-pair-body {
+  border-top: 1px solid #eef0f3;
+  padding: 6px 10px 8px;
+}
+
+.tool-pair-call {
+  padding: 2px 0;
+}
+
+.tool-pair-arrow {
+  text-align: center;
+  color: #9aa4b2;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.tool-pair-result {
+  border-top: 1px dashed #e5e7eb;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.tool-pair-miss-note {
+  display: inline-block;
+  margin: 2px 0;
+  font-size: 11px;
+  color: #9aa4b2;
+  font-weight: 400;
+}
+.message-alert {
+  border-left: 3px solid #c0392b;
+  background: #fdf6f5;
+}
+
+/* ── 长内容分块（2026-08-15 用户需求：不折叠，顺序分段全量可见） ── */
+.chunked-pre {
+  display: block;
+}
+.chunk-marker {
+  margin: 8px 0 4px 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* ── T3: 代码块语法高亮（自研简版，spec 5.3.1 D1） ── */
+.code-kw {
+  color: #c678dd;
+  font-weight: 500;
+}
+.code-str {
+  color: #98c379;
+}
+.code-comment {
+  color: #7f848e;
+  font-style: italic;
+}
+.code-num {
+  color: #d19a66;
+}
+
+/* ── T4 D2: 断流重试按钮 ── */
+.retry-btn {
+  display: inline-block;
+  margin: 8px;
+  padding: 4px 14px;
+  font-size: 13px;
+  color: #2456a6;
+  background: #eef4fd;
+  border: 1px solid #c3d7f2;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.retry-btn:hover {
+  background: #ddeafa;
+}
+
+/* ── 2026-08-17: 自动续联提示（连接中断自动重连中） ── */
+.reconnect-note {
+  padding: 4px 8px;
+  margin: 4px 8px;
+  font-size: 12px;
+  color: #8a6d1a;
+  background: #fdf6e3;
+  border: 1px solid #e8d9a0;
+  border-radius: 4px;
+}
+
+/* ── P1-1: 思考过程展示区（与正文视觉区分，默认折叠） ── */
+.reasoning-block {
+  margin: 4px 0 8px;
+  border-left: 3px solid #c9a8e8;
+  background: #f8f6fc;
+  border-radius: 0 4px 4px 0;
+}
+.reasoning-toggle {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #8a6bbf;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-style: italic;
+}
+.reasoning-toggle:hover {
+  background: #f0eaf8;
+}
+.reasoning-body {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #6b6b6b;
+  font-style: italic;
+  line-height: 1.6;
+}
+
+.tool-round-progress {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+  animation: tool-round-pulse 1.5s ease-in-out infinite;
+}
+.tool-round-counter {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+@keyframes tool-round-pulse {
+  0%, 100% { background: #f8fafc; }
+  50% { background: #eef2f7; }
+}
+
+/* ---------- P4-2 移动端适配（桌面优先，窄屏 <768px 增量叠加；单一断点） ---------- */
+/* 桌面默认隐藏汉堡/遮罩（新增规则，不改动既有桌面规则） */
+#sidebar-toggle,
+#sidebar-scrim {
+  display: none;
+}
+
+/* 集中式窄屏断点块（全文仅此一个 @media 断点；块外桌面规则零改动） */
+@media (max-width: 767.98px) {
+  /* 段1: 视口高度（动态视口 + 100vh 回退，软键盘/地址栏下输入区可达） */
+  #app {
+    height: 100vh;
+  }
+  @supports (height: 100dvh) {
+    #app {
+      height: 100dvh;
+    }
+  }
+
+  /* 段2: 侧栏抽屉（默认移出视口，打开滑入覆盖聊天区） */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(85vw, 320px);
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+  #app.sidebar-open #sidebar {
+    transform: translateX(0);
+  }
+  #sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 50;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    color: #1f2328;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  #sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 30;
+    display: none;
+  }
+  #app.sidebar-open #sidebar-scrim {
+    display: block;
+  }
+
+  /* 段3: 触控目标 ≥44×44（命中区域与视觉解耦） */
+  #send-btn,
+  #upload-btn,
+  #new-session-btn,
+  #model-select,
+  #search-input,
+  .cmd-suggest-item,
+  .load-more-btn {
+    min-height: 44px;
+  }
+  .session-item {
+    min-height: 44px;
+  }
+  .cmd-chip,
+  .session-del,
+  .session-pin,
+  .copy-btn,
+  .code-copy-btn,
+  .tool-call-toggle,
+  .tool-pair-toggle,
+  .reasoning-toggle,
+  .tool-call-full-btn,
+  .retry-btn {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 触控按压反馈（仅 CSS :active，不新增 JS） */
+  #send-btn:active,
+  #upload-btn:active,
+  #new-session-btn:active,
+  .cmd-chip:active,
+  .cmd-suggest-item:active,
+  .tool-call-toggle:active,
+  .tool-pair-toggle:active,
+  .reasoning-toggle:active,
+  .retry-btn:active {
+    opacity: 0.7;
+  }
+
+  /* 段4: hover-only 会话操作窄屏常显（覆盖块外 display:none + :hover 显示） */
+  .session-del,
+  .session-pin {
+    display: inline-flex;
+  }
+  .session-del {
+    float: none;
+    position: absolute;
+    top: 8px;
+    right: 30px;
+  }
+  .session-pin {
+    float: none;
+    position: absolute;
+    top: 8px;
+    right: 4px;
+  }
+
+  /* 段5: 输入区（收窄留白 + 工具行换行 + 命令 chips 横向滚动） */
+  #input-bar {
+    padding: 10px 10px 12px;
+  }
+  #input-tools {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #cmd-hint {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #cmd-hint::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 段6: 消息气泡与卡片宽度适配 */
+  .message,
+  .message-wrap,
+  .attachment-bubble {
+    max-width: 92%;
+  }
+  #messages {
+    padding: 12px;
+  }
+}
+
+/* ---------- P4-3 数学公式渲染（KaTeX）样式 ---------- */
+.katex {
+  font-size: 1.05em;
+}
+
+.katex-display {
+  margin: 8px 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* user 蓝底白字反色适配 */
+.message.user .katex,
+.message.user .katex-display {
+  color: #fff;
+}
+
+.message.user .katex a {
+  color: #bfdbfe;
+}
+
+/* 思考区字号协调 */
+.reasoning-body .katex {
+  font-size: 1em;
+}
+
+/* EVO-20260923 工作区管理条（暗色侧栏内嵌，与搜索框同风格） */
+#workspace-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+#workspace-bar select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: #cfd6e4;
+  background: #2a3344;
+  border: 1px solid #303a50;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#workspace-bar .btn-secondary {
+  flex: none;
+  padding: 6px 10px;
+  line-height: 1.2;
+}
+
+#workspace-bar select:disabled,
+#workspace-bar .btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

@@ -1,0 +1,178 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-smc-semantic-logic-p1a-p4d",
+  "summary": "SMC semantic-logic compiler chain phases P1a-P4d onto main: a new standalone semantic_logic module (typed IR + rule engine + serialization), its deterministic qualification tooling (N3/EYE wasm validator bridges, p1d/p3 qualification, p4d typed compiler), 14 unit-test files, and the frozen phase specs/protocols/results (all 8 phase RESULT docs status=pass). The module is NOT imported by any runtime dispatch path in this PR (no factory/tools wiring); it lands as a self-contained subsystem with its own tests, staged for later integration decisions.",
+  "components": [
+    {
+      "component_id": "smc-semantic-logic-module",
+      "paths": [
+        "src/llm_loop/semantic_logic/__init__.py",
+        "src/llm_loop/semantic_logic/ir.py",
+        "src/llm_loop/semantic_logic/rules.py",
+        "src/llm_loop/semantic_logic/serialization.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "src/llm_loop/semantic_logic (ir.py typed IR, rules.py rule engine, serialization.py round-trip) - a new standalone semantic-logic authority for the SMC compiler chain; not yet referenced by any runtime dispatch path (factory/tools untouched by this PR)",
+      "disposition": "ADMIT as new self-contained subsystem: 4 new source files with no wiring into session/tool dispatch. Later integration into any control plane must go through its own architecture submission. Relationship to existing machinery: new_authority.",
+      "evidence": [
+        "grep over src/ shows zero imports of semantic_logic outside the module itself; src/llm_loop/factory.py and src/llm_loop/tools/ are unchanged in this diff",
+        "Phase RESULT docs frozen in this PR: P1A/P1B/P1C/P1D/P2-design/P2/P3/P4D all status=pass (docs/SMC-SEMANTIC-LOGIC-*-RESULT-20260917.json)",
+        "P4-D typed-compiler equivalence protocol pinned by sha256 (docs/SMC-SEMANTIC-LOGIC-P4-AB-PROTOCOL-v0.1.json) and its PASS result"
+      ],
+      "verification_level": "14 dedicated unit-test files (p1a-p4d) + ruff/pyright CI gate + A.5 manifest check",
+      "model_evidence_veto_recovery_exit": "Module is pure in-process library code; no model-facing tool exposes it yet, so no runtime veto/recovery surface changes. Exit: revert the branch merge; single rebase-branch rollback.",
+      "rollback_route": "Revert PR #45 merge (26-commit rebase branch plus this manifest commit); no factory/config/data migration involved.",
+      "declaration_id": "smc-semantic-logic-authority"
+    },
+    {
+      "component_id": "smc-semantic-logic-tests",
+      "paths": [
+        "tests/unit/test_smc_semantic_logic_p1a.py",
+        "tests/unit/test_smc_semantic_logic_p1b.py",
+        "tests/unit/test_smc_semantic_logic_p1c.py",
+        "tests/unit/test_smc_semantic_logic_p1d.py",
+        "tests/unit/test_smc_semantic_logic_p2_final.py",
+        "tests/unit/test_smc_semantic_logic_p2_g1.py",
+        "tests/unit/test_smc_semantic_logic_p2_g2.py",
+        "tests/unit/test_smc_semantic_logic_p2_g3.py",
+        "tests/unit/test_smc_semantic_logic_p2_g4.py",
+        "tests/unit/test_smc_semantic_logic_p2_g5_receipt.py",
+        "tests/unit/test_smc_semantic_logic_p2_g5_version.py",
+        "tests/unit/test_smc_semantic_logic_p2_red.py",
+        "tests/unit/test_smc_semantic_logic_p3_shadow.py",
+        "tests/unit/test_smc_semantic_logic_p4d.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression for the semantic_logic module (IR/literal parity, serialization round-trip, P2 red gates, P3 shadow replay, P4-D typed compiler parity)",
+      "disposition": "ADMIT as tests only.",
+      "evidence": [
+        "tests/unit/test_smc_semantic_logic_{p1a,p1b,p1c,p1d,p2_g1,p2_g2,p2_g3,p2_g4,p2_g5_receipt,p2_g5_version,p2_red,p2_final,p3_shadow,p4d}.py run green locally and in the CI gate"
+      ],
+      "verification_level": "pytest in CI gate plus local run of the same 14 files",
+      "model_evidence_veto_recovery_exit": "Not applicable (tests only).",
+      "rollback_route": "Revert with the branch."
+    },
+    {
+      "component_id": "smc-semantic-logic-qualification-tools",
+      "paths": [
+        "tools/semantic_logic/n3_validator/.gitignore",
+        "tools/semantic_logic/n3_validator/bridge.mjs",
+        "tools/semantic_logic/n3_validator/harness.py",
+        "tools/semantic_logic/n3_validator/p1d_bridge.mjs",
+        "tools/semantic_logic/n3_validator/p2_g1_bridge.mjs",
+        "tools/semantic_logic/n3_validator/p2_g2_bridge.mjs",
+        "tools/semantic_logic/n3_validator/p2_g3_bridge.mjs",
+        "tools/semantic_logic/n3_validator/p2_g4_bridge.mjs",
+        "tools/semantic_logic/n3_validator/p2_g5_receipt_bridge.mjs",
+        "tools/semantic_logic/n3_validator/p2_g5_version_bridge.mjs",
+        "tools/semantic_logic/n3_validator/package-lock.json",
+        "tools/semantic_logic/n3_validator/package.json",
+        "tools/semantic_logic/n3_validator/sandbox_probe.mjs",
+        "tools/semantic_logic/p1d_qualification.py",
+        "tools/semantic_logic/p3_shadow_qualification.py",
+        "tools/semantic_logic/p4d_typed_compiler.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "offline qualification harness: Node-side N3/EYE wasm validator bridges under tools/semantic_logic/n3_validator plus p1d/p3 qualification runners and the p4d typed compiler used to prove equivalence",
+      "disposition": "ADMIT as offline tooling: not imported by src/ runtime; exercised by unit tests and qualification scripts only.",
+      "evidence": [
+        "n3_validator bridges (bridge.mjs, p1d/p2_g*/p2_g5 bridges, sandbox_probe.mjs) drive EYE wasm reasoning in a Node child process for deterministic validation",
+        "p1d_qualification.py / p3_shadow_qualification.py / p4d_typed_compiler.py are standalone harness entry points with frozen RESULT docs"
+      ],
+      "verification_level": "unit tests invoking the bridges + frozen qualification RESULT docs",
+      "model_evidence_veto_recovery_exit": "Not applicable (offline tools; no runtime dispatch).",
+      "rollback_route": "Revert with the branch."
+    },
+    {
+      "component_id": "smc-semantic-logic-docs",
+      "paths": [
+        "docs/PLAN-20260917-smc-semantic-logic-layer.md",
+        "docs/SMC-FACT-PROVENANCE-v0.1.md",
+        "docs/SMC-RULE-AUTHORITY-v0.1.md",
+        "docs/SMC-SEMANTIC-LOGIC-P0-AUDIT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P0-FROZEN-FIXTURES-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P0-SCHEMA-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P1-ARCHITECTURE-DECISION-v0.1.md",
+        "docs/SMC-SEMANTIC-LOGIC-P1-HYBRID-PROTOCOL-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P1A-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P1A-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P1B-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P1B-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P1B-SERIALIZATION-v0.1.md",
+        "docs/SMC-SEMANTIC-LOGIC-P1C-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P1C-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P1D-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P1D-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P2-CORE-RULE-ENGINE-v0.1.md",
+        "docs/SMC-SEMANTIC-LOGIC-P2-DESIGN-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P2-DESIGN-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P2-RED-GATES-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P2-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P2-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P2-RULEPACK-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P2-SCHEMA-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P3-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P3-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P3-SHADOW-PROTOCOL-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P4-AB-PROTOCOL-v0.1.json",
+        "docs/SMC-SEMANTIC-LOGIC-P4-AUDIT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-P4D-RESULT-20260917.json",
+        "docs/SMC-SEMANTIC-LOGIC-P4D-RESULT-20260917.md",
+        "docs/SMC-SEMANTIC-LOGIC-v0.1.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "frozen specs, schemas, protocols, audits and phase results for the SMC semantic-logic chain (P0 audit -> P1 architecture decision -> P2 core rule engine -> P3 shadow -> P4-D typed compiler)",
+      "disposition": "ADMIT as documentation/provenance records; includes frozen fixtures and JSON schemas consumed by tests.",
+      "evidence": [
+        "All 8 phase RESULT json docs carry status pass; P0 audit and P1 architecture decision record the frozen scope"
+      ],
+      "verification_level": "JSON schema files load as valid JSON; referenced by the test suite",
+      "model_evidence_veto_recovery_exit": "Not applicable (docs/fixtures).",
+      "rollback_route": "Revert with the branch."
+    },
+    {
+      "component_id": "smc-semantic-logic-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20260919-smc-semantic-logic-p1a-p4d.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "this A.5 architecture submission manifest",
+      "disposition": "ADMIT as governance record for this PR.",
+      "evidence": [
+        "Validates against scripts/check_architecture_submission.py with exact changed-path coverage"
+      ],
+      "verification_level": "A.5 gate PASS locally and in CI",
+      "model_evidence_veto_recovery_exit": "Not applicable (manifest).",
+      "rollback_route": "Revert with the branch."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "smc-semantic-logic-authority",
+      "g1": {
+        "necessity": "SMC semantic operations need a deterministic, reviewable semantic-logic layer (typed IR + core rule engine) instead of ad-hoc per-phase scripts; the P0 audit (docs/SMC-SEMANTIC-LOGIC-P0-AUDIT-20260917.md) froze the gap and the P1 architecture decision chose the hybrid protocol that this module implements."
+      },
+      "g2": {
+        "authority_owner": "src/llm_loop/semantic_logic owns the typed IR, rule evaluation and serialization for the SMC semantic-logic chain; it is new authority with no existing src/ owner (no other module imports it in this PR).",
+        "relationship": "new_authority",
+        "non_duplication": "No runtime control plane is duplicated or modified: factory/tools dispatch are untouched, and N3/EYE validation remains in offline tooling under tools/semantic_logic rather than being reimplemented in src/."
+      },
+      "g3": {
+        "model_evidence": [
+          "phase RESULT docs frozen in-tree: P1A/P1B/P1C/P1D/P2-design/P2/P3/P4D all status=pass",
+          "14 dedicated unit-test files (tests/unit/test_smc_semantic_logic_*) cover IR parity, serialization round-trip, P2 red gates, P3 shadow replay and P4-D typed compiler equivalence",
+          "grep evidence that no runtime dispatch path imports semantic_logic in this PR"
+        ],
+        "recovery_or_reason": "No integration risk surface in this PR: the module is unreachable from any session/tool dispatch. Any future wiring must come as its own submission with fresh G1-G4 evidence."
+      },
+      "g4": {
+        "rollback": "Revert the PR #45 merge (rebase branch with 26 SMC commits plus this manifest commit); no runtime wiring, runtime.toml, credential or persisted-data migration is involved.",
+        "verification": [
+          "local pytest run of tests/unit/test_smc_semantic_logic_*.py (14 files, p1a through p4d) on the candidate tree",
+          "CI gate on PR #45: security scan SUCCESS, pytest+ruff+pyright must be green before merge",
+          "A.5 gate re-run on the new head commit with this manifest"
+        ]
+      }
+    }
+  ]
+}

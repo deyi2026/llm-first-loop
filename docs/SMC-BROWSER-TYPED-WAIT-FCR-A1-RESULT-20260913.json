@@ -1,0 +1,77 @@
+{
+  "date": "2026-09-13",
+  "evidence_sha256": {
+    "execution_manifest_json": "b728825a8adb862042eeab711e95eb12ef0f85a9f238e7769915a400e1c3340b",
+    "plan_json": "b102a2b430815c8babb62ced6dab098a0d8ed4589ffc36bb6d30a6bea5de4f7e",
+    "results_jsonl": "79f482a4427de174ea925b9f69d6ddd8657a8f6d36e34b47ad36a675a18b6f4b",
+    "smoke_gate_json": "ff4c8b45f42c6542c63c21aa73221036f95624385865d1654cbdc5511e4ca4cc"
+  },
+  "gate": {
+    "complete_rows": 2,
+    "expected_wait_first": "2/2",
+    "first_wait_satisfied": "0/2",
+    "first_wait_structurally_complete": "2/2",
+    "infra_valid": true,
+    "legacy_wait_misuse_count": 0,
+    "missing_predicate_failure_count": 0,
+    "mutation_call_count": 0,
+    "no_fallback": true,
+    "pass": false,
+    "scope_target_mismatch_failure_count": 0,
+    "security_agent_spawned": false,
+    "snapshot_before_first_wait": "2/2",
+    "snapshot_predicate_count": 0,
+    "surface_exact": true,
+    "typed_wait_failure_count": 6
+  },
+  "identity": {
+    "a0_equivalence_commit": "080e38f9",
+    "a0_implementation_commit": "07fe17f0",
+    "a1_measured_head": "625a5fe9",
+    "a1_protocol_commit": "a978bf3a",
+    "design_commit": "ba6d93cd",
+    "plan_sha256": "9650bdb09b54fdaa7f55f3ec845979379ea7b973a0d4610721830a7af85b03b1",
+    "surface_sha256": "15fd428653b325ef7d56f49bf8e8254d6d4e944787422f93873f22bee84ccecf"
+  },
+  "nonclaims": [
+    "A1 does not qualify A2, navigation redesign, or cloud providers",
+    "A1 failure does not invalidate A0 deterministic compiler equivalence",
+    "no automatic coercion, retry, rebind, latest selection, or task-completion logic was added"
+  ],
+  "rows": [
+    {
+      "classification": "capability_advertisement_sensor_fact_mismatch",
+      "first_wait_result": "indeterminate",
+      "first_wait_tool": "browser_wait_scope",
+      "index": 1,
+      "observer_error_count": 0,
+      "root_cause": "property_unobserved",
+      "sample_count": 117,
+      "status": "TASK_FAIL",
+      "structurally_complete": true,
+      "task_id": "scope_ready"
+    },
+    {
+      "classification": "property_dependent_value_type_not_fcr_visible",
+      "first_wait_tool": "browser_wait_object",
+      "index": 2,
+      "observed_value_argument_types": {
+        "string_false_calls": 1,
+        "string_true_calls": 5
+      },
+      "root_cause": "predicate value type mismatch for enabled: expected boolean",
+      "status": "TASK_FAIL",
+      "structurally_complete": true,
+      "task_id": "object_enabled",
+      "typed_wait_failure_count": 6
+    }
+  ],
+  "schema": "smc.browser_typed_wait_fcr_a1.result.v0.6",
+  "verdict": {
+    "a0_mechanical_compiler": "PASS",
+    "a1_fcr_live_capability": "FAIL_NOT_QUALIFIED",
+    "a2_confirmatory": "NOT_RUN_BY_GATE",
+    "cloud_canary": "NOT_RUN",
+    "v0_6_b_navigation": "NOT_STARTED"
+  }
+}

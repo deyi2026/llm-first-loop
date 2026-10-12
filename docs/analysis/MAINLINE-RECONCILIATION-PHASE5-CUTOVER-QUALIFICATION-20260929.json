@@ -1,0 +1,83 @@
+{
+  "candidate": {
+    "all_delta_paths": 23,
+    "base": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "head_before_phase5_evidence": "50b048be9778d306dbcc1a1c9ffd984f68e014ee",
+    "merge_base_with_production": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "production_only_commits": 0,
+    "reconciliation_commits_before_phase5_evidence": 8,
+    "runtime_delta_exact": [
+      "scripts/restart_feishu.sh",
+      "scripts/restart_system.sh",
+      "src/llm_loop/cache_guard/guard.py"
+    ],
+    "worktree_clean_before_phase5_evidence": true
+  },
+  "cutover_plan": [
+    "create and switch root working tree from main to wip/main-pre-reconcile-20260929 at the same old main commit, preserving dirty files and clean index bytes",
+    "re-verify all 31 frozen tracked WIP hashes and index tree after branch switch",
+    "force-update main ref from old divergent main to the fully qualified reconciliation head; this is intentionally non-fast-forward because the two old main governance commits were semantically replayed as new commits",
+    "switch the clean reconciliation worktree from reconcile/mainline-gen161-20260929 to main at the same qualified tree",
+    "verify main head/tree, production gen161 currentness, and original WIP preservation before any later worktree cleanup"
+  ],
+  "date": "2026-09-29",
+  "production": {
+    "converged_services": [
+      "web",
+      "feishu",
+      "learning"
+    ],
+    "generation": 161,
+    "head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+    "lagging": [],
+    "pending_failed": [],
+    "service_control_verify": "PASS"
+  },
+  "qualification": {
+    "baseline_ab": "all 9 exact failed nodes reproduced on untouched gen161 production",
+    "candidate_regression_failures": 0,
+    "code_nav_skill_real_pyright": "36/36 PASS",
+    "deployment_preflight": "PASS without touching services",
+    "full_unit_candidate": "6189 passed / 116 skipped / 9 failed",
+    "full_unit_failed_nodes": [
+      "tests/unit/test_arch_guards.py::test_local_imports_ratchet",
+      "tests/unit/test_arch_guards.py::test_runtime_cycles_match_known",
+      "tests/unit/test_resolved_episode.py::test_engine_second_run_retires_first_episode_but_episode_is_retrievable",
+      "tests/unit/test_resolved_episode.py::test_engine_anchor_remap_preserves_current_tool_protocol_after_retirement",
+      "tests/unit/test_rule_presence_contract.py::test_ledger_covers_all_sot_rules",
+      "tests/unit/test_safety.py::test_evo1_home_subpath_allowed_home_itself_blocked",
+      "tests/unit/test_safety_bypass.py::test_rm_rf_tilde_subdir_allowed",
+      "tests/unit/test_safety_bypass.py::test_rm_rf_home_var_subdir_allowed",
+      "tests/unit/test_timekeeping_local.py::test_source_does_not_serialize_new_wall_clock_in_utc"
+    ],
+    "git_diff_check": "PASS",
+    "knowledge_binding_preflight": "PASS",
+    "py_compile_changed_python": "PASS",
+    "restart_shell_syntax": "PASS",
+    "ruff_check_changed_python": "PASS",
+    "security_scan": "PASS",
+    "webui_build": "PASS",
+    "webui_dist_vs_gen161": "byte-equivalent tree hash 1bade596417fec339a936744207fb29d6b62c8006c317b0872d4888f8b8466f4",
+    "webui_tests": "35 files / 263 tests PASS"
+  },
+  "result": "QUALIFIED_FOR_CUTOVER_CHECKPOINT",
+  "safety": {
+    "dirty_main_files_modified": false,
+    "main_ref_moved_in_phase5": false,
+    "production_modified": false,
+    "production_restarted": false,
+    "root_worktree_branch_changed_in_phase5": false,
+    "worktrees_deleted": false
+  },
+  "schema": "lfl.mainline_reconciliation.phase5_cutover_qualification.v1",
+  "source_main": {
+    "frozen_tracked_wip_hash_drift": 0,
+    "head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b",
+    "index_equals_head": true,
+    "index_tree": "1d6bf5bd04e8eaf3857f8e4ae5ab85e61ef59616",
+    "note": "root working tree remains dirty but index is exactly the old main tree; no staged changes exist",
+    "porcelain_untracked_entries": 130,
+    "tracked_worktree_modifications": 31,
+    "tree": "1d6bf5bd04e8eaf3857f8e4ae5ab85e61ef59616"
+  }
+}

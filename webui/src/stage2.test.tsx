@@ -1,0 +1,635 @@
+// 阶段 2：markdown/高亮/消息/输入区 单元与冒烟测试
+
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { act, render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
+import { ensureMathRenderer, renderMarkdown, highlightCode } from "./core/markdown";
+import { MessageItem } from "./components/conversation/MessageItem";
+import { Composer } from "./components/conversation/Composer";
+import { projectToolActivityMessages } from "./core/toolActivity";
+import { previewTabsStore, rightPanelStore } from "./core/stores";
+
+beforeAll(async () => {
+  await ensureMathRenderer();
+});
+
+describe("renderMarkdown", () => {
+  it("GFM 基础渲染", () => {
+    const html = renderMarkdown("# 标题\n\n**加粗** 与 `code`");
+    expect(html).toContain("<h1>标题</h1>");
+    expect(html).toContain("<strong>加粗</strong>");
+    expect(html).toContain("<code>code</code>");
+  });
+
+  it("数学 KaTeX 渲染（块级/行内）", () => {
+    const html = renderMarkdown("行内 $x^2$ 与块级 $$E=mc^2$$");
+    expect(html).toContain("katex");
+  });
+
+  it("fenced shell 命令中的 $PWD 不经过 KaTeX，且代码文本逐字保持", () => {
+    const command = [
+      'LFL_WORKSPACE_ROOT="$PWD" LFL_RUNTIME_ROOT="$PWD" PYTHONPATH="$PWD/src" \\',
+      '.venv/bin/python -m llm_loop.runtime.service_control publish \\',
+      '  --expected-generation 30 --code-root "$PWD" --runtime-root "$PWD" --data-dir "$PWD/data"',
+    ].join("\n");
+    const html = renderMarkdown(`\`\`\`bash\n${command}\n\`\`\``);
+    expect(html).not.toContain("katex");
+    expect(html).not.toContain("katex-mathml");
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    expect(host.querySelector("pre code")?.textContent).toBe(command);
+  });
+
+  it("inline code 保护 shell 变量，同时保留相邻真正数学", () => {
+    const html = renderMarkdown('运行 `echo "$PWD"`，然后计算 $x^2$');
+    expect(html).toContain('<code>echo "$PWD"</code>');
+    expect(html).toContain("katex");
+  });
+
+  it("出产物内联路径：正文中的文件路径 code 变为可点击链接", () => {
+    const html = renderMarkdown(
+      "已修改 `src/llm_loop/core/a.py` 与 `src/llm_loop/core/b.py`",
+      new Set(["src/llm_loop/core/a.py"])
+    );
+    // 集合命中的路径 → v2-file-link（可点击打开）
+    expect(html).toContain('class="v2-file-link" data-path="src/llm_loop/core/a.py"');
+    // 未命中集合但路径样式 → 也可点（点击时后端校验存在性）
+    expect(html).toContain('class="v2-file-link" data-path="src/llm_loop/core/b.py"');
+  });
+
+  it("出产物内联路径：无 clickablePaths 时路径样式 code 也可点，命令/普通词排除", () => {
+    // 路径样式（含 / 或以已知扩展名结尾）→ 可点
+    const html = renderMarkdown("修改了 `docs/development_methodology.md` 与 `src/a.py`");
+    expect(html).toContain('class="v2-file-link" data-path="docs/development_methodology.md"');
+    expect(html).toContain('class="v2-file-link" data-path="src/a.py"');
+    // 命令（含空格）/ 普通词 → 保持普通 code
+    const html2 = renderMarkdown("执行 `bash llm_loop evolve-review` 与 `hello` 与 `max_tokens`");
+    expect(html2).not.toContain("v2-file-link");
+    expect(html2).toContain("<code>bash llm_loop evolve-review</code>");
+    expect(html2).toContain("<code>hello</code>");
+    // URL 排除（marked 渲染为链接，不在 code 内）
+    const html3 = renderMarkdown("看 `https://example.com/a.md`");
+    expect(html3).not.toContain('class="v2-file-link" data-path="https://example.com/a.md"');
+  });
+
+  it("XSS 脚本被剥离（白名单 sanitize）", () => {
+    const html = renderMarkdown('<script>alert(1)</script>正文');
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("正文");
+  });
+});
+
+describe("highlightCode", () => {
+  it("关键字/字符串/注释/数字分色", () => {
+    const html = highlightCode('def f(x):\n    # 注释\n    return "s" + 1');
+    expect(html).toContain("shiki-keyword");
+    expect(html).toContain("shiki-string");
+    expect(html).toContain("shiki-comment");
+    expect(html).toContain("shiki-number");
+  });
+
+  it("特殊字符转义（防 XSS）", () => {
+    const html = highlightCode("<script>alert(1)</script>");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+describe("MessageItem", () => {
+  it("用户消息气泡", () => {
+    render(<MessageItem msg={{ role: "user", content: "你好" }} />);
+    expect(screen.getByTestId("msg-user")).toBeInTheDocument();
+    expect(screen.getByText("你好")).toBeInTheDocument();
+  });
+
+  it("消息时间按浏览器/操作系统本地时区显示，并保留 ISO 机器时间", () => {
+    const ts = 1_700_000_000;
+    render(<MessageItem msg={{ role: "user", content: "带时间消息", ts }} />);
+    const time = document.querySelector("time.v2-msg-time") as HTMLTimeElement | null;
+    expect(time).not.toBeNull();
+    expect(time?.dateTime).toBe(new Date(ts * 1000).toISOString());
+    expect(time?.title).toBe("按设备系统时区显示");
+    expect(time?.textContent).toMatch(/\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it("用户/助手消息均有一键复制按钮", () => {
+    render(<MessageItem msg={{ role: "user", content: "用户内容" }} />);
+    expect(screen.getByTestId("copy-btn")).toBeInTheDocument();
+    cleanup();
+    render(<MessageItem msg={{ role: "assistant", content: "助手内容" }} />);
+    expect(screen.getByTestId("copy-btn")).toBeInTheDocument();
+  });
+
+  it("点击复制 → 写入剪贴板 + 显示已复制（1s 恢复）", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    render(<MessageItem msg={{ role: "assistant", content: "待复制内容" }} />);
+    fireEvent.click(screen.getByTestId("copy-btn"));
+    expect(writeText).toHaveBeenCalledWith("待复制内容");
+    await waitFor(() => expect(screen.getByText("已复制")).toBeInTheDocument());
+    vi.useFakeTimers();
+    // 触发 1s 定时器恢复（copied 状态由 setTimeout 复位）
+    // 先等待写入 promise 微任务落地再推进
+    vi.advanceTimersByTime(1000);
+    vi.useRealTimers();
+    await waitFor(() => expect(screen.getByText("复制")).toBeInTheDocument());
+    vi.unstubAllGlobals();
+  });
+
+  it("Clipboard API 不可用时回退 execCommand，移动/域名环境仍可复制", async () => {
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    try {
+      render(<MessageItem msg={{ role: "assistant", content: "移动端复制" }} />);
+      fireEvent.click(screen.getByTestId("copy-btn"));
+      await waitFor(() => expect(screen.getByText("已复制")).toBeInTheDocument());
+      expect(execCommand).toHaveBeenCalledWith("copy");
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+      if (originalExecCommand) {
+        Object.defineProperty(document, "execCommand", originalExecCommand);
+      } else {
+        Reflect.deleteProperty(document, "execCommand");
+      }
+    }
+  });
+
+  it("代码块复制 shell 命令时使用未污染的原始可见代码文本", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const command = 'LFL_WORKSPACE_ROOT="$PWD" LFL_RUNTIME_ROOT="$PWD" PYTHONPATH="$PWD/src"';
+    render(<MessageItem msg={{ role: "assistant", content: `\`\`\`bash\n${command}\n\`\`\`` }} />);
+    const button = document.querySelector(".v2-code-copy") as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    fireEvent.click(button);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(command));
+    vi.unstubAllGlobals();
+  });
+
+  it("助手消息：模型 + token 消耗页脚（M51/M52，k 单位格式化）", () => {
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "回答", model_used: "kimi/k3", tokens_in: 12345, tokens_out: 678 }}
+      />
+    );
+    const footer = screen.getByTestId("msg-footer");
+    expect(footer.textContent).toContain("—— kimi/k3");
+    expect(footer.textContent).toContain("12.3k入");
+    expect(footer.textContent).toContain("678出");
+  });
+
+  it("流式等待提示只陈述等待事实，不臆测首 token 或同会话排队阶段", async () => {
+    vi.useFakeTimers();
+    render(<MessageItem msg={{ role: "assistant", content: "", streaming: true, streamStartedAt: Date.now() - 6_000 }} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    const hint = screen.getByTestId("thinking-hint");
+    expect(hint.textContent).toContain("已等待");
+    expect(hint.textContent).toContain("正在处理");
+    expect(hint.textContent).not.toContain("首 token");
+    expect(hint.textContent).not.toContain("同会话串行排队");
+    vi.useRealTimers();
+  });
+
+  it("助手消息：无模型/token 时不渲染页脚", () => {
+    render(<MessageItem msg={{ role: "assistant", content: "回答" }} />);
+    expect(screen.queryByTestId("msg-footer")).not.toBeInTheDocument();
+  });
+
+  it("流式 reasoning 一到达就自动展开并显示实时游标，历史消息仍可默认折叠", () => {
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "", reasoningContent: "正在分析当前证据", streaming: true }}
+      />
+    );
+    const block = screen.getByTestId("think-block");
+    expect(block.querySelector(".v2-think-body")?.textContent).toContain("正在分析当前证据");
+    expect(block.querySelector(".v2-think-cursor")).not.toBeNull();
+    expect(block.querySelector("button")?.textContent).toContain("▾");
+  });
+
+  it("助手消息：正文 + 思考块默认折叠", () => {
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "回答内容", reasoningContent: "推理过程" }}
+      />
+    );
+    expect(screen.getByText("回答内容")).toBeInTheDocument();
+    expect(screen.getByTestId("think-block")).toBeInTheDocument();
+    expect(screen.getByText("💭 思考过程（4 字）▸")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("think-block").querySelector("button")!);
+    expect(screen.getByText("推理过程")).toBeInTheDocument();
+  });
+
+  it("思考块：shell 美元变量不经过 KaTeX，不产生 MathML 污染", () => {
+    const reasoning = 'check $d$p and "$p" from repo root';
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "回答", reasoningContent: reasoning }}
+      />
+    );
+    fireEvent.click(screen.getByTestId("think-block").querySelector("button")!);
+    const body = screen.getByTestId("think-block").querySelector(".v2-think-body")!;
+    expect(body.textContent).toContain("$d$p");
+    expect(body.querySelector(".katex")).toBeNull();
+    expect(body.querySelector("math")).toBeNull();
+  });
+
+  it("工具活动：执行中自动展开；完成后默认折叠；普通界面不暴露 tool_call_id", () => {
+    const { rerender } = render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          streaming: true,
+          toolCalls: [{ id: "c1-secret-id", name: "read_file", arguments: { path: "/tmp/a" } }],
+          toolActivities: [{ id: "c1-secret-id", name: "read_file", status: "running", argsSummary: '{"path":"/tmp/a"}' }],
+        }}
+      />
+    );
+    expect(screen.getByTestId("tool-activity")).toBeInTheDocument();
+    expect(screen.getByText(/正在使用工具/)).toBeInTheDocument();
+    expect(screen.getByText("读取文件")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("c1-secret-id");
+
+    rerender(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "完成",
+          streaming: false,
+          toolCalls: [{ id: "c1-secret-id", name: "read_file", arguments: { path: "/tmp/a" } }],
+          toolActivities: [{ id: "c1-secret-id", name: "read_file", status: "success", arguments: { path: "/tmp/a" } }],
+        }}
+      />
+    );
+    expect(screen.getByText("使用了 1 个工具")).toBeInTheDocument();
+    expect(screen.queryByText("读取文件")).not.toBeInTheDocument();
+  });
+
+  it("实时任务进展卡：只显示高层阶段、工具摘要和下一步，不复述隐藏推理正文", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          reasoningContent: "PRIVATE_REASONING_SHOULD_NOT_ENTER_PROGRESS_CARD",
+          streaming: true,
+          streamStartedAt: Date.now() - 3_000,
+          progressUpdatedAt: Date.now(),
+          progressStage: "tool",
+          toolActivities: [{
+            id: "c-progress",
+            name: "read_file",
+            status: "running",
+            arguments: { path: "src/example.py" },
+          }],
+        }}
+      />
+    );
+    const card = screen.getByTestId("progress-card");
+    expect(within(card).getByText("正在使用工具")).toBeInTheDocument();
+    expect(card.textContent).toContain("正在执行 读取文件 · src/example.py");
+    expect(card.textContent).toContain("预计下一步");
+    expect(card.textContent).toContain("等待工具返回后继续分析");
+    expect(card.textContent).not.toContain("PRIVATE_REASONING_SHOULD_NOT_ENTER_PROGRESS_CARD");
+  });
+
+  it("实时任务进展卡：静默 12 秒后显示 heartbeat，明确不是卡死", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-27T08:00:20Z"));
+      render(
+        <MessageItem
+          msg={{
+            role: "assistant",
+            content: "",
+            streaming: true,
+            streamStartedAt: Date.now() - 20_000,
+            progressUpdatedAt: Date.now() - 13_000,
+            progressStage: "tool",
+            toolActivities: [{ id: "c-slow", name: "execute_command", status: "running" }],
+          }}
+        />
+      );
+      const card = screen.getByTestId("progress-card");
+      expect(card.textContent).toContain("运行命令 仍在执行 · 13 秒无新事件");
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
+  });
+
+  it("终态消息不保留实时任务进展卡，避免污染最终回答", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "完成",
+          streaming: false,
+          progressStage: "answering",
+          progressUpdatedAt: Date.now(),
+        }}
+      />
+    );
+    expect(screen.queryByTestId("progress-card")).toBeNull();
+    expect(screen.getByText("完成")).toBeInTheDocument();
+  });
+
+  it("旧backend无exact status的completed保持中性，不渲染成功色", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "done",
+          toolActivities: [{ id: "legacy-c1", name: "read_file", status: "completed" }],
+        }}
+      />
+    );
+    expect(screen.getByTestId("tool-activity").querySelector(".v2-tool-activity-summary-icon.neutral")).not.toBeNull();
+    expect(screen.queryByText("成功")).not.toBeInTheDocument();
+  });
+
+  it("孤立legacy tool receipt仍从旧文本fallback识别中断，不伪装unknown", () => {
+    render(
+      <MessageItem
+        msg={{ role: "tool", content: "[执行中断] legacy receipt", toolCallId: "legacy-orphan", toolName: "read_file" }}
+      />
+    );
+    expect(screen.getByText("已中断")).toBeInTheDocument();
+  });
+
+  it("工具活动：失败项保持展开且清楚显示失败", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolActivities: [{ id: "c1", name: "execute_command", status: "failure", resultContent: "[状态: failure] exit 1" }],
+        }}
+      />
+    );
+    expect(screen.getByText("工具执行有异常 · 1 个工具")).toBeInTheDocument();
+    expect(screen.getByText("运行命令")).toBeInTheDocument();
+    expect(screen.getByText("失败")).toBeInTheDocument();
+  });
+
+  it("出产物：edit_file 工具调用 → 文件 chips 即时可见", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            { id: "c1", name: "edit_file", arguments: { path: "src/llm_loop/core/a.py" } },
+            { id: "c2", name: "edit_file", arguments: { path: "src/llm_loop/core/a.py" } }, // 去重
+            { id: "c3", name: "read_file", arguments: { path: "README.md" } }, // 非产出工具
+          ],
+        }}
+      />
+    );
+    expect(screen.getByTestId("produced-files")).toBeInTheDocument();
+    expect(screen.getByText("src/llm_loop/core/a.py")).toBeInTheDocument();
+    expect(screen.queryByText("README.md")).not.toBeInTheDocument();
+  });
+
+  it("出产物：present_files 声明（execute_command 等产物）→ chips 可见，description 进 tooltip", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            {
+              id: "p1",
+              name: "present_files",
+              arguments: {
+                files: [
+                  { path: "docs/SPEC-20260922-x.md", description: "优化方案" },
+                  { path: "out/result.json" },
+                ],
+              },
+            },
+            { id: "p2", name: "edit_file", arguments: { path: "src/a.py" } }, // 与声明并存
+          ],
+        }}
+      />
+    );
+    expect(screen.getByTestId("produced-files")).toBeInTheDocument();
+    expect(screen.getByText("docs/SPEC-20260922-x.md")).toBeInTheDocument();
+    expect(screen.getByText("out/result.json")).toBeInTheDocument();
+    expect(screen.getByText("src/a.py")).toBeInTheDocument();
+    expect(screen.getByTitle("优化方案")).toBeInTheDocument();
+    expect(screen.getByTitle("打开 out/result.json")).toBeInTheDocument();
+  });
+
+  it("出产物：点击 chip → 右侧栏预览 tab 打开（store 联动；模态已退役）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ sessions: [], count: 0 }), { status: 200 })
+      )
+    );
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "c1", name: "edit_file", arguments: { path: "src/a.py" } }],
+        }}
+      />
+    );
+    fireEvent.click(screen.getByText("src/a.py"));
+    const { tabs, active } = previewTabsStore.getState();
+    expect(tabs.map((t) => t.path)).toEqual(["src/a.py"]);
+    expect(active).toBe("src/a.py");
+    expect(rightPanelStore.getState().tab).toBe("preview");
+    expect(rightPanelStore.getState().open).toBe(true);
+    previewTabsStore.closeAll();
+    rightPanelStore.setOpen(false);
+    rightPanelStore.setTab("settings");
+  });
+});
+
+
+describe("tool activity history projection", () => {
+  it("按 exact tool_call_id 合并调用和回执；原消息不变；孤儿回执不吞掉", () => {
+    const raw = [
+      { role: "assistant" as const, content: "", toolCalls: [{ id: "c1", name: "read_file", arguments: { path: "README.md" } }] },
+      { role: "tool" as const, content: "[状态: success] ok", toolCallId: "c1" },
+      { role: "tool" as const, content: "[状态: failure] orphan", toolCallId: "other" },
+      { role: "assistant" as const, content: "done" },
+    ];
+    const projected = projectToolActivityMessages(raw);
+    expect(raw).toHaveLength(4);
+    expect(projected).toHaveLength(3);
+    expect(projected[0].msg.toolActivities?.[0]).toMatchObject({ id: "c1", status: "success" });
+    expect(projected[1].msg.role).toBe("tool");
+    expect(projected[1].msg.toolCallId).toBe("other");
+  });
+
+  it("结构化 tool status 优先于矛盾回执文本；legacy 文本仅作 fallback", () => {
+    const structured = projectToolActivityMessages([
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read_file", arguments: {} }] },
+      { role: "tool", content: "[状态: success] stale text", toolCallId: "c1", toolName: "read_file", toolStatus: "failure", toolDurationMs: 12.5 },
+    ]);
+    expect(structured[0].msg.toolActivities?.[0]).toMatchObject({
+      id: "c1", status: "failure", durationMs: 12.5,
+    });
+
+    const legacy = projectToolActivityMessages([
+      { role: "assistant", content: "", toolCalls: [{ id: "c2", name: "read_file", arguments: {} }] },
+      { role: "tool", content: "[状态: success] legacy", toolCallId: "c2" },
+    ]);
+    expect(legacy[0].msg.toolActivities?.[0]?.status).toBe("success");
+  });
+});
+
+describe("Composer", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    }));
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("发送按钮随文本启用/禁用", () => {
+    render(<Composer />);
+    const send = screen.getByText("发送") as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("composer-input"), { target: { value: "hi" } });
+    expect(send.disabled).toBe(false);
+  });
+
+  it("粘贴大内容发送后输入框高度复位（不再残留增高）", async () => {
+    // chat/stream 返回 done（sendMessage 完整链路）
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream")) {
+        return new Response(
+          "data: {\"type\":\"done\",\"data\":{\"final_answer\":\"ok\"}}\n\n",
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    });
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { value: 1000, configurable: true });
+    Object.defineProperty(ta, "scrollHeight", { value: 800, configurable: true });
+    // 中等长度内容仍留在 textarea，且可扩到 40vh（本例 400px），不再卡死在旧 180px。
+    fireEvent.change(ta, { target: { value: "长内容\n".repeat(30) } });
+    expect(ta.style.height).toBe("400px");
+    // 发送后高度应复位（空内容 → 内联高度清除，恢复 CSS 默认）
+    fireEvent.click(screen.getByText("发送"));
+    await waitFor(() => {
+      expect((ta as HTMLTextAreaElement).style.height).toBe("");
+    });
+    expect((ta as HTMLTextAreaElement).value).toBe("");
+    Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
+  });
+
+  it("移动键盘出现时输入框按 visualViewport 重算高度，不继续占用布局视口 40%", () => {
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { value: 1000, configurable: true });
+    let viewportHeight = 400;
+    let resizeListener: EventListener | null = null;
+    vi.stubGlobal("visualViewport", {
+      get height() { return viewportHeight; },
+      addEventListener: (type: string, listener: EventListener) => {
+        if (type === "resize") resizeListener = listener;
+      },
+      removeEventListener: (type: string, listener: EventListener) => {
+        if (type === "resize" && resizeListener === listener) resizeListener = null;
+      },
+    });
+
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    Object.defineProperty(ta, "scrollHeight", { value: 800, configurable: true });
+    fireEvent.change(ta, { target: { value: "移动端长输入\n".repeat(20) } });
+    expect(ta.style.height).toBe("160px");
+
+    act(() => {
+      viewportHeight = 300;
+      resizeListener?.(new Event("resize"));
+    });
+    expect(ta.style.height).toBe("120px");
+    Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
+  });
+
+  it("/ 唤起命令面板", () => {
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "/" } });
+    expect(screen.getByTestId("cmd-popup")).toBeInTheDocument();
+    expect(screen.getByText("/new")).toBeInTheDocument();
+  });
+
+  it("/model 目录选项可点击：点选即切换模型 + 反馈", async () => {
+    // 真实契约：models 为字符串数组
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/models")) {
+        return new Response(
+          JSON.stringify({ models: ["deepseek/deepseek-v4-flash", "kimi/k3"], current: null }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    const { sessionStore } = await import("./core/stores");
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "/model" } });
+    const popup = () => screen.getByTestId("cmd-popup");
+    await waitFor(
+      () => expect(within(popup()).getByText("deepseek/deepseek-v4-flash")).toBeInTheDocument(),
+      { timeout: 3000 }
+    );
+    fireEvent.click(within(popup()).getByText("deepseek/deepseek-v4-flash"));
+    expect(sessionStore.getState().model).toBe("deepseek/deepseek-v4-flash");
+    expect(screen.getByTestId("composer-hint").textContent).toContain("已选择模型");
+  });
+
+  it("模型下拉：选择后 store 更新且 select 值保持（响应式不回弹）", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/models")) {
+        return new Response(
+          JSON.stringify({ models: ["deepseek/deepseek-v4-flash", "kimi/k3"], current: null }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    const { sessionStore } = await import("./core/stores");
+    sessionStore.setModel(null);
+    render(<Composer />);
+    const select = (await screen.findByTestId("model-select")) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBeGreaterThan(1)); // 模型选项加载
+    fireEvent.change(select, { target: { value: "kimi/k3" } });
+    expect(sessionStore.getState().model).toBe("kimi/k3");
+    expect(sessionStore.getState().modelChangePending).toBe(true);
+    // 响应式：select 受控值跟随 store（再渲染不回弹）
+    expect(select.value).toBe("kimi/k3");
+  });
+
+  it("命令行点击直接执行（/new 无选项）", () => {
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "/new" } });
+    const popup = screen.getByTestId("cmd-popup");
+    expect(popup).toBeInTheDocument();
+    fireEvent.click(within(popup).getByText("/new"));
+    expect((ta as HTMLTextAreaElement).value).toBe("");
+  });
+});

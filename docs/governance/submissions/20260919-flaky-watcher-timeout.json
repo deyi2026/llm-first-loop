@@ -1,0 +1,40 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-flaky-watcher-timeout",
+  "summary": "Defensive hardening of the job_registry watcher test wait budget: single CI observation of test_watcher_notifies_failed timing out at 3s on a loaded runner; local stress 30/30 green, so no reproduction-based regression is possible; wall-clock budget raised to 10s with assertion content unchanged. No production code is touched.",
+  "components": [
+    {
+      "component_id": "flaky-watcher-timeout-tests",
+      "paths": [
+        "tests/unit/test_job_registry.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "job registry watcher notification tests",
+      "disposition": "ADMIT as test-only wait-budget hardening; assertion content unchanged, no production behavior modified.",
+      "evidence": [
+        "CI run 35417579205 era: one-off test_watcher_notifies_failed failure (original log superseded by re-run).",
+        "Local stress: 30/30 consecutive full-file runs green at 2026-09-19.",
+        "Watcher is a daemon thread performing file I/O; slow CI runners can exceed a 3s wall-clock budget."
+      ],
+      "verification_level": "Focused file pytest (7/7) plus 30x local stress; ruff/pyright unaffected (test-only).",
+      "model_evidence_veto_recovery_exit": "Tests remain independently revisable; reverting restores the 3s budget with no runtime effect.",
+      "rollback_route": "Revert the single test-file commit."
+    },
+    {
+      "component_id": "a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-flaky-watcher-timeout.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage; mechanical gate only.",
+      "evidence": [
+        "Manifest partitions the exact base...head changed-path set of this PR."
+      ],
+      "verification_level": "Local A.5 self-gate before publication.",
+      "model_evidence_veto_recovery_exit": "Review authority remains with humans/models; metadata has no runtime authority.",
+      "rollback_route": "Revert together with the test change."
+    }
+  ],
+  "declarations": []
+}

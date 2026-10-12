@@ -1,0 +1,110 @@
+{
+  "arms": [
+    {
+      "LFL_SMX_PERCEIVE": "",
+      "id": "lfl_smx_off",
+      "smx_perceive_expected": false
+    },
+    {
+      "LFL_SMX_PERCEIVE": "<repo>/tools/smx/smx.py",
+      "id": "lfl_smx_on",
+      "smx_perceive_expected": true
+    }
+  ],
+  "differential_invariants": {
+    "expected_changed_source_files": [
+      "evals/pilot/analyze.py"
+    ],
+    "v1_1_causal_design_canonical_sha256": "7ea2738f77f9fb2de5e4b89d3025981e9f49a80a867f9a48f499d89c5695bdf0",
+    "v1_1_plan_rows_canonical_sha256": "cdac602f6e5b757ec1ee869eebc67c7506ac5f84fbc7ee8b9c55d223fe081414",
+    "v1_2_causal_design_canonical_sha256": "7ea2738f77f9fb2de5e4b89d3025981e9f49a80a867f9a48f499d89c5695bdf0",
+    "v1_2_plan_rows_canonical_sha256": "cdac602f6e5b757ec1ee869eebc67c7506ac5f84fbc7ee8b9c55d223fe081414"
+  },
+  "execution_plan_sha256": "2f925980a5715ce7ccbd95c9c8c9f6df74c8b44c1e71b90c905a574284f47027",
+  "invalidation": [
+    "frozen_hash_changed",
+    "model_or_runtime_identity_changed",
+    "concurrent_runner_same_workdir",
+    "plan_index_gap_or_duplicate",
+    "overlapping_8901_workload"
+  ],
+  "planned_runs": 30,
+  "protocol": "agentpilot-smx-focused-v1.2",
+  "repeats": 3,
+  "required_execution_manifest": [
+    "lfl_git_commit",
+    "git_dirty",
+    "model_directory_fingerprint",
+    "runtime_identity",
+    "sampling_config",
+    "reasoning_config",
+    "off_tool_surface_sha256",
+    "on_tool_surface_sha256",
+    "smx_resolved_path",
+    "smx_impl_sha256",
+    "smx_glue_sha256",
+    "runner_sha256",
+    "tasks_sha256",
+    "telemetry_sha256",
+    "scorer_sha256",
+    "execution_plan_sha256"
+  ],
+  "schema": 1,
+  "seed": 20260912,
+  "source_sha256": {
+    "evals/pilot/analyze.py": "326227d5f4b4601c03eb245a03f13a80907d284efeaefb20f3b69bb4b6113064",
+    "evals/pilot/run_pilot.py": "a7480edfca2b9d1b3a28b5088855ee3c55b5758f3749360479bad7734f45c3d8",
+    "evals/pilot/tasks.py": "d481735bfeb57b1960f5ef5d71aea5ecf3db9add08d2ca82e29837d4038ac769",
+    "evals/pilot/telemetry.py": "0d559f3955d727e55aaee04099cb719c76242dbfac5c4a7f59ac5f61f5c350dd",
+    "src/llm_loop/config.py": "23d8d477782510e742bd04c1f7328645e43e86e930306dbca61bb332bb82624a",
+    "src/llm_loop/factory.py": "0ed300f8984f1376c6cf3e554cf32ee3b88bf03b731c7682d23f0dc58aab94fa",
+    "src/llm_loop/tools/builtin/smx_perceive.py": "2a528386f095998e365cfc17695c1d0b7c828927575791da761cc8faa34951b7",
+    "src/llm_loop/tools/registry.py": "67c93722168f7d9ea8af378cd77ddba1f82620d305fe1c363fbec935b2f2c9d2",
+    "tools/smx/lab/tasks/T3/judge.sh": "873210debc30a6d0187ab8de5cdb6bf5cf5504fe85b9baa8aee9e0509f4998e6",
+    "tools/smx/lab/tasks/T3/setup.sh": "20127fb214166e0396d0f4fc3832fdecc095a7b42254e3360efde57000e3a54c",
+    "tools/smx/lab/tasks/T3/task.md": "0352424d9dea7418513b90df4d255aa4dc29a88e7b7769dca733fc8c6dab8115",
+    "tools/smx/lab/tasks/T4/judge.sh": "6d80e23bc222e5a9941f095b386895a8fd5940346073774c38c560859f08492f",
+    "tools/smx/lab/tasks/T4/setup.sh": "03c6c3d7a45ffcfa8c01de11bceb36380ffbd8b61323277bba096a57f2c59204",
+    "tools/smx/lab/tasks/T4/task.md": "3f4cb3cfca261e4805affa7dff5e057eeb372166c701055d7f5e30d7ef0aa061",
+    "tools/smx/lab/tasks/T6/judge.sh": "12972177ef6c1d33648ee391719313338b5cb3de34d492e248e65555d49a63a7",
+    "tools/smx/lab/tasks/T6/setup.sh": "4a978e6b4d4af93a6efdcfe45df3bc0499d761f53ff328304a9c90aa4fcf985c",
+    "tools/smx/lab/tasks/T6/task.md": "fcb999b52e57227671cee3a40e725ccb63ce5714c7584080bbfc4103e57b2518",
+    "tools/smx/smx.py": "2aa66aa622cfe18a0d29cdd801c39ec8e6d633b8748b09a5f363375be926f0d2"
+  },
+  "status": "frozen_not_executed",
+  "supersedes": {
+    "disposition": "deprecated_superseded",
+    "freeze_commit": "dba31bd79c106820e021902d5bcf43bfb32f5fd1",
+    "plan_sha256": "23414345b73b5095ae4afba478aa363e65c4ceb14adcbf936d7e80a9ba243cc7",
+    "protocol": "agentpilot-smx-focused-v1.1",
+    "reason": "v1.1 is not eligible for new formal execution on the current convergence lineage; v1.2 re-freezes the same causal design against the current source facts.",
+    "spec_sha256": "6183fe34a4e7aa9954f67f29ed5b3a6c0c63226bc1a570e6e7bacd0c834e6dde"
+  },
+  "tasks": [
+    {
+      "id": "sx_wait_existing_writer",
+      "role": "positive_wait",
+      "source": "tools/smx/lab/tasks/T3"
+    },
+    {
+      "id": "sx_background_worker",
+      "role": "positive_wait",
+      "source": "tools/smx/lab/tasks/T6"
+    },
+    {
+      "id": "sx_bulk_rename_diff",
+      "role": "positive_diff",
+      "source": "tools/smx/lab/tasks/T4"
+    },
+    {
+      "id": "ap_t06_log_count",
+      "role": "negative_control",
+      "source": "evals/pilot/tasks.py:t06_log_count"
+    },
+    {
+      "id": "ap_t09_big_file_line",
+      "role": "negative_control",
+      "source": "evals/pilot/tasks.py:t09_big_file_line"
+    }
+  ]
+}

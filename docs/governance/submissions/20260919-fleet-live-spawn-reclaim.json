@@ -1,0 +1,55 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-live-spawn-reclaim",
+  "summary": "Isolated live qualification for the Project/ExecutionWorkspace/WorkerLease/reclaim minimal vertical slice on merged main 5fb75d897: one real-LLM spawn through SubAgentRunner+ProjectCoordinator with on-disk lease/workspace/facts/parent-binding verification, plus a separate-process recovery pass proving durable topology, facts_summary, expired-lease reclaim with generation fencing.",
+  "components": [
+    {
+      "component_id": "fleet-live-qual-harness",
+      "paths": [
+        "scripts/qualification/fleet_live_spawn_reclaim.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "standalone qualification harness",
+      "disposition": "ADMIT as an isolated, read-only-with-respect-to-shared-runtime qualification script. It constructs existing fleet/subagent components in a temp state root and makes real provider calls; it adds no runtime authority, no new gates, and never touches production data dirs or the shared services.",
+      "evidence": [
+        "Final run-4: spawn 13/13 PASS and recover 5/5 PASS in two separate processes (real glm-5.3 child, outcome=ok).",
+        "Fencing proven: stale generation-1 lease write raised FencedError naming lease-ws-2-g1 superseded; reclaim advanced generation 1->2 and settled.",
+        "Prior failing runs are recorded honestly in the qualification document (provider-side hang, outcome vocabulary, stale-handle construction)."
+      ],
+      "verification_level": "Ruff PASS on the script; two-process execution receipts included in the qualification record",
+      "model_evidence_veto_recovery_exit": "The harness is a model-invokable evidence collector; operators may delete or amend it with no runtime effect.",
+      "rollback_route": "Revert the single commit; no runtime or data migration involved."
+    },
+    {
+      "component_id": "fleet-live-qual-record",
+      "paths": [
+        "docs/QUALIFICATION-20260919-fleet-live-spawn-reclaim.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "qualification evidence record",
+      "disposition": "ADMIT as a factual record of the live qualification runs; runtime does not consume it.",
+      "evidence": [
+        "Records exact baseline SHA, harness path, reproduction commands, per-run PASS/FAIL inventories, and the non-judged glm-5.3 refusal observation."
+      ],
+      "verification_level": "Human/model review against the harness output receipts",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend or reject the record without changing runtime behavior.",
+      "rollback_route": "Delete the record with no runtime effect."
+    },
+    {
+      "component_id": "fleet-live-qual-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-live-spawn-reclaim.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage; no control machinery is introduced by this submission.",
+      "evidence": [
+        "Manifest partitions the exact changed-path set (harness, record, this manifest)."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains the authority for classification truth.",
+      "rollback_route": "Revert together with the qualification metadata."
+    }
+  ],
+  "declarations": []
+}

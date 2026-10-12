@@ -1,0 +1,14 @@
+=== dry-run: single-file layer ===
+scanned_sessions: 582
+opened_total: 4941
+candidates: 1
+already_orphaned: 8
+replicas_skipped: 0
+marked: 0
+=== dry-run: incl multi-segment ===
+scanned_sessions: 646
+opened_total: 32178
+candidates: 1
+already_orphaned: 55
+replicas_skipped: 1
+marked: 0

@@ -1,0 +1,12 @@
+---
+title: SWE-bench Django batch12 修复模式（10 实例，含 namedtuple 三态陷阱与 lazy proxy 二元运算）
+scenario: "继续 SWE-bench django 批量流水线（batch12: 13513/13516/13551/13590/13658/13741/13786/13794/13807/13809），本地验证 10/10 全绿、patch 已落盘 /tmp/swe_lfl_patches/，容器终验后台进行中。这些修复模式对后续批次（batch13-20）同类问题直接可复用。"
+root_cause: 各实例独立根因见 solution 内逐条说明；共性教训：① 继承 TextIOBase/argparse 等基类时，基类已定义同名方法会屏蔽 __getattr__ 转发（13516）；② 容器重建要区分 plain tuple 与 namedtuple 子类的构造语义（13590）；③ SQL 关键字表/列名需统一引号（13807 需连修 3 处，第一处修完才暴露下一处）；④ proxy 运算需显式处理 Promise 操作数（13794）。
+solution: "按实例记录最小修复：① 13513 django/views/debug.py get_traceback_frames：exceptions.pop() 取到无 traceback 的 cause 后需 while tb is None and exceptions 继续 pop 跳过（手动赋 __context__ 的异常从未 raise 无 tb）；② 13516 OutputWrapper 显式加 flush() 转发 self._out.flush()（TextIOBase 已有 flush 方法导致 __getattr__ 不触发）；③ 13551 PasswordResetTokenGenerator._make_hash_value 加 email=getattr(user, user.get_email_field_name(), '') or ''（支持自定义 EMAIL_FIELD）；④ 13590 Query.resolve_lookup_value 重建容器时**三态分支**：type(value) is tuple→tuple(resolved)、isinstance tuple→type(value)(*resolved)（namedtuple 需展开）、list→list(resolved)——普通 tuple 用 * 展开会报 tuple expected at most 1 argument（回归坑，先 type 判断）；⑤ 13658 ManagementUtility 预处理 parser 加 prog=self.prog_name（sys.argv[0] 可能为 None）；⑥ 13741 ReadOnlyPasswordHashField __init__ 加 kwargs.setdefault('disabled', True)；⑦ 13786 CreateModel.reduce 合并 AlterModelOptions 后对 ALTER_OPTION_KEYS 不在 operation.options 的键 pop（对齐 state_forwards 清除语义）；⑧ 13794 lazy __proxy__ 显式 __add__/__radd__（对方 Promise 先 __cast()），否则 proxy+proxy 及 str+proxy 都 NotImplemented；⑨ 13807 SQLite check_constraints 全部表名/列名加双引号：PRAGMA foreign_key_check(\"%s\")、foreign_key_list(\"%s\")、SELECT \"%s\",\"%s\" FROM \"%s\"（关键字表名 order、db_column select/where）；⑩ 13809 runserver 加 --skip-checks 选项（add_arguments store_true + inner_run 中 if not options['skip_checks'] 包裹系统检查输出与 self.check/check_migrations）。容器终验注意：harness 脚本须用 llm-first-loop/.venv/bin/python（有 docker+swebench 模块），系统 python3 无 docker 模块。"
+evidence: 本地验证：13513 89 tests OK / 13516 F2P+44(1 pre-existing argparse py3.11 差异) / 13551 566 OK / 13590 155 OK / 13658 1 OK / 13741 3 OK / 13786 34 OK / 13794 27 OK / 13807 6 OK / 13809 10 OK；predictions 10 条已写入 data/swe_results/django_batch12_predictions.jsonl
+tags: [swebench, django, 批量流水线, 修复模式, namedtuple, lazy-proxy, sqlite-quoting]
+source: {}
+status: active
+created_at: "2026-08-20T03:41:20.411193+08:00"
+updated_at: "2026-08-20T03:41:20.411193+08:00"
+---

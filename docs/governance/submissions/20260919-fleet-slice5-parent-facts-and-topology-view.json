@@ -1,0 +1,104 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-slice5-parent-facts-and-topology-view",
+  "summary": "Fleet slice 5 (G2+G3): bind workspace ownership into the durable fact stream (parent_session_id on run_started/run_settled; recover() surfaces a mechanical facts_summary readable after restart) and expose a read-only subagent_topology tool merging the topology journal with lease disk truth per child or parent.",
+  "components": [
+    {
+      "component_id": "fleet-slice5-fact-ownership-and-view-wiring",
+      "paths": [
+        "src/llm_loop/subagent/runner.py",
+        "src/llm_loop/fleet/coordinator.py",
+        "src/llm_loop/factory.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "fleet lease lifecycle fact stream and recovery read surface (runner emission + coordinator recover summary + factory tool registration)",
+      "disposition": "ADMIT as one narrow ownership-binding tranche. The program adds only mechanical provenance: parent_session_id on both lifecycle facts (source: parent_of's active+durable mechanical path), a facts count/ownership summary in recover() (no semantic judgment), and registration of the read-only merged-view tool. Settled facts are emitted before finish_run because store fencing accepts facts only from active leases; exactly-once remains _fleet_leases.pop + store SettlementError. No new store, no liveness policy, no takeover authority.",
+      "evidence": [
+        "RED-first: settlement-fact test exposed a real gap — store.settle never appended run_settled to the facts stream at all; the fix emits the fact from the runner (run_started/run_settled symmetric) instead of changing slice1's store contract (gate test stays authoritative and green).",
+        "Restart probe: a fresh ProjectCoordinator on the same fleet_dir reads last_parent_session_id=parent-run-1 and run_started/run_settled counts from disk facts alone.",
+        "Adjacent fleet + topology + factory suites 84/84 PASS; ruff clean; pyright 0/0/0."
+      ],
+      "verification_level": "RED-first focused TDD, adjacent fleet+topology+factory pytest, ruff, pyright, full not-real_llm pytest on the committed candidate",
+      "model_evidence_veto_recovery_exit": "All new surfaces are read-only facts; the model decides takeover/reclaim actions via existing verbs with recover()/subagent_lease/subagent_topology disk truth. Exit: unset fleet opt-in keeps everything off; the tool then honestly reports lease unavailable while the topology view still works.",
+      "rollback_route": "Revert the single commit. Facts JSONL entries gain an additive field (readers tolerate absence); state.json schema unchanged; no migration needed.",
+      "declaration_id": "fleet-slice5-fact-ownership-and-view-wiring"
+    },
+    {
+      "component_id": "fleet-slice5-topology-readonly-tool",
+      "paths": [
+        "src/llm_loop/tools/builtin/subagent_topology.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "read-only merged topology+lease view tool (model agency surface)",
+      "disposition": "ADMIT as a read-only observation tool: composes existing runner methods (parent_of/topology_snapshot/active_children/pending_obligations/lease_facts) into one text view; performs no writes, no takeover, no semantic judgment; degrades honestly per block (lease unavailable when fleet not wired).",
+      "evidence": [
+        "Tool tests: child view merges parent binding + settled lease facts; parent view lists children/obligations; no-argument call fails closed; un-wired runner keeps topology with lease unavailable.",
+        "Factory registers the tool even with fleet off (degradation is per-block, not registration-gated)."
+      ],
+      "verification_level": "Focused tool tests + factory registration test",
+      "model_evidence_veto_recovery_exit": "Pure read; removing it removes no authority, only visibility.",
+      "rollback_route": "Revert with the implementation."
+    },
+    {
+      "component_id": "fleet-slice5-tests",
+      "paths": [
+        "tests/unit/test_fleet_topology_tool_and_parent_facts.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression for fact ownership binding, restart recovery, and merged view degradation",
+      "disposition": "ADMIT as tests only (7 cases incl. factory registration with fleet off).",
+      "evidence": [
+        "Two RED pre-implementation failures on the ownership tests; all 7 green after."
+      ],
+      "verification_level": "Focused + adjacent pytest",
+      "model_evidence_veto_recovery_exit": "Tests expose mechanical facts and can be revised independently.",
+      "rollback_route": "Revert with the implementation."
+    },
+    {
+      "component_id": "fleet-slice5-a5-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-slice5-parent-facts-and-topology-view.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 stays mechanical.",
+      "evidence": [
+        "Manifest partitions the exact changed-path set and declares the single control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth.",
+      "rollback_route": "Revert together with the implementation."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "fleet-slice5-fact-ownership-and-view-wiring",
+      "g1": {
+        "necessity": "After slices 1-4, a restarted coordinator could see a workspace's lease and settlement but not which parent session owned it — ownership lived only in the separate session-store topology journal, so fleet disk truth alone could not answer takeover questions, and no tool merged both stores."
+      },
+      "g2": {
+        "authority_owner": "existing FleetStore facts JSONL (per-workspace append-only stream) and existing session-store topology journal; the merged view composes two existing read-only authorities at read time",
+        "relationship": "reuse",
+        "non_duplication": "No new store or second ownership record: parent_session_id is provenance attached to facts the runner already emits; recover()'s facts_summary is a mechanical aggregation of the same stream; the tool only reads."
+      },
+      "g3": {
+        "model_evidence": [
+          "run_started/run_settled facts each carry parent_session_id",
+          "recover() facts_summary (counts + last_parent_session_id) readable by a restarted coordinator",
+          "subagent_topology merged text view per child/parent incl. lease state and expires/expired",
+          "settled-fact-before-finish ordering documented and fencing-tested"
+        ],
+        "recovery_or_reason": "Exit is configuration-level (fleet opt-in off) or single-commit revert; append-only facts with an additive field are inert to older readers and no schema migration exists."
+      },
+      "g4": {
+        "rollback": "Revert the single commit; no data migration (facts additive field, state.json schema unchanged).",
+        "verification": [
+          "RED-first ownership tests failed pre-implementation (settlement fact absent entirely), 7/7 PASS after",
+          "adjacent fleet+topology+factory+slice4-wiring suites 84/84 PASS",
+          "ruff clean; pyright 0/0/0",
+          "full not-real_llm pytest on the committed candidate PASS"
+        ]
+      }
+    }
+  ]
+}

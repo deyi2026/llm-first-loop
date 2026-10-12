@@ -1,0 +1,582 @@
+"""灾难性安全硬边界 CatastrophicGuard（design.md §2.1.3.5 机制四 / FR-SAFE）.
+
+唯一允许程序硬阻断的边界（FR-SAFE-01）: 只拦截不可逆删除/系统破坏，
+其余一切如实反馈放行（FR-SAFE-03）。边界刻意保持极小（FR-SAFE-03）。
+
+如实标注（P0-1, 2026-08-15，审计发现 #3 修复）：本机制是**已知灾难模式的
+硬阻断 + 全量阻断审计**，不是完备沙箱——它拦截常见的不可逆破坏形态
+（rm -rf 根/主目录本体、mkfs、dd 写块设备、fork bomb、curl 管道执行、写系统
+关键区、find 删除载荷（按起点目标语义判定）、shell/python 载荷中的上述行为），
+不能证明任意命令无副作用。需要更强隔离时请叠加 EXEC_MODE 分级与系统级沙箱
+（纵深防御）。确属必要的被阻断操作走提权闭环（escalation_request → web 人工
+审批 → 一次性令牌重发；见 tools/escalation.py）。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import shlex
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from llm_loop.timekeeping import system_local_now
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BlockDecision:
+    """一次灾难性阻断判定结果."""
+
+    blocked: bool
+    reason: str = ""
+    evidence: str = ""  # 判定依据（FR-SAFE-02 阻断信息透明）
+
+
+# 不可逆删除 / 系统破坏的最小灾难性模式集合（design.md §2.1.3.5）
+_CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # rm -rf 的路径目标只能经下方完整 token + canonical path 判定:
+    # 前缀 regex 不知道 HOME 子路径、.. 或符号链接的真实目标，既可误拦也可漏拦。
+    # _scan_tokens 负责 rm、常用执行前缀与嵌套 shell；其余灾难行为正则不变。
+    # 格式化 / 建文件系统
+    ("mkfs/format 格式化磁盘", re.compile(r"(mkfs\.|mkfs\s|format\s+[a-z]:|newfs)", re.IGNORECASE)),
+    # dd 写块设备
+    ("dd 写入块设备", re.compile(r"dd\b[^|;]*\bof=/dev/(sd|hd|vd|nvme|disk)", re.IGNORECASE)),
+    # fork bomb
+    ("fork bomb", re.compile(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;", re.IGNORECASE)),
+    # curl/wget 管道直连执行
+    ("curl/wget 下载直连执行", re.compile(r"(curl|wget)[^|;]*\|\s*(ba)?sh\b", re.IGNORECASE)),
+    # 写系统关键区
+    (
+        "写入系统关键区",
+        re.compile(
+            r"(>\s*|>>\s*|tee\s+)/etc/(passwd|shadow|sudoers|fstab|hosts|crontab)|(>\s*|>>\s*)//boot",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+# rm -rf 的灾难性目标（变量展开 + ~ 展开后判定，审计发现 #3：$HOME/${HOME}/~ 绕过修复）
+_SYSTEM_DIRS = ("/etc", "/boot", "/usr", "/bin", "/sbin", "/lib", "/var", "/home")
+
+# python -c 载荷的不可逆破坏分级（审计发现 #3 补洞 + EVO-20260923-c58a0bb1 修正 3）:
+# - 递归级（rmtree/removedirs/内嵌 rm -rf/mkfs/dd→块设备）: 无条件硬拦——
+#   灾难规模与 shell 层同构，不因拼写形式（python vs rm）改变判定。
+# - 单文件级（os.remove/os.unlink/os.rmdir/Path(...).unlink/rmdir）: 仅当
+#   **字面目标**命中灾难目录时拦；与 shell 层 `rm /tmp/x` 放行对齐——
+#   单文件删除非灾难规模，拦截不应取决于载荷语言。
+_PY_RECURSIVE_DANGER = re.compile(
+    r"(shutil\.rmtree|os\.removedirs|rm\s+-[a-z]*r[a-z]*f|mkfs\b|dd\b.*of=/dev/)",
+    re.IGNORECASE,
+)
+# 单文件删除调用 + 提取首个字符串字面量实参（动态目标不判——单文件规模）
+_PY_SINGLE_FILE_CALL = re.compile(
+    r"(?:os\.(?:remove|unlink|rmdir)|\.(?:unlink|rmdir))\s*\(\s*(['\"])(.*?)\1",
+    re.IGNORECASE,
+)
+
+# 复合命令切分边界（审计发现 #3：;/&&/||/| 拼接绕过修复——见 _split_tokenized）
+
+
+def _expand(command: str) -> str:
+    """$VAR/${VAR} + ~ 展开（判定在展开后的真实目标上进行）.
+
+    注意 os.path.expanduser 只展开字符串开头的 ~——命令中 ~ 出现在空白/运算符后
+    （rm -rf ~/data），需按词边界补展开（词中 hello~world 不动，防误改）。
+    """
+    expanded = os.path.expandvars(command)
+    home = os.path.expanduser("~")
+    if "~" in expanded and home != "~":
+        expanded = re.sub(r"(^|(?<=[\s;|&'\"=]))~(?=[/\s'\"]|$)", lambda m: m.group(1) + home, expanded)
+    return expanded
+
+
+def _split_tokenized(command: str) -> list[list[str]]:
+    """按 ; && || | 切分复合命令为 token 组（引号语义保留——载荷内的 ; 不切断）.
+
+    shlex punctuation_chars 模式把 ;|& 作为独立边界 token；引号不配对等异常
+    回退纯字符切分（保守：切错了也逐段过同一套判定，不漏整体正则层）。
+    """
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=";|&")
+        lex.whitespace_split = True
+        raw = list(lex)
+    except ValueError:
+        return [_tokens(p) for p in re.split(r"&&|\|\||[;|]", command) if p.strip()]
+    groups: list[list[str]] = []
+    cur: list[str] = []
+    for t in raw:
+        if re.fullmatch(r"[;&|]+", t):
+            if cur:
+                groups.append(cur)
+                cur = []
+        else:
+            cur.append(t)
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def _tokens(sub: str) -> list[str]:
+    """shlex 分词（引号归并）；分词失败回退空白切分（fail-open 到保守判定）."""
+    try:
+        return shlex.split(sub, posix=True)
+    except ValueError:
+        return sub.split()
+
+
+def _rm_recursive_force(tokens: list[str]) -> bool:
+    """rm 标志聚合判定：-r/-f 可分散为多个标志位（-r -f）或合并（-rf/-fr）."""
+    recursive = force = False
+    for t in tokens[1:]:
+        if t == "--":
+            break
+        if t.startswith("--"):
+            recursive = recursive or t == "--recursive"
+            force = force or t == "--force"
+        elif t.startswith("-") and len(t) > 1:
+            body = t[1:].lower()
+            recursive = recursive or "r" in body
+            force = force or "f" in body
+    return recursive and force
+
+
+def _rm_targets(tokens: list[str]) -> list[str]:
+    """rm 的非标志参数（-- 分隔符之后的全部算目标，分隔符本身不算）."""
+    out: list[str] = []
+    seen_sep = False
+    for t in tokens[1:]:
+        if seen_sep:
+            out.append(t)
+        elif t == "--":
+            seen_sep = True
+        elif not t.startswith("-"):
+            out.append(t)
+    return out
+
+
+def _is_dangerous_rm_target(target: str) -> bool:
+    """根 / 主目录本体 / 系统关键目录（含子路径）.
+
+    EVO-20260923-c58a0bb1（accepted）修正 1: 主目录**子路径**不再按
+    拼写前缀一票否决——同一目标写成 `./dir` 放行、写成绝对路径就拦，
+    拦截结果取决于拼写而非目标语义，对诚实工作流只制造中断，对
+    恶意主体无防护增益。主目录**本体**与系统关键目录（含子路径）
+    保持不可逆全量定位拦。
+    工作区相对路径（./build 等）与 /tmp 不在此列——边界极小纪律，
+    会话内正常清理由 AI 自主裁决，程序只拦不可逆系统级破坏。
+    """
+    t = target.rstrip("/")
+    if t in ("", "/") or "\x00" in t:
+        return True
+    # Realpath (strict=False) 解析存在的 symlink 前缀、相对路径和 ..，
+    # 不做任何磁盘写入。/etc -> /private/etc 与 /var -> /private/var
+    # 等 OS 别名必须被同一权威目标判定覆盖。
+    canonical = os.path.realpath(t).rstrip("/") or "/"
+    home = os.path.realpath(os.path.expanduser("~")).rstrip("/") or "/"
+    if canonical in ("/", home):
+        return True
+    # 只有真正 canonical HOME 严格子路径获豁免。HOME/../../etc、
+    # HOME 内指向 /etc 的符号链接不会被原始字符串前缀误放行。
+    if home != "/" and canonical.startswith(home + "/"):
+        return False
+    # 原有契约允许执行目录内的 ./build、find . 和普通相对文件清理。
+    # pytest/macOS 的工作目录可能在 /private/var/... 临时沙箱下；
+    # 不应因为 OS 临时目录的父路径属于 /var 就把局部相对清理全部误拦。
+    # 只豁免真实目标仍在 cwd 内（无 '..' 逃逸、无指向系统目录的 symlink）
+    # 且 cwd 本身不是受保护系统区的相对操作。
+    if not os.path.isabs(t):
+        cwd = os.path.realpath(os.getcwd()).rstrip("/") or "/"
+        local_target = os.path.normpath(os.path.join(cwd, t))
+        if (
+            cwd != "/"
+            and canonical == local_target
+            and (canonical == cwd or canonical.startswith(cwd + "/"))
+        ):
+            temp_root = os.path.realpath(tempfile.gettempdir()).rstrip("/") or "/"
+            temp_scoped = cwd == temp_root or cwd.startswith(temp_root + "/")
+            protected_cwd = any(
+                cwd == (d_real := os.path.realpath(d).rstrip("/") or "/")
+                or cwd.startswith(d_real + "/")
+                for d in _SYSTEM_DIRS
+            )
+            if temp_scoped or not protected_cwd:
+                return False
+    return any(
+        canonical == (d_real := os.path.realpath(d).rstrip("/") or "/")
+        or canonical.startswith(d_real + "/")
+        for d in _SYSTEM_DIRS
+    )
+
+
+def _execution_tokens(tokens: list[str]) -> list[str]:
+    """Unwrap common execution prefixes before rm/find/shell scanning.
+
+    The regex previously caught `sudo rm -rf /etc`; retaining this coverage
+    is required when moving rm targets to semantic canonical-path checks.
+    This is a known-pattern guard, not a complete shell interpreter.
+    """
+    parts = list(tokens)
+    for _ in range(6):
+        if not parts:
+            break
+        cmd = os.path.basename(parts[0])
+        if cmd in {"command", "builtin", "exec", "nohup"}:
+            parts = parts[1:]
+        elif cmd == "sudo":
+            idx = 1
+            while idx < len(parts):
+                opt = parts[idx]
+                if opt == "--":
+                    idx += 1
+                    break
+                if opt in {"-u", "-g", "-h", "-p", "-C", "-r", "-t"}:
+                    idx += 2
+                elif opt.startswith("-"):
+                    idx += 1
+                else:
+                    break
+            parts = parts[idx:]
+        elif cmd == "env":
+            idx = 1
+            while idx < len(parts):
+                opt = parts[idx]
+                if opt == "--":
+                    idx += 1
+                    break
+                if opt in {"-u", "--unset"}:
+                    idx += 2
+                elif opt.startswith("-") or ("=" in opt and not opt.startswith("=")):
+                    idx += 1
+                else:
+                    break
+            parts = parts[idx:]
+        else:
+            break
+    if parts:
+        parts[0] = os.path.basename(parts[0])
+    return parts
+
+
+def _find_start_points(tokens: list[str]) -> list[str]:
+    """find 的起点路径（EVO-20260923-c58a0bb1 修正 2）.
+
+    POSIX 语义: 起点是 find 后、表达式区前的非选项参数；-H/-L/-P/-O/-D
+    为可前置的全局选项。遇到第一个非全局选项的 '-' token 即进入表达式区，
+    其后的 -newer/-name 等参数不再误判为起点。无显式起点 = 隐含 '.'。
+    """
+    starts: list[str] = []
+    for t in tokens[1:]:
+        if t in ("-H", "-L", "-P") or re.fullmatch(r"-O\d?", t) or t.startswith("-D"):
+            continue
+        if t.startswith("-"):
+            break
+        starts.append(_expand(t))
+    return starts or ["."]
+
+
+def _shell_payload(tokens: list[str]) -> str | None:
+    """sh/bash -c 的载荷字符串."""
+    if tokens and tokens[0] in ("sh", "bash", "zsh") and "-c" in tokens:
+        idx = tokens.index("-c")
+        if idx + 1 < len(tokens):
+            return tokens[idx + 1]
+    return None
+
+
+def _python_payload(tokens: list[str]) -> str | None:
+    """python/python3 -c 的载荷字符串."""
+    if tokens and tokens[0] in ("python", "python3") and "-c" in tokens:
+        idx = tokens.index("-c")
+        if idx + 1 < len(tokens):
+            return tokens[idx + 1]
+    return None
+
+
+class CatastrophicGuard:
+    """灾难性行为判定与硬阻断（FR-SAFE 系列）.
+
+    Args:
+        audit_dir: 阻断审计目录（data/audit）；None = 不落盘（测试/轻量场景）。
+                   非 None 时每次阻断追加 data/audit/safety_blocks.jsonl（FR-SAFE-02 透明）。
+    """
+
+    def __init__(self, audit_dir: Path | str | None = None) -> None:
+        self._audit_dir = Path(audit_dir) if audit_dir else None
+
+    def guard(self, tool_name: str, args: dict) -> BlockDecision | None:
+        """对工具调用做灾难性判定.
+
+        Args:
+            tool_name: 工具名.
+            args: 工具参数（如 execute_command 的 command 字段）.
+
+        Returns:
+            BlockDecision(blocked=True) 命中灾难性模式；
+            None 未命中（放行）。
+        """
+        command = ""
+        if tool_name == "execute_command":
+            command = str(args.get("command", "") or "")
+        elif tool_name in {"delete_file", "write_file", "edit_file", "append_file"}:
+            path = str(args.get("path", "") or "")
+            command = f"{tool_name} {path}"
+        if not command.strip():
+            return None
+
+        decision = self._scan_command(command, tool_name, depth=0)
+        if decision is not None and decision.blocked:
+            self._audit_block(tool_name, command, decision)
+        return decision
+
+    def _scan_command(self, command: str, tool_name: str, depth: int) -> BlockDecision | None:
+        """双层扫描：A) 正则模式在整条展开命令上（管道/fork 等跨段模式不被切分破坏）；
+        B) 分词分析逐子命令（引号语义保留，rm/find/sh/python 载荷递归）."""
+        expanded = _expand(command)
+        # A) 正则灾难模式（整条展开串——$HOME/~ 展开后判定，拼接目标无处遁形）
+        for label, pattern in _CATASTROPHIC_PATTERNS:
+            m = pattern.search(expanded)
+            if m:
+                return self._block(label, command, m.group(0))
+        # B) 逐子命令分词分析
+        for toks in _split_tokenized(expanded):
+            d = self._scan_tokens(toks, " ".join(toks)[:200], depth)
+            if d is not None and d.blocked:
+                return d
+        return None
+
+    def _scan_tokens(self, toks: list[str], sub: str, depth: int) -> BlockDecision | None:
+        toks = _execution_tokens(toks)
+        if not toks:
+            return None
+
+        # 1) rm 分词判定（标志聚合 + 展开后目标集合；正则漏网的复合形态在此闭合）
+        if toks[0] == "rm" and _rm_recursive_force(toks):
+            for target in _rm_targets(toks):
+                if _is_dangerous_rm_target(target):
+                    return self._block("rm -rf 指向根/主目录/系统关键目录", sub, f"rm 目标: {target}")
+
+        # 2) find 删除载荷（审计发现 #3 补洞 + EVO-20260923-c58a0bb1 修正 2:
+        #    -delete / -exec rm 不再无条件拦——改按 find **起点**的目标语义
+        #    判定。工作区/临时区等安全起点放行（正常清理不再误拦），
+        #    灾难级起点（根/主目录本体/系统目录子树）仍硬拦。）
+        if toks[0] == "find":
+            has_delete_payload = "-delete" in toks or any(
+                t == "-exec" and i + 1 < len(toks) and toks[i + 1] in ("rm", "shred", "srm")
+                for i, t in enumerate(toks)
+            )
+            if has_delete_payload:
+                for start in _find_start_points(toks):
+                    if _is_dangerous_rm_target(start):
+                        return self._block(
+                            "find 删除载荷指向灾难级起点",
+                            sub,
+                            f"find 起点: {start}",
+                        )
+
+        # 3) shell 载荷递归（sh -c "..." 内仍是命令，深度限 2 防无限递归）
+        if depth < 2:
+            payload = _shell_payload(toks)
+            if payload:
+                d = self._scan_command(payload, "execute_command", depth + 1)
+                if d is not None and d.blocked:
+                    return BlockDecision(
+                        blocked=True,
+                        reason=d.reason,
+                        evidence=f"shell 载荷: {payload[:120]} ← {d.evidence}",
+                    )
+
+        # 4) python -c 载荷检查（递归级无条件拦；单文件级字面目标判定）
+        py_payload = _python_payload(toks)
+        if py_payload:
+            m = _PY_RECURSIVE_DANGER.search(py_payload)
+            if m:
+                return self._block("python -c 载荷含递归级不可逆破坏调用", sub, f"载荷命中: {m.group(0)[:80]}")
+            for lm in _PY_SINGLE_FILE_CALL.finditer(py_payload):
+                target = lm.group(2)
+                if _is_dangerous_rm_target(_expand(target)):
+                    return self._block(
+                        "python -c 载荷单文件删除指向灾难目录",
+                        sub,
+                        f"字面目标: {target[:80]}",
+                    )
+            # 引号/逗号归一后 token 扫描（subprocess.run(['rm','-rf','/']) 等列表形态）
+            inner_toks = re.sub(r"['\",()\[\];]", " ", py_payload).split()
+            for i, t in enumerate(inner_toks):
+                if t == "rm" and _rm_recursive_force(inner_toks[i:]):
+                    for target in _rm_targets(inner_toks[i:]):
+                        if _is_dangerous_rm_target(target):
+                            return self._block(
+                                "python -c 载荷内嵌 rm -rf 灾难目标",
+                                sub,
+                                f"载荷 rm 目标: {target}",
+                            )
+        return None
+
+    @staticmethod
+    def _block(label: str, command: str, hit: str) -> BlockDecision:
+        return BlockDecision(
+            blocked=True,
+            reason=f"检测到灾难性行为: {label}。该行为可能造成不可逆破坏，已硬阻断（FR-SAFE-01）。",
+            evidence=f"命令: {command[:200]}; 命中: {hit[:80]}",
+        )
+
+    def _audit_block(self, tool_name: str, command: str, decision: BlockDecision) -> None:
+        """阻断审计落盘（data/audit/safety_blocks.jsonl）；写失败不影响阻断（fail-open）."""
+        if self._audit_dir is None:
+            return
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": system_local_now().isoformat(),
+                "tool_name": tool_name,
+                "command": command[:200],
+                "reason": decision.reason,
+                "evidence": decision.evidence,
+            }
+            with (self._audit_dir / "safety_blocks.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            logger.warning("阻断审计落盘失败（不影响阻断本身）", exc_info=True)
+
+
+# ── EVO-20260810-2549e9b6: EXEC_MODE 只读命令判定 ──
+_READONLY_PREFIXES = (
+    "ls",
+    "cat",
+    "pwd",
+    "echo",
+    "head",
+    "tail",
+    "grep",
+    "find",
+    "which",
+    "git status",
+    "git log",
+    "git diff",
+    "ps",
+    "df",
+    "du",
+    "env",
+    "date",
+    "whoami",
+    "python3 -c",
+    "python -c",
+    "printenv",
+)
+_WRITE_MARKERS = (
+    ">",
+    ">>",
+    "tee",
+    "rm ",
+    "mv ",
+    "cp ",
+    "mkdir",
+    "touch",
+    "chmod",
+    "chown",
+    "curl -o",
+    "wget -O",
+    "pip install",
+    "pip3 install",
+    "npm install",
+    "git add",
+    "git commit",
+    "git push",
+    "git reset",
+    "git checkout",
+    "source ",
+    "export ",
+    "unset ",
+    "kill",
+    "sudo ",
+    "brew install",
+    "cargo install",
+    # P0-1(2026-08-15，审计发现 #4): 只读前缀命令的写载荷标记——
+    # find -delete/-exec 删除；python -c 载荷中的文件破坏/写打开/子进程调用
+    "-delete",
+    "-exec",
+    "rmtree",
+    "unlink(",
+    ".remove(",
+    "rmdir",
+    "removedirs",
+    ".write(",
+    "writelines",
+    "subprocess",
+)
+
+
+def is_readonly_command(command: str) -> bool:
+    """判定命令是否只读（EXEC_MODE=readonly 时放行只读，拦截写类）.
+
+    P0-1 收紧：find/python -c 等"只读前缀"命令携带写载荷（-delete/-exec/
+    rmtree/unlink/write(/subprocess）不再误判只读——宁误拦勿漏放（锁死模式下
+    误拦的代价是 AI 换命令，漏放的代价是数据丢失）。
+    """
+    cmd = command.strip().lstrip()
+    if not cmd:
+        return False
+    if cmd.startswith(_READONLY_PREFIXES):
+        # 只读命令 + 无写标记 → 放行
+        return not any(m in command for m in _WRITE_MARKERS)
+    return False
+
+
+@dataclass(frozen=True)
+class LinkProbeResult:
+    """link_shaped_paths 三态探测结果（R9-IMM-04 / R9-DFX-05，D7）.
+
+    探测函数保持 fail-open：如实返回探测结果、不抛异常；
+    fail-closed 决策（如 edit_file 拒写）由调用方按 status 处置。
+    """
+
+    status: Literal["no_links", "probe_failed", "links_found"]
+    links: tuple[str, ...] = ()  # links_found 时的路径链（根→叶）；其余态为空
+
+
+def link_shaped_paths(path: str | Path) -> LinkProbeResult:
+    """路径链中的符号链接组件探测（自身或任一父目录，T5b 对齐 Harness Unlink 模式）.
+
+    路径可不存在（写场景的待建文件）：从最深现有祖先向下检查每层 is_symlink。
+
+    Returns: LinkProbeResult 三态——
+      - no_links: 探测完成，路径链无符号链接
+      - probe_failed: 探测失败（ELOOP/权限等 OSError）——探测失败≠无链接，
+        这正是最需防护的场景（fail-open：如实返回，不抛异常）
+      - links_found: 链含符号链接（links 为根→叶顺序路径链）
+    """
+    out: list[str] = []
+    try:
+        p = Path(path).expanduser()
+        # 从最深现有祖先开始（不存在部分先暂存，之后逐层拼回）
+        cur = p
+        missing: list[Path] = []
+        while not cur.exists() and cur != cur.parent:
+            missing.append(cur)
+            cur = cur.parent
+        chain: list[Path] = []
+        if cur.exists():
+            parts = cur.parts
+            probe = Path(parts[0])
+            chain.append(probe)
+            for part in parts[1:]:
+                probe = probe / part
+                chain.append(probe)
+        for m in reversed(missing):
+            chain.append(m)
+        for c in chain:
+            if c.is_symlink():
+                out.append(str(c))
+    except OSError:
+        # 路径解析失败 fail-open：如实返回"探测失败"态（不阻断正常路径；
+        # 调用方按语义处置——写面应拒、读面放行）
+        return LinkProbeResult(status="probe_failed")
+    if out:
+        return LinkProbeResult(status="links_found", links=tuple(out))
+    return LinkProbeResult(status="no_links")

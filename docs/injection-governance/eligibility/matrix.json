@@ -1,0 +1,745 @@
+{
+  "schema": "prompt-eligibility-audit-v1",
+  "audit_base_commit": "31df1a3",
+  "audit_date": "2026-08-31",
+  "phase": "R8.23_STRICT_CONTEXT_CENSUS",
+  "production_behavior_changed": true,
+  "behavior_canary_allowed": false,
+  "status_semantics": {
+    "DONE": "current provider-view behavior already satisfies the target eligibility rule",
+    "PARTIAL": "mitigation exists but automatic provider visibility or lifecycle leakage remains",
+    "OPEN": "current behavior conflicts with the target eligibility rule or lacks the required gate",
+    "KEEP": "surface is intentionally eligible under the stated narrow condition"
+  },
+  "target_classes": {
+    "ALWAYS_INLINE": "must remain in provider context by contract",
+    "ACTIVE_EPHEMERAL": "eligible only while the current unresolved run/turn needs it; consumed immediately afterwards",
+    "ACTIVE_STATE": "canonical current effective state only; historical versions are retrievable",
+    "REF_ON_DEMAND": "default no body; hydrate only when current task dependency is proven",
+    "RETRIEVABLE_ONLY": "stored/indexed but never automatically projected",
+    "OBSERVABILITY_ONLY": "event/state/tool/UI surface; zero prompt by default",
+    "PROTOCOL_ONLY": "retain only the minimum bytes required by provider protocol",
+    "CONDITIONAL_EXTERNAL": "external message becomes eligible only when it is an actual current task/control dependency",
+    "CONTROL_PLANE_ONLY": "runtime may act deterministically, but the control occurrence/instruction contributes zero provider-prompt prose"
+  },
+  "owner_rule": "resolved is retrievable, not injectable",
+  "hard_order": [
+    "lifecycle_eligibility",
+    "retrieval_or_representation",
+    "model_profile",
+    "injection_budget",
+    "provider_wire"
+  ],
+  "entries": [
+    {
+      "id": "E01",
+      "surface": "current_user_truth",
+      "current_status": "DONE",
+      "target_class": "ALWAYS_INLINE",
+      "priority": "P0-protect",
+      "current_behavior": "R6 freezes canonical current human text and makes it the exact semantic tail of the initial human-ingress provider envelope.",
+      "target_rule": "Never retire, summarize, rewrite or duplicate the current human text.",
+      "retrieval_path": "not_applicable",
+      "evidence": [
+        "src/llm_loop/core/user_truth_wire.py",
+        "docs/injection-governance/r6/report.md"
+      ]
+    },
+    {
+      "id": "E02",
+      "surface": "current_active_assistant_tool_pairing",
+      "current_status": "KEEP",
+      "target_class": "ACTIVE_EPHEMERAL",
+      "priority": "P0-protect",
+      "current_behavior": "assistant(tool_calls) and matching tool results stay in the active protocol chain.",
+      "target_rule": "Keep while the current run requires protocol/result consumption; after a resolved final answer, retire the old tool chain from default future-turn projection.",
+      "retrieval_path": "resolved_episode_ref",
+      "evidence": [
+        "src/llm_loop/core/loop/tool_exec.py",
+        "src/llm_loop/core/history.py"
+      ]
+    },
+    {
+      "id": "E03",
+      "surface": "resolved_user_assistant_episode",
+      "current_status": "DONE",
+      "target_class": "RETRIEVABLE_ONLY",
+      "priority": "P0",
+      "current_behavior": "R8.8 keeps the R8.5 durable-first retirement path and adds conservative pre-R8.5 migration proof from durable event logs. A legacy final answer migrates only when one run segment has exactly one matching assistant message.appended followed by run.end(reason=completed,truncated=false) with matching answer_preview; corrupt/missing/ambiguous proof stays provider-visible fail-open. Read-only runtime census: 136/182 legacy completed-model answers were provable across 19/19 legacy sessions; 46 remained unretired rather than guessed.",
+      "target_rule": "Once answered/resolved, default future prompt visibility is zero. Explicit follow-up/continuation may hydrate required fragments from an episode index.",
+      "retrieval_path": "search_records(kind=episode, query=\"\") -> stable episode ref; keyword/ref hydration with bounded paging; unproven legacy history remains visible until proof exists",
+      "evidence": [
+        "src/llm_loop/memory/episode.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_resolved_episode.py",
+        "docs/injection-governance/eligibility/resolved-episode-report.md",
+        "docs/injection-governance/eligibility/r88-report.md"
+      ]
+    },
+    {
+      "id": "E04",
+      "surface": "resolved_tool_calls_and_tool_results",
+      "current_status": "DONE",
+      "target_class": "RETRIEVABLE_ONLY",
+      "priority": "P0",
+      "current_behavior": "R8.20 adds a consumed-tool-span lifecycle independent from whole-episode resolution. At next human ingress, exact complete assistant(tool_calls)+tool receipt spans are retired only when a later real non-tool model assistant has consumed them and EpisodeStore durably indexes user + raw tool evidence + consumer. User instruction and consumer answer remain visible unless the whole episode separately proves resolved. Incomplete/current protocol and program finals remain visible.",
+      "target_rule": "Raw tool protocol is working context only until a real model consumer exists. After durable toolspan indexing, retire declarations/results from default provider view; keep unresolved task text and consumer answer, and recover exact evidence on demand.",
+      "retrieval_path": "EpisodeStore toolspan ref via search_records(kind=episode), searchable by tool-result transcript content; exact visible chain hydrated on demand with bounded paging",
+      "evidence": [
+        "src/llm_loop/memory/episode.py",
+        "src/llm_loop/core/episode_history.py",
+        "tests/unit/test_resolved_episode.py",
+        "tests/unit/test_consumed_tool_span_r820.py",
+        "docs/injection-governance/eligibility/r820-report.md"
+      ]
+    },
+    {
+      "id": "E05",
+      "surface": "historical_reasoning_content",
+      "current_status": "DONE",
+      "target_class": "PROTOCOL_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.21 binds historical reasoning replay to the actual provider selected for each request attempt. Local/cognilocal and non-thinking MiniMax replay none; GLM replays only assistant reasoning attached to tool-call turns; DeepSeek official tools requests retain all still-visible assistant reasoning required by protocol; unknown providers fail-safe to configured policy. Cross-provider fallback rebuilds the provider message view for each candidate instead of reusing the primary projection. Resolved/consumed history remains retired before this protocol-only projection, and private reasoning is never duplicated into EpisodeStore hydration.",
+      "target_rule": "Retain only reasoning bytes still required by the active provider protocol/pairing. Resolved historical reasoning is archive-only.",
+      "retrieval_path": "Visible resolved transcript is episode-hydratable; private reasoning is intentionally not duplicated as retrieval content",
+      "evidence": [
+        "src/llm_loop/memory/episode.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/history.py:562-610",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/fallback.py",
+        "tests/unit/test_reasoning_tail.py",
+        "tests/unit/test_fallback_integration.py",
+        "docs/injection-governance/eligibility/r821-report.md"
+      ]
+    },
+    {
+      "id": "E06",
+      "surface": "durable_effective_constraints_and_decisions",
+      "current_status": "DONE",
+      "target_class": "REF_ON_DEMAND",
+      "priority": "P0-protect",
+      "current_behavior": "R8.22 removes conversational history as an automatic authority source. A resolved user turn retires even if it contains standing-rule wording or a legacy resolved_episode_keep_provider marker; exact source text remains EpisodeStore-hydratable. MemoryStore decision/convention entries are runtime recall-only for automatic projection, including legacy inject_policy=auto entries, while new decision/convention extraction persists recall_only directly. Current user instructions remain exact inline under E01. Stable always-on rules belong to the versioned rule/config/control plane rather than an old chat turn.",
+      "target_rule": "Historical conversational decisions/constraints are retrievable by default, not automatically projected. Current user instructions stay inline; any truly always-on rule must have explicit stable rule/config authority rather than inheriting authority from historical wording.",
+      "retrieval_path": "Resolved source turn via EpisodeStore/search_records(kind=episode); decision/convention via search_records(kind=memory) including exact memory:<id>; MemoryStore current version + version_history preserve supersession history",
+      "evidence": [
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/memory/retrieve.py",
+        "src/llm_loop/memory/extract.py",
+        "tests/unit/test_resolved_episode.py",
+        "tests/unit/test_durable_state_on_demand_r822.py",
+        "docs/injection-governance/eligibility/r822-report.md"
+      ]
+    },
+    {
+      "id": "E07",
+      "surface": "memory_snapshot",
+      "current_status": "PARTIAL",
+      "target_class": "REF_ON_DEMAND",
+      "priority": "P0",
+      "current_behavior": "R8.8 binds automatic memory_snapshot to the exact current human turn and retires older snapshots. R8.22 additionally removes decision/convention from automatic memory projection. Strict R8.23 still finds a fresh automatic producer: ingress keyword/semantic retrieval can persist fact/procedure reference frames as role=user for the current turn without explicit user accept or model retrieval request. Real storage census: 389 memory_snapshot messages / 417,908 chars across 44 sessions.",
+      "target_rule": "Memory is retrievable by default. Turn identity proves lifecycle only, not required-now authority. Automatic provider bytes require explicit user input-side authorization or a model-requested retrieval/tool result.",
+      "retrieval_path": "search_records(kind=memory) / exact memory ref; resolved visible episode transcript via episode ref",
+      "evidence": [
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/episode_history.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_cr_r1_shadow_projection.py",
+        "tests/unit/test_injection_budget.py",
+        "docs/injection-governance/eligibility/r88-report.md"
+      ]
+    },
+    {
+      "id": "E08",
+      "surface": "experience_tip",
+      "current_status": "PARTIAL",
+      "target_class": "REF_ON_DEMAND",
+      "priority": "P0",
+      "current_behavior": "R8.15 removed the fresh generic experience-tip producer and centrally denies canonical historical experience_tip messages. Strict R8.23 finds a legacy resurrection path remains: err1210 defer can reconstruct SlotKind.TIP into _tip_tail_messages, build still accepts dynamic slot tip, and tip remains in the central producer allowlist. Fresh clean-start production has no new TIP producer, but hot-reload/defer compatibility can regain prompt authority.",
+      "target_rule": "No generic experience/tip slot may be automatically provider-visible. Remove TIP from prompt allowlist/replay; explicit experience search or model-requested tool recovery is the only semantic path.",
+      "retrieval_path": "search_records(kind=experience) keyword/exact experience:<id>; explicit skill tools; current-failure typed/guidance recovery",
+      "evidence": [
+        "src/llm_loop/core/loop/tool_exec.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/introspection/search.py",
+        "src/llm_loop/tools/registry.py",
+        "tests/unit/test_tool_experience_inject.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_reference_injection_integration.py",
+        "tests/integration/test_experience_integration.py",
+        "tests/unit/test_experience_guidance.py",
+        "docs/injection-governance/eligibility/r815-report.md"
+      ]
+    },
+    {
+      "id": "E09",
+      "surface": "session_digest_catalog",
+      "current_status": "DONE",
+      "target_class": "REF_ON_DEMAND",
+      "priority": "P1",
+      "current_behavior": "R8.18 retires automatic SessionDigest catalog projection. digest_enabled remains a diagnostic/retrieval capability flag only; build emits/persists zero session_digest_catalog messages. Legacy canonical catalog frames are centrally denied while ordinary human text is preserved.",
+      "target_rule": "Catalog stays outside prompt by default; historical detail is retrieved explicitly through search_archive / digest ref when needed.",
+      "retrieval_path": "search_archive / digest archive ref; resolved episode ref when catalog belonged to a retired episode",
+      "evidence": [
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/session_digest.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "tests/unit/test_session_digest_on_demand_r818.py",
+        "docs/injection-governance/eligibility/r818-report.md"
+      ]
+    },
+    {
+      "id": "E10",
+      "surface": "compact_archive_pointer_and_fold_status",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.17 removes compression/archive/fold/cache-degrade occurrence from provider working context. Archive and fold mechanics still execute and remain observable through compact_view_stats, message.cache_compacted events, cache-monitor degradation state and run.compact action telemetry. Dynamic archive counts, fold counts and ref=archive:search_archive frames are no longer emitted. The stable system prompt truthfully advertises archive recovery with search_archive without claiming retired compression-status/catalog/key-fact frames. Legacy anchor-mode current-decision compatibility is kept as a separate compact_active_state_appendix active-state surface, not E10 observability.",
+      "target_rule": "Archive/fold/cache-degrade occurrence and dynamic counts are observability only. Historical content is retrieved explicitly through search_archive. A current active decision, when separately proven eligible, must not regain authority merely because it shares a compact build path.",
+      "retrieval_path": "search_archive / ArchiveStore; compact_view_stats / message.cache_compacted / cache monitor / run.compact action telemetry for observability",
+      "evidence": [
+        "src/llm_loop/core/history.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/prompt.py",
+        "tests/unit/test_compact_observability_r817.py",
+        "tests/unit/test_append_compression.py",
+        "tests/unit/test_progressive_fold.py",
+        "tests/unit/test_cache_round_sim.py",
+        "tests/unit/test_history.py",
+        "tests/unit/test_reference_injection_integration.py",
+        "docs/injection-governance/eligibility/r817-report.md"
+      ]
+    },
+    {
+      "id": "E11",
+      "surface": "identity_qna_derived_summary",
+      "current_status": "DONE",
+      "target_class": "RETRIEVABLE_ONLY",
+      "priority": "closed",
+      "current_behavior": "R5 keeps raw archive but strips identity/self-description details from derived long-term summary/index projection.",
+      "target_rule": "Keep existing R5 behavior.",
+      "retrieval_path": "search_archive(with_summary=false) for explicit raw retrieval",
+      "evidence": [
+        "src/llm_loop/core/identity_summary.py",
+        "docs/injection-governance/r5/report.md"
+      ]
+    },
+    {
+      "id": "E12",
+      "surface": "program_recovery",
+      "current_status": "PARTIAL",
+      "target_class": "CONTROL_PLANE_ONLY",
+      "priority": "closed-protect",
+      "current_behavior": "R4 made program recovery one-shot and non-durable, but strict R8.23 confirms it is still model-facing program prose. The err1210 fallback explicitly implements a programmatic user resend: it arms a PROGRAM_RECOVERY block saying to retry the current request once, then build auto-projects that slot on the next model attempt.",
+      "target_rule": "1210 recovery is deterministic runtime control: rebuild/retry program-side and record an event. Do not ask the model to execute a program-authored recovery instruction.",
+      "retrieval_path": "program.recovery audit event for history, not prompt",
+      "evidence": [
+        "src/llm_loop/core/program_recovery.py",
+        "src/llm_loop/core/loop/build.py:519-533",
+        "docs/injection-governance/r4/report.md"
+      ]
+    },
+    {
+      "id": "E13",
+      "surface": "model_switch_notice",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P0",
+      "current_behavior": "R8.8 removes model-switch chat-text replay entirely. A real transition records model.switch observability only; it does not copy recent user/assistant text, append session/tail prompt messages, or issue a program \"continue\" command.",
+      "target_rule": "Model routing change is runtime state. Zero prompt by default. If an active task must be resumed, hydrate canonical active-task state rather than chat text.",
+      "retrieval_path": "model.switch action/event observability; active-task continuity comes from canonical active state or explicit retrieval, never copied recent chat text",
+      "evidence": [
+        "src/llm_loop/core/loop/interop.py",
+        "tests/unit/test_model_switch_notice.py",
+        "docs/injection-governance/eligibility/r88-report.md"
+      ]
+    },
+    {
+      "id": "E14",
+      "surface": "declaration_reminder",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P0",
+      "current_behavior": "R8.9 removes declaration_reminder from prompt/session history entirely. Declaration validation happens after the model final answer already exists, so discrepancies now remain in LoopResult/UI plus declaration_check audit/action telemetry. New runs emit no reminder message; pre-R8.9 legacy reminders are denied only when they match the exact historical fixed program sentence, preserving genuine user discussion of the label.",
+      "target_rule": "Audit/UI or pre-delivery correction only; never persist as next-turn prompt material.",
+      "retrieval_path": "LoopResult.verification_note / declaration_check audit / action telemetry",
+      "evidence": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_m41.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
+      ]
+    },
+    {
+      "id": "E15",
+      "surface": "stagnation_reminder",
+      "current_status": "PARTIAL",
+      "target_class": "CONTROL_PLANE_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.9 prevents next-turn leakage but still appends a natural-language stagnation_reminder with prompt_lifecycle=current_turn and exact turn_ref. Central current-turn eligibility deliberately exposes it to later model rounds in the same user run.",
+      "target_rule": "Stagnation detection/breaking is program control + telemetry. The model sees only actual tool receipts; no synthetic reminder prose is inserted.",
+      "retrieval_path": "action_trace / stagnation audit",
+      "evidence": [
+        "src/llm_loop/core/loop/tool_exec.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_loop_stagnation.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
+      ]
+    },
+    {
+      "id": "E16",
+      "surface": "empty_search_reminder",
+      "current_status": "PARTIAL",
+      "target_class": "CONTROL_PLANE_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.9 prevents next-turn leakage but still appends a natural-language empty_search_reminder with prompt_lifecycle=current_turn. Real census found persisted examples, and same-turn eligibility exposes them to later model rounds.",
+      "target_rule": "Negative evidence is represented by the real empty tool result/path registry. Program may stop/replan at the control layer, but must not append advisory prose to model context.",
+      "retrieval_path": "path_registry / action_trace",
+      "evidence": [
+        "src/llm_loop/core/loop/tool_exec.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_loop_stagnation.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
+      ]
+    },
+    {
+      "id": "E17",
+      "surface": "overflow_feedback",
+      "current_status": "PARTIAL",
+      "target_class": "CONTROL_PLANE_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.9 bounds overflow_feedback to current_turn, but first overflow still appends a synthetic STATUS system message and forces another LLM round so the model can decide how to react.",
+      "target_rule": "Overflow handling is deterministic runtime control/user-visible failure state. Rebuild, route, compact, stop or surface the error according to policy; zero program-authored overflow prose enters the model prompt.",
+      "retrieval_path": "exception/action audit",
+      "evidence": [
+        "src/llm_loop/core/loop/overflow.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_overflow_lifecycle.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
+      ]
+    },
+    {
+      "id": "E18",
+      "surface": "round_exhaustion_decision",
+      "current_status": "PARTIAL",
+      "target_class": "CONTROL_PLANE_ONLY",
+      "priority": "P0",
+      "current_behavior": "R8.8 fixed persistence/consumption identity, but the active path still appends [轮次决策请求] and explicitly continue-s into one extra LLM decision round at max_iterations. Same-run program instruction remains model-facing.",
+      "target_rule": "Round budget is a hard runtime boundary. Stop/pause or wait for explicit user continue/strategy input; do not spend an extra model round on a program-authored decision request.",
+      "retrieval_path": "run.end/action audit",
+      "evidence": [
+        "src/llm_loop/core/loop/engine.py",
+        "tests/unit/test_exhaustion_decision.py",
+        "docs/injection-governance/eligibility/r88-report.md"
+      ]
+    },
+    {
+      "id": "E19",
+      "surface": "push_style_architecture_selfeval_budget_round_notices",
+      "current_status": "PARTIAL",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "closed-protect",
+      "current_behavior": "Provider build uses skip_injected_system=true, so architecture/eval/budget/round notices are normally zero wire bytes. Strict R8.23 finds they are still appended into conversational session storage. Current census: 2,993 injected_system messages / 530,464 chars across 146 sessions (58 tagged architecture_report; most legacy untyped). This violates the stronger control-plane separation and can still bloat session/lifecycle bookkeeping even when provider-filtered.",
+      "target_rule": "Observability lives in event/status/UI only. Do not append architecture/eval/budget/round runtime notices to sess.messages at all; legacy stored notices remain provider-denied.",
+      "retrieval_path": "architecture_status / event records",
+      "evidence": [
+        "src/llm_loop/core/history.py:624-646",
+        "src/llm_loop/core/loop/build.py:731-737",
+        "src/llm_loop/core/loop/signals.py:20-43"
+      ]
+    },
+    {
+      "id": "E20",
+      "surface": "cache_gate_note",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.11 consumes cache gate_note_pending as one-shot runtime observability and records run.cache_gate observed_only telemetry with prompt_chars=0. The live build producer is removed and gate_note is no longer in the dynamic prompt allowlist. Legacy GATE_NOTE_CONTENT/restore/parser support remains only for historical err1210/defer compatibility; restored markers are consumed/retired without provider replay.",
+      "target_rule": "Cache/prefix-health intervention state is runtime observability only; it must never add program-authored natural-language advice to provider input.",
+      "retrieval_path": "cache monitor snapshot / architecture status / action trace",
+      "evidence": [
+        "src/llm_loop/core/cache_health.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_cache_monitor.py",
+        "tests/unit/test_interop_inject.py",
+        "tests/unit/test_injection_fingerprint.py",
+        "tests/integration/test_cognitive_integration.py",
+        "docs/injection-governance/eligibility/r811-report.md"
+      ]
+    },
+    {
+      "id": "E21",
+      "surface": "injection_budget_receipt",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P1",
+      "current_behavior": "P1-C: semantic InjectionBudget runtime retired after zero-producer fixed-point proof; no program-origin keep/drop priority remains.",
+      "target_rule": "Physical context/window budgeting may bound bytes/tokens; program semantics must not be ranked by a runtime budget selector.",
+      "retrieval_path": "LoopEngine._last_injection_budget / action.injection_budget trace / architecture status",
+      "evidence": [
+        "src/llm_loop/core/injection_budget.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_injection_budget.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r811-report.md"
+      ]
+    },
+    {
+      "id": "E22",
+      "surface": "evidence_recovery_manifest",
+      "current_status": "DONE",
+      "target_class": "REF_ON_DEMAND",
+      "priority": "P0",
+      "current_behavior": "R8.8 removes every-build Evidence Recovery Manifest projection from build, closing the R2 bypass. Ledger, ManifestProjector, source reuse and read/search/list recovery remain durable control-plane capabilities. list_evidence(scope=recovery) explicitly returns the same bounded prioritized manifest on demand, preserving queryless discovery without automatic prompt bytes.",
+      "target_rule": "Evidence ledger remains tool-addressable. Do not inject the manifest/index by default; hydrate only a proven current dependency.",
+      "retrieval_path": "list_evidence(scope=recovery) for bounded queryless discovery; list_evidence(scope=recent) / search_evidence / read_evidence for targeted recovery",
+      "evidence": [
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/tools/evidence_tools.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/memory/evidence.py",
+        "tests/unit/test_evidence_phase4.py",
+        "tests/unit/test_evidence_phase5.py",
+        "tests/unit/test_evidence_phase7_gate.py",
+        "docs/injection-governance/eligibility/r88-report.md"
+      ]
+    },
+    {
+      "id": "E23",
+      "surface": "task_frontier",
+      "current_status": "DONE",
+      "target_class": "ACTIVE_STATE",
+      "priority": "P1",
+      "current_behavior": "R8.16 retires the full automatic task_frontier producer. Build now auto-projects only a byte-stable task_active identity when the active Goal has exactly one in_progress task: goal_id + task_id + status=in_progress + one-line title. Zero or multiple in_progress tasks produce zero task prompt chars. Ready/blocked/unreachable/completed/premise_stale/counts and task-operation guidance remain outside automatic prompt. The old task_frontier slot is centrally deny-listed by absence from the prompt producer allowlist, preventing a future full-graph producer from regaining authority by reusing the old slot name.",
+      "target_rule": "Only a uniquely bound current execution identity may be automatic active state. Full graph, candidate selection, blocked/unreachable/completed state and task bookkeeping guidance are tool-only by default; ambiguous or non-executable graphs auto-project nothing.",
+      "retrieval_path": "task_frontier() full graph / get_goal task summary / get_tool_schema discovery",
+      "evidence": [
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/injection_budget.py",
+        "src/llm_loop/introspection/task_store.py",
+        "src/llm_loop/introspection/tools_task.py",
+        "src/llm_loop/introspection/tools_goal.py",
+        "tests/unit/test_task_active_prompt_r816.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_injection_budget.py",
+        "docs/injection-governance/eligibility/r816-report.md"
+      ]
+    },
+    {
+      "id": "E24",
+      "surface": "task_hotcard",
+      "current_status": "DONE",
+      "target_class": "CONDITIONAL_EXTERNAL",
+      "priority": "P0",
+      "current_behavior": "R8.14 keeps task_hotcard as a durable handoff artifact but removes all automatic prompt authority. build no longer pops/injects/consumes a card on cross-session entry; pop/reset require explicit authorized=True; legacy HOTCARD err1210 defer is dropped rather than reset/replayed; and hotcard is removed from the central dynamic prompt producer allowlist.",
+      "target_rule": "Cross-session, unconsumed state, recency, or origin mismatch never proves continuation. A hotcard may be read/consumed only after an explicit input-side user restore/accept action (or another future canonical authorization mechanism with equivalent user authority). Durable handoff/archive state remains retrievable without entering provider working context by default.",
+      "retrieval_path": "data/handoff/task_hotcard.json via read_file; handoff_now artifact + ArchiveStore/search_archive; explicit authorized pop helper",
+      "evidence": [
+        "src/llm_loop/core/loop/hotcard.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/err1210.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "tests/unit/test_task_hotcard.py",
+        "tests/unit/test_handoff_archive.py",
+        "tests/unit/test_err1210_recovery.py",
+        "tests/unit/test_injection_fingerprint.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r814-report.md"
+      ]
+    },
+    {
+      "id": "E25",
+      "surface": "interop_notify_and_backlog",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.12 removes automatic prompt authority from interop topic=notify and backlog-count notices. First-seen and duplicate notify files are archived directly to lfl_to_dsh/done with body preserved for UI/retrieval, and compact interop.notify action telemetry records prompt_chars=0. Pending backlog depth is action/watchdog observability only; no synthetic \"另有 N 条\" Message is created. Subagent reports remain semantically available through SubAgentResult/spawn_subagent tool receipts, so their notify copy is no longer a duplicate model-input channel. Coordinate/task messages remain unchanged for E26 conditional-external audit.",
+      "target_rule": "notify/job-complete/subagent-copy/backlog are event/UI state and never automatic model prompt. If the current task needs a result, retrieve it explicitly through job_output/interop state/tool receipt; true coordinate/task changes are governed separately by E26.",
+      "retrieval_path": "interop Web UI recent_done/event/action trace / job_output / spawn_subagent tool receipt",
+      "evidence": [
+        "src/llm_loop/core/loop/interop.py",
+        "tests/unit/test_interop_inject.py",
+        "tests/unit/test_interop_watch.py",
+        "tests/web/test_interop_api.py",
+        "tests/unit/test_job_registry.py",
+        "tests/unit/test_subagent_report.py",
+        "docs/injection-governance/eligibility/r812-report.md"
+      ]
+    },
+    {
+      "id": "E26",
+      "surface": "interop_coordinate_or_task",
+      "current_status": "DONE",
+      "target_class": "CONDITIONAL_EXTERNAL",
+      "priority": "P1",
+      "current_behavior": "R8.13 removes automatic prompt authority from interop coordinate/task. Pending external items remain in interop state/UI and are not consumed into Message/provider wire. The factory watcher records only global action observability: it no longer attributes an external item to the most-recent session and never fabricates user_text or starts a model run. Legacy in-memory interop tail/defer state is retired before build, and the central dynamic producer allowlist no longer contains interop.",
+      "target_rule": "External coordinate/task has zero automatic provider eligibility. A message may enter model working context only after an input-side user authorization/accept-insert action turns it into genuine user-authorized task input; session/ref targeting alone is not authorization. Without that authorization it stays retrievable in interop state/UI.",
+      "retrieval_path": "interop pending/Web UI + global action observability; explicit future accept/insert input path",
+      "evidence": [
+        "src/llm_loop/core/loop/interop.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "tests/unit/test_interop_inject.py",
+        "tests/unit/test_factory.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_err1210_recovery.py",
+        "tests/unit/test_injection_fingerprint.py",
+        "docs/injection-governance/eligibility/r813-report.md"
+      ]
+    },
+    {
+      "id": "E27",
+      "surface": "fallback_success_or_all_failed_notice",
+      "current_status": "DONE",
+      "target_class": "ACTIVE_EPHEMERAL",
+      "priority": "P1",
+      "current_behavior": "R8.9 stops appending post-fallback notices to session prompt history because the fallback call has already returned before the notice exists. Successful fallback state remains in model_fallback status/audit/action observability. When all candidates fail, the detailed fallback summary is surfaced in the current program final result rather than as a future system prompt notice. Legacy fallback system notices are centrally denied.",
+      "target_rule": "Fallback routing/status is observability. Current all-failed details belong in the current program result; no post-response fallback notice has future prompt authority.",
+      "retrieval_path": "model_fallback status/event/action; current all-failed program result",
+      "evidence": [
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/fallback.py",
+        "tests/unit/test_fallback_integration.py",
+        "tests/unit/test_model_fallback.py",
+        "tests/unit/test_fallback_notice_stamp.py",
+        "docs/injection-governance/eligibility/r89-report.md"
+      ]
+    },
+    {
+      "id": "E28",
+      "surface": "local_model_behavior_hint",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P0",
+      "current_behavior": "R8.8 deletes the provider_id==local per-build command-shaped behavior patch. Local routing no longer grants evaluation/autonomy/search guidance dynamic prompt authority.",
+      "target_rule": "Remove from dynamic prompt. If any rule is truly authoritative, place it once in stable system/rules; evaluation patches do not gain production prompt authority.",
+      "retrieval_path": "not_applicable",
+      "evidence": [
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r88-report.md"
+      ]
+    },
+    {
+      "id": "E29",
+      "surface": "capability_profile_shadow_telemetry",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "closed-protect",
+      "current_behavior": "P1-C: runtime Injection Profile recommendation/emitter retired; historical injection.profile.shadow schema remains read-compatible only, with no new provider-attempt emission.",
+      "target_rule": "No model-tier prompt-density selector. Capability metadata may remain factual elsewhere but cannot grant/withhold program prompt authority.",
+      "retrieval_path": "event log",
+      "evidence": [
+        "docs/injection-governance/r8/report.md",
+        "docs/injection-governance/r8/soak-report.md"
+      ]
+    },
+    {
+      "id": "E30",
+      "surface": "cache_telemetry_in_assistant_history",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "closed-protect",
+      "current_behavior": "Legacy cache hit-rate lines in assistant content are stripped in build provider view; authoritative cache data is transported separately.",
+      "target_rule": "Keep telemetry out of conversational prompt.",
+      "retrieval_path": "cache telemetry/event",
+      "evidence": [
+        "src/llm_loop/core/loop/build.py:533-550"
+      ]
+    },
+    {
+      "id": "E31",
+      "surface": "tool_schemas",
+      "current_status": "DONE",
+      "target_class": "REF_ON_DEMAND",
+      "priority": "P1",
+      "current_behavior": "R8.7 applies a stable CORE9 plus current task/protocol/recovery-needed tool projection to local and cloud providers. Hidden healthy tools remain registered and discoverable through get_tool_schema catalog/search/exact lookup. Playwright is runtime-quarantined when unavailable; MCP tools/list=0 yields no live capability. Clean-source simple surface is 9 tools / 3,425 raw lazy chars (3,714 provider-wrapper chars) versus 61 / 22,699 all-lazy raw chars.",
+      "target_rule": "Expose a stable universal core plus task/state-relevant tools only; discover secondary schemas on demand. DEGRADED/QUARANTINED tools require runtime-health and failure-class recovery policy before visibility.",
+      "retrieval_path": "get_tool_schema",
+      "evidence": [
+        "src/llm_loop/tools/eligibility.py",
+        "src/llm_loop/core/loop/tool_eligibility.py",
+        "src/llm_loop/tools/recovery.py",
+        "tests/unit/test_tool_eligibility_r87.py",
+        "docs/injection-governance/tool-eligibility/r87-report.md",
+        "docs/injection-governance/tool-eligibility/matrix.json",
+        "docs/injection-governance/tool-eligibility/recovery-policy.json"
+      ]
+    },
+    {
+      "id": "E32",
+      "surface": "interruption_recovery_note",
+      "current_status": "PARTIAL",
+      "target_class": "CONTROL_PLANE_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.19 correctly removed the model-facing recovery note and repairs event/session divergence program-side. Strict R8.23 found an ordering leak: episode/tool lifecycle backfill runs before current ingress, while interruption repair runs after ingress. Replay-only completed historical Q/A inserted after backfill therefore lacks resolved_episode_ref for this build and can re-enter provider history once. Mechanical repro confirmed provider_contains_missing_resolved=True.",
+      "target_rule": "Repair event/session divergence before lifecycle retirement/projection, or immediately rerun lifecycle indexing after repair. Recovery occurrence stays zero prompt; recovered historical content must pass the same resolved/consumed eligibility gates before provider build.",
+      "retrieval_path": "event_log replay / SessionStore reconciliation; action telemetry for repair outcome",
+      "evidence": [
+        "src/llm_loop/core/loop/events.py:208-252",
+        "src/llm_loop/core/loop/events.py",
+        "src/llm_loop/core/session.py",
+        "tests/unit/test_interruption_recovery_r819.py",
+        "docs/injection-governance/eligibility/r819-report.md"
+      ]
+    },
+    {
+      "id": "E33",
+      "surface": "program_fault_feedback",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P1",
+      "current_behavior": "R8.10 removes automatic prompt authority from auxiliary program faults. Initial session_persistence, archive_sink and memory retrieval failures still emit selfheal/status/action/recovery evidence, but no longer append program-authored fault prose to session history or current-turn memory snapshots. Legacy system [程序异常] frames are centrally denied in provider projection. Loop-end session-save failure remains visible to the current user as a program final result; on future turns R8.10 projects that assistant to the fixed program-final protocol boundary instead of replaying fault detail.",
+      "target_rule": "Program faults are runtime observability/recovery state, not model instructions. Preserve current-user error disclosure where required, but never grant auxiliary fault prose automatic prompt authority; future provider history keeps only protocol shape when needed.",
+      "retrieval_path": "search_records(kind=selfheal/exception_log) / architecture_status / recovery evidence",
+      "evidence": [
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/archive.py",
+        "src/llm_loop/core/loop/turn_context.py",
+        "tests/unit/test_p0b_program_feedback.py",
+        "tests/unit/test_loop_honest_feedback.py",
+        "tests/unit/test_memory_turn_snapshot.py",
+        "tests/integration/test_fault_isolation.py",
+        "docs/injection-governance/eligibility/r810-report.md"
+      ]
+    },
+    {
+      "id": "E34",
+      "surface": "unknown_program_slot_default",
+      "current_status": "DONE",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P0",
+      "current_behavior": "R8.8 separates semantic labelling from eligibility. Dynamic prompt producers must match an explicit allowlist before label/profile/budget; an unknown or unattributed slot is dropped and audited as action.prompt_eligibility/unknown_producer_denied. infer_layer keeps its legacy STATUS fallback only for rendering compatibility and can no longer grant prompt access.",
+      "target_rule": "Unknown prompt producer is not eligible by default. Only an explicit prompt-producer allowlist may enter eligibility/profile/budget.",
+      "retrieval_path": "producer telemetry only",
+      "evidence": [
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r88-report.md"
+      ]
+    },
+    {
+      "id": "E35",
+      "surface": "legacy_compact_anchor_decision_frame",
+      "current_status": "PARTIAL",
+      "target_class": "OBSERVABILITY_ONLY",
+      "priority": "P1-hardening",
+      "current_behavior": "A legacy compatibility path remains when COG_RUNTIME_ANCHOR_MODE=anchor: history compaction can append a dynamic compact_active_state_appendix containing [当前决策] goal/objective + [下一步]. Shell/default mode is unset/auto, so this is not fresh default production reachability, but an operator-visible switch can reactivate a second program-owned active-state prompt path alongside task_active/Cognitive state.",
+      "target_rule": "Retire the compact-specific anchor prompt path. If active task identity is needed, use one canonical active-state projection (E23/Cognitive) independent of compression occurrence; compact mode must not create a second semantic channel.",
+      "retrieval_path": "GoalStore/task_frontier/semantic state remain available; compression event/status is observability only",
+      "evidence": [
+        "src/llm_loop/core/history.py:_cog_anchor_mode",
+        "src/llm_loop/core/history.py:_decision_line_frame",
+        "src/llm_loop/core/history.py:compact_active_state_appendix",
+        "tests/unit/test_append_compression.py"
+      ]
+    }
+  ],
+  "runtime_storage_snapshot": {
+    "scope_note": "read-only counts from session storage; not equivalent to current provider-wire counts",
+    "active_sessions": {
+      "sessions": 62,
+      "messages": 11061,
+      "tool_messages": 4428,
+      "reasoning_bearing_messages": 3840,
+      "injection_kind_counts": {
+        "memory_snapshot": 382,
+        "experience_tip": 118,
+        "model_switch_notice": 21,
+        "architecture_report": 12,
+        "session_digest_catalog": 5,
+        "declaration_reminder": 3
+      },
+      "stored_chars_by_injection_kind": {
+        "memory_snapshot": 410243,
+        "experience_tip": 47746,
+        "model_switch_notice": 9278,
+        "architecture_report": 2336,
+        "session_digest_catalog": 1198,
+        "declaration_reminder": 3862
+      }
+    },
+    "updated_2026_08_30": {
+      "sessions": 15,
+      "messages": 780,
+      "tool_messages": 250,
+      "reasoning_bearing_messages": 219,
+      "injection_kind_counts": {
+        "memory_snapshot": 59,
+        "experience_tip": 20,
+        "architecture_report": 12,
+        "model_switch_notice": 10,
+        "session_digest_catalog": 5,
+        "declaration_reminder": 3
+      }
+    }
+  },
+  "canary_blockers": [
+    "E07",
+    "E08",
+    "E12",
+    "E15",
+    "E16",
+    "E17",
+    "E18",
+    "E19",
+    "E32",
+    "E35"
+  ],
+  "r8_5_status": "PASS_CURRENT_FORMAT; LEGACY_MIGRATION_NOT_STARTED",
+  "r8_5_evidence": "docs/injection-governance/eligibility/resolved-episode-report.md",
+  "r8_7_tool_eligibility_status": "PASS",
+  "r8_7_evidence": "docs/injection-governance/tool-eligibility/r87-report.md",
+  "r8_8_status": "PASS",
+  "r8_8_evidence": "docs/injection-governance/eligibility/r88-report.md",
+  "behavior_canary_gate_state": "BLOCKED_STRICT_CONTEXT_CENSUS",
+  "r8_9_status": "PASS",
+  "r8_9_evidence": "docs/injection-governance/eligibility/r89-report.md",
+  "r8_10_status": "PASS",
+  "r8_10_evidence": "docs/injection-governance/eligibility/r810-report.md",
+  "r8_11_status": "PASS",
+  "r8_11_evidence": "docs/injection-governance/eligibility/r811-report.md",
+  "r8_12_status": "PASS",
+  "r8_12_evidence": "docs/injection-governance/eligibility/r812-report.md",
+  "r8_13_status": "PASS",
+  "r8_13_evidence": "docs/injection-governance/eligibility/r813-report.md",
+  "r8_14_status": "PASS",
+  "r8_14_evidence": "docs/injection-governance/eligibility/r814-report.md",
+  "r8_15_status": "PASS",
+  "r8_15_evidence": "docs/injection-governance/eligibility/r815-report.md",
+  "r8_16_status": "PASS",
+  "r8_16_evidence": "docs/injection-governance/eligibility/r816-report.md",
+  "r8_17_status": "PASS",
+  "r8_17_evidence": "docs/injection-governance/eligibility/r817-report.md",
+  "r8_18_status": "PASS",
+  "r8_18_evidence": "docs/injection-governance/eligibility/r818-report.md",
+  "r8_19_status": "PASS",
+  "r8_19_evidence": "docs/injection-governance/eligibility/r819-report.md",
+  "r8_20_status": "PASS",
+  "r8_20_evidence": "docs/injection-governance/eligibility/r820-report.md",
+  "r8_21_status": "PASS",
+  "r8_21_evidence": "docs/injection-governance/eligibility/r821-report.md",
+  "r8_22_status": "PASS",
+  "r8_22_evidence": "docs/injection-governance/eligibility/r822-report.md",
+  "r8_23_status": "BLOCKERS_FOUND",
+  "r8_23_evidence": "docs/injection-governance/eligibility/r823-report.md"
+}

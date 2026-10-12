@@ -1,0 +1,327 @@
+{
+ "schema": "subject-binding-v3-dev-sealed/v1",
+ "present_order": [
+  "db6fd74071ba",
+  "776b355da180",
+  "1d48851b7316",
+  "b9347146b8c9",
+  "75c44552f7fa",
+  "07a5b704cb73",
+  "60f3ad5cead6",
+  "5b468be45fd9",
+  "8e85cd3efe97",
+  "edfe85267bcc",
+  "275301ff2e2c",
+  "a99f9c893519",
+  "21fbdef7437b",
+  "299a5703663f",
+  "24076c231c5a",
+  "506d16bcc6b7",
+  "59f910088491",
+  "9faa7c90c740",
+  "68e0d3e1bc69",
+  "337909e190da",
+  "994e0d18f572",
+  "8c3db87f233d",
+  "3f799865ac31",
+  "16cf6029268f",
+  "b8c08c09f876",
+  "9385ddfb3f25",
+  "70b6a51b1e66",
+  "b76b8de38dd0",
+  "35401242d2d9",
+  "f5415533ffde",
+  "3639d7388503",
+  "81fbc7109e80"
+ ],
+ "cases": {
+  "59f910088491": {
+   "case_id": "v3d-B01",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac",
+   "source_method_id": "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+   "purpose_divergence": "任务核验标识符存在性；subject Method 面向写入逐字枚举工件前的名集提取。"
+  },
+  "68e0d3e1bc69": {
+   "case_id": "v3d-B02",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "bounded-chunk-write-verify-for-long-file-artifacts-45c00c2ebf00",
+   "source_method_id": "bound-verification-output-to-survive-truncation-5879c1e4cca7",
+   "purpose_divergence": "任务压缩验证命令输出；subject Method 面向长文件写入传输的分块与落盘核验。"
+  },
+  "3639d7388503": {
+   "case_id": "v3d-B03",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "batch-complete-required-fields-on-parameter-rejection-71b35b88bd44",
+   "source_method_id": "bare-id-state-reconcile-before-transition-retry-588019de930e",
+   "purpose_divergence": "任务先对账已发起动作的最新状态；subject Method 面向参数缺失型拒绝后的字段补全重试。"
+  },
+  "9faa7c90c740": {
+   "case_id": "v3d-B04",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-evidence-to-instance-lifecycle-window-fffe781df7d0",
+   "source_method_id": "anchor-process-verification-on-deployment-identity-1a2a8ee84ad1",
+   "purpose_divergence": "任务核对当前进程的部署身份；subject Method 面向跨进程生命周期证据切窗与当前实例复现。"
+  },
+  "a99f9c893519": {
+   "case_id": "v3d-B05",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-on-unique-identifier-to-find-mechanism-ae14900fecb5",
+   "source_method_id": "async-action-terminal-ledger-first-7f9a435b6e99",
+   "purpose_divergence": "任务沿已知 action 读取终态和反馈；subject Method 面向借唯一标识定位未知 producer/consumer 机制。"
+  },
+  "5b468be45fd9": {
+   "case_id": "v3d-B06",
+   "kind": "challenge",
+   "family": "same_object_different_action",
+   "intended": "SKIP",
+   "subject_method_id": "binding-identity-gate-before-destructive-ops-9e1d9ef8f671",
+   "source_method_id": "binding-verify-config-first-probe-86ba90942add",
+   "purpose_divergence": "任务验证连接绑定一致性；subject Method 面向破坏性操作前确认数字标识的实体类别与归属。"
+  },
+  "9385ddfb3f25": {
+   "case_id": "v3d-B07",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "artifact-symbol-lineage-before-mechanism-reading-e22289ec79cf",
+   "source_method_id": "audit-report-by-resolving-cited-pointers-4cbbd66a7689",
+   "purpose_divergence": "任务裁定报告声明真伪；subject Method 面向共享数据工件的写入者符号血缘归因。"
+  },
+  "16cf6029268f": {
+   "case_id": "v3d-B08",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-first-claim-audit-81071f5c9dc1",
+   "source_method_id": "authoritative-record-first-when-preview-truncated-0155675ee421",
+   "purpose_divergence": "任务恢复具名规格全文；subject Method 面向报告事实声明的持久状态锚点优先审计。"
+  },
+  "b9347146b8c9": {
+   "case_id": "v3d-B09",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "audit-closure-via-transition-event-receipts-not-artifact-grep-da92ba3b84c6",
+   "source_method_id": "audit-duplicates-via-unfiltered-timeline-and-controlflow-boundary-340f7604d311",
+   "purpose_divergence": "任务解释重复动作的控制流来源；subject Method 面向生命周期阶段转移与闭环回执证明。"
+  },
+  "35401242d2d9": {
+   "case_id": "v3d-B10",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-verification-over-narrative-recovery-73fa76a07438",
+   "source_method_id": "answer-terse-ref-from-authoritative-goal-record-bound-recovery-f5a3ce3d72c2",
+   "purpose_divergence": "任务解析当前回指；subject Method 面向核验旧叙述声称是否已经落实。"
+  },
+  "75c44552f7fa": {
+   "case_id": "v3d-B11",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "bare-citation-anchor-not-path-guess-c0caae461a97",
+   "source_method_id": "authoritative-artifact-first-then-live-contract-probe-6867db304150",
+   "purpose_divergence": "任务按已知绝对路径读取工件；subject Method 面向裸文件名引用下的路径定位。"
+  },
+  "21fbdef7437b": {
+   "case_id": "v3d-B12",
+   "kind": "challenge",
+   "family": "same_evidence_different_claim",
+   "intended": "SKIP",
+   "subject_method_id": "audit-report-by-resolving-cited-pointers-4cbbd66a7689",
+   "source_method_id": "audit-duplicates-via-unfiltered-timeline-and-controlflow-boundary-340f7604d311",
+   "purpose_divergence": "任务分析单会话控制流重复；subject Method 面向带可解析指针的分析报告逐声明核验。"
+  },
+  "776b355da180": {
+   "case_id": "v3d-B13",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc",
+   "source_method_id": "complete-failure-inventory-before-root-cause-ce230cde7fa6",
+   "purpose_divergence": "任务建立失败全集；subject Method 面向失败集合已知后的 touched-set 与 clean-HEAD 因果归因。"
+  },
+  "60f3ad5cead6": {
+   "case_id": "v3d-B14",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "complete-failure-inventory-before-root-cause-ce230cde7fa6",
+   "source_method_id": "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc",
+   "purpose_divergence": "任务已进入因果归因阶段；subject Method 面向先钉死完整失败清单。"
+  },
+  "299a5703663f": {
+   "case_id": "v3d-B15",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "authority-contract-before-managed-mutation-62e4436f179e",
+   "source_method_id": "binding-drift-preflight-before-gated-service-mutation-e6f2166d36f7",
+   "purpose_divergence": "任务判定 binding drift 与可接纳性；subject Method 面向先确定动作权限归属。"
+  },
+  "275301ff2e2c": {
+   "case_id": "v3d-B16",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "async-wait-on-pipeline-conclusion-not-artifact-03a2fa7c25cb",
+   "source_method_id": "bounded-probe-before-blocking-retry-e3e7b0a91b65",
+   "purpose_divergence": "任务对阻塞网络重试做有界故障分类；subject Method 面向异步 pipeline 的终态结论等待。"
+  },
+  "70b6a51b1e66": {
+   "case_id": "v3d-B17",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "assertions-as-spec-first-for-behavior-edits-c1f836aa31cd",
+   "source_method_id": "bulk-edit-from-displayed-literal-anchor-free-per-surface-verify-95849638b2f5",
+   "purpose_divergence": "任务执行多表面字面量迁移；subject Method 面向行为或指标契约变更时以断言作为规格。"
+  },
+  "b8c08c09f876": {
+   "case_id": "v3d-B18",
+   "kind": "challenge",
+   "family": "same_workflow_different_phase",
+   "intended": "SKIP",
+   "subject_method_id": "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+   "source_method_id": "binding-verify-config-first-probe-86ba90942add",
+   "purpose_divergence": "任务按权威配置做重绑一致性验证；subject Method 面向接入失败场景先判断 attach 可行性。"
+  },
+  "24076c231c5a": {
+   "case_id": "v3d-B19",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-on-self-report-then-probe-gaps-003c0af478b6",
+   "source_method_id": "binary-intervention-sufficiency-gate-7631f80e335c",
+   "purpose_divergence": "任务用最小事实对裁决二元干预；subject Method 面向 authoritative self-report 存在时以其状态字段为主锚。"
+  },
+  "1d48851b7316": {
+   "case_id": "v3d-B20",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "anchor-process-verification-on-deployment-identity-1a2a8ee84ad1",
+   "source_method_id": "anchor-evidence-to-instance-lifecycle-window-fffe781df7d0",
+   "purpose_divergence": "任务用生命周期身份切证据窗口并复现异常；subject Method 面向重启后核对进程是否落在目标部署身份。"
+  },
+  "8c3db87f233d": {
+   "case_id": "v3d-B21",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "binding-drift-preflight-before-gated-service-mutation-e6f2166d36f7",
+   "source_method_id": "authority-contract-before-managed-mutation-62e4436f179e",
+   "purpose_divergence": "任务判动作 authority contract；subject Method 面向已知权限契约下的代码树与部署绑定漂移。"
+  },
+  "f5415533ffde": {
+   "case_id": "v3d-B22",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "bounded-probe-before-blocking-retry-e3e7b0a91b65",
+   "source_method_id": "async-wait-on-pipeline-conclusion-not-artifact-03a2fa7c25cb",
+   "purpose_divergence": "任务等待异步 pipeline 的结论；subject Method 面向阻塞式命令重试前的本地有界探针。"
+  },
+  "994e0d18f572": {
+   "case_id": "v3d-B23",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "binding-verify-config-first-probe-86ba90942add",
+   "source_method_id": "binding-identity-gate-before-destructive-ops-9e1d9ef8f671",
+   "purpose_divergence": "任务是破坏性操作前的实体身份门；subject Method 面向重启后按配置值验证外部连接绑定。"
+  },
+  "506d16bcc6b7": {
+   "case_id": "v3d-B24",
+   "kind": "challenge",
+   "family": "same_infra_different_decision",
+   "intended": "SKIP",
+   "subject_method_id": "binary-intervention-sufficiency-gate-7631f80e335c",
+   "source_method_id": "anchor-on-self-report-then-probe-gaps-003c0af478b6",
+   "purpose_divergence": "任务以权威 self-report 回答健康问题；subject Method 面向用户提出重启/回滚等二元干预请求时的最小事实裁决。"
+  },
+  "337909e190da": {
+   "case_id": "v3d-A01",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac",
+   "source_method_id": "allowlist-names-from-authoritative-definition-not-summary-28a550ac5cac",
+   "purpose_divergence": "self-applicable control"
+  },
+  "8e85cd3efe97": {
+   "case_id": "v3d-A02",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "bounded-chunk-write-verify-for-long-file-artifacts-45c00c2ebf00",
+   "source_method_id": "bounded-chunk-write-verify-for-long-file-artifacts-45c00c2ebf00",
+   "purpose_divergence": "self-applicable control"
+  },
+  "3f799865ac31": {
+   "case_id": "v3d-A03",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "artifact-symbol-lineage-before-mechanism-reading-e22289ec79cf",
+   "source_method_id": "artifact-symbol-lineage-before-mechanism-reading-e22289ec79cf",
+   "purpose_divergence": "self-applicable control"
+  },
+  "edfe85267bcc": {
+   "case_id": "v3d-A04",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "audit-closure-via-transition-event-receipts-not-artifact-grep-da92ba3b84c6",
+   "source_method_id": "audit-closure-via-transition-event-receipts-not-artifact-grep-da92ba3b84c6",
+   "purpose_divergence": "self-applicable control"
+  },
+  "b76b8de38dd0": {
+   "case_id": "v3d-A05",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc",
+   "source_method_id": "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc",
+   "purpose_divergence": "self-applicable control"
+  },
+  "07a5b704cb73": {
+   "case_id": "v3d-A06",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "authority-contract-before-managed-mutation-62e4436f179e",
+   "source_method_id": "authority-contract-before-managed-mutation-62e4436f179e",
+   "purpose_divergence": "self-applicable control"
+  },
+  "db6fd74071ba": {
+   "case_id": "v3d-A07",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "anchor-on-self-report-then-probe-gaps-003c0af478b6",
+   "source_method_id": "anchor-on-self-report-then-probe-gaps-003c0af478b6",
+   "purpose_divergence": "self-applicable control"
+  },
+  "81fbc7109e80": {
+   "case_id": "v3d-A08",
+   "kind": "apply_control",
+   "family": "apply_control",
+   "intended": "APPLY",
+   "subject_method_id": "anchor-process-verification-on-deployment-identity-1a2a8ee84ad1",
+   "source_method_id": "anchor-process-verification-on-deployment-identity-1a2a8ee84ad1",
+   "purpose_divergence": "self-applicable control"
+  }
+ }
+}

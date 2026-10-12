@@ -1,0 +1,90 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-fleet-slice4-factory-wiring",
+  "summary": "Fleet slice 4 (G1): wire the already-landed fleet lease lifecycle (slices 1-3) into the production factory path behind explicit settings opt-in (LFL_FLEET_WORKSPACE_ROOT empty = fleet fully off, zero regression by test), constructing a per-process ProjectCoordinator injected into the factory-built SubAgentRunner.",
+  "components": [
+    {
+      "component_id": "fleet-slice4-factory-optin-wiring",
+      "paths": [
+        "src/llm_loop/config.py",
+        "src/llm_loop/factory.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "factory production construction of the fleet coordination control plane (opt-in ProjectCoordinator injection into SubAgentRunner)",
+      "disposition": "ADMIT as one narrow opt-in wiring tranche. The program owns only construction and provenance: settings fields (fleet_workspace_root/project_id/state_dir/repo_head), derived fleet_dir, per-process owner_id, and the coordinator->runner injection. Run-boundary lease acquire/renew/settle logic itself is the already-reviewed slices 1-3 surface; this tranche adds no second store, no new authority, and no liveness judgment (cross-generation takeover stays on-disk CAS reclaim).",
+      "evidence": [
+        "RED-first: 3 of 4 new factory wiring tests failed before implementation (Settings lacked fleet fields; runner._project_coordinator stayed None); the default-off zero-regression test was green before and after.",
+        "Default settings keep fleet fully off: no coordinator, no state.json anywhere under data_dir, subagent_lease tool receipt stays failure exactly as pre-wiring.",
+        "Opt-in build persists project state to disk at construction time (state.json visible with default or explicit project id) and the registry-resolvable subagent_lease tool's runner carries the coordinator; runner keeps the bounded default lease TTL 900s (no legacy never-expiring path).",
+        "Adjacent fleet/factory/config suites 94/94 PASS; ruff clean; pyright 0/0/0; architecture guards (incl. local_imports ratchet, module-level import only) 14/14 PASS."
+      ],
+      "verification_level": "RED-first focused TDD, adjacent fleet+factory+config pytest, ruff, pyright, architecture guards, full not-real_llm pytest on the committed candidate",
+      "model_evidence_veto_recovery_exit": "Unset LFL_FLEET_WORKSPACE_ROOT (or set empty): factory returns to no-coordinator construction with all fleet behavior off; no data migration needed to exit. Model-visible facts remain disk-truth state.json, subagent_lease tool receipts, and coordinator recover() facts; the program never decides lease liveness or takeover semantics on the model's behalf.",
+      "rollback_route": "Revert the single wiring commit. state.json is only written when enabled and keeps the already-versioned slice1 schema; leaving it on disk after rollback is inert.",
+      "declaration_id": "fleet-slice4-factory-optin-wiring"
+    },
+    {
+      "component_id": "fleet-slice4-wiring-tests",
+      "paths": [
+        "tests/unit/test_fleet_factory_wiring.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic factory wiring regression and opt-in mapping qualification",
+      "disposition": "ADMIT as tests only: default-off zero-regression guard, opt-in coordinator wiring + disk state, explicit project_id/state_dir/repo_head override, and LFL_FLEET_* env mapping incl. empty defaults.",
+      "evidence": [
+        "4/4 PASS after implementation; 3/4 RED before implementation.",
+        "Zero-regression guard (default off) asserted both pre- and post-implementation."
+      ],
+      "verification_level": "Focused and adjacent pytest",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical wiring facts and can be revised independently of production state.",
+      "rollback_route": "Revert with the implementation if the tranche is abandoned."
+    },
+    {
+      "component_id": "fleet-slice4-a5-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260919-fleet-slice4-factory-wiring.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 stays a mechanical presence/coverage gate.",
+      "evidence": [
+        "Manifest partitions the exact base...head changed-path set and declares the sole control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth; the metadata has no runtime authority.",
+      "rollback_route": "Revert together with the implementation."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "fleet-slice4-factory-optin-wiring",
+      "g1": {
+        "necessity": "Slices 1-3 landed the fleet lease lifecycle inside SubAgentRunner (run-boundary acquire, per-turn fail-soft renew, fenced settle, subagent_lease tool) but the production factory never constructed a ProjectCoordinator, so the whole capability was inert in production and the tool honestly reported not-wired. An explicit construction wiring with an off-by-default gate is required to expose it without forcing fleet behavior on default installs."
+      },
+      "g2": {
+        "authority_owner": "existing FleetStore closed-schema disk state (state.json + facts JSONL) through the existing ProjectCoordinator; settings fields are configuration provenance only",
+        "relationship": "reuse",
+        "non_duplication": "Adds four settings fields and one construction branch. No new store, no second coordination authority, no liveness/heartbeat controller, no takeover policy: fencing stays per-lease generation via FleetStore CAS, cross-generation takeover stays the already-reviewed reclaim path, and owner_id remains a per-process mechanical token."
+      },
+      "g3": {
+        "model_evidence": [
+          "disk-truth state.json under the resolved fleet dir (project record visible at build time)",
+          "subagent_lease tool receipts incl. expires_at/expired once leases exist",
+          "coordinator recover() facts after restart",
+          "per-process owner_id + repo_head recorded as mechanical workspace facts"
+        ],
+        "recovery_or_reason": "Exit is configuration-level: unset LFL_FLEET_WORKSPACE_ROOT and the factory reverts to no-coordinator construction with all fleet behavior off; leases on disk simply expire via the slice1 TTL path and state.json is inert without a coordinator. No secret, schema migration, or service state is involved."
+      },
+      "g4": {
+        "rollback": "Revert the single wiring commit; no data migration required (state.json schema unchanged from slice1 and only written when enabled).",
+        "verification": [
+          "RED-first: 3/4 new tests failed pre-implementation, 4/4 PASS post-implementation",
+          "adjacent fleet + factory + config suites 94/94 PASS",
+          "architecture guards incl. local_imports ratchet 14/14 PASS (module-level import only)",
+          "ruff clean; pyright 0 errors on changed sources",
+          "full not-real_llm pytest on the committed candidate PASS"
+        ]
+      }
+    }
+  ]
+}

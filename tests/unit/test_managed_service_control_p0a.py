@@ -1,0 +1,743 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from llm_loop.core.message import ToolResultStatus
+from llm_loop.runtime.manifest import write_manifest
+from llm_loop.runtime.service_control import (
+    DeploymentGenerationConflictError,
+    ManagedServiceDeployment,
+    ManagedServiceDeploymentStore,
+    ManagedServiceMutationGuard,
+    ServiceControlAction,
+    build_deployment,
+    build_restart_plan,
+    verify_deployment_binding,
+)
+from llm_loop.tools.builtin.service_control import ServiceControlTool
+
+
+def _deployment(tmp_path: Path, *, generation: int = 1) -> ManagedServiceDeployment:
+    code_root = (tmp_path / "code").resolve()
+    runtime_root = (tmp_path / "runtime-root").resolve()
+    code_root.mkdir(parents=True, exist_ok=True)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    (code_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (code_root / "scripts" / "restart_mirror.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    return ManagedServiceDeployment(
+        schema="managed-service-deployment/v1",
+        deployment_id=f"deploy-{generation}",
+        generation=generation,
+        git_head="a" * 40,
+        code_root=str(code_root),
+        runtime_root=str(runtime_root),
+        webui_artifact_sha256="b" * 64,
+    )
+
+
+def _write_live_manifest(data_dir: Path, service: str, pid: int) -> None:
+    runtime = data_dir / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "service": service,
+        "pid": pid,
+        "workspace_root": "/qualified/code-root",
+        "git_head": "a" * 40,
+        "identity_ok": True,
+    }
+    (runtime / f"runtime_manifest.{service}.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
+def _manifest_snippet(services: str) -> str:
+    """Shell fragment: 写与 desired 一致的 runtime manifest，使核验判 confirmed_ok.
+
+    这些用例覆盖 worker 的绑定/锁语义（核验语义另有专测）。lifecycle_agency
+    L6/L7 后，不产 manifest 的脚本会落到 verify_evidence_ready（判据缺失≠失败），
+    而非 succeeded。
+    """
+    return (
+        'mkdir -p "$LFL_RESTART_RUNTIME_ROOT/data/runtime"\n'
+        'head=$(git -C "$LFL_RESTART_CODE_ROOT" rev-parse HEAD)\n'
+        'started=$(date -u +%Y-%m-%dT%H:%M:%S+00:00)\n'
+        "for svc in " + services + "; do\n"
+        '  printf \'{"pid": 1, "git_head": "%s", "started_at": "%s"}\\n\' "$head" "$started" '
+        '> "$LFL_RESTART_RUNTIME_ROOT/data/runtime/runtime_manifest.$svc.json"\n'
+        "done\n"
+    )
+
+
+def test_deployment_contract_is_closed_schema(tmp_path: Path) -> None:
+    dep = _deployment(tmp_path)
+    raw = dep.to_dict()
+    assert ManagedServiceDeployment.from_dict(raw) == dep
+
+    with pytest.raises(ValueError, match="unknown fields"):
+        ManagedServiceDeployment.from_dict({**raw, "caller_cwd": "/tmp"})
+
+    missing = dict(raw)
+    missing.pop("git_head")
+    with pytest.raises(ValueError, match="missing fields"):
+        ManagedServiceDeployment.from_dict(missing)
+
+
+def test_deployment_store_generation_cas_fails_closed(tmp_path: Path) -> None:
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    first = _deployment(tmp_path, generation=1)
+    store.compare_and_swap(first, expected_generation=0)
+    assert store.read() == first
+
+    second = ManagedServiceDeployment(
+        **{**first.to_dict(), "deployment_id": "deploy-2", "generation": 2}
+    )
+    with pytest.raises(DeploymentGenerationConflictError):
+        store.compare_and_swap(second, expected_generation=0)
+    assert store.read() == first
+
+    store.compare_and_swap(second, expected_generation=1)
+    assert store.read() == second
+
+
+def test_runtime_manifest_writes_service_specific_identity(tmp_path: Path) -> None:
+    out = write_manifest({"service": "web", "pid": 123}, tmp_path / "data")
+    assert out.name == "runtime_manifest.json"
+    specific = tmp_path / "data" / "runtime" / "runtime_manifest.web.json"
+    assert json.loads(specific.read_text(encoding="utf-8")) == {"service": "web", "pid": 123}
+
+
+def test_guard_blocks_exact_real_incident_kill_shape(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_live_manifest(data_dir, "web", 58992)
+    _write_live_manifest(data_dir, "feishu", 59055)
+    commands = {
+        58992: "/venv/bin/python -m llm_loop.runtime.launch web",
+        59055: "/venv/bin/python -m llm_loop.runtime.launch feishu",
+    }
+    guard = ManagedServiceMutationGuard(
+        data_dir,
+        process_command_reader=lambda pid: commands.get(pid, ""),
+    )
+    decision = guard.guard(
+        "cd /repo && kill -TERM 58992 59055 2>/dev/null; sleep 3; ps -p 58992,59055"
+    )
+    assert decision is not None
+    assert decision.blocked is True
+    assert "service_control" in decision.reason
+    assert set(decision.services) == {"web", "feishu"}
+
+
+def test_guard_blocks_previous_web_feishu_kill_shape(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_live_manifest(data_dir, "web", 17029)
+    _write_live_manifest(data_dir, "feishu", 15769)
+    commands = {
+        17029: "/venv/bin/python -m llm_loop.runtime.launch web",
+        15769: "/venv/bin/python -m llm_loop.runtime.launch feishu",
+    }
+    guard = ManagedServiceMutationGuard(data_dir, process_command_reader=lambda fd: commands.get(fd, ""))
+    assert guard.guard("kill -TERM 17029 15769; sleep 3") is not None
+
+
+def test_guard_blocks_official_restart_and_direct_launch_from_generic_shell(tmp_path: Path) -> None:
+    guard = ManagedServiceMutationGuard(tmp_path / "data", process_command_reader=lambda _pid: "")
+    blocked = [
+        "bash scripts/restart_mirror.sh all",
+        "sh /repo/scripts/restart_system.sh restart",
+        ".venv/bin/python -m llm_loop.runtime.launch web",
+        "python3 -m llm_loop.runtime.launch feishu",
+        "python3 -m llm_loop.runtime.launch learning",
+        "python -m llm_loop.runtime.service_control publish --expected-generation 1",
+    ]
+    for command in blocked:
+        decision = guard.guard(command)
+        assert decision is not None, command
+        assert decision.blocked is True, command
+
+
+def test_guard_does_not_turn_generic_shell_readonly(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_live_manifest(data_dir, "web", 111)
+    guard = ManagedServiceMutationGuard(
+        data_dir,
+        process_command_reader=lambda pid: (
+            "/venv/bin/python -m llm_loop.runtime.launch web" if pid == 111 else ""
+        ),
+    )
+    allowed = [
+        "pytest -q tests/unit/test_runtime_manifest.py",
+        "git diff --check",
+        "ps -p 111 -o pid,command",
+        "kill -0 111",
+        "kill -TERM 99999",
+        "grep -n restart_mirror.sh docs/LFL-restart-guide.md",
+    ]
+    for command in allowed:
+        assert guard.guard(command) is None, command
+
+
+def test_service_control_writes_accepted_receipt_before_detached_worker(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    store = ManagedServiceDeploymentStore(data_dir)
+    dep = _deployment(tmp_path)
+    store.compare_and_swap(dep, expected_generation=0)
+    seen: list[dict] = []
+
+    def spawn(action_id: str) -> None:
+        action = store.read_action(action_id)
+        assert action is not None
+        assert action.status == "accepted"
+        seen.append(action.to_dict())
+
+    tool = ServiceControlTool(
+        store=store,
+        worker_spawner=spawn,
+        session_id_getter=lambda: "session-A",
+    )
+    result = tool.execute(action="restart", target="all", expected_generation=1)
+    assert result.status == ToolResultStatus.SUCCESS
+    assert "accepted" in result.content
+    assert seen and seen[0]["requester_session_id"] == "session-A"
+    assert seen[0]["deployment_generation"] == 1
+
+
+def test_service_control_rejects_stale_generation_without_spawning(tmp_path: Path) -> None:
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    dep = _deployment(tmp_path)
+    store.compare_and_swap(dep, expected_generation=0)
+    spawned: list[str] = []
+    tool = ServiceControlTool(store=store, worker_spawner=spawned.append)
+
+    result = tool.execute(action="restart", target="web", expected_generation=0)
+    assert result.status == ToolResultStatus.FAILURE
+    assert "generation" in result.content.lower()
+    assert spawned == []
+
+
+def test_restart_plan_is_bound_only_to_desired_state_roots(tmp_path: Path) -> None:
+    dep = _deployment(tmp_path)
+    action = ServiceControlAction(
+        schema="service-control-action/v1",
+        action_id="act-1",
+        action="restart",
+        target="all",
+        deployment_id=dep.deployment_id,
+        deployment_generation=dep.generation,
+        requester_session_id="session-A",
+        status="accepted",
+        created_at="2026-09-16T00:00:00+00:00",
+        updated_at="2026-09-16T00:00:00+00:00",
+        detail="",
+    )
+    plan = build_restart_plan(action, dep)
+    assert plan.argv == ("/bin/bash", str(Path(dep.code_root) / "scripts" / "restart_mirror.sh"), "all")
+    assert plan.cwd == dep.runtime_root
+    assert plan.env["LFL_RESTART_CODE_ROOT"] == dep.code_root
+    assert plan.env["LFL_RESTART_RUNTIME_ROOT"] == dep.runtime_root
+    assert "caller_cwd" not in plan.env
+
+
+def test_tool_registry_blocks_managed_service_kill_before_shell_executes(tmp_path: Path) -> None:
+    from llm_loop.core.message import ToolCall
+    from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+    from llm_loop.tools.registry import ToolRegistry
+
+    data_dir = tmp_path / "data"
+    _write_live_manifest(data_dir, "web", 4242)
+    guard = ManagedServiceMutationGuard(
+        data_dir,
+        process_command_reader=lambda pid: (
+            "/venv/bin/python -m llm_loop.runtime.launch web" if pid == 4242 else ""
+        ),
+    )
+    registry = ToolRegistry(managed_service_guard=guard)
+    registry.register(ExecuteCommandTool(timeout_s=1))
+    result = registry.execute(
+        ToolCall(
+            id="call-1",
+            name="execute_command",
+            arguments={"command": "kill -TERM 4242"},
+        )
+    )
+    assert result.status == ToolResultStatus.BLOCKED
+    assert "service_control" in result.content
+
+
+def test_guard_allows_runtime_launch_dry_run_and_signal_zero_probes(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_live_manifest(data_dir, "web", 31337)
+    guard = ManagedServiceMutationGuard(
+        data_dir,
+        process_command_reader=lambda pid: (
+            "/venv/bin/python -m llm_loop.runtime.launch web" if pid == 31337 else ""
+        ),
+    )
+    allowed = [
+        "python3 -m llm_loop.runtime.launch web --dry-run",
+        "python3 -c 'import os; os.kill(31337, 0)'",
+        "pkill -0 -f 'llm_loop.runtime.launch web'",
+        "bash scripts/restart_mirror.sh status",
+    ]
+    for command in allowed:
+        assert guard.guard(command) is None, command
+
+
+def test_action_worker_fails_closed_if_generation_changes_after_accept(tmp_path: Path) -> None:
+    from llm_loop.runtime.service_control import run_action_worker
+
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    first = _deployment(tmp_path, generation=1)
+    store.compare_and_swap(first, expected_generation=0)
+    action = store.accept_restart(
+        target="all",
+        expected_generation=1,
+        requester_session_id="session-A",
+    )
+    second = ManagedServiceDeployment(
+        **{**first.to_dict(), "deployment_id": "deploy-2", "generation": 2}
+    )
+    store.compare_and_swap(second, expected_generation=1)
+
+    assert run_action_worker(store, action.action_id) == 3
+    terminal = store.read_action(action.action_id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert "stale" in terminal.detail or "no longer matches" in terminal.detail
+
+
+def test_action_worker_records_success_from_desired_state_script(tmp_path: Path) -> None:
+    import subprocess
+
+    from llm_loop.runtime.service_control import run_action_worker
+
+    code, runtime = _git_deployment_fixture(tmp_path)
+    script = code / "scripts" / "restart_mirror.sh"
+    marker = runtime / "worker-marker.txt"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s|%s|%s|%s\\n" "$1" "$LFL_RESTART_CODE_ROOT" "$LFL_RESTART_RUNTIME_ROOT" "${P0A_SHOULD_NOT_LEAK-unset}" > worker-marker.txt\n'
+        + _manifest_snippet("web"),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "worker fixture"], check=True)
+    dep = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store = ManagedServiceDeploymentStore(runtime / "data")
+    store.compare_and_swap(dep, expected_generation=0)
+    action = store.accept_restart(
+        target="web",
+        expected_generation=1,
+        requester_session_id="session-A",
+    )
+
+    import os
+
+    os.environ["P0A_SHOULD_NOT_LEAK"] = "ambient-secret"
+    try:
+        assert run_action_worker(store, action.action_id) == 0
+    finally:
+        os.environ.pop("P0A_SHOULD_NOT_LEAK", None)
+    terminal = store.read_action(action.action_id)
+    assert terminal is not None and terminal.status == "succeeded"
+    target, code_root, runtime_root, leaked = marker.read_text(encoding="utf-8").strip().split("|")
+    assert target == "web"
+    assert code_root == dep.code_root
+    assert runtime_root == dep.runtime_root
+    assert leaked == "unset"
+
+
+def test_guard_blocks_common_shell_wrappers_and_dynamic_managed_pid_sources(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _write_live_manifest(data_dir, "web", 58992)
+    _write_live_manifest(data_dir, "feishu", 59055)
+    commands = {
+        58992: "/venv/bin/python -m llm_loop.runtime.launch web",
+        59055: "/venv/bin/python -m llm_loop.runtime.launch feishu",
+    }
+    guard = ManagedServiceMutationGuard(data_dir, process_command_reader=lambda fd: commands.get(fd, ""))
+    blocked = [
+        "bash -c 'kill -TERM 58992'",
+        "env FOO=1 bash scripts/restart_mirror.sh all",
+        "pkill -f 'llm_loop.runtime.launch'",
+        "pkill -f 'llm_loop.web'",
+        "killall python",
+        "kill -TERM $(jq -r .pid data/runtime/runtime_manifest.web.json)",
+        "kill -TERM $(jq -r .pid data/feishu_heartbeat.json)",
+        "kill -TERM $(lsof -tiTCP:8903 -sTCP:LISTEN)",
+        "kill -9 -1",
+    ]
+    for command in blocked:
+        decision = guard.guard(command)
+        assert decision is not None and decision.blocked, command
+
+
+def test_guard_keeps_wrapped_readonly_service_observation_available(tmp_path: Path) -> None:
+    guard = ManagedServiceMutationGuard(tmp_path / "data", process_command_reader=lambda _pid: "")
+    allowed = [
+        "env FOO=1 bash scripts/restart_mirror.sh status",
+        "env FOO=1 python3 -m llm_loop.runtime.launch web --dry-run",
+        "grep -n 'bash scripts/restart_mirror.sh all' docs/LFL-restart-guide.md",
+        "cat data/runtime/runtime_manifest.web.json",
+    ]
+    for command in allowed:
+        assert guard.guard(command) is None, command
+
+
+def test_guard_does_not_block_textual_mentions_of_launch_or_control_cli(tmp_path: Path) -> None:
+    guard = ManagedServiceMutationGuard(tmp_path / "data", process_command_reader=lambda _pid: "")
+    allowed = [
+        "grep -n 'python -m llm_loop.runtime.launch web' docs/LFL-restart-guide.md",
+        "echo 'python3 -m llm_loop.runtime.launch feishu'",
+        "grep -R 'llm_loop.runtime.service_control publish' docs tests",
+    ]
+    for command in allowed:
+        assert guard.guard(command) is None, command
+
+
+def _git_deployment_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    import subprocess
+
+    code = tmp_path / "git-code"
+    runtime = tmp_path / "git-runtime"
+    code.mkdir()
+    runtime.mkdir()
+    subprocess.run(["git", "init", "-q", str(code)], check=True)
+    subprocess.run(["git", "-C", str(code), "config", "user.email", "p0a@test"], check=True)
+    subprocess.run(["git", "-C", str(code), "config", "user.name", "p0a-test"], check=True)
+    (code / ".gitignore").write_text("webui/dist/\n", encoding="utf-8")
+    (code / "pyproject.toml").write_text("[project]\nname='p0a'\nversion='0'\n", encoding="utf-8")
+    (code / "scripts").mkdir()
+    (code / "scripts" / "restart_mirror.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(code), "add", ".gitignore", "pyproject.toml", "scripts/restart_mirror.sh"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "fixture"], check=True)
+    dist = code / "webui" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html>v1</html>\n", encoding="utf-8")
+    (dist / "app.js").write_text("console.log('v1')\n", encoding="utf-8")
+    return code, runtime
+
+
+def test_publish_builds_exact_binding_and_verify_accepts_it(tmp_path: Path) -> None:
+    code, runtime = _git_deployment_fixture(tmp_path)
+    deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    assert deployment.generation == 1
+    # EVO-20261007-9c6eccf3: code_root 绑定物化的 release checkout（固定 HEAD），
+    # 开发树只作为 publish 时的代码来源，前移不再影响既有期望代。
+    assert deployment.code_root == str((runtime / ".releases" / deployment.git_head).resolve())
+    assert deployment.runtime_root == str(runtime.resolve())
+    assert len(deployment.git_head) == 40
+    assert len(deployment.webui_artifact_sha256) == 64
+    assert verify_deployment_binding(
+        deployment,
+        code_root=Path(deployment.code_root),
+        runtime_root=runtime,
+    ) == []
+
+
+def test_verify_detects_root_head_dirty_and_webui_artifact_drift(tmp_path: Path) -> None:
+    import subprocess
+
+    code, runtime = _git_deployment_fixture(tmp_path)
+    deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+
+    # EVO-20261007-9c6eccf3: 漂移全部改测绑定树（release checkout）——
+    # runtime/head/dirty/webui 的检测语义不变，仅事实源从开发树移到绑定树。
+    bound = Path(deployment.code_root)
+    wrong_runtime = tmp_path / "wrong-runtime"
+    wrong_runtime.mkdir()
+    problems = verify_deployment_binding(
+        deployment,
+        code_root=bound,
+        runtime_root=wrong_runtime,
+    )
+    assert any("runtime_root mismatch" in item for item in problems)
+
+    (bound / "webui" / "dist" / "app.js").write_text("console.log('v2')\n", encoding="utf-8")
+    problems = verify_deployment_binding(deployment, code_root=bound, runtime_root=runtime)
+    assert any("webui artifact mismatch" in item for item in problems)
+    # Feishu-only restart intentionally does not depend on WebUI artifacts.
+    assert verify_deployment_binding(
+        deployment,
+        code_root=bound,
+        runtime_root=runtime,
+        verify_webui=False,
+    ) == []
+
+    (bound / "pyproject.toml").write_text("[project]\nname='p0a'\nversion='dirty'\n", encoding="utf-8")
+    problems = verify_deployment_binding(
+        deployment,
+        code_root=bound,
+        runtime_root=runtime,
+        verify_webui=False,
+    )
+    assert "code_root tracked worktree is dirty" in problems
+    subprocess.run(["git", "-C", str(bound), "checkout", "--", "pyproject.toml"], check=True)
+
+    (bound / "next.txt").write_text("next\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(bound), "add", "next.txt"], check=True)
+    subprocess.run(["git", "-C", str(bound), "commit", "-qm", "next"], check=True)
+    problems = verify_deployment_binding(
+        deployment,
+        code_root=bound,
+        runtime_root=runtime,
+        verify_webui=False,
+    )
+    assert any("git_head mismatch" in item for item in problems)
+
+
+def test_publish_rejects_tracked_dirty_tree_but_allows_ignored_webui_dist(tmp_path: Path) -> None:
+    code, runtime = _git_deployment_fixture(tmp_path)
+    # dist is ignored and intentionally part of deployment artifact identity, not Git cleanliness.
+    deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    assert deployment.webui_artifact_sha256
+    (code / "pyproject.toml").write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="tracked worktree must be clean"):
+        build_deployment(code_root=code, runtime_root=runtime, generation=2)
+
+
+def test_lifecycle_lock_serializes_publish_against_physical_restart(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+    import time
+
+    code, runtime = _git_deployment_fixture(tmp_path)
+    marker = runtime / "lifecycle-started"
+    script = code / "scripts" / "restart_mirror.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'touch "$LFL_RESTART_RUNTIME_ROOT/lifecycle-started"\n'
+        + _manifest_snippet("web feishu learning")
+        + "sleep 0.8\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "lifecycle fixture"], check=True)
+    first = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store = ManagedServiceDeploymentStore(runtime / "data")
+    store.compare_and_swap(first, expected_generation=0)
+    action = store.accept_restart(
+        target="all",
+        expected_generation=1,
+        requester_session_id="session-A",
+    )
+    source_root = Path(__file__).resolve().parents[2] / "src"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(source_root)
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from llm_loop.runtime.service_control import ManagedServiceDeploymentStore, run_action_worker; "
+                "raise SystemExit(run_action_worker(ManagedServiceDeploymentStore(sys.argv[1]), sys.argv[2]))"
+            ),
+            str(store.data_dir),
+            action.action_id,
+        ],
+        env=env,
+    )
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert marker.exists(), "worker never entered the physical restart window"
+
+    second = ManagedServiceDeployment(
+        **{**first.to_dict(), "deployment_id": "deploy-2", "generation": 2}
+    )
+    started = time.monotonic()
+    store.compare_and_swap(second, expected_generation=1)
+    elapsed = time.monotonic() - started
+    assert child.wait(timeout=5) == 0
+    assert elapsed >= 0.45, f"publish did not wait for lifecycle lease: {elapsed:.3f}s"
+    assert store.read() == second
+
+# ── P0-A.1 bootstrap-audit follow-up (2026-09-16) ──
+
+
+def test_missing_deployment_read_is_strictly_zero_write(tmp_path: Path) -> None:
+    data_dir = tmp_path / "read-data"
+    store = ManagedServiceDeploymentStore(data_dir)
+
+    assert not data_dir.exists()
+    assert store.read() is None
+    assert not data_dir.exists(), "read-only missing-state lookup must not create runtime/lock files"
+
+
+def test_service_control_status_on_missing_state_is_strictly_zero_write(tmp_path: Path) -> None:
+    data_dir = tmp_path / "tool-status-data"
+    store = ManagedServiceDeploymentStore(data_dir)
+    tool = ServiceControlTool(store=store)
+
+    result = tool.execute(action="status")
+    assert result.status == ToolResultStatus.SUCCESS
+    assert '"deployment": null' in result.content
+    assert not data_dir.exists(), "model-visible status must be physically read-only"
+
+
+def test_cli_show_and_verify_missing_state_are_strictly_zero_write(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+
+    source_root = Path(__file__).resolve().parents[2] / "src"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(source_root)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    show_data = tmp_path / "cli-show-data"
+    shown = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "llm_loop.runtime.service_control",
+            "show",
+            "--data-dir",
+            str(show_data),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert shown.returncode == 0
+    assert shown.stdout.strip() == "{}"
+    assert not show_data.exists(), "CLI show must not create a state-lock directory"
+
+    verify_data = tmp_path / "cli-verify-data"
+    verified = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "llm_loop.runtime.service_control",
+            "verify",
+            "--data-dir",
+            str(verify_data),
+            "--code-root",
+            str(tmp_path),
+            "--runtime-root",
+            str(tmp_path),
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert verified.returncode == 4
+    assert "not published" in verified.stderr
+    assert not verify_data.exists(), "CLI verify missing-state path must remain zero-write"
+
+
+def test_detached_worker_uses_current_control_code_for_pre_p0a_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+    from typing import Any
+
+    import llm_loop.runtime.service_control as sc
+    from llm_loop.runtime.service_control import spawn_service_control_worker
+
+    code, runtime = _git_deployment_fixture(tmp_path)
+    script = code / "scripts" / "restart_mirror.sh"
+    marker = runtime / "old-target-ran.txt"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s\\n" "$1" > old-target-ran.txt\n'
+        + _manifest_snippet("web feishu learning"),
+        encoding="utf-8",
+    )
+    import subprocess
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "old target script"], check=True)
+    assert not (code / "src" / "llm_loop" / "runtime" / "service_control.py").exists()
+
+    store = ManagedServiceDeploymentStore(runtime / "data")
+    deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store.compare_and_swap(deployment, expected_generation=0)
+    action = store.accept_restart(
+        target="all",
+        expected_generation=1,
+        requester_session_id="session-rollback",
+    )
+
+    captured: dict[str, Any] = {}
+    original_env_builder = sc._control_subprocess_env
+
+    def _spy(**kwargs: Any) -> dict[str, str]:
+        captured.clear()
+        captured.update(kwargs)
+        return original_env_builder(**kwargs)
+
+    monkeypatch.setattr(sc, "_control_subprocess_env", _spy)
+    spawn_service_control_worker(store, action.action_id)
+    # Controller identity must be an explicit binding decision, not an
+    # accident of PYTHONPATH ordering or a site-packages editable install
+    # (which would mask a pre-fix regression in some environments).
+    assert captured.get("python_src") is not None, (
+        "worker spawn must explicitly bind controller identity via python_src"
+    )
+    assert Path(str(captured["python_src"])).resolve() == (sc._control_code_root() / "src").resolve()
+    deadline = time.monotonic() + 8
+    terminal = None
+    while time.monotonic() < deadline:
+        terminal = store.read_action(action.action_id)
+        if terminal is not None and terminal.status in {"succeeded", "failed"}:
+            break
+        time.sleep(0.05)
+
+    assert terminal is not None
+    assert terminal.status == "succeeded", terminal.detail
+    assert marker.read_text(encoding="utf-8").strip() == "all"
+
+
+def test_worker_reverifies_dirty_target_before_old_script_execution(tmp_path: Path) -> None:
+    import subprocess
+
+    from llm_loop.runtime.service_control import run_action_worker
+
+    code, runtime = _git_deployment_fixture(tmp_path)
+    marker = runtime / "must-not-run.txt"
+    script = code / "scripts" / "restart_mirror.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "touch must-not-run.txt\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(code), "add", "scripts/restart_mirror.sh"], check=True)
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "old target script"], check=True)
+
+    store = ManagedServiceDeploymentStore(runtime / "data")
+    deployment = build_deployment(code_root=code, runtime_root=runtime, generation=1)
+    store.compare_and_swap(deployment, expected_generation=0)
+    action = store.accept_restart(
+        target="all",
+        expected_generation=1,
+        requester_session_id="session-dirty",
+    )
+
+    # Drift after publish/accept: generation/deployment_id still match, bytes do not
+    # （EVO-20261007-9c6eccf3: 漂移改测绑定树 release checkout，开发树前移不再是失败源）。
+    (Path(deployment.code_root) / "pyproject.toml").write_text(
+        "[project]\nname='p0a'\nversion='dirty-after-publish'\n",
+        encoding="utf-8",
+    )
+    rc = run_action_worker(store, action.action_id)
+    terminal = store.read_action(action.action_id)
+
+    assert rc != 0
+    assert terminal is not None and terminal.status == "failed"
+    assert "dirty" in terminal.detail
+    assert not marker.exists(), "worker must fail before executing a drifted pre-P0-A script"

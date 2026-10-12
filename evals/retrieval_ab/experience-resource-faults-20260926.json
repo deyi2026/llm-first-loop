@@ -1,0 +1,141 @@
+{
+  "cold_fail_open": {
+    "latency_ms": 18.4,
+    "same_lexical_order": true,
+    "fallback_reason": "candidate_cache_cold",
+    "missing_count": 194,
+    "prewarm_scheduled": true,
+    "foreground_calls_delta": 0,
+    "background_calls_after_settle": 2,
+    "background_diag": {
+      "prewarm_ms": 136.889,
+      "cache_flush_ms": 4.28,
+      "missing_count": 32,
+      "completed": true,
+      "error": ""
+    }
+  },
+  "startup_warm_hot": {
+    "warm": {
+      "requested": true,
+      "candidate_count": 246,
+      "initial_missing": 214,
+      "remaining_missing": 0,
+      "passes": 1,
+      "elapsed_ms": 534.99
+    },
+    "latency_ms": 30.8,
+    "top1": "EXPERIENCE-20260922-readonly-vs-vs-hang",
+    "semantic_diagnostics": {
+      "semantic_requested": true,
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_count": 194,
+      "candidate_missing_count": 0,
+      "cache_files_refreshed": 0,
+      "prewarm_scheduled": false,
+      "engine": "primary",
+      "latency_ms": 12.479,
+      "background_prewarm_inflight": false,
+      "last_prewarm_count": 32,
+      "last_prewarm_ms": 136.889,
+      "last_cache_flush_ms": 4.28,
+      "last_prewarm_error": "",
+      "threshold": 0.5,
+      "semantic_hit_count": 182,
+      "query_embedding_ms": 6.514,
+      "embedding_queue_wait_ms": 0.001,
+      "embedding_encode_ms": 3.219,
+      "embedding_http_ms": 6.506,
+      "embedding_transport_error": ""
+    },
+    "foreground_calls_delta": 1
+  },
+  "cross_process_refresh": {
+    "writer_remaining_missing": 0,
+    "reader_top1": "EXPERIENCE-20260922-readonly-vs-vs-hang",
+    "reader_diagnostics": {
+      "semantic_requested": true,
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_count": 194,
+      "candidate_missing_count": 0,
+      "cache_files_refreshed": 1,
+      "prewarm_scheduled": false,
+      "engine": "primary",
+      "latency_ms": 30.423,
+      "background_prewarm_inflight": false,
+      "last_prewarm_count": 0,
+      "last_prewarm_ms": 0.0,
+      "last_cache_flush_ms": 0.0,
+      "last_prewarm_error": "",
+      "threshold": 0.5,
+      "semantic_hit_count": 182,
+      "query_embedding_ms": 9.823,
+      "embedding_queue_wait_ms": 0.001,
+      "embedding_encode_ms": 5.706,
+      "embedding_http_ms": 9.816,
+      "embedding_transport_error": ""
+    }
+  },
+  "write_time_vectorization": {
+    "filename": "EXPERIENCE-20260926-managed-service-control.md",
+    "background_calls_delta": 1,
+    "missing_after_write": 0,
+    "first_query_top1": "EXPERIENCE-20260926-managed-service-control",
+    "first_query_foreground_calls": 1,
+    "first_query_diagnostics": {
+      "semantic_requested": true,
+      "semantic_effective": true,
+      "semantic_fallback_reason": "",
+      "candidate_count": 1,
+      "candidate_missing_count": 0,
+      "cache_files_refreshed": 0,
+      "prewarm_scheduled": false,
+      "engine": "primary",
+      "latency_ms": 14.924,
+      "background_prewarm_inflight": false,
+      "last_prewarm_count": 1,
+      "last_prewarm_ms": 12.552,
+      "last_cache_flush_ms": 0.438,
+      "last_prewarm_error": "",
+      "threshold": 0.5,
+      "semantic_hit_count": 1,
+      "query_embedding_ms": 14.875,
+      "embedding_queue_wait_ms": 0.002,
+      "embedding_encode_ms": 10.165,
+      "embedding_http_ms": 14.869,
+      "embedding_transport_error": ""
+    }
+  },
+  "query_transport_fail_open": {
+    "latency_ms": 24.6,
+    "same_lexical_order": true,
+    "diagnostics": {
+      "semantic_requested": true,
+      "semantic_effective": false,
+      "semantic_fallback_reason": "embedding_unavailable",
+      "candidate_count": 194,
+      "candidate_missing_count": 0,
+      "cache_files_refreshed": 0,
+      "prewarm_scheduled": false,
+      "engine": "primary",
+      "latency_ms": 4.817,
+      "query_embedding_ms": 4.508,
+      "embedding_queue_wait_ms": null,
+      "embedding_encode_ms": null,
+      "embedding_http_ms": 4.483,
+      "embedding_transport_error": "http_503"
+    },
+    "degradation_marked": true
+  },
+  "server_final": {
+    "errors": 0,
+    "queue": {
+      "active": false,
+      "foreground_waiters": 0,
+      "background_waiters": 0,
+      "active_queue": 0
+    }
+  }
+}

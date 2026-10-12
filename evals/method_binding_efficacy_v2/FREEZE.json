@@ -1,0 +1,31 @@
+{
+ "schema": "subject-binding-efficacy-v2-goldset-freeze/v1",
+ "provider_calls": 0,
+ "production_mutations": 0,
+ "push": false,
+ "qualification": "PASS",
+ "result_sha256": "decf64eab824e45d1c712a92eb0dc364a22edfce086202bbeeac4437000ac701",
+ "artifacts": {
+  "GOLDSET-PREREG.md": "75ec6bf81cc71711e52446c1519281692a3626eae920c061aeccd2e6ced6bf8e",
+  "goldset_build.py": "95047ca284ce4a9109b3c135179912a05e8e8a4471edd05875d32f1d26bb63a6",
+  "goldset_candidates.json": "523584aeb6826c207e3f28e81d10ffb1f90c244ddd843c9952aa6a2fb168ed20",
+  "goldset_sealed.json": "3bbdcac01de76bf4825ebb4831db1bec251aeeff90eb508cefc2da1750d08740",
+  "GOLDSET-SHEET.md": "1e5e46a5ec91065ec353e2358f6caae70204957acf9df51e5b3c668a268a5a00",
+  "score_template.jsonl": "bc79bfb153b0a38b14490072a1526869268d19d55c8d26e16491ad53f789ae58",
+  "blind_batch_1.md": "163134e51e96696cd1e7f25e7b206c353f4deabfdd28e21c36b5ad2d7dcb3d09",
+  "blind_batch_2.md": "f4a109d8f2cbb63e31b7c928ad971d19734c464a7469a86e0042c3db028aa205",
+  "blind_batch_3.md": "a1569a0fcb632dcd762742826a94e9d0717c9266b7d2ad24608e0b18f70989d1",
+  "blind_batch_4.md": "cbe892f8464f71254857248c3049c617a8f3ad4e856a97081c3c5853249e4060",
+  "R1.jsonl": "fb969f3580f20948d984e524549e9c937a2790025d3088b259b12b412f71d4a0",
+  "R2.jsonl": "86367a8c549636c76a2ae344c66018851c9efa14994d216aa0c3b055847e1c55",
+  "goldset_analyze.py": "752583e14edb7ba8d5fc30e123be1353727fd1ebf5985bb843f486237b66b74f",
+  "GOLDSET-RESULT.json": "decf64eab824e45d1c712a92eb0dc364a22edfce086202bbeeac4437000ac701",
+  "GOLDSET-RESULT.md": "6f144471dc7d57f6f94a7016dba3432ec5fb686073c8e10ee3b1bb211e3567d7"
+ },
+ "notes": [
+  "IQ-CTOR-v2 first downstream use",
+  "R1/R2 are independent fresh web-gpt proxy sessions split into four 10-case blind batches each; no human inter-rater claim",
+  "initial single 40-case R1 transport produced no readable score artifact and is excluded",
+  "deterministic build+analyze replay is byte-identical"
+ ]
+}

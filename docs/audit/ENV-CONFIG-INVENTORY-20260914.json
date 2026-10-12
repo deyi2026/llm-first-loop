@@ -1,0 +1,1198 @@
+{
+  "access_count": 190,
+  "class_key_counts": {
+    "bootstrap_os": 2,
+    "business_config": 86,
+    "debug_test": 12,
+    "dynamic_or_bulk": 2,
+    "secret": 3
+  },
+  "file_count": 62,
+  "keys": {
+    "<all>": {
+      "class": "dynamic_or_bulk",
+      "files": [
+        "src/llm_loop/codearts/audit.py",
+        "src/llm_loop/cognitive/cache_tags.py",
+        "src/llm_loop/config.py",
+        "src/llm_loop/feishu/config.py",
+        "src/llm_loop/introspection/tools_playwright_exec.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/runtime/identity.py",
+        "src/llm_loop/runtime/knowledge_health.py",
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/runtime/paths.py",
+        "src/llm_loop/runtime/resolver.py",
+        "src/llm_loop/tools/builtin/dsh_task.py",
+        "src/llm_loop/tools/builtin/execute_command.py",
+        "src/llm_loop/tools/mcp_client.py",
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 31,
+      "writes": 0
+    },
+    "<dynamic>": {
+      "class": "dynamic_or_bulk",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py",
+        "src/llm_loop/config.py",
+        "src/llm_loop/core/loop/engine_services/tool_reachability.py",
+        "src/llm_loop/core/loop/events.py",
+        "src/llm_loop/core/loop/input_authorization.py",
+        "src/llm_loop/core/trace_leak/leak_events.py",
+        "src/llm_loop/core/trace_leak/trace_signature.py",
+        "src/llm_loop/core/trace_leak/user_ingress_guard.py",
+        "src/llm_loop/feishu/__init__.py",
+        "src/llm_loop/feishu/bridge.py",
+        "src/llm_loop/feishu/compensation.py",
+        "src/llm_loop/llm/providers.py",
+        "src/llm_loop/runtime/resolver.py",
+        "src/llm_loop/runtime/route_context.py",
+        "src/llm_loop/web/provider_admin.py",
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 18,
+      "writes": 3
+    },
+    "ANTHROPIC_CACHE_CONTROL": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_COOLDOWN_ROUNDS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_EXIT_CHARS_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_EXIT_STABLE_RUNS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_HIT_THR": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_OVER_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_PRESSURE_ESCAPE_MAX": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_PRESSURE_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "BREAKER_TRIGGER_RUNS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_BLOCK_ESCAPE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_HIT_BLOCK": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_HIT_SAMPLE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_HIT_TELEMETRY": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_HIT_WARN": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_HIT_WARN_ADAPTIVE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_HIT_WARN_TIERS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_GUARD_PERF_BLOCK": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_TELEMETRY_STRIP_AUDIT_LOG": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "CACHE_TELEMETRY_STRIP_TAIL_LINES": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/core/cache_health.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "COG_RUNTIME_ANCHOR_MODE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "COG_RUNTIME_TELEMETRY": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/cognitive/telemetry.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "COMPACT_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/prompt_build/stages/history_budget_prep.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "COMPRESS_TARGET_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "DATA_DIR": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/approval.py",
+        "src/llm_loop/feishu/handlers.py",
+        "src/llm_loop/feishu/rest.py",
+        "src/llm_loop/introspection/loop_signals.py",
+        "src/llm_loop/introspection/proc_version.py",
+        "src/llm_loop/runtime/knowledge_health.py",
+        "src/llm_loop/runtime/manifest.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 7,
+      "writes": 0
+    },
+    "DSH_HOME": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/builtin/dsh_session_read.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "DSH_SESSIONS_ROOT": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/builtin/dsh_session_read.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "ERR1210_DEFER_TRACE": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/core/loop/injection_span.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "ERR1210_RECOVERY": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/core/loop/engine_services/recovery_controller.py",
+        "src/llm_loop/core/loop/injection_span.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "ERR1210_SNAPSHOT": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/core/loop/err1210.py",
+        "src/llm_loop/core/loop/injection_span.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "EXEC_SANDBOX": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/sandbox.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "EXEC_SANDBOX_IMAGE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/sandbox.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_APPROVAL_ALLOWED": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/approval.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_AUDIT_DIR": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/introspection/tools_feishu_outbound.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_CROSS_SYNC": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/cross_sync.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_CROSS_SYNC_MAX_CHARS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/cross_sync.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_CROSS_SYNC_MIN_INTERVAL_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/cross_sync.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_CROSS_SYNC_POLL_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/cross_sync.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_DEDUP_PATH": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_FOLD_LONG_REPLY": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_HEARTBEAT_HISTORY_MAX_MB": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_HEARTBEAT_HISTORY_PATH": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_HEARTBEAT_PATH": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/compensation.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_OUTBOUND_ALLOWED_USERS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/introspection/tools_feishu_outbound.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_OUTBOUND_ENABLED": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/introspection/tools_feishu_outbound.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_OUTBOUND_RATE_PER_MIN": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/introspection/tools_feishu_outbound.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_WS_QUEUE_MAX": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_WS_WATCHDOG_LOCK_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "FEISHU_WS_WATCHDOG_POLL_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/bridge.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "HEAD_KEEP_FORCE_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/prompt_build/stages/history_projection.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "HEAD_KEEP_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/prompt_build/stages/history_projection.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "HEAD_KEEP_TARGET_RATIO": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/prompt_build/stages/history_projection.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "INBOX_PENDING_CLEANUP_ON_START": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/interop_watch.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "INBOX_PENDING_MAX": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/interop_watch.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "INBOX_PENDING_TTL_HOURS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/interop_watch.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "INBOX_WAKEUP": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/interop_watch.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "INBOX_WAKEUP_MIN_INTERVAL_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/interop_watch.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "INBOX_WATCH_POLL_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/interop_watch.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "JOB_MAX_CONCURRENT": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/builtin/job_registry.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_BREAKER_PRESSURE_NARROW": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/loop/build.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_DATA_DIR": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/cache_guard/guard.py",
+        "src/llm_loop/core/cache_health.py",
+        "src/llm_loop/core/history.py",
+        "src/llm_loop/core/interop_watch.py",
+        "src/llm_loop/core/loop/engine_services/interop.py",
+        "src/llm_loop/core/loop/injection_span.py",
+        "src/llm_loop/core/scheduler.py",
+        "src/llm_loop/core/trace_leak/leak_events.py",
+        "src/llm_loop/eval/oracle_1210.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/tools/builtin/job_registry.py",
+        "src/llm_loop/web/routes.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 18,
+      "writes": 0
+    },
+    "LFL_E18_HARD_STOP": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/loop/engine.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_ENV_FILE": {
+      "class": "bootstrap_os",
+      "files": [
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_EVIDENCE_CAPSULE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/evidence_enforce.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_RESTART_CONFIRM_TTL_S": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/feishu/restart_guard.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_GUIDANCE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/registry.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_OCTET": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/runtime/tool_octet.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_WORKING_SET_BATCH_CHARS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/episode_history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_WORKING_SET_GRACE_GROUPS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/episode_history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_WORKING_SET_HARD_RESULT_CAP": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/episode_history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/episode_history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_WORKING_SET_RECEIPTS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/episode_history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/episode_history.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_WORKSPACE_ROOT": {
+      "class": "bootstrap_os",
+      "files": [
+        "src/llm_loop/runtime/resolver.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_MODEL": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_PAYLOAD_TRACE": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_PAYLOAD_TRACE_PATH": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_PAYLOAD_TRACE_RETAIN_DAYS": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_RETRY_DISCONNECT": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LLM_TRUST_ENV": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LMS_CHAT_TAIL": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LMS_DIRECT": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/llm/providers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LOCAL_ENABLE_THINKING": {
+      "class": "debug_test",
+      "files": [
+        "src/llm_loop/llm/client.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "MINIMAX_ANTHROPIC_BASE_URL": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "MINIMAX_API_KEY": {
+      "class": "secret",
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 3,
+      "writes": 0
+    },
+    "MODEL_PROVIDERS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/runtime/manifest.py",
+        "src/llm_loop/web/provider_admin.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 4,
+      "writes": 0
+    },
+    "NUDGE_GROWTH_CHARS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/prompt_build/stages/history_budget_prep.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "RUN_CLEANUP_CONFIRMATION_REQUIRED": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/loop/runner.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/loop/runner.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "SESSION_CONCURRENCY_LOCK": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/__init__.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "STALE_RUN_INSPECT_HOURS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/core/loop/runner.py"
+      ],
+      "module_import_reads": 1,
+      "reads": 1,
+      "writes": 0
+    },
+    "UI_V2_DIR": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/__init__.py",
+        "src/llm_loop/web/routes.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_API_KEY": {
+      "class": "secret",
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_AUTH_REQUIRE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_FETCH_BLOCK_FAKE_IP": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/builtin/web_fetch.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_FETCH_BLOCK_PRIVATE": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/tools/builtin/web_fetch.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_HOST": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_LOGIN_PASSWORD_HASH": {
+      "class": "secret",
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_ORIGIN_ALLOWLIST": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 3,
+      "writes": 0
+    },
+    "WEB_SESSION_TTL_SECONDS": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/auth.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_VISION_BACKEND": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WEB_VISION_MODEL": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
+      "writes": 0
+    },
+    "WEB_VISION_TIMEOUT": {
+      "class": "business_config",
+      "files": [
+        "src/llm_loop/web/vision.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    }
+  },
+  "module_import_access_count": 40,
+  "schema_version": 1,
+  "signature_counts": {
+    "src/llm_loop/cache_guard/guard.py|<module>|read|CACHE_GUARD_BLOCK_ESCAPE": 1,
+    "src/llm_loop/cache_guard/guard.py|<module>|read|CACHE_GUARD_HIT_BLOCK": 1,
+    "src/llm_loop/cache_guard/guard.py|<module>|read|CACHE_GUARD_HIT_SAMPLE": 1,
+    "src/llm_loop/cache_guard/guard.py|<module>|read|CACHE_GUARD_HIT_WARN": 1,
+    "src/llm_loop/cache_guard/guard.py|<module>|read|CACHE_GUARD_HIT_WARN_ADAPTIVE": 1,
+    "src/llm_loop/cache_guard/guard.py|<module>|read|CACHE_GUARD_HIT_WARN_TIERS": 1,
+    "src/llm_loop/cache_guard/guard.py|<module>|read|CACHE_GUARD_PERF_BLOCK": 1,
+    "src/llm_loop/cache_guard/guard.py|_check_privacy|read|<dynamic>": 1,
+    "src/llm_loop/cache_guard/guard.py|_resolve_audit_path|read|LFL_DATA_DIR": 2,
+    "src/llm_loop/codearts/audit.py|_redact|bulk:items|<all>": 1,
+    "src/llm_loop/cognitive/cache_tags.py|tagging_enabled_for|bulk:raw|<all>": 1,
+    "src/llm_loop/cognitive/telemetry.py|telemetry_enabled|read|COG_RUNTIME_TELEMETRY": 1,
+    "src/llm_loop/config.py|_raw_env|bulk:raw|<all>": 1,
+    "src/llm_loop/config.py|load_env_file|bulk:raw|<all>": 1,
+    "src/llm_loop/config.py|load_env_file|write|<dynamic>": 1,
+    "src/llm_loop/config.py|load_settings|bulk:raw|<all>": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_COOLDOWN_ROUNDS": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_EXIT_CHARS_RATIO": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_EXIT_STABLE_RUNS": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_HIT_THR": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_OVER_RATIO": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_PRESSURE_ESCAPE_MAX": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_PRESSURE_RATIO": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|BREAKER_TRIGGER_RUNS": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|CACHE_TELEMETRY_STRIP_AUDIT_LOG": 1,
+    "src/llm_loop/core/cache_health.py|<module>|read|CACHE_TELEMETRY_STRIP_TAIL_LINES": 1,
+    "src/llm_loop/core/cache_health.py|_breaker_audit_path|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/episode_history.py|_working_set_batch_chars|read|LFL_TOOL_WORKING_SET_BATCH_CHARS": 1,
+    "src/llm_loop/core/episode_history.py|_working_set_grace_groups|read|LFL_TOOL_WORKING_SET_GRACE_GROUPS": 1,
+    "src/llm_loop/core/episode_history.py|_working_set_hard_result_cap|read|LFL_TOOL_WORKING_SET_HARD_RESULT_CAP": 1,
+    "src/llm_loop/core/episode_history.py|_working_set_min_net_gain_chars|read|LFL_TOOL_WORKING_SET_MIN_NET_GAIN_CHARS": 1,
+    "src/llm_loop/core/episode_history.py|_working_set_receipts_enabled|read|LFL_TOOL_WORKING_SET_RECEIPTS": 1,
+    "src/llm_loop/core/episode_history.py|_working_set_soft_result_cap|read|LFL_TOOL_WORKING_SET_SOFT_RESULT_CAP": 1,
+    "src/llm_loop/core/history.py|_cog_anchor_mode|read|COG_RUNTIME_ANCHOR_MODE": 1,
+    "src/llm_loop/core/history.py|_compress_target_ratio|read|COMPRESS_TARGET_RATIO": 1,
+    "src/llm_loop/core/history.py|_decision_line_frame|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/history.py|_persist_semantic_state|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/interop_watch.py|<module>|read|INBOX_PENDING_CLEANUP_ON_START": 1,
+    "src/llm_loop/core/interop_watch.py|<module>|read|INBOX_PENDING_MAX": 1,
+    "src/llm_loop/core/interop_watch.py|<module>|read|INBOX_PENDING_TTL_HOURS": 1,
+    "src/llm_loop/core/interop_watch.py|<module>|read|INBOX_WAKEUP": 1,
+    "src/llm_loop/core/interop_watch.py|<module>|read|INBOX_WAKEUP_MIN_INTERVAL_S": 1,
+    "src/llm_loop/core/interop_watch.py|<module>|read|INBOX_WATCH_POLL_S": 1,
+    "src/llm_loop/core/interop_watch.py|InboxWatcher/__init__|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/loop/build.py|_BuildMixin/_breaker_pressure_block|read|LFL_BREAKER_PRESSURE_NARROW": 1,
+    "src/llm_loop/core/loop/engine.py|LoopEngine/_run_stream_inner|read|LFL_E18_HARD_STOP": 1,
+    "src/llm_loop/core/loop/engine_services/interop.py|InteropService/_interop_inbox_messages|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/loop/engine_services/recovery_controller.py|RecoveryController/_try_err1210_recovery|read|ERR1210_RECOVERY": 1,
+    "src/llm_loop/core/loop/engine_services/tool_reachability.py|_log_path|read|<dynamic>": 1,
+    "src/llm_loop/core/loop/err1210.py|snapshot_offending_payload|read|ERR1210_SNAPSHOT": 1,
+    "src/llm_loop/core/loop/events.py|_EventsMixin/_env_tail_limit|read|<dynamic>": 1,
+    "src/llm_loop/core/loop/injection_span.py|_Err1210Mixin/_try_err1210_recovery|read|ERR1210_RECOVERY": 1,
+    "src/llm_loop/core/loop/injection_span.py|record_defer_event|read|ERR1210_DEFER_TRACE": 1,
+    "src/llm_loop/core/loop/injection_span.py|record_defer_event|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/loop/injection_span.py|snapshot_offending_payload|read|ERR1210_SNAPSHOT": 1,
+    "src/llm_loop/core/loop/input_authorization.py|current_latent_channel_mode|read|<dynamic>": 1,
+    "src/llm_loop/core/loop/runner.py|<module>|read|RUN_CLEANUP_CONFIRMATION_REQUIRED": 1,
+    "src/llm_loop/core/loop/runner.py|<module>|read|RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC": 1,
+    "src/llm_loop/core/loop/runner.py|<module>|read|STALE_RUN_INSPECT_HOURS": 1,
+    "src/llm_loop/core/prompt_build/stages/history_budget_prep.py|run_history_budget_prep|read|COMPACT_RATIO": 1,
+    "src/llm_loop/core/prompt_build/stages/history_budget_prep.py|run_history_budget_prep|read|NUDGE_GROWTH_CHARS": 1,
+    "src/llm_loop/core/prompt_build/stages/history_projection.py|run_history_projection|read|HEAD_KEEP_FORCE_RATIO": 1,
+    "src/llm_loop/core/prompt_build/stages/history_projection.py|run_history_projection|read|HEAD_KEEP_RATIO": 1,
+    "src/llm_loop/core/prompt_build/stages/history_projection.py|run_history_projection|read|HEAD_KEEP_TARGET_RATIO": 1,
+    "src/llm_loop/core/scheduler.py|<module>|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/scheduler.py|SchedulerThread/_notify_via_interop|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/trace_leak/leak_events.py|current_quarantine_mode|read|<dynamic>": 1,
+    "src/llm_loop/core/trace_leak/leak_events.py|quarantine_root|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/core/trace_leak/trace_signature.py|current_signature_mode|read|<dynamic>": 1,
+    "src/llm_loop/core/trace_leak/user_ingress_guard.py|current_guard_mode|read|<dynamic>": 1,
+    "src/llm_loop/eval/oracle_1210.py|run_oracle|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/feishu/__init__.py|_env_float|read|<dynamic>": 1,
+    "src/llm_loop/feishu/approval.py|_allowed_open_ids|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/approval.py|_allowed_open_ids|read|FEISHU_APPROVAL_ALLOWED": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_DEDUP_PATH": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_HEARTBEAT_HISTORY_PATH": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_HEARTBEAT_PATH": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_WS_QUEUE_MAX": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_WS_WATCHDOG_LOCK_S": 1,
+    "src/llm_loop/feishu/bridge.py|<module>|read|FEISHU_WS_WATCHDOG_POLL_S": 1,
+    "src/llm_loop/feishu/bridge.py|_env_float|read|<dynamic>": 1,
+    "src/llm_loop/feishu/bridge.py|_heartbeat_history_max_bytes|read|FEISHU_HEARTBEAT_HISTORY_MAX_MB": 1,
+    "src/llm_loop/feishu/compensation.py|<module>|read|FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S": 1,
+    "src/llm_loop/feishu/compensation.py|compensation_path|read|<dynamic>": 1,
+    "src/llm_loop/feishu/compensation.py|legacy_interrupted_path|read|<dynamic>": 1,
+    "src/llm_loop/feishu/config.py|_env_flag|bulk:raw|<all>": 1,
+    "src/llm_loop/feishu/config.py|_env_int|bulk:raw|<all>": 1,
+    "src/llm_loop/feishu/config.py|load_feishu_config|bulk:raw|<all>": 1,
+    "src/llm_loop/feishu/cross_sync.py|<module>|read|FEISHU_CROSS_SYNC": 1,
+    "src/llm_loop/feishu/cross_sync.py|<module>|read|FEISHU_CROSS_SYNC_MAX_CHARS": 1,
+    "src/llm_loop/feishu/cross_sync.py|<module>|read|FEISHU_CROSS_SYNC_MIN_INTERVAL_S": 1,
+    "src/llm_loop/feishu/cross_sync.py|<module>|read|FEISHU_CROSS_SYNC_POLL_S": 1,
+    "src/llm_loop/feishu/handlers.py|FeishuMessageHandler/_default_audit_dir|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/handlers.py|FeishuMessageHandler/_reply_chunked|read|FEISHU_FOLD_LONG_REPLY": 1,
+    "src/llm_loop/feishu/rest.py|_default_audit_dir|read|DATA_DIR": 1,
+    "src/llm_loop/feishu/restart_guard.py|confirm_ttl_s|read|LFL_RESTART_CONFIRM_TTL_S": 1,
+    "src/llm_loop/introspection/loop_signals.py|LoopSignalDetector/_ghost_ignore_path|read|DATA_DIR": 1,
+    "src/llm_loop/introspection/proc_version.py|_audit_dir|read|DATA_DIR": 1,
+    "src/llm_loop/introspection/tools_feishu_outbound.py|<module>|read|FEISHU_AUDIT_DIR": 1,
+    "src/llm_loop/introspection/tools_feishu_outbound.py|_get_allowed_users|read|FEISHU_OUTBOUND_ALLOWED_USERS": 1,
+    "src/llm_loop/introspection/tools_feishu_outbound.py|_get_rate_limit|read|FEISHU_OUTBOUND_RATE_PER_MIN": 1,
+    "src/llm_loop/introspection/tools_feishu_outbound.py|_is_outbound_enabled|read|FEISHU_OUTBOUND_ENABLED": 1,
+    "src/llm_loop/introspection/tools_playwright_exec.py|_child_env|bulk:items|<all>": 1,
+    "src/llm_loop/llm/client.py|LLMClient/__post_init__|read|LLM_TRUST_ENV": 1,
+    "src/llm_loop/llm/client.py|LLMClient/_anthropic_cache_enabled|read|ANTHROPIC_CACHE_CONTROL": 1,
+    "src/llm_loop/llm/client.py|LLMClient/_stream_openai|bulk:raw|<all>": 1,
+    "src/llm_loop/llm/client.py|LLMClient/_stream_openai|read|LLM_RETRY_DISCONNECT": 1,
+    "src/llm_loop/llm/client.py|LLMClient/ensure_guard|read|CACHE_GUARD_HIT_TELEMETRY": 1,
+    "src/llm_loop/llm/client.py|LLMClient/reasoning_contract_state|bulk:raw|<all>": 2,
+    "src/llm_loop/llm/client.py|LLMClient/reasoning_contract_state|read|LOCAL_ENABLE_THINKING": 1,
+    "src/llm_loop/llm/client.py|LLMClient|read|LMS_CHAT_TAIL": 1,
+    "src/llm_loop/llm/client.py|_cleanup_trace_shards|read|LLM_PAYLOAD_TRACE_RETAIN_DAYS": 1,
+    "src/llm_loop/llm/client.py|_trace_payload_fingerprint|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/llm/client.py|_trace_payload_fingerprint|read|LLM_PAYLOAD_TRACE": 1,
+    "src/llm_loop/llm/client.py|_trace_payload_fingerprint|read|LLM_PAYLOAD_TRACE_PATH": 1,
+    "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>": 1,
+    "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|LMS_DIRECT": 1,
+    "src/llm_loop/runtime/identity.py|_find_workspace_root|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/identity.py|_mode|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/identity.py|compute_identity|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/knowledge_health.py|_paths_from_process_env|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/knowledge_health.py|_paths_from_process_env|read|DATA_DIR": 1,
+    "src/llm_loop/runtime/manifest.py|_knowledge_runtime_paths|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/manifest.py|_manifest_model_providers_raw|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/runtime/manifest.py|default_data_dir|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/manifest.py|default_data_dir|read|DATA_DIR": 1,
+    "src/llm_loop/runtime/manifest.py|providers_hashes|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/runtime/paths.py|resolve_runtime_paths|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|_default_workspace|read|LFL_WORKSPACE_ROOT": 1,
+    "src/llm_loop/runtime/resolver.py|apply_to_environ|bulk:pop|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|apply_to_environ|write|<dynamic>": 1,
+    "src/llm_loop/runtime/resolver.py|legacy_env_snapshot|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|legacy_settings_snapshot|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/resolver.py|resolve_effective|bulk:raw|<all>": 1,
+    "src/llm_loop/runtime/route_context.py|_env_or_none|read|<dynamic>": 1,
+    "src/llm_loop/runtime/tool_octet.py|record_tool_octet|read|LFL_TOOL_OCTET": 1,
+    "src/llm_loop/tools/builtin/dsh_session_read.py|<module>|read|DSH_SESSIONS_ROOT": 1,
+    "src/llm_loop/tools/builtin/dsh_session_read.py|DshSessionReadTool/_sessions_root|read|DSH_HOME": 1,
+    "src/llm_loop/tools/builtin/dsh_task.py|DshTaskTool/_redact|bulk:items|<all>": 1,
+    "src/llm_loop/tools/builtin/dsh_task.py|_dsh_env|bulk:raw|<all>": 1,
+    "src/llm_loop/tools/builtin/execute_command.py|_scrubbed_env|bulk:items|<all>": 1,
+    "src/llm_loop/tools/builtin/job_registry.py|JobRegistry/__init__|read|JOB_MAX_CONCURRENT": 1,
+    "src/llm_loop/tools/builtin/job_registry.py|JobRegistry/_notify_completion|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/tools/builtin/web_fetch.py|_block_private_enabled|read|WEB_FETCH_BLOCK_PRIVATE": 1,
+    "src/llm_loop/tools/builtin/web_fetch.py|_strict_fake_ip|read|WEB_FETCH_BLOCK_FAKE_IP": 1,
+    "src/llm_loop/tools/evidence_enforce.py|_capsule_mode|read|LFL_EVIDENCE_CAPSULE": 1,
+    "src/llm_loop/tools/mcp_client.py|McpConnection/_start_process|bulk:raw|<all>": 1,
+    "src/llm_loop/tools/registry.py|_tool_guidance_mode|read|LFL_TOOL_GUIDANCE": 1,
+    "src/llm_loop/tools/sandbox.py|docker_argv|read|EXEC_SANDBOX_IMAGE": 1,
+    "src/llm_loop/tools/sandbox.py|sandbox_mode|read|EXEC_SANDBOX": 1,
+    "src/llm_loop/web/__init__.py|build_app|read|SESSION_CONCURRENCY_LOCK": 1,
+    "src/llm_loop/web/__init__.py|build_app|read|UI_V2_DIR": 1,
+    "src/llm_loop/web/__init__.py|main|bulk:setdefault|<all>": 2,
+    "src/llm_loop/web/auth.py|_web_api_key|read|WEB_API_KEY": 1,
+    "src/llm_loop/web/auth.py|_web_login_password_hash|read|WEB_LOGIN_PASSWORD_HASH": 1,
+    "src/llm_loop/web/auth.py|auth_required|read|WEB_AUTH_REQUIRE": 1,
+    "src/llm_loop/web/auth.py|auth_required|read|WEB_HOST": 1,
+    "src/llm_loop/web/auth.py|auth_required|read|WEB_ORIGIN_ALLOWLIST": 1,
+    "src/llm_loop/web/auth.py|configured_origin_allowlist|read|WEB_ORIGIN_ALLOWLIST": 1,
+    "src/llm_loop/web/auth.py|session_ttl_seconds|read|WEB_SESSION_TTL_SECONDS": 1,
+    "src/llm_loop/web/auth.py|validate_auth_require|read|WEB_AUTH_REQUIRE": 1,
+    "src/llm_loop/web/auth.py|validate_origin_allowlist|read|WEB_ORIGIN_ALLOWLIST": 1,
+    "src/llm_loop/web/provider_admin.py|_clear_dotenv_value|bulk:pop|<all>": 2,
+    "src/llm_loop/web/provider_admin.py|_configured_default_ref|read|LLM_MODEL": 1,
+    "src/llm_loop/web/provider_admin.py|_credential_fact|read|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_dotenv_value_source|read|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_effective_config|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/web/provider_admin.py|_ensure_mutable|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/web/provider_admin.py|_set_dotenv_value|write|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|env_file_path|read|LFL_ENV_FILE": 1,
+    "src/llm_loop/web/routes.py|evolution_detail|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|evolution_diff|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|evolution_list|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|list_interop_messages|read|LFL_DATA_DIR": 1,
+    "src/llm_loop/web/routes.py|root|read|UI_V2_DIR": 1,
+    "src/llm_loop/web/vision.py|_describe_minimax|read|MINIMAX_ANTHROPIC_BASE_URL": 1,
+    "src/llm_loop/web/vision.py|_describe_minimax|read|MINIMAX_API_KEY": 1,
+    "src/llm_loop/web/vision.py|_describe_provider|read|<dynamic>": 1,
+    "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>": 2,
+    "src/llm_loop/web/vision.py|_vision_backend|read|WEB_VISION_BACKEND": 1,
+    "src/llm_loop/web/vision.py|_vision_model|read|WEB_VISION_MODEL": 1,
+    "src/llm_loop/web/vision.py|_vision_timeout|read|WEB_VISION_TIMEOUT": 1,
+    "src/llm_loop/web/vision.py|vision_enabled|read|MINIMAX_API_KEY": 2,
+    "src/llm_loop/web/vision.py|vision_enabled|read|WEB_VISION_MODEL": 1
+  },
+  "unique_key_count": 105
+}

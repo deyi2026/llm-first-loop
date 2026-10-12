@@ -1,0 +1,14 @@
+{
+ "c1_authorized": false,
+ "formal_cells": 46,
+ "label_result_sha256": "db5f2f6084a5a6678487f339402a86eaae5b8614050f2f148052fbe0abf12c1d",
+ "plan_sha256": "05c67353fb49407f6d6915865767229ee063af76d6b3df6cec71aa591f986b48",
+ "preflight_sha256": "2503785550d76108f57e46f39c15cb7edac291c4cdf2b214341b44c1adafdd23",
+ "production_mutations": 0,
+ "provider_calls_at_freeze": 0,
+ "push": false,
+ "runner_sha256": "c05d66e91dd690997931c13e03897b62edda19946db100644d6548e4c65fc968",
+ "schema": "subject-binding-v3-dev-c0-freeze/v1",
+ "source_commit": "e347fe3fa7a97cd0163a71a726f3968bc9b606cb",
+ "spec_sha256": "7915240a0520d8761f65943e2ad26cd46a4b6f902317b261929e08aa55459d18"
+}

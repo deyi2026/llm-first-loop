@@ -1,0 +1,60 @@
+{
+  "schema": "smc.browser_live_semantic_execute_qualification.report.v0.1",
+  "date": "2026-09-13",
+  "status": "PASS",
+  "implementation_commit": "b313f9bb5e689aa935cdc081d83f5dca7d7af3a7",
+  "qualification_harness_commit": "fd812123a8ad0fe5e844a2fc7f0d2e17ceccd3be",
+  "qualification_harness_sha256": "c169cde81f94c6f819e81d1d808656bafd2d5dec08e1a0bebdfc56d4d459a532",
+  "formal_result_sha256": "87c2faed2567babda572bfd1d145be2e61047fe2c19003e9c2becd7a8cbdf816",
+  "formal_result": {
+    "behavior": {
+      "automatic_retry_never_performed": "PASS",
+      "object_ref_click_dispatches_once": "PASS",
+      "old_object_ref_stale_rejected_before_effect": "PASS",
+      "receipt_history_remains_append_only": "PASS",
+      "receipt_ok_not_task_completion": "PASS",
+      "resource_ref_hydrates_page_scope_and_version": "PASS",
+      "resource_ref_navigate_single_dispatch": "PASS",
+      "same_exact_request_reuses_action_identity_and_dedups": "PASS",
+      "same_name_replacement_never_rebound": "PASS",
+      "snapshot_exposes_exact_resource_ref": "PASS",
+      "thin_fill_args_reach_real_page": "PASS",
+      "wrong_projection_rejected_before_navigation": "PASS"
+    },
+    "behavior_pass": 12,
+    "behavior_total": 12,
+    "safety": {
+      "basic_password_store_enabled": "PASS",
+      "fill_plaintext_absent_from_action_store": "PASS",
+      "mock_keychain_enabled": "PASS",
+      "model_surface_only_verb_target_ref_args": "PASS",
+      "mutation_actuator_exact_target_bound": "PASS",
+      "read_host_exact_target_bound": "PASS",
+      "security_agent_not_spawned": "PASS"
+    },
+    "safety_pass": 7,
+    "safety_total": 7
+  },
+  "scope": {
+    "model_called": false,
+    "browser": "isolated loopback Chrome via CDP",
+    "model_facing_new_inputs": ["verb", "target_ref", "args"],
+    "existing_runtime_reused": [
+      "BrowserActionAdapter",
+      "BrowserActionReceiptStore",
+      "CdpBrowserMutationActuator",
+      "BrowserPerceptionAdapter"
+    ],
+    "automatic_retry": false,
+    "automatic_rebind": false,
+    "automatic_latest": false,
+    "task_completion_authority": false,
+    "legacy_browser_action_weakened": false
+  },
+  "non_claims": [
+    "This does not qualify model usability or task-level success.",
+    "This does not expand Browser Phase 1 to vision/native UI/root-level scroll.",
+    "This does not requalify provider-specific behavior.",
+    "This does not claim ActionReceipt status=ok means the user task is complete."
+  ]
+}

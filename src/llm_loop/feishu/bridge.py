@@ -1,0 +1,1419 @@
+"""飞书 WS 长连接桥（M42，薄壳适配器，借鉴 本地既有实现 ws_bridge.py 算法思路）.
+
+事件注册 im.message.receive_v1 → 去重 → 消息处理 → 回复原会话。
+启用条件：凭证已配置 且 FEISHU_WS_ENABLED != "0"。凭证预检、指数退避重连、生命周期。
+_WsConnector 封装 websockets 可注入 Mock（测试零真实 WS 连接）。
+"""
+
+import json
+import logging
+import os
+import queue
+import re
+import threading
+import time
+from collections import deque
+from collections.abc import Callable
+from pathlib import Path
+from time import sleep as _sleep
+from typing import Any
+
+import httpx
+import lark_oapi
+
+from llm_loop.feishu.compensation import (
+    CRASH,
+    DRAIN_TIMEOUT,
+    PROCESS_TIMEOUT,
+    QUEUE_FULL,
+    WATCHDOG_EXIT,
+    CompensationStore,
+    InterruptionCompensationRecord,
+    InterruptionNotifier,
+    compensation_path,
+)
+from llm_loop.feishu.config import FeishuConfig, _resolved_float
+from llm_loop.feishu.handlers import (
+    FASTLANE_CONTROL_COMMANDS,
+    FeishuMessage,
+    FeishuMessageHandler,
+)
+from llm_loop.feishu.rest import FeishuRestClient, FeishuRestError, _mask_id
+from llm_loop.runtime.resolver import business_config_snapshot
+
+logger = logging.getLogger(__name__)
+
+_BRIDGE_CONFIG = business_config_snapshot("feishu_bridge")
+
+_MAX_DEDUP_IDS = 500
+_RECONNECT_BASE_S = 5
+_RECONNECT_MAX_S = 30
+_RECONNECT_MAX_ATTEMPTS = 5
+_RECONNECT_LONG_BACKOFF_S = 300
+_TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"  # 探针端点（M44：token 生命周期交 SDK，仅预检用）
+
+
+# ── M47 WS 假死防护（2026-08-12）──
+# 根因：lark-oapi<=1.7.2 ws.Client._connect() acquire 锁后若连接已建立则提前 return
+# 未释放锁；密集断连时并发重连竞态必命中 → SDK 内部锁永久泄漏 → ping/重连全部
+# 永久阻塞，进程假死但旧 TCP 仍 ESTABLISHED（健康检查误报健康，须人工重启）。
+# 防护三层：①_ 修补 _connect 锁泄漏（根治）②看门狗心跳 + 假死自杀（兜底）
+# ③restart_system.sh 健康检查改看门狗心跳新鲜度（消除误报）。
+_WATCHDOG_POLL_S = int(_BRIDGE_CONFIG.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看门狗轮询/心跳间隔
+_WATCHDOG_LOCK_S = float(_BRIDGE_CONFIG.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
+_HEARTBEAT_PATH = _BRIDGE_CONFIG.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
+# 中断补偿（2026-08-16）：优雅退出打断长任务 → 落盘 → 下次启动主动回复（避免静默丢失）
+# 2026-09 起：单文件改 JSONL 增量存储（feishu/compensation.py，legacy 单文件启动时自动迁移）
+_DEDUP_PATH = _BRIDGE_CONFIG.get("FEISHU_DEDUP_PATH", "data/feishu_dedup.json")
+_HEARTBEAT_HISTORY_PATH = _BRIDGE_CONFIG.get(
+    "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
+)
+
+# §8.2-2 消息准入屏障（feishu 侧）：服务重启 waiting 窗口内的消息延迟
+# 策略。屏障路径与 web 同源：<heartbeat 同级 data 根>/runtime/service-control-barriers/
+# feishu.json；feishu 进程 cwd 即运行时根，与心跳文件同一相对解析约定。
+_BARRIER_DEFER_POLL_S = float(_BRIDGE_CONFIG.get("FEISHU_BARRIER_DEFER_POLL_S", "1.0"))
+_BARRIER_DEFER_WAIT_S = float(_BRIDGE_CONFIG.get("FEISHU_BARRIER_DEFER_WAIT_S", "2.0"))
+
+
+def _feishu_admission_barrier():
+    """只读读取 feishu 服务准入屏障；读取失败 fail-open（不阻断消息流）.
+
+    依赖范围走任务注册表（``feishu_message → ("feishu",)``，缺口②闭表），
+    调用点不指定服务名。KeyError 未捕获属编码错误，当场暴露。
+    """
+    try:
+        from llm_loop.runtime.admission_barrier import task_admission_barrier
+
+        data_root = Path(_HEARTBEAT_PATH).parent  # "data"
+        return task_admission_barrier(data_root, "feishu_message")
+    except KeyError:
+        raise  # 编码错误：未登记的任务种类必须当场暴露
+    except Exception as exc:  # noqa: BLE001 — fail-open
+        logger.warning("飞书准入屏障读取失败（fail-open）: %s", exc)
+        return None
+
+# ── T3a(2026-08-14): 心跳历史轮转（防无限膨胀；空=不限制零回归）──
+# 每 30s 一次心跳追加写，历史文件将无限增长（实测 5.4MB/万行）——超过阈值时
+# 当前文件轮转为 .1（保留 1 份最近段），健康检查/诊断数据源不丢近期数据。
+
+
+def _heartbeat_history_max_bytes() -> int | None:
+    """解析 FEISHU_HEARTBEAT_HISTORY_MAX_MB（MB→bytes；空/非法 → None 不限制）."""
+    raw = os.environ.get("FEISHU_HEARTBEAT_HISTORY_MAX_MB", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(float(raw) * 1024 * 1024)
+    except (TypeError, ValueError):
+        return None  # 非法值 fail-open 不限制
+
+
+def rotate_heartbeat_history(hist_path: str | Path, max_bytes: int | None) -> bool:
+    """心跳历史轮转：文件存在且 ≥ 阈值时轮转为 .1（先删旧 .1，保留 1 份）。
+
+    Returns: 是否发生轮转；未配置/不存在/未超限/OSError 均 False（fail-open 不阻断写入）。
+    """
+    if max_bytes is None or max_bytes <= 0:
+        return False
+    try:
+        p = Path(hist_path)
+        if p.exists() and p.stat().st_size >= max_bytes:
+            bak = p.with_suffix(p.suffix + ".1")
+            if bak.exists():
+                bak.unlink()
+            p.rename(bak)
+            return True
+    except OSError:
+        pass  # 轮转失败 fail-open：不阻断心跳写入（下轮再试）
+    return False
+
+# ── P1-2-R2: 消息处理线程迁移（阻塞消除）──
+# 根因: 事件回调在 SDK asyncio loop 内同步执行消息处理（LLM 推理可达分钟级），期间
+# _ping_loop 停发 → 服务端 3003 断开。方案: 单 worker 线程 + 有界队列，_handle_event
+# 仅 marshal + put_nowait 立即返回；队列满 fail-open 如实告警丢弃（不阻塞 loop）。
+_MAX_MSG_QUEUE: int = int(_BRIDGE_CONFIG.get("FEISHU_WS_QUEUE_MAX", "64"))
+
+# ── P1-3-R2: 优雅退出 drain 时间预算 ──
+# 时间契约: wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量（与 feishu/__init__.py 对齐）。
+# P1-A2: reuse the immutable bridge RuntimeConfig snapshot; no module-import env read.
+_DRAIN_BUDGET_S: float = _resolved_float(_BRIDGE_CONFIG, "FEISHU_EXIT_DRAIN_S", 3)
+
+# ── P1-3-R3: 活性观测阈值 ──
+# 单条消息处理超时探测（只记录不打断，默认 5min）；主链路静默判定（默认 30min）。
+_MSG_PROCESS_TIMEOUT_S: float = _resolved_float(
+    _BRIDGE_CONFIG, "FEISHU_MSG_PROCESS_TIMEOUT_S", 300
+)
+_SILENT_THRESHOLD_S: float = _resolved_float(
+    _BRIDGE_CONFIG, "FEISHU_SILENT_THRESHOLD_S", 1800
+)
+
+
+def _patch_sdk_connect_lock(client: Any) -> None:
+    """修补 lark-oapi<=1.7.2 ws.Client._connect 锁泄漏（acquire 后 conn 非空早退未释放）.
+
+    策略：外层 asyncio.Lock 串行化 + 进入前/持锁后双重 conn 检查，确保"连接已建立"
+    的并发重连永不进入有 bug 的原生实现。上游修复后本包装仍安全无副作用（可移除）。
+    """
+    try:
+        if getattr(client, "_connect_lock_patched", False):
+            return
+        orig = getattr(client, "_connect", None)
+        if orig is None or not callable(orig):
+            return
+        import asyncio
+        from collections.abc import Callable
+
+        _orig_connect: Callable[..., Any] = orig
+
+        guard = asyncio.Lock()
+
+        async def _connect_safe() -> None:
+            if getattr(client, "_conn", None) is not None:
+                return
+            async with guard:
+                if getattr(client, "_conn", None) is not None:
+                    return
+                await _orig_connect()
+
+        client._connect = _connect_safe  # noqa: SLF001 — 刻意修补 SDK 私有方法
+        client._connect_lock_patched = True  # noqa: SLF001
+    except Exception:  # noqa: BLE001 — 修补失败如实告警，继续使用原生实现
+        logger.warning("lark SDK _connect 锁泄漏修补失败（继续使用原生实现）", exc_info=True)
+
+
+class _PingTimeoutDowngradeFilter(logging.Filter):
+    """SDK ping_timeout/keepalive 1011 日志降噪：ERROR→WARNING 并计数（断线自愈属常态，避免淹没真实异常）.
+
+    P1-2-R3 修复: ①levelno 降级同时同步 levelname（原只改 levelno，日志仍显示 [ERROR] 半生效）；
+    ②匹配扩展 keepalive ping timeout（1011 同类断线）；③计数仅在降级时 +1（真实异常不误计）。
+    """
+
+    count = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            if record.levelno >= logging.ERROR and (
+                "ping_timeout" in msg or "keepalive ping timeout" in msg
+            ):
+                record.levelno = logging.WARNING
+                record.levelname = logging.getLevelName(logging.WARNING)
+                type(self).count += 1
+        except Exception:  # noqa: BLE001
+            # 日志 Filter 必须永不抛异常，否则一条畸形 record 会中断整个 logging 管线
+            pass
+        return True
+
+
+def _install_lark_log_filter() -> None:
+    """给 SDK "Lark" logger 挂降噪过滤器（幂等）."""
+    lark_logger = logging.getLogger("Lark")
+    if not any(isinstance(f, _PingTimeoutDowngradeFilter) for f in lark_logger.filters):
+        lark_logger.addFilter(_PingTimeoutDowngradeFilter())
+
+
+class _WsConnector:
+    """飞书 WS 长连接（lark-oapi ws.Client 包装，FR-RW-WS-01~06）.
+
+    路径 B' 修正（用户拍板 2026-08-11）：SDK 实测协议为 protobuf 帧 + 自定义握手，
+    远超自实现假设 → 改用 lark-oapi ws.Client（官方维护、实测可靠）。
+    token 检查（无缓存等待零触网，保 Mock 面）→ ws.Client.start（SDK 内部完成
+    endpoint/连接/心跳/重连/收帧）；事件经 EventDispatcherHandler 注册
+    im.message.receive_v1 → 序列化回 payload dict → on_message 分发（既有链路零改动）。
+    """
+
+    def __init__(
+        self,
+        config: FeishuConfig,
+        on_message: Callable[[dict], None],
+        has_token: Callable[[], bool],
+        rest_client: FeishuRestClient | None = None,
+        *,
+        ws_client_factory: Callable[..., Any] | None = None,
+        sleep: Callable[[float], None] | None = None,
+        notifier: InterruptionNotifier | None = None,
+        store: CompensationStore | None = None,
+        current_sid_fn: Callable[[], str] | None = None,
+        on_recall: Callable[[dict], Any] | None = None,
+    ) -> None:
+        self._config = config
+        self._on_message = on_message
+        self._has_token = has_token
+        self._rest = rest_client
+        self._ws_client_factory = ws_client_factory or self._default_ws_client
+        self._sleep = sleep or _sleep
+        # 中断检测（DET）依赖：提示发送器 + 补偿存储 + 处理中 sid 只读回查（context_ref 数据源）
+        self._notifier = notifier
+        self._store = store
+        self._current_sid_fn = current_sid_fn
+        self._on_recall = on_recall
+        # Recall races are coordinated independently from the message queue lock. Once a
+        # worker claims an item it is no longer queue-withdrawable; later recall becomes an
+        # append-only declaration. Deferred facts retry after that worker finishes so the
+        # ingress event is guaranteed to exist before exact-source lookup.
+        self._retraction_lock = threading.Lock()
+        self._deferred_recall_facts: dict[str, dict] = {}
+        self._stop = False
+        self._reconnect_count = 0  # SDK on_reconnecting 计数（心跳可观测）
+        self._lock_held_since: float | None = None  # SDK 锁首次观测为持有的时刻
+        # P1-2-R2: 消息处理 worker 线程 + 有界队列（_handle_event 提交即返，不阻塞 SDK loop）
+        self._msg_queue: queue.Queue[dict | None] = queue.Queue(maxsize=_MAX_MSG_QUEUE)
+        self._worker_thread: threading.Thread | None = None
+        # P1-2-R4: 断线/重连状态（三态 connected/reconnecting/disconnected，心跳可观测）
+        self._conn_state: str = "disconnected"
+        self._last_disconnect_ts: float | None = None
+        self._last_reconnect_ts: float | None = None
+        self._disconnect_count: int = 0
+        # P1-3-R3: 主链路活性状态（心跳活性字段数据源；区分"正常静默"与"worker 卡死"）
+        self._last_message_ts: float | None = None  # 最近收到 SDK 消息时刻
+        self._last_processed_ts: float | None = None  # 最近处理完成时刻
+        self._processing_msg_id: str = ""  # 当前处理中消息 id（空=无处理中）
+        self._processing_since: float | None = None  # 当前消息处理开始时刻
+        # 中断补偿：处理中消息的回复目标（优雅退出被打断时落盘，下次启动主动回复）
+        self._processing_chat_id: str = ""
+        self._processing_reply_id: str = ""
+        self._processing_reply_type: str = "chat_id"
+        self._process_timeout_count: int = 0  # 累计单条处理超时次数
+        self._processing_timeout_reported: bool = False  # 当前消息是否已告警（防重复）
+
+    def _default_ws_client(self, event_handler):
+        """默认 lark ws.Client（官方长连接；Mock 测试注入替代）."""
+        import lark_oapi as lark
+
+        return lark.ws.Client(
+            self._config.app_id,
+            self._config.app_secret,
+            event_handler=event_handler,
+            log_level=lark.LogLevel.WARNING,
+        )
+
+    def _build_event_handler(self):
+        """构造 lark 事件分发器：im.message.receive_v1 → _handle_event；已知无需处理事件注册 no-op（消 processor not found 噪音，EVO-20260811-cf6d9a78）."""
+        import lark_oapi as lark
+
+        return (
+            lark.EventDispatcherHandler.builder("", "")
+            .register_p2_im_message_receive_v1(self._handle_event)
+            .register_p2_im_message_message_read_v1(self._ignore_event)
+            .register_p2_im_message_reaction_created_v1(self._ignore_event)
+            .register_p2_im_message_reaction_deleted_v1(self._ignore_event)
+            .register_p2_im_message_recalled_v1(self._handle_recall_event)
+            .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self._ignore_event)
+            .build()
+        )
+
+    def _ignore_event(self, data, ctx=None) -> None:
+        """已知无需处理事件的空处理器（已读回执/表情回复/进入会话），消除未注册告警."""
+        logger.debug("飞书事件已忽略（无需处理类型）: %s", type(data).__name__)
+
+    @staticmethod
+    def _queued_message_id(payload: dict | None) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        event = payload.get("event") or {}
+        message = event.get("message") or {}
+        return str(message.get("message_id") or "")
+
+    def _remove_queued_message(self, message_id: str) -> bool:
+        """Physically remove not-yet-claimed receive events matching one Feishu message id."""
+        if not message_id:
+            return False
+        q = self._msg_queue
+        removed = 0
+        # queue.Queue has no public arbitrary-delete API. Its mutex + deque are the standard
+        # mechanical primitives behind get/put; mutate under that same mutex and preserve
+        # unfinished_tasks/not_full accounting. No message content is inspected.
+        with q.mutex:
+            kept = []
+            while q.queue:
+                item = q.queue.popleft()
+                if item is not None and self._queued_message_id(item) == message_id:
+                    removed += 1
+                    continue
+                kept.append(item)
+            q.queue.extend(kept)
+            if removed:
+                q.unfinished_tasks = max(0, q.unfinished_tasks - removed)
+                q.not_full.notify_all()
+        return removed > 0
+
+    def _dispatch_recall_fact(self, fact: dict) -> dict | None:
+        callback = self._on_recall
+        if callback is None:
+            return None
+        try:
+            result = callback(dict(fact))
+            return result if isinstance(result, dict) else None
+        except Exception as exc:  # noqa: BLE001 — recall callback must not break WS loop
+            logger.exception("飞书撤回处理异常（fail-open）: %s", exc)
+            return {"status": "callback_error"}
+
+    def _handle_recall_event(self, data, ctx=None) -> None:
+        """Handle im.message.recalled_v1 as queue withdrawal or durable declaration."""
+        try:
+            import lark_oapi as lark
+
+            raw = lark.JSON.marshal(data)
+            payload = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+            event = payload.get("event") if isinstance(payload, dict) else None
+            event = event if isinstance(event, dict) else {}
+            message_id = str(event.get("message_id") or "")
+            if not message_id:
+                logger.warning("飞书撤回事件缺少 message_id，无法机械定位")
+                return
+
+            queue_removed = self._remove_queued_message(message_id)
+            with self._retraction_lock:
+                processing = self._processing_msg_id == message_id
+            sid_hint = self._current_sid() if processing else ""
+            fact = {
+                "message_id": message_id,
+                "chat_id": str(event.get("chat_id") or ""),
+                "recall_time": str(event.get("recall_time") or ""),
+                "recall_type": str(event.get("recall_type") or ""),
+                "queue_removed": queue_removed,
+                "session_id_hint": sid_hint,
+            }
+            result = self._dispatch_recall_fact(fact)
+            if not queue_removed and (result or {}).get("status") in {"not_found", "write_failed"}:
+                with self._retraction_lock:
+                    self._deferred_recall_facts[message_id] = fact
+        except Exception as exc:  # noqa: BLE001 — callback exception must not break SDK loop
+            logger.exception("飞书撤回事件解析异常（fail-open）: %s", exc)
+
+    def _handle_event(self, data, ctx=None) -> None:
+        """lark 事件对象 → payload dict → 提交队列（P1-2-R2: 立即返回，不阻塞 SDK loop）.
+
+        消息处理迁移到 worker 线程（_worker_loop），SDK _ping_loop 不再被 LLM 推理阻塞。
+        marshal/序列化异常如实记录（try/except 保留，不向 SDK 冒泡）。
+        """
+        try:
+            import json
+
+            import lark_oapi as lark
+
+            raw = lark.JSON.marshal(data)
+            if isinstance(raw, dict):
+                self._submit_message(raw)
+                return
+            payload = json.loads(raw or "{}")
+            if isinstance(payload, dict):
+                self._submit_message(payload)
+        except Exception as exc:  # noqa: BLE001 — 回调异常如实记录不中断连接
+            logger.exception("飞书事件回调处理异常: %s", exc)
+
+    def _submit_message(self, payload: dict) -> bool:
+        """提交消息到 worker 队列（非阻塞；队列满 fail-open 如实告警丢弃，不阻塞 loop）.
+
+        /stop 走快车道旁路分发（4.1，design D1）——不入队排队等待进行中的
+        推理（spec 4.1.1 受理即时性）。/continue 是新的 user turn，必须照常
+        入单 worker 队列，禁止旁路线程直接进入 engine.run。
+        Returns:
+            True=入队成功或快车道已接管; False=队列满丢弃（已告警，不抛异常、不向 SDK 冒泡）。
+        """
+        if self._is_control_command(payload):
+            threading.Thread(
+                target=self._fastlane_dispatch, args=(payload,), name="feishu-fastlane", daemon=True
+            ).start()
+            self._last_message_ts = time.time()
+            return True
+        try:
+            self._msg_queue.put_nowait(payload)
+            # P1-3-R3: 入队成功记录"最近收到消息时刻"（活性字段；队列满丢弃分支不更新）
+            self._last_message_ts = time.time()
+            return True
+        except queue.Full:
+            header = payload.get("header") or {}
+            logger.warning(
+                "飞书消息队列已满（maxsize=%d），丢弃事件: event_type=%s event_id=%s（fail-open，不阻塞连接）",
+                self._msg_queue.maxsize,
+                header.get("event_type", ""),
+                header.get("event_id", ""),
+            )
+            self._handle_queue_full(payload)
+            return False
+
+    @staticmethod
+    def _is_control_command(payload: dict) -> bool:
+        """快车道预判：仅 /stop 命中（单一事实来源 FASTLANE_CONTROL_COMMANDS）.
+
+        只做低成本文本提取（结构与 _unpack_message 同源），不做会话映射、不触碰
+        SessionStore；post/附件等非 text 类型零开销直通。
+        """
+        event = payload.get("event") or {}
+        message = event.get("message") or {}
+        if message.get("message_type", "") != "text":
+            return False
+        content_raw = message.get("content") or ""
+        try:
+            content = json.loads(content_raw) if isinstance(content_raw, str) else (content_raw or {})
+        except json.JSONDecodeError:
+            return False
+        text = str(content.get("text", "") or "").strip().lower()
+        return text in FASTLANE_CONTROL_COMMANDS
+
+    def _fastlane_dispatch(self, payload: dict) -> None:
+        """快车道旁路线程分发（4.2，daemon）：直接驱动 _on_message（bridge._on_ws_message）.
+
+        复用既有完整链路（双键去重 → _unpack_message → handler.handle），行为与
+        worker 路径由同一入口保证一致；指令在 _handle_text 拦截链被短路、不入引擎；
+        该路径不登记 _processing_msg_id（仅 worker 的 _safe_handle_message 调用），
+        天然不产生指令自身补偿。异常 fail-open（日志；用户可见兜底回执由拦截器
+        内部 try/except 保证）。
+        """
+        try:
+            self._on_message(payload)
+        except Exception as exc:  # noqa: BLE001 — 旁路异常不阻断桥
+            logger.exception("飞书控制指令快车道分发异常（fail-open）: %s", exc)
+
+    # ── 中断检测与提示（DET/COMP 落点）──
+    def _current_sid(self) -> str:
+        """当前处理中会话 sid（供 context_ref；只读回查 handler，fail-open）."""
+        fn = self._current_sid_fn
+        if fn is None:
+            return ""
+        try:
+            return str(fn() or "")
+        except Exception:  # noqa: BLE001 — sid 读取失败如实降级为空
+            return ""
+
+    def _emit_interruption(
+        self,
+        cause: str,
+        receive_id: str,
+        reply_type: str,
+        text: str,
+        *,
+        msg_id: str = "",
+    ) -> None:
+        """落补偿记录 + 尽力提示（提示失败由已落补偿记录启动兜底，至少一次可感知）.
+
+        先落完整补偿记录（含 context_ref/msg_id），再旁路尽力即送提示；提示
+        失败不重复落盘（补偿记录已在）。目标会话不可判定时不落不提示（仅审计）。
+        """
+        if not receive_id:
+            return
+        if self._store is not None:
+            try:
+                self._store.append(
+                    InterruptionCompensationRecord(
+                        receive_id=receive_id,
+                        reply_type=reply_type,
+                        interrupt_cause=cause,
+                        context_ref=self._current_sid(),
+                        msg_id=msg_id,
+                    )
+                )
+            except (ValueError, OSError) as exc:
+                logger.warning("中断补偿落盘失败（fail-open）: %s", exc)
+        if self._notifier is not None and text:
+            try:
+                self._notifier.notify(receive_id, reply_type, cause, text, fallback=False)
+            except Exception as exc:  # noqa: BLE001 — 提示异常由补偿记录兜底
+                logger.warning("中断提示发送异常（fail-open）: %s", exc)
+
+    def _notify_midstate(self, cause: str, text: str) -> None:
+        """中间态提示（不打断、不落补偿；仅尽力告知，如处理超时疑似卡住）."""
+        receive_id = self._processing_reply_id or self._processing_chat_id
+        if not receive_id:
+            return
+        if self._notifier is None:
+            return
+        try:
+            self._notifier.notify(
+                receive_id,
+                self._processing_reply_type or "chat_id",
+                cause,
+                text,
+                fallback=False,
+            )
+        except Exception as exc:  # noqa: BLE001 — 中间态提示失败不阻断探测
+            logger.warning("中间态提示发送异常（fail-open）: %s", exc)
+
+    def _handle_queue_full(self, payload: dict) -> None:
+        """队列满丢弃提示 + 补偿（可判定目标会话时；否则仅落审计标注去向待确认）."""
+        target = _reply_target_from_payload(payload)
+        if target is None:
+            logger.warning("队列满丢弃：目标会话不可判定，仅审计（去向待确认）")
+            return
+        receive_id, reply_type, msg_id = target
+        self._emit_interruption(
+            QUEUE_FULL,
+            receive_id,
+            reply_type,
+            "（程序提示）消息未进入处理（队列忙），请稍后重发。",
+            msg_id=msg_id,
+        )
+
+    def _interrupt_watchdog_exit(self) -> None:
+        """看门狗假死自杀前：落补偿 + 尽力提示（不阻塞退出，ADR-2/RC-1）."""
+        receive_id = self._processing_reply_id or self._processing_chat_id
+        if receive_id:
+            self._emit_interruption(
+                WATCHDOG_EXIT,
+                receive_id,
+                self._processing_reply_type or "chat_id",
+                "（程序提示）服务将因异常退出，当前任务未完成；请稍后发送 /continue 恢复。",
+                msg_id=self._processing_msg_id,
+            )
+
+    def _drain_backlog_compensate(self) -> dict:
+        """drain 预算耗尽时逐条为被丢弃积压消息落补偿（interrupt_cause=drain_timeout）."""
+        results: list[str] = []
+        while True:
+            try:
+                item = self._msg_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                continue
+            target = _reply_target_from_payload(item)
+            if target is None:
+                results.append("<unknown>")
+                continue
+            receive_id, reply_type, msg_id = target
+            results.append(msg_id or "<unknown>")
+            self._emit_interruption(
+                DRAIN_TIMEOUT,
+                receive_id,
+                reply_type,
+                "（程序提示）您的一条消息因服务退出未处理，请重新发送。",
+                msg_id=msg_id,
+            )
+        return {"count": len(results), "ids": ", ".join(results[:8]) + ("…" if len(results) > 8 else "")}
+
+    def _worker_loop(self) -> None:
+        """消息处理 worker 线程：串行处理队列消息（单 worker 保证 SessionStore 无并发）.
+
+        P1-3-R2: 哨兵 drain 按时间预算（_DRAIN_BUDGET_S）执行，预算耗尽中断并如实记录。
+        """
+        while True:
+            item = self._msg_queue.get()
+            if item is None:  # 哨兵 → 优雅退出（按预算 drain 剩余消息）
+                deadline = time.monotonic() + _DRAIN_BUDGET_S
+                while True:
+                    if time.monotonic() > deadline:
+                        leftover_ids = self._drain_backlog_compensate()
+                        logger.warning(
+                            "优雅退出 drain 超时: 剩余积压 %d 条，已逐条落补偿，消息 id 摘要: %s",
+                            leftover_ids["count"],
+                            leftover_ids["ids"],
+                        )
+                        break
+                    try:
+                        leftover = self._msg_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if leftover is not None:
+                        self._safe_handle_message(leftover)
+                break
+            self._safe_handle_message(item)
+
+
+    def _safe_handle_message(self, payload: dict) -> None:
+        """worker 线程内安全处理单条消息（单条异常不导致 worker 崩溃）.
+
+        P1-3-R3: 处理开始/完成时刻与消息 id 记录（心跳活性字段数据源）。
+        中断补偿: 记录回复目标（chat_id / 私聊 open_id），优雅退出被打断时落盘供下次启动回复。
+        §8.2-2: feishu 服务重启 waiting 窗口内不发起 run——消息保留在有界
+        _msg_queue 中延迟处理（不丢、不静默：队列满走既有 QUEUE_FULL 补偿
+        回执；进程在窗口内停止由 drain 补偿兜底）。延迟会移到队尾，跨发送
+        方的相对顺序不保证；单发送方连续消息仍按到达序保留。
+        """
+        barrier = _feishu_admission_barrier()
+        if barrier is not None:
+            logger.info(
+                "飞书消息延迟（服务重启 waiting 窗口，operation=%s）: message_id=%s",
+                barrier.operation_id,
+                str((payload.get("event") or {}).get("message", {}).get("message_id", "") or ""),
+            )
+            try:
+                from llm_loop.runtime.admission_barrier import log_admission_rejection
+
+                log_admission_rejection(
+                    Path(_HEARTBEAT_PATH).parent,
+                    "feishu_message",
+                    barrier,
+                    source="feishu",
+                    detail=str(
+                        (payload.get("event") or {}).get("message", {}).get("message_id", "")
+                        or ""
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — R3(P7) 审计 fail-open
+                logger.debug("feishu barrier rejection audit failed", exc_info=True)
+            time.sleep(_BARRIER_DEFER_POLL_S)
+            try:
+                self._msg_queue.put(payload, timeout=_BARRIER_DEFER_WAIT_S)
+            except queue.Full:
+                self._handle_queue_full(payload)
+            return
+        header = payload.get("header") or {}
+        event = payload.get("event") or {}
+        message = event.get("message") or {}
+        mid = str(message.get("message_id", "") or "")
+        with self._retraction_lock:
+            self._processing_msg_id = mid or str(header.get("event_id", "") or "")
+        self._processing_since = time.time()
+        self._processing_timeout_reported = False
+        # 回复目标（对齐 handlers reply_receive_id 推导：chat_id 优先，私聊用 sender open_id）
+        chat_id = str(message.get("chat_id") or (event.get("chat") or {}).get("chat_id") or "")
+        sender = event.get("sender") or {}
+        open_id = str((sender.get("sender_id") or {}).get("open_id", ""))
+        self._processing_chat_id = chat_id
+        if chat_id:
+            self._processing_reply_id = chat_id
+            self._processing_reply_type = "chat_id"
+        else:
+            self._processing_reply_id = open_id
+            self._processing_reply_type = "open_id"
+        try:
+            self._on_message(payload)
+        except Exception as exc:  # noqa: BLE001 — worker 永不因单条消息崩溃
+            logger.exception("飞书消息处理异常（worker）: %s", exc)
+        finally:
+            deferred = None
+            with self._retraction_lock:
+                if mid:
+                    deferred = self._deferred_recall_facts.pop(mid, None)
+                self._processing_msg_id = ""
+            self._processing_since = None
+            self._last_processed_ts = time.time()
+            if deferred is not None:
+                # The worker has now crossed a terminal boundary, so the exact ingress event
+                # is durable and global source-id lookup can no longer race admission.
+                deferred = dict(deferred)
+                deferred["session_id_hint"] = ""
+                result = self._dispatch_recall_fact(deferred)
+                if (result or {}).get("status") in {"not_found", "write_failed"}:
+                    logger.warning(
+                        "飞书撤回声明延迟重试仍未落盘: message_id=%s status=%s",
+                        mid,
+                        (result or {}).get("status", "unknown"),
+                    )
+
+    # ── M47 看门狗（假死兜底）──
+    def _install_sdk_callbacks(self, client: Any) -> None:
+        """挂接 SDK 重连钩子（重连/断线/重连完成计数入心跳，进程级可观测；Mock 无属性时静默跳过）."""
+
+        def _on_reconnecting() -> None:
+            self._reconnect_count += 1
+            # P1-2-R4: 断线/重连状态更新（三态 + 时间戳 + 累计次数）
+            self._disconnect_count += 1
+            self._last_disconnect_ts = time.time()
+            self._conn_state = "reconnecting"
+
+        def _on_reconnected() -> None:
+            self._last_reconnect_ts = time.time()
+            self._conn_state = "connected"
+
+        try:
+            if hasattr(client, "on_reconnecting"):
+                client.on_reconnecting = _on_reconnecting
+            # P1-2-R4: 重连完成钩子（SDK 有 on_reconnected 时挂接；无属性静默跳过）
+            if hasattr(client, "on_reconnected"):
+                client.on_reconnected = _on_reconnected
+        except Exception:  # noqa: BLE001
+            # SDK 钩子挂接为尽力而为：mock/异常 __setattr__ 不得阻断飞书桥启动
+            pass
+
+    def _sdk_lock_held_s(self, client: Any) -> float | None:
+        """SDK 内部锁连续持有时长（秒；未持有返回 None）——假死检测信号."""
+        lock = getattr(client, "_lock", None)
+        held = False
+        if lock is not None and hasattr(lock, "locked"):
+            try:
+                held = bool(lock.locked())
+            except Exception:  # noqa: BLE001
+                held = False
+        if held:
+            if self._lock_held_since is None:
+                self._lock_held_since = time.time()
+            return time.time() - self._lock_held_since
+        self._lock_held_since = None
+        return None
+
+    def _queue_depth(self) -> int:
+        """worker 队列当前深度（心跳活性字段；qsize 异常回退 0，fail-open）."""
+        try:
+            return int(self._msg_queue.qsize())
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _silent_suspected(self) -> bool:
+        """主链路静默疑似判定：有消息过但 ≥ 阈值无新消息且无处理中 → True（可能 worker 卡死）."""
+        if self._last_message_ts is None:
+            return False
+        if self._processing_msg_id:
+            return False
+        return time.time() - self._last_message_ts >= _SILENT_THRESHOLD_S
+
+    def _write_heartbeat(self, client: Any) -> None:
+        """心跳落盘（restart_system.sh 健康检查据此判断假死，替代误报的 TCP ESTABLISHED）."""
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+
+            # P1-2-R4: state 三态（connected/reconnecting/disconnected）。
+            # _conn_state 优先（SDK on_reconnected 后置位）；无 SDK 连接对象时如实 disconnected。
+            if self._conn_state == "connected" or getattr(client, "_conn", None) is not None:
+                state = "connected"
+            elif self._conn_state == "reconnecting":
+                state = "reconnecting"
+            else:
+                state = "disconnected"
+            payload = {
+                "ts": time.time(),
+                "pid": os.getpid(),
+                "state": state,
+                "reconnect_count": self._reconnect_count,
+                "ping_timeout_count": _PingTimeoutDowngradeFilter.count,
+                # P1-2-R4: 断线/重连诊断字段（跨重启清零，进程内计数语义）
+                "disconnect_count": self._disconnect_count,
+                "last_disconnect_ts": self._last_disconnect_ts,
+                "last_reconnect_ts": self._last_reconnect_ts,
+                "sdk_lock_held_s": self._sdk_lock_held_s(client),
+                "sdk_connect_lock_patched": bool(getattr(client, "_connect_lock_patched", False)),
+                # P1-3-R3: 主链路活性字段（区分"正常静默"与"worker 卡死"；全部 fail-open）
+                "last_message_ts": self._last_message_ts,
+                "queue_depth": self._queue_depth(),
+                "last_processed_ts": self._last_processed_ts,
+                "processing_msg_id": self._processing_msg_id,
+                "processing_since": self._processing_since,
+                "process_timeout_count": self._process_timeout_count,
+                "msg_timeout_s": _MSG_PROCESS_TIMEOUT_S,
+                "silent_suspected": self._silent_suspected(),
+                "silent_since": self._last_message_ts,
+            }
+            path = _Path(_HEARTBEAT_PATH)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_json.dumps(payload), encoding="utf-8")
+            # P1-2-R4: 心跳历史追加写（R6 连续新鲜率数据源；fail-open，与主文件互不影响）
+            hist_path = _Path(_HEARTBEAT_HISTORY_PATH)
+            try:
+                hist_path.parent.mkdir(parents=True, exist_ok=True)
+                # T3a(2026-08-14): 追加前轮转检查（未配置 FEISHU_HEARTBEAT_HISTORY_MAX_MB 时零行为）
+                rotate_heartbeat_history(hist_path, _heartbeat_history_max_bytes())
+                with open(hist_path, "a", encoding="utf-8") as f:
+                    f.write(_json.dumps(payload) + "\n")
+            except Exception:  # noqa: BLE001 — 历史写失败不影响主文件与主流程
+                logger.warning("飞书心跳历史写失败（fail-open）: %s", _HEARTBEAT_HISTORY_PATH)
+        except Exception:  # noqa: BLE001 — 心跳失败不阻断主流程
+            pass
+
+    def _watchdog_check_process_timeout(self) -> None:
+        """P1-3-R3: 单条消息处理超时探测（只记录不打断，覆盖 engine.run 卡死不退出场景）."""
+        if (
+            self._processing_since is not None
+            and time.time() - self._processing_since > _MSG_PROCESS_TIMEOUT_S
+            and not self._processing_timeout_reported
+        ):
+            self._process_timeout_count += 1
+            self._processing_timeout_reported = True
+            logger.warning(
+                "飞书消息处理超时: msg_id=%s 处理中 %.0fs ≥ 阈值 %.0fs（探测不打断）",
+                self._processing_msg_id,
+                time.time() - self._processing_since,
+                _MSG_PROCESS_TIMEOUT_S,
+            )
+            # DET: 中间态提示（不打断，仅尽力告知「疑似卡住」）
+            self._notify_midstate(
+                PROCESS_TIMEOUT,
+                "（程序提示）任务处理中，疑似卡住（未中断）；请稍候，或发送 /stop 终止后用 /continue 恢复。",
+            )
+
+    def _watchdog_loop(self, client: Any) -> None:
+        """看门狗：周期心跳落盘；SDK 锁持有超 _WATCHDOG_LOCK_S 判定假死 → 自杀（restart_system.sh 拉起）.
+
+        P1-3-R3: 每轮追加单条消息处理超时探测（只记录不打断，覆盖 engine.run 卡死不退出场景）。
+        """
+        while not self._stop:
+            self._write_heartbeat(client)
+            # P1-3-R3: 单条处理超时探测（_processing_since 超阈值 → 计数 + 如实告警，不打断处理）
+            self._watchdog_check_process_timeout()
+            held_s = self._sdk_lock_held_s(client)
+            if held_s is not None and held_s >= _WATCHDOG_LOCK_S:
+                logger.error(
+                    "飞书桥看门狗: SDK 内部锁持有 %.0fs（>= %.0fs），判定假死，进程退出交由重启脚本拉起",
+                    held_s,
+                    _WATCHDOG_LOCK_S,
+                )
+                self._interrupt_watchdog_exit()
+                os._exit(42)  # noqa: SLF001 — 假死兜底：不经 atexit，确保退出
+            _sleep(_WATCHDOG_POLL_S)  # 模块级真实 sleep（不复用注入 Mock，防忙轮询）
+
+    def stop(self) -> None:
+        """停止（lark ws.Client 无公开 stop API；daemon 线程 + 进程退出兜底）."""
+        self._stop = True
+        # P1-2-R2: worker 线程优雅退出（哨兵 + drain 剩余消息 + join 兜底；未启动不抛异常）
+        # P1-3-R2-T3: join 时长与 drain 预算显式关联（max(1, 预算+1)），超时如实告警
+        if self._worker_thread is not None:
+            from contextlib import suppress
+
+            with suppress(queue.Full):  # 队列满：直接丢弃（哨兵必须送达）
+                self._msg_queue.put_nowait(None)
+            join_timeout = max(1.0, int(_DRAIN_BUDGET_S) + 1)
+            self._worker_thread.join(timeout=join_timeout)
+            if self._worker_thread.is_alive():
+                logger.warning(
+                    "优雅退出: worker join 超时（预算 %.0fs，线程仍在处理）", _DRAIN_BUDGET_S
+                )
+            self._worker_thread = None
+
+    def run(self) -> None:
+        """长连接主循环（token 未就绪等待零触网；就绪后 lark ws.Client.start 阻塞）."""
+        if not self._has_token():
+            logger.warning(
+                "飞书 WS 连接未启动：tenant_access_token 未就绪（预检未获取），进入等待（零触网）"
+            )
+            while not self._stop:
+                self._sleep(1)
+            return
+        client = self._ws_client_factory(self._build_event_handler())
+        _patch_sdk_connect_lock(client)  # M47①：SDK 锁泄漏根治（Mock 无 _connect 时静默跳过）
+        self._install_sdk_callbacks(client)
+        _install_lark_log_filter()  # M47：ping_timeout 日志降噪
+        # P1-2-R2: 启动消息处理 worker 线程（队列提交即返，SDK ping 不被消息处理阻塞）
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop,
+            name="feishu-ws-worker",
+            daemon=True,
+        )
+        self._worker_thread.start()
+        watchdog = threading.Thread(
+            target=self._watchdog_loop,
+            args=(client,),
+            name="feishu-ws-watchdog",
+            daemon=True,
+        )
+        watchdog.start()  # M47②：心跳落盘 + 假死检测自杀
+        # SDK 内部完成 endpoint/连接/心跳/重连/收帧（阻塞；断线 SDK 自动重连）
+        client.start()
+
+
+class FeishuWsBridge:
+    """飞书 WS 桥：事件注册/去重/预检/重连/生命周期（薄壳）."""
+
+    def __init__(
+        self,
+        config: FeishuConfig,
+        handler: FeishuMessageHandler | None = None,
+        lark_client: lark_oapi.Client | None = None,
+    ) -> None:
+        self._config = config
+        self._handler = handler
+        self._lark_client = lark_client
+        self._connector: _WsConnector | None = None
+        self._thread: threading.Thread | None = None
+        self._running = False
+        self._ws_state = "disconnected"
+        self._seen_ids: set[str] = set()
+        self._seen_order: deque[str] = deque()  # 到达序（裁剪最旧用，保证窗口有序有界）
+        self._dedup_lock = threading.Lock()
+        # token 生命周期交 lark.Client（M44，FR-SDK-TKN-01：feishu 层零 token 值接触）
+        self._token_ready: bool = False  # 凭证有效标志（替代 _token 缓存，token 值仅 SDK 内部）
+        # REST 面（M44：共享 lark.Client 惰性创建真实实例 / 测试注入 Mock）
+        self._rest_client: FeishuRestClient | None = None
+        # 2026-08-15 跨端同步（飞书 ← Web）：Web 侧新消息推送到映射飞书聊天
+        self._cross_sync: Any | None = None
+        # 中断补偿（COMP）：JSONL 多记录存储 + 三要素提示发送器（提示失败落补偿兜底）
+        self._compensation_store = CompensationStore(compensation_path())
+        self._notifier = InterruptionNotifier(self.send_text, self._compensation_store)
+
+    def _current_processing_sid(self) -> str:
+        """当前处理中会话 sid（供 connector 生成 context_ref；只读回查 handler fail-open）."""
+        handler = self._handler
+        fn = getattr(handler, "current_processing_sid", None)
+        if callable(fn):
+            try:
+                return str(fn() or "")
+            except Exception:  # noqa: BLE001 — sid 读取失败如实降级为空
+                return ""
+        return ""
+
+    @property
+    def config(self) -> FeishuConfig:
+        return self._config
+
+    # ── 生命周期 ──
+    def start(self) -> bool:
+        """启动桥（启用条件 + 凭证预检 + 后台线程）."""
+        if not self._config.enabled:
+            logger.warning(
+                "飞书桥未启用（FEISHU_APP_ID/FEISHU_APP_SECRET 未配置或 FEISHU_WS_ENABLED=0）"
+            )
+            return False
+        preflight = self._preflight()
+        if preflight:
+            logger.warning("飞书桥凭证预检失败: %s", preflight)
+            return False
+        self._running = True
+        self._load_dedup()  # 去重表持久化: 重启后恢复已见事件, 防 WS 重推旧消息重复处理
+        self._ws_state = "connected"
+        self._connector = _WsConnector(
+            self._config,
+            self._on_ws_message,
+            self._has_token,
+            self._ensure_rest_client(),
+            notifier=self._notifier,
+            store=self._compensation_store,
+            current_sid_fn=self._current_processing_sid,
+            on_recall=self._on_message_recalled,
+        )
+        self._thread = threading.Thread(target=self._run_loop, name="feishu-ws", daemon=True)
+        self._thread.start()
+        self._start_cross_sync()
+        logger.info("飞书桥已启动")
+        return True
+
+    def _start_cross_sync(self) -> None:
+        """2026-08-15 跨端同步装配（FEISHU_CROSS_SYNC=0 关闭；fail-open）."""
+        from llm_loop.feishu.cross_sync import _ENABLED, CrossSyncWatcher
+
+        if not _ENABLED or self._cross_sync is not None:
+            return
+        handler = self._handler
+        if handler is None:
+            return
+        engine = getattr(handler, "_engine", None)
+        if engine is None:
+            return
+        try:
+            self._cross_sync = CrossSyncWatcher(
+                engine.session,
+                handler._session_map,
+                handler._reply_fn,
+                engine.settings.sessions_dir,
+                # P1-11: 按会话精确跳过——只防桥正在处理的那个会话的回答被当 Web 增量
+                # 重复推；其他会话照常实时同步（不做全局暂停, 忙时跨端不卡）
+                skip_fn=lambda sid: sid in getattr(handler, "_processing_sids", frozenset()),
+            )
+            handler._cross_sync = self._cross_sync
+            self._cross_sync.start()
+        except Exception as exc:  # noqa: BLE001 — 装配失败不阻断桥主体
+            logger.warning("跨端同步装配失败（fail-open）: %s", exc)
+
+    def stop(self) -> None:
+        self._running = False
+        self._ws_state = "disconnected"
+        if self._cross_sync is not None:
+            self._cross_sync.stop()
+            self._cross_sync = None
+        self._token_ready = False
+        if self._connector:
+            self._connector.stop()
+            # 长任务处理中被优雅退出打断 → 落盘（下次启动补偿回复，防静默丢失）
+            self._persist_interrupted()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def _persist_interrupted(self) -> None:
+        """优雅退出打断长任务 → 落盘补偿记录（下次启动 _recover_interrupted 主动回复）."""
+        connector = self._connector
+        if connector is None:
+            return
+        mid = getattr(connector, "_processing_msg_id", "") or ""
+        if not mid:
+            return  # 无处理中消息 → 正常退出，不产生补偿记录
+        # user_stop 待收口判定（4.3，design D7）：/stop 收口秒级窗口内优雅退出时，
+        # 停止收口回复由 worker 线程正常发出——跳过补偿落盘防重启后重复回复
+        # （spec 4.5.3）；handler 为测试桩/旧实例无该方法时行为与现状一致（fail-open）。
+        pending_fn = getattr(self._handler, "is_user_stop_pending", None)
+        if callable(pending_fn):
+            try:
+                chat_key = (
+                    getattr(connector, "_processing_chat_id", "")
+                    or getattr(connector, "_processing_reply_id", "")
+                    or ""
+                )
+                if chat_key and pending_fn(chat_key) is True:
+                    logger.info(
+                        "user_stop 待收口窗口内优雅退出，跳过中断补偿落盘: msg_id=%s", mid
+                    )
+                    return
+            except Exception:  # noqa: BLE001 — 查询失败按现状落盘（零回归兜底）
+                logger.warning("user_stop 待收口查询异常（fail-open，按现状落盘）", exc_info=True)
+        reply_id = getattr(connector, "_processing_reply_id", "") or ""
+        if not reply_id:
+            return
+        try:
+            self._compensation_store.append(
+                InterruptionCompensationRecord(
+                    receive_id=reply_id,
+                    reply_type=getattr(connector, "_processing_reply_type", "chat_id") or "chat_id",
+                    interrupt_cause=CRASH,
+                    context_ref=self._current_processing_sid(),
+                    msg_id=mid,
+                )
+            )
+        except (ValueError, OSError) as exc:
+            logger.warning("中断补偿落盘失败（fail-open）: %s", exc)
+
+    def _recover_interrupted(self) -> None:
+        """启动补偿：读 JSONL 逐条如实送达（含原因 + 恢复指引），成功剔除幂等."""
+        records = self._compensation_store.read_all()
+        for rec in records:
+            try:
+                ok = self.send_text(rec.receive_id, self._recovery_text(rec), rec.reply_type)
+                if ok:
+                    self._compensation_store.remove_entry(rec.key())
+                    logger.warning("中断补偿回复成功: %s", rec.receive_id)
+                else:
+                    logger.warning("中断补偿回复失败（保留待重试）: %s", rec.receive_id)
+            except Exception as exc:  # noqa: BLE001 — 单条异常不阻断其余
+                logger.warning("中断补偿回复异常（fail-open）: %s", exc)
+            # 补偿过的消息登记去重: 防服务端重推该消息导致重复处理/重复回复
+            if rec.msg_id and self._remember(f"m:{rec.msg_id}"):
+                self._persist_dedup()
+
+    @staticmethod
+    def _recovery_text(rec: InterruptionCompensationRecord) -> str:
+        """启动补偿三要素文案（未完成 + 原因类别 + 恢复指引）."""
+        hints = {
+            WATCHDOG_EXIT: "服务因异常退出中断，未生成回答；请发送 /continue 恢复。",
+            QUEUE_FULL: "您的消息当时未进入处理；请重新发送该消息。",
+            DRAIN_TIMEOUT: "服务退出时该消息未处理；请重新发送该消息。",
+            PROCESS_TIMEOUT: "上一条任务疑似卡住；请发送 /continue 或重发恢复。",
+            CRASH: "长任务处理因服务重启被中断，未生成回答；请发送 /continue 恢复。",
+        }
+        hint = hints.get(rec.interrupt_cause, hints[CRASH])
+        return f"（程序提示）上一条任务处理未完成（原因：{rec.interrupt_cause}）。{hint}"
+
+    def _on_message_recalled(self, fact: dict) -> dict:
+        """Delegate mechanical recall facts to the handler; never infer user intent."""
+        handler = self._handler
+        if handler is None:
+            return {"status": "handler_unavailable"}
+        fn = getattr(handler, "handle_recall", None)
+        if not callable(fn):
+            return {"status": "handler_unavailable"}
+        result = fn(fact)
+        return result if isinstance(result, dict) else {"status": "unknown"}
+
+    def is_healthy(self) -> bool:
+        return self._running and self._thread is not None and self._thread.is_alive()
+
+    @property
+    def state(self) -> str:
+        """连接状态（connected/reconnecting/disconnected，如实可查）."""
+        return self._ws_state
+
+    # ── 预检 ──
+    def _preflight(self) -> str | None:
+        """凭证预检（借鉴 本地既有实现 ws_bridge preflight 算法思路）.
+
+        两段：app_id 格式校验（cli_ 前缀）+ tenant_access_token 凭证预检。
+        网络不可达不阻断启动（WS 重连兜底）；失败如实返回原因。
+        """
+        if not self._config.has_credentials:
+            return "FEISHU_APP_ID/FEISHU_APP_SECRET 未配置"
+        app_id = self._config.app_id
+        if not re.fullmatch(r"cli_[a-z0-9]+", app_id):
+            return f"FEISHU_APP_ID 格式异常（{app_id[:8]}...，应为 cli_ 开头）"
+        return self._token_probe()
+
+    def _token_probe(self) -> str | None:
+        """凭证预检探针（M44，FR-SDK-TKN-02：签名 str|None 保持）.
+
+        仅探针不缓存 token 值（token 生命周期交 SDK）；成功置 `_token_ready=True` 返回 None；
+        凭证错误返回含 code/msg 原因（_token_ready 保持 False）；网络不可达返回 None（不阻断启动）。
+        """
+        try:
+            self._fetch_token()  # 探针一次性调用（验证凭证有效性，不缓存 token 值）
+            self._token_ready = True
+            return None
+        except FeishuRestError as exc:
+            return str(exc)  # 凭证错误如实返回原因（含 code/msg）
+        except Exception:  # noqa: BLE001 — 网络不可达不阻断启动
+            return None
+
+    def _fetch_token(self) -> tuple[str, int]:
+        """httpx POST 认证端点获取 token（成功返回 (token, expire_seconds)）.
+
+        Raises:
+            FeishuRestError: 凭证错误（含 code/msg 如实信息）.
+        """
+        resp = httpx.post(
+            _TOKEN_URL,
+            json={"app_id": self._config.app_id, "app_secret": self._config.app_secret},
+            timeout=5,
+        )
+        data = resp.json()
+        if data.get("code", 0) != 0:
+            raise FeishuRestError(
+                f"凭证校验失败（code={data.get('code')} msg={data.get('msg', '')}）"
+            )
+        token = data.get("tenant_access_token", "")
+        if not token:
+            raise FeishuRestError("认证响应缺少 tenant_access_token")
+        return token, int(data.get("expire", 7200))
+
+    def _has_token(self) -> bool:
+        """凭证预检标志（_WsConnector 等待零触网判定，FR-SDK-TKN-02：返回 _token_ready）."""
+        return self._token_ready
+
+    def _ensure_lark_client(self) -> lark_oapi.Client:
+        """共享 lark.Client（None 时惰性 builder 创建真实实例；测试可注入 Mock）."""
+        if self._lark_client is None:
+            import lark_oapi as lark
+
+            self._lark_client = (
+                lark.Client.builder()
+                .app_id(self._config.app_id)
+                .app_secret(self._config.app_secret)
+                .log_level(lark.LogLevel.WARNING)
+                .build()
+            )
+        return self._lark_client
+
+    def _ensure_rest_client(self) -> FeishuRestClient:
+        """REST 客户端（None 时惰性创建，持共享 lark.Client；测试可注入 Mock）."""
+        if self._rest_client is None:
+            self._rest_client = FeishuRestClient(self._config, self._ensure_lark_client())
+        return self._rest_client
+
+    def attach_handler(self, handler: FeishuMessageHandler) -> None:
+        """装配消息处理器（build_bridge 顺序：bridge 先建 → attach_handler）."""
+        self._handler = handler
+
+    # ── REST 面委托（M43，FR-RW-SND-01/02 + DLD-01/03）──
+    def send_text(self, receive_id: str, text: str, receive_id_type: str = "chat_id") -> bool:
+        """发送文本消息（委托 rest；失败如实记录 + 尝试如实告知，不伪装成功）.
+
+        receive_id_type: "chat_id" 群聊 / "open_id" 私聊（p2p 无 chat_id 时用 open_id 发送）.
+        """
+        try:
+            self._ensure_rest_client().send_text(receive_id, text, receive_id_type)
+            return True
+        except Exception as exc:  # noqa: BLE001 — 发送失败如实反馈（fail-open）
+            logger.warning("飞书消息发送失败（receive_id=%s）: %s", _mask_id(receive_id), exc)
+            # 尝试如实告知（错误说明也失败则日志已完整可追溯，不递归）
+            from contextlib import suppress
+
+            with suppress(Exception):
+                self._ensure_rest_client().send_text(
+                    receive_id,
+                    f"[发送失败] 上一条回复未能送达（{type(exc).__name__}）。",
+                    receive_id_type,
+                )
+            return False
+
+    def download_attachment(self, msg: FeishuMessage) -> tuple[bytes | None, str]:
+        """下载附件（委托 rest；失败返回 (None, 原因)，handlers fail-open 如实回复）."""
+        resource_type = "image" if msg.msg_type == "image" else "file"
+        file_key = msg.file_key or ""
+        filename = msg.file_name or f"feishu_attachment_{file_key}"
+        try:
+            data = self._ensure_rest_client().download_resource(
+                msg.message_id, file_key, resource_type
+            )
+            return data, filename
+        except Exception as exc:  # noqa: BLE001 — 下载失败如实反馈（fail-open 延续）
+            logger.warning("飞书附件下载失败: %s", exc)
+            return None, str(exc)
+
+    # ── 消息分发 ──
+    def _on_ws_message(self, payload: dict) -> None:
+        """WS 事件分发（im.message.receive_v1）：去重 → 解包 → handler."""
+        header = payload.get("header") or {}
+        event_type = header.get("event_type", "")
+        if event_type != "im.message.receive_v1":
+            return
+        if self._handler is None:
+            logger.warning("飞书消息事件到达但 handler 未装配，跳过（build_bridge 后自动装配）")
+            return
+        event_id = header.get("event_id", "")
+        if not self._is_new_event(event_id):
+            return  # 去重
+        event = payload.get("event") or {}
+        msg = self._unpack_message(event)
+        if msg is not None:
+            # 双键去重: 消息 ID 优先（同一消息重推即使 event_id 变化也能识别）
+            if msg.message_id and self._remember(f"m:{msg.message_id}"):
+                self._persist_dedup()
+            try:
+                self._handler.handle(msg)
+            except Exception as exc:  # 处理异常不中断桥
+                logger.exception("feishu message handle crashed: %s", exc)
+
+    def _unpack_message(self, event: dict) -> FeishuMessage | None:
+        """解包飞书消息事件 → FeishuMessage（类型/文本/附件/会话信息）.
+
+        chat_id/chat_type 兼容提取（真实结构校准 2026-08-11）：SDK marshal 后事件
+        的 chat_id/chat_type 在 `event.message` 内（EventMessage.chat_id/chat_type），
+        无 `event.chat` 字段——message 优先，event.chat 兜底（兼容既有 Mock 结构）。
+        """
+        sender = event.get("sender") or {}
+        sender_id = sender.get("sender_id") or {}
+        open_id = sender_id.get("open_id", "")
+        sender_type = sender.get("sender_type", "")
+        message = event.get("message") or {}
+        chat = event.get("chat") or {}
+        chat_id = message.get("chat_id") or chat.get("chat_id", "")
+        chat_type = message.get("chat_type") or chat.get("chat_type", "")
+        msg_type = message.get("message_type", "")
+        content_raw = message.get("content") or ""
+        content = json.loads(content_raw) if isinstance(content_raw, str) else (content_raw or {})
+        text = ""
+        file_key = None
+        file_name = ""
+        if msg_type == "text":
+            text = content.get("text", "")
+        elif msg_type == "post":
+            text = _extract_post_text(content)
+        elif msg_type == "file":
+            file_key = content.get("file_key")
+            file_name = content.get("file_name", "")
+        elif msg_type == "image":
+            file_key = content.get("image_key")
+            file_name = "image.png"
+        is_group = bool(chat_type == "group")
+        return FeishuMessage(
+            message_id=message.get("message_id", ""),
+            sender_id=open_id,
+            chat_id=chat_id,
+            msg_type=msg_type,
+            text=text,
+            is_group=is_group,
+            sender_type=sender_type,
+            file_key=file_key,
+            file_name=file_name,
+            raw=payload_safe(event),
+        )
+
+    # ── 工具 ──
+    def _remember(self, key: str) -> bool:
+        """登记去重键（新键返回 True；已见返回 False）.
+
+        有界窗口（_MAX_DEDUP_IDS）：按到达序淘汰最旧，防无限增长。
+        键格式带前缀避免 event_id 与 message_id 碰撞: e:<event_id> / m:<message_id>.
+        """
+        with self._dedup_lock:
+            if key in self._seen_ids:
+                return False
+            self._seen_ids.add(key)
+            self._seen_order.append(key)
+            while len(self._seen_order) > _MAX_DEDUP_IDS:
+                oldest = self._seen_order.popleft()
+                self._seen_ids.discard(oldest)
+            return True
+
+    def _is_new_event(self, event_id: str) -> bool:
+        if not event_id:
+            return True
+        is_new = self._remember(f"e:{event_id}")
+        if is_new:
+            self._persist_dedup()
+        return is_new
+
+    def _load_dedup(self) -> None:
+        """启动加载去重表（EVO-20260816-38875e81）.
+
+        重启后恢复已见事件/消息 ID, 防 WS at-least-once 重推旧事件被当新消息
+        重复处理（用户可见"旧消息再次弹出"）。加载失败 fail-open（不影响启动）。
+        """
+        try:
+            p = Path(_DEDUP_PATH)
+            if not p.exists():
+                return
+            data = json.loads(p.read_text(encoding="utf-8"))
+            ids = [str(i) for i in data.get("ids", [])][-_MAX_DEDUP_IDS:]
+            with self._dedup_lock:
+                for key in ids:
+                    if key not in self._seen_ids:
+                        self._seen_ids.add(key)
+                        self._seen_order.append(key)
+            logger.info("去重表已恢复 %d 条（%s）", len(ids), _DEDUP_PATH)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("去重表加载失败（fail-open，不影响启动）: %s", exc)
+
+    def _persist_dedup(self) -> None:
+        """落盘去重表（窗口内已见事件/消息 ID，供下次启动恢复）."""
+        try:
+            with self._dedup_lock:
+                ids = list(self._seen_order)
+            Path(_DEDUP_PATH).parent.mkdir(parents=True, exist_ok=True)
+            Path(_DEDUP_PATH).write_text(
+                json.dumps({"ids": ids}, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError as exc:
+            logger.warning("去重表落盘失败（fail-open）: %s", exc)
+
+    def _run_loop(self) -> None:
+        """后台循环：指数退避重连（5→30s，连续失败超限长退避 300s）."""
+        # 中断补偿：上次优雅退出打断的长任务 → 主动回复（走 HTTP API，token 由 send_text 解析）
+        self._recover_interrupted()
+        fail_count = 0
+        while self._running:
+            try:
+                if self._connector:
+                    self._connector.run()
+                fail_count = 0
+                self._ws_state = "connected"
+            except Exception as exc:
+                fail_count += 1
+                self._ws_state = "reconnecting"
+                logger.warning("飞书 WS 连接异常: %s，%ds 后重连", exc, _backoff_delay(fail_count))
+            if not self._running:
+                break
+            _sleep(_backoff_delay(fail_count))
+        self._ws_state = "disconnected"
+
+
+def _backoff_delay(fail_count: int) -> int:
+    """指数退避时长（连续失败计数 → 秒）.
+
+    序列：5/10/20/30/30（1-5 次）→ 连续失败超限（>5 次）长退避 300s（不高频重试）。
+    """
+    if fail_count > _RECONNECT_MAX_ATTEMPTS:
+        return _RECONNECT_LONG_BACKOFF_S
+    if fail_count < 1:
+        return _RECONNECT_BASE_S
+    return min(_RECONNECT_BASE_S * (2 ** (fail_count - 1)), _RECONNECT_MAX_S)
+
+
+def _extract_post_text(content: dict) -> str:
+    """飞书 post 富文本提取（对齐 本地既有实现 _extract_post_text 算法思路）.
+
+    结构：{"title": str, "content": [[{"tag": "text", "text": "..."}]]}。
+    拼接各行文本（行内元素以空格连接），标题前置。
+    """
+    parts: list[str] = []
+    title = content.get("title")
+    if isinstance(title, str) and title:
+        parts.append(title)
+    rows = content.get("content") or []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, list):
+            continue
+        cells = [
+            str(c.get("text", "")) for c in row if isinstance(c, dict) and c.get("tag") == "text"
+        ]
+        line = " ".join(c for c in cells if c)
+        if line:
+            parts.append(line)
+    return "\n".join(parts)
+
+
+def payload_safe(event: dict) -> dict | None:
+    """事件原始数据（日志脱敏用，密钥不外泄）."""
+    return event if isinstance(event, dict) else None
+
+
+def _reply_target_from_payload(payload: dict) -> tuple[str, str, str] | None:
+    """从 WS payload 提取回复目标 (receive_id, reply_type, msg_id)；不可判定返回 None.
+
+    与 handlers.FeishuMessage.__post_init__ 回复目标推导同源：chat_id 优先，私聊用 open_id。
+    """
+    event = payload.get("event") or {}
+    message = event.get("message") or {}
+    chat_id = str(message.get("chat_id") or (event.get("chat") or {}).get("chat_id") or "")
+    sender = event.get("sender") or {}
+    open_id = str((sender.get("sender_id") or {}).get("open_id", ""))
+    msg_id = str(message.get("message_id", "")) or str((payload.get("header") or {}).get("event_id", ""))
+    if chat_id:
+        return chat_id, "chat_id", msg_id
+    if open_id:
+        return open_id, "open_id", msg_id
+    return None

@@ -1,0 +1,663 @@
+"""Durable provider-call settlement primitives for RG-3C shadow mode.
+
+A ProviderCall is one logical model invocation owned by an execution surface. Each
+physical transport send is a distinct ProviderTransportAttempt, including hidden
+transport retries. This module records mechanical identity/accounting facts only;
+it has no admission, routing, fallback, retry, or semantic authority.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import threading
+import time
+import uuid
+from collections import OrderedDict
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
+from dataclasses import dataclass
+from decimal import Decimal
+from enum import StrEnum
+from typing import Any
+
+from llm_loop.core.run_context import current_run_generation
+from llm_loop.resources.contracts import ExecutionClass, ServicePriority
+
+
+class ProviderCallPurpose(StrEnum):
+    """Mechanical producer of a provider call, independent from service priority."""
+
+    TASK = "task"
+    SUBAGENT = "subagent"
+    LEARNING = "learning"
+    SUMMARIZER = "summarizer"
+    MEMORY_EXTRACTOR = "memory_extractor"
+
+
+class ProviderAttemptKind(StrEnum):
+    """Why a logical call reached a provider again; no semantic quality meaning."""
+
+    PRIMARY = "primary"
+    ERR1210_RETRY = "err1210_retry"
+    FALLBACK = "fallback"
+
+
+class ProviderCallOutcome(StrEnum):
+    SUCCESS = "success"
+    ERROR = "error"
+    INTERRUPTED = "interrupted"
+    BLOCKED_BEFORE_TRANSPORT = "blocked_before_transport"
+
+
+class ProviderTransportOutcome(StrEnum):
+    SUCCESS = "success"
+    ERROR = "error"
+    INTERRUPTED = "interrupted"
+
+
+@dataclass(frozen=True)
+class ProviderCallIdentity:
+    """Stable logical-call identity; the raw idempotency key is never persisted."""
+
+    call_id: str
+    session_id: str
+    idempotency_key: str
+    owner_ref: str
+    execution_class: ExecutionClass
+    service_priority: ServicePriority
+    purpose: ProviderCallPurpose
+    created_at: float
+    origin_run_generation: str = ""
+
+
+@dataclass(frozen=True)
+class ProviderCallSite:
+    """One caller-visible attempt site inside a logical ProviderCall."""
+
+    call: ProviderCallIdentity
+    attempt_kind: ProviderAttemptKind
+    site_index: int
+    provider_id: str
+    model_id: str
+
+
+@dataclass(frozen=True)
+class ProviderTransportAttempt:
+    """Identity of one actual transport send."""
+
+    call_id: str
+    attempt_id: str
+    parent_attempt_id: str | None
+    attempt_kind: ProviderAttemptKind
+    site_index: int
+    transport_retry_index: int
+    provider_id: str
+    model_id: str
+    started_at: float
+
+
+_CURRENT_PROVIDER_CALL_SITE: ContextVar[ProviderCallSite | None] = ContextVar(
+    "lfl_provider_call_site", default=None
+)
+
+
+def current_provider_call_site() -> ProviderCallSite | None:
+    """Return the request-scoped provider-call site, if RG-3C bound one."""
+
+    return _CURRENT_PROVIDER_CALL_SITE.get()
+
+
+@contextmanager
+def bind_provider_call_site(site: ProviderCallSite | None) -> Iterator[None]:
+    """Bind correlation only; it cannot change whether/how a provider is called."""
+
+    if site is None:
+        yield
+        return
+    token = _CURRENT_PROVIDER_CALL_SITE.set(site)
+    try:
+        yield
+    finally:
+        _CURRENT_PROVIDER_CALL_SITE.reset(token)
+
+
+def _call_id(session_id: str, idempotency_key: str, origin_run_generation: str = "") -> str:
+    if origin_run_generation:
+        raw = f"{session_id}\x00{origin_run_generation}\x00{idempotency_key}".encode()
+    else:
+        # Preserve historical/offline call ids when no run identity exists.
+        raw = f"{session_id}\x00{idempotency_key}".encode()
+    return "pcall:" + hashlib.sha256(raw).hexdigest()[:32]
+
+
+def _idempotency_digest(idempotency_key: str) -> str:
+    return hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:24]
+
+
+def _require_text(name: str, value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{name} must be non-empty")
+    return text
+
+
+def _json_scalar(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    return value
+
+
+_USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "reasoning_tokens",
+    "total_tokens",
+)
+
+
+class ProviderCallSettlementJournal:
+    """EventStore-backed reducer for RG-3C durable/idempotent shadow accounting.
+
+    The journal never blocks or retries provider work. Callers may use it to record
+    facts, but no ResourceGovernor/fallback decision reads this state in RG-3C.
+    """
+
+    CALL_OPENED = "provider.call.opened"
+    TRANSPORT_OPENED = "provider.transport.opened"
+    TRANSPORT_SETTLED = "provider.transport.settled"
+    TRANSPORT_ORPHANED = "provider.transport.orphaned"
+    CALL_SETTLED = "provider.call.settled"
+
+    def __init__(
+        self,
+        event_store: Any,
+        *,
+        clock=time.time,
+        projection_sink: Any | None = None,
+    ) -> None:
+        self._event_store = event_store
+        self._clock = clock
+        self._projection_sink = projection_sink
+        self._lock = threading.RLock()
+        self._max_cached_calls = 128
+        self._call_order: OrderedDict[str, None] = OrderedDict()
+        self._calls: dict[str, ProviderCallIdentity] = {}
+        self._last_attempt_id: dict[str, str] = {}
+        self._opened_attempts: dict[str, dict[str, Any]] = {}
+        self._settled_attempts: dict[str, dict[str, Any]] = {}
+        self._orphaned_attempts: dict[str, dict[str, Any]] = {}
+        self._settled_calls: dict[str, dict[str, Any]] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self._event_store is not None and getattr(self._event_store, "enabled", False))
+
+    def _project_written_event(self, event: Any | None) -> None:
+        """Best-effort RG-3D derived projection; EventStore remains the SoT."""
+
+        sink = self._projection_sink
+        if event is None or sink is None:
+            return
+        with suppress(Exception):
+            sink.ingest_event(event)
+
+    def _drop_call_cache_locked(self, call_id: str) -> None:
+        self._calls.pop(call_id, None)
+        self._last_attempt_id.pop(call_id, None)
+        self._settled_calls.pop(call_id, None)
+        for attempt_id, payload in list(self._opened_attempts.items()):
+            if str(payload.get("call_id") or "") == call_id:
+                self._opened_attempts.pop(attempt_id, None)
+        for attempt_id, payload in list(self._settled_attempts.items()):
+            if str(payload.get("call_id") or "") == call_id:
+                self._settled_attempts.pop(attempt_id, None)
+        for attempt_id, payload in list(self._orphaned_attempts.items()):
+            if str(payload.get("call_id") or "") == call_id:
+                self._orphaned_attempts.pop(attempt_id, None)
+
+    def _remember_call_locked(self, call_id: str) -> None:
+        self._call_order[call_id] = None
+        self._call_order.move_to_end(call_id)
+        while len(self._call_order) > max(1, int(self._max_cached_calls)):
+            victim, _ = self._call_order.popitem(last=False)
+            self._drop_call_cache_locked(victim)
+
+    def _hydrate_call_locked(self, session_id: str, call_id: str) -> None:
+        """Read through durable EventStore for one logical call only.
+
+        Provider facts are append-only durable history.  Runtime caches must therefore be
+        bounded by recent logical calls, never by all calls/sessions ever observed.
+        """
+        if call_id in self._call_order:
+            self._call_order.move_to_end(call_id)
+            return
+        self._drop_call_cache_locked(call_id)
+        found = False
+        events = self._event_store.read(session_id) if self.enabled else []
+        for event in events:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            event_type = str(event.type or "")
+            if str(payload.get("call_id") or "") != call_id:
+                continue
+            found = True
+            if event_type == self.CALL_OPENED:
+                call = self._call_from_payload(session_id, payload)
+                if call is not None:
+                    self._calls[call.call_id] = call
+            elif event_type == self.TRANSPORT_OPENED:
+                attempt_id = str(payload.get("attempt_id") or "")
+                if attempt_id and call_id:
+                    self._opened_attempts[attempt_id] = dict(payload)
+                    self._last_attempt_id[call_id] = attempt_id
+            elif event_type == self.TRANSPORT_SETTLED:
+                attempt_id = str(payload.get("attempt_id") or "")
+                if attempt_id and call_id:
+                    self._settled_attempts[attempt_id] = dict(payload)
+                    self._last_attempt_id[call_id] = attempt_id
+            elif event_type == self.TRANSPORT_ORPHANED:
+                # GAP-DUR-1: offline reconciliation fact; outcome unknown by
+                # construction.  The attempt leaves the opened semantics and is
+                # never counted as settled.
+                attempt_id = str(payload.get("attempt_id") or "")
+                if attempt_id and call_id:
+                    self._orphaned_attempts[attempt_id] = dict(payload)
+                    self._last_attempt_id[call_id] = attempt_id
+            elif event_type == self.CALL_SETTLED:
+                if call_id:
+                    self._settled_calls[call_id] = dict(payload)
+        if found:
+            self._remember_call_locked(call_id)
+
+    @staticmethod
+    def _call_from_payload(
+        session_id: str, payload: Mapping[str, Any]
+    ) -> ProviderCallIdentity | None:
+        try:
+            raw_priority = payload.get("service_priority")
+            if raw_priority is None:
+                return None
+            return ProviderCallIdentity(
+                call_id=_require_text("call_id", str(payload.get("call_id") or "")),
+                session_id=session_id,
+                idempotency_key="",
+                owner_ref=_require_text("owner_ref", str(payload.get("owner_ref") or "")),
+                execution_class=ExecutionClass(str(payload.get("execution_class") or "")),
+                service_priority=ServicePriority(int(raw_priority)),
+                purpose=ProviderCallPurpose(str(payload.get("purpose") or "")),
+                created_at=float(payload.get("created_at") or 0.0),
+                origin_run_generation=str(payload.get("origin_run_generation") or ""),
+            )
+        except (TypeError, ValueError):
+            return None
+
+    def last_attempt_id_for_call(self, call_id: str) -> str | None:
+        """P0-2 B3 (GAP-REQ-2): read-only join key for event-log consumers.
+
+        Returns the latest transport attempt id recorded for one logical call,
+        or None when the call is unknown or its bounded cache was evicted; the
+        caller renders that as an empty join key instead of inventing an id.
+        """
+        with self._lock:
+            return self._last_attempt_id.get(str(call_id or ""))
+
+    def open_call(
+        self,
+        *,
+        session_id: str,
+        idempotency_key: str,
+        owner_ref: str,
+        execution_class: ExecutionClass,
+        service_priority: ServicePriority,
+        purpose: ProviderCallPurpose,
+    ) -> ProviderCallIdentity:
+        """Return one stable logical call and append its open fact at most once locally."""
+
+        session_id = _require_text("session_id", session_id)
+        idempotency_key = _require_text("idempotency_key", idempotency_key)
+        owner_ref = _require_text("owner_ref", owner_ref)
+
+        origin_run_generation = str(current_run_generation.get() or "")
+        call_id = _call_id(session_id, idempotency_key, origin_run_generation)
+        with self._lock:
+            self._hydrate_call_locked(session_id, call_id)
+            existing = self._calls.get(call_id)
+            if existing is not None:
+                if (
+                    existing.owner_ref != owner_ref
+                    or existing.execution_class is not execution_class
+                    or existing.service_priority is not service_priority
+                    or existing.purpose is not purpose
+                ):
+                    raise ValueError("provider call idempotency identity conflict")
+                return ProviderCallIdentity(
+                    call_id=existing.call_id,
+                    session_id=existing.session_id,
+                    idempotency_key=idempotency_key,
+                    owner_ref=existing.owner_ref,
+                    execution_class=existing.execution_class,
+                    service_priority=existing.service_priority,
+                    purpose=existing.purpose,
+                    created_at=existing.created_at,
+                    origin_run_generation=existing.origin_run_generation,
+                )
+
+            call = ProviderCallIdentity(
+                call_id=call_id,
+                session_id=session_id,
+                idempotency_key=idempotency_key,
+                owner_ref=owner_ref,
+                execution_class=execution_class,
+                service_priority=service_priority,
+                purpose=purpose,
+                created_at=float(self._clock()),
+                origin_run_generation=origin_run_generation,
+            )
+            payload = {
+                "call_id": call.call_id,
+                "idempotency_digest": _idempotency_digest(idempotency_key),
+                "owner_ref": call.owner_ref,
+                "execution_class": call.execution_class.value,
+                "service_priority": int(call.service_priority),
+                "purpose": call.purpose.value,
+                "created_at": call.created_at,
+            }
+            if call.origin_run_generation:
+                payload["origin_run_generation"] = call.origin_run_generation
+            written = self._event_store.append(session_id, self.CALL_OPENED, payload) if self.enabled else None
+            if written is not None:
+                self._calls[call_id] = call
+                self._remember_call_locked(call_id)
+                self._project_written_event(written)
+            return call
+
+    def open_transport_attempt(
+        self,
+        site: ProviderCallSite,
+        *,
+        transport_retry_index: int,
+        prepared: Mapping[str, Any] | None = None,
+    ) -> ProviderTransportAttempt:
+        """Create a fresh identity immediately before one physical send."""
+
+        if transport_retry_index < 0:
+            raise ValueError("transport_retry_index must be >= 0")
+        if site.site_index < 0:
+            raise ValueError("site_index must be >= 0")
+        with self._lock:
+            self._hydrate_call_locked(site.call.session_id, site.call.call_id)
+            parent = self._last_attempt_id.get(site.call.call_id)
+            attempt = ProviderTransportAttempt(
+                call_id=site.call.call_id,
+                attempt_id="pattempt:" + uuid.uuid4().hex,
+                parent_attempt_id=parent,
+                attempt_kind=site.attempt_kind,
+                site_index=int(site.site_index),
+                transport_retry_index=int(transport_retry_index),
+                provider_id=_require_text("provider_id", site.provider_id),
+                model_id=_require_text("model_id", site.model_id),
+                started_at=float(self._clock()),
+            )
+            payload = self._attempt_identity_payload(attempt)
+            prepared_facts = self._normalize_prepared(prepared)
+            if prepared_facts:
+                payload["prepared"] = prepared_facts
+            written = (
+                self._event_store.append(site.call.session_id, self.TRANSPORT_OPENED, payload)
+                if self.enabled
+                else None
+            )
+            if written is not None:
+                self._opened_attempts[attempt.attempt_id] = payload
+                self._last_attempt_id[attempt.call_id] = attempt.attempt_id
+                self._project_written_event(written)
+            return attempt
+
+    @staticmethod
+    def _normalize_prepared(prepared: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        """GAP-REQ-1 prepared facts: additive schema, mechanical typing, no semantics.
+
+        Unknown or mistyped fields are dropped, never coerced; absence stays
+        absence (old events hydrate unchanged).
+        """
+        if not isinstance(prepared, Mapping):
+            return None
+        out: dict[str, Any] = {}
+        digest_hex = str(prepared.get("payload_hmac") or "").strip().lower()
+        if digest_hex:
+            out["payload_hmac"] = digest_hex
+        key_id = str(prepared.get("payload_hmac_key_id") or "").strip()
+        if key_id:
+            out["payload_hmac_key_id"] = key_id
+        projected = prepared.get("projected_bytes")
+        if isinstance(projected, int) and not isinstance(projected, bool) and projected >= 0:
+            out["projected_bytes"] = projected
+        representation = str(prepared.get("representation") or "").strip()
+        if representation:
+            out["representation"] = representation
+        controls = prepared.get("controls")
+        if isinstance(controls, Mapping):
+            out["controls"] = {str(k): v for k, v in controls.items()}
+        knowledge = prepared.get("knowledge_references")
+        if isinstance(knowledge, list) and len(knowledge) <= 2:
+            valid = [
+                {key: row[key] for key in (
+                    "run_ref", "knowledge_event_key", "refs", "reference_chars", "reference_sha256",
+                )}
+                for row in knowledge
+                if isinstance(row, dict)
+                and isinstance(row.get("run_ref"), str)
+                and isinstance(row.get("knowledge_event_key"), str)
+                and isinstance(row.get("refs"), list)
+                and len(row["refs"]) <= 5
+                and all(isinstance(ref, str) for ref in row["refs"])
+                and isinstance(row.get("reference_chars"), int)
+                and isinstance(row.get("reference_sha256"), str)
+                and len(row["reference_sha256"]) == 64
+            ]
+            if valid:
+                out["knowledge_references"] = valid
+        return out or None
+
+    @staticmethod
+    def _attempt_identity_payload(attempt: ProviderTransportAttempt) -> dict[str, Any]:
+        return {
+            "call_id": attempt.call_id,
+            "attempt_id": attempt.attempt_id,
+            "parent_attempt_id": attempt.parent_attempt_id,
+            "attempt_kind": attempt.attempt_kind.value,
+            "site_index": attempt.site_index,
+            "transport_retry_index": attempt.transport_retry_index,
+            "provider_id": attempt.provider_id,
+            "model_id": attempt.model_id,
+            "started_at": attempt.started_at,
+        }
+
+    def settle_transport_attempt(
+        self,
+        *,
+        session_id: str,
+        attempt: ProviderTransportAttempt,
+        outcome: ProviderTransportOutcome,
+        usage: Mapping[str, Any] | None,
+        usage_observations: int,
+        status_code: int | None,
+        provider_code: str | None,
+        retry_after_seconds: float | None,
+        rate_limits: tuple[Any, ...] | list[Any],
+        error_type: str | None,
+        finish_reason: str | None = None,
+        normalized_response_hmac: str | None = None,
+        normalized_response_hmac_key_id: str | None = None,
+        provider_observed_model: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Append one terminal transport settlement; duplicate attempt IDs are idempotent.
+
+        GAP-RESP-1 (C1) response facts are additive: each key is written only
+        when its value is present (missing protocol echo or missing HMAC key
+        material is an honest absence, never a fabricated value).
+        """
+
+        with self._lock:
+            self._hydrate_call_locked(session_id, attempt.call_id)
+            existing = self._settled_attempts.get(attempt.attempt_id)
+            candidate = {
+                **self._attempt_identity_payload(attempt),
+                "outcome": outcome.value,
+                "settled_at": float(self._clock()),
+                "usage": self._normalize_usage_payload(usage or {}),
+                "usage_observations": max(0, int(usage_observations)),
+                "status_code": status_code,
+                "provider_code": provider_code,
+                "retry_after_seconds": retry_after_seconds,
+                "rate_limits": self._normalize_rate_limits(rate_limits),
+                "error_type": error_type,
+            }
+            if finish_reason:
+                candidate["finish_reason"] = str(finish_reason)
+            if normalized_response_hmac:
+                candidate["normalized_response_hmac"] = str(normalized_response_hmac)
+                if normalized_response_hmac_key_id:
+                    candidate["normalized_response_hmac_key_id"] = str(
+                        normalized_response_hmac_key_id
+                    )
+            if provider_observed_model:
+                candidate["provider_observed_model"] = str(provider_observed_model)
+            if existing is not None:
+                self._assert_same_attempt_settlement(existing, candidate)
+                return dict(existing)
+            written = self._event_store.append(session_id, self.TRANSPORT_SETTLED, candidate) if self.enabled else None
+            if written is not None:
+                self._settled_attempts[attempt.attempt_id] = candidate
+                self._last_attempt_id[attempt.call_id] = attempt.attempt_id
+                self._project_written_event(written)
+                return dict(candidate)
+            return None
+
+    @staticmethod
+    def _assert_same_attempt_settlement(
+        existing: Mapping[str, Any], candidate: Mapping[str, Any]
+    ) -> None:
+        comparable = (
+            "call_id",
+            "attempt_id",
+            "parent_attempt_id",
+            "attempt_kind",
+            "site_index",
+            "transport_retry_index",
+            "provider_id",
+            "model_id",
+            "outcome",
+            "usage",
+            "usage_observations",
+            "status_code",
+            "provider_code",
+            "retry_after_seconds",
+            "rate_limits",
+            "error_type",
+            "finish_reason",
+            "normalized_response_hmac",
+            "normalized_response_hmac_key_id",
+            "provider_observed_model",
+        )
+        if any(existing.get(key) != candidate.get(key) for key in comparable):
+            raise ValueError("conflicting provider transport settlement for attempt_id")
+
+    @staticmethod
+    def _normalize_usage_payload(usage: Mapping[str, Any]) -> dict[str, Any]:
+        out = {field: _json_scalar(usage.get(field)) for field in _USAGE_FIELDS}
+        out["provider_units"] = _json_scalar(usage.get("provider_units"))
+        out["provider_unit"] = usage.get("provider_unit")
+        return out
+
+    @staticmethod
+    def _normalize_rate_limits(rate_limits: tuple[Any, ...] | list[Any]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for fact in rate_limits:
+            metric = getattr(fact, "metric", None)
+            out.append(
+                {
+                    "metric": getattr(metric, "value", str(metric or "")),
+                    "limit": getattr(fact, "limit", None),
+                    "remaining": getattr(fact, "remaining", None),
+                    "window_seconds": getattr(fact, "window_seconds", None),
+                    "reset_at": getattr(fact, "reset_at", None),
+                    "reset_after_seconds": getattr(fact, "reset_after_seconds", None),
+                }
+            )
+        return out
+
+    def settle_call(
+        self,
+        call: ProviderCallIdentity | None,
+        outcome: ProviderCallOutcome,
+    ) -> dict[str, Any] | None:
+        """Record terminal logical-call outcome without changing caller control flow."""
+
+        if call is None:
+            return None
+        with self._lock:
+            self._hydrate_call_locked(call.session_id, call.call_id)
+            existing = self._settled_calls.get(call.call_id)
+            if existing is not None:
+                if existing.get("outcome") != outcome.value:
+                    raise ValueError("conflicting provider call settlement")
+                return dict(existing)
+            payload = {
+                "call_id": call.call_id,
+                "outcome": outcome.value,
+                "settled_at": float(self._clock()),
+            }
+            written = self._event_store.append(call.session_id, self.CALL_SETTLED, payload) if self.enabled else None
+            if written is not None:
+                self._settled_calls[call.call_id] = payload
+                self._project_written_event(written)
+                return dict(payload)
+            return None
+
+    def snapshot_call(self, call: ProviderCallIdentity | str, *, session_id: str | None = None) -> dict[str, Any]:
+        """Reduce durable attempt facts into completeness-aware call accounting."""
+
+        if isinstance(call, ProviderCallIdentity):
+            call_id = call.call_id
+            sid = call.session_id
+        else:
+            call_id = str(call)
+            sid = _require_text("session_id", str(session_id or ""))
+        with self._lock:
+            self._hydrate_call_locked(sid, call_id)
+            opened = [row for row in self._opened_attempts.values() if row.get("call_id") == call_id]
+            settled = [row for row in self._settled_attempts.values() if row.get("call_id") == call_id]
+            orphaned_rows = [row for row in self._orphaned_attempts.values() if row.get("call_id") == call_id]
+            settled_ids = {row.get("attempt_id") for row in settled}
+            # GAP-DUR-1: an orphaned attempt left the opened semantics; it is
+            # counted separately and never treated as settled.
+            orphaned_ids = {
+                row.get("attempt_id") for row in orphaned_rows if row.get("attempt_id") not in settled_ids
+            }
+            opened = [row for row in opened if row.get("attempt_id") not in orphaned_ids]
+            # Dict insertion order mirrors EventStore seq order both live and after hydration.
+            # Do not use random attempt UUIDs as a tie-break when provider sends share a clock tick.
+            known_sum: dict[str, int] = {}
+            completeness: dict[str, bool] = {}
+            for field in _USAGE_FIELDS:
+                values = [(row.get("usage") or {}).get(field) for row in settled]
+                known_sum[field] = sum(int(value) for value in values if value is not None)
+                completeness[field] = bool(settled) and all(value is not None for value in values)
+            attempts_complete = bool(opened) and {row.get("attempt_id") for row in opened} <= {
+                row.get("attempt_id") for row in settled
+            }
+            terminal = self._settled_calls.get(call_id)
+            return {
+                "call_id": call_id,
+                "attempts_opened": len(opened),
+                "attempts_settled": len(settled),
+                "attempts_orphaned": len(orphaned_ids),
+                "attempts_complete": attempts_complete,
+                "known_usage_sum": known_sum,
+                "usage_complete": completeness,
+                "call_outcome": terminal.get("outcome") if terminal else None,
+                "call_settled": terminal is not None,
+                "attempts": [dict(row) for row in settled],
+            }

@@ -1,0 +1,659 @@
+from __future__ import annotations
+
+from llm_loop.config import HistoryPolicySettings
+from llm_loop.core.episode_history import project_active_tool_working_set
+from llm_loop.core.message import (
+    Message,
+    MessageSource,
+    RecoverabilityStatus,
+    ToolResult,
+    ToolResultStatus,
+)
+from llm_loop.tools.registry import tool_result_to_message
+
+
+def _policy(**overrides) -> HistoryPolicySettings:
+    values = {"working_set_receipts": True}
+    values.update(overrides)
+    return HistoryPolicySettings(**values)
+
+
+def _assistant(call_id: str) -> Message:
+    return Message(
+        role="assistant",
+        content="继续检查",
+        source=MessageSource.USER,
+        tool_calls=[
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }
+        ],
+        model_used="cognilocal/ornith",
+        metadata={"answer_origin": "model"},
+    )
+
+
+def _tool(call_id: str, text: str, *, ref: str | None) -> Message:
+    metadata = {}
+    if ref:
+        metadata = {
+            "recoverability_status": "recorded",
+            "evidence_ref": ref,
+            "evidence_representation": "excerpt",
+            "evidence_projection_complete": False,
+            "evidence_source_label": "read_file:src/x.py",
+            "evidence_coverage_label": "source_line:0-200",
+        }
+    return Message(
+        role="tool",
+        content=text,
+        source=MessageSource.TOOL,
+        tool_call_id=call_id,
+        status=ToolResultStatus.SUCCESS,
+        tool_name="read_file",
+        metadata=metadata,
+    )
+
+
+def test_working_set_receipt_compacts_only_older_exposed_group():
+    policy = _policy(working_set_batch_chars=4096)
+    first_raw = "FIRST-RAW-" * 1000
+    latest_raw = "LATEST-RAW-" * 1000
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", first_raw, ref="evidence://v1/first"),
+        _assistant("c2"),
+        _tool("c2", latest_raw, ref="evidence://v1/latest"),
+    ]
+
+    projected = project_active_tool_working_set(messages, policy=policy)
+
+    assert messages[2].content == first_raw  # storage truth untouched
+    assert projected[1].tool_calls == messages[1].tool_calls
+    assert projected[2].tool_call_id == "c1"
+    assert "tool_result_receipt" in projected[2].content
+    assert "evidence_ref=evidence://v1/first" in projected[2].content
+    assert "prior_full_result_exposed=true" in projected[2].content
+    assert messages[4].content == latest_raw  # durable storage truth stays byte-exact
+    assert projected[3].tool_calls == messages[3].tool_calls
+    assert projected[4].tool_call_id == "c2"
+    assert "tool_result_bounded_first_view" in projected[4].content
+    assert "evidence_ref=evidence://v1/latest" in projected[4].content
+    assert latest_raw[:8192] in projected[4].content
+
+
+def test_large_recoverable_latest_result_uses_bounded_first_view_without_breaking_pairing():
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    raw = "0123456789" * 2000
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", raw, ref="evidence://v1/large"),
+    ]
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=_policy(working_set_first_view_chars=8192),
+    )
+
+    assert messages[2].content == raw
+    assert projected[1].tool_calls == messages[1].tool_calls
+    assert projected[2].tool_call_id == "c1"
+    assert projected[2].tool_name == messages[2].tool_name
+    assert "[tool_result_bounded_first_view]" in projected[2].content
+    assert "evidence_ref=evidence://v1/large" in projected[2].content
+    assert "raw_chars=20000" in projected[2].content
+    assert "first_view_chars=8192" in projected[2].content
+    assert projected[2].content.endswith(raw[:8192])
+    assert stats.first_view_limit_chars == 8192
+    assert stats.bounded_first_view_results == 1
+    assert stats.bounded_first_view_raw_chars == len(raw)
+    assert stats.bounded_first_view_projected_chars == len(projected[2].content)
+    assert stats.projected_tool_chars < stats.raw_tool_chars
+
+
+def test_large_latest_result_without_durable_evidence_stays_raw():
+    raw = "NO-REF-" * 3000
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", raw, ref=None),
+    ]
+
+    projected = project_active_tool_working_set(
+        messages,
+        policy=_policy(working_set_first_view_chars=8192),
+    )
+
+    assert projected[2].content == raw
+
+
+def test_bounded_first_view_can_be_disabled_without_changing_raw_result():
+    raw = "RAW-" * 5000
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", raw, ref="evidence://v1/raw"),
+    ]
+
+    projected = project_active_tool_working_set(
+        messages,
+        policy=_policy(working_set_first_view_chars=0),
+    )
+
+    assert projected[2].content == raw
+
+
+def test_model_selected_direct_evidence_digest_stays_byte_exact_on_first_view():
+    from llm_loop.core.episode_history import (
+        collect_active_evidence_groups,
+        project_active_tool_working_set_with_stats,
+    )
+
+    raw = "DIRECT-EVIDENCE-" * 1500
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", raw, ref="evidence://v1/direct"),
+    ]
+    groups = collect_active_evidence_groups(messages)
+    assert len(groups) == 1
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=_policy(working_set_first_view_chars=8192),
+        preserve_group_digests=[groups[0].descriptor.protocol_digest],
+    )
+
+    assert projected[2].content == raw
+    assert stats.bounded_first_view_results == 0
+
+
+def test_incomplete_tool_protocol_group_is_never_represented_as_bounded_first_view():
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    declaration = _assistant("c1")
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        declaration,
+    ]
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=_policy(working_set_first_view_chars=8192),
+    )
+
+    assert projected[1] is declaration
+    assert stats.bounded_first_view_results == 0
+
+
+def test_64k_recoverable_result_sheds_most_wire_bytes_on_first_view():
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    raw = "R" * 65536
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", raw, ref="evidence://v1/64k"),
+    ]
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=_policy(working_set_first_view_chars=8192),
+    )
+
+    assert stats.raw_tool_chars == 65536
+    assert stats.bounded_first_view_results == 1
+    assert stats.projected_tool_chars < 10000
+    assert stats.raw_tool_chars - stats.projected_tool_chars > 55000
+    assert projected[2].content.endswith(raw[:8192])
+
+
+def test_multi_round_large_tool_episode_stays_bounded_and_pair_complete():
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 7):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(
+                    f"c{idx}",
+                    chr(64 + idx) * 65536,
+                    ref=f"evidence://v1/round-{idx}",
+                ),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=_policy(
+            working_set_first_view_chars=8192,
+            working_set_batch_chars=65536,
+            working_set_grace_groups=1,
+        ),
+    )
+
+    assert stats.raw_tool_chars == 6 * 65536
+    assert stats.projected_tool_chars < 80000
+    assert stats.bounded_first_view_results == 1
+    assert stats.folded_results >= 4
+    for idx in range(1, 7):
+        assistant = projected[(idx * 2) - 1]
+        result = projected[idx * 2]
+        assert assistant.tool_calls[0]["id"] == f"c{idx}"
+        assert result.tool_call_id == f"c{idx}"
+
+
+def test_three_megabyte_durable_tool_episode_projects_to_bounded_working_set():
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 49):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(
+                    f"c{idx}",
+                    chr(65 + idx % 26) * 65536,
+                    ref=f"evidence://v1/large-{idx}",
+                ),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=_policy(
+            working_set_first_view_chars=8192,
+            working_set_batch_chars=65536,
+            working_set_grace_groups=1,
+        ),
+    )
+
+    assert stats.raw_tool_chars == 48 * 65536
+    assert stats.raw_tool_chars > 3_000_000
+    assert stats.bounded_first_view_results == 1
+    assert stats.projected_tool_chars < 100_000
+    assert stats.projected_tool_chars < stats.raw_tool_chars * 0.04
+    assert projected[-1].tool_call_id == "c48"
+
+def test_working_set_receipt_fails_open_without_durable_ref():
+    policy = _policy(working_set_batch_chars=4096)
+    raw = "NO-DURABLE-REF" * 100
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", raw, ref=None),
+        _assistant("c2"),
+        _tool("c2", "latest", ref="evidence://v1/latest"),
+    ]
+    assert project_active_tool_working_set(messages, policy=policy)[2].content == raw
+
+def test_working_set_receipts_keep_small_incomplete_batch_raw():
+    policy = _policy(working_set_batch_chars=32768)
+    first_raw = "A" * 12000
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", first_raw, ref="evidence://v1/first"),
+        _assistant("c2"),
+        _tool("c2", "latest", ref="evidence://v1/latest"),
+    ]
+    projected = project_active_tool_working_set(messages, policy=policy)
+    assert projected[2].content == first_raw
+    assert projected[4].content == "latest"
+
+def test_working_set_receipts_default_off():
+    policy = HistoryPolicySettings()
+    raw = "RAW" * 100
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", raw, ref="evidence://v1/first"),
+        _assistant("c2"),
+        _tool("c2", "latest", ref="evidence://v1/latest"),
+    ]
+    projected = project_active_tool_working_set(messages, policy=policy)
+    assert projected is messages
+    assert projected[2].content == raw
+
+def test_tool_result_helper_preserves_evidence_metadata_without_raw_wire_leak():
+    result = ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content="bounded projection",
+        tool_call_id="c1",
+        tool_name="read_file",
+        recoverability_status=RecoverabilityStatus.RECORDED,
+        evidence_ref="evidence://v1/abc",
+        evidence_representation="excerpt",
+        evidence_projection_complete=False,
+        evidence_source_label="read_file:src/x.py",
+        evidence_coverage_label="source_line:0-200",
+        evidence_origin_facts={
+            "acquired_at": "2026-09-05T01:02:03+00:00",
+            "source_kind": "file",
+            "source_version_policy": "probeable",
+            "source_version_token": "stat:1:2",
+            "provenance": {
+                "producer": "tool_registry_enforce",
+                "authority": "tool_observation",
+                "scope": "success",
+            },
+        },
+        source_resolution_mode="source_execution",
+        source_execution_performed=True,
+    )
+
+    message = tool_result_to_message(result)
+    wire = message.to_llm_dict()
+
+    assert message.metadata["recoverability_status"] == "recorded"
+    assert message.metadata["evidence_ref"] == "evidence://v1/abc"
+    assert message.metadata["evidence_source_label"] == "read_file:src/x.py"
+    assert message.metadata["evidence_coverage_label"] == "source_line:0-200"
+    assert message.metadata["evidence_origin_facts"]["acquired_at"] == "2026-09-05T01:02:03+00:00"
+    assert message.metadata["evidence_origin_facts"]["source_version_token"] == "stat:1:2"
+    direct = result.to_message()
+    assert direct.metadata["evidence_origin_facts"] == message.metadata["evidence_origin_facts"]
+    assert "2026-09-05T01:02:03+00:00" not in wire["content"]  # metadata stays off wire until projection
+    assert message.metadata["source_resolution_mode"] == "source_execution"
+    assert message.metadata["source_execution_performed"] is True
+    assert "evidence://v1/abc" not in wire["content"]
+
+
+def test_working_set_stats_report_only_mechanical_projection_facts():
+    policy = _policy(working_set_batch_chars=8000)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", "A" * 5000, ref="evidence://v1/a"),
+        _assistant("c2"),
+        _tool("c2", "B" * 5000, ref="evidence://v1/b"),
+        _assistant("c3"),
+        _tool("c3", "C" * 5000, ref="evidence://v1/c"),
+    ]
+
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
+
+    assert stats.enabled is True
+    assert stats.batch_chars == 8000
+    assert stats.raw_tool_chars == 15000
+    assert stats.folded_results == 2
+    assert stats.folded_groups == 2
+    assert stats.pending_raw_chars == 0
+    assert stats.pending_receipt_chars == 0
+    assert stats.pending_net_gain_chars == 0
+    assert stats.pending_results == 0
+    assert stats.latest_raw_chars == 5000
+    assert stats.fold_boundaries == (5,)
+    assert stats.fold_triggers == ("coarse_bytes",)
+    assert stats.projected_tool_chars < stats.raw_tool_chars
+    assert stats.receipt_chars == len(projected[2].content) + len(projected[4].content)
+    assert projected[6].content == "C" * 5000
+
+def test_working_set_stats_expose_small_incomplete_batch_without_folding():
+    policy = _policy(working_set_batch_chars=16000)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        _tool("c1", "A" * 5000, ref="evidence://v1/a"),
+        _assistant("c2"),
+        _tool("c2", "B" * 5000, ref="evidence://v1/b"),
+    ]
+
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
+
+    assert stats.folded_results == 0
+    assert stats.folded_groups == 0
+    assert stats.pending_raw_chars == 5000
+    assert stats.pending_receipt_chars > 0
+    assert stats.pending_net_gain_chars == 5000 - stats.pending_receipt_chars
+    assert stats.pending_results == 1
+    assert stats.latest_raw_chars == 5000
+    assert stats.fold_boundaries == ()
+    assert projected[2].content == "A" * 5000
+    assert projected[4].content == "B" * 5000
+
+def test_soft_result_cap_defers_low_gain_small_results_without_prefix_rewrite():
+    """Soft count pressure alone must not rewrite a prefix for a small byte saving."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 21):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 1000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
+
+    assert stats.raw_tool_chars == 20000
+    assert stats.soft_result_cap == 12
+    assert stats.hard_result_cap == 32
+    assert stats.min_net_gain_chars == 16384
+    assert stats.folded_groups == 0
+    assert stats.folded_results == 0
+    assert stats.pending_results == 18
+    assert stats.pending_results > stats.soft_result_cap
+    assert stats.pending_results < stats.hard_result_cap
+    assert stats.pending_net_gain_chars < stats.min_net_gain_chars
+    assert stats.grace_results == 1
+    assert stats.latest_raw_chars == 1000
+    assert projected[2].content == "B" * 1000
+    assert stats.fold_triggers == ()
+    assert "tool_result_receipt" not in projected[-3].content
+    assert "tool_result_receipt" not in projected[-1].content
+
+def test_hard_result_cap_still_bounds_long_small_result_episode():
+    """A hard mechanical count valve prevents a return to 60+ raw pending results."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1, working_set_min_net_gain_chars=1048576)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 37):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 1000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
+
+    assert stats.raw_tool_chars == 36000
+    assert stats.folded_results == 32
+    assert stats.folded_groups == 32
+    assert stats.fold_triggers == ("hard_result_cap",)
+    assert stats.pending_results == 2
+    assert stats.grace_results == 1
+    assert stats.latest_raw_chars == 1000
+    assert "tool_result_receipt" in projected[2].content
+
+
+def test_same_run_defers_soft_fold_without_rewriting_provider_prefix():
+    """Same-run cache continuity must defer an opportunistic soft-cap rewrite."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 16):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 2000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=policy,
+        allow_opportunistic_fold=False,
+    )
+
+    assert stats.raw_tool_chars == 30000
+    assert stats.folded_results == 0
+    assert stats.folded_groups == 0
+    assert stats.fold_triggers == ()
+    assert stats.pending_results >= stats.soft_result_cap
+    assert stats.pending_net_gain_chars >= stats.min_net_gain_chars
+    assert projected[2].content == "B" * 2000
+
+
+def test_same_run_byte_hard_boundary_is_a_resource_safety_valve():
+    """Same-run continuity defers opportunistic rewrites, not the byte hard boundary.
+
+    The append-only preference ranks below resource safety: pending raw tool bytes
+    at/above batch_chars must fold even in logical round > 1 (trigger
+    ``resource_safety_bytes``), so a few very large results cannot grow the
+    provider prefix unbounded before the result-count cap ever fires.
+    """
+    policy = _policy(working_set_batch_chars=4096, working_set_grace_groups=0)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 4):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 2500, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=policy,
+        allow_opportunistic_fold=False,
+    )
+
+    assert stats.raw_tool_chars == 7500
+    # 第 2 组末 pending 累计 5000 ≥ 4096 → 立即折前 2 组；第 3 组是本轮最新
+    # 未暴露组，保持 raw（append-only 对"已发送前缀"的保留只排到资源边界之下）。
+    assert stats.folded_results == 2
+    assert stats.folded_groups == 2
+    assert stats.fold_boundaries == (5,)
+    assert stats.fold_triggers == ("resource_safety_bytes",)
+    assert "tool_result_receipt" in projected[2].content
+    assert stats.latest_raw_chars == 2500
+    assert stats.projected_tool_chars < stats.raw_tool_chars
+
+
+def test_same_run_still_applies_hard_result_cap_safety_valve():
+    """Disabling opportunistic rewrites must not disable the hard bounded-result valve."""
+    policy = _policy(
+        working_set_batch_chars=1048576,
+        working_set_grace_groups=1,
+        working_set_min_net_gain_chars=1048576,
+    )
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 37):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 1000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(
+        messages,
+        policy=policy,
+        allow_opportunistic_fold=False,
+    )
+
+    assert stats.folded_results == 32
+    assert stats.folded_groups == 32
+    assert stats.fold_triggers == ("hard_result_cap",)
+    assert "tool_result_receipt" in projected[2].content
+
+def test_soft_result_cap_folds_when_net_saving_is_material():
+    """Soft cap may fold before 64K when the raw->receipt byte saving is large."""
+    policy = _policy(working_set_batch_chars=65536, working_set_grace_groups=1)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 16):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(65 + idx % 26) * 2000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
+
+    assert stats.raw_tool_chars == 30000
+    assert stats.folded_results >= stats.soft_result_cap
+    assert stats.fold_triggers == ("soft_cap_net_gain",)
+    assert stats.fold_boundaries
+    assert stats.projected_tool_chars < stats.raw_tool_chars
+
+def test_working_set_grace_keeps_recent_exposed_groups_raw():
+    policy = _policy(working_set_batch_chars=8000, working_set_grace_groups=2)
+    from llm_loop.core.episode_history import project_active_tool_working_set_with_stats
+
+    messages = [Message(role="user", content="task", source=MessageSource.USER)]
+    for idx in range(1, 6):
+        messages.extend(
+            [
+                _assistant(f"c{idx}"),
+                _tool(f"c{idx}", chr(64 + idx) * 5000, ref=f"evidence://v1/{idx}"),
+            ]
+        )
+
+    projected, stats = project_active_tool_working_set_with_stats(messages, policy=policy)
+
+    assert stats.grace_groups == 2
+    assert stats.folded_groups == 2
+    assert stats.folded_results == 2
+    assert stats.grace_raw_chars == 10000
+    assert stats.grace_results == 2
+    assert stats.latest_raw_chars == 5000
+    assert "tool_result_receipt" in projected[2].content
+    assert "tool_result_receipt" in projected[4].content
+    assert projected[6].content == "C" * 5000
+    assert projected[8].content == "D" * 5000
+    assert projected[10].content == "E" * 5000
+
+def test_working_set_receipt_exposes_mechanical_origin_not_task_judgment():
+    policy = _policy(working_set_batch_chars=4096)
+    older = _tool("c1", "A" * 5000, ref="evidence://v1/a")
+    older.metadata["evidence_origin_facts"] = {
+        "acquired_at": "2026-08-28T12:00:00+00:00",
+        "source_kind": "file",
+        "source_version_policy": "probeable",
+        "source_version_token": "stat:10:20",
+        "provenance": {
+            "producer": "tool_registry_enforce",
+            "authority": "tool_observation",
+            "scope": "success",
+        },
+    }
+    messages = [
+        Message(role="user", content="task", source=MessageSource.USER),
+        _assistant("c1"),
+        older,
+        _assistant("c2"),
+        _tool("c2", "latest", ref="evidence://v1/b"),
+    ]
+
+    receipt = project_active_tool_working_set(messages, policy=policy)[2].content
+
+    assert "acquired_at=2026-08-28T12:00:00+00:00" in receipt
+    assert "version_policy=probeable" in receipt
+    assert "task_applicability=not_evaluated" in receipt
+    # High-cardinality/verbose origin details remain recoverable, not repeated in every receipt.
+    assert "version_token=" not in receipt
+    assert "provenance_authority=" not in receipt
+    assert "task_applicability=current" not in receipt

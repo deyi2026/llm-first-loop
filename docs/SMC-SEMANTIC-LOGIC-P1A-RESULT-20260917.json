@@ -1,0 +1,87 @@
+{
+  "schema": "smc.semantic_logic_p1a_result.v0.1",
+  "date": "2026-09-17",
+  "status": "pass",
+  "phase": "P1-A",
+  "baseline_git_sha": "19e253edfe4d3fcbeb268830b90d00fd273a6262",
+  "branch": "feature/smc-semantic-logic-p1a-20260917",
+  "design_baseline_commit": "942c7655",
+  "implementation_commit": "2e99b99f5232d1b16bdc01754a9fefa787015629",
+  "implementation": {
+    "kind": "typed_fact_graph_ir",
+    "authority": "shadow_only",
+    "production_consumed": false,
+    "n3_reasoner_used": false,
+    "provider_visible_change": false,
+    "mutation_authority_change": false,
+    "production_source_paths_modified": false,
+    "files": [
+      {
+        "path": "src/llm_loop/semantic_logic/__init__.py",
+        "sha256": "6b9a0afdf0aadc1125cf48185be647342ce22bc303a326236588ecb4ddc151ee"
+      },
+      {
+        "path": "src/llm_loop/semantic_logic/ir.py",
+        "sha256": "4c91407e151577f85578321ec7e55ffc3a37f9e335d873f13c847c5540c9f688"
+      },
+      {
+        "path": "tests/unit/test_smc_semantic_logic_p1a.py",
+        "sha256": "ba4ef43da59f95a1480e4e29a8def31bdf4a6eab3b2dcef43efbbee441100723"
+      }
+    ]
+  },
+  "p1a_gate": {
+    "frozen_cases_required": 15,
+    "frozen_cases_projected": 15,
+    "semantic_loss_observed": 0,
+    "production_consumers": 0
+  },
+  "frozen_gates": {
+    "S1": 3,
+    "S2": 2,
+    "S3": 3,
+    "S4": 4,
+    "S5": 3
+  },
+  "tests": {
+    "p1a_focused": {
+      "collected": 21,
+      "passed": 21
+    },
+    "browser_frozen_oracle": {
+      "collected": 119,
+      "passed": 119
+    },
+    "combined_adjacent": {
+      "collected": 140,
+      "passed": 140
+    }
+  },
+  "static": {
+    "ruff": "pass",
+    "py_compile": "pass",
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "git_diff_check": "pass"
+  },
+  "whole_repo_gate": {
+    "ci_gate": "pass",
+    "ruff": "pass",
+    "env_pin_test_files_scanned": 588,
+    "env_pin_undeclared_compact_ratio_dependents": 0,
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "tier0": "pass",
+    "full_xdist": "pass"
+  },
+  "boundaries": {
+    "python_oracle_remains_authoritative": true,
+    "p1b_started": false,
+    "p1c_started": false,
+    "p1d_started": false,
+    "push_performed": false,
+    "deploy_performed": false,
+    "service_restart_performed": false,
+    "local_model_change_performed": false
+  }
+}

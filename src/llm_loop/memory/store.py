@@ -1,0 +1,586 @@
+"""记忆条目存取 MemoryStore（design.md §2.2.2.5 / FR-MEM 系列）.
+
+边界说明（M11）: 本模块负责记忆条目（index.json）;压缩档案存取（JSONL）在 memory/archive.py，二者存储对象与文件格式不同，不合并。
+
+JSON 文件存储（P0），条目含 id/type/content/keywords/source_session_id/
+source_message_id/created_at（数据约束 6.3: 可检索、来源可溯）。
+失败不阻塞主循环（FR-MEM-03），由调用方捕获并如实标注。
+
+版本化与去重（EVO-20260811-cbd6c52a）: 同一事实更新时覆盖旧版而非追加，
+保留 version/updated_at，旧版内容沉入 version_history（不删除业务数据），
+检索排序按版本新鲜度。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import threading
+import uuid
+from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime
+from pathlib import Path
+
+from llm_loop.timekeeping import system_local_now
+
+
+@dataclass
+class MemoryEntry:
+    """记忆条目（数据约束 6.3 / P1 字段扩展 §3.5.1）."""
+
+    id: str
+    type: str  # fact | decision | convention | procedure
+    content: str
+    keywords: list[str] = field(default_factory=list)
+    source_session_id: str = ""
+    source_message_id: str = ""
+    created_at: str = ""
+    summary: str = ""  # P1: 摘要（可选）
+    summary_source: str = "deterministic"  # P1: llm/deterministic
+    deposit_path: str = "inline"  # P1: inline（即时沉淀）/ extract（独立提取）
+    content_fingerprint: str = ""  # P1: 内容规范化 SHA-256（去重）
+    # ── 记忆分级（2026-08-20 防污染，架构: docs/ARCHITECTURE-cache-stable-rules.md §5）──
+    # scope=global（默认）: 通用决策/约定/经验，跨会话可召回复用。
+    # scope=session: 会话瞬时性内容（调试现场/进度快照/路径/PID），仅原会话（或查询含
+    #   对应会话标识）可召回——防 A 会话调试现场污染 B 会话判断。
+    scope: str = "global"
+    # Legacy persistence field: automatic memory prompt injection is retired.
+    # Keep inject_policy only so old index.json entries remain readable; current runtime
+    # retrieves memory explicitly and does not use this field to grant prompt authority.
+    inject_policy: str = "auto"
+    # ── Phase 2 增强（EVO-20260810-baae4016）──
+    access_count: int = 0            # 检索命中次数
+    last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）
+    decay_score: float = 1.0         # 衰减分（1.0=最新最活跃；随未访问天数下降）
+    # Legacy persistence fields from the retired automatic-injection era. They are
+    # read/write compatible only and no longer drive current applicability/promotion.
+    inject_count: int = 0
+    last_inject_at: str = ""
+    # SkillZip ReZip 借鉴（执行感知反馈环）:
+    # guidance_used_at: 最近一次被 M41 注入使用的时间（执行感知）
+    # guidance_risk: 风险标记（注入后同场景仍失败累计，>=2 提示经验可能失效）
+    guidance_used_at: str = ""
+    guidance_risk: int = 0
+    citations: list[dict] = field(default_factory=list)  # 溯源: [{"kind","ref","note"}]
+    # ── 版本化与去重（EVO-20260811-cbd6c52a）──
+    version: int = 1                 # 版本号（同事实更新 +1）
+    updated_at: str = ""             # 最近更新时间 ISO（空=与 created_at 同）
+    version_history: list[dict] = field(default_factory=list)  # 旧版沉淀: [{"version","content","updated_at"}]
+    # P3: results computed from an older observed store state remain durable facts, but
+    # never retake the current value after a newer version has been committed.
+    # 兼容性（2026-09-15 事故回归）: 旧 reader 遇到新 schema 的该未知字段曾触发
+    # MemoryEntry(**e) TypeError → _load 误判 corruption → 索引清空。此处仅补字段，
+    # 保证旧代码可无损读写新格式 index；语义升级随 main 线 cherry-pick。
+    observation_history: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+_HALF_LIFE_DAYS = 30.0  # Phase 2: 衰减半衰期（decay = 0.5 ** (未访问天数/30)）
+
+
+def _normalize_content(text: str) -> str:
+    """内容规范化（用于指纹/同事实判定）: 去首尾空白、折叠空白、小写."""
+    return re.sub(r"\s+", " ", text.strip()).lower()
+
+
+class MemorySchemaMismatchError(RuntimeError):
+    """记忆索引 schema 高于当前 reader（未知字段/缺必填字段）——不是文件损坏.
+
+    2026-09-15 事故根治: reader 过旧时绝不能走 corruption 路径（备份+清空+继续
+    写会把好数据覆盖丢失），必须 fail-closed: 原文件不动、禁止任何写入、明确
+    抛错提示升级代码。JSON 语法破损仍走原 corruption 路径（备份+fail-open）。
+    """
+
+
+class MemoryStore:
+    """记忆条目存取（JSON 单文件索引，P0）."""
+
+    def __init__(self, memory_dir: str | Path) -> None:
+        self._dir = Path(memory_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._index_path = self._dir / "index.json"
+        self._entries: list[MemoryEntry] = []
+        self._post_save_hooks: list[Callable[[MemoryEntry], None]] = []
+        # 2026-09-15 事故根治: 索引 schema 高于本 reader 时置为诊断消息并禁写（fail-closed）
+        self._schema_locked: str | None = None
+        # 2026-08-20（d8a76517, 镜像）: 跨进程/线程并发写防护——写前合并磁盘最新态
+        self._lock = threading.RLock()
+        self._load()
+        self._index_stamp = self._index_file_stamp()
+
+    def _index_file_stamp(self) -> tuple[int, int, int] | None:
+        try:
+            st = self._index_path.stat()
+            return st.st_ino, st.st_mtime_ns, st.st_size
+        except OSError:
+            return None
+
+    @contextmanager
+    def _mutation_file_lock(self):
+        """Serialize cross-process index mutations on POSIX; fail-open elsewhere."""
+        lock_path = self._dir / "index.lock"
+        fh = lock_path.open("a+b")
+        try:
+            try:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass
+            yield
+        finally:
+            try:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                pass
+            fh.close()
+
+    @staticmethod
+    def _preserve_runtime_counters(remote: MemoryEntry, local: MemoryEntry) -> MemoryEntry:
+        """Keep newer local read/use counters while accepting remote durable content."""
+        remote.access_count = max(int(remote.access_count), int(local.access_count))
+        remote.inject_count = max(int(remote.inject_count), int(local.inject_count))
+        if str(local.last_access_at or "") > str(remote.last_access_at or ""):
+            remote.last_access_at = local.last_access_at
+        if str(local.last_inject_at or "") > str(remote.last_inject_at or ""):
+            remote.last_inject_at = local.last_inject_at
+        remote.guidance_risk = max(int(remote.guidance_risk), int(local.guidance_risk))
+        if str(local.guidance_used_at or "") > str(remote.guidance_used_at or ""):
+            remote.guidance_used_at = local.guidance_used_at
+        return remote
+
+    def _refresh_from_disk_if_changed(self) -> bool:
+        """Refresh long-lived readers when another process replaces index.json."""
+        with self._lock:
+            stamp = self._index_file_stamp()
+            if stamp == self._index_stamp or stamp is None:
+                return False
+            try:
+                raw = json.loads(self._index_path.read_text(encoding="utf-8"))
+                disk_entries = [MemoryEntry(**row) for row in raw]
+            except (json.JSONDecodeError, ValueError, TypeError, OSError):
+                return False
+            local_by_id = {entry.id: entry for entry in self._entries if entry.id}
+            refreshed: list[MemoryEntry] = []
+            for remote in disk_entries:
+                local = local_by_id.get(remote.id)
+                if local is None:
+                    refreshed.append(remote)
+                    continue
+                remote_is_newer = (
+                    int(remote.version) > int(local.version)
+                    or str(remote.updated_at or remote.created_at)
+                    > str(local.updated_at or local.created_at)
+                    or (
+                        remote.content_fingerprint
+                        and remote.content_fingerprint != local.content_fingerprint
+                    )
+                )
+                refreshed.append(
+                    self._preserve_runtime_counters(remote, local)
+                    if remote_is_newer
+                    else local
+                )
+            self._entries = refreshed
+            self._index_stamp = stamp
+            return True
+
+    def add_post_save_hook(self, hook: Callable[[MemoryEntry], None]) -> None:
+        """Register a fail-open callback invoked after a current memory value is saved.
+
+        Hooks run after the store lock is released so derived work (for example semantic
+        vectorization) can never extend the durable memory write critical section.
+        """
+        with self._lock:
+            self._post_save_hooks.append(hook)
+
+    def _notify_post_save(self, entry: MemoryEntry) -> None:
+        with self._lock:
+            hooks = list(self._post_save_hooks)
+        if not hooks:
+            return
+        import logging
+
+        logger = logging.getLogger(__name__)
+        for hook in hooks:
+            try:
+                hook(entry)
+            except Exception:  # noqa: BLE001 - derived caches never block memory durability
+                logger.debug("memory post-save hook failed", exc_info=True)
+
+    def _load(self) -> None:
+        if self._index_path.exists():
+            try:
+                data = json.loads(self._index_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, ValueError) as exc:
+                # T39: 真 corruption（JSON 语法/文件破损）→ 备份原始文件（不覆盖丢数据），fail-open 继续
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "记忆索引损坏，已备份并重置为空索引（原因: %s）", exc
+                )
+                try:
+                    backup = self._index_path.with_suffix(".corrupt.json")
+                    backup.write_text(
+                        self._index_path.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
+                except OSError:
+                    pass  # 备份失败尽力而为
+                self._entries = []
+                return
+            try:
+                self._entries = [MemoryEntry(**e) for e in data]
+            except TypeError as exc:
+                # 2026-09-15 事故根治: schema mismatch ≠ corruption。MemoryEntry(**e)
+                # 的 TypeError 基本意味着 reader 比数据格式旧（未知字段/缺必填字段），
+                # 原文件本身是好的——不备份、不清空、进入禁写保护（fail-closed），
+                # 防止旧进程下一次保存把好索引覆盖丢失。
+                import logging
+
+                unknown = sorted(
+                    {k for e in data if isinstance(e, dict) for k in e}
+                    - {f.name for f in fields(MemoryEntry)}
+                )
+                self._schema_locked = (
+                    f"记忆索引 schema 高于当前 reader（TypeError: {exc}）"
+                    + (f"；未知字段: {', '.join(unknown)}" if unknown else "")
+                    + "。原文件未改动、已禁止写入；请升级到含该字段的代码版本后重试。"
+                )
+                logging.getLogger(__name__).error(self._schema_locked)
+                self._entries = []
+
+    def _save(self, *, merge: bool = True) -> None:
+        # 2026-08-20（d8a76517, 镜像）: 写前合并磁盘最新态（防覆盖其他进程写入）+
+        # 线程锁（同进程多线程安全）。
+        # merge=False: 本进程有明确淘汰/清理语义（cleanup）时跳过磁盘合并——否则
+        # 磁盘旧状态会把刚淘汰的条目回填合并，淘汰失效（2026-08-20 镜像实测回归）。
+        with self._lock:
+            if self._schema_locked is not None:
+                raise MemorySchemaMismatchError(self._schema_locked)
+            with self._mutation_file_lock():
+                if merge:
+                    self._merge_remote_changes()
+                    if self._schema_locked is not None:
+                        # 运行期磁盘被更高 schema 进程升级: 本进程同样禁写，防止
+                        # 旧 reader 用"过滤后的内存态"覆盖磁盘新 schema 数据。
+                        raise MemorySchemaMismatchError(self._schema_locked)
+                # 原子写（unique tmp+rename）：多进程共享记忆时防半写/临时文件互踩。
+                payload = json.dumps(
+                    [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
+                )
+                try:
+                    tmp = self._index_path.with_name(
+                        f"{self._index_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+                    )
+                    tmp.write_text(payload, encoding="utf-8")
+                    tmp.replace(self._index_path)
+                except OSError:
+                    # 原子写失败回退直写（fail-open，尽力而为）
+                    self._index_path.write_text(payload, encoding="utf-8")
+                self._index_stamp = self._index_file_stamp()
+
+    # 2026-08-20（d8a76517, 镜像）: 写前合并磁盘最新态——磁盘独有条目并入内存,
+    # 同 id 以内存为准（本进程最新改动优先）; 损坏磁盘不合并（避免覆盖）。
+    def _merge_remote_changes(self) -> None:
+        if not self._index_path.exists():
+            return
+        try:
+            disk = json.loads(self._index_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError):
+            return  # 磁盘损坏: _load 已有备份逻辑, 此处不合并防覆盖
+        try:
+            disk_entries = [MemoryEntry(**e) for e in disk]
+        except TypeError as exc:
+            # 2026-09-15 事故根治: 磁盘 schema 高于 reader → 置锁禁写（_save 随后
+            # raise MemorySchemaMismatchError），绝不静默 return 后照常覆盖磁盘。
+            import logging
+
+            self._schema_locked = (
+                f"磁盘记忆索引 schema 高于当前 reader（TypeError: {exc}）；已禁止写入。"
+            )
+            logging.getLogger(__name__).error(self._schema_locked)
+            return
+        local_by_id = {e.id: e for e in self._entries if e.id}
+        remote_only: list[MemoryEntry] = []
+        remote_newer: dict[str, MemoryEntry] = {}
+        for de in disk_entries:
+            local = local_by_id.get(de.id)
+            if local is None:
+                remote_only.append(de)
+            elif int(de.version) > int(local.version):
+                remote_newer[de.id] = self._preserve_runtime_counters(de, local)
+        if remote_newer:
+            self._entries = [
+                remote_newer.get(entry.id, entry) for entry in self._entries
+            ]
+        if remote_only:
+            # 磁盘顺序在前, 本进程新增在后（保持时间序稳定）
+            self._entries = remote_only + self._entries
+
+
+    # ── 版本化与去重（EVO-20260811-cbd6c52a）──
+    def _compute_fingerprint(self, entry: MemoryEntry) -> str:
+        """规范化内容 SHA-256（空内容返回空串，不参与指纹匹配）."""
+        norm = _normalize_content(entry.content)
+        if not norm:
+            return ""
+        return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+    def _find_same_fact(self, entry: MemoryEntry) -> MemoryEntry | None:
+        """查找"同事实"旧条目:
+        - 强匹配: content_fingerprint 非空且相等（内容规范化后完全一致）
+        - 弱匹配: type 相同 且 双方 keywords 均非空 且 交集 >= 1（同一主题更新）
+        都不命中返回 None（视为新事实追加）。
+        """
+        fp = entry.content_fingerprint or self._compute_fingerprint(entry)
+        new_keys = [str(k).lower() for k in entry.keywords]
+        for e in self._entries:
+            if fp and (e.content_fingerprint or self._compute_fingerprint(e)) == fp:
+                return e
+            # 弱匹配（同主题更新）: 交集>=1 且 交集包含任一方首标签。
+            # 修复(2026-08-13): 原交集>=1 过弱，共享泛用词（如 adjust_strategy/基线）
+            # 会误判跨主题条目为同事实并覆盖（借鉴 playbook 资产化时实证触发）。
+            old_keys = [str(k).lower() for k in e.keywords]
+            if e.type == entry.type and new_keys and old_keys:
+                inter = set(new_keys) & set(old_keys)
+                if inter and (new_keys[0] in inter or old_keys[0] in inter):
+                    return e
+        return None
+
+    def _update_existing(self, existing: MemoryEntry, entry: MemoryEntry) -> MemoryEntry:
+        """覆盖更新旧条目（保留 id/created_at/访问统计，版本 +1，旧版沉 version_history）."""
+        now = system_local_now().isoformat()
+        # 旧版沉淀（不删除业务数据）
+        existing.version_history.append(
+            {
+                "version": existing.version,
+                "content": existing.content,
+                "updated_at": existing.updated_at or existing.created_at,
+            }
+        )
+        existing.version += 1
+        existing.content = entry.content
+        existing.keywords = list(entry.keywords)
+        existing.citations = entry.citations or existing.citations  # 溯源跟随新条目（修复残留旧来源）
+        existing.summary = entry.summary or existing.summary
+        existing.source_session_id = entry.source_session_id or existing.source_session_id
+        existing.source_message_id = entry.source_message_id or existing.source_message_id
+        existing.updated_at = now
+        existing.content_fingerprint = entry.content_fingerprint or self._compute_fingerprint(entry)
+        existing.decay_score = 1.0  # 更新即"最新"，衰减重置（访问统计保留）
+        return existing
+
+    def version_snapshot(self) -> dict[str, int]:
+        """Return a mechanical id→version snapshot for long-running producers.
+
+        The snapshot carries no relevance/currentness judgment.  It is only a CAS basis
+        so a late producer cannot overwrite a memory value changed after it started.
+        """
+        with self._lock:
+            self._merge_remote_changes()
+            return {str(entry.id): int(entry.version) for entry in self._entries if entry.id}
+
+    def _prepare_entry(self, entry: MemoryEntry) -> None:
+        if not entry.id:
+            entry.id = f"MEM-{system_local_now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
+        if not entry.created_at:
+            entry.created_at = system_local_now().isoformat()
+        if not entry.content_fingerprint:
+            entry.content_fingerprint = self._compute_fingerprint(entry)
+
+    def save_entry_if_observed(
+        self, entry: MemoryEntry, *, observed_versions: dict[str, int]
+    ) -> tuple[MemoryEntry, bool]:
+        """CAS-style save for async/late producers.
+
+        ``True`` means the candidate became current (new entry or update of an unchanged
+        observed entry). ``False`` means a matching entry was created/changed after the
+        producer's snapshot; the candidate is retained in observation_history but is not
+        promoted to current.
+        """
+        result: MemoryEntry
+        promoted = False
+        with self._lock:
+            self._merge_remote_changes()
+            self._prepare_entry(entry)
+            existing = self._find_same_fact(entry)
+            if existing is not None:
+                observed_version = observed_versions.get(existing.id)
+                if observed_version is None or int(existing.version) != int(observed_version):
+                    existing.observation_history.append(
+                        {
+                            "disposition": "late_observation_not_promoted",
+                            "content": entry.content,
+                            "keywords": list(entry.keywords),
+                            "source_session_id": entry.source_session_id,
+                            "source_message_id": entry.source_message_id,
+                            "deposit_path": entry.deposit_path,
+                            "content_fingerprint": entry.content_fingerprint,
+                            "observed_version": observed_version,
+                            "current_version": int(existing.version),
+                            "observed_at": system_local_now().isoformat(),
+                        }
+                    )
+                    self._save()
+                    result = existing
+                    promoted = False
+                else:
+                    result = self._update_existing(existing, entry)
+                    self._save()
+                    promoted = True
+            else:
+                entry.updated_at = entry.updated_at or entry.created_at
+                self._entries.append(entry)
+                self._save()
+                result = entry
+                promoted = True
+        if promoted:
+            self._notify_post_save(result)
+        return result, promoted
+
+    def save_entry(self, entry: MemoryEntry) -> MemoryEntry:
+        result: MemoryEntry
+        with self._lock:
+            # Refresh before matching, not only before the final file write.  Otherwise a
+            # concurrent writer can create the same fact after this process loaded its
+            # in-memory index and weak-dedup would make the decision on stale state.
+            self._merge_remote_changes()
+            self._prepare_entry(entry)
+            existing = self._find_same_fact(entry)
+            if existing is not None:
+                result = self._update_existing(existing, entry)
+                self._save()
+            else:
+                entry.updated_at = entry.updated_at or entry.created_at
+                self._entries.append(entry)
+                self._save()
+                result = entry
+        self._notify_post_save(result)
+        return result
+
+    def search(self, keywords: list[str], top_k: int = 5, session_id: str = "") -> list[MemoryEntry]:
+        """关键词检索 + 衰减排序（Phase 2）: 检索命中更新访问统计（内存），不即时全量落盘.
+
+        记忆分级（2026-08-20，docs/ARCHITECTURE-cache-stable-rules.md §5）: scope=session
+        条目仅当传入 session_id 且等于条目 source_session_id 时召回（防跨会话污染）；
+        scope=global 条目不受限。默认 session_id="" → 仅召回 global。
+        """
+        self._refresh_from_disk_if_changed()
+        if not keywords:
+            return []
+        scored: list[tuple[float, MemoryEntry]] = []
+        now = system_local_now().isoformat()
+        for e in self._entries:
+            if e.scope == "session" and not (session_id and e.source_session_id == session_id):
+                continue
+            hay = " ".join([e.content, *e.keywords]).lower()
+            score = sum(1 for k in keywords if k.lower() in hay)
+            if score > 0:
+                # 命中 → 先基于"上次访问时间"算当前衰减分（体现久未访问降权），再刷新访问时间（命中即强化）
+                e.decay_score = self._compute_decay(e)
+                e.access_count += 1
+                e.last_access_at = now
+                scored.append((score, e))
+        # 排序: 关键词分降序 → decay_score 降序 → 版本新鲜度（updated_at/created_at）降序
+        scored.sort(
+            key=lambda x: (
+                x[0],
+                x[1].decay_score,
+                x[1].updated_at or x[1].created_at,
+            ),
+            reverse=True,
+        )
+        return [e for _, e in scored[:top_k]]
+
+    @staticmethod
+    def _compute_decay(entry: MemoryEntry) -> float:
+        """衰减分: 1.0 * 0.5**(未访问天数/半衰期)；无访问记录视为 1.0."""
+        if not entry.last_access_at:
+            return 1.0
+        try:
+            last = datetime.fromisoformat(entry.last_access_at)
+            days = (system_local_now() - last).total_seconds() / 86400.0
+            return round(1.0 * (0.5 ** max(0.0, days / _HALF_LIFE_DAYS)), 4)
+        except (ValueError, TypeError):
+            return 1.0
+
+    def mark_injected(self, entries: list[MemoryEntry]) -> None:
+        """标记条目已实际注入上下文（EVO-20260816-fcdbe2e9）.
+
+        仅内存态更新（inject_count+1 / last_inject_at 刷新），落盘沿用
+        engine.run 末 flush() 批量持久化路径（低频，不新增写盘点）。
+        与 search() 的 access_count 区分：此处只计真正进入注入消息的 top_k 条目。
+        """
+        if not entries:
+            return
+        now = system_local_now().isoformat()
+        for e in entries:
+            e.inject_count += 1
+            e.last_inject_at = now
+
+    def top_injected(self, limit: int = 5) -> list[dict]:
+        """按实际注入次数降序的头部条目（升格判断量化事实源）.
+
+        返回 [{id, type, inject_count, last_inject_at, content(截断)}]；
+        无注入记录 → 空列表（如实，不伪造）。
+        """
+        hits = [e for e in self._entries if e.inject_count > 0]
+        hits.sort(key=lambda e: (e.inject_count, e.last_inject_at), reverse=True)
+        return [
+            {
+                "id": e.id,
+                "type": e.type,
+                "inject_count": e.inject_count,
+                "last_inject_at": e.last_inject_at,
+                "content": e.content[:60],
+            }
+            for e in hits[:limit]
+        ]
+
+    def flush(self) -> None:
+        """强制落盘（供调用方在合适时机批量持久化，避免每轮检索全量写 JSON）."""
+        self._save()
+
+    def cleanup(self, *, max_entries: int = 0) -> dict:
+        """P1-5: 记忆条数上限保护（启动时调用一次，超限淘汰 decay_score 最低的条目）.
+
+        max_entries<=0 空操作（零回归）；淘汰后落盘。
+        Returns: {"pruned": N}
+        """
+        if max_entries <= 0 or len(self._entries) <= max_entries:
+            return {"pruned": 0}
+        excess = len(self._entries) - max_entries
+        sorted_entries = sorted(
+            self._entries,
+            key=lambda e: (e.decay_score, e.last_access_at or ""),
+        )
+        doomed = {id(e) for e in sorted_entries[:excess]}
+        self._entries = [e for e in self._entries if id(e) not in doomed]
+        # merge=False: 淘汰是本进程权威决定，落盘跳过磁盘合并——否则磁盘旧状态
+        # 把刚淘汰条目回填（2026-08-20 E1 回归实测）。
+        self._save(merge=False)
+        return {"pruned": excess}
+
+    def all(self) -> list[MemoryEntry]:
+        self._refresh_from_disk_if_changed()
+        return list(self._entries)
+
+    def _by_id(self, entry_id: str) -> MemoryEntry | None:
+        """按 id 取条目（语义检索融合用）."""
+        self._refresh_from_disk_if_changed()
+        for e in self._entries:
+            if e.id == entry_id:
+                return e
+        return None
+
+    def count(self) -> int:
+        self._refresh_from_disk_if_changed()
+        return len(self._entries)

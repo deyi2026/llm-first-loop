@@ -1,0 +1,701 @@
+"""单元测试: AI 自我评估聚合器与触发检测（T62-T63 / EVAL-01/02/03/04/07）."""
+
+from __future__ import annotations
+
+import json
+
+from llm_loop.feedback.validator import VALIDATOR_VERSION
+from llm_loop.introspection.evaluator import (
+    EVALUATOR_VERSION,
+    SelfEvaluator,
+)
+
+
+def _write_jsonl(path, records: list[dict]) -> None:
+    with path.open("a", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+class _Status:
+    """status mock: 提供 tool_history 与 llm_rounds."""
+
+    def __init__(self, tool_history=None, llm_rounds=0) -> None:
+        self._tool_history = tool_history or []
+        self._llm_rounds = llm_rounds
+
+    def snapshot(self):
+        return {
+            "tool_history": self._tool_history,
+            "context_usage": {"llm_rounds": self._llm_rounds},
+        }
+
+
+def _seed_action_trace(tmp_path, n_success=40, n_fail=10):
+    """写入 action_trace.jsonl（success 动作 + error 动作）."""
+    records = []
+    for i in range(n_success):
+        records.append(
+            {
+                "ts": f"t{i}",
+                "phase": "action.tool_loop",
+                "action_type": "tool_call",
+                "detail": f"read_file f{i}",
+            }
+        )
+    for i in range(n_fail):
+        records.append(
+            {
+                "ts": f"e{i}",
+                "phase": "action.llm_decide",
+                "action_type": "llm_error",
+                "detail": "timeout",
+            }
+        )
+    _write_jsonl(tmp_path / "action_trace.jsonl", records)
+    return n_success + n_fail
+
+
+def test_evaluate_five_metrics(tmp_path):
+    """核心五维 + 辅助口径指标聚合（来源可溯，EVAL-02 + EVO-20260930.1）."""
+    _seed_action_trace(tmp_path, n_success=40, n_fail=10)
+    # EVO-20260930: declarations=[] → not_evaluable；有声明的行才进 honesty 分母
+    # EVO-20260930.1: 携带 validator_version 的行才进当前 cohort（消费侧隔离）
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [
+            {
+                "ts": f"c{i}",
+                "consistent": True,
+                "declarations": ["已写入 a.py"],
+                "validator_version": VALIDATOR_VERSION,
+            }
+            for i in range(20)
+        ]
+        + [
+            {
+                "ts": "bad",
+                "consistent": False,
+                "declarations": ["已执行清理命令"],
+                "validator_version": VALIDATOR_VERSION,
+            }
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": f"x{i}", "error_type": "ValueError"} for i in range(3)],
+    )
+    status = _Status(
+        tool_history=[{"name": "read_file", "status": "success"} for _ in range(18)]
+        + [{"name": "read_file", "status": "failure"} for _ in range(2)],
+        llm_rounds=10,
+    )
+    evaluator = SelfEvaluator(status_provider=status, audit_dir=tmp_path, min_samples=5, span=50)
+    report = evaluator.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    # 成功率 = 40/(40+10) = 0.8
+    assert metrics["success_rate"].value == 0.8
+    assert metrics["success_rate"].source == "action_trace"
+    # 工具效率 = 18/20 = 0.9
+    assert metrics["tool_efficiency"].value == 0.9
+    # 诚实性（conditional）= 20/21（有声明行内部占比）
+    honesty = metrics["honesty_rate"].value
+    assert honesty is not None
+    assert round(honesty, 4) == round(20 / 21, 4)
+    # 声明携带率 = 21/21（全部行有声明）
+    assert metrics["claim_bearing_rate"].value == 1.0
+    # 异常率 = 3/10 = 0.3
+    assert metrics["exception_rate"].value == 0.3
+    # 停滞率: 10 条 llm_error（9 条同指纹重复）→ 9/50 = 0.18
+    assert metrics["stagnation_rate"].value == 0.18
+    # eval_id + 落盘 + 评估器版本 cohort 字段（EVO-20260930）
+    assert report.eval_id.startswith("SE-")
+    assert report.trigger == "manual"
+    assert report.evaluator_version == EVALUATOR_VERSION
+    log = (tmp_path / "self_eval_log.jsonl").read_text(encoding="utf-8")
+    assert report.eval_id in log
+    assert json.loads(log.strip().splitlines()[-1])["evaluator_version"] == EVALUATOR_VERSION
+
+
+def test_evaluate_sample_insufficient(tmp_path):
+    """样本不足 → value=None + 如实标注（EVAL-02，spec 10.2.3-1）.
+
+    EVO-20260816-dc3876f9: tool_efficiency 仅无样本才 N/A（空工具历史标注"无工具调用样本"），
+    其余指标维持样本不足语义。
+    """
+    evaluator = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path, min_samples=5)
+    report = evaluator.evaluate()
+    metrics = {m.name: m for m in report.metrics}
+    for name, m in metrics.items():
+        assert m.value is None
+        if name == "tool_efficiency":
+            assert m.note == "无工具调用样本"
+        else:
+            assert "样本不足" in m.note
+
+
+def test_evaluate_stagnation_detected(tmp_path):
+    """停滞率: 重复动作（同参数指纹）占比."""
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [
+            {
+                "ts": f"t{i}",
+                "phase": "action.tool_loop",
+                "action_type": "tool_call",
+                "detail": "read_file SAME",
+            }
+            for i in range(10)
+        ],
+    )
+    evaluator = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path, min_samples=5)
+    report = evaluator.evaluate()
+    metrics = {m.name: m for m in report.metrics}
+    # 10 条动作，9 条重复 → 0.9
+    assert metrics["stagnation_rate"].value == 0.9
+    assert metrics["success_rate"].value == 1.0
+
+
+def test_evaluate_no_source_unavailable(tmp_path):
+    """来源不可用 → 数据不可用如实标注（不生成无依据结论）."""
+    evaluator = SelfEvaluator(status_provider=None, audit_dir=tmp_path, min_samples=5)
+    report = evaluator.evaluate()
+    metrics = {m.name: m for m in report.metrics}
+    for m in metrics.values():
+        assert m.value is None
+    assert report.summary != ""
+
+
+def test_eval_log_fail_open(tmp_path, monkeypatch):
+    """落盘失败 → fail-open（不阻塞评估结果，DFX-REL-06）."""
+    from pathlib import Path
+
+    real_open = Path.open
+
+    def _broken(self, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "open", _broken)
+    try:
+        evaluator = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path)
+        report = evaluator.evaluate()
+    finally:
+        monkeypatch.setattr(Path, "open", real_open)
+    assert report.eval_id.startswith("SE-")
+
+
+def test_two_evaluations_metric_readable(tmp_path):
+    """M18 AA5: compare 已移除，对比交 AI——两次 evaluate 指标字段可读（AI 侧自比基础）."""
+    evaluator = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path)
+    _seed_action_trace(tmp_path, n_success=30, n_fail=20)
+    before = evaluator.evaluate(trigger="manual")
+    (tmp_path / "action_trace.jsonl").write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "ts": f"t{i}",
+                    "phase": "action.tool_loop",
+                    "action_type": "tool_call",
+                    "detail": f"f{i}",
+                }
+            )
+            for i in range(45)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    after = evaluator.evaluate(trigger="manual")
+    # 两次评估 eval_id 不同可溯源，指标字段可读（AI 侧自比 delta 的基础）
+    assert before.eval_id != after.eval_id
+    bm = {m.name: m for m in before.metrics}
+    am = {m.name: m for m in after.metrics}
+    assert bm["success_rate"].value == 0.6
+    assert am["success_rate"].value == 1.0  # AI 可自行计算 delta=0.4
+    assert not hasattr(evaluator, "compare")
+
+
+
+
+
+
+def test_eval_id_unique_across_runs(tmp_path):
+    """M16 审计（FR-AUDIT-AI-10）: eval_id 含随机后缀，连续评估唯一."""
+    evaluator = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path)
+    r1 = evaluator.evaluate()
+    r2 = evaluator.evaluate()
+    assert r1.eval_id != r2.eval_id
+    assert r1.eval_id.count("-") >= 3  # SE-YYYYMMDD-NNN-XXXX 格式
+    # 同实例连续两次 → 当日计数递增且后缀不同
+
+
+def test_eval_id_unique_across_restart(tmp_path):
+    """M16 审计（FR-AUDIT-AI-10）: 模拟重启（新实例）→ 当日计数递增不重复."""
+    e1 = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path)
+    r1 = e1.evaluate()
+    e2 = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path)  # 模拟重启
+    r2 = e2.evaluate()
+    assert r1.eval_id != r2.eval_id
+    # 同日计数递增（SE-YYYYMMDD-NNN-XXXX）
+    prefix1 = r1.eval_id.rsplit("-", 1)[0]
+    prefix2 = r2.eval_id.rsplit("-", 1)[0]
+    assert prefix2 > prefix1  # 计数递增
+
+
+# ── EVO-20260816-f1f73a0d: 时间窗过滤 ──
+
+def test_time_filter_excludes_old_exceptions(tmp_path):
+    """时间窗: 24h 前的异常被过滤，不污染当前评估（条数窗会把旧异常混入）."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    old_ts = (now - timedelta(hours=48)).isoformat()
+    new_ts = (now - timedelta(hours=1)).isoformat()
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [
+            {"ts": old_ts, "error_type": "OldError"},
+            {"ts": new_ts, "error_type": "NewError"},
+            {"ts": "no_ts", "error_type": "NoTs"},  # 缺 ts 保留
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [{"ts": new_ts, "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"} for _ in range(8)],
+    )
+    status = _Status(llm_rounds=8)
+    ev = SelfEvaluator(status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=24)
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    # 24h 内异常: NewError + NoTs = 2 条（OldError 被过滤）→ 异常率 2/8
+    assert metrics["exception_rate"].value == 0.25
+
+
+def test_time_filter_disabled_window_zero(tmp_path):
+    """window_hours=0（旧行为）: 不过滤，全部计入."""
+    from datetime import UTC, datetime, timedelta
+
+    old_ts = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": old_ts, "error_type": "OldError"} for _ in range(4)],
+    )
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [{"ts": "t", "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"} for _ in range(8)],
+    )
+    status = _Status(llm_rounds=8)
+    ev = SelfEvaluator(status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0)
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["exception_rate"].value == 0.5  # 4/8 全部计入
+
+
+def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(tmp_path):
+    """False 样本可追溯，但 self_eval 不复制 declaration_check 的大 receipts。"""
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [
+            {
+                "id": "DC-ok", "ts": "", "consistent": True,
+                "declarations": ["已读取文件"], "discrepancies": [],
+                "cross_round_hits": [], "tool_call_ids": ["ok-1"],
+                "receipts": ["R" * 4000],
+                "validator_version": VALIDATOR_VERSION,
+            },
+            {
+                "id": "DC-bad", "ts": "", "consistent": False,
+                "declarations": ["已写入不存在的文件"],
+                "discrepancies": ["本轮未见写入成功"],
+                "cross_round_hits": ["跨轮候选未命中"],
+                "tool_call_ids": ["bad-1"],
+                "receipts": ["VERY-LARGE-RECEIPT-" + "X" * 4000],
+                "validator_version": VALIDATOR_VERSION,
+            },
+        ],
+    )
+    evaluator = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
+    )
+    report = evaluator.evaluate(session_id="s1", trigger="manual")
+    row = json.loads((tmp_path / "self_eval_log.jsonl").read_text().splitlines()[-1])
+    diag = row["diagnostics"]["declaration_check"]
+    assert diag["sample_size"] == 2
+    assert diag["window_rows"] == 2
+    assert diag["current_cohort_rows"] == 2
+    assert diag["excluded_other_cohort_rows"] == 0
+    assert diag["source_validator_versions"] == {VALIDATOR_VERSION: 2}
+    assert diag["false_count"] == 1
+    sample = diag["false_samples"][0]
+    assert sample["ref"] == "DC-bad"
+    assert sample["tool_call_ids"] == ["bad-1"]
+    assert sample["declaration_summary"] == "已写入不存在的文件"
+    assert sample["discrepancy_summary"] == "本轮未见写入成功"
+    assert sample["cross_round_hit"] is True
+    assert "receipts" not in sample
+    assert "VERY-LARGE-RECEIPT" not in json.dumps(row, ensure_ascii=False)
+
+    from llm_loop.introspection.search import RecordSearcher
+    searcher = RecordSearcher(audit_dir=tmp_path)
+    exact = searcher.search(kind="self_eval", query=report.eval_id, limit=10)
+    assert exact and exact[0]["id"] == report.eval_id
+    assert exact[0]["diagnostics"]["declaration_check"]["false_samples"][0]["ref"] == "DC-bad"
+    broad = searcher.search(kind="self_eval", query="SE-", limit=10)
+    assert broad
+    assert all("diagnostics" not in hit for hit in broad), "宽检索不应自动灌入逐样本明细"
+
+    hydrated = searcher.search(kind="declaration_check", query="DC-bad", limit=10)
+    assert hydrated and hydrated[0]["hydrated"] is True
+    assert hydrated[0]["detail"]["tool_call_ids"] == ["bad-1"]
+    assert hydrated[0]["detail"]["receipts"][0].startswith("VERY-LARGE-RECEIPT-")
+    indexed = searcher.search(kind="declaration_check", query="False", limit=10)
+    assert indexed and all("detail" not in hit for hit in indexed), "宽检索只能给轻量索引"
+
+
+def test_self_eval_diagnostics_carry_cohort_counts_without_false_samples(tmp_path):
+    """EVO-20260930.1: 无 False 行也携带 cohort 构成计数（重启过渡期可见性）.
+
+    此前无 False 时整个 diagnostics 块缺省——当前 cohort=0 的过渡态不可见；
+    false_samples 仍仅有 False 时携带（轻量诊断不复制 receipts 的约束不变）。
+    """
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [
+            {
+                "id": "DC-ok",
+                "ts": "",
+                "consistent": True,
+                "validator_version": VALIDATOR_VERSION,
+            }
+        ],
+    )
+    evaluator = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
+    )
+    evaluator.evaluate(session_id="s1", trigger="manual")
+    row = json.loads((tmp_path / "self_eval_log.jsonl").read_text().splitlines()[-1])
+    diag = row["diagnostics"]["declaration_check"]
+    assert diag["window_rows"] == 1
+    assert diag["current_cohort_rows"] == 1
+    assert diag["excluded_other_cohort_rows"] == 0
+    assert diag["source_validator_versions"] == {VALIDATOR_VERSION: 1}
+    assert diag["false_count"] == 0
+    assert "false_samples" not in diag
+
+
+def test_honesty_rate_conditional_and_cohort_isolated(tmp_path):
+    """EVO-20260930 口径修复 + EVO-20260930.1 消费侧 cohort 隔离.
+
+    条件率: 分母 = 当前端次有声明行（2/4=0.5）；legacy 行（缺 validator_version）
+    无论 consistent 真假、有无声明均整行排除，不因有声明混入当前 cohort，
+    但在 diagnostics 以 window/current/excluded/versions 计数可见。
+    """
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        # 4 条空声明自动 True（当前代次: not_evaluable，不进 honesty 分母）
+        [
+            {
+                "ts": f"empty{i}",
+                "consistent": True,
+                "declarations": [],
+                "validator_version": VALIDATOR_VERSION,
+            }
+            for i in range(4)
+        ]
+        # 2 条有声明 True + 2 条有声明 False → 当前代次条件率 0.5
+        + [
+            {
+                "ts": "t1",
+                "consistent": True,
+                "declarations": ["已写入 a.py"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+            {
+                "ts": "t2",
+                "consistent": True,
+                "declarations": ["已执行命令 x"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+            {
+                "ts": "f1",
+                "consistent": False,
+                "declarations": ["已删除 b.py"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+            {
+                "ts": "f2",
+                "consistent": False,
+                "declarations": ["已保存 c.txt"],
+                "validator_version": VALIDATOR_VERSION,
+            },
+        ]
+        # legacy 行（2026-09-30 前无 validator_version）: 含缺 declarations 字段的
+        # 匿名段行与有声明的行——均整行排除，不进当前 cohort 指标与 False 归因
+        + [
+            {"ts": "legacy1", "consistent": True},
+            {"ts": "legacy2", "consistent": True},
+            {"ts": "legacy3", "consistent": False, "declarations": ["已写入旧文件"]},
+        ],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    # 条件率（当前代次内）: 有声明行 2/4 = 0.5；legacy3 的 False 不进当前分母
+    assert metrics["honesty_rate"].value == 0.5
+    assert metrics["honesty_rate"].sample_size == 4
+    assert "未声明行 4 条不计入(not_evaluable)" in metrics["honesty_rate"].note
+    assert "cohort 隔离" in metrics["honesty_rate"].note
+    assert "排除其他代次 3 行" in metrics["honesty_rate"].note
+    # 携带率分母 = 当前代次 8 行（4 有声明/4 空声明），legacy 不混入
+    assert metrics["claim_bearing_rate"].value == 0.5
+    assert metrics["claim_bearing_rate"].sample_size == 8
+    # 诊断层: cohort 构成 + 当前代次内 evaluable 分层
+    diag = report.diagnostics["declaration_check"]
+    assert diag["window_rows"] == 11
+    assert diag["current_cohort_rows"] == 8
+    assert diag["excluded_other_cohort_rows"] == 3
+    assert diag["source_validator_versions"] == {"(unversioned)": 3, VALIDATOR_VERSION: 8}
+    assert diag["evaluable_rows"] == 4
+    assert diag["not_evaluable_rows"] == 4
+    assert diag["false_count"] == 2  # legacy3 的 False 不进当前代次 False 归因
+    assert diag["sample_size"] == 8
+
+
+def test_honesty_rate_na_when_window_only_legacy_cohort(tmp_path):
+    """EVO-20260930.1 重启过渡期: 窗口全为无版本 legacy 行 → 当前 cohort 0 行，
+    如实 N/A 并披露隔离构成，不拿旧代次填样本量。"""
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [
+            {"ts": f"l{i}", "consistent": True, "declarations": ["已写入 a.py"]}
+            for i in range(10)
+        ],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["honesty_rate"].value is None
+    assert metrics["honesty_rate"].sample_size == 0
+    assert "cohort 隔离" in metrics["honesty_rate"].note
+    assert "当前 validator 代次 0 行/窗口 10 行" in metrics["honesty_rate"].note
+    assert metrics["claim_bearing_rate"].value is None
+    assert "均为其他代次，已隔离" in metrics["claim_bearing_rate"].note
+    diag = report.diagnostics["declaration_check"]
+    assert diag["window_rows"] == 10
+    assert diag["current_cohort_rows"] == 0
+    assert diag["excluded_other_cohort_rows"] == 10
+    assert diag["source_validator_versions"] == {"(unversioned)": 10}
+    assert "false_samples" not in diag
+
+
+def test_metric_names_contract_core_plus_aux():
+    """EVO-20260930.1 指标契约: 5 核心能力指标 + claim_bearing 辅助口径，不再自称六维."""
+    from llm_loop.introspection.evaluator import (
+        AUX_METRIC_NAMES,
+        CORE_METRIC_NAMES,
+        METRIC_NAMES,
+    )
+
+    assert len(CORE_METRIC_NAMES) == 5
+    assert METRIC_NAMES == CORE_METRIC_NAMES + AUX_METRIC_NAMES
+    assert "claim_bearing_rate" in AUX_METRIC_NAMES
+    assert "claim_bearing_rate" not in CORE_METRIC_NAMES
+    # 工具回执遍历 report.metrics: 六项都在，但结构语义是 5 核心 + 1 辅助
+    assert set(METRIC_NAMES) == {
+        "success_rate",
+        "tool_efficiency",
+        "honesty_rate",
+        "claim_bearing_rate",
+        "stagnation_rate",
+        "exception_rate",
+    }
+
+
+def test_declaration_check_legacy_line_ref_hydrates_exact_sample(tmp_path):
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [{
+            "ts": "legacy", "consistent": False,
+            "declarations": ["legacy declaration"],
+            "discrepancies": ["legacy gap"],
+            "receipts": ["legacy full receipt"],
+        }],
+    )
+    from llm_loop.introspection.search import RecordSearcher
+    hit = RecordSearcher(audit_dir=tmp_path).search(
+        kind="declaration_check", query="declaration_check.jsonl:L1", limit=10
+    )
+    assert hit and hit[0]["source_ref"] == "declaration_check.jsonl:L1"
+    assert hit[0]["detail"]["receipts"] == ["legacy full receipt"]
+
+
+# ── EVO-20260917-45863aeb: 口径自证 + 矛盾哨兵 + 窗口分母主路径锁定 ──
+
+
+def _seed_llm_rounds_action_trace(tmp_path, n_rounds):
+    """写入 n 条 action.llm_decide/llm_response 轮次记录（exception_rate 窗口分母来源）."""
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [
+            {
+                "ts": f"r{i}",
+                "phase": "action.llm_decide",
+                "action_type": "llm_response",
+                "detail": f"resp-{i}",
+            }
+            for i in range(n_rounds)
+        ],
+    )
+
+
+def test_exception_rate_window_denominator_main_path(tmp_path):
+    """主修复路径锁定: action_trace 窗口内 llm 轮次作分母（优先于进程快照）.
+
+    EVO-20260827-c6908267 主路径此前无测试——现有用例 llm_rounds 快照恒生效、
+    窗口分母路径（win_rounds>0 → rounds_src=window_action_trace）一旦被重构破坏，
+    测试仍全绿。本用例进程快照故意给大值（100），误走快照路径时 value=1/100。
+    """
+    _seed_llm_rounds_action_trace(tmp_path, n_rounds=6)
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": "x0", "error_type": "ValueError"}],
+    )
+    status = _Status(llm_rounds=100)  # 进程快照虚高，反向锁定窗口分母优先
+    ev = SelfEvaluator(
+        status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    exc = metrics["exception_rate"]
+    assert exc.value == round(1 / 6, 4)  # 窗口轮次 6 作分母（非进程快照 100）
+    assert "window_action_trace" in exc.note
+    assert "process_snapshot" not in exc.note
+    # 分子=1 < 分母=6 → 无封顶标注
+    assert "封顶" not in exc.note
+
+
+def test_metric_notes_carry_caliber_on_normal_path(tmp_path):
+    """A: 五维指标正常计算时 note 均自带分子/分母口径（数字自带口径可审计，无需读源码）."""
+    _seed_llm_rounds_action_trace(tmp_path, n_rounds=8)
+    _write_jsonl(
+        tmp_path / "tool_history.jsonl",
+        [{"name": "read_file", "status": "success"} for _ in range(8)]
+        + [{"name": "read_file", "status": "failure"} for _ in range(2)],
+    )
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [
+            {
+                "ts": f"c{i}",
+                "consistent": True,
+                "declarations": ["已写入 a.py"],
+                "validator_version": VALIDATOR_VERSION,
+            }
+            for i in range(10)
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": f"x{i}", "error_type": "ValueError"} for i in range(2)],
+    )
+    ev = SelfEvaluator(
+        status_provider=None, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["success_rate"].note == "分子=8 条成功动作/分母=8 条动作(近span)"
+    assert metrics["tool_efficiency"].note == "分子=8 条成功调用/分母=10 条调用"
+    # EVO-20260930 口径: 分母是『有声明检查记录』（条件占比），not_evaluable 单独披露
+    assert (
+        metrics["honesty_rate"].note
+        == "分子=10 条一致(有声明行)/分母=10 条有声明检查记录(近span)；未声明行 0 条不计入(not_evaluable)"
+    )
+    assert metrics["claim_bearing_rate"].note == "分子=10 条有声明记录/分母=10 条检查记录(近span)"
+    assert metrics["exception_rate"].note == "分子=2 条(近span)/分母=8 轮(window_action_trace)"
+    assert "连续重复口径" in metrics["stagnation_rate"].note
+    # 正常组合（exception=0.25, success=1.0）→ 无哨兵、无 diagnostics 键
+    assert "矛盾哨兵" not in report.note
+    assert "consistency_alerts" not in report.diagnostics
+
+
+def test_consistency_sentinel_flags_exception_success_conflict(tmp_path):
+    """B: exception_rate 与 success_rate 矛盾组合 → report 显式标注（只标注不阻断）.
+
+    复现 2026-08-27 SE 案例形态: exception_rate=1.00 与 success_rate=1.00 同现。
+    """
+    _seed_llm_rounds_action_trace(tmp_path, n_rounds=6)
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": f"x{i}", "error_type": "ValueError"} for i in range(6)],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["exception_rate"].value == 1.0  # 6/6 封顶
+    assert metrics["success_rate"].value == 1.0
+    assert "封顶" in metrics["exception_rate"].note  # 截断显式化
+    assert "矛盾哨兵" in report.note
+    alerts = report.diagnostics["consistency_alerts"]
+    assert len(alerts) == 1
+    assert "EVO-20260827-c6908267" in alerts[0]
+    # 只标注不阻断: 评估照常完成并落盘，哨兵随 diagnostics 持久化
+    assert report.eval_id.startswith("SE-")
+    row = json.loads((tmp_path / "self_eval_log.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert row["diagnostics"]["consistency_alerts"] == alerts
+
+
+def test_adjacent_shift_sentinel_flags_metric_jump(tmp_path):
+    """B(ii) 相邻突变: 与 self_eval_log 上一条同指标 |Δ|≥0.5 → 口径存疑标注（只标注不阻断）.
+
+    复现 2026-08-27 案例的单次跳变形态（exception_rate 0.06 → 1.00 此前只能人工比对发现）。
+    """
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [
+            {"ts": f"t{i}", "phase": "action.tool_loop", "action_type": "tool_call", "detail": f"f{i}"}
+            for i in range(10)
+        ],
+    )
+    ev = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=5, span=50, window_hours=0
+    )
+    first = ev.evaluate(session_id="s1", trigger="manual")
+    fm = {m.name: m for m in first.metrics}
+    assert fm["success_rate"].value == 1.0
+    assert "哨兵" not in first.note  # 首次评估无上一条可比，不触发
+
+    # 第二次: success_rate 1.0 → 0.2（|Δ|=0.8 ≥ 0.5）；错误 detail 互异避免停滞率联动告警
+    (tmp_path / "action_trace.jsonl").write_text(
+        "\n".join(
+            json.dumps(
+                {"ts": f"s{i}", "phase": "action.tool_loop", "action_type": "tool_call", "detail": f"g{i}"}
+            )
+            for i in range(2)
+        )
+        + "\n"
+        + "\n".join(
+            json.dumps(
+                {"ts": f"e{i}", "phase": "action.llm_decide", "action_type": "llm_error", "detail": f"err{i}"}
+            )
+            for i in range(8)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    second = ev.evaluate(session_id="s1", trigger="manual")
+    sm = {m.name: m for m in second.metrics}
+    assert sm["success_rate"].value == 0.2
+    alerts = second.diagnostics["consistency_alerts"]
+    shift = [a for a in alerts if "相邻突变" in a]
+    assert len(shift) == 1
+    assert "success_rate" in shift[0]
+    assert "口径存疑，需复核" in shift[0]
+    assert "相邻突变" in second.note
+    # 只标注不阻断: 两次评估均正常落盘
+    rows = (tmp_path / "self_eval_log.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 2

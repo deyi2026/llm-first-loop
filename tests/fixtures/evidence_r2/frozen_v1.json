@@ -1,0 +1,25 @@
+{
+  "schema": "evidence-r2-freeze-v1",
+  "status": "FROZEN_WITH_INFRA_ONLY_AMENDMENT_V1_1",
+  "created_date": "2026-08-26",
+  "matrix_count": 72,
+  "providers": [
+    "minimax",
+    "deepseek"
+  ],
+  "real_requests_sent_before_freeze": 0,
+  "artifacts": {
+    "docs/RECOVERABILITY-R2-PRE-REGISTRATION-v1.md": "ca26b2c31fdf73f960755c1417032bbd0ab8b6ecb78d35d23c492295168e7be0",
+    "docs/RECOVERABILITY-R1-RESULT-v1.md": "4ff7106b87aab46fc3c6c1e7b13cb1e94ec6b5bf734aaa473e3e35205c09845f",
+    "tests/fixtures/evidence_r2/README.md": "b625d7b0cf7891d960eacb8eca4e3259278e8d9b3b2b3a72342377111963ed96",
+    "tests/fixtures/evidence_r2/fixtures_v1.json": "f00e268dc1fa3c621ad4e46346352f002f4e049b37808eeeebe23229b2ed0135",
+    "tests/fixtures/evidence_r2/matrix_v1.json": "de47c6b4ce322561f12ffa6bd68eff815a828607833b4c899a6fcf8ed8205dcf",
+    "scripts/evidence/r2/fixtures.py": "195142cc502b569c28d080d85360e6017ae0ea94d5477bc42f5f17dd45cad6e3",
+    "scripts/evidence/r2/build_matrix.py": "bcdd71ec4399d093258232bfdbb4e3736b8945594aeddd6ad974168cd65f7ba5",
+    "scripts/evidence/r2/runner.py": "abb3cb57b268525386fbaabba1c9c12f0ce2b167333f4a078ed13486be618147",
+    "scripts/evidence/r2/score.py": "3c00a0b13d252c2bcf9e5c0e53991555b485d19a920521f6a51da2b4af88ac82",
+    "tests/unit/test_evidence_r2_runner.py": "44a6d54e0afc4e3e77c7aed43b8e9601de7e1db2b23321edcaa431a32a172281",
+    "docs/RECOVERABILITY-R2-INFRA-AMENDMENT-v1.1.md": "30be84a778774cde2c00056a76bf93cb8c66f6c08f1c492c213844229024ae8f"
+  },
+  "infra_amendment": "docs/RECOVERABILITY-R2-INFRA-AMENDMENT-v1.1.md"
+}

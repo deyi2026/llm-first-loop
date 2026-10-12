@@ -1,0 +1,36 @@
+{
+ "extract": {
+  "event_count": 560,
+  "filter": [
+   "request.usage",
+   "request.meta",
+   "history.compaction",
+   "message.cache_compacted"
+  ],
+  "first_seq": 4,
+  "last_seq": 7005,
+  "path": "extract.jsonl",
+  "projection": "cache-attribution/v1-minimal",
+  "provenance": "privacy-safe field projection of source logs; seq/ts preserved verbatim; scorer verifies this file only",
+  "sha256": "3925810954eabd72191b3f81cb6ed21fec8c79c6583846d4e113edbf6992228a"
+ },
+ "log_snapshot_at": "2026-09-14T15:11:13.340655+00:00",
+ "manifest_version": "1",
+ "notes": "real session frozen from mirror repo; privacy-safe cache-attribution field projection",
+ "session_id": "51da0a7a-2855-47be-b050-622198947082",
+ "source_dir": "event_logs/51da0a7a-2855-47be-b050-622198947082",
+ "sources": [
+  {
+   "bytes": 10486023,
+   "mtime": "2026-09-14T13:32:13.504920+00:00",
+   "path": "1.jsonl",
+   "sha256": "07e41d74b9042dbfd143f629f3f873c0d9ca73bb81fb8036fa4cfa2e1a1f6237"
+  },
+  {
+   "bytes": 9107895,
+   "mtime": "2026-09-14T15:11:13.340655+00:00",
+   "path": "2.jsonl",
+   "sha256": "ff8ec3bd64009e51f984440868d1a98f17ee5b631872d533c79726b9679f0ce2"
+  }
+ ]
+}

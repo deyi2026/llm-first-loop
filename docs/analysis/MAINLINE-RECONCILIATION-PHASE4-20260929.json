@@ -1,0 +1,95 @@
+{
+  "already_resolved_elsewhere": {
+    "production_exact_count": 10,
+    "production_superseded_prototypes": [
+      "docs/analysis/ANALYSIS-20260928-codebase-memory-mcp-adoption-eval.md",
+      "scripts/code_nav.py",
+      "skills/code-nav/SKILL.md"
+    ]
+  },
+  "date": "2026-09-29",
+  "defer_needs_canonicalization": {
+    "files": [
+      "docs/llm-first-cognitive-runtime-analysis.md"
+    ],
+    "reason": "useful conceptual synthesis but currently undated and without status/authority metadata; should be promoted deliberately as ANALYSIS/DECISION rather than silently canonicalized from an untracked draft"
+  },
+  "defer_with_evidence_bundle": {
+    "files": [
+      "docs/PLAN-20260925-semantic-retrieval-stabilization.md",
+      "docs/REPORT-20260926-learning-method-semantic-production-activation.md",
+      "docs/REPORT-20260926-learning-retry-recovery-production.md"
+    ],
+    "reason": "documents depend on excluded eval/retrieval evidence paths; do not create canonical docs with provenance links missing from the same reconciliation scope"
+  },
+  "exclude_local_tooling": {
+    "files": [
+      ".opencode/AGENTS.md",
+      ".opencode/mem-exp-config.json"
+    ],
+    "reason": "repository currently tracks zero .opencode files; these are tool-local context/settings rather than product source of truth"
+  },
+  "exclude_standalone_evidence": {
+    "files": [
+      "LLM-First-Loop-Agent-Harness-Analysis-20260926.pdf",
+      "facts.json"
+    ],
+    "reason": "standalone/generated evidence without an approved canonical source relationship; local context metadata must not be promoted into source control"
+  },
+  "knowledge_commit": "0af0a2500",
+  "migrate": {
+    "count": 9,
+    "files": [
+      "docs/AUDIT-20260926-q5-semantic-authority.md",
+      "docs/DECISION-context-management-role-separation.md",
+      "docs/DESIGN-20260925-context-management-role-separation.md",
+      "docs/DESIGN-20260926-model-variance-containment.md",
+      "docs/LEDGER-20260926-compat-retirement.md",
+      "docs/PLAN-20260925-execution-efficiency-fcr.md",
+      "experiences/EXPERIENCE-20260925-codearts-agent-http-kernel.md",
+      "experiences/EXPERIENCE-20260925-codearts-api-env.md",
+      "experiences/EXPERIENCE-20260928-git-check-ignore-no-index.md"
+    ],
+    "normalization": {
+      "docs/PLAN-20260925-execution-efficiency-fcr.md": "removed one extra blank line at EOF to satisfy git diff --check; semantic content unchanged"
+    },
+    "rationale": {
+      "context_management_pair": "accepted DECISION + finalized DESIGN; no canonical equivalent exists",
+      "execution_efficiency_plan": "standalone design plan with no broken repository dependency; identical content previously existed in historical commit e01c53965",
+      "experiences": "all three parse under current ExperienceDocument, remain status=active, and match tracked experiences/ repository convention",
+      "semantic_authority_governance_trio": "mutually linked draft-for-review governance assets with no eval-bundle dependency; status remains explicitly draft"
+    }
+  },
+  "next_phase": "prepare canonical-main cutover candidate and prove it is production gen161 plus reconciled governance/runtime/knowledge commits; do not move main until final cutover qualification passes",
+  "phase3_head": "f9bdb0001b980e17815813450f63f8a988b02a39",
+  "production_generation": 161,
+  "production_head": "67ce123c5fa8430ab833610857fbf276d55e589d",
+  "qualification": {
+    "absolute_user_paths_in_migrated_files": false,
+    "experience_direct_parse": "3/3 PASS",
+    "experience_repository_differential_harness": "PASS",
+    "git_diff_cached_check": "PASS after one EOF whitespace normalization",
+    "hard_internal_dependency_check": "PASS; four lexical false positives were an illustrative placeholder, external reviewed source path, and two conceptual/legacy module labels",
+    "original_main_reviewed_candidate_drift": 0,
+    "security_scan": "PASS",
+    "staged_knowledge_files": 9
+  },
+  "safety": {
+    "eval_generated_assets_bulk_imported": false,
+    "local_tooling_imported": false,
+    "original_main_modified": false,
+    "production_modified": false,
+    "standalone_evidence_imported": false
+  },
+  "schema": "lfl.mainline_reconciliation.phase4_untracked_knowledge.v1",
+  "scope": {
+    "explicitly_excluded_from_phase4": [
+      "90 eval code candidates",
+      "22 eval docs candidates",
+      "604 eval generated/frozen evidence",
+      "59 runtime/eval evidence"
+    ],
+    "reviewed_non_eval_untracked": 17
+  },
+  "source_main_head": "8454c8a9813947173bc5696dcb5d5309d21cdf3b"
+}

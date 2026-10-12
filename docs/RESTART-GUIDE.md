@@ -1,0 +1,246 @@
+# 重启指南（Restart Guide）
+
+> 前身: 镜像重启指南 MIRROR-RESTART-GUIDE.md；2026-09-29 主区退役后更名（本区即唯一生产区）。
+
+> 适用范围：本工作区（唯一生产区，web :8903 + 飞书桥）常驻服务的重启操作。原主区（:8902）已于 2026-09-29 退役删除。
+> 唯一重启入口：`scripts/restart_mirror.sh`（2026-09-09 加固版）。
+> 相关协议：`docs/WORKSPACE-CHANGE-PROTOCOL.md`；事故证据见 `experiences/EXPERIENCE-20260828-*`、`experiences/EXPERIENCE-20260829-*`。
+
+## 1. 本区跑的是什么
+
+| 服务 | 命令 | 锚点 | 就绪判据 |
+|---|---|---|---|
+| web | `python -m llm_loop.web` | 端口 **8903**（历史：原为避开主区 8902，主区退役后保留既定端口） | `GET /auth/status` 返回 `{"status":"ok",...}` |
+| feishu | `python -m llm_loop.feishu` | 无端口；WS 长连 msg-frontier.feishu.cn | `data/feishu_heartbeat.json` 的 `state=connected` |
+
+## 2. 什么时候需要重启
+
+| 场景 | 动作 |
+|---|---|
+| 改了本区 `.env` / 配置（web/feishu 常驻进程读 env，改文件不热生效） | `restart_mirror.sh all` |
+| 经审批后代码变更生效，需加载新代码（本区即唯一区，无跨区同步） | `restart_mirror.sh all` |
+| web 或飞书桥单服务挂死/异常 | 只重启对应服务（`web` / `feishu`） |
+| 想确认现状，不确定要不要重启 | `restart_mirror.sh status`（无副作用） |
+
+## 3. 标准命令
+
+```bash
+cd <本仓库根>   # 唯一工作区
+
+bash scripts/restart_mirror.sh status   # 查看现状：web 8903 / feishu 心跳（脚本名为历史遗留）
+bash scripts/restart_mirror.sh web      # 只重启 web（默认）
+bash scripts/restart_mirror.sh feishu   # 只重启飞书桥
+bash scripts/restart_mirror.sh all      # 全量重启（web + feishu）
+```
+
+**AI/自动化代执行**（后台 job、非 tty 环境 `read` 撞 EOF 必取消，双开关缺一不可）：
+
+```bash
+RESTART_WAIT_IDLE=1 FORCE=1 bash scripts/restart_mirror.sh all
+```
+
+- `RESTART_WAIT_IDLE=1`：重启前 poll 飞书心跳（`processing_msg_id`/`queue_depth`）至空闲（默认 300s 超时，`RESTART_WAIT_IDLE_TIMEOUT_S` 可调），防止打断进行中的长任务；
+- `FORCE=1`：等待超时后免交互确认（责任在调用方）。
+- 飞书 WS 握手实测 15~55s 波动（脚本轮询至多 90s），整个 `all` 重启预期 **1~2 分钟**，请用后台 job 或足够长的超时执行。
+
+## 4. 重启前二查
+
+1. **查飞书心跳**：`data/feishu_heartbeat.json` 的 `processing_msg_id` 非空或 `queue_depth>0` = 有任务在跑——等完成，或人工确认可中断再重启（`FORCE=1` 会跳过确认）。
+2. **查 launchd 残留**：`launchctl list | grep lfl`——确认无遗留 launchd 重启作业（2026-08-28 无限复活事故源头）。
+
+## 5. 重启后四验
+
+```bash
+bash scripts/restart_mirror.sh status
+```
+
+1. **status 全绿**：`web ✅ pid <新pid>` + `feishu ✅ ... (hb: connected)`；
+2. **心跳文件** `data/feishu_heartbeat.json` 的 `state=connected` 且 `pid` = 新进程（脚本 lsof 告警「未见 feishu.cn 连接」多为时序误报，以心跳文件为准）；
+3. **web.log 的 `Shutting down` 计数冻结**：`grep -c "Shutting down" data/web.log` 间隔 20s 两次取样不变（持续增长 = 有外部循环在杀 web，追查 PPID=1 的派生者 + launchd）；
+4. **范围零外溢**：重启只作用于本区服务（历史版本核对主区 8902 零外溢；主区已退役，原则保留为不越界纪律）。
+
+**回执落盘（唯一可独立核查载体）**——stdout 回执会随宿主 shell 死亡消失，落盘不会：
+
+```bash
+cat data/restart-receipt.json   # 最新一次（覆盖）
+tail data/restart-receipt.log   # 历史追加
+# 字段: ts / action / rc / git_head / web_pid / feishu_pid / detail
+```
+
+`rc=0` = 成功；`rc=1` 时看 `detail`（如 `web_stopped=0` = 停止失败已跳过启动防双进程）。
+
+## 6. 红线（历史实证事故，绝对禁止）
+
+| 禁止 | 后果（实证） |
+|---|---|
+| `pkill -f "llm_loop.web"` | 主区/镜像进程命令行相同，会**误杀主区 web（:8902）**（2026-08-22）。正确做法：按端口 `lsof -tiTCP:8903`（脚本已内置） |
+| `launchctl submit` 执行重启 | submit = KeepAlive 常驻作业，退出即重拉 → web 陷入每 ~30s 循环重启（2026-08-28，web.log 累计 100 次 Shutting down） |
+| 手写 `nohup python -m llm_loop.web &` 启动 | 绕过脚本的 DSH 环境隔离/凭证清理/PYTHONPATH 注入/WEB_PORT 设置（见 §7），且不换进程组，会被调用方超时 killpg 波及 |
+| 服务启动省略 `PYTHONPATH=<本区>/src` | 历史风险：共享 venv 时代 editable .pth 指旧主区 src（2026-09-29 核实 .pth 已指本区 src，此条留作防御性提醒） |
+| 翻转 venv 的 `__editable__*.pth` 指向 | 历史事故（2026-08-29 共享 venv 双向毒化）；现为独立 venv，仍勿手改 .pth |
+| 停止失败后强行启动 | 制造双进程（旧进程持 `<session>.run.lock`，新请求全被判「另一进程执行」）。脚本已内置保护：停失败即跳过启动 |
+
+## 7. 脚本内置的隔离机制（为什么必须走脚本）
+
+- **按端口杀 + argv 精确识别**：web = 端口 lsof ∪ 镜像 venv 绝对 argv（能找到已释放端口但持 run lease 的 stale owner）；feishu = 心跳 pid（≤180s 新鲜度门，防 PID 复用误杀）∪ argv 兜底（uv 启动会改写 argv）。等待 **PID 本身退出**而非仅端口释放。
+- **等 PID 退出**：SIGTERM 后最多等 10s，仍存活则 SIGKILL；旧 PID 未退出 / 端口仍占用 → 拒绝启动新进程。
+- **`_prep_dsh_env` 环境自卫**：
+  - 服务身份恢复真实账户 `HOME`/macOS `TMPDIR`（不继承调用方沙箱，2026-09-11 MCP Console 事故）；
+  - `DSH_HOME=<镜像>/data/dsh-home`（dsh_task 会话目录按镜像 workspace_key 解析）；
+  - `unset` 清理跨区污染键：`LFL_DATA_DIR`/`DATA_DIR`（否则镜像直读主区 data）、`PYTHONPATH`（残留主区 src）、`FEISHU_APP_ID`/`FEISHU_APP_SECRET`（单边残留 = 凭证错配对 → 飞书预检 10014）、`DSH_SESSION_*`。
+- **配置归 python resolver**：`WEB_PORT`/`WEB_HOST` 经 `PYTHONPATH=<镜像>/src` 查询 runtime resolver（.env 权威 + 外部 shell 残留 8902 不压过镜像 8903），空值用 `${VAR:-default}` 兜底（`$(cmd || echo x)` 兜不住空串成功）。
+- **`_spawn_detached` 进程脱离**：python `setsid()+execvp()`（macOS 无 setsid(1)；nohup 不换进程组）→ 新会话/新进程组，调用方 shell 超时 killpg 不牵连。
+- **失败补偿**：`all` 分支各服务独立成败（web 停/启失败不再短路吞掉 feishu 恢复），聚合退出码。
+
+## 8. 常见故障排查
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| 新进程报 `Errno 48` 地址被占 | 旧进程未真正退出（曾因 resolver 空输出假停机） | `lsof -nP -iTCP:8903` 找占端口者；确认是镜像 web 后按 pid kill，再重跑脚本 |
+| feishu 预检 `10014 app secret invalid` | shell 残留单边 `FEISHU_APP_ID` 与文件 SECRET 错配对 | 走脚本启动（内置 unset）；手工诊断：`env \| grep FEISHU` 找残留 + 比对 app_id 前 10 位归属 |
+| 心跳显示 connected 但服务无响应 | 进程被杀时心跳不写终态（残留假象） | 存活判定以 pgrep/lsof 为准，心跳只作辅助 |
+| web 30s 未就绪 | 启动崩溃 | `tail -20 data/web.log` 看异常栈 |
+| feishu 启动即退出 | 凭证占位符/网络 | `tail -8 data/feishu.log`（真凭证在 `.feishu.env`，不能是 `cli_xxx` 占位符） |
+| status 显示 web ❌ 但 8903 可访问 | 加载了主区代码或绑错端口 | `ps eww <pid>` 查进程 `PYTHONPATH` 是否 = 镜像 src、端口是否 8903 |
+| web.log `Shutting down` 计数持续增长 | 外部循环在杀 web（launchd 作业等） | `launchctl list \| grep lfl` 找作业并 `launchctl remove <label>`；追 PPID=1 派生者 |
+
+## 9. 实例（2026-09-14 本镜像真实重启）
+
+```text
+$ RESTART_WAIT_IDLE=1 FORCE=1 bash scripts/restart_mirror.sh all   # 后台 job 执行
+[mirror] 13:50:48 停止镜像 Web pid(s): 91734  (port 8903)...
+[mirror] 13:50:49 已停止（旧 PID 全部退出）
+[mirror] 13:50:50 飞书桥已停止 (pid 30190)
+[mirror] 13:50:58 ✅ web 就绪: http://127.0.0.1:8903/ (pid 94809)
+[mirror] 13:51:37 ✅ 飞书桥心跳 connected (pid 94936)
+[mirror] 13:51:37 回执已落盘: data/restart-receipt.json (rc=0)
+
+$ cat data/restart-receipt.json
+{"ts": "2026-09-14T13:51:37+08:00", "action": "all", "rc": 0, "git_head": "2d247ba7",
+ "web_pid": 94809, "feishu_pid": 94936, "detail": "web_stopped=1 feishu_stopped=1"}
+```
+
+四验全过：status 全绿、心跳 connected 且空闲、Shutting down 计数冻结、服务范围零外溢。（该实例发生于双区时代，主区核对项已随主区退役）全程约 50s（web 就绪 9s + feishu WS 握手 39s）。
+
+## 10. 相关文档
+
+- `docs/WORKSPACE-CHANGE-PROTOCOL.md` — 唯一工作区变更协议（变更门禁/历史遗留边界）
+- `scripts/restart_mirror.sh` — 脚本本体（头部注释含全部设计依据）
+- `tests/scripts/test_restart_mirror_hardening.py`、`tests/unit/test_restart_mirror_script.py` — 脚本行为回归
+- `experiences/EXPERIENCE-20260828-mirror-restart-launchd-trap.md` — launchctl 无限复活事故
+- `experiences/EXPERIENCE-20260829-restart-mirror-r2-triple-failure.md` — 共享 venv/PYTHONPATH/凭证错配三连环事故
+
+## 12. T0 增补（2026-09-16）: CODE_ROOT 来源判定 / 嵌套禁令 / worktree registry
+
+同日两起事故的制度化修复（实现见 `scripts/restart_mirror.sh` T0-A3 块、
+`src/llm_loop/runtime/worktree_registry.py`、`scripts/bootstrap_worktree_registry.py`）：
+
+1. **CODE_ROOT 来源三态**（`_code_root_source_check`，位于根校验之前）：
+   - 脚本目录默认（未设 `LFL_RESTART_CODE_ROOT`）→ 通过；
+   - 调用点显式（环境值==脚本目录，或 `LFL_RESTART_CODE_ROOT_CONFIRMED=1`）→ 通过；
+   - 疑似会话残留（环境值≠脚本目录且未确认）→ 告警+审计
+     `data/audit/restart_preflight.log`；**自动化通道（非 tty 或 FORCE=1）直接 abort**。
+   事故案例：17:22 会话环境残留指向旧 worktree，`service_control` 缺失才暴露。
+1a. **RUNTIME_ROOT 同判**（R4，2026-09-22，`_runtime_root_source_check`）：
+   ambient `LFL_RESTART_RUNTIME_ROOT` 残留同样能污染预检根
+   （`_knowledge_binding_preflight` 读 `$RUNTIME_ROOT` 下 `.env`），07:33 gen64
+   预检 aborted 证明残留源仍在复现。确认变量为
+   `LFL_RESTART_RUNTIME_ROOT_CONFIRMED=1`。受控路径
+   （`build_restart_plan`）显式带 CONFIRMED。审计行含 `var=` 触发变量名。
+ 1b. **同仓族降级**（S2，2026-09-22 简化包）：环境根与脚本目录同 Git 仓族
+   （`--git-common-dir` 相同，即本仓 linked worktree）时不再要求 CONFIRMED——
+   告警 + 审计 `outcome=deferred-to-verify` 后放行，由 service-control 部署
+   绑定核验（P0-A 字节级）裁决：残留指向未发布 worktree 时 verify 必拒。
+   异仓族（跨区/跨仓/无 Git 身份）维持自动化通道硬拒。动机：受控 dual-root
+   重启与会话残留共用「环境根≠脚本目录」形态，CONFIRMED 硬门曾把滚动升级
+   （旧控制器×新脚本，13:20 事故）砖死；降级后任意升级顺序自洽，直连
+   dual-root 操作（同仓族时）不再必须确认两个根。
+2. **嵌套 worktree 禁令**（dual-root 校验内 + `--check-add` guard）：
+   CODE_ROOT 内含嵌套 worktree 一律拒绝；创建前用
+   `scripts/bootstrap_worktree_registry.py --check-add <path>` 预检（拒绝 rc=2，
+   审计 `data/audit/worktree_guard.log`）。主 worktree 下挂 `.worktrees/` 是既定布局，不算嵌套。
+3. **worktree registry**（`data/audit/worktree_registry.json`，fail-open 非承重）：
+   bootstrap 全量落表，默认唯一 protected=现役 code root（`runtime_manifest.json`
+   的 workspace_root）+显式回滚候选，其余标 legacy；人工 retired 标记不被覆盖；
+   缺失/损坏时消费方降级既有校验。GC（A4，9/19 再议）：只标记永不自动删除。
+4. `restart_mirror.sh preflight`：只读 dry-run（根校验+来源判定+webui 产物预检
+   +store 绑定预检，2026-09-22 见 §13），不触服务、不验 service_control 绑定；
+   测试与运维共用。
+5. bash 陷阱记录：`$VAR` 后紧跟多字节字符（如全角括号）会被吞首字节成
+   `VAR\xef: unbound variable`——一律 `${VAR}`。
+
+## 13. dual-root store 绑定（2026-09-22，gen63 事故制度化）
+
+背景：知识库随 87a971ade 进 git 后，干净 deploy worktree 自带 legacy store 快照
+（`experiences/`、`methods/` 位于 worktree 内、随代码检出）。共享 state 的
+dual-root 部署（linked worktree + `DATA_DIR` 推断到 common root）若不显式声明
+canonical 绑定，resolve 出的可写 store 与 git 快照必然分叉 →
+`knowledge_preflight_failed` 拒绝重启（守卫行为正确，缺的是部署侧声明）。
+事故时间线与修复包见 `docs/SPEC-20260922-service-control-restart-fixpack-v1.md`。
+
+### 13.1 绑定步骤（每次 dual-root 部署必做）
+
+1. 确认 canonical store 位置（主根，如 `<主根>/experiences`、`<主根>/methods`）；
+2. 在**主根 `.env`** 与 **deploy worktree `.env`** 两份文件中都显式声明：
+
+   ```
+   EXPERIENCES_DIR=<主根绝对路径>/experiences
+   METHODS_DIR=<主根绝对路径>/methods
+   ```
+
+   路径必须是绝对路径；只改其中一份 = 另一半部署仍走推断，分叉照旧；
+3. 重启前跑只读预检：`bash scripts/restart_mirror.sh preflight`
+   - 含 store 绑定校验（R2.3）：dual-root 缺声明 / 目录不可写 → 直接 fail；
+   - 通过标志：`✅ Knowledge store binding PASS`。
+
+### 13.2 判定语义（`knowledge_health --check-binding`）
+
+- dual-root 共享态 = linked worktree 且 `DATA_DIR` 解析在 code root 之外；
+  此形态**必须** `EXPERIENCES_DIR`/`METHODS_DIR` 显式声明且目录存在可写；
+- 单根部署、sidecar state（`DATA_DIR` 显式指向 worktree 内）豁免——推断绑定
+  与 legacy 同路径，不可能分叉；
+- mutating 路径：绑定预检失败复用 `knowledge_preflight_failed` 回执标记
+  （R1 白名单内：预检链零物理副作用 → 屏障自动释放，不残留假死屏障）。
+
+## 14. R2.1（2026-09-22）：gen64 部署时显式重启 cli 宿主
+
+`check_stale_services()` 的主动过期提示按设计排除 `service == "cli"`
+（cli 会话归操作员所有，运行中强杀等于打断自己）——代价是**部署新代后
+cli 宿主收不到任何主动提示，仍加载旧代码继续执行**。修复包（R1–R6）
+部署即 gen64 起生效，部署序列**最后一步**（spec §8 R2.1，操作员执行）：
+
+1. 受管服务（web/feishu/learning）照常经 `restart_mirror.sh` 重启到新代；
+2. **操作员显式重启 cli 宿主**——结束当前 CLI/代理会话并重新拉起
+   （新进程启动时自行写入 `proc_versions.jsonl` 最新记录）；
+3. 验收 `code_current=true`（cli 行的启动 HEAD == 当前 HEAD）：
+   - 代理侧：`architecture_status(dimensions=["process_versions"])`；
+   - 或 shell（镜像 PYTHONPATH 必须指向本区 src，见 §6 红线）：
+
+   ```bash
+   PYTHONPATH=src .venv/bin/python -c "from llm_loop.introspection.proc_version import get_process_versions as g; print([(s['pid'], s['git_head'], s['code_current']) for s in g()['services'] if s['service']=='cli'])"
+   ```
+
+   结果为空 = 新 cli 进程尚未写启动记录（等数秒重查）；仍为 `false` =
+   查询者自己还在旧进程里（旧进程查自己永远看到旧记录）——先确认会话
+   确已在新宿主中再判定验收失败。
+
+## 15. 一条命令的受控重启（S3，2026-09-22 简化包）
+
+直连脚本与动作链两条路径并存是事故放大器：直连不写 durable 回执（stable 落后、
+R6 只能标 stale），操作员/模型要在两套语义里选，恢复期容易选错门。此后**受控
+重启只有一扇门**：
+
+```bash
+PYTHONPATH=src .venv/bin/python -m llm_loop.runtime.service_control restart \
+  --data-dir data [--target web|feishu|learning|all] [--requester <身份>]
+```
+
+语义：受理（屏障随受理原子建立，重启窗口内消息持久化排队）→ worker 内联执行
+物理重启 + 核验 → 终态回执（succeeded/failed）落 `service-control-actions/`，
+stable 凭证只在 succeeded 时前进；预检类失败按 R1/S1 白名单回执自动释放屏障，
+消息立即恢复流动。stdout 两行 JSON：受理行（action_id/generation）+ 终态行
+（ok/status/detail）；rc 透传 worker。
+
+直连 `restart_mirror.sh` 退为应急通道（如控制面自身不可用时）；其结果不写
+动作回执，stable 依 R6 如实滞后。升级到含本节的版本后，建议尽快走一次 CLI
+restart 让 stable 凭证收敛。

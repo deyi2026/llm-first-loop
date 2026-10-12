@@ -1,0 +1,149 @@
+{
+  "rewrites_source": "evals/retrieval_ab/auto-rewrites-20260922.json",
+  "rows": [
+    {
+      "id": "N01",
+      "query": "换模型要记住我之前选过哪个吗",
+      "gold": "MEM-20260811-7d273d76",
+      "orig_rank": null,
+      "variants": [
+        {
+          "variant": "模型切换 记住上次选择 switch_model 会话持久化",
+          "rank": 1
+        },
+        {
+          "variant": "switch_model 模型偏好记忆 持久化 default model",
+          "rank": 6
+        }
+      ],
+      "best_variant_rank": 1,
+      "verdict": "SAVED"
+    },
+    {
+      "id": "N02",
+      "query": "规则写太多反而碍事，该留多少",
+      "gold": "MEM-20260901-fff7eafc",
+      "orig_rank": 6,
+      "variants": [
+        {
+          "variant": "规则过多 rule bloat 上下文占用 该留多少",
+          "rank": null
+        },
+        {
+          "variant": "规则膨胀 精简裁剪 保留多少 rules prompt",
+          "rank": null
+        }
+      ],
+      "best_variant_rank": null,
+      "verdict": "NO-GAIN"
+    },
+    {
+      "id": "N03",
+      "query": "改动后怎么知道性能没退步",
+      "gold": "MEM-20260819-4fdb7d80",
+      "orig_rank": null,
+      "variants": [
+        {
+          "variant": "性能回归检测 benchmark 基准对比 延迟吞吐",
+          "rank": null
+        },
+        {
+          "variant": "改动后 无性能退化验证 regression testing",
+          "rank": null
+        }
+      ],
+      "best_variant_rank": null,
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "N04",
+      "query": "静态检查工具自己崩了是什么问题",
+      "gold": "MEM-20260818-e575f8eb",
+      "orig_rank": null,
+      "variants": [
+        {
+          "variant": "静态分析工具崩溃 linter crash 堆栈报错",
+          "rank": null
+        },
+        {
+          "variant": "静态检查 linter 自身崩溃 原因排查 stack trace",
+          "rank": null
+        }
+      ],
+      "best_variant_rank": null,
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "N05",
+      "query": "输出太长被切断怎么办",
+      "gold": "MEM-20260813-b2364eeb",
+      "orig_rank": 1,
+      "variants": [
+        {
+          "variant": "输出截断 max_tokens 超限 分页续写方案",
+          "rank": null
+        },
+        {
+          "variant": "长输出被截断 truncation token 上限 解决",
+          "rank": null
+        }
+      ],
+      "best_variant_rank": null,
+      "verdict": "REGRESSION"
+    },
+    {
+      "id": "N06",
+      "query": "手滑删了还在用的文件能找回来吗",
+      "gold": "MEM-20260811-c54bb631",
+      "orig_rank": null,
+      "variants": [
+        {
+          "variant": "误删在用文件恢复 recover_from_backup 备份",
+          "rank": null
+        },
+        {
+          "variant": "文件误删找回 回收站 git restore 数据恢复",
+          "rank": null
+        }
+      ],
+      "best_variant_rank": null,
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "N07",
+      "query": "什么条件才算第一次就能用",
+      "gold": "MEM-20260913-722e3d3d",
+      "orig_rank": null,
+      "variants": [
+        {
+          "variant": "开箱即用 判定条件 first-run 首次可用性",
+          "rank": null
+        },
+        {
+          "variant": "首次就能用的条件 one-shot 一次通过 验收标准",
+          "rank": null
+        }
+      ],
+      "best_variant_rank": null,
+      "verdict": "STILL-MISS"
+    },
+    {
+      "id": "N08",
+      "query": "远程连回内网机器的网络分流配置",
+      "gold": "MEM-20260811-9dde9612",
+      "orig_rank": null,
+      "variants": [
+        {
+          "variant": "远程接入内网 内网穿透 split tunneling 分流配置",
+          "rank": null
+        },
+        {
+          "variant": "内网机器远程回连 VPN 分流路由 port forwarding",
+          "rank": null
+        }
+      ],
+      "best_variant_rank": null,
+      "verdict": "STILL-MISS"
+    }
+  ]
+}

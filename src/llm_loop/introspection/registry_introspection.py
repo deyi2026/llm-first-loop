@@ -1,0 +1,190 @@
+"""架构自省类工具注册（T2，design §2.1.2-5.2）.
+
+承载: architecture_status / search_archive / search_records / search_docs
+执行实现委托至 introspection/tools_status.py + tools_docs.py（既有拆分）。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from llm_loop.core.message import ToolResult
+from llm_loop.introspection.registry_host import RegistryHost
+from llm_loop.introspection.tools_docs import SEARCH_DOCS_TOOL_DEF
+from llm_loop.introspection.tools_status import _ALL_DIMS
+
+_ARCHITECTURE_STATUS_TOOL_DEF: dict[str, Any] = {
+    "name": "architecture_status",
+    "description": "读取 LFL 运行时架构状态（循环阶段/动作轨迹/工具历史/缓存/异常/配置），用于诊断程序运行；architecture_config 含 evolution_summary 演进待办/状态摘要。它不是用户任务 Goal/Task 的事实源：当前活动目标用 get_goal，任务图用 task_frontier。需要执行参数/重试/重载修正时再用 adjust_strategy/retry_tool/refresh_config。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "dimensions": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(_ALL_DIMS)},
+                "description": "按需裁剪的状态维度；合法值由执行侧 _ALL_DIMS 单一事实源机械导出。",
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["current_session", "runtime"],
+                "description": "观测范围。默认 current_session，仅返回当前执行会话的任务自省事实；runtime 会显式混合进程内多个会话，仅用于跨会话运维审计。",
+            }
+        },
+    },
+}
+
+_SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
+    "name": "search_archive",
+    "description": "检索被压缩的历史/超长工具结果（信息未丢失，全部另存在压缩档案）。何时用: 上下文压缩后需要找回早期信息、或工具结果被截断需要看完整内容时。何时不用: 需要检索所有历史记录（动作轨迹/异常/记忆/演进）用 search_records。失败对策: 未检索到匹配会如实返回空，请调整关键词或改用 search_records。命中为历史记录：采信前先对照时间锚点（list_evidence/event_stream）；字面命中≠当前所指，过时命中仅作背景。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "关键词（匹配摘要/关键事实/关键路径/原文）",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "最多返回条数（默认 10，上限 50）",
+            },
+            "role": {
+                "type": "string",
+                "enum": ["user", "assistant", "tool", "system"],
+                "description": "按角色过滤",
+            },
+            "tool_name": {
+                "type": "string",
+                "description": "按来源工具名过滤（如 read_file）",
+            },
+            "with_summary": {
+                "type": "boolean",
+                "description": "兼容参数。true 只显示既有 archive index summary + preview，并明确 projection_complete=false；不再对 preview 发起隐藏 LLM 摘要调用。需要全文摘要时先恢复 exact source，再由 source_synopsis 保存模型自写摘要。",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+_SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
+    "name": "search_records",
+    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、lesson、self_eval、resolved/truncated episode、synopsis、rule 等。episode 表示已解决/退休的对话片段，不代表当前活动任务；experience=正向/legacy 经验 discovery，lesson=失败/未验证/已证伪教训；两者 exact 内容均用 stable experience:<id> 水合。当前 Goal/Task 状态用 get_goal/task_frontier。历史命中仍需检查时间与当前适用性。kind=method 时普通关键词用于 discovery；动手前先查既有方法：失败重试/换源、编辑冲突与写前校验、超时判定、浏览器元素定位、检索与验证纪律等高频域，或准备直接开始重试、修复、拼装多步流程时，先做一次有界 Method discovery（通常 limit<=5）；简单明确任务无需机械搜索；method:<id> 仅用于把搜索结果已经返回的 stable Method ref 原样精确水合，不要猜 method:<关键词>。停滞/当前事实不足/需要规则依据时，可按需用 kind=rule 水合 RULE-AI-xx；非每轮强制、不强制检索顺序。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "action_trace",
+                    "exception_log",
+                    "self_correction_log",
+                    "declaration_check",
+                    "memory",
+                    "memory_extract",
+                    "archive",
+                    "selfheal",
+                    "param_adjust",
+                    "evolution",
+                    "evolution_exec",
+                    "self_eval",
+                    "change_log",
+                    "proc_versions",
+                    "feishu_audit",
+                    "experience",
+                    "lesson",
+                    "episode",
+                    "rule",
+                    "file_effect",
+                    "synopsis",
+                    "method",
+                    "all",
+                ],
+            },
+            "query": {
+                "type": "string",
+                "description": "关键词（空则返回该 kind 最近记录）。kind=method: discovery 用普通词；仅已知且由结果返回的完整 method:<id> stable ref 用于 exact hydration。",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "最多返回条数（默认 10，上限 50）",
+            },
+        },
+        "required": ["kind"],
+    },
+}
+
+
+_EVENT_STREAM_TOOL_DEF: dict[str, Any] = {
+    "name": "event_stream",
+    "description": "统一事件流视图（EVO-20260814，对齐 Harness Trajectory）：把分散的 append-only 审计流按时间序合并。默认只返回当前 session，且每条保留 session_id；只有显式 scope=workspace 才允许跨会话审计。何时用: 回溯/审计/交接/排障。何时不用: 只查单类记录或压缩档案时使用对应专用检索能力。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "streams": {
+                "type": "string",
+                "description": "逗号分隔的流名子集；'all' = 全部流（默认）。可选: action_trace/exception_log/self_correction/evolution/param_adjust/declaration_check/self_eval/memory_extract/proc_versions/feishu_audit/evolution_exec",
+            },
+            "query": {
+                "type": "string",
+                "description": "关键词过滤（匹配摘要字段，空 = 不过滤）",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "返回条数上限（按时间倒序取最近 N 条，默认 50）",
+            },
+            "since": {
+                "type": "string",
+                "description": "ISO 时间下界（只返回 ts >= since 的事件，空 = 不限）。如 '2026-08-14T00:00:00'",
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["current_session", "workspace"],
+                "description": "事件归因范围。默认 current_session；workspace 会显式混合多个会话，仅用于跨会话审计。",
+            },
+        },
+    },
+}
+
+
+def tool_defs() -> list[dict]:
+    return [
+        _ARCHITECTURE_STATUS_TOOL_DEF,
+        _SEARCH_ARCHIVE_TOOL_DEF,
+        _SEARCH_RECORDS_TOOL_DEF,
+        _EVENT_STREAM_TOOL_DEF,
+        SEARCH_DOCS_TOOL_DEF,
+    ]
+
+
+def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
+    if name == "architecture_status":
+        from llm_loop.introspection.tools_status import run_status
+
+        return run_status(host.ctx, host.status_provider, args)
+
+    if name == "search_archive":
+        from llm_loop.introspection.tools_status import run_search_archive
+
+        return run_search_archive(
+            host.ctx,
+            host.archive_store,
+            args,
+            host.current_session_id,
+            summarizer=getattr(host.ctx, "summarizer", None),
+        )
+
+    if name == "search_records":
+        from llm_loop.introspection.tools_status import run_search_records
+
+        return run_search_records(host.ctx, host.search_records_fn, args, host.current_session_id)
+
+    if name == "event_stream":
+        from llm_loop.introspection.tools_status import run_event_stream
+
+        return run_event_stream(host.search_records_fn, args, host.current_session_id)
+
+    if name == "search_docs":
+        from llm_loop.introspection.tools_docs import run_search_docs
+
+        return run_search_docs(host.search_docs_fn, args)
+
+    return None

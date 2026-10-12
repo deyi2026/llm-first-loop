@@ -1,0 +1,133 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 测试/工具缓存
+.pytest_cache/
+.vite/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# 运行时数据（会话/记忆/审计——不入库）；例外：data/methods/ 是学习方法资产，入库保全
+data/*
+!data/methods/
+/data/methods/usage.jsonl
+/data/methods/.usage_watermark.json
+# SMX 感知运行时数据（快照/回执/runs——不入库，任意层级）
+.smx/
+
+# 环境与密钥
+.env
+.env.local
+.env.bak*
+# 密钥备份一律不入库（含 .env.bak.YYYYMMDD 点分格式与 .env.bak-* 连字符格式）
+
+*.bak-*
+# 代码修改备份不入库
+# 系统
+.DS_Store
+# 含密钥的本地启动脚本（勿提交）
+scripts/start_with_embedding.sh
+
+
+# 含飞书密钥的项目凭证文件（勿提交）
+.feishu.env
+
+# CodeArts 工具运行时配置（开源只带 specs 规格文档，其余工具链配置不公开）
+.codeartsdoer/*
+!.codeartsdoer/specs/
+!.codeartsdoer/specs/llm_first_loop/
+
+# CodeArts 开发工作流（specs 等全部本地保留，不公开）
+.codeartsdoer/
+
+# 评测报告（本地运行产物，不入库——key 不上传策略下评测本地跑）
+docs/metrics/
+
+# 本地学习/经验文档（不入库、不上传 GitHub）
+docs/local/
+
+# 运行时经验库（并行会话沉淀的知识资产——2026-09-17 起入库保全，防单点丢失）
+# experiences/
+
+# Web V2（React+TS，独立目录；构建产物由 UI_V2_DIR/本地构建提供，不入库）
+webui/node_modules/
+webui/node_modules
+webui/dist/
+webui/tsconfig.tsbuildinfo
+
+# SWE-bench 评测产物（本地跑评测输出，不入库——22 个 json 污染工作区）
+llm-first-loop.swe-*.json
+
+# 评测日志（run_evaluation 产物，35M 体量）
+logs/
+.feishu.env.dsh
+
+# 本地 Surge 代理导出/修复配置（含代理凭据，禁止入库）
+Nexitally_Surge.fixed.conf
+.venv
+/tasks.md
+cloudflared/tunnel.json
+
+# 实验残留/工作区污染不入库（治理：见 docs/subsystem-disposition-20260909.md）
+.backup/
+swe-*.json
+Nexitally_Surge*.conf
+
+# Web/local provider registry overlay (may contain private endpoints; no secrets)
+data/providers.local.json
+evals/embedding_stage2/bge_cache.json
+
+# Local runtime business configuration SoT
+runtime.toml
+
+# 仓库卫生治理（2026-09-20）：可再生运行产物不入库
+# 评测运行产物（可重跑再生，~9G；单次 smoke 可 3G+）
+evals/*/results/
+# pilot 评测运行输出（同类产物；results.jsonl 历史已跟踪，保持不动）
+evals/pilot/data/results_*.jsonl
+# git worktrees（旁路工作区，登记在 .git/worktrees）
+.worktrees/
+.context-integrity-wt/
+# publish 物化的固定提交 release checkout（EVO-20261007-9c6eccf3，可再生：删后重 publish 即重建）
+.releases/
+# 临时/一次性目录（本地保留，不入库）
+.tmp-rebase-backup/
+.formal-v1/
+.research-notes/
+# 方法库中的 embedding 向量缓存（可再生，2.7M；同类先例 evals/embedding_stage2/bge_cache.json）
+data/methods/embeddings-*.json
+data/methods/embeddings-*.json.lock
+
+# 本地产出物/一次性分析（2026-09-20 收尾：/tmp 迁移产物与 unreferenced 脚本，不入库，本地保留）
+/deliverables/
+/output/
+/papers/
+/patches/
+/staging-*/
+/scripts/data/
+/tools/method-poc-defaults/
+evals/harness_evolution_v0/
+evals/pilot/qualification/
+evals/retrieval_ab/compile_report.json
+evals/retrieval_ab/compile_corpus.py
+evals/browser_smc_semantic_execute_recovery_smoke/summarize_comparison.py
+
+# 2026-09-24 批量裁剪：本地临时目录与隧道运行日志不入库（同类先例 logs/、cloudflared/tunnel.json）
+/tmp/
+cloudflared/tunnel-runtime.log
+
+# 本地测试运行日志不随库分发（安全扫描 .log$ 拦截；2026-10-08）
+.arts/*.log
+
+# 运行时 store 写锁（方法库/经验库瞬时锁文件，可再生非资产，不入库；2026-10-08）
+.__method_store.lock
+.__experience_store.lock
+
+# 本地工具缓存（verify-citations 等可再生产物，不入库；2026-10-10）
+.cache/

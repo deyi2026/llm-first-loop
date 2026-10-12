@@ -1,0 +1,1033 @@
+"""单元测试: 架构自省与 AI 修正工具（T18 / AI-serving 2.1.4）."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from typing import Any
+
+from llm_loop.core.message import ToolResultStatus
+from llm_loop.core.run_context import current_session_id
+from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
+from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
+from llm_loop.introspection.status import ArchitectureStatusProvider, ToolHistoryItem
+
+
+def _bound_call(fn: Callable[..., Any], *args: Any, sid: str = "s1", **kwargs: Any) -> Any:
+    """Run one model-facing tool call with an exact execution session binding."""
+    token = current_session_id.set(sid)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        current_session_id.reset(token)
+
+
+def test_status_snapshot_eight_dimensions():
+    """架构状态快照八维字段齐全、如实反映."""
+    p = ArchitectureStatusProvider(config_status=lambda: {"tools": ["read_file"]})
+    p.record_phase("action.tool_loop")
+    p.record_action("action.tool_loop", "tool_call", "read_file data/x.txt")
+    p.record_llm_round()
+    snap = p.snapshot()
+    for dim in (
+        "current_phase",
+        "action_trace",
+        "tool_history",
+        "message_flow",
+        "memory_state",
+        "context_usage",
+        "exception_log",
+        "architecture_config",
+    ):
+        assert dim in snap
+    assert snap["current_phase"] == "action.tool_loop"
+    assert snap["action_trace"][0]["detail"] == "read_file data/x.txt"
+    assert snap["architecture_config"]["tools"] == ["read_file"]
+
+
+def test_status_snapshot_dimension_crop():
+    """维度裁剪 + 不可用维度如实标注."""
+    p = ArchitectureStatusProvider()
+    snap = p.snapshot(dimensions=["current_phase", "nonexistent_dim"])
+    assert "current_phase" in snap
+    assert "unavailable" in snap["nonexistent_dim"]
+
+
+def test_event_report_cooldown():
+    """上报冷却去重：冷却期内同类事件不重复上报."""
+    r = ArchitectureStatusProvider(cooldown_s=100).reporter
+    ev = ArchitectureEvent(
+        event_type=ArchitectureEventType.EXCEPTION,
+        fact="工具连续失败",
+        reason="FileNotFoundError",
+        suggestion="检查路径",
+    )
+    assert r.should_report(ev) is True
+    assert r.should_report(ev) is False  # 冷却期内
+    msg = r.build_message(ev)
+    assert "[架构上报]" in msg.content
+    assert "连续发生" in msg.content
+
+
+def test_event_report_first_call_fresh_system(monkeypatch):
+    """HARNESS-05 回归: 系统启动不足冷却窗（CI 全新 runner）时首次上报必须通过.
+
+    根因: should_report 首次调用 last 取 0.0, 而 time.monotonic() 从系统启动起算;
+    CI runner 启动可能 <60s → `now - 0 < cooldown` 误判冷却拦截首次上报
+    → eval_trigger 提醒偶发不注入（本地系统启动久无法复现, CI 复现）。
+    """
+    import llm_loop.introspection.events as evmod
+
+    class _FakeTime:
+        t = 5.0
+
+        @staticmethod
+        def monotonic() -> float:
+            return _FakeTime.t
+
+    orig = evmod.time.monotonic
+    evmod.time.monotonic = _FakeTime.monotonic
+    try:
+        r = ArchitectureStatusProvider(cooldown_s=60).reporter
+        ev = ArchitectureEvent(
+            event_type=ArchitectureEventType.DEGRADATION,
+            fact="本轮 run 已完成",
+            reason="r",
+            suggestion="s",
+        )
+        assert r.should_report(ev) is True  # 系统启动 5s 首次上报必须通过
+        assert r.should_report(ev) is False  # 仍处冷却
+        _FakeTime.t = 70.0
+        assert r.should_report(ev) is True  # 冷却过期恢复
+    finally:
+        evmod.time.monotonic = orig
+
+
+def test_exception_log_reported():
+    """异常记录落盘（exception_log）."""
+    p = ArchitectureStatusProvider(audit_dir="/tmp/llm-loop-test-audit-exc")
+    try:
+        raise ValueError("boom")
+    except ValueError as exc:
+        p.record_exception("tool_execute", exc)
+    assert len(p.snapshot()["exception_log"]) == 1
+    assert p.snapshot()["exception_log"][0]["error_type"] == "ValueError"
+
+
+def test_correction_adjust_strategy_whitelist():
+    """修正工具边界校验：越界参数拒绝 + 白名单执行."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    # 越界: 关闭安全边界（不在白名单）
+    r = reg.execute("adjust_strategy", {"strategy": {"safety": False}})
+    assert r.status == ToolResultStatus.FAILURE
+    assert "白名单" in r.content
+    # 越界: 数值超范围
+    r2 = reg.execute("adjust_strategy", {"strategy": {"max_iterations": 99999}})
+    assert r2.status == ToolResultStatus.FAILURE
+    # 合法
+    r3 = reg.execute("adjust_strategy", {"strategy": {"max_iterations": 30}})
+    assert r3.status == ToolResultStatus.SUCCESS
+    assert ctx.strategy["max_iterations"] == 30
+
+
+def test_correction_retry_uses_executor():
+    """retry_tool 走注入的完整执行包裹."""
+    ctx = CorrectionContext()
+    calls: list[str] = []
+
+    def fake_executor(name, args):
+        calls.append(name)
+        from llm_loop.core.message import ToolResult
+
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS, content="ok", tool_call_id="r1", tool_name=name
+        )
+
+    ctx.retry_executor = fake_executor
+    reg = CorrectionToolRegistry(ctx)
+    r = reg.execute("retry_tool", {"tool_name": "read_file", "arguments": {"path": "x"}})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert calls == ["read_file"]
+
+
+def test_correction_clear_state_removed():
+    """T44: clear_state 已移除（死入口清理）→ 不在工具清单，调用返回失败."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    # 工具清单中无 clear_state
+    names = [td["name"] for td in reg.tool_defs()]
+    assert "clear_state" not in names
+    # 调用返回失败（工具不存在）
+    r = reg.execute("clear_state", {"scope": "stagnation"})
+    assert r.status == ToolResultStatus.FAILURE
+    # 修正工具集 + 检索/状态工具 + M12 submit_evolution/self_evaluate + M17 evolution_complete
+    # + M48 model_catalog / switch_model（design §5.3 新增工具）
+    # + P1-2 save_experience / refine_experience（经验库沉淀/生命周期）
+    # + EVO-20260813-432813b2 主动出站飞书（send_feishu_message / create_feishu_doc / send_feishu_attachment）
+    # + P2-2 recover_from_backup（fail-open 数据丢失恢复通道）
+    # + P2-3 search_docs（docs/ 文档语义检索入口）
+    # 2026-09-01: == 改为 >=（超集断言）——注册表随 EVO 演进动态扩工具
+    # （task_create/task_update/task_frontier、create_goal、code_review、
+    # playwright_exec、skill_list 等按需注册），静态全量 == 与演进机制冲突;
+    # 基线集合防既有工具丢失, clear_state 防复活由上方 not in 断言保证。
+    assert set(names) >= {
+        "architecture_status",
+        "search_archive",
+        "search_records",
+        # EVO-20260814: 统一事件流视图（对齐 Harness Trajectory）
+        "event_stream",
+        "search_docs",
+        "adjust_strategy",
+        "retry_tool",
+        "refresh_config",
+        "submit_evolution",
+        "self_evaluate",
+        "evolution_complete",
+        "model_catalog",
+        "switch_model",
+        "save_experience",
+        "refine_experience",
+        "send_feishu_message",
+        "create_feishu_doc",
+        "send_feishu_attachment",
+        "recover_from_backup",
+        # EVO-20260824-3cd4d74b: 任务级 Goal 状态机（MCP Console Goal 借鉴）
+        "create_goal",
+        "checkpoint_goal",
+        "get_goal",
+        "update_goal",
+        # Codex 风格 Skills 工具（2026-08-13 头条文章盘点补齐）
+        "code_review",
+        "grill_me",
+        "stop_slop",
+            "handoff_now",
+            "generate_evolution_template",
+            "playwright_test",
+            # EVO-20260816-bfb9f215: 单 exec 浏览器工具（阶段二）
+            "playwright_exec",
+            "record_skill",
+            "brainstorm_design",
+            "tdd_red_green",
+            "design_review",
+            # B3: 插件化 Skill（skills/ 目录）
+            "skill_list",
+            "skill_load",
+    }
+
+
+def test_architecture_status_tool_snapshot_json():
+    """architecture_status 工具返回状态 JSON."""
+    p = ArchitectureStatusProvider(config_status=lambda: {"llm_model": "fake"})
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx, status_provider=p)
+    r = reg.execute("architecture_status", {})
+    assert r.status == ToolResultStatus.SUCCESS
+    data = json.loads(r.content)
+    assert "current_phase" in data
+
+
+def test_architecture_status_defaults_to_current_session_isolation():
+    """Model-facing self inspection must contain only exact current-session facts."""
+    p = ArchitectureStatusProvider()
+    ctx = CorrectionContext(session_id="stale-shared-context")
+    reg = CorrectionToolRegistry(ctx, status_provider=p)
+
+    def _record(sid: str, label: str) -> None:
+        token = current_session_id.set(sid)
+        try:
+            p.record_action("action.tool_loop", "tool_call", f"{label}-action")
+            p.record_tool_history(
+                ToolHistoryItem(
+                    name=f"{label}-tool",
+                    arguments={},
+                    status=ToolResultStatus.SUCCESS,
+                    summary=f"{label}-summary",
+                )
+            )
+            p.record_message("tool", "tool", len(label), note=f"{label}-message")
+            p.record_exception("tool_execute", RuntimeError(f"{label}-exception"))
+        finally:
+            current_session_id.reset(token)
+
+    _record("session-A", "A")
+    _record("session-B", "B")
+    # Process-global/unbound records are operational facts, not current-task facts.
+    p.record_action("schedule.wake", "deferred_retry", "unbound-action")
+    p.record_tool_history(
+        ToolHistoryItem(
+            name="unbound-tool",
+            arguments={},
+            status=ToolResultStatus.SUCCESS,
+            summary="unbound-summary",
+        )
+    )
+    p.record_message("tool", "tool", 1, note="unbound-message")
+    p.record_exception("scheduler", RuntimeError("unbound-exception"))
+
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute(
+            "architecture_status",
+            {"dimensions": ["action_trace", "tool_history", "message_flow", "exception_log"]},
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    data = json.loads(result.content)
+    assert data["_observation_scope"] == {
+        "kind": "current_session",
+        "session_id": "session-A",
+        "cross_session": False,
+    }
+    assert [row["detail"] for row in data["action_trace"]] == ["A-action"]
+    assert [row["name"] for row in data["tool_history"]] == ["A-tool"]
+    assert [row["note"] for row in data["message_flow"]] == ["A-message"]
+    assert [row["error_message"] for row in data["exception_log"]] == ["A-exception"]
+
+
+def test_architecture_status_runtime_scope_is_explicit_and_cross_session():
+    """Operational global view remains available, but only via explicit scope=runtime."""
+    p = ArchitectureStatusProvider()
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx, status_provider=p)
+    for sid in ("session-A", "session-B"):
+        token = current_session_id.set(sid)
+        try:
+            p.record_action("action.tool_loop", "tool_call", f"{sid}-action")
+        finally:
+            current_session_id.reset(token)
+    p.record_action("schedule.wake", "deferred_retry", "unbound-action")
+
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute(
+            "architecture_status",
+            {"dimensions": ["action_trace"], "scope": "runtime"},
+        )
+    finally:
+        current_session_id.reset(token)
+
+    data = json.loads(result.content)
+    assert data["_observation_scope"] == {
+        "kind": "runtime",
+        "session_id": "session-A",
+        "cross_session": True,
+    }
+    assert {row["session_id"] for row in data["action_trace"]} == {
+        "",
+        "session-A",
+        "session-B",
+    }
+
+
+def test_architecture_status_current_session_fails_closed_for_unscoped_sensitive_provider():
+    """A provider that cannot bind session identity must not masquerade as current-session."""
+    from llm_loop.introspection.tools_status import run_status
+
+    class _GlobalOnlyStatus:
+        def snapshot(self, dimensions=None):
+            return {"action_trace": [{"session_id": "", "detail": "global"}]}
+
+    result = run_status(
+        CorrectionContext(session_id="session-A"),
+        _GlobalOnlyStatus(),
+        {"dimensions": ["action_trace"]},
+    )
+    assert result.status == ToolResultStatus.FAILURE
+    assert "session-scoped snapshot" in result.content
+
+    runtime = run_status(
+        CorrectionContext(session_id="session-A"),
+        _GlobalOnlyStatus(),
+        {"dimensions": ["action_trace"], "scope": "runtime"},
+    )
+    assert runtime.status == ToolResultStatus.SUCCESS
+
+
+def test_architecture_status_schema_makes_cross_session_scope_explicit():
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx, status_provider=ArchitectureStatusProvider())
+    definition = next(row for row in reg.tool_defs() if row["name"] == "architecture_status")
+    scope = definition["parameters"]["properties"]["scope"]
+    assert scope["enum"] == ["current_session", "runtime"]
+    assert "默认 current_session" in scope["description"]
+
+
+def test_submit_evolution_uses_current_run_session_id(tmp_path):
+    """并发run时演进建议归属必须取ContextVar当前session，而不是共享ctx最后写入者。"""
+    from llm_loop.core.run_context import current_session_id
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, session_id="session-B")
+    reg = CorrectionToolRegistry(ctx)
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute(
+            "submit_evolution",
+            {"content": "并发归属测试", "impact_scope": "introspection/"},
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    rows = store.list()
+    assert rows and rows[0]["session_id"] == "session-A"
+
+
+def test_submit_evolution_receipt_level0_same_as_before(tmp_path):
+    """EVOLVE_LOCAL_EXEC=0（默认）回执与现状一致（P0 零回归，EXEC-01）."""
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, evolve_local_exec=0, session_id="s1")
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "submit_evolution",
+        {"content": "优化记忆检索", "impact_scope": "memory/", "priority": "medium"},
+    )
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "仅建议模式" in r.content  # 级别 0 保持现状回执语义
+    assert "EVOLVE_LOCAL_EXEC=0" in r.content
+
+
+def test_submit_evolution_receipt_by_level(tmp_path):
+    """回执按权限级别如实说明（EXEC-01: 1=白名单 / 2=全面）."""
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+
+    ctx1 = CorrectionContext(evolution_store=store, evolve_local_exec=1)
+    r1 = _bound_call(
+        CorrectionToolRegistry(ctx1).execute,
+        "submit_evolution", {"content": "优化超时", "impact_scope": "timeout_s"}
+    )
+    assert r1.status == ToolResultStatus.SUCCESS
+    assert "白名单局部执行" in r1.content
+
+    ctx2 = CorrectionContext(evolution_store=store, evolve_local_exec=2)
+    r2 = _bound_call(
+        CorrectionToolRegistry(ctx2).execute,
+        "submit_evolution", {"content": "优化超时", "impact_scope": "timeout_s"}
+    )
+    assert r2.status == ToolResultStatus.SUCCESS
+    assert "全面执行" in r2.content
+
+
+def test_submit_evolution_receipt_boundary(tmp_path):
+    """涉边界建议回执仍标注需人工（EVOLVE-03）."""
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, evolve_local_exec=2)
+    r = _bound_call(
+        CorrectionToolRegistry(ctx).execute,
+        "submit_evolution", {"content": "调整安全策略", "impact_scope": "safety"}
+    )
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "需人工决策" in r.content
+
+
+def test_self_evaluate_uses_current_run_session_id():
+    """并发run时自评必须评估ContextVar当前session，而不是共享ctx最后写入者。"""
+    from types import SimpleNamespace
+
+    from llm_loop.core.run_context import current_session_id
+
+    captured = {}
+
+    class _Evaluator:
+        def evaluate(self, *, session_id, trigger):
+            captured["session_id"] = session_id
+            captured["trigger"] = trigger
+            return SimpleNamespace(eval_id="SE-CURRENT", metrics=[])
+
+    ctx = CorrectionContext(evaluator=_Evaluator(), session_id="session-B")
+    reg = CorrectionToolRegistry(ctx)
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute("self_evaluate", {"trigger": "manual"})
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    assert captured == {"session_id": "session-A", "trigger": "manual"}
+
+
+def test_self_evaluate_tool(tmp_path):
+    """T64: self_evaluate 工具返回五维指标 + 落盘回执（EVAL-01/04）."""
+    from llm_loop.introspection.evaluator import SelfEvaluator
+
+    evaluator = SelfEvaluator(status_provider=None, audit_dir=tmp_path / "audit")
+    ctx = CorrectionContext(evaluator=evaluator, session_id="s1")
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(reg.execute, "self_evaluate", {"trigger": "manual"})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "[自我评估]" in r.content
+    assert "success_rate" in r.content
+    assert "self_eval" in r.content
+    assert "eval:" in r.content  # 提示可引用评估 ID
+    # 落盘
+    assert (tmp_path / "audit" / "self_eval_log.jsonl").exists()
+
+
+def test_self_evaluate_not_assembled():
+    """self_evaluate 未装配 → 如实失败."""
+    ctx = CorrectionContext(evaluator=None)
+    r = CorrectionToolRegistry(ctx).execute("self_evaluate", {})
+    assert r.status == ToolResultStatus.FAILURE
+    assert "未装配" in r.content
+
+
+def test_self_evaluate_invalid_trigger_failure(tmp_path):
+    """M19 FIX-04: 非法 trigger → FAILURE 三件套（不再静默回退 manual）."""
+    from llm_loop.introspection.evaluator import SelfEvaluator
+
+    evaluator = SelfEvaluator(status_provider=None, audit_dir=tmp_path / "audit")
+    ctx = CorrectionContext(evaluator=evaluator)
+    r = CorrectionToolRegistry(ctx).execute("self_evaluate", {"trigger": "weird"})
+    assert r.status == ToolResultStatus.FAILURE
+    assert "[参数错误]" in r.content
+    assert "periodic/milestone/anomaly/manual" in r.content
+    assert "'weird'" in r.content  # 收到值如实回显
+    # 非法 trigger 不产生评估（不消耗 eval_id 计数）
+    assert not (tmp_path / "audit" / "self_eval_log.jsonl").exists()
+
+
+def test_submit_evolution_eval_id_bidirectional(tmp_path):
+    """T64: submit_evolution evidence 引用 eval:<id> → eval_id 回填 + 双向溯源（EVAL-05）."""
+    from llm_loop.introspection.evaluator import SelfEvaluator
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.search import RecordSearcher
+
+    evaluator = SelfEvaluator(status_provider=None, audit_dir=tmp_path / "audit")
+    report = evaluator.evaluate(session_id="s1", trigger="manual")
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(
+        evolution_store=store, evaluator=evaluator, session_id="s1", evolve_local_exec=0
+    )
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "submit_evolution",
+        {
+            "content": "基于评估优化超时参数",
+            "impact_scope": "timeout_s",
+            "evidence": f"eval:{report.eval_id}",
+        },
+    )
+    assert r.status == ToolResultStatus.SUCCESS
+    # eval_id 回填落盘（建议 → 评估）
+    stored = store.list()[0]
+    assert stored["eval_id"] == report.eval_id
+    # 检索 self_eval → 返回关联建议 ID（评估 → 建议）
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit")
+    hits = searcher.search(kind="self_eval", query=report.eval_id)
+    assert len(hits) == 1
+    assert hits[0]["id"] == report.eval_id
+    assert stored["id"] in hits[0].get("linked_suggestions", [])
+
+
+def test_search_records_schema_has_self_eval():
+    """M16 审计（FR-AUDIT-AI-02）: search_records schema 三处含 self_eval（AI 可达）."""
+    from llm_loop.introspection.search import _VALID_KINDS
+
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    td = next(t for t in reg.tool_defs() if t["name"] == "search_records")
+    enum = td["parameters"]["properties"]["kind"]["enum"]
+    assert "self_eval" in enum
+    # schema 枚举是 _VALID_KINDS 的子集（self_eval 已同步，历史缺口 param_adjust/selfheal 不在 schema 属既有范围）
+
+    assert set(enum) <= set(_VALID_KINDS)
+    assert "self_eval" in enum and "self_eval" in _VALID_KINDS
+    assert "self_eval" in td["description"]
+
+    # 错误提示文案含 self_eval（注入检索实现使 kind 校验可达——R3 typed 归因后
+    # 须抛 InvalidSearchKindError 才归 [参数错误]，裸 ValueError 属内部错误）
+    from llm_loop.introspection.search import InvalidSearchKindError
+
+    def _raising(**kw):
+        raise InvalidSearchKindError("kind 'no_such_kind' 不在可选范围")
+
+    reg._search_records_fn = _raising  # noqa: SLF001
+    r = reg.execute("search_records", {"kind": "no_such_kind"})
+    assert "self_eval" in r.content
+
+
+def test_submit_evolution_pure_suggestion_channel():
+    """M16 审计（FR-AUDIT-AI-07）: submit_evolution 纯建议通道——schema 无 kind/actions 入参."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    td = next(t for t in reg.tool_defs() if t["name"] == "submit_evolution")
+    props = td["parameters"]["properties"]
+    assert "kind" not in props  # 防误加回 execute_request
+    assert "actions" not in props
+    assert "content" in props  # 纯建议通道核心入参保留
+
+
+def test_adjust_strategy_frequency_budget(tmp_path):
+    """M18 AA2: PARAM-03 单轮频次预算——生产路径连续 3 次后第 4 次拦截（如实反馈）."""
+    from llm_loop.config import Settings
+    from llm_loop.factory import build_engine
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        self_inspection_enabled=False,
+        extract_enabled=False,
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    assert engine.corrections is not None
+    assert engine.correction_ctx is not None
+    ctx = engine.correction_ctx
+    # 3 次合法调整（PARAM_ADJUST_PER_ROUND=3）
+    for i in (30, 40, 50):
+        r = engine.corrections.execute("adjust_strategy", {"strategy": {"max_iterations": i}})
+        assert r.status.value == "success"
+    # 第 4 次 → 频次超限拦截
+    r4 = engine.corrections.execute("adjust_strategy", {"strategy": {"max_iterations": 60}})
+    assert r4.status.value == "failure"
+    assert "PARAM-03" in r4.content
+    assert "已达上限" in r4.content
+    # 非法参数不消耗频次（校验失败先于 can_adjust）: reset 后第 1 次传非法 → 白名单错误，不消耗
+    assert ctx.runtime is not None
+    ctx.runtime.reset_round()
+    r_bad = engine.corrections.execute("adjust_strategy", {"strategy": {"safety": False}})
+    assert r_bad.status.value == "failure"
+    assert "白名单" in r_bad.content
+    # 下一轮（reset 后）恢复可调
+    r_ok = engine.corrections.execute("adjust_strategy", {"strategy": {"max_iterations": 70}})
+    assert r_ok.status.value == "success"
+
+
+def test_memory_stats_in_status(tmp_path):
+    """M18 AA10: memory_state 补真实数据——注入统计含真实 entries/recent；未注入如实标注."""
+    from llm_loop.introspection.status import ArchitectureStatusProvider
+
+    # 未注入 → 如实标注"暂不可用"
+    p1 = ArchitectureStatusProvider()
+    assert p1.snapshot()["memory_state"]["note"] == "memory_state 暂不可用（未注入统计）"
+    # 注入 → 真实数据
+    p2 = ArchitectureStatusProvider(memory_stats_fn=lambda: {"entries": 2, "recent": []})
+    ms = p2.snapshot()["memory_state"]
+    assert ms["entries"] == 2
+
+    # 闭包异常 → 如实标注读取失败（fail-open）
+    def _broken():
+        raise OSError("boom")
+
+    p3 = ArchitectureStatusProvider(memory_stats_fn=_broken)
+    ms3 = p3.snapshot()["memory_state"]
+    assert "读取失败" in ms3["note"]
+
+
+def test_retry_tool_call_id_unique():
+    """M18 AA14: _make_tool_call id 唯一（time_ns 后缀，协议 C3）."""
+    from llm_loop.factory import _make_tool_call
+
+    tc1 = _make_tool_call("read_file", {"path": "/a"})
+    tc2 = _make_tool_call("read_file", {"path": "/a"})
+    assert tc1.id != tc2.id
+    assert tc1.id.startswith("retry-read_file-")
+    assert tc2.id.startswith("retry-read_file-")
+
+
+def test_llm_error_text_three_part():
+    """M18 AA15: llm_error_text 返回三件套文本（事实/原因/建议）."""
+    from llm_loop.feedback.honesty import llm_error_text
+
+    err = RuntimeError("connection refused")
+    text = llm_error_text(err)
+    assert "[LLM 调用异常]" in text
+    assert "事实:" in text and "原因:" in text and "建议:" in text
+    assert "检查网络/Key/模型名配置后重试" in text
+    assert "connection refused" in text
+    # 死函数已清理
+    import llm_loop.feedback.honesty as h
+
+    assert not hasattr(h, "llm_error_message")
+    assert not hasattr(h, "memory_unavailable_message")
+
+
+def test_search_truncation_note(tmp_path):
+    """M19 FIX-02: 检索 >6 条命中 → 回执含"仅显示前 6 条"标注（真实命中数 + limit）."""
+    from llm_loop.introspection.tools_status import run_search_records
+
+    ctx = CorrectionContext()
+    hits = [{"ts": f"t{i}", "kind": "action_trace", "summary": f"s{i}"} for i in range(9)]
+
+    def _search(**kw):
+        return hits
+
+    r = run_search_records(
+        ctx, _search, {"kind": "action_trace", "query": "x", "limit": 10}, lambda: ""
+    )
+    assert r.status.value == "success"
+    assert "[仅显示前 6 条]" in r.content
+    assert "共 9 条命中" in r.content
+    assert "limit=10" in r.content
+    # ≤6 条无标注
+    r2 = run_search_records(
+        ctx, lambda **kw: hits[:5], {"kind": "action_trace", "query": "x", "limit": 10}, lambda: ""
+    )
+    assert "[仅显示前 6 条]" not in r2.content
+
+
+def test_status_snapshot_truncation_note(tmp_path):
+    """M19 FIX-03 / EVO-20260826 安全网: 即使默认精简子集，单维度本身 >8000 → 仍截断标注（位于截断段后）.
+
+    _BigStatus 忽略 dimensions 参数（模拟某维度本身极大），默认视图仍触发截断安全网。
+    """
+    from llm_loop.introspection.tools_status import run_status
+
+    class _BigStatus:
+        def snapshot(self, dimensions=None):
+            return {"big": "x" * 9000}
+
+    r = run_status(CorrectionContext(), _BigStatus(), {"scope": "runtime"})
+    assert r.status.value == "success"
+    assert "[快照截断] 超出 8000 字符" in r.content
+    assert r.content.rfind("[快照截断]") > 8000  # 标注在截断段之后
+
+
+def test_status_default_returns_lean_subset_with_hint(tmp_path):
+    """EVO-20260826: architecture_status() 无 dimensions → 默认精简子集 + 分页提示，不触发截断."""
+    from llm_loop.introspection.tools_status import run_status
+
+    class _RespectingStatus:
+        """snapshot 遵重 dimensions 参数（真实 provider 行为）."""
+        _all = {
+            "current_phase": "idle", "action_trace": [], "tool_history": [],
+            "message_flow": [], "memory_state": {}, "context_usage": {"llm_rounds": 1},
+            "exception_log": [], "architecture_config": {"heavy": "H" * 6000},
+            "rules_version": "4", "workspace_changed": None, "process_versions": {},
+            "model_fallback": {}, "pending_actions": {}, "recovery": {}, "program_faults": {},
+        }
+        def snapshot(self, dimensions=None):
+            if dimensions is None:
+                return self._all
+            return {d: self._all.get(d, {}) for d in dimensions}
+
+    r = run_status(CorrectionContext(), _RespectingStatus(), {"scope": "runtime"})
+    assert r.status.value == "success"
+    assert "[快照截断]" not in r.content  # 精简子集小，不触发截断
+    data = json.loads(r.content)
+    assert "_default_view_hint" in data
+    assert "current_phase" in data  # 轻维度在子集中
+    assert "context_usage" in data
+    assert "architecture_config" not in data  # 重维度被排除
+    assert "H" * 6000 not in r.content  # 重维度 payload 不出现
+
+
+def test_architecture_status_propagates_pending_capability_requirements():
+    from llm_loop.introspection.tools_status import run_status
+
+    p = ArchitectureStatusProvider()
+    p.set_pending_actions_fn(lambda: {
+        "executing_evolutions": 1,
+        "pending_reviews": 0,
+        "pending_self_evals": 0,
+        "hint": "1 项演进执行中（可经 evolution_complete 登记）",
+        "capability_requirements": ("evolution_complete",),
+        "note": None,
+    })
+    r = run_status(CorrectionContext(), p, {})
+    assert r.status.value == "success"
+    assert r.capability_requirements == ("evolution_complete",)
+
+
+def test_self_evaluate_success_jit_declares_submit_evolution():
+    from types import SimpleNamespace
+
+    from llm_loop.introspection.tools_eval import run_self_evaluate
+
+    class _Evaluator:
+        def evaluate(self, **kwargs):
+            return SimpleNamespace(eval_id="SE-JIT", metrics=[])
+
+    ctx = SimpleNamespace(evaluator=_Evaluator(), session_id="s1")
+    r = _bound_call(
+        run_self_evaluate,
+        ctx,
+        lambda *a, **k: None,
+        {"trigger": "manual"},
+    )
+    assert r.status.value == "success"
+    assert "submit_evolution" in r.content
+    assert r.capability_requirements == ("submit_evolution",)
+
+
+def test_status_all_dims_in_sync():
+    """EVO-20260826 守护: tools_status._ALL_DIMS 与 ArchitectureStatusProvider.snapshot 全量键一致（防漂移）."""
+    from llm_loop.introspection.tools_status import _ALL_DIMS
+
+    p = ArchitectureStatusProvider()
+    actual = set(p.snapshot().keys())
+    assert set(_ALL_DIMS) == actual, (
+        f"_ALL_DIMS 与 snapshot 键漂移: 缺 {actual - set(_ALL_DIMS)}, 多 {set(_ALL_DIMS) - actual}"
+    )
+
+
+def test_submit_evolution_eval_id_hint(tmp_path):
+    """M19 FIX-05: 引用不存在 eval_id → 回执含提示引导 + 建议仍落盘."""
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.tools_evolution import run_submit_evolution
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store)
+    r = _bound_call(
+        run_submit_evolution,
+        ctx,
+        lambda *a, **k: None,
+        {"content": "优化超时", "impact_scope": "timeout_s", "evidence": "eval:SE-NOPE"},
+        audit_dir=str(tmp_path / "audit"),
+    )
+    assert r.status.value == "success"
+    assert "评估 ID 'SE-NOPE' 未在 self_eval_log 中找到" in r.content
+    assert "self_evaluate" in r.capability_requirements
+    assert store.list()[0]["eval_id"] == "SE-NOPE"  # 建议仍落盘（双向溯源不阻断）
+
+
+def test_architecture_status_desc_has_evolution_summary():
+    """M19 FR-UX-AI-02: architecture_status 描述含 evolution_summary 可达性引导."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    td = next(t for t in reg.tool_defs() if t["name"] == "architecture_status")
+    assert "evolution_summary" in td["description"]
+    assert "演进待办" in td["description"]
+
+
+def test_submit_evolution_scope_session_receipt(tmp_path):
+    """M49: scope=session → 回执标注 executing + 登记闭环指引，不进人工审阅."""
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.tools_evolution import run_submit_evolution
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store)
+    r = _bound_call(
+        run_submit_evolution,
+        ctx,
+        lambda *a, **k: None,
+        {"content": "本轮临时调参", "impact_scope": "运行参数", "scope": "session"},
+        audit_dir=str(tmp_path / "audit"),
+    )
+    assert r.status.value == "success"
+    assert "scope=session" in r.content
+    assert "状态=executing" in r.content
+    assert "evolution_complete" in r.content
+    assert "pending_review" not in r.content
+    assert r.capability_requirements == ("evolution_complete",)
+    assert store.list(status="pending_review") == []
+
+
+def test_submit_evolution_scope_boundary_override_receipt(tmp_path):
+    """M49: 涉边界指定 session → 强制 global，回执如实标注覆盖."""
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.tools_evolution import run_submit_evolution
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store)
+    r = _bound_call(
+        run_submit_evolution,
+        ctx,
+        lambda *a, **k: None,
+        {"content": "改安全边界", "impact_scope": "安全边界", "scope": "session"},
+        audit_dir=str(tmp_path / "audit"),
+    )
+    assert r.status.value == "success"
+    assert "scope=global" in r.content
+    assert "覆盖为 global" in r.content
+    assert store.list(status="pending_review")[0]["scope"] == "global"
+
+
+def test_submit_evolution_default_scope_global_receipt(tmp_path):
+    """M49: 不传 scope → 默认 global，回执保持原人工审阅语义（向后兼容）."""
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.tools_evolution import run_submit_evolution
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store)
+    r = _bound_call(
+        run_submit_evolution,
+        ctx,
+        lambda *a, **k: None,
+        {"content": "优化超时", "impact_scope": "timeout_s"},
+        audit_dir=str(tmp_path / "audit"),
+    )
+    assert r.status.value == "success"
+    assert "scope=global" in r.content
+    assert "evolve-review" in r.content
+    assert r.capability_requirements == ()
+
+
+# ── R2/A6: 程序故障计数（AI 可感知程序故障率）──
+
+
+def test_program_fault_counter_and_snapshot():
+    """record_program_fault 计数 + snapshot 可见（AI 可感知程序故障）."""
+    from llm_loop.introspection.status import ArchitectureStatusProvider
+
+    p = ArchitectureStatusProvider(config_status=lambda: {"llm_model": "fake"})
+    p.record_program_fault("memory")
+    p.record_program_fault("memory")
+    p.record_program_fault("llm_call")
+    snap = p.snapshot()
+    assert snap["program_faults"] == {"memory": 2, "llm_call": 1}
+    # 禁用时不计（enabled=False）
+    p.enabled = False
+    p.record_program_fault("session_persist")
+    assert p.snapshot()["program_faults"] == {"memory": 2, "llm_call": 1}
+
+
+def test_engine_ordinary_run_does_not_touch_memory_retrieval(tmp_path):
+    """retrieval-only: 普通 run 不得自动 memory.search，也不应伪造 memory fault."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def chat(self, messages, tools, **kw) -> LLMResponse:
+            return LLMResponse(content="回答", tool_calls=[], provider="fake")
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return LLMResponse(content="回答", tool_calls=[], provider="fake")
+
+            return _gen()
+
+    class _BrokenMemory:
+        def search(self, *a, **k):
+            raise RuntimeError("记忆故障")
+
+        def flush(self) -> None:
+            pass  # 循环末记忆统计落盘（故障隔离外）
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    from llm_loop.introspection.status import ArchitectureStatusProvider
+
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=ToolRegistry(),  # type: ignore[arg-type]
+        memory=_BrokenMemory(),  # type: ignore[arg-type]
+        session=SessionStore(tmp_path / "sessions"),
+        settings=settings,
+        status_provider=ArchitectureStatusProvider(config_status=lambda: {"llm_model": "fake"}),
+    )
+    result = engine.run_single("任务")
+    assert result.final_answer  # 记忆故障不阻断
+    assert engine.status is not None
+    faults = engine.status.snapshot()["program_faults"]
+    assert faults.get("memory", 0) == 0  # 未显式检索就不触碰 memory
+
+
+def test_record_searcher_global_archive_search_sees_new_segment_layout(tmp_path):
+    """无session过滤的全局archive检索必须经ArchiveStore枚举命中新分片。"""
+    from llm_loop.introspection.search import RecordSearcher
+    from llm_loop.memory.archive import ArchiveStore
+
+    archive = ArchiveStore(tmp_path / "archives", segment_bytes=1)
+    archive.archive("s1", role="user", source="user", content="filler")
+    archive.archive("s1", role="user", source="user", content="new-layout-NEEDLE")
+    assert (tmp_path / "archives" / "s1.segments" / "1.jsonl").exists()
+
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", archive_store=archive)
+    hits = searcher.search(kind="archive", query="NEEDLE", limit=10)
+
+    assert len(hits) == 1
+    assert "NEEDLE" in hits[0]["content_preview"]
+
+
+# ---------- record_skill: Applicability 适用边界 + auto_submit 前置门（EVO-20260919-7e8e4b20） ----------
+
+_RS_LOG = [
+    {"action": "click", "target": "#submit", "args": {}},
+    {"action": "click", "target": "#confirm", "args": {}},
+    {"action": "fill", "target": "#name", "args": {"name": "alice"}},
+]  # click×2（进 common_actions）；fill×1（不进 common_actions，但必须在覆盖全集内）
+
+
+def test_record_skill_applicability_covers_full_action_set(tmp_path):
+    """Applicability 段覆盖动作取全集：仅出现 1 次的 fill 也必须出现在边界声明里."""
+    ctx = CorrectionContext()
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "demo_flow", "action_log": _RS_LOG},
+    )
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "## Applicability 适用边界" in r.content
+    covered_line = next(ln for ln in r.content.splitlines() if "覆盖动作（全集）" in ln)
+    assert "`fill`×1" in covered_line  # 全集而非 common_actions 子集
+    assert "`click`×2" in covered_line
+    assert "越界判定" in r.content
+
+
+def test_record_skill_auto_submit_gate_blocks_todo(tmp_path):
+    """auto_submit=true 且草案含未解决 TODO 时必须被前置门拦截，且不落盘."""
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, session_id="s-rs")
+    reg = CorrectionToolRegistry(ctx)
+    log_with_todo = _RS_LOG + [
+        {"action": "fill", "target": "#memo", "args": {"memo": "TODO: 待补内容"}}
+    ]
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "todo_flow", "action_log": log_with_todo, "auto_submit": True},
+    )
+    assert r.status == ToolResultStatus.FAILURE
+    assert "前置门" in r.content
+    assert store.list() == []  # 门禁生效：未提交任何建议
+
+
+def test_record_skill_auto_submit_success(tmp_path):
+    """auto_submit=true 通过前置门后经 submit_evolution 落盘，草案含 Applicability 段."""
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, session_id="s-rs")
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "demo_flow", "action_log": _RS_LOG, "auto_submit": True},
+    )
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "已自动提交" in r.content
+    rows = store.list()
+    assert len(rows) == 1
+    assert "## Applicability 适用边界" in rows[0]["content"]
+    assert rows[0]["impact_scope"] == "skills/demo_flow"
+
+
+def test_record_skill_auto_submit_without_store_fails_openly(tmp_path):
+    """evolution_store 未装配时 auto_submit 如实失败并给出人工提交路径，不静默."""
+    ctx = CorrectionContext(session_id="s-rs")
+    reg = CorrectionToolRegistry(ctx)
+    r = _bound_call(
+        reg.execute,
+        "record_skill",
+        {"skill_name": "demo_flow", "action_log": _RS_LOG, "auto_submit": True},
+    )
+    assert r.status == ToolResultStatus.FAILURE
+    assert "[auto_submit 提交失败]" in r.content
+    assert "auto_submit=false" in r.content

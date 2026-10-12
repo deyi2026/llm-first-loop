@@ -1,0 +1,66 @@
+{
+  "audit_commit": "1de84408828ea77524d465cf87815a71940ed724",
+  "concurrent_asset_cleanup": {
+    "deliverables_file_count": 5,
+    "deliverables_files_modified_or_deleted": false,
+    "deliverables_ignore_commit": "1722e33e247c915b3dcc121ae63315ffb86a1ac5",
+    "deliverables_snapshot_sha256": "e732627d0e290fc2c04eab7d0d5c069a7b1d6bdcb47ce5da4c90bfd81e5d914e",
+    "focused_method_learning_tests": "91/91 PASS",
+    "method_commit": "a9f4bc1e9faf463b22a33fab4a771802a8af0c3c",
+    "new_candidate_methods": 4
+  },
+  "date": "2026-09-29",
+  "execution": {
+    "batchA_deleted": 31,
+    "batchB_deleted": 5,
+    "branch_count_after": 70,
+    "branch_count_before": 106,
+    "delete_modes": {
+      "-D-after-d-refusal": 35,
+      "-d": 1
+    },
+    "deleted_total": 36,
+    "production_restarted": false,
+    "remote_refs_modified": false
+  },
+  "final_pre_receipt_commit_acceptance": {
+    "bundle_verify": "PASS",
+    "deleted_candidate_refs_absent": "36/36",
+    "production_verify": {
+      "generation": 161,
+      "ok": true
+    },
+    "remote_refs_sha256_unchanged": true,
+    "retained_heads_exact": "70/70",
+    "root_clean": true,
+    "worktree_count": 2
+  },
+  "main_head_before_execution_receipt_commit": "1722e33e247c915b3dcc121ae63315ffb86a1ac5",
+  "predelete_proof": {
+    "batchA_ancestry_witnesses": "31/31 PASS",
+    "batchB_duplicate_proofs": "5/5 PASS",
+    "candidate_refs_exact": 36,
+    "remote_refs_sha256": "fc8dc145f2556cf52392382f50dd3cc436427e54d9e1b2dcaa8a72346e4587a5",
+    "root_clean": true,
+    "worktree_count": 2
+  },
+  "private_backup": {
+    "bundle": "phase17-delete-candidates.bundle",
+    "bundle_bytes": 14667327,
+    "bundle_head_count": 36,
+    "bundle_sha256": "2d00df7ae5ea11682fa434b947f894721a6fa77271c1f82c35522a47082caa2e",
+    "bundle_verify": "PASS complete history",
+    "manifest_sha256": "4a0b850d6d2fd08c421f5f9876d41fff2177000e6b063c8831b329b9bed637b1",
+    "path": "data/private-archive/branch-governance/phase17/ref-backup-20260929"
+  },
+  "protected_refs": {
+    "archive": "80f7ff79b51252da162634bbcf391a6a0e3e2017",
+    "production": "67ce123c5fa8430ab833610857fbf276d55e589d"
+  },
+  "result": "PASS",
+  "schema": "lfl.branch_governance.phase17_execution_receipt.v1",
+  "source_evidence": {
+    "audit_json_sha256": "da7b1152080956bc82de5dda5c15d4691ffb426e9d079a07239f87d7268eeba0",
+    "plan_md_sha256": "eb5b9d9b620f7dbcfa47f87ca305bf80cc2a7c6a14a9fe1bb6af3ddd1dc37b1b"
+  }
+}

@@ -1,0 +1,20 @@
+{
+ "all_attempt0": true,
+ "all_latest_mechanically_healthy": true,
+ "files": {
+  "FREEZE.json": "635f81d1bc911219a3a65cb0dbb6600fd6c8f7693bff118cd6ee540504f3f90b",
+  "PREFLIGHT.json": "abb660b882181449832daa18282352baec9862245f68c98b17e4f677d4200c2e",
+  "RESULT.json": "8a75bd18630d0ac2211cd5402f565ae0041f2cca8ab9b02a160635ea39af2218",
+  "SPEC.md": "7ab7859459d4d577c50d2226b8492d379edb7bdd751015a26e1a469fda0cff9d",
+  "SURFACE-PROBE.json": "db596b1978dc0c06c5ec42900a035c77c6d4d65d563184ab6656220dfb525bff",
+  "SYNTHESIS.md": "89b21a41a7cecbb2f39a1c9f1b58cceeed36ccf37f6994e3bf77d742fe2bf36c",
+  "analyze.py": "804aa43dd5e9d8ac961d32fab0519b7fad53f54da51cc05964c094aaf6c0c9fb",
+  "matrix.jsonl": "71bec18a5d459040a0bf305c00a9789633792ac53483d2f66526792b112d442c",
+  "plan.json": "cde98bfcac967eeea80be7610e6abd351404c8e08aa6088860aff425fa7d8468"
+ },
+ "formal_cells_terminal": 92,
+ "production_promotion_authorized": false,
+ "provider_rows_after_analysis": 0,
+ "schema": "subject-binding-v3-confirmatory-result-freeze/v1",
+ "verdict": "EFFICACY_NOT_QUALIFIED"
+}

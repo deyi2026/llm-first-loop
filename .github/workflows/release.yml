@@ -1,0 +1,58 @@
+# GitHub Release 唯一写入口（B11 发布节奏制度化）
+# tag v* 推送时: ① 先跑门禁（pytest/ruff/pyright）确认发版基线 ② 生成与该 tag 同名的 Release 草稿，人工确认后发布。
+# 重要：仓库不得再启用第二个 Draft Release writer。Release Drafter 曾在多个 draft 并存时选中 v0.6.12 后按 NEXT_PATCH_VERSION 将其改写为 v0.6.10；
+# 因此 tag-based release.yml 是 Release 对象的 single writer，发布说明由 GitHub generate_release_notes + CHANGELOG 提供。
+# remote 命名陷阱（2026-09-12 收口记录）：本镜像工作区里 `origin` = llm-first-loop-legacy（旧仓库），正式仓库是 `lfl`（github.com/deyi2026/llm-first-loop）。
+# 发版推送一律显式 `git push lfl <tag>` / `git push lfl HEAD:main`，禁止依赖 origin 默认语义；tag 即 SHA 事实，打 tag 前先 `git rev-parse` 双确认目标提交。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    name: 发版门禁复核（零回归纪律）
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the gate suite includes pinned-commit contract tests
+      # (peer scorecard, e.g. 832b4dfaa) that need ancestor commit objects
+      # absent from a depth-1 checkout — same runner-proof discipline as the
+      # ci.yml gate job. v0.6.14 tag push failed on exactly this gap.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+      - name: 安装依赖（uv.lock 冻结环境，与本地 ci_gate 同一面）
+        run: uv sync --frozen --extra dev
+      - name: tag 与包版本一致性
+        run: |
+          PACKAGE_VERSION="$(uv run --no-sync python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "v${PACKAGE_VERSION}" = "${GITHUB_REF_NAME}"
+      - name: ruff
+        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool ruff
+      - name: pyright
+        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool pyright
+      - name: pytest（非真实 LLM）
+        run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm"
+
+  release:
+    name: 生成 Release 草稿
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 生成 Release（草稿, 人工确认发布）
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}

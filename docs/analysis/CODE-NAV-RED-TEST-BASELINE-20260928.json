@@ -1,0 +1,37 @@
+{
+  "base_head": "889634f21c5f50b3859a9217949b9c24d437185a",
+  "branch": "fix/code-nav-hardening-20260928",
+  "expected_failures": [
+    "test_unknown_server_request_returns_method_not_found",
+    "test_close_uses_graceful_shutdown_then_exit",
+    "test_readiness_failure_is_fail_closed",
+    "test_symbol_ambiguity_fails_before_lsp",
+    "test_ref_paths_are_repo_root_relative_not_cwd_relative",
+    "test_cross_check_uses_git_visible_python_universe",
+    "test_callees_separate_site_and_target_paths_and_keep_all_ranges",
+    "test_managed_worktree_finds_pyright_from_git_common_root"
+  ],
+  "implementation_modified": false,
+  "passing": [
+    "test_protocol_sends_initialized_and_answers_progress_request"
+  ],
+  "production_modified": false,
+  "pytest": "1 passed, 8 failed",
+  "schema": "lfl.code_nav.red_test_baseline.v1",
+  "static_quality": {
+    "git_diff_check": "PASS",
+    "py_compile": "PASS",
+    "ruff_check": "PASS",
+    "ruff_format_check": "PASS"
+  },
+  "test_artifacts": {
+    "tests/fixtures/code_nav_fake_lsp.py": {
+      "bytes": 3870,
+      "sha256": "6b30c19b1910af5654246c3e5c49666899d18b78c18ccdc4d9238595dc87f776"
+    },
+    "tests/unit/test_code_nav_hardening_red.py": {
+      "bytes": 10607,
+      "sha256": "0a898830c36de03ef914a5211e75f970c48d12fa102ed4dbb26a8d9e5f343fee"
+    }
+  }
+}

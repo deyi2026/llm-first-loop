@@ -1,0 +1,273 @@
+"""架构自省工具与 AI 自主修正工具薄壳聚合（T2，design §2.1.4.4）.
+
+工具 schema 与执行逻辑拆分至 10 个 registry_*.py 模块; 本壳保留
+CorrectionContext + 注入通道 + 审计落盘 + 聚合分派。工具总数不削减，零回归。
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from llm_loop.core.message import ToolResult, ToolResultStatus
+
+# T2: 工具注册拆分聚合（10 个 registry 模块，顺序即 tool_defs/execute 遍历序）
+from llm_loop.introspection import (
+    registry_correction,
+    registry_eval,
+    registry_evolution,
+    registry_experience,
+    registry_feishu,
+    registry_goal,
+    registry_introspection,
+    registry_model,
+    registry_playwright,
+    registry_recovery,
+    registry_skills,
+    registry_task,
+)
+from llm_loop.introspection.status import ArchitectureStatusProvider
+from llm_loop.timekeeping import system_local_now
+
+_REGISTRIES = (
+    registry_introspection,
+    registry_correction,
+    registry_experience,
+    registry_evolution,
+    registry_goal,
+    registry_eval,
+    registry_feishu,
+    registry_skills,
+    registry_task,
+    registry_model,
+    registry_recovery,
+    registry_playwright,
+)
+
+
+def _now() -> str:
+    return system_local_now().isoformat()
+
+
+@dataclass
+class CorrectionContext:
+    """修正工具可作用的运行时状态（由主程序装配注入）."""
+
+    # adjust_strategy 白名单（FR-SAFE-01 排除安全边界; M57-M59 含 memory_top_k 等）
+    strategy_whitelist: dict[str, dict] = field(
+        default_factory=lambda: {
+            "max_iterations": {"type": "integer", "min": 5, "max": 500},
+            "timeout_s": {"type": "number", "min": 5, "max": 600},
+            "history_budget": {"type": "integer", "min": 1000, "max": 200000},  # EVO-20260818: 收敛上限 1M→200K（spec §5.1.1-2，与 runtime_params 白名单一致）
+            "memory_top_k": {"type": "integer", "min": 1, "max": 50},
+            "extract_interval_msgs": {"type": "integer", "min": 5, "max": 200},
+            "retrieve_semantic_top_k": {"type": "integer", "min": 1, "max": 100},
+            # task_quality 六路径开关（D3 定案：动态参数，布尔 0/1）
+            "precheck_enabled": {"type": "integer", "min": 0, "max": 1},
+            "fix_loop_enabled": {"type": "integer", "min": 0, "max": 1},
+            # EVO-20260923-5342bf75: 主循环推理档位（字符串枚举；None/未调整=run 启动档）
+            "reasoning_effort": {"type": "string", "enum": ["low", "medium", "high", "max"]},
+        }
+    )
+    strategy: dict = field(default_factory=dict)  # 运行时策略（adjust_strategy 修改，循环消费）
+    retry_executor: Callable[[str, dict], ToolResult] | None = None
+    refresh_executor: Callable[[], str] | None = None
+    session_id: str = ""  # 当前会话（search_archive/search_records 过滤）
+    runtime: Any | None = None  # M12 T50
+    evolution_store: Any | None = None  # M12 T52: EvolutionStore
+    evolve_local_exec: int = 0  # 0=仅建议/1=白名单/2=全面执行
+    evolve_exec_whitelist: str = ""  # 执行白名单（逗号分隔，级别 1 时生效）
+    evaluator: Any | None = None  # M12 T64: SelfEvaluator
+    # M48/P6: 模型池 + exact per-session binding resolver。
+    # 会话 getter/setter 不再作为共享 CorrectionContext 字段保存；模型侧与
+    # CLI/飞书 control-plane 均必须持有本次明确 Session 的局部 binding。
+    model_pool: Any | None = None
+    # P0-5/P2: 每会话绑定解析器（contextvar 定位本会话 sess 的 override
+    # getter/setter；并发 run 不互踩）。模型侧 registry 缺 binding 时必须 fail closed。
+    session_binding_resolver: Callable[[str], Any] | None = None
+    # Learning Plane P0: 当前真实 human turn 的机械 Episode identity 解析器。
+    # 仅由活跃 Engine run 装配；不得回退 latest historical episode，也不接受模型自报 ref。
+    current_episode_ref_resolver: Callable[[str], str] | None = None
+    summarizer: Any | None = None  # R2: search_archive(with_summary=true) LLM 摘要
+    task_evidence_verifier: Any | None = None  # P1: Task Evidence 机械真实性校验器
+
+
+class CorrectionToolRegistry:
+    """修正工具薄壳聚合（T2）: tool_defs/execute 委托 10 个 registry 模块，零回归。"""
+
+    def __init__(
+        self,
+        ctx: CorrectionContext,
+        *,
+        audit_dir: str | Path | None = None,
+        status_provider: ArchitectureStatusProvider | None = None,
+        archive_store: Any | None = None,
+    ) -> None:
+        self.ctx = ctx
+        self._audit_dir = Path(audit_dir) if audit_dir else None
+        self._status = status_provider
+        self._archive = archive_store
+        self._search_records_fn: Callable[..., list[dict]] | None = None
+        self._search_docs_fn: Callable[..., list[dict]] | None = None
+        self._experience_store: Any | None = None
+        self._method_store: Any | None = None
+        self._recovery_channel: Any | None = None
+        self._recovery_sessions_dir: str | Path | None = None
+        self._recovery_sessions_dir_fn: Callable[[], str | Path | None] | None = None
+        self._recovery_session_store: Any | None = None
+        self._recovery_memory_dir: str | Path | None = None
+        self._skills_dir: str | None = None  # B3: 插件化 Skill 目录（None=未注入零回归）
+        self._skill_execution_facts: dict[str, str] = {}
+        self._extensions_catalog: Any | None = None  # P1-A: 扩展目录（标准包 catalog）
+
+    def build_knowledge_advisor(self, mode: str) -> Any | None:
+        """Re-use the installed authoritative search adapter, without a new store.
+
+        Called only by the opt-in run projection; off never reads an index.
+        """
+        if mode == "off" or self._search_records_fn is None:
+            return None
+        from llm_loop.introspection.knowledge_advisor import KnowledgeAdvisor
+
+        return KnowledgeAdvisor(self._search_records_fn, mode=mode)
+
+    # ── 暴露私有属性为公开名供 registry 模块访问（RegistryHost 协议）──
+    _PUBLIC_MAP = {
+        "audit_dir": "_audit_dir",
+        "status_provider": "_status",
+        "archive_store": "_archive",
+        "search_records_fn": "_search_records_fn",
+        "search_docs_fn": "_search_docs_fn",
+        "experience_store": "_experience_store",
+        "method_store": "_method_store",
+        "recovery_channel": "_recovery_channel",
+        "recovery_session_store": "_recovery_session_store",
+        "recovery_memory_dir": "_recovery_memory_dir",
+        "skills_dir": "_skills_dir",  # B3: 插件化 Skill 目录
+        "skill_execution_facts": "_skill_execution_facts",
+        "extensions_catalog": "_extensions_catalog",  # P1-A: 扩展目录（标准包）
+    }
+
+    @property
+    def recovery_sessions_dir(self) -> str | Path | None:
+        """会话恢复正式根；正常装配时动态跟随当前SessionStore workspace分区。"""
+        if self._recovery_sessions_dir_fn is not None:
+            return self._recovery_sessions_dir_fn()
+        return self._recovery_sessions_dir
+
+    def __getattr__(self, name: str) -> Any:
+        priv = type(self)._PUBLIC_MAP.get(name)
+        if priv is not None:
+            return getattr(self, priv)
+        raise AttributeError(name)
+
+    def tool_defs(self) -> list[dict]:
+        """Return a stable schema order with read-only task state discoverable first.
+
+        Registration order is part of the model-facing affordance when many tools share
+        one provider request.  Keep the full surface and every other relative order
+        unchanged; only move the two read-only durable task-state queries ahead of the
+        generic architecture/history introspection group.  This is static and
+        user-text-independent, so it cannot become a hidden task router.
+        """
+        defs: list[dict] = []
+        for reg in _REGISTRIES:
+            defs.extend(reg.tool_defs())
+        preferred = ("get_goal", "task_frontier")
+        by_name = {str(row.get("name") or ""): row for row in defs}
+        head = [by_name[name] for name in preferred if name in by_name]
+        return head + [row for row in defs if str(row.get("name") or "") not in preferred]
+
+    # ── 执行分派聚合（边界校验 → 执行 → 审计 → 如实回传）──
+    def execute(self, name: str, arguments: dict) -> ToolResult:
+        for reg in _REGISTRIES:
+            result = reg.execute(name, arguments, self)
+            if result is not None:
+                return result
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[修正工具不存在] 未注册的修正工具 '{name}'",
+            tool_call_id="",
+            tool_name=name,
+        )
+
+    # ── 辅助方法（供 registry 模块经 RegistryHost 调用）──
+    def current_session_id(self) -> str:
+        from llm_loop.introspection.tools_status import current_session_id
+
+        return current_session_id(self.ctx)
+
+    def current_episode_ref(self) -> str:
+        """Return the runtime-derived Episode ref for the active human turn only.
+
+        The resolver is deliberately separate from ``session_binding_resolver``:
+        model override binding and provenance identity are different mechanical
+        capabilities.  Missing/out-of-run provenance returns an empty string;
+        callers that require provenance must fail rather than invent an id.
+        """
+        resolver = self.ctx.current_episode_ref_resolver
+        if resolver is None:
+            return ""
+        session_id = self.current_session_id()
+        if not session_id:
+            return ""
+        try:
+            ref = str(resolver(session_id) or "")
+        except Exception:  # noqa: BLE001 - caller decides whether provenance is mandatory
+            return ""
+        return ref if ref.startswith("episode:") else ""
+
+    def current_params(self) -> dict:
+        from llm_loop.introspection.tools_status import current_params
+
+        return current_params(self.ctx)
+
+    # ── 审计落盘（AI 可溯源，design.md §2.3.2）──
+    def _audit(self, tool_name: str, arguments: dict, result_status: str) -> None:
+        if self._audit_dir is None:
+            return
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            record = {
+                "id": f"COR-{system_local_now().strftime('%Y%m%d')}",
+                "ts": _now(),
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "result_status": result_status,
+            }
+            with (self._audit_dir / "self_correction_log.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # fail-open
+
+    # 公开别名供 registry 模块经 RegistryHost.audit 调用
+    audit = _audit
+
+    def audit_fallback_event(
+        self,
+        *,
+        from_model: str,
+        to_model: str,
+        reason: str,
+        result_status: str,
+        detail: str = "",
+    ) -> None:
+        """M49: 模型降级事件审计落盘（tool_name=model_fallback，落 self_correction_log.jsonl）."""
+        if self._audit_dir is None:
+            return
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            record = {
+                "id": f"COR-{system_local_now().strftime('%Y%m%d')}",
+                "ts": _now(),
+                "tool_name": "model_fallback",
+                "arguments": {"from": from_model, "to": to_model, "reason": reason, "detail": detail},
+                "result_status": result_status,
+            }
+            with (self._audit_dir / "self_correction_log.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # fail-open

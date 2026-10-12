@@ -1,0 +1,29 @@
+{
+  "schema": "experience-semantic-qualification/v1",
+  "date": "2026-09-26",
+  "contract": {
+    "canonical_source": "active, typed, supersede-filtered experiences/*.md",
+    "semantic_role": "optional relevance signal; lexical remains primary and task applicability remains model-owned",
+    "noise_rule": "semantic ON must not add below-threshold cards to lexical noise results",
+    "resource_rule": "hot foreground discovery may embed the query only; corpus vectorization is startup/background work"
+  },
+  "tool_tasks": [
+    {"id":"E1","kind":"experience","class":"positive","query":"想上线新的提交，单纯 service_control 重启为什么还是旧代码","target":"EXPERIENCE-20260917-mirror-service-control-restart-qualified-worktree"},
+    {"id":"E2","kind":"experience","class":"positive","query":"同一份代码只想重启服务，受理之后怎么确认真正完成","target":"EXPERIENCE-20260917-mirror-service-control"},
+    {"id":"E3","kind":"experience","class":"positive","query":"换 embedding 模型前为什么裸向量对比不够","target":"EXPERIENCE-20260916-embedding-provider-2-bug"},
+    {"id":"E4","kind":"experience","class":"ordering_gain","query":"readonly 工具都卡住但 execute_command 正常，怎么判断是线程池阻塞还是服务挂了","target":"EXPERIENCE-20260922-readonly-vs-vs-hang"},
+    {"id":"E5","kind":"experience","class":"positive","query":"模型名字没命中 server 别名为什么会导致第二份模型加载和 swap","target":"EXPERIENCE-20260911-mlx-lm-huggingface-hf-hub-offline-1"},
+    {"id":"L1","kind":"lesson","class":"typed_positive","query":"我能不能直接用 service_control CLI 的 restart 子命令","target":"EXPERIENCE-20260919-service-control-cli-restart"},
+    {"id":"L2","kind":"lesson","class":"typed_positive","query":"冻结 worktree 做真实模型评测为什么会立刻报缺 LLM_API_KEY","target":"EXPERIENCE-20260912-worktree-env"},
+    {"id":"C1","kind":"experience","class":"lexical_control","query":"glm provider 缓存 TTL 300s","target":"EXPERIENCE-20260918-glm-provider-ttl-300s"},
+    {"id":"N1","kind":"experience","class":"noise","query":"供应商 SLA 赔偿退款条款","target":null},
+    {"id":"N2","kind":"lesson","class":"noise","query":"东京明天天气适合带伞吗","target":null}
+  ],
+  "model_tasks": [
+    {"id":"M1","kind":"experience","class":"ordering_gain","query":"readonly 工具都卡住但 execute_command 正常，怎么判断是线程池阻塞还是服务挂了","target":"experience:EXPERIENCE-20260922-readonly-vs-vs-hang"},
+    {"id":"M2","kind":"experience","class":"positive","query":"换 embedding 模型前为什么裸向量对比不够","target":"experience:EXPERIENCE-20260916-embedding-provider-2-bug"},
+    {"id":"M3","kind":"lesson","class":"typed_positive","query":"我能不能直接用 service_control CLI 的 restart 子命令","target":"experience:EXPERIENCE-20260919-service-control-cli-restart"},
+    {"id":"M4","kind":"experience","class":"lexical_control","query":"glm provider 缓存 TTL 300s","target":"experience:EXPERIENCE-20260918-glm-provider-ttl-300s"},
+    {"id":"M5","kind":"experience","class":"noise","query":"供应商 SLA 赔偿退款条款","target":"NONE"}
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "schema": "smc.semantic_logic_p4d_result.v0.1",
+  "status": "PASS",
+  "date": "2026-09-17",
+  "phase": "P4-D deterministic compiler equivalence",
+  "scope": "isolated qualification harness only",
+  "protocol": {
+    "commit": "ff735cfac4c905e4c0de0bd7ce933b311eecea41",
+    "path": "docs/SMC-SEMANTIC-LOGIC-P4-AB-PROTOCOL-v0.1.json",
+    "sha256": "d39a34053c9762ae6760e6bc65a43375ac6f4023966621963918890af78ab9f6"
+  },
+  "implementation": {
+    "commit": "aed762f2c9596c9f07251e67783119bb076d80b5",
+    "parent": "ff735cfac4c905e4c0de0bd7ce933b311eecea41",
+    "changed_paths": [
+      "tests/unit/test_smc_semantic_logic_p4d.py",
+      "tools/semantic_logic/p4d_typed_compiler.py"
+    ],
+    "path_count": 2,
+    "insertions": 407,
+    "helper_sha256": "682829616f3d511518b2719753c4372972092c28c99fc61b26e15c93fb57fed5",
+    "test_sha256": "39c7ea518aaa735cad7e2b6730fe6aa828c89d7a72f5b7840e256c6e29355a48"
+  },
+  "red_green": {
+    "pre_red_test_design_correction": "pytest reserved parameter name request was renamed to payload before accepting the RED evidence",
+    "proper_red": "protocol-freeze assertion passed and all implementation-dependent tests failed only because tools/semantic_logic/p4d_typed_compiler.py did not exist",
+    "green": "19/19 focused P4-D tests PASS without changing production Browser code or the frozen P4 protocol"
+  },
+  "compiler_contract": {
+    "location": "tools/semantic_logic/p4d_typed_compiler.py",
+    "production_registered": false,
+    "factory_wired": false,
+    "delegates_to_existing_arm_a_compile_request": true,
+    "typed_tools": [
+      "browser_semantic_click",
+      "browser_semantic_fill",
+      "browser_semantic_select",
+      "browser_semantic_scroll",
+      "browser_semantic_navigate"
+    ],
+    "dispatch_capability": false,
+    "automatic_snapshot": false,
+    "automatic_target_choice": false,
+    "fuzzy_matching": false,
+    "automatic_rebind": false,
+    "automatic_retry": false,
+    "completion_inference": false
+  },
+  "deterministic_gate": {
+    "focused": "19/19 PASS",
+    "adjacent": "64/64 PASS",
+    "browser_p1_p2_p3_plus_p4d": "394/394 PASS",
+    "positive_compile_parity": "5/5 typed operations exactly equal Arm A canonical SemanticAction output",
+    "wrong_kind_ref_rejection": "PASS",
+    "cross_session_ref_rejection": "PASS",
+    "malformed_ref_rejection": "PASS",
+    "expired_ref_rejection_without_refresh_or_rebind": "PASS",
+    "compile_rejection_dispatch_count": 0,
+    "deterministic_action_id": "PASS"
+  },
+  "environment": {
+    "eye_lock_sha256": "83d2ee38f112bea8929751a5a2c31dede5aec07312eb696ce660537d288c71be",
+    "fresh_worktree_initial_condition": "gitignored pinned EYE node_modules absent",
+    "recovery": "copied the byte-compatible already-qualified P3 validator node_modules after verifying identical lockfile SHA; no tracked file changed",
+    "backend_missing_was_not_counted_as_semantic_failure": true
+  },
+  "static_and_repo_gates": {
+    "ruff": "PASS",
+    "py_compile": "PASS",
+    "helper_test_pyright": "0 errors / 0 warnings",
+    "src_pyright": "0 errors / 0 warnings",
+    "production_typed_consumer": 0,
+    "whole_tree_security": "2000 files PASS",
+    "ci_gate": "PASS",
+    "ci_gate_env_pin": "605 test files / 0 undeclared COMPACT_RATIO dependents",
+    "ci_gate_xdist": "all green"
+  },
+  "non_effects": [
+    "no model calls",
+    "no Browser physical mutation",
+    "no production typed compiler consumer",
+    "no Factory or production registry wiring",
+    "no Runtime or Adapter authority change",
+    "no push or merge",
+    "no deployment",
+    "no Web, Feishu, or 8901 restart",
+    "no model start or switch"
+  ],
+  "ruling": "P4-D deterministic typed compiler parity is qualified. This result does not qualify P4-FCR, P4-LIVE, production authority, or the overall P4 A/B hypothesis.",
+  "next_boundary": "P4-FCR declaration-only 40-row A/B remains NOT_STARTED and requires a separate phase decision before any model call.",
+  "post_result_validation_policy": "The result-doc commit is requalified after commit; that external committed-state evidence is not written back into this JSON to avoid recursive result commits."
+}

@@ -1,0 +1,102 @@
+{
+  "Q01": [
+    "飞书 桥 feishu bridge 密钥 加载 优先级 环境 变量 配置",
+    "feishu_bridge app_id app_secret 密钥 加载 顺序 配置 优先级 loader"
+  ],
+  "Q02": [
+    "飞书 消息 收发 发送 应用 凭证 app credential tenant token",
+    "feishu app_id app_secret tenant_access_token 凭证 消息 发送"
+  ],
+  "Q03": [
+    "环境 变量 配置 修改 不生效 未 加载 重启 生效",
+    "env 环境变量 .env 修改 不生效 配置 加载 热更新 restart"
+  ],
+  "Q04": [
+    "模型 调用 出错 失败 最终 回答 前缀 标记 生成者 来源",
+    "模型 报错 回答 前缀 prefix error marker 生成 final answer fallback"
+  ],
+  "Q05": [
+    "系统 变慢 性能 下降 反复 压缩 上下文 历史 关系",
+    "压缩 compress 上下文 context 历史 反复 压缩 性能 变慢 原因"
+  ],
+  "Q06": [
+    "工具 调用 性能 优化 指标 延迟 耗时 响应 时间",
+    "tool call latency 耗时 指标 P95 延迟 性能 优化 目标"
+  ],
+  "Q07": [
+    "旧 工具 结果 裁剪 规则 历史 observation 截断 保留 策略",
+    "工具 结果 裁剪 truncate observation 历史 滚动 规则 保留"
+  ],
+  "Q08": [
+    "自我 评估 维度 历史 一直 不达标 低分 指标",
+    "self_evaluate 维度 成功率 诚实性 停滞 异常 历史 低分 不达标"
+  ],
+  "Q09": [
+    "机器 硬件 配置 CPU 内存 磁盘 规格 型号 信息",
+    "hardware cpu cores memory disk 机器 配置 规格 容量"
+  ],
+  "Q10": [
+    "用户 审 代码 习惯 风格 code review 偏好 要求",
+    "code review 用户 偏好 风格 审查 习惯 注释 简洁"
+  ],
+  "Q11": [
+    "证据 可恢复性 验证 是否 测试 结果 备份 恢复",
+    "evidence recovery 可恢复 验证 backup 恢复 测试 结果"
+  ],
+  "Q12": [
+    "成本 计算 缓存 命中 数据 来源 以 哪个 为准 cache hit",
+    "cost 缓存命中 cache hit token 用量 计费 数据 来源"
+  ],
+  "Q13": [
+    "公开 仓库 提交 代码 作者 信息 填写 git commit author",
+    "git author email 用户名 提交 公开 仓库 邮箱 填写"
+  ],
+  "Q14": [
+    "现在 允许 执行 shell 命令 吗 历史 限制 安全 白名单",
+    "execute_command shell 命令 白名单 限制 危险 禁止 授权"
+  ],
+  "Q15": [
+    "声称 完成 任务 未 实际 执行 虚假 声明 后果 处理",
+    "虚假 完成 声明 未执行 declaration 检查 惩罚 谎报 任务"
+  ],
+  "Q16": [
+    "旧 web 会话 归档 到 哪个 目录 位置 archive",
+    "web 会话 归档 目录 archive sessions 路径 存放 位置"
+  ],
+  "Q17": [
+    "同步 远端 主线 merge rebase 选择 策略 git 拉取",
+    "git pull merge rebase 主线 同步 远端 冲突 策略"
+  ],
+  "Q18": [
+    "错误 恢复 消息 剥离 重发 最多 几次 限制 次数",
+    "错误恢复 消息 剥离 重发 retry 次数 上限 拆分 重试"
+  ],
+  "Q19": [
+    "会话 前缀 缓存 一直 不命中 miss 原因 prompt cache",
+    "prefix cache 不命中 前缀 变化 prompt 缓存 命中率 原因"
+  ],
+  "Q20": [
+    "父 子 代理 互发 消息 实测 验证 测试 结果",
+    "agent_message parent child 父 子 代理 消息 实测 验证"
+  ],
+  "Q21": [
+    "模型 接口 报 500 可能 原因 服务端 错误 排查",
+    "500 internal server error 模型 api 接口 报错 原因"
+  ],
+  "Q22": [
+    "已知 测试 失败 项 记录 在 哪个 文件 清单 known failures",
+    "known_failures 测试 失败 记录 文件 flaky tests 清单 路径"
+  ],
+  "Q23": [
+    "查询 架构 状态 工具 有 个 参数 不能 传 禁止",
+    "architecture_status 参数 禁止 不能 传 dimensions scope 工具 限制"
+  ],
+  "Q24": [
+    "编辑 文件 工具 已知 缺陷 问题 bug 限制",
+    "edit_file 缺陷 bug 已知 问题 替换 失败 限制"
+  ],
+  "Q25": [
+    "分享 按钮 实际 做了 什么 功能 行为 实现 作用",
+    "share button 分享 按钮 实现 点击 行为 webui 功能"
+  ]
+}

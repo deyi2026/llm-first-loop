@@ -1,0 +1,120 @@
+{
+  "applied": false,
+  "mode": "shadow",
+  "models": [
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "cognilocal/qwen3.8-27b-cog",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "deepseek/deepseek-v4-flash",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "deepseek/deepseek-v4-pro",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "glm/glm-5.3",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "glm/glm-5.3-flash",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "strong",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "local/qwen/qwen3.8-27b",
+      "reason": "strong_reasoning_capability",
+      "reasoning": true,
+      "reasoning_explicit": true,
+      "recommended_injection_profile": "full"
+    },
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "local/qwen3.8-27b-mlx",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "local/qwythos-9b-claude-mythos-5-1m@q4_k_m",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "weak",
+      "capability_tier_explicit": true,
+      "metadata_complete_for_canary": true,
+      "model": "minimax/MiniMax-M3",
+      "reason": "weak_capability",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    }
+  ],
+  "registry_degraded": false,
+  "schema": "injection-r8-shadow-v1",
+  "source": {
+    "name": "providers.json",
+    "sha256": "5ae22fa8489083ee37d2e778a18afa1d11f77dbb8da7274ca9c42b317b6e62fa"
+  },
+  "summary": {
+    "canary_block_reason": "",
+    "canary_ready": true,
+    "capability_tier_counts": {
+      "strong": 1,
+      "weak": 8
+    },
+    "classified_coverage_pct": 100.0,
+    "classified_models": 9,
+    "metadata_complete_coverage_pct": 100.0,
+    "metadata_complete_models": 9,
+    "models_total": 9,
+    "profile_counts": {
+      "full": 1,
+      "minimal": 8
+    },
+    "unknown_models": 0
+  }
+}

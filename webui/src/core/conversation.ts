@@ -1,0 +1,1045 @@
+// Web V2：对话 store（消息流 / 流式状态 / 历史分页 / 发送·停止·重试）
+
+import { useSyncExternalStore } from "react";
+import type {
+  AttachmentFact,
+  ChatDoneData,
+  ChatMessage,
+  QueueItem,
+  ToolResultEvent,
+  ToolRoundEvent,
+} from "./types";
+import {
+  streamChatRequest,
+  toChatMessage,
+  buildAssistantNote,
+  fetchHistory,
+  fetchStreamStatus,
+  fetchQueueList,
+  enqueueQueueMessage,
+  cancelQueueItem,
+  interjectQueueItem,
+  claimNextQueued,
+} from "./chat";
+import { sessionStore } from "./stores";
+import {
+  mergeFinalToolCalls,
+  settleRunningActivities,
+  settleToolResult,
+  startToolActivity,
+} from "./toolActivity";
+
+const HISTORY_PAGE_SIZE = 100;
+
+interface ComposerPrefill {
+  text: string;
+  attachments: AttachmentFact[];
+}
+
+interface ConversationState {
+  messages: ChatMessage[];
+  composerPrefill: ComposerPrefill | null;
+  hasMoreHistory: boolean;
+  loadedHistoryCount: number;
+  streaming: boolean;
+  /** 后台 run 进行中（EVO 后台 run：刷新/切换后可见性） */
+  backgroundRunning: boolean;
+  /** 当前视图 live run 的 exact generation；“立即插入”必须绑定此机械事实。 */
+  activeRunGeneration: string | null;
+  /** 当前进行中的助手消息索引（-1=无） */
+  streamingIndex: number;
+  lastError: string | null;
+  /** 本次流式开始时刻（占位符等待时长展示；null=未在流式） */
+  streamStartedAt: number | null;
+  /** 当前会话的 Human Turn 排队项（FIFO 序；后端 durable 事实的本地镜像） */
+  queueItems: QueueItem[];
+}
+
+const listeners = new Set<() => void>();
+let state: ConversationState = {
+  messages: [],
+  composerPrefill: null,
+  hasMoreHistory: false,
+  loadedHistoryCount: 0,
+  streaming: false,
+  backgroundRunning: false,
+  activeRunGeneration: null,
+  streamingIndex: -1,
+  lastError: null,
+  streamStartedAt: null,
+  queueItems: [],
+};
+
+let abortCtrl: AbortController | null = null;
+let abortSessionId: string | null = null;
+let resumeAbort: AbortController | null = null;
+let resumeSessionId: string | null = null;
+let bgPollTimer: number | undefined;
+
+// ── 空闲增量轮询（飞书桥等外部通道写入后 Web 及时刷新，无需手动切会话）──
+const IDLE_POLL_INTERVAL_MS = 20_000;
+let idlePollTimer: number | undefined;
+let idlePollSession: string | null = null;
+/** 上次探针的服务端最新消息指纹（与服务端自比对，消除本地 toChatMessage 映射差异） */
+let idleProbeFp: string | null = null;
+
+function emit(): void {
+  listeners.forEach((l) => l());
+}
+
+export const conversationStore = {
+  getState: () => state,
+  subscribe: (l: () => void) => {
+    listeners.add(l);
+    return () => listeners.delete(l);
+  },
+  setState: (partial: Partial<ConversationState>) => {
+    state = { ...state, ...partial };
+    emit();
+  },
+};
+
+export function useConversation(): ConversationState {
+  return useSyncExternalStore(conversationStore.subscribe, () => conversationStore.getState());
+}
+
+/** Fill the composer after an explicit human edit/fork action. Never auto-send. */
+export function prefillComposer(text: string, attachments: AttachmentFact[] = []): void {
+  conversationStore.setState({
+    composerPrefill: { text, attachments: [...attachments] },
+  });
+}
+
+function abortForegroundSubscription(): void {
+  const ctrl = abortCtrl;
+  if (!ctrl) return;
+  ctrl.abort();
+  if (abortCtrl === ctrl) {
+    abortCtrl = null;
+    abortSessionId = null;
+  }
+}
+
+function abortResumeSubscription(): void {
+  const ctrl = resumeAbort;
+  if (!ctrl) return;
+  ctrl.abort();
+  if (resumeAbort === ctrl) {
+    resumeAbort = null;
+    resumeSessionId = null;
+  }
+}
+
+/** 会话切换只 detach 旧 SSE，不调用 cancel：后台 run 继续，切回可 resume。 */
+function detachSubscriptionsForSession(nextSessionId: string | null): void {
+  if (abortCtrl && abortSessionId !== nextSessionId) abortForegroundSubscription();
+  if (resumeAbort && resumeSessionId !== nextSessionId) abortResumeSubscription();
+}
+
+let observedSessionId = sessionStore.getState().currentSessionId;
+sessionStore.subscribe(() => {
+  const nextSessionId = sessionStore.getState().currentSessionId;
+  if (nextSessionId === observedSessionId) return;
+  observedSessionId = nextSessionId;
+  detachSubscriptionsForSession(nextSessionId);
+  if (bgPollTimer !== undefined) {
+    window.clearInterval(bgPollTimer);
+    bgPollTimer = undefined;
+  }
+  // 切换会话：停上一会话的空闲轮询（新会话由 loadHistory 重新 ensure）
+  stopIdlePoll();
+  // EVO-20260920（灵活新建/切换）: streaming 语义收敛为"当前视图会话在流式"。
+  // 用户切走/新建会话时，旧会话 run 转后台（服务端继续，切回经 resume 接管），
+  // 视图解除输入锁——否则旧流式终态守卫提前 return，streaming 永久卡 true，
+  // 新会话无法发送首条消息。机械绑定（run_started 先行令 abortSessionId 等于
+  // 新 sid 再 publish）不视为用户切换，不重置。
+  const foregroundFollows = abortCtrl !== null && abortSessionId === nextSessionId;
+  const resumeFollows = resumeAbort !== null && resumeSessionId === nextSessionId;
+  const st = conversationStore.getState();
+  // A real user/navigation session switch must never leave the previous session's
+  // messages/queue/error visible under the new session header. Fresh-session run_started
+  // binds abort ownership before publishing the new sid, so that mechanical bind is
+  // explicitly exempt and keeps its optimistic user/assistant turn intact.
+  if (!foregroundFollows && !resumeFollows) {
+    conversationStore.setState({
+      messages: [],
+      hasMoreHistory: false,
+      loadedHistoryCount: 0,
+      queueItems: [],
+      lastError: null,
+      activeRunGeneration: null,
+      streaming: false,
+      streamingIndex: -1,
+      streamStartedAt: null,
+      backgroundRunning: false,
+    });
+  }
+  if (!foregroundFollows && !resumeFollows && st.activeRunGeneration !== null) {
+    conversationStore.setState({ activeRunGeneration: null });
+  }
+  if (st.streaming && !foregroundFollows && !resumeFollows) {
+    conversationStore.setState({
+      streaming: false,
+      streamingIndex: -1,
+      streamStartedAt: null,
+    });
+  }
+  if (st.backgroundRunning && !resumeFollows) {
+    conversationStore.setState({ backgroundRunning: false });
+  }
+});
+
+/** 服务端最新消息指纹（limit=1 探针，成本低） */
+function fingerprintLatest(m: ChatMessage | undefined): string | null {
+  if (!m) return null;
+  return JSON.stringify([m.role, m.content, m.note ?? null]);
+}
+
+/** 空闲轮询一跳：非空闲/无会话直接退出；指纹变化 → 重载整窗 */
+async function idlePollTick(sessionId: string): Promise<void> {
+  const st = conversationStore.getState();
+  if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0) return;
+  const resp = await fetchHistory(sessionId, 1, 0);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (resp.ok === false) return; // background probe is observational; never fabricate empty history
+  const fp = fingerprintLatest(resp.messages[0] as ChatMessage | undefined);
+  if (fp === null) return; // 会话被清空等异常形态：不触发重载（下次探针再判）
+  if (idleProbeFp === null) {
+    idleProbeFp = fp; // 基线跳
+    return;
+  }
+  if (fp !== idleProbeFp) void loadHistory(sessionId); // 有新写入 → 全量重载（终态可靠）
+}
+
+function stopIdlePoll(): void {
+  if (idlePollTimer !== undefined) {
+    window.clearInterval(idlePollTimer);
+    idlePollTimer = undefined;
+  }
+}
+
+/** 启动空闲增量轮询（幂等；仅当前会话；流式/后台 run 时自动退避不请求） */
+export function ensureIdlePoll(sessionId: string): void {
+  if (idlePollTimer !== undefined && idlePollSession === sessionId) return;
+  stopIdlePoll();
+  idlePollSession = sessionId;
+  idleProbeFp = null;
+  idlePollTimer = window.setInterval(() => void idlePollTick(sessionId), IDLE_POLL_INTERVAL_MS);
+}
+
+// ── 外部同步信号刷新（SSE sessions_updated / 看门狗 / 聚焦共用入口）──
+let syncRefreshBusy = false;
+
+/** 空闲态重载当前会话消息区：飞书桥等外部写入的推送级可见路径（EVO-20260827-23d33f32）。
+ *  async 闩防抖（信号风暴只保留一个在途重载）；run 进行中让路（流式/后台轮询已接管）。 */
+export async function refreshCurrentSessionMessages(): Promise<void> {
+  if (syncRefreshBusy) return;
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return; // 空 current 是"新会话待建"语义（见 events.ts newSessionPending 注释）
+  const st = conversationStore.getState();
+  if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0) return;
+  syncRefreshBusy = true;
+  try {
+    await loadHistory(sessionId);
+  } finally {
+    syncRefreshBusy = false;
+  }
+}
+
+export async function loadHistory(sessionId: string): Promise<void> {
+  // setCurrentSession 通常先发生；owner-aware detach 不依赖 store 的“当前值”猜旧流归属。
+  detachSubscriptionsForSession(sessionId);
+  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (resp.ok === false) {
+    conversationStore.setState({ lastError: resp.error ?? "会话历史读取失败，请重试。" });
+    return;
+  }
+  const messages = resp.messages.map(toChatMessage);
+  conversationStore.setState({
+    messages,
+    hasMoreHistory: resp.has_more,
+    loadedHistoryCount: messages.length,
+    streaming: false,
+    streamingIndex: -1,
+    lastError: null,
+    streamStartedAt: null,
+    backgroundRunning: false,
+    activeRunGeneration: null,
+  });
+  // EVO 后台 run：加载后查后台生成状态——running 则轮询直到完成（刷新/切换后可见进行中任务）
+  // 空闲增量轮询：飞书桥等外部写入 → Web 20s 内自动刷新；基线指纹直接取自本次加载，省一次探针
+  ensureIdlePoll(sessionId);
+  idleProbeFp = fingerprintLatest(messages[messages.length - 1]);
+  void checkBackgroundRun(sessionId);
+  // Human Turn 队列：切会话/刷新后恢复队列镜像；空闲且有排队 → 兜底接力
+  // （多标签场景：A 标签关页后其 run 终态无人接力，切回时由这里补发）
+  void (async () => {
+    await refreshQueue(sessionId);
+    void relayNextQueued(sessionId);
+  })();
+}
+
+/** 后台 run 检查：running → resume 订阅（重放已生成内容+实时流式——对齐 DSH 刷新可见中间状态）；
+ *  订阅失败/非 running → 回退轮询直到完成重载。 */
+export async function checkBackgroundRun(sessionId: string): Promise<void> {
+  if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
+  bgPollTimer = undefined;
+  const status = await fetchStreamStatus(sessionId);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (!status || !status.running) return;
+  conversationStore.setState({ backgroundRunning: true, activeRunGeneration: null });
+  // FC2-C run identity: resume must bind the exact generation returned by status.
+  // Missing generation fails closed to polling; never subscribe to "whatever run is current".
+  const runGeneration = typeof status.run_generation === "string" ? status.run_generation.trim() : "";
+  const resumed = runGeneration ? await resumeBackgroundStream(sessionId, runGeneration) : false;
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (resumed) return; // 订阅成功——流式接管（done 后自动重载）
+  // 回退：轮询直到完成（订阅失败/不支持——run 已结束或网络异常）
+  bgPollTimer = window.setInterval(async () => {
+    if (sessionStore.getState().currentSessionId !== sessionId) {
+      if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
+      bgPollTimer = undefined;
+      return;
+    }
+    const s = await fetchStreamStatus(sessionId);
+    if (sessionStore.getState().currentSessionId !== sessionId) return;
+    if (!s || !s.running) {
+      if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
+      bgPollTimer = undefined;
+      conversationStore.setState({ backgroundRunning: false });
+      void loadHistory(sessionId); // 后台完成 → 重载显示完整结果
+    }
+  }, 2000);
+}
+
+/** 对齐 DSH（2026-08-18）: 刷新/切回时后台 run 进行中 → resume 订阅已有 run——
+ *  后端重放已生成 delta（EventBus 有界缓冲 c3c6c6d）+ 实时流式；done 后重载完整结果。 */
+async function resumeBackgroundStream(
+  sessionId: string,
+  runGeneration: string,
+  reuseCurrentStreamingMessage = false
+): Promise<boolean> {
+  const controller = new AbortController();
+  resumeAbort = controller;
+  resumeSessionId = sessionId;
+  try {
+    // 刷新/切回：新建流式占位；网络断流续联：复用原 streaming message，
+    // replay 从头机械重建该消息，避免临时出现两个 assistant 气泡。
+    const cur = conversationStore.getState();
+    if (reuseCurrentStreamingMessage) {
+      if (cur.streamingIndex < 0) return false;
+      conversationStore.setState({
+        streaming: true,
+        backgroundRunning: true,
+        activeRunGeneration: runGeneration,
+        lastError: null,
+      });
+      patchStreaming({
+        content: "",
+        reasoningContent: "",
+        note: "连接中断，正在恢复…",
+        streaming: true,
+        progressStage: "recovering",
+        progressUpdatedAt: Date.now(),
+      });
+    } else {
+      const placeholder: ChatMessage = {
+        role: "assistant",
+        content: "",
+        reasoningContent: "",
+        toolCalls: null,
+        note: null,
+        streaming: true,
+        streamStartedAt: Date.now(),
+        progressStage: "recovering",
+        progressUpdatedAt: Date.now(),
+        tokens_in: 0,
+        tokens_out: 0,
+        tokens_cache_hit: 0,
+      };
+      conversationStore.setState({
+        messages: [...cur.messages, placeholder],
+        streaming: true,
+        streamingIndex: cur.messages.length,
+        activeRunGeneration: runGeneration,
+        lastError: null,
+      });
+    }
+    const acc = { answer: "", reasoning: "" };
+    const sid = sessionId;
+    // delta 补丁合并（同 sendMessage）：resume 重放+实时流式同样高频
+    const patchAnswer = makeCoalescedPatch(() => patchStreaming({
+      content: acc.answer,
+      progressStage: "answering",
+      progressUpdatedAt: Date.now(),
+    }));
+    const patchReasoning = makeCoalescedPatch(() => patchStreaming({
+      reasoningContent: acc.reasoning,
+      progressStage: "analyzing",
+      progressUpdatedAt: Date.now(),
+    }));
+    const outcome = await streamChatRequest(
+      { message: "resume", session_id: sid, resume: true, run_generation: runGeneration },
+      {
+        onAnswerDelta: (d) => {
+          // 会话守卫：当前会话已切换 → 停止渲染（防串写）
+          if (sessionStore.getState().currentSessionId !== sid) return;
+          acc.answer += d;
+          patchAnswer();
+        },
+        onReasoningDelta: (d) => {
+          if (sessionStore.getState().currentSessionId !== sid) return;
+          acc.reasoning += d;
+          patchReasoning();
+        },
+        onToolRound: (event: ToolRoundEvent) => {
+          if (sessionStore.getState().currentSessionId !== sid) return;
+          const current = conversationStore.getState();
+          const active = current.streamingIndex >= 0
+            ? current.messages[current.streamingIndex]?.toolActivities
+            : undefined;
+          patchStreaming({
+            toolActivities: startToolActivity(active, event),
+            progressStage: "tool",
+            progressUpdatedAt: Date.now(),
+          });
+        },
+        onToolResult: (event: ToolResultEvent) => {
+          if (sessionStore.getState().currentSessionId !== sid) return;
+          const current = conversationStore.getState();
+          const active = current.streamingIndex >= 0
+            ? current.messages[current.streamingIndex]?.toolActivities
+            : undefined;
+          patchStreaming({
+            toolActivities: settleToolResult(active, event),
+            progressStage: "integrating",
+            progressUpdatedAt: Date.now(),
+          });
+        },
+      },
+      controller.signal
+    );
+    if (resumeAbort === controller) {
+      resumeAbort = null;
+      resumeSessionId = null;
+    }
+    if (sessionStore.getState().currentSessionId !== sessionId) return true;
+    if (outcome.ok && outcome.data) {
+      conversationStore.setState({
+        streaming: false,
+        backgroundRunning: false,
+        activeRunGeneration: null,
+      });
+      void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
+      return true;
+    }
+    // 失败（run 已结束/网络）：刷新路径移除自己的占位；同消息续联则把控制权
+    // 交回原 sendMessage，由它用断流前累积内容收敛为 interrupted。
+    if (reuseCurrentStreamingMessage) {
+      conversationStore.setState({ backgroundRunning: false, activeRunGeneration: null });
+    } else {
+      conversationStore.setState({
+        messages: conversationStore.getState().messages.slice(0, -1),
+        streaming: false,
+        backgroundRunning: false,
+        activeRunGeneration: null,
+      });
+    }
+    return false;
+  } catch {
+    if (resumeAbort === controller) {
+      resumeAbort = null;
+      resumeSessionId = null;
+    }
+    // 会话已切换时这是主动 detach，不得为旧会话启动回退轮询。
+    if (sessionStore.getState().currentSessionId !== sessionId) return true;
+    conversationStore.setState({ activeRunGeneration: null });
+    return false;
+  }
+}
+
+export async function loadEarlierHistory(sessionId: string): Promise<void> {
+  const cur = conversationStore.getState();
+  const offset = cur.loadedHistoryCount;
+  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, offset);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  if (resp.ok === false) {
+    conversationStore.setState({ lastError: resp.error ?? "更早历史读取失败，请重试。" });
+    return;
+  }
+  const now = conversationStore.getState();
+  // A concurrent reload/second pagination request changed the window while this page was
+  // in flight. Its offset is stale, so applying it could duplicate or cross-contaminate rows.
+  if (now.loadedHistoryCount !== offset) return;
+  const earlier = resp.messages.map(toChatMessage);
+  conversationStore.setState({
+    messages: [...earlier, ...now.messages],
+    hasMoreHistory: resp.has_more,
+    loadedHistoryCount: offset + earlier.length,
+  });
+}
+
+export function stopStreaming(): void {
+  // Stop 与会话切换不同：先捕获“实际流 owner”，再断订阅并请求后端真取消。
+  let sid: string | null = null;
+  if (abortCtrl) sid = abortSessionId;
+  else if (resumeAbort) sid = resumeSessionId;
+  else sid = sessionStore.getState().currentSessionId;
+  abortForegroundSubscription();
+  abortResumeSubscription();
+  // 一旦用户请求停止，本地不再允许把后续“立即插入”绑定到刚才那一代 run。
+  conversationStore.setState({ activeRunGeneration: null });
+  // fail-open: 取消失败不影响前端状态（后端 run 终会自然结束落盘）。
+  if (sid) {
+    void fetch("/api/v1/chat/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sid }),
+    }).catch(() => undefined);
+  }
+  // EVO-20260823 停止按钮修复: SSE abort 只停订阅（后台 run 线程继续执行），
+  // 需调后端 cancel API 请求真正取消（runner.cancel → 引擎主循环检查点终止）。
+  // （2026-09-04 修复重复声明: 原第二段 const sid 重复取消逻辑与上方重复，删除）
+}
+
+/** 发送消息（含附件前缀注入；流式渲染思考/工具轮/正文；done 终态覆盖；错误可重试） */
+export interface SendAttachment {
+  filename: string;
+  result_text: string;
+  status?: "ok" | "pending" | "degraded" | "error";
+  detail?: string;
+  attachment_ref?: string;
+  content_type?: string;
+  size_bytes?: number;
+  sha256?: string;
+}
+
+/** 队列接力选项：以排队时冻结的事实发起（模型/effort 不取当前 UI 值） */
+export interface SendQueueOpts {
+  queueId: string;
+  frozenModel: string | null;
+  frozenModelChange: boolean;
+  frozenEffort: string | null;
+  frozenReasoningMode: string | null;
+}
+
+export async function sendMessage(text: string, attachments: SendAttachment[], opts?: SendQueueOpts): Promise<void> {
+  const cur = conversationStore.getState();
+  // 空串归一为 null：新工作区/新会话无会话时后端按"新建会话"处理
+  // （不可在此 return，否则新工作区发消息被静默拦截）
+  const sessionId = sessionStore.getState().currentSessionId || null;
+  // Fresh new_session 的真实 session_id 直到 run_started 才由后端产生。后续流 owner、
+  // Stop/cancel 与断流续联都跟随这个机械事实，而不是永远绑定发送前的 null。
+  let ownerSessionId: string | null = sessionId;
+  let runGeneration = "";
+  // 本地发送即将写入/产生新消息：停空闲轮询防竞态（基线由完成后的重载路径重建）
+  stopIdlePoll();
+  // 附件以服务端 opaque ref 作为唯一授权引用；不再把提取全文拼进 human message。
+  // pending/degraded/error 不进入当前模型请求，仍只作为 Composer UI 事实展示。
+  const sendable = attachments.filter(
+    (a) => a.status === "ok" && typeof a.attachment_ref === "string" && a.attachment_ref.length > 0
+  );
+  const attachmentRefs = sendable.map((a) => ({ ref: a.attachment_ref! }));
+  const userAttachmentFacts: AttachmentFact[] = sendable.map((a) => ({
+    ref: a.attachment_ref!,
+    filename: a.filename,
+    content_type: a.content_type,
+    size_bytes: a.size_bytes,
+    sha256: a.sha256,
+  }));
+
+  const localSendTs = Date.now() / 1000;
+  const userMsg: ChatMessage = { role: "user", content: text, attachments: userAttachmentFacts, ts: localSendTs };
+  const placeholder: ChatMessage = {
+    role: "assistant",
+    content: "",
+    reasoningContent: "",
+    toolCalls: null,
+    note: null,
+    streaming: true,
+    streamStartedAt: Date.now(),
+    progressStage: "preparing",
+    progressUpdatedAt: Date.now(),
+    ts: localSendTs,
+    tokens_in: 0,
+    tokens_out: 0,
+    tokens_cache_hit: 0,
+  };
+  conversationStore.setState({
+    messages: [...cur.messages, userMsg, placeholder],
+    streaming: true,
+    streamingIndex: cur.messages.length + 1,
+    activeRunGeneration: null,
+    lastError: null,
+    streamStartedAt: Date.now(),
+  });
+
+  // 2026-08-18 修复跳回旧会话: handleNew 后发送需 new_session=true。
+  // 2026-09-18: pending guard 必须保持到 run_started 绑定真实新 session；如果在
+  // 发请求前就清掉，current 仍为空的窗口会被 SSE/watchdog 用旧 shared/current
+  // 回填，session-store subscriber 随即 detach 本次新会话 SSE。
+  const newSessionPending = sessionStore.getState().newSessionPending;
+  const modelChangeIntent = opts
+    ? opts.frozenModelChange
+    : sessionStore.getState().modelChangePending;
+  const body = {
+    message: text,
+    attachments: attachmentRefs,
+    session_id: sessionId,
+    // 队列接力：用排队时冻结的模型/effort/mode（不取当前 UI 值——冻结语义）
+    model: opts ? opts.frozenModel : sessionStore.getState().model,
+    model_change: modelChangeIntent || undefined,
+    reasoning_effort: opts ? opts.frozenEffort : sessionStore.getState().reasoningEffort,
+    reasoning_mode: opts ? opts.frozenReasoningMode ?? undefined : sessionStore.getState().thinkingMode,
+    new_session: newSessionPending || undefined,
+    // 队列项回写：run 终态时后端把该 queue 项标 completed/failed（durable 收敛）
+    queue_id: opts?.queueId,
+  };
+  const controller = new AbortController();
+  abortCtrl = controller;
+  abortSessionId = ownerSessionId;
+  const acc = { answer: "", reasoning: "" };
+  // delta 补丁合并（见 makeCoalescedPatch 注释）：高频 delta 不逐条触发渲染
+  const patchAnswer = makeCoalescedPatch(() => patchStreaming({
+    content: acc.answer,
+    progressStage: "answering",
+    progressUpdatedAt: Date.now(),
+  }));
+  const patchReasoning = makeCoalescedPatch(() => patchStreaming({
+    reasoningContent: acc.reasoning,
+    progressStage: "analyzing",
+    progressUpdatedAt: Date.now(),
+  }));
+
+  const outcome = await streamChatRequest(
+    body,
+    {
+      onRunStarted: (event) => {
+        const sid = typeof event.session_id === "string" ? event.session_id : "";
+        const generation = typeof event.run_generation === "string" ? event.run_generation : "";
+        if (!sid || !generation) return;
+        if (ownerSessionId && sid !== ownerSessionId) return;
+        ownerSessionId = sid;
+        runGeneration = generation;
+        if (sessionStore.getState().currentSessionId === sid || !sessionId) {
+          conversationStore.setState({ activeRunGeneration: generation });
+        }
+        // Update abort ownership before publishing the new session id; the session-store
+        // subscriber must not mistake this mechanical bind for a user session switch.
+        abortSessionId = sid;
+        if (newSessionPending) sessionStore.setNewSessionPending(false);
+        if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
+        // 2026-09-22（切换会话无变化事故）：会话绑定只服务"新会话首 run"——发送时
+        // 无会话（sessionId=null，new_session 语义），服务端刚分配真实 sid，视图必须
+        // 采用它。既有会话的 run（用户直发后切走、或队列接力）绝不能把用户已切走的
+        // 视图拉回：接力 run_started 晚于用户点击到达时，旧写法无条件
+        // setCurrentSession(sid) 会把视图拽回原会话，表现为"点击不同会话显示没变化"。
+        if (sessionStore.getState().currentSessionId !== sid && !sessionId) {
+          sessionStore.setCurrentSession(sid);
+        }
+        patchStreaming({ progressStage: "analyzing", progressUpdatedAt: Date.now() });
+      },
+      onAnswerDelta: (d) => {
+        // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
+        acc.answer += d;
+        patchAnswer();
+      },
+      onReasoningDelta: (d) => {
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
+        acc.reasoning += d;
+        patchReasoning();
+      },
+      onToolRound: (event: ToolRoundEvent) => {
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
+        const current = conversationStore.getState();
+        const active = current.streamingIndex >= 0
+          ? current.messages[current.streamingIndex]?.toolActivities
+          : undefined;
+        patchStreaming({
+          toolActivities: startToolActivity(active, event),
+          note: null,
+          progressStage: "tool",
+          progressUpdatedAt: Date.now(),
+        });
+      },
+      onToolResult: (event: ToolResultEvent) => {
+        if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
+        const current = conversationStore.getState();
+        const active = current.streamingIndex >= 0
+          ? current.messages[current.streamingIndex]?.toolActivities
+          : undefined;
+        patchStreaming({
+          toolActivities: settleToolResult(active, event),
+          note: null,
+          progressStage: "integrating",
+          progressUpdatedAt: Date.now(),
+        });
+      },
+    },
+    controller.signal
+  );
+  if (abortCtrl === controller) {
+    abortCtrl = null;
+    abortSessionId = null;
+  }
+
+  // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
+  if (sessionStore.getState().currentSessionId !== ownerSessionId) {
+    return;
+  }
+
+  // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
+  if (sessionStore.getState().currentSessionId !== ownerSessionId) {
+    return;
+  }
+
+  const st = conversationStore.getState();
+  const liveActivities = st.streamingIndex >= 0
+    ? st.messages[st.streamingIndex]?.toolActivities
+    : undefined;
+
+  // Network loss is not a model/run failure. If this exact stream already yielded a
+  // run_started receipt, reconnect only to that generation and rebuild the same message
+  // from EventBus replay. User Stop/abort is never auto-resumed.
+  if (
+    !outcome.ok &&
+    outcome.errorType === "network" &&
+    !controller.signal.aborted &&
+    ownerSessionId &&
+    runGeneration
+  ) {
+    const resumed = await resumeBackgroundStream(ownerSessionId, runGeneration, true);
+    if (resumed) return;
+  }
+
+  const finalize = (msg: ChatMessage) => {
+    conversationStore.setState({
+      messages: [...st.messages.slice(0, st.streamingIndex), msg, ...st.messages.slice(st.streamingIndex + 1)],
+      streaming: false,
+      streamingIndex: -1,
+      streamStartedAt: null,
+      activeRunGeneration: null,
+    });
+  };
+
+  if (outcome.ok && outcome.data) {
+    const data = outcome.data as ChatDoneData;
+    if (data.session_id) {
+      if (newSessionPending) sessionStore.setNewSessionPending(false);
+      // 2026-09-22（切换会话无变化事故）：与 onRunStarted 同一绑定规则——仅"新会话
+      // 首 run"（发送时无会话）采用服务端 sid。既有会话 run 的 done.session_id 不得
+      // 改写视图：跨会话认领/接力时它可能不等于当前视图会话，旧写法无条件
+      // setCurrentSession 会把用户已切走的视图拉回。
+      if (!sessionId) sessionStore.setCurrentSession(data.session_id);
+    }
+    if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
+    // model_used is per-run telemetry (and may be a fallback), not session authority.
+    // Session authority is synchronized from the session list instead.
+    const finalText = (data.final_answer ?? "").trim();
+    if (finalText) {
+      finalize({
+        role: "assistant",
+        content: data.final_answer ?? "",
+        reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
+        toolCalls: data.tool_calls ?? null,
+        toolActivities: mergeFinalToolCalls(liveActivities, data.tool_calls),
+        note: buildAssistantNote(data),
+        streaming: false,
+        ts: Date.now() / 1000,
+        // M51/M52: 模型 + token 消耗结构化填充（页脚渲染，与历史恢复同源）
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
+      });
+    } else if (Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
+      finalize({
+        role: "assistant",
+        content: "",
+        reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
+        toolCalls: data.tool_calls,
+        toolActivities: mergeFinalToolCalls(liveActivities, data.tool_calls),
+        note: buildAssistantNote(data) ?? "（无文字回答）",
+        streaming: false,
+        ts: Date.now() / 1000,
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
+      });
+    } else {
+      finalize({
+        role: "assistant",
+        content: acc.answer || "（无文字回答）",
+        reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
+        toolActivities: mergeFinalToolCalls(liveActivities, data.tool_calls),
+        note: buildAssistantNote(data),
+        streaming: false,
+        ts: Date.now() / 1000,
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
+      });
+    }
+  } else {
+    const detail = outcome.error?.detail ?? "服务内部错误。";
+    const errorCode = outcome.error?.error ?? "";
+    // Cross-ingress refusal is an intentional safety boundary, not a program exception.
+    // Preserve the visible explanation on the old session; only the *next* human send
+    // carries new_session=true, so no user message is silently replayed or auto-routed.
+    const ingressMismatch = errorCode === "session_ingress_mismatch";
+    const note = outcome.errorType === "network" || ingressMismatch ? detail : `[程序异常] ${detail}`;
+    finalize({
+      role: "assistant",
+      content: acc.answer || "",
+      reasoningContent: acc.reasoning || null,
+      toolActivities: settleRunningActivities(liveActivities, "interrupted"),
+      note,
+      streaming: false,
+      ts: Date.now() / 1000,
+    });
+    conversationStore.setState({ lastError: note });
+    if (ingressMismatch) {
+      sessionStore.setNewSessionPending(true);
+      return;
+    }
+    // 队列路径必有 sessionId（claim 项即来自该会话）；null 时跳过——后端 reaper 兜底
+    if (opts?.queueId && sessionId) {
+      if (outcome.error?.error === "session_busy") {
+        // run owner 已在正式 admission 失败点把该 queue claim 安全回滚；前端只刷新镜像，
+        // 不再自行调用 release（客户端不能成为“是否已开始执行”的真相源）。
+        await refreshQueue(sessionId);
+        return;
+      }
+      // 真失败（引擎/网络）：后端已把 queue 项标 failed；刷新镜像收敛 UI
+      await refreshQueue(sessionId);
+    }
+    // 失败也是终态：队列接力继续（用户可看到错误后下一条照常发出）
+    if (sessionId) void relayNextQueued(sessionId);
+    return;
+  }
+  // 成功终态：FIFO 接力下一条排队消息（冻结事实派发）
+  if (opts && sessionId) await refreshQueue(sessionId);
+  if (sessionId) void relayNextQueued(sessionId);
+}
+
+function patchStreaming(partial: Partial<ChatMessage>): void {
+  const st = conversationStore.getState();
+  if (st.streamingIndex < 0) return;
+  const idx = st.streamingIndex;
+  const messages = st.messages.map((m, i) => (i === idx ? { ...m, ...partial } : m));
+  conversationStore.setState({ messages });
+}
+
+// ── 流式补丁合并（2026-09-22 "推理时切换不了会话" 事故）──
+// 真实 provider delta 可达 100+/s；逐 delta patchStreaming → setState → 全列表
+// reconcile + 流式消息 markdown 重解析会饱和主线程，点击/切换事件饥饿秒级。
+// 合并为 ≤~8 次/s 的补丁（120ms 窗口 + trailing 兜底），内容零丢失（终态
+// finalize/done 覆盖全量），视觉延迟 ≤120ms。
+const PATCH_COALESCE_MS = 120;
+
+function makeCoalescedPatch(apply: () => void): () => void {
+  let lastAt = 0;
+  let pending = false;
+  let alive = true;
+  const force = () => {
+    if (!alive) return;
+    lastAt = Date.now();
+    pending = false;
+    apply();
+  };
+  return () => {
+    if (!alive) return;
+    if (Date.now() - lastAt >= PATCH_COALESCE_MS) {
+      force();
+      return;
+    }
+    if (pending) return;
+    pending = true;
+    window.setTimeout(force, PATCH_COALESCE_MS);
+  };
+}
+
+// ══ Human Turn 排队（生成中 cmd/ctrl+Enter；后端 durable 事实）══
+// 普通排队：入队冻结事实 → run 终态后
+// FIFO 接力派发（多标签原子 claim 只有一个成功）。
+
+/** 刷新当前会话队列镜像（FIFO 序；切会话/入队/取消/接力后调用） */
+export async function refreshQueue(sessionId: string): Promise<void> {
+  const resp = await fetchQueueList(sessionId);
+  if (!resp) return;
+  // 会话守卫：切换期间返回的旧会话队列不写回当前视图
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  conversationStore.setState({ queueItems: resp.items });
+}
+
+/** 入队一条 human turn（流式时 Composer cmd/ctrl+Enter 调用）：
+ *  冻结 message/attachments/model/effort/created_at；返回 false 时调用方提示错误。 */
+export async function enqueueQueueTurn(
+  text: string,
+  attachments: SendAttachment[]
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "新会话尚未建立，无法排队（先发送第一条消息）" };
+  const sendable = attachments.filter(
+    (a) => a.status === "ok" && typeof a.attachment_ref === "string" && a.attachment_ref.length > 0
+  );
+  if (!text.trim() && sendable.length === 0) return { ok: false, detail: "空消息不能排队" };
+  const refs = sendable.map((a) => ({ ref: a.attachment_ref! }));
+  const st = sessionStore.getState();
+  const resp = await enqueueQueueMessage(
+    sessionId, text.trim(), refs, st.model, st.reasoningEffort, st.thinkingMode, st.modelChangePending
+  );
+  if (!resp.ok) {
+    return { ok: false, detail: resp.detail ?? "排队失败，请稍后重试" };
+  }
+  if (st.modelChangePending) sessionStore.setModelChangePending(false);
+  await refreshQueue(sessionId);
+  return { ok: true };
+}
+
+/** 取消排队项（仅 queued 可取消；claimed 已进入发送流程） */
+export async function cancelQueueTurn(
+  queueId: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  const result = await cancelQueueItem(sessionId, queueId);
+  await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
+}
+
+/** 撤回编辑：取消成功后把冻结正文/附件交给 Composer 合并回当前草稿。 */
+export async function withdrawQueueTurn(
+  queueId: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  const result = await cancelQueueItem(sessionId, queueId);
+  if (result.ok && result.item) {
+    conversationStore.setState({
+      composerPrefill: {
+        text: result.item.message || "",
+        attachments: result.item.attachment_facts ?? [],
+      },
+    });
+  }
+  await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
+}
+
+/** 纯删除（对齐 DSH queue remove）：取消排队且不回填草稿。 */
+export async function removeQueueTurn(
+  queueId: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  const result = await cancelQueueItem(sessionId, queueId);
+  await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
+}
+
+/**
+ * 全部插话（对齐 DSH steerQueue）：FIFO 逐条把 queued 项交给当前 live run。
+ * 任一条失败（如 run 已结束）即停止并回传后端 detail；剩余项保持 queued，
+ * 由既有 run 终态 relay 语义继续按序发送——不重复、不丢弃。
+ */
+export async function steerAllQueued(): Promise<{
+  ok: boolean;
+  steered: number;
+  detail?: string;
+}> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, steered: 0, detail: "当前没有可操作的会话" };
+  const queued = conversationStore
+    .getState()
+    .queueItems.filter((it) => it.status === "queued");
+  if (queued.length === 0) return { ok: false, steered: 0, detail: "没有可插话的排队消息。" };
+  // “全部插话”是一次显式人类动作：整批必须绑定点击瞬间同一个 exact run。
+  // 若处理中 run 已换代，后端会对剩余项 fail-closed，绝不漂到新 run。
+  const runGeneration = conversationStore.getState().activeRunGeneration;
+  if (!runGeneration) {
+    return { ok: false, steered: 0, detail: "当前任务身份尚未就绪；消息仍保留在普通排队中。" };
+  }
+  let steered = 0;
+  for (const it of queued) {
+    const result = await interjectQueueTurn(it.queue_id, runGeneration);
+    if (!result.ok) {
+      await refreshQueue(sessionId);
+      // 部分成功不算整体 ok：detail 如实回传，已 steered 条数单独给出
+      return { ok: false, steered, detail: result.detail };
+    }
+    steered += 1;
+  }
+  await refreshQueue(sessionId);
+  return { ok: true, steered };
+}
+
+/** 真插话：交给当前 live run；pending/received 由后端状态回显。 */
+export async function interjectQueueTurn(
+  queueId: string,
+  expectedRunGeneration?: string
+): Promise<{ ok: boolean; detail?: string }> {
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
+  // Read once at action start. A delayed HTTP request remains bound to the run the
+  // human actually clicked, never “whatever run is current” when the server receives it.
+  const runGeneration = expectedRunGeneration ?? conversationStore.getState().activeRunGeneration;
+  if (!runGeneration) {
+    return { ok: false, detail: "当前任务身份尚未就绪；消息仍保留在普通排队中。" };
+  }
+  const result = await interjectQueueItem(sessionId, queueId, runGeneration);
+  await refreshQueue(sessionId);
+  return { ok: result.ok, detail: result.detail };
+}
+
+/** relay 防重入（多路径终态触发：done/error/停止/切回兜底） */
+let relayInFlight: string | null = null;
+
+/** run 终态后 FIFO 接力：原子领取队首 → 以冻结事实发起正式发送。
+ *  多标签并发领取只有一个成功；领取后发现 session_busy/本地仍在流式 → release 回滚保持 FIFO。
+ *  链式接力由 sendMessage 终态再次触发（队列消费自动递归）。 */
+export async function relayNextQueued(sessionId: string): Promise<void> {
+  if (relayInFlight === sessionId) return;
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  const st = conversationStore.getState();
+  if (st.streaming || st.backgroundRunning) return; // run 仍在进行：等其终态再接力
+  const hasQueued = st.queueItems.some((it) => it.status === "queued");
+  if (!hasQueued) return;
+  relayInFlight = sessionId;
+  try {
+    const claimed = await claimNextQueued(sessionId);
+    if (!claimed) {
+      await refreshQueue(sessionId); // 队空或被其他标签领走：收敛镜像
+      return;
+    }
+    await refreshQueue(sessionId); // claimed 状态立即反映到 UI
+    // 以冻结事实发起正式发送（模型/effort 用冻结值；queue_id 让后端终态回写队列）
+    const frozenAttachments: SendAttachment[] = (claimed.attachment_facts ?? []).map((f) => ({
+      filename: f.filename,
+      result_text: "",
+      status: "ok",
+      attachment_ref: f.ref,
+      content_type: f.content_type,
+      size_bytes: f.size_bytes,
+      sha256: f.sha256,
+    }));
+    // sendMessage 终态（done/error）会再次触发 relayNextQueued → 链式消费。
+    // 不 await（fire-and-forget）：await 会让本函数直到 run 终态才结束，
+    // 防重入闸 relayInFlight 迟迟不清，反而拦死 sendMessage 终态处的链式接力。
+    void sendMessage(claimed.message || "", frozenAttachments, {
+      queueId: claimed.queue_id,
+      frozenModel: claimed.model ?? null,
+      frozenModelChange: Boolean((claimed as { model_change?: boolean }).model_change),
+      frozenEffort: claimed.reasoning_effort ?? null,
+      frozenReasoningMode: (claimed as { reasoning_mode?: string }).reasoning_mode ?? null,
+    }).catch(() => {
+      // 兜底：sendMessage 不应抛出；抛出则该队列项悬挂，由后端 reaper 回滚
+    });
+  } finally {
+    relayInFlight = null;
+  }
+}

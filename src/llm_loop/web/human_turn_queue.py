@@ -1,0 +1,451 @@
+"""Human Turn Queue：生成中排队的 Human Turn 的后端 durable 事实源.
+
+设计契约（feature/webui-human-turn-queue-20260910）：
+- 队列是后端 durable 事实：JSON 落盘，刷新/切会话/多标签/进程重启不丢不串。
+- 入队时冻结本条事实：session_id / message / attachment refs+facts / model /
+  reasoning_effort / created_at / queue_id——后续派发只消费冻结值，不读前端内存。
+- 状态机：queued → claimed（dispatch 原子领取）→ completed | failed；
+  queued → cancelled（用户取消）。
+- FIFO：按 created_at 升序派发，同毫秒按入队序号 tie-break。
+- claimed reaper：CLAIM_TIMEOUT_S 只表示“需要核验”，不是 run 死亡证明。超时后先
+  读取机械 run/事件事实：active 保持 claimed；未开始才回滚 queued；已落 human ingress
+  但无 run.end 进入 recovery_required（禁止整轮自动重发）；已有 run.end 则收敛终态。
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import os
+import tempfile
+import threading
+import time
+import uuid
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+QUEUE_FILENAME = "human_turn_queue.json"
+QUEUE_VERSION = 1
+# claimed 悬挂回滚阈值：前端领取后应在数秒内发起正式 chat 请求；
+# 60s 覆盖慢网络与短暂卡顿，同时避免崩溃标签长时间阻塞队列。
+CLAIM_TIMEOUT_S = 60.0
+INTERJECT_RECEIPT_VISIBLE_S = 8.0
+
+
+def _now() -> float:
+    return time.time()
+
+
+class HumanTurnQueue:
+    """会话级 human turn 队列（进程内单实例 + JSON 文件持久化）.
+
+    线程安全：所有公开方法在 _lock 内完成"读改写"，落盘为原子写
+    （tempfile + os.replace），多进程/多实例不保证跨进程互斥（8903 单进程契约）。
+    """
+
+    def __init__(
+        self,
+        data_dir: str | Path,
+        claim_timeout_s: float = CLAIM_TIMEOUT_S,
+        claim_state_probe: Callable[[str, str], str] | None = None,
+    ) -> None:
+        self._path = Path(data_dir) / QUEUE_FILENAME
+        self._lock = threading.Lock()
+        self._items: list[dict[str, Any]] = []
+        self._seq = 0
+        self._claim_timeout_s = claim_timeout_s
+        self._claim_state_probe = claim_state_probe
+        self._load()
+
+    # ------------------------------------------------------------------ 持久化
+
+    def _load(self) -> None:
+        if not self._path.exists():
+            self._items = []
+            return
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            items = raw.get("items", [])
+            assert isinstance(items, list)
+        except Exception:  # noqa: BLE001 — 损坏文件如实降级为空队列并告警（不中断服务）
+            logger.exception("human turn queue 文件损坏，按空队列处理: %s", self._path)
+            items = []
+        self._items = [it for it in items if isinstance(it, dict)]
+        # interject_pending is a process-local live-run handoff.  After a Web process
+        # restart that mailbox no longer exists, so restore the durable intent to the
+        # ordinary queue instead of pretending it is still pending delivery.
+        recovered_pending = False
+        for it in self._items:
+            if it.get("status") == "interject_pending":
+                it["status"] = "queued"
+                it["requeued_at"] = _now()
+                it["requeued_from"] = "interject_process_restart"
+                recovered_pending = True
+        self._seq = max((int(it.get("_seq", 0)) for it in self._items), default=0)
+        if recovered_pending:
+            self._save()
+
+    def _save(self) -> None:
+        payload = {"version": QUEUE_VERSION, "items": self._items}
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=QUEUE_FILENAME, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp, self._path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+
+    # ------------------------------------------------------------------ 内部
+
+    def _probe_claim_state(self, session_id: str, queue_id: str) -> str:
+        """Return one closed mechanical claim state; uncertainty fails closed."""
+        probe = self._claim_state_probe
+        if probe is None:
+            return "unknown"
+        try:
+            state = str(probe(session_id, queue_id) or "unknown")
+        except Exception:  # noqa: BLE001 - unknown must never become permission to replay
+            logger.warning(
+                "human turn claim state probe failed; keep claimed: sid=%s qid=%s",
+                session_id,
+                queue_id,
+                exc_info=True,
+            )
+            return "unknown"
+        if state not in {"not_started", "active", "ingress_open", "completed", "failed", "unknown"}:
+            logger.warning("unknown human turn claim state %r; keep claimed", state)
+            return "unknown"
+        return state
+
+    @staticmethod
+    def _clear_recovery_fields(it: dict[str, Any]) -> None:
+        it.pop("recovery_state", None)
+        it.pop("recovery_required", None)
+
+    def _reap_stale_claims_locked(self, now: float) -> None:
+        """Reconcile stale claims from mechanical run facts; timeout alone never replays."""
+        changed = False
+        for it in self._items:
+            if it.get("status") != "claimed":
+                continue
+            claimed_at = float(it.get("claimed_at") or 0)
+            if not claimed_at or now - claimed_at <= self._claim_timeout_s:
+                continue
+            sid = str(it.get("session_id") or "")
+            qid = str(it.get("queue_id") or "")
+            state = self._probe_claim_state(sid, qid)
+            if state == "not_started":
+                it["status"] = "queued"
+                it.pop("claimed_at", None)
+                it.pop("claimed_by", None)
+                self._clear_recovery_fields(it)
+                it["requeued_at"] = now
+                changed = True
+            elif state in {"completed", "failed"}:
+                it["status"] = state
+                it["terminal_at"] = now
+                it["reconciled_at"] = now
+                it["reconciled_from"] = "durable_run_end"
+                self._clear_recovery_fields(it)
+                changed = True
+            else:
+                recovery_required = state == "ingress_open"
+                if (
+                    it.get("recovery_state") != state
+                    or bool(it.get("recovery_required")) != recovery_required
+                ):
+                    it["recovery_state"] = state
+                    it["recovery_required"] = recovery_required
+                    changed = True
+        if changed:
+            self._save()
+
+    def _active_items_locked(self, session_id: str) -> list[dict[str, Any]]:
+        now = _now()
+        out: list[dict[str, Any]] = []
+        for it in self._items:
+            if it.get("session_id") != session_id:
+                continue
+            status = it.get("status")
+            if status in ("queued", "claimed", "interject_pending"):
+                out.append(it)
+                continue
+            if status == "interject_received":
+                received_at = float(it.get("received_at") or 0)
+                if received_at and now - received_at <= INTERJECT_RECEIPT_VISIBLE_S:
+                    out.append(it)
+        return out
+
+    @staticmethod
+    def _public(it: dict[str, Any]) -> dict[str, Any]:
+        """对外视图：剥离内部 _seq."""
+        return {k: v for k, v in it.items() if not k.startswith("_")}
+
+    # ------------------------------------------------------------------ 公开 API
+
+    def enqueue(
+        self,
+        session_id: str,
+        message: str,
+        attachments: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        model_change: bool = False,
+        reasoning_effort: str | None = None,
+        reasoning_mode: str = "auto",
+        attachment_facts: list[dict[str, Any]] | None = None,
+        origin: str = "",
+        origin_operation_id: str = "",
+    ) -> dict[str, Any]:
+        """入队：冻结本条事实并落盘；返回完整条目（含 queue_id）.
+
+        origin/origin_operation_id（SPEC-20260923-queue-recovery）：机械来源
+        标记（如 barrier_window + 屏障操作号），供恢复重排等下游按事实筛选；
+        缺省为空，旧语义不变。
+        """
+        now = _now()
+        with self._lock:
+            self._seq += 1
+            item = {
+                "queue_id": f"q_{uuid.uuid4().hex[:12]}",
+                "_seq": self._seq,
+                "session_id": session_id,
+                "message": message,
+                "attachments": list(attachments or []),
+                "attachment_facts": list(attachment_facts or []),
+                "model": model,
+                "model_change": bool(model_change),
+                "reasoning_effort": reasoning_effort,
+                "reasoning_mode": reasoning_mode,
+                "created_at": now,
+                "status": "queued",
+            }
+            if origin:
+                item["origin"] = str(origin)
+            if origin_operation_id:
+                item["origin_operation_id"] = str(origin_operation_id)
+            self._items.append(item)
+            self._save()
+            return self._public(item)
+
+    def list_active(self, session_id: str) -> list[dict[str, Any]]:
+        """会话的活跃队列（queued+claimed，FIFO 序）；顺带触发 reaper."""
+        with self._lock:
+            self._reap_stale_claims_locked(_now())
+            return [self._public(it) for it in self._active_items_locked(session_id)]
+
+    def snapshot_items(self) -> list[dict[str, Any]]:
+        """全量只读快照（公共视图，含终态；恢复扫描等下游用，不触发 reaper）."""
+        with self._lock:
+            return [self._public(it) for it in self._items]
+
+    def cancel(self, session_id: str, queue_id: str) -> bool:
+        """取消一条排队项（queued→cancelled；claimed 不可取消：已进入发送流程）."""
+        return self.cancel_with_item(session_id, queue_id) is not None
+
+    def cancel_with_item(
+        self, session_id: str, queue_id: str, *, cancelled_by: str = "system"
+    ) -> dict[str, Any] | None:
+        """Atomically cancel one still-queued item and return its frozen facts.
+
+        cancelled_by（SPEC-20260923-queue-recovery）：机械取消方标记——
+        用户主动取消（端点传 "user"）与系统路径取消可区分，恢复重排只认后者。
+        """
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "queued":
+                        return None
+                    it["status"] = "cancelled"
+                    it["terminal_at"] = _now()
+                    it["cancelled_by"] = str(cancelled_by or "system")
+                    self._save()
+                    return self._public(it)
+            return None
+
+    def claim_interject(
+        self, session_id: str, queue_id: str, *, run_generation: str = ""
+    ) -> dict[str, Any] | None:
+        """queued→interject_pending for an exact live-run handoff.
+
+        run_generation 记录认领时的 live 代次，供 reap_orphan_interjects
+        判孤儿（与 queue-interject 端点 CAS 判据同构）；缺省不记录（旧调用
+        语义不变）。
+        """
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "queued":
+                        return None
+                    it["status"] = "interject_pending"
+                    it["interject_requested_at"] = _now()
+                    if run_generation:
+                        it["interject_run_generation"] = str(run_generation)
+                    self._save()
+                    return self._public(it)
+            return None
+
+    def release_interject(
+        self,
+        session_id: str,
+        queue_id: str,
+        *,
+        reason: str = "interject_handoff_rejected",
+    ) -> bool:
+        """Rollback a mailbox handoff that never reached a live run."""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "interject_pending":
+                        return False
+                    it["status"] = "queued"
+                    it["requeued_at"] = _now()
+                    it["requeued_from"] = reason
+                    self._save()
+                    return True
+            return False
+
+    def reap_orphan_interjects(
+        self, runs_alive: Callable[[str], str | None]
+    ) -> list[str]:
+        """Requeue interject_pending items whose live run no longer exists.
+
+        enqueue_interjection 返回 True 后 run 若在轮边界消费 mailbox 前终止，
+        该项将停在 interject_pending；此前只有进程重启的 _load() 会恢复。本
+        回收以 runs_alive 探测的代次事实为准：无 live run，或代次已换 →
+        回滚 queued（audit 标记 interject_run_ended）。与 _load() 同一取舍：
+        宁可承受 ack 失败窗口下的重复投递，也不让用户消息静默滞留（消息必达
+        优先，queue_recovery 机械边界同构）。
+        """
+        requeued: list[str] = []
+        for it in self.snapshot_items():
+            if it.get("status") != "interject_pending":
+                continue
+            sid = str(it.get("session_id") or "")
+            claimed_gen = str(it.get("interject_run_generation") or "")
+            alive = runs_alive(sid)
+            if alive is not None and (claimed_gen == "" or alive == claimed_gen):
+                continue  # run 仍在且代次吻合：交给轮边界消费
+            if self.release_interject(sid, str(it.get("queue_id") or ""), reason="interject_run_ended"):
+                requeued.append(str(it.get("queue_id") or ""))
+        return requeued
+
+    def mark_interject_received(self, session_id: str, queue_id: str) -> bool:
+        """Mark the exact point where the engine worker consumed the human steer."""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "interject_pending":
+                        return False
+                    it["status"] = "interject_received"
+                    it["received_at"] = _now()
+                    it["terminal_at"] = it["received_at"]
+                    self._save()
+                    return True
+            return False
+
+    def dispatch_claim(self, session_id: str, claimed_by: str = "web") -> dict[str, Any] | None:
+        """原子领取队首 queued 项（FIFO）：标记 claimed；无可派发项返回 None."""
+        with self._lock:
+            self._reap_stale_claims_locked(_now())
+            pending = sorted(self._active_items_locked(session_id), key=lambda x: (x.get("created_at", 0), int(x.get("_seq", 0))))
+            for it in pending:
+                if it.get("status") == "queued":
+                    it["status"] = "claimed"
+                    it["claimed_at"] = _now()
+                    it["claimed_by"] = claimed_by
+                    self._clear_recovery_fields(it)
+                    self._save()
+                    return self._public(it)
+            return None
+
+    def claimed_item(self, session_id: str, queue_id: str) -> dict[str, Any] | None:
+        """Return one currently claimed frozen handoff fact without mutating it."""
+        with self._lock:
+            self._reap_stale_claims_locked(_now())
+            for it in self._items:
+                if (
+                    it.get("queue_id") == queue_id
+                    and it.get("session_id") == session_id
+                    and it.get("status") == "claimed"
+                ):
+                    return self._public(it)
+            return None
+
+    def release(self, session_id: str, queue_id: str) -> bool:
+        """领取方未能发起正式 run（如 session_busy 竞态）→ 回滚 queued 保持 FIFO."""
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "claimed":
+                        return False
+                    it["status"] = "queued"
+                    it.pop("claimed_at", None)
+                    it.pop("claimed_by", None)
+                    self._clear_recovery_fields(it)
+                    self._save()
+                    return True
+            return False
+
+    def interject_pressure(self, session_id: str) -> dict[str, Any]:
+        """R2③（antidrift_impl 批1）只读统计：等待投递集计数与最早入队时间.
+
+        DC-1 术语映射口径：{queued, interject_pending} 即 HEAD 状态机中
+        "已入队、尚未进入模型上下文"的全部机械状态；interject_received 为
+        投递完成终态，不构成等待压力。不改任何既有状态转移。
+        """
+        with self._lock:
+            count = 0
+            oldest: float | None = None
+            for it in self._items:
+                if it.get("session_id") != session_id:
+                    continue
+                if it.get("status") not in ("queued", "interject_pending"):
+                    continue
+                count += 1
+                created = it.get("created_at")
+                if isinstance(created, (int, float)) and (
+                    oldest is None or float(created) < oldest
+                ):
+                    oldest = float(created)
+            return {"count": count, "oldest_enqueued_at": oldest}
+
+    def mark_terminal(
+        self, session_id: str, queue_id: str, status: str, run_error: str | None = None
+    ) -> bool:
+        """run 终态回写：claimed → completed | failed."""
+        if status not in ("completed", "failed"):
+            raise ValueError(f"unsupported terminal status: {status}")
+        with self._lock:
+            for it in self._items:
+                if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
+                    if it.get("status") != "claimed":
+                        return False
+                    it["status"] = status
+                    it["terminal_at"] = _now()
+                    self._clear_recovery_fields(it)
+                    if run_error:
+                        it["run_error"] = run_error
+                    self._save()
+                    return True
+            return False
+
+    def compact(self, keep_n: int = 500) -> None:
+        """终态条目滚动清理（保最近 keep_n 条终态历史）."""
+        with self._lock:
+            if len(self._items) <= keep_n:
+                return
+            actives = [
+                it
+                for it in self._items
+                if it.get("status") in ("queued", "claimed", "interject_pending")
+            ]
+            terminals = [it for it in self._items if it not in actives]
+            self._items = actives + terminals[-keep_n:]
+            self._save()

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# pre-commit 钩子：AI 自动提交前的安全扫描（防误传敏感/私密/错误文件）
+# 由 scripts/git_security_scan.sh --staged 执行（规则见该脚本）。
+# 安装: git config core.hooksPath .githooks（见 scripts/install_security_hooks.sh）
+
+exec bash "$(git rev-parse --show-toplevel)/scripts/git_security_scan.sh" --staged

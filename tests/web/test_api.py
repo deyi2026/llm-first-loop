@@ -1,0 +1,861 @@
+"""Web API 端点测试（M36，FakeLLM 装配零真实冒烟）.
+
+用例 1-14：对话成功/会话复用/422 系列/500 异常/透传/健康检查/会话列表/删除确认/会话不存在。
+复用 tests/conftest.py 的 build_test_engine fixture（既有装配，不复制逻辑）。
+"""
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from llm_loop.web import build_app
+from llm_loop.web.routes import SERVICE_VERSION
+
+
+def _make_client(engine):
+    return TestClient(build_app(engine=engine))
+
+
+def test_chat_success_creates_session(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "你好"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "你好"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["final_answer"] == "你好"
+    assert body["session_id"]
+    assert engine.session.exists(body["session_id"])
+
+
+def test_chat_reuses_session(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "一"}, {"content": "二"}])
+    client = _make_client(engine)
+    r1 = client.post("/api/v1/chat", json={"message": "一"}).json()
+    sid = r1["session_id"]
+    before = len(engine.session.list_sessions())
+    r2 = client.post("/api/v1/chat", json={"message": "二", "session_id": sid})
+    assert r2.status_code == 200
+    assert r2.json()["session_id"] == sid
+    assert len(engine.session.list_sessions()) == before  # 复用不新增
+
+
+def test_program_final_placeholder_stays_empty_in_session_but_history_recovers_event_text(
+    build_test_engine,
+    tmp_path,
+):
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.event_log.store import EventStore
+
+    engine, _ = build_test_engine([])
+    engine._event_store = EventStore(tmp_path / "events", enabled=True)  # pyright: ignore[reportPrivateUsage]
+    sid = engine.session.create()
+    event = engine._event_store.append(  # pyright: ignore[reportPrivateUsage]
+        sid,
+        "program.final",
+        {
+            "session_id": sid,
+            "reason": "overflow",
+            "answer_origin": "program",
+            "full_text": "[上下文超限] rendered_chars=151651; max_request_chars=150000",
+        },
+    )
+    assert event is not None
+    sess = engine.session.load(sid)
+    sess.messages.append(
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.SYSTEM,
+            metadata={
+                "answer_origin": "program",
+                "run_end_reason": "overflow",
+                "program_final_placeholder": True,
+                "program_final_event_seq": event.seq,
+            },
+        )
+    )
+    engine.session.save(sess)
+    assert engine.session.load(sid).messages[-1].content == ""
+
+    client = _make_client(engine)
+    response = client.get(f"/api/v1/sessions/{sid}/messages")
+    assert response.status_code == 200
+    assert response.json()["messages"][-1]["content"].startswith("[上下文超限]")
+    # UI hydration must not mutate the Session/model-visible protocol placeholder.
+    assert engine.session.load(sid).messages[-1].content == ""
+
+
+def test_chat_missing_message_422(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={})
+    assert resp.status_code == 422
+
+
+def test_chat_empty_message_422(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": ""})
+    assert resp.status_code == 422
+
+
+def test_chat_non_string_message_422(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": 123})
+    assert resp.status_code == 422
+
+
+def test_chat_engine_error_500(build_test_engine, fake_settings):
+    def boom(_calls):
+        raise RuntimeError("fake engine failure")
+
+    engine, _ = build_test_engine([boom])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x"})
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body["error"] == "internal_error"
+    assert "fake engine failure" in body["detail"]
+
+
+def test_chat_verification_note_passthrough(build_test_engine, fake_settings):
+    from llm_loop.core.message import ToolCall
+    from llm_loop.llm.client import LLMResponse
+
+    tc = ToolCall(id="call_1", name="read_file", arguments={"path": "/no/such"})
+    responses = [
+        LLMResponse(content="", tool_calls=[tc], provider="fake"),
+        LLMResponse(content="最终回答", tool_calls=[], provider="fake"),
+    ]
+    engine, _ = build_test_engine(responses)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "读文件"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["final_answer"] == "最终回答"
+    assert "verification_note" in body
+
+
+def test_chat_response_tool_calls_passthrough(build_test_engine, fake_settings):
+    """P2-1: 后端 ChatResponse.tool_calls 透传链路（前端可消费数据源成立，零后端改动）."""
+    from llm_loop.core.message import ToolCall
+    from llm_loop.llm.client import LLMResponse
+
+    tc = ToolCall(id="call_1", name="read_file", arguments={"path": "/no/such"})
+    responses = [
+        LLMResponse(content="", tool_calls=[tc], provider="fake"),
+        LLMResponse(content="最终回答", tool_calls=[], provider="fake"),
+    ]
+    engine, _ = build_test_engine(responses)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "读文件"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tool_calls"] and body["tool_calls"][0]["name"] == "read_file"
+    assert body["tool_calls"][0]["arguments"] == {"path": "/no/such"}
+
+
+def test_chat_truncated_passthrough(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "ok"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x"})
+    assert resp.status_code == 200
+    assert "truncated" in resp.json()
+
+
+def test_health_no_llm_call(build_test_engine, fake_settings):
+    engine, fake = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "llm-first-loop-web"
+    assert body["version"] == SERVICE_VERSION
+    assert isinstance(body["build"], dict)
+    assert isinstance(body["knowledge"], dict)
+    assert len(fake.calls) == 0  # 健康检查不调 LLM
+
+
+def test_root_returns_service_info(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """V2 产物缺失时根路径如实报 frontend_missing，API 仍独立可用."""
+    monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
+    engine, fake = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.get("/")
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "frontend_missing"
+    assert len(fake.calls) == 0  # 根路径不调 LLM
+    info = client.get("/api/info")
+    assert info.status_code == 200
+    assert info.json()["service"] == "llm-first-loop-web"
+    assert info.json()["version"] == SERVICE_VERSION
+    assert isinstance(info.json()["build"], dict)
+
+
+def test_list_sessions(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    client.post("/api/v1/chat", json={"message": "a"})
+    resp = client.get("/api/v1/sessions")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert body["sessions"][0]["session_id"]
+
+
+def test_list_sessions_exposes_each_session_effective_model(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    sid_a = engine.session.create(model_override="glm/glm-5.3")
+    sid_b = engine.session.create(model_override="minimax/MiniMax-M2.1")
+    client = _make_client(engine)
+
+    sessions = {row["session_id"]: row for row in client.get("/api/v1/sessions").json()["sessions"]}
+
+    assert sessions[sid_a]["model"] == "glm/glm-5.3"
+    assert sessions[sid_b]["model"] == "minimax/MiniMax-M2.1"
+
+
+def test_delete_session_requires_confirm(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "a"}).json()["session_id"]
+    resp = client.delete(f"/api/v1/sessions/{sid}")
+    assert resp.status_code == 409  # 无 confirm 拒绝
+    assert engine.session.exists(sid)  # 未删除
+
+
+def test_delete_session_confirm_ok(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "a"}).json()["session_id"]
+    resp = client.delete(f"/api/v1/sessions/{sid}?confirm=true")
+    assert resp.status_code == 200
+    assert not engine.session.exists(sid)
+
+
+def test_delete_session_not_found(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.delete("/api/v1/sessions/does-not-exist?confirm=true")
+    assert resp.status_code == 404
+
+
+def test_chat_session_not_found_no_create(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    before = len(engine.session.list_sessions())
+    resp = client.post("/api/v1/chat", json={"message": "x", "session_id": "nope"})
+    assert resp.status_code == 404
+    assert len(engine.session.list_sessions()) == before  # 不静默新建
+
+
+
+
+
+def test_chat_rejects_path_traversal_session_id_before_engine_run(
+    build_test_engine, fake_settings, monkeypatch
+):
+    """恶意session_id必须在存储exists边界被拒绝，不能进入LLM/run路径。"""
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    called = False
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("非法session_id不得触发engine run")
+
+    monkeypatch.setattr(engine, "_run_with_acquired", forbidden_run)
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "x", "session_id": "../workspace-B/victim"},
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "session_not_found"
+    assert called is False
+
+
+def test_get_session_messages(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "回答"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "你好"}).json()["session_id"]
+    resp = client.get(f"/api/v1/sessions/{sid}/messages")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["session_id"] == sid
+    roles = [m["role"] for m in body["messages"]]
+    assert "user" in roles
+    assert "assistant" in roles
+
+
+def test_get_session_messages_not_found(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.get("/api/v1/sessions/nope/messages")
+    assert resp.status_code == 404
+
+
+def test_chat_model_passthrough(build_test_engine, fake_settings):
+    """显式 Web 模型切换经池解析：provider/model → 裸模型名透传给 LLM 调用."""
+    engine, fake = build_test_engine([{"content": "用 pro 模型回答"}])
+    client = _make_client(engine)
+    # "default" 为 L0 合成单 provider id（fake.local），"fake-model" 为其唯一模型
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "x", "model": "default/fake-model", "model_change": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["final_answer"] == "用 pro 模型回答"
+    assert fake.calls and fake.calls[0]["model"] == "fake-model"
+
+
+def test_chat_model_unavailable_honest(build_test_engine, fake_settings):
+    """per-call 模型不在注册表 → 如实 [模型不可用] 反馈，不静默降级、不调 LLM."""
+    engine, fake = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x", "model": "nonexistent/model-xyz"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "[模型不可用]" in body["final_answer"]
+    assert "nonexistent/model-xyz" in body["final_answer"]
+    assert len(fake.calls) == 0  # 未调 LLM
+
+
+def test_chat_model_omitted_uses_default(build_test_engine, fake_settings):
+    """不传 model 时透传 None（引擎用装配默认模型）."""
+    engine, fake = build_test_engine([{"content": "ok"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x"})
+    assert resp.status_code == 200
+    assert fake.calls and fake.calls[0]["model"] is None
+
+
+def test_list_models_endpoint(build_test_engine, fake_settings):
+    """GET /api/v1/models 分开返回 effective 候选与当前选择的可用性事实."""
+    engine, fake = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.get("/api/v1/models")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "models" in body and body["models"]
+    assert isinstance(body["current"], str)
+    assert body["current_available"] is (body["current"] in body["models"])
+    if body["current_available"] is False:
+        assert body["current"] not in body["models"], "stale current must not be fabricated as available"
+    assert isinstance(body["catalog"], list)
+    assert len(fake.calls) == 0  # 不调 LLM
+
+
+# ── M56 Web/飞书会话同步：置顶 + 来源 + SSE + 飞书推送 ──
+
+
+def test_session_pin_endpoint(build_test_engine, fake_settings):
+    """POST /api/v1/sessions/{id}/pin?pinned=true 置顶；列表 pinned=True 且置顶优先."""
+    engine, _ = build_test_engine([{"content": "a"}, {"content": "b"}])
+    client = _make_client(engine)
+    client.post("/api/v1/chat", json={"message": "a"})
+    sid_b = client.post("/api/v1/chat", json={"message": "b"}).json()["session_id"]
+    # 置顶 b（后创建的 b 本来排在前面；置顶后仍第一）
+    resp = client.post(f"/api/v1/sessions/{sid_b}/pin?pinned=true")
+    assert resp.status_code == 200
+    assert resp.json()["pinned"] is True
+    sessions = client.get("/api/v1/sessions").json()["sessions"]
+    assert sessions[0]["session_id"] == sid_b and sessions[0]["pinned"] is True
+    # 取消置顶
+    resp = client.post(f"/api/v1/sessions/{sid_b}/pin?pinned=false")
+    assert resp.status_code == 200
+    sessions = client.get("/api/v1/sessions").json()["sessions"]
+    assert sessions[0]["pinned"] is False
+
+
+def test_session_pin_not_found(build_test_engine, fake_settings):
+    """置顶不存在的会话 → 404."""
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/sessions/nope/pin?pinned=true")
+    assert resp.status_code == 404
+
+
+def test_list_sessions_includes_pinned_and_channel(build_test_engine, fake_settings):
+    """列表透传 pinned/channel（M56）."""
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "a"}).json()["session_id"]
+    sessions = client.get("/api/v1/sessions").json()["sessions"]
+    item = next(s for s in sessions if s["session_id"] == sid)
+    assert item["pinned"] is False
+    assert item["channel"] == "web"
+
+
+def test_chat_feishu_channel_push(build_test_engine, fake_settings, monkeypatch):
+    """飞书来源会话发消息 → 后台推送到飞书（mock 推送，fail-open）."""
+    import llm_loop.web.feishu_push as fp
+
+    pushed = []
+    monkeypatch.setattr(fp, "push_web_chat_to_feishu", lambda channel, user_text, answer: pushed.append((channel, user_text, answer)))
+    engine, _ = build_test_engine([{"content": "第一答"}, {"content": "回答内容"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "web 消息"}).json()["session_id"]
+    engine.session.set_channel(sid, "feishu:group:oc_test_chat")
+    resp = client.post("/api/v1/chat", json={"message": "第二句", "session_id": sid})
+    assert resp.status_code == 200
+    assert pushed, "飞书来源会话应触发推送"
+    channel, user_text, answer = pushed[0]
+    assert channel == "feishu:group:oc_test_chat"
+    assert user_text == "第二句"
+    assert answer == "回答内容"
+
+
+def test_chat_web_channel_no_push(build_test_engine, fake_settings, monkeypatch):
+    """Web 来源会话发消息不触发飞书推送."""
+    import llm_loop.web.feishu_push as fp
+
+    pushed = []
+    monkeypatch.setattr(fp, "push_web_chat_to_feishu", lambda channel, user_text, answer: pushed.append(1))
+    engine, _ = build_test_engine([{"content": "ok"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x"})
+    assert resp.status_code == 200
+    assert not pushed
+
+
+def test_sse_events_endpoint(build_test_engine, fake_settings):
+    """SSE 端点已注册 + 指纹变化检测正确（无限流不做 HTTP 级流读，冒烟阶段 curl 验证）."""
+    from llm_loop.web.routes import _sessions_fingerprint
+
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    client.post("/api/v1/chat", json={"message": "a"})
+    # 指纹变化检测：写入新会话文件后指纹应变化
+    fp_before = _sessions_fingerprint(engine.settings.sessions_dir)
+    engine.session.create()
+    fp_after = _sessions_fingerprint(engine.settings.sessions_dir)
+    assert fp_before != fp_after
+    # 端点已注册（OpenAPI schema）
+    schema = client.get("/openapi.json").json()
+    assert "/api/v1/events" in schema["paths"]
+    # 端点信息含在 /api/info
+    info = client.get("/api/info").json()
+    assert "GET /api/v1/events" in info["endpoints"]
+
+
+# ── 2026-08-15: SSE 命名事件修复（此前 data 内嵌 type，浏览器按默认 message 处理，
+#    addEventListener("sessions_updated") 永不触发 → Web 端必须手动刷新）──
+
+def test_sse_named_event_frame_format():
+    """命名事件帧带 `event:` 行（浏览器按命名事件分发的前置条件）."""
+    from llm_loop.web.routes import _sse_event
+
+    frame = _sse_event("sessions_updated", {"type": "sessions_updated"})
+    assert frame.startswith("event: sessions_updated\n")
+    assert "data: {\"type\": \"sessions_updated\"}" in frame
+    assert frame.endswith("\n\n")
+    conn = _sse_event("connected", {"type": "connected"})
+    assert conn.startswith("event: connected\n")
+
+
+def test_sse_fingerprint_scan_does_not_block_event_loop(monkeypatch):
+    """Slow filesystem fingerprinting must not stall unrelated async requests."""
+    import asyncio
+    import threading
+
+    import llm_loop.web.routes as routes
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_fingerprint(_engine):
+        started.set()
+        assert release.wait(timeout=1.0)
+        return "fingerprint"
+
+    monkeypatch.setattr(routes, "_session_events_fingerprint", slow_fingerprint)
+
+    async def scenario():
+        task = asyncio.create_task(routes._session_events_fingerprint_async(object()))
+        for _ in range(100):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert started.is_set()
+
+        # If the slow scan ran on the event-loop thread, execution could not
+        # reach this yield/release point until the blocking wait had finished.
+        await asyncio.sleep(0)
+        release.set()
+        assert await asyncio.wait_for(task, timeout=1.0) == "fingerprint"
+
+    asyncio.run(scenario())
+
+
+def test_sse_route_uses_named_event_helper():
+    """端点使用 _sse_event 生成帧（防回退 data 内嵌 type 格式的回归守护）."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "routes.py"
+    text = src.read_text(encoding="utf-8")
+    assert '_sse_event("sessions_updated"' in text
+    assert '_sse_event("connected"' in text
+    assert 'yield "data: ' not in text  # 旧格式（无 event: 行）不再出现
+
+
+# ── Web V2（2026-08-15）：/ui/v2 挂载并存（原版 / 不动；产物缺失不挂载） ──
+
+def test_ui_v2_mounted_when_dist_present(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """webui/dist 存在（UI_V2_DIR 注入）→ /ui/v2 挂载并可取 index.html."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Web V2</body></html>", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(dist))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.get("/ui/v2/")
+    assert resp.status_code == 200
+    assert "Web V2" in resp.text
+
+
+def test_ui_v2_not_mounted_without_dist(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """无构建产物 → /ui/v2 404，根入口明确 503，不回退已退役 v1."""
+    monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    assert client.get("/ui/v2/").status_code == 404
+    assert client.get("/").status_code == 503
+
+
+def test_ui_v2_assets_same_origin_api(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """V2 静态资源与 API 同源（base=/ui/v2/ 的 assets 可解析）."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(
+        '<script type="module" src="/ui/v2/assets/index-x.js"></script>', encoding="utf-8"
+    )
+    (dist / "assets").mkdir()
+    (dist / "assets" / "index-x.js").write_text("console.log(1)", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(dist))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    assert client.get("/ui/v2/assets/index-x.js").status_code == 200
+
+
+# ── 2026-08-15：消息反馈（对齐 DSH ui-message-feedback） ──
+
+def test_feedback_appends_jsonl(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """反馈 → data/feedback.jsonl 追加（含 role/note），会话内容不变."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    engine, fake = build_test_engine([{"content": "回答内容"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "你好"})
+    sid = resp.json()["session_id"]
+    before = engine.session.load(sid)
+    r = client.post(
+        f"/api/v1/sessions/{sid}/feedback",
+        json={"message_index": 1, "feedback": "up", "note": "回答准确"},
+    )
+    assert r.status_code == 200
+    lines = (Path(engine.settings.data_dir) / "feedback.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    rec = __import__("json").loads(lines[0])
+    assert rec["session_id"] == sid and rec["feedback"] == "up" and rec["note"] == "回答准确"
+    assert rec["role"] == "assistant"
+    after = engine.session.load(sid)
+    assert len(after.messages) == len(before.messages)  # 会话内容未被反馈修改
+
+
+def test_feedback_validations(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """非法 feedback / 越界 index → 400 如实."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    engine, fake = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "hi"})
+    sid = resp.json()["session_id"]
+    assert (
+        client.post(
+            f"/api/v1/sessions/{sid}/feedback",
+            json={"message_index": 0, "feedback": "sideways"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            f"/api/v1/sessions/{sid}/feedback",
+            json={"message_index": 999, "feedback": "up"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/v1/sessions/nonexistent/feedback",
+            json={"message_index": 0, "feedback": "up"},
+        ).status_code
+        == 404
+    )
+
+
+def test_chat_new_session_forces_create(build_test_engine, fake_settings):
+    """2026-08-18: new_session=true → 强制新建会话并设为共享当前（/new 语义）."""
+    engine, fake = build_test_engine([])
+    fake._responses = [__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    cli = _make_client(engine)
+    # 先建一个共享会话
+    sid0 = engine.session.create()
+    engine.session.set_shared_current(sid0)
+
+    # new_session=true 发消息（fake LLM 返回完成）
+    r = cli.post("/api/v1/chat", json={"message": "hi", "new_session": True})
+    assert r.status_code == 200
+    new_sid = r.json()["session_id"]
+    assert new_sid != sid0, "应新建会话而非复用旧会话"
+    # 共享当前已更新为新会话
+    assert engine.session.get_shared_current() == new_sid
+
+
+def test_chat_new_session_is_born_with_explicit_model_not_foreign_shared_model(
+    build_test_engine, fake_settings, monkeypatch
+):
+    """显式 Web 模型必须在 session.created 时就拥有 authority，不能先继承别的 tab。"""
+    from llm_loop.llm.client import LLMResponse
+
+    engine, fake = build_test_engine([])
+    fake._responses = [LLMResponse(content="fresh", tool_calls=[], provider="fake")]
+    old_sid = engine.session.create(model_override="foreign/tab-model")
+    engine.session.set_shared_current(old_sid)
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    expected = f"{pid}/{mid}"
+
+    created_overrides: list[str | None] = []
+    original_create = engine.session.create
+
+    def capture_create(*args, **kwargs):
+        created_overrides.append(kwargs.get("model_override"))
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(engine.session, "create", capture_create)
+    cli = _make_client(engine)
+    response = cli.post(
+        "/api/v1/chat",
+        json={"message": "hi", "new_session": True, "model": "fake-model"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert created_overrides == [expected]
+    assert engine.session.load(response.json()["session_id"]).model_override == expected
+
+
+def test_chat_without_new_session_reuses_shared(build_test_engine, fake_settings):
+    """不带 new_session → 复用共享当前（原逻辑零回归）."""
+    engine, fake = build_test_engine([])
+    fake._responses = [__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    cli = _make_client(engine)
+    sid0 = engine.session.create()
+    engine.session.set_shared_current(sid0)
+    r = cli.post("/api/v1/chat", json={"message": "hi"})
+    assert r.status_code == 200
+    assert r.json()["session_id"] == sid0
+
+
+def test_chat_new_session_wins_when_session_id_also_sent(build_test_engine):
+    """schema 明示冲突时 new_session 优先，不能意外续写显式旧 sid。"""
+    from llm_loop.llm.client import LLMResponse
+
+    engine, fake = build_test_engine([])
+    fake._responses = [LLMResponse(content="fresh", tool_calls=[], provider="fake")]
+    old_sid = engine.session.create()
+    cli = _make_client(engine)
+    r = cli.post(
+        "/api/v1/chat",
+        json={"message": "hi", "session_id": old_sid, "new_session": True},
+    )
+    assert r.status_code == 200
+    new_sid = r.json()["session_id"]
+    assert new_sid != old_sid
+    assert engine.session.get_shared_current() == new_sid
+
+
+def test_chat_cross_process_busy_does_not_persist_model_override(build_test_engine):
+    from llm_loop.core.session import SessionStore
+
+    engine, fake = build_test_engine([])
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001 — 模拟另一服务进程
+    cli = _make_client(engine)
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        r = cli.post(
+            "/api/v1/chat",
+            json={"message": "busy", "session_id": sid, "model": "fake-model"},
+        )
+    assert r.status_code == 503
+    assert r.json()["error"] == "session_busy"
+    assert engine.session.load(sid).model_override is None
+
+    from llm_loop.llm.client import LLMResponse
+
+    fake._responses = [LLMResponse(content="accepted later", tool_calls=[], provider="fake")]
+    r2 = cli.post(
+        "/api/v1/chat",
+        json={
+            "message": "accepted",
+            "session_id": sid,
+            "model": "fake-model",
+            "model_change": True,
+        },
+    )
+    assert r2.status_code == 200
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    assert engine.session.load(sid).model_override == f"{pid}/{mid}"
+
+
+def test_management_routes_busy_during_external_run_lease(build_test_engine):
+    """另一进程持 whole-run lease 时，管理 API 返回 409 而不是改写/删除旧快照。"""
+    from llm_loop.core.session import SessionStore
+
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001 — 模拟另一进程
+
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        responses = [
+            client.post(f"/api/v1/sessions/{sid}/pin?pinned=true"),
+            client.post(f"/api/v1/sessions/{sid}/archive?archived=true"),
+            client.post(f"/api/v1/sessions/{sid}/fork"),
+            client.delete(f"/api/v1/sessions/{sid}?confirm=true"),
+        ]
+        for response in responses:
+            assert response.status_code == 409, response.text
+            assert response.json()["error"] == "session_busy"
+        current = engine.session.load(sid)
+        assert current.pinned is False
+        assert current.status == "active"
+        assert engine.session.exists(sid) is True
+
+    assert client.post(f"/api/v1/sessions/{sid}/pin?pinned=true").status_code == 200
+    assert client.delete(f"/api/v1/sessions/{sid}?confirm=true").status_code == 200
+    assert engine.session.exists(sid) is False
+
+
+def test_chat_rejects_session_if_workspace_changes_before_sync_admission(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """同步chat在session解析后切workspace时应409，不得在新分区用旧sid起run。"""
+    engine, _ = build_test_engine([{"content": "should-not-run"}])
+    workspace_a = tmp_path / "sync-epoch-a"
+    workspace_b = tmp_path / "sync-epoch-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    engine.set_workspace(str(workspace_a), "sync-epoch-a")
+    sid = engine.session.create()
+    root_a = engine.session.root
+    original = engine._run_with_acquired
+    switched = False
+
+    def switch_then_run(*args, **kwargs):
+        nonlocal switched
+        if not switched:
+            engine.set_workspace(str(workspace_b), "sync-epoch-b")
+            switched = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_run_with_acquired", switch_then_run)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "must-not-cross-workspace", "session_id": sid},
+    )
+
+    assert switched is True
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "workspace_changed"
+    assert (root_a / f"{sid}.json").exists()
+    assert not (engine.settings.sessions_dir / "sync-epoch-b" / f"{sid}.json").exists()
+
+
+def test_delete_session_cleanup_failure_returns_500(build_test_engine, fake_settings, monkeypatch):
+    """底层物理清理失败时Web不得仍返回deleted 200。"""
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "a"}).json()["session_id"]
+    monkeypatch.setattr(engine.session, "delete", lambda _sid: False)
+
+    resp = client.delete(f"/api/v1/sessions/{sid}?confirm=true")
+
+    assert resp.status_code == 500
+    assert resp.json()["error"] == "delete_failed"
+    assert engine.session.exists(sid)
+
+
+def test_web_rejects_reuse_of_cli_origin_session(build_test_engine, fake_settings):
+    """Production regression: a CLI/eval probe session must not be adopted by Web."""
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    engine, _ = build_test_engine([{"content": "probe-ok"}, {"content": "web-should-not-run"}])
+    sid = engine.session.create()
+    cli_result = engine.run(sid, "Reply with exactly: ok", ingress=issue_ingress("cli"))
+    assert cli_result.final_answer == "probe-ok"
+
+    client = _make_client(engine)
+    response = client.post(
+        "/api/v1/chat",
+        json={"message": "real web turn", "session_id": sid},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "session_ingress_mismatch"
+    stored = engine.session.load(sid)
+    assert [m.content for m in stored.messages if m.role == "user"] == ["Reply with exactly: ok"]
+
+
+def test_session_list_marks_cli_origin_as_not_web_reusable(build_test_engine, fake_settings):
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    engine, _ = build_test_engine([{"content": "probe-ok"}])
+    sid = engine.session.create()
+    engine.run(sid, "probe", ingress=issue_ingress("cli"))
+
+    item = next(
+        row for row in _make_client(engine).get("/api/v1/sessions").json()["sessions"]
+        if row["session_id"] == sid
+    )
+    assert item["origin_channel"] == "cli"
+    assert item["web_reusable"] is False
+
+
+def test_chat_new_session_allowed_while_other_session_running(build_test_engine):
+    """EVO-20260920（灵活新建）: 会话 A 推理进行中，new_session=true 的新建请求
+    必须成功（多会话并发是既定能力）；共享当前切到新会话且 A 的 run 不受影响。"""
+    from llm_loop.llm.client import LLMResponse, StreamDelta
+
+    engine, _ = build_test_engine([])
+    cli = _make_client(engine)
+
+    def slow_stream(**_kwargs):
+        yield StreamDelta(text="A1")
+        yield StreamDelta(text="A2")
+        return LLMResponse(content="A1A2", tool_calls=[], provider="fake")
+
+    engine.llm_pool.default_client.chat_stream = slow_stream
+    sid_a = engine.session.create()
+    engine.session.set_shared_current(sid_a)
+    stream = engine.run_stream(sid_a, "hold")
+    try:
+        assert next(stream).text == "A1"  # A 已在推理中（sync run active）
+
+        def quick_stream(**_kwargs):
+            yield StreamDelta(text="新")
+            return LLMResponse(content="新会话完成", tool_calls=[], provider="fake")
+
+        engine.llm_pool.default_client.chat_stream = quick_stream
+        resp = cli.post("/api/v1/chat", json={"message": "hi", "new_session": True})
+        assert resp.status_code == 200, resp.text
+        new_sid = resp.json()["session_id"]
+        assert new_sid != sid_a
+        assert engine.session.get_shared_current() == new_sid
+        # A 的 run 不被打断：继续产出
+        assert next(stream).text == "A2"
+    finally:
+        stream.close()

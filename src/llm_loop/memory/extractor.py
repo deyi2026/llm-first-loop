@@ -1,0 +1,404 @@
+"""独立记忆提取 MemoryExtractor（design.md §3.3 / FR-P1-EXT 系列）.
+
+边界说明（M11）: 本模块为独立提取调度器（触发时机/预算/审计）;记忆块解析纯函数在 memory/extract.py（被复用）。
+
+- 三触发: 会话结束（session_end）/ 定期（interval）/ 手动（manual）
+- P0-C（2026-09-18）: interval 触发的执行调度迁入 Learning Plane——maybe_trigger 仅做
+  门控判定（阈值/冷却），通过后向 LearningJournal 投递 durable 任务
+  （kind=memory_extract，episode_ref=memory-extract:<sid>:<message_count>），
+  由 LearningPlane 在学习车道内执行 extract_session(trigger="interval")。
+  不再自建线程调度（不残留双实现）。LEARNING_PLANE_ENABLED=false 时 journal 未装配，
+  interval 触发不排程（手动/会话结束路径不受影响）。
+- 输出与即时 [[memory]] 沉淀完全同构（复用 memory/extract.py）
+- 内容指纹去重（与既有条目共存不重复）
+- 失败隔离（LearningPlane worker 内执行，不阻塞主循环）；预算/频次冷却；审计落盘可检索
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import re
+import threading
+import time
+import uuid
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES  # P0-B3
+from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
+from llm_loop.memory.store import MemoryEntry, MemoryStore
+from llm_loop.resources.contracts import ExecutionClass, ServicePriority
+from llm_loop.resources.provider_calls import ProviderCallCoordinator
+from llm_loop.resources.provider_settlement import (
+    ProviderAttemptKind,
+    ProviderCallOutcome,
+    ProviderCallPurpose,
+)
+from llm_loop.timekeeping import system_local_now
+
+logger = logging.getLogger(__name__)
+
+ExtractTrigger = Literal["session_end", "interval", "manual"]
+
+_EXTRACT_PROMPT = """从以下会话历史中提取值得长期记忆的信息（关键事实/决策/约定），
+以结构化记忆块输出（与常规记忆块格式一致），每块一个条目，无值得记忆内容则输出空：
+
+[[memory]] {{"type": "fact", "content": "要记住的内容", "keywords": ["关键词"], "citations": [{{"kind": "message", "ref": "msg:3", "note": "该内容的原始出处"}}]}} [[/memory]]
+
+citations 规则：
+- 每条记忆块必须包含 citations 字段，至少一条；
+- ref 格式为 "msg:N"，N 为该内容出处消息在会话历史中的编号（历史每行以 [N] 开头）；
+- ref 必须指向历史中真实存在的编号，不得编造；note 用一句话说明出处上下文。
+
+会话历史：
+{history}"""
+
+
+@dataclass
+class ExtractRecord:
+    """一次独立提取执行记录（FR-P1-EXT-06，落盘可检索）."""
+
+    ts: str
+    session_id: str
+    trigger: ExtractTrigger
+    input_scope: str
+    input_chars: int
+    entries: int
+    failures: list[str] = field(default_factory=list)
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "ts": self.ts,
+            "session_id": self.session_id,
+            "trigger": self.trigger,
+            "input_scope": self.input_scope,
+            "input_chars": self.input_chars,
+            "entries": self.entries,
+            "failures": self.failures,
+            "note": self.note,
+        }
+
+
+@dataclass
+class ExtractResult:
+    """提取执行结果."""
+
+    records: list[ExtractRecord]
+    entries: list[MemoryEntry]
+    skipped_duplicates: int = 0
+
+
+def _fingerprint(content: str) -> str:
+    """内容规范化 SHA-256（去空白/标点）用于去重."""
+    norm = re.sub(r"[\s\W_]+", "", content.lower())
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+class MemoryExtractor:
+    """独立记忆提取器（三触发 + 去重 + 预算冷却 + 异步隔离 + 审计）."""
+
+    def __init__(
+        self,
+        llm_client: Any | None = None,
+        memory: MemoryStore | None = None,
+        session_store: Any | None = None,
+        *,
+        enabled: bool = True,
+        interval_msgs: int = 20,
+        cooldown_s: float = 600.0,
+        max_input_chars: int = 100000,
+        timeout_s: float = 60.0,
+        audit_dir: str | Path | None = None,
+        provider_call_coordinator: ProviderCallCoordinator | None = None,
+        learning_journal: Any | None = None,
+        failure_backoff_s: float = 1800.0,
+    ) -> None:
+        self.llm = llm_client
+        self.memory = memory
+        self.session_store = session_store
+        self.enabled = enabled
+        self.interval_msgs = interval_msgs
+        self.cooldown_s = cooldown_s
+        self.max_input_chars = max_input_chars
+        self.timeout_s = timeout_s
+        self._audit_dir = Path(audit_dir) if audit_dir else None
+        self.provider_call_coordinator = provider_call_coordinator
+        # P0-C: LearningJournal（Learning Plane durable 队列）。interval 触发的唯一
+        # 调度路径；未装配时 maybe_trigger 不排程（见模块 docstring）。
+        self.learning_journal = learning_journal
+        self.failure_backoff_s = max(0.0, float(failure_backoff_s))
+        self.model_ref: str = ""  # factory 注入，用于 job.source_model（学习车道资源请求）
+        self._last_trigger_ts: OrderedDict[str, float] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _load_session_for_trigger(
+        self, session_id: str, trigger: ExtractTrigger
+    ) -> Any:
+        """Select the lawful session read path for this extraction trigger."""
+        store = self.session_store
+        if store is None:
+            raise RuntimeError("session_store unavailable")
+        if trigger == "interval":
+            owner_loader = getattr(store, "load_from_identity_owner", None)
+            if callable(owner_loader):
+                return owner_loader(session_id)
+        return store.load(session_id)
+
+    # ── 触发判定 ──
+    def maybe_trigger(self, session_id: str) -> bool:
+        """定期触发判定（消息数 ≥ 阈值 且 过冷却 → 向 Learning Plane 投递 durable 任务）.
+
+        P0-C: 本方法只做门控与入队，执行由 LearningPlane 消费 journal 完成；
+        返回 True 表示"已投递/已有在途任务"，False 表示"未满足或不可排程"。
+
+        FIX(2026-08-14, CI 抓到的平台 bug): 首次触发判定不得用 0.0 与 monotonic 比较——
+        容器/新命名空间里 time.monotonic() 从 0 开始（CI runner 启动 < cooldown_s 时），
+        `now - 0.0 < cooldown` 会把首次触发误判为冷却期（提取静默失效）。用 None 表示
+        "从未触发"，首次只检查消息数阈值（平台无关）。
+        """
+        if not self.enabled or self.session_store is None:
+            return False
+        meta = self.session_store.get_meta(session_id)
+        if meta is None:
+            return False
+        now = time.monotonic()
+        with self._lock:
+            cutoff = now - max(0.0, float(self.cooldown_s))
+            while self._last_trigger_ts:
+                oldest_sid, oldest_ts = next(iter(self._last_trigger_ts.items()))
+                if oldest_ts > cutoff:
+                    break
+                self._last_trigger_ts.pop(oldest_sid, None)
+            last = self._last_trigger_ts.get(session_id)
+            if meta.message_count < self.interval_msgs or (
+                last is not None and (now - last) < self.cooldown_s
+            ):
+                return False
+            self._last_trigger_ts[session_id] = now
+            self._last_trigger_ts.move_to_end(session_id)
+        journal = self.learning_journal
+        if journal is None:
+            # P0-C: Learning Plane 未启用 → interval 提取无调度路径（fail-closed，
+            # 不自建线程，避免双实现）。手动/会话结束触发不受影响。
+            logger.debug(
+                "memory extractor: journal 未装配（Learning Plane 未启用），跳过 interval 排程 sid=%s",
+                session_id,
+            )
+            return False
+        # 2026-09-23 学习风暴止血：会话近期有终态失败任务 → interval 触发退避
+        # （机械窗口；失败根因修复前不再生成同会话新任务反复冲击 provider）。
+        if getattr(journal, "recent_failure", None) is not None and journal.recent_failure(
+            session_id, within_s=self.failure_backoff_s
+        ):
+            logger.debug(
+                "memory extractor: 会话近期存在失败学习任务，interval 退避 sid=%s", session_id
+            )
+            return False
+        episode_ref = f"memory-extract:{session_id}:{meta.message_count}"
+        job = journal.enqueue(
+            episode_ref,
+            session_id=session_id,
+            source_model=self.model_ref,
+            kind="memory_extract",
+            trigger_facts={
+                "kind": "memory_extract",
+                "trigger": "interval",
+                "message_count": int(meta.message_count),
+                "interval_msgs": int(self.interval_msgs),
+            },
+        )
+        return job is not None
+
+    def extract_session(self, session_id: str, trigger: ExtractTrigger = "manual") -> ExtractResult:
+        """同步提取（会话结束/手动，受预算与冷却约束）."""
+        if not self.enabled:
+            return ExtractResult(records=[], entries=[], skipped_duplicates=0)
+        if self.session_store is None or self.llm is None or self.memory is None:
+            self._audit(session_id, trigger, "不可用", 0, ["组件未装配"], note="提取不可用")
+            return ExtractResult(records=[], entries=[], skipped_duplicates=0)
+
+        session = self._load_session_for_trigger(session_id, trigger)
+        # 预算: 输入超限截断最旧 + 标注
+        history_text = self._build_history_text(session.messages)
+        note = ""
+        if len(history_text) > self.max_input_chars:
+            history_text = history_text[: self.max_input_chars]
+            note = f"输入超预算，已截断至 {self.max_input_chars} 字符"
+
+        # P3: async extraction may outlive the run that observed this history. Capture
+        # only a mechanical memory-version snapshot before the provider call; no semantic
+        # relevance/currentness decision is made here.
+        observed_memory_versions = self.memory.version_snapshot()
+
+        coordinator = self.provider_call_coordinator
+        background = trigger == "interval"
+        execution_class = (
+            ExecutionClass.BACKGROUND_LEARNING if background else ExecutionClass.FOREGROUND_TASK
+        )
+        service_priority = (
+            ServicePriority.P3_BACKGROUND_LEARNING if background else ServicePriority.P0_FOREGROUND
+        )
+        provider_call = (
+            coordinator.open_shadow_call_for_client(
+                self.llm,
+                session_id=session_id,
+                # MemoryExtractor has no durable upstream job identity. Each actual
+                # invocation gets a fresh logical call rather than conflating two
+                # independent manual runs that happen to see the same message count.
+                idempotency_key=f"memory-extractor:{uuid.uuid4().hex}",
+                owner_ref=f"memory-extractor:{session_id}:{trigger}",
+                execution_class=execution_class,
+                service_priority=service_priority,
+                purpose=ProviderCallPurpose.MEMORY_EXTRACTOR,
+            )
+            if coordinator is not None
+            else None
+        )
+        try:
+            if coordinator is None:
+                resp = self.llm.chat(
+                    messages=[
+                        {"role": "user", "content": _EXTRACT_PROMPT.format(history=history_text)}
+                    ],
+                    tools=[],
+                )
+            else:
+                with coordinator.bind_shadow_call_site(
+                    provider_call,
+                    self.llm,
+                    attempt_kind=ProviderAttemptKind.PRIMARY,
+                    site_index=0,
+                ):
+                    resp = self.llm.chat(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": _EXTRACT_PROMPT.format(history=history_text),
+                            }
+                        ],
+                        tools=[],
+                    )
+                coordinator.settle_shadow_call(provider_call, ProviderCallOutcome.SUCCESS)
+            answer = resp.content or ""
+        except Exception as exc:  # noqa: BLE001 — 提取失败隔离，不影响主循环
+            if coordinator is not None:
+                coordinator.settle_shadow_call(provider_call, ProviderCallOutcome.ERROR)
+            self._audit(
+                session_id,
+                trigger,
+                "会话全量",
+                len(history_text),
+                [f"提取调用失败: {exc}"],
+                note="提取失败",
+            )
+            return ExtractResult(records=[], entries=[], skipped_duplicates=0)
+
+        # 解析（与即时沉淀同构）
+        blocks = extract_memory_blocks(answer)
+        entries, failures = memory_blocks_to_entries(
+            blocks, session_id=session_id, message_id="extract"
+        )
+        # 指纹去重 + deposit_path=extract
+        new_entries: list[MemoryEntry] = []
+        skipped = 0
+        late_not_promoted = 0
+        existing_fps = {e.content_fingerprint for e in self.memory.all() if e.content_fingerprint}
+        for e in entries:
+            fp = _fingerprint(e.content)
+            e.content_fingerprint = fp
+            e.deposit_path = "extract"
+            if fp in existing_fps:
+                skipped += 1
+                continue
+            existing_fps.add(fp)
+            saved, promoted = self.memory.save_entry_if_observed(
+                e, observed_versions=observed_memory_versions
+            )
+            if promoted:
+                new_entries.append(saved)
+            else:
+                late_not_promoted += 1
+
+        if late_not_promoted:
+            suffix = f"late_observation_not_promoted={late_not_promoted}"
+            note = f"{note}; {suffix}" if note else suffix
+
+        self._audit(
+            session_id,
+            trigger,
+            f"会话全量（消息数 {len(session.messages)}）",
+            len(history_text),
+            failures,
+            note=note,
+        )
+        return ExtractResult(
+            records=[self._last_record(session_id)],
+            entries=new_entries,
+            skipped_duplicates=skipped,
+        )
+
+    # ── 辅助 ──
+    def _build_history_text(self, messages: list[Any]) -> str:
+        lines = []
+        for idx, m in enumerate(messages):
+            role = m.role
+            content = m.content[:500]
+            # P0-B3（2026-08-28 批准）: 程序反馈（错误/熔断/守卫/耗尽）不进长期记忆
+            # 提取——防"错误文本 → 记忆 → 召回误用"架构性污染通道。2026-08-28 抽查
+            # 590 条无实质污染（4 命中均为机制元知识），纯防御性关闭通道（成本极低）。
+            # GPT 审计批次2: origin 单一真相源过滤（含 system 原生程序反馈），
+            # prefix 仅 legacy 兜底（老消息无 metadata，老程序反馈落 assistant/system）。
+            # B3 边界修正：prefix 兜底过滤 assistant/system，不误伤 user 角色同前缀正常文本
+            if (m.metadata or {}).get("answer_origin") == "program":
+                continue
+            if role in ("assistant", "system") and str(m.content or "").startswith(
+                PROGRAM_FEEDBACK_PREFIXES
+            ):
+                continue
+            # EXP-20260922（实验分支）: 行首加真实 index 锚点 [idx][role]。被过滤消息
+            # 占号不占行，msg:N 与 session.messages[N] 一一映射。依据 .tmp-ci 实验：
+            # 仅改 prompt 且历史无锚点时，程序反馈过滤使行序≠消息序，模型按行序自
+            # 编号产出 5/5 系统性错位 refs；加真实 index 锚点后 5/5 精确命中。
+            lines.append(f"[{idx}][{role}] {content}")
+        return "\n".join(lines)
+
+    def _audit(
+        self,
+        session_id: str,
+        trigger: str,
+        input_scope: str,
+        input_chars: int,
+        failures: list[str],
+        note: str = "",
+        entries: int = 0,
+    ) -> None:
+        """审计落盘（FR-P1-EXT-06，可被 search_records kind=memory_extract 检索）."""
+        if self._audit_dir is None:
+            return
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            record = ExtractRecord(
+                ts=system_local_now().isoformat(),
+                session_id=session_id,
+                trigger=trigger,  # type: ignore[arg-type]
+                input_scope=input_scope,
+                input_chars=input_chars,
+                entries=entries,
+                failures=failures,
+                note=note,
+            )
+            with (self._audit_dir / "memory_extract_log.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
+            self._last_record_store = record
+        except OSError:
+            pass  # fail-open
+
+    def _last_record(self, session_id: str) -> ExtractRecord:
+        return getattr(self, "_last_record_store", None) or ExtractRecord(
+            ts="", session_id=session_id, trigger="manual", input_scope="", input_chars=0, entries=0
+        )

@@ -1,0 +1,39 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-v0.6.14-changelog-erratum",
+  "summary": "Erratum for the published v0.6.14 changelog: the compaction bullet claimed the task-anchor pinning feature (7004b9b89) which was subsequently removed from the mainline by the human-reviewed convergence fix edde89582 (restore cache-only scope) and is NOT in the released v0.6.14 tree. The bullet is corrected with an explicit erratum note; every other v0.6.14 bullet was re-verified against the final tree.",
+  "components": [
+    {
+      "component_id": "v0.6.14-changelog-erratum",
+      "paths": [
+        "CHANGELOG.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "public user-facing changelog",
+      "disposition": "ADMIT as documentation correction only: remove the phantom feature claim, keep the two verified items (wire-tail anchor move, same-run resource-safety byte valve), add dated erratum naming both commits.",
+      "evidence": [
+        "git merge-base --is-ancestor 7004b9b89 HEAD = true (commit is in history) but grep for task_anchor_pin/pin_messages/pinned_msg_seqs in the v0.6.14 tree = 0 hits (removed by edde89582, pickaxe-verified).",
+        "Symbol-level verification of all other v0.6.14 bullets at tag v0.6.14: 13/13 FOUND."
+      ],
+      "verification_level": "Tree-level symbol grep + pickaxe ancestry at v0.6.14; local A.5 self-gate",
+      "model_evidence_veto_recovery_exit": "Markdown prose only; review retains authority.",
+      "rollback_route": "Revert this commit."
+    },
+    {
+      "component_id": "v0.6.14-changelog-erratum-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-v0.6.14-changelog-erratum.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage; all non-control documentation.",
+      "evidence": [
+        "Manifest partitions the exact changed-path set."
+      ],
+      "verification_level": "Local exact A.5 self-gate",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority.",
+      "rollback_route": "Revert together with the correction."
+    }
+  ],
+  "declarations": []
+}

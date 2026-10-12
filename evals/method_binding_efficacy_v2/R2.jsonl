@@ -1,0 +1,40 @@
+{"opaque_id":"155988cea3b3","verdict":"SKIP","reason":"任务只是补齐 closure API 必填字段后重试，不涉及共享工件的写入者血缘或跨分支 VCS 溯源。"}
+{"opaque_id":"91baff38edab","verdict":"APPLY","reason":"任务直接引用 UI 可见指标/文案并追问变化原因，正适合以字面标签定位前端组件并沿数据请求追到后端口径。"}
+{"opaque_id":"08ca9269f286","verdict":"SKIP","reason":"任务是在重试 git fetch 前做短时网络可达性探针，并非等待可查询结论的异步流水线或最终产物。"}
+{"opaque_id":"6ae0aee051b0","verdict":"SKIP","reason":"动作权限归属已经明确，当前核心是 HEAD、部署绑定和 dirty 增量的漂移预检，而非判定 operator 与模型的发布权限边界。"}
+{"opaque_id":"e805a3302ea4","verdict":"APPLY","reason":"日志跨多次重启且已知当前 PID 和启动时刻，应先按实例生命周期切窗，再判断当前进程中的缓存异常是否复现。"}
+{"opaque_id":"7a3b70a04db8","verdict":"SKIP","reason":"报告中的事实已有 commit/hash/URL/内部 ID 可逐项直达核验，且没有易滞后的 live 状态锚点需要优先批量刷新。"}
+{"opaque_id":"c06c44d33af1","verdict":"SKIP","reason":"当前没有 connection refused 或 attach 可行性疑问，且已知 .env 是端口和 TARGET_ID 的权威来源，应直接按配置验证绑定。"}
+{"opaque_id":"e98ab3b22128","verdict":"APPLY","reason":"checker 报整组锚点缺失且目标文件零命中，正应跨相关历史 refs 横扫以区分本次回归和陈旧契约。"}
+{"opaque_id":"6e97e323c1d9","verdict":"SKIP","reason":"任务要解释 wake、compact、handoff 后的重复工具调用并还原控制流，不是在审计生命周期阶段是否闭环或统计阶段转移。"}
+{"opaque_id":"bbbd211ba8a9","verdict":"APPLY","reason":"定向测试已绿而更大测试集出现失败，正需要用触碰集与失败点求交并在干净 HEAD worktree 上做单变量基线归因。"}
+{"opaque_id":"b970ae014e14","verdict":"SKIP","reason":"任务核心是先把执行上下文绑定到 artifact 所属 ref/worktree 再运行门禁，并无“文件缺锚点”断言或历史锚点归因需求，与该 Method 的 stale-contract 历史横扫目的不符。"}
+{"opaque_id":"efd1d51dcf17","verdict":"SKIP","reason":"任务是在已有 action ID 上查询最新终态以判断既发起动作是否完成，不是处理首次调用的必填参数缺失，因此不适用批量补齐 evidence/reason 的 Method。"}
+{"opaque_id":"7f9879d49604","verdict":"SKIP","reason":"任务只是非破坏性核验 CDP 端点与 TARGET_ID 的绑定一致性，没有 kill/清理操作及 PID/端口身份误判风险，不需要破坏性操作前的身份门控。"}
+{"opaque_id":"d4f5cb3c0d3c","verdict":"APPLY","reason":"任务正是健康状态查询且已有权威 self-report 接口，应该先以 healthy/status 为主判据，仅对未覆盖维度做定向探测，完全符合该 Method。"}
+{"opaque_id":"efdf84f769b4","verdict":"APPLY","reason":"目标 artifact 仅由可查询结论的 CI 流水线成功后生成，继续按文件存在性盲轮询会在失败吸收态无谓超时，应优先按 pipeline conclusion 分支处理。"}
+{"opaque_id":"5b94341349ed","verdict":"APPLY","reason":"任务结论依赖来源不明 artifact 的写入者与生产线归因，且仓库多线、artifact 含罕见 token，正适合先用唯一 token 跨线定位 writer 再读对应实现。"}
+{"opaque_id":"a3892e6fad72","verdict":"SKIP","reason":"任务只是依据已显示的多文件旧版本字面量做机械替换并复查，没有行为、指标口径或测试契约需要重新定义，断言优先的行为编辑 Method 属于过度套用。"}
+{"opaque_id":"0ee29cd6256c","verdict":"SKIP","reason":"任务核心是依据进程存活和公网 303 证据否决重启并转查客户端路径，与裸文件名证据引用的路径定位和修正毫无关系。"}
+{"opaque_id":"a7ef9307788d","verdict":"APPLY","reason":"任务明确要修改既有指标分母及 note，且测试中已有精确比率和文案断言尚未读取，正应先把这些断言作为现行行为契约再同步修改实现与说明。"}
+{"opaque_id":"8b222bd93ad3","verdict":"APPLY","reason":"任务是在带 generation 的受管 desired-state 系统执行 publish/restart，且当前工具面仅见 status/restart、发布权限归属未明，正应先核对 authority contract 再决定自行发布还是交 operator。"}
+{"opaque_id":"b5bafc6128e9","verdict":"SKIP","reason":"任务核心是判定受管 publish/restart 的动作权限归属，Method 专治 shell 长文档写入静默截断，目的与失效模式均无关。"}
+{"opaque_id":"985377af6b96","verdict":"SKIP","reason":"任务明确没有 authoritative self-report，只能依据进程监督与公网 HTTP 探测判断；Method 以 authoritative status/dashboard 的健康字段为首要锚点，前提不成立。"}
+{"opaque_id":"0c5feb2f4dc7","verdict":"APPLY","reason":"这是短回指任务，active Goal 已给出恰好两个对应完成项且 open=0，已形成足够精确锚点，应停止重复检索并直接映射回答，符合充分即停目的。"}
+{"opaque_id":"c8e632597e27","verdict":"SKIP","reason":"任务已有当天精确回指锚点并要求停止检索，Method 则用于来源不明 artifact 的唯一 token 跨线归因，两者未知量完全不同。"}
+{"opaque_id":"6f096e5b8b23","verdict":"SKIP","reason":"任务要先辨明两个数字是 PID 还是端口再决定 kill，Method 针对用户逐字引用 UI 标签后追踪前后端数据源，不涉及该身份映射问题。"}
+{"opaque_id":"7071083a3752","verdict":"SKIP","reason":"任务只需用当前进程列表核验实例是否匹配已知 runtime_root/git_head，没有跨重启证据流或历史故障解释，Method 的生命周期窗口机制无增益。"}
+{"opaque_id":"941899b88528","verdict":"SKIP","reason":"任务的截断发生在 shell heredoc 写入文件内容，应分块写盘核行数；Method 处理的是 pytest/命令验证输出过长被截断，失效层次不同。"}
+{"opaque_id":"de61d84f462b","verdict":"SKIP","reason":"任务是三个代码/文档表面的同步版本替换与逐面验证，不存在异步 action_id、受理与终态分离或反馈通道闭环。"}
+{"opaque_id":"60d373c6e982","verdict":"APPLY","reason":"任务目的与 Method Trigger 直接一致，都是沿异步动作的 action_id 查询权威终态、留痕及反馈静默原因并完成闭环。"}
+{"opaque_id":"4b5a887b25f0","verdict":"APPLY","reason":"任务表述与 Method Trigger 完全一致，正是 shell heredoc/cat 长文档写入且不能把 exit 0 当完整性证据的场景，应采用分块写入逐块验证。"}
+{"opaque_id":"ab0813242878","verdict":"APPLY","reason":"任务与方法的触发条件完全一致，都是已存在注入点组件通过 opt-in settings 接入生产装配点并保证缺省零差异的窄接线。"}
+{"opaque_id":"31d2eda57d15","verdict":"APPLY","reason":"任务正是从文档裸文件名定位证据工件并修正为精确路径，方法专门用上下文锚与层级约定避免同目录路径猜测。"}
+{"opaque_id":"c62d5b85f676","verdict":"APPLY","reason":"任务处于多分支共享数据目录并需判断机制对运行时指标的影响，正符合先以工件独特符号判写入血缘再审实现的目的。"}
+{"opaque_id":"dd4c7c1dddf2","verdict":"SKIP","reason":"任务要用唯一 EVO ID 直接取得已批准记录全文后继续执行，而方法用于核验过去建议是否落实并以机器锚点替代叙事恢复，目的不同。"}
+{"opaque_id":"47790159f6d3","verdict":"SKIP","reason":"任务只需依据现有 action_id 和专属台账确认异步 restart 终态及未反馈原因，明确不需要追查该标识的生产消费机制。"}
+{"opaque_id":"775cc1024fcc","verdict":"SKIP","reason":"任务是查询后台 CI run 的 conclusion 并按需读取失败日志，与组件 factory 装配、settings opt-in 接线及零回归验证无关。"}
+{"opaque_id":"5e91f424cf89","verdict":"SKIP","reason":"任务当前只需从被截断的 CI 完整日志固定 FAILED/ERROR 清单，方法针对注册表配置缺口及 live capability contract 探测，目标不相符。"}
+{"opaque_id":"3f8868a097b4","verdict":"SKIP","reason":"任务尚处于恢复完整失败清单阶段，方法用于失败集合已知后通过 touched-set 与干净 HEAD 对照做因果归因，介入时机过早。"}
+{"opaque_id":"812338a5a875","verdict":"APPLY","reason":"任务与方法触发条件直接一致，均是已知权威 live 注册表路径下判断具体能力字段是否缺失并以真实 client 契约探测裁决。"}
+{"opaque_id":"fa2b99204855","verdict":"APPLY","reason":"任务只需确认少量已知测试是否通过且 pytest 警告导致尾部 summary 和退出码截断，正适合用精确选择、tail 与显式退出码压缩验证输出。"}

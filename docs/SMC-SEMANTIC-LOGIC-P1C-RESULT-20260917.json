@@ -1,0 +1,371 @@
+{
+  "authority": "shadow_only",
+  "backend_identity": {
+    "backend_id": "eye-js-wasm",
+    "eye_version": "EYE v11.24.5 (2026-08-23)",
+    "eyereasoner_integrity": "sha512-aLKl0hMCa5xvZ/qVfupyZ7vAchXwXIlVWNtbd5Zb9IUNB9FGq44yvM6N3T+Q1x9A9VL9CKB652nqT5PgpgcZDw==",
+    "eyereasoner_version": "21.1.18",
+    "node_version": "v24.18.0",
+    "package_lock_sha256": "83d2ee38f112bea8929751a5a2c31dede5aec07312eb696ce660537d288c71be",
+    "swipl_wasm_version": "7.0.10"
+  },
+  "bounds": {
+    "answer_cap": 4096,
+    "max_bridge_stderr_bytes": 131072,
+    "max_bridge_stdout_bytes": 262144,
+    "max_input_bytes": 1048576,
+    "max_output_bytes": 1500000,
+    "wall_timeout_ms": 20000
+  },
+  "frozen_cases": [
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S1-object-grounding-compile",
+      "gate_id": "S1",
+      "input_bytes": 134132,
+      "input_sha256": "0917b80313b7d4569b123075d1c74d2bfd9a0cb7894bdad2c0833bf4de0f0f0c",
+      "reasoner_output_bytes": 111123,
+      "reasoner_output_sha256": "42f253ea6dc654e4053d77d6324f0a26817bfd3fd734cb7f1eecb30b9269b539",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S1-resource-grounding-compile",
+      "gate_id": "S1",
+      "input_bytes": 99063,
+      "input_sha256": "db72a50ab15461bb03fa55fbbd779b20e0f98e2c3bc795db20a5cc8fdd4a8099",
+      "reasoner_output_bytes": 81974,
+      "reasoner_output_sha256": "3adbd3a152a948d7036ba5004e43e6def71181f669ca3fb67f3d930f90cf8ece",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S1-grounding-fail-closed",
+      "gate_id": "S1",
+      "input_bytes": 30938,
+      "input_sha256": "42630dafc74ac043ddf041ff01cea1c03b0d12c0c4b4fc6d7d248dead1f88b78",
+      "reasoner_output_bytes": 25661,
+      "reasoner_output_sha256": "cdb07d8cdaf8e7f4306f221dd2aebf501eb02b361ccbce85d5f28e56f18d6a2d",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S2-dom-ax-field-conflict",
+      "gate_id": "S2",
+      "input_bytes": 290754,
+      "input_sha256": "629e3be42c638a42f5d2610681c8e3e9a862a0e2f1c529a7ca83e3d6c72d41fc",
+      "reasoner_output_bytes": 241273,
+      "reasoner_output_sha256": "07f00a78ff6cae72bcbd7760453a33538ab781c5ba2ddc3630313551992aa9f7",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S2-identity-fusion-ambiguity",
+      "gate_id": "S2",
+      "input_bytes": 403631,
+      "input_sha256": "000cd927294c9c4a34e15323ddbfc7eea44c3b727c607a05cb745f43ea1bbc0d",
+      "reasoner_output_bytes": 335461,
+      "reasoner_output_sha256": "9671dba7174dd6e110d18cbdf3684726a1b4e656eba29491d20ed96e7e2a8e9c",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S3-absence-complete-vs-partial",
+      "gate_id": "S3",
+      "input_bytes": 94784,
+      "input_sha256": "77de48532755d7719ef782b8d82147fd2aa626b465ba4e6e379b31971f11ab33",
+      "reasoner_output_bytes": 77628,
+      "reasoner_output_sha256": "73bdd81e565d7368f7e6b743225198fc5d27b8c4bcadfc3fd20860e0dd9fe2af",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S3-unknown-or-unstable-identity",
+      "gate_id": "S3",
+      "input_bytes": 106096,
+      "input_sha256": "4f734fcaa56aaa5a32c8266e56d9a44fd1be24cc68e57a2f3e9684b018834fa5",
+      "reasoner_output_bytes": 86698,
+      "reasoner_output_sha256": "42cd356534c0b9848d1e6cf237c105d73858d343d8cb9c14121ec57152d94e48",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S3-lower-bound-object-count",
+      "gate_id": "S3",
+      "input_bytes": 72082,
+      "input_sha256": "deee8a12e2454c51cbff7ae580094b20e31bb6e844b043edc97e8b3e7774b5a4",
+      "reasoner_output_bytes": 58834,
+      "reasoner_output_sha256": "fdc281c65018875a9085aad13e562a9ca53253c01855ed35a9bfae324b717ac3",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S4-object-same-generation-changed",
+      "gate_id": "S4",
+      "input_bytes": 70284,
+      "input_sha256": "6749bce89ea042b0adabb378496d05e33ae128c4122ca7455f3326515e129b30",
+      "reasoner_output_bytes": 57326,
+      "reasoner_output_sha256": "44234d7646f977646127c156dea153fe465e1e681389b54cacd6a116b7190dd8",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S4-object-unchanged-new-observation",
+      "gate_id": "S4",
+      "input_bytes": 70328,
+      "input_sha256": "8b003ae9f98f6bae709aa01e92cd9e2bebd6b6ec23e7a4b55cf3b18197e800d6",
+      "reasoner_output_bytes": 57370,
+      "reasoner_output_sha256": "aa68a6679f9e77abf23ecbc19296678341f100d8eec0f3b722aec278775c0afb",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S4-document-generation-change",
+      "gate_id": "S4",
+      "input_bytes": 70198,
+      "input_sha256": "951955516e1657743b06fe592fcf03476facd38d592846ab61c58351482c2f8b",
+      "reasoner_output_bytes": 57240,
+      "reasoner_output_sha256": "ddfc0dade2e733d001d505ab5cc9f058bd0b948488745cdefe27976a58bb2fcd",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S4-incomplete-missing-target",
+      "gate_id": "S4",
+      "input_bytes": 140775,
+      "input_sha256": "ac7cc5c185b301baa327ac3d3d68082d2596894e829a38b6d9861bdc4b5164ed",
+      "reasoner_output_bytes": 115342,
+      "reasoner_output_sha256": "1a3958579c246b5cc0afb09c02fad8e4e511d9e48f87c563b3f3f4a2895a0fb3",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S5-running-terminal-sequence",
+      "gate_id": "S5",
+      "input_bytes": 315511,
+      "input_sha256": "4d785997569b493977aaa3f6f2bcecb162a09fec80e2feab2f4ae1303b588f45",
+      "reasoner_output_bytes": 263143,
+      "reasoner_output_sha256": "cd4ba142899c267ad82f3cbe5e3c3ca289b097c893603f6cc80430a2be9b3132",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S5-duplicate-action-id",
+      "gate_id": "S5",
+      "input_bytes": 516785,
+      "input_sha256": "733ce080b1e1741c8189441a2f2228b5d0c0e825ccbb974f2700658222cf82b8",
+      "reasoner_output_bytes": 431073,
+      "reasoner_output_sha256": "fe4aba433b16c857b2bb9da88bc138e20252d741f6e8d49f5f28b3c4a88ec025",
+      "status": "pass"
+    },
+    {
+      "diagnostic_bytes": 0,
+      "diagnostic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "eye_args": [
+        "--nope",
+        "--quiet",
+        "--restricted",
+        "--tactic",
+        "limited-answer",
+        "4096",
+        "--pass",
+        "./data.n3"
+      ],
+      "fixture_id": "S5-transport-ambiguity-no-replay",
+      "gate_id": "S5",
+      "input_bytes": 315978,
+      "input_sha256": "4451a27d4f2f2115996a9b691f6f8860c6d87c50eb257e721bb051dc5ce402c5",
+      "reasoner_output_bytes": 263524,
+      "reasoner_output_sha256": "a51ae8d3fb9c2b0318af931493dbd05ea2cee433ad684f63ac05730530cafd4c",
+      "status": "pass"
+    }
+  ],
+  "implementation_commit": "59f66d678662cd9a255067084c05841a5692c830",
+  "parent_p1b_result": "7cc6433aa8012636d49795b070a36392a5d06ddb",
+  "production_consumed": false,
+  "qualification": {
+    "browser_p1a_p1b_p1c": {
+      "passed": 190,
+      "total": 190
+    },
+    "ci_gate": "PASS",
+    "env_pin": {
+      "scanned_test_files": 590,
+      "undeclared": 0
+    },
+    "p1c_tests": {
+      "passed": 24,
+      "total": 24
+    },
+    "pyright": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "whole_tree_security_files": 1950
+  },
+  "sandbox_probe": {
+    "child_process_denied": true,
+    "forbidden_write_materialized": false,
+    "host_file_write_denied": true,
+    "network_denied": true,
+    "schema": "smc.n3_validator_sandbox_probe_result.v0.1",
+    "seatbelt_profile": "(version 1)(allow default)(deny network*)(deny file-write*)(deny process-fork)",
+    "status": "pass"
+  },
+  "schema": "smc.semantic_logic_p1c_result.v0.1",
+  "status": "PASS"
+}

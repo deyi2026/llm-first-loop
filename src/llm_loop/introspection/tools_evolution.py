@@ -1,0 +1,188 @@
+"""submit_evolution 工具实现（M16 审计 FR-AUDIT-AI-14 拆分: corrections.py → tools_evolution.py）.
+
+M16 审计（FR-AUDIT-AI-07）: submit_evolution 为纯建议通道（无 kind/actions 参数），
+accepted 后的落地执行由 AI 经修正工具自主完成（RULE-AI-06 子规则 4）。
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from llm_loop.core.message import ToolResult, ToolResultStatus
+
+# EVO-20260923-6fe23c9b F1: provider prompt 面信号（命中→提交回执加严提示）
+_PROMPT_SURFACE_RE = re.compile(
+    r"开场|附录|常驻提醒|提醒注入|程序附录|prompt[ ]?(注入|面)|"
+    r"program[ _]prompt|provider[ _]prompt|system[ _]prompt|"
+    r"工具[ ]?schema|schema[ ]?(策略|文案|描述)|identity[ ]?摘要|"
+    r"opening|appendix|context[ ]?injection",
+    re.IGNORECASE,
+)
+
+SUBMIT_EVOLUTION_TOOL_DEF: dict = {
+    "name": "submit_evolution",
+    "description": "提交架构演进建议（结构化落盘供人工审阅）。何时用: 已有架构状态、检索或自评证据支持明确改进机会时（如冗余工具/重复模式/效率建议）。注意: 涉安全边界/协议硬约束的建议仅提交等待人工决策，AI 不得自行执行。evidence 可引用评估 ID（格式 'eval:SE-...'，EVAL-05 双向溯源）。硬性要求（EVO-20260923-6fe23c9b）: 凡新增/修改进入 provider prompt 的程序性内容（开场附录/常驻提醒/工具 schema 策略文字），必须对照 L2-2/L2-6 eligibility 契约说明准入理由，并在弱模型档跑身份轮+任务轮行为对照，无劣化才可上线。何时不用: 无具体证据/影响范围的空泛建议不应提交。失败对策: 提交失败（必填 content 缺失）会如实返回，请补齐后重试。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "建议内容（改进点 + 期望效果）",
+            },
+            "evidence": {
+                "type": "string",
+                "description": "证据（架构状态/检索结果/观察；可引用评估 ID 'eval:SE-...'）",
+            },
+            "impact_scope": {
+                "type": "string",
+                "description": "影响范围（文件/模块/行为）",
+            },
+            "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+            "scope": {
+                "type": "string",
+                "enum": ["global", "session"],
+                "description": "作用域（M49 双层，默认 global 保守）: global=持久变更进人工审阅；session=本会话级改进直达 executing，后续执行与完成登记能力按运行状态 JIT 提供",
+            },
+        },
+        "required": ["content"],
+    },
+}
+
+
+def run_submit_evolution(
+    ctx: Any,
+    audit: Any,
+    args: dict,
+    audit_dir: str | None = None,
+) -> ToolResult:
+    """submit_evolution: 提交架构演进建议（EVOLVE-02/03/04，纯建议通道）.
+
+    audit: 审计落盘 callable（corrections._audit 注入，保持共用 self_correction_log）。
+    audit_dir: 审计目录（M19 FIX-05: eval_id 存在性校验数据源，读取失败 fail-open 跳过）。
+    """
+    content = str(args.get("content", "")).strip()
+    if not content:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 缺少必填参数 'content'（建议内容）",
+            tool_call_id="",
+            tool_name="submit_evolution",
+        )
+    if ctx.evolution_store is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[演进建议不可用] 事实: 演进建议存储未装配。原因: EVOLVE_ENABLED=0。建议: 检查配置。",
+            tool_call_id="",
+            tool_name="submit_evolution",
+        )
+    evidence = str(args.get("evidence", "")).strip()
+    # EVAL-05: 解析 eval_id（evidence 引用 "eval:SE-..." 格式 → 双向溯源）
+    eval_id = ""
+    if evidence.startswith("eval:"):
+        eval_id = evidence.split("eval:", 1)[1].strip()
+    # M19 FIX-05: eval_id 存在性轻量校验（O(1) 行匹配；读取失败 fail-open 跳过，不阻断落盘）
+    eval_hint = ""
+    if eval_id and audit_dir:
+        exists = _eval_id_exists(audit_dir, eval_id)
+        if exists is False:
+            eval_hint = (
+                f"\n[提示] evidence 引用的评估 ID '{eval_id}' 未在 self_eval_log 中找到"
+                "（可能拼写错误），建议核对 eval_id 或先调用 self_evaluate 生成。"
+            )
+    requested_scope = str(args.get("scope", "global") or "global")
+    from llm_loop.introspection.tools_status import bound_session_id
+
+    sid = bound_session_id()
+    if not sid:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[会话归属不可用] 当前执行没有可证明的 session binding；演进建议未落盘。",
+            tool_call_id="",
+            tool_name="submit_evolution",
+        )
+
+    suggestion = ctx.evolution_store.submit(
+        content=content,
+        evidence=evidence,
+        impact_scope=str(args.get("impact_scope", "")),
+        priority=str(args.get("priority", "medium")),
+        session_id=sid,
+        eval_id=eval_id,
+        scope=requested_scope,
+    )
+    # 边界判定（EVOLVE-03/04），回执按权限级别如实说明（EXEC-01，级别 0 保持现状语义）
+    level = int(getattr(ctx, "evolve_local_exec", 0) or 0)
+    scope_overridden = requested_scope == "session" and suggestion.scope == "global"
+    if suggestion.requires_human:
+        note = "涉安全边界/协议硬约束，需人工决策，AI 不得自行执行。"
+        if scope_overridden:
+            note += "（M49: 指定 scope=session 因涉边界已覆盖为 global，如实标注）"
+    elif suggestion.scope == "session":
+        note = (
+            "M49 双层作用域: scope=session 直达 executing，不进人工审阅队列。"
+            "请经修正工具（adjust_strategy 等）执行后调用 evolution_complete 登记闭环；"
+            "执行失败可 adjust_strategy 复位并登记 failed。涉边界内容会被强制 global。"
+        )
+    elif level == 0:
+        note = "权限分级: 当前为仅建议模式（EVOLVE_LOCAL_EXEC=0），执行由人工审阅后决定。"
+    elif level == 1:
+        note = "权限分级: 白名单局部执行（EVOLVE_LOCAL_EXEC=1），人工采纳后自动执行白名单内范围。"
+    else:
+        note = "权限分级: 全面执行（EVOLVE_LOCAL_EXEC=2），人工采纳后自动执行（涉边界仍仅人工）。"
+    audit("submit_evolution", {"id": suggestion.id}, "success")
+    # EVO-20260923-6fe23c9b F1: Provider Prompt 影响硬检查（回执必附；命中信号加严）
+    prompt_check = (
+        "\n[Provider Prompt 影响检查·硬性] 本变更是否新增/修改进入 provider prompt 的程序性内容"
+        "（开场附录/常驻提醒/工具 schema 策略文字）？若是: (a) 对照 L2-2/L2-6 eligibility 契约说明"
+        "准入理由；(b) 弱模型档（cognilocal/qwen3.8-flash-next）身份轮+任务轮行为对照，无劣化才可上线。"
+    )
+    if _PROMPT_SURFACE_RE.search(f"{content}\n{str(args.get('impact_scope', ''))}"):
+        prompt_check += (
+            "\n[加严提示] 命中 provider prompt 面相关信号——若落地后新增此类内容，"
+            "上线前必须完成 并留证，否则不得进入 executing。"
+        )
+    next_step = (
+        "下一步: 本会话级建议已在 executing，执行完成后 `evolution_complete` 登记闭环。"
+        if suggestion.scope == "session"
+        else "下一步: 建议已进入审阅队列（pending_review），等待人工 `evolve-review <id> accepted|rejected` 审阅；"
+        "期间可继续循环，或经 `search_records(kind=evolution)` 查询状态。"
+    )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=(
+            f"[演进建议已提交] id={suggestion.id} 状态={suggestion.status} scope={suggestion.scope}。\n"
+            f"{note}\n建议: {suggestion.content[:200]}\n"
+            f"{prompt_check}\n"
+            f"{next_step}"
+            f"{eval_hint}"
+        ),
+        tool_call_id="",
+        tool_name="submit_evolution",
+        capability_requirements=tuple(
+            dict.fromkeys(
+                (("evolution_complete",) if suggestion.scope == "session" else ())
+                + (("self_evaluate",) if eval_hint else ())
+            )
+        ),
+    )
+
+
+def _eval_id_exists(audit_dir: str, eval_id: str) -> bool | None:
+    """轻量校验 eval_id 是否存在于 self_eval_log.jsonl（O(1) 行匹配，不加载全文件）.
+
+    返回: True=存在 / False=不存在 / None=读取失败（fail-open 跳过校验，不阻断落盘）。
+    """
+    from pathlib import Path
+
+    path = Path(audit_dir) / "self_eval_log.jsonl"
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if eval_id in line:
+                    return True
+        return False
+    except OSError:
+        return None  # fail-open: 读取失败跳过校验（DFX-REL-10）

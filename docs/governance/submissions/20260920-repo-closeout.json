@@ -1,0 +1,57 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260920-repo-closeout",
+  "summary": "Repository closeout batch: preserve 5 migrated method cards in-repo and ignore regenerable local-only artifact directories (output/, evals/harness_evolution_v0/, papers/, patches/, staging-*, scripts/data logs, tools/method-poc-defaults, evals/pilot/qualification, unreferenced retrieval/smoke one-off scripts).",
+  "components": [
+    {
+      "component_id": "gitignore-closeout-local-artifacts",
+      "paths": [
+        ".gitignore"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository hygiene metadata",
+      "disposition": "ADMIT as ignore-rule hygiene: keep regenerable local-only artifacts out of history (output/ 62MB, evals/harness_evolution_v0/ 683MB embedding caches, papers/, patches/, staging-*, scripts/data logs, tools/method-poc-defaults, evals/pilot/qualification, 3 unreferenced one-off scripts); in-repo knowledge exceptions under data/methods and experiences/ remain tracked per the existing policy.",
+      "evidence": [
+        "commit 1d6ac21ee; content audit at commit time: the 11 ignored groups are pure regenerable artifacts with no tracked-code references (grep verified)"
+      ],
+      "verification_level": "git status / check-ignore spot checks at commit time; nothing under ignored dirs executes from tracked code",
+      "model_evidence_veto_recovery_exit": "Any wrongly-ignored path can be re-included by a follow-up .gitignore change; ignored content remains on local disk untouched.",
+      "rollback_route": "git revert 1d6ac21ee restores the prior ignore rules."
+    },
+    {
+      "component_id": "methods-knowledge-increment-closeout",
+      "paths": [
+        "data/methods/ambiguous-timeout-verify-landed-before-rerun-2fad1c47ee54/METHOD.md",
+        "data/methods/compound-timeout-bounded-local-probe-first-8a88098e84bd/METHOD.md",
+        "data/methods/derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558/METHOD.md",
+        "data/methods/patch-equivalence-first-close-or-deliver-for-stale-branches-a16e3f4e387f/METHOD.md",
+        "data/methods/regression-report-mtime-refute-then-trace-loader-5ce779f003db/METHOD.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "learning method-card knowledge base (data/methods)",
+      "disposition": "ADMIT as knowledge artifacts: 5 METHOD.md cards (one .md each, ~4K) migrated from /tmp rescue staging (4) plus one race-generated card finalized at closeout (1) into the in-repo method store per the established data/methods in-repo policy; no runtime authority.",
+      "evidence": [
+        "commit 1d6ac21ee; each directory contains exactly one METHOD.md with no other payload"
+      ],
+      "verification_level": "content-level security scan (secrets/large-file) via the CI 安全扫描 job on this PR",
+      "model_evidence_veto_recovery_exit": "Any card can be removed by path in a follow-up commit; nothing executes from this directory.",
+      "rollback_route": "git revert 1d6ac21ee removes the five cards."
+    },
+    {
+      "component_id": "a5-submission-repo-closeout-20260920",
+      "paths": [
+        "docs/governance/submissions/20260920-repo-closeout.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 remains a mechanical presence/coverage gate.",
+      "evidence": [
+        "local exact A.5 self-gate against base 582e5b015"
+      ],
+      "verification_level": "local checker run: scripts/check_architecture_submission.py --base 582e5b015 --head HEAD",
+      "model_evidence_veto_recovery_exit": "Reviewer may amend classifications; the gate reports exact path deltas on any mismatch.",
+      "rollback_route": "remove the manifest file in a follow-up commit."
+    }
+  ],
+  "declarations": []
+}

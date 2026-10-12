@@ -1,0 +1,78 @@
+{
+  "schema": "behavior-baseline-r824-v1",
+  "frozen_at": "2026-09-01T04:05:00+00:00",
+  "fixed_point": "R8.24 六门全 PASS（3 PASS/3 FAIL → 6 PASS），R9 Phase 0 三批切换收口",
+  "batch_chain": [
+    {
+      "batch": "1/3 capsule (H4)",
+      "commit": "79376ef",
+      "switch": "src/llm_loop/tools/evidence_enforce.py:40 LFL_EVIDENCE_CAPSULE default on->off",
+      "gates_anchors": ["test_evidence_capsule_default_off_enforced", "test_h4_default_capsule_absent_and_off_zero"],
+      "runner_family_pin": "scripts/evidence/_capsule_pin.py（r4/r7/r7v2/r8/r10 execute_run 钉历史协议 capsule=on）",
+      "observation": {
+        "window": "2026-09-01T02:02:57Z 后（W1: a100a752×284行 + ab623054×246行）",
+        "completion": "7/7=100%（基线 82.8%）",
+        "dup_rate": "0/114=0.0%（基线 10.3%）",
+        "ref_recovery": "read_evidence 7->0（行为转移：episode 检索+重读兜底，read_file 21 与基线 22 持平）；episode hydrate 6 次 success"
+      }
+    },
+    {
+      "batch": "2/3 guidance (H3)",
+      "commit": "cfda166",
+      "switch": "src/llm_loop/tools/registry.py:40 LFL_TOOL_GUIDANCE default on->off",
+      "gates_anchors": ["test_tool_guidance_default_off_enforced", "test_h3_default_failure_receipt_advisory_absent", "test_tristate_invalid_falls_back_off"],
+      "observation": {
+        "window": "2026-09-01T03:13:31Z 后（W2: ab623054 4 任务/47 调用）",
+        "completion": "4/4=100%",
+        "dup_rate": "2/47=4.3%",
+        "failure_self_recovery": "3/3=100% 零 advisory 依赖（事实性回执驱动：路径诊断/退出码+stderr/schema 合法值清单）",
+        "metacognition": "模型自述区分『事实性诊断（保留）』vs『引导文案（已退出）』= C-D2 设计语义行为验证"
+      }
+    },
+    {
+      "batch": "3/3 perf (H6)",
+      "commit": "6a137ef",
+      "switch": "src/llm_loop/cache_guard/guard.py:56 _PERF_BLOCK_MODE default on->enforce（模块级常量）",
+      "gates_anchors": ["test_cache_perf_block_default_enforced", "test_h6_default_perf_warn_and_on_block_retained", "test_perf_mode_default_is_enforce"],
+      "observation": {
+        "window": "2026-09-01T03:39:50Z 后（W3: ab623054 5 任务/85 调用）",
+        "guard_verdicts": "63 条判定全部 ALLOW：would_block=0 / BLOCK=0 / WARN=0（零误拦；窗口流量未触发规则 F）",
+        "completion": "5/5=100%",
+        "dup_rate": "1/85=1.2%",
+        "failure_self_recovery": "6/6（read_file 复用失败→force_refresh ×3+grep 替代；枚举拒绝→get_tool_schema 查参）",
+        "privacy_invariant": "privacy/safety BLOCK 五类硬拦不受开关影响（探针+GATES 双态断言复核）"
+      }
+    }
+  ],
+  "six_gates_final": {
+    "H1_wire_zero_program_prose": "PASS（承载: test_runtime_zero_prompt×9 + _static×5 + GATES 组二×2）",
+    "H2_latent_channel_zero": "PASS（LFL_LATENT_CHANNEL=off；承载: test_latent_channel_exit×10 E-G1~G6）",
+    "H3_advisory_chars_zero": "PASS（LFL_TOOL_GUIDANCE=off → 四源模型可见 chars=0）",
+    "H4_capsule_chars_zero": "PASS（LFL_EVIDENCE_CAPSULE=off → complete=true 回执无 capsule）",
+    "H5_suspect_provenance_zero": "PASS（quarantine=off 生效 + guard_mode=enforce fail-closed）",
+    "H6_perf_block_warn_only": "PASS（enforce: perf→WARN/submit_ratio_perf/would_block=True；privacy BLOCK 照旧）"
+  },
+  "seven_switches_final": {
+    "LFL_TOOL_GUIDANCE": "off",
+    "LFL_EVIDENCE_CAPSULE": "off",
+    "LFL_LEAK_QUARANTINE": "off(=quarantine 生效)",
+    "LFL_LEAK_GUARD_MODE": "enforce",
+    "LFL_LATENT_CHANNEL": "off",
+    "LFL_COG_ENFORCE_FREEZE": "1",
+    "CACHE_GUARD_PERF_BLOCK": "enforce"
+  },
+  "resident_assertion_layer": {
+    "gates": "tests/unit/test_r824_final_gates.py 13 用例翻转后形态全绿",
+    "wire_fixtures": "tests/fixtures/wire/ 6 fixtures + tests/unit/test_wire_fixtures.py 47 用例（B1-PREP-02 收编）",
+    "six_gate_carriers": "99 用例全绿（GATES+zero_prompt+latent_channel+factualization+reclassification+quarantine）",
+    "full_suite": "全量 xdist 0 failed（外部级 2 项除外: D-07 function_size_guard 外部 factory.py 中间态 / D-08 p1_final 外部 SUMMARY_MODE 顺序敏感 flaky）"
+  },
+  "reproduction": {
+    "env": "env -u LFL_TOOL_GUIDANCE LFL_EVIDENCE_CAPSULE LFL_LEAK_QUARANTINE LFL_LEAK_GUARD_MODE LFL_LATENT_CHANNEL LFL_COG_ENFORCE_FREEZE CACHE_GUARD_PERF_BLOCK（干净进程=重启生产默认态）",
+    "install": "uv sync --frozen --extra dev（B1-IMM-03）",
+    "full_suite": "pytest tests/ --dist loadfile -n 8（B1-WF-02；~36s）",
+    "tier0": "pytest -m tier0（~15s 冒烟）",
+    "ci_gate": "bash scripts/ci_gate.sh（B1-WF-03）"
+  },
+  "constraint": "Phase 3-7 期间本基线只读（spec §6.1）——后续重构提交以本基线为对照；活体 API 基线跑（scripts/run_fixture_baseline.py，本地 27B）为可选补充，不属本快照层（偏差 D-10）"
+}

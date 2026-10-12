@@ -1,0 +1,479 @@
+"""model_catalog + switch_model 工具实现（M48 / design §5.3）.
+
+- MODEL_CATALOG_TOOL_DEF / SWITCH_MODEL_TOOL_DEF: LLM 可见工具 schema（修正框架复用）
+- run_model_catalog: 只读，列目录 + 当前会话模型 + degraded 标注
+- run_switch_model: 写操作，改 sess.model_override + 审计落盘 + 如实回执
+
+失败路径按 design §三 原则 2 如实反馈（resolve 失败 / key 缺失 / 歧义），禁止静默降级；
+model="default" 视为清除 override 回装配默认（design §5.3 行为 5）。
+
+复用 corrections.py 现有审计通道（self_correction_log.jsonl），扩展记录 who/when/from→to/reason.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.llm.model_ids import canonical_model_id
+from llm_loop.llm.pool import ModelClientPool
+from llm_loop.resources.local_runtime import (
+    LocalRuntimeIdentityObservation,
+    observe_local_runtime_identity,
+)
+from llm_loop.timekeeping import system_local_now
+
+MODEL_CATALOG_TOOL_DEF: dict = {
+    "name": "model_catalog",
+    "description": (
+        "列出当前可用的模型目录（provider/模型/上下文窗口/思考支持/成本档）及当前会话所用模型。"
+        "何时用: 核验‘当前模型/你是什么模型’等 LFL 会话身份事实；判断当前任务是否需要更强/更便宜的模型，"
+        "或当前模型异常需要换模型前先用本工具查候选。请求载荷中的 model 只是路由标签，外层宿主/网页模型"
+        "自报身份也不是 LFL 当前模型回执，二者都不能替代本工具的当前会话事实。"
+        "何时不用: 已知要用哪个模型时直接用 switch_model。"
+        "失败对策: 注册表未配置时如实返回单 provider 现状（不伪造多 provider）。"
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
+
+SWITCH_MODEL_TOOL_DEF: dict = {
+    "name": "switch_model",
+    "description": (
+        "切换当前会话使用的模型（provider/model 或裸模型名；model='default' 清除覆盖回默认）。"
+        "何时用: 当前模型不适合任务（如需要更强推理/需要本地离线/成本约束），"
+        "或当前模型连续异常经判断为模型侧问题时。"
+        "何时不用: 工具失败应先用 retry_tool；参数问题应用 adjust_strategy。"
+        "失败对策: 模型不在目录/provider key 缺失/裸名歧义会如实返回原因，请基于回执选择其他模型或说明。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "model": {
+                "type": "string",
+                "description": "目标模型（'provider/model' 或裸模型名；'default' 清除覆盖）",
+            },
+            "reason": {
+                "type": "string",
+                "description": "切换原因（审计落盘，必填）",
+            },
+        },
+        "required": ["model", "reason"],
+    },
+}
+
+
+@dataclass(frozen=True)
+class _SwitchOutcome:
+    """switch_model 内部结果（frozen 类型安全，外部仅消费 ToolResult）."""
+
+    from_model: str
+    to_model: str  # "default" 表示清除 override 回默认
+    reason: str
+    thinking_supported: bool
+    # True 表示成功切换（已修改 sess.model_override + 审计落盘）；
+    # False 表示 resolve/client_params 失败（未修改状态，如实回执）
+    changed: bool
+
+
+def run_model_catalog(
+    ctx: Any,
+    pool: ModelClientPool | None,
+    session_override: str | None,
+    *,
+    session_binding_known: bool = True,
+    local_runtime_identity_observer: Callable[[str], LocalRuntimeIdentityObservation | None] = (
+        observe_local_runtime_identity
+    ),
+) -> ToolResult:
+    """model_catalog: 列出可用模型 + 当前会话模型 + degraded 标注（只读）.
+
+    零回归: 未配置注册表（registry 仅含单 provider）时如实返回单 provider 现状,
+    不伪造多 provider 列表.
+    """
+    if pool is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[工具不可用] 事实: 模型客户端池未装配（pool=None）。"
+                "原因: 程序未注入 ModelClientPool；model_catalog 工具不可用。"
+                "建议: 检查装配（factory.build_engine 应已注入）。"
+            ),
+            tool_call_id="",
+            tool_name="model_catalog",
+        )
+
+    registry = pool.registry_snapshot()
+    default_registry = pool.default_registry_snapshot()
+    default_model = pool.get_default_model()
+    current_pid = ""
+    current_mid = ""
+    if not session_binding_known:
+        current_model = "unknown"
+    elif session_override:
+        current_model = session_override
+        try:
+            current_pid, current_mid = registry.resolve(session_override)
+            current_model = f"{current_pid}/{current_mid}"
+        except ValueError:
+            pass
+    else:
+        current_model = default_model
+        try:
+            current_pid, current_mid = default_registry.resolve(default_model)
+            current_model = f"{current_pid}/{current_mid}"
+        except ValueError:
+            pass
+    current_source = (
+        "归属不可用"
+        if not session_binding_known
+        else ("会话覆盖" if session_override else "默认装配")
+    )
+
+    lines: list[str] = []
+    lines.append(f"[状态: 成功] 当前会话模型: {current_model}（{current_source}）")
+    if registry.degraded:
+        lines.append(f"[degraded] {registry.degraded_reason}")
+    lines.append("可用模型目录:")
+    # 按 provider 分组列出, 标记当前会话模型所在 provider
+    for pid, spec in registry.providers.items():
+        lines.append(f"  [{pid}] base_url={spec.base_url}")
+        shown_canonical: set[str] = set()
+        for mid, mspec in spec.models.items():
+            reasoning_capable, reasoning_control = registry.reasoning_contract(pid, mid)
+            is_current = pid == current_pid and mid == current_mid
+            mark = " ← 当前" if is_current else ""
+            canon = canonical_model_id(mid)
+            if canon in shown_canonical and canon != mid:
+                lines.append(f"    - {mid}: → alias of {canon}{mark}")
+                continue
+            shown_canonical.add(canon)
+            alias_note = "" if canon == mid else f", canonical={canon}"
+            caps = []
+            if mspec.reasoning:
+                caps.append("reasoning")
+            if mspec.long_context:
+                caps.append("long_context")
+            if mspec.multimodal:
+                caps.append("multimodal")
+            cap_str = f" [{'/'.join(caps)}]" if caps else ""
+            identity_bits = [
+                f"runtime_identity_declared={mspec.runtime_identity or 'unknown'}",
+                "runtime_identity_declared_currentness=not_observed",
+            ]
+            if is_current:
+                try:
+                    observed = local_runtime_identity_observer(spec.base_url)
+                except Exception:
+                    observed = None
+                if observed is not None:
+                    identity_bits.extend(
+                        [
+                            f"runtime_identity_observed={observed.identity}",
+                            "runtime_identity_observed_source=live_loopback_process",
+                        ]
+                    )
+            lines.append(
+                f"    - {mid}: context={mspec.context}, "
+                f"reasoning_capable={'✓' if reasoning_capable else '✗'}, "
+                f"reasoning_control={reasoning_control}, "
+                f"reasoning_replay={mspec.reasoning_replay}, "
+                f"{', '.join(identity_bits)}, "
+                f"cost={mspec.cost_tier}{alias_note}{cap_str}{mark}"
+            )
+    if not session_override and default_registry is not registry:
+        lines.append(
+            f"默认路由合同: {current_model} 仍绑定进程启动 registry 快照；"
+            "当前模型目录已热重载，重启前默认路由不随目录切换。"
+        )
+    # B6(2026-08-14): 成本/能力选型指引（对齐 RULE-AI-09 切前自查——判断归 AI，程序只给事实）
+    lines.append(
+        "选型指引: cost=low/mid/high 成本档；reasoning_capable=有推理产出能力证据；"
+        "reasoning_control=已知显式控制协议；long_context=长上下文；multimodal=多模态。"
+        "复杂推理优先看 reasoning_capable；是否可 on/off 另看 reasoning_control。"
+        "切换经 switch_model（必带 reason，审计可溯，RULE-AI-09）。"
+    )
+    # EVO-20260914-1eb26afa: 执行面能力矩阵（机器可读面 + spawn 前比对入口）
+    from llm_loop.core.execution_surface import EXECUTION_SURFACE_MATRIX_DOC
+
+    lines.append(f"执行面能力矩阵: {EXECUTION_SURFACE_MATRIX_DOC}")
+    lines.append(
+        "  - local_subagent: allowed_tools=父执行域继承（spawn 时 live 派生）, "
+        "network_egress=随工具域, "
+        "fs=workspace(随工具域), session_continuity=✓（terminal 后有界续话）"
+    )
+    lines.append(
+        "  - codearts: allowed_tools=远端定义（本地不可枚举）, network_egress=✓, "
+        "fs=remote_sandbox, session_continuity=✗（跨步状态经 ctx_path 显式传递）"
+    )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content="\n".join(lines),
+        tool_call_id="",
+        tool_name="model_catalog",
+    )
+
+
+def run_switch_model(
+    ctx: Any,
+    pool: ModelClientPool | None,
+    session_set_override: Callable[[str | None], None] | None,
+    audit: Callable[[str, dict, str], None] | None,
+    args: dict,
+    *,
+    session_get_override: Callable[[], str | None] | None = None,
+    routing_transition: Callable[[Any, str], None] | None = None,
+) -> ToolResult:
+    """switch_model: 切换会话级 model_override + 审计落盘 + 如实回执.
+
+    行为契约 (design §5.3):
+    - resolve 失败 → 如实回执（含候选列表），不改变现状
+    - client_params 失败（key 缺失）→ 如实回执含 env var 名，不改变现状
+    - 成功 → 写 sess.model_override + 回执 + 审计落盘 self_correction_log.jsonl
+    - model="default" → 清除 override 回装配默认（同样审计）
+    """
+    if pool is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[工具不可用] 事实: 模型客户端池未装配。"
+                "原因: 程序未注入 ModelClientPool；switch_model 工具不可用。"
+                "建议: 检查装配（factory.build_engine 应已注入）。"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+
+    model_ref = str(args.get("model", "")).strip()
+    reason = str(args.get("reason", "")).strip()
+    if not model_ref:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 缺少必填参数 'model'（目标模型；'default' 清除覆盖）",
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+    if not reason:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[参数错误] 缺少必填参数 'reason'（切换原因；审计必填）",
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+
+    # P6: valid model mutation requires an exact read/write binding for the same
+    # Session.  There is no shared-context fallback: without either side, ownership is
+    # unknown and the mutation must fail closed before resolving/constructing a client.
+    if session_get_override is None or session_set_override is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[会话归属不可用] 当前模型切换缺少 exact session getter/setter binding；"
+                "未读取 shared override，模型切换未执行。"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+    try:
+        current_override = session_get_override()
+    except Exception as exc:  # noqa: BLE001 — exact binding read must fail closed
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[会话归属不可用] 当前 session override 读取失败；"
+                f"模型切换未执行: {exc}"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+    from_label = current_override if current_override else pool.get_default_model()
+
+    # 特殊语义: model="default" → 清除 override 回装配默认。default client 本身
+    # 绑定 startup registry，因此本次 epoch transition 也必须绑定同一 startup contract；
+    # 不能借“切回 default”顺带把外部 hot reload 变成隐式授权。
+    if model_ref.lower() == "default":
+        transition_registry = pool.default_registry_snapshot()
+        try:
+            session_set_override(None)
+        except Exception as exc:  # noqa: BLE001 — 写入异常如实标注
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[清除失败] 事实: 清除会话覆盖写入异常: {exc}。建议: 检查会话存储可写性。",
+                tool_call_id="",
+                tool_name="switch_model",
+            )
+        if routing_transition is not None:
+            routing_transition(transition_registry, "default")
+        if audit is not None:
+            audit(
+                "switch_model",
+                {
+                    "from": from_label,
+                    "to": "default",
+                    "reason": reason,
+                    "result": "success",
+                },
+                "success",
+            )
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=(
+                f"[状态: 成功] 模型已切换: {from_label} → default（原因: {reason}）；"
+                f"已清除会话覆盖，下一轮 LLM 调用回装配默认。"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+
+    registry = pool.registry_snapshot()
+
+    # resolve 模型引用 → (provider_id, model_id)，本次切模判定全程绑定同一 registry 快照。
+    try:
+        provider_id, model_id = registry.resolve(model_ref)
+    except ValueError as exc:
+        # 如实回执（resolve 失败不改变现状）
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                f"[状态: 失败] 模型 '{model_ref}' 不可用: {exc}。"
+                "请用 model_catalog 查候选后重试。"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+
+    # client_params 检查（含 key 缺失 → 如实报错含 env var 名）
+    try:
+        registry.client_params(provider_id, model_id)
+    except ValueError as exc:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[状态: 失败] 模型 {provider_id}/{model_id} 不可用: {exc}",
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+
+    # 预构建 client（提前暴露构造异常；缓存命中走快路径）
+    try:
+        pool.get_resolved_client(f"{provider_id}/{model_id}", registry=registry)
+    except ValueError as exc:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[状态: 失败] 模型 {provider_id}/{model_id} 客户端构造失败: {exc}",
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+
+    to_label = f"{provider_id}/{model_id}"
+    reasoning_capable, reasoning_control = registry.reasoning_contract(
+        provider_id, model_id
+    )
+    thinking_supported = reasoning_control in {
+        "thinking_type", "chat_template", "always_on_effort"
+    } or (
+        reasoning_control == "legacy"
+        and registry.supports_thinking(provider_id, model_id)
+    )
+
+    # 写会话 override
+    try:
+        session_set_override(to_label)
+    except Exception as exc:  # noqa: BLE001 — 写入异常如实标注
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                f"[状态: 失败] 会话覆盖写入失败: {exc}。"
+                "建议: 检查会话存储可写性（会话 JSON 目录权限）。"
+            ),
+            tool_call_id="",
+            tool_name="switch_model",
+        )
+
+    # The exact registry used above is the only authority allowed to advance the active
+    # run routing epoch. A background provider-admin/refresh without this explicit model
+    # action therefore remains invisible to later rounds of the current run.
+    if routing_transition is not None:
+        routing_transition(registry, to_label)
+
+    # 审计落盘（who/when/from→to/reason; 复用 corrections.py 现有 _audit 通道）
+    if audit is not None:
+        audit(
+            "switch_model",
+            {
+                "from": from_label,
+                "to": to_label,
+                "reason": reason,
+                "result": "success",
+            },
+            "success",
+        )
+
+    thinking_note = (
+        f"reasoning: capable={'是' if reasoning_capable else '未证实'}, control={reasoning_control}（请求级 auto/off/on；always_on_effort 的 off 映射最低 effort，不代表关闭 reasoning）"
+        if thinking_supported
+        else f"reasoning: capable={'是' if reasoning_capable else '未证实'}, control={reasoning_control}（无已证实显式控制；auto/off/on 不伪造 provider 控制）"
+    )
+    # B6(2026-08-15): 成本/能力事实注入——目标模型 cost_tier + 能力语义（对齐
+    # model_catalog 选型指引, 判断归 AI, 程序只给事实）
+    try:
+        mspec = registry.providers[provider_id].models[model_id]
+        cost_note = f"成本档: {mspec.cost_tier}"
+        caps = []
+        if reasoning_capable:
+            caps.append("reasoning_capable")
+        if mspec.reasoning:
+            caps.append("reasoning")
+        if mspec.long_context:
+            caps.append("long_context")
+        if mspec.multimodal:
+            caps.append("multimodal")
+        cap_note = f"能力: {'/'.join(caps) if caps else '标准'}"
+        context_note = f"上下文: {mspec.context // 1024}K"
+    except Exception:  # noqa: BLE001 — 元数据缺失如实省略（不伪造）
+        cost_note = "成本档: 未知（元数据缺失）"
+        cap_note = "能力: 未知（元数据缺失）"
+        context_note = ""
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=(
+            f"[状态: 成功] 模型已切换: {from_label} → {to_label}（原因: {reason}）；"
+            f"{thinking_note}；{cost_note}；{cap_note}"
+            + (f"；{context_note}" if context_note else "")
+            + "。新模型将在下一轮 LLM 调用生效（覆盖已写入会话存储）。"
+        ),
+        tool_call_id="",
+        tool_name="switch_model",
+    )
+
+
+def write_model_tools_audit(
+    audit_dir: Any,
+    tool_name: str,
+    arguments: dict,
+    result_status: str,
+) -> None:
+    """独立审计落盘（model_catalog/switch_model 直接调用时; corrections 复用 _audit 时不必）。
+
+    复用 corrections._audit 行为: 写 self_correction_log.jsonl, fail-open 不抛穿.
+    本函数供不经过 CorrectionToolRegistry 的路径（如独立子代理 / 集成测试）使用.
+    """
+    import json
+    from pathlib import Path
+
+    if audit_dir is None:
+        return
+    try:
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "id": f"COR-{system_local_now().strftime('%Y%m%d')}",
+            "ts": system_local_now().isoformat(),
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "result_status": result_status,
+        }
+        with (Path(audit_dir) / "self_correction_log.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # fail-open

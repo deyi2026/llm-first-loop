@@ -1,0 +1,413 @@
+"""基础工具: 注册定时通知或当前任务的一次性 delegated continuation。
+
+普通提醒是 output-side notify，不自动进入模型 prompt。wake=true 只允许当前真人 run
+把同会话执行权降权委派一次；它不是未来的新真人输入，也不能递归或周期唤醒。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
+from llm_loop.core.scheduler import (
+    ScheduleCommitUncertainError,
+    SchedulePersistError,
+    ScheduleStore,
+)
+from llm_loop.core.trace_leak.ingress_token import (
+    current_ingress_session_id,
+    current_ingress_token,
+    delegate_ingress,
+)
+
+_MAX_SCHEDULE_MESSAGE_CHARS = 4000
+
+# antidrift R1: subject_refs 引用类型封闭集（OQ4 裁定；扩展须显式登记，不加白名单）
+_SUBJECT_REF_TYPES = ("job_id", "expected_generation", "action_id")
+
+
+class ScheduleTool:
+    name = "schedule"
+    description = (
+        "注册定时提醒：after（N 秒后一次）/ at（绝对时间）/ rate（每 N 秒重复，可限次数）。"
+        "默认到点仅通知；wake=true 时仅在当前真实用户 run 可签发一次性同会话续跑，"
+        "后台续跑不能递归再唤醒；wake 续跑 prompt 会自动追加本会话后台任务机械现状投影。"
+        "交付失败处理: 瞬态失败有界退避重试；新提醒重启后恢复已授权的一次性委派；"
+        "旧提醒无持久授权时需同会话真人 re-arm，窗口内未恢复才降级为通知。"
+        "何时用: 需要延迟/周期性提醒（如 60 秒后检查后台任务、每 5 分钟汇报状态）。"
+        "何时不用: 即时动作直接执行；一次性协调消息走 interop。"
+        "失败对策: 参数校验失败如实返回；存储失败区分 definitely_not_committed 与 "
+        "commit_outcome_uncertain，后者返回 sid/current-state 机械事实并明确禁止盲重试。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "maxLength": _MAX_SCHEDULE_MESSAGE_CHARS,
+                "description": (
+                    "提醒/一次性续跑内容（必填，最多 4000 字符）。wake=true 时应为"
+                    "「哨兵+完成判据+核验动作」：写明到点时用什么读操作（如 job_output/"
+                    "ls-remote/status 查询）核验哪些完成标志，而不是可逐步重放的操作清单"
+                    "——唤醒 run 看不到沉睡前的终态回执，步骤清单易被误当未完成而重放。"
+                ),
+            },
+            "after": {
+                "type": "number",
+                "description": "N 秒后触发一次（默认 0=立即触发；与 at 二选一，都填以 at 为准）",
+            },
+            "at": {
+                "type": "string",
+                "description": "绝对触发时间 ISO（如 '2026-08-17T10:00:00'，本地时区）；与 after 二选一",
+            },
+            "repeat_interval": {
+                "type": "number",
+                "description": "重复间隔秒（>0 表示周期提醒）",
+            },
+            "max_count": {
+                "type": "integer",
+                "description": "最多触发次数（重复时有效，默认 1）",
+            },
+            "wake": {
+                "type": "boolean",
+                "description": (
+                    "到点后自动续跑当前会话。仅当前真实用户输入触发的顶层 run 可授权；"
+                    "默认 false 只通知。"
+                ),
+            },
+            "subject_refs": {
+                "type": "array",
+                "description": (
+                    "可选自报对象引用：唤醒时程序会把这些对象的现状差量（终态/generation 前移/"
+                    "动作状态，仅事实无结论）附于唤醒消息。type 为封闭枚举"
+                    "（job_id/expected_generation/action_id），未知类型按参数错误拒绝。"
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["job_id", "expected_generation", "action_id"],
+                        },
+                        "id": {
+                            "type": "string",
+                            "description": "引用对象标识（job id / 排程时观察到的 generation 值 / action id）",
+                        },
+                    },
+                    "required": ["type", "id"],
+                },
+            },
+        },
+        "required": ["message"],
+    }
+
+    def __init__(
+        self,
+        store: ScheduleStore | None = None,
+        *,
+        goal_binding_resolver: Callable[[str], tuple[str, str] | None] | None = None,
+    ) -> None:
+        self._store = store
+        self._goal_binding_resolver = goal_binding_resolver
+
+    def _get_store(self) -> ScheduleStore:
+        if self._store is None:
+            self._store = ScheduleStore()
+        return self._store
+
+    def execute(self, **kwargs) -> ToolResult:
+        try:
+            message = str(kwargs.get("message", "") or "").strip()
+            after = float(kwargs.get("after", 0) or 0)
+            at = str(kwargs.get("at", "") or "").strip()
+            repeat_interval = float(kwargs.get("repeat_interval", 0) or 0)
+            max_count = int(kwargs.get("max_count", 1) or 1)
+            wake = bool(kwargs.get("wake", False))
+            subject_refs_raw = kwargs.get("subject_refs") or []
+        except (TypeError, ValueError) as exc:
+            # 审查低危修复: 参数类型转换异常如实返回 FAILURE（原实现直接外抛）
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] 参数类型非法: {exc}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+        if not message:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] 缺少必填参数 'message'",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if len(message) > _MAX_SCHEDULE_MESSAGE_CHARS:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] message 最多 {_MAX_SCHEDULE_MESSAGE_CHARS} 字符",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if after < 0 or repeat_interval < 0:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] after/repeat_interval 必须 ≥ 0",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+        # antidrift R1: subject_refs 封闭枚举校验（参数校验，非行为门禁；BindingProblemKind 同款封闭集纪律）
+        if not isinstance(subject_refs_raw, list):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] subject_refs 必须为 {type,id} 对象数组",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        subject_refs: list[dict] = []
+        for item in subject_refs_raw:
+            if (
+                not isinstance(item, dict)
+                or not str(item.get("type", "") or "")
+                or not str(item.get("id", "") or "")
+            ):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[参数错误] subject_refs 每条须含非空 type 与 id",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            if str(item.get("type")) not in _SUBJECT_REF_TYPES:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        "[参数错误] subject_refs.type 未知类型: "
+                        f"{item.get('type')}（封闭集: {'/'.join(_SUBJECT_REF_TYPES)}）"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            subject_refs.append({"type": str(item["type"]), "id": str(item["id"])})
+
+        if wake and repeat_interval > 0:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] wake=true 仅支持一次性续跑；周期任务请使用普通通知后由用户决定是否继续",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+        # 绝对时间解析（ISO，本地时区；带 Z 视为 UTC）
+        at_ts: float | None = None
+        if at:
+            try:
+                from datetime import datetime
+
+                dt = datetime.fromisoformat(at)
+                if dt.tzinfo is None:
+                    dt = dt.astimezone()  # 无时区按本地
+                at_ts = dt.timestamp()
+            except ValueError:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[参数错误] at 时间格式非法（期望 ISO 如 '2026-08-17T10:00:00'）: {at}",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            # 审查低危修复: at 过去时间如实拒绝（原实现静默立即触发——"at 过去不校验"）
+            import time as _time
+
+            if at_ts < _time.time() - 5:  # 5s 容差（时钟偏差/构造-注册间隙）
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[参数错误] at 时间已过去（{at}），请检查或改用 after",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+
+        wake_grant = None
+        wake_session_id = ""
+        wake_goal_id = ""
+        wake_goal_generation = ""
+        if wake:
+            wake_session_id = current_session_id.get()
+            ingress_session_id = current_ingress_session_id.get()
+            ingress = current_ingress_token.get()
+            if not wake_session_id or ingress_session_id != wake_session_id or ingress is None:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=(
+                        "[schedule] wake=true 需要当前真实用户输入绑定的同会话授权；"
+                        "后台/子代理/无 ingress 上下文不能创建自动续跑。"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            try:
+                wake_grant = delegate_ingress(ingress, entry="schedule_wake")
+            except ValueError as exc:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=f"[schedule] 自动续跑授权失败: {exc}",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            if self._goal_binding_resolver is not None:
+                try:
+                    binding = self._goal_binding_resolver(wake_session_id)
+                except Exception as exc:  # noqa: BLE001 — lifecycle authority cannot be guessed
+                    return ToolResult(
+                        status=ToolResultStatus.ERROR,
+                        content=(
+                            "[schedule] 当前 Goal 生命周期身份不可核验，未创建自动续跑；"
+                            f"error={type(exc).__name__}"
+                        ),
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
+                if binding is not None:
+                    wake_goal_id, wake_goal_generation = binding
+
+        try:
+            sid = self._get_store().add(
+                message, after=after, at=at_ts, repeat_interval=repeat_interval,
+                max_count=max_count, wake=wake, session_id=wake_session_id,
+                wake_grant=wake_grant, goal_id=wake_goal_id,
+                goal_generation=wake_goal_generation,
+                subject_refs=subject_refs,
+            )
+        except ScheduleCommitUncertainError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule] commit_outcome_uncertain: "
+                    f"sid={exc.sid}; visible_state={exc.visible_state}; "
+                    "durability_confirmed=false; retry_safe=false。"
+                    "当前文件可见状态已机械核对；不要直接重复注册同一提醒，"
+                    "先按 sid/会话排程事实 reconcile。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
+        except SchedulePersistError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule] definitely_not_committed: "
+                    f"sid={exc.sid or '-'}; "
+                    f"retry_safe={'true' if exc.retry_safe else 'false'}; error={exc}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
+        when = f"after {after}s" if after > 0 else (f"at {at}" if at else "immediate")
+        if repeat_interval > 0:
+            when += f"（每 {repeat_interval}s，最多 {max_count} 次）"
+        delivery = "到点自动续跑当前会话" if wake else "到点仅发送通知"
+        content = f"[schedule] 已注册提醒 {sid}: '{message}'（{when}；{delivery}）。"
+        # antidrift R5: 同会话 wake 排程的分叉选项披露（非门禁，排程已照常生效）
+        if wake and wake_session_id == current_session_id.get():
+            content += (
+                "\n[提示] 独立验证/巡检类子任务建议排程至分叉会话"
+                "（协议见 docs/wake-fork-protocol.md）；本提示为选项披露，排程已照常生效"
+            )
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=content,
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+
+class ScheduleCancelTool:
+    """取消已注册提醒（审查 P2: 无取消工具 → 提醒只能等触发/重启清除）."""
+
+    name = "schedule_cancel"
+    description = (
+        "取消已注册的定时提醒（按 sid，来自 schedule 工具回执）。"
+        "何时用: 提醒不再需要/重复注册后清理。"
+        "失败对策: sid 不存在如实返回。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "sid": {
+                "type": "string",
+                "description": "要取消的提醒 sid（schedule 工具回执中给出）",
+            },
+        },
+        "required": ["sid"],
+    }
+
+    def __init__(self, store: ScheduleStore | None = None) -> None:
+        self._store = store
+
+    def _get_store(self) -> ScheduleStore:
+        if self._store is None:
+            self._store = ScheduleStore()
+        return self._store
+
+    def execute(self, **kwargs) -> ToolResult:
+        sid = str(kwargs.get("sid", "") or "").strip()
+        if not sid:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] 缺少必填参数 'sid'",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        try:
+            removed = self._get_store().cancel(sid)
+        except ScheduleCommitUncertainError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule_cancel] commit_outcome_uncertain: "
+                    f"sid={sid}; visible_state={exc.visible_state}; "
+                    "durability_confirmed=false; "
+                    f"retry_safe={'true' if exc.retry_safe else 'false'}。"
+                    "取消是同 sid 幂等操作，可用同一 sid 重试/核对排程事实；"
+                    "不要创建替代提醒。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
+        except SchedulePersistError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    "[schedule_cancel] definitely_not_committed: "
+                    f"sid={sid}; retry_safe={'true' if exc.retry_safe else 'false'}; "
+                    f"error={exc}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open 如实回执
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=f"[schedule_cancel] 取消失败: {type(exc).__name__}: {exc}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if removed:
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=f"[schedule_cancel] 已取消提醒 {sid}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[schedule_cancel] 提醒 {sid} 不存在（可能已触发或已取消）",
+            tool_call_id="",
+            tool_name=self.name,
+        )

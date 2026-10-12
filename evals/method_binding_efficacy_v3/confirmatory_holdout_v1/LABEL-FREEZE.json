@@ -1,0 +1,17 @@
+{
+ "analyzer_bug": "initial analyzer used reverse_risk_apply instead of sealed kind apply_reverse_risk; only two kind comparisons corrected; answers/sealed/gates unchanged",
+ "certified_cases": 23,
+ "challenge_certified": 17,
+ "reverse_risk_certified": 6,
+ "schema": "subject-binding-v3-holdout-label-freeze/v1",
+ "sha256": {
+  "LABEL-RESULT.json": "1411bb019f484787ed7e1e48b2082d837b22aa13eb5cb378ea8449226133e8a0",
+  "PREREG.md": "776a4692489f633bc6008c93bb043aadd798d166c83cc851dedbf18af05545b1",
+  "R1.jsonl": "5e1a3be446e724346a7930a38ea4d8590b33576cf81fd73189775dd69931017a",
+  "R2.jsonl": "d8fb019c10a34778fbe70792406718a67a0596d7a7702b8a683617a929d071b2",
+  "analyze_labels.py": "4094b45a6cf85358b130af90fb678cfaac9b386ddef884e4367da85f22b2cfbc",
+  "candidates.json": "c4593204e9d591fdab864a66e9c4f301d66293d8393e463291c9c42cc2baec73",
+  "sealed.json": "4c0e0dfd06fddb01f9d1b1dcf8c8272d8e35d39fb9ef9e4d69dd1a5e4ec947a3"
+ },
+ "verdict": "PASS"
+}

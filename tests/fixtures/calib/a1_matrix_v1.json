@@ -1,0 +1,829 @@
+{
+  "version": "A1-MATRIX-v1",
+  "randomization_seed": 202608261001,
+  "providers": [
+    "minimax",
+    "deepseek"
+  ],
+  "variants": [
+    "A0-Baseline",
+    "A1-Contract",
+    "A2-Contract-DRU",
+    "A3-Contract-Evidence",
+    "A4-Contract-ClosedDecision",
+    "A5-Contract-Risk",
+    "A6-Full-Reference"
+  ],
+  "seed_ids": [
+    "F01",
+    "F02",
+    "F03",
+    "F04",
+    "F05",
+    "F06",
+    "F07",
+    "F08"
+  ],
+  "rows": [
+    {
+      "run_id": "A1-001",
+      "provider": "minimax",
+      "seed": "F07",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 1
+    },
+    {
+      "run_id": "A1-002",
+      "provider": "minimax",
+      "seed": "F05",
+      "variant": "A6-Full-Reference",
+      "block_seq": 2
+    },
+    {
+      "run_id": "A1-003",
+      "provider": "minimax",
+      "seed": "F04",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 3
+    },
+    {
+      "run_id": "A1-004",
+      "provider": "minimax",
+      "seed": "F03",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 4
+    },
+    {
+      "run_id": "A1-005",
+      "provider": "minimax",
+      "seed": "F08",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 5
+    },
+    {
+      "run_id": "A1-006",
+      "provider": "minimax",
+      "seed": "F04",
+      "variant": "A6-Full-Reference",
+      "block_seq": 6
+    },
+    {
+      "run_id": "A1-007",
+      "provider": "minimax",
+      "seed": "F04",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 7
+    },
+    {
+      "run_id": "A1-008",
+      "provider": "minimax",
+      "seed": "F08",
+      "variant": "A1-Contract",
+      "block_seq": 8
+    },
+    {
+      "run_id": "A1-009",
+      "provider": "minimax",
+      "seed": "F07",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 9
+    },
+    {
+      "run_id": "A1-010",
+      "provider": "minimax",
+      "seed": "F07",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 10
+    },
+    {
+      "run_id": "A1-011",
+      "provider": "minimax",
+      "seed": "F06",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 11
+    },
+    {
+      "run_id": "A1-012",
+      "provider": "minimax",
+      "seed": "F01",
+      "variant": "A0-Baseline",
+      "block_seq": 12
+    },
+    {
+      "run_id": "A1-013",
+      "provider": "minimax",
+      "seed": "F01",
+      "variant": "A1-Contract",
+      "block_seq": 13
+    },
+    {
+      "run_id": "A1-014",
+      "provider": "minimax",
+      "seed": "F03",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 14
+    },
+    {
+      "run_id": "A1-015",
+      "provider": "minimax",
+      "seed": "F08",
+      "variant": "A6-Full-Reference",
+      "block_seq": 15
+    },
+    {
+      "run_id": "A1-016",
+      "provider": "minimax",
+      "seed": "F06",
+      "variant": "A0-Baseline",
+      "block_seq": 16
+    },
+    {
+      "run_id": "A1-017",
+      "provider": "minimax",
+      "seed": "F02",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 17
+    },
+    {
+      "run_id": "A1-018",
+      "provider": "minimax",
+      "seed": "F02",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 18
+    },
+    {
+      "run_id": "A1-019",
+      "provider": "minimax",
+      "seed": "F02",
+      "variant": "A0-Baseline",
+      "block_seq": 19
+    },
+    {
+      "run_id": "A1-020",
+      "provider": "minimax",
+      "seed": "F03",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 20
+    },
+    {
+      "run_id": "A1-021",
+      "provider": "minimax",
+      "seed": "F07",
+      "variant": "A0-Baseline",
+      "block_seq": 21
+    },
+    {
+      "run_id": "A1-022",
+      "provider": "minimax",
+      "seed": "F02",
+      "variant": "A1-Contract",
+      "block_seq": 22
+    },
+    {
+      "run_id": "A1-023",
+      "provider": "minimax",
+      "seed": "F01",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 23
+    },
+    {
+      "run_id": "A1-024",
+      "provider": "minimax",
+      "seed": "F03",
+      "variant": "A1-Contract",
+      "block_seq": 24
+    },
+    {
+      "run_id": "A1-025",
+      "provider": "minimax",
+      "seed": "F03",
+      "variant": "A0-Baseline",
+      "block_seq": 25
+    },
+    {
+      "run_id": "A1-026",
+      "provider": "minimax",
+      "seed": "F06",
+      "variant": "A1-Contract",
+      "block_seq": 26
+    },
+    {
+      "run_id": "A1-027",
+      "provider": "minimax",
+      "seed": "F06",
+      "variant": "A6-Full-Reference",
+      "block_seq": 27
+    },
+    {
+      "run_id": "A1-028",
+      "provider": "minimax",
+      "seed": "F05",
+      "variant": "A1-Contract",
+      "block_seq": 28
+    },
+    {
+      "run_id": "A1-029",
+      "provider": "minimax",
+      "seed": "F06",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 29
+    },
+    {
+      "run_id": "A1-030",
+      "provider": "minimax",
+      "seed": "F07",
+      "variant": "A6-Full-Reference",
+      "block_seq": 30
+    },
+    {
+      "run_id": "A1-031",
+      "provider": "minimax",
+      "seed": "F02",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 31
+    },
+    {
+      "run_id": "A1-032",
+      "provider": "minimax",
+      "seed": "F05",
+      "variant": "A0-Baseline",
+      "block_seq": 32
+    },
+    {
+      "run_id": "A1-033",
+      "provider": "minimax",
+      "seed": "F05",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 33
+    },
+    {
+      "run_id": "A1-034",
+      "provider": "minimax",
+      "seed": "F04",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 34
+    },
+    {
+      "run_id": "A1-035",
+      "provider": "minimax",
+      "seed": "F01",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 35
+    },
+    {
+      "run_id": "A1-036",
+      "provider": "minimax",
+      "seed": "F04",
+      "variant": "A1-Contract",
+      "block_seq": 36
+    },
+    {
+      "run_id": "A1-037",
+      "provider": "minimax",
+      "seed": "F08",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 37
+    },
+    {
+      "run_id": "A1-038",
+      "provider": "minimax",
+      "seed": "F03",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 38
+    },
+    {
+      "run_id": "A1-039",
+      "provider": "minimax",
+      "seed": "F04",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 39
+    },
+    {
+      "run_id": "A1-040",
+      "provider": "minimax",
+      "seed": "F03",
+      "variant": "A6-Full-Reference",
+      "block_seq": 40
+    },
+    {
+      "run_id": "A1-041",
+      "provider": "minimax",
+      "seed": "F01",
+      "variant": "A6-Full-Reference",
+      "block_seq": 41
+    },
+    {
+      "run_id": "A1-042",
+      "provider": "minimax",
+      "seed": "F01",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 42
+    },
+    {
+      "run_id": "A1-043",
+      "provider": "minimax",
+      "seed": "F05",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 43
+    },
+    {
+      "run_id": "A1-044",
+      "provider": "minimax",
+      "seed": "F08",
+      "variant": "A0-Baseline",
+      "block_seq": 44
+    },
+    {
+      "run_id": "A1-045",
+      "provider": "minimax",
+      "seed": "F06",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 45
+    },
+    {
+      "run_id": "A1-046",
+      "provider": "minimax",
+      "seed": "F07",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 46
+    },
+    {
+      "run_id": "A1-047",
+      "provider": "minimax",
+      "seed": "F04",
+      "variant": "A0-Baseline",
+      "block_seq": 47
+    },
+    {
+      "run_id": "A1-048",
+      "provider": "minimax",
+      "seed": "F02",
+      "variant": "A6-Full-Reference",
+      "block_seq": 48
+    },
+    {
+      "run_id": "A1-049",
+      "provider": "minimax",
+      "seed": "F08",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 49
+    },
+    {
+      "run_id": "A1-050",
+      "provider": "minimax",
+      "seed": "F02",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 50
+    },
+    {
+      "run_id": "A1-051",
+      "provider": "minimax",
+      "seed": "F05",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 51
+    },
+    {
+      "run_id": "A1-052",
+      "provider": "minimax",
+      "seed": "F08",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 52
+    },
+    {
+      "run_id": "A1-053",
+      "provider": "minimax",
+      "seed": "F07",
+      "variant": "A1-Contract",
+      "block_seq": 53
+    },
+    {
+      "run_id": "A1-054",
+      "provider": "minimax",
+      "seed": "F05",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 54
+    },
+    {
+      "run_id": "A1-055",
+      "provider": "minimax",
+      "seed": "F06",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 55
+    },
+    {
+      "run_id": "A1-056",
+      "provider": "minimax",
+      "seed": "F01",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 56
+    },
+    {
+      "run_id": "A1-057",
+      "provider": "deepseek",
+      "seed": "F05",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 1
+    },
+    {
+      "run_id": "A1-058",
+      "provider": "deepseek",
+      "seed": "F07",
+      "variant": "A6-Full-Reference",
+      "block_seq": 2
+    },
+    {
+      "run_id": "A1-059",
+      "provider": "deepseek",
+      "seed": "F03",
+      "variant": "A1-Contract",
+      "block_seq": 3
+    },
+    {
+      "run_id": "A1-060",
+      "provider": "deepseek",
+      "seed": "F08",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 4
+    },
+    {
+      "run_id": "A1-061",
+      "provider": "deepseek",
+      "seed": "F07",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 5
+    },
+    {
+      "run_id": "A1-062",
+      "provider": "deepseek",
+      "seed": "F03",
+      "variant": "A6-Full-Reference",
+      "block_seq": 6
+    },
+    {
+      "run_id": "A1-063",
+      "provider": "deepseek",
+      "seed": "F05",
+      "variant": "A1-Contract",
+      "block_seq": 7
+    },
+    {
+      "run_id": "A1-064",
+      "provider": "deepseek",
+      "seed": "F04",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 8
+    },
+    {
+      "run_id": "A1-065",
+      "provider": "deepseek",
+      "seed": "F06",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 9
+    },
+    {
+      "run_id": "A1-066",
+      "provider": "deepseek",
+      "seed": "F03",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 10
+    },
+    {
+      "run_id": "A1-067",
+      "provider": "deepseek",
+      "seed": "F06",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 11
+    },
+    {
+      "run_id": "A1-068",
+      "provider": "deepseek",
+      "seed": "F07",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 12
+    },
+    {
+      "run_id": "A1-069",
+      "provider": "deepseek",
+      "seed": "F02",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 13
+    },
+    {
+      "run_id": "A1-070",
+      "provider": "deepseek",
+      "seed": "F08",
+      "variant": "A6-Full-Reference",
+      "block_seq": 14
+    },
+    {
+      "run_id": "A1-071",
+      "provider": "deepseek",
+      "seed": "F02",
+      "variant": "A1-Contract",
+      "block_seq": 15
+    },
+    {
+      "run_id": "A1-072",
+      "provider": "deepseek",
+      "seed": "F05",
+      "variant": "A6-Full-Reference",
+      "block_seq": 16
+    },
+    {
+      "run_id": "A1-073",
+      "provider": "deepseek",
+      "seed": "F03",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 17
+    },
+    {
+      "run_id": "A1-074",
+      "provider": "deepseek",
+      "seed": "F02",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 18
+    },
+    {
+      "run_id": "A1-075",
+      "provider": "deepseek",
+      "seed": "F02",
+      "variant": "A6-Full-Reference",
+      "block_seq": 19
+    },
+    {
+      "run_id": "A1-076",
+      "provider": "deepseek",
+      "seed": "F01",
+      "variant": "A0-Baseline",
+      "block_seq": 20
+    },
+    {
+      "run_id": "A1-077",
+      "provider": "deepseek",
+      "seed": "F07",
+      "variant": "A1-Contract",
+      "block_seq": 21
+    },
+    {
+      "run_id": "A1-078",
+      "provider": "deepseek",
+      "seed": "F06",
+      "variant": "A0-Baseline",
+      "block_seq": 22
+    },
+    {
+      "run_id": "A1-079",
+      "provider": "deepseek",
+      "seed": "F01",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 23
+    },
+    {
+      "run_id": "A1-080",
+      "provider": "deepseek",
+      "seed": "F08",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 24
+    },
+    {
+      "run_id": "A1-081",
+      "provider": "deepseek",
+      "seed": "F06",
+      "variant": "A1-Contract",
+      "block_seq": 25
+    },
+    {
+      "run_id": "A1-082",
+      "provider": "deepseek",
+      "seed": "F05",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 26
+    },
+    {
+      "run_id": "A1-083",
+      "provider": "deepseek",
+      "seed": "F04",
+      "variant": "A1-Contract",
+      "block_seq": 27
+    },
+    {
+      "run_id": "A1-084",
+      "provider": "deepseek",
+      "seed": "F03",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 28
+    },
+    {
+      "run_id": "A1-085",
+      "provider": "deepseek",
+      "seed": "F05",
+      "variant": "A0-Baseline",
+      "block_seq": 29
+    },
+    {
+      "run_id": "A1-086",
+      "provider": "deepseek",
+      "seed": "F06",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 30
+    },
+    {
+      "run_id": "A1-087",
+      "provider": "deepseek",
+      "seed": "F01",
+      "variant": "A1-Contract",
+      "block_seq": 31
+    },
+    {
+      "run_id": "A1-088",
+      "provider": "deepseek",
+      "seed": "F01",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 32
+    },
+    {
+      "run_id": "A1-089",
+      "provider": "deepseek",
+      "seed": "F02",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 33
+    },
+    {
+      "run_id": "A1-090",
+      "provider": "deepseek",
+      "seed": "F08",
+      "variant": "A0-Baseline",
+      "block_seq": 34
+    },
+    {
+      "run_id": "A1-091",
+      "provider": "deepseek",
+      "seed": "F04",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 35
+    },
+    {
+      "run_id": "A1-092",
+      "provider": "deepseek",
+      "seed": "F08",
+      "variant": "A2-Contract-DRU",
+      "block_seq": 36
+    },
+    {
+      "run_id": "A1-093",
+      "provider": "deepseek",
+      "seed": "F06",
+      "variant": "A6-Full-Reference",
+      "block_seq": 37
+    },
+    {
+      "run_id": "A1-094",
+      "provider": "deepseek",
+      "seed": "F03",
+      "variant": "A0-Baseline",
+      "block_seq": 38
+    },
+    {
+      "run_id": "A1-095",
+      "provider": "deepseek",
+      "seed": "F02",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 39
+    },
+    {
+      "run_id": "A1-096",
+      "provider": "deepseek",
+      "seed": "F01",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 40
+    },
+    {
+      "run_id": "A1-097",
+      "provider": "deepseek",
+      "seed": "F02",
+      "variant": "A0-Baseline",
+      "block_seq": 41
+    },
+    {
+      "run_id": "A1-098",
+      "provider": "deepseek",
+      "seed": "F08",
+      "variant": "A1-Contract",
+      "block_seq": 42
+    },
+    {
+      "run_id": "A1-099",
+      "provider": "deepseek",
+      "seed": "F04",
+      "variant": "A6-Full-Reference",
+      "block_seq": 43
+    },
+    {
+      "run_id": "A1-100",
+      "provider": "deepseek",
+      "seed": "F03",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 44
+    },
+    {
+      "run_id": "A1-101",
+      "provider": "deepseek",
+      "seed": "F04",
+      "variant": "A4-Contract-ClosedDecision",
+      "block_seq": 45
+    },
+    {
+      "run_id": "A1-102",
+      "provider": "deepseek",
+      "seed": "F07",
+      "variant": "A0-Baseline",
+      "block_seq": 46
+    },
+    {
+      "run_id": "A1-103",
+      "provider": "deepseek",
+      "seed": "F07",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 47
+    },
+    {
+      "run_id": "A1-104",
+      "provider": "deepseek",
+      "seed": "F04",
+      "variant": "A0-Baseline",
+      "block_seq": 48
+    },
+    {
+      "run_id": "A1-105",
+      "provider": "deepseek",
+      "seed": "F01",
+      "variant": "A6-Full-Reference",
+      "block_seq": 49
+    },
+    {
+      "run_id": "A1-106",
+      "provider": "deepseek",
+      "seed": "F04",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 50
+    },
+    {
+      "run_id": "A1-107",
+      "provider": "deepseek",
+      "seed": "F08",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 51
+    },
+    {
+      "run_id": "A1-108",
+      "provider": "deepseek",
+      "seed": "F01",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 52
+    },
+    {
+      "run_id": "A1-109",
+      "provider": "deepseek",
+      "seed": "F05",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 53
+    },
+    {
+      "run_id": "A1-110",
+      "provider": "deepseek",
+      "seed": "F07",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 54
+    },
+    {
+      "run_id": "A1-111",
+      "provider": "deepseek",
+      "seed": "F05",
+      "variant": "A3-Contract-Evidence",
+      "block_seq": 55
+    },
+    {
+      "run_id": "A1-112",
+      "provider": "deepseek",
+      "seed": "F06",
+      "variant": "A5-Contract-Risk",
+      "block_seq": 56
+    }
+  ],
+  "secondary_review_runs": [
+    "A1-012",
+    "A1-027",
+    "A1-028",
+    "A1-043",
+    "A1-051",
+    "A1-054",
+    "A1-056",
+    "A1-061",
+    "A1-067",
+    "A1-085",
+    "A1-087",
+    "A1-089",
+    "A1-100",
+    "A1-105"
+  ]
+}

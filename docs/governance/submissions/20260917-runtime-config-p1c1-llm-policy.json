@@ -1,0 +1,128 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260917-runtime-config-p1c1-llm-policy",
+  "summary": "Start Runtime Config P1-C by moving four non-secret LLM transport/cache policy reads from ambient call-time process env into the existing startup-resolved RuntimeConfig/Settings authority, while preserving historical defaults, routed-client behavior, secret boundaries, and operator-visible provenance.",
+  "components": [
+    {
+      "component_id": "p1c1-llm-policy-control",
+      "paths": [
+        "src/llm_loop/config.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/llm/client.py",
+        "src/llm_loop/llm/pool.py",
+        "src/llm_loop/runtime/resolver.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "canonical startup runtime configuration ownership for non-secret LLM mechanical transport/cache policy",
+      "disposition": "ADMIT as the first narrow P1-C tranche. The program owns configuration provenance, immutable startup policy, transport retry count, proxy use and cache/telemetry enablement; no model semantic decision is encoded.",
+      "evidence": [
+        "Exact formal base 49cd3082 has 132 direct / 143 effective env observations with 69 business-config observations; committed candidate has 128 / 139 with 65 business-config observations.",
+        "The four migrated keys disappear from the corrected scanner inventory without widening the one-way ratchet baseline.",
+        "RuntimeConfig precedence regression proves runtime.toml beats stale ambient shell values for all four fields.",
+        "Factory and routed-client tests prove one startup snapshot reaches both the default LLMClient and ModelClientPool-created clients while omitted fields preserve historical provider-aware defaults."
+      ],
+      "verification_level": "Committed-state focused and adjacent pytest, corrected env inventory, Ruff, Pyright, py_compile, diff-check, staged/whole-tree security, and full ci_gate",
+      "model_evidence_veto_recovery_exit": "RuntimeConfig source provenance remains inspectable. Operators may omit every new field to retain the historical automatic defaults, use the repository's existing explicit runtime-override mechanism where authorized, or revert the single implementation commit. No content-semantic model judgment is replaced.",
+      "rollback_route": "Revert 742bc2db. The fields are optional and no persistent data or secret migration is required.",
+      "declaration_id": "p1c1-llm-policy-control"
+    },
+    {
+      "component_id": "p1c1-runtime-config-example",
+      "paths": [
+        "runtime.toml.example"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator-facing non-secret runtime.toml example",
+      "disposition": "ADMIT as documentation of optional closed-schema fields; the example itself has no runtime authority.",
+      "evidence": [
+        "The production closed-schema parser accepts the new fields.",
+        "The existing no-secret-field architecture gate remains green."
+      ],
+      "verification_level": "Closed-schema parse, runtime-config tests, and repository security gates",
+      "model_evidence_veto_recovery_exit": "Operators may omit all example fields; omission preserves historical automatic/default behavior.",
+      "rollback_route": "Revert the example lines with no runtime effect."
+    },
+    {
+      "component_id": "p1c1-llm-policy-tests",
+      "paths": [
+        "tests/unit/test_llm_client.py",
+        "tests/unit/test_provider_call_settlement.py",
+        "tests/unit/test_runtime_config_p1c_llm_policy.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "P1-C1 deterministic regression and authority qualification",
+      "disposition": "ADMIT as deterministic tests only; they establish configuration facts and preserve transport semantics but own no live runtime authority.",
+      "evidence": [
+        "Initial P1-C1 regression was 5/5 RED before implementation and focused qualification is 7/7 PASS after implementation.",
+        "Runtime/config/env/startup plus LLM client/pool/provider/factory adjacency is 313/313 PASS.",
+        "Existing late-env-mutation tests were converted to explicit startup/client snapshot injection instead of retaining shared mutable process-env semantics."
+      ],
+      "verification_level": "Focused, adjacent, tier0, and full xdist pytest",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical configuration behavior and can be revised independently of production state.",
+      "rollback_route": "Revert with the implementation if the tranche is abandoned."
+    },
+    {
+      "component_id": "p1c1-qualification-record",
+      "paths": [
+        "docs/QUALIFICATION-20260917-runtime-config-p1c1-llm-policy.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "qualification evidence record",
+      "disposition": "ADMIT as a factual review record; runtime does not consume it.",
+      "evidence": [
+        "Records exact identities, before/after scanner facts, TDD evidence, committed-state gates, scope exclusions, production boundary, rollback, and the separate ci_gate linked-worktree bootstrap issue."
+      ],
+      "verification_level": "Exact Git/test/inventory evidence review plus A.5 path coverage",
+      "model_evidence_veto_recovery_exit": "Human/model reviewers may amend or reject the record without changing runtime behavior.",
+      "rollback_route": "Revert or delete the record with no runtime effect."
+    },
+    {
+      "component_id": "p1c1-a5-submission-record",
+      "paths": [
+        "docs/governance/submissions/20260917-runtime-config-p1c1-llm-policy.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations. A.5 remains a mechanical presence/coverage gate and does not decide semantic quality, deployment, or promotion.",
+      "evidence": [
+        "Manifest partitions the exact formal-base-to-candidate changed-path set and declares the sole runtime control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate before any publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and promotion; the metadata has no runtime authority.",
+      "rollback_route": "Revert together with the qualification metadata."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "p1c1-llm-policy-control",
+      "g1": {
+        "necessity": "Four non-secret LLM mechanical policy decisions still re-read ambient process environment at client construction or request time. That shared mutable authority can diverge from canonical runtime.toml and from the Settings snapshot already used for the rest of LLM configuration."
+      },
+      "g2": {
+        "authority_owner": "existing canonical RuntimeConfig resolver rooted at LFL_RUNTIME_ROOT/runtime.toml and immutable Settings assembled at startup",
+        "relationship": "reuse",
+        "non_duplication": "The tranche adds four fields to the existing closed schema and passes them through existing Settings/factory/client/pool objects. It creates no new configuration store, environment wrapper, secret store, retry controller, cache controller, or provider routing authority."
+      },
+      "g3": {
+        "model_evidence": [
+          "RuntimeConfig source precedence and source provenance",
+          "corrected alias/helper-aware env inventory",
+          "LLMClient and ModelClientPool policy fields and test receipts",
+          "provider-aware default behavior when optional fields are omitted"
+        ],
+        "recovery_or_reason": "Omitting optional booleans preserves historical provider-aware behavior and retry count defaults to one. Existing explicit runtime override remains unchanged. Operators can revert 742bc2db without data migration."
+      },
+      "g4": {
+        "rollback": "Revert 742bc2db; no runtime.toml rewrite, credential migration, service-state mutation, or data conversion is needed.",
+        "verification": [
+          "Initial focused RED 5/5 expected failures before implementation; final focused 7/7 PASS",
+          "runtime/config/env/startup and LLM client/pool/provider/factory adjacency 313/313 PASS",
+          "corrected candidate inventory 128 direct / 139 effective / 0 module-import / 65 business-config; all four target keys absent",
+          "changed Ruff PASS; production Pyright 0/0/0; py_compile and diff-check PASS",
+          "staged security PASS",
+          "full committed-state ci_gate PASS with repository Python explicitly selected: env-pin 587/0, tier0 PASS, xdist full PASS, architecture guard report PASS"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260916-restart-webui-readiness-hardening",
+  "summary": "Hardens the existing mirror restart lifecycle against a reproduced false-success state where a linked worktree lacks gitignored Web V2 build artifacts: Web-capable restarts now fail before stopping the current service when artifacts are missing/partial, and Web readiness requires both backend and /ui/v2 availability. The existing restart lifecycle remains the sole service-control authority.",
+  "components": [
+    {
+      "component_id": "restart-webui-artifact-readiness-control",
+      "paths": ["scripts/restart_mirror.sh"],
+      "control_machinery": true,
+      "owning_subsystem": "mirror service restart lifecycle and mechanical Web readiness",
+      "disposition": "ADMIT as a narrow fail-closed extension of the existing restart authority: validate Web V2 build artifacts before stopping a healthy Web and require the Web V2 route in addition to backend readiness after start. No build, rollback, model, or Agent semantic authority is added.",
+      "evidence": [
+        "Production reproduced rc=0 and /auth/status=200 while /ui/v2 returned 404 because the exact linked code worktree lacked ignored webui/dist.",
+        "TDD RED locked missing artifact-preflight ordering and backend-only readiness before implementation.",
+        "Dynamic fixtures prove missing dist and partial dist with a missing hashed asset fail before restart side effects and persist an explicit failure receipt."
+      ],
+      "verification_level": "TDD RED/GREEN, 24-test restart adjacency, bash syntax, whole-tree static/type/test CI, staged security, exact A.5 path coverage, and committed-state requalification",
+      "model_evidence_veto_recovery_exit": "The program exposes only mechanical artifact existence/reference facts, HTTP readiness facts, logs, and restart receipts. It does not infer UI quality or task success. Missing artifacts fail before stop; post-start UI unavailability returns nonzero so the operator/model can inspect evidence and choose build/reuse/rollback explicitly.",
+      "rollback_route": "Revert this restart-hardening commit. No persistent schema/data migration, provider change, Feishu protocol change, or 8901/model restart is involved.",
+      "declaration_id": "restart-webui-artifact-readiness-control"
+    },
+    {
+      "component_id": "restart-webui-hardening-tests",
+      "paths": [
+        "tests/scripts/test_restart_mirror_hardening.py",
+        "tests/unit/test_restart_mirror_script.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "restart artifact/readiness regression qualification",
+      "disposition": "ADMIT as deterministic verification-only coverage of ordering, missing/partial artifacts, preserved wait-idle semantics, and dual backend/UI readiness.",
+      "evidence": [
+        "Three initial RED assertions failed on the exact c577 base before implementation.",
+        "Missing-dist fixture returns rc=1 with webui_artifact_preflight_failed receipt.",
+        "Restart-focused/adjacent matrix passes 24/24 after implementation."
+      ],
+      "verification_level": "focused pytest plus full repository ci_gate",
+      "model_evidence_veto_recovery_exit": "Tests own no runtime authority and assert only mechanical restart contracts.",
+      "rollback_route": "Revert with the production restart-script change."
+    },
+    {
+      "component_id": "restart-operator-manual",
+      "paths": ["docs/LFL-restart-guide.md"],
+      "control_machinery": false,
+      "owning_subsystem": "operator restart procedure and incident knowledge",
+      "disposition": "ADMIT as portable operator documentation. It records the reproduced dist/readiness failure and safe build/reuse/post-canary procedure; runtime does not consume it.",
+      "evidence": [
+        "Manual documents that rc=0, port listen, and /auth/status=200 do not prove Web V2 usability.",
+        "Machine-specific absolute paths were removed before tracking the document."
+      ],
+      "verification_level": "privacy/security scan plus factual comparison to the frozen c577 incident evidence",
+      "model_evidence_veto_recovery_exit": "Human/model operators may revise or reject the procedure without runtime side effects.",
+      "rollback_route": "Revert or amend the documentation independently; no runtime state changes."
+    },
+    {
+      "component_id": "restart-hardening-qualification-record",
+      "paths": ["docs/QUALIFICATION-20260916-restart-webui-readiness-hardening.md"],
+      "control_machinery": false,
+      "owning_subsystem": "local qualification and non-interference evidence record",
+      "disposition": "ADMIT as a factual review record; runtime does not consume it.",
+      "evidence": [
+        "Record captures reproduced root cause, narrow authority boundary, RED/GREEN evidence, full local gates, manual publication boundary, and rollback."
+      ],
+      "verification_level": "exact Git/evidence review plus branch-wide A.5 path coverage",
+      "model_evidence_veto_recovery_exit": "Reviewers may amend or reject the record without affecting runtime behavior.",
+      "rollback_route": "Revert or remove with no runtime effect."
+    },
+    {
+      "component_id": "restart-hardening-submission-record",
+      "paths": ["docs/governance/submissions/20260916-restart-webui-readiness-hardening.json"],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations only; semantic classification remains review-owned.",
+      "evidence": [
+        "A.5 mechanically checks this closed manifest against the exact candidate changed-path set."
+      ],
+      "verification_level": "staged A.5 self-gate followed by committed-state A.5 requalification",
+      "model_evidence_veto_recovery_exit": "Human/model review remains responsible for classification truth and may amend or reject this metadata.",
+      "rollback_route": "Revert together with the review line."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "restart-webui-artifact-readiness-control",
+      "g1": {
+        "necessity": "A restart mechanism that can stop a healthy Web and report success while the user-facing Web V2 route is absent creates a mechanical deployment-safety defect. Artifact completeness must therefore be checked before stop, and readiness must include the mounted UI route rather than backend health alone."
+      },
+      "g2": {
+        "authority_owner": "existing scripts/restart_mirror.sh service lifecycle and readiness controller",
+        "relationship": "reuse",
+        "non_duplication": "No second service controller or Web state machine is introduced. The change extends the existing restart preflight/readiness gates with artifact and HTTP facts and leaves build/rollback decisions explicit."
+      },
+      "g3": {
+        "model_evidence": [
+          "resolved Web V2 dist path and index existence",
+          "missing local asset references from built index",
+          "restart receipt action/rc/detail",
+          "HTTP status for /auth/status and /ui/v2/",
+          "existing service logs and PID/port facts"
+        ],
+        "recovery_or_reason": "If the artifact is absent or partial, fail before stopping the current Web and provide an explicit build instruction. If the backend starts but /ui/v2 is unavailable, return restart failure and preserve logs/receipt so the operator/model can explicitly build, reuse a proven equivalent artifact, or roll back."
+      },
+      "g4": {
+        "rollback": "Revert the narrow restart-hardening commit. The change has no durable schema/data migration and does not alter provider, Feishu, LFRT, or 8901/model state.",
+        "verification": [
+          "TDD RED for missing preflight/order and backend-only readiness",
+          "dynamic missing-dist and partial-dist failure fixtures",
+          "restart-focused/adjacent 24/24 PASS",
+          "bash syntax PASS",
+          "full Ruff zero violations and env-pin 585/0",
+          "Pyright 0 errors / 0 warnings / 0 informations",
+          "tier0 and full xdist pytest PASS",
+          "architecture guard PASS",
+          "staged security and exact A.5 path coverage before commit",
+          "committed-state requalification before any remote publication or deployment"
+        ]
+      }
+    }
+  ]
+}

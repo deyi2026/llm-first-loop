@@ -1,0 +1,728 @@
+{
+  "diagnostics": {
+    "pyright": [
+      {
+        "count": 1,
+        "message": "Object of type \"None\" is not subscriptable",
+        "path": "src/llm_loop/browser/action.py",
+        "rule": "reportOptionalSubscript",
+        "source_line_sha256": "c8a08155851c378d36a4ec720c3faa41dd06f5c5bdd60a7bbe79a0a105df2761"
+      },
+      {
+        "count": 1,
+        "message": "Object of type \"None\" is not subscriptable",
+        "path": "src/llm_loop/browser/action.py",
+        "rule": "reportOptionalSubscript",
+        "source_line_sha256": "e9a2b4659a13c4c0a4c167a63b9f03ab5b3ce18cfca68639bd6d8964bd85e9e7"
+      },
+      {
+        "count": 1,
+        "message": "Type \"object\" is not assignable to return type \"dict[str, Any]\"\n  \"object\" is not assignable to \"dict[str, Any]\"",
+        "path": "src/llm_loop/browser/action.py",
+        "rule": "reportReturnType",
+        "source_line_sha256": "247e807695c112fe2feaf12453d4143bab52908f5288a2ee560a764f97b4b82d"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal[-1]\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\"\n  \"Literal[-1]\" is not assignable to \"str\"",
+        "path": "src/llm_loop/browser/cdp_action_host.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "83c4e8948c45cf8290d5932aa50dad7b2d9974a12c61e40d5b3e3ce7d27e907d"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"dict[str, object]\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\"\n  \"dict[str, object]\" is not assignable to \"str\"",
+        "path": "src/llm_loop/core/scheduler.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "2ccb92e12edaa80c4022369ba36edc8afdac1716cf385ae5261aff0659befbd4"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"object | Literal[0]\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"object | Literal[0]\" is not assignable to type \"ConvertibleToInt\"\n    Type \"object\" is not assignable to type \"ConvertibleToInt\"\n      \"object\" is not assignable to \"str\"\n      \"object\" is incompatible with protocol \"Buffer\"\n        \"__buffer__\" is not present\n      \"object\" is incompatible with protocol \"SupportsInt\"\n        \"__int__\" is not present\n      \"object\" is incompatible with protocol \"SupportsIndex\"",
+        "path": "src/llm_loop/core/subagent_delivery.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "17ef8db8227fdbbe772de499dcdf7fe7a8c52de8d403e79718671644836b22ba"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"object | Literal[0]\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"object | Literal[0]\" is not assignable to type \"ConvertibleToInt\"\n    Type \"object\" is not assignable to type \"ConvertibleToInt\"\n      \"object\" is not assignable to \"str\"\n      \"object\" is incompatible with protocol \"Buffer\"\n        \"__buffer__\" is not present\n      \"object\" is incompatible with protocol \"SupportsInt\"\n        \"__int__\" is not present\n      \"object\" is incompatible with protocol \"SupportsIndex\"\n  ...",
+        "path": "src/llm_loop/core/subagent_delivery.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "17ef8db8227fdbbe772de499dcdf7fe7a8c52de8d403e79718671644836b22ba"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"object | list[_T@list]\" cannot be assigned to parameter \"iterable\" of type \"Iterable[_T@list]\" in function \"__init__\"\n  Type \"object | list[_T@list]\" is not assignable to type \"Iterable[_T@list]\"\n    \"object\" is incompatible with protocol \"Iterable[_T@list]\"\n      \"__iter__\" is not present",
+        "path": "src/llm_loop/core/subagent_delivery.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "4c70fe802dea11478aba5a6594a007e2747fa961da6bd1953550aee51ffb5b41"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"(entry: Any) -> bool\" cannot be assigned to parameter \"hook\" of type \"(ArchiveEntry) -> None\" in function \"add_post_save_hook\"\n  Type \"(entry: Any) -> bool\" is not assignable to type \"(ArchiveEntry) -> None\"\n    Function return type \"bool\" is incompatible with type \"None\"\n      \"bool\" is not assignable to \"None\"",
+        "path": "src/llm_loop/factory.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "f4ffa07b8b93c50d56328880b6909b7d9a748d47935bd6dd1b6c53b8e6e58508"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"(entry: Any) -> bool\" cannot be assigned to parameter \"hook\" of type \"(MemoryEntry) -> None\" in function \"add_post_save_hook\"\n  Type \"(entry: Any) -> bool\" is not assignable to type \"(MemoryEntry) -> None\"\n    Function return type \"bool\" is incompatible with type \"None\"\n      \"bool\" is not assignable to \"None\"",
+        "path": "src/llm_loop/factory.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "100dca4ee4107990addd6eec8106d122a578b74396b02a89469b9cb70ad64dbf"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"(record: MethodRecord) -> bool\" cannot be assigned to parameter \"hook\" of type \"(MethodRecord) -> None\" in function \"add_post_save_hook\"\n  Type \"(record: MethodRecord) -> bool\" is not assignable to type \"(MethodRecord) -> None\"\n    Function return type \"bool\" is incompatible with type \"None\"\n      \"bool\" is not assignable to \"None\"",
+        "path": "src/llm_loop/factory.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "a6d29c6fe29a3eb6bfc8031786b486c790514b390a835627143b56e3dedd8c53"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"AckRecord | None\" cannot be assigned to parameter \"ack\" of type \"AckRecord\" in function \"ack_digest\"\n  Type \"AckRecord | None\" is not assignable to type \"AckRecord\"\n    \"None\" is not assignable to \"AckRecord\"",
+        "path": "src/llm_loop/factory.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "61536bf5395a455f75b2cc9a7bf3c74de3fd24b9f71706a8c38586758df564e7"
+      },
+      {
+        "count": 1,
+        "message": "\"object\" is not iterable\n  \"__iter__\" method not defined",
+        "path": "src/llm_loop/introspection/docs_search.py",
+        "rule": "reportGeneralTypeIssues",
+        "source_line_sha256": "5691d6122946c40da1bee80234aa274ec022ff2f3c7b4e8eab1c879b5ebcb738"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"object\" cannot be assigned to parameter \"fields\" of type \"str\" in function \"_transition\"\n  \"object\" is not assignable to \"str\"",
+        "path": "src/llm_loop/introspection/evolution.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "de536d6223ee08c86059ea84a4bf098d9955bc621cac5e9065677c3f629b9620"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"object\" cannot be assigned to parameter \"owner_session_id\" of type \"str | None\" in function \"_transition\"\n  Type \"object\" is not assignable to type \"str | None\"\n    \"object\" is not assignable to \"str\"\n    \"object\" is not assignable to \"None\"",
+        "path": "src/llm_loop/introspection/evolution.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "de536d6223ee08c86059ea84a4bf098d9955bc621cac5e9065677c3f629b9620"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal['archive']\" cannot be assigned to parameter \"default\" of type \"bytes\" in function \"setdefault\"\n  \"Literal['archive']\" is not assignable to \"bytes\"",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "626b8396cda4c91de1d1e5161f41f1b69d28ce46e1986899d6f3729ae5b1f28b"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal['content_preview']\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"get\"\n  \"Literal['content_preview']\" is not assignable to \"bytes\"",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "26100ea5da4e15a9bb4a7e406af233aa638ce7bb284711977c188d00e9c1127e"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal['kind']\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"setdefault\"\n  \"Literal['kind']\" is not assignable to \"bytes\"",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "626b8396cda4c91de1d1e5161f41f1b69d28ce46e1986899d6f3729ae5b1f28b"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal['summary']\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"__setitem__\"\n  \"Literal['summary']\" is not assignable to \"bytes\"",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "26100ea5da4e15a9bb4a7e406af233aa638ce7bb284711977c188d00e9c1127e"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal['summary']\" cannot be assigned to parameter \"key\" of type \"bytes\" in function \"get\"\n  \"Literal['summary']\" is not assignable to \"bytes\"",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "732b993184bd298ad78fe8a7e7b3bbacb43bbfe51d9f21394d89b66f8da6d867"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"object | dict[Unknown, Unknown]\" cannot be assigned to parameter \"iterable\" of type \"Iterable[list[bytes]]\" in function \"__init__\"\n  Type \"object | dict[Unknown, Unknown]\" is not assignable to type \"Iterable[list[bytes]]\"\n    \"object\" is incompatible with protocol \"Iterable[list[bytes]]\"\n      \"__iter__\" is not present",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "f6163f3da729dbfafa5b232e05a05f3ef42856da05c7110bf1f69012e78057c5"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"str\" cannot be assigned to parameter \"value\" of type \"bytes\" in function \"__setitem__\"\n  \"str\" is not assignable to \"bytes\"",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "26100ea5da4e15a9bb4a7e406af233aa638ce7bb284711977c188d00e9c1127e"
+      },
+      {
+        "count": 1,
+        "message": "No overloads for \"__init__\" match the provided arguments",
+        "path": "src/llm_loop/introspection/search.py",
+        "rule": "reportCallIssue",
+        "source_line_sha256": "f6163f3da729dbfafa5b232e05a05f3ef42856da05c7110bf1f69012e78057c5"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"frozenset[str]\" cannot be assigned to parameter \"known\" of type \"set[str]\" in function \"_normalize_dimensions\"\n  \"frozenset[str]\" is not assignable to \"set[str]\"",
+        "path": "src/llm_loop/introspection/status.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "6f5e31e9777fb86ae86c9ae148ff32c012a7fdb39f0645f1c5d1278b26cf0ff0"
+      },
+      {
+        "count": 3,
+        "message": "Argument of type \"list[dict[Unknown, Unknown]]\" cannot be assigned to parameter \"tool_calls\" of type \"list[ToolCall] | list[Mapping[str, Any]] | None\" in function \"_note_settled_response_facts\"\n  Type \"list[dict[Unknown, Unknown]]\" is not assignable to type \"list[ToolCall] | list[Mapping[str, Any]] | None\"\n    \"list[dict[Unknown, Unknown]]\" is not assignable to \"list[ToolCall]\"\n      Type parameter \"_T@list\" is invariant, but \"dict[Unknown, Unknown]\" is not the same as \"ToolCall\"\n      Consider switching from \"list\" to \"Sequence\" which is covariant\n    \"list[dict[Unknown, Unknown]]\" is not assignable to \"list[Mapping[str, Any]]\"\n      Type parameter \"_T@list\" is invariant, but \"dict[Unknown, Unknown]\" is not the same as \"Mapping[str, Any]\"\n      Consider switching from \"list\" to \"Sequence\" which is covariant\n    \"list[dict[Unknown, Unknown]]\" is not assignable to \"None\"",
+        "path": "src/llm_loop/llm/client.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "848c434f036cdd72a44c7e46ad474d31b742dce789438511b245ee9d340a3a97"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"list[dict[str, object]]\" cannot be assigned to parameter \"tool_calls\" of type \"list[ToolCall] | list[Mapping[str, Any]] | None\" in function \"_note_settled_response_facts\"\n  Type \"list[dict[str, object]]\" is not assignable to type \"list[ToolCall] | list[Mapping[str, Any]] | None\"\n    \"list[dict[str, object]]\" is not assignable to \"list[ToolCall]\"\n      Type parameter \"_T@list\" is invariant, but \"dict[str, object]\" is not the same as \"ToolCall\"\n      Consider switching from \"list\" to \"Sequence\" which is covariant\n    \"list[dict[str, object]]\" is not assignable to \"list[Mapping[str, Any]]\"\n      Type parameter \"_T@list\" is invariant, but \"dict[str, object]\" is not the same as \"Mapping[str, Any]\"\n      Consider switching from \"list\" to \"Sequence\" which is covariant\n    \"list[dict[str, object]]\" is not assignable to \"None\"",
+        "path": "src/llm_loop/llm/client.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "36d0ca03ee14087e110bf0d4664835c2047dae11cb47619985911900662483c1"
+      },
+      {
+        "count": 1,
+        "message": "Object of type \"None\" cannot be called",
+        "path": "src/llm_loop/memory/multiquery_shadow.py",
+        "rule": "reportOptionalCall",
+        "source_line_sha256": "195735307f82d84cc97e1be36f60a05478b7272cf7143b4dc50802fec5c5d6df"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"object | list[float] | None\" cannot be assigned to parameter \"object\" of type \"list[float] | None\" in function \"append\"\n  Type \"object | list[float] | None\" is not assignable to type \"list[float] | None\"\n    Type \"object\" is not assignable to type \"list[float] | None\"\n      \"object\" is not assignable to \"list[float]\"\n      \"object\" is not assignable to \"None\"",
+        "path": "src/llm_loop/memory/retriever.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "22933f71891628e5ceb77b70cdbf78b6c9f88c3bc382bdad058945ffd87af134"
+      },
+      {
+        "count": 1,
+        "message": "Type \"object\" is not assignable to declared type \"list[list[float] | None]\"\n  \"object\" is not assignable to \"list[list[float] | None]\"",
+        "path": "src/llm_loop/memory/retriever.py",
+        "rule": "reportAssignmentType",
+        "source_line_sha256": "49f6d8705e7b874a5bc018b62bc2c1fabba3ecee939dcd12d042287e43681f8d"
+      },
+      {
+        "count": 1,
+        "message": "Type \"object\" is not assignable to declared type \"list[list[float] | None]\"\n  \"object\" is not assignable to \"list[list[float] | None]\"",
+        "path": "src/llm_loop/memory/retriever.py",
+        "rule": "reportAssignmentType",
+        "source_line_sha256": "c362e7cd5608b638d412f3f461c3564d23519a1315825e5aadc62015e40b3ccf"
+      },
+      {
+        "count": 1,
+        "message": "Type \"tuple[object | list[float], float, Literal['']]\" is not assignable to return type \"tuple[list[float] | None, float, str]\"\n  Type \"object | list[float]\" is not assignable to type \"list[float] | None\"\n    Type \"object\" is not assignable to type \"list[float] | None\"\n      \"object\" is not assignable to \"list[float]\"\n      \"object\" is not assignable to \"None\"",
+        "path": "src/llm_loop/memory/retriever.py",
+        "rule": "reportReturnType",
+        "source_line_sha256": "ed797598c5e44964cf6727531d78a751d8a5c44f303025f977508e67f4b4c8d2"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal[False]\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\"\n  \"Literal[False]\" is not assignable to \"str\"",
+        "path": "src/llm_loop/methods/store.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "39b030bc47107efea0ab64a5625b99453629345a83fac743b646f9afed9cb35c"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"Literal[True]\" cannot be assigned to parameter \"value\" of type \"str\" in function \"__setitem__\"\n  \"Literal[True]\" is not assignable to \"str\"",
+        "path": "src/llm_loop/methods/store.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "5b16d2cd12249b4217ce46ba666ef4c98d924df4fbcc28526c8e0b7c42da77fc"
+      },
+      {
+        "count": 1,
+        "message": "\"get\" is not a known attribute of \"None\"",
+        "path": "src/llm_loop/resources/lfrt_runtime.py",
+        "rule": "reportOptionalMemberAccess",
+        "source_line_sha256": "0e25b550b6b33cf973db4ff56261621ba8624a03e5d8497b056b3c7ee6548a12"
+      },
+      {
+        "count": 1,
+        "message": "\"get\" is not a known attribute of \"None\"",
+        "path": "src/llm_loop/resources/lfrt_runtime.py",
+        "rule": "reportOptionalMemberAccess",
+        "source_line_sha256": "b16c0a61ab5fa5e9888a3dc3fa5d66be0fb1a1342c557ae3a5a11162249a9e27"
+      },
+      {
+        "count": 1,
+        "message": "Argument of type \"list[Literal['web', 'feishu', 'learning']] | list[str]\" cannot be assigned to parameter \"services\" of type \"list[str]\" in function \"_verify_restart_targets\"\n  Type \"list[Literal['web', 'feishu', 'learning']] | list[str]\" is not assignable to type \"list[str]\"\n    \"list[Literal['web', 'feishu', 'learning']]\" is not assignable to \"list[str]\"\n      Type parameter \"_T@list\" is invariant, but \"Literal['web', 'feishu', 'learning']\" is not the same as \"str\"\n      Consider switching from \"list\" to \"Sequence\" which is covariant",
+        "path": "src/llm_loop/runtime/service_control.py",
+        "rule": "reportArgumentType",
+        "source_line_sha256": "2070f3435164b21bb71a56bd662feb0cdc4f74be389bfe5bd64f41fd858ecb69"
+      },
+      {
+        "count": 1,
+        "message": "\"timestamp\" is not a known attribute of \"None\"",
+        "path": "src/llm_loop/runtime/service_control.py",
+        "rule": "reportOptionalMemberAccess",
+        "source_line_sha256": "349df364b30b903dcc1973f1fb4d94e8461ecf81d193bf47cf56db904be89a0d"
+      },
+      {
+        "count": 1,
+        "message": "\"total_seconds\" is not a known attribute of \"None\"",
+        "path": "src/llm_loop/runtime/service_control.py",
+        "rule": "reportOptionalMemberAccess",
+        "source_line_sha256": "4578d3bdfa0dd34fec321094a6dd6fd6da3a6ac37920af20f8f6d157a7574826"
+      },
+      {
+        "count": 1,
+        "message": "Cannot access attribute \"get\" for class \"object\"\n  Attribute \"get\" is unknown",
+        "path": "src/llm_loop/web/queue_recovery.py",
+        "rule": "reportAttributeAccessIssue",
+        "source_line_sha256": "2ae9376a8a54f3a83e76891eb288ba500052b46c1ed567718f0aa66ee1f3af39"
+      }
+    ],
+    "ruff": [
+      {
+        "count": 1,
+        "message": "No newline at end of file",
+        "path": "scripts/rule_presence_audit.py",
+        "rule": "W292",
+        "source_line_sha256": "cd3fb70d97e571ccea1f4ec6d0c8d17da570ec047efdfff78a653cb41f902308"
+      },
+      {
+        "count": 1,
+        "message": "Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`",
+        "path": "scripts/spike/s0_browser_attestation_probe.py",
+        "rule": "SIM105",
+        "source_line_sha256": "8761c2f50a05555a9fa1d49305b92b83c2e0ce8ab14ba63c491eba8d0f52fb60"
+      },
+      {
+        "count": 1,
+        "message": "Use a context manager for opening files",
+        "path": "scripts/spike/s0_browser_attestation_probe.py",
+        "rule": "SIM115",
+        "source_line_sha256": "2ecf52c77c85b798760bbb0706b3039b5209271142dd8dbd6c21de4777419991"
+      },
+      {
+        "count": 1,
+        "message": "Import from `collections.abc` instead: `Callable`",
+        "path": "src/llm_loop/browser/action.py",
+        "rule": "UP035",
+        "source_line_sha256": "e14e90af82a30285a75f116b450c51c362ed2c836ca649eef88a61babe5f1843"
+      },
+      {
+        "count": 1,
+        "message": "`typing.Callable` imported but unused",
+        "path": "src/llm_loop/browser/attestation.py",
+        "rule": "F401",
+        "source_line_sha256": "5bec6608aeb574109d70b3b498709bfc79766b58fa11d0427402b38f20b35990"
+      },
+      {
+        "count": 1,
+        "message": "Import from `collections.abc` instead: `Callable`, `Sequence`",
+        "path": "src/llm_loop/browser/attestation.py",
+        "rule": "UP035",
+        "source_line_sha256": "5bec6608aeb574109d70b3b498709bfc79766b58fa11d0427402b38f20b35990"
+      },
+      {
+        "count": 1,
+        "message": "Remove quotes from type annotation",
+        "path": "src/llm_loop/browser/attestation.py",
+        "rule": "UP037",
+        "source_line_sha256": "309be63aa554baa42083fca3a03d29d996e07457964d7b1dc7b3bf00a629d634"
+      },
+      {
+        "count": 1,
+        "message": "Remove quotes from type annotation",
+        "path": "src/llm_loop/browser/attestation.py",
+        "rule": "UP037",
+        "source_line_sha256": "77f5da5431f95e98b4ecc6c58b6c96a30133175f3c8b80f12a3c4c20c11654e2"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "src/llm_loop/browser/cdp_action_host.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "Import from `collections.abc` instead: `Callable`",
+        "path": "src/llm_loop/browser/channel_binding.py",
+        "rule": "UP035",
+        "source_line_sha256": "e67964863f6e84bdffbd0fceed8384c70d1092dad85f6cee2e4508ca07de63d6"
+      },
+      {
+        "count": 1,
+        "message": "Local variable `document_hash` is assigned to but never used",
+        "path": "src/llm_loop/browser/perception.py",
+        "rule": "F841",
+        "source_line_sha256": "cdcb32bf954f548922e480c91045044e7ed9e0d060d09e21d3b789919b8b8765"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "src/llm_loop/core/longrun_continuity.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "src/llm_loop/core/loop/engine_services/tool_cycle.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "27dced094c9514184c1983402a02c05d10c904156f13318d12650d0243454e60"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "3ddb26968cc6251bdb984fa36c0441bbc314139a828d706fea21a8c502e5dcf8"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "4d23b19275c68343ef552d5753f23b57cad257b9839ca25df697939ff234657a"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "5ff110ec34626b5a8c519753926b2a2626044e1bec922b66a1cf583310a9c703"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "6d69f2ac09017b8a49d050ab336e953b8fa02ae08c24396916ea7ea42418e627"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "9e77b3746ea081eb4c557e71cc84ca29dc66a89d18a07e85dba66a336e7310ae"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "aa9b8992d933fb283cded8613eb1e5823a68188a6f98606b509da92c287487a3"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "ac29718e308b0c71c1984329b3063be496d96d1b6684d0a044ccae901dcce67e"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "src/llm_loop/feishu/__init__.py",
+        "rule": "E402",
+        "source_line_sha256": "eab327cc1f96fb6171b5178c69e5f35adf7781e7a72036e81d439ac5a8130d5a"
+      },
+      {
+        "count": 1,
+        "message": "Use f-string instead of `format` call",
+        "path": "src/llm_loop/introspection/tools_skills.py",
+        "rule": "UP032",
+        "source_line_sha256": "50728dd58e856a686b29b4fc2821e1522283f5e22147b6bc9e4bb4b0349b605a"
+      },
+      {
+        "count": 1,
+        "message": "Use f-string instead of `format` call",
+        "path": "src/llm_loop/introspection/tools_task.py",
+        "rule": "UP032",
+        "source_line_sha256": "fc4c1868f34cfb519e76be7307878b7254a939fea0a2f13fd8029482816af74d"
+      },
+      {
+        "count": 1,
+        "message": "Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`",
+        "path": "src/llm_loop/memory/multiquery_shadow.py",
+        "rule": "SIM105",
+        "source_line_sha256": "8761c2f50a05555a9fa1d49305b92b83c2e0ce8ab14ba63c491eba8d0f52fb60"
+      },
+      {
+        "count": 1,
+        "message": "Use a single `if` statement instead of nested `if` statements",
+        "path": "src/llm_loop/methods/store.py",
+        "rule": "SIM102",
+        "source_line_sha256": "745ffed5125442ba5fb0753496a0851398a18ee2876d6234e0c597be73dc6cd6"
+      },
+      {
+        "count": 1,
+        "message": "Use a single `if` statement instead of nested `if` statements",
+        "path": "src/llm_loop/methods/store.py",
+        "rule": "SIM102",
+        "source_line_sha256": "d5acfd1a10c270f482529aeb030b1bc46ece366ada0e55a73aec7298474439f4"
+      },
+      {
+        "count": 1,
+        "message": "Use `contextlib.suppress(OSError, ValueError)` instead of `try`-`except`-`pass`",
+        "path": "src/llm_loop/runtime/service_control.py",
+        "rule": "SIM105",
+        "source_line_sha256": "8761c2f50a05555a9fa1d49305b92b83c2e0ce8ab14ba63c491eba8d0f52fb60"
+      },
+      {
+        "count": 3,
+        "message": "Use `contextlib.suppress(OSError, ValueError, json.JSONDecodeError)` instead of `try`-`except`-`pass`",
+        "path": "src/llm_loop/runtime/service_control.py",
+        "rule": "SIM105",
+        "source_line_sha256": "8761c2f50a05555a9fa1d49305b92b83c2e0ce8ab14ba63c491eba8d0f52fb60"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "src/llm_loop/tools/builtin/browser_semantic_operation.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "src/llm_loop/web/__init__.py",
+        "rule": "I001",
+        "source_line_sha256": "27dced094c9514184c1983402a02c05d10c904156f13318d12650d0243454e60"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/integration/test_browser_dispatch_settle_e2e.py",
+        "rule": "I001",
+        "source_line_sha256": "66ec018201fb03f10df19f1a56a1264beb2654e8f07c2f163f023ebd53a751e4"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "tests/integration/test_browser_semantic_guard_e2e.py",
+        "rule": "E402",
+        "source_line_sha256": "064959c87d57960f5b9d9fbadefef331aa99995739fa258528e89c246efd2292"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "tests/integration/test_browser_semantic_guard_e2e.py",
+        "rule": "E402",
+        "source_line_sha256": "916d21ec3b1fa1ed1e9d91eae281baa92da9422304927edf8fc84a6476b0b28a"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "tests/integration/test_browser_semantic_guard_e2e.py",
+        "rule": "E402",
+        "source_line_sha256": "b10149c4681933f2616f946319b3f4a3d67d2308bc9df029ce9cb1d653f69c5c"
+      },
+      {
+        "count": 1,
+        "message": "Module level import not at top of file",
+        "path": "tests/integration/test_browser_semantic_guard_e2e.py",
+        "rule": "E402",
+        "source_line_sha256": "b68c7455442cfb1f96d8ec922778dbc63d12db0a24da87baa273b913b9b0164b"
+      },
+      {
+        "count": 1,
+        "message": "`playwright.sync_api.sync_playwright` imported but unused; consider using `importlib.util.find_spec` to test for availability",
+        "path": "tests/integration/test_browser_semantic_guard_e2e.py",
+        "rule": "F401",
+        "source_line_sha256": "6977f029708fb5f49e59fa8df473f99d569fed6cc56c861d659e0989fe98a0f5"
+      },
+      {
+        "count": 1,
+        "message": "`pathlib.Path` imported but unused",
+        "path": "tests/unit/test_browser_attestation_v01.py",
+        "rule": "F401",
+        "source_line_sha256": "6d69f2ac09017b8a49d050ab336e953b8fa02ae08c24396916ea7ea42418e627"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_browser_attestation_v01.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_browser_page_binding.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_browser_profile_class_gate_v01.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "Local variable `full` is assigned to but never used",
+        "path": "tests/unit/test_escalation.py",
+        "rule": "F841",
+        "source_line_sha256": "e2f969f8c0fd3508cd79c03f2528c05fcedbeae8a39a2d565c84416ec7c46960"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_escalation.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 2,
+        "message": "Camelcase `Path` imported as constant `_P`",
+        "path": "tests/unit/test_escalation.py",
+        "rule": "N814",
+        "source_line_sha256": "4e71fcafc558fcad94cad0c7770d360d6da5cd32176af5a70baa04cf68117503"
+      },
+      {
+        "count": 1,
+        "message": "`llm_loop.introspection.tools_experience.FRESHNESS_ACTION_ERR` imported but unused",
+        "path": "tests/unit/test_evo_6fe23c9b_gates.py",
+        "rule": "F401",
+        "source_line_sha256": "a5be1806d45a980c5b3c1d10e464aabc4582e6e65c219b86523c72741ac8b579"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_evo_6fe23c9b_gates.py",
+        "rule": "I001",
+        "source_line_sha256": "52f69f3ed8ab34934c761b185eb13cd3fddbcf66a89deb5bb242dc482b31a590"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_evo_6fe23c9b_gates.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 2,
+        "message": "Use `datetime.UTC` alias",
+        "path": "tests/unit/test_evo_6fe23c9b_gates.py",
+        "rule": "UP017",
+        "source_line_sha256": "a600e6a66eee84c596e38eb8ca999245c12de87d37912716b2a4563f02b1248f"
+      },
+      {
+        "count": 1,
+        "message": "`pytest` imported but unused",
+        "path": "tests/unit/test_goal_finality_evidence_gate.py",
+        "rule": "F401",
+        "source_line_sha256": "db7b0741c94798db5932296122312b7b87d6e5a9e2ee29833a9949d1f774f40b"
+      },
+      {
+        "count": 1,
+        "message": "No newline at end of file",
+        "path": "tests/unit/test_lifecycle_update_single_action.py",
+        "rule": "W292",
+        "source_line_sha256": "d03504fa86e2ed33aa0b0f5af74da1be039b12cc5fc31479950842050509cccd"
+      },
+      {
+        "count": 1,
+        "message": "`pytest` imported but unused",
+        "path": "tests/unit/test_method_learning.py",
+        "rule": "F401",
+        "source_line_sha256": "db7b0741c94798db5932296122312b7b87d6e5a9e2ee29833a9949d1f774f40b"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_method_subject_binding_flag.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "`pathlib.Path` imported but unused",
+        "path": "tests/unit/test_multiquery_shadow.py",
+        "rule": "F401",
+        "source_line_sha256": "6d69f2ac09017b8a49d050ab336e953b8fa02ae08c24396916ea7ea42418e627"
+      },
+      {
+        "count": 1,
+        "message": "Do not assign a `lambda` expression, use a `def`",
+        "path": "tests/unit/test_service_control_worker_lifecycle.py",
+        "rule": "E731",
+        "source_line_sha256": "a243db2e0b209bcbeac7d4bb5b59da69d26768c5e784522ed94f424e549fd6ae"
+      },
+      {
+        "count": 1,
+        "message": "Do not assign a `lambda` expression, use a `def`",
+        "path": "tests/unit/test_service_control_worker_lifecycle.py",
+        "rule": "E731",
+        "source_line_sha256": "f8f2717b131569d9a55143dc816cdb82d58bbd5340cb6a3e30eccc9378e3bd70"
+      },
+      {
+        "count": 1,
+        "message": "`contextlib` imported but unused",
+        "path": "tests/unit/test_service_control_worker_lifecycle.py",
+        "rule": "F401",
+        "source_line_sha256": "3ddb26968cc6251bdb984fa36c0441bbc314139a828d706fea21a8c502e5dcf8"
+      },
+      {
+        "count": 1,
+        "message": "`io` imported but unused",
+        "path": "tests/unit/test_service_control_worker_lifecycle.py",
+        "rule": "F401",
+        "source_line_sha256": "b000f4590d6af9cfe633ffe0faae301a05dde8e4ca7757d7566f899d61f240b8"
+      },
+      {
+        "count": 1,
+        "message": "Import block is un-sorted or un-formatted",
+        "path": "tests/unit/test_service_control_worker_lifecycle.py",
+        "rule": "I001",
+        "source_line_sha256": "a6284e6d3d43bdfbf0da732945adb2b4f31147c92bea47aee100d7f556c22d00"
+      },
+      {
+        "count": 1,
+        "message": "No newline at end of file",
+        "path": "tests/unit/test_svc_deploy_cli_update.py",
+        "rule": "W292",
+        "source_line_sha256": "c7129b979988d069578ddf6c6129748b3fcf0a8c8045289fea3a393391a05e07"
+      },
+      {
+        "count": 1,
+        "message": "`zip()` without an explicit `strict=` parameter",
+        "path": "tests/unit/test_svc_deploy_next_step.py",
+        "rule": "B905",
+        "source_line_sha256": "3b793aa79cba30dad9640903c6b1ae19ef449cc2d32f8a77b9f0d4edaf45654a"
+      },
+      {
+        "count": 1,
+        "message": "Yoda condition detected",
+        "path": "tests/unit/test_svc_deploy_next_step.py",
+        "rule": "SIM300",
+        "source_line_sha256": "885e89c9dce9990cd789ab36de976138042b9392346b0aa2b7b94e1b835b24b5"
+      },
+      {
+        "count": 1,
+        "message": "No newline at end of file",
+        "path": "tests/unit/test_svc_deploy_next_step.py",
+        "rule": "W292",
+        "source_line_sha256": "ff3898ccf412d356ac0682fe53e716addba3937e845cb66edbdfa2294a4bcd8e"
+      },
+      {
+        "count": 1,
+        "message": "Camelcase `TestClient` imported as constant `_TC`",
+        "path": "tests/web/test_login_cookie_domain.py",
+        "rule": "N814",
+        "source_line_sha256": "0c7be6772f475d0fce354408385479a233b086f873a59a0c08af81e130ca2d92"
+      }
+    ]
+  },
+  "origin_head": "500ee8f3eff02b12eacf77dede706e5d57a8d9c5",
+  "schema": "r9-static-diagnostic-ratchet/v1",
+  "versions": {
+    "pyright": "pyright 1.1.411",
+    "ruff": "ruff 0.16.5"
+  }
+}

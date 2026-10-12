@@ -1,0 +1,17 @@
+{
+  "version": "r0-search-v1",
+  "documents": [
+    {"id": "D1", "owner": "A", "content": "alpha beta release decision is stable"},
+    {"id": "D2", "owner": "A", "content": "alpha gamma runtime observation"},
+    {"id": "D3", "owner": "A", "content": "prefix material then exact quoted phrase appears in the middle"},
+    {"id": "D4", "owner": "A", "content": "alpha separated by a long span xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx beta"},
+    {"id": "PRIVATE", "owner": "B", "content": "alpha beta gamma private owner evidence"}
+  ],
+  "queries": [
+    {"query": "alpha beta", "expected": ["D1", "D4"], "visible_terms": ["alpha", "beta"]},
+    {"query": "beta OR gamma", "expected": ["D1", "D2", "D4"], "visible_any": ["beta", "gamma"]},
+    {"query": "\"quoted phrase\"", "expected": ["D3"], "visible_terms": ["quoted phrase"]},
+    {"query": "alpha delta", "expected": [], "visible_terms": []},
+    {"query": "\"alpha beta\"", "expected": ["D1"], "visible_terms": ["alpha beta"]}
+  ]
+}

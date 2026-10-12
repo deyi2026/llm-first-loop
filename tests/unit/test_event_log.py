@@ -1,0 +1,710 @@
+"""单元测试: D1 事件模型与事件日志存储（design.md §2.4.1）.
+
+覆盖:
+- 模型: serialize→parse 往返逐字段一致；损坏行返回 None（fail-open）；
+  未登记类型 validate 报违规；登记表覆盖全部已注册事件且字段语义可查询
+- 存储: seq 从 1 递增不重号；JSONL 合法且不可变（追加修改被拒绝）；
+  多进程并发 append 同会话无行交错；损坏行跳过计数；enabled=False 零写入
+"""
+
+from __future__ import annotations
+
+import json
+import multiprocessing
+import os
+
+from llm_loop.event_log.model import (
+    EVENT_CODEARTS_CANCELLED,
+    EVENT_CODEARTS_COLLECTED,
+    EVENT_CODEARTS_DISPATCHED,
+    EVENT_CODEARTS_RECOVERED,
+    EVENT_CODEARTS_STATUS_SYNCED,
+    EVENT_CODEARTS_STATUS_UNKNOWN,
+    EVENT_CONTEXT_COMPRESSED,
+    EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+    EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+    EVENT_EXTERNAL_EXECUTION_TERMINAL,
+    EVENT_HISTORY_COMPACTION,
+    EVENT_HISTORY_COMPACTION_STATE_RESET,
+    EVENT_HUMAN_FILE_EDIT_OBSERVED,
+    EVENT_HUMAN_FILE_EDIT_PREPARED,
+    EVENT_HUMAN_FILE_EDIT_REJECTED,
+    EVENT_INJECTION_PROFILE_SHADOW,
+    EVENT_INTEROP_SPLICED,
+    EVENT_LLM_INTERRUPTED,
+    EVENT_LLM_PARTIAL_CHECKPOINT,
+    EVENT_MESSAGE_APPENDED,
+    EVENT_MESSAGE_CACHE_COMPACTED,
+    EVENT_MESSAGE_RETRACTED,
+    EVENT_PROGRAM_RECOVERY,
+    EVENT_PROVIDER_CALL_OPENED,
+    EVENT_PROVIDER_CALL_SETTLED,
+    EVENT_PROVIDER_TRANSPORT_OPENED,
+    EVENT_PROVIDER_TRANSPORT_SETTLED,
+    EVENT_REQUEST_ATTEMPT,
+    EVENT_REQUEST_META,
+    EVENT_REQUEST_USAGE,
+    EVENT_RUN_END,
+    EVENT_SESSION_CREATED,
+    EVENT_SESSION_FORKED,
+    EVENT_SESSION_META_CHANGED,
+    EVENT_SUBAGENT_CANCEL_REQUESTED,
+    EVENT_SUBAGENT_GENERATION_RELEASED,
+    EVENT_SUBAGENT_GENERATION_STARTED,
+    EVENT_SUBAGENT_LINKED,
+    EVENT_SUBAGENT_MAILBOX_QUEUED,
+    EVENT_SUBAGENT_REPORT_QUEUED,
+    EVENT_SUBAGENT_RESULT_AVAILABLE,
+    EVENT_SUBAGENT_TERMINAL,
+    EVENT_TOOL_EXECUTION_DECLARED,
+    EVENT_TOOL_EXECUTION_EFFECT_OBSERVED,
+    EVENT_TOOL_EXECUTION_EFFECT_PREPARED,
+    EVENT_TOOL_EXECUTION_FINISHED,
+    EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
+    EVENT_TOOL_EXECUTION_STARTED,
+    REGISTRY,
+    Event,
+    parse_event_line,
+    serialize_event,
+    validate_event_type,
+)
+from llm_loop.event_log.store import EventStore
+
+
+def _make_event(seq: int = 1, type_: str = EVENT_MESSAGE_APPENDED, **payload) -> Event:
+    return Event(
+        event_id=f"evt-{seq}",
+        session_id="s1",
+        seq=seq,
+        type=type_,
+        ts="2026-08-14T00:00:00+00:00",
+        payload=payload or {"index": seq - 1, "role": "user", "content": "hi"},
+    )
+
+
+# ── 模型: 序列化/解析 ──
+
+def test_event_serialize_parse_roundtrip():
+    ev = _make_event(
+        seq=3,
+        type_=EVENT_MESSAGE_APPENDED,
+        index=2,
+        role="assistant",
+        content="回答，含中文",
+        source="user",
+        reasoning_content="思考链",
+        metadata={"truncated": True},
+    )
+    line = serialize_event(ev)
+    # 单行 JSONL 语义：无内嵌换行
+    assert "\n" not in line
+    parsed = parse_event_line(line)
+    assert parsed is not None
+    assert parsed.event_id == ev.event_id
+    assert parsed.session_id == ev.session_id
+    assert parsed.seq == ev.seq
+    assert parsed.type == ev.type
+    assert parsed.ts == ev.ts
+    assert parsed.payload == ev.payload
+    # ensure_ascii=False
+    assert "思考链" in line
+
+
+def test_parse_event_line_corrupt_returns_none():
+    assert parse_event_line("not json{{{") is None
+    assert parse_event_line("") is None
+    assert parse_event_line("123") is None
+    assert parse_event_line('{"event_id": "x"}') is None  # 缺 session_id
+    assert parse_event_line('{"event_id": "x", "session_id": "s", "seq": "bad", "type": "t", "ts": "ts"}') is None
+    assert parse_event_line('{"event_id": "x", "session_id": "s", "seq": 0, "type": "t", "ts": "ts"}') is None
+
+
+def test_validate_event_type_unregistered():
+    ev = _make_event(type_="not.registered")
+    problems = validate_event_type(ev)
+    assert problems and "未登记" in problems[0]
+    # 已登记类型 → 合法
+    assert validate_event_type(_make_event(type_=EVENT_SESSION_CREATED)) == []
+
+
+# ── 模型: 类型登记表 ──
+
+def test_registry_covers_registered_types_with_fields():
+    names = {
+        EVENT_SESSION_CREATED,
+        EVENT_MESSAGE_APPENDED,
+        EVENT_MESSAGE_RETRACTED,
+        EVENT_CONTEXT_COMPRESSED,
+        EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+        EVENT_EXTERNAL_EXECUTION_TERMINAL,
+        EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+    EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+    EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+    EVENT_EXTERNAL_EXECUTION_TERMINAL,
+        EVENT_HISTORY_COMPACTION,
+        EVENT_HISTORY_COMPACTION_STATE_RESET,
+        EVENT_MESSAGE_CACHE_COMPACTED,
+        EVENT_SESSION_META_CHANGED,
+    EVENT_SUBAGENT_GENERATION_RELEASED,
+    EVENT_SUBAGENT_GENERATION_STARTED,
+    EVENT_SUBAGENT_LINKED,
+    EVENT_SUBAGENT_TERMINAL,
+        EVENT_SESSION_FORKED,
+        EVENT_PROVIDER_CALL_OPENED,
+        EVENT_PROVIDER_TRANSPORT_OPENED,
+        EVENT_PROVIDER_TRANSPORT_SETTLED,
+        EVENT_PROVIDER_CALL_SETTLED,
+        EVENT_REQUEST_ATTEMPT,
+        EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
+        EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
+        EVENT_INTEROP_SPLICED,  # DSH 借鉴: interop.spliced 协调注入事件
+        EVENT_LLM_INTERRUPTED,
+        EVENT_LLM_PARTIAL_CHECKPOINT,
+        EVENT_TOOL_EXECUTION_DECLARED,
+        EVENT_TOOL_EXECUTION_STARTED,
+        EVENT_TOOL_EXECUTION_EFFECT_PREPARED,
+        EVENT_TOOL_EXECUTION_EFFECT_OBSERVED,
+        EVENT_HUMAN_FILE_EDIT_PREPARED,
+        EVENT_HUMAN_FILE_EDIT_OBSERVED,
+        EVENT_HUMAN_FILE_EDIT_REJECTED,
+        EVENT_TOOL_EXECUTION_FINISHED,
+        EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
+        EVENT_SUBAGENT_LINKED,
+        EVENT_SUBAGENT_GENERATION_STARTED,
+        EVENT_SUBAGENT_GENERATION_RELEASED,
+        EVENT_SUBAGENT_TERMINAL,
+        EVENT_SUBAGENT_MAILBOX_QUEUED,
+        EVENT_SUBAGENT_REPORT_QUEUED,
+        EVENT_SUBAGENT_RESULT_AVAILABLE,
+        EVENT_SUBAGENT_CANCEL_REQUESTED,
+        EVENT_INJECTION_PROFILE_SHADOW,  # R8: per-attempt shadow 注入 profile 归因
+        EVENT_RUN_END,  # DSH 借鉴: run.end run 生命周期结束事件
+        EVENT_PROGRAM_RECOVERY,  # R4: runtime-only recovery 的 session 审计事件
+        EVENT_CODEARTS_DISPATCHED,
+        EVENT_CODEARTS_STATUS_SYNCED,
+        EVENT_CODEARTS_STATUS_UNKNOWN,
+        EVENT_CODEARTS_COLLECTED,
+        EVENT_CODEARTS_CANCELLED,
+        EVENT_CODEARTS_RECOVERED,
+    }
+    assert set(REGISTRY.registered()) == names
+    # 字段语义可查询
+    call_spec = REGISTRY.spec(EVENT_PROVIDER_CALL_OPENED)
+    assert call_spec is not None
+    assert {
+        "call_id", "idempotency_digest", "owner_ref", "execution_class",
+        "service_priority", "purpose", "created_at",
+    } <= set(call_spec.fields)
+    transport_spec = REGISTRY.spec(EVENT_PROVIDER_TRANSPORT_SETTLED)
+    assert transport_spec is not None
+    assert {
+        "call_id", "attempt_id", "parent_attempt_id", "attempt_kind",
+        "site_index", "transport_retry_index", "provider_id", "model_id",
+        "outcome", "usage", "usage_observations", "status_code",
+        "provider_code", "retry_after_seconds", "rate_limits", "error_type",
+    } <= set(transport_spec.fields)
+    external_spec = REGISTRY.spec(EVENT_EXTERNAL_EXECUTION_LAUNCHED)
+    assert external_spec is not None
+    assert {"job_id", "workspace_root", "executor", "command_sha256", "pid", "pgid"} <= set(
+        external_spec.fields
+    )
+    effect_spec = REGISTRY.spec(EVENT_TOOL_EXECUTION_EFFECT_PREPARED)
+    assert effect_spec is not None
+    assert {
+        "execution_id", "workspace_root", "canonical_path", "before_sha256",
+        "expected_after_sha256",
+    } <= set(effect_spec.fields)
+    observed_spec = REGISTRY.spec(EVENT_TOOL_EXECUTION_EFFECT_OBSERVED)
+    assert observed_spec is not None
+    assert {"actual_after_sha256", "actual_size", "matches_expected"} <= set(
+        observed_spec.fields
+    )
+    msg_spec = REGISTRY.spec(EVENT_MESSAGE_APPENDED)
+    assert msg_spec is not None
+    assert msg_spec.version >= 1
+    assert "index" in msg_spec.fields and "reasoning_content" in msg_spec.fields
+    comp_spec = REGISTRY.spec(EVENT_CONTEXT_COMPRESSED)
+    assert comp_spec is not None
+    assert {"archive_ref", "tool_call_id", "msg_seq", "chars"} <= set(comp_spec.fields)
+    history_compact_spec = REGISTRY.spec(EVENT_HISTORY_COMPACTION)
+    assert history_compact_spec is not None
+    assert {
+        "model", "provider_id", "compaction_epoch", "trigger",
+        "pre_history_chars", "pre_chars", "post_chars",
+        "effective_budget_chars", "compact_ratio", "trigger_limit_chars",
+        "trigger_excess_chars", "archive_target_ratio", "archive_target_chars",
+        "archived_count", "archived_group_count", "atomic_group_count",
+        "compaction_mode", "cache_boundary_mode", "cache_epoch_reset",
+        "anchor_before", "anchor_after", "anchor_moved",
+    } <= set(history_compact_spec.fields)
+    reset_spec = REGISTRY.spec(EVENT_HISTORY_COMPACTION_STATE_RESET)
+    assert reset_spec is not None
+    assert {
+        "model", "provider_id", "effective_budget", "legacy_anchor_reset",
+        "anchor_before", "reopened_marker_count", "reason",
+    } <= set(reset_spec.fields)
+    request_meta_spec = REGISTRY.spec(EVENT_REQUEST_META)
+    assert request_meta_spec is not None
+    assert {"history_chars", "reasoning_chars", "provider_visible_chars"} <= set(request_meta_spec.fields)
+    assert "run_integrity_receipt" in request_meta_spec.fields
+    checkpoint_spec = REGISTRY.spec(EVENT_LLM_PARTIAL_CHECKPOINT)
+    assert checkpoint_spec is not None
+    assert {
+        "round", "provider", "model", "text_tail", "reasoning_tail",
+        "text_chars", "reasoning_chars", "partial_sha256",
+    } <= set(checkpoint_spec.fields)
+    interrupted_spec = REGISTRY.spec(EVENT_LLM_INTERRUPTED)
+    assert interrupted_spec is not None
+    assert {
+        "round", "reason", "error_digest", "text_tail", "reasoning_tail",
+        "partial_chars", "partial_sha256",
+    } <= set(interrupted_spec.fields)
+    usage_spec = REGISTRY.spec(EVENT_REQUEST_USAGE)
+    assert usage_spec is not None
+    assert {
+        "tokens_in", "cache_hit", "cache_miss", "usage_available",
+        "cache_read_tokens", "uncached_prompt_tokens", "cache_hit_rate",
+        "context_window", "output_reserve_tokens", "context_headroom_tokens",
+        "context_used_ratio", "stable_prefix_fp", "prefix_changed",
+        "cache_prefix_epoch", "compaction_epoch", "runtime_pid",
+    } <= set(usage_spec.fields)
+    spliced_spec = REGISTRY.spec(EVENT_INTEROP_SPLICED)
+    assert spliced_spec is not None
+    assert {"session_id", "count", "start", "sources", "content_preview"} <= set(spliced_spec.fields)
+    mailbox_spec = REGISTRY.spec(EVENT_SUBAGENT_MAILBOX_QUEUED)
+    assert mailbox_spec is not None
+    assert {"message_id", "child_id", "parent_id", "generation", "sender_id", "content"} <= set(mailbox_spec.fields)
+    report_spec = REGISTRY.spec(EVENT_SUBAGENT_REPORT_QUEUED)
+    assert report_spec is not None
+    assert {"report_id", "child_id", "parent_id", "generation", "content"} <= set(report_spec.fields)
+    result_spec = REGISTRY.spec(EVENT_SUBAGENT_RESULT_AVAILABLE)
+    assert result_spec is not None
+    assert {"result_id", "child_id", "parent_id", "generation", "result", "report_ids"} <= set(result_spec.fields)
+    cancel_spec = REGISTRY.spec(EVENT_SUBAGENT_CANCEL_REQUESTED)
+    assert cancel_spec is not None
+    assert {"cancel_id", "child_id", "parent_id", "generation", "reason"} <= set(cancel_spec.fields)
+    run_end_spec = REGISTRY.spec(EVENT_RUN_END)
+    assert run_end_spec is not None
+    assert {"reason", "rounds", "tokens_in", "cache_hit", "duration_ms"} <= set(run_end_spec.fields)
+    topology_spec = REGISTRY.spec(EVENT_SUBAGENT_GENERATION_STARTED)
+    assert topology_spec is not None
+    assert {"child_id", "parent_id", "generation", "owner_id", "depth"} <= set(topology_spec.fields)
+
+
+def test_registry_unregistered_spec_none():
+    assert REGISTRY.spec("ghost.type") is None
+
+
+# ── 存储: EventStore ──
+
+def test_append_seq_increments_without_duplicate(tmp_path):
+    store = EventStore(tmp_path / "logs")
+    e1 = store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 0, "role": "user"})
+    e2 = store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 1, "role": "assistant"})
+    e3 = store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 2, "role": "tool"})
+    assert [e1.seq, e2.seq, e3.seq] == [1, 2, 3]
+    assert e1.event_id != e2.event_id
+    assert e1.session_id == "s1"
+    assert store.last_seq("s1") == 3
+    assert store.exists("s1")
+    assert not store.exists("s-other")
+
+
+def test_append_jsonl_valid_and_immutable(tmp_path):
+    store = EventStore(tmp_path / "logs")
+    store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 0, "role": "user"})
+    p = tmp_path / "logs" / "s1.jsonl"
+    # 每行一个合法 JSON 事件
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        data = json.loads(raw)
+        assert data["session_id"] == "s1"
+        assert data["seq"] >= 1
+    # append-only：既有内容不可被修改（文件重写被拒绝于语义层——追加后原内容原样保留）
+    before = p.read_bytes()
+    store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 1, "role": "assistant"})
+    after = p.read_bytes()
+    assert after.startswith(before)  # 原内容前缀保留（append-only）
+    assert before != after  # 有新行追加
+
+
+def test_read_missing_file_empty(tmp_path):
+    store = EventStore(tmp_path / "logs")
+    assert store.read("ghost") == []
+    assert store.last_seq("ghost") == 0
+
+
+def test_read_skips_corrupt_lines_with_count(tmp_path):
+    store = EventStore(tmp_path / "logs")
+    store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 0, "role": "user"})
+    p = tmp_path / "logs" / "s1.jsonl"
+    with p.open("a", encoding="utf-8") as f:
+        f.write("{corrupt line}\n")
+        f.write('{"seq": 5, "type": "bad"}\n')  # 缺必填字段 → 结构非法
+    store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 1, "role": "assistant"})
+    events = store.read("s1")
+    assert len(events) == 2  # 损坏行如实跳过
+    assert store.last_read_skipped >= 2
+    # last_seq 以可解析事件为准（容错），损坏行不参与续号
+    assert [e.seq for e in events] == [1, 2]
+
+
+def test_enabled_false_zero_write(tmp_path):
+    store = EventStore(tmp_path / "logs", enabled=False)
+    result = store.append("s1", EVENT_MESSAGE_APPENDED, {"index": 0})
+    assert result is None
+    assert not store.exists("s1")
+    assert not (tmp_path / "logs").exists()
+
+
+def _worker_append(logs_dir: str, out_q) -> None:
+    """模块级 worker（spawn 可 pickle）：并发向同一会话追加事件."""
+    store = EventStore(logs_dir)
+    ok = True
+    for i in range(30):
+        ev = store.append("s1", EVENT_MESSAGE_APPENDED, {"w": os.getpid(), "i": i})
+        if ev is None:
+            ok = False
+    out_q.put(ok)
+
+
+def test_append_multiprocess_no_interleaving(tmp_path):
+    """多进程并发 append 同会话：flock 写锁保证每行不交错."""
+    logs_dir = str(tmp_path / "logs")
+
+    ctx = multiprocessing.get_context("spawn")
+    q = ctx.Queue()
+    procs = [ctx.Process(target=_worker_append, args=(logs_dir, q)) for _ in range(3)]
+    for p_ in procs:
+        p_.start()
+    for p_ in procs:
+        p_.join()
+    results = [q.get() for _ in procs]
+    assert all(results), "并发 append 存在失败"
+
+    store = EventStore(logs_dir)
+    events = store.read("s1")
+    assert len(events) == 90
+    # 每行均可独立解析（无交错）且 seq 唯一连续
+    seqs = [e.seq for e in events]
+    assert seqs == sorted(seqs) and len(set(seqs)) == 90
+    assert seqs == list(range(1, 91))
+
+
+# ── HARNESS-02: request.meta 请求快照事件 ──
+
+
+def test_request_meta_event_written_per_round(tmp_path):
+    """引擎每轮 LLM 调用前写 request.meta（模型/思考/工具数/预算快照，fail-open）."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.message import ToolCall
+    from llm_loop.core.session import SessionStore
+    from llm_loop.event_log.store import EventStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def _next(self):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content="用工具",
+                    tool_calls=[
+                        ToolCall(id="tc-m", name="read_file", arguments={"path": "a"})
+                    ],
+                    provider="fake",
+                    reasoning_content="PLAN-ABC",
+                )
+            return LLMResponse(content="完成", tool_calls=[], provider="fake")
+
+        def chat(self, messages, tools, **kw):
+            return self._next()
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self._next()
+
+            return _gen()
+
+    reg = ToolRegistry()
+    reg.register(
+        type(
+            "RF",
+            (),
+            {"name": "read_file", "description": "t", "parameters": {"type": "object"}},
+        )()
+    )
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    ev_dir = tmp_path / "events"
+    event_store = EventStore(ev_dir)
+    sess_dir = tmp_path / "sessions"
+    store = SessionStore(sess_dir, event_store=event_store)
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=reg,  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        session=store,
+        settings=settings,
+        event_store=event_store,
+    )
+    result = engine.run_single("任务")
+    assert result.final_answer
+    events = event_store.read(result.session_id)
+    metas = [e for e in events if e.type == "request.meta"]
+    assert len(metas) == 2  # 两轮各一次
+    assert metas[0].payload["model"]  # 模型标签如实记录（测试环境无 pool 时为回退标签，非空即可）
+    assert metas[0].payload["round"] == 1
+    assert metas[1].payload["round"] == 2
+    assert "tools_count" in metas[0].payload
+    assert "budget" in metas[0].payload
+    assert "reasoning_capable" in metas[0].payload
+    assert "reasoning_control" in metas[0].payload
+    assert "reasoning_supported" in metas[0].payload
+    assert metas[0].payload["routing_epoch"] == 0
+    assert "routing_registry_fp" in metas[0].payload
+    assert metas[0].payload["routing_transition"] == "run_start"
+    receipt = metas[0].payload["run_integrity_receipt"]
+    assert receipt["schema"] == "run-integrity/v1"
+    assert receipt["session_id"] == result.session_id
+    assert receipt["run_generation_state"] == "not_background"
+    assert receipt["background_run_generation"] == ""
+    assert receipt["routing_epoch"] == metas[0].payload["routing_epoch"]
+    assert receipt["routing_registry_fp"] == metas[0].payload["routing_registry_fp"]
+    assert receipt["provider_call_id"] == metas[0].payload["provider_call_id"]
+    assert receipt["attempt_id"] == metas[0].payload["attempt_id"]
+    assert receipt["system_fp"]
+    assert receipt["tools_fp"]
+    assert "task_completion" not in receipt
+    assert metas[0].payload["reasoning_chars"] == 0
+    assert metas[1].payload["reasoning_chars"] == len("PLAN-ABC")
+    for meta in metas:
+        assert meta.payload["provider_visible_chars"] >= (
+            meta.payload["history_chars"] + meta.payload["reasoning_chars"]
+        )
+
+
+def test_request_usage_separates_context_capacity_from_cache_reuse(tmp_path, monkeypatch):
+    """cached tokens 仍占物理窗口；headroom 只由 prompt + output reserve 决定。"""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.session import SessionStore
+    from llm_loop.event_log.store import EventStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        max_tokens = 200
+
+        def _resp(self):
+            return LLMResponse(
+                content="完成", tool_calls=[], provider="fake",
+                prompt_tokens=300, completion_tokens=10,
+                prompt_cache_hit_tokens=240,
+            )
+
+        def chat(self, messages, tools, **kw):
+            return self._resp()
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self._resp()
+            return _gen()
+
+    event_store = EventStore(tmp_path / "events")
+    store = SessionStore(tmp_path / "sessions", event_store=event_store)
+    settings = Settings(
+        llm_api_key="k", llm_base_url="https://x/v1", llm_model="m",
+        data_dir=str(tmp_path / "data"), extract_enabled=False, summary_mode="off",
+    )
+    engine = LoopEngine(
+        llm_client=_Fake(), registry=ToolRegistry(), memory=None, session=store,
+        settings=settings, event_store=event_store,
+    )
+    monkeypatch.setattr(engine._routing, "_current_context_limit", lambda *a, **k: 1000)
+    result = engine.run_single("任务")
+    usage = [e for e in event_store.read(result.session_id) if e.type == "request.usage"][-1].payload
+    assert usage["tokens_in"] == 300
+    assert usage["cache_read_tokens"] == 240
+    assert usage["uncached_prompt_tokens"] == 60
+    assert usage["cache_hit_rate"] == 0.8
+    assert usage["context_window"] == 1000
+    assert usage["output_reserve_tokens"] == 200
+    # 1000 - 300 - 200 = 500; cached 240 is NOT subtracted from capacity usage.
+    assert usage["context_headroom_tokens"] == 500
+    assert usage["context_used_ratio"] == 0.5
+    assert usage["prefix_changed"] is False
+    assert usage["cache_prefix_epoch"] == 0
+    assert usage["stable_prefix_fp"]
+    assert usage["runtime_pid"] == os.getpid()
+
+
+def test_request_meta_registered_replay_ignored(tmp_path):
+    """回放对已登记但视图不消费的 request.meta → 静默跳过，消息重建不受影响（replay 兼容）."""
+    from llm_loop.event_log.model import EVENT_REQUEST_META
+    from llm_loop.event_log.replay import replay_session
+    from llm_loop.event_log.store import EventStore
+
+    ev_dir = tmp_path / "events"
+    store = EventStore(ev_dir)
+    sid = "s-request-meta"
+    store.append(sid, EVENT_REQUEST_META, {"round": 1, "model": "m"})
+    store.append(
+        sid,
+        "session.created",
+        {
+            "version": 4,
+            "title": "t",
+            "created_at": "2026-08-14T00:00:00+00:00",
+            "updated_at": "2026-08-14T00:00:00+00:00",
+            "status": "active",
+            "parent_id": None,
+            "branch_id": None,
+            "branch_summary": None,
+            "model_override": None,
+            "pinned": False,
+            "channel": "cli",
+        },
+    )
+    view = replay_session(list(store.read(sid)))
+    assert view["session_id"] == sid  # 视图正常重建
+    assert "unknown_event_types" not in view  # 已登记类型不记 unknown
+    assert view["messages"] == []  # request.meta 不产生消息
+
+
+def test_compaction_state_reset_clears_legacy_marker_once_then_replays_new_scope(tmp_path):
+    """预算/模型 contract 变化先清旧 marker；本轮仍需压缩时再追加新 versioned marker。"""
+    from llm_loop.event_log.replay import replay_session
+    from llm_loop.event_log.store import EventStore
+
+    store = EventStore(tmp_path / "events")
+    sid = "s-compaction-contract-reset"
+    store.append(
+        sid,
+        EVENT_SESSION_CREATED,
+        {"version": 5, "title": "t", "status": "active"},
+    )
+    store.append(
+        sid,
+        EVENT_MESSAGE_APPENDED,
+        {"index": 0, "role": "assistant", "content": "old", "source": "user"},
+    )
+    # Legacy event: provider only, no model/budget provenance.
+    store.append(
+        sid,
+        EVENT_MESSAGE_CACHE_COMPACTED,
+        {"msg_seq": 0, "provider_id": "minimax"},
+    )
+    legacy = replay_session(list(store.read(sid)))
+    assert legacy["messages"][0]["metadata"]["cache_compacted_for"] == ["minimax"]
+
+    store.append(
+        sid,
+        EVENT_HISTORY_COMPACTION_STATE_RESET,
+        {
+            "model": "minimax/MiniMax-M3",
+            "provider_id": "minimax",
+            "effective_budget": 540_000,
+            "legacy_anchor_reset": False,
+            "anchor_before": 0,
+            "reopened_marker_count": 1,
+            "reason": "compaction_contract_changed",
+        },
+    )
+    reopened = replay_session(list(store.read(sid)))
+    assert "cache_compacted_for" not in reopened["messages"][0]["metadata"]
+
+    # If the current physical budget still requires compaction, the same build emits
+    # a fresh marker after reset. Replay must reconstruct only the new contract.
+    store.append(
+        sid,
+        EVENT_MESSAGE_CACHE_COMPACTED,
+        {
+            "msg_seq": 0,
+            "provider_id": "minimax",
+            "marker_version": 1,
+            "model": "minimax/MiniMax-M3",
+            "effective_budget": 540_000,
+        },
+    )
+    current = replay_session(list(store.read(sid)))
+    meta = current["messages"][0]["metadata"]
+    assert meta["cache_compacted_for"] == ["minimax"]
+    assert meta["cache_compaction_scope"]["minimax"] == {
+        "version": 1,
+        "model": "minimax/MiniMax-M3",
+        "effective_budget": 540_000,
+    }
+
+
+def test_long_answer_persist_uses_pathlib_and_is_content_stable(tmp_path):
+    """baseline 回归：>8000 字回答应真实落盘；events.py 缺 Path 时这里会 NameError 后静默不落盘。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from llm_loop.core.loop.events import _EventsMixin
+
+    class _Dummy(_EventsMixin):
+        settings = SimpleNamespace(data_dir=str(tmp_path))
+
+    answer = "长回答" * 3000
+    out1 = _Dummy()._persist_long_answer("session-12345678", answer)
+    out2 = _Dummy()._persist_long_answer("session-12345678", answer)
+
+    assert out1.startswith(answer)
+    marker = "[长回答已落盘] "
+    path1 = Path(out1.split(marker, 1)[1])
+    path2 = Path(out2.split(marker, 1)[1])
+    assert path1 == path2, "同内容应使用内容哈希稳定路径，避免回传历史前缀漂移"
+    assert path1.is_file()
+    assert path1.read_text(encoding="utf-8") == answer
+
+
+
+def test_event_store_rejects_session_id_path_traversal(tmp_path):
+    """EventStore不可用../跨事件根读取或追加；fail-open查询/写契约保持。"""
+    store_a = EventStore(tmp_path / "ev-A")
+    store_b = EventStore(tmp_path / "ev-B")
+    store_a.append("safe", EVENT_MESSAGE_APPENDED, {"owner": "A"})
+    store_b.append("victim", EVENT_MESSAGE_APPENDED, {"secret": "B"})
+    traversal = "../ev-B/victim"
+    victim = tmp_path / "ev-B" / "victim.jsonl"
+    before = victim.read_bytes()
+
+    assert store_a.exists(traversal) is False
+    assert store_a.read(traversal) == []
+    assert store_a.last_seq(traversal) == 0
+    assert store_a.append(traversal, EVENT_MESSAGE_APPENDED, {"attack": True}) is None
+    assert victim.read_bytes() == before
+
+
+def test_delete_session_purges_single_and_segmented_event_data_but_keeps_lock(tmp_path):
+    """物理删除应覆盖single+rolled segments，同时保留稳定lock inode。"""
+    store = EventStore(tmp_path, enabled=True)
+    sid = "delete-multi-event"
+    store.append(sid, EVENT_SESSION_CREATED, {"version": 5})
+    seg_dir = tmp_path / sid
+    seg_dir.mkdir()
+    (seg_dir / "1.jsonl").write_text("{}\n", encoding="utf-8")
+    (seg_dir / "2.jsonl").write_text("{}\n", encoding="utf-8")
+    lock_path = tmp_path / f"{sid}.lock"
+    lock_path.touch()
+
+    removed = store.delete_session(sid)
+
+    assert removed == 3
+    assert not (tmp_path / f"{sid}.jsonl").exists()
+    assert not seg_dir.exists()
+    assert lock_path.exists()
+    assert store.exists(sid) is False

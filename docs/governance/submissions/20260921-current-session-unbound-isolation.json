@@ -1,0 +1,90 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260921-current-session-unbound-isolation",
+  "summary": "Correct PR #58 current-session introspection semantics after a deployed live canary proved that unbound process-global action_trace rows (session_id='') were still visible to a fresh task session. Restore exact current-session identity filtering for the four session-sensitive status dimensions while preserving process-global/dry/evidence inspection through explicit scope=runtime. No compaction, provider-routing, convergence-boundary, schedule-wake, or model-authority behavior is changed.",
+  "components": [
+    {
+      "component_id": "current-session-introspection-boundary",
+      "paths": [
+        "src/llm_loop/introspection/status.py",
+        "src/llm_loop/introspection/tools_status.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "runtime introspection scope projection",
+      "disposition": "ADMIT corrective boundary: current_session action_trace/tool_history/message_flow/exception_log include only records whose exact session_id equals the current execution session. Unbound/process-global records and peer-session records are excluded. Explicit scope=runtime remains the supported global operational view. Providers unable to bind session identity fail closed for session-sensitive dimensions rather than masquerading as current-session snapshots.",
+      "evidence": [
+        "live Web canary session b26f8d55-84aa-438f-a8c8-fde86c81247c reproduced an unbound schedule.wake row under current_session before this fix",
+        "tests/unit/test_introspection.py strict current-session/unbound/peer and explicit runtime coverage PASS",
+        "full scripts/ci_gate.sh PASS"
+      ],
+      "verification_level": "deterministic regression + full repository CI + post-deploy live canary",
+      "model_evidence_veto_recovery_exit": "Read-only scope projection only; the program does not add model semantic authority. Operational global facts remain recoverable through explicit scope=runtime, while task self-inspection fails closed against unbound or peer facts.",
+      "rollback_route": "Revert this corrective commit; no data migration is required. Runtime rollback requires a new service-control generation if deployed.",
+      "declaration_id": "decl-current-session-introspection-boundary"
+    },
+    {
+      "component_id": "explicit-runtime-observability-callers",
+      "paths": [
+        "scripts/run_eval.py",
+        "tests/unit/test_evidence_enforce.py",
+        "tests/unit/test_introspection.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "evaluation and deterministic verification",
+      "disposition": "ADMIT verification alignment: process-global dry/evidence checks now request scope=runtime explicitly instead of relying on current_session to leak unbound facts. Tests cover exact current-session exclusion and explicit runtime inclusion.",
+      "evidence": [
+        "tests/unit/test_eval_dry_selfcheck.py PASS",
+        "tests/unit/test_evidence_enforce.py architecture-status full snapshot regression PASS",
+        "tests/unit/test_arch_guards.py local-import ratchet PASS"
+      ],
+      "verification_level": "focused deterministic tests + full repository CI",
+      "model_evidence_veto_recovery_exit": "Evaluation/test callers only; explicit scope declaration removes ambiguous authority rather than adding control behavior.",
+      "rollback_route": "Revert together with the introspection boundary correction so caller scope and provider semantics remain paired."
+    },
+    {
+      "component_id": "a5-current-session-unbound-isolation",
+      "paths": [
+        "docs/governance/submissions/20260921-current-session-unbound-isolation.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 submission manifest",
+      "disposition": "ADMIT: mechanical A.5 path coverage and G1-G4 declaration for this corrective review.",
+      "evidence": [
+        "scripts/check_architecture_submission.py --staged PASS"
+      ],
+      "verification_level": "A.5 mechanical presence/coverage gate",
+      "model_evidence_veto_recovery_exit": "Manifest only; no runtime authority.",
+      "rollback_route": "Revert with the corrective submission."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "decl-current-session-introspection-boundary",
+      "g1": {
+        "necessity": "A deployed fresh-session canary proved that an unbound schedule.wake runtime row entered a model-facing current_session snapshot, recreating the semantic-context pollution class this guard was intended to prevent."
+      },
+      "g2": {
+        "authority_owner": "ArchitectureStatusProvider exact session identity plus explicit run_status scope selection",
+        "relationship": "replace",
+        "non_duplication": "This replaces the PR #58 permissive unbound-or-current filter; it does not create a second isolation mechanism. Global observability continues through the existing explicit runtime scope."
+      },
+      "g3": {
+        "model_evidence": [
+          "fresh-session live canary tool receipt with _observation_scope=current_session and an older session_id='' schedule.wake row",
+          "deterministic four-dimension current-session isolation regression",
+          "explicit runtime-scope regression retaining unbound and peer operational facts"
+        ],
+        "recovery_or_reason": "If session identity is unavailable, current-session sensitive views fail closed; operators/eval harnesses retain an explicit scope=runtime recovery path."
+      },
+      "g4": {
+        "rollback": "Revert the corrective commit and restart through service-control generation if deployment rollback is required; no persisted state migration is involved.",
+        "verification": [
+          "focused PR #58 failure-path regressions",
+          "full scripts/ci_gate.sh",
+          "staged/full-tree security scan",
+          "post-deploy repetition of the same fresh-session live canary"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,1157 @@
+{
+  "config": {
+    "rrf_k": 60,
+    "top_k": 20,
+    "corpus": 1765,
+    "strategies": {
+      "equal": {
+        "w_orig": 1.0,
+        "vote": false
+      },
+      "ow1.5": {
+        "w_orig": 1.5,
+        "vote": false
+      },
+      "ow2": {
+        "w_orig": 2.0,
+        "vote": false
+      },
+      "ow3": {
+        "w_orig": 3.0,
+        "vote": false
+      },
+      "ow5": {
+        "w_orig": 5.0,
+        "vote": false
+      },
+      "vote": {
+        "w_orig": 1.0,
+        "vote": true
+      },
+      "ow2vote": {
+        "w_orig": 2.0,
+        "vote": true
+      }
+    },
+    "decision_rule": "dev (h@5,h@1,mrr) 字典序最优 -> held-out 方向性验证"
+  },
+  "dev": {
+    "table": {
+      "equal": {
+        "h@1": 9,
+        "h@3": 15,
+        "h@5": 16,
+        "h@10": 19,
+        "mrr": 0.5046,
+        "miss": 4
+      },
+      "ow1.5": {
+        "h@1": 7,
+        "h@3": 13,
+        "h@5": 16,
+        "h@10": 19,
+        "mrr": 0.4474,
+        "miss": 4
+      },
+      "ow2": {
+        "h@1": 6,
+        "h@3": 13,
+        "h@5": 16,
+        "h@10": 17,
+        "mrr": 0.4258,
+        "miss": 4
+      },
+      "ow3": {
+        "h@1": 6,
+        "h@3": 13,
+        "h@5": 16,
+        "h@10": 17,
+        "mrr": 0.4216,
+        "miss": 4
+      },
+      "ow5": {
+        "h@1": 5,
+        "h@3": 13,
+        "h@5": 16,
+        "h@10": 17,
+        "mrr": 0.4036,
+        "miss": 4
+      },
+      "vote": {
+        "h@1": 9,
+        "h@3": 15,
+        "h@5": 16,
+        "h@10": 19,
+        "mrr": 0.5046,
+        "miss": 4
+      },
+      "ow2vote": {
+        "h@1": 6,
+        "h@3": 13,
+        "h@5": 17,
+        "h@10": 19,
+        "mrr": 0.4317,
+        "miss": 4
+      }
+    },
+    "ranks": {
+      "equal": [
+        1,
+        9,
+        2,
+        11,
+        2,
+        1,
+        null,
+        1,
+        1,
+        null,
+        null,
+        2,
+        1,
+        2,
+        22,
+        2,
+        6,
+        1,
+        5,
+        1,
+        6,
+        null,
+        1,
+        1,
+        3
+      ],
+      "ow1.5": [
+        1,
+        7,
+        5,
+        13,
+        2,
+        1,
+        null,
+        2,
+        2,
+        null,
+        null,
+        2,
+        1,
+        2,
+        27,
+        2,
+        6,
+        1,
+        5,
+        1,
+        9,
+        null,
+        1,
+        1,
+        4
+      ],
+      "ow2": [
+        1,
+        5,
+        11,
+        15,
+        2,
+        1,
+        null,
+        2,
+        2,
+        null,
+        null,
+        2,
+        1,
+        2,
+        27,
+        2,
+        6,
+        1,
+        4,
+        1,
+        12,
+        null,
+        2,
+        1,
+        4
+      ],
+      "ow3": [
+        1,
+        5,
+        21,
+        22,
+        2,
+        1,
+        null,
+        2,
+        2,
+        null,
+        null,
+        2,
+        1,
+        2,
+        27,
+        2,
+        6,
+        1,
+        4,
+        1,
+        23,
+        null,
+        2,
+        1,
+        4
+      ],
+      "ow5": [
+        1,
+        4,
+        21,
+        22,
+        2,
+        2,
+        null,
+        2,
+        2,
+        null,
+        null,
+        2,
+        1,
+        2,
+        27,
+        2,
+        6,
+        1,
+        4,
+        1,
+        23,
+        null,
+        2,
+        1,
+        4
+      ],
+      "vote": [
+        1,
+        9,
+        2,
+        11,
+        2,
+        1,
+        null,
+        1,
+        1,
+        null,
+        null,
+        2,
+        1,
+        2,
+        22,
+        2,
+        6,
+        1,
+        5,
+        1,
+        6,
+        null,
+        1,
+        1,
+        3
+      ],
+      "ow2vote": [
+        1,
+        5,
+        5,
+        13,
+        2,
+        1,
+        null,
+        2,
+        2,
+        null,
+        null,
+        2,
+        1,
+        2,
+        27,
+        2,
+        6,
+        1,
+        4,
+        1,
+        9,
+        null,
+        2,
+        1,
+        4
+      ]
+    },
+    "collected": [
+      {
+        "id": "Q01",
+        "query": "飞书桥的密钥从哪里加载，优先级是什么",
+        "gold": "MEM-20260810-3d377ff0",
+        "per": [
+          {
+            "text": "飞书桥的密钥从哪里加载，优先级是什么",
+            "rank": 1,
+            "mode": "semantic"
+          },
+          {
+            "text": "飞书 桥 feishu bridge 密钥 加载 优先级 环境 变量 配置",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "feishu_bridge app_id app_secret 密钥 加载 顺序 配置 优先级 loader",
+            "rank": 3,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q02",
+        "query": "飞书消息收发用哪个应用凭证",
+        "gold": "MEM-20260811-8fe63120",
+        "per": [
+          {
+            "text": "飞书消息收发用哪个应用凭证",
+            "rank": 4,
+            "mode": "semantic"
+          },
+          {
+            "text": "飞书 消息 收发 发送 应用 凭证 app credential tenant token",
+            "rank": 8,
+            "mode": "mixed"
+          },
+          {
+            "text": "feishu app_id app_secret tenant_access_token 凭证 消息 发送",
+            "rank": 14,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q03",
+        "query": "改了环境变量配置为什么不生效",
+        "gold": "MEM-20260814-9e98292f",
+        "per": [
+          {
+            "text": "改了环境变量配置为什么不生效",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "环境 变量 配置 修改 不生效 未 加载 重启 生效",
+            "rank": 6,
+            "mode": "mixed"
+          },
+          {
+            "text": "env 环境变量 .env 修改 不生效 配置 加载 热更新 restart",
+            "rank": 9,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q04",
+        "query": "模型调用出错时最终回答里那个前缀标记是谁生成的",
+        "gold": "MEM-20260811-381d1e8a",
+        "per": [
+          {
+            "text": "模型调用出错时最终回答里那个前缀标记是谁生成的",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "模型 调用 出错 失败 最终 回答 前缀 标记 生成者 来源",
+            "rank": 4,
+            "mode": "mixed"
+          },
+          {
+            "text": "模型 报错 回答 前缀 prefix error marker 生成 final answer fallback",
+            "rank": 17,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q05",
+        "query": "系统变慢和反复压缩有什么关系",
+        "gold": "MEM-20260822-efd8b59a",
+        "per": [
+          {
+            "text": "系统变慢和反复压缩有什么关系",
+            "rank": 1,
+            "mode": "semantic"
+          },
+          {
+            "text": "系统 变慢 性能 下降 反复 压缩 上下文 历史 关系",
+            "rank": 6,
+            "mode": "mixed"
+          },
+          {
+            "text": "压缩 compress 上下文 context 历史 反复 压缩 性能 变慢 原因",
+            "rank": 9,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q06",
+        "query": "工具调用性能优化主要优化什么指标",
+        "gold": "MEM-20260822-631105bc",
+        "per": [
+          {
+            "text": "工具调用性能优化主要优化什么指标",
+            "rank": 3,
+            "mode": "semantic"
+          },
+          {
+            "text": "工具 调用 性能 优化 指标 延迟 耗时 响应 时间",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "tool call latency 耗时 指标 P95 延迟 性能 优化 目标",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q07",
+        "query": "旧工具结果按什么规则裁剪",
+        "gold": "MEM-20260818-52cd07c0",
+        "per": [
+          {
+            "text": "旧工具结果按什么规则裁剪",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "旧 工具 结果 裁剪 规则 历史 observation 截断 保留 策略",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "工具 结果 裁剪 truncate observation 历史 滚动 规则 保留",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q08",
+        "query": "自我评估哪些维度历史上一直不达标",
+        "gold": "MEM-20260813-3e159470",
+        "per": [
+          {
+            "text": "自我评估哪些维度历史上一直不达标",
+            "rank": 7,
+            "mode": "semantic"
+          },
+          {
+            "text": "自我 评估 维度 历史 一直 不达标 低分 指标",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "self_evaluate 维度 成功率 诚实性 停滞 异常 历史 低分 不达标",
+            "rank": 3,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q09",
+        "query": "这台机器的硬件配置是什么",
+        "gold": "MEM-20260907-1825fa9e",
+        "per": [
+          {
+            "text": "这台机器的硬件配置是什么",
+            "rank": 3,
+            "mode": "semantic"
+          },
+          {
+            "text": "机器 硬件 配置 CPU 内存 磁盘 规格 型号 信息",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "hardware cpu cores memory disk 机器 配置 规格 容量",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q10",
+        "query": "用户审代码的习惯风格",
+        "gold": "MEM-20260910-fbb9a634",
+        "per": [
+          {
+            "text": "用户审代码的习惯风格",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "用户 审 代码 习惯 风格 code review 偏好 要求",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "code review 用户 偏好 风格 审查 习惯 注释 简洁",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q11",
+        "query": "证据可恢复性验证过没有，结果如何",
+        "gold": "MEM-20260829-db3ed00a",
+        "per": [
+          {
+            "text": "证据可恢复性验证过没有，结果如何",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "证据 可恢复性 验证 是否 测试 结果 备份 恢复",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "evidence recovery 可恢复 验证 backup 恢复 测试 结果",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q12",
+        "query": "算成本时缓存命中数据以哪个来源为准",
+        "gold": "MEM-20260823-3a8e4d12",
+        "per": [
+          {
+            "text": "算成本时缓存命中数据以哪个来源为准",
+            "rank": 2,
+            "mode": "semantic"
+          },
+          {
+            "text": "成本 计算 缓存 命中 数据 来源 以 哪个 为准 cache hit",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "cost 缓存命中 cache hit token 用量 计费 数据 来源",
+            "rank": 2,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q13",
+        "query": "往公开仓库提交代码时作者信息怎么填",
+        "gold": "MEM-20260908-92569756",
+        "per": [
+          {
+            "text": "往公开仓库提交代码时作者信息怎么填",
+            "rank": 1,
+            "mode": "semantic"
+          },
+          {
+            "text": "公开 仓库 提交 代码 作者 信息 填写 git commit author",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "git author email 用户名 提交 公开 仓库 邮箱 填写",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q14",
+        "query": "现在允许执行 shell 命令吗，有没有什么历史限制",
+        "gold": "MEM-20260810-f4e98600",
+        "per": [
+          {
+            "text": "现在允许执行 shell 命令吗，有没有什么历史限制",
+            "rank": 3,
+            "mode": "mixed"
+          },
+          {
+            "text": "现在 允许 执行 shell 命令 吗 历史 限制 安全 白名单",
+            "rank": 8,
+            "mode": "mixed"
+          },
+          {
+            "text": "execute_command shell 命令 白名单 限制 危险 禁止 授权",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q15",
+        "query": "声称完成任务但没实际执行会怎样",
+        "gold": "MEM-20260818-d4fe7e7e",
+        "per": [
+          {
+            "text": "声称完成任务但没实际执行会怎样",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "声称 完成 任务 未 实际 执行 虚假 声明 后果 处理",
+            "rank": 11,
+            "mode": "mixed"
+          },
+          {
+            "text": "虚假 完成 声明 未执行 declaration 检查 惩罚 谎报 任务",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q16",
+        "query": "旧 web 会话归档到哪个目录了",
+        "gold": "MEM-20260825-2f39f239",
+        "per": [
+          {
+            "text": "旧 web 会话归档到哪个目录了",
+            "rank": 5,
+            "mode": "mixed"
+          },
+          {
+            "text": "旧 web 会话 归档 到 哪个 目录 位置 archive",
+            "rank": 3,
+            "mode": "mixed"
+          },
+          {
+            "text": "web 会话 归档 目录 archive sessions 路径 存放 位置",
+            "rank": 2,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q17",
+        "query": "同步远端主线用 merge 还是 rebase",
+        "gold": "MEM-20260909-e0c9a56f",
+        "per": [
+          {
+            "text": "同步远端主线用 merge 还是 rebase",
+            "rank": 7,
+            "mode": "mixed"
+          },
+          {
+            "text": "同步 远端 主线 merge rebase 选择 策略 git 拉取",
+            "rank": 6,
+            "mode": "mixed"
+          },
+          {
+            "text": "git pull merge rebase 主线 同步 远端 冲突 策略",
+            "rank": 4,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q18",
+        "query": "错误恢复里消息剥离重发最多几次",
+        "gold": "MEM-20260827-589020d5",
+        "per": [
+          {
+            "text": "错误恢复里消息剥离重发最多几次",
+            "rank": 1,
+            "mode": "semantic"
+          },
+          {
+            "text": "错误 恢复 消息 剥离 重发 最多 几次 限制 次数",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "错误恢复 消息 剥离 重发 retry 次数 上限 拆分 重试",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q19",
+        "query": "为什么会话前缀缓存一直不命中",
+        "gold": "MEM-20260827-a6f1fb7d",
+        "per": [
+          {
+            "text": "为什么会话前缀缓存一直不命中",
+            "rank": 4,
+            "mode": "semantic"
+          },
+          {
+            "text": "会话 前缀 缓存 一直 不命中 miss 原因 prompt cache",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "prefix cache 不命中 前缀 变化 prompt 缓存 命中率 原因",
+            "rank": 13,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q20",
+        "query": "父子代理互发消息实测过吗",
+        "gold": "MEM-20260818-685c91b0",
+        "per": [
+          {
+            "text": "父子代理互发消息实测过吗",
+            "rank": 1,
+            "mode": "semantic"
+          },
+          {
+            "text": "父 子 代理 互发 消息 实测 验证 测试 结果",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "agent_message parent child 父 子 代理 消息 实测 验证",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q21",
+        "query": "模型接口报 500 可能是什么原因",
+        "gold": "MEM-20260830-72ff5609",
+        "per": [
+          {
+            "text": "模型接口报 500 可能是什么原因",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "模型 接口 报 500 可能 原因 服务端 错误 排查",
+            "rank": 10,
+            "mode": "mixed"
+          },
+          {
+            "text": "500 internal server error 模型 api 接口 报错 原因",
+            "rank": 5,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q22",
+        "query": "已知的测试失败项记录在哪个文件",
+        "gold": "MEM-20260909-1d2d768b",
+        "per": [
+          {
+            "text": "已知的测试失败项记录在哪个文件",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "已知 测试 失败 项 记录 在 哪个 文件 清单 known failures",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "known_failures 测试 失败 记录 文件 flaky tests 清单 路径",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q23",
+        "query": "查架构状态的工具有个参数不能传是哪个",
+        "gold": "MEM-20260820-9a8d8d45",
+        "per": [
+          {
+            "text": "查架构状态的工具有个参数不能传是哪个",
+            "rank": 6,
+            "mode": "semantic"
+          },
+          {
+            "text": "查询 架构 状态 工具 有 个 参数 不能 传 禁止",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "architecture_status 参数 禁止 不能 传 dimensions scope 工具 限制",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q24",
+        "query": "编辑文件工具有什么已知缺陷",
+        "gold": "MEM-20260813-6b931628",
+        "per": [
+          {
+            "text": "编辑文件工具有什么已知缺陷",
+            "rank": 2,
+            "mode": "semantic"
+          },
+          {
+            "text": "编辑 文件 工具 已知 缺陷 问题 bug 限制",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "edit_file 缺陷 bug 已知 问题 替换 失败 限制",
+            "rank": 1,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "Q25",
+        "query": "分享按钮实际做了什么",
+        "gold": "MEM-20260909-f7774536",
+        "per": [
+          {
+            "text": "分享按钮实际做了什么",
+            "rank": 4,
+            "mode": "semantic"
+          },
+          {
+            "text": "分享 按钮 实际 做了 什么 功能 行为 实现 作用",
+            "rank": 4,
+            "mode": "mixed"
+          },
+          {
+            "text": "share button 分享 按钮 实现 点击 行为 webui 功能",
+            "rank": 4,
+            "mode": "mixed"
+          }
+        ]
+      }
+    ]
+  },
+  "heldout": {
+    "table": {
+      "equal": {
+        "h@1": 0,
+        "h@3": 0,
+        "h@5": 1,
+        "h@10": 2,
+        "mrr": 0.058,
+        "miss": 5
+      },
+      "ow1.5": {
+        "h@1": 0,
+        "h@3": 0,
+        "h@5": 1,
+        "h@10": 3,
+        "mrr": 0.0646,
+        "miss": 5
+      },
+      "ow2": {
+        "h@1": 0,
+        "h@3": 1,
+        "h@5": 2,
+        "h@10": 3,
+        "mrr": 0.0854,
+        "miss": 5
+      },
+      "ow3": {
+        "h@1": 0,
+        "h@3": 1,
+        "h@5": 2,
+        "h@10": 3,
+        "mrr": 0.0868,
+        "miss": 5
+      },
+      "ow5": {
+        "h@1": 0,
+        "h@3": 1,
+        "h@5": 2,
+        "h@10": 3,
+        "mrr": 0.0868,
+        "miss": 5
+      },
+      "vote": {
+        "h@1": 0,
+        "h@3": 0,
+        "h@5": 1,
+        "h@10": 2,
+        "mrr": 0.058,
+        "miss": 5
+      },
+      "ow2vote": {
+        "h@1": 0,
+        "h@3": 0,
+        "h@5": 1,
+        "h@10": 3,
+        "mrr": 0.0646,
+        "miss": 5
+      }
+    },
+    "ranks": {
+      "equal": [
+        4,
+        21,
+        null,
+        null,
+        6,
+        null,
+        null,
+        null
+      ],
+      "ow1.5": [
+        4,
+        10,
+        null,
+        null,
+        6,
+        null,
+        null,
+        null
+      ],
+      "ow2": [
+        4,
+        10,
+        null,
+        null,
+        3,
+        null,
+        null,
+        null
+      ],
+      "ow3": [
+        4,
+        9,
+        null,
+        null,
+        3,
+        null,
+        null,
+        null
+      ],
+      "ow5": [
+        4,
+        9,
+        null,
+        null,
+        3,
+        null,
+        null,
+        null
+      ],
+      "vote": [
+        4,
+        21,
+        null,
+        null,
+        6,
+        null,
+        null,
+        null
+      ],
+      "ow2vote": [
+        4,
+        10,
+        null,
+        null,
+        6,
+        null,
+        null,
+        null
+      ]
+    },
+    "collected": [
+      {
+        "id": "N01",
+        "query": "换模型要记住我之前选过哪个吗",
+        "gold": "MEM-20260811-7d273d76",
+        "per": [
+          {
+            "text": "换模型要记住我之前选过哪个吗",
+            "rank": 12,
+            "mode": "semantic"
+          },
+          {
+            "text": "模型切换 记住上次选择 switch_model 会话持久化",
+            "rank": 1,
+            "mode": "mixed"
+          },
+          {
+            "text": "switch_model 模型偏好记忆 持久化 default model",
+            "rank": 6,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "N02",
+        "query": "规则写太多反而碍事，该留多少",
+        "gold": "MEM-20260901-fff7eafc",
+        "per": [
+          {
+            "text": "规则写太多反而碍事，该留多少",
+            "rank": 9,
+            "mode": "semantic"
+          },
+          {
+            "text": "规则过多 rule bloat 上下文占用 该留多少",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "规则膨胀 精简裁剪 保留多少 rules prompt",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "N03",
+        "query": "改动后怎么知道性能没退步",
+        "gold": "MEM-20260819-4fdb7d80",
+        "per": [
+          {
+            "text": "改动后怎么知道性能没退步",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "性能回归检测 benchmark 基准对比 延迟吞吐",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "改动后 无性能退化验证 regression testing",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "N04",
+        "query": "静态检查工具自己崩了是什么问题",
+        "gold": "MEM-20260818-e575f8eb",
+        "per": [
+          {
+            "text": "静态检查工具自己崩了是什么问题",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "静态分析工具崩溃 linter crash 堆栈报错",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "静态检查 linter 自身崩溃 原因排查 stack trace",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "N05",
+        "query": "输出太长被切断怎么办",
+        "gold": "MEM-20260813-b2364eeb",
+        "per": [
+          {
+            "text": "输出太长被切断怎么办",
+            "rank": 1,
+            "mode": "semantic"
+          },
+          {
+            "text": "输出截断 max_tokens 超限 分页续写方案",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "长输出被截断 truncation token 上限 解决",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "N06",
+        "query": "手滑删了还在用的文件能找回来吗",
+        "gold": "MEM-20260811-c54bb631",
+        "per": [
+          {
+            "text": "手滑删了还在用的文件能找回来吗",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "误删在用文件恢复 recover_from_backup 备份",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "文件误删找回 回收站 git restore 数据恢复",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "N07",
+        "query": "什么条件才算第一次就能用",
+        "gold": "MEM-20260913-722e3d3d",
+        "per": [
+          {
+            "text": "什么条件才算第一次就能用",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "开箱即用 判定条件 first-run 首次可用性",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "首次就能用的条件 one-shot 一次通过 验收标准",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      },
+      {
+        "id": "N08",
+        "query": "远程连回内网机器的网络分流配置",
+        "gold": "MEM-20260811-9dde9612",
+        "per": [
+          {
+            "text": "远程连回内网机器的网络分流配置",
+            "rank": null,
+            "mode": "semantic"
+          },
+          {
+            "text": "远程接入内网 内网穿透 split tunneling 分流配置",
+            "rank": null,
+            "mode": "mixed"
+          },
+          {
+            "text": "内网机器远程回连 VPN 分流路由 port forwarding",
+            "rank": null,
+            "mode": "mixed"
+          }
+        ]
+      }
+    ]
+  },
+  "dev_best": "ow2vote",
+  "heldout_delta": {
+    "h@1": 0,
+    "h@5": 0,
+    "mrr": 0.007
+  }
+}

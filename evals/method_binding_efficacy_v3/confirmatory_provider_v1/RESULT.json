@@ -1,0 +1,94 @@
+{
+ "schema": "subject-binding-v3-confirmatory-result/v1",
+ "formal_cells": 92,
+ "latest_cells": 92,
+ "all_latest_mechanically_healthy": true,
+ "models": {
+  "strong": {
+   "challenge": {
+    "n": 17,
+    "C0_correct": 7,
+    "C1_correct": 9,
+    "positive_flip": 4,
+    "negative_flip": 2,
+    "net_flip": 2,
+    "efficacy_pass": false
+   },
+   "reverse_risk": {
+    "n": 6,
+    "C0_correct": 4,
+    "C1_correct": 6,
+    "new_harm": 0,
+    "pass": true
+   },
+   "safety": {
+    "OTHER_C0": 0,
+    "OTHER_C1": 0,
+    "technical_retries_C0": 0,
+    "technical_retries_C1": 0,
+    "missing_experience_C0": 0,
+    "missing_experience_C1": 0,
+    "pass": true
+   },
+   "cost": {
+    "mean_tokens_C0": 41476.17391304348,
+    "mean_tokens_C1": 42327.04347826087,
+    "token_ratio": 1.020514659018483,
+    "mean_rounds_C0": 2.608695652173913,
+    "mean_rounds_C1": 2.5652173913043477,
+    "tool_calls_C0": 59,
+    "tool_calls_C1": 59,
+    "pass": true
+   },
+   "guardrails_pass": true
+  },
+  "weak": {
+   "challenge": {
+    "n": 17,
+    "C0_correct": 9,
+    "C1_correct": 11,
+    "positive_flip": 2,
+    "negative_flip": 0,
+    "net_flip": 2,
+    "efficacy_pass": false
+   },
+   "reverse_risk": {
+    "n": 6,
+    "C0_correct": 6,
+    "C1_correct": 6,
+    "new_harm": 0,
+    "pass": true
+   },
+   "safety": {
+    "OTHER_C0": 0,
+    "OTHER_C1": 0,
+    "technical_retries_C0": 0,
+    "technical_retries_C1": 0,
+    "missing_experience_C0": 0,
+    "missing_experience_C1": 0,
+    "pass": true
+   },
+   "cost": {
+    "mean_tokens_C0": 45027.913043478264,
+    "mean_tokens_C1": 47047.34782608696,
+    "token_ratio": 1.0448485094270028,
+    "mean_rounds_C0": 2.9565217391304346,
+    "mean_rounds_C1": 3.0434782608695654,
+    "tool_calls_C0": 56,
+    "tool_calls_C1": 55,
+    "pass": true
+   },
+   "guardrails_pass": true
+  }
+ },
+ "disposition": "EFFICACY_NOT_QUALIFIED",
+ "production_promotion_authorized": false,
+ "input_sha256": {
+  "SPEC.md": "7ab7859459d4d577c50d2226b8492d379edb7bdd751015a26e1a469fda0cff9d",
+  "FREEZE.json": "635f81d1bc911219a3a65cb0dbb6600fd6c8f7693bff118cd6ee540504f3f90b",
+  "plan.json": "cde98bfcac967eeea80be7610e6abd351404c8e08aa6088860aff425fa7d8468",
+  "matrix.jsonl": "71bec18a5d459040a0bf305c00a9789633792ac53483d2f66526792b112d442c",
+  "PREFLIGHT.json": "abb660b882181449832daa18282352baec9862245f68c98b17e4f677d4200c2e",
+  "SURFACE-PROBE.json": "db596b1978dc0c06c5ec42900a035c77c6d4d65d563184ab6656220dfb525bff"
+ }
+}

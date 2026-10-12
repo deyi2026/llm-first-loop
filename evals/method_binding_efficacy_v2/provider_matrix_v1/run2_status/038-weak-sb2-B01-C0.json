@@ -1,0 +1,26 @@
+{
+ "state": "terminal",
+ "row": {
+  "ordinal": 38,
+  "block_ordinal": 19,
+  "model": "weak",
+  "case_id": "sb2-B01",
+  "arm": "C0",
+  "row_id": "weak:sb2-B01:C0"
+ },
+ "attempts": [
+  {
+   "attempt": 0,
+   "rc": -15,
+   "healthy": false,
+   "recovery_reason": "outer_command_timeout_interrupted_worker_before_settlement"
+  },
+  {
+   "attempt": 1,
+   "rc": 0,
+   "healthy": true
+  }
+ ],
+ "mechanically_healthy": true,
+ "recovered_reserved_identity": true
+}

@@ -1,0 +1,18 @@
+{
+  "plan": [
+    {
+      "expected_wait_tool": "browser_wait_scope",
+      "index": 1,
+      "prompt_sha256": "8d0b190006d8bc09af72b9adc065f3c9e42c812688087f6615ab5e293a367cac",
+      "task_id": "scope_ready"
+    },
+    {
+      "expected_wait_tool": "browser_wait_object",
+      "index": 2,
+      "prompt_sha256": "ea4bd91036339fa32cce6e99422ade54f7266c03ae898bc5cda711e762513053",
+      "task_id": "object_enabled"
+    }
+  ],
+  "plan_sha256": "9650bdb09b54fdaa7f55f3ec845979379ea7b973a0d4610721830a7af85b03b1",
+  "schema": "smc.browser_typed_wait_fcr_a1.v0.6.plan"
+}

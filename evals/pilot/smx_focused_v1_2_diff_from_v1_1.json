@@ -1,0 +1,153 @@
+{
+  "analyze_diff": {
+    "added": "cont = sum(1 for r in t12 if r.get(\"resume_session_continuity\"))",
+    "declared_class": "display_key_correction_only",
+    "removed": "cont = sum(1 for r in t12 if r.get(\"session_continuity\"))",
+    "unified_diff_sha256": "27df17f34d1d59758cf463199c4211a653919b2388a2e61beb4c25ae2734b541"
+  },
+  "causal_design": {
+    "identical": true,
+    "v1_1_canonical_sha256": "7ea2738f77f9fb2de5e4b89d3025981e9f49a80a867f9a48f499d89c5695bdf0",
+    "v1_2_canonical_sha256": "7ea2738f77f9fb2de5e4b89d3025981e9f49a80a867f9a48f499d89c5695bdf0"
+  },
+  "changed_source_count": 1,
+  "changed_source_files": [
+    "evals/pilot/analyze.py"
+  ],
+  "from": {
+    "commit": "dba31bd79c106820e021902d5bcf43bfb32f5fd1",
+    "plan_sha256": "23414345b73b5095ae4afba478aa363e65c4ceb14adcbf936d7e80a9ba243cc7",
+    "protocol": "agentpilot-smx-focused-v1.1",
+    "spec_sha256": "6183fe34a4e7aa9954f67f29ed5b3a6c0c63226bc1a570e6e7bacd0c834e6dde"
+  },
+  "governance_assertions": {
+    "same_tasks_arms_seed_repeats_invalidation": true,
+    "v1_1_disposition": "deprecated_superseded",
+    "v1_2_model_run_authorized": false
+  },
+  "kind": "smx_focused_protocol_differential_proof",
+  "plan_rows": {
+    "identical": true,
+    "row_count": 30,
+    "v1_1_canonical_sha256": "cdac602f6e5b757ec1ee869eebc67c7506ac5f84fbc7ee8b9c55d223fe081414",
+    "v1_2_canonical_sha256": "cdac602f6e5b757ec1ee869eebc67c7506ac5f84fbc7ee8b9c55d223fe081414"
+  },
+  "schema": 1,
+  "source_hashes": [
+    {
+      "path": "evals/pilot/analyze.py",
+      "status": "changed",
+      "v1_1_sha256": "33de85e20ae6e42a3336372f8253c543a9504330985f9a80d6cb191a9da5d0c1",
+      "v1_2_sha256": "326227d5f4b4601c03eb245a03f13a80907d284efeaefb20f3b69bb4b6113064"
+    },
+    {
+      "path": "evals/pilot/run_pilot.py",
+      "status": "same",
+      "v1_1_sha256": "a7480edfca2b9d1b3a28b5088855ee3c55b5758f3749360479bad7734f45c3d8",
+      "v1_2_sha256": "a7480edfca2b9d1b3a28b5088855ee3c55b5758f3749360479bad7734f45c3d8"
+    },
+    {
+      "path": "evals/pilot/tasks.py",
+      "status": "same",
+      "v1_1_sha256": "d481735bfeb57b1960f5ef5d71aea5ecf3db9add08d2ca82e29837d4038ac769",
+      "v1_2_sha256": "d481735bfeb57b1960f5ef5d71aea5ecf3db9add08d2ca82e29837d4038ac769"
+    },
+    {
+      "path": "evals/pilot/telemetry.py",
+      "status": "same",
+      "v1_1_sha256": "0d559f3955d727e55aaee04099cb719c76242dbfac5c4a7f59ac5f61f5c350dd",
+      "v1_2_sha256": "0d559f3955d727e55aaee04099cb719c76242dbfac5c4a7f59ac5f61f5c350dd"
+    },
+    {
+      "path": "src/llm_loop/config.py",
+      "status": "same",
+      "v1_1_sha256": "23d8d477782510e742bd04c1f7328645e43e86e930306dbca61bb332bb82624a",
+      "v1_2_sha256": "23d8d477782510e742bd04c1f7328645e43e86e930306dbca61bb332bb82624a"
+    },
+    {
+      "path": "src/llm_loop/factory.py",
+      "status": "same",
+      "v1_1_sha256": "0ed300f8984f1376c6cf3e554cf32ee3b88bf03b731c7682d23f0dc58aab94fa",
+      "v1_2_sha256": "0ed300f8984f1376c6cf3e554cf32ee3b88bf03b731c7682d23f0dc58aab94fa"
+    },
+    {
+      "path": "src/llm_loop/tools/builtin/smx_perceive.py",
+      "status": "same",
+      "v1_1_sha256": "2a528386f095998e365cfc17695c1d0b7c828927575791da761cc8faa34951b7",
+      "v1_2_sha256": "2a528386f095998e365cfc17695c1d0b7c828927575791da761cc8faa34951b7"
+    },
+    {
+      "path": "src/llm_loop/tools/registry.py",
+      "status": "same",
+      "v1_1_sha256": "67c93722168f7d9ea8af378cd77ddba1f82620d305fe1c363fbec935b2f2c9d2",
+      "v1_2_sha256": "67c93722168f7d9ea8af378cd77ddba1f82620d305fe1c363fbec935b2f2c9d2"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T3/judge.sh",
+      "status": "same",
+      "v1_1_sha256": "873210debc30a6d0187ab8de5cdb6bf5cf5504fe85b9baa8aee9e0509f4998e6",
+      "v1_2_sha256": "873210debc30a6d0187ab8de5cdb6bf5cf5504fe85b9baa8aee9e0509f4998e6"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T3/setup.sh",
+      "status": "same",
+      "v1_1_sha256": "20127fb214166e0396d0f4fc3832fdecc095a7b42254e3360efde57000e3a54c",
+      "v1_2_sha256": "20127fb214166e0396d0f4fc3832fdecc095a7b42254e3360efde57000e3a54c"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T3/task.md",
+      "status": "same",
+      "v1_1_sha256": "0352424d9dea7418513b90df4d255aa4dc29a88e7b7769dca733fc8c6dab8115",
+      "v1_2_sha256": "0352424d9dea7418513b90df4d255aa4dc29a88e7b7769dca733fc8c6dab8115"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T4/judge.sh",
+      "status": "same",
+      "v1_1_sha256": "6d80e23bc222e5a9941f095b386895a8fd5940346073774c38c560859f08492f",
+      "v1_2_sha256": "6d80e23bc222e5a9941f095b386895a8fd5940346073774c38c560859f08492f"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T4/setup.sh",
+      "status": "same",
+      "v1_1_sha256": "03c6c3d7a45ffcfa8c01de11bceb36380ffbd8b61323277bba096a57f2c59204",
+      "v1_2_sha256": "03c6c3d7a45ffcfa8c01de11bceb36380ffbd8b61323277bba096a57f2c59204"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T4/task.md",
+      "status": "same",
+      "v1_1_sha256": "3f4cb3cfca261e4805affa7dff5e057eeb372166c701055d7f5e30d7ef0aa061",
+      "v1_2_sha256": "3f4cb3cfca261e4805affa7dff5e057eeb372166c701055d7f5e30d7ef0aa061"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T6/judge.sh",
+      "status": "same",
+      "v1_1_sha256": "12972177ef6c1d33648ee391719313338b5cb3de34d492e248e65555d49a63a7",
+      "v1_2_sha256": "12972177ef6c1d33648ee391719313338b5cb3de34d492e248e65555d49a63a7"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T6/setup.sh",
+      "status": "same",
+      "v1_1_sha256": "4a978e6b4d4af93a6efdcfe45df3bc0499d761f53ff328304a9c90aa4fcf985c",
+      "v1_2_sha256": "4a978e6b4d4af93a6efdcfe45df3bc0499d761f53ff328304a9c90aa4fcf985c"
+    },
+    {
+      "path": "tools/smx/lab/tasks/T6/task.md",
+      "status": "same",
+      "v1_1_sha256": "fcb999b52e57227671cee3a40e725ccb63ce5714c7584080bbfc4103e57b2518",
+      "v1_2_sha256": "fcb999b52e57227671cee3a40e725ccb63ce5714c7584080bbfc4103e57b2518"
+    },
+    {
+      "path": "tools/smx/smx.py",
+      "status": "same",
+      "v1_1_sha256": "2aa66aa622cfe18a0d29cdd801c39ec8e6d633b8748b09a5f363375be926f0d2",
+      "v1_2_sha256": "2aa66aa622cfe18a0d29cdd801c39ec8e6d633b8748b09a5f363375be926f0d2"
+    }
+  ],
+  "to": {
+    "plan_sha256": "2f925980a5715ce7ccbd95c9c8c9f6df74c8b44c1e71b90c905a574284f47027",
+    "protocol": "agentpilot-smx-focused-v1.2",
+    "source_baseline_commit": "d3c287dcf0c9ad4bed91887582470856f89392cc",
+    "spec_sha256": "769a7782e122aceb9be916973958a5aaf8d85fdc35842ccdbc9bb199fe54b35b"
+  },
+  "unchanged_source_count": 17
+}

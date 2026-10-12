@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llm-first-loop.local/schema/architecture-submission-v0.1.json",
+  "title": "LFL A.5 Architecture Submission v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "submission_id", "components", "declarations"],
+  "properties": {
+    "schema": {"const": "lfl.architecture_submission.v0.1"},
+    "submission_id": {"type": "string", "minLength": 1},
+    "summary": {"type": "string", "minLength": 1},
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component_id",
+          "paths",
+          "control_machinery",
+          "owning_subsystem",
+          "disposition",
+          "evidence",
+          "verification_level",
+          "model_evidence_veto_recovery_exit",
+          "rollback_route"
+        ],
+        "properties": {
+          "component_id": {"type": "string", "minLength": 1},
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": true
+          },
+          "control_machinery": {"type": "boolean"},
+          "owning_subsystem": {"type": "string", "minLength": 1},
+          "disposition": {"type": "string", "minLength": 1},
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "verification_level": {"type": "string", "minLength": 1},
+          "model_evidence_veto_recovery_exit": {"type": "string", "minLength": 1},
+          "rollback_route": {"type": "string", "minLength": 1},
+          "declaration_id": {"type": "string", "minLength": 1}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"control_machinery": {"const": true}}},
+            "then": {"required": ["declaration_id"]},
+            "else": {"not": {"required": ["declaration_id"]}}
+          }
+        ]
+      }
+    },
+    "declarations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["declaration_id", "g1", "g2", "g3", "g4"],
+        "properties": {
+          "declaration_id": {"type": "string", "minLength": 1},
+          "g1": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["necessity"],
+            "properties": {"necessity": {"type": "string", "minLength": 1}}
+          },
+          "g2": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["authority_owner", "relationship", "non_duplication"],
+            "properties": {
+              "authority_owner": {"type": "string", "minLength": 1},
+              "relationship": {"enum": ["reuse", "replace", "new_authority"]},
+              "non_duplication": {"type": "string", "minLength": 1}
+            }
+          },
+          "g3": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["model_evidence", "recovery_or_reason"],
+            "properties": {
+              "model_evidence": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 1}
+              },
+              "recovery_or_reason": {"type": "string", "minLength": 1}
+            }
+          },
+          "g4": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rollback", "verification"],
+            "properties": {
+              "rollback": {"type": "string", "minLength": 1},
+              "verification": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

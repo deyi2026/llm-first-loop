@@ -1,0 +1,403 @@
+"""EVO-20260912-10818cb5 胶水层测试: smx_perceive 三面（wait/snapshot-diff/receipt）+ 安全拒绝.
+
+SMX focused v1.2 已封盘后，本文件同时覆盖 Domain-0 wait 观察语义与 LFL 胶水层:
+- wait 满足/超时语义（超时=正常观测 satisfied=false，非工具故障）
+- loopback 与 run_id 白名单的胶水层预拒绝（smx 内部还有第二道）
+- snapshot/diff 净变更（复用冻结 take_snapshot/diff_pair）
+- 回执摘要查询 + 路径穿越拒绝
+- opt-in 默认关闭（config 字段默认空）
+"""
+from __future__ import annotations
+
+import dataclasses
+import json
+from pathlib import Path
+
+import pytest
+
+from llm_loop.config import Settings
+from llm_loop.core.message import ToolResultStatus
+from llm_loop.tools.builtin.smx_perceive import SmxPerceiveTool
+
+SMX_PATH = Path(__file__).resolve().parents[1] / "tools" / "smx" / "smx.py"
+
+
+@pytest.fixture()
+def tool(tmp_path):
+    return SmxPerceiveTool(smx_path=str(SMX_PATH), data_dir=str(tmp_path / "data"), max_wait_s=5.0)
+
+
+def _payload(res):
+    return json.loads(res.content)
+
+
+# ---------- wait ----------
+def test_wait_file_exists_satisfied(tool, tmp_path):
+    flag = tmp_path / "done.flag"
+    flag.write_text("ok")
+    res = tool.execute(action="wait", file_exists=str(flag), timeout=3, root=str(tmp_path))
+    assert res.status == ToolResultStatus.SUCCESS
+    p = _payload(res)
+    assert p["satisfied"] is True and p["kind"] == "wait"
+    assert p["run_id"]
+
+
+def test_wait_timeout_is_observation_not_failure(tool, tmp_path):
+    res = tool.execute(action="wait", file_exists=str(tmp_path / "never.flag"),
+                       timeout=0.6, interval=0.2, root=str(tmp_path))
+    assert res.status == ToolResultStatus.SUCCESS  # 超时=正常观测
+    p = _payload(res)
+    assert p["satisfied"] is False and p.get("waited_ms", 0) >= 500
+
+
+def test_wait_observer_error_is_indeterminate_with_sampling_facts(tool, tmp_path):
+    directory = tmp_path / "not-a-file"
+    directory.mkdir()
+    res = tool.execute(
+        action="wait",
+        file_contains=[str(directory), "needle"],
+        timeout=0.5,
+        interval=0.1,
+        root=str(tmp_path),
+    )
+    assert res.status == ToolResultStatus.SUCCESS
+    p = _payload(res)
+    assert p["satisfied"] is None
+    assert p["predicate_result"]["result"] == "indeterminate"
+    assert p["evaluation_mode"] == "polling"
+    assert p["interval"] == 0.1
+    assert p["sample_count"] >= 1
+    assert p["observer_error_count"] == p["sample_count"]
+    assert p["predicate_result"]["observer_error_count"] == p["observer_error_count"]
+    assert "读取失败" in p["detail"]
+
+
+def test_wait_capped_negative_is_indeterminate_but_positive_witness_is_satisfied(tool, tmp_path):
+    cap = int(tool._load_smx().FC_CAP)  # noqa: SLF001
+    target = tmp_path / "large.bin"
+    with target.open("wb") as fh:
+        fh.write(b"WITNESS\n")
+        fh.write(b"A" * cap)
+        fh.write(b"NEEDLE_AFTER_CAP")
+
+    negative = _payload(
+        tool.execute(
+            action="wait",
+            file_contains=[str(target), "NEEDLE_AFTER_CAP"],
+            timeout=0.5,
+            interval=0.1,
+            root=str(tmp_path),
+        )
+    )
+    assert negative["satisfied"] is None
+    assert negative["predicate_result"]["result"] == "indeterminate"
+    assert negative["predicate_result"]["coverage_complete"] is False
+    assert "capped" in negative["detail"]
+
+    positive = _payload(
+        tool.execute(
+            action="wait",
+            file_contains=[str(target), "WITNESS"],
+            timeout=0.5,
+            interval=0.1,
+            root=str(tmp_path),
+        )
+    )
+    assert positive["satisfied"] is True
+    assert positive["predicate_result"]["result"] == "satisfied"
+    assert positive["predicate_result"]["coverage_complete"] is False
+
+
+def test_wait_timeout_reports_unsatisfied_sampling_semantics(tool, tmp_path):
+    p = _payload(
+        tool.execute(
+            action="wait",
+            file_exists=str(tmp_path / "never.flag"),
+            timeout=0.5,
+            interval=0.1,
+            root=str(tmp_path),
+        )
+    )
+    assert p["satisfied"] is False
+    assert p["predicate_result"]["result"] == "unsatisfied"
+    assert p["evaluation_mode"] == "polling"
+    assert p["sample_count"] >= 2
+    assert p["observer_error_count"] == 0
+    assert p["predicate_result"]["sampling_semantics"] == "discrete_samples_only"
+
+
+def test_wait_nonloopback_host_rejected(tool):
+    res = tool.execute(action="wait", port_open=80, host="example.com", timeout=1)
+    assert res.status == ToolResultStatus.FAILURE and "安全拒绝" in res.content
+
+
+def test_wait_two_predicates_rejected(tool, tmp_path):
+    res = tool.execute(action="wait", file_exists=str(tmp_path), file_gone=str(tmp_path / "x"))
+    assert res.status == ToolResultStatus.FAILURE and "恰好一个谓词" in res.content
+
+
+def test_wait_no_command_surface(tool):
+    assert "command" not in json.dumps(tool.parameters["properties"])
+    assert "cmd" not in tool.parameters["properties"]
+
+
+def test_wait_description_exposes_tristate_and_sampling_semantics(tool):
+    assert "satisfied=true/false/null" in tool.description
+    assert "sample_count" in tool.description
+    assert "observer_error_count" in tool.description
+    assert "采样间隙" in tool.description
+    assert "nested smc canonical projection" in tool.description
+    assert "canonical=false" in tool.description
+
+
+# ---------- snapshot / diff ----------
+def test_snapshot_then_diff_shows_created(tool, tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    snap = _payload(tool.execute(action="snapshot", roots=[str(work)], depth=2))
+    assert snap["entries"] == 1  # 冻结行为: 空目录计根条目
+    (work / "new.txt").write_text("hi")
+    d = _payload(tool.execute(action="diff", since=snap["snapshot_id"]))
+    assert d["created"] == 1 and d["deleted"] == 0  # modified=1 为根目录 mtime，属冻结语义
+    assert any("+new.txt" in r for r in d["display_rows"])
+
+
+def test_diff_between_two_snapshots_shows_deleted(tool, tmp_path):
+    work = tmp_path / "w"
+    work.mkdir()
+    victim = work / "old.txt"
+    victim.write_text("x")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)]))["snapshot_id"]
+    victim.unlink()
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)]))["snapshot_id"]
+    d = _payload(tool.execute(action="diff", since=s1, current=s2))
+    assert d["deleted"] == 1 and any("-old.txt" in r for r in d["display_rows"])
+
+
+def test_diff_between_different_snapshot_scopes_is_explicitly_incomparable(tool, tmp_path):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "a.txt").write_text("a")
+    (right / "b.txt").write_text("b")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(left)], depth=2))["snapshot_id"]
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(right)], depth=2))["snapshot_id"]
+    d = _payload(tool.execute(action="diff", since=s1, current=s2))
+    assert d["comparable"] is False
+    assert d["scope_relation"] == "different_roots"
+    assert d["created"] is None and d["deleted"] is None and d["modified"] is None
+    assert d["total_changes"] is None
+    assert d["display_rows"] == []
+    assert d["diff_complete"] is False
+
+
+def test_diff_same_roots_but_different_depth_is_incomparable(tool, tmp_path):
+    work = tmp_path / "depth"
+    (work / "nested").mkdir(parents=True)
+    (work / "nested" / "x.txt").write_text("x")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)], depth=1))["snapshot_id"]
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)], depth=2))["snapshot_id"]
+    d = _payload(tool.execute(action="diff", since=s1, current=s2))
+    assert d["comparable"] is False
+    assert d["scope_relation"] == "different_depth"
+    assert d["created"] is None and d["deleted"] is None and d["modified"] is None
+
+
+def test_diff_truncated_budget_never_reports_deleted(tool, tmp_path):
+    # P1 回归: budget 截断侧的 ±差集不可判（110 文件 + 根 = 111 条目 > budget 100）。
+    # 旧行为会把 11 个被预算裁剪掉的文件误报为 deleted；修复后必须降级为 null(unknown)。
+    work = tmp_path / "w"
+    work.mkdir()
+    for i in range(110):
+        (work / f"f{i:03d}.txt").write_text("x")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=5000))["snapshot_id"]
+    (work / "f000.txt").write_text("changed")
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=100))["snapshot_id"]
+    d = _payload(tool.execute(action="diff", since=s1, current=s2))
+    assert d["diff_complete"] is False
+    assert d["deleted"] is None and d["created"] is None and d["total_changes"] is None
+    assert d["modified"] >= 1
+    assert d["field_completeness"] == {
+        "created": False, "deleted": False, "modified": False, "total_changes": False
+    }
+    assert d["modified_semantics"] == "observed_lower_bound"
+    assert any(r.startswith("~") and "f000.txt" in r for r in d["display_rows"])
+    assert not any(r.startswith(("+", "-")) for r in d["display_rows"])
+    assert any(m.get("truncated") for m in d["meta"]["current"])
+    assert "warning" in d
+
+
+def test_diff_live_truncated_baseline_also_downgrades(tool, tmp_path):
+    # 现场(现拍)分支同样受完整性纪律约束: 基线截断即降级，磁盘无删除就不得报 deleted。
+    work = tmp_path / "w"
+    work.mkdir()
+    for i in range(110):
+        (work / f"g{i:03d}.txt").write_text("x")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=100))["snapshot_id"]
+    d = _payload(tool.execute(action="diff", since=s1))  # live 现拍按基线 budget=100，同样截断
+    assert d["diff_complete"] is False
+    assert d["deleted"] is None and d["created"] is None
+    assert d["meta"]["baseline"] and "warning" in d
+
+
+def test_diff_bad_snapshot_id_rejected(tool):
+    res = tool.execute(action="diff", since="../evil")
+    assert res.status == ToolResultStatus.FAILURE
+
+
+# ---------- receipt ----------
+def test_receipt_summary_and_traversal_rejected(tool, tmp_path):
+    flag = tmp_path / "done.flag"
+    flag.write_text("ok")
+    w = _payload(tool.execute(action="wait", file_exists=str(flag), timeout=3, root=str(tmp_path)))
+    rid = w["run_id"]
+    r = _payload(tool.execute(action="receipt", run_id=rid, root=str(tmp_path)))
+    assert r["kind"] == "wait" and r["satisfied"] is True and "hint" in r
+    full = _payload(tool.execute(action="receipt", run_id=rid, root=str(tmp_path), full=True))
+    assert full["run_id"] == rid and "_receipt_path" in full
+    for bad in ("../evil", "a/b", "", "a..b"):
+        res = tool.execute(action="receipt", run_id=bad, root=str(tmp_path))
+        assert res.status == ToolResultStatus.FAILURE, bad
+
+
+def test_receipt_missing_run(tool, tmp_path):
+    res = tool.execute(action="receipt", run_id="no-such-run", root=str(tmp_path))
+    assert res.status == ToolResultStatus.FAILURE and "回执不存在" in res.content
+
+
+# ---------- opt-in ----------
+def test_opt_in_default_off():
+    f = next(f for f in dataclasses.fields(Settings) if f.name == "smx_perceive_path")
+    assert f.default == ""
+
+
+def test_smc_snapshot_projection_is_canonical_without_breaking_legacy_envelope(tool, tmp_path):
+    work = tmp_path / "smc-snapshot"
+    work.mkdir()
+    (work / "a.txt").write_text("a")
+    payload = _payload(tool.execute(action="snapshot", roots=[str(work)], depth=2, budget=5000))
+
+    # Legacy envelope remains available.
+    assert payload["action"] == "snapshot"
+    assert payload["snapshot_id"].startswith("snap-")
+
+    smc = payload["smc"]
+    assert smc["schema"] == "smc.world_snapshot.v0.1"
+    assert smc["domain"] == "shell"
+    assert smc["snapshot_id"] == payload["snapshot_id"]
+    assert smc["scope"] == {"roots": [str(work.resolve())], "depth": 2, "filters": []}
+    assert smc["observed_at"]
+    assert smc["completeness"] == {"complete": True, "reasons": []}
+    assert smc["budget"]["entries"] >= 2
+    assert smc["budget"]["budget_cap"] == 5000
+    assert smc["budget"]["est_tokens"] is None
+    assert smc["grounding_version"] == payload["content_sha256"]
+    assert smc["projection"]["representation"] == "overview"
+    assert smc["projection"]["complete"] is False
+    assert smc["projection"]["full_ref"] == payload["store_path"]
+    assert smc["objects_ref"] == payload["store_path"]
+
+
+def test_smc_diff_projection_uses_full_mechanical_lists_and_snapshot_pair_semantics(tool, tmp_path):
+    work = tmp_path / "smc-diff"
+    work.mkdir()
+    (work / "keep.txt").write_text("v1")
+    (work / "gone.txt").write_text("gone")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)]))["snapshot_id"]
+    (work / "keep.txt").write_text("version-two")
+    (work / "gone.txt").unlink()
+    (work / "new.txt").write_text("new")
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)]))["snapshot_id"]
+
+    payload = _payload(tool.execute(action="diff", since=s1, current=s2))
+    smc = payload["smc"]
+    assert smc["schema"] == "smc.semantic_diff.v0.1"
+    assert smc["domain"] == "shell"
+    assert smc["from_version"] == s1
+    assert smc["to_version"] == s2
+    assert smc["diff_semantics"] == "snapshot_pair_net"
+    assert smc["comparable"] is True
+    assert smc["scope_relation"] == "same"
+    assert any(x.endswith("/new.txt") for x in smc["created"])
+    assert any(x.endswith("/gone.txt") for x in smc["removed"])
+    changed = next(x for x in smc["changed"] if x["path"].endswith("/keep.txt"))
+    assert set(changed["changed"]) >= {"s", "m"}
+    assert smc["completeness"] == {"complete": True, "reasons": []}
+    assert smc["field_completeness"] == {"created": True, "removed": True, "changed": True}
+
+
+def test_smc_incomplete_diff_keeps_changed_lower_bound_and_nulls_false_difference_claims(tool, tmp_path):
+    work = tmp_path / "smc-incomplete"
+    work.mkdir()
+    for idx in range(110):
+        (work / f"f{idx:03d}.txt").write_text("x")
+    s1 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=5000))["snapshot_id"]
+    (work / "f000.txt").write_text("changed")
+    s2 = _payload(tool.execute(action="snapshot", roots=[str(work)], budget=100))["snapshot_id"]
+
+    smc = _payload(tool.execute(action="diff", since=s1, current=s2))["smc"]
+    assert smc["created"] is None and smc["removed"] is None
+    assert any(x["path"].endswith("/f000.txt") for x in smc["changed"])
+    assert smc["completeness"]["complete"] is False
+    assert smc["completeness"]["reasons"]
+    assert smc["field_completeness"] == {"created": False, "removed": False, "changed": False}
+
+
+def test_smc_wait_projection_is_action_receipt_with_mechanical_predicate(tool, tmp_path):
+    missing = tmp_path / "never.flag"
+    payload = _payload(
+        tool.execute(
+            action="wait",
+            file_exists=str(missing),
+            root=str(tmp_path),
+            timeout=0.5,
+            interval=0.1,
+        )
+    )
+    assert payload["satisfied"] is False  # legacy envelope preserved
+
+    smc = payload["smc"]
+    required = {
+        "schema", "domain", "scope_ref", "action_id", "receipt_id", "receipt_seq", "verb",
+        "operation_class", "idempotency_class", "atomicity_class", "target_id", "status",
+        "before_version", "after_version", "observed_effects", "boundary_events",
+        "grounding_refs", "completeness", "predicate_result", "predicate",
+    }
+    assert required <= set(smc)
+    assert smc["schema"] == "smc.action_receipt.v0.1"
+    assert smc["domain"] == "shell"
+    assert smc["verb"] == "wait"
+    assert smc["operation_class"] == "observe"
+    assert smc["status"] == "ok"  # unsatisfied predicate is not a tool failure
+    assert smc["predicate_result"]["result"] == "unsatisfied"
+    pred = smc["predicate"]
+    assert pred == {
+        "schema": "smc.predicate.v0.1",
+        "domain": "shell",
+        "scope_ref": smc["scope_ref"],
+        "target": str(missing.resolve()),
+        "property": "exists",
+        "operator": "eq",
+        "value": True,
+    }
+
+
+def test_smc_wait_port_probe_declares_probe_operation_class(tool):
+    # Port 1 is expected closed locally; predicate result itself is not the assertion here.
+    payload = _payload(tool.execute(action="wait", port_open=1, host="127.0.0.1", timeout=0.5, interval=0.1))
+    assert payload["smc"]["operation_class"] == "probe"
+    assert payload["smc"]["predicate"]["property"] == "connectable"
+
+
+def test_raw_receipt_hydration_remains_noncanonical_and_has_no_smc_projection(tool, tmp_path):
+    root = tmp_path / "raw-receipt"
+    run = root / ".smx" / "runs" / "run-raw-1"
+    run.mkdir(parents=True)
+    (run / "receipt.json").write_text(
+        json.dumps({"run_id": "run-raw-1", "kind": "exec", "diff": {"created": ["x"]}})
+    )
+    payload = _payload(tool.execute(action="receipt", run_id="run-raw-1", root=str(root), full=True))
+    assert payload["canonical"] is False
+    assert payload["representation"] == "raw_smx_receipt"
+    assert "smc" not in payload

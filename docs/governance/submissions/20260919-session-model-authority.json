@@ -1,0 +1,110 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-session-model-authority",
+  "summary": "Keep Web model selection authority strictly session-scoped: only explicit human model_change (or new-session creation) may mutate a session's model_override; stale browser snapshots can no longer create authority on a session that had none; the session list exposes the effective model read-only so the WebUI restores each session's own model on switch instead of conflating per-run model_used telemetry with authority.",
+  "components": [
+    {
+      "component_id": "session-model-authority-server",
+      "paths": [
+        "src/llm_loop/core/session.py",
+        "src/llm_loop/web/routes.py",
+        "src/llm_loop/web/schemas.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "session-scoped model routing authority (existing Session.model_override via M48 routing pool) and Web ingress intent handling",
+      "disposition": "ADMIT as a narrowing of control: authority mutation now requires explicit human intent (model_change or new_session). Known model refs route through accepted Session authority; unknown refs keep per-call routing for the honest unavailable fact. New sessions inherit the previous shared session's override (M60, aligned with feishu M52-fix / CLI /new). No new store or authority layer is introduced.",
+      "evidence": [
+        "SessionMeta now carries model_override as a read-only passthrough (list/cache rebuild sites covered); the runtime Session persistence of model_override predates this change (M48/M52) and is untouched.",
+        "tests/web regression: a session with no override stays untouched when a request arrives without explicit model_change.",
+        "tests/web regression: stale web model snapshot cannot overwrite an in-run switch_model authority change.",
+        "New-session inheritance reads the old shared session's override fail-open (missing/corrupt old session does not block session creation)."
+      ],
+      "verification_level": "tests/web full run plus model_override-adjacent unit files, Ruff, Pyright, WebUI vitest suite, WebUI production build, worktree-clean candidate",
+      "model_evidence_veto_recovery_exit": "In-run switch_model remains authoritative and can still move a session's model at any time; sending requests without model_change never mutates authority; operators can revert the single implementation commit with no data migration (old sessions read the new meta key as None).",
+      "rollback_route": "Revert d877e208c together with this manifest; no runtime.toml, credential, or persisted-data migration is required.",
+      "declaration_id": "session-model-authority-server"
+    },
+    {
+      "component_id": "session-model-authority-tests",
+      "paths": [
+        "tests/web/test_api.py",
+        "tests/web/test_stream_endpoint.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "deterministic regression coverage for session model authority",
+      "disposition": "ADMIT as tests only; existing accepted-selection tests now carry explicit model_change intent, plus two new regressions for the no-authority-creation and explicit-replacement invariants.",
+      "evidence": [
+        "tests/web full run green on the candidate (exit 0).",
+        "Two new regressions: snapshot cannot create authority without explicit change; explicit change replaces existing authority."
+      ],
+      "verification_level": "Full tests/web run under the repository .venv",
+      "model_evidence_veto_recovery_exit": "Tests expose exact mechanical behavior and can be revised independently of production state.",
+      "rollback_route": "Revert with the implementation commit."
+    },
+    {
+      "component_id": "session-model-authority-webui",
+      "paths": [
+        "webui/src/core/api.ts",
+        "webui/src/core/conversation.ts",
+        "webui/src/core/stores.ts",
+        "webui/src/sendflow.test.tsx"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "operator-facing WebUI client state bound to server authority",
+      "disposition": "ADMIT as client view logic only: selector restores each session's own model from the session list; explicit user selection sets modelChangePending so only the next send carries model_change; the per-run model_used telemetry no longer writes back into the selector (removing the cross-session pollution source). No runtime authority lives in the client.",
+      "evidence": [
+        "WebUI vitest 156/156 green including updated sendflow coverage.",
+        "Session switching restores model from SessionMeta.model; list polling does not override a pending explicit selection."
+      ],
+      "verification_level": "WebUI vitest suite and production build on the candidate",
+      "model_evidence_veto_recovery_exit": "The selector is a view; server session authority remains inspectable via the session list API.",
+      "rollback_route": "Revert with the implementation commit."
+    },
+    {
+      "component_id": "session-model-authority-a5",
+      "paths": [
+        "docs/governance/submissions/20260919-session-model-authority.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 remains mechanical presence/coverage and does not decide semantic quality or promotion.",
+      "evidence": [
+        "Manifest partitions the exact PR changed-path set and declares the single control component."
+      ],
+      "verification_level": "Local exact A.5 self-gate against the PR base before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth and merge.",
+      "rollback_route": "Revert together with the implementation metadata."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "session-model-authority-server",
+      "g1": {
+        "necessity": "Web model selection previously conflated UI continuity with authority: payload.model was sent on every request, so a stale browser snapshot could create or mutate a session's model authority without explicit human intent, and one session's selection leaked into another session's effective routing."
+      },
+      "g2": {
+        "authority_owner": "the existing per-Session model_override authority resolved by the M48 model routing pool",
+        "relationship": "reuse",
+        "non_duplication": "No new configuration store or routing authority is added. The change extends SessionMeta with a read-only passthrough of the existing override, adds one explicit-intent request field, and removes the client-side writeback that duplicated authority into the selector."
+      },
+      "g3": {
+        "model_evidence": [
+          "session list API exposes each session's effective model (override or assembly default) as a read-only fact",
+          "regressions proving stale snapshots cannot create or overwrite authority and that explicit change can replace it",
+          "new-session inheritance is fail-open and mirrors feishu M52-fix / CLI /new semantics"
+        ],
+        "recovery_or_reason": "In-run switch_model remains a model-invokable authority change at any time; requests without model_change are pure no-ops on authority; omitting the field entirely preserves pre-existing session authority; old persisted sessions read the new meta key as None."
+      },
+      "g4": {
+        "rollback": "Revert the single implementation commit d877e208c plus this manifest; no persisted-data migration, runtime.toml change, or credential change is involved.",
+        "verification": [
+          "tests/web full run on the candidate: exit 0, all tests green (includes the two new regressions and the two updated intent tests)",
+          "model_override-adjacent unit files (test_model_pool_per_model, test_routing_epoch, test_m50_three_end, test_export_distill_compat, test_migrate_rollback): exit 0",
+          "Ruff on src/tests/scripts: all checks passed; Pyright src: 0 errors / 0 warnings / 0 informations",
+          "WebUI vitest 156/156 passed (24 files); npm production build passed",
+          "worktree clean at the review candidate; verification run against the actual candidate tree, not a stale HEAD"
+        ]
+      }
+    }
+  ]
+}

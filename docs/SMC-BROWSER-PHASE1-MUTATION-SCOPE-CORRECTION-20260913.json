@@ -1,0 +1,80 @@
+{
+  "schema": "smc.browser_phase1_mutation_scope_correction.v0.1",
+  "status": "QUALIFIED_CORRECTION",
+  "baseline_commit": "23947f8185bd710d590d47cc85039038481e7c28",
+  "implementation_commit": "4461e64fc924ef265dad2a09cb6f1a85a3407326",
+  "supersedes": {
+    "scope": "browser_phase1_mutation_version_scope_only",
+    "historical_evidence_rewritten": false,
+    "strict_b_stale_semantics_changed": false
+  },
+  "trigger": {
+    "result_bundle": "evals/browser_smc_ab/results/SMOKE-v0.1",
+    "valid_rows": 6,
+    "smc_task_pass": 0,
+    "smc_task_total": 3,
+    "legacy_task_pass": 3,
+    "legacy_task_total": 3,
+    "smc_terminal_receipt_rejected_total": 9,
+    "smc_successful_physical_dispatch_total": 0,
+    "automatic_retry_true_total": 0,
+    "repeated_reason": "version_precondition_stale:different_snapshot_same_generation"
+  },
+  "corrected_mutation_version_scopes": {
+    "click": ["object"],
+    "fill": ["object"],
+    "select": ["object"],
+    "scroll": ["object"],
+    "navigate": ["resource"]
+  },
+  "snapshot_semantics": {
+    "read_only_version_assessment_preserved": true,
+    "mutation_precondition_scope": false
+  },
+  "unchanged_boundaries": {
+    "fresh_pre_dispatch_observation": true,
+    "exact_identity_reresolution": true,
+    "strict_stale_rejection": true,
+    "automatic_mutation_retry": false,
+    "silent_rebind": false,
+    "task_completion_judgement": false
+  },
+  "deterministic": {
+    "focused_action_spec_qualification_pass": 43,
+    "expanded_browser_smc_schema_adjacency_pass": 179,
+    "all_mutation_snapshot_scope_reject_before_capture": true,
+    "runtime_profile_model_surface_alignment": true
+  },
+  "live": {
+    "navigation": {
+      "pass": "8/8",
+      "sha256": "81168752968887f26dbb741033bf97d6fcbea25730a79d3d8da4e09f9edf0c80"
+    },
+    "semantic_diff": {
+      "pass": "15/15",
+      "sha256": "b0af595c5c392de494b243127f9ca60ae57624fd9f19a2dd04370680dd475915"
+    },
+    "predicate_wait": {
+      "pass": "12/12",
+      "sha256": "41b7ca20d9bbc938b4c0254660fddc16a15c78aac56da1f7eff90bae01732828"
+    },
+    "version_pressure": {
+      "pass": "13/13",
+      "sha256": "51268ff3b5b9e31a92a167425a18746e01310749fa4b3b0f3c19dd2613d2d2ae"
+    },
+    "action_receipt": {
+      "behavior": "19/19",
+      "safety": "9/9",
+      "sha256": "1c017ad8779450f2e5b2a75ab6e0af253350ad9345f88ca3c046737ea529c821",
+      "snapshot_mutation_scope_rejected_without_navigation": true,
+      "model_surface_snapshot_mutation_scope_absent": true
+    }
+  },
+  "working_tree_gates_before_implementation_commit": {
+    "ruff": "PASS",
+    "pyright": "0 errors / 0 warnings / 0 informations",
+    "whole_tree_security_files": 1684,
+    "ci_gate": "PASS"
+  },
+  "next": "new_protocol_identity_real_model_ab_after_final_committed_state_requalification"
+}

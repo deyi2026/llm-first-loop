@@ -1,0 +1,157 @@
+"""历史会话懒加载测试（spec 5.3.2 D2 / design §2.4.4 / tasks 4.4）.
+
+断言:
+1. get_session_messages 带 limit 返回连续切片 + has_more/total 正确
+2. 不传 limit 全量返回 + has_more=false + total=len（向后兼容）
+3. offset >= total → messages=[] + has_more=false，不报错
+4. 全部页拼接 == 会话全部消息（顺序不变、不丢一条）
+5. MessageItem 契约不变
+6. app.js loadSessionMessages 含 limit/offset + 加载更早逻辑
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from llm_loop.web import build_app
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _make_client(engine):
+    return TestClient(build_app(engine=engine))
+
+
+def _build_session(build_test_engine, n_messages: int):
+    """发 n 条消息构造会话（每条 chat 产生 user + assistant 共 2 条），返回 (engine, sid, total)."""
+    engine, _ = build_test_engine([{"content": f"m{i}"} for i in range(n_messages)])
+    client = _make_client(engine)
+    sid = None
+    for i in range(n_messages):
+        r = client.post("/api/v1/chat", json={"message": f"m{i}"})
+        assert r.status_code == 200
+        sid = r.json()["session_id"]
+    return engine, sid, n_messages * 2
+
+
+class TestHistoryPagination:
+    def test_limit_returns_slice(self, build_test_engine):
+        engine, sid, total = _build_session(build_test_engine, 3)  # 6 条
+        client = _make_client(engine)
+        resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=2")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == total
+        assert len(body["messages"]) == 2
+        assert body["has_more"] is True
+
+    def test_no_limit_returns_all(self, build_test_engine):
+        engine, sid, total = _build_session(build_test_engine, 3)
+        client = _make_client(engine)
+        resp = client.get(f"/api/v1/sessions/{sid}/messages")
+        body = resp.json()
+        assert len(body["messages"]) == total
+        assert body["has_more"] is False
+        assert body["total"] == total
+
+    def test_offset_beyond_total_returns_empty(self, build_test_engine):
+        engine, sid, total = _build_session(build_test_engine, 2)
+        client = _make_client(engine)
+        resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=10&offset={total + 5}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["messages"] == []
+        assert body["has_more"] is False
+
+    def test_all_pages_concat_equals_full(self, build_test_engine):
+        engine, sid, total = _build_session(build_test_engine, 4)  # 8 条
+        client = _make_client(engine)
+        collected = []
+        offset = 0
+        while True:
+            resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=3&offset={offset}")
+            body = resp.json()
+            collected = body["messages"] + collected
+            if not body["has_more"]:
+                break
+            offset += 3
+        assert len(collected) == total
+
+    def test_message_item_contract_allows_planned_fields(self, build_test_engine):
+        engine, sid, _ = _build_session(build_test_engine, 1)
+        client = _make_client(engine)
+        resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=10")
+        for m in resp.json()["messages"]:
+            # M51/M52: 模型 + token 消耗字段（2026-08-16 页脚扩展，属计划内契约变更）
+            # ts: 消息时间戳；attachments: 结构化附件卡恢复（均为计划内契约扩展）
+            assert set(m.keys()) <= {
+                "role", "content", "tool_call_id", "reasoning_content",
+                "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
+                "ts", "attachments", "status", "tool_name", "duration_ms",
+                "fallback_receipt", "reasoning_mode", "reasoning_capable", "reasoning_control",
+                "reasoning_supported", "reasoning_effective", "reasoning_tokens",
+            }
+
+    def test_runtime_receipt_history_projection_is_whitelisted(self, build_test_engine):
+        """UI receipt survives refresh, while arbitrary assistant metadata stays private."""
+        engine, sid, _ = _build_session(build_test_engine, 1)
+        sess = engine.session.load(sid)
+        assistant = next(m for m in reversed(sess.messages) if m.role == "assistant")
+        metadata = dict(assistant.metadata or {})
+        runtime_receipt = dict(metadata.get("runtime_receipt") or {})
+        runtime_receipt["fallback_receipt"] = {
+            "from": "p/a",
+            "to": "p/b",
+            "reason": "rate_limit",
+        }
+        metadata["runtime_receipt"] = runtime_receipt
+        metadata["private_internal_fact"] = "must-not-leak"
+        assistant.metadata = metadata
+        engine.session.save(sess)
+
+        client = _make_client(engine)
+        rows = client.get(f"/api/v1/sessions/{sid}/messages").json()["messages"]
+        restored = next(m for m in reversed(rows) if m["role"] == "assistant")
+        assert restored["fallback_receipt"] == {
+            "from": "p/a",
+            "to": "p/b",
+            "reason": "rate_limit",
+        }
+        assert "runtime_receipt" not in restored
+        assert "private_internal_fact" not in restored
+
+    def test_limit_projects_only_requested_page(self, build_test_engine, monkeypatch):
+        """limit bounds MessageItem projection work instead of slicing after projection."""
+        engine, sid, total = _build_session(build_test_engine, 8)
+        import llm_loop.web.routes as routes
+
+        original = routes.MessageItem
+        calls = 0
+
+        def counted_message_item(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(routes, "MessageItem", counted_message_item)
+        client = _make_client(engine)
+        resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=3")
+
+        assert resp.status_code == 200
+        assert resp.json()["total"] == total
+        assert len(resp.json()["messages"]) == 3
+        assert calls == 3
+
+
+class TestFrontendLazyLoad:
+    def test_load_session_messages_uses_limit(self, app_js_src: str):
+        assert "loadSessionMessages" in app_js_src
+        assert "?limit=" in app_js_src
+        assert "limit=${HISTORY_PAGE_SIZE}" in app_js_src
+
+    def test_load_earlier_history_defined(self, app_js_src: str):
+        assert "async function loadEarlierHistory" in app_js_src
+        assert "&offset=" in app_js_src
+        assert "加载更早消息" in app_js_src

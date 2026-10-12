@@ -1,0 +1,245 @@
+{
+  "applied_to_prompt": false,
+  "date": "2026-08-30",
+  "mode": "shadow",
+  "models": [
+    {
+      "aggregate_A": {
+        "completion_rate": 0.1667,
+        "drift_rate": 0.1667,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 0.0
+      },
+      "evidence": "controlled_r7_A_live",
+      "model": "cognilocal/qwen3.8-27b-cog",
+      "notes": "configured alias accepted by provider; A-arm completion 1/6 and dominance 0",
+      "reasoning_update": null,
+      "tier": "weak"
+    },
+    {
+      "evidence": "r8_remote_ab",
+      "model": "deepseek/deepseek-v4-flash",
+      "notes": "credential-safe project LLMClient R7 A/B; classification=r7_a_weak_gate; raw answers/provider bodies not persisted",
+      "reasoning_update": null,
+      "tier": "weak",
+      "aggregate_A": {
+        "tasks": 6,
+        "completion_rate": 0.3333,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.3257,
+        "hard_structural_gate_pass": false
+      },
+      "aggregate_B": {
+        "tasks": 6,
+        "completion_rate": 1.0,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 1.0,
+        "mean_injection_share": 0.1644,
+        "hard_structural_gate_pass": true
+      }
+    },
+    {
+      "evidence": "r8_remote_ab",
+      "model": "deepseek/deepseek-v4-pro",
+      "notes": "credential-safe project LLMClient R7 A/B; classification=r7_a_weak_gate; raw answers/provider bodies not persisted",
+      "reasoning_update": null,
+      "tier": "weak",
+      "aggregate_A": {
+        "tasks": 6,
+        "completion_rate": 0.6667,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.3257,
+        "hard_structural_gate_pass": false
+      },
+      "aggregate_B": {
+        "tasks": 6,
+        "completion_rate": 0.8333,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 1.0,
+        "mean_injection_share": 0.1644,
+        "hard_structural_gate_pass": true
+      }
+    },
+    {
+      "evidence": "r8_remote_ab",
+      "model": "glm/glm-5.3",
+      "notes": "credential-safe project LLMClient R7 A/B; classification=r7_a_weak_gate; raw answers/provider bodies not persisted",
+      "reasoning_update": null,
+      "tier": "weak",
+      "aggregate_A": {
+        "tasks": 6,
+        "completion_rate": 0.1667,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.3257,
+        "hard_structural_gate_pass": false
+      },
+      "aggregate_B": {
+        "tasks": 6,
+        "completion_rate": 0.3333,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.1644,
+        "hard_structural_gate_pass": true
+      }
+    },
+    {
+      "evidence": "r8_remote_ab",
+      "model": "glm/glm-5.3-flash",
+      "notes": "credential-safe project LLMClient R7 A/B; classification=r7_a_weak_gate; raw answers/provider bodies not persisted",
+      "reasoning_update": null,
+      "tier": "weak",
+      "aggregate_A": {
+        "tasks": 6,
+        "completion_rate": 0.5,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.3257,
+        "hard_structural_gate_pass": false
+      },
+      "aggregate_B": {
+        "tasks": 6,
+        "completion_rate": 0.1667,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.1644,
+        "hard_structural_gate_pass": true
+      }
+    },
+    {
+      "aggregate_A": {
+        "completion_rate": 1.0,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 1.0
+      },
+      "aggregate_B": {
+        "completion_rate": 1.0,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": true,
+        "mean_injection_share": 0.1644,
+        "tasks": 6,
+        "user_dominance_rate": 1.0
+      },
+      "evidence": "r7_frozen",
+      "model": "local/qwen/qwen3.8-27b",
+      "notes": "A-arm 6/6, drift 0, dominance 1.0; reasoning tokens present on all six controlled responses",
+      "reasoning_tokens": [
+        49,
+        55,
+        228,
+        150,
+        51,
+        74
+      ],
+      "reasoning_update": true,
+      "source_sha256": "814d745c4398f44073f7291481db5a269cd02e9fe9f846be53a61c8d971db970",
+      "tier": "strong"
+    },
+    {
+      "aggregate_A": {
+        "completion_rate": 0.6667,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 0.0
+      },
+      "aggregate_B": {
+        "completion_rate": 1.0,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": true,
+        "mean_injection_share": 0.1644,
+        "tasks": 6,
+        "user_dominance_rate": 1.0
+      },
+      "evidence": "r7_frozen_plus_alias_probe",
+      "model": "local/qwen3.8-27b-mlx",
+      "notes": "configured alias is accepted and provider reports response_model=qwen3.8-27b-mlx@4bit; frozen @4bit A-arm 4/6 with dominance 0. reasoning tokens observed, but reasoning metadata intentionally not asserted for weak tier",
+      "reasoning_update": null,
+      "source_sha256": "df2c9b70e8adc6f2d8204bd16c00cad76c98a1471758a032a25e52f83fc809c8",
+      "tier": "weak"
+    },
+    {
+      "aggregate_A": {
+        "completion_rate": 0.1667,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 0.0
+      },
+      "evidence": "controlled_r7_A_live",
+      "model": "local/qwythos-9b-claude-mythos-5-1m@q4_k_m",
+      "notes": "A-arm completion 1/6 and dominance 0; reasoning tokens observed but not used to upgrade tier",
+      "reasoning_update": null,
+      "tier": "weak"
+    },
+    {
+      "evidence": "r8_remote_ab",
+      "model": "minimax/MiniMax-M3",
+      "notes": "credential-safe project LLMClient R7 A/B; classification=r7_a_weak_gate; raw answers/provider bodies not persisted",
+      "reasoning_update": null,
+      "tier": "weak",
+      "aggregate_A": {
+        "tasks": 6,
+        "completion_rate": 0.5,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.3257,
+        "hard_structural_gate_pass": false
+      },
+      "aggregate_B": {
+        "tasks": 6,
+        "completion_rate": 0.6667,
+        "drift_rate": 0.0,
+        "user_dominance_rate": 0.0,
+        "mean_injection_share": 0.1644,
+        "hard_structural_gate_pass": true
+      }
+    }
+  ],
+  "policy": {
+    "otherwise": "unknown",
+    "reasoning": "for strong models, assert only with direct provider/runtime evidence; weak models do not require reasoning metadata for R8 canary completeness",
+    "strong_gate": "completion_rate=1.0, drift_rate=0.0, user_dominance_rate=1.0 on the 6-fixture controlled A-arm",
+    "tier_source": "controlled R7 legacy-structure A-arm or explicit runtime evidence; never model/provider name, context, cost or thinking flag",
+    "weak_gate": "completion_rate<0.8 or user_dominance_rate<0.9 on controlled A-arm",
+    "transport_gate": "HTTP/network/protocol failure keeps tier=unknown; LLMEmptyResponseError is behavioral completion failure, not transport failure"
+  },
+  "providers_sha256_after": "5ae22fa8489083ee37d2e778a18afa1d11f77dbb8da7274ca9c42b317b6e62fa",
+  "providers_sha256_before": "fc7afbaab442834d420985cadf19b327d2027931a3d940e48903a5fb037871e1",
+  "providers_sha256_pre_retirement": "e25e74471ab9a3bf98b770c09a995c66377058aba4d4f2bd64be6447250749cd",
+  "retired_models": [
+    {
+      "date": "2026-08-30",
+      "model": "local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp",
+      "reason": "operator_retired_unused_model"
+    },
+    {
+      "date": "2026-08-30",
+      "model": "mxnook/glm-5.3-flash",
+      "reason": "operator_excluded_from_active_inventory"
+    }
+  ],
+  "schema": "injection-r8-capability-audit-v1",
+  "summary": {
+    "canary_ready": true,
+    "classified": 9,
+    "coverage_pct": 100.0,
+    "live_registry_reloaded": false,
+    "models_total": 9,
+    "strong": 1,
+    "unknown": 0,
+    "weak": 8
+  },
+  "providers_sha256_before_r8_2": "bc800ffa713c94510c1fb4841b9034fd0ea74486a8521c02fd877e21472e8f03",
+  "remote_ab_evidence": "docs/injection-governance/r8/remote-ab.json",
+  "runner": "scripts/injection_r8_remote_ab.py"
+}

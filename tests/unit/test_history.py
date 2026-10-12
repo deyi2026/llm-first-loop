@@ -1,0 +1,682 @@
+"""单元测试: 上下文构造与压缩另存（T18/T22 / FR-MSG-03 / spec 5.2.3-2）.
+
+T22 验收: 超长时"另存提取重要信息"再注入精简内容（无静默丢弃），
+压缩标注含"可查 search_archive"指引。
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from llm_loop.core.history import build_history_messages
+from llm_loop.core.message import Message, MessageSource
+
+_Role = Literal["user", "assistant", "tool", "system"]
+
+
+def _m(role: _Role, content: str) -> Message:
+    return Message(role=role, content=content, source=MessageSource.USER)
+
+
+def test_history_order_preserved():
+    """FR-MSG-03: 保序提交."""
+    msgs = [_m("user", "第一条"), _m("assistant", "回答1"), _m("user", "第二条")]
+    out = build_history_messages(msgs, system_prompt="SYS", max_chars=100000)
+    roles = [m["role"] for m in out]
+    assert roles == ["system", "user", "assistant", "user"]
+    assert out[1]["content"] == "第一条"
+    assert out[3]["content"] == "第二条"
+
+
+def test_history_compression_archives_oldest():
+    """T22/R8.17: 超长时最旧消息另存；压缩状态不自动进入 prompt."""
+    archived: list[Message] = []
+    msgs = [_m("user", "A" * 1000), _m("user", "B" * 1000), _m("user", "C" * 10)]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=600, session_id="s1", archive_sink=sink
+    )
+    # 被压缩的旧消息全部另存（信息零丢失）
+    assert len(archived) >= 1
+    assert all(a.content for a in archived)  # 原文完整
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out)
+    assert not any("ref=archive:search_archive" in str(m.get("content", "")) for m in out)
+    # 最新消息保留
+    contents = [m.get("content", "") for m in out if m["role"] != "system"]
+    assert any("C" in c for c in contents)
+
+
+def test_history_single_oversize_message_archived():
+    """T22: 单条消息即超限 → 全文另存 + 精简注入 + 压缩标注."""
+    archived: list[Message] = []
+    msgs = [_m("user", "A" * 5000)]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=2000, session_id="s1", archive_sink=sink
+    )
+    assert len(archived) == 1
+    assert len(archived[0].content) == 5000  # 原文完整另存
+    body = [m for m in out if m["role"] != "system"][0]["content"]
+    assert len(body) < 2100
+    assert "search_archive" in body
+
+
+def test_history_within_budget_no_compression():
+    """预算内 → 全保留无压缩标注."""
+    msgs = [_m("user", "你好"), _m("assistant", "你好呀")]
+    out = build_history_messages(msgs, system_prompt="SYS", max_chars=10000)
+    assert len(out) == 3
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out)
+
+
+def test_reasoning_content_kept_after_trim():
+    """M20 THK-04: 单条超限压缩后 reasoning_content 保留（回传链不因截断断裂）."""
+    from llm_loop.core.history import build_history_messages
+    from llm_loop.core.message import Message, MessageSource
+
+    long_msg = Message(
+        role="assistant",
+        content="x" * 5000,
+        source=MessageSource.USER,
+        reasoning_content="思考链保留",
+    )
+    out = build_history_messages([long_msg], system_prompt="", max_chars=2000)
+    found = [
+        d for d in out if d.get("role") == "assistant" and d.get("content", "").startswith("x")
+    ]
+    assert found, "压缩后应保留 assistant 消息"
+    assert found[0].get("reasoning_content") == "思考链保留"
+
+
+def _tool_pair(prefix: str, n_calls: int = 2) -> list[Message]:
+    """构造 assistant(tool_calls) + n 条 tool 响应的配对组（协议合法序列）."""
+    msgs: list[Message] = []
+    calls = []
+    for k in range(n_calls):
+        tid = f"{prefix}_call_{k}"
+        calls.append({"id": tid, "name": "web_fetch", "arguments": "{}"})
+    msgs.append(Message(role="assistant", content=f"调用 {prefix}", source=MessageSource.USER, tool_calls=calls))
+    for k in range(n_calls):
+        msgs.append(Message(role="tool", content=f"结果 {prefix}_{k}", source=MessageSource.TOOL, tool_call_id=f"{prefix}_call_{k}"))
+    return msgs
+
+
+def test_compression_keeps_tool_pairs_atomic():
+    """M40 修复: 压缩保留端——assistant(tool_calls) 与其 tool 响应同组保留（协议不断裂）."""
+    # 构造: 旧配对组（大字符，将触发归档）+ 新配对组（保留）+ 最新 user
+    msgs = []
+    for k in range(8):
+        msgs.extend(_tool_pair(f"old{k}", 2))  # 旧配对组（8 组 × 3 条，约 24 条大消息）
+    msgs.extend(_tool_pair("new", 2))  # 新配对组（保留）
+    msgs.append(_m("user", "最新问题"))
+    # 预算仅够最新部分 → 触发压缩
+    out = build_history_messages(msgs, system_prompt="SYS", max_chars=2000)
+
+    # 校验: assistant(tool_calls) 后的 tool 消息数 == 该 assistant 的 tool_calls 数（协议配对）
+    i = 0
+    n = len(out)
+    while i < n:
+        d = out[i]
+        if d["role"] == "assistant" and d.get("tool_calls"):
+            n_calls = len(d["tool_calls"])
+            j = i + 1
+            while j < n and out[j]["role"] == "tool":
+                j += 1
+            tool_count = j - (i + 1)
+            assert tool_count == n_calls, f"assistant(tool_calls={n_calls}) 后 tool 消息数 {tool_count} 不匹配"
+            i = j
+        else:
+            i += 1
+
+
+def test_compression_archives_tool_pairs_atomic():
+    """M40 修复: 压缩归档端——被归档的 assistant(tool_calls) 与其 tool 响应整组归档（无残留 tool 消息）."""
+    archived: list[Message] = []
+    msgs = []
+    for k in range(10):
+        msgs.extend(_tool_pair(f"old{k}", 2))
+    msgs.append(_m("user", "最新问题"))
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=600, session_id="s1", archive_sink=sink
+    )
+
+    # 归档端的 assistant(tool_calls) 也应与其 tool 响应同组归档（不残留孤 tool）
+    arch_roles = [m.role for m in archived]
+    for idx, r in enumerate(arch_roles):
+        if r == "assistant":
+            # 该 assistant 带 tool_calls → 其后必须归档了对应的 tool 响应（整组归档）
+            assert any(t == "tool" for t in arch_roles[idx:]), "归档端 assistant(tool_calls) 无对应 tool 响应"
+    # 保留端配对校验
+    i = 0
+    n = len(out)
+    while i < n:
+        d = out[i]
+        if d["role"] == "assistant" and d.get("tool_calls"):
+            n_calls = len(d["tool_calls"])
+            j = i + 1
+            while j < n and out[j]["role"] == "tool":
+                j += 1
+            assert (j - (i + 1)) == n_calls, "保留端 assistant(tool_calls) 与 tool 响应数不匹配"
+            i = j
+        else:
+            i += 1
+
+
+# ── EVO-9794797e + RULE-AI-00: 上下文压缩主动化 ──
+def test_history_compression_no_auto_llm_summary():
+    """RULE-AI-00: 压缩不再自动调用 summarizer 注入 LLM 摘要（AI 主动触发 search_archive）.
+
+    压缩状态/目录不再自动注入；原文仍完整另存，检索能力由稳定系统提示提供。
+    """
+    msgs = [
+        Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
+        for i in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    class _FakeResult:
+        summary = "这是旧消息的语义摘要内容"
+        source = "llm"
+        note = ""
+
+    class _FakeSummarizer:
+        def summarize(self, text):
+            return _FakeResult()
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=3000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=_FakeSummarizer(),
+    )
+    assert len(archived) >= 1  # 原文仍完整另存
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("上下文压缩摘要" in c for c in contents)  # 不再自动注入 LLM 摘要
+    assert not any("这是旧消息的语义摘要内容" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
+
+
+def test_history_compression_summary_fail_open():
+    """summarizer 异常 → fail-open：不阻断、无摘要/状态注入."""
+    msgs = [
+        Message(role="user", content="x" * 200, source=MessageSource.USER) for _ in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    class _BoomSummarizer:
+        def summarize(self, text):
+            raise RuntimeError("summarizer boom")
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=1000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=_BoomSummarizer(),
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("上下文压缩摘要" in c for c in contents)  # fail-open 无摘要
+    assert not any("ref=archive:search_archive" in c for c in contents)
+
+
+def test_history_no_summarizer_backward_compat():
+    """summarizer=None → 纯另存，无自动摘要/压缩状态注入."""
+    msgs = [
+        Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=1000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("上下文压缩摘要" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
+
+
+# ── EVO-20260811-1e68f400: 压缩档案目录化 ──
+def test_compression_archive_body_and_pointer_are_both_on_demand():
+    """R8.17: 归档正文和动态 pointer 都不自动回灌 provider。"""
+    msgs = [
+        Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
+        for i in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    class _FakeResult:
+        summary = "摘要"
+        source = "llm"
+        note = ""
+
+    class _FakeSummarizer:
+        def summarize(self, text):
+            return _FakeResult()
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=3000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=_FakeSummarizer(),
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("压缩档案目录" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
+    assert len(archived) >= 1  # 原文仍完整另存
+    assert any("旧消息" in m.content for m in archived)
+
+
+def test_archive_pointer_without_summarizer_is_prompt_neutral():
+    """R8.17: summarizer=None 同样不生成正文目录或动态 pointer。"""
+    msgs = [
+        Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=1000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("上下文压缩摘要" in c for c in contents)
+    assert not any("压缩档案目录" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
+
+
+def test_archive_pointer_does_not_replay_tool_result_catalog():
+    """R3: tool_name/结果构成不自动回灌；原始 tool 仍在 archive。"""
+    msgs = []
+    for k in range(6):
+        msgs.append(
+            Message(
+                role="assistant",
+                content=f"调用第{k}次" * 60,
+                source=MessageSource.USER,
+                tool_calls=[{"id": f"c{k}", "name": "read_file", "arguments": "{}"}],
+            )
+        )
+        msgs.append(
+            Message(
+                role="tool",
+                content=f"读取结果{k}" * 50,
+                source=MessageSource.TOOL,
+                tool_call_id=f"c{k}",
+                tool_name="read_file",
+            )
+        )
+    msgs.append(Message(role="user", content="最新问题", source=MessageSource.USER))
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=800,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("压缩档案目录" in c for c in contents)
+    assert not any("read_file" in c for c in contents if "ref=archive:search_archive" in c)
+    assert any(m.tool_name == "read_file" for m in archived)
+
+
+# ── R3: 压缩资料正文改为按需检索 ──
+def test_compression_does_not_reinject_deterministic_key_facts():
+    """R3: 关键事实仍随原文归档，但不自动重新注入当前 prompt。"""
+    msgs = [
+        Message(role="user", content="方案对比完成：选定方案 A 作为最终方案", source=MessageSource.USER),
+        Message(role="tool", content="read_file 成功，配置读取完成", source=MessageSource.TOOL),
+        Message(role="user", content="" * 500, source=MessageSource.USER),
+        Message(role="user", content="补充内容" * 200, source=MessageSource.USER),
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=800,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("压缩关键事实" in c for c in contents)
+    assert not any("选定方案 A" in c for c in contents)
+    assert not any("read_file 成功" in c for c in contents)
+    assert any("选定方案 A" in m.content for m in archived)
+    assert any("read_file 成功" in m.content for m in archived)
+    assert not any("ref=archive:search_archive" in c for c in contents)
+
+
+# ── EVO-3b39134f: 压缩保留推理结论（OpenAI harness 借鉴）──
+
+
+
+
+
+
+
+
+
+# ── EVO-3b39134f 端到端缺陷修复回归（facts 为空但 reasoning 非空）──
+
+
+
+
+
+def test_build_history_messages_merges_multiple_system_messages():
+    """(2026-08-18 对齐 DSH) 非首个 system 转 user 独立——system 主体静态跨会话.
+
+    原行为: 合并进主体（每会话数量不同 → 主体跨会话不一致 → 首轮不命中）。
+    新行为: 主体字节静态（跨会话一致——首轮命中稳定段）；注入内容转 user 保留。
+    """
+    sp = "SYS"
+    msgs = [
+        _m("system", "A1"),
+        _m("user", "u1"),
+        _m("system", "S2"),
+        _m("user", "u2"),
+    ]
+    out = build_history_messages(msgs, system_prompt=sp, max_chars=10000)
+    assert out[0]["role"] == "system"
+    assert out[0]["content"] == sp, "主体静态（不含注入）"
+    users = [m for m in out if m["role"] == "user"]
+    contents = [m["content"] for m in users]
+    assert "A1" in contents, "system 注入转 user 保留"
+    assert "S2" in contents, "后续 system 转 user 保留"
+    assert "u1" in contents and "u2" in contents
+
+
+
+def test_validate_pairing_ok():
+    """S2: 正常序列（assistant(tool_calls) + 全量 tool 消息）返回空列表."""
+    from llm_loop.core.history import validate_tool_call_pairing
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}, {"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+        {"role": "tool", "tool_call_id": "c2", "content": "r2"},
+        {"role": "assistant", "content": "done"},
+    ]
+    assert validate_tool_call_pairing(messages) == []
+
+
+def test_validate_pairing_missing_tool():
+    """S2: assistant(tool_calls) 后缺 tool 消息 → 返回违规描述."""
+    from llm_loop.core.history import validate_tool_call_pairing
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}, {"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+        {"role": "assistant", "content": "done"},
+    ]
+    violations = validate_tool_call_pairing(messages)
+    assert len(violations) == 1
+    assert "缺 1 条" in violations[0]
+
+
+def test_validate_pairing_remediation():
+    """S2: 构造点检测违规 → 补齐占位 + 如实标注（fail-open，不伪造真实回执）."""
+    from llm_loop.core.history import _repair_tool_call_pairing, validate_tool_call_pairing
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}, {"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+        {"role": "assistant", "content": "done"},
+    ]
+    repaired = _repair_tool_call_pairing(messages)
+    # 补齐后配对自检通过
+    assert validate_tool_call_pairing(repaired) == []
+    # 占位以 [程序异常] 如实标注，tool_call_id 沿用声明 id
+    tool_msgs = [m for m in repaired if m["role"] == "tool"]
+    assert any("[程序异常]" in m["content"] for m in tool_msgs)
+    assert tool_msgs[1]["tool_call_id"] == "c2"
+    # 正常序列零改动（原样返回）
+    ok_msgs = [
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+    ]
+    assert _repair_tool_call_pairing(ok_msgs) is ok_msgs
+
+
+def _long_m(role, tag, n=200) -> Message:
+    """长消息（默认 200 字符，用于构造超预算场景）."""
+    return _m(role, tag * n)
+
+
+def test_head_keep_cache_friendly_archive():
+    """EVO-20260817-9d3e1f2c: head_keep_chars>0 时保留锚点头部（提交前缀稳定命中），
+    只归档中段，锚点不动——压缩不再全量破坏前缀缓存."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "旧"), _m("assistant", "旧"),   # 锚点前（history_anchor=2）
+        _long_m("user", "头"),                      # 头部（前缀核心）
+        _long_m("assistant", "头"),
+        _long_m("user", "中"),                      # 中段（应归档）
+        _long_m("user", "中"),
+        _long_m("user", "尾"),                      # 尾部（最近，保留）
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    anchor_box: list[int] = []
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=800, session_id="s1",
+        archive_sink=sink, history_anchor=2, anchor_out=anchor_box,
+        head_keep_chars=400,  # 头部保留 400 字符（idx2+3 组）
+    )
+    # ① 锚点不动（前缀稳定）
+    assert anchor_box == [2], f"头部保留时锚点不应推进: {anchor_box}"
+    # ② 头部消息保留在输出（前缀核心未删）
+    contents = "".join(str(m.get("content", "")) for m in out)
+    assert "头" in contents, "头部消息应保留（前缀命中核心）"
+    # ③ 中段被归档（信息零丢失）
+    assert any("中" in a.content for a in archived), "中段应被归档"
+    # ④ 尾部（最近消息）保留
+    assert "尾" in contents, "最近消息应保留"
+
+
+def test_head_keep_zero_regression():
+    """head_keep_chars=0（默认）保持现有行为: 锚点前移 = 丢弃数（旧行为零回归）."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "旧"), _m("assistant", "旧"),
+        _long_m("user", "头"), _long_m("assistant", "头"),
+        _long_m("user", "中"), _long_m("user", "中"),
+        _long_m("user", "尾"),
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    anchor_box: list[int] = []
+    build_history_messages(
+        msgs, system_prompt="SYS", max_chars=800, session_id="s1",
+        archive_sink=sink, history_anchor=2, anchor_out=anchor_box,
+        head_keep_chars=0,  # 关闭修正 = 现有行为
+    )
+    # 旧行为: 从最旧端删除直到凑满 480 预算 → 保留尾部 400 字符（2 组）→ 锚点 = 2 + (5-2) = 5
+    assert anchor_box == [5], f"零回归模式锚点应推进: {anchor_box}"
+
+
+def test_compact_ratio_preemptive_compression():
+    """EVO-20260817 分级压缩: compact_ratio=0.9 时 90% 预算即主动压缩（不撞顶）.
+
+    预算 10000，history 9500（95%）——1.0 不压（<10000），0.9 压（>9000）.
+    预压缩只归档旧消息（消息数减少），最新消息在预算内不截断（平滑整理不打断推理）.
+    """
+    # 锚点保护（2026-08-29 漂移修复）适配: 首条改为注入块前缀——注入块不构成任务
+    # 锚点、不受保护、归档行为不变；若为真实用户指令则成锚点、保护阻止其被归档（预期行为）
+    msgs = [_m("user", "[相关记忆] 旧消息" + "y" * 500), _m("assistant", "x" * 8900)]
+    # 默认 1.0: 95% 未超限 → 不压缩
+    out_full = build_history_messages(msgs, system_prompt="SYS", max_chars=10000)
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out_full)
+    # 0.9: 95% > 90% → 主动压缩（归档最旧，保留最新）
+    compacted: list[bool] = []
+    out_pre = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=10000, compact_ratio=0.9,
+        compacted_out=compacted,
+    )
+    assert compacted == [True]
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out_pre)
+    non_sys = [m for m in out_pre if m["role"] != "system"]
+    # R3: 压缩 extras 只保留状态/pointer，不再自动回灌关键事实/目录正文。
+    latest = [m for m in non_sys if m["content"].startswith("x")]
+    assert len(latest) == 1  # 旧消息归档, 只留最新
+    assert all("ref=archive:search_archive" not in m["content"] for m in non_sys)
+    assert all("[压缩档案目录]" not in m["content"] for m in non_sys)
+    # system 主体稳定（动态状态/pointer 不入主体）
+    sys_msgs = [m for m in out_pre if m["role"] == "system"]
+    assert all("ref=archive:search_archive" not in m["content"] for m in sys_msgs)
+
+
+def test_compact_ratio_one_is_legacy():
+    """compact_ratio=1.0 保持现行为（超限才压），零回归."""
+    msgs = [_m("user", "u"), _m("assistant", "x" * 9500)]
+    out = build_history_messages(msgs, system_prompt="SYS", max_chars=10000, compact_ratio=1.0)
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out)
+    # 超限（105%）仍压
+    msgs2 = [_m("user", "u"), _m("assistant", "x" * 10500)]
+    compacted: list[bool] = []
+    out2 = build_history_messages(
+        msgs2, system_prompt="SYS", max_chars=10000, compact_ratio=1.0,
+        compacted_out=compacted,
+    )
+    assert compacted == [True]
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out2)
+
+
+def test_compacted_out_reports_real_budget_compression_only():
+    """协议修复/普通构建不冒充截断；只有真实预算压缩才置 compacted_out=True。"""
+    clean = [Message(role="user", content="hello", source=MessageSource.USER)]
+    box: list[bool] = []
+    build_history_messages(clean, "SYS", max_chars=1000, compacted_out=box)
+    assert box == [False]
+
+    long = [Message(role="user", content="x" * 2000, source=MessageSource.USER)]
+    build_history_messages(long, "SYS", max_chars=500, compacted_out=box)
+    assert box == [True]
+
+
+def test_anchor_protects_last_real_user_on_compaction():
+    """漂移修复 2026-08-29（会话 68fed5f5 实证）: 预算超载折叠保留最后一条真实用户消息.
+
+    场景复现: 锚点（真实用户任务指令）在早段，其后全是注入块；预算超载时原逻辑
+    从预算边界外把锚点一并归档 → 残余上下文只剩注入块 → 本地弱模型答非所问。
+    修复后: 锚点组穿透预算强制保留。
+    """
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "很老的早期历史" + "A" * 400),  # 组0: 预算耗尽后归档
+        _m("user", "请分析这篇头条文章的内容"),  # 组1: ← 任务锚点（最后一条真实用户指令）
+        _m("user", "[相关记忆] 注入噪声" + "D" * 150),  # 组2: 锚点后保护
+        _m("user", "[声明提醒] 注入噪声" + "E" * 150),  # 组3: 锚点后保护
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=250, session_id="s1", archive_sink=sink
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("请分析这篇头条文章" in c for c in contents), "任务锚点必须穿透预算保留在提交里"
+    assert any("很老的早期历史" in str(x.content) for x in archived), "锚点前的旧历史仍正常归档"
+
+
+def test_no_real_user_message_all_injected_still_compacts():
+    """零回归: 全注入块会话（无真实用户指令）无锚点保护对象，压缩行为不变."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "[上下文注入] 块A" + "A" * 300),
+        _m("user", "[相关记忆] 块B" + "B" * 200),
+        _m("user", "[声明提醒] 块C" + "C" * 200),
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=400, session_id="s2", archive_sink=sink
+    )
+    assert archived, "无锚点场景归档照常发生（零回归）"
+    assert len(out) >= 1
+
+
+def test_anchor_protection_cap_invalid_when_oversized():
+    """锚点保护上限（2026-08-29 回归修复）: 锚点区自身超整预算时保护失效退回归档.
+
+    场景: 用户单条贴长文（大锚点）——保护它 = 永久穿透预算 + 档案零命中；
+    失效后原文入档（信息零丢失），可经 search_archive 检索找回。
+    """
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "很老的历史" + "A" * 100),
+        _m("user", "请分析这个超长文档：" + "B" * 800),  # 锚点，锚点区超 max_chars
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=300, session_id="s1", archive_sink=sink
+    )
+    # 保护失效: 大锚点原文被归档（零丢失）
+    assert any("超长文档" in str(x.content) for x in archived), "超预算锚点须入档"
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("压缩" in c or "超长文档" in c for c in contents), "提交须有压缩标注或锚点残迹"
+
+
+def test_anchor_protection_valid_when_fits_budget():
+    """对照: 锚点区在预算内时保护正常生效（穿透 archive_budget 保留）."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "很老的历史" + "A" * 400),  # 组0: 归档目标
+        _m("user", "请分析这篇文章"),  # 组1: 锚点（小，锚点区在预算内）
+        _m("user", "[相关记忆] 注入" + "C" * 100),  # 组2: 锚点后保护
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=300, session_id="s2", archive_sink=sink
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("请分析这篇文章" in c for c in contents), "预算内锚点必须穿透保留"
+    assert any("很老的历史" in str(x.content) for x in archived), "锚点前旧历史正常归档"

@@ -1,0 +1,1 @@
+{"event_id":"fixture-context-279","session_id":"00000000-0eak-0000-0000-000000000280","seq":830,"type":"message.appended","ts":"2026-08-31T02:20:39.318552+00:00","payload":{"index":279,"role":"system","metadata":{"origin_layer":"status","program_origin":true,"injection_kind":"architecture_report","injected_system":true},"content":""}}

@@ -1,0 +1,341 @@
+"""DSH-PLUGINS-20260816 ②: schedule 工具 + 调度线程测试."""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from pathlib import Path
+
+from llm_loop.core.scheduler import ScheduleEntry, SchedulerThread, ScheduleStore
+from llm_loop.tools.builtin.schedule import ScheduleTool
+
+
+def _store(tmp_path: Path) -> ScheduleStore:
+    return ScheduleStore(path=tmp_path / "schedule.json")
+
+
+def test_schedule_after(tmp_path):
+    """after 注册: 返回 sid + 持久化."""
+    st = _store(tmp_path)
+    sid = st.add("检查任务", after=60)
+    assert sid.startswith("sched-")
+    entries = st.list()
+    assert len(entries) == 1
+    assert entries[0]["message"] == "检查任务"
+    assert entries[0]["trigger_at"] > time.time() + 50  # ~60s 后
+
+
+def test_schedule_due_and_trigger(tmp_path):
+    """到点触发: 单次删除."""
+    st = _store(tmp_path)
+    sid = st.add("立即提醒", after=0)
+    due = st.due()
+    assert len(due) == 1 and due[0].sid == sid
+    st.mark_triggered(sid)
+    assert st.list() == []  # 单次触发后删除
+
+
+def test_schedule_repeat(tmp_path):
+    """重复提醒: 按间隔重排直到 max_count."""
+    st = _store(tmp_path)
+    sid = st.add("周期汇报", after=0, repeat_interval=10, max_count=3)
+    now = time.time()
+    for i in range(3):
+        due = st.due(now=now)  # 到点
+        assert len(due) == 1
+        st.mark_triggered(sid, now=now)
+        if i < 2:
+            assert len(st.list()) == 1  # 未达上限保留
+        now += 10  # 推进一个周期
+    assert st.list() == []  # 达上限删除
+
+
+def test_schedule_persist_restart(tmp_path):
+    """持久化: 新实例加载（模拟进程重启）."""
+    p = tmp_path / "schedule.json"
+    st1 = ScheduleStore(path=p)
+    st1.add("重启保留", after=300)
+    st2 = ScheduleStore(path=p)
+    entries = st2.list()
+    assert len(entries) == 1
+    assert entries[0]["message"] == "重启保留"
+
+
+def test_schedule_cancel(tmp_path):
+    """取消提醒."""
+    st = _store(tmp_path)
+    sid = st.add("将被取消", after=60)
+    assert st.cancel(sid) is True
+    assert st.list() == []
+    assert st.cancel(sid) is False  # 不存在
+
+
+def test_schedule_tool_register(tmp_path):
+    """工具层: after 注册成功回执."""
+    tool = ScheduleTool(store=_store(tmp_path))
+    r = tool.execute(message="60秒后提醒", after=60)
+    assert r.status.value == "success"
+    assert "已注册" in r.content and "sched-" in r.content
+
+
+def test_schedule_tool_missing_message(tmp_path):
+    """工具层: 缺 message 失败."""
+    tool = ScheduleTool(store=_store(tmp_path))
+    r = tool.execute(after=60)
+    assert r.status.value == "failure"
+    assert "缺少必填参数" in r.content
+
+
+def test_schedule_tool_bad_at(tmp_path):
+    """工具层: at 格式非法失败."""
+    tool = ScheduleTool(store=_store(tmp_path))
+    r = tool.execute(message="坏时间", at="not-a-time")
+    assert r.status.value == "failure"
+    assert "at 时间格式非法" in r.content
+
+
+def test_scheduler_thread_notify(tmp_path):
+    """线程: 到点触发写 interop notify 文件（协调通道定时化）."""
+
+    import llm_loop.core.scheduler as mod
+
+    # 用 tmp inbox 注入（monkeypatch 模块级 inbox 路径）
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    orig = mod.SchedulerThread._notify_via_interop
+
+    def fake_notify(entry):
+        (inbox / f"{entry.sid}.json").write_text(
+            json.dumps({"sid": entry.sid, "body": entry.message}), encoding="utf-8"
+        )
+
+    st = ScheduleStore(path=tmp_path / "sched.json")
+    sid = st.add("线程提醒", after=0)
+    SchedulerThread._notify_via_interop = staticmethod(fake_notify)
+    try:
+        th = SchedulerThread(st, tick_interval=0.05)
+        th.start()
+        time.sleep(0.3)
+        th.stop()
+        files = list(inbox.iterdir())
+        assert len(files) == 1
+        assert json.loads(files[0].read_text(encoding="utf-8"))["sid"] == sid
+        assert st.list() == []  # 触发后删除
+    finally:
+        SchedulerThread._notify_via_interop = orig
+
+
+def test_schedule_notify_effect_identity_is_stable_per_occurrence(tmp_path):
+    """同一 sid+count 重试必须复用同一 interop effect，不生成第二份通知."""
+    entry = ScheduleEntry(
+        sid="sched-stable1",
+        message="same occurrence",
+        trigger_at=time.time(),
+        count=0,
+    )
+    SchedulerThread._notify_via_interop(entry, data_dir=tmp_path)
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    files = list(inbox.glob("*.json"))
+    assert [f.name for f in files] == ["notify-sched-stable1-occ-0.json"]
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["id"] == "schedule:sched-stable1:0"
+
+    SchedulerThread._notify_via_interop(entry, data_dir=tmp_path)
+    assert [f.name for f in inbox.glob("*.json")] == ["notify-sched-stable1-occ-0.json"]
+
+
+def test_due_sees_other_store_add(tmp_path):
+    """BUGFIX(2026-08-27) oracle: 运行中 Store A 必须看到另一实例 B 后注册的提醒.
+
+    原实现 due() 只扫内存 self._entries，factory 双实例装配下注册侧与
+    检查侧互不可见 → 提醒永不触发（实证 sched-649240a2/aa53e496 count=0）。
+    修复后 due() 先 refresh 磁盘（SoT）再扫。
+    """
+    p = tmp_path / "schedule.json"
+    store_a = ScheduleStore(path=p)  # 模拟 SchedulerThread 侧（先启动）
+    store_b = ScheduleStore(path=p)  # 模拟 ScheduleTool 侧（后注册）
+    sid = store_b.add("跨实例提醒", after=0)
+    # store_a 不重建——due() 必须自己看到磁盘新增
+    due = store_a.due()
+    assert [e.sid for e in due] == [sid]
+    assert [e.message for e in due] == ["跨实例提醒"]
+
+
+def test_due_refresh_keeps_memory_on_disk_error(tmp_path):
+    """BUGFIX 配套: 磁盘损坏时 refresh 保持内存现状（fail-open 不清空）.
+
+    若清空内存，due() 空转后 mark_triggered 会把空状态写回磁盘 → 真丢失。
+    """
+    p = tmp_path / "schedule.json"
+    s = ScheduleStore(path=p)
+    s.add("要保住的提醒", after=3600)  # 未来触发，驻留内存+磁盘
+    p.write_text("{corrupted json", encoding="utf-8")  # 磁盘损坏
+    due = s.due(now=time.time())
+    assert [e.message for e in due] == []  # 未到点不触发
+    assert [e["message"] for e in s.list()] == ["要保住的提醒"]  # 内存未被清空
+
+
+def test_scheduler_thread_cross_store_trigger(tmp_path):
+    """线程级 oracle: SchedulerThread(store_A) 先启动，store_B 后注册也能触发.
+
+    完整复刻 factory 装配分裂场景（双实例 + 线程已运行 + 后注册）。
+    修复前该测试必红（线程只扫 A 的空内存）。
+    """
+    p = tmp_path / "schedule.json"
+    store_a = ScheduleStore(path=p)
+    fired: list[str] = []
+    ev = threading.Event()
+
+    def notify(entry):
+        fired.append(entry.sid)
+        ev.set()
+
+    th = SchedulerThread(store_a, tick_interval=0.05, notify=notify)
+    th.start()
+    try:
+        store_b = ScheduleStore(path=p)  # 另一实例后注册（after=0 立即到点）
+        sid = store_b.add("线程跨实例", after=0)
+        assert ev.wait(timeout=3.0), "3s 内未触发——读侧 SoT 修复失效"
+        assert fired == [sid]
+        # notify 回调先于 mark_triggered 落盘（线程 finally），轮询等最终一致
+        deadline = time.time() + 3.0
+        while store_b.list() != [] and time.time() < deadline:
+            time.sleep(0.02)
+        assert store_b.list() == [], "触发后 3s 内未从磁盘删除（经 A 的 mark_triggered）"
+    finally:
+        th.stop()
+
+
+def test_multi_store_no_overwrite(tmp_path):
+    """审查中危: 多实例（模拟多进程）add 不互相覆盖——修复前后写覆盖先写丢条目."""
+    p = tmp_path / "schedule.json"
+    s1 = ScheduleStore(p)
+    s2 = ScheduleStore(p)  # 独立实例 = 模拟另一个进程
+    sid1 = s1.add("proc1 提醒", after=60)
+    sid2 = s2.add("proc2 提醒", after=120)
+    # s1 重新加载（或另一实例）应看到两条
+    s3 = ScheduleStore(p)
+    assert s3.cancel(sid1) is True
+    assert s3.cancel(sid2) is True, "s2 的条目被覆盖丢失（多进程覆盖 bug）"
+
+
+def test_mark_triggered_persists_deletion(tmp_path):
+    """审查中危: 触发删除后磁盘同步（不读回已删条目）."""
+    p = tmp_path / "schedule.json"
+    s = ScheduleStore(p)
+    sid = s.add("立即", after=0)
+    s.mark_triggered(sid)
+    s2 = ScheduleStore(p)  # 重新加载
+    assert s2.list() == []
+
+
+def test_multi_store_mark_no_resurrect(tmp_path):
+    """审查中危: 多实例场景触发删除不复活（磁盘删除语义跨实例一致）."""
+    p = tmp_path / "schedule.json"
+    s1 = ScheduleStore(p)
+    sid = s1.add("立即", after=0)
+    s1.mark_triggered(sid)
+    s3 = ScheduleStore(p)
+    assert s3.list() == [], "已删除条目被合并读回（resurrect）"
+
+
+def test_schedule_cancel_tool(tmp_path):
+    """审查 P2: schedule_cancel 工具可取消已注册提醒."""
+    from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
+    st = ScheduleTool(store=ScheduleStore(tmp_path / "s.json"))
+    r = st.execute(message="测试提醒", after=60)
+    assert r.status.value == "success"
+    sid = r.content.split("已注册提醒 ")[1].split(":")[0]
+    ct = ScheduleCancelTool(store=ScheduleStore(tmp_path / "s.json"))
+    r2 = ct.execute(sid=sid)
+    assert r2.status.value == "success" and "已取消" in r2.content
+    r3 = ct.execute(sid=sid)
+    assert r3.status.value == "failure" and "不存在" in r3.content
+    r4 = ct.execute(sid="")
+    assert r4.status.value == "failure" and "缺少必填" in r4.content
+
+
+def test_non_posix_file_lock_fallback_is_reentrant(tmp_path, monkeypatch):
+    """无 fcntl 时 _file_lock + _mutate 内层锁不得自锁。"""
+    import builtins
+    import threading
+
+    store = ScheduleStore(tmp_path / "schedule.json")
+    real_import = builtins.__import__
+
+    def no_fcntl(name, *args, **kwargs):
+        if name == "fcntl":
+            raise ImportError("simulated non-posix")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_fcntl)
+    done = threading.Event()
+
+    def worker():
+        store.add("fallback-lock", after=30)
+        done.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    assert done.wait(1.0), "non-POSIX fallback must not deadlock on nested store lock"
+    assert len(store.list()) == 1
+
+
+def test_notify_via_interop_carries_wake_degraded_reason(tmp_path):
+    """EVO-20260920-213965a1 案2: wake 降级原因随通知结构化落盘."""
+    entry = ScheduleEntry(sid="sched-xyz", message="核对重启", trigger_at=time.time())
+    SchedulerThread._notify_via_interop(
+        entry, data_dir=tmp_path, wake_degraded_reason="grant_lost_owner_dead"
+    )
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    files = list(inbox.glob("*-sched-*.json"))
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["ref"] == "sched-xyz"
+    assert payload["wake_degraded_reason"] == "grant_lost_owner_dead"
+    assert payload["body"] == "[定时提醒] 核对重启"
+
+def test_schedule_entry_subject_refs_roundtrip(tmp_path):
+    """T3-1 (antidrift R1): 排程带 subject_refs → 条目持久化含 refs（往返一致）；不带 → 条目形态与现状一致（无新键）."""
+    p1 = tmp_path / "s_refs.json"
+    refs = [
+        {"type": "job_id", "id": "job-1"},
+        {"type": "expected_generation", "id": "66"},
+        {"type": "action_id", "id": "act-1"},
+    ]
+    ScheduleStore(path=p1).add("带 refs", after=60, subject_refs=refs)
+    reloaded = ScheduleStore(path=p1).list()
+    assert len(reloaded) == 1
+    assert reloaded[0]["subject_refs"] == refs
+
+    p2 = tmp_path / "s_plain.json"
+    ScheduleStore(path=p2).add("不带 refs", after=60)
+    entry = ScheduleStore(path=p2).list()[0]
+    assert "subject_refs" not in entry
+
+
+def test_schedule_entry_subject_refs_legacy_entry_default_empty():
+    """T3-1 附属: 旧条目（磁盘 dict 无 refs 字段）from_dict → 缺省空，向后兼容."""
+    legacy = {
+        "sid": "sched-legacy",
+        "message": "m",
+        "trigger_at": 1.0,
+        "repeat_interval": 0.0,
+        "max_count": 1,
+        "created_at": 1.0,
+        "count": 0,
+        "wake": False,
+        "session_id": "",
+        "lease_owner": "",
+        "lease_until": 0.0,
+        "wake_owner_pid": 0,
+        "wake_started_at": 0.0,
+        "retry_count": 0,
+        "retry_deadline_at": 0.0,
+        "goal_id": "",
+        "goal_generation": "",
+    }
+    entry = ScheduleEntry.from_dict(legacy)
+    assert entry.subject_refs == []
+    assert "subject_refs" not in entry.to_dict()

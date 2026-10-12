@@ -1,0 +1,58 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260920-prompt-prefix-phase-a-formalization",
+  "summary": "Formalize the already-deployed Phase-A prompt prefix-stability instrumentation as a self-contained review candidate. Preserve exact deployed wiring commit 69c95dec98764efde1005ea27abdb902f4e76df7; add the previously untracked fail-open observer module and its focused unit tests; no provider behavior, prompt content, cache gate, model selection, service lifecycle, or deployment authority is added.",
+  "components": [
+    {
+      "component_id": "prompt-prefix-stability-observability",
+      "paths": [
+        "src/llm_loop/core/prompt_build/stages/ingress_resolution.py",
+        "src/llm_loop/core/prompt_build/stages/tail_assembly.py",
+        "src/llm_loop/core/prefix_stability.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "core.prompt_build prefix-stability observability",
+      "disposition": "ADMIT as fail-open measurement only: observe head/working_set/final message fingerprints, compute cross-round LCP attribution, and emit diagnostic telemetry without mutating provider messages or changing any gate/admission decision.",
+      "evidence": [
+        "deployed generation 56 runs exact wiring commit 69c95dec98764efde1005ea27abdb902f4e76df7 on Web/Feishu/learning",
+        "runtime prefix_stability.py existed before all generation-56 service starts; exact SHA256 5eaf05761af8599e3fa5fa64c9f2f64a16dbe7721a473ad1f45e8213b31b0936",
+        "fresh isolated worktree focused prefix/prompt suite 42/42 PASS; Ruff PASS; Pyright 0 errors / 0 warnings; py_compile and diff-check PASS"
+      ],
+      "verification_level": "focused deterministic tests + repository full CI/security on the final committed PR head",
+      "model_evidence_veto_recovery_exit": "No model authority or veto is introduced. Observer state is process-local only and every public observation/finalization path is fail-open; rollback is code revert without session/data migration.",
+      "rollback_route": "Revert the formalization range to base d5b9ebe9ddb7edfb1af1e0afb8434f765b037924; for a deployed rollback, publish the previously qualified clean code root as a new service-control generation rather than decrementing generation."
+    },
+    {
+      "component_id": "prompt-prefix-stability-tests",
+      "paths": [
+        "tests/unit/test_prefix_stability.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "unit regression suite for prefix-stability observability",
+      "disposition": "ADMIT as deterministic coverage for cold baseline, append stability, head/working-set/final attribution, compression classification, fail-open behavior, and no-mutation semantics.",
+      "evidence": [
+        "tests/unit/test_prefix_stability.py exact runtime-source SHA256 914ba90a9f8956a874377819bd916af42e8ef0ebf55193c62d7289c392faf344",
+        "focused prefix/prompt suite 42/42 PASS in the isolated review worktree"
+      ],
+      "verification_level": "pytest focused subset + repository full CI on final committed state",
+      "model_evidence_veto_recovery_exit": "Test-only artifact; no runtime authority.",
+      "rollback_route": "Revert the test together with the observer formalization."
+    },
+    {
+      "component_id": "a5-prompt-prefix-phase-a-formalization",
+      "paths": [
+        "docs/governance/submissions/20260920-prompt-prefix-phase-a-formalization.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 remains a mechanical presence/coverage gate and does not itself assert semantic correctness or deployment approval.",
+      "evidence": [
+        "local exact A.5 self-gate against official base d5b9ebe9ddb7edfb1af1e0afb8434f765b037924 before remote publication"
+      ],
+      "verification_level": "scripts/check_architecture_submission.py --base d5b9ebe9ddb7edfb1af1e0afb8434f765b037924 --head HEAD",
+      "model_evidence_veto_recovery_exit": "Reviewer may amend classifications; the checker reports any changed-path coverage mismatch.",
+      "rollback_route": "Remove this metadata file in the same revert/rollback range."
+    }
+  ],
+  "declarations": []
+}

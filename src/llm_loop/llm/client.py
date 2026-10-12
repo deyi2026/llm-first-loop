@@ -1,0 +1,3204 @@
+"""LLM 流式客户端（多协议：OpenAI 兼容 / Anthropic Messages / Google Gemini）.
+
+`wire_protocol`（ModelSpec 元数据，providers.json 模型条目可配）:
+- openai（默认，零回归）：POST {base}/chat/completions，SSE choices[].delta
+- anthropic：POST {base}/v1/messages，x-api-key + anthropic-version 头，
+  SSE content_block_* 事件（text_delta / thinking_delta / input_json_delta / tool_use）
+- google：POST {base}/v1beta/models/{model}:streamGenerateContent?alt=sse，
+  x-goog-api-key 头，SSE candidates[0].content.parts（text / functionCall）
+
+异常分类/思考分片/工具聚合/用量/截断语义三协议统一（LLMError 体系不变）。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import re
+import shutil
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, cast
+
+import httpx
+
+from llm_loop.cache_guard.guard import (
+    PromptGuard,  # EVO-20260818: 顶层 import（guard 无内部依赖，无循环）——guard property 类型标注
+)
+from llm_loop.cognitive.cache_tags import (  # M4.3 认知缓存标记（研究线）
+    apply_cognitive_cache_tags,
+    tagging_enabled_for,
+)
+from llm_loop.core.message import ToolCall
+from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
+from llm_loop.llm.errors import (
+    LLMEmptyResponseError,
+    LLMError,
+    LLMHTTPError,
+    LLMNetworkError,
+    LLMProjectionError,
+    LLMStreamProviderError,
+    LLMTimeoutError,
+)
+from llm_loop.llm.schemas import ToolCallDeltaAggregator
+from llm_loop.runtime.causality import effective_generation_contract
+from llm_loop.timekeeping import system_local_now
+
+logger = logging.getLogger(__name__)
+
+# 2026-09-24（流式总时长兜底）: httpx 的 read-timeout 是「相邻两次读的间隔」上限，
+# 不是总时长——流式响应只要每个 delta 间隔 < timeout_s 就永不触发（当日事故：
+# glm-5.3 深推理持续滴流，run 挂十分钟+无中断无产出，用户侧表现为"发消息没反
+# 应"）。此系数给流式调用加独立总预算 = effective_timeout × factor，机械边界，
+# 不判断 provider 语义；>1 保证深推理的正常长流不被误伤。
+_STREAM_TOTAL_BUDGET_FACTOR = 5.0
+
+# EVO-20261007-519eeb93: 空响应（流正常结束但零内容零工具调用；glm-5.3 thinking
+# 高发瞬态）同模型有界自动重试。幂等性依据：空响应条件本身保证零 text/tool delta
+# 已投递（text delta 必进 content_parts，tool 终态必进 result.tool_calls），唯一
+# 可能已上抛的是 reasoning delta——重复投递只影响 UI 展示与中断半截产物（非权威
+# 状态；成功落盘只取终态 LLMResponse）；非收敛熔断需 3 连击相似窗口，单次重试
+# 最多贡献 1-2 个窗口，不可能单独触发。
+_EMPTY_RESPONSE_RETRY_MAX = 1
+_EMPTY_RESPONSE_RETRY_BACKOFF_S = 0.5
+
+
+def _stream_total_deadline(effective_timeout: float) -> float:
+    return time.monotonic() + effective_timeout * _STREAM_TOTAL_BUDGET_FACTOR
+
+
+def _check_stream_deadline(deadline: float, effective_timeout: float) -> None:
+    if time.monotonic() > deadline:
+        budget = effective_timeout * _STREAM_TOTAL_BUDGET_FACTOR
+        raise LLMTimeoutError(
+            f"LLM 流式总时长超限（>{budget:.0f}s = timeout {effective_timeout:.0f} × "
+            f"{_STREAM_TOTAL_BUDGET_FACTOR:.1f}；各 read 间隔均未超时——provider 持续滴流不收敛，已机械截断）"
+        )
+
+
+def _iter_task_budget_checked_lines(resp: httpx.Response) -> Iterator[str]:
+    """I5-B: owner-scoped transport abort and pre/post SSE budget checks.
+
+    An explicit budget installs a watchdog/HTTP1 socket shutdown hook for
+    blocked reads. Unsupported transports use a bounded per-read timeout;
+    neither mechanism claims remote provider/billing quiescence. Unbound
+    traffic still uses the untouched legacy iterator.
+    """
+    from llm_loop.resources.task_budget_dispatch import active_task_budget
+    from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+    from llm_loop.resources.task_budget_transport import watched_budget_response
+
+    budget = active_task_budget()
+    if budget is None:
+        yield from resp.iter_lines()
+        return
+
+    # I5-C: a multiplexed HTTP/2 or HTTP/3 socket can belong to sibling
+    # requests. I5-B deliberately has no safe per-stream physical abort for
+    # these transports; reject the already-observed response before ANY SSE
+    # data enters the model. The dispatched Provider liability stays UNKNOWN.
+    # There is no model- or prompt-level override for this safety gate; an
+    # operator can choose the unbound/default-OFF path independently.
+    extensions = getattr(resp, "extensions", {})
+    http_version = extensions.get("http_version") if isinstance(extensions, dict) else None
+    if http_version in (b"HTTP/2", b"HTTP/3", "HTTP/2", "HTTP/3"):
+        budget.request_stop(reason="multiplexed_transport_unqualified")
+        raise TaskBudgetDeniedError("multiplexed_transport_unqualified")
+
+    def assert_live() -> None:
+        try:
+            budget._get_validated()
+        except TaskBudgetDeniedError as exc:
+            if exc.reason == "deadline_expired":
+                # A fast drip can make the owner see expiry before the
+                # watchdog. Persist Stop even in this cooperative path.
+                budget.request_stop(reason="deadline_expired")
+            raise
+
+    with watched_budget_response(budget, resp):
+        assert_live()
+        try:
+            for line in resp.iter_lines():
+                assert_live()
+                yield line
+                assert_live()
+        except TaskBudgetDeniedError:
+            # A denial subclasses PermissionError/OSError; do not catch it
+            # again as a socket exception and mask deadline_expired with the
+            # subsequent local Stop latch.
+            raise
+        except (httpx.TransportError, OSError):
+            # On Stop, surface the authoritative deny; do not misclassify a
+            # locally-aborted socket as a retryable provider/network failure.
+            assert_live()
+            raise
+        # A shutdown can result in clean EOF rather than a read exception.
+        assert_live()
+
+
+def _task_budget_transport_timeout(effective_timeout: float) -> float | httpx.Timeout:
+    from llm_loop.resources.task_budget_transport import budgeted_transport_timeout
+
+    return budgeted_transport_timeout(effective_timeout)
+
+
+def _task_budget_provider_stream(
+    client: httpx.Client, method: str, url: str, *,
+    json: dict[str, Any], headers: dict[str, str],
+    timeout: float | httpx.Timeout,
+) -> Any:
+    """I5-D: delegate only a trusted opt-in bound attempt to an OS worker.
+
+    With no explicit isolation profile this is the exact existing HTTPX
+    streaming context, including the same timeout argument and shared client.
+    """
+    from llm_loop.resources.task_budget_process_transport import isolated_provider_stream
+
+    return isolated_provider_stream(
+        client, method, url, json=json, headers=headers, timeout=timeout,
+    )
+
+
+# 2026-09-18（gen20 自愈）: 连接被拒绝时的单次重试前退避秒数。毫秒级原地重试对瞬断/
+# 陈旧连接无效（实测两次尝试相隔 2.8ms 同因 ECONNREFUSED）；仅作用于 ConnectError。
+_TRANSPORT_RETRY_BACKOFF_S = 0.5
+
+_SAFE_PROVIDER_CODE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def _safe_provider_code_value(value: Any) -> str | None:
+    """Normalize only short structured provider codes, never arbitrary diagnostics."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return str(value) if value >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if _SAFE_PROVIDER_CODE_RE.fullmatch(stripped) else None
+    return None
+
+
+def _safe_provider_code_from_body(body: str) -> str | None:
+    """Read only structured JSON code fields; raw body text is never returned."""
+    if not body:
+        return None
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    error = data.get("error")
+    if isinstance(error, dict):
+        code = _safe_provider_code_value(error.get("code"))
+        if code is not None:
+            return code
+    return _safe_provider_code_value(data.get("code"))
+  # finish() 含 json.loads 归一（约束 C5）
+
+
+@dataclass
+class LLMResponse:
+    content: str | None
+    tool_calls: list[ToolCall]
+    provider: str = "openai-compat"
+    truncated: bool = False
+    # Exact provider stop reason when available (e.g. ``length``/``max_tokens``).
+    # Keep this as transport fact; the loop must not infer semantic completion from it.
+    finish_reason: str = ""
+    reasoning_content: str | None = None  # M20 THK-02/03
+    prompt_tokens: int = 0  # M52: 缺失保持 0 = 未提供，不伪造
+    completion_tokens: int = 0
+    prompt_cache_hit_tokens: int = 0  # M58: provider 前缀缓存命中 token（省钱可观测）
+    # provider 若提供 completion_tokens_details.reasoning_tokens 则如实透传；
+    # 不提供时为 None，不用字符数伪造 token 数。
+    reasoning_tokens: int | None = None
+    # Provider-specific opaque replay state required by some multi-turn tool
+    # protocols (for example MiniMax reasoning_details). This is distinct from
+    # reasoning_content: the latter is normalized for display/telemetry, while
+    # this field preserves wire structure for the same provider only.
+    provider_replay: dict[str, Any] | None = None
+
+
+@dataclass
+class ToolRoundInfo:
+    """单轮工具调用摘要（引擎回执 + 事件日志）."""
+
+    tool_name: str
+    round_index: int
+    args_summary: str = ""
+    tool_call_id: str = ""
+
+
+@dataclass
+class ToolResultInfo:
+    """Exact terminal tool-execution fact for UI/transport observability only."""
+
+    tool_name: str
+    tool_call_id: str
+    status: str
+    duration_ms: float | None = None
+    # Mechanical size only.  Never carries result text or hidden reasoning.
+    result_chars: int | None = None
+
+
+@dataclass
+class StreamDelta:
+    text: str = ""
+    reasoning: str | None = None
+    tool_round: ToolRoundInfo | None = None
+    tool_result: ToolResultInfo | None = None
+
+
+@dataclass(frozen=True)
+class GuardRequestContext:
+    """单次 LLM 请求的 cache_guard 元数据；不可变且绝不存放在共享 client 状态。"""
+
+    session_id: str = ""
+    system_text: str | None = None
+    compress_count_this_run: int = 0
+    history_budget: int = 0
+    run_round: int | None = None
+    provider: str = ""
+    model: str = ""
+    stable_prefix_fp: str = ""
+    cache_prefix_epoch: int | None = None
+    compaction_epoch: int | None = None
+    breaker_active: bool = False  # P0（2026-08-25）: 压缩风暴熔断冻结期（规则 F 降级协调）
+    # Provider-projection ownership facts.  They are request-scoped mechanical
+    # expectations only; delegated ingress remains delegated and is never relabelled
+    # as human truth.  The corresponding internal message marker is stripped before
+    # transport.
+    active_run_ingress_ref: str = ""
+    active_run_ingress_kind: str = "none"
+    structure_state_hook: Callable[[dict[str, Any]], None] | None = field(
+        default=None, repr=False, compare=False
+    )
+    knowledge_reference_probe: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = field(
+        default=None, repr=False, compare=False,
+    )
+    # Optional request-scoped observer for provider-native in-flight state.  It is
+    # deliberately carried on the immutable request context rather than shared client
+    # state so concurrent sessions cannot cross-write crash-recovery checkpoints.
+    stream_state_hook: Callable[[dict[str, Any]], None] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+
+def _tool_call_projection_parts(
+    tool_call: Any,
+) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Parse one durable tool-call declaration for provider projection.
+
+    Returns ``(name, arguments, violation_code)``.  The accepted source shapes are
+    the production OpenAI-canonical nested form and the historical flat adapter form.
+    Arguments must mechanically resolve to a JSON object; no semantic schema judgement
+    is performed here.
+    """
+    if not isinstance(tool_call, dict):
+        return "", None, "tool_call_not_object"
+    fn = tool_call.get("function")
+    if isinstance(fn, dict):
+        name = str(fn.get("name") or "")
+        raw_args = fn.get("arguments")
+    else:
+        name = str(tool_call.get("name") or "")
+        raw_args = tool_call.get("arguments")
+    if not name:
+        return "", None, "tool_call_name_missing"
+    if isinstance(raw_args, dict):
+        return name, dict(raw_args), None
+    if raw_args is None or raw_args == "":
+        return name, {}, None
+    if isinstance(raw_args, str):
+        try:
+            parsed = json.loads(raw_args)
+        except json.JSONDecodeError:
+            return name, None, "tool_call_arguments_invalid_json"
+        if isinstance(parsed, dict):
+            return name, parsed, None
+    return name, None, "tool_call_arguments_not_object"
+
+
+def provider_structure_violations(
+    messages: list[dict], *, expected_active_ingress_ref: str = ""
+) -> list[str]:
+    """Return mechanical provider-wire violations without semantic judgement."""
+    violations: list[str] = []
+    expected_ref = str(expected_active_ingress_ref or "")
+    marked: list[tuple[int, dict]] = []
+    seen_non_system = False
+    pending_ids: list[str] = []
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            violations.append(f"message_not_object:{index}")
+            continue
+        raw_role = message.get("role")
+        role = raw_role if isinstance(raw_role, str) else ""
+        if role not in {"system", "user", "assistant", "tool"}:
+            violations.append(f"role_invalid:{index}:{role or '?'}")
+        content = message.get("content")
+        assistant_tool_only = (
+            role == "assistant"
+            and content is None
+            and bool(message.get("tool_calls"))
+        )
+        if not isinstance(content, str) and not assistant_tool_only:
+            violations.append(
+                f"content_not_string:{index}:{type(content).__name__}"
+            )
+        marker = str(message.get("_active_run_ingress_ref") or "")
+        if marker:
+            marked.append((index, message))
+
+        if role == "system":
+            if seen_non_system:
+                violations.append(f"system_after_non_system:{index}")
+        else:
+            seen_non_system = True
+
+        if role == "assistant":
+            if pending_ids:
+                violations.append(
+                    "tool_results_missing_before_next_message:" + ",".join(pending_ids)
+                )
+                pending_ids = []
+            tool_calls = message.get("tool_calls") or []
+            ids: list[str] = []
+            for call_index, tool_call in enumerate(tool_calls):
+                if not isinstance(tool_call, dict):
+                    violations.append(f"tool_call_not_object:{index}:{call_index}")
+                    continue
+                call_id = str(tool_call.get("id") or "")
+                if not call_id:
+                    violations.append(f"tool_call_id_missing:{index}:{call_index}")
+                _name, _arguments, projection_violation = _tool_call_projection_parts(tool_call)
+                if projection_violation:
+                    violations.append(f"{projection_violation}:{call_id or '?'}")
+                if call_id in ids:
+                    violations.append(f"tool_call_id_duplicate:{call_id}")
+                ids.append(call_id)
+            pending_ids = ids
+            continue
+
+        if role == "tool":
+            tool_call_id = str(message.get("tool_call_id") or "")
+            if not pending_ids:
+                violations.append(f"orphan_tool_result:{index}:{tool_call_id or '?'}")
+            elif tool_call_id in pending_ids:
+                pending_ids.remove(tool_call_id)
+            else:
+                violations.append(f"orphan_tool_result:{index}:{tool_call_id or '?'}")
+            continue
+
+        if pending_ids:
+            violations.append(
+                "tool_results_interrupted_before_completion:" + ",".join(pending_ids)
+            )
+            pending_ids = []
+
+    if pending_ids:
+        violations.append("tool_results_missing_at_tail:" + ",".join(pending_ids))
+
+    if expected_ref:
+        matching = [
+            (index, message)
+            for index, message in marked
+            if str(message.get("_active_run_ingress_ref") or "") == expected_ref
+        ]
+        if not matching:
+            violations.append(f"active_run_ingress_missing:{expected_ref}")
+        elif len(matching) > 1:
+            violations.append(f"active_run_ingress_duplicate:{expected_ref}:{len(matching)}")
+        else:
+            index, message = matching[0]
+            if message.get("role") != "user":
+                violations.append(f"active_run_ingress_wrong_role:{index}")
+            if not str(message.get("content") or "").strip():
+                violations.append(f"active_run_ingress_empty:{index}")
+        foreign_markers = [
+            marker
+            for _, message in marked
+            if (marker := str(message.get("_active_run_ingress_ref") or ""))
+            and marker != expected_ref
+        ]
+        if foreign_markers:
+            violations.append("active_run_ingress_foreign_marker:" + ",".join(foreign_markers))
+    elif marked:
+        violations.append("active_run_ingress_unexpected_marker")
+
+    return violations
+
+
+def _emit_stream_state(
+    guard_context: GuardRequestContext | None,
+    *,
+    provider: str,
+    provider_replay: dict[str, Any] | None = None,
+    tool_call_drafts: list[dict[str, Any]] | None = None,
+) -> None:
+    """Emit provider-native crash state to the request-scoped recovery observer.
+
+    This channel is runtime-only.  It never alters user-visible stream deltas and a
+    partial tool-call draft is explicitly non-executable until the normal provider
+    stream completion path produces a real ``ToolCall``.
+    """
+    hook = guard_context.stream_state_hook if guard_context is not None else None
+    if hook is None:
+        return
+    state: dict[str, Any] = {"provider": str(provider or "")}
+    if provider_replay:
+        state["provider_replay"] = provider_replay
+    if tool_call_drafts:
+        state["tool_call_drafts"] = tool_call_drafts
+    if len(state) == 1:
+        return
+    try:
+        hook(state)
+    except Exception:  # noqa: BLE001 — observability/recovery hook must not break stream
+        logger.debug("provider-native stream-state hook failed (fail-open)", exc_info=True)
+
+
+@dataclass
+class _StreamAcc:
+    """协议无关的流式聚合状态."""
+
+    content_parts: list[str] = field(default_factory=list)
+    reasoning_parts: list[str] = field(default_factory=list)
+    truncated: bool = False
+    finish_reason: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    prompt_cache_hit_tokens: int = 0
+    reasoning_tokens: int | None = None
+    provider_replay_fields: dict[str, Any] = field(default_factory=dict)
+    reasoning_details_text: str = ""
+
+
+def _reasoning_details_text(value: Any) -> str:
+    """Extract display text from provider reasoning_details without changing raw state."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        text = value.get("text")
+        return text if isinstance(text, str) else ""
+    if isinstance(value, list):
+        return "".join(_reasoning_details_text(item) for item in value)
+    return ""
+
+
+def _merge_reasoning_details(prev: Any, new: Any, prev_text: str, new_text: str) -> Any:
+    """Preserve cumulative or incremental reasoning_details streams for replay."""
+    if prev is None:
+        return new
+    if new_text and prev_text and new_text.startswith(prev_text):
+        return new
+    if new_text and prev_text and prev_text.startswith(new_text):
+        return prev
+    if isinstance(prev, list) and isinstance(new, list):
+        return [*prev, *new]
+    return new
+
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+# 非流首开标签的待证实上限: 字面 `<think>`（无配对闭合）积压超过该字符数即放弃
+# 等待并按字面吐出，防止流式 UI 无限积压（M3 典型思考段远小于该值）。
+_THINK_PENDING_LIMIT = 65536
+
+
+@dataclass
+class _ThinkTagStreamParser:
+    """请求局部的 `<think>` 增量状态机，支持标签跨任意 SSE delta 分片."""
+
+    buffer: str = ""
+    in_think: bool = False
+    # 所有开标签都先进入 pending；只有实际看到配对 `</think>` 后才解释为
+    # provider reasoning。这样同一字节流不因 SSE delta 如何切分而改变语义，
+    # 且未闭合的字面 `<think>` 在 flush 时能完整回吐到正文，不丢标签。
+    emitted: bool = False
+    pending_open: bool = False
+
+    @staticmethod
+    def _partial_marker_suffix(text: str, marker: str) -> int:
+        """返回 text 尾部与 marker 前缀重合长度，完整 marker 留给 find 处理."""
+        for size in range(min(len(text), len(marker) - 1), 0, -1):
+            if marker.startswith(text[-size:]):
+                return size
+        return 0
+
+    def feed(self, content: str) -> list[tuple[str, str]]:
+        self.buffer += content
+        out: list[tuple[str, str]] = []
+        while self.buffer or self.pending_open:
+            if self.pending_open:
+                close = self.buffer.find(_THINK_CLOSE)
+                if close >= 0:
+                    # 证实为真思考段: 标签内文本归 reasoning，闭合后回落正文。
+                    inner = self.buffer[:close]
+                    if inner:
+                        out.append(("reasoning", inner))
+                        self.emitted = True
+                    self.buffer = self.buffer[close + len(_THINK_CLOSE):]
+                    self.pending_open = False
+                    continue
+                if len(self.buffer) >= _THINK_PENDING_LIMIT:
+                    logger.info(
+                        "think_parser: pending <think> exceeded %d chars without "
+                        "close tag, kept as literal content",
+                        _THINK_PENDING_LIMIT,
+                    )
+                    out.append(("content", _THINK_OPEN + self.buffer))
+                    self.emitted = True
+                    self.buffer = ""
+                    self.pending_open = False
+                break
+            marker = _THINK_CLOSE if self.in_think else _THINK_OPEN
+            kind = "reasoning" if self.in_think else "content"
+            idx = self.buffer.find(marker)
+            if idx >= 0:
+                before = self.buffer[:idx]
+                if marker == _THINK_OPEN:
+                    if before:
+                        out.append((kind, before))
+                        self.emitted = True
+                    self.buffer = self.buffer[idx + len(marker):]
+                    self.pending_open = True
+                    continue
+                self.buffer = self.buffer[idx + len(marker):]
+                if before:
+                    out.append((kind, before))
+                    self.emitted = True
+                self.in_think = not self.in_think
+                self.emitted = True
+                continue
+
+            keep = self._partial_marker_suffix(self.buffer, marker)
+            safe_end = len(self.buffer) - keep
+            if safe_end > 0:
+                out.append((kind, self.buffer[:safe_end]))
+                self.emitted = True
+            self.buffer = self.buffer[safe_end:]
+            break
+        return out
+
+    def flush(self) -> list[tuple[str, str]]:
+        """正常流结束时排空残片并重置；状态绝不跨请求存活."""
+        out: list[tuple[str, str]] = []
+        if self.pending_open:
+            # 流结束仍未等到配对 `</think>`: 判为字面，整段（含标签）回吐正文。
+            logger.info(
+                "think_parser: stream ended with unconfirmed <think>, "
+                "kept as literal content (len=%d)",
+                len(self.buffer),
+            )
+            if self.buffer:
+                out.append(("content", _THINK_OPEN + self.buffer))
+            self.buffer = ""
+            self.in_think = False
+            self.emitted = False
+            self.pending_open = False
+            return out
+        text = self.buffer
+        kind = "reasoning" if self.in_think else "content"
+        self.buffer = ""
+        self.in_think = False
+        self.emitted = False
+        return [(kind, text)] if text else []
+
+
+def _finish_response(
+    acc: _StreamAcc,
+    agg: ToolCallDeltaAggregator,
+    provider: str,
+    client: LLMClient | None = None,
+    guard_context: GuardRequestContext | None = None,
+    actual_model: str | None = None,
+) -> LLMResponse:
+    raw_calls = agg.finish()
+    tool_calls: list[ToolCall] = [
+        ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"]) for c in raw_calls
+    ]
+    # cache_guard 规则 G 回馈必须使用本请求快照，不能在长 stream 结束时再读取
+    # provider 级共享 client.guard_session_id（跨会话并发会串台）。无显式上下文时
+    # 仅为旧直接调用方保留 legacy 字段回退。
+    try:
+        if client is not None:
+            _pg = getattr(client, "_pg", None)
+            _sid = (guard_context.session_id if guard_context is not None else client.guard_session_id)
+            if _pg is not None and _sid:
+                _pg.record_result(
+                    _sid,
+                    acc.prompt_tokens,
+                    acc.prompt_cache_hit_tokens,
+                    provider=(
+                        guard_context.provider
+                        if guard_context is not None and guard_context.provider
+                        else client.provider
+                    ),
+                    model=(
+                        guard_context.model
+                        if guard_context is not None and guard_context.model
+                        else client.model
+                    ),
+                )
+    except Exception:  # noqa: BLE001 — cache telemetry fail-open，不影响主响应
+        logger.debug("cache guard response feedback failed (fail-open)", exc_info=True)
+    return LLMResponse(
+        content="".join(acc.content_parts) or None,
+        tool_calls=tool_calls,
+        provider=provider,
+        truncated=acc.truncated,
+        finish_reason=acc.finish_reason,
+        reasoning_content="".join(acc.reasoning_parts) or None,
+        prompt_tokens=acc.prompt_tokens,
+        completion_tokens=acc.completion_tokens,
+        prompt_cache_hit_tokens=acc.prompt_cache_hit_tokens,
+        reasoning_tokens=acc.reasoning_tokens,
+        provider_replay=(
+            client._provider_replay_envelope(
+                acc.provider_replay_fields,
+                model=str(actual_model or client.model or ""),
+            )
+            if acc.provider_replay_fields and client is not None
+            else None
+        ),
+    )
+
+
+# err1210 任务组 1（spec 4.4-1）: trace 按日轮转——进程内节流时间戳（每小时至多一次实际 stat）
+_TRACE_ROTATE_LAST_CHECK = 0.0
+
+
+def _cleanup_trace_shards(active: Path) -> None:
+    """删除超过保留期的历史分片（LLM_PAYLOAD_TRACE_RETAIN_DAYS，默认 7 天；≤0 禁用）."""
+    try:
+        retain_days = int(os.environ.get("LLM_PAYLOAD_TRACE_RETAIN_DAYS", "7") or "7")
+    except ValueError:
+        retain_days = 7
+    if retain_days <= 0:
+        return
+    cutoff = time.time() - retain_days * 86400
+    try:
+        for shard in active.parent.glob(f"{active.stem}-*{active.suffix}"):
+            try:
+                if shard.stat().st_mtime < cutoff:
+                    shard.unlink()
+            except OSError:
+                pass  # 分片刚被并发移除/暂不可访问——跳过，继续清理其余分片
+    except Exception:  # noqa: BLE001 — 清理失败 fail-open
+        logger.debug("payload_trace 过期分片清理失败（fail-open）", exc_info=True)
+
+
+def _maybe_rotate_trace_file(path: str) -> str:
+    """[err1210 T1.1/T1.2] 写入前节流轮转检查: trace 文件 mtime 跨日 → 切分为历史分片.
+
+    - 节流: 进程内模块级时间戳，每小时至多触发一次实际 stat（写入热路径零负担）。
+    - 轮转: 活跃文件 mtime 所在日 ≠ 今日 → os.replace 为 payload_trace-YYYYMMDD.jsonl，
+      当日请求继续写活跃文件（open "a" 自动新建）。
+    - 同名分片已存在（时钟回拨/手动复制）→ 追加合并防丢后移除活跃文件。
+    - 顺带执行过期分片清理（_cleanup_trace_shards）。
+    - 全路径 fail-open: 任何异常返回原路径，不影响主请求写入。
+    """
+    global _TRACE_ROTATE_LAST_CHECK
+    now = time.time()
+    if now - _TRACE_ROTATE_LAST_CHECK < 3600.0:
+        return path
+    _TRACE_ROTATE_LAST_CHECK = now
+    try:
+        from datetime import datetime
+
+        active = Path(path)
+        if not active.exists():
+            return path
+        mtime_day = datetime.fromtimestamp(active.stat().st_mtime).strftime("%Y%m%d")
+        today = system_local_now().strftime("%Y%m%d")
+        if mtime_day != today:
+            archived = active.with_name(f"{active.stem}-{mtime_day}{active.suffix}")
+            if archived.exists():
+                with open(archived, "ab") as dst, open(active, "rb") as src:
+                    shutil.copyfileobj(src, dst)
+                active.unlink()
+            else:
+                os.replace(active, archived)
+        _cleanup_trace_shards(active)
+    except Exception:  # noqa: BLE001 — 轮转失败 fail-open（写入继续走活跃文件）
+        logger.debug("payload_trace 轮转检查失败（fail-open）", exc_info=True)
+    return path
+
+
+_PREFIX_TRACE_MAX_KEYS = 128
+_PREFIX_TRACE_LOCK = threading.Lock()
+_PREFIX_TRACE_STATE: OrderedDict[tuple[str, str], list[tuple[str, int]]] = OrderedDict()
+"""FR-3 前缀命中埋点状态: (session_id, model) → 上轮 wire 消息序列 [(wire哈希, chars)].
+
+进程内增量比对（NFR-2: O(消息数) 非 O(全字节)）；trace 行落盘后供离线与
+usage.cached_tokens 对齐分析。不落盘自身（进程重启冷启动=首轮无理论值，正常）。
+"""
+
+_PREFIX_TRACE_SHAPE_STATE: OrderedDict[tuple[str, str], tuple[str, str]] = OrderedDict()
+"""Deep-trace-only previous (tools fingerprint, top-level params fingerprint)."""
+
+
+def _trace_payload_fingerprint(
+    payload: dict[str, Any],
+    messages: list[dict],
+    *,
+    session_id: str,
+    provider: str,
+    model: str,
+    run_round: int | None = None,
+    stable_prefix_fp: str = "",
+    cache_prefix_epoch: int | None = None,
+    compaction_epoch: int | None = None,
+) -> None:
+    """[临时诊断 2026-08-27] 请求分段指纹追踪——定位轮间前缀漂移段（缓存命中暴跌排查）.
+
+    背景: 上游裸调健康、生产请求参数恒定，但轮间命中钉死在工具块头部——怀疑
+    messages/tools 之外或极靠前位置存在轮间漂移元素，且对规则 A（system）与
+    cache.window（消息）均不可见。本函数在发送前对请求体做确定性分段哈希：
+    - tools 整块哈希 + 数量（工具 schema 轮间漂移 → 一眼可见）
+    - 除 messages/tools 外的顶层参数哈希（thinking/effort/tool_choice 等）
+    - 逐消息 sha256（canonical JSON：含 role/content/tool_calls 全字段）
+    逐请求一行 JSON 追加 data/audit/payload_trace.jsonl（可用 env 改路径）。
+    只读不改 payload；任何异常吞掉 fail-open，绝不影响主请求。
+    env LLM_PAYLOAD_TRACE=1 显式开启 deep-wire trace；默认关闭。常态结构/因果观测由
+    EventStore request.meta/request.attempt 承担，避免重复 hash + 独立 JSONL 写入。
+    """
+    if os.environ.get("LLM_PAYLOAD_TRACE", "0") != "1":
+        return
+    try:
+        import hashlib
+
+        def _h(obj: Any) -> str:
+            canon = json.dumps(obj, ensure_ascii=False, sort_keys=True)
+            return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+
+        def _hw(obj: Any) -> str:
+            """Insertion-order-sensitive JSON-input hash, not a claim about HTTP bytes.
+
+            ``httpx(..., json=payload)`` may choose its own separators/encoding details.
+            This fingerprint deliberately hashes the exact Python request object in
+            insertion order so key-order drift remains visible without pretending the
+            diagnostic captured transport-body bytes.
+            """
+            json_input = json.dumps(obj)
+            return hashlib.sha256(json_input.encode("utf-8")).hexdigest()[:16]
+
+        def _type_tag(a: Any) -> str:
+            if isinstance(a, str):
+                return "str"
+            if isinstance(a, dict):
+                return "dict"
+            if a is None:
+                return "None"
+            return f"other_{type(a).__name__}"
+
+        def _arg_type(tc: Any) -> str:
+            """单个 tool_call 的 arguments 形态标记（1210 归因：区分 str/dict/缺失/扁平）."""
+            if not isinstance(tc, dict):
+                return "tc_non_dict"
+            fn = tc.get("function")
+            if isinstance(fn, dict):
+                if "arguments" not in fn:
+                    return "missing"
+                return _type_tag(fn["arguments"])
+            if "arguments" in tc:
+                return "flat_" + _type_tag(tc["arguments"])
+            return "flat_no_args"
+
+        top = {k: v for k, v in payload.items() if k not in ("messages", "tools")}
+        tools_wire = _hw(payload.get("tools") or [])
+        params_wire = _hw(top)
+        record = {
+            "ts": system_local_now().isoformat(timespec="seconds"),
+            "session_id": session_id,
+            "provider": provider,
+            "model": model,
+            "run_round": run_round,
+            "stable_prefix_fp": stable_prefix_fp,
+            "cache_prefix_epoch": cache_prefix_epoch,
+            "compaction_epoch": compaction_epoch,
+            "payload_canonical_hash": _h(payload),
+            "payload_json_input_hash": _hw(payload),
+            "tools_hash": _h(payload.get("tools") or []),
+            "tools_wire": tools_wire,
+            "tools_n": len(payload.get("tools") or []),
+            "params_json_input_hash": params_wire,
+            "params": {
+                k: (_h(v) if isinstance(v, dict | list) else v) for k, v in sorted(top.items())
+            },
+            "msgs": [
+                {
+                    "i": i,
+                    "role": m.get("role"),
+                    "chars": len(m.get("content") or "") if isinstance(m.get("content"), str) else -1,
+                    "h": _h(m),
+                    "w": _hw(m),
+                    "args": [_arg_type(tc) for tc in m.get("tool_calls") or []] or None,
+                }
+                for i, m in enumerate(messages)
+            ],
+        }
+        # FR-3 前缀命中埋点（EVO-20260829-06c96021/SDD-20260830）: 与上轮 wire 消息
+        # 序列逐位比对（哈希不等即断点）→ 公共前缀消息数与字节和。core 自检不变式：
+        # 理论前缀命中 ≈ 实测 cached_tokens（偏离即结构破损——离线对齐 usage 分析）。
+        # 消息级粒度（消息内字节变化→断于该消息前，二分可细化）；fail-open。
+        try:
+            _key = (session_id, model)
+            _cur = [(mm["w"], mm["chars"]) for mm in record["msgs"]]
+            with _PREFIX_TRACE_LOCK:
+                _prev = _PREFIX_TRACE_STATE.get(_key)
+                _prev_shape = _PREFIX_TRACE_SHAPE_STATE.get(_key)
+                if _prev is not None:
+                    k = 0
+                    while k < len(_cur) and k < len(_prev) and _cur[k][0] == _prev[k][0]:
+                        k += 1
+                    record["prefix_hit_msgs"] = k
+                    record["prefix_hit_chars"] = sum(c for _, c in _cur[:k])
+                    record["previous_message_count"] = len(_prev)
+                    record["current_message_count"] = len(_cur)
+                    record["first_divergent_message"] = (
+                        k if k < min(len(_cur), len(_prev)) else None
+                    )
+                    record["messages_append_only"] = bool(
+                        k == len(_prev) and len(_cur) >= len(_prev)
+                    )
+                    if _prev_shape is not None:
+                        tools_changed = tools_wire != _prev_shape[0]
+                        params_changed = params_wire != _prev_shape[1]
+                        record["tools_changed"] = tools_changed
+                        record["params_changed"] = params_changed
+                        message_rewrite = not record["messages_append_only"]
+                        if not tools_changed and not params_changed and not message_rewrite:
+                            mutation_scope = "append_only"
+                        else:
+                            changed_axes = []
+                            if message_rewrite:
+                                changed_axes.append("messages")
+                            if tools_changed:
+                                changed_axes.append("tools")
+                            if params_changed:
+                                changed_axes.append("params")
+                            mutation_scope = "+".join(changed_axes) or "unknown"
+                        record["mutation_scope"] = mutation_scope
+                _PREFIX_TRACE_STATE[_key] = _cur
+                _PREFIX_TRACE_STATE.move_to_end(_key)
+                _PREFIX_TRACE_SHAPE_STATE[_key] = (tools_wire, params_wire)
+                _PREFIX_TRACE_SHAPE_STATE.move_to_end(_key)
+                while len(_PREFIX_TRACE_STATE) > _PREFIX_TRACE_MAX_KEYS:
+                    stale_key, _ = _PREFIX_TRACE_STATE.popitem(last=False)
+                    _PREFIX_TRACE_SHAPE_STATE.pop(stale_key, None)
+                while len(_PREFIX_TRACE_SHAPE_STATE) > _PREFIX_TRACE_MAX_KEYS:
+                    stale_key, _ = _PREFIX_TRACE_SHAPE_STATE.popitem(last=False)
+                    _PREFIX_TRACE_STATE.pop(stale_key, None)
+        except Exception:  # noqa: BLE001 — 埋点 fail-open
+            pass
+        # GPT 审计批次3: 默认路径跟 LFL_DATA_DIR（测试隔离不再污染生产 data/audit）
+        path = os.environ.get(
+            "LLM_PAYLOAD_TRACE_PATH",
+            os.path.join(os.environ.get("LFL_DATA_DIR", "data"), "audit", "payload_trace.jsonl"),
+        )
+        path = _maybe_rotate_trace_file(path)
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 — 纯诊断，失败静默
+        logger.debug("payload 指纹追踪写入失败", exc_info=True)
+
+
+@dataclass
+class LLMClient:
+    """多协议流式客户端（OpenAI 兼容 / Anthropic / Google；wire_protocol 分发）.
+
+    通过 `LLMClient.chat(messages, tools)` 发起请求；
+    测试用 FakeLLM 需实现相同接口（Duck typing）。
+    """
+
+    api_key: str
+    base_url: str
+    model: str
+    timeout_s: float = 120.0
+    max_tokens: int | None = None  # 2026-08-15: 显式输出预算（None=不发字段，模型默认）
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    max_retries: int = 0
+    wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（ModelSpec 元数据）
+    # P1-C1 startup-owned business policy. None preserves provider-aware defaults.
+    trust_env: bool | None = None
+    retry_disconnect: int = 1
+    anthropic_cache_control: bool | None = None
+    guard_hit_telemetry: bool | None = None
+
+    # 兼容构造: settings 装配（保留字段注入）
+    provider: str = "openai-compat"
+    # M20 THK-01/CFG-03: DeepSeek V4 思考模式（默认开启；非 DeepSeek 不发）
+    thinking_mode: bool = True
+    reasoning_effort: str = "high"
+    # Model-owned chat-template vocabulary map. Empty preserves legacy enable_thinking-only wire.
+    reasoning_effort_map: dict[str, str] | None = None
+    # Model-owned canonical effort capability/default. Empty preserves legacy behavior.
+    reasoning_efforts: tuple[str, ...] | None = None
+    reasoning_default_effort: str | None = None
+
+    # M47（design §5.5）: 思考参数泛化 - 显式传入时以此为准（消除硬编码 deepseek.com）;
+    # None 时保持原 _thinking_supported() 行为（向后兼容，零回归）.
+    thinking_supported: bool | None = None
+    # Reasoning contract split: capability is an observed/model fact; control is
+    # the request wire mechanism. A model may be capable while control is unknown.
+    reasoning_capable: bool | None = None
+    reasoning_control: str = "legacy"
+    # Provider/model wire contract.  False means omit explicit tool_choice and
+    # rely on the provider's default selection semantics when tools are present.
+    send_tool_choice: bool = True
+    # Provider/model representation contract. True asks compatible OpenAI endpoints
+    # to return structured reasoning_details for exact replay. It is deliberately
+    # independent from reasoning_mode / thinking enable-disable control.
+    reasoning_split: bool = False
+    # 2026-08-18 cache_guard（MCP 出入口）: 请求前规则校验开关（默认开；CACHE_GUARD=0 关闭）
+    guard_enabled: bool = True
+    guard_audit_file: str | Path | None = None
+    # legacy guard 字段：仅兼容直接调用方。主 engine 使用 GuardRequestContext，
+    # 不再把 per-request 元数据写进 provider 级共享 LLMClient。
+    guard_system: str | None = None
+    guard_session_id: str = ""
+    guard_compress_count: int = 0
+    guard_history_budget: int = 0
+    # RG-3B: bounded process-local shadow recorder. It receives only typed transport
+    # facts and is never consulted for admission/routing/fallback in this phase.
+    transport_observer: Any | None = field(default=None, repr=False, compare=False)
+    # 2026-09-18（会话挂载实测自愈）: 传输级连接失败回调。本实例的连接/代理配置在构造时固定
+    # （远程 provider trust_env 经 urllib 读取 macOS 系统代理；Surge 等工具换实例后，旧实例会
+    # 持续打旧端点 → 每次调用 3ms 内 ECONNREFUSED，而新进程一切正常）。连接级失败时通知持有者
+    # （ModelClientPool）退休该 provider/model 缓存实例，使下次调用按当前配置重建。
+    # 仅传递机械异常事实，不改变重试次数/降级/严格模式语义。
+    on_transport_failure: Any | None = field(default=None, repr=False, compare=False)
+    # P0-A schema-token authority: only local OpenAI-compatible runtimes with an exact
+    # tokenizer/template endpoint participate. Cache is per client/model and keyed by the
+    # provider-visible tool surface; it is never shared across provider/model clients.
+    _tool_schema_token_cache: OrderedDict[str, int] = field(
+        default_factory=OrderedDict, init=False, repr=False, compare=False
+    )
+    _tool_schema_token_lock: Any = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
+    _tool_schema_tokenizer_unavailable: bool = field(
+        default=False, init=False, repr=False, compare=False
+    )
+    # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
+    guard_last_model: str = ""
+    def __post_init__(self) -> None:
+        # 2026-08-20 (Sub2API Grok 兼容): Connection: close 关闭连接复用——
+        # 复用的 httpx 连接池对 ai.mxnook.com 网关的 keepalive 不兼容（流式请求挂起/HTTP 400）；
+        # 每次新连接对 DeepSeek/MiniMax/本地 provider 实测零功能影响（仅少一次连接复用）。
+        # 2026-08-21 修复（本地模型 400 根因，见 EXPERIENCE-20260821-urllib-sse-lm-studio-400）:
+        #   Connection: close 与 LM Studio 本地 SSE 冲突——实测连续请求交替 200/400
+        #   （LM Studio 判定客户端提前断开，server 日志 "Client disconnected. Stopping generation"）。
+        #   本地 provider（localhost/127.0.0.1）豁免该头；远程 provider 保留原行为（零回归）。
+        # 2026-08-24 本地直连忽略系统代理（根因修复）: httpx 默认 trust_env=True 经 urllib
+        # 读取 macOS 系统代理（Surge 等代理工具把 127.0.0.1:6152 设为系统代理）→ 回环 LLM
+        # 请求被转给代理 → Surge 无法代理自身回环 → 503 Connection Closed（SGErrorDomain）
+        # → 表现即"本地模型出错"。本地推理必须直连（llama-server KV 前缀缓存依赖同 slot
+        # 直连; 见 EXPERIENCE-local-model-config）；远程 provider 保持默认（需代理访问
+        # API 的场景零回归）。P1-C1 后显式覆盖由启动时 Settings 快照注入。
+        base = (self.base_url or "").lower()
+        _is_local_base = any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+        self._is_local_base = _is_local_base  # 2026-08-24: 供 _stream_openai 判本地关 thinking
+        if _is_local_base:
+            headers: dict[str, str] = {}
+        else:
+            headers = {"Connection": "close"}
+        trust_env = bool(self.trust_env) if self.trust_env is not None else not _is_local_base
+        self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
+
+    def count_tool_schema_tokens(self, tools: list[dict]) -> int | None:
+        """Return exact provider-template token cost for ``tools`` when mechanically known.
+
+        This capability is intentionally narrow: llama.cpp-style local OpenAI-compatible
+        runtimes expose ``/apply-template`` and ``/tokenize`` against the already-loaded
+        tokenizer.  Remote/other protocols are not probed; they return ``None`` so the
+        caller can use its explicit conservative fallback.  No generation request occurs.
+
+        The result is the token delta between the same minimal user message rendered with
+        and without the tool surface, so chat-template wrapper cost is included.  Positive
+        results are cached by exact canonical tool surface for the life of this model client.
+        Any missing capability or transport/shape error is fail-soft and never affects chat.
+        """
+        if not tools:
+            return 0
+        if not self._is_local_base or str(self.wire_protocol or "").lower() != "openai":
+            return None
+        if self._tool_schema_tokenizer_unavailable:
+            return None
+
+        try:
+            template_kwargs = self._openai_chat_template_kwargs()
+            canonical = json.dumps(
+                {"tools": tools, "chat_template_kwargs": template_kwargs},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            cache_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        except (TypeError, ValueError):
+            return None
+
+        with self._tool_schema_token_lock:
+            cached = self._tool_schema_token_cache.get(cache_key)
+            if cached is not None:
+                self._tool_schema_token_cache.move_to_end(cache_key)
+                return cached
+
+            base = self.base_url.rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            template_url = f"{base}/apply-template"
+            tokenize_url = f"{base}/tokenize"
+            messages = [{"role": "user", "content": "x"}]
+            probe_timeout = min(5.0, max(0.1, float(self.timeout_s or 5.0)))
+
+            def _render(payload: dict[str, Any]) -> str | None:
+                response = self._client.post(template_url, json=payload, timeout=probe_timeout)
+                status = int(getattr(response, "status_code", 0) or 0)
+                if status in {404, 405}:
+                    self._tool_schema_tokenizer_unavailable = True
+                    return None
+                if status >= 400:
+                    return None
+                body = response.json()
+                prompt = body.get("prompt") if isinstance(body, dict) else None
+                return prompt if isinstance(prompt, str) else None
+
+            def _count(prompt: str) -> int | None:
+                response = self._client.post(
+                    tokenize_url,
+                    json={"content": prompt, "add_special": False, "parse_special": True},
+                    timeout=probe_timeout,
+                )
+                status = int(getattr(response, "status_code", 0) or 0)
+                if status in {404, 405}:
+                    self._tool_schema_tokenizer_unavailable = True
+                    return None
+                if status >= 400:
+                    return None
+                body = response.json()
+                tokens = body.get("tokens") if isinstance(body, dict) else None
+                return len(tokens) if isinstance(tokens, list) else None
+
+            try:
+                base_payload: dict[str, Any] = {"messages": messages}
+                tool_payload: dict[str, Any] = {"messages": messages, "tools": tools}
+                if template_kwargs is not None:
+                    base_payload["chat_template_kwargs"] = template_kwargs
+                    tool_payload["chat_template_kwargs"] = template_kwargs
+                base_prompt = _render(base_payload)
+                if base_prompt is None:
+                    return None
+                base_tokens = _count(base_prompt)
+                if base_tokens is None:
+                    return None
+                tool_prompt = _render(tool_payload)
+                if tool_prompt is None:
+                    return None
+                tool_prompt_tokens = _count(tool_prompt)
+                if tool_prompt_tokens is None:
+                    return None
+                exact = int(tool_prompt_tokens) - int(base_tokens)
+            except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError):
+                logger.debug("local tool-schema tokenizer probe failed (fail-soft)", exc_info=True)
+                return None
+
+            if exact <= 0:
+                return None
+            self._tool_schema_token_cache[cache_key] = exact
+            self._tool_schema_token_cache.move_to_end(cache_key)
+            while len(self._tool_schema_token_cache) > 64:
+                self._tool_schema_token_cache.popitem(last=False)
+            return exact
+
+    def _effective_reasoning_effort(self) -> str | None:
+        """Resolve the exact request-local reasoning effort used by wire controls."""
+        requested = (current_reasoning_effort.get() or "").strip().lower()
+        supported = tuple(self.reasoning_efforts or ())
+        if requested and (not supported or requested in supported):
+            return requested
+        model_default = (self.reasoning_default_effort or "").strip().lower()
+        if model_default and (not supported or model_default in supported):
+            return model_default
+        legacy_default = (self.reasoning_effort or "").strip().lower()
+        if not supported or legacy_default in supported:
+            return legacy_default or None
+        return None
+
+    def _openai_chat_template_kwargs(self) -> dict[str, Any] | None:
+        """Return the exact local OpenAI chat-template kwargs for the current request."""
+        (
+            reasoning_mode,
+            _reasoning_capable,
+            reasoning_control,
+            reasoning_supported,
+            reasoning_requested,
+        ) = self.reasoning_contract_state()
+        if reasoning_control != "chat_template":
+            return None
+        # reasoning_contract_state already owns the operator/env compatibility path.
+        # Do not create a second direct env authority here; consume its resolved fact.
+        if reasoning_requested is None or not reasoning_supported:
+            return None
+        kwargs: dict[str, Any] = {"enable_thinking": reasoning_requested}
+        if reasoning_requested and self.reasoning_effort_map:
+            requested_effort = self._effective_reasoning_effort()
+            mapped_effort = (
+                self.reasoning_effort_map.get(requested_effort)
+                if requested_effort
+                else None
+            )
+            if mapped_effort:
+                kwargs["reasoning_effort"] = mapped_effort
+        return kwargs
+
+    def _notify_transport_failure(self, exc: BaseException) -> None:
+        """Report a transport-level connection failure to the owner (ModelClientPool).
+
+        The httpx client is built once per provider/model and freezes its proxy mounts
+        (trust_env reads the macOS system proxy through urllib). When the proxy topology
+        changes after construction, this instance keeps dialing the stale endpoint and
+        every call fails with an instant ECONNREFUSED. The owner retires the cached
+        instance so the next call rebuilds it from current settings. Observation only:
+        it never changes retry count, fallback, or strict-override semantics.
+        """
+        hook = self.on_transport_failure
+        if hook is None:
+            return
+        try:
+            hook(type(exc).__name__)
+        except Exception:  # noqa: BLE001 - self-healing hook can never break a call
+            logger.debug("transport failure notify failed (self-heal)", exc_info=True)
+
+    def _observe_transport_response(self, resp: httpx.Response, *, model_id: str) -> None:
+        observer = self.transport_observer
+        if observer is None:
+            return
+        try:
+            observer.record_response(
+                provider_id=self.provider,
+                model_id=model_id,
+                status_code=int(resp.status_code),
+                headers=resp.headers,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B shadow can never affect provider behavior
+            logger.debug("resource transport response observation failed (shadow)", exc_info=True)
+
+    def _observe_transport_usage(self, usage: dict[str, Any], *, model_id: str) -> None:
+        observer = self.transport_observer
+        if observer is None:
+            return
+        try:
+            observer.record_usage(
+                provider_id=self.provider,
+                model_id=model_id,
+                usage=usage,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B shadow can never affect provider behavior
+            logger.debug("resource transport usage observation failed (shadow)", exc_info=True)
+
+    def _observe_transport_error(
+        self,
+        *,
+        model_id: str,
+        status_code: int | None,
+        provider_code: str | None,
+        headers: Any | None = None,
+    ) -> None:
+        observer = self.transport_observer
+        if observer is None:
+            return
+        try:
+            observer.record_error(
+                provider_id=self.provider,
+                model_id=model_id,
+                status_code=status_code,
+                provider_code=provider_code,
+                headers=headers,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B shadow can never affect provider behavior
+            logger.debug("resource transport error observation failed (shadow)", exc_info=True)
+
+    def _transport_attempt_scope(
+        self,
+        *,
+        model_id: str,
+        target_url: str = "",
+        transport_retry_index: int = 0,
+        prepared: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """Compose an optional hard pre-send budget gate with RG-3C observation.
+
+        With no explicitly bound budget the transport behavior is unchanged.
+        Budget failures must never be swallowed by RG-3C shadow fail-open.
+        """
+
+        observer = self.transport_observer
+        fn = getattr(observer, "transport_attempt", None) if observer is not None else None
+        observation: AbstractContextManager[Any] = nullcontext()
+        if callable(fn):
+            try:
+                observation = cast(AbstractContextManager[Any], fn(
+                    provider_id=self.provider,
+                    model_id=model_id,
+                    transport_retry_index=transport_retry_index,
+                    prepared=prepared,
+                ))
+            except Exception:  # noqa: BLE001 - RG-3C remains shadow-only
+                observation = nullcontext()
+
+        @contextmanager
+        def _scoped_attempt() -> Iterator[None]:
+            from llm_loop.resources.task_budget_dispatch import checked_provider_attempt
+
+            with checked_provider_attempt(
+                provider_id=self.provider, model_id=model_id,
+                wire_protocol=self.wire_protocol, target_url=target_url,
+            ), observation:
+                yield
+
+        return _scoped_attempt()
+
+    def _note_settled_response_facts(
+        self,
+        *,
+        finish_reason: str | None,
+        content: str | None,
+        reasoning_content: str | None,
+        tool_calls: Sequence[ToolCall | Mapping[str, Any]] | None,
+        provider_observed_model: str | None = None,
+    ) -> None:
+        """GAP-RESP-1 (C1): attach response facts to the active attempt settlement.
+
+        Must run inside :meth:`_transport_attempt_scope` before it exits
+        (settle fires on scope exit).  Fail-open by contract: any failure,
+        including missing HMAC key material, only drops the shadow fact
+        (honest absence) and never affects the transport result.  Web paths
+        call the observer helper directly because ``provider_observed_model``
+        is structurally absent there.
+        """
+
+        observer = self.transport_observer
+        note = getattr(observer, "note_settled_response_facts", None) if observer is not None else None
+        if not callable(note):
+            return
+        try:
+            rows: list[dict[str, Any]] = []
+            for call in tool_calls or []:
+                if isinstance(call, ToolCall):
+                    rows.append({"id": call.id, "name": call.name, "arguments": call.arguments})
+                else:
+                    rows.append(
+                        {
+                            "id": str(call.get("id") or ""),
+                            "name": str(call.get("name") or ""),
+                            "arguments": call.get("arguments"),
+                        }
+                    )
+            digest: str | None = None
+            key_id: str | None = None
+            try:
+                from llm_loop.resources.content_digest import normalized_response_hmac
+
+                digest, key_id = normalized_response_hmac(
+                    content, reasoning_content, rows, allow_create=False
+                )
+            except Exception:  # noqa: BLE001 - missing key material is honest absence
+                logger.debug("settled response hmac unavailable (shadow)", exc_info=True)
+            note(
+                finish_reason=str(finish_reason) if finish_reason else None,
+                normalized_response_hmac=digest,
+                normalized_response_hmac_key_id=key_id,
+                provider_observed_model=str(provider_observed_model) if provider_observed_model else None,
+            )
+        except Exception:  # noqa: BLE001 - RG-3B/C shadow can never affect provider behavior
+            logger.debug("settled response facts note failed (shadow)", exc_info=True)
+
+    def _prepared_attempt_facts(
+        self,
+        *,
+        payload: Mapping[str, Any],
+        representation: str,
+        timeout_s: float,
+        knowledge_probe: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
+    ) -> dict[str, Any] | None:
+        """GAP-REQ-1 write-before-send prepared facts (hash-only default, fail-open).
+
+        Never blocks or alters the transport; any failure yields None (whole
+        prepared mapping omitted). Key-material failure alone yields honest
+        absence of the two hmac fields while keeping the mechanical facts.
+        """
+        try:
+            from llm_loop.resources.content_digest import (
+                canonical_json_bytes,
+                resolve_content_hmac_key,
+            )
+
+            data = canonical_json_bytes(payload)
+            controls: dict[str, Any] = dict(effective_generation_contract(self))
+            mode, capable, control, supported, requested = self.reasoning_contract_state()
+            controls.update(
+                reasoning_mode=mode,
+                reasoning_capable=capable,
+                reasoning_control_kind=control,
+                reasoning_control_supported=supported,
+                reasoning_requested=requested,
+                timeout_s=timeout_s,
+            )
+            prepared: dict[str, Any] = {
+                "projected_bytes": len(data),
+                "representation": representation,
+                "controls": controls,
+            }
+            if knowledge_probe is not None:
+                try:
+                    facts = knowledge_probe(dict(payload))
+                    if facts:
+                        prepared["knowledge_references"] = facts
+                except Exception:
+                    logger.debug("knowledge wire probe unavailable", exc_info=True)
+            try:
+                key = resolve_content_hmac_key(allow_create=False)
+                prepared["payload_hmac"] = key.digest(data)
+                prepared["payload_hmac_key_id"] = key.key_id
+            except Exception:  # noqa: BLE001 - hmac absence is honest, not an error
+                logger.debug("prepared payload_hmac unavailable (honest absence)")
+            return prepared
+        except Exception:  # noqa: BLE001 - shadow must never block transport
+            return None
+
+    def _thinking_supported(self) -> bool:
+        """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
+
+        - thinking_supported 显式传入（非 None）→ 以传入值为准（注册表元数据驱动）
+        - thinking_supported=None → 原行为: provider 为 deepseek 或 base_url 含 deepseek.com
+        """
+        if self.thinking_supported is not None:
+            return self.thinking_supported
+        return self.provider == "deepseek" or "deepseek.com" in self.base_url
+
+    def reasoning_control_state(self) -> tuple[str, bool, bool | None]:
+        """兼容接口：返回 (configured_mode, control_supported, requested)."""
+        mode, _capable, _control, supported, requested = self.reasoning_contract_state()
+        return mode, supported, requested
+
+    def reasoning_contract_state(self) -> tuple[str, bool, str, bool, bool | None]:
+        """返回 (mode, capable, control_kind, control_supported, requested).
+
+        requested=None 表示 auto 且本地 provider/operator 默认未被 LFL 覆盖，
+        因而发送前不能诚实声称“已开启/已关闭”。不做内容复杂度启发式判断。
+        """
+        raw_mode = (current_reasoning_mode.get() or "").strip().lower()
+        mode = raw_mode or "auto"
+        if mode not in {"auto", "off", "on"}:
+            mode = "auto"
+        legacy_supported = self._thinking_supported()
+        capable = (
+            bool(self.reasoning_capable)
+            if self.reasoning_capable is not None
+            else legacy_supported
+        )
+        control = (self.reasoning_control or "legacy").strip().lower()
+        if control == "legacy":
+            if getattr(self, "_is_local_base", False) and (
+                legacy_supported or "LOCAL_ENABLE_THINKING" in os.environ
+            ):
+                control = "chat_template"
+            elif legacy_supported:
+                control = "thinking_type"
+            else:
+                control = "none"
+        supported = control in {"thinking_type", "chat_template", "always_on_effort"}
+        if mode == "on":
+            return mode, capable, control, supported, True if supported else None
+        if mode == "off":
+            return mode, capable, control, supported, False if supported else None
+        if control == "chat_template":
+            if "LOCAL_ENABLE_THINKING" in os.environ:
+                raw = os.environ.get("LOCAL_ENABLE_THINKING", "").strip().lower()
+                return mode, capable, control, supported, raw not in {"0", "false", "off", "no"}
+            # Local chat-template servers own their default when no explicit
+            # request/operator override exists, including legacy direct calls.
+            return mode, capable, control, supported, None
+        if not supported:
+            return mode, capable, control, False, None
+        # A run-bound explicit `auto` means provider-native/default behavior:
+        # do not turn reasoning on or off from LFL.  Empty contextvar is the
+        # legacy direct-client path; preserve its historical thinking_mode
+        # default for compatibility with callers that do not use LoopEngine.
+        if raw_mode == "auto":
+            return mode, capable, control, True, None
+        # Legacy direct-client path (no request context): historical
+        # thinking_mode=False meant "do not send a thinking parameter", not an
+        # explicit provider disable request. Preserve that compatibility while
+        # run-bound mode=off above remains a real disabled wire control.
+        if not raw_mode and not self.thinking_mode:
+            return mode, capable, control, True, None
+        return mode, capable, control, True, bool(self.thinking_mode)
+
+    @property
+    def guard(self) -> PromptGuard | None:
+        """cache_guard 实例（懒创建，chat_stream 内初始化；供 architecture_status 注入快照）."""
+        return getattr(self, "_pg", None)
+
+    def ensure_guard(self) -> PromptGuard:
+        """预创建 cache_guard（幂等；EVO-20260818: factory 装配后调用使
+        architecture_status 快照进程启动即可用——懒创建会让 web 端点在首个请求前无数据）."""
+        _guard = getattr(self, "_pg", None)
+        if _guard is None:
+            # EVO-20260818（spec §6.2-6，grill-me 2.2）: 命中回执开关——
+            # lms-chat 等本地推理无命中回执（三字段兜底后仍恒 0）→ 规则 G 停用
+            # 防恒 0 误拦；P1-C1 后显式覆盖由启动时 Settings 快照注入。
+            if self.guard_hit_telemetry is not None:
+                _tel = bool(self.guard_hit_telemetry)
+            else:
+                _tel = self.wire_protocol != "lms-chat"
+            _guard = PromptGuard(audit_file=self.guard_audit_file, hit_telemetry=_tel)
+            self._pg = _guard
+        return _guard
+
+    def close(self) -> None:
+        self._client.close()
+
+    # ── 统一入口（协议分发） ──
+    @staticmethod
+    def _normalize_tool_call_args(messages: list[dict]) -> tuple[list[dict], dict | None]:
+        """Canonicalize OpenAI tool calls and stringify function arguments.
+
+        取证（6485b02b 会话排查 + 智谱 coding 端点二分探测）:
+        - 15 个请求变体中仅「arguments 缺失(D4)/为 dict(D5)」复现 HTTP 400
+          {"code":"1210","API 调用参数有误"}；孤儿配对/null content/额外键等全过。
+        - ToolCall dataclass 标注 arguments: dict（core/message.py:54），存在隐式
+          dict 构建分支——任何未经 json.dumps 的 wire 重建都会整轮 400，且 provider
+          只回笼统 1210 无定位信息。
+        Historical direct callers may still provide the old flat
+        ``{id,name,arguments}`` shape.  Normalize that mechanically to the current
+        OpenAI-canonical ``function{name,arguments}`` shape at this provider boundary.
+        两遍扫描 + copy-on-write（不改调用方消息）；最终结构合法性由随后 validator 裁决；
+        返回 (新消息列表, 首个修复项诊断 {msg_idx, call_idx, tool}) 供异常归因。
+        """
+        needs = False
+        for m in messages:
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") if isinstance(tc, dict) else None
+                legacy_flat = (
+                    isinstance(tc, dict)
+                    and not isinstance(fn, dict)
+                    and bool(tc.get("name"))
+                )
+                if legacy_flat or (
+                    isinstance(fn, dict) and not isinstance(fn.get("arguments"), str)
+                ):
+                    needs = True
+                    break
+            if needs:
+                break
+        if not needs:
+            return messages, None
+
+        out: list[dict] = []
+        first_fixed: dict | None = None
+        fixed_count = 0
+        for mi, m in enumerate(messages):
+            tcs = m.get("tool_calls")
+            if not tcs:
+                out.append(m)
+                continue
+            new_tcs: list[dict] = []
+            changed = False
+            for ti, tc in enumerate(tcs):
+                fn = tc.get("function") if isinstance(tc, dict) else None
+                legacy_flat = (
+                    isinstance(tc, dict)
+                    and not isinstance(fn, dict)
+                    and bool(tc.get("name"))
+                )
+                if isinstance(fn, dict):
+                    fn2 = dict(fn)
+                    args = fn.get("arguments")
+                    tool_name = fn.get("name")
+                elif legacy_flat:
+                    fn2 = {"name": str(tc.get("name") or "")}
+                    args = tc.get("arguments")
+                    tool_name = fn2["name"]
+                else:
+                    new_tcs.append(tc)
+                    continue
+                if isinstance(args, str) and not legacy_flat:
+                    new_tcs.append(tc)
+                    continue
+                fn2["arguments"] = (
+                    args
+                    if isinstance(args, str)
+                    else json.dumps(args if args is not None else {}, ensure_ascii=False)
+                )
+                tc2 = dict(tc) if isinstance(tc, dict) else {}
+                tc2.pop("name", None)
+                tc2.pop("arguments", None)
+                tc2.setdefault("type", "function")
+                tc2["function"] = fn2
+                new_tcs.append(tc2)
+                changed = True
+                fixed_count += 1
+                if first_fixed is None:
+                    first_fixed = {
+                        "msg_idx": mi,
+                        "call_idx": ti,
+                        "tool": (tool_name if isinstance(tool_name, str) else "") or "?",
+                    }
+            if changed:
+                m2 = dict(m)
+                m2["tool_calls"] = new_tcs
+                out.append(m2)
+            else:
+                out.append(m)
+        logger.warning(
+            "提交视图修复(V3): %d 处 tool_call legacy shape/arguments 已机械规范化"
+            "（首个 msg#%d call#%d %s）——智谱 1210 触发器防御",
+            fixed_count,
+            (first_fixed or {}).get("msg_idx", -1),
+            (first_fixed or {}).get("call_idx", -1),
+            (first_fixed or {}).get("tool", "?"),
+        )
+        return out, first_fixed
+
+    @staticmethod
+    def _sanitize_openai_tool_pairs(messages: list[dict]) -> list[dict]:
+        """EVO-20260827 V2: OpenAI 路径 tool_calls↔tool 配对双向清洗（连续 400 根因修复）.
+
+        取证（eb5c2686/6485b02b 等 5+ 会话，跨 provider 复现）:
+        "An assistant message with 'tool_calls' must be followed by tool messages
+        responding to each 'tool_call_id'" —— 反向孤儿（声明在、应答被
+        cache_compacted_for 过滤/锚点裁剪切断）是主签名；正向孤儿（tool 无声明）
+        为次签名。上游 history.py 过滤不校验配对（689-695），此处为客户端最后防线。
+        双向修复（copy-on-write，不改调用方消息对象）:
+        - 正向: 孤儿 tool（无在案声明/重复应答）→ 删该 tool 消息
+        - 反向: assistant tool_call 无应答（含被 user/system 插队截断、序列末尾悬空）
+          → 从 tool_calls 剔除该 id；剔空后无文本则整条删
+        fail-open + warning 如实记录两个方向的修复量。
+        """
+        has_tool = any(m.get("role") == "tool" for m in messages)
+        has_tc = any(m.get("tool_calls") for m in messages)
+        if not (has_tool or has_tc):
+            return messages  # 快速路径：无配对结构原样返回（零开销）
+
+        out: list[dict | None] = []
+        pending: dict[str, int] = {}  # tool_call_id -> 其 assistant 在 out 中的下标
+        removed_tool = 0
+        stripped_ids = 0
+        dropped_assistant = 0
+
+        def _strip_pending() -> None:
+            # pending 中剩余的 id 即"无应答孤儿"（主签名），从 assistant 剔除之
+            nonlocal stripped_ids, dropped_assistant
+            if not pending:
+                return
+            by_idx: dict[int, list[str]] = {}
+            for tid, i in pending.items():
+                by_idx.setdefault(i, []).append(tid)
+            for i, orphan_tids in by_idx.items():
+                orphan_set = set(orphan_tids)
+                m_i = out[i]
+                if m_i is None:
+                    continue  # 理论不可达: pending 下标指向 append 后未被压缩的条目
+                tcs = m_i.get("tool_calls") or []
+                keep = [tc for tc in tcs if (tc or {}).get("id") not in orphan_set]
+                stripped_ids += len(tcs) - len(keep)
+                if keep:
+                    m_i["tool_calls"] = keep
+                else:
+                    m_i.pop("tool_calls", None)
+                    if not m_i.get("content"):  # 无文本且无 tool_calls → 整条删
+                        out[i] = None  # 占位，尾部统一压缩
+                        dropped_assistant += 1
+            pending.clear()
+
+        for m in messages:
+            role = m.get("role")
+            if role == "assistant":
+                if pending:  # 新 assistant 前仍有悬空声明 → 反向孤儿
+                    _strip_pending()
+                    pending.clear()
+                tcs = m.get("tool_calls") or []
+                if tcs:
+                    m2 = dict(m)  # copy-on-write
+                    out.append(m2)
+                    for tc in tcs:
+                        tid = (tc or {}).get("id")
+                        if tid:
+                            pending[tid] = len(out) - 1
+                else:
+                    out.append(m)
+            elif role == "tool":
+                tid = m.get("tool_call_id") or ""
+                if tid and tid in pending:
+                    out.append(m)
+                    del pending[tid]  # 首个应答有效；重复应答按孤儿删
+                else:
+                    removed_tool += 1
+            else:  # user/system：插队即截断悬空声明
+                if pending:
+                    _strip_pending()
+                    pending.clear()
+                out.append(m)
+        if pending:  # 序列末尾悬空
+            _strip_pending()
+        compacted: list[dict] = [m for m in out if m is not None]
+        if removed_tool:
+            logger.warning(
+                "提交视图修复: 删除 %d 条孤儿 tool 消息（无在案声明/重复应答）", removed_tool
+            )
+        if stripped_ids or dropped_assistant:
+            logger.warning(
+                "提交视图修复: 剔除 %d 个无应答 tool_call_id，删除 %d 条空 assistant"
+                "（反向孤儿——连续 400 主签名，EVO-20260827 V2）",
+                stripped_ids,
+                dropped_assistant,
+            )
+        return compacted
+
+    @staticmethod
+    def _provider_structure_violations(
+        messages: list[dict], *, expected_active_ingress_ref: str = ""
+    ) -> list[str]:
+        """Compatibility wrapper for callers that previously reached the class helper."""
+        return provider_structure_violations(
+            messages, expected_active_ingress_ref=expected_active_ingress_ref
+        )
+
+    def _validate_and_strip_provider_structure(
+        self,
+        messages: list[dict],
+        *,
+        guard_context: GuardRequestContext | None,
+    ) -> list[dict]:
+        """Validate the final internal wire shape and remove transport-only markers."""
+        expected_ref = (
+            str(guard_context.active_run_ingress_ref or "")
+            if guard_context is not None
+            else ""
+        )
+        ingress_kind = (
+            str(guard_context.active_run_ingress_kind or "none")
+            if guard_context is not None
+            else "none"
+        )
+        violations = provider_structure_violations(
+            messages, expected_active_ingress_ref=expected_ref
+        )
+        hook = guard_context.structure_state_hook if guard_context is not None else None
+        if hook is not None:
+            try:
+                hook(
+                    {
+                        "valid": not violations,
+                        "violations": list(violations),
+                        "active_run_ingress_ref": expected_ref,
+                        "active_run_ingress_kind": ingress_kind,
+                    }
+                )
+            except Exception:  # noqa: BLE001 — observability must not alter projection authority
+                logger.debug("provider structure telemetry hook failed", exc_info=True)
+        if violations:
+            raise LLMProjectionError(
+                "provider projection failed structural validation: " + "; ".join(violations),
+                violations=violations,
+                provider=self.provider,
+            )
+        stripped: list[dict] = []
+        for message in messages:
+            if "_active_run_ingress_ref" not in message:
+                stripped.append(message)
+                continue
+            clean = dict(message)
+            clean.pop("_active_run_ingress_ref", None)
+            stripped.append(clean)
+        return stripped
+
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
+        model: str | None = None,  # WEB: 每次调用可覆盖模型（None 用构造值，供 Web 模型切换）
+        guard_context: GuardRequestContext | None = None,
+    ) -> Iterator[StreamDelta]:
+        """流式请求，逐 content delta yield；generator 结束返回完整 LLMResponse.
+
+        异常按类型抛出 LLMError 子类，由循环如实反馈。
+        """
+        protocol = self.wire_protocol
+        actual_model = self.model if model is None else model
+        # Convert internal provider replay markers into exact wire fields before
+        # guard/fingerprint/context accounting. Native replay is authorized only by
+        # an exact provider+model+generation-contract match; visible assistant state
+        # remains ordinary history when that hidden transport scope does not match.
+        messages = self._project_provider_replay(messages, model=actual_model)
+        # 每请求 guard 快照：显式上下文优先；legacy 直接调用仍从兼容字段构造一次
+        # 局部快照，后续整个流（含终态 telemetry）都不再读取共享 per-request 字段。
+        _guard_ctx = guard_context or GuardRequestContext(
+            session_id=self.guard_session_id or "__global__",
+            system_text=(
+                self.guard_system
+                if self.guard_system is not None
+                else (
+                    messages[0].get("content", "")
+                    if messages and messages[0].get("role") == "system"
+                    else ""
+                )
+            ),
+            compress_count_this_run=self.guard_compress_count,
+            history_budget=self.guard_history_budget,
+            provider=self.provider,
+            model=actual_model,
+        )
+        # cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
+        self._guard_start_ts = 0
+        if self.guard_enabled:
+            try:
+                _guard = self.ensure_guard()
+                _d = _guard.check(
+                    session_id=_guard_ctx.session_id or "__global__",
+                    system_text=_guard_ctx.system_text or "",
+                    messages=messages,
+                    tools=tools,
+                    run_round=_guard_ctx.run_round,
+                    compress_count_this_run=_guard_ctx.compress_count_this_run,
+                    history_budget=_guard_ctx.history_budget,
+                    provider=_guard_ctx.provider or self.provider,
+                    model=_guard_ctx.model or actual_model,
+                    breaker_active=_guard_ctx.breaker_active,
+                    stable_prefix_fp=_guard_ctx.stable_prefix_fp,
+                    cache_prefix_epoch=_guard_ctx.cache_prefix_epoch,
+                    compaction_epoch=_guard_ctx.compaction_epoch,
+                )
+                if _d.rule == "submit_ratio" and _d.verdict == "WARN":
+                    # 规则 F WARN 升级：注入提示（AI 可见——接近超限提前处理）
+                    self.guard_warn_injected = getattr(self, "guard_warn_injected", False)
+                if _d.verdict == "BLOCK":
+                    from llm_loop.cache_guard.guard import CacheGuardBlockedError
+
+                    raise CacheGuardBlockedError(f"cache_guard 拦截: {_d.detail}")
+                if _d.verdict == "WARN":
+                    logger.warning("cache_guard: %s（%s）", _d.rule, _d.detail)
+            except LLMError:
+                raise
+            except Exception:  # noqa: BLE001 — fail-open 不阻断
+                logger.debug("cache_guard 校验异常（fail-open）", exc_info=True)
+        # 注意：Python 3.11+ 裸 `yield from` 会丢弃子生成器 return 值（StopIteration.value=None），
+        # 必须显式捕获后 return 才能把终态 LLMResponse 传给消费者（engine 经 StopIteration.value 取终态）。
+        # EVO-20260827: OpenAI 兼容路径孤儿 tool 清洗（anthropic 在 _to_anthropic_messages
+        # 内已有对称清洗；google 的 functionCall 结构不同不适用）——防压缩切配对/注入
+        # 插队产生的孤儿 tool 消息被 provider 拒收（连续 400 根因，跨 provider 取证）
+        _v3_diag: dict | None = None  # EVO-20260827 V3: arguments 串化诊断（1210 归因用）
+        if protocol not in ("anthropic", "google"):
+            messages = self._sanitize_openai_tool_pairs(messages)
+            messages, _v3_diag = self._normalize_tool_call_args(messages)
+            # M4.3 认知缓存标记（研究线）: 仅 COGNITIVE_TAG_ENDPOINTS 命中的端点生效，
+            # 云端 provider 零接触（cache_tag 非标字段，GLM 1210 前科）。
+            if tagging_enabled_for(getattr(self, "base_url", None)):
+                messages = apply_cognitive_cache_tags(messages)
+        messages = self._validate_and_strip_provider_structure(
+            messages, guard_context=_guard_ctx
+        )
+        # EVO-20261007-519eeb93: 外层 while 仅由空响应重试路径 continue 驱动（≤1 次），
+        # 其余路径（正常返回/异常上抛）与原实现语义完全一致。
+        _empty_retries_used = 0
+        while True:
+            try:
+                if protocol == "anthropic":
+                    result = yield from self._stream_anthropic(
+                        messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                    )
+                elif protocol == "google":
+                    result = yield from self._stream_google(
+                        messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                    )
+                elif protocol == "lms-chat":
+                    result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
+                else:
+                    result = yield from self._stream_openai(
+                        messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                    )
+            except LLMHTTPError:
+                # EVO-20260827 V3: 参数类 400（如智谱 1210 笼统无定位）携带本轮 arguments
+                # 串化诊断，异常侧日志可直接归因到消息位置/工具名。
+                if _v3_diag:
+                    logger.error(
+                        "LLM HTTP 错误伴随 V3 诊断: 本请求有 %d 处非串 arguments 已强制串化"
+                        "（首个 msg#%s call#%s %s）——若仍 400 属其他结构残留",
+                        _v3_diag.get("fixed_total", 0),
+                        _v3_diag.get("msg_idx"),
+                        _v3_diag.get("call_idx"),
+                        _v3_diag.get("tool"),
+                    )
+                raise
+            # EVO-20260818-92bd97d6: 空响应兜底——流正常结束但无任何内容/工具调用
+            # 视为异常（流被截断/模型异常），抛异常走如实反馈，不再静默记为 content=(空)
+            # EVO-20261007-519eeb93: 上抛前先同模型自动重试（幂等性依据见模块常量注释：
+            # 空响应保证零 text/tool delta 已投递）；重试后仍空才如实上抛——默认装配
+            # 路径由引擎 fallback 链接管，strict override 会话照实反馈（不静默换模型）。
+            if result is not None and not result.content and not result.tool_calls:
+                # ASSESS-20261008 BUG-15: reasoning-only 响应已投递思考 delta——
+                # 不满足同模型重试的"零 delta 投递"幂等前提（重试会把两次思考
+                # 拼成一个成功回答，且已发生的 provider 请求/计费不因重试抹掉），
+                # 如实上抛空响应异常并携带已投递事实；引擎层按其 fallback 政策
+                # 决定是否换模型，展示侧保留 attempt 边界。
+                _reasoning_delivered = bool(
+                    getattr(result, "reasoning_content", None)
+                ) or bool(getattr(result, "reasoning_tokens", None) or 0)
+                if (
+                    not _reasoning_delivered
+                    and _empty_retries_used < _EMPTY_RESPONSE_RETRY_MAX
+                ):
+                    _empty_retries_used += 1
+                    logger.warning(
+                        "空响应（provider=%s, model=%s, finish_reason=%s, reasoning_tokens=%s）"
+                        "→ %.1fs 后同模型自动重试（第 %d/%d 次）",
+                        self.provider,
+                        self.model,
+                        result.finish_reason,
+                        result.reasoning_tokens,
+                        _EMPTY_RESPONSE_RETRY_BACKOFF_S,
+                        _empty_retries_used,
+                        _EMPTY_RESPONSE_RETRY_MAX,
+                    )
+                    time.sleep(_EMPTY_RESPONSE_RETRY_BACKOFF_S)
+                    continue
+                _reasoning_note = (
+                    f"；已投递思考 {len(result.reasoning_content)} 字符"
+                    if _reasoning_delivered and result.reasoning_content
+                    else ""
+                )
+                raise LLMEmptyResponseError(
+                    f"模型返回空响应（无内容且无工具调用，provider={self.provider}，model={self.model}；"
+                    f"已同模型自动重试 {_empty_retries_used} 次仍为空{_reasoning_note}）",
+                    provider=self.provider,
+                    finish_reason=result.finish_reason,
+                    completion_tokens=result.completion_tokens,
+                    reasoning_tokens=result.reasoning_tokens,
+                    provider_truncated=result.truncated,
+                )
+            return result
+
+    def _provider_replay_contract(self, model: str | None = None) -> dict[str, Any]:
+        """Return the exact secret-free generation contract for native replay scope."""
+        actual_model = str(model or self.model or "")
+        contract = dict(effective_generation_contract(self))
+        # Per-call model override is a real wire identity axis; the shared helper sees
+        # client.model, so replace only this mechanical field with the actual request model.
+        contract["model"] = actual_model
+        contract["provider"] = str(self.provider or "")
+        return contract
+
+    def _provider_replay_envelope(
+        self, fields: dict[str, Any], *, model: str | None = None
+    ) -> dict[str, Any]:
+        """Bind opaque provider-native fields to the exact transport generation scope."""
+        actual_model = str(model or self.model or "")
+        return {
+            "provider": str(self.provider or ""),
+            "model": actual_model,
+            "generation_contract": self._provider_replay_contract(actual_model),
+            "fields": dict(fields),
+        }
+
+    def _project_provider_replay(
+        self, messages: list[dict], *, model: str | None = None
+    ) -> list[dict]:
+        """Project exact-scoped native replay at the final provider boundary.
+
+        Legacy/provider-only records remain durable evidence but have no authority to
+        recreate hidden native state.  Scope mismatch never removes visible assistant
+        content or normalized reasoning; it only withholds opaque provider-native fields.
+        The source message is never mutated.
+        """
+        actual_model = str(model or self.model or "")
+        expected_contract = self._provider_replay_contract(actual_model)
+        out: list[dict] = []
+        for message in messages:
+            replay = message.get("_provider_replay")
+            raw_time_ts = message.get("_message_time_ts")
+            if replay is None and raw_time_ts is None:
+                out.append(message)
+                continue
+            m = dict(message)
+            m.pop("_provider_replay", None)
+            m.pop("_message_time_ts", None)
+            if m.get("role") == "user" and raw_time_ts is not None:
+                try:
+                    ts = float(raw_time_ts)
+                    local_time = (
+                        datetime.fromtimestamp(ts)
+                        .astimezone()
+                        .isoformat(timespec="seconds")
+                        if ts > 0
+                        else ""
+                    )
+                except (TypeError, ValueError, OverflowError, OSError):
+                    local_time = ""
+                if local_time:
+                    m["content"] = (
+                        f"[message_time system_local={local_time}]\n"
+                        + str(m.get("content") or "")
+                    )
+            replay_scope_matches = bool(
+                m.get("role") == "assistant"
+                and isinstance(replay, dict)
+                and str(replay.get("provider") or "") == str(self.provider or "")
+                and str(replay.get("model") or "") == actual_model
+                and isinstance(replay.get("generation_contract"), dict)
+                and replay.get("generation_contract") == expected_contract
+            )
+            if replay_scope_matches and isinstance(replay, dict):
+                fields = replay.get("fields")
+                if isinstance(fields, dict):
+                    details = fields.get("reasoning_details")
+                    if details is not None:
+                        m["reasoning_details"] = details
+                        # reasoning_content is the normalized display form of the
+                        # same state. Prefer exact provider-native structure only inside
+                        # the matching replay scope.
+                        m.pop("reasoning_content", None)
+            out.append(m)
+        return out
+
+    @staticmethod
+    def _reasoning_split_safe_for_history(
+        messages: list[dict], tools: list[dict]
+    ) -> bool:
+        """Whether structured reasoning representation can be enabled this request.
+
+        Pre-P3 MiniMax sessions persisted normalized ``reasoning_content`` but not
+        provider-native ``reasoning_details``.  For a tool request, switching such a
+        history to structured interleaved-thinking mid-chain would claim replay state
+        that LFL does not possess.  Keep that request on the legacy representation
+        until those old tool rounds retire; fresh sessions can use reasoning_split
+        immediately.
+        """
+        if not tools:
+            return True
+        for message in messages:
+            if message.get("role") != "assistant" or not message.get("tool_calls"):
+                continue
+            if message.get("reasoning_content") and "reasoning_details" not in message:
+                return False
+        return True
+
+    # ── OpenAI 兼容（既有行为，零回归） ──
+    def _stream_openai(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None,
+        model: str | None,
+        guard_context: GuardRequestContext | None = None,
+    ) -> Iterator[StreamDelta]:
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
+        payload: dict[str, Any] = {
+            "model": self.model if model is None else model,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        # 无工具时不要进入 provider 的 tool protocol。OpenAI-compatible provider
+        # 不需要 `tools: []`；部分 reasoning provider 会把“请求携带 tools 参数”
+        # 视为后续 assistant/reasoning replay 的协议边界。空数组既不增加能力，
+        # 还可能无意义触发更严格的 replay 约束，因此只在本轮确有工具时发送。
+        if tools:
+            payload["tools"] = tools
+            if self.send_tool_choice:
+                payload["tool_choice"] = "auto"  # provider 明确支持时才显式发送
+        if self.reasoning_split and self._reasoning_split_safe_for_history(messages, tools):
+            payload["reasoning_split"] = True
+        # 2026-08-15: 显式输出预算（None=不发字段，模型默认——思考链模型默认 4096 时
+        # 思考占大半、最终分析被截断，用户现场反馈"回答被截断"根因）
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if self.top_k is not None:
+            payload["top_k"] = self.top_k
+        if self.min_p is not None:
+            payload["min_p"] = self.min_p
+        # 请求级 reasoning 模式：auto/off/on。
+        # - auto: 不做内容启发式判断；本地尊重 server/operator 默认，远端保持既有
+        #   thinking_mode 默认语义。对于 reasoning_control=always_on_effort 的模型，
+        #   effort 是独立于 thinking on/off 的 operator 配置：auto 不发送 thinking
+        #   开关，但仍应发送已配置/请求级 reasoning_effort，避免静默退回 provider
+        #   默认（GLM-5.3 Coding Plan 默认 max）。
+        # - on/off: 仅在 provider 元数据确认支持时显式控制。
+        # 这样“模型支持 reasoning”与“本次是否启用 reasoning”不再混为一谈。
+        (
+            _reasoning_mode,
+            _reasoning_capable,
+            _reasoning_control,
+            _reasoning_supported,
+            _reasoning_requested,
+        ) = self.reasoning_contract_state()
+        if _reasoning_control == "chat_template":
+            _template_kwargs = self._openai_chat_template_kwargs()
+            if _template_kwargs is not None:
+                payload["chat_template_kwargs"] = _template_kwargs
+        elif _reasoning_control == "thinking_type" and _reasoning_supported and _reasoning_requested is not None:
+            payload["thinking"] = {
+                "type": "enabled" if _reasoning_requested else "disabled"
+            }
+            if _reasoning_requested:
+                _effective_effort = self._effective_reasoning_effort()
+                if _effective_effort:
+                    payload["reasoning_effort"] = _effective_effort
+        elif _reasoning_control == "always_on_effort" and _reasoning_supported:
+            # GLM-5.3-class contract: reasoning cannot be disabled. Provider docs
+            # prescribe enabled+low as the migration equivalent of the old disabled
+            # intent. Keep requested=False in telemetry; do not lie that reasoning
+            # was actually disabled. In auto, leave thinking ownership with the
+            # provider but still honor the independent operator/request effort.
+            _effective_effort = self._effective_reasoning_effort()
+            if _reasoning_requested is None:
+                if _effective_effort:
+                    payload["reasoning_effort"] = _effective_effort
+            else:
+                payload["thinking"] = {"type": "enabled"}
+                if _reasoning_requested:
+                    if _effective_effort:
+                        payload["reasoning_effort"] = _effective_effort
+                else:
+                    payload["reasoning_effort"] = "low"
+        # 本地 provider（api_key 为空）不发 Authorization 头
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        # [临时诊断 2026-08-27] 分段指纹落盘（见 _trace_payload_fingerprint docstring）——
+        # 放在 payload 完整组装后、发送前；BLOCK 的请求在 chat_stream 层已被拦，不会到达这里。
+        _trace_payload_fingerprint(
+            payload,
+            messages,
+            session_id=(guard_context.session_id if guard_context else "") or "__global__",
+            provider=self.provider,
+            model=payload.get("model", "") or self.model,
+            run_round=(guard_context.run_round if guard_context else None),
+            stable_prefix_fp=(guard_context.stable_prefix_fp if guard_context else ""),
+            cache_prefix_epoch=(guard_context.cache_prefix_epoch if guard_context else None),
+            compaction_epoch=(guard_context.compaction_epoch if guard_context else None),
+        )
+
+        acc = _StreamAcc()
+        agg = ToolCallDeltaAggregator()
+        effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+        # EVO-20260824: 大上下文流式断连重试（默认 1 次；P1-C1 后由启动快照可调/关）——
+        # 观测: 150K+ 字符上下文下 deepseek 流式偶发 peer closed connection
+        # （incomplete chunked read），同请求重试因前缀缓存命中率高、代价极低；
+        # 仅在「尚无任何输出已产出」时重试（已有 content/reasoning/tool delta
+        # 产出则重试会造成 UI 重复/工具重复执行，故不重试）。
+        _retry_disconnect = int(self.retry_disconnect)
+        _tc_seen = False
+
+        def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
+            """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）.
+
+            ASSESS-20261008 BUG-12: 每次 transport attempt 重新初始化 response
+            accumulator 与工具聚合——finish/truncation 状态不跨 attempt 残留
+            （复现: attempt1 length-only 零输出后断连，重试成功 stop 但最终
+            truncated 仍为 True）。失败 attempt 的 usage/transport 事实仍保留
+            在 attempt journal（_observe_transport_usage /
+            _note_settled_response_facts 逐 attempt 记录），不因重试被丢弃。
+            """
+            nonlocal _tc_seen, acc, agg
+            acc = _StreamAcc()
+            agg = ToolCallDeltaAggregator()
+            think_parser = _ThinkTagStreamParser()
+            with self._transport_attempt_scope(
+                model_id=str(payload["model"]),
+                transport_retry_index=transport_retry_index,
+                target_url=url,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="openai-json",
+                    timeout_s=effective_timeout,
+                    knowledge_probe=(guard_context.knowledge_reference_probe if guard_context else None),
+                ),
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ) as resp:
+                self._raise_for_status(resp, model_id=str(payload["model"]))
+                self._observe_transport_response(resp, model_id=str(payload["model"]))
+                _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
+                for line in _iter_task_budget_checked_lines(resp):
+                    _check_stream_deadline(_deadline, effective_timeout)
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    self._check_sse_error(
+                        chunk, model_id=str(payload["model"]), http_status=int(resp.status_code)
+                    )
+                    if _observed_model is None:
+                        _m = chunk.get("model")
+                        if isinstance(_m, str) and _m:
+                            _observed_model = _m
+                    usage = chunk.get("usage")
+                    if isinstance(usage, dict):
+                        self._observe_transport_usage(usage, model_id=str(payload["model"]))
+                        # M58 修复（审查中危）: 缺失不覆盖——部分 provider 在中间 chunk
+                        # 带 usage 但缺字段（或全 0），覆盖式赋值会把已累计值清零。
+                        pt = usage.get("prompt_tokens")
+                        if pt:
+                            acc.prompt_tokens = int(pt)
+                        ct = usage.get("completion_tokens")
+                        if ct:
+                            acc.completion_tokens = int(ct)
+                        _completion_details = usage.get("completion_tokens_details") or {}
+                        _reasoning_tokens = (
+                            _completion_details.get("reasoning_tokens")
+                            if isinstance(_completion_details, dict)
+                            else None
+                        )
+                        if _reasoning_tokens is not None:
+                            acc.reasoning_tokens = int(_reasoning_tokens)
+                        # M58: 前缀缓存命中（DeepSeek prompt_cache_hit_tokens；Kimi 兜底 cached_tokens；
+                        # 2026-08-18 MiniMax-M3: prompt_tokens_details.cached_tokens（嵌套——实测 128 命中）
+                        hit = usage.get("prompt_cache_hit_tokens")
+                        if hit is None:
+                            hit = usage.get("cached_tokens")
+                        if hit is None:
+                            hit = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                        if hit:
+                            acc.prompt_cache_hit_tokens = int(hit)
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        # MiniMax-M3 等 provider 可能把思考链放 content 的 <think> 标签；
+                        # parser 必须请求局部且保留潜在 marker 前缀，避免分片泄漏/跨会话污染。
+                        for kind, text in think_parser.feed(content):
+                            if kind == "reasoning":
+                                acc.reasoning_parts.append(text)
+                                yield StreamDelta(text="", reasoning=text)
+                            else:
+                                acc.content_parts.append(text)
+                                yield StreamDelta(text=text)
+                    # Structured reasoning replay (MiniMax reasoning_split and
+                    # compatible gateways). Preserve raw structure for the next
+                    # provider round while emitting only newly-added display text.
+                    reasoning_details = delta.get("reasoning_details")
+                    if reasoning_details is not None:
+                        new_details_text = _reasoning_details_text(reasoning_details)
+                        prev_details_text = acc.reasoning_details_text
+                        acc.provider_replay_fields["reasoning_details"] = _merge_reasoning_details(
+                            acc.provider_replay_fields.get("reasoning_details"),
+                            reasoning_details,
+                            prev_details_text,
+                            new_details_text,
+                        )
+                        if new_details_text:
+                            if prev_details_text and new_details_text.startswith(prev_details_text):
+                                reasoning_delta = new_details_text[len(prev_details_text):]
+                                acc.reasoning_details_text = new_details_text
+                            elif prev_details_text.startswith(new_details_text):
+                                reasoning_delta = ""
+                            else:
+                                reasoning_delta = new_details_text
+                                acc.reasoning_details_text = prev_details_text + new_details_text
+                            if reasoning_delta:
+                                acc.reasoning_parts.append(reasoning_delta)
+                                yield StreamDelta(text="", reasoning=reasoning_delta)
+                        _emit_stream_state(
+                            guard_context,
+                            provider=self.provider,
+                            provider_replay=self._provider_replay_envelope(
+                                acc.provider_replay_fields, model=str(payload["model"])
+                            ),
+                            tool_call_drafts=agg.snapshot(),
+                        )
+                    # OpenAI-compatible reasoning field dialects differ by server.
+                    # DeepSeek-style gateways use `reasoning_content`, while the
+                    # mlx_lm OpenAI-compatible server emits `reasoning`.  Accept
+                    # both at the wire boundary and normalize them into LFL's
+                    # internal `reasoning_content` field.  Prefer the established
+                    # key when a provider happens to emit both so one chunk is not
+                    # counted twice.
+                    rc = delta.get("reasoning_content") or delta.get("reasoning")
+                    if reasoning_details is None and rc:
+                        acc.reasoning_parts.append(rc)
+                        yield StreamDelta(text="", reasoning=rc)
+                    if delta.get("tool_calls"):
+                        _tc_seen = True
+                        for tc in delta["tool_calls"]:
+                            agg.add_delta(tc)
+                        _emit_stream_state(
+                            guard_context,
+                            provider=self.provider,
+                            provider_replay=(
+                                self._provider_replay_envelope(
+                                    acc.provider_replay_fields, model=str(payload["model"])
+                                )
+                                if acc.provider_replay_fields
+                                else None
+                            ),
+                            tool_call_drafts=agg.snapshot(),
+                        )
+                    fr = choice.get("finish_reason")
+                    if fr:
+                        acc.finish_reason = fr
+                    if acc.finish_reason == "length":
+                        acc.truncated = True
+                for kind, text in think_parser.flush():
+                    if kind == "reasoning":
+                        acc.reasoning_parts.append(text)
+                        yield StreamDelta(text="", reasoning=text)
+                    else:
+                        acc.content_parts.append(text)
+                        yield StreamDelta(text=text)
+                self._note_settled_response_facts(
+                    finish_reason=acc.finish_reason,
+                    content="".join(acc.content_parts) or None,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=agg.finish(),
+                    provider_observed_model=_observed_model,
+                )
+        _attempt = 0
+        while True:
+            _attempt += 1
+            try:
+                yield from _openai_stream_once(_attempt - 1)
+                break  # 流完整结束（含 [DONE]）
+            except httpx.TimeoutException as exc:
+                raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+            except (httpx.NetworkError, httpx.ProtocolError) as exc:
+                # 传输级断连（peer closed / 连接重置 / 协议中断）→ 无输出已产出时重试一次
+                # 2026-09-18: 连接级失败先上报持有者（退休本实例，使后续调用按当前系统代理/
+                # 网络配置重建），再按既有单次重试语义决定是否重试。
+                self._notify_transport_failure(exc)
+                # ASSESS-20261008 BUG-12: 重试判定读取失败 attempt 的已投递事实
+                # （acc 在下一 attempt 开始时才重置）——content/reasoning/details/
+                # 工具任一已投递即不重试，避免 UI 重复与工具重复执行。
+                _output_seen = (
+                    bool(
+                        acc.content_parts
+                        or acc.reasoning_parts
+                        or acc.reasoning_details_text
+                    )
+                    or _tc_seen
+                )
+                if _attempt <= _retry_disconnect and not _output_seen:
+                    logger.warning(
+                        "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
+                        _attempt, _retry_disconnect, exc,
+                    )
+                    # 连接被瞬时拒绝时，毫秒级原地重试无意义（实测两次尝试相隔 2.8ms 同因失败）：
+                    # 换连接前短退避；超时类失败不退避，保持既有节奏。
+                    if isinstance(exc, httpx.ConnectError):
+                        time.sleep(_TRANSPORT_RETRY_BACKOFF_S)
+                    continue
+                raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
+            except LLMHTTPError:
+                raise
+            except httpx.HTTPError as exc:
+                raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
+        return _finish_response(
+            acc, agg, self.provider, client=self, guard_context=guard_context,
+            actual_model=str(payload["model"]),
+        )
+
+    # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──
+    def _anthropic_cache_enabled(self) -> bool:
+        """prompt caching 开关（EVO-20260817）: 启动快照可显式覆盖；
+        未配置时 localhost/127.0.0.1 自动启用（本地模型省 token 主场景），远端默认关
+        （官方 API 兼容但默认零回归，避免第三方端点对 cache_control 报错）。"""
+        if self.anthropic_cache_control is not None:
+            return bool(self.anthropic_cache_control)
+        base = (self.base_url or "").lower()
+        return "localhost" in base or "127.0.0.1" in base
+
+    def _stream_anthropic(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None,
+        model: str | None,
+        guard_context: GuardRequestContext | None = None,
+    ) -> Iterator[StreamDelta]:
+        # EVO-20260817: base_url 已含 /v1 时（如 LM Studio http://localhost:1234/v1）
+        # 避免拼出 /v1/v1/messages 404——归一化后两种配置均正确，官方 API 零回归
+        _base = self.base_url.rstrip("/")
+        if _base.endswith("/v1"):
+            _base = _base[:-3]
+        url = f"{_base}/v1/messages"
+        system_parts = [m["content"] for m in messages if m.get("role") == "system" and m.get("content")]
+        msgs = [m for m in messages if m.get("role") != "system"]
+        payload: dict[str, Any] = {
+            "model": self.model if model is None else model,
+            "messages": self._to_anthropic_messages(msgs),
+            "stream": True,
+            "max_tokens": self.max_tokens or 4096,
+        }
+        # EVO-20260817: 无工具时不发 tools 字段（LM Studio 拒绝 null；官方 API 亦兼容省略）
+        _atools = self._to_anthropic_tools(tools)
+        if _atools:
+            payload["tools"] = _atools
+        if system_parts:
+            # EVO-20260817 prompt caching（本地模型省 token，用户需求）:
+            # system+tools 为"固化固定信息"（每轮不变），打 cache_control 标记 →
+            # 首次全量计费、后续轮 cache hit 只计费追加的 messages（实测 LM Studio
+            # cache_read_input_tokens 命中，81% 前缀省 token）；messages 尾部追加最新。
+            # 默认 localhost 自动启用；官方 API 亦兼容（可 env 覆盖）。
+            if self._anthropic_cache_enabled():
+                payload["system"] = [
+                    {
+                        "type": "text",
+                        "text": "\n\n".join(str(p) for p in system_parts),
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+                if payload.get("tools"):
+                    payload["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+            else:
+                payload["system"] = "\n\n".join(str(p) for p in system_parts)
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+
+        acc = _StreamAcc()
+        agg = ToolCallDeltaAggregator()
+        try:
+            effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+            with self._transport_attempt_scope(
+                model_id=str(payload["model"]),
+                transport_retry_index=0,
+                target_url=url,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="anthropic-converted",
+                    timeout_s=effective_timeout,
+                ),
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ) as resp:
+                self._raise_for_status(resp, model_id=str(payload["model"]))
+                self._observe_transport_response(resp, model_id=str(payload["model"]))
+                _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
+                for line in _iter_task_budget_checked_lines(resp):
+                    _check_stream_deadline(_deadline, effective_timeout)
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        evt = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    evt_type = evt.get("type")
+                    if evt_type == "error":
+                        # ASSESS-20261008 BUG-04: Anthropic 流内 error 事件显式上抛。
+                        # 原实现无分支——partial 后 error 会以"半截成功"收尾。
+                        err = evt.get("error") if isinstance(evt.get("error"), dict) else {}
+                        err_code = (
+                            _safe_provider_code_value(err.get("type"))
+                            or _safe_provider_code_value(err.get("code"))
+                        )
+                        err_msg = str(err.get("message") or "Anthropic 流内错误事件")
+                        partial = sum(len(p) for p in acc.content_parts) + sum(
+                            len(p) for p in acc.reasoning_parts
+                        )
+                        try:
+                            err_body = json.dumps(
+                                {"error": {"type": err.get("type"), "message": err_msg[:2000]}},
+                                ensure_ascii=False,
+                            )[:2000]
+                        except Exception:  # noqa: BLE001
+                            err_body = err_msg[:2000]
+                        raise LLMStreamProviderError(
+                            f"Anthropic 流内错误事件（type={err_code or '未知'}）: {err_msg[:500]}",
+                            status_code=int(resp.status_code),
+                            provider_code=err_code,
+                            body=err_body,
+                            provider=self.provider,
+                            partial_chars=partial,
+                        )
+                    if evt_type == "message_start":
+                        usage = (evt.get("message") or {}).get("usage") or {}
+                        acc.prompt_tokens = int(usage.get("input_tokens") or 0)
+                        acc.completion_tokens = int(usage.get("output_tokens") or 0)
+                        # M58: Anthropic 缓存命中（cache_read_input_tokens）
+                        acc.prompt_cache_hit_tokens = int(usage.get("cache_read_input_tokens") or 0)
+                        if _observed_model is None:
+                            _m = (evt.get("message") or {}).get("model")
+                            if isinstance(_m, str) and _m:
+                                _observed_model = _m
+                    elif evt_type == "content_block_start":
+                        block = evt.get("content_block") or {}
+                        if block.get("type") == "tool_use":
+                            # 流式语义：start 时 input 恒为空 dict——不并入 arguments，
+                            # 参数由随后的 input_json_delta 分片拼装（并入 "{}" 会破坏 JSON）
+                            start_input = block.get("input") or {}
+                            start_args = (
+                                json.dumps(start_input, ensure_ascii=False)
+                                if start_input
+                                else ""
+                            )
+                            agg.add_delta(
+                                {
+                                    "index": evt.get("index", 0),
+                                    "id": block.get("id", ""),
+                                    "function": {"name": block.get("name", ""), "arguments": start_args},
+                                }
+                            )
+                    elif evt_type == "content_block_delta":
+                        delta = evt.get("delta") or {}
+                        dtype = delta.get("type")
+                        if dtype == "text_delta" and delta.get("text"):
+                            acc.content_parts.append(delta["text"])
+                            yield StreamDelta(text=delta["text"])
+                        elif dtype == "thinking_delta" and delta.get("thinking"):
+                            acc.reasoning_parts.append(delta["thinking"])
+                            yield StreamDelta(text="", reasoning=delta["thinking"])
+                        elif dtype == "input_json_delta":
+                            agg.add_delta(
+                                {
+                                    "index": evt.get("index", 0),
+                                    "function": {"arguments": delta.get("partial_json") or ""},
+                                }
+                            )
+                    elif evt_type == "message_delta":
+                        stop = ((evt.get("delta") or {}).get("stop_reason")) or ""
+                        if stop:
+                            acc.finish_reason = stop
+                        if acc.finish_reason in ("max_tokens", "length"):
+                            acc.truncated = True
+                        usage = evt.get("usage") or {}
+                        # ASSESS-20261008 BUG-11: message_delta.usage 为累计值
+                        # （platform.claude.com/docs streaming）——按字段存在即更新，
+                        # 缺字段不清零（M58 缺失不覆盖契约延续），不与已有值相加。
+                        if isinstance(usage, dict):
+                            if usage.get("input_tokens") is not None:
+                                acc.prompt_tokens = int(usage["input_tokens"])
+                            if usage.get("output_tokens") is not None:
+                                acc.completion_tokens = int(usage["output_tokens"])
+                            if usage.get("cache_read_input_tokens") is not None:
+                                acc.prompt_cache_hit_tokens = int(
+                                    usage["cache_read_input_tokens"]
+                                )
+                self._note_settled_response_facts(
+                    finish_reason=acc.finish_reason,
+                    content="".join(acc.content_parts) or None,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=agg.finish(),
+                    provider_observed_model=_observed_model,
+                )
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+        except httpx.NetworkError as exc:
+            raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
+        except LLMHTTPError:
+            raise
+        except httpx.HTTPError as exc:
+            raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
+        return _finish_response(
+            acc, agg, self.provider, client=self, guard_context=guard_context,
+            actual_model=str(payload["model"]),
+        )
+
+    # ── Google Gemini API（wire_protocol=google，P3-5） ──
+    def _stream_google(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None,
+        model: str | None,
+        guard_context: GuardRequestContext | None = None,
+    ) -> Iterator[StreamDelta]:
+        model_id = self.model if model is None else model
+        url = (
+            f"{self.base_url.rstrip('/')}/v1beta/models/{model_id}:streamGenerateContent?alt=sse"
+        )
+        system_parts = [m["content"] for m in messages if m.get("role") == "system" and m.get("content")]
+        msgs = [m for m in messages if m.get("role") != "system"]
+        payload: dict[str, Any] = {
+            "contents": self._to_google_contents(msgs),
+            "generationConfig": {"maxOutputTokens": self.max_tokens or 4096},
+        }
+        if system_parts:
+            payload["systemInstruction"] = {
+                "parts": [{"text": "\n\n".join(str(p) for p in system_parts)}]
+            }
+        gtools = self._to_google_tools(tools)
+        if gtools:
+            payload["tools"] = gtools
+        headers = {"Content-Type": "application/json", "x-goog-api-key": self.api_key}
+
+        acc = _StreamAcc()
+        agg = ToolCallDeltaAggregator()
+        google_fc_index = 0  # Google functionCall 每次独立工具调用（index 递增）
+        try:
+            effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+            with self._transport_attempt_scope(
+                model_id=model_id,
+                transport_retry_index=0,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="google-payload",
+                    timeout_s=effective_timeout,
+                ),
+                target_url=url,
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ) as resp:
+                self._raise_for_status(resp, model_id=model_id)
+                self._observe_transport_response(resp, model_id=model_id)
+                _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
+                for line in _iter_task_budget_checked_lines(resp):
+                    _check_stream_deadline(_deadline, effective_timeout)
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if not data:
+                        continue
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if _observed_model is None:
+                        _m = chunk.get("modelVersion")
+                        if isinstance(_m, str) and _m:
+                            _observed_model = _m
+                    err_obj = chunk.get("error")
+                    if isinstance(err_obj, dict):
+                        # ASSESS-20261008 BUG-04: Google 流内 error 事件显式上抛
+                        # （原实现无分支，partial 后 error 以"半截成功"收尾）。
+                        err_code = (
+                            _safe_provider_code_value(err_obj.get("status"))
+                            or _safe_provider_code_value(err_obj.get("code"))
+                        )
+                        err_msg = str(err_obj.get("message") or "Google 流内错误事件")
+                        partial = sum(len(p) for p in acc.content_parts) + sum(
+                            len(p) for p in acc.reasoning_parts
+                        )
+                        try:
+                            err_body = json.dumps(
+                                {"error": {"code": err_obj.get("code"),
+                                           "status": err_obj.get("status"),
+                                           "message": err_msg[:2000]}},
+                                ensure_ascii=False,
+                            )[:2000]
+                        except Exception:  # noqa: BLE001
+                            err_body = err_msg[:2000]
+                        raise LLMStreamProviderError(
+                            f"Google 流内错误事件（{err_code or '未知'}）: {err_msg[:500]}",
+                            status_code=int(resp.status_code),
+                            provider_code=err_code,
+                            body=err_body,
+                            provider=self.provider,
+                            partial_chars=partial,
+                        )
+                    usage = chunk.get("usageMetadata") or {}
+                    if usage:
+                        # M58 修复（审查中危）: 缺失不覆盖（与 openai 路径一致）
+                        pt = usage.get("promptTokenCount")
+                        if pt:
+                            acc.prompt_tokens = int(pt)
+                        ct = usage.get("candidatesTokenCount")
+                        if ct:
+                            acc.completion_tokens = int(ct)
+                    finish = chunk.get("candidates", [{}])[0].get("finishReason", "") if chunk.get("candidates") else ""
+                    if finish:
+                        acc.finish_reason = finish
+                        if finish in ("MAX_TOKENS", "LENGTH"):
+                            acc.truncated = True
+                    parts = ((chunk.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+                    for part in parts:
+                        if part.get("text"):
+                            acc.content_parts.append(part["text"])
+                            yield StreamDelta(text=part["text"])
+                        if part.get("functionCall"):
+                            fc = part["functionCall"]
+                            agg.add_delta(
+                                {
+                                    "index": google_fc_index,
+                                    "id": f"fc_{int(time.time() * 1000)}",
+                                    "function": {
+                                        "name": fc.get("name", ""),
+                                        "arguments": json.dumps(fc.get("args") or {}, ensure_ascii=False),
+                                    },
+                                }
+                            )
+                            google_fc_index += 1
+                self._note_settled_response_facts(
+                    finish_reason=acc.finish_reason,
+                    content="".join(acc.content_parts) or None,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=agg.finish(),
+                    provider_observed_model=_observed_model,
+                )
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+        except httpx.NetworkError as exc:
+            raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
+        except LLMHTTPError:
+            raise
+        except httpx.HTTPError as exc:
+            raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
+        return _finish_response(
+            acc, agg, self.provider, client=self, guard_context=guard_context,
+            actual_model=model_id,
+        )
+
+    # ── LM Studio /api/v1/chat（wire_protocol=lms-chat，EVO-20260817 用户需求） ──
+    def _stream_lms_chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None,
+        model: str | None,
+    ) -> Iterator[StreamDelta]:
+        """LM Studio 新版 /api/v1/chat 端点适配.
+
+        端点特征（实测 2026-08-17）:
+        - input: 模态数组 [{type: text, content: str}]（无 role/system/tools 键——极简接口）
+        - SSE 流式: reasoning.delta / message.delta / chat.end 事件（无原生工具事件）
+        - 无原生工具调用 → 文本工具协议: 工具描述注入文本, 模型输出
+          JSON {"tool": name, "args": {...}}，此处解析为 ToolCall 交给循环执行
+        - 工具轮上下文精简（用户需求）: 只保留最近 LMS_CHAT_TAIL 条消息文本化
+          （默认 16），不发送全部历史——端点无角色字段天然拼接, 早期历史经压缩
+          归档可检索（信息零丢失）
+        """
+        base = self.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        url = f"{base}/api/v1/chat"
+        model_id = self.model if model is None else model
+        payload: dict[str, Any] = {
+            "model": model_id,
+            "input": self._to_lms_input(messages, tools),
+            "stream": True,
+        }
+        headers = {"Content-Type": "application/json"}
+        acc = _StreamAcc()
+        try:
+            effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+            with self._transport_attempt_scope(
+                model_id=model_id,
+                transport_retry_index=0,
+                prepared=self._prepared_attempt_facts(
+                    payload=payload,
+                    representation="lms-chat-json",
+                    timeout_s=effective_timeout,
+                ),
+                target_url=url,
+            ), _task_budget_provider_stream(
+                self._client, "POST", url, json=payload, headers=headers, timeout=_task_budget_transport_timeout(effective_timeout)
+            ) as resp:
+                if resp.status_code >= 400:
+                    self._raise_for_status(resp, model_id=model_id)
+                self._observe_transport_response(resp, model_id=model_id)
+                _deadline = _stream_total_deadline(effective_timeout)
+                _observed_model: str | None = None
+                for line in _iter_task_budget_checked_lines(resp):
+                    _check_stream_deadline(_deadline, effective_timeout)
+                    if not line or not line.startswith("data: "):
+                        continue
+                    try:
+                        chunk = json.loads(line[6:])
+                    except ValueError:
+                        continue
+                    etype = chunk.get("type")
+                    if etype == "reasoning.delta":
+                        rc = chunk.get("content") or ""
+                        if rc:
+                            acc.reasoning_parts.append(rc)
+                            yield StreamDelta(text="", reasoning=rc)
+                    elif etype == "message.delta":
+                        c = chunk.get("content") or ""
+                        if c:
+                            acc.content_parts.append(c)
+                            yield StreamDelta(text=c)
+                    elif etype == "chat.end":
+                        # 2026-08-22 补 usage 解析: lms-chat 的 chat.end.result.stats 含
+                        # input_tokens/total_output_tokens（此前 acc 恒 0, 本地模型用量统计失真）。
+                        # 注: stats 不含 cached_tokens（lms-chat 协议限制, KV 命中不可观测——
+                        # 需走 OpenAI 协议直连 llama-server 才能拿 prompt_tokens_details）。
+                        try:
+                            _stats = (chunk.get("result") or {}).get("stats") or {}
+                            _it = _stats.get("input_tokens")
+                            _ot = _stats.get("total_output_tokens")
+                            if _it:
+                                acc.prompt_tokens = int(_it)
+                            if _ot:
+                                acc.completion_tokens = int(_ot)
+                        except Exception:  # noqa: BLE001 — 解析失败 fail-open（不影响输出）
+                            pass
+                        break
+                _lms_content = "".join(acc.content_parts) or None
+                _lms_tool_rows: list[dict[str, object]] = []
+                if _lms_content:
+                    for _i, _tc in enumerate(self._parse_text_tool_calls(_lms_content)):
+                        _lms_tool_rows.append(
+                            {"id": f"lms-{_i}", "name": _tc["name"], "arguments": _tc["arguments"]}
+                        )
+                self._note_settled_response_facts(
+                    finish_reason=None,
+                    content=_lms_content,
+                    reasoning_content="".join(acc.reasoning_parts) or None,
+                    tool_calls=_lms_tool_rows,
+                )
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+        except httpx.NetworkError as exc:
+            raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
+        except LLMHTTPError:
+            raise
+        except httpx.HTTPError as exc:
+            raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
+        content = "".join(acc.content_parts) or None
+        reasoning = "".join(acc.reasoning_parts) or None
+        tool_calls: list[ToolCall] = []
+        if content:
+            for i, tc in enumerate(self._parse_text_tool_calls(content)):
+                tool_calls.append(ToolCall(id=f"lms-{i}", name=tc["name"], arguments=tc["arguments"]))
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            provider=self.provider,
+            reasoning_content=reasoning,
+            prompt_tokens=acc.prompt_tokens,
+            completion_tokens=acc.completion_tokens,
+        )
+
+    # ── lms-chat 文本工具协议 ──
+    _LMS_CHAT_TAIL = int(os.environ.get("LMS_CHAT_TAIL", "16"))  # 工具轮只保留最近 N 条（上下文精简）
+
+    def _to_lms_input(self, messages: list[dict], tools: list[dict]) -> list[dict]:
+        """消息 → input 模态数组（system + 工具描述 + 最近 N 条历史，文本化）."""
+        parts: list[str] = []
+        for m in messages:
+            if m.get("role") == "system" and m.get("content"):
+                parts.append("[系统] " + str(m["content"]))
+        if tools:
+            parts.append(self._lms_tools_text(tools))
+        tail = [m for m in messages if m.get("role") != "system"][-self._LMS_CHAT_TAIL:]
+        for m in tail:
+            parts.append(self._lms_msg_text(m))
+        return [{"type": "text", "content": "\n\n".join(parts)}]
+
+    @staticmethod
+    def _lms_msg_text(m: dict) -> str:
+        """单条消息文本化（角色前缀标记；工具结果/调用 JSON 化）."""
+        role = m.get("role", "user")
+        content = m.get("content")
+        c = content if isinstance(content, str) else (
+            json.dumps(content, ensure_ascii=False) if content else ""
+        )
+        if role == "tool":
+            name = m.get("name") or "tool"
+            return f"[工具结果 {name}] {c}"
+        if role == "assistant":
+            tcs = m.get("tool_calls") or []
+            extra = ""
+            if tcs:
+                bits = []
+                for tc in tcs:
+                    fn = tc.get("function") or tc
+                    bits.append(
+                        f'[调用工具 {fn.get("name")} 参数 {json.dumps(fn.get("arguments") or {}, ensure_ascii=False)}]'
+                    )
+                extra = " " + " ".join(bits)
+            return f"[助手] {c}{extra}"
+        return f"[用户] {c}"
+
+    @staticmethod
+    def _lms_tools_text(tools: list[dict]) -> str:
+        """工具描述 → 文本注入（文本工具协议）.
+
+        EVO-20260817 本地模型精简（用户需求）: 本地模型 prefill 随输入线性增长，
+        全量 40+ 工具完整 JSON 每轮重发 = token 大头。这里固化精简:
+        - 仅 name + description 首句（≤120 字符）+ 参数骨架（字段名+类型+required）
+        - 固定不变 → 前缀稳定；尾部追加最新消息（LMS_CHAT_TAIL 已限 16 条）
+        - 省 token 但不影响推理: 模型只需知道"有哪些工具/干什么/参数骨架"，
+          完整 schema 按需经 get_tool_schema 读取
+        """
+        lines = ["[可用工具]"]
+        for t in tools:
+            fn = t.get("function") or t
+            desc = (fn.get("description") or "").strip().split("\n")[0][:120]
+            params = fn.get("parameters") or {}
+            props = (params.get("properties") or {})
+            skeleton = {
+                k: {"type": v.get("type", "string")}
+                for k, v in props.items()
+            }
+            lines.append(
+                json.dumps(
+                    {
+                        "name": fn.get("name", ""),
+                        "description": desc,
+                        "parameters": {
+                            "type": "object",
+                            "properties": skeleton,
+                            "required": params.get("required", []),
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        lines.append(
+            '需要调用工具时，仅输出一行 JSON: {"tool": "工具名", "args": {...}}；'
+            "多个调用用换行分隔，不要输出其他内容。"
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_text_tool_calls(text: str) -> list[dict]:
+        """从消息文本解析文本协议工具调用 → [{name, arguments(dict)}].
+
+        容错: ```json 围栏、前后杂文本、args 嵌套空对象/数组；
+        解析失败返回空（fail-open 当普通回答）。
+        实现: 定位 "tool" 键 → 向前找对象起点 → 平衡括号找对象终点 → json.loads。
+        """
+        import re
+
+        out: list[dict] = []
+        s = text.strip()
+        m = re.search(r"```(?:json)?\s*(.*?)```", s, re.S)
+        if m:
+            s = m.group(1).strip()
+        for tm in re.finditer(r'"tool"\s*:\s*"[^"]+"', s):
+            i = tm.start()
+            while i > 0 and s[i] != "{":
+                i -= 1
+            if s[i] != "{":
+                continue
+            depth = 0
+            in_str = False
+            esc = False
+            j = i
+            while j < len(s):
+                ch = s[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                else:
+                    if ch == '"':
+                        in_str = True
+                    elif ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                j += 1
+            if j >= len(s):
+                continue
+            try:
+                d = json.loads(s[i : j + 1])
+            except ValueError:
+                continue
+            name = d.get("tool")
+            if not name:
+                continue
+            args = d.get("args") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {}
+            out.append({"name": name, "arguments": args if isinstance(args, dict) else {}})
+        return out
+
+    # ── 共享工具方法 ──
+    def _raise_for_status(
+        self, resp: httpx.Response, *, model_id: str | None = None
+    ) -> None:
+        if resp.status_code >= 400:
+            body = resp.read().decode("utf-8", errors="replace")[:2000]
+            provider_code = _safe_provider_code_from_body(body)
+            self._observe_transport_error(
+                model_id=model_id or self.model,
+                status_code=int(resp.status_code),
+                provider_code=provider_code,
+                headers=getattr(resp, "headers", None),
+            )
+            raise LLMHTTPError(
+                f"HTTP {resp.status_code}: {resp.reason_phrase} | {body}",
+                status_code=resp.status_code,
+                body=body,
+                provider=self.provider,
+                provider_code=provider_code,
+            )
+
+    def _check_sse_error(
+        self,
+        chunk: dict[str, Any],
+        *,
+        model_id: str | None = None,
+        http_status: int | None = None,
+    ) -> None:
+        """SSE 流内 error 事件检测（HTTP 2xx + data: {error:...}）.
+
+        ASSESS-20261008 BUG-03 事实分离契约: status_code 保留真实 HTTP 状态，
+        业务码由 LLMStreamProviderError.provider_code 承载（原实现把业务码灌入
+        status_code 且非数值码回退 500，污染上层分类与降级判定）。
+        body 存结构化 JSON（含业务码），保持 parse_provider_error_code 可解析。
+        """
+        err_obj = chunk.get("error")
+        if isinstance(err_obj, dict):
+            msg = str(err_obj.get("message") or err_obj.get("code") or "未知 SSE 错误")
+            raw_code = err_obj.get("code")
+            code = _safe_provider_code_value(raw_code)
+            # 能进入流循环说明 HTTP 头已是 2xx（否则 _raise_for_status 已上抛）
+            real_status = int(http_status) if http_status is not None else 200
+            self._observe_transport_error(
+                model_id=model_id or self.model,
+                status_code=real_status,
+                provider_code=code,
+            )
+            try:
+                body = json.dumps(
+                    {"error": {"code": raw_code, "message": msg[:2000]}},
+                    ensure_ascii=False,
+                )[:2000]
+            except Exception:  # noqa: BLE001 — body 只是事实载体，构造失败退裸摘要
+                body = msg[:2000]
+            raise LLMStreamProviderError(
+                f"SSE 流内错误（HTTP {real_status} 码={code or '未知'}）: {msg[:500]}",
+                status_code=real_status,
+                provider_code=code,
+                body=body,
+                provider=self.provider,
+            )
+
+    # ── 消息/工具协议转换 ──
+    @staticmethod
+    def _provider_tool_call_parts(tool_call: dict) -> tuple[str, dict[str, Any]]:
+        """Return exact provider-native name/args from canonical or legacy tool calls.
+
+        Durable LFL history uses the OpenAI-canonical nested representation
+        ``{"function": {"name": ..., "arguments": "<json>"}}``.  Older direct
+        adapter/tests may still carry the legacy flat ``name/arguments`` form.
+        Cross-protocol projection must understand both without mutating durable truth.
+
+        Anthropic/Google require an object for tool arguments.  Invalid/non-object JSON
+        is a mechanical projection failure, not an excuse to silently send ``{}`` and
+        change the model's declared action.
+        """
+        name, arguments, violation = _tool_call_projection_parts(tool_call)
+        if violation:
+            call_id = tool_call.get("id") if isinstance(tool_call, dict) else "?"
+            raise LLMProjectionError(
+                "provider tool-call declaration cannot be projected exactly",
+                violations=[f"{violation}:{call_id or '?'}"],
+            )
+        assert arguments is not None  # narrowed by violation-free parser result
+        return name, arguments
+
+    @staticmethod
+    def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
+        """OpenAI 历史 → Anthropic messages（tool_use/tool_result 配对清洗）.
+
+        2026-08-17 修复: 历史可能含"声明了 tool_calls 但回执缺失"的 assistant 消息
+        （LLM 调用失败中断/上下文压缩裁剪导致）。Anthropic API 硬约束: tool_use 必须
+        紧跟对应 tool_result。清洗策略: 未消费的孤立 tool_use 删除其块（含整条空消息
+        剔除）；孤立 tool_result（无对应 tool_use）删除该 user 消息。避免 400 拒绝。
+        """
+        # 第一遍: 转换 + 记录 tool_use 消费情况
+        out: list[dict] = []
+        pending_use_ids: list[str] = []   # 已发出但未消费的 tool_use id
+        consumed: set[str] = set()        # 已被 tool_result 消费的 id
+        # (输出索引, 该条 assistant 的 tool_use id 列表)
+        assistant_blocks: list[tuple[int, list[str]]] = []
+        # 2026-08-17 修复2: 连续 tool 回执合并为单条 user（含多个 tool_result 块）。
+        # Anthropic 硬约束: 每个 tool_use 必须"immediately after"紧跟其 tool_result；
+        # 若一条 assistant 声明多个 tool_use、回执拆成多条独立 user → 仅第一个 tool_use
+        # 满足紧跟，后续 tool_use 被前一条 user 隔开 → 400（现场: id 360355894）。
+        # 合并后: assistant[text, tool_use A, tool_use B] → user[tool_result A, tool_result B]。
+        tool_buffer: list[dict] = []
+        for m in messages:
+            role = m.get("role")
+            content = m.get("content") or ""
+            if role == "tool":
+                tid = str(m.get("tool_call_id") or "")
+                if tid and tid not in pending_use_ids:
+                    # 孤立 tool_result（无对应 tool_use）→ 跳过该消息
+                    continue
+                tool_buffer.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tid,
+                        "content": str(content),
+                    }
+                )
+                consumed.add(tid)
+                continue
+            # 非 tool 消息: 先 flush 缓冲的 tool_result（合并为单条 user）
+            if tool_buffer:
+                out.append({"role": "user", "content": tool_buffer})
+                tool_buffer = []
+            if role == "assistant" and m.get("tool_calls"):
+                blocks: list[dict] = []
+                if content:
+                    blocks.append({"type": "text", "text": str(content)})
+                ids: list[str] = []
+                for tc in m.get("tool_calls") or []:
+                    tid = str(tc.get("id") or "")
+                    name, arguments = LLMClient._provider_tool_call_parts(tc)
+                    ids.append(tid)
+                    pending_use_ids.append(tid)
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": tid,
+                            "name": name,
+                            "input": arguments,
+                        }
+                    )
+                out.append({"role": "assistant", "content": blocks})
+                assistant_blocks.append((len(out) - 1, ids))
+                continue
+            out.append({"role": role, "content": str(content)})
+        if tool_buffer:  # 循环尾部 flush
+            out.append({"role": "user", "content": tool_buffer})
+        # 第二遍: 剔除未消费的孤立 tool_use 块（整条消息无文本且全孤立 → 删消息）
+        orphan_ids = [tid for tid in pending_use_ids if tid not in consumed]
+        if orphan_ids:
+            orphan_set = set(orphan_ids)
+            remove_indices: set[int] = set()
+            for idx, _ids in assistant_blocks:
+                msgs = out[idx]
+                blocks = msgs.get("content") or []
+                keep = [b for b in blocks if not (b.get("type") == "tool_use" and b.get("id") in orphan_set)]
+                if keep:
+                    out[idx]["content"] = keep
+                else:
+                    # 该 assistant 消息只剩孤立 tool_use → 整条删除
+                    remove_indices.add(idx)
+            if remove_indices:
+                out = [m for idx, m in enumerate(out) if idx not in remove_indices]
+        return out
+
+    @staticmethod
+    def _to_anthropic_tools(tools: list[dict]) -> list[dict]:
+        out = []
+        for t in tools:
+            fn = t.get("function") or t
+            out.append(
+                {
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", ""),
+                    "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+                }
+            )
+        return out
+
+    @staticmethod
+    def _to_google_contents(messages: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        for m in messages:
+            role = m.get("role")
+            if role == "tool":
+                out.append(
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "functionResponse": {
+                                    "name": str(m.get("name") or m.get("tool_name") or ""),
+                                    "response": {"result": str(m.get("content") or "")},
+                                }
+                            }
+                        ],
+                    }
+                )
+                continue
+            if role == "assistant" and m.get("tool_calls"):
+                parts: list[dict] = []
+                if m.get("content"):
+                    parts.append({"text": str(m["content"])})
+                for tc in m.get("tool_calls") or []:
+                    name, arguments = LLMClient._provider_tool_call_parts(tc)
+                    parts.append({"functionCall": {"name": name, "args": arguments}})
+                out.append({"role": "model", "parts": parts})
+                continue
+            out.append({"role": "user" if role == "user" else "model", "parts": [{"text": str(m.get("content") or "")}]})
+        return out
+
+    @staticmethod
+    def _to_google_tools(tools: list[dict]) -> list[dict]:
+        decls = []
+        for t in tools:
+            fn = t.get("function") or t
+            decls.append(
+                {
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+                }
+            )
+        return [{"functionDeclarations": decls}] if decls else []
+
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
+        model: str | None = None,
+        guard_context: GuardRequestContext | None = None,
+    ) -> LLMResponse:
+        """非流式：内部走流式聚合（终态与流式一致，含思考链/截断/用量）."""
+        it = self.chat_stream(
+            messages, tools, timeout_s=timeout_s, model=model, guard_context=guard_context
+        )
+        result: LLMResponse | None = None
+        while True:  # 消费全部 delta；终态 LLMResponse 经 StopIteration.value 捕获
+            try:
+                next(it)
+            except StopIteration as exc:
+                result = exc.value
+                break
+        return result if result is not None else LLMResponse(content=None, tool_calls=[], provider=self.provider)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    pass

@@ -1,0 +1,165 @@
+{
+  "summary": {
+    "off": {
+      "build_s": 0.06,
+      "rows": 3,
+      "dup_rows": 0,
+      "candidate_rows": 2,
+      "target_in_existing_methods": false,
+      "embedding_delta_calls": 0,
+      "embedding_delta_texts": 0,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      },
+      "p50_s": 46.83,
+      "max_s": 73.8
+    },
+    "on": {
+      "build_s": 0.234,
+      "rows": 3,
+      "dup_rows": 3,
+      "candidate_rows": 0,
+      "target_in_existing_methods": false,
+      "embedding_delta_calls": 6,
+      "embedding_delta_texts": 44,
+      "embedding_error_delta": 0,
+      "queue_after": {
+        "active": false,
+        "foreground_waiters": 0,
+        "background_waiters": 0,
+        "active_queue": 0
+      },
+      "p50_s": 14.19,
+      "max_s": 19.47
+    }
+  },
+  "rows": [
+    {
+      "arm": "off",
+      "repeat": 1,
+      "semantic_on": false,
+      "target_ref": "method:aaaa-restart-runtime-provenance-fe343daf8140",
+      "target_in_existing_methods": false,
+      "reason": "No observable detour: the supplied facts show only a restart receipt (rc=0, readiness 200) followed immediately by the correct identity-verification answer (new PID, manifest git head, actual import p",
+      "candidate": false,
+      "dup": false,
+      "elapsed_s": 46.83,
+      "method_discovery_diagnostics": {
+        "semantic_requested": false,
+        "semantic_effective": false
+      }
+    },
+    {
+      "arm": "off",
+      "repeat": 2,
+      "semantic_on": false,
+      "target_ref": "method:aaaa-restart-runtime-provenance-fe343daf8140",
+      "target_in_existing_methods": false,
+      "reason": "schema_ok",
+      "candidate": true,
+      "dup": false,
+      "elapsed_s": 73.8,
+      "method_discovery_diagnostics": {
+        "semantic_requested": false,
+        "semantic_effective": false
+      }
+    },
+    {
+      "arm": "off",
+      "repeat": 3,
+      "semantic_on": false,
+      "target_ref": "method:aaaa-restart-runtime-provenance-fe343daf8140",
+      "target_in_existing_methods": false,
+      "reason": "schema_ok",
+      "candidate": true,
+      "dup": false,
+      "elapsed_s": 45.9,
+      "method_discovery_diagnostics": {
+        "semantic_requested": false,
+        "semantic_effective": false
+      }
+    },
+    {
+      "arm": "on",
+      "repeat": 1,
+      "semantic_on": true,
+      "target_ref": "method:aaaa-restart-runtime-provenance-fe343daf8140",
+      "target_in_existing_methods": false,
+      "reason": "dup:method:aaaa-restart-runtime-provenance-fe343daf8140",
+      "candidate": false,
+      "dup": true,
+      "elapsed_s": 19.47,
+      "method_discovery_diagnostics": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "scope": "method",
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 22.639,
+        "query_embedding_ms": 13.543,
+        "semantic_hit_count": 20,
+        "keyword_hit_count": 24,
+        "fused_hit_count": 6,
+        "candidate_missing_count": 0,
+        "canonical_hydration_failures": 0,
+        "prewarm_scheduled": false,
+        "related_method_count": 6
+      }
+    },
+    {
+      "arm": "on",
+      "repeat": 2,
+      "semantic_on": true,
+      "target_ref": "method:aaaa-restart-runtime-provenance-fe343daf8140",
+      "target_in_existing_methods": false,
+      "reason": "dup:method:aaaa-restart-runtime-provenance-fe343daf8140 — 独立比对后确认：本 episode 的触发条件（长驻服务重启后、rc=0/readiness 200 仅证明存活）与机制（交叉核对新 PID、runtime manifest git head、实际 import/module path 指向目标 code root 才判定版本加载成",
+      "candidate": false,
+      "dup": true,
+      "elapsed_s": 14.19,
+      "method_discovery_diagnostics": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "scope": "method",
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 85.991,
+        "query_embedding_ms": 73.057,
+        "semantic_hit_count": 20,
+        "keyword_hit_count": 24,
+        "fused_hit_count": 6,
+        "candidate_missing_count": 0,
+        "canonical_hydration_failures": 0,
+        "prewarm_scheduled": false,
+        "related_method_count": 6
+      }
+    },
+    {
+      "arm": "on",
+      "repeat": 3,
+      "semantic_on": true,
+      "target_ref": "method:aaaa-restart-runtime-provenance-fe343daf8140",
+      "target_in_existing_methods": false,
+      "reason": "dup:aaaa-restart-runtime-provenance-fe343daf8140",
+      "candidate": false,
+      "dup": true,
+      "elapsed_s": 12.32,
+      "method_discovery_diagnostics": {
+        "semantic_requested": true,
+        "semantic_effective": true,
+        "scope": "method",
+        "semantic_fallback_reason": "",
+        "semantic_latency_ms": 64.497,
+        "query_embedding_ms": 57.35,
+        "semantic_hit_count": 20,
+        "keyword_hit_count": 24,
+        "fused_hit_count": 6,
+        "candidate_missing_count": 0,
+        "canonical_hydration_failures": 0,
+        "prewarm_scheduled": false,
+        "related_method_count": 6
+      }
+    }
+  ]
+}

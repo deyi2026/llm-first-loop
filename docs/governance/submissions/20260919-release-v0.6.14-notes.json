@@ -1,0 +1,56 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20260919-release-v0.6.14-notes",
+  "summary": "Release-notes-only documentation closure for v0.6.14: extend the CHANGELOG v0.6.14 entry with the post-boundary merged work (fleet lifecycle, runtime integrity, learning loop, browser SMC evals, CI hardening), set the release date to 2026-09-19, and fix stale README semantic-version references (v0.6.13 -> v0.6.14). No code, config, or behavior change.",
+  "components": [
+    {
+      "component_id": "release-v0.6.14-changelog-entry",
+      "paths": [
+        "CHANGELOG.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "public user-facing changelog",
+      "disposition": "ADMIT as documentation only: the v0.6.14 section header date moves to the actual release date and eight factual bullets summarize commits already merged to main between the v0.6.14 boundary (b4f5899df, 2026-09-13) and this release (fleet slices + live qualification, runtime integrity fixes, service-control/resource governance, learning loop default-on and memory retrieval A/B, compaction anchor pinning, browser SMC ground-truth evals, method_manage schema description clarification, CI gate hardening).",
+      "evidence": [
+        "git log --oneline --no-merges b4f5899df..lfl/main enumerates the summarized commits (232 total incl. merges).",
+        "pyproject.toml, src/llm_loop/web/routes.py SERVICE_VERSION already read 0.6.14 on main; no version code is touched here."
+      ],
+      "verification_level": "Local A.5 self-gate on the exact changed-path set; human review of prose accuracy",
+      "model_evidence_veto_recovery_exit": "Markdown prose only; review retains authority over factual accuracy of the summary.",
+      "rollback_route": "Revert this commit; no data or runtime coupling."
+    },
+    {
+      "component_id": "release-v0.6.14-readme-version-refs",
+      "paths": [
+        "README.md",
+        "README.en.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "public README feature list",
+      "disposition": "ADMIT as documentation only: two stale 'semantic versioning v0.6.13' references updated to v0.6.14 to match pyproject/SERVICE_VERSION/tag that this release finalizes.",
+      "evidence": [
+        "README.md line 113 and README.en.md line 73 were the only stale v0.6.13 references (grep).",
+        "Header Version fields in both READMEs already read 0.6.14."
+      ],
+      "verification_level": "grep + local A.5 self-gate",
+      "model_evidence_veto_recovery_exit": "Markdown prose only.",
+      "rollback_route": "Revert this commit."
+    },
+    {
+      "component_id": "release-v0.6.14-a5-record",
+      "paths": [
+        "docs/governance/submissions/20260919-release-v0.6.14-notes.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "repository A.5 architecture submission metadata",
+      "disposition": "ADMIT as exact changed-path coverage and submitter declarations; A.5 stays mechanical.",
+      "evidence": [
+        "Manifest partitions the exact changed-path set; all components are non-control documentation."
+      ],
+      "verification_level": "Local exact A.5 self-gate before publication",
+      "model_evidence_veto_recovery_exit": "Human/model review remains authority for classification truth.",
+      "rollback_route": "Revert together with the documentation change."
+    }
+  ],
+  "declarations": []
+}

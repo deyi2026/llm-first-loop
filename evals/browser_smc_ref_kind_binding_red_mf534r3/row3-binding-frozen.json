@@ -1,0 +1,163 @@
+{
+  "schema": "smc.browser.ref_kind_binding_replay.v0.1",
+  "source": {
+    "qualification": "MF534R2-ORNITH-AB-v0.1-MEASURED-489dd5a4",
+    "run_id": "03-fill_submit-r1-B",
+    "measured_head": "489dd5a47a7636ec0a6791dc1964c35c68bb7cf8",
+    "result_freeze_commit": "cbe225f52d4d59789fab9ba148230981b2abdcee",
+    "raw_event_log_sha256": "43d97fd597a77f260f5d19f78d1f30db9a51c3e41e9ad5da56d952c753cdfe46",
+    "raw_event_log_bytes": 206218,
+    "model_rerun": false
+  },
+  "task": {
+    "task_id": "fill_submit",
+    "arm": "B",
+    "task_oracle_pass": false,
+    "rounds": 12,
+    "max_iterations": 12,
+    "run_end_reason": "max_iterations",
+    "protocol_repair_episodes": 5
+  },
+  "refs": {
+    "set_text_diff_ref": {
+      "kind": "diff",
+      "sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212"
+    },
+    "original_input_object_ref": {
+      "kind": "object",
+      "sha256": "da1e4c7d4af38ccb755b32f60f997231b3a7f09be3d0ec58907793ea2dbef1e0"
+    },
+    "fresh_input_object_ref": {
+      "kind": "object",
+      "sha256": "7ecb07aa747d67653c102437e87a6d6725faf2b27b07ed6764a70d4cc841072d"
+    }
+  },
+  "tool_calls": [
+    {
+      "index": 4,
+      "name": "browser_operate",
+      "status": "success",
+      "operation_do": "set_text",
+      "arg_keys": ["do", "target", "text"],
+      "result_diff_ref_kind": "diff",
+      "result_diff_ref_sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212"
+    },
+    {
+      "index": 5,
+      "name": "browser_perceive",
+      "status": "failure",
+      "perceive_action": "wait",
+      "arg_keys": ["action", "action2", "field", "grounding_ref", "kind", "match", "text"],
+      "grounding_ref_kind": "diff",
+      "grounding_ref_sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212",
+      "has_action2": true,
+      "failure_kind": "fields_mismatch_action2"
+    },
+    {
+      "index": 6,
+      "name": "browser_perceive",
+      "status": "success",
+      "perceive_action": "hydrate",
+      "arg_keys": ["action", "grounding_ref"],
+      "grounding_ref_kind": "diff",
+      "grounding_ref_sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212",
+      "hydration_projection_schema": "smc.semantic_diff.v0.1",
+      "hydration_has_semantic_object": false
+    },
+    {
+      "index": 7,
+      "name": "browser_perceive",
+      "status": "failure",
+      "perceive_action": "hydrate",
+      "arg_keys": ["action", "field", "grounding_ref", "kind", "match", "text"],
+      "grounding_ref_kind": "diff",
+      "grounding_ref_sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212",
+      "failure_kind": "hydrate_with_wait_fields"
+    },
+    {
+      "index": 8,
+      "name": "browser_perceive",
+      "status": "failure",
+      "perceive_action": "wait",
+      "arg_keys": ["action", "field", "grounding_ref", "kind", "match", "text"],
+      "grounding_ref_kind": "diff",
+      "grounding_ref_sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212",
+      "failure_kind": "object_ref_projection_mismatch"
+    },
+    {
+      "index": 9,
+      "name": "browser_perceive",
+      "status": "failure",
+      "perceive_action": "wait",
+      "arg_keys": ["action", "field", "grounding_ref", "kind", "match", "text"],
+      "grounding_ref_kind": "diff",
+      "grounding_ref_sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212",
+      "failure_kind": "object_ref_projection_mismatch",
+      "visible_intent": "The diff ref isn't a valid object ref. Let me use the original input object's grounding ref."
+    },
+    {
+      "index": 10,
+      "name": "browser_perceive",
+      "status": "failure",
+      "perceive_action": "wait",
+      "arg_keys": ["action", "field", "grounding_ref", "kind", "match", "text"],
+      "grounding_ref_kind": "diff",
+      "grounding_ref_sha256": "fcab64048beb12bfeed34daf3be654cd8440d0adb3383eaeb6667926aa623212",
+      "failure_kind": "object_ref_projection_mismatch",
+      "visible_intent": "Let me use the original input object's grounding ref."
+    },
+    {
+      "index": 11,
+      "name": "browser_perceive",
+      "status": "success",
+      "perceive_action": "snapshot",
+      "arg_keys": ["action"]
+    },
+    {
+      "index": 12,
+      "name": "browser_perceive",
+      "status": "success",
+      "perceive_action": "hydrate",
+      "arg_keys": ["action", "grounding_ref"],
+      "grounding_ref_kind": "object",
+      "grounding_ref_sha256": "7ecb07aa747d67653c102437e87a6d6725faf2b27b07ed6764a70d4cc841072d",
+      "hydration_projection_schema": "smc.semantic_object.v0.1",
+      "hydration_has_semantic_object": true
+    }
+  ],
+  "controls": [
+    {
+      "row": 4,
+      "arm": "A",
+      "pair_id": "fill_submit-r1",
+      "task_oracle_pass": true,
+      "protocol_repair_episodes": 0,
+      "post_set_text_path": "object_text_wait",
+      "wait_grounding_ref_kind": "object",
+      "wait_grounding_ref_sha256": "583ef4e7bfa7d0f2b10e8fb86e14d2d94a7c87e44fe2fe5340bff0ad9327a08d"
+    },
+    {
+      "row": 9,
+      "arm": "A",
+      "pair_id": "fill_submit-r2",
+      "task_oracle_pass": true,
+      "protocol_repair_episodes": 0,
+      "post_set_text_path": "direct_save_click",
+      "wait_grounding_ref_kind": null
+    },
+    {
+      "row": 10,
+      "arm": "B",
+      "pair_id": "fill_submit-r2",
+      "task_oracle_pass": true,
+      "protocol_repair_episodes": 0,
+      "post_set_text_path": "direct_save_click",
+      "wait_grounding_ref_kind": null
+    }
+  ],
+  "treatment": {
+    "compact_description_only": true,
+    "changes_ref_semantics": false,
+    "causality_from_single_row": "NOT_ESTABLISHED"
+  }
+}

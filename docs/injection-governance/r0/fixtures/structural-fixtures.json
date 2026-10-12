@@ -1,0 +1,206 @@
+{
+  "fixtures": {
+    "consecutive_user_wire": {
+      "expected_violation": "wire contains consecutive user-role messages",
+      "human_event_seq": 818,
+      "session_id": "09c44093-a0c4-49e4-95af-3ae2e59b210a",
+      "turn": 9,
+      "user_truth_chars": 2,
+      "user_truth_sha256_16": "7c9691192f1b7340",
+      "wire_consecutive_user_run_max": 4,
+      "wire_tail_user_run_max": 2
+    },
+    "duplicate_reference_frame": {
+      "duplicate_frame_hashes": [
+        "0b4ed4479675821e",
+        "1d237b39f56895d7",
+        "28fff7d5e0f29fcd",
+        "4aee3185d48a43bc",
+        "5bc63ce0411b9852",
+        "6c0728af4f2b24eb",
+        "baaff8a56f147ac0",
+        "bce80667953c8445",
+        "de316a973313c823",
+        "ed6d82236a4b5dc9",
+        "ef718ea52feda084"
+      ],
+      "duplicate_injection_count": 51,
+      "expected_violation": "same normalized reference frame repeats in one session",
+      "human_event_seq": 1241,
+      "session_id": "09c44093-a0c4-49e4-95af-3ae2e59b210a",
+      "turn": 11,
+      "user_truth_chars": 2,
+      "user_truth_sha256_16": "7c9691192f1b7340"
+    },
+    "imperative_reference": {
+      "expected_violation": "reference material contains command-shaped language",
+      "human_event_seq": 937,
+      "imperative_reference_count": 6,
+      "injection_block_hashes": [
+        "523bbe1ad5d9288a",
+        "d6bb2cb5acdb5cc0",
+        "523bbe1ad5d9288a",
+        "1885885f5727d555",
+        "523bbe1ad5d9288a",
+        "523bbe1ad5d9288a",
+        "523bbe1ad5d9288a",
+        "523bbe1ad5d9288a",
+        "7b97df586d29cefe",
+        "c8bed3ed867d74be",
+        "c8bed3ed867d74be",
+        "368434f1316eeb73"
+      ],
+      "session_id": "09c44093-a0c4-49e4-95af-3ae2e59b210a",
+      "turn": 10,
+      "user_truth_chars": 3,
+      "user_truth_sha256_16": "ca5b7e1c5b0ddba5"
+    },
+    "post_user_program_append": {
+      "expected_violation": "injection_after_user_chars > 0",
+      "human_event_seq": 18,
+      "injected_blocks": [
+        {
+          "chars": 918,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 19,
+          "sha256_16": "9abe8edac93a6d07"
+        },
+        {
+          "chars": 338,
+          "kind": "experience_tip",
+          "role": "user",
+          "seq": 26,
+          "sha256_16": "761d5318cb98c2c1"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 27,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 662,
+          "kind": "experience_tip",
+          "role": "user",
+          "seq": 33,
+          "sha256_16": "e28b3c8b991602a8"
+        },
+        {
+          "chars": 269,
+          "kind": "experience_tip",
+          "role": "user",
+          "seq": 39,
+          "sha256_16": "84f4e69c38f37def"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 45,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 66,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 87,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 108,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 184,
+          "kind": "experience_tip",
+          "role": "user",
+          "seq": 124,
+          "sha256_16": "1885885f5727d555"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 125,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 146,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 167,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 188,
+          "sha256_16": "30fa045163799921"
+        },
+        {
+          "chars": 185,
+          "kind": "experience_tip",
+          "role": "user",
+          "seq": 209,
+          "sha256_16": "cf7e0db135f1c1ae"
+        },
+        {
+          "chars": 931,
+          "kind": "legacy_context_injection",
+          "role": "user",
+          "seq": 210,
+          "sha256_16": "30fa045163799921"
+        }
+      ],
+      "injection_after_user_chars": 11866,
+      "session_id": "09c44093-a0c4-49e4-95af-3ae2e59b210a",
+      "turn": 2,
+      "user_truth_chars": 10,
+      "user_truth_sha256_16": "6ea8c49320964ea6"
+    }
+  },
+  "redaction": "No raw human/reference text is stored; fixtures use lengths and SHA-256 prefixes.",
+  "schema": "r0-injection-baseline-v2",
+  "source_event_logs": [
+    {
+      "event_sha256": "b0bca0b7eb14ceca7c3371866ae5e0b1ec57b88f2931fa65925a7c1f55b5ad14",
+      "sample_role": "weak-model-drift",
+      "session_id": "68fed5f5-3002-445b-95ad-cb2065168979"
+    },
+    {
+      "event_sha256": "39469213ffd2d9b81f4464448c68d485562718e98570e856bf30cb159ea0dc5b",
+      "sample_role": "duplicate-heavy-history",
+      "session_id": "09c44093-a0c4-49e4-95af-3ae2e59b210a"
+    },
+    {
+      "event_sha256": "b914ebc6e7f8c544f998e86ddc3b22b4419757648ab1cb82050b291f25f35b24",
+      "sample_role": "compact-long-session",
+      "session_id": "996e7e52-82c3-4fc5-82ea-fff5863c2969"
+    },
+    {
+      "event_sha256": "e8021532c72f3ecfa9f70ccc66271405f06ce4da7e55dd2c1f36a7da9aaf16be",
+      "sample_role": "clean-control",
+      "session_id": "69715765-08b3-40af-a054-8a8161543243"
+    }
+  ]
+}

@@ -1,0 +1,398 @@
+{
+  "authority": "shadow_only",
+  "backend": {
+    "backend_id": "eye-js-wasm",
+    "eye_version": "EYE v11.24.5 (2026-08-23)",
+    "eyereasoner_integrity": "sha512-aLKl0hMCa5xvZ/qVfupyZ7vAchXwXIlVWNtbd5Zb9IUNB9FGq44yvM6N3T+Q1x9A9VL9CKB652nqT5PgpgcZDw==",
+    "eyereasoner_version": "21.1.18",
+    "node_version": "v24.18.0",
+    "package_lock_sha256": "83d2ee38f112bea8929751a5a2c31dede5aec07312eb696ce660537d288c71be",
+    "swipl_wasm_version": "7.0.10"
+  },
+  "branch": "feature/smc-semantic-logic-p1d-20260917",
+  "cases": [
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S1-object-grounding-compile",
+      "gate_id": "S1",
+      "plane_a_relation_count": 382,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 382,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 382,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S1-resource-grounding-compile",
+      "gate_id": "S1",
+      "plane_a_relation_count": 310,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 310,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 310,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S1-grounding-fail-closed",
+      "gate_id": "S1",
+      "plane_a_relation_count": 97,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 97,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 97,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S2-dom-ax-field-conflict",
+      "gate_id": "S2",
+      "plane_a_relation_count": 825,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 825,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 825,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S2-identity-fusion-ambiguity",
+      "gate_id": "S2",
+      "plane_a_relation_count": 1105,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 1105,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 1105,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S3-absence-complete-vs-partial",
+      "gate_id": "S3",
+      "plane_a_relation_count": 285,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 285,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 285,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S3-unknown-or-unstable-identity",
+      "gate_id": "S3",
+      "plane_a_relation_count": 307,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 307,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 307,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S3-lower-bound-object-count",
+      "gate_id": "S3",
+      "plane_a_relation_count": 207,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 207,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 207,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S4-object-same-generation-changed",
+      "gate_id": "S4",
+      "plane_a_relation_count": 217,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 217,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 217,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S4-object-unchanged-new-observation",
+      "gate_id": "S4",
+      "plane_a_relation_count": 217,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 217,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 217,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S4-document-generation-change",
+      "gate_id": "S4",
+      "plane_a_relation_count": 217,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 217,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 217,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S4-incomplete-missing-target",
+      "gate_id": "S4",
+      "plane_a_relation_count": 429,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 429,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 429,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S5-running-terminal-sequence",
+      "gate_id": "S5",
+      "plane_a_relation_count": 1011,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 1011,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 1011,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S5-duplicate-action-id",
+      "gate_id": "S5",
+      "plane_a_relation_count": 1665,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 1665,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 1665,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    },
+    {
+      "a_equals_b": true,
+      "a_equals_c": true,
+      "b_equals_c": true,
+      "context_or_version_loss": 0,
+      "false_closure": 0,
+      "fixture_id": "S5-transport-ambiguity-no-replay",
+      "gate_id": "S5",
+      "plane_a_relation_count": 1011,
+      "plane_b_added": 0,
+      "plane_b_missing": 0,
+      "plane_b_relation_count": 1011,
+      "plane_c_missing": 0,
+      "plane_c_relation_count": 1011,
+      "relation_equivalent": true,
+      "source_or_provenance_loss": 0,
+      "unknown_to_false_collapse": 0
+    }
+  ],
+  "gate_summary": {
+    "cases_observed": 15,
+    "cases_required": 15,
+    "context_or_version_loss_total": 0,
+    "false_closure_total": 0,
+    "plane_b_added_total": 0,
+    "plane_b_missing_total": 0,
+    "plane_c_missing_total": 0,
+    "relation_equivalent_cases": 15,
+    "sentinel_exact_matches": 4,
+    "sentinel_fixtures": 4,
+    "source_or_provenance_loss_total": 0,
+    "unknown_to_false_collapse_total": 0
+  },
+  "implementation_commit": "bc3f72d169636b5fc3ab9e54d9f866fd478ab553",
+  "implementation_hashes": {
+    "tests/unit/test_smc_semantic_logic_p1d.py": "fdfe3956a4d87544c09edfd7d7214c1a18fb6ccf1e5452d1a6d101d1112d383e",
+    "tools/semantic_logic/n3_validator/p1d_bridge.mjs": "c8dd0c60a48851c7a3f114c15f0ac81e9bbbf46bb52a0a049be5a109d9f56341",
+    "tools/semantic_logic/p1d_qualification.py": "15f24f7c11c411ae31c36f597cd122a5596dd56f4ee10377dbd47a6698a87a7b"
+  },
+  "next_boundary": "P2 Core Rule Engine requires separate owner authorization",
+  "non_effects": [
+    "no_production_consumer",
+    "no_provider_visible_change",
+    "no_runtime_authority_change",
+    "no_mutation_authority_change",
+    "no_deploy",
+    "no_service_restart",
+    "no_model_start_or_switch"
+  ],
+  "parent_p1c_result": "ec548709a3ee7286a4dcd3397538f39ff7741709",
+  "phase": "P1-D",
+  "plane_c_parser": {
+    "integrity": "sha512-Hy6dfGg9yniLQpSBirvH2E2yO3EG7dSmA3aefRbtO411oqtzG8roD3h1kTc/N065bivCOPfTFIjf0KlwW7KlnQ==",
+    "package": "n3",
+    "version": "2.7.12"
+  },
+  "planes": {
+    "A": "frozen_python_canonical_oracle_direct_traversal",
+    "B": "typed_fact_graph_direct_fields",
+    "C": "restricted_eye_output_parsed_by_pinned_n3_parser"
+  },
+  "production_consumed": false,
+  "qualification": {
+    "ci_gate": "PASS",
+    "combined_semantic": {
+      "passed": 215,
+      "total": 215
+    },
+    "env_pin_scanned_test_files": 591,
+    "env_pin_undeclared": 0,
+    "p1d_focused": {
+      "passed": 25,
+      "total": 25
+    },
+    "pyright_errors": 0,
+    "pyright_warnings": 0,
+    "whole_tree_security_files": 1955
+  },
+  "schema": "smc.semantic_logic_p1d_result.v0.1",
+  "sentinels": [
+    {
+      "expectation_source": "independent_python_frozen_oracle",
+      "expected_hits": [
+        "S2-conflict-canonical-null"
+      ],
+      "fixture_ref": "S2-dom-ax-field-conflict",
+      "gate_id": "S2",
+      "hits": [
+        "S2-conflict-canonical-null"
+      ]
+    },
+    {
+      "expectation_source": "independent_python_frozen_oracle",
+      "expected_hits": [
+        "S3-complete-false-absence",
+        "S3-complete-satisfied",
+        "S3-partial-indeterminate"
+      ],
+      "fixture_ref": "S3-absence-complete-vs-partial",
+      "gate_id": "S3",
+      "hits": [
+        "S3-complete-false-absence",
+        "S3-complete-satisfied",
+        "S3-partial-indeterminate"
+      ]
+    },
+    {
+      "expectation_source": "independent_python_frozen_oracle",
+      "expected_hits": [
+        "S4-document-change-stale"
+      ],
+      "fixture_ref": "S4-document-generation-change",
+      "gate_id": "S4",
+      "hits": [
+        "S4-document-change-stale"
+      ]
+    },
+    {
+      "expectation_source": "independent_python_frozen_oracle",
+      "expected_hits": [
+        "S5-no-auto-retry",
+        "S5-single-dispatch"
+      ],
+      "fixture_ref": "S5-duplicate-action-id",
+      "gate_id": "S5",
+      "hits": [
+        "S5-no-auto-retry",
+        "S5-single-dispatch"
+      ]
+    }
+  ],
+  "status": "PASS"
+}

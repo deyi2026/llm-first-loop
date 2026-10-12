@@ -1,0 +1,131 @@
+{
+  "schema": "smc.browser_live_navigation_result.v0.1",
+  "date": "2026-09-13",
+  "status": "PASS",
+  "qualification_scope": "same_target_full_document_reload_generation_identity_grounding",
+  "baseline_commit": "e7609f850b598320d85639524705c8117cdfaeb5",
+  "qualification_commit": "b32b359b4c5aaeb49fad6c9849140a831fd9612f",
+  "browser": {
+    "name": "Google Chrome",
+    "version": "152.0.7977.84",
+    "control_plane": "qualification_only_separate_cdp_websocket",
+    "full_document_trigger": "Page.reload",
+    "cross_url_page_navigate": "NOT_QUALIFIED"
+  },
+  "production_surface": {
+    "browser_perceive_actions": [
+      "snapshot",
+      "hydrate"
+    ],
+    "model_mutation_surface_enabled": false,
+    "qualification_control_plane_imported_by_src": false,
+    "production_cdp_methods": [
+      "Target.getTargetInfo",
+      "Page.getFrameTree",
+      "DOMSnapshot.captureSnapshot",
+      "Accessibility.getFullAXTree"
+    ],
+    "explicitly_blocked_in_test": [
+      "Page.navigate",
+      "Page.reload",
+      "Runtime.evaluate",
+      "Input.dispatchMouseEvent"
+    ]
+  },
+  "formal_live_result": {
+    "sha256": "81168752968887f26dbb741033bf97d6fcbea25730a79d3d8da4e09f9edf0c80",
+    "checks": {
+      "same_exact_target": "PASS",
+      "page_generation_preserved": "PASS",
+      "page_scope_preserved": "PASS",
+      "loader_changed": "PASS",
+      "document_generation_incremented": "PASS",
+      "document_scope_changed": "PASS",
+      "same_name_identity_invalidated": "PASS",
+      "old_grounding_exact_after_reload": "PASS"
+    },
+    "safety": {
+      "mock_keychain_enabled": "PASS",
+      "basic_password_store_enabled": "PASS",
+      "security_agent_not_spawned": "PASS",
+      "production_host_exact_target_bound": "PASS"
+    }
+  },
+  "identity_selection": {
+    "name_or_role_used_as_identity": false,
+    "mechanical_basis": "grounding.identity_basis=dom_physical_identity",
+    "real_same_name_cards_observed": 3,
+    "observed_identity_bases": [
+      "snapshot_local_ax_identity",
+      "dom_physical_identity",
+      "ax_backend_physical_identity"
+    ]
+  },
+  "keychain_safety": {
+    "exploratory_prompt_incident_resolved": true,
+    "user_confirmed_prompt_gone": true,
+    "formal_runner_use_mock_keychain": true,
+    "formal_runner_password_store_basic": true,
+    "formal_run_security_agent_spawned": false
+  },
+  "tests": {
+    "b_live_navigation_direct": {
+      "passed": 4,
+      "total": 4
+    },
+    "b_live_navigation_plus_live_perception": {
+      "passed": 8,
+      "total": 8
+    },
+    "expanded_adjacent": {
+      "passed": 136,
+      "total": 136,
+      "breakdown": {
+        "b_live_navigation": 4,
+        "b_live_perception": 4,
+        "b_perception": 45,
+        "b_spec": 21,
+        "smc_core": 15,
+        "schema_lazy": 14,
+        "factory": 19,
+        "arch_guards": 14
+      }
+    }
+  },
+  "static_and_repo_gates": {
+    "ruff_touched": "PASS",
+    "py_compile": "PASS",
+    "new_script_and_navigation_test_pyright": "0 errors / 0 warnings / 0 informations",
+    "existing_live_perception_test_pyright_baseline": "1 pre-existing mock typing error; 0 new",
+    "diff_check": "PASS",
+    "privacy": "PASS",
+    "security_scan": "3 files PASS",
+    "full_repo_ruff": "PASS",
+    "env_pin": "539 files / 0 violations",
+    "src_pyright": "0 errors / 0 warnings / 0 informations",
+    "tier0": "PASS",
+    "xdist_full": "PASS",
+    "ci_gate_exit": 0
+  },
+  "implementation_artifacts": {
+    "scripts/qualification/smc_browser_live_navigation.py": "f78e75f4c0266362c58c86b5242447443efa8c5a24ec85b60d57d8db4a019b94",
+    "tests/unit/test_smc_browser_live_navigation_v01.py": "5e61cdd08ee450392badadbac607045c64d45bf22b6f77d8654e1566b99db820",
+    "tests/unit/test_smc_browser_live_perception_v01.py": "8fc9a52a7225fe2d7798f779a0248b7e18a921af76c0fac603431951a92cdb09"
+  },
+  "side_effect_boundaries": {
+    "external_websites_accessed": false,
+    "llm_calls": 0,
+    "local_8901_calls": 0,
+    "service_restarts": 0,
+    "production_src_changed": false,
+    "model_navigation_exposed": false
+  },
+  "residual_not_qualified": [
+    "cross-URL Page.navigate dispatch on raw remote-debugging control path",
+    "Browser mutation conformance",
+    "live SemanticDiff/Predicate/wait qualification",
+    "vision-only actionability",
+    "native browser chrome / OS UI"
+  ],
+  "ruling": "Same-target full-document replacement perception generation/identity/grounding is live qualified. This result must not be cited as cross-URL navigation or Browser mutation qualification."
+}

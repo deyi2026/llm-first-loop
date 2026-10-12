@@ -1,0 +1,32 @@
+{"opaque_id":"db6fd74071ba","verdict":"APPLY","reason":"任务正是基于权威 status self-report 先判健康状态、再只补探未覆盖维度，与方法目的和触发条件直接一致。"}
+{"opaque_id":"776b355da180","verdict":"SKIP","reason":"任务当前只需从完整 CI 日志钉死失败清单与数量，尚未进入 touched set 与 clean HEAD 对照的因果归因阶段。"}
+{"opaque_id":"1d48851b7316","verdict":"SKIP","reason":"任务核心是按当前 PID 与启动时刻切分日志证据窗口并复现缓存异常，而方法用于验证部署后进程身份与代际是否落地。"}
+{"opaque_id":"b9347146b8c9","verdict":"SKIP","reason":"任务要沿完整事件流定位重复调用始于哪个 wake/compact/handoff 控制流边界，方法则面向生命周期闭环与动作发生次数审计。"}
+{"opaque_id":"75c44552f7fa","verdict":"SKIP","reason":"回执已提供完整绝对路径与 sha256，可直接读取校验；方法明确把“引用已含完整路径”列为无需路径锚定推断的反例。"}
+{"opaque_id":"07a5b704cb73","verdict":"APPLY","reason":"任务正是在受管 desired-state 变更前核实工具面与源码中的动作权限归属，再按 authority contract 决定 publish/restart 执行方式。"}
+{"opaque_id":"60f3ad5cead6","verdict":"SKIP","reason":"失败清单已固定且定向测试已有结果，任务已进入 touched set 与 clean HEAD 因果归因；该方法用于清单尚未完整时先钉死失败全集。"}
+{"opaque_id":"5b468be45fd9","verdict":"SKIP","reason":"任务只是依据明确的 CDP 端口和 TARGET_ID 做非破坏性端点与绑定核验，而方法专用于 kill/清理前身份不明的破坏性操作门控。"}
+{"opaque_id":"8e85cd3efe97","verdict":"APPLY","reason":"任务正是针对 heredoc 长文件静默截断风险进行有界分块写入、逐块行数核验和最终哈希验证，与 Method 目的直接一致。"}
+{"opaque_id":"edfe85267bcc","verdict":"APPLY","reason":"任务要求证明 Method 从 save、use 到 activate 的生命周期闭环，正应以阶段转移事件和 action 回执逐段核验，而非靠 artifact 文本命中。"}
+{"opaque_id":"275301ff2e2c","verdict":"SKIP","reason":"任务是在 git fetch 挂起后探测 remote host 的网络传输层状态，Method 针对可查询结论的异步 CI/发布流水线等待，问题类型不同。"}
+{"opaque_id":"a99f9c893519","verdict":"SKIP","reason":"任务已有 action ID 和专属台账路径，只需读取终态与反馈结果，并不需要借唯一标识反查数据的生产消费机制或操作流程。"}
+{"opaque_id":"21fbdef7437b","verdict":"SKIP","reason":"任务是直接分析指定 session 的完整事件流以定位 wake/compact/handoff 边界和重复来源，并非审查一份带指针的外部分析报告。"}
+{"opaque_id":"299a5703663f","verdict":"SKIP","reason":"任务核心是 git_head、当前 HEAD 与 dirty 增量之间的 binding drift 及 fence 接纳性预检，而 Method 的核心判别是发布动作的权限归属与 operator handoff。"}
+{"opaque_id":"24076c231c5a","verdict":"SKIP","reason":"任务依据监督者 running 与公网端到端 HTTP 303 裁决是否重启，没有 authoritative healthy/status self-report，故不符合该 Method 的关键判别条件。"}
+{"opaque_id":"506d16bcc6b7","verdict":"SKIP","reason":"任务是依据权威 status 的 healthy 摘要判断是否扩展诊断，而 Method 专用于“是否重启”等二元干预并要求监督者状态加公网端到端探测。"}
+{"opaque_id":"59f910088491","verdict":"SKIP","reason":"任务是核验摘要所称标识符是否存在并定位定义，并不涉及新建或修改逐字枚举允许集，因此不满足该方法的核心触发条件。"}
+{"opaque_id":"9faa7c90c740","verdict":"SKIP","reason":"任务只需核对当前进程实例与部署身份的一致性，不是在跨重启证据流中划定生命周期窗口或复现进程内故障。"}
+{"opaque_id":"68e0d3e1bc69","verdict":"SKIP","reason":"任务目标是压缩 pytest 验证输出以保留 summary 和退出码，与长文档 heredoc 写盘截断及分块完整性校验无关。"}
+{"opaque_id":"337909e190da","verdict":"APPLY","reason":"任务正是从 schema 与前端类型机械提取真实字段名集、对比旧摘要并据此更新契约允许集，与方法目的和流程直接一致。"}
+{"opaque_id":"994e0d18f572","verdict":"SKIP","reason":"任务要先判定数字标识属于 PID、端口还是目标 ID 并核对进程归属，不是依据权威配置验证重启后的外部连接绑定。"}
+{"opaque_id":"8c3db87f233d","verdict":"SKIP","reason":"任务核心是判定 publish/restart 各动作的权限与责任归属，未给出绑定漂移或 dirty 经验记录等该方法用于变更预检的关键条件。"}
+{"opaque_id":"3f799865ac31","verdict":"APPLY","reason":"任务明确要求先追踪共享审计工件的符号、提交与 writer 血缘，再判断机制对运行指标的影响，正对应方法的核心目的。"}
+{"opaque_id":"16cf6029268f","verdict":"SKIP","reason":"任务是按唯一 EVO ID 从持久台账取回完整记录并依规格继续执行，并非审计一份混合持久状态与代码断言的既有分析。"}
+{"opaque_id":"b8c08c09f876","verdict":"SKIP","reason":"任务是依据已记录的CDP URL与TARGET_ID核验重启后的绑定连续性，并无connection refused或接入可行性诊断，和该方法的核心目的不符。"}
+{"opaque_id":"9385ddfb3f25","verdict":"SKIP","reason":"任务是逐个解析commit/hash/URL/内部ID并向权威来源核验事实，方法则专门解决共享工件写入者与部署代码的符号血缘归属问题，范围与判别目标不同。"}
+{"opaque_id":"70b6a51b1e66","verdict":"SKIP","reason":"任务是跨三个表面同步版本字面值并核对替换结果，不涉及既有行为口径或以测试断言反推规范，因此该方法不适用。"}
+{"opaque_id":"b76b8de38dd0","verdict":"APPLY","reason":"任务正是定向测试通过但更大测试集出现已知失败后，用touched set与clean HEAD对照判断失败是否由本轮改动引入，与方法目的完全一致。"}
+{"opaque_id":"35401242d2d9","verdict":"APPLY","reason":"任务要把用户回指的两个收口项映射到当前Goal权威回执中的已完成条目并直接确认，符合优先依赖可查权威锚点而非恢复旧叙事的目的。"}
+{"opaque_id":"f5415533ffde","verdict":"SKIP","reason":"任务是查询异步CI workflow的终态并据conclusion分支处理，不是重试曾挂死的阻塞网络操作，也不需要先做传输层探针。"}
+{"opaque_id":"3639d7388503","verdict":"SKIP","reason":"任务是在complete已发出后按action ID读取最新状态并决定迁移，未出现缺必填参数的拒绝，和该方法针对参数补全重试的核心场景不符。"}
+{"opaque_id":"81fbc7109e80","verdict":"APPLY","reason":"任务要依据重启回执中的generation、runtime_root与git_head核对全部进程实例的部署身份，正是该方法以部署身份锚定进程验证的适用场景。"}
