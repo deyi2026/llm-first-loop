@@ -117,6 +117,49 @@ def test_linked_worktree_without_data_dir_anchors_state_to_git_common_root(tmp_p
     assert paths.state_root == repo.resolve()
 
 
+def test_skills_follow_primary_worktree_from_linked_sidecar_without_publish(tmp_path):
+    """2026-10-12 owner directive (RULE-AI-28 配套): 新工作区 skill 无需 publish 即入注册表.
+
+    从 linked sidecar worktree（发布快照）运行时，skills_dir 必须解析到主工作树，
+    让工作区新增 skill 立即可见；显式 SKILLS_DIR 仍然最优先。
+    """
+    import subprocess
+
+    repo = tmp_path / "repo"
+    side = tmp_path / "sidecar"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Runtime Paths Test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "runtime-paths@example.invalid"], cwd=repo, check=True)
+    (repo / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "worktree", "add", "-q", "-b", "side", str(side)], cwd=repo, check=True)
+
+    (repo / "skills" / "live-skill").mkdir(parents=True)
+    (repo / "skills" / "live-skill" / "SKILL.md").write_text(
+        "---\nname: live-skill\n---\n", encoding="utf-8"
+    )
+    (side / "skills" / "snapshot-skill").mkdir(parents=True)
+    (side / "skills" / "snapshot-skill" / "SKILL.md").write_text(
+        "---\nname: snapshot-skill\n---\n", encoding="utf-8"
+    )
+
+    paths = resolve_runtime_paths(data_dir=None, code_root=side, env={})
+
+    assert paths.skills_dir == (repo / "skills").resolve()
+
+    # loader 层判别性 pin：live-skill 可见、snapshot-skill 不可见（P2-4 加固）
+    from llm_loop.skills.loader import scan_skills_dir
+
+    assert [m.name for m in scan_skills_dir(paths.skills_dir)] == ["live-skill"]
+
+    explicit = resolve_runtime_paths(
+        data_dir=None, code_root=side, env={"SKILLS_DIR": str(side / "skills")}
+    )
+    assert explicit.skills_dir == (side / "skills").resolve()
+
+
 def test_explicit_data_dir_inside_linked_sidecar_is_preserved_but_marked_unsafe(tmp_path):
     import subprocess
 
@@ -141,6 +184,8 @@ def test_explicit_data_dir_inside_linked_sidecar_is_preserved_but_marked_unsafe(
     assert paths.data_dir == (side / "data").resolve()
     assert paths.data_dir_source == "explicit"
     assert paths.explicit_sidecar_state is True
+    # 隔离只约束可变知识写入；skills 读取源仍跟随主工作树（P2-2 加固，2026-10-12）
+    assert paths.skills_dir == (repo / "skills").resolve()
 
     from llm_loop.runtime.knowledge_health import inspect_knowledge_health
 

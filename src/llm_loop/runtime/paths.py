@@ -1,7 +1,9 @@
 """Mechanical runtime path resolution for code-bound and persistent state assets.
 
 Mutable knowledge follows persistent state identity, never process cwd.  Tracked
-assets (rules/method seeds/skills/docs) follow the exact code root.  Linked Git
+assets (rules/method seeds/docs) follow the exact code root; skills follow the
+primary worktree when running from a linked sidecar worktree so live workspace
+skills register without a publish (owner directive 2026-10-12).  Linked Git
 worktrees share the primary repository state by default, while an explicit DATA_DIR
 is always preserved and merely reported if it points back inside a linked sidecar.
 """
@@ -171,7 +173,18 @@ def resolve_runtime_paths(
         methods_source = "data_dir_inferred"
 
     method_seed = _resolved(seed_raw) if seed_raw else _resolved(code / "methods")
-    skills = _resolved(skills_raw) if skills_raw else _resolved(code / "skills")
+    if skills_raw:
+        skills = _resolved(skills_raw)
+    elif linked_worktree:
+        # 2026-10-12 owner directive (RULE-AI-28 配套): skills are living assets.
+        # When running from a linked sidecar worktree (release snapshot), read
+        # them from the primary worktree so new workspace skills reach the
+        # registry without waiting for the next publish + restart.  Explicit
+        # SKILLS_DIR still wins over both.
+        assert common_root is not None
+        skills = _resolved(common_root / "skills")
+    else:
+        skills = _resolved(code / "skills")
     docs = _resolved(docs_raw) if docs_raw else _resolved(code / "docs")
 
     legacy_experiences = _resolved(code / "experiences")
