@@ -119,6 +119,18 @@ web 2: test_deepseek_web_catalog.py / test_chatgpt_binding_observability.py
 
 ## 5. 里程碑
 - M1 本文档定稿 ✅（grill_me 评审 + D1-D6 用户确认 2026-10-14T00:18）
-- M2 独立项目脚手架 + 文件迁移 + 测试迁移（中间件侧不动）→ G3
-- M3 中间件接缝改造（factory/providers/config/resolver/.env）+ 原件删除 → G2
-- M4 回归 + 发布 + 双侧交付报告 → G1/G4/G5
+- M2 独立项目成立 ✅（lfl-web-providers @ 5f21f07，G3 达成 143 passed：
+  12 源内聚迁移 + 14 测试 + 契约测试 3；依赖面实测 7 符号修正 §2.3）
+- M3 中间件接缝改造 ✅（6db89d6b5，G2 达成）：
+  新增 llm/web_provider_registration.py（importlib + 失败分级 + path 注入）；
+  providers/factory 双硬编码段删除；config 18 字段→2 入口字段；resolver
+  18 映射删 + carved-out 前缀 fail-closed（防静默无效配置）；webui 观测面
+  移除（D1：notifier 挂载 + 4 路由 + helpers，-330 行）；删 12 源 + 14 测试；
+  4 接缝测试改写（注入断言 11 项 + section fail-closed）；M5 脚本退役标注；
+  arch 基线随动 3 处。独立项目侧 registration/config/.env 落地
+  （@ 47e14c8，146 passed，必填校验语义与旧 finalize 对齐）。
+  全量回归 8687 passed / 0 failed（首轮 11 failed：barrier 常量误删/arch
+  基线漂移/M5 ruff/section 语义过时——全部定位修复后复验归零）。
+  意外发现：venv editable 指针指向 .releases 发布快照（gen 部署机制），
+  裸 python 与 pytest(pythonpath=src) 加载不同代码——调试需用 pytest 路径。
+- M4 回归 + 发布 + 双侧交付报告 → G1/G4/G5（待做：发布 gen255 + 报告）
