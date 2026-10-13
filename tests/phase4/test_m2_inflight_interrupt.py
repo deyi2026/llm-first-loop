@@ -41,6 +41,14 @@ M2_REPORT_DIR = Path(os.path.abspath(M2_REPORT_DIR))
 M2_REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+
+def _guarded_write(path, *a, **k):
+    """基线/里程碑快照防覆写护栏（同 M0 惯例；PHASE4_OVERWRITE_REPORTS=1 强制）."""
+    import os as _os
+    if path.exists() and _os.environ.get("PHASE4_OVERWRITE_REPORTS") != "1":
+        return
+    return path.write_text(*a, **k)
+
 def _one_interrupt_sample(build_test_engine, i: int) -> dict:
     engine, fake = build_test_engine(
         [
@@ -104,7 +112,7 @@ def test_a_s13_interrupt_meets_target(build_test_engine):
         samples.append(s)
     effs = [s["t_effect_ms"] for s in samples if s["t_effect_ms"] is not None]
     p50, p95 = _pct(effs, 0.50), _pct(effs, 0.95)
-    (M2_REPORT_DIR / "S13M2.json").write_text(
+    _guarded_write(M2_REPORT_DIR / "S13M2.json", 
         json.dumps({"scenario": "S13M2", "n": 5, "samples": samples,
                     "t_effect_p50_ms": p50, "t_effect_p95_ms": p95},
                    ensure_ascii=False, indent=2, default=str),
@@ -167,7 +175,7 @@ def test_b_s14_conservative_wait(build_test_engine):
         finally:
             runner.cancel(sid)
     effs = [s["t_effect_ms"] for s in samples if s["t_effect_ms"] is not None]
-    (M2_REPORT_DIR / "S14M2.json").write_text(
+    _guarded_write(M2_REPORT_DIR / "S14M2.json", 
         json.dumps({"scenario": "S14M2", "n": 3, "samples": samples,
                     "t_effect_p50_ms": _pct(effs, 0.50)},
                    ensure_ascii=False, indent=2, default=str),
@@ -196,7 +204,7 @@ def test_c_s15_race_two_branches(build_test_engine):
         else:
             assert s["branch"] == "natural_first", s
             assert not s["interrupted_receipt"]
-    (M2_REPORT_DIR / "S15M2.json").write_text(
+    _guarded_write(M2_REPORT_DIR / "S15M2.json", 
         json.dumps({"scenario": "S15M2", "n": len(samples), "samples": samples},
                    ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",

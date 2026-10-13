@@ -384,8 +384,21 @@ class HumanTurnQueue:
                 requeued.append(str(it.get("queue_id") or ""))
         return requeued
 
-    def mark_interject_received(self, session_id: str, queue_id: str) -> bool:
-        """Mark the exact point where the engine worker consumed the human steer."""
+    def mark_interject_received(
+        self,
+        session_id: str,
+        queue_id: str,
+        *,
+        consumed_via: str = "",
+        interrupt_receipt: bool = False,
+    ) -> bool:
+        """Mark the exact point where the engine worker consumed the human steer.
+
+        Phase4 M3 四桶机械归属（§7）：consumed_via∈{round_start, final_gate,
+        gap_harvest}（engine 消费点戳）+ interrupt_receipt（本轮回执含
+        interrupted_for_interjection）→ 分桶由 aggregate 派生，不在标记时判断
+        （戳记只记事实，不解释）。
+        """
         with self._lock:
             for it in self._items:
                 if it.get("queue_id") == queue_id and it.get("session_id") == session_id:
@@ -393,6 +406,10 @@ class HumanTurnQueue:
                         return False
                     it["status"] = "interject_received"
                     it["received_at"] = _now()
+                    if consumed_via:
+                        it["consumed_via"] = consumed_via
+                    if interrupt_receipt:
+                        it["interrupt_receipt"] = True
                     it["terminal_at"] = it["received_at"]
                     self._save()
                     return True
@@ -595,6 +612,18 @@ class HumanTurnQueue:
                     round((it["applied_at"] - c) * 1000, 1) if it.get("applied_at") else None
                 ),
             }
+            # Phase4 M3 四桶机械归属（§7）：interruptible=本轮含打断回执；
+            # 其余按消费点：final_gate→llm_stream；gap_harvest→idle；
+            # round_start/无戳记（老数据）→natural_boundary（轮转消费缺省）。
+            if it.get("interrupt_receipt"):
+                bucket = "interruptible"
+            elif it.get("consumed_via") == "final_gate":
+                bucket = "llm_stream"
+            elif it.get("consumed_via") == "gap_harvest":
+                bucket = "idle"
+            else:
+                bucket = "natural_boundary"
+            row["bucket"] = bucket
             rows.append(row)
         out: dict[str, Any] = {
             "session_id": session_id,
@@ -607,4 +636,20 @@ class HumanTurnQueue:
             )
             out[f"p50_{key}"] = self._pct(vals, 0.50)
             out[f"p95_{key}"] = self._pct(vals, 0.95)
+        # Phase4 M3 分桶汇总（§7 验收面）：每桶 n/p50/p95，样本不足 5 标注
+        # insufficient_sample（诚实口径，不冒充达标）。
+        buckets_out: dict[str, Any] = {}
+        for b in ("interruptible", "natural_boundary", "llm_stream", "idle"):
+            effs = sorted(
+                row["t_effect_ms"]
+                for row in rows
+                if row.get("bucket") == b and row.get("t_effect_ms") is not None
+            )
+            buckets_out[b] = {
+                "n": len(effs),
+                "p50_t_effect_ms": self._pct(effs, 0.50),
+                "p95_t_effect_ms": self._pct(effs, 0.95),
+                "insufficient_sample": len(effs) < 5,
+            }
+        out["buckets"] = buckets_out
         return out

@@ -86,6 +86,12 @@ class Rec:
         self.data["t_effect_p50_ms"] = _pct(effs, 0.50)
         self.data["t_effect_p95_ms"] = _pct(effs, 0.95)
         path = REPORT_DIR / f"{self.data['scenario']}.json"
+        # 基线保全护栏：已存在的基线快照默认不覆写（PHASE4_OVERWRITE_REPORTS=1
+        # 强制重测）。基线数据是不可再生事实，回归重跑测的是新行为，混入基线
+        # 目录会破坏对照真值。
+        import os as _os
+        if path.exists() and _os.environ.get("PHASE4_OVERWRITE_REPORTS") != "1":
+            return
         path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 

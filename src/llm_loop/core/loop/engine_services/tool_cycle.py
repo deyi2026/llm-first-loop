@@ -553,6 +553,11 @@ class ToolCycleService:
                         sess, _gap_skipped, round_index=rounds
                     )
                     self._consume_gap_interjections(sess)
+                # Phase4 M3 分桶戳记（§7）：本轮回执是否含在途打断标注（度量用）。
+                self._host._run_state().last_receipt_interrupted = any(
+                    getattr(result, "interrupted_for_interjection", False)
+                    for _tc, result in recorded_results
+                )
 
                 # UI terminal facts are emitted only after every receipt in this execution
                 # batch has been recorded and the batch persistence boundary was attempted.
@@ -900,7 +905,9 @@ class ToolCycleService:
         """
         from llm_loop.core.loop.engine import _consume_live_interjections
 
-        accepted = _consume_live_interjections(self._host, sess.session_id, sess)
+        accepted = _consume_live_interjections(
+            self._host, sess.session_id, sess, via="gap_harvest"
+        )
         if accepted:
             self._host._run_state().interject_harvest_user_texts.extend(accepted)
             self._host._record_action(

@@ -72,6 +72,9 @@ class _RunState:
     # 收割并消费成功的插话文本。轮首消费时合并进 user_text 辅助视图后清空
     # （单读单清）；仅 engine 工作线程写入（会话单写者纪律不变）。
     interject_harvest_user_texts: list[str] = field(default_factory=list)
+    # Phase4 M3 四桶机械归属（§7）：本轮回执是否含 interrupted_for_interjection
+    # （tool_cycle 回执落盘时置位；轮首只读）。仅度量戳记用途，不参与决策。
+    last_receipt_interrupted: bool = False
     last_breakdown: Any = None
     last_build_info: Any = None
     # 2026-09-03 cache-boundary P1: provider cache window 是跨 run、按 session 的事实。

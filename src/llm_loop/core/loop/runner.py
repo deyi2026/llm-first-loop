@@ -492,12 +492,17 @@ class BackgroundRunner:
             h.interjections[:0] = [dict(r) for r in rows]
 
     @staticmethod
-    def acknowledge_interjection(payload: dict[str, Any]) -> None:
-        """Best-effort transport acknowledgement after the engine persisted the steer."""
+    def acknowledge_interjection(payload: dict[str, Any], **context: Any) -> None:
+        """Best-effort transport acknowledgement after the engine persisted the steer.
+
+        Phase4 M3：context（consumed_via/interrupt_receipt 等消费上下文）透传给
+        回执闭包，供 hq 条目分桶戳记；旧闭包（无参）不受影响（kwargs 不传即不
+        改签名行为——闭包侧以 **ctx 吸收）。
+        """
         callback = payload.get("_on_received")
         if callable(callback):
             try:
-                callback()
+                callback(**context)
             except Exception:  # noqa: BLE001 - UI acknowledgement cannot rewrite run truth
                 logger.warning("interjection acknowledgement failed (fail-open)", exc_info=True)
 

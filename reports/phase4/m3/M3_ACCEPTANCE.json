@@ -1,0 +1,116 @@
+{
+  "interruptible": {
+    "bucket_construct": "interruptible",
+    "n": 5,
+    "t_effect_samples": [
+      80.7,
+      103.7,
+      100.0,
+      98.9,
+      102.7
+    ],
+    "p50": 100.0,
+    "p95": 103.7,
+    "consumed_via": [
+      "round_start",
+      "round_start",
+      "round_start",
+      "round_start",
+      "round_start"
+    ],
+    "interrupt_receipts": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "natural_boundary": {
+    "bucket_construct": "natural_boundary",
+    "n": 5,
+    "t_effect_samples": [
+      135.5,
+      148.7,
+      149.4,
+      153.6,
+      149.2
+    ],
+    "p50": 149.2,
+    "p95": 153.6,
+    "consumed_via": [
+      "round_start",
+      "round_start",
+      "round_start",
+      "round_start",
+      "round_start"
+    ],
+    "interrupt_receipts": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "llm_stream": {
+    "bucket_construct": "llm_stream",
+    "n": 5,
+    "t_effect_samples": [
+      1219.3,
+      1245.6,
+      1249.8,
+      1246.0,
+      1211.1
+    ],
+    "p50": 1245.6,
+    "p95": 1249.8,
+    "consumed_via": [
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate"
+    ],
+    "interrupt_receipts": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "idle": {
+    "bucket_construct": "idle",
+    "n": 5,
+    "t_effect_samples": [
+      2001.6,
+      38.2,
+      32.8,
+      34.1,
+      34.6
+    ],
+    "p50": 34.6,
+    "p95": 2001.6,
+    "consumed_via": [
+      "round_start",
+      "gap_harvest",
+      "gap_harvest",
+      "gap_harvest",
+      "gap_harvest"
+    ],
+    "interrupt_receipts": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "mechanism_p50_t_effect_ms": 34.1
+  },
+  "baseline_compare": {
+    "S13_baseline_p50_ms": 1679.7,
+    "S13_m3_p50_ms": 100.0,
+    "improvement_x": 16.8
+  }
+}

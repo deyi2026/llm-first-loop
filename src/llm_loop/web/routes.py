@@ -2107,8 +2107,8 @@ def queue_interject(payload: QueueInterjectRequest, request: Request) -> Respons
             "message": item.get("message", ""),
             "attachment_facts": list(item.get("attachment_facts") or []),
             "_ingress": issue_ingress("web"),
-            "_on_received": lambda: hq.mark_interject_received(
-                payload.session_id, payload.queue_id
+            "_on_received": lambda **ctx: hq.mark_interject_received(
+                payload.session_id, payload.queue_id, **ctx
             ),
             # Phase3 G1 分级回执（全部 fail-open，回执失败不阻断主链路）：
             # denied=ingress 守卫拒绝；applied=含插话决策产生首个动作或改变终答；

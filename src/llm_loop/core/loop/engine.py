@@ -145,7 +145,12 @@ def _background_note_active(engine: Any, session_id: str, round_no: int) -> None
 
 
 def _consume_live_interjections(
-    engine: Any, session_id: str, sess: Any, *, at_final_gate: bool = False
+    engine: Any,
+    session_id: str,
+    sess: Any,
+    *,
+    at_final_gate: bool = False,
+    via: str = "round_start",
 ) -> list[str]:
     """Persist pending genuine-human steer messages at a safe model-round boundary.
 
@@ -153,6 +158,9 @@ def _consume_live_interjections(
     runs on the owning engine worker, keeping Session mutation single-writer.  A row is
     acknowledged only after it has crossed the same ingress guard and Session/Event
     persistence path as an ordinary human message.
+
+    Phase4 M3：via∈{round_start, final_gate, gap_harvest} 为消费点事实戳记
+    （供 hq 条目四桶机械归属，§7），不参与任何决策。
     """
     runner = getattr(engine, "runner", None)
     take = getattr(runner, "take_interjections", None)
@@ -240,7 +248,17 @@ def _consume_live_interjections(
         accepted_texts.append(text)
         ack = getattr(runner, "acknowledge_interjection", None)
         if callable(ack):
-            ack(row)
+            # Phase4 M3 分桶戳记（§7）：消费点事实（via）+ 本轮打断回执事实
+            # （run_state.last_receipt_interrupted，tool_cycle 回执落盘时置位）；
+            # fail-open（acknowledge 内部兜底），分桶派生在 aggregate。
+            with contextlib.suppress(Exception):
+                ack(
+                    row,
+                    consumed_via=via,
+                    interrupt_receipt=bool(
+                        getattr(engine._run_state(), "last_receipt_interrupted", False)
+                    ),
+                )
         with contextlib.suppress(Exception):
             engine._record_action(
                 "human.interjection",
@@ -2493,7 +2511,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 # settlement boundary; otherwise continue the same run so the next model
                 # decision includes the newly persisted genuine-human turn.
                 _late_interjected = _consume_live_interjections(
-                    self, session_id, sess, at_final_gate=True
+                    self, session_id, sess, at_final_gate=True, via="final_gate"
                 )
                 if _late_interjected:
                     _nonempty_interjected = [row for row in _late_interjected if row.strip()]
