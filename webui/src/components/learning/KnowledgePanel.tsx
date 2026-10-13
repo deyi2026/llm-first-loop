@@ -61,6 +61,12 @@ function ExperienceCard({
       <div className="v2-knowledge-meta">
         {record.record_kind ? <span>{record.record_kind === "lesson" ? "lesson" : "experience"}</span> : null}
         {record.verification_state ? <span>{record.verification_state}</span> : null}
+        {record.use_count != null ? (
+          <span data-testid="experience-use-count">使用 {record.use_count} 次</span>
+        ) : null}
+        {record.last_used_at ? (
+          <span data-testid="experience-last-used">最近使用 {record.last_used_at.slice(0, 10)}</span>
+        ) : null}
         {record.updated_at ? <span>{record.updated_at.slice(0, 10)}</span> : null}
       </div>
       {(record.tags ?? []).length > 0 ? (

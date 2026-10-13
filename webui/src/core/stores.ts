@@ -209,6 +209,21 @@ export function useMainView(): MainView {
   return useSyncExternalStore(mainViewStore.subscribe, () => mainViewStore.getState().view);
 }
 
+// ── 学习页子页切换（EVO-20261013）：知识管理上移到顶部，与学习通道二选一展示 ──
+export type LearningPage = "learning" | "knowledge";
+
+const learningPageStoreRaw = createStore<{ page: LearningPage }>({ page: "knowledge" });
+
+export const learningPageStore = {
+  getState: learningPageStoreRaw.getState,
+  setPage: (page: LearningPage) => learningPageStoreRaw.setState({ page }),
+  subscribe: learningPageStoreRaw.subscribe,
+};
+
+export function useLearningPage(): LearningPage {
+  return useSyncExternalStore(learningPageStore.subscribe, () => learningPageStore.getState().page);
+}
+
 // ── 右侧面板 store：面板开合 + 活动页签（预览 tab 打开时全局联动 App 壳） ──
 export type RightPanelTab = "settings" | "jobs" | "binding" | "preview";
 

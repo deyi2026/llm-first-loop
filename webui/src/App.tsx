@@ -15,7 +15,9 @@ import {
   previewTabsStore,
   rightPanelStore,
   sidebarViewStore,
+  learningPageStore,
   useCurrentSessionId,
+  useLearningPage,
   useMainView,
   useNewSessionPending,
   useRightPanel,
@@ -36,6 +38,32 @@ export function clampPanelWidth(px: number): number {
 function readPanelWidth(): number {
   const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
   return clampPanelWidth(saved);
+}
+
+// ── 学习页（EVO-20261013 改版）：知识管理上移到顶部，与学习通道二选一切换 ──
+// 旧结构为两面板纵向堆叠（学习通道在上、知识管理沉底）；现改为顶部页签切换，
+// 知识管理置顶为默认页。侧栏「学习通道/知识管理」按钮与页签共用同一 store。
+function LearningPlane() {
+  const page = useLearningPage();
+  return (
+    <div className="v2-learning-view" data-testid="learning-view">
+      <nav className="v2-learning-pagetabs" data-testid="learning-pagetabs">
+        <button
+          className={page === "knowledge" ? "on" : ""}
+          onClick={() => learningPageStore.setPage("knowledge")}
+        >
+          📚 知识管理
+        </button>
+        <button
+          className={page === "learning" ? "on" : ""}
+          onClick={() => learningPageStore.setPage("learning")}
+        >
+          🧠 学习通道
+        </button>
+      </nav>
+      {page === "knowledge" ? <KnowledgePanel /> : <LearningPanel />}
+    </div>
+  );
 }
 
 export function App() {
@@ -181,10 +209,7 @@ export function App() {
         <TopBar onToggleSidebar={toggleSidebar} onShowFiles={showConversationFiles} />
         {mainView === "chat" ? <InteropNotice /> : null}
         {mainView === "learning" ? (
-          <div className="v2-learning-view" data-testid="learning-view">
-            <LearningPanel />
-            <KnowledgePanel />
-          </div>
+          <LearningPlane />
         ) : mainView === "services" ? (
           <ServicesPanel />
         ) : (

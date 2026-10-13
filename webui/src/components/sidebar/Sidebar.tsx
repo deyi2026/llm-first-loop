@@ -6,10 +6,12 @@ import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSess
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { useCapabilities } from "../../core/capabilities";
 import {
+  learningPageStore,
   mainViewStore,
   sessionStore,
   sidebarViewStore,
   useCurrentSessionId,
+  useLearningPage,
   useMainView,
   useSessions,
   useSidebarView,
@@ -27,6 +29,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const sessions = useSessions();
   const currentId = useCurrentSessionId();
   const mainView = useMainView();
+  const learningPage = useLearningPage();
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -188,9 +191,24 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       </button>
       <button
         type="button"
-        className={`v2-learning-entry ${mainView === "learning" ? "active" : ""}`}
+        className={`v2-learning-entry ${mainView === "learning" && learningPage === "knowledge" ? "active" : ""}`}
+        data-testid="knowledge-entry"
+        onClick={() => {
+          mainViewStore.setView("learning");
+          learningPageStore.setPage("knowledge");
+        }}
+      >
+        <span>📚 知识管理</span>
+        <small>Experiences · Methods</small>
+      </button>
+      <button
+        type="button"
+        className={`v2-learning-entry ${mainView === "learning" && learningPage === "learning" ? "active" : ""}`}
         data-testid="learning-entry"
-        onClick={() => mainViewStore.setView("learning")}
+        onClick={() => {
+          mainViewStore.setView("learning");
+          learningPageStore.setPage("learning");
+        }}
       >
         <span>🧠 学习通道</span>
         <small>Reflection · Methods</small>

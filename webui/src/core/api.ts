@@ -150,6 +150,8 @@ export interface ExperienceRecordInfo {
   created_at?: string;
   updated_at?: string;
   body?: string;
+  use_count?: number; // EVO-20261013 知识页：使用账本聚合（catalog 投影）
+  last_used_at?: string | null; // 同上；null=账本缺失/无使用记录
 }
 
 export interface ExperienceCatalog {

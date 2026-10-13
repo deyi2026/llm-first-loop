@@ -359,6 +359,7 @@ class ExperienceStore:
         records: list[dict] = []
         skipped = 0
         scan_error: str | None = None
+        usage = self.usage_stats()  # EVO-20261013 知识页：经验卡使用统计投影
         try:
             paths = sorted(self._dir.glob("EXPERIENCE-*.md"), reverse=True)
         except OSError as exc:  # 与 search_outcome 同形：目录级失败如实上报诊断态
@@ -376,6 +377,9 @@ class ExperienceStore:
             if status and doc_status != status:
                 continue
             record = self.to_hydrated_record(path.stem, doc)
+            stat = usage.get(str(record.get("experience_ref") or ""), {})
+            record["use_count"] = int(stat.get("use_count") or 0)
+            record["last_used_at"] = stat.get("last_used_at")
             if query:
                 haystack = f"{record.get('summary', '')} {record.get('scenario', '')} {' '.join(record.get('tags') or [])}"
                 if query.lower() not in haystack.lower():
@@ -967,6 +971,28 @@ class ExperienceStore:
             rows.append(row)
         rows.reverse()
         return rows[: max(0, min(int(limit), 200))]
+
+    def usage_stats(self) -> dict[str, dict[str, Any]]:
+        """聚合使用账本：每个 experience_ref 的 use_count / last_used_at.
+
+        与 usage_entries 同一真值源（usage.jsonl），fail-open：账本缺失/不可读
+        返回空 dict（调用方不得据此推断“无使用”，仅展示为 0 次）。
+        last_used_at 取 ts 字典序最大值（ISO-8601 同格式下字典序即时间序）。
+        """
+        stats: dict[str, dict[str, Any]] = {}
+        for row in self._iter_usage_entries():
+            ref = str(row.get("experience_ref") or "").strip()
+            if not ref:
+                continue
+            ts = str(row.get("ts") or "")
+            entry = stats.setdefault(ref, {"use_count": 0, "last_used_at": ""})
+            entry["use_count"] += 1
+            if ts > entry["last_used_at"]:
+                entry["last_used_at"] = ts
+        for entry in stats.values():
+            if not entry["last_used_at"]:
+                entry["last_used_at"] = None
+        return stats
 
     def _count_usage_lines(self) -> int:
         path = self.usage_ledger_path()

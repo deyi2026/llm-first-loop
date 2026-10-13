@@ -75,6 +75,29 @@ def test_experience_catalog_lists_all_lifecycle_states(build_test_engine, tmp_pa
     assert ref_a.startswith("EXPERIENCE-")  # raw stem
 
 
+def test_experience_catalog_usage_stats(build_test_engine, tmp_path) -> None:
+    """EVO-20261013 知识页：catalog 投影 use_count / last_used_at（账本聚合）."""
+    engine, _ = build_test_engine([{"content": "你好"}])
+    client = _client(engine, tmp_path)
+    store = engine.corrections._experience_store  # noqa: SLF001
+    ref_a = _seed_experience(store, "used one")
+    ref_b = _seed_experience(store, "never used")
+
+    store.record_use(ref_a, use_decision="applied", note="first")
+    store.record_use(ref_a, use_decision="adapted", note="second")
+
+    resp = client.get("/api/v1/knowledge/experiences")
+    assert resp.status_code == 200
+    by_summary = {r["summary"]: r for r in resp.json()["records"]}
+
+    used = by_summary["used one"]
+    assert used["use_count"] == 2
+    assert used["last_used_at"]  # 有值即可：ts 由运行时生成，断言非空且 >= created
+    fresh = by_summary["never used"]
+    assert fresh["use_count"] == 0
+    assert fresh["last_used_at"] is None
+
+
 def test_experience_detail_and_404(build_test_engine, tmp_path) -> None:
     engine, _ = build_test_engine([{"content": "你好"}])
     client = _client(engine, tmp_path)

@@ -1,8 +1,9 @@
 // EVO-20261013-2 回归：journal 降级信号 / knowledge 503 不伪装空库 / candidate_ref 标注
+// EVO-20261013-4 改版：学习页改为页签切换（知识管理置顶），回归口径同步更新。
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, act, fireEvent, within } from "@testing-library/react";
 import { App } from "./App";
-import { mainViewStore } from "./core/stores";
+import { learningPageStore, mainViewStore } from "./core/stores";
 
 const learningStatus = {
   enabled: true,
@@ -37,10 +38,11 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function renderLearningView(): Promise<void> {
+async function renderLearningView(page: "learning" | "knowledge" = "knowledge"): Promise<void> {
   await act(async () => {
     render(<App />);
     mainViewStore.setView("learning");
+    learningPageStore.setPage(page);
     await new Promise((r) => window.setTimeout(r, 0));
   });
 }
@@ -58,12 +60,13 @@ describe("learning 通道修复回归（4b21343d9）", () => {
   afterEach(() => {
     cleanup();
     mainViewStore.setView("chat");
+    learningPageStore.setPage("knowledge");
     vi.unstubAllGlobals();
     localStorage.clear();
   });
 
   it("journal 降级信号显示警告横幅，而非静默全 0", async () => {
-    await renderLearningView();
+    await renderLearningView("learning");
     const banner = await screen.findByTestId("journal-error");
     expect(banner.textContent).toContain("jobs");
     expect(banner.textContent).toContain("count_states");
@@ -82,16 +85,24 @@ describe("learning 通道修复回归（4b21343d9）", () => {
   });
 
   it("candidate_ref 按前缀标注产物类型", async () => {
-    await renderLearningView();
+    await renderLearningView("learning");
     expect(await screen.findByText("记忆抽取产物")).toBeTruthy();
     expect(await screen.findByText("Method candidate")).toBeTruthy();
   });
 
-  it("learning 视图为单一滚动容器结构（P0 布局）", async () => {
-    await renderLearningView();
+  it("learning 视图保持单一滚动容器，页签二选一挂载面板（改版后口径）", async () => {
+    await renderLearningView("knowledge");
     const view = await screen.findByTestId("learning-view");
     expect(view.className).toContain("v2-learning-view");
-    expect(view.querySelector("main.v2-learning-panel")).toBeTruthy();
+    // 知识管理置顶为默认页：只挂载知识面板，学习面板不在 DOM。
     expect(view.querySelector('[data-testid="knowledge-panel"]')).toBeTruthy();
+    expect(view.querySelector("main.v2-learning-panel")).toBeNull();
+    // 点击「学习通道」页签切换到学习页（503 时显示不可用占位，亦证明面板已挂载）。
+    const tab = within(screen.getByTestId("learning-pagetabs")).getByRole("button", { name: /学习通道/ });
+    await act(async () => {
+      fireEvent.click(tab);
+    });
+    expect(view.querySelector("main.v2-learning-panel")).toBeTruthy();
+    expect(view.querySelector('[data-testid="knowledge-panel"]')).toBeNull();
   });
 });

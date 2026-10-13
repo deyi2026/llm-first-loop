@@ -246,6 +246,35 @@
   flex-direction: column;
 }
 
+/* EVO-20261013 知识页改版：页签条置顶（知识管理在前），替代旧的纵向堆叠。 */
+.v2-learning-pagetabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  padding: 10px 24px;
+  background: var(--dsw-alias-bg-canvas, var(--bg));
+  border-bottom: 1px solid var(--dsw-alias-line-regular, rgba(127, 127, 127, 0.22));
+}
+
+.v2-learning-pagetabs button {
+  border: 1px solid var(--dsw-alias-line-regular, rgba(127, 127, 127, 0.28));
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.v2-learning-pagetabs button.on {
+  background: var(--dsw-alias-fill-brand-selected, rgba(64, 128, 255, 0.16));
+  color: var(--dsw-alias-label-primary, inherit);
+  border-color: var(--dsw-alias-line-accent, rgba(64, 128, 255, 0.5));
+  font-weight: 600;
+}
+
 .v2-learning-panel {
   flex: none;
   overflow: visible;
