@@ -128,7 +128,7 @@ web 2: test_deepseek_web_catalog.py / test_chatgpt_binding_observability.py
   移除（D1：notifier 挂载 + 4 路由 + helpers，-330 行）；删 12 源 + 14 测试；
   4 接缝测试改写（注入断言 11 项 + section fail-closed）；M5 脚本退役标注；
   arch 基线随动 3 处。独立项目侧 registration/config/.env 落地
-  （@ 47e14c8，146 passed，必填校验语义与旧 finalize 对齐）。
+  （@ 33e07dd，146 passed，必填校验语义与旧 finalize 对齐）。
   全量回归 8687 passed / 0 failed（首轮 11 failed：barrier 常量误删/arch
   基线漂移/M5 ruff/section 语义过时——全部定位修复后复验归零）。
   意外发现：venv editable 指针指向 .releases 发布快照（gen 部署机制），

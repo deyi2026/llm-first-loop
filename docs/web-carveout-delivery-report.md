@@ -5,7 +5,7 @@
 - 设计：docs/web-carveout-m0.md（M0 调查 + grill_me 评审 + D1-D6 用户确认
   「按倾向定」2026-10-14T00:18）
 - Goal：GOAL-20261013-a36699bb
-- 独立项目：~/Project/lfl-web-providers（@ 47e14c8，146 passed）
+- 独立项目：~/Project/lfl-web-providers（@ 33e07dd，146 passed）
 
 ## 1. 问题与结果
 
@@ -17,7 +17,7 @@ deepseek/chatgpt 页面自动化 client（Playwright transport，单窗口可达
 
 ## 2. 交付内容
 
-### 2.1 独立项目 lfl-web-providers（M2，5f21f07 → 47e14c8）
+### 2.1 独立项目 lfl-web-providers（M2，5f21f07 → 33e07dd）
 - 12 模块内聚迁移（llm/ 10 + runtime/ 2 平铺），相对 import 修正 15 处；
 - 14 测试迁移 + conftest 数据目录隔离（宿主 LFL_DATA_DIR 指向中间件生产
   data/，不隔离则 hmac 语义测试假红）；
