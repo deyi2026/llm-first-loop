@@ -1,0 +1,89 @@
+{
+  "gate": "code",
+  "reviewer": "/root/wait_code_review",
+  "verdict": "PASS",
+  "reviewed_at": "2026-10-13T00:57:08.358055-04:00",
+  "base_head": "138da6fb6a73bd57ffd2d3aaeb3ebe629b40a82c",
+  "scope_files": [
+    "docs/WAIT-LIFECYCLE-20261013.md",
+    "src/llm_loop/core/loop/lifecycle.py",
+    "src/llm_loop/core/run_context.py",
+    "src/llm_loop/tools/builtin/execute_command.py",
+    "src/llm_loop/tools/builtin/job_registry.py",
+    "src/llm_loop/tools/builtin/wait.py",
+    "src/llm_loop/tools/registry.py",
+    "tests/unit/test_wait_main_lifecycle.py"
+  ],
+  "narrow_scope_files": [
+    "src/llm_loop/core/loop/lifecycle.py",
+    "tests/unit/test_wait_main_lifecycle.py",
+    "src/llm_loop/core/session.py",
+    "src/llm_loop/core/loop/runner.py"
+  ],
+  "findings": [],
+  "applied": [
+    "P1-1",
+    "P1-1-R1"
+  ],
+  "rejected": [
+    {
+      "id": "investigation-capability-wait-gate",
+      "reason": "新增 capability_requirements=(job_output,wait) 在当前源码中不是执行门禁：ToolCycleService._attach_capability_boundary_metadata:600-657 仅查询 runtime_tool_health 并附加可用性事实，不检查 child scope、不拒绝执行，异常 fail-open；既有 test_capability_wiring.py 与 test_capability_requirements.py 明确该字段不得 select/hide/promote tools。故未将最初疑虑列为 P1。"
+    }
+  ],
+  "artifact_sha256": "c8080ffec34863e803436fce4729096e2138c85fe038c6b64cbb885bae229cec",
+  "source_sha256": {
+    "docs/WAIT-LIFECYCLE-20261013.md": "af03b7760d28ab7d94287c26c2199b9284e7bb7b5b02469fc0bf08eb5e32af99",
+    "src/llm_loop/core/loop/lifecycle.py": "ce7234db9cf68fc245d2c51aaaf782996cdb02dc19f6970ee986213fa0f0c55d",
+    "src/llm_loop/core/run_context.py": "99a419eb24eb9a716f08f488a877b651897af95cdcc0750468590eb1661d1639",
+    "src/llm_loop/tools/builtin/execute_command.py": "6b981396139d749934ef607526c6ba2de65aa2ed7bc641dc164c67da512410b8",
+    "src/llm_loop/tools/builtin/job_registry.py": "a70f6e45ca9ee4ae72e7f79506f22ff7cbb4be3c72f0c41a3d2226afe22ae679",
+    "src/llm_loop/tools/builtin/wait.py": "ae221d11fa21d1e40433e5f6295b9ec6166dda59fc0ba5685f1397042d10850d",
+    "src/llm_loop/tools/registry.py": "d4034849dce74976f9bdc73f267f83663a0f9eea1df3b5386754d03adec22776",
+    "tests/unit/test_wait_main_lifecycle.py": "b6fb63357c2469334edc70a6582d66b134a1f8e8e31b662dc79a8cf98299601d"
+  },
+  "dependency_sha256": {
+    "src/llm_loop/core/session.py": "2dead58fd50bcd45e5ac9ac3542115ec879067d2a2e93aad345a8c3aaec4ffce"
+  },
+  "narrow_recheck": {
+    "reviewer": "/root/wait_code_review",
+    "verdict": "PASS",
+    "prior_artifact_sha256": "89da568ab19c034737083ad77188fd6c3ac8a1c9172611c8351810287af50613",
+    "artifact_sha256": "c8080ffec34863e803436fce4729096e2138c85fe038c6b64cbb885bae229cec",
+    "resolved_findings": [
+      "P1-1",
+      "P1-1-R1"
+    ],
+    "remaining_findings": [],
+    "checks": [
+      "同步路径先读取 runner.is_cancelled，再校验 SessionStore.active_run_generation==闭包 run_generation；跨代次取消不会被接受。",
+      "Runner 的查询锁在返回时释放，然后进入 SessionStore 查询锁；不嵌套，未引入与 runner.cancel 的锁顺序反转。",
+      "SessionStore 激活记录 exact generation、退役按 token identity 清理；迟到旧 token 不能删新 run 权威。",
+      "新增真实 LoopEngine closure 回归明确在取消读取期间切换到 next-run-generation，并要求旧 checker=False；提供的 v2 RED 证明原先检查顺序失效。",
+      "有界独立实际源码 AST 验证 PASS：当前同步 Stop、无 active 代次、已换新代次、取消读取中的切代窗口、迟到 token 清理、后台同/异代次、runner=None。"
+    ]
+  },
+  "review_history": [
+    {
+      "artifact_sha256": "f3fa4ecaf9b59c4ab721b82ab536ea190c7d9e7169c12c4c2eccc224bcc82041",
+      "verdict": "REVISE",
+      "finding": "P1-1"
+    },
+    {
+      "artifact_sha256": "89da568ab19c034737083ad77188fd6c3ac8a1c9172611c8351810287af50613",
+      "verdict": "REVISE",
+      "finding": "P1-1-R1"
+    },
+    {
+      "artifact_sha256": "c8080ffec34863e803436fce4729096e2138c85fe038c6b64cbb885bae229cec",
+      "verdict": "PASS",
+      "findings": []
+    }
+  ],
+  "limitations": [
+    "只读审查与回执写入；未修改生产代码、运行全量测试、发布、重启或推送。",
+    "本轮按窄复审要求检查 v2→v3 修订及关联 SessionStore/Runner 权威和锁路径；v1 未变部分沿用已有完整审查。",
+    "执行方此前报告的 focused 46、53 相邻检查与 Pyright current21/new0/touched0 未由本审查独立重跑；v3 含新增竞态回归的最终 focused 结果在任务下发时进行中。PASS 是代码审查结论，完整候选测试门禁仍须由执行方完成并绑定该 SHA。",
+    "本地为冻结源码而非完整可运行仓库；独立验证采用实际源码 AST 编译的确定性交错，未做真实服务运行态验证。"
+  ]
+}

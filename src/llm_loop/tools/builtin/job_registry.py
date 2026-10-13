@@ -63,6 +63,7 @@ class JobEntry:
     finished_at: float = 0.0
     journal: ExternalExecutionJournal | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    completion_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
 
 class JobRegistry:
@@ -315,6 +316,13 @@ class JobRegistry:
             "command": "",
         }
 
+    def completion_event(self, job_id: str, *, session_id: str) -> threading.Event | None:
+        """Local exit notification for an exact owned handle; never reattaches a PID."""
+        entry = self.get(job_id)
+        if entry is None or not session_id or entry.session_id != session_id:
+            return None
+        return entry.completion_event
+
     def start_readers(self, job_id: str) -> None:
         entry = self.get(job_id)
         if entry is None or entry.proc is None:
@@ -369,6 +377,7 @@ class JobRegistry:
             entry.terminal_durable = terminal_durable
             if not entry.finished_at:
                 entry.finished_at = time.time()
+        entry.completion_event.set()
         self._notify_completion(job_id)
         self._retain_terminal_handle(job_id)
 

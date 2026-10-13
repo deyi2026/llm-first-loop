@@ -80,7 +80,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "present_files": "声明已存在的输出文件为最终交付物（对齐 DSH present）：写入完成→最终答复前调用；Web 出产物面板可点击打开/预览；execute_command 创建的产物必须显式声明；工作区内、全有或全无。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
-    "execute_command": "在本地 shell 执行命令并返回 stdout/stderr；每次为独立进程，灾难性命令由硬安全边界阻断。",
+    "execute_command": "在独立 shell 执行命令；fail_fast=true 显式启用 bash -e -o pipefail 保留管道失败，否则退出码仅代表 shell 最后命令。后台启动返回 exact job_id；等终态用 wait(seconds,job_id)，查输出用 job_output；灾难性命令由硬安全边界阻断。",
     "service_control": "共享Web/Feishu/Learning生命周期控制：status只读；publish发布新desired deployment（自动以当前代做CAS+干净git树+webui产物hash绑定）；restart异步走desired-state绑定的official restart（expected_generation可省略，缺省取当前代）；终态failed动作留下的屏障可被新restart接管（自恢复）。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
@@ -136,9 +136,9 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "subagent_lease": "读取子代理 fleet 租约磁盘事实（lease/settlement，expires_at/expired）；只读，不含接管语义。",
     "agent_followup": "对已终止的直接 child 有界续话（同会话保留上下文，每 child≤2 次/父会话≤4 次/15 分钟窗口）。",
     "wait": (
-        "只读墙钟等待（E5, EVO-20261012-65475c5a）：确定性阻塞 1..120 秒，等待期间零模型"
-        "调用；父取消 ≤0.5s 唤醒；每 child 会话累计 ≤600s。心跳/轮询等待期用它替代"
-        "多轮空转调用。"
+        "只读等待 1..120s；传当前会话 exact job_id 等进程终态，完成即返回；省略只等墙钟，"
+        "不监视后台任务。主 Stop/父对子代理取消提前唤醒；回执含 wake_reason/实际时长/累计。"
+        "child 累计租约预算≤600s；主会话仅记本 run 累计。进程终态≠任务验收通过。"
     ),
     "fix_loop": "原子编排检查→定位→子代理修复→重跑的有界修复循环。",
     "workflow_run": "编排 parallel/pipeline/DAG 子任务；按依赖执行并传递前序结果。",

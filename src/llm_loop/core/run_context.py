@@ -14,6 +14,8 @@ registry._session_id 等）原是实例属性，跨会话并发 run 互相污染
 from __future__ import annotations
 
 import contextvars
+import threading
+from collections.abc import Callable
 
 # 当前执行上下文所属的会话 id（run_stream 入口 set；只读工具池经 copy_context 传播）
 current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -80,12 +82,40 @@ child_wait_budget_used: contextvars.ContextVar[object | None] = (
 
 
 class WaitBudget:
-    """每 child 会话一个的 wait 累计预算载体（runner 注入，wait 原位累加）."""
+    """Shared wait accounting across dispatch snapshots; limits belong to the caller."""
 
-    __slots__ = ("used",)
+    __slots__ = ("used", "reserved", "_lock")
 
     def __init__(self, used: float = 0.0) -> None:
         self.used = float(used)
+        self.reserved = 0.0
+        self._lock = threading.Lock()
+
+    def reserve(self, seconds: float, limit_s: float | None) -> tuple[bool, float, float | None]:
+        with self._lock:
+            remaining = None if limit_s is None else limit_s - self.used - self.reserved
+            if remaining is not None and seconds > remaining:
+                return False, self.used, remaining
+            self.reserved += seconds
+            return True, self.used, remaining
+
+    def settle(self, requested: float, elapsed: float) -> float:
+        with self._lock:
+            self.reserved = max(0.0, self.reserved - requested)
+            self.used += elapsed
+            return self.used
+
+
+# Main-run accounting is observation only, with no child lease limit. Lifecycle
+# owns one carrier across generator resumptions and restores the caller Context.
+current_wait_budget: contextvars.ContextVar[WaitBudget | None] = contextvars.ContextVar(
+    "llm_loop_current_wait_budget", default=None
+)
+# Read the admitted run's existing cancellation authority, including Stop accepted
+# before a wait worker registers its local cancellation hook. Never signs a wake grant.
+current_wait_cancel_check: contextvars.ContextVar[Callable[[], bool] | None] = (
+    contextvars.ContextVar("llm_loop_current_wait_cancel_check", default=None)
+)
 
 # ERC R0/Phase2 shadow only: tools preserve their pre-trim observation only when an explicit
 # registry shadow hook is installed. Default false keeps legacy memory/runtime behavior unchanged.

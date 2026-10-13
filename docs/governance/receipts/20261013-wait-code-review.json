@@ -1,0 +1,87 @@
+{
+  "gate": "code",
+  "reviewer": "/root/wait_code_review",
+  "verdict": "REVISE",
+  "reviewed_at": "2026-10-13T00:46:36.878369-04:00",
+  "base_head": "138da6fb6a73bd57ffd2d3aaeb3ebe629b40a82c",
+  "scope_files": [
+    "docs/WAIT-LIFECYCLE-20261013.md",
+    "src/llm_loop/core/loop/lifecycle.py",
+    "src/llm_loop/core/run_context.py",
+    "src/llm_loop/tools/builtin/execute_command.py",
+    "src/llm_loop/tools/builtin/job_registry.py",
+    "src/llm_loop/tools/builtin/wait.py",
+    "src/llm_loop/tools/registry.py",
+    "tests/unit/test_wait_main_lifecycle.py"
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "src/llm_loop/core/loop/lifecycle.py",
+      "lines": "167-175; consumed by tools/builtin/wait.py:76-82",
+      "issue": "无后台 RunHandle 时，_wait_cancelled() 仅按 session_id 回查 runner.is_cancelled，未核验同步 run_generation。SubAgentRunner.start 的 copy_context 将父 run 的 checker 复制到后台 child；child mini-loop 不重绑定该变量。旧同步 run 的存活 worker/child 因而可能读到同一父 session 后续同步 run 的 Stop，在自己的 child_cancel_event 和 stop Event 均未设置时错误返回 cancelled。",
+      "impact": "破坏同会话跨 run 代次隔离，可能使旧 child 的授权内等待被无关新 run 的 Stop 提前唤醒并误报取消。",
+      "evidence": [
+        "冻结候选 lifecycle.py:175 的 fallback 未使用闭包 run_generation。",
+        "subagent/runner.py:1351,1355-1369 复制父 Context；1001-1177 的 child mini-loop 只切换 session id，并未清除/重绑定 current_wait_cancel_check。",
+        "从候选实际 AST 编译 _wait_cancelled 与 WaitTool._cancelled 的有界无写入复现：旧 checker 复制到 child Context，get_handle=None，新同步 run Stop 前 false、后 true；child_cancel_event_set=false、old_child_stop_event_set=false。"
+      ],
+      "fix_hint": "同步 fallback 前复用现有 SessionStore.active_run_generation(session_id) 权威，要求其与闭包 run_generation 一致；保留当前代次注册前 Stop 的检查。补旧 checker/旧 child 与新同步 Stop 隔离，以及当前同步 run 注册前 Stop 正常唤醒的回归。"
+    }
+  ],
+  "applied": [],
+  "rejected": [
+    {
+      "id": "investigation-capability-wait-gate",
+      "reason": "新增 capability_requirements=(job_output,wait) 在当前源码中不是执行门禁：ToolCycleService._attach_capability_boundary_metadata:600-657 仅查询 runtime_tool_health 并附加可用性事实，不检查 child scope、不拒绝执行，异常 fail-open；既有 test_capability_wiring.py 与 test_capability_requirements.py 明确该字段不得 select/hide/promote tools。故未将最初疑虑列为 P1。"
+    }
+  ],
+  "artifact_sha256": "f3fa4ecaf9b59c4ab721b82ab536ea190c7d9e7169c12c4c2eccc224bcc82041",
+  "source_sha256": {
+    "docs/WAIT-LIFECYCLE-20261013.md": "af03b7760d28ab7d94287c26c2199b9284e7bb7b5b02469fc0bf08eb5e32af99",
+    "src/llm_loop/core/loop/lifecycle.py": "0b2aad27b4fdc73f6b4f8a892e66a19ac7319fb20fd8434a147af7e0a004130c",
+    "src/llm_loop/core/run_context.py": "99a419eb24eb9a716f08f488a877b651897af95cdcc0750468590eb1661d1639",
+    "src/llm_loop/tools/builtin/execute_command.py": "6b981396139d749934ef607526c6ba2de65aa2ed7bc641dc164c67da512410b8",
+    "src/llm_loop/tools/builtin/job_registry.py": "a70f6e45ca9ee4ae72e7f79506f22ff7cbb4be3c72f0c41a3d2226afe22ae679",
+    "src/llm_loop/tools/builtin/wait.py": "ae221d11fa21d1e40433e5f6295b9ec6166dda59fc0ba5685f1397042d10850d",
+    "src/llm_loop/tools/registry.py": "d4034849dce74976f9bdc73f267f83663a0f9eea1df3b5386754d03adec22776",
+    "tests/unit/test_wait_main_lifecycle.py": "4c30a7b9aaf591d0bccb49ee8a211eef30d90703ab7c90f448c89f5f2b405233"
+  },
+  "narrow_recheck": null,
+  "reviewed_dependencies": [
+    "AGENTS.md",
+    "docs/DEVELOPMENT_REPAIR_SAFETY.md",
+    "skills/code-review-gate/SKILL.md",
+    "docs/ai_rules.md",
+    "docs/governance/card-lifecycle.md",
+    "src/llm_loop/core/loop/runner.py",
+    "src/llm_loop/core/external_execution.py",
+    "src/llm_loop/core/message.py",
+    "src/llm_loop/core/loop/engine_services/tool_cycle.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/subagent/runner.py",
+    "src/llm_loop/tools/sandbox.py",
+    "tests/unit/test_e4_requires_enforcement_e5_wait.py",
+    "tests/unit/test_execute_command_background.py",
+    "tests/unit/test_runner_cancel_sync.py",
+    "tests/unit/test_run_context_cross_context.py",
+    "tests/unit/test_capability_wiring.py",
+    "tests/unit/test_capability_requirements.py"
+  ],
+  "verified_invariants": [
+    "完整 staged diff 已逐文件阅读；8 个改动文件已完整阅读；抽取内容与 authoritative bundle 逐文件相等；diff SHA256 一致。",
+    "主 run 的 WaitBudget 经每次生成器恢复重绑定，并在 yield/close/异常清理后恢复调用方 Context；child 预留和 settle 使用同一锁。",
+    "job 等待强制非空 session 和 exact owner 比较；completion_event 仅返回 exact owned local handle；orphaned 不重连/回收。",
+    "killed 只有取消请求时不被 _terminal 认作已物理退出；watcher 在 proc.wait、终态事实更新后才设置 completion_event。",
+    "wait 的 session+generation 本地 Event 注册与清理受锁保护，finally 释放预留；后台完成只产生事实，不把进程成功等同任务验收。",
+    "fail_fast 显式 opt-in，使用 shlex.quote 保留命令文本，前台/后台/沙箱同一路 launch_command；默认命令和显式 || 处理语义保持。"
+  ],
+  "limitations": [
+    "未编辑任何生产代码，未执行全量测试、发布、重启或推送。",
+    "45 passed、四项 RED、Ruff 和 Pyright 属于父代理提供的候选证据；本审查未独立重跑这些项目检查，Pyright 最终结果需由执行方核实。",
+    "本地为冻结源码抽取而非完整可运行仓库；通过实际源码 AST 的有界复现验证 P1-1，未做真实服务运行态验证。",
+    "大型未改动 factory/subagent/tool_cycle 只读取与能力消费、Context、owner、取消及注册相关完整路径；无需全量重审所有未改动模块。",
+    "SessionStore.active_run_generation 的候选修复入口由父代理指出；原实现的缺陷不依赖该入口，修订后应补充实际源码并窄复审。"
+  ]
+}

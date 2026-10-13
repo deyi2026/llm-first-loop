@@ -1,0 +1,84 @@
+{
+  "gate": "code",
+  "reviewer": "/root/wait_code_review",
+  "verdict": "REVISE",
+  "reviewed_at": "2026-10-13T00:52:00.241204-04:00",
+  "base_head": "138da6fb6a73bd57ffd2d3aaeb3ebe629b40a82c",
+  "scope_files": [
+    "docs/WAIT-LIFECYCLE-20261013.md",
+    "src/llm_loop/core/loop/lifecycle.py",
+    "src/llm_loop/core/run_context.py",
+    "src/llm_loop/tools/builtin/execute_command.py",
+    "src/llm_loop/tools/builtin/job_registry.py",
+    "src/llm_loop/tools/builtin/wait.py",
+    "src/llm_loop/tools/registry.py",
+    "tests/unit/test_wait_main_lifecycle.py"
+  ],
+  "narrow_scope_files": [
+    "src/llm_loop/core/loop/lifecycle.py",
+    "tests/unit/test_wait_main_lifecycle.py",
+    "src/llm_loop/core/session.py",
+    "src/llm_loop/core/loop/runner.py"
+  ],
+  "findings": [
+    {
+      "id": "P1-1-R1",
+      "severity": "P1",
+      "parent_finding": "P1-1",
+      "file": "src/llm_loop/core/loop/lifecycle.py",
+      "lines": "175-177",
+      "issue": "新增同步代次检查与 runner.is_cancelled 的会话级取消读取分离且各自释放锁；旧父 run 可在检查旧代次之后退役，新同步 run 可在取消读取之前准入并 Stop。旧 child 的 inherited checker 仍可能借用新 run 的 Stop。P1-1 的顺序情形已修，但并发交错尚未收口。",
+      "evidence": [
+        "实际 SessionStore 源码确认：active_run_generation 持 _run_save_tokens_guard 后返回并释放锁；_activate/_deactivate 各自持同一锁，退役按 opaque token identity 清理。",
+        "实际 Runner.is_cancelled 另持 runner._guard，按当前 session registry/_sync_cancelled 读取，不绑定闭包代次。",
+        "将 v2 实际 _wait_cancelled 与真实 SessionStore activation/retirement/read 方法、Runner.is_cancelled 方法从 AST 编译后确定性复现：generation_before=old；切代发生在 generation 检查与取消读取之间；old_checker=True；generation_after=new；old_token_is_active=False。",
+        "新增真实 LoopEngine 回归仅覆盖新 run 已存在后查询旧 checker 的顺序情形，提供的 v1 RED [(True,True)] 支持其有效性，但没有覆盖两次读取之间的切代窗口。"
+      ],
+      "fix_hint": "在读取取消结果后再次核验 SessionStore.active_run_generation 与闭包代次一致，避免跨代次读取被接受；补明确在两次读取之间退役旧 run、激活/停止新同步 run 的确定性回归。勿持 SessionStore.run_generation_authority 锁后读取 Runner：runner.cancel 现有路径持 runner._guard 调 active_run_generation，会形成锁顺序反转。"
+    }
+  ],
+  "applied": [
+    "P1-1"
+  ],
+  "applied_status": {
+    "P1-1": "部分落实：复用现有 SessionStore 代次权威及顺序隔离回归已落地；P1-1-R1 并发竞态仍需修订。"
+  },
+  "rejected": [
+    {
+      "id": "investigation-capability-wait-gate",
+      "reason": "新增 capability_requirements=(job_output,wait) 在当前源码中不是执行门禁：ToolCycleService._attach_capability_boundary_metadata:600-657 仅查询 runtime_tool_health 并附加可用性事实，不检查 child scope、不拒绝执行，异常 fail-open；既有 test_capability_wiring.py 与 test_capability_requirements.py 明确该字段不得 select/hide/promote tools。故未将最初疑虑列为 P1。"
+    }
+  ],
+  "artifact_sha256": "89da568ab19c034737083ad77188fd6c3ac8a1c9172611c8351810287af50613",
+  "source_sha256": {
+    "docs/WAIT-LIFECYCLE-20261013.md": "af03b7760d28ab7d94287c26c2199b9284e7bb7b5b02469fc0bf08eb5e32af99",
+    "src/llm_loop/core/loop/lifecycle.py": "75dcb5ddaa3a31f6bb995fbfc051a0a689a3661c01d4f3ed1ca2cfb64d7ad45c",
+    "src/llm_loop/core/run_context.py": "99a419eb24eb9a716f08f488a877b651897af95cdcc0750468590eb1661d1639",
+    "src/llm_loop/tools/builtin/execute_command.py": "6b981396139d749934ef607526c6ba2de65aa2ed7bc641dc164c67da512410b8",
+    "src/llm_loop/tools/builtin/job_registry.py": "a70f6e45ca9ee4ae72e7f79506f22ff7cbb4be3c72f0c41a3d2226afe22ae679",
+    "src/llm_loop/tools/builtin/wait.py": "ae221d11fa21d1e40433e5f6295b9ec6166dda59fc0ba5685f1397042d10850d",
+    "src/llm_loop/tools/registry.py": "d4034849dce74976f9bdc73f267f83663a0f9eea1df3b5386754d03adec22776",
+    "tests/unit/test_wait_main_lifecycle.py": "02355015a6297bbd07d5b0b3d99be251a4882296fd05f5852693238b60873a58"
+  },
+  "dependency_sha256": {
+    "src/llm_loop/core/session.py": "2dead58fd50bcd45e5ac9ac3542115ec879067d2a2e93aad345a8c3aaec4ffce"
+  },
+  "narrow_recheck": {
+    "reviewer": "/root/wait_code_review",
+    "verdict": "REVISE",
+    "prior_artifact_sha256": "f3fa4ecaf9b59c4ab721b82ab536ea190c7d9e7169c12c4c2eccc224bcc82041",
+    "artifact_sha256": "89da568ab19c034737083ad77188fd6c3ac8a1c9172611c8351810287af50613",
+    "remaining_findings": [
+      "P1-1-R1"
+    ],
+    "resolved_cases": [
+      "新同步 run 已准入后，旧 checker 不再读取新 Stop；当前同步 checker 保持 Stop 可见。"
+    ]
+  },
+  "limitations": [
+    "只读审查与回执写入；未修改生产代码、运行全量测试、发布、重启或推送。",
+    "本轮只审查 v1→v2 两项修订及 SessionStore/Runner 相关权威与锁路径；未重审未变源码。",
+    "46 focused、53 相邻检查以及 Pyright current21/new0/touched0 为父代理提供的执行结果；未独立重跑。",
+    "本地未持完整可运行仓库；独立验证采用实际源码 AST 编译的确定性交错，无真实进程/服务运行态验证。"
+  ]
+}

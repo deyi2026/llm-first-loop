@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.run_context import (
+    WaitBudget,
+    current_wait_budget,
+    current_wait_cancel_check,
+)
+from llm_loop.core.run_context import (
     current_model_label as _current_model_label,
 )
 from llm_loop.core.run_context import (
@@ -157,6 +162,24 @@ class _RunEntrypointMixin:
         # have no external handle, so mint an equally strong internal generation once and
         # replay it into every generator-resume Context for the whole admitted run.
         run_generation = str(_current_run_generation.get() or uuid.uuid4().hex)
+        run_wait_budget = WaitBudget()
+
+        def _wait_cancelled() -> bool:
+            if runner is None:
+                return False
+            snap = runner.get_handle(session_id)
+            if snap is not None:
+                return bool(
+                    snap.get("run_generation") == run_generation and snap.get("cancelled")
+                )
+            # Validate after reading the session-scoped cancel flag: an old
+            # child may retain this checker while its parent retires and a new
+            # synchronous run starts. Do not nest SessionStore/Runner locks.
+            return bool(
+                runner.is_cancelled(session_id)
+                and self.session.active_run_generation(session_id) == run_generation
+            )
+
         _run_stack = ExitStack()
         _run_save_token: object | None = None
         _budget_execution: Any = None
@@ -168,6 +191,8 @@ class _RunEntrypointMixin:
             nonlocal _event_step_scope
             sid_token = _current_session_id.set(session_id)
             generation_token = _current_run_generation.set(run_generation)
+            wait_budget_token = current_wait_budget.set(run_wait_budget)
+            wait_cancel_token = current_wait_cancel_check.set(_wait_cancelled)
             ws_token = _current_workspace_root.set(run_workspace)
             effort_token = _current_reasoning_effort.set(run_effort)
             reasoning_mode_token = _current_reasoning_mode.set(run_reasoning_mode)
@@ -202,6 +227,8 @@ class _RunEntrypointMixin:
                 _current_reasoning_mode.reset(reasoning_mode_token)
                 _current_reasoning_effort.reset(effort_token)
                 _current_workspace_root.reset(ws_token)
+                current_wait_cancel_check.reset(wait_cancel_token)
+                current_wait_budget.reset(wait_budget_token)
                 _current_run_generation.reset(generation_token)
                 _current_session_id.reset(sid_token)
 

@@ -197,6 +197,9 @@ class ExecuteCommandTool:
         "失败对策: 非零退出码会如实返回并标注；破坏性命令（rm -rf 根目录等）会被安全边界硬阻断，请改用安全方案。"
         "状态契约: 每次调用是独立 shell 进程——cd/环境变量/命令历史不跨调用持久（用 workdir 参数或命令内 cd && 串联）；"
         "run_in_background 任务跨调用持久，启动后用 job_output 查询；需要终止时须以真实用户取消意图为依据；"
+        "等后台进程终态可用 wait(seconds=120, job_id=启动回执ID)，完成即返回；"
+        "验证命令可显式 fail_fast=true（bash -e -o pipefail），未处理的失败停止后续命令；"
+        "默认 shell 退出码仅是最后执行命令的状态，不代表管道内全部步骤成功。"
         "命令输出默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断，并由统一 durable recovery 负责恢复；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
@@ -213,6 +216,10 @@ class ExecuteCommandTool:
             "run_in_background": {
                 "type": "boolean",
                 "description": "后台运行（可选，默认 false）。true 时立即返回 job_id，不阻塞等待；用 job_output 查询输出。终止能力仅在真实用户明确要求取消时提供。适合长任务（测试/安装/编译）。",
+            },
+            "fail_fast": {
+                "type": "boolean",
+                "description": "可选，默认 false。true 使用 bash -e -o pipefail，管道或未处理命令失败即返回非零；显式处理的失败仍遵循 shell 语义。",
             },
             "escalation_token": {
                 "type": "string",
@@ -298,6 +305,14 @@ class ExecuteCommandTool:
                 )
             workdir = str(wd)
         run_bg = bool(kwargs.get("run_in_background", False))
+        fail_fast = kwargs.get("fail_fast", False)
+        if not isinstance(fail_fast, bool):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] fail_fast 需为 boolean",
+                tool_call_id="", tool_name=self.name,
+            )
+        launch_command = "bash -e -o pipefail -c " + shlex.quote(command) if fail_fast else command
         # 工作区跟随: 未显式指定 workdir 时默认当前工作区根（无工作区 → 进程 cwd，零回归）
         if workdir is None:
 
@@ -313,7 +328,7 @@ class ExecuteCommandTool:
 
                 try:
                     bg_cmd, _ = sandbox_argv(
-                        command,
+                        launch_command,
                         str(workdir or "."),
                         mode=self._sandbox_mode,
                         image=self._sandbox_image,
@@ -344,7 +359,7 @@ class ExecuteCommandTool:
                             tool_name=self.name,
                         )
                     proc = subprocess.Popen(
-                        bg_cmd if bg_cmd is not None else command,
+                        bg_cmd if bg_cmd is not None else launch_command,
                         shell=bg_cmd is None,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
@@ -360,7 +375,7 @@ class ExecuteCommandTool:
                 try:
                     job_id = JobRegistry.instance().create(
                         proc,
-                        command,
+                        launch_command,
                         session_id=_sid,
                         workspace_root=str(workdir or ""),
                         executor="execute_command",
@@ -397,11 +412,13 @@ class ExecuteCommandTool:
                 return ToolResult(
                     status=ToolResultStatus.SUCCESS,
                     content=f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"
-                            f"用 job_output(job_id={job_id}) 查询输出；如用户明确要求终止，再按取消意图处理。",
+                            f"shell_mode={'fail_fast' if fail_fast else 'default'}\n"
+                            f"等进程终态用 wait(seconds=120, job_id={job_id})；"
+                            f"用 job_output(job_id={job_id}) 查询退出码与输出。",
                     tool_call_id="",
                     tool_name=self.name,
                     # R2 P1-7: 回执文案与结构化字段同一构造点产出（活跃句柄 → 下轮投影选入）
-                    capability_requirements=("job_output",),
+                    capability_requirements=("job_output", "wait"),
                 )
             # P3-3(2026-08-15): EXEC_SANDBOX=bwrap → bwrap argv（shell=False，独立命名空间 +
             # 只读系统目录 + 工作区可写）；显式开启而 bwrap 缺失 → fail-closed 如实失败
@@ -410,7 +427,7 @@ class ExecuteCommandTool:
             sandbox_note = ""
             try:
                 sandbox_cmd, sandbox_note = sandbox_argv(
-                    command,
+                    launch_command,
                     str(workdir or "."),
                     mode=self._sandbox_mode,
                     image=self._sandbox_image,
@@ -439,7 +456,7 @@ class ExecuteCommandTool:
                         tool_name=self.name,
                     )
                 proc = subprocess.Popen(
-                    sandbox_cmd if sandbox_cmd is not None else command,
+                    sandbox_cmd if sandbox_cmd is not None else launch_command,
                     shell=sandbox_cmd is None,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
