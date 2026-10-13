@@ -29,6 +29,14 @@ class PageContractError(RuntimeError):
     """The observed ChatGPT page no longer satisfies the qualified contract."""
 
 
+class PageCancelledError(PageContractError):
+    """Phase6 M2：页面轮次被协作取消（engine 窗口打断的 transport 早退）。
+
+    非页面契约破裂——引擎主动取消在页面线程的如实呈现；engine M1 worker
+    将其按打断轮丢弃，guard 随线程退出释放。
+    """
+
+
 _PROJECT_SEGMENT_RE = re.compile(r"/g/([^/]+)")
 _CONVERSATION_RE = re.compile(
     r"/c/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -168,6 +176,23 @@ class ChatGPTPageAdapter:
     # request_id token, starving strict send confirmation.
     EXPAND_TURN_LABEL = "显示更多"
     MAX_TURN_EXPANSION_ATTEMPTS = 3
+
+    def _try_release_generation(self) -> None:
+        """Phase6 M2：取消时 best-effort 点击停止按钮释放页面（页面线程内）。
+
+        ChatGPT 生成期按钮区渲染「停止」控制（STOP_BUTTON 契约常量）；
+        探测/点击失败一律静默——释放是增强，取消语义不依赖它。
+        """
+
+        try:
+            stop = self._page.get_by_role("button", name=self.STOP_BUTTON)
+            for index in range(stop.count()):
+                candidate = stop.nth(index)
+                if candidate.is_visible():
+                    candidate.click()
+                    return
+        except Exception:  # noqa: BLE001 - 释放失败不影响取消语义
+            return
 
     def __init__(self, page: Any, *, profile_label: str, project_name: str | None = None):
         self._page = page
@@ -521,6 +546,7 @@ class ChatGPTPageAdapter:
         confirm_timeout_s: float | None = None,
         poll_ms: int = 100,
         confirm_token: str | None = None,
+        cancelled: Any = None,
     ) -> SendReceipt:
         """Submit one human/control message using the explicit visible Send button."""
         if not isinstance(text, str) or not text.strip():
@@ -548,6 +574,10 @@ class ChatGPTPageAdapter:
         send_deadline = time.monotonic() + readiness_timeout_s
         visible_send = None
         while time.monotonic() < send_deadline:
+            if cancelled is not None and cancelled.is_set():
+                raise PageCancelledError(
+                    "send_text cancelled before dispatch (Phase6 M2)"
+                )
             send = self._page.get_by_role("button", name=self.SEND_BUTTON)
             for index in range(send.count()):
                 candidate = send.nth(index)
@@ -572,6 +602,11 @@ class ChatGPTPageAdapter:
         expansion_attempts = 0
         while time.monotonic() < deadline:
             self._page.wait_for_timeout(poll_ms)
+            if cancelled is not None and cancelled.is_set():
+                self._try_release_generation()
+                raise PageCancelledError(
+                    "send_text cancelled during confirm (Phase6 M2)"
+                )
             try:
                 binding = self.observe_identity()
                 if not binding.conversation_id:
@@ -659,6 +694,7 @@ class ChatGPTPageAdapter:
         timeout_s: float = 45.0,
         poll_ms: int = 100,
         stability_polls: int = 2,
+        cancelled: Any = None,
     ) -> GenerationState:
         """Wait for the assistant turn caused by the just-submitted user turn.
 
@@ -672,6 +708,12 @@ class ChatGPTPageAdapter:
         last_identity: str | None = None
         stable = 0
         while time.monotonic() < deadline:
+            if cancelled is not None and cancelled.is_set():
+                # Phase6 M2：页面线程 best-effort 释放生成后取消早退
+                self._try_release_generation()
+                raise PageCancelledError(
+                    "assistant wait cancelled mid-generation (Phase6 M2)"
+                )
             self._page.wait_for_timeout(poll_ms)
             try:
                 state = self.observe_generation()

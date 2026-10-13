@@ -33,6 +33,14 @@ class DeepSeekPageContractError(RuntimeError):
     """The observed DeepSeek page no longer satisfies the qualified contract."""
 
 
+class DeepSeekPageCancelledError(DeepSeekPageContractError):
+    """Phase6 M2：页面轮次被协作取消（engine 窗口打断的 transport 早退）。
+
+    非页面契约破裂——是引擎侧主动取消在页面线程的如实呈现；engine M1
+    worker 将其按打断轮丢弃，guard 随线程退出释放。
+    """
+
+
 class DeepSeekPageAdapter:
     COMPOSER_SELECTOR = '#chat-input, textarea[placeholder^="给 DeepSeek 发送消息"]'
     MESSAGE_SELECTOR = ".ds-message"
@@ -142,6 +150,42 @@ class DeepSeekPageAdapter:
             )
         except DeepSeekPageContractError:
             return False
+
+    # Phase6 M2：停止按钮建模（best-effort，不设门）。DeepSeek 生成期发送按钮
+    # 通常变为停止形态；环境可行性未证，选择器探测失败一律记 0（如实观察，
+    # 不猜 DOM）。取消路径释放生成用同一探测（_try_release_generation）。
+    STOP_BUTTON_SELECTORS = (
+        'button[aria-label*="停止"]',
+        'button[aria-label*="Stop" i]',
+        'div[role="button"][aria-label*="停止"]',
+    )
+
+    def _stop_button_count(self) -> int:
+        total = 0
+        for selector in self.STOP_BUTTON_SELECTORS:
+            try:
+                located = self._page.locator(selector)
+                visible = sum(
+                    1 for i in range(located.count()) if located.nth(i).is_visible()
+                )
+                total += visible
+            except Exception:  # noqa: BLE001 - best-effort 观察失败记 0
+                continue
+        return total
+
+    def _try_release_generation(self) -> None:
+        """取消时 best-effort 点击停止按钮释放页面（页面线程内执行）。"""
+
+        try:
+            for selector in self.STOP_BUTTON_SELECTORS:
+                located = self._page.locator(selector)
+                for i in range(located.count()):
+                    candidate = located.nth(i)
+                    if candidate.is_visible():
+                        candidate.click()
+                        return
+        except Exception:  # noqa: BLE001 - 释放失败不影响取消语义
+            return
 
     def _set_feature(self, index: int, enabled: bool) -> bool:
         button = self._feature_button(index)
@@ -274,6 +318,7 @@ class DeepSeekPageAdapter:
         confirm_timeout_s: float | None = None,
         poll_ms: int = 100,
         confirm_token: str | None = None,
+        cancelled: Any = None,
     ) -> SendReceipt:
         if not isinstance(text, str) or not text.strip():
             raise DeepSeekPageContractError("refusing to send empty text")
@@ -284,6 +329,10 @@ class DeepSeekPageAdapter:
         deadline = time.monotonic() + timeout_s
         send_button = None
         while time.monotonic() < deadline:
+            if cancelled is not None and cancelled.is_set():
+                raise DeepSeekPageCancelledError(
+                    "send_text cancelled before dispatch (Phase6 M2)"
+                )
             candidate = self._send_button()
             classes = set(str(candidate.get_attribute("class") or "").split())
             disabled = (
@@ -304,6 +353,11 @@ class DeepSeekPageAdapter:
         deadline = time.monotonic() + float(confirm_timeout_s or timeout_s)
         while time.monotonic() < deadline:
             self._page.wait_for_timeout(poll_ms)
+            if cancelled is not None and cancelled.is_set():
+                self._try_release_generation()
+                raise DeepSeekPageCancelledError(
+                    "send_text cancelled during confirm (Phase6 M2)"
+                )
             binding = self.observe_identity()
             if not binding.conversation_id:
                 continue
@@ -331,12 +385,20 @@ class DeepSeekPageAdapter:
         timeout_s: float = 120.0,
         poll_ms: int = 250,
         stability_polls: int = 3,
+        cancelled: Any = None,
     ) -> GenerationState:
         deadline = time.monotonic() + timeout_s
         stable_text = ""
         stable = 0
         sample_ms = max(750, poll_ms)
         while time.monotonic() < deadline:
+            if cancelled is not None and cancelled.is_set():
+                # Phase6 M2：页面线程上先 best-effort 释放生成（点击停止按钮），
+                # 再以取消异常早退——engine worker 即刻结束，guard 随线程释放。
+                self._try_release_generation()
+                raise DeepSeekPageCancelledError(
+                    "assistant wait cancelled mid-generation (Phase6 M2)"
+                )
             self._page.wait_for_timeout(sample_ms)
             messages = self.observe_messages()
             users = [m for m in messages if m.role == "user"]
@@ -368,7 +430,7 @@ class DeepSeekPageAdapter:
             if stable >= max(2, stability_polls) and self._generation_settled():
                 return GenerationState(
                     streaming=False,
-                    stop_button_count=0,
+                    stop_button_count=self._stop_button_count(),
                     user_count=len(users),
                     assistant_count=len(assistants),
                     latest_assistant_identity=latest.identity,

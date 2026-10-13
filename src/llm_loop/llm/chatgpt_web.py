@@ -190,6 +190,16 @@ class ChatGPTWebModelClient:
             "hard_overflow": bool(hard > 0 and observed > hard),
         }
 
+    def cancel(self) -> None:
+        """Phase6 M2：协作取消钩子（engine M1 窗口打断探测调用，fail-open）。"""
+
+        try:
+            canceller = getattr(self.transport, "cancel", None)
+            if callable(canceller):
+                canceller()
+        except Exception:  # noqa: BLE001 - 取消钩子异常不影响打断语义
+            logger.debug("chatgpt-web cancel hook raised", exc_info=True)
+
     def chat(
         self,
         messages: list[dict],
@@ -303,6 +313,13 @@ class _SurfaceOwnedTransport:
         # scoped to one segment because a rollover opens a fresh outer
         # conversation where prefix continuity cannot carry over anyway.
         self._prefix_baselines: dict[str, dict[str, Any]] = {}
+
+    def cancel(self) -> None:
+        """Phase6 M2：委托内层页面 transport 的协作取消（fail-open）。"""
+
+        canceller = getattr(self.inner, "cancel", None)
+        if callable(canceller):
+            canceller()
 
     @staticmethod
     def _request_chars(request: dict[str, Any]) -> int:
@@ -544,6 +561,17 @@ class _ThreadBoundTransport:
         timeout_s: float | None,
     ) -> dict[str, Any]:
         return self._get_or_build().exchange(request, timeout_s=timeout_s)
+
+    def cancel(self) -> None:
+        """Phase6 M2：置位内层页面 transport 取消事件（线程安全，不上 executor）。"""
+
+        with self._lock:
+            if self._closed:
+                return
+            inner = self._inner
+        canceller = getattr(inner, "cancel", None)
+        if callable(canceller):
+            canceller()
 
     def close(self) -> None:
         with self._lock:

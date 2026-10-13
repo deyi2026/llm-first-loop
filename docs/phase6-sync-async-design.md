@@ -172,3 +172,28 @@ grill_me 盘问（edge_cases/failure_modes/scale）+ 自查，回填 4 项：
 - **发现未修（M1 边界外）**：Phase5 流式检查点（engine.py L1852 附近）对
   `interjections_pending` 仍为裸调，同类 peek 故障会冒泡至 run error——
   预存问题，M1 承诺 chat_stream 通道零改动，记 M4 交付报告遗留候选。
+
+## 10. M2 实施修订记录（web client 协作取消，2026-10-13）
+
+- **取消事件归属**：`DeepSeekWebPageTransport` / `ChatGPTWebPageTransport`
+  各持一个 `threading.Event`；`exchange` 开始清零（取消只作用在途轮次，
+  不预取消未来轮次——无在途轮次时 cancel 为无害 no-op）；engine 经
+  client→_ThreadBound→_SurfaceOwned→页面 transport 三层 fail-open 委托
+  置位。Event.set 线程安全、不上 executor、不触碰 Playwright 对象。
+- **早退点**：页面 adapter 的 send 确认循环与 assistant 等待循环顶部检查
+  事件 → 抛 `DeepSeekPageCancelledError` / `PageCancelledError`（契约错误
+  子类，语义=引擎主动取消而非页面契约破裂）；engine M1 worker 将其按打断
+  轮丢弃，guard 随线程退出释放（W3 断言取消后第二次 chat 不阻塞）。
+- **停止按钮释放必须在页面线程**：点击不能从 engine 线程发起
+  （Playwright 对象线程绑定；executor 正被阻塞的 exchange 占用）——由
+  等待循环在看到取消事件后自行 best-effort 点击再抛出（W1/W4 断言点击
+  发生）。
+- **停止按钮建模（best-effort，不设门）**：deepseek `stop_button_count`
+  从硬编码 0 改为选择器探测（aria-label 停止/Stop，失败记 0，不猜 DOM）；
+  ChatGPT 复用既有 `STOP_BUTTON="停止"` 契约常量。环境可行性未证，真机
+  验证留 M3 抽查。
+- **测试**：tests/phase6/test_m2_web_cancel.py W1-W4（无真机浏览器）：
+  W1 等待循环早退+释放点击；W2 transport.cancel() 置位的事件即 adapter
+  收到的同一对象（exchange 即刻取消结束）；W3 client 全链委托+guard 释放
+  （第二次 chat 不阻塞）；W4 chatgpt 镜像。受影响面回归：phase6 14 +
+  deepseek/chatgpt web 单测 362 全绿。

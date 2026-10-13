@@ -158,6 +158,21 @@ class DeepSeekWebModelClient:
             "hard_overflow": bool(hard > 0 and observed > hard),
         }
 
+    def cancel(self) -> None:
+        """Phase6 M2：协作取消钩子（engine M1 窗口打断探测调用，fail-open）。
+
+        经 guard 外直接置位 transport 取消事件：等待循环在页面线程早退并
+        best-effort 点击停止按钮释放页面；guard 随 chat() 所在线程退出释放，
+        下一 exchange 安全。
+        """
+
+        try:
+            canceller = getattr(self.transport, "cancel", None)
+            if callable(canceller):
+                canceller()
+        except Exception:  # noqa: BLE001 - 取消钩子异常不影响打断语义
+            logger.debug("deepseek-web cancel hook raised", exc_info=True)
+
     def chat(
         self,
         messages: list[dict],
@@ -254,6 +269,13 @@ class _SurfaceOwnedTransport:
         self.reasoning_effort = reasoning_effort
         self._closed = False
 
+    def cancel(self) -> None:
+        """Phase6 M2：委托内层页面 transport 的协作取消（fail-open）。"""
+
+        canceller = getattr(self.inner, "cancel", None)
+        if callable(canceller):
+            canceller()
+
     def exchange(
         self,
         request: dict[str, Any],
@@ -318,6 +340,18 @@ class _ThreadBoundTransport:
         self, request: dict[str, Any], timeout_s: float | None
     ) -> dict[str, Any]:
         return self._get_or_build().exchange(request, timeout_s=timeout_s)
+
+    def cancel(self) -> None:
+        """Phase6 M2：置位内层页面 transport 的取消事件（Event.set 线程安全，
+        无需上 executor/触碰 Playwright 对象；等待循环在页面线程早退）。"""
+
+        with self._lock:
+            if self._closed:
+                return
+            inner = self._inner
+        canceller = getattr(inner, "cancel", None)
+        if callable(canceller):
+            canceller()
 
     def close(self) -> None:
         with self._lock:

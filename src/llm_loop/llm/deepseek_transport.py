@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 from typing import Any
 
 from llm_loop.llm.errors import LLMRequestTooLargeError
@@ -275,6 +276,15 @@ class DeepSeekWebPageTransport:
         self.stability_polls = int(stability_polls)
         self.max_request_chars = int(max_request_chars)
         self.last_prefix_diagnostics: dict[str, Any] = {}
+        # Phase6 M2：协作取消事件——engine 窗口打断调 cancel() 置位，页面等待
+        # 循环早退（页面线程内 best-effort 释放生成后抛 cancelled 异常）。
+        # 每 exchange 开始时清零：取消只作用于在途轮次，不预取消未来轮次。
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        """协作取消当前在途 exchange（无在途轮次时为无害 no-op）。"""
+
+        self._cancelled.set()
 
     def exchange(
         self,
@@ -284,6 +294,7 @@ class DeepSeekWebPageTransport:
     ) -> dict[str, Any]:
         if request.get("protocol") != MODEL_PROTOCOL:
             raise DeepSeekModelProtocolError("transport received wrong model protocol")
+        self._cancelled.clear()  # Phase6 M2：新轮次开始，取消旗标复位
         self.adapter.require_binding(self.binding)
         before = self.adapter.observe_generation()
         self.last_prefix_diagnostics = self._prefix_diagnostics(request)
@@ -311,6 +322,7 @@ class DeepSeekWebPageTransport:
             confirm_timeout_s=turn_timeout,
             poll_ms=self.poll_ms,
             confirm_token=request_id or None,
+            cancelled=self._cancelled,
         )
         if self.binding.conversation_id is None:
             current = self.adapter.observe_identity()
@@ -332,6 +344,7 @@ class DeepSeekWebPageTransport:
             timeout_s=turn_timeout,
             poll_ms=self.poll_ms,
             stability_polls=self.stability_polls,
+            cancelled=self._cancelled,
         )
         self.adapter.require_binding(self.binding)
         native = self.adapter.observe_native_tool_activity()

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from typing import Any
 
 from llm_loop.llm.chatgpt_protocol import (
@@ -84,6 +85,13 @@ class ChatGPTWebPageTransport:
         self.stability_polls = int(stability_polls)
         self.max_request_chars = int(max_request_chars)
         self.last_prefix_diagnostics: dict[str, Any] = {}
+        # Phase6 M2：协作取消事件（与 deepseek 同模式；见 deepseek_transport 注释）
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        """协作取消当前在途 exchange（无在途轮次时为无害 no-op）。"""
+
+        self._cancelled.set()
 
     def exchange(
         self,
@@ -93,6 +101,7 @@ class ChatGPTWebPageTransport:
     ) -> dict[str, Any]:
         if request.get("protocol") != MODEL_PROTOCOL:
             raise ChatGPTModelProtocolError("transport received wrong model protocol")
+        self._cancelled.clear()  # Phase6 M2：新轮次开始，取消旗标复位
         self.adapter.require_binding(self.binding)
         before = self.adapter.observe_generation()
         self.last_prefix_diagnostics = self._prefix_diagnostics(request)
@@ -120,6 +129,7 @@ class ChatGPTWebPageTransport:
             confirm_timeout_s=turn_timeout_s,
             poll_ms=self.poll_ms,
             confirm_token=request_id or None,
+            cancelled=self._cancelled,
         )
         if self.binding.conversation_id is None:
             current = self.adapter.observe_identity()
@@ -140,6 +150,7 @@ class ChatGPTWebPageTransport:
             timeout_s=turn_timeout_s,
             poll_ms=self.poll_ms,
             stability_polls=self.stability_polls,
+            cancelled=self._cancelled,
         )
         self.adapter.require_binding(self.binding)
         native = self.adapter.observe_native_tool_activity()
