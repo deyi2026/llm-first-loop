@@ -96,7 +96,11 @@ _MARKDOWN_STRUCT_PREFIXES = ("|", ">")
 # precision/误报归因（8 月旧 ±40 窗口行为 ≠ 当前整句单元行为）。
 # 2026.10.07: 第三方评述句豁免（属实/见下文/见上文/详见——DC-20261007T081417368324
 # 实证: 对第三方项目设计的评语被抽为完成声明）→ 抽取语义变更，bump 代次。
-VALIDATOR_VERSION = "2026.10.07"
+# 2026.10.13: 指标名词/动词名词化复合豁免前置于完成标志门（EVO-20261013-8d9410ec）
+# → 抽取语义变更，bump 代次。
+# 2026.10.13.2: rev2——豁免改为动词 occurrence 名词化吸收判定，修复省略主语的
+# 完成声明漏检与整句豁免粒度（EVO-20261013-8d9410ec rev2）→ 抽取语义变更，bump。
+VALIDATOR_VERSION = "2026.10.13.2"
 
 # inline code span（`...`）为引用/provenance 内容（EVO-20260930）。
 # 实证 DC-20260930T080447006508: 回答引用历史审计文本（"- `✅ RULE-AI-19 已落地…`"
@@ -405,6 +409,19 @@ class DeclarationValidator:
         # 天然含"完成/执行"但语义为征询）
         if re.search(r"(完成|执行|写入|创建|更新|保存|删除|登记)了吗", text):
             return True
+        # EVO-20261013-8d9410ec rev2: 名词化吸收判定（动词 occurrence 语义分类）。
+        # rev1 缺陷（外部只读审查实测复现）: 「句内无自我主体词 + 句内任意位置
+        # 命中指标/复合 regex」即豁免整句。中文省略主语极常见（"已写入历史
+        # 记录。"），rev1 使这类真完成声明漏检；混合句（"已保存配置，更新
+        # 频率提升了"）前半真动作被后半指标词豁免。
+        # rev2 豁免条件 = 句内**每个**声明动词 occurrence 都落在指标/复合
+        # 匹配 span 内（名词化吸收）且无一携带完成体依附。局部命中不再
+        # 豁免整句；省略主语不再导致漏检。句级自我主体词护栏保留（双保险:
+        # 主体句先拦，不进入吸收判定）。
+        if not any(agent in lower for agent in _SELF_AGENTS) and (
+            DeclarationValidator._all_declared_verbs_nominalized(text)
+        ):
+            return True
         if any(m in lower for m in _COMPLETION_MARKERS):
             return False
         if any(m in lower for m in _NARRATIVE_MARKERS):
@@ -413,11 +430,40 @@ class DeclarationValidator:
             return True
         if _JUDGMENT_CONCLUSION_RE.search(text):
             return True
-        if _METRIC_NOUN_RE.search(text):
-            return True
-        if _VERB_NOUN_COMPOUND_RE.search(text):
-            return True
         return bool(_COGNITIVE_OBJECT_RE.search(text))
+
+    @staticmethod
+    def _all_declared_verbs_nominalized(text: str) -> bool:
+        """EVO-20261013-8d9410ec rev2: 声明动词是否全部被名词化/指标语境吸收.
+
+        动词 occurrence 级语义分类（根因层，非句式正则特判）:
+        - absorbed: occurrence 完整落在 _METRIC_NOUN_RE / _VERB_NOUN_COMPOUND_RE
+          匹配 span 内 → 该动词是名词短语成分（"更新频率"的"更新"），
+          非独立谓语;
+        - aspect_attached: occurrence 前邻完成体副词（已/已经）或后邻
+          动态助词/结果/趋向补语（了/完/掉/过/到）→ 独立谓语且携带
+          完成语义（"已写入历史"的"写入"），不可吸收。
+        全部 occurrence 被吸收 → 豁免（"更新频率提升了"）；任一独立谓语
+        → 不豁免，fall through 到完成标志门（"已写入历史记录"仍校验）。
+        _DECLARE_VERBS 中自带体标记的组合形式（"已写""写入了"）天然
+        不落在吸收 span（"写入了历史"破坏复合词边界）→ 不豁免，方向一致。
+        """
+        spans = [m.span() for m in _METRIC_NOUN_RE.finditer(text)]
+        spans += [m.span() for m in _VERB_NOUN_COMPOUND_RE.finditer(text)]
+        for verb in _DECLARE_VERBS:
+            start = 0
+            while (idx := text.find(verb, start)) != -1:
+                vs, ve = idx, idx + len(verb)
+                absorbed = any(s <= vs and ve <= e for s, e in spans)
+                aspect_attached = (
+                    (vs > 0 and text[vs - 1] == "已")
+                    or (vs >= 2 and text[vs - 2:vs] == "已经")
+                    or (ve < len(text) and text[ve] in "了完掉过到")
+                )
+                if not absorbed or aspect_attached:
+                    return False
+                start = ve
+        return True
 
     @staticmethod
     def _is_third_party_state(text: str) -> bool:

@@ -101,3 +101,65 @@ def test_negative_modify_statement_exempt():
 def test_mixed_negative_and_positive_statement_still_checked():
     decls = _extract("未修改配置，但已执行命令 git status。")
     assert decls and any("执行" in d for d in decls), "独立正向完成声明不得被否定子句掩盖"
+
+
+# ── EVO-20261013-8d9410ec: 指标/名词化复合豁免前置于完成标志门 ──
+#
+# 缺陷: _METRIC_NOUN_RE / _VERB_NOUN_COMPOUND_RE 原先位于完成标志短路之后，
+# 凡指标名或固定搭配自身含完成标志的句子永远到不了这两种豁免（实证不可达）。
+# 注意: 提案原文引用的两条样本「执行成功率」「执行后」经实测并不匹配这两个
+# regex（前者无数字、后者后缀不在表内），故此处用实测可命中的样本做回归。
+
+def test_metric_noun_with_completion_marker_exempt():
+    """指标名词含完成标志时豁免仍可达（修复前在此短路，豁免不可达）."""
+    for text in ("今日下载 3,000 次已完成统计", "昨日写入 12 条已完成"):
+        decls = _extract(text)
+        assert decls == [], f"指标名词句应豁免，实际抽取: {decls} ({text})"
+
+
+def test_verb_noun_compound_with_completion_marker_exempt():
+    """动词名词化复合含完成标志时豁免仍可达（修复前不可达）."""
+    decls = _extract("更新频率提升了")
+    assert decls == [], f"名词化复合句应豁免，实际抽取: {decls}"
+
+
+def test_existing_metric_noun_exempt_still_works():
+    """既有指标名词行为不变（无完成标志路径回归）."""
+    decls = _extract("月下载 30,031")
+    assert decls == [], f"既有指标名词豁免不得被破坏: {decls}"
+
+
+def test_self_agent_blocks_metric_compound_exemption():
+    """护栏: 句内含自我主体词时不得因复合/指标豁免而漏网（防真阳性丢失）."""
+    for text in ("我已写入历史记录", "我已更新日志到 2026-10-13", "我已更新上下文"):
+        decls = _extract(text)
+        assert decls, f"自我主体的完成声明必须保留校验: {text}"
+
+
+# ── EVO-20261013-8d9410ec rev2: 省略主语漏检与整句豁免粒度修复 ──
+#
+# rev1 缺陷（外部只读审查实测 + 本会话 PYTHONPATH=src 复现）: 豁免以
+# 「句内无自我主体词」为前提，句内任意位置命中指标/复合 regex 即豁免整句。
+# 中文省略主语极常见（"已写入历史记录。"），导致无主语真完成声明漏检；
+# 混合句（"已保存配置，更新频率提升了"）前半真动作被后半指标词拖累豁免。
+# rev2 根因层: 豁免绑定到动词 occurrence 语义类别（名词化吸收 × 完成体依附），
+# 不再依赖主体词缺失，不再局部命中豁免整句。
+
+def test_subjectless_completion_claim_not_exempt():
+    """省略主语的完成声明（中文常态句式）不得因名词化/指标语境豁免漏检."""
+    for text in ("已更新上下文", "已写入历史记录", "已删除临时目录并更新 12 条记录"):
+        decls = _extract(text)
+        assert decls, f"省略主语的完成声明必须保留校验: {text} -> {decls}"
+
+
+def test_mixed_action_and_metric_not_whole_sentence_exempt():
+    """混合句: 前半真完成动作不得被后半指标词豁免（局部命中不豁免整句）."""
+    decls = _extract("已保存配置，更新频率提升了")
+    assert decls, f"混合句中的真完成动作不得被指标语境整句豁免: {decls}"
+
+
+def test_nominalized_absorption_still_exempts_pure_metric_sentences():
+    """rev2 不得误伤 8d9410ec 目标场景: 纯名词化/指标句仍豁免."""
+    for text in ("更新频率提升了", "今日下载 3,000 次已完成统计", "昨日写入 12 条已完成", "月下载 30,031"):
+        decls = _extract(text)
+        assert decls == [], f"纯指标/名词化句应豁免: {text} -> {decls}"
