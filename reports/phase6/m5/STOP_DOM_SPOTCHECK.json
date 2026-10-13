@@ -1,0 +1,14 @@
+{
+  "window_s": 8.0,
+  "port": 8899,
+  "ui": "/ui/v2/",
+  "session_id": "07955b20-7e0e-403d-a386-24e32b2f5391",
+  "stop_selector": "button:has-text(\"停止\")（按「停止」子串匹配，兼容「■ 停止生成」全形态——审查 C1 实证 dist 含完整文案，非代差）",
+  "t_click_to_engine_terminal_ms": 49.3,
+  "t_click_to_ui_terminal_ms": 55.5,
+  "four_state_cancelled_inflight": {
+    "assistant_content_empty": true,
+    "tool_calls_empty": true
+  },
+  "history_status": 200
+}

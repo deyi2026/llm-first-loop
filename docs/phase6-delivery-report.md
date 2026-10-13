@@ -83,27 +83,46 @@ transport，单窗口可达 120s）此前走引擎同步内联分支：窗口内
 ## 5. 发布与验证
 
 - 提交链：15640062d（M1）→ 36a372c66（M2）→ 1b37c14bb（M3）→
-  f6be73f92（M4 报告+加固）。
+  f6be73f92（M4 报告+加固）→ 5c7f2acb9（L1 流式裸调 peek fail-open +
+  遗留处置）→ 本提交（M5 遗留验证 #3/#4，见 §5.1）。
 - 发布：publish **generation=252**（deploy-40055b9d1a07476ca255c241532dd4e2，
   git_head=f6be73f92，webui 产物 sha=1ed83575…b5264 绑定；前端零改动，
-  沿用既有 dist）。
+  沿用既有 dist）；M5 后一并发布升级 generation=253（git_head=本提交，
+  前端仍零改动）。
 - 重启：action svc-3882d8e1148543bf97d3f721875eca63 已受理
   （waiting_for_requester_exit——两阶段等待先等发布方会话退出，本会话
   即 requester，终态为其退出后异步事实）；核验入口
   service_control(status)（generation=252, matches_desired_generation=true）。
-- 真机抽查（deepseek-web 停止按钮/残余窗口）：本会话环境不可用，未执行
-  ——按设计 §5 属 best-effort 不设门；候选见 §6。
+- 真机抽查（deepseek-web 停止按钮/残余窗口）：deepseek 真页面环境不可用——
+  等效替代验证见 §5.1（真 webui dist DOM 全链路 + 桩页面确定性量化）。
+
+### 5.1 M5 遗留验证（#3 停止按钮真 DOM + #4 残余窗口量化，2026-10-13 晚）
+
+- 方法与完整数据：docs/phase6-m5-leftover-verification.md；
+  脚本 scripts/phase6_m5_leftover_verification.py；
+  工件 reports/phase6/m5/{STOP_DOM_SPOTCHECK,RESIDUAL_WINDOW}.json。
+- **#3 真 webui DOM 停止**（隔离 dev 实例 :8899 + 慢 FakeLLM 同步通道 8s 窗口）：
+  Playwright 真点击「停止」→ cancel 路由 → 引擎 Stop 即时终态
+  **t=49.3ms**（T2 门 ≤100ms 经真实 UI 全链路达标；UI 按钮消失 55.5ms）；
+  四态·取消在途断言通过（0 字节 0 工具）。
+- **#4 残余窗口**：引擎侧续答残余 **1.6ms**（打断消费→下一轮调用开始）；
+  guard 侧无钩子 **3990.7ms**≈理论上界 4000ms（§4.4「续答受残余窗口约束」
+  精确量化），有 M2 cancel 钩子 **0.4ms**（近瞬时释放）。
+- 审查：独立子代理实读审查 approve（blocking 0/comment 7 全采纳，
+  记录见方法文档 §4）。
 
 ## 6. 遗留与候选
 
-- **phase5 流式检查点裸调 peek（预存）**：engine.py L1852 附近
-  `interjections_pending` 无 fail-open，同类管道故障会冒泡 run error；
-  M1 承诺 chat_stream 通道零改动未修。候选：与 M1 同法收敛。
+- **phase5 流式检查点裸调 peek（预存）**：~~engine.py L1852 附近……~~
+  **已处置（L1，提交 5c7f2acb9）**：`_interjection_peek` fail-open 收敛
+  （流式+同步两调用点统一，审查 approve_with_comments，red→green 锁定，
+  全量 8800 passed）。
 - **test_b 时序脆弱（预存，M1 收窄余量）**：phase4 gap 收割测试 ~40ms 注入
   余量偶发翻面（无语义损伤，miss 时插话由下一合法边界消费）。候选：加固
   注入锚点或标注 known-flake。
-- **停止按钮真机验证**：选择器探测/点击释放的环境可行性未证（W1/W4 为
-  fake page 验证）；真机可用时抽查回填。
-- **web 通道续答残余窗口**：无停止按钮可用时，打断后下一轮 exchange 在
-  guard 上等待残余 turn（设计 §4.4 诚实口径：消费即时、续答受残余窗口
-  约束）；M2 页面线程释放点击旨在缩短该残余，真机效果待抽查。
+- **~~停止按钮真机验证~~（已关闭）**：M5 以真 webui dist DOM 全链路等效验证
+  （§5.1）；deepseek 真页面选择器/点击释放仍为 best-effort（环境不可用，
+  维持设计 §5 不设门）。
+- **~~web 通道续答残余窗口~~（已关闭）**：M5 确定性量化完成（§5.1）——
+  引擎侧 ~2ms + guard 侧（无钩子≈剩余 turn；有 M2 钩子≈0.4ms）；
+  真实页面残余还含页面实际完成时间，属页面固有。

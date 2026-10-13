@@ -1,0 +1,23 @@
+{
+  "engine_side": {
+    "window_s": 8.0,
+    "inject_at_s": 2.0,
+    "consumed_via": "sync_window_poll",
+    "t_effect_ms": 20.1,
+    "engine_residual_ms": 1.6,
+    "note": "FakeLLM 无 guard 页面：打断后 daemon worker 后台自然结束，下一轮立即开始；web 通道总残余 = 本引擎侧下界 + guard 等待（见 guard_side）"
+  },
+  "guard_side": {
+    "exchange_gen_s": 6.0,
+    "interrupt_at_s": 2.0,
+    "no_cancel": {
+      "guard_wait_ms": 3990.7,
+      "expected_upper_bound_ms": 4000.0
+    },
+    "with_cancel": {
+      "early_exit_release_ms": 0.3,
+      "guard_wait_ms": 0.4,
+      "note": "第一次经 cancel 早退释放 guard；第二次即刻进入 exchange"
+    }
+  }
+}
