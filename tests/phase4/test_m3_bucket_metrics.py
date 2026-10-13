@@ -188,8 +188,13 @@ def test_m3_four_buckets(build_test_engine):
             if baseline_p50 and out["interruptible"]["p50"] else None
         ),
     }
-    (M3_DIR / "M3_ACCEPTANCE.json").write_text(
-        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 验收工件护栏（终局评审 P2-1/P0-1 机制）：默认不覆写已存在的验收快照
+    # （PHASE4_OVERWRITE_REPORTS=1 强制重测）——防调试重跑静默漂移交付数字。
+    if not (M3_DIR / "M3_ACCEPTANCE.json").exists() or os.environ.get(
+        "PHASE4_OVERWRITE_REPORTS"
+    ) == "1":
+        (M3_DIR / "M3_ACCEPTANCE.json").write_text(
+            json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({k: (v.get("p50"), v.get("p95"), v.get("n")) for k, v in out.items()
                       if isinstance(v, dict) and "p50" in v}), flush=True)
 
