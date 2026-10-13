@@ -1850,93 +1850,101 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         attempt_kind=ProviderAttemptKind.PRIMARY,
                         site_index=0,
                     )
-                    while True:
-                        try:
-                            d = next(it)
-                            _cancel_reason = _background_cancel_reason(self, session_id)
-                            if _cancel_reason:
-                                cap.cancelled = True
-                                _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
-                                cap.fire(
-                                    sess, "cancelled", rounds
-                                )  # B1: 半截产物限量落盘（防重内聚）
-                                close_stream = getattr(it, "close", None)
-                                if callable(close_stream):
-                                    try:
-                                        close_stream()
-                                    except Exception:  # noqa: BLE001 — 取消时释放流 fail-open
-                                        logger.debug(
-                                            "LLM stream close 失败（fail-open）", exc_info=True
-                                        )
-                                break
-                            # Phase5 M2（设计 §2.2.1/§2.2.2）：流内插话检查点——
-                            # Stop 优先（上分支），插话次之；节流（≥间隔才 peek，
-                            # 检查位=next(it) 返回后、on_delta 前，命中即丢弃本
-                            # delta）。命中打断收割：半截产物如实限量落盘（P1-6
-                            # 同款，不伪装完整）→ close → 置 flag → 流后收割分支。
-                            if (
-                                getattr(
-                                    self.settings.tool_runtime,
-                                    "llm_stream_interject_checkpoint",
-                                    True,
-                                )
-                                and (time.monotonic() - _stream_icheck_last)
-                                >= _STREAM_INTERJECT_CHECK_MIN_GAP_S
-                            ):
-                                _stream_icheck_last = time.monotonic()
-                                # 遗留处置 L1：peek 经 _interjection_peek fail-open
-                                # （§4.4 peek 失败不收割；此前裸调，管道故障会冒泡 run error）
-                                if _interjection_peek(
-                                    self,
-                                    session_id,
-                                    warned=_stream_peek_warned,
-                                    where="llm_stream",
-                                ):
-                                    _interject_interrupted = True
+                    def _consume_provider_stream(
+                        *, it: Any = it, cap: Any = cap,
+                        rounds: int = rounds, _llm_start: float = _llm_start,
+                        _stream_peek_warned: list[bool] = _stream_peek_warned,
+                    ) -> Iterator[StreamDelta]:
+                        nonlocal _cancel_reason, _llm_round_ms, _interject_interrupted
+                        nonlocal _stream_icheck_last, _ttft_done, ttft_first_ms, resp
+                        while True:
+                            try:
+                                d = next(it)
+                                _cancel_reason = _background_cancel_reason(self, session_id)
+                                if _cancel_reason:
+                                    cap.cancelled = True
                                     _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
                                     cap.fire(
-                                        sess, "interjection_interrupted", rounds
-                                    )  # 半截产物限量落盘 + llm.interrupted 审计（防重内聚）
-                                    _icheck_close = getattr(it, "close", None)
-                                    if callable(_icheck_close):
+                                        sess, "cancelled", rounds
+                                    )  # B1: 半截产物限量落盘（防重内聚）
+                                    close_stream = getattr(it, "close", None)
+                                    if callable(close_stream):
                                         try:
-                                            _icheck_close()
-                                        except Exception:  # noqa: BLE001 — 收割释放流 fail-open
+                                            close_stream()
+                                        except Exception:  # noqa: BLE001 — 取消时释放流 fail-open
                                             logger.debug(
-                                                "LLM stream close 失败（fail-open）",
-                                                exc_info=True,
+                                                "LLM stream close 失败（fail-open）", exc_info=True
                                             )
                                     break
-                            if not _ttft_done and getattr(d, "text", ""):
-                                _ttft_done = True
-                                ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
-                            cap.on_delta(d)
-                            if cap.fuse_tripped:
-                                # EVO-20260915-789eb9d5：机械非收敛熔断——先落半截产物
-                                # 与 llm.interrupted 审计，再终态终止本生成（不再 yield）。
-                                cap.fire(sess, "nonconvergence_fuse", rounds)
-                                close_stream = getattr(it, "close", None)
-                                if callable(close_stream):
-                                    try:
-                                        close_stream()
-                                    except Exception:  # noqa: BLE001 — 熔断释放流 fail-open
-                                        logger.debug(
-                                            "LLM stream close 失败（fail-open）", exc_info=True
-                                        )
-                                raise NonconvergenceFuseError(cap.fuse_evidence)
-                            yield d
-                        except StopIteration as exc:
-                            resp = exc.value
-                            _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
-                            if resp is not None:
-                                cap.on_response(resp)
-                            break
-                        except GeneratorExit:
-                            # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
-                            # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
-                            # 而 session JSON 未保存"的双轨漂移。
-                            self._on_stream_disconnect(sess, cap.text_parts)
-                            raise
+                                # Phase5 M2（设计 §2.2.1/§2.2.2）：流内插话检查点——
+                                # Stop 优先（上分支），插话次之；节流（≥间隔才 peek，
+                                # 检查位=next(it) 返回后、on_delta 前，命中即丢弃本
+                                # delta）。命中打断收割：半截产物如实限量落盘（P1-6
+                                # 同款，不伪装完整）→ close → 置 flag → 流后收割分支。
+                                if (
+                                    getattr(
+                                        self.settings.tool_runtime,
+                                        "llm_stream_interject_checkpoint",
+                                        True,
+                                    )
+                                    and (time.monotonic() - _stream_icheck_last)
+                                    >= _STREAM_INTERJECT_CHECK_MIN_GAP_S
+                                ):
+                                    _stream_icheck_last = time.monotonic()
+                                    # 遗留处置 L1：peek 经 _interjection_peek fail-open
+                                    # （§4.4 peek 失败不收割；此前裸调，管道故障会冒泡 run error）
+                                    if _interjection_peek(
+                                        self,
+                                        session_id,
+                                        warned=_stream_peek_warned,
+                                        where="llm_stream",
+                                    ):
+                                        _interject_interrupted = True
+                                        _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                        cap.fire(
+                                            sess, "interjection_interrupted", rounds
+                                        )  # 半截产物限量落盘 + llm.interrupted 审计（防重内聚）
+                                        _icheck_close = getattr(it, "close", None)
+                                        if callable(_icheck_close):
+                                            try:
+                                                _icheck_close()
+                                            except Exception:  # noqa: BLE001 — 收割释放流 fail-open
+                                                logger.debug(
+                                                    "LLM stream close 失败（fail-open）",
+                                                    exc_info=True,
+                                                )
+                                        break
+                                if not _ttft_done and getattr(d, "text", ""):
+                                    _ttft_done = True
+                                    ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                cap.on_delta(d)
+                                if cap.fuse_tripped:
+                                    # EVO-20260915-789eb9d5：机械非收敛熔断——先落半截产物
+                                    # 与 llm.interrupted 审计，再终态终止本生成（不再 yield）。
+                                    cap.fire(sess, "nonconvergence_fuse", rounds)
+                                    close_stream = getattr(it, "close", None)
+                                    if callable(close_stream):
+                                        try:
+                                            close_stream()
+                                        except Exception:  # noqa: BLE001 — 熔断释放流 fail-open
+                                            logger.debug(
+                                                "LLM stream close 失败（fail-open）", exc_info=True
+                                            )
+                                    raise NonconvergenceFuseError(cap.fuse_evidence)
+                                yield d
+                            except StopIteration as exc:
+                                resp = exc.value
+                                _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                if resp is not None:
+                                    cap.on_response(resp)
+                                break
+                            except GeneratorExit:
+                                # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
+                                # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
+                                # 而 session JSON 未保存"的双轨漂移。
+                                self._on_stream_disconnect(sess, cap.text_parts)
+                                raise
+                    yield from _consume_provider_stream()
                 else:
                     # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
                     _llm_sync_start = time.perf_counter()
@@ -2046,44 +2054,52 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             daemon=True,
                         )
                         _sync_thread.start()
-                        while True:
-                            _cancel_reason = _background_cancel_reason(self, session_id)
-                            if _cancel_reason:
-                                # Stop 即时终态：请求协作取消（尽力）后不等 worker
-                                cap.cancelled = True
-                                if callable(_sync_cancel_hook):
-                                    try:
-                                        _sync_cancel_hook()
-                                    except Exception:  # noqa: BLE001 - 钩子异常降级
-                                        logger.debug("sync chat cancel hook raised", exc_info=True)
-                                break
-                            if (time.monotonic() - _sync_icheck_last) >= _SYNC_INTERJECT_POLL_GAP_S:
-                                _sync_icheck_last = time.monotonic()
-                                if _interjection_peek(self, session_id, warned=_peek_warned):
-                                    # 窗口内插话命中 → 即时打断（复用流式打断收割分支）
-                                    _interject_interrupted = True
-                                    _interrupt_via = "sync_window_poll"
+                        def _poll_sync_chat(
+                            *, _sync_thread: threading.Thread = _sync_thread,
+                            _sync_cancel_hook: Any = _sync_cancel_hook,
+                            cap: Any = cap, _peek_warned: list[bool] = _peek_warned,
+                        ) -> None:
+                            nonlocal _cancel_reason, _interject_interrupted, _interrupt_via
+                            nonlocal _sync_icheck_last
+                            while True:
+                                _cancel_reason = _background_cancel_reason(self, session_id)
+                                if _cancel_reason:
+                                    # Stop 即时终态：请求协作取消（尽力）后不等 worker
+                                    cap.cancelled = True
                                     if callable(_sync_cancel_hook):
                                         try:
                                             _sync_cancel_hook()
                                         except Exception:  # noqa: BLE001 - 钩子异常降级
                                             logger.debug("sync chat cancel hook raised", exc_info=True)
                                     break
-                            if not _sync_thread.is_alive():
-                                _sync_thread.join()
-                                # 命中优先（设计 §8.6）：worker 完成检测点补一次
-                                # 无节流终检——节流跳过期间到达的窗口内插话仍应
-                                # 打断，晚到的完整响应按打断轮丢弃（不进投影）。
-                                if _interjection_peek(self, session_id, warned=_peek_warned):
-                                    _interject_interrupted = True
-                                    _interrupt_via = "sync_window_poll"
-                                    if callable(_sync_cancel_hook):
-                                        try:
-                                            _sync_cancel_hook()
-                                        except Exception:  # noqa: BLE001 - 钩子异常降级
-                                            logger.debug("sync chat cancel hook raised", exc_info=True)
-                                break
-                            time.sleep(_SYNC_INTERJECT_POLL_GAP_S / 2)
+                                if (time.monotonic() - _sync_icheck_last) >= _SYNC_INTERJECT_POLL_GAP_S:
+                                    _sync_icheck_last = time.monotonic()
+                                    if _interjection_peek(self, session_id, warned=_peek_warned):
+                                        # 窗口内插话命中 → 即时打断（复用流式打断收割分支）
+                                        _interject_interrupted = True
+                                        _interrupt_via = "sync_window_poll"
+                                        if callable(_sync_cancel_hook):
+                                            try:
+                                                _sync_cancel_hook()
+                                            except Exception:  # noqa: BLE001 - 钩子异常降级
+                                                logger.debug("sync chat cancel hook raised", exc_info=True)
+                                        break
+                                if not _sync_thread.is_alive():
+                                    _sync_thread.join()
+                                    # 命中优先（设计 §8.6）：worker 完成检测点补一次
+                                    # 无节流终检——节流跳过期间到达的窗口内插话仍应
+                                    # 打断，晚到的完整响应按打断轮丢弃（不进投影）。
+                                    if _interjection_peek(self, session_id, warned=_peek_warned):
+                                        _interject_interrupted = True
+                                        _interrupt_via = "sync_window_poll"
+                                        if callable(_sync_cancel_hook):
+                                            try:
+                                                _sync_cancel_hook()
+                                            except Exception:  # noqa: BLE001 - 钩子异常降级
+                                                logger.debug("sync chat cancel hook raised", exc_info=True)
+                                    break
+                                time.sleep(_SYNC_INTERJECT_POLL_GAP_S / 2)
+                        _poll_sync_chat()
                         _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
                         if not cap.cancelled and not _interject_interrupted:
                             _sync_exc = _sync_result.get("exc")

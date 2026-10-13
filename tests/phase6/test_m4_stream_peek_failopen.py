@@ -26,8 +26,8 @@ from tests.phase4.test_m0_scenarios import (  # noqa: E402
 from tests.phase5.test_m2_stream_interrupt import (  # noqa: E402
     STREAM_FINAL,
     STREAM_FULL,
-    _Injector,
     _deltas,
+    _Injector,
 )
 
 

@@ -88,6 +88,7 @@ from llm_loop.methods.store import (
 )
 from llm_loop.resources.foreground import ForegroundActivityProbe
 from llm_loop.resources.governor import ResourceGovernor
+from llm_loop.resources.learning_foreground import LearningForegroundActivityProbe
 from llm_loop.resources.ledger_projection import ProviderSettlementProjectionIndex
 from llm_loop.resources.lfrt_runtime import LFRTAdmissionRuntimeAdapter, make_lfrt_status_fn
 from llm_loop.resources.local_runtime import LocalRuntimeConcurrencyAdapter
@@ -2047,7 +2048,43 @@ def build_engine(
     # journal 双消费、双发 provider 请求。
     engine.learning_plane = None
     foreground_probe = ForegroundActivityProbe(engine, settings.sessions_dir)
-    resource_governor = ResourceGovernor(foreground_probe=foreground_probe.active)
+    foreground_active = foreground_probe.active
+    learning_model_resolver = model_pool.get_client
+    learning_model_ref = str(settings.learning_model or "").strip()
+    learning_resource_target: tuple[str, str] | None = None
+    if runtime_role == "learning":
+        # A grant uses the startup route until Learning reloads. The probe and
+        # worker share the same instance even if refresh replaces the pool cache.
+        pinned_client = None
+        if settings.learning_independent_cloud_hosts and learning_model_ref:
+            try:
+                pinned_client = model_pool.get_client(learning_model_ref)
+                learning_resource_target = model_pool.registry.resolve(learning_model_ref)
+            except Exception:  # noqa: BLE001 - invalid grant preserves the dynamic, yielding route
+                pinned_client = None
+                learning_resource_target = None
+                logger.warning("Learning cloud route unavailable; preserving foreground yield")
+        if pinned_client is not None:
+            def _resolve_pinned_learning_model(_model_ref: str) -> Any:
+                return pinned_client
+
+            learning_model_resolver = _resolve_pinned_learning_model
+
+        def _learning_clients() -> list[object]:
+            if pinned_client is None:
+                return []  # unknown per-job target retains whole-run yield
+            clients: list[object] = [pinned_client]
+            if extractor is not None:
+                clients.append(extractor.llm)
+            return clients
+
+        learning_foreground_probe = LearningForegroundActivityProbe(
+            foreground_probe=foreground_active,
+            independent_cloud_hosts=settings.learning_independent_cloud_hosts,
+            clients=_learning_clients,
+        )
+        foreground_active = learning_foreground_probe.active
+    resource_governor = ResourceGovernor(foreground_probe=foreground_active)
     engine.resource_governor = resource_governor
     lfrt_admission_runtime = (
         LFRTAdmissionRuntimeAdapter(settings.lfrt_cli)
@@ -2089,6 +2126,8 @@ def build_engine(
             _activate_default_workspace(engine, settings)
 
             def _resolve_learning_resource_target(model_ref: str) -> tuple[str, str]:
+                if learning_resource_target is not None and model_ref == learning_model_ref:
+                    return learning_resource_target
                 return model_pool.registry.resolve(model_ref or settings.llm_model)
 
             _learning_method_discovery: MethodDiscovery | None = None
@@ -2145,7 +2184,7 @@ def build_engine(
                 episode_store=episode_store,
                 method_store=method_store,
                 engine=engine,
-                model_resolver=model_pool.get_client,
+                model_resolver=learning_model_resolver,
                 resource_governor=resource_governor,
                 resource_target_resolver=_resolve_learning_resource_target,
                 provider_call_coordinator=provider_call_coordinator,
@@ -2162,7 +2201,7 @@ def build_engine(
                 # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL → Settings.
                 # learning_model）：学习提取/反思走独立模型（如 flash），
                 # 缺省回落会话 source_model（行为不变）。
-                model_override=str(getattr(settings, "learning_model", "") or "").strip(),
+                model_override=learning_model_ref,
             )
             learning_plane.start()
             engine.learning_plane = learning_plane

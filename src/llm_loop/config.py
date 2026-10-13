@@ -615,6 +615,9 @@ class Settings:
     # 2026-09-23 学习通道模型隔离（LFL_LEARNING_MODEL）：学习提取/反思的独立
     # 模型引用；空 = 回落会话 source_model（行为不变）。
     learning_model: str = ""
+    # Explicit cloud host grant for one independent Learning call; empty keeps
+    # whole-run foreground yield. Local/unknown transports never use the grant.
+    learning_independent_cloud_hosts: str = ""
     skills_dir: str = (
         "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
     )
@@ -1192,6 +1195,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         method_seed_dir=str(_resolved_paths.method_seed_dir),
         learning_plane_enabled=env_values.get("LEARNING_PLANE_ENABLED", "1").strip() in {"1", "true", "yes", "on"},
         learning_model=env_values.get("LEARNING_MODEL", "").strip(),
+        learning_independent_cloud_hosts=env_values.get("LEARNING_INDEPENDENT_CLOUD_HOSTS", "").strip(),
         skills_dir=str(_resolved_paths.skills_dir),  # primary worktree when linked sidecar, else CODE_ROOT (2026-10-12)
         docs_dir=str(_resolved_paths.docs_dir),
         archive_max_entries=env_int("ARCHIVE_MAX_ENTRIES", 0),

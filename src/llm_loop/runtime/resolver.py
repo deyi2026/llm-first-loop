@@ -184,6 +184,9 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         # 解析失败无限留队）。入 schema 后随 resolve_effective → dotenv/toml
         # → apply_to_environ → Settings.learning_model 全链生效。
         ("learning", "model"): TomlField(("LEARNING_MODEL",), "str"),
+        ("learning", "independent_cloud_hosts"): TomlField(
+            ("LEARNING_INDEPENDENT_CLOUD_HOSTS",), "str"
+        ),
     }
 )
 

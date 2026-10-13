@@ -1,0 +1,72 @@
+{
+  "gate": "code",
+  "reviewer": "/root/learning_code_review",
+  "verdict": "REVISE",
+  "scope_files": [
+    "src/llm_loop/config.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/runtime/resolver.py",
+    "src/llm_loop/resources/learning_foreground.py",
+    "tests/unit/test_learning_foreground_independence.py",
+    "docs/LEARNING-CLOUD-LANE-20261013.md"
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "src/llm_loop/resources/learning_foreground.py",
+      "issue": "DNS fallback accepts local/private numeric aliases and root-dotted local names as cloud hosts: exact grants 127.1, 127.0.0.01, 0x7f.1, 10.0.0.01, localhost., host.local. and host.internal. make active() false with a busy foreground. Numeric inet_aton replay independently maps the first three to 127.0.0.1 and the fourth to 10.0.0.1. Malformed DNS such as api..example.test and names with spaces also passes. This violates the declared local/unknown-target foreground-yield boundary.",
+      "fix_hint": "Normalize the optional DNS root dot before local suffix checks; validate canonical DNS labels and FQDN syntax; keep strict ipaddress global checks for IP literals; reject noncanonical numeric/hex IPv4 aliases. Add a parameterized regression matrix."
+    },
+    {
+      "id": "P1-2",
+      "severity": "P1",
+      "file": "src/llm_loop/factory.py",
+      "issue": "_learning_clients resolves the current ModelClientPool client each time, while LearningPlane._try_execute captures a client retained by the in-flight worker. The installed refresh executor can replace_registry and retire the cache without replacing in-flight clients. With extraction disabled, a local reflection started while foreground is idle can keep running after the pool is refreshed to a granted cloud client and foreground becomes busy; the probe checks the new cloud object and misses the actual local transport.",
+      "fix_hint": "Bind independence to the exact client used by the worker. A narrowly scoped startup reflection client and target shared by the probe and LearningPlane resolver in explicit-grant mode is sufficient; keep the no-grant path unchanged, resolution errors conservative, and document Learning reload semantics. Test actual factory wiring and memory-extraction execution."
+    }
+  ],
+  "applied": [
+    "P1-1",
+    "P1-2"
+  ],
+  "rejected": [],
+  "artifact_sha256": "8d316f02addb74d1c8b2e7a6f610ee22370fd9506c222eed62c8cced45d6960c",
+  "narrow_recheck": {
+    "reviewer": "/root/learning_code_review",
+    "verdict": "PASS",
+    "artifact_sha256": "6abad6f1cbf41d1ed147abac8d3259b339120f35fd51539f14d6c201db25a243",
+    "receipt": "20261013-learning-code-review-v2.json"
+  },
+  "checklist": [
+    {
+      "item": "correctness",
+      "result": "Read the full six-file candidate diff; checked Settings/resolver grant propagation and factory reflection/extractor actual-client wiring."
+    },
+    {
+      "item": "boundaries_concurrency",
+      "result": "REVISE for P1-1/P1-2; independently replayed endpoint aliases and inspected LearningPlane admission/preemption, straggler drain, governor and pool refresh ownership."
+    },
+    {
+      "item": "security_authorization",
+      "result": "No secret, command execution, or path surface was added. Host configuration is an operator declaration of one additional call, not DNS/capacity inference; local alias validation still needs correction."
+    },
+    {
+      "item": "regression_sot",
+      "result": "Existing default foreground barrier, one consumer/one Learning call, service restart checks, journal and provider settlement remain structurally intact. Current new tests bypass real factory and memory-extraction execution; require those paths in the revision."
+    },
+    {
+      "item": "consistency",
+      "result": "Dedicated Learning-only role check is correct. No AI semantic policy, baseline widening, or SoT-rule edits are introduced."
+    }
+  ],
+  "validation": {
+    "full_suite_run": false,
+    "independent_checks": [
+      "All candidate Python files AST-parse successfully.",
+      "Loaded the exact v1 helper source in memory and replayed 14 endpoint cases without DNS/network or file changes.",
+      "Read remote staged binary diff hash; it matches the supplied artifact_sha256."
+    ],
+    "reported_by_executor": "Focused 56 passed; independently reviewed the supplied tests and evidence, did not relabel that run as a reviewer run."
+  }
+}

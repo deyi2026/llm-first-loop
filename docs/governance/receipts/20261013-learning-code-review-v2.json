@@ -1,0 +1,77 @@
+{
+  "gate": "code",
+  "reviewer": "/root/learning_code_review",
+  "verdict": "PASS",
+  "scope_files": [
+    "src/llm_loop/config.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/runtime/resolver.py",
+    "src/llm_loop/resources/learning_foreground.py",
+    "tests/unit/test_learning_foreground_independence.py",
+    "docs/LEARNING-CLOUD-LANE-20261013.md"
+  ],
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "file": "src/llm_loop/resources/learning_foreground.py",
+      "issue": "rstrip(\".\") strips any number of trailing dots. With grant api.example.test, endpoints https://api.example.test../v1 and https://api.example.test.../v1 are accepted as the canonical cloud host even though their DNS spelling has multiple root dots and is malformed. Known local aliases are now rejected; this is a strictness/documentation improvement, not a remaining local-yield bypass.",
+      "fix_hint": "Remove at most one optional DNS root dot, so further empty labels fail the existing DNS-label validation, and add a multi-tail-dot regression."
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "file": "tests/unit/test_learning_foreground_independence.py",
+      "issue": "The task factory regression passes runtime_role=\"web\", outside build_engine's declared Literal[\"task\", \"learning\"] contract. Current fallback reaches the task branch, but the test should exercise the supported task role.",
+      "fix_hint": "Use role=\"task\" in the factory regression."
+    }
+  ],
+  "applied": [
+    "P1-1",
+    "P1-2"
+  ],
+  "rejected": [],
+  "artifact_sha256": "6abad6f1cbf41d1ed147abac8d3259b339120f35fd51539f14d6c201db25a243",
+  "narrow_recheck": {
+    "reviewer": "/root/learning_code_review",
+    "verdict": "PASS",
+    "base_artifact_sha256": "8d316f02addb74d1c8b2e7a6f610ee22370fd9506c222eed62c8cced45d6960c",
+    "rechecked": [
+      "P1-1 canonical host/local alias rejection",
+      "P1-2 actual reflection client/resource target ownership",
+      "new factory and memory_extract execution tests",
+      "added changes and adjacent configuration/role defaults"
+    ]
+  },
+  "checklist": [
+    {
+      "item": "correctness",
+      "result": "Read full v2 six-file diff and revised full helper/test bodies. Explicit grant now pins reflection client/model/resource target at Learning startup; probe and worker resolver share that exact instance."
+    },
+    {
+      "item": "boundaries_concurrency",
+      "result": "Both prior P1 findings close. Pin resolution errors fall back to the original dynamic route and yield. Both actual reflection and extractor clients remain required; local/unknown targets yield. Consumer/straggler/service barrier/one-call lease semantics were not widened."
+    },
+    {
+      "item": "security_authorization",
+      "result": "Operator exact-host allowance remains an explicit additional Learning-call declaration, with HTTPS/443/no URL credentials and strict global-IP or canonical DNS-label checks. No DNS/capacity inference or execution surface added."
+    },
+    {
+      "item": "regression_sot",
+      "result": "Reviewed added real build_engine pin/replacement, invalid-model startup, task foreground-lock, and memory_extract branch cases. Settings and resolver plumbing remain unchanged from v1; no baseline or SoT rule edits."
+    },
+    {
+      "item": "consistency",
+      "result": "Docs now describe startup pin and Learning reload semantics; default no-grant route remains dynamic. Two nonblocking P2 strictness/test-contract suggestions recorded."
+    }
+  ],
+  "validation": {
+    "full_suite_run": false,
+    "independent_checks": [
+      "Loaded exact v2 helper source in memory: 25 rejected endpoint cases, five exact cloud/global literal cases, three empty/unknown/mixed-client cases, and two no-grant busy/idle cases pass.",
+      "Compiled the exact revised factory admission block and resource-target function from its AST into an in-memory replay: same pinned reflection object/target survive current-pool replacement, actual local pinned endpoint yields, empty grant remains dynamic, task role remains foreground-yielding, unresolved model preserves startup, actual local extractor blocks independence.",
+      "All candidate Python files AST-parse successfully."
+    ],
+    "reported_by_executor": "Focused 94 passed in 1.79s; this is executor-provided evidence, not a claimed reviewer pytest run."
+  }
+}

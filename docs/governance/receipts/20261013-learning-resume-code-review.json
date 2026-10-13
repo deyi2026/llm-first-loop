@@ -1,0 +1,106 @@
+{
+  "gate": "code",
+  "reviewer": "/root/learning_final_code_review",
+  "verdict": "PASS",
+  "scope_files": [
+    "docs/LEARNING-CLOUD-LANE-20261013.md",
+    "src/llm_loop/config.py",
+    "src/llm_loop/core/loop/engine.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/resources/learning_foreground.py",
+    "src/llm_loop/runtime/resolver.py",
+    "tests/unit/test_learning_foreground_independence.py"
+  ],
+  "findings": [],
+  "applied": [],
+  "rejected": [],
+  "artifact_sha256": "c96e9c2b9a4589b63d524b85b30ac276613f146553676630ebd9641f160d3078",
+  "narrow_recheck": {
+    "reviewer": "/root/learning_final_code_review",
+    "verdict": "PASS",
+    "previous_base_commit": "102d0331109436dc532b42e45fdb651915bb36f7",
+    "base_commit": "5c7f2acb93b2e58cc031d3e0f2c5a82b21b95998",
+    "rechecked": [
+      "Read actual 102d-to-5c7 baseline delta (engine stream-peek fail-open repair, corresponding design note and regression).",
+      "Read complete actual engine extraction diff against 5c7; independently expanded both helpers and confirmed exact complete-module AST equality.",
+      "Verified added _stream_peek_warned default binding, unchanged nonlocal state and immediate invocation, with provider dispatch/settlement outside extraction unchanged.",
+      "Read final 70-line Learning document: previous 165-test and Pyright evidence explicitly remains historical; final combined tree requires fresh canonical gate.",
+      "Independently ran 40 targeted tests on exact final combined tree; verified source/index identities and final scoped diff digest."
+    ]
+  },
+  "base_commit": "5c7f2acb93b2e58cc031d3e0f2c5a82b21b95998",
+  "artifact_definition": "SHA256 of exact git diff --binary --full-index --no-ext-diff BASE -- SCOPE_FILES output, in listed scope order. Working-tree output equals cached output; all listed source bytes equal index. Existing and this review receipt are audit metadata excluded from this product digest to avoid recursive identity.",
+  "source_sha256": {
+    "docs/LEARNING-CLOUD-LANE-20261013.md": "a7154984687ad6b891da65a08226d050e02f018250a2f08b64a4fc95b1d0357e",
+    "src/llm_loop/config.py": "e0051fa8f549ab1b952ec61f4a6ced6d7cdf4c0dbc11d450a197fc6553c7bcc6",
+    "src/llm_loop/core/loop/engine.py": "94478197ecb93c79564e5425c255f6a08fdf4143cbcc6b9dff3ebfcf51c022ae",
+    "src/llm_loop/factory.py": "099d75b2fd4d1fd1d2c602a6b5daebaa1e98cd0b5df37053b276a0a9387de308",
+    "src/llm_loop/resources/learning_foreground.py": "dcf271e70af71e574e6dd6c1afce62b58c511ea23c2f3a4e158d2e5700a39e15",
+    "src/llm_loop/runtime/resolver.py": "f3baae25256ec50502b20843c53502326e85b213d6448dbb37fecfc7029e6e25",
+    "tests/unit/test_learning_foreground_independence.py": "de6b8e78fe2553a6aa719cacd4c2c458364b06cbcd93fcfccf0c47fba50e5577"
+  },
+  "checklist": [
+    {
+      "check": "correctness",
+      "result": "PASS",
+      "evidence": "Read every complete scoped diff against the actual 102d candidate during initial review, then read the complete revised engine diff and real baseline delta for final 5c7 candidate. Independently normalized final complete engine AST by expanding only the two helper bodies and removing their immediate wrappers; AST exactly matches 5c7. Default bindings and nonlocal mutations retain state."
+    },
+    {
+      "check": "boundaries",
+      "result": "PASS",
+      "evidence": "Executed actual factory admission block AST in memory: pinned route stays the observed instance after pool replacement; local mutation of pinned or actual MemoryExtractor client restores yield; empty grant preserves yield. Ten URL boundary replays passed (HTTPS exact host, uppercase/FQDN, credentials, bad port, private IPv4/IPv6, empty endpoint, suffix, wildcard, localhost). New baseline peek fail-open behavior is retained."
+    },
+    {
+      "check": "security",
+      "result": "PASS",
+      "evidence": "Changes introduce no secret, executable command interpolation or filesystem write interface. Grant requires explicit exact host declaration, HTTPS and port443 with no credentials; DNS placement and provider capacity remain operator facts, not inferred proof."
+    },
+    {
+      "check": "regression",
+      "result": "PASS",
+      "evidence": "Final combined tree independently passed 40 tests: new stream-peek fail-open regression, SoT rules sync, Learning independence, generator disconnect/resume, transport settlement lineage and fuse capture. Earlier 102d independent 39-test check and executor 165-test/Pyright reports are historical only. No full suite run by reviewer."
+    },
+    {
+      "check": "consistency",
+      "result": "PASS",
+      "evidence": "Read AGENTS, maintenance contract, code-review skill, RULE-AI-28 and card lifecycle. Settings/env/TOML wiring agrees; only Learning runtime installs grant probe. Consumer ownership, concurrency1, straggler drain, restart barrier, quiet period and provider settlement are unchanged. No analyzer threshold, debt ledger, architecture baseline, SoT or test selection modification appears in task diff."
+    }
+  ],
+  "validation": {
+    "full_suite_run": false,
+    "final_independent_tests": {
+      "command_id": "sess-73487-94",
+      "result": "40 passed, 1 existing Starlette dependency warning in 2.96s",
+      "command": "<repo-venv>/bin/python -m pytest -q -p no:cacheprovider tests/phase6/test_m4_stream_peek_failopen.py tests/unit/test_ai_rules_sync.py tests/unit/test_learning_foreground_independence.py tests/unit/test_fork_pairing_disconnect.py::test_generator_exit_saves_session tests/unit/test_fork_pairing_disconnect.py::test_generator_exit_partial_resumes_once_before_next_human_ingress tests/unit/test_provider_call_settlement.py::test_primary_1210_retry_and_fallback_share_one_ordered_transport_lineage tests/test_nonconvergence_fuse.py::test_capture_fuse_end_to_end"
+    },
+    "final_independent_ast_command_id": "sess-73487-92",
+    "factory_and_url_replay_command_id": "sess-73487-73",
+    "historical_102d_evidence": {
+      "independent_tests": [
+        "sess-73487-71:4 passed",
+        "sess-73487-76:35 passed"
+      ],
+      "independent_ast_command_id": "sess-73487-65",
+      "executor_reports": [
+        "data/learning-resume-20261013/focused-final.txt:165 passed, 1 warning",
+        "data/learning-resume-20261013/pyright-refactor-v4.txt:current21/new0/changed_file0"
+      ],
+      "applies_to_final_5c7_tree": false
+    },
+    "diff_checks": "Final cached git diff --check exited0; no unstaged tracked diff at receipt preparation."
+  },
+  "limitations": [
+    "This PASS is the independent code-review prerequisite for full canonical testing. The final 5c7 combined candidate still requires its fresh complete canonical R9 gate before qualification is complete.",
+    "No production API request, deployment, restart, account quota qualification or live Learning backlog recovery was performed. Host declarations are operator assertions and do not prove DNS cloud placement.",
+    "The earlier executor focused/Pyright logs were read independently but belong to the former 102d candidate, and are not claimed as final combined-tree gate results."
+  ],
+  "knowledge_feedback": "No method/experience card was applied and no new finding requires a card mutation; this review remains within read-only/nonproduction-test/receipt-write scope.",
+  "sanitization": {
+    "change": "Evidence path normalization only. Repository, isolated candidate and environment locations use <repo>, <candidate-worktree> and <repo-venv> placeholders; code, document, verdict and product hashes are unchanged.",
+    "original_receipt_sha256": "79fba1a9cb5cba070676a4c2dcde688e9d1401e4d141ec0757a9a9a7756b9de5",
+    "exact_original_ref": "data/learning-resume-20261013/20261013-learning-resume-code-review-original.private.json",
+    "exact_original_ignored": true,
+    "privacy_basis": "RULE-AI-24 / docs/DEVELOPMENT_REPAIR_SAFETY.md: keep local/private paths out of publishable evidence.",
+    "artifact_binding_unchanged": true
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "gate": "code",
+  "reviewer": "/root/learning_final_code_review",
+  "verdict": "PASS",
+  "scope_files": [
+    "docs/LEARNING-CLOUD-LANE-20261013.md",
+    "src/llm_loop/config.py",
+    "src/llm_loop/core/loop/engine.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/resources/learning_foreground.py",
+    "src/llm_loop/runtime/resolver.py",
+    "tests/phase6/test_m4_stream_peek_failopen.py",
+    "tests/unit/test_learning_foreground_independence.py"
+  ],
+  "findings": [],
+  "applied": [
+    "R9-I001"
+  ],
+  "rejected": [],
+  "artifact_sha256": "99d1a7abe971d98f8daf50d7fcf3ccfb21fbd4a335ab04e70e940286844ce628",
+  "narrow_recheck": {
+    "reviewer": "/root/learning_final_code_review",
+    "verdict": "PASS",
+    "base_artifact_sha256": "c96e9c2b9a4589b63d524b85b30ac276613f146553676630ebd9641f160d3078",
+    "previous_receipt": "docs/governance/receipts/20261013-learning-resume-code-review.json",
+    "previous_receipt_sha256": "4dd6f5d7b14c4a8275c9c0c43b8444d49fe0062536f4b3e6473f85f636a6eb5b",
+    "rechecked": [
+      "The preceding PASS remains valid for the original seven scope files: independently recomputed exact scoped diff SHA and every source SHA; all are unchanged.",
+      "Read the actual complete added test diff: only _deltas and _Injector import alias lines are reordered. Candidate text equals baseline with exactly that pair swapped; no assertion, fixture, function body or runtime logic changed.",
+      "Normalized both complete test-module ASTs by sorting only ImportFrom aliases; exact AST equality confirmed.",
+      "Read original full R9 stop evidence: newly inherited baseline test had Ruff I001; independently ran Ruff on the repaired file, exit0, All checks passed.",
+      "Verified the full new eight-file candidate diff equals cached diff, all scope bytes equal index, no unstaged tracked drift and diff-check clean."
+    ]
+  },
+  "base_commit": "5c7f2acb93b2e58cc031d3e0f2c5a82b21b95998",
+  "artifact_definition": "SHA256 of exact git diff --binary --full-index --no-ext-diff BASE -- SCOPE_FILES output, in listed scope order. Working-tree output equals cached output; all listed source bytes equal index. Existing and this review receipt are audit metadata excluded from this product digest to avoid recursive identity.",
+  "source_sha256": {
+    "docs/LEARNING-CLOUD-LANE-20261013.md": "a7154984687ad6b891da65a08226d050e02f018250a2f08b64a4fc95b1d0357e",
+    "src/llm_loop/config.py": "e0051fa8f549ab1b952ec61f4a6ced6d7cdf4c0dbc11d450a197fc6553c7bcc6",
+    "src/llm_loop/core/loop/engine.py": "94478197ecb93c79564e5425c255f6a08fdf4143cbcc6b9dff3ebfcf51c022ae",
+    "src/llm_loop/factory.py": "099d75b2fd4d1fd1d2c602a6b5daebaa1e98cd0b5df37053b276a0a9387de308",
+    "src/llm_loop/resources/learning_foreground.py": "dcf271e70af71e574e6dd6c1afce62b58c511ea23c2f3a4e158d2e5700a39e15",
+    "src/llm_loop/runtime/resolver.py": "f3baae25256ec50502b20843c53502326e85b213d6448dbb37fecfc7029e6e25",
+    "tests/phase6/test_m4_stream_peek_failopen.py": "ecb6c81d876449da2be5ce7543eb97c07b56b980c932226d1343db682aa206fe",
+    "tests/unit/test_learning_foreground_independence.py": "de6b8e78fe2553a6aa719cacd4c2c458364b06cbcd93fcfccf0c47fba50e5577"
+  },
+  "inherited_review": {
+    "receipt": "docs/governance/receipts/20261013-learning-resume-code-review.json",
+    "scope_files": [
+      "docs/LEARNING-CLOUD-LANE-20261013.md",
+      "src/llm_loop/config.py",
+      "src/llm_loop/core/loop/engine.py",
+      "src/llm_loop/factory.py",
+      "src/llm_loop/resources/learning_foreground.py",
+      "src/llm_loop/runtime/resolver.py",
+      "tests/unit/test_learning_foreground_independence.py"
+    ],
+    "artifact_sha256": "c96e9c2b9a4589b63d524b85b30ac276613f146553676630ebd9641f160d3078",
+    "remains_valid": true,
+    "unchanged_engine_sha256": "94478197ecb93c79564e5425c255f6a08fdf4143cbcc6b9dff3ebfcf51c022ae",
+    "independent_test_evidence": "Previous review independently ran 40 targeted tests on the same engine/seven-file code artifact. The added amendment is verified as import order only; those tests were not rerun for this narrow lint repair."
+  },
+  "checklist": [
+    {
+      "check": "correctness",
+      "result": "PASS",
+      "evidence": "Prior seven-file correctness review remains bound to identical bytes; new complete test diff is exactly two import aliases reordered, with normalized whole-module AST equality."
+    },
+    {
+      "check": "boundaries",
+      "result": "PASS",
+      "evidence": "No new branch, exception handling, fixture, assertion, concurrency or provider behavior; original seven-file boundary review remains valid."
+    },
+    {
+      "check": "security",
+      "result": "PASS",
+      "evidence": "No new input, credential, executable surface, path or external interaction; only existing import ordering changed."
+    },
+    {
+      "check": "regression",
+      "result": "PASS",
+      "evidence": "Exact test AST equivalence apart from import order; affected imports refer to existing definitions in the same module. Independent targeted Ruff PASS; no test removed or assertion relaxed."
+    },
+    {
+      "check": "consistency",
+      "result": "PASS",
+      "evidence": "Repair resolves the required Ruff I001 without a debt ledger, threshold, exemption or test selection change. Previous RULE-AI-28/SoT review remains valid."
+    }
+  ],
+  "validation": {
+    "full_suite_run": false,
+    "identity_and_ast_command_id": "sess-73487-114",
+    "ruff_command_id": "sess-73487-115",
+    "ruff_result": "All checks passed; exit0",
+    "failure_evidence": "data/learning-resume-20261013/r9-gate-import-red.txt",
+    "behavior_tests_rerun": false,
+    "diff_check": "git diff --cached --check exited0"
+  },
+  "limitations": [
+    "PASS is the independent review prerequisite for retrying complete R9 on this exact eight-file candidate digest; full canonical qualification remains pending.",
+    "No production call, deployment, restart or external message was performed. Prior 102d focused/Pyright evidence remains historical, not new combined-tree qualification."
+  ],
+  "sanitization": {
+    "change": "Evidence path normalization only. Repository, isolated candidate and environment locations use <repo>, <candidate-worktree> and <repo-venv> placeholders; code, document, verdict and product hashes are unchanged.",
+    "original_receipt_sha256": "2753fba331c8c12293eb294c65d6b42182a74e04cce2336ea3f699c68b4866fd",
+    "exact_original_ref": "data/learning-resume-20261013/20261013-learning-resume-code-review-v2-original.private.json",
+    "exact_original_ignored": true,
+    "privacy_basis": "RULE-AI-24 / docs/DEVELOPMENT_REPAIR_SAFETY.md: keep local/private paths out of publishable evidence.",
+    "artifact_binding_unchanged": true,
+    "linked_previous_receipt_sha256_refreshed": true
+  }
+}

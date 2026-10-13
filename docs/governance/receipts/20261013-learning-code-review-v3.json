@@ -1,0 +1,68 @@
+{
+  "gate": "code",
+  "reviewer": "/root/learning_code_review",
+  "verdict": "PASS",
+  "scope_files": [
+    "src/llm_loop/config.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/runtime/resolver.py",
+    "src/llm_loop/resources/learning_foreground.py",
+    "tests/unit/test_learning_foreground_independence.py",
+    "docs/LEARNING-CLOUD-LANE-20261013.md"
+  ],
+  "findings": [],
+  "applied": [
+    "P1-1",
+    "P1-2",
+    "P2-1",
+    "P2-2"
+  ],
+  "rejected": [],
+  "artifact_sha256": "f3c0802d4f226a8b37476144609dc85b76fca9914abae1dd6764d2b84daad25f",
+  "narrow_recheck": {
+    "reviewer": "/root/learning_code_review",
+    "verdict": "PASS",
+    "base_artifact_sha256": "6abad6f1cbf41d1ed147abac8d3259b339120f35fd51539f14d6c201db25a243",
+    "rechecked": [
+      "P2-1 at most one optional DNS root dot; residual empty labels rejected",
+      "P2-2 factory regression uses the declared task role",
+      "scanned every v2-to-v3 source change; factory pin/config/resolver/docs unchanged"
+    ]
+  },
+  "checklist": [
+    {
+      "item": "correctness",
+      "result": "V1 full review and v2/v3 narrow rechecks completed. Default empty grant retains whole-run foreground yielding. Only dedicated Learning may use the operator-declared exact cloud hosts, and reflection/extraction actual clients must both qualify."
+    },
+    {
+      "item": "boundaries_concurrency",
+      "result": "Prior P1 local/numeric aliases and client-instance mismatch are fixed. Prior P2 multiple-root-dot and unsupported-role tests are fixed. Startup pin shares client/model/target across probe and worker; unresolved startup route yields and retains the dynamic fallback. One consumer, one Learning transport, straggler drain, quiet window and service restart barriers remain in the existing path."
+    },
+    {
+      "item": "security_authorization",
+      "result": "Explicit operator declaration allows one additional call. No DNS-derived capacity claim, automatic policy, secret, execution command, path widening or local/unknown-target allowance introduced."
+    },
+    {
+      "item": "regression_sot",
+      "result": "Reviewed full staged six-file diff across review stages, including Settings/TOML governance, real factory pin/default task/error wiring, foreground-arrival and memory_extract execution branch regressions. No baseline widening, AI-rule edits, journal rewrites or provider-settlement changes."
+    },
+    {
+      "item": "consistency",
+      "result": "Documentation states startup route pin and Learning reload semantics. The declared factory role contract is now exercised directly. No remaining findings."
+    }
+  ],
+  "validation": {
+    "full_suite_run": false,
+    "independent_checks": [
+      "Exact v3 bundle diff bytes hash matches artifact_sha256 f3c0802d4f226a8b37476144609dc85b76fca9914abae1dd6764d2b84daad25f.",
+      "Read all v2-to-v3 source changes: exactly two helper normalization edits, one new malformed-tail test row, one test role correction.",
+      "Loaded exact v3 helper in memory: 11 independent cases pass, including multiple trailing dots, canonical root-dot/case host, numeric/hex private aliases, internal/localhost suffixes, open.bigmodel.cn and empty grant.",
+      "All final candidate Python files AST-parse successfully.",
+      "V2 exact factory admission AST replay qualified pinned-client/resource-target identity after pool replacement, no-grant dynamic behavior, supported task role, startup resolution failure and actual local extractor rejection; final factory is byte-identical to v2."
+    ],
+    "reported_by_executor": "V2 focused 94 passed in 1.79s; final v3 new regression file 30 passed in 0.33s. These are executor-provided run evidence, not a claimed reviewer pytest run."
+  },
+  "limitations": [
+    "This PASS closes the independent code-review gate only. The full canonical test gate and any separately authorized deployment/live qualification remain the executor responsibilities."
+  ]
+}
