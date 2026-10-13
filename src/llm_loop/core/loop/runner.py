@@ -502,7 +502,23 @@ class BackgroundRunner:
         callback = payload.get("_on_received")
         if callable(callback):
             try:
-                callback(**context)
+                # Phase4 M3 审查（终局回归）：_on_received 契约兼容——Phase3 既有
+                # 回调为 0 参（如 Event.set），仅当回调声明了 **kwargs/可吸收命名
+                # 参数时才传消费上下文，否则按原 0 参调用（契约不破坏，升级可选）。
+                import inspect
+
+                try:
+                    sig = inspect.signature(callback)
+                    accepts_ctx = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in sig.parameters.values()
+                    )
+                except (TypeError, ValueError):
+                    accepts_ctx = False
+                if accepts_ctx:
+                    callback(**context)
+                else:
+                    callback()
             except Exception:  # noqa: BLE001 - UI acknowledgement cannot rewrite run truth
                 logger.warning("interjection acknowledgement failed (fail-open)", exc_info=True)
 

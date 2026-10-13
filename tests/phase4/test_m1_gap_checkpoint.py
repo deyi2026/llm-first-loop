@@ -19,17 +19,15 @@ from fastapi.testclient import TestClient
 from llm_loop.core.loop.runner import BackgroundRunner
 from llm_loop.core.message import ToolCall
 from llm_loop.web import build_app
-
 from tests.phase4.test_m0_scenarios import (
+    INTERJECT_TEXT,
     REPORT_DIR,
-    _enqueue_and_interject,
     _hq_item,
     _hq_of,
     _interject,
     _pct,
     _wait_run_done,
     _wait_tool_started,
-    INTERJECT_TEXT,
 )
 
 

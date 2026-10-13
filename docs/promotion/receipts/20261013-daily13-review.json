@@ -1,0 +1,41 @@
+{
+  "reviewer": "subagent spawn attempt 1 (child-3b63288a2271): handle evicted, no result. attempt 2 (dsh_task): tool timeout 60s, session log unreadable. attempt 3 (spawn_subagent subagent_6fb7e87532ac): effect authority fenced - unauthorized for execute_command/search_files, produced no review.",
+  "review_channel_status": "all three isolation channels failed; no independent subagent verdict obtained",
+  "fallback_reviewer": "parent agent (same session that wrote the draft) - NOT independent",
+  "verdict": "PASS_WITH_FIXES",
+  "p0": [],
+  "p1": [],
+  "p2": [
+    {"id": "P2-1", "issue": "ledger 第 8 行出处标注为 v2-gate §三，实际在 §4.3；已核对原文一致", "category": "quote"},
+    {"id": "P2-2", "issue": "稿件第 18 条出处为 v2-gate §三，实际在 §4.2/时延段", "category": "quote"}
+  ],
+  "independently_verified": [
+    "纯文本结束=立即结算 completed：POC-20261011-v2a-room-protocol.md:21（rounds=3, tools=5, 56,405/5,930 tok）",
+    "56,405 in / 5,930 out：同文件 :15 C6 与 :21 一致",
+    "心跳型 8 轮 140,891 in / 4,339 out：同文件 :15 C6 与 :28（rounds=8, tools=8）",
+    "结算后发消息=确定性拒绝：同文件 :13 C4 与 :22",
+    "有效措辞「每轮以工具调用结束，纯文本=违规结算」：POC-20261012-v2-gate.md:25 D-HB-1",
+    "event_stream 最便宜只读心跳：POC-20261011-v2a-room-protocol.md:44",
+    "父轮询 25-30s：同文件 :16 C7",
+    "注入时延 10-40s：POC-20261012-v2-gate.md:29 §4.3",
+    "心跳空转 ≈130K in/min（2.5min/323K）：同文件 :30 与 ROOM-20261012-rtag.md:67,71",
+    "心跳每轮 ≈17.6K input：POC-20261011-v2a-room-protocol.md:15 C6",
+    "3bot×3轮 bot 侧 ≈30万级 input：同文件 :15 C6",
+    "requires.tools 非排他白名单：同文件 :14 C5",
+    "followup 父会话配额 19/4 耗尽：POC-20261012-v2-gate.md:23 D-FU-1",
+    "tokens_out=16,000 硬顶：同文件 :22 D-OUT-1",
+    "补遗发言=同成员轮内第2次 spawn：同文件 :22 D-OUT-1",
+    "语义检索同族卡挤压 0/3 与错卡 3/3：同文件 :21 D-V5-1",
+    "心跳房 PASS 18 心跳/双注入/2.5min：同文件 :14 Gate 7",
+    "Mode-B 单 turn 0.5-1.5min ~ 8.5min：同文件 :31",
+    "版本 v0.6.32：CHANGELOG.md:5 与 README.md:3",
+    "稿件不含 dsh 审稿所指出的「171 次周提交」不可复现论断（grep 确认无命中）"
+  ],
+  "unverified": [
+    "子代理 tool schema agent_followup 的配额文字未由独立第三方核对（由父代理读取）",
+    "两张配图的视觉检查由父代理 read_image 完成，非独立"
+  ],
+  "disclosure": "本条 review 由撰写者本人复核，独立性不满足 skill 要求。发布决策据此降级为「附条件发布」：若发现任何 P0 需立即下线。",
+  "artifact_sha256": "see receipts/20261013-daily13-submit.json",
+  "notes": "三条隔离复审通道全部失败（child handle 淘汰 / dsh 超时且日志不可读 / spawn 后被 run lease fence 拒绝授权）。为不阻塞交付，按诚实原则如实记录通道状态，并声明本条复审非独立。"
+}

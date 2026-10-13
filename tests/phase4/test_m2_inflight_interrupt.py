@@ -11,28 +11,27 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from llm_loop.core.loop.runner import BackgroundRunner
 from llm_loop.core.message import ToolCall
 from llm_loop.web import build_app
-
 from tests.phase4.test_m0_scenarios import (
     INTERJECT_TEXT,
     _hq_item,
     _hq_of,
     _interject,
+    _LockedSleepTool,
     _pct,
     _wait_run_done,
     _wait_tool_started,
 )
-from tests.phase4.test_m0_scenarios import _LockedSleepTool
 
 REPO_DIR = None
-import os
-from pathlib import Path
 
 M2_REPORT_DIR = Path(
     os.environ.get("PHASE4_M2_REPORT_DIR", "reports/phase4/m2")
@@ -112,7 +111,7 @@ def test_a_s13_interrupt_meets_target(build_test_engine):
         samples.append(s)
     effs = [s["t_effect_ms"] for s in samples if s["t_effect_ms"] is not None]
     p50, p95 = _pct(effs, 0.50), _pct(effs, 0.95)
-    _guarded_write(M2_REPORT_DIR / "S13M2.json", 
+    _guarded_write(M2_REPORT_DIR / "S13M2.json",
         json.dumps({"scenario": "S13M2", "n": 5, "samples": samples,
                     "t_effect_p50_ms": p50, "t_effect_p95_ms": p95},
                    ensure_ascii=False, indent=2, default=str),
@@ -175,7 +174,7 @@ def test_b_s14_conservative_wait(build_test_engine):
         finally:
             runner.cancel(sid)
     effs = [s["t_effect_ms"] for s in samples if s["t_effect_ms"] is not None]
-    _guarded_write(M2_REPORT_DIR / "S14M2.json", 
+    _guarded_write(M2_REPORT_DIR / "S14M2.json",
         json.dumps({"scenario": "S14M2", "n": 3, "samples": samples,
                     "t_effect_p50_ms": _pct(effs, 0.50)},
                    ensure_ascii=False, indent=2, default=str),
@@ -189,12 +188,13 @@ def test_c_s15_race_two_branches(build_test_engine):
     # 分支 B（interrupt_first）：注入 +1.25s（早于 1.4s 判定片）→ sleep 1.5 被终止
     for i in range(3):
         samples.append(_race_sample(build_test_engine, i, "B", inject_delay=1.25))
-    # 分支 A（natural_first，P2-7 加固）：sleep 1.6 + 注入 +1.45s——晚于最后
-    # 判定片（1.4s）且距自然完成余量 ~110ms（吸收 HTTP 往返抖动），确定性落入
-    # 自然完成分支；1.6s 判定片与完成赛跑由 future.result 先返自然结果取胜。
+    # 分支 A（natural_first，终局加固）：sleep 1.55 + 注入 +1.45s——完成时刻落在
+    # 判定片 (1.4,1.6) 内部：到达无论何时（轻载 1.46-1.51 / 重载 >1.55），下一
+    # 判定唤醒 1.6s 均晚于完成 1.55s，future.result 先返自然结果，双侧确定性
+    # 落入自然完成分支（不与判定片边界对齐——1.6 会在完成点与唤醒点赛跑）。
     for i in range(3):
         samples.append(_race_sample(build_test_engine, i, "A", inject_delay=1.45,
-                                    tool_sleep=1.6))
+                                    tool_sleep=1.55))
     for s in samples:
         assert s["final"] == "done"
         assert s["item_status"] == "interject_received"
@@ -204,7 +204,7 @@ def test_c_s15_race_two_branches(build_test_engine):
         else:
             assert s["branch"] == "natural_first", s
             assert not s["interrupted_receipt"]
-    _guarded_write(M2_REPORT_DIR / "S15M2.json", 
+    _guarded_write(M2_REPORT_DIR / "S15M2.json",
         json.dumps({"scenario": "S15M2", "n": len(samples), "samples": samples},
                    ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
@@ -262,7 +262,28 @@ def _race_sample(build_test_engine, i: int, construct: str, inject_delay: float,
 
 def test_d_gate_conservative_matrix(build_test_engine):
     """§4.4 gate 保守矩阵（unit）：各失败面 → False；全清 → True."""
-    engine, fake = build_test_engine([{"content": "ok"}])
+    # run 需存活整个断言期（handle status=running 是 peek/enqueue 的前提）：
+    # 单轮即完的 run 会让后续断言与 handle 清理赛跑（全套负载下必现）。
+    # 存活工具用内联纯 sleep——不登记 revocable=False 副作用（locked 工具会登记
+    # 且永不 settle，负载下登记先于断言落账 →「已结算后恢复 True」被自身工具污染）。
+    class _PlainSleepTool:
+        name = "phase4_plain_sleep"
+        description = "test_d 专用：纯 sleep 保活，无副作用登记"
+        parameters = {"type": "object",
+                      "properties": {"seconds": {"type": "number"}},
+                      "required": ["seconds"]}
+
+        def execute(self, seconds: float = 5.0) -> str:
+            time.sleep(seconds)
+            return "plain sleep done"
+
+    engine, fake = build_test_engine([
+        {"content": "go", "tool_calls": [
+            ToolCall(id="gate-matrix-c1", name="phase4_plain_sleep",
+                     arguments={"seconds": 5.0})]},
+        {"content": "ok"},
+    ])
+    engine.registry.register(_PlainSleepTool())
     runner = BackgroundRunner(engine)
     engine.runner = runner
     sid = engine.session.create()
@@ -279,8 +300,12 @@ def test_d_gate_conservative_matrix(build_test_engine):
         assert gate(sid, "execute_command") is True
         # 3) 闭集外 → False
         assert gate(sid, "phase4_locked_sleep") is False
-        # 4) 未结算 revocable=False 副作用 → False
+        # 4) 未结算 revocable=False 副作用 → False（登记前重置代次 contextvar：
+        #    本用例在 run 上下文外直接登记，it_gen 应为空（=保守阻断语义）；
+        #    全套下 main 线程残留其他用例的代次会造成跨 run 误判（污染源））
         from llm_loop.core.loop.side_effects import SideEffectRegistry
+        from llm_loop.core.run_context import current_run_generation
+        current_run_generation.set("")
         ser = SideEffectRegistry.instance()
         ser.register(sid, "t", "a", "k", revocable=False, detail="gate-matrix")
         try:

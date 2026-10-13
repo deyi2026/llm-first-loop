@@ -2,7 +2,7 @@
   "scenario": "S02",
   "title": "空闲插话（无 live run）",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-13T06:27:23",
+  "started_at": "2026-10-13T11:03:19",
   "steps": [],
   "wall": {},
   "dur_ms": {},
@@ -18,11 +18,11 @@
     "POST /queue": {
       "status": 202,
       "body": {
-        "queue_id": "q_ec8cb55b53b3",
+        "queue_id": "q_7a6f1d8c46c3",
         "position": 1,
         "item": {
-          "queue_id": "q_ec8cb55b53b3",
-          "session_id": "0a395020-2213-4e49-8321-e2363a89f96a",
+          "queue_id": "q_7a6f1d8c46c3",
+          "session_id": "bd0a5968-adb7-41b7-ba17-5b4bf599cdf3",
           "message": "有人在吗",
           "attachments": [],
           "attachment_facts": [],
@@ -30,7 +30,7 @@
           "model_change": false,
           "reasoning_effort": null,
           "reasoning_mode": "auto",
-          "created_at": 1791844043.173125,
+          "created_at": 1791860599.528349,
           "status": "queued",
           "grade": "queued",
           "grade_reason": ""
@@ -50,8 +50,8 @@
       "body": {
         "items": [
           {
-            "queue_id": "q_ec8cb55b53b3",
-            "session_id": "0a395020-2213-4e49-8321-e2363a89f96a",
+            "queue_id": "q_7a6f1d8c46c3",
+            "session_id": "bd0a5968-adb7-41b7-ba17-5b4bf599cdf3",
             "message": "有人在吗",
             "attachments": [],
             "attachment_facts": [],
@@ -59,7 +59,7 @@
             "model_change": false,
             "reasoning_effort": null,
             "reasoning_mode": "auto",
-            "created_at": 1791844043.173125,
+            "created_at": 1791860599.528349,
             "status": "queued",
             "grade": "queued",
             "grade_reason": ""
@@ -71,6 +71,6 @@
       }
     }
   },
-  "finished_at": "2026-10-13T06:27:23",
+  "finished_at": "2026-10-13T11:03:19",
   "status": "ok"
 }

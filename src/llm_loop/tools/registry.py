@@ -388,7 +388,7 @@ class ToolRegistry:
         # None = 零回归（无分段等待打断路径）。
         self._interrupt_gate: Callable[[str, str], bool] | None = None
 
-    def set_interrupt_gate(self, gate: "Callable[[str, str], bool] | None") -> None:
+    def set_interrupt_gate(self, gate: Callable[[str, str], bool] | None) -> None:
         """Install/remove the Phase4 in-flight interrupt decision gate (CK-B).
 
         gate(session_id, tool_name) -> bool 由 engine 装配并保证 §4.2 固定序

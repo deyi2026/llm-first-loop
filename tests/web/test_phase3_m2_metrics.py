@@ -152,7 +152,10 @@ def test_metrics_endpoint_after_live_interject(build_test_engine):
         item = agg["items"][0]
         assert item["grade"] == "applied"  # M1 分级与 M2 度量同源
         assert 0 < item["t_ack_ms"] < 200, item  # 受理毫秒级
-        assert item["t_effect_ms"] > 1000, item  # 轮边界等待（工具 2s）→ 生效秒级
+        # Phase4 语义变更（docs/phase4-effect-latency-design.md §3 T1）：execute_command
+        # 属可中断闭集——在途插话经 τ=200ms 分段等待判定后定向打断收割，t_effect
+        # 脱离工具剩余时长（原断言 >1000ms 是 Phase4 要消除的旧行为）。
+        assert 0 < item["t_effect_ms"] < 500, item  # 在途打断生效（目标 P50≤500）
         assert item["t_persist_ms"] > 0
         assert item["t_applied_ms"] is not None
         assert abs(item["t_ack_ms"] + item["t_persist_ms"] - item["t_effect_ms"]) < 0.5

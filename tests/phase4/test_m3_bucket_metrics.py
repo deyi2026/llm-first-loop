@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 from llm_loop.core.loop.runner import BackgroundRunner
 from llm_loop.core.message import ToolCall
 from llm_loop.web import build_app
-
 from tests.phase4.test_m0_scenarios import (
     INTERJECT_TEXT,
     _hq_item,
@@ -80,9 +79,11 @@ def _bucket(build_test_engine, n=5, mode="interruptible"):
             responses.append({"content": "final"})
             inject_delay = 0.3
         elif mode == "natural_boundary":
+            # sleep 1.55：完成落在判定片 (1.4,1.6) 内部——到达无论早晚均自然完成
+            # （1.6 会与判定唤醒对齐成刀刃，负载下翻转到打断分支）
             responses.append({"content": "go",
                               "tool_calls": [ToolCall(id=f"m3n-{i}", name="execute_command",
-                                                      arguments={"command": "sleep 1.6"})]})
+                                                      arguments={"command": "sleep 1.55"})]})
             responses.append({"content": "final"})
             inject_delay = 1.45
         elif mode == "llm_stream":
@@ -161,7 +162,7 @@ def test_m3_four_buckets(build_test_engine):
     idle_hits = [v == "gap_harvest" for v in out["idle"]["consumed_via"]]
     assert sum(idle_hits) >= 3, out["idle"]
     idle_p50 = _pct(
-        [t for t, hit in zip(out["idle"]["t_effect_samples"], idle_hits) if hit],
+        [t for t, hit in zip(out["idle"]["t_effect_samples"], idle_hits, strict=False) if hit],
         0.50,
     )
     assert idle_p50 <= 50, (idle_p50, out["idle"])
@@ -199,6 +200,7 @@ def test_m3_aggregate_endpoint_buckets(build_test_engine):
     assert res["p50"] is not None
     # 直接核 aggregate 结构（端点按 session 聚合并原样回传 buckets）
     import tempfile
+
     from llm_loop.web.human_turn_queue import HumanTurnQueue
     with tempfile.TemporaryDirectory() as td:
         hq = HumanTurnQueue(td)

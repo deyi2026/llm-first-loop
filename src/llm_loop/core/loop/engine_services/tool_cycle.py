@@ -903,7 +903,9 @@ class ToolCycleService:
         run_state.interject_harvest_user_texts 暂存，由下一轮轮首合并。
         延迟导入避免 engine↔service 环引。
         """
-        from llm_loop.core.loop.engine import _consume_live_interjections
+        from llm_loop.core.loop.engine_services.interjection_consume import (
+            _consume_live_interjections,
+        )
 
         accepted = _consume_live_interjections(
             self._host, sess.session_id, sess, via="gap_harvest"

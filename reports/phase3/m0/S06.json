@@ -2,14 +2,14 @@
   "scenario": "S06",
   "title": "前台长工具停止：requested→local_terminated",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-13T06:27:32",
+  "started_at": "2026-10-13T11:03:29",
   "steps": [],
   "wall": {
-    "tool_started": 1791844052.817
+    "tool_started": 1791860609.253
   },
   "dur_ms": {
-    "runner_cancel_ms": 0.5,
-    "cancel_to_run_terminal_ms": 20.9
+    "runner_cancel_ms": 2.4,
+    "cancel_to_run_terminal_ms": 26.7
   },
   "obs": {
     "runner_cancel_returned": true,
@@ -23,6 +23,6 @@
     ]
   },
   "endpoints": {},
-  "finished_at": "2026-10-13T06:27:32",
+  "finished_at": "2026-10-13T11:03:29",
   "status": "ok"
 }

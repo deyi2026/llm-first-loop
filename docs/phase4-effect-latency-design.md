@@ -209,3 +209,13 @@ skipped 接续测试；P2-7 S15-A 构造改 sleep 1.6@1.45s（余量 ~110ms）�
    支撑；终止登记幂等性由单线程判定序天然保证。
 2. §4.2 初始闭集收窄为 {execute_command}：spawn_subagent 收益≈0（其等待不占
    t_effect 主路径），保守不入；闭集扩张需走 §7 度量门。
+
+**M4 终局（全套回归处置留痕）**：
+- R9 断环：M1 的 tool_cycle→engine 函数级 import 构成 runtime 环
+  （engine<->tool_cycle）——`_consume_live_interjections` 抽取至
+  engine_services/interjection_consume.py，双方自此 import，环清零（守卫恒 0 恢复）
+- `_on_received` 契约兼容：M3 的 context 透传按回调签名自适应（Phase3 0 参
+  回调不破坏）——终局回归发现的真兼容缺口，非测试问题
+- Phase3 M2 metrics 断言迁移至 Phase4 语义（t_effect>1000ms→<500ms）
+- 负载时序加固（全套 8220+ 测试压力下的构造确定性）：S15 完成点落判定片内部
+  （1.55s）；test_d run 存活构造；S15 脚手架 409 重试；R9 ratchet 修复
