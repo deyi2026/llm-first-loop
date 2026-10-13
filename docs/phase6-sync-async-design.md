@@ -2,7 +2,7 @@
 
 - Goal: GOAL-20261013-35007287
 - 日期: 2026-10-13
-- 状态: M0 设计（评审中）
+- 状态: M0 设计（评审已过，见 §8）
 - 前序: Phase4（生效时延优化，GOAL-20261013-9b1fa766 已交付）→ Phase5（LLM 流内插话打断，已交付 gen251）
 
 ## 1. 问题与动机
@@ -106,3 +106,26 @@ Phase5 使 `chat_stream` 通道获得流内检查点打断（真机 t_effect=93m
 - worker 线程并发面：provider_calls lease 记账线程安全；engine 轮询仅在 run 线程（无新共享写）
 - 打断后 FakeLLM 状态：callable 响应项在 calls 列表 append 时已序号定位，后台完成不影响下一轮取数
 - 非 Goal：不改 chat_stream 通道行为；不做 C 路线；停止按钮释放页面不设门
+
+## 8. 设计评审记录（M0，2026-10-13）
+
+grill_me 盘问（edge_cases/failure_modes/scale）+ 自查，回填 4 项：
+
+1. **shadow call 双结算竞态**：Stop daemon 化 worker 的晚到结果会尝试再次结算——
+   settle 必须幂等（settled 标志守卫），晚到结果仅作 orphan 记录（usage 按打断固有
+   不完整口径，不补收）。M1 需专项断言：打断后 provider_call 记录单次结算。
+2. **worker 异常/取消钩子异常降级**：worker 内 provider 异常经结果槽传回 run 线程，
+   行为与今日内联异常一致；client.cancel() 抛错 → 捕获记日志，退化为残余等待，
+   不影响打断语义。
+3. **无工具回复的口径变化显式化**：今日 final_gate 将窗口内插话的响应记录为完整轮次
+   后续跑；新设计打断丢弃响应、轮次记 llm_interrupted（对齐流式 P1-6 口径）。
+   这是**有意的语义对齐**（同步通道与流式通道行为一致），非回归；M1/M2 需断言
+   「打断轮不进下一轮 provider 投影」且会话历史含 interrupted 标记。
+4. **配置门对称**：新增 `tool_runtime.sync_chat_interject_checkpoint: bool = True`
+   （默认开，逃生舱），与 Phase5 `llm_stream_interject_checkpoint` 同模式；
+   关闭时回退今日窗口形态（final_gate 保守路径），行为可回滚。
+5. **工具轮打断一致性**：窗口内插话命中时即使响应含 tool_calls 也不执行工具、
+   整轮打断——与流式检查点打断「剩余 delta 丢弃 + 工具不执行」口径一致。
+6. **竞态边界定义**：poll 循环以「worker 完成」或「命中」先到者为准；命中优先
+   （即使 worker 已完成，检测到窗口内插话即打断）。worker 先完成且无命中 →
+   走既有路径（final_gate 仍适用于晚到插话）。
