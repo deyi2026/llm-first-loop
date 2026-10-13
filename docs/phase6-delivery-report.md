@@ -1,6 +1,7 @@
 # Phase6 交付报告：同步 chat 通道异步化
 
-- 日期：2026-10-13　状态：交付（全量回归/发布见 §4/§5）
+- 日期：2026-10-13　状态：交付完成（全量回归 8800/0 + 发布 gen252；重启
+  动作已受理、终态为会话退出后异步事实，§5）
 - 设计：docs/phase6-sync-async-design.md（M0 定稿 + §9/§10 实施修订）
 - 前序：Phase4（生效时延，GOAL-20261013-9b1fa766）→ Phase5（流式打断，gen251）
 
@@ -74,11 +75,24 @@ transport，单窗口可达 120s）此前走引擎同步内联分支：窗口内
 
 ## 4. 全量回归
 
-（回填：全量 pytest + ruff 改动面）
+- pytest 全量（tests/）：**8800 passed / 0 failed**，132 skipped（常规），
+  613s（2026-10-13T18:2x，最终门禁跑）。首跑 1 failed=test_b（预存时序
+  脆弱，§6），注入锚点加固后归零（3/3 稳定复验）。
+- ruff：本任务改动面（engine/config/llm×6/tests/phase6/）0 error。
 
 ## 5. 发布与验证
 
-（回填：publish generation / restart / 真机抽查 best-effort）
+- 提交链：15640062d（M1）→ 36a372c66（M2）→ 1b37c14bb（M3）→
+  f6be73f92（M4 报告+加固）。
+- 发布：publish **generation=252**（deploy-40055b9d1a07476ca255c241532dd4e2，
+  git_head=f6be73f92，webui 产物 sha=1ed83575…b5264 绑定；前端零改动，
+  沿用既有 dist）。
+- 重启：action svc-3882d8e1148543bf97d3f721875eca63 已受理
+  （waiting_for_requester_exit——两阶段等待先等发布方会话退出，本会话
+  即 requester，终态为其退出后异步事实）；核验入口
+  service_control(status)（generation=252, matches_desired_generation=true）。
+- 真机抽查（deepseek-web 停止按钮/残余窗口）：本会话环境不可用，未执行
+  ——按设计 §5 属 best-effort 不设门；候选见 §6。
 
 ## 6. 遗留与候选
 
