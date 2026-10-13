@@ -2,10 +2,10 @@
   "scenario": "S04",
   "title": "停止后台 execute_command job",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-13T12:07:00",
+  "started_at": "2026-10-13T18:28:25",
   "steps": [],
   "wall": {
-    "job_terminal_observed": 1791864420.717
+    "job_terminal_observed": 1791887305.291
   },
   "dur_ms": {
     "cancel_session_call_ms": 0.3,
@@ -13,16 +13,16 @@
   },
   "obs": {
     "assembly": "production_fair: session_cancel_hook registered (factory.py:731)",
-    "bg_start_result_head": "[后台任务已启动] job_id=job-bb138098af6f4fab86b0 status=running\n命令: sleep 30\n用 job_output(job_id=job-bb138098af6f4fab86b0) 查询输出；如用户明确要求终止，再按取消意图处理。",
+    "bg_start_result_head": "[后台任务已启动] job_id=job-9826bd642a2246b1b4e9 status=running\n命令: sleep 30\nshell_mode=default\n等进程终态用 wait(seconds=120, job_id=job-9826bd642a2246b1b4e9)；用 job_output(job_id=job-9826bd642a2246b1b4e9) 查询退出码与输出。",
     "job_state_before_stop": {
       "state": "running"
     },
     "cancel_session_count": 1,
     "job_state_after_stop": {
-      "job_id": "job-bb138098af6f4fab86b0",
-      "session_id": "23633441-9d65-4968-a49e-ac348974600c",
+      "job_id": "job-9826bd642a2246b1b4e9",
+      "session_id": "cb5ca0b2-7e2c-45bb-a0ed-18e66d33c87f",
       "origin_run_generation": "",
-      "workspace_root": "/private/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/pytest-of-yyj/pytest-5054/test_s04_stop_background_job0",
+      "workspace_root": "/private/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/pytest-of-yyj/pytest-5230/test_s04_stop_background_job0",
       "executor": "execute_command",
       "state": "killed",
       "exit_code": null,
@@ -34,11 +34,11 @@
       "auto_reclaim": false,
       "output": [],
       "command": "sleep 30",
-      "started_at": 1791864420.714955,
+      "started_at": 1791887305.290011,
       "finished_at": null
     }
   },
   "endpoints": {},
-  "finished_at": "2026-10-13T12:07:00",
+  "finished_at": "2026-10-13T18:28:25",
   "status": "ok"
 }

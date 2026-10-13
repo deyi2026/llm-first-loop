@@ -100,7 +100,7 @@ def _run_t2(build_test_engine, n: int = N) -> dict:
         engine, fake = build_test_engine([_blocking(window_started)])
         runner = BackgroundRunner(engine)
         engine.runner = runner
-        client = TestClient(build_app(engine=engine))
+        TestClient(build_app(engine=engine))  # runner 门控依赖 app 装配
         sid = engine.session.create()
         _h, q = runner.start(sid, "请长篇回答")
         assert window_started.wait(timeout=10), f"T2 样本{i} 窗口未开始"
