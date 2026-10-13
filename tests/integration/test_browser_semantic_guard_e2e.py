@@ -92,6 +92,8 @@ def env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[SimpleNamespace]:
             chromium = pw.chromium.executable_path
         except Exception:  # pragma: no cover
             pytest.skip("chromium binary not installed")
+        if not Path(chromium).is_file():
+            pytest.skip("playwright chromium binary not installed; browser E2E unverified")
         profile = tmp_path_factory.mktemp("e2e-profile")
         proc = subprocess.Popen(
             [

@@ -1,0 +1,55 @@
+{
+  "gate": "code",
+  "reviewer": "/root/r123_code_review",
+  "verdict": "REVISE",
+  "scope_files": [
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "README.en.md",
+    "docs/INDEX.md",
+    "docs/known-reds-20260909.md",
+    "tests/integration/test_browser_semantic_guard_e2e.py"
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "CHANGELOG.md:8; docs/known-reds-20260909.md:59",
+      "issue": "New remediation text claims installed-browser startup errors continue to fail, but the inspected env fixture still calls pytest.skip when Chromium exits or fails to expose a DevTools endpoint within 15 seconds (tests/integration/test_browser_semantic_guard_e2e.py:123-139). An existing installed executable can therefore produce skipped cases, contradicting these new unconditional claims. Skipped browser cases cannot establish mandatory browser qualification.",
+      "fix_hint": "Narrow both statements to the exact missing-executable-file branch introduced by this patch; explicitly acknowledge the pre-existing CDP-readiness skip as unverified. Keep ordinary Popen/connect/assertion failures described precisely and preserve mandatory qualification requiring actual case execution. No fixture-policy expansion is required."
+    }
+  ],
+  "applied": [],
+  "rejected": [],
+  "artifact_sha256": "e678895c3a1118f929808bb3dcc8e02f229fb1ed6bd0f85c6240feb11f6d7a7a",
+  "narrow_recheck": null,
+  "candidate": ".worktrees/review-r123-20261013",
+  "scope": "R1 current-candidate verification; R2 contributor documentation; R3 environment-qualified red registry and missing browser executable fixture. Inherited M4 changes are context only and not approved here.",
+  "evidence": {
+    "access": "Independent remote LFLM calls returned MCP -32603 Internal error. Reviewer inspected complete raw exported source/evidence bundles supplied by parent, computed hashes independently, and wrote this receipt locally for verbatim copying to candidate.",
+    "bundle": "r123_bundle.json plus r123_supplement.json",
+    "patch_hash_verified": true,
+    "all_seven_manifest_file_hashes_verified": true,
+    "r1_current_file_sha256_verified": "362d165bff2e52666bcccb8fc6171c45ffc683fc233fc4c5a1817cc49596f980",
+    "diff_hunks_verified_against_exported_candidate": 8,
+    "baseline_xml_sha256_verified": "5081efdafaed55a54c181d0a18d8d8819db11b1038b322e5f8c868679724cab0",
+    "baseline_result": "49 cases: 44 passed, 5 setup errors; all 5 error messages identify FileNotFoundError for default Playwright cached Chromium path. R1 targeted conservative matrix case passed.",
+    "focused_xml_sha256": "00f7934ea4f068e6b0d65ee787937e393025385737a53be686e6c3f11d53fa28",
+    "focused_result": "45 cases: 40 passed, 5 skipped; all five browser guard cases explicitly state playwright chromium binary not installed; browser E2E unverified. Focused text agrees.",
+    "r1_source": "tests/phase4/test_m2_inflight_interrupt.py:283-299 constructs engine before engine.registry.register(_PlainSleepTool()); reported UnboundLocalError is absent in inspected candidate and was not reproduced by baseline/focused evidence.",
+    "r2_authority": "docs/ai_rules.md:3-7, src/llm_loop/core/prompt.py:1-16,31-42, tests/unit/test_ai_rules_sync.py and tests/unit/test_common_governance.py confirm discoverable maintenance playbook exclusion with controlled static projections; pyproject.toml:3 is 0.6.32; scenarios_v1.json contains seven scenarios with samples=6 each.",
+    "qualification": "Registry explicitly limits conclusions to macOS candidate/environment, says skipped means unverified, retains real multi-UID/browser qualification obligations, and makes no current Ubuntu CI/full-suite/release claim."
+  },
+  "checklist": {
+    "correctness": "Complete seven-file remediation diff read; 8 new/context hunks match exported candidate; P1-1 found in documentation accuracy.",
+    "boundaries": "New is_file guard skips absent/non-file executable paths before Popen. It does not catch installed-path Popen/connect/test failures. Existing no-CDP endpoint skip persists and is the subject of P1-1.",
+    "security": "No new credential, command-string execution, runtime authorization change, or unsafe path-write behavior in remediation diff.",
+    "regression": "No test deletion, assert weakening, marker exclusion, baseline widening, schema change, or prompt-source edit in this remediation. Focused anchors are represented in evidence.",
+    "consistency": "Reviewed AGENTS.md, DEVELOPMENT_REPAIR_SAFETY.md, code-review-gate/SKILL.md, ai_rules.md and card-lifecycle.md. Apart from P1-1, observed changes agree with current contracts."
+  },
+  "limitations": [
+    "Reviewer did not run tests, provider calls, live browser qualification, commit/stage/push/publish/restart, or approve inherited M4 changes.",
+    "This receipt is a code-review gate for the identified remediation artifact, not a full-test or deployment qualification receipt."
+  ]
+}

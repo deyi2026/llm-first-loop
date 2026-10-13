@@ -1,0 +1,117 @@
+{
+  "gate": "code",
+  "reviewer": "/root/r123_code_review",
+  "verdict": "PASS",
+  "scope_files": [
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "README.en.md",
+    "docs/INDEX.md",
+    "docs/known-reds-20260909.md",
+    "tests/integration/test_browser_semantic_guard_e2e.py",
+    "src/llm_loop/tools/registry.py",
+    "tests/phase4/test_m2_inflight_interrupt.py"
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "CHANGELOG.md:8; docs/known-reds-20260909.md:59",
+      "issue": "New remediation text claims installed-browser startup errors continue to fail, but the inspected env fixture still calls pytest.skip when Chromium exits or fails to expose a DevTools endpoint within 15 seconds (tests/integration/test_browser_semantic_guard_e2e.py:123-139). An existing installed executable can therefore produce skipped cases, contradicting these new unconditional claims. Skipped browser cases cannot establish mandatory browser qualification.",
+      "fix_hint": "Narrow both statements to the exact missing-executable-file branch introduced by this patch; explicitly acknowledge the pre-existing CDP-readiness skip as unverified. Keep ordinary Popen/connect/assertion failures described precisely and preserve mandatory qualification requiring actual case execution. No fixture-policy expansion is required.",
+      "status": "resolved"
+    }
+  ],
+  "applied": [
+    "P1-1"
+  ],
+  "rejected": [],
+  "artifact_sha256": "871aed5abc0d490c64586ff8c049df62671b0a3744e1b3870900a22eb12ac267",
+  "narrow_recheck": {
+    "reviewer": "/root/r123_code_review",
+    "verdict": "PASS",
+    "previous_receipt": "docs/governance/receipts/20261013-r123-code-review.json",
+    "previous_receipt_sha256": "61fc7f170aad34dc178acc52455883dbb2c4185d9bcfed124d35bc055a451bcd",
+    "previous_artifact_sha256": "d8b28911e595f99b16df8de192766e1f485d3346b859c6cb2ce60572c29b0a1d",
+    "artifact_sha256": "871aed5abc0d490c64586ff8c049df62671b0a3744e1b3870900a22eb12ac267",
+    "scope_files": [
+      "CHANGELOG.md",
+      "docs/known-reds-20260909.md",
+      "tests/phase4/test_m2_inflight_interrupt.py"
+    ],
+    "source_scope": "test_d_gate_conservative_matrix and new threading import only; all other M2 source and prior v2 scope checked for byte identity/unchanged hunks",
+    "new_findings": [],
+    "evidence": "All 9 manifest hashes and 13 complete v3 patch hunks verified. All 8 pre-existing gate/enqueue assert expressions retained exactly; one additional entered.wait(timeout=10.0) prerequisite added. Held tool remains outside INTERRUPTIBLE_TOOLS, waits on release with a 30s failure bound, and is released in outer finally before runner.cancel. Side-effect registration and settle cleanup are covered by try/finally; nested finally restores current_run_generation using its token. Prior original baseline blob identities agree with v3 old blob headers, including M2 90cd35d01080327883bace7134f3b154b2a72905, so the explicit base_tree change does not broaden the remediation baseline. Exact first v2 gate log confirms documented 1 failed/8747 passed/146 skipped, same after-settle False assertion, serial 6 passed and ci_gate success line; documentation explicitly avoids treating this as xdist zero failures or proven root cause. V3 focused JUnit/text show 6 passed; Ruff ratchet PASS shows new=0 and changed_file_diagnostics=0."
+  },
+  "candidate": ".worktrees/review-r123-20261013",
+  "scope": "R1 current-candidate verification and bounded conservative-matrix test lifecycle synchronization; R2 contributor documentation; R3 environment-qualified red registry and missing browser executable fixture; one adjacent optional-call narrowing at src/llm_loop/tools/registry.py:1591. Other inherited M4 changes remain context only and are not approved here.",
+  "evidence": {
+    "access": "Independent remote LFLM calls returned MCP -32603 Internal error. Reviewer inspected complete raw exported source/evidence bundles supplied by parent, computed hashes independently, and wrote this receipt locally for verbatim copying to candidate.",
+    "bundle": "Previously verified v1/v2 bundles plus r123_v3.json, r123_v3_full_gate_evidence.json and r123_v3_evidence.json",
+    "patch_hash_verified": true,
+    "all_seven_manifest_file_hashes_verified": true,
+    "diff_hunks_verified_against_exported_candidate": 13,
+    "baseline_xml_sha256_verified": "5081efdafaed55a54c181d0a18d8d8819db11b1038b322e5f8c868679724cab0",
+    "baseline_result": "49 cases: 44 passed, 5 setup errors; all 5 error messages identify FileNotFoundError for default Playwright cached Chromium path. R1 targeted conservative matrix case passed.",
+    "focused_xml_sha256": "00f7934ea4f068e6b0d65ee787937e393025385737a53be686e6c3f11d53fa28",
+    "focused_result": "45 cases: 40 passed, 5 skipped; all five browser guard cases explicitly state playwright chromium binary not installed; browser E2E unverified. Focused text agrees.",
+    "r1_source": "Current M2 source constructs engine before registry.register(_HeldTool()). test_d_gate_conservative_matrix now establishes actual in-flight entry before enqueue, keeps a bounded explicit hold, restores temporary contextvar state, and releases on cleanup; original conservative matrix assertions remain unchanged.",
+    "r2_authority": "docs/ai_rules.md:3-7, src/llm_loop/core/prompt.py:1-16,31-42, tests/unit/test_ai_rules_sync.py and tests/unit/test_common_governance.py confirm discoverable maintenance playbook exclusion with controlled static projections; pyproject.toml:3 is 0.6.32; scenarios_v1.json contains seven scenarios with samples=6 each.",
+    "qualification": "Registry explicitly limits conclusions to macOS candidate/environment, says skipped means unverified, retains real multi-UID/browser qualification obligations, and makes no current Ubuntu CI/full-suite/release claim.",
+    "all_eight_v2_manifest_file_hashes_verified": true,
+    "v2_files_sha256_verified": {
+      "CHANGELOG.md": "86903b5b85974edaf7d55d35f3bb6a85f43cbee5f7e0d0117f054f3887b7c8d9",
+      "CONTRIBUTING.md": "55eb17314dea8426de41b74ad35dde7a0a0abe43d3bf20b23eeca555f8b7c2fc",
+      "README.md": "a8b6bc1889e374a6ad74c636bd0534b4bfc75a3e88ae234aefb75da7dfb657f6",
+      "README.en.md": "ff4668bd9955e9fdb58cc19372761435c7f1e62a23480f3ec8e7fc2541c635f7",
+      "docs/INDEX.md": "b6d492fb8aed9c828d5594bfe361ac64a7b02b84bb2f652052f35829c5eb4363",
+      "docs/known-reds-20260909.md": "416007bdc1d1edeac659868ca96812922516e670cc9f0722920022401a765898",
+      "tests/integration/test_browser_semantic_guard_e2e.py": "1fb40b86110d6d1f2b86cbd6bef66b79e79860457dda5c17ac3611a2f9e74233",
+      "src/llm_loop/tools/registry.py": "8b4cb54fa79514399b6a1600ba840b426ad970e0f231ddae946add5b6b852764"
+    },
+    "v2_patch": "data/r123-remediation-v2.patch",
+    "v2_manifest": "data/r123-candidate-v2.json",
+    "registry_focused_xml_sha256": "9cd8356a6163c0c18ad310a1fddc4d4e2712aaf92d7a6d106d2fe41664cf4ac8",
+    "registry_focused_result": "18 passed, zero failures/errors/skips in exported JUnit; text agrees. Includes all 6 M2 cases and registry integration/unregister cases.",
+    "pyright_fixed_log_sha256": "ec84bda0aface96ed2a6565ef0dcd86788c55f8f257cfd7f8b11b2135c3f146e",
+    "pyright_fixed_result": "R9 ratchet PASS; historical=45,current=21,new=0,resolved=24,changed_file_diagnostics=0. Historical type debt remains visible; no baseline or waiver edit in remediation.",
+    "transport_integrity": "Initially incomplete registry export and CHANGELOG page joins failed reviewer hash checks and were rejected as evidence. Complete registry and LF-preserving CHANGELOG reexports now match the manifest exactly; the verified revised patch remains unchanged.",
+    "all_nine_v3_manifest_file_hashes_verified": true,
+    "v3_files_sha256_verified": {
+      "CHANGELOG.md": "3c9120e9ba113466cb9bfe3ae4849886f67248b2b9d209e7a584025115107988",
+      "CONTRIBUTING.md": "55eb17314dea8426de41b74ad35dde7a0a0abe43d3bf20b23eeca555f8b7c2fc",
+      "README.md": "a8b6bc1889e374a6ad74c636bd0534b4bfc75a3e88ae234aefb75da7dfb657f6",
+      "README.en.md": "ff4668bd9955e9fdb58cc19372761435c7f1e62a23480f3ec8e7fc2541c635f7",
+      "docs/INDEX.md": "b6d492fb8aed9c828d5594bfe361ac64a7b02b84bb2f652052f35829c5eb4363",
+      "docs/known-reds-20260909.md": "c79a277bb2c78974804e594c67a438f5b690dbdb472aa680b4a2cf223812ed7b",
+      "tests/integration/test_browser_semantic_guard_e2e.py": "1fb40b86110d6d1f2b86cbd6bef66b79e79860457dda5c17ac3611a2f9e74233",
+      "src/llm_loop/tools/registry.py": "8b4cb54fa79514399b6a1600ba840b426ad970e0f231ddae946add5b6b852764",
+      "tests/phase4/test_m2_inflight_interrupt.py": "87f50793d843a39fca7d77231372cb1d95f5373c24f9af07a1f3e35b17a29bfd"
+    },
+    "v3_patch": "data/r123-remediation-v3.patch",
+    "v3_manifest": "data/r123-candidate-v3.json",
+    "r1_original_file_sha256_verified": "362d165bff2e52666bcccb8fc6171c45ffc683fc233fc4c5a1817cc49596f980",
+    "r1_current_file_sha256_verified": "87f50793d843a39fca7d77231372cb1d95f5373c24f9af07a1f3e35b17a29bfd",
+    "first_v2_full_gate_log_sha256": "69e7db9a8b7b950b214a884837e35c082582df9fe0b4be344d33cc0d54997e8a",
+    "first_v2_full_gate_observation": "xdist had 1 failed/8747 passed/146 skipped; serial file retry had 6 passed and script emitted overall success under pre-existing D-B2-09 policy. This does not demonstrate xdist zero failures, a confirmed root cause, or browser/multi-UID qualification.",
+    "v3_focused_xml_sha256": "408865050839aa96000dad28a819ea5a1459c9cdc1d018c81a24c301e57f4b9c",
+    "v3_focused_text_sha256": "f6a064ac15305d2d1ae0638582f516a4eb9515a0bc6ed16f67eb2110d4049508",
+    "v3_focused_result": "6 passed, 0 failures/errors/skips; includes the conservative matrix test. Text and JUnit agree. Reviewer read evidence and did not run tests.",
+    "v3_ruff_log_sha256": "75d29360cdb56007c530784a06eaf404e249a3e781b05a4d7d5db99e6f26809b",
+    "v3_ruff_result": "Ruff ratchet PASS: historical=67,current=42,new=0,resolved=25,changed_file_diagnostics=0. Baseline unchanged."
+  },
+  "checklist": {
+    "correctness": "Complete v3 patch and newly changed test synchronization/docs inspected. All 9 manifest hashes and v3 patch SHA match. Narrow scope preserves every previous gate/enqueue assertion and actual failure branches; no new P0/P1/P2 findings.",
+    "boundaries": "10s entry and 30s held-tool wait are bounded failures, not skips. Outer finally releases tool and cancels runner on any assertion outcome; nested finally restores contextvar token even if side-effect settle cleanup raises. New harness cannot silently label incomplete entry as pass.",
+    "security": "No new credential, command-string execution, runtime authorization change, or unsafe path-write behavior in remediation diff.",
+    "regression": "Original 8 assertion expressions retained exactly and new lifecycle prerequisite asserted; no retry, skip, xfail, flaky exemption, production gate change, or baseline widening added. Exact v3 focused evidence is 6 passed. V3 full gate is pending this independent code-review receipt.",
+    "consistency": "New docs distinguish first v2 xdist failure from serial-policy success, do not claim a confirmed root cause, and retain browser/multi-UID qualification obligations. Prior prompt/version/evaluation authority conclusions remain unchanged."
+  },
+  "limitations": [
+    "Reviewer did not run tests, provider calls, live browser qualification, commit/stage/push/publish/restart, or approve inherited M4 changes beyond the specifically scoped registry narrowing line.",
+    "This PASS is an independent source-review gate for v3, not proof that the full-suite failure root cause is established or that the v3 full suite has passed.",
+    "Browser/multi-UID deployment, Ubuntu CI, release and restart qualification remain separate; skipped tests remain unverified."
+  ],
+  "base_tree": "0ee9001cfeb9a0a9d50a19d9bbaf9513bc9eb6bb"
+}

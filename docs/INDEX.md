@@ -8,7 +8,7 @@
 
 | 文档 | 说明 |
 |:---|:---|
-| `ai_rules.md` | **AI 自主规则唯一真相源（SoT）**，内嵌于 system prompt，`test_ai_rules_sync` 防漂移——运行必需 |
+| `ai_rules.md` | **AI 自主规则唯一真相源（SoT）**，按需读取；不镜像进普通 user run 的 universal prompt，`test_ai_rules_sync` 防止 playbook 回潮 |
 | `ANALYSIS-20260827-evidence-canary-rollout.md` | Evidence 生产启用 Canary 方案（批次2 设计稿）：C0 shadow→C1 镜像 enforce→C2 主区默认化，R12 前提核验+6 观察指标+硬回退条件 |
 | `ROADMAP-B-20260814.md` | 开源框架化路线图（面向使用者的项目方向说明） |
 | `api.md` | 公共 API 参考（装配/引擎/会话/工具/Web/CLI/扩展点） |

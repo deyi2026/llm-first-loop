@@ -1588,7 +1588,7 @@ class ToolRegistry:
                 # 异常分支（与单段等待语义等价），不得吞入自旋至总超时。
                 if future.done():
                     raise
-            if not interruptible:
+            if not interruptible or gate is None:
                 continue
             try:
                 if not bool(gate(active_session_id, call.name)):

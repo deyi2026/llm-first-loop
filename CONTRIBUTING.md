@@ -11,8 +11,8 @@
    不静默降级、不伪装成功。
 3. **容错优先**：组件故障 → `[程序异常]` 如实告知 → 循环继续。
 4. **规则真相源（SoT）**：`docs/ai_rules.md` 是唯一规则真相源；规则改动先改
-   SoT 再同步 `src/llm_loop/core/prompt.py`（防漂移测试 `test_ai_rules_sync`
-   会校验，改了 SoT 不同步会挂）。
+   SoT，并核对受影响的实现、工具契约与测试。`test_ai_rules_sync` 断言
+   universal prompt 不得镜像规则 playbook；不要把规则全文同步进 `prompt.py`。
 5. **公开面原则**：非必要文档不公开——开发过程文档（specs/内部记录）留本地；
    公开仓库只放运行必需 + 面向使用者的内容。
 

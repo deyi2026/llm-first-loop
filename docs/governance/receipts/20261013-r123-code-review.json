@@ -1,0 +1,93 @@
+{
+  "gate": "code",
+  "reviewer": "/root/r123_code_review",
+  "verdict": "PASS",
+  "scope_files": [
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "README.en.md",
+    "docs/INDEX.md",
+    "docs/known-reds-20260909.md",
+    "tests/integration/test_browser_semantic_guard_e2e.py",
+    "src/llm_loop/tools/registry.py"
+  ],
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "CHANGELOG.md:8; docs/known-reds-20260909.md:59",
+      "issue": "New remediation text claims installed-browser startup errors continue to fail, but the inspected env fixture still calls pytest.skip when Chromium exits or fails to expose a DevTools endpoint within 15 seconds (tests/integration/test_browser_semantic_guard_e2e.py:123-139). An existing installed executable can therefore produce skipped cases, contradicting these new unconditional claims. Skipped browser cases cannot establish mandatory browser qualification.",
+      "fix_hint": "Narrow both statements to the exact missing-executable-file branch introduced by this patch; explicitly acknowledge the pre-existing CDP-readiness skip as unverified. Keep ordinary Popen/connect/assertion failures described precisely and preserve mandatory qualification requiring actual case execution. No fixture-policy expansion is required.",
+      "status": "resolved"
+    }
+  ],
+  "applied": [
+    "P1-1"
+  ],
+  "rejected": [],
+  "artifact_sha256": "d8b28911e595f99b16df8de192766e1f485d3346b859c6cb2ce60572c29b0a1d",
+  "narrow_recheck": {
+    "reviewer": "/root/r123_code_review",
+    "verdict": "PASS",
+    "scope_files": [
+      "CHANGELOG.md",
+      "docs/known-reds-20260909.md",
+      "src/llm_loop/tools/registry.py"
+    ],
+    "source_scope": "src/llm_loop/tools/registry.py:1591 only, with enclosing _wait_with_interrupt_gate and callback installation/termination context inspected",
+    "original_artifact_sha256": "e678895c3a1118f929808bb3dcc8e02f229fb1ed6bd0f85c6240feb11f6d7a7a",
+    "artifact_sha256": "d8b28911e595f99b16df8de192766e1f485d3346b859c6cb2ce60572c29b0a1d",
+    "resolved": [
+      "P1-1"
+    ],
+    "new_findings": [],
+    "evidence": "Corrected CHANGELOG.md:8 and known-reds registry:59 explicitly state both missing-file and pre-existing CDP-not-ready skips are unverified, with no deployment qualification. CHANGELOG.md:9 and registry.py:1572-1594 agree: a local gate=None already makes interruptible=False; adding or gate is None preserves the existing conservative wait path while narrowing Optional before call. Parent-exported Pyright ratchet log is PASS with new=0 and changed_file_diagnostics=0; new focused JUnit has 18 cases, 0 failures/errors/skips."
+  },
+  "candidate": ".worktrees/review-r123-20261013",
+  "scope": "R1 current-candidate verification; R2 contributor documentation; R3 environment-qualified red registry and missing browser executable fixture; exactly one adjacent optional-call narrowing at src/llm_loop/tools/registry.py:1591. Other inherited M4 changes remain context only and are not approved here.",
+  "evidence": {
+    "access": "Independent remote LFLM calls returned MCP -32603 Internal error. Reviewer inspected complete raw exported source/evidence bundles supplied by parent, computed hashes independently, and wrote this receipt locally for verbatim copying to candidate.",
+    "bundle": "r123_bundle.json, r123_supplement.json, r123_v2.json, r123_v2_complete.json, r123_v2_changelog.json and r123_v2_evidence.json",
+    "patch_hash_verified": true,
+    "all_seven_manifest_file_hashes_verified": true,
+    "r1_current_file_sha256_verified": "362d165bff2e52666bcccb8fc6171c45ffc683fc233fc4c5a1817cc49596f980",
+    "diff_hunks_verified_against_exported_candidate": 9,
+    "baseline_xml_sha256_verified": "5081efdafaed55a54c181d0a18d8d8819db11b1038b322e5f8c868679724cab0",
+    "baseline_result": "49 cases: 44 passed, 5 setup errors; all 5 error messages identify FileNotFoundError for default Playwright cached Chromium path. R1 targeted conservative matrix case passed.",
+    "focused_xml_sha256": "00f7934ea4f068e6b0d65ee787937e393025385737a53be686e6c3f11d53fa28",
+    "focused_result": "45 cases: 40 passed, 5 skipped; all five browser guard cases explicitly state playwright chromium binary not installed; browser E2E unverified. Focused text agrees.",
+    "r1_source": "tests/phase4/test_m2_inflight_interrupt.py:283-299 constructs engine before engine.registry.register(_PlainSleepTool()); reported UnboundLocalError is absent in inspected candidate and was not reproduced by baseline/focused evidence.",
+    "r2_authority": "docs/ai_rules.md:3-7, src/llm_loop/core/prompt.py:1-16,31-42, tests/unit/test_ai_rules_sync.py and tests/unit/test_common_governance.py confirm discoverable maintenance playbook exclusion with controlled static projections; pyproject.toml:3 is 0.6.32; scenarios_v1.json contains seven scenarios with samples=6 each.",
+    "qualification": "Registry explicitly limits conclusions to macOS candidate/environment, says skipped means unverified, retains real multi-UID/browser qualification obligations, and makes no current Ubuntu CI/full-suite/release claim.",
+    "all_eight_v2_manifest_file_hashes_verified": true,
+    "v2_files_sha256_verified": {
+      "CHANGELOG.md": "86903b5b85974edaf7d55d35f3bb6a85f43cbee5f7e0d0117f054f3887b7c8d9",
+      "CONTRIBUTING.md": "55eb17314dea8426de41b74ad35dde7a0a0abe43d3bf20b23eeca555f8b7c2fc",
+      "README.md": "a8b6bc1889e374a6ad74c636bd0534b4bfc75a3e88ae234aefb75da7dfb657f6",
+      "README.en.md": "ff4668bd9955e9fdb58cc19372761435c7f1e62a23480f3ec8e7fc2541c635f7",
+      "docs/INDEX.md": "b6d492fb8aed9c828d5594bfe361ac64a7b02b84bb2f652052f35829c5eb4363",
+      "docs/known-reds-20260909.md": "416007bdc1d1edeac659868ca96812922516e670cc9f0722920022401a765898",
+      "tests/integration/test_browser_semantic_guard_e2e.py": "1fb40b86110d6d1f2b86cbd6bef66b79e79860457dda5c17ac3611a2f9e74233",
+      "src/llm_loop/tools/registry.py": "8b4cb54fa79514399b6a1600ba840b426ad970e0f231ddae946add5b6b852764"
+    },
+    "v2_patch": "data/r123-remediation-v2.patch",
+    "v2_manifest": "data/r123-candidate-v2.json",
+    "registry_focused_xml_sha256": "9cd8356a6163c0c18ad310a1fddc4d4e2712aaf92d7a6d106d2fe41664cf4ac8",
+    "registry_focused_result": "18 passed, zero failures/errors/skips in exported JUnit; text agrees. Includes all 6 M2 cases and registry integration/unregister cases.",
+    "pyright_fixed_log_sha256": "ec84bda0aface96ed2a6565ef0dcd86788c55f8f257cfd7f8b11b2135c3f146e",
+    "pyright_fixed_result": "R9 ratchet PASS; historical=45,current=21,new=0,resolved=24,changed_file_diagnostics=0. Historical type debt remains visible; no baseline or waiver edit in remediation.",
+    "transport_integrity": "Initially incomplete registry export and CHANGELOG page joins failed reviewer hash checks and were rejected as evidence. Complete registry and LF-preserving CHANGELOG reexports now match the manifest exactly; the verified revised patch remains unchanged."
+  },
+  "checklist": {
+    "correctness": "Original complete diff reviewed, then revised docs and single adjacent source line independently rechecked. All 8 manifest file hashes and revised patch SHA match. P1-1 resolved; no remaining P0/P1/P2 findings.",
+    "boundaries": "Browser missing-file skip stays before Popen; existing CDP-readiness skip is now disclosed. Registry explicit gate-is-None check preserves missing-callback wait behavior, success result handling, total timeout, and conservative callback-exception handling.",
+    "security": "No new credential, command-string execution, runtime authorization change, or unsafe path-write behavior in remediation diff.",
+    "regression": "No test deletion, assert weakening, marker exclusion, baseline widening, schema change, or prompt-source edit in this remediation. Focused anchors are represented in evidence.",
+    "consistency": "Reviewed governing documents and current prompt/version/evaluation authorities. Corrected text agrees with actual skip behavior and preserves mandatory qualification requiring executed browser cases."
+  },
+  "limitations": [
+    "Reviewer did not run tests, provider calls, live browser qualification, commit/stage/push/publish/restart, or approve inherited M4 changes beyond the single explicitly scoped registry narrowing line.",
+    "This PASS is the independent code-review gate for the identified remediation artifact, not a full-test, Ubuntu CI, browser/multi-UID deployment, release, or restart qualification receipt."
+  ]
+}

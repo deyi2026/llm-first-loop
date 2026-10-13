@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -262,34 +263,35 @@ def _race_sample(build_test_engine, i: int, construct: str, inject_delay: float,
 
 def test_d_gate_conservative_matrix(build_test_engine):
     """§4.4 gate 保守矩阵（unit）：各失败面 → False；全清 → True."""
-    # run 需存活整个断言期（handle status=running 是 peek/enqueue 的前提）：
-    # 单轮即完的 run 会让后续断言与 handle 清理赛跑（全套负载下必现）。
-    # 存活工具用内联纯 sleep——不登记 revocable=False 副作用（locked 工具会登记
-    # 且永不 settle，负载下登记先于断言落账 →「已结算后恢复 True」被自身工具污染）。
-    class _PlainSleepTool:
-        name = "phase4_plain_sleep"
-        description = "test_d 专用：纯 sleep 保活，无副作用登记"
-        parameters = {"type": "object",
-                      "properties": {"seconds": {"type": "number"}},
-                      "required": ["seconds"]}
+    # 先确认工具真实进入在途，再入队；断言期由显式 release 保活，避免
+    # 固定 sleep 与入队消费/handle 清理竞争。工具不登记不可撤回副作用。
+    entered = threading.Event()
+    release = threading.Event()
 
-        def execute(self, seconds: float = 5.0) -> str:
-            time.sleep(seconds)
-            return "plain sleep done"
+    class _HeldTool:
+        name = "phase4_hold_open"
+        description = "test_d 专用：事件同步保活，无副作用登记"
+        parameters = {"type": "object", "properties": {}}
+
+        def execute(self) -> str:
+            entered.set()
+            if not release.wait(timeout=30.0):
+                raise TimeoutError("gate matrix fixture was not released")
+            return "held tool released"
 
     engine, fake = build_test_engine([
         {"content": "go", "tool_calls": [
-            ToolCall(id="gate-matrix-c1", name="phase4_plain_sleep",
-                     arguments={"seconds": 5.0})]},
+            ToolCall(id="gate-matrix-c1", name="phase4_hold_open", arguments={})]},
         {"content": "ok"},
     ])
-    engine.registry.register(_PlainSleepTool())
+    engine.registry.register(_HeldTool())
     runner = BackgroundRunner(engine)
     engine.runner = runner
     sid = engine.session.create()
     gate = engine._phase4_interrupt_gate
     try:
         _h, q = runner.start(sid, "ping")
+        assert entered.wait(timeout=10.0), "gate matrix tool did not enter in-flight"
         gen = (runner.get_handle(sid) or {}).get("run_generation")
         # 1) 无 peek → False
         assert gate(sid, "execute_command") is False
@@ -305,16 +307,19 @@ def test_d_gate_conservative_matrix(build_test_engine):
         #    全套下 main 线程残留其他用例的代次会造成跨 run 误判（污染源））
         from llm_loop.core.loop.side_effects import SideEffectRegistry
         from llm_loop.core.run_context import current_run_generation
-        current_run_generation.set("")
+        generation_token = current_run_generation.set("")
         ser = SideEffectRegistry.instance()
-        ser.register(sid, "t", "a", "k", revocable=False, detail="gate-matrix")
         try:
+            ser.register(sid, "t", "a", "k", revocable=False, detail="gate-matrix")
             assert gate(sid, "execute_command") is False
         finally:
-            snap = ser.snapshot(sid)
-            for it in snap:
-                if it.get("detail") == "gate-matrix":
-                    ser.settle(it.get("id"), reason="gate-matrix-test")
+            try:
+                snap = ser.snapshot(sid)
+                for it in snap:
+                    if it.get("detail") == "gate-matrix":
+                        ser.settle(it.get("id"), reason="gate-matrix-test")
+            finally:
+                current_run_generation.reset(generation_token)
         # 已结算后恢复 True
         assert gate(sid, "execute_command") is True
         # 5) stop 链优先：cancel_reason 非空 → False（stop 通道接管）
@@ -327,6 +332,7 @@ def test_d_gate_conservative_matrix(build_test_engine):
         assert gate(sid, "execute_command") is True
         # 6) gate 抛异常路径（引擎侧兜底）→ 不在此测（registry 侧 except 覆盖）
     finally:
+        release.set()
         runner.cancel(sid)
 
 
