@@ -243,6 +243,42 @@ class FakeLLM:
     def tool(name: str, arguments: dict, tc_id: str = "call_fake_1") -> ToolCall:
         return ToolCall(id=tc_id, name=name, arguments=arguments)
 
+    # Phase5 M2（设计 §2.2.5）：可选流式通道——缺省不挂 chat_stream 属性
+    # （engine getattr 拿不到 → 同步 chat，既有测试零影响）。enable_stream
+    # 后实例级绑定：按 stream_config 逐 delta 产出；on_delta_n 为确定性同步
+    # 钩子（在产 delta 的 next() 内回调，钩子返回即注入完成，随后同一 delta
+    # 的流内检查点必然命中——消除 S17 时序 flaky，设计评审 Q4）。
+    def enable_stream(self, config: dict) -> None:
+        self.stream_config = config
+        self.chat_stream = self._chat_stream_impl
+
+    def _chat_stream_impl(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None = None,
+        model: str | None = None,
+    ):
+        import time as _time
+        from types import SimpleNamespace
+
+        cfg = dict(self.stream_config or {})
+        delay = float(cfg.get("delta_delay_s", 0.0) or 0.0)
+        hooks = cfg.get("on_delta_n") or {}
+        pieces = list(cfg.get("deltas") or [])
+        # 与 chat 同源取数并记录 calls（S17-M2 断言下一轮请求历史用）；
+        # generator 体在首个 next 才执行（engine 开始消费流时）。
+        final_resp = self.chat(messages, tools, timeout_s=timeout_s, model=model)
+        for i, piece in enumerate(pieces):
+            if delay:
+                _time.sleep(delay)
+            hook = hooks.get(i)
+            if callable(hook):
+                hook(i)
+            yield SimpleNamespace(text=piece)
+        return final_resp
+
 
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path, monkeypatch):

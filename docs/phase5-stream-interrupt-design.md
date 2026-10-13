@@ -130,3 +130,24 @@ recorded_results 518-533 构建 →（540-545 同步 save，无 yield）→ 547-
   - B2→§2.2.3 双保险（新 via 强制 False+桶派生判序最前）+ §2.2.4 P2-5 轮首复位 + S18-M3；
   - Q1→§2.2.2 收割分支插点=2182 前、rounds 顶部自增不手动+1、r1「空响应终止分支」表述作废；Q2→via 直传+harvest 暂存；Q3→S17-M4 开关关闭变体；Q4→on_delta_n 确定性钩子+节流可注入；Q5→§3.7 计量口径声明；Q6→S17-M3 变体②；
   - C1→局部 flag；C2→fire→close 先例序；C3→检查位+丢弃口径固定；C4→采纳（单文件+老数据兼容核实）；C5→§1.1 表重写按代码事实；C6→§8 点名；C7→§5 明示；C8→采纳（M1 先行）。
+
+- 2026-10-13 实施修订（r2 落地后发现，全部有测试锁定）：
+  - **§2.2.4 复位位置修订**：轮首复位原定于轮内消费点之前——实施中实测发现
+    该消费点（via=round_start）正是 Phase4 M3 interruptible 桶样本的收割路径
+    （S13 形态：工具打断后下一轮轮内消费，戳记=读上一轮置位 True，这是
+    **特性而非残值**）。复位移至轮内消费点**之后**（rounds+=1 前）：既保留
+    interruptible 桶口径，又消除其后（本轮 LLM 流/final_gate/跨 run）的残值
+    读取。S18-M3 锁定跨 run 消除，Phase4 M3 回归锁定桶语义不回归。
+  - **S18-M2 构造修订**：原「时序窗口注入」（c3 完成前 ~100ms）在连跑负载
+    下 flaky（首败实测）。改为不可取消工具 phase4_locked_sleep（revocable=
+    False）作 c3——注入时机无窗口约束（gate 不取消、必然自然完成），确定性
+    纯 gap 收割；4 连跑全绿。
+  - **Phase4 M3 桶集合断言扩展**：test_m3_aggregate_endpoint_buckets 的桶
+    集合断言从四桶扩为五桶（+llm_stream_interrupt）——Phase4 四桶语义与
+    全部既有断言不变。
+  - **FakeLLM chat_stream 注入线程模型**：on_delta_n 钩子在 run 线程内直接
+    TestClient.post 会 portal 死锁（实测超时）；改为跨线程事件同步（run 线程
+    hook 只发就绪信号并阻塞，主线程完成注入后放行），确定性不降。
+  - **runner 终报形态**：cancelled 语义经 type=done + result.run_incomplete/
+    final_answer=「已停止」表达（非 type=cancelled）——S17-M3 断言按实测形态
+    锁定。

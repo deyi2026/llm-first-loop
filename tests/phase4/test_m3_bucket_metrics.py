@@ -210,6 +210,9 @@ def test_m3_aggregate_endpoint_buckets(build_test_engine):
     with tempfile.TemporaryDirectory() as td:
         hq = HumanTurnQueue(td)
         agg = hq.aggregate_interject_metrics("no-such-session")
+    # Phase5 M2（§2.2.3）：桶集合扩展 llm_stream_interrupt（流内打断收割，
+    # 判序最前独立统计）——Phase4 四桶语义不变。
     assert "buckets" in agg and set(agg["buckets"]) == {
-        "interruptible", "natural_boundary", "llm_stream", "idle"}
+        "interruptible", "natural_boundary", "llm_stream",
+        "llm_stream_interrupt", "idle"}
     assert all("insufficient_sample" in v for v in agg["buckets"].values())

@@ -1,0 +1,96 @@
+{
+  "g1_llm_stream_interrupt": {
+    "n": 10,
+    "t_effect_samples": [
+      3.8,
+      4.1,
+      5.6,
+      3.8,
+      4.0,
+      5.6,
+      3.8,
+      7.0,
+      6.0,
+      7.4
+    ],
+    "p50": 4.1,
+    "p95": 7.4,
+    "consumed_via": [
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt",
+      "llm_stream_interrupt"
+    ],
+    "interrupt_receipts": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "g2_llm_stream_conservative": {
+    "n": 10,
+    "t_effect_samples": [
+      924.6,
+      930.0,
+      937.0,
+      927.7,
+      924.6,
+      933.5,
+      932.6,
+      935.1,
+      911.7,
+      933.8
+    ],
+    "p50": 930.0,
+    "p95": 937.0,
+    "consumed_via": [
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate"
+    ],
+    "interrupt_receipts": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "gates": {
+    "g1": {
+      "p50_max_ms": 500.0,
+      "p95_max_ms": 900.0,
+      "pass": true
+    },
+    "g2": {
+      "p50_max_ms": 1550.0,
+      "pass": true
+    }
+  },
+  "generated_at": "2026-10-13T14:21:06+0800"
+}

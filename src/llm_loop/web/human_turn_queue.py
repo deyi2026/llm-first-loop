@@ -615,7 +615,12 @@ class HumanTurnQueue:
             # Phase4 M3 四桶机械归属（§7）：interruptible=本轮含打断回执；
             # 其余按消费点：final_gate→llm_stream；gap_harvest→idle；
             # round_start/无戳记（老数据）→natural_boundary（轮转消费缺省）。
-            if it.get("interrupt_receipt"):
+            # Phase5 M2（设计 §2.2.3）：llm_stream_interrupt（流内插话打断收割）
+            # 判序最前——先于 interrupt_receipt，防跨轮残值 True 劫持新桶样本
+            # （该消费点 interrupt_receipt 恒 False，双保险）。
+            if it.get("consumed_via") == "llm_stream_interrupt":
+                bucket = "llm_stream_interrupt"
+            elif it.get("interrupt_receipt"):
                 bucket = "interruptible"
             elif it.get("consumed_via") == "final_gate":
                 bucket = "llm_stream"
@@ -639,7 +644,15 @@ class HumanTurnQueue:
         # Phase4 M3 分桶汇总（§7 验收面）：每桶 n/p50/p95，样本不足 5 标注
         # insufficient_sample（诚实口径，不冒充达标）。
         buckets_out: dict[str, Any] = {}
-        for b in ("interruptible", "natural_boundary", "llm_stream", "idle"):
+        # Phase5 M2：汇总桶序追加 llm_stream_interrupt（打断收割路径，独立统计，
+        # 与保守等待路径 llm_stream 分开，不互相冒充；合并视图另列总口径）。
+        for b in (
+            "interruptible",
+            "natural_boundary",
+            "llm_stream",
+            "llm_stream_interrupt",
+            "idle",
+        ):
             effs = sorted(
                 row["t_effect_ms"]
                 for row in rows

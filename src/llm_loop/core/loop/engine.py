@@ -120,6 +120,12 @@ logger = logging.getLogger(__name__)
 
 _CANCELLED_ANSWER = "（已停止——用户点击停止按钮，本轮回答终止）"
 
+# Phase5 M2（设计 §2.2.1/§2.3）：LLM 流内插话检查点节流间隔。
+# 开关经 settings.tool_runtime.llm_stream_interject_checkpoint（config.py 集中
+# 装配 LLM_STREAM_INTERJECT_CHECKPOINT，缺省开）——关闭即回退保守 final_gate
+# 路径（流内不检查插话，等流自然结束），配置级回滚无需改代码。
+_STREAM_INTERJECT_CHECK_MIN_GAP_S = 0.04  # 每 delta peek 会持 mailbox 锁，节流
+
 
 def _background_cancelled(engine: Any, session_id: str) -> bool:
     runner = getattr(engine, "runner", None)
@@ -1008,6 +1014,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 _nonempty_interjected = [row for row in _interjected if row.strip()]
                 if _nonempty_interjected:
                     user_text = "\n\n".join(_nonempty_interjected)
+            # Phase5 M2（P2-5，设计 §2.2.4 修订，见 §10）：复位置于轮内消费点
+            # **之后**——消费点读上一轮工具打断置位（interruptible 桶口径，
+            # Phase4 M3 S13 形态）必须保留；复位只消除其后（本轮 LLM 流、
+            # final_gate、下一 run）读到的跨轮/跨 run 残值。
+            self._run_state().last_receipt_interrupted = False
             rounds += 1
             _projection_mandatory_only = False
             # CR-R1.1（审查项7）: 轮次入 contextvar——cognitive telemetry 等 build 期
@@ -1733,6 +1744,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 nonconvergence_jaccard=self.settings.tool_runtime.nonconvergence_fuse_jaccard,
                 nonconvergence_min_delta=self.settings.tool_runtime.nonconvergence_fuse_min_delta,
             )  # B1: 轮级重置 + durable in-flight checkpoint for restart continuity
+            # Phase5 M2（设计 §2.2.1/§2.2.2）：流内插话检查点每轮局部状态——
+            # _interject_interrupted 打断收割 flag（run 不终止，流后收割分支消费）；
+            # _stream_icheck_last 节流时间戳（≥间隔才 peek mailbox）。
+            _interject_interrupted = False
+            _stream_icheck_last = 0.0
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
                 _llm_round_ms = 0.0
@@ -1808,6 +1824,42 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                             "LLM stream close 失败（fail-open）", exc_info=True
                                         )
                                 break
+                            # Phase5 M2（设计 §2.2.1/§2.2.2）：流内插话检查点——
+                            # Stop 优先（上分支），插话次之；节流（≥间隔才 peek，
+                            # 检查位=next(it) 返回后、on_delta 前，命中即丢弃本
+                            # delta）。命中打断收割：半截产物如实限量落盘（P1-6
+                            # 同款，不伪装完整）→ close → 置 flag → 流后收割分支。
+                            if (
+                                getattr(
+                                    self.settings.tool_runtime,
+                                    "llm_stream_interject_checkpoint",
+                                    True,
+                                )
+                                and (time.monotonic() - _stream_icheck_last)
+                                >= _STREAM_INTERJECT_CHECK_MIN_GAP_S
+                            ):
+                                _stream_icheck_last = time.monotonic()
+                                _icheck_runner = getattr(self, "runner", None)
+                                if (
+                                    _icheck_runner is not None
+                                    and getattr(_icheck_runner, "enabled", False)
+                                    and _icheck_runner.interjections_pending(session_id)
+                                ):
+                                    _interject_interrupted = True
+                                    _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                    cap.fire(
+                                        sess, "interjection_interrupted", rounds
+                                    )  # 半截产物限量落盘 + llm.interrupted 审计（防重内聚）
+                                    _icheck_close = getattr(it, "close", None)
+                                    if callable(_icheck_close):
+                                        try:
+                                            _icheck_close()
+                                        except Exception:  # noqa: BLE001 — 收割释放流 fail-open
+                                            logger.debug(
+                                                "LLM stream close 失败（fail-open）",
+                                                exc_info=True,
+                                            )
+                                    break
                             if not _ttft_done and getattr(d, "text", ""):
                                 _ttft_done = True
                                 ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
@@ -2189,6 +2241,30 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 final_answer = _CANCELLED_ANSWER
                 resp = None  # 防止上一轮响应残留参与 usage/reasoning/finalize
                 break
+
+            if _interject_interrupted:
+                # Phase5 M2（设计 §2.2.2）：流内插话打断收割——run 不终止，轮边界
+                # 收割：settle INTERRUPTED + attempt 收口 → 消费插话（via=
+                # llm_stream_interrupt，interrupt_receipt 恒 False）→ 下一轮 LLM
+                # 请求历史含插话 user 消息（半截行按 P1-6 退役纪律不进 provider
+                # 投影）。usage/reasoning 归集跳过（打断固有，与 cancelled 同口径）。
+                if _provider_call_coordinator is not None:
+                    _provider_call_coordinator.settle_shadow_call(
+                        _provider_call, ProviderCallOutcome.INTERRUPTED
+                    )
+                self._tool_cycle._reachability_finalize("interjection_interrupted_provider")
+                resp = None  # 打断轮无完整响应，防残留参与 usage/reasoning/finalize
+                _interrupted_texts = _consume_live_interjections(
+                    self, session_id, sess, via="llm_stream_interrupt"
+                )
+                if _interrupted_texts:
+                    # 收割文本并入轮首合并桶（设计 Q2：否则下一轮轮首消费点空取，
+                    # user_text 辅助视图错过本轮插话）。
+                    with contextlib.suppress(Exception):
+                        self._run_state().interject_harvest_user_texts.extend(
+                            t for t in _interrupted_texts if t.strip()
+                        )
+                continue
 
             # All paths reaching this boundary have a completed provider response:
             # normal return, successful fallback, or successful ERR1210 recovery.

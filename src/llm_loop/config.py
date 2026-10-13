@@ -54,6 +54,9 @@ class ToolRuntimeSettings:
     nonconvergence_fuse_windows: int = 3
     nonconvergence_fuse_jaccard: float = 0.6
     nonconvergence_fuse_min_delta: int = 16
+    # Phase5 M2（设计 §2.3）：LLM 流内插话检查点开关——False 时回退保守
+    # final_gate 路径（流内不检查插话，等流自然结束），配置级回滚。
+    llm_stream_interject_checkpoint: bool = True
 
 
 @dataclass(frozen=True)
@@ -1078,6 +1081,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         nonconvergence_fuse_windows=env_int("LFL_NONCONV_FUSE_WINDOWS", 3),
         nonconvergence_fuse_jaccard=_nonconvergence_jaccard,
         nonconvergence_fuse_min_delta=env_int("LFL_NONCONV_FUSE_MIN_DELTA", 16),
+        llm_stream_interject_checkpoint=_env_bool(
+            "LLM_STREAM_INTERJECT_CHECKPOINT", True
+        ),
     )
     settings = Settings(
         llm_api_key=api_key,

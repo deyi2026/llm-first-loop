@@ -129,13 +129,21 @@ def _consume_live_interjections(
             # Phase4 M3 分桶戳记（§7）：消费点事实（via）+ 本轮打断回执事实
             # （run_state.last_receipt_interrupted，tool_cycle 回执落盘时置位）；
             # fail-open（acknowledge 内部兜底），分桶派生在 aggregate。
+            # Phase5 M2（设计 §2.2.3）：流内打断收割消费点无工具回执参与，
+            # interrupt_receipt 恒 False（与桶派生判序最前双保险，防跨轮残值
+            # 劫持新桶样本）。
+            _interrupt_receipt = (
+                False
+                if via == "llm_stream_interrupt"
+                else bool(
+                    getattr(engine._run_state(), "last_receipt_interrupted", False)
+                )
+            )
             with contextlib.suppress(Exception):
                 ack(
                     row,
                     consumed_via=via,
-                    interrupt_receipt=bool(
-                        getattr(engine._run_state(), "last_receipt_interrupted", False)
-                    ),
+                    interrupt_receipt=_interrupt_receipt,
                 )
         with contextlib.suppress(Exception):
             engine._record_action(

@@ -81,7 +81,7 @@ def test_experience_catalog_usage_stats(build_test_engine, tmp_path) -> None:
     client = _client(engine, tmp_path)
     store = engine.corrections._experience_store  # noqa: SLF001
     ref_a = _seed_experience(store, "used one")
-    ref_b = _seed_experience(store, "never used")
+    _ref_b = _seed_experience(store, "never used")  # noqa: F841 — 对照组（use_count=0 分支）
 
     store.record_use(ref_a, use_decision="applied", note="first")
     store.record_use(ref_a, use_decision="adapted", note="second")
