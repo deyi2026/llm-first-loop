@@ -355,6 +355,11 @@ def test_g_sequence_head_harvest_all(build_test_engine):
     engine.runner = runner
     client = TestClient(build_app(engine=engine))
     sid = engine.session.create()
+    # 注：Phase6 M1 后同步 LLM 窗口默认开闸（窗口内插话提前打断计划轮）；
+    # 本测试的语义目标是「序列头收割」机制（计划返回后的序列头边界），
+    # 故显式关闸走旧行为——该机制仍服务晚到插话与关闸回退（Phase6 §5.6/§9）。
+    _tr = engine.settings.tool_runtime
+    object.__setattr__(_tr, "sync_chat_interject_checkpoint", False)
     try:
         _h, q = runner.start(sid, "请规划并执行")
         # 等首次 LLM 调用开始（计划窗口开启）后注入

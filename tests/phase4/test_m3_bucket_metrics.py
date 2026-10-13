@@ -154,7 +154,9 @@ def test_m3_four_buckets(build_test_engine):
     assert all(v == "round_start" for v in out["interruptible"]["consumed_via"]), out["interruptible"]
     assert not any(out["natural_boundary"]["interrupt_receipts"]), out["natural_boundary"]
     assert all(v == "round_start" for v in out["natural_boundary"]["consumed_via"]), out["natural_boundary"]
-    assert all(v == "final_gate" for v in out["llm_stream"]["consumed_via"]), out["llm_stream"]
+    # Phase6 M1 后：同步 LLM 窗口内插话默认被窗口轮询截获（via=sync_window_poll，
+    # 新口径即设计 §5.6 T1 度量依据）；final_gate 归属保留给晚到/关闸回退。
+    assert all(v == "sync_window_poll" for v in out["llm_stream"]["consumed_via"]), out["llm_stream"]
     # idle 桶为「到达-边界」竞速构造（外部 HTTP 注入对 µs 级间隙有 ±30ms 抖动）：
     # 命中间隙的样本测收割机制时延（via=gap_harvest，目标 ≤50ms）；错失边界的
     # 样本落入 natural_boundary（轮转消费，如实归属，不打断零误标）。≥3/5 命中

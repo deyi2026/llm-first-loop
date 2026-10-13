@@ -214,6 +214,11 @@ def test_grade_cbf_at_final_gate(build_test_engine):
     assert _wait_tool_started(engine)
     # 关键时序：等到第 2 次 LLM 调用（延迟终答在途）开始后再插话——
     # 消息才会落在终答结算边界前（CBF 窗口），而非第 2 轮起始消费。
+    # 注：Phase6 M1 后同步调用默认开窗轮询（窗口内插话走 sync_window_poll
+    # 提前打断）；本测试的语义目标是「结算边界 CBF」旧路径，故显式关闸，
+    # 该路径仍服务晚到插话与关闸回退（设计 §5.6/§9）。
+    _tr = engine.settings.tool_runtime
+    object.__setattr__(_tr, "sync_chat_interject_checkpoint", False)
     deadline = time.monotonic() + 5.0
     while len(getattr(_fake, "calls", [])) < 2 and time.monotonic() < deadline:
         time.sleep(0.02)

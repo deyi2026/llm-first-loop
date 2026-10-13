@@ -58,6 +58,12 @@ class ToolRuntimeSettings:
     # final_gate 路径（流内不检查插话，等流自然结束），配置级回滚。
     llm_stream_interject_checkpoint: bool = True
 
+    # Phase6：同步 chat 通道（无 chat_stream 的 client：FakeLLM 同步形态 /
+    # deepseek-web / chatgpt-web）窗口内打断检查点。开：provider 调用移入
+    # worker 线程 + run 线程轮询（消费即时 + INTERRUPTED 结算 + Stop 即时终态）；
+    # 关：回退内联阻塞（窗口形态，final_gate 保守收割），配置级回滚。
+    sync_chat_interject_checkpoint: bool = True
+
 
 @dataclass(frozen=True)
 class HistoryPolicySettings:
@@ -1083,6 +1089,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         nonconvergence_fuse_min_delta=env_int("LFL_NONCONV_FUSE_MIN_DELTA", 16),
         llm_stream_interject_checkpoint=_env_bool(
             "LLM_STREAM_INTERJECT_CHECKPOINT", True
+        ),
+        sync_chat_interject_checkpoint=_env_bool(
+            "LFL_SYNC_CHAT_INTERJECT_CHECKPOINT", True
         ),
     )
     settings = Settings(

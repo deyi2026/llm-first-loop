@@ -129,3 +129,46 @@ grill_me 盘问（edge_cases/failure_modes/scale）+ 自查，回填 4 项：
 6. **竞态边界定义**：poll 循环以「worker 完成」或「命中」先到者为准；命中优先
    （即使 worker 已完成，检测到窗口内插话即打断）。worker 先完成且无命中 →
    走既有路径（final_gate 仍适用于晚到插话）。
+
+## 9. M1 实施修订记录（2026-10-13，TDD red→green）
+
+评审回填断言落地（`tests/phase6/test_m1_sync_interrupt.py` S1-S9；red 证据：
+撤除 engine 同步分支改动后 S1/S2/S6/S7/S8/S9 六项失败，恢复后 10 passed）：
+
+- **共享路径改动列明（§4.6 披露义务）**：共享收割分支 `via="llm_stream_interrupt"`
+  改为 `via=_interrupt_via`（默认值不变，仅同步分支轮内改置 `sync_window_poll`）。
+  流式通道行为零变化（默认值路径等价）。
+- **R6 实现缺陷修复**：初版 worker 完成分支直接 break，插话检查受 40ms 节流跳过时
+  worker 完成可抢占已 pending 的窗口内插话（违反 §8.6 命中优先）。修复：完成检测点
+  补一次**无节流终检**，窗口内插话仍可见即打断，晚到完整响应按打断轮丢弃。
+  S9 以「插话仅在 worker 完成后可见」的确定性构造锁定该语义。
+- **R1 断言口径**：测试注入记录型 SpyCallCoordinator，断言打断轮恰好一次
+  INTERRUPTED 结算、每 call 单次结算、下一轮正常 success；journal 幂等守卫
+  （同 outcome 幂等/异 outcome 报冲突）由资源层既有实现保证。
+- **R5 断言**：工具轮窗口打断，响应含 tool_calls 也不执行（spy tool 零调用），
+  下一轮仅消费插话。
+- **S3 配置门**：`sync_chat_interject_checkpoint=False` 回退 final_gate 窗口形态
+  （m0 基线测试同步改为关闸断言回退路径）。
+- **peek fail-open 一致性（全量回归发现）**：窗口轮询对 `interjections_pending`
+  的调用遵守 Phase4 §4.4 保守降级契约（peek 失败不收割、不冒泡），收敛为
+  `_sync_interjection_peek`（test_d 锁定；裸调会把诊断管道故障升级为 run 级
+  error，违反零语义降级红线）。观测走 per-window 至多一条 warning（40ms
+  轮询频率下逐次告警会刷屏）。
+- **既有语义目标测试的关闸适配**：注入时点落在同步 LLM 窗口内、且断言旧
+  边界语义的测试（phase3 CBF 结算边界、phase4 序列头收割），显式
+  `sync_chat_interject_checkpoint=False` 保留其机制测试原意；旧边界仍服务
+  晚到插话与关闸回退。phase4 gap 收割（test_b）注入在工具执行期，与窗口
+- **test_b 时序敏感（预存脆弱性，M1 收窄余量）**：phase4 gap 收割测试注入在
+  工具执行期（与 LLM 窗口无关），不适配关闸；但其 0.74s/0.8s 的 ~40ms 注入
+  余量为预存脆弱面，M1 每轮线程化开销（spawn/join + 轮询粒度）进一步收窄，
+  偶发 miss 时插话改由下一合法边界消费（窗口轮询/final_gate），0-skip 形态
+  断言翻面。无语义损伤（消费/模型可见/终态均正确）；HEAD 3/3 过、带改动
+  单跑与文件级跑多数过、重载下偶发失败。M4 承接：加固其注入锚点或标注
+  known-flake。
+- **m3 桶归属断言更新**：phase4 `llm_stream` 桶（同步 LLM 窗口内注入）归属
+  从 final_gate 更新为 sync_window_poll——该测试断言的是"构造↔归属机械
+  一致"，新归属即当前默认真相（§5.6 T1 度量依据）；final_gate 归属保留
+  给晚到插话与关闸回退（S3/m0 基线关闸断言覆盖）。
+- **发现未修（M1 边界外）**：Phase5 流式检查点（engine.py L1852 附近）对
+  `interjections_pending` 仍为裸调，同类 peek 故障会冒泡至 run error——
+  预存问题，M1 承诺 chat_stream 通道零改动，记 M4 交付报告遗留候选。

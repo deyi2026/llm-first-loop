@@ -7,31 +7,31 @@
   "b1_sync_interject_final_gate": {
     "n": 5,
     "t_effect_samples": [
-      845.8,
-      883.4,
-      875.9,
-      859.3,
-      847.6
+      19.0,
+      8.9,
+      19.1,
+      7.2,
+      59.7
     ],
-    "p50": 859.3,
+    "p50": 19.0,
     "consumed_via": [
-      "final_gate",
-      "final_gate",
-      "final_gate",
-      "final_gate",
-      "final_gate"
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll"
     ]
   },
   "b2_sync_stop_window": {
     "n": 5,
     "stop_effect_samples": [
-      911.1,
-      910.2,
-      920.2,
-      915.3,
-      922.7
+      26.3,
+      29.0,
+      24.1,
+      60.1,
+      22.3
     ],
-    "p50": 915.3,
+    "p50": 26.3,
     "final_event_types": [
       "done",
       "done",
@@ -40,5 +40,5 @@
       "done"
     ]
   },
-  "generated_at": "2026-10-13T15:54:05+0800"
+  "generated_at": "2026-10-13T16:07:51+0800"
 }

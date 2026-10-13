@@ -51,7 +51,12 @@ def _blocking_response(window_started: threading.Event, window_s: float):
 
 
 def test_m0_sync_channel_baseline(build_test_engine):
-    """B1 插话窗口形态 + B2 Stop 窗口形态，n=5。"""
+    """B1 插话窗口形态 + B2 Stop 窗口形态，n=5。
+
+    M1 后默认门开（sync_window_poll 即时打断）；本测试显式关闸
+    （sync_chat_interject_checkpoint=False）守护保守回退路径的窗口形态。
+    M0 原始基线（门开前现状）见 reports/phase6/m0/BASELINE.json（不覆写）。
+    """
     b1_samples, b1_vias = [], []
     for i in range(N):
         window_started = threading.Event()
@@ -61,50 +66,64 @@ def test_m0_sync_channel_baseline(build_test_engine):
                 {"content": "final-after-interject"},
             ]
         )
-        runner = BackgroundRunner(engine)
-        engine.runner = runner
-        client = TestClient(build_app(engine=engine))
-        sid = engine.session.create()
-        _h, q = runner.start(sid, "请长篇回答")
-        assert window_started.wait(timeout=10), f"B1样本{i} 同步窗口未开始"
-        time.sleep(INJECT_AT_S)
-        gen = (runner.get_handle(sid) or {}).get("run_generation")
-        r1 = client.post(
-            "/api/v1/chat/queue",
-            json={"session_id": sid, "message": INTERJECT_TEXT},
-        )
-        assert r1.status_code == 202, r1.status_code
-        queue_id = r1.json()["queue_id"]
-        r2 = _interject(client, sid, queue_id, gen)
-        assert r2.status_code == 202, r2.status_code
-        final = _wait_run_done(q, timeout=30)
-        assert final.get("type") == "done", f"B1样本{i} run 未正常结束: {final}"
-        item = _hq_item(_hq_of(client, engine), sid, queue_id) or {}
-        assert item.get("status") == "interject_received", f"B1样本{i} 未被消费: {item}"
-        te = (item["received_at"] - item["created_at"]) * 1000.0
-        b1_samples.append(round(te, 1))
-        b1_vias.append(item.get("consumed_via"))
-        runner.cancel(sid)
+        _tr = engine.settings.tool_runtime
+        _orig_gate = _tr.sync_chat_interject_checkpoint
+        object.__setattr__(_tr, "sync_chat_interject_checkpoint", False)
+        try:
+            runner = BackgroundRunner(engine)
+            engine.runner = runner
+            client = TestClient(build_app(engine=engine))
+            sid = engine.session.create()
+            _h, q = runner.start(sid, "请长篇回答")
+            assert window_started.wait(timeout=10), f"B1样本{i} 同步窗口未开始"
+            time.sleep(INJECT_AT_S)
+            gen = (runner.get_handle(sid) or {}).get("run_generation")
+            r1 = client.post(
+                "/api/v1/chat/queue",
+                json={"session_id": sid, "message": INTERJECT_TEXT},
+            )
+            assert r1.status_code == 202, r1.status_code
+            queue_id = r1.json()["queue_id"]
+            r2 = _interject(client, sid, queue_id, gen)
+            assert r2.status_code == 202, r2.status_code
+            final = _wait_run_done(q, timeout=30)
+            assert final.get("type") == "done", f"B1样本{i} run 未正常结束: {final}"
+            item = _hq_item(_hq_of(client, engine), sid, queue_id) or {}
+            assert item.get("status") == "interject_received", f"B1样本{i} 未被消费: {item}"
+            te = (item["received_at"] - item["created_at"]) * 1000.0
+            b1_samples.append(round(te, 1))
+            b1_vias.append(item.get("consumed_via"))
+            runner.cancel(sid)
+        finally:
+            object.__setattr__(_tr, "sync_chat_interject_checkpoint", _orig_gate)
 
     b2_samples, b2_finals = [], []
     for i in range(N):
         window_started = threading.Event()
         engine, fake = build_test_engine([_blocking_response(window_started, WINDOW_S)])
-        runner = BackgroundRunner(engine)
-        engine.runner = runner
-        client = TestClient(build_app(engine=engine))
-        sid = engine.session.create()
-        _h, q = runner.start(sid, "请长篇回答")
-        assert window_started.wait(timeout=10), f"B2样本{i} 同步窗口未开始"
-        time.sleep(INJECT_AT_S)
-        t0 = time.monotonic()
-        runner.cancel(sid)
-        final = _wait_run_done(q, timeout=30)
-        stop_effect_ms = (time.monotonic() - t0) * 1000.0
-        b2_samples.append(round(stop_effect_ms, 1))
-        b2_finals.append(final.get("type"))
+        _tr2 = engine.settings.tool_runtime
+        _orig_gate2 = _tr2.sync_chat_interject_checkpoint
+        object.__setattr__(_tr2, "sync_chat_interject_checkpoint", False)
+        try:
+            runner = BackgroundRunner(engine)
+            engine.runner = runner
+            client = TestClient(build_app(engine=engine))
+            sid = engine.session.create()
+            _h, q = runner.start(sid, "请长篇回答")
+            assert window_started.wait(timeout=10), f"B2样本{i} 同步窗口未开始"
+            time.sleep(INJECT_AT_S)
+            t0 = time.monotonic()
+            runner.cancel(sid)
+            final = _wait_run_done(q, timeout=30)
+            stop_effect_ms = (time.monotonic() - t0) * 1000.0
+            b2_samples.append(round(stop_effect_ms, 1))
+            b2_finals.append(final.get("type"))
+        finally:
+            object.__setattr__(_tr2, "sync_chat_interject_checkpoint", _orig_gate2)
 
     payload = {
+        "mode": "gate_off_fallback",
+        "note": "M1 后门开默认即时打断；本文件记录门关保守回退路径形态。M0 原始基线见 BASELINE.json（不覆写）",
         "scenario": {
             "window_s": WINDOW_S,
             "inject_at_s": INJECT_AT_S,
@@ -125,7 +144,7 @@ def test_m0_sync_channel_baseline(build_test_engine):
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     REPORT.mkdir(parents=True, exist_ok=True)
-    (REPORT / "BASELINE.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    (REPORT / "FALLBACK_GATE_OFF.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
     # 基线形态断言：窗口形态（t_effect / stop_effect 接近剩余窗口 ~900ms），
     # 而非检查点形态（Phase5 G1 实测 P50 3.7ms 量级）。

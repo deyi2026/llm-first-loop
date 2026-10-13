@@ -1,0 +1,46 @@
+{
+  "mode": "gate_off_fallback",
+  "note": "M1 后门开默认即时打断；本文件记录门关保守回退路径形态。M0 原始基线见 BASELINE.json（不覆写）",
+  "scenario": {
+    "window_s": 1.2,
+    "inject_at_s": 0.3,
+    "expected_remaining_ms": 900.0
+  },
+  "b1_sync_interject_final_gate": {
+    "n": 5,
+    "t_effect_samples": [
+      870.3,
+      859.8,
+      883.9,
+      857.2,
+      855.4
+    ],
+    "p50": 859.8,
+    "consumed_via": [
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate",
+      "final_gate"
+    ]
+  },
+  "b2_sync_stop_window": {
+    "n": 5,
+    "stop_effect_samples": [
+      902.6,
+      912.8,
+      899.1,
+      911.6,
+      911.2
+    ],
+    "p50": 911.2,
+    "final_event_types": [
+      "done",
+      "done",
+      "done",
+      "done",
+      "done"
+    ]
+  },
+  "generated_at": "2026-10-13T17:43:10+0800"
+}

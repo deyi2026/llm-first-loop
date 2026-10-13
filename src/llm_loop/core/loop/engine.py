@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -125,6 +126,38 @@ _CANCELLED_ANSWER = "（已停止——用户点击停止按钮，本轮回答�
 # 装配 LLM_STREAM_INTERJECT_CHECKPOINT，缺省开）——关闭即回退保守 final_gate
 # 路径（流内不检查插话，等流自然结束），配置级回滚无需改代码。
 _STREAM_INTERJECT_CHECK_MIN_GAP_S = 0.04  # 每 delta peek 会持 mailbox 锁，节流
+
+# Phase6 M1：同步 chat 通道轮询间隔（worker 线程承载 provider 调用，run 线程轮询
+# Stop/插话检查点）。0.04s 与流式通道检查节流对齐；t_effect 上界 ≈ 该间隔 + 调度。
+_SYNC_INTERJECT_POLL_GAP_S = 0.04
+
+
+def _sync_interjection_peek(
+    engine: Any, session_id: str, *, warned: list[bool] | None = None
+) -> bool:
+    """Phase6 M1：同步窗口插话探视。
+
+    与 tool_cycle 的 gap peek 同契约（§4.4 保守降级）：peek 管道故障时
+    视为无插话（不收割、不冒泡），窗口轮询继续由既有边界兜底。
+    观测：per-window 至多一条 warning（warned 为同窗口共享的一次性旗标；
+    40ms 轮询频率下逐次 warning 会刷屏，静默 debug 又会掩盖持续降级）。
+    """
+    try:
+        runner = getattr(engine, "runner", None)
+        if runner is None or not getattr(runner, "enabled", False):
+            return False
+        return bool(runner.interjections_pending(session_id))
+    except Exception:  # noqa: BLE001 - peek 失败不收割（fail-open）
+        if warned is not None and not warned:
+            warned.append(True)
+            logger.warning(
+                "sync window interjection peek failed "
+                "(fail-open, window interrupt degraded; once per window)",
+                exc_info=True,
+            )
+        else:
+            logger.debug("sync window interjection peek failed", exc_info=True)
+        return False
 
 
 def _background_cancelled(engine: Any, session_id: str) -> bool:
@@ -1749,6 +1782,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # _stream_icheck_last 节流时间戳（≥间隔才 peek mailbox）。
             _interject_interrupted = False
             _stream_icheck_last = 0.0
+            # Phase6 M1：打断收割的 via 口径——流式检查点命中保持 llm_stream_interrupt；
+            # 同步窗口轮询命中为 sync_window_poll（度量分桶区分两通道，T1/T3 依据）。
+            _interrupt_via = "llm_stream_interrupt"
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
                 _llm_round_ms = 0.0
@@ -1921,22 +1957,130 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             structure_state_hook=_structure_state_hook,
                             knowledge_reference_probe=getattr(self._run_state().knowledge_runtime, "provider_reference_facts", None),
                         )
-                    resp = foreground_task_provider_chat(
-                        self,
-                        llm_client,
-                        llm_client.chat,
-                        _chat_kwargs,
-                        owner_ref=f"task:{session_id}:round:{rounds}:primary:{_primary_attempt_id}",
-                        provider_id=str(getattr(llm_client, "provider", "") or ""),
-                        model_id=chat_model_arg or getattr(llm_client, "model", ""),
-                        before_call=cap.mark_provider_send,
-                        provider_call=_provider_call,
-                        attempt_kind=ProviderAttemptKind.PRIMARY,
-                        site_index=0,
+                    _sync_gate = bool(
+                        getattr(self.settings.tool_runtime, "sync_chat_interject_checkpoint", True)
                     )
-                    _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
-                    if resp is not None:
-                        cap.on_response(resp)
+                    if not _sync_gate:
+                        # 配置门关（逃生舱）→ 原内联路径：窗口形态（final_gate 保守收割），行为可回滚
+                        resp = foreground_task_provider_chat(
+                            self,
+                            llm_client,
+                            llm_client.chat,
+                            _chat_kwargs,
+                            owner_ref=f"task:{session_id}:round:{rounds}:primary:{_primary_attempt_id}",
+                            provider_id=str(getattr(llm_client, "provider", "") or ""),
+                            model_id=chat_model_arg or getattr(llm_client, "model", ""),
+                            before_call=cap.mark_provider_send,
+                            provider_call=_provider_call,
+                            attempt_kind=ProviderAttemptKind.PRIMARY,
+                            site_index=0,
+                        )
+                        _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
+                        if resp is not None:
+                            cap.on_response(resp)
+                    else:
+                        # Phase6 M1（设计 §3A）：同步 chat 通道异步化——provider 调用移入
+                        # worker 线程，run 线程轮询 Stop/插话检查点。无 chat_stream 的
+                        # client（FakeLLM 同步形态 / deepseek-web / chatgpt-web）在 LLM
+                        # 窗口内获得与流式通道同口径的打断：消费即时（sync_window_poll）
+                        # + INTERRUPTED 结算 + 下一轮全量消费；Stop 即时终态不等 worker
+                        # （daemon 残余后台自然结束，lease/site 晚退可接受）。worker 晚到
+                        # 结果被丢弃——打断轮不进下一轮 provider 投影（P1-6 退役纪律）。
+                        # 命中优先于 worker 完成（设计 §8.6）；client.cancel() 协作钩子
+                        # 尽力调用，异常降级残余等待（§8.2）。
+                        _sync_icheck_last = 0.0
+                        _sync_cancel_hook = getattr(llm_client, "cancel", None)
+                        _sync_result: dict[str, Any] = {}
+                        _peek_warned: list[bool] = []  # 本窗口 peek 失败告警旗标（至多一条）
+
+                        # 默认参数在定义时求值：worker 线程绑定本轮快照
+                        # （B023 语义——闭包经默认参固化，不受后续轮次重绑定影响）。
+                        def _sync_worker(
+                            *,
+                            _result: dict[str, Any] = _sync_result,
+                            _client: Any = llm_client,
+                            _chat_kw: dict[str, Any] = _chat_kwargs,
+                            _owner_ref: str = f"task:{session_id}:round:{rounds}:primary:{_primary_attempt_id}",
+                            _provider_id: str = str(getattr(llm_client, "provider", "") or ""),
+                            _model_id: str = chat_model_arg or getattr(llm_client, "model", ""),
+                            _before_call: Any = cap.mark_provider_send,
+                            _provider_call_id: Any = _provider_call,
+                        ) -> None:
+                            try:
+                                _result["resp"] = foreground_task_provider_chat(
+                                    self,
+                                    _client,
+                                    _client.chat,
+                                    _chat_kw,
+                                    owner_ref=_owner_ref,
+                                    provider_id=_provider_id,
+                                    model_id=_model_id,
+                                    before_call=_before_call,
+                                    provider_call=_provider_call_id,
+                                    attempt_kind=ProviderAttemptKind.PRIMARY,
+                                    site_index=0,
+                                )
+                            except BaseException as exc:  # noqa: BLE001 - 经结果槽传回 run 线程
+                                _result["exc"] = exc
+
+                        # contextvars 拷贝进 worker：预算门控（active_task_budget）、
+                        # reasoning effort 等上下文绑定在 run 线程，新线程默认不继承
+                        # （回归实证：task_budget 系列门控曾因此失效）。provider 调用
+                        # 内部对 contextvar 的写仅落在拷贝内（隔离），与内联语义一致。
+                        _sync_ctx = contextvars.copy_context()
+                        _sync_thread = threading.Thread(
+                            target=_sync_ctx.run,
+                            args=(_sync_worker,),
+                            name=f"phase6-syncchat:{session_id}:round:{rounds}",
+                            daemon=True,
+                        )
+                        _sync_thread.start()
+                        while True:
+                            _cancel_reason = _background_cancel_reason(self, session_id)
+                            if _cancel_reason:
+                                # Stop 即时终态：请求协作取消（尽力）后不等 worker
+                                cap.cancelled = True
+                                if callable(_sync_cancel_hook):
+                                    try:
+                                        _sync_cancel_hook()
+                                    except Exception:  # noqa: BLE001 - 钩子异常降级
+                                        logger.debug("sync chat cancel hook raised", exc_info=True)
+                                break
+                            if (time.monotonic() - _sync_icheck_last) >= _SYNC_INTERJECT_POLL_GAP_S:
+                                _sync_icheck_last = time.monotonic()
+                                if _sync_interjection_peek(self, session_id, warned=_peek_warned):
+                                    # 窗口内插话命中 → 即时打断（复用流式打断收割分支）
+                                    _interject_interrupted = True
+                                    _interrupt_via = "sync_window_poll"
+                                    if callable(_sync_cancel_hook):
+                                        try:
+                                            _sync_cancel_hook()
+                                        except Exception:  # noqa: BLE001 - 钩子异常降级
+                                            logger.debug("sync chat cancel hook raised", exc_info=True)
+                                    break
+                            if not _sync_thread.is_alive():
+                                _sync_thread.join()
+                                # 命中优先（设计 §8.6）：worker 完成检测点补一次
+                                # 无节流终检——节流跳过期间到达的窗口内插话仍应
+                                # 打断，晚到的完整响应按打断轮丢弃（不进投影）。
+                                if _sync_interjection_peek(self, session_id, warned=_peek_warned):
+                                    _interject_interrupted = True
+                                    _interrupt_via = "sync_window_poll"
+                                    if callable(_sync_cancel_hook):
+                                        try:
+                                            _sync_cancel_hook()
+                                        except Exception:  # noqa: BLE001 - 钩子异常降级
+                                            logger.debug("sync chat cancel hook raised", exc_info=True)
+                                break
+                            time.sleep(_SYNC_INTERJECT_POLL_GAP_S / 2)
+                        _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
+                        if not cap.cancelled and not _interject_interrupted:
+                            _sync_exc = _sync_result.get("exc")
+                            if _sync_exc is not None:
+                                raise _sync_exc
+                            resp = _sync_result.get("resp")
+                            if resp is not None:
+                                cap.on_response(resp)
                 _cancel_reason = _background_cancel_reason(self, session_id)
                 if _cancel_reason:
                     cap.cancelled = True
@@ -2255,7 +2399,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 self._tool_cycle._reachability_finalize("interjection_interrupted_provider")
                 resp = None  # 打断轮无完整响应，防残留参与 usage/reasoning/finalize
                 _interrupted_texts = _consume_live_interjections(
-                    self, session_id, sess, via="llm_stream_interrupt"
+                    self, session_id, sess, via=_interrupt_via
                 )
                 if _interrupted_texts:
                     # 收割文本并入轮首合并桶（设计 Q2：否则下一轮轮首消费点空取，
