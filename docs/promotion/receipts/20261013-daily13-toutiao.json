@@ -1,0 +1,94 @@
+{
+  "issue": "第 13 期 · 一条心跳指令，把机器人从「等等看」拽出来",
+  "toutiao": {
+    "platform": "今日头条",
+    "author_account": "LFL-AGENT (创作者后台真实登录态)",
+    "title": "让 AI 别再「等等看」：一条把机器人从聊天气泡里拽出来的心跳指令",
+    "title_len": 33,
+    "body_words": 3059,
+    "body_sha256": "6b527e5dd0ff8c7cecec3d4592e67a5858484c3f47cc472469aec173793f544e",
+    "body_chars_plain": 3553,
+    "figures": [
+      {
+        "file": "img/fig39-heartbeat-protocol.png",
+        "size": "1000x690",
+        "position": "正文首图（引子后，存活规则对比）",
+        "src": "image-tt-private.toutiao.com/tos-cn-i-6w9my0ksvp/38e..."
+      },
+      {
+        "file": "img/fig40-heartbeat-cost.png",
+        "size": "1000x690",
+        "position": "第四章标题前（价码与适用边界）",
+        "src": "image-tt-private.toutiao.com/tos-cn-i-6w9my0ksvp/8bd..."
+      }
+    ],
+    "ai_declaration": "作品声明勾选「引用AI」",
+    "submitted_at": "2026-10-13 11:15",
+    "status_at_submit": "审核中（作品管理列表实见）",
+    "public_url": "https://www.toutiao.com/article/7695979733812527659/",
+    "group_id": "7695979733812527659",
+    "verified": {
+      "verified_at": "2026-10-13 11:40",
+      "state_in_list": "已发布",
+      "metrics_observed": {
+        "展现": 2,
+        "阅读": 0,
+        "点赞": 0,
+        "评论": 0
+      },
+      "metric_note": "发布 25 分钟时的首轮快照，头条展现/阅读有数小时延迟，不作为最终表现",
+      "public_fetch": {
+        "curl_status": 200,
+        "body_bytes": 72914,
+        "note": "curl 拿到的是 JS 壳，无标题无图，不能作为正文验收"
+      },
+      "public_render_check": {
+        "method": "Chrome 打开 canonical URL（/item/ 自动 301 到 /article/），滚动触发懒加载",
+        "title_ok": true,
+        "body_chars": 3403,
+        "sections_present": [
+          "一、先说清楚",
+          "二、那条指令",
+          "三、比指令更硬",
+          "四、什么时候值得",
+          "五、",
+          "六、这件事真正的教训"
+        ],
+        "table_rendered": 1,
+        "images_rendered": [
+          "1000x690",
+          "1000x672"
+        ],
+        "ai_disclaimer_present": "本文由 AI 辅助生成，内容基于真实工程实测记录…"
+      }
+    }
+  },
+  "known_issues_fixed_this_run": [
+    "html 曾残留 md 图片 alt 残段「!心跳协议：纯文本即结算」→ 已删除，发布前无裸 fig 段",
+    "h1 章节标题统一改为 h2（头条渲染后平台自身再转为 H1）",
+    "图 40 首次上传失败：脚本用 os.path.dirname(abspath('.')) 拼出 .../docs/img/ 错误路径；改为相对当前目录的绝对路径后上传成功"
+  ],
+  "ops_note": "头条 ProseMirror：清空 execCommand(delete)+textarea 原型 setter 填标题+整篇 HTML ClipboardEvent paste（表/引用/强调一次成型）；插图=真实点击目标标题定位光标 → .syl-toolbar-tool.image 按钮 → CDP DOM.setFileInputFiles → 移除失败项 → 点「确定」；发布=「预览并发布」→「确认发布」",
+  "zhihu": {
+    "status": "blocked_network",
+    "attempts": [
+      {
+        "at": "2026-10-13 ~11:20",
+        "evidence": "curl https://www.zhuanlan.zhihu.com/write → 000, LibreSSL SSL_ERROR_SYSCALL (TLS handshake reset); 域名解析到 198.18.x.x fake-ip 段"
+      },
+      {
+        "at": "2026-10-13 ~11:22",
+        "evidence": "Chrome CDP Page.navigate → chrome-error://chromewebdata/, .DraftEditor-root 不存在"
+      },
+      {
+        "at": "2026-10-13 ~11:25",
+        "evidence": "重试仍 000；对照 https://www.zhihu.com/ → 302, https://www.toutiao.com/ → 200（仅 zhuanlan 子域不可达）"
+      },
+      {
+        "at": "2026-10-13 11:35",
+        "evidence": "curl https://www.zhuanlan.zhihu.com/ → 000；对照 www.zhihu.com → 302，仍不可达；浏览器标签页停在 chrome-error"
+      }
+    ],
+    "conclusion": "本机代理/网络层对 zhuanlan.zhihu.com 的连接被阻断，非文章或账号问题；待网络恢复后按 STATUS-20261012.md 的知乎路径补发（/write 整篇合成 paste + 真实点击锚点插图 + 发布后补设创作声明）"
+  }
+}

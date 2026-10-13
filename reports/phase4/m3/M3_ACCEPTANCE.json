@@ -3,14 +3,14 @@
     "bucket_construct": "interruptible",
     "n": 5,
     "t_effect_samples": [
-      48.8,
-      80.1,
-      67.5,
-      71.1,
-      85.2
+      60.0,
+      79.0,
+      81.2,
+      70.0,
+      72.1
     ],
-    "p50": 71.1,
-    "p95": 85.2,
+    "p50": 72.1,
+    "p95": 81.2,
     "consumed_via": [
       "round_start",
       "round_start",
@@ -30,14 +30,14 @@
     "bucket_construct": "natural_boundary",
     "n": 5,
     "t_effect_samples": [
-      76.2,
-      92.4,
-      96.1,
-      98.3,
-      99.2
+      51.1,
+      100.1,
+      97.3,
+      100.7,
+      99.1
     ],
-    "p50": 96.1,
-    "p95": 99.2,
+    "p50": 99.1,
+    "p95": 100.7,
     "consumed_via": [
       "round_start",
       "round_start",
@@ -57,14 +57,14 @@
     "bucket_construct": "llm_stream",
     "n": 5,
     "t_effect_samples": [
-      1207.4,
-      1245.3,
-      1248.8,
-      1244.2,
-      1239.9
+      1218.9,
+      1240.1,
+      1239.4,
+      1246.1,
+      1257.1
     ],
-    "p50": 1244.2,
-    "p95": 1248.8,
+    "p50": 1240.1,
+    "p95": 1257.1,
     "consumed_via": [
       "final_gate",
       "final_gate",
@@ -84,14 +84,14 @@
     "bucket_construct": "idle",
     "n": 5,
     "t_effect_samples": [
-      18.6,
-      31.1,
-      35.1,
-      39.3,
-      36.0
+      26.4,
+      34.7,
+      39.1,
+      32.9,
+      34.7
     ],
-    "p50": 35.1,
-    "p95": 39.3,
+    "p50": 34.7,
+    "p95": 39.1,
     "consumed_via": [
       "gap_harvest",
       "gap_harvest",
@@ -106,11 +106,11 @@
       false,
       false
     ],
-    "mechanism_p50_t_effect_ms": 35.1
+    "mechanism_p50_t_effect_ms": 34.7
   },
   "baseline_compare": {
     "S13_baseline_p50_ms": 1679.7,
-    "S13_m3_p50_ms": 71.1,
-    "improvement_x": 23.6
+    "S13_m3_p50_ms": 72.1,
+    "improvement_x": 23.3
   }
 }
