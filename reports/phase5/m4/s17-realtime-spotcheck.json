@@ -1,0 +1,135 @@
+{
+  "meta": {
+    "title": "Phase5 M4 真机抽查：S17 等效流式打断 + hq 戳记核验",
+    "target": "web 127.0.0.1:8903 (generation 251 / 62602acca)",
+    "started_at": "2026-10-13T14:36:21",
+    "finished_at": "2026-10-13T14:37:16",
+    "gate": "consumed_via=llm_stream_interrupt & interrupt_receipt!=True & t_effect<=500ms"
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "inject_delay_s": 1.2,
+      "prompt": "请以「山中雾」为题写一篇约700字的散文，语言细",
+      "interject": "先停一下：请改写主题为「海雾」，写一篇约400字的短文即可。",
+      "enqueue_status": 202,
+      "interject_status": 202,
+      "inject_wall": 1791873406.503403,
+      "chars_before_inject": 198,
+      "session_id": "2d0f53f3-d050-429c-9bdb-4ba961d03d78",
+      "deltas_before_inject": 14,
+      "deltas_after_inject": 49,
+      "done_type": null,
+      "final_answer_head": "好的，按您的最新要求：主题改为「海雾」，篇幅约400字。\n\n---\n\n**海雾**\n\n雾从海上来，先于黎明抵达。\n\n它不像山雾那样缠在树梢，而是平铺而来，把整片海悄悄收进怀里。天与水的界线一寸寸模糊，昨夜还清晰的灯塔，此刻只剩一团昏黄的光晕",
+      "item": {
+        "queue_id": "q_3e532a97b501",
+        "session_id": "2d0f53f3-d050-429c-9bdb-4ba961d03d78",
+        "message": "先停一下：请改写主题为「海雾」，写一篇约400字的短文即可。",
+        "attachments": [],
+        "attachment_facts": [],
+        "model": null,
+        "model_change": false,
+        "reasoning_effort": null,
+        "reasoning_mode": "auto",
+        "created_at": 1791873406.493897,
+        "status": "interject_received",
+        "interject_requested_at": 1791873406.500263,
+        "interject_run_generation": "fe719dd80d5642048bcf7e4c5207238e",
+        "received_at": 1791873406.586895,
+        "consumed_via": "llm_stream_interrupt",
+        "terminal_at": 1791873406.586895,
+        "applied_at": 1791873435.347402,
+        "applied_detail": "final_answer_after_interjection",
+        "grade": "applied",
+        "grade_reason": "final_answer_after_interjection"
+      },
+      "metrics": {
+        "ok": true,
+        "session_id": "2d0f53f3-d050-429c-9bdb-4ba961d03d78",
+        "n": 1,
+        "items": [
+          {
+            "queue_id": "q_3e532a97b501",
+            "grade": "applied",
+            "t_ack_ms": 6.4,
+            "t_persist_ms": 86.6,
+            "t_effect_ms": 93.0,
+            "t_applied_ms": 28853.5,
+            "bucket": "llm_stream_interrupt"
+          }
+        ],
+        "p50_t_ack_ms": 6.4,
+        "p95_t_ack_ms": 6.4,
+        "p50_t_persist_ms": 86.6,
+        "p95_t_persist_ms": 86.6,
+        "p50_t_effect_ms": 93.0,
+        "p95_t_effect_ms": 93.0,
+        "p50_t_applied_ms": 28853.5,
+        "p95_t_applied_ms": 28853.5,
+        "buckets": {
+          "interruptible": {
+            "n": 0,
+            "p50_t_effect_ms": null,
+            "p95_t_effect_ms": null,
+            "insufficient_sample": true
+          },
+          "natural_boundary": {
+            "n": 0,
+            "p50_t_effect_ms": null,
+            "p95_t_effect_ms": null,
+            "insufficient_sample": true
+          },
+          "llm_stream": {
+            "n": 0,
+            "p50_t_effect_ms": null,
+            "p95_t_effect_ms": null,
+            "insufficient_sample": true
+          },
+          "llm_stream_interrupt": {
+            "n": 1,
+            "p50_t_effect_ms": 93.0,
+            "p95_t_effect_ms": 93.0,
+            "insufficient_sample": true
+          },
+          "idle": {
+            "n": 0,
+            "p50_t_effect_ms": null,
+            "p95_t_effect_ms": null,
+            "insufficient_sample": true
+          }
+        }
+      },
+      "t_effect_ms": 93.0,
+      "interrupt_hit": true
+    }
+  ],
+  "success_session_id": "2d0f53f3-d050-429c-9bdb-4ba961d03d78",
+  "session_verify": {
+    "message_count": 5,
+    "half_line_count": 1,
+    "half_line": {
+      "content_len": 261,
+      "content_tail": "退去：先是\n[截断标注] reason=interjection_interrupted; 保存尾 206/206 字符",
+      "reason": null,
+      "metadata_keys": [
+        "answer_origin",
+        "interrupted_model",
+        "interrupted_native_state_sha256",
+        "interrupted_provider",
+        "interrupted_reasoning_tail",
+        "interrupted_text_tail",
+        "interrupted_tool_call_draft_count",
+        "llm_interrupted",
+        "partial_chars",
+        "partial_sha256",
+        "run_end_reason",
+        "truncation_artifact_ref"
+      ]
+    },
+    "interject_user_msg_found": true,
+    "audit_hits": [
+      "{\"event_id\": \"df2d4395-2bcc-461f-a230-911a9a22d9bb\", \"session_id\": \"2d0f53f3-d050-429c-9bdb-4ba961d03d78\", \"seq\": 28, \"type\": \"llm.interrupted\", \"ts\": \"2026-10-13T14:36:46.564318+08:00\", \"payload\": {\"round\": 1, \"reason\": \"interjection_inter",
+      "{\"event_id\": \"a83380b2-e358-402b-936e-6e9845450668\", \"session_id\": \"2d0f53f3-d050-429c-9bdb-4ba961d03d78\", \"seq\": 29, \"type\": \"message.appended\", \"ts\": \"2026-10-13T14:36:46.564925+08:00\", \"payload\": {\"index\": 2, \"role\": \"assistant\", \"conten"
+    ]
+  }
+}

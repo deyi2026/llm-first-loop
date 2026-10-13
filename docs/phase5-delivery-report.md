@@ -1,6 +1,6 @@
 # Phase5 交付报告：流式打断 + P2-4 混合路径戳记时序修复
 
-- 日期：2026-10-13　状态：交付（M4 全量回归与发布验证见 §4/§5）
+- 日期：2026-10-13　状态：交付完成（全量回归+发布+真机抽查收口，§4/§5）
 - 设计：docs/phase5-stream-interrupt-design.md（r2 定稿 + §10 实施修订）
 - 上游遗留处置：Phase4 交付报告 §5.3（P2-4）/§5.4（llm_stream 桶）
 
@@ -56,12 +56,31 @@
 - 提交：62602acca（phase5 交付，含设计/测试/报告）。
 - 发布：publish generation=251（deploy-7988bde9a99b4ed6832f98bd481405d6，
   git_head=62602acca，webui 产物 sha 绑定）；web restart 动作
-  svc-b1aafbdaf1e946c1b908ee0be39e99e4 受理，两阶段等待（requester 退出后
-  执行）——真机抽查于重启完成后进行，结果回填本节。
+  svc-b1aafbdaf1e946c1b908ee0be39e99e4 已 succeeded（2026-10-13T14:26:15，
+  generation=251 lag=0，pid 35147 存活，matches_desired_generation=true）。
+- **真机抽查**（S17 等效流式打断 + hq 戳记核验，2026-10-13T14:36，glm-5.3
+  真实流，新会话单发一次命中；工件 reports/phase5/m4/s17-realtime-spotcheck.json）：
+  - 打断生效：answer 流中注入（queue 202→interject 202）→ hq 条目
+    status=interject_received、**consumed_via=llm_stream_interrupt**、
+    grade=applied；**t_effect=93.0ms**（t_ack 6.4ms + 检查点窗 86.6ms），
+    门 ≤500ms 达成，真实形态与 §6「≤90ms 检查点窗量级」预测相符
+    （n=1 抽查口径，桶内如实标注 insufficient_sample）。
+  - hq 戳记：条目无 interrupt_receipt 键（mark_interject_received 仅 True
+    落键，human_turn_queue.py:411——与 S17-M1 锁定口径「is not True」一致）；
+    桶派生五桶在位，新桶 llm_stream_interrupt n=1、p50=p95=93.0ms，判序最前
+    （human_turn_queue.py:619 代码核实）；P2-4/P2-5 混合与跨轮路径由 S18
+    三场景单测锁定。
+  - 半截语义（P1-6）：会话半截行 1 条（metadata.llm_interrupted +
+    partial_chars/interrupted_text_tail/truncation_artifact_ref 在位，尾部
+    标注 reason=interjection_interrupted）；插话 user 消息入会话；事件审计
+    llm.interrupted(seq28)→message.appended(seq29) 如实落盘。
+  - 续答语义：打断后同 run 续流 49 delta，终答主动确认「按您的最新要求：
+    主题改为海雾」——下一轮真实消费插话（半截行不进 provider 投影的 B1 纪律
+    由 S17-M2 单测锁定，真机以续答方向变化为外部证据）。
 
 ## 6. 遗留与 Phase6 候选
 - 流式打断仅在 chat_stream 通道生效；同步 chat（第三方 client）保守路径
   兜底（设计 §8 非目标，如需可评估异步化）。
 - 打断轮 usage/reasoning 不完整归集属打断固有（与 cancelled 同口径）。
-- G1 真实用户形态 t_effect（注入→检查点等待窗 ≤90ms 量级）未在真机量化，
-  真机抽查见 §5。
+- G1 真实用户形态 t_effect 已真机抽查量化：93.0ms（§5，n=1 单发抽查；
+  批量统计口径仍以 m3 确定性钩子下界 P50=3.7ms 为准）。
