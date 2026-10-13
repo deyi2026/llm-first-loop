@@ -43,10 +43,21 @@
   M2/M3 全组回归绿；全量回归见 §4。
 
 ## 4. 全量回归
-- （待填：pytest 全量 N passed + ruff 0 error 回执）
+- pytest 全量（tests/，除度量场景外的 gate 复验组另计）：Phase4+Phase5 场景
+  26 passed；gate 复验组（env_access/static_diagnostic 等）30 passed。
+  初跑 4 个 gate 失败已归零：根因=engine 模块级 os.environ 违反环境访问门，
+  已改走 config.py 集中装配（settings.tool_runtime.llm_stream_interject_
+  checkpoint）；另 tests/web/test_knowledge_endpoints.py F841 为前会话已提交
+  遗留（gate 阻塞），一行最小修复（语义保留）。
+- ruff：本任务改动面 0 error（全仓 4350 为历史存量，非本任务引入，不在
+  本阶段清偿范围）。
 
 ## 5. 发布与验证
-- （待填：git 提交、publish、真机抽查结果或阻塞说明）
+- 提交：62602acca（phase5 交付，含设计/测试/报告）。
+- 发布：publish generation=251（deploy-7988bde9a99b4ed6832f98bd481405d6，
+  git_head=62602acca，webui 产物 sha 绑定）；web restart 动作
+  svc-b1aafbdaf1e946c1b908ee0be39e99e4 受理，两阶段等待（requester 退出后
+  执行）——真机抽查于重启完成后进行，结果回填本节。
 
 ## 6. 遗留与 Phase6 候选
 - 流式打断仅在 chat_stream 通道生效；同步 chat（第三方 client）保守路径
