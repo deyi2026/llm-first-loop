@@ -2,7 +2,7 @@
   "scenario": "S12",
   "title": "进程重启后 interject_pending 恢复 + 孤儿回收",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-13T18:28:42",
+  "started_at": "2026-10-14T01:00:49",
   "steps": [],
   "wall": {},
   "dur_ms": {},
@@ -13,13 +13,13 @@
     "after_restart_state": "queued",
     "after_restart_requeued_from": "interject_process_restart",
     "reap_released_ids": [
-      "q_2e7752554659"
+      "q_bc2277fd27b7"
     ],
     "orphan_after_reap_state": "queued",
     "orphan_after_reap_requeued_from": "interject_run_ended",
     "message_intact_after_recovery": true
   },
   "endpoints": {},
-  "finished_at": "2026-10-13T18:28:42",
+  "finished_at": "2026-10-14T01:00:49",
   "status": "ok"
 }

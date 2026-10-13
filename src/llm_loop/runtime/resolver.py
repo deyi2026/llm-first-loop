@@ -252,7 +252,7 @@ _SECRET_NAME_RE = re.compile(r"(?:api[_-]?key|secret|token|password|credential|\
 
 
 def _strip_invisible(name: str) -> str:
-    """剥离不可见字符（Cc/Cf 等控制与格式符，含零宽、双向覆盖）后的名字提示.
+    """剥离全部 C* 类别不可见/控制字符（Cc/Cf/Cs/Co/Cn，含零宽、双向覆盖、私用区）后的名字提示.
 
     EVO-20261014-483ca6de 边界审计：密钥名混入零宽字符可绕过子串匹配
     （"API_KEY" in key）。入口层（parse_env_file 的 _KEY_RE、runtime.toml
@@ -289,6 +289,11 @@ def _redact_url_credentials(val: str) -> str:
             if text[i] in "/?#":
                 end = i
                 break
+        # 多 URL 串值（前一 URL 无路径、逗号/空格直接接下一 scheme://）时，
+        # 下一 scheme 不得被吞进当前 authority（审查 P1：否则后续 URL 密码泄漏）。
+        m2 = scheme_re.search(text, start)
+        if m2 is not None and m2.start() < end:
+            end = m2.start()
         authority = text[start:end]
         at = authority.rfind("@")
         colon = authority[:at].find(":") if at > 0 else -1
