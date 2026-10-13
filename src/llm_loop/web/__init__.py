@@ -442,42 +442,9 @@ def main() -> None:
     _fallback.start()
     app.state.queue_server_fallback = _fallback
 
-    _binding_notifier = None
-    if bool(getattr(settings, "chatgpt_web_enabled", False)):
-        from llm_loop.llm.chatgpt_surface import ChatGPTSessionBindingStore
-        from llm_loop.llm.chatgpt_web import CHATGPT_WEB_SEGMENT_BUDGET_RATIO
-        from llm_loop.runtime.chatgpt_binding_health import (
-            inspect_chatgpt_binding_health,
-        )
-        from llm_loop.runtime.chatgpt_binding_notifications import (
-            ChatGPTBindingAlertNotifier,
-        )
-
-        _binding_store = ChatGPTSessionBindingStore(
-            Path(_data_dir) / "chatgpt-web-provider" / "sessions"
-        )
-        _segment_max_chars = max(
-            1,
-            int(
-                int(getattr(settings, "chatgpt_web_max_request_chars", 150_000))
-                * CHATGPT_WEB_SEGMENT_BUDGET_RATIO
-            ),
-        )
-
-        def _binding_health_probe():
-            return inspect_chatgpt_binding_health(
-                _binding_store,
-                engine.session,
-                segment_max_chars=_segment_max_chars,
-                min_gc_age_days=30,
-            )
-
-        _binding_notifier = ChatGPTBindingAlertNotifier(
-            _data_dir,
-            _binding_health_probe,
-        )
-        _binding_notifier.start()
-    app.state.chatgpt_binding_alert_notifier = _binding_notifier
+    # web-carveout M3（D1）：chatgpt binding 观测面（health probe + alert
+    # notifier + webui 路由族）随页面 client 一并剥离至 lfl-web-providers；
+    # 中间件 webui 不再挂载（app.state.chatgpt_binding_alert_notifier 移除）。
 
     import uvicorn
 
@@ -487,8 +454,6 @@ def main() -> None:
     try:
         uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=10)
     finally:
-        if _binding_notifier is not None:
-            _binding_notifier.stop()
         # P2-4(2026-08-15): 服务退出关闭 LLM 连接（httpx Client 连接池不泄漏）
         engine.close()
 

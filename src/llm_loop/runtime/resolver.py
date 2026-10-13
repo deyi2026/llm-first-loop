@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import tomllib
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -96,24 +97,12 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("web", "task_budget_canary_config"): TomlField(
             ("LFL_TASK_BUDGET_WEB_CANARY_CONFIG",), "str"
         ),
-        ("chatgpt_web", "enabled"): TomlField(("CHATGPT_WEB_ENABLED",), "bool"),
-        ("chatgpt_web", "cdp_endpoint"): TomlField(("CHATGPT_WEB_CDP_ENDPOINT",), "str"),
-        ("chatgpt_web", "project_url"): TomlField(("CHATGPT_WEB_PROJECT_URL",), "str"),
-        ("chatgpt_web", "project_ref"): TomlField(("CHATGPT_WEB_PROJECT_REF",), "str"),
-        ("chatgpt_web", "project_name"): TomlField(("CHATGPT_WEB_PROJECT_NAME",), "str"),
-        ("chatgpt_web", "profile_label"): TomlField(("CHATGPT_WEB_PROFILE_LABEL",), "str"),
-        ("chatgpt_web", "turn_timeout_s"): TomlField(("CHATGPT_WEB_TURN_TIMEOUT_S",), "int"),
-        ("chatgpt_web", "reasoning_effort"): TomlField(("CHATGPT_WEB_REASONING_EFFORT",), "str"),
-        ("chatgpt_web", "context_tokens"): TomlField(("CHATGPT_WEB_CONTEXT_TOKENS",), "int"),
-        ("chatgpt_web", "max_request_chars"): TomlField(("CHATGPT_WEB_MAX_REQUEST_CHARS",), "int"),
-        ("deepseek_web", "enabled"): TomlField(("DEEPSEEK_WEB_ENABLED",), "bool"),
-        ("deepseek_web", "cdp_endpoint"): TomlField(("DEEPSEEK_WEB_CDP_ENDPOINT",), "str"),
-        ("deepseek_web", "root_url"): TomlField(("DEEPSEEK_WEB_ROOT_URL",), "str"),
-        ("deepseek_web", "profile_label"): TomlField(("DEEPSEEK_WEB_PROFILE_LABEL",), "str"),
-        ("deepseek_web", "turn_timeout_s"): TomlField(("DEEPSEEK_WEB_TURN_TIMEOUT_S",), "int"),
-        ("deepseek_web", "reasoning_effort"): TomlField(("DEEPSEEK_WEB_REASONING_EFFORT",), "str"),
-        ("deepseek_web", "context_tokens"): TomlField(("DEEPSEEK_WEB_CONTEXT_TOKENS",), "int"),
-        ("deepseek_web", "max_request_chars"): TomlField(("DEEPSEEK_WEB_MAX_REQUEST_CHARS",), "int"),
+        # web-carveout M3（D2/D3）：18 个 web 通道明细映射随 client 剥离迁出，
+        # 仅保留外部注册模块入口。
+        ("web_providers", "module"): TomlField(("LFL_WEB_PROVIDERS_MODULE",), "str"),
+        ("web_providers", "module_path"): TomlField(
+            ("LFL_WEB_PROVIDERS_MODULE_PATH",), "str"
+        ),
         ("local_runtime", "observer"): TomlField(("LFL_LOCAL_RUNTIME_OBSERVER",), "str"),
         ("local_runtime", "admission_authority"): TomlField(("LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY",), "str"),
         ("local_runtime", "cli"): TomlField(("LFL_LFRT_CLI",), "str"),
@@ -194,13 +183,14 @@ _SERVICE_SCOPED_SECTIONS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "semantic": frozenset({"web", "feishu", "learning"}),
         "knowledge_advisor": frozenset({"web"}),
-        # ChatGPT browser I/O is intentionally a Web-only surface.  Keeping the
-        # runtime switch service-scoped prevents Feishu/Learning from acquiring
-        # the browser-backed provider on future independent restarts.
-        "chatgpt_web": frozenset({"web"}),
-        "deepseek_web": frozenset({"web"}),
+        # web-carveout M3：chatgpt_web/deepseek_web 两个 service-scoped section
+        # 随通道明细配置迁出删除（浏览器通道现为 Web-only 由独立项目侧配置）。
     }
 )
+
+# web-carveout M3：已剥离前缀的显式 fail-closed 拒绝清单（见
+# _parse_runtime_toml_layers 循环开头的迁移指引报错）。
+_CARVED_OUT_WEB_SECTIONS = frozenset({"chatgpt_web", "deepseek_web"})
 
 _TOML_ENV_KEYS = tuple(
     dict.fromkeys(key for spec in TOML_SCHEMA.values() for key in spec.env_keys)
@@ -261,17 +251,75 @@ _COMMENT_RE = re.compile(r"\s+#.*$")
 _SECRET_NAME_RE = re.compile(r"(?:api[_-]?key|secret|token|password|credential|\bak\b|\bsk\b)", re.I)
 
 
+def _strip_invisible(name: str) -> str:
+    """剥离不可见字符（Cc/Cf 等控制与格式符，含零宽、双向覆盖）后的名字提示.
+
+    EVO-20261014-483ca6de 边界审计：密钥名混入零宽字符可绕过子串匹配
+    （"API_KEY" in key）。入口层（parse_env_file 的 _KEY_RE、runtime.toml
+    闭式 schema）已拒绝此类名字；本函数是 values 掩码处的 fail-closed
+    纵深（RULE-AI-30：无法排除敏感 ⇒ 按敏感处理）。
+    """
+    return "".join(
+        ch for ch in str(name or "") if not unicodedata.category(ch).startswith("C")
+    )
+
+
+def _redact_url_credentials(val: str) -> str:
+    """URL userinfo 凭据掩码（EVO-20261014-483ca6de 边界审计）.
+
+    - 密码可含 ``@`` ``:`` 等标点：以 authority 内最后一个 ``@`` 为界、
+      userinfo 内第一个 ``:`` 之后整体掩码（不漏尾部密码片段）；
+    - IPv6 括号主机（``[::1]:5432``）不含 ``@``：不受影响也不被误伤
+      （colon 判定限定在 userinfo 段内，不把主机/端口冒号当凭据分隔）；
+    - username-only userinfo（无 ``:``）无密码事实可泄，保持原样。
+    仅处理显式 ``scheme://`` 形式；无 userinfo 的 URL 原样返回。
+    """
+    text = str(val or "")
+    scheme_re = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*://")
+    parts: list[str] = []
+    pos = 0
+    while True:
+        m = scheme_re.search(text, pos)
+        if m is None:
+            parts.append(text[pos:])
+            break
+        start = m.end()
+        end = len(text)
+        for i in range(start, len(text)):
+            if text[i] in "/?#":
+                end = i
+                break
+        authority = text[start:end]
+        at = authority.rfind("@")
+        colon = authority[:at].find(":") if at > 0 else -1
+        if at > 0 and colon >= 0:
+            parts.append(text[pos:start])
+            parts.append(f"{authority[:colon]}:***{authority[at:]}")
+        else:
+            parts.append(text[pos:end])
+        pos = end
+    return "".join(parts)
+
+
 def _mask_secret(key: str, val: str) -> str:
+    # fail-closed 纵深：不可见字符剥离后仍无法排除敏感 ⇒ 掩码。
+    # compact 匹配兜底零宽插进词内的形态（"API\u200bKEY" → "APIKEY"）。
+    hint = _strip_invisible(key)
+    compact = hint.replace("_", "").replace("-", "").upper()
     if (
-        key in _SECRET_KEYS
-        or "API_KEY" in key
-        or "SECRET" in key
-        or "TOKEN" in key
-        or "PASSWORD" in key
-        or key == "LFL_KNOWLEDGE_ADVISOR_SESSIONS"
+        hint in _SECRET_KEYS
+        or "API_KEY" in hint
+        or "SECRET" in hint
+        or "TOKEN" in hint
+        or "PASSWORD" in hint
+        or hint == "LFL_KNOWLEDGE_ADVISOR_SESSIONS"
+        or "APIKEY" in compact
+        or "SECRET" in compact
+        or "TOKEN" in compact
+        or "PASSWORD" in compact
     ):
         return f"<secret:{len(val)}chars>"
-    return val
+    return _redact_url_credentials(val)
 
 
 def parse_env_file(path: str | Path) -> dict[str, str]:
@@ -356,18 +404,27 @@ def _parse_runtime_toml_layers(
     service_out: dict[str, str] = {}
     requested_service = str(service or "").strip().lower()
     for raw_path, value in _flatten_toml(data):
+        if raw_path[0] in _CARVED_OUT_WEB_SECTIONS:
+            # web-carveout M3：deepseek/chatgpt 页面自动化通道已剥离至
+            # lfl-web-providers 独立项目。旧 section 显式 fail-closed
+            # （带迁移指引），防止「写了但无人消费」的静默无效配置。
+            raise ValueError(
+                "runtime.toml section "
+                f"[{raw_path[0]}] 已随 web provider 剥离迁移（web-carveout M3）；"
+                "通道明细配置请写入 lfl-web-providers/.env"
+            )
         if len(raw_path) == 3 and raw_path[0] in _SERVICE_SCOPED_SECTIONS:
             section = raw_path[0]
             scoped_service = raw_path[1]
             field_name = raw_path[2]
             where = ".".join(raw_path)
             if scoped_service not in _SERVICE_SCOPED_SECTIONS[section]:
-                if any(_SECRET_NAME_RE.search(part) for part in raw_path):
+                if any(_SECRET_NAME_RE.search(_strip_invisible(part)) for part in raw_path):
                     raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
                 raise ValueError(f"runtime.toml 未知服务级 {section} scope: {where}")
             spec = TOML_SCHEMA.get((section, field_name))
             if spec is None:
-                if any(_SECRET_NAME_RE.search(part) for part in raw_path):
+                if any(_SECRET_NAME_RE.search(_strip_invisible(part)) for part in raw_path):
                     raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
                 raise ValueError(f"runtime.toml 未知字段: {where}")
             legacy = _toml_value_to_legacy((section, field_name), value, spec.kind)
@@ -378,7 +435,7 @@ def _parse_runtime_toml_layers(
 
         if len(raw_path) != 2:
             where = ".".join(raw_path)
-            if any(_SECRET_NAME_RE.search(part) for part in raw_path):
+            if any(_SECRET_NAME_RE.search(_strip_invisible(part)) for part in raw_path):
                 raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
             raise ValueError(f"runtime.toml 未知字段: {where}")
         field_path = (raw_path[0], raw_path[1])
@@ -393,7 +450,7 @@ def _parse_runtime_toml_layers(
         spec = TOML_SCHEMA.get(field_path)
         if spec is None:
             where = ".".join(field_path)
-            if any(_SECRET_NAME_RE.search(part) for part in field_path):
+            if any(_SECRET_NAME_RE.search(_strip_invisible(part)) for part in field_path):
                 raise ValueError(f"runtime.toml 禁止存放凭证/密钥字段: {where}")
             raise ValueError(f"runtime.toml 未知字段: {where}")
         legacy = _toml_value_to_legacy(field_path, value, spec.kind)
@@ -408,8 +465,7 @@ def parse_runtime_toml(path: str | Path, *, service: str | None = None) -> dict[
     The parser is strict when the file exists: unknown fields, wrong types and any
     secret-looking field fail closed.  Missing default runtime.toml is allowed so a
     workspace can migrate from .env incrementally.  When ``service`` is supplied,
-    matching service-scoped values (for example ``[semantic.web]`` and
-    ``[chatgpt_web.web]``) override the corresponding global section values.
+    matching service-scoped values (for example ``[semantic.web]``) override the corresponding global section values.
     """
     global_values, service_values = _parse_runtime_toml_layers(path, service=service)
     out = dict(global_values)

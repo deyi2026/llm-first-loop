@@ -63,20 +63,6 @@ class ChatRequest(BaseModel):
         return self
 
 
-class ChatGPTBindingGcRequest(BaseModel):
-    """Explicit orphan-binding GC request.
-
-    GC is never automatic and never applies to an existing LFL Session. The
-    caller must echo the binding's observed updated_at value so a stale plan
-    cannot remove a binding that resumed activity.
-    """
-
-    session_id: str = Field(min_length=1, max_length=128)
-    expected_updated_at: str = Field(min_length=1, max_length=128)
-    min_age_days: int = Field(default=30, ge=1, le=3650)
-    confirm: bool = Field(default=False)
-
-
 class ChatResponse(BaseModel):
     """对话响应（LoopResult 七字段如实透传, M51 增 model_used）."""
     session_id: str

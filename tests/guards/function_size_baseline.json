@@ -133,7 +133,6 @@
     "resources->timekeeping",
     "runtime->config",
     "runtime->methods",
-    "runtime->notify",
     "runtime->timekeeping"
   ],
   "durability_registry": {
@@ -438,15 +437,6 @@
           "src/llm_loop/introspection/tools_skill_dsh.py"
         ],
         "rationale": "DSH 插件发现缓存为可覆盖 TTL 状态，失败 fail-open。"
-      },
-      "chatgpt_surface_state": {
-        "tier": "T2",
-        "status": "observe",
-        "owner": "llm",
-        "paths": [
-          "src/llm_loop/llm/chatgpt_surface.py"
-        ],
-        "rationale": "ChatGPT binding/lease/history 含跨进程锁与覆盖式状态。"
       },
       "llm_diagnostic_audit": {
         "tier": "T1",
@@ -916,15 +906,6 @@
           "src/llm_loop/memory/synopsis.py"
         ],
         "rationale": "SynopsisStore 同文件维护 immutable content-addressed source snapshots，单独按 T3 分面。"
-      },
-      "chatgpt_binding_notifications": {
-        "tier": "T1",
-        "status": "observe",
-        "owner": "runtime",
-        "paths": [
-          "src/llm_loop/runtime/chatgpt_binding_notifications.py"
-        ],
-        "rationale": "ChatGPT binding 通知/回执以追加事实形式持久化。"
       },
       "learning_idle_state": {
         "tier": "T2",

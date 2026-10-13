@@ -542,38 +542,22 @@ def build_engine(
     # 未配置 MODEL_PROVIDERS（仅 L0 单 provider 合成）→ 池仅有默认 client，行为与现状一致
     # M49（design §5.4）: 注入 MODEL_FALLBACKS 原始字符串，池在 fallback_candidates() 中按需解析
     from llm_loop.llm.pool import ModelClientPool
+    from llm_loop.llm.web_provider_registration import load_web_client_factories
 
+    # web-carveout M3（D2/D3）：外部 web client 构造器改由外部注册模块供给
+    # （importlib 动态加载，失败分级见 web_provider_registration）；仅注册
+    # 目录内实际生效的 model ref（effective_refs 过滤语义与旧硬编码段一致）。
     external_client_factories: dict[str, Any] = {}
-    if settings.chatgpt_web_enabled:
-        from llm_loop.llm.chatgpt_web import (  # r9-import-exempt: plugin
-            CHATGPT_WEB_MODEL_REF,
-            build_chatgpt_web_model_client,
-        )
-
-        effective_refs = {
-            f"{pid}/{mid}"
-            for pid, provider_spec in registry.providers.items()
-            for mid in provider_spec.models
-        }
-        if CHATGPT_WEB_MODEL_REF in effective_refs:
-            external_client_factories[CHATGPT_WEB_MODEL_REF] = (
-                lambda: build_chatgpt_web_model_client(settings, transport_observer=transport_observer)
-            )
-    if settings.deepseek_web_enabled:
-        from llm_loop.llm.deepseek_web import (  # r9-import-exempt: plugin
-            DEEPSEEK_WEB_MODEL_REF,
-            build_deepseek_web_model_client,
-        )
-
-        effective_refs = {
-            f"{pid}/{mid}"
-            for pid, provider_spec in registry.providers.items()
-            for mid in provider_spec.models
-        }
-        if DEEPSEEK_WEB_MODEL_REF in effective_refs:
-            external_client_factories[DEEPSEEK_WEB_MODEL_REF] = (
-                lambda: build_deepseek_web_model_client(settings, transport_observer=transport_observer)
-            )
+    effective_refs = {
+        f"{pid}/{mid}"
+        for pid, provider_spec in registry.providers.items()
+        for mid in provider_spec.models
+    }
+    for model_ref, builder in load_web_client_factories(
+        settings, transport_observer=transport_observer
+    ).items():
+        if model_ref in effective_refs:
+            external_client_factories[model_ref] = builder
 
     model_pool = ModelClientPool(
         registry=registry,

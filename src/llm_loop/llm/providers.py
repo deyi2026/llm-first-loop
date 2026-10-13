@@ -21,6 +21,7 @@ from typing import Any
 
 from llm_loop.config import Settings
 from llm_loop.llm.model_ids import canonical_model_id, loose_key
+from llm_loop.llm.web_provider_registration import load_web_provider_specs
 
 logger = logging.getLogger(__name__)
 
@@ -1060,113 +1061,17 @@ def load_registry(settings: Settings) -> ProviderRegistry:
         providers = dict(registry.providers)
         changed = False
 
-        if bool(getattr(settings, "chatgpt_web_enabled", False)):
-            required = (
-                str(getattr(settings, "chatgpt_web_cdp_endpoint", "") or "").strip(),
-                str(getattr(settings, "chatgpt_web_project_url", "") or "").strip(),
-                str(getattr(settings, "chatgpt_web_project_ref", "") or "").strip(),
-                str(getattr(settings, "chatgpt_web_project_name", "") or "").strip(),
-            )
-            if not all(required):
+        # web-carveout M3（D2/D3）：web 通道 provider 目录条目改由外部注册模块
+        # 供给（importlib 动态加载，失败分级见 web_provider_registration）。
+        for provider_id, spec in load_web_provider_specs(settings).items():
+            if provider_id in providers:
                 logger.warning(
-                    "CHATGPT_WEB_ENABLED=1 但浏览器模型配置不完整；chatgpt-web 不加入模型目录"
+                    "provider id '%s' 已被现有配置占用；外部 web provider 未注册",
+                    provider_id,
                 )
-            else:
-                from llm_loop.llm.chatgpt_web import (
-                    CHATGPT_WEB_MODEL_ID,
-                    CHATGPT_WEB_PROVIDER_ID,
-                )
-
-                if CHATGPT_WEB_PROVIDER_ID in providers:
-                    logger.warning(
-                        "provider id '%s' 已被现有配置占用；内置 ChatGPT Web provider 未注册",
-                        CHATGPT_WEB_PROVIDER_ID,
-                    )
-                else:
-                    web_context_tokens = int(
-                        getattr(settings, "chatgpt_web_context_tokens", 262_144)
-                        or 262_144
-                    )
-                    providers[CHATGPT_WEB_PROVIDER_ID] = ProviderSpec(
-                        id=CHATGPT_WEB_PROVIDER_ID,
-                        base_url="browser://chatgpt-web",
-                        api_key_env="",
-                        models={
-                            CHATGPT_WEB_MODEL_ID: ModelSpec(
-                                context=web_context_tokens,
-                                reasoning_capable=True,
-                                reasoning_control="provider_owned",
-                                reasoning=True,
-                                long_context=web_context_tokens >= 262_144,
-                                reasoning_efforts=("instant", "medium", "high", "xhigh", "pro"),
-                                reasoning_default_effort=str(
-                                    getattr(settings, "chatgpt_web_reasoning_effort", "high")
-                                    or "high"
-                                ),
-                                cost_tier="subscription",
-                                runtime_identity="chatgpt-web-browser-surface",
-                            )
-                        },
-                        default_model=CHATGPT_WEB_MODEL_ID,
-                        timeout_s=float(
-                            getattr(settings, "chatgpt_web_turn_timeout_s", 120.0)
-                            or 120.0
-                        ),
-                    )
-                    changed = True
-
-        if bool(getattr(settings, "deepseek_web_enabled", False)):
-            required = (
-                str(getattr(settings, "deepseek_web_cdp_endpoint", "") or "").strip(),
-                str(getattr(settings, "deepseek_web_root_url", "") or "").strip(),
-            )
-            if not all(required):
-                logger.warning(
-                    "DEEPSEEK_WEB_ENABLED=1 但浏览器模型配置不完整；deepseek-web 不加入模型目录"
-                )
-            else:
-                from llm_loop.llm.deepseek_web import (
-                    DEEPSEEK_WEB_MODEL_ID,
-                    DEEPSEEK_WEB_PROVIDER_ID,
-                )
-
-                if DEEPSEEK_WEB_PROVIDER_ID in providers:
-                    logger.warning(
-                        "provider id '%s' 已被现有配置占用；内置 DeepSeek Web provider 未注册",
-                        DEEPSEEK_WEB_PROVIDER_ID,
-                    )
-                else:
-                    context_tokens = int(
-                        getattr(settings, "deepseek_web_context_tokens", 131_072)
-                        or 131_072
-                    )
-                    providers[DEEPSEEK_WEB_PROVIDER_ID] = ProviderSpec(
-                        id=DEEPSEEK_WEB_PROVIDER_ID,
-                        base_url="browser://deepseek-web",
-                        api_key_env="",
-                        models={
-                            DEEPSEEK_WEB_MODEL_ID: ModelSpec(
-                                context=context_tokens,
-                                reasoning_capable=True,
-                                reasoning_control="provider_owned",
-                                reasoning=True,
-                                long_context=context_tokens >= 131_072,
-                                reasoning_efforts=("instant", "high"),
-                                reasoning_default_effort=str(
-                                    getattr(settings, "deepseek_web_reasoning_effort", "high")
-                                    or "high"
-                                ),
-                                cost_tier="subscription",
-                                runtime_identity="deepseek-web-browser-surface",
-                            )
-                        },
-                        default_model=DEEPSEEK_WEB_MODEL_ID,
-                        timeout_s=float(
-                            getattr(settings, "deepseek_web_turn_timeout_s", 120.0)
-                            or 120.0
-                        ),
-                    )
-                    changed = True
+                continue
+            providers[provider_id] = spec
+            changed = True
 
         if not changed:
             return registry

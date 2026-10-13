@@ -17,8 +17,12 @@
      - cancel 触发（M2 早退路径）：第一次调用早退释放 guard，第二次 chat 即刻
        进入 exchange（残余≈早退时延）。
 """
+# [RETIRED 2026-10-14 web-carveout M3] 本脚本的被测模块（deepseek_web/deepseek_page）
+# 已剥离至 lfl-web-providers 独立项目；脚本保留为 M5 交付的历史工件（报告见
+# docs/phase6-m5-leftover-verification.md），不再在中间件环境可运行。
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -132,6 +136,7 @@ _SERVER = None  # 进程内单例：多 part 复用同端口时必须先停旧�
 def _start_server(engine):
     global _SERVER
     import uvicorn
+
     from llm_loop.web import build_app
 
     if _SERVER is not None:
@@ -203,13 +208,12 @@ def part3_stop_dom(engine, runner) -> dict:
         # 终答落盘可能晚于 run 终态数毫秒：带重试后取末条 assistant。
         # 语义口径（Phase4 四态）：取消在途 → 终态 0 字节 0 工具——
         # _CANCELLED_ANSWER 仅随终态事件发 UI，持久化消息内容为空（实测）。
-        hist_text = ""
+        _hist_text = ""  # noqa: F841 — 语义口径注释保留（四态取消在途=终态 0 字节）
         status = 0
         assistant_tail = None
         for _ in range(6):
             time.sleep(0.5)
             status, hist = _http("GET", f"/api/v1/sessions/{sid}/messages?limit=5")
-            hist_text = json.dumps(hist, ensure_ascii=False)
             msgs = hist.get("messages", []) if isinstance(hist, dict) else []
             for m in reversed(msgs):
                 if m.get("role") == "assistant":
@@ -362,10 +366,8 @@ def part4b_guard_residual() -> dict:
 
     def _chat2():
         t_chat2_entry.append(time.monotonic())
-        try:
+        with contextlib.suppress(Exception):
             c1.chat(msgs, [])
-        except Exception:
-            pass
         t_chat2_done.append(time.monotonic())
 
     th1 = threading.Thread(
@@ -391,10 +393,8 @@ def part4b_guard_residual() -> dict:
     c2, pt2 = make_client(cancellable=True)
 
     def _first():
-        try:
+        with contextlib.suppress(Exception):
             c2.chat(msgs, [])
-        except Exception:
-            pass
 
     th3 = threading.Thread(target=_first, daemon=True)
     th3.start()
@@ -410,10 +410,8 @@ def part4b_guard_residual() -> dict:
 
     def _second():
         t2_entry.append(time.monotonic())
-        try:
+        with contextlib.suppress(Exception):
             c2.chat(msgs, [])
-        except Exception:
-            pass
         t2_done.append(time.monotonic())
 
     th4 = threading.Thread(target=_second, daemon=True)
