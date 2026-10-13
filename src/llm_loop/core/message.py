@@ -234,6 +234,12 @@ class ToolResult:
     # EW2-C: immutable workspace artifact identities produced by execution-owned tools.
     # Facts are mechanical (ref/path/hash/size/version); task applicability stays with the model.
     artifact_facts: tuple[dict[str, object], ...] = ()
+    # Phase4 M2 在途打断（§4.2 CK-C）：registry 定向终止收割后由等待方标注；
+    # False（默认）= 零回归。标注事实：本调用因收到用户新插话被单调用粒度
+    # 终止（非会话级停止），partial_output/returncode/duration 如实保留在
+    # content 与既有字段中。provider 不可见字段层（同 result_fingerprint 惯例）。
+    interrupted_for_interjection: bool = False
+    interrupt_reason_code: str = ""
 
     def to_message(self) -> Message:
         """构造为 tool 消息（如实承载状态，AI 视角：状态结构化呈现）.

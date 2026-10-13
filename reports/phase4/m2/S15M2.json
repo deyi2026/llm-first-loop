@@ -1,0 +1,66 @@
+{
+  "scenario": "S15M2",
+  "n": 6,
+  "samples": [
+    {
+      "construct": "B",
+      "tag": "S15M2-B-1",
+      "inject_delay_s": 1.25,
+      "t_effect_ms": 159.6,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "branch": "interrupt_first"
+    },
+    {
+      "construct": "B",
+      "tag": "S15M2-B-2",
+      "inject_delay_s": 1.25,
+      "t_effect_ms": 149.9,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "branch": "interrupt_first"
+    },
+    {
+      "construct": "B",
+      "tag": "S15M2-B-3",
+      "inject_delay_s": 1.25,
+      "t_effect_ms": 144.1,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "branch": "interrupt_first"
+    },
+    {
+      "construct": "A",
+      "tag": "S15M2-A-1",
+      "inject_delay_s": 1.45,
+      "t_effect_ms": 129.2,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": false,
+      "branch": "natural_first"
+    },
+    {
+      "construct": "A",
+      "tag": "S15M2-A-2",
+      "inject_delay_s": 1.45,
+      "t_effect_ms": 128.2,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": false,
+      "branch": "natural_first"
+    },
+    {
+      "construct": "A",
+      "tag": "S15M2-A-3",
+      "inject_delay_s": 1.45,
+      "t_effect_ms": 130.7,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": false,
+      "branch": "natural_first"
+    }
+  ]
+}

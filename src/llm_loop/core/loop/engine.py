@@ -400,6 +400,49 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
 
+    def _phase4_interrupt_gate(self, session_id: str, tool_name: str) -> bool:
+        """Phase4 CK-B 打断判定（§4.2 固定序；§4.4 全链保守降级）.
+
+        注册表分段等待（τ 片）在引擎工作线程内逐片调用；判定顺序固定：
+        1) stop 链优先：背景取消原因非空 → False（检查点放弃，停止通道接管）；
+        2) mailbox 真值 peek（CK-A interjections_pending，不引入内存标志）；
+        3) 工具 ∈ 可中断闭集（registry.INTERRUPTIBLE_TOOLS，不解释）；
+        4) 无未结算 revocable=False 副作用登记（SideEffectRegistry 四态快照，
+           查询失败 → 保守 False）。
+        任何异常 → False（不打断；退化为自然完成/超时路径）。
+        """
+        try:
+            if _background_cancel_reason(self, session_id):
+                return False
+            runner = getattr(self, "runner", None)
+            if runner is None or not getattr(runner, "enabled", False):
+                return False
+            if not runner.interjections_pending(session_id):
+                return False
+            if tool_name not in getattr(
+                self.registry, "INTERRUPTIBLE_TOOLS", frozenset()
+            ):
+                return False
+            try:
+                from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+                # §4.2 CK-B④（审查 P1-2）：副作用面限定当前 run_generation——
+                # 跨 run 陈旧未结算项不静默阻断打断；无代次（老数据/直跑）按
+                # 会话全量保守。
+                cur_gen = (
+                    (runner.get_handle(session_id) or {}).get("run_generation") or ""
+                )
+                for it in SideEffectRegistry.instance().snapshot(session_id):
+                    if not it.get("revocable") and not it.get("settled_at"):
+                        it_gen = it.get("run_generation") or ""
+                        if not cur_gen or not it_gen or it_gen == cur_gen:
+                            return False
+            except Exception:  # noqa: BLE001 — 副作用面查询失败保守
+                return False
+            return True
+        except Exception:  # noqa: BLE001 — §4.4 判定失败保守
+            return False
+
     def _run_state(self) -> _RunState:
         """当前会话状态桶（B5-W4-03：解析逻辑在 RunStateManager.bucket，薄委托）."""
         return self._run_state_mgr.bucket()
@@ -461,6 +504,12 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     ) -> None:
         self.llm = llm_client
         self.registry = registry
+        # Phase4 M2 CK-B（§4.2）：在途打断判定钩子装配（stop 链优先 + mailbox
+        # peek 真值 + 闭集 + 副作用面；gate 内自含 §4.4 保守降级）。
+        try:
+            registry.set_interrupt_gate(self._phase4_interrupt_gate)
+        except Exception:  # noqa: BLE001 — 装配失败 = 无打断通道（零回归）
+            logger.warning("phase4 interrupt gate 装配失败（无打断通道）", exc_info=True)
         self.memory = memory
         self.session = session
         self.settings = settings

@@ -1,0 +1,28 @@
+{
+  "scenario": "S14M2",
+  "n": 3,
+  "samples": [
+    {
+      "tag": "S14M2-1",
+      "t_effect_ms": 1673.3,
+      "final": "done",
+      "natural_receipt": true,
+      "interrupted_receipt": false
+    },
+    {
+      "tag": "S14M2-2",
+      "t_effect_ms": 1682.4,
+      "final": "done",
+      "natural_receipt": true,
+      "interrupted_receipt": false
+    },
+    {
+      "tag": "S14M2-3",
+      "t_effect_ms": 1688.3,
+      "final": "done",
+      "natural_receipt": true,
+      "interrupted_receipt": false
+    }
+  ],
+  "t_effect_p50_ms": 1682.4
+}

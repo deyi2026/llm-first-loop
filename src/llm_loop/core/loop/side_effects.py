@@ -203,6 +203,15 @@ class SideEffectRegistry:
             # seq 只作版本号不再当身份。
             self._seq += 1
             eff_id = f"se-{self._seq}-{uuid.uuid4().hex[:6]}"
+            # Phase4 M2（§4.2 CK-B④，审查 P1-2）：登记戳当前 run_generation（来自
+            # run_context；无上下文=空串）——打断判定的副作用面按代次过滤，防跨
+            # run 陈旧未结算项静默阻断在途打断能力。纯增字段，旧数据无此键=空。
+            try:
+                from llm_loop.core.run_context import current_run_generation
+
+                _reg_gen = current_run_generation.get()
+            except Exception:  # noqa: BLE001 — 登记面不因观测戳失败
+                _reg_gen = ""
             self._items.append(
                 {
                     "id": eff_id,
@@ -212,6 +221,7 @@ class SideEffectRegistry:
                     "kind": kind,
                     "revocable": bool(revocable),
                     "detail": str(detail)[:200],
+                    "run_generation": _reg_gen,
                     "created_at": _now(),
                     "settled_at": None,   # 自然完成/已被停止回收的时间
                     "confirmed_at": None,  # 人工确认（仅 external_unknown 用）

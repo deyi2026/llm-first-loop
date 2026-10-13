@@ -1,0 +1,68 @@
+{
+  "scenario": "S13M2",
+  "n": 5,
+  "samples": [
+    {
+      "tag": "S13M2-1",
+      "t_effect_ms": 87.4,
+      "elapsed_s": 0.43,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "model_saw_interject": true,
+      "receipt_texts": [
+        "[状态: failure] [在途打断] interrupted_for_interjection=true; reason_code=terminated_for_interject; auto_reexecuted=false; exe"
+      ]
+    },
+    {
+      "tag": "S13M2-2",
+      "t_effect_ms": 87.0,
+      "elapsed_s": 0.45,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "model_saw_interject": true,
+      "receipt_texts": [
+        "[状态: failure] [在途打断] interrupted_for_interjection=true; reason_code=terminated_for_interject; auto_reexecuted=false; exe"
+      ]
+    },
+    {
+      "tag": "S13M2-3",
+      "t_effect_ms": 74.6,
+      "elapsed_s": 0.44,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "model_saw_interject": true,
+      "receipt_texts": [
+        "[状态: failure] [在途打断] interrupted_for_interjection=true; reason_code=terminated_for_interject; auto_reexecuted=false; exe"
+      ]
+    },
+    {
+      "tag": "S13M2-4",
+      "t_effect_ms": 84.1,
+      "elapsed_s": 0.44,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "model_saw_interject": true,
+      "receipt_texts": [
+        "[状态: failure] [在途打断] interrupted_for_interjection=true; reason_code=terminated_for_interject; auto_reexecuted=false; exe"
+      ]
+    },
+    {
+      "tag": "S13M2-5",
+      "t_effect_ms": 80.8,
+      "elapsed_s": 0.45,
+      "final": "done",
+      "item_status": "interject_received",
+      "interrupted_receipt": true,
+      "model_saw_interject": true,
+      "receipt_texts": [
+        "[状态: failure] [在途打断] interrupted_for_interjection=true; reason_code=terminated_for_interject; auto_reexecuted=false; exe"
+      ]
+    }
+  ],
+  "t_effect_p50_ms": 84.1,
+  "t_effect_p95_ms": 87.4
+}

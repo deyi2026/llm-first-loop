@@ -184,3 +184,28 @@ sequenceDiagram
 | P1-3 | 等待点归属失准+变更面不足 | §2.4-④ 收口=registry._run_with_timeout:1589；「无界」改单段阻塞（execute_command 60s 上界）；spawn_subagent 收益≈0 如实标注；§5 M2 变更面清单（WAL/started/_synthesize_cancelled/checked_tool_dispatch/record_tool_octet/批次边界） |
 | P1-4 | 空窗桶不可达/不可验收 | §3 T2+§7：空窗钉死序列间隙/轮间隙；新增第四桶 LLM 流内在途（不设目标）；S16 构造精度 §6 |
 | P2×9 | 消费点两点表述/S13-S16 规格/分桶归属/降级表两行/revocable 限定 run 内/Stop 次序锚点/CK-C 回执规范+D6/短工具开销/称谓与 M1 措辞 | 分别并入 §2.1、§6、§7 表、§4.4 两行、§4.2 CK-B④、§4.2 Stop 段、§4.2 CK-C、§4.4 尾注、§8、§5 M1 |
+
+## 10. 实施修订记录（M1/M2 审查处置，2026-10-13）
+
+**M1 评审（bb6d33de4 提交前）**：P1-1 消费故障路径吞持久化异常→行级回插
+`requeue_interjections_front` + 异常传播（与轮首同语义）；P2-1/P2-5 跳过合成与
+消费点后移至回执落盘后（消除无 WAL 部署孤儿窗口、固定消息序）；P2-6 补混合
+[R,M,M] 与序列头收割两场景。P2-2（skipped 无 started 记录——与「未开始」语义
+自洽，对齐 _synthesize_cancelled 先例）、P2-3（重复 tool_call_id 后写覆盖——
+provider 契约域）留现状。
+
+**M2 评审（M2 提交前）**：P1-1 片超时 except 吞工具本体 TimeoutError→加
+`if future.done(): raise`；P1-2 副作用面未限 run→register 截
+run_generation（run_context contextvar）+ gate 按代次过滤（无代次保守全量）；
+P1-3 停止四态专项断言补齐（test_p1_3：cancel_hook 零触发 + stop_record 零写 +
+终态 done）。P2-1 补 future.cancel 尽力语义；P2-3 收割前二次 gate 查（stop 链
+优先复检）；P2-5 interrupted 标注投影 Message.metadata；P2-6 补打断→剩余
+skipped 接续测试；P2-7 S15-A 构造改 sleep 1.6@1.45s（余量 ~110ms）。
+
+**设计裁剪（与 §4.1-7/§4.2 原文的实现差异，方向保守）**：
+1. §4.1-7 判别器以「事件序（future.done() 同线程串行判定）+ 收割结果状态」
+   替代登记 set：SUCCESS 一律判自然完成（终止信号几乎不可能产生 rc=0），非
+   SUCCESS 一律标打断（terminate 确已发出，标注非虚假）。S15 双分支 3+3 实测
+   支撑；终止登记幂等性由单线程判定序天然保证。
+2. §4.2 初始闭集收窄为 {execute_command}：spawn_subagent 收益≈0（其等待不占
+   t_effect 主路径），保守不入；闭集扩张需走 §7 度量门。

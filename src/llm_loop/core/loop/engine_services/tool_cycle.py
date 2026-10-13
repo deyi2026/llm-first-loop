@@ -779,7 +779,11 @@ class ToolCycleService:
             duration_ms=result.duration_ms,
             result_content=result.content,
             reason_code=(
-                "tool_result_blocked"
+                # Phase4 M2 CK-C：在途打断标注优先（§4.2 回执规范）
+                result.interrupt_reason_code
+                if getattr(result, "interrupted_for_interjection", False)
+                and result.interrupt_reason_code
+                else "tool_result_blocked"
                 if result.status is ToolResultStatus.BLOCKED
                 else "unauthorized"
                 if result.status is ToolResultStatus.UNAUTHORIZED

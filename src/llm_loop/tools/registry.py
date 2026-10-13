@@ -383,6 +383,19 @@ class ToolRegistry:
         # T5a: 人工审批通道（None = 拦截即拒；set_approval_callback 运行时注入）
         self._approval_callback = approval_callback
         self._approval_audit_path = Path(approval_audit_path) if approval_audit_path else None
+        # Phase4 M2 CK-B（§4.2）：在途打断判定钩子（engine 侧装配：stop 链优先 +
+        # mailbox peek 真值 + 可中断闭集 + 无未结算 revocable=False 副作用）。
+        # None = 零回归（无分段等待打断路径）。
+        self._interrupt_gate: Callable[[str, str], bool] | None = None
+
+    def set_interrupt_gate(self, gate: "Callable[[str, str], bool] | None") -> None:
+        """Install/remove the Phase4 in-flight interrupt decision gate (CK-B).
+
+        gate(session_id, tool_name) -> bool 由 engine 装配并保证 §4.2 固定序
+        判定（stop 链优先 → peek 真值 → 闭集 → 副作用面）与 §4.4 保守降级；
+        本注册表不解释判定内容。None = 移除（零回归）。
+        """
+        self._interrupt_gate = gate
 
     def set_approval_callback(self, callback: Callable[[str, str], bool] | None) -> None:
         """运行时注入/移除人工审批回调（CLI 交互模式装配；web/feishu 不注入 → fail-closed）."""
@@ -1535,6 +1548,145 @@ class ToolRegistry:
                 return f"工具 {name} 不在白名单（EXEC_ALLOWLIST），需人工执行"
         return "未知 EXEC_MODE"
 
+    # Phase4 M2（§4.2）：在途打断可中断闭集——单调用原子回收（terminate_session
+    # 定向终止通道）且无跨调用持锁语义的工具。S14 语义（revocable=False 副作用）
+    # 由 gate 的副作用面判定拦截，双重保守。闭集扩张需走 §7 度量门。
+    INTERRUPTIBLE_TOOLS: frozenset[str] = frozenset({"execute_command"})
+    _INTERRUPT_WAIT_SLICE_S: float = 0.2  # CK-B τ=200ms 分段等待
+    _INTERRUPT_HARVEST_S: float = 3.0  # CK-C 定向终止后收割上限（超过→等自然完成）
+
+    def _wait_with_interrupt_gate(
+        self, *, future, timeout_s: float, call: ToolCall, tool: Any,
+        active_session_id: str,
+    ) -> ToolResult:
+        """Phase4 CK-B 分段等待（§4.2）：τ 片等待 + 固定序打断判定.
+
+        每片醒来按序判定：stop 链优先（gate 内含，见 engine 装配）→ mailbox
+        peek 真值 → 闭集成员 → 无未结算 revocable=False 副作用，全真才进入
+        CK-C 定向取消；否则下一片。gate 缺失/异常/返回假 → 保守不打断
+        （§4.4），语义退化为原单点等待（仅多 τ 量化唤醒）。总超时语义不变
+        （片和=总预算；到期抛 concurrent.futures.TimeoutError 交原超时链）。
+        """
+        import concurrent.futures
+
+        deadline = time.monotonic() + timeout_s
+        gate = self._interrupt_gate
+        interruptible = bool(
+            gate is not None and active_session_id and call.name in self.INTERRUPTIBLE_TOOLS
+        )
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise concurrent.futures.TimeoutError()
+            try:
+                return future.result(
+                    timeout=min(remaining, self._INTERRUPT_WAIT_SLICE_S)
+                )
+            except concurrent.futures.TimeoutError:
+                # M2 审查 P1-1：片超时 future 必未 done；若已 done 说明是工具本体
+                # 抛出的 TimeoutError（Py≥3.11 与片超时同类）——立即上抛进原
+                # 异常分支（与单段等待语义等价），不得吞入自旋至总超时。
+                if future.done():
+                    raise
+            if not interruptible:
+                continue
+            try:
+                if not bool(gate(active_session_id, call.name)):
+                    continue
+            except Exception:  # noqa: BLE001 — §4.4 判定失败保守不打断
+                logger.debug(
+                    "interrupt gate raised for %s (conservative skip)", call.name
+                )
+                continue
+            interrupted = self._terminate_for_interjection(
+                future=future,
+                call=call,
+                tool=tool,
+                active_session_id=active_session_id,
+                harvest_deadline=min(
+                    deadline, time.monotonic() + self._INTERRUPT_HARVEST_S
+                ),
+                gate=gate,
+            )
+            if interrupted is not None:
+                return interrupted
+            # terminate 失败/收割超时（§4.4）：继续分段等待自然完成/总超时
+
+    def _terminate_for_interjection(
+        self, *, future, call: ToolCall, tool: Any,
+        active_session_id: str, harvest_deadline: float, gate: Any = None,
+    ) -> ToolResult | None:
+        """Phase4 CK-C 单调用粒度定向取消 + 竞速机械判别（§4.2/§4.3）.
+
+        三不：不调 cancel_session（会话级连坐）、不触发 _session_cancel_hooks、
+        不写 StopRecord（停止通道独占）。事件序判定（不比时间戳，判定与终止
+        发送同线程串行故天然有序）：future 已完成 → 自然完成先到（None=调用
+        方按自然结果回执，不标注打断）；未完成 → 发送 terminate_session 后
+        有界收割。terminate 失败 → None（§4.4 视为不可中断回等待）。
+        收割结果的竞速微窗口机械解决：干净自然成功（SUCCESS）视为自然完成
+        先到（终止信号几乎不可能产生 rc=0 成功），其余（FAILURE/TIMEOUT/
+        rc≠0）标注 interrupted_for_interjection——partial_output/returncode/
+        duration 如实保留，回执不引用插话文本（D6）。
+        """
+        import concurrent.futures
+
+        if future.done():
+            return None
+        # M2 审查 P2-3（§4.2「与停止的竞速」）：收割前二次查 stop 链——gate 首查
+        # 即 stop 优先，此处 gate=False（含 stop 已到）则放弃本次打断。
+        if gate is not None:
+            try:
+                if not bool(gate(active_session_id, call.name)):
+                    return None
+            except Exception:  # noqa: BLE001 — 判定失败保守不打断
+                return None
+        terminate_session = getattr(tool, "terminate_session", None)
+        if not callable(terminate_session) or not active_session_id:
+            return None
+        try:
+            terminate_session(active_session_id)
+        except Exception:  # noqa: BLE001 — §4.4 terminate 失败 → 不可中断
+            logger.warning(
+                "interject terminate_session failed (conservative, keep waiting)",
+                exc_info=True,
+            )
+            return None
+        # §4.1-3/CK-C 原文「该 future.cancel + 该工具实例 terminate_session」：
+        # cancel 为尽力语义（运行中任务不受影响，由 terminate 兜底；未启动任务
+        # 被拒派——两者均不冒充打断回执）。
+        with contextlib.suppress(Exception):
+            future.cancel()
+        logger.info(
+            "CK-C 定向终止已发: tool=%s call=%s（terminated_for_interject）",
+            call.name, call.id,
+        )
+        try:
+            result = future.result(
+                timeout=max(0.0, harvest_deadline - time.monotonic())
+            )
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                "CK-C 收割超时（等自然完成/总超时）: tool=%s call=%s",
+                call.name, call.id,
+            )
+            return None
+        if result is None:
+            return None
+        if getattr(result, "status", None) is ToolResultStatus.SUCCESS:
+            # 自然完成先到（微竞速窗口机械解决，见 docstring）
+            return None
+        marker = (
+            "[在途打断] interrupted_for_interjection=true; "
+            "reason_code=terminated_for_interject; auto_reexecuted=false; "
+            f"executed_duration_ms={getattr(result, 'duration_ms', None)}; "
+            "因收到用户新插话，本调用被单调用粒度定向终止（非会话级停止）；"
+            "以上输出为终止前部分输出（partial_output），请基于新输入重新规划。"
+        )
+        result.content = f"{marker}\n{result.content or ''}"
+        result.interrupted_for_interjection = True
+        result.interrupt_reason_code = "terminated_for_interject"
+        return result
+
     def _run_with_timeout(self, tool: Any, call: ToolCall) -> ToolResult:
         """真实执行 + 超时控制 + 输出截断标注."""
         # ERC R9: resolve probeable source requests from verified-current covering Evidence
@@ -1586,7 +1738,17 @@ class ToolRegistry:
         _registry_timeout = getattr(tool, "registry_timeout_s", self.tool_timeout_s)
         timeout_s = None if _registry_timeout is None else float(_registry_timeout)
         try:
-            result = future.result() if timeout_s is None else future.result(timeout=timeout_s)
+            result = (
+                future.result()
+                if timeout_s is None
+                else self._wait_with_interrupt_gate(
+                    future=future,
+                    timeout_s=timeout_s,
+                    call=call,
+                    tool=tool,
+                    active_session_id=active_session_id,
+                )
+            )
         except concurrent.futures.TimeoutError:
             # P3: revoke the shared effect capability before TIMEOUT becomes visible.
             # If the worker is already inside the tiny physical commit window this waits
@@ -1803,6 +1965,12 @@ def tool_result_to_message(
             metadata["evidence_representation"] = result.evidence_representation
         if result.evidence_projection_complete is not None:
             metadata["evidence_projection_complete"] = result.evidence_projection_complete
+    # Phase4 M2（§4.2，审查 P2-5）：在途打断标注投影 Message.metadata——
+    # 仅供度量分桶/审计机械读取，不进 provider wire；模型可见性由 content
+    # marker 承担（D6：不引用插话正文）。
+    if getattr(result, "interrupted_for_interjection", False):
+        metadata["interrupted_for_interjection"] = True
+        metadata["interrupt_reason_code"] = result.interrupt_reason_code or ""
     if result.source_resolution_mode is not None:
         metadata["source_resolution_mode"] = result.source_resolution_mode
     if result.source_execution_performed is not None:
