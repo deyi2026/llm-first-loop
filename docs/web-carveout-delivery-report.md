@@ -1,11 +1,11 @@
 # Web Carveout 交付报告：deepseek/chatgpt 页面自动化通道剥离为独立项目
 
-- 日期：2026-10-14　状态：交付完成（中间件全量回归 8687/0；发布 gen256
-  + 重启受理 svc-8944f762 终态为会话退出后异步事实；真机往返核验见 §5 遗留）
+- 日期：2026-10-14　状态：交付完成（中间件全量回归 8687/0；发布 gen256；
+  G4 真机往返等价验证完成——生产进程内生效待 restart 终态后核验，§5）
 - 设计：docs/web-carveout-m0.md（M0 调查 + grill_me 评审 + D1-D6 用户确认
   「按倾向定」2026-10-14T00:18）
 - Goal：GOAL-20261013-a36699bb
-- 独立项目：~/Project/lfl-web-providers（@ 33e07dd，146 passed）
+- 独立项目：~/Project/lfl-web-providers（@ e74fd98，157 passed）
 
 ## 1. 问题与结果
 
@@ -69,16 +69,47 @@ deepseek/chatgpt 页面自动化 client（Playwright transport，单窗口可达
 - restart svc-8944f762977447ad905f1f6309c351a5 已受理（两阶段等待 requester
   退出后异步执行；终态核验 service_control(status)）。
 
-## 5. 遗留与候选
+## 5. G4 真机核验结果与遗留（2026-10-14 上午补验）
 
-- **G4 真机往返（待重启完成后核验）**：生产 .env 已配置
-  LFL_WEB_PROVIDERS_MODULE=lfl_web_providers.registration（+PATH 指向
-  独立项目 src 目录）；重启后 web 目录应经外部注册出现 deepseek-web 条目（目录端点
-  /api/v1/models 或 engine registry），chatgpt-web 维持必填缺失不注册形。
-- **真机 t_effect 抽查（自前序交接候选 1 延续，环境已备）**：CDP 9229 存活
-  （Chrome 154）、deepseek 标签已开且登录态 LOGGED_IN 实测（2026-10-14
-  00:1x 探针）；抽查脚本应基于独立项目 client 栈实施，回填
-  docs/phase6-delivery-report.md §6。
+### 5.1 G4 发现并修复的两个真实缺陷（真机核验的价值所在）
+
+- **发现路径**：`/api/v1/providers` 运行时计数与 raw 磁盘一致（5/28，
+  无外部条目）→ 进程外复现外部模块加载 → 定位。
+- **#1 dotenv 布局缺陷（6220dfc）**：`_package_root()` 在 src 布局返回
+  `src/`，读不存在的 `src/.env`（真实 .env 在项目根）→ 双通道静默
+  `enabled=False` → specs 空、无 warning（fail-soft「未配置」形态）。
+  修复：平铺（上溯 2 级）→ src 布局（上溯 3 级）候选搜索，src 内
+  .env 优先（本地覆盖）；布局单测 + 本 checkout 条件回归。
+- **#2 闭包劫持（ae87bee）**：两通道块复用局部名 `duck`，闭包按引用捕获
+  → 双通道同时 enabled（生产形态）时 chatgpt 块重绑定劫持 deepseek lambda，
+  deepseek builder 收到 chatgpt duck（无 deepseek_web_* 属性）→「未完整
+  配置」错。此前测试只断言 factories 键集合未实际调用 builder。修复：
+  分名绑定 + 双通道 builder 实调用回归（假 build 捕获收到的 settings）。
+- **#3（Phase6 候选 1 范畴，e74fd98）**：停止控件 aria-label 选择器对当前
+  deepseek UI 结构性 miss（控件无 aria-label，发送/停止共体仅 svg path
+  切换）→ 升级实测 svg 特征探测。详见 docs/phase6-delivery-report.md §5.2。
+
+### 5.2 G4 真机往返（等价路径验证完成）
+
+- **路径与生产同构**：中间件 `web_provider_registration` 接缝（importlib
+  动态加载）→ `lfl_web_providers.registration.web_client_factories` →
+  `build_deepseek_web_model_client`（settings duck 透传中间件 data_dir，
+  D4 lease 连续性）→ CDP surface → 真页面。
+- **结果**：specs 注册 `deepseek-web`；真页面 chat 往返 7.7s，
+  finish=stop，回显 `OK-G4` 精确匹配。工件
+  reports/web-carveout/g4/ROUNDTRIP.json。chatgpt-web 维持必填缺失
+  不注册形（stderr warning 明示，与剥离前语义一致）。
+- **真机 t_effect（Phase6 候选 1 一并收口）**：cancel→早退抛错
+  41/507/714ms（n=3）+ 停止释放点击生效（取消后发送图标回归、文本停止
+  增长）——回填 docs/phase6-delivery-report.md §5.2。
+
+### 5.3 待下会话核验（restart 终态后）
+
+- restart svc-cbbc2f575e46419ebe2b264ce507f354 已受理（两阶段：等本
+  会话退出后执行）——生产进程需重启重新 import 修复后的外部模块（模块
+  缓存不热更新）；
+- 核验点：`/api/v1/providers` 运行时计数 6/29（+deepseek-web）；
+  生产 API 走 deepseek-web 一次真机往返；
 - venv editable 指针指向 .releases 发布快照（gen 部署机制）：裸 python 与
   pytest(pythonpath=src) 加载不同代码，调试/脚本须走 pytest 路径或显式
   sys.path——已记录设计稿 §5 M3 段。

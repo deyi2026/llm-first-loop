@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-10-14T07:26:04+0800",
+  "v1_stop_button_max": 0,
+  "cancel_call_ms": 0.0,
+  "v3_outcome": {
+    "kind": "completed",
+    "content": "# 蔚蓝的星球之心——海洋科普漫谈\n\n我们脚下的这颗星球常被称作“地球”，但更贴切的名字或许是“水球”。海洋覆盖了地球表面约百分之七十一的面积，储存着地球上约百分之九十七的水。它不只是地图上大片蓝色的",
+    "wall_s": 13.36
+  },
+  "v3_t_effect_s": null,
+  "v2_after_cancel_page": {
+    "stop_count": 0,
+    "composer_count": 1
+  }
+}

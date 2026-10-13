@@ -111,6 +111,32 @@ transport，单窗口可达 120s）此前走引擎同步内联分支：窗口内
 - 审查：独立子代理实读审查 approve（blocking 0/comment 7 全采纳，
   记录见方法文档 §4）。
 
+### 5.2 真机抽查回填（deepseek 真页面，2026-10-14，环境具备后补验）
+
+- 前提：CDP 9229 存活（Chrome 154）+ deepseek 标签登录态 LOGGED_IN 实测；
+  走 web-carveout 后的外部注册模块栈（中间件接缝→lfl_web_providers→
+  build client，与生产同路径）。工件 reports/phase6/m5/：
+  REALPAGE_TEFFECT.json（v2，aria 选择器 miss 记录）/
+  REALPAGE_TEFFECT_v3_dom.json（生成期按钮 DOM 轮询）/
+  REALPAGE_COMPOSER_DOM_DIFF.json（空闲 vs 生成 vs 取消后三态 diff）/
+  REALPAGE_TEFFECT_v5.json（选择器升级后终验）。
+- **真机 t_effect（cancel→早退抛错，n=3）**：41 / 507 / 714ms
+  （`DeepSeekPageCancelledError: assistant wait cancelled mid-generation`）。
+  亚秒级，粒度由页面等待循环 poll 间隔主导；对照 fake 窗口引擎侧 30.1ms
+  （M3）与 webui DOM 全链 49.3ms（M5），真机页面路径同量级达标。
+- **停止控件实测发现（结构性）**：当前 deepseek UI 停止控件是 composer
+  主按钮（div[role=button].ds-button--primary--filled--circle，**无
+  aria-label、无文本**），生成期仅 svg path 切换（发送 `M8.3125`→停止
+  `M2 4.88`）。M2 的三个 aria-label 选择器全程 miss（生成期 26s 计数 0），
+  释放点击从未发生（取消后页面继续生成，实测 post-cancel 按钮仍停止态）。
+- **选择器升级（独立项目 e74fd98）**：以实测 svg path 前缀为主探测路径
+  （计数+点击 JS），aria-label 保留兜底，失败记 0 语义不变；桩测试 W5/W6
+  锁定（157 passed）。终验（v5）：生成期命中 1（发送图标同步消失）；
+  cancel 后 +2s 停止图标消失、发送图标回归、文本停止增长——**释放点击
+  真机生效**。
+- 门维持不设（设计 §5 原口径）：图标 path 特征可能随 UI 更新漂移，
+  best-effort 失败回 0 是有意设计。
+
 ## 6. 遗留与候选
 
 - **phase5 流式检查点裸调 peek（预存）**：~~engine.py L1852 附近……~~
@@ -120,9 +146,11 @@ transport，单窗口可达 120s）此前走引擎同步内联分支：窗口内
 - **test_b 时序脆弱（预存，M1 收窄余量）**：phase4 gap 收割测试 ~40ms 注入
   余量偶发翻面（无语义损伤，miss 时插话由下一合法边界消费）。候选：加固
   注入锚点或标注 known-flake。
-- **~~停止按钮真机验证~~（已关闭）**：M5 以真 webui dist DOM 全链路等效验证
-  （§5.1）；deepseek 真页面选择器/点击释放仍为 best-effort（环境不可用，
-  维持设计 §5 不设门）。
+- **~~停止按钮真机验证~~（已关闭，2026-10-14 真机补验）**：M5 以真 webui
+  dist DOM 全链路等效验证（§5.1）；环境具备后真机实测收口（§5.2）——
+  aria-label 选择器对当前 UI 结构性 miss，已升级为实测 svg path 特征
+  （独立项目 e74fd98），释放点击真机生效；门维持不设（best-effort 语义
+  保留，UI 图标漂移时自然回 0）。
 - **~~web 通道续答残余窗口~~（已关闭）**：M5 确定性量化完成（§5.1）——
   引擎侧 ~2ms + guard 侧（无钩子≈剩余 turn；有 M2 钩子≈0.4ms）；
   真实页面残余还含页面实际完成时间，属页面固有。

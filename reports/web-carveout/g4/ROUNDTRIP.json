@@ -1,0 +1,16 @@
+{
+  "verified_at": "2026-10-14T07:24:02+0800",
+  "path": "middleware web_provider_registration seam -> lfl_web_providers.registration -> build_deepseek_web_model_client -> real page chat",
+  "specs_registered": [
+    "deepseek-web"
+  ],
+  "factories": [
+    "chatgpt-web/web-gpt",
+    "deepseek-web/web-deepseek"
+  ],
+  "build_s": 0.0,
+  "chat_s": 7.66,
+  "finish_reason": "stop",
+  "content_excerpt": "OK-G4",
+  "echo_ok": true
+}

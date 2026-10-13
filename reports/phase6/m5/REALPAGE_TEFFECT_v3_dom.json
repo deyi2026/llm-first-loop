@@ -1,0 +1,37 @@
+{
+  "captured_at": "2026-10-14T07:27:46+0800",
+  "dom_new_buttons": [
+    {
+      "t": 0.0,
+      "new": [
+        [
+          "DIV",
+          "",
+          ""
+        ],
+        [
+          "DIV",
+          "",
+          "下载"
+        ],
+        [
+          "DIV",
+          "",
+          "复制"
+        ],
+        [
+          "DIV",
+          "朗读",
+          ""
+        ]
+      ]
+    }
+  ],
+  "outcome": {
+    "kind": "DeepSeekPageCancelledError",
+    "detail": "assistant wait cancelled mid-generation (Phase6 M2)",
+    "t_err_after_cancel_s": 0.041,
+    "wall_s": 26.11
+  },
+  "cancel_call_ms": 0.0
+}

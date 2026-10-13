@@ -1,0 +1,24 @@
+{
+  "captured_at": "2026-10-14T07:31:36+0800",
+  "v1_gen_stop_icon": 1,
+  "gen_snapshot": {
+    "stop": 1,
+    "sendIcon": false,
+    "text_len": 768
+  },
+  "cancel_ms": 0.0,
+  "outcome": {
+    "kind": "DeepSeekPageCancelledError",
+    "t_err": 0.714
+  },
+  "post_cancel_2s": {
+    "stop": 0,
+    "sendIcon": true,
+    "text_len": 1264
+  },
+  "post_cancel_4_5s": {
+    "stop": 0,
+    "sendIcon": true,
+    "text_len": 1264
+  }
+}
