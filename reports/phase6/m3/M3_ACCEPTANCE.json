@@ -1,0 +1,113 @@
+{
+  "t1_sync_window_poll": {
+    "n": 10,
+    "t_effect_samples": [
+      31.0,
+      29.9,
+      55.6,
+      24.5,
+      29.6,
+      30.3,
+      13.4,
+      23.0,
+      12.2,
+      59.5
+    ],
+    "p50": 29.6,
+    "p95": 59.5,
+    "consumed_via": [
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll",
+      "sync_window_poll"
+    ],
+    "interrupt_receipts": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "baseline_b1_p50_ms": 859.3
+  },
+  "t2_sync_window_stop": {
+    "n": 10,
+    "stop_effect_samples": [
+      29.4,
+      51.7,
+      30.1,
+      48.4,
+      30.3,
+      29.4,
+      30.1,
+      30.1,
+      30.1,
+      27.8
+    ],
+    "p50": 30.1,
+    "final_types": [
+      "done",
+      "done",
+      "done",
+      "done",
+      "done",
+      "done",
+      "done",
+      "done",
+      "done",
+      "done"
+    ],
+    "cancel_answer_semantics": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ],
+    "baseline_b2_p50_ms": 915.3
+  },
+  "t3_zero_semantic_regression": {
+    "locked_by": [
+      "S1 打断轮文本不进下一轮 provider 投影（P1-6）",
+      "S2 Stop 即时终态 + 取消语义（四态之一）",
+      "S3 配置门关回退 final_gate 窗口形态",
+      "S7 打断后 provider_call 单次结算",
+      "S8 工具轮打断：响应含 tool_calls 也不执行",
+      "S9 worker 完成与命中竞态：命中优先",
+      "W3 cancel 钩子后 guard 释放（无死锁）"
+    ],
+    "full_regression_gate": "M4 全量回归门（tests/ 全套）"
+  },
+  "gates": {
+    "t1": {
+      "p50_max_ms": 100.0,
+      "p95_max_ms": 200.0,
+      "pass": true
+    },
+    "t2": {
+      "p50_max_ms": 100.0,
+      "pass": true
+    },
+    "t3": {
+      "pass": true,
+      "note": "单测锁定 + M4 全量门"
+    }
+  },
+  "generated_at": "2026-10-13T18:12:29+0800"
+}
