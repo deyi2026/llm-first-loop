@@ -619,6 +619,14 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         const sid = typeof event.session_id === "string" ? event.session_id : "";
         const generation = typeof event.run_generation === "string" ? event.run_generation : "";
         if (!sid || !generation) return;
+        // 2026-10-13 newSessionPending 卡死修复：本请求自带 new_session=true（上方
+        // 闭包快照）时，schema 契约保证服务端强制新建并分配全新 sid；下方 owner
+        // guard 会因 新sid ≠ 发送前 ownerSessionId（残留旧会话）拦掉本回调——若清
+        // pending 放在 guard 之后，标记将永久卡 true，events.ts 的 SSE/看门狗回填
+        // 被一并挡死。事件已带合法 sid/generation 即代表新会话 run 已实质启动，
+        // pending 的保持使命（见 579-581 行注释）已完成，故对"本次请求生效"的
+        // 清除必须先于 owner guard。
+        if (newSessionPending) sessionStore.setNewSessionPending(false);
         if (ownerSessionId && sid !== ownerSessionId) return;
         ownerSessionId = sid;
         runGeneration = generation;
@@ -628,7 +636,6 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         // Update abort ownership before publishing the new session id; the session-store
         // subscriber must not mistake this mechanical bind for a user session switch.
         abortSessionId = sid;
-        if (newSessionPending) sessionStore.setNewSessionPending(false);
         if (!opts && modelChangeIntent) sessionStore.setModelChangePending(false);
         // 2026-09-22（切换会话无变化事故）：会话绑定只服务"新会话首 run"——发送时
         // 无会话（sessionId=null，new_session 语义），服务端刚分配真实 sid，视图必须

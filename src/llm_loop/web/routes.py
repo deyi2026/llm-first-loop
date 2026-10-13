@@ -1081,6 +1081,14 @@ def chat(
                 # schema 契约：new_session 与 session_id 同传时强制新建优先。
                 # 显式模型选择属于本次 human turn，必须在 session.created 时就成为
                 # 新会话 authority；只有本请求未显式选模型时才继承 shared_current。
+                # 2026-10-13 加固：同传组合本身是前端状态异常（newSessionPending 与
+                # 残留 currentSessionId 并存）的信号，打 warn 便于观测定位。
+                if payload.session_id is not None:
+                    logger.warning(
+                        "chat new_session=true combined with session_id=%s "
+                        "(frontend session-state anomaly signal; new_session wins)",
+                        payload.session_id,
+                    )
                 session_id = engine.session.create(
                     model_override=_new_session_model_override(engine, payload.model)
                 )
@@ -1573,6 +1581,14 @@ def chat_stream(
             if getattr(payload, "new_session", False):
                 # 与同步入口相同：本请求显式模型优先于进程级 shared_current；
                 # 未显式选模型时才走 M60 继承（fail-open → None）。
+                # 2026-10-13 加固：同传组合本身是前端状态异常（newSessionPending 与
+                # 残留 currentSessionId 并存）的信号，打 warn 便于观测定位。
+                if payload.session_id is not None:
+                    logger.warning(
+                        "chat new_session=true combined with session_id=%s "
+                        "(frontend session-state anomaly signal; new_session wins)",
+                        payload.session_id,
+                    )
                 session_id = engine.session.create(
                     model_override=_new_session_model_override(engine, payload.model)
                 )

@@ -1,0 +1,67 @@
+{
+ "date": "2026-10-13",
+ "issue": 13,
+ "platform": "zhihu_zhuanlan",
+ "status": "published",
+ "article_id": "2093317776920392419",
+ "url": "https://zhuanlan.zhihu.com/p/2093317776920392419",
+ "title": "让 AI 别再「等等看」：一条把机器人从聊天气泡里拽出来的心跳指令",
+ "source_html": "20261013-lfl-daily-13.html",
+ "body_sha256": "6b527e5dd0ff8c7cecec3d4592e67a5858484c3f47cc472469aec173793f544e",
+ "publish_time": "2026-10-13T12:45+08:00",
+ "editor_gate": {
+  "title_match": true,
+  "h2_count": 6,
+  "table": 1,
+  "blockquote": 2,
+  "hr": 1,
+  "imgs": 2,
+  "imgs_loaded": 2,
+  "img_dims": [
+   "1000x690",
+   "1000x672"
+  ],
+  "word_count": "字数：3553",
+  "ed_len_nows": 3439,
+  "publish_btn_enabled": true,
+  "img_positions": [
+   "块20：紧贴 h2「三、比指令更硬的两条边界」之前",
+   "块27：紧贴 h2「四、什么时候值得用心跳，什么时候不值得」之前"
+  ]
+ },
+ "declaration": "包含 AI 辅助创作 作者对内容负责",
+ "public_verification": {
+  "url_reachable": true,
+  "h1_text_match": true,
+  "h2_sample": [
+   "一、先说清楚：机器人的「存活」和你以为的不一样",
+   "二、那条指令：每轮以工具调用结束，以纯文本结束=违规结算",
+   "三、比指令更硬的两条边界",
+   "六、这件事真正的教训"
+  ],
+  "img_elements": 2,
+  "visual_crop_check": [
+   "crop_a：fig39（纯文本结束 vs 工具调用结束 对比卡片）位于第二章末段落之后，标题渲染正常",
+   "crop_b：fig40（心跳协议的价码与适用边界）位于第三章末段落之后"
+  ],
+  "placeholder_leak": false,
+  "login_wall": false
+ },
+ "pitfalls": [
+  "1) /write 粘贴正文后页面自动转 /p/{draft}/edit 并自动存草稿，脚本按 /write 找标签页会 NO_PAGE",
+  "2) /edit 页章节块是 h2[data-block=true]（内层 div），段落块是 DIV[data-block=true]；用 div 选择器找标题会 NO_ANCHOR",
+  "3) 脚本 Range.setStartBefore 设置的选区不被 DraftJS 采纳，paste 落在编辑器末尾；必须真实 Input.dispatchMouseEvent 点击建立选区",
+  "4) 在 h2 块内点击后 paste File 会把该 h2 降级成 DIV/unstyled，且工具栏「标题/二级标题」按钮点不动（el.click() 与坐标点击均无效），Backspace 在段首也不触发合并——即块类型/删除类操作整体受内部 selection 同步问题阻断",
+  "5) 可靠解法：段落真正末尾（TreeWalker 最后一个非空文本节点 + getClientRects 最后一行，y=top+min(h/2,4)）真实点击 → Enter 造独立空块 → 在空块内 paste File；此时段落不 split、H2 不降级",
+  "6) Ctrl+Z 无法撤销合成 paste 的图片；删除图要用真实点击选中 figure 后按 Backspace",
+  "7) data URI <img> 随 HTML 粘贴只会生成知乎占位图（两张共用同一占位 src），不会上传，不能用",
+  "8) 逐字符编辑型命令（Backspace/Delete/blockType 切换）在 /edit 页对 DOM 真实点击建立的选区不生效；唯一有效写入口是合成 paste"
+ ],
+ "artifacts": [
+  "zh13_article_verify.png（整页截图）",
+  "zh13_crop_a.png",
+  "zh13_crop_b.png",
+  "_zhpub13.py（固化配方）"
+ ],
+ "reusable_script": "docs/promotion/_zhpub13.py"
+}

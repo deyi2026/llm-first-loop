@@ -89,9 +89,17 @@
   （git_head=138da6fb6，config_hash 57a03543…，2026-10-13T12:11）
 - **restart**：两阶段 barrier 已建（operation svc-5f43435c…，waiting_for_
   requester_exit——按机制等本 requester 会话退出后自动完成重启）
-- **重启后核验清单**（下一会话执行）：generation 前进至 desired、web 存活、
-  冒烟（队列受理 202/插话 202/metrics 分桶字段）、关键核验（HEAD=
-  138da6fb6+、三服务存活）
+- **重启后核验**（下一会话执行，**已于 2026-10-13T13:0x 完成**）：
+  - restart 自动收口：action svc-d1382470… 12:49:33 succeeded（web/feishu/
+    learning 三 stage 全 succeeded，terminal_action_barrier=null）
+  - generation=249 前进至 desired（lag=0，matches_desired_generation=true）
+  - web 存活：pid 81233，127.0.0.1:8903，HEAD=138da6fb6（dirty=false），
+    config_hash 57a03543… 与发布一致
+  - 冒烟（127.0.0.1:8903 实测）：队列受理 **202**（queue_id=q_afed1ad950c1，
+    验后即取消 200）；metrics **buckets 四桶字段在位**（interruptible/
+    natural_boundary/llm_stream/idle，n/p50/p95/insufficient_sample）；
+    插话端点无活跃 run 环境 return **409 interject_no_live_run**（协议正确
+    路径；202 通道需活跃 run+run_generation 匹配，本冒烟环境不可复现，如实）
 - **全量回归终态**：8225 passed / 0 failed / 132 skipped（tests/unit+web+
   guards+integration+phase3_baseline+phase4，502.86s）
 

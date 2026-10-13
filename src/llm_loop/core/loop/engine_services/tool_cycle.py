@@ -544,6 +544,14 @@ class ToolCycleService:
                         "tool_result 前会话快照持久化失败（fail-open）", exc_info=True
                     )
 
+                # Phase5 M1（P2-4 时序修复）：本轮回执事实必须先于任何轮内 gap
+                # 消费 ack 写入 run_state——原置位在消费之后，「同轮打断+剩余
+                # skipped」混合路径的 ack 会读到上一轮残值（双向错桶）。语义
+                # 不变（Phase4 M3 分桶戳记真相源），仅时序前移；S18-M1/M2 锁定。
+                self._host._run_state().last_receipt_interrupted = any(
+                    getattr(result, "interrupted_for_interjection", False)
+                    for _tc, result in recorded_results
+                )
                 if _gap_skipped:
                     # Phase4 M1 间隙收割（§4.2 CK-A 尾段）：已执行回执落盘后，
                     # 剩余未开始调用逐条回执 skipped_for_interjection → 轮内直接
@@ -553,11 +561,6 @@ class ToolCycleService:
                         sess, _gap_skipped, round_index=rounds
                     )
                     self._consume_gap_interjections(sess)
-                # Phase4 M3 分桶戳记（§7）：本轮回执是否含在途打断标注（度量用）。
-                self._host._run_state().last_receipt_interrupted = any(
-                    getattr(result, "interrupted_for_interjection", False)
-                    for _tc, result in recorded_results
-                )
 
                 # UI terminal facts are emitted only after every receipt in this execution
                 # batch has been recorded and the batch persistence boundary was attempted.

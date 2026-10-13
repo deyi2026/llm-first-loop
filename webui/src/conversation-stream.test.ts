@@ -117,6 +117,37 @@ describe("conversation stream ownership", () => {
     expect(conversationStore.getState().activeRunGeneration).toBeNull();
   });
 
+  // 2026-10-13 newSessionPending 卡死回归：newSessionPending 与残留 currentSessionId
+  // 并存时（前端状态异常组合），请求同传 session_id + new_session；schema 契约下服务端
+  // 必然分配全新 sid，旧 owner guard（新sid ≠ 发送前 owner）会拦掉 onRunStarted 剩余
+  // 逻辑——若清 pending 在 guard 之后将永久卡 true（SSE/看门狗回填被 events.ts 挡死）。
+  it("clears newSessionPending even when run_started sid mismatches stale owner (session_id+new_session combo)", async () => {
+    sessionStore.setCurrentSession("s-stale");
+    sessionStore.setNewSessionPending(true);
+
+    const run = sendMessage("fresh", []);
+    await nextTurn();
+    expect(h.pending).toHaveLength(1);
+    const pending = h.pending[0];
+    expect(pending.body).toMatchObject({ session_id: "s-stale", new_session: true });
+    expect(sessionStore.getState().newSessionPending).toBe(true);
+
+    pending.handlers.onRunStarted?.({ session_id: "s-new", run_generation: "g-new" });
+    // 核心断言：pending 已清除，不被 owner guard 卡死
+    expect(sessionStore.getState().newSessionPending).toBe(false);
+    // 最小修法边界：视图绑定规则不变——既有会话（sessionId 非空）的 run_started
+    // 新 sid 不得把视图拽走，currentSessionId 保持发送前值
+    expect(sessionStore.getState().currentSessionId).toBe("s-stale");
+
+    pending.resolve({
+      ok: true,
+      errorType: null,
+      error: null,
+      data: { session_id: "s-new", final_answer: "ok" },
+    } satisfies StreamOutcome);
+    await run;
+  });
+
   it("fresh run 网络断流后只用 run_started 的 exact generation 续联，不猜 latest", async () => {
     h.streamChatRequest
       .mockImplementationOnce(async (_body: Record<string, unknown>, handlers: any) => {
