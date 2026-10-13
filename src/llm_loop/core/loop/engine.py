@@ -132,15 +132,21 @@ _STREAM_INTERJECT_CHECK_MIN_GAP_S = 0.04  # 每 delta peek 会持 mailbox 锁，
 _SYNC_INTERJECT_POLL_GAP_S = 0.04
 
 
-def _sync_interjection_peek(
-    engine: Any, session_id: str, *, warned: list[bool] | None = None
+def _interjection_peek(
+    engine: Any,
+    session_id: str,
+    *,
+    warned: list[bool] | None = None,
+    where: str = "sync_window",
 ) -> bool:
-    """Phase6 M1：同步窗口插话探视。
+    """插话到达探视（§4.4 保守降级：peek 失败不收割）。
 
-    与 tool_cycle 的 gap peek 同契约（§4.4 保守降级）：peek 管道故障时
-    视为无插话（不收割、不冒泡），窗口轮询继续由既有边界兜底。
+    同步窗口轮询（Phase6 M1）与流式检查点（遗留处置 L1）共用；
+    与 tool_cycle 的 gap peek 同契约：peek 管道故障时视为无插话
+    （不收割、不冒泡），收割兜底交给轮首/gap/final_gate 既有边界。
     观测：per-window 至多一条 warning（warned 为同窗口共享的一次性旗标；
     40ms 轮询频率下逐次 warning 会刷屏，静默 debug 又会掩盖持续降级）。
+    where 标注调用通道（sync_window / llm_stream），供分桶诊断。
     """
     try:
         runner = getattr(engine, "runner", None)
@@ -151,12 +157,12 @@ def _sync_interjection_peek(
         if warned is not None and not warned:
             warned.append(True)
             logger.warning(
-                "sync window interjection peek failed "
-                "(fail-open, window interrupt degraded; once per window)",
+                "interjection peek failed (channel=%s, fail-open, no harvest; once per window)",
+                where,
                 exc_info=True,
             )
         else:
-            logger.debug("sync window interjection peek failed", exc_info=True)
+            logger.debug("interjection peek failed (channel=%s)", where, exc_info=True)
         return False
 
 
@@ -1782,6 +1788,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # _stream_icheck_last 节流时间戳（≥间隔才 peek mailbox）。
             _interject_interrupted = False
             _stream_icheck_last = 0.0
+            # 遗留处置 L1：流式检查点 peek 故障一次性 warning 旗标（per-run 轮状态，
+            # 与同步窗口 _peek_warned 同语义；一 run 内至多一条，避免 40ms 节流刷屏）。
+            _stream_peek_warned: list[bool] = []
             # Phase6 M1：打断收割的 via 口径——流式检查点命中保持 llm_stream_interrupt；
             # 同步窗口轮询命中为 sync_window_poll（度量分桶区分两通道，T1/T3 依据）。
             _interrupt_via = "llm_stream_interrupt"
@@ -1875,11 +1884,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                 >= _STREAM_INTERJECT_CHECK_MIN_GAP_S
                             ):
                                 _stream_icheck_last = time.monotonic()
-                                _icheck_runner = getattr(self, "runner", None)
-                                if (
-                                    _icheck_runner is not None
-                                    and getattr(_icheck_runner, "enabled", False)
-                                    and _icheck_runner.interjections_pending(session_id)
+                                # 遗留处置 L1：peek 经 _interjection_peek fail-open
+                                # （§4.4 peek 失败不收割；此前裸调，管道故障会冒泡 run error）
+                                if _interjection_peek(
+                                    self,
+                                    session_id,
+                                    warned=_stream_peek_warned,
+                                    where="llm_stream",
                                 ):
                                     _interject_interrupted = True
                                     _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
@@ -2048,7 +2059,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                 break
                             if (time.monotonic() - _sync_icheck_last) >= _SYNC_INTERJECT_POLL_GAP_S:
                                 _sync_icheck_last = time.monotonic()
-                                if _sync_interjection_peek(self, session_id, warned=_peek_warned):
+                                if _interjection_peek(self, session_id, warned=_peek_warned):
                                     # 窗口内插话命中 → 即时打断（复用流式打断收割分支）
                                     _interject_interrupted = True
                                     _interrupt_via = "sync_window_poll"
@@ -2063,7 +2074,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                                 # 命中优先（设计 §8.6）：worker 完成检测点补一次
                                 # 无节流终检——节流跳过期间到达的窗口内插话仍应
                                 # 打断，晚到的完整响应按打断轮丢弃（不进投影）。
-                                if _sync_interjection_peek(self, session_id, warned=_peek_warned):
+                                if _interjection_peek(self, session_id, warned=_peek_warned):
                                     _interject_interrupted = True
                                     _interrupt_via = "sync_window_poll"
                                     if callable(_sync_cancel_hook):

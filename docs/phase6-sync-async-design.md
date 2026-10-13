@@ -169,9 +169,17 @@ grill_me 盘问（edge_cases/failure_modes/scale）+ 自查，回填 4 项：
   从 final_gate 更新为 sync_window_poll——该测试断言的是"构造↔归属机械
   一致"，新归属即当前默认真相（§5.6 T1 度量依据）；final_gate 归属保留
   给晚到插话与关闸回退（S3/m0 基线关闸断言覆盖）。
-- **发现未修（M1 边界外）**：Phase5 流式检查点（engine.py L1852 附近）对
-  `interjections_pending` 仍为裸调，同类 peek 故障会冒泡至 run error——
-  预存问题，M1 承诺 chat_stream 通道零改动，记 M4 交付报告遗留候选。
+- **发现未修（M1 边界外）→ 已处置（遗留处置 L1，2026-10-13）**：Phase5 流式
+  检查点对 `interjections_pending` 的裸调（peek 故障冒泡 run error）已修复：
+  `_sync_interjection_peek` 通用化改名为 `_interjection_peek`（新增 `where`
+  通道标注：sync_window / llm_stream，供分桶诊断），流式检查点调用点替换
+  （同 §4.4 保守降级；正常路径零变化）。red→green 锁定：
+  `tests/phase6/test_m4_stream_peek_failopen.py`（裸调版 failed=run error
+  冒泡 / 修复版 passed；构造复刻 S17-M1，`_boom` 替换 peek，断言 done、
+  consumed_via=final_gate、无半截行、续跑轮含插话、终答=续跑完整响应）。
+  审查：专门代码审查子 agent approve_with_comments，blocking（测试断言⑤
+  假红：终答为续跑轮响应而非第一轮流文本）与 4 项 comment（warning 通道
+  误标、双编号溯源、rename 注记、行号漂移）全部采纳。
 
 ## 10. M2 实施修订记录（web client 协作取消，2026-10-13）
 
