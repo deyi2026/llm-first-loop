@@ -200,9 +200,12 @@ class TestWorkerPidField:
         _write_waiting_action(store, "act-a", age_s=0, worker_pid=0)
         store.record_worker_pid("act-a", 4242)
         stamped = store.read_action("act-a")
+        assert stamped is not None
         assert stamped.worker_pid == 4242
         store.record_worker_pid("act-a", 4242)
-        assert store.read_action("act-a").updated_at == stamped.updated_at
+        reread = store.read_action("act-a")
+        assert reread is not None
+        assert reread.updated_at == stamped.updated_at
 
 
 class TestReaperLiveness:
