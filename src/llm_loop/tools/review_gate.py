@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable, cast
+from collections.abc import Callable
+from typing import cast
 
 GATE_NOTE_PREFIX = "[RULE-AI-28 闸]"
 
@@ -123,9 +124,7 @@ def is_read_only_probe(command: str) -> bool:
         return True
     # (c) 只读子命令：argv1 必须在该 argv0 的逐个核定白名单内。
     subcommands = _READ_ONLY_SUBCOMMANDS_BY_ARGV0.get(argv0, frozenset())
-    if rest[0] in subcommands and _safe_args(rest[1:]):
-        return True
-    return False
+    return rest[0] in subcommands and _safe_args(rest[1:])
 
 
 def classify_review_gate_command(command: str) -> str | None:
@@ -205,10 +204,11 @@ def make_review_gate_probe(
                         last_verdict = verdict
                         found_line = f"last_verdict={verdict}（本会话已落盘 VERDICT 回执）"
                         break
-                if last_verdict:
-                    fact = found_line
-                else:
-                    fact = "none_found（本会话未见已落盘 VERDICT 回执）"
+                fact = (
+                    found_line
+                    if last_verdict
+                    else "none_found（本会话未见已落盘 VERDICT 回执）"
+                )
         except Exception:  # noqa: BLE001 - probe is best-effort, never blocks the action
             fact = "unknown（探测异常）"
         # review_gate_probe 事件：模型声明位留给回执，机器事实当轮落盘（程序不裁决）。

@@ -13,9 +13,9 @@ import shutil
 import signal
 import subprocess
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Callable
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (

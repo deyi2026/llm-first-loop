@@ -7,7 +7,6 @@ review_gate_probe 事件落盘（模型声明 vs 机器事实并排）、只提�
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 

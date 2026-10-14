@@ -468,9 +468,7 @@ class FileService:
                     )
                     if part
                 )
-                raise FileServiceError(
-                    "EffectAuthorityLost", detail=detail or None
-                )
+                raise FileServiceError("EffectAuthorityLost", detail=detail)
             try:
                 fd, tmp_name = tempfile.mkstemp(
                     dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
