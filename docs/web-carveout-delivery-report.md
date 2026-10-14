@@ -108,8 +108,11 @@ deepseek/chatgpt 页面自动化 client（Playwright transport，单窗口可达
 - restart svc-cbbc2f575e46419ebe2b264ce507f354 已受理（两阶段：等本
   会话退出后执行）——生产进程需重启重新 import 修复后的外部模块（模块
   缓存不热更新）；
-- 核验点：`/api/v1/providers` 运行时计数 6/29（+deepseek-web）；
-  生产 API 走 deepseek-web 一次真机往返；
+- 核验点（2026-10-14T10:10 用户裁决后修订）：`/api/v1/providers`
+  运行时计数**不含 deepseek-web**（lfl-web-providers/.env
+  `DEEPSEEK_WEB_ENABLED=0`，通道退役；chatgpt-web 未被提及不受影响）；
+  ~~生产 API 走 deepseek-web 一次真机往返~~ **撤销**——用户裁决弃用
+  deepseek，§5.2 G4 等价路径验证即为该通道最终实测存档；
 - venv editable 指针指向 .releases 发布快照（gen 部署机制）：裸 python 与
   pytest(pythonpath=src) 加载不同代码，调试/脚本须走 pytest 路径或显式
   sys.path——已记录设计稿 §5 M3 段。
