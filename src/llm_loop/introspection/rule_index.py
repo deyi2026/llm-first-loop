@@ -85,6 +85,16 @@ class RuleIndex:
             return self._entries, self._digest
 
         matches = list(_RULE_HEADING_RE.finditer(text))
+        # Rules are level-2 Markdown sections. A later sibling heading may be
+        # an appendix rather than another numbered Rule. Respect every level-2
+        # boundary so exact hydration never includes unrelated trailing docs.
+        headings = list(re.finditer(r"^##[ \t]+[^\n]+$", text, re.MULTILINE))
+        section_ends = {
+            heading.start(): (
+                headings[index + 1].start() if index + 1 < len(headings) else len(text)
+            )
+            for index, heading in enumerate(headings)
+        }
         parsed: list[RuleEntry] = []
         for index, match in enumerate(matches):
             start = match.start()

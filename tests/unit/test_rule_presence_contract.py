@@ -243,6 +243,41 @@ def test_search_records_contract_carries_timing_semantics() -> None:
     assert "按需" in full and "非每轮强制" in full and "不强制检索顺序" in full
     assert "RULE-AI" in full
     assert "非每轮强制" in compact and "不强制顺序" in compact
+    for text in (full, compact):
+        assert "RULE-AI-31" in text
+        assert "实质任务" in text
+        assert "每类 limit<=5" in text
+        assert "同一连续任务窗口" in text
+        assert "record_use" in text
+
+
+def test_rule31_discovery_contract_reaches_first_provider_packet(build_test_engine) -> None:
+    """Use the full test assembly, not the two-tool ERR1210 fixture."""
+    engine, fake = build_test_engine(
+        [LLMResponse(content="已收到任务", tool_calls=[], provider="fake")]
+    )
+    session_id = engine.session.create()
+    engine.run(session_id, "排查多步工具调用和方法检索问题")
+    assert fake.calls
+    first = fake.calls[0]
+    schemas = first["tools"]
+    assert {"search_records", "method_manage", "save_experience", "refine_experience"}.issubset(
+        _tool_names(first)
+    )
+    search_schema = next(
+        item if item.get("name") == "search_records" else item["function"]
+        for item in schemas
+        if item.get("name") == "search_records"
+        or item.get("function", {}).get("name") == "search_records"
+    )
+    assert "RULE-AI-31" in search_schema["description"]
+    assert "同一连续任务窗口" in search_schema["description"]
+    assert "每类 limit<=5" in search_schema["description"]
+    assert any(
+        "学习与成长" in str(message.get("content", ""))
+        for message in first["messages"]
+        if isinstance(message, dict) and message.get("role") == "system"
+    )
 
 
 def test_rule31_bounded_discovery_reaches_full_lazy_and_first_model_tool_packet(
