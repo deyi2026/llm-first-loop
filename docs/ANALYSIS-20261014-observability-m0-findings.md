@@ -152,7 +152,7 @@ G1 修法与单测、验收门）；评审后定验收门再实施。
 | V4 | 零语义回归 | pytest 全量 0 failed；Phase6 红线单测（S/W 系列）绿 |
 | V5 | 不设门项 | 生产样本充足性不设门——insufficient_sample 诚实标注本身即验收形态，不要求真实流量 n≥5 |
 
-### 5.1 第二轮覆盖验证（2026-10-14）
+### 6.1 第二轮覆盖验证（2026-10-14）
 
 修订版再提交 grill（depth=2，聚焦 edge_cases/failure_modes）：四域问题均被
 第一轮 B1-B7 裁决覆盖（空数据 V2 锁、并发只读锁拷贝 ms 级、鉴权 B3 事实、
@@ -206,3 +206,32 @@ G1 修法与单测、验收门）；评审后定验收门再实施。
   rule_presence 49 passed；providers 影响面 549 passed。
   实施纪律记录：守卫 _read_source 对 unstaged 外部漂移回退读 HEAD——
   修复须 stage 后复验（首验假阴性一次，定位后纠正）。
+
+## 8. M1 验收门核对与运行时首览（2026-10-14T12:1x 收口回填）
+
+| 门 | 结果 | 证据 |
+|---|---|---|
+| V1 聚合口径单测 | ✅ pass | M1a red→green 9 passed（§7）；sync 独立桶/不落 natural_boundary 专项；phase4 桶集合断言适配 |
+| V2 端点契约 | ✅ pass | M1b 3 项契约测试 + 影响面 11 passed（§7）；既有单 session 端点零变化 |
+| V3 面板 | ✅ pass | M1c 4 项 + webui 282/282（§7）；运行时实拍六桶全渲染见下 |
+| V4 零语义回归 | ✅ pass | M1d 全量 8712 passed / 0 failed + S/W 红线绿（§7） |
+| V5 不设门项 | 如实呈现 | 生产 n<5 桶「样本不足」徽标、n=0「无样本」≠0ms——首览即此形态 |
+
+**运行时首览（生产 web 服务 gen259，2026-10-14T12:0x）**：
+
+- 工件：reports/observability-m1/——GLOBAL_METRICS_20261014.json（全局端点
+  快照）+ PANEL_20261014.png（面板主视图）+ PANEL_SIDEBAR_FULL_20261014.png
+  （侧栏元素级）+ PANEL_IDLE_BUCKET_20261014.png（idle 桶行特写，滚动补拍）。
+- 全局端点实况：n=62、sessions_in_window=38、window_terminal_cap=500；四口径
+  P50/P95（ms）：t_ack 1881/28949、t_persist 11494/70923、t_effect 16013/125139、
+  t_applied 80085/101688。
+- 六桶生产分布：natural_boundary n=57（P50 17804ms，主桶）、llm_stream_interrupt
+  n=4（1751ms，「样本不足」徽标）、idle n=1（1847ms）、interruptible/llm_stream/
+  sync_window_poll n=0「无样本」——null 不造数与 insufficient 诚实标注在运行时
+  生效（V2/V5 口径）。
+- sync_window_poll 生产 n=0 属当前真相而非聚合缺陷：deepseek-web 通道已于
+  2026-10-14T10:10 用户裁决退役（phase6 交付报告 §5.2），生产流量以流式通道
+  为主；G1 修复的桶归属正确性由单测锁定，与样本量无关。
+- 防误读注记：面板 t_effect P50=16s 量级是「请求→消费」全时延口径（含排队与
+  当前轮次时长），与 Phase6 T1 门（fake 窗口注入→检查点消费，30ms）非同口径，
+  不构成门比对。
