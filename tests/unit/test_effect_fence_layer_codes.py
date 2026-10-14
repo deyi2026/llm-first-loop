@@ -154,20 +154,31 @@ def test_read_only_probe_classifier_matrix() -> None:
     destructive = "rm " + "-rf " + str(Path("/"))
     denied = [
         destructive,  # 非只读形态
-        "cat foo.txt",  # cat 不在只读子命令集（保守）
+        # 独立审查 subagent_859ec7d661bf 发现的 argv0 混淆洞（已修复：argv0 白名单）：
+        "rm status",  # 写命令 + 只读子命令名 ≠ 只读
+        "tee diff",  # 写命令 + 只读子命令名
+        "mv log src dst",  # 同上
+        "./deploy.sh --dry-run",  # 未知脚本 --dry-run 不可信
+        "deploy.sh status",  # 未知 argv0
+        "/usr/local/bin/evil status",  # 绝对路径未知命令
+        "cat foo.txt",  # cat 不在只读集（保守）
         "git commit -m x",
         "git push origin main",
+        "git diff --textconv",  # 外部程序执行面（git 配置驱动）
+        "git log --ext-diff",  # 同上
+        "git difftool -x 'rm -rf x'",  # difftool 不在只读子命令集
         "echo hi | sh",
         "git status; " + destructive,
         "git diff --output=/tmp/leak",
         "git log --output=/tmp/leak",
         "sudo git status",
         "nohup git status",
+        "bash git status",  # shell 包装
         "FOO=1 git status --short extra=ok",
         "",
     ]
-    # 注：--dry-run 豁免信任 CLI 约定（git clean/push --dry-run 等主流工具该旗标
-    # 语义即"不落盘"）；常见写文件旗标（--output 等）已在分类器 denylist。
+    # 注：--dry-run 豁免仅限 git（确定"不落盘"语义）；常见写文件旗标与外部程序
+    # 执行旗标（--output/--textconv/--ext-diff）在分类器 denylist。
     for cmd in denied:
         assert not is_read_only_probe(cmd), f"应拒绝: {cmd}"
 
@@ -176,6 +187,65 @@ def test_read_only_probe_handles_substitution_and_redirects() -> None:
     assert not is_read_only_probe("git diff $(curl example.invalid)")
     assert not is_read_only_probe("git log >> /tmp/x")
     assert not is_read_only_probe("git status > /tmp/x")
+
+
+def test_edit_file_write_protected_reports_e5(tmp_path: Path) -> None:
+    """E5 写保护层带码（独立审查 subagent_859ec7d661bf E5 项：原实现零覆盖）。
+
+    写保护在版本前置路径上强制：目标路径在 effect binding 可写根内（durable
+    journal 可用）但超出 workspace_base() 范围时，FileService 在物理写入前抛
+    WorkspaceScopeMismatch，映射为 E5 码且零写入。
+    """
+    from llm_loop.core.message import ToolCall
+    from llm_loop.core.run_context import current_workspace_root
+    from llm_loop.tools.builtin.edit_file import EditFileTool
+    from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+    from llm_loop.workspace.file_service import FileService
+
+    target = tmp_path / "target-e5.txt"
+    target.write_text("unchanged\n", encoding="utf-8")
+    ws_root = tmp_path / "ws"
+    ws_root.mkdir()
+    store = WorkspaceArtifactStore(tmp_path / "artifacts-data")
+    service = FileService(artifact_store=store)
+    tool = EditFileTool(
+        artifact_store=store, file_service=service, require_version_precondition=True
+    )
+    tok = current_workspace_root.set(str(ws_root))
+    gen_tok = current_run_generation.set("")
+    try:
+        journal, sessions, sid = _journal(tmp_path)
+        call = ToolCall(
+            id="tc-e5-1",
+            name="edit_file",  # binding.tool_name 须与工具名一致（sink 匹配）
+            arguments={"path": str(target), "old_string": "x", "new_string": "y"},
+        )
+        sess = sessions.load(sid)
+        eid = journal.declared(sess, call, round_no=1)
+        with journal.effect_context(
+            session_id=sid,
+            execution_id=eid,
+            round_no=1,
+            call=call,
+            workspace_root=str(tmp_path),  # binding 可写根 = tmp_path
+            lease_fence=None,
+        ):
+            result = tool.run(
+                {
+                    "path": str(target),  # 在 binding 根内、在 workspace_base() 外
+                    "old_string": "unchanged",
+                    "new_string": "changed",
+                    "expected_snapshot_ref": "artifact://v1/deadbeef-outside-scope",
+                }
+            )
+        assert result.status.value in {"error", "failure"}
+        assert result.error_type == "E5_WRITE_PROTECTED"
+        assert "[E5_WRITE_PROTECTED]" in result.content
+        assert target.read_text(encoding="utf-8") == "unchanged\n"  # fail-closed
+    finally:
+        current_run_generation.reset(gen_tok)
+        current_workspace_root.reset(tok)
+        target.unlink(missing_ok=True)
 
 
 def test_read_only_probe_passes_fence_but_mutation_still_denied(tmp_path: Path) -> None:

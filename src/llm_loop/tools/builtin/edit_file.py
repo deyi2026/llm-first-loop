@@ -296,7 +296,14 @@ class EditFileTool:
                 "版本冲突: 当前完整文件字节已不同于 expected_snapshot_ref；本次未写入。",
                 "VersionConflict",
             )
-        if exc.error_type in {"VersionPreconditionInvalid", "WorkspaceScopeMismatch"}:
+        if exc.error_type == "WorkspaceScopeMismatch":
+            # EVO-20261014-459a8a1e: E5 写保护层（workspace 范围校验）带确定性分层码。
+            return self._fail(
+                "[E5_WRITE_PROTECTED] 写保护拒绝: 目标路径不在当前工作区可写范围内；"
+                "本次未写入。",
+                "E5_WRITE_PROTECTED",
+            )
+        if exc.error_type == "VersionPreconditionInvalid":
             return self._fail(
                 "版本前置条件无效: snapshot 不属于当前工作区/路径或无法完整验证；本次未写入。",
                 "VersionPreconditionInvalid",

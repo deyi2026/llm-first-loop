@@ -26,12 +26,14 @@ def test_gate_triggers_on_git_push_variants() -> None:
         == "git_push"
     )
     assert classify_review_gate_command("/usr/bin/git push origin main") == "git_push"
+    assert classify_review_gate_command("git -C repo push origin main") == "git_push"
     assert classify_review_gate_command("cd repo && git push origin main") == "git_push"
 
 
 def test_gate_triggers_on_full_pytest_only() -> None:
     assert classify_review_gate_command("pytest") == "full_test"
     assert classify_review_gate_command("python -m pytest -q") == "full_test"
+    assert classify_review_gate_command(".venv/bin/python -m pytest") == "full_test"
     # 收窄后不触发（子集不算全量闸面）。
     assert classify_review_gate_command("pytest tests/unit/test_a.py") is None
     assert classify_review_gate_command("pytest -k fence") is None
@@ -44,6 +46,11 @@ def test_gate_non_triggers() -> None:
     assert classify_review_gate_command("grep push file.txt") is None
     assert classify_review_gate_command("ls") is None
     assert classify_review_gate_command("") is None
+    # 误报形态（独立审查 subagent_859ec7d661bf C 项）：非命令位置出现关键词。
+    assert classify_review_gate_command("echo git push") is None
+    assert classify_review_gate_command("grep pytest README.md") is None
+    assert classify_review_gate_command("git log --grep push") is None
+    assert classify_review_gate_command("cat pytest.txt") is None
 
 
 def test_review_gate_note_one_line_with_declaration_slots() -> None:

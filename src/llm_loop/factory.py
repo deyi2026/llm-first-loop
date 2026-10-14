@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -147,6 +148,7 @@ from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
+from llm_loop.tools.review_gate import make_review_gate_probe
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 from llm_loop.workspace.file_effect_query import FileEffectQueryService
 from llm_loop.workspace.file_service import FileService
@@ -1331,16 +1333,13 @@ def build_engine(
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
     # EVO-20261014-7ba73d88: push/publish/全量测试闸提示记录器（机器事实探测 +
     # review_gate_probe 事件落盘；fail-open，注入失败时闸仍提醒、事实为 unknown）。
-    from llm_loop.core.run_context import current_session_id as _rg_session_id_var
-    from llm_loop.tools.review_gate import make_review_gate_probe
-
     def _review_gate_audit(action_type: str, detail_text: str, sid: str) -> None:
         status_provider.record_action(
             "tool.review_gate", action_type, detail_text, session_id=sid
         )
 
     _review_gate_recorder = make_review_gate_probe(
-        event_store, _rg_session_id_var.get, _review_gate_audit
+        event_store, current_session_id.get, _review_gate_audit
     )
     _register_basic(
         "execute_command",
@@ -1617,13 +1616,12 @@ def build_engine(
         detail = f"{first_line} | dur={dur:.0f}ms" if isinstance(dur, (int, float)) else first_line
         # EVO-20261014-459a8a1e: 分层诊断码（E1..E6）随拒绝落 exception_log，
         # 拒绝可按层/按会话统计（edit_file 路径码在 error_detail 前缀）。
+        # 严格形态 E<1-6>_<UPPER>，避免任意 E 开头字符串被误统计。
         fence_code = str(getattr(result, "error_type", "") or "")
-        if not fence_code.startswith("E"):
+        if not re.fullmatch(r"E[1-6]_[A-Z_]+", fence_code):
             error_detail = str(getattr(result, "error_detail", "") or "")
-            if error_detail.startswith("[E"):
-                fence_code = error_detail.split("]", 1)[0].lstrip("[")
-            else:
-                fence_code = ""
+            m = re.match(r"\[(E[1-6]_[A-Z_]+)\]", error_detail)
+            fence_code = m.group(1) if m else ""
         status_provider.record_tool_fault(
             tool_name, str(getattr(status, "value", status)), detail, fence_code=fence_code
         )

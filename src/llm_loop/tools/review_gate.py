@@ -15,36 +15,60 @@ from typing import Callable, cast
 GATE_NOTE_PREFIX = "[RULE-AI-28 闸]"
 
 # git push 子命令（含 --force / --force-with-lease 变体）：触发闸。
-_GIT_PUSH_RE = re.compile(r"(?:^|[\s;&|])(?:/usr/bin/)?git(?:-[A-Za-z0-9._-]+)?\s+(?:[-\w=]+\s+)*push\b")
-# 全量 pytest：出现 pytest 且无 -k/::/具体测试文件路径收窄。
-_NARROWING_RE = re.compile(r"(^|\s)-k\S*|\S*::\S*|\S*\.py\b|(^|\s)tests?/\S*|(^|\s)-m\s+\S+")
-# 只读探测的旗标形态（供 execute_command 复用，保持单一定义点）。
-_READ_ONLY_SUBCOMMANDS = frozenset(
-    {"status", "diff", "log", "ls", "show", "info", "list", "version", "help"}
+# 锚定在命令起点或 shell 操作符之后（echo git push / git log --grep push 不触发）；
+# git 与 push 之间只允许以 - 开头的旗标。
+_GIT_PUSH_RE = re.compile(
+    r"(?:^|[;&|]{1,2})\s*(?:\S*/)?git(?:-[A-Za-z0-9._-]+)?\s+"
+    r"(?:--?[\w=.-]+(?:\s+(?:\"[^\"]*\"|'[^']*'|[\w./@:~-]+))?\s+)*push\b"
 )
+# 全量 pytest：pytest 位于命令起点或操作符之后（python -m pytest 归一后判定），
+# 且无 -k/::/具体测试文件路径收窄。grep pytest file 之类不触发。
+_PYTEST_CMD_RE = re.compile(r"(?:^|[;&|]{1,2})\s*(?:\S+/)?(python3?\s+-m\s+)?pytest3?\b")
+# 全量 pytest 的收窄形态（出现即视为子集，不触发闸）。
+_NARROWING_RE = re.compile(r"(^|\s)-k\S*|\S*::\S*|\S*\.py\b|(^|\s)tests?/\S*|(^|\s)-m\s+(?!pytest3?\b)\S+")
+# 只读探测的旗标形态（供 execute_command 复用，保持单一定义点）。
+# argv0 允许集（basename 归一后）：只读豁免只对集合内命令生效——
+# rm status / tee diff / ./deploy.sh --dry-run 等 argv0 混淆形态一律不放行
+# （独立审查 subagent_859ec7d661bf 端到端证实原实现对写命令穿透）。
+_READ_ONLY_ARGV0 = frozenset(
+    {"git", "service_control", "ls", "pwd", "pytest", "pytest3", "python", "python3", "pip", "pip3"}
+)
+# 各 argv0 允许的只读子命令（argv1 白名单，按命令真实语义逐个核定）。
+_READ_ONLY_SUBCOMMANDS_BY_ARGV0: dict[str, frozenset[str]] = {
+    "git": frozenset({"status", "diff", "log", "show"}),
+    "service_control": frozenset({"status"}),
+}
+# --dry-run 豁免仅限有该旗标"不落盘"确定语义的命令。
+_DRY_RUN_ARGV0 = frozenset({"git"})
 _READ_ONLY_STANDALONE_FLAGS = frozenset({"--help", "-h", "--version", "-V", "-?"})
-# argv0 自身即只读动词的命令（如 ls）。
-_READ_ONLY_SELF_BINS = frozenset({"ls"})
+# argv0 自身即只读动词的命令。
+_READ_ONLY_SELF_BINS = frozenset({"ls", "pwd"})
 _READ_ONLY_ARG_RE = re.compile(r"^(--?[A-Za-z][A-Za-z0-9=_./:+-]*|[A-Za-z0-9._/~@:%+-]+)$")
 # 疑似写文件旗标（如 git diff --output=…）：只读面一律不放行。
 _WRITE_FLAG_RE = re.compile(r"^--?(o|out|output|write|w)(=|\b)", re.IGNORECASE)
+# 外部程序执行面旗标（git 配置驱动的 textconv/ext-diff）：只读面不放行。
+_EXTERNAL_EXEC_FLAG_RE = re.compile(r"^--?(textconv|ext-diff|exec-path)\b", re.IGNORECASE)
 # shell 复合/重定向/替换操作符：出现在命令文本中即不归类为只读探测（fail-closed）。
 _SHELL_OPERATOR_RE = re.compile(r"&&|\|\||[|;&<>`]|>>|\$\(|\$\{")
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_WRAPPER_ARGV0 = frozenset({"sudo", "su", "nohup", "env", "xargs", "watch", "timeout", "exec", "source", ".", "bash", "sh", "zsh", "fish", "dash"})
 
 
 def is_read_only_probe(command: str) -> bool:
     """Deterministic read-only probe classifier (EVO-20261014-459a8a1e，保守、fail-closed).
 
-    只识别无 shell 操作符、无环境赋值包装、无 sudo/nohup 类前缀的单一简单命令，
-    且形态限于三类：
-    - ``<bin> --help/-h/--version/-V``（可多旗标并置）；
-    - 含 ``--dry-run`` 且其余 token 均为安全旗标/路径样参数；
-    - ``<bin> <sub>``，sub ∈ 只读子命令集（status/diff/log/ls/show/info/list/
-      version/help），其余 token 均为安全旗标/路径样参数且非写文件旗标。
+    只识别无 shell 操作符、无环境赋值包装、无包装器前缀、且 argv0（basename
+    归一）在显式允许集内的单一简单命令，形态限于：
+    - ``<bin> --help/-h/--version/-V``（允许集内任意 bin，旗标须全部为独立
+      help/version 形态）；
+    - ``git ... --dry-run``（--dry-run 豁免仅限有确定"不落盘"语义的命令集）；
+    - ``<bin> <sub>``，sub ∈ 该 argv0 逐个核定的只读子命令白名单，其余 token
+      均为安全旗标/路径样参数且非写文件/外部程序执行旗标；
+    - ``ls/pwd ...``（argv0 自身只读动词）。
 
-    该分类只用于 shell 围栏层（E3/E4）放行确定只读探测；灾难性硬阻断等其他
-    层不受影响，无法归类的命令一律不放行。
+    argv0 不在允许集内的一律不放行（rm status / tee diff / ./x.sh --dry-run
+    等混淆形态）；无法归类的命令一律不放行。灾难性硬阻断等其他围栏层不受
+    本分类影响。
     """
     import shlex
 
@@ -60,27 +84,37 @@ def is_read_only_probe(command: str) -> bool:
         tokens = tokens[1:]
     if not tokens:
         return False
-    argv0 = tokens[0]
-    if argv0 in {"sudo", "su", "nohup", "env", "xargs", "watch", "timeout", "exec", "source", "."}:
+    # basename 归一（/usr/bin/git → git）；相对路径脚本（./x.sh）的 basename
+    # 不在允许集内，天然拒绝。
+    argv0 = tokens[0].rsplit("/", 1)[-1]
+    if argv0 in _WRAPPER_ARGV0 or argv0 not in _READ_ONLY_ARGV0:
         return False
     rest = tokens[1:]
     if not rest:
         return False
 
     def _safe_args(args: list[str]) -> bool:
-        return all(_READ_ONLY_ARG_RE.match(t) and not _WRITE_FLAG_RE.match(t) for t in args)
+        return all(
+            _READ_ONLY_ARG_RE.match(t)
+            and not _WRITE_FLAG_RE.match(t)
+            and not _EXTERNAL_EXEC_FLAG_RE.match(t)
+            for t in args
+        )
 
     # (a) 独立 help/version 旗标。
     if all(t in _READ_ONLY_STANDALONE_FLAGS for t in rest):
         return True
-    # (a') argv0 自身即只读动词（ls 类）。
+    # (a') argv0 自身即只读动词（ls/pwd 类）。
     if argv0 in _READ_ONLY_SELF_BINS and _safe_args(rest):
         return True
-    # (b) --dry-run：其余参数须为安全旗标/路径样。
-    if "--dry-run" in rest and _safe_args([t for t in rest if t != "--dry-run"]):
+    # (b) --dry-run：仅限确定"不落盘"语义命令集，其余参数须为安全旗标/路径样。
+    if argv0 in _DRY_RUN_ARGV0 and "--dry-run" in rest and _safe_args(
+        [t for t in rest if t != "--dry-run"]
+    ):
         return True
-    # (c) 只读子命令。
-    if rest[0] in _READ_ONLY_SUBCOMMANDS and _safe_args(rest[1:]):
+    # (c) 只读子命令：argv1 必须在该 argv0 的逐个核定白名单内。
+    subcommands = _READ_ONLY_SUBCOMMANDS_BY_ARGV0.get(argv0, frozenset())
+    if rest[0] in subcommands and _safe_args(rest[1:]):
         return True
     return False
 
@@ -96,12 +130,8 @@ def classify_review_gate_command(command: str) -> str | None:
         return None
     if _GIT_PUSH_RE.search(text):
         return "git_push"
-    tokens = text.split()
-    if any(tok == "pytest" or tok.endswith("/pytest") or tok == "pytest3" for tok in tokens):
-        # `python -m pytest` 是模块调用形态，不是 `-m <marker>` 收窄——先归一掉再判收窄。
-        probe_text = re.sub(r"(^|\s)-m\s+(pytest|pytest3)(\s|$)", r"\1\2\3", text)
-        if not _NARROWING_RE.search(probe_text):
-            return "full_test"
+    if _PYTEST_CMD_RE.search(text) and not _NARROWING_RE.search(text):
+        return "full_test"
     return None
 
 
