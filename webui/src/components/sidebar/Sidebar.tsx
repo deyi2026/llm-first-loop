@@ -21,6 +21,7 @@ import { loadHistory } from "../../core/conversation";
 import { WorkspaceGroups, formatRelative } from "./WorkspaceGroups";
 import { FileTree } from "./FileTree";
 import { EvolutionPanel } from "./EvolutionPanel";
+import { InterjectMetricsPanel } from "./InterjectMetricsPanel";
 import { EscalationPanel, EscalationWatcher } from "./EscalationCenter";
 import { zh } from "../../i18n/zh";
 
@@ -265,6 +266,14 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         >
           🗄 归档
         </button>
+        <button
+          type="button"
+          className={`v2-tab ${view === "metrics" ? "active" : ""}`}
+          onClick={() => sidebarViewStore.setView("metrics")}
+          data-testid="tab-metrics"
+        >
+          📊 时延
+        </button>
       </div>
       {actionError ? (
         <div className="v2-sidebar-error" role="status" data-testid="sidebar-action-error">
@@ -277,6 +286,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         <EvolutionPanel />
       ) : view === "esc" ? (
         <EscalationPanel />
+      ) : view === "metrics" ? (
+        <InterjectMetricsPanel sessionId={currentId ?? ""} />
       ) : view === "archived" ? (
         <div className="v2-archived-list" data-testid="archived-list">
           {archivedError ? (

@@ -5,7 +5,7 @@ import type { SessionMeta } from "./api";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ThinkingMode = "auto" | "off" | "on";
-export type SidebarView = "sessions" | "files" | "evo" | "esc" | "archived";
+export type SidebarView = "sessions" | "files" | "evo" | "esc" | "archived" | "metrics";
 export type MainView = "chat" | "learning" | "services";
 
 interface SessionState {
