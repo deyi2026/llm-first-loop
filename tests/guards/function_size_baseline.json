@@ -108,7 +108,8 @@
       "factory.py": "kernel-candidate（装配根）",
       "learning_runtime.py": "Learning",
       "notify.py": "Action",
-      "timekeeping.py": "kernel-candidate"
+      "timekeeping.py": "kernel-candidate",
+      "usage_net.py": "Learning（usage-net 净分派生视图：search_records 命中行注记 + record_use 回执阈值提醒，RULE-AI-31 程序支持，EVO-20261014-7299aec2）"
     },
     "exemptions": {}
   },

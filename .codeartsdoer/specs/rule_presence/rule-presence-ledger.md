@@ -12,7 +12,7 @@
 | `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
 | `lite_version` | 19 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 33（实测 2026-10-12；RULE-AI-00~29（21 编号空缺，SoT :333 说明）见 §2，附则/子规则/方法层见 §2.4） |
+| `records` | 34（2026-10-12 实测 33；2026-10-14 RULE-AI-31 机械补登（EVO-20261014-7299aec2 漏登，SoT :505）；RULE-AI-00~29（21 编号空缺，SoT :333 说明）见 §2，附则/子规则/方法层见 §2.4） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |

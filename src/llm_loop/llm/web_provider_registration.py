@@ -52,11 +52,11 @@ def load_web_provider_specs(settings: Any) -> dict[str, Any]:
             exc,
         )
         return {}
-    from llm_loop.llm.providers import ProviderSpec
-
-    if not isinstance(specs, dict) or not all(
-        isinstance(spec, ProviderSpec) for spec in specs.values()
-    ):
+    # 条目级 isinstance ProviderSpec 校验由调用方（providers.finalize）执行——
+    # 所有权侧校验；本模块若反向 import providers 会构成运行时环
+    # （providers↔web_provider_registration，2026-10-14 守卫书补断环，
+    # R9-P2-06a 只减不增终态）。
+    if not isinstance(specs, dict):
         logger.warning(
             "web provider 注册模块 web_provider_specs() 返回类型异常"
             "（期望 dict[str, ProviderSpec]）；web 通道不注册"

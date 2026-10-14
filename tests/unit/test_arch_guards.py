@@ -418,6 +418,12 @@ def test_import_exempt_markers_zero_this_batch():
       workspace>user 安装实例与 legacy MCP_SERVERS 合并；try/except
       fail-open 的可选扩展子系统装配，import 失败降级为无 MCP 工具，
       与 §5.4 ExtensionStore 装配同一语义；登记后棘轮保持基线 63）。
+    - 2026-10-14 净 -2+1=4 plugin：web-carveout M3（6db89d6b5）删除
+      chatgpt_web/deepseek_web 内置注册两标记（-2，注册段移出 factory），
+      新增 web_provider_registration 外部模块加载（+1，importlib 动态加载
+      +失败分级「未配置静默/失败 warning 不注册」，与 provider 注册同类
+      plugin 语义）；登记后棘轮回基线 63。〔守卫书补：carveout M3 提交时
+      漏同步本登记簿与断言，观测面板 M1d 全量回归期机械补正〕
     """
     b = _load_baseline()
     total_marks = 0
@@ -426,7 +432,7 @@ def test_import_exempt_markers_zero_this_batch():
         if p.exists():
             _, exempt, _ = _count_fn_imports(_read_source(rel))
             total_marks += exempt
-    assert total_marks == 5, f"豁免标记应登记 5 处（见登记簿注释），实测 {total_marks} 处"
+    assert total_marks == 4, f"豁免标记应登记 4 处（见登记簿注释），实测 {total_marks} 处"
 
 
 # ── runtime cycle 守卫（B2-P2-05 / R9-P2-06·DFX-12）─────────────────────────

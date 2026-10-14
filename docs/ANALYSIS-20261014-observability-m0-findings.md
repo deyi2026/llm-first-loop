@@ -157,3 +157,52 @@ G1 修法与单测、验收门）；评审后定验收门再实施。
 修订版再提交 grill（depth=2，聚焦 edge_cases/failure_modes）：四域问题均被
 第一轮 B1-B7 裁决覆盖（空数据 V2 锁、并发只读锁拷贝 ms 级、鉴权 B3 事实、
 最坏失败=口径误导被 V1 逐桶单测锁、fail-open V3），无新盲点。评审闭环。
+
+## 7. M1 实施记录（2026-10-14）
+
+- **M1a G1 修复**（commit c1408d7a7）：aggregate 分桶判序加 sync_window_poll
+  分支（B6 位置：llm_stream_interrupt 后、interrupt_receipt 前——精确值
+  consumed_via 优先于布尔标记）；red（sync 样本断言独立桶，如实复现误归
+  natural_boundary）→green 9 passed；phase4 桶集合断言适配六桶口径
+  （Phase5 同款「断言=当前真相」演进）；ruff 0 error。
+- **M1b 全局端点**（commit e97a6ec8e）：hq 聚合抽共享行构建器
+  `_interject_metric_rows(session_id: str | None)`（单一事实源；rows+sessions
+  二元组），单 session 视图零变化（既有测试绿）；新增
+  `aggregate_interject_metrics_global()`：scope/session_id=None/n/
+  sessions_in_window/window_terminal_cap + 三口径 P50/P95 + 6 桶，无 items
+  明细（B1 合并视图 YAGNI）；路由 `GET /api/v1/chat/queue/metrics/global`
+  （loopback+OriginGuard 同层鉴权事实，B3 不扩不降）；compact 常量化
+  TERMINAL_HISTORY_KEEP_N=500。V2 契约测试（red=import 缺符号→green）
+  3 项：空数据 null 不造数/多 session 合并（含 denied 干扰不混入、
+  sessions_in_window 不计空 session）/既有端点 422+items 契约零变化。
+  影响面：11 passed（M1b×3+M1a×3+phase3-M2×3+phase4-M3×2）+ruff 0。
+  实施纪律记录：误用 `ruff format` 全文件重排引入 ~400 行噪声（HEAD 本就
+  非 format-clean），已整文件还原+手工回滚 4 个 format-only hunk，最终
+  diff routes.py +17/-0、hq 仅逻辑改动。
+- **M1c webui 面板**（commit 7997949fc）：侧栏新增「📊 时延」视图
+  （SidebarView + tab + 分支）；`InterjectMetricsPanel`：全局块（M1b 端点）
+  +当前会话块（复用 Phase3 G2 既有端点，session_id 取 currentId）；
+  fail-open（任一源失败仅该块「不可用」，B4）；null=「无样本」≠0ms；
+  样本不足徽标（n<5）；窗口脚注「最近 N 条终态（滚动窗口，非全历史）」
+  （B5）；零写（仅 GET 两端点）。V3 测试 4 项（红=组件缺→绿）：六桶渲染
+  /null/徽标+零写/fail-open 独立性/无会话显式提示/手动刷新。tsc+vite
+  build 过；全量 webui 282/282。
+- **预存修复（独立提交 d8accba79）**：evolution-panel 测试断言漂移——
+  e2ab47980 改批准守卫文案（加「或显式授权执行」）漏同步测试；3/3 复现
+  +stash 路径限定 HEAD 复现确认预存后一行对齐，webui 套件恢复全绿。
+- **M1d 全量回归+发布**：pytest 全量 **8712 passed / 0 failed**（132 skipped，
+  610.6s，2026-10-14T11:3x；对照修复前 8707+5failed 精确对账）+ webui 282/282
+  + ruff 0；publish（前端 dist 变更，本 Goal 首次非零前端改动发布）。
+- **M1d 附带守卫书补（预存 5 失败修复，独立提交）**：全量首跑暴露 5 个
+  非本 Goal 引入的守卫失败——4 处源于 web-carveout M3（6db89d6b5）提交时
+  漏同步：factory.py 函数内 import 棘轮 63→64（外部注册模块加载，plugin
+  语义补行内豁免标记）、豁免标记登记 5→3（删 2 内置注册标记未同步登记簿
+  与断言，收支补记 -2+1=4）、runtime 环 providers↔web_provider_registration
+  （真断环：ProviderSpec 条目校验移回所有权侧 providers.finalize，批次语义
+  原样保留——known_cycles 登记与 exemptions 两路均被防篡改层封死，断环是
+  唯一合规路径）；1 处源于 EVO-20261014-7299aec2（usage_net）：顶层能力文件
+  未登记（top_level_units 补 Learning 归属）+ RULE-AI-31 台账漏登（rule-
+  presence ledger 补行，锚 33→34）。守卫书补后 test_arch_guards +
+  rule_presence 49 passed；providers 影响面 549 passed。
+  实施纪律记录：守卫 _read_source 对 unstaged 外部漂移回退读 HEAD——
+  修复须 stage 后复验（首验假阴性一次，定位后纠正）。

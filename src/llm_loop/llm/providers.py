@@ -1063,7 +1063,16 @@ def load_registry(settings: Settings) -> ProviderRegistry:
 
         # web-carveout M3（D2/D3）：web 通道 provider 目录条目改由外部注册模块
         # 供给（importlib 动态加载，失败分级见 web_provider_registration）。
-        for provider_id, spec in load_web_provider_specs(settings).items():
+        # 条目类型校验在本侧执行（ProviderSpec 所有权侧；registration 模块
+        # 反向 import 会构成运行时环，2026-10-14 守卫书补断环）。
+        external_specs = load_web_provider_specs(settings)
+        if not all(isinstance(spec, ProviderSpec) for spec in external_specs.values()):
+            logger.warning(
+                "web provider 注册模块 web_provider_specs() 条目类型异常"
+                "（期望 dict[str, ProviderSpec]）；web 通道不注册"
+            )
+            external_specs = {}
+        for provider_id, spec in external_specs.items():
             if provider_id in providers:
                 logger.warning(
                     "provider id '%s' 已被现有配置占用；外部 web provider 未注册",

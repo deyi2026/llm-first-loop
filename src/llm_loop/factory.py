@@ -542,7 +542,9 @@ def build_engine(
     # 未配置 MODEL_PROVIDERS（仅 L0 单 provider 合成）→ 池仅有默认 client，行为与现状一致
     # M49（design §5.4）: 注入 MODEL_FALLBACKS 原始字符串，池在 fallback_candidates() 中按需解析
     from llm_loop.llm.pool import ModelClientPool
-    from llm_loop.llm.web_provider_registration import load_web_client_factories
+    from llm_loop.llm.web_provider_registration import (  # r9-import-exempt: plugin
+        load_web_client_factories,
+    )
 
     # web-carveout M3（D2/D3）：外部 web client 构造器改由外部注册模块供给
     # （importlib 动态加载，失败分级见 web_provider_registration）；仅注册
