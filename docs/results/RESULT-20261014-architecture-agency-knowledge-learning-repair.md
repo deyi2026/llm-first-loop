@@ -25,10 +25,12 @@ An initial ERR1210 two-tool test fixture was correctly rejected as nonrepresenta
 ## Verification snapshot
 
 - Focused suites, covering Rule retrieval/presence/SoT, Method and Experience, knowledge receipts, Learning and wake, factory and providers, architecture guard: **374 passed** (`-q --tb=short`, ~7.7 s) on the isolated working candidate.
+- Post-commit candidate `47ef1b60c` re-ran the exact focused test selection: **374 passed**. Tier0 preflight `python -m pytest -m tier0 -q --tb=short`: **318 passed, 8,543 deselected, 3 dependency deprecation warnings**, exit 0. Tier0 is a preflight, **not** the full R9 gate.
 - Ruff on seven modified Python files: PASS; `git diff --check`: PASS.
 - `scripts/check_static_diagnostics.py --tool pyright`: exit 0; historical 45, current 19, new 0, resolved 26, changed-file diagnostics 0 (tool version 1.1.411).
 - Existing test-side-effect audit issued 51 non-blocking review warnings, not counted as verified harmless across all cases.
 - Whole R9/full-suite gate, independent SubAgent review receipt, real GLM provider-view result, weak-model efficacy experiment, production merge/publish/restart: **NOT DONE**. Per RULE-AI-28, independent code-review SubAgent PASS receipt must precede full-suite execution; self-review and scoped tests cannot substitute.
+- An isolated browser tab was opened to inspect whether a fresh LFL Web session could safely host an independent reviewer. Its UI indicated a different active background stream, so no review task was dispatched through that tab; the tab was then closed. This is an unverified observation, **not** a confirmed cross-session bug and **not** a reviewer run. Independent reviewer identity/verdict/receipt remain absent.
 
 ## Next stage
 
