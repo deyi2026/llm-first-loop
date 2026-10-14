@@ -2,20 +2,20 @@
   "scenario": "S01",
   "title": "长工具运行中插话（主路径）",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-14T01:00:27",
+  "started_at": "2026-10-14T01:09:25",
   "steps": [],
   "wall": {
-    "run_started": 1791910827.897,
-    "tool_running": 1791910827.91,
-    "interject_accepted": 1791910827.934,
-    "run_done": 1791910828.127
+    "run_started": 1791911365.778,
+    "tool_running": 1791911365.791,
+    "interject_accepted": 1791911365.814,
+    "run_done": 1791911366.016
   },
   "dur_ms": {
-    "t_enqueue_ack_ms": 21.3,
-    "t_interject_ack_ms": 2.0,
-    "interject_requested_at_minus_created_at_ms": 2.2,
-    "received_at_minus_created_at_ms": 176.4,
-    "terminal_at_minus_created_at_ms": 176.4
+    "t_enqueue_ack_ms": 20.9,
+    "t_interject_ack_ms": 2.1,
+    "interject_requested_at_minus_created_at_ms": 2.3,
+    "received_at_minus_created_at_ms": 183.6,
+    "terminal_at_minus_created_at_ms": 183.6
   },
   "obs": {
     "tool_running_at_enqueue": true,
@@ -54,11 +54,11 @@
     "POST /queue": {
       "status": 202,
       "body": {
-        "queue_id": "q_e0606d808dc2",
+        "queue_id": "q_3576e2e3c419",
         "position": 1,
         "item": {
-          "queue_id": "q_e0606d808dc2",
-          "session_id": "cc1ec002-d9a1-4bc1-8003-b660693c127d",
+          "queue_id": "q_3576e2e3c419",
+          "session_id": "4f275cf4-cbfb-4e61-9883-a956dee705ea",
           "message": "改用方案B，不要等了",
           "attachments": [],
           "attachment_facts": [],
@@ -66,7 +66,7 @@
           "model_change": false,
           "reasoning_effort": null,
           "reasoning_mode": "auto",
-          "created_at": 1791910827.930697,
+          "created_at": 1791911365.8107939,
           "status": "queued",
           "grade": "queued",
           "grade_reason": ""
@@ -77,13 +77,13 @@
       "status": 202,
       "body": {
         "ok": true,
-        "queue_id": "q_e0606d808dc2",
+        "queue_id": "q_3576e2e3c419",
         "state": "interject_pending",
         "grade": "accepted",
         "grade_reason": "受理≠生效：已进入 live run 信箱；生效分级见 GET /api/v1/chat/queue/item"
       }
     }
   },
-  "finished_at": "2026-10-14T01:00:28",
+  "finished_at": "2026-10-14T01:09:26",
   "status": "ok"
 }

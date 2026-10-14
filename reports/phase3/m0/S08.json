@@ -2,7 +2,7 @@
   "scenario": "S08",
   "title": "wake 一次性（存量测试证据）",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-14T01:00:45",
+  "started_at": "2026-10-14T01:09:44",
   "steps": [],
   "wall": {},
   "dur_ms": {},
@@ -18,6 +18,6 @@
       "33 passed in 0.26s"
     ]
   },
-  "finished_at": "2026-10-14T01:00:46",
+  "finished_at": "2026-10-14T01:09:45",
   "status": "ok"
 }

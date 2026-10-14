@@ -4,8 +4,8 @@
   "samples": [
     {
       "tag": "S16M1-1",
-      "t_effect_ms": 77.1,
-      "elapsed_s": 0.63,
+      "t_effect_ms": 70.3,
+      "elapsed_s": 0.64,
       "final": "done",
       "item_status": "interject_received",
       "skipped_receipts": 1,
@@ -14,8 +14,8 @@
     },
     {
       "tag": "S16M1-2",
-      "t_effect_ms": 74.9,
-      "elapsed_s": 0.63,
+      "t_effect_ms": 87.3,
+      "elapsed_s": 0.64,
       "final": "done",
       "item_status": "interject_received",
       "skipped_receipts": 1,
@@ -24,7 +24,7 @@
     },
     {
       "tag": "S16M1-3",
-      "t_effect_ms": 69.8,
+      "t_effect_ms": 63.0,
       "elapsed_s": 0.63,
       "final": "done",
       "item_status": "interject_received",
@@ -34,8 +34,8 @@
     },
     {
       "tag": "S16M1-4",
-      "t_effect_ms": 85.8,
-      "elapsed_s": 0.66,
+      "t_effect_ms": 81.0,
+      "elapsed_s": 0.64,
       "final": "done",
       "item_status": "interject_received",
       "skipped_receipts": 1,
@@ -44,7 +44,7 @@
     },
     {
       "tag": "S16M1-5",
-      "t_effect_ms": 80.6,
+      "t_effect_ms": 77.5,
       "elapsed_s": 0.65,
       "final": "done",
       "item_status": "interject_received",
@@ -53,6 +53,6 @@
       "model_saw_interject": true
     }
   ],
-  "t_effect_p50_ms": 77.1,
+  "t_effect_p50_ms": 77.5,
   "ran_under": "M1-gap-harvest"
 }
