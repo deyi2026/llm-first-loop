@@ -66,3 +66,12 @@
 4. **修复**：runner.py `_execute_subagent` 工具执行窗口隔离 `current_run_generation.set("")`（子代理 effect 权威回归 R1 lease fence 单一来源）+ red→green 复现测试 `tests/unit/test_subagent_effect_generation_isolation.py`（修复前 `allowed=False` 精确复现生产形态）。回归子集 315 passed；全量 7508 passed / 108 skipped / 1 failed（test_static_diagnostic_gate 预先存在失败，stash 干净树复现同败，与本次修复无关）。
 
 **insight**：unauthorized 文案与真实拒绝原因错位是本次排查最大成本——"run lease fenced" 文案让排查在 lease 链路上空转，磁盘真相才纠偏。权威分层（lease / generation）的拒绝消息应区分来源。
+
+> **后续（2026-10-14 EVO-20261014-459a8a1e，人工已批准执行）**：本 insight 已落地——`effect_mutation_authority` 产出带码 verdict（E3_LEASE_FENCE / E4_GENERATION_AUTHORITY 区分 + 机器事实：binding/current 代际并排），所有 effect 工具拒绝回执带 `[E*_...]` 分层码；E1（工具域）/E2（能力）/E5（写保护）/E6（灾难性硬阻断）同步带码；exception_log 持久化 session_id+fence_code 可按层统计。本文件上文引用的旧文案为历史记录，保留不改。
+
+### v2 端到端验证（2026-10-14 17:43 · 部署 gen 262，修复生效）
+
+- **部署事实**：web gen 262 succeeded（restart action `svc-8efd757ccfde4cc4a1b5c476e3910c9a`，pid 53247 新起，17:34:41→17:35:04 succeeded）；部署头 `df24e01df` 经 merge-base 验证包含修复 `47773fff5`。
+- **验证配置**：`tools=[execute_command]` + `fs=true` + `inherit=false`；child=subagent_d43deb130fca，3 轮结算 completed。
+- **结果**：✅ 修复在部署环境端到端生效——子代理回执原文 execute_command `status=success`，stdout 含 `SUBAGENT_EFFECT_OK` 与 pwd；程序级工具轨迹 `execute_command:success`×2；事件日志 `data/event_logs/subagent_d43deb130fca.jsonl` unauthorized=0 / fenced=0。
+- **判定**：v2 根因②（generation 继承缺陷）修复确认生效；本 playbook 第 6 条判据（"看回执原文是否有 unauthorized"）本次实测通过。

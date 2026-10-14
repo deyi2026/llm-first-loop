@@ -446,14 +446,31 @@ class FileService:
         authority_factory = (
             getattr(effect_sink, "mutation_authority", None) if effect_sink is not None else None
         )
-        authority_ctx: contextlib.AbstractContextManager[bool] = contextlib.nullcontext(True)
+        authority_ctx: contextlib.AbstractContextManager = contextlib.nullcontext(True)
         if callable(authority_factory):
-            authority_ctx = cast(
-                contextlib.AbstractContextManager[bool], authority_factory()
-            )
+            authority_ctx = cast(contextlib.AbstractContextManager, authority_factory())
         with authority_ctx as mutation_allowed:
             if not mutation_allowed:
-                raise FileServiceError("EffectAuthorityLost")
+                # EVO-20261014-459a8a1e: 真实层（E3 lease / E4 代际）线程化到异常 detail，
+                # 上层 unauthorized 回执与 exception_log 均可按层统计。
+                fence_code = str(getattr(mutation_allowed, "code", "") or "")
+                fence_reason = str(getattr(mutation_allowed, "reason", "") or "")
+                fence_facts = getattr(mutation_allowed, "facts", None) or {}
+                facts_txt = " ".join(
+                    f"{k}={v}" for k, v in sorted(dict(fence_facts).items())
+                )
+                detail = " | ".join(
+                    part
+                    for part in (
+                        f"[{fence_code}]" if fence_code else "",
+                        fence_reason,
+                        f"facts: {facts_txt}" if facts_txt else "",
+                    )
+                    if part
+                )
+                raise FileServiceError(
+                    "EffectAuthorityLost", detail=detail or None
+                )
             try:
                 fd, tmp_name = tempfile.mkstemp(
                     dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"

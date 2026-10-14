@@ -15,6 +15,7 @@ import subprocess
 import threading
 from contextlib import suppress
 from pathlib import Path
+from typing import Callable
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
@@ -23,6 +24,11 @@ from llm_loop.core.run_context import (
     workspace_base,
 )
 from llm_loop.tools.builtin.job_registry import JobDurabilityError, JobLimitExceeded, JobRegistry
+from llm_loop.tools.review_gate import (
+    classify_review_gate_command,
+    is_read_only_probe,
+    review_gate_note,
+)
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
@@ -240,11 +246,15 @@ class ExecuteCommandTool:
         *,
         sandbox_mode: str = "none",
         sandbox_image: str = "python:3.13-slim",
+        review_gate_recorder: Callable[[dict], str] | None = None,
     ) -> None:
         """工具内兜底超时（M18 AA8: 读配置值，默认 30s 兜底向后兼容；注册表另有线程级超时）."""
         self._timeout_s = 30.0 if timeout_s is None else float(timeout_s)
         self._sandbox_mode = sandbox_mode
         self._sandbox_image = sandbox_image
+        # EVO-20261014-7ba73d88: push/全量测试前的 review gate 闸提示记录器
+        # （factory 注入，返回机器事实一行；None 时闸仍提醒但机器事实为 unknown）。
+        self._review_gate_recorder = review_gate_recorder
         # P1-5 + Stop: 工具实例跨 session 共享，单 `_active_proc` 会被并发覆盖并
         # 导致超时/Stop 杀错进程。按 current_session_id 保存前台进程，锁保护跨线程访问。
         self._active_procs: dict[str, subprocess.Popen] = {}
@@ -284,6 +294,34 @@ class ExecuteCommandTool:
         if len(procs) == 1:
             self._terminate_proc(procs[0])
 
+    def _review_gate_line(self, command: str) -> str:
+        """RULE-AI-28 闸提示行（EVO-20261014-7ba73d88，只提醒不阻断）。
+
+        触发面：git push（含 force 变体）与全量 pytest。机器事实由 factory 注入的
+        recorder 探测本会话最近一条已落盘 VERDICT 回执并写 review_gate_probe 事件；
+        程序不裁决，声明（satisfied / exempted:<类型> / none）由模型自报。
+        """
+        kind = classify_review_gate_command(command)
+        if not kind:
+            return ""
+        label = "git push" if kind == "git_push" else "全量 pytest"
+        fact = ""
+        recorder = getattr(self, "_review_gate_recorder", None)
+        if recorder is not None:
+            try:
+                fact = str(recorder(
+                    {
+                        "action_kind": kind,
+                        "tool": "execute_command",
+                        "command_preview": command[:120],
+                    }
+                ) or "")
+            except Exception:  # noqa: BLE001 - 探测失败不阻断动作、不阻断提醒
+                fact = ""
+        if not fact:
+            fact = "unknown（未注入探测器）"
+        return review_gate_note(kind, fact, action_label=label)
+
     def execute(self, **kwargs) -> ToolResult:
         command = str(kwargs.get("command", "")).strip()
         if not command:
@@ -313,6 +351,8 @@ class ExecuteCommandTool:
                 tool_call_id="", tool_name=self.name,
             )
         launch_command = "bash -e -o pipefail -c " + shlex.quote(command) if fail_fast else command
+        # EVO-20261014-7ba73d88: push/全量测试闸提示（只提醒不阻断，回执注入一行）。
+        gate_line = self._review_gate_line(command)
         # 工作区跟随: 未显式指定 workdir 时默认当前工作区根（无工作区 → 进程 cwd，零回归）
         if workdir is None:
 
@@ -342,19 +382,23 @@ class ExecuteCommandTool:
                     )
                 from llm_loop.core.tool_execution_journal import (
                     current_effect_mutation_authority,
+                    format_effect_denial,
                 )
 
-                with current_effect_mutation_authority() as mutation_allowed:
+                # EVO-20261014-459a8a1e: 确定只读探测（--help/--dry-run/status/diff/
+                # log/ls 类）无 durable 副作用提交点，shell 围栏层确定性放行；
+                # 其余命令仍 fail-closed，拒绝回执带分层码指认真实层。
+                read_only_probe = is_read_only_probe(command)
+                with current_effect_mutation_authority() as verdict:
                     # R1 effect fence: 进程 spawn 即副作用提交点。lease 权威
                     # 丢失（过期/被接管）时拒绝 spawn，fail-closed。
-                    if not mutation_allowed:
+                    if not verdict and not read_only_probe:
                         return ToolResult(
                             status=ToolResultStatus.UNAUTHORIZED,
-                            content=(
-                                "[状态: unauthorized] effect authority 丢失（run lease "
-                                "fenced），后台命令拒绝启动: "
-                                + command
+                            content=format_effect_denial(
+                                verdict, action=f"后台命令拒绝启动: {command}"
                             ),
+                            error_type=verdict.code or "E0_EFFECT_AUTHORITY",
                             tool_call_id="",
                             tool_name=self.name,
                         )
@@ -409,10 +453,13 @@ class ExecuteCommandTool:
                     )
                 except Exception:  # noqa: BLE001 — 登记失败不阻断工具（观测面 fail-open）
                     pass
+                bg_content = f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"
+                if gate_line:
+                    bg_content = f"{gate_line}\n{bg_content}"
                 return ToolResult(
                     status=ToolResultStatus.SUCCESS,
-                    content=f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"
-                            f"shell_mode={'fail_fast' if fail_fast else 'default'}\n"
+                    content=bg_content
+                            + f"shell_mode={'fail_fast' if fail_fast else 'default'}\n"
                             f"等进程终态用 wait(seconds=120, job_id={job_id})；"
                             f"用 job_output(job_id={job_id}) 查询退出码与输出。",
                     tool_call_id="",
@@ -441,17 +488,21 @@ class ExecuteCommandTool:
                 )
             from llm_loop.core.tool_execution_journal import (
                 current_effect_mutation_authority,
+                format_effect_denial,
             )
 
-            with current_effect_mutation_authority() as mutation_allowed:
+            # EVO-20261014-459a8a1e: 同后台路径——只读探测围栏层放行，其余 fail-closed
+            # 且拒绝回执带分层码（E3/E4）指认真实层。
+            read_only_probe = is_read_only_probe(command)
+            with current_effect_mutation_authority() as verdict:
                 # R1 effect fence: 进程 spawn 即副作用提交点（同后台路径）。
-                if not mutation_allowed:
+                if not verdict and not read_only_probe:
                     return ToolResult(
                         status=ToolResultStatus.UNAUTHORIZED,
-                        content=(
-                            "[状态: unauthorized] effect authority 丢失（run lease "
-                            "fenced），命令拒绝执行: " + command
+                        content=format_effect_denial(
+                            verdict, action=f"命令拒绝执行: {command}"
                         ),
+                        error_type=verdict.code or "E0_EFFECT_AUTHORITY",
                         tool_call_id="",
                         tool_name=self.name,
                     )
@@ -480,7 +531,10 @@ class ExecuteCommandTool:
                     proc.wait(timeout=5)  # 收尸（SIGKILL 后立即退出；失败不阻断回执）
                 return ToolResult(
                     status=ToolResultStatus.TIMEOUT,
-                    content=f"[执行超时] 命令超过 {self._timeout_s:.0f}s 未完成",
+                    content=(
+                        f"[执行超时] 命令超过 {self._timeout_s:.0f}s 未完成"
+                        + (f"\n{gate_line}" if gate_line else "")
+                    ),
                     tool_call_id="",
                     tool_name=self.name,
                 )
@@ -524,7 +578,13 @@ class ExecuteCommandTool:
         # （原实现仅失败时前置退出码，成功时直接是输出内容）
         _cmd_preview = " ".join(command.split()[:8]) if command else "?"
         _out_lines = len(content.splitlines())
-        content = f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]\n{content}"
+        # EVO-20261014-7ba73d88: 闸提示行紧随 [命令] 摘要行（成功回执首内容契约保持纯 stdout 紧随其后）。
+        _summary_line = f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]"
+        content = "\n".join(
+            line
+            for line in (_summary_line, gate_line or None, content)
+            if line is not None
+        )
 
         raw_observation = content if current_evidence_shadow_enabled.get() else None
 

@@ -85,21 +85,25 @@ def test_fence_lost_denies_and_revokes_binding_sticky(tmp_path: Path) -> None:
     def fence() -> bool:
         return verdict[0]
 
-    # First probe: fence says lost -> denied.
-    assert _authority(journal, sessions, sid, tmp_path, fence) is False
+    # First probe: fence says lost -> denied（EVO-20261014-459a8a1e: 携带 E3 层码）。
+    first = _authority(journal, sessions, sid, tmp_path, fence)
+    assert not first
+    assert first.code == "E3_LEASE_FENCE"
     # Binding is permanently revoked even if the fence later says healthy.
     verdict[0] = True
-    assert _authority(journal, sessions, sid, tmp_path, fence) is False
+    second = _authority(journal, sessions, sid, tmp_path, fence)
+    assert not second
+    assert second.code == "E3_LEASE_FENCE"  # sticky 复拒仍指认 E3
 
 
 def test_fence_loss_is_sticky_per_session_for_new_bindings(tmp_path: Path) -> None:
     journal, sessions, sid = _journal(tmp_path)
-    assert _authority(journal, sessions, sid, tmp_path, lambda: False) is False
+    assert not _authority(journal, sessions, sid, tmp_path, lambda: False)
     # New binding with a healthy fence still starts revoked (sticky session).
-    assert _authority(journal, sessions, sid, tmp_path, lambda: True) is False
+    assert not _authority(journal, sessions, sid, tmp_path, lambda: True)
     # Another session is unaffected.
     sid2 = sessions.create()
-    assert _authority(journal, sessions, sid2, tmp_path, lambda: True) is True
+    assert _authority(journal, sessions, sid2, tmp_path, lambda: True)
 
 
 def test_fence_probe_exception_fails_closed(tmp_path: Path) -> None:
@@ -108,14 +112,17 @@ def test_fence_probe_exception_fails_closed(tmp_path: Path) -> None:
     def boom() -> bool:
         raise RuntimeError("disk truth unreadable")
 
-    assert _authority(journal, sessions, sid, tmp_path, boom) is False
+    result = _authority(journal, sessions, sid, tmp_path, boom)
+    assert not result
+    assert result.code == "E3_LEASE_FENCE"
+    assert "fail-closed" in result.reason
     assert journal.effect_fence_lost(sid) is True
 
 
 def test_no_fence_keeps_pre_r1_behavior(tmp_path: Path) -> None:
     journal, sessions, sid = _journal(tmp_path)
     # lease_fence=None: authority granted exactly like before R1.
-    assert _authority(journal, sessions, sid, tmp_path, None) is True
+    assert _authority(journal, sessions, sid, tmp_path, None)
 
 
 # ---------------------------------------------------- B: store lease_is_current

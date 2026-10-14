@@ -124,16 +124,18 @@ class CodeArtsDispatchTool:
         # （过期/被接管）时拒绝发起远端任务，fail-closed。
         from llm_loop.core.tool_execution_journal import (
             current_effect_mutation_authority,
+            format_effect_denial,
         )
 
-        with current_effect_mutation_authority() as mutation_allowed:
-            if not mutation_allowed:
+        with current_effect_mutation_authority() as verdict:
+            # EVO-20261014-459a8a1e: 拒绝回执带分层码指认真实层（E3/E4）。
+            if not verdict:
                 return ToolResult(
                     status=ToolResultStatus.UNAUTHORIZED,
-                    content=(
-                        "[状态: unauthorized] effect authority 丢失（run lease "
-                        "fenced），远端任务拒绝发起: " + task_description[:80]
+                    content=format_effect_denial(
+                        verdict, action="远端任务拒绝发起: " + task_description[:80]
                     ),
+                    error_type=verdict.code or "E0_EFFECT_AUTHORITY",
                     tool_call_id="",
                     tool_name=self.name,
                 )

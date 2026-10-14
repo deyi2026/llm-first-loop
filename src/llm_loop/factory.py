@@ -1329,18 +1329,35 @@ def build_engine(
 
     registry.register(GetToolSchemaTool(registry))
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
+    # EVO-20261014-7ba73d88: push/publish/全量测试闸提示记录器（机器事实探测 +
+    # review_gate_probe 事件落盘；fail-open，注入失败时闸仍提醒、事实为 unknown）。
+    from llm_loop.core.run_context import current_session_id as _rg_session_id_var
+    from llm_loop.tools.review_gate import make_review_gate_probe
+
+    def _review_gate_audit(action_type: str, detail_text: str, sid: str) -> None:
+        status_provider.record_action(
+            "tool.review_gate", action_type, detail_text, session_id=sid
+        )
+
+    _review_gate_recorder = make_review_gate_probe(
+        event_store, _rg_session_id_var.get, _review_gate_audit
+    )
     _register_basic(
         "execute_command",
         ExecuteCommandTool(
             timeout_s=_tool_timeout,
             sandbox_mode=settings.tool_runtime.exec_sandbox,
             sandbox_image=settings.tool_runtime.exec_sandbox_image,
+            review_gate_recorder=_review_gate_recorder,
         ),
     )
     # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.
     _register_basic(
         "service_control",
-        ServiceControlTool(store=ManagedServiceDeploymentStore(settings.data_dir)),
+        ServiceControlTool(
+            store=ManagedServiceDeploymentStore(settings.data_dir),
+            review_gate_recorder=_review_gate_recorder,
+        ),
     )
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
     _register_basic("job_output", JobOutputTool())
@@ -1598,8 +1615,17 @@ def build_engine(
         first_line = content.splitlines()[0][:200] if content else "(no content)"
         dur = getattr(result, "duration_ms", None)
         detail = f"{first_line} | dur={dur:.0f}ms" if isinstance(dur, (int, float)) else first_line
+        # EVO-20261014-459a8a1e: 分层诊断码（E1..E6）随拒绝落 exception_log，
+        # 拒绝可按层/按会话统计（edit_file 路径码在 error_detail 前缀）。
+        fence_code = str(getattr(result, "error_type", "") or "")
+        if not fence_code.startswith("E"):
+            error_detail = str(getattr(result, "error_detail", "") or "")
+            if error_detail.startswith("[E"):
+                fence_code = error_detail.split("]", 1)[0].lstrip("[")
+            else:
+                fence_code = ""
         status_provider.record_tool_fault(
-            tool_name, str(getattr(status, "value", status)), detail
+            tool_name, str(getattr(status, "value", status)), detail, fence_code=fence_code
         )
 
     registry.add_post_result_observer(_tool_fault_observer)

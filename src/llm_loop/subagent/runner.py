@@ -2281,10 +2281,18 @@ class SubAgentRunner:
                 elif scope is not None and call.name not in scope:
                     result = ToolResult(
                         status=ToolResultStatus.BLOCKED,
-                        content=f"[状态: blocked] 工具 {call.name} 不在父执行域授权集合内。",
+                        # EVO-20261014-459a8a1e: E1 工具白名单层，带码落 exception_log。
+                        content=(
+                            f"[状态: blocked] [E1_TOOL_WHITELIST] 工具 {call.name} 不在父执行域授权集合内。"
+                        ),
                         tool_call_id=call.id,
                         tool_name=call.name,
+                        error_type="E1_TOOL_WHITELIST",
                     )
+                    # 该拒绝不经 registry.execute，显式走同一观察者管线落故障台账。
+                    notify_external = getattr(self.registry, "notify_external_result", None)
+                    if callable(notify_external):
+                        notify_external(call.name, result)
                 else:
                     started = self._tool_journal.started(
                         sess.session_id,

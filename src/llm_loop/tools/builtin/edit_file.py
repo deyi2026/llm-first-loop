@@ -314,16 +314,21 @@ class EditFileTool:
         if exc.error_type == "EffectAuthorityLost":
             # R1: file 提交窗口内 lease 权威丢失（或超时撤销）。UNAUTHORIZED
             # 而非 ERROR——这是一次类型化的权限拒绝，本次未写入。
+            # EVO-20261014-459a8a1e: detail 携带分层码（E3/E4）与该层机器事实。
+            fence_code = ""
+            if exc.detail and exc.detail.startswith("[E"):
+                fence_code = exc.detail.split("]", 1)[0].lstrip("[")
             return ToolResult(
                 status=ToolResultStatus.UNAUTHORIZED,
                 content=(
-                    "[状态: unauthorized] effect authority 丢失（run lease fenced/"
-                    "attempt 已撤销），本次写入未发生: " + path_str
+                    "[状态: unauthorized] effect authority 丢失（"
+                    + (exc.detail or "run lease fenced/attempt 已撤销")
+                    + "），本次写入未发生: " + path_str
                 ),
                 tool_call_id="",
                 tool_name=self.name,
-                error_type="EffectAuthorityLost",
-                error_detail="mutation authority denied at commit boundary",
+                error_type=fence_code or "EffectAuthorityLost",
+                error_detail=exc.detail or "mutation authority denied at commit boundary",
             )
         if exc.error_type == "WriteFailed":
             return self._fail(

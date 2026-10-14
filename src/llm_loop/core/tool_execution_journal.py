@@ -17,6 +17,7 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -129,20 +130,63 @@ def revoke_effect_binding_for_call(tool_call_id: str) -> bool:
     return True
 
 
+# EVO-20261014-459a8a1e: effect 拒绝分层诊断码（与提案 taxonomy 对齐）。
+FENCE_CODE_LEASE = "E3_LEASE_FENCE"
+FENCE_CODE_GENERATION = "E4_GENERATION_AUTHORITY"
+
+
+@dataclass(frozen=True)
+class EffectAuthorityVerdict:
+    """One deterministic, bool-compatible verdict of a mutation-authority probe.
+
+    ``bool(verdict)`` 保留既有调用方语义；被拒时 ``code`` 指认真实层
+    （E3 lease fence / E4 generation authority），``facts`` 携带该层机器事实。
+    """
+
+    allowed: bool
+    code: str = ""
+    reason: str = ""
+    facts: dict[str, object] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return self.allowed
+
+
+def format_effect_denial(verdict: EffectAuthorityVerdict, *, action: str) -> str:
+    """Deterministic unauthorized-receipt body naming the true fence layer.
+
+    EVO-20261014-459a8a1e: 统一 effect 拒绝文案，拒绝回执必须指认真实层，不再笼统
+    写 "run lease fenced"（该文案曾把 E4 代际失权误导为 E3 lease 问题）。
+    """
+    code = verdict.code or "E0_EFFECT_AUTHORITY"
+    facts = " ".join(f"{k}={v}" for k, v in sorted((verdict.facts or {}).items()))
+    parts = [f"[状态: unauthorized] [{code}] effect authority 丢失"]
+    if verdict.reason:
+        parts.append(f"真实层: {verdict.reason}")
+    if facts:
+        parts.append(f"facts: {facts}")
+    parts.append(f"fail-closed 拒绝动作: {action}")
+    return " | ".join(parts)
+
+
 @contextlib.contextmanager
-def current_effect_mutation_authority() -> Iterator[bool]:
+def current_effect_mutation_authority() -> Iterator[EffectAuthorityVerdict]:
     """Expose the current tool attempt's exact mutation capability, if any.
 
     Direct/control-plane callers without a ToolExecutionJournal binding retain legacy
     behavior. Runtime model-tool calls receive a binding and therefore exact attempt/run
     fencing without each actuator reimplementing ownership logic.
+
+    EVO-20261014-459a8a1e: yields a bool-compatible verdict that names the true
+    denial layer (E3 lease fence / E4 generation authority) plus machine facts, so
+    rejection receipts stop pointing diagnostics at the wrong layer.
     """
     binding = _current_effect_binding.get()
     if binding is None:
-        yield True
+        yield EffectAuthorityVerdict(allowed=True)
         return
-    with binding.journal.effect_mutation_authority(binding) as allowed:
-        yield bool(allowed)
+    with binding.journal.effect_mutation_authority(binding) as verdict:
+        yield verdict
 
 
 class ToolExecutionJournal:
@@ -410,43 +454,89 @@ class ToolExecutionJournal:
             _current_effect_bindings.reset(token)
 
     @contextlib.contextmanager
-    def effect_mutation_authority(self, binding: _EffectBinding) -> Iterator[bool]:
+    def effect_mutation_authority(self, binding: _EffectBinding) -> Iterator[EffectAuthorityVerdict]:
         """Hold exact attempt + run ownership across one physical mutation commit.
 
         R1: when the binding carries a lease fence capability (fleet run), the
         physical commit window first probes "is this run still the writable
         authority?".  A lost fence revokes the binding and marks the session
         sticky-fenced, so later commits fail closed without re-probing disk.
+
+        EVO-20261014-459a8a1e: yields :class:`EffectAuthorityVerdict` so callers can
+        report the true denial layer (E3 vs E4) with machine facts instead of a
+        misleading generic "run lease fenced" line.
         """
         with binding._authority_lock:
             if binding._revoked:
-                yield False
+                yield EffectAuthorityVerdict(
+                    allowed=False,
+                    code=FENCE_CODE_LEASE,
+                    reason="binding 已撤销（此前已观测到 lease 权威丢失，本进程粘性围栏）",
+                    facts={"session_id": binding.session_id, "sticky_fence": True},
+                )
                 return
             fence = binding.lease_fence
             if fence is not None:
                 allowed = False
+                probe_error = ""
                 try:
                     allowed = bool(fence())
-                except Exception:  # noqa: BLE001 - unreadable truth fails closed
+                except Exception as exc:  # noqa: BLE001 - unreadable truth fails closed
                     allowed = False
+                    probe_error = f"{type(exc).__name__}: {exc}"
                 if not allowed:
                     binding.revoke()
                     self.mark_effect_fence_lost(binding.session_id)
-                    yield False
+                    yield EffectAuthorityVerdict(
+                        allowed=False,
+                        code=FENCE_CODE_LEASE,
+                        reason=(
+                            "fleet lease 探针判定本 run 已非可写权威（lease 过期/被接管）"
+                            + ("；探针读取异常按 fail-closed 处理" if probe_error else "")
+                        ),
+                        facts={
+                            "session_id": binding.session_id,
+                            "sticky_fence": False,
+                            "probe": probe_error or "false",
+                        },
+                    )
                     return
             generation = str(binding.origin_run_generation or "")
             # Empty generation is legacy/non-run use. Preserve old behavior rather than
             # inventing ownership; runtime-owned effects always carry a generation now.
             if not generation:
-                yield True
+                yield EffectAuthorityVerdict(allowed=True)
                 return
+            # Facts 采集须在 run_generation_authority 窗口外：该 CM 持
+            # _run_save_tokens_guard 横跨 yield，窗口内再取 active_run_generation
+            # 会同线程死锁（best-effort，读值与权威判定的微小竞态可接受）。
+            try:
+                current_generation = str(
+                    self.session_store.active_run_generation(binding.session_id)
+                )
+            except Exception:  # noqa: BLE001 - facts are best-effort observability
+                current_generation = ""
             with self.session_store.run_generation_authority(
                 binding.session_id, generation
             ) as owned:
                 if not owned or binding._revoked:
-                    yield False
+                    yield EffectAuthorityVerdict(
+                        allowed=False,
+                        code=FENCE_CODE_GENERATION,
+                        reason=(
+                            "本 attempt 绑定的 run 代际已不是当前权威代际"
+                            "（新 run 已接管或旧 run 已收口）"
+                            if not binding._revoked
+                            else "提交窗口内 binding 被撤销（attempt 失去权威）"
+                        ),
+                        facts={
+                            "session_id": binding.session_id,
+                            "binding_generation": generation,
+                            "current_generation": str(current_generation or "(inactive)"),
+                        },
+                    )
                     return
-                yield True
+                yield EffectAuthorityVerdict(allowed=True)
 
     def mark_effect_fence_lost(self, session_id: str) -> None:
         """R1: sticky, process-local. Lease authority for this session was observed lost."""

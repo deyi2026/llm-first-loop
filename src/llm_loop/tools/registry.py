@@ -879,6 +879,15 @@ class ToolRegistry:
             except Exception:  # noqa: BLE001 — 观察者 fail-open
                 logger.warning("post_result observer 异常（fail-open）", exc_info=True)
 
+    def notify_external_result(self, name: str, result: ToolResult) -> None:
+        """外部构造的回执（不经 registry.execute 的拒绝）走同一观察者管线。
+
+        EVO-20261014-459a8a1e: 子代理 runner 的 E1 工具域拒绝原先绕过
+        post_result_observers（即 exception_log 故障台账），现显式走同一收口，
+        拒绝可按层统计。
+        """
+        self._notify_result_observers(name, result)
+
     def add_session_cancel_hook(self, hook: SessionCancelHook) -> None:
         """注册会话级长期资源取消钩子（如 parent→background child 级联）."""
         if hook not in self._session_cancel_hooks:
@@ -1105,9 +1114,10 @@ class ToolRegistry:
                     call,
                     ToolResult(
                         status=ToolResultStatus.BLOCKED,
-                        content=f"[安全硬阻断] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}",
+                        content=f"[安全硬阻断][E6_CATASTROPHIC_HARD] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}",
                         tool_call_id=call.id,
                         tool_name=call.name,
+                        error_type="E6_CATASTROPHIC_HARD",
                         error_detail=f"判定依据: {blocked.evidence}",
                         duration_ms=0.0,
                     ),
@@ -1124,9 +1134,10 @@ class ToolRegistry:
                     call,
                     ToolResult(
                         status=ToolResultStatus.BLOCKED,
-                        content=f"[共享服务控制权拦截] {decision.reason}",
+                        content=f"[共享服务控制权拦截][E2_CAPABILITY] {decision.reason}",
                         tool_call_id=call.id,
                         tool_name=call.name,
+                        error_type="E2_CAPABILITY",
                         error_detail=(
                             "managed_services=" + ",".join(decision.services)
                             if decision.services
@@ -1156,9 +1167,10 @@ class ToolRegistry:
                             call,
                             ToolResult(
                                 status=ToolResultStatus.BLOCKED,
-                                content=f"[权限拦截] {blocked}（人工审批未通过）",
+                                content=f"[权限拦截][E2_CAPABILITY] {blocked}（人工审批未通过）",
                                 tool_call_id=call.id,
                                 tool_name=call.name,
+                                error_type="E2_CAPABILITY",
                                 error_detail="EXEC_MODE 限制，人工审批拒绝该操作",
                                 duration_ms=0.0,
                             ),
@@ -1171,9 +1183,10 @@ class ToolRegistry:
                         call,
                         ToolResult(
                             status=ToolResultStatus.BLOCKED,
-                            content=f"[权限拦截] {blocked}",
+                            content=f"[权限拦截][E2_CAPABILITY] {blocked}",
                             tool_call_id=call.id,
                             tool_name=call.name,
+                            error_type="E2_CAPABILITY",
                             error_detail="EXEC_MODE 限制，该操作需人工执行",
                             duration_ms=0.0,
                         ),

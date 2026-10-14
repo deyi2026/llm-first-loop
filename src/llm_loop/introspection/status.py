@@ -332,12 +332,19 @@ class ArchitectureStatusProvider:
         )
 
     def record_tool_fault(
-        self, tool: str, outcome: str, detail: str, *, session_id: str = ""
+        self,
+        tool: str,
+        outcome: str,
+        detail: str,
+        *,
+        session_id: str = "",
+        fence_code: str = "",
     ) -> None:
         """工具回执故障台账（B 最小闭环，EVO 工具故障可追溯）.
 
         非 SUCCESS 回执与 "done 但空输出" 由 registry post_result observer 统一送入；
-        与 record_exception 同构落盘（ts/phase/error_type/error_message），
+        与 record_exception 同构落盘（ts/phase/error_type/error_message），另持久化
+        session_id 与分层诊断码（EVO-20261014-459a8a1e，拒绝可按层/按会话统计），
         phase=tool.<name>、error_type=tool_<outcome>，search_records(kind=exception_log)
         既有检索路径零改动可查。自身 fail-open：台账失败绝不影响工具主流程。
         """
@@ -353,15 +360,17 @@ class ArchitectureStatusProvider:
             )
             self._exception_log.append(item)
             self._exception_log = self._exception_log[-100:]
-            self._write_audit(
-                "exception_log.jsonl",
-                {
-                    "ts": item.ts,
-                    "phase": item.phase,
-                    "error_type": item.error_type,
-                    "error_message": item.error_message,
-                },
-            )
+            payload = {
+                "ts": item.ts,
+                "phase": item.phase,
+                "error_type": item.error_type,
+                "error_message": item.error_message,
+            }
+            if item.session_id:
+                payload["session_id"] = item.session_id
+            if fence_code:
+                payload["fence_code"] = fence_code
+            self._write_audit("exception_log.jsonl", payload)
             # A-④（EVO-20260924-40755734）: 同形态故障 ≥N 次自动提醒（L4）——
             # 每 (phase, error_type) 签名首个达到阈值的时刻记一条 repeat 台账 +
             # report_event 走既有冷却通道；不新增 prompt 注入路径（可检索/有事件）。

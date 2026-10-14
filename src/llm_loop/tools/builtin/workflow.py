@@ -426,13 +426,15 @@ class WorkflowRunTool:
             # R1 effect fence: 远端 dispatch 即副作用提交点（同 codearts_dispatch）。
             from llm_loop.core.tool_execution_journal import (
                 current_effect_mutation_authority,
+                format_effect_denial,
             )
 
-            with current_effect_mutation_authority() as mutation_allowed:
-                if not mutation_allowed:
+            with current_effect_mutation_authority() as verdict:
+                # EVO-20261014-459a8a1e: 拒绝回执带分层码指认真实层（E3/E4）。
+                if not verdict:
                     return (
-                        f"[步骤 {i}/{total}] [状态: unauthorized] effect authority 丢失"
-                        "（run lease fenced），远端步骤拒绝发起",
+                        f"[步骤 {i}/{total}] "
+                        + format_effect_denial(verdict, action="远端步骤拒绝发起"),
                         True,
                         False,
                         "",

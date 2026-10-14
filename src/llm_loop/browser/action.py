@@ -722,9 +722,12 @@ class BrowserActionAdapter:
         dispatch_error: Exception | None = None
         dispatch_result: BrowserDispatchResult | None = None
         dispatch_authority_lost = False
+        # EVO-20261014-459a8a1e: 记录真实拒绝层（E3/E4）供回执携带。
+        dispatch_authority_verdict = None
         with current_effect_mutation_authority() as mutation_allowed:
             if not mutation_allowed:
                 dispatch_authority_lost = True
+                dispatch_authority_verdict = mutation_allowed
             else:
                 try:
                     dispatch_result = self.actuator.dispatch(
@@ -824,6 +827,19 @@ class BrowserActionAdapter:
             terminal["status"] = "failed"
             reasons.append("dispatch_authority_lost")
             terminal["retry"]["reason"] = "dispatch_authority_lost"
+            # EVO-20261014-459a8a1e: 分层诊断码 + 该层机器事实（E3/E4）。
+            if dispatch_authority_verdict is not None:
+                terminal["effect_fence_code"] = (
+                    getattr(dispatch_authority_verdict, "code", "") or "E0_EFFECT_AUTHORITY"
+                )
+                terminal["effect_fence_reason"] = str(
+                    getattr(dispatch_authority_verdict, "reason", "") or ""
+                )
+                facts = getattr(dispatch_authority_verdict, "facts", None) or {}
+                if facts:
+                    terminal["effect_fence_facts"] = {
+                        str(k): str(v) for k, v in dict(facts).items()
+                    }
         elif dispatch_error is not None:
             terminal["status"] = "failed"
             reasons.append("dispatch_outcome_ambiguous")

@@ -28,6 +28,7 @@ from llm_loop.runtime.service_control import (
     release_admission_barrier,
     spawn_service_control_worker,
 )
+from llm_loop.tools.review_gate import review_gate_note
 
 
 def _derive_restart_target(code_root: str) -> str:
@@ -257,12 +258,39 @@ class ServiceControlTool:
         store: ManagedServiceDeploymentStore,
         worker_spawner: Callable[[str], None] | None = None,
         session_id_getter: Callable[[], str] | None = None,
+        review_gate_recorder: Callable[[dict], str] | None = None,
     ) -> None:
         self.store = store
         self._worker_spawner = worker_spawner or (
             lambda action_id: spawn_service_control_worker(self.store, action_id)
         )
         self._session_id_getter = session_id_getter or (lambda: current_session_id.get() or "")
+        # EVO-20261014-7ba73d88: publish 闸提示记录器（factory 注入）。
+        self._review_gate_recorder = review_gate_recorder
+
+    def _review_gate_line(self) -> str:
+        """RULE-AI-28 闸提示行（EVO-20261014-7ba73d88，publish 触发面，只提醒不阻断）。"""
+        fact = ""
+        recorder = getattr(self, "_review_gate_recorder", None)
+        if recorder is not None:
+            try:
+                fact = str(
+                    recorder(
+                        {
+                            "action_kind": "publish",
+                            "tool": "service_control",
+                            "action": "publish",
+                        }
+                    )
+                    or ""
+                )
+            except Exception:  # noqa: BLE001 - 探测失败不阻断动作、不阻断提醒
+                fact = ""
+        if not fact:
+            fact = "unknown（未注入探测器）"
+        return review_gate_note(
+            "publish", fact, action_label="service_control publish"
+        )
 
     def execute(self, **kwargs) -> ToolResult:
         action = str(kwargs.get("action", "") or "").strip().lower()
@@ -308,17 +336,20 @@ class ServiceControlTool:
             # + webui dist 产物 hash + generation CAS）；shell 围栏不动（CLI
             # 仍 operator-only），模型走本工具。runtime_root 按 data_dir
             # 契约推导（runtime_root/data = data_dir），不接受调用点自选。
+            # EVO-20261014-7ba73d88: publish 闸提示（动作前探测，成功/失败回执均携带）。
+            gate_note = self._review_gate_line()
             deployment, error = self._publish(
                 str(kwargs.get("code_root", "") or "").strip(),
                 kwargs.get("expected_generation"),
             )
             if error is not None:
-                return self._failure(error)
+                return self._failure(f"{gate_note}\n{error}")
             assert deployment is not None
             # EVO-20260924-dc3c7c78：成功回执附只读收敛快照（同眼可见
             # lagging）；读取失败缺省该键，可见性增强不反噬成功回执。
             publish_body: dict[str, object] = {
                 "published": deployment.to_dict(),
+                "review_gate": gate_note,
                 "next": (
                     "desired 已推进；对 convergence.lagging 中仍落后的服务逐个 "
                     "service_control(action=restart, target=..., "
