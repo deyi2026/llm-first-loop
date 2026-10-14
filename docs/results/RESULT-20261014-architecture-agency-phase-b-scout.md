@@ -4,7 +4,7 @@ Date: 2026-10-14; isolated candidate `fix/architecture-guard-and-agency-20261014
 
 ## Reproduced issue and correction
 
-The current SOT `docs/ai_rules.md` contains RULE-AI-31, while the optional internal rule-presence ledger at `.codeartsdoer/specs/rule_presence/rule-presence-ledger.md` lacked that rule. The rule-presence test failed with `missing=['RULE-AI-31']` (59 other scoped tests passed). The **local ignored internal ledger** has been amended using SOT exact text as authority; this does NOT claim rule injection into provider-visible messages. Because `.codeartsdoer` is Git-ignored, the correction is **local only**, intentionally NOT forced into git. The maintainer of that private governance store must preserve/synchronize the ledger independently; no hidden force-add or expansion of prompt.
+The current SOT `docs/ai_rules.md` contains RULE-AI-31, while the rule-presence ledger at `.codeartsdoer/specs/rule_presence/rule-presence-ledger.md` lacked that rule. The rule-presence test failed with `missing=['RULE-AI-31']` (59 other scoped tests passed). The tracked ledger has been amended using SOT exact text as authority; this does NOT claim rule injection into provider-visible messages. The containing `.codeartsdoer` directory matches an ignore rule, but `git ls-files` proves this particular ledger is already tracked and the correction is included in commit `8ffa396f8`. No new force-add, prompt expansion or baseline exemption was necessary.
 
 ## Offline test receipts
 
@@ -20,4 +20,4 @@ The current SOT `docs/ai_rules.md` contains RULE-AI-31, while the optional inter
 3. P1 compare strongest and weakest supported model task FCR/retries/full costs using frozen comparable test cases. Neither more prompts nor fewer calls alone count as efficacy proof.
 4. Execute independent review as required by RULE-AI-28 before full R9; then final candidate R9, security and exact code SHA gates; only thereafter consider managed release and safe-idle.
 
-No active worktree removed, no main changes, no provider calls and no deployments. The ignored private ledger edit exists only in this isolated worktree and must not be mistaken for published coverage.
+No active worktree removed, no main changes, no provider calls and no deployments. The ledger edit is versioned in the isolated branch and must not be mistaken for production provider-view coverage.
