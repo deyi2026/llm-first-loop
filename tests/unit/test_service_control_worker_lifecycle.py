@@ -12,10 +12,8 @@
 
 from __future__ import annotations
 
-import io
 import json
 import os
-import contextlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -93,8 +91,8 @@ class TestCliDispatch:
 
             def lease(self):
                 class _L:
-                    __enter__ = lambda self: None
-                    __exit__ = lambda self, *a: False
+                    __enter__ = lambda self: None  # noqa: E731
+                    __exit__ = lambda self, *a: False  # noqa: E731
 
                 return _L()
 
