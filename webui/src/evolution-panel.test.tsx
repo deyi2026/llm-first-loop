@@ -145,7 +145,7 @@ describe("EvolutionPanel approval feedback", () => {
     expect(screen.getByText("请先勾选 Provider Prompt 影响核对，再执行批准。")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
-    expect(screen.getByText("请先勾选安全边界确认，再执行批准。")).toBeInTheDocument();
+    expect(screen.getByText("请先勾选安全边界确认或显式授权执行，再执行批准。")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("evo-extra-confirm"));
     expect(okButton).not.toBeDisabled();
     fireEvent.click(okButton);
