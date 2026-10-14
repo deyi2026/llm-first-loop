@@ -24,6 +24,7 @@ from typing import Any
 from llm_loop.core.run_context import workspace_base
 from llm_loop.introspection.rule_index import RuleIndex
 from llm_loop.timekeeping import system_local_now
+from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
 
 _LOGGER = logging.getLogger("llm_loop.introspection.search")
 
@@ -754,6 +755,33 @@ class RecordSearcher:
         merged.sort(key=lambda e: e["ts"])
         return merged
 
+    def _annotate_usage(self, rows: list[dict], *, side: str) -> list[dict]:
+        """EVO-20261014-7299aec2: 命中行附使用净分（record_use 审计派生视图，只读）。
+
+        与 card_age 同一聚合层；fail-open——派生视图任何异常只降级为不加字段，
+        不得影响检索主路径。
+        """
+        if not rows:
+            return rows
+        store = self._method_store if side == "method" else self._experience_store
+        if store is None:
+            return rows
+        memo: dict[str, dict | None] = {}
+        annotated: list[dict] = []
+        for row in rows:
+            try:
+                ref = str(row.get("experience_ref") or row.get("key") or "")
+                if not ref:
+                    annotated.append(row)
+                    continue
+                if ref not in memo:
+                    memo[ref] = store.usage_net(ref)
+                extra = _usage_net_row_annotation(memo[ref])
+                annotated.append({**row, **extra} if extra else row)
+            except Exception:  # noqa: BLE001 — 派生视图降级不阻断检索
+                annotated.append(row)
+        return annotated
+
     def _search_method(self, query: str, limit: int) -> list[dict]:
         """Method discovery uses lexical cards plus optional semantic RRF.
 
@@ -764,7 +792,7 @@ class RecordSearcher:
             return []
         raw = str(query or "").strip()
         if raw.lower().startswith("method:"):
-            return self._method_store.list(raw, limit)
+            return self._annotate_usage(self._method_store.list(raw, limit), side="method")
         keyword_limit = max(limit * 4, 20)
         keyword = self._method_store.list(raw, keyword_limit)
         if (
@@ -773,7 +801,9 @@ class RecordSearcher:
             or not self._semantic.semantic_available()
             or not raw
         ):
-            return annotate_card_age(keyword[:limit])  # EVO-20260923-6fe23c9b F2(b)
+            return self._annotate_usage(  # EVO-20260923-6fe23c9b F2(b) + EVO-20261014-7299aec2
+                annotate_card_age(keyword[:limit]), side="method"
+            )
         result = self._semantic.search(
             raw,
             top_k=limit,
@@ -794,7 +824,9 @@ class RecordSearcher:
             if record.freshness_refs:
                 card["freshness"] = self._method_store.freshness(record.method_ref)
             rows.append(card)
-        rows = annotate_card_age(rows[:limit])  # EVO-20260923-6fe23c9b F2(b)
+        rows = self._annotate_usage(  # EVO-20260923-6fe23c9b F2(b) + EVO-20261014-7299aec2
+            annotate_card_age(rows[:limit]), side="method"
+        )
         self._store_semantic_diagnostics(
             result,
             scope="method",
@@ -828,7 +860,10 @@ class RecordSearcher:
                 self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
                 self._last_semantic_diagnostics = None
                 stem = exact.removesuffix(".md")
-                return [self._experience_store.to_hydrated_record(stem, doc)][:limit]
+                return self._annotate_usage(  # EVO-20261014-7299aec2
+                    [self._experience_store.to_hydrated_record(stem, doc)][:limit],
+                    side="experience",
+                )
         # R3(P0-3): 三态扫描 Outcome——诊断独立于 results[:limit] 截断照常回填
         #（kind=all 聚合中 experience 记录被挤出返回集时，诊断仍到达模型）
         outcome = self._experience_store.search_outcome(
@@ -844,7 +879,9 @@ class RecordSearcher:
         }
         semantic_diag = getattr(self._experience_store, "last_semantic_diagnostics", None)
         self._last_semantic_diagnostics = dict(semantic_diag or {}) or None
-        return annotate_card_age(outcome.records)  # EVO-20260923-6fe23c9b F2(b)
+        return self._annotate_usage(  # EVO-20260923-6fe23c9b F2(b) + EVO-20261014-7299aec2
+            annotate_card_age(outcome.records), side="experience"
+        )
 
     @staticmethod
     def _memory_visible_in_session(entry: Any, session_id: str) -> bool:

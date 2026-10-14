@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.timekeeping import system_local_now
+from llm_loop.usage_net import summarize_since_last_transition
 
 _VALID_STATUSES = {"teacher", "candidate", "qualified", "active", "hold", "invalidated", "retired"}
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -1017,6 +1018,29 @@ class MethodStore:
         except OSError:
             return []
         return result
+
+    def usage_net(self, method_ref: str) -> dict[str, Any] | None:
+        """EVO-20261014-7299aec2: 使用净分派生视图（只读汇总，不改账本、不裁决）。
+
+        锚点为最近 lifecycle transition：账本条目内嵌 method_status（声明时状态）
+        与当前 status 尾段一致的条目才计入（口径见 llm_loop/usage_net.py D3）。
+        无卡或无声明返回 None，调用方据此不附加任何字段。
+        """
+        ref = str(method_ref or "").strip()
+        if not ref:
+            return None
+        record = self.get(ref)
+        if record is None:
+            return None
+        entries = self.usage_entries(ref)  # 文件序=旧→新
+        if not entries:
+            return None
+        return summarize_since_last_transition(
+            list(reversed(entries)),
+            decision_key="decision",
+            status_key="method_status",
+            current_status=str(record.status or ""),
+        )
 
     def record_qualification(
         self,

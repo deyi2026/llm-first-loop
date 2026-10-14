@@ -25,6 +25,7 @@ from typing import Any
 
 from llm_loop.experiences.document import ExperienceDocument
 from llm_loop.timekeeping import system_local_now
+from llm_loop.usage_net import summarize_since_last_transition
 
 logger = logging.getLogger(__name__)
 
@@ -971,6 +972,31 @@ class ExperienceStore:
             rows.append(row)
         rows.reverse()
         return rows[: max(0, min(int(limit), 200))]
+
+    def usage_net(self, experience_ref: str = "") -> dict[str, Any] | None:
+        """EVO-20261014-7299aec2: 使用净分派生视图（只读汇总，不改账本、不裁决）。
+
+        锚点为最近 lifecycle transition：账本条目内嵌 status（声明时状态）与当前
+        文档 status 尾段一致的条目才计入（口径见 llm_loop/usage_net.py D3）。
+        disproven 取当前文档 verification_state（D1 纠偏触发，不改净分权重）。
+        文档不可得时不重锚、全量累计并在 anchor 标注；无声明返回 None。
+        """
+        ref = str(experience_ref or "").strip()
+        # 账本条目以 experience:<stem>（无 .md）为真值形式（record_use 归一），此处对齐
+        stem = ref.removeprefix("experience:").removesuffix(".md")
+        ref = f"experience:{stem}"
+        doc = self.get(stem)
+        entries = self.usage_entries(ref)  # 倒序=新→旧
+        if not entries:
+            return None
+        current_status = str(getattr(doc, "status", "") or "") if doc is not None else ""
+        return summarize_since_last_transition(
+            entries,
+            decision_key="use_decision",
+            status_key="status",
+            current_status=current_status,
+            disproven=str(getattr(doc, "verification_state", "") or "") == "disproven",
+        )
 
     def usage_stats(self) -> dict[str, dict[str, Any]]:
         """聚合使用账本：每个 experience_ref 的 use_count / last_used_at.

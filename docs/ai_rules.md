@@ -502,6 +502,28 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+## 规则三十一：RSI 方法/经验循环——任务前检索、任务后评分与生命周期闭环（RULE-AI-31，用户指示 2026-10-14）
+
+**规则**：每个有实质工作量的任务（需要工具执行、多步推进、修改产物或排查问题），形成**检索 → 使用 → 评分 → 处置**的闭环，使经验/方法库随每次真实使用被持续校准（递归自我改进）。RULE-AI-18 管"用前核适用性"、RULE-AI-29 管"用后交账"，本条把两者串成**任务级前置义务 + 数值化评分与累计处置**的完整循环。
+
+1. **任务前检索（开局）**：动手前对经验/方法库做一次有界检索——`search_records(kind=method|experience|lesson)`，≤2 类、每类 limit≤5，query 用当前任务关键词；命中后按 RULE-AI-18/22 双闸（来源时间/新鲜度 + 当前任务适用性）裁决是否采用，一行说明裁决理由。零命中时如实记"无可用经验"后正常推进，不为凑命中反复换词检索。**豁免**（防格式税）：单步明确问答、闲聊、纯复述类不触发；同一连续任务窗口内不重复检索。
+2. **任务后评分（收口）**：对本次**实际使用**的每张卡片落 `record_use` 并计分：`applied`/`adapted` 且任务结果验证有效 = **+1**；`not_applicable`（不适合）= **-1**；`rejected`（错误引导/内容错误）= **-1**。note 附一句本次观察（何场景/何效果/何偏差）。时限对齐 RULE-AI-29 第 4 条：最迟当前任务收口前；仅"检索到但未采用"的卡片不评分（裁决已在开局一行说明）。净分是 `record_use` 留痕的机械汇总事实，不另建平行账本文件（单一数据源，锚 RULE-AI-20(6)）。
+3. **处置评估（±1 之后的决策）**：
+   - **+1**：无需额外动作；可选 `annotate_freshness` 刷新时效锚。
+   - **-1（not_applicable）**：仅记账保留给其他场景——"我用不上 ≠ 它错了"，不得据此弃用（锚 RULE-AI-29 第 3 条）。
+   - **-1（rejected）**：当场评估三选一并注明依据：`refine`/`annotate_freshness` 修正（能改不弃）；`transition=hold`（存疑待证）；`invalidate`/`retire` 弃用（前提错误/已被更好替代），须带本次 evidence。
+   - **累计阈值**：同一卡片累计净分 ≤ **-2**，或 `verification_state=disproven` → 必须处置（修正或弃用二选一），不得无限搁置；修正后的卡片从修正点重新累计，历史留痕不删。
+4. **新经验沉淀**：任务中产生可复用发现 → `save_experience`（正向经验须声明 verified+evidence）/ `method_manage(save_candidate)`；升格规则候选走 `docs/governance/card-lifecycle.md`，不在本条内复制清单。
+
+**程序角色**：无新增。现有 `search_records` / `save_experience` / `refine_experience` / `method_manage` 已支撑全部动作；净分自动统计与超阈值提醒**已由程序支持**（EVO-20261014-7299aec2 已执行）：`search_records` 命中行附 `usage_net`/`usage_net_detail`（净分≤-2 或 disproven 时另有 `pending_disposition=true`），`method_manage`/`refine_experience` 的 record_use 回执在触发阈值时附 `[threshold_alert]`（分项计数+一行提醒，提醒即止不裁决）。计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1），累计自**最近 lifecycle transition** 起算（D3 口径）；不随 lifecycle 变化的 `refine` 修正不自动重锚，"修正后从修正点重新累计"仍由模型行为层承担。
+
+**条款化来源**：method 候选 `会话级知识层双向同步（开局检索·使用裁决·收尾结算）`（method:candidate-a80acb208b99）的"开局检索+一行裁决"思想经本条升格，防止双层漂移（学规则十二条款化先例）。
+
+**正例**：排查任务开局检索命中适用经验卡 → 按其步骤少走弯路并验证有效 → 收口前 `record_use(applied)` note"省 2 次重试"（+1）；误用一张过时方法卡返工 → `record_use(rejected)` + `annotate_freshness` 标失效版本 + `transition=hold`（-1，当场处置）。
+**反例**：任务收口零评分零处置（只有单向写）；把"不适合"升级为 invalidate；累计两次 rejected 仍不处置无限搁置；为每次闲聊也跑检索凑流程。
+
+---
+
 ## 配置扩展（2026-09-03 agency-first 修订）
 
 Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。

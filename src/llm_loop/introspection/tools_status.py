@@ -573,6 +573,16 @@ def _single_line(value: Any, limit: int = 240) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
+def _usage_net_part(record: dict) -> str:
+    """EVO-20261014-7299aec2: usage_net 派生视图渲染段；无数据返回空串。"""
+    if not isinstance(record.get("usage_net"), int):
+        return ""
+    part = f" | usage_net={int(record['usage_net']):+d} [{record.get('usage_net_detail', '')}]"
+    if record.get("pending_disposition"):
+        part += " | pending_disposition=true"
+    return part
+
+
 def _render_experience_record(record: dict, fallback_kind: str) -> str:
     """Render either a thin discovery card or an explicitly hydrated experience."""
     ts = str(record.get("ts", ""))
@@ -596,19 +606,30 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
         if isinstance(age, int)
         else ""
     )
+    # EVO-20261014-7299aec2: 使用净分派生视图（record_use 审计，只读）
+    usage_part = _usage_net_part(record)
     if not record.get("hydrated"):
         scenario = _single_line(record.get("scenario"))
         return (
             f"[{ts}] {record.get('kind', fallback_kind)}: {title} | "
             f"experience_ref={ref} | status={status} | "
             f"record_kind={record_kind} | verification_state={verification} | "
-            f"task_applicability={applicability}{age_part} | scenario={scenario} | source={source}"
+            f"task_applicability={applicability}{age_part}{usage_part} | scenario={scenario} | source={source}"
             f"{lifecycle_suffix}"
         )
     age_fields = (
         [f"卡龄={age}d（超龄降权）"]
         if isinstance(age, int) and record.get("card_age_downweighted")
         else ([f"卡龄={age}d"] if isinstance(age, int) else [])
+    )
+    usage_fields = (
+        [
+            f"usage_net={int(record['usage_net']):+d}",
+            f"usage_net_detail={record.get('usage_net_detail', '')}",
+        ]
+        + (["pending_disposition=true"] if record.get("pending_disposition") else [])
+        if isinstance(record.get("usage_net"), int)
+        else []
     )
     fields = [
         f"[{ts}] {record.get('kind', fallback_kind)}: {title}",
@@ -622,6 +643,7 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
         f"created_at={record.get('created_at', '')}",
         f"updated_at={record.get('updated_at', '')}",
         *age_fields,
+        *usage_fields,
         f"source={source}",
         *lifecycle,
         f"tags={record.get('tags', [])}",
@@ -821,6 +843,8 @@ def _finalize_search_records(
                 if isinstance(age, int)
                 else ""
             )
+            # EVO-20261014-7299aec2: 使用净分派生视图（record_use 审计，只读）
+            usage_part = _usage_net_part(r)
             if r.get("_method_semantic_discovery") and visible_idx == 1:
                 card = (
                     f"alternate_method: {summary} ({method_ref}, "
@@ -830,12 +854,12 @@ def _finalize_search_records(
             elif r.get("_method_semantic_discovery"):
                 compact_description = _single_line(description, 180)
                 card = (
-                    f"{summary} ({method_ref}, status={status}{freshness_part}, "
+                    f"{summary} ({method_ref}, status={status}{freshness_part}{usage_part}, "
                     f"task_applicability={applicability}) — {compact_description}"
                 ).strip()
             else:
                 card = (
-                    f"{summary} ({method_ref}, status={status}{freshness_part}{age_part}, "
+                    f"{summary} ({method_ref}, status={status}{freshness_part}{usage_part}{age_part}, "
                     f"task_applicability={applicability}) — {description}"
                 ).strip()
             if r.get("projection_complete"):

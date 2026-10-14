@@ -17,6 +17,7 @@ from llm_loop.core.run_context import current_model_label
 from llm_loop.experiences.store import ExperiencePersistError
 from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.methods.store import MethodCommitUncertainError, MethodPersistError
+from llm_loop.usage_net import alert_section
 
 _SAVE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "save_experience",
@@ -278,9 +279,18 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
         "ledger_recorded": True, "ledger_ts": entry.get("ts", ""),
         "session_id": entry.get("session_id", ""), "episode_ref": entry.get("episode_ref", ""),
     }
+    # EVO-20261014-7299aec2: 回执附使用净分告警（提醒即止，不裁决）；派生视图 fail-open
+    alert = ""
+    try:
+        alert = alert_section("experience", ref, store.usage_net(ref))
+    except Exception:
+        alert = ""
+    content = "[refine_experience] use declaration\n" + json.dumps(payload, ensure_ascii=False)
+    if alert:
+        content += "\n" + alert
     return ToolResult(
         status=ToolResultStatus.SUCCESS, tool_call_id="", tool_name="refine_experience",
-        content="[refine_experience] use declaration\n" + json.dumps(payload, ensure_ascii=False),
+        content=content,
     )
 
 
@@ -428,12 +438,21 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
         },
         "success",
     )
+    # EVO-20261014-7299aec2: 回执附使用净分告警（提醒即止，不裁决）；派生视图 fail-open
+    alert = ""
+    try:
+        alert = alert_section("method", method_ref, store.usage_net(method_ref))
+    except Exception:
+        alert = ""
+    content = (
+        f"[record_method_use] {method_ref} episode_ref={episode_ref} "
+        f"decision={entry['decision']} task_benefit=not_evaluated promotion=not_evaluated"
+    )
+    if alert:
+        content += "\n" + alert
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
-        content=(
-            f"[record_method_use] {method_ref} episode_ref={episode_ref} "
-            f"decision={entry['decision']} task_benefit=not_evaluated promotion=not_evaluated"
-        ),
+        content=content,
         tool_call_id="",
         tool_name=tool_name,
     )
