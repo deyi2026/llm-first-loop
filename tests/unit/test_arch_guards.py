@@ -28,6 +28,7 @@ import functools
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -171,9 +172,30 @@ def _external_unstaged_src(porcelain: list[str]) -> frozenset[str]:
     return frozenset(out)
 
 
+_head_caliber_noted: set[str] = set()
+
+
+def _note_head_caliber(rel: str) -> None:
+    """EVO-20261014-f96d8158：按 HEAD 口径读 unstaged 漂移文件时提示一次（防假阴性排障损耗）。
+
+    只加可观测性，不改 XY→口径判定语义（安全设计保留）：提示排障者
+    「修复若仅在工作树，守卫读到的是 HEAD 旧内容，先 stage 再复验」。
+    同文件去重，正常 clean 工作树零输出。
+    """
+    if rel in _head_caliber_noted:
+        return
+    _head_caliber_noted.add(rel)
+    print(
+        f"note: {rel} 存在 unstaged 工作树改动，守卫按 HEAD（staged 现实）口径校验；"
+        f"若你的修复仅在工作树，请 `git add {rel}` 后复验。",
+        file=sys.stderr,
+    )
+
+
 def _read_source(rel: str) -> str:
     """守卫读源：外部漂移未 staged 文件回退 `git show HEAD:<rel>`，其余 working。"""
     if rel in _external_unstaged_src(_git_porcelain()):
+        _note_head_caliber(rel)
         proc = subprocess.run(
             ["git", "show", f"HEAD:{rel}"], capture_output=True, text=True, check=True, cwd=ROOT
         )
@@ -220,6 +242,32 @@ def test_read_source_dual_caliber_integration(monkeypatch):
     # 同一文件若不属于外部未 staged 集 → 读 working tree。
     monkeypatch.setattr(mod, "_git_porcelain", lambda: [])
     assert _read_source(rel) == (ROOT / rel).read_text(encoding="utf-8")
+
+
+def test_read_source_head_caliber_note(monkeypatch, capsys):
+    """EVO-20261014-f96d8158：HEAD 口径读源输出一行 stage 提示；同文件去重；working 口径无提示。"""
+    mod = sys.modules[__name__]
+    rel = "src/llm_loop/core/cache_health.py"
+
+    monkeypatch.setattr(mod, "_git_porcelain", lambda: [f" M {rel}"])
+    mod._head_caliber_noted.clear()
+    try:
+        _read_source(rel)
+        first = capsys.readouterr()
+        assert "git add" in first.err
+        assert rel in first.err
+        assert "HEAD" in first.err
+
+        # 同文件第二次读：去重，不再输出
+        _read_source(rel)
+        assert capsys.readouterr().err == ""
+
+        # 无漂移（working 口径）：无提示
+        monkeypatch.setattr(mod, "_git_porcelain", lambda: [])
+        _read_source(rel)
+        assert capsys.readouterr().err == ""
+    finally:
+        mod._head_caliber_noted.clear()
 
 
 def _measure_functions(root: Path | None = None) -> dict[str, int]:
