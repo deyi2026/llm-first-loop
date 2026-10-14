@@ -2113,6 +2113,23 @@ def queue_interject_metrics(session_id: str, request: Request) -> Response:
     )
 
 
+@router.get("/api/v1/chat/queue/metrics/global")
+def queue_interject_metrics_global(request: Request) -> Response:
+    """可观测性 M1b（B1）：全局只读端点——跨 session 合并的六桶三口径聚合.
+
+    - 与单 session 端点（Phase3 G2）同一 hq 同一实现（单一事实源）；零写副作用；
+      不含逐条 items（合并视图不做 per-session 明细，明细走既有单 session 端点）。
+    - window_terminal_cap 标注数据窗口=最近 N 条终态（compact 滚动上限），
+      非全历史；n=0 → p50/p95=null 不造数。
+    - 鉴权事实同层（M0 评审 B3）：/api/v1 现状=loopback 信任+OriginGuard，
+      本端点不扩不降鉴权面。
+    """
+    hq = _human_turn_queue(request)
+    return UTF8JSONResponse(
+        status_code=200, content={"ok": True, **hq.aggregate_interject_metrics_global()}
+    )
+
+
 @router.get("/api/v1/chat/stop-state")
 def chat_stop_state(session_id: str, request: Request) -> Response:
     """Phase3 G3 只读端点：停止四态组合查询（requested/dispatched_stopped/local_terminated）.

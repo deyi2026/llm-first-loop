@@ -34,6 +34,9 @@ QUEUE_VERSION = 1
 # 60s 覆盖慢网络与短暂卡顿，同时避免崩溃标签长时间阻塞队列。
 CLAIM_TIMEOUT_S = 60.0
 INTERJECT_RECEIPT_VISIBLE_S = 8.0
+# 终态滚动历史上限（compact 保最近 N 条终态）。可观测性 M1b：全局聚合视图的
+# 数据窗口即此值——端点以 window_terminal_cap 如实标注（B5：防误读全历史）。
+TERMINAL_HISTORY_KEEP_N = 500
 
 
 def _now() -> float:
@@ -554,7 +557,7 @@ class HumanTurnQueue:
                     return True
             return False
 
-    def compact(self, keep_n: int = 500) -> None:
+    def compact(self, keep_n: int = TERMINAL_HISTORY_KEEP_N) -> None:
         """终态条目滚动清理（保最近 keep_n 条终态历史）."""
         with self._lock:
             if len(self._items) <= keep_n:
@@ -578,22 +581,21 @@ class HumanTurnQueue:
         k = max(1, min(len(sorted_vals), int((p * len(sorted_vals) + 0.999999) // 1)))
         return sorted_vals[k - 1]
 
-    def aggregate_interject_metrics(self, session_id: str) -> dict[str, Any]:
-        """三口径时延（ms）+ P50/P95（Phase3 §7.1，端侧零改动）.
+    def _interject_metric_rows(
+        self, session_id: str | None
+    ) -> tuple[list[dict[str, Any]], set[str]]:
+        """构建插话终态样本行（单一实现；session_id=None 即跨 session 全量）.
 
-        口径（全部由已有时间戳机械推导，无墙钟注入）：
-        - t_ack_ms    = interject_requested_at - created_at（入队→HTTP 受理）
-        - t_persist_ms= received_at - interject_requested_at（受理→进入会话历史，
-                        含轮边界等待与 session 写盘；即「回执≠生效」的差值本体）
-        - t_effect_ms = received_at - created_at（入队→生效端到端）
-        - t_applied_ms= applied_at - created_at（入队→首个动作；未 applied 无值）
-        只统计 interject_received* 终态项；denied/requeued 不混入（口径含混即失真）。
+        行结构与分桶口径被单 session / 全局两个视图共用（单一事实源）；
+        返回 (rows, sessions)——sessions 为样本来源 session_id 集合（全局视图
+        sessions_in_window 的事实源；单 session 视图忽略之）。
         """
         rows: list[dict[str, Any]] = []
+        sessions: set[str] = set()
         with self._lock:
             items = [dict(it) for it in self._items]
         for it in items:
-            if it.get("session_id") != session_id:
+            if session_id is not None and it.get("session_id") != session_id:
                 continue
             if it.get("status") != "interject_received":
                 continue
@@ -637,17 +639,20 @@ class HumanTurnQueue:
                 bucket = "natural_boundary"
             row["bucket"] = bucket
             rows.append(row)
-        out: dict[str, Any] = {
-            "session_id": session_id,
-            "n": len(rows),
-            "items": rows,
-        }
+            sid = str(it.get("session_id") or "")
+            if sid:
+                sessions.add(sid)
+        return rows, sessions
+
+    def _interject_percentile_block(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
         for key in ("t_ack_ms", "t_persist_ms", "t_effect_ms", "t_applied_ms"):
-            vals = sorted(
-                row[key] for row in rows if row.get(key) is not None
-            )
+            vals = sorted(row[key] for row in rows if row.get(key) is not None)
             out[f"p50_{key}"] = self._pct(vals, 0.50)
             out[f"p95_{key}"] = self._pct(vals, 0.95)
+        return out
+
+    def _interject_bucket_block(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         # Phase4 M3 分桶汇总（§7 验收面）：每桶 n/p50/p95，样本不足 5 标注
         # insufficient_sample（诚实口径，不冒充达标）。
         buckets_out: dict[str, Any] = {}
@@ -674,5 +679,47 @@ class HumanTurnQueue:
                 "p95_t_effect_ms": self._pct(effs, 0.95),
                 "insufficient_sample": len(effs) < 5,
             }
-        out["buckets"] = buckets_out
+        return buckets_out
+
+    def aggregate_interject_metrics(self, session_id: str) -> dict[str, Any]:
+        """三口径时延（ms）+ P50/P95（Phase3 §7.1，端侧零改动）.
+
+        口径（全部由已有时间戳机械推导，无墙钟注入）：
+        - t_ack_ms    = interject_requested_at - created_at（入队→HTTP 受理）
+        - t_persist_ms= received_at - interject_requested_at（受理→进入会话历史，
+                        含轮边界等待与 session 写盘；即「回执≠生效」的差值本体）
+        - t_effect_ms = received_at - created_at（入队→生效端到端）
+        - t_applied_ms= applied_at - created_at（入队→首个动作；未 applied 无值）
+        只统计 interject_received* 终态项；denied/requeued 不混入（口径含混即失真）。
+        """
+        rows, _sessions = self._interject_metric_rows(session_id)
+        out: dict[str, Any] = {
+            "session_id": session_id,
+            "n": len(rows),
+            "items": rows,
+        }
+        out.update(self._interject_percentile_block(rows))
+        out["buckets"] = self._interject_bucket_block(rows)
+        return out
+
+    def aggregate_interject_metrics_global(self) -> dict[str, Any]:
+        """可观测性 M1b（B1/B5）：跨 session 合并的全局聚合（只读，零写副作用）.
+
+        - 桶口径/三口径/百分位与单 session 视图同一实现（_interject_metric_rows
+          单一事实源）；不含逐条 items——合并视图不做 per-session 明细（B1 YAGNI，
+          明细走既有单 session 端点）。
+        - window_terminal_cap=TERMINAL_HISTORY_KEEP_N：compact 终态滚动上限即
+          本视图天然数据窗口（最近 N 条终态，非全历史）；消费端须标注防误读（B5）。
+        - n=0 → p50/p95=null、sessions_in_window=0，不造数（同单 session 口径）。
+        """
+        rows, sessions = self._interject_metric_rows(None)
+        out: dict[str, Any] = {
+            "scope": "global",
+            "session_id": None,
+            "n": len(rows),
+            "sessions_in_window": len(sessions),
+            "window_terminal_cap": TERMINAL_HISTORY_KEEP_N,
+        }
+        out.update(self._interject_percentile_block(rows))
+        out["buckets"] = self._interject_bucket_block(rows)
         return out
