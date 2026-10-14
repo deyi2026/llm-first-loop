@@ -20,6 +20,12 @@
         <button id="workspace-add-btn" class="btn-secondary" title="打开目录：注册为新工作区并切换">＋</button>
         <button id="workspace-del-btn" class="btn-secondary" title="注销选中工作区（当前工作区不可注销；会话数据保留，可随时重新打开）">🗑</button>
       </div>
+      <!-- 可观测性 M1c-rev（GOAL-20261014-dddae6e0）：插话六桶指标 + 结构零徽标；
+           数据源 GET /api/v1/chat/queue/metrics/global（只读），展开时拉取 -->
+      <details id="queue-metrics" aria-label="插话指标">
+        <summary>插话指标</summary>
+        <div id="queue-metrics-body">展开查看</div>
+      </details>
       <button id="new-session-btn" class="btn-primary">+ 新会话</button>
       <input id="search-input" type="text" placeholder="搜索会话..." aria-label="搜索会话">
       <ul id="session-list" aria-label="会话列表"></ul>
@@ -59,6 +65,7 @@
   <script src="/static/modules/responsive.js"></script>
   <script src="/static/modules/session-list.js"></script>
   <script src="/static/modules/workspace-bar.js"></script>
+  <script src="/static/modules/queue-metrics.js"></script>
   <script src="/static/modules/command-upload-model.js"></script>
   <script src="/static/app.js"></script>
 </body>

@@ -1256,3 +1256,99 @@ html, body {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ---------- 可观测性 M1c-rev：插话指标面板（GOAL-20261014-dddae6e0） ---------- */
+#queue-metrics {
+  font-size: 12px;
+  border: 1px solid #303a50;
+  border-radius: 6px;
+  background: #2a3344;
+  padding: 0 10px;
+}
+
+#queue-metrics summary {
+  cursor: pointer;
+  padding: 7px 0;
+  color: #cfd6e4;
+  user-select: none;
+}
+
+#queue-metrics summary::-webkit-details-marker {
+  display: none;
+}
+
+#queue-metrics summary::before {
+  content: "▸ ";
+}
+
+#queue-metrics[open] summary::before {
+  content: "▾ ";
+}
+
+#queue-metrics-body {
+  padding-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.qm-window {
+  color: #8f9bb0;
+  font-size: 11px;
+}
+
+.qm-bucket {
+  background: #232b3b;
+  border: 1px solid #303a50;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.qm-bucket-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.qm-bucket-name {
+  color: #d8dee9;
+  font-weight: 600;
+}
+
+.qm-bucket-n {
+  margin-left: auto;
+  color: #8f9bb0;
+}
+
+.qm-bucket-stats {
+  margin-top: 2px;
+  color: #aab4c4;
+}
+
+.qm-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.qm-badge-zero {
+  background: #145a5a;
+  color: #d4f5f0;
+}
+
+.qm-badge-insuff {
+  background: #3a4557;
+  color: #aab4c4;
+}
+
+.qm-reason {
+  margin-top: 4px;
+  color: #9fd8cd;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.qm-reason-warn {
+  color: #e8c37a;
+}
