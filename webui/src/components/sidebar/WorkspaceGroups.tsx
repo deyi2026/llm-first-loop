@@ -2,9 +2,9 @@
 // 每个工作区 = 分组头（📁 名称 + 会话数）+ 会话列表；当前工作区分组显示完整
 // 会话（含操作，由调用方渲染），其他工作区分组显示只读会话（点击 = 切换并打开）。
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  fetchWorkspaceSessions,
+  fetchWorkspaceSessionsResult,
   fetchWorkspaces,
   switchWorkspace,
   type SessionMeta,
@@ -49,35 +49,84 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
   const [currentWsId, setCurrentWsId] = useState("");
   // 其他工作区会话缓存：{ wsId: SessionMeta[] }
   const [otherSessions, setOtherSessions] = useState<Record<string, SessionMeta[]>>({});
+  const [expandedOther, setExpandedOther] = useState<Set<string>>(new Set());
+  const [otherLoaded, setOtherLoaded] = useState<Set<string>>(new Set());
+  const [otherLoading, setOtherLoading] = useState<Set<string>>(new Set());
+  const [otherErrors, setOtherErrors] = useState<Record<string, string>>({});
+  const [otherLimits, setOtherLimits] = useState<Record<string, number>>({});
+  const reloadVersion = useRef(0);
+  const mounted = useRef(false);
   const [browsing, setBrowsing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const reload = (preferredCurrent: string) => {
+    const version = ++reloadVersion.current;
     void fetchWorkspaces().then((data) => {
-      if (!data) return;
+      if (!mounted.current || version !== reloadVersion.current) return;
+      if (!data) {
+        setError("工作区列表加载失败；已保留当前列表，请稍后重试。");
+        return;
+      }
       const list = Array.isArray(data.workspaces) ? data.workspaces : [];
       setWorkspaces(list);
       const current = typeof data.current === "string" && data.current ? data.current : preferredCurrent;
       setCurrentWsId(current);
-      // 并行拉取非当前工作区会话
-      const others = list.filter((w) => w.id !== current);
-      void Promise.all(
-        others.map((w) =>
-          fetchWorkspaceSessions(w.id).then((ss) => ({ id: w.id, sessions: ss }))
-        )
-      ).then((all) => {
-        const map: Record<string, SessionMeta[]> = {};
-        for (const item of all) map[item.id] = item.sessions;
-        setOtherSessions(map);
-      });
+      // 首屏不批量请求所有其他工作区的会话；展开时再独立拉取。
     });
   };
 
   useEffect(() => {
+    mounted.current = true;
     reload("");
+    return () => {
+      mounted.current = false;
+      ++reloadVersion.current; // 丢弃已卸载或已过期的工作区列表响应
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadOther = async (wsId: string) => {
+    setOtherLoading((prev) => new Set(prev).add(wsId));
+    setOtherErrors((prev) => {
+      const next = { ...prev };
+      delete next[wsId];
+      return next;
+    });
+    try {
+      const result = await fetchWorkspaceSessionsResult(wsId);
+      if (!mounted.current) return;
+      if (!result.ok) {
+        setOtherErrors((prev) => ({ ...prev, [wsId]: "工作区会话加载失败，请重试。" }));
+        return;
+      }
+      setOtherSessions((prev) => ({ ...prev, [wsId]: result.sessions }));
+      setOtherLoaded((prev) => new Set(prev).add(wsId));
+    } catch {
+      if (mounted.current) {
+        setOtherErrors((prev) => ({ ...prev, [wsId]: "工作区会话加载失败，请重试。" }));
+      }
+    } finally {
+      if (mounted.current) {
+        setOtherLoading((prev) => {
+          const next = new Set(prev);
+          next.delete(wsId);
+          return next;
+        });
+      }
+    }
+  };
+
+  const toggleOther = (wsId: string) => {
+    const opening = !expandedOther.has(wsId);
+    setExpandedOther((prev) => {
+      const next = new Set(prev);
+      if (opening) next.add(wsId);
+      else next.delete(wsId);
+      return next;
+    });
+    if (opening && !otherLoaded.has(wsId) && !otherLoading.has(wsId)) void loadOther(wsId);
+  };
 
   const openOtherSession = async (wsId: string, sid: string) => {
     if (busy) return;
@@ -157,17 +206,22 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
           .map((ws) => {
             const isCurrent = ws.id === currentWsId;
             const others = otherSessions[ws.id] ?? [];
+            const expanded = expandedOther.has(ws.id);
+            const shown = otherLimits[ws.id] ?? 48;
+            const loading = otherLoading.has(ws.id);
+            const loaded = otherLoaded.has(ws.id);
             return (
               <div
                 key={ws.id}
                 className={`v2-ws-tree-node ${isCurrent ? "current" : ""}`}
                 data-testid="ws-group"
               >
-                <div
+                <button
+                  type="button"
                   className="v2-ws-tree-head"
                   title={ws.path}
-                  role="button"
-                  tabIndex={0}
+                  aria-expanded={isCurrent ? !collapsedCurrent : undefined}
+                  disabled={busy}
                   onClick={() => {
                     if (isCurrent) {
                       setCollapsedCurrent((v) => !v);
@@ -175,25 +229,41 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
                       void switchWs(ws.id);
                     }
                   }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      if (isCurrent) setCollapsedCurrent((v) => !v);
-                      else void switchWs(ws.id);
-                    }
-                  }}
                   data-testid="ws-tree-head"
                 >
                   <span className="v2-ws-tree-arrow">{isCurrent ? (collapsedCurrent ? "▶" : "▼") : ""}</span>
                   <span className="v2-ws-tree-icon">{isCurrent ? "📁" : "📂"}</span>
                   <span className="v2-ws-tree-name">{basename(ws.path)}</span>
-                  {!isCurrent ? <span className="v2-ws-tree-count">{others.length}</span> : null}
-                </div>
+                  {!isCurrent ? <span className="v2-ws-tree-count">{loaded ? others.length : "—"}</span> : null}
+                </button>
                 <div className="v2-ws-tree-children">
                   {isCurrent ? (
                     collapsedCurrent ? null : children
                   ) : (
                     <div className="v2-ws-other-sessions" data-testid="ws-other-sessions">
-                      {others.map((s) => (
+                      <button
+                        type="button"
+                        className="v2-ws-session-toggle"
+                        data-testid="ws-show-sessions"
+                        aria-expanded={expanded}
+                        disabled={busy}
+                        onClick={() => toggleOther(ws.id)}
+                      >
+                        {expanded ? "▾ 收起会话" : "▸ 查看会话"}
+                      </button>
+                      {expanded && loading ? <span className="v2-ws-empty" role="status">正在加载会话…</span> : null}
+                      {expanded && !loading && otherErrors[ws.id] ? (
+                        <div className="v2-ws-empty" role="alert">
+                          {otherErrors[ws.id]}
+                          <button
+                            type="button"
+                            className="v2-ws-session-toggle"
+                            data-testid="ws-retry-sessions"
+                            onClick={() => void loadOther(ws.id)}
+                          >重试</button>
+                        </div>
+                      ) : null}
+                      {expanded && !loading && !otherErrors[ws.id] && loaded && others.slice(0, shown).map((s) => (
                         <button
                           key={s.session_id}
                           type="button"
@@ -207,7 +277,16 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
                           <span className="v2-session-rel">{formatRelative(s.updated_at)}</span>
                         </button>
                       ))}
-                      {others.length === 0 ? <div className="v2-ws-empty">暂无会话</div> : null}
+                      {expanded && !loading && !otherErrors[ws.id] && loaded && others.length > shown ? (
+                        <button
+                          type="button"
+                          className="v2-ws-session-toggle"
+                          onClick={() => setOtherLimits((prev) => ({ ...prev, [ws.id]: shown + 48 }))}
+                        >显示更多（{shown}/{others.length}）</button>
+                      ) : null}
+                      {expanded && !loading && !otherErrors[ws.id] && loaded && others.length === 0
+                        ? <div className="v2-ws-empty">暂无会话</div>
+                        : null}
                     </div>
                   )}
                 </div>

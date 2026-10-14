@@ -18,18 +18,19 @@ function refreshFromSync(): void {
   void refreshCurrentSessionMessages();
 }
 
-export async function refreshSessionsAndCurrent(): Promise<void> {
+/** Boolean result distinguishes a successful empty list from a failed read. */
+export async function refreshSessionsAndCurrent(): Promise<boolean> {
   const result = await fetchSessionsResult();
   // Session discovery is authoritative only on a valid response. A transient 5xx/offline
   // result must not mechanically rewrite a known non-empty sidebar into "zero sessions".
-  if (!result.ok) return;
+  if (!result.ok) return false;
   const sessions = result.sessions;
   sessionStore.setSessions(sessions);
   // 2026-08-19 修复跳回旧会话: 用户主动"新建/清除上下文"（newSessionPending=true）时，
   // 空 currentSessionId 是新会话语义——SSE 同步（sessions_updated/看门狗/聚焦）不得
   // 回填为最近/共享会话；首条消息发送时由 conversation.ts 消费标记（new_session=true）
   // 并切换到服务端新建的会话。发送前若有其他路径需要会话 id，由发起方自行处理。
-  if (sessionStore.getState().newSessionPending) return;
+  if (sessionStore.getState().newSessionPending) return true;
   // Deep links are navigation metadata only: honor them only after validating
   // the requested id against the current server-provided session list.
   const requested = readSessionIdFromLocation();
@@ -39,7 +40,7 @@ export async function refreshSessionsAndCurrent(): Promise<void> {
     sessions.some((s) => s.session_id === requested)
   ) {
     sessionStore.setCurrentSession(requested);
-    return;
+    return true;
   }
   if (!sessionStore.getState().currentSessionId) {
     const shared = await fetchSharedCurrent();
@@ -51,6 +52,7 @@ export async function refreshSessionsAndCurrent(): Promise<void> {
       sessionStore.setCurrentSession(sessions[0].session_id);
     }
   }
+  return true;
 }
 
 export function initEventStream(): void {

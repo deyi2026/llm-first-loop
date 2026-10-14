@@ -1,7 +1,7 @@
 // Web V2：顶栏（侧栏开关 / 会话主区标题 / 模型选择占位 / 主题切换 / 连接状态）
 
 import { zh } from "../../i18n/zh";
-import { useConnection } from "../../core/stores";
+import { useConnection, useLearningPage, useMainView } from "../../core/stores";
 import { fetchAuthStatus, fetchHealth, logoutBrowserSession } from "../../core/api";
 import { useEffect, useState } from "react";
 import { SessionHeaderActions } from "./SessionHeaderActions";
@@ -9,11 +9,24 @@ import { SessionHeaderActions } from "./SessionHeaderActions";
 export function TopBar({
   onToggleSidebar,
   onShowFiles,
+  onTogglePanel,
+  panelOpen = false,
+  isMobile = false,
 }: {
   onToggleSidebar: () => void;
   onShowFiles?: () => void;
+  onTogglePanel?: () => void;
+  panelOpen?: boolean;
+  isMobile?: boolean;
 }) {
   const { ok, version, build, checked } = useConnection();
+  const mainView = useMainView();
+  const learningPage = useLearningPage();
+  const viewTitle = mainView === "services"
+    ? "服务身份"
+    : mainView === "learning"
+      ? (learningPage === "knowledge" ? "知识管理" : "学习通道")
+      : "会话";
   const [browserAuthenticated, setBrowserAuthenticated] = useState(false);
 
   useEffect(() => {
@@ -58,9 +71,21 @@ export function TopBar({
       >
         ☰
       </button>
-      <span style={{ fontSize: 13, color: "var(--dsw-alias-label-secondary)" }}>会话</span>
+      <span className="v2-topbar-view">{viewTitle}</span>
       <div style={{ flex: 1 }} />
       <SessionHeaderActions onShowFiles={onShowFiles} />
+      {isMobile && onTogglePanel ? (
+        <button
+          type="button"
+          className="v2-icon-btn v2-mobile-panel-toggle"
+          onClick={onTogglePanel}
+          title="右侧面板"
+          aria-label="右侧面板"
+          aria-expanded={panelOpen}
+        >
+          ▤
+        </button>
+      ) : null}
       {browserAuthenticated && (
         <button
           type="button"

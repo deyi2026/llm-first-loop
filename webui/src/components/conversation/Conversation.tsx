@@ -17,18 +17,25 @@ import { zh } from "../../i18n/zh";
 export function Conversation() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [loadingHistoryFor, setLoadingHistoryFor] = useState<string | null>(null);
   const currentId = useCurrentSessionId();
   const sessions = useSessions();
   const conv = useConversation();
   const current = sessions.find((s) => s.session_id === currentId);
 
   useEffect(() => {
+    let active = true;
     setExportError("");
     if (currentId) {
-      void loadHistory(currentId);
+      setLoadingHistoryFor(currentId);
+      void loadHistory(currentId).finally(() => {
+        if (active) setLoadingHistoryFor(null);
+      });
     } else {
+      setLoadingHistoryFor(null);
       conversationStore.setState({ messages: [], hasMoreHistory: false, loadedHistoryCount: 0 });
     }
+    return () => { active = false; };
   }, [currentId]);
 
   const doExport = async (sid: string) => {
@@ -91,7 +98,7 @@ export function Conversation() {
           ) : null}
         </>
       )}
-      <MessageList />
+      <MessageList historyLoading={Boolean(currentId && loadingHistoryFor === currentId)} />
       <ChatQueue />
       <Composer />
     </main>

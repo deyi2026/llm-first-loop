@@ -132,7 +132,8 @@ describe("Sidebar 会话管理", () => {
     const calls = mockApi();
     render(<Sidebar collapsed={false} />);
     await waitFor(() => expect(screen.getByTestId("ws-groups")).toBeInTheDocument());
-    const items = screen.getAllByTestId("other-session-item");
+    fireEvent.click(screen.getByTestId("ws-show-sessions"));
+    const items = await screen.findAllByTestId("other-session-item");
     expect(items.length).toBeGreaterThan(0);
     fireEvent.click(items[0]);
     await waitFor(() =>

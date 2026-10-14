@@ -1,7 +1,7 @@
 // Web V2：侧边栏（会话列表：搜索/置顶/删除/分支/新会话；来源通道标签；激活态）
 // 阶段 3：管理交互（pin/delete 两步确认/fork）——删除与分支后自动刷新并切换。
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSessionsResult, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { useCapabilities } from "../../core/capabilities";
@@ -25,13 +25,16 @@ import { InterjectMetricsPanel } from "./InterjectMetricsPanel";
 import { EscalationPanel, EscalationWatcher } from "./EscalationCenter";
 import { zh } from "../../i18n/zh";
 
-export function Sidebar({ collapsed }: { collapsed: boolean }) {
+export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const caps = useCapabilities();
   const sessions = useSessions();
   const currentId = useCurrentSessionId();
   const mainView = useMainView();
   const learningPage = useLearningPage();
   const [query, setQuery] = useState("");
+  const [visibleRootLimit, setVisibleRootLimit] = useState(48);
+  const [sessionListStatus, setSessionListStatus] = useState<"loading" | "ready" | "error">("loading");
+  const sessionListLoadEpoch = useRef(0);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
@@ -65,8 +68,20 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     void fetchAgentsTree().then(setParentMap);
   }, []);
 
+  const reloadSessionIndex = () => {
+    const epoch = ++sessionListLoadEpoch.current;
+    setSessionListStatus("loading");
+    void refreshSessionsAndCurrent().then((ok) => {
+      if (epoch === sessionListLoadEpoch.current) setSessionListStatus(ok ? "ready" : "error");
+    }).catch(() => {
+      if (epoch === sessionListLoadEpoch.current) setSessionListStatus("error");
+    });
+  };
+
   useEffect(() => {
-    void refreshSessionsAndCurrent();
+    reloadSessionIndex();
+    return () => { ++sessionListLoadEpoch.current; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = sessions.filter((s) => {
@@ -78,10 +93,17 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     );
   });
 
+  // 列表显示分块只控制 DOM，不删历史/不裁剪搜索数据。
+  // 输入新查询时从首块开始，避免上次已展开的大列表继续占用首屏。
+  useEffect(() => {
+    setVisibleRootLimit(48);
+  }, [query]);
+
   const handleNew = () => {
     if (busyAction) return;
     setActionError("");
     mainViewStore.setView("chat");
+    onNavigate?.();
     sessionStore.setCurrentSession("");
     sessionStore.setNewSessionPending(true);  // 2026-08-18 修复跳回旧会话
     conversationStore.setState({
@@ -163,6 +185,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     }
     mainViewStore.setView("chat");
     sessionStore.setCurrentSession(report.new_session_id);
+    onNavigate?.();
     await refreshSessionsAndCurrent();
     await loadHistory(report.new_session_id);
     finishAction();
@@ -197,6 +220,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         onClick={() => {
           mainViewStore.setView("learning");
           learningPageStore.setPage("knowledge");
+          onNavigate?.();
         }}
       >
         <span>📚 知识管理</span>
@@ -209,6 +233,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         onClick={() => {
           mainViewStore.setView("learning");
           learningPageStore.setPage("learning");
+          onNavigate?.();
         }}
       >
         <span>🧠 学习通道</span>
@@ -218,7 +243,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         type="button"
         className={`v2-learning-entry ${mainView === "services" ? "active" : ""}`}
         data-testid="services-entry"
-        onClick={() => mainViewStore.setView("services")}
+        onClick={() => {
+          mainViewStore.setView("services");
+          onNavigate?.();
+        }}
       >
         <span>🛠 服务身份</span>
         <small>desired · live · stable</small>
@@ -308,6 +336,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   onClick={() => {
                     mainViewStore.setView("chat");
                     sessionStore.setCurrentSession(s.session_id);
+                    onNavigate?.();
                   }}
                 >
                   <span className="v2-session-title">🗄 {s.title || "未命名"}</span>
@@ -350,12 +379,14 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
           // 工作区已由 WorkspaceGroups 切换；打开会话（Conversation 随 currentId 加载历史）
           mainViewStore.setView("chat");
           sessionStore.setCurrentSession(sid);
+          onNavigate?.();
           void refreshSessionsAndCurrent();
         }}
         onWorkspaceChanged={() => {
           // 新工作区无旧会话上下文：清空当前会话与对话区（对齐 handleNew）
           mainViewStore.setView("chat");
           sessionStore.setCurrentSession("");
+          onNavigate?.();
           conversationStore.setState({ messages: [], hasMoreHistory: false, loadedHistoryCount: 0 });
           void refreshSessionsAndCurrent();
         }}
@@ -387,7 +418,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   style={{ paddingLeft: depth > 0 ? 22 : 0 }}
                 >
                   {depth > 0 && <span className="v2-tree-branch" aria-hidden />}
-                  {depth === 0 && (
+                  {depth === 0 && kids.length > 0 && (
                     <button
                       type="button"
                       className="v2-session-arrow"
@@ -405,12 +436,16 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                       {isExpanded ? "▼" : "▶"}
                     </button>
                   )}
+                  {depth === 0 && kids.length === 0 ? (
+                    <span className="v2-session-arrow placeholder" aria-hidden="true" />
+                  ) : null}
                   <button
                     type="button"
                     className="v2-session-item"
                     onClick={() => {
                       mainViewStore.setView("chat");
                       sessionStore.setCurrentSession(s.session_id);
+                      onNavigate?.();
                     }}
                   >
                     <span className="v2-session-title">
@@ -478,19 +513,52 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   </div>
                 </div>
                 {isExpanded && kids.map((c) => renderRow(c, depth + 1))}
-                {isExpanded && kids.length === 0 && (
-                  <div className="v2-session-empty-kids" style={{ paddingLeft: 40 }}>
-                    （无子代理）
-                  </div>
-                )}
               </div>
               );
             };
-            return roots.map((s) => renderRow(s, 0));
+            const visibleRoots = roots.slice(0, visibleRootLimit);
+            // 正在查看的会话即使排在第 100+ 条，也必须仍然能够被定位。
+            // 若当前会话是子 Agent，保留其父会话的入口。
+            const seen = new Set<string>();
+            let activeRootId = currentId ?? "";
+            while (activeRootId && !seen.has(activeRootId)) {
+              seen.add(activeRootId);
+              const parent = parentMap.get(activeRootId);
+              if (!parent || !ids.has(parent) || parent === activeRootId) break;
+              activeRootId = parent;
+            }
+            const activeRoot = roots.find((s) => s.session_id === activeRootId);
+            if (activeRoot && !visibleRoots.some((s) => s.session_id === activeRoot.session_id)) {
+              visibleRoots.unshift(activeRoot);
+            }
+            return (
+              <>
+                {visibleRoots.map((s) => renderRow(s, 0))}
+                {roots.length > visibleRootLimit ? (
+                  <button
+                    type="button"
+                    className="v2-session-show-more"
+                    data-testid="session-show-more"
+                    onClick={() => setVisibleRootLimit((n) => n + 48)}
+                  >
+                    显示更多会话（{Math.min(visibleRootLimit, roots.length)}/{roots.length}）
+                  </button>
+                ) : null}
+              </>
+            );
           })()}
           {filtered.length === 0 && (
             <div style={{ padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
-              {query ? "无匹配会话" : "暂无会话"}
+              {sessionListStatus === "loading" ? (
+                <span role="status" data-testid="sessions-loading">正在加载会话列表…</span>
+              ) : sessionListStatus === "error" ? (
+                <div data-testid="sessions-load-error" role="alert">
+                  会话列表加载失败，无法确认是否为空。
+                  <button type="button" className="v2-ws-session-toggle" onClick={reloadSessionIndex}>
+                    重试加载会话
+                  </button>
+                </div>
+              ) : query ? "无匹配会话" : "暂无会话"}
             </div>
           )}
         </div>

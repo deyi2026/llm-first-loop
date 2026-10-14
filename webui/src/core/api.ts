@@ -796,11 +796,16 @@ export async function switchWorkspace(id: string): Promise<WorkspaceSwitchResult
 }
 
 /** 按工作区列会话（侧栏工作区分组展示；不改当前工作区） */
-export async function fetchWorkspaceSessions(workspaceId: string): Promise<SessionMeta[]> {
+export async function fetchWorkspaceSessionsResult(workspaceId: string): Promise<{ ok: boolean; sessions: SessionMeta[] }> {
   const { status, data } = await api<{ sessions?: SessionMeta[] }>(
     `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/sessions`
   );
-  return status === 200 && Array.isArray(data.sessions) ? data.sessions : [];
+  const ok = status === 200 && Array.isArray(data.sessions);
+  return { ok, sessions: ok ? data.sessions! : [] };
+}
+
+export async function fetchWorkspaceSessions(workspaceId: string): Promise<SessionMeta[]> {
+  return (await fetchWorkspaceSessionsResult(workspaceId)).sessions;
 }
 
 /** 目录浏览（对齐 DSH directory-browser：应用内选择工作区目录） */

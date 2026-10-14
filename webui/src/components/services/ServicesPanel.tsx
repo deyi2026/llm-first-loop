@@ -70,7 +70,7 @@ export function ServicesPanel() {
   const serverOffset = info?.server_tz_offset_minutes;
 
   return (
-    <div className="v2-learning-panel" data-testid="services-panel">
+    <div className="v2-learning-panel v2-services-view" data-testid="services-panel">
       <h2>🛠 受管服务身份</h2>
       <p style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
         desired = operator 发布的期望部署 · live = 服务进程 startup manifest · stable =
@@ -82,16 +82,18 @@ export function ServicesPanel() {
           <div>
             generation {deployment.generation} · {shortHead(deployment.git_head)}
           </div>
-          <div style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
+          <div className="v2-service-code-root" style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
             code_root {deployment.code_root}
           </div>
         </div>
       ) : loaded ? (
         <div style={cardStyle}>（尚未发布 desired deployment）</div>
       ) : null}
-      <div className="v2-learning-grid">
+      {/* Service cards are peers, not the label/value pairs in LearningPanel.
+          Reusing .v2-learning-grid makes every other card a 110px column. */}
+      <div className="v2-services-grid" data-testid="services-grid">
         {Object.entries(info?.services ?? {}).map(([name, svc]) => (
-          <div key={name} style={cardStyle} data-testid={"service-card-" + name}>
+          <div key={name} className="v2-service-card" style={cardStyle} data-testid={"service-card-" + name}>
             <strong>
               {name}{" "}
               {svc.restart_required ? (

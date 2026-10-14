@@ -25,6 +25,7 @@
 .v2-sidebar {
   flex: none;
   width: 244px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--dsw-specific-sidebar-fill);
@@ -39,6 +40,7 @@
 .v2-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--dsw-alias-bg-base);
@@ -89,6 +91,14 @@
   gap: var(--dsw-space-2);
   padding: 0 var(--dsw-space-4);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.v2-topbar-view {
+  flex: none;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
 }
 
 .v2-header-actions {
@@ -281,6 +291,38 @@
   padding: 24px;
 }
 
+/* Direct child of the viewport-bound main column: long service identities
+   need their own scrollport instead of overflowing into the clipped shell. */
+.v2-services-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+}
+
+.v2-service-code-root {
+  overflow-wrap: anywhere;
+}
+
+/* Service identities are equal peer cards, NOT LearningPanel's two-column
+   key/value grid. Responsive tracks preserve readable width in a three-pane
+   desktop layout and fall back to one column on narrow/mobile viewports. */
+.v2-services-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+  gap: 12px;
+  align-items: start;
+  margin-top: 12px;
+  min-width: 0;
+}
+
+.v2-service-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .v2-learning-header {
   display: flex;
   justify-content: space-between;
@@ -464,8 +506,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   height: 30px;
+  flex: none;
   padding: 0 8px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
   border-radius: var(--dsw-radius-sm);
   font-size: 13px;
   color: var(--dsw-alias-label-primary);
@@ -531,6 +579,32 @@
   flex-direction: column;
   gap: 1px;
   padding: 2px 0;
+}
+
+.v2-ws-session-toggle,
+.v2-session-show-more {
+  width: 100%;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.v2-ws-session-toggle:hover,
+.v2-session-show-more:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-ws-tree-head:focus-visible,
+.v2-ws-session-toggle:focus-visible,
+.v2-session-show-more:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
 }
 
 .v2-session-item.compact {
@@ -753,6 +827,15 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Archive view is outside WorkspaceGroups; it must not push past the fixed
+   sidebar bottom. Keep its history intact and expose it through scrolling. */
+.v2-archived-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .v2-session-item {
@@ -1191,6 +1274,12 @@
 
 /* ── 移动端响应式（对齐原版 P4-2：抽屉式侧栏/面板） ── */
 @media (max-width: 900px) {
+  .v2-mobile-panel-toggle {
+    width: var(--v2-mobile-touch-target);
+    min-width: var(--v2-mobile-touch-target);
+    height: var(--v2-mobile-touch-target);
+  }
+
   .v2-sidebar {
     position: fixed;
     top: 0;
@@ -1389,6 +1478,16 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.v2-conversation-loading {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* ── 右侧面板 ── */
 .v2-panel-tabs {
   flex: none;
@@ -1571,6 +1670,32 @@
   }
 
   .v2-sidebar:has(.v2-evo) .v2-evo-body {
+    flex: none;
+    overflow: visible;
+  }
+
+  /* One-outer-scroll fallback for the workspace tree and archived-sessions
+     views, ported from fix/web-v2-ux-hardening-20261013. Scoped per view
+     (:has(.v2-tree) / :has(.v2-archived-list)) so the unscoped .v2-sidebar
+     rules above from main stay unchanged. */
+  .v2-sidebar:has(.v2-tree),
+  .v2-sidebar:has(.v2-archived-list) {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  .v2-sidebar:has(.v2-tree) > *,
+  .v2-sidebar:has(.v2-archived-list) > * {
+    flex-shrink: 0;
+  }
+
+  .v2-sidebar .v2-tree,
+  .v2-sidebar .v2-archived-list {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .v2-sidebar .v2-tree-body {
     flex: none;
     overflow: visible;
   }

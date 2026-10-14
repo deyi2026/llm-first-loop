@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageItem, extractProducedPaths } from "./MessageItem";
-import { loadEarlierHistory, useConversation } from "../../core/conversation";
+import { loadEarlierHistory, loadHistory, useConversation } from "../../core/conversation";
 import { sessionStore } from "../../core/stores";
 import { projectToolActivityMessages } from "../../core/toolActivity";
 import { zh } from "../../i18n/zh";
 
-export function MessageList() {
+export function MessageList({ historyLoading = false }: { historyLoading?: boolean }) {
   const conv = useConversation();
   const [atBottom, setAtBottom] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -42,6 +42,25 @@ export function MessageList() {
   }, [conv.messages, atBottom]);
 
   if (conv.messages.length === 0) {
+    if (historyLoading) {
+      return (
+        <div className="v2-conversation-loading" data-testid="history-loading" role="status">
+          正在加载会话历史…
+        </div>
+      );
+    }
+    const sid = sessionStore.getState().currentSessionId;
+    if (sid && conv.lastError) {
+      return (
+        <div className="v2-conversation-empty" data-testid="history-error">
+          <h2>会话暂不可显示</h2>
+          <p>历史记录未被清空。重新读取不会重新发送消息。</p>
+          <button type="button" className="v2-btn ghost" onClick={() => void loadHistory(sid)}>
+            重新加载会话
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="v2-conversation-empty" data-testid="empty-state">
         <h2>{zh.emptyHeroTitle}</h2>

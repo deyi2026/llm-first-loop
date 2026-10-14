@@ -156,6 +156,8 @@ describe("workspace switch controls", () => {
     }));
 
     render(<Sidebar collapsed={false} />);
+    await waitFor(() => expect(screen.getByText("other")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("ws-show-sessions"));
     await waitFor(() => expect(screen.getByText("其他会话")).toBeInTheDocument());
     fireEvent.click(screen.getByText("其他会话"));
     await waitFor(() =>

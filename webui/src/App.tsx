@@ -36,8 +36,14 @@ export function clampPanelWidth(px: number): number {
 }
 
 function readPanelWidth(): number {
-  const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
-  return clampPanelWidth(saved);
+  try {
+    const saved = localStorage.getItem(PANEL_WIDTH_KEY);
+    // Number(null) === 0; a first-time visitor should receive the designed default,
+    // not the minimum panel width. Storage can also throw in restricted browsers.
+    return saved === null || saved.trim() === "" ? PANEL_WIDTH_DEFAULT : clampPanelWidth(Number(saved));
+  } catch {
+    return PANEL_WIDTH_DEFAULT;
+  }
 }
 
 // ── 学习页（EVO-20261013 改版）：知识管理上移到顶部，与学习通道二选一切换 ──
@@ -134,8 +140,17 @@ export function App() {
 
   const showConversationFiles = () => {
     sidebarViewStore.setView("files");
-    if (isMobile) setMobileSidebarOpen(true);
+    if (isMobile) {
+      rightPanelStore.setOpen(false);
+      setMobileSidebarOpen(true);
+    }
     else setSidebarCollapsed(false);
+  };
+
+  const togglePanel = () => {
+    const nextOpen = !panelOpen;
+    if (isMobile && nextOpen) setMobileSidebarOpen(false);
+    rightPanelStore.setOpen(nextOpen);
   };
 
   const shellClass = [
@@ -160,10 +175,11 @@ export function App() {
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const onHandleDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if ((e.button ?? 0) !== 0 || isMobile) return;
       dragRef.current = { startX: e.clientX, startW: panelWidth };
       (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     },
-    [panelWidth]
+    [panelWidth, isMobile]
   );
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -186,15 +202,24 @@ export function App() {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("blur", onUp);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("blur", onUp);
     };
   }, []);
 
   return (
     <div className={shellClass} data-testid="app-shell">
-      <Sidebar collapsed={!isMobile && sidebarCollapsed} />
+      <Sidebar
+        collapsed={!isMobile && sidebarCollapsed}
+        onNavigate={() => {
+          if (isMobile) setMobileSidebarOpen(false);
+        }}
+      />
       {isMobile && mobileSidebarOpen && (
         <div className="v2-scrim" data-testid="sidebar-scrim" onClick={() => setMobileSidebarOpen(false)} />
       )}
@@ -206,7 +231,13 @@ export function App() {
         />
       )}
       <div className="v2-main">
-        <TopBar onToggleSidebar={toggleSidebar} onShowFiles={showConversationFiles} />
+        <TopBar
+          onToggleSidebar={toggleSidebar}
+          onShowFiles={showConversationFiles}
+          onTogglePanel={togglePanel}
+          panelOpen={panelOpen}
+          isMobile={isMobile}
+        />
         {mainView === "chat" ? <InteropNotice /> : null}
         {mainView === "learning" ? (
           <LearningPlane />
@@ -216,20 +247,16 @@ export function App() {
           <Conversation />
         )}
       </div>
-      <button
+      {!isMobile && <button
         type="button"
         className="v2-icon-btn"
         style={{ alignSelf: "center" }}
-        onClick={() => {
-          const nextOpen = !panelOpen;
-          if (isMobile && nextOpen) setMobileSidebarOpen(false);
-          rightPanelStore.setOpen(nextOpen);
-        }}
+        onClick={togglePanel}
         title="右侧面板"
         aria-label="右侧面板"
       >
         {panelOpen ? "▸" : "◂"}
-      </button>
+      </button>}
       {panelOpen && !isMobile ? (
         <div
           className="v2-panel-resize-handle"

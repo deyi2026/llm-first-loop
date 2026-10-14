@@ -1,9 +1,9 @@
 // Web V2 冒烟测试（阶段 1 验收：布局壳渲染 / 主题切换 / 状态链路）
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import { App } from "./App";
-import { mainViewStore } from "./core/stores";
+import { render, screen, fireEvent, cleanup, act, within } from "@testing-library/react";
+import { App, PANEL_WIDTH_DEFAULT, PANEL_WIDTH_KEY } from "./App";
+import { learningPageStore, mainViewStore } from "./core/stores";
 
 async function renderAppSettled(): Promise<void> {
   await act(async () => {
@@ -32,6 +32,24 @@ describe("App 布局壳", () => {
     localStorage.clear();
   });
 
+  it("首次访问右面板使用默认宽度，而不是意外夹到最小宽度", async () => {
+    localStorage.removeItem(PANEL_WIDTH_KEY);
+    await renderAppSettled();
+    expect(screen.getByTestId("right-panel")).toHaveStyle({ width: `${PANEL_WIDTH_DEFAULT}px` });
+  });
+
+  it("指针取消拖拽后不再继续调整面板", async () => {
+    await renderAppSettled();
+    const handle = screen.getByTestId("panel-resize-handle");
+    const panel = screen.getByTestId("right-panel");
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 800 });
+    fireEvent.pointerMove(window, { clientX: 700 });
+    const previousWidth = panel.style.width;
+    fireEvent.pointerCancel(window);
+    fireEvent.pointerMove(window, { clientX: 400 });
+    expect(panel.style.width).toBe(previousWidth);
+  });
+
   it("渲染三栏壳与核心元素", async () => {
     await renderAppSettled();
     expect(screen.getByTestId("app-shell")).toBeInTheDocument();
@@ -42,6 +60,68 @@ describe("App 布局壳", () => {
     expect(screen.getByText("LLM-First Loop")).toBeInTheDocument();
     // 空状态 hero（对齐 DSH 文案风格）
     expect(screen.getByText("描述你想要构建的内容")).toBeInTheDocument();
+  });
+
+  it("顶栏标题跟随知识/学习/服务视图变化", async () => {
+    await renderAppSettled();
+    const topbar = screen.getByTestId("topbar");
+    act(() => {
+      mainViewStore.setView("learning");
+      learningPageStore.setPage("knowledge");
+    });
+    expect(within(topbar).getByText("知识管理")).toBeInTheDocument();
+    act(() => learningPageStore.setPage("learning"));
+    expect(within(topbar).getByText("学习通道")).toBeInTheDocument();
+    act(() => mainViewStore.setView("services"));
+    expect(within(topbar).getByText("服务身份")).toBeInTheDocument();
+  });
+
+  it("服务身份使用专用服务网格和主区滚动容器，不能继承学习详情双列样式", async () => {
+    await renderAppSettled();
+    act(() => mainViewStore.setView("services"));
+    const panel = screen.getByTestId("services-panel");
+    expect(panel).toHaveClass("v2-services-view");
+    expect(within(panel).getByTestId("services-grid")).toHaveClass("v2-services-grid");
+    expect(within(panel).getByTestId("services-grid")).not.toHaveClass("v2-learning-grid");
+  });
+
+  it("移动端面板开关在顶栏内，不侵占聊天主区宽度", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: true, media: "(max-width: 900px)", onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    })));
+    await renderAppSettled();
+    const toggle = within(screen.getByTestId("topbar")).getByRole("button", { name: "右侧面板" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("panel-scrim")).toBeInTheDocument();
+  });
+
+  it("移动端从侧栏进入服务身份、学习通道或新会话时，关闭覆盖主视图的抽屉", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: true, media: "(max-width: 900px)", onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    })));
+    await renderAppSettled();
+    const shell = screen.getByTestId("app-shell");
+    const menu = within(screen.getByTestId("topbar")).getAllByRole("button")[0];
+
+    fireEvent.click(menu);
+    expect(shell).toHaveClass("mobile-sidebar-open");
+    fireEvent.click(screen.getByTestId("services-entry"));
+    expect(shell).not.toHaveClass("mobile-sidebar-open");
+    expect(screen.getByTestId("services-panel")).toBeInTheDocument();
+
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByTestId("learning-entry"));
+    expect(shell).not.toHaveClass("mobile-sidebar-open");
+
+    fireEvent.click(menu);
+    fireEvent.click(screen.getByTestId("new-session"));
+    expect(shell).not.toHaveClass("mobile-sidebar-open");
   });
 
   it("固定学习通道入口打开独立 Learning Plane 观察页", async () => {
