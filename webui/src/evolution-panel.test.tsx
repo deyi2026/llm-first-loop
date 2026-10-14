@@ -182,4 +182,40 @@ describe("EvolutionPanel approval feedback", () => {
     fireEvent.click(screen.getByTitle("关闭回执"));
     expect(screen.queryByTestId("evo-review-receipt")).toBeNull();
   });
+
+  it("keeps long post-approval feedback and its copy button inside the same scrollport as the list", async () => {
+    installFetch({
+      reviewBody: {
+        ok: true,
+        message: "审批完成，但执行仍需继续核验和回执。".repeat(40),
+        new_status: "executing",
+      },
+    });
+    render(<EvolutionPanel />);
+    await screen.findByText(baseItem.id);
+    const scrollport = screen.getByTestId("evo-scroll-region");
+    scrollport.scrollTop = 100;
+    fireEvent.click(screen.getByText(baseItem.id));
+    fireEvent.click(await screen.findByTestId("evo-approve"));
+    fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
+    fireEvent.click(screen.getByTestId("evo-confirm-ok"));
+
+    const receipt = await screen.findByTestId("evo-review-receipt");
+    expect(scrollport.scrollTop).toBe(0);
+    expect(scrollport).toContainElement(screen.getByTestId("evo-action-msg"));
+    expect(scrollport).toContainElement(receipt);
+    expect(scrollport).toContainElement(screen.getByTestId("evo-review-receipt-copy"));
+    expect(scrollport).toHaveAttribute("tabIndex", "0");
+    expect(receipt).toHaveTextContent("新状态 executing");
+  });
+
+  it("keeps batch approval controls next to the tabs instead of burying them within the list", async () => {
+    installFetch();
+    render(<EvolutionPanel />);
+    await screen.findByText(baseItem.id);
+    fireEvent.click(screen.getByTitle("勾选批量"));
+    const bar = screen.getByTestId("evo-batchbar");
+    expect(bar).toBeInTheDocument();
+    expect(screen.getByTestId("evo-scroll-region")).not.toContainElement(bar);
+  });
 });

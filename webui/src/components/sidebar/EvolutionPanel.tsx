@@ -3,7 +3,7 @@
 // 决策：review（单条，二次确认+拒绝理由必填+CAS）/ review-batch（批量，服务端跳过 requires_human）
 // 交互：分类 Tab / 详情懒加载 / 二次确认 / 拒绝理由必填 / 批量 / 409 冲突提示 / 涉边界禁用批量
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { writeClipboardText } from "../../core/clipboard";
 import { zh } from "../../i18n/zh";
 
@@ -66,6 +66,7 @@ function fmtTs(ts: string | undefined | null): string {
 }
 
 export function EvolutionPanel() {
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState<EvoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("pending_review");
@@ -162,6 +163,15 @@ export function EvolutionPanel() {
 
   // 人工审批回执（EVO-20260918-d1182270）: AI 会话无推送 → 生成可复制回执，避免"批了但没人知道"
   const [reviewReceipt, setReviewReceipt] = useState<{ text: string; hint: string } | null>(null);
+
+  // A successful review inserts a potentially long status and copyable receipt.
+  // Keep the result in the list scrollport and expose it immediately even if
+  // the user had scrolled down to approve an item near the end of the list.
+  useEffect(() => {
+    if (reviewReceipt && bodyRef.current) {
+      bodyRef.current.scrollTop = 0;
+    }
+  }, [reviewReceipt]);
 
   const buildReceipt = (ids: string[], decision: string, reason: string, newStatus?: string) => {
     const time = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -297,40 +307,7 @@ export function EvolutionPanel() {
         ))}
       </div>
 
-      {/* 面板级操作反馈（UX 修复: 原渲染在条目 map 内，条目刷新消失后消息跟着消失 → 用户感知"没反应"） */}
-      {actionMsg && (
-        <div className="v2-evo-action-msg" data-testid="evo-action-msg">{actionMsg}</div>
-      )}
-
-      {/* 审批回执（EVO-20260918-d1182270）: AI 会话无推送 → 一键复制告知话术，闭环"批完之后下一步" */}
-      {reviewReceipt && (
-        <div
-          className="v2-evo-receipt"
-          data-testid="evo-review-receipt"
-          style={{ margin: "6px 0", padding: "8px 10px", border: "1px solid #2f6f4f", borderRadius: 8, background: "rgba(47,111,79,0.08)" }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-            <span style={{ fontSize: 12 }}>{reviewReceipt.hint}</span>
-            <button type="button" className="v2-icon-btn" title="关闭回执" onClick={() => setReviewReceipt(null)}>×</button>
-          </div>
-          <pre
-            data-testid="evo-review-receipt-text"
-            style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "6px 0 0", fontSize: 12, userSelect: "text" }}
-          >
-            {reviewReceipt.text}
-          </pre>
-          <button
-            type="button"
-            className="v2-evo-btn approve"
-            data-testid="evo-review-receipt-copy"
-            onClick={() => void copyReceipt(reviewReceipt.text)}
-          >
-            复制回执
-          </button>
-        </div>
-      )}
-
-      {/* 批量栏（仅待审批 Tab + 有可选） */}
+      {/* Batch approval remains by the filters while the result/list scrolls. */}
       {tab === "pending_review" && selected.size > 0 && (
         <div className="v2-evo-batchbar" data-testid="evo-batchbar">
           <span>已选 {selected.size} 条</span>
@@ -348,7 +325,47 @@ export function EvolutionPanel() {
         </div>
       )}
 
-      <div className="v2-evo-body">
+      <div
+        className="v2-evo-body"
+        data-testid="evo-scroll-region"
+        ref={bodyRef}
+        role="region"
+        aria-label="演进审批结果与建议"
+        tabIndex={0}
+      >
+        {/* 面板级操作反馈（UX 修复: 原渲染在条目 map 内，条目刷新消失后消息跟着消失 → 用户感知"没反应"） */}
+        {actionMsg && (
+          <div className="v2-evo-action-msg" data-testid="evo-action-msg" role="status">{actionMsg}</div>
+        )}
+
+        {/* 审批回执（EVO-20260918-d1182270）: AI 会话无推送 → 一键复制告知话术，闭环"批完之后下一步" */}
+        {reviewReceipt && (
+          <div
+            className="v2-evo-receipt"
+            data-testid="evo-review-receipt"
+            style={{ margin: "6px 0", padding: "8px 10px", border: "1px solid #2f6f4f", borderRadius: 8, background: "rgba(47,111,79,0.08)" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 12 }}>{reviewReceipt.hint}</span>
+              <button type="button" className="v2-icon-btn" title="关闭回执" onClick={() => setReviewReceipt(null)}>×</button>
+            </div>
+            <pre
+              data-testid="evo-review-receipt-text"
+              style={{ whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "6px 0 0", fontSize: 12, userSelect: "text" }}
+            >
+              {reviewReceipt.text}
+            </pre>
+            <button
+              type="button"
+              className="v2-evo-btn approve"
+              data-testid="evo-review-receipt-copy"
+              onClick={() => void copyReceipt(reviewReceipt.text)}
+            >
+              复制回执
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="v2-tree-loading">加载中…</div>
         ) : tabItems.length === 0 ? (

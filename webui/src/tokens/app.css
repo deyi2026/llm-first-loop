@@ -1551,3 +1551,27 @@
   background: color-mix(in srgb, var(--dsw-specific-accent-fg, #e8b64c) 10%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--dsw-specific-accent-fg, #e8b64c) 30%, transparent);
 }
+
+/* Short landscape / large browser zoom: the sidebar chrome alone can use
+   nearly the entire viewport. For evolution approval, prefer one outer scroll
+   area over a 0px inner list, so results and copy controls remain reachable. */
+@media (max-height: 520px) {
+  .v2-sidebar:has(.v2-evo) {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  .v2-sidebar:has(.v2-evo) > * {
+    flex-shrink: 0;
+  }
+
+  .v2-sidebar:has(.v2-evo) .v2-evo {
+    flex: none;
+    overflow: visible;
+  }
+
+  .v2-sidebar:has(.v2-evo) .v2-evo-body {
+    flex: none;
+    overflow: visible;
+  }
+}
