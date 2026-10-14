@@ -24,7 +24,7 @@ import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -652,14 +652,35 @@ class HumanTurnQueue:
             out[f"p95_{key}"] = self._pct(vals, 0.95)
         return out
 
+    # 可观测性 M1c 修订（2026-10-14，§9 结构性零落地）：两桶 n=0 的成因是
+    # 部署拓扑使然而非采样不足——后端为口径单一来源，前端仅渲染。
+    # - sync_window_poll：web 页面自动化通道已剥离退役（2026-10-14），
+    #   本部署不存在此消费路径；
+    # - llm_stream：当前拓扑（流式 provider + Phase5 流内检查点默认开）下
+    #   final_gate 收割窗被检查点先占（实测竞速窗上界 <350ms），无样本为
+    #   健康形态。该属性是拓扑推断而非物理定律：若检查点关闸/切非流式
+    #   provider，final_gate 会重新收割样本（n>0 时前端照常显示统计，
+    #   标注自然不出现）。
+    STRUCTURAL_ZERO_BUCKETS: ClassVar[dict[str, str]] = {
+        "sync_window_poll": (
+            "同步窗口轮询通道已随 web 页面自动化通道退役（2026-10-14 剥离）；"
+            "当前部署不存在此消费路径，无样本为预期形态"
+        ),
+        "llm_stream": (
+            "当前拓扑（流式 provider + Phase5 流内检查点默认开）下 final_gate "
+            "保守等待的竞速窗被检查点先占收割（实测上界 <350ms）；无样本为"
+            "健康形态，非采样不足"
+        ),
+    }
+
     def _interject_bucket_block(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         # Phase4 M3 分桶汇总（§7 验收面）：每桶 n/p50/p95，样本不足 5 标注
         # insufficient_sample（诚实口径，不冒充达标）。
         buckets_out: dict[str, Any] = {}
         # Phase5 M2：汇总桶序追加 llm_stream_interrupt（打断收割路径，独立统计，
         # 与保守等待路径 llm_stream 分开，不互相冒充；合并视图另列总口径）。
-        # 可观测性 M1a：追加 sync_window_poll（同步窗口轮询收割，M0 评审 B7
-        # 六桶全列口径）。
+        # 可观测性 M1a：追加 sync_window_poll（M0 评审 B7 六桶全列口径）。
+        # M1c 修订：每桶追加 structural_zero/zero_reason（§9 结构性零口径）。
         for b in (
             "interruptible",
             "natural_boundary",
@@ -678,6 +699,8 @@ class HumanTurnQueue:
                 "p50_t_effect_ms": self._pct(effs, 0.50),
                 "p95_t_effect_ms": self._pct(effs, 0.95),
                 "insufficient_sample": len(effs) < 5,
+                "structural_zero": b in self.STRUCTURAL_ZERO_BUCKETS,
+                "zero_reason": self.STRUCTURAL_ZERO_BUCKETS.get(b),
             }
         return buckets_out
 

@@ -29,6 +29,10 @@ interface BucketStats {
   p50_t_effect_ms: number | null;
   p95_t_effect_ms: number | null;
   insufficient_sample: boolean;
+  // M1c 修订（§9 结构性零）：后端口径单一来源下发；仅 n=0 时据此区分
+  // 「结构性零」（拓扑使然，健康/预期）与「无样本」（采样不足）。
+  structural_zero?: boolean;
+  zero_reason?: string | null;
 }
 
 interface MetricsView {
@@ -65,6 +69,13 @@ const badge: React.CSSProperties = {
   borderRadius: 8,
   background: "var(--dsw-alias-state-warning-bg, #fef3c7)",
   color: "var(--dsw-alias-state-warning, #92400e)",
+};
+// 结构性零徽标（§9）：非告警——解释性标注（拓扑使然而非采样不足），中性色。
+const badgeZero: React.CSSProperties = {
+  ...badge,
+  background: "var(--dsw-alias-state-info-bg, #e0f2fe)",
+  color: "var(--dsw-alias-state-info, #075985)",
+  cursor: "help",
 };
 const muted = { fontSize: 11, color: "var(--dsw-alias-label-tertiary, #888)" } as const;
 
@@ -112,6 +123,11 @@ function BucketTable({ view, scope }: { view: MetricsView; scope: string }) {
         {BUCKETS.map((b) => {
           const s = view.buckets?.[b.key];
           const insuff = s?.insufficient_sample;
+          // §9 结构性零：仅 n=0 且后端裁定结构性零时生效；n>0（历史残留/
+          // 拓扑变化后）照常显示统计，标注不出现（拓扑属性不吞样本事实）。
+          const isStructuralZero = !!s && s.n === 0 && !!s.structural_zero;
+          const fmtBucket = (v: number | null | undefined): string =>
+            isStructuralZero ? "结构性零" : fmtMs(v);
           return (
             <tr key={b.key} data-testid={`im-${scope}-bucket-${b.key}`}>
               <td style={td}>
@@ -121,10 +137,19 @@ function BucketTable({ view, scope }: { view: MetricsView; scope: string }) {
                     样本不足
                   </span>
                 ) : null}
+                {isStructuralZero ? (
+                  <span
+                    style={badgeZero}
+                    title={s?.zero_reason ?? undefined}
+                    data-testid={`im-${scope}-structural-zero-${b.key}`}
+                  >
+                    结构性零
+                  </span>
+                ) : null}
               </td>
               <td style={td}>{s ? s.n : 0}</td>
-              <td style={td}>{fmtMs(s?.p50_t_effect_ms)}</td>
-              <td style={td}>{fmtMs(s?.p95_t_effect_ms)}</td>
+              <td style={td}>{fmtBucket(s?.p50_t_effect_ms)}</td>
+              <td style={td}>{fmtBucket(s?.p95_t_effect_ms)}</td>
             </tr>
           );
         })}

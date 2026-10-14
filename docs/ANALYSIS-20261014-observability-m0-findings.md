@@ -187,6 +187,12 @@ G1 修法与单测、验收门）；评审后定验收门再实施。
   （B5）；零写（仅 GET 两端点）。V3 测试 4 项（红=组件缺→绿）：六桶渲染
   /null/徽标+零写/fail-open 独立性/无会话显式提示/手动刷新。tsc+vite
   build 过；全量 webui 282/282。
+- **M1c-rev 结构性零标注**（§9 落地，同日）：§9 真实样本战役裁定两桶 n=0
+  成因为拓扑使然（sync_window_poll=通道退役、llm_stream=检查点先占），
+  面板原对 n=0 一律「无样本」易误读——后端桶块增发 `structural_zero`/
+  `zero_reason`（`STRUCTURAL_ZERO_BUCKETS` 常量，单一事实源），前端 n=0
+  且结构性零时显示「结构性零」+成因徽标；n>0 照常显示统计（拓扑属性不吞
+  样本事实）。测试 +4 后端/+2 前端（详见 §9 落地段）。
 - **预存修复（独立提交 d8accba79）**：evolution-panel 测试断言漂移——
   e2ab47980 改批准守卫文案（加「或显式授权执行」）漏同步测试；3/3 复现
   +stash 路径限定 HEAD 复现确认预存后一行对齐，webui 套件恢复全绿。
@@ -266,4 +272,13 @@ live run 信箱（run_generation 从 SSE run_started 事件取）。
 默认开）下 llm_stream≈0 是健康形态；与 sync_window_poll=0（通道退役、
 不存在）成因不同——这里是「竞速窗被先占」。两桶均应标注结构性零而非
 「无样本」。
+
+**落地（M1c-rev，2026-10-14 13:2x，本节结论当日闭环）**：
+`_interject_bucket_block` 每桶下发 `structural_zero`/`zero_reason`（口径单一
+来源在后端，`STRUCTURAL_ZERO_BUCKETS` 常量）；面板 `n=0 且 structural_zero`
+→ P50/P95 显示「结构性零」+ 中性徽标（title=成因），非「无样本」；`n>0`
+（历史残留/拓扑变化后重新收割）照常显示统计、标注不出现——拓扑属性不吞
+样本事实。测试：后端 `tests/observability/test_structural_zero.py` 4 项
+（字段契约/成因内容/与样本数无关/全局同契约）+ 前端 V3 扩至 6 项（结构性零
+渲染不误读 + n>0 不吞统计）。
 
