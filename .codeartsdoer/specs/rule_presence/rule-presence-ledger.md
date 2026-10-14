@@ -12,7 +12,7 @@
 | `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
 | `lite_version` | 19 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 35（2026-10-12 实测 33；2026-10-14 RULE-AI-31 机械补登（EVO-20261014-7299aec2 漏登，SoT :505）；2026-10-14 RULE-AI-32 机械补登（EVO-20261014-a731be2b 漏登，SoT :527）；RULE-AI-00~29（21 编号空缺，SoT :333 说明）见 §2，附则/子规则/方法层见 §2.4） |
+| `records` | 36（2026-10-12 实测 33；2026-10-14 RULE-AI-31 机械补登（EVO-20261014-7299aec2 漏登，SoT :505）；2026-10-14 RULE-AI-32 机械补登（EVO-20261014-a731be2b 漏登，SoT :527）；2026-10-14 RULE-AI-33 新增同步登记（SoT 规则三十三，终审组合实施，非漏登）；RULE-AI-00~29（21 编号空缺，SoT :333 说明）见 §2，附则/子规则/方法层见 §2.4） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |
@@ -110,6 +110,7 @@
 | RULE-AI-29 | 方法/经验用后负反馈必须在当前任务收口前闭环（SoT 2026-10-12） | 在库未注入 | EVO-20261012-19f88338（2026-10-12 人工批准）新增：触发三情形（不适配/误导/时效过期）+ 三级处置（record_use 保底 / refine·annotate_freshness 修正首选 / invalidate·retire 核验后弃用）+ 证据要求（"我用不上"≠"它错了"，not_applicable 不得升级弃用）+ 收口时限（明确判定当场处置）+ Learning Plane 兜底非替代；模型行为纪律，工具契约已支撑，无新增程序角色 |
 | RULE-AI-30 | Fail-closed 通用纪律——无法判定按未通过处理（SoT 2026-10-14） | 在库未注入 | EVO-20261014-483ca6de 新增：防线类机制（校验/过滤/脱敏/白名单/配额/门禁/寻址）无法匹配/解析/判断时一律按未通过并显式说明缺失事实；规则缺失≠允许、解析失败≠空值继续、解析异常走保守分支；fail-open 仅限显式声明"可用性优先"的既有位点（如 event_log 钩子链），新增防线默认 fail-closed、改默认须过演进审批。〔2026-10-14 web-carveout M3 回归期机械补登：内容取自 docs/ai_rules.md L491-496 真值源，登记缺口非本任务引入〕 |
 | RULE-AI-32 | 共享文件格式化纪律——禁全文件 ruff format，hunk 级最小化或独立提交（SoT 2026-10-14） | 在库未注入 | EVO-20261014-a731be2b 人工批准新增：对非本次任务新引入的共享/存量文件禁止 `ruff format <file>` 全文件重排；格式化只允许作用于本次任务实际新增/修改的 hunk；确需全文件 format 时先 `ruff format --diff` 评估并独立提交（不与语义改动混提）；动机=M1b 实测全文件重排引入 ~400 行噪声污染审查面（ANALYSIS §7 实施纪律记录）；程序角色=无新增（规则层条款化，RULE 卡检索命中）。〔2026-10-14 可观测性 M1c-rev 全量回归期机械补登：内容取自 docs/ai_rules.md L527-535 真值源，登记缺口非本任务引入〕 |
+| RULE-AI-33 | service_control generation 冲突即事实——冲突回执直接重试、显式带代（SoT 2026-10-14） | 在库未注入 | 2026-10-14 终审组合实施同步登记（非漏登，SoT 规则三十三）：模型侧调用纪律条款——generation 冲突回执即当前事实，直接以回执 current 重试（存活 owner ≤一 poll；死 worker 由 reaper 按 30s/120s/2100s 分档回收），不等待/不询问；首选显式 expected_generation=最新 status 观察值；等待中旧 action 不构成重试前置；A 方案（publish 时全量 supersede 非终态 action）rejected 留档于条款第 4 条。程序角色=程序侧已实现（等待循环 stale 检测 + reaper accepted 覆盖，同一变更集），规则只管模型侧。 |
 
 > RULE-AI-22 同时出现在 §2.2（B3 子缺口：discover→hydrate 触发时机）与本节（主条款设计性零注入），二者不冲突：本特性只补"触发时机"子语义，不改主条款。
 

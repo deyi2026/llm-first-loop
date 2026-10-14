@@ -32,6 +32,7 @@ def _write_waiting_action(
     *,
     age_s: float,
     worker_pid: int | None,
+    status: str = "waiting_for_idle",
 ) -> None:
     store.actions_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now()
@@ -44,7 +45,7 @@ def _write_waiting_action(
         "deployment_id": "dep-test",
         "deployment_generation": 1,
         "requester_session_id": "sess-test",
-        "status": "waiting_for_idle",
+        "status": status,
         "created_at": ts,
         "updated_at": ts,
         "detail": "",
@@ -246,6 +247,52 @@ class TestReaperLiveness:
         assert recent is not None and recent.status == "waiting_for_idle"
         assert ancient is not None and ancient.status == "failed"
         assert "presumed dead" in ancient.detail
+
+
+class TestReaperAcceptedCoverage:
+    """accepted 覆盖（2026-10-14 终审必补项）。
+
+    worker 在盖章 pid 前死亡（spawn→入口的 kill-9/OOM 窗口）卡 accepted，
+    此前 reaper 谓词不含 accepted：死 pid 快路径与 2100s 兜底双双跳过，
+    屏障永久占坑。误杀面由等待循环入口守卫兜住（终态即零续写退出）。
+    """
+
+    def test_fails_accepted_with_dead_worker_pid(self, tmp_path: Path) -> None:
+        store = ManagedServiceDeploymentStore(tmp_path)
+        _write_waiting_action(
+            store, "act-acc-dead", age_s=60, worker_pid=999_999_999, status="accepted"
+        )
+        _reap(store)
+        action = store.read_action("act-acc-dead")
+        assert action is not None and action.status == "failed"
+        assert "999999999" in action.detail
+
+    def test_fails_accepted_never_stamped_pid_after_grace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sc, "_STALE_ACCEPTED_NO_PID_GRACE_S", 60.0)
+        store = ManagedServiceDeploymentStore(tmp_path)
+        _write_waiting_action(
+            store, "act-acc-orphan", age_s=120, worker_pid=0, status="accepted"
+        )
+        _write_waiting_action(
+            store, "act-acc-fresh", age_s=30, worker_pid=0, status="accepted"
+        )
+        _reap(store)
+        orphan = store.read_action("act-acc-orphan")
+        fresh = store.read_action("act-acc-fresh")
+        assert orphan is not None and orphan.status == "failed"
+        assert "never stamped pid" in orphan.detail
+        assert fresh is not None and fresh.status == "accepted"
+
+    def test_accepted_live_pid_not_reaped(self, tmp_path: Path) -> None:
+        store = ManagedServiceDeploymentStore(tmp_path)
+        _write_waiting_action(
+            store, "act-acc-live", age_s=120, worker_pid=os.getpid(), status="accepted"
+        )
+        _reap(store)
+        action = store.read_action("act-acc-live")
+        assert action is not None and action.status == "accepted"
 
 
 class TestWorkerStampsPid:

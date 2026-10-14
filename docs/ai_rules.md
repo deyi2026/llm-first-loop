@@ -538,6 +538,23 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+## 规则三十三：service_control generation 冲突即事实（RULE-AI-33，2026-10-14）
+
+**适用范围**：调用 `service_control`（publish/restart/update 等带 expected_generation 语义）的 AI 主体。
+
+**核心规则**：**generation 冲突回执本身就是当前事实。** 收到 `DeploymentGenerationConflictError`（expected≠current）时不等待、不询问用户、不补观察——直接以回执中的 current 值重试一次；受理闸在 lease 内重验 desired 绑定。`status` 回执只是快照观察，不是权威判据；CAS（publish）与受理复检（restart/update accept）才是。可过时窗：陈旧 owner 存活时 ≤ 一个 poll 间隔（其等待循环会自行 supersede）；owner worker 已死时由 reaper 分档回收（pid 死 30s / accepted 无 pid 120s / 兜底 2100s），期间重试会收到 BarrierConflictError——仍属冲突回执即事实，按分档时窗再重试即可。
+
+1. **首选显式带代**：restart/update 显式携带 `expected_generation=<最新 status 观察值>`——过期观察以冲突回执响亮失败（fail-fast），而非被静默 rebase；失败即按核心规则直接重试。
+2. **缺省仅兜底**：省略 expected_generation 自动取当前代，仅用于无法先观察的场景。
+3. **等待中的旧 action 不构成前置**：action 停在 accepted/waiting_for_* 时，新 restart 受理闸会经 reaper/等待循环废弃陈旧 owner（秒级）；不得把"等清理完成""询问用户"当作重试前置。
+4. **A 方案留档（rejected）**：曾评估"publish 时把所有非终态 action 一律 supersede"——否决（2026-10-14 终审）：会误杀 running/verifying 中的物理执行、把发布关键路径与 action 清理耦合、触发面窄于"等待循环检测+reaper 覆盖"组合。程序侧重申：supersede 仅限 accepted/waiting 等零副作用状态。
+
+**程序角色（已实现，模型知悉即可）**：等待循环每轮核 desired 绑定（前进/记录缺失→superseded；读异常不判死；废弃走标准 update_action 路径、屏障随终态释放）；reaper 覆盖 accepted/waiting 的死 worker（pid 死 30s、无 pid 孤儿 120s、兜底 2100s）。
+**正例**：restart 收到 generation 冲突回执 → 以回执 current 作为 expected_generation 立即重试 → 受理成功。
+**反例**：收到冲突回执后回复"等待部署稳定后再试"或向用户确认是否覆盖——冲突回执已是最新的可执行事实。
+
+---
+
 ## 配置扩展（2026-09-03 agency-first 修订）
 
 Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。

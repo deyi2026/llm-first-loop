@@ -133,6 +133,12 @@ _STALE_WAITING_MARGIN_S = 300.0
 # reaper 可按进程存活判定提前回收——dead-pid 宽限覆盖 poll 间隔与 stamp 延迟，
 # 把 caller 超时杀 worker 的锁死窗口从最长 2100s 收缩到秒级。
 _STALE_PID_GRACE_S = 30.0
+# B/reaper accepted 覆盖（2026-10-14 终审必补项）：worker 在盖章 pid 前死亡
+# （spawn→入口的 kill-9/OOM 窗口）会卡死 accepted——此前 reaper 谓词不含
+# accepted，死 pid 快路径与 2100s 兜底双双跳过，屏障永久占坑。盖章在 worker
+# 入口第一步，正常秒级完成；超此宽限仍无 pid 判定孤儿回收。误杀面（慢启动
+# worker 事后恢复）由等待循环入口守卫兜住：终态即零续写退出。
+_STALE_ACCEPTED_NO_PID_GRACE_S = 120.0
 # lifecycle_agency L6/L7（已删除）: 旧 `_VERIFY_MAX_ATTEMPTS=2` 让程序据核验
 # 结论自动重跑脚本并自动判终态——这是程序替模型做策略判断（违反 Q5），也是
 # "判据缺失被当失败"的来源。现 `_verify_restart_targets` 只产三态证据
@@ -1125,19 +1131,27 @@ class ManagedServiceDeploymentStore:
         生命周期加固（GOAL-20261008-f143e051）：优先按 worker_pid 存活判定——
         pid 已死且超过宽限即回收（秒级解锁屏障）；无 pid 的旧 action 或 pid
         复用等无法确认的场景回退原 2100s 时间窗。
+        accepted 覆盖（2026-10-14 终审）：accepted 与 waiting 同属零副作用
+        态，一并纳入回收——pid 死同快路径；无 pid 孤儿按
+        _STALE_ACCEPTED_NO_PID_GRACE_S 宽限回收（spawn→入口死亡窗口）。
         """
         now_ts = system_local_now().timestamp()
         stale_before = now_ts - (
             _REQUESTER_EXIT_TIMEOUT_S + _IDLE_TIMEOUT_S + _STALE_WAITING_MARGIN_S
         )
         pid_grace_before = now_ts - _STALE_PID_GRACE_S
+        accepted_no_pid_before = now_ts - _STALE_ACCEPTED_NO_PID_GRACE_S
         for path in sorted(self.actions_dir.glob("*.json")):
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 action = ServiceControlAction.from_dict(raw)
             except (OSError, ValueError):
                 continue
-            if action.status not in {"waiting_for_requester_exit", "waiting_for_idle"}:
+            if action.status not in {
+                "accepted",
+                "waiting_for_requester_exit",
+                "waiting_for_idle",
+            }:
                 continue
             try:
                 updated_ts = datetime.fromisoformat(action.updated_at).timestamp()
@@ -1151,6 +1165,19 @@ class ManagedServiceDeploymentStore:
             ):
                 reap_detail = (
                     f"stale waiting state reaped: worker pid {action.worker_pid} dead"
+                )
+            elif (
+                action.status == "accepted"
+                and action.worker_pid == 0
+                and updated_ts < accepted_no_pid_before
+            ):
+                # accepted 无 pid：worker 在 spawn→入口盖章间死亡（kill-9/OOM）
+                # 或极慢启动。盖章在入口第一步，正常秒级完成；超宽限仍无 pid
+                # 判定孤儿回收。误杀面（慢启动 worker 事后恢复）由等待循环
+                # 入口守卫兜住：终态即零续写退出。
+                reap_detail = (
+                    "stale accepted state reaped: worker never stamped pid; "
+                    "presumed dead (spawn→entry window)"
                 )
             elif updated_ts < stale_before:
                 reap_detail = "stale waiting state reaped: detached worker presumed dead"
@@ -2943,6 +2970,80 @@ def _consume_restart_failure_receipt(
 
 
 
+def _read_action_quietly(
+    store: ManagedServiceDeploymentStore, action_id: str
+) -> tuple[ServiceControlAction | None, bool]:
+    """三态读 action（B，2026-10-14）：``(record, readable)``。
+
+    readable=False 表示读异常（IO/corrupt）——异常≠缺失，不据此废弃健康
+    action，也不用旧对象续写；readable=True 且 record=None 表示记录已被
+    外部移除。
+    """
+    try:
+        return store.read_action(action_id), True
+    except (OSError, ValueError):
+        return None, False
+
+
+def _waiting_supersede_reason(
+    store: ManagedServiceDeploymentStore, action: ServiceControlAction
+) -> str | None:
+    """B：等待循环的 desired 绑定核验；返回废弃原因（None=继续等待）。
+
+    与 Phase3 lease 内复检同判据（deployment_id+generation 双重复核），
+    区别仅在时机：等待零物理副作用，desired 前进的第一时间即可废弃。
+    读异常≠缺失：desired 记录不可读时返回 None（继续轮询），防 IO 瞬断
+    或损坏误杀健康 action；记录缺失（None）则受理时的绑定永远无法满足，
+    同样废弃。
+    """
+    try:
+        deployment = store.read()
+    except (OSError, ValueError):
+        return None
+    if deployment is None:
+        return "desired deployment record missing while waiting"
+    if (
+        deployment.deployment_id != action.deployment_id
+        or deployment.generation != action.deployment_generation
+    ):
+        return (
+            "desired deployment advanced while waiting: "
+            f"bound_generation={action.deployment_generation} "
+            f"current_generation={deployment.generation}"
+        )
+    return None
+
+
+def _supersede_waiting_action(
+    store: ManagedServiceDeploymentStore, action_id: str, reason: str
+) -> None:
+    """B：把等待中的 action 经标准写路径置 failed（superseded）。
+
+    走 update_action（lease 内 fresh 重读 + §8.3 屏障释放钩子 + 终态事
+    件），不绕过写路径裸写。前置三态读仅允许在 accepted/waiting 态废弃；
+    已被 reaper 等先行关闭则不写——废弃与回收幂等收敛，不复活终态。
+    废弃失败保持现状：等待零副作用，reaper（含 accepted 覆盖）兜底回收，
+    不在此重试。
+    """
+    try:
+        current, readable = _read_action_quietly(store, action_id)
+        if not readable or current is None:
+            return
+        if current.status not in {
+            "accepted",
+            "waiting_for_requester_exit",
+            "waiting_for_idle",
+        }:
+            return
+        store.update_action(
+            action_id,
+            status="failed",
+            detail=f"superseded while waiting: {reason}",
+        )
+    except (OSError, ValueError, RuntimeError):
+        return
+
+
 def _wait_for(
     store: ManagedServiceDeploymentStore,
     action: ServiceControlAction,
@@ -2960,12 +3061,34 @@ def _wait_for(
     期间经 ``service_control(action=override, gate=...)`` 附证据推进，本循环
     非阻塞读取 action 上的 ``model_override`` 字段后按分级放行。
     """
+    # B（2026-10-14 终审）：入口 fresh 重读——已被外部关闭（终态）或删除
+    # 的 action 直接零续写退出，不得用旧对象复活终态（含屏障语义）。
+    # 读异常同样退出（零写入=不判死也不复活，重启意图由模型重发；与
+    # desired 读异常不判死的不对称是有意的：action 侧写即有复活风险）。
+    current, readable = _read_action_quietly(store, action.action_id)
+    if not readable or current is None or current.status in _TERMINAL_ACTION_STATUSES:
+        return False
+    action = current
     _mark_action(store, action, status=status)
     deadline = time.monotonic() + timeout_s
     while True:
+        # B：等待零副作用，desired 前进/记录缺失即可废弃（判据与 Phase3
+        # 复检一致，屏障占用从最长 ~1800s 收敛到 ≤ 一个 poll 间隔）；
+        # 读异常不判死。supersede 后 return，本 worker 零续写。
+        supersede_reason = _waiting_supersede_reason(store, action)
+        if supersede_reason is not None:
+            _supersede_waiting_action(store, action.action_id, supersede_reason)
+            return False
         state, probe_detail = _interpret_idle_probe(busy_probe())
         if state != "confirmed_busy":
             if state == "unconfirmable":
+                current, readable = _read_action_quietly(store, action.action_id)
+                if not readable:
+                    # 读异常：跳过记录性写入，仅按非忙碌推进
+                    return True
+                if current is None or current.status in _TERMINAL_ACTION_STATUSES:
+                    return False
+                action = current
                 # L22: "无法确认"≠"忙碌"——不阻塞推进，但如实记录事实供模型复核。
                 _mark_action(
                     store,
@@ -2977,11 +3100,16 @@ def _wait_for(
                     ),
                 )
             return True
-        try:
-            current = store.read_action(action.action_id)
-        except (OSError, ValueError):
-            current = None
-        overrides = _load_overrides(current.model_override) if current is not None else []
+        current, readable = _read_action_quietly(store, action.action_id)
+        if readable:
+            if current is None or current.status in _TERMINAL_ACTION_STATUSES:
+                # 已被 reaper/接管方关闭或删除：等待就此终止，不复活终态。
+                return False
+            action = current
+            overrides = _load_overrides(action.model_override)
+        else:
+            # 读异常≠缺失：本轮不判死也不续写，继续轮询。
+            overrides = []
         match = next((item for item in overrides if item.get("gate") == gate), None)
         if match is not None:
             remaining = [item for item in overrides if item.get("gate") != gate]

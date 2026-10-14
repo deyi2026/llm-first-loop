@@ -242,10 +242,13 @@ def test_publish_during_wait_supersedes_action_without_restart(
         thread.join(timeout=10)
 
     assert not thread.is_alive()
-    assert outcome["rc"] == 3
+    # B（2026-10-14）：supersede 从 Phase3 lease 复检（rc=3）提前到等待
+    # 循环（rc=1），语义等价——终态 failed、不执行 restart、证据链保留。
+    assert outcome["rc"] == 1
     final = store.read_action(action.action_id)
     assert final is not None
     assert final.status == "failed"
+    assert "superseded while waiting" in final.detail
     assert "advanced while waiting" in final.detail
     assert not (tmp_path / "marker.txt").exists()
 

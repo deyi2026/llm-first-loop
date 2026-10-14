@@ -81,7 +81,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
     "execute_command": "在独立 shell 执行命令；fail_fast=true 显式启用 bash -e -o pipefail 保留管道失败，否则退出码仅代表 shell 最后命令。后台启动返回 exact job_id；等终态用 wait(seconds,job_id)，查输出用 job_output；灾难性命令由硬安全边界阻断。",
-    "service_control": "共享Web/Feishu/Learning生命周期控制：status只读；publish发布新desired deployment（自动以当前代做CAS+干净git树+webui产物hash绑定）；restart异步走desired-state绑定的official restart（expected_generation可省略，缺省取当前代）；终态failed动作留下的屏障可被新restart接管（自恢复）。",
+    "service_control": "共享Web/Feishu/Learning生命周期控制：status只读（快照观察，CAS与受理复检才是权威）；publish发布新desired deployment（自动以当前代做CAS+干净git树+webui产物hash绑定）；restart异步走desired-state绑定的official restart（建议显式带expected_generation=最新status观察值，缺省取当前代）。generation冲突回执即当前事实：直接以回执current重试（存活owner≤一poll可过；死worker由reaper按30s/120s/2100s分档回收后可过），不等待、不询问；终态failed/等待中陈旧action的屏障由等待循环与reaper按档释放，新restart可接管（自恢复）。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
     "search_files": "按文件名/glob 或内容搜索当前工作区；默认排除 .tmp-ci/.backup/.worktrees 等旁路副本，需审这些副本时显式 root 到对应目录。pattern+content 表示先限定文件再搜内容。root 只接受搜索根目录，不能填文件路径；查单个已知文件内容用 root=<父目录> + pattern=<文件名> + content=<关键词>，或直接 read_file。path 只做精确存在/stat，不执行内容搜索。",
