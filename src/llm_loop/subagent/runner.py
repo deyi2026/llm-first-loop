@@ -2305,16 +2305,27 @@ class SubAgentRunner:
                     else:
                         executed = True
                         try:
+                            # EVO-20261014 子代理 effect 代际隔离：worker 线程经
+                            # copy_context 继承父 run 的 current_run_generation，
+                            # binding 会带父代去查子会话的 run_generation_authority
+                            # （子 sid 从未注册 → "" != 父代 → 全部 effect 工具被
+                            # unauthorized，文案误导为 "run lease fenced"，磁盘
+                            # lease 实则健康）。子代理会话不参与父 run-generation
+                            # CAS；其 effect 权威由 R1 fleet lease fence 承担。
+                            generation_token = current_run_generation.set("")
+                            try:
 
-                            with self._tool_journal.effect_context(
-                                session_id=sess.session_id,
-                                execution_id=execution_id,
-                                round_no=rounds,
-                                call=call,
-                                workspace_root=current_workspace_root.get(),
-                                lease_fence=self._fleet_lease_fence(sess.session_id),
-                            ):
-                                result = self.registry.execute(call)
+                                with self._tool_journal.effect_context(
+                                    session_id=sess.session_id,
+                                    execution_id=execution_id,
+                                    round_no=rounds,
+                                    call=call,
+                                    workspace_root=current_workspace_root.get(),
+                                    lease_fence=self._fleet_lease_fence(sess.session_id),
+                                ):
+                                    result = self.registry.execute(call)
+                            finally:
+                                current_run_generation.reset(generation_token)
                         except Exception as exc:  # noqa: BLE001 — 如实回传
                             result = ToolResult(
                                 status=ToolResultStatus.ERROR,
