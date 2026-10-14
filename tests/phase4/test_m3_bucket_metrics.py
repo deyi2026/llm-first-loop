@@ -214,7 +214,9 @@ def test_m3_aggregate_endpoint_buckets(build_test_engine):
         agg = hq.aggregate_interject_metrics("no-such-session")
     # Phase5 M2（§2.2.3）：桶集合扩展 llm_stream_interrupt（流内打断收割，
     # 判序最前独立统计）——Phase4 四桶语义不变。
+    # 可观测性 M1a（2026-10-14）：桶集合扩展 sync_window_poll（Phase6 M1 同步
+    # 窗口轮询收割独立成桶，ANALYSIS-20261014 §3-G1/评审 B7）——六桶全列口径。
     assert "buckets" in agg and set(agg["buckets"]) == {
         "interruptible", "natural_boundary", "llm_stream",
-        "llm_stream_interrupt", "idle"}
+        "llm_stream_interrupt", "sync_window_poll", "idle"}
     assert all("insufficient_sample" in v for v in agg["buckets"].values())

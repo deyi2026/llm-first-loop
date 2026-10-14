@@ -618,8 +618,15 @@ class HumanTurnQueue:
             # Phase5 M2（设计 §2.2.3）：llm_stream_interrupt（流内插话打断收割）
             # 判序最前——先于 interrupt_receipt，防跨轮残值 True 劫持新桶样本
             # （该消费点 interrupt_receipt 恒 False，双保险）。
+            # 可观测性 M1a（2026-10-14，G1 修复）：sync_window_poll（Phase6 M1
+            # 同步窗口轮询收割，engine L2080/L2094 写入、receipt 恒 False）独立
+            # 成桶——精确值 consumed_via 优先于布尔标记 interrupt_receipt，与
+            # 上面同理；此前落 else 误归 natural_boundary，两桶同时失真
+            # （docs/ANALYSIS-20261014-observability-m0-findings.md §3-G1）。
             if it.get("consumed_via") == "llm_stream_interrupt":
                 bucket = "llm_stream_interrupt"
+            elif it.get("consumed_via") == "sync_window_poll":
+                bucket = "sync_window_poll"
             elif it.get("interrupt_receipt"):
                 bucket = "interruptible"
             elif it.get("consumed_via") == "final_gate":
@@ -646,11 +653,14 @@ class HumanTurnQueue:
         buckets_out: dict[str, Any] = {}
         # Phase5 M2：汇总桶序追加 llm_stream_interrupt（打断收割路径，独立统计，
         # 与保守等待路径 llm_stream 分开，不互相冒充；合并视图另列总口径）。
+        # 可观测性 M1a：追加 sync_window_poll（同步窗口轮询收割，M0 评审 B7
+        # 六桶全列口径）。
         for b in (
             "interruptible",
             "natural_boundary",
             "llm_stream",
             "llm_stream_interrupt",
+            "sync_window_poll",
             "idle",
         ):
             effs = sorted(
