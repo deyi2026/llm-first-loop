@@ -2,12 +2,16 @@ English version of docs/ai_rules.md (Chinese: docs/ai_rules.md)
 
 # AI Autonomous Rules Checklist (T40 / M11 single rule source of truth: docs/ai_rules.md)
 
+> **⚠️ STATUS: STALE SNAPSHOT — annotated 2026-10-14. NOT the source of truth.**
+> The authoritative rule SoT is `docs/ai_rules.md` (Chinese). This English copy is a historical translation that has drifted out of sync: as of 2026-10-14 it is missing RULE-AI-28..32 (236 lines vs 600 in the Chinese SoT), and the mechanism it describes below (rules embedded in `core/prompt.py`, extensible via `SYSTEM_PROMPT_EXTRA`) no longer matches the current design (rules live in the document; the prompt does not mirror them).
+> For any conflict or gap, the Chinese SoT governs. Do not extend this file; new rules go into the Chinese SoT only.
+
 > Per the "program minimalism" principle (T38 review conclusion), the following decision logic is handed over from the program to **AI autonomous execution**.
 > The program retains only execution and truthful reporting; rules live in the document and are not re-implemented in the program.
 > These rules are embedded in the system prompt (`core/prompt.py`, with the corresponding sections carrying RULE-AI numbers),
 > and can be extended by layering via `SYSTEM_PROMPT_EXTRA` (custom sections are not included in this SoT check).
-> **Consistency maintenance**: this file is the single rule source of truth (SoT); `core/prompt.py` is its derived rendering;
-> rule changes must first update this file and then sync the prompt, with `tests/unit/test_ai_rules_sync.py` guarding against drift.
+> **Consistency maintenance** (historical mechanism, superseded by the stale-snapshot notice above): this file was then treated as the single rule source of truth (SoT); `core/prompt.py` was its derived rendering;
+> rule changes were to first update this file and then sync the prompt, with `tests/unit/test_ai_rules_sync.py` guarding against drift.
 
 ---
 

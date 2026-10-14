@@ -20,7 +20,7 @@
 | experimental | schedule / escalation 闭环 / source_synopsis / method_manage / refine_experience / search_records 卡片形态 | 回执与卡片字段可演进 |
 | EARLY ACCESS | fix_loop、workflow_run、dsh_task（report_format）、browser_perceive 的 vision 投影 | 可能撤回或重写；工作流须自带降级路径 |
 
-规则条目：docs/ai_rules.md 为唯一 SoT（RULE-AI-00..30），版本化演进；规则可经 search_records(kind=rule) 按需水合——可检索 ≠ 可注入（L2-2）。
+规则条目：docs/ai_rules.md 为唯一 SoT（RULE-AI-00..32，截至 2026-10-14），版本化演进；规则可经 search_records(kind=rule) 按需水合——可检索 ≠ 可注入（L2-2）。
 
 ## 本轮为何不触发 L2-2/L2-6 准入门（ELIG 说明）
 
