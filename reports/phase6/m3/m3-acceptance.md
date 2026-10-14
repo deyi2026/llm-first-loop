@@ -1,6 +1,6 @@
 # Phase6 M3 度量验收（T1/T2/T3）
 
-- T1 sync_window_poll：n=10，P50=20.5ms（门≤100，基线 B1=859.3），P95=58.3ms（门≤200）→ PASS
+- T1 sync_window_poll：n=10，P50=24.9ms（门≤100，基线 B1=859.3），P95=62.4ms（门≤200）→ PASS
 - T2 窗口内 Stop：n=10，P50=31.2ms（门≤100，基线 B2=915.3），四态取消语义断言通过 → PASS
 - T3 零语义降级：S1/S2/S3/S7/S8/S9/W3 单测锁定；全量回归门=M4 → PASS
 
