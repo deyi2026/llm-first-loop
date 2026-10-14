@@ -1746,8 +1746,22 @@
 
 .v2-evo-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
   padding: 2px 6px;
+}
+
+.v2-evo-body:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
+}
+
+.v2-evo-receipt,
+.v2-evo-action-msg {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .v2-evo-item {
