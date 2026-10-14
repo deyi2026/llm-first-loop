@@ -524,6 +524,20 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+## 规则三十二：共享文件格式化纪律——禁全文件 ruff format，hunk 级最小化或独立提交（RULE-AI-32，EVO-20261014-a731be2b 2026-10-14 人工批准）
+
+**规则**：对**非本次任务新引入**的文件（共享/存量文件），禁止 `ruff format <file>` 全文件重排操作；格式化只允许作用于本次任务实际新增或修改的 hunk。确需对共享文件全文件 format 时：先 `ruff format --diff` 评估影响面，并作为**独立提交**（不与语义改动混合），提交说明写明评估结论。
+
+1. **动机事实**：HEAD 若本就非 format-clean，全文件 format 会引入大量无关 diff（2026-10-14 可观测性 M1b 实测 ~400 行），污染交付物审查面，干扰守卫棘轮与代码审查的变更归因（记录见 docs/ANALYSIS-20261014-observability-m0-findings.md §7）。
+2. **边界**：本条管操作纪律（何时允许全文件 format），不改 ruff 配置本身；本次任务新引入的文件不受限。
+3. **护栏层（可选，未实施）**：arch guard 启发式检测「守卫范围 diff 中 format-only hunk 占比超阈值且非新文件」——误报率与维护成本未评估，按建议原文保留为可选后续；若未来实施需再过演进审批。
+
+**程序角色**：无新增（规则层条款化，通过 RULE 卡检索命中）。
+**正例**：共享文件新增 30 行守卫代码，新增行手动保持风格一致、不动其余行；确需整理该文件历史格式 → `ruff format --diff src/x.py` 评估 → 独立 commit「style: format src/x.py（评估 N 行，纯格式）」。
+**反例**：修一个函数后顺手 `ruff format src/llm_loop/engine.py` 全文件，把 ~400 行无关重排混入语义提交。
+
+---
+
 ## 配置扩展（2026-09-03 agency-first 修订）
 
 Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。
