@@ -1,0 +1,379 @@
+{
+ "started_at": "2026-10-14T12:39:27",
+ "model": "glm/glm-5.3-flash",
+ "scenarios": [
+  {
+   "name": "A_interruptible",
+   "message": "请立即使用 execute_command 工具前台执行命令：sleep 25 && echo LFL_SAMPLE_DONE 。等待完成后把 stdout 原样告诉我。不要后台运行，不要做其它事。",
+   "session_id": "9a5ce0cb-15f6-49e2-a9dd-ddbc42b5f3a2",
+   "sse_err": null,
+   "trigger_wait_s": 9.37,
+   "state_at_trigger": {
+    "deltas": 0,
+    "reasoning": 19,
+    "tool_rounds": 1,
+    "tool_round_names": [
+     "execute_command"
+    ]
+   },
+   "enqueue": {
+    "queue_id": "q_e4361caff147",
+    "position": 1
+   },
+   "interject": {
+    "state": "interject_pending",
+    "grade": "accepted"
+   },
+   "run_done": true,
+   "answer_snip": "None",
+   "queue_terminal": {
+    "status": "interject_received",
+    "consumed_via": "round_start",
+    "interrupt_receipt": true,
+    "interject_requested_at": 1791952777.7323258,
+    "received_at": 1791952777.934805,
+    "applied_at": 1791952790.192825
+   },
+   "session_metrics": {
+    "ok": true,
+    "session_id": "9a5ce0cb-15f6-49e2-a9dd-ddbc42b5f3a2",
+    "n": 1,
+    "items": [
+     {
+      "queue_id": "q_e4361caff147",
+      "grade": "applied",
+      "t_ack_ms": 62.5,
+      "t_persist_ms": 202.5,
+      "t_effect_ms": 265.0,
+      "t_applied_ms": 12523.0,
+      "bucket": "interruptible"
+     }
+    ],
+    "p50_t_ack_ms": 62.5,
+    "p95_t_ack_ms": 62.5,
+    "p50_t_persist_ms": 202.5,
+    "p95_t_persist_ms": 202.5,
+    "p50_t_effect_ms": 265.0,
+    "p95_t_effect_ms": 265.0,
+    "p50_t_applied_ms": 12523.0,
+    "p95_t_applied_ms": 12523.0,
+    "buckets": {
+     "interruptible": {
+      "n": 1,
+      "p50_t_effect_ms": 265.0,
+      "p95_t_effect_ms": 265.0,
+      "insufficient_sample": true
+     },
+     "natural_boundary": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "llm_stream": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "llm_stream_interrupt": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "sync_window_poll": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "idle": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     }
+    }
+   }
+  },
+  {
+   "name": "B_stream_interrupt",
+   "message": "请写一篇约 1500 字的说明文，主题：可观测性为什么对 Agent 系统重要。直接输出全文，不要调用任何工具。",
+   "session_id": "c3945015-b1fd-4a4f-ae30-0d2fb1b21886",
+   "sse_err": null,
+   "trigger_wait_s": 36.02,
+   "state_at_trigger": {
+    "deltas": 12,
+    "reasoning": 430,
+    "tool_rounds": 0,
+    "tool_round_names": []
+   },
+   "enqueue": {
+    "queue_id": "q_208c50a442c8",
+    "position": 1
+   },
+   "interject": {
+    "state": "interject_pending",
+    "grade": "accepted"
+   },
+   "run_done": true,
+   "answer_snip": "None",
+   "queue_terminal": {
+    "status": "interject_received",
+    "consumed_via": "llm_stream_interrupt",
+    "interject_requested_at": 1791952919.816365,
+    "received_at": 1791952919.8723252,
+    "applied_at": 1791952927.389086
+   },
+   "session_metrics": {
+    "ok": true,
+    "session_id": "c3945015-b1fd-4a4f-ae30-0d2fb1b21886",
+    "n": 1,
+    "items": [
+     {
+      "queue_id": "q_208c50a442c8",
+      "grade": "applied",
+      "t_ack_ms": 8.4,
+      "t_persist_ms": 56.0,
+      "t_effect_ms": 64.4,
+      "t_applied_ms": 7581.1,
+      "bucket": "llm_stream_interrupt"
+     }
+    ],
+    "p50_t_ack_ms": 8.4,
+    "p95_t_ack_ms": 8.4,
+    "p50_t_persist_ms": 56.0,
+    "p95_t_persist_ms": 56.0,
+    "p50_t_effect_ms": 64.4,
+    "p95_t_effect_ms": 64.4,
+    "p50_t_applied_ms": 7581.1,
+    "p95_t_applied_ms": 7581.1,
+    "buckets": {
+     "interruptible": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "natural_boundary": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "llm_stream": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "llm_stream_interrupt": {
+      "n": 1,
+      "p50_t_effect_ms": 64.4,
+      "p95_t_effect_ms": 64.4,
+      "insufficient_sample": true
+     },
+     "sync_window_poll": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "idle": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     }
+    }
+   }
+  },
+  {
+   "name": "C_stream_tail",
+   "message": "请写一篇约 2000 字的综述，主题：时间敏感系统的时延度量方法。直接输出全文，不要调用任何工具。",
+   "session_id": "d4f7a36b-ed8f-49fe-aa43-e37f0a28f676",
+   "sse_err": null,
+   "trigger_wait_s": 69.82,
+   "state_at_trigger": {
+    "deltas": 300,
+    "reasoning": 693,
+    "tool_rounds": 0,
+    "tool_round_names": []
+   },
+   "enqueue": {
+    "queue_id": "q_c96e795075a8",
+    "position": 1
+   },
+   "interject": {
+    "http_error": 409,
+    "body": "{\"ok\":false,\"error\":\"interject_no_live_run\",\"detail\":\"当前会话没有可接收插话的运行任务；消息仍保留在排队中\"}"
+   },
+   "run_done": true,
+   "answer_snip": "None",
+   "queue_terminal": {
+    "status": "completed"
+   },
+   "session_metrics": {
+    "ok": true,
+    "session_id": "d4f7a36b-ed8f-49fe-aa43-e37f0a28f676",
+    "n": 0,
+    "items": [],
+    "p50_t_ack_ms": null,
+    "p95_t_ack_ms": null,
+    "p50_t_persist_ms": null,
+    "p95_t_persist_ms": null,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "p50_t_applied_ms": null,
+    "p95_t_applied_ms": null,
+    "buckets": {
+     "interruptible": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "natural_boundary": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "llm_stream": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "llm_stream_interrupt": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "sync_window_poll": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     },
+     "idle": {
+      "n": 0,
+      "p50_t_effect_ms": null,
+      "p95_t_effect_ms": null,
+      "insufficient_sample": true
+     }
+    }
+   }
+  }
+ ],
+ "global_before": {
+  "ok": true,
+  "scope": "global",
+  "session_id": null,
+  "n": 62,
+  "sessions_in_window": 38,
+  "window_terminal_cap": 500,
+  "p50_t_ack_ms": 1880.5,
+  "p95_t_ack_ms": 28948.9,
+  "p50_t_persist_ms": 11494.0,
+  "p95_t_persist_ms": 70923.2,
+  "p50_t_effect_ms": 16013.0,
+  "p95_t_effect_ms": 125139.3,
+  "p50_t_applied_ms": 80084.7,
+  "p95_t_applied_ms": 101687.9,
+  "buckets": {
+   "interruptible": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "natural_boundary": {
+    "n": 57,
+    "p50_t_effect_ms": 17803.5,
+    "p95_t_effect_ms": 346305.4,
+    "insufficient_sample": false
+   },
+   "llm_stream": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "llm_stream_interrupt": {
+    "n": 4,
+    "p50_t_effect_ms": 1751.3,
+    "p95_t_effect_ms": 4274.9,
+    "insufficient_sample": true
+   },
+   "sync_window_poll": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "idle": {
+    "n": 1,
+    "p50_t_effect_ms": 1847.3,
+    "p95_t_effect_ms": 1847.3,
+    "insufficient_sample": true
+   }
+  }
+ },
+ "global_after": {
+  "ok": true,
+  "scope": "global",
+  "session_id": null,
+  "n": 64,
+  "sessions_in_window": 40,
+  "window_terminal_cap": 500,
+  "p50_t_ack_ms": 1869.5,
+  "p95_t_ack_ms": 28948.9,
+  "p50_t_persist_ms": 11480.8,
+  "p95_t_persist_ms": 70923.2,
+  "p50_t_effect_ms": 15905.5,
+  "p95_t_effect_ms": 125139.3,
+  "p50_t_applied_ms": 39160.4,
+  "p95_t_applied_ms": 101687.9,
+  "buckets": {
+   "interruptible": {
+    "n": 1,
+    "p50_t_effect_ms": 265.0,
+    "p95_t_effect_ms": 265.0,
+    "insufficient_sample": true
+   },
+   "natural_boundary": {
+    "n": 57,
+    "p50_t_effect_ms": 17803.5,
+    "p95_t_effect_ms": 346305.4,
+    "insufficient_sample": false
+   },
+   "llm_stream": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "llm_stream_interrupt": {
+    "n": 5,
+    "p50_t_effect_ms": 1751.3,
+    "p95_t_effect_ms": 4274.9,
+    "insufficient_sample": false
+   },
+   "sync_window_poll": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "idle": {
+    "n": 1,
+    "p50_t_effect_ms": 1847.3,
+    "p95_t_effect_ms": 1847.3,
+    "insufficient_sample": true
+   }
+  }
+ }
+}

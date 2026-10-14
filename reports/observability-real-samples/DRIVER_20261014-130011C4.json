@@ -1,0 +1,113 @@
+{
+ "scenarios": [
+  {
+   "idx": 1,
+   "sid": "2b1da00f-5dbd-46b3-9e07-4399115ad275",
+   "deltas": 260,
+   "fired": true,
+   "fire_result": {
+    "qid": "q_a5aff6bde7b9",
+    "ij": {
+     "ok": true,
+     "queue_id": "q_a5aff6bde7b9",
+     "state": "interject_pending",
+     "grade": "accepted",
+     "grade_reason": "受理≠生效：已进入 live run 信箱；生效分级见 GET /api/v1/chat/queue/item"
+    },
+    "t_req": 1791954161.838322
+   },
+   "terminal": {
+    "status": "interject_received",
+    "consumed_via": "llm_stream_interrupt",
+    "interject_requested_at": 1791954161.8468962,
+    "received_at": 1791954161.897457,
+    "applied_at": 1791954167.7155461
+   }
+  },
+  {
+   "idx": 2,
+   "sid": "43f4ed00-5d4a-4aa2-95c8-c83a0ab02fe2",
+   "deltas": 718,
+   "fired": true,
+   "fire_result": {
+    "qid": "q_45c79dba9f4c",
+    "ij": {
+     "ok": true,
+     "queue_id": "q_45c79dba9f4c",
+     "state": "interject_pending",
+     "grade": "accepted",
+     "grade_reason": "受理≠生效：已进入 live run 信箱；生效分级见 GET /api/v1/chat/queue/item"
+    },
+    "t_req": 1791954250.5489569
+   },
+   "terminal": {
+    "status": "interject_received",
+    "consumed_via": "llm_stream_interrupt",
+    "interject_requested_at": 1791954250.608963,
+    "received_at": 1791954250.782229,
+    "applied_at": 1791954410.99981
+   }
+  },
+  {
+   "idx": 3,
+   "sid": "1fb88c99-189e-47ad-b104-a278512b7705",
+   "deltas": 225,
+   "fired": false,
+   "fire_result": null
+  }
+ ],
+ "global_after": {
+  "ok": true,
+  "scope": "global",
+  "session_id": null,
+  "n": 66,
+  "sessions_in_window": 42,
+  "window_terminal_cap": 500,
+  "p50_t_ack_ms": 1867.0,
+  "p95_t_ack_ms": 28948.9,
+  "p50_t_persist_ms": 11106.9,
+  "p95_t_persist_ms": 70923.2,
+  "p50_t_effect_ms": 15707.7,
+  "p95_t_effect_ms": 125139.3,
+  "p50_t_applied_ms": 39160.4,
+  "p95_t_applied_ms": 160433.1,
+  "buckets": {
+   "interruptible": {
+    "n": 1,
+    "p50_t_effect_ms": 265.0,
+    "p95_t_effect_ms": 265.0,
+    "insufficient_sample": true
+   },
+   "natural_boundary": {
+    "n": 57,
+    "p50_t_effect_ms": 17803.5,
+    "p95_t_effect_ms": 346305.4,
+    "insufficient_sample": false
+   },
+   "llm_stream": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "llm_stream_interrupt": {
+    "n": 7,
+    "p50_t_effect_ms": 215.6,
+    "p95_t_effect_ms": 4274.9,
+    "insufficient_sample": false
+   },
+   "sync_window_poll": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "idle": {
+    "n": 1,
+    "p50_t_effect_ms": 1847.3,
+    "p95_t_effect_ms": 1847.3,
+    "insufficient_sample": true
+   }
+  }
+ }
+}

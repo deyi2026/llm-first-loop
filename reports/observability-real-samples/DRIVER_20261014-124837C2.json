@@ -1,0 +1,89 @@
+{
+ "started_at": "2026-10-14T12:48:37",
+ "scenarios": [
+  {
+   "idx": 1,
+   "sid": "bebc43b2-5b30-4a78-8a82-eccf8827597f",
+   "qid": "q_736f3329ff4f",
+   "deltas_at_fire": 573,
+   "stall_s": 0.35,
+   "interject": {
+    "http": 409,
+    "body": "{\"ok\":false,\"error\":\"interject_no_live_run\",\"detail\":\"当前会话没有可接收插话的运行任务；消息仍保留在排队中\"}"
+   },
+   "terminal": {
+    "status": "queued"
+   },
+   "run_done": true
+  },
+  {
+   "idx": 2,
+   "sid": "87f4362a-423e-4568-b351-8265ce71e5e6",
+   "qid": "q_9d223a2a991c",
+   "deltas_at_fire": 279,
+   "stall_s": 0.35,
+   "interject": {
+    "http": 409,
+    "body": "{\"ok\":false,\"error\":\"interject_no_live_run\",\"detail\":\"当前会话没有可接收插话的运行任务；消息仍保留在排队中\"}"
+   },
+   "terminal": {
+    "status": "queued"
+   },
+   "run_done": true
+  }
+ ],
+ "global_after": {
+  "ok": true,
+  "scope": "global",
+  "session_id": null,
+  "n": 64,
+  "sessions_in_window": 40,
+  "window_terminal_cap": 500,
+  "p50_t_ack_ms": 1869.5,
+  "p95_t_ack_ms": 28948.9,
+  "p50_t_persist_ms": 11480.8,
+  "p95_t_persist_ms": 70923.2,
+  "p50_t_effect_ms": 15905.5,
+  "p95_t_effect_ms": 125139.3,
+  "p50_t_applied_ms": 39160.4,
+  "p95_t_applied_ms": 101687.9,
+  "buckets": {
+   "interruptible": {
+    "n": 1,
+    "p50_t_effect_ms": 265.0,
+    "p95_t_effect_ms": 265.0,
+    "insufficient_sample": true
+   },
+   "natural_boundary": {
+    "n": 57,
+    "p50_t_effect_ms": 17803.5,
+    "p95_t_effect_ms": 346305.4,
+    "insufficient_sample": false
+   },
+   "llm_stream": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "llm_stream_interrupt": {
+    "n": 5,
+    "p50_t_effect_ms": 1751.3,
+    "p95_t_effect_ms": 4274.9,
+    "insufficient_sample": false
+   },
+   "sync_window_poll": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "idle": {
+    "n": 1,
+    "p50_t_effect_ms": 1847.3,
+    "p95_t_effect_ms": 1847.3,
+    "insufficient_sample": true
+   }
+  }
+ }
+}

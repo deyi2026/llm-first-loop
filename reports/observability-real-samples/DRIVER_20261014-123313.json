@@ -1,0 +1,80 @@
+{
+ "started_at": "2026-10-14T12:33:13",
+ "scenarios": [
+  {
+   "name": "A_interruptible",
+   "prev_current": null,
+   "message": "请立即使用 execute_command 工具前台执行命令：sleep 25 && echo LFL_SAMPLE_DONE 。等待它完成，然后把 stdout 原样告诉我。不要用后台运行，不要做其它事。",
+   "session_id": null,
+   "error": "session id 未发现"
+  },
+  {
+   "name": "B_stream_interrupt",
+   "prev_current": null,
+   "message": "请写一篇约 1500 字的说明文，主题：可观测性为什么对 Agent 系统重要。直接输出全文正文，不要调用任何工具。",
+   "session_id": null,
+   "error": "session id 未发现"
+  },
+  {
+   "name": "C_stream_tail",
+   "prev_current": null,
+   "message": "请写一篇约 2000 字的综述，主题：时间敏感系统的时延度量方法。直接输出全文正文，不要调用任何工具。",
+   "session_id": null,
+   "error": "session id 未发现"
+  }
+ ],
+ "global_after": {
+  "ok": true,
+  "scope": "global",
+  "session_id": null,
+  "n": 62,
+  "sessions_in_window": 38,
+  "window_terminal_cap": 500,
+  "p50_t_ack_ms": 1880.5,
+  "p95_t_ack_ms": 28948.9,
+  "p50_t_persist_ms": 11494.0,
+  "p95_t_persist_ms": 70923.2,
+  "p50_t_effect_ms": 16013.0,
+  "p95_t_effect_ms": 125139.3,
+  "p50_t_applied_ms": 80084.7,
+  "p95_t_applied_ms": 101687.9,
+  "buckets": {
+   "interruptible": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "natural_boundary": {
+    "n": 57,
+    "p50_t_effect_ms": 17803.5,
+    "p95_t_effect_ms": 346305.4,
+    "insufficient_sample": false
+   },
+   "llm_stream": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "llm_stream_interrupt": {
+    "n": 4,
+    "p50_t_effect_ms": 1751.3,
+    "p95_t_effect_ms": 4274.9,
+    "insufficient_sample": true
+   },
+   "sync_window_poll": {
+    "n": 0,
+    "p50_t_effect_ms": null,
+    "p95_t_effect_ms": null,
+    "insufficient_sample": true
+   },
+   "idle": {
+    "n": 1,
+    "p50_t_effect_ms": 1847.3,
+    "p95_t_effect_ms": 1847.3,
+    "insufficient_sample": true
+   }
+  }
+ }
+}

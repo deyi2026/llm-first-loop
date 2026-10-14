@@ -235,3 +235,35 @@ G1 修法与单测、验收门）；评审后定验收门再实施。
 - 防误读注记：面板 t_effect P50=16s 量级是「请求→消费」全时延口径（含排队与
   当前轮次时长），与 Phase6 T1 门（fake 窗口注入→检查点消费，30ms）非同口径，
   不构成门比对。
+
+## 9. 真实样本补全战役（2026-10-14 午，glm-5.3-flash 定向驱动）
+
+用户批准项：用 glm-5.3-flash 真实会话补全 interruptible/llm_stream 桶样本。
+驱动方法（工件 reports/observability-real-samples/，DRIVER×5 + GLOBAL_METRICS×2）：
+经生产 web 服务（:8903）真实 run，SSE 监听 run_started/answer_delta/tool_round，
+按场景时机 enqueue + **POST /api/v1/chat/queue/interject（携带 run_generation）**。
+
+**关键接线事实**（驱动踩坑结论）：纯 `POST /chat/queue` **不进**引擎插话信箱——
+排队项在 run 结束后被 QueueServerFallback 以普通轮认领跑掉（claimed_by=
+server-fallback，无插话语义、不落桶）。入桶必须经 /interject 端点显式递交
+live run 信箱（run_generation 从 SSE run_started 事件取）。
+
+战果（全局 n：战役前→后）：
+
+| 桶 | 前→后 | 归因证据 |
+|---|---|---|
+| interruptible | 0→**1** | sleep-25 执行期递交：interrupt_receipt=True、consumed_via=round_start、t_ack=202ms（与 §8.1 单测 P50=207ms 一致） |
+| llm_stream_interrupt | 4→**7** | 流中/流晚发射 3 次，t_ack=51~174ms |
+| llm_stream(final_gate) | 0→**0** | 7 次定向尝试全部 miss（见下） |
+| natural_boundary / idle / sync_window_poll | 不变 | 未扰动 |
+
+**llm_stream=0 的机制结论（结构性近零，非采样不足）**：final_gate 收割窗
+被两侧夹死——流中可达的插话全部被 Phase5 流内检查点先占收割（t_ack 实测
+51~174ms，桶归 llm_stream_interrupt）；等流「停顿 ≥0.35s」再发射则在轮结算
+之后到达（409 interject_no_live_run ×2，server-fallback 普通轮跑掉）；0.15s
+微停顿事件驱动发射 3 次均命中流中段 pause → 仍被检查点先占。窗口实测上界
+<350ms 且被先占。**面板解读口径**：当前拓扑（流式 provider + Phase5 检查点
+默认开）下 llm_stream≈0 是健康形态；与 sync_window_poll=0（通道退役、
+不存在）成因不同——这里是「竞速窗被先占」。两桶均应标注结构性零而非
+「无样本」。
+
