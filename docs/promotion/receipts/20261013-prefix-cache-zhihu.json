@@ -1,0 +1,42 @@
+{
+  "article": "AI 每次回答都重读整个对话——为什么你的账单没爆",
+  "source_md": "docs/promotion/20261013-prefix-cache-kepu.md",
+  "platform": "zhihu",
+  "url": "https://zhuanlan.zhihu.com/p/2093486494619013424",
+  "published_at": "2026-10-13T23:40:00+08:00",
+  "ai_declaration": "包含 AI 辅助创作 作者对内容负责",
+  "prepublish_gate": {
+    "title": "AI 每次回答都重读整个对话——为什么你的账单没爆",
+    "textLen": 1976,
+    "headings": 5,
+    "imgs": 0
+  },
+  "public_verify": {
+    "fetch": 200,
+    "doc_chars": 150484,
+    "title_hit": true,
+    "h2": 5,
+    "keys_hit": [
+      "前缀缓存（prefix caching）",
+      "缓存命中 0.006 美元",
+      "5 分钟",
+      "绝不跨组织",
+      "核实日期 2026 年 10 月 13 日"
+    ],
+    "keys_miss": []
+  },
+  "notes": "纯文本无插图；发布后编辑器标签自动跳转线上 URL；首次回读 404 是发布中，完成后 200。",
+  "history": [
+    {
+      "ts": "2026-10-14T00:49+08:00",
+      "action": "补配图（用户新增需求）",
+      "method": "创作者中心内容管理→编辑→Draft paste 插图→更新",
+      "imgs": [
+        "https://pic4.zhimg.com/v2-7ed80a40_l.png (fig1)",
+        "https://pic2.zhimg.com/v2-3af43844_l.png (fig2)"
+      ],
+      "url": "https://zhuanlan.zhihu.com/p/2093486494619013424",
+      "note": "AI 声明在更新时需重设(编辑器默认'无声明'回填丢失)，已选回'包含 AI 辅助创作'；URL 不变"
+    }
+  ]
+}

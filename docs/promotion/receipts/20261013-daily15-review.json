@@ -1,0 +1,22 @@
+{
+  "status": "PASS_WITH_UNVERIFIED",
+  "reviewer": "independent LFL Web new session; glm/glm-5.3",
+  "session_id": "35de72fa-dead-41ed-83a1-dadad7d1952a",
+  "review_text": "# 审稿结论：**PASS**\n\n审稿人：独立 LFL 会话（只读）。全部核验基于本轮工具实测回执，未调用任何写入/发布/重启/删除/外部计费工具。\n\n## 一、SHA 与版本锁定（已验证）\n\n`sha256sum` 实测 8/8 文件与送审索引完全一致，字节数逐一吻合（7208/2852/97888/101118/88232/102387/98007/106987）。磁盘文本与送审正文一致，审的即是锁定版本。\n\n## 二、逐项核查依据\n\n**1. 事实与营销语边界（过）**：全文无\"领先/最快/最省\"式性能断言；第五节\"真实案例\"有工程报告+原始日志+源码+测试四重支撑；第七节明写\"这是评价框架的建议，不是 LFL 已经实现同业领先的证据\"（L97）。\"隐形账本\"\"最会骗人的统计图\"属修辞，不构成产品宣称。\n\n**2. 数字自洽（过，全部独立复算）**：\n- D07：1,069,021 + 63,273 = 1,132,294 ✓；1,069,021 ÷ 1,132,294 = 94.4120% → 94.41% ✓\n- 用被引模块 `summarize_physical_provider_usage` 直接重放原始 `data/event_logs/subagent_c0488e1c1d83.jsonl`：23 逻辑调用 / 31 已结算物理尝试 / opened 0 / 冲突 0 / 输入 1,132,294 / 输出 25,312 / 缓存 1,069,021 / 未缓存 63,273 / 94.41% / 262,930.4ms，`by_model` 仅 `minimax/MiniMax-M3.1-Flash-Preview` 一桶——与文章表格、RESULT-20261012 报告**逐项一致**\n- 图45：90,000/100,000=90%，未缓存段 10,000 自洽；图46：103,000=100,000+3,000 自洽\n\n**3. 图注准确性（过，逐图视觉审图）**：本会话有图像读取工具，已实际读图。fig43 分叉结构与图注相符且图内标\"示意\"、无任何百分比/Token 数；fig44 恰为 3 蓝卡→5 白卡映射并标\"假想案例\"、底部明写\"5 次物理尝试 ≠ 5 笔收费\"；fig45 四个数字齐全并标\"假想例子\"、标题即否定\"打 1 折\"；fig46 为 **2×2 田字格布局**，\"四象限\"图注用词准确；fig47 三状态与图注一一对应，含\"缺缓存字段则标未知\"；fig48 恰好六问、无厂商/模型/百分比断言。6 图均 1200×740 PNG，与来源文档声明一致。\n\n**4. 模拟与真实严格隔离（过）**：正文 L11\"教学示例\"、L27\"假设数字\"、L37\"图上假设\"、L53\"有真实记录，不再是假想数字\"、L103 声明图 43–46 为解释性示意图；图内分别自带\"示意/假想案例/假想例子/假设数据\"标注，图文双侧闭环。\n\n**5. MiniMax D07 不外推 GLM（过）**：文章 L57、L103，RESULT L64–65 三处声明；且我的复算显示模型桶仅 MiniMax 一项，客观上无可外推基础。\n\n**6. 未结算/冲突/缺字段不记 0（过，代码级验证）**：`provider_transport_usage_stats.py` L144–151 `finalize` 仅在覆盖完整时给出 `cache_hit_rate`，否则 `None`；L87–89 冲突 attempt 不入合计；L117–131 opened 未结算单列并禁用\"完整\"声明；docstring 明写\"NEVER a fabricated 0% miss\"。测试文件恰 6 个用例且断言逐条覆盖上述行为，本机实跑 **6 passed (0.04s)**，复现来源文档声明。\n\n**7. 作者观点标注（过）**：L97 显式\"作者观点：\"前缀+边界声明。\n\n**8. 标题不夸大（过）**：\"问一句，后台跑了几次？Agent 的隐形账本\"为疑问句+比喻，无最高级、无量化承诺。\n\n**9. AI 声明（过）**：L105 存在，含\"示意图并非实时产品截图\"与\"公开发表前须逐项核对\"，与本次独立审稿流程吻合。\n\n**10. 图文密度（过）**：约 7.2KB 正文 / 7 节 / 6 图，每图紧邻对应论述并配独立图注行，密度合理。\n\n**11. 发布日期（过）**：文章与来源文档均 2026-10-13（Asia/Shanghai），与当前日期一致；引用的工程报告日期 2026-10-12 与文件名/内容一致；D07 原始会话首事件 ts 为 2026-10-11，文章仅称\"历史会话\"，无日期错误。绘图脚本 `docs/promotion/figures/_d15.py` 存在（9696B）。\n\n## 三、本轮无法独立验证（UNVERIFIED）\n\n1. **\"旧的子代理会话统计显示缓存命中为零\"（正文 L55）**：依据为 RESULT L9–10 的声明（child Assistant 消息 `tokens_cache_hit` 全 0），但我在该 jsonl 中实测 `tokens_cache_hit` 字段出现 0 次，此历史统计显示状态无法从现有只读材料独立复现。不涉及文中任何表格数字。\n2. **发布后验收项**（真实平台 URL、完整正文、六图实际上线、AI 声明随发、头条/知乎查重）：尚未发生，本轮不可验证；来源文档亦将其列为发布后条件，符合闸门要求。\n3. **像素级逐字符比对**：视觉审图基于 `read_image` 机器转述，已与图注、正文数字交叉印证，但未做逐像素字形校对（个别标点/字重不在保证范围）。\n\n**最终判定：PASS**（附上述 3 项 UNVERIFIED 边界，均不构成修改理由）。",
+  "artifact_sha256": {
+    "docs/promotion/20261013-lfl-daily-15.md": "00e0e3c810ca8ad1572112b8f960c80d7981dd1347bfe13dc43ccf9bff73683b",
+    "docs/promotion/20261013-daily15-sources.md": "0c2d5fc7ca8bdc2b783043503f5e7b495fec9b5df0a0d0dd49a78e895af66b8e",
+    "docs/promotion/img/fig43-one-prompt-many-calls.png": "90e2cdd3155536aac9670ceff1e4bf2e9f6d197484084f7b144fa1d7286dc998",
+    "docs/promotion/img/fig44-logical-vs-physical.png": "4028eb8aab4391542ae59013a33817dd5107c0a9bd45179e386cb52c9d1b45c8",
+    "docs/promotion/img/fig45-cache-not-free.png": "35ba173fbcb1fbdaeaf707c1dd6fa597097dff9528a8108522bc30d55b985cfc",
+    "docs/promotion/img/fig46-four-denominators.png": "e428ec14e158a88160faa5a9f4a450e16d187e5f39322d35bd8d4495d152d758",
+    "docs/promotion/img/fig47-receipt-evidence-states.png": "829b25fdb13319339bdd5c63de7fc8762018698bb53b58ed6059e6d2bfed71eb",
+    "docs/promotion/img/fig48-six-questions.png": "aacb622d7ad01cc81e69240ce9fe873b1b31fb9094e06c268eee93eaf7056550"
+  },
+  "independent_audit": "GET /api/v1/sessions/{id}/messages after original synchronous caller timed out; no second provider request",
+  "unverified": [
+    "old UI 0% historic display independently not reproduced",
+    "public publication pending",
+    "pixel-level typography beyond image semantic review"
+  ]
+}

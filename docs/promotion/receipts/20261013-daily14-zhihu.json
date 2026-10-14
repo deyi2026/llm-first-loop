@@ -1,0 +1,60 @@
+{
+  "item": "20261013-第14期 原创科普《把程序从大脑降级为手脚：Agent 运行时的反直觉赌注》",
+  "platform": "zhihu",
+  "date": "2026-10-13",
+  "status": "published",
+  "title": "把程序从大脑降级为手脚：Agent 运行时的反直觉赌注",
+  "title_len": 27,
+  "source_md": "docs/promotion/20261013-lfl-daily-14.md",
+  "source_md_sha256": "c5c84929fdf474f929e975d00e917d2e02c31b4e30c578f5e09c5270b8135cb0",
+  "source_html": "docs/promotion/20261013-lfl-daily-14.html",
+  "source_html_sha256": "d6e3bcbc717a2528da3e009d11a5296dfcffbc77197d3e3e1de3449f7f93883f",
+  "ledger": "docs/promotion/20261013-daily14-sources.md",
+  "review": {
+    "subagent": "subagent_a0f65901309b",
+    "round1": "REVISE(4 blockers: B1观点标注覆盖不全/B2表1 P0优先级无源/B3 SWE-bench 批次明细与合计不自洽/B4 README 口径冲突)",
+    "round2": "正文 8 项(B1-B4+S1-S5)全部 PASS 落地；遗留 ledger 措辞与 HTML 未重合成两项，由发布者会话自行修复并复跑门禁",
+    "final_md_sha256_reviewed": "c5c84929fdf474f929e975d00e917d2e02c31b4e30c578f5e09c5270b8135cb0"
+  },
+  "pre_gate": {
+    "public_url": "https://zhuanlan.zhihu.com/p/2093444801823760655",
+    "fetch_status": 200,
+    "article_h1": 1,
+    "article_h2": 9,
+    "images_in_article": 3,
+    "figure_images": 2,
+    "words_indicator": 6227,
+    "content_checks": {
+      "标题": "把程序从大脑降级为手脚：Agent 运行时的反直觉赌注",
+      "3.3 图注": "分权：哪些判断程序绝不接手",
+      "4 节图注": "自主演进的三道锁",
+      "审稿改写 B3": "不对这个数字背书",
+      "审稿改写 B2": "P0*",
+      "审稿改写 B2b": "本节这张表的优先级",
+      "AI 声明 footer": "未经人工事实核验"
+    },
+    "tags": 0,
+    "tags_note": "编辑器存在「添加话题」控件；搜索「开源 AI Agent」「人工智能」候选仅返回书籍/园区类话题（AI Agent 应用开发（书籍）、生成式 AI 实战（书籍）、经开人工智能科技园 等），与本文主题不符，按纪律不硬塞，tags=0 如实记录"
+  },
+  "publish": {
+    "flow": "粘贴正文 → 2 图插入 → 填标题 → 点击发布（一次点击即发布，无二次确认）",
+    "submitted_at": "2026-10-13 20:58"
+  },
+  "public_verify": {
+    "attempt_1": {
+      "at": "2026-10-13 20:58",
+      "result": "PASS",
+      "evidence": "页面内 fetch 公开 URL，status=200，h1=1、h2=9、两张图均来自 zhimg，6 项正文内容检查全部命中"
+    }
+  },
+  "failures_encountered": [
+    "编辑器是 Slate（block 皆为 div[data-block]），按 <p> 查找不到图注锚点 → 改用 [data-block=true]",
+    "setStartBefore(block) + 合成 paste 事件不会把光标移到目标块，图片被追加到文末 → 改为点击该块并用真实 ClipboardEvent 粘贴",
+    "图片落在文末后 Cmd+Z（modifiers=4）在该编辑器无效 → 改为点击图块后按 Backspace 删除重插",
+    "PREV_NOT_EMPTY：目标 H2 前一块是空 FIGURE 块 → 直接复用该空块作为落点"
+  ],
+  "honesty_notes": [
+    "正文数字全部由发布者会话本地复算，ledger F 节记录了命令与输出；独立审稿子代理无 shell，A4-A7 在其侧为 UNVERIFIED，由发布者会话实跑补齐",
+    "正文已披露 SWE-bench 报告批次明细与合计行不自洽，并声明不对该数字背书"
+  ]
+}

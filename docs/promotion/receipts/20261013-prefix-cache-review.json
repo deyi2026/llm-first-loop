@@ -1,0 +1,28 @@
+{
+  "issue": "20261013-prefix-cache-kepu",
+  "title": "AI 每次回答都重读整个对话——为什么你的账单没爆",
+  "platform": "微信公众号（gzh-design 摸鱼绿主题）",
+  "review_gate": "RULE-AI-28 第2条 文章闸 / skills/article-review-gate",
+  "reviewer": "独立子代理 subagent_f95bea4a8db1 (glm/glm-5.3, 4 rounds, 7 tool calls, 只读)",
+  "reviewed_at": "2026-10-13T23:30:00+08:00",
+  "verdict": "PASS",
+  "summary": "六类逐项审查均无 high/medium 问题：无利益冲突、无极限词、12 项抽查数字全部有口径与日期、无幻影锚点、兜底与 AI 声明完整；CASE 01 经 SKILL.md 及记录库对照确为真实排查经历。",
+  "low_notes_accepted": [
+    "1. '1%' 文内补口径标签 → 已改为'（本系统 2026 年 8 月实测）'（MD+HTML CASE 01 段落）",
+    "2. 数字↔根因配对为两真实要素合成 → 已改为'排查过多次故障……有时是每轮压缩、有时是注入会变化内容'，对齐 skills/cache-hit-debug/SKILL.md L95/L116 两条独立实测记录，不再精确配对单一根因"
+  ],
+  "facts_verified_by_main_agent": {
+    "date": "2026-10-13",
+    "sources": [
+      "https://platform.openai.com/docs/guides/prompt-caching (cached-input 折扣 up to 95%)",
+      "https://docs.claude.com/en/docs/build-with-claude/prompt-caching (旗舰档 hit $0.25 vs $10/MTok, 5min TTL, 命中免费续期, 不跨组织共享)",
+      "https://api-docs.deepseek.com/quick_start/pricing (flash hit $0.006 vs miss $0.30/MTok 峰值, 谷时减半)"
+    ]
+  },
+  "validation": "gzh-design validate_gzh_html.py: 0 ERROR / 1 WARNING(封面组件原样装饰渐变细线, 非文字卡片背景, 人工确认保留); DOM 渲染文本抽查 10/10 命中",
+  "artifacts": {
+    "markdown": "docs/promotion/20261013-prefix-cache-kepu.md",
+    "html": "docs/promotion/20261013-prefix-cache-kepu.html",
+    "preview": "docs/promotion/20261013-prefix-cache-kepu_预览.html"
+  }
+}

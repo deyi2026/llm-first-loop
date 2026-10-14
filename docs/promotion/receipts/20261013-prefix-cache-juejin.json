@@ -1,0 +1,58 @@
+{
+  "article": "AI 每次回答都重读整个对话——为什么你的账单没爆",
+  "source_md": "docs/promotion/20261013-prefix-cache-kepu.md",
+  "platform": "juejin",
+  "status": "published",
+  "published_at": "2026-10-14T00:10:00+08:00",
+  "url": "https://juejin.cn/post/7696005650718998571",
+  "article_id": "7696005650718998571",
+  "draft_id": "7696029445102207030",
+  "category": "人工智能",
+  "tags": [
+    "LLM"
+  ],
+  "tags_note": "准备标签为 [人工智能, LLM]，但掘金标签下拉里与分类同名的'人工智能'选项为 --disabled（平台限制，疑为禁止标签与分类重名），实际发布 tags=[LLM]、category=人工智能，语义等价",
+  "predecessor_block": "2026-10-13T23:57 账号未绑手机号被 article_draft/create 403 must bind phone 硬拒（见同文件 git 历史）；用户绑定手机后重跑本链路成功，draft 创建正常",
+  "editor_gate": {
+    "title": "AI 每次回答都重读整个对话——为什么你的账单没爆",
+    "body_len_nonws": 1998
+  },
+  "public_verify": {
+    "status": "verified",
+    "url": "https://juejin.cn/post/7696005650718998571",
+    "page_title": "AI 每次回答都重读整个对话——为什么你的账单没爆AI 并不会\"接着聊\" ... - 掘金",
+    "h1_hit": true,
+    "article_len_nonws": 5575,
+    "keys_hit": [
+      "前缀缓存（prefix caching）",
+      "缓存命中 0.006 美元",
+      "5 分钟",
+      "绝不跨组织",
+      "核实日期 2026 年 10 月 13 日"
+    ],
+    "keys_miss": []
+  },
+  "scripts": [
+    "_pub16_juejin.py (fill/dialog/verify)",
+    "_pub16_jj_confirm2.py",
+    "_pub16_jj_fix.py",
+    "_pub16_jj_tag3.py",
+    "_pub16_jj_probe2.py",
+    "_pub16_jj_go.py",
+    "_pub16_jj_url.py",
+    "_pub16_jj_verify.py"
+  ],
+  "history": [
+    {
+      "ts": "2026-10-14T00:49+08:00",
+      "action": "补配图（用户新增需求）",
+      "method": "editor/drafts/7696029445102207030 CodeMirror paste 上传→publish API 直调(UI 确定并更新点击吞事件)",
+      "imgs": [
+        "https://p6-xtjj-sign.byteimg.com/tos-cn-i-73owjymdk6/03ef6d22 (fig1,795px)",
+        "https://p6-xtjj-sign.byteimg.com/tos-cn-i-73owjymdk6/5e851706 (fig2,1000px)"
+      ],
+      "url": "https://juejin.cn/post/7696005650718998571",
+      "note": "draft_id 经 list_by_user API 获取；publish API tag_ids 需字符串数组；同 article_id 返回=更新成功"
+    }
+  ]
+}

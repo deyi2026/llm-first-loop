@@ -1,0 +1,61 @@
+{
+  "gate": "article",
+  "reviewer": "article-review-subagent-20261014 (subagent_ac7173cbe8ba)",
+  "verdict": "PASS",
+  "issue": 10,
+  "scope": "full",
+  "findings": [
+    {
+      "id": "P2-1",
+      "category": "引语与引用",
+      "issue": "L23 加粗『不许静默降级』与 README.md:14 原文『不静默降级』一字之差且语气加重，准引述框架下易被当作直接引语",
+      "fix": "改回『不静默降级』；口语强化移出引述框架另起句"
+    },
+    {
+      "id": "P2-2",
+      "category": "引语与引用",
+      "issue": "L45『下层不得扩大上层的授权』较 STACK.md:48 原文多『的』字，『铁律就一句：』构成准引述",
+      "fix": "删『的』与原文逐字对齐"
+    },
+    {
+      "id": "P2-3",
+      "category": "引语与引用",
+      "issue": "L53 引号内『先取证后判断』非官方规则名（实质源：ai_rules.md:132；RULE-AI-24 为『先取证，再修复』），概括命名冒似专名",
+      "fix": "去引号改行文概括"
+    },
+    {
+      "id": "P2-4",
+      "category": "事实与数字（来源标注）",
+      "issue": "尾注 STACK.md 丢『（v0.1 草案）』标注；『子代理编排』出处 CHANGELOG.md:103/194 未列；上一版之 ARCHITECTURE 文档未恢复",
+      "fix": "尾注补草案标注与 CHANGELOG.md，恢复 ARCHITECTURE 文档"
+    },
+    {
+      "id": "P2-5",
+      "category": "残留扫描",
+      "issue": "L19『官方定位一句话：』书面腔残留与口语风格冲突",
+      "fix": "改口语『官方给它的定位就一句话』"
+    },
+    {
+      "id": "P2-6",
+      "category": "事实与数字（表述）",
+      "issue": "L63『下次不会再踩』将经验沉淀绝对化，超出机制保证",
+      "fix": "软化为『下次有据可查，不必重踩一遍』"
+    }
+  ],
+  "applied": [
+    "P2-1",
+    "P2-2",
+    "P2-3",
+    "P2-4",
+    "P2-5",
+    "P2-6"
+  ],
+  "rejected": [],
+  "artifact_sha256": "b2337daeb982924425808f818a44f82754aa66d9ae62b5941db9da78054fe98b",
+  "artifact": "outputs/lfl-article/toutiao-article.md",
+  "narrow_recheck": {
+    "reviewer": "article-review-subagent-20261014 (agent_followup 同一审查者)",
+    "verdict": "PASS",
+    "note": "6/6 修订点解决，0 新引入问题；审查子代理执行通道被 run lease fence 拒绝无法自行写盘/算 sha，回执与 sha 由父会话代落盘，sha256 为父会话 shasum 实测值"
+  }
+}

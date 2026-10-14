@@ -1,0 +1,56 @@
+{
+  "issue": "2026-10-13 D15",
+  "title": "问一句，后台跑了几次？Agent 的隐形账本",
+  "article_sha256": "00e0e3c810ca8ad1572112b8f960c80d7981dd1347bfe13dc43ccf9bff73683b",
+  "source_ledger_sha256": "0c2d5fc7ca8bdc2b783043503f5e7b495fec9b5df0a0d0dd49a78e895af66b8e",
+  "platform_html_sha256": "81d7bff9660585d1f724a9dc48a0574d0823e08d68c35d7e4ac1e67e8ee8efe3",
+  "image_count": 6,
+  "source_image_sha256": {
+    "fig43-one-prompt-many-calls.png": "90e2cdd3155536aac9670ceff1e4bf2e9f6d197484084f7b144fa1d7286dc998",
+    "fig44-logical-vs-physical.png": "4028eb8aab4391542ae59013a33817dd5107c0a9bd45179e386cb52c9d1b45c8",
+    "fig45-cache-not-free.png": "35ba173fbcb1fbdaeaf707c1dd6fa597097dff9528a8108522bc30d55b985cfc",
+    "fig46-four-denominators.png": "e428ec14e158a88160faa5a9f4a450e16d187e5f39322d35bd8d4495d152d758",
+    "fig47-receipt-evidence-states.png": "829b25fdb13319339bdd5c63de7fc8762018698bb53b58ed6059e6d2bfed71eb",
+    "fig48-six-questions.png": "aacb622d7ad01cc81e69240ce9fe873b1b31fb9094e06c268eee93eaf7056550"
+  },
+  "review": {
+    "status": "PASS_WITH_UNVERIFIED",
+    "session_id": "35de72fa-dead-41ed-83a1-dadad7d1952a",
+    "model": "glm/glm-5.3",
+    "note": "independent read-only review, source+images passed; three limitations disclosed"
+  },
+  "verification_timestamp": "2026-10-13T22:10:58.950267+08:00",
+  "not_modified": [
+    "main branch",
+    "runtime services",
+    "model-provider configuration"
+  ],
+  "platform": "zhihu",
+  "status": "published_and_public_verified",
+  "public_url": "https://zhuanlan.zhihu.com/p/2093460921402275186",
+  "platform_submission": "published, success toast said '发布成功' and public URL opened",
+  "public_verify": {
+    "title_correct": true,
+    "section_count": 7,
+    "figure_caption_count": 6,
+    "figure_placement_after_correct_caption": true,
+    "visible_image_count": 6,
+    "loaded_image_count": 6,
+    "image_dimensions": "1200x740 each",
+    "d07_data_present": true,
+    "ai_declaration_present": true,
+    "built_in_creation_declaration": "包含 AI 辅助创作 作者对内容负责",
+    "article_non_whitespace_chars": 2392,
+    "method": "fresh Chrome reload of canonical public URL, scroll through six figures, checked actual src and natural image sizes and content"
+  },
+  "repair": {
+    "initial_public_verify": "FAIL_FIVE_FIGURES",
+    "missing": "fig47 after its caption; other five published",
+    "action": "edit original published article, insert fig47 and set official AI declaration again, click 更新",
+    "post_update_public_verify": "PASS_SIX_FIGURES"
+  },
+  "caveats": [
+    "First published version was missing fig47; not counted as six-image compliant until successful edit and independent public verification",
+    "no claims about recommendation, traffic, engagement"
+  ]
+}

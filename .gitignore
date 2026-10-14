@@ -132,3 +132,8 @@ cloudflared/tunnel-runtime.log
 # 本地工具缓存（verify-citations 等可再生产物，不入库；2026-10-10）
 .cache/
 build/
+
+# 发布渲染大文件（>1MB base64 内嵌图；md 源与 build_html.py/gen_images.py 已入库可再生，
+# 安全扫描体积门 1MB 不豁免——2026-10-14 收口决策）
+outputs/lfl-article/index.html
+outputs/lfl-article/*-embed*.html

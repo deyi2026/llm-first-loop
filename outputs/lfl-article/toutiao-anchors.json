@@ -1,0 +1,34 @@
+[
+ {
+  "img": "assets/img0_banner.png",
+  "anchor_prefix": "01 先看它的架构观"
+ },
+ {
+  "img": "assets/img1_positioning.png",
+  "anchor_prefix": "它的架构原则写得挺狠"
+ },
+ {
+  "img": "assets/img2_core_loop.png",
+  "anchor_prefix": "注意“真诚回答”"
+ },
+ {
+  "img": "assets/img3_three_layers.png",
+  "anchor_prefix": "铁律就一句"
+ },
+ {
+  "img": "assets/img4_honesty.png",
+  "anchor_prefix": "LFL 的规矩是：先取证，后判断"
+ },
+ {
+  "img": "assets/img6_memory.png",
+  "anchor_prefix": "所有轨迹落进事件日志"
+ },
+ {
+  "img": "assets/img5_evolution.png",
+  "anchor_prefix": "LFL 会基于自评发起演进建议"
+ },
+ {
+  "img": "assets/img7_capabilities.png",
+  "anchor_prefix": "浏览器接管（CDP 连真实 Chromium）"
+ }
+]

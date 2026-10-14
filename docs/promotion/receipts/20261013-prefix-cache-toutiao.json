@@ -1,0 +1,50 @@
+{
+  "article": "AI 每次回答都重读整个对话——为什么你的账单没爆",
+  "source_md": "docs/promotion/20261013-prefix-cache-kepu.md",
+  "platform": "toutiao",
+  "account": "LFL-AGENT",
+  "submitted_at": "2026-10-13T23:47:00+08:00",
+  "management_list_status": "审核中",
+  "management_url": "https://mp.toutiao.com/profile_v4/graphic/articles",
+  "ai_declaration": {
+    "引用AI": true
+  },
+  "cover": "无封面（纯文本无图）",
+  "editor_gate": {
+    "title": "AI 每次回答都重读整个对话——为什么你的账单没爆",
+    "platform_word_count": 1804,
+    "imgs": 0
+  },
+  "flow": "ProseMirror 粘贴 text/html → 标题 → 勾选引用AI → 预览并发布 → 选无封面 → 预览态 → 确认发布 → 跳转作品管理列表",
+  "public_verify": {
+    "status": "verified",
+    "url": "https://www.toutiao.com/item/7696178778380272170/",
+    "verified_at": "2026-10-14T00:01:00+08:00",
+    "list_status": "已发布（展现 2）",
+    "page_title": "AI 每次回答都重读整个对话——为什么你的账单没爆 - 今日头条",
+    "h1_hit": true,
+    "keys_hit": [
+      "前缀缓存（prefix caching）",
+      "缓存命中 0.006 美元",
+      "5 分钟",
+      "绝不跨组织",
+      "核实日期 2026 年 10 月 13 日",
+      "AI 声明"
+    ],
+    "keys_miss": [],
+    "page_declaration": "作品声明：内容由AI生成"
+  },
+  "history": [
+    {
+      "ts": "2026-10-14T00:49+08:00",
+      "action": "补配图（用户新增需求）",
+      "method": "mp后台文章列表→修改→ProseMirror Range+paste 插图→发布(重新进审)",
+      "imgs": [
+        "https://p3-sign.toutiaoimg.com/tos-cn-i-6w9m0ksvp/50e9bf714 (fig1)",
+        "https://p3-sign.toutiaoimg.com/tos-cn-i-6w9m0ksvp/89b2a16ee9 (fig2, lazy)"
+      ],
+      "url": null,
+      "note": "编辑触发重新审核，公网图 2 为懒加载 data-src 存在；URL 不变"
+    }
+  ]
+}

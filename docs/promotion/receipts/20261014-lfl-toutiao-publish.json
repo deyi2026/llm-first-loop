@@ -1,0 +1,27 @@
+{
+  "gate": "publish",
+  "platform": "toutiao",
+  "published_at": "2026-10-14 07:58 (公网页面显示时间)",
+  "article_url": "https://www.toutiao.com/article/7696304713734341174/",
+  "title": "AI 说\"改好了\"却没改？这个开源项目，专治智能体撒谎",
+  "words": 1507,
+  "images": 8,
+  "ai_declaration": "已勾选（引用AI），公网页面显示「作品声明：内容由AI生成」",
+  "review_gate": {
+    "reviewer": "article-review-subagent-20261014 (subagent_ac7173cbe8ba)",
+    "full_review": "PASS (0 P1, 6 P2)",
+    "p2_applied": 6,
+    "narrow_recheck": "PASS",
+    "receipt": "docs/promotion/receipts/20261014-lfl-toutiao-review.json"
+  },
+  "verify": {
+    "method": "登录态 DOM 实见（作者主页文章列表进入文章页）",
+    "title_ok": true,
+    "imgs_in_article": 8,
+    "h2_in_page": true,
+    "has_ai_decl": true,
+    "not_found_or_404": false,
+    "screenshot": "outputs/lfl-article/toutiao-live-verify.png"
+  },
+  "note": "发布链路本次更新：插图改用 data-URI 随正文一次 paste（编辑器自动转存图床），绕开工具栏上传面板；详见 save_experience 记录。"
+}

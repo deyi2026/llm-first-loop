@@ -1,0 +1,76 @@
+{
+  "item": "20261013-第14期 原创科普《把程序从大脑降级为手脚：Agent 运行时的反直觉赌注》",
+  "platform": "toutiao",
+  "date": "2026-10-13",
+  "status": "published_and_public_verified",
+  "title": "把程序从大脑降级为手脚：Agent 运行时的反直觉赌注",
+  "title_len": 27,
+  "source_md": "docs/promotion/20261013-lfl-daily-14.md",
+  "source_md_sha256": "c5c84929fdf474f929e975d00e917d2e02c31b4e30c578f5e09c5270b8135cb0",
+  "source_html": "docs/promotion/20261013-lfl-daily-14.html",
+  "source_html_sha256": "d6e3bcbc717a2528da3e009d11a5296dfcffbc77197d3e3e1de3449f7f93883f",
+  "ledger": "docs/promotion/20261013-daily14-sources.md",
+  "review": {
+    "subagent": "subagent_a0f65901309b",
+    "round1": "REVISE(4 blockers: B1观点标注覆盖不全/B2表1 P0优先级无源/B3 SWE-bench 批次明细与合计不自洽/B4 README 口径冲突)",
+    "round2": "正文 8 项(B1-B4+S1-S5)全部 PASS 落地；遗留 ledger 措辞与 HTML 未重合成两项，由发布者会话自行修复并复跑门禁",
+    "final_md_sha256_reviewed": "c5c84929fdf474f929e975d00e917d2e02c31b4e30c578f5e09c5270b8135cb0"
+  },
+  "pre_gate": {
+    "words": 5194,
+    "images_expected": 2,
+    "images_loaded": 2,
+    "image_dims": [
+      "1000x700",
+      "1000x640"
+    ],
+    "image_positions": "fig41 在 3.3 末条 bullet 之后、图注段之前；fig42 在「第 3 条是关键…」之后",
+    "empty_h1": 0,
+    "h2_in_editor": 0,
+    "cover": {
+      "set": true,
+      "naturalWidth": 899
+    },
+    "img_captions": [
+      33,
+      32
+    ],
+    "ai_declaration": {
+      "引用AI": "ON"
+    },
+    "tags": 0,
+    "tags_note": "头条图文编辑器本轮未发现话题/标签控件（工具栏 11 项、图片描述 2 个输入、编辑区底部 4 组按钮均无 tag 控件）；按计划「宁可记录门禁未满足，也不硬塞错标签」，如实记录 tags=0"
+  },
+  "publish": {
+    "clicked": "预览并发布 → 确认发布",
+    "submitted_at": "2026-10-13 20:53",
+    "platform_status_after_submit": "审核中",
+    "pgc_id": "7696133427334070825",
+    "public_url": "https://www.toutiao.com/article/7696133427334070825/"
+  },
+  "public_verify": {
+    "attempt_1": {
+      "at": "2026-10-13 20:53",
+      "result": "FAIL_NOT_PUBLIC",
+      "evidence": "浏览器访问公开 URL 被重定向回 https://www.toutiao.com/ 首页；curl 200 但为 JS 壳，正文为空",
+      "note": "后台列表显示 20:53 审核中，公网尚不可读；已排一次性提醒（+13 分钟）复核，不以后台状态冒充公网通过"
+    },
+    "attempt_2": {
+      "at": "2026-10-13 21:05",
+      "result": "PASS",
+      "evidence": "浏览器打开 https://www.toutiao.com/article/7696133427334070825/ 并滚到底：h1=「把程序从大脑降级为手脚：Agent 运行时的反直觉赌注」；正文 5864 字 / 118 段；9 个章节标题全部命中（开场…八、现在该怎么看它）；两张配图以真实尺寸加载 1000x700 与 1000x640（src=p3-sign.toutiaoimg.com/tos-cn-i-axegupay5k/… 与 …/tos-cn-i-6w9my0ksvp/…），与本地 fig41/fig42 尺寸一致；两条图注段原文命中。",
+      "ssr_check": "21:04 在登录 Chrome 内 fetch canonical URL 得到 SSR HTML：status=200、h1 正确、9 章节命中、7 项内容检查全 true（含审稿改写 B3「不对这个数字背书」、B2「P0*」、观点标注、AI 声明、复算命令）；SSR 里图片为 1x1 占位、滚动后由 JS 注入真实图床，故以滚动后 DOM 为准。",
+      "note": "公网可见证据以「浏览器 + canonical URL + 滚动后 DOM」为准，未以后台列表状态代替。"
+    }
+  },
+  "failures_encountered": [
+    "首轮两图上传：setFileInputFiles 后弹窗显示「上传失败」，后续重试（同流程）成功 → 判定为一次性上传失败，重试有效",
+    "编辑器 h2 在粘贴后被平台降级为加粗段落（h2=0），与 D13 一致，按平台归一化处理",
+    "图片描述（caption）在进入预览后被清空，返回编辑重填后才保住"
+  ],
+  "honesty_notes": [
+    "正文数字全部由发布者会话本地复算，ledger F 节记录了命令与输出；独立审稿子代理无 shell，A4-A7 在其侧为 UNVERIFIED，由发布者会话实跑补齐",
+    "正文已披露 SWE-bench 报告批次明细与合计行不自洽，并声明不对该数字背书"
+  ],
+  "platform_status_now": "已公开（公网可读，审核已通过）"
+}
