@@ -146,6 +146,10 @@ def test_read_only_probe_classifier_matrix() -> None:
         "git show",
         "git push --dry-run",
         "pytest --help",
+        # SPEC-20260922 原始场景：白名单 bin 的子命令尾随 help（长度恰 2）。
+        "service_control publish --help",
+        "service_control publish -h",
+        "git push --help",
     ]
     for cmd in allowed:
         assert is_read_only_probe(cmd), f"应放行: {cmd}"

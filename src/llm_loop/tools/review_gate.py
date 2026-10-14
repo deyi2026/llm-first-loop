@@ -104,6 +104,15 @@ def is_read_only_probe(command: str) -> bool:
     # (a) 独立 help/version 旗标。
     if all(t in _READ_ONLY_STANDALONE_FLAGS for t in rest):
         return True
+    # (a") 尾随 help 旗标形态：<bin> <sub> --help/-h（白名单 bin 的子命令帮助，
+    # 如 service_control publish --help / git push --help——SPEC-20260922 原始场景；
+    # 仅限长度恰 2 且尾旗标恰为 help，不扩散到其它参数组合）。
+    if (
+        len(rest) == 2
+        and re.fullmatch(r"[a-z][a-z0-9_-]*", rest[0])
+        and rest[1] in {"--help", "-h"}
+    ):
+        return True
     # (a') argv0 自身即只读动词（ls/pwd 类）。
     if argv0 in _READ_ONLY_SELF_BINS and _safe_args(rest):
         return True
