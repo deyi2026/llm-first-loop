@@ -245,6 +245,46 @@ def test_search_records_contract_carries_timing_semantics() -> None:
     assert "非每轮强制" in compact and "不强制顺序" in compact
 
 
+def test_rule31_bounded_discovery_reaches_full_lazy_and_first_model_tool_packet(
+    tmp_path, monkeypatch
+) -> None:
+    """The actual FakeLLM first call must see bounded, non-coercive knowledge discovery."""
+    from llm_loop.tools.registry import ToolRegistry
+
+    class SearchRecordsStub:
+        name = "search_records"
+        description = _SEARCH_RECORDS_TOOL_DEF["description"]
+        parameters = _SEARCH_RECORDS_TOOL_DEF["parameters"]
+
+    expected = ("method", "experience", "lesson", "≤2类", "每类≤5", "同一任务窗口", "简单")
+    registry = ToolRegistry()
+    registry.register(SearchRecordsStub())
+    for lazy in (False, True):
+        tool = next(row for row in registry.schemas(lazy=lazy) if row["name"] == "search_records")
+        assert all(part in tool["description"] for part in expected)
+        assert set(("method", "experience", "lesson", "rule")) <= set(
+            tool["parameters"]["properties"]["kind"]["enum"]
+        )
+
+    engine, fake = _mk(
+        tmp_path, monkeypatch,
+        responses=[LLMResponse(content="完成", tool_calls=[], provider="fake")],
+    )
+    engine.registry.register(SearchRecordsStub())
+    _capture_tools(fake)
+    result = engine.run(engine.session.create(), "需要排障和有界检索的多步骤任务")
+    assert result.final_answer == "完成"
+    assert fake.calls
+    first_tools = fake.calls[0]["tools"]
+    tool = next(
+        (row.get("function") or row)
+        for row in first_tools
+        if (row.get("function") or row).get("name") == "search_records"
+    )
+    assert all(part in tool["description"] for part in expected)
+    assert "method" in tool["parameters"]["properties"]["kind"]["enum"]
+
+
 def test_model_catalog_contract_is_identity_verification_entrypoint_without_prompt_growth() -> None:
     full = MODEL_CATALOG_TOOL_DEF["description"]
     compact = _COMPACT_TOOL_DESCRIPTIONS["model_catalog"]
@@ -285,8 +325,15 @@ def test_ledger_covers_all_sot_rules() -> None:
     refs = _sot_rule_refs(sot)
     assert refs
     ledger = _LEDGER_MD.read_text(encoding="utf-8")
-    missing = [ref for ref in refs if ref not in ledger]
+    # Inventory header and narrative references are not formal Rule rows.
+    rows = re.findall(r"^\| (RULE-AI-\d{2}) \|", ledger, re.MULTILINE)
+    assert len(rows) == len(set(rows))
+    missing = [ref for ref in refs if ref not in rows]
     assert missing == []
+    report = _load_audit().inventory(generated_at="2026-10-15")
+    inventory_header = re.search(r"^\| `records` \| (\d+)", ledger, re.MULTILINE)
+    assert inventory_header is not None
+    assert int(inventory_header.group(1)) == len(report.records)
 
 
 def test_sot_rule_refs_ignore_body_mentions_and_gap_notes() -> None:

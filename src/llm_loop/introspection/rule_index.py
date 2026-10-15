@@ -14,6 +14,7 @@ from pathlib import Path
 
 _RULE_REF_RE = re.compile(r"RULE-AI-\d+(?:\.\d+)?", re.IGNORECASE)
 _RULE_HEADING_RE = re.compile(r"^##\s+.*?(RULE-AI-\d+(?:\.\d+)?).*?$", re.IGNORECASE | re.MULTILINE)
+_SECTION_HEADING_RE = re.compile(r"^##[ \t]+", re.MULTILINE)
 _QUERY_TOKEN_RE = re.compile(r"[\w.\-]+", re.UNICODE)
 _ASCII_TERM_RE = re.compile(r"[a-z0-9]+")
 _CJK_RUN_RE = re.compile(r"[\u3400-\u9fff]+")
@@ -87,7 +88,10 @@ class RuleIndex:
         parsed: list[RuleEntry] = []
         for index, match in enumerate(matches):
             start = match.start()
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            # A Rule ends at the next same-level H2, even if it is not a Rule.
+            # Rule 33 is followed by configuration H2; nested H3 stays inside.
+            next_section = _SECTION_HEADING_RE.search(text, match.end())
+            end = next_section.start() if next_section else len(text)
             section = text[start:end].rstrip()
             heading = match.group(0).strip()
             ref = match.group(1).upper()
