@@ -57,6 +57,44 @@ class TestBuildRequest:
 
 
 class TestPerQuestionValidation:
+    @pytest.mark.parametrize("kind", ["choice", "score"])
+    @pytest.mark.parametrize("confidence", [None, True, "0.8", float("nan")])
+    def test_invalid_confidence_is_not_coerced_to_a_number(self, kind, confidence):
+        spec = _choice() if kind == "choice" else QuestionSpec(
+            name="premise_linux", type="score", instructions="score", criteria={}
+        )
+        answer = _answer(confidence=confidence) if kind == "choice" else {
+            "score": 0.6, "confidence": confidence,
+        }
+        resp = normalize_response(
+            request=_request({"premise_linux": spec}),
+            raw={"model": "m", "answers": {"premise_linux": answer}, "usage": {}},
+            transport_status="ok",
+        )
+        fact = resp.answers["premise_linux"]
+        assert fact.status == "contract_invalid"
+        assert fact.confidence is None
+        assert "confidence_missing_or_out_of_range" in fact.invalid_reasons
+
+    @pytest.mark.parametrize("probabilities, reason", [
+        (None, "probabilities_missing_or_not_object"),
+        ([], "probabilities_missing_or_not_object"),
+        ({"yes": None, "no": 0.05, "unknown": 0.95}, "probability_not_finite_or_out_of_unit"),
+    ])
+    def test_invalid_choice_probabilities_are_not_coerced(self, probabilities, reason):
+        answer = _answer()
+        answer["probabilities"] = probabilities
+        resp = normalize_response(
+            request=_request({"premise_linux": _choice()}),
+            raw={"model": "m", "answers": {"premise_linux": answer}, "usage": {}},
+            transport_status="ok",
+        )
+        fact = resp.answers["premise_linux"]
+        assert fact.status == "contract_invalid"
+        assert fact.probabilities is None
+        assert fact.p_selected is None
+        assert reason in fact.invalid_reasons
+
     def test_valid_choice_keeps_distribution_and_p_selected_separate(self):
         req = _request({"premise_linux": _choice()})
         resp = normalize_response(
