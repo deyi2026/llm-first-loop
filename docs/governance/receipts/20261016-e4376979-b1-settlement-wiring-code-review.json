@@ -1,0 +1,108 @@
+{
+  "gate": "code",
+  "reviewer": "rule28-independent-code-review-subagent@GOAL-20261016-e4376979 B1-T1（未参与产出，与执行者分离）",
+  "verdict": "PASS",
+  "round": "r0",
+  "goal": "GOAL-20261016-e4376979 B1-T1 settlement 批量结算接线到模型可用面",
+  "head_commit": "ea1d313b7d8706a611b0bd9457f5fc91d4433c8b",
+  "fingerprints": {
+    "src/llm_loop/introspection/settlement.py": "262970a821fa0c0c877579fbb8dfe6f6c9d0ed3f13e4e01e2e70ed114555025a",
+    "src/llm_loop/introspection/corrections.py": "63c6594fea4ce3087a6ef9c9af86abdefb360d2b0bac00930592ff3879728978",
+    "src/llm_loop/introspection/search.py": "0e0b2acf170d54a01bdb003f99d762634497fcba40b41fd33e7e1af46ad4f7d9",
+    "src/llm_loop/introspection/registry_experience.py": "8c443b0503a2dfc423aeff9fcc5827725aa3792dc637fdae0e58d89a23eb2e03",
+    "src/llm_loop/factory.py": "6346448bfbd9c10f102b0e139005947b967a864346ca7d23be9eeda62c1c1a1b",
+    "tests/unit/test_settlement_tools.py": "78d976ad5df61c326a04e8e5845824523207464f79d9267e49692e5dde3454c2",
+    "git_diff_staged_sha256": "85bfcdbb2139228f04cce10eaed5bd4113af17e40f8ce91f70e2960ae2718da5",
+    "fingerprint_check": "6/6 文件 sha256 与编码者自报一致（shasum -a 256 实测），无 P0"
+  },
+  "scope_files": [
+    "src/llm_loop/introspection/settlement.py",
+    "src/llm_loop/introspection/corrections.py",
+    "src/llm_loop/introspection/search.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/factory.py",
+    "tests/unit/test_settlement_tools.py"
+  ],
+  "methodology_search": "search_files 对 data/methods 有界检索：content=代码审查(*.json)/code review gate(*.md) 无命中；补检 content=窄复审 命中 3 张闸纪律卡（三态 verdict 分支/窄复审+回执落盘/产物 sha 登记），仅作背景纪律参考，未复用任何结论",
+  "checklist": {
+    "1_正确性": {
+      "verdict": "PASS（成本计数口径两处 P2 见 findings）",
+      "evidence": "工具参数→SettlementItem 映射逐字段核对（registry_experience.py:780-813）；条目上限 32 超限整批拒绝且零落账（test_submit_tool_over_cap_rejects_whole_batch_without_truncation 验 usage.jsonl 不存在）；回执三分 committed|pending|failed 语义与 partial-success 测试一致；run_id/episode_ref/model 取 current_run_generation/current_episode_ref 解析器（仅接受 episode: 前缀、拒模型自报）/current_model_label 真实来源（registry_experience.py:840-842）"
+    },
+    "2_边界": {
+      "verdict": "PASS",
+      "evidence": "通道未装配/会话不可归属→FAILURE 零行为（测试 + 探针确认 events 目录不创建）；无 work_unit_id→degraded(session) 标注 + 账本行 attribution=unresolved（探针 A4）；自报条目校验失败回 failed 带 reason；清单自带 coverage_boundary 与 none 两列"
+    },
+    "3_安全面": {
+      "verdict": "PASS",
+      "evidence": "不可信输入仅达 store.get/rule_index（无执行/路径拼接放大）；无密钥；错误回执仅异常类型+消息不泄堆栈（探针 B6/B7）——消息体可含内部路径见 N1；上限防御（32 条整批拒、note/suggestion 2000 截断双侧 store + 规则侧）"
+    },
+    "4_回归面": {
+      "verdict": "PASS",
+      "evidence": "探针 B1-B5：rule_exists 前缀模糊 RULE-AI-1 拒判、大小写归一、触发 knowledge_read 打点 0 次；search 主路径精确水合仍打 1 次、泛查询 0 次（002 行为不变）；CorrectionContext 默认 settlement=None 零影响；tool_defs 既有三工具相对序保持、新工具尾部追加；test_factory 75 tests 全绿"
+    },
+    "5_一致性": {
+      "verdict": "PASS（跨会话幂等表述见 P2-2）",
+      "evidence": "schema 契约与实现逐条对齐（三分回执/32 上限/unresolved 不抵扣/覆盖边界/pending 附 submission_hash 提示）；设计文档 v3『待结算清单的生成机制』『边界与失败模式决策表』逐条比对一致；测试断言验到账本行数/事件数/slot_id/submission_hash/revision/ledger_watermark 而非仅状态码"
+    },
+    "6_P1复检_硬要求": {
+      "verdict": "PASS（r0 P2-10 集成点复检完成，独立探针非引测试）",
+      "evidence": "探针 A（/tmp/settlement_review_probeA2）：A1 跨 slot 不折叠（T1 结算后 T2 清单仍列项）；A2 同内容重试幂等（idempotent=True、账本行 1→1）；A3 跨 ref 同默认内容各自落账独立修订链；A4 降级落账 binding=unresolved/slot_id=''/无伪造 episode/task 哨兵；A5 unresolved 回执不抵扣确定任务 T3"
+    }
+  },
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "427-432",
+      "issue": "降级模式（无 work_unit_id）下 settlement_calls/settlement_rounds 把两侧 usage ledger 全局行（含其他会话、其他工作单元的回执）计入本次成本：_receipts_for_session 对 ledger 侧无 session 过滤，wu_receipts 降级时回退全量。探针 A6：本会话首笔提交回 settlement_calls=5（全局账本 5 行）。确定任务窗口有 wu 精确过滤不受影响",
+      "fix_hint": "降级分支对 ledger 回执按 session_id 过滤（与 _offsets 降级窗口口径对齐），或在该口径下仅计 rule 事件 + 本次调用"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "346-356",
+      "issue": "规则条目幂等查重只扫当前会话事件（collect_rule_feedback_receipts(event_store, session_id)），同 (slot_id, submission_hash) 跨会话重提会追加重复 rule.feedback 事件且返回非幂等 committed 回执（探针 A7：两会话各 1 事件）。下游 RuleFeedbackProjection 按 submission_hash 去重、抵扣亦会话内闭环，故仅冗余事件+成本虚增，但与工具描述『同对象同内容重试幂等（返回既有回执）』的无限定表述存在偏差",
+      "fix_hint": "确定任务 slot（wu 非空）查重经 event_logs_dir 投影跨会话扫描，或在工具描述中明示幂等边界=会话内"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "165-178",
+      "issue": "_ledger_receipts 依赖 ExperienceStore.usage_entries(limit=200)（最新 200 行截断；MethodStore 侧无界）：experience 侧较旧回执滑出 200 行窗口后不再进入抵收集合，其读取会重新出现在待结算清单（诱导重报）。store 写入侧先扫后写为全量扫描，重报会命中 dedupe 返回幂等回执、不产生重复行，故影响限于清单/成本计数准确性",
+      "fix_hint": "experience 侧回执收集改为按 session/work_unit 过滤的分页读或 store 侧提供带过滤的计数接口"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "file": "tests/unit/test_settlement_tools.py",
+      "line": "130,131,166,167,195,274,275,312,409,434,435",
+      "issue": "11 处 pyright reportOptionalMemberAccess 潜在错误（host.ctx.settlement / store.get 返回 Optional 未收窄）。当前 CI [3/5] 口径下 PASS 仅因 pyproject [tool.pyright] include=[\"src\"] 不含 tests/（闸脚本权威复跑 PASS、changed_file_diagnostics=0 已验证）；一旦 tests 纳入类型检查作用域即翻红",
+      "fix_hint": "对 host.ctx.settlement 与 ms.get(ref) 补 assert is not None 收窄或 typing.cast"
+    }
+  ],
+  "non_blocking_notes": [
+    "N1: failed 回执内嵌 str(exc) 原文（探针 B6：'RuntimeError: boom path.py:42'），消息体可携带内部绝对路径。无堆栈泄漏，与既有 registry 错误惯例一致；可选加固为截断/路径脱敏",
+    "N2: evidence_refs maxItems=16 与 work_unit_id maxLength=128 仅 schema 声明，工具层未程序强制（note/suggestion 双侧 store 已 2000 截断）；直调超限不破坏账本仅影响哈希材料体积",
+    "N3: 降级窗口抵扣接受 session_id 为空的 legacy 账本行（settlement.py:219-220）——仅影响本已非权威的降级视图，确定任务窗口不受影响",
+    "N4: 方法侧降级落账走显式 allow_unresolved=True 退化路径（binding=unresolved、slot_id=''），不同无归属任务不并入同一伪 slot 修订链——P1-1 语义在接线层保持"
+  ],
+  "applied": [
+    "shasum -a 256 核对 6 文件指纹，与编码者自报全一致",
+    "通读 6 个 staged 文件 diff + settlement 核心（build_pending_settlement/submit_settlement_batch/_submit_rule_item/_offsets/_settlement_costs）与双侧 store record_use/resolve_submission 契约",
+    "定向测试真实执行（PYTHONPATH=src .venv/bin/python -m pytest，禁 uv run）：test_settlement_tools.py+test_settlement_receipts.py+test_search_feedback_reflow.py+test_factory.py → 75 passed",
+    "ruff/pyright 以 ci_gate.sh [1/5][3/5] 同口径调用（scripts/check_static_diagnostics.py --tool ruff|pyright）→ 双 PASS（touched files clean）；另逐文件强测发现闸外 11 处 test 文件潜在类型错误（P2-4）",
+    "语义探针 A（/tmp/settlement_review_probeA2，独立场景非复用测试）：跨 slot/幂等/跨 ref/无哨兵/unresolved 不抵扣/降级成本口径/规则跨会话幂等边界",
+    "语义探针 B（/tmp/settlement_review_probeB2）：rule_exists 精确性与零打点、主路径打点回归、泛查询零打点、工具注册序、CorrectionContext 默认零影响、failed/pending 回执信息面",
+    "设计文档 v3 关键节（待结算清单生成机制/幂等两层键/三类知识共用入口/边界与失败模式决策表）与实现逐条比对"
+  ],
+  "rejected": [],
+  "notes": [
+    "verdict=PASS 依据：六项清单全过、P1 复检四不变量由独立探针复现成立、无 P0/P1 发现；4 项 P2 均为观测面/口径精度问题（不伪造归属、不产生重复账本行、不破坏抵扣正确性），建议随后续任务消化",
+    "探针与测试均用 mktemp 临时目录，未触碰仓库 src/tests/data；本审查未做任何 git 写操作（回执文件除外）",
+    "全量测试门由父代理按 RULE-AI-28 执行，本回执仅覆盖代码审查闸"
+  ]
+}

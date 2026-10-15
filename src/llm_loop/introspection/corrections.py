@@ -93,6 +93,10 @@ class CorrectionContext:
     current_episode_ref_resolver: Callable[[str], str] | None = None
     summarizer: Any | None = None  # R2: search_archive(with_summary=true) LLM 摘要
     task_evidence_verifier: Any | None = None  # P1: Task Evidence 机械真实性校验器
+    # TASK-ac085ab1-004: 受限结算通道（EventStore 启用时由 factory 装配
+    # SettlementChannel；None=未装配 → settlement_pending/settlement_submit
+    # 回执"通道不可用"，零行为不伪造清单）
+    settlement: Any | None = None
 
 
 class CorrectionToolRegistry:

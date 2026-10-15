@@ -75,6 +75,22 @@ class SettlementItem:
     self_reported: bool = False
 
 
+@dataclass(frozen=True)
+class SettlementChannel:
+    """受限结算通道的工厂装配件（模型工具面 ← 结算核心的绑定视图）.
+
+    由 factory 在 EventStore 启用时构造并注入 ``CorrectionContext.settlement``；
+    未装配（None）时 ``settlement_pending`` / ``settlement_submit`` 回执
+    "通道不可用"（零行为：不伪造清单、不落任何账）。本类只持绑定引用，
+    不含新行为——校验/持久化/回执三分全部由上述结算函数承担。
+    """
+
+    event_store: Any
+    method_store: Any | None = None
+    experience_store: Any | None = None
+    rule_lookup: Callable[[str], bool] | None = None
+
+
 def emit_knowledge_read(
     sink: Callable[[dict], None] | None,
     *,

@@ -275,6 +275,19 @@ class RecordSearcher:
         """最近一次 semantic 检索的机械诊断，不包含查询正文或记录内容."""
         return self._last_semantic_diagnostics
 
+    def rule_exists(self, ref: str) -> bool:
+        """Exact rule-ref existence over the same RuleIndex truth source.
+
+        TASK-ac085ab1-004: 受限结算通道的 rule_lookup 用——只做存在性判断，
+        不走 search() 主路径（避免触发 knowledge_read 打点/泛查询逻辑）。
+        回执 rule_ref 与请求 ref 全等才视为存在，防止模糊命中伪造存在性。
+        """
+        clean = str(ref or "").strip().upper()
+        if not clean:
+            return False
+        rows = self._rule_index.search(clean, 1)
+        return bool(rows) and str(rows[0].get("rule_ref") or "").upper() == clean
+
     def search(
         self,
         kind: str = "all",

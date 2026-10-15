@@ -71,6 +71,7 @@ from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.settlement import (
     KNOWLEDGE_READ_EVENT_TYPE,
     RuleFeedbackProjection,
+    SettlementChannel,
 )
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
@@ -1851,6 +1852,23 @@ def build_engine(
         multiquery_shadow=multiquery_probe,
         knowledge_read_sink=_knowledge_read_sink,
         rule_feedback_projection=_rule_feedback_projection,
+    )
+
+    # TASK-ac085ab1-004: 受限结算通道装配——build_pending_settlement /
+    # submit_settlement_batch 接到模型工具面（settlement_pending /
+    # settlement_submit，经 registry_experience 注册）。EventStore 未启用时
+    # 不装配 → 两工具回执"通道不可用"（零行为，不伪造清单、不落账）；
+    # rule_lookup 复用检索器同一 RuleIndex 真值源（存在性判断，不走 search
+    # 主路径，不触发 knowledge_read 打点）。
+    correction_ctx.settlement = (
+        SettlementChannel(
+            event_store=event_store,
+            method_store=method_store,
+            experience_store=experience_store,
+            rule_lookup=searcher.rule_exists,
+        )
+        if getattr(event_store, "enabled", False)
+        else None
     )
 
     # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）

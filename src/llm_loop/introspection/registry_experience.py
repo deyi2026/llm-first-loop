@@ -1,6 +1,7 @@
 """经验库类工具注册（T2，design §2.1.2-5.2）.
 
-承载: save_experience / refine_experience
+承载: save_experience / refine_experience / method_manage
+以及受限结算通道 settlement_pending / settlement_submit（TASK-ac085ab1-004）。
 AI 优先：程序仅通道，提取/判断归 AI。
 """
 
@@ -13,9 +14,14 @@ import os
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.core.run_context import current_model_label
+from llm_loop.core.run_context import current_model_label, current_run_generation
 from llm_loop.experiences.store import ExperiencePersistError
 from llm_loop.introspection.registry_host import RegistryHost
+from llm_loop.introspection.settlement import (
+    SettlementItem,
+    build_pending_settlement,
+    submit_settlement_batch,
+)
 from llm_loop.methods.store import MethodCommitUncertainError, MethodPersistError
 from llm_loop.usage_net import alert_section
 
@@ -139,6 +145,120 @@ _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     },
 }
 
+# ── 受限结算通道（TASK-ac085ab1-004，设计草案 v3「收尾一次提交简短结算」）──
+# 条目上限：整批拒绝不截断（超限时回参数错误，不静默截断前 N 条——
+# 截断会让模型误以为剩余条目已结算）。
+MAX_SETTLEMENT_BATCH_ITEMS = 32
+
+_SETTLEMENT_PENDING_TOOL_DEF: dict[str, Any] = {
+    "name": "settlement_pending",
+    "description": (
+        "任务收尾结算前置查询：返回当前 session 的待结算知识清单——统一检索工具"
+        "精确水合的 knowledge_read 读取事件 − 已持久化结算回执，按（工作单元、对象、"
+        "读取版本）三元组抵扣。传 work_unit_id（当前 task id）得确定任务窗口 task(id)；"
+        "缺省为降级 session 窗口 degraded(session)。覆盖边界：不覆盖 read_file 直读知识文件、"
+        "附件内嵌摘录、泛查询命中；清单是事件源可观测范围，不是全部知识接触——事件源外"
+        "接触可经 settlement_submit 提交自报条目（self_reported=true，程序校验 ref 存在性）。"
+        "回执含 none 两列（事件源无接触/模型自报无接触）与 settled_count。每个有实质工作量的"
+        "工作单元收尾调用一次即可，不要每轮轮询；简单问答豁免。"
+    ),
+    "compact_description": (
+        "收尾结算前置：待结算知识清单=精确水合读取事件−已回执（工作单元×对象×版本抵扣）；"
+        "不覆盖 read_file 直读/附件/泛查询；缺 work_unit_id 走 degraded(session)；收尾一次即可。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "work_unit_id": {
+                "type": "string",
+                "maxLength": 128,
+                "description": "当前工作单元/任务 id（推荐 get_goal/task 图事实中的 task id）；缺省=降级 session 窗口",
+            },
+            "self_reported_no_contact": {
+                "type": "boolean",
+                "description": "模型自报本任务未接触事件源外知识时置 true（进入 none 两列呈现；不冒充事件源观察）",
+            },
+        },
+    },
+}
+
+_SETTLEMENT_SUBMIT_TOOL_DEF: dict[str, Any] = {
+    "name": "settlement_submit",
+    "description": (
+        "任务收尾批量结算提交（受限通道）：一次提交 method/experience/rule 的使用反馈，"
+        "程序逐条校验（kind/decision/benefit/evidence_level 合法性、ref 存在性）、逐条持久化、"
+        "逐条回执 committed|pending|failed（含 slot_id/submission_hash/revision/ledger_watermark）。"
+        "两层键由程序派生：同对象同内容重试幂等（返回既有回执）；提交内容改变即按 supersedes 追加修订。"
+        "写入结果未知返回 pending 并附 submission_hash 查询提示，先查原结算再决定是否重发，不盲目重发。"
+        "批量部分成功不宣称整批原子完成。回执含结算成本观察（settlement_calls/settlement_rounds）。"
+        "work_unit_id 缺省时归属 attribution=unresolved：不抵扣任何确定任务的待结算项。"
+        "条目上限 32，超限整批拒绝不截断；未采用的普通候选用 not_applicable 并给选择原因，不计为使用失败。"
+    ),
+    "compact_description": (
+        "收尾批量结算：method/experience/rule 使用反馈逐条回执 committed|pending|failed"
+        "（slot_id/submission_hash/revision）+结算成本计数；同内容幂等；≤32 条超限整批拒；"
+        "无 work_unit_id=unresolved 不抵扣确定任务。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "work_unit_id": {
+                "type": "string",
+                "maxLength": 128,
+                "description": "当前工作单元/任务 id；缺省=归属 unresolved（不抵扣确定任务）",
+            },
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "description": "结算条目（上限 32，超限整批拒绝不截断）",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["method", "experience", "rule"]},
+                        "ref": {
+                            "type": "string",
+                            "description": "稳定 ref：method:<id> / experience:<id> / RULE-AI-xx；自报条目程序校验存在性",
+                        },
+                        "decision": {
+                            "type": "string",
+                            "enum": ["applied", "adapted", "not_applicable", "rejected"],
+                        },
+                        "benefit": {
+                            "type": "string",
+                            "enum": ["helped", "neutral", "hindered", "unknown", "mixed"],
+                            "description": "缺省 unknown，不当失败或零收益",
+                        },
+                        "evidence_level": {
+                            "type": "string",
+                            "enum": ["model_declared", "observation_linked", "independently_evaluated"],
+                            "description": "缺省 model_declared",
+                        },
+                        "evidence_refs": {
+                            "type": "array",
+                            "maxItems": 16,
+                            "items": {"type": "string"},
+                            "description": "证据引用；程序不自动判断正确性",
+                        },
+                        "note": {"type": "string", "maxLength": 2000, "description": "简短观察/依据"},
+                        "suggestion": {"type": "string", "maxLength": 2000, "description": "改进建议"},
+                        "read_version": {
+                            "type": "string",
+                            "description": "来自 settlement_pending 清单条目的 read_version（版本级抵扣需要）",
+                        },
+                        "self_reported": {
+                            "type": "boolean",
+                            "description": "事件源外接触的自报条目置 true；程序校验 ref 存在性后落账并标注",
+                        },
+                    },
+                    "required": ["kind", "ref", "decision"],
+                },
+            },
+        },
+        "required": ["items"],
+    },
+}
+
 
 METHOD_SUBJECT_BINDING_EXPERIMENTAL_ENV = "LFL_METHOD_SUBJECT_BINDING_EXPERIMENTAL"
 METHOD_SUBJECT_BINDING_SCHEMA = "lfl-method-applicability-subject-binding/v1"
@@ -174,7 +294,13 @@ def _save_experience_tool_def() -> dict[str, Any]:
 
 
 def tool_defs() -> list[dict]:
-    return [_save_experience_tool_def(), _REFINE_EXPERIENCE_TOOL_DEF, _METHOD_MANAGE_TOOL_DEF]
+    return [
+        _save_experience_tool_def(),
+        _REFINE_EXPERIENCE_TOOL_DEF,
+        _METHOD_MANAGE_TOOL_DEF,
+        _SETTLEMENT_PENDING_TOOL_DEF,
+        _SETTLEMENT_SUBMIT_TOOL_DEF,
+    ]
 
 
 def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
@@ -184,6 +310,10 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         return _run_refine_experience(args, host)
     if name == "method_manage":
         return _run_method_manage(args, host)
+    if name == "settlement_pending":
+        return _run_settlement_pending(args, host)
+    if name == "settlement_submit":
+        return _run_settlement_submit(args, host)
     return None
 
 
@@ -582,3 +712,151 @@ def _run_refine_method(args: dict, host: RegistryHost, *, tool_name: str = "refi
         return _method_failure(tool_name, f"[Method 生命周期更新失败] {type(exc).__name__}: {exc}{suffix}")
     host.audit("refine_method", {"method_ref": method_ref, "status": record.status}, "success")
     return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[refine_method] {method_ref} status={record.status}", tool_call_id="", tool_name=tool_name)
+
+
+# ── 受限结算通道执行（TASK-ac085ab1-004）：薄适配层，语义全部在 settlement.py ──
+
+
+def _settlement_unavailable(tool_name: str, fact: str) -> ToolResult:
+    """通道缺件/会话不可归属的零行为回执（不伪造清单、不落任何账）."""
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=f"[结算通道不可用] 事实: {fact}\n建议: 核对装配/会话上下文后重试；不要手工伪造结算或清单。",
+        tool_call_id="",
+        tool_name=tool_name,
+    )
+
+
+def _settlement_context(host: RegistryHost) -> tuple[Any | None, str]:
+    """取 (channel, session_id)；两者任一缺位即由调用方返回零行为回执."""
+    channel = host.ctx.settlement
+    if channel is None:
+        return None, ""
+    return channel, str(host.current_session_id() or "")
+
+
+def _run_settlement_pending(args: dict, host: RegistryHost) -> ToolResult:
+    """settlement_pending: 待结算清单 = 读取事件 − 持久化回执（fail-open 投影）."""
+    channel, session_id = _settlement_context(host)
+    if channel is None:
+        return _settlement_unavailable(
+            "settlement_pending", "settlement 通道未装配（EventStore 未启用或组件缺失）"
+        )
+    if not session_id:
+        return _settlement_unavailable("settlement_pending", "当前会话不可归属（session_id 为空），不生成清单")
+    pending = build_pending_settlement(
+        event_store=channel.event_store,
+        method_store=channel.method_store,
+        experience_store=channel.experience_store,
+        session_id=session_id,
+        work_unit_id=str(args.get("work_unit_id") or "").strip(),
+        model_self_reported_no_contact=bool(args.get("self_reported_no_contact")),
+    )
+    host.audit(
+        "settlement_pending",
+        {"work_unit_id": pending["work_unit_id"], "items": len(pending["items"])},
+        "success",
+    )
+    header = (
+        f"[settlement_pending] 待结算 {len(pending['items'])} 项 | settled_count={pending['settled_count']} | "
+        f"attribution={pending['attribution']} | read_source={pending['read_source']}"
+    )
+    # 结算成本观察（真实数据派生）：唯一读取键/已抵扣/待结算 + 成本计数位置；
+    # settlement_calls/settlement_rounds 属提交回执（每张结算回执携带），此处不重复计算
+    read_keys = int(pending["settled_count"]) + len(pending["items"])
+    cost_note = (
+        f"结算成本观察: 本窗口唯一读取键 {read_keys}，已抵扣 {pending['settled_count']}，"
+        f"待结算 {len(pending['items'])}；收尾一次 settlement_submit 批量提交即可"
+        "（调用/回合计数随提交回执返回），不要每轮轮询"
+    )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=header + "\n" + cost_note + "\n" + json.dumps(pending, ensure_ascii=False),
+        tool_call_id="",
+        tool_name="settlement_pending",
+    )
+
+
+def _settlement_items_from_args(raw: Any) -> list[SettlementItem] | str:
+    """有界条目解析：超上限整批拒绝（不截断）；结构非法给出首错位置."""
+    if not isinstance(raw, list) or not raw:
+        return "items 必须为非空数组"
+    if len(raw) > MAX_SETTLEMENT_BATCH_ITEMS:
+        return (
+            f"条目数 {len(raw)} 超上限 {MAX_SETTLEMENT_BATCH_ITEMS}：整批拒绝不截断；"
+            "请按 settlement_pending 清单拆分后分批提交"
+        )
+    items: list[SettlementItem] = []
+    for idx, row in enumerate(raw):
+        if not isinstance(row, dict):
+            return f"items[{idx}] 必须为对象"
+        refs = row.get("evidence_refs")
+        if refs is None:
+            refs = []
+        if not isinstance(refs, list) or any(not isinstance(r, str) for r in refs):
+            return f"items[{idx}].evidence_refs 必须为字符串数组"
+        items.append(
+            SettlementItem(
+                kind=str(row.get("kind") or "").strip(),
+                ref=str(row.get("ref") or "").strip(),
+                decision=str(row.get("decision") or "").strip(),
+                benefit=str(row.get("benefit") or "unknown"),
+                evidence_level=str(row.get("evidence_level") or "model_declared"),
+                evidence_refs=tuple(str(r) for r in refs),
+                note=str(row.get("note") or ""),
+                suggestion=str(row.get("suggestion") or ""),
+                supersedes=str(row.get("supersedes") or ""),
+                read_version=str(row.get("read_version") or ""),
+                self_reported=bool(row.get("self_reported")),
+            )
+        )
+    return items
+
+
+def _run_settlement_submit(args: dict, host: RegistryHost) -> ToolResult:
+    """settlement_submit: 批量结算逐条回执（committed/pending/failed）+ 成本计数."""
+    channel, session_id = _settlement_context(host)
+    if channel is None:
+        return _settlement_unavailable(
+            "settlement_submit", "settlement 通道未装配（EventStore 未启用或组件缺失）"
+        )
+    if not session_id:
+        return _settlement_unavailable("settlement_submit", "当前会话不可归属（session_id 为空），不落任何账")
+    parsed = _settlement_items_from_args(args.get("items"))
+    if isinstance(parsed, str):
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[参数错误] {parsed}",
+            tool_call_id="",
+            tool_name="settlement_submit",
+        )
+    receipt = submit_settlement_batch(
+        items=parsed,
+        method_store=channel.method_store,
+        experience_store=channel.experience_store,
+        event_store=channel.event_store,
+        session_id=session_id,
+        work_unit_id=str(args.get("work_unit_id") or "").strip(),
+        run_id=str(current_run_generation.get() or ""),
+        episode_ref=str(host.current_episode_ref() or ""),
+        model=str(current_model_label.get() or ""),
+        rule_lookup=channel.rule_lookup,
+    )
+    counts = receipt["counts"]
+    # 零 committed 时回执 FAILURE：部分成功/未知不冒充整批成功；逐条事实在 receipts 内
+    host.audit(
+        "settlement_submit",
+        {"work_unit_id": receipt["work_unit_id"], "items": len(parsed), "counts": counts},
+        "success" if counts["committed"] else "no_commit",
+    )
+    header = (
+        f"[settlement_submit] committed={counts['committed']} pending={counts['pending']} "
+        f"failed={counts['failed']} | settlement_calls={receipt['settlement_calls']} "
+        f"settlement_rounds={receipt['settlement_rounds']} | attribution={receipt['attribution']}"
+    )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS if counts["committed"] > 0 else ToolResultStatus.FAILURE,
+        content=header + "\n" + json.dumps(receipt, ensure_ascii=False),
+        tool_call_id="",
+        tool_name="settlement_submit",
+    )
