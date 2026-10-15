@@ -28,7 +28,7 @@ from llm_loop.runtime.service_control import (
     release_admission_barrier,
     spawn_service_control_worker,
 )
-from llm_loop.tools.review_gate import review_gate_note
+from llm_loop.tools.review_gate import GATE_NOTE_PREFIX
 
 
 def _derive_restart_target(code_root: str) -> str:
@@ -269,7 +269,7 @@ class ServiceControlTool:
         self._review_gate_recorder = review_gate_recorder
 
     def _review_gate_line(self) -> str:
-        """RULE-AI-28 闸提示行（EVO-20261014-7ba73d88，publish 触发面，只提醒不阻断）。"""
+        """Deployment observation only; service publish is not article publication."""
         fact = ""
         recorder = getattr(self, "_review_gate_recorder", None)
         if recorder is not None:
@@ -277,19 +277,21 @@ class ServiceControlTool:
                 fact = str(
                     recorder(
                         {
-                            "action_kind": "publish",
+                            "action_kind": "deployment_publish",
                             "tool": "service_control",
                             "action": "publish",
                         }
                     )
                     or ""
                 )
-            except Exception:  # noqa: BLE001 - 探测失败不阻断动作、不阻断提醒
+            except Exception:  # noqa: BLE001 - 观测失败不构成审查资格或免审
                 fact = ""
         if not fact:
             fact = "unknown（未注入探测器）"
-        return review_gate_note(
-            "publish", fact, action_label="service_control publish"
+        return (
+            f"{GATE_NOTE_PREFIX} service_control publish 是代码部署，非文稿发表｜"
+            f"观测线索（审查资格未核验）: {fact}｜"
+            "本行不授予文稿发表资格或扩大原授权"
         )
 
     def execute(self, **kwargs) -> ToolResult:

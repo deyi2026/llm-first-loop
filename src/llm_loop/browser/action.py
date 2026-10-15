@@ -11,10 +11,11 @@ import hashlib
 import json
 import os
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
@@ -270,11 +271,13 @@ class BrowserActionAdapter:
         settle_enabled: bool = False,
         receipt_diff_summary_enabled: bool = False,
         receipt_diff_summary_cap: int = 32,
+        review_authorizer: Callable[[str, dict[str, Any], dict[str, Any] | None, dict[str, Any]], Any] | None = None,
     ) -> None:
         self.perception = perception
         self.receipt_store = receipt_store
         self.capture_backend = capture_backend
         self.actuator = actuator
+        self._review_authorizer = review_authorizer  # P0-B physical dispatch fence
         # FR-1 local semantic guard (DESIGN-20261007-browser-semantic-guard).
         # Default off: the guard is an additive pre-dispatch gate; enabling it
         # must never change behavior for sessions that did not ask for it.
@@ -325,7 +328,11 @@ class BrowserActionAdapter:
         if not callable(settle):
             return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": "actuator_no_settle"}
         try:
-            return settle(physical_target=physical_target, mode=mode)
+            observed = settle(physical_target=physical_target, mode=mode)
+            return observed if isinstance(observed, dict) else {
+                "schema": "smc.browser_wait_verdict.v0.1",
+                "mode": mode, "verdict": "unavailable", "reason": "settle_invalid_receipt",
+            }
         except Exception as exc:  # noqa: BLE001 - settle must never break the dispatch path.
             return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": f"settle_error:{type(exc).__name__}"}
 
@@ -631,8 +638,11 @@ class BrowserActionAdapter:
                 # receipt (the model has to see "mismatch absorbed because
                 # semantics are stable", not a plain ok indistinguishable
                 # from a genuine version match).
-                guard_verdict["exempted"] = True
-                guard_verdict["exemption_reason"] = "version_mismatch_semantics_stable"
+                # guard_pass already implies a dict; explicitly narrow before
+                # touching it so Pyright can prove these writes are safe.
+                if isinstance(guard_verdict, dict):
+                    guard_verdict["exempted"] = True
+                    guard_verdict["exemption_reason"] = "version_mismatch_semantics_stable"
         else:
             # Lightweight resource-level precondition: reuse the full mechanical
             # assessment against the model-declared version itself (both sides of
@@ -700,6 +710,26 @@ class BrowserActionAdapter:
                     "navigate_page_target_mismatch",
                     before_version=before_version,
                     before_ref=before_ref,
+                )
+
+        # The final ground/target identity is known here, and the physical actuator
+        # has not been called. All model-facing browser mutation aliases funnel here.
+        # Only publication-class clicks trigger the extra gate; drafts, edits and
+        # navigation remain under existing version/effect constraints.
+        if self._review_authorizer is not None:
+            try:
+                review_decision = self._review_authorizer(
+                    session_id, action, semantic_object, before_raw,
+                )
+            except Exception as exc:  # noqa: BLE001 - a broken review verifier must deny
+                return self._append_rejected(
+                    session_id, action, f"review_admission_verifier_error:{type(exc).__name__}",
+                    before_version=before_version, before_ref=before_ref,
+                )
+            if not review_decision.allowed:
+                return self._append_rejected(
+                    session_id, action, "review_admission_blocked:" + review_decision.reason,
+                    before_version=before_version, before_ref=before_ref,
                 )
 
         dispatch_ref = self.receipt_store.persist_dispatch_grounding(

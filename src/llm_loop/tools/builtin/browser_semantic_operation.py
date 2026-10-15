@@ -30,6 +30,7 @@ from llm_loop.browser.perception import (
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.browser_semantic_execute import BrowserSemanticExecuteTool
 from llm_loop.tools.builtin.browser_wait import BrowserWaitObjectTool
+from llm_loop.tools.review_gate import ARTICLE_REVIEW_OBLIGATION
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +328,7 @@ class BrowserSemanticOperationTool:
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
         "不判断 task completion。"
+        + ARTICLE_REVIEW_OBLIGATION
     )
     _IDENTITY_SCHEMA = {
         "type": "object",

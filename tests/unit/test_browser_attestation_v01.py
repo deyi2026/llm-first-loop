@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -19,8 +19,8 @@ from llm_loop.browser import attestation as attestation_mod
 from llm_loop.browser.attestation import (
     AttestationVerdict,
     BindingPolicy,
-    attest_port,
     attest_debug_url,
+    attest_port,
     builtin_default_trees,
     classify_user_data_dir,
     extract_user_data_dir_value,
@@ -247,7 +247,12 @@ def test_coordinator_attestation_verdict_mismatch_refused():
 
 
 def test_attest_dead_port_fail_closed_real():
-    verdict = attest_port(39099, TREES)  # 无监听
+    # Reserve an OS-assigned port without listening. A fixed port can already
+    # belong to another application; retaining this socket prevents a race
+    # between choosing an available address and the real lsof observation.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved:
+        reserved.bind(("0.0.0.0", 0))
+        verdict = attest_port(reserved.getsockname()[1], TREES)
     assert verdict.verdict == "real"
     assert "无监听" in verdict.detail
 

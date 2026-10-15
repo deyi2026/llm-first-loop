@@ -13,6 +13,7 @@ from typing import Any
 from llm_loop.browser.action import BrowserActionAdapter
 from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_CARD
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.tools.review_gate import ARTICLE_REVIEW_OBLIGATION
 
 
 class BrowserActionTool:
@@ -30,6 +31,7 @@ class BrowserActionTool:
         "ActionReceipt 只表示机械执行/观察事实，不代表任务完成或语义成功。"
         "完整方法可按 method_ref 用 search_records(kind=method, query=<exact ref>) 精确水合；"
         "是否加载完整方法和如何应用由模型决定。"
+        + ARTICLE_REVIEW_OBLIGATION
     )
     parameters = {
         "type": "object",

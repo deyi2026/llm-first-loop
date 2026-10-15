@@ -25,6 +25,7 @@ from llm_loop.core.run_context import (
 )
 from llm_loop.tools.builtin.job_registry import JobDurabilityError, JobLimitExceeded, JobRegistry
 from llm_loop.tools.review_gate import (
+    REVIEW_GATE_OBLIGATION,
     classify_review_gate_command,
     is_read_only_probe,
     review_gate_note,
@@ -208,6 +209,7 @@ class ExecuteCommandTool:
         "默认 shell 退出码仅是最后执行命令的状态，不代表管道内全部步骤成功。"
         "命令输出默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断，并由统一 durable recovery 负责恢复；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
+        + "RULE-AI-28：" + REVIEW_GATE_OBLIGATION
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.COMMAND_SNAPSHOT)
     )
@@ -253,7 +255,7 @@ class ExecuteCommandTool:
         self._sandbox_mode = sandbox_mode
         self._sandbox_image = sandbox_image
         # EVO-20261014-7ba73d88: push/全量测试前的 review gate 闸提示记录器
-        # （factory 注入，返回机器事实一行；None 时闸仍提醒但机器事实为 unknown）。
+        # （factory 注入，返回观测线索；None 时审查资格仍未核验）。
         self._review_gate_recorder = review_gate_recorder
         # P1-5 + Stop: 工具实例跨 session 共享，单 `_active_proc` 会被并发覆盖并
         # 导致超时/Stop 杀错进程。按 current_session_id 保存前台进程，锁保护跨线程访问。
@@ -295,11 +297,11 @@ class ExecuteCommandTool:
             self._terminate_proc(procs[0])
 
     def _review_gate_line(self, command: str) -> str:
-        """RULE-AI-28 闸提示行（EVO-20261014-7ba73d88，只提醒不阻断）。
+        """RULE-AI-28 前置义务与观测线索；本行不是准入资格核验。
 
         触发面：git push（含 force 变体）与全量 pytest。机器事实由 factory 注入的
-        recorder 探测本会话最近一条已落盘 VERDICT 回执并写 review_gate_probe 事件；
-        程序不裁决，声明（satisfied / exempted:<类型> / none）由模型自报。
+        recorder 探测本会话工具文本并写 review_gate_probe 观测事件；
+        父 agent 必须在调用前核验真正独立回执，本行不凭文本授予资格。
         """
         kind = classify_review_gate_command(command)
         if not kind:
@@ -316,7 +318,7 @@ class ExecuteCommandTool:
                         "command_preview": command[:120],
                     }
                 ) or "")
-            except Exception:  # noqa: BLE001 - 探测失败不阻断动作、不阻断提醒
+            except Exception:  # noqa: BLE001 - 观测失败不构成免审
                 fact = ""
         if not fact:
             fact = "unknown（未注入探测器）"
@@ -351,7 +353,8 @@ class ExecuteCommandTool:
                 tool_call_id="", tool_name=self.name,
             )
         launch_command = "bash -e -o pipefail -c " + shlex.quote(command) if fail_fast else command
-        # EVO-20261014-7ba73d88: push/全量测试闸提示（只提醒不阻断，回执注入一行）。
+        # RULE-AI-28: caller-visible obligation is in the schema before invocation;
+        # the returned annotation reports observations, not automatic admission.
         gate_line = self._review_gate_line(command)
         # 工作区跟随: 未显式指定 workdir 时默认当前工作区根（无工作区 → 进程 cwd，零回归）
         if workdir is None:

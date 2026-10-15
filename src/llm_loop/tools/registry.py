@@ -10,6 +10,7 @@ import contextlib
 import copy
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -33,11 +34,13 @@ from llm_loop.core.run_context import (
     current_run_generation,
     current_session_id,
     current_tool_discovery_scope,
+    workspace_base,
 )
 from llm_loop.knowledge.injection_ledger import append_row
 from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.eligibility import runtime_tool_health
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
+from llm_loop.tools.review_gate import ARTICLE_REVIEW_OBLIGATION
 from llm_loop.tools.safety import CatastrophicGuard
 
 logger = logging.getLogger(__name__)
@@ -73,14 +76,15 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "browser_wait_scope_count": "Browser只读对象计数等待：exact scope_ref + operator(eq|ge|le) + integer count>=0；程序固定property=object_count，不retry/latest/rebind。",
     "browser_wait_object_state": "Browser只读对象状态等待：exact object_ref + state property + boolean value；程序exact hydrate并固定operator=eq，不名称匹配/retry/rebind。",
     "browser_wait_object_text": "Browser只读对象文本等待：exact object_ref + property(name|value_text) + string operator/value；程序exact hydrate，不名称匹配/retry/rebind。",
-    "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。",
+    "browser_action": SEMANTIC_OPERATION_METHOD_CARD + " Browser SMC Phase 1 写操作：click/fill/select/navigate/scroll；使用 snapshot 的 exact Semantic ID/scope + expected_version，object mutation=object，navigate=resource，snapshot 不作为 mutation version_scope；dispatch 前机械复核；单次 dispatch，不自动 retry/rebind；ActionReceipt 只表示机械事实，不等于任务完成。" + ARTICLE_REVIEW_OBLIGATION,
     "browser_semantic_execute": "Browser低层语义执行：exact GroundingRef/resource_ref + verb/args；内部编译scope/version/action_id并single-dispatch。ActionReceipt已有post-capture/diff；仅需更广语义或证据不完整时再snapshot；不retry/rebind/完成判断。",
-    "browser_operate": "Browser操作：一次调用一个已决定mutation；do=navigate/click/set_text/append_text/select/scroll，target三选一寻址(EVO-20261010-1e06d6b4)：exact kind+name(+role)｜kind+name_normalized(snapshot暴露的零宽剥离/空白折叠归一形式)｜grounding_ref(先前snapshot/未命中候选清单，受retention约束)；identity未命中回执有界候选清单；wait属于browser_perceive；程序只做ground/version/single-dispatch/post-capture；不fuzzy/rebind/retry/完成判断。",
+    "browser_operate": "Browser操作：一次调用一个已决定mutation；do=navigate/click/set_text/append_text/select/scroll，target三选一寻址(EVO-20261010-1e06d6b4)：exact kind+name(+role)｜kind+name_normalized(snapshot暴露的零宽剥离/空白折叠归一形式)｜grounding_ref(先前snapshot/未命中候选清单，受retention约束)；identity未命中回执有界候选清单；wait属于browser_perceive；程序只做ground/version/single-dispatch/post-capture；不fuzzy/rebind/retry/完成判断。" + ARTICLE_REVIEW_OBLIGATION,
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "present_files": "声明已存在的输出文件为最终交付物（对齐 DSH present）：写入完成→最终答复前调用；Web 出产物面板可点击打开/预览；execute_command 创建的产物必须显式声明；工作区内、全有或全无。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
-    "execute_command": "在独立 shell 执行命令；fail_fast=true 显式启用 bash -e -o pipefail 保留管道失败，否则退出码仅代表 shell 最后命令。后台启动返回 exact job_id；等终态用 wait(seconds,job_id)，查输出用 job_output；灾难性命令由硬安全边界阻断。",
+    "execute_command": "独立shell；fail_fast=true 用bash -e -o pipefail，否则退出码仅代表最后命令。后台返job_id；wait等终态，job_output查输出；灾难命令硬阻断。全量测试/push前按RULE-AI-28取得独立审查覆盖当前产物的有效PASS回执，未满足暂缓。",
+    "review_admission": "Rule28 Host审核准入：action=start(kind=full_test|git_push|article_publish,workdir,command,target_name)冻结真实产物，启动独立只读 GLM-5.3 reviewer；action=status(child_id)查真实完成、核对精确SHA与P0/P1并签发一次性内存资格，正文PASS/旧回执/不同目标均不能放行；不代替用户授权。",
     "service_control": "共享Web/Feishu/Learning生命周期控制：status只读（快照观察，CAS与受理复检才是权威）；publish发布新desired deployment（自动以当前代做CAS+干净git树+webui产物hash绑定）；restart异步走desired-state绑定的official restart（建议显式带expected_generation=最新status观察值，缺省取当前代）。generation冲突回执即当前事实：直接以回执current重试（存活owner≤一poll可过；死worker由reaper按30s/120s/2100s分档回收后可过），不等待、不询问；终态failed/等待中陈旧action的屏障由等待循环与reaper按档释放，新restart可接管（自恢复）。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
     "job_kill": "终止仍在运行的 execute_command 后台任务。",
@@ -376,6 +380,7 @@ class ToolRegistry:
         self._exact_read_projection_budget_chars: int | None = None
         self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
         self._managed_service_guard = managed_service_guard
+        self._review_admission: Any | None = None  # Host-only capability, configured at factory
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         self._escalation_store = escalation_store  # EscalationStore（提权闭环，None=零回归）
         # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
@@ -512,6 +517,10 @@ class ToolRegistry:
                 min(self.max_output_chars, self._exact_read_projection_budget_chars),
             )
         return max(128, min(self.max_output_chars, 5000))
+
+    def set_review_admission(self, authority: Any) -> None:
+        """Attach a Host-owned review authority; never accept a model-provided PASS."""
+        self._review_admission = authority
 
     def set_pipeline(self, pipeline: Any) -> None:
         """装配工具执行瀑布（EVO-20260813-9ced1f4c + ERC R12）.
@@ -1143,6 +1152,29 @@ class ToolRegistry:
                             if decision.services
                             else "managed_service_lifecycle"
                         ),
+                        duration_ms=0.0,
+                    ),
+                )
+
+        # P0-B: real Host admission before *any* execute_command process spawn,
+        # including background launch and shell approval paths. This is independent
+        # of catastrophic safety, user permission and model-facing advice text.
+        if call.name == "execute_command" and self._review_admission is not None:
+            cmd = str(call.arguments.get("command") or "")
+            target_dir = str(call.arguments.get("workdir") or workspace_base() or os.getcwd())
+            verdict = self._review_admission.check_shell(
+                str(current_session_id.get() or ""), cmd, target_dir,
+            )
+            if not verdict.allowed:
+                return self._preblock(
+                    call,
+                    ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=verdict.reason,
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        error_type="E2_REVIEW_ADMISSION",
+                        error_detail="review_qualification_missing_or_stale",
                         duration_ms=0.0,
                     ),
                 )
