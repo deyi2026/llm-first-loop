@@ -1,0 +1,100 @@
+{
+  "adopted_specialist_jev_commit": "c0f577d181bb677109b7ced2b3474a5b1e87eedf",
+  "branch": "fix/rule28-jev-converged-20261015",
+  "capability_coverage": "only identified Host execute_command full-test/push and definite article Publish click",
+  "combined_jev_boundary_verification": {
+    "deterministic_comparisons": 1550,
+    "differential_sha256": "bddfeb60234535a7d7277ac07159e6ef43823e792630dd91980fa3d851bd9b7e",
+    "no_provider_call": true,
+    "semantic_differences": 0
+  },
+  "converged_jev_wire_blob": "32a1d4c41d4c26acddce07b21fcbbb0e54ad4d92",
+  "converged_source_commit": "604592a243080bc4bb366853764992114605840b",
+  "date": "2026-10-15",
+  "deployed": false,
+  "explicit_user_canary_authorization": false,
+  "generated_report_diff_sha256": "15ed0b28361af33e4ac70ac9ae7e6e4ab62e5dba54088c8a3f9aa364dc4933b6",
+  "independent_glm53_review": {
+    "child_id": "subagent_0c925ea1b114",
+    "findings": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 3
+    },
+    "isolated": true,
+    "model": "glm/glm-5.3",
+    "parent_id": "review-parent-rule28-jev-convergence-20261015",
+    "qualification": "PASS",
+    "raw_ref": "data/rule28-jev-convergence/glm-child-review.json",
+    "raw_review_sha256": "76c484f60386ee9255ac788f1dd90f1cfe5ed4aae2a0d88af3e4ff333c423c15",
+    "review_text_sha256": "4b9885a6bc34fe1e018adc489ce5818efd2ea2e76e0c479d917e70af81dfa93f",
+    "state": "completed",
+    "terminal_count": 1,
+    "terminal_event_id": "836cb723-09b2-46df-ba53-bd208a0dda4a",
+    "verdict": "PASS"
+  },
+  "joint_focused_log_sha256": "e4c14114e287260c3b6248eeb401cad49c0e220f8cf130c8427a3fe9a8a90117",
+  "joint_focused_passed": 409,
+  "limited_web_canary": "QUALIFIED_FOR_APPROVAL_REQUEST_ONLY",
+  "main_baseline": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+  "main_merged": false,
+  "new_native_full_r9": {
+    "env_pin": "PASS",
+    "exit_code": 0,
+    "full_log_ref": "data/rule28-jev-convergence/native-full-r9.log",
+    "full_log_sha256": "2a011bfd01f071fdb3690e1ea4a52f2b24cdb6a9feeef459697063a7ba7d1c10",
+    "guard_report": "PASS",
+    "pyright": "PASS",
+    "ruff": "PASS",
+    "script": "bash scripts/ci_gate.sh",
+    "tier0_passed": 319,
+    "warnings": 13,
+    "xdist_passed": 8959,
+    "xdist_skipped": 146
+  },
+  "out_of_scope": [
+    "DSH downstream subprocesses",
+    "arbitrary opaque shell",
+    "generic Submit and form Enter",
+    "direct HTTP/CDP/third-party publishing",
+    "OS-wide atomic gate guarantee"
+  ],
+  "production_live_at_verification": {
+    "feishu": {
+      "commit": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+      "identity_ok": true,
+      "pid": 18502
+    },
+    "learning": {
+      "commit": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+      "identity_ok": true,
+      "pid": 20670
+    },
+    "web": {
+      "commit": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+      "identity_ok": true,
+      "pid": 21744
+    }
+  },
+  "pushed": false,
+  "reports_generated_and_reverted": 18,
+  "restarted": false,
+  "schema": "lfl.rule28_jev_convergence_qualification/v1",
+  "source_commit_exactly_matches_independent_review": true,
+  "source_files": 26,
+  "source_patch_sha256": "dced89e9733fb289cfbdea0d04407d6da9041fbb6358ddb27b598da2d054af0f",
+  "specialist_jev_original_r9": {
+    "failures": [
+      "test_orphan_tmp_and_lock_invisible_to_scan_surfaces",
+      "test_attest_dead_port_fail_closed_real"
+    ],
+    "raw_log_sha256": "8881d08af696741d3f727909f06c37f28b5a4d8634e0828132100b1e1f58527c",
+    "status": "FAILED",
+    "xdist_failed": 2,
+    "xdist_passed": 8850,
+    "xdist_skipped": 146
+  },
+  "specialist_jev_patch_sha256": "b31c73f5d8da7d5d001253c10414e59801b1a60b1eeb858bfeb1924a913ed331",
+  "specialist_jev_wire_blob": "32a1d4c41d4c26acddce07b21fcbbb0e54ad4d92",
+  "universal_three_gate": "NO_GO_FOR_UNIVERSAL_PRODUCTION_GATE"
+}
