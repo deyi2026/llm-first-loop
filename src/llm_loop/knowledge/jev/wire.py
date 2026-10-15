@@ -227,7 +227,12 @@ def _validate_choice(
             if not values_ok:
                 reasons.append("probability_not_finite_or_out_of_unit")
             else:
-                total = sum(float(v) for v in probabilities.values())
+                # values_ok already proves every probability is a finite
+                # non-bool number; keep that invariant visible to Pyright.
+                total = sum(
+                    float(v) for v in probabilities.values()
+                    if isinstance(v, (int, float)) and not isinstance(v, bool)
+                )
                 if abs(total - 1.0) > PROB_SUM_TOLERANCE:
                     reasons.append(f"probability_sum_off_by_{abs(total - 1.0):.3e}")
                 else:
