@@ -8,11 +8,11 @@
 
 | 字段 | 值 |
 |---|---|
-| `generated_at` | 2026-10-12（重新盘点：RULE-AI-28 台账补登 + RULE-AI-29 入库，EVO-20261012-19f88338；同日早前盘点：RULE-AI-27 入库补登记，EVO-20261012-e29ead3c） |
+| `generated_at` | 2026-10-15（RuleIndex 主线精确整合专项，只读盘点补登 Rule31；保留原 Rule32/Rule33 权威正文及历史证据） |
 | `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
 | `lite_version` | 19 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 36（2026-10-12 实测 33；2026-10-14 RULE-AI-31 机械补登（EVO-20261014-7299aec2 漏登，SoT :505）；2026-10-14 RULE-AI-32 机械补登（EVO-20261014-a731be2b 漏登，SoT :527）；2026-10-14 RULE-AI-33 新增同步登记（SoT 规则三十三，终审组合实施，非漏登）；RULE-AI-00~29（21 编号空缺，SoT :333 说明）见 §2，附则/子规则/方法层见 §2.4） |
+| `records` | 37（2026-10-15 按当前 `scripts/rule_presence_audit.py` **全文去重 ref** 口径只读实测：34 个 `RULE-AI-xx` 文本编号，**包含仅在空缺说明中提到、并非正式规则的 RULE-AI-21**，再加附则/子规则/方法层 3 条；真正以 SoT `##` 标题定义的正式 Rule 是 **33 条**，对应本台账 33 个正式规则行，另有 3 个 scope 登记项，共 **36 条真实登记项**。脚本观测 37 不得误称“正式规则 34”或“真实登记项 37”；此处只纠正台账口径，不修改盘点器实现。Rule31 在原 main 台账漏登、Rule32/33 原条目完整保留；gaps=3、uncovered=0） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |
@@ -109,6 +109,7 @@
 | RULE-AI-28 | 三道审查闸——代码全量测试前/文章发布前/push 前独立子代理审查（SoT 2026-10-12） | 在库未注入 | EVO-20261012（用户指示 2026-10-12，入库提交 30ece512e）新增：三类高成本/难撤回动作前独立审查子代理 PASS 为必要条件，审查者与执行者分离；三态 verdict（PASS/REVISE/BLOCK）+ 回执落盘；豁免三类（用户豁免/纯文案/既有回执且 SHA 未变）如实记录；与知识体系持续优化循环衔接；行为纪律，无工具契约承载。**台账本次补登**（并行会话入库时漏登，EVO-20261012-19f88338 连带处置） |
 | RULE-AI-29 | 方法/经验用后负反馈必须在当前任务收口前闭环（SoT 2026-10-12） | 在库未注入 | EVO-20261012-19f88338（2026-10-12 人工批准）新增：触发三情形（不适配/误导/时效过期）+ 三级处置（record_use 保底 / refine·annotate_freshness 修正首选 / invalidate·retire 核验后弃用）+ 证据要求（"我用不上"≠"它错了"，not_applicable 不得升级弃用）+ 收口时限（明确判定当场处置）+ Learning Plane 兜底非替代；模型行为纪律，工具契约已支撑，无新增程序角色 |
 | RULE-AI-30 | Fail-closed 通用纪律——无法判定按未通过处理（SoT 2026-10-14） | 在库未注入 | EVO-20261014-483ca6de 新增：防线类机制（校验/过滤/脱敏/白名单/配额/门禁/寻址）无法匹配/解析/判断时一律按未通过并显式说明缺失事实；规则缺失≠允许、解析失败≠空值继续、解析异常走保守分支；fail-open 仅限显式声明"可用性优先"的既有位点（如 event_log 钩子链），新增防线默认 fail-closed、改默认须过演进审批。〔2026-10-14 web-carveout M3 回归期机械补登：内容取自 docs/ai_rules.md L491-496 真值源，登记缺口非本任务引入〕 |
+| RULE-AI-31 | RSI 方法/经验循环：实质任务开局有界检索、实际使用后计分与生命周期处置（SoT 2026-10-14） | 在库未注入 | 权威 `docs/ai_rules.md` 规则三十一：有实质多步/工具任务时 `search_records` 从 method/experience/lesson 最多选2类、每类≤5，同连续任务窗口只检索一次；简单问答/闲聊豁免，零命中不循环换词。稳定 ref 用于精确水合，命中时效与任务适用性由模型判断；实际引用后的 `record_use` 正负评分与处置遵循既有工具契约，程序不代替模型做语义判断，不无条件向 universal prompt 注入经验/方法。2026-10-15 从当前 main 精确整合时补充正式台账行，主线 Rule32/33 保留。 |
 | RULE-AI-32 | 共享文件格式化纪律——禁全文件 ruff format，hunk 级最小化或独立提交（SoT 2026-10-14） | 在库未注入 | EVO-20261014-a731be2b 人工批准新增：对非本次任务新引入的共享/存量文件禁止 `ruff format <file>` 全文件重排；格式化只允许作用于本次任务实际新增/修改的 hunk；确需全文件 format 时先 `ruff format --diff` 评估并独立提交（不与语义改动混提）；动机=M1b 实测全文件重排引入 ~400 行噪声污染审查面（ANALYSIS §7 实施纪律记录）；程序角色=无新增（规则层条款化，RULE 卡检索命中）。〔2026-10-14 可观测性 M1c-rev 全量回归期机械补登：内容取自 docs/ai_rules.md L527-535 真值源，登记缺口非本任务引入〕 |
 | RULE-AI-33 | service_control generation 冲突即事实——冲突回执直接重试、显式带代（SoT 2026-10-14） | 在库未注入 | 2026-10-14 终审组合实施同步登记（非漏登，SoT 规则三十三）：模型侧调用纪律条款——generation 冲突回执即当前事实，直接以回执 current 重试（存活 owner ≤一 poll；死 worker 由 reaper 按 30s/120s/2100s 分档回收），不等待/不询问；首选显式 expected_generation=最新 status 观察值；等待中旧 action 不构成重试前置；A 方案（publish 时全量 supersede 非终态 action）rejected 留档于条款第 4 条。程序角色=程序侧已实现（等待循环 stale 检测 + reaper accepted 覆盖，同一变更集），规则只管模型侧。 |
 
@@ -159,6 +160,7 @@
 | 重新盘点（2026-09-23）：lite v18→v19 / RULE-AI-25 入库补登记 | 触发 §6 条件 2；`rule_presence_audit.py` 实测 `records=28`、`base_prompt_hash=8934d96c3f25` 未变、hydration `memory/memory_extract=18/18`；`test_rule_presence_contract.py` 18/18 绿 |
 | 重新盘点（2026-10-12）：RULE-AI-27 入库补登记 | EVO-20261012-e29ead3c（人工批准）执行；`rule_presence_audit.py` 实测 `records=31`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677`、lite v19 未变；`test_ledger_covers_all_sot_rules` 修复后绿（详见本轮回归记录） |
 | 重新盘点（2026-10-12）：RULE-AI-28 台账补登 + RULE-AI-29 入库 | EVO-20261012-19f88338（人工批准）执行；`rule_presence_audit.py` 实测 `records=33`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677` 未变、lite v19 未变（hydration kind 计数为运行时数据自然增长：memory/memory_extract=70/70、method=24，非本次改动所致）；`test_ledger_covers_all_sot_rules` 覆盖 28/29 后绿 |
+| 重新盘点（2026-10-15）：Rule31 当前 main 精确整合与库存口径核对 | 以 `main@2ad0bc06d55aefa3496bdf8c26bad1a4dc2963b2` 的 SoT 为源只读盘点：脚本 `records=37`、`gaps=3`、`uncovered=0`、`base_prompt_hash=5aeea16c7677`、lite v19；交叉核验 SoT 正式 H2 Rule=33（00–20、22–33），正式台账行=33、附属 scope=3（合计36）；脚本使用全文 `RULE-AI-\d{2}` 去重，额外把正文中的空缺号 RULE-AI-21 记入，故报告 37。该差异已显式披露为盘点口径问题，未调整盘点算法、未新增/删除规则、未放宽测试；测试与审查资格以各自正式回执为准，不得由本盘点行代替。 |
 | 已知红处置 | 无新增已知红；既有已知红仍为"修复 或 显式接受"，**未扩基线** |
 
 ## 6. 重新盘点触发条件
