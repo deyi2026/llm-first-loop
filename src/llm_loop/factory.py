@@ -64,6 +64,14 @@ from llm_loop.introspection.corrections import CorrectionContext, CorrectionTool
 from llm_loop.introspection.docs_search import DocsSearcher
 from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.search import RecordSearcher
+
+# GOAL-20261015-ac085ab1：settlement 打点/投影装配名顶层化——原 build_engine
+# 函数内 import 使 local_imports 棘轮 63→64（豁免仅 optional/plugin，此处两类
+# 语义皆不是）；settlement→use_ledger→timekeeping 无回边，顶层化不构成环。
+from llm_loop.introspection.settlement import (
+    KNOWLEDGE_READ_EVENT_TYPE,
+    RuleFeedbackProjection,
+)
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 from llm_loop.llm.client import LLMClient
@@ -1813,20 +1821,18 @@ def build_engine(
         )
     # TASK-ac085ab1-002/003: 精确水合打点 sink + 规则反馈注释投影（均 fail-open，
     # 复用既有 EventStore 与 event_logs_dir，不新建账本）。
-    _knowledge_read_sink = None
+    # 显式标注默认 None 的回调槽位；启用分支内用独立函数名装配再回填，
+    # 避免同槽位 def 重声明遮蔽（pyright 视 def 为符号声明）。运行时语义不变。
+    _knowledge_read_sink: Callable[[dict], None] | None = None
     _rule_feedback_projection = None
     if getattr(event_store, "enabled", False):
-        from llm_loop.introspection.settlement import (
-            KNOWLEDGE_READ_EVENT_TYPE,
-            RuleFeedbackProjection,
-        )
-
-        def _knowledge_read_sink(payload: dict) -> None:  # noqa: F811 - 单一装配点
+        def _append_knowledge_read_event(payload: dict) -> None:
             sid = str(payload.get("session_id") or "")
             if not sid:
                 return  # 无法归属会话：不打点（fail-open，不阻断检索）
             event_store.append(sid, KNOWLEDGE_READ_EVENT_TYPE, payload)
 
+        _knowledge_read_sink = _append_knowledge_read_event
         _rule_feedback_projection = RuleFeedbackProjection(settings.event_logs_dir)
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,

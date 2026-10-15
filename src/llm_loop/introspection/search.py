@@ -792,7 +792,9 @@ class RecordSearcher:
                         # 回退旧路径：净分注释（usage_net 摘要 → 行注字段）
                         summary = store.usage_net(ref)
                         value = _usage_net_row_annotation(summary) if summary else None
-                    memo[ref] = value
+                    # 只收 dict 形态的反馈视图入 memo（与下方 isinstance 消费口径
+                    # 一致）；非 dict 结果一律按无附加注释处理，行为不变。
+                    memo[ref] = value if isinstance(value, dict) else None
                 extra = memo[ref] if isinstance(memo[ref], dict) else None
                 annotated.append({**row, **extra} if extra else row)
             except Exception:  # noqa: BLE001 — 派生视图降级不阻断检索

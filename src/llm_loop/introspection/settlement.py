@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from llm_loop.use_ledger import derive_slot_id, derive_submission_hash
 
@@ -622,6 +622,18 @@ def _parse_event_file(path: Path) -> Iterable[dict]:
         return
 
 
+class _ProjectionCache(TypedDict):
+    """RuleFeedbackProjection 的 TTL 缓存载荷（三视图一次性物化）.
+
+    修正原 ``dict[str, dict]`` 注解：receipt_pairs 实为 set、reads 实为
+    list[str] 聚合，按真实键型精确建模（仅类型层，无运行时影响）。
+    """
+
+    feedback: dict[str, dict]
+    reads: dict[str, list[str]]
+    receipt_pairs: set[tuple[str, str]]
+
+
 class RuleFeedbackProjection:
     """规则反馈注释通道的数据投影：EventStore → per-rule 聚合（可重建，非真相源）.
 
@@ -634,9 +646,11 @@ class RuleFeedbackProjection:
         self._dir = Path(event_logs_dir)
         self._ttl = float(ttl_seconds)
         self._cached_at = 0.0
-        self._cache: dict[str, dict] = {}
+        # 缓存槽位默认 None（falsy）：与原空 dict 同样令 TTL 判定走重扫路径，
+        # 首次 _aggregate 前不返回任何投影；键型见 _ProjectionCache。
+        self._cache: _ProjectionCache | None = None
 
-    def _aggregate(self) -> dict[str, dict]:
+    def _aggregate(self) -> _ProjectionCache:
         now = time.monotonic()
         if now - self._cached_at < self._ttl and self._cache:
             return self._cache
@@ -646,7 +660,10 @@ class RuleFeedbackProjection:
         watermark: dict[str, str] = {}
         for row in _scan_event_files(self._dir):
             event_type = str(row.get("type") or "")
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            # 先落名再 isinstance：调用表达式不可收窄，直接内联会让 payload
+            # 残留 None 分支；经局部名收窄后恒为 mapping（else 分支 {}）。
+            raw_payload = row.get("payload")
+            payload = raw_payload if isinstance(raw_payload, dict) else {}
             ref = str(payload.get("ref") or row.get("ref") or "")
             if not ref:
                 continue

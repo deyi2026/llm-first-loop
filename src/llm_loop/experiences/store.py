@@ -25,7 +25,28 @@ from typing import Any
 
 from llm_loop.experiences.document import ExperienceDocument
 from llm_loop.timekeeping import system_local_now
+from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
 from llm_loop.usage_net import summarize_since_last_transition
+from llm_loop.use_ledger import (
+    BENEFITS as USE_BENEFITS,
+)
+from llm_loop.use_ledger import (
+    EVIDENCE_LEVELS as USE_EVIDENCE_LEVELS,
+)
+from llm_loop.use_ledger import (
+    SCHEMA_EXPERIENCE_V2 as SCHEMA_EXPERIENCE_USE_V2,
+)
+from llm_loop.use_ledger import (
+    append_ledger_line,
+    count_valid_lines,
+    dedupe_slot_heads,
+    derive_slot_id,
+    derive_submission_hash,
+    ensure_appendable_tail,
+    quarantine_torn_tail,
+    read_ledger_entries,
+    resolve_submission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -849,6 +870,15 @@ class ExperienceStore:
         episode_ref: str = "",
         session_id: str = "",
         model: str = "",
+        work_unit_id: str = "",
+        benefit: str = "unknown",
+        evidence_level: str = "model_declared",
+        suggestion: str = "",
+        supersedes: str = "",
+        read_version: str = "",
+        run_id: str = "",
+        attribution: str = "",
+        self_reported: bool = False,
     ) -> dict:
         """追加一条模型声明的经验使用记录（observability 账本）.
 
@@ -856,6 +886,13 @@ class ExperienceStore:
         写入在跨进程 flock 内完成：追加 JSONL 一行 + fsync + 刷新单调水位
         (experiences/.usage_watermark.json)。确定未提交时抛 ExperiencePersistError，
         调用方必须如实失败——不得把使用声明降级为“只回执不落账”（诚实优先）。
+
+        TASK-ac085ab1-001 P0 记录契约（设计草案 v3）: v2 条目带 schema 标记、
+        工作单元绑定、读取版本绑定与模型自评；slot_id / submission_hash 两层键
+        程序派生，flock 内先扫后写——同 (slot, submission_hash) 重试折叠为既有
+        回执（返回 idempotent=True），同 slot 不同内容经 supersedes 追加修订
+        （父记录校验：存在/同slot/在链上，失败抛 ValueError），不改写历史行；
+        每行附完整性凭据，坏尾先隔离再追加。
         """
         doc = self.get(experience_id)
         if doc is None:
@@ -865,29 +902,113 @@ class ExperienceStore:
             raise ValueError(
                 "use_decision must be one of applied|adapted|not_applicable|rejected"
             )
+        clean_benefit = str(benefit or "").strip().lower() or "unknown"
+        if clean_benefit not in USE_BENEFITS:
+            raise ValueError(f"benefit must be one of {sorted(USE_BENEFITS)}")
+        clean_level = str(evidence_level or "").strip().lower() or "model_declared"
+        if clean_level not in USE_EVIDENCE_LEVELS:
+            raise ValueError(f"evidence_level must be one of {sorted(USE_EVIDENCE_LEVELS)}")
+        stem = experience_id.removesuffix(".md")
+        experience_ref = f"experience:{stem}"
+        clean_episode = str(episode_ref or "").strip()[:256]
+        clean_wu = str(work_unit_id or "").strip()[:128]
+        if clean_wu:
+            binding = "explicit"
+            resolved_wu = clean_wu
+        else:
+            binding = "episode_fallback" if clean_episode else "unresolved"
+            resolved_wu = clean_episode
+        version = str(read_version or "").strip() or _payload_sha256(doc.to_md())
+        slot_id = (
+            derive_slot_id(
+                work_unit_id=resolved_wu, kind=doc.record_kind,
+                ref=experience_ref, version=version,
+            )
+            if resolved_wu
+            else ""
+        )
+        clean_refs = [
+            str(v).strip()[:256] for v in (evidence_refs or []) if str(v).strip()
+        ]
+        clean_note = str(note).strip()[:2000]
+        clean_suggestion = str(suggestion or "").strip()[:2000]
+        submission_hash = derive_submission_hash(
+            decision=clean_decision, benefit=clean_benefit, evidence_level=clean_level,
+            evidence_refs=clean_refs, note=clean_note, suggestion=clean_suggestion,
+        )
         entry = {
-            "schema": "experience-use/v1",
+            "schema": SCHEMA_EXPERIENCE_USE_V2,
             "ts": system_local_now().isoformat(),
-            "experience_ref": f"experience:{experience_id.removesuffix('.md')}",
-            "id": experience_id.removesuffix(".md"),
+            "experience_ref": experience_ref,
+            "id": stem,
             "record_kind": doc.record_kind,
             "verification_state": doc.verification_state,
             "status": doc.status,
             "use_decision": clean_decision,
-            "note": str(note).strip()[:2000],
-            "evidence_refs": [
-                str(v).strip()[:256] for v in (evidence_refs or []) if str(v).strip()
-            ],
+            "note": clean_note,
+            "evidence_refs": clean_refs,
             "document_projection_sha256": _payload_sha256(doc.to_md()),
-            "episode_ref": str(episode_ref).strip()[:256],
+            "episode_ref": clean_episode,
             "session_id": str(session_id).strip()[:128],
             "model": str(model).strip()[:256],
             "application_proven": clean_decision in {"applied", "adapted"},
             "authority": "model_declared",
             "task_benefit": "not_evaluated",
+            # ── v2 记录契约（TASK-ac085ab1-001）──
+            "work_unit_id": resolved_wu,
+            "work_unit_binding": binding,
+            "run_id": str(run_id or "").strip()[:128],
+            "read_version": version,
+            "slot_id": slot_id,
+            "submission_hash": submission_hash,
+            "revision": 1,
+            "supersedes": "",
+            "benefit": clean_benefit,
+            "evidence_level": clean_level,
+            "suggestion": clean_suggestion,
         }
-        self._append_usage_entry(entry)
+        if self_reported:
+            entry["self_reported"] = True
+        if attribution:
+            entry["attribution"] = str(attribution).strip()[:64]
+
+        self._dir.mkdir(parents=True, exist_ok=True)
+        path = self.usage_ledger_path()
+        with self._file_lock():
+            existing = read_ledger_entries(path)
+            outcome = resolve_submission(
+                existing, slot_id=slot_id, submission_hash=submission_hash,
+                object_field="experience_ref", object_ref=experience_ref,
+                requested_supersedes=str(supersedes or "").strip(),
+            )
+            if outcome.action == "invalid":
+                raise ValueError(outcome.reason)
+            if outcome.action == "dedupe" and outcome.existing is not None:
+                receipt = dict(outcome.existing)
+                receipt["idempotent"] = True
+                return receipt  # 重试/重复提交同一内容：返回既有回执，不重复追加
+            ensure_appendable_tail(path)
+            ledger_seq = count_valid_lines(path) + 1
+            entry["revision"] = outcome.revision
+            entry["supersedes"] = (
+                str(outcome.parent.get("submission_hash") or "") if outcome.parent else ""
+            )
+            entry["ledger_seq"] = ledger_seq
+            entry["ledger_watermark"] = ledger_seq
+            try:
+                entry = append_ledger_line(path, entry)
+            except OSError as exc:
+                raise ExperiencePersistError(
+                    f"经验使用账本追加失败(确定未提交): {exc}"
+                ) from exc
+            self._refresh_usage_watermark_locked()
         return entry
+
+    def recover_usage_ledger(self) -> dict:
+        """显式恢复入口：torn 尾部隔离旁文件 + 诊断报告（锁内执行）."""
+        with self._file_lock():
+            return quarantine_torn_tail(self.usage_ledger_path())
+
 
     def record_migrated_entry(self, entry: dict) -> dict:
         """方案B 一次性迁移专用：回放历史 event_stream 声明.
@@ -980,6 +1101,10 @@ class ExperienceStore:
         文档 status 尾段一致的条目才计入（口径见 llm_loop/usage_net.py D3）。
         disproven 取当前文档 verification_state（D1 纠偏触发，不改净分权重）。
         文档不可得时不重锚、全量累计并在 anchor 标注；无声明返回 None。
+
+        TASK-ac085ab1-001: 统计前按 slot 取链头（修订只计现行评价）；
+        legacy（无 slot）条目按字段齐全度参与，分层分母不计入并以
+        legacy_entries 披露。
         """
         ref = str(experience_ref or "").strip()
         # 账本条目以 experience:<stem>（无 .md）为真值形式（record_use 归一），此处对齐
@@ -989,14 +1114,80 @@ class ExperienceStore:
         entries = self.usage_entries(ref)  # 倒序=新→旧
         if not entries:
             return None
+        heads = dedupe_slot_heads(entries)
         current_status = str(getattr(doc, "status", "") or "") if doc is not None else ""
-        return summarize_since_last_transition(
-            entries,
+        summary = summarize_since_last_transition(
+            heads,
             decision_key="use_decision",
             status_key="status",
             current_status=current_status,
             disproven=str(getattr(doc, "verification_state", "") or "") == "disproven",
         )
+        current_version = (
+            _payload_sha256(doc.to_md()) if doc is not None else ""
+        )
+        v2_heads = [e for e in heads if e.get("slot_id")]
+        version_scope = "current_version_only"
+        matched = (
+            [e for e in v2_heads if str(e.get("read_version") or "") == current_version]
+            if current_version
+            else []
+        )
+        if not matched and v2_heads:
+            version_scope = "all_v2_heads_no_current_version_match"
+            matched = v2_heads  # 卡片已修订：如实累计全部 v2 链头并标注口径
+        summary["benefit_counts"] = {
+            name: sum(1 for e in matched if str(e.get("benefit") or "") == name)
+            for name in sorted(USE_BENEFITS)
+        }
+        summary["benefit_version_scope"] = version_scope
+        summary["legacy_entries"] = len(entries) - len(v2_heads)
+        summary["slot_revisions_collapsed"] = len(entries) - len(heads)
+        return summary
+
+    def usage_feedback(self, experience_ref: str = "") -> dict[str, Any] | None:
+        """TASK-ac085ab1-003 P1 查询回流：命中行反馈注释数据（只读派生视图）."""
+        summary = self.usage_net(experience_ref)
+        if summary is None:
+            return None
+        ref = str(experience_ref or "").strip()
+        stem = ref.removeprefix("experience:").removesuffix(".md")
+        experience_ref = f"experience:{stem}"
+        doc = self.get(stem)
+        current_version = _payload_sha256(doc.to_md()) if doc is not None else ""
+        heads = dedupe_slot_heads(self.usage_entries(experience_ref))
+        v2_heads = (
+            [e for e in heads if e.get("slot_id") and e.get("read_version") == current_version]
+            if current_version
+            else [e for e in heads if e.get("slot_id")]
+        )
+        # usage_entries 倒序（新→旧）：直接顺序扫描即从最新链头找近因问题
+        recent_issue = ""
+        for entry in v2_heads:
+            if str(entry.get("benefit") or "") in {"hindered", "mixed"} or str(
+                entry.get("use_decision") or ""
+            ) == "rejected":
+                note = " ".join(str(entry.get("note") or "").split())[:160]
+                if note:
+                    recent_issue = note  # 取最近一条非空问题摘要
+                    break
+        state = (
+            "current"
+            if v2_heads
+            else ("stale_after_card_edit" if any(e.get("slot_id") for e in heads) else "none")
+        )
+        feedback = {
+            "read_entry": experience_ref,
+            "feedback_version_state": state,
+            "recent_issue": recent_issue,
+            "feedback_watermark": count_valid_lines(self.usage_ledger_path()),
+        }
+        feedback.update(_usage_net_row_annotation(summary))
+        feedback["benefit_counts"] = dict(summary.get("benefit_counts", {}))
+        legacy = int(summary.get("legacy_entries", 0) or 0)
+        if legacy:
+            feedback["usage_feedback_legacy"] = legacy  # 未分层分母如实披露
+        return feedback
 
     def usage_stats(self) -> dict[str, dict[str, Any]]:
         """聚合使用账本：每个 experience_ref 的 use_count / last_used_at.

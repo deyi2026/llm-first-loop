@@ -21,7 +21,28 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.timekeeping import system_local_now
+from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
 from llm_loop.usage_net import summarize_since_last_transition
+from llm_loop.use_ledger import (
+    BENEFITS as USE_BENEFITS,
+)
+from llm_loop.use_ledger import (
+    EVIDENCE_LEVELS as USE_EVIDENCE_LEVELS,
+)
+from llm_loop.use_ledger import (
+    SCHEMA_METHOD_V2 as SCHEMA_METHOD_USE_V2,
+)
+from llm_loop.use_ledger import (
+    append_ledger_line,
+    count_valid_lines,
+    dedupe_slot_heads,
+    derive_slot_id,
+    derive_submission_hash,
+    ensure_appendable_tail,
+    quarantine_torn_tail,
+    read_ledger_entries,
+    resolve_submission,
+)
 
 _VALID_STATUSES = {"teacher", "candidate", "qualified", "active", "hold", "invalidated", "retired"}
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -862,6 +883,16 @@ class MethodStore:
         model: str = "",
         evidence_refs: list[str] | None = None,
         session_id: str = "",
+        work_unit_id: str = "",
+        benefit: str = "unknown",
+        evidence_level: str = "model_declared",
+        suggestion: str = "",
+        supersedes: str = "",
+        read_version: str = "",
+        run_id: str = "",
+        attribution: str = "",
+        self_reported: bool = False,
+        allow_unresolved: bool = False,
     ) -> dict[str, Any]:
         """Serialize use evidence with any destructive disposition it may support."""
         self._require_write_safe()
@@ -869,7 +900,11 @@ class MethodStore:
             return self._record_use_locked(
                 method_ref, episode_ref=episode_ref, decision=decision,
                 note=note, model=model, evidence_refs=evidence_refs,
-                session_id=session_id,
+                session_id=session_id, work_unit_id=work_unit_id, benefit=benefit,
+                evidence_level=evidence_level, suggestion=suggestion,
+                supersedes=supersedes, read_version=read_version, run_id=run_id,
+                attribution=attribution, self_reported=self_reported,
+                allow_unresolved=allow_unresolved,
             )
 
     def _record_use_locked(
@@ -882,6 +917,16 @@ class MethodStore:
         model: str = "",
         evidence_refs: list[str] | None = None,
         session_id: str = "",
+        work_unit_id: str = "",
+        benefit: str = "unknown",
+        evidence_level: str = "model_declared",
+        suggestion: str = "",
+        supersedes: str = "",
+        read_version: str = "",
+        run_id: str = "",
+        attribution: str = "",
+        self_reported: bool = False,
+        allow_unresolved: bool = False,
     ) -> dict[str, Any]:
         """Append one model-authored Method applicability/use declaration.
 
@@ -890,6 +935,13 @@ class MethodStore:
         merely because the model declared how it treated them.
         session_id (EVO-20260923-618f7fd1 ②) is optional provenance used by the
         goal-level method_use_gate; legacy entries without it simply never match.
+
+        TASK-ac085ab1-001 P0 记录契约（设计草案 v3）: v2 条目带 schema 标记、
+        工作单元绑定、读取版本绑定与模型自评；slot_id / submission_hash 两层键
+        程序派生，flock 内先扫后写——同 (slot, submission_hash) 重试折叠为既有
+        回执，同 slot 不同内容经 supersedes 追加修订（父记录校验），不改写
+        历史行；每行附完整性凭据，坏尾先隔离再追加。task_benefit 保持独立
+        评估语义（not_evaluated），模型自评只进 benefit 字段。
         """
         record = self.get(method_ref)
         if record is None:
@@ -899,8 +951,47 @@ class MethodStore:
         if clean_decision not in allowed:
             raise ValueError(f"decision must be one of {sorted(allowed)}")
         clean_episode = episode_ref.strip()
-        if not clean_episode.startswith("episode:"):
+        # P1-1（独立审查回执 20261015-ac085ab1）：非空 episode 仍须运行时溯源
+        # 前缀；空 episode 仅在调用方显式 allow_unresolved=True 时放行——由下方
+        # binding 判定落 binding=unresolved、slot_id=''（use_ledger.
+        # resolve_submission 定义的归属 unresolved 退化路径），调用方不得伪造
+        # 哨兵前缀（如 "episode:unset"）把不同无归属任务并入同一伪 slot 链。
+        episode_ok = clean_episode.startswith("episode:") or (
+            allow_unresolved and not clean_episode
+        )
+        if not episode_ok:
             raise ValueError("Method use declaration requires runtime episode provenance")
+        clean_benefit = str(benefit or "").strip().lower() or "unknown"
+        if clean_benefit not in USE_BENEFITS:
+            raise ValueError(f"benefit must be one of {sorted(USE_BENEFITS)}")
+        clean_level = str(evidence_level or "").strip().lower() or "model_declared"
+        if clean_level not in USE_EVIDENCE_LEVELS:
+            raise ValueError(f"evidence_level must be one of {sorted(USE_EVIDENCE_LEVELS)}")
+        clean_wu = str(work_unit_id or "").strip()[:128]
+        if clean_wu:
+            binding = "explicit"
+            resolved_wu = clean_wu
+        else:
+            # 无显式工作单元时回退 episode（执行单元，细于 session）；两者皆缺
+            # → 归属 unresolved，不参与需要任务绑定的统计分母。
+            binding = "episode_fallback" if clean_episode else "unresolved"
+            resolved_wu = clean_episode
+        clean_refs = [str(v).strip() for v in (evidence_refs or []) if str(v).strip()]
+        clean_note = note.strip()[:2000]
+        clean_suggestion = str(suggestion or "").strip()[:2000]
+        version = str(read_version or "").strip() or record.content_hash
+        slot_id = (
+            derive_slot_id(
+                work_unit_id=resolved_wu, kind="method",
+                ref=record.method_ref, version=version,
+            )
+            if resolved_wu
+            else ""
+        )
+        submission_hash = derive_submission_hash(
+            decision=clean_decision, benefit=clean_benefit, evidence_level=clean_level,
+            evidence_refs=clean_refs, note=clean_note, suggestion=clean_suggestion,
+        )
         entry = {
             "ts": _now(),
             "method_ref": record.method_ref,
@@ -909,23 +1000,63 @@ class MethodStore:
             "episode_ref": clean_episode,
             "decision": clean_decision,
             "model": model.strip()[:256],
-            "evidence_refs": [str(v).strip() for v in (evidence_refs or []) if str(v).strip()],
-            "note": note.strip()[:2000],
+            "evidence_refs": clean_refs,
+            "note": clean_note,
             "application_proven": clean_decision in {"applied", "adapted"},
             "task_benefit": "not_evaluated",
             "promotion": "not_evaluated",
+            # ── v2 记录契约（TASK-ac085ab1-001）──
+            "schema": SCHEMA_METHOD_USE_V2,
+            "work_unit_id": resolved_wu,
+            "work_unit_binding": binding,
+            "run_id": str(run_id or "").strip()[:128],
+            "read_version": version,
+            "slot_id": slot_id,
+            "submission_hash": submission_hash,
+            "revision": 1,
+            "supersedes": "",
+            "benefit": clean_benefit,
+            "evidence_level": clean_level,
+            "suggestion": clean_suggestion,
         }
+        if attribution:
+            entry["attribution"] = str(attribution).strip()[:64]
+        if self_reported:
+            entry["self_reported"] = True
         clean_session = session_id.strip()[:128]
         if clean_session:
             entry["session_id"] = clean_session
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._dir / _USAGE_LEDGER_FILE
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+        existing = read_ledger_entries(path)
+        outcome = resolve_submission(
+            existing, slot_id=slot_id, submission_hash=submission_hash,
+            object_field="method_ref", object_ref=record.method_ref,
+            requested_supersedes=str(supersedes or "").strip(),
+        )
+        if outcome.action == "invalid":
+            raise ValueError(outcome.reason)
+        if outcome.action == "dedupe" and outcome.existing is not None:
+            receipt = dict(outcome.existing)
+            receipt["idempotent"] = True
+            return receipt  # 传输层重试/重复提交：返回既有回执，不重复追加
+        ensure_appendable_tail(path)
+        ledger_seq = count_valid_lines(path) + 1
+        entry["revision"] = outcome.revision
+        entry["supersedes"] = (
+            str(outcome.parent.get("submission_hash") or "") if outcome.parent else ""
+        )
+        entry["ledger_seq"] = ledger_seq
+        entry["ledger_watermark"] = ledger_seq
+        entry = append_ledger_line(path, entry)
         self._refresh_usage_watermark_locked()
         return entry
+
+    def recover_usage_ledger(self) -> dict[str, Any]:
+        """显式恢复入口：torn 尾部隔离旁文件 + 诊断报告（锁内执行）."""
+        with _store_lock(self._dir):
+            return quarantine_torn_tail(self._dir / _USAGE_LEDGER_FILE)
+
 
     def _count_usage_lines(self) -> int:
         """Count non-empty usage ledger lines; unreadable ledger reports zero."""
@@ -1035,12 +1166,77 @@ class MethodStore:
         entries = self.usage_entries(ref)  # 文件序=旧→新
         if not entries:
             return None
-        return summarize_since_last_transition(
-            list(reversed(entries)),
+        # TASK-ac085ab1-001: 统计以 slot 为单位取链头（同工作单元×对象×版本的
+        # 修订只计一条现行评价）；legacy（无 slot）条目按字段齐全度参与——
+        # ref+决定计入总次数，缺自评/版本的不进入分层分母（legacy_entries 披露）。
+        heads = dedupe_slot_heads(entries)
+        summary = summarize_since_last_transition(
+            list(reversed(heads)),
             decision_key="decision",
             status_key="method_status",
             current_status=str(record.status or ""),
         )
+        v2_heads = [e for e in heads if e.get("slot_id")]
+        version_scope = "current_version_only"
+        matched = [
+            e
+            for e in v2_heads
+            if str(e.get("read_version") or "") == str(record.content_hash)
+        ]
+        if not matched and v2_heads:
+            version_scope = "all_v2_heads_no_current_version_match"
+            matched = v2_heads  # 卡片已修订：如实累计全部 v2 链头并标注口径
+        summary["benefit_counts"] = {
+            name: sum(1 for e in matched if str(e.get("benefit") or "") == name)
+            for name in sorted(USE_BENEFITS)
+        }
+        summary["benefit_version_scope"] = version_scope
+        summary["legacy_entries"] = len(entries) - len(v2_heads)
+        summary["slot_revisions_collapsed"] = len(entries) - len(heads)
+        return summary
+
+    def usage_feedback(self, method_ref: str) -> dict[str, Any] | None:
+        """TASK-ac085ab1-003 P1 查询回流：命中行反馈注释数据（只读派生视图）.
+
+        供检索短卡附分项反馈、近因问题摘要、当前版本状态与读取入口；
+        与 usage_net 同一真值源，不改账本、不改排序、不裁决。
+        """
+        summary = self.usage_net(method_ref)
+        if summary is None:
+            return None
+        ref = str(method_ref or "").strip()
+        record = self.get(ref)
+        current_version = str(record.content_hash) if record is not None else ""
+        heads = dedupe_slot_heads(self.usage_entries(ref))
+        v2_heads = [
+            e for e in heads if e.get("slot_id") and e.get("read_version") == current_version
+        ] if current_version else [e for e in heads if e.get("slot_id")]
+        recent_issue = ""
+        for entry in reversed(v2_heads):
+            if str(entry.get("benefit") or "") in {"hindered", "mixed"} or str(
+                entry.get("decision") or ""
+            ) == "rejected":
+                note = " ".join(str(entry.get("note") or "").split())[:160]
+                if note:
+                    recent_issue = note  # 取最近一条非空问题摘要
+                    break
+        state = (
+            "current"
+            if v2_heads
+            else ("stale_after_card_edit" if any(e.get("slot_id") for e in heads) else "none")
+        )
+        feedback = {
+            "read_entry": record.method_ref if record is not None else ref,
+            "feedback_version_state": state,
+            "recent_issue": recent_issue,
+            "feedback_watermark": count_valid_lines(self._dir / _USAGE_LEDGER_FILE),
+        }
+        feedback.update(_usage_net_row_annotation(summary))
+        feedback["benefit_counts"] = dict(summary.get("benefit_counts", {}))
+        legacy = int(summary.get("legacy_entries", 0) or 0)
+        if legacy:
+            feedback["usage_feedback_legacy"] = legacy  # 未分层分母如实披露
+        return feedback
 
     def record_qualification(
         self,
