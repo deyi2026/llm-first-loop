@@ -1,0 +1,17 @@
+{
+  "model": "jev-1.13.0-resolved",
+  "answers": {
+    "other_question": {
+      "probabilities": {
+        "yes": 1.0,
+        "no": 0.0,
+        "unknown": 0.0
+      },
+      "confidence": 1.0,
+      "choice": "yes"
+    }
+  },
+  "usage": {
+    "total_tokens": 100
+  }
+}

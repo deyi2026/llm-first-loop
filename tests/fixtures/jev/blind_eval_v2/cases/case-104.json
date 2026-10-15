@@ -1,0 +1,44 @@
+{
+  "case_id": "case-104",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-gitlog-no-os",
+  "subject_hash": "sha256:fixture-v2-104",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-104",
+    "command": "git log --oneline -5",
+    "source_excerpt": "a1b2c3d fix(parser): 边界空串\n4e5f6a7 feat(api): 增加 retry 上限参数"
+  },
+  "allowlist": [
+    "command",
+    "source_excerpt",
+    "source_ref"
+  ],
+  "questions": {
+    "premise_target_os_is_linux": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 Linux 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_excerpt_contains_git_log": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断 source_excerpt 内容为 git log 输出的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_repo_has_commits": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断该仓库存在提交记录的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

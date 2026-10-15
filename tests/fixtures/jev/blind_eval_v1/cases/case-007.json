@@ -1,0 +1,19 @@
+{
+  "case_id": "case-007",
+  "subject_ref": "experience:EXPERIENCE-fixture-evidence-coverage",
+  "subject_hash": "sha256:fixture-0007",
+  "task_snapshot": {
+    "evidence_fields": ["scenario", "solution", "evidence"],
+    "missing_fields": ["root_cause", "tags"],
+    "source_ref": "evidence://fixture/0007",
+    "source_excerpt": "该卡 scenario/solution/evidence 三段完整；root_cause 与 tags 为空。"
+  },
+  "allowlist": ["evidence_fields", "missing_fields", "source_ref", "source_excerpt"],
+  "questions": {
+    "coverage_score": {
+      "type": "score",
+      "instructions": "根据 task_snapshot，评估该记录的结构完整度（0=缺失严重，1=完整）。",
+      "criteria": {}
+    }
+  }
+}

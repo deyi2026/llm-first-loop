@@ -1,0 +1,18 @@
+{
+  "case_id": "case-002",
+  "subject_ref": "experience:EXPERIENCE-fixture-worktree-env",
+  "subject_hash": "sha256:fixture-0002",
+  "task_snapshot": {
+    "target_os": "",
+    "source_ref": "evidence://fixture/0002",
+    "source_excerpt": "在未注明操作系统的共享 CI 日志中观察到类似症状；日志未记录 uname 或 os-release。"
+  },
+  "allowlist": ["target_os", "source_ref", "source_excerpt"],
+  "questions": {
+    "premise_linux": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 Linux 的前提。",
+      "criteria": {"yes": "明确证据支持", "no": "明确证据反对", "unknown": "证据缺失、歧义或冲突"}
+    }
+  }
+}

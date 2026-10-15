@@ -1,0 +1,18 @@
+{
+  "case_id": "case-001",
+  "subject_ref": "experience:EXPERIENCE-fixture-curl-render-data",
+  "subject_hash": "sha256:fixture-0001",
+  "task_snapshot": {
+    "target_os": "linux",
+    "source_ref": "evidence://fixture/0001",
+    "source_excerpt": "curl -L -sS --max-time 20 '<url>' returned HTTP 200 with full HTML on Ubuntu 22.04."
+  },
+  "allowlist": ["target_os", "source_ref", "source_excerpt"],
+  "questions": {
+    "premise_linux": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 Linux 的前提。",
+      "criteria": {"yes": "明确证据支持", "no": "明确证据反对", "unknown": "证据缺失、歧义或冲突"}
+    }
+  }
+}

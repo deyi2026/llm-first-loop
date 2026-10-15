@@ -1,0 +1,46 @@
+{
+  "case_id": "case-103",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-os-conflict",
+  "subject_hash": "sha256:fixture-v2-103",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-103",
+    "tool_report": {
+      "reported_os": "linux"
+    },
+    "source_excerpt": "同一探测脚本运行：tool_report.reported_os=linux；但实测执行 sw_vers 得到 ProductVersion 14.5（两条证据均在快照内，互相矛盾）"
+  },
+  "allowlist": [
+    "source_excerpt",
+    "source_ref",
+    "tool_report"
+  ],
+  "questions": {
+    "premise_linux": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 Linux 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_darwin": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 macOS（darwin）的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_snapshot_has_conflicting_os_evidence": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断快照内存在互相矛盾的目标 OS 证据的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

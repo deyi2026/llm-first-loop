@@ -1,0 +1,24 @@
+{
+  "case_id": "case-004",
+  "subject_ref": "experience:EXPERIENCE-fixture-publish-sidecar",
+  "subject_hash": "sha256:fixture-0004",
+  "task_snapshot": {
+    "runtime_env": "bare-metal",
+    "shell": "bash",
+    "source_ref": "evidence://fixture/0004",
+    "source_excerpt": "在裸机 Linux 上以 bash 执行发布脚本；systemd 存在，无容器 cgroup 限制。"
+  },
+  "allowlist": ["runtime_env", "shell", "source_ref", "source_excerpt"],
+  "questions": {
+    "premise_bare_metal": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断非容器运行环境的前提。",
+      "criteria": {"yes": "明确证据支持", "no": "明确证据反对", "unknown": "证据缺失、歧义或冲突"}
+    },
+    "premise_systemd": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断 systemd 可用的前提。",
+      "criteria": {"yes": "明确证据支持", "no": "明确证据反对", "unknown": "证据缺失、歧义或冲突"}
+    }
+  }
+}

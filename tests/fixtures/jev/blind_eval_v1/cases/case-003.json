@@ -1,0 +1,18 @@
+{
+  "case_id": "case-003",
+  "subject_ref": "experience:EXPERIENCE-fixture-macos-seatbelt",
+  "subject_hash": "sha256:fixture-0003",
+  "task_snapshot": {
+    "target_os": "darwin",
+    "source_ref": "evidence://fixture/0003",
+    "source_excerpt": "sw_vers 输出 ProductVersion 14.5；命令在 macOS Seatbelt 环境执行成功。"
+  },
+  "allowlist": ["target_os", "source_ref", "source_excerpt"],
+  "questions": {
+    "premise_linux": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 Linux 的前提。",
+      "criteria": {"yes": "明确证据支持", "no": "明确证据反对", "unknown": "证据缺失、歧义或冲突"}
+    }
+  }
+}

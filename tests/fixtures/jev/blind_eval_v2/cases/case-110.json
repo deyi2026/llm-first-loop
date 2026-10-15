@@ -1,0 +1,44 @@
+{
+  "case_id": "case-110",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-network-probe",
+  "subject_hash": "sha256:fixture-v2-110",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-110",
+    "curl_probe": "curl -m 3 http://localhost:8901/v1/models → HTTP 200，响应含 models 列表",
+    "note": "外部端点本窗口未探测"
+  },
+  "allowlist": [
+    "curl_probe",
+    "note",
+    "source_ref"
+  ],
+  "questions": {
+    "premise_local_8901_up": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断本机 8901 端口服务可达的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_typesafe_api_reachable": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断 api.typesafe.ai 当前可达的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_probe_used_https": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断该探测请求使用了 https 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

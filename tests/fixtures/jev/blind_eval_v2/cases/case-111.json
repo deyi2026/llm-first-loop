@@ -1,0 +1,44 @@
+{
+  "case_id": "case-111",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-git-state",
+  "subject_hash": "sha256:fixture-v2-111",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-111",
+    "git_status": "## main...origin/main\n(porcelain 输出为空)",
+    "head": "a1b2c3d"
+  },
+  "allowlist": [
+    "git_status",
+    "head",
+    "source_ref"
+  ],
+  "questions": {
+    "premise_working_tree_clean": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断工作树干净（无未提交改动）的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_on_branch_dev": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断当前分支为 dev 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_has_uncommitted_changes": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断存在未提交改动的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "blind_policy": "labels/ 不进入 judge 可见路径；judge 侧仅消费 cases/ 与 wire_examples/。",
+  "cases": [
+    {
+      "file": "cases/case-001.json",
+      "sha256": "sha256:3f79765777b22ead44800f7e005c4c6398a52877c947dbe18726ac8930bc87de"
+    },
+    {
+      "file": "cases/case-002.json",
+      "sha256": "sha256:7f35e391899259a316bb41a5390b442f3aaed126c041e528b949a9699673c049"
+    },
+    {
+      "file": "cases/case-003.json",
+      "sha256": "sha256:bc75335c655476c3bd3191363cc88844d08796911a7725bbcd664565a0147386"
+    },
+    {
+      "file": "cases/case-004.json",
+      "sha256": "sha256:25975d2460a0f32b43fc84b3d91bf46d2c92330b22ad08f8175d76eb93060ebd"
+    },
+    {
+      "file": "cases/case-005.json",
+      "sha256": "sha256:ac31d73725c8342e616706b23d865870f760b5f218deacff8323aa0b3a012216"
+    },
+    {
+      "file": "cases/case-006.json",
+      "sha256": "sha256:11f3f8c5d2b39f1900d9df269600a838c26b079bfe55ce41c1b1c789813573e3"
+    },
+    {
+      "file": "cases/case-007.json",
+      "sha256": "sha256:cfe989b919e41fa9a67c5c2a9dcdde8a91a15d08bea23c01ca86732675b84e0f"
+    },
+    {
+      "file": "cases/case-008.json",
+      "sha256": "sha256:133b597a3a808fdef5e3742aa2c7b2feb46d942ed2f2a963902b219a06818a0d"
+    }
+  ],
+  "frozen_at": "2026-10-15T12:40:00+08:00",
+  "goal_ref": "DESIGN-20261014-jev v0.6 §11 P1a（冻结盲评集）",
+  "labels": {
+    "file": "labels/labels.json",
+    "sha256": "sha256:56182c8a152ea76a0654e603a5ed6394e663cde5f0fc0d3b38c2e04e9efe6545"
+  },
+  "refreeze_note": "v2（R1 根因修复）：wire 样本改官方逐题值字段名 choice/score/noul（EVO-20261015，DESIGN 附录 C v0.8.8）；cases/labels 字节不变。",
+  "schema_version": "jev-blind-eval/v1",
+  "wire_examples": [
+    {
+      "file": "wire_examples/invalid_choice_not_in_options.json",
+      "sha256": "sha256:3408f285faca5e10492481a0f2c611a3f7ee733f8ce4d8d69dcc1a8d1f190b76"
+    },
+    {
+      "file": "wire_examples/invalid_confidence_range.json",
+      "sha256": "sha256:2d0560a81dccfcc9df5ff66e7bd70a5f795e0807afcbc20772726c3de386f1ea"
+    },
+    {
+      "file": "wire_examples/invalid_prob_sum.json",
+      "sha256": "sha256:a33efed92c08e9efa3c1d1dddf817448a2932ae995f1b89a5b122a7ad435fdb4"
+    },
+    {
+      "file": "wire_examples/missing_question.json",
+      "sha256": "sha256:44814eefc03c50565cc50415c8b5511af9391844ee568fedefee131fc7cc5726"
+    },
+    {
+      "file": "wire_examples/noul_no_confidence.json",
+      "sha256": "sha256:469b07f504127ae685c2d069ca017ab7246ffa35d11cc203405c91a93b9db8a5"
+    },
+    {
+      "file": "wire_examples/resolved_model_missing.json",
+      "sha256": "sha256:127aa554b6c2bf7263383f3a01696cd007027ddf9263588ab9dd8f8cb77b0ca9"
+    },
+    {
+      "file": "wire_examples/usage_missing.json",
+      "sha256": "sha256:aaa99c5530a05fd709bcc243a28bd74545728dc4ed70175af28ee5c81059b0aa"
+    },
+    {
+      "file": "wire_examples/valid_minimal.json",
+      "sha256": "sha256:4f53f8b04d56e1478bdafd627f08850e46c75141fb0a5cd9cb24a2272333ddb6"
+    }
+  ]
+}

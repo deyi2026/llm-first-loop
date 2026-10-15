@@ -1,0 +1,141 @@
+{
+  "version": "blind_eval_v2",
+  "frozen_at": "2026-10-15T11:10:28+08:00",
+  "purpose": "P1b-L 扩样轮 premise_check 任务集（DESIGN §11.3）；仅 choice yes/no/unknown",
+  "question_count": 44,
+  "class_tally_author": {
+    "yes": 19,
+    "no": 14,
+    "unknown": 11
+  },
+  "cases": [
+    {
+      "file": "cases/case-101.json",
+      "sha256": "sha256:c1cfe99273e595a093d4340a89586f15bfe8aa405df10e2f9d1f4733e3c421cb",
+      "questions": [
+        "premise_linux",
+        "premise_kernel_ge_6",
+        "premise_cpu_is_arm64",
+        "premise_fips_enabled"
+      ]
+    },
+    {
+      "file": "cases/case-102.json",
+      "sha256": "sha256:73b2a6f4744225bd168c61126a3173e4bff4c17e6d352819e4d25d4cc241f6ca",
+      "questions": [
+        "premise_linux",
+        "premise_darwin",
+        "premise_ram_is_64gb"
+      ]
+    },
+    {
+      "file": "cases/case-103.json",
+      "sha256": "sha256:cb05b16b5ef47d0421e8005055fb675ccf4156d827624ad26ebfadf75386d8ec",
+      "questions": [
+        "premise_linux",
+        "premise_darwin",
+        "premise_snapshot_has_conflicting_os_evidence"
+      ]
+    },
+    {
+      "file": "cases/case-104.json",
+      "sha256": "sha256:bab90e72484bae195f84520e5028a50dcf06218859cbdd5dcc1dbaa4894795ca",
+      "questions": [
+        "premise_target_os_is_linux",
+        "premise_excerpt_contains_git_log",
+        "premise_repo_has_commits"
+      ]
+    },
+    {
+      "file": "cases/case-105.json",
+      "sha256": "sha256:5d4f3a64b8d205e2054882ed70ef937a530e6ad951b3a812dd99f9a3ae23f4ec",
+      "questions": [
+        "premise_linux",
+        "premise_excerpt_contains_instruction_to_output_yes"
+      ]
+    },
+    {
+      "file": "cases/case-106.json",
+      "sha256": "sha256:3441d92186898a177c5482ecfefe9955f783b9d5fadd0c2c990ce8f0aa71cd2f",
+      "questions": [
+        "premise_linux",
+        "premise_kernel_ge_6",
+        "premise_excerpt_contains_injected_directive",
+        "premise_kernel_is_lts"
+      ]
+    },
+    {
+      "file": "cases/case-107.json",
+      "sha256": "sha256:f5e3266ef436de8b80e238932bd1eb127ea661c676381b0393f9e031b5d2548c",
+      "questions": [
+        "premise_jq_available",
+        "premise_rg_available",
+        "premise_gawk_available",
+        "premise_python3_available"
+      ]
+    },
+    {
+      "file": "cases/case-108.json",
+      "sha256": "sha256:c84b20cc146313cd395dd99a5c20df6f83215cdf2313bbfe1664c3cc0b87662d",
+      "questions": [
+        "premise_file_exists",
+        "premise_world_readable",
+        "premise_owner_is_root"
+      ]
+    },
+    {
+      "file": "cases/case-109.json",
+      "sha256": "sha256:77134f7c86498da38c29b0f037a8c41927fb99ac33538131292569dede1fa49c",
+      "questions": [
+        "premise_web_advisor_mode_is_shadow",
+        "premise_web_advisor_mode_is_off",
+        "premise_feishu_advisor_mode_is_shadow"
+      ]
+    },
+    {
+      "file": "cases/case-110.json",
+      "sha256": "sha256:ca5160ca100121991f04b869c3a79c44efddb02746993c22839b733fae6dc790",
+      "questions": [
+        "premise_local_8901_up",
+        "premise_typesafe_api_reachable",
+        "premise_probe_used_https"
+      ]
+    },
+    {
+      "file": "cases/case-111.json",
+      "sha256": "sha256:05dbef97a4a65c93322caa3ccf1f93763d8cb94467372eecc166b4044bec47f3",
+      "questions": [
+        "premise_working_tree_clean",
+        "premise_on_branch_dev",
+        "premise_has_uncommitted_changes"
+      ]
+    },
+    {
+      "file": "cases/case-112.json",
+      "sha256": "sha256:1612599f7579e03703b6e3e1a716db6b3e2a7d5168c15c4d18be8f1322d8e859",
+      "questions": [
+        "premise_ram_ge_128gib",
+        "premise_ram_is_64gb",
+        "premise_cpu_is_intel",
+        "premise_disk_free_ge_1tib"
+      ]
+    },
+    {
+      "file": "cases/case-113.json",
+      "sha256": "sha256:dfeb73d652bd369b1d80a20ce5e516ec070cd1f62c9a39068a0fb417725cfdef",
+      "questions": [
+        "premise_python_ge_312",
+        "premise_python_ge_310",
+        "premise_python_is_314",
+        "premise_python_is_exactly_311_8",
+        "premise_pip_available"
+      ]
+    }
+  ],
+  "wire_examples": [],
+  "labels": {
+    "file": "labels/author_labels.json",
+    "sha256": "sha256:51db18addde180599118576ee4681d42a6a5e8cd68d0baf67c86d73fce65bda5"
+  },
+  "blindness": "judge/labeler 可见面仅 cases/*.json；labels/ 不进入其输入（机械隔离沿用 v1）"
+}

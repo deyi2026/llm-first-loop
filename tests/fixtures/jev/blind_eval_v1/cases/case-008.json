@@ -1,0 +1,18 @@
+{
+  "case_id": "case-008",
+  "subject_ref": "experience:EXPERIENCE-fixture-noul-caveat",
+  "subject_hash": "sha256:fixture-0008",
+  "task_snapshot": {
+    "target_os": "linux",
+    "source_ref": "evidence://fixture/0008",
+    "source_excerpt": "该卡在 macOS 上未验证；仅 Ubuntu 22.04 与 Debian 12 实测通过。"
+  },
+  "allowlist": ["target_os", "source_ref", "source_excerpt"],
+  "questions": {
+    "unverified_platform_caveat": {
+      "type": "noul",
+      "instructions": "根据 task_snapshot，提取该记录未声明验证的平台范围（自由文本；无 confidence 字段）。",
+      "criteria": {}
+    }
+  }
+}

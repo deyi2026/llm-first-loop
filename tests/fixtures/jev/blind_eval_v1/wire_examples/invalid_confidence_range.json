@@ -1,0 +1,17 @@
+{
+  "model": "jev-1.13.0-resolved",
+  "answers": {
+    "premise_linux": {
+      "probabilities": {
+        "yes": 0.9,
+        "no": 0.05,
+        "unknown": 0.05
+      },
+      "confidence": 1.5,
+      "choice": "yes"
+    }
+  },
+  "usage": {
+    "total_tokens": 100
+  }
+}

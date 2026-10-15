@@ -1,0 +1,62 @@
+{
+  "case_id": "case-113",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-python-version",
+  "subject_hash": "sha256:fixture-v2-113",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-113",
+    "version_output": "Python 3.11.8",
+    "requirement": "部署要求 Python ≥3.12"
+  },
+  "allowlist": [
+    "requirement",
+    "source_ref",
+    "version_output"
+  ],
+  "questions": {
+    "premise_python_ge_312": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断本机 Python ≥3.12 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_python_ge_310": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断本机 Python ≥3.10 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_python_is_314": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断本机 Python 为 3.14 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_python_is_exactly_311_8": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断本机 Python 恰为 3.11.8 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_pip_available": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断本机 pip 可用的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

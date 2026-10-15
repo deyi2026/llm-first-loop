@@ -60,6 +60,7 @@ _ALLOWLIST=(
   'tools/smx/lab/config-b.card'  # SMX lab treatment 评测卡：冻结样例，绝对路径是实验定义本体（同 tests/fixtures/wire/ 先例，内容不可改写）
   'docs/promotion/zh13_article_verify.png'  # zh13 推广文章平台验证长截图存档（2428x11574 原分辨率保留证据价值；sips 重采样 w1400 仍 2.7MB 无法过 1MB 线，有损压缩不可接受；2026-10-14 CI 安全扫描暴露后登记）
   'evals/browser_smc_subject_v01/results/'  # subject_v01 measured 回执：引擎 provenance 路径记录=机器产物本体（同 tests/fixtures/wire/ 先例，回执不可改写；仅 summary.json 入库）
+  'tests/unit/test_jev_policy.py'  # Jev P1a policy 守卫测试：虚构私钥/AKIA/ghp_/sk- 样例验证红线模式递归扫描（同 cache_block_reclassification 先例，2026-10-15 登记）
 )
 
 # ── 规则粒度豁免：仅跳过规则3（本地绝对路径）；规则1禁路径/规则2敏感内容/规则4大文件仍全量执行 ──
@@ -67,6 +68,7 @@ _ALLOWLIST=(
 # 新增文件仍必须过 secret/大文件安检，不能借目录逃逸（2026-09-18 审查：整目录全豁免属边界放宽）。
 _ABS_PATH_ONLY_ALLOWLIST=(
   'experiences/'  # 经验档案：文档如实记录本机工作区路径=记录本体，非泄露；secret/大文件/禁路径检查不豁免
+  'outputs/jev-p0b-20261015/digest_run_058dc3b8.json'  # Jev P0b 只读投影回执：provenance 嵌工作区路径=记录本体（同 experiences/ 粒度先例，2026-10-15 登记；secret/大文件仍全检）
 )
 
 # ── 规则粒度豁免：仅跳过规则1（禁路径）；规则2敏感内容/规则3绝对路径/规则4大文件仍全量执行 ──

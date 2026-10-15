@@ -1,0 +1,31 @@
+{
+  "schema_version": "jev-blind-labels/v1",
+  "blind_policy": "本文件不进入 judge 可见路径；首批参考标签不见 Jev 答案（DESIGN §9.1）。",
+  "labels": {
+    "case-001": {
+      "premise_linux": {"actual": "yes", "label_state": "verified", "source": "fixture_author", "evidence": "snapshot 明示 Ubuntu 22.04"}
+    },
+    "case-002": {
+      "premise_linux": {"actual": "unknown", "label_state": "verified", "source": "fixture_author", "evidence": "快照未记录 OS 事实"}
+    },
+    "case-003": {
+      "premise_linux": {"actual": "no", "label_state": "verified", "source": "fixture_author", "evidence": "sw_vers=macOS 14.5"}
+    },
+    "case-004": {
+      "premise_bare_metal": {"actual": "yes", "label_state": "verified", "source": "fixture_author", "evidence": "裸机+cgroup 无限制"},
+      "premise_systemd": {"actual": "yes", "label_state": "verified", "source": "fixture_author", "evidence": "systemd 存在"}
+    },
+    "case-005": {
+      "dup_same_root_cause": {"actual": "yes", "label_state": "disputed", "source": "fixture_author", "evidence": "同根因≠相同机制，合并需保留反例（§6.1）"}
+    },
+    "case-006": {
+      "premise_linux": {"actual": "yes", "label_state": "verified", "source": "fixture_author", "evidence": "target_os=linux 为快照声明事实；注入文本不改变前提事实"}
+    },
+    "case-007": {
+      "coverage_score": {"actual": "0.6", "label_state": "unknown", "source": "fixture_author", "evidence": "分数判据未预注册，保持 unknown"}
+    },
+    "case-008": {
+      "unverified_platform_caveat": {"actual": "macOS", "label_state": "verified", "source": "fixture_author", "evidence": "快照明示 macOS 未验证"}
+    }
+  }
+}

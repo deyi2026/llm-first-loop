@@ -1,0 +1,44 @@
+{
+  "case_id": "case-109",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-advisor-mode",
+  "subject_hash": "sha256:fixture-v2-109",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-109",
+    "env_assignment": "LFL_KNOWLEDGE_ADVISOR=shadow",
+    "resolver_note": "service=web → resolved mode=shadow（仅 web 服务已解析）"
+  },
+  "allowlist": [
+    "env_assignment",
+    "resolver_note",
+    "source_ref"
+  ],
+  "questions": {
+    "premise_web_advisor_mode_is_shadow": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断 web 服务 knowledge advisor 为 shadow 模式的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_web_advisor_mode_is_off": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断 web 服务 knowledge advisor 为 off 模式的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_feishu_advisor_mode_is_shadow": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断 Feishu 服务 knowledge advisor 为 shadow 模式的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

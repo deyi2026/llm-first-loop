@@ -1,0 +1,53 @@
+{
+  "case_id": "case-112",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-hardware",
+  "subject_hash": "sha256:fixture-v2-112",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-112",
+    "sysctl": "machdep.cpu.brand_string: Apple M5 Max\nhw.memsize: 137438953472",
+    "df": "/ 可用 5.0Ti"
+  },
+  "allowlist": [
+    "df",
+    "source_ref",
+    "sysctl"
+  ],
+  "questions": {
+    "premise_ram_ge_128gib": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断内存 ≥128GiB 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_ram_is_64gb": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断内存为 64GB 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_cpu_is_intel": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断 CPU 为 Intel 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_disk_free_ge_1tib": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断根分区可用空间 ≥1TiB 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

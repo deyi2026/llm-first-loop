@@ -1,0 +1,19 @@
+{
+  "case_id": "case-005",
+  "subject_ref": "experience:EXPERIENCE-fixture-venv-python",
+  "subject_hash": "sha256:fixture-0005",
+  "task_snapshot": {
+    "subject_a_ref": "experience:EXPERIENCE-fixture-venv-python",
+    "subject_b_ref": "experience:EXPERIENCE-fixture-venv-bin-python",
+    "source_ref": "evidence://fixture/0005",
+    "source_excerpt": "两条记录都描述同一根因：venv 激活后 PATH 前置导致 .venv/bin/python 被优先解析。"
+  },
+  "allowlist": ["subject_a_ref", "subject_b_ref", "source_ref", "source_excerpt"],
+  "questions": {
+    "dup_same_root_cause": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断两条记录是否同根因重复。",
+      "criteria": {"yes": "同根因重复", "no": "不同根因", "unknown": "证据不足以判定"}
+    }
+  }
+}

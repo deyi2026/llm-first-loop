@@ -1,0 +1,44 @@
+{
+  "case_id": "case-102",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-macos-swvers",
+  "subject_hash": "sha256:fixture-v2-102",
+  "task_snapshot": {
+    "target_os": "darwin",
+    "source_ref": "evidence://fixture/v2-102",
+    "source_excerpt": "sw_vers → ProductVersion: 15.1, Build: 24B83；uname -m → arm64；hostinfo 型号行 → MacBookPro (M5 Max)"
+  },
+  "allowlist": [
+    "source_excerpt",
+    "source_ref",
+    "target_os"
+  ],
+  "questions": {
+    "premise_linux": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 Linux 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_darwin": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 macOS（darwin）的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_ram_is_64gb": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断本机内存为 64GB 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

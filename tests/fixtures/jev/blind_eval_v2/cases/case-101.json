@@ -1,0 +1,53 @@
+{
+  "case_id": "case-101",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-linux-web-uname",
+  "subject_hash": "sha256:fixture-v2-101",
+  "task_snapshot": {
+    "target_os": "linux",
+    "source_ref": "evidence://fixture/v2-101",
+    "source_excerpt": "uname -a → Linux web-01 6.8.0-45-generic #45-Ubuntu SMP PREEMPT_DYNAMIC x86_64 GNU/Linux；cat /etc/os-release → NAME=\"Ubuntu\", VERSION_ID=\"22.04\""
+  },
+  "allowlist": [
+    "source_excerpt",
+    "source_ref",
+    "target_os"
+  ],
+  "questions": {
+    "premise_linux": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统为 Linux 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_kernel_ge_6": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统内核主版本号 ≥6 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_cpu_is_arm64": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统 CPU 为 arm64 架构的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_fips_enabled": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断目标系统已启用 FIPS 模式的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}

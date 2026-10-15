@@ -1,0 +1,11 @@
+{
+  "model": "jev-1.13.0-resolved",
+  "answers": {
+    "unverified_platform_caveat": {
+      "noul": 0.42
+    }
+  },
+  "usage": {
+    "total_tokens": 100
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "answers": {
+    "premise_linux": {
+      "probabilities": {
+        "yes": 0.9,
+        "no": 0.05,
+        "unknown": 0.05
+      },
+      "confidence": 0.9,
+      "choice": "yes"
+    }
+  },
+  "usage": {
+    "total_tokens": 100
+  }
+}

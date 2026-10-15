@@ -1,0 +1,44 @@
+{
+  "case_id": "case-108",
+  "subject_ref": "experience:EXPERIENCE-fixture-v2-file-perm",
+  "subject_hash": "sha256:fixture-v2-108",
+  "task_snapshot": {
+    "source_ref": "evidence://fixture/v2-108",
+    "ls_output": "-rw-------@ 1 yyj staff 17365 Oct 15 10:50 run_batch.py",
+    "stat_mode": "600"
+  },
+  "allowlist": [
+    "ls_output",
+    "source_ref",
+    "stat_mode"
+  ],
+  "questions": {
+    "premise_file_exists": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断文件 run_batch.py 存在的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_world_readable": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断该文件对其他用户可读的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    },
+    "premise_owner_is_root": {
+      "type": "choice",
+      "instructions": "根据 task_snapshot，判断该文件属主为 root 的前提。",
+      "criteria": {
+        "yes": "明确证据支持",
+        "no": "明确证据反对",
+        "unknown": "证据缺失、歧义或冲突"
+      }
+    }
+  }
+}
