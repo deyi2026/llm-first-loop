@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | draft v0.6：P0a 关联/覆盖审计已实施（只读，脚本可复算）；尚未获得生产效果资格 |
+| 状态 | draft v0.8.9：P0a/P0b/P1a 已实施；P1b 参数预注册冻结（§11.1/§11.1.1）+ producer 机会分母字段已实施；本地 judge 三轮（§11.2–§11.5）主指标 21/37 负向，无资格授予；P1b-OR R1（§11.6）6/6 contract_invalid（wire 误读 `answer`，官方为 choice/score/noul，附录 C v0.8.8）；**§11.7 R4 修复轮已冻结并执行（2026-10-15 13:18）：6/6 题 schema-valid 且与冻结盲评标签 6/6 一致**，预算 2/2 合规、resolved `typesafe/jev-1.13-20260917`、费用 unknown（无账面字段）；6 题单批次事实，不构成校准资格；尚未获得生产效果资格 |
 | 初审/最新复核 | 2026-10-14 / 2026-10-15（Asia/Shanghai） |
 | 本轮输入 v0.4 SHA-256 | `47606b0e3f3a6f58ceaa6ff891726a82d57f1a803e2732389e898e77146063bb`；保留其已核方向，仅修订口径 |
 | 初次审查基线 | main `5badfc95aadfc286f9c2d8b323cf5932e285c725`；v0.1 当时未跟踪（历史事实） |
@@ -12,7 +12,7 @@
 | 原稿 SHA-256 | `dcf2200bf8add2b9640390a58b80f1885eba72c13665b9f191b47eb3185a2df0` |
 | 定位 | 先补知识消费的证据与对账，再验证可选外部判断能力；模型保留语义终裁 |
 | 关联 | `METHOD_LEARNING_V1.md`、`CHANGES-20261007-method-consumption-closed-loop.md`、`PLAN-20260926-learning-method-semantic-integration.md`、`ai_rules.md` Rule 18/22/29/31、`DEVELOPMENT_REPAIR_SAFETY.md` |
-| 本次变更范围 | 仅修订本设计；没有改运行代码、Rules、配置、资产生命周期或生产服务 |
+| 本次变更范围 | 修订本设计（§11.7 R4 修复轮预注册冻结 + 状态/表格同步）；实施契约符合性修复：`src/llm_loop/knowledge/jev/{wire,shadow}.py`、jev 定向测试三件、`tests/fixtures/jev/blind_eval_v1/`（wire 样本官方字段名 + manifest 重冻，cases/labels 字节不变）、包外 runner/local transport（R4 口径）；R4 真实外发仅限 §11.7 预注册并经用户 12:29 "修" 授权的同任务集 2 请求/6 题；未改 Rules、配置、资产生命周期；未部署、未重启任何服务 |
 
 > 本文区分【已核事实】【分析】【拟实施要求】【待实测】。读取源码证明的是该基线的实现，不证明 live 已加载或效果已经成立。文中已存在的事件/模块见 §1.3；增量字段、判断/贡献事件名、schema、策略档与阶段闸均是提案，不是现有 API。
 
@@ -503,10 +503,146 @@ schema-invalid 题保留原无效事实和 null，不填 confidence=0.5；usage 
 |---|---|---|---|
 | P0a 剩余关联/覆盖审计 | 静态映射与完整分段计数已完成；走EventStore/SessionDigest，对declared-use、hydration、prepared和open/interruption分层核身份/coverage | 同服务/时间窗/机会分母；run.end无run_ref时不强join；稀薄类别不足与源码bug分开 | 不开新采样、不补造终态；不改producer或外发 |
 | P0b 复用链的只读贡献投影 | 现有EventStore/SessionDigest+usage；先一条run投影和unknown报告；只补已证实缺字段，不默认新journal/worker | 正常/多任务/中断/重放；零原账本写入、零重复评分；需新增持久处理时才验证崩溃/并发 | 停增量投影，不关闭既有知识观察；保留原账本与现有canary契约 |
-| P1a 本地 fixture + shadow 方案 | 官方 wire/mock、逐题 invalid、预算/隐私/故障测试、冻结盲评集 | 零真实外发；OFF/shadow 的检索输出一致；完整 negative cases | 维持 OFF；未授权不能启动真实模型 |
-| P1b 有界外部 shadow（另授权） | 固定模型/用途/scope/任务集；独立 actual 标签、成本与对账报告 | 不改排序/保存；按类质量与未知比例可审计；API可用≠效果通过 | 超预算、泄露、版本漂移、隐式重试即停 |
+| P1a 本地 fixture + shadow 方案 | **已实现（2026-10-15，v0.7）**：`src/llm_loop/knowledge/jev/`（wire/policy/transport-mock/shadow）+ 冻结盲评集 `tests/fixtures/jev/blind_eval_v1/`；88 定向测试；代码闸三轮回执 `data/audit/code_gates/RULE-AI-28-jev-p1a-20261015.md`；未接入 live 检索路径 | 零真实外发：包内无网络 import（tripwire+测试守卫）、仅 Mock 传输、transport 必须显式注入；OFF/shadow 输出一致：runner 无候选集/排序 API 面、事件 ordering_effect=none、src 无包外接线；negative cases：wire 12 类 + 预算 4 类 + 守卫 25+ 例 + 传输/事件故障 | 维持 OFF：无新增开关；真实传输属 P1b 另授权 |
+| P1b 有界外部 shadow（另授权） | **参数已预注册冻结（§11.1，v0.8）**：固定模型/用途/scope/任务集；独立 actual 标签已备（blind_eval_v1 独立盲评，附录 C v0.7→v0.8）、成本与对账报告；**OpenRouter 分支预注册 §11.6（v0.8.7）**：TypeSafe 官方凭据未取得，endpoint/凭据名/模型 id/resolved 合法集四字段经新一轮预注册变更，其余沿用；**R1 已执行：6/6 contract_invalid（官方 wire 字段名 `choice` vs 实现误读 `answer`，预算 2/2 用尽零重发；附录 C v0.8.8）**；**§11.7（v0.8.9）R4 修复轮预注册冻结：契约符合性修复（三验证器官方字段名+noul 值域+answers 摘录），代码闸 REVISE→PASS，manifest 重冻 cases/labels 字节不变，预算/任务集/标签源/对账全部沿用；**已执行（13:18）：6/6 valid、6/6 与冻结标签一致（附录 C v0.8.9）** | 不改排序/保存；按类质量与未知比例可审计；API可用≠效果通过；观察结果后改闸属违规，需新一轮预注册 | 超预算、泄露、版本漂移、隐式重试即停 |
+| P1b-L 本地开源 judge 影子（用户 2026-10-15 10:35 指示） | **参数已预注册冻结（§11.2，v0.8.2）**：SemIf+Qwen3.5-4B@851bf6e+MLX 本地评分（shared 模式），零外发、零凭据、零费用；任务集/标签源/对账口径同 §11.1/§11.1.1 | 不构成 Jev 校准资格（SemIf 复现接口模式而非 Jev 本体）；6 题仅为链路验证与本地 judge 单批次事实；观察结果后改闸违规 | 评分进程超时/异常退出、manifest SHA 漂移、守卫命中、resolved_model 漂移即停 |
+| P1b-L2 本地 judge 扩样（用户 2026-10-15 11:03 指示） | **参数已预注册冻结（§11.3，v0.8.3）**：blind_eval_v2 44 题（manifest SHA `60a17edf…`）；judge/传输同 §11.2 不变；双源独立盲评（glm-5.3-flash+deepseek-v4-flash）先于评分；分桶对账 | 44 题 <§9.2 200 条可行性起点：不构成校准/Jev 校准/排序资格；观察结果后改闸违规 | §11.3 中止条件全部沿用；另加预运行闸：双源一致率 <70% 即 `label_insufficient` 暂停 |
 | P2a 单变量排序试验（另决策） | 冻结策略、基线组、有限曝光审计、模型绕过出口 | 成功率不退化；返工或全任务成本有可重复改善；关键候选恢复验证 | 恢复原顺序/停调度，不删资产 |
 | P2b 去重/分类与建议队列 | 各用途独立 shadow/收益资格、带版本复审建议 | 无静默合并/删除/状态变化；原/新版本证据保全 | 停该用途并隔离派生结果 |
+
+### 11.1 P1b 参数预注册（冻结于任何真实外发之前；v0.8）
+
+依据 §10“任何数值目标……预注册，不能观察完结果再改闸”与 §9.1 冻结流程，以下参数在获得 P1b 外发授权之前冻结；授权后不得改闸再跑，观察结果后改闸属违规（需新一轮预注册）。
+
+| 维度 | 冻结值 |
+|---|---|
+| 固定模型 | `jev-1.13.0`；每响应绑定 resolved model，≠`jev-1.13.0` 即版本漂移，按 §9.3 停止并退 HOLD |
+| 单一用途 | 仅 `premise_check` 题型（choice yes/no/unknown）。dup_check、coverage_score、分类、noul 题一律不进 P1b |
+| 任务集 | 冻结 `tests/fixtures/jev/blind_eval_v1/`（manifest SHA-256 `2fc40cfa4226b5c5024c0a874b7ca6168202cbf8a671abe6efdd7476cba8227d`）中 premise 类 6 题：case-001/002/003/006 的 `premise_linux` + case-004 的 `premise_bare_metal`/`premise_systemd`。case-005（dup）/007（score）/008（noul）按单一用途排除 |
+| 预算上限 | HTTP 批数 ≤2（6 题按每批 ≤5 题打包）；每请求 input ≤2000 tokens、output ≤2000 tokens（policy.py 试验初值转正式冻结值，撤销 provisional）；重试 0（隐式/显式均关）；单请求 deadline 2s；本批 6 题/2 请求为总量上限，不追加；费用以响应 usage 如实记录，缺失记 unknown 不计 0 |
+| 对账口径 | 标签源=独立盲评结果（`outputs/jev-blind-eval-20261015/blind_eval_result.json`：judge=deepseek/deepseek-v4-pro 隔离子代理、零上下文继承、0 工具调用；与作者标签 9/9 取值一致，premise 子集 6/6 verified）；逐题 confusion（yes/no/unknown 三类）+ 弃答/schema-invalid 单列，分母含 eligible/attempted/transport-completed/schema-valid/labelled/missing 全链（§9.2）；样本量 6 仅证明 wire/守卫/对账链路可运行，**不构成 §9.2 校准资格**（200 条可行性起点远未达） |
+| 中止条件 | 任一即停并退 HOLD：任一预算面超限；守卫触发（红线键/凭证样式/工具授权字段任何命中）；resolved model 漂移；出现隐式重试；任一题 schema-invalid 且原因未明 |
+| 闸序 | 本节冻结先于授权与任何外发；结果观察只产生报告，不回改本节 |
+
+### 11.1.1 预执行增补（v0.8.1；生效于任何真实外发之前）
+
+本增补按用户 2026-10-15 09:51 指令在首次真实外发前冻结；此前零真实外发（P1a 验收事实不变），故不属“观察结果后改闸”。生效后与 §11.1 主表同等冻结，改任一字段需新一轮预注册。
+
+| 项 | 增补内容 |
+|---|---|
+| 授权记录 | 用户 2026-10-15 09:51（Asia/Shanghai）：授权本批次真实外发——6 题/≤2 请求，费用上限 10 元 RMB；确认 endpoint/账户（官方 `POST https://api.typesafe.ai/v1/systemone`）；指令 judge 不得用 deepseek-v4-pro，改用 glm-5.3-flash 或 deepseek-v4-flash |
+| 对账口径·标签源替换 | v1 盲评（deepseek-v4-pro）弃用作 P1b 标签源，保留为历史；生效标签源 `outputs/jev-blind-eval-20261015/blind_eval_result_v2_ds_v4_flash.json`：judge=deepseek/deepseek-v4-flash 隔离子代理（零上下文继承；requires tools=[]/network=false/fs=false；回执 tools=0，tokens 15417/3670）；与作者标签 9/9 取值一致，premise 子集 6/6 verified；case-005 维持 disputed、case-007 维持 unknown（不因一致升级）；注入反例按数据处理。其余对账口径不变 |
+| 费用上限执行口径 | cost_cap=10.0 元 RMB（收紧，非放宽）。无官方价目表不可事前精确折算，执行面为三层：(a) 冻结 token 硬闸（HTTP≤2、每批题≤5、est input≤2000/output≤2000 累计、重试 0、deadline 2s）；(b) 响应 usage 如实入账；(c) 响应若携带费用字段且累计>10 元即中止剩余批次并记 budget_breach；费用缺失记 unknown 不计 0 |
+| 批次打包（固定） | batch-1 = case-001/002/003/006 的 `premise_linux` ×4：共享 state（四案例快照按 case 键内联），每题 instruction 显式限定仅依据本题所属快照——跨案例同 state 是打包事实，如实入报告；batch-2 = case-004 的 `premise_bare_metal`+`premise_systemd` ×2（单 subject state）。题目名带 case 后缀以保唯一 |
+| 前置条件 | 真实传输需 `TYPESAFE_API_KEY`；2026-10-15 09:20 复核 .env 无任何 TypeSafe 凭据（仅 DEEPSEEK/EMBEDDING/FEISHU/FUYAO/GLM/LLM/MINIMAX 七类凭据名）。凭据未就位即不发送；不得以其它 provider 凭据替代（跨方泄露）。真实传输实现置于包外 runner（`outputs/jev-p1b-20261015/`），jev 包内零网络 import tripwire 维持 |
+
+P1b 通过不授予排序资格：§9.3 的样本量、盲评质量与收益闸（P2a 前置）不变；收益归因另依赖 producer 机会分母字段（附录 C v0.7→v0.8 第 3 条）。
+
+### 11.2 P1b-L 本地开源 judge 影子预注册（新一轮；冻结于任何本地真实评分之前；v0.8.2）
+
+依据 §11.1.1"改任一字段需新一轮预注册"，本节为**新一轮预注册**：不修改 §11.1/§11.1.1 任何冻结字段（TypeSafe 真实外发路径原样保留，待 TYPESAFE_API_KEY 就位后按其原冻结值执行）。触发：用户 2026-10-15 10:35 指示"网上有类似 jev 的开源模型可以替代，可以本地部署"+10:40 提供来源（二手文，仅作线索）。截至本节冻结时点：零真实外发（P1a 验收事实不变）；P1b 仅完成 mock dry-run，其答案为脚本中立值、不构成对任何 judge 质量的观察——故本节属"先冻结后执行"，非"观察结果后改闸"。
+
+【已核一手事实】SemIf（`github.com/TheoLeeCJ/SemIf`，MIT，原 OpenJev）：开源复现 Jev 接口模式（state + 结构化 options 进、各选项概率出；直接读 option 概率、无文本生成），原生 MLX 后端（Apple Silicon），冻结基线 `Qwen/Qwen3.5-4B@851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`，shared 模式 = 一次 state prefill + 独立题后缀（要求全批同 state）。其自述：复现的是接口模式，不复现 Jev 未公开的模型与训练；与 TypeSafe 无关。另一手核实：Jev 1.13 已上架 OpenRouter（`typesafe/jev-1.13`，Decisions API）——保留为真 Jev 校准备选路径，本轮不使用。第三方跑分（含 SemIf 73.1→47.7 排名波动）不作为本设计任何资格输入。
+
+| 维度 | 冻结值 |
+|---|---|
+| judge 主体 | vendored SemIf（master tarball，`outputs/jev-p1b-20261015/vendor/SemIf`，py3.11 venv，mlx 0.32.2）+ `Qwen/Qwen3.5-4B@851bf6e…` + MLX 后端、源精度 bf16 不量化 + shared 模式。resolved_model 固定 `semif-phase1+Qwen3.5-4B@851bf6e+mlx`，漂移即停 |
+| 替代声明 | 本批结果 = 本地开源 judge（接口模式复现）单批次事实；**不构成 Jev 校准资格**，也不构成 §9.2 校准资格（6 题）；Jev 主线不变 |
+| 单一用途/任务集/打包 | 同 §11.1/§11.1.1：仅 premise_check 6 题；manifest SHA `2fc40cfa…` 不变；批1（4 题同 state）+ 批2（2 题同 state），满足 shared 同 state 约束 |
+| 传输 | 本机 subprocess 调 vendored venv（包外 `local_semif_transport.py`；jev 包内零网络 tripwire 维持）；零外发、零凭据、零费用；§11.1.1 的 10 元费用上限未被使用（本地无计费面），不重释为已花额度 |
+| 预算 | 评分进程调用 ≤2（每批一次）；重试 0；单次 deadline 180s（实测装载+shared 首评分 ~9s，冻 180s 为安全裕量，观察后不改）；Jev usage 字段记 unknown 不计 0（本地无计费计量，不虚构）；SemIf 逐题 input_tokens/forward_seconds 落盘 `semif_audit/` 供审计 |
+| 映射契约 | question=instructions（含 case 专属限定语）；options=yes/no/unknown（description=criteria 对应项）；answer=argmax；probabilities=dict(zip(option_ids, softmax 数组))——SemIf 输出为按选项顺序的数组而非字典（已核源码 direct.py/shared.py），adapter 负责转换；confidence:=p_selected（SemIf 无 Jev confidence 字段，此为 adapter 定义的分布确定性摘要；两者分字段存）；SemIf 自带 `probability_status="conditional option score; uncalibrated as decision confidence"` 原样入审计与报告，不作校准解读 |
+| 对账 | 标签源不变（§11.1.1 生效版 `blind_eval_result_v2_ds_v4_flash.json`）；逐题 confusion + §9.2 全链分母同 §11.1 |
+| 盲性 | judge（本地权重 SemIf+Qwen3.5-4B）与 labeler（deepseek-v4-flash，远程 API）不同实现、不同运行面；fixture labels 文件不进入 judge 输入（runner 仅读 cases/wire_examples，P1a 机械隔离保持）；部署冒烟仅用 SemIf 自带示例与自造题，不含冻结 6 题任何一题 |
+| 中止条件 | 任一即停并如实记录：manifest SHA 漂移；守卫命中；shared 模式 state 不一致（评分层拒绝）；评分进程超时/非零退出；任一题 schema-invalid 且原因未明 |
+| 冒烟证据（冻结前取得，非冻结 6 题） | SemIf 官方 examples 各行 state 不同被 shared 拒绝（约束生效佐证）；自造同 state 2 题：platform=linux→yes 0.999、"version 恰为 3.10？"（实为 3.11）→no 0.588；单进程含装载 ~8.7s |
+
+### 11.3 P1b-L2 本地 judge 扩样预注册（新一轮；冻结于任何 v2 本地评分之前；v0.8.3）
+
+依据 §11.2 同构纪律：本节不修改 §11.1/§11.1.1/§11.2 任何冻结字段。触发：用户 2026-10-15 11:03 选定"①本地 judge 扩样（预注册新轮，premise_check 扩到 30-50 题，本地零成本）"。截至本节冻结时点：blind_eval_v2 已构建并冻结 manifest（SHA-256 `60a17edf43de07b189ee28ecb27bbbfd6a11003629bc42b9c2215d6e68d4b97e`）；v2 集任何一题未经任何 judge 评分；双源盲评未开始。v1 六题首跑结果（5/6）仅用于失败形态分桶设计（case-003 no→unknown 漏判、case-006 低确定命中），属诊断性分层而非闸值调优——本轮不含任何资格阈值。
+
+| 维度 | 冻结值 |
+|---|---|
+| judge 主体/传输 | 与 §11.2 完全一致（vendored SemIf + `Qwen/Qwen3.5-4B@851bf6e…` + MLX bf16 + shared 模式；resolved_model `semif-phase1+Qwen3.5-4B@851bf6e+mlx` 漂移即停；包外 `local_semif_transport.py` 复用不改） |
+| 任务集 | 冻结 `tests/fixtures/jev/blind_eval_v2/`：13 案例 / 44 题（作者标签分布 yes19/no14/unknown11，仅构造分层用）；仅 premise_check choice yes/no/unknown；judge 可见面不含 `labels/` |
+| 打包 | 每 case 一批（state=该 case 快照，批内题数 ≤5）：共 13 批；无跨 case 共享 state |
+| 预算 | 评分进程调用 ≤13（每批一次）；重试 0；单次 deadline 180s（§11.2 冻结值沿用）；est input ≤2000 tokens/请求；本地零费用（§11.1.1 的 10 元额度仍不使用、不重释） |
+| 标签源 | 双源独立盲评：`glm-5.3-flash` 与 `deepseek-v4-flash` 各一隔离子代理（用户 2026-10-15 09:51 已列名两者；零上下文继承；tools=[]/network=false/fs=false；输入=13 案例快照+题目 instructions+criteria，对称于 judge 可见面；不见作者标签/他源标签/judge 输出）。合并规则：两源取值一致→`dual_agreed`（入准确率分母）；不一致→`disputed`（出准确率、单列计数，不以作者标签仲裁）；任一缺→`missing`。诚实边界：glm-5.3-flash 与作者会话模型同家族（glm-5.3），独立性弱于两源均异家族；机制隔离（零上下文继承+标签不入输入）保持 |
+| 预运行闸 | 双源一致率（dual_agreed/44）<70% → 标签不足，暂停评分（`label_insufficient`），不跑批 |
+| 对账口径 | 准确率/三类混淆矩阵仅在 dual_agreed 子集；类条件漏判单列（重点：no→unknown，case-003 形态）；p_selected 分箱 [0.5,0.6)/[0.6,0.7)/[0.7,0.8)/[0.8,0.9)/[0.9,1.0] 逐箱准确率（p_selected 为 adapter 定义的分布确定性摘要，SemIf 自带 uncalibrated 声明沿用）；注入桶（case-105/106 中注入文本在场的 4 道语义判定题）单列；低确定命中（p_selected<0.6 且答对）与低确定错判单列；§9.2 全链分母（eligible 44 / attempted 13 / transport-completed / schema-valid / dual-labelled / disputed / missing） |
+| 主张边界 | 44 题（dual_agreed 子集 ≤44）仍低于 §9.2 每主要题型 200 条可行性起点：不构成校准资格、不构成 Jev 校准、不授予排序/保存/生产资格；结果为本地 judge 扩样单批次事实 |
+| 中止条件 | 任一即停并如实记录：manifest SHA 漂移；守卫命中；评分进程超时/非零退出；shared state 不一致被拒；任一题 schema-invalid 且原因未明；预运行闸 `label_insufficient` |
+
+### 11.4 P1b-L2-R2 扩样轮重预注册（direct 模式；冻结于任何 v2 direct 评分之前；v0.8.4）
+
+**触发与 §11.3 轮中止事实**：§11.3 轮于 2026-10-15 11:19:51 启动，13 批计划；批1（case-101，4 题）recorded（3 道 dual_agreed 全中，1 道 disputed 不入分母）；批2（case-102）评分进程 exit=1：`ValueError: The fixed state prefix does not match every full prompt`（SemIf `shared.py::_check_prefix`）→ 按 §11.3 冻结中止条件"评分进程异常退出"停轮，剩余 11 批未跑。回执：`outputs/jev-p1l-expand-20261015/{p1l_expand_report.json, jev_shadow_events_v2.jsonl, semif_audit/}`。
+
+**根因（已核 vendored 源码）**：shared 模式的 state 前缀由"占位题"探针渲染 chat template 后取证据序列化并去尾 token 编码；state JSON 与题目后缀在分词边界存在融合可能，融合与否随题目首字符变化——批内题目不一致即整批抛错。v1 六题首跑与 case-101 批通过属边界兼容的偶然，不是协议保证。**任何在 shared 约束下"调题目措辞以过前缀校验"的做法都会改动冻结任务集，禁止。**
+
+**唯一变更面**：`--mode shared → direct`。CLI direct 模式对每行（每题）独立全前向评分、无前缀校验；prompt 构造（`direct.py::encode_prompt`→`direct_messages`）与最后位 logits→softmax 数学与 shared 完全同路径（同一 `_result`），仅无前缀缓存复用。resolved_model 记 `semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct`（模式显式入 ID）。新传输件 `outputs/jev-p1l-expand-20261015/local_semif_transport_direct.py`（子类化，不改 §11.2 冻结件）。
+
+**不变项（全部沿用 §11.3 冻结值）**：任务集与 manifest（SHA `60a17edf…`）；打包（每 case 一批、≤5 题/批、共 13 次评分进程调用）；deadline 180s/次；重试 0；est input ≤2000 tokens/请求；本地零费用；双源盲评结果与合并规则（dual_agreed 43 / disputed 1 已冻结落盘，预运行闸 97.7% 已过）；对账口径（分箱/注入桶/低确定/no→unknown/全链分母）与主张边界不变。
+
+**已见题处理（诚实分桶）**：case-101 的 4 题在 §11.3 轮已被 judge（shared 模式）评分，从本轮主指标剔除；本轮仍对其实施 direct 评分，仅作 shared↔direct 同题执行一致性观察（`seen_bucket`，不入任何准确率）。主指标集 = cases 102–113 的 40 题（全部 dual_agreed；唯一 disputed 属 case-101）。
+
+**冻结时序**：本节写入时，direct 模式尚未对 blind_eval_v2 任何一题执行过。中止条件沿用 §11.3（"shared state 不一致被拒"一条随模式更换自然失效）。
+
+### 11.5 P1b-L2-R3 扩样轮重预注册（预算记账修正；冻结于 R3 任何评分之前；v0.8.5）
+
+**触发与 R2 中止事实**：§11.4 轮（run_ref `p1l2-20261015-expand02-direct`）于 2026-10-15 11:25 执行：批1 case-101 recorded（seen_bucket，direct 与 §11.3 shared 答案 4/4 一致）；批2 case-102 recorded（3 道 dual_agreed 全中）；批3 case-103 被守卫 `BudgetRefused: output_tokens_over_cap` 拒绝 → 按冻结中止条件停轮。回执：`p1l_expand_report_direct.json`、`jev_shadow_events_v2direct.jsonl`、`semif_audit_direct/`。
+
+**根因（已核 policy.py 与事件 facts）**：守卫对每题按 est_output_tokens=256 固定估算累计记账；§11.3/§11.4 沿用 v1 的 max_output_tokens=2000 总上限（v1 仅 6 题 ×256=1536 故通过），与 44 题任务集（44×256=11264）在算术上不相容。同法核出 est input 亦为累计口径（44 题估 ~3900 > 2000 上限），为同类潜在中止点。两上限均为机械记账边界，非资格/阈值参数。
+
+**唯一变更面**：`max_output_tokens 2000→12288`、`max_input_tokens 2000→8000`（est 全量核算：output 11264/12288、input ~3900/8000、requests 13/13、q/批 ≤5/5、deadline 180s/次实测 ~8s）。其余一切沿用 §11.4 冻结值。
+
+**已见题处理（诚实分桶扩大）**：case-101（§11.3 shared + R2 direct 两轮暴露）、case-102（R2 direct 一轮暴露）共 7 题全部转入 seen_bucket，不入任何准确率；本轮仍对全部 13 批评分（同 prompt 确定性复算），seen_bucket 对照 R2 答案作执行一致性观察。**主指标集 = cases 103–113 的 33 题**（全部 dual_agreed）。
+
+**追加中止规则**：若 R3 仍因预算/记账类原因中止，停止逐轮补丁，先离线核算全部守卫约束与 13 批计划的全量边界，再议 R4——不允许"逐轮发现逐轮改"。冻结时序：本节写入时 R3 未执行。
+
+### 11.6 P1b-OR OpenRouter 分支预注册（新一轮；冻结于任何 OpenRouter 真实外发之前；v0.8.7）
+
+**触发与前置事实**：用户 2026-10-15 11:58 报告已取得 OpenRouter key、12:04 写入根 `.env`（`OPENROUTER_API_KEY`；已核存在性/格式：单条、73 字符、`sk-or-` 前缀、无引号/空格；key 值不进入任何输出/记录/文档）。§11.1.1 前置的 `TYPESAFE_API_KEY` 至今未取得（09:20 复核无 TypeSafe 凭据），TypeSafe 官方路径原样保留待未来凭据。依据 §11.1.1"改任一字段需新一轮预注册"，本节为**新一轮预注册**：不修改 §11.1/§11.1.1 任何冻结文本；仅变更四个传输面字段并预注册一项预检，其余全部沿用。
+
+【已核一手事实（2026-10-15 12:04–12:10，公开页面/端点 API，未携带 key、未调用任何 judge、未发送任务数据）】：
+- OpenRouter Jev guide（`/docs/guides/community/jev`）：Jev 暴露于两个 surface——Decisions API `POST https://openrouter.ai/api/alpha/decisions`（通用 HTTP/SDK）与 System One API `POST https://openrouter.ai/api/v1/systemone`（TypeSafe SDK 换 base URL 即用）；两 surface 同 key、同账户计费；每个响应含 `usage.cost`（USD）；context 262,144 tokens（state+questions）。
+- Jev tutorial：curl 示例 body 为 `{"model": "typesafe/jev-1.13", "state": {...}, "questions": {...}}`，鉴权 `Authorization: Bearer $OPENROUTER_API_KEY`——与 §8.2 冻结 wire 形态逐字段一致。
+- per-model endpoints API（`/api/v1/models/typesafe/jev-1.13/endpoints`）：`typesafe/jev-1.13` 存在，唯一 endpoint 快照 `typesafe/jev-1.13-20260917`，pricing prompt $0.000000042/token、completion $0，uptime 正常。
+- 版本页 `/typesafe/jev`：家族已出现 `typesafe/jev-1.14`（快照 20261014）；本分支钉 1.13 别名不受影响。`/api/v1/models` 公共列表当前仅返回 `typesafe/jev-router`（text→text 路由变体，非 Decisions 形态），不采用；模型存在性以 per-model endpoints API 与模型页（均 200）为准。
+- 模型页 drop-in code 为客户端渲染（`BAILOUT_TO_CLIENT_SIDE_RENDERING`）——上午静态抓取失败的原因；等价 wire 事实已从 guide/tutorial 静态正文取得。
+- 预检端点：`GET /api/v1/auth/check` 404 不存在；`GET /api/v1/key` 无 key 探测 401（存在且要求鉴权）。
+
+| 维度 | 冻结值 |
+|---|---|
+| endpoint | `POST https://openrouter.ai/api/v1/systemone`（System One surface：与 §8.2 冻结请求形态 model/state/questions 进、model/answers/usage 出一致）。换用 `/api/alpha/decisions` surface 或任何其它端点属新一轮预注册，不得运行中切换 |
+| 凭据 | 根 `.env` 的 `OPENROUTER_API_KEY`（runner 从 .env 定向读取该单键，不经 shell history/export）；不得以其它 provider 凭据替代；key 值不写入任何报告/事件/文档 |
+| 模型 id（请求） | `typesafe/jev-1.13`（OpenRouter 命名空间；§11.1 `jev-1.13.0` 的 OpenRouter 别名）。**resolved model 漂移条款**：响应 `model` ∈ {`typesafe/jev-1.13`, `typesafe/jev-1.13-20260917`}（别名及其当前唯一 endpoint 快照，2026-10-15 读数）为合法；其它任何值（含 1.14、router、无命名空间形式）即版本漂移，按 §9.3 停止退 HOLD |
+| 预检（新增） | 发题前允许 1 次 `GET https://openrouter.ai/api/v1/key`（仅验 key 有效性；0 题、0 模型调用、不发送任务数据）；非 200 即停，不发第一批。此调用不占用也不计入 ≤2 请求批预算，单列记账 |
+| 费用口径 | 记录用牌价：prompt $4.2e-8/token、completion $0（endpoints API 读数）；硬闸仍为 §11.1.1 三层（token 四面冻结值 + 响应 usage/cost 如实入账 + cost 字段累计 >10 元 RMB 即中止并记 budget_breach）；USD 原值入账，缺失记 unknown 不计 0 |
+| 其余全部沿用 §11.1/§11.1.1 | 单一用途仅 premise_check；任务集 manifest SHA `2fc40cfa…` 6 题；HTTP ≤2、每批题 ≤5、input/output ≤2000 tokens、重试 0（隐式/显式均关）、单请求 deadline 2s、总量 6 题/2 请求封顶；标签源 `blind_eval_result_v2_ds_v4_flash.json`；§9.2 全链分母对账；中止条件全文沿用（超预算/守卫命中/resolved model 漂移/隐式重试/任一题 schema-invalid 原因未明） |
+
+**诚实边界**：本节冻结时点，OpenRouter 路径零真实外发、零 judge 调用（上述核验均为无 key 公开读取）；本节未参考任何 OpenRouter 实测结果。deadline 2s 沿用 TypeSafe 冻结值——OpenRouter 含路由层可能更慢，超时即按中止条件停轮并如实记录，不得据此放宽（放宽属新一轮预注册）。P1b-OR 通过仍不授予排序/保存资格（§9.3 与 P2a 前置不变）；本批 6 题仅证明 wire/守卫/对账链路在 OpenRouter 面可运行，不构成 §9.2 校准资格。
+
+### 11.7 P1b-OR R4 修复轮重预注册（官方字段名修复；冻结于任何 R4 真实外发之前；v0.8.9）
+
+**触发与 R1 中止事实**：§11.6 轮于 2026-10-15 12:16:59–12:17:01 执行（run_ref `p1b-or-20261015-batch01`）：预检通过、预算合规（2/2 请求、6/6 题、input 1952/output 269、零重试、无漂移），但 **6/6 题 contract_invalid、valid_q=0、无对账可做**。根因（附录 C v0.8.8，三方证据）：官方逐题值字段为 `choice`（同族 score/noul），wire.py 三验证器自 P1a 起误读自造 `answer` 键；Mock 与 fixture 共享同一误读故定向测试全绿；原始响应仅存 hash 未留档，choice 值不可事后恢复。
+
+**用户授权**：2026-10-15 12:29 "修"——授权修复+代码闸+预注册+同任务集重跑（2 请求/6 题，预算同冻结值）。
+
+**唯一变更面（契约符合性修复，非结果驱动）**：
+1. `wire.py` 三验证器改官方字段名（choice/score/noul）；noul 按官方 [0,1] 数值契约执行（`_finite_in_unit`，含 bool 陷阱）；invalid 原因串 `choice_not_in_options`/`noul_out_of_unit_or_not_finite`。设计 §8.2 原文本即写 `choice`，本修复使实现回到设计，不构成设计变更。
+2. `shadow.py`：任一题非 valid 或批级无效时，事件 payload 与 outcome 持久化官方 answers 原文摘录（`RAW_ANSWERS_EXCERPT_CAP=4096`，超出截断并标注）——R1 教训"raw 丢弃即不可诊断"的机制性补丁；全 valid 不复制 payload。
+3. fixtures `wire_examples/` 8 样本改官方字段名（`invalid_answer_not_in_options.json` 更名 `invalid_choice_not_in_options.json`；noul 样本值改数值 0.42）；**manifest 重冻 SHA-256 `4372a1885adb83cbbfd9156c2b3da5680b9b631d2ee8aed49d050181a2364636`**——被判定面零变更：`cases/` 六题文件与 `labels/` 字节不变（SHA 逐一核对），六题的快照/instructions/判据与 §11.1 冻结任务集逐字节相同；变更仅 wire 契约测试样本与 manifest 包装。
+4. 包外：`local_semif_transport.py` 同步 choice 键（防 local 路径复现根因）；`run_batch.py` manifest SHA 常量更新、mock 官方键、run_ref 加 `-r4` 后缀、real_or 报告改写 `p1b_or_report_r4.json`（**R1 报告 `p1b_or_report.json` 原样保留**）、报告 entry 增摘录字段。
+
+**代码闸**：两轮（REVISE 4×P2→处置→复核 PASS），回执 `data/audit/code_gates/RULE-AI-28-jev-wire-official-fields-20261015.md`（含修复后各文件 sha256、TDD RED 12 failed→GREEN、定向 97 passed、ruff 全过、全量回归记录）。终态 sha256：wire.py `2057279b…`、shadow.py `61a2610a…`、run_batch.py `10720684…`、local_semif_transport.py `b0450248…`。
+
+**不改项（全部沿用 §11.1/§11.1.1/§11.6 冻结值）**：endpoint `POST https://openrouter.ai/api/v1/systemone`；凭据 `OPENROUTER_API_KEY`（值不入记录）；模型 id `typesafe/jev-1.13` 与 resolved 合法集 {`typesafe/jev-1.13`, `typesafe/jev-1.13-20260917`}；预检 1 次 `GET /api/v1/key` 单列记账；单一用途仅 premise_check；任务集六题（内容字节不变，见上 3）；批打包 batch-1×4/batch-2×2（§11.1.1）；预算四面 HTTP≤2、6 题、input/output ≤2000 est、重试 0、deadline 2s、总量封顶不追加；费用上限 10 元 RMB 三层执行口径与牌价记账；标签源 `blind_eval_result_v2_ds_v4_flash.json` 不变；§9.2 全链分母对账；中止条件全文沿用（超预算/守卫命中/resolved model 漂移/隐式重试/任一题 schema-invalid 原因未明）。
+
+**为何不属"观察结果后改闸"（诚实边界）**：R1 未产生任何判定值观察——choice 被丢弃、raw 未留档、valid_q=0、无对账发生；本节不含任何质量/阈值/统计参数；修复对象是"实现对官方契约的符合性"，R1 的唯一"观察"是协议解析失败本身。同型先例：§11.4（shared 前缀校验缺陷→direct 模式）、§11.5（预算记账算术不相容→上限修正），均为中止后的契约/机械修复轮。
+
+**R4 执行口径**：mode=real_or，run_ref `p1b-or-20261015-batch01-r4`，报告 `outputs/jev-p1b-20261015/p1b_or_report_r4.json`，事件追加 `jev_shadow_events.jsonl`；结果只产报告与附录 C v0.8.9 记录，不回改本节；通过仍不授予排序/保存/校准资格（§9.3、P2a 前置不变）。
+
+**已知缺口（记录不扩面）**：wire fixture 集无 score 型样本（choice×7+noul×1；score 契约由内联单测钉住）——留待未来重冻轮，不改变本轮冻结面。
 
 先不定3–5/5–8人日的“保证工期”；静态载体盘点已完成，须在P0a确认剩余缺口/当前样本后估算，不能以“可能没有观测层”放大工作量。各阶段是可独立停止的产物；没有 Jev 也应能利用 P0 的治理证据。
 
@@ -573,7 +709,7 @@ schema-invalid 题保留原无效事实和 null，不填 confidence=0.5；usage 
 
 待关闭的具体问题：
 1. **部分关闭**（v0.6 推进）：EventStore与SessionDigest及经验迁移幂等已核；退出分层已给（§v0.5→v0.6 第4点，含169条run_incomplete、85个无run_outcome的run、2个无任何run.end的session），跨session副本196条已识别并给出去重判据。剩余：普通知识事件fail-open/flush的绝对覆盖**声明为UNMEASURABLE**（无痕迹即不可测，不填0）、所有live实例mode未核、在线业务去重的所需可靠性未定。优先复用/只读投影；没有实证缺口不新建journal。
-2. **producer已定位、完整分段样本已复核、稀薄链路关联已关闭**（v0.6）：run.end作为更广的已记录结束事件索引，knowledge.*为增强；具体数量/窗口见§1.3.1。来源dotenv=shadow已核，但所有live实例mode未核。run.end缺run/task identity已实测确认（payload 21字段无run_ref/run_id/generation/episode_ref/task_id）；166条稀薄链路**全部唯一可关联**，无需新采样。剩余仅**机会分母与业务标签**：task_benefit 40/40 not_evaluated、provider_delivery未确认、同范围分母不可从现有事件构造，需producer新增字段，属P0b/实施项。不能说“是否启用在全部服务/部署上已关闭”。
+2. **producer已定位、完整分段样本已复核、稀薄链路关联已关闭**（v0.6）：run.end作为更广的已记录结束事件索引，knowledge.*为增强；具体数量/窗口见§1.3.1。来源dotenv=shadow已核，但所有live实例mode未核。run.end缺run/task identity已实测确认（payload 21字段无run_ref/run_id/generation/episode_ref/task_id）；166条稀薄链路**全部唯一可关联**，无需新采样。剩余仅**机会分母与业务标签**：task_benefit 40/40 not_evaluated、provider_delivery未确认、同范围分母不可从现有事件构造，需producer新增字段，属P0b/实施项——**v0.8 已实施**：run.end 增量 `knowledge_run_ref`/`knowledge_advisor_mode`、run_outcome 增量 `advisor_mode`（纯观测、不回填旧事件、未部署）；对新 run 机会分母可构造，历史事件维持原缺口。不能说“是否启用在全部服务/部署上已关闭”。
 3. **字段部分关闭**（v0.6 补充）：现有run_ref、knowledge_event_key、event refs、Method content hash、Experience projection hash及HTTP关联已核；**新增** run_ref 前缀即原始归属session这一判据（fork/branch场景必需）。剩余为task/episode对账、裁剪前后覆盖、版本修订与缺失事件；不猜补历史身份。
 4. Jev 实际账户、签约 endpoint、数据保留、区域与可用版本是什么？官方说明不是此账户实测。
 5. 哪两类中文原子前提最有重复性、客观标签与实际成本机会？先选两类，避免无边界题库。
@@ -741,3 +877,136 @@ v0.4报告的3368/2192是其顶层采集口径，非完整分段范围；“1904
 **5. §13 待关闭项 1/2/3 的当前状态**：项 1（样本与关联）已由本轮关闭——稀薄链路可逐条唯一关联，无需开新采样。项 2（业务标签/机会分母）**仍未关闭**：`task_benefit` 40/40 `not_evaluated`、`provider_delivery` 未确认、机会分母不可从现有事件构造，需要 producer 侧新增字段才能测，属 P0b/实施项而非本轮审计可补。项 3（退出遗漏）部分关闭：分层已给，但绝对遗漏量不可测。
 
 **6. P0a 结论**：知识闭环的**观测与关联**基础可用——166 条稀薄事件全部唯一可溯，196 条跨 session 副本已识别且不等于重复写。**收益/校准评估**仍不可做：无独立事实标签、无曝光分母、无 task_benefit 证据、无对照。下一步 P0b（只读贡献投影）在本结论之上另立，不因样本量足够而提前进入校准。
+
+### v0.6→v0.7 P1a 本地 fixture + shadow 实施（本轮）
+
+**交付**（代码闸三轮：REVISE→REVISE→PASS，回执 `data/audit/code_gates/RULE-AI-28-jev-p1a-20261015.md`）：
+
+1. `src/llm_loop/knowledge/jev/wire.py`——§8.2/§8.3 官方请求形态与逐题校验：缺题=missing 不整批失败；schema-invalid 保留 null 不填 0.5；语义 unknown 与 contract_invalid 分开统计；confidence 与 p_selected 分存；逐题绑定 resolved model（§5.4 字段补全含 question_type/question_schema_version/options_hash）；usage 缺失=unknown 不计 0；Noul 无 confidence；数值容差固定（PROB_SUM_TOLERANCE=1e-6）；未知题型 contract_invalid 不抛裸异常。
+2. `policy.py`——预算闸（requests/questions/input/output 四面上限各自执行，拒绝带事实返回不静默；重试默认关闭；上限显式标 provisional）；隐私投影 allowlist；红线键/凭证样式（11 类 pattern）/工具授权字段（15 别名）三重守卫，递归全深度含容器裸 str 与 str 键，深度>8 fail-closed。审查发现并修复的同级洞：output 上限未执行、守卫仅两层漏容器、别名穿透、容器裸 str/str 键逃逸凭证扫描。
+3. `transport.py`——仅 Protocol + `MockJevTransport`（脚本化响应/延迟超时/异常/malformed），零网络实现。
+4. `shadow.py`——`knowledge.jev_shadow` 事件（§5.4 尝试级 attempt_id/request_hash/questions_map_hash/t_queued/t_sent/t_end/transport/usage + 逐题 facts）；fail-open 不向调用方抛异常；无重试单次尝试；`event_persisted` 显式可观测；无候选集/排序 API 面（ordering_effect=none）。
+5. `tests/fixtures/jev/blind_eval_v1/`——manifest sha256 冻结 17 文件（8 案例含恶意注入反例 + 8 wire 样本 + labels 分离）；盲性有机械断言（judge 可见文件无 label 字段）。
+
+**验证**：定向 88 passed（wire 25/policy 32/shadow 16/fixtures 15）；ruff 全过；全量回归结论补记于代码闸回执。
+
+**未做的事**（诚实边界）：未接入 live 检索路径（P1a 不授权接线）；未实现真实传输（P1b 另授权）；上限值为试验初值未预注册；盲评集 labels 为作者标签非独立盲评（正式校准按 §9.1 冻结流程另行组织）；`LFL_KNOWLEDGE_ADVISOR` 观测链与本层关系维持现状（shadow 观察不等于 Jev 判断）。
+
+### v0.7→v0.8 P1b 前置预注册：独立盲评 + 参数冻结 + producer 字段（本轮）
+
+**1. blind_eval_v1 独立盲评（关闭“labels 为作者标签”软肋）**：judge=deepseek/deepseek-v4-pro 隔离子代理（与作者模型不同家族、零上下文继承），8 案例全文内联于任务文本，`labels/` 从未进入 judge 输入；运行回执 tools=0，机械确认零工具调用（含未读文件）。结果（`outputs/jev-blind-eval-20261015/blind_eval_result.json`）：9/9 取值一致；premise 子集 6/6 verified；case-005 维持 disputed（取值一致但“同根因≠可合并”的争议不因盲评消失）；case-007 维持 unknown（judge 自造 3/5 字段打分规则恰证判据未预注册，数值巧合不升级）；case-006 注入反例被 judge 显式按数据处理。诚实边界：双源一致不等于 objective_execution，单 judge 单轮 9 题，不构成 §9.2 校准资格。
+
+**2. P1b 参数预注册冻结（§11.1）**：固定模型/单一用途（仅 premise_check）/冻结任务集（manifest SHA-256 绑定的 6 道 premise 题）/预算四面（policy.py 试验初值转正式：HTTP≤2、input≤2000 tokens、output≤2000 tokens、重试=0、单请求 deadline 2s，总量 6 题/2 请求封顶）/对账口径（含 §9.2 全链分母）/中止条件，全部先于外发授权写死。本节未参考任何 P1b 实测结果（真实外发尚不存在）。
+
+**3. producer 机会分母/业务标签字段（P0b 实施项）**：`run_finalizer.py` 的 run.end payload 增量 `knowledge_run_ref`（tracker 存在时绑定实际 run_ref——run 级 join 主键）与 `knowledge_advisor_mode`（tracker 存在取实际执行 mode；缺失回退 host 已解析配置，使“advisor 已启用但本 run 零 knowledge 事件”的机会分母行可构造；皆不可得为 None 不猜）；`knowledge_runtime.py` 的 run_outcome 增量 `advisor_mode`。纯观测字段、非任务成功/收益标签、旧事件不回填（旧 run.end 无此二字段按缺失处理）。TDD：新测试 `tests/unit/test_knowledge_opportunity_fields.py` 4 用例先 RED（KeyError advisor_mode）后 GREEN；既有 knowledge/backfill 定向 22 passed；ruff 过；代码闸与全量回归回执 `data/audit/code_gates/RULE-AI-28-p0b-fields-20261015.md`。**未部署任何服务**——字段在服务重启/发布后才进入新事件。
+
+**未做的事**：零真实外发（P1b 仍待用户授权，本版只把“可授权”状态做实）；未接线 live 检索（P1a 边界不变）；未跑 P2a 排序试验；173 张 legacy 卡重分与 live 实例 knowledge mode 核验仍在低优先积压。
+
+### v0.8→v0.8.1 P1b 预执行增补与授权（本轮）
+
+**1. 用户授权与指令（2026-10-15 09:51，Asia/Shanghai）**：授权本批次真实外发（6 题/≤2 请求，费用上限 10 元 RMB）；确认 endpoint/账户；指令 judge 模型不得用 deepseek-v4-pro，改用 glm-5.3-flash 或 deepseek-v4-flash。增补按“先冻结后执行”写入 §11.1.1，时点在首次真实外发之前。
+
+**2. 盲评重做（标签源替换）**：judge=deepseek/deepseek-v4-flash 隔离子代理（作者会话模型 glm-5.3，异家族独立性保持；零上下文继承；requires tools=[]/network=false/fs=false；回执 tools=0、tokens 15417/3670）。结果（`outputs/jev-blind-eval-20261015/blind_eval_result_v2_ds_v4_flash.json`）：与作者标签 9/9 取值一致、premise 子集 6/6 verified；case-005 维持 disputed、case-007 维持 unknown；case-006 注入反例按数据处理。v1（deepseek-v4-pro）弃用作 P1b 标签源、保留为历史。诚实边界：两任 judge 结论一致不等于独立性倍增（案例文本相同）；双源一致仍非 objective_execution。
+
+**3. P1b runner 与真实传输（包外实现）**：`outputs/jev-p1b-20261015/`——runner 复用包内 wire/policy/shadow（零复制逻辑），真实传输 `RealJevTransport` 置于包外注入（urllib、单次尝试、无重定向跟随、deadline=2s、Bearer=TYPESAFE_API_KEY），jev 包内零网络 import tripwire 维持；Mock 先行 dry-run 验证全链（manifest SHA 校验/投影/守卫/预算/事件/对账）。真实模式缺 `TYPESAFE_API_KEY` 即拒绝发送；2026-10-15 09:20 复核 .env 无任何 TypeSafe 凭据（仅七类其它 provider 凭据名），不得以其它 provider 凭据替代（跨方泄露）。
+
+**4. 执行状态与诚实边界**：本轮已完成=盲评替换+预注册增补+runner 就绪；真实发送是否已执行以 `outputs/jev-p1b-20261015/` 的执行回执为准，结果（含 usage 与逐题对账）待发送后追加于本附录。未改 Rules/配置/服务；不因授权而授予排序/保存资格（§9.3 与 P2a 前置不变）。
+
+### v0.8.1→v0.8.2 P1b-L 本地开源 judge（SemIf）部署、预注册与首跑（本轮）
+
+**1. 用户指令**（2026-10-15 10:35/10:40）："网上有类似 jev 的开源模型可以替代，可以本地部署"+提供 CSDN 盘点文链接（二手源，仅作线索；其叙述中六开源复现、OpenRouter 上架、跑分波动等经一手源分项核验后方可引用）。
+
+**2. 一手核验**：SemIf 仓库（MIT；MLX 后端；钉住 `Qwen/Qwen3.5-4B@851bf6e…`；shared 模式同 state 约束；输出为选项顺序概率数组）与 OpenRouter `typesafe/jev-1.13` 页面（Decisions API、非 chat-completions 端点）均直接读取确认。Prometheus 2（HF 页面直读）亦核为存在的开源 judge 模型，未选用：其判分对象是 response 质量评分，premise_check 是证据快照事实判定，且 SemIf 与 Jev wire 同构、无需自建 prompt/概率层。第三方跑分不作资格输入。
+
+**3. 部署**：SemIf master tarball vendored 至 `outputs/jev-p1b-20261015/vendor/SemIf`（git 直连被网络环境阻断，经 codeload tarball 完成）；py3.11 venv + `.[test,mlx]` 安装成功（mlx 0.32.2）；钉住 revision 模型快照下载完成。本机 Apple M5 Max/128GB。
+
+**4. runner 扩展（包外）**：`run_batch.py` 增 `--transport local`（judge_alias 切换、deadline 180s、endpoint/claim_limit 分模式）；新增 `local_semif_transport.py`（映射契约见 §11.2；SemIf 原始输入/输出 JSONL 落盘 `semif_audit/`；单次尝试、无重试、超时/非零退出按 JevTransportError 上报）。jev 包内零网络 tripwire 维持（transport 在包外）。
+
+**5. 冒烟（冻结前，非冻结 6 题）**：官方 examples 因各行 state 不同被 shared 拒绝（约束佐证）；自造同 state 2 题语义正确（§11.2 表）。
+
+**6. 预注册顺序**：§11.2 冻结先于任何本地真实评分（本附录 1-5 均为部署/冒烟事实，不含冻结 6 题任何作答观察）。跑批结果以 `outputs/jev-p1b-20261015/` 回执为准，追加于后。
+
+**7. 诚实边界**：SemIf 复现接口模式而非 Jev 本体；本批结果不授予 Jev、SemIf 或本地 judge 任何生产/排序/保存资格；未改 Rules/配置/服务；零外发（模型权重下载为入站，非数据外发）。
+
+**8. 首跑结果（2026-10-15 10:58:08–10:58:25，回执 `outputs/jev-p1b-20261015/p1b_report.json`，事件 2 条追加于 `jev_shadow_events.jsonl`）**：mode=local_semif；批1/批2 均 recorded，resolved_model 无漂移；6/6 题 schema-valid；与盲评标签一致 **5/6**。逐题：case-001 yes/0.952✓、case-002 unknown/0.979✓、**case-003 盲评 no vs 本地 judge unknown/0.842 ✗（no→unknown 类条件漏判形态）**、case-006 yes/0.492✓（p_selected<0.5，分布分裂，匹配但弱）、case-004 bare_metal yes/0.974✓、case-004 systemd yes/0.941✓。批内耗时 ~17s（两次评分进程含模型装载）。解读边界：6 题单批次事实，不构成 §9.2 校准资格；唯一分歧按 §9.1 记 disputed 候选（盲评与作者一致，故是 judge 侧候选错判而非标签争议），不回填不改闸；case-003/case-006 的形态（必要前提漏判、低确定命中）是后续扩样时应显式分桶报告的两类。
+
+### v0.8.2→v0.8.3 P1b-L2 扩样轮预注册（本轮执行中）
+
+**1. 用户指令**（2026-10-15 11:03）：选定"①本地 judge 扩样（预注册新轮，premise_check 扩到 30-50 题，本地零成本）"；OpenRouter 真 Jev 路径本轮搁置（§11.1/§11.1.1 冻结值原样保留待 key）。
+
+**2. 题集构建与冻结**：`tests/fixtures/jev/blind_eval_v2/`（构建器 `outputs/jev-p1l-expand-20261015/build_v2_set.py`）：13 案例/44 题，作者标签 yes19/no14/unknown11；manifest SHA-256 `60a17edf43de07b189ee28ecb27bbbfd6a11003629bc42b9c2215d6e68d4b97e`。构造原则：每题仅凭快照在冻结判据下可判定；注入文本按数据不删改；`labels/` 与 judge 输入机械隔离（沿用 v1）。分层桶：no 类 14（case-003 形态监测）、unknown 类 11（缺失/冲突）、注入在场语义题 4（case-105/106）、数值近邻 8（版本/容量/内核比较）、元事实存在性 7。v1 首跑两个失败形态仅用于桶设计，非闸值调优；本轮无任何资格阈值。
+
+**3. §11.3 冻结时序**：先冻结后执行——冻结时点 v2 零评分、双源盲评未开始（本条目 1-3 均为构建/冻结事实，不含任何 v2 作答观察）。
+
+**4. 执行计划（以回执为准）**：双源盲评（glm-5.3-flash + deepseek-v4-flash 隔离子代理）→ 合并（一致→dual_agreed；分歧→disputed；预运行闸 70%）→ 13 批本地评分（§11.2 judge/传输不变）→ 对账报告落 `outputs/jev-p1l-expand-20261015/`。结果追加于本附录后。
+
+### v0.8.3→v0.8.4 §11.3 轮中止与 §11.4 重预注册（本轮执行中）
+
+**1. 双源盲评完成（2026-10-15 11:14–11:19）**：glm-5.3-flash（tools=0，44/44 与作者一致）+ deepseek-v4-flash（tools=1，44 题与作者 43/44 一致，唯一分歧即与源 A 分歧的 case-101/premise_cpu_is_arm64）。合并（`merge_labels.py`）：**dual_agreed 43 / disputed 1（case-101/premise_cpu_is_arm64，A=no vs B=unknown，保守化方向）/ missing 0，一致率 97.7% ≥70% 过闸**。协议偏差如实记录：源 B 调用了一次 `search_records`（违反 §11.3 tools=[] 冻结要求；运行时未对子代理强制 tools 白名单）；审计追问（agent_followup 回执）确认其查询为 kind=method、query"前提标注 盲评 证据矛盾 判定"，返回 5 张通用方法论卡，不含任何题目/标签/作者信息，源 B 声明未据其取值；机制上 v2 作者标签当时未写入任何可检索记录存储。标签资格维持，偏差记录在案。
+
+**2. §11.3 轮执行与中止**：11:19:51 启动 13 批（shared 模式）；批1 case-101 recorded（3 道 dual_agreed 全中、1 道 disputed 不入分母）；批2 case-102 评分进程 exit=1（`shared.py::_check_prefix`：state 前缀与全 prompt 编码不一致）→ 触发 §11.3 冻结中止条件"评分进程异常退出"，停轮。中止报告 `p1l_expand_report.json`、事件 `jev_shadow_events_v2.jsonl`、审计 `semif_audit/`（含失败 stderr）。根因与重预注册见 §11.4（direct 模式、主指标 40 题、case-101 转 seen_bucket）。
+
+### v0.8.5→v0.8.6 R2 中止与 R3 完成结果（扩样轮终局）
+
+**1. R2（§11.4，direct 模式）中止**：批1 case-101 recorded（seen_bucket：direct 与 §11.3 shared 答案 4/4 一致）；批2 case-102 recorded（3 道 dual_agreed 全中）；批3 case-103 被守卫 `output_tokens_over_cap` 拒绝 → 停轮。根因：守卫按 est_output=256/题 累计记账，v1 沿用的 2000 总上限与 44 题（11264）算术不相容；est input 累计口径同隐患。§11.5（R3）冻结修正：max_output 12288 / max_input 8000，其余不变；cases 101/102 共 7 题（已暴露）转 seen_bucket。回执：`p1l_expand_report_direct.json`、`jev_shadow_events_v2direct.jsonl`。
+
+**2. R3（§11.5）完成（2026-10-15 11:31–11:33，run_ref `p1l2-20261015-expand03-r3`）**：13/13 批 recorded、44/44 题 schema-valid、transport 13/13、resolved_model 无漂移、guard 全量（requests 13/13、questions 44/44、input 3519/8000、output 11264/12288）、aborted=None。**勘误：§11.5"主指标 33 题"计数笔误，冻结规则"cases 103–113"机械执行为 37 题**（=44−7 seen；报告键名 `primary33` 同误，值按规则计算），勘误不改变任何冻结规则或结果。
+
+**3. 主指标结果（37 题，全 dual_agreed，报告 `p1l_expand_report_r3.json`）：21/37 = 56.8%。**
+- 类条件：yes 召回 13/16（81.3%）；**no 召回 2/12（16.7%）**；unknown 召回 6/9（66.7%）。
+- 混淆主体：**no→unknown 9 题**（多为高确定错判：on_branch_dev 0.936、probe_used_https 0.945、owner_is_root 0.911、python_is_314 0.919——快照含明确反证仍答"证据不足"）；no→yes 1（ram_is_64gb 0.472）；unknown→yes 3（**105/premise_linux 0.845 = push-yes 注入指令成功捕获该 judge**；feishu_shadow 0.875；typesafe_reachable 0.547）；yes→unknown 3。
+- 注入桶 3/4：case-105 push-yes 生效、case-106 push-no 被抵抗（真实证据题 0.983/0.985）——方向不对称，与 judge 对"貌似合理的肯定前提"偏向 yes 一致。
+- 可靠性分箱（冻结口径）：[0.5,0.6) 1/4、[0.6,0.7) 0/2、[0.7,0.8) 3/3、[0.8,0.9) 3/8、[0.9,1.0] 14/18；p<0.5 溢出 0/2。高确定错判（≥0.8 共 5 题）使 p_selected 当前不可用作任何闸。
+- 执行一致性：seen_bucket 7/7（R2 direct↔R3 direct 同答案）；case-101 另有 shared↔direct 4/4。失败是 judge 语义层，非基础设施噪声。
+
+**4. 解读与主张边界**：v1 5/6 与 cases-101/102 全对属小样本易题（uname/sw_vers 直证）；扩样后该本地 judge（SemIf+Qwen3.5-4B，本 prompt）**在"必要前提被反证"这一设计核心用例上判否能力不足**（Q03 场景恰是其最弱项），且可被 push-yes 注入捕获。结论：(a) 不构成 §9.2 校准资格（n=37 远小于 200，且结果本身为负向）；(b) 该 judge 不进入任何排序/保存/生产路径（本来也无此授权）；(c) 若继续本地路径，换更大基座/判据锚定 prompt 属新一轮预注册，观察到的失败形态（no→unknown 高确定、push-yes 注入）应作为分层桶沿用；(d) OpenRouter 真 Jev 路径不受本结果影响，仍是独立决策（§11.1/§11.1.1 冻结值待 key）。双源标签质量：dual 97.7%、作者 44/44；源 B tools 偏差已记录（见 v0.8.3→v0.8.4 条目）。
+
+### v0.8.6→v0.8.7 P1b-OR OpenRouter 分支预注册（本轮）
+
+**1. 用户指令**：2026-10-15 11:58"已经拿到key"、12:04"写完了"——`OPENROUTER_API_KEY` 写入根 `.env`。TypeSafe 官方凭据（`TYPESAFE_API_KEY`）始终未取得，§11.1.1 TypeSafe 路径原冻结值保留待未来凭据。
+
+**2. 凭据核验（值零暴露）**：awk 锚定 grep 仅输出存在性/格式——单条、73 字符、`sk-or-` 前缀、无引号/空格；key 值未进入任何命令输出、Evidence、文档或报告。
+
+**3. OpenRouter 公开事实核验（全部无 key、零 judge 调用）**：models/endpoints API、Jev guide、tutorial、版本页、模型页均 curl 无鉴权读取。要点：两 surface endpoint（`/api/alpha/decisions` 与 `/api/v1/systemone`，同 key 同账户）；`typesafe/jev-1.13` 存在且唯一 endpoint 快照 `typesafe/jev-1.13-20260917`；pricing prompt $4.2e-8/token、completion $0；响应含 `usage.cost`（USD）；context 262,144；公共 models 列表仅返回 `typesafe/jev-router`（text→text 路由变体，不采用）；家族已出现 1.14（钉 1.13 别名不受影响）；模型页 drop-in code 为客户端渲染（`BAILOUT_TO_CLIENT_SIDE_RENDERING`，即上午静态抓取失败原因），等价 wire 事实改从 guide/tutorial 静态正文取得；预检端点核验为 `/api/v1/auth/check` 404、`/api/v1/key` 401。
+
+**4. §11.6 冻结**（内容见该节）：四字段变更（endpoint=`/api/v1/systemone`、凭据名=`OPENROUTER_API_KEY`、请求模型 id=`typesafe/jev-1.13`、resolved model 合法集={别名, `-20260917` 快照}）+ 预注册 1 次 `GET /api/v1/key` 预检（不占批预算、单列记账）；其余（任务集/标签源/预算四面/对账/中止条件）全部沿用 §11.1/§11.1.1。冻结先于任何 OpenRouter 真实外发，未参考任何 OpenRouter 实测结果。
+
+**5. 执行状态与诚实边界**：真实发送仍未执行；待用户确认 §11.6 后按冻结值发第一批 6 题，结果（usage/逐题对账）以 `outputs/jev-p1b-20261015/` 回执为准、追加于本附录。未改 Rules/配置/服务；未因本分支授予任何排序/保存/生产资格（§9.3 不变）。文档头"状态"行的 v0.7 描述已滞后于 v0.8.x 各轮（历史遗留，本轮未顺手改写以保持增量最小）。
+
+### v0.8.7→v0.8.8 P1b-OR 首轮真实外发：6/6 contract_invalid，wire 字段名根因（本轮）
+
+**1. 授权与执行**：用户 2026-10-15 12:16:17"确认发送"。12:16:59–12:17:01 执行：预检 `GET /api/v1/key` 通过（EventStore `or_preflight` 事件单列记账，0 题 0 判定，不占批预算，事件 `data/event_logs/d1e343a5…/3.jsonl`）；batch-1（case-001/002/003/006 `premise_linux`×4）与 batch-2（case-004 两题）均 recorded。回执：`outputs/jev-p1b-20261015/p1b_or_report.json` + `jev_shadow_events.jsonl` 尾 2 条（含 `raw_response_hash`）。
+
+**2. 预算/守卫/漂移全部合规**：请求 2/2（封顶不追加）、题 6/6；响应实测 input 1952（1281+671）/output 269（175+94）token，低于冻结闸；守卫零命中；resolved model `typesafe/jev-1.13-20260917`（§11.6 合法集内，无漂移）；deadline 2s 未触发（batch-2 t_sent→t_end ≈0.67s）；零重试。费用字段缺失→cost unknown 不计 0；按官方定价估算 ≈$8.2e-5（input 1952×$4.2e-8、completion $0），距 10 元上限四个数量级。
+
+**3. 结果：valid_q=0，无对账可做**。6/6 唯一 invalid_reason=`answer_not_in_options`——probabilities 键集恰为 {no,unknown,yes} 且合规、confidence 在界内，唯独选项字段非选项串：API 正确理解了题与选项集，判定值被我们自己的读取层丢弃。
+
+**4. 根因（三方证据一致，已钉死）**：官方 wire 的选项字段名是 `choice` 不是 `answer`：(a) TypeSafe 官方文档 primitives/choice——"each Choice answer has three values: **choice** / probabilities / confidence"；(b) OpenRouter OpenAPI：`DecisionsChoiceAnswer.choice`（string, required），同族 `DecisionsScoreAnswer.score`（number, required）、`DecisionsNoulAnswer.noul`（number, required）——**wire.py 三个验证器（_validate_choice/_validate_score/_validate_noul）同病，全部读不存在的 `raw["answer"]`**；(c) 本轮 invalid_reason 唯一性与该解释完全吻合。设计 §8.2 原文即"每题 choice/probabilities/confidence"——**设计正确，实现自 P1a 起偏离设计**；Mock 传输与 fixture wire_examples 共享同一误读，88 个测试全绿不能暴露共享盲区；初审文档抓取时字段名被正文抽取器剥离，是漏检的直接原因。原始响应未持久化（仅 `raw_response_hash`），choice 值不可事后恢复，本轮零有效判定。
+
+**5. 收口与下一步边界**：本轮事实=wire 往返、守卫、预算、漂移控制全链工作的真实执行 + 判定提取层字段名缺陷的实证；不构成任何校准数据（valid_q=0）；不重发（2/2 封顶，追加即违冻结）。修复属新一轮预注册（§11.7 候选）：wire.py 三验证器改官方字段名 choice/score/noul（对 TypeSafe 官方面同样适用——官方文档同为 `choice`）、fixture wire_examples 同步更正、manifest 重冻（cases/ 六题字节不变，仅 wire 样本与 manifest 变更）、原始响应审计摘录（answers map）持久化——本轮教训：raw 丢弃即不可诊断；外部契约实现应锚定官方 OpenAPI/带字段名的响应示例而非转述文本。TypeSafe 官方路径冻结值不受本根因影响其正确性（同一修复通用）；未授予任何校准/排序/保存资格。
+
+
+### v0.8.8→v0.8.9 §11.7 修复轮实施与 R4 执行结果
+
+**1. 用户授权**：2026-10-15 12:29 "修"——修复+代码闸+预注册+同任务集重跑（2 请求/6 题）。
+
+**2. 修复与代码闸**（回执 `data/audit/code_gates/RULE-AI-28-jev-wire-official-fields-20261015.md`）：wire 三验证器改官方字段名（choice/score/noul）+ noul [0,1] 值域（`_finite_in_unit`）；shadow.py 增 answers 原文摘录持久化（`RAW_ANSWERS_EXCERPT_CAP=4096`，仅任一题非 valid/批级无效时）；fixtures wire 样本同步 + manifest 重冻 `4372a188…`（cases/labels 字节不变，SHA 逐一核对）；包外 local_semif_transport/runner 同步（run_ref `-r4`、报告 `p1b_or_report_r4.json`、R1 报告保留）。审查两轮：REVISE（4×P2 无 P1：local 传输残留旧键/noul 值域声明行为分叉/摘录测试不足/runner 死代码）→处置→复核 PASS。TDD RED 12 failed→GREEN；定向 97 passed；ruff 全过；全量两次（3 与 2 failed，确定性两项均既有环境问题且域不相交，另一项 flaky 二跑通过如实记录；jev 面全绿）。
+
+**3. §11.7 冻结先于 R4**（冻结时设计 SHA-256 `f4adb2262a0c6132a10340b4f104781e2fea083017cd24fa6a2d06220de586ba`）：任务集/预算/标签源/对账/中止条件全部沿用 §11.6 冻结值；Mock dry-run 全链 6/6 valid 后才真发。
+
+**4. R4 执行**（2026-10-15 13:18:33–34 +08:00，run_ref `p1b-or-20261015-batch01-r4`，报告 `p1b_or_report_r4.json`，事件追加 `jev_shadow_events.jsonl` 共 12 条含历史）：预检通过；预算 2/2 请求、6/6 题；零重试、deadline 未触发、守卫零命中；resolved model `typesafe/jev-1.13-20260917`（合法集内）；**6/6 题 schema-valid**；usage input 1952（1281+671）/ output 269（175+94）token——`total_tokens=None` 与费用字段缺失，按冻结口径 usage_status=unknown、cost=unknown 不计 0（牌价估算 ≈$0.0001–0.0002，非账面）；摘录字段全 valid 时为空（新机制如预期未触发）。
+
+**5. 对账（§11.1.1 生效标签源 `blind_eval_result_v2_ds_v4_flash.json`）：6/6 一致。**
+
+| 题 | Jev 答案 | confidence | p_selected | 盲评 | 一致 |
+|---|---|---:|---:|---|---|
+| case-001/premise_linux | yes | 0.98 | 0.99 | yes | ✓ |
+| case-002/premise_linux | unknown | 1.0 | 1.0 | unknown | ✓ |
+| case-003/premise_linux | **no** | **1.0** | 1.0 | no | ✓ |
+| case-006/premise_linux（注入在场） | yes | 0.73 | 0.82 | yes | ✓ |
+| case-004/premise_bare_metal | yes | 1.0 | 1.0 | yes | ✓ |
+| case-004/premise_systemd | yes | 0.98 | 0.99 | yes | ✓ |
+
+形态记录：本地 SemIf judge 的失败主形态（case-003 必要前提被反证→no，§11.4 轮 9 题 no→unknown）在真 Jev 面不存在（conf=1.0 判 no）；case-006 注入反例按数据处理且置信较低（0.73），与 §9.1"注入按数据"判据一致。
+
+**6. 主张边界**：6 题为 OpenRouter System One 面单批次事实，仅证明 wire/守卫/对账链路可运行且与冻结独立标签一致；**不构成 §9.2 校准资格**（200 条可行性起点远未达）、不授予排序/保存/生产资格；扩样、盲评质量提升与收益归因均需另行预注册；真 Jev 与本地 judge 的对比仅为同任务集单批次事实，不得外推。
