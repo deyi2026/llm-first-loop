@@ -243,7 +243,7 @@ def memory():
         text(d,(x+160,482),sub,21,MUTED,anchor="mm")
         if i<2: arrow(d,(x+322,417),(x+389,417),c,4)
     rect(d,(181,622,1096,694),"#FEF3DF",22)
-    text(d,(638,659),"⚠  历史记录 ≠ 今天仍然成立的事实",27,"#90631F",anchor="mm",bold=True)
+    text(d,(638,659),"注意：历史记录 ≠ 今天仍然成立的事实",27,"#90631F",anchor="mm",bold=True)
     export(im,"06-memory.png")
 
 
@@ -275,7 +275,7 @@ def get_started():
     text(d,(133,530),"02  配置 API",27,"#9CE7F2")
     text(d,(500,530),"按 README 设置模型供应商与密钥",25,"white")
     text(d,(133,594),"03  运行任务",27,"#9CE7F2")
-    text(d,(500,594),"python -m llm_loop.cli \"你好\"",25,"white")
+    text(d,(500,594),".venv/bin/python -m llm_loop.cli \"你好\"",23,"white")
     text(d,(128,659),"先跑通最小闭环，再按需接入浏览器、Web 与飞书",20,"#A9C1DB")
     export(im,"08-get-started.png")
 
