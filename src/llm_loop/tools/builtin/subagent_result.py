@@ -123,8 +123,6 @@ class SubAgentResultTool:
                     f"{item.get('name', '?')}:{item.get('status', '?')}" for item in trace[:10]
                 )
             )
-        parts.append("[子代理回答]")
-        parts.append(str(getattr(result, "final_answer", "") or ""))
         nested_success = tuple(
             f"{item.get('name', '?')}:success"
             for item in trace
@@ -143,6 +141,18 @@ class SubAgentResultTool:
             if all((child_id, parent_id, generation, result_id))
             else None
         )
+        if binding is None:
+            # A process-local handle can complete even if its result_available
+            # event could not be committed. The local result is still useful,
+            # but a new process will correctly see orphaned, not completed.
+            # Never pass this response off as a recoverable settlement receipt.
+            parts.append(
+                "[持久化未确认] result_durability=local_only；当前结果仅获本进程确认，"
+                "没有可恢复的结果回执；进程重启后可能显示 orphaned，"
+                "不可据此证明已持久化结算。",
+            )
+        parts.append("[子代理回答]")
+        parts.append(str(getattr(result, "final_answer", "") or ""))
         return ToolResult(
             status=status,
             content="\n".join(parts),

@@ -678,6 +678,7 @@ class SubAgentRunner:
         *,
         run_generation: str = "",
         origin_run_generation: str = "",
+        _all_generations: bool = False,
     ) -> int:
         """Cancel only children owned by the exact parent run generation.
 
@@ -688,7 +689,16 @@ class SubAgentRunner:
         if not parent_session_id:
             return 0
 
-        target_generation = str(run_generation or origin_run_generation or current_run_generation.get() or "")
+        # A parent run's generation must scope cancellation of its *direct*
+        # children. Once a particular child is itself being stopped, however,
+        # its descendants are owned by that child session, not by the root's
+        # generation: tool dispatch clears the inherited run-generation context.
+        # Keep the normal generation fence, explicitly crossing it only while
+        # mechanically stopping that child's own active descendants.
+        target_generation = (
+            "" if _all_generations
+            else str(run_generation or origin_run_generation or current_run_generation.get() or "")
+        )
         with self._children_guard:
             rows = []
             for sid in self._children_by_parent.get(parent_session_id, set()):
@@ -726,6 +736,11 @@ class SubAgentRunner:
                     handle.activity_event.set()
             if event is not None:
                 event.set()
+            # Do not depend on the registry cancel hook to transitively visit
+            # grandchildren: it may inherit the ROOT run generation and skip a
+            # child spawned under the nested tool's empty generation. Recursing
+            # over the already-owned child tree is bounded by the depth cap.
+            self.cancel_parent(sid, _all_generations=True)
             with suppress(Exception):
                 self.registry.cancel_session(sid)
         return len(rows)
@@ -945,6 +960,11 @@ class SubAgentRunner:
         result: SubAgentResult | None,
     ) -> SubAgentResult | None:
         """Finalize local state; durable terminal requires an exact result fact first."""
+        # Structured lifecycle: a child reaching terminal (even successfully)
+        # cannot leave its own active descendants executing late side effects.
+        # Only the children of THIS child session are affected; unrelated root
+        # runs retain their generation-scoped cancellation boundary.
+        self.cancel_parent(sid, _all_generations=True)
         with self._children_guard:
             generation = self._local_generation_by_child.get(sid, "")
             durable_before = self._durable_topology.get(sid)
