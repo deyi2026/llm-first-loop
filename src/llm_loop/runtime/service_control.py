@@ -49,6 +49,7 @@ from llm_loop.runtime.admission_barrier import (
     BarrierConflictError,
 )
 from llm_loop.runtime.learning_idle import learning_busy_reason
+from llm_loop.runtime.webui_provenance import verify_webui_source_binding
 from llm_loop.timekeeping import system_local_now
 
 _DEPLOYMENT_SCHEMA = "managed-service-deployment/v1"
@@ -3754,6 +3755,15 @@ def _binding_problems_structured(
                         actual=artifact,
                     )
                 )
+        try:
+            verify_webui_source_binding(code)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            problems.append(
+                BindingProblem(
+                    kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
+                    text=f"webui artifact source binding invalid: {exc}",
+                )
+            )
     return problems
 
 
@@ -3942,6 +3952,16 @@ def build_deployment(
             "code_root tracked worktree must be clean before publish",
             kind=BindingProblemKind.TRACKED_WORKTREE_DIRTY,
         )
+    # An unchanged gitignored dist can belong to an older WebUI source even
+    # though its own SHA is internally consistent. Fail before creating any
+    # release checkout or changing the desired generation.
+    try:
+        verify_webui_source_binding(code)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise DeploymentBindingError(
+            f"webui artifact source binding failed: {exc}",
+            kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
+        ) from exc
     artifact = _tree_sha256(code / "webui" / "dist")
     # EVO-20261007-9c6eccf3: code_root 绑定物化后的 release checkout（固定
     # HEAD），与开发工作树解耦；旧期望代（code_root 仍指开发树）语义不变。
@@ -4101,15 +4121,18 @@ def main(argv: list[str] | None = None) -> int:
             message = str(exc)
             missing = _missing_webui_artifacts(args.code_root)
             if missing or "artifact" in message.lower():
+                kind = (
+                    BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE
+                    if missing else BindingProblemKind.WEBUI_ARTIFACT_MISMATCH
+                )
                 print(
                     json.dumps(
                         {
                             "ok": False,
-                            "error": "artifact_missing",
+                            "error": "artifact_missing" if missing else "artifact_stale",
                             "missing": missing,
-                            "next_step": _next_steps_view(
-                                [BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE]
-                            ),
+                            "detail": message,
+                            "next_step": _next_steps_view([kind]),
                         },
                         ensure_ascii=False,
                         sort_keys=True,
@@ -4318,15 +4341,18 @@ def main(argv: list[str] | None = None) -> int:
             message = str(exc)
             missing = _missing_webui_artifacts(args.code_root)
             if missing or "artifact" in message.lower():
+                kind = (
+                    BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE
+                    if missing else BindingProblemKind.WEBUI_ARTIFACT_MISMATCH
+                )
                 print(
                     json.dumps(
                         {
                             "ok": False,
-                            "error": "artifact_missing",
+                            "error": "artifact_missing" if missing else "artifact_stale",
                             "missing": missing,
-                            "next_step": _next_steps_view(
-                                [BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE]
-                            ),
+                            "detail": message,
+                            "next_step": _next_steps_view([kind]),
                         },
                         ensure_ascii=False,
                         sort_keys=True,
