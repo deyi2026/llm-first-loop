@@ -281,6 +281,16 @@ def test_webui_artifact_preflight_checks_index_and_referenced_assets():
     assert "npm run build" in body
 
 
+def test_webui_artifact_preflight_checks_exact_source_provenance():
+    src = _src()
+    body = src.split("_webui_artifact_preflight()", 1)[1].split("\n}", 1)[0]
+    assert "verify_webui_source_binding" in body
+    assert 'PYTHONPATH="$CODE_ROOT/src"' in body
+    assert '"$CODE_ROOT" "$dist"' in body
+    assert "Web V2 artifact source binding FAILED" in body
+    assert body.index("verify_webui_source_binding") < body.index("Web V2 artifact preflight PASS")
+
+
 def test_web_readiness_requires_ui_v2_not_only_auth_status():
     src = _src()
     body = src.split("_start_web()", 1)[1].split("\n}", 1)[0]

@@ -110,11 +110,24 @@ git -C "$LFL_OP_CODE" log -1 --format='%H %s'
 ) > "$LFL_OP_AUDIT/webui-build.log" 2>&1
 ```
 
-项目构建命令实际为 `tsc -b && vite build`。检查命令退出码和日志，不能只看到 `dist` 目录就认为成功。失败时保持旧服务运行，先处理构建错误。
+项目 `npm run build` 运行本地 `tsc -b` 与 `vite build`，并在成功后生成
+`webui/dist/.lfl-webui-source.json`（Git 跟踪的 WebUI 路径与实际字节指纹）。
+**正式 publish/update 必须核对这个指纹与待发布代码树一致**；无指纹或不一致
+即是旧构建/错误构建来源，先在固定的候选工作树重新 `npm run build`，
+不得复制旧 `dist` 冒充新版本。指纹属于机械来源校验，不是代码审核或 UI
+回归测试的替代。检查退出码与日志，不能只看到 `dist` 目录就认为成功；
+构建失败时保持旧服务运行。
 
 离线复用依赖时，只能在确认 `package.json`、`package-lock.json` 与已验来源逐字节一致，并核对来源依赖状态后，复制依赖到待部署目录重新构建。不应直接复制不明版本的旧 `dist`，也不要修改共享 `.venv` 的 editable 安装来“修正路径”。
 
 **允许的窄例外：已验静态产物的机械复用。** 如果待部署提交与已知稳定版本的 tracked `webui` tree 完全相同（例如 `git rev-parse <target>:webui` 与 `git rev-parse <stable>:webui` 相同，且 `git diff <stable>..<target> -- webui` 为空），并且来源 `dist` 已在真实 Web 稳定点验收过，则可以把该 `dist` 逐字节复制到目标 linked worktree。复制前后必须记录文件数和内容树 SHA256，并再次确认目标 Git worktree 仍干净。**只要 tracked WebUI tree 不同，就不能复用旧 `dist`，必须从目标源码重新 build。**
+
+即使源代码与上一代一致，也应让受控发布入口核验构建指纹。不允许只比对
+`dist` 自身的 SHA256 就宣称「前端与新源码一致」：gen264 曾发生源码已含
+`v2-services-grid`、线上 JS/CSS 却仍含旧 `v2-learning-grid` 的实际回退。
+旧包的 SHA 可完全一致、HTTP 200，仍不是正确的源构建。对**同一 Git SHA**
+已经有正在运行的 release worktree 时，不直接覆写其 `dist`，应使用带新提交的
+独立候选并由 operator 正式发布；单纯重启旧 generation 不会解决问题。
 
 若使用 `UI_V2_DIR`，还要核对其实际指向。默认方案是使用目标 code root 自己的 `webui/dist`，避免旧环境变量把前端指到另一版本。
 

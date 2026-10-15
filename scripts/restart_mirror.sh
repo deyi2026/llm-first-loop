@@ -353,6 +353,33 @@ PYASSET
     _log "  下一步: cd '$CODE_ROOT/webui' && npm run build（或 service_control action=update）"
     return 1
   fi
+  # Index + hashed filenames alone do NOT prove that the bundle was built
+  # from this checkout. Gen264 served pre-fix JS/CSS with post-fix tracked JSX.
+  # Check the build-produced exact source fingerprint before any Web stop.
+  if [[ -f "$CODE_ROOT/webui/package.json" ]]; then
+    if ! PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" - "$CODE_ROOT" "$dist" <<'PYSOURCE'
+import sys
+from pathlib import Path
+from llm_loop.runtime.webui_provenance import verify_webui_source_binding
+
+try:
+    verify_webui_source_binding(
+        Path(sys.argv[1]).resolve(), dist_root=Path(sys.argv[2]).resolve()
+    )
+except (OSError, ValueError) as exc:
+    print(f"webui artifact source binding rejected: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PYSOURCE
+    then
+      if _override_enabled precheck:artifact; then
+        _log "⚠️ [OVERRIDE] Web V2 source binding 由模型显式举证放行 (precheck:artifact)"
+      else
+        _log "✗ Web V2 artifact source binding FAILED；拒绝停止现有 Web"
+        _log "  下一步: 在当前固定代码版本的 webui/ 运行 npm run build，再由 operator publish"
+        return 1
+      fi
+    fi
+  fi
   _log "✅ Web V2 artifact preflight PASS: $dist"
 }
 

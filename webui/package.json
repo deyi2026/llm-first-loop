@@ -6,7 +6,7 @@
   "description": "Web V2（React+TS，UI/交互/视觉对齐 DeepSeek Harness Web 端；独立开发，与原版 vanilla 版并存）",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/build-with-source-binding.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
