@@ -7,6 +7,8 @@ validated the stale copy, not its source provenance.
 
 import hashlib
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -17,6 +19,10 @@ from llm_loop.runtime.service_control import (
     build_deployment,
     main,
     verify_deployment_binding,
+)
+from llm_loop.runtime.webui_provenance import (
+    tracked_webui_fingerprint,
+    verify_webui_source_binding,
 )
 
 
@@ -106,6 +112,68 @@ def test_publish_rejects_untracked_frontend_inputs(tmp_path: Path) -> None:
     with pytest.raises(DeploymentBindingError, match="untracked WebUI inputs"):
         build_deployment(code_root=code, runtime_root=runtime, generation=1)
     assert not (runtime / ".releases").exists()
+
+
+def test_symlink_outside_webui_is_rejected(tmp_path: Path) -> None:
+    code, _ = _create_repo(tmp_path)
+    outside = tmp_path / "external.txt"
+    outside.write_text("not a WebUI source", encoding="utf-8")
+    source = code / "webui" / "src" / "main.tsx"
+    source.unlink()
+    source.symlink_to(outside)
+    with pytest.raises(ValueError, match="escapes webui"):
+        tracked_webui_fingerprint(code)
+
+
+@pytest.mark.parametrize("case", ["pass", "changed_source", "wrong_output_dir"])
+def test_real_node_builder_and_python_verifier_agree(tmp_path: Path, case: str) -> None:
+    """Exercise the exact Node build wrapper with fixture compiler executables."""
+    code, _ = _create_repo(tmp_path)
+    ui = code / "webui"
+    wrapper = Path(__file__).resolve().parents[2] / "webui/scripts/build-with-source-binding.mjs"
+    script = ui / "scripts" / "build-with-source-binding.mjs"
+    script.parent.mkdir()
+    shutil.copyfile(wrapper, script)
+    (code / ".gitignore").write_text(
+        "webui/dist/\nwebui/node_modules/\nwebui/alternate-dist/\n",
+        encoding="utf-8",
+    )
+    _git(code, "add", "-A")
+    _git(code, "commit", "-qm", "track reproducible build wrapper")
+    bin_dir = ui / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    tsc = bin_dir / "tsc"
+    tsc.write_text("#!/bin/sh\ntest \"$1\" = -b\n", encoding="utf-8")
+    tsc.chmod(0o755)
+    vite = bin_dir / "vite"
+    if case == "pass":
+        command = "mkdir -p dist; echo '<html>new</html>' > dist/index.html"
+    elif case == "changed_source":
+        command = "echo '// changed' >> src/main.tsx; mkdir -p dist; echo ok > dist/index.html"
+    else:
+        command = "mkdir -p alternate-dist; echo '<html>wrong</html>' > alternate-dist/index.html"
+    vite.write_text(
+        f"#!/bin/sh\ntest \"$1\" = build || exit 2\n{command}\n",
+        encoding="utf-8",
+    )
+    vite.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    result = subprocess.run(
+        ["node", str(script)], cwd=ui, env=env,
+        capture_output=True, text=True, timeout=20,
+    )
+    manifest = ui / "dist" / ".lfl-webui-source.json"
+    if case == "pass":
+        assert result.returncode == 0, result.stderr
+        assert manifest.is_file()
+        assert json.loads(manifest.read_text())["source_sha256"] == _source_digest(code)[0]
+        verify_webui_source_binding(code)
+    else:
+        assert result.returncode != 0
+        assert not manifest.exists()
+        expected_error = "changed during build" if case == "changed_source" else "build.outDir"
+        assert expected_error in (result.stderr + result.stdout)
 
 
 def test_publish_accepts_exact_build_source_and_preserves_binding(tmp_path: Path) -> None:

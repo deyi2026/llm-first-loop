@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -33,11 +32,27 @@ def tracked_webui_fingerprint(code_root: Path) -> tuple[str, int]:
     tracked = sorted(path for path in paths.split(b"\0") if path)
     if not tracked:
         raise ValueError("webui source binding: no tracked WebUI files")
+    source_root = (code_root / "webui").resolve()
+    if not source_root.is_relative_to(code_root.resolve()):
+        raise ValueError("webui source binding: webui root escapes code_root")
     checksum = hashlib.sha256()
     for relative in tracked:
+        try:
+            tracked_name = relative.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("webui source binding: tracked WebUI path is not UTF-8") from exc
+        path = code_root / tracked_name
+        try:
+            real_path = path.resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise ValueError(
+                f"webui source binding: tracked WebUI file missing: {tracked_name}"
+            ) from exc
+        if not real_path.is_relative_to(source_root) or not real_path.is_file():
+            raise ValueError(f"webui source binding: tracked input escapes webui/: {tracked_name}")
         checksum.update(relative)
         checksum.update(b"\0")
-        file_digest = hashlib.sha256((code_root / os.fsdecode(relative)).read_bytes()).digest()
+        file_digest = hashlib.sha256(real_path.read_bytes()).digest()
         checksum.update(file_digest)
         checksum.update(b"\0")
     return checksum.hexdigest(), len(tracked)
