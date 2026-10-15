@@ -205,3 +205,10 @@ def test_real_engine_terminal_outcome_is_recorded_without_live_provider(tmp_path
     outcomes = [args[2] for args in events if args[1] == "knowledge.run_outcome"]
     assert len(outcomes) == 1 and outcomes[0]["task_benefit"] == "not_evaluated"
     assert outcomes[0]["reason"] == "completed"
+    # v0.8 producer 字段（P0b 机会分母/join 主键）：run_outcome 记实际 mode，
+    # run.end 的 knowledge_run_ref 与 run_outcome 的 run_ref 可靠 join。
+    assert outcomes[0]["advisor_mode"] == "canary"
+    run_ends = [args[2] for args in events if args[1] == "run.end"]
+    assert len(run_ends) == 1
+    assert run_ends[0]["knowledge_run_ref"] == outcomes[0]["run_ref"]
+    assert run_ends[0]["knowledge_advisor_mode"] == "canary"

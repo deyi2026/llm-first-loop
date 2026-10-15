@@ -295,6 +295,9 @@ class KnowledgeRun:
             "reason": reason, "rounds": rounds, "tokens_in": tokens_in,
             "tokens_out": tokens_out, "duration_ms": duration_ms,
             "model_used": model_used, "run_incomplete": run_incomplete,
+            # P0b producer 字段：该 run 实际执行的 advisor mode，关闭
+            # "payload 未统一记录 mode"的审计缺口（DESIGN §1.3.1/§13.2）。
+            "advisor_mode": str(getattr(self.advisor, "mode", None) or "") or None,
             "task_benefit": "not_evaluated",
             "hydrated_refs": sorted(self._hydrated_refs),
         })

@@ -52,6 +52,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _knowledge_terminal_fields(host: Any, tracker: Any) -> dict[str, Any]:
+    """run.end 的知识/机会分母字段（P0b 实施项，DESIGN §13.2 producer 缺口）.
+
+    tracker 存在 → 绑定该 run 实际 run_ref 与 advisor.mode（run 级 join 主键）；
+    不存在 → 回退 host 已解析配置的 knowledge_advisor_mode，使"advisor 已启用
+    但本 run 未产生任何 knowledge 事件"的行留下可审计痕迹（机会分母可构造）；
+    两者皆不可得 → None（unknown，不猜）。纯观测字段，不是任务成功/收益标签，
+    旧事件不回填。
+    """
+    if tracker is not None:
+        return {
+            "knowledge_run_ref": str(getattr(tracker, "run_ref", "") or "") or None,
+            "knowledge_advisor_mode": (
+                str(getattr(getattr(tracker, "advisor", None), "mode", "") or "") or None
+            ),
+        }
+    configured = getattr(
+        getattr(getattr(host, "settings", None), "tool_runtime", None),
+        "knowledge_advisor_mode",
+        None,
+    )
+    return {
+        "knowledge_run_ref": None,
+        "knowledge_advisor_mode": str(configured) if configured else None,
+    }
+
+
 class RunFinalizer:
     """run 收尾职责面（memory/persistence/UI event/audit → LoopResult）."""
 
@@ -498,6 +525,7 @@ class RunFinalizer:
                     "projection_rebuilt": bool(projection_rebuilt),
                     "projection_cannot_fit": bool(projection_cannot_fit),
                     "answer_preview": (final_answer or "")[:200],
+                    **_knowledge_terminal_fields(self._host, tracker),
                     **self._host._kpi_snapshot(),
                 },
             )
