@@ -117,6 +117,7 @@ class _SubAgentHandle:
     parent_run_generation: str
     depth: int
     generation: str
+    review_isolated: bool = False  # P0-B genuine reviewer never accepts parent steer
     state: str = "running"
     result: SubAgentResult | None = None
     cancel_requested: bool = False
@@ -573,6 +574,9 @@ class SubAgentRunner:
 
             children = self._children_by_parent.get(sender_id, set())
             if resolved_target in children and resolved_target in self._cancel_events:
+                child_handle = self._handles.get(resolved_target)
+                if child_handle is not None and child_handle.review_isolated:
+                    return False, "独立审查 child 禁止父会话 steer（review_isolated）", resolved_target
                 generation = self._local_generation_by_child.get(resolved_target, "")
                 if not generation:
                     return False, "目标 child 缺少可归因 execution generation", resolved_target
@@ -605,6 +609,11 @@ class SubAgentRunner:
     ) -> int:
         """Durably project current-generation parent steer at a safe child step boundary."""
         with self._children_guard:
+            local_handle = self._handles.get(child_sid)
+            if local_handle is not None and local_handle.review_isolated:
+                # Even a preexisting/durable mailbox injection cannot enter a
+                # Host-designated independent review. Ordinary child unaffected.
+                return 0
             generation = self._local_generation_by_child.get(child_sid, "")
             local_pending = list(self._agent_inbox.get(child_sid, []))
 
@@ -1265,8 +1274,9 @@ class SubAgentRunner:
         acceptance: list[str] | None = None,
         model: str = "",
         required_tools: list[str] | None = None,
+        review_isolated: bool = False,
     ) -> dict:
-        """启动 background child 并立即返回 handle snapshot，不等待 child 结算。"""
+        """启动 background child；review_isolated 仅由可信 Host 内部调用。"""
         if depth >= self.max_depth:
             return {
                 "accepted": False,
@@ -1321,6 +1331,10 @@ class SubAgentRunner:
                 "detail": f"后台子代理资源已达硬上限（{self._max_handles}）",
             }
         sid, cancel_event, sess, handle = reserved
+        # Set this before the worker starts and BEFORE child_id is exposed to
+        # the caller. Reviewer's parent cannot alter its input via agent_message.
+        if review_isolated:
+            handle.review_isolated = True
 
         if self._project_coordinator is not None:
             try:
@@ -1477,6 +1491,37 @@ class SubAgentRunner:
             ),
             "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
         }
+
+    def review_terminal_current(self, child_id: str, parent_id: str) -> dict[str, str | bool] | None:
+        """P0-B: process-local terminal attestation, never a disk-replayed PASS.
+
+        An untrusted same-user shell can rewrite runtime JSON/journal bytes.
+        Review admission therefore requires the *actual in-memory* child handle
+        owned by this runner, with its done_event set and completed outcome.
+        Pruned handles or process restarts fail closed, even if durable logs
+        still describe an earlier successful review.
+        """
+        with self._children_guard:
+            handle = self._handles.get(str(child_id))
+            if (
+                handle is None
+                or handle.parent_id != str(parent_id)
+                or not handle.review_isolated
+                or handle.state != "completed"
+                or not handle.done_event.is_set()
+                or handle.result is None
+                or handle.result.outcome != "completed"
+                or not handle.generation
+            ):
+                return None
+            return {
+                "child_id": handle.child_id,
+                "parent_id": handle.parent_id,
+                "generation": handle.generation,
+                "state": handle.state,
+                "review_isolated": True,
+                "final_answer": handle.result.final_answer,
+            }
 
     def result_current(self, child_id: str, wait_seconds: float = 0.0) -> tuple[bool, str, dict]:
         """Query a direct child from local handle or durable generation-scoped facts."""

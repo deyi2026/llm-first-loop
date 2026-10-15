@@ -1,13 +1,16 @@
 ---
 name: article-review-gate
-description: 文章审查闸（RULE-AI-28 第 2 条）——推广文章发布前的独立子代理审查清单与回执格式
+description: 文章审查闸（RULE-AI-28 第 2 条）——所有对外发表文稿的独立子代理审查清单与回执格式
 ---
 # 文章审查闸（发布前）
 
-触发：推广文章向任一平台发布前必走（RULE-AI-28）。沿用 2026-10-07 起的两段式实践：全量审查 → 修订 → 窄复审。
+触发：所有需要对外发表的文稿向任一平台发表前必走（RULE-AI-28）。沿用 2026-10-07 起的两段式实践：全量审查 → 修订 → 窄复审。
+
+## 前置义务与资格
+审查是强制前置义务。父 agent 主动安排对应独立审查子代理，取得覆盖当前产物的有效 PASS 回执后方可执行目标动作；缺失、未完成、未通过或失效时暂缓该动作，继续其他可推进工作。核实真实子会话终态、审查类型、产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的“继续 / 按建议执行 / 授权发布”不构成免审；用户明确豁免须留痕。程序观测提示不等于有效回执。
 
 ## 审查者纪律
-- 独立子代理，六只读工具白名单（读文档/读图片/检索/搜文件/git 只读命令等），无发布权。
+- 未参与产出的专门独立子代理，应能读取完整文稿、标题、图片/图注、引用、尾注及目标平台最终呈现证据；按实际需要配置只读工具，不以固定工具数量妨碍取证；无发布权。
 - 修订答复只做裁决：每条给 [接受]/[拒绝+一句理由]/[部分接受]，不讨论不膨胀。
 - 无法核验的项目明标"未核验"，不越授权范围补验（制造新的未授权动作）。
 
@@ -25,11 +28,13 @@ description: 文章审查闸（RULE-AI-28 第 2 条）——推广文章发布�
 
 ## 回执（落盘 docs/promotion/receipts/，命名 YYYYMMDD-issue-review[-narrow].json）
 ```json
-{"gate": "article", "reviewer": "<subagent_id>", "verdict": "PASS|REVISE",
- "issue": 10, "scope": "full|narrow", "findings": [{"id": "P1-1", "category": "structure", "issue": "...", "fix": "..."}],
+{"gate": "article", "reviewer": "<subagent_id>", "verdict": "PASS|REVISE|BLOCK",
+ "issue": "<实际文稿编号>", "scope": "full|narrow", "findings": [{"id": "P1-1", "category": "structure", "issue": "...", "fix": "..."}],
  "applied": [...], "rejected": [{"id": "...", "reason": "..."}],
  "artifact_sha256": "...", "narrow_recheck": null | {"reviewer": "...", "verdict": "PASS"}}
 ```
+
+示例字段只表示回执结构：issue 必须填写本次文稿真实编号；BLOCK 也应如实填写 findings，不得用示例编号冒充实际审查对象。
 
 ## 沉淀循环
 审查中发现的重复模式（如数字口径混用、尾注矛盾）更新进本清单第 3/5 类；单次坑 save_experience；审查结论与发布后平台反馈的出入记经验账，供下一期校准。

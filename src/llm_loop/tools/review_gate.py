@@ -1,9 +1,9 @@
-"""EVO-20261014-7ba73d88: push/publish/全量测试前的 review gate 闸提示。
+"""RULE-AI-28 mandatory review obligation and observational evidence hints.
 
-只提醒不阻断：回执注入一行 RULE-AI-28 闸状态（satisfied / exempted:<类型> / none，
-由模型按规则二十八自声明），并写 review_gate_probe 结构化事件——模型声明与机器
-事实并排落盘，程序不裁决。机器事实探测 = 本会话事件流中最近一条已落盘的
-``VERDICT:`` 回执（审查类子代理结算报告的稳定产物），best-effort、fail-open。
+The model must obtain an independent PASS for the current artifact before the
+target action. These receipt annotations are observations, not admission proof:
+a VERDICT substring is unverified tool text, not an authenticated child result.
+Only observation recording is best-effort; its failure never waives review.
 """
 
 from __future__ import annotations
@@ -14,6 +14,9 @@ from collections.abc import Callable
 from typing import cast
 
 GATE_NOTE_PREFIX = "[RULE-AI-28 闸]"
+REVIEW_GATE_OBLIGATION = "代码任务进入全量测试、文稿对外发表或 git push 前，必须取得对应独立审查子代理覆盖当前产物的有效 PASS 回执；未满足时暂缓该动作。"
+ARTICLE_REVIEW_OBLIGATION = "涉及文稿发表前，按 RULE-AI-28 取得专门独立审查子代理覆盖当前产物的有效 PASS 回执；未满足时暂缓发表。"
+
 
 # git push 子命令（含 --force / --force-with-lease 变体）：触发闸。
 # 锚定在命令起点或 shell 操作符之后（echo git push / git log --grep push 不触发）；
@@ -130,8 +133,8 @@ def is_read_only_probe(command: str) -> bool:
 def classify_review_gate_command(command: str) -> str | None:
     """Deterministically classify a shell command as a review-gate trigger.
 
-    Returns ``"git_push"`` / ``"full_test"`` / ``None``。只做形态匹配，不裁决、
-    不阻断；闸语义（是否已审查/豁免）由模型声明 + 机器事实并排呈现。
+    Returns ``"git_push"`` / ``"full_test"`` / ``None``。仅报告已识别形态；
+    不是完整 shell 解析器，也不返回审查资格。父 agent 仍须履行前置审查义务。
     """
     text = str(command or "").strip()
     if not text:
@@ -144,11 +147,12 @@ def classify_review_gate_command(command: str) -> str | None:
 
 
 def review_gate_note(action_kind: str, machine_fact: str, *, action_label: str) -> str:
-    """One-line gate reminder injected into the receipt (EVO-20261014-7ba73d88)."""
+    """Report the obligation and unverified observation without claiming admission."""
     return (
         f"{GATE_NOTE_PREFIX} 动作={action_label}（{action_kind}）｜"
-        "本动作前是否已有独立审查子代理 PASS 回执？声明 satisfied / exempted:<类型> / none｜"
-        f"机器事实: {machine_fact}｜只提醒不阻断，豁免按规则二十八自声明"
+        "审查是强制前置义务，须先取得对应独立审查子代理覆盖当前产物的有效 PASS 回执｜"
+        f"观测线索（审查资格未核验）: {machine_fact}｜"
+        "本行不是审查通过凭据或免审许可；具体执行状态以本工具回执为准"
     )
 
 
@@ -160,8 +164,8 @@ def make_review_gate_probe(
     """Build the machine-fact probe + review_gate_probe event recorder closure.
 
     返回的 recorder 接收动作指纹 dict（action_kind/tool/command_preview），探测
-    本会话事件流中最近一条 ``VERDICT:`` 回执并写 ``review_gate_probe`` 事件，
-    返回机器事实一行文本。探测与写盘均 fail-open：任何异常返回 unknown 并照常提醒。
+    本会话工具文本中最近一条 verdict 线索并写 ``review_gate_probe`` 事件，
+    返回观测线索一行文本。观测故障返回 unknown；unknown 不等于通过或免审。
 
     ``audit_recorder(action_type, detail_text, session_id)``（可选）把同一事件
     以 ``review_gate_probe`` action_type 同步落 action_trace 审计流，使
@@ -171,6 +175,12 @@ def make_review_gate_probe(
     verdict_re = re.compile(r"VERDICT:\s*([A-Z][A-Z_]*)")
 
     def _fact_from_content(content: str) -> str | None:
+        try:
+            candidate = json.loads(content)
+        except (ValueError, TypeError):
+            candidate = None
+        if isinstance(candidate, dict) and candidate.get("verdict") in {"PASS", "REVISE", "BLOCK"}:
+            return str(candidate["verdict"])
         m = verdict_re.search(content)
         return m.group(1) if m else None
 
@@ -202,20 +212,23 @@ def make_review_gate_probe(
                     verdict = _fact_from_content(str(payload.get("content") or ""))
                     if verdict:
                         last_verdict = verdict
-                        found_line = f"last_verdict={verdict}（本会话已落盘 VERDICT 回执）"
+                        found_line = (
+                            f"unverified_verdict_text={verdict}"
+                            "（仅工具文本，未核验真实子会话、审查类型、当前产物与目标）"
+                        )
                         break
                 fact = (
                     found_line
                     if last_verdict
-                    else "none_found（本会话未见已落盘 VERDICT 回执）"
+                    else "none_found（未发现可识别的工具文本线索；不证明不存在审查回执）"
                 )
-        except Exception:  # noqa: BLE001 - probe is best-effort, never blocks the action
+        except Exception:  # noqa: BLE001 - observation unavailable; review remains mandatory
             fact = "unknown（探测异常）"
-        # review_gate_probe 事件：模型声明位留给回执，机器事实当轮落盘（程序不裁决）。
+        # Only an observation: never promote a text match to review qualification.
         payload = {
             **dict(detail or {}),
             "machine_fact": fact,
-            "model_declaration": "(模型在回执/后续消息中自声明)",
+            "review_qualification_verified": False,
         }
         try:
             append = getattr(event_store, "append", None)
@@ -223,7 +236,7 @@ def make_review_gate_probe(
                 append(sid, "review_gate_probe", payload)
         except Exception:  # noqa: BLE001 - event write is observability, fail-open
             pass
-        # 同步落 action_trace 审计流（event_stream 统一视图可检索）。
+        # Observation failures affect telemetry only, never the review obligation.
         try:
             if callable(audit_recorder):
                 audit_recorder(

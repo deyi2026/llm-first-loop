@@ -6,6 +6,9 @@ description: push 审查闸（RULE-AI-28 第 3 条）——git push 前的独立
 
 触发：任何 `git push` 前必走（RULE-AI-28）。审查者有 BLOCK 权：不通过就不推。
 
+## 前置义务与资格
+审查是强制前置义务。父 agent 主动安排对应独立审查子代理，取得覆盖当前产物的有效 PASS 回执后方可执行目标动作；缺失、未完成、未通过或失效时暂缓该动作，继续其他可推进工作。核实真实子会话终态、审查类型、产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的“继续 / 按建议执行 / 授权发布”不构成免审；用户明确豁免须留痕。程序观测提示不等于有效回执。
+
 ## 前置事实收集（只读命令，逐条留痕）
 1. `git status --porcelain`（全量，不只前 15 行）——区分 staged / modified / untracked。
 2. `git log --oneline @{upstream}..HEAD` 与 `git log origin/<branch>..HEAD`、`git log lfl/<branch>..HEAD`——本仓库双 remote（`lfl` 主仓 / `origin` legacy）各查一遍，确认待推集合与目标 remote。
@@ -28,9 +31,12 @@ description: push 审查闸（RULE-AI-28 第 3 条）——git push 前的独立
 ```json
 {"gate": "push", "reviewer": "<subagent_id>", "verdict": "PASS|REVISE|BLOCK",
  "commits": [...], "remote": "lfl|origin", "branch": "...", "carried_files_removed": [...],
- "sensitive_checks": "clean|findings", "push_sha_local": "...", "push_sha_remote": "...",
+ "sensitive_checks": "clean|findings", "push_sha_local": "...", "push_sha_remote": null,
+ "artifact_sha256": "...", "target_ref": "...",
  "failure_diagnosis": null | {"cause": "...", "action": "..."}}
 ```
+
+push_sha_remote=null 仅用于 push 前独立审查阶段，表示尚无推送后远端证据；push 成功后由父 agent 使用 git ls-remote 取得真实远端 SHA，并在独立的推送收口回执中写入 push_sha_remote 与验证结果。不得将预审 null 或 PASS 冒充推送成功。
 
 ## 沉淀循环
 每次 BLOCK/夹带/失败诊断都 save_experience（pattern + 判据）；.gitignore 盲区发现同步补 .gitignore；清单缺陷改回本 skill。

@@ -239,7 +239,13 @@ def _validate_choice(
     if not confidence_valid:
         reasons.append("confidence_missing_or_out_of_range")
 
-    if answer_valid and probs_ok and confidence_valid:
+    # Runtime guards above establish these types; keep the narrowing explicit
+    # for static analysis without accepting any additional wire payloads.
+    if (
+        answer_valid and probs_ok and confidence_valid
+        and isinstance(probabilities, dict)
+        and isinstance(confidence, (int, float))
+    ):
         unit_probs = {k: min(1.0, max(0.0, float(v))) for k, v in probabilities.items()}
         return NormalizedAnswer(
             name=name,
@@ -270,7 +276,7 @@ def _validate_score(name: str, spec: QuestionSpec, raw: Any) -> NormalizedAnswer
     conf_ok = _finite_in_unit(confidence) if confidence is not None else False
     if not conf_ok:
         reasons.append("confidence_missing_or_out_of_range")
-    if score_ok and conf_ok:
+    if score_ok and conf_ok and isinstance(confidence, (int, float)):
         return NormalizedAnswer(
             name=name, status=QUESTION_STATUS_VALID, answer=str(answer),
             confidence=min(1.0, max(0.0, float(confidence))),

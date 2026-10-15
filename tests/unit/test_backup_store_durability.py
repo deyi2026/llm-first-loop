@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -280,7 +281,14 @@ def test_mark_recovered_missing_or_corrupt_fail_open_untouched(tmp_path):
     assert path.read_text(encoding="utf-8") == corrupt  # 损坏文件原样保留
 
 
-def test_orphan_tmp_and_lock_invisible_to_scan_surfaces(tmp_path):
+def test_orphan_tmp_and_lock_invisible_to_scan_surfaces(tmp_path, monkeypatch):
+    # This test verifies scan invisibility, not age-based retention.  The
+    # archive fixture is dated 2026-10-08 and expires after 7 days; freeze only
+    # this cleanup clock to prevent a calendar-dependent false test failure.
+    monkeypatch.setattr(
+        backup_module, "system_local_now",
+        lambda: datetime.fromisoformat("2026-10-09T10:00:00"),
+    )
     store = BackupStore(tmp_path)
     backup_id = store.save_archive(make_archive())
     (tmp_path / f"{backup_id}.abcdef123456.tmp").write_text("orphan", encoding="utf-8")

@@ -149,6 +149,7 @@ from llm_loop.tools.builtin.workflow import WorkflowRunTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.tools.review_gate import make_review_gate_probe
+from llm_loop.tools.review_host_admission import HostReviewAdmission, ReviewAdmissionTool
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 from llm_loop.workspace.file_effect_query import FileEffectQueryService
 from llm_loop.workspace.file_service import FileService
@@ -729,6 +730,12 @@ def build_engine(
     # EW2-A: background external executions keep process-local handles, while the
     # shared EventStore owns durable launch/terminal/cancel facts.  Session cancellation
     # only signals currently local handles; normal model final remains unaffected.
+    # P0-B Host-owned review gate, in-memory admission only. Reviewer is attached
+    # after the real SubAgentRunner has been built below.
+    _host_review = HostReviewAdmission()
+    _host_review.attach_event_store(event_store)
+    registry.set_review_admission(_host_review)
+
     _job_registry = JobRegistry.instance()
     _job_registry.configure(
         event_store=event_store,
@@ -1279,6 +1286,9 @@ def build_engine(
                     attest_fn=_browser_attest,
                 )
                 _browser_page_controller.attach_mutation_host(_browser_actuator)
+                # The review freezes real page text from the same read-only
+                # capture backend; no model-supplied JSON can mint a PASS.
+                _host_review.attach_browser_capture(_browser_host.capture)
                 _browser_action_adapter = BrowserActionAdapter(
                     perception=_browser_adapter,
                     receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
@@ -1297,6 +1307,7 @@ def build_engine(
                     # the same way (default off = pre-FR-5b byte-identical).
                     receipt_diff_summary_enabled=settings.browser_receipt_diff_summary_enabled,
                     receipt_diff_summary_cap=settings.browser_receipt_diff_summary_cap,
+                    review_authorizer=_host_review.check_browser,
                 )
                 _browser_semantic_execute = BrowserSemanticExecuteTool(
                     perception=_browser_adapter,
@@ -1332,7 +1343,7 @@ def build_engine(
     registry.register(GetToolSchemaTool(registry))
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
     # EVO-20261014-7ba73d88: push/publish/全量测试闸提示记录器（机器事实探测 +
-    # review_gate_probe 事件落盘；fail-open，注入失败时闸仍提醒、事实为 unknown）。
+    # review_gate_probe 观测事件落盘；观测失败记 unknown，不授予审查资格或免审）。
     def _review_gate_audit(action_type: str, detail_text: str, sid: str) -> None:
         status_provider.record_action(
             "tool.review_gate", action_type, detail_text, session_id=sid
@@ -2415,6 +2426,9 @@ def build_engine(
         parent_session_provider=_subagent_parent_session,
         project_coordinator=_fleet_coordinator,
     )
+    # True child lifecycle/terminal is the sole review qualification authority.
+    _host_review.attach_runner(subagent_runner)
+    registry.register(ReviewAdmissionTool(_host_review))
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
     # Web 谱系面（/api/v1/agents/tree）经 engine.subagent_runner 读机械拓扑事实。
