@@ -644,6 +644,22 @@ P1b 通过不授予排序资格：§9.3 的样本量、盲评质量与收益闸�
 
 **已知缺口（记录不扩面）**：wire fixture 集无 score 型样本（choice×7+noul×1；score 契约由内联单测钉住）——留待未来重冻轮，不改变本轮冻结面。
 
+### 11.8 P1b-OR-V2 v2 扩样对真 Jev 预注册（新一轮；冻结于任何 v2→OpenRouter 请求之前；v0.9）
+
+依据 §11.1.1"改任一字段需新一轮预注册"，本节不修改 §11.1–§11.7 任何冻结文本。**触发与授权**：用户 2026-10-15 13:32 "1授权"——授权 blind_eval_v2 44 题对真 Jev（OpenRouter 路径），费用上限 1 元 RMB、请求 ≤14（含预检）。截至本节冻结时点：v2 任务集对 OpenRouter 零请求（R4 仅含 v1 六题）；v2 已被本地 judge 评分不构成 Jev 侧暴露；作者/双源标签从未进入任何 judge 输入。执行件 `outputs/jev-p1l-expand-20261015/run_v2_batch_or.py` 随本节同版落盘；冻结先于执行，观察结果只产报告不回改本节。
+
+| 维度 | 冻结值 |
+|---|---|
+| 传输/模型/预检 | 全部沿用 §11.6/§11.7 冻结值：endpoint `POST https://openrouter.ai/api/v1/systemone`；请求模型 id `typesafe/jev-1.13`；resolved model 合法集 {`typesafe/jev-1.13`, `typesafe/jev-1.13-20260917`}，漂移即停；凭据根 `.env` `OPENROUTER_API_KEY`（值不入任何记录，不得以其它 provider 凭据替代）；预检 1 次 `GET /api/v1/key` 单列记账（不占批预算） |
+| 任务集 | blind_eval_v2 原样冻结：manifest SHA-256 `60a17edf…`（同 §11.3）；13 案例/44 题仅 premise_check choice yes/no/unknown；`labels/` 不入请求（投影 allowlist 维持） |
+| 标签源 | §11.3 冻结落盘的双源合并 `v2_labels_merged.json`（dual_agreed 43 / disputed 1 / missing 0，一致率 97.7% 已过 ≥70% 预运行闸，闸在 runner 内机械复核）；主指标 = dual_agreed 43 题；case-101/premise_cpu_is_arm64 disputed 出分母单列，不以作者标签仲裁 |
+| 打包 | 每 case 一批（state=该 case 快照，批内题 ≤5）：13 批，无跨 case 共享 state（§11.3 形态） |
+| 预算 | 决策 POST ≤13（预检另计 1 次）；题总量 44 封顶；est input ≤8000 / est output ≤12288（§11.5 已冻的 v2 算术相容值；R3 实测 3519/11264）；重试 0（隐式/显式均关）；单请求 deadline 2s（§11.6 冻结值沿用不放宽，超时即停轮）；费用牌价记账（prompt $4.2e-8/token、completion $0），硬闸累计 >$0.14（≈1 元 RMB）即中止剩余批次并记 budget_breach；费用缺失记 unknown 不计 0 |
+| 对账口径 | §11.3 全套沿用（R3 执行形态）：三类混淆矩阵/类条件召回（重点 no→unknown）/p_selected 分箱 [0.5,0.6)…[0.9,1.0]+<0.5 溢出/注入桶（case-105/106 在场 4 题）/低确定命中（p<0.6）/高确定错判（conf≥0.8 且错）；§9.2 全链分母：eligible 44 / attempted 13 / transport-completed / schema-valid / dual-labelled 43 / disputed 1 / missing；conf 与 p_selected 分字段存 |
+| 已见题 | 对 Jev 无已见题（v1 六题与 v2 零重叠）→ 无 seen_bucket；本地 judge 的三轮暴露属其自身轮次事实，不进本轮任何分母，也不构成"任务集已泄" |
+| 中止条件 | 任一即停并如实记录：任一预算面超限；守卫触发；resolved model 漂移；出现隐式重试；任一批 not_recorded；任一题 schema-invalid（原因以 raw excerpt 留档）；deadline 超时；费用硬闸触发 |
+| 主张边界 | 43 题 < §9.2 每主要题型 200 条可行性起点：不构成校准资格、不授予排序/保存/生产资格；结果为真 Jev 对 v2 的单批次事实；本地 judge 56.8% 负结果不因本轮回改；R4 六题与本轮结果不得外推比较基线 |
+
 先不定3–5/5–8人日的“保证工期”；静态载体盘点已完成，须在P0a确认剩余缺口/当前样本后估算，不能以“可能没有观测层”放大工作量。各阶段是可独立停止的产物；没有 Jev 也应能利用 P0 的治理证据。
 
 发布前依项目现有独立 Reviewer、最终 candidate 门禁和服务变更契约执行；本文评审不是独立代码审查 PASS。Web/Feishu/Learning 分别显式绑定，不以共享配置一次扩散。纯文档修订不运行真实 Provider 或服务重启。
@@ -1010,3 +1026,13 @@ v0.4报告的3368/2192是其顶层采集口径，非完整分段范围；“1904
 形态记录：本地 SemIf judge 的失败主形态（case-003 必要前提被反证→no，§11.4 轮 9 题 no→unknown）在真 Jev 面不存在（conf=1.0 判 no）；case-006 注入反例按数据处理且置信较低（0.73），与 §9.1"注入按数据"判据一致。
 
 **6. 主张边界**：6 题为 OpenRouter System One 面单批次事实，仅证明 wire/守卫/对账链路可运行且与冻结独立标签一致；**不构成 §9.2 校准资格**（200 条可行性起点远未达）、不授予排序/保存/生产资格；扩样、盲评质量提升与收益归因均需另行预注册；真 Jev 与本地 judge 的对比仅为同任务集单批次事实，不得外推。
+
+### v0.8.9→v0.9 §11.8 P1b-OR-V2 预注册与授权（本轮）
+
+**1. 用户授权**（2026-10-15 13:32，Asia/Shanghai）："1授权，2现在发"——①授权 v2 扩样对真 Jev（blind_eval_v2 44 题，费用 ≤1 元 RMB、请求 ≤14 含预检）；②授权 P0b producer 字段部署（另记于服务变更回执）。
+
+**2. 冻结顺序**：§11.8 与执行件 `run_v2_batch_or.py` 在任何 v2→OpenRouter 请求之前同版落盘并提交（本轮 git 提交序：jev 包/producer 字段/设计 v0.8.9/outputs 全量入库 → §11.8 冻结提交）。任务集/标签/打包/对账沿用 §11.3 冻结值，传输/模型/预检/牌价沿用 §11.6/§11.7 冻结值；唯一新增预算面为 v2 算术相容 token 上限（§11.5 先例）与费用硬闸 $0.14。
+
+**3. 入库收尾事实**：4 组提交（feat jev 包 44 文件 / feat producer 字段 4 文件 / docs v0.8.9 / outputs 五目录）+ 安全扫描粒度豁免三登记（test_jev_policy.py 虚构凭证样例；digest/事件/报告回执的 provenance 工作区路径=记录本体）；reports/ 18 个回归重跑噪声文件 revert；vendor/SemIf（~1GB）与源 tarball 入 .gitignore 不入库。未跟踪的推广/文章/eval 产物与当日学习记录不阻塞 publish（service_control 干净树检查 `--untracked-files=no`，已核实现），留待各自任务收口。
+
+**4. 执行状态**：本条目写入时 §11.8 尚未执行任何 v2 请求；真实执行事实（含 usage/费用/逐题对账）以 `outputs/jev-p1l-expand-20261015/p1l_or_expand_report.json` 与 `jev_shadow_events_v2or.jsonl` 为准，结果追加于后。
