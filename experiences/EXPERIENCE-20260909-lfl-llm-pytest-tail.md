@@ -7,6 +7,8 @@ evidence: "job-8c67fce0（污染）vs job-a9c55b0d（干净）对照；evidence:
 tags: [env-leak, pytest, execute_command, background-job, ci-parity, worktree-review]
 source: {}
 status: active
+record_kind: experience
+verification_state: verified
 created_at: "2026-09-09T21:52:13.811630+08:00"
-updated_at: "2026-09-09T21:52:13.811630+08:00"
+updated_at: "2026-10-15T06:18:22.273510+08:00"
 ---

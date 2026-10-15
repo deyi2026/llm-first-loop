@@ -7,8 +7,10 @@ evidence: 2026-09-09 worktree webui-live-parity-20260909：不剥离时 tests/we
 tags: [pytest, env-leakage, llm-first-loop, fail-closed, web-auth]
 source: {}
 status: active
+record_kind: experience
+verification_state: verified
 created_at: "2026-09-09T17:52:16.273365+08:00"
-updated_at: "2026-09-09T17:52:16.273365+08:00"
+updated_at: "2026-10-15T06:18:22.273959+08:00"
 ---
 
 ## Gotcha

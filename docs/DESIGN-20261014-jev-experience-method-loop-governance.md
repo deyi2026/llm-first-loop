@@ -2,15 +2,19 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | draft v0.2：完成事实核对与反例拷问，尚未实施或获得生产效果资格 |
-| 审查日期 | 2026-10-14（Asia/Shanghai） |
-| 审查基线 | main `5badfc95aadfc286f9c2d8b323cf5932e285c725`；原稿为未跟踪文件 |
+| 状态 | draft v0.6：P0a 关联/覆盖审计已实施（只读，脚本可复算）；尚未获得生产效果资格 |
+| 初审/最新复核 | 2026-10-14 / 2026-10-15（Asia/Shanghai） |
+| 本轮输入 v0.4 SHA-256 | `47606b0e3f3a6f58ceaa6ff891726a82d57f1a803e2732389e898e77146063bb`；保留其已核方向，仅修订口径 |
+| 初次审查基线 | main `5badfc95aadfc286f9c2d8b323cf5932e285c725`；v0.1 当时未跟踪（历史事实） |
+| 补充核对基线 | HEAD `2ad0bc06d55aefa3496bdf8c26bad1a4dc2963b2`；初审基线为其祖先 |
+| v0.2 入库事实 | `df24e01df5bf3057b9a2586f8e42616f80c0f1f8`（2026-10-14 17:20:40 +0800）；补核前该文件工作树干净 |
+| v0.2 SHA-256 | `0443e8540d5337ede81629bfbb33cc7b3cb88b26ce28b6afa1c08bb2314553f5`；v0.3 是本轮文档修订，未在本轮提交 |
 | 原稿 SHA-256 | `dcf2200bf8add2b9640390a58b80f1885eba72c13665b9f191b47eb3185a2df0` |
 | 定位 | 先补知识消费的证据与对账，再验证可选外部判断能力；模型保留语义终裁 |
 | 关联 | `METHOD_LEARNING_V1.md`、`CHANGES-20261007-method-consumption-closed-loop.md`、`PLAN-20260926-learning-method-semantic-integration.md`、`ai_rules.md` Rule 18/22/29/31、`DEVELOPMENT_REPAIR_SAFETY.md` |
 | 本次变更范围 | 仅修订本设计；没有改运行代码、Rules、配置、资产生命周期或生产服务 |
 
-> 本文区分【已核事实】【分析】【拟实施要求】【待实测】。读取源码证明的是该基线的实现，不证明 live 已加载或效果已经成立。文中新增事件名、schema、策略档与阶段闸均是提案，不是现有 API。
+> 本文区分【已核事实】【分析】【拟实施要求】【待实测】。读取源码证明的是该基线的实现，不证明 live 已加载或效果已经成立。文中已存在的事件/模块见 §1.3；增量字段、判断/贡献事件名、schema、策略档与阶段闸均是提案，不是现有 API。
 
 ## 0. 审查结论与优先级
 
@@ -18,7 +22,7 @@
 
 | 优先级 | 修订方向 | 为什么先做 | 验收边界 |
 |---|---|---|---|
-| P0 | 按当前源码重建基线，修正“判断/统计完全缺失”的说法 | 净分、使用账本、资格审及语义召回已有；历史 B 面不能冒充当前实现 | 每项现状有源码指针、SHA；运行态另取证 |
+| P0 | 复用已存在的观测/传输/终局链，补字段与可靠性缺口 | 净分、账本、10种知识事件、EventStore、SessionDigest 已有；不另造相同 producer/journal | §1.3–1.4 已完成静态盘点，P0a 只审计范围内真实样本与剩余缺口 |
 | P0 | 曝光、使用声明、事实标签、收益归因四者分开 | 没读到不等于拒绝；成功不等于条目有效；采纳不等于前提为真 | unknown 保留，事实与声明分栏，不能自动相互推导 |
 | P0 | 保存/任务交付不依赖 Jev 与异步结算成功 | 新组件不可成为“存不下教训/任务卡住”的依赖 | 故障可降级、结算可恢复、正文交付不等待外部判断 |
 | P0 | 可见性与模型否决出口写入契约 | 只排序仍能通过 top-k/字符预算隐藏候选 | 原检索可用、exact ref 可读、裁剪可发现、模型可绕过建议 |
@@ -26,7 +30,7 @@
 | P1 | 采用官方多问题 API，控制总调用/Token/延迟/队列 | 原稿的单问单发和 k×p 并发会重复上下文、放大成本 | 一次 HTTP 可含多道独立题；依赖题分阶段；SDK 隐式重试关闭 |
 | P2 | 去重、分类、helped_hint、权重建议逐项验证 | 一次引入全部能力会失去归因 | 每种用途独立结果、独立开关/策略版本和回滚；helped_hint 首轮不做 |
 
-**当前推荐下一项**：只做 Provider-free 的现状与事件样本核对，以及一条最小“声明→结算投影→可恢复回执”原型。先证明数据不会误标、重复或阻塞，再决定是否申请 Jev 的有界外发试验。本设计不授权任何外部调用或上线。
+**当前推荐下一项**：从现有完整 EventStore（包括滚动分段）、两侧 usage ledger 和 SessionDigest 做 Provider-free 的覆盖审计与只读投影；用 `run.end` 作更广的“已记录结束事件”索引，`knowledge.*` 作可选增强。已有历史及近期知识事件，不需要为了这一步先开 shadow 造样本。运行样本数量、来源配置、进程实际 mode、语义收益分别核验，不能相互代替；缺少明确 run/task 身份时只产 unknown/关联候选，不能按同一 session 强行归因。P0a 本轮已完成分段计数和重复身份初核，下一项只核剩余关联/业务标签缺口。本设计不授权任何外部调用或上线。
 
 ## 1. 当前事实：已有能力与实际缺口
 
@@ -42,9 +46,9 @@
 | 新正向 experience 要求 verified+evidence；未验证/证伪内容应走 lesson；legacy 不自动升格 | `introspection/tools_experience.py::run_save_experience`；`experiences/document.py` | 删除“所有新经验恒为 unverified”的原稿模板，沿用现有学习记录契约 |
 | Experience `scenario` 是字符串，解析器只支持极简 YAML 子集 | `experiences/document.py` | 嵌套 preconditions 不直接塞回原主文件；先用带版本的派生 sidecar |
 | Method 已有 freshness_refs 与 freshness 展示，经验保存有当前性验证动作校验 | `search.py::_search_method`；`tools_experience.py` | 不另造第二套相互冲突的新鲜度来源；先映射现有字段 |
-| 10-07 文档记录 B 面附带候选及测试；当前 main 的 src/tests 未找到对应 related-hint 实现或该测试文件 | `CHANGES-20261007-method-consumption-closed-loop.md`；本轮源码检索 | B 面视为历史候选，不能假定当前“保留其行为”；若要恢复须单独审查 |
-| Learning 的相关 Method 发现与后台 Reflection 已有独立方案 | `methods/reflection.py`；`PLAN-20260926-learning-method-semantic-integration.md` | 不把前台与 Learning 的权限、优先级、语料范围合并 |
-| 当前 src/tests 未检出 Jev client 或本设计知识结算/判断对账实体 | 本轮 `rg`；注意 fleet 的同名 settlements 是另一领域 | 新能力必须先核现有存储契约，不能复用名字就宣称已接线 |
+| 10-07 文档记录 B 面“记忆检索工具回执附 Method 尾注”；当前 `src/` 与 `tests/` 未找到该前台 search 分支或 `test_method_related_hint.py` | `CHANGES-20261007-method-consumption-closed-loop.md`；`introspection/search.py` | 只收窄到该 B 面工具回执路径；不推断全仓没有前台候选能力，见 §1.3 KnowledgeAdvisor |
+| Learning Reflection 的 `_discover_related_methods` 确实存在，调用/装配于 493/508，536 声明候选适用性未评估 | `src/llm_loop/methods/reflection.py:417`；历史集成计划 | 这是 Reflection 候选发现，不是 B 面 search 回执尾注，也不是下述 KnowledgeAdvisor 前台尾注；三条路径分别核验 |
+| 当前 `src/` 与 `tests/` 未发现 Jev/TypeSafe client；已有知识观测与摘要载体，但尚无本设计的独立判断标签/贡献评估实体 | `knowledge_runtime.py`、`knowledge/` 子包详见 §1.3；源码检索 | 把“已有观测链”与“尚缺贡献/标签”分开；provider settlement 与 fleet settlements 是另外两个领域 |
 
 这些事实不证明当前 Rule 31 净分存在运行故障，也不证明 B 面曾经无效；只是防止设计以历史描述代替当前基线。
 
@@ -57,7 +61,115 @@
 4. 收益是主模型自报、有机制证据支持，还是独立对照证明？
 5. 版本修改、终局重放、中断恢复时，账本与结算是否保持一致？
 
-Jev 只可能补充第 3 项的有界建议以及部分重复识别辅助。第 1、2、4、5 项主要是保真、存储和评估问题，不能用外部模型替代。
+Jev 只可能补充第 3 项的有界建议以及部分重复识别辅助。第 1、2、5 项已有观测和恢复基础，接下来核覆盖与缺失字段；第 4 项主要缺独立收益证据。不能用外部模型替代这些工作。
+
+### 1.3 已有知识观测链：10种事件生产点与3个模块
+
+【已核源码，不是 live 运行证明】下表事件由 `src/llm_loop/core/loop/engine_services/knowledge_runtime.py` 的 `KnowledgeRun._emit` 生产，行号对应补充核对 HEAD。与初审 `5badfc95` 比较，该 runtime、`knowledge/` 子包、advisor 和 provider_settlement 相关源码无差异：这是初审时已经存在、但 v0.2 漏盘的基础，不是后续才新增。
+
+| 已有事件 | 生产点（knowledge_runtime.py） | 已记录事实与限制 |
+|---|---|---|
+| `knowledge.discovery` | before_provider:244 | frontier、trigger、筛选后的 hints、投影指纹/诊断；applicability=not_evaluated；不是原始召回池全集 |
+| `knowledge.reference_prepared` | before_provider:254 | refs、reference_chars；provider_delivery=not_confirmed，准备不等于送达 |
+| `knowledge.hydration_observed` | observe_receipts:130 | 配对成功工具回执中的 exact 水合；adoption=not_evaluated |
+| `knowledge.method_declaration` | observe_receipts:135 | call/ref/decision、hydration_observed；task_benefit=not_evaluated；原 usage ledger 仍是声明真相源 |
+| `knowledge.experience_declaration` | observe_receipts:161 | 校验声明回执并记录验证态/投影 hash；明确只作审计对照，不替代经验 usage 账本 |
+| `knowledge.run_outcome` | finish:294 | reason、轮数/Token/耗时、模型、run_incomplete、hydrated_refs；不判任务成功/知识收益 |
+| `knowledge.failure_observed` | observe_receipts:100 | 首个真实配对工具失败；root_cause=not_evaluated |
+| `knowledge.followup_tool_observed` | observe_receipts:203 | 失败后工具事实；recovery_proven=false，不把后续成功当根因修复 |
+| `knowledge.learning_saved` | observe_receipts:194 | 已确认 stable save ref 与首失败关联；independently_validated=false |
+| `knowledge.learning_unconfirmed` | observe_receipts:187 | 没有 exact confirmed save ref；不冒充成功落库 |
+
+LFL反馈所列另外三项是已存在的 Python 模块/载体，**不是本轮发现的同名 EventStore 事件生产点**：
+
+| 模块 | 实际能力 | 复用与证据上限 |
+|---|---|---|
+| `knowledge/injection_ledger.py::append_row` | 工具回执提示/水合的独立 JSONL 观察账本，factory/registry 接线，fail-open | 可作曝光审计线索；不是 usage 真相源；该路径无 fsync/跨进程去重承诺 |
+| `knowledge/digest_receipts.py::transport_pairs/_pair` | 将 prepared 与 provider.transport.opened/settled 按身份、顺序、refs、字符数和SHA结构关联 | 保留 http_success_observed / http_error_observed / unknown；model_attention 永远 unknown |
+| `knowledge/session_digest.py::SessionDigestReader` 与 CLI | 从 canonical EventStore 建只读投影，event ref/hash、coverage、分页、currentness与exact事件恢复 | 现成复用；task_success/task_benefit=not_evaluated；CLI/reader存在不证明所有模型工具面已暴露 |
+
+完整接线还包括：
+
+- `introspection/knowledge_advisor.py:111/131`：off/shadow/canary，任务 frontier 的有界 Method/Experience/Lesson 发现；`core/loop/build.py:649–657` 在 mode off 时不执行该路径。
+- `knowledge_runtime.py::project_execution_knowledge`：canary 引用尾注需当前签名 Web ingress、session allowlist、low-risk 与字符余量；shadow 不改 wire。这是前台能力，但**不是 B 面的记忆检索回执尾注**。源码默认、当前非密来源赋值与事件样本分开核对，见 §1.3.1；未核所有 live 进程的 resolved mode。
+- `runtime/resolver.py:447–454`：拒绝全局 knowledge_advisor 配置，只支持服务级 Web 配置；不能静默扩到 Feishu/Learning。
+- `KnowledgeRun.provider_reference_facts:262`：在已准备引用与最终 OpenAI 形态 payload 的 user 字符串后缀之间匹配 exact bytes，生成 reference_sha256；其它 wire 形态保持未观测。
+- `llm/client.py:1369–1378` 调用 knowledge probe，将其写入 prepared；`resources/provider_settlement.py:442–460` 持久化前作有界字段类型/长度筛选。此处不是独立重算源 hash，也不是远端“已阅读”证明。
+- `run_finalizer.py:460–474`：存在 tracker 时调用 finish；随后 :476 起追加通用 `run.end`（独立 try，不依赖 tracker）。故现有终局出口应优先复用，不另找一个无关联的 producer。
+
+#### 1.3.1 来源配置、已有样本与完整扫描（v0.5复核）
+
+【已核】代码默认off；当前根 `.env:266` 的非密赋值是 `LFL_KNOWLEDGE_ADVISOR=shadow`；EventStore中已有历史及近期知识观测事件。因此“整条链关闭/没有样本”的推论不成立，P0a不需要先开启新的采样。
+
+**证据上限也必须区分**：
+- `.env` 是来源配置，不等于所有已启动进程的实际值。`runtime/resolver.py:604–646` 还处理服务边界、CLI、允许的shell override、服务级TOML与dotenv优先级；本轮未核所有live PID/manifest的resolved mode。
+- `git check-ignore .env` 确认该文件被忽略；`git grep` 不能从忽略文件读取这条赋值。搜索零命中不是“未启用”的证据，但不能因此反过来把Git一概排除于源码/配置来源核对。
+- 既有 `knowledge.*` 的payload未统一记录mode与部署generation；事件证明观察事实曾被记录，不单凭事件总数证明每天、每服务、每实例均运行shadow。历史 `reference_prepared` 的canary路径也不能混称shadow。
+- “样本已存在”足以撤销开采样这一步；“足以进行收益/校准评估”需要真实曝光、应用、独立标签与对照，不由总数决定。
+
+**扫描范围纠正**：v0.4使用 `data/event_logs/*.jsonl`，只覆盖顶层单文件会话。现有EventStore还支持 `data/event_logs/<session_id>/<segment_seq>.jsonl`；`read/read_source_files` 会读取多段。正式审计优先走这两个接口，不以顶层glob冒充完整来源。
+
+本轮只读流式扫描冻结每个文件的初始长度，解析事件顶层type/ts/session_id及payload；只输出聚合计数，不导出消息/工具正文。固定上界为 **2026-10-15T00:08:59.999999+08:00**，没有给run.end另加起始日期。该边界比v0.4“00:08”更明确，不声称精确复现其秒级结束时刻。
+
+| 口径 | 顶层单文件 | 滚动分段 | 完整范围 |
+|---|---:|---:|---:|
+| JSONL文件数（本轮捕获） | 830 | 337 | 1167 |
+| `knowledge.*`事件 | 3374 | 11350 | 14724 |
+| knowledge session | 92 | 26 | 118 |
+| `knowledge.run_outcome` | 191 | 299 | 490 |
+| `run.end`事件 | 2192 | 2326 | 4518 |
+
+完整范围的knowledge共有568个不同run_ref；run.end分布于667个session。knowledge最早为2026-10-09 05:34:47，固定上界内最后为2026-10-15 00:08:58。逐日计数为1436/2966/1352/1105/4530/3249/86，合计14724。
+
+| knowledge类型（固定上界完整范围） | 数量 |
+|---|---:|
+| followup_tool_observed | 13094 |
+| discovery | 678 |
+| run_outcome | 490 |
+| failure_observed | 294 |
+| learning_unconfirmed | 87 |
+| learning_saved | 30 |
+| experience_declaration | 25 |
+| method_declaration | 15 |
+| hydration_observed | 9 |
+| reference_prepared | 2 |
+| 合计 | 14724 |
+
+**v0.4计数不能作为全量口径继续引用**：其run.end=2192与本轮顶层口径一致；遗漏分段是主要差异，不是几分钟的新事件能解释。原报告“1904个会话文件”也没有区分JSONL、锁文件和目录。本轮目录项含830个顶层JSONL、977个lock、100个分段目录及1个其它项；它们不是1908个会话文件。顶层与分段无同名会话重叠，337个段名均为数值。
+
+v0.4还存在内部加总不一致：总数3368、逐日和3370、类型和3363、distinct2989+重复381=3370。可能涉及采集时点/口径混用，但本轮未取得其原脚本/完整回执，不能指定根因。本轮使用同一过滤范围重新计数，不猜改原分项以凑总数。
+
+**重复判据纠正**（全部字段在payload；schema中不存在对应data层）：
+- 裸key：14724行、14044个非空不同key、重复超额680（Σ每key的count−1）。
+- 业务身份初核：`(session_id, run_ref, event_type, knowledge_event_key)` 的重复超额为 **0**；同身份冲突payload组为0。
+- `KnowledgeRun.finish` 固定使用key=`terminal`，不同run合法复用；其它事件也可能在不同类型/作用域共享key。裸key重复不能证明重复写入、二次评分或去重缺陷。
+- “本窗口未观察到同身份重复”不等于协议已具备跨重启exactly-once，也不证明use账本在线幂等；§1.4的源码边界保留。不能据裸key计数去删事件或补去重器。
+
+**run.end更广，但不是完整运行全集或可直接join的主键**：它不依赖knowledge tracker，但普通append仍fail-open，进程被杀/没走finalizer可能没有它。在本轮4518条run.end的payload中，run_ref/run_id/generation/episode_ref/task_id的非空计数均为0，源码finalizer与KPI也没有添加这些字段。只读投影可用 `(session_id,event_id,seq)` 标识结束事件；关联knowledge/use时须有额外明确身份/时序证据，多run共用session或重入时必须保留ambiguity，不允许“取最近一条”当同run证明。
+
+审计分母必须是同服务、同时间窗、同启用/任务机会范围；本表run.end上界前的历史范围比knowledge首次出现更宽。不能用490/4518直接称“知识终局覆盖率”，更不能用completed当任务验证成功。无结束事件的open/interruption需依既有request.meta、execution/checkpoint与恢复事实单列，不能自动补造run.end。
+
+**捕获完整性说明**：初始JSONL字节合计3755925438；文件元数据清单SHA-256为 `3d5f8ae9356e8cc6cdf638d09f68a6b82b9df4ebb03a0f14d1526c55708c3fa6`，它是文件名/长度/mtime清单指纹，不是事件原文字节hash。本次相关行解析失败、读取错误、未完成尾行、扫描中发生变化的文件均为0；未据此宣称所有非相关事件均通过canonical完整性校验。正式case证据继续使用EventStore/SessionDigest exact event refs与hash。
+
+以上都是该工作区、该过滤范围的本机读数，不等于其它部署/release，也不证明Jev效果、经验收益或主模型attention。2条prepared、9条hydration与40条使用声明说明关键链路仍稀薄；其原因待核（实际机会/模式/工具可见性/版本/回记），不能预先判成bug或无效。
+
+### 1.4 复用优先，但不能越过已核能力边界
+
+| 核对项 | 已能关闭的部分 | 仍须核对/不成立的推论 |
+|---|---|---|
+| Q1：事件与恢复载体 | EventStore及SessionDigest已存在；事件具备 session/seq/event_ref/source hash 与分页 | 普通 append 为flush、fail-open，不是强 fsync/事务成功；KnowledgeRun._emit 不核写入返回，不能直接充任必达结算 intent |
+| Q1：幂等 | KnowledgeRun 的 keys/call_ids/finished 做 run 内内存去重；经验迁移 `record_migrated_entry:892–911` 按 knowledge_event_key 跨进程锁内去重 | 普通 `record_use` 不传 dedupe_key；EventStore.append 生成新event_id，不按业务 key 去重；不能推论在线 use/跨重启贡献投影已幂等 |
+| Q2：terminal producer | run.end在tracker块外追加，已记录结束事件更广；knowledge.run_outcome作增强 | run.end fail-open且缺明确run/task identity；退出遗漏、服务/时间窗/机会分母与关联歧义见§1.3.1，不能强join或称完整全集 |
+| Q3：使用/版本/传输关联 | Method usage有method_content_hash；Experience有document_projection_sha256；run_ref与knowledge_event_key可连接传输 | 观察事件可能缺失；discovery的projection:指纹不是全文hash；旧声明未必有task identity；不能猜补或当同一事务 |
+| 名称边界 | 10种knowledge事件、3个knowledge模块、provider传输结算、fleet workspace结算已区分 | grep模块路径不能计作事件；reference材料不能计作独立参考标签；跨域“settlement”不能混算 |
+
+**持久性具体边界**：`event_log/store.py::append:325` 经会话锁写入；`_append_locked:583–611` 是write+flush，普通append没有上述业务去重或fsync确认。专用 `append_durable_human_message:368` 的更强语义不能自动借给知识事件。这里记录的是现有设计取舍，不在本轮改程序或扩建通用预算/存储架构。
+
+v0.2 的 `src/tests` 写法确实不准确，v0.3 全部改成两个根 `src/` 与 `tests/`。初审实际工具使用的是这两个独立根，并非检索不存在的目录；错误在报告表述。对“13种事件”也用生产点而非路径计数修正，避免以新误述替换旧误述。
+
+**v0.6 P0a 审计结果交叉引用**：上表的数量/窗口/类型分布已独立复算并逐项对齐（脚本 `outputs/jev-p0a-20261015/recount.py`）；退出遗漏、同范围分母与关键稀薄链路的审计结论见文首「v0.5→v0.6 P0a 关联与覆盖审计」一节与 §13 待关闭项 1/2/3 的更新。事件字段名是 `type`，不是 `event_type`。
+
+
 
 ## 2. 反例拷问：原稿哪些假设站不住
 
@@ -125,22 +237,24 @@ Jev 只可能补充第 3 项的有界建议以及部分重复识别辅助。第 
 
 ## 5. 数据契约：单一真相源、版本绑定、声明不冒充效果
 
-### 5.1 先核载体，再确定投影表
+### 5.1 在既有观测/恢复载体上补增量，不先建新journal
 
-【拟实施】原 Method/Experience 主文件、usage.jsonl、qualification/transition receipts 保持各自真相源。新增知识事件与结算投影放在中性知识/存储层，Web/Feishu/Learning 只作 adapter；不放 Web 包。
+【已核事实】原 Method/Experience 文件、usage.jsonl、qualification/transition receipts 保持各自真相源。KnowledgeRun→EventStore→SessionDigest 已提供运行观测/只读恢复；injection ledger 另作提示观察。先审这些载体对新要求的覆盖，不再提出“先确认有没有事件源”。
 
-不在设计阶段承诺“两张表”：原稿事实上还新增 settlements。先核现有事件/事务/持久化接口，再选择复用事件或独立 append-only journal。投影可重建，原审计事件不能被投影覆写；稳定 ref + 内容 SHA + 授权回读路径必须一起提供。
+【拟实施】默认复用 EventStore、SessionDigest与原usage，Web/Feishu/Learning只作adapter。投影可重建，不能覆写原审计。只在样本或故障证明现有契约不足时，提出具体增量字段、贡献revision或局部持久intent；不先添第二份use账本、通用终局producer或新后台worker。
 
-拟新增事件族：
+v0.2四个拟新增事件族经名称/语义撞车审查后调整如下；新名在补核 `src/` 范围内未发现生产点，注册/落代码前仍要再核：
 
-| 事件族（提议名） | 最小事实 | 不得推断 |
+| v0.2提案名 | v0.3处理/提案名 | 需要的增量与禁止推断 |
 |---|---|---|
-| `knowledge.retrieval_snapshot` | query/策略版本、scope、候选集与原顺序、asset hash、展示选中/裁剪、曝光阶段 | 召回=读到；读到=认真考虑 |
-| `knowledge.judgment_attempt` | 物理 request/逻辑题 identity、模板/抽取/上下文 hash、resolved model、逐题状态、用量 | timeout=未执行/免费；成功=准确 |
-| `knowledge.settlement_revision` | task/run/terminal revision、原 use refs、贡献评估、证据和缺失原因 | 未声明=拒绝；任务成功=helped |
-| `knowledge.judgment_reference` | question instance、独立实际标签、来源、证据、争议/修订 | 使用决定=前提事实；引用存在=内容充分 |
+| `knowledge.retrieval_snapshot` | 优先增补已有 `knowledge.discovery` 字段与projection；不默认新增事件 | 现有hints不是全集；需raw/kept/pruned、基线顺序、版本/覆盖及实际呈现关联；召回≠阅读 |
+| `knowledge.judgment_attempt` | `knowledge.judgment.attempt`（拟新增） | 外部结构化题的逻辑/物理身份、模板/上下文、原值与逐题状态；成本仍关联既有provider尝试，不能双记 |
+| `knowledge.settlement_revision` | `knowledge.contribution.revision`（拟新增） | 引用已有run/terminal、use账本与证据，新增贡献评估revision；不是provider计费结算或fleet workspace结算 |
+| `knowledge.judgment_reference` | `knowledge.judgment.label`（拟新增） | 独立actual标签、来源、证据、争议/版本；不与reference_prepared/knowledge_references引用材料混用 |
 
-新增事件仅记录已有 observable 事实与显式声明；不得为凑四态去自动调用模型或补写 record_use。
+名称既要区分domain，也要记录 `schema/domain` 和来源身份。标签字段改 `label_state/label_revision`；既有 `reference_*` 字段保持原语义，不做破坏性重命名。
+
+新增事件只记录已观察事实或显式语义声明；不能为凑四态补写record_use。SessionDigest可连接原事件/声明/HTTP事实，但不能自动评估helped或真实任务成功；新贡献与标签才是独立评估缺口。
 
 ### 5.2 统一身份与时间
 
@@ -157,15 +271,15 @@ Jev 只可能补充第 3 项的有界建议以及部分重复识别辅助。第 
 
 ```json
 {
-  "schema": "knowledge-settlement/v1",
-  "settlement_id": "set_example",
+  "schema": "knowledge-contribution/v1",
+  "contribution_id": "contribution_example",
   "run_id": "run_example",
   "task_id": "task_example",
   "terminal_event_ref": "event:terminal_example",
   "revision": 1,
   "supersedes": null,
   "task_outcome": "success",
-  "settlement_state": "partial",
+  "contribution_state": "partial",
   "use_refs": ["usage:example"],
   "contributions": [{
     "subject_ref": "experience:example",
@@ -190,7 +304,7 @@ Jev 只可能补充第 3 项的有界建议以及部分重复识别辅助。第 
 
 - 每个物理尝试：attempt_id、request_hash、questions_map_hash、排队/发出/结束时间、HTTP/transport 状态、usage、费用来源和 unknown。
 - 每个逻辑题：question_instance_id、question_type、question_schema_version、options_hash、subject/context/extraction/template hash、答案分布、confidence、resolved_model、status。
-- 判断不可变；对账记录单独追加，包含实际标签/来源/证据、blind_to_prediction、reference_state=verified|unknown|disputed、reference_revision。
+- 判断不可变；对账记录单独追加，包含实际标签/来源/证据、blind_to_prediction、label_state=verified|unknown|disputed、label_revision；与既有provider reference材料分域。
 - 只有标签充分且同一快照/版本才入准确率样本；缺失证据不能“回填 yes”。校准统计可重建，不用一个 `reconciled` 布尔值掩盖未评估与争议。
 
 ## 6. 六步闭环：入→存→取→用→结→调
@@ -224,13 +338,15 @@ Rule 31 现有检索与评分义务仍有效。本设计不得为了增加评估
 
 ### 6.5 结：非阻塞、可恢复、有状态
 
-按 task/run 的真实 terminal 事件登记 durable settlement intent；多任务 Goal 终局仅作汇总和遗漏发现。显式中间结算形成 partial revision，不能被算作最终成功。没有 task_id 的 run 使用真实 run identity。
+优先以通用 `run.end` 的event identity建立“已记录结束事件”索引，再用knowledge.run_outcome、原usage与明确运行证据增强。它们不是业务成功标签；run.end没有run_ref的旧事件不按session强行关联使用声明，无匹配就产unknown/ambiguity。无knowledge tracker不伪造run_outcome；未结束/非正常退出单列既有恢复事实，多任务Goal只汇总，没有task_id不猜。
+
+仅当批准自动持续处理、且实测证明当前源事件可靠性不足时，另提局部durable contribution intent或确认机制；不能把普通EventStore append的flush当fsync，也不能把迁移去重借给在线结算。显式中间评估形成partial revision，不算最终成功。
 
 拟定状态：pending→building→complete / partial / needs_review；持久化失败记 storage_error，不能回执 complete。中断/取消保留真实 task_outcome=interrupted|cancelled|unknown，不改成 failed 或 success 来填分母。
 
 - 程序可先汇总原账本；语义贡献初判复用已有授权的收尾/Reflection 结果，无结果则 unclear。
 - 新增模型归因任务需要独立的资源范围，不能偷偷增加 foreground Provider 调用。
-- 幂等重放、journal 水位/lease、崩溃恢复须核既有实现后复用；不发明无法核证的 exactly-once 承诺。
+- 复用已有event identity/水位和SessionDigest currentness；新投影以 `(session_id, run_ref, event_type, knowledge_event_key/event_id, schema_version)` 区分业务身份，不能只靠同名key。持久去重、lease/重放仅对实证增量设计，不宣称在线exactly-once已具备。
 - 告警看 eligible terminal 后超时的 backlog 年龄/数量、存储错误与覆盖率；原“连续 3 任务”只作补充，不能发现低流量长期卡住。
 - 任务交付不等异步结算；现有原 usage 落账失败仍如实失败，不能因“投影可降级”改写原真相源契约。
 
@@ -385,14 +501,14 @@ schema-invalid 题保留原无效事实和 null，不填 confidence=0.5；usage 
 
 | 阶段 | 最小改动/交付 | 验收 | 停止/回滚 |
 |---|---|---|---|
-| P0a 现状核对（先做） | 字段/事件/存储映射、当前首包/回执与使用样本；确认 B 面与 Rule31 口径 | 来源hash、时序与身份完整；区分缺口和已有能力 | 无稳定引用/作用域不清则先修机械事实，不接 Jev |
-| P0b 非阻塞结算原型 | 沿用 usage ledger；durable intent、结算投影/revision、恢复入口与积压诊断 | 正常/多任务/中断/重放/崩溃；20任务可作 smoke，零重复净分、零自动补声明 | 停 producer/worker，保留原账本；投影可重建 |
+| P0a 剩余关联/覆盖审计 | 静态映射与完整分段计数已完成；走EventStore/SessionDigest，对declared-use、hydration、prepared和open/interruption分层核身份/coverage | 同服务/时间窗/机会分母；run.end无run_ref时不强join；稀薄类别不足与源码bug分开 | 不开新采样、不补造终态；不改producer或外发 |
+| P0b 复用链的只读贡献投影 | 现有EventStore/SessionDigest+usage；先一条run投影和unknown报告；只补已证实缺字段，不默认新journal/worker | 正常/多任务/中断/重放；零原账本写入、零重复评分；需新增持久处理时才验证崩溃/并发 | 停增量投影，不关闭既有知识观察；保留原账本与现有canary契约 |
 | P1a 本地 fixture + shadow 方案 | 官方 wire/mock、逐题 invalid、预算/隐私/故障测试、冻结盲评集 | 零真实外发；OFF/shadow 的检索输出一致；完整 negative cases | 维持 OFF；未授权不能启动真实模型 |
 | P1b 有界外部 shadow（另授权） | 固定模型/用途/scope/任务集；独立 actual 标签、成本与对账报告 | 不改排序/保存；按类质量与未知比例可审计；API可用≠效果通过 | 超预算、泄露、版本漂移、隐式重试即停 |
 | P2a 单变量排序试验（另决策） | 冻结策略、基线组、有限曝光审计、模型绕过出口 | 成功率不退化；返工或全任务成本有可重复改善；关键候选恢复验证 | 恢复原顺序/停调度，不删资产 |
 | P2b 去重/分类与建议队列 | 各用途独立 shadow/收益资格、带版本复审建议 | 无静默合并/删除/状态变化；原/新版本证据保全 | 停该用途并隔离派生结果 |
 
-先不定3–5/5–8人日的“保证工期”；须在 P0a 关闭载体与测试接缝后估算。各阶段是可独立停止的产物；没有 Jev 也应能利用 P0 的治理证据。
+先不定3–5/5–8人日的“保证工期”；静态载体盘点已完成，须在P0a确认剩余缺口/当前样本后估算，不能以“可能没有观测层”放大工作量。各阶段是可独立停止的产物；没有 Jev 也应能利用 P0 的治理证据。
 
 发布前依项目现有独立 Reviewer、最终 candidate 门禁和服务变更契约执行；本文评审不是独立代码审查 PASS。Web/Feishu/Learning 分别显式绑定，不以共享配置一次扩散。纯文档修订不运行真实 Provider 或服务重启。
 
@@ -411,6 +527,8 @@ schema-invalid 题保留原无效事实和 null，不填 confidence=0.5；usage 
 | 批次少一道题、选项越界、NaN、概率缺键 | 逐题invalid/missing；不默填置信度、不整批假绿 |
 | SDK默认重试、超时后远端可能计费 | 首轮无隐式重试；物理尝试有账，费用未知不计0 |
 | 终局重放、两个worker、intent后crash | 幂等投影，可恢复；不二次评分、不更改原use账本 |
+| 多run共享session、旧run.end无run_ref | 结束事件有自己的event identity；无法唯一关联则unknown/ambiguous，不按最近事件强join |
+| terminal裸key跨run重复、分段被滚动 | 组合身份判重复；完整来源包含分段，不删合法事件；顶层glob不冒充全集 |
 | 同status内容改写、archive→restore | 新评估绑定新hash/transition；不冒充精确旧净分重锚 |
 | Jev高置信错判、提示恶意命令 | 主模型可拒绝/原检索继续；工具和状态权限零扩大 |
 | 一条高风险冷门教训90天无引用 | 不自动归档；缺曝光与无价值严格分开 |
@@ -421,6 +539,27 @@ schema-invalid 题保留原无效事实和 null，不填 confidence=0.5；usage 
 实施时测试真实失败不变量与实际候选，先 RED 后 GREEN；不为文档草案编写镜像实现的测试，也不把上述拟验收表写成已经通过。
 
 ## 13. 风险与待关闭项
+
+### 13.0 EVO-20261015-251ac06d：D3 晋升型不清零的独立审查分歧与处置（本轮）
+
+**被审产物**：`src/llm_loop/usage_net.py`（D3 截断分支 + 新增 `_PROMOTION_LADDER`/`is_promotion`）。
+
+**漏闸事实**：首次实现直接跑了全量测试，未走 RULE-AI-28 代码闸；经用户指出后补审（两个只读审查子代理）。
+
+**两份审查结论相反，不取平均**：
+- 审查 A：**REVISE**，2×P1——(1) 实现与叙述不符：声明"晋升型不清零"，实现实际是"晋升链全量重放"（`is_promotion(declared, current)` 与当前 status 比，非与前一状态比，故 `[candidate, qualified, candidate, qualified]` 全数保留，循环不停）；(2) 副作用未披露：晋升前的负证据也重新计入，已晋升卡片可因历史负证据达 `net<=-2` 触发 `pending_disposition`。
+- 审查 B：**PASS**，仅 P2 表述/测试建议。
+
+**采纳更严的一份（A）**，已修订：
+1. docstring 首句由"首个 status 不等处截断"改为"最近一次**纠错型** lifecycle transition 之后"，并显式写入"晋升链全量累计"与"晋升前负证据重新可见"的副作用，`r` 与 `n` 两侧同等适用。
+2. 补 2 个钉子测试：`test_evo20261015_d3_promotion_chain_accumulates_to_earliest_entry`（晋升链一路累计至最早条目，且遇 `invalidated` 立即截断作反向对照）、`test_evo20261015_promotion_resurfaces_pre_promotion_negative_evidence`（晋升前 rejected×2 触发 `pending_disposition`，钉住该副作用以防被当回归修掉）。
+
+**验证**：定向 `tests/unit/test_usage_net.py` 16 passed；`ruff check` All passed；全量回归 stash 前后差分**归一化后为空**（344=344，差集仅 `session=<UUID>` 噪声）。
+
+**口径修正（诚实留痕）**：此前报告"281 failed"与本轮"344 failed"不可直接比较——前者命令缺 `--continue-on-collection-errors`，被 80 个收集错误中断。两者均非本次改动引入。
+
+**未做的事**：未同步 `docs/ai_rules.en.md`（该文件仅 240 行、不含 RULE-AI-31，是旧版摘要而非完整镜像，硬塞反而制造漂移）。存量测试文件的 `ruff format` 债务按 RULE-AI-32 未碰。
+
 
 | 风险 | 处理 | 何时关闭 |
 |---|---|---|
@@ -433,9 +572,9 @@ schema-invalid 题保留原无效事实和 null，不填 confidence=0.5；usage 
 | 回滚无法撤回外发/资产修改 | 主资产首轮不变，逐次审计；队列/投影/已发结算分别处理 | P1/P2 回滚演练 |
 
 待关闭的具体问题：
-1. 现有事件存储是否覆盖所需事务/跨进程恢复与 exact 可读 ref？若不足，最小新 journal 应落哪一层？
-2. 哪个真实 terminal producer 能覆盖 Web/Feishu/Learning 的 task/run，不依赖当前 Goal 或 UI done？
-3. 现有 usage 与事件引用能否完整关联 task/episode/content hash？缺失历史数据只读兼容，不能猜填。
+1. **部分关闭**（v0.6 推进）：EventStore与SessionDigest及经验迁移幂等已核；退出分层已给（§v0.5→v0.6 第4点，含169条run_incomplete、85个无run_outcome的run、2个无任何run.end的session），跨session副本196条已识别并给出去重判据。剩余：普通知识事件fail-open/flush的绝对覆盖**声明为UNMEASURABLE**（无痕迹即不可测，不填0）、所有live实例mode未核、在线业务去重的所需可靠性未定。优先复用/只读投影；没有实证缺口不新建journal。
+2. **producer已定位、完整分段样本已复核、稀薄链路关联已关闭**（v0.6）：run.end作为更广的已记录结束事件索引，knowledge.*为增强；具体数量/窗口见§1.3.1。来源dotenv=shadow已核，但所有live实例mode未核。run.end缺run/task identity已实测确认（payload 21字段无run_ref/run_id/generation/episode_ref/task_id）；166条稀薄链路**全部唯一可关联**，无需新采样。剩余仅**机会分母与业务标签**：task_benefit 40/40 not_evaluated、provider_delivery未确认、同范围分母不可从现有事件构造，需producer新增字段，属P0b/实施项。不能说“是否启用在全部服务/部署上已关闭”。
+3. **字段部分关闭**（v0.6 补充）：现有run_ref、knowledge_event_key、event refs、Method content hash、Experience projection hash及HTTP关联已核；**新增** run_ref 前缀即原始归属session这一判据（fork/branch场景必需）。剩余为task/episode对账、裁剪前后覆盖、版本修订与缺失事件；不猜补历史身份。
 4. Jev 实际账户、签约 endpoint、数据保留、区域与可用版本是什么？官方说明不是此账户实测。
 5. 哪两类中文原子前提最有重复性、客观标签与实际成本机会？先选两类，避免无边界题库。
 6. Rule31 “验证才+1”与程序“applied默认+1”、not_applicable累计处置张力是否要另立规则/实现修正提案？
@@ -447,7 +586,7 @@ schema-invalid 题保留原无效事实和 null，不填 confidence=0.5；usage 
 
 本设计保留原稿有效部分：原子问题、结算先行、证据门、版本分桶与模型终裁。取消或收紧会造成副作用的部分：默认预排序、凭空乘积系数、unknown数值化、强制前提字段、Jev冲突阻塞、采用即真值、按周自动切换、冷热度淘汰和“零风险回滚”。
 
-推荐先提交一份 P0a 字段/事件映射和有限真实样本审计，再实现 P0b 最小结算原型。仅当独立校准与任务收益都支持时，才讨论外部辅助判断对模型能力的增益；质量高但没有任务收益的 Jev 能力也应继续作为可选工具而非默认治理器。
+本轮已补足静态映射与完整分段计数，确认已有知识样本、来源dotenv=shadow；取消“先开shadow采样”。**P0a 已于 v0.6 实施完毕（只读）**：基线10项口径复算对齐；发现196条跨session事件副本并给出去重判据；166条稀薄链路全部唯一可关联；退出分层已给并显式标注UNMEASURABLE项。结论是**观测与关联基础可用，收益/校准评估仍不可做**（无独立事实标签、无曝光分母、task_benefit 40/40 not_evaluated、无对照）。P0b复用SessionDigest/usage做只读贡献投影：run.end作为结束事件索引，knowledge.*作增强；无法证明同一run则保留unknown，不补造终态或默认新建journal/worker/预算架构。只有独立校准和任务收益都支持，才讨论Jev对模型执行的增益；总事件量或任务completed不授予效果资格。
 
 本轮只修订设计，不修改任何 authority/Rule，未做 Jev调用、实现或效能验证。不能据此声称该治理闭环已经运行或提升智力、执行力。
 
@@ -498,14 +637,23 @@ sidecar 可失效/重建；原文不改。未抽取时 extraction_state=unstruct
 - `src/llm_loop/methods/store.py::usage_net`、`src/llm_loop/usage_net.py`。
 - `src/llm_loop/introspection/tools_experience.py::run_save_experience/run_refine_experience`。
 - `src/llm_loop/introspection/search.py::_search_method/_annotate_usage`；相关 registry与测试的文本检索。
-- src/tests 对 Jev、related-hint、knowledge settlement 实体的检索。缺少命中仅支持本审查基线/范围内未发现，不推断历史不存在或生产必定未启用。
+- `src/` 与 `tests/` 两个独立根对 Jev/TypeSafe、B面前台回执分支的检索；缺少命中只限定当前路径/范围，不能否定KnowledgeAdvisor或Reflection的另一路能力。
+- 补核全文：`core/loop/engine_services/knowledge_runtime.py`、`knowledge/digest_receipts.py`、`knowledge/session_digest.py`、`knowledge/session_digest_cli.py`、`knowledge/injection_ledger.py`、`introspection/knowledge_advisor.py`。
+- 补核关键接线：`core/loop/build.py:649`、`runtime/resolver.py:447`、`run_finalizer.py:460–474`、`llm/client.py:1369`、`resources/provider_settlement.py:442–460`。
+- 补核持久/去重边界：`event_log/store.py::append/_append_locked/append_durable_human_message`、`core/loop/events.py::_event_append`、`experiences/store.py::record_use/record_migrated_entry/_append_usage_entry`。
+- AST核对KnowledgeRun实际`_emit`生产点为10种；其余3项核为模块，未找到同名事件生产点。未用模块import字符串计事件，也未取运行会话私有正文。
+- v0.5只读取根`.env`的单个非密knowledge mode赋值并输出允许枚举；值为shadow；用git check-ignore确认文件被忽略，没有输出其余配置或凭据。备份/hash为LFL先前报告，不作为本轮进程mode证明。
+- v0.5只读聚合同时覆盖顶层830个JSONL与337个数值分段，按固定时间上界统计；复核bare-key与组合identity，并核run.end payload五类身份字段。来源范围、清单指纹和证据上限见§1.3.1。
+- LFL的v0.4报告使用顶层`data/event_logs/*.jsonl`采样；其“1904文件”及聚合口径由本轮§1.3.1复核收窄，不再当作完整EventStore计数。
 
-### 官方外部来源（2026-10-14读取）
+### 官方外部来源（2026-10-14初审直接读取）
 
 - [TypeSafe API reference](https://docs.typesafe.ai/api)：endpoint、命名questions、结构化answers与usage、SDK重试说明。
 - [TypeSafe Models](https://docs.typesafe.ai/models)：版本/alias、上下文限制与文本输入；动态限流以接入时当前资料再核。
 - [TypeSafe Confidence](https://docs.typesafe.ai/confidence)：confidence与probabilities的区别，Noul无独立confidence。
 - [TypeSafe Choice](https://docs.typesafe.ai/primitives/choice)：Choice问题与判据。
+
+初审由GPT直接读取官方正文；LFL后续只报告页面可达、未呈现正文，不能因此算作LFL独立核验，也不能推断初审事实已被否定。本轮补核聚焦仓库链路，未新增外部能力/效果资格。
 
 未用第三方宣传准确率、产品仿站或文章节奏作验收依据。未取凭据、未测试HTTPS鉴权、未调用外部Provider。所有成本、P95和任务收益仍待受控实测。
 
@@ -518,3 +666,78 @@ sidecar 可失效/重建；原文不改。未抽取时 extraction_state=unstruct
 5. 用官方API形态修正单问单发与confidence；不虚构证据span或缺省概率。
 6. 阶段顺序改为事实核对→非阻塞结算→独立标签shadow→单变量收益试验；调优/去重分别后置。
 7. 保留为待实施设计；不冒充Reviewer PASS、运行验收或效果资格。
+
+### v0.2→v0.3 补核与修订摘要
+
+1. 接受LFL对观测层漏盘的核心批评：KnowledgeRun、EventStore、传输关联、SessionDigest和finalizer在初审基线已存在；v0.2盘点不完整。
+2. 更正目录/历史状态，限定B面工具回执、KnowledgeAdvisor前台尾注、Learning Reflection为三条不同路径。
+3. 校正反馈中的数字与能力外推：10种实际knowledge事件+3个模块，不是13种事件；knowledge_event_key迁移去重不是普通record_use的在线幂等。
+4. 补全ordinary EventStore flush/fail-open、KnowledgeRun内存去重、HTTP观测而非attention的证据上限。
+5. 优先复用discovery；新判断/标签/贡献事件分domain命名，撤销把provider reference材料与独立actual标签混称reference的设计。
+6. P0a收窄为剩余coverage/样本审计；P0b先做SessionDigest+usage的只读贡献投影，增量机制只按实证缺口提出。
+7. 本轮只改文档，未运行测试或真实Provider、未改代码/Rules/配置、未提交或重启；源码审阅不冒充独立Reviewer或live验收。
+
+### v0.3→v0.4 历史反馈记录（部分口径由v0.5取代）
+
+LFL撤回“默认off+git grep零命中→整条链关闭”的推论，补查dotenv与既有事件，并改用不依赖tracker的run.end作投影入口。这三个方向保留。
+v0.4报告的3368/2192是其顶层采集口径，非完整分段范围；“1904会话文件”、逐项加总、裸key重复和所有实例均shadow的说法不能继续作为已核全量/身份结论。具体复核见§1.3.1，不把历史反馈当当前事实。
+
+### v0.4→v0.5 完整样本与关联复核
+
+1. 保留“样本已存在、无需先开新shadow采样”；区分来源赋值、历史/近期事件与所有live实例resolved mode。
+2. 按现有EventStore多段布局补入337个滚动文件；固定上界下knowledge=14724、run.end=4518；顶层run.end=2192解释v0.4主要范围差异。
+3. 撤回“裸key重复=业务重复”的外推：raw repeat excess=680，组合身份重复=0；既有protocol仍不能据此冒充exactly-once。
+4. 用run.end作“已记录结束事件”索引，标明fail-open/非正常退出遗漏和旧payload无run/task身份；不按session/最近时间强join。
+5. 样本量只支持覆盖审计；独立标签、关键曝光/应用与真实任务收益仍不足。P0a不扩建机制，直接审剩余关联/分母，P0b保持只读投影。
+6. 本轮只改文档；EventStore只读聚合，无原始消息正文导出，无代码/Rules/配置/usage写入、Provider调用、提交或服务重启。
+
+### v0.5→v0.6 P0a 关联与覆盖审计（本轮实施）
+
+**性质**：只读审计，脚本落盘可复算；未新建采样、未改 producer、未补造终态、未写 usage 账本或 EventStore、未调用外部 Provider、未改 Rules/配置/服务、未提交。
+
+**产物**（`outputs/jev-p0a-20261015/`）：`recount.py/.json`（基线复算）、`thin_links.py/.json`（稀薄链路审计）、`exit_layers.py/.json`（退出分层）。事件字段名是 `type`，不是 `event_type`（首轮枚举曾按 `event_type` 取到全空，已修正）。
+
+**1. 基线复算：v0.5 全部 10 项口径逐一对齐。** 固定上界 `2026-10-15T00:08:59.999999+08:00`，顶层 830 + 分段 337 = 1167 文件；knowledge 3374 + 11350 = 14724；knowledge session 118、run_ref 568；`run.end` 4518 / 667 session；逐日 1436/2966/1352/1105/4530/3249/86；类型分布与 v0.5 表逐项相同；解析失败 0。去掉上界重算得 knowledge 14889（+165）、`run.end` 4519（+1），全部落在 10-15 当天上界之后——差异是采集时点，不是口径分歧。
+
+**2. 新增发现：196 条跨 session 事件副本。** `run_ref` 形如 `<origin_session_id>:turn:<n>:run:<hash>`，前缀即原始归属 session。存在一组 fork/branch：session `94cf14a5…` 复制了 `cbdfc9d0…` 的同一批 knowledge 事件（同 `seq`/`ts`/`knowledge_event_key`，不同 `event_id`）。按类型分布：followup_tool_observed 177、discovery 7、run_outcome 7、failure_observed 3、learning_saved 2。
+
+这条解释了 v0.5 "裸 key 重复超额 680" 的结构来源之一：跨 session 副本会重复裸 key，但**不是**重复写入或去重缺陷。以 `(run_ref, seq, knowledge_event_key)` 为业务身份去重后：14724 → 14528 行，跨 session 重复 196 条。归属 session 取 `run_ref` 前缀，不按"最近事件"归因。v0.5"组合身份重复超额=0"的结论在单 session 内仍成立；跨 session 场景需补这一层去重判据。
+
+**3. 稀薄链路：166 条全部可唯一关联**（去重后，非 v0.5 原始 168）。逐条判定 UNIQUE，无 AMBIGUOUS、无 NO_RUN_REF。
+
+| 链路 | 条数 | 有 discovery | 有 run_outcome |
+|---|---:|---:|---:|
+| learning_unconfirmed | 87 | 85 | 79 |
+| learning_saved | 28 | 28 | 26 |
+| experience_declaration | 25 | 25 | 23 |
+| method_declaration | 15 | 15 | 15 |
+| hydration_observed | 9 | 8 | 8 |
+| reference_prepared | 2 | 2 | 2 |
+| 合计 | 166 | 163 | 153 |
+
+40 条使用声明：`applied` 31、`adapted` 8、`not_applicable` 1；`task_benefit` 全部 `not_evaluated`（40/40）；`hydration_observed` 标记 True 仅 4、False 36。2 条 `reference_prepared` 均 `provider_delivery=not_confirmed`，且各自配到 1 次 discovery + 1 次 run_outcome。
+
+**分母口径（不得混用）**：discovery 覆盖 487 个不同 run_ref，run_outcome 覆盖 483 个。稀薄链路的"机会分母"只能是**同 run 的 discovery 存在与否**，不能拿全集 `run.end`=4518 或 discovery=678 直接当覆盖率分母——二者机会范围不同（advisor 是否触发、是否被裁剪、服务/时间窗）。
+
+**4. 退出分层与不可测量。**
+
+| 层 | 计数 |
+|---|---:|
+| `run.end` 总数（上界内） | 4518 / 667 session |
+| 其 `reason` 分布 | completed 3911、llm_error 340、cancelled 161、guard_blocked 42、overflow 17、stagnation 17、routing_override 18、breaker_context_pressure 8、max_iterations 4 |
+| `run_incomplete=true` | 169 |
+| knowledge run_ref 总数 | 568 |
+| 其中有 `run_outcome` | 483 |
+| 其中无 `run_outcome` | 85 |
+| 有 knowledge 但整个 session 无任何 `run.end` | 2（`207cc107…`、`aaacf5ff…`） |
+
+`run.end` payload 实测 21 个字段，**确认不含** run_ref/run_id/generation/episode_ref/task_id（v0.5 §1.3.1 断言成立）：身份只有 `session_id`（且与事件顶层 `session_id` 可不同，见上表 fork 场景）。因此 knowledge 与 `run.end` 只能在 `run_ref` 侧对齐，`run.end` 侧无 run 级主键可 join。
+
+**显式 UNMEASURABLE（不填 0）**：
+- 既无 `run.end` 也无 `run_outcome` 的运行，是 kill/fail-open 丢失还是从未启动：EventStore 不留痕迹，不可测。
+- provider 是否真实送达模型（model_attention）：protocol 层永远 unknown。
+- 未产生 discovery 的机会窗口（advisor 未触发/被裁剪）：无事件即无痕迹，不可测。
+
+**5. §13 待关闭项 1/2/3 的当前状态**：项 1（样本与关联）已由本轮关闭——稀薄链路可逐条唯一关联，无需开新采样。项 2（业务标签/机会分母）**仍未关闭**：`task_benefit` 40/40 `not_evaluated`、`provider_delivery` 未确认、机会分母不可从现有事件构造，需要 producer 侧新增字段才能测，属 P0b/实施项而非本轮审计可补。项 3（退出遗漏）部分关闭：分层已给，但绝对遗漏量不可测。
+
+**6. P0a 结论**：知识闭环的**观测与关联**基础可用——166 条稀薄事件全部唯一可溯，196 条跨 session 副本已识别且不等于重复写。**收益/校准评估**仍不可做：无独立事实标签、无曝光分母、无 task_benefit 证据、无对照。下一步 P0b（只读贡献投影）在本结论之上另立，不因样本量足够而提前进入校准。
