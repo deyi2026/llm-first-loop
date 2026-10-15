@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -19,8 +19,8 @@ from llm_loop.browser import attestation as attestation_mod
 from llm_loop.browser.attestation import (
     AttestationVerdict,
     BindingPolicy,
-    attest_port,
     attest_debug_url,
+    attest_port,
     builtin_default_trees,
     classify_user_data_dir,
     extract_user_data_dir_value,
@@ -247,9 +247,13 @@ def test_coordinator_attestation_verdict_mismatch_refused():
 
 
 def test_attest_dead_port_fail_closed_real():
-    verdict = attest_port(39099, TREES)  # 无监听
-    assert verdict.verdict == "real"
-    assert "无监听" in verdict.detail
+    # 向内核预留临时端口但不 listen，避免固定端口被其他真实应用占用。
+    # 仍真实执行 lsof → 无监听 → fail-closed；不 mock 判定器或降低断言。
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        verdict = attest_port(reserved.getsockname()[1], TREES)
+        assert verdict.verdict == "real"
+        assert "无监听" in verdict.detail
 
 
 def test_attest_debug_url_carries_paths_semantics():

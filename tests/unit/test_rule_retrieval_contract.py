@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from hashlib import sha256
 from pathlib import Path
 
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.introspection.registry_introspection import _SEARCH_RECORDS_TOOL_DEF
+from llm_loop.introspection.rule_index import RuleIndex
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.tools_status import run_search_records
 from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
@@ -73,6 +75,53 @@ def test_exact_rule_ref_hydrates_complete_section_with_source_version(tmp_path):
     assert row["source_version_token"] == sha256(RULE_DOC.encode()).hexdigest()
     assert "## 规则十八" in row["content"]
     assert "## 规则二十二" not in row["content"]
+
+
+def test_last_rule_hydration_stops_at_non_rule_h2_without_losing_nested_content(tmp_path):
+    """Last RULE must not silently absorb non-rule maintenance instructions."""
+    source = RULE_DOC + (
+        "\n### 适用示例\n细节仍属于 RULE-AI-22。\n\n"
+        "## 配置扩展\n这段仅属于配置扩展，不属于 RULE-AI-22。\n"
+        "\n## 配置生命周期\n这是另一个独立章节。\n"
+    )
+    path = tmp_path / "ai_rules.md"
+    path.write_text(source, encoding="utf-8")
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", rule_path=path)
+
+    result = searcher.search(kind="rule", query="rule:RULE-AI-22", limit=5)
+    assert len(result) == 1
+    row = result[0]
+    assert row["hydrated"] and row["projection_complete"]
+    assert row["source_version_token"] == sha256(source.encode()).hexdigest()
+    assert "### 适用示例" in row["content"]
+    assert "细节仍属于 RULE-AI-22" in row["content"]
+    assert "## 配置扩展" not in row["content"]
+    assert "## 配置生命周期" not in row["content"]
+    assert len(searcher.search(kind="rule", query="", limit=10)) == 3
+
+
+def test_real_rules_sot_last_rule_and_model_receipt_exclude_configuration_sections(tmp_path):
+    """Exercise current SoT, not just a synthetic heading ordering fixture."""
+    source_path = Path(__file__).resolve().parents[2] / "docs" / "ai_rules.md"
+    text = source_path.read_text(encoding="utf-8")
+    refs = re.findall(r"^## [^\n]*?(RULE-AI-\d+)", text, re.MULTILINE)
+    # Preserve the actual SoT's last-rule boundary as new rules are appended.
+    assert {"RULE-AI-31", "RULE-AI-32", "RULE-AI-33"} <= set(refs)
+    assert len(refs) == len(set(refs))
+    assert "## 配置扩展" in text
+    result = RuleIndex(source_path).search(refs[-1], limit=1)
+    assert len(result) == 1
+    assert result[0]["source_version_token"] == sha256(text.encode()).hexdigest()
+    assert "## 配置扩展" not in result[0]["content"]
+    assert "## 配置生命周期约定" not in result[0]["content"]
+
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", rule_path=source_path)
+    receipt = run_search_records(
+        None, searcher.search, {"kind": "rule", "query": refs[-1]}, lambda: "sid"
+    )
+    assert receipt.status.value == "success"
+    assert f"rule_ref={refs[-1]}" in receipt.content
+    assert "## 配置扩展" not in receipt.content
 
 
 def test_unique_rule_ref_inside_query_hydrates_exact_rule(tmp_path):
