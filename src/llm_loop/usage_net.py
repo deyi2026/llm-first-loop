@@ -11,9 +11,19 @@
 - D2 分项展示：a/n/r 计数始终并列出现。not_applicable 与 rejected 同为 -1 但处置
   语义不同——"我用不上 ≠ 它错了"：not_applicable 负分只记账，不构成弃用依据
   （RULE-AI-31 第 3 条）；rejected 才是错误引导证据。
-- D3 重锚点：净分只累计"最近一次 lifecycle transition 之后"的声明。锚点取账本条目
-  内嵌的声明时 status（method 键 method_status / experience 键 status）与当前 status
-  的尾段一致：自最新条目回溯，首个 status 不等处截断。已知边界：status 往返
+- D3 重锚点：净分只累计"最近一次**纠错型** lifecycle transition 之后"的声明。锚点
+  取账本条目内嵌的声明时 status（method 键 method_status / experience 键 status）
+  与当前 status 比较：自最新条目回溯，相等则计入；不等时按差异性质二选一——
+  EVO-20261015-251ac06d：晋升型（candidate<qualified<active 阶梯内上升）不截断、
+  继续回溯，晋升是背书不是纠错，不抹掉卡片已挣得的信用；其余差异（阶梯逆行、
+  出阶梯、非阶梯状态如 invalidated/retired/archived/hold/teacher、未知值）截断。
+  故实际锚点为"最近一次纠错型转移"：若回溯路径上全是晋升型差异，则累计至账本
+  最早条目（晋升链全量累计，而非"跳过首个晋升点后仍截断"）。副作用已确认并有
+  意为之：晋升前 candidate 期的 rejected/not_applicable 同样重新可见，已晋升卡片
+  可能因历史负证据达 net<=-2 而触发 threshold_alert/pending_disposition——程序只
+  提醒，处置决策仍归模型。晋升判定要求声明时与当前 status 同在晋升阶梯内且阶梯
+  上升，故 experience 侧（status 无晋升阶梯）行为不变。
+  已知边界：status 往返
   （如 archive→restore 回到原 status）在账本上不可分辨，该情形沿用往返前的累计
   ——restore 后历史负证据重新可见，属保守取向；如需清零语义由处置动作自身承担。
 - D4 存储路径：沿用 usage.jsonl 两侧既有布局，本模块零新增存储。
@@ -28,6 +38,24 @@ ALERT_NET_THRESHOLD = -2
 _POSITIVE = {"applied", "adapted"}
 _NOT_APPLICABLE = {"not_applicable"}  # 计 -1 但只记账，不构成弃用依据（RULE-AI-31）
 _REJECTED = {"rejected"}
+
+# EVO-20261015-251ac06d：晋升阶梯（背书型转移）。阶梯内上升不清零，其余差异
+# 一律视为纠错型并按 D3 截断。experience 侧无此阶梯（status 为 active/archived/
+# invalid 等），故该表对其天然不适用，行为不变。
+_PROMOTION_LADDER = {"candidate": 0, "qualified": 1, "active": 2}
+
+
+def is_promotion(declared_status: str, current_status: str) -> bool:
+    """声明时→当前 是否属晋升型转移（背书，不清零）。
+
+    要求两者同在晋升阶梯内且阶梯上升；逆行（active→candidate）与跨阶梯/非阶梯
+    状态（如 →invalidated/retired/archived）均判 False，保持纠错型截断语义。
+    """
+    declared = str(declared_status or "").strip().lower()
+    current = str(current_status or "").strip().lower()
+    if declared not in _PROMOTION_LADDER or current not in _PROMOTION_LADDER:
+        return False
+    return _PROMOTION_LADDER[current] > _PROMOTION_LADDER[declared]
 
 
 def summarize_since_last_transition(
@@ -50,9 +78,16 @@ def summarize_since_last_transition(
         for entry in entries_newest_first:
             if not isinstance(entry, dict):
                 continue
-            if str(entry.get(status_key) or "").strip() != current:
-                break
-            kept.append(entry)
+            declared = str(entry.get(status_key) or "").strip()
+            if declared == current:
+                kept.append(entry)
+                continue
+            # EVO-20261015-251ac06d：晋升型差异不截断（背书不清零）；其余差异
+            # （含任何非晋升阶梯状态、阶梯逆行）仍按 D3 截断。
+            if is_promotion(declared, current):
+                kept.append(entry)
+                continue
+            break
         anchor = f"lifecycle_status({current})"
     else:
         kept = [e for e in entries_newest_first if isinstance(e, dict)]

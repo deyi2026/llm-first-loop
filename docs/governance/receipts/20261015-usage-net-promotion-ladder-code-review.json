@@ -1,0 +1,117 @@
+{
+  "gate": "code",
+  "reviewer": "RULE-AI-28-code-review/usage-net-promotion-ladder",
+  "verdict": "PASS",
+  "scope_files": [
+    "src/llm_loop/usage_net.py",
+    "tests/unit/test_usage_net.py",
+    "docs/ai_rules.md",
+    "src/llm_loop/methods/store.py",
+    "src/llm_loop/experiences/store.py"
+  ],
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "issue": "模块 docstring D3 首句仍写『自最新条目回溯，首个 status 不等处截断』，与本次实现（首个**非晋升型**差异处截断、晋升型差异保留）字面矛盾；正确语义只由紧随其后的 EVO-20261015-251ac06d 段落补丁说明，读者按首句理解会误判截断条件。",
+      "fix_hint": "把首句改为『自最新条目回溯，首个**非晋升型**差异处截断（晋升型差异保留不清零，见下）』，使首句与实现自洽，EVO 段落退化为理由说明。"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "issue": "『experience 侧行为不变』依赖 ExperienceDocument.status 为自由文本这一**未强制**约定（document.py 无枚举、update_status 不校验取值）。实测当前工具面 action_map 只产 archived/invalid/active，故不变式成立；但若将来有 experience 卡 status 取 candidate/qualified，experience 侧会静默进入晋升逻辑（因 active 本身在阶梯内）。",
+      "fix_hint": "在 docstring/注释中把前提显式写成『依赖 experience status ∈ {active, archived, invalid}』，或补一条 ExperienceStore 端到端断言钉住该不变式，避免约定漂移无告警。"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "issue": "is_promotion 签名标注 (declared_status: str, current_status: str)，但实现用 str(x or \"\").strip().lower() 归一化并已正确处理 None/空串/非 str（实测 28 组：None→False、''→False、空白大小写→归一化）；签名与实现能力不一致，调用方会误以为需自行防 None。",
+      "fix_hint": "标注为 `str | None`（或 object）并在 docstring 写明归一化语义，与实现如实对齐。"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "issue": "等值分支 `declared == current` 仅 strip 未 lower，而 is_promotion 内部 lower —— 双路径归一化口径不一致：declared='Active'/current='active' 走截断（保守），declared='Candidate'/current='active' 走保留。结果与旧实现一致、无回归，但属隐式不对称。",
+      "fix_hint": "在 summarize 内统一 lower 后再比较（declared/current 同时 lower），或显式注释声明『大小写差异按非同态处理』是有意保守取向。"
+    },
+    {
+      "id": "P2-5",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "issue": "anchor 字段语义随本次改动扩展：anchor='lifecycle_status(active)' 现在可能包含声明时为 candidate 的条目，而 alert_section 把 anchor= 直接打进告警文案，易被读成『所有计入条目声明时即处于该 status』。",
+      "fix_hint": "在 docstring / alert_section 文案中说明 anchor 表示**锚定规则**（当前 status 及晋升前段），不是过滤后集合的声明时 status；或改名为 anchor_rule 类语义标签。"
+    },
+    {
+      "id": "P2-6",
+      "severity": "P2",
+      "file": "tests/unit/test_usage_net.py",
+      "issue": "新增三条只钉住纯函数层（status_key='status'，实为 experience 形键但用 method 形 candidate/active 取值），未覆盖 method 侧 status_key='method_status' 的端到端晋升链路（save_candidate → record_use(applied) → update_status('qualified') → usage_net net==1）。我以真实 data/methods 复算确认该路径正确，但回归网未钉住，键名漂移不会有测试失败。",
+      "fix_hint": "补一条 MethodStore 端到端用例：candidate 期 +1 → 晋升 qualified/active 后 usage_net['net'] 仍为 1、anchor='lifecycle_status(active)'。"
+    }
+  ],
+  "applied": [],
+  "rejected": [],
+  "artifact_sha256": "97c14413cede8f3e80ac5bdf9b8321f03e052d90",
+  "narrow_recheck": null,
+  "review_meta": {
+    "rule": "RULE-AI-28 第 1 条 / skills/code-review-gate/SKILL.md",
+    "evo": "EVO-20261015-251ac06d",
+    "base_commit": "2ad0bc06d",
+    "blobs_verified": {
+      "src/llm_loop/usage_net.py": "97c14413cede8f3e80ac5bdf9b8321f03e052d90",
+      "tests/unit/test_usage_net.py": "446679f0cc3456af6158ed5d14f62cc8e03e4bd2"
+    },
+    "diff_stats": {
+      "src/llm_loop/usage_net.py": "+35/-4",
+      "tests/unit/test_usage_net.py": "+72/-0"
+    },
+    "read_only": true,
+    "full_suite_run": false
+  },
+  "validation": {
+    "checklist_results": {
+      "1_correctness": "PASS — 逐行读完 git diff HEAD -- src/llm_loop/usage_net.py 全文（64 行，无截断）；改动确为实现声明意图：新增 _PROMOTION_LADDER 与 is_promotion，截断分支改为 declared==current 保留 / is_promotion 保留 / 否则 break。",
+      "2_boundaries": "PASS — 实测 28 组 is_promotion 分支：升序(candidate→qualified/active, qualified→active)=True；同阶三例=False；逆行三例=False；未知值(hold/teacher/invalidated/retired/archived)=False；空串与 None 各侧=False；大小写归一('CANDIDATE','ACTIVE')=True、空白归一生效。空 entries/非 dict 条目/status_key 缺失（declared 归一为 '' → 非晋升 → 截断）/current_status 空串走 ledger_full 不重锚分支均未改变；模块纯函数无状态，无并发/重入面。",
+      "3_security": "PASS — 无凭据硬编码、无命令注入、无路径构造/逃逸；输入仅在 str/strip/lower 归一化后用于字典查表，不直达执行面。",
+      "4_regression": "PASS — 两调用点逐一核对：methods/store.py:1038-1043 (decision_key='decision', status_key='method_status', current=record.status)；experiences/store.py:993-999 (decision_key='use_decision', status_key='status', current=doc.status)。两者均未被本次改动触及，接线一致。test_ai_rules_sync.py 断言面（lite 版本/字数/universal prompt 内容）不受本次 docs/ai_rules.md 正文一行增补影响（该测试只校验 lite 与 prompt，不校验 SoT 正文长度）。",
+      "5_consistency": "PASS — docs/ai_rules.md:518 已同步写入『D3 只截断纠错型转移，晋升型不清零（EVO-20261015-251ac06d 已执行）』，与 RULE-AI-31 第 3 条『历史留痕不删』同向；与 card-lifecycle.md 无冲突（该文件不定义晋升阶梯）。模块 docstring 已同步（见 P2-1 措辞残留）。命名/结构与同目录一致。",
+      "6_executor_claims": "独立核验通过 —— 见 independent_recompute。"
+    },
+    "independent_recompute": {
+      "method": "以 data/methods/usage.jsonl 真实账本（18 个 method ref）按旧实现与新实现两套 kept 逻辑并行复算，逐 ref 比对 kept 条数与净分。",
+      "refs_total": 18,
+      "diff_count": 2,
+      "diff_refs": [
+        {
+          "ref": "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+          "current_status": "active",
+          "declared_status": "candidate",
+          "is_promotion": true,
+          "old_net": 0,
+          "new_net": 1
+        },
+        {
+          "ref": "method:self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+          "current_status": "qualified",
+          "declared_status": "candidate",
+          "is_promotion": true,
+          "old_net": 0,
+          "new_net": 1
+        }
+      ],
+      "evaluation": "执行方『18 个 method ref 中 2 条晋升型由 +1→0 修正为 +1，其余不变』属实：差异集合恰为这 2 条，且两条均为阶梯内上升（candidate→active / candidate→qualified），is_promotion 在其上返回 True；其余 16 条（current 为 candidate 或 hold，declared 与 current 恒等）新旧 kept 与净分逐条相同。另经 MethodStore.usage_net 真实调用面复核，两条确返回 net=1。",
+      "not_independently_verified": [
+        "『全量回归失败集合 diff 为空』（本闸为静态审查，未跑全量测试，按委派要求不重复执行）",
+        "『ruff check All passed』仅对本次两个被审文件独立复跑确认通过（src/llm_loop/usage_net.py 与 tests/unit/test_usage_net.py 均 All checks passed），未覆盖全仓 ruff。"
+      ]
+    }
+  },
+  "limitations": [
+    "本闸为只读静态审查 + 真实数据复算，未执行全量测试套件；PASS 不替代执行方 canonical 全量门禁。",
+    "P2 均为可维护性/表述类改进，不阻塞；是否采纳由执行方答复时说明。"
+  ]
+}

@@ -1,0 +1,117 @@
+{
+  "gate": "code",
+  "reviewer": "RULE-AI-28-subagent-usage-net-review",
+  "verdict": "REVISE",
+  "reviewed_at": "2026-10-15",
+  "base_head": "2ad0bc06d55aefa3496bdf8c26bad1a4dc2963b2",
+  "scope_files": [
+    "src/llm_loop/usage_net.py",
+    "tests/unit/test_usage_net.py"
+  ],
+  "reviewed_artifacts": {
+    "src/llm_loop/usage_net.py": {
+      "blob_sha": "97c14413cede8f3e80ac5bdf9b8321f03e052d90",
+      "blob_sha_verified": true,
+      "worktree_sha256": "047da9293222fa0f9b77c775356f186b4fcd176e4b0aeb2652c5cba3d2d1f984"
+    },
+    "tests/unit/test_usage_net.py": {
+      "blob_sha": "446679f0cc3456af6158ed5d14f62cc8e03e4bd2",
+      "blob_sha_verified": true,
+      "worktree_sha256": "007948e23ac9fb0b81d21ebfa4e12fac1a9989395cec6006b341a7c3494fd8dd"
+    },
+    "diff_sha256": "382802ecdff7ee14394ab8d798ceecb1527d55a52d6aae0edb06fca9583bc9b6"
+  },
+  "checklist_trace": {
+    "1_correctness": "已逐行读 git diff HEAD 全文（src 64 行 / tests 93 行 diff）+ usage_net.py 160 行全文。声明意图（晋升型不清零、纠错型仍截断、experience 侧不变）在代码层面确已实现。",
+    "2_boundaries": "非 dict 条目 continue（与旧实现同构）；status_key 缺失→declared=''→非晋升→break（correct）；current_status 空串→ledger_full 不重锚分支未改动；disproven 仅回填不改净分；is_promotion(None/''/未知)→False。",
+    "3_security": "无凭据硬编码、无 subprocess/exec、无路径拼接、无网络/写入面；新增为纯函数 + 常量表，攻击面零新增。",
+    "4_regression": "grep 全仓：summarize_since_last_transition 仅两处调用（experiences/store.py:993、methods/store.py:1038），is_promotion/_PROMOTION_LADDER 无外部调用。test_ai_rules_sync.py 锚点（lite version=N 与 _rules_version() 对齐、sot 必含串）未被触及；docs/ai_rules.lite.md 与 core/prompt.py 未改动。",
+    "5_consistency": "docs/ai_rules.md 第 31 条程序角色段已同步新增晋升型口径；模块 docstring D3 段已同步；docs/governance/card-lifecycle.md 无 D3/净分锚点，不冲突。遗留措辞冲突见 P1-1。",
+    "6_test_coverage": "新增 4 个单测覆盖第 1 点（阶梯边界）充分；第 2 点（跨多个 transition 的 continue 语义）未被钉住，见 P1-2。"
+  },
+  "key_verdict_point_2": {
+    "question": "晋升型用 continue 跳过继续向后扫描，是否会越过多个 transition 把本应截断的历史证据算进来？",
+    "judgement": "会，且这是本次改动的实质语义变更。证据：usage_net.py:74-86 对 declared==current（append+continue）与 is_promotion 为真（append+continue）走同一条继续路径，只有 is_promotion 为假才 break。因此只要回溯路径上的每一条 declared 都相对 current 阶梯上升（例 newest-first [candidate, qualified, candidate, qualified]，current=active），循环不会在任何晋升点停住，candidate 期与 qualified 期的全部声明（含 -1 的 rejected / not_applicable）都进入当前 active 窗口。等价于'晋升链上全量累计'，而非 D3 原文'最近一次 lifecycle transition 之后'。",
+    "risk": "方向不止'不抹掉正信用'：晋升前 candidate 期的负证据同样被重新计入，可使已晋升 active/qualified 的卡净分 ≤ -2 或触发 pending_disposition / [threshold_alert]，与声明中'修正双向低估偏向'的叙述方向部分相反。遇到出阶梯/逆行/非阶梯状态（invalidated/retired/archived/hold/teacher/空）仍 break，故爆炸半径受限于阶梯内连续段。",
+    "acceptable_if": "若执行方明确主张'晋升链上全量累计'即新语义，需在 ai_rules.md 与模块 docstring 把'累计自最近 lifecycle transition 起算'改为'晋升链内不重锚、纠错型转移才重锚'，并用测试钉住跨 transition 场景。"
+  },
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "src/llm_loop/usage_net.py / docs/ai_rules.md",
+      "lines": "usage_net.py:74-86（截断循环）；docs/ai_rules.md:518 第 31 条程序角色段",
+      "issue": "晋升型 continue 使 D3 锚点语义从'最近一次 transition 之后'变为'晋升链上不重锚、全量累计'（见 key_verdict_point_2）。但 docs/ai_rules.md 第 31 条仍保留原句'累计自**最近 lifecycle transition** 起算（D3 口径）'，模块 docstring 第 15-16 行同样保留'自最新条目回溯，首个 status 不等处截断'，两处与程序实际行为形成文本—行为漂移：晋升型恰恰是首个不等处却不截断。",
+      "fix_hint": "把两处'起算/截断'表述改写成'纠错型转移（出阶梯、阶梯逆行、非阶梯状态）处重锚；阶梯内晋升不重锚，晋升链上全量累计'，并注明晋升前的负证据同样重新可见（这是处置提醒面的可见副作用，需被显式接受或显式排除）。"
+    },
+    {
+      "id": "P1-2",
+      "severity": "P1",
+      "file": "tests/unit/test_usage_net.py",
+      "lines": "86-154（test_evo20261015_d3_promotion_does_not_clear_earned_credit / _correction_still_truncates / _is_promotion_ladder_boundaries）",
+      "issue": "本次核心风险（第 2 点：continue 跨越多个 transition）无对应钉子测试。现有 promoted_active/promoted_qualified/chained 三例全部是'每个条目都相对 current 阶梯上升'或'全部计入'，无法区分'晋升不清零'与'晋升链上全量累计'两种语义；也没有'晋升链之后遇到 invalidated/hold 应在该处 break'的边界用例，也没有'晋升前 candidate 期 rejected 被重新计入并触发 breached'的副作用用例。",
+      "fix_hint": "补 3 个用例：(a) current='active'，newest-first [active/applied, candidate/applied, invalidated/rejected, candidate/applied] → 期望 net=2（第 3 项处 break，第 4 项不入窗），钉住'晋升 continue 仍受后续纠错点终止'；(b) current='active'，newest-first [active/applied, candidate/rejected, candidate/rejected] → 期望 net=-1 且 breached=True，钉住晋升前负证据重新可见这一副作用为有意行为；(c) current='active'，newest-first [active/applied, active/applied] 后再叠加 qualified/candidate 交错，钉住跨多 transition 的累计上限。"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "lines": "41 (_PROMOTION_LADDER) / 83",
+      "issue": "hold（method 池 _VALID_STATUSES 含 hold）既非晋升也非纠错——RULE-AI-31 第 3 条把 -1(rejected) 后的 transition=hold 定义为'存疑待证'。当前 hold 因不在阶梯而被当纠错型截断，晋升前的正证据被清零，方向与本次声明的'不抹掉已挣得信用/修正低估'相反。属未改善（旧实现同样截断），非回归。",
+      "fix_hint": "在注释/docstring 显式写明 hold 归纠错型截断的理由（存疑待证=信用待重新挣得），或改判为不截断并在 ai_rules 同步。"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "lines": "50-51 vs 70,77",
+      "issue": "大小写归一不一致：is_promotion 内部 lower()，而 summarize_since_last_transition 的 current（第 70 行）与 declared（第 77 行）只 strip() 不 lower()。若账本内嵌 'Active' 而当前 'active'，第 78 行不等后 is_promotion 内部 lower 后相等→False→截断；而 'Candidate' vs 'active' 走晋升计入。同一大小写噪声下两种结果。",
+      "fix_hint": "在第 70/77 行统一 strip().lower()（与 is_promotion 一致），并补一条大小写用例。"
+    },
+    {
+      "id": "P2-5",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "lines": "41",
+      "issue": "_PROMOTION_LADDER 为模块内硬编码字面量，与 methods/store.py:26 _VALID_STATUSES 无共享真值源；新增/改名 method 状态时阶梯表会静默漂移（漂移表现为'晋升被当纠错截断'，静默且难发现）。",
+      "fix_hint": "从 methods/store.py 导入 _VALID_STATUSES 做子集断言（单测或运行时 import-time 校验），或在阶梯表注释处钉住来源文件行号。"
+    },
+    {
+      "id": "P2-6",
+      "severity": "P2",
+      "file": "src/llm_loop/usage_net.py",
+      "lines": "17-21,44-49",
+      "issue": "docstring 与 is_promotion docstring 举例止于 invalidated/retired/archived，未覆盖 method 侧实际存在的 teacher/hold 两种状态在阶梯表中的判 False 事实，读者需自行推断。",
+      "fix_hint": "补一句'teacher/hold 不在阶梯内，等同纠错型截断（hold 见 RULE-AI-31 第 3 条存疑待证）'。"
+    }
+  ],
+  "independently_verified_claims": {
+    "is_promotion_ladder_true": [
+      "candidate->qualified",
+      "candidate->active",
+      "qualified->active"
+    ],
+    "is_promotion_ladder_false": [
+      "candidate->candidate(同阶)",
+      "active->candidate(逆行)",
+      "qualified->qualified",
+      "->invalidated/retired/archived/hold/teacher/None/空串/未知"
+    ],
+    "experience_side_unchanged": "experience 侧 status 真值集为 active/archived（data 侧实测 377 active / 36 archived，另有 invalidated 等），均不在 _PROMOTION_LADDER，is_promotion 恒 False → 首个不等处仍 break，与改动前逐分支等价。experiences/store.py:993 传 status_key='status'、current 取 doc.status，走查一致。",
+    "method_side_changed": "methods/store.py:1038 传 status_key='method_status'、current 取 record.status；_VALID_STATUSES={teacher,candidate,qualified,active,hold,invalidated,retired}，其中 candidate/qualified/active 在阶梯内，故 method 侧行为确按声明改变（晋升不清零），其余状态仍截断。candidate→active 直接晋升被 store.py:1273-1275 程序拒绝，故阶梯内最陡一跳实际由 qualified→active 承担。",
+    "no_p0": "未发现错误行为/数据损坏/安全洞/契约破坏：本模块为只读派生视图，改动不改变任何持久化路径，两处调用点签名未变。"
+  },
+  "applied": [],
+  "rejected": [
+    {
+      "id": "n-execution-verdict-overreach",
+      "reason": "执行方自证的'18 个 method ref 中 2 条晋升型由 +1→0 修正为 +1'与'全量回归失败集合 diff 为空'未采信为审查证据；本次结论仅基于 diff 全文阅读与调用点走查（只读，未执行测试）。"
+    },
+    {
+      "id": "n-continue-not-p0",
+      "reason": "晋升型 continue 虽改变 D3 锚点语义并可能让晋升前负证据重新可见（进而触发 pending_disposition，方向偏保守而非放任），但爆炸半径受限于阶梯内连续段、且不写任何账本、不新增执行面，故判 P1（语义文档漂移 + 测试缺口）而非 P0。"
+    }
+  ],
+  "artifact_sha256": "047da9293222fa0f9b77c775356f186b4fcd176e4b0aeb2652c5cba3d2d1f984",
+  "narrow_recheck": null
+}

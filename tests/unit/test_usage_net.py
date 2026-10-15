@@ -14,6 +14,7 @@ from llm_loop.usage_net import (
     ALERT_NET_THRESHOLD,
     alert_section,
     breached,
+    is_promotion,
     row_annotation,
     signed_net,
     summarize_since_last_transition,
@@ -80,6 +81,124 @@ def test_d3_trailing_status_match_reanchors_at_last_transition() -> None:
     assert summary["net"] == 0
     assert (summary["applied"], summary["rejected"]) == (1, 1)
     assert summary["anchor"] == "lifecycle_status(archived)"
+
+
+def test_evo20261015_d3_promotion_does_not_clear_earned_credit() -> None:
+    """EVO-20261015-251ac06d：晋升型转移不清零（背书不是纠错）。"""
+    # candidate 声明 +1，晋升到 active 后仍需计入（旧实现归零）
+    promoted_active = summarize_since_last_transition(
+        _entries(("candidate", "applied")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="active",
+    )
+    assert promoted_active["net"] == 1
+    assert promoted_active["anchor"] == "lifecycle_status(active)"
+
+    promoted_qualified = summarize_since_last_transition(
+        _entries(("candidate", "applied")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="qualified",
+    )
+    assert promoted_qualified["net"] == 1
+
+    # 两段晋升链：candidate 声明 +1 与 qualified 声明 +1 都保留
+    chained = summarize_since_last_transition(
+        _entries(("qualified", "applied"), ("candidate", "applied")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="active",
+    )
+    assert chained["net"] == 2
+
+
+def test_evo20261015_d3_correction_still_truncates() -> None:
+    """纠错型转移（含阶梯逆行、出阶梯）仍按 D3 清零。"""
+    # invalidated 属纠错型：出晋升阶梯，截断
+    invalidated = summarize_since_last_transition(
+        _entries(("candidate", "applied")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="invalidated",
+    )
+    assert invalidated["net"] == 0
+
+    # 阶梯逆行（active→candidate）不是背书，截断
+    demoted = summarize_since_last_transition(
+        _entries(("active", "applied")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="candidate",
+    )
+    assert demoted["net"] == 0
+
+    # experience 侧 archived 非晋升阶梯，行为不变（截断）
+    archived = summarize_since_last_transition(
+        _entries(("active", "applied")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="archived",
+    )
+    assert archived["net"] == 0
+
+
+def test_evo20261015_d3_promotion_chain_accumulates_to_earliest_entry() -> None:
+    """EVO-20261015-251ac06d：锚点是"最近一次纠错型转移"，不是"跳过首个晋升点"。
+
+    回溯路径上若全是晋升型差异，则一路累计到账本最早条目（晋升链全量累计）。
+    本用例钉住该语义，防止后续被误改成"遇首个晋升点即停"。
+    """
+    # candidate(旧,最老) -> qualified -> active(最新,当前)
+    # 三段的声明都应计入：+1 -1 +1 = +1
+    chain = summarize_since_last_transition(
+        _entries(("active", "applied"), ("qualified", "rejected"), ("candidate", "applied")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="active",
+    )
+    assert chain["net"] == 1
+    assert (chain["applied"], chain["rejected"]) == (2, 1)
+
+    # 反向对照：一旦路径上出现纠错型差异（invalidated），立即在其处截断
+    truncated = summarize_since_last_transition(
+        _entries(
+            ("active", "applied"),
+            ("qualified", "applied"),
+            ("invalidated", "applied"),
+            ("candidate", "applied"),
+        ),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="active",
+    )
+    assert truncated["net"] == 2  # 只计 active/qualified 两段，invalidated 处截断
+
+
+def test_evo20261015_promotion_resurfaces_pre_promotion_negative_evidence() -> None:
+    """副作用已确认并有意为之：晋升前的负证据重新可见，可触发 pending_disposition。
+
+    这是"历史留痕不删"两侧同等适用的代价面，不是 bug——钉住以防被当作回归修掉。
+    """
+    summary = summarize_since_last_transition(
+        _entries(("candidate", "rejected"), ("candidate", "rejected")),
+        decision_key="use_decision",
+        status_key="status",
+        current_status="active",
+    )
+    assert summary["net"] == -2
+    assert row_annotation(summary).get("pending_disposition") is True
+
+
+def test_evo20261015_is_promotion_ladder_boundaries() -> None:
+    assert is_promotion("candidate", "qualified") is True
+    assert is_promotion("candidate", "active") is True
+    assert is_promotion("qualified", "active") is True
+    assert is_promotion("candidate", "candidate") is False  # 未变，非晋升
+    assert is_promotion("active", "candidate") is False  # 逆行
+    assert is_promotion("candidate", "invalidated") is False  # 出阶梯
+    assert is_promotion("active", "archived") is False  # experience 侧恒 False
+    assert is_promotion("", "active") is False
 
 
 def test_d3_current_status_empty_falls_back_to_full_ledger() -> None:

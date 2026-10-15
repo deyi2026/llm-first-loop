@@ -515,7 +515,7 @@ k3（Kimi，经 model_catalog 回执核验）"。
    - **累计阈值**：同一卡片累计净分 ≤ **-2**，或 `verification_state=disproven` → 必须处置（修正或弃用二选一），不得无限搁置；修正后的卡片从修正点重新累计，历史留痕不删。
 4. **新经验沉淀**：任务中产生可复用发现 → `save_experience`（正向经验须声明 verified+evidence）/ `method_manage(save_candidate)`；升格规则候选走 `docs/governance/card-lifecycle.md`，不在本条内复制清单。
 
-**程序角色**：无新增。现有 `search_records` / `save_experience` / `refine_experience` / `method_manage` 已支撑全部动作；净分自动统计与超阈值提醒**已由程序支持**（EVO-20261014-7299aec2 已执行）：`search_records` 命中行附 `usage_net`/`usage_net_detail`（净分≤-2 或 disproven 时另有 `pending_disposition=true`），`method_manage`/`refine_experience` 的 record_use 回执在触发阈值时附 `[threshold_alert]`（分项计数+一行提醒，提醒即止不裁决）。计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1），累计自**最近 lifecycle transition** 起算（D3 口径）；不随 lifecycle 变化的 `refine` 修正不自动重锚，"修正后从修正点重新累计"仍由模型行为层承担。
+**程序角色**：无新增。现有 `search_records` / `save_experience` / `refine_experience` / `method_manage` 已支撑全部动作；净分自动统计与超阈值提醒**已由程序支持**（EVO-20261014-7299aec2 已执行）：`search_records` 命中行附 `usage_net`/`usage_net_detail`（净分≤-2 或 disproven 时另有 `pending_disposition=true`），`method_manage`/`refine_experience` 的 record_use 回执在触发阈值时附 `[threshold_alert]`（分项计数+一行提醒，提醒即止不裁决）。计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1），累计自**最近 lifecycle transition** 起算（D3 口径）；**D3 只截断纠错型转移，晋升型不清零**（EVO-20261015-251ac06d 已执行）：晋升（candidate→qualified→active）是背书不是纠错，不应抹掉卡片已挣得的信用，且"历史留痕不删"对本条第 3 条两侧同等适用；阶梯逆行与出阶梯（→invalidated/retired/archived）仍按纠错型截断，experience 侧无晋升阶梯故行为不变。不随 lifecycle 变化的 `refine` 修正不自动重锚，"修正后从修正点重新累计"仍由模型行为层承担。
 
 **条款化来源**：method 候选 `会话级知识层双向同步（开局检索·使用裁决·收尾结算）`（method:candidate-a80acb208b99）的"开局检索+一行裁决"思想经本条升格，防止双层漂移（学规则十二条款化先例）。
 
