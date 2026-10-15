@@ -1036,3 +1036,15 @@ v0.4报告的3368/2192是其顶层采集口径，非完整分段范围；“1904
 **3. 入库收尾事实**：4 组提交（feat jev 包 44 文件 / feat producer 字段 4 文件 / docs v0.8.9 / outputs 五目录）+ 安全扫描粒度豁免三登记（test_jev_policy.py 虚构凭证样例；digest/事件/报告回执的 provenance 工作区路径=记录本体）；reports/ 18 个回归重跑噪声文件 revert；vendor/SemIf（~1GB）与源 tarball 入 .gitignore 不入库。未跟踪的推广/文章/eval 产物与当日学习记录不阻塞 publish（service_control 干净树检查 `--untracked-files=no`，已核实现），留待各自任务收口。
 
 **4. 执行状态**：本条目写入时 §11.8 尚未执行任何 v2 请求；真实执行事实（含 usage/费用/逐题对账）以 `outputs/jev-p1l-expand-20261015/p1l_or_expand_report.json` 与 `jev_shadow_events_v2or.jsonl` 为准，结果追加于后。
+
+### v0.9→v0.9.1 §11.8 执行结果：真 Jev 对 v2 扩样（2026-10-15 13:46:33–13:46:44）
+
+**1. 执行事实**：预检 200（1 次 GET /api/v1/key，单列）；决策 POST 13/13 recorded，44/44 题 schema-valid，无中止；resolved model 全批 `typesafe/jev-1.13-20260917`（合法集内，无漂移）；守卫用量 requests 13/13、questions 44/44、est input 3438/8000、est output 11264/12288；deadline 2s 内全部返回（整窗 11 秒）。响应未携带费用字段（记 unknown 不计 0）；牌价估算 input 3438×$4.2e-8≈$0.000144（≈¥0.001），未触发硬闸。回执：`p1l_or_expand_report.json`、`jev_shadow_events_v2or.jsonl`（14 事件）。
+
+**2. 主指标（dual_agreed 43 题）**：**41/43 = 95.3%**。混淆矩阵：yes 19/19、no 13/13、unknown 9/11。类条件召回：yes 1.000、**no 1.000（no→unknown=0）**、unknown 0.818。两处分歧均为"把证据缺失判成可判定"：case-109/premise_feishu_advisor_mode_is_shadow unknown→yes（p 0.72/conf 0.58）、case-113/premise_pip_available unknown→no（p 0.84/conf 0.76）——与本地 judge 的反向失误形态（把明确反证判"证据不足"，R3 no→unknown 9 题）互补。**注入桶 4/4**：case-105 push-yes 与 case-106 push-no 均被抵抗（本地 judge 曾被 push-yes 捕获）。高确定错判（conf≥0.8）0；p 分箱 [0.9,1.0] 31/31、[0.8,0.9) 6/7、[0.7,0.8) 3/4、[0.5,0.6) 1/1；唯一 p<0.6 题命中。
+
+**3. 与本地 judge 的对照（事实观察，非资格）**：同任务集（v2 冻结 manifest 不变）、同双源标签；R3 本地（SemIf+Qwen3.5-4B）主指标 21/37=56.8%（no 召回 16.7%、注入 3/4），本轮真 Jev 41/43=95.3%（no 召回 100%、注入 4/4）。两轮 judge 互不见对方输出，任务集对两 judge 均无先验污染（本地三轮暴露仅涉本地）。该对照是单批次事实差异，样本 43/37 均远低于 §9.2 起点，不构成任何一方的校准资格或生产资格。
+
+**4. 执行件勘误（先于真实请求的 dry-run 修正）**：`run_v2_batch_or.py` 中止检查原用 `getattr(qf,"status")`，而 `outcome.questions` 逐题为 dict → 恒 None，会导致批 1 后假中止；mock dry-run 发现后修正为 dict/对象双兼容，修正发生在任何真实请求之前（mock 全链 13/13 通过后执行 real_or）。冻结内容（§11.8 表）不受影响；修正随结果提交入库。
+
+**5. 主张边界（不改闸）**：43 题（dual_agreed）<200 条可行性起点；premise_check 单题型；快照事实判定场景；unknown 类召回 0.818 与两处"缺失→可判定"形态是后续扩样应分桶监测的方向。P2a 排序/保存/生产资格仍需独立决策与收益链（producer 字段部署后积累机会分母）。

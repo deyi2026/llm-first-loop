@@ -182,8 +182,10 @@ def main() -> int:
             total = sum(c["value"] for c in cumulative_cost)
             if cumulative_cost and total > COST_CAP_USD:
                 aborted = f"budget_breach: reported cost {total} > cap {COST_CAP_USD} (USD≈1 RMB)"
-            invalid = [inst for inst, qf in (outcome.questions or {}).items()
-                       if getattr(qf, "status", None) != "valid"]
+            invalid = [
+                inst for inst, qf in (outcome.questions or {}).items()
+                if (qf.get("status") if isinstance(qf, dict) else getattr(qf, "status", None)) != "valid"
+            ]
             if invalid:
                 aborted = f"schema_invalid_stop: {b['batch_id']} {sorted(invalid)}"
         batch_results.append(entry)

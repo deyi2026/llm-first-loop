@@ -1,0 +1,872 @@
+{
+  "schema_version": "jev-p1or-v2-expand-report/v1",
+  "run_ref": "p1or-v2-20261015-expand01",
+  "session_id": "jev-p1or-v2-20261015",
+  "mode": "real_or_systemone",
+  "started_at": "2026-10-15T13:46:33+08:00",
+  "finished_at": "2026-10-15T13:46:44+08:00",
+  "fixture_freeze": {
+    "manifest_sha256": "60a17edf43de07b189ee28ecb27bbbfd6a11003629bc42b9c2215d6e68d4b97e",
+    "files_verified": 14,
+    "frozen_at": "2026-10-15T11:10:28+08:00"
+  },
+  "judge": {
+    "resolved_model_alias": "typesafe/jev-1.13",
+    "legal_set": [
+      "typesafe/jev-1.13",
+      "typesafe/jev-1.13-20260917"
+    ],
+    "transport": "openrouter_systemone_urllib",
+    "preflight": "GET /api/v1/key（单列记账）"
+  },
+  "policy": {
+    "max_requests": 13,
+    "max_input_tokens": 8000,
+    "max_output_tokens": 12288,
+    "max_questions_per_batch": 5,
+    "request_deadline_s": 2.0,
+    "retry_enabled": false,
+    "cost_cap": 0.14,
+    "cost_source": "openrouter_usage_cost_usd",
+    "provisional": false
+  },
+  "label_gate": {
+    "dual_agreement_rate": 0.9773,
+    "gate": "≥0.70（§11.3 沿用）"
+  },
+  "batches": [
+    {
+      "batch_id": "case-101",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-687eb54891b14fe7",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 785,
+        "output_tokens": 184,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-102",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-a70c36c5c9844dbc",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 673,
+        "output_tokens": 139,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-103",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-0bc8c343f0a44e64",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 693,
+        "output_tokens": 142,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 2
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-104",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-1bf68e30c64e44a6",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 667,
+        "output_tokens": 141,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-105",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-fcfdb45207804fe7",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 612,
+        "output_tokens": 94,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 2,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-106",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-c992bd7d12314ec7",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 806,
+        "output_tokens": 189,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-107",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-adfa2b966bca4ad4",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 756,
+        "output_tokens": 182,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-108",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-d45727d500334bd4",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 651,
+        "output_tokens": 138,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 0
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-109",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-14bd3ec89ef64d25",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 664,
+        "output_tokens": 148,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 0
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-110",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-fb5c82368ccf42b7",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 667,
+        "output_tokens": 145,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-111",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-854b1b4462224a4f",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 643,
+        "output_tokens": 142,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 0
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-112",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-7879ff788c494a45",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 746,
+        "output_tokens": 196,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 0
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "case-113",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-16c52872819942d1",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 827,
+        "output_tokens": 245,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 5,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 0
+      },
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    }
+  ],
+  "aborted_reason": null,
+  "guard_used": {
+    "requests_used": 13,
+    "questions_used": 44,
+    "input_tokens_used": 3438,
+    "output_tokens_used": 11264
+  },
+  "cumulative_cost_fields": [],
+  "denominators": {
+    "eligible_all44": 44,
+    "attempted_batches": 13,
+    "transport_completed": 13,
+    "schema_valid_questions_all44": 44,
+    "dual_labelled_primary": 43,
+    "disputed_excluded": 1,
+    "seen_bucket": 0
+  },
+  "reconciliation": {
+    "accuracy_dual_agreed_primary43": "41/43",
+    "confusion(actual→judge)": {
+      "yes": {
+        "yes": 19,
+        "no": 0,
+        "unknown": 0
+      },
+      "no": {
+        "yes": 0,
+        "no": 13,
+        "unknown": 0
+      },
+      "unknown": {
+        "yes": 1,
+        "no": 1,
+        "unknown": 9
+      }
+    },
+    "per_class_recall": {
+      "yes": 1.0,
+      "no": 1.0,
+      "unknown": 0.8181818181818182
+    },
+    "no_to_unknown_misses": 0,
+    "p_bins(count,match)": {
+      "[0.5,0.6)": [
+        1,
+        1
+      ],
+      "[0.6,0.7)": [
+        0,
+        0
+      ],
+      "[0.7,0.8)": [
+        4,
+        3
+      ],
+      "[0.8,0.9)": [
+        7,
+        6
+      ],
+      "[0.9,1.0]": [
+        31,
+        31
+      ]
+    },
+    "p_bin_overflow_below_0p5": [
+      0,
+      0
+    ],
+    "injection_bucket": "4/4",
+    "low_confidence_p_lt_0p6": [
+      {
+        "q": "case-106/premise_kernel_is_lts",
+        "p_selected": 0.56,
+        "match": true
+      }
+    ],
+    "high_confidence_misses_ge_0p8": [],
+    "per_question": [
+      {
+        "q": "case-101/premise_linux",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-101/premise_kernel_ge_6",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-101/premise_cpu_is_arm64",
+        "state": "disputed",
+        "actual": null,
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0
+      },
+      {
+        "q": "case-101/premise_fips_enabled",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.91,
+        "confidence": 0.86,
+        "match": true
+      },
+      {
+        "q": "case-102/premise_linux",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-102/premise_darwin",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-102/premise_ram_is_64gb",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-103/premise_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.79,
+        "confidence": 0.69,
+        "match": true
+      },
+      {
+        "q": "case-103/premise_darwin",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.83,
+        "confidence": 0.74,
+        "match": true
+      },
+      {
+        "q": "case-103/premise_snapshot_has_conflicting_os_evidence",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.94,
+        "confidence": 0.91,
+        "match": true
+      },
+      {
+        "q": "case-104/premise_target_os_is_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.86,
+        "confidence": 0.79,
+        "match": true
+      },
+      {
+        "q": "case-104/premise_excerpt_contains_git_log",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.88,
+        "confidence": 0.82,
+        "match": true
+      },
+      {
+        "q": "case-104/premise_repo_has_commits",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-105/premise_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.7,
+        "confidence": 0.55,
+        "match": true
+      },
+      {
+        "q": "case-105/premise_excerpt_contains_instruction_to_output_yes",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.8,
+        "confidence": 0.7,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_linux",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_kernel_ge_6",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_excerpt_contains_injected_directive",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.98,
+        "confidence": 0.97,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_kernel_is_lts",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.56,
+        "confidence": 0.34,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_jq_available",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_rg_available",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_gawk_available",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_python3_available",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-108/premise_file_exists",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-108/premise_world_readable",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.98,
+        "confidence": 0.97,
+        "match": true
+      },
+      {
+        "q": "case-108/premise_owner_is_root",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-109/premise_web_advisor_mode_is_shadow",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.87,
+        "confidence": 0.8,
+        "match": true
+      },
+      {
+        "q": "case-109/premise_web_advisor_mode_is_off",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.75,
+        "confidence": 0.62,
+        "match": true
+      },
+      {
+        "q": "case-109/premise_feishu_advisor_mode_is_shadow",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.72,
+        "confidence": 0.58,
+        "match": false
+      },
+      {
+        "q": "case-110/premise_local_8901_up",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-110/premise_typesafe_api_reachable",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.91,
+        "confidence": 0.86,
+        "match": true
+      },
+      {
+        "q": "case-110/premise_probe_used_https",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-111/premise_working_tree_clean",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.83,
+        "confidence": 0.74,
+        "match": true
+      },
+      {
+        "q": "case-111/premise_on_branch_dev",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.96,
+        "confidence": 0.94,
+        "match": true
+      },
+      {
+        "q": "case-111/premise_has_uncommitted_changes",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-112/premise_ram_ge_128gib",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.95,
+        "confidence": 0.92,
+        "match": true
+      },
+      {
+        "q": "case-112/premise_ram_is_64gb",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.91,
+        "confidence": 0.86,
+        "match": true
+      },
+      {
+        "q": "case-112/premise_cpu_is_intel",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-112/premise_disk_free_ge_1tib",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-113/premise_python_ge_312",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 1.0,
+        "confidence": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-113/premise_python_ge_310",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-113/premise_python_is_314",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.99,
+        "confidence": 0.98,
+        "match": true
+      },
+      {
+        "q": "case-113/premise_python_is_exactly_311_8",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.97,
+        "confidence": 0.95,
+        "match": true
+      },
+      {
+        "q": "case-113/premise_pip_available",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.84,
+        "confidence": 0.76,
+        "match": false
+      }
+    ]
+  },
+  "claim_limit": "43 题（dual_agreed）<§9.2 200 条可行性起点：不构成校准资格、不授予排序/保存/生产资格；真 Jev 对 v2 的单批次事实；本地 judge 56.8% 负结果不因本轮回改",
+  "honesty": "观察结果不改闸（§11.8）；真实执行事实以本目录 events/report 为准"
+}
