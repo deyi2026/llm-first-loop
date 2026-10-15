@@ -31,6 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from llm_loop.core.session import SessionDeletedError
 from llm_loop.methods.learning_journal import LearningJob, LearningJournal
 from llm_loop.methods.reflection import MethodDiscovery, reflect_on_episode
 from llm_loop.resources.contracts import (
@@ -623,7 +624,15 @@ class LearningPlane:
             self._journal.mark_requeued(job.job_id, "preempted_by_foreground")
             return False
         if "error" in result:
-            raise result["error"]
+            error = result["error"]
+            if isinstance(error, SessionDeletedError):
+                # The user already deleted the durable owner. Re-reading is both
+                # impossible and forbidden; retrying cannot recover this source.
+                # Preserve the durable cancellation fact without copying any
+                # deleted session contents to a new artifact or audit record.
+                self._journal.cancel(job.job_id, "source_session_deleted")
+                return True
+            raise error
         outcome = result["outcome"]
         entries_n = len(getattr(outcome, "entries", None) or [])
         skipped = int(getattr(outcome, "skipped_duplicates", 0) or 0)

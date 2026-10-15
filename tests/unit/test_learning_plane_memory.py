@@ -9,6 +9,8 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from llm_loop.methods.learning_journal import LearningJournal
 from llm_loop.methods.learning_plane import LearningPlane
 from llm_loop.resources.foreground import ForegroundActivityProbe
@@ -121,6 +123,79 @@ def test_memory_extract_job_without_wired_extractor_fails_closed(tmp_path):
     after = journal.job(job.job_id)
     assert after is not None and after.state == "failed"
     assert after.reason == "memory_extractor_not_wired"
+
+
+def test_deleted_source_session_is_terminal_cancelled_not_retried(tmp_path):
+    """A deleted owner's lawful refusal must not become repeated worker crashes."""
+    from llm_loop.core.session import SessionDeletedError
+
+    journal = LearningJournal(tmp_path / "journal.jsonl", candidate_lookup=None)
+    job = _enqueue_memory_job(journal)
+
+    class _DeletedExtractor(_FakeExtractor):
+        def extract_session(self, session_id: str, *, trigger: str):
+            self.calls.append((session_id, trigger))
+            raise SessionDeletedError("source session has been deleted")
+
+    extractor = _DeletedExtractor()
+    plane, _holder = _mk_plane(tmp_path, journal, extractor)
+    assert plane._try_execute(job) is True
+    after = journal.job(job.job_id)
+    assert after is not None and after.state == "cancelled"
+    assert after.reason == "source_session_deleted"
+    assert after.attempt == 1
+    assert extractor.calls == [("s1", "interval")]
+    assert journal.runnable_jobs() == []
+
+
+def test_real_deleted_session_owner_cannot_be_rehydrated_by_learning(tmp_path):
+    """End-to-end deleted identity fence: no provider call or lost retry accounting."""
+    from llm_loop.core.session import SessionStore
+    from llm_loop.memory.extractor import MemoryExtractor
+    from llm_loop.memory.store import MemoryStore
+
+    root = tmp_path / "sessions"
+    owner = SessionStore(root / "workspace-a", identity_root=root)
+    reader = SessionStore(root / "workspace-b", identity_root=root)
+    sid = owner.create()
+
+    journal = LearningJournal(tmp_path / "journal.jsonl", candidate_lookup=None)
+    job = _enqueue_memory_job(journal, sid)
+    assert owner.delete(sid) is True
+
+    class _NoProvider:
+        def chat(self, *_args, **_kwargs):
+            raise AssertionError("deleted session must not reach a provider")
+
+    extractor = MemoryExtractor(
+        llm_client=_NoProvider(),
+        memory=MemoryStore(tmp_path / "memory"),
+        session_store=reader,
+    )
+    plane, _holder = _mk_plane(tmp_path, journal, extractor)
+    assert plane._try_execute(job) is True
+    after = journal.job(job.job_id)
+    assert after is not None and after.state == "cancelled"
+    assert after.reason == "source_session_deleted"
+    assert after.attempt == 1
+    assert journal.runnable_jobs() == []
+
+
+def test_memory_extract_unrelated_failure_remains_visible(tmp_path):
+    """Only SessionDeletedError is terminal; other failures remain retryable."""
+    journal = LearningJournal(tmp_path / "journal.jsonl", candidate_lookup=None)
+    job = _enqueue_memory_job(journal)
+
+    class _BrokenExtractor(_FakeExtractor):
+        def extract_session(self, session_id: str, *, trigger: str):
+            raise RuntimeError("transient extractor defect")
+
+    plane, _holder = _mk_plane(tmp_path, journal, _BrokenExtractor())
+    with pytest.raises(RuntimeError, match="transient extractor defect"):
+        plane._try_execute(job)
+    journal.mark_failed(job.job_id, "worker_exception")
+    assert journal.job(job.job_id).state == "failed"
+    assert len(journal.runnable_jobs()) == 1
 
 
 def test_memory_extract_job_preempted_by_foreground_mid_call(tmp_path):
