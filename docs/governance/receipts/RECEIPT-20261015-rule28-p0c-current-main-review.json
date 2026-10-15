@@ -1,0 +1,92 @@
+{
+  "branch": "fix/rule28-p0c-current-main-20261015",
+  "ci_gate": {
+    "env_pin": "PASS",
+    "exit_code": 0,
+    "generated_report_patch_local_ref": "data/rule28-p0c-qualification/r9-generated-18-tracked-reports.patch",
+    "generated_report_patch_sha256": "8861118e0d50df1111b3c0ba97f9ff406fa6f242b5752d6272b1f214c1dc3a45",
+    "log_local_ref": "data/rule28-p0c-qualification/native-full-r9.log",
+    "log_sha256": "25f08441e6b912e589570a45e821cb597838114ee29533d699d149170c702fa2",
+    "post_gate_staged_diff_unchanged": true,
+    "pyright": "PASS",
+    "ruff": "PASS",
+    "script": "bash scripts/ci_gate.sh",
+    "test_modified_tracked_reports": 18,
+    "tier0_passed": 319,
+    "warnings": 13,
+    "xdist_passed": 8842,
+    "xdist_skipped": 146
+  },
+  "date": "2026-10-15",
+  "decision": "ISOLATED_QUALIFIED_BUT_NOT_RELEASE_AUTHORIZED",
+  "deployment_authorized": false,
+  "integrated_source_commits": [
+    "24a99fa266e068dfe9c1bab796e2b6e49b48d116",
+    "7e4efb3dd004ff2296afd0b97819c731e5036e2b"
+  ],
+  "limitations": [
+    "unknown nested scripts/DSH subprocesses not structurally covered",
+    "arbitrary remote publication/CDP direct/keyboard-form submits not covered",
+    "TOCTOU between capability consume and irreversible physical execution",
+    "new main six commits require independent combined qualification"
+  ],
+  "main_base_commit": "db4aaa8565ea0d0cc061b12e5701f5398b53698e",
+  "merged_main": false,
+  "new_main_drift": {
+    "changed_paths": 134,
+    "commit_count": 6,
+    "current_main": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+    "dry_merge_tree_hash": "3dd0fd7ff0ba3664b854bea5c8daaa553f2d026a",
+    "git_merge_tree_status": "clean",
+    "new_main_combined_r9_verified": false,
+    "source_path_overlap": 0
+  },
+  "production_runtime_at_check": {
+    "feishu": {
+      "git_head": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+      "identity_ok": true,
+      "pid": 18502
+    },
+    "learning": {
+      "git_head": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+      "identity_ok": true,
+      "pid": 20670
+    },
+    "web": {
+      "git_head": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+      "identity_ok": true,
+      "pid": 21744
+    }
+  },
+  "pushed": false,
+  "restarted": false,
+  "review": {
+    "child_id": "subagent_163729fd0363",
+    "child_state": "completed",
+    "findings": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 2
+    },
+    "first_failed_review_local_ref": "data/rule28-p0c-qualification/glm-child-review-attempt1-empty-response.json",
+    "first_failed_review_sha256": "982f38a25001d1818f59e96ba61a2ac6e22f8ebdd4337a9d363194659e605f39",
+    "model": "glm/glm-5.3",
+    "parent_id": "review-parent-rule28-p0c-integration-a2-20261015",
+    "qualification": "PASS",
+    "raw_review_local_ref": "data/rule28-p0c-qualification/glm-child-review.json",
+    "raw_review_sha256": "0f0cd15b96552e5416de78fadfde397b90c29b365538dc6d8212c382d5c48188",
+    "result_id": "result-842e5d973ed044d2b4a782f272d61dae",
+    "review_isolated": true,
+    "review_text_sha256": "31bc139d63ad712c8e8348fb2fd78504c1ec4c05eb10dec4c34fe36e0d4da25f",
+    "terminal_count": 1,
+    "terminal_event_id": "c4885a0c-af52-4dfc-98a8-f630a6850c15",
+    "verdict": "PASS"
+  },
+  "schema": "lfl.rule28_p0c_current_main_qualification/v1",
+  "source_commit": "7e6cf11346a079a769d51129c9f2572757533053",
+  "source_commit_diff_matches_review": true,
+  "source_files": 22,
+  "source_patch_bytes": 152674,
+  "source_patch_sha256": "ef0b15dbdbbf10cd6011adf46b7e333616a897cf7ab1e3e6370a415e00bbbca1",
+  "universal_gate": "NO_GO_FOR_UNIVERSAL_PRODUCTION_GATE"
+}
