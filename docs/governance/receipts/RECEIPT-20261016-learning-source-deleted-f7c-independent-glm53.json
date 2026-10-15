@@ -1,0 +1,62 @@
+{
+  "schema": "lfl.learning.integration_independent_code_review/v1",
+  "gate": "code",
+  "verdict": "PASS",
+  "qualification": "PASS",
+  "base_commit": "f7c0812825807d6dec2a2ad6e835899766229c40",
+  "behavior_source_commit": "672c1e3b6437f589b51b249fcc78c6c0f4753929",
+  "branch": "fix/learning-source-deleted-f7c-integration-20261016",
+  "sampled_at": "2026-10-16T07:26:27+08:00",
+  "source_patch_sha256": "925e453fd5baf1632eaa305134a47b2b198762dc26af8b0d222d1bec50981e89",
+  "source_patch_bytes": 5550,
+  "source_patch_paths": [
+    "src/llm_loop/methods/learning_plane.py",
+    "tests/unit/test_learning_plane_memory.py"
+  ],
+  "reviewer_independent": true,
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_registered_tools": 0,
+  "reviewer_max_rounds": 1,
+  "reviewer_auto_retries": 0,
+  "child_id": "subagent_81ac3cf3a6de",
+  "child_parent_id": "learning-source-deleted-f7c-independent-review-20261016",
+  "result_id": "result-66d16cc407894bfd8888af834967534c",
+  "terminal_event_id": "144d6b16-2844-4ae1-9574-ae191c3402b4",
+  "terminal_count": 1,
+  "terminal_state": "completed",
+  "live_handle_terminal_verified": true,
+  "machine_verdict_format_exact": true,
+  "P0": 0,
+  "P1": 0,
+  "P2": 2,
+  "nonblocking_P2": [
+    "unrelated error test simulates outer handler with manual mark_failed",
+    "foreground preemption race lacks direct test"
+  ],
+  "reviewed_scope": "full two-file binary patch and B1+B2 factory/settlement/tools_status/rule feedback integration with Rule28",
+  "targeted_16_file_tests": {
+    "passed": 221,
+    "failed": 0,
+    "warnings": 1,
+    "raw_log_path": "data/learning-source-deleted-f7c-integration-20261016/tests/focused-cross-module.log",
+    "raw_log_sha256": "9f39b904ad6d4b053cd38054696ba662fa6c57c3068382cc8adc9674314a67af"
+  },
+  "quick_preflight": {
+    "command": "bash scripts/ci_gate.sh --quick",
+    "physical_exit_code": 0,
+    "passed": 319,
+    "deselected": 8895,
+    "warnings": 3,
+    "raw_log_path": "data/learning-source-deleted-f7c-integration-20261016/tests/native-quick.log",
+    "raw_log_sha256": "c367dea73dc0f37d90542e385b85a4a33a535c7a5b6fd66363ae56a59d18cdbb"
+  },
+  "raw_reviewer_json_path": "data/learning-source-deleted-f7c-integration-20261016/review/independent-glm53-review.json",
+  "raw_reviewer_json_sha256": "a50e91aaac808edc9c72ceffb38b542953c62c8174bdf64e3edb4b658731f736",
+  "raw_review_text_sha256": "5b9cc1271414ed9a3b0afa31d7a9450e7b3ac9a323618102ae06a5b7c326699f",
+  "raw_run_log_path": "data/learning-source-deleted-f7c-integration-20261016/review/reviewer-run.log",
+  "raw_run_log_sha256": "5d0008e3788a2c0dd0386070e4f91439216124421d97e92ee68f383a4fde2d0e",
+  "reviewer_executed_full_r9": false,
+  "main_merge_authorized": false,
+  "push_authorized": false,
+  "production_release_authorized": false
+}

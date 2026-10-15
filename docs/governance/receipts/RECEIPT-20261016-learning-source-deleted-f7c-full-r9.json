@@ -1,0 +1,72 @@
+{
+  "schema": "lfl.learning.canonical_full_r9_gate_receipt/v2",
+  "gate": "full_r9",
+  "verdict": "PASS",
+  "physical_exit_code": 0,
+  "base_commit": "f7c0812825807d6dec2a2ad6e835899766229c40",
+  "behavior_source_commit": "672c1e3b6437f589b51b249fcc78c6c0f4753929",
+  "branch": "fix/learning-source-deleted-f7c-integration-20261016",
+  "sampled_at": "2026-10-16T07:26:27+08:00",
+  "source_patch_sha256": "925e453fd5baf1632eaa305134a47b2b198762dc26af8b0d222d1bec50981e89",
+  "source_patch_bytes": 5550,
+  "source_patch_paths": [
+    "src/llm_loop/methods/learning_plane.py",
+    "tests/unit/test_learning_plane_memory.py"
+  ],
+  "code_reviewer_gate_passed_before_full_r9": true,
+  "reviewer_child_id": "subagent_81ac3cf3a6de",
+  "reviewer_terminal_event_id": "144d6b16-2844-4ae1-9574-ae191c3402b4",
+  "reviewer_P0": 0,
+  "reviewer_P1": 0,
+  "reviewer_P2": 2,
+  "reviewer_raw_json_sha256": "a50e91aaac808edc9c72ceffb38b542953c62c8174bdf64e3edb4b658731f736",
+  "canonical_command": "bash scripts/ci_gate.sh",
+  "canonical_script_unchanged": true,
+  "canonical_script_sha256": "174a541d40e5d1fcb32849bffd178bf63a8c08b0c535caa898f452059683e17e",
+  "ruff": "PASS historical67 current34 new0 changedfile0",
+  "env_pin": "PASS 867 files",
+  "pyright": "PASS historical45 current16 new0 changedfile0",
+  "webui_candidate_build": "PASS",
+  "tier0": {
+    "passed": 319,
+    "deselected": 8895,
+    "warnings": 3,
+    "duration_seconds": 20.92
+  },
+  "xdist": {
+    "full_suite_selection": true,
+    "workers": 4,
+    "first_run_status": "GREEN",
+    "passed": 9057,
+    "skipped": 141,
+    "failed": 0,
+    "warnings": 13,
+    "duration_seconds": 189.01,
+    "initial_failed_nodes": []
+  },
+  "serial_recheck": {
+    "triggered": false,
+    "reason": "xdist first run GREEN"
+  },
+  "final_guard_report": {
+    "passed": 1,
+    "deselected": 29,
+    "duration_seconds": 0.76
+  },
+  "raw_full_log_path": "data/learning-source-deleted-f7c-integration-20261016/full-native-r9.log",
+  "raw_full_log_sha256": "e9e7b05f355b9cb163c589d04a82ba802b777cb598866faf4abbc3c50c8a4f74",
+  "raw_full_log_bytes": 91839,
+  "physical_exit_record_path": "data/learning-source-deleted-f7c-integration-20261016/full-native-r9.exit",
+  "provider_env_unset_for_test_shell": true,
+  "python_test_offline_guard_sha256": "a66fd43421b2f3232bbd5b7960339ea3e988c6c47aa8a442283a9ae110866961",
+  "python_dispatch_sha256": "1fcb41ffcee4e1c5ad7026b89c7e81a7b3b1fa8c9a440254f95d11b6cc872a83",
+  "generated_tracked_report_count": 18,
+  "generated_report_diff_backup_path": "data/learning-source-deleted-f7c-integration-20261016/full-r9-generated-report-side-effects.patch",
+  "generated_report_diff_backup_sha256": "9c20ace1187584b8d335d1bde0c1bf5eebbc7e5768b59ecc291dc8128a76aac5",
+  "generated_reports_restored_only_in_self_owned_isolated_worktree": true,
+  "source_patch_unchanged_after_test": true,
+  "qualification_scope": "PASS only exact f7c main base and 672c source; newer main drift cannot inherit PASS",
+  "main_merge_authorized": false,
+  "push_authorized": false,
+  "production_release_authorized": false
+}
