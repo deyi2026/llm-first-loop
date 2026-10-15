@@ -1,0 +1,82 @@
+{
+  "gate": "code",
+  "reviewer": "independent minimax/MiniMax-M3 session 0807b2a3-b981-44da-bd38-b078913676d6",
+  "verdict": "PASS",
+  "scope_files": [
+    "docs/LFL-restart-guide.md",
+    "scripts/restart_mirror.sh",
+    "src/llm_loop/runtime/service_control.py",
+    "src/llm_loop/runtime/webui_provenance.py",
+    "tests/scripts/test_restart_mirror_hardening.py",
+    "tests/unit/test_webui_source_provenance.py",
+    "webui/package.json",
+    "webui/scripts/build-with-source-binding.mjs"
+  ],
+  "findings": [
+    {
+      "id": "P1A",
+      "severity": "P1",
+      "file": "webui/scripts/build-with-source-binding.mjs",
+      "issue": "hardcoded Node package internal tool paths",
+      "resolution": "fixed by PATH-based npm executables"
+    },
+    {
+      "id": "P1B",
+      "severity": "P1",
+      "file": "src/llm_loop/runtime/service_control.py",
+      "issue": "reviewer incorrectly claimed CLI diagnostics on stdout",
+      "resolution": "false-positive; file=sys.stderr pre-existed and dedicated test passes"
+    }
+  ],
+  "applied": [
+    "P1A build uses npm PATH tsc/vite executables",
+    "P2: path escape and incorrect Vite output rejected; automated fixture tests added"
+  ],
+  "rejected": [
+    {
+      "id": "P1B",
+      "reason": "CLI error branches already print on sys.stderr; focused negative unit confirms"
+    },
+    {
+      "id": "P2-git-scan",
+      "reason": "Two bounded git commands over 104 tracked WebUI paths; no correctness problem"
+    },
+    {
+      "id": "P2-outdir-parser",
+      "reason": "Dist cleared before build and fresh dist/index.html is required; TypeScript config parser unnecessary"
+    }
+  ],
+  "artifact_sha256": "cca422423480e040844290ed75f807168f578133640994661d6e74901f620779",
+  "review_base_commit": "c8e50cb2b16c067a22609285d6aaa5eadf3ebdac",
+  "initial_commit": "218370f8b6c08a609f3a97e4905fcd284cb0d296",
+  "revised_commit": "7b0e7134d8e0d5523c45f00fa5dd58577d0319fc",
+  "initial_diff_sha256": "8e44f8e3e5173f9151fdf678d26cc86acc5d9a4abda3adf65cbb821a0ded9118",
+  "initial_review_raw_sha256": "838afb22e0be12de4c659983ff3828916115d241ee563284c37c09ce16e0d022",
+  "narrow_recheck": {
+    "reviewer": "independent minimax/MiniMax-M3.1-Flash-Preview session eef2fbd2-39c4-4478-83eb-c7e206b9f47a",
+    "verdict": "PASS",
+    "reviewed_commit": "7b0e7134d8e0d5523c45f00fa5dd58577d0319fc",
+    "revision_diff_sha256": "dd868dd9e846578e9dd155d56934a4a02ec98961705e89ca51fde42ecda9ac8c",
+    "P0": 0,
+    "P1": 0,
+    "P2": 5,
+    "review_raw_sha256": "6a8207562e5a3dbece3e6dcf24ebbe198361177b367f69b8fdeea6ae60924175",
+    "remaining_P2": [
+      "Node sourceRoot anchoring and type check",
+      "non-npm invocation PATH toolchain provenance",
+      "Windows shell-fixture portability",
+      "missing-tracked-file error message harmonization",
+      "report source mismatch before output-directory error"
+    ]
+  },
+  "review_execution": {
+    "initial_model": "minimax/MiniMax-M3",
+    "initial_tool_calls": 0,
+    "narrow_model": "minimax/MiniMax-M3.1-Flash-Preview",
+    "narrow_tool_calls": 0,
+    "narrow_run_incomplete": false,
+    "narrow_truncated": false,
+    "independence": "separate fresh LFL Web sessions, zero actual tool calls; tool schema availability not host denied"
+  },
+  "full_suite_run_after_review": false
+}
