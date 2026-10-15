@@ -1,0 +1,53 @@
+{
+  "run_end_total": 4518,
+  "run_end_sessions": 667,
+  "run_end_reasons": {
+    "completed": 3911,
+    "llm_error": 340,
+    "cancelled": 161,
+    "routing_override": 18,
+    "overflow": 17,
+    "guard_blocked": 42,
+    "breaker_context_pressure": 8,
+    "max_iterations": 4,
+    "stagnation": 17
+  },
+  "run_end_run_incomplete_true": 169,
+  "run_end_payload_keys": [
+    "answer_preview",
+    "cache_hit",
+    "cancel_reason",
+    "duration_ms",
+    "history_compacted",
+    "kpi_inject_msgs",
+    "kpi_inject_ratio",
+    "kpi_local_llm_ms_avg",
+    "kpi_no_tool_rounds",
+    "model_used",
+    "projection_cannot_fit",
+    "projection_rebuilt",
+    "projection_validator_failed",
+    "provider_output_truncated",
+    "reason",
+    "rounds",
+    "run_incomplete",
+    "session_id",
+    "tokens_in",
+    "tokens_out",
+    "truncated"
+  ],
+  "knowledge_sessions": 118,
+  "knowledge_runs_total": 568,
+  "knowledge_runs_with_outcome": 483,
+  "knowledge_runs_without_outcome": 85,
+  "knowledge_sessions_without_any_run_end": 2,
+  "knowledge_sessions_without_any_run_end_sample": [
+    "207cc107-c78d-4833-8de6-261570f7985a",
+    "aaacf5ff-1ec1-461e-b82a-ca80c2aa0bcb"
+  ],
+  "UNMEASURABLE": [
+    "无 run.end 也无 run_outcome 的运行是否被 kill/fail-open 丢失：EventStore 无该 run 的任何痕迹，不可测",
+    "provider 是否真实送达模型（model_attention）：protocol 层永远 unknown",
+    "未产生 discovery 的机会窗口（advisor 未触发/被裁剪）：无事件即无痕迹，不可测"
+  ]
+}

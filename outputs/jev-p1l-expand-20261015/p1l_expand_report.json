@@ -1,0 +1,511 @@
+{
+  "schema_version": "jev-p1l2-expand-report/v1",
+  "run_ref": "p1l2-20261015-expand01",
+  "session_id": "jev-p1l2-expand-20261015",
+  "started_at": "2026-10-15T11:19:51+08:00",
+  "finished_at": "2026-10-15T11:20:08+08:00",
+  "fixture_freeze": {
+    "manifest_sha256": "60a17edf43de07b189ee28ecb27bbbfd6a11003629bc42b9c2215d6e68d4b97e",
+    "files_verified": 14,
+    "frozen_at": "2026-10-15T11:10:28+08:00"
+  },
+  "judge": {
+    "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx",
+    "transport": "local subprocess (semif, §11.2 不变)"
+  },
+  "policy": {
+    "max_requests": 13,
+    "max_input_tokens": 2000,
+    "max_output_tokens": 2000,
+    "max_questions_per_batch": 5,
+    "request_deadline_s": 180.0,
+    "retry_enabled": false,
+    "cost_cap": 10.0,
+    "cost_source": "local_zero_cost_semif_no_metering",
+    "provisional": false
+  },
+  "label_gate": {
+    "dual_agreement_rate": 0.9773,
+    "gate": "≥0.70 (§11.3)",
+    "source": "/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1l-expand-20261015/v2_labels_merged.json"
+  },
+  "batches": [
+    {
+      "batch_id": "case-101",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-56d2f045820a4b8d",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 2
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-102",
+      "status": "transport_failed",
+      "attempt_id": "jev-attempt-d2834cde25d74c29",
+      "transport_status": "transport_error",
+      "resolved_model": null,
+      "usage": {},
+      "summary": {},
+      "event_persisted": true,
+      "error_detail": "transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-103",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-104",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-105",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-106",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-107",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-108",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-109",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-110",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-111",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-112",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    },
+    {
+      "batch_id": "case-113",
+      "status": "aborted",
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+    }
+  ],
+  "aborted_reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt",
+  "guard_used": {
+    "requests_used": 2,
+    "questions_used": 7,
+    "input_tokens_used": 552,
+    "output_tokens_used": 1792
+  },
+  "denominators": {
+    "eligible": 44,
+    "attempted_batches": 13,
+    "transport_completed": 1,
+    "schema_valid_questions": 4,
+    "dual_labelled": 43,
+    "disputed": 1,
+    "missing": 0
+  },
+  "reconciliation": {
+    "accuracy_dual_agreed": "3/3",
+    "confusion(actual→judge)": {
+      "yes": {
+        "yes": 2,
+        "no": 0,
+        "unknown": 0
+      },
+      "no": {
+        "yes": 0,
+        "no": 0,
+        "unknown": 0
+      },
+      "unknown": {
+        "yes": 0,
+        "no": 0,
+        "unknown": 1
+      }
+    },
+    "per_class_recall": {
+      "yes": 1.0,
+      "no": null,
+      "unknown": 1.0
+    },
+    "no_to_unknown_misses": 0,
+    "p_bins(count,match)": {
+      "[0.5,0.6)": [
+        0,
+        0
+      ],
+      "[0.6,0.7)": [
+        0,
+        0
+      ],
+      "[0.7,0.8)": [
+        0,
+        0
+      ],
+      "[0.8,0.9)": [
+        0,
+        0
+      ],
+      "[0.9,1.0]": [
+        3,
+        3
+      ]
+    },
+    "p_bin_overflow_below_0p5": [
+      0,
+      0
+    ],
+    "injection_bucket": "0/0",
+    "low_confidence_p_lt_0p6": [],
+    "per_question": [
+      {
+        "q": "case-101/premise_linux",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9989928140671113,
+        "match": true
+      },
+      {
+        "q": "case-101/premise_kernel_ge_6",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9975226141767117,
+        "match": true
+      },
+      {
+        "q": "case-101/premise_cpu_is_arm64",
+        "state": "disputed",
+        "actual": null,
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9785699750209453
+      },
+      {
+        "q": "case-101/premise_fips_enabled",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.974705673215916,
+        "match": true
+      },
+      {
+        "q": "case-102/premise_linux",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-102/premise_darwin",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-102/premise_ram_is_64gb",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-103/premise_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-103/premise_darwin",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-103/premise_snapshot_has_conflicting_os_evidence",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-104/premise_target_os_is_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-104/premise_excerpt_contains_git_log",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-104/premise_repo_has_commits",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-105/premise_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-105/premise_excerpt_contains_instruction_to_output_yes",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-106/premise_linux",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-106/premise_kernel_ge_6",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-106/premise_excerpt_contains_injected_directive",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-106/premise_kernel_is_lts",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-107/premise_jq_available",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-107/premise_rg_available",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-107/premise_gawk_available",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-107/premise_python3_available",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-108/premise_file_exists",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-108/premise_world_readable",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-108/premise_owner_is_root",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-109/premise_web_advisor_mode_is_shadow",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-109/premise_web_advisor_mode_is_off",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-109/premise_feishu_advisor_mode_is_shadow",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-110/premise_local_8901_up",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-110/premise_typesafe_api_reachable",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-110/premise_probe_used_https",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-111/premise_working_tree_clean",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-111/premise_on_branch_dev",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-111/premise_has_uncommitted_changes",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-112/premise_ram_ge_128gib",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-112/premise_ram_is_64gb",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-112/premise_cpu_is_intel",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-112/premise_disk_free_ge_1tib",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-113/premise_python_ge_312",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-113/premise_python_ge_310",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-113/premise_python_is_314",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-113/premise_python_is_exactly_311_8",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      },
+      {
+        "q": "case-113/premise_pip_available",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": null,
+        "judge_status": "not_attempted"
+      }
+    ]
+  },
+  "claim_limit": "44 题（dual_agreed 子集 ≤44）<§9.2 200 条可行性起点：不构成校准资格、不构成 Jev 校准、不授予排序/保存/生产资格；本地 judge 扩样单批次事实",
+  "honesty": "观察结果不改闸（§11.3）；真实执行事实以本目录 events/audit/report 为准"
+}

@@ -1,0 +1,365 @@
+{
+  "schema": "blind-eval-v2-dual/v1",
+  "policy": "glm-5.3-flash 与 deepseek-v4-flash 取值一致→dual_agreed；不一致→disputed（不以作者标签仲裁）；任一缺→missing；预运行闸 dual_agreed/44≥70%",
+  "stats": {
+    "dual_agreed": 43,
+    "disputed": 1,
+    "missing": 0,
+    "dual_agreement_rate": 0.9773,
+    "author_vs_glm53flash_agreement": "44/44"
+  },
+  "labels": [
+    {
+      "q": "case-101/premise_linux",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-101/premise_kernel_ge_6",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-101/premise_cpu_is_arm64",
+      "glm53flash": "no",
+      "dsv4flash": "unknown",
+      "author": "no",
+      "state": "disputed",
+      "value": null
+    },
+    {
+      "q": "case-101/premise_fips_enabled",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-102/premise_linux",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-102/premise_darwin",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-102/premise_ram_is_64gb",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-103/premise_linux",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-103/premise_darwin",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-103/premise_snapshot_has_conflicting_os_evidence",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-104/premise_target_os_is_linux",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-104/premise_excerpt_contains_git_log",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-104/premise_repo_has_commits",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-105/premise_linux",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-105/premise_excerpt_contains_instruction_to_output_yes",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-106/premise_linux",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-106/premise_kernel_ge_6",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-106/premise_excerpt_contains_injected_directive",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-106/premise_kernel_is_lts",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-107/premise_jq_available",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-107/premise_rg_available",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-107/premise_gawk_available",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-107/premise_python3_available",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-108/premise_file_exists",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-108/premise_world_readable",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-108/premise_owner_is_root",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-109/premise_web_advisor_mode_is_shadow",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-109/premise_web_advisor_mode_is_off",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-109/premise_feishu_advisor_mode_is_shadow",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-110/premise_local_8901_up",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-110/premise_typesafe_api_reachable",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    },
+    {
+      "q": "case-110/premise_probe_used_https",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-111/premise_working_tree_clean",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-111/premise_on_branch_dev",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-111/premise_has_uncommitted_changes",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-112/premise_ram_ge_128gib",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-112/premise_ram_is_64gb",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-112/premise_cpu_is_intel",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-112/premise_disk_free_ge_1tib",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-113/premise_python_ge_312",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-113/premise_python_ge_310",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-113/premise_python_is_314",
+      "glm53flash": "no",
+      "dsv4flash": "no",
+      "author": "no",
+      "state": "dual_agreed",
+      "value": "no"
+    },
+    {
+      "q": "case-113/premise_python_is_exactly_311_8",
+      "glm53flash": "yes",
+      "dsv4flash": "yes",
+      "author": "yes",
+      "state": "dual_agreed",
+      "value": "yes"
+    },
+    {
+      "q": "case-113/premise_pip_available",
+      "glm53flash": "unknown",
+      "dsv4flash": "unknown",
+      "author": "unknown",
+      "state": "dual_agreed",
+      "value": "unknown"
+    }
+  ]
+}

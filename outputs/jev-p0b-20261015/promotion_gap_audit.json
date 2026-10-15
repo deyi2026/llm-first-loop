@@ -1,0 +1,450 @@
+{
+  "audit": "经验卡晋升空窗与 record_use 账本失真审计",
+  "read_only": true,
+  "authoritative_parser": "ExperienceDocument.from_md",
+  "cards": {
+    "total_cards": 463,
+    "verification_state_x_record_kind": {
+      "legacy_unclassified|experience": 176,
+      "unverified|lesson": 16,
+      "verified|experience": 160,
+      "verified|lesson": 111
+    },
+    "verification_state_explicitness": {
+      "legacy_unclassified|defaulted": 165,
+      "legacy_unclassified|explicit": 11,
+      "unverified|explicit": 16,
+      "verified|explicit": 271
+    },
+    "legacy_total": 176,
+    "legacy_explicit": 11,
+    "legacy_defaulted": 165,
+    "legacy_explicit_profile": {
+      "status": {
+        "archived": 11
+      },
+      "promoted_to_rule_nonempty": 6,
+      "last_verified_nonempty": 9
+    },
+    "legacy_defaulted_profile": {
+      "status": {
+        "active": 128,
+        "archived": 37
+      },
+      "has_evidence": 142,
+      "promoted_to_rule_nonempty": 5,
+      "last_verified_nonempty": 2
+    },
+    "legacy_explicit_cards": [
+      {
+        "id": "EXPERIENCE-20260816-self-evaluate-trigger",
+        "status": "archived",
+        "promoted_to_rule": "RULE-AI-02",
+        "last_verified_at": "2026-09-11T19:34:33.266797+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260817-contextvar-finally-reset-subagent-report",
+        "status": "archived",
+        "promoted_to_rule": "",
+        "last_verified_at": ""
+      },
+      {
+        "id": "EXPERIENCE-20260817-llm-0-system",
+        "status": "archived",
+        "promoted_to_rule": "",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260817-system-run",
+        "status": "archived",
+        "promoted_to_rule": "",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260902-task-restart-requires-user-confirm",
+        "status": "archived",
+        "promoted_to_rule": "RULE-AI-23",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260902-task-startup-discipline",
+        "status": "archived",
+        "promoted_to_rule": "RULE-AI-23",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260902-task-startup-discipline-no-auto-restart-ask-user-f",
+        "status": "archived",
+        "promoted_to_rule": "RULE-AI-23",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260903-self-evaluate-trigger-schema",
+        "status": "archived",
+        "promoted_to_rule": "RULE-AI-02",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260903-tool-discovery-callability-schema-breaker-terminat",
+        "status": "archived",
+        "promoted_to_rule": "",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260903-user-rule-no-auto-restart-done-tasks",
+        "status": "archived",
+        "promoted_to_rule": "RULE-AI-23",
+        "last_verified_at": "2026-09-11T19:33:32.133104+08:00"
+      },
+      {
+        "id": "EXPERIENCE-20260911-mlx-lm",
+        "status": "archived",
+        "promoted_to_rule": "",
+        "last_verified_at": ""
+      }
+    ]
+  },
+  "parse_errors": [
+    {
+      "file": "README.md",
+      "error": "ExperienceParseError: 缺少 front matter 起始标记 '---'"
+    }
+  ],
+  "ledgers": {
+    "experience_ledger": {
+      "entries": 20,
+      "use_decision": {
+        "adapted": 4,
+        "applied": 16
+      },
+      "declared_vs": {
+        "verified": 8,
+        "legacy_unclassified": 3,
+        "unverified": 9
+      },
+      "task_benefit": {
+        "not_evaluated": 20
+      },
+      "drift": [],
+      "drift_count": 0,
+      "per_card": [
+        {
+          "id": "EXPERIENCE-20260912-shell-git",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261009-fail-closed",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261008-publish-release-sidecar-env-experiences-dir-method",
+          "ledger_entries": 2,
+          "counted_by_usage_net": 2,
+          "net": 2,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20260912-worktree-env",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20260830-evolutionstore-split-brain-data-dir-cwd-env",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261011-lfl-子代理存活语义与消息循环-心跳协议-v2a-实测",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261012-bot-调研员",
+          "ledger_entries": 2,
+          "counted_by_usage_net": 2,
+          "net": 2,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261012-bot-实现者",
+          "ledger_entries": 2,
+          "counted_by_usage_net": 2,
+          "net": 2,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261012-bot-评审员",
+          "ledger_entries": 4,
+          "counted_by_usage_net": 4,
+          "net": 4,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20260909-lfl-llm-pytest-tail",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20260909-lfl-shell-pytest-web-auth-require-web-origin-allow",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261014-闭环搭建模式-规则上线三件套-内容-触发载体-回收闭环",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261014-并行-run-持有-restart-准入屏障且绑定-stale-desired-时的接管姿势",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "EXPERIENCE-20261014-子代理工具发挥受三层机制管束-工具面白名单-能力-fail-fast-effect-执行权-leas",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(active)",
+          "truncated": false,
+          "net_none": false
+        }
+      ],
+      "truncated_count": 0
+    },
+    "method_ledger": {
+      "entries": 22,
+      "decision": {
+        "applied": 18,
+        "adapted": 3,
+        "not_applicable": 1
+      },
+      "task_benefit": {
+        "not_evaluated": 22
+      },
+      "drift": [
+        {
+          "id": "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+          "declared_status": "candidate",
+          "current_status": "active"
+        },
+        {
+          "id": "method:self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+          "declared_status": "candidate",
+          "current_status": "qualified"
+        }
+      ],
+      "drift_count": 2,
+      "per_card": [
+        {
+          "id": "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 0,
+          "net": 0,
+          "anchor": "lifecycle_status(active)",
+          "truncated": true,
+          "net_none": false
+        },
+        {
+          "id": "method:self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 0,
+          "net": 0,
+          "anchor": "lifecycle_status(qualified)",
+          "truncated": true,
+          "net_none": false
+        },
+        {
+          "id": "method:write-precondition-token-before-first-edit-ad1f203fa6ef",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:serialize-cas-writes-by-chaining-snapshot-refs-65d014ca9b9a",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:mechanical-blind-eval-isolation-00c0648997ae",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:deferred-action-failure-layer-scoped-lifecycle-trace-ae4184904e2b",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:record-use-v3-1c1b05bfa2ee",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:attribute-validation-run-via-structural-identity-before-reuse-e30bf0d78688",
+          "ledger_entries": 3,
+          "counted_by_usage_net": 3,
+          "net": 3,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3",
+          "ledger_entries": 2,
+          "counted_by_usage_net": 2,
+          "net": 2,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:multiplatform-publish-order-by-irreversibility-d9f5c7ea6b4d",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:audit-claimed-pending-work-via-result-artifacts-f180eb31a0fe",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:probe-live-end-state-before-resuming-stale-failure-bd8bc0adafd0",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:rehead-search-query-on-dictionary-degradation-8da50263deb1",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+          "ledger_entries": 2,
+          "counted_by_usage_net": 2,
+          "net": 2,
+          "anchor": "lifecycle_status(hold)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:check-desired-head-binding-before-restart-choose-update-2e3637e8aef7",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": -1,
+          "anchor": "lifecycle_status(candidate)",
+          "truncated": false,
+          "net_none": false
+        },
+        {
+          "id": "method:candidate-a80acb208b99",
+          "ledger_entries": 1,
+          "counted_by_usage_net": 1,
+          "net": 1,
+          "anchor": "lifecycle_status(hold)",
+          "truncated": false,
+          "net_none": false
+        }
+      ],
+      "truncated_count": 2
+    }
+  }
+}

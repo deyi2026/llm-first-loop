@@ -1,0 +1,219 @@
+{
+  "schema": "knowledge-contribution/v1",
+  "contribution_id": "contribution:b02593f4eec54b63",
+  "run_id": "de7f7e47-443e-42f9-9513-57ee99c8a21e:turn:27:run:058dc3b808c543eeb2398a817e69d1fc",
+  "task_id": null,
+  "goal_id": null,
+  "session_id": "de7f7e47-443e-42f9-9513-57ee99c8a21e",
+  "terminal_event_ref": "event:119bac6e-181a-4995-9247-396e22722458",
+  "revision": 1,
+  "supersedes": null,
+  "task_outcome": "unknown",
+  "task_outcome_note": "仅有模型自报 run_outcome.reason='completed'；无独立任务成功标签，按 §5.3『不能回填』原则不写 success",
+  "contribution_state": "unclear",
+  "contribution_state_note": "3 条声明全部 helped=unclear / attribution_level=insufficient，故整体不标 partial；§5.3 仅示例了 partial，unclear 为本轮补充取值",
+  "use_refs": [
+    "usage:EXPERIENCE-20260909-lfl-llm-pytest-tail",
+    "usage:EXPERIENCE-20260909-lfl-shell-pytest-web-auth-require-web-origin-allow",
+    "usage:method:locate-project-env-before-symptom-workarounds-f7dd29f1718b"
+  ],
+  "contributions": [
+    {
+      "subject_ref": "method:locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+      "subject_kind": "method",
+      "subject_hash": "sha256:07080534a0064b85a31373a1b8cb874b61a8c8f67aa577541c57fa2f095576de",
+      "subject_hash_semantics": "method_content_hash",
+      "use_decision": "applied",
+      "declaration_authority": null,
+      "hydration_observed": false,
+      "verification_state": null,
+      "ledger_application_proven": true,
+      "ledger_matched": true,
+      "declaration_event_ref": "event:7922fa76-79a2-4ec8-8f5e-1913755730ad",
+      "helped": "unclear",
+      "attribution_level": "insufficient",
+      "evidence_refs": [
+        "evidence://v1/442308677a0e21f939cf4768d80b4bc4e361acc28c06e19295995321f2cdea67",
+        "job-14973d4e1b78487facd7"
+      ],
+      "missing_reason": "no_independent_contribution_evidence"
+    },
+    {
+      "subject_ref": "experience:EXPERIENCE-20260909-lfl-llm-pytest-tail",
+      "subject_kind": "experience",
+      "subject_hash": "sha256:999f202f60a925b438c7b9d9567c2c42ba748818dc611f7ebf9168df2e366462",
+      "subject_hash_semantics": "document_projection_sha256（重序列化投影 hash，非磁盘 exact bytes hash）",
+      "use_decision": "applied",
+      "declaration_authority": "model_declared",
+      "hydration_observed": true,
+      "verification_state": "legacy_unclassified",
+      "ledger_application_proven": true,
+      "ledger_matched": true,
+      "declaration_event_ref": "event:d7cbe98a-2f1a-40c7-856f-127441391f4f",
+      "helped": "unclear",
+      "attribution_level": "insufficient",
+      "evidence_refs": [
+        "evidence://v1/442308677a0e21f939cf4768d80b4bc4e361acc28c06e19295995321f2cdea67"
+      ],
+      "missing_reason": "no_independent_contribution_evidence"
+    },
+    {
+      "subject_ref": "experience:EXPERIENCE-20260909-lfl-shell-pytest-web-auth-require-web-origin-allow",
+      "subject_kind": "experience",
+      "subject_hash": "sha256:7a4cfb5a8ab8237b2ee320eca2013f44942a42711e38328cca48b34441eaf2fa",
+      "subject_hash_semantics": "document_projection_sha256（重序列化投影 hash，非磁盘 exact bytes hash）",
+      "use_decision": "applied",
+      "declaration_authority": "model_declared",
+      "hydration_observed": true,
+      "verification_state": "legacy_unclassified",
+      "ledger_application_proven": true,
+      "ledger_matched": true,
+      "declaration_event_ref": "event:21071f49-8ef0-4f32-b290-b569d49e4453",
+      "helped": "unclear",
+      "attribution_level": "insufficient",
+      "evidence_refs": [
+        "evidence://v1/442308677a0e21f939cf4768d80b4bc4e361acc28c06e19295995321f2cdea67"
+      ],
+      "missing_reason": "no_independent_contribution_evidence"
+    }
+  ],
+  "presented_without_declaration": [
+    "experience:EXPERIENCE-20261008-drc-t2-contextmanager-tmp",
+    "experience:EXPERIENCE-20261010-verified-2-unverified",
+    "method:stop-on-identical-failure-receipt-75253a27634f"
+  ],
+  "declared_without_presentation_in_run": [
+    "experience:EXPERIENCE-20260909-lfl-llm-pytest-tail",
+    "experience:EXPERIENCE-20260909-lfl-shell-pytest-web-auth-require-web-origin-allow",
+    "method:locate-project-env-before-symptom-workarounds-f7dd29f1718b"
+  ],
+  "projection_provenance_refs": [
+    "event:81038cee-0283-4e2d-9bff-988bae701526",
+    "event:5e7b53a2-7788-4ade-98b0-6a3b927f6145",
+    "event:7922fa76-79a2-4ec8-8f5e-1913755730ad",
+    "event:539b3941-3c15-4462-a855-281559ad7adc",
+    "event:b611a9bc-8bb8-4ef0-a991-01c3d0305db1",
+    "event:d7cbe98a-2f1a-40c7-856f-127441391f4f",
+    "event:21071f49-8ef0-4f32-b290-b569d49e4453",
+    "event:119bac6e-181a-4995-9247-396e22722458"
+  ],
+  "p0b_diagnostics": {
+    "run_seq_range": [
+      509,
+      812
+    ],
+    "ts_range": [
+      "2026-10-12T23:30:56.856751+08:00",
+      "2026-10-12T23:35:00.658261+08:00"
+    ],
+    "files": [
+      "de7f7e47-443e-42f9-9513-57ee99c8a21e.jsonl"
+    ],
+    "event_count": 8,
+    "type_distribution": {
+      "knowledge.hydration_observed": 2,
+      "knowledge.method_declaration": 1,
+      "knowledge.failure_observed": 1,
+      "knowledge.discovery": 1,
+      "knowledge.experience_declaration": 2,
+      "knowledge.run_outcome": 1
+    },
+    "chain_counts": {
+      "hydration_observed": 2,
+      "discovery": 1,
+      "declarations": 3,
+      "failure_observed": 1,
+      "run_outcome": 1
+    },
+    "hints": {
+      "shown": 3,
+      "declared_within_run": [],
+      "follow_through": "0/3",
+      "pairing": [
+        {
+          "hint_ref": "method:stop-on-identical-failure-receipt-75253a27634f",
+          "discovery_seq": 759,
+          "declared_later": null
+        },
+        {
+          "hint_ref": "experience:EXPERIENCE-20261008-drc-t2-contextmanager-tmp",
+          "discovery_seq": 759,
+          "declared_later": null
+        },
+        {
+          "hint_ref": "experience:EXPERIENCE-20261010-verified-2-unverified",
+          "discovery_seq": 759,
+          "declared_later": null
+        }
+      ],
+      "missed": [
+        "method:stop-on-identical-failure-receipt-75253a27634f",
+        "experience:EXPERIENCE-20261008-drc-t2-contextmanager-tmp",
+        "experience:EXPERIENCE-20261010-verified-2-unverified"
+      ]
+    },
+    "ledger_match": {
+      "match": "session_id exact",
+      "exp_total": 20,
+      "met_total": 22,
+      "exp_matched": 2,
+      "met_matched": 1
+    },
+    "run_end": {
+      "reason": "completed",
+      "join": "seq-adjacent(seq 812 >= run max 812)",
+      "seq": 812
+    },
+    "read_only_proof": {
+      "experiences_usage_sha256": "67e7f4aedf3df66bbf70520de93f88b6de0ef3a18480c7d81003cbc94a52dcc2",
+      "methods_usage_sha256": "55ff92c2113fdd4207d1b51f6306a380258beeed8a88358dc699a2484edc6f1b"
+    },
+    "unknowns": [
+      {
+        "item": "净贡献/反事实增益",
+        "value": "UNMEASURABLE",
+        "why": "无对照组、无独立事实标签；单条轨迹无法分离『有知识』与『无知识』的结果差"
+      },
+      {
+        "item": "task_benefit",
+        "value": "all-not_evaluated",
+        "why": "账本 3 行 + run_outcome 1 行全为 not_evaluated"
+      },
+      {
+        "item": "task_id / goal_id",
+        "value": "absent",
+        "why": "本 run 事件 payload 不含 task_id/goal_id（§5.2 允许保留 unknown，不猜）"
+      },
+      {
+        "item": "provider_delivery / model_attention",
+        "value": "unknown",
+        "why": "本 run 无 knowledge.reference_prepared 送达事件，模型是否读到属 protocol 层不可知"
+      },
+      {
+        "item": "机会分母（advisor 未触发/被裁剪窗口）",
+        "value": "UNMEASURABLE",
+        "why": "无事件即无痕迹；hint 分母只覆盖已触发窗口"
+      },
+      {
+        "item": "helped / attribution_level 的独立可核性",
+        "value": "unverified_in_this_session",
+        "why": "账本 application_proven=true 但 authority=model_declared；其 evidence:// 句柄在本会话不可解析，本轮未复验，故 helped 一律 unclear、attribution_level=insufficient"
+      },
+      {
+        "item": "discovery→declaration 时序（逐条配对）",
+        "value": "checked",
+        "why": "discovery seq [759]；declaration seq [724, 791, 792]。hint 3 条，其中 3 条在其 discovery 之后无 declaration 命中 → 不是时序伪影。1 条声明早于全部 discovery，不计入落地率"
+      },
+      {
+        "item": "run.outcome 与 run.end 一致性",
+        "value": "checked",
+        "why": "run_outcome.reason='completed' vs run.end.reason='completed'（join=seq-adjacent(seq 812 >= run max 812)）"
+      },
+      {
+        "item": "hydration_observed 与 run_outcome.hydrated_refs 一致性",
+        "value": "checked",
+        "why": "hydrated_refs 2 条；declaration 中 hydration_observed=True 的 2 条"
+      }
+    ]
+  }
+}

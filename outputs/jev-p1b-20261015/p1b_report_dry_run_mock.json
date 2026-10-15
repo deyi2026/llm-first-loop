@@ -1,0 +1,181 @@
+{
+  "schema_version": "jev-p1b-report/v1",
+  "mode": "dry_run_mock",
+  "run_ref": "p1b-20261015-batch01",
+  "session_id": "jev-p1b-batch-20261015",
+  "started_at": "2026-10-15T12:57:47+08:00",
+  "finished_at": "2026-10-15T12:57:47+08:00",
+  "fixture_freeze": {
+    "manifest_sha256": "4372a1885adb83cbbfd9156c2b3da5680b9b631d2ee8aed49d050181a2364636",
+    "files_verified": 17,
+    "frozen_at": "2026-10-15T12:40:00+08:00"
+  },
+  "label_source": {
+    "file": "outputs/jev-blind-eval-20261015/blind_eval_result_v2_ds_v4_flash.json",
+    "judge_model": "deepseek/deepseek-v4-flash",
+    "manifest_sha256": "2fc40cfa4226b5c5024c0a874b7ca6168202cbf8a671abe6efdd7476cba8227d"
+  },
+  "policy": {
+    "max_requests": 2,
+    "max_input_tokens": 2000,
+    "max_output_tokens": 2000,
+    "max_questions_per_batch": 5,
+    "request_deadline_s": 2.0,
+    "retry_enabled": false,
+    "cost_cap": 10.0,
+    "cost_source": "user_authorization_20261015_usage_audit_no_price_list",
+    "provisional": false
+  },
+  "endpoint": null,
+  "batches": [
+    {
+      "batch_id": "batch-1",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-f3b70fcf682048f9",
+      "transport_status": "ok",
+      "resolved_model": "jev-1.13.0-mock",
+      "usage": {
+        "usage_status": "valid",
+        "input_tokens": 700,
+        "output_tokens": 60,
+        "total_tokens": 760,
+        "usage_reason": ""
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 4
+      },
+      "request_hash": "sha256:4c117b4e1b1ab32662193d87ab5b7216fe8a6873318b65d2e5d340210d63ba2c",
+      "questions_map_hash": "sha256:d8a06b171674c59488127304adac445c44c36b8909e91e491a65e48caaf84b28",
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "batch-2",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-7358895dbea04db7",
+      "transport_status": "ok",
+      "resolved_model": "jev-1.13.0-mock",
+      "usage": {
+        "usage_status": "valid",
+        "input_tokens": 220,
+        "output_tokens": 40,
+        "total_tokens": 260,
+        "usage_reason": ""
+      },
+      "summary": {
+        "valid": 2,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 2
+      },
+      "request_hash": "sha256:0a697f99f128a31e13537c1b131606a5a59fbf3e7e06c239a221dcf46109bba8",
+      "questions_map_hash": "sha256:76f0d4f14662d692ace2c209a7f09c562113ffef80bb6b1561276cc32710bb96",
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    }
+  ],
+  "aborted_reason": null,
+  "guard_used": {
+    "requests_used": 2,
+    "questions_used": 6,
+    "input_tokens_used": 785,
+    "output_tokens_used": 1536
+  },
+  "reconciliation": {
+    "eligible": 6,
+    "attempted_batches": 2,
+    "transport_completed_batches": 2,
+    "schema_valid_questions": 6,
+    "independently_labelled": 6,
+    "label_agreement_with_author": "9/9 取值一致",
+    "matches": 1,
+    "per_question": [
+      {
+        "q": "case-001/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-001",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "unknown",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.8,
+        "jev_p_selected": 0.8,
+        "match": false
+      },
+      {
+        "q": "case-002/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-002",
+        "blind_actual": "unknown",
+        "blind_final_state": "verified",
+        "jev_answer": "unknown",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.8,
+        "jev_p_selected": 0.8,
+        "match": true
+      },
+      {
+        "q": "case-003/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-003",
+        "blind_actual": "no",
+        "blind_final_state": "verified",
+        "jev_answer": "unknown",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.8,
+        "jev_p_selected": 0.8,
+        "match": false
+      },
+      {
+        "q": "case-006/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-006",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "unknown",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.8,
+        "jev_p_selected": 0.8,
+        "match": false
+      },
+      {
+        "q": "case-004/premise_bare_metal",
+        "batch_id": "batch-2",
+        "question_instance_id": "premise_bare_metal__case-004",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "unknown",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.8,
+        "jev_p_selected": 0.8,
+        "match": false
+      },
+      {
+        "q": "case-004/premise_systemd",
+        "batch_id": "batch-2",
+        "question_instance_id": "premise_systemd__case-004",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "unknown",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.8,
+        "jev_p_selected": 0.8,
+        "match": false
+      }
+    ],
+    "claim_limit": "6 题仅证明 wire/守卫/对账链路可运行，不构成 §9.2 校准资格；mock 模式答案为脚本中立值，不代表 Jev 质量"
+  },
+  "cost": {
+    "cap_rmb": 10.0,
+    "fields_found": [],
+    "enforcement": "token 硬闸 + usage 审计 + 响应携带费用字段且累计>cap 即中止"
+  },
+  "honesty": "真实发送与否以本目录 events/receipt 为准；观察结果不改闸（§11.1/§11.1.1）"
+}

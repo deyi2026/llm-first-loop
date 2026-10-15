@@ -1,0 +1,242 @@
+{
+  "root": "data/event_logs",
+  "bound": "2026-10-15T00:08:59.999999+08:00",
+  "files_top": 830,
+  "files_segment": 337,
+  "files_total": 1167,
+  "lines_parsed": 1966232,
+  "parse_bad": 0,
+  "knowledge_top": 3374,
+  "knowledge_segment": 11350,
+  "knowledge_total": 14724,
+  "knowledge_sessions": 118,
+  "knowledge_run_refs": 568,
+  "knowledge_first_ts": "2026-10-09T05:34:47.865259+08:00",
+  "knowledge_last_ts": "2026-10-15T00:08:58.860260+08:00",
+  "knowledge_daily": {
+    "2026-10-09": 1436,
+    "2026-10-10": 2966,
+    "2026-10-11": 1352,
+    "2026-10-12": 1105,
+    "2026-10-13": 4530,
+    "2026-10-14": 3249,
+    "2026-10-15": 86
+  },
+  "run_end_total": 4518,
+  "run_end_sessions": 667,
+  "knowledge_types": {
+    "followup_tool_observed": 13094,
+    "discovery": 678,
+    "run_outcome": 490,
+    "failure_observed": 294,
+    "learning_unconfirmed": 87,
+    "learning_saved": 30,
+    "experience_declaration": 25,
+    "method_declaration": 15,
+    "hydration_observed": 9,
+    "reference_prepared": 2
+  },
+  "top50_types": [
+    [
+      "llm.partial_checkpoint",
+      519541
+    ],
+    [
+      "context.compressed",
+      215986
+    ],
+    [
+      "message.appended",
+      188520
+    ],
+    [
+      "message.cache_compacted",
+      167417
+    ],
+    [
+      "tool.execution.declared",
+      80372
+    ],
+    [
+      "tool.execution.started",
+      80372
+    ],
+    [
+      "tool.execution.receipt_committed",
+      80362
+    ],
+    [
+      "tool.execution.finished",
+      80347
+    ],
+    [
+      "request.meta",
+      78631
+    ],
+    [
+      "request.usage",
+      77924
+    ],
+    [
+      "cache.window",
+      74974
+    ],
+    [
+      "provider.transport.opened",
+      57126
+    ],
+    [
+      "provider.transport.settled",
+      57062
+    ],
+    [
+      "provider.call.opened",
+      56567
+    ],
+    [
+      "provider.call.settled",
+      56504
+    ],
+    [
+      "provider.structure.validated",
+      47141
+    ],
+    [
+      "knowledge.followup_tool_observed",
+      13094
+    ],
+    [
+      "injection.profile.shadow",
+      6438
+    ],
+    [
+      "run.end",
+      4518
+    ],
+    [
+      "tool.execution.effect_prepared",
+      4400
+    ],
+    [
+      "tool.execution.effect_observed",
+      4400
+    ],
+    [
+      "history.compaction",
+      2028
+    ],
+    [
+      "learning.enqueued",
+      1262
+    ],
+    [
+      "external.execution.launched",
+      1181
+    ],
+    [
+      "external.execution.terminal",
+      1169
+    ],
+    [
+      "session.created",
+      837
+    ],
+    [
+      "knowledge.discovery",
+      678
+    ],
+    [
+      "knowledge.run_outcome",
+      490
+    ],
+    [
+      "session.meta_changed",
+      462
+    ],
+    [
+      "program.final",
+      394
+    ],
+    [
+      "service_action_terminal",
+      339
+    ],
+    [
+      "history.compaction_state_reset",
+      320
+    ],
+    [
+      "knowledge.failure_observed",
+      294
+    ],
+    [
+      "llm.interrupted",
+      253
+    ],
+    [
+      "interop.spliced",
+      176
+    ],
+    [
+      "method.reflection",
+      132
+    ],
+    [
+      "subagent.linked",
+      111
+    ],
+    [
+      "subagent.generation.started",
+      111
+    ],
+    [
+      "subagent.result.available",
+      110
+    ],
+    [
+      "subagent.generation.released",
+      110
+    ],
+    [
+      "subagent.terminal",
+      110
+    ],
+    [
+      "external.execution.cancel_requested",
+      88
+    ],
+    [
+      "knowledge.learning_unconfirmed",
+      87
+    ],
+    [
+      "provider.transport.orphaned",
+      55
+    ],
+    [
+      "request.ingress_pressure",
+      41
+    ],
+    [
+      "knowledge.learning_saved",
+      30
+    ],
+    [
+      "knowledge.experience_declaration",
+      25
+    ],
+    [
+      "subagent.mailbox.queued",
+      20
+    ],
+    [
+      "knowledge.method_declaration",
+      15
+    ],
+    [
+      "method.usage_observed",
+      12
+    ]
+  ],
+  "file_manifest_sha256": "fe859fb33f4399416aa0bf8ce3c8ec1ed7a20d84784dae3095ba5187f63c0d23"
+}

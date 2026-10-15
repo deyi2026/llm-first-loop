@@ -137,3 +137,7 @@ build/
 # 安全扫描体积门 1MB 不豁免——2026-10-14 收口决策）
 outputs/lfl-article/index.html
 outputs/lfl-article/*-embed*.html
+
+# Jev P1b：vendored SemIf（~1GB）与源 tarball 不入库；重物按目录精确排除
+outputs/jev-p1b-20261015/vendor/
+outputs/jev-p1b-20261015/semif.tar.gz

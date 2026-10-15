@@ -69,6 +69,8 @@ _ALLOWLIST=(
 _ABS_PATH_ONLY_ALLOWLIST=(
   'experiences/'  # 经验档案：文档如实记录本机工作区路径=记录本体，非泄露；secret/大文件/禁路径检查不豁免
   'outputs/jev-p0b-20261015/digest_run_058dc3b8.json'  # Jev P0b 只读投影回执：provenance 嵌工作区路径=记录本体（同 experiences/ 粒度先例，2026-10-15 登记；secret/大文件仍全检）
+  'outputs/jev-p1l-expand-20261015/jev_shadow_events_v2.jsonl'  # Jev P1b-L2 shadow 事件回执：attempt facts 嵌回执落盘路径=记录本体（同上粒度，2026-10-15 登记）
+  'outputs/jev-p1l-expand-20261015/p1l_expand_report.json'  # Jev P1b-L2 R1 中止报告：报告路径字段嵌工作区路径=记录本体（同上粒度，2026-10-15 登记）
 )
 
 # ── 规则粒度豁免：仅跳过规则1（禁路径）；规则2敏感内容/规则3绝对路径/规则4大文件仍全量执行 ──

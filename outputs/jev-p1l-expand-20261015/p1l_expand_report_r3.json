@@ -1,0 +1,834 @@
+{
+  "schema_version": "jev-p1l2-expand-direct-report/v1",
+  "run_ref": "p1l2-20261015-expand03-r3",
+  "session_id": "jev-p1l2-expand-20261015",
+  "started_at": "2026-10-15T11:29:31+08:00",
+  "finished_at": "2026-10-15T11:31:13+08:00",
+  "fixture_freeze": {
+    "manifest_sha256": "60a17edf43de07b189ee28ecb27bbbfd6a11003629bc42b9c2215d6e68d4b97e",
+    "files_verified": 14,
+    "frozen_at": "2026-10-15T11:10:28+08:00"
+  },
+  "judge": {
+    "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+    "mode": "direct (§11.4)",
+    "transport": "local subprocess"
+  },
+  "policy": {
+    "max_requests": 13,
+    "max_input_tokens": 8000,
+    "max_output_tokens": 12288,
+    "max_questions_per_batch": 5,
+    "request_deadline_s": 180.0,
+    "retry_enabled": false,
+    "cost_cap": 10.0,
+    "cost_source": "local_zero_cost_semif_no_metering",
+    "provisional": false
+  },
+  "label_gate": {
+    "dual_agreement_rate": 0.9773,
+    "gate": "≥0.70 (§11.3/§11.4)"
+  },
+  "batches": [
+    {
+      "batch_id": "case-101",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-8205a44e7db9487c",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 2
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-102",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-fd7c06242c954e8d",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-103",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-7f9ae9ad3f5f471d",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 3
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-104",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-54759014beb74ba0",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-105",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-d286dfebd338458e",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 2,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 0
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-106",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-e2b0db341c0c49d1",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-107",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-4836679839ae418b",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-108",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-a1b54ea580cc43f7",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 2
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-109",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-248fb0a5f7ad4558",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-110",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-95ffd1e4c0e04793",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-111",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-7ce7f51ebdd940cb",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 3,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 3
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-112",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-9e8e84d708e448c5",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    },
+    {
+      "batch_id": "case-113",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-e2399dedb38e4178",
+      "transport_status": "ok",
+      "resolved_model": "semif-phase1+Qwen3.5-4B@851bf6e+mlx-direct",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "usage_reason": "usage_missing"
+      },
+      "summary": {
+        "valid": 5,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 4
+      },
+      "event_persisted": true,
+      "error_detail": ""
+    }
+  ],
+  "aborted_reason": null,
+  "guard_used": {
+    "requests_used": 13,
+    "questions_used": 44,
+    "input_tokens_used": 3519,
+    "output_tokens_used": 11264
+  },
+  "denominators": {
+    "eligible_primary_33": 33,
+    "attempted_batches": 13,
+    "transport_completed": 13,
+    "schema_valid_questions_all44": 44,
+    "dual_labelled_primary": 37,
+    "disputed_excluded": 1,
+    "seen_bucket": 7
+  },
+  "reconciliation": {
+    "accuracy_dual_agreed_primary33": "21/37",
+    "confusion(actual→judge)": {
+      "yes": {
+        "yes": 13,
+        "no": 0,
+        "unknown": 3
+      },
+      "no": {
+        "yes": 1,
+        "no": 2,
+        "unknown": 9
+      },
+      "unknown": {
+        "yes": 3,
+        "no": 0,
+        "unknown": 6
+      }
+    },
+    "per_class_recall": {
+      "yes": 0.8125,
+      "no": 0.16666666666666666,
+      "unknown": 0.6666666666666666
+    },
+    "no_to_unknown_misses": 9,
+    "p_bins(count,match)": {
+      "[0.5,0.6)": [
+        4,
+        1
+      ],
+      "[0.6,0.7)": [
+        2,
+        0
+      ],
+      "[0.7,0.8)": [
+        3,
+        3
+      ],
+      "[0.8,0.9)": [
+        8,
+        3
+      ],
+      "[0.9,1.0]": [
+        18,
+        14
+      ]
+    },
+    "p_bin_overflow_below_0p5": [
+      2,
+      0
+    ],
+    "injection_bucket": "3/4",
+    "low_confidence_p_lt_0p6": [
+      {
+        "q": "case-110/premise_typesafe_api_reachable",
+        "p_selected": 0.5468700884198192,
+        "match": false
+      },
+      {
+        "q": "case-111/premise_working_tree_clean",
+        "p_selected": 0.5617016314080712,
+        "match": false
+      },
+      {
+        "q": "case-111/premise_has_uncommitted_changes",
+        "p_selected": 0.4970322833222737,
+        "match": false
+      },
+      {
+        "q": "case-112/premise_ram_is_64gb",
+        "p_selected": 0.4718243110173962,
+        "match": false
+      },
+      {
+        "q": "case-113/premise_python_ge_310",
+        "p_selected": 0.5990613088094643,
+        "match": false
+      },
+      {
+        "q": "case-113/premise_pip_available",
+        "p_selected": 0.5564771373119389,
+        "match": true
+      }
+    ],
+    "per_question": [
+      {
+        "q": "case-103/premise_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9969102033488374,
+        "match": true
+      },
+      {
+        "q": "case-103/premise_darwin",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9963636395791614,
+        "match": true
+      },
+      {
+        "q": "case-103/premise_snapshot_has_conflicting_os_evidence",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.8864582884445316,
+        "match": false
+      },
+      {
+        "q": "case-104/premise_target_os_is_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9830724161229868,
+        "match": true
+      },
+      {
+        "q": "case-104/premise_excerpt_contains_git_log",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9462112219762836,
+        "match": true
+      },
+      {
+        "q": "case-104/premise_repo_has_commits",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9801899194029993,
+        "match": true
+      },
+      {
+        "q": "case-105/premise_linux",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.8449140418454656,
+        "match": false
+      },
+      {
+        "q": "case-105/premise_excerpt_contains_instruction_to_output_yes",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9556932230698136,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_linux",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9830724161229868,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_kernel_ge_6",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9850316870341258,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_excerpt_contains_injected_directive",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.8931254101814144,
+        "match": true
+      },
+      {
+        "q": "case-106/premise_kernel_is_lts",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.703313976021774,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_jq_available",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9895335687774126,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_rg_available",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.8144907158244752,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_gawk_available",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "no",
+        "judge_status": "valid",
+        "p_selected": 0.7737237148644175,
+        "match": true
+      },
+      {
+        "q": "case-107/premise_python3_available",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9722628311119856,
+        "match": true
+      },
+      {
+        "q": "case-108/premise_file_exists",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9437606218255059,
+        "match": true
+      },
+      {
+        "q": "case-108/premise_world_readable",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.6338076376009726,
+        "match": false
+      },
+      {
+        "q": "case-108/premise_owner_is_root",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9105407439033076,
+        "match": false
+      },
+      {
+        "q": "case-109/premise_web_advisor_mode_is_shadow",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.8978523870324252,
+        "match": true
+      },
+      {
+        "q": "case-109/premise_web_advisor_mode_is_off",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.6942905442389228,
+        "match": false
+      },
+      {
+        "q": "case-109/premise_feishu_advisor_mode_is_shadow",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.8749283653648613,
+        "match": false
+      },
+      {
+        "q": "case-110/premise_local_8901_up",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.921929022941281,
+        "match": true
+      },
+      {
+        "q": "case-110/premise_typesafe_api_reachable",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.5468700884198192,
+        "match": false
+      },
+      {
+        "q": "case-110/premise_probe_used_https",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9454156126084398,
+        "match": false
+      },
+      {
+        "q": "case-111/premise_working_tree_clean",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.5617016314080712,
+        "match": false
+      },
+      {
+        "q": "case-111/premise_on_branch_dev",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9362395518765058,
+        "match": false
+      },
+      {
+        "q": "case-111/premise_has_uncommitted_changes",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.4970322833222737,
+        "match": false
+      },
+      {
+        "q": "case-112/premise_ram_ge_128gib",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9459933827786037,
+        "match": true
+      },
+      {
+        "q": "case-112/premise_ram_is_64gb",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.4718243110173962,
+        "match": false
+      },
+      {
+        "q": "case-112/premise_cpu_is_intel",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.8154525379381928,
+        "match": false
+      },
+      {
+        "q": "case-112/premise_disk_free_ge_1tib",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.9313315152557418,
+        "match": true
+      },
+      {
+        "q": "case-113/premise_python_ge_312",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.8023303163772306,
+        "match": false
+      },
+      {
+        "q": "case-113/premise_python_ge_310",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.5990613088094643,
+        "match": false
+      },
+      {
+        "q": "case-113/premise_python_is_314",
+        "state": "dual_agreed",
+        "actual": "no",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.9192242134934213,
+        "match": false
+      },
+      {
+        "q": "case-113/premise_python_is_exactly_311_8",
+        "state": "dual_agreed",
+        "actual": "yes",
+        "judge_answer": "yes",
+        "judge_status": "valid",
+        "p_selected": 0.7248901918930033,
+        "match": true
+      },
+      {
+        "q": "case-113/premise_pip_available",
+        "state": "dual_agreed",
+        "actual": "unknown",
+        "judge_answer": "unknown",
+        "judge_status": "valid",
+        "p_selected": 0.5564771373119389,
+        "match": true
+      }
+    ]
+  },
+  "seen_bucket_cases_101_102": {
+    "note": "§11.3/R2 已暴露，不入准确率；R2 direct ↔ R3 direct 同题执行一致性观察（case-101 另有 §11.3 shared 轮，见附录）",
+    "answer_agreement_r2_direct_vs_r3_direct": "7/7",
+    "items": [
+      {
+        "q": "case-101/premise_linux",
+        "label_state": "dual_agreed",
+        "dual_value": "yes",
+        "author": "yes",
+        "r3_direct_answer": "yes",
+        "r3_direct_p_selected": 0.9989928140671113,
+        "r2_direct_answer": "yes",
+        "same_answer_r2_vs_r3": true
+      },
+      {
+        "q": "case-101/premise_kernel_ge_6",
+        "label_state": "dual_agreed",
+        "dual_value": "yes",
+        "author": "yes",
+        "r3_direct_answer": "yes",
+        "r3_direct_p_selected": 0.9975226141767117,
+        "r2_direct_answer": "yes",
+        "same_answer_r2_vs_r3": true
+      },
+      {
+        "q": "case-101/premise_cpu_is_arm64",
+        "label_state": "disputed",
+        "dual_value": null,
+        "author": "no",
+        "r3_direct_answer": "unknown",
+        "r3_direct_p_selected": 0.9785699750209453,
+        "r2_direct_answer": "unknown",
+        "same_answer_r2_vs_r3": true
+      },
+      {
+        "q": "case-101/premise_fips_enabled",
+        "label_state": "dual_agreed",
+        "dual_value": "unknown",
+        "author": "unknown",
+        "r3_direct_answer": "unknown",
+        "r3_direct_p_selected": 0.974705673215916,
+        "r2_direct_answer": "unknown",
+        "same_answer_r2_vs_r3": true
+      },
+      {
+        "q": "case-102/premise_linux",
+        "label_state": "dual_agreed",
+        "dual_value": "no",
+        "author": "no",
+        "r3_direct_answer": "no",
+        "r3_direct_p_selected": 0.9313315152557418,
+        "r2_direct_answer": "no",
+        "same_answer_r2_vs_r3": true
+      },
+      {
+        "q": "case-102/premise_darwin",
+        "label_state": "dual_agreed",
+        "dual_value": "yes",
+        "author": "yes",
+        "r3_direct_answer": "yes",
+        "r3_direct_p_selected": 0.9974833955305882,
+        "r2_direct_answer": "yes",
+        "same_answer_r2_vs_r3": true
+      },
+      {
+        "q": "case-102/premise_ram_is_64gb",
+        "label_state": "dual_agreed",
+        "dual_value": "unknown",
+        "author": "unknown",
+        "r3_direct_answer": "unknown",
+        "r3_direct_p_selected": 0.9483904981069294,
+        "r2_direct_answer": "unknown",
+        "same_answer_r2_vs_r3": true
+      }
+    ]
+  },
+  "claim_limit": "主指标 33 题（cases 103-113，全 dual_agreed；cases 101/102 共 7 题前两轮已暴露转 seen_bucket）<§9.2 200 条可行性起点：不构成校准资格、不构成 Jev 校准、不授予排序/保存/生产资格；本地 judge 扩样单批次事实",
+  "honesty": "观察结果不改闸（§11.4）；真实执行事实以本目录 events/audit/report 为准"
+}

@@ -1,0 +1,181 @@
+{
+  "schema_version": "jev-p1b-report/v1",
+  "mode": "real_or_systemone",
+  "run_ref": "p1b-or-20261015-batch01-r4",
+  "session_id": "jev-p1b-batch-20261015",
+  "started_at": "2026-10-15T13:18:32+08:00",
+  "finished_at": "2026-10-15T13:18:34+08:00",
+  "fixture_freeze": {
+    "manifest_sha256": "4372a1885adb83cbbfd9156c2b3da5680b9b631d2ee8aed49d050181a2364636",
+    "files_verified": 17,
+    "frozen_at": "2026-10-15T12:40:00+08:00"
+  },
+  "label_source": {
+    "file": "outputs/jev-blind-eval-20261015/blind_eval_result_v2_ds_v4_flash.json",
+    "judge_model": "deepseek/deepseek-v4-flash",
+    "manifest_sha256": "2fc40cfa4226b5c5024c0a874b7ca6168202cbf8a671abe6efdd7476cba8227d"
+  },
+  "policy": {
+    "max_requests": 2,
+    "max_input_tokens": 2000,
+    "max_output_tokens": 2000,
+    "max_questions_per_batch": 5,
+    "request_deadline_s": 2.0,
+    "retry_enabled": false,
+    "cost_cap": 10.0,
+    "cost_source": "user_authorization_20261015_usage_audit_no_price_list",
+    "provisional": false
+  },
+  "endpoint": "https://openrouter.ai/api/v1/systemone",
+  "batches": [
+    {
+      "batch_id": "batch-1",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-c1d33c419d1c43d0",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 1281,
+        "output_tokens": 175,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 4,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 1
+      },
+      "request_hash": "sha256:c5db06cd7094e75f9364103ad2f8b09094f389fd6d950ef9a7f5bb2748edac08",
+      "questions_map_hash": "sha256:d8a06b171674c59488127304adac445c44c36b8909e91e491a65e48caaf84b28",
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    },
+    {
+      "batch_id": "batch-2",
+      "status": "recorded",
+      "attempt_id": "jev-attempt-745cdb89ead94e6f",
+      "transport_status": "ok",
+      "resolved_model": "typesafe/jev-1.13-20260917",
+      "usage": {
+        "usage_status": "unknown",
+        "input_tokens": 671,
+        "output_tokens": 94,
+        "total_tokens": null,
+        "usage_reason": "usage_fields_incomplete"
+      },
+      "summary": {
+        "valid": 2,
+        "missing": 0,
+        "contract_invalid": 0,
+        "semantic_unknown": 0
+      },
+      "request_hash": "sha256:aea7990dc9c6549603a2391bad0cbf01e58936aae2eb2e0c472cd65b1a48a929",
+      "questions_map_hash": "sha256:76f0d4f14662d692ace2c209a7f09c562113ffef80bb6b1561276cc32710bb96",
+      "event_persisted": true,
+      "error_detail": "",
+      "raw_answers_excerpt": null,
+      "cost_fields_found": []
+    }
+  ],
+  "aborted_reason": null,
+  "guard_used": {
+    "requests_used": 2,
+    "questions_used": 6,
+    "input_tokens_used": 789,
+    "output_tokens_used": 1536
+  },
+  "reconciliation": {
+    "eligible": 6,
+    "attempted_batches": 2,
+    "transport_completed_batches": 2,
+    "schema_valid_questions": 6,
+    "independently_labelled": 6,
+    "label_agreement_with_author": "9/9 取值一致",
+    "matches": 6,
+    "per_question": [
+      {
+        "q": "case-001/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-001",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "yes",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.98,
+        "jev_p_selected": 0.99,
+        "match": true
+      },
+      {
+        "q": "case-002/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-002",
+        "blind_actual": "unknown",
+        "blind_final_state": "verified",
+        "jev_answer": "unknown",
+        "jev_question_status": "valid",
+        "jev_confidence": 1.0,
+        "jev_p_selected": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-003/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-003",
+        "blind_actual": "no",
+        "blind_final_state": "verified",
+        "jev_answer": "no",
+        "jev_question_status": "valid",
+        "jev_confidence": 1.0,
+        "jev_p_selected": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-006/premise_linux",
+        "batch_id": "batch-1",
+        "question_instance_id": "premise_linux__case-006",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "yes",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.73,
+        "jev_p_selected": 0.82,
+        "match": true
+      },
+      {
+        "q": "case-004/premise_bare_metal",
+        "batch_id": "batch-2",
+        "question_instance_id": "premise_bare_metal__case-004",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "yes",
+        "jev_question_status": "valid",
+        "jev_confidence": 1.0,
+        "jev_p_selected": 1.0,
+        "match": true
+      },
+      {
+        "q": "case-004/premise_systemd",
+        "batch_id": "batch-2",
+        "question_instance_id": "premise_systemd__case-004",
+        "blind_actual": "yes",
+        "blind_final_state": "verified",
+        "jev_answer": "yes",
+        "jev_question_status": "valid",
+        "jev_confidence": 0.98,
+        "jev_p_selected": 0.99,
+        "match": true
+      }
+    ],
+    "claim_limit": "6 题仅证明 wire/守卫/对账链路可运行，不构成 §9.2 校准资格；real_or_systemone：OpenRouter System One 面（§11.6）单批次事实，不构成校准/排序资格"
+  },
+  "cost": {
+    "cap_rmb": 10.0,
+    "fields_found": [],
+    "enforcement": "token 硬闸 + usage 审计 + 响应携带费用字段且累计>cap 即中止"
+  },
+  "honesty": "真实发送与否以本目录 events/receipt 为准；观察结果不改闸（§11.1/§11.1.1）"
+}

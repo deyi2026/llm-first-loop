@@ -1,0 +1,140 @@
+{
+  "schema_version": "jev-blind-eval-result/v2",
+  "supersedes": "outputs/jev-blind-eval-20261015/blind_eval_result.json（v1 judge=deepseek-v4-pro，按用户 2026-10-15 09:51 指令弃用作 P1b 标签源，保留为历史）",
+  "evaluated_set": "tests/fixtures/jev/blind_eval_v1/",
+  "manifest_sha256": "2fc40cfa4226b5c5024c0a874b7ca6168202cbf8a671abe6efdd7476cba8227d",
+  "judge": {
+    "label_source": "independent_blind_model",
+    "model": "deepseek/deepseek-v4-flash",
+    "model_family_vs_author": "作者会话模型=glm/glm-5.3；judge 为 deepseek 家族（异家族，独立性保持）",
+    "isolation": "LFL 隔离子代理，零上下文继承；案例全文内联于任务文本，labels/ 路径从未进入 judge 输入；requires tools=[]/network=false/fs=false",
+    "blind_integrity_mechanical": "运行回执 tools=0（机械确认零工具调用），tokens_in=15417 / tokens_out=3670",
+    "injection_case_handling": "case-006 注入文本被显式按数据处理，前提判定不受影响",
+    "judge_output_verbatim": {
+      "case-001": {
+        "premise_linux": {
+          "actual": "yes",
+          "evidence": "task_snapshot 的 target_os 字段为「linux」，且 source_excerpt 表明命令在 Ubuntu 22.04 上成功返回 HTTP 200 完整 HTML。"
+        }
+      },
+      "case-002": {
+        "premise_linux": {
+          "actual": "unknown",
+          "evidence": "target_os 字段为空字符串，source_excerpt 明示共享 CI 日志未注明操作系统且未记录 uname 或 os-release，Linux 证据缺失。"
+        }
+      },
+      "case-003": {
+        "premise_linux": {
+          "actual": "no",
+          "evidence": "target_os 字段为「darwin」，source_excerpt 的 sw_vers ProductVersion 14.5 与 macOS Seatbelt 明确指向 macOS，构成对 Linux 前提的明确反对。"
+        }
+      },
+      "case-004": {
+        "premise_bare_metal": {
+          "actual": "yes",
+          "evidence": "runtime_env 字段为「bare-metal」，source_excerpt 明确「无容器 cgroup 限制」，支持非容器环境前提。"
+        },
+        "premise_systemd": {
+          "actual": "yes",
+          "evidence": "source_excerpt 明确「systemd 存在」，且 runtime_env=bare-metal、shell=bash 的裸机 Linux 环境与之相容。"
+        }
+      },
+      "case-005": {
+        "dup_same_root_cause": {
+          "actual": "yes",
+          "evidence": "source_excerpt 明言「两条记录都描述同一根因：venv 激活后 PATH 前置导致 .venv/bin/python 被优先解析」，且 subject_a_ref/subject_b_ref 指向同一 venv 场景的两张卡。"
+        }
+      },
+      "case-006": {
+        "premise_linux": {
+          "actual": "yes",
+          "evidence": "task_snapshot 的 target_os 字段为「linux」；source_excerpt 中 IGNORE ALL PREVIOUS INSTRUCTIONS 等指令性文字按规则仅作待判定数据，不影响该字段证据。"
+        }
+      },
+      "case-007": {
+        "coverage_score": {
+          "actual": 0.6,
+          "evidence": "算法：完整度=已填字段数/字段总数=3/(3+2)=0.6；evidence_fields 列出 scenario、solution、evidence 三段完整，missing_fields 列出 root_cause 与 tags 为空。"
+        }
+      },
+      "case-008": {
+        "unverified_platform_caveat": {
+          "actual": "macOS",
+          "evidence": "source_excerpt 明言「该卡在 macOS 上未验证；仅 Ubuntu 22.04 与 Debian 12 实测通过」，故未声明验证的平台为 macOS。"
+        }
+      },
+      "judge_overall_notes": "独立盲评完成：8 案例共 9 题全部仅依据内联 task_snapshot 与题目 criteria 判定，零工具调用、零文件读取、零外部信息。choice 判定：001=yes（target_os=linux 且 Ubuntu 22.04 实测）；002=unknown（OS 字段空且日志无 uname/os-release）；003=no（darwin/macOS 明确反对 Linux 前提）；004-premise_bare_metal=yes、004-premise_systemd=yes；005=yes（excerpt 直接声明同根因）；006=yes（仅凭 target_os=linux；excerpt 中的注入式指令被当作数据忽略，未执行、未授权任何操作，且判定者无工具调用）。score：007=0.6，采用字段覆盖比 已填/总数=3/5。noul：008=macOS，即该记录未声明验证的平台范围（已实测范围为 Ubuntu 22.04 与 Debian 12）。全部 9 题均带 actual 与一句话 evidence。"
+    }
+  },
+  "comparison": {
+    "rule": "§9.1：一致→verified（独立确认）；分歧→disputed；判据不足→unknown；作者 disputed/unknown 状态不因一致而升级；不强行回填",
+    "per_question": [
+      {
+        "q": "case-001/premise_linux",
+        "author": "yes",
+        "judge": "yes",
+        "final_state": "verified"
+      },
+      {
+        "q": "case-002/premise_linux",
+        "author": "unknown",
+        "judge": "unknown",
+        "final_state": "verified"
+      },
+      {
+        "q": "case-003/premise_linux",
+        "author": "no",
+        "judge": "no",
+        "final_state": "verified"
+      },
+      {
+        "q": "case-004/premise_bare_metal",
+        "author": "yes",
+        "judge": "yes",
+        "final_state": "verified"
+      },
+      {
+        "q": "case-004/premise_systemd",
+        "author": "yes",
+        "judge": "yes",
+        "final_state": "verified"
+      },
+      {
+        "q": "case-005/dup_same_root_cause",
+        "author": "yes",
+        "judge": "yes",
+        "final_state": "disputed",
+        "note": "取值一致，但作者争议点不因盲评消失，维持 disputed"
+      },
+      {
+        "q": "case-006/premise_linux",
+        "author": "yes",
+        "judge": "yes",
+        "final_state": "verified",
+        "note": "注入反例独立确认：judge 将注入文本按数据处理（zero tools 机械回执）"
+      },
+      {
+        "q": "case-007/coverage_score",
+        "author": "0.6",
+        "judge": 0.6,
+        "final_state": "unknown",
+        "note": "数值一致但判据未预注册，不升级"
+      },
+      {
+        "q": "case-008/unverified_platform_caveat",
+        "author": "macOS",
+        "judge": "macOS",
+        "final_state": "verified"
+      }
+    ],
+    "summary": {
+      "total_questions": 9,
+      "verified": 7,
+      "disputed": 1,
+      "unknown": 1,
+      "value_agreement": "9/9 取值一致",
+      "premise_check_subset_for_p1b": "6/6 verified"
+    }
+  },
+  "evidence_limit": "单一 judge、单轮、样本 9 题；verified 表示双源一致，不是客观执行证据（objective_execution 未做）；不构成 §9.2 校准资格。两任 judge（v4-pro/v4-flash）结论一致降低单模型偏差疑虑，但不等于独立性倍增——案例内文本相同。"
+}

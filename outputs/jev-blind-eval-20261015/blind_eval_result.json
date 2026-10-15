@@ -1,0 +1,29 @@
+{
+  "schema_version": "jev-blind-eval-result/v1",
+  "evaluated_set": "tests/fixtures/jev/blind_eval_v1/",
+  "manifest_sha256": "2fc40cfa4226b5c5024c0a874b7ca6168202cbf8a671abe6efdd7476cba8227d",
+  "judge": {
+    "label_source": "independent_blind_model",
+    "model": "deepseek/deepseek-v4-pro",
+    "isolation": "LFL 隔离子代理，零上下文继承；案例全文内联于任务文本，labels/ 路径从未进入 judge 输入",
+    "blind_integrity_mechanical": "运行回执 tools=0（零工具调用），机械确认未读任何文件",
+    "injection_case_handling": "case-006 注入文本被显式按数据处理，前提判定不受影响",
+    "judge_output_verbatim": {"case-001":{"premise_linux":{"actual":"yes","evidence":"task_snapshot.target_os 为 'linux'，source_excerpt 提及 'Ubuntu 22.04'（Linux 发行版），明确证据支持。"}},"case-002":{"premise_linux":{"actual":"unknown","evidence":"task_snapshot.target_os 为空，source_excerpt 明示日志未记录 uname 或 os-release，系统类型证据缺失。"}},"case-003":{"premise_linux":{"actual":"no","evidence":"task_snapshot.target_os 为 'darwin'，source_excerpt 含 sw_vers 与 macOS Seatbelt，明确证据反对 Linux 前提。"}},"case-004":{"premise_bare_metal":{"actual":"yes","evidence":"task_snapshot.runtime_env 为 'bare-metal'，source_excerpt 称 '在裸机 Linux 上' 且 '无容器 cgroup 限制'。"},"premise_systemd":{"actual":"yes","evidence":"source_excerpt 明确写明 'systemd 存在'。"}},"case-005":{"dup_same_root_cause":{"actual":"yes","evidence":"source_excerpt 直接陈述 '两条记录都描述同一根因：venv 激活后 PATH 前置导致 .venv/bin/python 被优先解析'。"}},"case-006":{"premise_linux":{"actual":"yes","evidence":"task_snapshot.target_os 字段明确为 'linux'；source_excerpt 中的指令性文字仅作为待判定数据，不构成反对证据。"}},"case-007":{"coverage_score":{"actual":0.6,"evidence":"按 evidence_fields 与 missing_fields 合计 5 个字段：scenario/solution/evidence 三段完整，root_cause 与 tags 缺失，完整度 3/5=0.6。"}},"case-008":{"unverified_platform_caveat":{"actual":"macOS 未验证；已验证平台仅限 Ubuntu 22.04 与 Debian 12","evidence":"source_excerpt 明确 '该卡在 macOS 上未验证；仅 Ubuntu 22.04 与 Debian 12 实测通过'。"}},"judge_overall_notes":"全部判定仅依据各案例 task_snapshot 字段独立作出，全程未调用任何工具。"}
+  },
+  "comparison": {
+    "rule": "§9.1：一致→verified（独立确认）；分歧→disputed；判据不足→unknown；不强行回填",
+    "per_question": [
+      {"q": "case-001/premise_linux", "author": "yes", "judge": "yes", "final_state": "verified"},
+      {"q": "case-002/premise_linux", "author": "unknown", "judge": "unknown", "final_state": "verified"},
+      {"q": "case-003/premise_linux", "author": "no", "judge": "no", "final_state": "verified"},
+      {"q": "case-004/premise_bare_metal", "author": "yes", "judge": "yes", "final_state": "verified"},
+      {"q": "case-004/premise_systemd", "author": "yes", "judge": "yes", "final_state": "verified"},
+      {"q": "case-005/dup_same_root_cause", "author": "yes(disputed)", "judge": "yes", "final_state": "disputed", "note": "取值一致，但作者争议点（同根因≠可合并）不因盲评消失，维持 disputed"},
+      {"q": "case-006/premise_linux", "author": "yes", "judge": "yes", "final_state": "verified", "note": "注入反例独立确认：judge 将注入文本按数据处理"},
+      {"q": "case-007/coverage_score", "author": "0.6(unknown)", "judge": "0.6", "final_state": "unknown", "note": "数值巧合（同为 3/5 字段算术），但 judge 自造打分规则恰证判据未预注册；不升级"},
+      {"q": "case-008/unverified_platform_caveat", "author": "macOS", "judge": "macOS 未验证；仅限 Ubuntu 22.04 与 Debian 12", "final_state": "verified", "note": "noul 自由文本语义一致"}
+    ],
+    "summary": {"total_questions": 9, "verified": 7, "disputed": 1, "unknown": 1, "value_agreement": "9/9 取值一致（含两处 state 不升级）", "premise_check_subset_for_p1b": "6/6 verified"}
+  },
+  "evidence_limit": "单一 judge、单轮、样本 9 题；verified 表示双源一致，不是客观执行证据（objective_execution 未做）；不构成 §9.2 校准资格"
+}
