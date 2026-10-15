@@ -342,9 +342,11 @@ def test_experience_store_usage_net_disproven_current_doc_triggers(tmp_path: Pat
 def test_render_usage_net_part_and_experience_thin_row() -> None:
     assert _usage_net_part({}) == ""
     part = _usage_net_part({"usage_net": 3, "usage_net_detail": "a4/n1/r0"})
-    assert part == " | usage_net=+3 [a4/n1/r0]"
+    # TASK-fdc7603b-001 B 线：净分展示必须标注"声明净分"（非独立验证结论）
+    assert part == " | usage_net=+3 [a4/n1/r0]（声明净分，非独立验证）"
     breach_part = _usage_net_part({"usage_net": -2, "usage_net_detail": "a0/n0/r2", "pending_disposition": True})
     assert "usage_net=-2" in breach_part and "pending_disposition=true" in breach_part
+    assert "声明净分" in breach_part
 
     thin = _render_experience_record(
         {
@@ -378,6 +380,7 @@ def test_render_usage_net_part_and_experience_thin_row() -> None:
     )
     assert "usage_net=-2" in hydrated
     assert "pending_disposition=true" in hydrated
+    assert "声明净分" in hydrated  # hydrated 经验卡逐字段路径同样标注（B 线）
 
 
 def test_alert_section_content_contract() -> None:

@@ -556,12 +556,60 @@ def test_rule_feedback_projection_aggregates_receipts_and_pending(tmp_path):
     assert data18["rule_recent_issue"] == "触发条件与任务不符"
     assert data18["rule_pending_count"] == 0
     assert data18["rule_feedback_watermark"]  # 反馈水位非空
+    # TASK-fdc7603b-001 C 线：投影自带覆盖边界水位（indexed_watermark）
+    assert data18["rule_feedback_indexed_watermark"]  # 投影已扫描到的最新事件 ts
+    assert data18["rule_feedback_indexed_watermark"] >= data18["rule_feedback_watermark"]
 
     data29 = projection("RULE-AI-29")
     assert data29["rule_feedback_count"] == 0
     assert data29["rule_pending_count"] == 1  # 读到未回记 → pending
+    assert data29["rule_feedback_indexed_watermark"] == data18["rule_feedback_indexed_watermark"]
 
     assert projection("RULE-AI-99") is None  # 无反馈无读取 → 不附加字段
+
+
+def test_rule_projection_discloses_lag_watermark_instead_of_pretending_fresh(tmp_path):
+    """TASK-fdc7603b-001 C 线：投影落后（TTL 缓存未到期）时显示旧水位，不冒充新.
+
+    设计草案 v3 决策表：投影落后 → 显示落后水位而非旧数据冒充新。
+    """
+    seg_dir = tmp_path / "events" / "sess-1"
+    seg_dir.mkdir(parents=True)
+
+    def _write(name: str, ts: str) -> None:
+        (seg_dir / name).write_text(
+            json.dumps(
+                {
+                    "event_id": name, "session_id": "sess-1", "seq": int(name.split(".")[0]),
+                    "type": RULE_FEEDBACK_EVENT_TYPE, "ts": ts,
+                    "payload": {"ref": "RULE-AI-18", "submission_hash": name,
+                                "slot_id": "s1", "decision": "applied",
+                                "benefit": "helped", "note": ""},
+                },
+                ensure_ascii=False,
+            ) + "\n",
+            encoding="utf-8",
+        )
+
+    _write("1.jsonl", "2026-10-15T00:00:00")
+    projection = RuleFeedbackProjection(tmp_path / "events", ttl_seconds=3600.0)
+    fresh = projection("RULE-AI-18")
+    assert fresh["rule_feedback_count"] == 1
+    assert fresh["rule_feedback_watermark"] == "2026-10-15T00:00:00"
+    assert fresh["rule_feedback_indexed_watermark"] == "2026-10-15T00:00:00"
+
+    # TTL 内追加更新的事件 → 投影仍返回旧快照（count 旧值），但披露的是旧
+    # indexed_watermark：消费方据此可见"投影只覆盖到 00:00:00"，不冒充已含新事件
+    _write("2.jsonl", "2026-10-15T01:00:00")
+    stale = projection("RULE-AI-18")
+    assert stale["rule_feedback_count"] == 1  # 旧数据（新事件尚未入投影）
+    assert stale["rule_feedback_indexed_watermark"] == "2026-10-15T00:00:00"  # 旧水位如实
+    assert stale["rule_feedback_indexed_watermark"] < "2026-10-15T01:00:00"
+
+    # 新投影实例（或 TTL 过期后重扫）覆盖到新事件，水位前进
+    refreshed = RuleFeedbackProjection(tmp_path / "events")("RULE-AI-18")
+    assert refreshed["rule_feedback_count"] == 2
+    assert refreshed["rule_feedback_indexed_watermark"] == "2026-10-15T01:00:00"
 
 
 def test_rule_feedback_projection_reads_segment_layout(tmp_path):

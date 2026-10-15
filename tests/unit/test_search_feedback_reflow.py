@@ -372,6 +372,8 @@ def test_model_visible_rendering_carries_feedback_and_rule_channel(tmp_path):
     assert result.status is ToolResultStatus.SUCCESS
     assert "benefit=helped×1" in result.content  # 分项反馈模型可见
     assert "usage_net=+1" in result.content
+    # TASK-fdc7603b-001 B 线：净分展示必须标注"声明净分"（设计草案 v3 :22）
+    assert "（声明净分，非独立验证）" in result.content
 
     rule_result = run_search_records(
         None, _Adapter(), {"kind": "rule", "query": "RULE-AI-18", "limit": 5},
@@ -379,4 +381,35 @@ def test_model_visible_rendering_carries_feedback_and_rule_channel(tmp_path):
     )
     assert rule_result.status is ToolResultStatus.SUCCESS
     assert "rule_feedback[feedback_count=1" in rule_result.content
+    # TASK-fdc7603b-001 C 线：渲染披露双水位（feedback_watermark + indexed_watermark）
+    assert "feedback_watermark=" in rule_result.content
+    assert "indexed_watermark=" in rule_result.content
     assert "authority=rule_sot" in rule_result.content  # 权威标注保留
+
+
+def test_legacy_fallback_net_annotation_is_labeled_declared_net(tmp_path):
+    """TASK-fdc7603b-001 B 线：无 usage_feedback 的旧 store 走 search.py 回退净分
+    注释路径（_annotate_usage → usage_net → row_annotation），渲染同样标注
+    "声明净分"——两条渲染路径口径一致。"""
+    from llm_loop.introspection.tools_status import _usage_net_part
+
+    class _LegacyStore:
+        """无 usage_feedback 属性的旧 store 形态（仅有 usage_net）。"""
+
+        def usage_net(self, ref):  # noqa: ARG002
+            return {
+                "net": 2, "applied": 2, "not_applicable": 0, "rejected": 0,
+                "unrecognized": 0, "anchor": "ledger_full", "disproven": False,
+            }
+
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", method_store=_LegacyStore())
+    rows = searcher._annotate_usage(
+        [{"key": "method:legacy-x", "kind": "method", "summary": "legacy",
+          "status": "active", "ts": ""}],
+        side="method",
+    )
+    assert rows[0]["usage_net"] == 2  # 回退路径仍附净分字段
+    assert rows[0]["usage_net_detail"] == "a2/n0/r0"
+    part = _usage_net_part(rows[0])
+    assert "usage_net=+2 [a2/n0/r0]" in part
+    assert "声明净分" in part  # legacy 回退路径同样明确声明净分口径

@@ -476,7 +476,7 @@ k3（Kimi，经 model_catalog 回执核验）"。
    - (b) **误导**：按卡片步骤执行走错路或引入返工（内容错误）；
    - (c) **时效过期**：卡片引用的 source/版本已变化，freshness 需刷新。
 2. **分级处置**：
-   - **记录（保底义务）**：所有实际使用（含正反馈）落 `record_use(use_decision=applied/adapted/not_applicable/rejected)`；method 池用 `method_manage`，experience 池用 `refine_experience`；
+   - **记录（保底义务）**：所有实际使用（含正反馈）落 `record_use(use_decision=applied/adapted/not_applicable/rejected)`；method 池用 `method_manage`，experience 池用 `refine_experience`；`record_use` 可附 `benefit` 模型收益自评（helped/neutral/hindered/unknown/mixed）——自评只记录本次观察，不写入独立资格结论（三层计分口径见 RULE-AI-31 程序角色，2026-10-16 同步设计草案 v3）；
    - **修正优化（首选）**：可修复的过时/不准 → `method_manage(refine/annotate_freshness)` 或 `refine_experience` 补充修正，能改不弃；
    - **弃用（核验后）**：前提错误 → `method_manage(transition=invalidate)`；方法仍真但不再适用或已被更好方法替代 → `transition=retire`；experience 池 → `refine_experience(invalidate)`；均须注 root_cause。
 3. **证据要求**：修正与弃用必须携带本次任务的实际观察（evidence_refs / 回执），不接受"感觉不对"。**"我用不上" ≠ "它错了"**：仅不适配且无证据表明卡片本身有错 → `record_use(not_applicable)+note` 保留给其他场景，不得升级为弃用（与 `docs/governance/card-lifecycle.md` R3 三轴"禁止混判"一致）。
@@ -517,7 +517,7 @@ k3（Kimi，经 model_catalog 回执核验）"。
    - **累计阈值**：同一卡片累计净分 ≤ **-2**，或 `verification_state=disproven` → 必须处置（修正或弃用二选一），不得无限搁置；修正后的卡片从修正点重新累计，历史留痕不删。
 4. **新经验沉淀**：任务中产生可复用发现 → `save_experience`（正向经验须声明 verified+evidence）/ `method_manage(save_candidate)`；升格规则候选走 `docs/governance/card-lifecycle.md`，不在本条内复制清单。
 
-**程序角色**：无新增。现有 `search_records` / `save_experience` / `refine_experience` / `method_manage` 已支撑全部动作；净分自动统计与超阈值提醒**已由程序支持**（EVO-20261014-7299aec2 已执行）：`search_records` 命中行附 `usage_net`/`usage_net_detail`（净分≤-2 或 disproven 时另有 `pending_disposition=true`），`method_manage`/`refine_experience` 的 record_use 回执在触发阈值时附 `[threshold_alert]`（分项计数+一行提醒，提醒即止不裁决）。计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1），累计自**最近 lifecycle transition** 起算（D3 口径）；**D3 只截断纠错型转移，晋升型不清零**（EVO-20261015-251ac06d 已执行）：晋升（candidate→qualified→active）是背书不是纠错，不应抹掉卡片已挣得的信用，且"历史留痕不删"对本条第 3 条两侧同等适用；阶梯逆行与出阶梯（→invalidated/retired/archived）仍按纠错型截断，experience 侧无晋升阶梯故行为不变。不随 lifecycle 变化的 `refine` 修正不自动重锚，"修正后从修正点重新累计"仍由模型行为层承担。
+**程序角色**：无新增。现有 `search_records` / `save_experience` / `refine_experience` / `method_manage` 已支撑全部动作；净分自动统计与超阈值提醒**已由程序支持**（EVO-20261014-7299aec2 已执行）：`search_records` 命中行附 `usage_net`/`usage_net_detail`（净分≤-2 或 disproven 时另有 `pending_disposition=true`），`method_manage`/`refine_experience` 的 record_use 回执在触发阈值时附 `[threshold_alert]`（分项计数+一行提醒，提醒即止不裁决）。计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1）。**三层计分口径**（2026-10-16 同步《LFL 任务知识使用反馈与检索闭环设计草案》v3 P1 规则对齐）：① **声明净分**——`usage_net` 是 `record_use` 使用声明的机械计分汇总，未独立验证的 applied/adapted 亦计 +1、净分不按验证态加权（纠偏走 disproven 触发与 threshold 提醒），故 `search_records` 回执展示时标注"声明净分"，它不代表独立验证结论；② **模型收益自评**——`record_use` 的 `benefit` 字段（helped/neutral/hindered/unknown/mixed）为模型自评，只记录本次观察，不得写入独立资格结论；③ **独立验证**——任务结果收益的独立评估走 qualification `task_benefit` 独立流程，不与①②混同、不因净分或自评改变（规则权威与卡片资格均不被评分改变）。累计自**最近 lifecycle transition** 起算（D3 口径）；**D3 只截断纠错型转移，晋升型不清零**（EVO-20261015-251ac06d 已执行）：晋升（candidate→qualified→active）是背书不是纠错，不应抹掉卡片已挣得的信用，且"历史留痕不删"对本条第 3 条两侧同等适用；阶梯逆行与出阶梯（→invalidated/retired/archived）仍按纠错型截断，experience 侧无晋升阶梯故行为不变。不随 lifecycle 变化的 `refine` 修正不自动重锚，"修正后从修正点重新累计"仍由模型行为层承担。
 
 **条款化来源**：method 候选 `会话级知识层双向同步（开局检索·使用裁决·收尾结算）`（method:candidate-a80acb208b99）的"开局检索+一行裁决"思想经本条升格，防止双层漂移（学规则十二条款化先例）。
 

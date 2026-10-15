@@ -639,15 +639,18 @@ def _parse_event_file(path: Path) -> Iterable[dict]:
 
 
 class _ProjectionCache(TypedDict):
-    """RuleFeedbackProjection 的 TTL 缓存载荷（三视图一次性物化）.
+    """RuleFeedbackProjection 的 TTL 缓存载荷（三视图一次性物化 + 覆盖水位）.
 
     修正原 ``dict[str, dict]`` 注解：receipt_pairs 实为 set、reads 实为
     list[str] 聚合，按真实键型精确建模（仅类型层，无运行时影响）。
+    indexed_watermark 是投影本次扫描已覆盖到的最新事件 ts——TTL 缓存命中的
+    旧快照据此披露旧水位，而不是旧数据冒充新（设计草案 v3 :106/:163）。
     """
 
     feedback: dict[str, dict]
     reads: dict[str, list[str]]
     receipt_pairs: set[tuple[str, str]]
+    indexed_watermark: str
 
 
 class RuleFeedbackProjection:
@@ -655,7 +658,9 @@ class RuleFeedbackProjection:
 
     只读派生视图：执行回执次数、最近问题一句话摘要、pending_count 与反馈
     水位。不改规则排序、不改规则权威（有效性来自已批准的权威来源）。
-    带短 TTL 缓存避免高频检索重复全量扫描。
+    带短 TTL 缓存避免高频检索重复全量扫描；投影自带 indexed_watermark
+    （覆盖边界），TTL 命中的旧快照以旧水位如实披露，不冒充已含新事件
+    （设计草案 v3 决策表：投影落后 → 显示落后水位而非旧数据冒充新）。
     """
 
     def __init__(self, event_logs_dir: str | Path, *, ttl_seconds: float = 10.0) -> None:
@@ -674,16 +679,21 @@ class RuleFeedbackProjection:
         reads: dict[str, list[str]] = {}
         receipt_pairs: set[tuple[str, str]] = set()
         watermark: dict[str, str] = {}
+        # TASK-fdc7603b-001 C 线：投影覆盖边界水位——本次扫描已见到的最新事件
+        # ts（含无 ref 事件）。TTL 命中的旧快照以旧 indexed_watermark 披露。
+        indexed_watermark = ""
         for row in _scan_event_files(self._dir):
             event_type = str(row.get("type") or "")
             # 先落名再 isinstance：调用表达式不可收窄，直接内联会让 payload
             # 残留 None 分支；经局部名收窄后恒为 mapping（else 分支 {}）。
             raw_payload = row.get("payload")
             payload = raw_payload if isinstance(raw_payload, dict) else {}
+            ts = str(row.get("ts") or "")
+            if ts > indexed_watermark:
+                indexed_watermark = ts
             ref = str(payload.get("ref") or row.get("ref") or "")
             if not ref:
                 continue
-            ts = str(row.get("ts") or "")
             if event_type == RULE_FEEDBACK_EVENT_TYPE:
                 feedback.setdefault(ref, []).append({**payload, "ts": ts})
                 # 版本级抵扣口径：回执携带 read_version 才能抵扣同版本读取；
@@ -716,6 +726,7 @@ class RuleFeedbackProjection:
             "feedback": aggregated,
             "reads": reads,
             "receipt_pairs": receipt_pairs,
+            "indexed_watermark": indexed_watermark,
         }
         self._cached_at = now
         return self._cache
@@ -741,6 +752,7 @@ class RuleFeedbackProjection:
             "rule_recent_issue": str(feedback["recent_issue"]) if feedback else "",
             "rule_pending_count": pending,
             "rule_feedback_watermark": str(feedback["watermark"]) if feedback else "",
+            "rule_feedback_indexed_watermark": str(data["indexed_watermark"]),
             "rule_feedback_source": "eventstore_projection",
         }
         return projection

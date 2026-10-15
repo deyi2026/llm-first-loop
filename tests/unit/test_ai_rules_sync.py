@@ -95,3 +95,26 @@ def test_lite_version_matches_snapshot_reader():
     match = re.search(r"version=(\d+)", header)
     assert match
     assert _rules_version() == match.group(1)
+
+
+def test_rule2931_record_and_scoring_notes_declare_three_layer_semantics():
+    """TASK-fdc7603b-001 A 线: Rule29/31 记录与计分说明区分三层口径（SoT 锚定）.
+
+    设计草案 v3 P1 规则对齐: 声明净分（usage_net 机械计分）/ 模型收益自评
+    （record_use benefit）/ 独立验证（qualification task_benefit）三层分开。
+    只锚定"记录与计分说明"文本；规范性义务语义（触发/时限/计分义务原文）
+    必须保持不动，故同时锚定义务原文仍在。
+    """
+    sot = _read("docs/ai_rules.md")
+    rule29 = sot.split("## 规则二十九：", 1)[1].split("\n## 规则三十：", 1)[0]
+    rule31 = sot.split("## 规则三十一：", 1)[1].split("\n## 规则三十二：", 1)[0]
+    # 三层口径说明（记录与计分说明层）
+    assert "声明净分" in rule31
+    assert "未独立验证的 applied/adapted 亦计 +1" in rule31
+    assert "benefit" in rule31 and "模型自评" in rule31
+    assert "task_benefit" in rule31 and "独立验证" in rule31
+    assert "不被评分改变" in rule31  # 规则权威与卡片资格不被评分改变
+    assert "模型收益自评" in rule29  # Rule29 记录说明同步 benefit 自评口径
+    # 规范性义务语义零改动锚点（原文保持，说明性追加不得触碰）
+    assert "最迟在当前任务收口（最终答复 / goal complete）前完成" in rule29
+    assert "且任务结果验证有效 = **+1**" in rule31  # 第 2 条计分义务原文未动

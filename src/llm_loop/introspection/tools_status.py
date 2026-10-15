@@ -573,11 +573,25 @@ def _single_line(value: Any, limit: int = 240) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
+# TASK-fdc7603b-001 B 线：usage_net 是 record_use 使用声明的机械计分
+# （未独立验证的 applied/adapted 亦 +1，见 usage_net.py D1 / 设计草案 v3 :22），
+# 展示必须标注"声明净分"，与独立验证结论区分。
+_DECLARED_NET_NOTE = "（声明净分，非独立验证）"
+
+
 def _usage_net_part(record: dict) -> str:
-    """EVO-20261014-7299aec2: usage_net 派生视图渲染段；无数据返回空串。"""
+    """EVO-20261014-7299aec2: usage_net 派生视图渲染段；无数据返回空串.
+
+    TASK-fdc7603b-001 B 线：净分按声明口径标注（声明净分，非独立验证），
+    覆盖 usage_feedback 新路径与无 usage_feedback 的 legacy 回退路径——
+    两条路径的行注字段同为 usage_net/usage_net_detail，渲染段共用本函数。
+    """
     if not isinstance(record.get("usage_net"), int):
         return ""
-    part = f" | usage_net={int(record['usage_net']):+d} [{record.get('usage_net_detail', '')}]"
+    part = (
+        f" | usage_net={int(record['usage_net']):+d} "
+        f"[{record.get('usage_net_detail', '')}]{_DECLARED_NET_NOTE}"
+    )
     if record.get("pending_disposition"):
         part += " | pending_disposition=true"
     return part
@@ -610,12 +624,23 @@ def _usage_feedback_part(record: dict) -> str:
 
 
 def _rule_feedback_part(record: dict) -> str:
-    """TASK-ac085ab1-003: 规则反馈注释通道渲染段（EventStore 投影）；无数据返回空串."""
+    """TASK-ac085ab1-003: 规则反馈注释通道渲染段（EventStore 投影）；无数据返回空串.
+
+    TASK-fdc7603b-001 C 线：渲染两个水位——feedback_watermark（该规则反馈
+    覆盖到的最新 ts）与 indexed_watermark（投影整体已扫描到的最新 ts）。
+    数据自带覆盖边界：投影落后（TTL 旧快照）时显示旧水位，不冒充新。
+    """
     if "rule_feedback_count" not in record:
         return ""
     count = int(record.get("rule_feedback_count") or 0)
     pending = int(record.get("rule_pending_count") or 0)
     parts = [f"feedback_count={count}", f"pending={pending}"]
+    feedback_watermark = str(record.get("rule_feedback_watermark") or "")
+    if feedback_watermark:
+        parts.append(f"feedback_watermark={feedback_watermark}")
+    indexed_watermark = str(record.get("rule_feedback_indexed_watermark") or "")
+    if indexed_watermark:
+        parts.append(f"indexed_watermark={indexed_watermark}")
     issue = _single_line(record.get("rule_recent_issue"), 160)
     if issue:
         parts.append(f"recent_issue={issue}")
@@ -665,7 +690,8 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
     )
     usage_fields = (
         [
-            f"usage_net={int(record['usage_net']):+d}",
+            # TASK-fdc7603b-001 B 线：hydrated 经验卡逐字段路径同样标注声明净分
+            f"usage_net={int(record['usage_net']):+d}{_DECLARED_NET_NOTE}",
             f"usage_net_detail={record.get('usage_net_detail', '')}",
         ]
         + (["pending_disposition=true"] if record.get("pending_disposition") else [])
@@ -921,21 +947,30 @@ def _finalize_search_records(
                 if quals:
                     full += "\n--- qualification ---\n" + json.dumps(quals, ensure_ascii=False)
                 if feedback_part or r.get("read_entry"):
+                    # TASK-fdc7603b-001 B 线：精确水合卡的反馈段附三层口径注记——
+                    # 声明净分（机械计分）/ benefit 模型自评 / 独立验证另走
+                    # qualification task_benefit（不在本段字段内），防口径混同。
+                    usage_payload = {
+                        k: r.get(k)
+                        for k in (
+                            "usage_net", "usage_net_detail", "benefit_counts",
+                            "recent_issue", "feedback_version_state",
+                            "read_entry", "feedback_watermark",
+                            "usage_feedback_legacy",
+                        )
+                        if r.get(k) is not None
+                    }
+                    if r.get("usage_net") is not None:
+                        usage_payload["usage_net_semantics"] = (
+                            "声明净分：record_use 使用声明机械计分，非独立验证结论"
+                        )
+                    if isinstance(r.get("benefit_counts"), dict):
+                        usage_payload["benefit_semantics"] = (
+                            "模型自评口径（与独立验证的 task_benefit 分开）"
+                        )
                     full += (
                         "\n--- usage feedback ---\n"
-                        + json.dumps(
-                            {
-                                k: r.get(k)
-                                for k in (
-                                    "usage_net", "usage_net_detail", "benefit_counts",
-                                    "recent_issue", "feedback_version_state",
-                                    "read_entry", "feedback_watermark",
-                                    "usage_feedback_legacy",
-                                )
-                                if r.get(k) is not None
-                            },
-                            ensure_ascii=False,
-                        )
+                        + json.dumps(usage_payload, ensure_ascii=False)
                     )
                 lines.append(prefix + full)
                 raw_lines.append(prefix + full)

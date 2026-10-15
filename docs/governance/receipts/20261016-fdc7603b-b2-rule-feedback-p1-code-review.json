@@ -1,0 +1,99 @@
+{
+  "gate": "RULE-AI-28 代码闸（全量测试前独立审查）",
+  "task": "GOAL-20261016-fdc7603b / TASK-fdc7603b-002（B2-T2）",
+  "reviewer": "独立代码审查者（未参与产出；只读代码+取证脚本+本回执）",
+  "reviewed_at": "2026-10-16",
+  "verdict": "PASS",
+  "verdict_meaning": "放行全量测试（ci_gate.sh / 整仓 pytest 由后续授权执行）",
+  "head_commit": "c24015a99203bcb9ca7203a68affe0cc6907e64f",
+  "authority": "docs/LFL 任务知识使用反馈与检索闭环设计草案.md v3（:22 声明净分口径 / :106 三件套水位 / :163 投影落后披露 / :176 P1 规则对齐）",
+  "fingerprint": {
+    "diff_vs_head_sha256": "6610c679c13b8782d52bbb5d0dd62546f3e9af5e95476de2b1ad73b793d33aef",
+    "diff_lines": 379,
+    "files": {
+      "docs/ai_rules.md": "699bad9b463810c78778beadecb2882cd04f57541014aaae1d86aac4b9675b6e",
+      "src/llm_loop/introspection/settlement.py": "ef917ae9e3d444deb9669078dec425d5be50dc3f5274f7528b05cd719ff6d0f0",
+      "src/llm_loop/introspection/tools_status.py": "6cde21afa19b6849d83fd8c5343fd5582ea880c62e5d0da235fbed6def7265f8",
+      "tests/unit/test_ai_rules_sync.py": "484ef1fc8e33b34271202b17c0c63a22ec3de41513ace6f33655fd2ae68e056b",
+      "tests/unit/test_search_feedback_reflow.py": "c576206fb35b05b5c6f40853f19d1c319b780b60ed3d0f72b72fdb1fd9e6b535",
+      "tests/unit/test_settlement_receipts.py": "e8cb08877cc671c20a52ee62d5f12a9bba4481502aff53d817e5f028e33106a4",
+      "tests/unit/test_usage_net.py": "636e93f225e12a86161d8e123764e9315909ca4e2259e3b628acbd0b7aa33e9b"
+    }
+  },
+  "scope_files": [
+    "docs/ai_rules.md",
+    "src/llm_loop/introspection/settlement.py",
+    "src/llm_loop/introspection/tools_status.py",
+    "tests/unit/test_ai_rules_sync.py",
+    "tests/unit/test_search_feedback_reflow.py",
+    "tests/unit/test_settlement_receipts.py",
+    "tests/unit/test_usage_net.py"
+  ],
+  "itemized_verdicts": {
+    "A_line_rule29_31_sot_sync": {
+      "claim": "Rule29/31 记录与计分说明同步三层口径，义务语义零变化",
+      "verdict": "FIXED",
+      "evidence": [
+        "git diff HEAD docs/ai_rules.md 恰 2 hunk、净变化 4 行（每 hunk 各替换 1 行）",
+        "Rule29：『记录（保底义务）』行为纯前缀追加（程序化 startswith 校验通过），描述 record_use 可附 benefit 自评（可附=许可性，非新义务）",
+        "Rule31：规范性正文（第 1-4 条，含『applied/adapted 且任务结果验证有效 = **+1**』）与 HEAD 逐字节一致；程序角色段=1 句拆分（，→。）+纯插入三层计分口径①②③，旧文 7 句中 6 句逐字保留、第 7 句两碎片（『计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1）。』『累计自**最近 lifecycle transition** 起算（D3 口径）』）逐字保留",
+        "SoT 描述能力真实存在：benefit 参数在 methods/store.py:887/921 与 experiences/store.py:874 落地，枚举 use_ledger.py:44 BENEFITS={helped,neutral,hindered,unknown,mixed} 与文档文字逐项一致；工具 schema registry_experience.py:95/134 暴露 benefit 且明示与 task_benefit 分开——满足设计 :176『文档、工具 schema…口径一致』方向",
+        "tests/unit/test_ai_rules_sync.py 全绿（含新增 SoT 三层口径锚定 + 义务原文零改动锚定双断言）"
+      ]
+    },
+    "B_line_declared_net_label_rendering": {
+      "claim": "两条渲染路径（usage_feedback 新路径 / legacy 回退）+ hydrated 经验卡均标注『（声明净分，非独立验证）』",
+      "verdict": "FIXED",
+      "evidence_type": "真实执行取证（/tmp/fdc7603b-review/forensics.py，23/23 PASS，未入库）",
+      "evidence": [
+        "新路径端到端 run_search_records：短卡输出『 | usage_net=+1 [a1/n0/r0]（声明净分，非独立验证） | feedback[benefit=helped×1；version=current]』",
+        "新路径精确水合：『--- usage feedback ---』JSON 附 usage_net_semantics=『声明净分：record_use 使用声明机械计分，非独立验证结论』与 benefit_semantics=『模型自评口径（与独立验证的 task_benefit 分开）』",
+        "legacy 回退端到端（真实 MethodStore 以代理屏蔽 usage_feedback 属性）：『 | usage_net=+1 [a1/n0/r0]（声明净分，非独立验证）』；_annotate_usage 回退仍附 usage_net/usage_net_detail 字段",
+        "hydrated 经验卡逐字段路径：『usage_net=-2（声明净分，非独立验证）』；_usage_net_part({})==''；精确格式==『 | usage_net=+3 [a4/n1/r0]（声明净分，非独立验证）』",
+        "断言真实性核验：test_usage_net.py:346 为全等断言（非子串存在）；reflow 测试经 run_search_records 真实工具渲染路径断言端到端 content 含该标注；legacy 新测试经 _annotate_usage 真实回退路径——非『字符串存在但路径未覆盖』"
+      ]
+    },
+    "C_line_indexed_watermark_projection": {
+      "claim": "RuleFeedbackProjection 增 indexed_watermark，_rule_feedback_part 渲染双水位，TTL 旧快照披露旧边界不冒充新",
+      "verdict": "FIXED",
+      "evidence_type": "真实执行取证（同上脚本）",
+      "evidence": [
+        "投影输出含 rule_feedback_indexed_watermark 且 >= rule_feedback_watermark（同扫不变式）；渲染段『 | rule_feedback[feedback_count=1；pending=0；feedback_watermark=…；indexed_watermark=…]』双水位可见；规则通道保持 authority=rule_sot",
+        "TTL 场景（ttl=3600s）：追加新事件后 count 停旧值 1、indexed_watermark 停旧扫描边界 00:00:00；新实例 count=2、水位前进 01:00:00——旧数据不再冒充当前，落后对消费方可见（设计 :163）",
+        "补充语义验证：无 ref 新事件（ts 更晚）同样推进 indexed_watermark 而反馈 count 不变——覆盖边界=全事件流（含无 ref 事件），与 docstring 声明一致，水位不会因事件无 ref 而虚低",
+        "新增测试 test_rule_projection_discloses_lag_watermark_instead_of_pretending_fresh 用真实 jsonl 落盘复现 TTL 落后场景，锚定旧水位如实披露"
+      ]
+    },
+    "cross_checks": {
+      "regression": "定向 99 passed：test_search_feedback_reflow / test_ai_rules_sync / test_usage_net / test_settlement_receipts / test_settlement_tools / test_factory；另补 test_use_ledger_contract 22 passed（usage_net API 消费方）",
+      "old_format_consumers": "grep 全仓：src 无任何对渲染文本 usage_net= 的解析方；仅 4 个测试文件引用且全部子串兼容（已跑绿）；docs（非回执）无格式消费；ai_rules.lite.md/.en.md 无净分/计分文字，无需同步",
+      "static_ruff": ".venv/bin/ruff check 6 个触碰 py 文件 All checks passed",
+      "static_pyright": "PYTHONPATH=src .venv/bin/python scripts/check_static_diagnostics.py --tool pyright → R9 PASS（historical=45 current=16 new=0 changed_file_diagnostics=0 touched files clean；未用 uv run）",
+      "discipline": "首动作已对 data/methods 做有界方法论检索（审查回执/code-review-gate/渲染取证，limit≤5）：无命中，如实记录；未跑 ci_gate.sh/整仓 pytest；无 git 写操作；未改任何被审文件"
+    }
+  },
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "title": "threshold_alert 未使用『声明净分』字样（语义已对齐，术语可选统一）",
+      "detail": "src/llm_loop/usage_net.py:158-167 record_use 回执的 [threshold_alert] 展示净分数字，未带『（声明净分，非独立验证）』标注；但其文案已内联披露『applied 未验证默认 +1，disproven 即触发本告警纠偏』，机械口径对模型可见，语义上符合设计 :22 意图，且 RULE-AI-31 程序角色①明确把标注义务限定在 search_records 回执展示。不阻断。",
+      "suggestion": "后续任务可选在 alert 文案统一『声明净分』术语（非本闸义务）"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "title": "观察：usage feedback 段 feedback_watermark=1（int）与规则通道 ts 字符串水位同名异型",
+      "detail": "精确水合『--- usage feedback ---』JSON 中 feedback_watermark 为 int（store usage_feedback 的计数语义），与 C 线规则通道 ts 字符串水位同名但类型/语义不同。该键位与类型系既有行为（本次 diff 未触碰该键），仅作命名碰撞观察，供后续消费方留意。",
+      "suggestion": "无需本闸处理；后续如扩展消费方可考虑重命名或文档说明"
+    }
+  ],
+  "applied": [
+    "A/B/C 三线全部独立复验通过（渲染/投影类均真实执行取证，23/23 PASS）",
+    "Rule SoT 安全核验通过（逐 hunk 比对+程序化逐句包含校验+义务锚点断言）",
+    "定向回归 99+22 passed；ruff/pyright 全过",
+    "两条 P2 发现如实列出（不阻断）"
+  ],
+  "rejected": [],
+  "notes": "回执为本次审查唯一写入文件（shell heredoc 新建）；取证脚本位于 /tmp/fdc7603b-review/（forensics.py / a_line_check.py / diff.txt），均不入库。方法论检索无命中已如实记录。verdict=PASS：按 RULE-AI-28 放行全量测试。"
+}
