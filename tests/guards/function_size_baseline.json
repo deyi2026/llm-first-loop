@@ -109,7 +109,8 @@
       "learning_runtime.py": "Learning",
       "notify.py": "Action",
       "timekeeping.py": "kernel-candidate",
-      "usage_net.py": "Learning（usage-net 净分派生视图：search_records 命中行注记 + record_use 回执阈值提醒，RULE-AI-31 程序支持，EVO-20261014-7299aec2）"
+      "usage_net.py": "Learning（usage-net 净分派生视图：search_records 命中行注记 + record_use 回执阈值提醒，RULE-AI-31 程序支持，EVO-20261014-7299aec2）",
+      "use_ledger.py": "Learning（两侧 usage ledger 共用原语：slot_id/submission_hash 幂等键、行级 integrity 凭据、JSONL 追加与 torn-tail 恢复扫描；净分统计裁决归 usage_net.py。guard(r9): GOAL-20261015-ac085ab1）"
     },
     "exemptions": {}
   },
@@ -952,6 +953,15 @@
           "src/llm_loop/core/loop/side_effects.py"
         ],
         "rationale": "T2 已实施（Phase3 M3 终审 P1-4 对齐 ScheduleStore/human_turn_queue 跨进程纪律）：side_effects.json 持久化走 flock（OSError fail-closed）+ 重读合并 + tempfile O_EXCL + os.replace，replace 前=definitely_not_committed 回滚内存；锁文件 <path>.lock。登记失败 fail-open 不阻断工具（观测面）；停止路径同类。验收=tests/unit/test_phase3_m3_side_effects.py"
+      },
+      "usage_ledger_primitives": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "methods+experiences",
+        "paths": [
+          "src/llm_loop/use_ledger.py"
+        ],
+        "rationale": "TASK-ac085ab1-001 两侧 usage ledger 共用原语：append_ledger_line 在调用方单写者锁内追加 JSONL + 行级 integrity 凭据 + flush/fsync；torn-tail 恢复把损坏尾行移入 .corrupt 旁文件、截断主账本并 fsync、出具诊断报告。主追加路径按 T1 observe 登记（对齐 method_store rationale 中『qualification/usage 等 JSONL 保留独立 T1 append 契约』口径）；恢复路径的截断/旁文件语义未做断电故障注入专项，不据此外推合规。guard(r9): GOAL-20261015-ac085ab1"
       }
     },
     "write_exemptions": {

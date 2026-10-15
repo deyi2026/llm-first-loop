@@ -1,0 +1,25 @@
+{
+  "gate": "full_test",
+  "goal": "GOAL-20261015-ac085ab1",
+  "verdict": "PASS",
+  "coverage_chain": [
+    "r0 independent code review REQUEST_CHANGES P1x3+P2x10 (20261015-ac085ab1-knowledge-feedback-loop-code-review.json)",
+    "r1 narrow recheck PASS, P1-1/2/3 FIXED (...-code-review-r1.json)",
+    "r2 review_admission PASS candidate_sha256=7ddc0d4e1d17362e12a0fbe1c46d951eb51980d803d54cc5986446a42bceff5a (P1 use_ledger object-boundary dedupe + 7 pyright narrowings)",
+    "r5 review_admission PASS candidate_sha256=3dd5134af713d5d4de3ded7531b831e19aabf41be5a168c7ce0a9ec0d2c93c5f (residual guard registrations, 2.3KB small-context retry)"
+  ],
+  "full_test": {
+    "command": "bash scripts/ci_gate.sh",
+    "workdir": "repo root (llm-first-loop-mirror)",
+    "exit_code": 0,
+    "result": "ruff new=0 PASS; env-pin PASS; pyright new=0 PASS (historical 45->16); tier0 319 passed; full pytest gate PASS",
+    "head_commit_at_run": "02c7a5382",
+    "job_id": "job-9f587c7088a34ffa97b5",
+    "finished_at_local": "2026-10-16T00:03+08:00"
+  },
+  "anomalies": [
+    "r3/r4 admission reviewer children failed: LLMEmptyResponseError (glm-5.3 empty response, provider flaky window); resolved by committing r2-covered bulk and shrinking uncommitted delta to 2.3KB (user-suggested small-context approach)",
+    "stash@{0} batchB-rest (created 2026-10-15 22:39:18 by prior interrupted run) had removed 8 files from worktree; restored via read-only git show per fingerprint match against r1 receipt; stash entry retained on disk"
+  ],
+  "scheduler_session": "f3bcb24f-1f02-4da7-aaad-75bb446ffa88"
+}
