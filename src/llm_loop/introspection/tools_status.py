@@ -583,6 +583,45 @@ def _usage_net_part(record: dict) -> str:
     return part
 
 
+def _usage_feedback_part(record: dict) -> str:
+    """TASK-ac085ab1-003: 分项反馈/近因问题/版本状态渲染段；无数据返回空串.
+
+    benefit 为模型自评口径（与独立验证的 task_benefit 分开）；legacy 未分层
+    分母如实披露，防止"看得见的卡"挤占"没被看见的卡"。
+    """
+    counts = record.get("benefit_counts")
+    if not isinstance(counts, dict) or not any(int(v or 0) for v in counts.values()):
+        return ""
+    parts = [
+        "benefit=" + "/".join(
+            f"{k}×{int(v or 0)}" for k, v in counts.items() if int(v or 0)
+        )
+    ]
+    state = str(record.get("feedback_version_state") or "")
+    if state:
+        parts.append(f"version={state}")
+    issue = _single_line(record.get("recent_issue"), 160)
+    if issue:
+        parts.append(f"recent_issue={issue}")
+    legacy = record.get("usage_feedback_legacy")
+    if isinstance(legacy, int) and legacy:
+        parts.append(f"legacy_unlayered={legacy}")
+    return " | feedback[" + "；".join(parts) + "]"
+
+
+def _rule_feedback_part(record: dict) -> str:
+    """TASK-ac085ab1-003: 规则反馈注释通道渲染段（EventStore 投影）；无数据返回空串."""
+    if "rule_feedback_count" not in record:
+        return ""
+    count = int(record.get("rule_feedback_count") or 0)
+    pending = int(record.get("rule_pending_count") or 0)
+    parts = [f"feedback_count={count}", f"pending={pending}"]
+    issue = _single_line(record.get("rule_recent_issue"), 160)
+    if issue:
+        parts.append(f"recent_issue={issue}")
+    return " | rule_feedback[" + "；".join(parts) + "]"
+
+
 def _render_experience_record(record: dict, fallback_kind: str) -> str:
     """Render either a thin discovery card or an explicitly hydrated experience."""
     ts = str(record.get("ts", ""))
@@ -608,13 +647,15 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
     )
     # EVO-20261014-7299aec2: 使用净分派生视图（record_use 审计，只读）
     usage_part = _usage_net_part(record)
+    # TASK-ac085ab1-003: 分项反馈/近因问题/版本状态（P1 查询回流）
+    feedback_part = _usage_feedback_part(record)
     if not record.get("hydrated"):
         scenario = _single_line(record.get("scenario"))
         return (
             f"[{ts}] {record.get('kind', fallback_kind)}: {title} | "
             f"experience_ref={ref} | status={status} | "
             f"record_kind={record_kind} | verification_state={verification} | "
-            f"task_applicability={applicability}{age_part}{usage_part} | scenario={scenario} | source={source}"
+            f"task_applicability={applicability}{age_part}{usage_part}{feedback_part} | scenario={scenario} | source={source}"
             f"{lifecycle_suffix}"
         )
     age_fields = (
@@ -628,8 +669,14 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
             f"usage_net_detail={record.get('usage_net_detail', '')}",
         ]
         + (["pending_disposition=true"] if record.get("pending_disposition") else [])
+        + ([feedback_part.strip(" |")] if feedback_part else [])
+        + (
+            [f"read_entry={record['read_entry']}", f"feedback_watermark={record['feedback_watermark']}"]
+            if record.get("read_entry")
+            else []
+        )
         if isinstance(record.get("usage_net"), int)
-        else []
+        else ([feedback_part.strip(" |")] if feedback_part else [])
     )
     fields = [
         f"[{ts}] {record.get('kind', fallback_kind)}: {title}",
@@ -688,6 +735,7 @@ def _render_rule_record(record: dict, fallback_kind: str) -> str:
         f"authority={record.get('authority', 'rule_sot')} | representation={representation} | "
         f"projection_complete={complete} | task_applicability={applicability} | "
         f"source_version={version}"
+        f"{_rule_feedback_part(record)}"
     )
     if record.get("hydrated"):
         return head + f"\nsource={record.get('source', '')}\ncontent={record.get('content', '')}"
@@ -845,6 +893,8 @@ def _finalize_search_records(
             )
             # EVO-20261014-7299aec2: 使用净分派生视图（record_use 审计，只读）
             usage_part = _usage_net_part(r)
+            # TASK-ac085ab1-003: 分项反馈/近因问题/版本状态（P1 查询回流）
+            feedback_part = _usage_feedback_part(r)
             if r.get("_method_semantic_discovery") and visible_idx == 1:
                 card = (
                     f"alternate_method: {summary} ({method_ref}, "
@@ -854,12 +904,12 @@ def _finalize_search_records(
             elif r.get("_method_semantic_discovery"):
                 compact_description = _single_line(description, 180)
                 card = (
-                    f"{summary} ({method_ref}, status={status}{freshness_part}{usage_part}, "
+                    f"{summary} ({method_ref}, status={status}{freshness_part}{usage_part}{feedback_part}, "
                     f"task_applicability={applicability}) — {compact_description}"
                 ).strip()
             else:
                 card = (
-                    f"{summary} ({method_ref}, status={status}{freshness_part}{usage_part}{age_part}, "
+                    f"{summary} ({method_ref}, status={status}{freshness_part}{usage_part}{feedback_part}{age_part}, "
                     f"task_applicability={applicability}) — {description}"
                 ).strip()
             if r.get("projection_complete"):
@@ -870,6 +920,23 @@ def _finalize_search_records(
                     full += "\n--- freshness ---\n" + json.dumps(freshness, ensure_ascii=False)
                 if quals:
                     full += "\n--- qualification ---\n" + json.dumps(quals, ensure_ascii=False)
+                if feedback_part or r.get("read_entry"):
+                    full += (
+                        "\n--- usage feedback ---\n"
+                        + json.dumps(
+                            {
+                                k: r.get(k)
+                                for k in (
+                                    "usage_net", "usage_net_detail", "benefit_counts",
+                                    "recent_issue", "feedback_version_state",
+                                    "read_entry", "feedback_watermark",
+                                    "usage_feedback_legacy",
+                                )
+                                if r.get(k) is not None
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
                 lines.append(prefix + full)
                 raw_lines.append(prefix + full)
             else:

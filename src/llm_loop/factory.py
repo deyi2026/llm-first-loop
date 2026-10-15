@@ -1811,6 +1811,23 @@ def build_engine(
             rewriter=make_llm_rewriter(llm),
             out_path=Path(settings.data_dir) / "retrieval_shadow.jsonl",
         )
+    # TASK-ac085ab1-002/003: 精确水合打点 sink + 规则反馈注释投影（均 fail-open，
+    # 复用既有 EventStore 与 event_logs_dir，不新建账本）。
+    _knowledge_read_sink = None
+    _rule_feedback_projection = None
+    if getattr(event_store, "enabled", False):
+        from llm_loop.introspection.settlement import (
+            KNOWLEDGE_READ_EVENT_TYPE,
+            RuleFeedbackProjection,
+        )
+
+        def _knowledge_read_sink(payload: dict) -> None:  # noqa: F811 - 单一装配点
+            sid = str(payload.get("session_id") or "")
+            if not sid:
+                return  # 无法归属会话：不打点（fail-open，不阻断检索）
+            event_store.append(sid, KNOWLEDGE_READ_EVENT_TYPE, payload)
+
+        _rule_feedback_projection = RuleFeedbackProjection(settings.event_logs_dir)
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,
         memory_store=memory,
@@ -1826,6 +1843,8 @@ def build_engine(
         synopsis_store=_synopsis_store,
         synopsis_source_resolver=_resolve_synopsis_source,
         multiquery_shadow=multiquery_probe,
+        knowledge_read_sink=_knowledge_read_sink,
+        rule_feedback_projection=_rule_feedback_projection,
     )
 
     # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）

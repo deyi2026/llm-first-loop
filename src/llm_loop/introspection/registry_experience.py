@@ -83,6 +83,18 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "task_type": {"type": "string", "maxLength": 64, "description": "仅 record_qualification 消费：本 qualification 所属任务域的模型声明（如 browser/code-edit/diagnosis/writing；大小写与空白归一，不校验真伪）。activate 门（EVO-20261010-994e30f4）要求 verdict=pass 条目覆盖 ≥2 个不同 task_type 才能转 active；缺省 unknown 不计数。存量 active 卡 grandfather 不回溯"},
             "evidence_refs": {"type": "array", "items": {"type": "string"}, "description": "save_candidate/record_use/record_qualification 的证据引用；程序将证据绑定到当次调用所属 episode，不自动证明 refs 的归属与内容正确"},
             "note": {"type": "string", "description": "仅 record_use/record_qualification 随记录持久化；save_candidate/refine 不读取、不持久化"},
+            "benefit": {
+                "type": "string",
+                "enum": ["helped", "neutral", "hindered", "unknown", "mixed"],
+                "description": "TASK-ac085ab1 record_use 可选模型自评：本任务中观察到什么帮助。与 task_benefit（独立资格评估）分开记录；缺省 unknown，不当失败或零收益",
+            },
+            "evidence_level": {
+                "type": "string",
+                "enum": ["model_declared", "observation_linked", "independently_evaluated"],
+                "description": "record_use 可选评价依据等级；缺省 model_declared",
+            },
+            "suggestion": {"type": "string", "maxLength": 2000, "description": "record_use 可选改进建议（需补前提/更新来源/修步骤/规则冲突）"},
+            "work_unit_id": {"type": "string", "maxLength": 128, "description": "record_use 可选任务/工作单元绑定；缺省回退当次 episode。用于防跨任务串账与修订链归并"},
             "transition": {
                 "type": "string",
                 "enum": ["qualify", "activate", "hold", "invalidate", "retire", "reopen"],
@@ -110,6 +122,18 @@ _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
             "use_decision": {"type": "string", "enum": ["applied", "adapted", "not_applicable", "rejected"], "description": "record_use 必填；由模型比较任务与经验目的作出判断"},
             "note": {"type": "string", "maxLength": 512, "description": "简短适用依据或跳过理由；不保存隐藏思维链"},
             "evidence_refs": {"type": "array", "maxItems": 16, "items": {"type": "string"}, "description": "声明的证据引用；程序不自动判断正确性"},
+            "benefit": {
+                "type": "string",
+                "enum": ["helped", "neutral", "hindered", "unknown", "mixed"],
+                "description": "TASK-ac085ab1 record_use 可选模型自评：本任务中观察到什么帮助。与 task_benefit（独立资格评估）分开记录；缺省 unknown",
+            },
+            "evidence_level": {
+                "type": "string",
+                "enum": ["model_declared", "observation_linked", "independently_evaluated"],
+                "description": "record_use 可选评价依据等级；缺省 model_declared",
+            },
+            "suggestion": {"type": "string", "maxLength": 2000, "description": "record_use 可选改进建议"},
+            "work_unit_id": {"type": "string", "maxLength": 128, "description": "record_use 可选任务/工作单元绑定；缺省回退当次 episode"},
         },
         "required": ["experience_id", "action"],
     },
@@ -259,6 +283,11 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
             episode_ref=str(getattr(host, "current_episode_ref", lambda: "")() or ""),
             session_id=str(getattr(host, "current_session_id", lambda: "")() or ""),
             model=str(current_model_label.get() or ""),
+            # TASK-ac085ab1-001: 模型自评/工作单元绑定可选透传；两层键由程序派生
+            work_unit_id=str(args.get("work_unit_id", "") or ""),
+            benefit=str(args.get("benefit", "") or "unknown"),
+            evidence_level=str(args.get("evidence_level", "") or "model_declared"),
+            suggestion=str(args.get("suggestion", "") or ""),
         )
     except ExperiencePersistError as exc:
         return _method_failure(
@@ -278,6 +307,10 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
         "authority": "model_declared", "task_benefit": "not_evaluated",
         "ledger_recorded": True, "ledger_ts": entry.get("ts", ""),
         "session_id": entry.get("session_id", ""), "episode_ref": entry.get("episode_ref", ""),
+        # TASK-ac085ab1-001: 两层键回执（程序派生）
+        "slot_id": entry.get("slot_id", ""), "submission_hash": entry.get("submission_hash", ""),
+        "revision": entry.get("revision", 1), "idempotent": bool(entry.get("idempotent")),
+        "benefit": entry.get("benefit", "unknown"),
     }
     # EVO-20261014-7299aec2: 回执附使用净分告警（提醒即止，不裁决）；派生视图 fail-open
     alert = ""
@@ -417,6 +450,7 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
         episode_ref = str(host.current_episode_ref() or "")
         if not episode_ref.startswith("episode:"):
             return _method_failure(tool_name, "[Method use 写入失败] 当前 Episode provenance 不可用")
+        # TASK-ac085ab1-001: 模型自评/工作单元绑定可选透传；两层键由程序派生
         entry = store.record_use(
             method_ref,
             episode_ref=episode_ref,
@@ -425,6 +459,10 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
             model=current_model_label.get(),
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
             session_id=str(host.current_session_id() or ""),
+            work_unit_id=str(args.get("work_unit_id", "") or ""),
+            benefit=str(args.get("benefit", "") or "unknown"),
+            evidence_level=str(args.get("evidence_level", "") or "model_declared"),
+            suggestion=str(args.get("suggestion", "") or ""),
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return _method_failure(tool_name, f"[Method use 写入失败] {type(exc).__name__}: {exc}")
@@ -435,6 +473,10 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
             "episode_ref": episode_ref,
             "decision": entry["decision"],
             "method_content_hash": entry["method_content_hash"],
+            "slot_id": entry.get("slot_id", ""),
+            "submission_hash": entry.get("submission_hash", ""),
+            "revision": entry.get("revision", 1),
+            "idempotent": bool(entry.get("idempotent")),
         },
         "success",
     )

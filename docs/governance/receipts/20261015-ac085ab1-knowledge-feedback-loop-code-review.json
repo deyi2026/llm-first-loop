@@ -1,0 +1,160 @@
+{
+  "gate": "code",
+  "reviewer": "rule28-independent-code-review-subagent@GOAL-20261015-ac085ab1",
+  "verdict": "REQUEST_CHANGES",
+  "skill_verdict": "REVISE",
+  "head_commit": "af4e26fae9ef78263de486ec6e7f01123aed453f",
+  "fingerprints": {
+    "git_diff_src_tests_sha256": "01a9b6c5e2399277c4cb8059fe317c705e2d99804f0a798682a37062ed1d81ee",
+    "git_diff_src_tests_lines": 1039,
+    "new_files_sha256": {
+      "src/llm_loop/use_ledger.py": "608bd5dae4efe3bb96befc616b9e041c1ea1aac9e2135e4f68cafa4b9cf8040c",
+      "src/llm_loop/introspection/settlement.py": "ca31c0d316f4e0deacebcfef3cba15c029bbdb0de742a8635802694eaf6a9fea",
+      "tests/unit/test_use_ledger_contract.py": "78e796463c8cc992f7c885a61f0bbb13bae79a1210892387e2756bd61d20672e",
+      "tests/unit/test_settlement_receipts.py": "9cfc8999fc535e2ee2e3a80c9a6babb4eebc06811a5d7ad95ea96edc14e227f6",
+      "tests/unit/test_search_feedback_reflow.py": "02f64b8c82f0489deb1a3e31a97e1513cfce2391e4a011a907e7f5e6905fcedb"
+    }
+  },
+  "scope_files": [
+    "src/llm_loop/experiences/store.py",
+    "src/llm_loop/methods/store.py",
+    "src/llm_loop/introspection/search.py",
+    "src/llm_loop/introspection/tools_status.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/factory.py",
+    "tests/unit/test_method_usage_watermark.py",
+    "src/llm_loop/use_ledger.py",
+    "src/llm_loop/introspection/settlement.py",
+    "tests/unit/test_use_ledger_contract.py",
+    "tests/unit/test_settlement_receipts.py",
+    "tests/unit/test_search_feedback_reflow.py"
+  ],
+  "authority": "docs/LFL 任务知识使用反馈与检索闭环设计草案.md v3（213 行全文比读）",
+  "methodology_search": "search_records 工具面不可用（本子代理工具集为 read_file/search_files/execute_command/read_evidence/edit_file），以 search_files 对 data/methods 做等效有界检索（limit≤5），无直接命中，按源码与设计文档独立审查",
+  "checklist": {
+    "correctness": "逐文件读毕 diff 全文(1039 行)与 5 个新文件全文；两层键程序派生、flock 锁内先扫后写(method=_store_lock/experience=_file_lock 均核实)、supersedes 父校验(存在/同slot/跨slot分列拒因)、链头统计顺序无关(_chain_parent 以 superseded 集合+revision/seq)、legacy 桶按字段齐全度参与、knowledge_read 仅精确水合打点且版本取自同一份内存快照——均与设计 v3 一致。发现 3 处 P1（见 findings）。",
+    "boundary": "torn 尾部隔离：原始字节迁 sidecar+字节范围+疑似原因诊断报告，中段坏行仅报告不改写；追加前 ensure_appendable_tail 守卫；同内容重试幂等；双进程 flock 收敛（subprocess 夹具）；invalid benefit/level 两侧拒绝且 registry 工具层 ValueError 有兜底回执。探针证实：recover 后 check_usage_integrity lost=1 如实；append 路径隔离后 lost 归零（持久证据在 sidecar+报告，记 P2-9）。",
+    "security": "无密钥/凭据；无命令注入（测试 subprocess 夹具用 sys.executable+仓库推导 PYTHONPATH，仅测试面）；路径限定 store 目录内；不可信输入无直达执行面；fail-open 方向不泄露内部堆栈（工具层仅回类型+消息）。",
+    "regression": "定向测试 199 passed（三新测试文件+watermark=51、受影响模块 148：method store/learning/telemetry/gate/binding、experience durability/contract/library/supersede/lifecycle、introspection_status、knowledge_status_wiring）；ruff 对全部 12 个触碰文件 All checks passed；test_ai_rules_sync 等 SoT 锚点未触碰；watermark 测试改动必要且正确（同(slot,submission)现折叠，需互异内容保三次真实追加）。",
+    "consistency": "schema 命名 method-use/v2、experience-use/v2 一致；事件类型沿用 dotted 惯例(knowledge.read/rule.feedback)；回执含 slot_id/submission_hash/revision/ledger_watermark；规则注释不改排序与权威(authority=rule_sot 保留并有断言)；per-side 注释模式与既有 _annotate_usage 一致。"
+  },
+  "focus_area_verdicts": {
+    "1_record_use_rewrite_and_episode_unset_sentinel": "锁内先扫后写与 supersedes 链：正确（含跨 slot 拒绝、修订只计链头、不改写历史行）。但 _submit_one 的 episode_ref='episode:unset' 兜底不符合设计：伪造 episode_fallback 溯源且把不同无归属任务并入同一伪 slot 修订链（探针：两个 session 不同内容 → 同 slot revision=2、统计 2 条塌缩为 1 链头），违背 v3『身份映射不确定时应报告归属缺失』与 use_ledger 自身定义的 unresolved 退化路径(slot='')。判 P1-1/P1-2。",
+    "2_quarantine_torn_tail": "截断语义正确（尾部坏行迁移+诊断，中段仅报告）；usage watermark 交互：recover 路径探针证实 lost=1 如实上报（主张成立）；附加发现：隔离后紧接的追加会把 lost 补齐归零（P2-9，持久证据仍在 sidecar+报告）。",
+    "3_search_rule_gating_and_annotate_fallback": "rows[0].hydrated 判定不漏打/错打：rule_index.search 精确 ref 仅返回单行 _full_record(hydrated=True)，泛查询返回卡片无 hydrated 字段，双向测试覆盖。_annotate_usage 无 usage_feedback 时回退旧净分注释：探针证实输出 usage_net/usage_net_detail。判正确。",
+    "4_factory_zero_behavior": "event_store 缺失/enabled=False 时 sink 与 projection 均为 None：emit_knowledge_read 对 None sink 直接 no-op，_search_rule 对 None projection 原样返回；测试覆盖无投影零行为。判正确。"
+  },
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "546",
+      "issue": "_submit_one method 侧 episode_ref or 'episode:unset' 伪造 episode 溯源：账本行落 binding=episode_fallback、episode_ref='episode:unset'（不存在的 episode），且不同无归属任务（不同 session、wu 皆空）的不同内容并入同一伪 slot 修订链（revision 递增、互为 supersedes），链头统计把多任务评价塌缩为 1。违背设计 v3『身份映射不确定时应报告归属缺失，不能静默匹配』及 use_ledger.resolve_submission 已定义的 slot=''(unresolved) 退化路径。探针 P2/P2b/P2c 证实。",
+      "fix_hint": "wu 与 episode_ref 皆空时不要伪造哨兵：改为显式 unresolved 路径（给 record_use 增加允许 binding=unresolved、slot_id='' 的显式参数），或按设计决策表返回 failed 回执并给原因（episode provenance unavailable；提供 work_unit_id 或 episode_ref）。修复后补一条覆盖该分支的测试。"
+    },
+    {
+      "id": "P1-2",
+      "severity": "P1",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "550-555",
+      "issue": "experience 侧 common 不传 episode_ref（探针 P3：显式提供 episode_ref 仍落 binding=unresolved、slot=''），与 method 侧实现及设计『工作单元=显式>episode 回退>unresolved』层级不一致：同一批次里 method 走 episode 回退、experience 直接 unresolved。",
+      "fix_hint": "_submit_one experience 分支补传 episode_ref=episode_ref（store 已支持该参数与 episode_fallback 推导），使两侧层级一致。"
+    },
+    {
+      "id": "P1-3",
+      "severity": "P1",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "283",
+      "issue": "build_pending_settlement 的 settled_count = len(reads) - len(items) 计量单位混用（读取事件数 − 唯一待结算键数）：探针 P1 证实同 key 3 次读取、零回执时 settled_count=2、items=1——虚报 2 条已结算。回执字段语义错误。",
+      "fix_hint": "在循环中按 key 记录是否被回执抵扣，settled_count=被抵扣的唯一键数；或改为输出 reads_total/pending_keys 两列原值，不派生误导性的 settled 数。补重复读取事件夹具测试。"
+    },
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "209-288",
+      "issue": "窗口未按设计以 task/goal 图事件为锚（自上次成功结算以来的范围）；实现为全会话读取−wu 过滤回执，多任务同会话时把其他任务的读取混入当前确定任务清单（anchor 字段有如实披露，attribution=task(wu) 与 session 窗口口径混用）。"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "652-656",
+      "issue": "RuleFeedbackProjection 聚合仅按 submission_hash 去重（忽略 slot）：不同工作单元对同一规则的相同内容反馈被折叠为 count=1，与两层身份『同内容跨 slot 不是重试』原则相悖（仅注释通道计数语义）。"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "201-204",
+      "issue": "session 降级窗口下无 session_id 的回执可抵扣任意会话读取（空值跳过会话比对）。"
+    },
+    {
+      "id": "P2-4",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "149-162",
+      "issue": "_ledger_receipts 经 experience usage_entries(limit=200) 默认截断：大账本下回执匹配与 settlement_calls 计数漂移（method 侧无此限）。"
+    },
+    {
+      "id": "P2-5",
+      "severity": "P2",
+      "file": "src/llm_loop/methods/store.py",
+      "line": "1119-1140",
+      "issue": "统计路径 usage_entries 不校验行级 integrity，而 record_use 去重扫描用 read_ledger_entries（校验）：中段被篡改行计入统计却对去重不可见，两视图口径分叉。"
+    },
+    {
+      "id": "P2-6",
+      "severity": "P2",
+      "file": "src/llm_loop/use_ledger.py",
+      "line": "413-422",
+      "issue": "append_ledger_line 补换行经文本模式句柄写入：Windows 下 '\\n' 会翻译为 '\\r\\n'（本仓库面向 POSIX，可移植性备注）。"
+    },
+    {
+      "id": "P2-7",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "493-513/677-679",
+      "issue": "规则 ref 大小写口径不对称：投影查询 upper() 但事件载荷 ref 未归一（_RULE_REF_RE IGNORECASE 放行小写提交）；且 SettlementItem.supersedes 对 kind=rule 被静默忽略（仅自动链头）。"
+    },
+    {
+      "id": "P2-8",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "405-410",
+      "issue": "wu 为空（降级模式）时 settlement_calls 的基数=全会话+跨会话账本回执（_ledger_receipts 无会话过滤），成本计数偏大。"
+    },
+    {
+      "id": "P2-9",
+      "severity": "P2",
+      "file": "src/llm_loop/use_ledger.py",
+      "line": "317-402",
+      "issue": "隔离后紧接追加会把 check_usage_integrity 的 lost 补齐归零（探针 B）：先前损坏信号从水位视图消失，持久证据仅存 sidecar+report+logger.error——建议在文档/回执说明该语义。"
+    },
+    {
+      "id": "P2-10",
+      "severity": "P2",
+      "file": "src/llm_loop/introspection/settlement.py",
+      "line": "386-441",
+      "issue": "submit_settlement_batch/build_pending_settlement 在 src 内无生产调用方（仅测试）：模型收尾清单与批量结算尚未接线到工具面（knowledge_read 打点与规则注释投影已由 factory 接线）。集成点留待后续任务时需复检 P1 各项。"
+    }
+  ],
+  "applied": [
+    "git diff -- src tests 全文逐行审读（1039 行）",
+    "5 个新文件全文审读（use_ledger 432 / settlement 700 / 三测试 1449 行）",
+    "设计文档 v3 全文（213 行）比读",
+    "定向 pytest：test_use_ledger_contract+test_settlement_receipts+test_search_feedback_reflow+test_method_usage_watermark=51 passed",
+    "受影响模块回归：method/experience store 与 introspection/status 12 个测试文件=148 passed",
+    "ruff check 全部 12 个触碰文件=All checks passed",
+    "语义探针×4：settled_count 虚报、episode:unset 伪 slot 跨任务并链、experience 侧 episode 丢弃、_annotate_usage legacy 回退",
+    "watermark 交互探针×2：recover 后 lost=1 如实；append 路径隔离后 lost 归零",
+    "符号核实：_store_lock/_file_lock 锁内先扫后写、_payload_sha256=sha256(to_md) 与打点版本同源、rule_index 精确水合单行、EventStore 布局与投影扫描匹配、registry 工具 ValueError 兜底"
+  ],
+  "rejected": [],
+  "notes": [
+    "experiences/usage.jsonl(+2 行)与 .usage_watermark.json(20→22) 为编码会话自身合法结算记录（真实 session/episode、v1 schema 由运行中旧版本进程写入），非测试污染；v2 上线后自然归入 legacy 桶。",
+    "verdict 词表映射：REQUEST_CHANGES=skill 的 REVISE；修复 P1-1/2/3 后仅需窄复审（修订点+新增扫描），无需全量重审。"
+  ],
+  "narrow_recheck": null
+}

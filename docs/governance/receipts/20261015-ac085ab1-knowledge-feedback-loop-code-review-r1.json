@@ -1,0 +1,99 @@
+{
+  "gate": "code",
+  "reviewer": "rule28-independent-narrow-recheck-subagent@GOAL-20261015-ac085ab1 (r1)",
+  "verdict": "PASS",
+  "skill_verdict": "PASS",
+  "round": "r1",
+  "recheck_of": "docs/governance/receipts/20261015-ac085ab1-knowledge-feedback-loop-code-review.json (REQUEST_CHANGES, P1x3+P2x10)",
+  "head_commit": "af4e26fae9ef78263de486ec6e7f01123aed453f",
+  "fingerprints": {
+    "git_diff_src_tests_sha256": "8a445afe97c1b73c66511e736590599321ca8243635114af0cb0b416bce6ced9",
+    "git_diff_src_tests_lines": 1053,
+    "r0_git_diff_src_tests_sha256": "01a9b6c5e2399277c4cb8059fe317c705e2d99804f0a798682a37062ed1d81ee (1039 lines)",
+    "new_files_sha256": {
+      "src/llm_loop/use_ledger.py": "608bd5dae4efe3bb96befc616b9e041c1ea1aac9e2135e4f68cafa4b9cf8040c (与 r0 一致，未被修复触碰)",
+      "src/llm_loop/introspection/settlement.py": "b87c27d96eda258a5cc99dee483c3c92868efde99989a5cd8b87384249e32888 (r0: ca31c0d3…a9fea)",
+      "tests/unit/test_use_ledger_contract.py": "4c4218800234e607480b9d242826f279ffd18ab68e689892399fb7c6e71699f9 (r0: 78e79646…20672e)",
+      "tests/unit/test_settlement_receipts.py": "d9e24f64f0ccbc213d6b3387fd2e05931103e5860fb6e0b2fbe3c2f8e1f8813e (r0: 9cfc8999…e227f6)",
+      "tests/unit/test_search_feedback_reflow.py": "02f64b8c82f0489deb1a3e31a97e1513cfce2391e4a011a907e7f5e6905fcedb (与 r0 一致，未被修复触碰)"
+    },
+    "tracked_changed_files_sha256": {
+      "src/llm_loop/methods/store.py": "c775e9c24711e1fe6c0094c490607c3e3f231a98516ac290e54342ac6b4e6738",
+      "src/llm_loop/experiences/store.py": "e7538f9766f8151c5b4a3952b0e1e931adf7543f1f164f39d0780477a483ae7b"
+    }
+  },
+  "scope_files": [
+    "src/llm_loop/introspection/settlement.py",
+    "src/llm_loop/methods/store.py",
+    "tests/unit/test_settlement_receipts.py",
+    "tests/unit/test_use_ledger_contract.py"
+  ],
+  "methodology_search": "search_records 工具面不可用（本子代理工具集 read_file/search_files/execute_command/edit_file），以 search_files 对 data/methods 做等效有界检索（content=窄复审, limit≤5），命中 3 张闸流程纪律卡（三态 verdict/窄复审/产物 sha 登记），仅作背景，未复用任何结论",
+  "itemized_verdicts": {
+    "P1-1_episode_unset_sentinel_removed": {
+      "verdict": "FIXED",
+      "evidence": [
+        "settlement.py:549-559 method 分支改为 record_use(ref, episode_ref=episode_ref, decision=…, allow_unresolved=True, **common)，无任何哨兵；grep 全仓 'episode:unset' 仅存于 methods/store.py:958 禁止性注释与测试断言（test_settlement_receipts.py:637）",
+        "methods/store.py:953-963 episode_ok = startswith('episode:') or (allow_unresolved and not clean_episode)；默认 allow_unresolved=False 时空 episode 仍 ValueError('…requires runtime episode provenance')，与 HEAD 旧契约逐字一致（git show HEAD :901-903 核对）；非空前缀缺失即便 allow_unresolved=True 也拒绝（探针 B2）",
+        "binding 层级 :970-978（explicit>episode_fallback>unresolved）+ slot_id 仅在 resolved_wu 非空时派生（:983-990）→ unresolved 落 binding=unresolved、work_unit_id=''、slot_id=''，即 use_ledger.resolve_submission 定义的退化路径（use_ledger.py:154-157、:202：slot='' 时仅按 submission_hash 尽力去重、append revision=1 无 supersedes 链）",
+        "独立探针 A 复现审查者原 P2/P2b/P2c 场景：两 session、wu/episode 皆空、不同内容 → 两条账本行均 revision=1、supersedes=''、idempotent=False、链头统计=2、账本字节无 'episode:unset'——伪 slot 塌缩场景消除",
+        "对照设计 v3 :71（降级回执标 attribution=unresolved、不抵扣确定任务）与 :143（身份映射不确定应报告归属缺失，不能静默匹配）：settlement 无 wu 时 entry_attribution='unresolved'（settlement.py:412-413），_offsets 在确定任务窗口跳过 attribution=unresolved 回执（:196-200，既有测试 :419 覆盖）——落账不抵扣、不伪造归属，语义符合",
+        "测试 test_unattributed_method_tasks_do_not_collapse_into_one_slot_chain（test_settlement_receipts.py:595-650）与 test_method_unresolved_attribution_requires_explicit_allow_and_stays_slotless（test_use_ledger_contract.py:481-510）断言真实（slot=''/binding/revision/链头数/账本无哨兵/默认拒绝），已跑通过"
+      ]
+    },
+    "P1-2_experience_episode_ref_passed": {
+      "verdict": "FIXED",
+      "evidence": [
+        "settlement.py:561-568 experience 分支 record_use(…, episode_ref=episode_ref, **common)（r0 时 common 不含 episode_ref）",
+        "experiences/store.py:913-919 与 methods/store.py:970-978 层级逐行同构：explicit wu > episode_fallback(clean_episode) > unresolved；slot 仅在 resolved_wu 非空时派生",
+        "独立探针 C（method+experience 两侧各三档）：显式 TASK-X → 双侧 binding=explicit、work_unit_id=TASK-X、slot 非空；仅 episode → 双侧 episode_fallback、work_unit_id=episode:s1:2:bb、slot 非空且 receipt.slot_id 非空（r0 探针 P3 的『显式 episode 仍落 unresolved』已消除）；皆空 → 双侧 unresolved、slot=''；同批次 method 走 episode 回退时 experience 同样走 episode 回退，两侧一致",
+        "测试 test_experience_settlement_uses_episode_attribution_when_provided（:653-678）断言落在账本行（binding/work_unit_id/episode_ref/slot_id）而非仅回执状态，真实有效"
+      ]
+    },
+    "P1-3_settled_count_counts_unique_keys": {
+      "verdict": "FIXED",
+      "evidence": [
+        "settlement.py:224-229 读取事件先收敛为唯一键集合 read_keys=(kind,ref,version)；:289 settled_count = max(0, len(read_keys)-len(items)) if reads else 0——items 即未被抵扣的唯一键（pending dict 同键空间），settled_count=被抵扣的唯一键数，单位混用消除",
+        "独立探针 D：同 key 3 次读取零回执 → items=1、settled_count=0（r0 探针 P1 场景虚报 2 已消除）；追加另一 key 并结算后 → settled_count=1、items=1（唯一键计数，非读取事件数）",
+        "测试 test_settled_count_counts_offset_unique_keys_not_read_events（:681-710）覆盖零回执与结算后两态，断言 settled_count==0/==1，已跑通过"
+      ]
+    },
+    "cross_checks": {
+      "verdict": "PASS",
+      "evidence": [
+        "既有调用方契约不变：allow_unresolved 默认 False；grep record_use 调用点——src 内仅 settlement.py:557 显式传 True（新增的预期调用点）与 registry_experience.py:278/:454（experience 侧签名无该参数，不受影响）；其余调用全为测试且均传 episode:'episode:…'，默认路径与 HEAD 行为逐字一致（旧校验 if not clean_episode.startswith('episode:'): raise）",
+        "未引入新 P0/P1：修复面窄（settlement 两分支 + store 判定 + 4 测试）；unresolved 条目不抵扣确定任务待结算项（_offsets :196-200）、不伪造任何溯源字段；slot='' 时同内容跨会话按 submission_hash 尽力去重为 use_ledger.py:154-157 文档化行为（非本次引入）",
+        "工作树一致性：tracked 修改= r0 scope 7 文件 + experiences/usage.jsonl 与 .usage_watermark.json（r0 回执 notes 已声明的编码会话合法结算产物，mtime 不晚于 r0 回执，修复期间未再动）；新增未跟踪 src/tests = settlement.py、use_ledger.py、3 个测试文件（均在 scope）；use_ledger.py 与 test_search_feedback_reflow.py sha256 与 r0 完全一致（未被修复触碰）；allow_unresolved 在 tracked diff 中仅出现于 methods/store.py hunk；find data/methods experiences outputs -newer r0回执 无命中——无意外旁路写入",
+        "定向回归：pytest test_settlement_receipts+test_use_ledger_contract+test_method_usage_watermark = 45 passed；test_search_feedback_reflow = 10 passed；ruff check 全部 12 个 scope 文件（两批合计）All checks passed"
+      ]
+    }
+  },
+  "findings": [],
+  "non_blocking_notes": [
+    "P3（观察，不阻断）：test_settlement_receipts.py:674 以 usage_entries(...)[-1] 取最新条目，而 ExperienceStore.usage_entries 文档契约为『默认倒序（最新在前）』（store.py:1083），[-1] 实为最旧——当前测试只有一条账本行故断言正确，但该取值模式对未来向该夹具追加条目的测试演进有误用风险（本复审探针初版即因同一排序假设误报，已定位为探针错误而非产品缺陷）。后续批次可顺手改为 [0]。",
+    "unresolved 条目同内容跨会话会按 submission_hash 折叠为 idempotent 既有回执（use_ledger 文档化『尽力而为』），回执 session 归属首写会话——设计允许的降级语义，记录备查。"
+  ],
+  "applied": [
+    "读 r0 回执全文，提取 P1-1/2/3 原始发现与修复指令",
+    "全文读当前 settlement.py（713 行）、methods/store.py record_use 段（895-1115）、experiences/store.py record_use/usage_entries 段、use_ledger.py 全文（432 行）",
+    "设计文档 v3 :71/:143 精确行比对（awk 定位）",
+    "git show HEAD 旧版 record_use 契约核对（默认路径行为不变）",
+    "grep 哨兵残留（仅注释+测试断言）与 record_use 全部调用点",
+    "读 4 个新测试全文（settlement :595-710 / contract :481-510）核断言强度",
+    "定向 pytest：45+10 passed；ruff 12 个 scope 文件全绿",
+    "独立探针×4（不复用编码者/上轮审查者脚本）：A 伪 slot 塌缩场景复现消除、B 默认契约+非空前缀拒绝、C 两侧三层级一致性、D settled_count 唯一键计数；探针初版一次断言失败已根因定位为探针自身排序假设错误（ExperienceStore.usage_entries 最新在前），非代码缺陷，修正后全过",
+    "产物指纹：git diff src tests sha256/行数、5 个新文件与 2 个 tracked 修复文件 sha256、r0 对照、find -newer 旁路写入检查"
+  ],
+  "rejected": [],
+  "notes": [
+    "P2×10（r0 findings P2-1…P2-10）明确不在本轮窄复审范围，已记录待后续批次处理。",
+    "verdict 词表：PASS=放行全量测试（RULE-AI-28 闸门通过；全量测试由父代理按流程另行执行）。",
+    "回执文件因 edit_file 不支持新建（空 old_string 无法锚定）改由 shell 写入本回执；除本回执外未写任何文件。"
+  ],
+  "narrow_recheck": {
+    "round": "r1",
+    "items_rechecked": ["P1-1", "P1-2", "P1-3"],
+    "result": "all FIXED, no new P0/P1",
+    "next": "放行全量测试"
+  }
+}

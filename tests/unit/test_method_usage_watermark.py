@@ -44,8 +44,10 @@ def test_watermark_detects_external_truncation(tmp_path, caplog):
 def test_watermark_never_ratchets_down(tmp_path):
     store = MethodStore(tmp_path)
     rec = _save(store)
-    for decision in ("applied", "adapted", "applied"):
-        store.record_use(rec.method_ref, episode_ref=EP, decision=decision, note="n")
+    # TASK-ac085ab1-001: 同 (slot, submission_hash) 的重复提交现在折叠为既有回执，
+    # 不再重复追加——本测试考察水位不回撤，故用互异内容保证三次真实追加。
+    for decision, note in (("applied", "n1"), ("adapted", "n2"), ("applied", "n3")):
+        store.record_use(rec.method_ref, episode_ref=EP, decision=decision, note=note)
 
     # external truncation to empty, then one legitimate new append
     (tmp_path / "usage.jsonl").write_text("", encoding="utf-8")

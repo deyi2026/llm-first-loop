@@ -14,6 +14,7 @@ LLM 可见的工具分派/呈现层在 introspection/corrections.py（消费本�
 
 from __future__ import annotations
 
+import hashlib
 import heapq
 import json
 import logging
@@ -232,6 +233,8 @@ class RecordSearcher:
         synopsis_store: Any | None = None,
         synopsis_source_resolver: Any | None = None,
         multiquery_shadow: Any | None = None,
+        knowledge_read_sink: Any | None = None,
+        rule_feedback_projection: Any | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
@@ -250,6 +253,10 @@ class RecordSearcher:
         self._workspace_scope_resolver = workspace_scope_resolver
         self._synopsis_store = synopsis_store
         self._synopsis_source_resolver = synopsis_source_resolver
+        # TASK-ac085ab1-002: 精确水合成功路径的 knowledge_read 打点 sink（fail-open）
+        self._knowledge_read_sink = knowledge_read_sink
+        # TASK-ac085ab1-003: 规则反馈注释通道（EventStore 投影，只读派生）
+        self._rule_feedback_projection = rule_feedback_projection
         # R3(P0-3/D11): experience 检索诊断透传——search() 入口重置，experience/all 路径回填
         self._last_diagnostics: dict[str, Any] | None = None
         self._last_semantic_diagnostics: dict[str, Any] | None = None
@@ -417,9 +424,9 @@ class RecordSearcher:
             results += self._search_episode(query, each_limit, session_id)
             # P1-B: all 可发现两类学习记录；每条卡片自身携带
             # record_kind/verification_state，不把失败 lesson 静默当成正向经验。
-            results += self._search_experience(query, each_limit, record_kind=None)
+            results += self._search_experience(query, each_limit, record_kind=None, session_id=session_id)
             results += self._search_synopsis(query, each_limit, session_id)
-            results += self._search_method(query, each_limit)
+            results += self._search_method(query, each_limit, session_id=session_id)
         return results[:limit]
 
     def _search_special(
@@ -437,15 +444,15 @@ class RecordSearcher:
         if kind == "episode":
             return self._search_episode(query, limit, session_id)
         if kind == "experience":  # P1-2/P1-B: verified-positive/legacy experience discovery
-            return self._search_experience(query, limit, record_kind="experience")
+            return self._search_experience(query, limit, record_kind="experience", session_id=session_id)
         if kind == "lesson":
-            return self._search_experience(query, limit, record_kind="lesson")
+            return self._search_experience(query, limit, record_kind="lesson", session_id=session_id)
         if kind == "rule":
-            return self._rule_index.search(query, limit)
+            return self._search_rule(query, limit, session_id)
         if kind == "synopsis":
             return self._search_synopsis(query, limit, session_id)
         if kind == "method":  # Method Learning v1: 轻量 Method 卡发现（method-Mxxx/METHOD-xx 精确水合）
-            return self._search_method(query, limit)
+            return self._search_method(query, limit, session_id=session_id)
         if kind == "file_effect":
             if self._file_effect_query is None or not session_id:
                 return []
@@ -760,6 +767,10 @@ class RecordSearcher:
 
         与 card_age 同一聚合层；fail-open——派生视图任何异常只降级为不加字段，
         不得影响检索主路径。
+
+        TASK-ac085ab1-003 P1 查询回流: store 有 usage_feedback 时改用其完整反馈
+        注释（净分 + 分项自评 + 近因问题摘要 + 当前版本状态 + 读取入口 +
+        legacy 未分层分母披露），per-side 模式不变。
         """
         if not rows:
             return rows
@@ -775,14 +786,69 @@ class RecordSearcher:
                     annotated.append(row)
                     continue
                 if ref not in memo:
-                    memo[ref] = store.usage_net(ref)
-                extra = _usage_net_row_annotation(memo[ref])
+                    feedback = getattr(store, "usage_feedback", None)
+                    value = feedback(ref) if callable(feedback) else None
+                    if value is None:
+                        # 回退旧路径：净分注释（usage_net 摘要 → 行注字段）
+                        summary = store.usage_net(ref)
+                        value = _usage_net_row_annotation(summary) if summary else None
+                    memo[ref] = value
+                extra = memo[ref] if isinstance(memo[ref], dict) else None
                 annotated.append({**row, **extra} if extra else row)
             except Exception:  # noqa: BLE001 — 派生视图降级不阻断检索
                 annotated.append(row)
         return annotated
 
-    def _search_method(self, query: str, limit: int) -> list[dict]:
+    def _emit_knowledge_read(
+        self, *, kind: str, ref: str, version: str, session_id: str, extra: dict | None = None
+    ) -> None:
+        """TASK-ac085ab1-002: 精确水合成功路径打 knowledge_read 事件（fail-open）.
+
+        版本哈希取自构成本次回执的同一份内存内容快照；事件语义收窄为
+        "精确内容已返回调用方"。泛查询不调用本方法。
+        """
+        from llm_loop.core.run_context import current_run_generation
+        from llm_loop.introspection.settlement import emit_knowledge_read
+
+        emit_knowledge_read(
+            self._knowledge_read_sink,
+            kind=kind,
+            ref=ref,
+            version=version,
+            session_id=session_id,
+            run=current_run_generation.get() or "",
+        )
+
+    def _search_rule(self, query: str, limit: int, session_id: str) -> list[dict]:
+        """TASK-ac085ab1-002/003: 规则检索 + 精确水合打点 + 反馈注释通道.
+
+        注释通道数据取自 EventStore 投影（rule_feedback_projection），携带反馈
+        水位与 pending_count；不改规则排序、不改规则权威（authority=rule_sot）。
+        """
+        rows = self._rule_index.search(query, limit)
+        if rows and rows[0].get("hydrated") is True:
+            content = str(rows[0].get("content") or "")
+            version = hashlib.sha256(content.encode("utf-8")).hexdigest() if content else ""
+            self._emit_knowledge_read(
+                kind="rule",
+                ref=str(rows[0].get("rule_ref") or ""),
+                version=version,
+                session_id=session_id,
+            )
+        projection = self._rule_feedback_projection
+        if projection is None or not rows:
+            return rows
+        annotated: list[dict] = []
+        for row in rows:
+            try:
+                ref = str(row.get("rule_ref") or row.get("id") or "")
+                data = projection(ref) if ref else None
+                annotated.append({**row, **data} if data else row)
+            except Exception:  # noqa: BLE001 — 注释通道 fail-open
+                annotated.append(row)
+        return annotated
+
+    def _search_method(self, query: str, limit: int, *, session_id: str = "") -> list[dict]:
         """Method discovery uses lexical cards plus optional semantic RRF.
 
         Exact stable refs remain exact hydration and never go through semantic fallback.
@@ -792,7 +858,16 @@ class RecordSearcher:
             return []
         raw = str(query or "").strip()
         if raw.lower().startswith("method:"):
-            return self._annotate_usage(self._method_store.list(raw, limit), side="method")
+            rows = self._method_store.list(raw, limit)
+            for row in rows:
+                # 打点仅发生在精确水合成功路径；版本=同一份内存记录快照的 content_hash
+                self._emit_knowledge_read(
+                    kind="method",
+                    ref=str(row.get("key") or ""),
+                    version=str(row.get("content_hash") or ""),
+                    session_id=session_id,
+                )
+            return self._annotate_usage(rows, side="method")
         keyword_limit = max(limit * 4, 20)
         keyword = self._method_store.list(raw, keyword_limit)
         if (
@@ -841,6 +916,7 @@ class RecordSearcher:
         limit: int,
         *,
         record_kind: str | None = "experience",
+        session_id: str = "",
     ) -> list[dict]:
         """P1-2/P1-B: typed discovery with exact ``experience:<id>`` hydration.
 
@@ -860,6 +936,17 @@ class RecordSearcher:
                 self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
                 self._last_semantic_diagnostics = None
                 stem = exact.removesuffix(".md")
+                # TASK-ac085ab1-002: 精确水合成功路径打点；版本哈希取自同一份 doc 快照
+                try:
+                    version = hashlib.sha256(doc.to_md().encode("utf-8")).hexdigest()
+                except Exception:  # noqa: BLE001 — 打点失败不阻断水合
+                    version = ""
+                self._emit_knowledge_read(
+                    kind=str(getattr(doc, "record_kind", "") or "experience"),
+                    ref=f"experience:{stem}",
+                    version=version,
+                    session_id=session_id,
+                )
                 return self._annotate_usage(  # EVO-20261014-7299aec2
                     [self._experience_store.to_hydrated_record(stem, doc)][:limit],
                     side="experience",
