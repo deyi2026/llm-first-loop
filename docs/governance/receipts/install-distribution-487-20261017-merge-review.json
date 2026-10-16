@@ -1,0 +1,78 @@
+{
+  "gate": "merge",
+  "reviewer": "/root/installation_p0_merge_review",
+  "reviewer_model": "fresh independent Codex subagent; no development participation; not GLM code-review replacement",
+  "verdict": "PASS",
+  "counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "scope": "P0 installation distribution MVP and extension disabled-state preservation; necessary A2A durability registration integration",
+  "goal_id": "708c482c-9377-4ed1-bad1-ff69834b6076",
+  "overall_goal_complete": false,
+  "later_scope_status": {
+    "P1": "pending",
+    "P2": "pending"
+  },
+  "branch": "integration/install-distribution-487-20261017",
+  "code_commit": "0ffc02eea591f41be4fafa163b74fad550448811",
+  "commits": [
+    "0ffc02eea591f41be4fafa163b74fad550448811"
+  ],
+  "commits_scope": "Implementation commit reviewed before this evidence-only self append; final receipt commit is bound through final_narrow_review evidence ref",
+  "based_on_main": true,
+  "main_sha_at_review": "48788987b497e0ce8b74398831cda5ee7cd24e6e",
+  "merge_base": "48788987b497e0ce8b74398831cda5ee7cd24e6e",
+  "worktree_clean": true,
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "prior_source_integration_resolution": "registry_experience.py keeps main method_use_receipt telemetry and contextlib.suppress; exact integration delta independently GLM-reviewed in existing canonical receipt",
+  "artifact_sha256": "f2aab015d4793b63b0cd78701197644023b980f621d90c4f2252abcb8aad222c",
+  "artifact_fingerprint_definition": "git diff --binary 48788987b497e0ce8b74398831cda5ee7cd24e6e..HEAD excluding only docs/governance/receipts/install-distribution-487-20261017-merge-review.json",
+  "implementation_23_sha256": "d7fb3ffb87d4b61a510e8d3c5e4fddb4b3b5456031af00522c0ad151d9499716",
+  "reviewed_27_sha256": "31eae8b4cf86bf8644317b4323e1132d8edc2a13fd4ecd2218b2a3c77cd4edb5",
+  "actual_independent_checks": [
+    "P0 done_when verified against implementation and actual test/install evidence; whole Goal remains incomplete",
+    "Four GLM source event streams each contain one terminal; parent/generation/result/event ID/final text/hash match canonical receipts; session two messages; runners isolated/inherit false/zero tools, original live checks recorded",
+    "Recomputed19/22/23/27/28file patch SHA chain and original-to-integrated source equivalence; only registry integration delta differs and has GLM coverage",
+    "R9 PROBE tree equals code commit tree; actual log hashes and gate/security/commit outcomes verified; no repeated full test",
+    "Wheel SHA recomputed;345 resources and463 Python files equal current branch; real fresh-venv smoke verified",
+    "fc6..487 five docs only, no selected bundle resource/code changes; one actual A2A T2/observe entry only, thresholds/scanner/exemptions unchanged"
+  ],
+  "findings": [],
+  "existing_code_P2_disposition": "Original three P2 dispositions retained in code receipts:two deferred,one already documented/no code change",
+  "full_r9": {
+    "verdict": "PASS",
+    "command_id": "sess-55664-2537",
+    "probe": "8d475a599ee4b30e5f2a585ca5883183a3ccbb38",
+    "exact_tree": "a4741a097daed5e25c49549fdd80698b07256776",
+    "tier0": "319passed9112deselected",
+    "full_result": "9269 passed,146 skipped,13 warnings",
+    "serial_result": "1passed29deselected",
+    "gate_log_sha256": "efcaa27f6cb4c2e23fb5bba923cfaafad0c0292121e4cb75796b7424f6968415",
+    "run_log_sha256": "4c2dc67c66e58d1db3e6c7200060a8bd16a9af2c6858a44b82cc778ef5333049"
+  },
+  "focused_gates": [
+    "204passed1warning",
+    "A2A registration and architecture47passed",
+    "fresh-venv wheel smoke PASS"
+  ],
+  "wheel_sha256": "92ea08d9483ab2ec12a0f92bee5002564c24fbf064a2716dbbf089fe4936e0b5",
+  "final_narrow_review": {
+    "state": "pending",
+    "evidence_ref": "data/install-distribution-487-20261017/merge-final-currentness-review.json"
+  },
+  "main_sha_after": null,
+  "merge_executed": false,
+  "merge_authorized": false,
+  "post_merge_focused_plan": [
+    "test_application",
+    "test_extensions_store",
+    "test_release_sidecar",
+    "test_settlement_tools",
+    "test_arch_guards",
+    "test_a2a_task_admission"
+  ],
+  "branch_disposition": "kept:awaiting receipt-only final currentness review and fresh separate user authorization for local-main merge"
+}
