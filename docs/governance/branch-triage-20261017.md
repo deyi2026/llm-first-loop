@@ -34,18 +34,33 @@
 | fix/web-multiagent-canary-main-integration-20261016 | 同上 | 链证 |
 | fix/web-multiagent-host-main-20261016-current | 8041dc357 基线旧代，被 b184 重基取代 | 链证 |
 
-## C. F 批整合簇，待补闸（11）
+## C. F 批整合簇——已补闸收口（2026-10-17）
 
-**合规缺口披露**：main 上 596bad1b8"处置报告追加 F 批执行结果（集成分支 9 commits、测试 82+29+29 passed）"已报告执行，但 `merge/f-batch-20261017`（17 个非 merge 提交未落地）与 `integrate/f-batch-v2-20261017`（4 个 docs 提交未落地）均 NOT in main——RULE-AI-34 前时代"报告收口、代码未进 main"实例。处置：登记为最高优先补闸待办，整合时逐项过 merge-review-gate；不机械合并。
+**合规缺口披露**：main 上 596bad1b8"处置报告追加 F 批执行结果（集成分支 9 commits、测试 82+29+29 passed）"已报告执行，但两条线均 NOT in main——RULE-AI-34 前时代"报告收口、代码未进 main"实例。**本缺口已于 2026-10-17 补闸闭合**（执行记录见下）。
 
-| 分支 | 内容 | 备注 |
-|---|---|---|
-| merge/f-batch-20261017 | 17 非合并提交：method telemetry 修复、provider spec 测试同步、jev pyright（c0f577d18）、canary 系列合并、learning 六分支合入 | 主整合线 |
-| integrate/f-batch-v2-20261017 | 4 docs 提交：GLM review/R9 回执归档 | 与上互有独有提交（23/7） |
-| fix/learning-source-deleted-{02c7,597,af4,c240,c72a,ea1d}-*（6 个） | learning 处置线；c240/c72a 部分经短名分支 IN-MAIN，整体在 f-batch 线 | 随 F 批收口 |
-| fix/jev-wire-pyright-narrowing-20261015 | c0f577d18 已在 f-batch 线 | 随 F 批 |
-| fix/review-prerequisite-20261015 | 2ad0bc06d 基线增量，被 f-batch 精准挑入 | 随 F 批 |
-| fix/architecture-guard-and-agency-20261014 | 测试部分已被 f-batch 提取（ed3248d60）；**src 部分与 main 现行演进冲突方向未定**（ed3248d60 原话） | 整合时一并裁决 |
+| 分支 | 处置 |
+|---|---|
+| merge/f-batch-20261017 | 17 非合并提交经 `integrate/f-batch-final-20261017` 并入 main（全量 R9 9228 passed） |
+| integrate/f-batch-v2-20261017 | 同上；其 rule-presence 台账补 RULE-AI-34 行修复了 main 当时的现行红测试 |
+| fix/learning-source-deleted-{02c7,597,af4,c240,c72a,ea1d,f7c}-*（7 个） | src 修复（删除会话提取取消不重试）patch-id 判定已含于并集；3 笔证据 docs 随归档合并落 main |
+| fix/jev-wire-pyright-narrowing-20261015 | c0f577d18 随 f-batch 线并入（wire.py pyright 收窄，main 此前未含） |
+| fix/review-prerequisite-20261015 | 0a92fff22（review 强制前置）经核验已被 main Rule28 演进取代（SoT:446 强化文本/obligation 契约测试/review_gate 常量俱在）——不采纳，留痕 |
+| fix/architecture-guard-and-agency-20261014 | **src 方向已裁决**（见下节）：断环取 main 方向；usage_net 移动不采纳；测试提取部分（ed3248d60+6e807fc3e）随线并入 |
+
+### architecture-guard src 冲突裁决记录
+
+1. **Provider 断环**：fdf280c6f 方向（registration 不反向 import providers、条目校验移调用方）已被 main 采纳并演进为整批校验语义（"条目类型异常"→web 通道整批不注册）；f-batch 线 ed3248d60+6e807fc3e 测试断言已同步该文案。**取 main 方向，分支 per-entry 变体不采纳**。
+2. **usage_net root→knowledge/ 移动**：不采纳。main 无该位置棘轮（test_arch_guards 无 usage_net 条目）；分支后 main 已独立演进根 usage_net.py；移动为孤立 plan（PLAN-20261014，自declare "isolated candidate"）之纯位置重构，零行为收益。
+3. **分支 learning_plane/rule_index 改动**：已被 main 演进取代（source_session_deleted/_SECTION_HEADING_RE）；v2 线携带的 rule_index"全 H2 边界精化"经独立准入审查 P1 判定为死代码（main 现行 _SECTION_HEADING_RE 已实现该语义），已撤除。
+
+### F 批整合执行记录
+
+- 集成线：`integrate/f-batch-final-20261017`（main←v2←f-batch 双 merge + 3 笔 learning docs cherry-pick）
+- 冲突 2 处均取 main/b184 严格版（runner.py 守卫多拒 fs_isolation——隔离工作树是共享台账无法核算的物理资源；canary 测试 762 行评审版 ⊃ 639 行旧版）
+- 独立准入两轮：REVISE（3 findings：rule_index 死代码/测试重名 def/遥测硬下标→fail-open）修复后 PASS（subagent_88a8d21a0e98）
+- 全量 R9：exit 0；tier0 319 passed + xdist 全量 9228 passed/137 skipped；tier0 暴露并补登 evidence_report.py durability write_exemption
+- 审查范围拆分：代码+台账入代码闸（41.9KB）；46 个证据 docs（297KB，超 192KB 审查材料上限）经独立归档合并落地，内容零改动
+- 回执：docs/governance/receipts/RECEIPT-20261017-fbatch-final-code-gate-full-r9.json
 
 ## D. 长期实验不合并（2）
 
@@ -61,5 +76,5 @@ ai_rules.md:463 原"P0-B（2026-10-15 独立实验分支，**尚未合并 main�
 ## 后续动作
 
 1. b184 线 gate PASS 后 ff 并入 main（本次执行，见 A 组回执）
-2. F 批整合簇补闸：先裁决 architecture-guard src 取向 → 单线整合 merge/f-batch + f-batch-v2 → merge-review-gate → 并入 main（待办，未排期）
+2. F 批整合簇补闸：✅ 已完成（2026-10-17，见 C 组执行记录；归档合并另见后续）
 3. B/D 组分支保留为历史现场；批量删除属卫生契约动作，待用户明示后执行
