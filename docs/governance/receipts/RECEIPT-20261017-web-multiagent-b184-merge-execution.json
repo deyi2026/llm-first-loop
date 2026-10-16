@@ -1,0 +1,22 @@
+{
+  "schema": "lfl.merge-gate-receipt.v1",
+  "kind": "merge_execution",
+  "object": "integrate/web-multiagent-host-b184-20261017",
+  "merged_at": "2026-10-17T01:41:30+08:00",
+  "merge_base": "b184edf9c7ecc16014c1806fd1c0bedff7a440cb",
+  "merge_mode": "fast-forward",
+  "merge_result_sha": "a0acecbfb3cea549ce3cf7062c36ece38356d7c3",
+  "sha_matches_gate_prediction": true,
+  "commits": ["8784c28cc", "0bf209354", "a0acecbfb"],
+  "commits_note": "a0acecbfb 为并行会话（parent b3627445）先前 gate 审查 subagent_d3bcef550f1b 的回执落盘；其回执内 reviewed_at 时间戳虚写、commits 自覆盖两处失真由复审裁决闭合，以 RECEIPT-20261017-web-multiagent-b184-merge-execution.json 与复审报告为准，不改写已核 SHA 链",
+  "reviews": [
+    {"reviewer": "subagent_d3bcef550f1b", "verdict": "PASS", "scope": "8784c28cc+0bf209354（回执提交前分支态）"},
+    {"reviewer": "subagent_a2ff06b93f26", "verdict": "PASS", "p0": 0, "p1": 2, "p2": 3, "scope": "全 3 笔（含回执提交窄复审）；P1=提交清单口径与旧回执失真，P2=改动面口径/冻结SHA语义/R9基线等价性；等价性 patch-id 独立复算 f909feaab6eb528e8447103a529acf7403849cac 且零交叉"}
+  ],
+  "change_surface": "16 files +1501/-22（src 7 +359/-19、scripts 1、tests 1 +762、docs/governance+design+results 7）",
+  "test_evidence": "R9 exit0 9201 passed/141 skipped/0 failed（commit_under_test 8634db468，patch-id 等价）；GLM-5.3 代码审查 PASS P0=0 P1=0 P2=4；focused 90/215 passed、Quick exit0（回执声明，复审未复跑）",
+  "unauthorized_actions_check": "合并前无越权：未 push（origin 无该分支）、未发布、未重启；push 攒批遵用户指示",
+  "branch_disposition": "merged into main",
+  "gate_rule": "RULE-AI-34",
+  "operator": "LFL 主会话（分支收口归类任务，docs/governance/branch-triage-20261017.md）"
+}
