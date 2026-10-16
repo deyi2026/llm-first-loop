@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 |---|---|
-| 状态 | draft v0.8.9：P0a/P0b/P1a 已实施；P1b 参数预注册冻结（§11.1/§11.1.1）+ producer 机会分母字段已实施；本地 judge 三轮（§11.2–§11.5）主指标 21/37 负向，无资格授予；P1b-OR R1（§11.6）6/6 contract_invalid（wire 误读 `answer`，官方为 choice/score/noul，附录 C v0.8.8）；**§11.7 R4 修复轮已冻结并执行（2026-10-15 13:18）：6/6 题 schema-valid 且与冻结盲评标签 6/6 一致**，预算 2/2 合规、resolved `typesafe/jev-1.13-20260917`、费用 unknown（无账面字段）；6 题单批次事实，不构成校准资格；尚未获得生产效果资格 |
+| 状态 | draft v0.9.2：P0a/P0b/P1a 已实施；producer 机会分母字段已部署（2026-10-15 13:51 起落地）并经首轮只读审计（附录 v0.9.2，2026-10-16）：窗口 30/30 新 run.end 双键齐备、30/30 可 join、零事件行/配置回退行 0 例；本地 judge 三轮（§11.2–§11.5）主指标 21/37 负向，无资格授予；真 Jev（OpenRouter System One）：R1 6/6 contract_invalid（wire 字段修复，§11.7）→R4 修复轮 6/6 与冻结标签一致；§11.8 v2 扩样 41/43=95.3%（no 召回 13/13、注入 4/4、零高确定错判，牌价≈$0.0001）；合计 47/49 仍 <§9.2 200 条可行性起点，不构成校准资格；尚未获得生产效果资格 |
 | 初审/最新复核 | 2026-10-14 / 2026-10-15（Asia/Shanghai） |
 | 本轮输入 v0.4 SHA-256 | `47606b0e3f3a6f58ceaa6ff891726a82d57f1a803e2732389e898e77146063bb`；保留其已核方向，仅修订口径 |
 | 初次审查基线 | main `5badfc95aadfc286f9c2d8b323cf5932e285c725`；v0.1 当时未跟踪（历史事实） |
@@ -1048,3 +1048,15 @@ v0.4报告的3368/2192是其顶层采集口径，非完整分段范围；“1904
 **4. 执行件勘误（先于真实请求的 dry-run 修正）**：`run_v2_batch_or.py` 中止检查原用 `getattr(qf,"status")`，而 `outcome.questions` 逐题为 dict → 恒 None，会导致批 1 后假中止；mock dry-run 发现后修正为 dict/对象双兼容，修正发生在任何真实请求之前（mock 全链 13/13 通过后执行 real_or）。冻结内容（§11.8 表）不受影响；修正随结果提交入库。
 
 **5. 主张边界（不改闸）**：43 题（dual_agreed）<200 条可行性起点；premise_check 单题型；快照事实判定场景；unknown 类召回 0.818 与两处"缺失→可判定"形态是后续扩样应分桶监测的方向。P2a 排序/保存/生产资格仍需独立决策与收益链（producer 字段部署后积累机会分母）。
+
+### v0.9.1→v0.9.2 P0b producer 字段首轮只读审计（定时委派，2026-10-16）
+
+**性质**：只读审计，零外发、零 mutation、不改代码/配置/服务；三件套=脚本+JSON `outputs/jev-p0b-audit-20261016/`（脚本 sha256 `a9bede5f…`）+本条目。扫描 2026-10-16 08:36:46–59：EventStore 1243 个 JSONL（顶层 891+分段 352，3.93GB，2,042,722 行，解析失败 0）；事件字段按 `type` 取（v0.5→v0.6 教训沿用）。
+
+**服务核验态**：三服务运行中、restart_required=false。今晨 08:06–08:12 一轮 restart 全部 succeeded（web `svc-2d4f473f…` generation 270、matches_desired_generation=true、pid 活、git `0b3d9825`；feishu `svc-b4e13812…` 08:11:57；learning `svc-8cb7a65e…` succeeded）。相对部署时点 generation 264→270 前移 6 代，前移≠失败；字段落地时点下界维持 2026-10-15 13:51（见 `service_status_observed.json`）。
+
+**字段是否进入事件流（窗口 ≥2026-10-15T13:51:24+08:00）**：新 run.end 30 条（8 个 session；reason：completed 28/llm_error 2）——**30/30 双键齐备**：`knowledge_run_ref` 全有值、`knowledge_advisor_mode` 全为 `shadow`；旧写入方签名 0、混合签名 0。新 `knowledge.run_outcome` 30 条，**30/30 含 `advisor_mode=shadow`**，且与窗口 run.end 30 条构成 1:1 对应。已见样本无未见缺失。
+
+**首批机会分母行**：30/30 advisor 启用；`knowledge_run_ref` 精确 join 成功 30；"advisor 启用零 knowledge 事件"行 0；"启用但无 run_ref（host 配置回退、不可归因）"行 0。结构性说明：run.end 带 run_ref ⇒ tracker 存在，正常 finish 至少产 1 条 knowledge 事件，故"零事件"桶实际捕捉的是 finish 前中断/写入失败——本窗 0 例；配置回退路径 0 例 ⇒ 窗口内全部 run.end 写入方均有 tracker。
+
+**口径边界与样本量限制**：窗口约 18.7h、30 条 run.end/8 session（过夜低流量），"已见/未见"不外推；窗口内 knowledge 事件 820 条 vs run.end 30 条——多数 knowledge 事件的 run 未在窗口内落 run.end（跨阈值启动/未结束/未走 finalizer），两者不得互为分母；fail-open 真实遗漏量 UNMEASURABLE 不填 0；全时计数（run.end 4592/knowledge 17534/去重 run_ref 647）仅作上下文，禁止作分母；审计时点（08:36:59）之后新事件不在本轮。
