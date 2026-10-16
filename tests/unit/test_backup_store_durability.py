@@ -292,7 +292,6 @@ def test_orphan_tmp_and_lock_invisible_to_scan_surfaces(tmp_path, monkeypatch):
     store = BackupStore(tmp_path)
     # This is a fresh-backup test: do not let the fixed 2026-10-08 fixture
     # silently cross the real seven-day retention boundary over time.
-    # （合并注：与前一条已合分支的同位注释同义，取更详版。）
     backup_id = store.save_archive(make_archive(backup_at=backup_module.system_local_now().isoformat()))
     (tmp_path / f"{backup_id}.abcdef123456.tmp").write_text("orphan", encoding="utf-8")
 
