@@ -1,0 +1,171 @@
+# AI Coding Agents & Agent Harnesses: Competitive Landscape (late 2025 / 2026)
+
+**Compiled 2026-10-16.** All facts below were retrieved from the cited URLs during research. Where I could not verify something, it is marked **[unverified]** or listed in §7. Note: `web_search`/`web_fetch` tools were blocked in the research environment; everything here came from direct HTTP fetches of vendor docs, GitHub, arxiv, and Hacker News.
+
+> **第二方复核注记（2026-10-17, LFL）**：本文档由外部代理（DSH）编写，数字类声明（版本号/日期/统计）未逐条独立复核；复核覆盖项为存在性、编译时间戳、[unverified] 标注约定合规性。外部事实以各引用 URL 的编写时点快照为准，时效不担保。
+
+---
+
+## 1. Claude Code (Anthropic)
+
+**Current version: 2.1.301, Oct 15 2026** ([changelog](https://code.claude.com/docs/en/changelog)). Docs live at `code.claude.com/docs` / `docs.claude.com`.
+
+**Official harness definition.** Anthropic explicitly names the concept: *"Claude Code is the layer around the model that provides the tools and manages the context the model sees. This surrounding layer is what the term agentic harness refers to."* ([how Claude Code works](https://code.claude.com/docs/en/how-claude-code-works)). The agentic loop is documented as **gather context → take action → verify results**, with the user interrupting at any point. Built-in tools fall into five agency categories: file ops, search, execution (bash), web, code intelligence (LSP).
+
+**Agent loop & primitives**
+- **Subagents** ([docs](https://docs.claude.com/en/docs/claude-code/sub-agents)): own context window, custom system prompt, tool allowlist, independent permissions. Built-ins: `Explore` (read-only, thoroughness levels quick/medium/very thorough), `Plan` (plan-mode research, read-only), `general-purpose`, `claude`, `statusline-setup`, `claude-code-guide` (Haiku). Explore/Plan **start without CLAUDE.md or git status** to keep research cheap. Subagent descriptions warn above **15,000 combined tokens**. Per-subagent `autoCompactWindow` added 2.1.296.
+- **Agent teams** (experimental, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`): multiple independent Claude Code sessions, shared task list, direct inter-agent messaging, split-pane (tmux/iTerm2) or in-process display. Docs explicitly warn they *"add coordination overhead and use significantly more tokens."*
+- **Skills**: `SKILL.md` folders with progressive disclosure — name+description in system prompt, body loaded on trigger, further files on demand. Follows the open [Agent Skills standard](https://agentskills.io/).
+- **Hooks**: PreToolUse/PostToolUse/Stop/etc., prompt-based (`llm` judge) variants, plus **`mods`** — a new (2.1.287) plugin layer that can *"modify deeper behavior"*, with its own `$` API, `Input` rows, notifications, and `.catch` handlers.
+- **MCP**: first-class; MCP tool **schemas are deferred by default** and loaded on demand via tool search (`ENABLE_TOOL_SEARCH=auto` loads them upfront only if they fit in 10% of the context window) — this is the documented answer to MCP context bloat.
+- **Sandboxing** ([docs](https://docs.claude.com/en/docs/claude-code/sandboxing)): OS-enforced, built on open-source [`@anthropic-ai/sandbox-runtime`](https://github.com/anthropic-ai/sandbox-runtime). macOS uses **Seatbelt**; Linux/WSL2 uses **bubblewrap + socat**, plus optional **seccomp** for Unix-socket blocking. Network goes through a proxy with an allowlist. Off by default; `/sandbox` to enable. Notably: file tools, MCP servers, hooks, and LSP run **outside** the sandbox.
+- **Context compaction**: `/compact`, auto-compaction, and now **`autoCompactWindow` per subagent**. The interactive [context-window explorer](https://code.claude.com/docs/en/context-window) shows a 200k window with system prompt (~4.2k tokens), auto memory (~680), env info (~280), skill index, and MCP tool names — and marks what survives compact.
+- **Memory**: two systems — `CLAUDE.md` (user-written; also reads `AGENTS.md`) and **auto memory** (Claude-written notes, first 200 lines or 25KB loaded every session). Load order: managed policy → user → project → local. Subagents can maintain their own auto memory.
+- **Checkpointing** ([docs](https://docs.claude.com/en/docs/claude-code/checkpointing)): file-edit snapshots per turn, 100 most recent, `/rewind` with restore code/conversation/both plus "Summarize from here"/"Summarize up to here". **Caveats**: Bash-file changes untracked, subagent edits usually not restored, symlinks skipped.
+- **Sessions**: `--continue`, `--resume`, `--resume <name|path>`, `--from-pr <n>`, `/resume`, **resume a running background session** via `claude attach`, `--fork-session`. Sessions are local `.jsonl` transcripts; snapshot retention ~30 days.
+- **`/goal`** ([docs](https://code.claude.com/docs/en/goal)) — a strong autonomy primitive: set a completion condition; after each turn *a separate model* checks whether it holds and starts another turn if not. Clears when met, judged impossible, or an error you must fix occurs. Compared explicitly against `/loop` (time-based) and Stop hooks (script-based).
+- **Background agents / agent view / cross-session messaging**, scheduled tasks, routines, computer use, remote control, mobile, desktop, JetBrains, VS Code, Slack, GitHub Actions, GitLab CI, self-hosted runners, cloud sessions.
+- **Observability**: OpenTelemetry tracing throughout, including `tool_decision` events carrying `classifier_verdict`, `permission_mode`, `classifier_category`.
+- **Agent SDK** (Python + TypeScript): `agent-loop.md`, `file-checkpointing.md`, `session-storage.md`, `subagents.md`, `tool-search.md`, `cost-tracking.md`, `observability.md`, `secure-deployment.md` ([index](https://code.claude.com/docs/llms.txt)).
+
+**Anthropic API-level primitives (new in 2026, highly relevant to any harness):**
+- **Server-side compaction** (beta header `compact-2026-09-04`): on-demand or at a token threshold; can keep recent turns verbatim, run in the background, and preserve thinking blocks ([compaction](https://platform.claude.com/docs/en/build-with-claude/compaction)).
+- **Context editing** (beta `context-management-2025-06-27`): `clear_tool_uses_20250919` (tool-result eviction, oldest first, replaced with a placeholder; `clear_tool_inputs` to also drop calls) and `clear_thinking_20251015` ([docs](https://platform.claude.com/docs/en/build-with-claude/context-editing)).
+- **Memory tool**: client-implemented `/memories` file directory the model reads/writes — explicitly framed as *"supports just-in-time context retrieval"* ([docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool)).
+- **Task budgets** (beta `task-budgets-2026-03-13`): tell the model its token budget for the whole loop; model sees a countdown and self-regulates ([docs](https://platform.claude.com/docs/en/build-with-claude/task-budgets)).
+- **Programmatic tool calling** (GA): *"call your tools from code in the code execution container, cutting model round trips and token use"* — i.e. Anthropic productized the "scripts instead of tools" pattern ([docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)).
+- **Tool search tool**, strict tool use, parallel tool use.
+
+**Design principles (verified from Anthropic engineering blog):**
+- *Effective context engineering for AI agents* (Sep 29 2025, [link](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)): names **context rot** ("as the number of tokens in the context window increases, the model's ability to accurately recall information from that context decreases"), frames context as a finite attention budget with n² pairwise relationships, and pushes **just-in-time context** — *"maintain lightweight identifiers (file paths, stored queries, web links) ... that allow agents to dynamically load data into context at runtime"* over pre-loading. Also discusses compaction, structured note-taking, and sub-agent architectures.
+- *Effective harnesses for long-running agents* (Nov 26 2025, [link](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)): the canonical reference. **Initializer agent + coding agent** pattern. Failure modes observed even with compaction on Opus 4.5: (1) one-shotting the app and running out of context, (2) later agents declaring the job done prematurely. Solutions: a **JSON feature list** (>200 features, `passes: false`, JSON chosen because models inappropriately edit Markdown less), **one feature per session**, **`claude-progress.txt`** + git history for state recovery, **`init.sh`** to start the dev server, and **end-to-end browser testing via Puppeteer MCP** ("testing as a human user would"). Standard get-up-to-speed ritual: `pwd` → read progress file → read feature list → pick highest-priority unfinished feature.
+- *Equipping agents for the real world with Agent Skills* (Oct 16 2025, updated Dec 18 2025, [link](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills)): progressive disclosure as the core principle; *"the amount of context that can be bundled into a skill is effectively unbounded"*. Published as an open standard Dec 18 2025.
+
+---
+
+## 2. OpenAI Codex CLI / Codex
+
+Rust CLI, **~129.5k GitHub stars** ([repo](https://github.com/openai/codex)). Docs at `developers.openai.com/codex` — the surface has expanded enormously (Codex Cloud, desktop app, IDE extension, mobile, "Dots", plugins, security product).
+
+- **Sandbox + approvals** ([agent approvals & security](https://developers.openai.com/codex/agent-approvals-security)): two orthogonal layers — **sandbox mode** (technical capability) and **approval policy** (when to ask). Default: **network off**, writes limited to workspace. Retired `approval_policy = "untrusted"`; recommended migration is `sandbox_mode="read-only"` + `approval_policy="on-request"`, or per-project `trust_level`. A dedicated [Codex security white paper](https://developers.openai.com/codex/security) and threat model exist. macOS Seatbelt / Linux landlock-style OS enforcement is standard for this stack **[the specific landlock citation was not directly retrievable; treat as expected-but-unverified]**.
+- **Exec policy → "rules"** ([docs](https://developers.openai.com/codex/exec-policy)): renamed from `execpolicy` to **rules**, still marked *experimental*. Starlark-like `prefix_rule(pattern=["gh","pr","view"], decision="prompt", justification=..., match=[...], not_match=[...])` in `~/.codex/rules/default.rules`. Notably **rules carry inline unit tests** (`match`/`not_match`) — a nice verifiability property.
+- **AGENTS.md** supported ([docs](https://developers.openai.com/codex/agent-configuration/agents-md)); also `AGENTS.md` can instruct delegation to subagents.
+- **Subagents** ([docs](https://developers.openai.com/codex/agent-configuration/subagents)): parallel specialized agents, each thread inspectable (`/subagents` in CLI, panel in IDE, activity in desktop). Docs name the motivation in Anthropic's own vocabulary: **context pollution** and **context rot**, citing the Chroma context-rot writeup. Consume more tokens than single-agent runs.
+- **Skills** ([docs](https://developers.openai.com/codex/build-skills)): same open Agent Skills standard; progressive disclosure; **skill list capped at 2% of the context window or 8,000 characters**. Bundled skills shown include Exec Plan, GitHub Fix CI, Linear, Skill Creator, Skill Installer. **Plugins** distribute skills + connectors through a shared ChatGPT/Codex directory.
+- **Memories** ([docs](https://developers.openai.com/codex/customization/memories)): local Codex memory store separate from ChatGPT memory; `/memories` per-chat controls; macOS **Computer History** turns app/website activity into memories. Explicit guidance: *"Keep required team guidance in AGENTS.md ... Treat memories as a helpful recall layer, not as the only source for rules that must always apply."*
+- **Long-running work / Goal mode**: `/goal` in desktop app, CLI, and IDE — goal text becomes both first prompt and completion criteria; pause/resume/edit ([docs](https://developers.openai.com/codex/long-running-work)). Same pattern as Claude Code's `/goal`.
+- **Hooks** ([docs](https://developers.openai.com/codex/hooks)), MCP ([docs](https://developers.openai.com/codex/extend/mcp)), record-and-replay, git worktrees, computer use, automations, code review, SDK, app-server, cloud environments.
+
+---
+
+## 3. Other harnesses — differentiators
+
+- **OpenCode** — now at `anomalyco/opencode`, **~214k stars**, the largest OSS coding-agent repo ([repo](https://github.com/anomalyco/opencode)). Primary-agents/subagents split; built-ins `Build` + `Plan` (primary) and `General`, `Explore`, `Scout` (subagents); switch agents with `Tab`, invoke with `@mention`; unified `permission` config (`allow`/`ask`/`deny`, `--auto` to auto-approve non-denied). Multi-surface (TUI, desktop, web, IDE).
+- **Amp** ([manual](https://ampcode.com/manual)) — multi-model by default (GPT-5.6, Claude Fable 5.1, fast models), **Orbs**: per-thread cloud machines with your code/tools/plugins pre-installed; *"send a prompt, close your laptop, and the agent keeps working"*; threads saveable/shareable; macOS/iOS/web/TUI/CLI with notifications; self-described as *opinionated* and *"no backward compatibility"*.
+- **Cursor** — has converged on the same primitives: **subagents** with context isolation (built-ins `Explore` and `Browser`, chosen specifically because exploration and DOM/screenshot output bloat context), foreground/background modes ([docs](https://cursor.com/docs/subagents)); **hooks** in `hooks.json` over stdio JSON with `sessionStart`/`sessionEnd`/`preToolUse`/`postToolUse` and explicit **Claude Code hook compatibility** ([docs](https://cursor.com/docs/hooks)); skills, MCP, rules, plugins. **[Cursor] Projects** (Sep 10 2026, [changelog](https://cursor.com/changelog)) is the big autonomy bet: a coordinator agent that **doesn't write code itself**, maintains shared context files synced across every cloud/local machine its agents use, delegates to *"thousands of subagents"*, and can be subscribed to Slack/schedule/PR signals. Also: self-hosted machines + worker pools with hibernation, computer use, remote control from iOS, Rollouts (deploy-health monitoring), Security Review bots.
+- **Gemini CLI** — **~107k stars** ([repo](https://github.com/google-gemini/gemini-cli)). `GEMINI.md` context files, MCP, extensions, sandboxing, **checkpointing via a shadow git repo** in `~/.gemini/history/<project_hash>` that doesn't touch your own git ([docs](https://geminicli.com/docs/cli/checkpointing/)), `/rewind`, plan mode, ACP mode, token caching, telemetry. **Auto Memory** (experimental) is distinctive: it *mines past session transcripts in the background*, and proposes memory updates as **unified-diff `.patch` files** plus reusable procedures as `SKILL.md` files, held in a **project-local inbox you approve or discard** ([docs](https://geminicli.com/docs/cli/auto-memory/)) — i.e. human-in-the-loop self-improvement.
+- **GitHub Copilot** — cloud coding agent (research → plan → code → PR), custom agents, MCP, and **Copilot Memory** for personal/org/enterprise ([docs](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/copilot-memory)). Dynamic workflows in CLI.
+- **Devin (Cognition)** — strongest memory story in the market: **Memory + Dreaming** (Oct 9 2026, [release notes](https://docs.devin.ai/release-notes/2026)). A **memory drive**: a persistent Git repo of Markdown notes (`MEMORY.md` + topic files). Each session gets its own checkout; `MEMORY.md` loads as context, other notes searched on demand. Each entry is a one-line bullet **linking back to the session where it was learned**. Devin commits, merges concurrent sessions' edits; **each night it reviews recent sessions and refines what it remembers** ("dreaming"). Personal per-org, toggleable, org/enterprise admin overrides. Also: skills as `SKILL.md` under `.agents/skills/` following the open standard, playbooks, scheduled sessions, plugins, session resume window **shortened to 14 days** (from 30).
+- **Factory / Droid** — **custom droids**: markdown-defined subagents with own system prompt, model, and tool policy, invoked via `Task` in a fresh context window; built-ins `worker` and `explorer`; **droids cannot spawn their own droids** and run non-interactively ([docs](https://docs.factory.ai/docs/harness/subagents)). **Missions** ([docs](https://docs.factory.ai/docs/missions/overview)): upfront collaborative planning → orchestration layer executing features/milestones; sweet spot stated as *"about 1–500 features"*. Docs structure uses the word **harness** for its config section (`/docs/harness/{agents-md,skills,subagents,hooks,mcp,plugins}`) — same vocabulary as Anthropic.
+- **Kimi (Moonshot)** — [platform.kimi.com](https://platform.kimi.com/) reachable; **[unverified]** I could not retrieve a Kimi Code/CLI architecture doc in this pass. Kimi model family docs exist but I did not confirm long-context/agent features. Flagged as a research gap.
+- **GLM / Z.ai** — [docs.z.ai](https://docs.z.ai/) and [docs.bigmodel.cn](https://docs.bigmodel.cn/) reachable, but I did not retrieve a GLM Coding Plan / Zcode architecture page. **[unverified]** — gap.
+- **Qwen Code** — **~28.5k stars** ([repo](https://github.com/QwenLM/qwen-code)). README headline: *"Agentic out of the box — **Auto-Memory, Auto-Skills, SubAgents, Agent Teams**, and MCP. Dynamic workflows, zero setup."* Multi-protocol (OpenAI/Anthropic/Gemini/Qwen APIs, Ollama/vLLM), and notably *"Qwen Code is actively iterating on itself — using its own agent and models to file issues, submit PRs, review code, and run tests."*
+- **Trae (ByteDance)** — `bytedance/trae-agent` **~12k stars**; the OSS agent is a general SWE CLI (bash, `str_replace` editing, sequential thinking, MCP, trajectory recording). The commercial product merged TraeCode + TraeWork into a single **TRAE** with **TRAE SOLO** ([docs](https://docs.trae.ai/)); docs are heavily i18n'd and I could not extract a clean architecture summary. **[partial]**
+
+---
+
+## 4. Notable OSS harnesses (stars measured 2026-10-16 from GitHub HTML payloads)
+
+| Repo | Stars | Known for |
+|---|---:|---|
+| [anomalyco/opencode](https://github.com/anomalyco/opencode) | 214,231 | Largest OSS coding agent; agents/permissions/MCP, multi-surface |
+| [openai/codex](https://github.com/openai/codex) | 129,514 | Rust terminal coding agent; sandbox + rules + subagents |
+| [earendil-works/pi](https://github.com/earendil-works/pi) (pi-mono) | 115,674 | *"Minimal, extensible agent harness you can make your own"* — **deliberately skips sub-agents and plan mode**; extensions/skills/themes/packages, RPC mode, TS SDK |
+| [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) | 107,408 | GEMINI.md, extensions, shadow-git checkpointing, auto memory |
+| [OpenHands/OpenHands](https://github.com/All-Hands-AI/OpenHands) | 91,058 | AI-driven development platform, sandboxed runtime |
+| [cline/cline](https://github.com/cline/cline) | 70,406 | *"Autonomous coding agent as an SDK, IDE extension, or CLI"* |
+| [block/goose](https://github.com/block/goose) | 55,344 | Extensible agent beyond code suggestions, any LLM |
+| [Aider-AI/aider](https://github.com/Aider-AI/aider) | 49,584 | Terminal pair programming, repo-map / edit-format research lineage |
+| [langchain-ai/deepagents](https://github.com/langchain-ai/deepagents) | 30,334 | *"The batteries-included agent harness"* — opinionated long-horizon defaults, sub-agents with isolated context, built on LangGraph with LangSmith tracing/eval |
+| [huggingface/smolagents](https://github.com/huggingface/smolagents) | 29,883 | *"A barebones library for agents that think in code"* — CodeAct lineage |
+| [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | 28,524 | Auto-memory / auto-skills / subagents / agent teams |
+| [charmbracelet/crush](https://github.com/charmbracelet/crush) | 28,675 | Glamourous agentic coding, LSP-aware |
+| [vercel/ai](https://github.com/vercel/ai) | 27,352 | AI SDK (provider abstraction, not a full harness) |
+| [letta-ai/letta](https://github.com/letta-ai/letta) | 25,166 | *"Platform for stateful agents: AI with advanced memory that can learn and self-improve"* — MemGPT lineage ([paper](https://arxiv.org/abs/2310.08560)) |
+| [RooCodeInc/Roo-Code](https://github.com/RooCodeInc/Roo-Code) | 24,276 | *"A whole dev team of AI agents in your code editor"* — modes |
+| [pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai) | 20,663 | Typed Python agent framework |
+| [bytedance/trae-agent](https://github.com/bytedance/trae-agent) | ~12,000 | General SWE agent CLI with trajectory recording |
+| [strands-agents/sdk-python](https://github.com/strands-agents/sdk-python) | 8,838 | *"Build an agent harness and control it end-to-end"* |
+
+---
+
+## 5. Dimensions table — what is table-stakes in 2026
+
+| Capability | Table-stakes? | Notes / leaders |
+|---|---|---|
+| Strict/structured tool calling | **Required** | Strict tool use, parallel tool use (Anthropic API) |
+| Context compaction | **Required** | Now server-side at the API level (Anthropic `compact-2026-09-04`) |
+| Tool-result eviction | **Required** | `clear_tool_uses_20250919`; tool search deferral (Claude Code) |
+| Just-in-time context | **Required** | Skills progressive disclosure; memory tool; tool search |
+| Subagents w/ context isolation | **Required** | Universal: Claude Code, Codex, Cursor, Factory, OpenCode, Qwen Code |
+| Agent Skills (`SKILL.md`) | **Required** | Open standard at [agentskills.io](https://agentskills.io/); adopted by Anthropic, OpenAI, Devin, Gemini CLI |
+| MCP | **Required** | Spec **2026-07-28** is current; ~half a billion SDK downloads/month ([blog](https://blog.modelcontextprotocol.io/)); MCP Apps, MCP tunnels, Enterprise-Managed Authorization |
+| OS sandbox | **Required** | Seatbelt (macOS) / bubblewrap+seccomp (Linux); Codex network-off by default |
+| Approval / policy layer | **Required** | Codex splits sandbox vs approval policy; Claude Code permission modes + OTel `tool_decision` |
+| Rules/execpolicy with tests | Emerging | Codex `.rules` `match`/`not_match` inline unit tests |
+| Session persistence & resume/fork | **Required** | Claude Code `.jsonl` + `--resume`/`--fork-session`; Devin 14-day resume |
+| Checkpointing / rewind | **Required** | Claude Code file snapshots; Gemini CLI shadow git |
+| Memory (persistent, cross-session) | **Required** | Two-tier (user-written file + agent-written notes) is the norm |
+| Background / long-running autonomy | **Required** | `/goal` in both Claude Code and Codex; Cursor Projects; Amp Orbs; Devin |
+| Multi-agent orchestration | Common but contested | Claude Code agent teams (experimental), Qwen agent teams, Cursor Projects |
+| Self-improvement (harness evolves) | **Differentiator** | Gemini CLI auto memory (human-approved), Devin Dreaming, Qwen "iterating on itself" |
+| Eval harness / judges | **Differentiator** | Claude Code plugin evals; Anthropic behavioral evals; research (§6) |
+| Tracing / observability | **Required** | OpenTelemetry in Claude Code; LangSmith in Deep Agents; Gemini CLI telemetry |
+| Multi-surface UI | **Required** | terminal, IDE, desktop, web, mobile, Slack/CI bots |
+| Model-agnostic routing | Common | Amp, OpenCode, Qwen Code, Goose, Deep Agents |
+| Task budgets / cost control | Emerging | Anthropic `task-budgets-2026-03-13`; Cursor/Codex usage insights |
+
+---
+
+## 6. Research & SOTA ideas a novel harness could differentiate on
+
+**Long-running architecture.** The reference design is Anthropic's initializer+coding-agent with a **JSON feature list** (`passes` flags) and a **progress file + git** as the durable state — chosen because JSON resists accidental model rewriting better than Markdown ([blog](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)). Key open insight: *compaction alone is insufficient*; the environment must be left in a mergeable "clean state" each session, and verification must be **end-to-end, as a human would** (browser automation), not unit-level.
+
+**Self-evolving harnesses — the hottest 2026 research thread.** A paper literally titled *Self-Evolving Agent Harness* ([arXiv:2610.18813](https://arxiv.org/abs/2610.18813), Oct 13 2026) formalizes it: *"Harness self-evolution revises an agent's software scaffolding, including prompts, memory, workflows, and executable components, while keeping model weights fixed."* It separates **update targets from proposal and admission mechanisms**, distinguishes interpreted state from code/tools/repo-control/plugin revisions, and gives a **high-probability admission rule using fresh, independent validation data**. It argues deployment needs *continual validation as task distributions and evaluators change* and *independent safeguards for learning, runtime privileges, and consequential actions*. This is the single best framing for a novel harness — and note the governance symmetry with your own "admission asymmetry" rule.
+
+**The improvement signal is the bottleneck.** *Small but Mighty: Test Suites as Improvement Signals for Self-Evolving Agents* ([arXiv:2610.15964](https://arxiv.org/abs/2610.15964), NeurIPS 2026 EvoRobust workshop): repo tests reject only **25.3%** of behavior-changing harness rewrites; a quality-diversity-evolved small strong suite (TeSearch) rejects **59.9%** at a 4.0% false-alarm rate and **3.5s per decision**. Directly actionable: don't gate harness self-modification on the project's own tests.
+
+**Self-designed evaluators.** *SelfSuite* ([arXiv:2609.33717](https://arxiv.org/abs/2609.33717), Sep 27 2026): a long-horizon agent with no rewards uses its own base model to **design a small weighted-judge evaluation suite from public materials, freeze it**, then use it to (a) gate a keep-best retry and (b) **label a typed, outcome-tracked memory**. Beats the plain agent with zero labels and matches methods given ten expert labels on τ²-bench. The gated second attempt is the only component whose removal hurts in every repeat. Compare **ACE** (Agentic Context Engineering, [arXiv:2510.04618](https://arxiv.org/abs/2510.04618), Oct 2025, revised Mar 2026) — evolving *context/playbooks* rather than weights — and classic lineage: **Reflexion** ([arXiv:2303.11366](https://arxiv.org/abs/2303.11366)), **Voyager**'s growing skill library ([arXiv:2305.16291](https://arxiv.org/abs/2305.16291)), **Darwin Gödel Machine** ([arXiv:2505.22954](https://arxiv.org/abs/2505.22954)), **MemGPT/Letta** ([arXiv:2310.08560](https://arxiv.org/abs/2310.08560)).
+
+**Context engineering mechanics.** Context rot is now standard vocabulary ([Chroma writeup](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) cites it). Current techniques: tool-result eviction, thinking-block clearing, deferred tool schemas, JIT retrieval, sub-agent isolation. Newer work: *Librarian Agents* ([arXiv:2610.22273](https://arxiv.org/abs/2610.22273), Oct 15 2026) train LLMs to **proactively curate long-context workspaces anticipating future queries** rather than reacting at inference — a real alternative to compaction.
+
+**File-based / code-native state.** Two converging directions: (1) *"maintain lightweight identifiers... dynamically load data at runtime"* (Anthropic); (2) **programmatic tool calling** — call tools from code inside a code-execution container, cutting round trips and tokens ([docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)), the descendant of **CodeAct** ([arXiv:2402.01030](https://arxiv.org/abs/2402.01030)). Multi-agent systems are also exploring sharing **KV caches** instead of text between agents ([arXiv:2610.22016](https://arxiv.org/abs/2610.22016)).
+
+**Multi-agent skepticism.** *Why Do Multi-Agent LLM Systems Fail?* / MAST ([arXiv:2503.13657](https://arxiv.org/abs/2503.13657)) remains the canonical taxonomy. Vendor docs themselves now warn: Anthropic says agent teams *"add coordination overhead and use significantly more tokens"*; OpenAI says subagent workflows *"consume more tokens than comparable single-agent runs"*; Factory forbids droids from spawning droids; **Pi deliberately ships without subagents**. *"Deviation from goal over long horizons"* is still an active research problem ([arXiv:2610.22316](https://arxiv.org/abs/2610.22316)).
+
+**Evaluation & judges — a live minefield.** *Rethinking How We Evaluate Agent Memory* ([arXiv:2610.22209](https://arxiv.org/abs/2610.22209), Oct 15 2026) shows downstream-QA accuracy **conflates memory correctness with retrieval/generation quality**, producing false positives. Judge reliability is fragile: design choices (prompt, scale, model) materially change verdicts ([arXiv:2610.05094](https://arxiv.org/abs/2610.05094)); pairwise-consistency proxies are unreliable ([arXiv:2609.37577](https://arxiv.org/abs/2609.37577)); debiasing can **suppress bias while destroying resolution** ([arXiv:2609.12439](https://arxiv.org/abs/2609.12439)); surface noise can fabricate measured bias ([arXiv:2609.11067](https://arxiv.org/abs/2609.11067)). Skill-marketplace scale is now itself a retrieval problem: >230,000 public skills ([arXiv:2609.38822](https://arxiv.org/abs/2609.38822)) and cross-file inconsistency within skill packages ([arXiv:2610.18927](https://arxiv.org/abs/2610.18927)).
+
+**Standards.** Agent Skills published as an open standard Dec 18 2025 ([agentskills.io](https://agentskills.io/)); **AGENTS.md** claims 60k+ projects ([agents.md](https://agents.md/)); **A2A** originated by Google, donated to the Linux Foundation ([a2a-protocol.org](https://a2a-protocol.org/)); MCP spec 2026-07-28 **went stateless, removing the initialize handshake and protocol-level session**, adding Multi-Round-Trip Requests ([blog](https://blog.modelcontextprotocol.io/)).
+
+---
+
+## 7. Critiques & failure modes
+
+*(Mostly practitioner sentiment from Hacker News, not peer-reviewed — treat as opinion.)*
+- **Context rot / pollution.** Now acknowledged in vendor docs themselves (Codex cites Chroma). Claude Code's docs mitigate with deferred MCP schemas, per-subagent compaction windows, and skill bodies capped at 5,000 tokens post-compact.
+- **MCP bloat.** The most concrete complaint: tool schemas eating context. Entire projects exist to fix it — *"Context Mode – 315 KB of MCP output becomes 5.4 KB in Claude Code"* ([HN, 2026-02-25](https://news.ycombinator.com/item?id=47148025)), *"Mcp2cli – 96-99% fewer tokens than native MCP"* ([HN, 2026-03-09](https://news.ycombinator.com/item?id=47305149)), *"Webctl – browser automation based on CLI instead of MCP"* ([HN, 2026-01-14](https://news.ycombinator.com/item?id=46616481)). Vendor answers: deferred schemas + tool search (Claude Code), skill list capped at 2% of context (Codex).
+- **Token cost.** An ecosystem of cost tooling: *"CodeBurn – analyze Claude Code token usage by task"* ([HN, 2026-04-13](https://news.ycombinator.com/item?id=47759035)), *"Smart model routing in Claude, Codex and Cursor"* ([HN, 2026-06-26](https://news.ycombinator.com/item?id=48688700)). Vendor answer: Anthropic task budgets.
+- **Verification burden.** The strongest structural critique. Anthropic's own finding: agents mark features complete without end-to-end testing, and even with Puppeteer, *"Claude can't see browser-native alert modals"* and those features stay buggy. The whole "last mile" bot category (Cursor Rollouts, Security Review; Devin code scans/Review) exists because human review doesn't scale.
+- **Sandbox escape / permission fatigue.** Auto-approve is dangerous but prompting is fatiguing; the industry answer is OS-enforced sandboxes that let commands run *without asking* (Claude Code sandbox rationale) plus classifier-based auto mode with **OTel-logged verdicts** for audit.
+- **Agent sprawl.** Vendors actively discourage it (Anthropic: use subagents for sequential/same-file work; Factory: no nested droids; Pi: no subagents at all).
+- **Self-modification risk.** Now formalized: authorization must be conserved across *"replacement, forking, and rollback"* of self-modifying agent populations ([arXiv:2610.00347](https://arxiv.org/abs/2610.00347)); proposals include **verifiable agent insurance** ([arXiv:2610.18230](https://arxiv.org/abs/2610.18230)) and low-latency guardrail models over editable policy trees ([arXiv:2610.18326](https://arxiv.org/abs/2610.18326)).
+
+---
+
+## 8. Gaps / caveats
+
+- **Kimi (Moonshot) and GLM/Z.ai**: reachable but I did not retrieve architecture docs; no verified feature claims. Treat as open research.
+- **Trae**: docs site heavily localized; only partial extraction.
+- **Codex sandbox internals**: Seatbelt/landlock specifics inferred from Claude Code docs and general knowledge, not confirmed on an OpenAI page.
+- **Star counts** are point-in-time (2026-10-16) scraped from GitHub repo pages; the REST API was rate-limited.
+- **Model names** (Claude Opus 5.5 / Sonnet 5.5 / Fable 5.1 / GPT-5.6 Sol / Gemini 4 Argon) are quoted from vendor docs as of today; they move fast.

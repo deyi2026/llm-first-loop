@@ -64,6 +64,25 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - **密钥**：密钥只从环境变量读取；代码/文档/日志/审计永不出现密钥字面量。
 - **中文注释**：代码注释与文档以中文为主（README 双语）。
 
+## 分支与证据归档卫生（2026-10-17 起）
+
+前缀即意图，两轨制：
+
+- **证据线**：`eval/ experiment/ exp/ qual/ integration/ archive/` 前缀 = 过程证据，
+  **默认不合入 main**。收口后打 `evidence/<分支名>` tag 指向原 tip，删除分支与
+  worktree；审计入口 `git log evidence/<name>` / `git show evidence/<name>`。
+- **产品线**：`feat/ fix/ release/` 前缀 = 需要并入 main 的功能，走下方合并门。
+- **合并门（三原则 + 副作用）**：① 功能仍被需要（未被 main 后续演进覆盖）→
+  ② 在隔离 worktree 修复至可合、测试全绿 → ③ 副作用评估：对大模型能力/智力/
+  执行力的实际收益 vs 冲突面/体积/回退风险。基于旧架构的集成快照不再合入
+  （例：dual-agent gen236–238，117 文件 ±2 万行差异、落后 172 commit，其结论
+  已以 assurance gate 形式进 main）。
+- **清理节奏**：独有 commit ≤4 且 30 天无活动 → 进清理清单；worktree 必须
+  dirty=0 才可移除；分支删除前必须先打 tag。
+- **并发写防护**：多代理同仓施工时，refs 写操作前后各拍一次快照留证；发现
+  对象被并发触碰（ref 忽隐忽现/移动）立即退避该对象，绝不与另一代理同时
+  处置同一分支。
+
 ## 路线图
 
 见 `docs/ROADMAP-B-20260814.md`（P1 可用性 / P2 差异化 / P3 社区化）与 `CHANGELOG.md`。
