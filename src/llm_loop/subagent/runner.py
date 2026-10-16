@@ -1342,6 +1342,36 @@ class SubAgentRunner:
             }
 
         parent_sid = current_session_id.get()
+        # Explicit Host canary authorization never turns into a full-powered
+        # child by inheriting the parent's worker ContextVar. The actual budget
+        # member must be bound to the new child SID/generation before any thread
+        # can call the provider. No descendant can recursively spawn.
+        from llm_loop.resources import task_budget_subagent_profile as canary_profile
+        from llm_loop.resources.task_budget_dispatch import active_task_budget
+
+        parent_budget = active_task_budget()
+        is_canary = (
+            parent_budget is not None
+            and parent_budget._get_validated()["grant"]["profile"] == canary_profile.PROFILE
+        )
+        if is_canary and parent_budget is not None and (
+            depth != 0 or inherit or required_tools != []
+            or child_model_label != canary_profile.MODEL_REF
+            or parent_budget.member.member_id != parent_budget.budget_id
+            or parent_budget.member.session_id != parent_sid
+        ):
+            return {
+                "accepted": False, "child_id": "", "state": "refused",
+                "depth": depth, "detail": "subagent_canary_child_scope_denied",
+            }
+        if is_canary:
+            # The child is a no-tool one-fact diagnostic, not a general
+            # recursive worker. Bound real model decision rounds regardless
+            # of the operator's much higher production iteration setting.
+            max_rounds = min(
+                self.max_iterations if max_rounds is None else max(1, int(max_rounds)),
+                3,
+            )
         if inherit:
             context = self._inherit_parent_context(context)
         reserved = self._reserve_background_child(parent_sid, depth)
@@ -1354,6 +1384,31 @@ class SubAgentRunner:
                 "detail": f"后台子代理资源已达硬上限（{self._max_handles}）",
             }
         sid, cancel_event, sess, handle = reserved
+        child_budget = None
+        if is_canary:
+            try:
+                assert parent_budget is not None
+                child_budget = parent_budget.bind_direct_canary_child(
+                    sid, handle.generation
+                )
+            except Exception as exc:
+                # No retry on CAS/persist ambiguity. A failed derivation cannot
+                # leave a runnable child or consume more Provider attempts.
+                refused = SubAgentResult(
+                    final_answer=(
+                        "subagent_canary_child_budget_not_authorized:"
+                        + type(exc).__name__
+                    ),
+                    outcome="refused", refused=True, depth=depth,
+                )
+                self._finalize_child(sid, parent_sid, refused)
+                with self._children_guard:
+                    if sid in self._handles:
+                        self._handles[sid].collected = True
+                return {
+                    "accepted": False, "child_id": sid, "state": "refused",
+                    "depth": depth, "detail": refused.final_answer,
+                }
         # Set this before the worker starts and BEFORE child_id is exposed to
         # the caller. Reviewer's parent cannot alter its input via agent_message.
         if review_isolated:
@@ -1543,7 +1598,27 @@ class SubAgentRunner:
                     child_cancel_event.reset(_cancel_tok)
                     child_wait_budget_used.reset(_wait_tok)
 
-            caller_ctx.run(_inside_context)
+            if child_budget is None:
+                caller_ctx.run(_inside_context)
+            else:
+                assert child_budget is not None
+                # The original parent budget is *never* usable with a child
+                # session ID. Bind a precisely derived member for this worker;
+                # its provider attempts debit the one durable shared ledger.
+                from llm_loop.resources.task_budget_dispatch import bind_task_budget
+
+                def _run_budgeted_child() -> None:
+                    assert child_budget is not None
+                    sid_tok = current_session_id.set(sid)
+                    gen_tok = current_run_generation.set(handle.generation)
+                    try:
+                        with bind_task_budget(child_budget, cleanup_scope=True):
+                            _inside_context()
+                    finally:
+                        current_run_generation.reset(gen_tok)
+                        current_session_id.reset(sid_tok)
+
+                caller_ctx.run(_run_budgeted_child)
 
         thread = threading.Thread(
             target=_worker,
