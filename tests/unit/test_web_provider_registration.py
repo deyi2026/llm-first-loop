@@ -187,6 +187,15 @@ def test_missing_module_name_degrades_without_blocking(tmp_path, caplog):
     assert any("web provider 注册模块加载失败" in r.message for r in caplog.records)
 
 
+def test_invalid_external_provider_spec_is_ignored(tmp_path, monkeypatch, caplog):
+    _install_stub_module(monkeypatch, "stub_bad_provider", {"invalid": object()})
+    settings = replace(load_settings(_base_env(tmp_path)), web_providers_module="stub_bad_provider")
+    registry = load_registry(settings)
+    assert "invalid" not in registry.providers
+    # （同步 main 现行文案：providers.py 已演进为"条目类型异常（期望 dict[str, ProviderSpec]）"）
+    assert any("条目类型异常" in record.message for record in caplog.records)
+
+
 def test_module_path_injection_loads_from_directory(tmp_path, monkeypatch):
     # D3：web_providers_module_path 注入 sys.path，独立项目免安装加载
     mod_root = tmp_path / "stubpkg_root"
