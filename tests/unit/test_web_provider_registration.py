@@ -192,7 +192,8 @@ def test_invalid_external_provider_spec_is_ignored(tmp_path, monkeypatch, caplog
     settings = replace(load_settings(_base_env(tmp_path)), web_providers_module="stub_bad_provider")
     registry = load_registry(settings)
     assert "invalid" not in registry.providers
-    assert any("返回类型异常" in record.message for record in caplog.records)
+    # （同步 main 现行文案：providers.py 已演进为"条目类型异常（期望 dict[str, ProviderSpec]）"）
+    assert any("条目类型异常" in record.message for record in caplog.records)
 
 
 def test_module_path_injection_loads_from_directory(tmp_path, monkeypatch):
