@@ -548,7 +548,7 @@ def test_submit_tool_receipt_survives_krate_spawn_failure(tmp_path, monkeypatch)
     assert payload["counts"]["committed"] == 1
     lines = (tmp_path / "audit/self_correction_log.jsonl").read_text(
         encoding="utf-8").strip().splitlines()
-    krate = [json.loads(l) for l in lines if json.loads(l)["tool_name"] == "krate_autorun"]
+    krate = [json.loads(line) for line in lines if json.loads(line)["tool_name"] == "krate_autorun"]
     # 两条均为预期：hook 内部 fail-open 记 failed；调用点记触发结果 triggered
     assert [(k["result_status"], k["arguments"]) for k in krate] == [
         ("failed", {"error": "spawn exploded"}),

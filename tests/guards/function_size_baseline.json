@@ -99,6 +99,7 @@
       "recovery": "Action（fail-open 恢复通道）",
       "skills": "Action",
       "knowledge": "Epistemic",
+      "knowledge_score": "Learning（27B 独立打分器：经验/方法卡+使用回执→本地 8091 档位概率打分，ledger 落库+sidecar 写回。guard(r9): GOAL-20261016-b2160223）",
       "extensions": "Action（外部标准包 formats/store/catalog，DESIGN-20261009 P1-A）",
       "export": "cross-plane（MCP 出向导出网关：Epistemic/Learning/Action 内容对外只读交付，r3 P0-2）"
     },
@@ -962,6 +963,16 @@
           "src/llm_loop/use_ledger.py"
         ],
         "rationale": "TASK-ac085ab1-001 两侧 usage ledger 共用原语：append_ledger_line 在调用方单写者锁内追加 JSONL + 行级 integrity 凭据 + flush/fsync；torn-tail 恢复把损坏尾行移入 .corrupt 旁文件、截断主账本并 fsync、出具诊断报告。主追加路径按 T1 observe 登记（对齐 method_store rationale 中『qualification/usage 等 JSONL 保留独立 T1 append 契约』口径）；恢复路径的截断/旁文件语义未做断电故障注入专项，不据此外推合规。guard(r9): GOAL-20261015-ac085ab1"
+      },
+      "knowledge_score_ledger": {
+        "tier": "T1",
+        "status": "observe",
+        "owner": "knowledge_score",
+        "paths": [
+          "src/llm_loop/knowledge_score/ledger.py",
+          "src/llm_loop/knowledge_score/card_writeback.py"
+        ],
+        "rationale": "GOAL-20261016-b2160223 独立打分器：ledger.append_score_line 复用 use_ledger.append_ledger_line 公开原语（调用方单写者锁内 JSONL 追加+行级 integrity 凭据+fsync+torn-tail 隔离，对齐 usage_ledger_primitives T1 append 契约口径）；card_writeback sidecar=目录 flock+O_EXCL tmp+os.replace+目录 fsync（纪律等价 experience_store，未做断电故障注入专项，不据此外推合规）；打分失败重试补写回不重打分（零 27B 调用）。数据落 data/knowledge_scores/。guard(r9): GOAL-20261016-b2160223"
       }
     },
     "write_exemptions": {
