@@ -50,6 +50,11 @@ def main() -> int:
     parser.add_argument("--session-id", default="", help="existing, dedicated Web session")
     parser.add_argument("--ttl-seconds", type=int, default=900)
     parser.add_argument(
+        "--profile", choices=("one-attempt", "direct-subagent"),
+        default="one-attempt",
+        help="explicit separate two-level canary capability, default unchanged",
+    )
+    parser.add_argument(
         "--provider-proxy", default=None,
         help=(
             "optional explicit loopback http:// egress proxy for the one "
@@ -59,6 +64,8 @@ def main() -> int:
     args = parser.parse_args()
     if not 60 <= args.ttl_seconds <= 3600:
         parser.error("--ttl-seconds must be 60..3600")
+    if args.profile == "direct-subagent" and args.provider_proxy is not None:
+        parser.error("direct-subagent canary cannot use provider-proxy")
     if args.provider_proxy is not None:
         from llm_loop.resources.task_budget_transport_context import (
             qualify_loopback_provider_proxy,
@@ -81,8 +88,14 @@ def main() -> int:
         parser.error("specified session does not exist in this workspace")
     session_id = args.session_id or engine.session.create()
     now = time.time()
+    if args.profile == "direct-subagent":
+        from llm_loop.resources import task_budget_subagent_profile as subagent_profile
+
+        schema = subagent_profile.CONFIG_SCHEMA
+    else:
+        schema = "web-task-budget-admin-once/v1"
     payload = {
-        "schema": "web-task-budget-admin-once/v1",
+        "schema": schema,
         "authorization_id": secrets.token_hex(16),
         "session_id": session_id,
         "workspace_root": engine.workspace_root or "",
@@ -90,6 +103,8 @@ def main() -> int:
         "valid_from_epoch_s": now - 1,
         "valid_until_epoch_s": now + args.ttl_seconds,
     }
+    if args.profile == "direct-subagent":
+        payload["profile"] = subagent_profile.PROFILE
     if args.provider_proxy is not None:
         payload["provider_proxy"] = args.provider_proxy
     # EVO-20261009-9d116efa G3：发放前置校验——字段未在本代码注册即拒发。
@@ -108,8 +123,16 @@ def main() -> int:
     print("WEB_SESSION_ID:", session_id)
     print("CONFIG_PATH:", args.output)
     print("TIME_WINDOW_SECONDS:", args.ttl_seconds)
-    print("PHYSICAL_ATTEMPTS_MAX: 1")
-    print("TOOLS_WAKE_SUBAGENTS: DENIED")
+    if args.profile == "direct-subagent":
+        print("CANARY_PROFILE:", subagent_profile.PROFILE)
+        print("PHYSICAL_ATTEMPTS_MAX:", subagent_profile.MAX_PHYSICAL_ATTEMPTS)
+        print("TOOL_INVOCATIONS_MAX:", subagent_profile.MAX_TOOL_INVOCATIONS)
+        print("TOOLS: spawn_subagent x1; subagent_result x2")
+        print("SUBAGENTS: ONE DIRECT, ZERO CHILD TOOLS, NO RECURSION")
+        print("WAKE / SHELL / FS / NET / BROWSER TOOLS: DENIED")
+    else:
+        print("PHYSICAL_ATTEMPTS_MAX: 1")
+        print("TOOLS_WAKE_SUBAGENTS: DENIED")
     print(
         "NEXT: runtime.toml [web] task_budget_canary_config 指向该文件后，"
         "重启前先自检: python -m llm_loop.runtime.resolver --check-toml <runtime.toml> web"
