@@ -60,7 +60,7 @@
 
 ## 状态更新（GOAL-20261016-cf563b27，2026-10-16）
 
-- 批次一 P-SET-1..7 全部 **fixed**：编码 subagent_c4f24a5a331c（自报告 docs/reports/GOAL-20261016-cf563b27-b1-settlement-p2-selfreport.md）→ 独立审查闸 subagent_191c6b090506 **PASS**（逐项 FIXED + 探针×5，回执 docs/governance/receipts/20261016-cf563b27-b1-settlement-p2-code-review.json，sha256 8ccb2a8c…）→ 全量门准入 PASS（candidate 85a33047…）→ ci_gate.sh 全链路 exit 0（ruff/env-pin/pyright new=0 + tier0 + 全量 pytest）→ 推送见本 goal 交付。
+- 批次一 P-SET-1..7 全部 **fixed**：编码 subagent_c4f24a5a331c（自报告 docs/reports/GOAL-20261016-cf563b27-b1-settlement-p2-selfreport.md）→ 独立审查闸 subagent_191c6b090506 **PASS**（逐项 FIXED + 探针×5，回执 docs/governance/receipts/20261016-cf563b27-b1-settlement-p2-code-review.json，sha256 8ccb2a8c…）→ 全量门准入 PASS（candidate 85a33047…）→ ci_gate.sh 全链路 exit 0（ruff/env-pin/pyright new=0 + tier0 + 全量 pytest，2026-10-16 09:31，覆盖此后未变的同一工作树）→ 推送完成：commit `1ddcfff77`（11 文件 +1019/−44），git_push 准入 PASS（subagent_b16c415d125f，candidate a3093c33…），`git ls-remote lfl refs/heads/main` = 本地 main = 1ddcfff7717f06ce47d29d5185be1ba08d80f48f（SHA 一致）。交付报告：docs/reports/GOAL-20261016-cf563b27-delivery.md。
 - r1N1 **fixed**（[-1]→[0]，随批次一）。
 - 新入池（T2 审查发现，2026-10-16-cf563b27 回执 P2×2）：
   - P-LED-6（批次二）：跨会话规则查重每次全目录扫描无 TTL 缓存（成本族，与 P-DEF-2 同类，可合并评估）
