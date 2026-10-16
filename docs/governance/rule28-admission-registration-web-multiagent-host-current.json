@@ -1,0 +1,31 @@
+{
+  "schema": "lfl.rule28_full_test_admission_registration/v1",
+  "registered_at_local": "2026-10-17T00:40:00+08:00",
+  "goal_id": "GOAL-20261016-bd8d4d65",
+  "gated_command": "bash scripts/ci_gate.sh",
+  "gated_command_kind": "original_full_r9",
+  "worktree_branch": "fix/web-multiagent-host-main-current-20261016-current",
+  "code_candidate_commit": "8634db468",
+  "code_candidate_base_main": "8041dc357d0c7ed75ed92ca5d4fad816342aa46d",
+  "code_candidate_staged_diff_sha256_pre_commit": "0834145b2c3df15c14242a10f7383317e53abba1fd32be79386e4fb681a9597b",
+  "host_frozen_tree_sha256_common_to_all_attempts": "962d37601c9356fb3ef109849f6b0c0057005065d0d5612c95aff980dde07314",
+  "review_attempts": [
+    {"child_id": "subagent_d332475b9676", "outcome": "infra_failed_empty_response", "thinking_chars": 70009},
+    {"child_id": "subagent_d70044fe0589", "outcome": "review_completed_verdict_truncated_at_16k_output", "tokens_in": 18490, "followup_verdict": "PASS", "p0": 0, "p1": 0, "p2": 4},
+    {"child_id": "subagent_d9ecaa896960", "outcome": "infra_failed_empty_response", "thinking_chars": 69210},
+    {"child_id": "subagent_7e89963ba296", "outcome": "infra_failed_empty_response", "thinking_chars": 69731}
+  ],
+  "shrink_maneuver": {
+    "applied": true,
+    "method_ref": "experience:EXPERIENCE-20261016-rule28-准入审查空响应-commit-已审大头-留小残留缩审查上下文",
+    "reason": "4/4 reviewer children died or truncated on ~75KB uncommitted admission material; user endorsed context-size hypothesis",
+    "committed_bulk": "code_candidate_commit 8634db468 (10 files, previously covered by completed independent GLM-5.3 review subagent_d70044fe0589 with followup verdict PASS P0=0 P1=0 P2=4 on the exact frozen tree sha256 above)",
+    "residual_material": "this registration file only"
+  },
+  "honest_layering": [
+    "code review evidence = subagent_d70044fe0589 complete review + bounded followup verdict covering frozen tree 962d3760...",
+    "formal host gate qualification = issued on this residual registration material only",
+    "the two layers are recorded separately and never conflated"
+  ],
+  "next_gate": "full R9 exit code and xdist/serial distinction recorded in RESULT doc after run"
+}

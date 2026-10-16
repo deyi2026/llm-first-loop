@@ -24,6 +24,7 @@ from llm_loop.core.trace_leak.ingress_token import IngressToken, is_whitelisted
 from llm_loop.event_log.model import Event
 from llm_loop.event_log.store import EventStore
 from llm_loop.resources import task_budget_knowledge_profile as knowledge_profile
+from llm_loop.resources import task_budget_subagent_profile as subagent_profile
 from llm_loop.resources.task_budget_contracts import (
     BudgetPhase,
     TaskBudgetGrant,
@@ -61,10 +62,10 @@ class AdminOnceEventPlan:
     profile: str = PROFILE
 
     def __post_init__(self) -> None:
-        if self.profile not in {PROFILE, knowledge_profile.PROFILE}:
+        if self.profile not in {PROFILE, knowledge_profile.PROFILE, subagent_profile.PROFILE}:
             raise TaskBudgetDeniedError("admin_once_profile_invalid")
-        if self.profile == knowledge_profile.PROFILE and self.provider_proxy is not None:
-            raise TaskBudgetDeniedError("knowledge_consumption_proxy_unqualified")
+        if self.profile in {knowledge_profile.PROFILE, subagent_profile.PROFILE} and self.provider_proxy is not None:
+            raise TaskBudgetDeniedError("profile_proxy_unqualified")
         if not isinstance(self.authorization_id, str) or not _ID.fullmatch(self.authorization_id):
             raise TaskBudgetDeniedError("admin_once_id_invalid")
         if (
@@ -139,6 +140,12 @@ def prepare_admin_once_event_budget(
         raise TaskBudgetDeniedError("admin_once_authorization_expired")
 
     consumption = plan.profile == knowledge_profile.PROFILE
+    subagent_canary = plan.profile == subagent_profile.PROFILE
+    policy = (
+        subagent_profile if subagent_canary
+        else knowledge_profile if consumption
+        else None
+    )
     grant = TaskBudgetGrant(
         budget_id=plan.budget_id,
         issuer="web-admin",
@@ -148,13 +155,13 @@ def prepare_admin_once_event_budget(
         human_turn_ref=f"event-{persisted.event_id}",
         surface="web",
         profile=plan.profile,
-        policy_version=knowledge_profile.POLICY if consumption else POLICY,
+        policy_version=policy.POLICY if policy is not None else POLICY,
         deadline_epoch_s=min(
-            now + (knowledge_profile.RUN_DEADLINE_SECONDS if consumption else _RUN_DEADLINE_SECONDS),
+            now + (policy.RUN_DEADLINE_SECONDS if policy is not None else _RUN_DEADLINE_SECONDS),
             plan.valid_until_epoch_s,
         ),
-        limits=knowledge_profile.limits() if consumption else limits(),
-        capabilities=knowledge_profile.capabilities() if consumption else capabilities(),
+        limits=policy.limits() if policy is not None else limits(),
+        capabilities=policy.capabilities() if policy is not None else capabilities(),
         provider_identity="glm",
         exact_model_ref="glm-5.3",
     )

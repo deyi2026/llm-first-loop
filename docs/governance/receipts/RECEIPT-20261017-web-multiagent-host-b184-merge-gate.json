@@ -1,0 +1,37 @@
+{
+  "gate": "merge",
+  "rule": "RULE-AI-34",
+  "reviewer": "subagent_d3bcef550f1b",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_independence": "fresh session, zero development participation, read-only tools [read_file, search_files], 9 tool calls, inherit=false",
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "p2": [
+    "P2-1: full R9 receipt (9201 passed/0 failed) originates from old-baseline snapshot 8041dc357, mitigated by patch-id equivalence 8784c28cc==8634db468 (f909feaab6eb528e8447103a529acf7403849cac), zero file crossing vs main's 3 new commits, and fresh new-baseline focused 215 passed + Quick exit0; reviewer judged residual risk acceptable and does NOT require new-main R9 rerun",
+    "P2-2: reviewer held read-only file tools only; git-side facts (SHA/patch-id/clean tree/merge-base) accepted from parent live-verified dossier; file-content spot checks consistent"
+  ],
+  "goal_id": "GOAL-20261017-7d1d91ed",
+  "branch": "integrate/web-multiagent-host-b184-20261017",
+  "based_on_main": true,
+  "main_sha_at_review": "b184edf9c7ecc16014c1806fd1c0bedff7a440cb",
+  "merge_base": "b184edf9c7ecc16014c1806fd1c0bedff7a440cb",
+  "commits": ["8784c28cc", "0bf209354"],
+  "merge_mode": "ff",
+  "merge_executed": false,
+  "main_sha_after": null,
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "targeted 3-file pytest 90 passed exit0 (b184 worktree, 2026-10-17)",
+    "extended focused 8-file pytest 215 passed exit0 (task_budget family + canary + subagent runner)",
+    "Quick ci_gate.sh --quick exit0: Tier0 319 passed/9045 deselected, Ruff 0 new, Pyright 0 new, env-pin PASS"
+  ],
+  "historical_evidence": {
+    "old_baseline": "8041dc357",
+    "code_review": "GLM-5.3 independent PASS P0/P1=0 P2=4 (child subagent_d70044fe0589 + bounded followup verdict, SHA re-confirmed; 16K truncation handled honestly per RECEIPT-20261017-web-multiagent-host-main-current-rule28.json)",
+    "full_r9": "xdist 9201 passed/141 skipped/0 failed exit0 (old snapshot, patch-id equivalent)"
+  },
+  "branch_disposition": "kept: merge execution deferred to next explicitly authorized stage; rollback plan = git reset --hard b184edf9c (pre-merge pointer recorded)",
+  "reviewed_at": "2026-10-17T01:40:00+08:00",
+  "reviewer_output_sha_note": "VERDICT line + SHA-CONFIRMED main=b184edf9c7ec branch_head=0bf209354 patch_id=f909feaab6e"
+}

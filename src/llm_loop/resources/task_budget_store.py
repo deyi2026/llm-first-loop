@@ -242,7 +242,19 @@ class TaskBudgetStore:
             if member.member_id != key or member.workspace_scope != grant.workspace_scope:
                 raise ValueError("member identity or workspace mismatch")
             if member.session_id != grant.session_id:
-                raise ValueError("member session mismatch")
+                from llm_loop.resources import task_budget_subagent_profile as subagent_profile
+
+                if not (
+                    grant.profile == subagent_profile.PROFILE
+                    and key != budget_id
+                    and member.member_id == member.session_id
+                    and member.session_id.startswith("subagent_")
+                    and member.parent_id == budget_id
+                    and member.ingress_kind == "subagent"
+                    and not member.schedule_sid
+                    and member.ingress_ref == f"delegated-{members[budget_id]['run_generation']}"
+                ):
+                    raise ValueError("member session mismatch")
             if key == budget_id:
                 if member.parent_id != budget_id or member.ingress_ref != grant.human_turn_ref:
                     raise ValueError("root member mismatch")
@@ -258,6 +270,23 @@ class TaskBudgetStore:
                     raise ValueError("cyclic member lineage")
                 seen.add(current)
                 current = members[current]["parent_id"]
+        if grant.profile == "web-glm-direct-subagent-canary-v1":
+            # Durable freeze: one direct child, no chained member, no hidden
+            # capability escalation by JSON substitution after an approval.
+            if len(members) > 2:
+                raise ValueError("subagent canary member capacity exceeded")
+            from llm_loop.resources import task_budget_subagent_profile as subagent_profile
+
+            if (
+                grant.capabilities != subagent_profile.capabilities()
+                or grant.limits != subagent_profile.limits()
+                or grant.policy_version != subagent_profile.POLICY
+                or grant.authority_source != "admin-once-config-cas-v1"
+                or grant.surface != "web"
+                or grant.provider_identity != "glm"
+                or grant.exact_model_ref != "glm-5.3"
+            ):
+                raise ValueError("subagent canary grant authority drift")
         reservations = _valid_reservations(data["reservations"])
         for row in reservations.values():
             binding = members.get(row["member_id"])
@@ -405,7 +434,28 @@ class TaskBudgetStore:
             members, cap = row["members"], row["grant"]["capabilities"]
             if member.member_id == budget_id or member.parent_id not in members:
                 raise TaskBudgetDeniedError("unknown_parent_or_member")
-            if member.workspace_scope != row["grant"]["workspace_scope"] or member.session_id != row["grant"]["session_id"]:
+            if member.workspace_scope != row["grant"]["workspace_scope"]:
+                raise TaskBudgetDeniedError("scope_mismatch")
+            from llm_loop.resources import task_budget_subagent_profile as subagent_profile
+
+            if row["grant"]["profile"] == subagent_profile.PROFILE:
+                root = members[budget_id]
+                if (
+                    member.ingress_kind != "subagent"
+                    or member.parent_id != budget_id
+                    or member.session_id != member.member_id
+                    or not member.session_id.startswith("subagent_")
+                    or member.ingress_ref != f"delegated-{root['run_generation']}"
+                    or len(members) != 1
+                    or not any(
+                        entry["member_id"] == budget_id
+                        and entry["tool_id"] == "spawn_subagent"
+                        and entry["phase"] in {"dispatched", "settled", "unknown"}
+                        for entry in row["reservations"].values()
+                    )
+                ):
+                    raise TaskBudgetDeniedError("subagent_canary_member_not_authorized")
+            elif member.session_id != row["grant"]["session_id"]:
                 raise TaskBudgetDeniedError("scope_mismatch")
             if member.ingress_kind == "scheduled:schedule_wake" and not cap["allow_wake"]:
                 raise TaskBudgetDeniedError("wake_not_allowed")
@@ -490,6 +540,35 @@ class TaskBudgetStore:
                 names = row["grant"]["capabilities"]["allowed_tools"]
                 if names is not None and tool_id not in names:
                     raise TaskBudgetDeniedError("tool_not_allowed")
+            if row["grant"]["profile"] == "web-glm-direct-subagent-canary-v1":
+                if kind == BudgetDimension.TOOL_INVOCATIONS:
+                    if member.member_id != budget_id or tool_id not in {
+                        "spawn_subagent", "subagent_result"
+                    }:
+                        raise TaskBudgetDeniedError("subagent_canary_child_tools_denied")
+                    seen = sum(1 for entry in reserved.values()
+                        if entry["kind"] == BudgetDimension.TOOL_INVOCATIONS.value
+                        and entry["tool_id"] == tool_id
+                        and entry["phase"] != ReservationPhase.ABORTED_BEFORE_DISPATCH.value)
+                    if seen >= (1 if tool_id == "spawn_subagent" else 2):
+                        raise TaskBudgetDeniedError("subagent_canary_tool_once_limit")
+                elif kind == BudgetDimension.PHYSICAL_ATTEMPTS:
+                    if member.member_id != budget_id and member.ingress_kind != "subagent":
+                        raise TaskBudgetDeniedError("subagent_canary_member_role_invalid")
+                    # A real transport failure/interruption, or an attempt
+                    # still pending/uncertain of physical dispatch, is NOT a
+                    # license to send the next call. A successfully returned
+                    # response with unknown *usage* is charged in full but
+                    # may continue within the frozen root allowance.
+                    if any(
+                        entry["kind"] == BudgetDimension.PHYSICAL_ATTEMPTS.value
+                        and (
+                            entry["phase"] in {"reserved", "dispatched"}
+                            or entry["outcome"] in {"failure", "interrupted", "cancelled"}
+                        )
+                        for entry in reserved.values()
+                    ):
+                        raise TaskBudgetDeniedError("subagent_canary_provider_retry_denied")
             descriptor["policy_generation"] = row["grant"]["generation"]
             if len(reserved) >= _MAX_RESERVATIONS:
                 raise TaskBudgetDeniedError("reservation_capacity_reached")
