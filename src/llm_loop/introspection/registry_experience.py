@@ -7,6 +7,7 @@ AI 优先：程序仅通道，提取/判断归 AI。
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -849,10 +850,8 @@ def _spawn_krate_autorun(host: RegistryHost, repo_root: Path | None = None) -> s
         )
         return f"spawned_pid={proc.pid}"
     except Exception as exc:  # noqa: BLE001 — hook 不得破坏结算主路径
-        try:
+        with contextlib.suppress(Exception):  # noqa: BLE001 — 审计失败必须 fail-open（不得破坏结算主路径）
             host.audit("krate_autorun", {"error": str(exc)[:300]}, "failed")
-        except Exception:
-            pass
         return "spawn_failed"
 
 
