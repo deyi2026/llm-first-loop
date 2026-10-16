@@ -118,6 +118,10 @@ class WorkflowRunTool:
                                     "type": "boolean",
                                     "description": "是否需要 terminal 后可续话（codearts 不支持，缺口前置拒绝）",
                                 },
+                                "fs_isolation": {
+                                    "type": "boolean",
+                                    "description": "是否声明 git worktree 文件系统隔离（仅 local 执行面；EVO-20261016-ac47e850：声明即隔离，该步子代理读写发生在独立 worktree，prepare 失败该步拒绝不降级）",
+                                },
                             },
                             "description": (
                                 "能力需求显式声明（可选，EVO-20260914-1eb26afa）：任何步骤声明缺口"
@@ -364,11 +368,29 @@ class WorkflowRunTool:
         executor = str(step.get("executor", "local")).strip().lower()
         if executor == "codearts":
             return self._run_step_codearts(i, total, task, ctx, budget)
+        # requires 声明透传（E4 白名单 + EVO-20261016-ac47e850 fs_isolation）：
+        # 矩阵校验只管"能不能"，这里把已通过的声明真正交到 run() 执行面。
+        from llm_loop.core.execution_surface import SurfaceRequirements
+
+        raw_requires = step.get("requires")
+        reqs = (
+            SurfaceRequirements.from_kwargs(raw_requires)
+            if isinstance(raw_requires, dict)
+            else None
+        )
+        fs_iso = bool(reqs.fs_isolation) if reqs is not None else False
+        # 区分 None（未声明→继承）与 []（显式空面→零工具）：空声明不静默放宽
+        # 到全量工具面（R28 审查 P2-1，与 run(required_tools=[]) 直调语义一致）。
+        req_tools = list(reqs.tools) if (reqs is not None and reqs.tools is not None) else None
         try:
-            if budget is not None:
-                result = self._runner.run(task=task, context=ctx, depth=0, max_rounds=budget)
-            else:
-                result = self._runner.run(task=task, context=ctx, depth=0)
+            result = self._runner.run(
+                task=task,
+                context=ctx,
+                depth=0,
+                max_rounds=budget,
+                required_tools=req_tools,
+                fs_isolation=fs_iso,
+            )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实标注，不阻断后续步骤
             return (
                 f"[步骤 {i}/{total}] [状态: error] 子代理异常: {type(exc).__name__}: {exc}",

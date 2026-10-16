@@ -2056,6 +2056,8 @@ class SubAgentRunner:
         inherit: bool = False,
         acceptance: list[str] | None = None,
         model: str = "",
+        required_tools: list[str] | None = None,
+        fs_isolation: bool = False,
     ) -> SubAgentResult:
         """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）.
 
@@ -2065,6 +2067,8 @@ class SubAgentRunner:
         acceptance (2026-08-18, 对齐 dsh_task 协议 v2): 验收清单——注入子代理系统提示，
         完成时逐项自检输出 完成/未完成/原因，分歧显性化（父级保留最终裁决权）。
         model: 显式 provider/model；省略时 production runner 机械继承父 run 当前模型。
+        required_tools/fs_isolation: 与 start() 同一声明语义（E4 白名单 +
+        EVO-20261016-ac47e850 worktree 隔离）——workflow local executor 的同步入口。
         """
         if depth >= self.max_depth:
             return SubAgentResult(
@@ -2104,23 +2108,99 @@ class SubAgentRunner:
 
         parent_sid = current_session_id.get()
         sid, cancel_event, sess = self._reserve_child(parent_sid)
-        if self._project_coordinator is not None:
-            try:
-                self._begin_fleet_run(sid, depth, parent_sid=parent_sid or "")
-            except Exception as exc:  # noqa: BLE001 - mechanical boundary rejection before any child/provider/tool action
-                refused = SubAgentResult(
-                    final_answer=(
-                        f"[状态: failure] fleet run 边界拒绝（lease acquire 失败），"
-                        f"未启动任何 child/provider/tool 动作: {type(exc).__name__}: {exc}"
-                    ),
-                    outcome="refused",
-                    refused=True,
-                    depth=depth,
-                )
-                finalized = self._finalize_child(sid, parent_sid, refused)
-                assert finalized is not None
-                return finalized
+        # E4（EVO-20261012-bb3022f4）: requires.tools 声明即程序级强制白名单——
+        # 声明时才裁决/挂载 discovery scope；未声明保持 run() 既有继承语义
+        # （零回归；start() 面未声明时的 spawn_subagent 剔除是异步舰队防递归
+        # 设计，不自动带入同步路径）。拒绝时未启动任何 child/provider/tool 动作。
+        # EVO-20261016-ac47e850: run() 同步路径（workflow local executor 同款入口）
+        # 接入声明式 worktree 隔离——prepare 失败 fail-fast 拒绝，不降级共享工作区。
+        # 全部提前返回路径统一经 finally 恢复 contextvar/释放 worktree/幂等
+        # finalize，杜绝拒绝路径的 scope 泄漏与拓扑残留（R28 审查 P1-1/P2-3）。
+        scope_token = None
+        ws_token = None
+        worktree_lease = None
+        wt_parent_root = ""
+        released = False
         try:
+            if required_tools is not None:
+                child_scope, scope_refusal = self._compute_child_tool_scope(required_tools)
+                if scope_refusal:
+                    refused = SubAgentResult(
+                        final_answer=(
+                            "[状态: failure] requires.tools 声明超出父执行域，"
+                            f"未启动任何 child/provider/tool 动作: {scope_refusal}"
+                        ),
+                        outcome="refused",
+                        refused=True,
+                        depth=depth,
+                    )
+                    finalized = self._finalize_child(sid, parent_sid, refused)
+                    assert finalized is not None
+                    return finalized
+                scope_token = current_tool_discovery_scope.set(child_scope)
+            if fs_isolation:
+                from llm_loop.workspace.worktree_isolation import (
+                    WorktreeIsolationError,
+                    prepare_worktree,
+                )
+
+                wt_parent_root = str(current_workspace_root.get() or "")
+                try:
+                    worktree_lease = prepare_worktree(sid, parent_root=wt_parent_root)
+                except WorktreeIsolationError as exc:
+                    refused = SubAgentResult(
+                        final_answer=(
+                            f"[状态: failure] fs_isolation 准备失败（child 未启动，"
+                            f"不降级共享工作区）: reason_code={exc.reason_code} {exc}"
+                        ),
+                        outcome="refused",
+                        refused=True,
+                        depth=depth,
+                    )
+                    finalized = self._finalize_child(sid, parent_sid, refused)
+                    assert finalized is not None
+                    return finalized
+                except Exception as exc:  # noqa: BLE001 - 机械准备段未知异常同样转 refused，不逃逸不泄漏拓扑
+                    refused = SubAgentResult(
+                        final_answer=(
+                            f"[状态: failure] fs_isolation 准备失败（child 未启动，"
+                            f"不降级共享工作区）: {type(exc).__name__}: {exc}"
+                        ),
+                        outcome="refused",
+                        refused=True,
+                        depth=depth,
+                    )
+                    finalized = self._finalize_child(sid, parent_sid, refused)
+                    assert finalized is not None
+                    return finalized
+            if self._project_coordinator is not None:
+                try:
+                    self._begin_fleet_run(sid, depth, parent_sid=parent_sid or "")
+                except Exception as exc:  # noqa: BLE001 - mechanical boundary rejection before any child/provider/tool action
+                    if worktree_lease is not None:
+                        from llm_loop.workspace.worktree_isolation import release_worktree
+
+                        release_worktree(
+                            parent_root=wt_parent_root,
+                            worktree_path=worktree_lease.path,
+                        )
+                        released = True
+                    refused = SubAgentResult(
+                        final_answer=(
+                            f"[状态: failure] fleet run 边界拒绝（lease acquire 失败），"
+                            f"未启动任何 child/provider/tool 动作: {type(exc).__name__}: {exc}"
+                        ),
+                        outcome="refused",
+                        refused=True,
+                        depth=depth,
+                    )
+                    finalized = self._finalize_child(sid, parent_sid, refused)
+                    assert finalized is not None
+                    return finalized
+            # 同步路径在当前线程挂载工作区根（discovery scope 已在声明分支挂载）；
+            # run() 返回前统一恢复。
+            if worktree_lease is not None:
+                ws_token = current_workspace_root.set(worktree_lease.path)
             result = self._run_reserved_child(
                 sid=sid,
                 sess=sess,
@@ -2133,10 +2213,48 @@ class SubAgentRunner:
                 llm_client=child_llm,
                 model_label=child_model_label,
             )
+            if worktree_lease is not None:
+                from llm_loop.workspace.worktree_isolation import (
+                    format_release_note,
+                    release_worktree,
+                )
+
+                report = release_worktree(
+                    parent_root=wt_parent_root,
+                    worktree_path=worktree_lease.path,
+                )
+                released = True
+                note = format_release_note(report, worktree_lease.path)
+                if note:
+                    result.final_answer = f"{result.final_answer}\n{note}"
             finalized = self._finalize_child(sid, parent_sid, result)
             assert finalized is not None
             return finalized
         finally:
+            if ws_token is not None:
+                current_workspace_root.reset(ws_token)
+            if scope_token is not None:
+                current_tool_discovery_scope.reset(scope_token)
+            if worktree_lease is not None and not released:
+                # 异常路径兜底释放：无 result 载体可附加 note，释放结果如实记入
+                # 日志；兜底自身失败不得遮蔽原异常。
+                from llm_loop.workspace.worktree_isolation import release_worktree
+
+                try:
+                    report = release_worktree(
+                        parent_root=wt_parent_root,
+                        worktree_path=worktree_lease.path,
+                    )
+                    logging.getLogger(__name__).warning(
+                        "run() 同步路径异常退出，已释放 fs_isolation worktree %s: state=%s",
+                        worktree_lease.path,
+                        report.state,
+                    )
+                except Exception:  # noqa: BLE001 - 兜底释放失败不得遮蔽原异常
+                    logging.getLogger(__name__).exception(
+                        "run() 同步路径异常退出，fs_isolation worktree 释放失败: %s",
+                        worktree_lease.path,
+                    )
             # 若 _run_reserved_child 抛出未预期异常，仍必须清 active topology；正常
             # 路径已经 finalize，二次调用是幂等清理且不会改写结果。
             with self._children_guard:

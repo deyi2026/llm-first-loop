@@ -24,13 +24,75 @@ class FakeResult:
     tokens_out: int = 0
 
 
+class _StaticRegistry:
+    """矩阵前置校验的 registry stub：names() 返回声明测试用的稳定工具面."""
+
+    @staticmethod
+    def names() -> list[str]:
+        return [
+            "read_file",
+            "execute_command",
+            "web_fetch",
+            "web_search",
+            "get_tool_schema",
+            "edit_file",
+            "spawn_subagent",
+        ]
+
+
 class FakeRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []  # (task, context)
+        self.kwargs_log: list[dict] = []  # 声明透传断言用（required_tools/fs_isolation 等）
+        self.registry = _StaticRegistry()
 
-    def run(self, task: str, context: str = "", depth: int = 0) -> FakeResult:
+    def run(
+        self,
+        task: str,
+        context: str = "",
+        depth: int = 0,
+        max_rounds: int | None = None,
+        required_tools: list[str] | None = None,
+        fs_isolation: bool = False,
+    ) -> FakeResult:
         self.calls.append((task, context))
+        self.kwargs_log.append(
+            {
+                "max_rounds": max_rounds,
+                "required_tools": required_tools,
+                "fs_isolation": fs_isolation,
+            }
+        )
         return FakeResult(final_answer=f"result_of:{task[:12]}", depth=depth, rounds=1)
+
+
+def test_step_requires_passthrough_to_run():
+    """E4 + EVO-20261016-ac47e850: local 步骤 requires 声明透传到 run() 执行面.
+
+    矩阵校验（启动前拒绝缺口）之外，声明必须真正落到 run() 的
+    required_tools/fs_isolation 参数——否则"校验通过≠执行生效"。
+    """
+    runner = FakeRunner()
+    tool = WorkflowRunTool(runner)
+    res = tool.execute(
+        mode="parallel",
+        steps=[
+            {
+                "task": "隔离面执行",
+                "requires": {"tools": ["read_file", "execute_command"], "fs_isolation": True},
+            },
+            {"task": "无声明步骤"},
+        ],
+    )
+    assert res.status == ToolResultStatus.SUCCESS
+    assert len(runner.kwargs_log) == 2
+    first, second = runner.kwargs_log
+    assert first["fs_isolation"] is True
+    assert first["required_tools"] == ["read_file", "execute_command"]
+    # 未声明步骤零回归：不隔离、无白名单、无预算
+    assert second["fs_isolation"] is False
+    assert second["required_tools"] is None
+    assert second["max_rounds"] is None
 
 
 def test_parallel_runs_each_step_and_aggregates():
@@ -112,7 +174,7 @@ def test_too_many_steps_rejected():
 def test_failed_step_does_not_block_others():
     """某步失败不阻断后续步骤，整体如实标注 failure."""
     class FlakyRunner(FakeRunner):
-        def run(self, task, context="", depth=0):
+        def run(self, task, context="", depth=0, **kwargs):  # noqa: ANN003
             if "bad" in task:
                 return FakeResult(final_answer="", refused=True, depth=depth)
             return FakeResult(final_answer=f"ok:{task[:8]}", depth=depth)
@@ -237,7 +299,14 @@ def test_dag_budget_rounds_passthrough():
         def __init__(self) -> None:
             self.max_rounds_calls: list[int | None] = []
 
-        def run(self, task: str, context: str = "", depth: int = 0, max_rounds: int | None = None):
+        def run(
+            self,
+            task: str,
+            context: str = "",
+            depth: int = 0,
+            max_rounds: int | None = None,
+            **kwargs,  # noqa: ANN003
+        ):
             self.max_rounds_calls.append(max_rounds)
             return FakeResult(final_answer=f"ok:{task[:8]}", rounds=3)
 

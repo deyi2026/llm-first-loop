@@ -408,3 +408,283 @@ class TestRunnerIntegration:
         finally:
             current_workspace_root.reset(ws_tok)
             current_session_id.reset(tok)
+
+
+class TestRunSyncFsIsolation:
+    """EVO-20261016-ac47e850 R2: run() 同步路径接入（workflow local executor 同款入口）.
+
+    与 start()（异步 spawn 面）同一声明语义：prepare 失败 fail-fast 拒绝不降级、
+    执行期 current_workspace_root 指向隔离树、终态 release + note、异常路径兜底释放。
+    """
+
+    @staticmethod
+    def _make_runner(git_repo: Path, responses):
+        from llm_loop.core.session import SessionStore
+        from llm_loop.subagent.runner import SubAgentRunner
+        from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+        from llm_loop.tools.builtin.read_file import ReadFileTool
+        from llm_loop.tools.registry import ToolRegistry
+
+        sessions = SessionStore(git_repo / "sync-sessions")
+        registry = ToolRegistry()
+        registry.register(ReadFileTool())
+        registry.register(ExecuteCommandTool())
+        return SubAgentRunner(llm=responses, registry=registry, session_store=sessions)  # type: ignore[arg-type]
+
+    def test_run_sync_executes_inside_worktree_and_releases(self, git_repo: Path) -> None:
+        """同步 run(): 子代理 execute_command pwd 落在隔离树内；干净树终态自动清理."""
+        import json as _json
+        import re as _re
+
+        from llm_loop.core.message import ToolCall
+        from llm_loop.core.run_context import current_session_id
+        from llm_loop.llm.client import LLMResponse
+
+        captured: dict = {"wt": ""}
+
+        class _PwdLLM:
+            calls = 0
+
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                _PwdLLM.calls += 1
+                if _PwdLLM.calls == 1:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                id="child-pwd",
+                                name="execute_command",
+                                arguments={"command": "pwd"},
+                            )
+                        ],
+                        provider="fake",
+                    )
+                blob = _json.dumps(messages, ensure_ascii=False, default=str)
+                m = _re.search(r"(/[^\s\"']*\.worktrees/lfl-child-[^\s\"']*)", blob)
+                if m:
+                    captured["wt"] = m.group(1)
+                return LLMResponse(content="child done", tool_calls=[], provider="fake")
+
+        runner = self._make_runner(git_repo, _PwdLLM())
+        tok = current_session_id.set("parent-run-sync")
+        ws_tok = current_workspace_root.set(str(git_repo.resolve()))
+        try:
+            result = runner.run(task="report cwd", fs_isolation=True)
+            # run() 返回后工作区根已恢复（run 内部 set/reset 配对，无泄漏）
+            assert current_workspace_root.get() == str(git_repo.resolve())
+        finally:
+            current_workspace_root.reset(ws_tok)
+            current_session_id.reset(tok)
+
+        assert not result.refused
+        # 子代理确实在隔离树内执行（pwd 输出被回执带回）
+        assert "lfl-child-" in captured["wt"], captured["wt"]
+        assert captured["wt"].startswith(str((git_repo / ".worktrees").resolve()))
+        # 干净树终态自动清理 + note 附加到 final_answer
+        assert "[worktree] 已清理隔离树（干净）" in result.final_answer
+        assert not Path(captured["wt"]).exists()
+        assert (git_repo / "seed.txt").read_text("utf-8") == "seed"  # 父不被污染
+
+    def test_run_sync_refuses_when_parent_not_git(self, tmp_path: Path) -> None:
+        """非 git 父目录: fail-fast 拒绝（不降级共享工作区），LLM 零调用."""
+        from llm_loop.core.run_context import current_session_id
+
+        class _NeverLLM:
+            calls = 0
+
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                _NeverLLM.calls += 1
+                raise AssertionError("refused 路径不得触达 LLM")
+
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        runner = self._make_runner(sessions_dir, _NeverLLM())
+        tok = current_session_id.set("parent-run-refuse")
+        ws_tok = current_workspace_root.set(str(plain.resolve()))
+        try:
+            result = runner.run(task="should refuse", fs_isolation=True)
+        finally:
+            current_workspace_root.reset(ws_tok)
+            current_session_id.reset(tok)
+
+        assert result.refused
+        assert result.outcome == "refused"
+        assert "reason_code=NOT_GIT_WORKSPACE" in result.final_answer
+        assert "不降级" in result.final_answer
+        assert _NeverLLM.calls == 0
+
+    def test_run_sync_releases_worktree_on_unexpected_error(
+        self, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """子代理循环未预期异常: 原异常向上传播，隔离树仍被 finally 兜底释放."""
+        from llm_loop.core.run_context import current_session_id
+
+        class _UnusedLLM:
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                raise AssertionError("该用例不触达 LLM")
+
+        runner = self._make_runner(git_repo, _UnusedLLM())
+
+        def _boom(**kwargs):  # noqa: ANN003, ARG001
+            raise RuntimeError("unexpected child crash")
+
+        monkeypatch.setattr(runner, "_run_reserved_child", _boom)
+        tok = current_session_id.set("parent-run-crash")
+        ws_tok = current_workspace_root.set(str(git_repo.resolve()))
+        caught: RuntimeError | None = None
+        try:
+            runner.run(task="crash in isolation", fs_isolation=True)
+        except RuntimeError as exc:
+            caught = exc
+            # 异常离开 run() 前其 finally 已执行：兜底释放 + contextvar 恢复
+            assert current_workspace_root.get() == str(git_repo.resolve())
+        finally:
+            current_workspace_root.reset(ws_tok)
+            current_session_id.reset(tok)
+        assert caught is not None and "unexpected child crash" in str(caught)
+        # 兜底释放生效：无残留隔离树
+        assert not list((git_repo / ".worktrees").glob("lfl-child-*"))
+
+    def test_run_sync_required_tools_whitelist(self, git_repo: Path) -> None:
+        """E4 白名单同步生效: required_tools=["read_file"] 时 execute_command 被拒."""
+        from llm_loop.core.message import ToolCall
+        from llm_loop.core.run_context import current_session_id
+        from llm_loop.llm.client import LLMResponse
+
+        class _ScopeLLM:
+            calls = 0
+
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                _ScopeLLM.calls += 1
+                if _ScopeLLM.calls == 1:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                id="child-denied",
+                                name="execute_command",
+                                arguments={"command": "pwd"},
+                            )
+                        ],
+                        provider="fake",
+                    )
+                return LLMResponse(content="read-only child done", tool_calls=[], provider="fake")
+
+        runner = self._make_runner(git_repo, _ScopeLLM())
+        tok = current_session_id.set("parent-run-scope")
+        try:
+            result = runner.run(task="read only", required_tools=["read_file"])
+        finally:
+            current_session_id.reset(tok)
+
+        assert not result.refused
+        assert result.tool_calls, "execute_command 调用应被记录在轨迹"
+        denied = result.tool_calls[0]
+        assert denied["name"] == "execute_command"
+        assert denied["status"] == "blocked"  # 白名单外工具被 discovery scope 拒绝
+        # discovery scope 恢复（当前线程 contextvar 不泄漏）
+        from llm_loop.core.run_context import current_tool_discovery_scope
+
+        assert current_tool_discovery_scope.get() is None
+
+    def test_run_sync_required_tools_refused_when_out_of_scope(self, git_repo: Path) -> None:
+        """声明超出父执行域（父 scope 限定 read_file，子声明 execute_command）→ 拒绝."""
+        from llm_loop.core.run_context import (
+            current_session_id,
+            current_tool_discovery_scope,
+        )
+
+        class _NeverLLM:
+            calls = 0
+
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                _NeverLLM.calls += 1
+                raise AssertionError("refused 路径不得触达 LLM")
+
+        runner = self._make_runner(git_repo, _NeverLLM())
+        tok = current_session_id.set("parent-run-scope-refuse")
+        scope_tok = current_tool_discovery_scope.set({"read_file"})
+        try:
+            result = runner.run(task="out of scope", required_tools=["execute_command"])
+        finally:
+            current_tool_discovery_scope.reset(scope_tok)
+            current_session_id.reset(tok)
+
+        assert result.refused
+        assert "requires.tools 声明超出父执行域" in result.final_answer
+        assert _NeverLLM.calls == 0
+
+    def test_run_sync_scope_not_leaked_on_prepare_refusal(self, tmp_path: Path) -> None:
+        """R28 审查 P1-1 回归: 声明 tools + prepare 失败（非 git）→ 拒绝后父 scope 不被污染."""
+        from llm_loop.core.run_context import (
+            current_session_id,
+            current_tool_discovery_scope,
+        )
+
+        class _NeverLLM:
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                raise AssertionError("refused 路径不得触达 LLM")
+
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        runner = self._make_runner(tmp_path / "sessions", _NeverLLM())
+        tok = current_session_id.set("parent-run-p1")
+        ws_tok = current_workspace_root.set(str(plain.resolve()))
+        parent_scope = frozenset({"read_file", "execute_command"})
+        scope_tok = current_tool_discovery_scope.set(parent_scope)
+        try:
+            result = runner.run(
+                task="scope + isolation both",
+                required_tools=["read_file"],
+                fs_isolation=True,
+            )
+            # run() 返回后：父 scope 原样恢复（拒绝路径不泄漏 child scope）
+            assert current_tool_discovery_scope.get() == parent_scope
+        finally:
+            current_tool_discovery_scope.reset(scope_tok)
+            current_workspace_root.reset(ws_tok)
+            current_session_id.reset(tok)
+
+        assert result.refused
+        assert "reason_code=NOT_GIT_WORKSPACE" in result.final_answer
+
+    def test_run_sync_scope_not_leaked_on_fleet_refusal(self, git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """R28 审查 P1-1 回归: fleet lease 拒绝（worktree 已建）→ 拒绝后 scope 复位、树释放."""
+        from llm_loop.core.run_context import (
+            current_session_id,
+            current_tool_discovery_scope,
+        )
+
+        class _NeverLLM:
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                raise AssertionError("refused 路径不得触达 LLM")
+
+        runner = self._make_runner(git_repo, _NeverLLM())
+
+        class _FleetBoom:
+            def _begin_fleet_run(self, *args, **kwargs):  # noqa: ANN002, ANN003
+                raise RuntimeError("lease acquire failed")
+
+        runner._project_coordinator = _FleetBoom()
+        tok = current_session_id.set("parent-run-fleet-p1")
+        ws_tok = current_workspace_root.set(str(git_repo.resolve()))
+        parent_scope = frozenset({"read_file"})
+        scope_tok = current_tool_discovery_scope.set(parent_scope)
+        try:
+            result = runner.run(
+                task="fleet refuse with worktree",
+                required_tools=["read_file"],
+                fs_isolation=True,
+            )
+            assert current_tool_discovery_scope.get() == parent_scope
+        finally:
+            current_tool_discovery_scope.reset(scope_tok)
+            current_workspace_root.reset(ws_tok)
+            current_session_id.reset(tok)
+
+        assert result.refused
+        assert "fleet run 边界拒绝" in result.final_answer
+        # 拒绝路径已释放隔离树
+        assert not list((git_repo / ".worktrees").glob("lfl-child-*"))
