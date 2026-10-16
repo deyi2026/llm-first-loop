@@ -1,0 +1,40 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_a00824a23db2 (merge-review-gate independent reviewer, delegated by parent session 78fffae1)",
+  "verdict": "PASS",
+  "goal_id": "n/a-in-delegation: parent-session mandate = branch triage 2026-10-17 C组 F批整合簇补闸收口 (docs/governance/branch-triage-20261017.md)",
+  "branch": "integrate/f-batch-final-20261017",
+  "based_on_main": true,
+  "branch_tip_frozen": "cba8289d0760d0b55161ed0f2e926993f27506f0",
+  "main_at_review": "9101b841ce54903697e24484a5fdbbc7ec2ef586",
+  "merge_base_equals_main": true,
+  "commits": ["cba8289d0","7903ea516","01f4adc00","ebb4d3e4d","e9d3fa125","43d9c2d91","012f06c8b","0e82e86e2","6847a1c2e","6350535a5","b3dd8c4ee","782e761e3","537b28b47","4ea057fea","11918a922","a076a94de","c79c0fc09","ed3006ed5","fffe1e999","c417621c0","7c3fb1243","aacef9336","6fa6d10a4","adbe6df01","644e96ec5","82e529ea3","37a66efeb","ee7a454dd","1dae2d72d","511445484","ec777b0ef","97174239c","434f857c3","6e807fc3e","6e25a6dba","ed3248d60","aa78aad1f","30e29a5ab","25f23d7f1","de0a8df05","9bb8e6f44","46eca04b7","f05405896","963847000","e6a0fdda5","1a992143c","ae2b6d5e0","13b4b87f2","c0f577d18","7a3ab1015","9c75e91ba","bc30c4631","9d395835f","45b114093","79cef184b","a75513b1f"],
+  "commit_count": 56,
+  "merge_mode": "ff",
+  "conflicts_resolved": [
+    "src/llm_loop/subagent/runner.py: 取 main/b184 严格版守卫（多拒 fs_isolation——隔离工作树是共享台账无法核算的物理资源）。核验方式：该文件不在 git diff main..HEAD 清单中，即冲突解决取 main 侧 ⇒ 相对 main 零 diff",
+    "tests/unit/test_web_direct_subagent_canary.py: 取 main/b184 762 行评审加固版（⊃ 分支 639 行旧版）。同上：不在 main..HEAD diff 清单中，零 diff 核验通过"
+  ],
+  "focused_gates": [
+    "本闸独立复跑（受影响面=diff 内全部测试文件）: tests/unit/{test_rule_presence_contract,test_method_learning,test_method_use_decision_telemetry,test_method_evidence_report,test_jev_wire,test_backup_store_durability,test_web_provider_registration,test_browser_attestation_v01}.py => 168 passed in 0.91s, exit 0",
+    "引用不重跑（RULE-AI-28 全量义务）: docs/governance/receipts/RECEIPT-20261017-fbatch-final-code-gate-full-r9.json —— commit_under_test=01f4adc00, canonical_command=bash scripts/ci_gate.sh, physical_exit_code=0, tier0 319 passed, xdist full 9228 passed/137 skipped"
+  ],
+  "main_sha_after": "ff-only ⇒ 合并时 main 指向分支 tip；被审树冻结于 cba8289d0760d0b55161ed0f2e926993f27506f0，本回执提交为其上的 docs-only 增量（回执不含自身 SHA，属结构性自引用豁免）",
+  "branch_disposition": "kept: F批族分支删除属卫生契约动作，待用户明示后执行（triage 后续动作3）",
+  "independent_admission_verified": {
+    "round1_REVISE": "subagent_810e4b06a6a1 — topology terminal/completed, lease settled, parent=78fffae1",
+    "round2_PASS": "subagent_88a8d21a0e98 — topology terminal/completed, lease settled, parent=78fffae1; event_stream 留痕父会话 02:16/02:18 两次 review_admission status 查询"
+  },
+  "tree_hygiene": "git status --porcelain 空（审查时点）；01f4adc00..HEAD 增量=纯 docs+reports 生成物（见 findings F2/F4）；ledger RULE-AI-34 行 HEAD L115 存在、main ABSENT（合并即修复 main 现行契约红测试，diff 不含 docs/ai_rules.md 即 SoT 两侧一致）",
+  "findings": [
+    {"id": "F1", "severity": "P3", "text": "round2 PASS candidate SHA d4263cef 不在仓库对象库（不可寻址），PASS 指纹无法直接复核。缓解：其后唯一代码树 delta=01f4adc00（仅 tests/guards/function_size_baseline.json +1 行守卫登记，非 src 行为），且全量 R9 直接以 01f4adc00 为 commit_under_test 物理 exit 0（含 tier0 319 passed），覆盖关系成立"},
+    {"id": "F2", "severity": "P3", "text": "7903ea516（回执提交）夹带 20 个 reports/phase* 工件重写（+212/−153）：为 R9 全量运行时测试重写的生成物（时间戳/计时/queue_id 级 diff，S01 started_at=02:21:08 与提交 02:24:49 时序吻合）。良性留痕，不构成夹带私货"},
+    {"id": "F3", "severity": "P3", "text": "46 个证据 docs 归档落地（拆分策略）中『源=0e82e86e2』表述不精确：0e82e86e2 本身仅含 1 文件；46 文件完整可寻址源为 e9d3fa125^（=43d9c2d91）树（e9d3fa125 单笔删除 46 files/−2501 行即为清单）。归档合并分支尚未创建（branch --contains 0e82e86e2 仅本分支），属计划中义务"},
+    {"id": "F4", "severity": "note", "text": "commit_under_test=01f4adc00 的树与 R9 实际运行工作树相差上述 reports 生成物（测试输出非输入，不影响门有效性）"}
+  ],
+  "pending_obligations": [
+    "46 docs 归档合并落地（内容零改动，源自 43d9c2d91 树；triage 后续动作2 已留痕）：该合并自身为分支收口并入 main 动作，按 RULE-AI-34 须另行过 merge-review-gate（docs-only 不豁免）"
+  ],
+  "verdict_basis": "SKILL 审查清单 6/6：完成证据真实（R9 回执+两子代理磁盘事实）；分支卫生（树干净，56 提交均可述来源，F2 良性留痕）；基线新鲜（merge-base==main）；测试面（本闸 168 passed 复跑+引用全量 R9）；合并方式 ff（冲突 2 处已核验零 diff）；合并后冒烟与分支处置已留痕。无 P0/P1。",
+  "created_at": "2026-10-17T02:55:00+08:00"
+}
