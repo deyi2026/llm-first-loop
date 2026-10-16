@@ -84,7 +84,7 @@ def _rule_lookup(tmp_path: Path):
     return lambda ref: bool(index.search(str(ref), 1))
 
 
-def _host(tmp_path: Path, *, rules: bool = False) -> CorrectionToolRegistry:
+def _host(tmp_path: Path, *, rules: bool = False, audit_dir=None) -> CorrectionToolRegistry:
     """构造带结算通道的修正工具注册表（session 经 ctx 字段回退注入）."""
     ctx = CorrectionContext()
     ctx.session_id = "sess-1"
@@ -99,7 +99,8 @@ def _host(tmp_path: Path, *, rules: bool = False) -> CorrectionToolRegistry:
         # P-SET-7 装配面：EventStore 同源目录——确定任务 slot 规则回执跨会话查重
         event_logs_dir=tmp_path / "events",
     )
-    return CorrectionToolRegistry(ctx)
+    # audit_dir 是 Registry 层能力（krate_autorun 可观测性测试用），Context 不管落盘
+    return CorrectionToolRegistry(ctx, audit_dir=audit_dir)
 
 
 def _emit_read(events: EventStore, session: str, *, kind: str, ref: str, version: str) -> None:
@@ -472,3 +473,84 @@ def test_factory_event_log_disabled_settlement_channel_not_assembled(tmp_path):
     result = engine.corrections.execute("settlement_pending", {"work_unit_id": "T"})
     assert result.status == ToolResultStatus.FAILURE
     assert "结算通道不可用" in result.content
+
+
+# ── K-Rate 闭环接线：settlement_submit → 自动触发 score+index ──
+# 审查 P1-2：删除调用点整行时必须红——此前全套件对此静默。
+
+
+def _krate_args(host, store, ref) -> dict:
+    events = host.ctx.settlement.event_store
+    version = store.get(ref).content_hash
+    _emit_read(events, "sess-krate", kind="method", ref=ref, version=version)
+    return {
+        "work_unit_id": "TASK-KRATE",
+        "items": [{
+            "kind": "method", "ref": ref, "decision": "applied",
+            "benefit": "helped", "evidence_level": "model_declared",
+        }],
+    }
+
+
+def test_submit_tool_wires_krate_autorun_only_on_committed(tmp_path, monkeypatch):
+    """接线正向断言：committed>0 触发一次；幂等重试 committed=0 不再触发."""
+    from llm_loop.introspection import registry_experience as re_mod
+
+    host = _host(tmp_path)
+    store, ref = _method_store(tmp_path)
+    calls = []
+
+    def _rec(h, repo_root=None):
+        calls.append(repo_root)
+        return "spawned_pid=1"
+
+    monkeypatch.setattr(re_mod, "_spawn_krate_autorun", _rec)
+    # 负例（不存在 ref → failed → committed=0，不触发）
+    bare = {
+        "work_unit_id": "TASK-KRATE-BARE",
+        "items": [{
+            "kind": "method", "ref": "method:no-such-ref-krate", "decision": "applied",
+            "benefit": "helped", "evidence_level": "model_declared",
+        }],
+    }
+    zero = host.execute("settlement_submit", bare)
+    assert _payload(zero)["counts"]["committed"] == 0
+    assert calls == []
+    # 正例：有 read 事件 → committed=1，触发一次（生产路径 repo_root=None）
+    args = _krate_args(host, store, ref)
+    first = host.execute("settlement_submit", args)
+    assert first.status == ToolResultStatus.SUCCESS
+    assert _payload(first)["counts"]["committed"] == 1
+    assert calls == [None]
+    # 幂等重试仍属 committed（idempotent 语义）：再次触发，锁保证串行幂等
+    retry = host.execute("settlement_submit", args)
+    assert _payload(retry)["receipts"][0]["idempotent"] is True
+    assert calls == [None, None]
+
+
+def test_submit_tool_receipt_survives_krate_spawn_failure(tmp_path, monkeypatch):
+    """fail-open 主断言：Popen 抛异常时结算回执仍 SUCCESS 且 committed 完整."""
+    from llm_loop.introspection import registry_experience as re_mod
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)  # 穿透守卫触达 Popen
+    monkeypatch.delenv("LFL_KRATE_AUTORUN", raising=False)
+    host = _host(tmp_path, audit_dir=tmp_path / "audit")
+    store, ref = _method_store(tmp_path)
+    args = _krate_args(host, store, ref)
+
+    def _boom(*a, **k):
+        raise RuntimeError("spawn exploded")
+
+    monkeypatch.setattr(re_mod.subprocess, "Popen", _boom)
+    result = host.execute("settlement_submit", args)
+    assert result.status == ToolResultStatus.SUCCESS  # 回执不受 hook 故障影响
+    payload = _payload(result)
+    assert payload["counts"]["committed"] == 1
+    lines = (tmp_path / "audit/self_correction_log.jsonl").read_text(
+        encoding="utf-8").strip().splitlines()
+    krate = [json.loads(l) for l in lines if json.loads(l)["tool_name"] == "krate_autorun"]
+    # 两条均为预期：hook 内部 fail-open 记 failed；调用点记触发结果 triggered
+    assert [(k["result_status"], k["arguments"]) for k in krate] == [
+        ("failed", {"error": "spawn exploded"}),
+        ("triggered", {"result": "spawn_failed"}),
+    ]

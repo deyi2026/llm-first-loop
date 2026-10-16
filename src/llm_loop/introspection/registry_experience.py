@@ -11,6 +11,9 @@ import copy
 import hashlib
 import json
 import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -814,6 +817,45 @@ def _settlement_items_from_args(raw: Any) -> list[SettlementItem] | str:
     return items
 
 
+def _spawn_krate_autorun(host: RegistryHost, repo_root: Path | None = None) -> str:
+    """K-Rate 闭环自动触发：committed 结算后后台跑 score+index.
+
+    约束（与 settlement 主路径的隔离）：
+    - fire-and-forget：start_new_session 分离进程组，不等待、不阻塞回执；
+    - fail-open：本函数任何异常只写 audit（"krate_autorun"/failed）后吞掉，
+      结算回执本身绝不受影响；
+    - 守卫：LFL_KRATE_AUTORUN=0 总开关；PYTEST_CURRENT_TEST 存在（pytest 内）
+      跳过，防单测向真实 data/ 落子；脚本缺失（未随部署携带）静默跳过。
+    串行化在脚本内（flock .autorun.lock，忙等上限 KRATE_AUTORUN_WAIT_S），
+    幂等性由 score(event_id)/index(全量重建) 保证。
+    """
+    try:
+        if os.environ.get("LFL_KRATE_AUTORUN") == "0":
+            return "disabled_env"
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return "skip_pytest"
+        root = repo_root or Path(__file__).resolve().parents[3]
+        script = root / "tools" / "krate" / "autorun_after_settlement.py"
+        if not script.exists():
+            return "script_missing"
+        proc = subprocess.Popen(  # noqa: S603 — 固定脚本路径，无 shell 拼接
+            [sys.executable, str(script)],
+            cwd=str(root),
+            env={**os.environ, "KRATE_ROOT": str(root)},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return f"spawned_pid={proc.pid}"
+    except Exception as exc:  # noqa: BLE001 — hook 不得破坏结算主路径
+        try:
+            host.audit("krate_autorun", {"error": str(exc)[:300]}, "failed")
+        except Exception:
+            pass
+        return "spawn_failed"
+
+
 def _run_settlement_submit(args: dict, host: RegistryHost) -> ToolResult:
     """settlement_submit: 批量结算逐条回执（committed/pending/failed）+ 成本计数."""
     channel, session_id = _settlement_context(host)
@@ -851,6 +893,14 @@ def _run_settlement_submit(args: dict, host: RegistryHost) -> ToolResult:
         {"work_unit_id": receipt["work_unit_id"], "items": len(parsed), "counts": counts},
         "success" if counts["committed"] else "no_commit",
     )
+    if counts["committed"] > 0:
+        # K-Rate 闭环：committed 结算后后台触发 score+index（fire-and-forget，
+        # fail-open——任何失败只 audit，绝不影响结算回执本身）。
+        # 触发结果本身也落 audit（P2-2 可观测性）：script_missing/disabled_env
+        # 静默跳过会导致闭环无声死亡；skip_pytest 属预期跳过，不产生噪声。
+        autorun_result = _spawn_krate_autorun(host)
+        if autorun_result != "skip_pytest":
+            host.audit("krate_autorun", {"result": autorun_result}, "triggered")
     header = (
         f"[settlement_submit] committed={counts['committed']} pending={counts['pending']} "
         f"failed={counts['failed']} | settlement_calls={receipt['settlement_calls']} "
