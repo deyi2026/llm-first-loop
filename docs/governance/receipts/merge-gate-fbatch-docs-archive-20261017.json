@@ -1,0 +1,38 @@
+{
+  "gate": "merge",
+  "reviewer": "subagent_72131268f259 (merge-review-gate independent reviewer, delegated by parent session)",
+  "verdict": "PASS",
+  "goal_id": "n/a-in-delegation: parent-session mandate = 兑现 merge-gate-fbatch-final-20261017.json pending_obligations（F批 46 证据 docs 归档落地，内容零改动；triage 后续动作2）",
+  "branch": "integrate/f-batch-docs-archive-20261017",
+  "based_on_main": true,
+  "branch_tip_frozen": "4a26e407044fc86183549041aaf942cd357b96da",
+  "main_at_review": "27d4d009ea618ead42b18e952b0c32e342ba6e20",
+  "merge_base_equals_main": true,
+  "commits": ["4a26e4070"],
+  "commit_count": 1,
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "tests/unit/test_rule_presence_contract.py（本闸独立复跑，默认 verbosity 即前闸 canonical 风格）: 22 passed, exit 0",
+    "同文件 pytest -q 模式 4 failed 18 passed：经临时 worktree（已清理）在 main@27d4d009e 基线同命令复现完全相同 4 例（FAILED 清单 diff 零差异）⇒ main 既有现象，非本分支引入（本分支 diff 无任何代码/测试文件，46 路径纯 docs 新增）",
+    "引用不重跑（RULE-AI-28 全量义务）: docs/governance/receipts/RECEIPT-20261017-fbatch-final-code-gate-full-r9.json —— commit_under_test=01f4adc00, canonical_command=bash scripts/ci_gate.sh, physical_exit_code=0；本分支为其后纯 docs 增量"
+  ],
+  "content_fidelity": {
+    "claim": "46 证据 docs 内容零改动，源树=43d9c2d91（整合分支拆分前 tip）",
+    "verification": "git diff --quiet 43d9c2d91 HEAD -- <46 路径全量> exit 0（字节级相同，全量核验非抽验）；46 路径清单与 e9d3fa125（单笔删除 46 files/-2501）逐路径一致（diff 零差异）；git rev-parse e9d3fa125^ == 43d9c2d91f688cbfc9bc589c0a9abb9674b863da；git ls-tree -r main -- <46 路径> = 0（main 尚无这些文件，合并纯增量无覆盖风险）",
+    "typo_ruling": "R9 回执 L42 '源=0e82e86e2' 确系笔误：git show --stat 0e82e86e2 实际仅 1 文件（+33 行），不可能为 46 文件之源；分支提交信息澄清正确源=43d9c2d91，与两棵树实际 diff 相符——按委派书要求以树级 diff 为准，裁定澄清成立，不改写历史回执"
+  },
+  "main_sha_after": "ff-only ⇒ 合并后 main = 本分支含本回执提交后的 tip（回执不含自身 SHA，结构性自引用豁免，同前闸先例）；父会话执行 ff 后核对 git rev-parse main == 分支 tip",
+  "branch_disposition": "kept: F批族分支删除属卫生契约动作，待用户明示后执行（triage 后续动作3，同前闸处置）",
+  "post_merge_duties": [
+    "git checkout main && git merge --ff-only integrate/f-batch-docs-archive-20261017，核对 git rev-parse main == 分支 tip",
+    "main 受影响面冒烟: tests/unit/test_rule_presence_contract.py 默认 verbosity 期望 22 passed",
+    "merge-gate-fbatch-final-20261017.json pending_obligations 在 Goal/checkpoint 标记兑现，evidence 引用本回执路径"
+  ],
+  "findings": [
+    {"id": "F1", "severity": "P3", "text": "test_rule_presence_contract.py 在 pytest -q 下稳定 4 例失败（rule31 discovery 契约类），main@27d4d009e 基线同命令完全同样失败、默认 verbosity/-v 则 22 全过：main 既有的 verbosity 敏感问题，与本 docs-only 分支无关（基线 parity 已用临时 worktree 实证），移交后续治理，不阻塞本闸"},
+    {"id": "F2", "severity": "note", "text": "R9 回执 '源=0e82e86e2' 笔误已由分支提交信息澄清，且经本闸树级 diff 独立复核成立（正确源=43d9c2d91=e9d3fa125^），文本层声明与两棵树实际一致，无需改写已合并历史"}
+  ],
+  "verdict_basis": "SKILL 审查清单 6/6：完成证据真实（前闸 pending_obligations+F3 留痕，46 文件字节级零改动全量核验，清单与 e9d3fa125 删除面精确镜像）；分支卫生（树干净、单原子提交、无夹带、src/tests 零变更）；基线新鲜（merge-base==main，无落后）；测试面（focused 22 passed+失败基线 parity 裁定+R9 全量回执引用，全量义务不重复跑）；合并方式 ff（无冲突）；合并后动作与分支处置已留痕。无 P0/P1。",
+  "created_at": "2026-10-17T02:39:15+08:00"
+}
