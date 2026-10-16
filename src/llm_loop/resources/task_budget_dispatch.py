@@ -29,6 +29,7 @@ from llm_loop.core.run_context import (
     current_workspace_root,
 )
 from llm_loop.resources import task_budget_knowledge_profile as knowledge_profile
+from llm_loop.resources import task_budget_subagent_profile as subagent_profile
 from llm_loop.resources.task_budget_contracts import (
     BudgetDimension,
     BudgetPhase,
@@ -152,15 +153,19 @@ class TaskBudgetExecution:
             raise TaskBudgetDeniedError("signed_provider_identity_mismatch")
         if grant["exact_model_ref"] and model_id != grant["exact_model_ref"]:
             raise TaskBudgetDeniedError("signed_model_identity_mismatch")
-        if grant["profile"] not in {"web-glm-one-physical-attempt-v3", knowledge_profile.PROFILE}:
+        if grant["profile"] not in {
+            "web-glm-one-physical-attempt-v3",
+            knowledge_profile.PROFILE,
+            subagent_profile.PROFILE,
+        }:
             return
         profile = active_isolated_transport_profile()
         # 2026-10-09: the one physical attempt may use exactly one explicit
         # operator-pinned loopback proxy (admin-once plan), never implicit
         # trusted-env/system discovery in the isolated worker.
         authorized = active_authorized_provider_proxy()
-        if grant["profile"] == knowledge_profile.PROFILE and profile is not None and profile.proxy is not None:
-            raise TaskBudgetDeniedError("knowledge_consumption_proxy_unqualified")
+        if grant["profile"] in {knowledge_profile.PROFILE, subagent_profile.PROFILE} and profile is not None and profile.proxy is not None:
+            raise TaskBudgetDeniedError("profile_proxy_unqualified")
         if (
             profile is None or profile.verify is not True
             or profile.proxy not in (None, authorized)
@@ -182,11 +187,18 @@ class TaskBudgetExecution:
 
     def assert_tool_allowed(self, name: str) -> None:
         snapshot = self._get_validated()
+        if (
+            snapshot["grant"]["profile"] == subagent_profile.PROFILE
+            and self.member.member_id != self.budget_id
+        ):
+            raise TaskBudgetDeniedError("subagent_canary_child_tools_denied")
         allowed = snapshot["grant"]["capabilities"]["allowed_tools"]
         if allowed is not None and name not in allowed:
             raise TaskBudgetDeniedError("tool_not_allowed")
         if snapshot["grant"]["limits"]["tool_invocations"] == 0:
             raise TaskBudgetDeniedError("tool_budget_exhausted")
+        if name == "spawn_subagent" and snapshot["grant"]["profile"] == subagent_profile.PROFILE:
+            return
         if name in {
             "schedule", "schedule_cancel", "execute_command", "spawn_subagent"
         }:
@@ -194,6 +206,36 @@ class TaskBudgetExecution:
             # process cleanup is bound to this new budget in I2/I3. Even an
             # allowlist entry does not make those effects safe yet.
             raise TaskBudgetDeniedError("derived_execution_capability_unqualified")
+
+    def bind_direct_canary_child(
+        self, child_id: str, child_generation: str,
+    ) -> TaskBudgetExecution:
+        """Durably derive exactly one child before its worker can send a byte.
+
+        A prior dispatched spawn-tool reservation, root role and exact Run
+        context are required. The child inherits one shared physical-attempt
+        counter, but no tool/delegation/wake permission. A retry cannot mint
+        another member or reset previously spent attempts.
+        """
+        snapshot = self._get_validated()
+        if (
+            snapshot["grant"]["profile"] != subagent_profile.PROFILE
+            or self.member.member_id != self.budget_id
+            or not isinstance(child_id, str) or not child_id.startswith("subagent_")
+            or not isinstance(child_generation, str) or not child_generation
+        ):
+            raise TaskBudgetDeniedError("subagent_canary_derive_denied")
+        member = TaskBudgetMember(
+            member_id=child_id, parent_id=self.budget_id,
+            workspace_scope=self.member.workspace_scope,
+            session_id=child_id, run_generation=child_generation,
+            ingress_ref=f"delegated-{self.member.run_generation}",
+            ingress_kind="subagent",
+        )
+        self._cas_mutate("bind_member", member=member)
+        return TaskBudgetExecution(
+            store=self.store, budget_id=self.budget_id, member=member
+        )
 
     def _cas_mutate(self, method: str, **kwargs: Any) -> dict[str, Any]:
         with self._ledger_lock:
@@ -399,6 +441,16 @@ def checked_tool_dispatch(
     snapshot = budget._get_validated()
     if snapshot["grant"]["profile"] == knowledge_profile.PROFILE:
         knowledge_profile.assert_tool_action(name, arguments)
+    elif snapshot["grant"]["profile"] == subagent_profile.PROFILE:
+        members = frozenset(
+            sid for sid, data in snapshot["members"].items()
+            if sid != budget.budget_id
+            and data["parent_id"] == budget.budget_id
+            and data["ingress_kind"] == "subagent"
+        )
+        subagent_profile.assert_parent_tool_action(
+            name, arguments, child_members=members
+        )
     rid = budget.reserve(BudgetDimension.TOOL_INVOCATIONS, tool_id=name)
     outcome = "interrupted"
     try:
