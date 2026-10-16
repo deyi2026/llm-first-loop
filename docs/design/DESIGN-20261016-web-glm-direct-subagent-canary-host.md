@@ -96,6 +96,22 @@ treat cancel flags as an acknowledged remote abort.
 6. Stage C three-level recursion is OUT OF SCOPE and requires a new exact
    `CHILD_SPAWN_GRANT` proposal and explicit approval. Never use `*`.
 
+## Real Registry wiring integration finding (RED → GREEN)
+
+Fresh-main integration additionally exercises the **physical**
+`ToolRegistry.execute(ToolCall(spawn_subagent,...))` →
+`SpawnSubAgentTool.execute` → `SubAgentRunner.start` →
+`SubAgentResultTool.execute` path with a no-provider Fake GLM.
+A RED test exposed an actual conversion bug: explicit
+`requires={"tools":[]}` was converted by the Spawn tool to
+`required_tools=None` because an empty tuple evaluated false, causing
+the new canary runner to reject its zero-tool child. The scoped correction
+preserves an **explicit empty allowlist** as `[]`, while leaving omitted
+`requires.tools` as `None`; this improves the existing E4 contract without
+granting child tools. The diagnostic failure is archived before the fix;
+GREEN tests, fresh independent review and complete R9 are mandatory
+for the amended integration candidate.
+
 ## Verified limits / honesty
 
 This is a narrow Host **capability/effect** budget, not a full OS sandbox.

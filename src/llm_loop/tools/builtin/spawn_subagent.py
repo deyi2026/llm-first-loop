@@ -200,7 +200,11 @@ class SpawnSubAgentTool:
                 acceptance=acceptance,
                 model=model,
                 required_tools=(
-                    list(reqs.tools) if reqs is not None and reqs.tools else None
+                    list(reqs.tools)
+                    if reqs is not None
+                    and isinstance(requires_raw, dict)
+                    and "tools" in requires_raw
+                    else None
                 ),
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传

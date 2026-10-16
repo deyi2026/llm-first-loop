@@ -532,3 +532,108 @@ def test_operator_setup_default_keeps_one_attempt_profile(monkeypatch,tmp_path):
     assert config["schema"]=="web-task-budget-admin-once/v1"
     assert "profile" not in config
     assert "allowed_tools" not in config
+
+
+def test_real_registry_spawn_and_result_tool_reaches_zero_tool_budgeted_child(tmp_path):
+    """Real physical Registry -> SpawnTool -> Runner and Registry -> ResultTool.
+
+    Previous positive test called runner.start directly. It never exercised
+    the SpawnSubAgentTool 'requires.tools=[]' conversion boundary.
+    """
+    import re
+
+    from llm_loop.core.message import ToolCall, ToolResultStatus
+    from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
+    from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
+
+    events, plan, root = _authorized(tmp_path)
+    sessions = SessionStore(tmp_path / "sessions", event_store=events)
+    llm = _OfflineFakeGLM()
+    registry = ToolRegistry()
+    runner = SubAgentRunner(
+        llm=cast(LLMClient, llm),
+        registry=registry,
+        session_store=sessions,
+        max_iterations=3,
+        llm_resolver=lambda ref: cast(LLMClient, llm),
+    )
+    registry.register(SpawnSubAgentTool(runner))
+    registry.register(SubAgentResultTool(runner))
+    with _runtime(plan.session_id, "canary-root-generation", str(tmp_path)):
+        with bind_task_budget(root), bind_isolated_provider_transport(IsolatedTransportProfile()):
+            start = registry.execute(ToolCall(
+                id="real-registry-spawn", name="spawn_subagent", arguments=SPAWN
+            ))
+            assert start.status == ToolResultStatus.SUCCESS, start.content
+            match = re.search(r"child_id=(subagent_[0-9a-f]+)", start.content)
+            assert match, start.content
+            result = registry.execute(ToolCall(
+                id="real-registry-result", name="subagent_result",
+                arguments={"child_id": match.group(1), "wait_seconds": 3},
+            ))
+            assert result.status == ToolResultStatus.SUCCESS, result.content
+            assert "CANARY_SUM=58597" in result.content
+    assert llm.responses == 1
+    row = plan.budget_store.read(plan.budget_id)
+    assert len(row["members"]) == 2
+    report = plan.budget_store.report(plan.budget_id)
+    assert report["used_or_reserved"]["physical_attempts"] == 1
+    assert report["used_or_reserved"]["tool_invocations"] == 2
+
+
+def test_spawn_tool_preserves_explicit_empty_vs_omitted_tools_without_provider():
+    """Only explicit requires.tools=[] produces a hard zero-tool child scope."""
+    from types import SimpleNamespace
+
+    from llm_loop.core.message import ToolResultStatus
+    from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
+
+    class _RecordingRunner:
+        def __init__(self):
+            self.registry = SimpleNamespace(names=lambda: ["wait"])
+            self.kwargs = []
+
+        def start(self, **kwargs):
+            self.kwargs.append(kwargs)
+            return {"accepted": False, "state": "refused", "detail": "no worker launched"}
+
+    fake_runner = _RecordingRunner()
+    tool = SpawnSubAgentTool(fake_runner)
+    for kw in (
+        {"task": "zero tools", "requires": {"tools": []}},
+        {"task": "legacy omitted"},
+        {"task": "nonempty", "requires": {"tools": ["wait"]}},
+    ):
+        result = tool.execute(**kw)
+        assert result.status == ToolResultStatus.FAILURE
+    assert [row["required_tools"] for row in fake_runner.kwargs] == [
+        [], None, ["wait"]
+    ]
+
+
+def test_real_registry_invalid_spawn_fails_closed_before_child_reservation(tmp_path):
+    """Physical Registry must not create any child for a malformed scoped call."""
+    from llm_loop.core.message import ToolCall, ToolResultStatus
+    from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
+
+    events, plan, root = _authorized(tmp_path)
+    llm = _OfflineFakeGLM()
+    registry = ToolRegistry()
+    runner = SubAgentRunner(
+        llm=cast(LLMClient, llm),
+        registry=registry,
+        session_store=SessionStore(tmp_path / "sessions", event_store=events),
+        llm_resolver=lambda _: cast(LLMClient, llm),
+    )
+    registry.register(SpawnSubAgentTool(runner))
+    with _runtime(plan.session_id, "canary-root-generation", str(tmp_path)):
+        with bind_task_budget(root):
+            result = registry.execute(ToolCall(
+                id="forbidden-child-tools", name="spawn_subagent",
+                arguments={"task": "unauthorized", "requires": {"tools": ["read_file"]}},
+            ))
+            assert result.status == ToolResultStatus.BLOCKED, result.content
+            assert "subagent_canary_child_must_have_zero_tools" in result.content
+    assert llm.responses == 0
+    assert not runner._handles
+    assert plan.budget_store.report(plan.budget_id)["used_or_reserved"]["tool_invocations"] == 0
