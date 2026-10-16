@@ -1,0 +1,62 @@
+{
+  "schema": "lfl.merge_review_gate_receipt/v1",
+  "gate": "merge",
+  "review_kind": "narrow_re_review_on_new_main",
+  "reviewer": "subagent_c268b418ee55",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_freshness": "fresh independent session spawned for this gate; no participation in any branch outputs; read-only (execute_command+read_file whitelist); terminal completed, 4 rounds / 8 tools",
+  "verdict": "PASS",
+  "findings": {"p0": [], "p1": [], "p2": [
+    "reviewer note: b68dbc2a..main changed-file list is 64 files = harmonyos/ 53 + docs/harmonyos/ 3 + src/llm_loop/core/loop/runner.py + src/llm_loop/web/{a2a_task_admission,routes,schemas}.py + tests/ 4; the 3 docs/harmonyos files are harmonyos deliverable docs, zero overlap with the 4 target docs paths; no merge-safety impact"
+  ]},
+  "branch": "integrate/web-multiagent-offline-docs-fc6-20261017",
+  "worktree": ".worktrees/web-multiagent-offline-docs-fc6-20261017",
+  "head": "32320fe795961d93f069cc4798c63557ef1debd1",
+  "based_on_main": true,
+  "main_sha_at_review": "fc6abb6749e892ad32ea2a53910cae8e4d5b39a6",
+  "merge_base": "fc6abb6749e892ad32ea2a53910cae8e4d5b39a6",
+  "commits": [
+    "554e4d883 (cherry-pick of 59d06aa52791ad37ffd3452f2482839f71cad31d)",
+    "32320fe79 (cherry-pick of bc388419fb30e74845972e32ea790545c1fea1b7 from docs/web-multiagent-offline-readiness-b68-20261017)"
+  ],
+  "changed_files_with_blob_equivalence": {
+    "docs/governance/CANARY-LAUNCH-MATERIALS-20261017-web-multiagent-host.md": "becb5646360c5df41c475e77f42898285089617b == old-branch blob",
+    "docs/governance/receipts/RECEIPT-20261017-web-multiagent-9101-docs-merge-review.json": "3312228aa02bf5953a2dc486b5f680cf57cfa01d == old-branch blob",
+    "docs/governance/receipts/RECEIPT-20261017-web-multiagent-9101-offline-preflight.json": "7599c5aa880c9bb646ee30b73ea41290453bb12f == old-branch blob",
+    "docs/results/RESULT-20261017-web-multiagent-9101-offline-package.md": "85b1ac4c62f8f60b188a30b65f72737070786a6d == old-branch blob"
+  },
+  "prior_review": {
+    "receipt": "docs/governance/receipts/RECEIPT-20261017-web-multiagent-9101-docs-merge-review.json",
+    "reviewer": "subagent_474c637a8b86",
+    "verdict": "PASS",
+    "findings": "P0=0 P1=0 P2=2",
+    "tested_commit": "59d06aa52791ad37ffd3452f2482839f71cad31d",
+    "main_sha_at_review": "b68dbc2a53c87295c7f160502795a4bd26f2f91d",
+    "validity": "PASS remains valid for content because all 4 files are byte-identical (blob SHA equal) to the reviewed old branch; its main_sha_at_review/commit fields are historical context only and are NOT a claim about the fc6 baseline or current live state"
+  },
+  "baseline_delta_check": {
+    "range": "b68dbc2a53c87295c7f160502795a4bd26f2f91d..fc6abb6749e892ad32ea2a53910cae8e4d5b39a6",
+    "commits": 8,
+    "changed_files": "harmonyos/ 53 + docs/harmonyos/ 3 + src/llm_loop/core/loop/runner.py + src/llm_loop/web/{a2a_task_admission,routes,schemas}.py + tests/ 4",
+    "overlap_with_target_docs": 0
+  },
+  "focused_gates": [
+    "pytest -q tests/unit/test_ai_rules_sync.py tests/unit/test_web_direct_subagent_canary.py tests/unit/test_subagent_lifecycle_cascade.py tests/web/test_artifact_hydration.py => 47 passed, exit 0 (repo .venv, Python 3.13.13, on this integration tree; not full R9)"
+  ],
+  "p2_resolution": {
+    "asset_tree_sha256": "e771d77590552e6597222b340eb64b53a3d1dca4711516885efea72380c5777d independently recomputed via src/llm_loop/runtime/service_control.py::_tree_sha256 over .worktrees/web-multiagent-release-9101-20261017/webui/dist: exact match",
+    "live_snapshot_p2": "prior-review P2 (production/live snapshot fields not independently observable by read-only reviewer) remains open by design; docs label idle state unknown/no_state_claim; unchanged by this re-review"
+  },
+  "merge_mode": "ff (fc6abb6 -> 32320fe7)",
+  "merge_executed": false,
+  "merge_pending_authorization": "local fast-forward into main is reserved for the external operator acting only on the user's separate explicit authorization after seeing this receipt; this receipt alone is not merge execution",
+  "administrative_note": "this new receipt file is an administrative addendum commit on the isolated branch; it is NOT claimed to be covered by the prior review and does not widen any permission; it must not be presented as a production canary/deployment approval",
+  "prohibited_this_round_and_respected": [
+    "git merge into main",
+    "git push",
+    "service_control publish/update/restart or any web/feishu/learning mutation",
+    "real Provider Canary Stage A/B",
+    "any production service or config change, any other worktree modification",
+    "touching MCP Console Goal 1d1f4ef7"
+  ]
+}
