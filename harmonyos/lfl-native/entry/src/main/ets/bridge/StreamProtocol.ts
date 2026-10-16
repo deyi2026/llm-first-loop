@@ -40,10 +40,20 @@ export interface ArtifactCandidate {
   ref: string;
   source: string;
   verification: string;
+  // Populated only after the verified hydration endpoint confirms the bytes.
+  verifiedSha256?: string;
 }
 
 const MAX_PENDING_FRAME = 1024 * 1024;
 const REF_PATTERN = /artifact:\/\/v1\/[0-9a-f]{32}(?![0-9a-zA-Z])/g;
+
+export function artifactId(ref: string): string {
+  const match = /^artifact:\/\/v1\/([0-9a-f]{32})$/.exec(ref);
+  if (match === null) {
+    throw new Error('invalid_artifact_ref');
+  }
+  return match[1];
+}
 
 export class LflSseParser {
   private pending: string = '';

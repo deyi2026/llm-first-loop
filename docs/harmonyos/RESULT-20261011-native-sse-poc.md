@@ -46,3 +46,15 @@ verify AFK A2A API type support and credentials under real SDK, implement
 the formal A2A adapter and secured Artifact hydration as a separately
 qualified capability. Freeze user-visible device tests and compare with
 mobile Web before attempting any migration to Cangjie/Rust.
+
+
+## Phase 3 (2026-10-17): offline adapter + verified artifact hydration
+
+| Gate | Evidence | Verdict |
+|---|---|---|
+| Dispatch decision layer (host tests) | `node --test`: 40 pass / 0 fail (9 new dispatch cases) | PASS |
+| Artifact hydration endpoint | pytest: 140 passed / 0 failed (17 new: positive, cross-scope 404, malformed 404, tamper 409) | PASS |
+| Six-suite regression | included in the 140 above | PASS |
+| Python lint / whitespace | Ruff all passed; `git diff --check` clean | PASS |
+| API26 compile with adapter wiring | `hvigor assembleHap` BUILD SUCCESSFUL (CompileArkTS 1.37 s, unsigned HAP) | PASS (unsigned build) |
+| Device / signing / live A2A EXECUTE | unchanged — no device, no signingConfig, no registered server | NOT TESTED |

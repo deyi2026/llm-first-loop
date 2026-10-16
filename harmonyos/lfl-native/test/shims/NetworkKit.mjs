@@ -13,7 +13,7 @@ export const http = {
       destroy() { destroyed = true; },
       async request(url, opts) {
         observed.push({url, opts, mode:'json'});
-        return {responseCode:scenario.code ?? 200, result:scenario.body ?? '{}'};
+        return {responseCode:scenario.code ?? 200, result:scenario.body ?? '{}', header:scenario.headers ?? {}};
       },
       async requestInStream(url, opts) {
         observed.push({url, opts, mode:'stream'});

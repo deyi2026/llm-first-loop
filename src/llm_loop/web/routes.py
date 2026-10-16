@@ -41,6 +41,7 @@ from llm_loop.runtime.admission_barrier import (
     task_admission_barrier,
 )
 from llm_loop.timekeeping import system_local_now
+from llm_loop.workspace.artifacts import ArtifactError, WorkspaceArtifactStore
 from llm_loop.workspace.store import (
     WorkspaceBusyError,
     WorkspaceChangedError,
@@ -1985,6 +1986,45 @@ def chat_cancel(payload: ChatCancelRequest, request: Request) -> Response:
                          "detail": "拒绝取消不同运行代次", "actual_run_generation": actual},
             )
     return UTF8JSONResponse(content={"cancelled": ok})
+
+
+@router.get("/api/v1/artifacts/{artifact_id}")
+def artifact_hydrate(artifact_id: str, request: Request) -> Response:
+    """验证的 workspace artifact 字节水合端点（harmonyos CONTRACT Required verification #4）.
+
+    仅接受 ``artifact://v1/<32hex>`` 的 id 部分；workspace 归属与 SHA256
+    readback 由 ``WorkspaceArtifactStore.hydrate`` 保证。不存在/越权统一
+    404（防枚举），blob 完整性失败 409。本端点无 blob 写路径。
+    """
+    engine = _engine_from(request)
+    chars = set("0123456789abcdef")
+    if len(artifact_id) != 32 or any(c not in chars for c in artifact_id):
+        return UTF8JSONResponse(status_code=404, content={"error": "artifact_not_found"})
+    store = WorkspaceArtifactStore(
+        getattr(getattr(engine, "settings", None), "data_dir", "./data")
+    )
+    try:
+        resolution, data = store.hydrate(
+            "artifact://v1/" + artifact_id,
+            workspace_scope=_current_attachment_workspace_scope(engine),
+        )
+    except ArtifactError as exc:
+        if "完整性" in str(exc):
+            return UTF8JSONResponse(
+                status_code=409, content={"error": "artifact_integrity_failure"}
+            )
+        return UTF8JSONResponse(status_code=404, content={"error": "artifact_not_found"})
+    record = resolution.record
+    headers = {
+        "X-Artifact-Ref": record.ref,
+        "X-Artifact-Sha256": record.sha256,
+        "X-Artifact-Size-Bytes": str(record.size_bytes),
+        "X-Artifact-Relative-Path": record.relative_path,
+        "X-Artifact-Workspace-Path-State": resolution.workspace_path_state,
+    }
+    if resolution.current_sha256 is not None:
+        headers["X-Artifact-Workspace-Path-Sha256"] = resolution.current_sha256
+    return Response(content=data, media_type="application/octet-stream", headers=headers)
 
 
 @router.get("/api/v1/chat/queue")

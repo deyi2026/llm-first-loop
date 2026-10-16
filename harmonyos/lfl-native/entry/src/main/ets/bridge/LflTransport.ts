@@ -1,11 +1,17 @@
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { LflSseParser } from './StreamProtocol';
+import { artifactId, LflSseParser } from './StreamProtocol';
 import type { LflEvent, LflHistory, LflStreamStatus } from './StreamProtocol';
 
 export interface HttpReply {
   status: number;
   text: string;
+  headers?: Record<string, string>;
+}
+
+export interface ArtifactVerification {
+  sha256: string;
+  sizeBytes: number;
 }
 
 export type EventReceiver = (event: LflEvent) => void;
@@ -50,7 +56,11 @@ export class LflTransport {
         connectTimeout: 10000,
         readTimeout: 20000
       });
-      return { status: reply.responseCode, text: reply.result.toString() };
+      return {
+        status: reply.responseCode,
+        text: reply.result.toString(),
+        headers: reply.header as Record<string, string>
+      };
     } finally {
       request.destroy();
     }
@@ -87,6 +97,30 @@ export class LflTransport {
   public async cancel(origin: string, token: string, payload: string): Promise<HttpReply> {
     return this.json(origin, token, '/api/v1/chat/cancel',
       http.RequestMethod.POST, payload);
+  }
+
+  /**
+   * Verified artifact hydration (CONTRACT "Artifact semantics"): calls the
+   * authenticated backend endpoint and returns the receipted SHA256/size.
+   * A 404 (unknown, foreign-scope or malformed) and a bad header contract
+   * both fail closed; the caller keeps the unverified_ref label on failure.
+   */
+  public async verifyArtifact(origin: string, token: string, ref: string): Promise<ArtifactVerification> {
+    const id: string = artifactId(ref);
+    const reply: HttpReply = await this.json(origin, token,
+      '/api/v1/artifacts/' + id, http.RequestMethod.GET);
+    if (reply.status !== 200) {
+      throw new Error('artifact_HTTP_' + reply.status.toString());
+    }
+    const headers: Record<string, string> = reply.headers ?? {};
+    const sha256: string = String(headers['x-artifact-sha256'] ?? '');
+    const sizeRaw: string = String(headers['x-artifact-size-bytes'] ?? '');
+    const sizeBytes: number = Number(sizeRaw);
+    if (!/^[0-9a-f]{64}$/.test(sha256) || !/^[0-9]+$/.test(sizeRaw) ||
+      !Number.isFinite(sizeBytes) || sizeBytes < 0) {
+      throw new Error('invalid_artifact_verification_headers');
+    }
+    return { sha256: sha256, sizeBytes: sizeBytes };
   }
 
   public disconnectSubscription(): void {

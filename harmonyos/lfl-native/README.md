@@ -125,3 +125,18 @@ conditions and exact replay tests.
 
 Do not merge to `main`, push, deploy, restart services or publish without
 separate authorization and full downstream qualification.
+
+
+## 2026-10-17 offline adapter completion
+
+`bridge/A2aDispatch.ts` + `bridge/NativeA2aAdapter.ets` implement the
+offline decision path (EXECUTE gated on host principal + backend CAS
+receipt; CANCEL/TaskStatus via the frozen contract). The App wires an
+inert `offlineAdapter()` probe whose every path fails closed. The
+backend now exposes the verified hydration endpoint
+`GET /api/v1/artifacts/<32hex>`; `LflTransport.verifyArtifact` returns
+the receipted SHA256/size and `artifactCandidates` gain an optional
+`verifiedSha256` label. Provider-free verification is unchanged
+(`node --test harmonyos/lfl-native/test/*.test.mjs` + the pytest
+suites); all remain host-only. Live A2A, device and signing gates are
+unchanged and NOT TESTED.

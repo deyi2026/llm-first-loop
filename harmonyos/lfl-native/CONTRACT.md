@@ -84,3 +84,21 @@ Backend HTTP and HarmonyOS A2A are **distinct interfaces**. Do not present HTTPS
    actual LFL DTOs/routes to frozen contract.
 4. Real device A2A/HTTPS, signed build and native-vs-mobile-Web metrics:
    *not* satisfied by host fixture or unsigned package.
+
+## 2026-10-17 offline completion delta
+
+- A provider-free dispatch layer (`bridge/A2aDispatch.ts`) plus the
+  compile-qualified native wiring (`bridge/NativeA2aAdapter.ets`) now
+  implement the adapter decision path: EXECUTE requires a host-verified
+  principal AND a backend durable CAS receipt before exactly one
+  human-turn submit; CANCEL/TaskStatus map through the frozen Task
+  contract. The default projector is `refuseProjector` and the default
+  verifier denies all principals — live A2A stays fail-closed pending
+  real-device receipts.
+- A verified artifact hydration endpoint `GET /api/v1/artifacts/<32hex>`
+  exists on the LFL backend (workspace scope ownership + SHA256 readback
+  + anti-enumeration 404/409), with `LflTransport.verifyArtifact` and the
+  optional `verifiedSha256` label on the App side. `artifact://v1/...`
+  refs remain `unverified_ref` until that verification succeeds.
+- Real device, signing, Xiǎoyì dispatch and live EXECUTE/CANCEL remain
+  NOT TESTED (hard gates in A2A-QUALIFICATION unchanged).

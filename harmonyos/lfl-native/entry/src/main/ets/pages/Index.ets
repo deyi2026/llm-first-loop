@@ -1,10 +1,36 @@
 import { LflTransport } from '../bridge/LflTransport';
 import { A2aTaskBindings } from '../bridge/A2ATaskContract';
+import { A2aTaskIngress, BackendAdmissionReceipt } from '../bridge/A2ATaskContract';
+import { A2aDispatchCoordinator } from '../bridge/A2aDispatch';
+import {
+  AdmissionReceiptSource, BackendDispatch, HostPrincipalVerifier, RequestContextProjection
+} from '../bridge/A2aDispatch';
+import { NativeA2aAdapter, refuseProjector } from '../bridge/NativeA2aAdapter';
 import { NativeA2aCompileProbe } from '../bridge/NativeA2aCompileProbe';
 import {
   LflEvent, artifactCandidates, cancellationPayload, historyAnswer,
   resumeDecision, resumePayload
 } from '../bridge/StreamProtocol';
+
+function offlineAdapter(): NativeA2aAdapter {
+  const verifier: HostPrincipalVerifier = {
+    verify: (_p: RequestContextProjection): { principalId: string | null } => {
+      return { principalId: null };
+    }
+  };
+  const receipts: AdmissionReceiptSource = {
+    fetch: async (_i: A2aTaskIngress): Promise<BackendAdmissionReceipt> => {
+      throw new Error('offline_receipt_source_unavailable');
+    }
+  };
+  const dispatch: BackendDispatch = {
+    submitHumanTurn: async (): Promise<void> => {},
+    cancelBoundRun: async (_payload: string): Promise<void> => {}
+  };
+  const coordinator: A2aDispatchCoordinator = new A2aDispatchCoordinator(
+    new A2aTaskBindings(), verifier, receipts, dispatch);
+  return new NativeA2aAdapter(coordinator, refuseProjector);
+}
 
 @Entry
 @Component
@@ -26,6 +52,10 @@ struct Index {
   private a2aContract: A2aTaskBindings = new A2aTaskBindings();
   // Typechecked at build time only; does not create or start an A2A server.
   private a2aSdkCompileProbe: NativeA2aCompileProbe = new NativeA2aCompileProbe();
+
+  // Offline adapter wiring (compile-qualified only): every path fails closed —
+  // no host principal, no receipt source, refuseProjector context extraction.
+  private a2aAdapterProbe: NativeA2aAdapter = offlineAdapter();
 
   private process(event: LflEvent): void {
     const row = event.data;
