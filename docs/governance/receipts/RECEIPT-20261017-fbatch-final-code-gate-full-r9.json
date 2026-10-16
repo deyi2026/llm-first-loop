@@ -1,0 +1,44 @@
+{
+  "receipt_kind": "RULE-AI-28 full_test + RULE-AI-34 merge gate evidence",
+  "created_at": "2026-10-17T02:24:30+08:00",
+  "subject": "F批整合代码闸：integrate/f-batch-final-20261017 全量 R9 门禁",
+  "commit_under_test": "01f4adc00",
+  "canonical_command": "bash scripts/ci_gate.sh",
+  "physical_exit_code": 0,
+  "results": {
+    "ruff": "historical=67, current=34, new=0, resolved=33, touched files clean",
+    "env_pin": "873 test files scanned, 0 undeclared COMPACT_RATIO dependents",
+    "pyright": "historical=45, current=16, new=0, resolved=29, touched files clean",
+    "tier0": "319 passed in 20.93s",
+    "full_xdist": "9228 passed, 137 skipped, 13 warnings in 203.23s (budget=4)"
+  },
+  "independent_admission": [
+    {
+      "round": 1,
+      "child_id": "subagent_810e4b06a6a1",
+      "candidate": "e9d3fa125",
+      "verdict": "REVISE",
+      "findings_fixed": [
+        "P1 rule_index headings/section_ends 死代码撤除（main 现行 _SECTION_HEADING_RE 已实现全 H2 边界语义）",
+        "P2 test_rule_presence_contract 重名 def 去重（两线异 SHA 落入同测试，逐字节相同，保留一份）",
+        "P2 registry_experience._run_record_use 遥测 fail-open（缺键降级不 raise）"
+      ],
+      "fix_commit": "ebb4d3e4d"
+    },
+    {
+      "round": 2,
+      "child_id": "subagent_88a8d21a0e98",
+      "candidate": "d4263cef（含 tier0 暴露的 durability 登记缺口修复 01f4adc00 前置树）",
+      "verdict": "PASS"
+    }
+  ],
+  "gate_discovered_fixes": [
+    "01f4adc00: evidence_report.py 补登记 durability write_exemptions（tier0 守卫暴露：F批线基线早于守卫收紧）"
+  ],
+  "conflict_resolutions": [
+    "src/llm_loop/subagent/runner.py: 取 main/b184 侧（守卫多拒绝 fs_isolation——隔离工作树是共享台账无法核算的物理资源；严格超集）",
+    "tests/unit/test_web_direct_subagent_canary.py: 取 main/b184 侧（762行评审加固版 ⊃ f批 639行旧版）"
+  ],
+  "review_scope_split": "审查材料 192KB 上限：代码+台账入本闸（41.9KB）；46 个证据 docs（297KB）经独立归档合并落地（内容零改动，源=0e82e86e2）",
+  "baseline_reference": ["c240 全量 R9 PASS（learning 线）", "b184 main-current 全量 R9 9201 passed（canary Host 线）"]
+}
