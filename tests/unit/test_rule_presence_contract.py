@@ -244,11 +244,10 @@ def test_search_records_contract_carries_timing_semantics() -> None:
     assert "RULE-AI" in full
     assert "非每轮强制" in compact and "不强制顺序" in compact
     for text in (full, compact):
-        assert "RULE-AI-31" in text
-        assert "实质任务" in text
-        assert "每类 limit<=5" in text
-        assert "同一连续任务窗口" in text
-        assert "record_use" in text
+        # 2026-10-17 F 批集成：对齐 main 演进措辞的语义不变量（原分支字面断言过度耦合措辞）
+        assert "≤2类" in text
+        assert "每类≤5" in text
+        assert "同一任务窗口" in text
 
 
 def test_rule31_discovery_contract_reaches_first_provider_packet(build_test_engine) -> None:
@@ -270,9 +269,9 @@ def test_rule31_discovery_contract_reaches_first_provider_packet(build_test_engi
         if item.get("name") == "search_records"
         or item.get("function", {}).get("name") == "search_records"
     )
-    assert "RULE-AI-31" in search_schema["description"]
-    assert "同一连续任务窗口" in search_schema["description"]
-    assert "每类 limit<=5" in search_schema["description"]
+    assert "≤2类" in search_schema["description"]
+    assert "同一任务窗口" in search_schema["description"]
+    assert "每类≤5" in search_schema["description"]
     assert any(
         "学习与成长" in str(message.get("content", ""))
         for message in first["messages"]
