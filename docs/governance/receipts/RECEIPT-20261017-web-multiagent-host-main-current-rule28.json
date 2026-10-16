@@ -1,0 +1,33 @@
+{
+  "schema": "lfl.rule28_full_test_receipt/v1",
+  "generated_at_local": "2026-10-17T00:58:00+08:00",
+  "goal_id": "GOAL-20261016-bd8d4d65",
+  "worktree": ".worktrees/web-multiagent-host-main-current-20261016",
+  "branch": "fix/web-multiagent-host-main-current-20261016-current",
+  "base_main": "8041dc357d0c7ed75ed92ca5d4fad816342aa46d",
+  "code_candidate_commit": "8634db468",
+  "code_patch_staged_sha256_precommit": "0834145b2c3df15c14242a10f7383317e53abba1fd32be79386e4fb681a9597b",
+  "host_frozen_tree_sha256_code_attempts": "962d37601c9356fb3ef109849f6b0c0057005065d0d5612c95aff980dde07314",
+  "review_layers": {
+    "code_review_evidence": {
+      "child_id": "subagent_d70044fe0589",
+      "reviewer": "independent GLM-5.3, zero tools, inherit=false, fresh context",
+      "coverage": "complete review of full 10-file candidate incl. fs_isolation hardening and 762-line test file; output truncated at 16000-token cap before verdict block",
+      "bounded_followup_verdict": {"verdict": "PASS", "p0": 0, "p1": 0, "p2": 4, "sha256_confirmed": "962d37601c9356fb3ef109849f6b0c0057005065d0d5612c95aff980dde07314"},
+      "p2_items": ["shared-path requires.tools=[] mapping change (conservative, pinned by tests)", "error-code rename knowledge_consumption_proxy_unqualified->profile_proxy_unqualified", "two hardcoded profile literals in task_budget_store", "bind_direct_canary_child prefix-only child_id validation + runner reading parent_budget._get_validated()"]
+    },
+    "formal_host_gate_qualification": {
+      "child_id": "subagent_7ed056917fac",
+      "admission_material": "2.2KB residual registration JSON after committing reviewed bulk (method: EXPERIENCE-20261016-rule28 shrink maneuver, user-endorsed)",
+      "candidate_sha256": "0826d1783f162995b2d2b9ddca412f55736cbffb725e87e8692911cd590b96b6",
+      "qualification": "PASS"
+    },
+    "honesty_note": "the formal gate PASS covers the residual registration material; the code review PASS verdict covers the code tree via subagent_d70044fe0589 review+followup; both are recorded, neither is conflated"
+  },
+  "failed_review_attempts": [
+    {"child_id": "subagent_d332475b9676", "reason": "LLMEmptyResponseError after 70009 thinking chars"},
+    {"child_id": "subagent_d9ecaa896960", "reason": "LLMEmptyResponseError after 69210 thinking chars"},
+    {"child_id": "subagent_7e89963ba296", "reason": "LLMEmptyResponseError after 69731 thinking chars"}
+  ],
+  "gated_command": "bash scripts/ci_gate.sh"
+}

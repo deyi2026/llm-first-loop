@@ -1,0 +1,20 @@
+{
+  "schema": "lfl.full_r9_receipt/v1",
+  "generated_at_local": "2026-10-17T00:58:00+08:00",
+  "goal_id": "GOAL-20261016-bd8d4d65",
+  "worktree": ".worktrees/web-multiagent-host-main-current-20261016",
+  "branch": "fix/web-multiagent-host-main-current-20261016-current",
+  "commit_under_test": "8634db468",
+  "interpreter": "../../.venv/bin (project venv) via scripts/ci_gate.sh",
+  "command": "bash scripts/ci_gate.sh",
+  "exit_code": 0,
+  "stages": {
+    "1_ruff_ratchet": {"status": "PASS", "historical": 67, "current": 34, "new": 0, "resolved": 33, "changed_file_diagnostics": 0},
+    "2_env_pin": {"status": "PASS", "files_scanned": 872, "undeclared_dependents": 0},
+    "3_pyright_ratchet": {"status": "PASS", "analyzer": "pyright 1.1.411"},
+    "4_tier0_precheck": {"status": "PASS", "passed": 319, "deselected": 9039},
+    "5_full_pytest_xdist": {"status": "PASS", "passed": 9201, "skipped": 141, "failed": 0, "duration": "182.18s", "note": "xdist 全量绿；无失败故无需 D-B2-09 串行复核（与旧集成分支 1 failed+串行 9 passed 的历史结果明确区分）"}
+  },
+  "prior_attempt_same_session": {"none": "首次即绿"},
+  "side_effect_audit": "51 处真实 provider base_url 低风险告警（隔离不触网，仅告警不阻断）"
+}
