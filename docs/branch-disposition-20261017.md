@@ -67,3 +67,20 @@ main 未做任何变更（施工冻结期，C 类合并门待工作树安静后�
 4. `feat/harmonyos-native-agent-poc-20261011`：A2A admission 与 harmonyos/ 均不在 main，产品方向决策 → **待用户确认，本轮保留分支**。
 5. kc 分支（feat/knowledge-consumption-receipts-20261009）为并发对象，退避不合，等其代理收口后归类。
 6. 分支卫生契约与季度清理机制见 CONTRIBUTING.md「分支与证据归档卫生」。
+
+## 7. F 批执行结果（2026-10-17 01:10）
+
+**集成分支 `merge/f-batch-20261017`（基 main bcaa79c36）共 9 个提交，针对性单测 82 passed + attestation 8 passed + canary 复核：**
+
+| 处置 | 对象 | 结果 |
+|---|---|---|
+| 整族合入 | rule31×4 | 4 处冲突全语义并集（attestation 取分支中文版 / backup 注释取详版 / jev_wire 保留 HEAD 增强测试） |
+| 整族合入 | canary×2 | host 干净 +1024 行；integration add/add 取超集（test 639>534）；含 spawn_subagent 显式空 tools 修复 |
+| 单 commit 提取 | fdf280c6f 测试部分 | provider invalid-spec 测试 +8（其 src 部分与 main 演进冲突不取）；断言同步 main 现行文案 |
+| cherry-pick | a209d80de | evidence_report.py +151 + usage telemetry/census + 测试（message.py 同位新增字段并排保留） |
+
+**验证为"main 已有更新形态"而不合**：rule28 族 3 + review-prerequisite（obligation 测试逐字节同、wiring main 版更长、admission 工具 main 版多 33 行增强、ai_rules 已含三层计分）；learning×6（unabsorbed 全为收据 docs，零代码缺失）；jev-wire-pyright-narrowing（diff=0）；subagent-lifecycle-audit（git cherry 全吸收）；architecture-guard-and-agency 与 rule-boundary-agency 主体（rule_retrieval 为弱化旧版断言）。
+
+**并发退避（01:08 实测）**：上述待归档 14 条分支的 worktree 全部被在场代理占用，且其新开 5 条同主题分支（rule28-jev-converged / rule28-jev-rule31-929c / rule28-web-only-final-candidate / subagent-lifecycle-main-integration / learning-source-deleted-f7c）——在场代理正在做 rule28/jev/subagent-lifecycle/learning 的收敛落地。**本方全部退避：不打 tag、不删分支、main 不 fast-forward**。集成分支保持待命，待其收口后统一裁定吸收路径（若其调和已覆盖相同内容，集成分支仅留对照）。
+
+待办：①在场代理收口后执行 14 条 evidence tag 归档；②主树干净后 main 吸收集成分支；③harmonyos 待用户方向确认；④kc 并发对象收口后归类。
