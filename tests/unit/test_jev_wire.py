@@ -192,6 +192,32 @@ class TestPerQuestionValidation:
         assert "probability_not_finite_or_out_of_unit" in a.invalid_reasons
         assert a.p_selected is None  # P2-5：此前写法恒真，收紧
 
+    @pytest.mark.parametrize("invalid", [None, True, "0.90", float("nan")])
+    def test_choice_non_numeric_probability_retains_contract_invalid(self, invalid):
+        req = _request({"premise_linux": _choice()})
+        probs = {"yes": invalid, "no": 0.05, "unknown": 0.05}
+        resp = normalize_response(
+            request=req,
+            raw={"model": "m", "answers": {"premise_linux": _answer(probs=probs)}},
+            transport_status="ok",
+        )
+        result = resp.answers["premise_linux"]
+        assert result.status == "contract_invalid"
+        assert result.probabilities is None and result.confidence is None
+        assert "probability_not_finite_or_out_of_unit" in result.invalid_reasons
+
+    def test_choice_missing_confidence_stays_invalid_without_default(self):
+        req = _request({"premise_linux": _choice()})
+        resp = normalize_response(
+            request=req,
+            raw={"model": "m", "answers": {"premise_linux": _answer(confidence=None)}},
+            transport_status="ok",
+        )
+        result = resp.answers["premise_linux"]
+        assert result.status == "contract_invalid"
+        assert result.confidence is None
+        assert "confidence_missing_or_out_of_range" in result.invalid_reasons
+
     def test_confidence_out_of_range_invalid(self):
         req = _request({"premise_linux": _choice()})
         resp = normalize_response(
@@ -256,6 +282,21 @@ class TestPerQuestionValidation:
             transport_status="ok",
         )
         assert over.answers["caveat"].status == "contract_invalid"
+
+    @pytest.mark.parametrize("invalid", [None, True, "invalid"])
+    def test_score_missing_or_nonnumeric_confidence_remains_invalid(self, invalid):
+        q = QuestionSpec(name="score", type="score", instructions="rate", criteria={})
+        resp = normalize_response(
+            request=_request({"score": q}),
+            raw={"model": "m", "answers": {"score": {
+                "score": 0.6, "confidence": invalid,
+            }}},
+            transport_status="ok",
+        )
+        answer = resp.answers["score"]
+        assert answer.status == "contract_invalid"
+        assert answer.confidence is None
+        assert "confidence_missing_or_out_of_range" in answer.invalid_reasons
 
     def test_score_requires_finite_answer(self):
         q = QuestionSpec(name="cov", type="score", instructions="评分", criteria={})

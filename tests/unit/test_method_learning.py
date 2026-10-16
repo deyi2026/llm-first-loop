@@ -535,6 +535,39 @@ def test_method_manage_record_use_derives_episode_and_model_and_never_promotes(t
     assert host.audit_rows[-1][0] == "record_method_use"
 
 
+def test_real_record_use_receipt_reaches_post_run_event_without_model_provenance(tmp_path, build_test_engine) -> None:
+    from types import SimpleNamespace
+
+    from llm_loop.core.loop.method_learning import MethodLearningService
+    from llm_loop.core.message import ToolCall
+
+    store = MethodStore(tmp_path / "methods")
+    record = store.save_candidate(name="receipt card", description="diagnostic", body=_CONTRACT_BODY)
+    host = _Host(store)
+    args = {"action": "record_use", "method_ref": record.method_ref, "use_decision": "adapted"}
+    result = execute_experience_tool("method_manage", args, cast(Any, host))
+    assert result is not None
+    engine, _ = build_test_engine([{"content": "unused"}])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    trace = []
+    engine._tool_cycle._record_single_receipt(
+        sess, ToolCall(id="method_receipt", name="method_manage", arguments=args), result, trace, round_index=1,
+    )
+    events = []
+    observer = SimpleNamespace(_event_append=lambda sid, kind, payload: events.append((kind, payload)))
+    MethodLearningService(observer).post_run(
+        sid, sess=None, rounds=1, tool_trace=trace, run_end_reason="completed", final_answer="", model_used="fake",
+    )
+    assert events[0][0] == "method.record_use"
+    payload = events[0][1]
+    assert payload["decision"] == "adapted"
+    assert payload["episode_ref"] == host.episode_ref
+    assert payload["method_content_hash"] == record.content_hash
+    assert payload["application_proven"] is False
+    assert "method_use_receipt" not in result.to_message().to_llm_dict()
+
+
 def test_method_manage_annotate_freshness_routes_and_reports_state(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     record = store.save_candidate(name="annotated card", description="legacy without refs", body=_CONTRACT_BODY)

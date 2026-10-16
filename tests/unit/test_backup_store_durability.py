@@ -290,7 +290,9 @@ def test_orphan_tmp_and_lock_invisible_to_scan_surfaces(tmp_path, monkeypatch):
         lambda: datetime.fromisoformat("2026-10-09T10:00:00"),
     )
     store = BackupStore(tmp_path)
-    backup_id = store.save_archive(make_archive())
+    # This is a fresh-backup test: do not let the fixed 2026-10-08 fixture
+    # silently cross the real seven-day retention boundary over time.
+    backup_id = store.save_archive(make_archive(backup_at=backup_module.system_local_now().isoformat()))
     (tmp_path / f"{backup_id}.abcdef123456.tmp").write_text("orphan", encoding="utf-8")
 
     # 孤儿 tmp 不入扫描面

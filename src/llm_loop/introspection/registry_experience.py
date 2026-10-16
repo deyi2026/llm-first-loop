@@ -631,6 +631,10 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
         content=content,
         tool_call_id="",
         tool_name=tool_name,
+        method_use_receipt={
+            key: str(entry[key])
+            for key in ("method_ref", "decision", "episode_ref", "method_content_hash")
+        },
     )
 
 

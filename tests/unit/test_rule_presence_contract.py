@@ -243,6 +243,80 @@ def test_search_records_contract_carries_timing_semantics() -> None:
     assert "按需" in full and "非每轮强制" in full and "不强制检索顺序" in full
     assert "RULE-AI" in full
     assert "非每轮强制" in compact and "不强制顺序" in compact
+    for text in (full, compact):
+        # 2026-10-17 F 批集成：对齐 main 演进措辞的语义不变量（原分支字面断言过度耦合措辞）
+        assert "≤2类" in text
+        assert "每类≤5" in text
+        assert "同一任务窗口" in text
+
+
+def test_rule31_discovery_contract_reaches_first_provider_packet(build_test_engine) -> None:
+    """Use the full test assembly, not the two-tool ERR1210 fixture."""
+    engine, fake = build_test_engine(
+        [LLMResponse(content="已收到任务", tool_calls=[], provider="fake")]
+    )
+    session_id = engine.session.create()
+    engine.run(session_id, "排查多步工具调用和方法检索问题")
+    assert fake.calls
+    first = fake.calls[0]
+    schemas = first["tools"]
+    assert {"search_records", "method_manage", "save_experience", "refine_experience"}.issubset(
+        _tool_names(first)
+    )
+    search_schema = next(
+        item if item.get("name") == "search_records" else item["function"]
+        for item in schemas
+        if item.get("name") == "search_records"
+        or item.get("function", {}).get("name") == "search_records"
+    )
+    assert "≤2类" in search_schema["description"]
+    assert "同一任务窗口" in search_schema["description"]
+    assert "每类≤5" in search_schema["description"]
+    assert any(
+        "学习与成长" in str(message.get("content", ""))
+        for message in first["messages"]
+        if isinstance(message, dict) and message.get("role") == "system"
+    )
+
+
+def test_rule31_bounded_discovery_reaches_full_lazy_and_first_model_tool_packet(
+    tmp_path, monkeypatch
+) -> None:
+    """The actual FakeLLM first call must see bounded, non-coercive knowledge discovery."""
+    from llm_loop.tools.registry import ToolRegistry
+
+    class SearchRecordsStub:
+        name = "search_records"
+        description = _SEARCH_RECORDS_TOOL_DEF["description"]
+        parameters = _SEARCH_RECORDS_TOOL_DEF["parameters"]
+
+    expected = ("method", "experience", "lesson", "≤2类", "每类≤5", "同一任务窗口", "简单")
+    registry = ToolRegistry()
+    registry.register(SearchRecordsStub())
+    for lazy in (False, True):
+        tool = next(row for row in registry.schemas(lazy=lazy) if row["name"] == "search_records")
+        assert all(part in tool["description"] for part in expected)
+        assert set(("method", "experience", "lesson", "rule")) <= set(
+            tool["parameters"]["properties"]["kind"]["enum"]
+        )
+
+    engine, fake = _mk(
+        tmp_path, monkeypatch,
+        responses=[LLMResponse(content="完成", tool_calls=[], provider="fake")],
+    )
+    engine.registry.register(SearchRecordsStub())
+    _capture_tools(fake)
+    result = engine.run(engine.session.create(), "需要排障和有界检索的多步骤任务")
+    assert result.final_answer == "完成"
+    assert fake.calls
+    first_tools = fake.calls[0]["tools"]
+    tool = next(
+        (row.get("function") or row)
+        for row in first_tools
+        if (row.get("function") or row).get("name") == "search_records"
+    )
+    assert all(part in tool["description"] for part in expected)
+    assert "method" in tool["parameters"]["properties"]["kind"]["enum"]
 
 
 def test_rule31_bounded_discovery_reaches_full_lazy_and_first_model_tool_packet(

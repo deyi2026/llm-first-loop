@@ -1,0 +1,27 @@
+{
+  "base_commit_sha": "db4aaa8565ea0d0cc061b12e5701f5398b53698e",
+  "candidate_commit_sha": "24a99fa266e068dfe9c1bab796e2b6e49b48d116",
+  "candidate_patch_bytes": 44820,
+  "candidate_patch_sha256": "2b18adc7736a6d09082be35e3c22e8ca1be0840a12bbd701264e02eb810bdd7b",
+  "evidence_local_ref": "data/rule28-current-main-independent-review/glm-child-review.json",
+  "findings": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 3
+  },
+  "gate": "code",
+  "implementation_boundary": "model obligation and observed hints; universal Host execution admission not yet implemented",
+  "qualification": "PASS",
+  "review_event_count": 8,
+  "review_text": "**独立只读审查 — 候选 SHA256: 2b18adc7736a6d09082be35e3c22e8ca1be0840a12bbd701264e02eb810bdd7b**\n\n**范围与符合性**\n- 该补丁仅更改模型端义务文本、观察注释和测试；它未添加硬性主机准入。根据任务约束，任何地方均无“Rule28 已部署 / 已强制执行”的声明——注释（`review_gate.py` 文档字符串，`factory.py:1335`）明确说明了观察与准入的区别。一致。\n- 通过仅在注入的工具描述和回执注释中追加义务字符串来保留用户意图；不扩大权限。\n\n**正确性 / 回归发现**\n\nP2-1 (`docs/ai_rules.md`, 豁免 c): 豁免 c 仍然写着“仅文章闸”，而闸 2 已改名为“文稿闸”。同一规则中的术语不一致；锚定文本措辞可能会困扰未来的审计。建议重命名为“仅文稿闸”。\n\nP2-2 (`browser_action.py`, `browser_semantic_operation.py`, `registry.py`): `ARTICLE_REVIEW_OBLIGATION` 被无条件地追加到每一次浏览器写入操作中，即使对于与发布无关的点击/滚动也是如此。功能上无害，但会膨胀紧凑的描述，并可能降低触发重要条款的信号；考虑增加范围限制或缩短措辞。\n\nP2-3 (`tests/unit/test_browser_attestation_v01.py::test_attest_dead_port_fail_closed_real`): 修复对于端口选择是正确的（OS 分配的端口，保持绑定以关闭竞争窗口），但在断言的含义上略微依赖平台：`attest_port` 的 `lsof` 路径可能会在某些容器中回退（在容器中 lsof 可能会遗漏仅绑定套接字，这取决于实现），并且无论 lsof 的可用性如何，测试名称都断言 `verdict.verdict == \"real\"`。建议进行防御性跳过或断言内部探测器所报告的任何 lsof 缺失可用性。这是一个脆弱性风险，在冻结的差异内容中并非失败。\n\n**积极检查**\n- `review_gate_note` 的重写与两项测试均匹配（存在义务文本，删除了 \"只提醒不阻断\"/\"自声明\"）；没有矛盾的 \"只提醒\" 残留。\n- `_fact_from_content` JSON 分支在正则表达式路径之前处理，并且始终发出 `review_qualification_verified: False`；新的否定测试（`test_json_or_cross_gate_pass_text_never_establishes_review_qualification`）正确锁定了 JSON PASS 文本和 \"File example only: VERDICT: PASS\" 永远不会作为资格证明。\n- `service_control` 交换了 `review_gate_note` → 原始 `GATE_NOTE_PREFIX` 字符串，其中包含明确的 \"非文稿发表\" 消歧；移除了未使用的导入。\n- push 回执 schema：`push_sha_remote: null` + 独立的推送后回执在语义上是合理的，并防止了将预推送的 PASS 误传为推送成功。\n- `test_review_obligation_contract.py`：`split(\"规则二十九：\")` 在该标题不存在时会优雅降级（返回尾部）；对于锚定目的而言是可以接受的。\n- 在提供的内容中未发现安全问题、秘密信息或权限扩大。\n\n**测试**：充足且覆盖了行为差异；未验证执行（未进行工具调用），因此上述 P2-3 中的脆弱性仅根据代码进行了标注。\n\nVERDICT: PASS\n\nP0=0 P1=0 P2=3",
+  "review_text_sha256": "e4023dc531f2f3cb71da1fb3c5f6a77bcb50eb3be65d72c7eb0a0ac4b2a2c1d8",
+  "reviewer_child_id": "subagent_139802203744",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_parent_id": "review-parent-rule28-main-20261015",
+  "schema": "lfl.rule28_main_integration_independent_review/v1",
+  "source_files": 14,
+  "terminal_count": 1,
+  "terminal_event_id": "d80969a1-676a-48a7-b107-39c909b5ea1e",
+  "terminal_state": "completed",
+  "verdict": "PASS"
+}
