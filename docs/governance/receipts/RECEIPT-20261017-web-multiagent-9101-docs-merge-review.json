@@ -1,0 +1,61 @@
+{
+  "schema": "lfl.merge_review_gate_receipt/v1",
+  "gate": "merge",
+  "reviewer": "subagent_474c637a8b86",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_freshness": "fresh independent session, no participation in branch outputs, read-only throughout",
+  "review_completed_at_local": "2026-10-17T06:43:04+08:00",
+  "verdict": "PASS",
+  "goal_id": "none-isolated-docs-branch",
+  "branch": "docs/web-multiagent-offline-readiness-b68-20261017",
+  "tested_commit": "59d06aa52791ad37ffd3452f2482839f71cad31d",
+  "based_on_main": true,
+  "main_sha_at_review": "b68dbc2a53c87295c7f160502795a4bd26f2f91d",
+  "commits": [
+    "59d06aa52791ad37ffd3452f2482839f71cad31d"
+  ],
+  "changed_files": [
+    "docs/governance/CANARY-LAUNCH-MATERIALS-20261017-web-multiagent-host.md",
+    "docs/governance/receipts/RECEIPT-20261017-web-multiagent-9101-offline-preflight.json",
+    "docs/results/RESULT-20261017-web-multiagent-9101-offline-package.md"
+  ],
+  "merge_mode": "ff",
+  "merge_executed": false,
+  "merge_pending_authorization": "explicit user authorization required; this receipt alone is not merge execution",
+  "main_sha_after": null,
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "136 passed / 0 failed provider-free focused (8 test files, per offline preflight receipt)",
+    "tier0 Quick 319 passed exit0, ruff/pyright new-red 0, env-pin PASS (Quick is not full R9)"
+  ],
+  "findings": {
+    "p0": [],
+    "p1": [],
+    "p2": [
+      "asset_tree_sha256 e771d77590552e6597222b340eb64b53a3d1dca4711516885efea72380c5777d value not independently recomputable (generating tool not in repo); substantive byte-identity claim independently confirmed via diff -r of 66 dist files vs stable b184 release and 0-mismatch filecmp of 104 tracked webui sources",
+      "production snapshot fields (gen273, live PID 49318, API ReadTimeout, HTTP 200) are preflight self-reported observations; reviewer by read-only design did not touch production; all three docs consistently label idle state unknown/no_state_claim"
+    ]
+  },
+  "verified_claims_summary": [
+    "branch HEAD 59d06aa52791ad37ffd3452f2482839f71cad31d, worktree porcelain clean, single commit, docs-only diff (M x1 + A x2), no code/config/script/binary stowaway",
+    "merge-base(main, branch) == main == b68dbc2a53c87295c7f160502795a4bd26f2f91d; branch ahead 1, behind 0, ff viable",
+    "release worktree HEAD 9101b841ce54903697e24484a5fdbbc7ec2ef586 tracked clean",
+    "webui tracked tree 747a0a2689f37d48e178bd6b8fc10579adfe186e, 104 files, source_sha256 a65737477344d226c0decefce18e0a1c9b81d1aa9adcffd2792f2a1b8e53e78b independently recomputed via build-with-source-binding.mjs algorithm: exact match",
+    "66 dist files byte-identical to stable b184edf9c release (diff -r); 104 tracked sources 0 mismatch",
+    "historical full R9 (8634db468, 9201/141/0) consistently labeled historical snapshot, not current acceptance for 9101 or b68",
+    "config rollback semantics: Canary OFF after unmounting LFL_TASK_BUDGET_WEB_CANARY_CONFIG, explicitly NOT auto-fallback to web-task-budget-admin-once/v1",
+    "code rollback: new-generation service_control publish CAS + restart web only + live readback; explicitly forbids git reset --hard on shared main and restarting old desired as fake rollback",
+    "real Provider Canary Stage A/B each require separate authorization; ordinary chat authorization is not Host qualification",
+    "no tool/permission widening: branch changes docs only; canary profile tool-face statements are references to existing design",
+    "historical qualifications (code review subagent_d70044fe0589, merge-gate subagent_d3bcef550f1b, historical R9) cited as historical evidence only"
+  ],
+  "branch_disposition": "kept: pending ff-merge into main upon explicit user authorization; no push this round",
+  "prohibited_this_round_and_respected": [
+    "git merge into main",
+    "git push",
+    "service_control publish/update/restart",
+    "production GLM Canary Stage A/B",
+    "any config or production file changes",
+    "touching MCP Console Goal 1d1f4ef7"
+  ]
+}
