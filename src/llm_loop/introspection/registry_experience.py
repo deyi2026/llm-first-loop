@@ -634,6 +634,10 @@ def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "
         method_use_receipt={
             key: str(entry[key])
             for key in ("method_ref", "decision", "episode_ref", "method_content_hash")
+            # Fail-open telemetry: a legacy/incomplete trace entry degrades to a
+            # partial receipt; record_use itself must never raise (Rule28 遥测
+            # 不降级主路径——独立审查 P2-2 修复)。
+            if key in entry
         },
     )
 
