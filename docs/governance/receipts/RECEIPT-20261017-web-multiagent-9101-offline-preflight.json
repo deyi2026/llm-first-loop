@@ -1,0 +1,97 @@
+{
+  "schema": "lfl.web_multiagent_offline_package_preflight/v1",
+  "observed_at_local": "2026-10-17T06:27:24+08:00",
+  "scope": "offline_package_only",
+  "goal_scope_note": "Independent Web Multi-Agent Host release readiness; NOT checkpointed into unrelated active LFLM 16K-subagent Goal",
+  "candidate": {
+    "commit": "9101b841ce54903697e24484a5fdbbc7ec2ef586",
+    "worktree": ".worktrees/web-multiagent-release-9101-20261017",
+    "git_tracked_clean": true,
+    "webui_tracked_tree": "747a0a2689f37d48e178bd6b8fc10579adfe186e",
+    "webui_tracked_file_count": 104,
+    "webui_source_sha256": "a65737477344d226c0decefce18e0a1c9b81d1aa9adcffd2792f2a1b8e53e78b",
+    "webui_source_binding_verified": true,
+    "asset_file_count": 66,
+    "asset_tree_sha256": "e771d77590552e6597222b340eb64b53a3d1dca4711516885efea72380c5777d",
+    "stable_source_and_assets_byte_identical": true,
+    "managed_release_published": false
+  },
+  "reference": {
+    "docs_branch_base": "b68dbc2a53c87295c7f160502795a4bd26f2f91d",
+    "local_main_at_preflight": "b68dbc2a53c87295c7f160502795a4bd26f2f91d",
+    "original_code_review": "GLM-5.3 code reviewer PASS P0=0 P1=0, historical frozen tree; see Rule28 receipt",
+    "historical_full_r9": {
+      "commit_under_test": "8634db468",
+      "exit_code": 0,
+      "passed": 9201,
+      "skipped": 141,
+      "failed": 0,
+      "note": "historical snapshot, not a new full R9 on 9101 or current main"
+    },
+    "original_merge_gate": "subagent_d3bcef550f1b PASS, scoped to prior b184 integration"
+  },
+  "offline_validation": {
+    "focused_tests": {
+      "command": "../../.venv/bin/python -m pytest -q tests/unit/test_web_direct_subagent_canary.py tests/unit/test_task_budget_admin_once.py tests/unit/test_task_budget_knowledge_consumption.py tests/unit/test_subagent_effect_generation_isolation.py tests/unit/test_subagent_lifecycle_cascade.py tests/unit/test_subagent.py tests/unit/test_subagent_settlement.py tests/web/test_subagent_lineage_surface.py",
+      "exit_code": 0,
+      "passed": 136,
+      "warnings": 1
+    },
+    "project_quick": {
+      "command": "bash scripts/ci_gate.sh --quick",
+      "exit_code": 0,
+      "ruff_new": 0,
+      "pyright_new": 0,
+      "env_pin": "PASS",
+      "tier0_passed": 319,
+      "tier0_deselected": 9045,
+      "note": "Quick is not full R9"
+    }
+  },
+  "production_snapshot": {
+    "desired_generation": 273,
+    "desired_deployment_id": "deploy-c661fa60788541b4ad1b04017835dc60",
+    "desired_git_head": "b184edf9c7ecc16014c1806fd1c0bedff7a440cb",
+    "live_git_head": "b184edf9c7ecc16014c1806fd1c0bedff7a440cb",
+    "live_web_pid": 49318,
+    "live_web_pid_alive": true,
+    "live_identity_ok": true,
+    "live_model_ref": "glm/glm-5.3",
+    "live_provider_host": "open.bigmodel.cn",
+    "official_web_idle_state": "unknown",
+    "official_web_idle_detail": "ReadTimeout",
+    "mechanical_held_whole_run_locks": 1,
+    "service_control_barriers_count": 0,
+    "stable_rollback_code_root_exists": true,
+    "stable_release_artifact_matches_candidate": true,
+    "live_service_status_api": "read_timeout_no_state_claim",
+    "web_ui_http_probe_status": 200,
+    "web_ui_http_probe_note": "GET /ui/v2/ returned HTTP200 independently; NOT equivalent to the service-status API idle proof"
+  },
+  "release_decision": {
+    "verdict": "NO_GO",
+    "blockers": [
+      "production_web_deployment_authorization_not_granted_for_this_stage",
+      "production_provider_canary_stage_A_B_authorization_not_granted",
+      "operator_specific_valid_0600_canary_config_not_qualified",
+      "candidate_not_published_into_managed_release",
+      "web_busy_or_idle_unconfirmed"
+    ],
+    "authorized_actions": [
+      "offline snapshot",
+      "local provider-free focused tests",
+      "local Quick",
+      "docs/receipt update on isolated branch"
+    ],
+    "not_authorized_actions": [
+      "service_control publish/update",
+      "service_control restart",
+      "real Provider Canary",
+      "main merge",
+      "git push",
+      "Feishu/Learning changes"
+    ]
+  },
+  "next_step": "Independent docs-branch merge review if applying corrected materials to main; separately approve exact Web-only CAS publish+restart after idle/rollback/currentness. Stage A/B use distinct operator authorization after live success.",
+  "supplemental_checked_at_local": "2026-10-17T06:27:55+08:00"
+}
