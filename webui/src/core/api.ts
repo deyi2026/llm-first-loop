@@ -161,16 +161,14 @@ export interface ExperienceCatalog {
 }
 
 export interface MethodCardInfo {
-  id: string;
-  method_ref?: string;
-  name?: string;
+  id: string; // 方法 raw stem（card() 投影）
+  key: string; // method:<id> —— 打分索引 ref；后端 card() 实际字段（无 method_ref/name）
+  summary?: string; // 方法名（card() 投影字段；此前误声明为 name）
   description?: string;
   status: string;
   source_model?: string;
   ts?: string;
-  qualification?: Record<string, unknown>;
   last_signal_age_days?: number | null;
-  freshness?: Record<string, unknown>;
 }
 
 export interface MethodInventory {
@@ -239,6 +237,55 @@ export async function setMethodTransition(
     { method: "POST" }
   );
   return status === 200 ? { ok: true, status: data?.status } : { ok: false, error: data?.error, detail: data?.detail };
+}
+
+// ── 知识打分（阶段2）：只读聚合——ledger 明细 + sidecar 徽标索引 ─────────────
+export interface KnowledgeScoreSummary {
+  top_label: string;
+  top_level: number;
+  confidence: number;
+  expected: number;
+  p_evidence_sufficient: number;
+  scored_slots: number;
+  last_scored_at: string;
+  evidence_level: string;
+  scorer_model: string;
+}
+
+export interface KnowledgeScoreLedgerEntry {
+  ledger_seq: number;
+  ref: string;
+  kind: string;
+  adopted: boolean;
+  top_label: string;
+  top_level: number;
+  confidence: number;
+  expected: number;
+  p_evidence_sufficient: number;
+  decision_reported: string;
+  error: string;
+  ts: string;
+  scorer_model: string;
+}
+
+export interface KnowledgeScoresResponse {
+  count: number;
+  scores: Record<string, KnowledgeScoreSummary>;
+  ledger: KnowledgeScoreLedgerEntry[];
+}
+
+export async function fetchKnowledgeScores(): Promise<KnowledgeScoresResponse> {
+  const { status, data } = await api<KnowledgeScoresResponse>("/api/v1/knowledge/scores");
+  if (
+    status === 200 &&
+    data &&
+    typeof data.count === "number" &&
+    data.scores &&
+    Array.isArray(data.ledger)
+  ) {
+    return data;
+  }
+  throw new Error(status === 0 ? "网络请求失败" : `HTTP ${status}`);
 }
 
 // ── TASK-005: 受管服务 desired/live/stable 身份视图 ──────────────────────────

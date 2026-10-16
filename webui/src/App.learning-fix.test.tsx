@@ -54,6 +54,7 @@ describe("learning 通道修复回归（4b21343d9）", () => {
       if (url.includes("/api/v1/learning/status")) return jsonResponse(learningStatus);
       if (url.includes("/api/v1/knowledge/experiences")) return jsonResponse({ detail: "down" }, 503);
       if (url.includes("/api/v1/knowledge/methods")) return jsonResponse({ detail: "down" }, 503);
+      if (url.includes("/api/v1/knowledge/scores")) return jsonResponse({ count: 0, scores: {}, ledger: [] });
       return jsonResponse({ sessions: [], count: 0 });
     }));
   });

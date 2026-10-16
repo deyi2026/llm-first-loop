@@ -447,6 +447,8 @@
 .v2-knowledge-badge.archived, .v2-knowledge-badge.retired, .v2-knowledge-badge.invalidated { color: var(--dsw-alias-label-tertiary); }
 .v2-knowledge-badge.invalid { color: var(--dsw-alias-state-danger, #c2410c); }
 .v2-knowledge-badge.active { color: var(--dsw-alias-state-success, #15803d); }
+.v2-knowledge-badge.scored { color: var(--dsw-alias-state-info, #2563eb); }
+.v2-knowledge-error { margin: 0; font-size: 11px; color: var(--dsw-alias-state-danger, #c2410c); word-break: break-all; }
 .v2-knowledge-desc { margin: 0; font-size: 12px; color: var(--dsw-alias-label-secondary); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .v2-knowledge-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--dsw-alias-label-tertiary); }
 .v2-knowledge-tags { display: flex; flex-wrap: wrap; gap: 4px; }

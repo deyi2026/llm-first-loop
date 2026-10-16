@@ -35,6 +35,7 @@ from llm_loop.feedback.honesty import (
     session_deleted_message,
     session_not_found_message,
 )
+from llm_loop.knowledge_score.ledger import KnowledgeScoreLedger
 from llm_loop.runtime.admission_barrier import (
     ServiceAdmissionBarrier,
     task_admission_barrier,
@@ -835,6 +836,111 @@ def knowledge_method_transition(
 def _web_data_dir(engine: Any) -> Path:
     """Resolve Web route storage from the already-resolved engine settings authority."""
     return Path(getattr(getattr(engine, "settings", None), "data_dir", "./data")).expanduser().resolve()
+
+
+# ---------- 阶段2: 知识打分只读聚合视图（知识管理页徽标 + 打分明细页签） ----------
+
+# 徽标摘要字段（sidecar schema knowledge-score-sidecar/v1 的展示投影）
+_SCORE_SUMMARY_FIELDS = (
+    "top_label",
+    "top_level",
+    "confidence",
+    "expected",
+    "p_evidence_sufficient",
+    "scored_slots",
+    "last_scored_at",
+    "evidence_level",
+    "scorer_model",
+)
+
+
+def _read_score_sidecars(cards_dir: Path) -> dict[str, dict]:
+    """读取全部打分 sidecar（<data>/knowledge_scores/cards/*.json）→ ref → 徽标摘要.
+
+    逐文件隔离：单份损坏（IO/JSON/UTF-8 解码失败、非对象、缺 ref）跳过该文件
+    不整体失败，对齐阶段1逐卡隔离语义；目录不存在视为尚无 sidecar（空索引）。
+    """
+    summaries: dict[str, dict] = {}
+    if not cards_dir.is_dir():
+        return summaries
+    for path in sorted(cards_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        # ValueError 涵盖 JSONDecodeError 与 UnicodeDecodeError（二进制损坏 sidecar）
+        except (OSError, ValueError) as exc:
+            logger.warning("score sidecar unreadable, skipped: %s: %s", path.name, exc)
+            continue
+        if not isinstance(payload, dict):
+            logger.warning("score sidecar not an object, skipped: %s", path.name)
+            continue
+        ref = str(payload.get("ref") or "")
+        if not ref:
+            continue
+        summaries[ref] = {field: payload.get(field) for field in _SCORE_SUMMARY_FIELDS}
+    return summaries
+
+
+@router.get("/api/v1/knowledge/scores")
+def knowledge_scores_index(request: Request) -> Response:
+    """知识打分只读聚合：ledger 明细（ts 倒序）+ 徽标索引（sidecar 优先）.
+
+    只读端点：不调打分服务、不写任何文件。数据落点与 CLI
+    scripts/knowledge_score.py 一致（<root>/data/knowledge_scores，web 侧由
+    settings.data_dir 权威解析）；数据未产生（文件缺失或为空）返回空结构
+    200 而非 5xx，读取异常（IO/解析）如实 500。
+    """
+    engine = _engine_from(request)
+    scores_dir = _web_data_dir(engine) / "knowledge_scores"
+    ledger = KnowledgeScoreLedger(scores_dir / "ledger.jsonl")
+    try:
+        entries = ledger.read()  # 旧→新；损坏行沿用账本扫描的跳过语义
+        scores: dict[str, dict] = _read_score_sidecars(scores_dir / "cards")
+    except Exception as exc:  # noqa: BLE001 - 管理视图不可得时如实 5xx
+        logger.warning("knowledge scores aggregate failed: %s", type(exc).__name__, exc_info=True)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={
+                "error": "knowledge_scores_failed",
+                "detail": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    for row in reversed(entries):  # 新→旧、先见者胜出 → 无 sidecar 的 ref 取 ledger 最新一条成功行
+        ref = str(row.get("ref") or "")
+        if not ref or ref in scores:
+            continue
+        if not str(row.get("top_label") or ""):
+            continue  # error 行无打分结果（top_label 为空），不进徽标索引
+        scores[ref] = {
+            "top_label": row.get("top_label"),
+            "top_level": row.get("top_level"),
+            "confidence": row.get("confidence"),
+            "expected": row.get("expected"),
+            "p_evidence_sufficient": row.get("p_evidence_sufficient"),
+            "scored_slots": 1,  # ledger 行即单 slot 打分；累计值只有 sidecar 才有
+            "last_scored_at": row.get("ts"),
+            "evidence_level": "",
+            "scorer_model": row.get("scorer_model"),
+        }
+    ledger_rows = [
+        {
+            "ledger_seq": row.get("ledger_seq"),
+            "ref": row.get("ref"),
+            "kind": row.get("kind"),
+            "adopted": row.get("adopted"),
+            "top_label": row.get("top_label"),
+            "top_level": row.get("top_level"),
+            "confidence": row.get("confidence"),
+            "expected": row.get("expected"),
+            "p_evidence_sufficient": row.get("p_evidence_sufficient"),
+            "decision_reported": row.get("decision_reported"),
+            "error": row.get("error"),
+            "ts": row.get("ts"),
+            "scorer_model": row.get("scorer_model"),
+        }
+        for row in entries
+    ]
+    ledger_rows.sort(key=lambda r: (str(r.get("ts") or ""), r.get("ledger_seq") or 0), reverse=True)
+    return UTF8JSONResponse({"count": len(entries), "scores": scores, "ledger": ledger_rows})
 
 
 # TASK-005: 受管服务 desired/live/stable 身份视图（与 service_control 工具同一 composer 单一数据源）

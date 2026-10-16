@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   fetchExperienceCatalog,
+  fetchKnowledgeScores,
   fetchMethodInventory,
   setExperienceLifecycle,
   setMethodTransition,
   type ExperienceCatalog,
   type ExperienceRecordInfo,
+  type KnowledgeScoreLedgerEntry,
+  type KnowledgeScoreSummary,
+  type KnowledgeScoresResponse,
   type MethodCardInfo,
   type MethodInventory,
   type MethodTransition,
@@ -37,16 +41,31 @@ const METHOD_TRANSITIONS: { value: MethodTransition; label: string }[] = [
   { value: "reopen", label: "重开为候选" },
 ];
 
-type KnowledgeTab = "experiences" | "methods";
+type KnowledgeTab = "experiences" | "methods" | "scores";
+
+/** 打分徽标短名：scorer_model 取首个 "-" 前段（如 27B-Instant-MLX-8bit → 27B）. */
+function shortScorerName(model: string): string {
+  return (model || "").split("-")[0] || model || "?";
+}
+
+function ScoreBadge({ summary }: { summary: KnowledgeScoreSummary }) {
+  return (
+    <span className="v2-knowledge-badge scored" data-testid="score-badge">
+      {`${shortScorerName(summary.scorer_model)}·${summary.top_label} ${(summary.confidence ?? 0).toFixed(2)}`}
+    </span>
+  );
+}
 
 function ExperienceCard({
   record,
   onAction,
   busy,
+  score,
 }: {
   record: ExperienceRecordInfo;
   onAction: (id: string, action: "archive" | "invalidate" | "restore") => void;
   busy: boolean;
+  score?: KnowledgeScoreSummary;
 }) {
   const id = record.experience_ref || record.experience_id || "";
   return (
@@ -56,6 +75,7 @@ function ExperienceCard({
         <span className={`v2-knowledge-badge ${record.status}`}>
           {EXPERIENCE_STATUS_LABELS[record.status] ?? record.status}
         </span>
+        {score ? <ScoreBadge summary={score} /> : null}
       </header>
       <p className="v2-knowledge-desc">{record.scenario}</p>
       <div className="v2-knowledge-meta">
@@ -95,20 +115,23 @@ function MethodCard({
   card,
   onTransition,
   busy,
+  score,
 }: {
   card: MethodCardInfo;
   onTransition: (id: string, transition: MethodTransition) => void;
   busy: boolean;
+  score?: KnowledgeScoreSummary;
 }) {
-  const id = card.method_ref || card.id || "";
+  const id = card.key || card.id || ""; // card() 投影：key=method:<id>（打分索引/流转端点同一 ref 形态）
   const [pending, setPending] = useState<MethodTransition | "">("");
   return (
     <article className="v2-knowledge-card" data-testid="method-card">
       <header>
-        <strong>{card.name || card.id}</strong>
+        <strong>{card.summary || card.id}</strong>
         <span className={`v2-knowledge-badge ${card.status}`}>
           {METHOD_STATUS_LABELS[card.status] ?? card.status}
         </span>
+        {score ? <ScoreBadge summary={score} /> : null}
       </header>
       <p className="v2-knowledge-desc">{card.description}</p>
       <div className="v2-knowledge-meta">
@@ -138,6 +161,36 @@ function MethodCard({
   );
 }
 
+/** 打分明细页签的单条 ledger 行（ts 倒序由调用方保证）。 */
+function ScoreRow({ entry }: { entry: KnowledgeScoreLedgerEntry }) {
+  const ref = entry.ref || "";
+  return (
+    <article className="v2-knowledge-card" data-testid="score-entry">
+      <header>
+        <code title={ref} data-testid="score-entry-ref">
+          {ref.slice(-40)}
+        </code>
+        <span className="v2-knowledge-badge scored">{entry.kind || "—"}</span>
+      </header>
+      <div className="v2-knowledge-meta">
+        <span>{entry.top_label || "（无打分结果）"}</span>
+        {entry.top_label ? <span>置信 {(entry.confidence ?? 0).toFixed(2)}</span> : null}
+        <span>期望 {(entry.expected ?? 0).toFixed(2)}</span>
+        <span>证据充分 {(entry.p_evidence_sufficient ?? 0).toFixed(2)}</span>
+        <span>{entry.adopted ? "✓采纳" : "✗未采纳"}</span>
+        {entry.decision_reported ? <span>{entry.decision_reported}</span> : null}
+        {entry.ts ? <span>{entry.ts.slice(0, 10)}</span> : null}
+        {entry.scorer_model ? <span>{shortScorerName(entry.scorer_model)}</span> : null}
+      </div>
+      {entry.error ? (
+        <p className="v2-knowledge-error" data-testid="score-entry-error">
+          {entry.error}
+        </p>
+      ) : null}
+    </article>
+  );
+}
+
 export function KnowledgePanel() {
   const [tab, setTab] = useState<KnowledgeTab>("experiences");
   const [experiences, setExperiences] = useState<ExperienceCatalog | null>(null);
@@ -150,6 +203,10 @@ export function KnowledgePanel() {
   const [loading, setLoading] = useState(true);
   const [expError, setExpError] = useState("");
   const [mthError, setMthError] = useState("");
+  // 阶段2: 知识打分只读索引（徽标 + 打分明细页签）
+  const [scoreData, setScoreData] = useState<KnowledgeScoresResponse | null>(null);
+  const [scoresLoading, setScoresLoading] = useState(true);
+  const scoreWarned = useRef(false);
 
   const refresh = useCallback(async () => {
     // EVO-20261013-2: 读取失败与空库分开呈现（fetch 失败抛错），错误不再伪装成"无匹配"
@@ -172,6 +229,21 @@ export function KnowledgePanel() {
       setMthError(mthRes.reason instanceof Error ? mthRes.reason.message : String(mthRes.reason));
     }
     setLoading(false);
+    // 阶段2: 打分索引独立拉取（不进 allSettled，失败静默降级——不显示徽标、
+    // 不阻塞经验/方法列表，仅 console.warn 一次避免 30s 轮询刷屏）
+    setScoresLoading(true);
+    fetchKnowledgeScores()
+      .then((res) => {
+        setScoreData(res);
+      })
+      .catch((err: unknown) => {
+        setScoreData(null);
+        if (!scoreWarned.current) {
+          scoreWarned.current = true;
+          console.warn("knowledge scores unavailable:", err);
+        }
+      })
+      .finally(() => setScoresLoading(false));
   }, [query, expStatus, methodStatus]);
 
   useEffect(() => {
@@ -241,12 +313,21 @@ export function KnowledgePanel() {
           <button className={tab === "methods" ? "on" : ""} onClick={() => setTab("methods")}>
             方法 {methods ? `(${Object.values(methods.counts).reduce((a, b) => a + b, 0)})` : ""}
           </button>
+          <button className={tab === "scores" ? "on" : ""} onClick={() => setTab("scores")}>
+            打分明细 {scoreData ? `(${scoreData.count})` : ""}
+          </button>
         </nav>
       </header>
       <div className="v2-knowledge-toolbar">
         <input
           type="search"
-          placeholder={tab === "experiences" ? "按标题/场景/标签搜索…" : "按 id/名称/描述搜索…"}
+          placeholder={
+            tab === "experiences"
+              ? "按标题/场景/标签搜索…"
+              : tab === "methods"
+                ? "按 id/名称/描述搜索…"
+                : "打分明细只读，按时间倒序展示全部落账行…"
+          }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -270,6 +351,7 @@ export function KnowledgePanel() {
                 <ExperienceCard
                   key={record.experience_ref || record.experience_id || record.summary}
                   record={record}
+                  score={scoreData?.scores[record.experience_ref || record.experience_id || ""]}
                   onAction={(id, action) => void doExperienceAction(id, action)}
                   busy={busy}
                 />
@@ -277,7 +359,7 @@ export function KnowledgePanel() {
             )}
           </div>
         </>
-      ) : (
+      ) : tab === "methods" ? (
         <>
           {methods ? statusChips(methods.counts, methodStatus, setMethodStatus) : null}
           <div className="v2-knowledge-list">
@@ -291,11 +373,33 @@ export function KnowledgePanel() {
               <div className="v2-knowledge-empty">无匹配方法</div>
             ) : (
               methods?.records.map((card) => (
-                <MethodCard key={card.id} card={card} onTransition={(id, t) => void doMethodTransition(id, t)} busy={busy} />
+                <MethodCard
+                  key={card.id}
+                  card={card}
+                  score={scoreData?.scores[card.key || ""]}
+                  onTransition={(id, t) => void doMethodTransition(id, t)}
+                  busy={busy}
+                />
               ))
             )}
           </div>
         </>
+      ) : (
+        <div className="v2-knowledge-list">
+          {scoresLoading ? (
+            <div className="v2-knowledge-empty">读取打分明细…</div>
+          ) : (scoreData?.ledger.length ?? 0) === 0 ? (
+            <div className="v2-knowledge-empty" data-testid="scores-empty">
+              暂无打分记录
+            </div>
+          ) : (
+            [...(scoreData?.ledger ?? [])]
+              .sort((a, b) => (b.ts || "").localeCompare(a.ts || ""))
+              .map((entry) => (
+                <ScoreRow key={`${entry.ledger_seq}-${entry.ref}-${entry.ts}`} entry={entry} />
+              ))
+          )}
+        </div>
       )}
     </section>
   );
