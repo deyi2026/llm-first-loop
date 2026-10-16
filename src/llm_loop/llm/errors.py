@@ -133,12 +133,14 @@ class LLMEmptyResponseError(LLMError):
         *,
         provider: str = "",
         finish_reason: str = "",
+        prompt_tokens: int = 0,
         completion_tokens: int = 0,
         reasoning_tokens: int | None = None,
         provider_truncated: bool = False,
     ) -> None:
         super().__init__(message, provider=provider)
         self.finish_reason = str(finish_reason or "")
+        self.prompt_tokens = int(prompt_tokens or 0)
         self.completion_tokens = int(completion_tokens or 0)
         self.reasoning_tokens = reasoning_tokens
         self.provider_truncated = bool(provider_truncated)

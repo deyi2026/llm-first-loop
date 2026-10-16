@@ -18,6 +18,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import (
@@ -26,6 +27,7 @@ from llm_loop.core.message import (
     ToolCall,
     ToolResult,
     ToolResultStatus,
+    dict_wire_chars,
 )
 from llm_loop.core.run_context import (
     WaitBudget,
@@ -46,6 +48,7 @@ from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.fleet.coordinator import ProjectCoordinator
 from llm_loop.fleet.store import WorkerLease
 from llm_loop.llm.client import LLMClient
+from llm_loop.llm.errors import LLMEmptyResponseError, LLMError, is_overflow_error
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
 from llm_loop.resources.provider_calls import ProviderCallCoordinator, subagent_provider_chat
 from llm_loop.resources.provider_settlement import (
@@ -55,6 +58,9 @@ from llm_loop.resources.provider_settlement import (
 )
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+
+if TYPE_CHECKING:
+    from llm_loop.memory.archive import ArchiveStore
 
 # 子代理不维护第二套静态工具能力表。父执行域由 current_tool_discovery_scope
 # 继承；None=完整 registry，显式集合=不得扩权。工具自身继续承担授权/安全边界。
@@ -167,12 +173,18 @@ class SubAgentRunner:
         artifact_store: WorkspaceArtifactStore | None = None,
         provider_call_coordinator: ProviderCallCoordinator | None = None,
         llm_resolver: Callable[[str], LLMClient] | None = None,
+        context_limits_resolver: Callable[[str], tuple[int, int | None, float] | None] | None = None,
+        archive_store: ArchiveStore | None = None,
         parent_session_provider: Callable[[str], Session | None] | None = None,
         project_coordinator: ProjectCoordinator | None = None,
         fleet_lease_ttl_seconds: float | None = 900.0,
     ) -> None:
         self.llm = llm
         self._llm_resolver = llm_resolver
+        # Optional model-registry facts and existing ArchiveStore; fake/legacy
+        # runners without a qualified window retain their exact original wire.
+        self._context_limits_resolver = context_limits_resolver
+        self._archive_store = archive_store
         self._parent_session_provider = parent_session_provider
         self.registry = registry
         self.session_store = session_store
@@ -2385,6 +2397,117 @@ class SubAgentRunner:
         # Save failure is a hard execution boundary: provider/tool work must not start.
         self.session_store.save(sess)
 
+    def _bounded_child_wire(
+        self,
+        sess: Session,
+        *,
+        llm: LLMClient,
+        model_label: str,
+        tools: list[dict],
+        archived_once: set[int],
+    ) -> tuple[list[dict], str]:
+        """Reuse the main history/token projectors only at actual input pressure.
+
+        Neither the original child messages nor the initial delegated ingress is
+        discarded. If a model-readable exact archive cannot be guaranteed, reject
+        the call instead of silently clipping or repeating the provider request.
+        """
+        messages = [m.to_llm_dict() for m in sess.messages]
+        if self._context_limits_resolver is None:
+            return messages, ""
+        limits = self._context_limits_resolver(model_label)
+        if limits is None:
+            return messages, ""
+        context_window, provider_input_limit, chars_per_token = limits
+        if context_window <= 0 or chars_per_token <= 0:
+            return messages, ""
+
+        from llm_loop.core.loop.engine_services.token_budget import reserve_history_after_tools
+
+        output_reserve = max(0, int(getattr(llm, "max_tokens", 0) or 0))
+        if output_reserve >= context_window:
+            return [], "输出预留已占满该模型的物理窗口"
+        allowed_input_tokens = min(int(context_window * 0.9), context_window - output_reserve)
+        if provider_input_limit is not None and provider_input_limit > 0:
+            allowed_input_tokens = min(allowed_input_tokens, provider_input_limit)
+        tool_chars = len(json.dumps(tools, ensure_ascii=False, separators=(",", ":")))
+        count_tools = getattr(llm, "count_tool_schema_tokens", None)
+        tool_tokens: int | None = None
+        if callable(count_tools):
+            try:
+                measured = count_tools(tools)
+                if isinstance(measured, int) and measured >= 0:
+                    tool_tokens = measured
+            except Exception:  # noqa: BLE001 — remote tokenizer not mandatory
+                logging.getLogger(__name__).debug("child tool tokenizer unavailable", exc_info=True)
+        reservation = reserve_history_after_tools(
+            allowed_input_tokens=allowed_input_tokens,
+            pre_tool_history_budget_chars=max(1, int(allowed_input_tokens * chars_per_token)),
+            tool_schema_chars=tool_chars,
+            tool_schema_tokens=tool_tokens,
+            projection_chars_per_token=chars_per_token,
+        )
+        budget = reservation.effective_history_budget_chars
+        if reservation.history_token_budget <= 0:
+            return [], "工具 schema 已耗尽本模型输入容量"
+        if sum(dict_wire_chars(m) for m in messages) <= budget:
+            return messages, ""
+
+        # A transcript ref is useful only if this child can actually hydrate it.
+        can_search_archive = any(
+            (tool.get("function") or {}).get("name") == "search_archive" for tool in tools
+        )
+        archive_store = self._archive_store
+        if archive_store is None or not can_search_archive:
+            return [], (
+                "模型输入接近实际窗口，但当前子代理没有可调用的 search_archive "
+                "或持久 ArchiveStore；已保留完整会话，拒绝静默截断"
+            )
+
+        from llm_loop.core.history import build_history_messages
+
+        def _archive_exact(child_id: str, msg: Message) -> None:
+            # build_history_messages may project the same immutable group again;
+            # a child-owned idempotence set avoids duplicate archive rows.
+            if id(msg) in archived_once:
+                return
+            archive_store.archive(
+                child_id,
+                role=msg.role,
+                source=str(getattr(msg.source, "value", msg.source)),
+                content=msg.content,
+                tool_name=msg.tool_name,
+                tool_call_id=msg.tool_call_id,
+                status=str(msg.status) if msg.status is not None else None,
+                reasoning_content=msg.reasoning_content,
+            )
+            archived_once.add(id(msg))
+
+        try:
+            projected = build_history_messages(
+                sess.messages,
+                system_prompt="",
+                max_chars=budget,
+                session_id=sess.session_id,
+                archive_sink=_archive_exact,
+                require_archive_success=True,
+                preserve_active_ingress_message=sess.messages[0] if sess.messages else None,
+            )
+        except Exception as exc:  # noqa: BLE001 — cannot claim recoverability on failed archive
+            return [], f"上下文压缩/原文归档失败（未向Provider发送）: {type(exc).__name__}"
+        measured = sum(dict_wire_chars(m) for m in projected)
+        if measured > budget:
+            return [], (
+                f"最小无损投影仍超过该模型输入容量（预算={budget}字符，"
+                f"投影={measured}字符）；完整委派和会话历史均已保留"
+            )
+        logging.getLogger(__name__).info(
+            "child context projected: session=%s model=%s source_messages=%d "
+            "wire_messages=%d budget_chars=%d",
+            sess.session_id, model_label, len(sess.messages), len(projected), budget,
+        )
+        return projected, ""
+
     def _execute_subagent(
         self,
         sess: Session,
@@ -2406,6 +2529,7 @@ class SubAgentRunner:
         llm_error_count = 0
         last_llm_error = ""
         active_llm = llm_client or self.llm
+        archived_once: set[int] = set()
 
         while rounds < effective_rounds:
             if cancel_event is not None and cancel_event.is_set():
@@ -2443,7 +2567,6 @@ class SubAgentRunner:
                 # 的竞态窗口。首轮不注入，避免 task user 后连续 user wire。
                 self._inject_pending_agent_messages(sess, sess.session_id)
             # ── LLM 决策 ──
-            msgs = [m.to_llm_dict() for m in sess.messages]  # type: ignore[attr-defined]
             # Full lazy registry by default; an explicit parent discovery scope is
             # inherited through contextvars and therefore cannot be expanded by child.
             # lazy=True preserves executable JSON-schema structure while removing long
@@ -2472,6 +2595,20 @@ class SubAgentRunner:
                 }
                 for t in sub_schemas
             ]
+            msgs, ingress_failure = self._bounded_child_wire(
+                sess, llm=active_llm, model_label=model_label,
+                tools=sub_schemas, archived_once=archived_once,
+            )
+            if ingress_failure:
+                return SubAgentResult(
+                    final_answer=f"[状态: failure] 子代理上下文预检: {ingress_failure}",
+                    outcome="failed",
+                    rounds=rounds,
+                    tool_calls=tool_trace,
+                    depth=depth,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                )
             _provider_call_coordinator = self.provider_call_coordinator
             _provider_call = (
                 _provider_call_coordinator.open_shadow_call_for_client(
@@ -2513,6 +2650,46 @@ class SubAgentRunner:
                 # 留在本地 terminal outcome，不进入模型对话历史。
                 llm_error_count += 1
                 last_llm_error = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, LLMEmptyResponseError):
+                    # Provider returned a real completed stream, possibly spending its
+                    # entire reasoning/output allowance without a visible answer.
+                    # Its usage is billable even though chat() raised and the child
+                    # received no LLMResponse. Never re-send this unchanged wire.
+                    tokens_in += max(0, int(exc.prompt_tokens))
+                    tokens_out += max(0, int(exc.completion_tokens))
+                    return SubAgentResult(
+                        final_answer=(
+                            "[状态: failure] 子代理模型未生成有效文本或工具动作；"
+                            f"finish_reason={exc.finish_reason or 'unknown'}，"
+                            f"已消耗输入 {exc.prompt_tokens} / 输出 {exc.completion_tokens} tokens"
+                            "（其中推理消耗 "
+                            f"{exc.reasoning_tokens if exc.reasoning_tokens is not None else 'unknown'}）。"
+                            "请父代理据实际额度调整模型级输出预算或任务分工，不重复原样调用。"
+                        ),
+                        outcome="failed",
+                        rounds=rounds,
+                        tool_calls=tool_trace,
+                        depth=depth,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                    )
+                if isinstance(exc, LLMError) and is_overflow_error(exc):
+                    # An input-window overflow is deterministic for the same
+                    # preserved messages. Return the exact failure to the parent;
+                    # blindly continuing would burn remaining child rounds.
+                    return SubAgentResult(
+                        final_answer=(
+                            "[状态: failure] 子代理模型输入超出该路由实际接收窗口；"
+                            f"last_error={last_llm_error}。"
+                            "当前子会话原始历史保持持久化，需先缩减输入投影或切换合适模型。"
+                        ),
+                        outcome="failed",
+                        rounds=rounds,
+                        tool_calls=tool_trace,
+                        depth=depth,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                    )
                 continue
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens

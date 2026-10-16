@@ -2516,6 +2516,26 @@ def build_engine(
             repo_head=settings.fleet_repo_head,
             owner_id=uuid.uuid4().hex,
         )
+    def _child_context_limits(model_ref: str) -> tuple[int, int | None, float] | None:
+        """Snapshot model/provider capacity from the same live registry as the client pool."""
+        ref = str(model_ref or settings.llm_model).strip()
+        if "/" not in ref:
+            return None
+        provider_id, model_id = ref.split("/", 1)
+        # Read a single registry reference; hot-reload swaps it atomically.
+        snapshot = model_pool.registry
+        provider = snapshot.providers.get(provider_id)
+        if provider is None:
+            return None
+        spec = provider.models.get(model_id)
+        if spec is None:
+            return None
+        return (
+            int(spec.context),
+            spec.max_input_tokens or provider.max_input_tokens,
+            float(provider.chars_per_token or 0.6),
+        )
+
     subagent_runner = SubAgentRunner(
         llm=llm,
         registry=registry,
@@ -2525,6 +2545,8 @@ def build_engine(
         artifact_store=_artifact_store,
         provider_call_coordinator=provider_call_coordinator,
         llm_resolver=model_pool.get_client,
+        context_limits_resolver=_child_context_limits,
+        archive_store=archive,
         parent_session_provider=_subagent_parent_session,
         project_coordinator=_fleet_coordinator,
     )

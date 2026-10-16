@@ -1899,6 +1899,7 @@ class LLMClient:
                     f"已同模型自动重试 {_empty_retries_used} 次仍为空{_reasoning_note}）",
                     provider=self.provider,
                     finish_reason=result.finish_reason,
+                    prompt_tokens=result.prompt_tokens,
                     completion_tokens=result.completion_tokens,
                     reasoning_tokens=result.reasoning_tokens,
                     provider_truncated=result.truncated,
