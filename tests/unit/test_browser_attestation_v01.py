@@ -247,14 +247,13 @@ def test_coordinator_attestation_verdict_mismatch_refused():
 
 
 def test_attest_dead_port_fail_closed_real():
-    # Reserve an OS-assigned port without listening. A fixed port can already
-    # belong to another application; retaining this socket prevents a race
-    # between choosing an available address and the real lsof observation.
+    # 向内核预留临时端口但不 listen，避免固定端口被其他真实应用占用。
+    # 仍真实执行 lsof → 无监听 → fail-closed；不 mock 判定器或降低断言。
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved:
-        reserved.bind(("0.0.0.0", 0))
+        reserved.bind(("127.0.0.1", 0))
         verdict = attest_port(reserved.getsockname()[1], TREES)
-    assert verdict.verdict == "real"
-    assert "无监听" in verdict.detail
+        assert verdict.verdict == "real"
+        assert "无监听" in verdict.detail
 
 
 def test_attest_debug_url_carries_paths_semantics():
