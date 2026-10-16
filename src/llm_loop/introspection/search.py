@@ -24,6 +24,7 @@ from typing import Any
 
 from llm_loop.core.run_context import workspace_base
 from llm_loop.introspection.rule_index import RuleIndex
+from llm_loop.runtime.installation import bundle_root
 from llm_loop.timekeeping import system_local_now
 from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
 
@@ -247,7 +248,8 @@ class RecordSearcher:
         self._semantic_memory_enabled = bool(semantic_memory_enabled)
         self._semantic_archive_enabled = bool(semantic_archive_enabled)
         self._semantic_method_enabled = bool(semantic_method_enabled)
-        default_rule_path = Path(__file__).resolve().parents[3] / "docs" / "ai_rules.md"
+        rule_root = bundle_root() or Path(__file__).resolve().parents[3]
+        default_rule_path = rule_root / "docs" / "ai_rules.md"
         self._rule_index = RuleIndex(rule_path or default_rule_path)
         self._file_effect_query = file_effect_query
         self._workspace_scope_resolver = workspace_scope_resolver

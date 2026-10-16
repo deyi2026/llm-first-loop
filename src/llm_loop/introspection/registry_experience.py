@@ -839,9 +839,12 @@ def _spawn_krate_autorun(host: RegistryHost, repo_root: Path | None = None) -> s
     幂等性由 score(event_id)/index(全量重建) 保证。
     """
     try:
-        if os.environ.get("LFL_KRATE_AUTORUN") == "0":
+        from llm_loop.runtime.resolver import legacy_env_snapshot
+
+        env = legacy_env_snapshot()
+        if env.get("LFL_KRATE_AUTORUN") == "0":
             return "disabled_env"
-        if os.environ.get("PYTEST_CURRENT_TEST"):
+        if env.get("PYTEST_CURRENT_TEST"):
             return "skip_pytest"
         root = repo_root or Path(__file__).resolve().parents[3]
         script = root / "tools" / "krate" / "autorun_after_settlement.py"
@@ -850,7 +853,7 @@ def _spawn_krate_autorun(host: RegistryHost, repo_root: Path | None = None) -> s
         proc = subprocess.Popen(  # noqa: S603 — 固定脚本路径，无 shell 拼接
             [sys.executable, str(script)],
             cwd=str(root),
-            env={**os.environ, "KRATE_ROOT": str(root)},
+            env={**env, "KRATE_ROOT": str(root)},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

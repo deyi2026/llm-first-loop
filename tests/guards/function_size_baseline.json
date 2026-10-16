@@ -973,6 +973,15 @@
           "src/llm_loop/knowledge_score/card_writeback.py"
         ],
         "rationale": "GOAL-20261016-b2160223 独立打分器：ledger.append_score_line 复用 use_ledger.append_ledger_line 公开原语（调用方单写者锁内 JSONL 追加+行级 integrity 凭据+fsync+torn-tail 隔离，对齐 usage_ledger_primitives T1 append 契约口径）；card_writeback sidecar=目录 flock+O_EXCL tmp+os.replace+目录 fsync（纪律等价 experience_store，未做断电故障注入专项，不据此外推合规）；打分失败重试补写回不重打分（零 27B 调用）。数据落 data/knowledge_scores/。guard(r9): GOAL-20261016-b2160223"
+      },
+      "a2a_task_admission": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "web",
+        "paths": [
+          "src/llm_loop/web/a2a_task_admission.py"
+        ],
+        "rationale": "离线 A2A Task 准入记录是跨重启恢复 SoT，按 T2 state_file 分类，不是非持久化豁免。现有实现为 per-task flock、O_EXCL 临时文件、file fsync、link create-if-absent 与目录/parent fsync；损坏 fail-closed，post-link uncertain 禁止盲重派发，重启同请求返回 newly_reserved=False。tests/unit/test_a2a_task_admission.py 覆盖并发、重启与 fsync 故障。本项 observe 仅登记已核实写入面，不宣称完整合规或 Huawei 主体验证、路由接线、实际 dispatch、生产 A2A 已获资格；依据 durable-run-contract §10 以 guard(r9): 可见提交。"
       }
     },
     "write_exemptions": {

@@ -8,17 +8,22 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 from collections import Counter
+from importlib.metadata import version
 from pathlib import Path
 
-from llm_loop.config import load_settings
+from llm_loop.config import load_env_file, load_settings
 from llm_loop.core.session import (
     SessionExternalResourceBusyError,
     SessionMutationBusyError,
     SessionStore,
 )
+from llm_loop.runtime.installation import bundle_root
+from llm_loop.runtime.resolver import apply_to_environ, legacy_env_snapshot
 from llm_loop.timekeeping import system_local_now
 
 
@@ -324,12 +329,16 @@ def _cmd_faults(args: list[str]) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, workspace_root: str | None = None) -> int:
     argv = list(argv) if argv is not None else list(sys.argv[1:])
     # M63 配置加载统一: CLI 先加载项目 .env（环境变量优先），与 web/feishu 进程配置一致
     from llm_loop.config import load_env_file
 
-    load_env_file()
+    env_file = legacy_env_snapshot().get("LFL_ENV_FILE")
+    if env_file:
+        load_env_file(env_file)
+    else:
+        load_env_file()
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
     from llm_loop.introspection.proc_version import record_process_start
 
@@ -363,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         "faults",  # A-⑤（EVO-20260924-40755734）: 工具故障台账聚合查询（只读，不装配 engine）
     }
     if argv and argv[0] in _cmds:
-        return _dispatch_command(argv)
+        return _dispatch_command(argv, workspace_root=workspace_root)
 
     parser = argparse.ArgumentParser(prog="llm_loop", description="LLM-First Core Loop")
     parser.add_argument("message", nargs="?", help="单条消息（不填则进入交互模式）")
@@ -385,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from llm_loop.factory import build_engine
 
-    engine = build_engine(settings)
+    engine = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
     # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
     # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
     # （单条消息模式 / 交互模式退出）。
@@ -409,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
         engine.close()
 
 
-def _dispatch_command(argv: list[str]) -> int:
+def _dispatch_command(argv: list[str], *, workspace_root: str | None = None) -> int:
     """子命令分派（list/delete/archive/unarchive/search/extract）."""
     cmd = argv[0]
     # export_distill: 薄壳纯读命令，入口特判（早于 build_engine，避免无谓 engine 装配）
@@ -451,7 +460,7 @@ def _dispatch_command(argv: list[str]) -> int:
 
     from llm_loop.factory import build_engine
 
-    engine = build_engine(settings)
+    engine = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
     # P2-4(2026-08-15): 子命令分派同样装配 engine（持有 LLM httpx 连接），
     # 统一 try/finally 在退出前 close（fail-open 幂等）——覆盖本分派全部 return 出口。
     def _dispatch() -> int:
@@ -617,10 +626,10 @@ def _cmd_export_distill(argv: list[str]) -> int:
     用法: llm_loop export-distill [--input-dir DIR] [--output FILE] [--report FILE] [--force]
     """
 
-    from llm_loop.introspection.export_distill import (
-        _DEFAULT_INPUT_DIR,
-        run_export,
-    )
+    from llm_loop.introspection.export_distill import run_export
+
+    data = Path(legacy_env_snapshot().get("DATA_DIR") or "data")
+    default_input = str(data / "sessions") + os.sep
 
     parser = argparse.ArgumentParser(
         prog="llm_loop export-distill",
@@ -628,8 +637,8 @@ def _cmd_export_distill(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--input-dir",
-        default=_DEFAULT_INPUT_DIR,
-        help=f"会话输入目录（默认 {_DEFAULT_INPUT_DIR}）",
+        default=default_input,
+        help=f"会话输入目录（默认 {default_input}）",
     )
     parser.add_argument(
         "--output",
@@ -649,8 +658,8 @@ def _cmd_export_distill(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     ts = system_local_now().strftime("%Y%m%d-%H%M%S")
-    output = args.output or f"data/export_distill/distill_{ts}.jsonl"
-    report_path = args.report or f"data/export_distill/report_{ts}.json"
+    output = args.output or str(data / "export_distill" / f"distill_{ts}.jsonl")
+    report_path = args.report or str(data / "export_distill" / f"report_{ts}.json")
 
     try:
         report = run_export(args.input_dir, output, report_path, force=args.force)
@@ -686,7 +695,7 @@ def _cmd_archive_index(argv: list[str]) -> int:
         prog="llm_loop archive-index",
         description="压缩档案存量段索引重建（幂等，可重复执行）",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     args = parser.parse_args(argv)
 
     try:
@@ -716,7 +725,7 @@ def _cmd_event_inventory(argv: list[str]) -> int:
         prog="llm_loop event-inventory",
         description="存量存储只读盘点（sessions/archives/compressed_archive/action_trace）",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     args = parser.parse_args(argv)
 
     try:
@@ -739,7 +748,7 @@ def _cmd_event_migrate(argv: list[str]) -> int:
         prog="llm_loop event-migrate",
         description="存量会话 → 事件日志迁移（备份先行、幂等、迁移后校验闭环）",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     parser.add_argument(
         "--force", action="store_true", help="跳过幂等检查强制重建既有事件日志（修复不一致）"
     )
@@ -772,7 +781,7 @@ def _cmd_event_verify(argv: list[str]) -> int:
         prog="llm_loop event-verify",
         description="事件重放 vs 源 session 逐字段校验（通过+失败=总数闭环）",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--session", default="", help="单会话校验（默认全部）")
     group.add_argument("--all", action="store_true", help="全量校验（默认行为）")
@@ -856,7 +865,7 @@ def _cmd_event_rollback(argv: list[str]) -> int:
         prog="llm_loop event-rollback",
         description="从备份区恢复源 session JSON（--remove-events 时清除迁移事件日志）",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     parser.add_argument("--session", default="", help="单会话回滚（默认全部备份）")
     parser.add_argument(
         "--remove-events", action="store_true", help="同时清除对应事件日志（需操作者显式确认）"
@@ -907,7 +916,7 @@ def _cmd_session_fork(argv: list[str]) -> int:
         description="会话 fork（事件日志物理复制继承 + session JSON 双轨）",
     )
     parser.add_argument("--session", required=True, help="源会话 ID")
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     parser.add_argument("--fork-point", type=int, default=None, help="fork 点（保留前 N 条消息；缺省=全部）")
     parser.add_argument("--summary", default="", help="分支摘要（缺省自动提炼）")
     args = parser.parse_args(argv)
@@ -962,7 +971,7 @@ def _cmd_event_retire(argv: list[str]) -> int:
         prog="llm_loop event-retire",
         description="三套存储退役（双轨对账前置 + 归档 + 读路径切换）",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     parser.add_argument("--force", action="store_true", help="跳过幂等检查强制退役")
     args = parser.parse_args(argv)
 
@@ -1004,7 +1013,7 @@ def _cmd_event_retire_rollback(argv: list[str]) -> int:
         prog="llm_loop event-retire-rollback",
         description="从备份区恢复源 session JSON + action_trace",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     parser.add_argument("--backup-dir", required=True, help="备份区目录")
     args = parser.parse_args(argv)
 
@@ -1036,7 +1045,7 @@ def _cmd_event_rotate_status(argv: list[str]) -> int:
         prog="llm_loop event-rotate-status",
         description="事件日志滚动段清单（序号/事件数/时间范围/大小/活跃状态）",
     )
-    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
     parser.add_argument("--session", default="", help="单会话段清单（缺省列出全部多段会话）")
     args = parser.parse_args(argv)
 
@@ -1219,6 +1228,143 @@ def _cmd_rename(engine, session_id: str, new_title: str) -> int:
         return 2
     print("❌ 重命名失败（新标题为空）", file=sys.stderr)
     return 2
+
+def default_home() -> Path:
+    values = legacy_env_snapshot()
+    if raw := values.get("LFL_HOME", "").strip():
+        return Path(raw).expanduser().resolve()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "LFL"
+    if sys.platform == "win32":
+        return Path(values.get("LOCALAPPDATA") or Path.home() / "AppData/Local") / "LFL"
+    raw = values.get("XDG_DATA_HOME", "")
+    base = Path(raw).expanduser() if raw else Path.home() / ".local/share"
+    return (base if base.is_absolute() else Path.home() / ".local/share") / "lfl"
+
+
+def prepare_environment(args: argparse.Namespace) -> dict[str, str]:
+    """Bind installed state/resources explicitly; never copy credentials into a bundle."""
+    bundle = bundle_root()
+    values = legacy_env_snapshot()
+    root = default_home() if bundle else Path(__file__).resolve().parents[2]
+    config = Path(args.config or values.get("LFL_ENV_FILE") or root / ".env").expanduser().resolve()
+    if args.config and not config.is_file():
+        raise ValueError(f"Configuration file does not exist: {config}")
+    existing_keys = set(values)
+    existing_data = values.get("DATA_DIR") or values.get("LFL_DATA_DIR")
+    load_env_file(config)
+    values = legacy_env_snapshot()
+    normalized = {}
+    for key in (
+        "DATA_DIR", "LFL_DATA_DIR", "LFL_RUNTIME_ROOT", "LFL_WORKSPACE_ROOT",
+        "SKILLS_DIR", "METHOD_SEED_DIR", "DOCS_DIR", "UI_V2_DIR",
+        "EXPERIENCES_DIR", "METHODS_DIR",
+    ):
+        raw = values.get(key, "")
+        if key not in existing_keys and raw and not Path(raw).expanduser().is_absolute():
+            values[key] = str((config.parent / raw).expanduser().resolve())
+            normalized[key] = values[key]
+    data_raw = args.data_dir or existing_data or values.get("DATA_DIR") or values.get("LFL_DATA_DIR")
+    data = Path(data_raw or root / "data").expanduser().resolve()
+    workspace = Path(args.workspace or values.get("LFL_WORKSPACE_ROOT") or Path.cwd()).expanduser().resolve()
+    bindings = {
+        "DATA_DIR": str(data),
+        "LFL_DATA_DIR": str(data),
+        "LFL_ENV_FILE": str(config),
+        "LFL_RUNTIME_ROOT": str(Path(values.get("LFL_RUNTIME_ROOT") or root).expanduser().resolve()),
+        "LFL_WORKSPACE_ROOT": str(workspace),
+    }
+    if bundle:
+        bindings.update({
+            key: str(Path(values.get(key) or bundle / suffix).expanduser().resolve())
+            for key, suffix in {
+                "SKILLS_DIR": "skills", "METHOD_SEED_DIR": "methods",
+                "DOCS_DIR": "docs", "UI_V2_DIR": "webui/dist",
+            }.items()
+        })
+    apply_to_environ(normalized | bindings)
+    return bindings
+
+
+def check_install() -> dict:
+    root = bundle_root()
+    if root is None:
+        return {"ok": False, "mode": "source", "error": "Not an installed application bundle"}
+    try:
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError("Bundle manifest must be an object")
+        if manifest.get("schema") != "lfl.application-bundle/v1" or manifest.get("version") != version("llm-first-loop"):
+            raise ValueError("Bundle schema/version does not match installed distribution")
+        files = manifest["files"]
+        required = {"docs/ai_rules.md", "webui/dist/index.html"}
+        if not isinstance(files, dict) or not required.issubset(files):
+            raise ValueError("Bundle is missing required resources")
+        failed = []
+        for name, digest in files.items():
+            path = (root / name).resolve()
+            if not path.is_relative_to(root) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                failed.append(name)
+        return {"ok": not failed, "mode": "installed", "version": manifest["version"],
+                "checked_files": len(files), "failed_files": failed}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"ok": False, "mode": "installed", "error": str(exc)}
+
+
+def application_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="lfl", add_help=False)
+    parser.add_argument("--data-dir")
+    parser.add_argument("--workspace")
+    parser.add_argument("--config")
+    parser.add_argument("--version", action="store_true")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # Global options precede COMMAND. Preserve subcommand options verbatim.
+    boundary = 0
+    path_options = ("--data-dir", "--workspace", "--config")
+    while boundary < len(argv):
+        token = argv[boundary]
+        if token == "--version" or any(token.startswith(option + "=") for option in path_options):
+            boundary += 1
+        elif token in path_options:
+            boundary += 2
+        else:
+            break
+    args = parser.parse_args(argv[:boundary])
+    remaining = argv[boundary:]
+    if args.version:
+        print(version("llm-first-loop"))
+        return 0
+    if remaining == ["--help"] or remaining == ["-h"]:
+        print("lfl [--data-dir DIR] [--workspace DIR] [--config FILE] COMMAND\n"
+              "Commands: chat [CLI arguments], web, paths, check-install\n"
+              "Other arguments are passed to the existing LFL CLI.\n"
+              "--version prints the installed version without starting services.")
+        return 0
+    if remaining == ["check-install"]:
+        report = check_install()
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["ok"] else 1
+    try:
+        bindings = prepare_environment(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if remaining == ["paths"]:
+        print(json.dumps(bindings, ensure_ascii=False, indent=2))
+        return 0
+    if remaining and remaining[0] == "web":
+        if len(remaining) != 1:
+            parser.error("web uses WEB_HOST/WEB_PORT configuration; unexpected arguments")
+        from llm_loop.web import main as web_main  # r9-import-exempt: optional Web entry
+
+        runtime = Path(bindings["LFL_RUNTIME_ROOT"])
+        runtime.mkdir(parents=True, exist_ok=True)
+        os.chdir(runtime)
+        web_main(workspace_root=bindings["LFL_WORKSPACE_ROOT"])
+        return 0
+    return main(remaining[1:] if remaining[:1] == ["chat"] else remaining,
+                workspace_root=bindings["LFL_WORKSPACE_ROOT"])
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

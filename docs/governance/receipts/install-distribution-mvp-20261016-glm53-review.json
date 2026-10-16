@@ -1,0 +1,82 @@
+{
+  "schema": "lfl.install_distribution_independent_review/v1",
+  "base": "25a1f243a2a10409a65dc21d6bd71e5e507dbfc6",
+  "candidate_state": "staged",
+  "head_commit_at_review": "25a1f243a2a10409a65dc21d6bd71e5e507dbfc6",
+  "candidate_sha256": "c5eb983de2e453e3364c78c17ced492d471c6be308b3e357da18eed1b37d94df",
+  "candidate_bytes": 66414,
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_effort": "low",
+  "tools_registered": 0,
+  "max_rounds": 1,
+  "child_id": "subagent_ede0184a4f24",
+  "child_parent_id": "install-mvp-708c482c-independent-review-low-20261016",
+  "state": "completed",
+  "result_id": "result-5af471be8dcf4abb9240fb9c73a5b77a",
+  "live_handle_terminal": true,
+  "native_review_terminal": {
+    "child_id": "subagent_ede0184a4f24",
+    "parent_id": "install-mvp-708c482c-independent-review-low-20261016",
+    "generation": "5af471be8dcf4abb9240fb9c73a5b77a",
+    "state": "completed",
+    "review_isolated": true,
+    "final_answer": "## 独立代码审查结论（GLM-5.3 · 只读 · SHA c5eb983d…b37d94df，19 文件全量逐行）\n\n**总体判断**：候选实现了声明的安装分发 MVP 意图——统一 `lfl` 入口（全局参数仅限命令名前，边界扫描循环正确保留子命令选项）、`setup.py` 构建期打包 `_bundled` 只读资源并生成 v1 清单（含越界/符号链接拒绝、editable 提前返回保持源码布局）、`check-install` 哈希校验含路径逃逸防护（`resolve().is_relative_to(root)`，且 root 已 resolve）、`installed_identity` 通过 distribution `locate_file` 所有权匹配杜绝\"把 `_bundled` 拷进源码工作区伪造安装身份\"的假绕过（无 dist 元数据即回落源码守卫；module 指向 checkout 而 dist 指向 venv 时返回 None，enforce 不放松）、`prepare_environment` 的 CLI > 既有环境 data 别名 > 文件值优先级与配置相对路径锚定实现正确、`web` 入口 chdir(runtime) 后 enforce cwd 匹配成立、`--workspace` 经 factory 显式覆盖持久 current。扩展更新保留启停状态的 `previous_enabled.get(..., new_enabled)` 逻辑覆盖\"全禁用安装新增组件保持禁用\"且有测试。smoke 脚本的回环网络守卫、进程清理（terminate→kill）、workspace 断言均具体可信。lint-only 两处（suppress、变量改名）无行为扩张。\n\n**P2 发现（不阻塞）**：\n1. `src/llm_loop/extensions/store.py:360-372` — 更新时 `enabled=s.status==\"supported\" and …` 的 status 门控与 `set_enabled` 不校验 status 不对称：用户已启用的组件在更新后 status 变为非 supported 会被静默停用，且 set_enabled 允许把非 supported 组件置 enabled，往返不一致。\n2. `src/llm_loop/cli.py:1228-1236` — `LFL_HOME` 为相对路径时按调用 cwd resolve（仅 Linux XDG 分支处理了相对回退），锚定不一致，换目录调用会得到不同状态根。\n3. `src/llm_loop/cli.py:1324-1332` — `--help/-h` 仅在 remaining 恰为单 token 时生效，`lfl chat --help` 之外的组合（如 `lfl --help chat`）会透传给旧 CLI；`--version` 位于 COMMAND 之后同样不生效，帮助文本未说明此限制。\n\n其余检查项（sdist/checkout 双路径打包、stale 资源、未知/损坏清单 fail-closed、密钥不入 paths 输出、cwd/data 隔离断言、subprocess 清理、argv 优先级、迁移假设、源码 vs 安装规则权威、身份假绕过/误拒、测试覆盖与 workflow 草稿边界）未发现 P0/P1 级缺陷。生产者证据均为声明，本审查独立复核了代码逻辑本身。\n\nVERDICT: PASS\nP0=0 P1=0 P2=3\nSHA256: c5eb983de2e453e3364c78c17ced492d471c6be308b3e357da18eed1b37d94df"
+  },
+  "terminal_event_id": "e8f33cdb-bf1f-46fa-a981-4e9faf0eb0e7",
+  "terminal_count": 1,
+  "verdict": "PASS",
+  "counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 3
+  },
+  "format_exact": true,
+  "qualification": "PASS",
+  "review_text": "## 独立代码审查结论（GLM-5.3 · 只读 · SHA c5eb983d…b37d94df，19 文件全量逐行）\n\n**总体判断**：候选实现了声明的安装分发 MVP 意图——统一 `lfl` 入口（全局参数仅限命令名前，边界扫描循环正确保留子命令选项）、`setup.py` 构建期打包 `_bundled` 只读资源并生成 v1 清单（含越界/符号链接拒绝、editable 提前返回保持源码布局）、`check-install` 哈希校验含路径逃逸防护（`resolve().is_relative_to(root)`，且 root 已 resolve）、`installed_identity` 通过 distribution `locate_file` 所有权匹配杜绝\"把 `_bundled` 拷进源码工作区伪造安装身份\"的假绕过（无 dist 元数据即回落源码守卫；module 指向 checkout 而 dist 指向 venv 时返回 None，enforce 不放松）、`prepare_environment` 的 CLI > 既有环境 data 别名 > 文件值优先级与配置相对路径锚定实现正确、`web` 入口 chdir(runtime) 后 enforce cwd 匹配成立、`--workspace` 经 factory 显式覆盖持久 current。扩展更新保留启停状态的 `previous_enabled.get(..., new_enabled)` 逻辑覆盖\"全禁用安装新增组件保持禁用\"且有测试。smoke 脚本的回环网络守卫、进程清理（terminate→kill）、workspace 断言均具体可信。lint-only 两处（suppress、变量改名）无行为扩张。\n\n**P2 发现（不阻塞）**：\n1. `src/llm_loop/extensions/store.py:360-372` — 更新时 `enabled=s.status==\"supported\" and …` 的 status 门控与 `set_enabled` 不校验 status 不对称：用户已启用的组件在更新后 status 变为非 supported 会被静默停用，且 set_enabled 允许把非 supported 组件置 enabled，往返不一致。\n2. `src/llm_loop/cli.py:1228-1236` — `LFL_HOME` 为相对路径时按调用 cwd resolve（仅 Linux XDG 分支处理了相对回退），锚定不一致，换目录调用会得到不同状态根。\n3. `src/llm_loop/cli.py:1324-1332` — `--help/-h` 仅在 remaining 恰为单 token 时生效，`lfl chat --help` 之外的组合（如 `lfl --help chat`）会透传给旧 CLI；`--version` 位于 COMMAND 之后同样不生效，帮助文本未说明此限制。\n\n其余检查项（sdist/checkout 双路径打包、stale 资源、未知/损坏清单 fail-closed、密钥不入 paths 输出、cwd/data 隔离断言、subprocess 清理、argv 优先级、迁移假设、源码 vs 安装规则权威、身份假绕过/误拒、测试覆盖与 workflow 草稿边界）未发现 P0/P1 级缺陷。生产者证据均为声明，本审查独立复核了代码逻辑本身。\n\nVERDICT: PASS\nP0=0 P1=0 P2=3\nSHA256: c5eb983de2e453e3364c78c17ced492d471c6be308b3e357da18eed1b37d94df",
+  "review_text_sha256": "22f6cb5cba5e8fe4ebe8fef5ee89677c579648f5b9257cbb25e7bfe35bc535d4",
+  "event_count": 8,
+  "scope_limit": "new isolated GLM5.3 child reviewed exact 19-file staged patch and supplied integration contexts; zero tools; source and installed distribution MVP scope, not whole repository",
+  "gate": "code",
+  "reviewer": "subagent_ede0184a4f24",
+  "artifact_sha256": "c5eb983de2e453e3364c78c17ced492d471c6be308b3e357da18eed1b37d94df",
+  "scope_files": [
+    ".github/workflows/release.yml",
+    "MANIFEST.in",
+    "README.md",
+    "docs/governance/receipts/install-distribution-mvp-20261016-supplemental-review.json",
+    "docs/installation.md",
+    "pyproject.toml",
+    "scripts/verify_install_distribution.py",
+    "setup.py",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/extensions/store.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/introspection/search.py",
+    "src/llm_loop/runtime/identity.py",
+    "src/llm_loop/runtime/installation.py",
+    "src/llm_loop/web/__init__.py",
+    "tests/unit/test_application.py",
+    "tests/unit/test_extensions_store.py",
+    "tests/unit/test_settlement_tools.py"
+  ],
+  "fingerprint_definition": "Exact 19-file staged candidate before attaching this formal evidence-only receipt; this receipt excluded to avoid self-reference.",
+  "applied": [],
+  "rejected": [
+    {
+      "id": "P2-3",
+      "reason": "Global options before COMMAND are already explicitly documented in docs/installation.md. No change to preserve subcommand option semantics."
+    }
+  ],
+  "deferred": [
+    {
+      "id": "P2-1",
+      "reason": "Supported-status gating predates this patch and remains capability compatibility policy. Unify unsupported-state toggling and user explanation in later extension-management unit."
+    },
+    {
+      "id": "P2-2",
+      "reason": "Relative explicit LFL_HOME uses normal invocation-relative path semantics; use absolute LFL_HOME for stable cross-cwd state. Doctor/onboarding validation can clarify in next unit."
+    }
+  ],
+  "narrow_recheck": null
+}

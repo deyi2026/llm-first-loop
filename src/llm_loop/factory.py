@@ -333,7 +333,7 @@ def _registry_is_production_default(settings: Any) -> bool:
         return False
 
 
-def _activate_default_workspace(engine: Any, settings: Any) -> None:
+def _activate_default_workspace(engine: Any, settings: Any, *, workspace_root: str | None = None) -> None:
     """工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区.
 
     2026-09-23 学习风暴根因修复：learning 分支提前 return 曾跳过本步——
@@ -347,7 +347,7 @@ def _activate_default_workspace(engine: Any, settings: Any) -> None:
     from llm_loop.workspace.store import WorkspaceMigrationConflictError, WorkspaceStore
 
     workspace_store = WorkspaceStore(settings.data_dir)
-    cwd = Path.cwd()
+    cwd = Path(workspace_root).expanduser().resolve() if workspace_root is not None else Path.cwd()
     if _cwd_in_system_temp(cwd) and _registry_is_production_default(settings):
         # 根治点：临时 cwd 不写入生产注册表。隔离运行（DATA_DIR 显式指向
         # 临时/评测目录）不受影响——那类注册表本身就是一次性的，照常注册。
@@ -359,7 +359,7 @@ def _activate_default_workspace(engine: Any, settings: Any) -> None:
         if current_ws is not None:
             engine.set_workspace(current_ws.path, current_ws.id)
         return
-    default_ws = workspace_store.register(os.getcwd())  # 幂等注册
+    default_ws = workspace_store.register(str(cwd))  # 幂等注册
     try:
         workspace_store.migrate_legacy_sessions(settings.data_dir, default_ws)
     except WorkspaceMigrationConflictError:
@@ -371,7 +371,7 @@ def _activate_default_workspace(engine: Any, settings: Any) -> None:
     except Exception:  # noqa: BLE001 — 非数据冲突的迁移异常仍保留启动兼容
         logger.warning("工作区旧会话迁移失败（fail-open）；未完成文件保留在旧根", exc_info=True)
     # 首次装配（注册表无 current）→ 默认工作区设为 current 并持久化
-    if workspace_store.get_current() is None:
+    if workspace_root is not None or workspace_store.get_current() is None:
         workspace_store.switch(default_ws.id)
     current_ws = workspace_store.get_current() or default_ws
     engine.workspace_store = workspace_store  # 先挂注册表，set_workspace 可精确按path/id分区
@@ -434,6 +434,7 @@ def build_engine(
     settings: Settings,
     *,
     runtime_role: Literal["task", "learning"] = "task",
+    workspace_root: str | None = None,
 ) -> LoopEngine:
     """装配组件并返回 LoopEngine。
 
@@ -2190,7 +2191,7 @@ def build_engine(
             # 积压任务会在毫秒级被受理，若此时 session 根仍平铺（owner ".")，
             # 冲突失败还会把坏 pin 焊进进程内存（本次实战实证：首版激活放在
             # return 前仍冲突）。与 task 公共路径同一函数。
-            _activate_default_workspace(engine, settings)
+            _activate_default_workspace(engine, settings, workspace_root=workspace_root)
 
             def _resolve_learning_resource_target(model_ref: str) -> tuple[str, str]:
                 if learning_resource_target is not None and model_ref == learning_model_ref:
@@ -2373,7 +2374,7 @@ def build_engine(
 
     # 工作区管理（对齐 DSH Workspace）：与 learning 分支共用同一激活函数
     # （2026-09-23 提取；原内联块语义不变）。
-    _activate_default_workspace(engine, settings)
+    _activate_default_workspace(engine, settings, workspace_root=workspace_root)
 
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: engine._run_state().last_breakdown)

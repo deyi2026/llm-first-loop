@@ -29,6 +29,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from llm_loop.runtime.installation import installed_identity
+
 FATAL_TAG = "FATAL_RUNTIME_IDENTITY_MISMATCH"
 
 
@@ -128,6 +130,11 @@ def compute_identity(
     expected_src = (workspace / "src").resolve()
     ok = expected_src == module.parent or expected_src in module.parents
 
+    installed = installed_identity(module)
+    if installed is not None:
+        expected_src = Path(installed["package_root"])
+        ok = module.parent == expected_src
+
     from .paths import resolve_runtime_paths
 
     data_dir_raw = str(values.get("DATA_DIR", "") or "").strip()
@@ -165,6 +172,7 @@ def compute_identity(
         ok=ok,
         detail={
             "expected_src": str(expected_src),
+            "installed_distribution": installed,
             "runtime_root": str(runtime_root),
             "pythonpath_set": bool(values.get("PYTHONPATH")),
             "pythonpath": values.get("PYTHONPATH", ""),

@@ -357,7 +357,7 @@ def _register_stack_dump_signal() -> None:
         logger.warning("faulthandler SIGUSR1 注册失败（诊断不可用，不影响服务）")
 
 
-def main() -> None:
+def main(*, workspace_root: str | None = None) -> None:
     """服务启动入口（python -m llm_loop.web）."""
     # R1（RUNTIME-SOT-WIRE）: workspace 身份守卫——错配时 shadow 仅告警/enforce 拒绝启动。
     # 锚定 CWD（与下方 .env 同约定）；模块 repo 与 CWD 不一致 = 共享 venv/PYTHONPATH 串区。
@@ -369,7 +369,9 @@ def main() -> None:
     # 不可用默认 __file__ 锚定（历史事故防御，机制保留）——双区时代共享代码曾让旧主区进程
     # 误读本区 .env 的 WEB_PORT/LFL_DATA_DIR；现本区即唯一区（2026-09-29 主区退役），cwd 锚定
     # 仍是正确语义（服务一律从本仓库根启动）。
-    _env_file = (Path.cwd() / ".env").resolve()
+    from llm_loop.runtime.resolver import legacy_env_snapshot
+
+    _env_file = Path(legacy_env_snapshot().get("LFL_ENV_FILE") or Path.cwd() / ".env").expanduser().resolve()
     os.environ.setdefault("LFL_ENV_FILE", str(_env_file))
     load_env_file(_env_file)
     # P0(2026-09-30): llm_loop.* INFO 日志可见化——auth_gate_redirect 等诊断日志
@@ -412,7 +414,7 @@ def main() -> None:
         print(f"❌ {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 
-    engine = build_engine(settings)
+    engine = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
     app = build_app(settings=settings, engine=engine)
     # SPEC-20260923-queue-recovery：生产入口启动排队恢复巡检——"恢复后自动
     # 继续"的承诺不再依赖浏览器派发循环存活。队列单例预置进 app.state

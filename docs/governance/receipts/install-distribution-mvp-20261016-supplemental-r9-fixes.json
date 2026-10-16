@@ -1,0 +1,40 @@
+{
+  "gate": "code",
+  "reviewer": "/root/installation_code_review",
+  "reviewer_model": "current Codex independent subagent; not GLM-5.3",
+  "qualification": "supplemental only; not the required GLM narrow review",
+  "verdict": "PASS",
+  "scope_files": [
+    "src/llm_loop/cli.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/runtime/resolver.py",
+    "src/llm_loop/web/__init__.py",
+    "tests/unit/test_application.py",
+    "tests/unit/test_release_sidecar.py"
+  ],
+  "findings": [],
+  "applied": [],
+  "rejected": [],
+  "artifact_sha256": "bc667314321b2abc77570100ebe64d40fca6e84272d4a4c055629b89be75a07c",
+  "revision_diff_sha256": "535a1ee8b8ce72c15e2608add9c7c476ff03589e92868d93ddeb3b96bc42dae3",
+  "baseline": "be91ad4c09062237462ae884c05f419a031419cd",
+  "counts_remaining": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "narrow_recheck": {
+    "reviewer": "/root/installation_code_review",
+    "verdict": "PASS",
+    "actual_checks": "Exact six-file delta and contexts read; memory/stub probes of snapshot isolation, governed-key deletion, explicit mapping scope, CLI config compatibility, Krate guards and child environment. No subprocess, Provider or pytest."
+  },
+  "producer_validation": {
+    "targeted_tests": "70 passed",
+    "architecture": "30 passed",
+    "static": "touched Ruff/Pyright clean",
+    "wheel_sha256": "e415340e99c5361213c815907f096fac2933058978a1764a3336965564fc4aaa",
+    "smoke_report": "data/install-distribution-mvp-20261016/installation-smoke-r9-fixed.json",
+    "full_r9": "attempt 1 failed before these revisions; attempt 2 not started"
+  },
+  "fingerprint_definition": "Current 22-file staged candidate before attaching this evidence-only receipt; this receipt not yet staged."
+}

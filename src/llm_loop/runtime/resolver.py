@@ -686,16 +686,21 @@ def _default_workspace() -> Path:
 
 
 def legacy_env_snapshot(
-    config: RuntimeConfig,
+    config: RuntimeConfig | None = None,
     *,
     base_env: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Return the legacy environment projection without mutating process state."""
+    """Copy the bootstrap environment, optionally projecting RuntimeConfig.
+
+    Unconfigured application bootstrap uses this same process boundary before
+    choosing its config file. Business consumers should receive Settings/config.
+    """
     out = dict(os.environ if base_env is None else base_env)
-    out.update(config.values)
-    for key in config.ignored_shell_env:
-        if key not in config.values:
-            out.pop(key, None)
+    if config is not None:
+        out.update(config.values)
+        for key in config.ignored_shell_env:
+            if key not in config.values:
+                out.pop(key, None)
     return out
 
 
@@ -720,15 +725,19 @@ def legacy_settings_snapshot(
     return out
 
 
-def apply_to_environ(config: RuntimeConfig) -> None:
-    """Legacy adapter: project RuntimeConfig into os.environ for unmigrated readers.
+def apply_to_environ(config: RuntimeConfig | Mapping[str, str]) -> None:
+    """Project configuration at legacy process/bootstrap boundaries only.
 
-    Keep this call at process/bootstrap compatibility boundaries only.  New business
-    logic should receive RuntimeConfig/Settings explicitly instead of reading env.
+    RuntimeConfig retains governed-key removal. An explicit bootstrap mapping
+    applies exactly those bindings, preserving unrelated process settings.
     """
-    projected = legacy_env_snapshot(config)
-    governed = set(BUSINESS_KEYS) | set(_SECRET_KEYS)
-    governed.update(config.ignored_shell_env)
+    if isinstance(config, RuntimeConfig):
+        projected = legacy_env_snapshot(config)
+        governed = set(BUSINESS_KEYS) | set(_SECRET_KEYS)
+        governed.update(config.ignored_shell_env)
+    else:
+        projected = dict(config)
+        governed = set(projected)
     for key in governed:
         if key in projected:
             os.environ[key] = projected[key]

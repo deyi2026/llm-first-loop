@@ -1,0 +1,33 @@
+{
+  "gate": "code",
+  "reviewer": "/root/installation_fc6_code_currentness",
+  "reviewer_model": "independent Codex; supplemental narrow review, not GLM",
+  "verdict": "PASS",
+  "counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "scope_files": [
+    "tests/guards/function_size_baseline.json"
+  ],
+  "artifact_sha256": "6a4c686eaebe60fe476d9c31d044a9b4e7c918856c9cbc486a802c15e6d68474",
+  "artifact_definition": "Only staged binary diff of named registry file relative to fc6 main; 1795bytes",
+  "findings": [],
+  "applied": [],
+  "rejected": [],
+  "actual_coverage": "Read exact one-file1795B diff; deleting sole a2a_task_admission entry produces JSON structurally identical to HEAD. All numerical thresholds, scanners, prior surfaces and exemptions unchanged. Checked clean fc6 main RED log and current original23file installation patch byte-equivalence. Read actual durable store/source tests/contract §10.",
+  "narrow_recheck": {
+    "reviewer": "/root/installation_fc6_code_currentness",
+    "verdict": "PASS",
+    "read_only": true,
+    "provider_calls": 0,
+    "tests_run_by_reviewer": 0
+  },
+  "rationale": "A2A admission is cross-restart SoT, properly classified T2 state_file. observe means discovered/classified, not full conformance. Source/tests support lock/fsync/CAS/uncertainty descriptions; no production/Huawei/route qualification claim. Legitimate semantic inventory, not baseline escape.",
+  "producer_validation": {
+    "clean_main_before": "guard1failed on unchanged fc6 tree",
+    "after": "test_arch_guards.py + test_a2a_task_admission.py 47passed in5.18s; includes synthetic negative and baseline ratchets"
+  },
+  "prior_installation_review": "GLM subagent_817350ea7771 / result-0f103e64a24d41ee86aac69bb20dd6e9 still covers identical23file d7fb patch; this new registration not yet GLM-reviewed"
+}

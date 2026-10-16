@@ -347,12 +347,18 @@ class ExtensionStore:
                     f"install {install_id} already exists from different "
                     f"source {existing.source!r}; refusing silent replacement"
                 )
+            previous_enabled = {
+                (c.kind, c.name): c.enabled for c in existing.components
+            } if existing is not None else {}
+            # Entirely disabled installations keep new components disabled, too.
+            new_enabled = existing is None or any(c.enabled for c in existing.components)
             components = [
                 ComponentRecord(
                     kind="skill",
                     name=s.name,
                     status=s.status,
-                    enabled=s.status == "supported",
+                    enabled=s.status == "supported"
+                    and previous_enabled.get(("skill", s.name), new_enabled),
                 )
                 for s in report.skills
             ] + [
@@ -360,7 +366,8 @@ class ExtensionStore:
                     kind="mcp_server",
                     name=s.name,
                     status=s.status,
-                    enabled=s.status == "supported",
+                    enabled=s.status == "supported"
+                    and previous_enabled.get(("mcp_server", s.name), new_enabled),
                 )
                 for s in report.servers
             ]

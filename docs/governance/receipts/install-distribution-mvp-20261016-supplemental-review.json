@@ -1,0 +1,104 @@
+{
+  "gate": "code",
+  "reviewer": "/root/installation_code_review",
+  "reviewer_model": "current Codex independent subagent; not GLM-5.3",
+  "verdict": "PASS",
+  "qualification": "supplemental only; does not satisfy Goal GLM-5.3 requirement",
+  "scope_files": [
+    ".github/workflows/release.yml",
+    "MANIFEST.in",
+    "README.md",
+    "docs/installation.md",
+    "pyproject.toml",
+    "scripts/verify_install_distribution.py",
+    "setup.py",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/extensions/store.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/introspection/search.py",
+    "src/llm_loop/runtime/identity.py",
+    "src/llm_loop/runtime/installation.py",
+    "src/llm_loop/web/__init__.py",
+    "tests/unit/test_application.py",
+    "tests/unit/test_extensions_store.py",
+    "tests/unit/test_settlement_tools.py"
+  ],
+  "artifact_sha256": "5656d9ae0c87a9d1c410ad97be29c193ddb4bda71b8016cabbfd0b8856afab78",
+  "artifact_bytes": 62240,
+  "base": "25a1f243a2a10409a65dc21d6bd71e5e507dbfc6",
+  "fingerprint_definition": "git diff --cached --binary before adding this evidence-only receipt; exact 18-file source candidate, self-reference excluded",
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "file": "src/llm_loop/cli.py",
+      "issue": "Chosen workspace not bound to engine",
+      "fix_hint": "Explicit workspace_root through CLI/Web/factory activation",
+      "status": "closed"
+    },
+    {
+      "id": "P1-2",
+      "severity": "P1",
+      "file": "src/llm_loop/cli.py",
+      "issue": "Config-relative knowledge paths used cwd",
+      "fix_hint": "Anchor EXPERIENCES_DIR/METHODS_DIR to config parent",
+      "status": "closed"
+    },
+    {
+      "id": "P1-3",
+      "severity": "P1",
+      "file": "src/llm_loop/cli.py",
+      "issue": "File DATA_DIR overrode preexisting LFL_DATA_DIR",
+      "fix_hint": "CLI then existing data aliases then file data aliases",
+      "status": "closed"
+    },
+    {
+      "id": "P1-4",
+      "severity": "P1",
+      "file": "src/llm_loop/cli.py",
+      "issue": "Default export paths ignored DATA_DIR",
+      "fix_hint": "Derive default input/output/report from bound data",
+      "status": "closed"
+    },
+    {
+      "id": "P1-5",
+      "severity": "P1",
+      "file": "src/llm_loop/cli.py",
+      "issue": "Outer parser consumed subcommand options",
+      "fix_hint": "Parse global options only before command",
+      "status": "closed"
+    }
+  ],
+  "applied": [
+    "P1-1",
+    "P1-2",
+    "P1-3",
+    "P1-4",
+    "P1-5"
+  ],
+  "rejected": [],
+  "counts_remaining": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "narrow_recheck": {
+    "reviewer": "/root/installation_code_review",
+    "verdict": "PASS",
+    "artifact_sha256": "5656d9ae0c87a9d1c410ad97be29c193ddb4bda71b8016cabbfd0b8856afab78",
+    "coverage": "Original full 17-file review 15ae66... plus 18-file revision with factory integration; final + os.sep line checked.",
+    "actual_checks": "Read complete patch and source contexts, read-only in-memory/stub probes; no pytest, actual engine/Store, Provider, or mutations by reviewer."
+  },
+  "producer_validation": {
+    "focused_tests": "128 passed",
+    "quick": "Ruff/env-pins/Pyright/UI build and 319 tier0 passed immediately before final + os.sep line; focused tests cover that final line",
+    "final_install_smoke": "data/install-distribution-mvp-20261016/installation-smoke-reviewed-final.json",
+    "wheel_sha256": "f93caa578749daf16b6422e002ce05be679fa306cffac1f3f74b9b85704345cd",
+    "resources_checked": 344,
+    "real_web_workspace_bound": true,
+    "provider_calls": 0,
+    "full_r9": "not run",
+    "commit_merge_deploy": "not performed"
+  }
+}

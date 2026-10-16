@@ -27,6 +27,10 @@
 
 ## 快速开始
 
+普通用户安装成品与开发者源码环境分开说明。安装分发 MVP 提供统一 `lfl` 命令、
+内置资源校验与独立数据目录，详见 [安装与升级说明](docs/installation.md)。
+下方是开发者源码路径；安装成品不要求安装开发依赖或运行项目全量测试。
+
 ```bash
 # 1. 初始化（uv 一键安装，lockfile 精确可复现；含 dev 门禁三件套 ruff/pyright/pytest）
 cd llm-first-loop

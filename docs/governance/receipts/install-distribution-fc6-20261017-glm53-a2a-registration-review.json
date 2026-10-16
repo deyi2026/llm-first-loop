@@ -1,0 +1,71 @@
+{
+  "schema": "lfl.install_distribution_independent_review/v1",
+  "base": "fc6abb6749e892ad32ea2a53910cae8e4d5b39a6",
+  "candidate_state": "staged",
+  "head_commit_at_review": "fc6abb6749e892ad32ea2a53910cae8e4d5b39a6",
+  "candidate_sha256": "31eae8b4cf86bf8644317b4323e1132d8edc2a13fd4ecd2218b2a3c77cd4edb5",
+  "candidate_bytes": 102585,
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_effort": "low",
+  "tools_registered": 0,
+  "max_rounds": 1,
+  "child_id": "subagent_851b721ed160",
+  "child_parent_id": "install-mvp-a2a-registration-independent-review-20261017",
+  "state": "completed",
+  "result_id": "result-5c74b5a7f36e4c2d9715d618ca6e728e",
+  "live_handle_terminal": true,
+  "native_review_terminal": {
+    "child_id": "subagent_851b721ed160",
+    "parent_id": "install-mvp-a2a-registration-independent-review-20261017",
+    "generation": "5c74b5a7f36e4c2d9715d618ca6e728e",
+    "state": "completed",
+    "review_isolated": true,
+    "final_answer": "## 审查结论（独立只读复核）\n\n**审查范围**：仅本次 registry delta（`a2a_task_admission` 条目新增于 `tests/guards/function_size_baseline.json`），以及该登记是否如实反映 `src/llm_loop/web/a2a_task_admission.py` 的实际写入语义；不含 A2A 整体实现复审。\n\n**逐项核查**：\n\n1. **是否真实 surface 登记而非 guard 规避**：源文件确含 `os.open(O_WRONLY|O_CREAT|O_EXCL)`（L259）与 `_locked` 中 `O_RDWR|O_CREAT`（L165），`_os_open_has_write_flag` 会捕获。fc6 基线确实遗漏登记导致 guard 失败，本 delta 是把已有写入面归档，符合登记方向（加严覆盖，不是绕过）。\n\n2. **T2 vs T3 分类**：虽然实现用 `os.link` create-if-absent（带 T3 色彩），但语义是跨重启 SoT 状态记录、按 task_id 键控且含身份冲突检测（`A2aAdmissionConflictError`），按 T2 state_file 分类合理；契约红线 3 允许「持锁或 CAS」，实现两者皆有（per-task flock + link CAS）。\n\n3. **observe 语义真实性**：rationale 明确声明「仅登记已核实写入面，不宣称完整合规/Huawei 主体验证/路由接线」，与 durable-run-contract §10「observe 只表示已发现并分类」定义一致，无越权声明。已核实项（flock、O_EXCL、file fsync、link CAS、目录/parent fsync、fail-closed、post-link uncertain、重启幂等）与源码逐条对得上：L167/L174、L259-263、L265、L268、L225-226、L270-273、L241-254。测试文件描述的覆盖（并发/重启/fsync 注入）与 test 文件实际内容相符（L229-265、L174-208）。\n\n4. **分类所有权**：owner=web 正确（文件位于 `src/llm_loop/web/`）。\n\n5. **无隐藏阈值/豁免变更**：diff 仅新增一个 surface 条目；`write_exemptions` 无改动，surfaces 数量 +1（收紧），scanner 逻辑（`test_arch_guards.py` 摘录）未修改。移除该条目恢复 HEAD 结构的声明与 diff 一致。\n\n6. **既有覆盖保持**：无源码/测试代码改动，仅登记 JSON 追加；不影响先前 23 文件实现覆盖。guard(r9) 提交前缀要求在 rationale 中已体现。\n\n**P2 备注（不阻塞）**：rationale 中「目录/parent fsync」表述与 `_durable_directory` 仅 fsync parent（L73）+ reserve 时 fsync 目录（L268）的实际组合略简，但语义无误导；`retry_safe=False` 属性仅存在于异常子类，登记未声称任何 dispatch 行为，无外推。\n\n未发现新引入回归；producer 的测试通过声明按纪律视为 claims，未自行验证，但静态一致性检查无矛盾。\n\nVERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: 31eae8b4cf86bf8644317b4323e1132d8edc2a13fd4ecd2218b2a3c77cd4edb5"
+  },
+  "terminal_event_id": "48bbb029-df68-4e6f-bd09-6496469fb752",
+  "terminal_count": 1,
+  "verdict": "PASS",
+  "counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "format_exact": true,
+  "qualification": "PASS",
+  "review_text": "## 审查结论（独立只读复核）\n\n**审查范围**：仅本次 registry delta（`a2a_task_admission` 条目新增于 `tests/guards/function_size_baseline.json`），以及该登记是否如实反映 `src/llm_loop/web/a2a_task_admission.py` 的实际写入语义；不含 A2A 整体实现复审。\n\n**逐项核查**：\n\n1. **是否真实 surface 登记而非 guard 规避**：源文件确含 `os.open(O_WRONLY|O_CREAT|O_EXCL)`（L259）与 `_locked` 中 `O_RDWR|O_CREAT`（L165），`_os_open_has_write_flag` 会捕获。fc6 基线确实遗漏登记导致 guard 失败，本 delta 是把已有写入面归档，符合登记方向（加严覆盖，不是绕过）。\n\n2. **T2 vs T3 分类**：虽然实现用 `os.link` create-if-absent（带 T3 色彩），但语义是跨重启 SoT 状态记录、按 task_id 键控且含身份冲突检测（`A2aAdmissionConflictError`），按 T2 state_file 分类合理；契约红线 3 允许「持锁或 CAS」，实现两者皆有（per-task flock + link CAS）。\n\n3. **observe 语义真实性**：rationale 明确声明「仅登记已核实写入面，不宣称完整合规/Huawei 主体验证/路由接线」，与 durable-run-contract §10「observe 只表示已发现并分类」定义一致，无越权声明。已核实项（flock、O_EXCL、file fsync、link CAS、目录/parent fsync、fail-closed、post-link uncertain、重启幂等）与源码逐条对得上：L167/L174、L259-263、L265、L268、L225-226、L270-273、L241-254。测试文件描述的覆盖（并发/重启/fsync 注入）与 test 文件实际内容相符（L229-265、L174-208）。\n\n4. **分类所有权**：owner=web 正确（文件位于 `src/llm_loop/web/`）。\n\n5. **无隐藏阈值/豁免变更**：diff 仅新增一个 surface 条目；`write_exemptions` 无改动，surfaces 数量 +1（收紧），scanner 逻辑（`test_arch_guards.py` 摘录）未修改。移除该条目恢复 HEAD 结构的声明与 diff 一致。\n\n6. **既有覆盖保持**：无源码/测试代码改动，仅登记 JSON 追加；不影响先前 23 文件实现覆盖。guard(r9) 提交前缀要求在 rationale 中已体现。\n\n**P2 备注（不阻塞）**：rationale 中「目录/parent fsync」表述与 `_durable_directory` 仅 fsync parent（L73）+ reserve 时 fsync 目录（L268）的实际组合略简，但语义无误导；`retry_safe=False` 属性仅存在于异常子类，登记未声称任何 dispatch 行为，无外推。\n\n未发现新引入回归；producer 的测试通过声明按纪律视为 claims，未自行验证，但静态一致性检查无矛盾。\n\nVERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: 31eae8b4cf86bf8644317b4323e1132d8edc2a13fd4ecd2218b2a3c77cd4edb5",
+  "review_text_sha256": "342b1113c60e69d5e7d4c9731f0ce8c0bdfdc1ad59543388d77837b4df888660",
+  "event_count": 8,
+  "scope_limit": "narrow review of one actual A2A durable-surface classification addition and regressions; entire staged SHA bound; prior23file installation patch unchanged with retained real GLM coverage; not full A2A or main review",
+  "gate": "code",
+  "reviewer": "subagent_851b721ed160",
+  "artifact_sha256": "31eae8b4cf86bf8644317b4323e1132d8edc2a13fd4ecd2218b2a3c77cd4edb5",
+  "scope_files": [
+    "tests/guards/function_size_baseline.json"
+  ],
+  "findings": [],
+  "applied": [],
+  "rejected": [],
+  "narrow_recheck": {
+    "reviewer": "subagent_851b721ed160",
+    "verdict": "PASS",
+    "scope": "narrow review of one actual A2A durable-surface classification addition and regressions; entire staged SHA bound; prior23file installation patch unchanged with retained real GLM coverage; not full A2A or main review"
+  },
+  "prior_installation_review": "docs/governance/receipts/install-distribution-current-20261017-glm53-integration-review.json",
+  "supplemental_registration_review": "docs/governance/receipts/install-distribution-fc6-20261017-a2a-registration-supplemental.json",
+  "producer_post_review_currentness": {
+    "reviewed_base": "fc6abb6749e892ad32ea2a53910cae8e4d5b39a6",
+    "current_base": "48788987b497e0ce8b74398831cda5ee7cd24e6e",
+    "main_changes": [
+      "docs/governance/CANARY-LAUNCH-MATERIALS-20261017-web-multiagent-host.md",
+      "docs/governance/receipts/RECEIPT-20261017-web-multiagent-9101-docs-merge-review.json",
+      "docs/governance/receipts/RECEIPT-20261017-web-multiagent-9101-offline-preflight.json",
+      "docs/governance/receipts/RECEIPT-20261017-web-multiagent-fc6-narrow-merge-gate.json",
+      "docs/results/RESULT-20261017-web-multiagent-9101-offline-package.md"
+    ],
+    "code_and_selected_bundle_resources_unchanged": true,
+    "staged_patch_and_all27files_byte_identical": true,
+    "candidate_sha256": "31eae8b4cf86bf8644317b4323e1132d8edc2a13fd4ecd2218b2a3c77cd4edb5"
+  },
+  "nonblocking_comment_disposition": "Reviewer prose calls parent/directory fsync shorthand a nonblocking note; terminal counts are P2=0. Existing wording accurately describes the combination and observe classification; no source change.",
+  "fingerprint_definition": "Entire27-file staged binary patch on fc6, byte-identical on487; this evidence-only receipt excluded for self-reference. No claim GLM re-reviewed later unrelated docs."
+}

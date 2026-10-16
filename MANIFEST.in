@@ -1,0 +1,11 @@
+include setup.py
+include docs/ai_rules.md
+include docs/configuration.md
+include docs/DEVELOPMENT_REPAIR_SAFETY.md
+include docs/governance/card-lifecycle.md
+graft skills
+graft methods
+graft webui/dist
+recursive-include src/llm_loop/web/static *
+global-exclude *.pyc *.pyo .DS_Store .env .env.*
+prune webui/node_modules

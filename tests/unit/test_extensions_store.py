@@ -131,6 +131,58 @@ class TestT21PluginData:
             store.install(tmp_path / "pkg", source="b", expected_revision=1)
 
 
+class TestUpdateEnablement:
+    @pytest.mark.parametrize("version", ["0.1.0", "0.2.0"])
+    def test_update_preserves_component_disable(self, store, tmp_path, version):
+        root = tmp_path / "pkg"
+        _write_pkg(root)
+        (root / "mcp.json").write_text(json.dumps({
+            "mcpServers": {"echo": {"type": "stdio", "command": "echo"}},
+        }))
+        store.install(root, source="local", expected_revision=0)
+        store.set_enabled("demo-plugin", component="deploy", enabled=False,
+                          expected_revision=1)
+        _write_pkg(root, version=version)
+        updated = store.install(root, source="local", expected_revision=2)
+        states = {(c.kind, c.name): c.enabled for c in updated.components}
+        assert states[("skill", "deploy")] is False
+        assert states[("mcp_server", "echo")] is True
+        assert store.read_state().installs[0] == updated
+
+    def test_disabled_install_stays_disabled_when_update_adds_component(self, store, tmp_path):
+        root = tmp_path / "pkg"
+        _write_pkg(root)
+        store.install(root, source="local", expected_revision=0)
+        store.set_enabled("demo-plugin", enabled=False, expected_revision=1)
+        _write_pkg(root, version="0.2.0")
+        new_skill = root / "skills" / "inspect"
+        new_skill.mkdir()
+        (new_skill / "SKILL.md").write_text(
+            "---\nname: inspect\ndescription: inspect\n---\n# Inspect\n"
+        )
+        updated = store.install(root, source="local", expected_revision=2)
+        assert len(updated.components) == 2
+        assert all(not c.enabled for c in updated.components)
+
+    def test_new_component_does_not_inherit_other_kind_disable(self, store, tmp_path):
+        root = tmp_path / "pkg"
+        _write_pkg(root)
+        mcp = root / "mcp.json"
+        mcp.write_text(json.dumps({
+            "mcpServers": {"echo": {"type": "stdio", "command": "echo"}},
+        }))
+        store.install(root, source="local", expected_revision=0)
+        store.set_enabled("demo-plugin", component="deploy", enabled=False,
+                          expected_revision=1)
+        mcp.write_text(json.dumps({
+            "mcpServers": {"deploy": {"type": "stdio", "command": "echo"}},
+        }))
+        updated = store.install(root, source="local", expected_revision=2)
+        states = {(c.kind, c.name): c.enabled for c in updated.components}
+        assert states[("skill", "deploy")] is False
+        assert states[("mcp_server", "deploy")] is True
+
+
 class TestRecordHygiene:
     def test_scan_sensitive_catches_tokens(self):
         assert _scan_sensitive({"env": {"api_token": "x"}})

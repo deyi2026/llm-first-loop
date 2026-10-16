@@ -24,6 +24,7 @@ _PKG_FILES = (
     "src/llm_loop/codearts/config.py",
     "src/llm_loop/runtime/__init__.py",
     "src/llm_loop/runtime/identity.py",
+    "src/llm_loop/runtime/installation.py",
     "src/llm_loop/runtime/paths.py",
     "src/llm_loop/runtime/knowledge_health.py",
 )

@@ -1,0 +1,61 @@
+{
+  "schema": "lfl.install_distribution_independent_review/v1",
+  "base": "25a1f243a2a10409a65dc21d6bd71e5e507dbfc6",
+  "candidate_state": "staged",
+  "head_commit_at_review": "25a1f243a2a10409a65dc21d6bd71e5e507dbfc6",
+  "candidate_sha256": "bc667314321b2abc77570100ebe64d40fca6e84272d4a4c055629b89be75a07c",
+  "candidate_bytes": 80996,
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_effort": "low",
+  "tools_registered": 0,
+  "max_rounds": 1,
+  "child_id": "subagent_7d25dfa9285a",
+  "child_parent_id": "install-mvp-708c482c-independent-review-r9-fixes-20261016",
+  "state": "completed",
+  "result_id": "result-8d4e6d72c74346a299f7694c866eff5b",
+  "live_handle_terminal": true,
+  "native_review_terminal": {
+    "child_id": "subagent_7d25dfa9285a",
+    "parent_id": "install-mvp-708c482c-independent-review-r9-fixes-20261016",
+    "generation": "8d4e6d72c74346a299f7694c866eff5b",
+    "state": "completed",
+    "review_isolated": true,
+    "final_answer": "窄复审结论（六文件 vs PROBE 差异，含新回归扫描）：\n\n- runtime/resolver.py:688-745 — `legacy_env_snapshot(config=None)` 退化为纯环境拷贝、无进程突变，语义正确；`apply_to_environ` 显式 Mapping 分支 governed=projected 键集合，即“只应用显式绑定、不删无关进程键”，而 RuntimeConfig 分支保留 BUSINESS_KEYS/_SECRET_KEYS/ignored_shell_env 治理删除。属于合法 bootstrap 边界 API 扩展，非哨卡规避：哨卡目标是禁止业务逻辑裸读/裸写 `os.environ`，而 bootstrap 恰是文档声明的兼容边界。\n- cli.py — main/prepare_environment/default_home 各读取点全部经 snapshot 适配；`prepare_environment` 原直接 `os.environ[key]=`（相对路径归一）现合并进 `apply_to_environ(normalized | bindings)`，键均存在故无删除副作用，语义等价且消除了裸写。CLI 无显式文件时保持零参 `load_env_file()`（config.py:197 默认路径），与 test_cli_main_finally_closes_engine 的零参 stub 兼容。`existing_keys`/二次 snapshot 的环境优先顺序保留（load_env_file 不覆盖已设键）。\n- web/__init__.py:372-376 与 registry_experience.py:834-848 — 函数内延迟导入无循环风险；krate 子进程 env 改为 snapshot 投影（含 PYTEST 守卫），行为等价。web 处遗留 `os.environ.setdefault` 为既有代码非本次新增回归，不据此升级原 P2。\n- 测试：test_application 的 setenv+delenv undo 登记修复了真实隔离缺口；新增两个适配器测试分别覆盖快照不可变与显式映射只应用绑定键；test_release_sidecar 补入 installation.py 匹配 knowledge_health→paths/config 真实导入闭包。无密钥面、无路径逃逸、close/finally 未触及。\n\n未发现新增 P0/P1；原 3 项 P2 依嘱维持记录、无新证据不予升级。\n\nVERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: bc667314321b2abc77570100ebe64d40fca6e84272d4a4c055629b89be75a07c"
+  },
+  "terminal_event_id": "6861a2dd-756a-401f-a779-333cb15968d6",
+  "terminal_count": 1,
+  "verdict": "PASS",
+  "counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "format_exact": true,
+  "qualification": "PASS",
+  "review_text": "窄复审结论（六文件 vs PROBE 差异，含新回归扫描）：\n\n- runtime/resolver.py:688-745 — `legacy_env_snapshot(config=None)` 退化为纯环境拷贝、无进程突变，语义正确；`apply_to_environ` 显式 Mapping 分支 governed=projected 键集合，即“只应用显式绑定、不删无关进程键”，而 RuntimeConfig 分支保留 BUSINESS_KEYS/_SECRET_KEYS/ignored_shell_env 治理删除。属于合法 bootstrap 边界 API 扩展，非哨卡规避：哨卡目标是禁止业务逻辑裸读/裸写 `os.environ`，而 bootstrap 恰是文档声明的兼容边界。\n- cli.py — main/prepare_environment/default_home 各读取点全部经 snapshot 适配；`prepare_environment` 原直接 `os.environ[key]=`（相对路径归一）现合并进 `apply_to_environ(normalized | bindings)`，键均存在故无删除副作用，语义等价且消除了裸写。CLI 无显式文件时保持零参 `load_env_file()`（config.py:197 默认路径），与 test_cli_main_finally_closes_engine 的零参 stub 兼容。`existing_keys`/二次 snapshot 的环境优先顺序保留（load_env_file 不覆盖已设键）。\n- web/__init__.py:372-376 与 registry_experience.py:834-848 — 函数内延迟导入无循环风险；krate 子进程 env 改为 snapshot 投影（含 PYTEST 守卫），行为等价。web 处遗留 `os.environ.setdefault` 为既有代码非本次新增回归，不据此升级原 P2。\n- 测试：test_application 的 setenv+delenv undo 登记修复了真实隔离缺口；新增两个适配器测试分别覆盖快照不可变与显式映射只应用绑定键；test_release_sidecar 补入 installation.py 匹配 knowledge_health→paths/config 真实导入闭包。无密钥面、无路径逃逸、close/finally 未触及。\n\n未发现新增 P0/P1；原 3 项 P2 依嘱维持记录、无新证据不予升级。\n\nVERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: bc667314321b2abc77570100ebe64d40fca6e84272d4a4c055629b89be75a07c",
+  "review_text_sha256": "ae1fad6691429065e33b5a91ab1fef25b938deac588a74662addefa1e6234922",
+  "event_count": 8,
+  "scope_limit": "narrow re-review of six exact delta files after original whole-candidate GLM PASS; current 22-file SHA bound; zero tools",
+  "gate": "code",
+  "reviewer": "subagent_7d25dfa9285a",
+  "artifact_sha256": "bc667314321b2abc77570100ebe64d40fca6e84272d4a4c055629b89be75a07c",
+  "scope_files": [
+    "src/llm_loop/cli.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/runtime/resolver.py",
+    "src/llm_loop/web/__init__.py",
+    "tests/unit/test_application.py",
+    "tests/unit/test_release_sidecar.py"
+  ],
+  "findings": [],
+  "applied": [],
+  "rejected": [],
+  "narrow_recheck": {
+    "verdict": "PASS",
+    "reviewer": "subagent_7d25dfa9285a",
+    "predecessor_review": "docs/governance/receipts/install-distribution-mvp-20261016-glm53-review.json",
+    "predecessor_artifact_sha256": "c5eb983de2e453e3364c78c17ced492d471c6be308b3e357da18eed1b37d94df",
+    "revision_diff_sha256": "535a1ee8b8ce72c15e2608add9c7c476ff03589e92868d93ddeb3b96bc42dae3"
+  },
+  "fingerprint_definition": "Exact frozen 22-file staged candidate before attaching two evidence-only narrow-review receipts. Both appended receipts are excluded to avoid self-reference."
+}

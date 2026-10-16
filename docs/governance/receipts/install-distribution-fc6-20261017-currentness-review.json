@@ -1,0 +1,76 @@
+{
+  "gate": "code",
+  "reviewer": "/root/installation_fc6_code_currentness",
+  "reviewer_model": "independent Codex; supplemental currentness only, not a new GLM review",
+  "verdict": "PASS",
+  "counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "artifact_sha256": "d7fb3ffb87d4b61a510e8d3c5e4fddb4b3b5456031af00522c0ad151d9499716",
+  "base": "fc6abb6749e892ad32ea2a53910cae8e4d5b39a6",
+  "reviewed_glm_base": "b68dbc2a53c87295c7f160502795a4bd26f2f91d",
+  "scope_files": [
+    ".github/workflows/release.yml",
+    "MANIFEST.in",
+    "README.md",
+    "docs/governance/receipts/install-distribution-mvp-20261016-glm53-r9-fixes-review.json",
+    "docs/governance/receipts/install-distribution-mvp-20261016-glm53-review.json",
+    "docs/governance/receipts/install-distribution-mvp-20261016-supplemental-r9-fixes.json",
+    "docs/governance/receipts/install-distribution-mvp-20261016-supplemental-review.json",
+    "docs/installation.md",
+    "pyproject.toml",
+    "scripts/verify_install_distribution.py",
+    "setup.py",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/extensions/store.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "src/llm_loop/introspection/search.py",
+    "src/llm_loop/runtime/identity.py",
+    "src/llm_loop/runtime/installation.py",
+    "src/llm_loop/runtime/resolver.py",
+    "src/llm_loop/web/__init__.py",
+    "tests/unit/test_application.py",
+    "tests/unit/test_extensions_store.py",
+    "tests/unit/test_release_sidecar.py"
+  ],
+  "findings": [],
+  "applied": [],
+  "rejected": [],
+  "actual_coverage": "Verified HEAD, full staged binary patch and all23files byte-identical to GLM-reviewed b68 candidate, clean tracked unstaged state, native GLM isolated/live unique terminal. Read all4 Python main changes b68..fc6, install CLI, setup/manifest, factory workspace binding, Web boot/auth/static, runtime identity, artifact store and new adjacent tests. 64 main changed paths disjoint from23 candidate paths; bundled resources unchanged.",
+  "coverage_conclusion": "Existing actual GLM qualification remains valid for the identical patch; supplemental review covers new-main interactions, not entire fc6 GLM review. Artifact routes use settings.data_dir and engine.workspace_root consistent with installed absolute paths. Cancel generation optional arg preserves prior behavior. A2A store absent from startup import chain.",
+  "narrow_recheck": {
+    "reviewer": "/root/installation_fc6_code_currentness",
+    "verdict": "PASS",
+    "provider_calls": 0,
+    "tests_run_by_reviewer": 0,
+    "read_only": true
+  },
+  "producer_validation": {
+    "focused": "204passed1warning in15.55s",
+    "wheel_smoke": {
+      "ok": true,
+      "version": "0.6.32",
+      "wheel_sha256": "92ea08d9483ab2ec12a0f92bee5002564c24fbf064a2716dbbf089fe4936e0b5",
+      "resource_integrity": {
+        "ok": true,
+        "mode": "installed",
+        "version": "0.6.32",
+        "checked_files": 345,
+        "failed_files": []
+      },
+      "web": {
+        "health": 200,
+        "ui": 200,
+        "assets_checked": 2,
+        "workspace_bound": true
+      },
+      "provider_calls": 0,
+      "fresh_venv": true,
+      "source_checkout_on_pythonpath": false
+    }
+  },
+  "fingerprint_definition": "Candidate23-file patch before this and formal GLM receipt, excluded to avoid self-reference"
+}
