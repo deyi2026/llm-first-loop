@@ -84,6 +84,19 @@ class SpawnSubAgentTool:
                         "type": "boolean",
                         "description": "是否需要工作区文件系统读写",
                     },
+                    "fs_isolation": {
+                        "type": "boolean",
+                        "description": (
+                            "git worktree 文件系统隔离（默认 false，EVO-20261016-ac47e850）："
+                            "true 时 child 在 <workspace>/.worktrees/lfl-child-*/ 的独立 git "
+                            "worktree 中施工，其 fs 工具面以隔离树为基准解析，与父工作区改动"
+                            "互不干扰（best-effort 施工面隔离：execute_command 经绝对路径/"
+                            "跨目录操作仍可越界，非安全沙箱，不可用于约束不可信代码）。"
+                            "父工作区须为 git 仓库且磁盘充足，否则 spawn 带 reason_code 拒绝"
+                            "（不降级共享工作区）。终态不自动合并：脏树保留并在结果中报告路径"
+                            "与 HEAD，合并回父是父会话的显式动作。"
+                        ),
+                    },
                     "session_continuity": {
                         "type": "boolean",
                         "description": "是否需要 terminal 后可续话（本执行面支持，声明用于 fail-fast）",
@@ -94,7 +107,8 @@ class SpawnSubAgentTool:
                     "tools=强制白名单（child 工具面截断到声明集，程序级拦截）；"
                     "network/fs/session_continuity 在 child 启动前比对执行面能力矩阵，"
                     "缺口即在启动前拒绝并给出替代执行面提示（只提前'必然失败'，"
-                    "不放宽任何授权边界）。不声明则 child 继承父执行域"
+                    "不放宽任何授权边界）。fs_isolation=true 额外将 child 施工面切到独立 git "
+                    "worktree（EVO-20261016-ac47e850）。不声明则 child 继承父执行域"
                     "（spawn_subagent 除外，默认防递归）。"
                 ),
             },
@@ -147,7 +161,7 @@ class SpawnSubAgentTool:
                 status=ToolResultStatus.FAILURE,
                 content=(
                     "[参数错误] requires 需为对象 {tools?: [工具名], network?: bool, "
-                    "fs?: bool, session_continuity?: bool}"
+                    "fs?: bool, fs_isolation?: bool, session_continuity?: bool}"
                 ),
                 tool_call_id="",
                 tool_name=self.name,
@@ -202,6 +216,7 @@ class SpawnSubAgentTool:
                 required_tools=(
                     list(reqs.tools) if reqs is not None and reqs.tools else None
                 ),
+                fs_isolation=bool(reqs.fs_isolation) if reqs is not None else False,
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(
@@ -224,12 +239,18 @@ class SpawnSubAgentTool:
 
         child_id = str(started.get("child_id", ""))
         tool_scope = str(started.get("tool_scope", "") or "")
+        worktree = str(started.get("worktree", "") or "")
         parts = [
             f"[状态: success] child_state=running child_id={child_id} "
             f"depth={started.get('depth', depth)} model={started.get('model', '') or 'legacy_default'}",
             (
                 f"tool_scope={tool_scope}（E4 强制白名单：声明外调用将被运行时确定性拒绝）"
                 if tool_scope
+                else ""
+            ),
+            (
+                f"worktree={worktree}（fs 隔离施工区，终态不自动合并；合并是父会话显式动作）"
+                if worktree
                 else ""
             ),
             "子代理已在后台启动；本回执不是任务结算。",

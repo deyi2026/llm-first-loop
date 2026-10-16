@@ -8,6 +8,9 @@
    codearts 为远端定义面，不可本地枚举，如实标注。
 
 变更记录: 2026-09-14 EVO-20260914-1eb26afa（人工已批准）
+         2026-10-16 EVO-20261016-ac47e850（人工已批准）: requires.fs_isolation 声明式
+         git worktree 文件系统隔离（仅 local_subagent；运行期 git/磁盘前置由
+         workspace.worktree_isolation.prepare_worktree fail-fast 拒绝）
 """
 
 from __future__ import annotations
@@ -71,6 +74,7 @@ class SurfaceRequirements:
     tools: tuple[str, ...] = ()
     network: bool = False
     fs: bool = False
+    fs_isolation: bool = False
     session_continuity: bool = False
 
     @classmethod
@@ -95,11 +99,18 @@ class SurfaceRequirements:
             tools=tools,
             network=bool(raw.get("network", False)),
             fs=bool(raw.get("fs", False)),
+            fs_isolation=bool(raw.get("fs_isolation", False)),
             session_continuity=bool(raw.get("session_continuity", False)),
         )
 
     def declared(self) -> bool:
-        return bool(self.tools or self.network or self.fs or self.session_continuity)
+        return bool(
+            self.tools
+            or self.network
+            or self.fs
+            or self.fs_isolation
+            or self.session_continuity
+        )
 
 
 def local_subagent_capability(
@@ -180,6 +191,17 @@ def validate_requirements(caps: SurfaceCapability, reqs: SurfaceRequirements) ->
     if reqs.fs and caps.filesystem_scope == "none":
         gaps.append(
             f"required filesystem: 执行面 {caps.surface} 无工作区文件系统工具"
+        )
+    if reqs.fs_isolation and caps.filesystem_scope == "none":
+        gaps.append(
+            f"required fs_isolation: 执行面 {caps.surface} 无工作区文件系统工具，"
+            f"隔离无意义（空洞隔离）"
+        )
+    if reqs.fs_isolation and caps.surface != SURFACE_LOCAL_SUBAGENT:
+        gaps.append(
+            f"required fs_isolation: 执行面 {caps.surface} 不支持 git worktree 文件系统隔离"
+            f"（仅 local_subagent 支持；且父工作区须为 git 仓库并有足够磁盘，"
+            f"运行期不满足时 spawn 将带 reason_code 拒绝，不降级共享工作区）"
         )
     if reqs.session_continuity and not caps.session_continuity:
         gaps.append(

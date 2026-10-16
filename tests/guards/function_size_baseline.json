@@ -973,7 +973,8 @@
       "src/llm_loop/web/routes.py": "Web route 中的写入主要是用户上传/预览等 workspace 交付文件效果，不作为内部 durability surface。",
       "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。",
       "src/llm_loop/extensions/sources.py": "P2-B（§5.2）源获取仅写 fetch 临时目录与解包目标（git 浅克隆、HTTP 下载 sink、zip/tar 解包、临时归档产物），属一次性外部文件效果与缓存，不是内部 durable 状态 SoT；插件安装态写入仍由 extensions/store.py 单一持久面负责。",
-      "src/llm_loop/methods/learning_plane.py": "learning admission heartbeat：观测信号（state/reason/queued 节拍，20s 节流，tmp+os.replace 原子写，fail-open debug 日志），不承载恢复态 payload，非 durable SoT（同 learning_runtime.py lockfile 先例）。"
+      "src/llm_loop/methods/learning_plane.py": "learning admission heartbeat：观测信号（state/reason/queued 节拍，20s 节流，tmp+os.replace 原子写，fail-open debug 日志），不承载恢复态 payload，非 durable SoT（同 learning_runtime.py lockfile 先例）。",
+      "src/llm_loop/workspace/worktree_isolation.py": "worktree 隔离机制自身的 meta 簿记文件（.lfl-worktree.json），随隔离树创建/删除，是运行期同步载体而非 durable payload，不作为内部恢复 SoT（EVO-20261016-ac47e850）。"
     }
   }
 }

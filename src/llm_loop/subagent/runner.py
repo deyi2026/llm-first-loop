@@ -1295,6 +1295,9 @@ class SubAgentRunner:
         model: str = "",
         required_tools: list[str] | None = None,
         review_isolated: bool = False,
+        # fs_isolation 放在既有参数之后（keyword 传参为主流；避免任何位置参数
+        # 调用方把 review_isolated 静默错绑到 fs_isolation）。
+        fs_isolation: bool = False,
     ) -> dict:
         """启动 background child；review_isolated 仅由可信 Host 内部调用。"""
         if depth >= self.max_depth:
@@ -1356,14 +1359,73 @@ class SubAgentRunner:
         if review_isolated:
             handle.review_isolated = True
 
+        # EVO-20261016-ac47e850: 声明式 git worktree 隔离。prepare 失败即拒绝
+        # （带 reason_code），绝不降级共享工作区——无声丢隔离比失败更糟。
+        worktree_lease = None  # WorktreeLease | None（延迟 import，运行态持有）
+        if fs_isolation:
+            from llm_loop.workspace.worktree_isolation import (
+                WorktreeIsolationError,
+                prepare_worktree,
+            )
+
+            _parent_ws = current_workspace_root.get() or ""
+            try:
+                worktree_lease = prepare_worktree(sid, parent_root=_parent_ws)
+            except WorktreeIsolationError as exc:
+                refused = SubAgentResult(
+                    final_answer=(
+                        f"[状态: failure] worktree 隔离准备失败"
+                        f"（reason_code={exc.reason_code}），child 未启动、"
+                        f"未降级共享工作区: {exc.detail}"
+                    ),
+                    outcome="refused",
+                    refused=True,
+                    depth=depth,
+                )
+                finalized = self._finalize_child(sid, parent_sid, refused)
+                with self._children_guard:
+                    if sid in self._handles:
+                        self._handles[sid].collected = True
+                assert finalized is not None
+                return {
+                    "accepted": False,
+                    "child_id": sid,
+                    "state": "refused",
+                    "depth": depth,
+                    "detail": refused.final_answer,
+                }
+
         if self._project_coordinator is not None:
             try:
                 self._begin_fleet_run(sid, depth, parent_sid=sess.parent_id or "")
             except Exception as exc:  # noqa: BLE001 - mechanical boundary rejection before any child/provider/tool action
+                # EVO-20261016-ac47e850: prepare 已建的树在此拒绝路径必须释放
+                # （child 未启动，树无主人）。
+                if worktree_lease is not None:
+                    from llm_loop.workspace.worktree_isolation import (
+                        format_release_note,
+                        release_worktree,
+                    )
+
+                    try:
+                        _note = format_release_note(
+                            release_worktree(
+                                worktree_lease.parent_root, worktree_lease.path
+                            ),
+                            worktree_lease.path,
+                        )
+                    except Exception as _rel_exc:  # noqa: BLE001 — 拒绝路径不被清理异常遮蔽
+                        _note = (
+                            f"[worktree] 清理异常（{type(_rel_exc).__name__}: "
+                            f"{_rel_exc}），树保留: {worktree_lease.path}"
+                        )
+                else:
+                    _note = ""
                 refused = SubAgentResult(
                     final_answer=(
                         f"[状态: failure] fleet run 边界拒绝（lease acquire 失败），"
                         f"未启动任何 child/provider/tool 动作: {type(exc).__name__}: {exc}"
+                        + (f"\n{_note}" if _note else "")
                     ),
                     outcome="refused",
                     refused=True,
@@ -1398,6 +1460,13 @@ class SubAgentRunner:
                     else None
                 )
                 _cancel_tok = child_cancel_event.set(cancel_event)
+                # EVO-20261016-ac47e850: 声明式隔离时 child 施工面切到 worktree；
+                # journal/session 落盘位置不受影响（session_store 决定）。
+                _ws_tok = (
+                    current_workspace_root.set(worktree_lease.path)
+                    if worktree_lease is not None
+                    else None
+                )
                 # EVO-20261012-32e89b46: 注入共享载体（值语义 set 会随每次派发
                 # copy_context() 快照丢失，累计恒归零）。
                 _wait_tok = child_wait_budget_used.set(WaitBudget())
@@ -1440,10 +1509,37 @@ class SubAgentRunner:
                                 depth=depth,
                             )
                         )
+                    # EVO-20261016-ac47e850: 终态释放隔离树（干净删/脏保留），
+                    # 报告附加到 result——父会话据此决定是否显式合并（不自动合并）。
+                    # release 自身异常绝不阻断 _finalize_child（防 handle 滞留）。
+                    if worktree_lease is not None:
+                        from llm_loop.workspace.worktree_isolation import (
+                            format_release_note,
+                            release_worktree,
+                        )
+
+                        try:
+                            _release = release_worktree(
+                                worktree_lease.parent_root,
+                                worktree_lease.path,
+                            )
+                            _release_note = format_release_note(
+                                _release, worktree_lease.path
+                            )
+                        except Exception as _rel_exc:  # noqa: BLE001 — 如实报告并放行终态
+                            _release_note = (
+                                f"[worktree] 清理异常（{type(_rel_exc).__name__}: "
+                                f"{_rel_exc}），树保留: {worktree_lease.path}"
+                            )
+                        result.final_answer = (
+                            f"{result.final_answer}\n{_release_note}"
+                        )
                     self._finalize_child(sid, parent_sid, result)
                 finally:
                     if _scope_tok is not None:
                         current_tool_discovery_scope.reset(_scope_tok)
+                    if _ws_tok is not None:
+                        current_workspace_root.reset(_ws_tok)
                     child_cancel_event.reset(_cancel_tok)
                     child_wait_budget_used.reset(_wait_tok)
 
@@ -1459,8 +1555,32 @@ class SubAgentRunner:
         try:
             thread.start()
         except BaseException as exc:  # noqa: BLE001 — 启动失败不得留下幽灵 active child
+            # EVO-20261016-ac47e850: worker 从未运行，prepare 已建的树在此释放。
+            if worktree_lease is not None:
+                from llm_loop.workspace.worktree_isolation import (
+                    format_release_note,
+                    release_worktree,
+                )
+
+                try:
+                    _note = format_release_note(
+                        release_worktree(
+                            worktree_lease.parent_root, worktree_lease.path
+                        ),
+                        worktree_lease.path,
+                    )
+                except Exception as _rel_exc:  # noqa: BLE001 — 启动失败原因优先
+                    _note = (
+                        f"[worktree] 清理异常（{type(_rel_exc).__name__}: "
+                        f"{_rel_exc}），树保留: {worktree_lease.path}"
+                    )
+            else:
+                _note = ""
             failed = SubAgentResult(
-                final_answer=f"[状态: failure] 子代理线程启动失败: {type(exc).__name__}: {exc}",
+                final_answer=(
+                    f"[状态: failure] 子代理线程启动失败: {type(exc).__name__}: {exc}"
+                    + (f"\n{_note}" if _note else "")
+                ),
                 outcome="failed",
                 depth=depth,
             )
@@ -1509,6 +1629,7 @@ class SubAgentRunner:
                 if child_scope is None
                 else ",".join(sorted(child_scope))
             ),
+            "worktree": worktree_lease.path if worktree_lease is not None else "",
             "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
         }
 
