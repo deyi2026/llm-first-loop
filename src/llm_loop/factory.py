@@ -1866,6 +1866,9 @@ def build_engine(
             method_store=method_store,
             experience_store=experience_store,
             rule_lookup=searcher.rule_exists,
+            # P-SET-7（GOAL-20261016-cf563b27 批次一）：EventStore 同源事件目录
+            # ——确定任务 slot 的规则回执跨会话查重/抵扣经该目录投影扫描。
+            event_logs_dir=settings.event_logs_dir,
         )
         if getattr(event_store, "enabled", False)
         else None

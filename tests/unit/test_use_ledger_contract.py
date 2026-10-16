@@ -23,6 +23,7 @@ from llm_loop.use_ledger import (
     dedupe_slot_heads,
     derive_slot_id,
     derive_submission_hash,
+    read_ledger_entries,
 )
 
 _CONTRACT_BODY = (
@@ -589,3 +590,58 @@ def test_unresolved_submission_does_not_fold_into_slotted_attribution(tmp_path):
     assert unresolved["ledger_seq"] != slotted["ledger_seq"]
     ledger = (tmp_path / "methods" / "usage.jsonl").read_text(encoding="utf-8")
     assert ledger.count("\n") == 2  # 未归属提交自身落账
+
+
+# ── P-SET-4（GOAL-20261016-cf563b27 批次一）：统计读取面与去重扫描同一完整性口径 ──
+
+
+def test_usage_entries_share_integrity_view_with_dedup_scan(tmp_path):
+    """P-SET-4：中段篡改行不再"计入统计却对去重不可见"——两视图行数一致.
+
+    审查反例：``usage_entries``（统计/回执视图）只做 JSON 解析不校验行级
+    integrity，而 ``record_use`` 去重扫描走 ``read_ledger_entries``（凭据
+    校验）。中段篡改行（JSON 仍合法、integrity 失配）计入统计却对去重
+    不可见。修复后统计侧同样校验，两视图对同一账本文件给出同一行集。
+    """
+    store, ref = _method_store(tmp_path)
+    store.record_use(ref, episode_ref="episode:s1:1:aa", decision="applied", note="one")
+    store.record_use(ref, episode_ref="episode:s1:2:bb", decision="adapted", note="two")
+
+    # 中段篡改第一行 note：保持 JSON 合法（区别于解析失败），仅 integrity 失配
+    ledger = tmp_path / "methods" / "usage.jsonl"
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    mutated = json.loads(lines[0])
+    mutated["note"] = "rewritten after write"
+    lines[0] = json.dumps(mutated, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # 统计视图：篡改行不进入（legacy 无凭据行不受影响——本夹具两行均带凭据）
+    visible = store.usage_entries(ref)
+    assert [e["note"] for e in visible] == ["two"]
+    # 与去重扫描同一行集：两视图对同一文件行数一致，不再分叉
+    assert len(visible) == len(read_ledger_entries(ledger))
+    # 去重视角行为断言：篡改行不可见 → 同内容重报不被它吞掉（真实追加）
+    again = store.record_use(
+        ref, episode_ref="episode:s1:1:aa", decision="applied", note="one",
+    )
+    assert again.get("idempotent") is not True
+    assert len(store.usage_entries(ref)) == len(read_ledger_entries(ledger)) == 2
+
+
+def test_usage_entries_legacy_rows_without_credential_stay_readable(tmp_path):
+    """P-SET-4 边界：legacy 无凭据行（无 integrity 字段）仍可读，口径不变."""
+    store, ref = _method_store(tmp_path)
+    store.record_use(ref, episode_ref="episode:s1:1:aa", decision="applied", note="v2 row")
+    ledger = tmp_path / "methods" / "usage.jsonl"
+    legacy = {
+        "ts": "2026-10-16T00:00:00",
+        "method_ref": ref,
+        "decision": "applied",
+        "note": "legacy row without credential",
+        "submission_hash": "legacy-hash",
+    }
+    with ledger.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(legacy, ensure_ascii=False, sort_keys=True) + "\n")
+
+    notes = [e["note"] for e in store.usage_entries(ref)]
+    assert notes == ["v2 row", "legacy row without credential"]  # legacy 行可读

@@ -39,6 +39,7 @@ from llm_loop.use_ledger import (
     derive_slot_id,
     derive_submission_hash,
     ensure_appendable_tail,
+    line_integrity_matches,
     quarantine_torn_tail,
     read_ledger_entries,
     resolve_submission,
@@ -1129,7 +1130,13 @@ class MethodStore:
         return report
 
     def usage_entries(self, method_ref: str = "") -> list[dict[str, Any]]:
-        """Read bounded-size local use declarations; semantic interpretation stays model-owned."""
+        """Read bounded-size local use declarations; semantic interpretation stays model-owned.
+
+        P-SET-4（GOAL-20261016-cf563b27 批次一）：读取面与 ``record_use`` 去重
+        扫描（``read_ledger_entries``）同一完整性口径——行级 integrity 凭据
+        失配的行不进入统计/回执视图，篡改行不再"计入统计却对去重不可见"；
+        legacy 无凭据行（无 ``integrity`` 字段）仍可读，口径不变。
+        """
         path = self._dir / "usage.jsonl"
         if not path.is_file():
             return []
@@ -1142,6 +1149,8 @@ class MethodStore:
                 except json.JSONDecodeError:
                     continue
                 if not isinstance(value, dict):
+                    continue
+                if not line_integrity_matches(value):
                     continue
                 if wanted and str(value.get("method_ref", "")).lower() != wanted:
                     continue

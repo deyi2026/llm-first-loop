@@ -751,6 +751,7 @@ def _run_settlement_pending(args: dict, host: RegistryHost) -> ToolResult:
         session_id=session_id,
         work_unit_id=str(args.get("work_unit_id") or "").strip(),
         model_self_reported_no_contact=bool(args.get("self_reported_no_contact")),
+        event_logs_dir=channel.event_logs_dir,
     )
     host.audit(
         "settlement_pending",
@@ -841,6 +842,7 @@ def _run_settlement_submit(args: dict, host: RegistryHost) -> ToolResult:
         episode_ref=str(host.current_episode_ref() or ""),
         model=str(current_model_label.get() or ""),
         rule_lookup=channel.rule_lookup,
+        event_logs_dir=channel.event_logs_dir,
     )
     counts = receipt["counts"]
     # 零 committed 时回执 FAILURE：部分成功/未知不冒充整批成功；逐条事实在 receipts 内

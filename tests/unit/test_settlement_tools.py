@@ -96,6 +96,8 @@ def _host(tmp_path: Path, *, rules: bool = False) -> CorrectionToolRegistry:
         method_store=method_store,
         experience_store=experience_store,
         rule_lookup=_rule_lookup(tmp_path) if rules else None,
+        # P-SET-7 装配面：EventStore 同源目录——确定任务 slot 规则回执跨会话查重
+        event_logs_dir=tmp_path / "events",
     )
     return CorrectionToolRegistry(ctx)
 
@@ -349,6 +351,39 @@ def test_submit_tool_rule_item_unknown_ref_fails_via_rule_lookup(tmp_path):
     assert "rule_lookup" in receipt["receipts"][0]["reason"]
 
 
+def test_submit_tool_rule_dedup_spans_sessions_via_channel_logs_dir(tmp_path):
+    """P-SET-7 工具面端到端：通道 event_logs_dir 装配后跨会话重提幂等.
+
+    旧行为：同 (slot, submission_hash) 在另一会话重提追加重复
+    rule.feedback 事件且返回非幂等 committed（查重只扫当前会话）。
+    """
+    host = _host(tmp_path, rules=True)
+    events = host.ctx.settlement.event_store
+    args = {
+        "work_unit_id": "TASK-A",
+        "items": [
+            {
+                "kind": "rule", "ref": "RULE-AI-18", "decision": "applied",
+                "benefit": "helped", "read_version": "v1", "note": "跨会话重试",
+            }
+        ],
+    }
+
+    first = _payload(host.execute("settlement_submit", args))
+    host.ctx.session_id = "sess-2"  # 另一会话重提（同工作单元、同内容）
+    second = _payload(host.execute("settlement_submit", args))
+
+    assert first["receipts"][0]["status"] == "committed"
+    assert second["receipts"][0]["idempotent"] is True
+    total = sum(
+        1
+        for sid in ("sess-1", "sess-2")
+        for e in events.read(sid)
+        if e.type == RULE_FEEDBACK_EVENT_TYPE
+    )
+    assert total == 1  # 不追加重复事件
+
+
 # ── 通道缺件零行为 ──
 
 
@@ -407,6 +442,8 @@ def test_factory_assembles_settlement_channel_and_tools(tmp_path):
 
     engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
     assert engine.correction_ctx.settlement is not None  # EventStore 默认启用
+    # P-SET-7 装配面：通道携带 EventStore 同源事件目录（跨会话规则查重数据源）
+    assert engine.correction_ctx.settlement.event_logs_dir
     names = set(engine.registry.names())
     assert "settlement_pending" in names
     assert "settlement_submit" in names

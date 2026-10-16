@@ -719,7 +719,7 @@ def test_experience_settlement_uses_episode_attribution_when_provided(tmp_path):
     )
 
     assert receipt["receipts"][0]["status"] == "committed"
-    entry = experience_store.usage_entries(f"experience:{stem}")[-1]
+    entry = experience_store.usage_entries(f"experience:{stem}")[0]  # 默认倒序=最新在前（r1N1：[-1] 实取最旧）
     assert entry["work_unit_binding"] == "episode_fallback"
     assert entry["work_unit_id"] == "episode:sess-1:2:bb"
     assert entry["episode_ref"] == "episode:sess-1:2:bb"
@@ -756,3 +756,319 @@ def test_settled_count_counts_offset_unique_keys_not_read_events(tmp_path):
     )
     assert settled_after["items"] == []
     assert settled_after["settled_count"] == 1  # 被抵扣的唯一键数 = 1（非 3）
+
+
+# ── 批次一 P-SET 修复回归（GOAL-20261016-cf563b27，规格 docs/tasks/P2-pool-knowledge-feedback.md）──
+
+
+def _write_event_file(root: Path, session: str, rows: list[dict]) -> None:
+    """直接写单文件事件布局（构造 legacy/跨会话场景，不经 EventStore）."""
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / f"{session}.jsonl").open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def test_rule_projection_counts_same_content_across_slots_separately(tmp_path):
+    """P-SET-1：同规则同内容跨 slot（不同工作单元）反馈不折叠为 count=1.
+
+    旧行为聚合仅按 submission_hash 去重——两个工作单元对同一规则的相同
+    内容评价被折叠 count=1，违背两层身份「同内容跨 slot 不是重试」。
+    """
+    root = tmp_path / "events"
+    base = {
+        "session_id": "sess-1", "seq": 1,
+        "type": RULE_FEEDBACK_EVENT_TYPE, "ts": "2026-10-16T00:00:00",
+        "payload": {
+            "ref": "RULE-AI-18", "submission_hash": "same-hash",
+            "decision": "applied", "benefit": "helped", "note": "同内容评价",
+        },
+    }
+    rows = []
+    for idx, slot in enumerate(("slot-task-a", "slot-task-b", "slot-task-a"), start=1):
+        row = json.loads(json.dumps(base))
+        row["seq"] = idx
+        row["ts"] = f"2026-10-16T00:0{idx}:00"
+        row["payload"]["slot_id"] = slot
+        rows.append(row)
+    _write_event_file(root, "sess-1", rows)
+
+    data = RuleFeedbackProjection(root)("RULE-AI-18")
+    # 跨 slot 同内容：两个工作单元各计一条（不折叠）；同 slot 重复事件仍收敛
+    assert data["rule_feedback_count"] == 2
+
+
+def test_degraded_window_ignores_empty_session_receipts_with_disclosure(tmp_path):
+    """P-SET-2：空 session_id 的回执不得抵扣降级窗口读取；排除数显式披露.
+
+    旧行为：降级分支空值跳过会话比对——无 session_id 的 legacy 账本行可
+    抵扣任意会话的读取。修复后此类行不参与抵扣，且被排除行数在清单
+    window.legacy_receipts_without_session_excluded 如实标注（不静默吞行）。
+    """
+    method_store, ref = _method_store(tmp_path)
+    version = method_store.get(ref).content_hash
+    # legacy 行：无 session_id（record_use 未传 session 时该键不落行）、无归属
+    method_store.record_use(
+        ref, episode_ref="", decision="applied", note="legacy no session",
+        read_version=version, allow_unresolved=True,
+    )
+    events = EventStore(tmp_path / "events")
+    _emit_read(events, "sess-1", kind="method", ref=ref, version=version)
+
+    pending = build_pending_settlement(
+        event_store=events, method_store=method_store, experience_store=None,
+        session_id="sess-1",  # 降级窗口（无工作单元）
+    )
+    assert any(i["ref"] == ref for i in pending["items"])  # 空 session 回执不抵扣
+    assert pending["window"]["legacy_receipts_without_session_excluded"] == 1  # 显式标注
+
+    # 对照：携带本会话 session_id 的回执正常抵扣降级窗口
+    method_store.record_use(
+        ref, episode_ref="episode:sess-1:1:aa", decision="applied",
+        note="this session", read_version=version, session_id="sess-1",
+    )
+    pending_after = build_pending_settlement(
+        event_store=events, method_store=method_store, experience_store=None,
+        session_id="sess-1",
+    )
+    assert not any(i["ref"] == ref for i in pending_after["items"])
+    assert pending_after["window"]["legacy_receipts_without_session_excluded"] == 1
+
+
+def test_experience_receipt_window_survives_default_200_cap(tmp_path):
+    """P-SET-3：experience 回执收集不被 usage_entries(limit=200) 截断.
+
+    旧行为：结算收集调 ``usage_entries()`` 默认取最新 200 行——较旧回执
+    滑出窗口后，其读取重现待结算清单（诱导重报）；method 侧无界、两侧
+    口径不一。修复后结算侧无界读取 + 按工作单元过滤，旧回执仍在匹配集。
+    """
+    experience_store, stem = _experience_store(tmp_path)
+    doc = experience_store.get(stem)
+    version = hashlib.sha256(doc.to_md().encode()).hexdigest()
+    # 最旧一条：本会话/本工作单元的目标回执（默认 200 行窗口会把它挤出）
+    experience_store.record_use(
+        stem, use_decision="applied", note="target receipt",
+        session_id="sess-1", work_unit_id="TASK-A", read_version=version,
+    )
+    # 250 条更新的其他会话/其他工作单元回执（默认读取面只见最新 200 行）
+    for i in range(250):
+        experience_store.record_use(
+            stem, use_decision="applied", note=f"noise-{i}",
+            session_id=f"sess-noise-{i}", work_unit_id=f"NOISE-{i}",
+        )
+    assert len(experience_store.usage_entries()) == 200  # 默认读取面口径不变
+
+    events = EventStore(tmp_path / "events")
+    _emit_read(events, "sess-1", kind="experience", ref=f"experience:{stem}", version=version)
+    pending = build_pending_settlement(
+        event_store=events, method_store=None, experience_store=experience_store,
+        session_id="sess-1", work_unit_id="TASK-A",
+    )
+    assert not any(i["ref"] == f"experience:{stem}" for i in pending["items"])  # 旧回执仍抵扣
+
+
+def test_rule_ref_case_normalized_at_submission_and_cross_case_idempotent(tmp_path):
+    """P-SET-5：规则 ref 提交时归一——载荷/slot/回执统一大写，跨大小写重提幂等.
+
+    旧行为：投影查询 upper()、事件载荷 ref 未归一、正则 IGNORECASE 放行
+    小写提交——大小写不对称（小写提交落小写键、查询漏读；跨大小写重提
+    产生不同 slot 不幂等）。
+    """
+    events = EventStore(tmp_path / "events")
+    lower = submit_settlement_batch(
+        items=[SettlementItem(
+            kind="rule", ref="rule-ai-18", decision="applied", benefit="helped",
+            note="小写提交", read_version="v1",
+        )],
+        method_store=None, experience_store=None, event_store=events,
+        session_id="sess-1", work_unit_id="TASK-A",
+    )
+    assert lower["receipts"][0]["status"] == "committed"
+    assert lower["receipts"][0]["ref"] == "RULE-AI-18"  # 回执归一
+    payload = [
+        e for e in events.read("sess-1") if e.type == RULE_FEEDBACK_EVENT_TYPE
+    ][0].payload
+    assert payload["ref"] == "RULE-AI-18"  # 载荷归一（slot 同样按归一 ref 派生）
+
+    # 跨大小写同内容重提：同 slot → 幂等，不追加重复事件
+    upper = submit_settlement_batch(
+        items=[SettlementItem(
+            kind="rule", ref="RULE-AI-18", decision="applied", benefit="helped",
+            note="小写提交", read_version="v1",
+        )],
+        method_store=None, experience_store=None, event_store=events,
+        session_id="sess-1", work_unit_id="TASK-A",
+    )
+    assert upper["receipts"][0]["status"] == "committed"
+    assert upper["receipts"][0]["idempotent"] is True
+    assert upper["receipts"][0]["slot_id"] == lower["receipts"][0]["slot_id"]
+    rule_events = [e for e in events.read("sess-1") if e.type == RULE_FEEDBACK_EVENT_TYPE]
+    assert len(rule_events) == 1
+
+
+def test_rule_projection_normalizes_legacy_lowercase_refs(tmp_path):
+    """P-SET-5：投影摄取侧归一 legacy 小写载荷行——反馈计数与读取抵扣两侧一致."""
+    root = tmp_path / "events"
+    rows = [
+        {
+            "event_id": "e1", "session_id": "sess-old", "seq": 1,
+            "type": RULE_FEEDBACK_EVENT_TYPE, "ts": "2026-10-16T00:00:00",
+            "payload": {
+                "ref": "rule-ai-18", "slot_id": "s1", "submission_hash": "h1",
+                "read_version": "v1", "decision": "applied",
+                "benefit": "helped", "note": "legacy lowercase",
+            },
+        },
+        {
+            "event_id": "e2", "session_id": "sess-old", "seq": 2,
+            "type": KNOWLEDGE_READ_EVENT_TYPE, "ts": "2026-10-16T00:01:00",
+            "payload": {"ref": "RULE-AI-18", "version": "v1", "kind": "rule"},
+        },
+    ]
+    _write_event_file(root, "sess-old", rows)
+
+    data = RuleFeedbackProjection(root)("RULE-AI-18")  # 查询侧 upper()
+    assert data["rule_feedback_count"] == 1  # 大小写不对称不再漏读
+    assert data["rule_pending_count"] == 0  # 小写回执抵扣大写读取（两侧同键）
+
+
+def test_rule_supersedes_explicit_parent_supported_and_rejected_with_reason(tmp_path):
+    """P-SET-5：rule 的 supersedes 显式支持（同 slot 链上父校验）或显式拒绝.
+
+    旧行为：SettlementItem.supersedes 对 kind=rule 静默忽略（修订链父记录
+    恒为程序推导）。修复后显式请求的父必须是同 slot 链上既有
+    submission_hash——不满足回 failed 并给原因，不静默忽略。
+    """
+    events = EventStore(tmp_path / "events")
+    first = submit_settlement_batch(
+        items=[SettlementItem(
+            kind="rule", ref="RULE-AI-18", decision="applied", benefit="helped",
+            note="初评", read_version="v1",
+        )],
+        method_store=None, experience_store=None, event_store=events,
+        session_id="sess-1", work_unit_id="TASK-A",
+    )
+    parent_hash = first["receipts"][0]["submission_hash"]
+
+    # 显式 supersedes 指向同 slot 链上既有提交：接受并落链
+    revised = submit_settlement_batch(
+        items=[SettlementItem(
+            kind="rule", ref="RULE-AI-18", decision="adapted", benefit="hindered",
+            note="更正：触发条件不符", read_version="v1", supersedes=parent_hash,
+        )],
+        method_store=None, experience_store=None, event_store=events,
+        session_id="sess-1", work_unit_id="TASK-A",
+    )
+    assert revised["receipts"][0]["status"] == "committed"
+    assert revised["receipts"][0]["revision"] == 2
+    payloads = [
+        e.payload for e in events.read("sess-1") if e.type == RULE_FEEDBACK_EVENT_TYPE
+    ]
+    assert payloads[-1]["supersedes"] == parent_hash  # 显式父被采用
+
+    # 指向不存在的父：显式拒绝并给原因（不静默忽略、不断链）
+    bogus = submit_settlement_batch(
+        items=[SettlementItem(
+            kind="rule", ref="RULE-AI-18", decision="applied", benefit="helped",
+            note="坏父", read_version="v1", supersedes="deadbeef",
+        )],
+        method_store=None, experience_store=None, event_store=events,
+        session_id="sess-1", work_unit_id="TASK-A",
+    )
+    assert bogus["receipts"][0]["status"] == "failed"
+    assert "supersedes" in bogus["receipts"][0]["reason"]
+    assert len(payloads) == 2  # 拒绝不落事件
+
+
+def test_degraded_settlement_costs_count_only_current_session_receipts(tmp_path):
+    """P-SET-6（B1 探针 A6 回归）：降级窗口成本只计本会话回执.
+
+    旧行为：无 wu 时成本回退两侧全局账本——其他会话/工作单元的 5 条回执
+    计入，本会话首笔提交回 settlement_calls=5。修复后与 _offsets 降级窗口
+    口径对齐（按 session_id 过滤）。
+    """
+    method_store, ref = _method_store(tmp_path)
+    for i in range(5):
+        method_store.record_use(
+            ref, episode_ref=f"episode:other:{i}:x", decision="applied",
+            note=f"global noise {i}", session_id=f"sess-other-{i}",
+        )
+    events = EventStore(tmp_path / "events")
+    items = [SettlementItem(
+        kind="rule", ref="RULE-AI-18", decision="applied", benefit="helped",
+        note="首笔", read_version="v1",
+    )]
+
+    first = submit_settlement_batch(
+        items=items, method_store=method_store, experience_store=None,
+        event_store=events, session_id="sess-1",  # 降级窗口（无 wu）
+    )
+    assert first["receipts"][0]["status"] == "committed"
+    assert first["settlement_calls"] == 1  # 首笔提交不得报 calls=5
+    assert first["settlement_rounds"] == 0
+
+    # 对照：本会话既有回执仍计入（第二次调用 calls=2）
+    second = submit_settlement_batch(
+        items=items, method_store=method_store, experience_store=None,
+        event_store=events, session_id="sess-1",
+    )
+    assert second["receipts"][0]["idempotent"] is True
+    assert second["settlement_calls"] == 2
+
+
+def test_rule_determined_slot_dedup_spans_sessions(tmp_path):
+    """P-SET-7：确定任务 slot 的 (slot, submission_hash) 跨会话重提幂等.
+
+    旧行为：规则查重只扫当前会话事件——同 (slot, submission_hash) 在另一
+    会话重提会追加重复 rule.feedback 事件且返回非幂等 committed。修复后
+    经 event_logs_dir 投影扫描跨会话查重（优先方案，非工具描述降级）。
+    """
+    events = EventStore(tmp_path / "events")
+    items = [SettlementItem(
+        kind="rule", ref="RULE-AI-18", decision="applied", benefit="helped",
+        note="跨会话重试", read_version="v1",
+    )]
+    first = submit_settlement_batch(
+        items=items, method_store=None, experience_store=None, event_store=events,
+        session_id="sess-a", work_unit_id="TASK-A", event_logs_dir=tmp_path / "events",
+    )
+    second = submit_settlement_batch(
+        items=items, method_store=None, experience_store=None, event_store=events,
+        session_id="sess-b", work_unit_id="TASK-A", event_logs_dir=tmp_path / "events",
+    )
+    assert first["receipts"][0]["status"] == "committed"
+    assert second["receipts"][0]["status"] == "committed"
+    assert second["receipts"][0]["idempotent"] is True  # 跨会话幂等回执
+    total = sum(
+        1
+        for sid in ("sess-a", "sess-b")
+        for e in events.read(sid)
+        if e.type == RULE_FEEDBACK_EVENT_TYPE
+    )
+    assert total == 1  # 不追加重复 rule.feedback 事件
+
+
+def test_pending_rule_receipt_offsets_across_sessions_for_determined_task(tmp_path):
+    """P-SET-7 延伸：确定任务窗口的规则回执抵扣跨会话生效（读取不再重现）."""
+    events = EventStore(tmp_path / "events")
+    _emit_read(events, "sess-b", kind="rule", ref="RULE-AI-18", version="v1")
+    submit_settlement_batch(
+        items=[SettlementItem(
+            kind="rule", ref="RULE-AI-18", decision="applied", read_version="v1",
+        )],
+        method_store=None, experience_store=None, event_store=events,
+        session_id="sess-a", work_unit_id="TASK-A", event_logs_dir=tmp_path / "events",
+    )
+
+    pending_b = build_pending_settlement(
+        event_store=events, method_store=None, experience_store=None,
+        session_id="sess-b", work_unit_id="TASK-A", event_logs_dir=tmp_path / "events",
+    )
+    assert not any(i["ref"] == "RULE-AI-18" for i in pending_b["items"])  # 跨会话抵扣
+
+    # 对照：其他工作单元窗口不受该回执抵扣
+    pending_other = build_pending_settlement(
+        event_store=events, method_store=None, experience_store=None,
+        session_id="sess-b", work_unit_id="TASK-B", event_logs_dir=tmp_path / "events",
+    )
+    assert any(i["ref"] == "RULE-AI-18" for i in pending_other["items"])

@@ -1077,11 +1077,13 @@ class ExperienceStore:
         except OSError:
             return
 
-    def usage_entries(self, experience_ref: str = "", *, limit: int = 200) -> list[dict]:
+    def usage_entries(self, experience_ref: str = "", *, limit: int | None = 200) -> list[dict]:
         """读取使用声明账本（refine_experience.record_use 的真值源）.
 
         读取面 fail-open：账本缺失/不可读返回空列表（调用方不得据此推断“无使用”）。
-        默认倒序（最新在前），limit 上限 200。
+        默认倒序（最新在前），limit 上限 200。``limit=None`` 为无界读取
+        （P-SET-3，GOAL-20261016-cf563b27 批次一：结算回执收集口径——较旧
+        回执不得因默认窗口截断滑出匹配集，与 method 侧无界读取对齐）。
         """
         ref = str(experience_ref or "").strip()
         if ref and not ref.startswith("experience:"):
@@ -1092,6 +1094,8 @@ class ExperienceStore:
                 continue
             rows.append(row)
         rows.reverse()
+        if limit is None:
+            return rows
         return rows[: max(0, min(int(limit), 200))]
 
     def usage_net(self, experience_ref: str = "") -> dict[str, Any] | None:

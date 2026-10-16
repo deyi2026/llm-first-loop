@@ -1,0 +1,135 @@
+{
+  "gate": "code",
+  "goal": "GOAL-20261016-cf563b27",
+  "round": "b1-settlement-p2（批次一 P-SET-1..7 + r1N1）",
+  "reviewer": "独立代码审查子代理（T2，未参与编码；RULE-AI-28 第 1 条 code-review-gate）",
+  "verdict": "PASS",
+  "verdict_semantics": "PASS=放行全量测试（全量门由父代理另行执行；词表映射照 B1/B2 回执先例）。REVISE=修订+窄复审；BLOCK=阻断——本次不适用。",
+  "head_commit": {
+    "delegation_baseline": "f7c081282",
+    "review_time_head": "0b3d982513bb8233878e8f16907942dc0e1716c6",
+    "note": "审查时点 HEAD 较委派基线前进 3 个提交（learning/subagent/governance，均未触碰本批 8 文件）；8 文件未提交 delta 自两基线 diff 完全一致（sha256 同为 e3d547f2…），审查对象即委派所述 delta。"
+  },
+  "fingerprints": {
+    "git_diff_src_tests": {
+      "sha256": "e3d547f2721cefe16302f6b135674e9e32c153aec22154106412320ff17c0578",
+      "lines": 1055,
+      "note": "git diff -- src tests（未提交 delta，含本批 8 文件全部改动）"
+    },
+    "git_diff_8files": {
+      "sha256": "e3d547f2721cefe16302f6b135674e9e32c153aec22154106412320ff17c0578",
+      "lines": 1055,
+      "note": "8 文件限定 diff 与全量 src tests diff 同哈希（本批 src/tests 改动恰为这 8 个文件）"
+    },
+    "files": {
+      "src/llm_loop/introspection/settlement.py": "33dccfca8e2df45f128e56c41bf66c448a836f621c3d4c693e479198963ac94f",
+      "src/llm_loop/experiences/store.py": "670f77f85d79cd42b1a993b3e7991fbc48a51468d215c0e9b115c478b0a3e474",
+      "src/llm_loop/methods/store.py": "4e04776e89ac22ec6d4a9ad82bf226daf638e01dc3f267833a77f4962ae11cc9",
+      "src/llm_loop/factory.py": "be809fcb0d098dade33e519e3f4ecafda387beb59ce1603f2e37d500fc228d96",
+      "src/llm_loop/introspection/registry_experience.py": "bbb7d15ccf24f6f4b0c432b00b3b4cdc0d7ac3c93fd1ce462dd658dd2da4b5f6",
+      "tests/unit/test_settlement_receipts.py": "e8e4366acd8689533c8a42b2199c9a4e60e540dd17baf829680a4dc9804d2264",
+      "tests/unit/test_settlement_tools.py": "8b488f50d037755ae465108ecd2c7bb7cc9189d1c90dbb093381aa1184b58f02",
+      "tests/unit/test_use_ledger_contract.py": "159f2f4c7a2abf64cf3944b1a851f744f5b893a8e5a0b5c27ea8fc450856a9e7"
+    },
+    "selfreport_match": "8 文件 sha256 与编码者自报告（docs/reports/GOAL-20261016-cf563b27-b1-settlement-p2-selfreport.md）逐一全一致"
+  },
+  "scope_files": [
+    "src/llm_loop/introspection/settlement.py",
+    "src/llm_loop/experiences/store.py",
+    "src/llm_loop/methods/store.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/introspection/registry_experience.py",
+    "tests/unit/test_settlement_receipts.py",
+    "tests/unit/test_settlement_tools.py",
+    "tests/unit/test_use_ledger_contract.py"
+  ],
+  "specs": {
+    "tracking": "docs/tasks/P2-pool-knowledge-feedback.md 批次一表（P-SET-1..7 + 附注 r1N1）",
+    "semantic_authority": "docs/LFL 任务知识使用反馈与检索闭环设计草案.md（v3：两层身份/降级窗口/幂等先查后写/显式披露原则）",
+    "selfreport": "docs/reports/GOAL-20261016-cf563b27-b1-settlement-p2-selfreport.md（按不可信参照逐项核验）",
+    "excluded": "docs/DESIGN-20261014-jev-experience-method-loop-governance.md——工作区内存在其未提交修改，属另一并行委派的写入，非本批产物；按委派只记录存在与排除决定，未审。"
+  },
+  "methodology_search": {
+    "discipline": "开工首动作：data/methods content 有界检索（代码审查/独立探针/闸，各 limit≤5）",
+    "hits": 3,
+    "applied_cards": [
+      "execute-approved-proposal-from-held-record-one-read-per-target-9befafb3af1b（代码审查闸=独立初审+回执+窄复审流程锚点）",
+      "attribute-suite-failures-via-touched-set-and-clean-head-worktree-8d92c40cb6dc（回归面归因纪律：触碰集∩失败主题；本次全绿未触发）"
+    ],
+    "background_only": ["background-first-delegation-for-minutes-scale-subtasks", "reversible-park-restore…", "intent-state-contradiction-probe…", "live-pid-first-runtime-lookup", "detach-never-exiting-helpers"]
+  },
+  "itemized_verdicts": {
+    "P-SET-1": {
+      "verdict": "FIXED",
+      "evidence": "settlement.py:918-928 _aggregate 去重键改 (slot_id, submission_hash) 元组：跨 slot 同内容不折叠、同 slot 同 hash 收敛、无 hash legacy 行退化 ts 键。测试 test_rule_projection_counts_same_content_across_slots_separately（行为断言 count==2）。独立探针 5 复核：跨文件同 (slot,hash) 收敛 1、同 hash 不同 slot 计 2、legacy 无 slot 同 hash 折叠、无 hash 行不误并。"
+    },
+    "P-SET-2": {
+      "verdict": "FIXED",
+      "evidence": "settlement.py:210-228 _ledger_receipts 降级分支空 session 行不抵扣且计数返回；:352-354 _offsets 降级分支要求非空且等于本会话；:443-449 window.legacy_receipts_without_session_excluded 显式披露（确定任务窗口恒 0，按 wu 匹配不看 session，与规格一致）。测试 test_degraded_window_ignores_empty_session_receipts_with_disclosure。独立探针 4 变体：空 session 行与他 session 行均不抵扣，披露计数仅统计空 session 行（==1，他 session 行非 legacy 不虚增），同会话回执正常抵扣。"
+    },
+    "P-SET-3": {
+      "verdict": "FIXED",
+      "evidence": "experiences/store.py:1080-1098 usage_entries 增 limit: int | None = 200（None=无界，默认口径不变）；settlement.py:179-228 结算收集显式 limit=None + 按（工作单元｜会话）窗口过滤，TypeError 逐级回退 {limit:None}→{}→(\"\") 兼容旧签名（MethodStore 无 limit 形参路径实测走 {} 成功）。测试 test_experience_receipt_window_survives_default_200_cap（251 行）。独立探针 2：401 行账本、目标回执滑出默认 200 窗口（断言默认读取面不可见）仍被结算侧抵扣不重现，scan=1ms。"
+    },
+    "P-SET-4": {
+      "verdict": "FIXED",
+      "evidence": "methods/store.py:1150-1153 usage_entries 读取面加 line_integrity_matches 过滤——与 record_use 去重扫描（store.py:1032 read_ledger_entries → use_ledger.py:288 _check_line 同函数）同一完整性口径；use_ledger.py:104-105 无凭据 legacy 行返回 True（可读性不变）。测试 test_usage_entries_share_integrity_view_with_dedup_scan（中段篡改行两视图一致剔除、同内容重报真实追加）+ test_usage_entries_legacy_rows_without_credential_stay_readable。经验侧同类结构性缺口（_iter_usage_entries 无校验）规格未列，编码者如实上报未扩权处理——核验属实，建议入池。"
+    },
+    "P-SET-5": {
+      "verdict": "FIXED",
+      "evidence": "归一：settlement.py:61-69 _normalize_rule_ref（RULE-AI-N 模式统一大写，非规则 ref 直通）落三处——提交侧 :721/_submit_rule_item:493（slot/载荷/回执）、投影摄取侧 :901-906（legacy 小写行收敛）、查询侧 :952 既有 upper() 对称；跨大小写重提同 slot 幂等。supersedes：:521-543 rule 由静默忽略改显式支持（父须为同 slot 链上既有 submission_hash，否则 failed 带原因不落事件；未请求时沿用程序推导链头）。测试 ×3（提交归一+跨大小写幂等、legacy 投影收敛、显式 supersedes 采纳/坏父拒绝）。独立探针 1.3：跨会话同 slot 不同内容不误判幂等、revision=2 且 supersedes 链正确；探针 5：小写查询命中归一键、归一器直通/剥离角全过。"
+    },
+    "P-SET-6": {
+      "verdict": "FIXED",
+      "evidence": "settlement.py:622-633 成本窗口与 _offsets 口径对齐：有 wu 按 wu 过滤（叠加 P-SET-3 窗口过滤）；降级按 session_id 过滤（空 session legacy 行已被 _ledger_receipts 排除，双重一致）。测试 test_degraded_settlement_costs_count_only_current_session_receipts（A6 回归：首笔 calls=1/rounds=0，第二笔 calls=2）。独立探针 3.1 变体：另一会话 3 条 rule.feedback 噪音事件不计入，本会话首笔 calls==1、带 run_id 时 rounds==1（回合按 run 去重语义一致）。"
+    },
+    "P-SET-7": {
+      "verdict": "FIXED",
+      "evidence": "优先方案（跨会话投影查重，未降级改工具描述）：settlement.py:243-300 _scan_rule_feedback_rows（按 work_unit_id 过滤，复用 EventStore 单文件+多段布局）/ _rule_receipts（行级 session 去重防双计）；:502-519 _submit_rule_item 确定 slot 先查后写跨会话幂等、不追加重复事件；SettlementChannel.event_logs_dir 新装配件 + factory.py:1866-1871 settings.event_logs_dir（与 EventStore:2692/Projection:1837 同源）+ registry_experience.py 两工具入口传递。格式兼容经真实 EventStore 落盘验证（serialize_event 顶层 session_id/seq/type/ts/payload 与扫描器期望一致）。降级 slot 以会话为身份不跨扫（设计一致）。fail-open：目录缺失/扫描异常/None 通道均退回会话内口径。测试 ×3 + 工具面端到端 + 工厂装配断言。独立探针 1（缺失目录回退不崩溃、损坏 JSON 行容忍且有效行仍命中跨会话幂等）+ 探针 3.2/1.3（成本窗口与修订链跨会话行为）。"
+    },
+    "r1N1": {
+      "verdict": "FIXED",
+      "evidence": "tests/unit/test_settlement_receipts.py:722 usage_entries(...)[-1]→[0]（默认倒序最新在前），附行内注释；所在测试随 75/258 定向复跑通过。"
+    }
+  },
+  "findings": {
+    "P0": [],
+    "P1": [],
+    "P2": [
+      {
+        "id": "P2-1",
+        "severity": "P2",
+        "file": "src/llm_loop/introspection/settlement.py",
+        "line": "243-300, 502-509",
+        "issue": "P-SET-7 跨会话查重/抵扣每次确定 slot 提交与清单构建都对 event_logs_dir 全目录做新鲜扫描（无 TTL 缓存；RuleFeedbackProjection 有 10s TTL 但本路径未复用）。正确性无虞，成本随事件总量线性增长，与挂账 P-DEF-2（≥3 次全文件扫描）同族。",
+        "fix_hint": "建议入 P2 追踪池（本批不阻断）：复用投影 TTL 缓存或按 work_unit 目录摘要做增量。"
+      },
+      {
+        "id": "P2-2",
+        "severity": "P2",
+        "file": "src/llm_loop/introspection/settlement.py",
+        "line": "352-354",
+        "issue": "降级窗口披露字段只覆盖 ledger 侧空 session legacy 行；rule.feedback 载荷缺 session_id 的 legacy 事件行会同样不抵扣但不进 legacy_receipts_without_session_excluded 计数。实际不可达（rule.feedback schema v1 自 B1 起恒带 session_id），仅为披露完整性备注。",
+        "fix_hint": "若未来出现 rule 侧 legacy 行，再扩展披露口径；无需本批处理。"
+      }
+    ]
+  },
+  "non_blocking_notes": [
+    "确定任务窗口成本计数含跨会话同工作单元回执（探针 3.2：另一会话同 wu 已有 1 笔，本会话新内容首笔 calls==2）——与设计『回执记录本工作单元的结算调用次数』的工作单元窗口语义一致，非缺陷，留档防后续误读。",
+    "探针 2 的 5000 行变体在造数阶段超时（record_use 逐行 flock+fsync 为存量行为，与本批无关）；结算扫描 401 行 1ms，线性外推 10 万行约百毫秒级，量级风险已由 P-DEF-2 挂账族覆盖。一次 1201 行后台探针因工具面无法回收输出，由前台 401 行等价语义探针替代（结论一致）。",
+    "编码者自报告的 8 文件 sha256、258 passed、ruff/pyright new=0 全部复验一致，未发现虚报；experience 侧 integrity 读取面缺口为如实上报（建议父代理作为新条目入 P2 追踪池，勿口头销账）。",
+    "test_ai_rules_sync.py 等 SoT 锚点不在本批 diff、未被触碰，且随 17 文件定向回归实跑通过。"
+  ],
+  "applied": [
+    "开工纪律：data/methods 有界检索（3 查询 limit≤5），命中 2 张适用卡已读并采纳流程锚点",
+    "git diff 逐行审读 8 文件（settlement.py 975 行全文 + 其余 7 文件 diff），对照批次一表与设计草案 v3 两层身份/降级语义/规则反馈通道逐项验收",
+    "产物指纹：8 文件 sha256 与自报告逐一核对一致；diff（src tests）sha256=e3d547f2…/1055 行；委派基线 f7c081282 与审查时 HEAD 间 3 提交未触碰 8 文件、delta 同哈希",
+    "定向测试真实复跑（PYTHONPATH=src .venv/bin/python -m pytest，未用 uv run）：3 文件 75 passed；编码者所列 17 文件套件 258 passed（与自报告一致）",
+    "静态诊断同口径复跑：ruff PASS（new=0, changed_file_diagnostics=0）、pyright PASS（new=0, changed_file_diagnostics=0）",
+    "独立探针 ×5（stdin heredoc 临时目录运行，不复用编码者脚本、不落任何文件）：①P-SET-7 降级安全+真实格式兼容+(slot,hash) 精度 ②P-SET-3 大账本（401 行）③A6 变体（跨会话 rule 噪音+run_id 回合+wu 窗口语义）④P-SET-2 变体（空/他 session 行+披露计数）⑤投影跨文件去重+legacy 收敛+归一器直通——全部通过",
+    "依赖语义核验：_check_line/read_ledger_entries 与 usage_entries 共用 line_integrity_matches（P-SET-4 两视图同口径）；EventStore 落盘格式与 _scan_event_files 布局期望一致（单文件+多段）；factory 三处同用 settings.event_logs_dir"
+  ],
+  "rejected": [],
+  "narrow_re_review": null,
+  "notes": "verdict 词表照 B1/B2 先例：PASS=放行全量测试（父代理执行），REVISE=修订+窄复审，BLOCK=阻断。本回执为 RULE-AI-28 第 1 条独立代码审查闸产物；除本回执文件外全程零文件写入、零 git 写操作、未跑 ci_gate.sh 与整仓 pytest。docs/DESIGN-20261014-jev-experience-method-loop-governance.md 之未提交修改属另一并行委派，本闸按委派明确排除、仅此记录。"
+}

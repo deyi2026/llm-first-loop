@@ -58,6 +58,17 @@ _LEVELS = {"model_declared", "observation_linked", "independently_evaluated"}
 _RULE_REF_RE = re.compile(r"^RULE-AI-\d+(?:\.\d+)?$", re.IGNORECASE)
 
 
+def _normalize_rule_ref(ref: str) -> str:
+    """规则 ref 归一：RULE-AI-N 模式统一大写（P-SET-5）.
+
+    提交（slot/载荷/回执）、投影摄取与查询侧三处同一口径——大小写不同的
+    同一规则不再产生不同 slot 或互相漏读；非规则模式的 ref 原样保留
+    （method/experience ref 大小写敏感，不在此归一）。
+    """
+    cleaned = str(ref or "").strip()
+    return cleaned.upper() if _RULE_REF_RE.fullmatch(cleaned) else cleaned
+
+
 @dataclass(frozen=True)
 class SettlementItem:
     """一条结算提交（模型只给字段值，两层键由程序派生）."""
@@ -83,12 +94,15 @@ class SettlementChannel:
     未装配（None）时 ``settlement_pending`` / ``settlement_submit`` 回执
     "通道不可用"（零行为：不伪造清单、不落任何账）。本类只持绑定引用，
     不含新行为——校验/持久化/回执三分全部由上述结算函数承担。
+    ``event_logs_dir``（P-SET-7）：EventStore 同源事件目录——确定任务 slot
+    的规则回执跨会话查重/抵扣经该目录投影扫描；None 时退回会话内口径。
     """
 
     event_store: Any
     method_store: Any | None = None
     experience_store: Any | None = None
     rule_lookup: Callable[[str], bool] | None = None
+    event_logs_dir: str | Path | None = None
 
 
 def emit_knowledge_read(
@@ -162,20 +176,56 @@ def collect_rule_feedback_receipts(event_store: Any, session_id: str) -> list[di
     ]
 
 
-def _ledger_receipts(store: Any) -> list[dict]:
-    """读取一侧 usage ledger 的 v2 结算回执（fail-open）."""
+def _ledger_receipts(
+    store: Any, *, session_id: str = "", work_unit_id: str = ""
+) -> tuple[list[dict], int]:
+    """读取一侧 usage ledger 的 v2 结算回执并按窗口过滤（fail-open）.
+
+    P-SET-3：experience 侧 ``usage_entries`` 默认 ``limit=200`` 截断会让较旧
+    回执滑出窗口后重现待结算清单（诱导重报）；此处显式请求无界读取
+    （store 支持 ``limit=None``），与 method 侧无界口径对齐。假 store 兼容
+    旧签名（TypeError 逐级回退到无参/单参调用）。
+    P-SET-2：降级 session 窗口下，session_id 为空的回执无法证明归属本会话
+    ——不参与抵扣；排除的 legacy 行数如实返回（清单 window 显式披露），
+    不静默抵扣。确定任务窗口按工作单元匹配，不看 session。
+
+    返回 ``(窗口内回执列表, 被排除的空 session legacy 行数)``。
+    """
     if store is None:
-        return []
-    try:
-        entries = store.usage_entries()
-    except TypeError:
+        return [], 0
+    entries: list | None = None
+    for kwargs in ({"limit": None}, {}):
         try:
-            entries = store.usage_entries("")
-        except Exception:  # noqa: BLE001
-            return []
-    except Exception:  # noqa: BLE001
-        return []
-    return [e for e in entries if isinstance(e, dict) and e.get("submission_hash")]
+            entries = list(store.usage_entries(**kwargs) or [])
+            break
+        except TypeError:
+            continue
+        except Exception:  # noqa: BLE001 — fail-open
+            return [], 0
+    if entries is None:
+        try:
+            entries = list(store.usage_entries("") or [])
+        except Exception:  # noqa: BLE001 — fail-open
+            return [], 0
+    wu = str(work_unit_id or "").strip()
+    sid = str(session_id or "")
+    out: list[dict] = []
+    legacy_excluded = 0
+    for entry in entries:
+        if not (isinstance(entry, dict) and entry.get("submission_hash")):
+            continue
+        if wu:
+            if _receipt_work_unit(entry) == wu:
+                out.append(entry)
+            continue
+        entry_sid = str(entry.get("session_id") or "")
+        if entry_sid:
+            if entry_sid == sid:
+                out.append(entry)
+        else:
+            # 空 session 回执：不抵扣降级窗口（P-SET-2）
+            legacy_excluded += 1
+    return out, legacy_excluded
 
 
 def _receipt_ref(entry: dict) -> str:
@@ -190,12 +240,92 @@ def _receipt_work_unit(entry: dict) -> str:
     return str(entry.get("work_unit_id") or "")
 
 
-def _receipts_for_session(
-    method_store: Any, experience_store: Any, event_store: Any, session_id: str
+def _scan_rule_feedback_rows(root: Path, *, work_unit_id: str) -> list[dict]:
+    """跨会话扫描 event_logs_dir 中匹配工作单元的 rule.feedback 回执（fail-open）.
+
+    P-SET-7：确定任务 slot 的规则回执身份是工作单元×对象×版本——与落在哪个
+    会话文件无关。此处按 ``work_unit_id`` 过滤投影扫描（复用 RuleFeedback
+    Projection 的文件布局遍历），返回与 ``collect_rule_feedback_receipts``
+    同构的合并行（payload 键 + type/ts/seq，附行级 session_id）。
+    """
+    wu = str(work_unit_id or "").strip()
+    if not wu or not root.is_dir():
+        return []
+    rows: list[dict] = []
+    for row in _scan_event_files(root):
+        if str(row.get("type") or "") != RULE_FEEDBACK_EVENT_TYPE:
+            continue
+        raw_payload = row.get("payload")
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        if str(payload.get("work_unit_id") or "") != wu:
+            continue
+        try:
+            merged = {
+                **payload,
+                "type": RULE_FEEDBACK_EVENT_TYPE,
+                "ts": str(row.get("ts") or ""),
+                "seq": int(row.get("seq") or 0),
+                "session_id": str(row.get("session_id") or payload.get("session_id") or ""),
+            }
+        except (TypeError, ValueError):  # noqa: BLE001 — 单行畸形不阻断扫描
+            continue
+        rows.append(merged)
+    return rows
+
+
+def _rule_receipts(
+    event_store: Any,
+    session_id: str,
+    *,
+    work_unit_id: str = "",
+    event_logs_dir: str | Path | None = None,
 ) -> list[dict]:
-    receipts = _ledger_receipts(method_store) + _ledger_receipts(experience_store)
-    receipts += collect_rule_feedback_receipts(event_store, session_id)
-    return receipts
+    """规则侧回执：本会话事件 +（确定任务时）跨会话投影扫描（fail-open）.
+
+    P-SET-7：确定任务窗口下，同工作单元任意会话的 rule.feedback 回执进入
+    匹配集（与 ledger 侧同工作单元口径对齐）；降级窗口 slot 以会话为身份，
+    不做跨会话扫描。当前会话行已含于 ``collect_rule_feedback_receipts``
+    （event_store 与 event_logs_dir 同源时按行级 session 去重，不重复计入）。
+    """
+    rows = collect_rule_feedback_receipts(event_store, session_id)
+    wu = str(work_unit_id or "").strip()
+    if not wu or not event_logs_dir:
+        return rows
+    try:
+        cross = _scan_rule_feedback_rows(Path(event_logs_dir), work_unit_id=wu)
+    except Exception:  # noqa: BLE001 — fail-open：投影扫描失败退回会话内口径
+        return rows
+    sid = str(session_id or "")
+    rows.extend(r for r in cross if str(r.get("session_id") or "") != sid)
+    return rows
+
+
+def _receipts_for_session(
+    method_store: Any,
+    experience_store: Any,
+    event_store: Any,
+    session_id: str,
+    *,
+    work_unit_id: str = "",
+    event_logs_dir: str | Path | None = None,
+) -> tuple[list[dict], int]:
+    """窗口内回执集合：两侧 ledger（无界+窗口过滤）+ 规则事件.
+
+    返回 ``(回执列表, 被排除的空 session legacy ledger 行数)``——后者供
+    清单 window 披露（P-SET-2 显式标注，不静默吞行）。
+    """
+    receipts: list[dict] = []
+    legacy_excluded = 0
+    for store in (method_store, experience_store):
+        rows, n_legacy = _ledger_receipts(
+            store, session_id=session_id, work_unit_id=work_unit_id
+        )
+        receipts.extend(rows)
+        legacy_excluded += n_legacy
+    receipts += _rule_receipts(
+        event_store, session_id, work_unit_id=work_unit_id, event_logs_dir=event_logs_dir
+    )
+    return receipts, legacy_excluded
 
 
 def _offsets(read: dict, receipts: list[dict], *, work_unit_id: str, session_id: str) -> bool:
@@ -203,6 +333,10 @@ def _offsets(read: dict, receipts: list[dict], *, work_unit_id: str, session_id:
 
     确定任务窗口：跳过 attribution=unresolved 的回执（降级窗口回执不抵扣
     确定任务，也不进任务级覆盖率分母）。
+    降级 session 窗口（P-SET-2）：只接受「回执自身携带非空且等于本会话的
+    session_id」的回执——空 session 回执（legacy 行）无法证明归属本会话，
+    不参与抵扣（排除数经清单 window.legacy_receipts_without_session_excluded
+    披露，不静默抵扣）。
     """
     for entry in receipts:
         if _receipt_ref(entry) != str(read.get("ref") or ""):
@@ -215,8 +349,8 @@ def _offsets(read: dict, receipts: list[dict], *, work_unit_id: str, session_id:
             if str(entry.get("attribution") or "") == "unresolved":
                 continue
         else:
-            # 降级 session 窗口：会话内回执即可抵扣（含其他降级回执）
-            if str(entry.get("session_id") or "") and str(entry.get("session_id")) != session_id:
+            entry_sid = str(entry.get("session_id") or "")
+            if not entry_sid or entry_sid != session_id:
                 continue
         return True
     return False
@@ -231,12 +365,14 @@ def build_pending_settlement(
     work_unit_id: str = "",
     tool_trace: Iterable[Any] | None = None,
     model_self_reported_no_contact: bool = False,
+    event_logs_dir: str | Path | None = None,
 ) -> dict:
     """待结算清单 = 读取事件 − 持久化结算回执（fail-open 投影，非新账本）."""
     wu = str(work_unit_id or "").strip()
     reads = collect_knowledge_reads(event_store, session_id)
     read_source = "knowledge_read_events"
     items: list[dict] = []
+    legacy_excluded = 0
     # P1-3：读取事件先按唯一键 (kind, ref, version) 收敛——settled_count 的单位是
     # "被回执抵扣的唯一键数"，同 key 重复读取不得虚增已结算数。
     read_keys: set[tuple[str, str, str]] = {
@@ -245,7 +381,14 @@ def build_pending_settlement(
     }
 
     if reads:
-        receipts = _receipts_for_session(method_store, experience_store, event_store, session_id)
+        receipts, legacy_excluded = _receipts_for_session(
+            method_store,
+            experience_store,
+            event_store,
+            session_id,
+            work_unit_id=wu,
+            event_logs_dir=event_logs_dir,
+        )
         pending: dict[tuple[str, str, str], dict] = {}
         for read in reads:
             if _offsets(read, receipts, work_unit_id=wu, session_id=session_id):
@@ -300,6 +443,9 @@ def build_pending_settlement(
         "window": {
             "anchor": "session_reads_minus_receipts",
             "session_id": str(session_id or ""),
+            # P-SET-2：降级窗口排除的空 session legacy ledger 行数（显式标注，
+            # 不静默抵扣也不静默吞行）；确定任务窗口按工作单元匹配，恒为 0。
+            "legacy_receipts_without_session_excluded": legacy_excluded,
         },
         "items": items,
         "settled_count": max(0, len(read_keys) - len(items)) if reads else 0,
@@ -333,37 +479,72 @@ def _submit_rule_item(
     work_unit_id: str,
     run_id: str,
     attribution: str,
+    event_logs_dir: str | Path | None = None,
 ) -> dict:
-    """规则侧回执写 canonical EventStore（按 submission_hash 先查后写）."""
+    """规则侧回执写 canonical EventStore（按 (slot, submission_hash) 先查后写）.
+
+    P-SET-5：ref 归一后入 slot/载荷/回执；supersedes 显式支持——请求父必须
+    是同 slot 链上既有 submission_hash，校验失败回 failed 并给原因（不静默
+    忽略，也不产生断链/环）；未显式请求时沿用程序推导的链头为父。
+    P-SET-7：确定任务 slot（work_unit_id 非空）查重跨会话——同
+    (slot, submission_hash) 跨会话重提返回幂等回执，不追加重复事件；
+    降级 slot 以会话为身份，维持会话内查重（跨会话本就是不同 slot）。
+    """
+    ref = _normalize_rule_ref(item.ref)
     submission_hash = derive_submission_hash(
         decision=item.decision, benefit=item.benefit, evidence_level=item.evidence_level,
         evidence_refs=list(item.evidence_refs), note=item.note, suggestion=item.suggestion,
     )
     slot_id = derive_slot_id(
         work_unit_id=work_unit_id or session_id or "unresolved",
-        kind="rule", ref=item.ref, version=item.read_version,
+        kind="rule", ref=ref, version=item.read_version,
     )
     existing = collect_rule_feedback_receipts(event_store, session_id)
+    if work_unit_id and event_logs_dir:
+        try:
+            cross = _scan_rule_feedback_rows(Path(event_logs_dir), work_unit_id=work_unit_id)
+        except Exception:  # noqa: BLE001 — fail-open：跨会话扫描失败退回会话内查重
+            cross = []
+        sid = str(session_id or "")
+        existing.extend(r for r in cross if str(r.get("session_id") or "") != sid)
     chain = [e for e in existing if e.get("slot_id") == slot_id]
     for row in existing:
         if row.get("submission_hash") == submission_hash and row.get("slot_id") == slot_id:
             return {
-                "kind": "rule", "ref": item.ref, "status": "committed",
+                "kind": "rule", "ref": ref, "status": "committed",
                 "idempotent": True, "slot_id": slot_id,
                 "submission_hash": submission_hash,
                 "revision": int(row.get("revision", 1) or 1),
                 "ledger_watermark": int(row.get("seq", 0) or 0),
             }
     revision = max((int(e.get("revision", 0) or 0) for e in chain), default=0) + 1
-    superseded = {str(e.get("supersedes") or "") for e in chain}
-    parent = next(
-        (e for e in chain if str(e.get("submission_hash") or "") not in superseded),
-        None,
-    )
+    requested = str(item.supersedes or "").strip()
+    parent = None
+    if requested:
+        # 显式 supersedes：父必须存在于同 slot 链（P-SET-5，与 ledger 侧
+        # resolve_submission 的父校验同口径）；不满足如实 failed。
+        parent = next(
+            (e for e in chain if str(e.get("submission_hash") or "") == requested), None,
+        )
+        if parent is None:
+            return {
+                "kind": "rule", "ref": ref, "status": "failed",
+                "reason": (
+                    "supersedes parent not found in rule slot chain "
+                    "(must be an existing submission_hash of the same slot)"
+                ),
+                "slot_id": slot_id, "submission_hash": submission_hash,
+            }
+    else:
+        superseded = {str(e.get("supersedes") or "") for e in chain}
+        parent = next(
+            (e for e in chain if str(e.get("submission_hash") or "") not in superseded),
+            None,
+        )
     payload = {
         "schema": RULE_FEEDBACK_SCHEMA,
         "kind": "rule",
-        "ref": item.ref,
+        "ref": ref,
         "read_version": item.read_version,
         "decision": item.decision,
         "benefit": item.benefit,
@@ -377,7 +558,7 @@ def _submit_rule_item(
         "slot_id": slot_id,
         "submission_hash": submission_hash,
         "revision": revision,
-        "supersedes": str(parent.get("submission_hash") or "") if parent else "",
+        "supersedes": requested or (str(parent.get("submission_hash") or "") if parent else ""),
         "attribution": attribution,
         "self_reported": bool(item.self_reported),
         "semantics": "model_declared_rule_execution_feedback",
@@ -388,18 +569,18 @@ def _submit_rule_item(
         event = event_store.append(session_id, RULE_FEEDBACK_EVENT_TYPE, payload)
     except Exception as exc:  # noqa: BLE001 — EventStore.append 自身 fail-open 返回 None
         return {
-            "kind": "rule", "ref": item.ref, "status": "failed",
+            "kind": "rule", "ref": ref, "status": "failed",
             "reason": f"rule feedback event append failed: {exc}",
             "slot_id": slot_id, "submission_hash": submission_hash, "revision": revision,
         }
     if event is None:
         return {
-            "kind": "rule", "ref": item.ref, "status": "failed",
+            "kind": "rule", "ref": ref, "status": "failed",
             "reason": "rule feedback event store unavailable (append returned None)",
             "slot_id": slot_id, "submission_hash": submission_hash, "revision": revision,
         }
     return {
-        "kind": "rule", "ref": item.ref, "status": "committed",
+        "kind": "rule", "ref": ref, "status": "committed",
         "slot_id": slot_id, "submission_hash": submission_hash,
         "revision": revision, "ledger_watermark": int(getattr(event, "seq", 0) or 0),
     }
@@ -418,18 +599,38 @@ def submit_settlement_batch(
     model: str = "",
     attribution: str = "",
     rule_lookup: Callable[[str], bool] | None = None,
+    event_logs_dir: str | Path | None = None,
 ) -> dict:
     """批量结算：逐条校验、逐条持久化、逐条回执（committed/pending/failed）.
 
     批量部分成功不宣称整批原子完成；写入未知（durability uncertain）返回
     pending 并附 submission_hash 查询提示，不谎报成功、不盲目重发。
+    ``event_logs_dir``（P-SET-7）：确定任务 slot 的规则回执查重跨会话——
+    经投影扫描同工作单元的全部 rule.feedback 事件，不追加重复事件。
     """
     wu = str(work_unit_id or "").strip()
     label = attribution.strip() if attribution.strip() else (f"task({wu})" if wu else "unresolved")
     entry_attribution = label if wu else "unresolved"
-    existing_receipts = _receipts_for_session(method_store, experience_store, event_store, session_id)
-    wu_receipts = [e for e in existing_receipts if _receipt_work_unit(e) == wu] if wu else existing_receipts
-    settlement_calls, settlement_rounds = _settlement_costs(wu_receipts, run_id=run_id)
+    existing_receipts, _legacy_excluded = _receipts_for_session(
+        method_store,
+        experience_store,
+        event_store,
+        session_id,
+        work_unit_id=wu,
+        event_logs_dir=event_logs_dir,
+    )
+    if wu:
+        window_receipts = [e for e in existing_receipts if _receipt_work_unit(e) == wu]
+    else:
+        # P-SET-6：降级窗口成本口径与 _offsets 对齐——只计本会话回执；
+        # 两侧全局账本里其他会话/其他工作单元的回执不再虚增本窗口的
+        # settlement_calls/settlement_rounds（B1 回执探针 A6：本会话首笔
+        # 提交回 calls=5 即此口径混入所致）。
+        sid = str(session_id or "")
+        window_receipts = [
+            e for e in existing_receipts if str(e.get("session_id") or "") == sid
+        ]
+    settlement_calls, settlement_rounds = _settlement_costs(window_receipts, run_id=run_id)
 
     receipts: list[dict] = []
     counts = {"committed": 0, "pending": 0, "failed": 0}
@@ -447,6 +648,7 @@ def submit_settlement_batch(
                 model=model,
                 entry_attribution=entry_attribution,
                 rule_lookup=rule_lookup,
+                event_logs_dir=event_logs_dir,
             )
         )
     for receipt in receipts:
@@ -476,6 +678,7 @@ def _submit_one(
     model: str,
     entry_attribution: str,
     rule_lookup: Callable[[str], bool] | None,
+    event_logs_dir: str | Path | None = None,
 ) -> dict:
     kind = str(item.kind or "").strip()
     ref = str(item.ref or "").strip()
@@ -513,6 +716,9 @@ def _submit_one(
     )
 
     if kind == "rule":
+        # P-SET-5：RULE-AI-N 模式 ref 提交时归一为大写——slot/载荷/回执与
+        # 投影查询同一口径（rule_exists 查询侧本就 upper()，此处补齐提交侧）。
+        ref = _normalize_rule_ref(ref)
         if rule_lookup is not None:
             try:
                 exists = bool(rule_lookup(ref))
@@ -529,6 +735,7 @@ def _submit_one(
             work_unit_id=work_unit_id,
             run_id=run_id,
             attribution=entry_attribution,
+            event_logs_dir=event_logs_dir,
         )
         if item.self_reported and receipt.get("status") == "committed":
             receipt["self_reported"] = True
@@ -691,7 +898,12 @@ class RuleFeedbackProjection:
             ts = str(row.get("ts") or "")
             if ts > indexed_watermark:
                 indexed_watermark = ts
-            ref = str(payload.get("ref") or row.get("ref") or "")
+            ref = str(payload.get("ref") or row.get("ref") or "").strip()
+            # P-SET-5：规则 ref 入投影前归一（RULE-AI-N 模式统一大写）——
+            # 与查询侧 upper() 对称，legacy 小写载荷行同样收敛到同一键；
+            # 非规则模式 ref（method/experience）大小写敏感，不在此归一。
+            if _RULE_REF_RE.fullmatch(ref):
+                ref = ref.upper()
             if not ref:
                 continue
             if event_type == RULE_FEEDBACK_EVENT_TYPE:
@@ -705,10 +917,15 @@ class RuleFeedbackProjection:
                 reads.setdefault(ref, []).append(str(payload.get("version") or ""))
         aggregated: dict[str, dict] = {}
         for ref, entries in feedback.items():
-            deduped: dict[str, dict] = {}
+            deduped: dict[tuple[str, str], dict] = {}
             for entry in entries:
-                key = str(entry.get("submission_hash") or "")
-                deduped.setdefault(key or f"ts:{entry.get('ts')}", entry)
+                hash_key = str(entry.get("submission_hash") or "")
+                # P-SET-1：去重键补 slot_id——同内容跨 slot（不同工作单元对
+                # 同一规则）不是重试，不折叠（两层身份原则）；同 slot 同
+                # hash（传输层重试/重复事件）仍收敛为一条。无 hash 的
+                # legacy 行退化为 ts 键，防止不同事件误并。
+                key = (str(entry.get("slot_id") or ""), hash_key or f"ts:{entry.get('ts')}")
+                deduped.setdefault(key, entry)
             unique = sorted(deduped.values(), key=lambda e: str(e.get("ts") or ""))
             recent_issue = ""
             for entry in reversed(unique):
