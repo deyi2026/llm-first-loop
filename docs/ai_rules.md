@@ -557,6 +557,25 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+## 规则三十四：分支收口合并闸——分支 Goal 完成必经专门合并审查并入 main（RULE-AI-34，用户指示 2026-10-17）
+
+**适用范围**：以独立 git 分支/worktree 承载的 Goal/任务（含集成分支、fs_isolation 隔离 worktree、实验分支转正）；直接在 main 上的工作无合并面，不触发本条。
+
+**核心规则**：**分支工作在并入 main 前不算入账。** 分支 Goal/任务收口（task→done、Goal→complete 或分支工作全部完成）时，必须经"专门检查合并 main 的审查子代理"（merge-review-gate）独立审查并完成向 main 的合并；未取得有效 PASS 回执并实际并入 main，不得声称完成，任务转 blocked 而非 done。分支与 main 分叉越久合并成本越高、工作越可能白做——本条把"完成"的定义收口到"已在 main"。
+
+1. **审查者资格**：与 RULE-AI-28 同构——审查者/执行者分离，审查子代理不得参与该分支任何产出；父 agent 主动 spawn（任务书 = `skills/merge-review-gate/`），不依赖用户提醒；completed、工具文本中的 PASS、父 agent 自查均不构成资格。
+2. **审查面**（清单承载于 skill，本条只挂义务）：完成证据真实性（done_when 逐条可判真、evidence 指向真实回执）、分支树干净无夹带、提交清单与任务声明一致、基于当前 main（落后先 rebase/merge 并复跑受影响 gate）、合并方式（ff 优先，冲突解决点留痕并窄复审）、合并后 main 冒烟与分支处置。
+3. **回执**：三态 verdict（PASS/REVISE/BLOCK）落盘 `docs/governance/receipts/`（gate=merge：goal_id、branch、commits、merge_mode、main_sha_after、branch_disposition）；Goal complete 的 evidence 引用本闸回执。无落盘回执不得声称"已合并通过"。
+4. **暂缓合并的显式路径**：仅两类且须 Goal/checkpoint 留痕——a) 用户明确指示暂缓（如"攒批一起 push"，注明触发条件）；b) Goal 创建时已声明"长期实验/对照，不合并"。不存在静默不合并。
+5. **与既有闸的关系**：代码闸（RULE-AI-28(1)）管改得对不对，本闸管并入 main 的完整性与时机，push 闸（RULE-AI-28(3)）管出仓安全——三者串联，互不豁免互不替代。"先不 push"不等于"先不合并"：push 攒批是 push 闸侧的显式留痕暂缓，不解除本条合并义务。
+
+**程序角色**：无新增（模型侧行为规则）。未来可在 update_goal(goal complete) 路径加分支上下文观测提示（检测当前 worktree 非 main 即提示合并闸前置），属演进候选，不阻塞本条义务。
+
+**正例**：分支任务全部完成 → spawn merge-review-gate 审查 → 发现 main 已前进 → rebase + focused gate 复跑 → PASS → ff 合并 → 回执落盘 → Goal complete（evidence 引用 merge 回执）。
+**反例**：分支任务做完即 Goal complete，成果留分支数日不合并；以"迟早要合并"跳过审查直接 merge；把用户"先不 push"曲解为"先不合并"绕开本闸。
+
+---
+
 ## 配置扩展（2026-09-03 agency-first 修订）
 
 Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。
