@@ -2,11 +2,11 @@
   "scenario": "S11",
   "title": "并发 100 次 interject 同一 queue_id",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-14T16:29:44",
+  "started_at": "2026-10-16T13:42:57",
   "steps": [],
   "wall": {},
   "dur_ms": {
-    "t_100_concurrent_interjects_ms": 115.0
+    "t_100_concurrent_interjects_ms": 160.5
   },
   "obs": {
     "status_202_count": 1,
@@ -43,6 +43,6 @@
     }
   },
   "endpoints": {},
-  "finished_at": "2026-10-14T16:29:45",
+  "finished_at": "2026-10-16T13:42:58",
   "status": "ok"
 }
