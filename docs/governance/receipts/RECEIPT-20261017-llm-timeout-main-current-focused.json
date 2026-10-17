@@ -1,0 +1,55 @@
+{
+  "stage": "latest_main_compaction_integration",
+  "status": "FOCUSED_PASS_PENDING_FINAL_MERGE_REVIEW",
+  "base_main_sha": "ddccf8843e3c0761160eb4dc06781a3f5572ac35",
+  "code_base_for_focused": "42fe370b96917bfd15eb0f4f68f0ce7073964983",
+  "docs_only_advance_confirmed": true,
+  "main_snapshot_sha": "ddccf8843e3c0761160eb4dc06781a3f5572ac35",
+  "main_status_snapshot": [],
+  "integration_head_before_evidence": "b7a9ef70d033504bcede1baa1e683d5f9c3a5dec",
+  "branch": "fix/llm-timeout-main-42fe-20261017",
+  "four_file_artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5",
+  "four_file_artifacts": [
+    {
+      "path": "src/llm_loop/llm/client.py",
+      "sha256": "35722ab429bf479c238040d7bfc06570fb23e28ebd4c0130b03ff2cd11c43ea9"
+    },
+    {
+      "path": "src/llm_loop/feedback/honesty.py",
+      "sha256": "a5706020a7a462d3059c1705c05a749703a416424aef8d97346c83a1ecad56a3"
+    },
+    {
+      "path": "tests/unit/test_timeout_recovery.py",
+      "sha256": "2cc99cda6b0b885b8213ce3b13676f865870bc325abd0e0b80d8968017ff5831"
+    },
+    {
+      "path": "tests/integration/test_fault_isolation.py",
+      "sha256": "d388980b264d79c7c9a7e6a68598ea28dcd060a2a73ab830fa387866aa7c5284"
+    }
+  ],
+  "conflicts_resolved": [],
+  "focused": {
+    "command_id": "sess-55664-3091",
+    "selected_files": 20,
+    "passed": 364,
+    "failed": 0,
+    "duration_seconds": 16.27,
+    "exit_code": 0,
+    "log": "data/llm-timeout-main-42fe-20261017/focused.log",
+    "log_sha256": "b50f7f966daae34be10829ce5bb355cb0fac53daab6e20fb434a3afe18d384c7",
+    "coverage": "previous17 + compaction_gate/interrupted persistence/program recovery boundary"
+  },
+  "ruff": "PASS: actual timeout artifact four files",
+  "diff_check": "PASS",
+  "historical_full_r9_base": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+  "historical_full_r9_receipt": "docs/governance/receipts/RECEIPT-20261017-llm-timeout-full-r9.json",
+  "new_full_r9_on_this_base": false,
+  "prior_main_98cd_focused": {
+    "passed": 309,
+    "receipt": "docs/governance/receipts/RECEIPT-20261017-llm-timeout-main-98cd-focused.json"
+  },
+  "prior_merge_block_superseded": "Initial dirty main converged; then compaction base42fe incorporated with focused, docs-only ddcc incorporated without code drift.",
+  "main_mutated": false,
+  "merged_main": false,
+  "production_changed": false
+}
