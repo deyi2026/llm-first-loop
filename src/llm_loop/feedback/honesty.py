@@ -94,6 +94,23 @@ def llm_error_text(error: Exception) -> str:
             f"原因: {type(error).__name__}: {error}\n"
             f"边界: 该错误码属于 provider 请求结构校验；本次未能获得模型回答。"
         )
+    # An explicit provider length stop is output exhaustion, not a transient empty stream.
+    if isinstance(error, LLMEmptyResponseError) and error.finish_reason.lower() in {
+        "length", "max_tokens",
+    }:
+        usage = (
+            f"输出 {error.completion_tokens} tokens"
+            if error.completion_tokens > 0 else "输出用量未报告"
+        )
+        if error.reasoning_tokens is not None:
+            usage += f"，其中思考 {error.reasoning_tokens} tokens"
+        return (
+            "[LLM 调用异常] 事实: 模型输出预算耗尽，尚无正文或工具调用，本轮已结束。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            f"用量: {usage}；finish_reason={error.finish_reason}。\n"
+            "建议: 核对该模型的输出预算，按模型支持范围提高预算后继续；"
+            "已有工具执行结果需先核对，避免重复执行。"
+        )
     # EVO-20260818-92bd97d6: 空响应专门文案（流被截断/模型抖动，重试可自愈）
     if isinstance(error, LLMEmptyResponseError):
         return (

@@ -1,0 +1,23 @@
+{
+  "recorded_at_utc": "2026-10-17T06:29:50.666979+00:00",
+  "configuration_path": "data/providers.local.json",
+  "json_pointer": "/glm/models/glm-5.3/max_tokens",
+  "before_sha256": "c8f0e16cb205d1eb63743e78e9ef3d1d83ae1fb87141621957d3d6d22a02c068",
+  "after_sha256": "c714d6dca825258584256c14e8ff38c624fbdaa124be74a4506703cc57a38d3e",
+  "old_explicit_value": null,
+  "previous_wire_value": 16000,
+  "new_explicit_value": 65536,
+  "semantic_changed_fields": 1,
+  "storage_lock": "data/.provider-admin.lock",
+  "write_mode": "flock + SHA CAS + fsync + atomic replace",
+  "backup": "data/glm-output-budget-20261017/providers.local.before.json",
+  "backup_mode": "0600",
+  "registry_reload": "HTTP200 existing provider reload endpoint",
+  "configured_default_model": "glm/glm-5.3",
+  "runtime_default_model": "glm/glm-5.3",
+  "default_client_budget_verified": false,
+  "default_client_requires_restart": true,
+  "restart_performed": false,
+  "rollback_contract": "same provider lock and CAS on after_sha256; never overwrite concurrent configuration",
+  "command_id": "sess-55664-3562"
+}
