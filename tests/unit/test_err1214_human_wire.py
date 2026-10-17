@@ -934,3 +934,45 @@ def test_t7_new_human_turn_retires_old_delegated_ingress_protection() -> None:
         item.get("content") != old_delegated.content for item in projection.built
     )
     assert validate_tool_call_pairing(projection.built) == []
+
+
+def test_subagent_delegated_ingress_survives_compaction_as_user_anchor():
+    """INC-20261017: a child's delegated ingress is program-origin by design.
+
+    It is still the child's only user-shaped turn, so compaction must not retire
+    it: doing so leaves ``assistant -> tool`` and GLM answers HTTP 400 / 1214 on
+    every retry (observed: 489 identical rejections for subagent_08561ba3535e).
+    """
+    ingress = Message(
+        role="user",
+        content="【父代理委派任务·非真人新授权】做一件事",
+        source=MessageSource.USER,
+        metadata={
+            "origin_layer": "program_recovery",
+            "program_origin": True,
+            "injection_kind": "subagent_task",
+            "subagent_depth": 1,
+        },
+    )
+    messages = [ingress]
+    for index in range(12):
+        messages.extend(_tool_group(index))
+
+    archived: list[Message] = []
+    for budget in (4_000, 8_000, 20_000):
+        archived.clear()
+        projected = build_history_messages(
+            messages,
+            system_prompt="",
+            max_chars=budget,
+            session_id="err1214-child-ingress",
+            archive_sink=lambda _sid, message: archived.append(message),
+            require_archive_success=True,
+            head_keep_chars=0,
+            preserve_active_ingress_message=ingress,
+            current_turn_ref=0,
+        )
+        roles = [item.get("role") for item in projected]
+        assert roles.count("user") == 1, (budget, roles)
+        assert roles[0] == "user", (budget, roles)
+        assert validate_tool_call_pairing(projected) == []

@@ -315,7 +315,7 @@ def test_cli_main_finally_closes_engine(monkeypatch):
         def close(self) -> None:
             closed.append(1)
 
-    monkeypatch.setattr("llm_loop.config.load_env_file", lambda: None)
+    monkeypatch.setattr("llm_loop.config.load_env_file", lambda *a, **k: None)
     monkeypatch.setattr("llm_loop.introspection.proc_version.record_process_start", lambda *a, **k: None)
     # load_settings 在 cli 模块顶层按值导入 → 需 patch llm_loop.cli.load_settings
     monkeypatch.setattr(cli_mod, "load_settings", lambda: object())

@@ -48,7 +48,12 @@ from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.fleet.coordinator import ProjectCoordinator
 from llm_loop.fleet.store import WorkerLease
 from llm_loop.llm.client import LLMClient
-from llm_loop.llm.errors import LLMEmptyResponseError, LLMError, is_overflow_error
+from llm_loop.llm.errors import (
+    LLMEmptyResponseError,
+    LLMError,
+    LLMHTTPError,
+    is_overflow_error,
+)
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
 from llm_loop.resources.provider_calls import ProviderCallCoordinator, subagent_provider_chat
 from llm_loop.resources.provider_settlement import (
@@ -2501,6 +2506,27 @@ class SubAgentRunner:
                 f"最小无损投影仍超过该模型输入容量（预算={budget}字符，"
                 f"投影={measured}字符）；完整委派和会话历史均已保留"
             )
+        if not any(m.get("role") == "user" for m in projected):
+            # Provider protocol invariant: a wire with no user-shaped turn is rejected
+            # before inference (GLM: HTTP 400 / provider_code 1214, "messages 参数非法").
+            # Re-anchor the exact persisted delegated ingress instead of sending it.
+            ingress = sess.messages[0].to_llm_dict() if sess.messages else None
+            if isinstance(ingress, dict) and ingress.get("role") == "user":
+                repaired = [ingress, *projected]
+                repaired_chars = sum(dict_wire_chars(m) for m in repaired)
+                if repaired_chars <= budget:
+                    logging.getLogger(__name__).warning(
+                        "child wire lost its user anchor under compaction; "
+                        "re-anchored persisted ingress: session=%s wire_messages=%d chars=%d",
+                        sess.session_id, len(repaired), repaired_chars,
+                    )
+                    projected = repaired
+                    measured = repaired_chars
+            if not any(m.get("role") == "user" for m in projected):
+                return [], (
+                    "压缩后的投影不含任何 user 消息（Provider 会以 HTTP 400/1214 "
+                    "拒绝该 wire）；完整委派和会话历史均已保留，拒绝发送非法请求"
+                )
         logging.getLogger(__name__).info(
             "child context projected: session=%s model=%s source_messages=%d "
             "wire_messages=%d budget_chars=%d",
@@ -2528,6 +2554,8 @@ class SubAgentRunner:
         truncated = False
         llm_error_count = 0
         last_llm_error = ""
+        last_error_signature = ""
+        same_error_streak = 0
         active_llm = llm_client or self.llm
         archived_once: set[int] = set()
 
@@ -2650,6 +2678,29 @@ class SubAgentRunner:
                 # 留在本地 terminal outcome，不进入模型对话历史。
                 llm_error_count += 1
                 last_llm_error = f"{type(exc).__name__}: {exc}"
+                # EVO-20261017-1d589ac3: a deterministic request rejection must not be
+                # re-sent unchanged.  4xx (except timeout/early-hints/rate-limit) is a
+                # property of this exact wire: retrying it burned a child's whole round
+                # budget (489->491 identical 400s) and masked the cause as "truncated".
+                if isinstance(exc, LLMHTTPError):
+                    status_code = int(getattr(exc, "status_code", 0) or 0)
+                    if 400 <= status_code < 500 and status_code not in (408, 425, 429):
+                        return SubAgentResult(
+                            final_answer=(
+                                "[状态: failure] 子代理模型请求被 Provider 确定性拒绝"
+                                f"（HTTP {status_code}，provider_code="
+                                f"{getattr(exc, 'provider_code', None) or 'n/a'}）："
+                                f"{str(exc)[:400]}。"
+                                "同一 wire 不会因重试而改变，已停止重发；"
+                                "子会话原始历史保持持久化。"
+                            ),
+                            outcome="failed",
+                            rounds=rounds,
+                            tool_calls=tool_trace,
+                            depth=depth,
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
+                        )
                 if isinstance(exc, LLMEmptyResponseError):
                     # Provider returned a real completed stream, possibly spending its
                     # entire reasoning/output allowance without a visible answer.
@@ -2682,6 +2733,29 @@ class SubAgentRunner:
                             "[状态: failure] 子代理模型输入超出该路由实际接收窗口；"
                             f"last_error={last_llm_error}。"
                             "当前子会话原始历史保持持久化，需先缩减输入投影或切换合适模型。"
+                        ),
+                        outcome="failed",
+                        rounds=rounds,
+                        tool_calls=tool_trace,
+                        depth=depth,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                    )
+                signature = f"{type(exc).__name__}:{str(exc)[:200]}"
+                if signature == last_error_signature:
+                    same_error_streak += 1
+                else:
+                    last_error_signature = signature
+                    same_error_streak = 1
+                if same_error_streak >= 3:
+                    # Same failure three times on an unchanged wire: transient retries
+                    # no longer explain it, so stop instead of burning the round budget.
+                    return SubAgentResult(
+                        final_answer=(
+                            "[状态: failure] 子代理连续 "
+                            f"{same_error_streak} 次收到同一模型错误，"
+                            f"已熔断停止重放：{last_llm_error[:400]}。"
+                            "子会话原始历史保持持久化。"
                         ),
                         outcome="failed",
                         rounds=rounds,

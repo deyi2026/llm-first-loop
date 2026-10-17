@@ -886,11 +886,28 @@ def build_history_messages(
     _preserved_ingress: Message | None = None
     _preserved_ingress_source_index: int | None = None
     _requested_ingress = preserve_active_ingress_message or preserve_human_message
+    # Sub-agent delegation is explicit transport provenance, not semantic authority:
+    # the child's only user-shaped turn is program-origin by design, so the
+    # injected-block filter must not disqualify it.  Without this carve-out
+    # compaction can retire the child's sole user message and leave an
+    # assistant/tool-only wire that GLM rejects as HTTP 1214
+    # (INC-20261017 subagent_08561ba3535e).
+    _requested_is_child_ingress = (
+        _requested_ingress is not None
+        and getattr(_requested_ingress, "role", "") == "user"
+        and (getattr(_requested_ingress, "metadata", None) or {}).get("injection_kind")
+        == "subagent_task"
+    )
     if (
         _requested_ingress is not None
         and id(_requested_ingress) in _source_index_by_id
-        and is_active_run_ingress_message(_requested_ingress)
-        and not _is_injected_block(_requested_ingress)
+        and (
+            _requested_is_child_ingress
+            or (
+                is_active_run_ingress_message(_requested_ingress)
+                and not _is_injected_block(_requested_ingress)
+            )
+        )
     ):
         _preserved_ingress = _requested_ingress
         _preserved_ingress_source_index = _source_index_by_id[id(_requested_ingress)]
@@ -1307,9 +1324,13 @@ def build_history_messages(
                 # （信息零丢失）+ 提交保留截断版（锚点残迹在，防漂移语义保留）。
                 archived.extend(group)
                 trimmed_group: list[Message] = []
+                # 截断上限取压缩目标水位（而非硬上限）并预留头部/包装余量：
+                # 头部的 active-run ingress 与 system 前缀不可裁，若这里按 max_chars
+                # 截断，叠加锚点后会再次越过 max_chars（INC 1214 修复后实测 2920>2752）。
+                _content_cap = max(min(trim_budget, _archive_target_chars) - 200, 100)
                 for mm in group:
                     trimmed = (
-                        mm.content[: max(trim_budget - 100, 100)]
+                        mm.content[:_content_cap]
                         + "\n…[本消息已压缩，完整内容已另存；检索入口: search_archive]…"
                     )
                     trimmed_group.append(

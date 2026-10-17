@@ -816,3 +816,59 @@ def test_subagent_tools_have_type_field(build_test_engine):
         for t in tools:
             assert t.get("type") == "function", f"缺 type=function: {t}"
             assert "function" in t and "name" in t["function"], f"缺 function.name: {t}"
+
+
+def test_deterministic_4xx_fails_fast_instead_of_burning_round_budget(build_test_engine):
+    """INC-20261017: a 400 is a property of the wire, not a transient fault.
+
+    The old branch treated every non-empty-response error as retryable and re-sent
+    the identical request (489->491 times), ending as ``truncated`` and hiding the
+    real provider code.
+    """
+    from llm_loop.llm.errors import LLMHTTPError
+
+    engine, fake = build_test_engine([])
+    runner = SubAgentRunner(
+        llm=fake,
+        registry=engine.registry,
+        session_store=engine.session,
+        max_iterations=500,
+    )
+
+    def _reject(_calls):
+        raise LLMHTTPError(
+            "HTTP 400: messages 参数非法。请检查文档。",
+            status_code=400,
+            provider="glm",
+            provider_code="1214",
+        )
+
+    fake._responses = [_reject]
+    result = runner.run(task="复现 1214", depth=0)
+
+    assert result.outcome == "failed"
+    assert result.rounds == 1
+    assert len(fake.calls) == 1
+    assert "HTTP 400" in result.final_answer
+    assert "1214" in result.final_answer
+
+
+def test_repeated_identical_error_trips_breaker_before_round_budget(build_test_engine):
+    """Non-HTTP deterministic failures still must not repeat forever unchanged."""
+    engine, fake = build_test_engine([])
+    runner = SubAgentRunner(
+        llm=fake,
+        registry=engine.registry,
+        session_store=engine.session,
+        max_iterations=500,
+    )
+
+    def _boom(messages, tools, **kwargs):
+        raise RuntimeError("schema wrapper rejected")
+
+    fake.chat = _boom  # type: ignore[method-assign]
+    result = runner.run(task="重复同一失败", depth=0)
+
+    assert result.outcome == "failed"
+    assert result.rounds == 3
+    assert "熔断" in result.final_answer
