@@ -1,0 +1,97 @@
+{
+  "P0": 0,
+  "P1": 0,
+  "P2": 2,
+  "branch_tip_reviewed": "0958a158c670a56771052dd37b33ef66e1574538",
+  "changed_files": [
+    "docs/DESIGN-20261017-p1-controlled-upgrade-transaction.md",
+    "docs/installation.md",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/runtime/upgrade_preflight.py",
+    "tests/unit/test_upgrade_candidate_preflight.py"
+  ],
+  "deploy": false,
+  "gate": "merge",
+  "goal_id": "2f012545-4f89-478b-ab87-53668e3004b2",
+  "integration_branch": "integrate/p1-upgrade-preflight-main-89d-20261017",
+  "main_integration_focused": {
+    "failed": 0,
+    "log_sha256": "97fbc975a3fc9cb8a4e4528baac11d1594286719699f60c83516f91c9b8e2f51",
+    "passed": 81
+  },
+  "main_integration_quick": {
+    "failed": 0,
+    "log_sha256": "19650006ee0663650adbafec58a702053d24010adb0f3214c791371a2faab82d",
+    "passed": 319
+  },
+  "main_sha_after": null,
+  "main_sha_at_review": "89d00f93cf41aea6425e800d2672075e1eb8bc89",
+  "merge_executed": false,
+  "merge_mode": "ff-only",
+  "preflight_limitations": {
+    "abort_implemented": false,
+    "candidate_trusted": false,
+    "commit_implemented": false,
+    "data_schema_compatibility_proven": false,
+    "mode": "read_only_candidate_integrity_only",
+    "prepare_implemented": false,
+    "service_stop_proven": false,
+    "stage_eligible": false
+  },
+  "production_upgrade": false,
+  "publish": false,
+  "push": false,
+  "qualification": "PASS",
+  "raw_rule34_review_sha256": "68280aecd80d1e974a944196eb2dc28b9016e26eb78b54e2dbc1d827cc206c57",
+  "raw_rule34_review_text": "VERDICT: PASS\nP0=0 P1=0 P2=2\nSHA256: 83bcb3648cbd8aac84be3cfa43d50d11c05cb736bab8fd5c4b2172cefd59cd7b\n\nFindings (independent review of the exact patch against the frozen facts):\n\n**Eligibility chain verified** — independent GLM-5.3 source review is PASS with 0/0/4 (receipt 569fc986…c81f4); original full R9 exit 0 (9424 passed / 0 failed, log cf56b8d5…16ea); latest-main focused 81 passed (97fbc975…2f51) and Quick 319 passed with pyright_new=0 (19650006…b82d); genuine new-venv installed-wheel WebUI smoke with web/ui health 200 and zero provider calls (00998efe…5d05). The patch content I read matches the declared changed_files set exactly — no extra/unexplained files inside the candidate.\n\n**Security posture is fail-closed**: the new preflight is read-only (O_NOFOLLOW/O_NONBLOCK open, fstat regular-file check, symlink final-component rejection, TOCTOU re-fstat after read), zip-bomb bounded (_MAX_MEMBERS/_MAX_UNCOMPRESSED/_MAX_WHEEL_BYTES), path-traversal/symlink-member/absolute-name rejection, duplicate METADATA/WHEEL members rejected, and — critically — `candidate_trusted=false`/`stage_eligible=false` unconditionally, with `--require-trust`/`--require-data-compatibility` hard-refusing even after integrity passes. No network, subprocess, installer, or service mutation path exists in the new code; the tests monkeypatch precisely to prove absence of those side effects. No credentials or user bytes leak into reports or stdout (tests assert this).\n\n**Mutation verbs correctly unavailable**: `--prepare/--commit/--abort` remain argparse errors (exit 2), matching the \"limits\" clause.\n\n**Branch hygiene**: `root_dirty_others` lists only untracked files outside the changed set (SVGs, unrelated event_scan_cache work) — not smuggled into the candidate; they must be disposed before merge per gate §前置5 but do not contaminate this patch's content fingerprint. merge_executed=false and push=false are correctly reported — I performed and claim no merge.\n\nP2 findings (non-blocking):\n1. `upgrade_preflight._read_candidate` blocks only a final-component symlink (`candidate.is_symlink()`); an intermediate directory component of the supplied path may still be a symlink (O_NOFOLLOW applies only to the final open). Defense-in-depth gap only, since the digest must still match the operator-supplied expected SHA.\n2. CLI digest syntax check accepts mixed case (`abcdefABCDEF`) but `_DIGEST` regex in the module is unused for that path; minor duplication/dead-regex inconsistency — cosmetic.\n\nCandidate is eligible for separately authorized ff-only local merge into main; nothing in the patch creates a security, correctness, or provenance blocker.",
+  "receipt_scope": "Rule34 reviewer examined the frozen code commit, not this later docs-only evidence file.",
+  "remaining_P2": [
+    "intermediate-directory symlink path not independently opened with dirfd",
+    "unused module-level digest regex duplicates CLI validation"
+  ],
+  "requires_separate_explicit_local_main_merge_authorization": true,
+  "restart": false,
+  "review_isolated_attested": true,
+  "review_material_sha256": "ec1823d561b73e564176e70c3cb5414a160ac01c3011371a6d464db116a1dea7",
+  "review_text_sha256": "57df981e86d8e9ffc1b8d9089f1271a0f09fb5bb407f3aec3c41d5bca61bba98",
+  "reviewed_code_patch_sha256": "83bcb3648cbd8aac84be3cfa43d50d11c05cb736bab8fd5c4b2172cefd59cd7b",
+  "reviewer": "subagent_08d6b97547a5",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_terminal_count": 1,
+  "schema": "lfl.rule34.merge_qualification/v1",
+  "source_commit": "24405f31f1714a201894bc03e7d0a91e9e0b1bef",
+  "source_glm53_review": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 4,
+    "qualification": "PASS",
+    "receipt_sha256": "569fc9867e9df18c685b275647cdba783cee59f6edd0d7fb10ddd7fb146c81f4",
+    "reviewer": "subagent_3435788b9e22"
+  },
+  "source_official_full_R9": {
+    "exit_code": 0,
+    "failed": 0,
+    "log_sha256": "cf56b8d5a5df068edcbfa5c72315372dc33979309a96e8243b6933914cde16ea",
+    "managed_commit_log_sha256": "978af4f6502a09a96b866cd35ccf840f0814356685c73f94a129f6b7f1c2d431",
+    "passed": 9424,
+    "skipped": 146
+  },
+  "unrelated_main_root_guard_red": "event_scan_cache.py untracked persistent writer requires owner classification",
+  "unrelated_main_worktree_untracked_files_preserved": [
+    "pelican_bicycle_animation.svg",
+    "pelican_bike_own.svg",
+    "src/llm_loop/introspection/event_scan_cache.py",
+    "tests/unit/test_event_scan_cache.py"
+  ],
+  "verdict": "PASS",
+  "wheel_offline_installed_smoke": {
+    "fresh_venv": true,
+    "log_sha256": "00998efecc33d7b0b8cb0c7ec289d59191debd9f7c4145a20839d79ba2d15d05",
+    "passed": true,
+    "provider_calls": 0,
+    "resource_integrity_checked_files": 345,
+    "web_health": 200,
+    "web_ui": 200,
+    "wheel_sha256": "8a8c96e2a2bcb1d0eeca89cc98926f3e4ac90168771615d31438129c9db469f4"
+  }
+}
