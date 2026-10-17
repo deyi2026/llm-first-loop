@@ -1,0 +1,89 @@
+{
+  "based_on_main": true,
+  "branch": "integrate/install-compaction-doctor-main-ab9-20261017",
+  "branch_disposition": "kept pending explicit owner local-main ff-only merge authorization, postmerge regression and cleanup approval",
+  "branch_tip_reviewed": "b25b41dba589cb9e21d26e32cdc619c5b6289e2f",
+  "combined_code_patch_sha256": "f2081a6a31fc70c6ca77c951c0fd40de9e4f358a1385833bd86df3f6bf9463b7",
+  "commits": [
+    "5e279d233bff0f52f7ab02f8c7e5ef70f3f892e0",
+    "b25b41dba589cb9e21d26e32cdc619c5b6289e2f"
+  ],
+  "conflicts_resolved": [],
+  "evidence_sha256": {
+    "combined_focused_log": "680f3791a03081593a230e9f6747c6e54bfbd069d88c2470ca46254f5a1e52b2",
+    "combined_full_R9_log": "730a9741fc8b7b4237b3e88b7e3d2bcfa12b2c9282680571e78011b10fa780df",
+    "combined_quick_log": "f45820998c15a5ca9611aa2de778c8e168bbfad13533a2eef563a3a07f9e3a8e",
+    "combined_r9_commit_log": "03c426be31b7a6487c987fb8709bc65f15120d42d383d66f4fc729cd3380f374",
+    "compaction_code_review": "037bc6e4cc34cf9984f29a6e99e2a2b202e4e4abf3e653a56830f68f4ba133ec",
+    "doctor_code_review": "54bac0dc3bfe79d549c904bbaf453c0e8219c5bcff6ae904886444566340c481"
+  },
+  "fingerprint_boundary": {
+    "future_docs_only_commit_must_change_only_this_JSON_file": true,
+    "receipt_is_added_only_after_readonly_review": true,
+    "receipt_is_evidence_only_not_reviewed_as_code": true,
+    "review_was_of_code_tip": "b25b41dba589cb9e21d26e32cdc619c5b6289e2f"
+  },
+  "focused_gates": [
+    "combined on current main: 102 passed, 0 failed",
+    "original native Quick: 319 passed / 9181 deselected / exit0; Pyright new=0 changed=0",
+    "original full R9: 9338 passed / 146 skipped / 0 failed; official r9_commit.sh exit=0",
+    "Rule28 compaction reviewer subagent_d3f7eb3b74bc PASS P0/P1=0",
+    "Rule28 doctor fixture reviewer subagent_35b7ea817b73 PASS P0/P1=0",
+    "git security scan PASS, R9 commit gate PASS on both source commits"
+  ],
+  "gate": "merge",
+  "goal_id": "2f012545-4f89-478b-ab87-53668e3004b2",
+  "main_sha_after": null,
+  "main_sha_at_review": "ab9b811d88d15bb5e41fcb96afbc2a149643fe54",
+  "merge_base": "ab9b811d88d15bb5e41fcb96afbc2a149643fe54",
+  "merge_executed": false,
+  "merge_mode": "ff",
+  "not_authorized": [
+    "git push",
+    "production publish",
+    "service restart",
+    "mutation of other-agent work"
+  ],
+  "pending_gates": [
+    "obtain separate explicit user authorization for main fast-forward",
+    "refresh main and integration SHA and Rule34 qualification prior to any merge",
+    "preserve other-agent uncommitted experience usage files",
+    "postmerge focused/smoke and identity checks"
+  ],
+  "phase": "compaction Pyright three fix + P1 doctor test fixture hermeticity",
+  "qualification": "PASS for reviewed frozen code tree; not main-merged",
+  "review": {
+    "child_id": "subagent_ed948b009da2",
+    "external_review_receipt_sha256": "047079e1bbbb35931660bc37bbfb45106c0ecf13c0a8f902f57c8490f43829f7",
+    "material_sha256": "d4c7d594bc9eaa256b9f5b15d8990788a74349d13933fb151868ce701bdfe331",
+    "max_rounds": 1,
+    "model": "glm/glm-5.3",
+    "native_terminal_count": 1,
+    "p0": 0,
+    "p1": 0,
+    "p2": 1,
+    "parent": "compaction-doctor-rule34-main-ab9-20261017",
+    "registered_tools": 0,
+    "result_id": "result-21cce5d8768242ee9f7d4c0d2dcaa9c1",
+    "review_isolated_attested": true,
+    "review_text": "独立审查（RULE-AI-34 合并闸，只读，不动 main）\n\n事实核对（依据冻结证据与完整补丁）：\n1. 分支卫生：branch_clean=true，commits_count=2，与提供的两个 commit（5e279d2 compaction 类型收窄、b25b41d doctor fixture 隔离）一致，无夹带声明外文件；改动面仅为声明的 3 个 code/test 文件。\n2. 双提交身份：cherry-pick 保留原 compaction 提交 ad90e66 的来源标注，doctor 测试提交独立，身份清晰。\n3. 源审查权威：两项 Rule28 代码审查均 PASS（P0=0/P1=0），且 reviewer_known_limits 明确要求合并层复核合并补丁——本审查即完成该复核。\n4. 补丁正确性逐行复核：\n   - compaction_gate.py：list-comprehension 改写为显式循环，isinstance(seq, int) 判定完全一致（bool 亦为 int 子类，行为与原版相同，无语义变化）；receipt fields 集合推导改为循环，_RECEIPT_FIELD_RE.match 单次调用改存变量，语义等价（原版每行 match 两次，新版一次，纯优化）。\n   - 新增 test_compaction_pyright_narrowing.py 覆盖混合 msg_seq（None/str/float）、全非整数、receipt 字段匹配含伪造前缀与缺字段场景，断言合理（seq_range=[4,9]、无整数时 None、receipt_valid 需配恢复工具）。\n   - test_application_doctor.py：monkeypatch cli.__file__ 到隔离路径，防止源码安装时开发 checkout 的 .env 泄入首次安装模拟；新增回归测试断言隔离生效且 config 仍 warn。monkeypatch 模块属性在运行时读取，方法有效。\n5. 测试面：joined focused 102 通过、native Quick 319 通过、全量 R9 9338 passed/0 failed 且 r9_commit.sh EXIT=0，含 Pyright new=0 / Ruff / EnvPin / security PASS。R9 真实性依赖所给 SHA（730a97…），与本合并闸不可重复跑全量一致，已引用回执。\n6. 基线与合并方式：merge_base == 当前 main（ab9b811），基于最新 main，可 fast-forward（2 commits 直线领先）；无冲突解决点。\n7. 后续义务（父会话执行，非本审查）：合并前 fresh ref/currentness 复查、本地 main ff-only 需 owner 单独批准、尊重另一 agent 在 main worktree 的水印编辑（不得 stash/discard）、合并后受影响 focused 冒烟、记录实际 main SHA 与分支处置。未发生任何 main merge/push/重启。\n\n发现：\nP0=0（无安全问题、无语义破坏、无越权）\nP1=0（证据链完整、覆盖与声明一致、基线新鲜）\nP2=1（次要：合并层无法独立复算 combined_patch_sha256 与 R9 回执哈希，只能采信冻结证据；建议父会话在 ff 前本地复算 `git diff main...branch | sha256sum` 与 f2081a6a… 比对后再执行）\n\n按规则：无 P0/P1，PASS 允许。\n\nP0=0 P1=0 P2=1\nSHA256: f2081a6a31fc70c6ca77c951c0fd40de9e4f358a1385833bd86df3f6bf9463b7\nVERDICT: PASS",
+    "review_text_sha256": "acd5aa37da6883edc7c5ce6ddd757f1ad112e946cc86a002dd4f50cdf8c57625",
+    "reviewer": "subagent_ed948b009da2",
+    "state": "completed",
+    "verdict_format_valid": true
+  },
+  "reviewed_files": [
+    "src/llm_loop/core/loop/engine_services/compaction_gate.py",
+    "tests/unit/test_application_doctor.py",
+    "tests/unit/test_compaction_pyright_narrowing.py"
+  ],
+  "reviewer_p2": [
+    "Specialist could not independently recompute SHA from its no-tool isolated session; parent verified exact binary git diff SHA against frozen digest before writing this receipt."
+  ],
+  "schema": "lfl.merge_review_receipt/v1",
+  "source_compaction_commit": "ad90e66265168499afea664507de05b96de42b25",
+  "source_compaction_patch_sha256": "ed0a3d6f8e7a958d9c3bb42728c991d8718f1612bce741981bc9391ece47fbe1",
+  "source_doctor_fixture_patch_sha256": "128107196c2163098bd43d8d68e2879f7fa0fd68663fbcb73af698de34de457b",
+  "tree_clean_before_receipt": true,
+  "verdict": "PASS"
+}
