@@ -1,0 +1,140 @@
+{
+  "gate": "merge",
+  "reviewer": "/root/timeout_merge_review",
+  "reviewer_kind": "independent_host_codex_subagent",
+  "reviewer_is_glm53": false,
+  "verdict": "PASS",
+  "branch": "fix/llm-timeout-main-42fe-20261017",
+  "reviewed_candidate_head": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+  "reviewed_main_sha": "ddccf8843e3c0761160eb4dc06781a3f5572ac35",
+  "based_on_main": true,
+  "candidate_clean": true,
+  "main_clean": true,
+  "artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5",
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "20 files:364 passed,exit0",
+    "Ruff PASS",
+    "diff-check PASS"
+  ],
+  "focused_log_sha256": "b50f7f966daae34be10829ce5bb355cb0fac53daab6e20fb434a3afe18d384c7",
+  "new_full_r9_required": false,
+  "new_full_r9_performed": false,
+  "full_r9_boundary": "Original full R9 is historical on41f; current compaction/doctor integration covered by focused and independent boundary review",
+  "merge_performed": true,
+  "expected_main_sha_after": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+  "main_sha_after": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+  "branch_disposition": "kept: integration and original frozen branches retain exact review/test source for release audit; detached postmerge checkout retains reproducible smoke source.",
+  "recorded_at_utc": "2026-10-17T02:46:27.183727+00:00",
+  "task": "LLM zero-output timeout bounded recovery",
+  "commits": [
+    "d2a9085bd6c7c5ccbb147b975ab0b00afdbe2738",
+    "eb4a1903dec4657f43bcfe07fcd77c3d7fdc6f5e",
+    "d560a97d7f5c7e4f83820d69feca3e572c12b7d4",
+    "b7a9ef70d033504bcede1baa1e683d5f9c3a5dec",
+    "f9893a3aef71f196039bf06cbe44cd265820baaf"
+  ],
+  "merge_command_id": "sess-55664-3115",
+  "main_sha_after_source_merge": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+  "main_clean_immediately_after_source_merge": true,
+  "postmerge_verdict": "PASS_ON_SAME_COMMIT_CLEAN_CHECKOUT_WITH_CONFIGURED_MAIN_DOCTOR_DIFFERENCE_DOCUMENTED",
+  "postmerge_selection": [
+    "tests/unit/test_timeout_recovery.py",
+    "tests/integration/test_fault_isolation.py",
+    "tests/unit/test_compaction_gate.py",
+    "tests/unit/test_factory.py",
+    "tests/unit/test_application_doctor.py"
+  ],
+  "postmerge_in_place": {
+    "command_id": "sess-55664-3116",
+    "head": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+    "exit_code": 1,
+    "passed": 93,
+    "failed": 2,
+    "duration_seconds": 1.61,
+    "log": "data/llm-timeout-main-42fe-20261017/postmerge-smoke.log",
+    "log_sha256": "c27f7c39d6fb98daa53bbd89d267dc09b8baf9c68450e2bd374e79bb42ea36ec",
+    "failed_nodes": [
+      "tests/unit/test_application_doctor.py::test_unconfigured_doctor_is_read_only_and_actionable",
+      "tests/unit/test_application_doctor.py::test_doctor_help_is_stateless_and_human_output_has_fixes"
+    ],
+    "classification": "Both expect an unconfigured source checkout (rc1). Main has real root .env; doctor resolves source root despite fixture chdir and reports configured rc0. No timeout test failed; no production config changed."
+  },
+  "configured_main_doctor_probe": {
+    "exit_code": 0,
+    "ready": true,
+    "checks": [
+      {
+        "id": "installation",
+        "status": "pass"
+      },
+      {
+        "id": "config",
+        "status": "pass"
+      },
+      {
+        "id": "model",
+        "status": "pass"
+      },
+      {
+        "id": "data_dir",
+        "status": "pass"
+      },
+      {
+        "id": "workspace",
+        "status": "pass"
+      },
+      {
+        "id": "resources",
+        "status": "pass"
+      }
+    ],
+    "offline_local_prerequisites_only": true,
+    "real_credentials_or_provider_not_validated": true,
+    "log": "data/llm-timeout-main-42fe-20261017/postmerge-configured-doctor-sanitized.json",
+    "log_sha256": "fb84ec104a242129b190b21ff545e699f8f30037e2beec40334e618b3969c457",
+    "command_id": "sess-55664-3166"
+  },
+  "postmerge_clean_checkout": {
+    "command_id": "sess-55664-3134",
+    "head": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+    "exit_code": 0,
+    "passed": 95,
+    "failed": 0,
+    "duration_seconds": 1.94,
+    "log": "data/llm-timeout-main-42fe-20261017/postmerge-clean-checkout-smoke.log",
+    "log_sha256": "3837edd15e3fe25447987616fb2c99918dbca4809fc3756fd1750bc4b5c83e90",
+    "configuration": "Detached source checkout without main local .env; same committed source and project venv."
+  },
+  "known_test_environment_limitation": "Two upstream doctor tests do not isolate source-root .env; preserved as observation, not changed or waived as passing in main in-place run.",
+  "historical_full_r9_receipt": "docs/governance/receipts/RECEIPT-20261017-llm-timeout-full-r9.json",
+  "current_focused_receipt": "docs/governance/receipts/RECEIPT-20261017-llm-timeout-main-current-focused.json",
+  "raw_logs_preserved_in_main_data": [
+    "data/llm-timeout-recovery-20261017/integration-revised.log",
+    "data/llm-timeout-recovery-20261017/backoff-red.log",
+    "data/llm-timeout-recovery-20261017/generated-reports-first-r9.patch",
+    "data/llm-timeout-recovery-20261017/review-green.log",
+    "data/llm-timeout-recovery-20261017/architecture.log",
+    "data/llm-timeout-recovery-20261017/generated-reports-final-r9.patch",
+    "data/llm-timeout-recovery-20261017/last-green.log",
+    "data/llm-timeout-recovery-20261017/full-r9.log",
+    "data/llm-timeout-recovery-20261017/ruff-ratchet.log",
+    "data/llm-timeout-recovery-20261017/full-r9-final.log",
+    "data/llm-timeout-recovery-20261017/final-focused.log",
+    "data/llm-timeout-recovery-20261017/cancel-red.log",
+    "data/llm-timeout-recovery-20261017/review-red.log",
+    "data/llm-timeout-recovery-20261017/final-pyright.log",
+    "data/llm-timeout-main-98cd-20261017/focused.log",
+    "data/llm-timeout-main-42fe-20261017/focused.log"
+  ],
+  "runtime_ledger_changes_preserved_uncommitted": [
+    "experiences/.usage_watermark.json",
+    "experiences/usage.jsonl"
+  ],
+  "runtime_ledger_attribution": "Unknown; live usage ledger changes left untouched and excluded from this evidence commit.",
+  "push_performed": false,
+  "production_changed": false,
+  "restart_performed": false,
+  "qualification_boundary": "Local source integration complete. Real provider recovery rate and production runtime not qualified by these offline tests."
+}
