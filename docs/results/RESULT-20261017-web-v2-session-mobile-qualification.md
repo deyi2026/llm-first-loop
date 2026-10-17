@@ -33,10 +33,17 @@
 - QA 结果与截图留在本地忽略目录：`data/web-v2-mobile-qa-20261017/{report.json,viewport-*.png}`。
 - 这验证的是 **Chromium 移动仿真**，不是实体 iOS Safari、Android WebView 或真实弱网设备。生产 before/after 延迟改善仍待受控上线后同口径重测；不得从 6/6 UI 功能 PASS 宣称线上性能达标。
 
-## 待放行闸
+## 审查与正式验收回执
 
-1. 冻结当前变更指纹并由真正独立的代码 Reviewer 根据 `skills/code-review-gate/SKILL.md` 审阅（RULE-AI-28），有效 PASS 且 P0/P1 均为 0。
-2. 审查后对冻结 candidate 跑项目原版 `bash scripts/ci_gate.sh`（完整 R9）；保留退出码/日志/候选指纹，切勿把 Quick 当全量。
-3. 与最新 main 再核对交叉文件，独立合并门与生产 Web-only 切换门分别办理；先检查 live session 和期望 generation，不抢占其他 Agent 会话。推送与重启需各自授权和事后 PID/实际资源指纹验收。
+1. **代码审查 PASS**：独立 GLM-5.3 子 Agent `subagent_d237b2127d77`，工具面与实际调用均为 0；真实 HTTP 200 一次、native completed 与 Host 资格回执各一条，`P0=0/P1=0/P2=2`。批准的 30,928 字节材料 SHA-256 `96486e9cbb0dbc0090eae7c74af3ed8de3a52588bf10aa77839eb2a902a9bfd8`，冻结补丁 SHA-256 `84fd1b447145160af47726a2fa16719536c919809d63043d8d2ae5cb84ae938f`。回执见 `docs/governance/receipts/RECEIPT-20261017-web-v2-session-mobile-glm53-code-review.json`。
+2. **原版 R9 exit 0，但保留并行失败观察**：`bash scripts/ci_gate.sh` Ruff、Pyright 新红均 0；tier0 319 passed；xdist 9,278 passed / 146 skipped / **1 failed**（`tests/phase6/test_m1_sync_interrupt.py::test_s4_multiple_interjections_all_consumed`）；依项目 `D-B2-09`，原命令自动串行复核该文件 1 passed / 0 failed，最终全链路退出码 0。**不能将此结果表述成 xdist 0 failed。** 完整日志位于私有 `data/web-v2-mobile-qa-20261017/full-r9.log`。
+3. **隔离代码已提交**：`3a066fd5ab712283bd4207a4fdd91651f1c8f188`，基底 `41f500ecb92c7aea881d8e15809194187b7b1dd3`；原 12 文件二进制 diff 与受审暂存补丁哈希一致。测试自动改写的 18 个 tracked `reports/` 文件已备份差分到私有测试目录并恢复干净，没有夹入代码提交。
+4. **Reviewer P2 处置**：P2-1 把 `fetchHistory` 的内部超时 AbortController 与 `loadHistory` 外层切会话控制器混同；纯超时并不 abort 外层信号，因此错误会写入 `lastError`、显示 alert 与重新加载入口，依据源码拒绝该错误前提。P2-2 的 Escape 同时关闭所有移动抽屉为非阻断 UX 设计建议，待明确叠层规范时处理，无需为未证实缺陷改变已验代码。
 
-**当前结论**：前端移动浏览器功能性检查通过，独立审查与完整 R9/上线仍为待验证；该候选尚不能标记 production GO。
+## 下一放行闸
+
+- 代码审查与原版 R9 已完成；**仍未合并 main**。先对届时最新 main/currentness 及其他 Agent 的脏工作树重新核对，执行独立 main 合并闸（RULE-AI-34），不得覆盖其他任务。
+- Web-only 生产发布与服务重启另按管理授权、活跃会话检查和 generation/PID 验收；push 另走 push 审核。不得直接视为生产 GO。
+- Chromium 移动仿真 6/6 不等于真机 Safari/WebView；受控上线后需要相同请求口径的性能前后对照，才可声称实际卡顿改善。
+
+**当前结论**：隔离修复、独立 GLM-5.3 代码审查与原版完整 R9（包含已记录的 xdist 串行复核观察项）已完成；尚未合并或上线。

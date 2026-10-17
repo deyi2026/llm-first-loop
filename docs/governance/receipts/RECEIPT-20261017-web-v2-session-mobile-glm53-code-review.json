@@ -1,0 +1,100 @@
+{
+  "schema": "lfl.web_v2.independent_code_review/v1",
+  "gate": "code",
+  "reviewer": "subagent_d237b2127d77",
+  "reviewer_model": "glm/glm-5.3",
+  "parent_id": "web-v2-session-mobile-glm53-review-20261017",
+  "child_generation": "4e67d2938d38487bb7d7361fad3f8d3a",
+  "child_result_id": "result-4e67d2938d38487bb7d7361fad3f8d3a",
+  "child_state": "completed",
+  "child_outcome": "completed",
+  "native_review_isolated": true,
+  "native_terminal_event_count": 1,
+  "durable_host_qualification_receipts": 1,
+  "host_qualification": "PASS",
+  "provider_http_status": 200,
+  "provider_physical_send_count": 1,
+  "reviewer_tool_surface": [],
+  "reviewer_tool_calls": [],
+  "auto_retry": false,
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "P2": 2,
+  "base_commit": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+  "isolated_code_commit": "3a066fd5ab712283bd4207a4fdd91651f1c8f188",
+  "staged_patch_sha256": "84fd1b447145160af47726a2fa16719536c919809d63043d8d2ae5cb84ae938f",
+  "approved_material_sha256": "96486e9cbb0dbc0090eae7c74af3ed8de3a52588bf10aa77839eb2a902a9bfd8",
+  "approved_material_bytes": 30928,
+  "artifact_sha256": "cdb1b519c62574f94dd8a2da94fd42548723f6453900a97a29e52ee1feeb2eb4",
+  "review_text_sha256": "27ff5cae1b8b5fe70e1348dab603cfb4f1d9270a0a7c214d74512272dfed922c",
+  "scope_files": [
+    "docs/results/RESULT-20261017-web-v2-session-mobile-qualification.md",
+    "scripts/qa_web_v2_session_mobile.py",
+    "src/llm_loop/core/session.py",
+    "tests/unit/test_session.py",
+    "webui/src/App.test.tsx",
+    "webui/src/App.tsx",
+    "webui/src/core-failopen.test.ts",
+    "webui/src/core/api.ts",
+    "webui/src/core/chat.ts",
+    "webui/src/core/conversation.ts",
+    "webui/src/session-switch.test.tsx",
+    "webui/src/tokens/app.css"
+  ],
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "file": "webui/src/core/conversation.ts",
+      "reviewer_note": "Suspected local timeout suppresses history error because request.signal.aborted is true.",
+      "disposition": "rejected_after_exact_source_check",
+      "reason": "fetchHistory internal 15-second timeout aborts only its own local controller. loadHistory checks the distinct caller controller; a pure timeout writes lastError. Conversation renders the alert; MessageList renders retry. No changed code warranted."
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "file": "webui/src/App.tsx",
+      "reviewer_note": "Escape currently dismisses all mobile overlays.",
+      "disposition": "deferred_nonblocking",
+      "reason": "A single Escape dismissing all overlays is acceptable current behavior. No product contract for layered mobile overlays is established."
+    }
+  ],
+  "applied": [],
+  "rejected": [
+    {
+      "id": "P2-1",
+      "reason": "Disproven premise: local timeout and navigation abort use different AbortController instances."
+    }
+  ],
+  "deferred": [
+    {
+      "id": "P2-2",
+      "reason": "Nonblocking UX policy; needs a separate explicit overlay-stack requirement."
+    }
+  ],
+  "narrow_recheck": null,
+  "full_r9": {
+    "command": "bash scripts/ci_gate.sh",
+    "exit_code": 0,
+    "qualification": "PASS_WITH_XDIST_SERIAL_RECHECK",
+    "ruff_new_errors": 0,
+    "pyright_new_errors": 0,
+    "tier0_passed": 319,
+    "xdist_passed": 9278,
+    "xdist_skipped": 146,
+    "xdist_failed": 1,
+    "xdist_failed_nodeid": "tests/phase6/test_m1_sync_interrupt.py::test_s4_multiple_interjections_all_consumed",
+    "project_serial_recheck_passed": 1,
+    "project_serial_recheck_failed": 0,
+    "serial_recheck_rule": "D-B2-09",
+    "full_log_sha256": "a50dc90175c96f0759e6b1580e141a6f6cfbb9d61ecc8e0e48311ac8564fa895"
+  },
+  "local_private_evidence": {
+    "review_result_json": "data/web-v2-mobile-qa-20261017/review/result.json",
+    "review_result_sha256": "79773005da9fa1a1c5564a0685b56b982d3023cb08a893bc3e2b0ea8392f8328",
+    "review_answer": "data/web-v2-mobile-qa-20261017/review/answer.txt",
+    "full_r9_log": "data/web-v2-mobile-qa-20261017/full-r9.log"
+  },
+  "scope_boundary": "The 12-file code commit is byte-for-byte the GLM-approved and original-R9-tested patch. This later receipt and after-the-fact results document are evidence-only. No merge/push/publish/restart/live latency proof."
+}
