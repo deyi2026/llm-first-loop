@@ -1336,7 +1336,7 @@ def application_main(argv: list[str] | None = None) -> int:
         return 0
     if remaining == ["--help"] or remaining == ["-h"]:
         print("lfl [--data-dir DIR] [--workspace DIR] [--config FILE] COMMAND\n"
-              "Commands: chat [CLI arguments], web, paths, check-install, doctor [--json]\n"
+              "Commands: chat [CLI arguments], web, paths, check-install, doctor [--json], init [--plan] [--json]\n"
               "Other arguments are passed to the existing LFL CLI.\n"
               "--version prints the installed version without starting services.")
         return 0
@@ -1344,6 +1344,25 @@ def application_main(argv: list[str] | None = None) -> int:
         report = check_install()
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ok"] else 1
+    if remaining and remaining[0] == "init":
+        # Setup is a separate consent-bound workflow; never invoke the normal
+        # stateful bootstrap, build an Engine, or open a provider connection.
+        init_parser = argparse.ArgumentParser(prog="lfl init", description="离线首次使用配置向导")
+        init_parser.add_argument("--plan", action="store_true", help="只读预览，不写配置")
+        init_parser.add_argument("--json", action="store_true", help="仅用于 --plan 的脱敏 JSON 预览")
+        try:
+            init_args = init_parser.parse_args(remaining[1:])
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 2
+
+        from llm_loop.runtime.first_use import run_first_use
+
+        bundle = bundle_root()
+        root = default_home() if bundle else Path(__file__).resolve().parents[2]
+        return run_first_use(
+            args=args, root=root, bundle=bundle, environment=legacy_env_snapshot(),
+            check_install=check_install, preview=init_args.plan, as_json=init_args.json,
+        )
     if remaining and remaining[0] == "doctor":
         # P1: diagnostics must not call prepare_environment (env mutations),
         # build_engine, network clients, or any managed service lifecycle code.

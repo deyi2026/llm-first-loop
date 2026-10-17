@@ -962,6 +962,15 @@
         ],
         "rationale": "T2 已实施（Phase3 M3 终审 P1-4 对齐 ScheduleStore/human_turn_queue 跨进程纪律）：side_effects.json 持久化走 flock（OSError fail-closed）+ 重读合并 + tempfile O_EXCL + os.replace，replace 前=definitely_not_committed 回滚内存；锁文件 <path>.lock。登记失败 fail-open 不阻断工具（观测面）；停止路径同类。验收=tests/unit/test_phase3_m3_side_effects.py"
       },
+      "first_use_configuration": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/first_use.py"
+        ],
+        "rationale": "P1 lfl init 将用户显式两次确认后的首次模型凭证配置作为持久 T2 状态；仅以 0600/0700 权限、同目录 O_EXCL 临时文件与原子 link(create-if-absent)+fsync 发布，从不覆写已有 .env，也不联网/自动启停服务。此处 observe 仅登记真实新增写入责任面及已覆盖的冲突/泄密定向验证，不宣称升级迁移/断电恢复完整资格；后续仍需独立 Rule28 审查与原版 R9。"
+      },
       "usage_ledger_primitives": {
         "tier": "T1",
         "status": "observe",
