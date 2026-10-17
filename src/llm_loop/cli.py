@@ -1336,7 +1336,7 @@ def application_main(argv: list[str] | None = None) -> int:
         return 0
     if remaining == ["--help"] or remaining == ["-h"]:
         print("lfl [--data-dir DIR] [--workspace DIR] [--config FILE] COMMAND\n"
-              "Commands: chat [CLI arguments], web, paths, check-install\n"
+              "Commands: chat [CLI arguments], web, paths, check-install, doctor [--json]\n"
               "Other arguments are passed to the existing LFL CLI.\n"
               "--version prints the installed version without starting services.")
         return 0
@@ -1344,6 +1344,28 @@ def application_main(argv: list[str] | None = None) -> int:
         report = check_install()
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ok"] else 1
+    if remaining and remaining[0] == "doctor":
+        # P1: diagnostics must not call prepare_environment (env mutations),
+        # build_engine, network clients, or any managed service lifecycle code.
+        doctor_parser = argparse.ArgumentParser(prog="lfl doctor", description="离线只读首用配置诊断")
+        doctor_parser.add_argument("--json", action="store_true", help="输出机器可读且不含配置值的 JSON")
+        try:
+            doctor_args = doctor_parser.parse_args(remaining[1:])
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 2
+        from llm_loop.runtime.doctor import human_report, inspect_first_use
+
+        bundle = bundle_root()
+        root = default_home() if bundle else Path(__file__).resolve().parents[2]
+        report = inspect_first_use(
+            args=args,
+            root=root,
+            bundle=bundle,
+            environment=legacy_env_snapshot(),
+            check_install=check_install,
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2) if doctor_args.json else human_report(report))
+        return 0 if report["ready"] else 1
     try:
         bindings = prepare_environment(args)
     except ValueError as exc:

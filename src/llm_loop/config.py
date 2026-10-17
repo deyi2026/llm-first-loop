@@ -200,23 +200,31 @@ def load_env_file(path: str | Path | None = None) -> None:
     if not p.exists():
         return
     try:
-        for raw in p.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            key = key.strip()
-            if not key or not key.isidentifier():
-                continue
-            if key in os.environ:
-                continue  # 环境变量优先，已设置的键不覆盖
-            val = val.strip()
-            # ASSESS-20261008 BUG-13c: 引号感知的行内注释剥离 + 引号剥离
-            # （原 split(" #") 把 X="abc #def" 截成 "abc 且保留引号）
-            val = _strip_quotes(_strip_inline_comment(val)).strip()
-            os.environ[key] = val
+        for key, val in read_env_file_values(p).items():
+            if key not in os.environ:
+                os.environ[key] = val  # 保留既有写入形式，进程环境始终优先
     except OSError:
         pass  # 读取失败 fail-open
+
+
+def read_env_file_values(path: str | Path) -> dict[str, str]:
+    """Use the CLI's exact dotenv syntax without changing ``os.environ``.
+
+    Repeated keys keep the first value, like ``load_env_file`` before extraction.
+    Unlike the RuntimeConfig parser, quoted inline ``#`` is preserved here.
+    """
+    out: dict[str, str] = {}
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or not key.isidentifier():
+            continue
+        val = _strip_quotes(_strip_inline_comment(val.strip())).strip()
+        out.setdefault(key, val)
+    return out
 
 
 def _env_bool(name: str, default: bool, env: Mapping[str, str] | None = None) -> bool:

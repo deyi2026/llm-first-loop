@@ -13,6 +13,7 @@ uv tool install --python 3.13 ./llm_first_loop-VERSION-py3-none-any.whl
 lfl --version
 lfl check-install
 lfl paths
+lfl doctor
 ~~~
 
 check-install 校验当前资源文件与包内清单一致性；这不是发布者签名或来源可信认证。
@@ -26,6 +27,27 @@ uv 会为应用建立独立 Python 环境；wheel 的运行依赖由包管理器
 lfl --config /absolute/path/to/lfl.env chat "你好"
 lfl --config /absolute/path/to/lfl.env web
 ~~~
+
+## 首次使用诊断（P1 doctor）
+
+~~~bash
+lfl doctor
+lfl doctor --json
+lfl --config /absolute/path/to/lfl.env doctor --json
+~~~
+
+doctor 是**离线、只读**预检：不装配 Engine、不访问 Provider、不启动/重启服务、
+不创建用户目录、不写入环境变量。检查安装包资源清单（源码运行时标明不适用）、
+配置文件的存在与可读取性、必需模型配置键是否设置、数据目录和工作目录可用性、
+以及自定义技能/文档/界面资源目录是否有效。
+
+JSON 输出遵循 `lfl.doctor/v1`，含 `ready/status/read_only/sources/checks`；
+配置项只报告来源（命令行/进程环境/配置文件/默认），**绝不回显配置值、密钥或配置路径**。
+每条诊断使用 `pass/warn/fail` 与可执行修复建议；全部通过返回退出码 0，
+有任何待配置或失败项返回 1，非法命令参数返回 2。
+
+doctor 不能证明远端密钥有效、模型可调用、Web 正在运行，也不是来源签名验证。
+诊断通过后仍需由用户明确选择启动方式；doctor 不自动修复配置或覆盖旧数据。
 
 web 复用原有 Web 入口、认证与生命周期清理，默认绑定本机环回地址。
 运行目录与用户工作目录分别绑定，身份守卫继续生效。
@@ -82,4 +104,4 @@ editable 开发安装保留源码布局，不要求预先构建界面。
 仅使用虚构凭证，Python 网络探针拒绝 Provider 与外部连接；测试只停止自己启动的 Web 进程。
 Release 工作流完成这些步骤后，向原有待人工确认的 Release 草稿附加成品、验收报告和校验和。
 
-首次使用向导、完整 doctor、自动升级恢复、桌面安装器、OCI 和生态目录仍为后续执行单元。
+交互式首次使用向导、自动升级恢复、桌面安装器、OCI 和生态目录仍为后续执行单元。
