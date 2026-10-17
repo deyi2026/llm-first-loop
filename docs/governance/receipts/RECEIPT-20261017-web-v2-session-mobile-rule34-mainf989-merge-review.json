@@ -1,0 +1,126 @@
+{
+  "schema": "lfl.merge_review_gate_receipt/v1",
+  "gate": "merge",
+  "rule": "RULE-AI-34",
+  "reviewer": "subagent_f7a68bc38b2a",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_independence": "fresh review_isolated=true child, no candidate code development, no registered or invoked tools; one real HTTP200 provider request",
+  "parent_id": "web-v2-session-mobile-mainf989-rule34-independent-review-20261017",
+  "native_review_isolated": true,
+  "native_terminal_event_count": 1,
+  "reviewer_generation": "20e492bcb940468195bc4b00e56b1f0b",
+  "reviewer_result_id": "result-20e492bcb940468195bc4b00e56b1f0b",
+  "reviewer_terminal_state": "completed",
+  "reviewer_outcome": "completed",
+  "provider_http_status": 200,
+  "provider_physical_send_count": 1,
+  "reviewer_registered_tools": [],
+  "reviewer_used_tools": [],
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "P2": 4,
+  "goal_or_task": "Web V2 session switching and mobile robustness, separate from active installation/doctor Goal",
+  "goal_id": null,
+  "main_sha_at_review": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+  "merge_base": "f9893a3aef71f196039bf06cbe44cd265820baaf",
+  "branch": "integrate/web-v2-session-mobile-mainf989-20261017",
+  "reviewed_branch_head": "90e5bd43edb7f239c1581359648607dcbd539656",
+  "reviewed_code_commit": "410b0cf4a04b8ef547d01d6110944c9c2dc89f18",
+  "based_on_main": true,
+  "commits": [
+    "410b0cf4a04b8ef547d01d6110944c9c2dc89f18",
+    "2612eb7df6437588fa92f8672eaad1903185da07",
+    "90e5bd43edb7f239c1581359648607dcbd539656"
+  ],
+  "reviewed_branch_paths": [
+    "docs/governance/receipts/RECEIPT-20261017-web-v2-session-mobile-glm53-code-review.json",
+    "docs/governance/receipts/RECEIPT-20261017-web-v2-session-mobile-rule34-main98-merge-review.json",
+    "docs/results/RESULT-20261017-web-v2-session-mobile-qualification.md",
+    "scripts/qa_web_v2_session_mobile.py",
+    "src/llm_loop/core/session.py",
+    "tests/unit/test_session.py",
+    "webui/src/App.test.tsx",
+    "webui/src/App.tsx",
+    "webui/src/core-failopen.test.ts",
+    "webui/src/core/api.ts",
+    "webui/src/core/chat.ts",
+    "webui/src/core/conversation.ts",
+    "webui/src/session-switch.test.tsx",
+    "webui/src/tokens/app.css"
+  ],
+  "reviewed_branch_files_count": 14,
+  "reviewed_full_branch_diff_sha256": "4a3de1de83c3985abf95737c6d3f2b25b62deefe392eba7159ab3ae4b3b17f8c",
+  "byte_identical_code_patch_sha256": "84fd1b447145160af47726a2fa16719536c919809d63043d8d2ae5cb84ae938f",
+  "main_dirty_paths_at_review": [
+    "experiences/.usage_watermark.json",
+    "experiences/usage.jsonl"
+  ],
+  "main_dirty_count_at_review": 2,
+  "main_dirty_overlap_with_branch": [],
+  "merge_mode": "ff",
+  "merge_executed": false,
+  "main_sha_after": null,
+  "conflicts_resolved": [],
+  "branch_disposition": "kept: pending separate exact-target main merge authorization, busy-worker window and fresh currentness",
+  "focused_gates": [
+    "f989 candidate Vitest first concurrent suite: 308 pass/1 fail on sendflow stage progression; preserved as timing variability, not hidden",
+    "f989 candidate isolated sendflow 12/12 PASS",
+    "f989 candidate full frontend Vitest rerun without concurrent load 309/309 PASS in 41 files",
+    "f989 candidate TypeScript tsc --noEmit --incremental false exit0",
+    "f989 candidate Python session+application_doctor+timeout_recovery+compaction_gate 91/91 PASS",
+    "f989 candidate headless Chromium simulated touch/desktop 320,375,390,430,768,1366px 6/6 PASS; not a real Safari test"
+  ],
+  "full_r9_provenance": {
+    "original_baseline": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+    "original_code_review": "GLM-5.3 PASS P0=0/P1=0 P2=2, reviewer subagent_d237b2127d77",
+    "original_r9_exit": 0,
+    "original_r9_xdist_pass": 9278,
+    "original_r9_xdist_skip": 146,
+    "original_r9_xdist_fail": 1,
+    "original_r9_serial_recheck_pass": 1,
+    "original_r9_serial_recheck_rule": "D-B2-09",
+    "complete_R9_on_main_f989_executed": false,
+    "reason_original_gate_reuse": "code patch binary SHA identical and no overlapping paths; focused regression repeated on f989; residual P2 recorded"
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "P2",
+      "text": "sendflow progressStage intermittent concurrent test failure; isolated and full rerun passed; recommend deterministic stage timing followup"
+    },
+    {
+      "id": "F2",
+      "severity": "P2",
+      "text": "full R9 from old 41f baseline, not f989; original byte-identical patch and new focused tests support acceptance with residual risk"
+    },
+    {
+      "id": "F3",
+      "severity": "P2",
+      "text": "main has unrelated uncommitted experiences data; merge requires explicit fresh-time window, owner clearance, no overwrite"
+    },
+    {
+      "id": "F4",
+      "severity": "P2",
+      "text": "Escape closes all mobile overlays; separate UX decision pending"
+    }
+  ],
+  "artifact_dossier_sha256": "6fdf198560abcabc2adc01943b96c623b6c03c142c6ecac5910d6c4e492653ec",
+  "artifact_dossier_bytes": 80293,
+  "review_answer_sha256": "1380df39f0e446abb8a31cea01d6e33d27671b767e9f0393b8bf2dac402bc3a0",
+  "review_raw_result_sha256": "4add024b413e2e373de67901cf11ec3ee950dfd1844bad7326b8d5398afe479e",
+  "private_evidence": {
+    "full_dossier": "data/web-v2-mobile-qa-20261017/merge-review-mainf989-dossier.txt",
+    "original_review_result": "data/web-v2-mobile-qa-20261017/merge_review_mainf989/result.json",
+    "original_review_answer": "data/web-v2-mobile-qa-20261017/merge_review_mainf989/answer.txt",
+    "initial_frontend_failure": "/tmp/lfl-web-v2-f989-vitest.log",
+    "frontend_success": "/tmp/lfl-web-v2-f989-vitest-alone.log",
+    "python_success": "/tmp/lfl-web-v2-f989-pytest.log"
+  },
+  "prior_review_currentness": {
+    "main98_rule34_review": "historical only: 98cd1d1f7 -> a4558a738, not reusable for f989",
+    "main41f_rule34_review": "invalid: contradictory P1/P2 counts",
+    "current_f989_rule34_review": "PASS, consistent P0=0 P1=0 P2=4"
+  },
+  "permission_boundary": "This receipt does not authorize main merge, push, release or restart. Source candidate 90e5 is what GLM reviewed. This evidence-only JSON is created after the reviewed tip, and requires an exact-target/currentness check before any ff."
+}
