@@ -270,18 +270,25 @@ def test_search_records_kind_evolution_exec(tmp_path):
         pass
 
 
-# ── 方案A（EVO-20260929）: 人工显式 exec_override 授权 → 越过边界拦截（仍过级别门禁）──
+# ── 方案A（EVO-20260929）+ EVO-20261018-f5f7580a: 人工逐条授权越过边界/级别/白名单 ──
 
-def test_can_auto_exec_override_boundary_still_level_gated():
-    """涉边界 + human_exec_override → 边界放行但级别门禁不放水（level 0 仍仅建议）."""
+def test_can_auto_exec_override_bypasses_level_gate():
+    """涉边界 + human_exec_override → 直接放行（level 0 亦不被档位压制）.
+
+    语义: EVOLVE_LOCAL_EXEC 是 AI 自主执行上限，不是人工逐条授权的上限；
+    反向压制会让 level 0 下 override 成为死特性（审批承诺自动执行却停在 accepted）。
+    """
     sug = _sug("调整安全策略", "safety", requires_human=True)
     sug.human_exec_override = True
     ok, reason = can_auto_exec(sug, level=0)
-    assert ok is False
-    assert reason == "仅建议级"  # 授权不放宽权限级别（EXEC-01）
-    ok2, reason2 = can_auto_exec(sug, level=2)
+    assert ok is True
+    assert reason == ""
+    ok2, reason2 = can_auto_exec(sug, level=1)  # 空白名单也不再拦
     assert ok2 is True
     assert reason2 == ""
+    ok3, reason3 = can_auto_exec(sug, level=2)
+    assert ok3 is True
+    assert reason3 == ""
 
 
 def test_plan_boundary_override_recorded():
@@ -316,3 +323,44 @@ def test_maybe_auto_execute_override_sets_executing(tmp_path):
     )
     assert record["boundary"]["touches_boundary"] is True
     assert record["boundary"]["human_exec_override"] is True
+
+
+def test_from_engine_level0_override_reaches_executing(tmp_path):
+    """回归 EVO-20261018-f5f7580a: level=0 + 人工 exec_override → executing.
+
+    此前 maybe_auto_execute_from_engine 在 level==0 直接返回"[等待人工执行]"
+    （override 根本不被读取），审批通道承诺的自动执行永不发生，
+    evolution_complete 因状态停在 accepted 而永久被拒。
+    """
+    from types import SimpleNamespace
+
+    from llm_loop.introspection.evolution_exec import maybe_auto_execute_from_engine
+
+    store = EvolutionStore(tmp_path / "audit")
+    sug = store.submit(content="调整超时参数", impact_scope="timeout_s")
+    target = store.review(sug.id, "accepted", exec_override=True)
+    engine = SimpleNamespace(
+        correction_ctx=SimpleNamespace(evolve_local_exec=0, evolve_exec_whitelist=""),
+        settings=SimpleNamespace(audit_dir=str(tmp_path / "audit")),
+    )
+    resp = maybe_auto_execute_from_engine(engine, store, target)
+    assert "自动执行" in resp and "executing" in resp
+    assert [s for s in store.list() if s["id"] == sug.id][0]["status"] == "executing"
+
+
+def test_from_engine_level0_without_override_stays_accepted(tmp_path):
+    """对照: level=0 无人工授权 → 仍仅建议（AI 自主执行上限不被绕过）."""
+    from types import SimpleNamespace
+
+    from llm_loop.introspection.evolution_exec import maybe_auto_execute_from_engine
+
+    store = EvolutionStore(tmp_path / "audit")
+    sug = store.submit(content="调整超时参数", impact_scope="timeout_s")
+    target = store.review(sug.id, "accepted")
+    engine = SimpleNamespace(
+        correction_ctx=SimpleNamespace(evolve_local_exec=0, evolve_exec_whitelist=""),
+        settings=SimpleNamespace(audit_dir=str(tmp_path / "audit")),
+    )
+    resp = maybe_auto_execute_from_engine(engine, store, target)
+    assert "等待人工执行" in resp
+    assert [s for s in store.list() if s["id"] == sug.id][0]["status"] == "accepted"

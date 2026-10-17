@@ -74,7 +74,7 @@
 | `SELF_INSPECTION_ENABLED` | 1 | architecture_status 工具开关 |
 | `STATUS_REPORT_COOLDOWN_S` | 60 | `[架构上报]` 推送冷却 |
 | `EVOLVE_ENABLED` | 1 | 演进建议通道 |
-| `EVOLVE_LOCAL_EXEC` | 0 | 演进执行权限: 0=仅建议 / 1=白名单局部执行 / 2=全面执行 |
+| `EVOLVE_LOCAL_EXEC` | 0 | 演进执行权限: 0=仅建议 / 1=白名单局部执行 / 2=全面执行。约束的是 **AI 自主执行上限**；人工审批显式勾选 `exec_override` 的条目不受该档位压制（方案A EVO-20260929 / EVO-20261018-f5f7580a） |
 | `EVOLVE_EXEC_WHITELIST` | 空 | 级别 1 的执行白名单（逗号分隔；空=不自动执行） |
 | `SELF_EVAL_ENABLED` | 1 | self_evaluate 工具/自评能力开关；普通 run 不周期注入提醒 |
 | `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 5 / 50 | 自评样本阈值 / 聚合窗口；评估时机按需决定 |

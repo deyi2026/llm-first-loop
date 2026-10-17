@@ -117,7 +117,7 @@
 
 **子规则 3（异常触发时机，2026-09-04 收正）**：有当前证据表明连续失败、声明-回执不一致、工具失败率异常等问题时，可主动调用 `self_evaluate`；无异常/无评估目标时不做周期性自查。程序保留指标与查询能力，不以定期/里程碑 prompt 提醒替模型选择评估时机。
 
-**子规则 4（执行动作，M12 审计移交承载 + M17 完成登记）**：人工 accepted 的演进在权限允许（EVOLVE_LOCAL_EXEC=1/2）且不涉边界时，应经修正工具（`adjust_strategy`/`retry_tool`/`refresh_config`/恢复工具）自行落地执行修正动作，并如实汇报执行结果（执行后按子规则 1 验证、失败按子规则 2 回滚）；**执行完成后调用 `evolution_complete` 登记"已完成 + 验证结论"（executor=ai，note 如实回传，未验证标注 unverified）**，避免状态滞留 executing；涉安全边界（FR-SAFE-01）/协议硬约束（C1-C6）/数据完整性的演进**仅建议、等待人工执行**，不得自行执行（人工完成后经 CLI `evolve-complete <id> "<结果说明>"` 登记，executor=human）。
+**子规则 4（执行动作，M12 审计移交承载 + M17 完成登记）**：人工 accepted 的演进在权限允许（EVOLVE_LOCAL_EXEC=1/2）且不涉边界时，应经修正工具（`adjust_strategy`/`retry_tool`/`refresh_config`/恢复工具）自行落地执行修正动作，并如实汇报执行结果（执行后按子规则 1 验证、失败按子规则 2 回滚）；**执行完成后调用 `evolution_complete` 登记"已完成 + 验证结论"（executor=ai，note 如实回传，未验证标注 unverified）**，避免状态滞留 executing；涉安全边界（FR-SAFE-01）/协议硬约束（C1-C6）/数据完整性的演进**仅建议、等待人工执行**，不得自行执行（人工完成后经 CLI `evolve-complete <id> "<结果说明>"` 登记，executor=human）。**人工逐条授权例外（方案A EVO-20260929 / EVO-20261018-f5f7580a）**：人工在审批通道显式勾选 `exec_override` 的条目，视为人工直接授权本条执行——该授权越过 `EVOLVE_LOCAL_EXEC` 档位与白名单门禁（level 0 亦可，`EVOLVE_LOCAL_EXEC` 约束的是 AI 自主执行上限而非人工逐条授权上限），但仍须过审批确认并在执行后经 `evolution_complete` 如实登记；AI 不得自授该字段（`transition` 对 AI 设置该字段抛错）。
 
 **子规则反例**：执行后不复查直接声称验证通过；失败后不还原却声称已回滚；连续失败却等待程序提醒才评估；对涉边界 accepted 建议自行执行；执行完成却不登记（状态滞留 executing）。
 

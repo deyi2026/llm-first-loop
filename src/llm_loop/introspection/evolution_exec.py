@@ -14,9 +14,14 @@ T57/T69 范围: EvolutionExecutor 执行引擎 + ExecutionOutcome 结果记录 +
 - manual_complete(): 人工执行通道（涉边界 accepted 演进人工完成标记 executed）
 
 判定顺序铁律（EXEC-03 最高优先，不因 accepted 隐式放宽）:
-  边界（复用 EvolutionStore._touches_boundary，命中即拒；唯一例外 = 人工审批显式
-  exec_override 授权，方案A EVO-20260929——仅人工 review 通道可设置，transition
-  对该字段抛错，AI 不可自授；授权只越过边界拦截，仍须过权限级别/白名单）→ 权限级别（EXEC-01）→ 白名单（EXEC-08，级别 1 时）。
+  人工逐条显式授权（human_exec_override，方案A EVO-20260929——仅人工 review 通道可设置，
+  transition 对该字段抛错，AI 不可自授）→ 直接放行: 边界/级别/白名单三级门禁由这一
+  更精确的人工授权一次性满足，level 0 亦不受阻（EVO-20261018-f5f7580a）；
+  无授权时 → 边界（复用 EvolutionStore._touches_boundary，命中即拒）→ 权限级别（EXEC-01）
+  → 白名单（EXEC-08，级别 1 时）。
+  语义边界: EVOLVE_LOCAL_EXEC 管的是 **AI 自主执行上限**，不是人工逐条授权的上限——
+  若档位反过来压制人工显式授权，level 0 下 override 即成死特性（审批通道承诺自动执行，
+  实际永远停在 accepted）。
 执行载体（移交后）: AI 经修正工具（adjust_strategy/retry_tool/refresh_config/恢复工具）自主执行，
 程序不代 AI 调用修正工具——程序只保留状态推进、审计落盘与如实标注（程序最小化，design.md 7.1.1）。
 """
@@ -91,16 +96,21 @@ def can_auto_exec(
     返回 (允许?, 原因): 允许 → (True, "")；
     不允许 → (False, 如实原因: "仅建议级" / "涉边界需人工执行" / "不在执行白名单"（级别 1 空白名单
     补充 "未配置白名单"））。
-    判定顺序: 边界（EXEC-03，最高优先）→ 权限级别（EXEC-01）→ 白名单（EXEC-08，级别 1 时）。
+    判定顺序: 人工逐条显式授权（直接放行）→ 边界（EXEC-03）→ 权限级别（EXEC-01）
+    → 白名单（EXEC-08，级别 1 时）。
     """
-    # 1. 边界判定（EXEC-03，最高优先）: 独立重查，不因 accepted 隐式放宽（DFX-SEC-05）；
-    #    唯一例外 = 人工审批显式授权（human_exec_override，方案A EVO-20260929）——
+    # 0. 人工逐条显式授权（方案A EVO-20260929 / EVO-20261018-f5f7580a）：
     #    仅人工 review 通道可设置（evolution.transition 对该字段抛错，AI 不可自授）。
-    #    授权只越过"边界拦截"，仍须过权限级别/白名单门禁（level 0 仍仅建议）。
+    #    人工逐条授权比全局档位更精确，三级门禁一次满足——不被 level/白名单压制。
+    #    反向压制会让 level 0 下 override 成为死特性（审批显示已授权、实际停在 accepted）。
+    if getattr(suggestion, "human_exec_override", False):
+        return True, ""
+    # 1. 边界判定（EXEC-03）: 独立重查，不因 accepted 隐式放宽（DFX-SEC-05）；
+    #    无人工授权时命中即拒。
     if (
         suggestion.requires_human
         or EvolutionStore._touches_boundary(suggestion.impact_scope, suggestion.content)
-    ) and not getattr(suggestion, "human_exec_override", False):
+    ):
         return False, "涉边界需人工执行"
     # 2. 权限级别（EXEC-01）
     if level <= 0:
@@ -127,7 +137,7 @@ class AutoExecPlan:
     reason: str  # 拒绝原因: "仅建议级" / "涉边界需人工执行" / "不在执行白名单"
     level: int
     boundary: bool  # 涉边界标记（审计记录，DFX-SEC-05）
-    human_exec_override: bool = False  # 人工显式授权越过边界拦截（方案A，审计记录）
+    human_exec_override: bool = False  # 人工逐条显式授权：越过边界/级别/白名单门禁（方案A，审计记录）
 
 
 @dataclass
@@ -226,7 +236,7 @@ class EvolutionExecutor:
                     executor="ai",
                     actions=list(suggestion.actions),
                     status="skipped",  # 政策跳过（非执行失败）: 终态如实区分（EVO-20260918-a6088cb7）
-                    note=f"未自动执行: {plan.reason}（保持 accepted；人工审批可 --authorize-exec 显式授权执行）",
+                    note=f"未自动执行: {plan.reason}（保持 accepted；人工审批勾选 exec_override 可授权本条自动执行）",
                     ts_start=_now(),
                     ts_end=_now(),
                 ),
@@ -348,20 +358,24 @@ def maybe_auto_execute_from_engine(engine, store, target: dict) -> str:
 
     自 cli._maybe_auto_execute 提取（EVO-20260817 飞书审批 UX，方案 ④）。
     返回提示文本（调用方打印/回执），不抛异常。
+
+    EVO-20261018-f5f7580a: 人工逐条显式授权（human_exec_override）优先于全局档位，
+    level 0 下亦可推进 executing——此前该分支在 level==0 直接 early return，override
+    永远不可达（审批通道承诺"自动执行"却停在 accepted，evolution_complete 随之永久失效）。
     """
     from llm_loop.introspection.evolution import EvolutionSuggestion
 
     level = int(getattr(engine.correction_ctx, "evolve_local_exec", 0) or 0)
-    if level == 0:
+    suggestion = EvolutionSuggestion(**target)
+    if level == 0 and not suggestion.human_exec_override:
         return (
             f"[等待人工执行] 当前为仅建议模式（EVOLVE_LOCAL_EXEC=0），"
-            f"{target['id']} 由人工执行。"
+            f"{target['id']} 由人工执行；人工审批勾选 exec_override 可授权本条自动执行。"
         )
     whitelist_raw = getattr(engine.correction_ctx, "evolve_exec_whitelist", "") or ""
     whitelist = (
         tuple(w.strip() for w in whitelist_raw.split(",") if w.strip()) if whitelist_raw else ()
     )
-    suggestion = EvolutionSuggestion(**target)
     executor = EvolutionExecutor(
         exec_level=level,
         whitelist=whitelist,
