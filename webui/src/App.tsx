@@ -166,6 +166,17 @@ export function App() {
     .filter(Boolean)
     .join(" ");
 
+  useEffect(() => {
+    if (!isMobile || (!mobileSidebarOpen && !panelOpen)) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMobileSidebarOpen(false);
+      rightPanelStore.setOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isMobile, mobileSidebarOpen, panelOpen]);
+
   // 右面板宽度（桌面）：拖拽调宽 + 持久化；移动端抽屉不受影响（inline 不设）
   const [panelWidth, setPanelWidth] = useState(() =>
     typeof window === "undefined" || window.matchMedia?.("(max-width: 900px)").matches
@@ -221,12 +232,13 @@ export function App() {
         }}
       />
       {isMobile && mobileSidebarOpen && (
-        <div className="v2-scrim" data-testid="sidebar-scrim" onClick={() => setMobileSidebarOpen(false)} />
+        <button type="button" className="v2-scrim" data-testid="sidebar-scrim" aria-label="关闭会话侧栏" onClick={() => setMobileSidebarOpen(false)} />
       )}
       {isMobile && panelOpen && (
-        <div
+        <button type="button"
           className="v2-scrim"
           data-testid="panel-scrim"
+          aria-label="关闭右侧面板"
           onClick={() => rightPanelStore.setOpen(false)}
         />
       )}

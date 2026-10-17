@@ -127,11 +127,18 @@ export function isAbort(err: unknown): boolean {
 export async function fetchHistory(
   sessionId: string,
   limit: number,
-  offset: number
+  offset: number,
+  signal?: AbortSignal
 ): Promise<HistoryResponse> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) controller.abort();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const resp = await fetch(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`,
+      { signal: controller.signal }
     );
     if (!resp.ok) {
       return {
@@ -158,10 +165,15 @@ export async function fetchHistory(
   } catch {
     return {
       ok: false,
-      error: "会话历史读取失败：网络连接失败",
+      error: controller.signal.aborted && !signal?.aborted
+        ? "会话历史读取超时，请重试。"
+        : "会话历史读取失败：网络连接失败",
       messages: [],
       has_more: false,
     };
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 

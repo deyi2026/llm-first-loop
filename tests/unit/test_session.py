@@ -408,6 +408,41 @@ def test_session_meta_cache_isolated_by_directory_and_invalidates(tmp_path):
 
 
 
+def test_session_meta_cache_warm_list_at_600_sessions(tmp_path, monkeypatch):
+    """The entire active sidebar inventory must stay warm, not just the first 512 rows."""
+    import llm_loop.core.session as session_module
+
+    store = _store(tmp_path)
+    for index in range(600):
+        sid = f"fixture-{index:04d}"
+        (store.root / f"{sid}.json").write_text(
+            json.dumps({
+                "session_id": sid, "title": sid, "status": "active",
+                "created_at": "t", "updated_at": "t", "messages": [],
+            }),
+            encoding="utf-8",
+        )
+    with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+        session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
+    try:
+        assert len(store.list_sessions()) == 600
+        calls = 0
+        real_load = session_module.json.load
+
+        def counted_load(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return real_load(*args, **kwargs)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(session_module.json, "load", counted_load)
+            assert len(store.list_sessions()) == 600
+        assert calls == 0
+    finally:
+        with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+            session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
+
+
 def test_session_id_path_traversal_cannot_cross_workspace_roots(tmp_path):
     """外部session_id不得用../跨workspace读/删兄弟会话。"""
     base = tmp_path / "sessions"

@@ -74,6 +74,7 @@ let abortCtrl: AbortController | null = null;
 let abortSessionId: string | null = null;
 let resumeAbort: AbortController | null = null;
 let resumeSessionId: string | null = null;
+let historyRequest: AbortController | null = null;
 let bgPollTimer: number | undefined;
 
 // ── 空闲增量轮询（飞书桥等外部通道写入后 Web 及时刷新，无需手动切会话）──
@@ -141,6 +142,8 @@ sessionStore.subscribe(() => {
   const nextSessionId = sessionStore.getState().currentSessionId;
   if (nextSessionId === observedSessionId) return;
   observedSessionId = nextSessionId;
+  historyRequest?.abort();
+  historyRequest = null;
   detachSubscriptionsForSession(nextSessionId);
   if (bgPollTimer !== undefined) {
     window.clearInterval(bgPollTimer);
@@ -249,7 +252,12 @@ export async function refreshCurrentSessionMessages(): Promise<void> {
 export async function loadHistory(sessionId: string): Promise<void> {
   // setCurrentSession 通常先发生；owner-aware detach 不依赖 store 的“当前值”猜旧流归属。
   detachSubscriptionsForSession(sessionId);
-  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0);
+  historyRequest?.abort();
+  const request = new AbortController();
+  historyRequest = request;
+  const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0, request.signal);
+  if (historyRequest === request) historyRequest = null;
+  if (request.signal.aborted) return;
   if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (resp.ok === false) {
     conversationStore.setState({ lastError: resp.error ?? "会话历史读取失败，请重试。" });

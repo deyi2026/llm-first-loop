@@ -1304,6 +1304,11 @@
     position: fixed;
     inset: 0;
     z-index: 190;
+    /* The scrim is a semantic button; suppress native button chrome on touch browsers. */
+    padding: 0;
+    border: 0;
+    appearance: none;
+    cursor: pointer;
     background: rgba(0, 0, 0, 0.35);
   }
 

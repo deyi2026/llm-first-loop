@@ -105,6 +105,44 @@ describe("侧栏会话切换", () => {
     expect(sessionStore.getState().currentSessionId).toBe(SESS_B);
   });
 
+  it("慢会话的历史请求被切换取消，不能阻塞后续会话或覆盖新视图", async () => {
+    let slowAborted = false;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`/api/v1/sessions/${SESS_A}/messages`)) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            slowAborted = true;
+            reject(new DOMException("aborted", "AbortError"));
+          }, { once: true });
+        });
+      }
+      if (url.includes(`/api/v1/sessions/${SESS_B}/messages`)) {
+        return Promise.resolve(new Response(JSON.stringify(messagesOf(SESS_B)), { status: 200 }));
+      }
+      if (url.endsWith("/api/v1/sessions")) {
+        return Promise.resolve(new Response(JSON.stringify({
+          sessions: [sessionMeta(SESS_A, "会话甲"), sessionMeta(SESS_B, "会话乙")], count: 2,
+        }), { status: 200 }));
+      }
+      if (url.endsWith("/api/v1/session/current")) {
+        return Promise.resolve(new Response(JSON.stringify({ current: SESS_A }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    }));
+    sessionStore.setSessions([sessionMeta(SESS_A, "会话甲"), sessionMeta(SESS_B, "会话乙")]);
+    sessionStore.setCurrentSession(SESS_A);
+    await renderAppSettled();
+    expect(screen.getByTestId("history-loading")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("会话乙"));
+    await waitFor(() => {
+      expect(slowAborted).toBe(true);
+      expect(screen.getByText(`${SESS_B} 的用户消息`)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(`${SESS_A} 的用户消息`)).not.toBeInTheDocument();
+    expect(sessionStore.getState().currentSessionId).toBe(SESS_B);
+  });
+
   it("队列接力的 run_started 不得把用户已切走的视图拉回（点击会话无变化事故）", async () => {
     // 事故重放（2026-09-22）：fc0ed66c 队列有毒丸项 → 用户停在该会话时 relay 认领
     // 并发起 run；用户点击其他会话后 run_started 才到达 —— onRunStarted 的无条件

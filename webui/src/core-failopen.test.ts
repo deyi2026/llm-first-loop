@@ -1,9 +1,59 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "./core/api";
+import { api, fetchSessionsResult } from "./core/api";
 import { fetchHistory, fetchModels, streamChatRequest } from "./core/chat";
 
 describe("core fetch fail-open", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it("deduplicates simultaneous sidebar session list reads", async () => {
+    let release!: (r: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    const fetchMock = vi.fn(() => pending);
+    vi.stubGlobal("fetch", fetchMock);
+    const a = fetchSessionsResult();
+    const b = fetchSessionsResult();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    release(new Response(JSON.stringify({ sessions: [], count: 0 }), { status: 200 }));
+    expect((await a).ok).toBe(true);
+    expect((await b).ok).toBe(true);
+  });
+
+  it("stops waiting for an unresponsive session index without deleting saved sessions", async () => {
+    vi.useFakeTimers();
+    let release!: (response: Response) => void;
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn((_url: RequestInfo | URL, options?: RequestInit) => {
+      requestSignal = options?.signal ?? undefined;
+      return new Promise<Response>((resolve) => { release = resolve; });
+    }));
+    const pending = fetchSessionsResult();
+    try {
+      await vi.advanceTimersByTimeAsync(21000);
+      expect(requestSignal?.aborted).toBe(true);
+    } finally {
+      release(new Response(JSON.stringify({ sessions: [], count: 0 }), { status: 200 }));
+      await pending;
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out an unresponsive history request rather than hanging indefinitely", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("fetch", vi.fn((_url: RequestInfo | URL, options?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError"))
+          );
+        })
+      ));
+      const result = fetchHistory("slow", 100, 0);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect((await result).error).toContain("超时");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("generic api converts network rejection to status=0", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));

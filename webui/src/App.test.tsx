@@ -99,6 +99,27 @@ describe("App 布局壳", () => {
     expect(screen.getByTestId("panel-scrim")).toBeInTheDocument();
   });
 
+  it("手机抽屉支持 Escape 关闭并提供屏幕阅读器遮罩按钮", async () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({
+      matches: true, media: "(max-width: 900px)", onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    })));
+    await renderAppSettled();
+    const shell = screen.getByTestId("app-shell");
+    const topbar = screen.getByTestId("topbar");
+    fireEvent.click(within(topbar).getAllByRole("button")[0]);
+    expect(shell).toHaveClass("mobile-sidebar-open");
+    expect(screen.getByRole("button", { name: "关闭会话侧栏" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(shell).not.toHaveClass("mobile-sidebar-open");
+    fireEvent.click(within(topbar).getByRole("button", { name: "右侧面板" }));
+    expect(shell).toHaveClass("mobile-panel-open");
+    expect(screen.getByRole("button", { name: "关闭右侧面板" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(shell).not.toHaveClass("mobile-panel-open");
+  });
+
   it("移动端从侧栏进入服务身份、学习通道或新会话时，关闭覆盖主视图的抽屉", async () => {
     vi.stubGlobal("matchMedia", vi.fn(() => ({
       matches: true, media: "(max-width: 900px)", onchange: null,

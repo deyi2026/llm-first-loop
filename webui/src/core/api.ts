@@ -360,12 +360,33 @@ export async function logoutBrowserSession(): Promise<boolean> {
 }
 
 export async function fetchSessionsResult(includeArchived = false): Promise<SessionListFetchResult> {
-  const { status, data } = await api<SessionListResponse>(
-    `/api/v1/sessions${includeArchived ? "?include_archived=true" : ""}`
-  );
-  const ok = status === 200 && Array.isArray(data.sessions);
-  return { ok, sessions: ok ? data.sessions : [], status };
+  const key = includeArchived ? "archived" : "active";
+  const existing = sessionListRequests.get(key);
+  if (existing) return existing;
+  const pending = (async () => {
+    const controller = new AbortController();
+    // A stuck list request must not pin every coalesced consumer forever.
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const { status, data } = await api<SessionListResponse>(
+        `/api/v1/sessions${includeArchived ? "?include_archived=true" : ""}`,
+        { signal: controller.signal }
+      );
+      const ok = status === 200 && Array.isArray(data.sessions);
+      return { ok, sessions: ok ? data.sessions : [], status };
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
+  sessionListRequests.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (sessionListRequests.get(key) === pending) sessionListRequests.delete(key);
+  }
 }
+
+const sessionListRequests = new Map<string, Promise<SessionListFetchResult>>();
 
 export async function fetchSessions(includeArchived = false): Promise<SessionMeta[]> {
   return (await fetchSessionsResult(includeArchived)).sessions;
