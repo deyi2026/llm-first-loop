@@ -16,7 +16,7 @@
 | Method 与经验按当前文件发现内容 | `methods/store.py::list/get`，`experiences/store.py::search_outcome` | 主查询路径读取文件；不同对象的并发读不等于全库一致快照 |
 | 语义缓存有内容键、后台预热和跨进程刷新 | `memory/retriever.py`，`factory.py` | 向量更新存在异步窗口；经验的 API 缓存缺失时会退回词法并调度修复 |
 | 精确读取 Method 后有收尾回记提醒 | `core/loop/engine_services/method_injection.py` | 每 run 至多一次；只覆盖该扫描器识别的 Method 精确读取，不覆盖全部经验和规则 |
-| 部分任务可启用完成前回记检查 | `introspection/tools_task.py::_method_use_gate_check` | 默认关闭，按 session 查至少一条声明；无法证明当前 task 已交账，读取异常会放行 |
+| 部分任务可启用完成前回记检查（已删除） | ~~`introspection/tools_task.py::_method_use_gate_check`~~ 已移除（含 `task_update(method_no_contact=...)` 出口与 Goal 存储字段） | 2026-10-18 按 EVO-20261018-f4ca0fc4 删除：原设计默认关闭，且自带自报免费出口，既不构成完整性防线，也与规则二十九“不设硬门”冲突；删除不改变运行时默认行为 |
 | 既有规范要求检索与反馈 | `docs/ai_rules.md` 中 RULE-AI-18、29、31 | 收尾反馈应落实已有义务，不应再依赖用户逐次提醒 |
 
 这里有两项需要优先修正的口径。第一，RULE-AI-31 的正分条件包含“任务结果验证有效”，而 `usage_net.py` 对未独立验证的 applied/adapted 仍机械计 +1；展示时必须明确这是声明净分。第二，净分的纠错锚主要依据状态变化，正文修正但状态不变不会自动重锚，不能称为严格按修订版本累计。

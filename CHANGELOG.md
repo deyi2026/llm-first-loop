@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- **移除 goal 级知识库 use 硬门（EVO-20261018-f4ca0fc4）**：`create_goal` 的 `method_use_gate`、`task_update` 的 `method_no_contact` 与 Goal 存储字段一并删除。该门默认关闭、从未在生产开启，且自带 `method_no_contact` 免费出口（一条自报声明即可 `→done`），既与不设硬门的规则冲突，也不构成完整性防线；删除不改变运行时默认行为。方法回记收尾提醒（`method_use_reminder`）保留，其专项用例不变。
 - **贡献入口对齐**：规则 SoT 按需读取，贡献指南和文档索引不再要求把 playbook 镜像进 universal prompt；中英文 README 的当前版本与评测场景数量对齐权威定义。
 - **浏览器测试前置条件如实呈现**：Playwright Chromium 文件缺失时，语义守卫 E2E 按既有可选测试契约标记 skipped，不再因启动不存在的路径产生 setup error。文件缺失和既有 CDP 未就绪分支的 skipped 均表示该环境未验证浏览器能力，不产生浏览器部署资格。
 - **Phase4 类型门禁**：分段等待在调用可选打断回调前显式确认其非空；缺失回调时仍继续等待，满足既有保守退化契约和 Pyright 检查。

@@ -94,16 +94,6 @@ TASK_UPDATE_TOOL_DEF: dict = {
                     "程序不从‘继续/重做’等词语推断该值。"
                 ),
             },
-            "method_no_contact": {
-                "type": "boolean",
-                "description": (
-                    "显式声明：本任务未接触知识库（方法库与经验库；EVO-20260923-618f7fd1 ② / "
-                    "EVO-20261011-d6b04567 语义澄清）。仅当 goal 开启 method_use_gate 且本会话 "
-                    "确无 method/experience 任一 record_use 时，evidence_required 任务 →done 的"
-                    "替代通过路径。误报会被 usage.jsonl 审计对照发现（2026-10-11 前历史记录的 "
-                    "false 只表示“未显式声明无方法库接触”，不蕴含经验库证据）。"
-                ),
-            },
         },
         "required": ["goal_id", "task_id"],
     },
@@ -183,63 +173,6 @@ def run_task_create(ctx: Any, host: Any, args: dict) -> ToolResult:
     )
 
 
-def _method_use_gate_check(
-    ctx: Any,
-    host: Any,
-    audit: str,
-    goal_id: str,
-    task_id: str,
-    target: str,
-    args: dict,
-) -> str | None:
-    """EVO-20260923-618f7fd1 ② + EVO-20261011-d6b04567: goal 级知识库 use 硬门（默认关，fail-open）。
-
-    开启条件（全部满足才检查）: goal.method_use_gate=true 且 task.evidence_required
-    且目标状态为 done。通过路径: 本会话至少一条 record_use（method/experience 双源，
-    各自 usage.jsonl 按 session_id 归属，旧条目无 session_id 不匹配）或显式
-    method_no_contact=true 声明（知识库级语义：方法库与经验库均未接触）。
-    审计兼容: 2026-10-11 前的历史 method_no_contact=false 只表示“未显式声明无方法库
-    接触”，不蕴含经验库证据；跨该时点的审计对照按此分界解读。
-    门禁是配置项而非完整性防线：任何读取异常一律放行（返回 None）。
-    """
-    if target != "done" or bool(args.get("method_no_contact", False)):
-        return None
-    try:
-        goal = GoalStore(audit).get(goal_id=goal_id)
-        if not goal or not bool(goal.get("method_use_gate", False)):
-            return None
-        task = TaskStore(audit).get(goal_id, task_id)
-        if task is None or not task.evidence_required:
-            return None
-        store = getattr(host, "method_store", None)
-        if store is None:
-            return None
-        from llm_loop.introspection.tools_status import bound_session_id
-
-        sid = bound_session_id()
-        if not sid:
-            return None  # 无法归属会话：放行，不阻断（门禁非完整性防线）
-        has_use = any(str(e.get("session_id", "") or "") == sid for e in store.usage_entries())
-        if has_use:
-            return None
-        experience_store = getattr(host, "experience_store", None)
-        if experience_store is not None:
-            has_experience_use = any(
-                str(e.get("session_id", "") or "") == sid
-                for e in experience_store.usage_entries()
-            )
-            if has_experience_use:
-                return None
-        return (
-            f"[知识库 use 硬门] goal={goal_id} 已开启 method_use_gate：evidence_required 任务 "
-            f"{task_id} →done 前，需本会话至少一条 method_manage(action=record_use) 或 "
-            "refine_experience(action=record_use) 回记；若本任务确未接触知识库"
-            "（方法库/经验库），以 task_update(method_no_contact=true) 显式声明。"
-        )
-    except Exception:  # noqa: BLE001 — fail-open：门禁是配置项，读取异常放行
-        return None
-
-
 def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     name = "task_update"
     goal_id = str(args.get("goal_id", "") or "").strip()
@@ -251,9 +184,6 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
     assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
     target = str(args.get("status") or "").strip()
-    gate_err = _method_use_gate_check(ctx, host, audit, goal_id, task_id, target, args)
-    if gate_err:
-        return ToolResult(ToolResultStatus.FAILURE, gate_err, "", name)
     try:
         verifier = getattr(getattr(host, "ctx", None), "task_evidence_verifier", None)
         store = TaskStore(audit, evidence_verifier=verifier)

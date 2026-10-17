@@ -1,46 +1,25 @@
-"""EVO-20260923-618f7fd1 ①②: 方法 use 回记——收尾提醒 / goal 级硬门.
+"""EVO-20260923-618f7fd1 ①: 方法 use 回记——收尾提醒.
 
-两条链路的机械验证（不测模型行为，只测程序面）：
-① method_injection.scan_method_use_ledger + build_use_reminder_message（状态层载体）
-② GoalStore.method_use_gate + task_update 门禁（默认关、fail-open、会话归属）
+机械验证（不测模型行为，只测程序面）：method_injection.scan_method_use_ledger +
+build_use_reminder_message（状态层载体）。
 
-原 ③（会话开场 active 卡清单 build_active_cards_message）已于 2026-09-24 退役：
-弱本地模型身份轮实测被带偏（6aec21cb 凭先验自称 DeepSeek-V4，对照 f66027f9 无附录
-时按证据自报正确），且无条件正文投喂违背 L2-2 retrievable != injectable。
+原 ②（goal 级 method_use_gate 硬门）已于 2026-10-18 按 EVO-20261018-f4ca0fc4 删除：
+与规则二十九“不设硬门”冲突，且自带 task_update(method_no_contact=true) 免费出口，
+从未在生产开启。原 ③（会话开场 active 卡清单 build_active_cards_message）已于
+2026-09-24 退役：弱本地模型身份轮实测被带偏（6aec21cb 凭先验自称 DeepSeek-V4，
+对照 f66027f9 无附录时按证据自报正确），且无条件正文投喂违背 L2-2
+retrievable != injectable。
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import pytest
-
-from llm_loop.core import run_context
 from llm_loop.core.injection_labels import InjectionLayer
 from llm_loop.core.loop.engine_services.method_injection import (
     build_use_reminder_message,
     scan_method_use_ledger,
 )
 from llm_loop.core.trace_leak.invariant import metadata_satisfies_invariant
-from llm_loop.introspection import tools_task
-from llm_loop.introspection.goal import GoalStore
-from llm_loop.introspection.task_evidence import TaskEvidenceVerificationReport
-from llm_loop.introspection.task_store import TaskStore
-from llm_loop.methods.store import MethodStore
 
 # ---------- ① 收尾提醒：tool_trace 扫描与消息载体 ----------
-
-
-@pytest.fixture(autouse=True)
-def _isolate_session_contextvar():
-    """隔离 run_context.current_session_id：先清空、测试后恢复原值。
-
-    门禁测试在用例内 set("sess-gate")；若不恢复，残留 ContextVar 会污染
-    同进程后续"缺上下文必须失败"类用例（test_missing_context_authority 等）。
-    """
-    token = run_context.current_session_id.set("")
-    yield
-    run_context.current_session_id.reset(token)
 
 
 def test_ledger_counts_exact_hydration_only():
@@ -79,138 +58,3 @@ def test_reminder_message_is_status_layer_program_origin():
 def test_reminder_never_fires_without_exact_hydration():
     rows = [{"name": "search_records", "arguments": {"kind": "method", "query": "导航"}, "status": "success"}]
     assert scan_method_use_ledger(rows).unrecorded() == ()
-
-
-# ---------- ② goal 级硬门 ----------
-
-class _StubVerifier:
-    def verify(self, refs):
-        return TaskEvidenceVerificationReport(status="verified", checked_at="now", refs_digest="d", checked_count=len(refs), failing_ref="")
-
-
-class _Ctx:
-    task_evidence_verifier = _StubVerifier()
-
-
-def _make_goal_and_task(audit: Path, gate: bool):
-    gs = GoalStore(str(audit))
-    ts = TaskStore(str(audit))
-    goal = gs.create("目标", session_id="sess-gate", method_use_gate=gate)
-    task = ts.create(goal.id, "T", acceptance=["验收"], evidence_required=True)
-    ts.update(goal.id, task.task_id, status="in_progress")
-    return gs, ts, goal, task
-
-
-def _host(audit: Path, methods: Path | None):
-    class Host:
-        pass
-
-    h = Host()
-    h.audit_dir = str(audit)
-    h.ctx = _Ctx()
-    if methods is not None:
-        h.method_store = MethodStore(str(methods))
-    return h
-
-
-def test_goal_method_use_gate_field_roundtrip(tmp_path):
-    gs = GoalStore(str(tmp_path / "audit"))
-    g1 = gs.create("开", method_use_gate=True)
-    g2 = gs.create("关")
-    assert g1.method_use_gate is True and g2.method_use_gate is False
-    assert gs.get(goal_id=g1.id)["method_use_gate"] is True
-    assert gs.get(goal_id=g2.id)["method_use_gate"] is False
-
-
-def test_goal_old_record_without_gate_defaults_off(tmp_path):
-    audit = tmp_path / "audit"
-    audit.mkdir()
-    goal_file = audit / "goals.jsonl"
-    goal_file.write_text(json.dumps({"id": "GOAL-X", "objective": "旧", "status": "active"}, ensure_ascii=False) + "\n")
-    assert GoalStore(str(audit)).get(goal_id="GOAL-X").get("method_use_gate") in (None, False)
-
-
-def test_gate_blocks_done_without_record_use(tmp_path):
-    audit, methods = tmp_path / "audit", tmp_path / "methods"
-    _, _, goal, task = _make_goal_and_task(audit, gate=True)
-    run_context.current_session_id.set("sess-gate")
-    r = tools_task.run_task_update(_Ctx(), _host(audit, methods), {
-        "goal_id": goal.id, "task_id": task.task_id, "status": "done",
-        "evidence_refs": ["evidence://v1/t-1"],
-    })
-    assert r.status.name == "FAILURE"
-    assert "method_use_gate" in r.content
-
-
-def test_gate_passes_with_explicit_declaration(tmp_path):
-    audit, methods = tmp_path / "audit", tmp_path / "methods"
-    _, _, goal, task = _make_goal_and_task(audit, gate=True)
-    run_context.current_session_id.set("sess-gate")
-    r = tools_task.run_task_update(_Ctx(), _host(audit, methods), {
-        "goal_id": goal.id, "task_id": task.task_id, "status": "done",
-        "evidence_refs": ["evidence://v1/t-1"], "method_no_contact": True,
-    })
-    assert r.status.name == "SUCCESS"
-
-
-def test_gate_passes_with_session_record_use(tmp_path):
-    audit, methods = tmp_path / "audit", tmp_path / "methods"
-    _, _, goal, task = _make_goal_and_task(audit, gate=True)
-    card = methods / "commit-then-verify-000000000001"
-    card.mkdir(parents=True)
-    (card / "METHOD.md").write_text("---\nid: commit-then-verify-000000000001\nname: c\n---\n正文")
-    MethodStore(str(methods)).record_use(
-        "method:commit-then-verify-000000000001",
-        episode_ref="episode:x", decision="applied", session_id="sess-gate",
-    )
-    run_context.current_session_id.set("sess-gate")
-    r = tools_task.run_task_update(_Ctx(), _host(audit, methods), {
-        "goal_id": goal.id, "task_id": task.task_id, "status": "done",
-        "evidence_refs": ["evidence://v1/t-1"],
-    })
-    assert r.status.name == "SUCCESS"
-
-
-def test_gate_ignores_other_session_record_use(tmp_path):
-    audit, methods = tmp_path / "audit", tmp_path / "methods"
-    _, _, goal, task = _make_goal_and_task(audit, gate=True)
-    card = methods / "commit-then-verify-000000000002"
-    card.mkdir(parents=True)
-    (card / "METHOD.md").write_text("---\nid: commit-then-verify-000000000002\nname: c\n---\n正文")
-    MethodStore(str(methods)).record_use(
-        "method:commit-then-verify-000000000002",
-        episode_ref="episode:x", decision="applied", session_id="sess-other",
-    )
-    run_context.current_session_id.set("sess-gate")
-    r = tools_task.run_task_update(_Ctx(), _host(audit, methods), {
-        "goal_id": goal.id, "task_id": task.task_id, "status": "done",
-        "evidence_refs": ["evidence://v1/t-1"],
-    })
-    assert r.status.name == "FAILURE"
-
-
-def test_gate_off_by_default_and_not_done_never_blocks(tmp_path):
-    audit, methods = tmp_path / "audit", tmp_path / "methods"
-    _, ts, goal, task = _make_goal_and_task(audit, gate=False)
-    run_context.current_session_id.set("sess-gate")
-    r = tools_task.run_task_update(_Ctx(), _host(audit, methods), {
-        "goal_id": goal.id, "task_id": task.task_id, "status": "done",
-        "evidence_refs": ["evidence://v1/t-1"],
-    })
-    assert r.status.name == "SUCCESS"
-    t2 = ts.create(goal.id, "T2", acceptance=["验收"], evidence_required=True)
-    r2 = tools_task.run_task_update(_Ctx(), _host(audit, methods), {
-        "goal_id": goal.id, "task_id": t2.task_id, "status": "in_progress",
-    })
-    assert r2.status.name == "SUCCESS"
-
-
-def test_gate_fail_open_without_method_store(tmp_path):
-    audit = tmp_path / "audit"
-    _, _, goal, task = _make_goal_and_task(audit, gate=True)
-    run_context.current_session_id.set("sess-gate")
-    r = tools_task.run_task_update(_Ctx(), _host(audit, None), {
-        "goal_id": goal.id, "task_id": task.task_id, "status": "done",
-        "evidence_refs": ["evidence://v1/t-1"],
-    })
-    assert r.status.name == "SUCCESS"
