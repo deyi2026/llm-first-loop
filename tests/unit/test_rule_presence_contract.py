@@ -26,7 +26,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 _LEDGER_MD = _ROOT / ".codeartsdoer" / "specs" / "rule_presence" / "rule-presence-ledger.md"
 _LEDGER_AVAILABLE = _LEDGER_MD.is_file()  # 账本为内部治理文档，开源仓库不含（同 test_docs_sync specs 口径）
 
-_BASELINE_SEARCH_RECORDS_COMPACT = 390
+# 2026-10-18 EVO-20261017-lifecycle-alignment：描述新增"候选卡与 active 同等可用、
+# status 只是质量标注、record_use 可选"语义（+81 chars）；基线随语义同步，+80 容忍不变。
+_BASELINE_SEARCH_RECORDS_COMPACT = 471
 _SLIM_PREFIX_HASH_12 = "5aeea16c7677"  # SOUL.MD 前置逐字钉入(1117 chars, 用户指令 2026-10-09); 前值 55cd98cf0928(645, EVO-20261009-0ffcaad8); 更早 66b4523a06e7(547, EVO-20261003-8b053766)
 
 _TOOL = ConvergenceDecideTool()

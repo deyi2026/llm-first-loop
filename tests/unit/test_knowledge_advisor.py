@@ -97,7 +97,9 @@ def test_per_kind_failed_lookup_is_fail_open_and_does_not_starve_other_kinds() -
         session_id="one", run_ref="r", frontier="t",
     )
     assert "experience:search_failed" in result.diagnostics
-    assert [h.kind for h in result.hints] == ["method", "lesson"]
+    # 2026-10-18 lifecycle-alignment：hold 同属可发现状态（六态全可见）。lane 先各取
+    # 一条（method/lesson），补齐位再追加第二张 method；experience 失败不饿死其他来源。
+    assert [h.kind for h in result.hints] == ["method", "lesson", "method"]
 
 
 def test_high_risk_reference_does_not_claim_authorization() -> None:
@@ -125,7 +127,7 @@ def test_size_bound_selection_and_stable_identity() -> None:
     assert first.key != advisor.discover(**{**args, "frontier": "frontier2"}).key
 
 
-def test_invalid_status_exact_hydration_and_wrong_kind_not_auto_exposed() -> None:
+def test_invalidated_status_visible_but_hydrated_and_wrong_kind_not_auto_exposed() -> None:
     def bad(*, kind, **_kwargs):
         return [
             {"method_ref": "method:invalid", "status": "invalidated"},
@@ -137,4 +139,8 @@ def test_invalid_status_exact_hydration_and_wrong_kind_not_auto_exposed() -> Non
         query="repair broken repository tests", trigger="task_start",
         session_id="one", run_ref="r", frontier="t",
     )
-    assert not result.hints and not result.reference
+    refs = [h.ref for h in result.hints]
+    # 2026-10-18 lifecycle-alignment：invalidated 属六态之一，现在可见；hydrated=True 仍
+    # 不自动内联，method lane 里混入的 lesson 行（wrong kind）仍不进。
+    assert refs == ["method:invalid"]
+    assert "experience:bad" not in result.reference

@@ -175,11 +175,13 @@ def test_method_transition_gates(build_test_engine, tmp_path) -> None:
     )
     assert bad.status_code == 422
 
-    # candidate → active：无 2 类任务 pass qualification，store 门禁拒绝 → 409
-    denied = client.post(
+    # candidate → active：2026-10-18 lifecycle-alignment 后状态是质量标注而非权限层，
+    # 一次写入即合法（原 promotion=pass / cross-task-type 门禁已按 DESIGN §9 移除）
+    activated = client.post(
         "/api/v1/knowledge/methods/method:gate-candidate/transition", params={"transition": "activate"}
     )
-    assert denied.status_code == 409
+    assert activated.status_code == 200
+    assert activated.json()["status"] == "active"
 
     # candidate → hold：合法流转
     held = client.post(
