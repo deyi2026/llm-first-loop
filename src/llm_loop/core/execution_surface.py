@@ -11,6 +11,10 @@
          2026-10-16 EVO-20261016-ac47e850（人工已批准）: requires.fs_isolation 声明式
          git worktree 文件系统隔离（仅 local_subagent；运行期 git/磁盘前置由
          workspace.worktree_isolation.prepare_worktree fail-fast 拒绝）
+         2026-10-17 EVO-20261016-96abc163（人工已批准）: SurfaceCapability 新增
+         fs_isolation 能力位（校验从面名比对改为能力位比对）；main_process 执行面
+         execute_command 新增 isolation=true 命令级 worktree 隔离（opt-in，
+         不放宽任何安全边界）
 """
 
 from __future__ import annotations
@@ -29,6 +33,8 @@ FS_TOOLS: frozenset[str] = frozenset(
     {"read_file", "edit_file", "search_files", "inspect_code", "read_image",
      "source_synopsis"}
 )
+# - 声明式 worktree 文件系统隔离入口（命令级 opt-in 参数面，EVO-20261016-96abc163）
+FS_ISOLATION_TOOLS: frozenset[str] = frozenset({"execute_command"})
 
 SURFACE_LOCAL_SUBAGENT = "local_subagent"
 SURFACE_CODEARTS = "codearts"
@@ -48,6 +54,9 @@ class SurfaceCapability:
     session_continuity: bool  # 是否支持 terminal 后有界续话（EVO-e6b8aa22）
     timeout_s_cap: int | None = None
     context_tokens_cap: int | None = None
+    # EVO-20261016-96abc163: worktree 文件系统隔离能力位（local_subagent 经 spawn
+    # requires.fs_isolation；main_process 经 execute_command isolation=true opt-in）
+    fs_isolation: bool = False
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +69,7 @@ class SurfaceCapability:
             "session_continuity": self.session_continuity,
             "timeout_s_cap": self.timeout_s_cap,
             "context_tokens_cap": self.context_tokens_cap,
+            "fs_isolation": self.fs_isolation,
             "notes": self.notes,
         }
 
@@ -138,6 +148,9 @@ def local_subagent_capability(
         session_continuity=True,  # EVO-e6b8aa22: terminal 后有界续话窗口
         timeout_s_cap=timeout_s_cap,
         context_tokens_cap=context_tokens_cap,
+        # EVO-20261016-ac47e850: spawn requires.fs_isolation 走 runner 内置
+        # worktree 隔离（与允许工具集无关，装配早期同样具备）
+        fs_isolation=True,
         notes=(
             "允许工具集=父执行域继承（live 派生）；工具自身安全/授权边界继续生效"
             if enumerable
@@ -197,11 +210,13 @@ def validate_requirements(caps: SurfaceCapability, reqs: SurfaceRequirements) ->
             f"required fs_isolation: 执行面 {caps.surface} 无工作区文件系统工具，"
             f"隔离无意义（空洞隔离）"
         )
-    if reqs.fs_isolation and caps.surface != SURFACE_LOCAL_SUBAGENT:
+    if reqs.fs_isolation and not caps.fs_isolation:
+        # EVO-20261016-96abc163: 面名比对改为能力位比对（消息保留"不支持"锚词）
         gaps.append(
             f"required fs_isolation: 执行面 {caps.surface} 不支持 git worktree 文件系统隔离"
-            f"（仅 local_subagent 支持；且父工作区须为 git 仓库并有足够磁盘，"
-            f"运行期不满足时 spawn 将带 reason_code 拒绝，不降级共享工作区）"
+            f"（仅 local_subagent 支持；主会话单条命令可用 execute_command "
+            f"isolation=true 命令级隔离，EVO-20261016-96abc163；且父工作区须为 "
+            f"git 仓库并有足够磁盘，运行期不满足时带 reason_code 拒绝，不降级共享工作区）"
         )
     if reqs.session_continuity and not caps.session_continuity:
         gaps.append(
@@ -228,7 +243,10 @@ def alternatives_hint(
 
 EXECUTION_SURFACE_MATRIX_DOC = (
     "执行面能力矩阵（EVO-20260914-1eb26afa）: spawn/step 可用 requires 显式声明"
-    "能力需求(tools/network/fs/session_continuity)，程序在 child 启动前比对矩阵，"
+    "能力需求(tools/network/fs/fs_isolation/session_continuity)，程序在 child 启动前比对矩阵，"
     "缺口即拒绝并给出替代执行面提示；只提前'必然失败'，不放宽任何授权边界。"
     "local_subagent 允许工具集随父执行域动态派生；codearts 为远端定义面。"
+    "fs_isolation: local_subagent 经 spawn requires 声明（EVO-20261016-ac47e850）；"
+    "main_process 的 execute_command 经 isolation=true 命令级 opt-in"
+    "（EVO-20261016-96abc163）"
 )

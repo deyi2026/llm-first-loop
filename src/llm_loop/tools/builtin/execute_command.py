@@ -16,6 +16,7 @@ import threading
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
+from uuid import uuid4
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
@@ -34,6 +35,13 @@ from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
     source_recovery_guidance,
+)
+from llm_loop.workspace.worktree_isolation import (
+    WorktreeIsolationError,
+    WorktreeLease,
+    format_release_note,
+    prepare_worktree,
+    release_worktree,
 )
 
 # EVO-20260814-61a52baf: 执行环境清洗（Harness defensive-patterns #6）
@@ -195,6 +203,22 @@ def _python_runtime_fact(
     )
 
 
+def _release_cmd_worktree_note(lease: WorktreeLease) -> str:
+    """释放命令级隔离树并返回回执附注（EVO-20261016-96abc163）.
+
+    一次性语义由调用方（execute 内 _wt_note_in + finally 兜底）保证；
+    本函数只做机械 release+格式化。释放异常如实返回文字（树保守保留，
+    绝不让释放失败吞掉/遮蔽命令真实结果）。
+    """
+    try:
+        report = release_worktree(lease.parent_root, lease.path)
+    except Exception as exc:  # noqa: BLE001 — 释放失败不构成命令结果改写
+        return (
+            f"[worktree] 释放异常（树保守保留）: {type(exc).__name__}: {exc} "
+            f"path={lease.path}"
+        )
+    return format_release_note(report, lease.path)
+
 
 class ExecuteCommandTool:
     name = "execute_command"
@@ -228,6 +252,19 @@ class ExecuteCommandTool:
             "fail_fast": {
                 "type": "boolean",
                 "description": "可选，默认 false。true 使用 bash -e -o pipefail，管道或未处理命令失败即返回非零；显式处理的失败仍遵循 shell 语义。",
+            },
+            "isolation": {
+                "type": "boolean",
+                "description": (
+                    "可选，默认 false（EVO-20261016-96abc163）。true 时本条命令在 "
+                    "<workspace>/.worktrees/ 下的独立 git worktree 中执行（cwd=隔离树根，"
+                    "基于父工作区当前 HEAD，与主工作区未提交改动互不干扰）。工作区须为 "
+                    "git 仓库且磁盘充足，否则带 reason_code 整条拒绝，绝不降级共享工作区"
+                    "执行。命令结束后：干净树自动删除；有未提交改动/新提交的树保守保留"
+                    "并在回执报告路径与 HEAD，合并回主工作区是你的显式动作。不可与 "
+                    "workdir/run_in_background 同用。best-effort 施工面隔离：命令经绝对"
+                    "路径/跨目录操作仍可越界，非安全沙箱，不可用于约束不可信代码"
+                ),
             },
             "escalation_token": {
                 "type": "string",
@@ -352,6 +389,35 @@ class ExecuteCommandTool:
                 content="[参数错误] fail_fast 需为 boolean",
                 tool_call_id="", tool_name=self.name,
             )
+        # EVO-20261016-96abc163: 命令级 worktree 硬隔离（opt-in，默认关闭=零行为变化）。
+        # 不可与 run_in_background（生命周期超出单次回执，无法确定性释放隔离树）或
+        # 显式 workdir（绝对路径逃逸隔离树语义）组合——确定性拒绝，不静默忽略。
+        isolation = kwargs.get("isolation", False)
+        if not isinstance(isolation, bool):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] isolation 需为 boolean",
+                tool_call_id="", tool_name=self.name,
+            )
+        if isolation and run_bg:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[参数错误] isolation=true 不支持 run_in_background=true："
+                    "后台任务生命周期超出单次回执，无法确定性释放隔离树。"
+                    "长隔离施工请改用 spawn_subagent(requires.fs_isolation=true)"
+                ),
+                tool_call_id="", tool_name=self.name,
+            )
+        if isolation and workdir is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[参数错误] isolation=true 不支持显式 workdir：隔离树根即本次 cwd"
+                    "（基于父工作区当前 HEAD）；需要子目录请在命令内用相对路径 cd"
+                ),
+                tool_call_id="", tool_name=self.name,
+            )
         launch_command = "bash -e -o pipefail -c " + shlex.quote(command) if fail_fast else command
         # RULE-AI-28: caller-visible obligation is in the schema before invocation;
         # the returned annotation reports observations, not automatic admission.
@@ -360,6 +426,47 @@ class ExecuteCommandTool:
         if workdir is None:
 
             workdir = workspace_base()
+        # EVO-20261016-96abc163: 命令级 worktree 隔离租约（opt-in）。prepare fail-fast
+        # 即整条拒绝——绝不降级共享工作区执行（无声丢隔离比失败更糟）。
+        # 释放协调：try 内联终态回执（超时/拒绝/OSError）经 _wt_note_in 现场释放并入
+        # 附注；正常完成路径的释放由 try/finally 确定性先行执行（内容拼装在 finally
+        # 之后），附注暂存 wt_note，由 _wt_note_in 从暂存并入——两路共享同一组
+        # 标志，保证 release_worktree 恰好一次、附注恰好一条。
+        wt_lease: WorktreeLease | None = None
+        wt_released = False
+        wt_note = ""
+
+        def _wt_note_in(content: str) -> str:
+            """终态一次性释放隔离树并把 ReleaseReport 附注并入回执内容."""
+            nonlocal wt_lease, wt_released, wt_note
+            if wt_lease is None and not wt_note:
+                return content
+            if wt_lease is not None and not wt_released:
+                wt_released = True
+                wt_note = _release_cmd_worktree_note(wt_lease)
+                wt_lease = None
+            if not wt_note:
+                return content
+            note, wt_note = wt_note, ""
+            return f"{content}\n{note}" if note else content
+
+        if isolation:
+            try:
+                wt_lease = prepare_worktree(
+                    f"lfl-cmd-{uuid4().hex[:16]}",
+                    parent_root=workspace_base(),
+                )
+            except WorktreeIsolationError as exc:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=(
+                        f"[worktree 隔离准备失败] reason_code={exc.reason_code}，"
+                        f"命令未执行（未降级共享工作区执行）: {exc.detail or exc}"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            workdir = wt_lease.path
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()
@@ -485,7 +592,7 @@ class ExecuteCommandTool:
             except RuntimeError as exc:
                 return ToolResult(
                     status=ToolResultStatus.ERROR,
-                    content=f"[沙箱不可用] {exc}",
+                    content=_wt_note_in(f"[沙箱不可用] {exc}"),
                     tool_call_id="",
                     tool_name=self.name,
                 )
@@ -502,9 +609,9 @@ class ExecuteCommandTool:
                 if not verdict and not read_only_probe:
                     return ToolResult(
                         status=ToolResultStatus.UNAUTHORIZED,
-                        content=format_effect_denial(
+                        content=_wt_note_in(format_effect_denial(
                             verdict, action=f"命令拒绝执行: {command}"
-                        ),
+                        )),
                         error_type=verdict.code or "E0_EFFECT_AUTHORITY",
                         tool_call_id="",
                         tool_name=self.name,
@@ -534,7 +641,7 @@ class ExecuteCommandTool:
                     proc.wait(timeout=5)  # 收尸（SIGKILL 后立即退出；失败不阻断回执）
                 return ToolResult(
                     status=ToolResultStatus.TIMEOUT,
-                    content=(
+                    content=_wt_note_in(
                         f"[执行超时] 命令超过 {self._timeout_s:.0f}s 未完成"
                         + (f"\n{gate_line}" if gate_line else "")
                     ),
@@ -544,13 +651,22 @@ class ExecuteCommandTool:
         except OSError as exc:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
-                content=f"[执行失败] {type(exc).__name__}: {exc}",
+                content=_wt_note_in(f"[执行失败] {type(exc).__name__}: {exc}"),
                 tool_call_id="",
                 tool_name=self.name,
                 error_type=type(exc).__name__,
                 error_detail=str(exc),
             )
         finally:
+            if wt_lease is not None and not wt_released:
+                # EVO-20261016-96abc163: 正常完成/非预期异常路径的确定性释放
+                # （内容拼装在 finally 之后，附注暂存 wt_note 由 _wt_note_in 并入
+                # 回执；异常向上传播时至少保证树不泄漏，释放异常不遮蔽原异常）。
+                wt_released = True
+                try:
+                    wt_note = _release_cmd_worktree_note(wt_lease)
+                finally:
+                    wt_lease = None
             _proc_key = locals().get("_proc_key")
             _proc = locals().get("proc")
             if _proc_key is not None:
@@ -588,6 +704,8 @@ class ExecuteCommandTool:
             for line in (_summary_line, gate_line or None, content)
             if line is not None
         )
+        # EVO-20261016-96abc163: 隔离树终态附注（干净=已删除；脏=保留路径+HEAD）
+        content = _wt_note_in(content)
 
         raw_observation = content if current_evidence_shadow_enabled.get() else None
 

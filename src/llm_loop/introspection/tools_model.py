@@ -202,11 +202,17 @@ def run_model_catalog(
     lines.append(
         "  - local_subagent: allowed_tools=父执行域继承（spawn 时 live 派生）, "
         "network_egress=随工具域, "
-        "fs=workspace(随工具域), session_continuity=✓（terminal 后有界续话）"
+        "fs=workspace(随工具域), fs_isolation=✓（worktree，EVO-20261016-ac47e850）, "
+        "session_continuity=✓（terminal 后有界续话）"
     )
     lines.append(
         "  - codearts: allowed_tools=远端定义（本地不可枚举）, network_egress=✓, "
         "fs=remote_sandbox, session_continuity=✗（跨步状态经 ctx_path 显式传递）"
+    )
+    lines.append(
+        "  - main_process: 工具直连本会话（fs=workspace）；execute_command 支持 "
+        "isolation=true 单条命令 worktree 隔离（opt-in，EVO-20261016-96abc163："
+        "干净树自动删除，脏树保留并在回执报告，prepare 失败带 reason_code 拒绝不降级）"
     )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
