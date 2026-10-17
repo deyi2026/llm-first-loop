@@ -103,6 +103,8 @@ web 复用原有 Web 入口、认证与生命周期清理，默认绑定本机�
 
 ~~~bash
 lfl upgrade --plan --json
+lfl upgrade --plan --candidate /absolute/private/llm_first_loop-0.6.33-py3-none-any.whl --expected-sha256 SHA256 --json
+lfl upgrade --plan --candidate /absolute/private/llm_first_loop-0.6.33-py3-none-any.whl --expected-sha256 SHA256 --require-trust --json
 lfl backup --plan --json
 # 先从运行态核对并停止受影响 Web/Feishu/Learning 与其他持久化写入进程
 lfl backup --to /absolute/private/snapshots/before-upgrade --confirm-services-stopped
@@ -111,8 +113,16 @@ lfl backup verify --from /absolute/private/snapshots/before-upgrade --json
 lfl rollback --from /absolute/private/snapshots/before-upgrade --into /absolute/private/staged-restore --confirm-services-stopped
 ~~~
 
-`--plan` 与 `verify` 不读取网络、不修改软件环境、不自动启动模型或服务。冷备份及隔离
-恢复必须显式确认受影响服务已停止；**该参数只是操作者声明，程序尚未证明服务真的
+`--plan` 与 `verify` 不读取网络、不修改软件环境、不自动启动模型或服务。
+
+升级 `--candidate` 检查仅读取本地 wheel、核对 SHA256、包身份和版本，且始终
+报告 `stage_eligible=false`、`candidate_trusted=false`；即便完整性通过也**绝不
+证明可信发布者来源、数据格式兼容、服务已停止或允许安装**。`--require-trust`
+和 `--require-data-compatibility` 在没有独立权威证明时必定安全拒绝，不会执行
+`uv`、访问网络、创建 staging 或切换应用程序。正式自动升级的 `prepare`、
+`commit`、`abort` 尚未实现，不能使用这些命令开展生产切换。
+
+冷备份及隔离恢复必须显式确认受影响服务已停止；**该参数只是操作者声明，程序尚未证明服务真的
 停止**，运行中的数据复制可能不一致。先通过现有运维/服务控制通道确认停机并协调
 其他写入者，必要时暂缓操作。备份目录和恢复目录必须以前从未存在且父目录可访问，
 不会强制覆盖。备份仅包括配置、选定数据及可解析的 Experience/Method 根，

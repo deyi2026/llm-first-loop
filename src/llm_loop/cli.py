@@ -1354,10 +1354,41 @@ def application_main(argv: list[str] | None = None) -> int:
             upgrade_parser = argparse.ArgumentParser(prog="lfl upgrade")
             upgrade_parser.add_argument("--plan", action="store_true")
             upgrade_parser.add_argument("--json", action="store_true")
+            upgrade_parser.add_argument("--candidate")
+            upgrade_parser.add_argument("--expected-sha256")
+            upgrade_parser.add_argument("--require-trust", action="store_true")
+            upgrade_parser.add_argument("--require-data-compatibility", action="store_true")
             try:
                 options = upgrade_parser.parse_args(remaining[1:])
             except SystemExit as exc:
                 return exc.code if isinstance(exc.code, int) else 2
+            if options.candidate is not None or options.expected_sha256 is not None or (
+                options.require_trust or options.require_data_compatibility
+            ):
+                # Candidate inspection is deliberately not a version switch.
+                # Do not initialize a provider, service controller, or installer.
+                digest = options.expected_sha256 or ""
+                if (not options.plan or options.candidate is None
+                        or len(digest) != 64
+                        or any(char not in "0123456789abcdefABCDEF" for char in digest)):
+                    return 2
+                from llm_loop.runtime.upgrade_preflight import candidate_preflight
+
+                bundle = bundle_root()
+                current = version("llm-first-loop") if bundle else None
+                status, report = candidate_preflight(
+                    candidate=options.candidate,
+                    expected_sha256=digest,
+                    current_version=current,
+                    require_trust=options.require_trust,
+                    require_data_compatibility=options.require_data_compatibility,
+                )
+                if options.json:
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
+                else:
+                    print("候选包内容完整性已核对；并不代表可信来源、数据兼容或允许安装。"
+                          if status == 0 else f"候选包检查拒绝：{report['reason']}")
+                return status
             return run_upgrade(bundle=bundle_root(), installed_version=version("llm-first-loop"),
                                preview=options.plan, as_json=options.json)
         if subcommand == "backup":
