@@ -201,7 +201,11 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
                         "archive_file": e.get("archive_file"),
                     }
                 )
-        seqs = [e.get("msg_seq") for e in entries if isinstance(e.get("msg_seq"), int)]
+        seqs: list[int] = []
+        for e in entries:
+            seq = e.get("msg_seq")
+            if isinstance(seq, int):
+                seqs.append(seq)
         # B2 完整性元数据：明确"快照存在≠内容完整"——archived/embedded 双向
         # 计数（消息数与字符数）+ 缺口声明，禁止把索引存在当原文在手。
         total_chars = sum(int(e.get("chars") or 0) for e in entries)
@@ -420,11 +424,11 @@ def evaluate_confirmation(
         if role == "assistant" and content.strip():
             result["assistant_after"] = True
             if RECEIPT_MARKER in content and not result["receipt_valid"]:
-                fields = {
-                    _RECEIPT_FIELD_RE.match(line).group(1)
-                    for line in content.splitlines()
-                    if _RECEIPT_FIELD_RE.match(line)
-                }
+                fields: set[str] = set()
+                for line in content.splitlines():
+                    match = _RECEIPT_FIELD_RE.match(line)
+                    if match is not None:
+                        fields.add(match.group(1))
                 ref_match = _MANIFEST_REF_LINE_RE.search(content)
                 # 回执可引用完整 64 位或 ≥12 位截断 ref——前缀关系判定
                 ref_line_ok = bool(
