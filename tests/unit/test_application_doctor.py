@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +23,10 @@ def doctor_home(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "bundle_root", lambda: None)
     monkeypatch.setattr(cli, "default_home", lambda: tmp_path / "lfl-home")
+    # Source installs resolve the default .env relative to cli.__file__, not
+    # cwd. Isolate that origin as well so a developer's real .env cannot turn
+    # an intentionally unconfigured first-use case into a configured one.
+    monkeypatch.setattr(cli, "__file__", str(tmp_path / "isolated-source" / "src" / "llm_loop" / "cli.py"))
     # This command must never follow the stateful application/Engine entrypoints.
     monkeypatch.setattr(cli, "prepare_environment", lambda *_: pytest.fail("mutating bootstrap"))
     monkeypatch.setattr(cli, "main", lambda *_a, **_kw: pytest.fail("engine bootstrap"))
@@ -35,6 +40,16 @@ def _run_json(argv, capsys):
 
 def _checks(report):
     return {check["id"]: check for check in report["checks"]}
+
+
+def test_doctor_fixture_does_not_use_real_checkout_env(doctor_home, capsys):
+    """The simulated first install must not see the developer checkout .env."""
+    source_root = doctor_home / "isolated-source"
+    assert Path(cli.__file__).resolve().parents[2] == source_root
+    assert not (source_root / ".env").exists()
+    rc, report = _run_json([], capsys)
+    assert rc == 1
+    assert _checks(report)["config"]["status"] == "warn"
 
 
 def test_unconfigured_doctor_is_read_only_and_actionable(doctor_home, capsys):
