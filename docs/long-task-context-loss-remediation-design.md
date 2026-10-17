@@ -6,15 +6,16 @@
 ## 0. 状态头（压缩恢复入口，每次 checkpoint 同步更新，保持 ≤50 行）
 
 - 目标：拷问完善"长任务压缩语义丢失"分析，产出本方案（意图原文见 §7 intent 记录）
-- 当前状态：rev3 实施完成待终验——rev1 08:32 → 独立代码审查 REVISE 08:57 → rev2 09:03 →
-  弱模型 probe5 无劣化 09:13 → 原会话 09:13:51 中断 → 09:22 恢复 → 二轮独立复审 REVISE
-  （无 P0，P1-1..4+P2）→ rev3 09:38 带入 09:29 裁决清单（B1/B2/B4/B7+B3/B9）+ 复审修复：
-  P1-1 重注入计数持久化｜B1 manifest 写失败→degraded 事件+观测 hint｜B7 重放防护声明｜
-  B2 coverage 块+覆盖声明行｜P1-4 空 batch 不提前返回+visible_from 重置+轮龄兜底｜
-  P2-1 扫描 mtime 排序+24h TTL｜P2-3 槽装配失败可观测｜P2-5 批驻留瘦身。gate 22 单测绿，
-  archive/compact 子集 275 绿；probe6（rev3 通知文本）复测中
-- 下一步：probe6 无劣化 → review_admission 二轮 PASS → 全量 pytest（RULE-AI-28 闸）→
-  提交 commit + evolution_complete 登记
+- 当前状态：**已完成交付（commit 42fe370b9）**——rev1 08:32 → 一轮审查 REVISE 08:57 →
+  rev2 09:03 → probe5 无劣化 09:13 → 原会话中断 09:13:51 → 09:22 证据恢复续作 →
+  二轮复审 REVISE(P1×4) → rev3（09:29 裁决清单 B1/B2/B4/B7+B3/B9 带入）→ 三轮复审
+  REVISE(P1-1 superseded) → rev4（P2-2/5/6/7/B9）→ 四轮复审 REVISE(P2×4) →
+  rev4.2（delivery_mode 标签/扫描容错/分状态计数）→ 六轮 review_admission 终态
+  **PASS**（SHA c5e02f13）→ 全量 pytest 9309 passed（唯一持续失败
+  test_cli_main_finally_closes_engine 经 HEAD 干净 worktree 验证为既有损坏，
+  与本改动无关；其余为并行时序抖动，串行/干净树均通过）→ evolve-complete
+  登记 executed。25 项 gate 单测 + durability 登记（T2/observe）
+- 下一步：部署后首个真实压缩首验（A3 恢复路径 + 五问记分）；B5/B8/B10/B11 后置项
 - 未解决问题：adjust_strategy 的 history_budget 作用域未核；schedule 单位已核（秒），通知投递语义未全核；
   breakdown 口径及 compaction_epoch / cache_prefix_epoch / last_request.round 的精确语义与作用域（run 级/会话级）未核
 - A0 观察史：08:05（llm_rounds=37、history=1129、tool_results=0，当时判"疑似压缩"）→ **08:13 反向证据**
@@ -117,7 +118,7 @@
 |---|---|---|
 | S1 | A1/A2/A3/A4/A5（纯行为纪律，本文件即实践） | 本文档落盘时生效 |
 | S2 | A6 schedule 闹钟（单位已核：repeat_interval 秒 / after 秒 / at ISO；默认仅通知，wake 续跑限真人 run） | 参数已核，待启用 |
-| S3 | C1+C2 提交 submit_evolution | ✅ 08:11 提交 → 08:12:22 accepted（EVO-20261017-53c394bd）。实施：rev1 08:32 → 一轮审查 REVISE 08:57 → rev2 09:03（单测绿+probe5 无劣化）→ 二轮审查 REVISE 09:32 → **rev3 09:38 完成**（带入 09:29 裁决清单 B1/B2/B4/B7+B3/B9 + P1-1..4/P2 修复；gate 22 单测+子集 275 绿）。待：probe6 + 二轮复审 PASS + 全量 pytest + commit |
+| S3 | C1+C2 提交 submit_evolution | ✅ **完成**：08:11 提交 → 08:12:22 accepted → 08:15 人工批准 → 实施 rev1→rev4.2（4 轮独立审查全收敛）→ review_admission PASS → 全量 9309P → commit 42fe370b9 → evolve-complete executed |
 | S4 | B 参数调整 | 观察 S1-S3 效果后议 |
 
 ## 6. 拷问记录与已知边界
