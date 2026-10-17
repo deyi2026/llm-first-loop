@@ -1,0 +1,135 @@
+{
+  "P0": 0,
+  "P1": 0,
+  "P2": 3,
+  "based_on_main": true,
+  "branch": "integrate/install-upgrade-backup-main-c46b-20261017",
+  "branch_disposition": "kept: awaiting separate explicit local main ff-only authorization",
+  "branch_tip_reviewed": "c299f70fa741dbb5819d997cb9b7b67f4784a32b",
+  "changed_files": [
+    "docs/DESIGN-20261017-install-upgrade-backup-rollback-p1.md",
+    "docs/installation.md",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/runtime/install_recovery.py",
+    "tests/guards/function_size_baseline.json",
+    "tests/unit/test_install_upgrade_recovery.py"
+  ],
+  "conflicts_resolved": [],
+  "gate": "merge",
+  "goal_id": "2f012545-4f89-478b-ab87-53668e3004b2",
+  "integration_branch_clean_at_review": true,
+  "integration_code_commits": [
+    "5f8d29ed29786de02a5505348de05d292381e8c6",
+    "c299f70fa741dbb5819d997cb9b7b67f4784a32b"
+  ],
+  "latest_main_focused": {
+    "exit": 0,
+    "failed": 0,
+    "log_sha256": "0caefa4dc294d6a54785fb349d1c530e53d71494a4c89b6fc677c37432dab04c",
+    "passed": 89
+  },
+  "latest_main_quick": {
+    "deselected": 9255,
+    "exit": 0,
+    "log_sha256": "299d42fde2fe15bc1b96949b9c9d7007297635963f348d199478a8e464592097",
+    "passed": 319,
+    "pyright_new": 0
+  },
+  "main_sha_after": null,
+  "main_sha_at_review": "c46c8bfd9d90b4180b6960f991fe04e10ee8fe87",
+  "main_worktree": {
+    "overlap_with_candidate": false,
+    "unrelated_untracked_files_preserved": [
+      "pelican_bicycle_animation.svg",
+      "pelican_bike_own.svg",
+      "src/llm_loop/introspection/event_scan_cache.py",
+      "tests/unit/test_event_scan_cache.py"
+    ]
+  },
+  "merge_executed": false,
+  "merge_mode": "ff",
+  "pending_distinct_user_merge_authorization": true,
+  "postmerge_requirements": [
+    "recheck main and candidate tip under shared commit lock",
+    "preserve all unrelated dirty main-worktree assets byte-for-byte",
+    "run actual-main focused, static, and offline installed CLI smoke"
+  ],
+  "production_publish": false,
+  "push": false,
+  "qualification": "PASS",
+  "receipt_scope": "This receipt records the new c46b-based Rule34 review. Reviewer reviewed the exact two code commits only; this receipt commit itself is documentation-only and is not claimed to have been independently code-reviewed.",
+  "restart": false,
+  "review_material_bytes": 142992,
+  "review_material_sha256": "fbc9ac07652c11dba4fd7113c015b033d0b258595be7e5a233d2ea84d27adf6e",
+  "review_text": "VERDICT: PASS\n\nP0=0 P1=0 P2=3\n\nSHA256: 5dc82e513e6204f0660fa2d5136ff75b26b2843411599ed34a6414e27793f4f1",
+  "review_text_sha256": "c6d68e141bd8c7fc5e05f9906cf08f95f3997c045ea81000c52160070d5bb834",
+  "reviewed_code_patch_sha256": "5dc82e513e6204f0660fa2d5136ff75b26b2843411599ed34a6414e27793f4f1",
+  "reviewer": "subagent_ea586fa7690e",
+  "reviewer_compact_verdict_note": "Reviewer was explicitly constrained to verdict/count/SHA lines; no P2 narrative was returned, so no individual P2 findings are fabricated.",
+  "reviewer_independent": true,
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_result_id": "result-db35c7b180054ac9af0466c5dce7ab83",
+  "reviewer_state": "completed",
+  "schema": "lfl.rule34.merge_qualification/v1",
+  "source_commits": [
+    "15526c7a81df67bccef93de3e9d46112ee5d4ed9",
+    "b56112ad0a215f2cd43be22403c7970478e7f8ac"
+  ],
+  "source_full_R9": [
+    {
+      "commit": "15526c7a81df67bccef93de3e9d46112ee5d4ed9",
+      "failed": 0,
+      "log_sha256": "aea794645c14ef75d6e1d240e50a695d54f81cd8a469a8844cda134c08b839a8",
+      "official_exit": 0,
+      "passed": 9388,
+      "skipped": 146,
+      "wrapper_sha256": "494b6cc87d70865014775676d5387796e478781723ea8cb65cb973bd058165fc"
+    },
+    {
+      "classification": "existing temporal xdist false red under project policy",
+      "commit": "b56112ad0a215f2cd43be22403c7970478e7f8ac",
+      "initial_failure": "tests/phase6/test_m1_sync_interrupt.py::test_s4_multiple_interjections_all_consumed",
+      "log_sha256": "bdd8477b813ae8415a7c8b3e6e18d102fa110519b250308757019f6ec88d71c4",
+      "official_exit": 0,
+      "official_serial_file_passed": 9,
+      "wrapper_sha256": "7afe006fa79edee7a281f03c298813c54494ce0642f7c86ce427ea972ac377c0",
+      "xdist_failed": 1,
+      "xdist_passed": 9403,
+      "xdist_skipped": 146
+    }
+  ],
+  "source_rule28_reviews": [
+    {
+      "P0": 0,
+      "P1": 0,
+      "P2": 3,
+      "receipt_sha256": "53c4876a7b511067e53ebc882c9964a54b283bc67ad28779a48c4bcf5d93696b",
+      "reviewer": "subagent_26a9066ddab8",
+      "verdict": "PASS"
+    },
+    {
+      "P0": 0,
+      "P1": 0,
+      "P2": 2,
+      "receipt_sha256": "00646b5d37f31b19d163cfb70367597106082c4a6b8f7a328f2fdaad3d1704f0",
+      "reviewer": "subagent_2ddda2ed7718",
+      "verdict": "PASS"
+    }
+  ],
+  "terminal_event_count": 1,
+  "upstream_delta_from_prior_rule34_base": [
+    "A\tdocs/governance/receipts/RECEIPT-20261017-all-model-output-budget.json",
+    "A\tdocs/results/RESULT-20261017-all-model-output-budget.md"
+  ],
+  "upstream_file_overlap": false,
+  "verdict": "PASS",
+  "wheel": {
+    "complete_locked_dependencies": true,
+    "dependency_count": 40,
+    "installed_cli_backup_verify_isolated_restore_pass": true,
+    "installed_cli_receipt_sha256": "0e4fffc141db0710487c9cfa485a0e618614752d07e351838ff11ae8ee162d34",
+    "methods_alias_no_duplicate_copy": true,
+    "offline_second_venv": true,
+    "wheel_install_receipt_sha256": "a3e21079da91d78d31a9191b287635cf125ffa9b5453b6ef9251db09e2679fdf"
+  }
+}
