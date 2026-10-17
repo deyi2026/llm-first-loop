@@ -260,31 +260,26 @@ def test_lexical_method_receipt_is_not_subject_to_semantic_budget() -> None:
     assert "Method semantic 候选预算" not in rendered.content
 
 
-def test_candidate_is_immutable_and_cannot_jump_directly_active(tmp_path: Path) -> None:
+def test_candidate_dedup_is_stable_and_status_is_directly_settable(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     first = store.save_candidate(name="hydrate trace", description="trace producer", body=_CONTRACT_BODY)
     second = store.save_candidate(name="hydrate trace", description="trace producer", body=_CONTRACT_BODY)
     assert first.method_ref == second.method_ref
     assert first.status == "candidate"
 
-    try:
-        store.update_status(first.method_ref, "active")
-    except ValueError as exc:
-        assert "qualify" in str(exc)
-    else:
-        raise AssertionError("candidate -> active must fail")
+    # EVO-20261017-lifecycle-alignment: candidate -> active is a legal one-step
+    # transition. Status is a badge, so no qualification round-trip is forced.
+    assert store.update_status(first.method_ref, "active").status == "active"
 
 
 def test_qualification_then_qualified_then_active(tmp_path: Path) -> None:
     store = MethodStore(tmp_path / "methods")
     record = store.save_candidate(name="api refresh", description="fresh callsites", body=_CONTRACT_BODY)
 
-    try:
-        store.update_status(record.method_ref, "qualified")
-    except ValueError as exc:
-        assert "promotion=pass" in str(exc)
-    else:
-        raise AssertionError("qualification evidence required")
+    # EVO-20261017-lifecycle-alignment: no proof obligation precedes a status badge,
+    # and every transition stays mechanically available in either direction.
+    assert store.update_status(record.method_ref, "qualified").status == "qualified"
+    assert store.update_status(record.method_ref, "candidate").status == "candidate"
 
     store.record_qualification(
         record.method_ref,
@@ -299,13 +294,9 @@ def test_qualification_then_qualified_then_active(tmp_path: Path) -> None:
     qualified = store.update_status(record.method_ref, "qualified")
     assert qualified.status == "qualified"
 
-    # EVO-20261010-994e30f4: single-domain pass evidence cannot activate yet.
-    try:
-        store.update_status(record.method_ref, "active")
-    except ValueError as exc:
-        assert "task_type" in str(exc)
-    else:
-        raise AssertionError("single-domain activation must be blocked")
+    # Single-domain evidence activates directly; cross-domain proof is informational.
+    assert store.update_status(record.method_ref, "active").status == "active"
+    assert store.update_status(record.method_ref, "hold").status == "hold"
 
     store.record_qualification(
         record.method_ref,
@@ -320,8 +311,6 @@ def test_qualification_then_qualified_then_active(tmp_path: Path) -> None:
     assert [e["task_type"] for e in entries] == ["code-edit", "browser"]
     active = store.update_status(record.method_ref, "active")
     assert active.status == "active"
-    # Idempotent re-assert of active stays available (grandfather clause:
-    # the gate only applies to transitions into active).
     still = store.update_status(record.method_ref, "active")
     assert still.status == "active"
 
@@ -360,58 +349,24 @@ def test_same_source_episode_cannot_supply_promotion_pass(tmp_path: Path) -> Non
     assert independent["promotion"] == "pass"
 
 
-def test_activation_task_type_gate_counts_and_grandfather_semantics(tmp_path: Path) -> None:
+def test_status_transitions_have_no_qualification_gate(tmp_path: Path) -> None:
+    """EVO-20261017-lifecycle-alignment: status is a badge, not a permission tier."""
     store = MethodStore(tmp_path / "methods")
     record = store.save_candidate(name="gate probe", description="type gate", body=_CONTRACT_BODY)
 
-    # Only verdict=pass entries with a declared task_type count toward diversity.
-    store.record_qualification(record.method_ref, task_ref="episode:x1", verdict="fail", task_type="browser")
-    store.record_qualification(record.method_ref, task_ref="episode:x2", verdict="mixed", task_type="writing")
-    store.record_qualification(record.method_ref, task_ref="episode:x3", verdict="not_evaluated", task_type="diagnosis")
-    store.record_qualification(record.method_ref, task_ref="episode:x4", verdict="pass", task_type="")
-    store.record_qualification(
-        record.method_ref, task_ref="episode:x5", verdict="pass", mechanism="pass",
-        task_benefit="pass", promotion="pass", task_type="code-edit",
-    )
-    store.update_status(record.method_ref, "qualified")
-    try:
-        store.update_status(record.method_ref, "active")
-    except ValueError as exc:
-        assert "task_type" in str(exc)
-    else:
-        raise AssertionError("non-pass/unknown declarations must not satisfy the gate")
-
-    # Case/format variants collapse to one type and must not fake diversity.
-    store.record_qualification(record.method_ref, task_ref="episode:x6", verdict="pass", task_type="CODE_EDIT")
-    try:
-        store.update_status(record.method_ref, "active")
-    except ValueError as exc:
-        assert "task_type" in str(exc)
-    else:
-        raise AssertionError("variant spellings must collapse to a single task_type")
-
-    store.record_qualification(record.method_ref, task_ref="episode:x7", verdict="pass", task_type="browser")
+    # A fresh candidate reaches active in one write: no qualification, no
+    # cross-domain proof, and hold -> active re-entry is equally free.
     assert store.update_status(record.method_ref, "active").status == "active"
+    assert store.update_status(record.method_ref, "hold").status == "hold"
+    assert store.update_status(record.method_ref, "active").status == "active"
+    assert store.update_status(record.method_ref, "qualified").status == "qualified"
 
-    # Grandfather: a legacy card that was already active re-asserts fine, but
-    # leaving and re-entering active re-applies the gate.
-    legacy = store.save_candidate(name="legacy active", description="predates gate", body=_CONTRACT_BODY)
-    legacy_path = Path(legacy.path)
-    legacy_path.write_text(
-        legacy_path.read_text(encoding="utf-8").replace("status: candidate", "status: active"),
-        encoding="utf-8",
+    # task_type stays recorded and normalized for grouping, but gates nothing.
+    store.record_qualification(
+        record.method_ref, task_ref="episode:x1", verdict="pass", mechanism="pass",
+        task_benefit="pass", promotion="pass", task_type="Code Edit",
     )
-    store2 = MethodStore(tmp_path / "methods")
-    reloaded = store2.get(legacy.method_ref)
-    assert reloaded is not None and reloaded.status == "active"
-    assert store2.update_status(legacy.method_ref, "active").status == "active"
-    assert store2.update_status(legacy.method_ref, "hold").status == "hold"
-    try:
-        store2.update_status(legacy.method_ref, "active")
-    except ValueError as exc:
-        assert "task_type" in str(exc)
-    else:
-        raise AssertionError("re-entering active must pass the cross-task-type gate")
+    assert store.qualification_entries(record.method_ref)[-1]["task_type"] == "code-edit"
 
 
 def test_teacher_cannot_be_reclassified(tmp_path: Path) -> None:
@@ -630,10 +585,12 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     assert persisted.source_model == "test-provider/test-model"
     assert persisted.source_episode_refs == ("episode:method-test-session:1:feedface",)
 
-    blocked = execute_experience_tool(
+    # EVO-20261017-lifecycle-alignment: a fresh candidate activates immediately;
+    # the tool layer no longer demands qualification evidence before a badge change.
+    activated_at_once = execute_experience_tool(
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
     )
-    assert blocked is not None and blocked.status.value == "failure"
+    assert activated_at_once is not None and activated_at_once.status.value == "success"
 
     # Qualification identity must come from the runtime current Episode.  The
     # legacy/spoofed caller task_ref is ignored and cannot manufacture independence.
@@ -663,13 +620,15 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     )
     assert moved is not None and moved.status.value == "success"
 
-    # EVO-20261010-994e30f4: single-domain evidence cannot activate via the tool layer.
-    blocked_activate = execute_experience_tool(
+    # EVO-20261017-lifecycle-alignment: single-domain evidence no longer blocks
+    # activation. Status is a declared badge; it neither gates use nor visibility,
+    # so the tool layer must not demand cross-domain proof before it.
+    activated = execute_experience_tool(
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
     )
-    assert blocked_activate is not None and blocked_activate.status.value == "failure"
-    assert "task_type" in blocked_activate.content
+    assert activated is not None and activated.status.value == "success"
 
+    # task_type remains recorded for grouping; a second domain is informational only.
     host.episode_ref = "episode:method-test-session:10:cross-domain"
     cross_domain = execute_experience_tool(
         "method_manage",
@@ -685,10 +644,10 @@ def test_method_tools_persist_candidate_qualification_and_lifecycle(tmp_path: Pa
     )
     assert cross_domain is not None and cross_domain.status.value == "success"
     assert "task_type=browser" in cross_domain.content
-    activated = execute_experience_tool(
+    reasserted = execute_experience_tool(
         "method_manage", {"action": "refine", "method_ref": ref, "transition": "activate"}, cast(Any, host)
     )
-    assert activated is not None and activated.status.value == "success"
+    assert reasserted is not None and reasserted.status.value == "success"
 
 
 def test_model_facing_method_writes_require_runtime_episode_provenance(tmp_path: Path) -> None:
@@ -902,24 +861,29 @@ def test_seed_lifecycle_is_copy_on_write_and_never_mutates_tracked_seed(tmp_path
 # ── EVO-20260929-5283ab1b P1/P2/P3: journal, disposition basis, card contract, freshness_refs ──
 
 
-def test_blocked_qualification_lands_in_journal_not_vaporized(tmp_path: Path) -> None:
-    """R4-as-journal: a failed qualify must leave a durable, retrievable trace."""
+def test_blocked_disposition_lands_in_journal_not_vaporized(tmp_path: Path) -> None:
+    """R4-as-journal: a failed transition must leave a durable, retrievable trace.
+
+    Status transitions themselves no longer carry a proof gate
+    (EVO-20261017-lifecycle-alignment), so this exercises the surviving gate:
+    destructive disposition without an independent factual basis.
+    """
     store = MethodStore(tmp_path / "methods")
     record = store.save_candidate(name="journal probe", description="blocked transition", body=_CONTRACT_BODY)
 
     import pytest
 
     with pytest.raises(ValueError):
-        store.update_status(record.method_ref, "qualified")  # no promotion=pass yet
+        store.update_status(record.method_ref, "invalidated")  # no independent basis yet
 
     assert store.get(record.method_ref).status == "candidate"  # lifecycle untouched
     attempts = store.attempt_entries(record.method_ref)
     assert len(attempts) == 1
     entry = attempts[0]
     assert entry["event"] == "lifecycle_transition_attempt"
-    assert entry["requested"] == "qualified"
+    assert entry["requested"] == "invalidated"
     assert entry["result"] == "blocked"
-    assert entry["missing_fact"] == "promotion_pass"
+    assert entry["missing_fact"] == "independent_disposition_evidence"
     assert entry["method_status"] == "candidate"
     assert entry["journal_persisted"] is True
 
@@ -933,12 +897,12 @@ def test_refine_failure_reports_journaled_attempt(tmp_path: Path) -> None:
 
     result = execute_experience_tool(
         "method_manage",
-        {"action": "refine", "method_ref": record.method_ref, "transition": "qualify"},
+        {"action": "refine", "method_ref": record.method_ref, "transition": "invalidate"},
         cast(Any, host),
     )
     assert result is not None and result.status.value == "failure"
     assert "已落账 lifecycle_transition_attempt" in result.content
-    assert "missing_fact=promotion_pass" in result.content
+    assert "missing_fact=independent_disposition_evidence" in result.content
     assert store.attempt_entries(record.method_ref)[0]["episode_ref"].startswith("episode:")
 
 
@@ -1107,22 +1071,27 @@ def _seed_timed_method(
     )
 
 
-def test_zero_signal_candidate_decays_and_sinks(tmp_path):
+def test_status_does_not_reorder_or_hide_retrieval(tmp_path):
+    """EVO-20261017-lifecycle-alignment: status is a badge, not a ranking factor.
+
+    Previously an idle candidate sank by (age - 7) * 2 points, so a never-qualified
+    card fell out of the top-N purely for being old. That is a usability gate in
+    disguise: Experience retrieval never scores verification_state. Now identical
+    lexical/coverage hits all return, and status only breaks an exact tie.
+    """
     root = tmp_path / "methods"
     _seed_timed_method(root, "stale-card", created_days_ago=40)
     _seed_timed_method(root, "fresh-card", created_days_ago=2)
     _seed_timed_method(root, "live-card", status="active", created_days_ago=90)
 
     cards = MethodStore(root).list("timeout retry", 10)
-    order = [c["key"] for c in cards]
-    # Same lexical score; active(+35) > fresh candidate(0, inside grace window)
-    # > stale candidate(decayed by (40-7)*2 = 66, capped at 80).
-    assert order[0] == "method:live-card"
-    assert order[1] == "method:fresh-card"
-    assert order[2] == "method:stale-card"
-    stale = cards[2]
-    assert stale["last_signal_age_days"] is None  # zero signals ever
-    assert cards[0]["last_signal_age_days"] is None  # active card never qualified either
+    keys = {c["key"] for c in cards}
+    assert keys == {"method:stale-card", "method:fresh-card", "method:live-card"}
+    # All three are equally relevant, and status is not a ranking input at all:
+    # an old, never-signaled candidate is returned alongside the active card.
+    stale = next(c for c in cards if c["key"] == "method:stale-card")
+    assert stale["last_signal_age_days"] is None
+    assert next(c for c in cards if c["key"] == "method:live-card")["status"] == "active"
 
 
 def test_signal_restores_candidate_ranking(tmp_path):

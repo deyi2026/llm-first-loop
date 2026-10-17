@@ -102,8 +102,9 @@ def test_rule2931_record_and_scoring_notes_declare_three_layer_semantics():
 
     设计草案 v3 P1 规则对齐: 声明净分（usage_net 机械计分）/ 模型收益自评
     （record_use benefit）/ 独立验证（qualification task_benefit）三层分开。
-    只锚定"记录与计分说明"文本；规范性义务语义（触发/时限/计分义务原文）
-    必须保持不动，故同时锚定义务原文仍在。
+    只锚定"记录与计分说明"文本；计分定义（+1/-1 语义与留痕口径）必须保持不动，
+    故同时锚定计分原文仍在。2026-10-18 起"必须记录/必须评分"的义务已撤销、
+    改为可选；下述断言仍锚定留痕发生时的唯一计分口径，而非使用前的强制义务。
     """
     sot = _read("docs/ai_rules.md")
     rule29 = sot.split("## 规则二十九：", 1)[1].split("\n## 规则三十：", 1)[0]

@@ -66,7 +66,8 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
     "name": "method_manage",
     "description": (
         "Method Learning 生命周期入口：保存 candidate、声明本任务如何使用 Method、记录独立 qualification、或显式流转状态。"
-        "record_use 只保存模型自己的 applied/adapted/not_applicable/rejected 声明；不自动 promotion，不替模型判断适用性，不保存隐藏思维链。"
+        "使用无前置条件：检索到的任意 status 卡（含 candidate）读后即可照做；status 只是质量标注，不参与检索排序、不限制可用性，也不阻断 qualify/activate/hold/reopen 流转。"
+        "record_use 完全可选，写与不写都不影响后续可用性；它只保存模型自己的 applied/adapted/not_applicable/rejected 声明。不自动 promotion，不替模型判断适用性，不保存隐藏思维链。"
     ),
     "parameters": {
         "type": "object",
@@ -91,7 +92,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "mechanism": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "task_benefit": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "promotion": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
-            "task_type": {"type": "string", "maxLength": 64, "description": "仅 record_qualification 消费：本 qualification 所属任务域的模型声明（如 browser/code-edit/diagnosis/writing；大小写与空白归一，不校验真伪）。activate 门（EVO-20261010-994e30f4）要求 verdict=pass 条目覆盖 ≥2 个不同 task_type 才能转 active；缺省 unknown 不计数。存量 active 卡 grandfather 不回溯"},
+            "task_type": {"type": "string", "maxLength": 64, "description": "仅 record_qualification 消费：本 qualification 所属任务域的模型声明（如 browser/code-edit/diagnosis/writing；大小写与空白归一，不校验真伪）。只用于分组统计，不是任何流转的门槛；缺省 unknown"},
             "evidence_refs": {"type": "array", "items": {"type": "string"}, "description": "save_candidate/record_use/record_qualification 的证据引用；程序将证据绑定到当次调用所属 episode，不自动证明 refs 的归属与内容正确"},
             "note": {"type": "string", "description": "仅 record_use/record_qualification 随记录持久化；save_candidate/refine 不读取、不持久化"},
             "benefit": {
@@ -109,7 +110,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "transition": {
                 "type": "string",
                 "enum": ["qualify", "activate", "hold", "invalidate", "retire", "reopen"],
-                "description": "refine: 显式生命周期动作；invalidate/retire 需独立处置依据（一次 qualification verdict=fail，或 ≥2 个不同 episode 的 rejected 使用声明），程序只核事实存在、不判断该 Method 是否该退役；被拒的尝试会落账 journal；reopen 恒可用",
+                "description": "refine: 显式生命周期动作。qualify/activate/hold 无前置条件（candidate 可一步转 active，无需先攒 qualification）；invalidate/retire 需独立处置依据（一次 qualification verdict=fail，或 ≥2 个不同 episode 的 rejected 使用声明），程序只核事实存在、不判断该 Method 是否该退役；被拒的尝试会落账 journal；reopen 恒可用",
             },
         },
         "required": ["action"],

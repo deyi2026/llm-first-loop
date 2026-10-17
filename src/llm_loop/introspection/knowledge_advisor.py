@@ -20,7 +20,10 @@ from llm_loop.core.injection_labels import (
 )
 
 _KINDS = ("method", "experience", "lesson")
-_METHOD_ELIGIBLE = frozenset({"candidate", "qualified", "active"})
+# EVO-20261017-lifecycle-alignment: every lifecycle state is discoverable. Status is
+# a quality badge rendered alongside the hint (KnowledgeHint.status), never a reason to
+# hide a method from the model — hiding was the practical form of the old gate.
+_METHOD_ELIGIBLE = frozenset({"candidate", "qualified", "active", "hold", "invalidated", "teacher"})
 _RISK_LEVELS = frozenset({"low", "high"})
 
 

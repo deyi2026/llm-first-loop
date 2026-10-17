@@ -467,26 +467,26 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
-## 规则二十九：方法/经验用后负反馈必须在当前任务收口前闭环（RULE-AI-29，用户指示 2026-10-12）
+## 规则二十九：方法/经验用后负反馈必须在当前任务收口前闭环（RULE-AI-29，用户指示 2026-10-12；2026-10-18 撤销强制 record_use）
 
-**规则**：使用 method/experience 卡片后发现不适配、误导或时效过期时，必须在**当前任务收口（最终答复 / goal complete）前**完成对应负反馈处置；任务内已明确判定的当场处置，不等收口。RULE-AI-18 管"用前核适用性"，本条管"用后交账"——不做用后反馈，下一次任务继续踩同一个坑。
+**规则**：使用 method/experience 卡片后发现不适配、误导或时效过期时，必须在**当前任务收口（最终答复 / goal complete）前**完成对应负反馈处置；任务内已明确判定的当场处置，不等收口。RULE-AI-18 管"用前核适用性"，本条管"卡片本身有错/过期就修或弃"——反馈是为了让卡片变准，不是为了记账。
 
 1. **触发情形**（任一即触发）：
    - (a) **不适配**：实际使用与卡片适用边界不符（条件不满足）；
    - (b) **误导**：按卡片步骤执行走错路或引入返工（内容错误）；
    - (c) **时效过期**：卡片引用的 source/版本已变化，freshness 需刷新。
 2. **分级处置**：
-   - **记录（保底义务）**：所有实际使用（含正反馈）落 `record_use(use_decision=applied/adapted/not_applicable/rejected)`；method 池用 `method_manage`，experience 池用 `refine_experience`；`record_use` 可附 `benefit` 模型收益自评（helped/neutral/hindered/unknown/mixed）——自评只记录本次观察，不写入独立资格结论（三层计分口径见 RULE-AI-31 程序角色，2026-10-16 同步设计草案 v3）；
-   - **修正优化（首选）**：可修复的过时/不准 → `method_manage(refine/annotate_freshness)` 或 `refine_experience` 补充修正，能改不弃；
+   - **记录（可选，不再强制）**：读到卡片并照做**不需要** `record_use`——不记录不构成违规，也不影响使用任何卡。仅当你想留下"这张卡在某场景帮过/误导过"的痕迹时才记（method 池 `method_manage`，experience 池 `refine_experience`，可附 `benefit` 模型收益自评（helped/neutral/hindered/unknown/mixed）；自评只记录本次观察，不写入独立资格结论）；
+   - **修正优化（首选）**：发现卡片过时/不准且可修复 → `method_manage(refine/annotate_freshness)` 或 `refine_experience` 补充修正，能改不弃；
    - **弃用（核验后）**：前提错误 → `method_manage(transition=invalidate)`；方法仍真但不再适用或已被更好方法替代 → `transition=retire`；experience 池 → `refine_experience(invalidate)`；均须注 root_cause。
-3. **证据要求**：修正与弃用必须携带本次任务的实际观察（evidence_refs / 回执），不接受"感觉不对"。**"我用不上" ≠ "它错了"**：仅不适配且无证据表明卡片本身有错 → `record_use(not_applicable)+note` 保留给其他场景，不得升级为弃用（与 `docs/governance/card-lifecycle.md` R3 三轴"禁止混判"一致）。
-4. **时限**：最迟在当前任务收口（最终答复 / goal complete）前完成；任务内已明确判定的当场处置（衔接 card-lifecycle R3"任何使用现场发现前提不成立 ⇒ 当场走事实轴"，本条把该纪律升格为 SoT 行为规则并扩展覆盖三轴全量负反馈，含非失效类的记录与修正）。
-5. **Learning Plane 兜底（非替代）**：会话后 ReflectionRun 扫描本会话 `record_use` 负反馈中卡片侧未处置的条目，产出修正候选或纳入周检清单——模型义务在前，程序兜底在后；经验积累管理（卡片库 active/hold/retired/invalidated 视图、超期未刷新清单）为 learning 通道演进项，独立立项，不阻塞本条行为义务。
+3. **证据要求**：修正与弃用必须携带本次任务的实际观察（evidence_refs / 回执），不接受"感觉不对"。**"我用不上" ≠ "它错了"**：仅不适配且无证据表明卡片本身有错 → 无需任何动作，换用别的方法即可，不得升级为弃用（与 `docs/governance/card-lifecycle.md` R3 三轴"禁止混判"一致）。
+4. **时限**：修正/弃用的判定最迟在当前任务收口（最终答复 / goal complete）前完成；任务内已明确判定的当场处置（衔接 card-lifecycle R3"任何使用现场发现前提不成立 ⇒ 当场走事实轴"）。本时限只约束处置动作，不约束记录。
+5. **Learning Plane 兜底（非替代）**：会话后 ReflectionRun 扫描本会话**已留痕**的负反馈（`record_use` 或任务内明确判定）中卡片侧未处置的条目，产出修正候选或纳入周检清单——模型义务在前，程序兜底在后；未留痕的使用扫不到，这是可选的代价，不据此要求补记。经验积累管理（卡片库 active/hold/retired/invalidated 视图、超期未刷新清单）为 learning 通道演进项，独立立项，不阻塞本条行为义务。
 
-**程序角色**：无新增。现有工具契约（`refine_experience` / `method_manage`）已支撑全部动作；本条是行为义务与时机的 SoT 化，不引入强制门。
+**程序角色**：无新增。现有工具契约（`refine_experience` / `method_manage`）已支撑全部动作；本条是行为义务与时机的 SoT 化，不引入强制门，也不要求使用后必须留痕。
 
 **正例**：method 卡步骤在新版工具下失效 → 任务内 `record_use(rejected)` + `annotate_freshness` 标失效版本 + 提 refine 修正，收口前完成。
-**反例**：用过时 method 卡绕路后任务答复但零处置；发现误导但 `invalidate` 不带 evidence；仅不适用就 `invalidate`（混淆 not_applicable 与 invalid）。
+**反例**：用过时 method 卡绕路后任务答复但零处置；发现误导但 `invalidate` 不带 evidence；仅不适用就 `invalidate`（混淆 not_applicable 与 invalid）；为合规给每张读过的卡补 `record_use`（记账不是义务）。
 
 ---
 
@@ -504,25 +504,25 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
-## 规则三十一：RSI 方法/经验循环——任务前检索、任务后评分与生命周期闭环（RULE-AI-31，用户指示 2026-10-14）
+## 规则三十一：RSI 方法/经验循环——任务前检索、任务后评分与生命周期闭环（RULE-AI-31，用户指示 2026-10-14；2026-10-18 评分改为可选）
 
-**规则**：每个有实质工作量的任务（需要工具执行、多步推进、修改产物或排查问题），形成**检索 → 使用 → 评分 → 处置**的闭环，使经验/方法库随每次真实使用被持续校准（递归自我改进）。RULE-AI-18 管"用前核适用性"、RULE-AI-29 管"用后交账"，本条把两者串成**任务级前置义务 + 数值化评分与累计处置**的完整循环。
+**规则**：每个有实质工作量的任务（需要工具执行、多步推进、修改产物或排查问题），形成**检索 → 使用 →（可选）留痕 → 处置**的循环，使经验/方法库随真实使用被校准。RULE-AI-18 管"用前核适用性"、RULE-AI-29 管"卡片有错就修或弃"。检索是发现方法的前提；留痕与评分不是使用的前提。
 
-1. **任务前检索（开局）**：动手前对经验/方法库做一次有界检索——`search_records(kind=method|experience|lesson)`，≤2 类、每类 limit≤5，query 用当前任务关键词；命中后按 RULE-AI-18/22 双闸（来源时间/新鲜度 + 当前任务适用性）裁决是否采用，一行说明裁决理由。零命中时如实记"无可用经验"后正常推进，不为凑命中反复换词检索。**豁免**（防格式税）：单步明确问答、闲聊、纯复述类不触发；同一连续任务窗口内不重复检索。
-2. **任务后评分（收口）**：对本次**实际使用**的每张卡片落 `record_use` 并计分：`applied`/`adapted` 且任务结果验证有效 = **+1**；`not_applicable`（不适合）= **-1**；`rejected`（错误引导/内容错误）= **-1**。note 附一句本次观察（何场景/何效果/何偏差）。时限对齐 RULE-AI-29 第 4 条：最迟当前任务收口前；仅"检索到但未采用"的卡片不评分（裁决已在开局一行说明）。净分是 `record_use` 留痕的机械汇总事实，不另建平行账本文件（单一数据源，锚 RULE-AI-20(6)）。
-3. **处置评估（±1 之后的决策）**：
+1. **任务前检索（开局）**：动手前对经验/方法库做一次有界检索——`search_records(kind=method|experience|lesson)`，≤2 类、每类 limit≤5，query 用当前任务关键词；命中后按 RULE-AI-18/22 双闸（来源时间/新鲜度 + 当前任务适用性）裁决是否采用。零命中时如实记"无可用经验"后正常推进，不为凑命中反复换词检索。**豁免**（防格式税）：单步明确问答、闲聊、纯复述类不触发；同一连续任务窗口内不重复检索。
+2. **任务后评分（可选，不再强制）**：若你对本次使用做了留痕，按 `record_use` 计分：`applied`/`adapted` 且任务结果验证有效 = **+1**；`not_applicable` = **-1**；`rejected` = **-1**。不记录则不评分——评分是留痕的副产品，不是任务义务，零记录不构成违规。note 一句本次观察（何场景/何效果/何偏差）。净分只覆盖已记录的使用，是机械汇总事实，不另建平行账本文件（单一数据源，锚 RULE-AI-20(6)）。
+3. **处置评估（仅针对已留痕的负反馈）**：
    - **+1**：无需额外动作；可选 `annotate_freshness` 刷新时效锚。
    - **-1（not_applicable）**：仅记账保留给其他场景——"我用不上 ≠ 它错了"，不得据此弃用（锚 RULE-AI-29 第 3 条）。
    - **-1（rejected）**：当场评估三选一并注明依据：`refine`/`annotate_freshness` 修正（能改不弃）；`transition=hold`（存疑待证）；`invalidate`/`retire` 弃用（前提错误/已被更好替代），须带本次 evidence。
-   - **累计阈值**：同一卡片累计净分 ≤ **-2**，或 `verification_state=disproven` → 必须处置（修正或弃用二选一），不得无限搁置；修正后的卡片从修正点重新累计，历史留痕不删。
+   - **累计阈值**：同一卡片累计净分 ≤ **-2**，或 `verification_state=disproven` → 程序提示值得处置；是否修正/弃用由模型按证据判断，提示不是强制，未处置不构成违规。修正后的卡片从修正点重新累计，历史留痕不删。
 4. **新经验沉淀**：任务中产生可复用发现 → `save_experience`（正向经验须声明 verified+evidence）/ `method_manage(save_candidate)`；升格规则候选走 `docs/governance/card-lifecycle.md`，不在本条内复制清单。
 
-**程序角色**：无新增。现有 `search_records` / `save_experience` / `refine_experience` / `method_manage` 已支撑全部动作；净分自动统计与超阈值提醒**已由程序支持**（EVO-20261014-7299aec2 已执行）：`search_records` 命中行附 `usage_net`/`usage_net_detail`（净分≤-2 或 disproven 时另有 `pending_disposition=true`），`method_manage`/`refine_experience` 的 record_use 回执在触发阈值时附 `[threshold_alert]`（分项计数+一行提醒，提醒即止不裁决）。计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1）。**三层计分口径**（2026-10-16 同步《LFL 任务知识使用反馈与检索闭环设计草案》v3 P1 规则对齐）：① **声明净分**——`usage_net` 是 `record_use` 使用声明的机械计分汇总，未独立验证的 applied/adapted 亦计 +1、净分不按验证态加权（纠偏走 disproven 触发与 threshold 提醒），故 `search_records` 回执展示时标注"声明净分"，它不代表独立验证结论；② **模型收益自评**——`record_use` 的 `benefit` 字段（helped/neutral/hindered/unknown/mixed）为模型自评，只记录本次观察，不得写入独立资格结论；③ **独立验证**——任务结果收益的独立评估走 qualification `task_benefit` 独立流程，不与①②混同、不因净分或自评改变（规则权威与卡片资格均不被评分改变）。累计自**最近 lifecycle transition** 起算（D3 口径）；**D3 只截断纠错型转移，晋升型不清零**（EVO-20261015-251ac06d 已执行）：晋升（candidate→qualified→active）是背书不是纠错，不应抹掉卡片已挣得的信用，且"历史留痕不删"对本条第 3 条两侧同等适用；阶梯逆行与出阶梯（→invalidated/retired/archived）仍按纠错型截断，experience 侧无晋升阶梯故行为不变。不随 lifecycle 变化的 `refine` 修正不自动重锚，"修正后从修正点重新累计"仍由模型行为层承担。
+**程序角色**：无新增。现有 `search_records` / `save_experience` / `refine_experience` / `method_manage` 已支撑全部动作；净分自动统计与超阈值提醒**已由程序支持**（EVO-20261014-7299aec2 已执行），只覆盖已留痕的 `record_use`：`search_records` 命中行附 `usage_net`/`usage_net_detail`（净分≤-2 或 disproven 时另有 `pending_disposition=true`），`method_manage`/`refine_experience` 的 record_use 回执在触发阈值时附 `[threshold_alert]`（分项计数+一行提醒，提醒即止不裁决）。计分对齐本条第 2 条（applied/adapted=+1，not_applicable/rejected=-1）。**三层计分口径**（2026-10-16 同步《LFL 任务知识使用反馈与检索闭环设计草案》v3 P1 规则对齐）：① **声明净分**——`usage_net` 是 `record_use` 使用声明的机械计分汇总，未独立验证的 applied/adapted 亦计 +1、净分不按验证态加权（纠偏走 disproven 触发与 threshold 提醒），故 `search_records` 回执展示时标注"声明净分"，它不代表独立验证结论；② **模型收益自评**——`record_use` 的 `benefit` 字段（helped/neutral/hindered/unknown/mixed）为模型自评，只记录本次观察，不得写入独立资格结论；③ **独立验证**——任务结果收益的独立评估走 qualification `task_benefit` 独立流程，不与①②混同、不因净分或自评改变（规则权威与卡片资格均不被评分改变）。累计自**最近 lifecycle transition** 起算（D3 口径）；**D3 只截断纠错型转移，晋升型不清零**（EVO-20261015-251ac06d 已执行）：晋升（candidate→qualified→active）是背书不是纠错，不应抹掉卡片已挣得的信用，且"历史留痕不删"对本条第 3 条两侧同等适用；阶梯逆行与出阶梯（→invalidated/retired/archived）仍按纠错型截断，experience 侧无晋升阶梯故行为不变。不随 lifecycle 变化的 `refine` 修正不自动重锚，"修正后从修正点重新累计"仍由模型行为层承担。
 
 **条款化来源**：method 候选 `会话级知识层双向同步（开局检索·使用裁决·收尾结算）`（method:candidate-a80acb208b99）的"开局检索+一行裁决"思想经本条升格，防止双层漂移（学规则十二条款化先例）。
 
-**正例**：排查任务开局检索命中适用经验卡 → 按其步骤少走弯路并验证有效 → 收口前 `record_use(applied)` note"省 2 次重试"（+1）；误用一张过时方法卡返工 → `record_use(rejected)` + `annotate_freshness` 标失效版本 + `transition=hold`（-1，当场处置）。
-**反例**：任务收口零评分零处置（只有单向写）；把"不适合"升级为 invalidate；累计两次 rejected 仍不处置无限搁置；为每次闲聊也跑检索凑流程。
+**正例**：排查任务开局检索命中适用经验卡 → 按其步骤少走弯路并验证有效 → 顺手 `record_use(applied)` note"省 2 次重试"（+1，可选）；误用一张过时方法卡返工 → 当场 `record_use(rejected)` + `annotate_freshness` 标失效版本 + `transition=hold`（-1，当场处置）。
+**反例**：把"不适合"升级为 invalidate；发现卡片误导/过期却不修不弃；为每次闲聊也跑检索凑流程；为合规给每张读过的卡补记录（记账不是义务）。
 
 ---
 

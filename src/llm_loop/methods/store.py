@@ -159,15 +159,13 @@ def _visible_state(path: Path, payload: bytes) -> str:
     except OSError:
         return "unreadable"
 
-# EVO-20260930-429f7c12: zero-signal candidate ranking decay.  A candidate that
-# has never produced any interaction signal (qualification or use declaration)
-# keeps its full ranking weight for a grace window (new cards need exposure),
-# then sinks by 2 points per idle day up to a cap.  Any recorded signal removes
-# the decay entirely — this changes discovery ordering only, never lifecycle
-# status, and the disposition evidence gate (EVO-20260929-5283ab1b) is untouched.
-_ZERO_SIGNAL_GRACE_DAYS = 7
-_ZERO_SIGNAL_DECAY_PER_DAY = 2
-_ZERO_SIGNAL_DECAY_CAP = 80
+# EVO-20261017-lifecycle-alignment: lifecycle status is a model-owned quality badge,
+# not a permission tier and not a ranking factor. A candidate is as usable and as
+# findable as an active card; lexical + coverage relevance alone orders discovery,
+# exactly like Experience retrieval where verification_state is displayed but never
+# scored. Status still matters for destructive operations (invalidate/retire need an
+# independent factual basis) and for human review, both of which protect assets
+# rather than restrict use.
 
 # EVO-20260929-5283ab1b P2 (R5 Card Contract): the persistence layer requires the
 # same six sections the generation protocol demands, so a weak model cannot
@@ -732,7 +730,11 @@ class MethodStore:
             name_text = self._normalized_search_text(record.name)
             desc_text = self._normalized_search_text(record.description)
             body_text = self._normalized_search_text(record.body)
-            fields = ((id_text, 10), (name_text, 8), (desc_text, 4), (body_text, 1))
+            # EVO-20261017-lifecycle-alignment: body carries the substance of a method,
+            # so a query term appearing in the body outranks an incidental mention in
+            # the one-line description. This replaces the old reliance on a lifecycle
+            # weight to promote verified cards over lexically noisy ones.
+            fields = ((id_text, 10), (name_text, 8), (desc_text, 4), (body_text, 5))
             matched = 0
             lexical = 0
             for term in terms:
@@ -753,19 +755,7 @@ class MethodStore:
             if terms and matched == 0 and identifier_bonus == 0:
                 continue
             coverage = (matched / len(terms)) if terms else 0.0
-            life = {"active": 35, "qualified": 25, "candidate": 0, "teacher": -5, "hold": -10, "invalidated": -20}.get(record.status, -25)
-            # EVO-20260930-429f7c12: a candidate with zero interaction signals
-            # decays with idle age so mass-generated cards cannot crowd out
-            # qualified/active ones on lexical score alone. Any qualification
-            # or use declaration restores full weight permanently.
-            if record.status == "candidate" and not self._last_signal_ts(record):
-                age = _age_days(record.created_at)
-                if age is not None and age > _ZERO_SIGNAL_GRACE_DAYS:
-                    life -= min(
-                        _ZERO_SIGNAL_DECAY_CAP,
-                        (age - _ZERO_SIGNAL_GRACE_DAYS) * _ZERO_SIGNAL_DECAY_PER_DAY,
-                    )
-            score = identifier_bonus + lexical * 10 + int(coverage * 50) + life
+            score = identifier_bonus + lexical * 10 + int(coverage * 50)
             ranked.append((score, coverage, record))
         ranked.sort(key=lambda item: (item[0], item[1], item[2].method_id), reverse=True)
         result: list[dict[str, Any]] = []
@@ -934,8 +924,8 @@ class MethodStore:
         This is observability, not qualification: it never changes lifecycle status and
         never proves task benefit. Seed Methods are not copied into the runtime overlay
         merely because the model declared how it treated them.
-        session_id (EVO-20260923-618f7fd1 ②) is optional provenance used by the
-        goal-level method_use_gate; legacy entries without it simply never match.
+        session_id (EVO-20260923-618f7fd1 ②) is optional provenance kept as audit
+        attribution; legacy entries without it simply never match a session query.
 
         TASK-ac085ab1-001 P0 记录契约（设计草案 v3）: v2 条目带 schema 标记、
         工作单元绑定、读取版本绑定与模型自评；slot_id / submission_hash 两层键
@@ -1462,8 +1452,12 @@ class MethodStore:
     def _update_status_locked(self, method_ref: str, target_status: str, *, episode_ref: str = "") -> MethodRecord:
         """Mechanical lifecycle transition; semantic choice belongs to the caller/model/owner.
 
-        Activating a candidate directly is rejected. A method must first pass through qualified,
-        so a same-episode self-distillation cannot become active in one write.
+        Status is a declared quality badge, not a permission tier. Any transition is
+        accepted, including candidate -> active in one write, because status neither
+        gates retrieval visibility (list() ranks by relevance alone) nor blocks use.
+        This matches Experience records, where verification_state is model-declared
+        and never a usability requirement. Only asset protection stays gated below:
+        teacher immutability and independent factual basis for invalidate/retire.
         """
         record = self.get(method_ref)
         if record is None:
@@ -1475,46 +1469,6 @@ class MethodStore:
         if record.status == "teacher" and target != "teacher":
             self._blocked(method_ref, target, "teacher_immutable", "teacher lifecycle is immutable", episode_ref=episode_ref)
             raise ValueError("teacher lifecycle is immutable; create a candidate distilled from it")
-        if record.status == "candidate" and target == "active":
-            self._blocked(method_ref, target, "independent_qualification", "candidate -> active is forbidden", episode_ref=episode_ref)
-            raise ValueError("candidate cannot become active directly; qualify independently first")
-        if target == "qualified":
-            entries = self.qualification_entries(method_ref)
-            if not any(
-                e.get("promotion") == "pass"
-                and (e.get("qualification_episode_ref") or e.get("task_ref"))
-                for e in entries
-            ):
-                self._blocked(method_ref, target, "promotion_pass", "no promotion=pass with episode provenance", episode_ref=episode_ref)
-                raise ValueError(
-                    "qualified requires at least one promotion=pass qualification with runtime episode provenance"
-                )
-        if target == "active" and record.status != "active":
-            # EVO-20261010-994e30f4: activation requires cross-task-type
-            # qualification. task_type is a model declaration; the program
-            # cannot verify task domains, so the gate only counts distinct
-            # declared types among verdict=pass entries ("unknown" never
-            # counts; the source task counts as one). Cards that are already
-            # active are grandfathered: the check applies to transitions into
-            # active only, never retroactively.
-            distinct_types = {
-                _normalize_task_type(e.get("task_type"))
-                for e in self.qualification_entries(method_ref)
-                if e.get("verdict") == "pass"
-            }
-            distinct_types.discard("unknown")
-            if len(distinct_types) < 2:
-                self._blocked(
-                    method_ref, target, "cross_task_type_qualification",
-                    f"distinct pass task_type count={len(distinct_types)} (<2)",
-                    episode_ref=episode_ref,
-                )
-                raise ValueError(
-                    "activation requires cross-task-type qualification: record "
-                    "verdict=pass qualifications spanning >=2 distinct task_type "
-                    "values (source domain plus at least one other); missing/unknown "
-                    "task_type does not count"
-                )
         # EVO-20260929-5283ab1b P1 (R3): destructive disposition needs independent
         # factual basis. The program never decides a Method *should* die; it only
         # refuses to record a conviction resting solely on one session's own
