@@ -1,0 +1,78 @@
+{
+  "schema": "lfl.rule34.merge_qualification/v1",
+  "goal_id": "2f012545-4f89-478b-ab87-53668e3004b2",
+  "gate": "merge",
+  "qualification": "PASS",
+  "verdict": "PASS",
+  "reviewer": "subagent_82a00ee02b4c",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_completed_attested": true,
+  "terminal_event_count": 1,
+  "P0": 0,
+  "P1": 0,
+  "P2": 3,
+  "reviewer_raw_receipt_sha256": "299e402587311b7a962aeb1df40107e5705ae1cdcd4b142607b93fe06baf62e2",
+  "review_material_sha256": "4a7abc159b9795d259b1b9fe1335dec4b33f5c2291c02dd0eb2ee63e56b2cbbb",
+  "main_sha_at_review": "7e281014c90a99ddfc812a589a012d3c04341dfe",
+  "branch": "integrate/committed-wheel-build-main-7e281-20261017",
+  "branch_tip_reviewed": "3d1cd53d8fccea1c21dab8a7539c0ed11ccd1477",
+  "source_commit": "a98497e099c55418683a8bf7170d43a0d72f2a6a",
+  "source_review": {
+    "reviewer": "subagent_9a188800729e",
+    "qualification": "PASS",
+    "P0": 0,
+    "P1": 0,
+    "P2": 3,
+    "receipt_sha256": "5346dd18106bc05f9fe8e5bf22092dda9d032e3ce17bb46d132c6db98fab9d55"
+  },
+  "reviewed_code_patch_sha256": "42bbd0368707309d3e5c13970a3e78e59d46568137ed3b44ae427c99c909670b",
+  "changed_files": [
+    "docs/installation.md",
+    "scripts/build_committed_distribution.py",
+    "tests/unit/test_build_committed_distribution.py"
+  ],
+  "source_full_R9": {
+    "exit_code": 0,
+    "passed": 9417,
+    "skipped": 146,
+    "failed": 0,
+    "log_sha256": "4429c9dbc172425a41d6519d561f822526e6af3d3d9bd8dbe96bc8c620d9baa9"
+  },
+  "latest_main_integration_focused": {
+    "exit_code": 0,
+    "passed": 54,
+    "failed": 0,
+    "log_sha256": "60bb35aa30436cdc10ecfc4be40b1c4325f7dcf8723c96d37063ee961fe3253d"
+  },
+  "latest_main_integration_quick": {
+    "exit_code": 0,
+    "passed": 319,
+    "full_R9": false,
+    "log_sha256": "40f34647028b0960439d6073e95c35c16379eda1562ee8f67e4df438048952d4"
+  },
+  "installed_distribution_smoke": {
+    "wheel_sha256": "fa52567c3393a0cf4853dc34e9696e401edb871a01eeb4d6c72bd34c3530dfe6",
+    "fresh_venv": true,
+    "bundle_files_checked": 345,
+    "web_health_status": 200,
+    "ui_status": 200,
+    "assets_checked": 2,
+    "provider_calls": 0,
+    "receipt_sha256": "1bb83ded66040d831aab5f7958bdeaeb2a93010c5d19d115f94e2e4c0062f822"
+  },
+  "remaining_P2": [
+    "The source binding is a reproducibility marker, not a publisher signature",
+    "The build subprocess timeout and suppressed stderr reduce diagnostics",
+    "The reused local node_modules binaries are not independently supply-chain verified"
+  ],
+  "merge_mode": "fast-forward-only",
+  "merge_executed": false,
+  "main_sha_after": null,
+  "requires_separate_explicit_local_main_merge_authorization": true,
+  "branch_disposition": "kept, pending owner approval",
+  "push_executed": false,
+  "release_published": false,
+  "service_restarted": false,
+  "production_data_changed": false,
+  "review_scope": "Independent reviewer examined only the exact code delta at branch_tip_reviewed. This later receipt file is documentation-only and has not itself been independently code-reviewed."
+}
