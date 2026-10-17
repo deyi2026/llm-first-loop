@@ -1206,6 +1206,26 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             if getattr(self, "_last_history_compacted", False):
                 history_compacted_noted = True
 
+            # EVO-20261017-53c394bd C1+C2: 压缩恢复门（fail-open，永不阻塞 run）。
+            # 压缩确认时写 manifest（C2）并开启确认门（C1）；通知经 CR-R1
+            # 认知包槽在下一次 build 交付（enforce），本钩子不写任何会话消息（R4）。
+            try:
+                from llm_loop.core.loop.engine_services.compaction_gate import (
+                    run_compaction_gate_step,
+                )
+
+                run_compaction_gate_step(
+                    self, sess, new_compaction=bool(getattr(self, "_last_history_compacted", False))
+                )
+            except Exception:  # noqa: BLE001 — 门禁 fail-open
+                logger.debug("compaction gate step dispatch failed", exc_info=True)
+                # B9（P2-1 二轮复审）：fail-open 但失败必须可观测
+                with contextlib.suppress(Exception):
+                    self._record_action(
+                        "run", "compaction_gate.dispatch_failed",
+                        f"session={getattr(sess, 'session_id', '?')}",
+                    )
+
             # Current run ingress is provider-protocol ownership, not human provenance.
             # Bind the exact persisted turn identity for both genuine-human and explicit
             # delegated ingress without changing either message's provenance.

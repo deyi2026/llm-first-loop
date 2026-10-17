@@ -141,6 +141,13 @@
   "durability_registry": {
     "_doc": "Durable Run Contract 写入面登记：AST 扫描 src/llm_loop 中明确 filesystem 写入原语；每个候选文件必须归入一个 surface（tier=T1/T2/T3，status=conform|migrate|partial|observe）或 write_exemptions。登记只证明已分类，不自动证明符合 tier；新增登记必须走 guard(r9) 可见提交。",
     "surfaces": {
+    "compaction_recovery_gate": {
+      "tier": "T2",
+      "status": "observe",
+      "owner": "core",
+      "paths": ["src/llm_loop/core/loop/engine_services/compaction_gate.py"],
+      "rationale": "EVO-20261017-53c394bd：压缩语义快照 manifest 与恢复门 gate_state 为会话恢复辅助态（temp+rename 原子写，无 fsync 栅栏，设计 fail-open——写失败走 degraded 观测路径，archive 索引仍可寻回历史）；跨重启门恢复语义待 DRC 专项核验，保持 observe。"
+    },
       "assurance_p1_review_request_staging": {
         "tier": "T2",
         "status": "partial",

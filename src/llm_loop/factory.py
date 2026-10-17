@@ -266,6 +266,61 @@ def _scan_degraded_wake_notify(data_dir: str | Path) -> list[dict[str, Any]]:
     return results
 
 
+_GATE_SCAN_TTL_SECONDS = 24 * 3600  # P2-1：陈旧门状态时间窗（对齐 failed_service_actions 口径）
+
+
+def _scan_pending_compaction_gates(data_dir: str | Path) -> list[dict[str, Any]]:
+    """EVO-20261017-53c394bd C1: 扫未闭合的压缩恢复确认门.
+
+    遍历 <data_dir>/compaction_snapshots/*/gate_state.json，挑 pending=True
+    或 escalated=True 的会话；输出 session_id/状态/attempt/manifest ref，
+    fail-open：扫描失败返回 []。
+    P2-1：按 state 文件 mtime 倒序（文件名恒为 gate_state.json，按名排序
+    无意义）+ 24h TTL——陈旧门不再计入 pending_actions 投影，防投影提示
+    永久累积陈旧项。
+    """
+    results: list[dict[str, Any]] = []
+    try:
+        root = Path(data_dir) / "compaction_snapshots"
+        now = time.time()
+        # P2-3（五轮复审）：逐文件容错——单个坏文件只跳过自身，不使整个扫描
+        # fail-open 返回 []；mtime 每文件只 stat 一次，排序期不再触碰文件系统。
+        fresh: list[tuple[float, Path]] = []
+        for p in root.glob("*/gate_state.json"):
+            try:
+                mtime = p.stat().st_mtime
+            except OSError:
+                continue
+            if p.is_file() and now - mtime <= _GATE_SCAN_TTL_SECONDS:
+                fresh.append((mtime, p))
+        for _mtime, state_file in sorted(fresh, key=lambda t: t[0], reverse=True)[:20]:
+            try:
+                payload = json.loads(state_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):  # JSONDecodeError 是 ValueError 子类
+                continue
+            pending = bool(payload.get("pending"))
+            escalated = bool(payload.get("escalated"))
+            degraded = bool(payload.get("status") == "degraded")  # P2-2：含降级态
+            if not (pending or escalated or degraded):
+                continue
+            results.append(
+                {
+                    "session_id": payload.get("session_id") or state_file.parent.name,
+                    "state": (
+                        "escalated" if escalated else ("degraded" if degraded else "pending")
+                    ),
+                    "attempt": payload.get("attempt"),
+                    "manifest_ref": payload.get("manifest_sha256"),
+                    "manifest_rel_path": payload.get("manifest_rel_path"),
+                    "reason": payload.get("reason"),
+                    "created_at": payload.get("created_at") or payload.get("degraded_at"),
+                }
+            )
+    except Exception:  # noqa: BLE001 — 投影扫描 fail-open
+        return []
+    return results
+
+
 def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
     """EVO-20260920-213965a1 案1 + EVO-20260924-8266b693 B: 扫最近 24h failed 待确认的 restart 动作.
 
@@ -2929,6 +2984,11 @@ def _build_pending_actions_fn(settings) -> Any:
         failed_service_actions = (
             _scan_failed_service_actions(scan_data_dir) if scan_data_dir else []
         )
+        # EVO-20261017-53c394bd C1 观测通道：未确认/已升级的压缩恢复门
+        # 进入 pending 投影（degraded_wake_notify 同款通知槽；file-scan fail-open）。
+        pending_compaction_gates = (
+            _scan_pending_compaction_gates(scan_data_dir) if scan_data_dir else []
+        )
 
         if degraded_wake_notify:
             hint_parts.append(
@@ -2939,6 +2999,19 @@ def _build_pending_actions_fn(settings) -> Any:
                 f"{len(failed_service_actions)} 个服务控制重启动作 failed 待确认"
                 "（verify_acknowledge accept 确认；superseded=已被新代接管）"
             )
+        if pending_compaction_gates:
+            # P2-4（五轮复审）：分状态计数——degraded（快照降级，未开确认门）
+            # 与 pending/escalated（确认门）语义不同，不得混计为"未闭合"。
+            n_by_state: dict[str, int] = {}
+            for g in pending_compaction_gates:
+                n_by_state[str(g.get("state"))] = n_by_state.get(str(g.get("state")), 0) + 1
+            parts = [
+                f"{k}={v}" for k, v in n_by_state.items() if v
+            ]
+            hint_parts.append(
+                f"压缩恢复门：{'，'.join(parts)}"
+                "（详情见 pending_compaction_gates；degraded=快照降级未开确认门）"
+            )
         return {
             "executing_evolutions": executing,
             "pending_reviews": pending_review,
@@ -2948,6 +3021,7 @@ def _build_pending_actions_fn(settings) -> Any:
             "capability_requirements": ("evolution_complete",) if executing else (),
             "degraded_wake_notify": degraded_wake_notify,
             "failed_service_actions": failed_service_actions,
+            "pending_compaction_gates": pending_compaction_gates,
             "note": None,
         }
 

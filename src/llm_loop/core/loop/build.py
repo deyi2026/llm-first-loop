@@ -790,6 +790,38 @@ class _BuildMixin:
                     if content:
                         parts.append(("memory", content))
 
+            # compaction_recovery 槽（EVO-20261017-53c394bd C1）：
+            # enforce 渲染进包（确认门经机械校验关闭前逐轮携带）；
+            # shadow 不渲染不消费（指纹中立），gate step 的观测事件照常。
+            # 通道合规：本槽不持久化任何会话消息（R4），经 CR-R1 认知包
+            # 单一聚合帧交付，span 经 seg_sources 登记。
+            try:
+                from llm_loop.core.loop.engine_services.compaction_gate import (
+                    restore_gate_state,
+                    take_gate_notice_text,
+                )
+
+                restore_gate_state(self, session_id=sess.session_id)
+                _compaction_notice = take_gate_notice_text(self, session_id=sess.session_id)
+                if _compaction_notice:
+                    if effective == "enforce":
+                        parts.append(("compaction_recovery", _compaction_notice))
+                    else:
+                        # P2-4：shadow 不交付必须可观测——留下 action 轨迹，
+                        # 区分"门开了但未注入"与"门未开"。
+                        with contextlib.suppress(Exception):
+                            self._record_action(
+                                "run", "compaction_gate.shadow_not_delivered",
+                                f"session={sess.session_id}",
+                            )
+            except Exception:  # noqa: BLE001 — 槽装配失败不阻断构建（B9 观测）
+                logger.debug("compaction_recovery slot assembly failed", exc_info=True)
+                with contextlib.suppress(Exception):
+                    self._record_action(  # B9（P2-1 二轮复审）：失败可观测
+                        "run", "compaction_gate.slot_assembly_failed",
+                        f"session={getattr(sess, 'session_id', '?')}",
+                    )
+
             budget = int(getattr(settings, "cog_runtime_packet_budget", 2000) or 2000)
             tier_enabled = bool(getattr(settings, "cog_runtime_tier_enabled", True))
             packet = compile_decision_packet(parts, cog_state, budget_chars=max(1, budget))

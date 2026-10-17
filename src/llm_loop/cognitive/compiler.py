@@ -130,6 +130,10 @@ def classify_tier(
         return ContextTier.HOT
     if kind == "interop":
         return ContextTier.HOT
+    if kind == "compaction_recovery":
+        # EVO-20261017-53c394bd C1：压缩恢复门禁知情（同 gate_note 类——
+        # 门控变量必须 inline，WARM 首行截断会破坏回执协议）。
+        return ContextTier.HOT
     if kind in ("hotcard", "tip", "memory", "hint"):
         return ContextTier.WARM
     if kind.startswith("evidence"):

@@ -138,6 +138,15 @@ class ArchiveService:
                     "chars": getattr(entry, "chars", None) or len(msg.content),
                 },
             )
+            # EVO-20261017-53c394bd C2: 记入压缩批次，供 build 确认压缩后写 manifest.
+            try:
+                from llm_loop.core.loop.engine_services.compaction_gate import (
+                    note_archive_batch_entry,
+                )
+
+                note_archive_batch_entry(self._host, session_id, msg, entry, msg_seq)
+            except Exception:  # noqa: BLE001 — 批次收集失败不影响归档本体
+                logger.debug("compaction manifest batch note dispatch failed", exc_info=True)
             # RULE-AI-00 自动摘要边界内: 压缩档案自动回填语义摘要（async 后台/off 跳过）
             if (
                 _identity_start is None
