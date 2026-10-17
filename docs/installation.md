@@ -165,3 +165,27 @@ Release 工作流完成这些步骤后，向原有待人工确认的 Release 草
 
 自动升级执行/原地恢复、桌面安装器、OCI 和生态目录仍为后续执行单元；
 冷备份/验证/隔离恢复的 P1 命令不等同于自动生产升级或发布功能。
+
+### 从精确 Git 提交构建可信候选
+
+日常开发工作树可能有尚未提交的源码（包括其他 Agent 正在处理的模块）。
+**不得从这样的工作树直接 `uv build` 并发布产物**：setuptools 会扫描 Python 包
+目录，可能把未提交代码带入 wheel，即使对应 Git commit 本身不包含它。
+
+请使用干净提交态构建入口；即使调用处存在未提交文件，也只读取指定 Git 提交：
+
+~~~bash
+python scripts/build_committed_distribution.py \
+  --ref HEAD --out-dir /absolute/new/private/release-candidate
+~~~
+
+该入口先从指定 commit 创建短命 detached Git worktree，只复用本机已安装的
+`webui/node_modules` **依赖二进制**，在隔离工作树重新执行源码绑定 WebUI build，
+再使用 `uv build --offline` 生成 wheel 和 sdist。它逐项比对 wheel 内 Python 模块
+与该 commit 跟踪的 `src/llm_loop/*.py`，并在新目录写入 `provenance.json`（源
+commit、WebUI 来源 SHA、wheel/sdist SHA）。目标目录必须从未存在，不覆盖旧产物。
+
+这只证明**代码来源于指定已提交快照、构建未用调用者未提交源码**；复用的
+本机 Node 依赖不等于独立证明软件供应链来源和版本锁闭合，构建回执也不等于
+发布者签名。Release 仍须完成受管代码审查、原版完整 R9、依赖哈希资格、
+隔离虚拟环境安装和人工批准；不能直接推送、发布或重启生产。
