@@ -1,6 +1,6 @@
 # GLM-5.3 输出预算耗尽修复（2026-10-17）
 
-状态：独立代码审查PASS（P0/P1/P2=0），相关60项回归通过，原版完整R9按既有serial复核策略通过，待最终独立合并审查。模型专属65536配置已原子保存并reload；默认client仍待受控Web重启核验，当前不声明全面生效。
+状态：已独立审查并本地快进合入main；原版完整R9通过既有serial复核策略。Web generation276已受控重启成功，真实默认GLM请求max_tokens=65536并正常完成；此单元完成，未push。
 
 ## 实际事故
 
@@ -30,3 +30,12 @@
 - 受管原版R9已经完成并提交源码`d5f7f3321c99c05d3fe8847b1127166f310d4615`；精确PROBE `d7c458b037259b93c48035f9a5ff798420f5eed4`树与源码提交完全一致。原命令保留期已过，不重跑；从真实提交、wrapper完成标记和原始ci_gate日志恢复终态。
 - Ruff/env-pin/Pyright/五规则/安全扫描通过，tier0 319passed；全量xdist首轮9378passed/141skipped/1failed（test_m3_four_buckets），原脚本对完整失败文件serial复核2passed后放行，trace schema 1passed。保留并行波动观察，不宣称首轮全绿或已修复该race。
 - 完整回执：`docs/governance/receipts/RECEIPT-20261017-glm-output-budget-full-r9.json`，含原始日志SHA。后续纯证据提交不改变已审代码指纹。
+
+## 最终合并与运行态验收
+
+- 独立merge Reviewer `/root/glm_budget_merge_review` 真实终态PASS，基线125a90059、精确候选868431905798b43045fe491a36a9ac5abd0dc510。共享r9锁内核SHA/基线/候选干净/路径无交叉，保护main当时8个其他资产bytes、模式和逐路径index，ff后全部一致。没有stash/reset/夹带他人文件。主仓合后同5文件60passed/0failed。
+- 从干净候选检出发布，复用与live b9 tracked WebUI完全相同的dist；provenance verifier和dist tree SHA均核通过。现有service_control update显式target=web、expected-generation275；新generation276、唯一action svc-28e2d0527ace483e9857627ed9a74fbe。
+- action先waiting_for_idle，再running，最终succeeded；未force或override。新Web PID76553、2026-10-17 15:16:08+08启动、release868431905、manifest max_tokens65536，health=ok。飞书PID25059、Learning PID25550保持原状；这两个既有进程未由本次重启更新。
+- 真实默认Web canary无模型override：session4ac1583a-36e6-48cd-90ac-c222113a0d2d，call pcall:8316f67867fea6e1569a1f529e451acf。request.meta与transport.opened同时确认GLM-5.3、max_tokens65536、reasoning_effort=max、timeout120、PID76553/release868431905。返回“预算验证通过”，无工具调用，单轮completed、未截断；shared-current指针前后SHA相同。
+- 此验证证明真实请求的预算已生效及普通回答可完成；本次短答没有触及16K/64K上限，不冒称已证明所有长任务恢复率或128K能力。原始失败的47359chars思考/native中断状态继续保留。
+- 最终回执：`docs/governance/receipts/RECEIPT-20261017-glm-output-budget-main-web.json`，关联代码审查、完整R9、main保全、配置CAS、部署action和真实请求。源码部署SHA为868431905；后续纯证据提交不改变被测/被部署代码。
