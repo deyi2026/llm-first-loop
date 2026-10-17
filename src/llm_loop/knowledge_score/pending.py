@@ -12,9 +12,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from llm_loop.knowledge_score.ledger import KnowledgeScoreLedger
+from llm_loop.timekeeping import system_local_now
 from llm_loop.use_ledger import read_ledger_entries
 
 
@@ -75,21 +77,45 @@ def load_use_receipts(root: str | Path) -> list[PendingUse]:
     return pending
 
 
+def _recent_error(item: PendingUse, error_ts: dict[str, str], now: datetime, cooldown_s: float) -> bool:
+    """该 slot 的最新 error 是否仍在冷却期（且错误晚于本次使用回执）。"""
+    raw = error_ts.get(item.slot_key)
+    if not raw:
+        return False
+    try:
+        error_at = datetime.fromisoformat(raw)
+        use_at = datetime.fromisoformat(str(item.use_entry.get("ts") or ""))
+        if error_at < use_at:
+            return False
+        return (now - error_at).total_seconds() < cooldown_s
+    except (TypeError, ValueError):
+        return False
+
+
 def scan_pending(
     root: str | Path,
     *,
     score_ledger: KnowledgeScoreLedger | None = None,
     limit: int | None = None,
+    error_cooldown_s: float = 0.0,
 ) -> list[PendingUse]:
-    """有使用回执但尚无对应打分记录（slot 级去重）的条目，旧→新。"""
+    """有使用回执但尚无对应打分记录（slot 级去重）的条目，旧→新。
+
+    ``error_cooldown_s`` > 0 时，最新 error 仍在冷却期内的 slot 暂不返回；
+    默认 0 保持既有语义（error 行立即可重试，满足手动重跑与测试）。
+    """
     root = Path(root)
     if score_ledger is None:
         score_ledger = KnowledgeScoreLedger.for_root(root)
     covered = score_ledger.covered_slot_keys()
+    error_ts = score_ledger.latest_error_timestamps() if error_cooldown_s > 0 else {}
+    now = system_local_now()
     grouped: dict[str, PendingUse] = {}
     order: list[str] = []
     for item in load_use_receipts(root):
         if item.slot_key in covered:
+            continue
+        if error_ts and _recent_error(item, error_ts, now, error_cooldown_s):
             continue
         if item.slot_key not in grouped:
             order.append(item.slot_key)

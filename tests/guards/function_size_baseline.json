@@ -999,6 +999,15 @@
         ],
         "rationale": "GOAL-20261016-b2160223 独立打分器：ledger.append_score_line 复用 use_ledger.append_ledger_line 公开原语（调用方单写者锁内 JSONL 追加+行级 integrity 凭据+fsync+torn-tail 隔离，对齐 usage_ledger_primitives T1 append 契约口径）；card_writeback sidecar=目录 flock+O_EXCL tmp+os.replace+目录 fsync（纪律等价 experience_store，未做断电故障注入专项，不据此外推合规）；打分失败重试补写回不重打分（零 27B 调用）。数据落 data/knowledge_scores/。guard(r9): GOAL-20261016-b2160223"
       },
+      "knowledge_score_runner_state": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "knowledge_score",
+        "paths": [
+          "src/llm_loop/knowledge_score/runner.py"
+        ],
+        "rationale": "GOAL-20261016-b2160223 自动闭环调度状态：runner_state.json 仅记录 last_attempt/last_success/pending/backoff 等调度观测元数据，tmp+os.replace 原子写；不是打分结果 SoT，可由 use ledger + score ledger 重新扫描重建，丢失只影响退避提示不影响打分事实。guard(r9): GOAL-20261016-b2160223"
+      },
       "a2a_task_admission": {
         "tier": "T2",
         "status": "observe",

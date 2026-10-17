@@ -1,13 +1,13 @@
 {
   "access_class_counts": {
     "bootstrap_os": 2,
-    "business_config": 79,
+    "business_config": 87,
     "debug_test": 12,
     "dynamic_or_bulk": 48,
     "dynamic_secret": 8,
     "secret": 7
   },
-  "access_count": 149,
+  "access_count": 153,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -61,7 +61,7 @@
     "dynamic_secret": 1,
     "secret": 5
   },
-  "direct_access_count": 149,
+  "direct_access_count": 153,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -1057,6 +1057,10 @@
     "src/llm_loop/knowledge/injection_ledger.py|_resolved_path|read|INJECTION_LEDGER_PATH": 1,
     "src/llm_loop/knowledge/injection_ledger.py|_switch_enabled|read|KNOWLEDGE_INJECTION_LEDGER": 1,
     "src/llm_loop/knowledge_score/client.py|resolve_endpoint|read|LFL_INDEPENDENT_SCORER_URL": 1,
+    "src/llm_loop/knowledge_score/runner.py|KnowledgeScoreLoop/__init__|read|LFL_KNOWLEDGE_SCORE_AUTORUN": 1,
+    "src/llm_loop/knowledge_score/runner.py|KnowledgeScoreLoop/__init__|read|PYTEST_CURRENT_TEST": 1,
+    "src/llm_loop/knowledge_score/runner.py|spawn_autorun|read|LFL_KNOWLEDGE_SCORE_AUTORUN": 1,
+    "src/llm_loop/knowledge_score/runner.py|spawn_autorun|read|PYTEST_CURRENT_TEST": 1,
     "src/llm_loop/llm/client.py|LLMClient/reasoning_contract_state|bulk:raw|<all>": 2,
     "src/llm_loop/llm/client.py|LLMClient/reasoning_contract_state|read|LOCAL_ENABLE_THINKING": 1,
     "src/llm_loop/llm/client.py|LLMClient|read|LMS_CHAT_TAIL": 1,
@@ -1100,6 +1104,9 @@
     "src/llm_loop/web/__init__.py|build_app|read|SESSION_CONCURRENCY_LOCK": 1,
     "src/llm_loop/web/__init__.py|build_app|read|UI_V2_DIR": 1,
     "src/llm_loop/web/__init__.py|main|bulk:setdefault|<all>": 2,
+    "src/llm_loop/web/__init__.py|main|read|LFL_KNOWLEDGE_SCORE_BATCH": 1,
+    "src/llm_loop/web/__init__.py|main|read|LFL_KNOWLEDGE_SCORE_INTERVAL_S": 1,
+    "src/llm_loop/web/__init__.py|main|read|LFL_KNOWLEDGE_SCORE_ROOT": 1,
     "src/llm_loop/web/__init__.py|main|read|WEB_HOST": 1,
     "src/llm_loop/web/__init__.py|main|read|WEB_PORT": 1,
     "src/llm_loop/web/auth.py|_web_api_key|read|WEB_API_KEY": 1,
@@ -1145,5 +1152,5 @@
     "src/llm_loop/web/vision.py|vision_enabled|read|MINIMAX_API_KEY": 2,
     "src/llm_loop/web/vision.py|vision_enabled|read|WEB_VISION_MODEL": 1
   },
-  "unique_key_count": 63
+  "unique_key_count": 69
 }

@@ -36,6 +36,8 @@ from llm_loop.feedback.honesty import (
     session_not_found_message,
 )
 from llm_loop.knowledge_score.ledger import KnowledgeScoreLedger
+from llm_loop.knowledge_score.pending import scan_pending
+from llm_loop.knowledge_score.runner import read_runner_state
 from llm_loop.runtime.admission_barrier import (
     ServiceAdmissionBarrier,
     task_admission_barrier,
@@ -941,7 +943,24 @@ def knowledge_scores_index(request: Request) -> Response:
         for row in entries
     ]
     ledger_rows.sort(key=lambda r: (str(r.get("ts") or ""), r.get("ledger_seq") or 0), reverse=True)
-    return UTF8JSONResponse({"count": len(entries), "scores": scores, "ledger": ledger_rows})
+    root = scores_dir.parent.parent
+    try:
+        pending: int | None = len(scan_pending(root, limit=None))
+        pending_error = None
+    except Exception as exc:  # noqa: BLE001 - 待办统计失败不拖垮已可读的打分明细
+        pending = None
+        pending_error = f"{type(exc).__name__}: {exc}"
+        logger.warning("knowledge scores pending count failed: %s", pending_error)
+    return UTF8JSONResponse(
+        {
+            "count": len(entries),
+            "scores": scores,
+            "ledger": ledger_rows,
+            "pending": pending,
+            "pending_error": pending_error,
+            "runner": read_runner_state(root),
+        }
+    )
 
 
 # TASK-005: 受管服务 desired/live/stable 身份视图（与 service_control 工具同一 composer 单一数据源）

@@ -715,6 +715,70 @@ def test_cli_all_fail_nonzero(tmp_path, capsys, monkeypatch):
     assert len(rows) == 1 and rows[0]["error"]
 
 
+def test_cli_circuit_breaker_stops_after_consecutive_failures(tmp_path, capsys, monkeypatch):
+    """服务持续失败时按阈值熔断，避免每卡 120s 拖死调度轮次；仍逐卡写 error 行。"""
+    make_root(
+        tmp_path,
+        exp_uses=[
+            _exp_use(slot="a" * 64, seq=1),
+            _exp_use(slot="c" * 64, seq=2),
+            _exp_use(slot="e" * 64, seq=3),
+        ],
+    )
+    cli = _load_cli()
+    calls = {"n": 0}
+
+    def dead(state, **kw):
+        calls["n"] += 1
+        raise ScorerTransportError("down")
+
+    monkeypatch.setattr(cli, "score_state", dead)
+    code = cli.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--all-pending",
+            "--max-consecutive-failures",
+            "2",
+        ]
+    )
+    err = capsys.readouterr().err
+    assert code == 1
+    assert calls["n"] == 2
+    assert "circuit-break" in err
+    rows = KnowledgeScoreLedger.for_root(tmp_path).read()
+    assert len(rows) == 2 and all(r["error"] for r in rows)
+
+
+def test_scan_pending_error_cooldown_skips_recent_failure(tmp_path, capsys, monkeypatch):
+    """error 行在冷却期内不再返回，避免永久坏卡每次巡检都追加 error。"""
+    make_root(tmp_path, exp_uses=[_exp_use(slot="a" * 64, seq=1)])
+    cli = _load_cli()
+    monkeypatch.setattr(
+        cli,
+        "score_state",
+        lambda *a, **kw: (_ for _ in ()).throw(ScorerTransportError("down")),
+    )
+    assert cli.main(["--root", str(tmp_path), "--all-pending", "--max-consecutive-failures", "1"]) == 1
+    capsys.readouterr()
+    assert len(scan_pending(tmp_path)) == 1
+    assert scan_pending(tmp_path, error_cooldown_s=1800) == []
+
+
+def test_cli_run_lock_blocks_second_process(tmp_path):
+    """同一 root 的第二个打分进程在 .run.lock 上拿不到锁。"""
+    cli = _load_cli()
+    first = cli._acquire_run_lock(tmp_path)
+    assert first is not None
+    try:
+        assert cli._acquire_run_lock(tmp_path) is None
+    finally:
+        cli._release_run_lock(first)
+    again = cli._acquire_run_lock(tmp_path)
+    assert again is not None
+    cli._release_run_lock(again)
+
+
 def test_cli_single_ref_multiple_uses(tmp_path, capsys, monkeypatch):
     """--ref 单卡：多条使用记录逐条打分（一对多）。"""
     make_root(

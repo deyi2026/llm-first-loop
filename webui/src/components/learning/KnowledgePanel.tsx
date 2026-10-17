@@ -385,21 +385,47 @@ export function KnowledgePanel() {
           </div>
         </>
       ) : (
-        <div className="v2-knowledge-list">
-          {scoresLoading ? (
-            <div className="v2-knowledge-empty">读取打分明细…</div>
-          ) : (scoreData?.ledger.length ?? 0) === 0 ? (
-            <div className="v2-knowledge-empty" data-testid="scores-empty">
-              暂无打分记录
-            </div>
-          ) : (
-            [...(scoreData?.ledger ?? [])]
-              .sort((a, b) => (b.ts || "").localeCompare(a.ts || ""))
-              .map((entry) => (
-                <ScoreRow key={`${entry.ledger_seq}-${entry.ref}-${entry.ts}`} entry={entry} />
-              ))
-          )}
-        </div>
+        <>
+          <div
+            data-testid="score-runner-status"
+            style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 12, opacity: 0.8, margin: "4px 0 8px" }}
+          >
+            <span title="按 use slot 统计，包含等待重试的 error 行">
+              待补分 {scoreData?.pending ?? "未知"} 条
+            </span>
+            {scoreData?.runner?.last_success_at ? (
+              <span>最近自动打分 {scoreData.runner.last_success_at.slice(0, 16).replace("T", " ")}</span>
+            ) : (
+              <span>自动打分器尚未运行</span>
+            )}
+            {scoreData?.runner?.consecutive_failures ? (
+              <span
+                style={{ color: "#b45309" }}
+                title={scoreData.runner.last_error || "打分服务不可用或超时"}
+              >
+                连续失败 {scoreData.runner.consecutive_failures} 次
+                {scoreData.runner.next_retry_at
+                  ? `，下次重试 ${scoreData.runner.next_retry_at.slice(0, 16).replace("T", " ")}`
+                  : ""}
+              </span>
+            ) : null}
+          </div>
+          <div className="v2-knowledge-list">
+            {scoresLoading ? (
+              <div className="v2-knowledge-empty">读取打分明细…</div>
+            ) : (scoreData?.ledger.length ?? 0) === 0 ? (
+              <div className="v2-knowledge-empty" data-testid="scores-empty">
+                暂无打分记录
+              </div>
+            ) : (
+              [...(scoreData?.ledger ?? [])]
+                .sort((a, b) => (b.ts || "").localeCompare(a.ts || ""))
+                .map((entry) => (
+                  <ScoreRow key={`${entry.ledger_seq}-${entry.ref}-${entry.ts}`} entry={entry} />
+                ))
+            )}
+          </div>
+        </>
       )}
     </section>
   );

@@ -102,6 +102,25 @@ class KnowledgeScoreLedger:
                 keys.add(key)
         return keys
 
+    def latest_error_timestamps(self) -> dict[str, str]:
+        """slot_key → 最新一行 error 的时间戳；成功行不进入结果。
+
+        供 ``scan_pending(error_cooldown_s=...)`` 做过期重试退避：
+        永久失败卡不会在每次巡检都追加 error 行；到冷却期后仍会重试。
+        """
+        latest: dict[str, tuple[int, str]] = {}
+        for row in self.read():
+            if not str(row.get("error") or ""):
+                continue
+            key = str(row.get("slot_key") or row.get("slot_id") or "")
+            if not key:
+                continue
+            seq = int(row.get("ledger_seq") or 0)
+            prior = latest.get(key)
+            if prior is None or seq >= prior[0]:
+                latest[key] = (seq, str(row.get("ts") or ""))
+        return {key: ts for key, (_, ts) in latest.items()}
+
     def latest_writeback_failed(self) -> dict[str, dict]:
         """slot_key → 该 slot 最新行且为「打分成功仅写回失败」的行（P2-5）。
 

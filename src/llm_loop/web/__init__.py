@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
+from llm_loop.knowledge_score.runner import KnowledgeScoreLoop
 from llm_loop.timekeeping import system_local_now
 
 from .auth import (
@@ -444,6 +445,36 @@ def main(*, workspace_root: str | None = None) -> None:
     _fallback.start()
     app.state.queue_server_fallback = _fallback
 
+    # 知识打分闭环：启动后先补 backlog，之后周期巡检；与结算后触发共用 CLI
+    # 的跨进程 .run.lock，重复触发只会在锁上排队/跳过，不会重复打分。
+    # root 必须与引擎数据根一致：显式 workspace_root 优先，否则服务重启脚本
+    # 约定的 CWD（仓库根）；不能用 __file__，否则以 site-packages/外部工作区
+    # 部署时会对源码目录建锁、扫错 ledger，页面 pending 永不下降。
+    # 测试注入引擎的 build_app 路径不经过这里；PYTEST_CURRENT_TEST 下线程自行禁用。
+    # 极端部署（服务从任意子目录启动）可用 LFL_KNOWLEDGE_SCORE_ROOT 显式指定。
+    _env_score_root = os.environ.get("LFL_KNOWLEDGE_SCORE_ROOT")
+    if _env_score_root:
+        _score_root = Path(_env_score_root).expanduser().resolve()
+    else:
+        _score_root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
+    try:
+        _score_interval = float(os.environ.get("LFL_KNOWLEDGE_SCORE_INTERVAL_S") or 120)
+    except (TypeError, ValueError):
+        logger.warning("LFL_KNOWLEDGE_SCORE_INTERVAL_S 非数字，回退 120s")
+        _score_interval = 120.0
+    try:
+        _score_batch = int(os.environ.get("LFL_KNOWLEDGE_SCORE_BATCH") or 20)
+    except (TypeError, ValueError):
+        logger.warning("LFL_KNOWLEDGE_SCORE_BATCH 非整数，回退 20")
+        _score_batch = 20
+    _score_loop = KnowledgeScoreLoop(
+        _score_root,
+        interval_s=_score_interval,
+        limit=_score_batch,
+    )
+    _score_loop.start()
+    app.state.knowledge_score_loop = _score_loop
+
     # web-carveout M3（D1）：chatgpt binding 观测面（health probe + alert
     # notifier + webui 路由族）随页面 client 一并剥离至 lfl-web-providers；
     # 中间件 webui 不再挂载（app.state.chatgpt_binding_alert_notifier 移除）。
@@ -456,6 +487,9 @@ def main(*, workspace_root: str | None = None) -> None:
     try:
         uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=10)
     finally:
+        # 先停调度线程（daemon，最多等到当前 wait 返回），再关引擎连接。
+        _score_loop.stop()
+        _score_loop.join(timeout=5)
         # P2-4(2026-08-15): 服务退出关闭 LLM 连接（httpx Client 连接池不泄漏）
         engine.close()
 

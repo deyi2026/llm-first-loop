@@ -268,10 +268,28 @@ export interface KnowledgeScoreLedgerEntry {
   scorer_model: string;
 }
 
+export interface KnowledgeScoreRunnerState {
+  schema?: string;
+  last_attempt_at?: string | null;
+  last_success_at?: string | null;
+  last_exit_code?: number | null;
+  last_scored?: number;
+  last_failed?: number;
+  last_pending_before?: number | null;
+  last_pending_after?: number | null;
+  skipped?: string;
+  last_error?: string;
+  consecutive_failures?: number;
+  next_retry_at?: string | null;
+}
+
 export interface KnowledgeScoresResponse {
   count: number;
   scores: Record<string, KnowledgeScoreSummary>;
   ledger: KnowledgeScoreLedgerEntry[];
+  pending?: number | null;
+  pending_error?: string | null;
+  runner?: KnowledgeScoreRunnerState | null;
 }
 
 export async function fetchKnowledgeScores(): Promise<KnowledgeScoresResponse> {

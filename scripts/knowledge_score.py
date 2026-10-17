@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import sys
 from dataclasses import replace
@@ -153,7 +154,7 @@ def _replay_writeback(
     return True
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="知识卡独立打分器（StartLux-Decision /v1/systemone）"
     )
@@ -193,11 +194,69 @@ def main(argv: list[str] | None = None) -> int:
             f" LFL_INDEPENDENT_SCORER_URL 与默认 {DEFAULT_SCORER_URL}"
         ),
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=120.0,
+        help="单卡打分 HTTP 超时秒数（默认 120；调度器会传更短值快速熔断）",
+    )
+    parser.add_argument(
+        "--max-consecutive-failures",
+        type=int,
+        default=0,
+        help="连续失败达到 N 即停止本轮（0=不熔断，默认 0）",
+    )
+    parser.add_argument(
+        "--error-cooldown-seconds",
+        type=float,
+        default=0.0,
+        help="同一 slot 最新 error 的冷却秒数；冷却期内不重试（0=立即重试，默认 0）",
+    )
+    return parser
 
-    root = Path(args.root).resolve()
+
+def _acquire_run_lock(root: Path):
+    """跨进程非阻塞锁：返回文件句柄；已有进程持锁时返回 None。"""
+    path = root / "data" / "knowledge_scores" / ".run.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    return handle
+
+
+def _release_run_lock(handle) -> None:
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        handle.close()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
     if not args.ref and not args.all_pending:
         parser.error("需要 --ref <ref> 或 --all-pending 之一")
+    if args.dry_run:
+        return _run(args)
+    root = Path(args.root).resolve()
+    lock = _acquire_run_lock(root)
+    if lock is None:
+        print("[skip] another knowledge-score run is in progress", file=sys.stderr)
+        return 0
+    try:
+        return _run(args)
+    finally:
+        _release_run_lock(lock)
+
+
+def _run(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
 
     targets: list[PendingUse] = []
     resolve_failures: list[str] = []
@@ -215,7 +274,11 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             targets.extend(matched)
     if args.all_pending:
-        pending = scan_pending(root, limit=args.limit)
+        pending = scan_pending(
+            root,
+            limit=args.limit,
+            error_cooldown_s=args.error_cooldown_seconds,
+        )
         known = {(t.kind, t.ref, t.slot_key) for t in targets}
         targets.extend(
             t for t in pending if (t.kind, t.ref, t.slot_key) not in known
@@ -236,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
 
     successes = 0
     failures: list[str] = []
+    consecutive_failures = 0
+    stopped = "done"
 
     for item in targets:
         try:
@@ -281,10 +346,15 @@ def main(argv: list[str] | None = None) -> int:
                 failures=failures,
             ):
                 successes += 1
+                consecutive_failures = 0
             continue
 
         try:
-            result = score_state(state, endpoint=args.endpoint)
+            result = score_state(
+                state,
+                endpoint=args.endpoint,
+                timeout=args.timeout_seconds,
+            )
         except Exception as exc:  # noqa: BLE001 — 逐卡隔离兜底（P2-2）
             error_text = (
                 str(exc) if isinstance(exc, ScorerError) else f"unexpected: {exc!r}"
@@ -303,6 +373,17 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             print(f"[failed] {item.ref}: {error_text}", file=sys.stderr)
+            consecutive_failures += 1
+            if (
+                args.max_consecutive_failures > 0
+                and consecutive_failures >= args.max_consecutive_failures
+            ):
+                stopped = "max_consecutive_failures"
+                print(
+                    f"[circuit-break] consecutive_failures={consecutive_failures}，停止本轮",
+                    file=sys.stderr,
+                )
+                break
             continue
 
         adopted = (
@@ -349,6 +430,7 @@ def main(argv: list[str] | None = None) -> int:
             entry["error"] = writeback_error
         ledger.append(entry)
         successes += 1
+        consecutive_failures = 0
         print(_format_summary(item.ref, item.slot_key, result, adopted))
 
     if args.dry_run:
@@ -356,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[dry-run] 共 {len(targets)} 项，零写入（未调服务、未写文件）")
         return 0
 
+    print(f"[run] scored={successes} failed={len(failures)} stopped={stopped}")
     if failures:
         print(f"\n[summary] 成功 {successes} / 失败 {len(failures)}:", file=sys.stderr)
         for message in failures:

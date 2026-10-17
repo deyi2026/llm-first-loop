@@ -26,6 +26,7 @@ from llm_loop.introspection.settlement import (
     build_pending_settlement,
     submit_settlement_batch,
 )
+from llm_loop.knowledge_score.runner import spawn_autorun as spawn_knowledge_score_autorun
 from llm_loop.methods.store import MethodCommitUncertainError, MethodPersistError
 from llm_loop.usage_net import alert_section
 
@@ -911,6 +912,16 @@ def _run_settlement_submit(args: dict, host: RegistryHost) -> ToolResult:
         autorun_result = _spawn_krate_autorun(host)
         if autorun_result != "skip_pytest":
             host.audit("krate_autorun", {"result": autorun_result}, "triggered")
+        # 知识打分闭环：committed 结算产生/更新 use ledger 后立即补一轮打分；
+        # 根目录从经验库反推（与当前 workspace 同源），不能用 runner 源码位置，
+        # 否则外部工作区部署会扫错 ledger。spawn 内部 fail-open。
+        score_root = getattr(
+            getattr(channel, "experience_store", None),
+            "workspace_root",
+            None,
+        )
+        if spawn_knowledge_score_autorun(score_root):
+            host.audit("knowledge_score_autorun", {"result": "spawned"}, "triggered")
     header = (
         f"[settlement_submit] committed={counts['committed']} pending={counts['pending']} "
         f"failed={counts['failed']} | settlement_calls={receipt['settlement_calls']} "

@@ -332,7 +332,14 @@ def test_knowledge_scores_empty_when_no_files(build_test_engine, tmp_path) -> No
     client = _client(engine, tmp_path)
     resp = client.get("/api/v1/knowledge/scores")
     assert resp.status_code == 200
-    assert resp.json() == {"count": 0, "scores": {}, "ledger": []}
+    assert resp.json() == {
+        "count": 0,
+        "scores": {},
+        "ledger": [],
+        "pending": 0,
+        "pending_error": None,
+        "runner": None,
+    }
 
 
 def test_knowledge_scores_skips_bad_lines_and_sidecars(build_test_engine, tmp_path) -> None:

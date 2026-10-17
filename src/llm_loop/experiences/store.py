@@ -193,6 +193,11 @@ class ExperienceStore:
             raise PermissionError("knowledge store quarantined: mutation disabled")
 
     @property
+    def workspace_root(self) -> Path:
+        """本库所属工作区根（experiences/ 的上一级），供外部调度器定位同源 ledger."""
+        return self._dir.resolve().parent
+
+    @property
     def last_experience_diagnostics(self) -> dict:
         """最近一次扫描的诊断四要素摘要（实验性：单线程假设，并发场景需改参数传递）.
 
