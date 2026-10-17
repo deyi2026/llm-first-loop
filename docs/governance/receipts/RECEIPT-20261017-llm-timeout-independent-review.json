@@ -1,0 +1,83 @@
+{
+  "gate": "code",
+  "reviewer": "/root/timeout_code_review",
+  "reviewer_kind": "independent_host_codex_subagent",
+  "reviewer_is_glm53": false,
+  "verdict": "PASS",
+  "scope_files": [
+    "src/llm_loop/llm/client.py",
+    "src/llm_loop/feedback/honesty.py",
+    "tests/unit/test_timeout_recovery.py",
+    "tests/integration/test_fault_isolation.py"
+  ],
+  "artifact_files": [
+    {
+      "path": "src/llm_loop/llm/client.py",
+      "sha256": "35722ab429bf479c238040d7bfc06570fb23e28ebd4c0130b03ff2cd11c43ea9"
+    },
+    {
+      "path": "src/llm_loop/feedback/honesty.py",
+      "sha256": "a5706020a7a462d3059c1705c05a749703a416424aef8d97346c83a1ecad56a3"
+    },
+    {
+      "path": "tests/unit/test_timeout_recovery.py",
+      "sha256": "2cc99cda6b0b885b8213ce3b13676f865870bc325abd0e0b80d8968017ff5831"
+    },
+    {
+      "path": "tests/integration/test_fault_isolation.py",
+      "sha256": "d388980b264d79c7c9a7e6a68598ea28dcd060a2a73ab830fa387866aa7c5284"
+    }
+  ],
+  "artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5",
+  "artifact_hash_algorithm": "sha256(path+NUL+sha256+LF in scope_files order)",
+  "findings": [],
+  "unresolved": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "applied": [
+    "P1-1 raw opaque provider state prevents retry",
+    "P1-2 buffered think text prevents retry",
+    "P1-3 expired stream deadline prevents reset",
+    "owner Stop and failed authority check prevent resend",
+    "P1-4 owner Stop during ConnectError backoff prevents next request",
+    "Integration matrix keeps generic advice for other errors and separately asserts truthful timeout feedback"
+  ],
+  "rejected": [],
+  "review_history": [
+    {
+      "verdict": "REVISE",
+      "artifact_sha256": "898fd5c1d772b3212f6a53c8de3b7b1bed38852bfb8e4699b577315238f72262",
+      "findings": "raw state, buffered think, total deadline; actual child turn later errored on credits; not PASS"
+    },
+    {
+      "verdict": "REVISE",
+      "artifact_sha256": "12f40f5c8f89bde008090d4b4b05ce8cf4b45bc156687281b4f96c5afdfc21f5",
+      "findings": "Stop during disconnect backoff"
+    }
+  ],
+  "narrow_recheck": {
+    "reviewer": "/root/timeout_code_review",
+    "verdict": "PASS",
+    "scope": "Existing integration timeout feedback expectation only; unchanged source3 hashes verified",
+    "tests": "error type matrix 1 passed exit0; diff-check PASS",
+    "artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5"
+  },
+  "authorization_boundary": "No merge/push/deployment/restart or live Provider call performed by reviewer; does not grant those actions.",
+  "narrow_rechecks": [
+    {
+      "reviewer": "/root/timeout_code_review",
+      "verdict": "PASS",
+      "artifact_sha256": "fd2566821badb8dad6ed8fcc2dd1e0941b70cb242decf5dcebcc73b66f42359b",
+      "tests": "4 passed,16 deselected,exit0; git diff --check PASS"
+    },
+    {
+      "reviewer": "/root/timeout_code_review",
+      "verdict": "PASS",
+      "scope": "Existing integration timeout feedback expectation only; unchanged source3 hashes verified",
+      "tests": "error type matrix 1 passed exit0; diff-check PASS",
+      "artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5"
+    }
+  ]
+}

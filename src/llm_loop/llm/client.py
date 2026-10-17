@@ -38,7 +38,12 @@ from llm_loop.cognitive.cache_tags import (  # M4.3 认知缓存标记（研究�
     tagging_enabled_for,
 )
 from llm_loop.core.message import ToolCall
-from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
+from llm_loop.core.run_context import (
+    child_cancel_event,
+    current_reasoning_effort,
+    current_reasoning_mode,
+    current_wait_cancel_check,
+)
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMError,
@@ -2115,6 +2120,29 @@ class LLMClient:
         # 产出则重试会造成 UI 重复/工具重复执行，故不重试）。
         _retry_disconnect = int(self.retry_disconnect)
         _tc_seen = False
+        _raw_output_seen = False
+        _deadline: float | None = None
+
+        def _retry_cancelled() -> bool:
+            # Reuse lifecycle's exact run/generation cancellation authority and
+            # the delegated child's existing Stop carrier. Never invent a new
+            # run, cancellation flag, or prompt-based continuation.
+            child_stop = child_cancel_event.get()
+            run_stop = current_wait_cancel_check.get()
+            try:
+                return bool(
+                    (child_stop is not None and cast(Any, child_stop).is_set())
+                    or (run_stop is not None and run_stop())
+                )
+            except Exception:  # noqa: BLE001 - unknown Stop state cannot authorize a retry
+                logger.warning("LLM 重试取消状态不可核验，保留原始传输异常")
+                return True
+
+        def _output_seen() -> bool:
+            return bool(
+                _raw_output_seen or acc.content_parts or acc.reasoning_parts
+                or acc.reasoning_details_text or _tc_seen
+            )
 
         def _openai_stream_once(transport_retry_index: int) -> Iterator[StreamDelta]:
             """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）.
@@ -2126,7 +2154,9 @@ class LLMClient:
             在 attempt journal（_observe_transport_usage /
             _note_settled_response_facts 逐 attempt 记录），不因重试被丢弃。
             """
-            nonlocal _tc_seen, acc, agg
+            nonlocal _tc_seen, _raw_output_seen, _deadline, acc, agg
+            _raw_output_seen = False
+            _deadline = None
             acc = _StreamAcc()
             agg = ToolCallDeltaAggregator()
             think_parser = _ThinkTagStreamParser()
@@ -2198,6 +2228,14 @@ class LLMClient:
                         continue
                     choice = choices[0]
                     delta = choice.get("delta") or {}
+                    # Received provider state counts even when not yet displayable
+                    # (buffered <think> tags or opaque/signed reasoning details).
+                    _raw_output_seen = _raw_output_seen or any(
+                        delta.get(key) for key in (
+                            "content", "reasoning_content", "reasoning",
+                            "reasoning_details", "tool_calls",
+                        )
+                    )
                     content = delta.get("content")
                     if content:
                         # MiniMax-M3 等 provider 可能把思考链放 content 的 <think> 标签；
@@ -2295,24 +2333,39 @@ class LLMClient:
                 yield from _openai_stream_once(_attempt - 1)
                 break  # 流完整结束（含 [DONE]）
             except httpx.TimeoutException as exc:
+                if _deadline is not None:
+                    _check_stream_deadline(_deadline, effective_timeout)
+                # A connect/read timeout with zero delivered output can recover just
+                # like a disconnect. Share its attempt budget and unchanged payload;
+                # never replay partial text/reasoning/tools, write/pool timeouts,
+                # the independent total-stream deadline, or task-budget cancellation.
+                if (
+                    isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout))
+                    and _attempt <= _retry_disconnect
+                    and not _output_seen()
+                    and not _retry_cancelled()
+                ):
+                    logger.warning(
+                        "LLM 流式请求超时（尚无输出已产出），同模型重试 %d/%d: %s",
+                        _attempt, _retry_disconnect, type(exc).__name__,
+                    )
+                    continue
                 raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
             except (httpx.NetworkError, httpx.ProtocolError) as exc:
                 # 传输级断连（peer closed / 连接重置 / 协议中断）→ 无输出已产出时重试一次
                 # 2026-09-18: 连接级失败先上报持有者（退休本实例，使后续调用按当前系统代理/
                 # 网络配置重建），再按既有单次重试语义决定是否重试。
                 self._notify_transport_failure(exc)
+                if _deadline is not None:
+                    _check_stream_deadline(_deadline, effective_timeout)
                 # ASSESS-20261008 BUG-12: 重试判定读取失败 attempt 的已投递事实
                 # （acc 在下一 attempt 开始时才重置）——content/reasoning/details/
                 # 工具任一已投递即不重试，避免 UI 重复与工具重复执行。
-                _output_seen = (
-                    bool(
-                        acc.content_parts
-                        or acc.reasoning_parts
-                        or acc.reasoning_details_text
-                    )
-                    or _tc_seen
-                )
-                if _attempt <= _retry_disconnect and not _output_seen:
+                if (
+                    _attempt <= _retry_disconnect
+                    and not _output_seen()
+                    and not _retry_cancelled()
+                ):
                     logger.warning(
                         "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
                         _attempt, _retry_disconnect, exc,
@@ -2321,7 +2374,10 @@ class LLMClient:
                     # 换连接前短退避；超时类失败不退避，保持既有节奏。
                     if isinstance(exc, httpx.ConnectError):
                         time.sleep(_TRANSPORT_RETRY_BACKOFF_S)
-                    continue
+                    # Stop may arrive while the backoff sleeps. Check the same
+                    # owner again immediately before issuing another request.
+                    if not _retry_cancelled():
+                        continue
                 raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
             except LLMHTTPError:
                 raise

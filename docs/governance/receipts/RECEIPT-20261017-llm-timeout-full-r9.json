@@ -1,0 +1,65 @@
+{
+  "gate": "original_full_r9",
+  "verdict": "PASS_UNDER_ORIGINAL_SERIAL_RECHECK_POLICY",
+  "exit_code": 0,
+  "command": "bash scripts/ci_gate.sh",
+  "command_id": "sess-55664-2993",
+  "base_commit": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+  "code_artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5",
+  "code_artifact_files": [
+    {
+      "path": "src/llm_loop/llm/client.py",
+      "sha256": "35722ab429bf479c238040d7bfc06570fb23e28ebd4c0130b03ff2cd11c43ea9"
+    },
+    {
+      "path": "src/llm_loop/feedback/honesty.py",
+      "sha256": "a5706020a7a462d3059c1705c05a749703a416424aef8d97346c83a1ecad56a3"
+    },
+    {
+      "path": "tests/unit/test_timeout_recovery.py",
+      "sha256": "2cc99cda6b0b885b8213ce3b13676f865870bc325abd0e0b80d8968017ff5831"
+    },
+    {
+      "path": "tests/integration/test_fault_isolation.py",
+      "sha256": "d388980b264d79c7c9a7e6a68598ea28dcd060a2a73ab830fa387866aa7c5284"
+    }
+  ],
+  "independent_review": "docs/governance/receipts/RECEIPT-20261017-llm-timeout-independent-review.json",
+  "static": {
+    "ruff": "PASS: no new or touched-file diagnostics",
+    "env_pin": "PASS: 880 files scanned",
+    "pyright": "PASS: no new or touched-file diagnostics"
+  },
+  "tier0": {
+    "passed": 319,
+    "deselected": 9141
+  },
+  "xdist_first_pass": {
+    "passed": 9297,
+    "skipped": 146,
+    "failed": 1,
+    "duration_seconds": 200.56,
+    "failed_node": "tests/phase4/test_m2_inflight_interrupt.py::test_c_s15_race_two_branches"
+  },
+  "original_serial_recheck": {
+    "file": "tests/phase4/test_m2_inflight_interrupt.py",
+    "passed": 6,
+    "failed": 0,
+    "duration_seconds": 18.63
+  },
+  "observation": "Parallel failure remains an observation under unchanged project gate policy; not claimed fixed or a completely green xdist run. No gate/baseline was modified.",
+  "full_log": "data/llm-timeout-recovery-20261017/full-r9-final.log",
+  "full_log_sha256": "7cc47d96f1db053e304f4e845e276b869920f89361571b120eb3382c1daa6510",
+  "first_r9": {
+    "exit_code": 1,
+    "xdist_passed": 9297,
+    "xdist_failed": 1,
+    "skipped": 146,
+    "failed_node": "tests/integration/test_fault_isolation.py::test_llm_error_type_matrix_injected",
+    "resolution": "Timeout advice expectation updated; independent narrow PASS before second full gate"
+  },
+  "production_changed": false,
+  "merged_main": false,
+  "push_performed": false,
+  "generated_report_diffs_archived": 18
+}

@@ -28,6 +28,7 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMHTTPError,
+    LLMTimeoutError,
     is_quota_error,
     parse_provider_error_code,
 )
@@ -100,6 +101,13 @@ def llm_error_text(error: Exception) -> str:
             f"原因: {type(error).__name__}: {error}\n"
             f"建议: 多为瞬态抖动（流被截断/模型异常），请直接重试；"
             f"本次未能获得回答。"
+        )
+    if isinstance(error, LLMTimeoutError):
+        return (
+            f"[LLM 调用异常] 事实: 本次模型请求超时，本轮已结束。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            "边界: 超时不等于 Key 或模型名配置错误；可能与网络等待、服务端排队或处理耗时有关。\n"
+            "建议: 可在当前会话重试或继续；已有工具执行结果需先核对，避免重复执行。"
         )
     return (
         f"[LLM 调用异常] 事实: LLM 调用失败。\n"

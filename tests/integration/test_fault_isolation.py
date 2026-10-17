@@ -323,4 +323,9 @@ def test_llm_error_type_matrix_injected(build_test_engine, monkeypatch):
         assert "原因:" in result.final_answer, type_name
         assert "建议:" in result.final_answer, type_name
         assert type_name in result.final_answer, type_name
-        assert "检查网络/Key/模型名配置后重试" in result.final_answer, type_name
+        if isinstance(err, LLMTimeoutError):
+            assert "本轮已结束" in result.final_answer
+            assert "超时不等于 Key 或模型名配置错误" in result.final_answer
+            assert "检查网络/Key/模型名配置后重试" not in result.final_answer
+        else:
+            assert "检查网络/Key/模型名配置后重试" in result.final_answer, type_name
