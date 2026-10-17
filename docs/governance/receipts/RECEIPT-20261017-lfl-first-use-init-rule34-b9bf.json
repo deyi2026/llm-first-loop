@@ -1,0 +1,89 @@
+{
+  "based_on_main": true,
+  "branch": "integrate/install-first-use-main-b9bf-20261017",
+  "branch_disposition": "kept: awaiting explicit local-main merge authorization and postmerge verification",
+  "branch_tip_reviewed": "b319ec19fdb75978d30750c6b5201f42527bc37c",
+  "commits": [
+    "b319ec19fdb75978d30750c6b5201f42527bc37c"
+  ],
+  "conflicts_resolved": [],
+  "current_main_focused": {
+    "exit": 0,
+    "failed": 0,
+    "log_sha256": "80faf314a79fbfd246209336fb53cf6c8cca850b7a91c37a9dcc66f8552b1025",
+    "passed": 72
+  },
+  "current_main_quick": {
+    "exit": 0,
+    "full_R9": false,
+    "log_sha256": "c0b168ec7ea14b7e4ba086d49b28d6ac9613c3e84546a386dc08d8320f67bc4b",
+    "passed": 319,
+    "pyright_new": 0
+  },
+  "decision_scope": "pre-merge qualification only",
+  "gate": "merge",
+  "goal_id": "2f012545-4f89-478b-ab87-53668e3004b2",
+  "main_sha_after": null,
+  "main_sha_at_review": "b9bf967d8c86652e9c4f417375c1c6a330196918",
+  "material_bytes": 79608,
+  "material_sha256": "8cb22f5eb6c4cd9e54c53f65b0331c5392f88be3275fc2d9f68a037693ee2c08",
+  "merge_executed": false,
+  "merge_mode": "ff",
+  "open_p2": [
+    "0600 temporary file could remain after process crash",
+    "os.link availability beyond macOS/Linux is unqualified",
+    "human plan status text ambiguity",
+    "existing-config interactive exit code documentation"
+  ],
+  "original_independent_review_receipt_sha256": "d914a77450b4160c0d6835e17cb9d63ff51679e0c99e96f6945d1e65093af963",
+  "p0": 0,
+  "p1": 0,
+  "p2": 4,
+  "pending_user_merge_authorization": true,
+  "postmerge_required": [
+    "recheck exact main and branch tip/clean status under shared git lock",
+    "preserve all other-agent dirty bytes/modes/status",
+    "fast-forward only after separate user approval",
+    "run focused+CLI smoke against actual main and report the real resulting main SHA"
+  ],
+  "production_publish": false,
+  "push": false,
+  "qualification": "PASS",
+  "receipt_notes": "Evidence-only receipt; independent review covered code tip b319ec19f, not this future docs-only receipt commit. Merge itself is not executed by this gate receipt.",
+  "restart": false,
+  "review_text": "## RULE-AI-34 合并资格审查（独立复审）\n\n**审查范围**：分支 `integrate/install-first-use-main-b9bf-20261017`，tip `b319ec19fdb75978d30750c6b5201f42527bc37c`，基于当前 main `b9bf967d`，单提交 cherry-pick 自 `fc9b6ea0`。\n\n**逐项核验**：\n\n1. **基线新鲜性**：merge-base == main HEAD（`b9bf967d`），upstream delta 六文件（factory/subagent runner/client/errors/测试/合并回执）与分支六路径零重叠，无未审查冲突面。\n2. **补丁完整性**：diff 覆盖声明的 6 个文件；`first_use.py` 中 `first_use_configuration` T2 登记与实现一致；`cli.py` init 分支先于任何 bootstrap/Engine 构建，符合离线约束。\n3. **先前 P1 TOCTOU 修复验证**（重点）：\n   - `_open_directory_chain` 逐级 `O_NOFOLLOW` dirfd 遍历，注释与代码均明确禁止遍历时 realpath——修复已在源码落实；\n   - `_exclusive_create` 使用 `O_CREAT|O_EXCL|O_NOFOLLOW` 0600 临时文件 + `os.link(follow_symlinks=False)` 同目录原子发布，link 对已存在目标（含 symlink）原子失败，无 rename-overwrite 路径；\n   - 确认后二次机械复检 `_unsafe_path(target...) or target.exists()` 存在；\n   - `test_last_moment_config_race_never_clobbers_existing_file` 与 `test_atomic_file_create_never_replaces_concurrent_winner` 直接覆盖竞争窗口。no-clobber 契约当前仍然成立。\n4. **其余安全面**：`--json` 无 `--plan` 返回 2；非 TTY 拒写；symlink 目标/祖先、`..` 穿越、bundle 内目标、空环境变量覆盖均有对应测试且通过（focused 72 passed，quick 319 passed，pyright 0 新增）。\n5. **证据有效性**：源分支 full R9 exit 0（9362 passed）；独立 Rule28 PASS 回执 SHA 934d…；集成后 focused/quick 日志 SHA 齐备；wheel 隔离验证 0 provider 调用、0600/0700、既有配置保留。\n6. **分支卫生/所有权**：分支 clean；main worktree 脏文件属其他代理、无路径重叠、本审查不动 main。\n7. **合并方式**：merge-base==main，ff-only 可行；合并执行须待单独授权（本审查仅为资格判定，`main_sha_after` pending 正确，未假装已合并）。\n\n**发现**：\n- P0=0：无安全或正确性缺陷。\n- P1=0：TOCTOU 修复经代码与测试双重确认。\n- P2=4（承袭且无升级）：① 崩溃后 0600 临时文件残留（`_exclusive_create` finally 仅在同进程清理）；② `os.link` 超出 macOS/Linux 的可移植性；③ plan 文本模式状态消息轻微歧义（\"会创建新文件\"与 can_create 语义）；④ 既有文件交互路径返回 0 的退出码文档未明示。均为非阻断。\n\n结论：合并资格（ff-only）成立，待单独授权执行。\n\nVERDICT: PASS\n\nP0=0 P1=0 P2=4\n\nSHA256: 9f6c5b20019ac446d07fb2efeff25049ac4914d23771750926fcb063f39b2be0",
+  "review_text_sha256": "8a6ab64ddbaf4e0b8bffa655dd94009fff253c7aed12a02f70a41bb31a2f85c8",
+  "reviewed_code_patch_sha256": "9f6c5b20019ac446d07fb2efeff25049ac4914d23771750926fcb063f39b2be0",
+  "reviewed_files": [
+    "docs/DESIGN-20261017-lfl-first-use-init.md",
+    "docs/installation.md",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/runtime/first_use.py",
+    "tests/guards/function_size_baseline.json",
+    "tests/unit/test_application_init.py"
+  ],
+  "reviewer": "subagent_c2a4019603aa",
+  "reviewer_independent": true,
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_result_id": "result-8d4669a44ab349eba5935a377fb8b0d4",
+  "reviewer_state": "completed",
+  "schema": "lfl.rule34.merge_qualification/v1",
+  "source_commit": "fc9b6ea0c30fe63a5e9e3d8801e87e8adfc2c95c",
+  "source_original_fullR9": {
+    "failed": 0,
+    "log_sha256": "6c0d85937574d8c6a8d789aa86558687ab50f31411c860a6ac667f2f8313cc8c",
+    "official_exit": 0,
+    "passed": 9362,
+    "skipped": 146
+  },
+  "source_rule28_code_review": {
+    "p0": 0,
+    "p1": 0,
+    "p2": 4,
+    "qualification": "PASS",
+    "receipt_sha256": "934d2959f2560782c916e5c610a5f086d66b9536b039066e8c05af564fe4447a",
+    "reviewer": "subagent_0f65c85db41c"
+  },
+  "terminal_event_count": 1,
+  "verdict": "PASS"
+}
