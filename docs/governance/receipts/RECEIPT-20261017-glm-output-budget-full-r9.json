@@ -1,0 +1,48 @@
+{
+  "gate": "original_full_r9",
+  "verdict": "PASS_UNDER_UNCHANGED_SERIAL_RECHECK_POLICY",
+  "base_sha": "125a90059c401ae32c48e6c5abe33544e6cc8be2",
+  "source_commit": "d5f7f3321c99c05d3fe8847b1127166f310d4615",
+  "tested_probe_commit": "d7c458b037259b93c48035f9a5ff798420f5eed4",
+  "probe_tree_matches_source_commit": true,
+  "command": "R9_GATE_RECEIPT_FILE=<task data>/full-r9.log bash scripts/r9_commit.sh \"fix(r9): report model output budget exhaustion accurately\"",
+  "command_id": "sess-55664-3563",
+  "command_retention": "Command result expired before user continuation; recovered completion from durable wrapper log, exact source commit/tree and full ci_gate log. No rerun.",
+  "ci_gate_reported_exit_code": 0,
+  "wrapper_completion_marker": true,
+  "static": [
+    "R9 five rules PASS",
+    "Ruff PASS",
+    "env-pin PASS",
+    "Pyright PASS",
+    "git security scan PASS"
+  ],
+  "tier0_passed": 319,
+  "xdist_first_pass": {
+    "passed": 9378,
+    "skipped": 141,
+    "failed": 1,
+    "duration_seconds": 197.0,
+    "failed_node": "tests/phase4/test_m3_bucket_metrics.py::test_m3_four_buckets"
+  },
+  "original_serial_recheck": {
+    "file": "tests/phase4/test_m3_bucket_metrics.py",
+    "passed": 2,
+    "failed": 0,
+    "duration_seconds": 22.21
+  },
+  "trace_schema_scan": {
+    "passed": 1,
+    "deselected": 29
+  },
+  "gate_policy_modified": false,
+  "observation": "Original script accepts serial green after xdist failure. Not claimed an all-green first parallel pass or a race fix.",
+  "artifact_sha256": "cbe95f4443473344c3858cd872af7dbbd54546c09eed21a55da0e868a962d676",
+  "full_log": "data/glm-output-budget-20261017/full-r9.log",
+  "full_log_sha256": "3e5ac6aef47ab703909f9ab24a7bb6c14b6f8eaf8bc7503fc5c788389a2cc40a",
+  "wrapper_log": "data/glm-output-budget-20261017/r9-commit.log",
+  "wrapper_log_sha256": "040383f1b62e0d8a9b90f86d831c12c1c4c10bb3cc33fef67f06dd64d9239058",
+  "independent_code_review": "docs/governance/receipts/RECEIPT-20261017-glm-output-budget-code-review.json",
+  "merged_main": false,
+  "production_source_changed": false
+}

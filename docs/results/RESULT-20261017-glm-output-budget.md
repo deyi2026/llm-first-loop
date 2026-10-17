@@ -1,6 +1,6 @@
 # GLM-5.3 输出预算耗尽修复（2026-10-17）
 
-状态：独立代码审查PASS（P0/P1/P2=0），相关60项回归通过，待原版完整R9与合并审查。模型专属65536配置已原子保存并reload；默认client仍待受控Web重启核验，当前不声明全面生效。
+状态：独立代码审查PASS（P0/P1/P2=0），相关60项回归通过，原版完整R9按既有serial复核策略通过，待最终独立合并审查。模型专属65536配置已原子保存并reload；默认client仍待受控Web重启核验，当前不声明全面生效。
 
 ## 实际事故
 
@@ -24,3 +24,9 @@
 
 - 独立代码审查回执：`docs/governance/receipts/RECEIPT-20261017-glm-output-budget-code-review.json`，Reviewer为宿主Codex子代理，非GLM-5.3；独立定向43passed，未提前全量。
 - 配置持久化回执：`docs/governance/receipts/RECEIPT-20261017-glm-output-budget-config.json`，只变更一个字段；备份私有0600，重载目录成功；默认client尚未重启。
+
+## 完整门禁与阶段冻结
+
+- 受管原版R9已经完成并提交源码`d5f7f3321c99c05d3fe8847b1127166f310d4615`；精确PROBE `d7c458b037259b93c48035f9a5ff798420f5eed4`树与源码提交完全一致。原命令保留期已过，不重跑；从真实提交、wrapper完成标记和原始ci_gate日志恢复终态。
+- Ruff/env-pin/Pyright/五规则/安全扫描通过，tier0 319passed；全量xdist首轮9378passed/141skipped/1failed（test_m3_four_buckets），原脚本对完整失败文件serial复核2passed后放行，trace schema 1passed。保留并行波动观察，不宣称首轮全绿或已修复该race。
+- 完整回执：`docs/governance/receipts/RECEIPT-20261017-glm-output-budget-full-r9.json`，含原始日志SHA。后续纯证据提交不改变已审代码指纹。
