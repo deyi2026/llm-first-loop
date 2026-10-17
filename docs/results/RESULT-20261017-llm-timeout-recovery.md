@@ -1,6 +1,6 @@
 # LLM 120 秒超时恢复修复（2026-10-17）
 
-状态：四文件独立代码审查PASS（未解决P0/P1/P2=0）；原版完整R9退出0（遵循原有serial复核策略，详见下文）。尚未合并main、推送、发布或重启；main仍有其他Agent活跃未提交修改，等待合并审查正式裁决。
+状态：四文件独立代码审查PASS（未解决P0/P1/P2=0）；原版完整R9退出0（遵循原有serial复核策略，详见下文）。尚未合并main、推送、发布或重启；main仍有其他Agent活跃未提交修改，专门合并审查已正式BLOCK本次即时合并，不能声称任务完成或生产生效。
 
 ## 实际故障与结论
 
@@ -44,3 +44,10 @@
 - 并行波动已登记观察，不称本次修复了该race，也不称xdist全绿；没有修改门禁或守卫baseline。
 - 全量回执：`docs/governance/receipts/RECEIPT-20261017-llm-timeout-full-r9.json`。原始日志在本任务ignored data目录并绑定SHA256。
 - 每次测试生成的18处reports差分已原样归档后恢复，不夹带进修复提交；未处置主仓其他Agent的任何修改。
+
+## 合并状态
+
+- 修复提交：`3361a5bef9154b7f8eccd69a0ce2b2e6935bf1ff`；独立merge Reviewer `/root/timeout_merge_review` 核验该精确提交树干净、仅7个任务相关文件、base新鲜、具备ff条件，代码与全量门禁均达标。
+- 正式裁决BLOCK即时合并：main另有6个tracked修改和3个untracked文件仍在活跃写入；与候选路径不交叉，也不能替代协调与保全。
+- 回执：`docs/governance/receipts/RECEIPT-20261017-llm-timeout-merge-block.json`。等待修改所有者自行提交/迁移使main达到可集成状态后，重核最新main、候选指纹与审查资格；main若前进，先更新候选基线并复跑受影响gate，再获merge PASS后ff及合并后冒烟。
+- 保留本分支及worktree供恢复，不标任务完成、不重启服务；没有stash/reset他人内容。

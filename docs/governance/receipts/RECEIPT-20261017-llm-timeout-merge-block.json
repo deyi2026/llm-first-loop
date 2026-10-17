@@ -1,0 +1,36 @@
+{
+  "gate": "merge",
+  "reviewer": "/root/timeout_merge_review",
+  "reviewer_kind": "independent_host_codex_subagent",
+  "reviewer_is_glm53": false,
+  "verdict": "BLOCK",
+  "branch": "fix/llm-timeout-recovery-20261017",
+  "based_on_main": true,
+  "reviewed_main_sha": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+  "commits": [
+    "3361a5bef9154b7f8eccd69a0ce2b2e6935bf1ff"
+  ],
+  "candidate_clean": true,
+  "candidate_hygiene": "PASS",
+  "code_gate": "PASS: valid independent review; artifact hashes verified",
+  "code_artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5",
+  "full_gate": "PASS_UNDER_ORIGINAL_SERIAL_RECHECK_POLICY",
+  "full_log_sha256": "7cc47d96f1db053e304f4e845e276b869920f89361571b120eb3382c1daa6510",
+  "block_reason": "Other agents have active uncommitted changes in main worktree; integration coordination has not converged.",
+  "other_main_changes": {
+    "tracked": 6,
+    "untracked": 3,
+    "candidate_path_intersection": []
+  },
+  "merge_mode": "ff",
+  "merge_performed": false,
+  "conflicts_resolved": [],
+  "main_sha_after": null,
+  "branch_disposition": "kept: awaiting coordinated main integration and refreshed merge review",
+  "resume_conditions": [
+    "Owners conclude active writes and commit or migrate their own work; never stash/reset others changes",
+    "Fresh main/candidate SHA, clean-tree and review-coverage checks; if main advances update baseline and rerun affected gates",
+    "Fresh independent merge PASS, ff by parent, postmerge SHA and focused smoke"
+  ],
+  "receipt_storage_note": "This records BLOCK for the exact reviewed source commit; a later evidence-only commit storing this receipt does not alter the four-file code artifact."
+}
