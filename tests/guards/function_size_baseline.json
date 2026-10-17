@@ -971,6 +971,15 @@
         ],
         "rationale": "P1 lfl init 将用户显式两次确认后的首次模型凭证配置作为持久 T2 状态；仅以 0600/0700 权限、同目录 O_EXCL 临时文件与原子 link(create-if-absent)+fsync 发布，从不覆写已有 .env，也不联网/自动启停服务。此处 observe 仅登记真实新增写入责任面及已覆盖的冲突/泄密定向验证，不宣称升级迁移/断电恢复完整资格；后续仍需独立 Rule28 审查与原版 R9。"
       },
+      "install_cold_backup_recovery": {
+        "tier": "T2",
+        "status": "partial",
+        "owner": "runtime",
+        "paths": [
+          "src/llm_loop/runtime/install_recovery.py"
+        ],
+        "rationale": "P1 离线冷备份/隔离恢复：操作者声明服务已停止，按 RuntimePaths 来源选择 config/data/Experiences/Methods 可读根，拒绝软链/硬链/路径逃逸；0700新目录+0600文件、O_EXCL独占、不完整状态拒绝，fsync文件与目录，manifest最终写入并校验SHA。仅 selected_roots 非全量、sha不代表发布者签名；失电fsync不确定性、跨文件事务与服务真的停止仍未完全验证，因此登记T2 partial，不声称生产恢复已完成，也不降低任何架构守卫。"
+      },
       "usage_ledger_primitives": {
         "tier": "T1",
         "status": "observe",

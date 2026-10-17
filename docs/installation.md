@@ -97,6 +97,38 @@ web 复用原有 Web 入口、认证与生命周期清理，默认绑定本机�
 然后执行 lfl check-install 与 lfl --version。数据目录在应用虚拟环境之外，更新不搬迁该目录。
 本 MVP 不自动迁移数据，不承诺跨不兼容数据格式的降级恢复。
 
+### P1 升级前检查、冷备份与隔离恢复
+
+在提供此 P1 功能且完成安装成品验收的版本中，可以使用以下**离线**工作流：
+
+~~~bash
+lfl upgrade --plan --json
+lfl backup --plan --json
+# 先从运行态核对并停止受影响 Web/Feishu/Learning 与其他持久化写入进程
+lfl backup --to /absolute/private/snapshots/before-upgrade --confirm-services-stopped
+lfl backup verify --from /absolute/private/snapshots/before-upgrade --json
+# 仅恢复到一个从未存在的新位置，不覆盖生产 data 或 .env
+lfl rollback --from /absolute/private/snapshots/before-upgrade --into /absolute/private/staged-restore --confirm-services-stopped
+~~~
+
+`--plan` 与 `verify` 不读取网络、不修改软件环境、不自动启动模型或服务。冷备份及隔离
+恢复必须显式确认受影响服务已停止；**该参数只是操作者声明，程序尚未证明服务真的
+停止**，运行中的数据复制可能不一致。先通过现有运维/服务控制通道确认停机并协调
+其他写入者，必要时暂缓操作。备份目录和恢复目录必须以前从未存在且父目录可访问，
+不会强制覆盖。备份仅包括配置、选定数据及可解析的 Experience/Method 根，
+始终标记 `selected_roots`，不自称全量；相应独立根、schema 兼容性及未知写入者
+需要管理员额外核对。
+
+快照内的 `.env` 和用户数据为**未加密明文**，权限限制为 `0700` 目录、`0600` 文件；
+不得放在公开共享位置、随 wheel 发布、上传不可信平台。SHA256 验证检测快照
+意外损坏，并**不能证明备份的真实来源、发布时间或完整信任链**。manifest 只有在
+完成备份后才出现；中断时遗留的私有目录不可作为可恢复快照，不会被自动清理。
+
+隔离恢复只建立一个新的可检查副本；不会自行运行 `uv tool install`、删除既有
+用户目录、降级数据库、修改 service_control 的期望版本，或重启服务。若确实需要
+回退软件，先核验先前 wheel/SHA 与数据格式相容性，再单独批准包安装、恢复目标
+切换和受控服务启动；不保证旧程序能读新数据。
+
 uv tool uninstall llm-first-loop 移除应用环境，保留独立数据目录。
 用户需要删除数据时，应先备份并明确选择目标目录。
 
@@ -125,4 +157,5 @@ editable 开发安装保留源码布局，不要求预先构建界面。
 仅使用虚构凭证，Python 网络探针拒绝 Provider 与外部连接；测试只停止自己启动的 Web 进程。
 Release 工作流完成这些步骤后，向原有待人工确认的 Release 草稿附加成品、验收报告和校验和。
 
-自动升级恢复、桌面安装器、OCI 和生态目录仍为后续执行单元。
+自动升级执行/原地恢复、桌面安装器、OCI 和生态目录仍为后续执行单元；
+冷备份/验证/隔离恢复的 P1 命令不等同于自动生产升级或发布功能。

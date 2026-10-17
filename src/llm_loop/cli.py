@@ -1336,7 +1336,7 @@ def application_main(argv: list[str] | None = None) -> int:
         return 0
     if remaining == ["--help"] or remaining == ["-h"]:
         print("lfl [--data-dir DIR] [--workspace DIR] [--config FILE] COMMAND\n"
-              "Commands: chat [CLI arguments], web, paths, check-install, doctor [--json], init [--plan] [--json]\n"
+              "Commands: chat [CLI arguments], web, paths, check-install, doctor [--json], init [--plan] [--json], upgrade --plan, backup, rollback\n"
               "Other arguments are passed to the existing LFL CLI.\n"
               "--version prints the installed version without starting services.")
         return 0
@@ -1344,6 +1344,60 @@ def application_main(argv: list[str] | None = None) -> int:
         report = check_install()
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ok"] else 1
+    if remaining and remaining[0] in ("upgrade", "backup", "rollback"):
+        # Installed recovery and planning never enter stateful Engine/bootstrap,
+        # provider clients, package manager, or service_control mutation.
+        from llm_loop.runtime.install_recovery import run_backup, run_rollback, run_upgrade
+
+        subcommand = remaining[0]
+        if subcommand == "upgrade":
+            upgrade_parser = argparse.ArgumentParser(prog="lfl upgrade")
+            upgrade_parser.add_argument("--plan", action="store_true")
+            upgrade_parser.add_argument("--json", action="store_true")
+            try:
+                options = upgrade_parser.parse_args(remaining[1:])
+            except SystemExit as exc:
+                return exc.code if isinstance(exc.code, int) else 2
+            return run_upgrade(bundle=bundle_root(), installed_version=version("llm-first-loop"),
+                               preview=options.plan, as_json=options.json)
+        if subcommand == "backup":
+            backup_parser = argparse.ArgumentParser(prog="lfl backup")
+            backup_parser.add_argument("--plan", action="store_true")
+            backup_parser.add_argument("--json", action="store_true")
+            backup_parser.add_argument("--to")
+            backup_parser.add_argument("--confirm-services-stopped", action="store_true")
+            backup_parser.add_argument("--from", dest="verify_from")
+            try:
+                suffix = remaining[1:]
+                verify = bool(suffix and suffix[0] == "verify")
+                options = backup_parser.parse_args(suffix[1:] if verify else suffix)
+            except SystemExit as exc:
+                return exc.code if isinstance(exc.code, int) else 2
+            if options.json and not (options.plan or verify or options.to):
+                return 2
+            if verify and (not options.verify_from or options.plan or options.to or options.confirm_services_stopped):
+                return 2
+            if not verify and options.verify_from:
+                return 2
+            if options.plan and (options.to or options.confirm_services_stopped):
+                return 2
+            bundle = bundle_root()
+            root = default_home() if bundle else Path(__file__).resolve().parents[2]
+            return run_backup(args=args, home=root, bundle=bundle, environment=legacy_env_snapshot(),
+                              preview=options.plan, as_json=options.json, target=options.to,
+                              verify=options.verify_from if verify else None,
+                              confirmed=options.confirm_services_stopped)
+        rollback_parser = argparse.ArgumentParser(prog="lfl rollback")
+        rollback_parser.add_argument("--from", dest="backup_from")
+        rollback_parser.add_argument("--into")
+        rollback_parser.add_argument("--confirm-services-stopped", action="store_true")
+        rollback_parser.add_argument("--json", action="store_true")
+        try:
+            options = rollback_parser.parse_args(remaining[1:])
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 2
+        return run_rollback(source=options.backup_from, target=options.into,
+                            confirmed=options.confirm_services_stopped, as_json=options.json)
     if remaining and remaining[0] == "init":
         # Setup is a separate consent-bound workflow; never invoke the normal
         # stateful bootstrap, build an Engine, or open a provider connection.
