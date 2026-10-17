@@ -1,0 +1,90 @@
+{
+  "based_on_main": true,
+  "branch": "integrate/install-doctor-p1-main-41f-20261017",
+  "branch_disposition": "kept: awaiting explicit local main fast-forward approval and post-merge verification",
+  "branch_tip_reviewed": "04a7c1536d1b362f12a25aae6f2b8516f32033ca",
+  "cherry_picked_source_commit": "8fdc749650ade128c4c34987373261000abe7c4c",
+  "code_files": [
+    "docs/installation.md",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/config.py",
+    "src/llm_loop/runtime/doctor.py",
+    "tests/unit/test_application_doctor.py"
+  ],
+  "code_patch_sha256": "669a523cd34b14d64d9fa73a494e218ae4c1f49aa3d9b1a260b874e3137eede8",
+  "commits": [
+    "04a7c1536d1b362f12a25aae6f2b8516f32033ca"
+  ],
+  "conflicts_resolved": [],
+  "evidence_sha256": {
+    "doctor_installed_smoke_receipt": "72196ebdaf76bf004bdc8b7fbc6eb0bb449bd310c8ba501a0b37d7c62764950d",
+    "latest_main_focused_log": "f57b3bc32a815e12b60a11f45cdbed97bb47938f2092b14b025a58bbf9f0ae0e",
+    "latest_main_quick_log": "a898033e117501b710f6fe69920c91651fb26228188e0bbdb763688fcb910f35",
+    "original_code_review_receipt": "01c6247c41aca4790c7283c1767b9b4a0b51bfd50601daf49fa1605e7e18b321",
+    "original_full_R9_log": "bc1c858ec952924dd48c76e7d44a78e2c05c1f6918dbbff483f230d400842e74",
+    "wheel_install_smoke_receipt": "6176192e2a1124ade222001e191452eb8a3c3f7f66c4cb194e25326a6dd8c443"
+  },
+  "fingerprint_boundary": {
+    "post_receipt_commit_must_change_only_this_json": true,
+    "receipt_added_only_after_review": true,
+    "receipt_is_evidence_only_and_excluded_from_its_own_sha": true,
+    "source_code_tip_reviewed": "04a7c1536d1b362f12a25aae6f2b8516f32033ca"
+  },
+  "focused_gates": [
+    "latest main isolated candidate: 141 passed, 0 failed; focused/architecture/CLI/config/doctor/execute_command isolation",
+    "latest main isolated candidate: original ci_gate.sh --quick exit=0; 319 passed, 9131 deselected",
+    "Pyright 0 new/touched errors, Ruff PASS, git diff --check PASS",
+    "original doctor candidate: native full R9 exit=0 (xdist 9278 passed,146 skipped,1 failed; automatic serial 9 passed on failing file)",
+    "original doctor candidate: offline wheel 0.6.32 installed in fresh venv, 345 resources verified, Web/UI 200, provider calls=0, doctor installed checks pass"
+  ],
+  "gate": "merge",
+  "goal_id": "2f012545-4f89-478b-ab87-53668e3004b2",
+  "main_sha_after": null,
+  "main_sha_at_review": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+  "merge_base": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+  "merge_executed": false,
+  "merge_mode": "ff",
+  "model": "glm/glm-5.3",
+  "not_yet_approved": [
+    "actual local main merge, which requires a new explicit owner approval and fresh main/currentness review",
+    "git push or any publication, deployment, service restart or provider smoke",
+    "destructive cleanup of another agent owned files or branches"
+  ],
+  "pending_merge_gates": [
+    "re-read main/branch SHA, ensure branch descends from fresh main or re-integrate and narrow re-review",
+    "resolve main dirty worktree ownership without modifying other agent files",
+    "explicit owner authorization for local main ff-only",
+    "post-merge focused regression and commit identity verification"
+  ],
+  "phase": "P1 lfl doctor latest-main isolated integration; pre-merge only",
+  "qualification": "PASS for branch tip reviewed, NOT executed main merge",
+  "review": {
+    "child_id": "subagent_1f223eb2c812",
+    "external_receipt_sha256": "43b96e7bf3022bc7e30422bd4580fbb445998bbf6985653e06594affe8e3fb92",
+    "format_exact": true,
+    "kind": "RULE-AI-34 dedicated independent merge review",
+    "material_bytes": 57207,
+    "material_sha256": "0011900e01c9e443b78a574294a0b68f05a0d6b5f212ffed5b178e8a344f6896",
+    "max_rounds": 1,
+    "model": "glm/glm-5.3",
+    "native_review_terminal_attested": true,
+    "p0": 0,
+    "p1": 0,
+    "p2": 2,
+    "parent": "install-doctor-p1-rule34-main-41f-20261017",
+    "registered_tools": 0,
+    "result_id": "result-4616fc9ab6d046d6a75bb206960d6653",
+    "review_text": "## RULE-AI-34 合并审查（merge-review-gate）独立审查\n\n**审查对象**：integration branch `integrate/install-doctor-p1-main-41f-20261017`，分支 tip `04a7c1536d1b362f12a25aae6f2b8516f32033ca`（本回执实际覆盖该分支 tip）。本审查仅判定并入 main 的资格，不执行合并，不宣称已合并或已部署。\n\n### 逐项核查\n\n1. **目的/done_when 与证据可判真**：候选 patch 与声明的 P1 doctor（离线只读预检）目的一致——`src/llm_loop/runtime/doctor.py` 新增、`cli.py` 接入 `doctor [--json]`、`config.py` 抽出无副作用的 `read_env_file_values`（并保持 `load_env_file` 语义不变）、文档与 179 行单测对应。diff 范围与 `integration_patch_files` 五个文件完全一致，无夹带。\n\n2. **分支卫生**：branch_clean=true，main..integration 恰好 1 个提交（cherry-pick 自 `8fdc749`，提交信息明确标注来源），无未说明提交。\n\n3. **基线新鲜**：merge_base == main（`41f500ec`），true。最新 main 变更（41f500ec）触及 execution_surface/tools_model/execute_command/test_execute_command_isolation，与候选路径零交集；语义兼容性经最新 main 上的 focused gate（141 passed，exit 0）与 quick gate（319 passed，exit 0）验证。未做全量 R9 属可接受——全量义务归 RULE-AI-28，且本次为 cherry-pick 重放而非源分支原环境。\n\n4. **测试面**：原始 R9 xdist 9278 passed / 1 failed（无关 phase6 sync-interrupt），同一失败文件串行复跑 9/9 PASS，官方 gate exit 0，接受。新增 doctor 单测覆盖只读性（env 快照不变、不建目录、socket.connect 断言）、密钥不回显、fail-closed、相对路径解析边界，测试设计质量良好。\n\n5. **源完整性**：独立代码评审 PASS（0 P0 / 0 P1 / 2 P2，glm-5.3，独立 reviewer），material 与 receipt 均有 SHA256。\n\n6. **合并方式与后续义务**：ff-only 计划正确（merge_base == main，单提交，天然可 ff）；main worktree 存在其他 agent 拥有的无关未提交改动——不阻塞本审查资格，但构成合并执行时的**前置条件**（合并前须确认不影响 ff 或由拥有者处置）；分支保留至合并后验证完成；合并后须做受影响模块 focused 回归；push/deploy/重启未授权。\n\n### 发现分级\n\n- **P2-1**：全量 R9 未在新 main 基线重跑（quick 319 + focused 141 覆盖），依赖 RULE-AI-28 后续义务——可接受但须留痕。\n- **P2-2**：`doctor` 的 `--data-dir`/workspace 检查使用 `os.access`（进程视角），对 root 或 ACL 边界可能误报；独立评审的 2 个 P2 同属可延后项。\n\n无 P0、无 P1。集成已具备并入 main 的资格；实际合并须等待明确人工批准，并在执行时遵守 ff-only 纪律与 main 未提交改动的所有权边界。\n\nP0=0 P1=0 P2=2\nSHA256: 669a523cd34b14d64d9fa73a494e218ae4c1f49aa3d9b1a260b874e3137eede8\n\nVERDICT: PASS",
+    "review_text_sha256": "d407e79a2fe8f43d03e4c9c6ca999d0434595d15dcf12344dd2d40b6244631e3",
+    "state": "completed",
+    "terminal_event_count": 1
+  },
+  "reviewer": "subagent_1f223eb2c812",
+  "reviewer_p2": [
+    "Latest-main full R9 was not rerun; focused and Quick gates are green, original source candidate has qualified R9.",
+    "os.access directory writability is a non-authoritative filesystem preflight for unusual ACL/root cases."
+  ],
+  "schema": "lfl.merge_review_receipt/v1",
+  "tree_clean_before_receipt": true,
+  "verdict": "PASS"
+}
