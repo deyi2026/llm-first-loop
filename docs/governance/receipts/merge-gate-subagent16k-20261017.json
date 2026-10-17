@@ -1,0 +1,40 @@
+{
+  "gate": "merge",
+  "reviewer": "merge-review-gate independent subagent (RULE-AI-34), delegated by parent consolidation session",
+  "verdict": "PASS",
+  "goal_id": "adopted-consolidation-20261017",
+  "branch": "integrate/subagent-16k-main-316a-20261017",
+  "based_on_main": true,
+  "branch_tip_frozen": "9b4914b72b0cf09e7ab28a1bbf20cfc435c33725",
+  "main_at_review": "316a77cd0578b55a4627aa83e32dfae3a9c2c9fa",
+  "merge_base_equals_main": true,
+  "commits": ["9b4914b72b0cf09e7ab28a1bbf20cfc435c33725"],
+  "commit_count": 1,
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "独立复跑（集成分支 worktree；pyproject pythonpath=[\"src\"] rootdir 相对注入 ⇒ llm_loop 解析为分支代码，实测 llm_loop.__file__ 机制已验证）: .venv/bin/python -m pytest tests/unit/ -k subagent => 169 passed, 8013 deselected, 3 warnings, exit 0",
+    "新测试单文件: tests/unit/test_subagent_output_budget_recovery.py => 4 passed, exit 0",
+    "阴性对照 --override-ini='pythonpath='（回退到 PYTHONPATH=.releases/b68dbc2a5 旧快照代码）: 3 failed, 1 passed —— 证明通过真实依赖分支修复，非偶然"
+  ],
+  "main_sha_after": "9b4914b72b0cf09e7ab28a1bbf20cfc435c33725",
+  "branch_disposition": "kept: 待父会话按分支卫生契约处置——建议删除 integrate 分支及其 worktree，连同两个被取代变体 ref fix/subagent-16k-output-recovery-20261017(6d8baafee) 与 integration/subagent-16k-current-20261017(b705ce87d)（补丁字节级等价已核，合并后全冗余）；先例 merge-gate-fbatch-final-20261017 亦留待明示后执行",
+  "patch_equivalence": {
+    "variants": ["6d8baafee (fix/subagent-16k-output-recovery-20261017, 2026-10-17 01:48:42 +0800)", "b705ce87d (integration/subagent-16k-current-20261017, 01:49:42)", "9b4914b72 (集成分支, 12:45:41, cherry-pick 尾注溯源 6d8baafee)"],
+    "method": "git show -U0 剥 @@ 行三向 diff",
+    "result": "增删内容字节级一致；仅 index blob 指纹行随基线不同（无内容差异）；集成分支不含任一变体 commit（兄弟关系），两变体被本分支取代"
+  },
+  "tree_hygiene": "git status --porcelain 空 + git diff HEAD 空（worktree 树==分支 tip）；main..branch 仅 1 提交；diffstat 恰为声明 5 文件 +311/-1；内容级抽查无夹带",
+  "findings": [
+    {"id": "F1", "severity": "P3", "text": "会话环境 PYTHONPATH 残留指向 .releases/b68dbc2a5/src（早前 release 验证残留），且 venv editable .pth 指向主区 src：裸 python 导入命中旧快照、非 pytest 路径的验证会测错代码。pytest 因 pyproject pythonpath=[\"src\"]（rootdir 相对）免疫，本闸已做 import 机制验证+阴性对照闭环。复跑验证必须以 worktree 为 rootdir"},
+    {"id": "F2", "severity": "P3", "text": "RULE-AI-28 全量回执不存在（receipts 目录 grep subagent-16k/6d8baafee/b705ce87d 零命中，01:48 起无回执即卡闸根因）。本闸仅覆盖 SKILL 第4条 focused 面；全量义务未消灭，移交父会话"},
+    {"id": "F3", "severity": "note", "text": "ff 有效性以合并时点 main==316a77cd0 为前提；若合并前 main 前移则 ff 失效，本回执作废需重审（基线新鲜性时间窗）"}
+  ],
+  "pending_obligations": [
+    "父会话合并（git checkout main && git merge --ff-only integrate/subagent-16k-main-316a-20261017；核对 rev-parse main == 9b4914b72b0cf09e7ab28a1bbf20cfc435c33725）",
+    "合并后 main 受影响面冒烟（-k subagent）+ RULE-AI-28 全量（scripts/ci_gate.sh）+ 回执落盘，之后方可重启 main 生效",
+    "分支卫生处置：删除 integrate 分支/worktree 及两个被取代变体 ref"
+  ],
+  "verdict_basis": "SKILL 清单 6/6：完成证据真实（新测试存在、独立复跑 169 passed、阴性对照证明依赖分支代码）；分支卫生（树净、1 提交、5 文件无夹带）；基线新鲜（merge-base==main HEAD）；测试面（focused 复跑通过，全量归 RULE-AI-28 已留痕）；合并方式 ff 零冲突；合并后动作已预嘱。变体三向补丁字节级等价。无 P0/P1",
+  "created_at": "2026-10-17T12:52:28+08:00"
+}
