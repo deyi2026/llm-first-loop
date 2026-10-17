@@ -1,0 +1,119 @@
+{
+  "schema": "lfl.merge_review_gate_receipt/v1",
+  "gate": "merge",
+  "rule": "RULE-AI-34",
+  "reviewer": "subagent_37ae8c2b29b1",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_parent_id": "web-v2-session-mobile-mainbd93-rule34-independent-review-20261017",
+  "reviewer_isolated": true,
+  "reviewer_result_generation": "2e1add0d778c4529907707113db0e8f4",
+  "reviewer_result_id": "result-2e1add0d778c4529907707113db0e8f4",
+  "native_terminal_state": "completed",
+  "native_terminal_event_count": 1,
+  "provider_physical_requests": 1,
+  "provider_http_status": 200,
+  "reviewer_tools_registered": 0,
+  "reviewer_tools_invoked": 0,
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "P2": 4,
+  "main_sha_at_review": "bd93bb97f66050c7b465bd33f008028f4f6ea601",
+  "merge_base": "bd93bb97f66050c7b465bd33f008028f4f6ea601",
+  "branch": "integrate/web-v2-session-mobile-mainbd93-20261017",
+  "reviewed_branch_head": "818177da37cd605b2178880fff28e522d0160898",
+  "based_on_main": true,
+  "commits": [
+    "bee1556b35de17bc792b8cc10f7e1ad959d809e9",
+    "ef74992ea545982289c51f951c9f61613c1c71e7",
+    "287b669e9ee578b132c1d2a5cd0c3e43076d2bbe",
+    "818177da37cd605b2178880fff28e522d0160898"
+  ],
+  "reviewed_paths": [
+    "docs/governance/receipts/RECEIPT-20261017-web-v2-session-mobile-glm53-code-review.json",
+    "docs/governance/receipts/RECEIPT-20261017-web-v2-session-mobile-rule34-main98-merge-review.json",
+    "docs/governance/receipts/RECEIPT-20261017-web-v2-session-mobile-rule34-mainf989-merge-review.json",
+    "docs/results/RESULT-20261017-web-v2-session-mobile-qualification.md",
+    "scripts/qa_web_v2_session_mobile.py",
+    "src/llm_loop/core/session.py",
+    "tests/unit/test_session.py",
+    "webui/src/App.test.tsx",
+    "webui/src/App.tsx",
+    "webui/src/core-failopen.test.ts",
+    "webui/src/core/api.ts",
+    "webui/src/core/chat.ts",
+    "webui/src/core/conversation.ts",
+    "webui/src/session-switch.test.tsx",
+    "webui/src/tokens/app.css"
+  ],
+  "reviewed_path_count": 15,
+  "code_commit_rebased": "bee1556b35de17bc792b8cc10f7e1ad959d809e9",
+  "code_binary_diff_sha256": "84fd1b447145160af47726a2fa16719536c919809d63043d8d2ae5cb84ae938f",
+  "full_reviewed_branch_diff_sha256": "f86b7d285f716956586d88fc93596062a70acdd7c39e0680f2c677d2cef322a7",
+  "post_f989_main_increment": "docs-only 4 paths; all src/,tests/,webui/,scripts/ bytes unchanged from f989",
+  "post_f989_doc_paths": [
+    "docs/governance/receipts/RECEIPT-20261017-llm-timeout-main-merge.json",
+    "docs/results/RESULT-20261017-llm-timeout-main-98cd.md",
+    "docs/results/RESULT-20261017-llm-timeout-main-current.md",
+    "docs/results/RESULT-20261017-llm-timeout-recovery.md"
+  ],
+  "branch_clean": true,
+  "main_dirty_paths_at_review": [
+    "experiences/.usage_watermark.json",
+    "experiences/usage.jsonl"
+  ],
+  "dirty_main_paths_overlap": [],
+  "merge_mode": "ff",
+  "merge_executed": false,
+  "main_sha_after": null,
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "bd93 candidate fresh focused frontend Vitest 29/29 PASS, 4 test files",
+    "bd93 candidate fresh Python test_session 36/36 PASS",
+    "source parity: f989 -> bd93 changed only 4 docs, src/tests/webui/scripts unchanged, code SHA identical",
+    "historical f989 candidate full Vitest 309/309 PASS after one concurrent sendflow flake (308/309 first), TSC pass, Python 91/91 PASS, Chromium simulated 6/6 PASS; NOT rerun on bd93"
+  ],
+  "code_review_and_full_r9_scope": {
+    "original_baseline": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+    "code_review": "GLM-5.3 independent PASS P0=0 P1=0 P2=2",
+    "r9_original_exit": 0,
+    "r9_xdist_results": "9278 passed/146 skipped/1 failed",
+    "r9_serial_recheck_rule": "D-B2-09",
+    "r9_serial_recheck": "1 passed/0 failed",
+    "full_R9_on_bd93": false
+  },
+  "reviewer_findings": [
+    {
+      "id": "F1",
+      "severity": "P2",
+      "note": "sendflow first concurrent suite timing failure, targeted/full reruns pass"
+    },
+    {
+      "id": "F2",
+      "severity": "P2",
+      "note": "complete R9 provenance remains original 41f, not bd93"
+    },
+    {
+      "id": "F3",
+      "severity": "P2",
+      "note": "shared main experiences usage files dirty from other agent; require fresh currentness/idle before authorized FF"
+    },
+    {
+      "id": "F4",
+      "severity": "P2",
+      "note": "Escape currently closes all mobile overlays; UX contract deferred"
+    }
+  ],
+  "branch_disposition": "kept pending separate explicit exact-target main-merge authorization and quiet-window validation",
+  "reviewed_dossier_sha256": "0df4c6f136e9a349bb03af7298b8a132954e0bca24d1bb880a6d1b2891bd8de4",
+  "reviewed_dossier_bytes": 93322,
+  "review_text_sha256": "91d42cbf16ef3dff80667264ed6ff5bc0adcb75f717d0c68bb5bf242f0f77429",
+  "raw_result_sha256": "b47a6fb1e4beaf3ce8850cd69411a083ffab7b7c378000b2ff8a1749297aaf06",
+  "private_evidence_files": [
+    "data/web-v2-mobile-qa-20261017/merge_review_mainbd93/result.json",
+    "data/web-v2-mobile-qa-20261017/merge_review_mainbd93/answer.txt",
+    "data/web-v2-mobile-qa-20261017/merge-review-mainbd93-dossier.txt"
+  ],
+  "authorization_boundary": "PASS is a reviewed snapshot qualification only. No permission to merge main, push, publish or restart; new docs receipt committed after reviewed branch tip is evidence only. Future main movement invalidates currentness and requires a new exact check.",
+  "goal_task_scope": "Web V2 session navigation/mobile stability; independent from installation/doctor active Goal"
+}
