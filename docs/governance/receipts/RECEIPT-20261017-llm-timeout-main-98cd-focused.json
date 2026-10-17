@@ -1,0 +1,73 @@
+{
+  "stage": "latest_main_isolated_integration",
+  "status": "FOCUSED_PASS_PENDING_INDEPENDENT_MERGE_REVIEW",
+  "base_main_sha": "98cd1d1f7413c0213fbf2de25392c712781e6a8e",
+  "main_snapshot_sha": "98cd1d1f7413c0213fbf2de25392c712781e6a8e",
+  "integrated_source_head": "5a1b378fe90b06cfeffe43ccec93db5858fdafee",
+  "branch": "fix/llm-timeout-main-98cd-20261017",
+  "source_commits_cherry_picked": [
+    "3361a5bef9154b7f8eccd69a0ce2b2e6935bf1ff",
+    "6942c6be37c9a5f7b239ea8a1baf663817bb3c05"
+  ],
+  "conflicts": [],
+  "four_file_artifact_sha256": "346563ad78647bbb7556ac04c5e18c61aab1c86355b471edf4979a0bf16408f5",
+  "four_file_artifacts": [
+    {
+      "path": "src/llm_loop/llm/client.py",
+      "sha256": "35722ab429bf479c238040d7bfc06570fb23e28ebd4c0130b03ff2cd11c43ea9"
+    },
+    {
+      "path": "src/llm_loop/feedback/honesty.py",
+      "sha256": "a5706020a7a462d3059c1705c05a749703a416424aef8d97346c83a1ecad56a3"
+    },
+    {
+      "path": "tests/unit/test_timeout_recovery.py",
+      "sha256": "2cc99cda6b0b885b8213ce3b13676f865870bc325abd0e0b80d8968017ff5831"
+    },
+    {
+      "path": "tests/integration/test_fault_isolation.py",
+      "sha256": "d388980b264d79c7c9a7e6a68598ea28dcd060a2a73ab830fa387866aa7c5284"
+    }
+  ],
+  "upstream_since_previous_base": [
+    "docs/governance/receipts/RECEIPT-20261017-install-doctor-p1-rule34-41f.json",
+    "docs/installation.md",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/config.py",
+    "src/llm_loop/runtime/doctor.py",
+    "tests/unit/test_application_doctor.py"
+  ],
+  "artifact_path_intersection": [],
+  "focused": {
+    "exit_code": 0,
+    "passed": 309,
+    "duration_seconds": 17.34,
+    "log": "data/llm-timeout-main-98cd-20261017/focused.log",
+    "log_sha256": "acba9d96b2e5d272bdfcc3b6ad6dec0818150dcb1e02423c0d66bb7481b7db88",
+    "selection": "timeout/client/feedback/settlement/stop/fallback/fault isolation + doctor/application/config/resolver/runtime params/factory/architecture (17 files)"
+  },
+  "ruff": "PASS: affected four files plus newly merged cli/config/doctor",
+  "diff_check": "PASS",
+  "historical_full_r9": {
+    "base_commit": "41f500ecb92c7aea881d8e15809194187b7b1dd3",
+    "exit_code": 0,
+    "scope": "previous exact code artifact, not a new full run on 98cd",
+    "receipt": "docs/governance/receipts/RECEIPT-20261017-llm-timeout-full-r9.json",
+    "log_sha256": "7cc47d96f1db053e304f4e845e276b869920f89361571b120eb3382c1daa6510"
+  },
+  "new_full_r9_on_this_base": false,
+  "main_status_snapshot": [
+    " M src/llm_loop/cognitive/compiler.py",
+    " M src/llm_loop/core/loop/build.py",
+    " M src/llm_loop/core/loop/engine.py",
+    " M src/llm_loop/core/loop/engine_services/archive.py",
+    " M src/llm_loop/factory.py",
+    " M tests/guards/function_size_baseline.json",
+    "?? docs/long-task-context-loss-remediation-design.md",
+    "?? src/llm_loop/core/loop/engine_services/compaction_gate.py",
+    "?? tests/unit/test_compaction_gate.py"
+  ],
+  "main_mutated": false,
+  "merged_main": false,
+  "production_changed": false
+}
