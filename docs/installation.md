@@ -119,6 +119,12 @@ lfl rollback --from /absolute/private/snapshots/before-upgrade --into /absolute/
 始终标记 `selected_roots`，不自称全量；相应独立根、schema 兼容性及未知写入者
 需要管理员额外核对。
 
+如果默认 Method 目录嵌套在 data 内，快照只保存一次 `data/methods`，
+manifest 用 `sources.methods="alias"` 和 `aliases.methods` 记录原始角色。
+显式配置的外部 Methods 目录仍单独备份，先前旧版 manifest 中的双份实体目录仍
+可以通过验证并隔离恢复。恢复时如有别名，应查看 manifest 确定真实文件所在的
+`payload` 子目录，不能将别名误认为额外恢复了一份数据。
+
 快照内的 `.env` 和用户数据为**未加密明文**，权限限制为 `0700` 目录、`0600` 文件；
 不得放在公开共享位置、随 wheel 发布、上传不可信平台。SHA256 验证检测快照
 意外损坏，并**不能证明备份的真实来源、发布时间或完整信任链**。manifest 只有在

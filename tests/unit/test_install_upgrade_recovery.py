@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import socket
 import stat
 from concurrent.futures import ThreadPoolExecutor
@@ -192,13 +194,14 @@ def test_cold_backup_verify_and_isolated_rollback_roundtrip(
     assert str(installed_clean) not in output.out + output.err
     assert stat.S_IMODE(snapshot.stat().st_mode) == 0o700
     assert stat.S_IMODE((snapshot / "manifest.json").stat().st_mode) == 0o600
-    for role in ("config", "data", "experiences", "methods"):
+    for role in ("config", "data", "experiences"):
         assert (snapshot / "payload" / role).is_dir()
+    assert not (snapshot / "payload" / "methods").exists()
     assert (snapshot / "payload" / "config" / "value").read_bytes() == state["config"].read_bytes()
     assert (snapshot / "payload" / "data" / "extensions" / "instances" / "id" / "data" / "plugin.state").read_bytes() == state["plugin"].read_bytes()
     assert (snapshot / "payload" / "data" / "sessions" / "empty-dir").is_dir()
     assert (snapshot / "payload" / "experiences" / "verified.jsonl").read_bytes() == state["experience"].read_bytes()
-    assert (snapshot / "payload" / "methods" / "active.jsonl").read_bytes() == state["method"].read_bytes()
+    assert (snapshot / "payload" / "data" / "methods" / "active.jsonl").read_bytes() == state["method"].read_bytes()
     capsys.readouterr()
     assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 0
     verified = json.loads(capsys.readouterr().out)
@@ -436,3 +439,244 @@ def test_relative_env_config_data_paths_use_config_parent(
     assert cli.application_main(["backup", "--to", str(target), "--confirm-services-stopped"]) == 0
     capsys.readouterr()
     assert (target / "payload" / "data" / "sessions" / "other.jsonl").read_bytes() == b"external-state\n"
+
+
+def test_default_nested_methods_is_captured_once_with_verified_role_alias(
+    installed_clean: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """data/methods and methods must not be two physical snapshot copies."""
+    home = installed_clean / "application-home"
+    state = _cold_state(home, secret="dummy-overlap-secret")
+    target = installed_clean / "once-only-snapshot"
+    assert cli.application_main([
+        "backup", "--to", str(target), "--json", "--confirm-services-stopped",
+    ]) == 0
+    output = capsys.readouterr()
+    receipt = json.loads(output.out)
+    manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+    assert receipt["file_count"] == len(manifest["files"]) == 5
+    assert manifest["sources"]["data"] == "directory"
+    assert manifest["sources"]["methods"] == "alias"
+    assert manifest["aliases"]["methods"] == {"under": "data", "relative": "methods"}
+    assert (target / "payload" / "data" / "methods" / "active.jsonl").read_bytes() == state["method"].read_bytes()
+    assert not (target / "payload" / "methods").exists()
+    assert "dummy-overlap-secret" not in output.out + output.err
+    assert cli.application_main(["backup", "verify", "--from", str(target), "--json"]) == 0
+    capsys.readouterr()
+    restore = installed_clean / "isolated-restored"
+    assert cli.application_main([
+        "rollback", "--from", str(target), "--into", str(restore),
+        "--confirm-services-stopped", "--json",
+    ]) == 0
+    restored = json.loads(capsys.readouterr().out)
+    assert restored["file_count"] == 5
+    assert (restore / "payload" / "data" / "methods" / "active.jsonl").read_bytes() == state["method"].read_bytes()
+    assert not (restore / "payload" / "methods").exists()
+    assert cli.application_main(["backup", "verify", "--from", str(restore), "--json"]) == 0
+    capsys.readouterr()
+
+
+def test_backup_plan_marks_nested_methods_capture_without_exposing_paths(
+    installed_clean: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = installed_clean / "application-home"
+    _cold_state(home)
+    assert cli.application_main(["backup", "--plan", "--json"]) == 0
+    out = capsys.readouterr()
+    report = json.loads(out.out)
+    assert report["sources"]["methods"]["captured_via"] == "data"
+    assert report["sources"]["data"]["captured_via"] == "data"
+    assert report["coverage"] == "selected_roots"
+    assert str(installed_clean) not in out.out + out.err
+
+
+def test_distinct_external_methods_root_remains_independently_captured(
+    installed_clean: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = installed_clean / "application-home"
+    _cold_state(home)
+    external = installed_clean / "external-methods"
+    external.mkdir()
+    (external / "external.jsonl").write_bytes(b"external method unrelated to data\n")
+    monkeypatch.setenv("METHODS_DIR", str(external))
+    snapshot = installed_clean / "external-snapshot"
+    assert cli.application_main(["backup", "--plan", "--json"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["sources"]["methods"]["captured_via"] == "methods"
+    assert cli.application_main([
+        "backup", "--to", str(snapshot), "--confirm-services-stopped", "--json",
+    ]) == 0
+    capsys.readouterr()
+    manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["sources"]["methods"] == "directory"
+    assert "methods" not in manifest.get("aliases", {})
+    assert (snapshot / "payload" / "methods" / "external.jsonl").read_bytes() == b"external method unrelated to data\n"
+
+
+def test_identical_data_and_methods_roots_snapshot_once(
+    installed_clean: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = installed_clean / "application-home"
+    state = _cold_state(home)
+    monkeypatch.setenv("METHODS_DIR", str(home / "data"))
+    snapshot = installed_clean / "same-root-snapshot"
+    assert cli.application_main([
+        "backup", "--to", str(snapshot), "--json", "--confirm-services-stopped",
+    ]) == 0
+    capsys.readouterr()
+    manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["sources"]["methods"] == "alias"
+    assert manifest["aliases"]["methods"] == {"under": "data", "relative": ""}
+    assert not (snapshot / "payload" / "methods").exists()
+    assert (snapshot / "payload" / "data" / "methods" / "active.jsonl").read_bytes() == state["method"].read_bytes()
+    assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 0
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    ("under", "relative"),
+    [
+        ("data", "../secrets"),
+        ("data", "methods/../../secrets"),
+        ("data", "/etc/passwd"),
+        ("data", "methods//nested"),
+        ("data", "methods\\nested"),
+        ("methods", ""),
+        ("experiences", "missing"),
+        ("data", "sessions/session.jsonl"),
+    ],
+)
+def test_manifest_role_alias_fails_closed_if_forged_or_wrong_kind(
+    installed_clean: Path, capsys: pytest.CaptureFixture[str],
+    under: str, relative: str,
+) -> None:
+    home = installed_clean / "application-home"
+    _cold_state(home)
+    snapshot = installed_clean / "snapshot"
+    assert cli.application_main([
+        "backup", "--to", str(snapshot), "--confirm-services-stopped",
+    ]) == 0
+    capsys.readouterr()
+    manifest = snapshot / "manifest.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["sources"]["methods"] == "alias"
+    payload["aliases"]["methods"] = {"under": under, "relative": relative}
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 1
+    out = capsys.readouterr()
+    assert json.loads(out.out)["valid"] is False
+    recovered = installed_clean / "denied-restore"
+    assert cli.application_main([
+        "rollback", "--from", str(snapshot), "--into", str(recovered),
+        "--confirm-services-stopped",
+    ]) == 1
+    capsys.readouterr()
+    assert not recovered.exists()
+
+
+def test_manifest_alias_cannot_advertise_an_extra_duplicate_payload(
+    installed_clean: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = installed_clean / "application-home"
+    _cold_state(home)
+    snapshot = installed_clean / "snapshot"
+    assert cli.application_main(["backup", "--to", str(snapshot), "--confirm-services-stopped"]) == 0
+    capsys.readouterr()
+    manifest = snapshot / "manifest.json"
+    physical = snapshot / "payload" / "methods"
+    shutil.copytree(snapshot / "payload" / "data" / "methods", physical)
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    raw["dirs"].append("methods")
+    copied = next(item for item in raw["files"] if item["path"] == "data/methods/active.jsonl")
+    raw["files"].append({**copied, "path": "methods/active.jsonl"})
+    manifest.write_text(json.dumps(raw), encoding="utf-8")
+    assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 1
+    capsys.readouterr()
+
+
+def test_legacy_v1_manifest_with_two_physical_copies_remains_restorable(
+    installed_clean: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Old manifest without aliases must not become unreadable after upgrade."""
+    state = _cold_state(installed_clean / "application-home")
+    snapshot = installed_clean / "legacy-snapshot"
+    assert cli.application_main(["backup", "--to", str(snapshot), "--confirm-services-stopped"]) == 0
+    capsys.readouterr()
+    manifest = snapshot / "manifest.json"
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    assert raw["sources"]["methods"] == "alias"
+    shutil.copytree(snapshot / "payload" / "data" / "methods", snapshot / "payload" / "methods")
+    raw["sources"]["methods"] = "directory"
+    raw.pop("aliases", None)  # old v1 shape
+    raw["dirs"].append("methods")
+    raw["files"].append({
+        "path": "methods/active.jsonl",
+        "size": state["method"].stat().st_size,
+        "sha256": hashlib.sha256(state["method"].read_bytes()).hexdigest(),
+    })
+    raw["dirs"].sort()
+    raw["files"].sort(key=lambda item: item["path"])
+    manifest.write_text(json.dumps(raw), encoding="utf-8")
+    assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 0
+    capsys.readouterr()
+    restore = installed_clean / "legacy-restored"
+    assert cli.application_main([
+        "rollback", "--from", str(snapshot), "--into", str(restore),
+        "--confirm-services-stopped", "--json",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["file_count"] == 6
+    assert (restore / "payload" / "methods" / "active.jsonl").read_bytes() == state["method"].read_bytes()
+    assert cli.application_main(["backup", "verify", "--from", str(restore), "--json"]) == 0
+    capsys.readouterr()
+
+
+def test_config_nested_in_data_uses_file_role_alias_not_secret_duplication(
+    installed_clean: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = installed_clean / "application-home"
+    state = _cold_state(home)
+    nested_config = home / "data" / "private.env"
+    state["config"].rename(nested_config)
+    monkeypatch.setenv("LFL_ENV_FILE", str(nested_config))
+    snapshot = installed_clean / "config-alias-snapshot"
+    assert cli.application_main(["backup", "--to", str(snapshot), "--confirm-services-stopped"]) == 0
+    capsys.readouterr()
+    raw = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+    assert raw["sources"]["config"] == "alias"
+    assert raw["aliases"]["config"] == {"under": "data", "relative": "private.env"}
+    assert not (snapshot / "payload" / "config").exists()
+    assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 0
+    capsys.readouterr()
+    restore = installed_clean / "config-alias-restore"
+    assert cli.application_main([
+        "rollback", "--from", str(snapshot), "--into", str(restore),
+        "--confirm-services-stopped",
+    ]) == 0
+    capsys.readouterr()
+    assert (restore / "payload" / "data" / "private.env").read_bytes() == nested_config.read_bytes()
+
+
+def test_outer_experiences_directory_contains_data_and_config_only_once(
+    installed_clean: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = installed_clean / "application-home"
+    _cold_state(home)
+    monkeypatch.setenv("EXPERIENCES_DIR", str(home))
+    snapshot = installed_clean / "outer-experiences-snapshot"
+    assert cli.application_main(["backup", "--to", str(snapshot), "--confirm-services-stopped"]) == 0
+    capsys.readouterr()
+    raw = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+    assert raw["sources"]["experiences"] == "directory"
+    assert raw["sources"]["data"] == "alias"
+    assert raw["sources"]["methods"] == "alias"
+    assert raw["sources"]["config"] == "alias"
+    assert raw["aliases"]["data"] == {"under": "experiences", "relative": "data"}
+    assert raw["aliases"]["methods"] == {"under": "experiences", "relative": "data/methods"}
+    assert raw["aliases"]["config"] == {"under": "experiences", "relative": ".env"}
+    assert cli.application_main(["backup", "verify", "--from", str(snapshot), "--json"]) == 0
+    capsys.readouterr()

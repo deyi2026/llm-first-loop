@@ -91,6 +91,43 @@ def _effective_sources(*, args: Any, home: Path, bundle: Path | None,
     return roots
 
 
+def _capture_layout(roots: Mapping[str, Path]) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """Choose each existing physical source once; retain logical nested roles.
+
+    Always select the outermost directory. Equal directories break ties with a
+    fixed role order so that aliases can never point at another alias.
+    """
+    priority = {"data": 0, "experiences": 1, "methods": 2, "config": 3}
+    sources: dict[str, str] = {}
+    aliases: dict[str, dict[str, str]] = {}
+    for role, root in roots.items():
+        if role not in priority:
+            raise BackupRejectedError("unknown_source_role")
+        if not root.exists():
+            sources[role] = "absent"
+            continue
+        kind = "file" if role == "config" else "directory"
+        if not (root.is_file() if kind == "file" else root.is_dir()):
+            raise BackupRejectedError("unexpected_source_kind")
+        parents = [
+            (len(other.parts), priority[other_role], other_role, other)
+            for other_role, other in roots.items()
+            if other_role != role
+            and other_role != "config"
+            and other.is_dir()
+            and _is_within(root, other)
+            and (root != other or priority[other_role] < priority[role])
+        ]
+        if not parents:
+            sources[role] = kind
+            continue
+        _, _, parent_role, parent = min(parents)
+        relative = "" if root == parent else root.relative_to(parent).as_posix()
+        sources[role] = "alias"
+        aliases[role] = {"under": parent_role, "relative": relative}
+    return sources, aliases
+
+
 def upgrade_plan(*, bundle: Path | None, installed_version: str | None) -> dict[str, Any]:
     return {
         "schema": "lfl.upgrade.plan/v1",
@@ -113,10 +150,13 @@ def upgrade_plan(*, bundle: Path | None, installed_version: str | None) -> dict[
 def backup_plan(*, args: Any, home: Path, bundle: Path | None,
                 environment: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, Path]]:
     roots = _effective_sources(args=args, home=home, bundle=bundle, environment=environment)
+    captures, aliases = _capture_layout(roots)
     sources: dict[str, dict[str, Any]] = {}
     for role, root in roots.items():
         sources[role] = {"exists": root.exists(),
-                         "kind": "file" if root.is_file() else "directory" if root.is_dir() else "absent"}
+                         "kind": "file" if root.is_file() else "directory" if root.is_dir() else "absent",
+                         "captured_via": aliases[role]["under"] if role in aliases
+                         else role if captures[role] != "absent" else None}
     return ({
         "schema": "lfl.backup.plan/v1",
         "read_only": True,
@@ -297,6 +337,8 @@ def create_backup(target_raw: str, roots: dict[str, Path], *, bundle: Path | Non
         if role not in ("config", "data", "experiences", "methods"):
             raise BackupRejectedError("unknown_source_role")
 
+    captures, aliases = _capture_layout(roots)
+
     # Exclusive mkdir reserves the final name; interrupted copies remain
     # visibly incomplete without a final manifest. Never replace/delete them.
     _safe_new_dir(target)
@@ -306,25 +348,22 @@ def create_backup(target_raw: str, roots: dict[str, Path], *, bundle: Path | Non
         "complete": True,
         "coverage": "selected_roots",
         "consistency": "operator_attested_services_stopped_not_mechanically_verified",
-        "sources": {}, "dirs": [], "files": [],
+        "sources": captures.copy(), "aliases": aliases, "dirs": [], "files": [],
     }
     budget = {"count": 0, "bytes": 0}
     try:
         _safe_new_dir(payload)
         for role, source in sorted(roots.items()):
-            if not source.exists():
-                manifest["sources"][role] = "absent"
+            if captures[role] in ("absent", "alias"):
                 continue
-            if source.is_file():
+            if captures[role] == "file":
                 _safe_new_dir(payload / role)
                 manifest["dirs"].append(role)
                 copied = _copy_file(source, payload / role / "value", budget)
                 manifest["files"].append({"path": role + "/value", **copied})
-                manifest["sources"][role] = "file"
                 _fsync_dir(payload / role)
-            elif source.is_dir():
+            elif captures[role] == "directory":
                 _copy_directory(source, payload / role, role, manifest, budget)
-                manifest["sources"][role] = "directory"
             else:
                 raise BackupRejectedError("unsupported_source_type")
         if all(kind == "absent" for kind in manifest["sources"].values()):
@@ -356,6 +395,54 @@ def _safe_rel_path(value: Any) -> str:
     if str(parsed) != value or parsed.parts[0] not in ("config", "data", "experiences", "methods"):
         raise BackupRejectedError("unsafe_manifest_path")
     return value
+
+
+def _validate_aliases(manifest: dict[str, Any], dirs: set[str], files: set[str]) -> None:
+    """Prove logical roots point to a real physical snapshot entry.
+
+    Older v1 snapshots had no aliases and remain readable. Aliases never
+    contain host filesystem paths, and do not create new files on recovery.
+    """
+    sources = manifest["sources"]
+    aliases = manifest.get("aliases", {})
+    if not isinstance(aliases, dict) or set(aliases) != {
+        role for role, kind in sources.items() if kind == "alias"
+    }:
+        raise BackupRejectedError("invalid_source_aliases")
+    for role, kind in sources.items():
+        if kind == "absent":
+            if role in dirs or any(p == role or p.startswith(role + "/") for p in files):
+                raise BackupRejectedError("absent_root_has_payload")
+        elif kind == "file":
+            if role + "/value" not in files or role not in dirs:
+                raise BackupRejectedError("source_file_missing")
+        elif kind == "directory":
+            if role not in dirs:
+                raise BackupRejectedError("source_directory_missing")
+        elif kind == "alias":
+            if role in dirs or role + "/value" in files:
+                raise BackupRejectedError("duplicate_alias_payload")
+            spec = aliases[role]
+            if not isinstance(spec, dict) or set(spec) != {"under", "relative"}:
+                raise BackupRejectedError("invalid_source_alias")
+            under = spec["under"]
+            relative = spec["relative"]
+            if (not isinstance(under, str) or under == role
+                    or sources.get(under) != "directory"):
+                raise BackupRejectedError("alias_cannot_refer_to_alias_or_missing_root")
+            if not isinstance(relative, str):
+                raise BackupRejectedError("invalid_alias_relative_path")
+            if relative and (
+                relative.startswith("/") or "\\" in relative or "\x00" in relative
+                or any(part in ("", ".", "..") for part in relative.split("/"))
+                or PurePosixPath(relative).as_posix() != relative
+            ):
+                raise BackupRejectedError("unsafe_alias_relative_path")
+            target = under + ("/" + relative if relative else "")
+            if (target not in files if role == "config" else target not in dirs):
+                raise BackupRejectedError("alias_target_missing_or_wrong_kind")
+        else:
+            raise BackupRejectedError("invalid_root_kind")
 
 
 def _snapshot_inventory(snapshot: Path) -> tuple[set[str], set[str]]:
@@ -403,7 +490,8 @@ def _read_manifest(snapshot: Path) -> tuple[dict[str, Any], bytes]:
     if set(data["sources"]) != {"config", "data", "experiences", "methods"}:
         raise BackupRejectedError("unexpected_snapshot_roots")
     if any(
-        kind not in ({"absent", "file"} if role == "config" else {"absent", "directory"})
+        kind not in ({"absent", "file", "alias"} if role == "config"
+                     else {"absent", "directory", "alias"})
         for role, kind in data["sources"].items()
     ):
         raise BackupRejectedError("invalid_snapshot_root_kind")
@@ -437,6 +525,7 @@ def verify_backup(snapshot_raw: str | Path) -> dict[str, Any]:
         dirs, files = _snapshot_inventory(snapshot)
         if dirs != set(expected_dirs) or files != set(expected_files):
             raise BackupRejectedError("snapshot_inventory_mismatch")
+        _validate_aliases(manifest, dirs, files)
         for rel in dirs:
             if stat.S_IMODE((snapshot / "payload" / rel).stat().st_mode) & 0o077:
                 raise BackupRejectedError("nonprivate_snapshot_directory")
@@ -488,7 +577,7 @@ def restore_to_new_dir(snapshot_raw: str, target_raw: str) -> dict[str, Any]:
         # same no-follow file/dirfd primitives, and their final hashes are
         # rechecked when the new staging snapshot is verified.
         for role in sorted(manifest["sources"]):
-            if manifest["sources"][role] == "absent":
+            if manifest["sources"][role] in ("absent", "alias"):
                 continue
             _copy_directory(source / "payload" / role, dest / "payload" / role,
                             role, {"dirs": [], "files": []}, {"count": 0, "bytes": 0})

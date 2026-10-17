@@ -23,6 +23,8 @@
 
 1. 版本升级 plan 与数据 snapshot 分开：源码工作区或未认证的 wheel 只给出资格未知及明确建议，不假装已经有可执行升级；不对任意 URL 自行下载。实际 `uv` 替换与重启另审批。
 2. 备份源由**同一套现有 CLI + RuntimePaths + dotenv 解析**得出：含 `.env`（如果存在，独立配置 file）、data、推断 Experiences 根及显式 `EXPERIENCES_DIR`/`METHODS_DIR`；排除 code root、bundle、目标目录和自己备份目录；源层遇 overlap 按可验证规则只保留最外层/单一路径并精确记录。若无法证明所有数据 root，一律 `coverage=selected_roots`，**不能返回 full**。
+
+   **去重修订（Stage B 窄修）：** 默认 `METHODS_DIR=<data>/methods` 属于 data 的子目录，不应另存一份。manifest v1 在不改变 `schema` 的前提下，新增可选 `aliases` 映射：`sources.methods="alias"` 与 `aliases.methods={"under":"data","relative":"methods"}`；`data/methods` 仅复制一次。同路径使用空的 relative。其他显式根覆盖关系同样选择最外层可读目录；只有被引用的物理源才复制。备份预览可报告 `captured_via` 角色，不包含本机绝对路径或凭证。`verify` 只能接受指向真实 manifest 文件/目录、无 `..`/绝对路径/自指/别名链的映射，恢复按物理目录复制并保留逻辑映射；**以前没有 `aliases` 且实体双拷的 v1 快照仍可校验和恢复**。`aliases` 是角色映射，不是符号链接，也不提供来源签名。
 3. 每个快照带 manifest `lfl.install-backup/v1`：`complete=true`、源 role、相对安全路径、长度/SHA256、时间/版本 identity（去敏，不包含密钥原文、host路径或 URL）；实际 `.env` 明文只在私有 backup payload 中，不能出现在 stdout/JSON/日志/receipt。必须有严格总文件数/字节预算，禁止设备文件和符号链接。不能省略空目录（对恢复有意义）。
 4. 不允许边写边宣称成功：新目录以原子 exclusive mkdir 预留，完成 payload、fsync 和目录 fsync 后才发布 final manifest；不完整/中断快照必须 fail-closed，后续 verify/rollback 不可继续，**绝不自动删除/覆盖**原有目录或用户数据。恢复目标同理，先复制后做完整校验；如果文件系统不支持保证，要如实阻断。
 5. 恢复只产出**隔离备选状态**，不把旧 DB 写回运行中的新版本；兼容性、更新前后的迁移与回滚操作另做显式确认，不能把恢复成功等同于生产版本已回退。
