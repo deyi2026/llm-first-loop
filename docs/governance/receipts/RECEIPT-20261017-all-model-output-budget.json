@@ -1,0 +1,578 @@
+{
+  "schema": "lfl.operational-receipt.all-model-output-budget.v1",
+  "recorded_at_utc": "2026-10-17T07:50:37.096726+00:00",
+  "status": "completed_with_explicit_unqualified_aliases",
+  "scope": "Runtime provider model max_tokens only; no source/test/protocol or model identity change",
+  "source_head": "868431905798b43045fe491a36a9ac5abd0dc510",
+  "main_head_before_receipt": "c397f893d5c2725e72f0b5b24449205da89bd836",
+  "incident": {
+    "session_id": "59688c5b-5ae5-42ee-9d63-23685fb569d6",
+    "call_id": "pcall:28ddcd9e0249884d65c39cc8f60d6fc4",
+    "seq": 88,
+    "timestamp": "2026-10-17T15:37:00.358929+08:00",
+    "event_path": "data/event_logs/59688c5b-5ae5-42ee-9d63-23685fb569d6.jsonl",
+    "event_sha256": "35caaa2e7d97a3e86cba91c12b962a55036c93fa32a136da92fa808415919cfb",
+    "model_ref": "deepseek/deepseek-v4-flash",
+    "wire_max_tokens": 16000,
+    "output_tokens": 16000,
+    "reasoning_tokens": 16000,
+    "finish_reason": "length",
+    "reasoning_characters_delivered": 56020,
+    "diagnosis": "Output budget exhausted by reasoning before content/tool call; not inferred from generic empty response"
+  },
+  "configuration": {
+    "recorded_at_utc": "2026-10-17T07:43:01.596945+00:00",
+    "before_sha256": "c714d6dca825258584256c14e8ff38c624fbdaa124be74a4506703cc57a38d3e",
+    "after_sha256": "9fe185a77f367049ed0658a14ff341ef712ca00fc4c54bfbad245b78337d68f1",
+    "configured_models": 28,
+    "changed_models": 25,
+    "only_model_max_tokens_changed": true,
+    "global_default_unchanged": true,
+    "thinking_timeout_model_endpoint_unchanged": true,
+    "registry_parser_all_models": "PASS",
+    "web_registry_reload": "HTTP200; all model budget values matched",
+    "web_default_client_unchanged_budget": 65536,
+    "rows": [
+      {
+        "model_ref": "cognilocal/ornith-ai/Ornith-1.5-35B-A3B-MLX",
+        "old_resolved": 16000,
+        "old_explicit": 16000,
+        "new": 32768,
+        "changed": true,
+        "basis": "configured and live LFRT context65536; output32768, no runtime context change"
+      },
+      {
+        "model_ref": "cognilocal/qwen3.8-flash-next",
+        "old_resolved": 16000,
+        "old_explicit": 16000,
+        "new": 32768,
+        "changed": true,
+        "basis": "configured and live LFRT context65536; output32768, no runtime context change"
+      },
+      {
+        "model_ref": "deepseek/deepseek-flash",
+        "old_resolved": 16000,
+        "old_explicit": null,
+        "new": 131072,
+        "changed": true,
+        "basis": "DeepSeek official max393216; selected128K within limit"
+      },
+      {
+        "model_ref": "deepseek/deepseek-v4-flash",
+        "old_resolved": 16000,
+        "old_explicit": null,
+        "new": 131072,
+        "changed": true,
+        "basis": "DeepSeek official max393216; selected128K within limit"
+      },
+      {
+        "model_ref": "deepseek/deepseek-v4-pro",
+        "old_resolved": 16000,
+        "old_explicit": null,
+        "new": 131072,
+        "changed": true,
+        "basis": "DeepSeek official max393216; selected128K within limit"
+      },
+      {
+        "model_ref": "glm/glm-5.3",
+        "old_resolved": 65536,
+        "old_explicit": 65536,
+        "new": 65536,
+        "changed": false,
+        "basis": "GLM official default65536/max131072"
+      },
+      {
+        "model_ref": "glm/glm-5.3-flash",
+        "old_resolved": 16000,
+        "old_explicit": null,
+        "new": 65536,
+        "changed": true,
+        "basis": "GLM official default65536/max131072"
+      },
+      {
+        "model_ref": "glm/glm-5.3-flashx",
+        "old_resolved": 16000,
+        "old_explicit": null,
+        "new": 65536,
+        "changed": true,
+        "basis": "GLM official default65536/max131072"
+      },
+      {
+        "model_ref": "minimax/MiniMax-M3",
+        "old_resolved": 16000,
+        "old_explicit": null,
+        "new": 131072,
+        "changed": true,
+        "basis": "MiniMax M3 official recommendation131072/max524288"
+      },
+      {
+        "model_ref": "minimax/MiniMax-M3.1-Flash-Preview",
+        "old_resolved": 16000,
+        "old_explicit": null,
+        "new": 131072,
+        "changed": true,
+        "basis": "MiniMax M3 official recommendation131072/max524288"
+      },
+      {
+        "model_ref": "workbuddy/deepseek-v4-pro",
+        "old_resolved": 128000,
+        "old_explicit": 128000,
+        "new": 131072,
+        "changed": true,
+        "basis": "upstream model128K-capable; adapter passes max_tokens; proxy qualification pending"
+      },
+      {
+        "model_ref": "workbuddy/deepseek-v4.1-flash",
+        "old_resolved": 128000,
+        "old_explicit": 128000,
+        "new": 131072,
+        "changed": true,
+        "basis": "upstream model128K-capable; adapter passes max_tokens; proxy qualification pending"
+      },
+      {
+        "model_ref": "workbuddy/glm-5.1",
+        "old_resolved": 48000,
+        "old_explicit": 48000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/glm-5.2",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/glm-5.3",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/glm-5.3-flash",
+        "old_resolved": 131072,
+        "old_explicit": 131072,
+        "new": 131072,
+        "changed": false,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/glm-5v-turbo",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/hy3",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 131072,
+        "changed": true,
+        "basis": "upstream model128K-capable; adapter passes max_tokens; proxy qualification pending"
+      },
+      {
+        "model_ref": "workbuddy/hy3-x",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 131072,
+        "changed": true,
+        "basis": "upstream model128K-capable; adapter passes max_tokens; proxy qualification pending"
+      },
+      {
+        "model_ref": "workbuddy/hy4-preview",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/kimi-k2.6",
+        "old_resolved": 32000,
+        "old_explicit": 32000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/kimi-k2.7",
+        "old_resolved": 32000,
+        "old_explicit": 32000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/kimi-k2.8-preview",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/kimi-k3-1",
+        "old_resolved": 32000,
+        "old_explicit": 32000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/minimax-m2.7",
+        "old_resolved": 48000,
+        "old_explicit": 48000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      },
+      {
+        "model_ref": "workbuddy/minimax-m3",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 131072,
+        "changed": true,
+        "basis": "upstream model128K-capable; adapter passes max_tokens; proxy qualification pending"
+      },
+      {
+        "model_ref": "workbuddy/space-bunny",
+        "old_resolved": 128000,
+        "old_explicit": 128000,
+        "new": 128000,
+        "changed": false,
+        "basis": "existing128000; opaque alias ceiling unknown, preserved existing high budget"
+      },
+      {
+        "model_ref": "workbuddy/step-5-preview",
+        "old_resolved": 64000,
+        "old_explicit": 64000,
+        "new": 65536,
+        "changed": true,
+        "basis": "64K model-specific output target; proxy acceptance to verify, no model/endpoint change"
+      }
+    ],
+    "restart_required_for_old_feishu_learning_registry": true,
+    "backup": "data/all-model-output-budget-20261017/providers.local.before.json",
+    "rollback_requires_after_sha_CAS": true,
+    "final_inverse_diff_check": "PASS: restoring only model max_tokens recreates exact parsed before configuration",
+    "final_live_all_28_match": true,
+    "no_enabled_model_inherits_16000": true,
+    "backup_mode": "0600",
+    "write_contract": "Existing .provider-admin.lock, SHA CAS, fsync file+directory, atomic replace; unlock before reload",
+    "final_sha256": "9fe185a77f367049ed0658a14ff341ef712ca00fc4c54bfbad245b78337d68f1"
+  },
+  "activation": {
+    "recorded_at_utc": "2026-10-17T07:50:37.096726+00:00",
+    "live_registry": {
+      "source": "local",
+      "mutable": true,
+      "config_version": "9fe185a77f367049ed0658a14ff341ef712ca00fc4c54bfbad245b78337d68f1",
+      "configured_default_model": "glm/glm-5.3",
+      "runtime_default_model": "glm/glm-5.3",
+      "restart_required": false,
+      "effective_model_count": 28
+    },
+    "actual_web_requests": [
+      {
+        "session_id": "daf42c33-3164-4ad1-885f-2e5c9b8039c9",
+        "model_ref": "deepseek/deepseek-v4-flash",
+        "call_id": "pcall:24f95ebff9dfab2d6769e8264ec19bf2",
+        "provider_observed_model": "deepseek-flash",
+        "max_tokens": 131072,
+        "timeout_s": 120.0,
+        "outcome": "success",
+        "finish_reason": "stop",
+        "usage": {
+          "input_tokens": 16052,
+          "output_tokens": 4,
+          "cached_input_tokens": 15872,
+          "reasoning_tokens": 0,
+          "total_tokens": 16056,
+          "provider_units": null,
+          "provider_unit": null
+        },
+        "run_end_reason": "completed",
+        "rounds": 1,
+        "provider_output_truncated": false,
+        "event_path": "data/event_logs/daf42c33-3164-4ad1-885f-2e5c9b8039c9.jsonl",
+        "event_sha256": "fb2ee7273d0ddf4c0522d026624647c5f458bb084b668bf055804da4db70e975",
+        "opened_at": "2026-10-17T15:44:25.627443+08:00",
+        "ended_at": "2026-10-17T15:44:26.559165+08:00"
+      },
+      {
+        "session_id": "b883008b-8bf9-45f2-a881-b61ba02b8643",
+        "model_ref": "minimax/MiniMax-M3.1-Flash-Preview",
+        "call_id": "pcall:a8ebf7a6b75017566ce0b6124064edf8",
+        "provider_observed_model": "MiniMax-M3.1-Flash-Preview",
+        "max_tokens": 131072,
+        "timeout_s": 120.0,
+        "outcome": "success",
+        "finish_reason": "stop",
+        "usage": {
+          "input_tokens": 16037,
+          "output_tokens": 5,
+          "cached_input_tokens": 0,
+          "reasoning_tokens": null,
+          "total_tokens": 16042,
+          "provider_units": null,
+          "provider_unit": null
+        },
+        "run_end_reason": "completed",
+        "rounds": 1,
+        "provider_output_truncated": false,
+        "event_path": "data/event_logs/b883008b-8bf9-45f2-a881-b61ba02b8643.jsonl",
+        "event_sha256": "e5d6b2be405e3fc2de92c5f608f53e518a05564bad4847433c864d1db144bdea",
+        "opened_at": "2026-10-17T15:45:59.498423+08:00",
+        "ended_at": "2026-10-17T15:46:01.961726+08:00"
+      }
+    ],
+    "services": [
+      {
+        "service": "web",
+        "pid": 76553,
+        "started_at": "2026-10-17T15:16:08+08:00",
+        "git_head": "868431905798b43045fe491a36a9ac5abd0dc510",
+        "identity_ok": true,
+        "model_ref": "glm/glm-5.3",
+        "max_tokens": 65536,
+        "providers_effective_hash": "c714d6dca825258584256c14e8ff38c624fbdaa124be74a4506703cc57a38d3e",
+        "manifest_path": "data/runtime/runtime_manifest.web.json",
+        "manifest_sha256": "b76441744f3d07b5782a42848ca6d979af840d9a29ead5e819b91fc045904044"
+      },
+      {
+        "service": "feishu",
+        "pid": 4204,
+        "started_at": "2026-10-17T15:46:35+08:00",
+        "git_head": "868431905798b43045fe491a36a9ac5abd0dc510",
+        "identity_ok": true,
+        "model_ref": "glm/glm-5.3",
+        "max_tokens": 65536,
+        "providers_effective_hash": "9fe185a77f367049ed0658a14ff341ef712ca00fc4c54bfbad245b78337d68f1",
+        "manifest_path": "data/runtime/runtime_manifest.feishu.json",
+        "manifest_sha256": "edae753394dc39688b4a50a4f4146a8ad8645f34d4b86c5148a7b5dcb1577d8c"
+      },
+      {
+        "service": "learning",
+        "pid": 4736,
+        "started_at": "2026-10-17T15:47:35+08:00",
+        "git_head": "868431905798b43045fe491a36a9ac5abd0dc510",
+        "identity_ok": true,
+        "model_ref": "glm/glm-5.3",
+        "max_tokens": 65536,
+        "providers_effective_hash": "9fe185a77f367049ed0658a14ff341ef712ca00fc4c54bfbad245b78337d68f1",
+        "manifest_path": "data/runtime/runtime_manifest.learning.json",
+        "manifest_sha256": "06674ae2951b487ddd0c9584aec9699fac5022dacf89d9010a752cfa56c9de5e"
+      }
+    ],
+    "native_refresh_actions": [
+      {
+        "service": "feishu",
+        "action_id": "svc-b6910eed7f1148f58544cac6688fbe68",
+        "generation": 276,
+        "previous_pid": 25059,
+        "previous_source": "b9bf967d8c86652e9c4f417375c1c6a330196918",
+        "previous_max_tokens": 16000,
+        "request_exit_code": 0,
+        "no_force": true,
+        "status": "succeeded",
+        "updated_at": "2026-10-17T15:47:33.847536+08:00",
+        "verify_evidence": "verify=confirmed_ok feishu[ok pid=4204 head=868431905798]",
+        "action_path": "data/runtime/service-control-actions/svc-b6910eed7f1148f58544cac6688fbe68.json",
+        "action_sha256": "e9118502504f5723afd6ed7ee479d7b2a968c47f75fe194cbbe5f6253fb14034"
+      },
+      {
+        "service": "learning",
+        "action_id": "svc-5570306a2b1843d1916e2ec173f1750e",
+        "generation": 276,
+        "previous_pid": 25550,
+        "previous_source": "b9bf967d8c86652e9c4f417375c1c6a330196918",
+        "previous_max_tokens": 16000,
+        "request_exit_code": 0,
+        "no_force": true,
+        "status": "succeeded",
+        "updated_at": "2026-10-17T15:47:36.328301+08:00",
+        "verify_evidence": "verify=confirmed_ok learning[ok pid=4736 head=868431905798]",
+        "action_path": "data/runtime/service-control-actions/svc-5570306a2b1843d1916e2ec173f1750e.json",
+        "action_sha256": "4cca59d0ae1aab6e1bd76e79d59dfa27c85d366363c5e1770ca0fa3c16d1a218"
+      }
+    ],
+    "health": "ok"
+  },
+  "proxy_checks": {
+    "level": "Direct proxy acceptance and short-answer only, not native Web or long-output efficacy",
+    "advertised_configured_models_success": 14,
+    "physical_attempts": 15,
+    "accepted": [
+      {
+        "model_ref": "workbuddy/deepseek-v4-pro",
+        "requested_max_tokens": 131072,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/deepseek-v4.1-flash",
+        "requested_max_tokens": 131072,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/glm-5.2",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/glm-5.3",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/glm-5.3-flash",
+        "requested_max_tokens": 131072,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/hy3",
+        "requested_max_tokens": 131072,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/glm-5v-turbo",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/hy3-x",
+        "requested_max_tokens": 131072,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/kimi-k2.6",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/hy4-preview",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/kimi-k2.7",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/kimi-k2.8-preview",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/minimax-m2.7",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      },
+      {
+        "model_ref": "workbuddy/glm-5.1",
+        "requested_max_tokens": 65536,
+        "http_status": 200,
+        "finish_reason": "stop",
+        "has_content": true
+      }
+    ],
+    "initial_glm51_failure": "HTTP400 reasoning effort unsupported: probe omitted existing model-specific medium; repeated using existing configured medium succeeded. No operator effort config changed.",
+    "configured_aliases_not_advertised": [
+      "kimi-k3-1",
+      "minimax-m3",
+      "space-bunny",
+      "step-5-preview"
+    ]
+  },
+  "local_check": {
+    "qwen_probe": {
+      "model_ref": "cognilocal/qwen3.8-flash-next",
+      "requested_max_tokens": 32768,
+      "http_status": 200,
+      "response_model": "qwen3.8-flash-next",
+      "finish_reason": "stop",
+      "has_content": true,
+      "usage": {
+        "completion_tokens": 154,
+        "prompt_tokens": 57,
+        "total_tokens": 211,
+        "prompt_tokens_details": {
+          "cached_tokens": 42
+        }
+      },
+      "elapsed_seconds": 26.27
+    },
+    "runtime_context_tokens": 65536,
+    "runtime_backend": "llama",
+    "model_or_context_restart": false,
+    "ornith_status": "Configured at32768; not advertised by live local model endpoint, not loaded/qualified"
+  },
+  "admission_reconciliation": "First parallel MiniMax Web admission returned session_busy with zero provider calls; only that rejected admission resubmitted after DeepSeek ended. Exactly one provider transport for each canary.",
+  "limits": [
+    "Short answers prove accepted request budget and successful ordinary completion; no claim that all long tasks now complete.",
+    "Four WorkBuddy aliases and unloaded Ornith remain unqualified; model names were not silently substituted.",
+    "Direct GLM flash/flashx, DeepSeek pro/other alias, and MiniMax M3 have configuration/live-registry validation; this operation did not issue every direct-provider model variant.",
+    "Web startup manifest retains prior provider hash as startup snapshot; dynamic registry and actual routed requests verified new configuration.",
+    "Existing provider/global fallback16000 remains unchanged for future unknown models; all current28 models explicit."
+  ],
+  "official_sources_checked_on": "2026-10-17",
+  "official_sources": [
+    "https://api-docs.deepseek.com/api/create-chat-completion/",
+    "https://api-docs.deepseek.com/api/list-models/",
+    "https://platform.minimax.io/docs/api-reference/text-chat-openai",
+    "https://docs.bigmodel.cn/cn/guide/start/concept-param",
+    "https://cloud.tencent.com/document/product/1823/130051"
+  ],
+  "validation_policy": "Configuration-only change: parser, inverse diff, live registry, real short requests and scoped service activation; no repeated full R9. Existing source review/R9 receipts remain in RESULT-20261017-glm-output-budget.md.",
+  "raw_evidence": {
+    "data/all-model-output-budget-20261017/proxy-models-not-advertised.json": "b0625d0eafb1775b41aad7dcd5dc9626a9d7f69deb59208a862a14a6c08476f6",
+    "data/all-model-output-budget-20261017/minimax-admission-retry.json": "22e48a98b203b265ad96969cc2b3950a2da82010fb30ac445f0837035378d04c",
+    "data/all-model-output-budget-20261017/web-smoke-identities.json": "32c279cc951af5827d8cee1c34ed5068865e2b789235f61195f3ecddf229cc94",
+    "data/all-model-output-budget-20261017/restart-feishu-request.log": "87359f1dbee7c7942904c81ce55c0baeaa31e844cd049ba2387a045e9f230c24",
+    "data/all-model-output-budget-20261017/web-smoke-results.json": "a7fdff75be4e8b97b2aa6261fa970f23805be0ce2afc5c4049d6f74180c696cc",
+    "data/all-model-output-budget-20261017/restart-learning-request.log": "c0b9035f939fba747e2774f0d0f2caf9ae4ccf6fdb7900b1d038cab082239f59",
+    "data/all-model-output-budget-20261017/native-refresh-actions.json": "7ae162be3e113ac2401cd19e28a2aa83b38bb63fc3de0bfff664c77c68fc2d3b",
+    "data/all-model-output-budget-20261017/additional-budget-probes.json": "abe9db4576e46d11dfcc154b5329c3ae0ffa345962da216cf165ed168b016aa4",
+    "data/all-model-output-budget-20261017/configuration-applied.json": "9fc81d6d02cf378f2ddc010a15978b69a6b49eb62c5388427d8be4c4876f08a4",
+    "data/all-model-output-budget-20261017/proxy-budget-probes.json": "a02ad66e355c449e90d15550bb94bde973d62c00747a9b530efb5d7655d66a94",
+    "data/all-model-output-budget-20261017/web-smoke-daf42c33-3164-4ad1-885f-2e5c9b8039c9.sse": "c72f10e93c339b7711ab392a184161d2ef46c007b0cf84254170dc1b8779553f",
+    "data/all-model-output-budget-20261017/final-runtime-facts.json": "9a69e63600469ade93b47390e2cba72ac4a0111dd1cd2d6dcfdf352fae44df3d",
+    "data/all-model-output-budget-20261017/minimax-admission-retry-result.json": "e16ad516c8f8b95a450f9e2bd4d7ce79d71d92bf20c19476a6444709b1faa3cc",
+    "data/all-model-output-budget-20261017/web-smoke-b883008b-8bf9-45f2-a881-b61ba02b8643.sse": "42c9e7a6c90aad14fd51556a289d09af2272e5804acf4c452bfd472c5e9618ad",
+    "data/all-model-output-budget-20261017/web-smoke-retry-b883008b-8bf9-45f2-a881-b61ba02b8643.sse": "f641b00b7ba192fd8d3bdf92087dc4a9ac54552232e7b93a0a1978078f3e1417"
+  },
+  "push_performed": false
+}
