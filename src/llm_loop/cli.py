@@ -1336,7 +1336,7 @@ def application_main(argv: list[str] | None = None) -> int:
         return 0
     if remaining == ["--help"] or remaining == ["-h"]:
         print("lfl [--data-dir DIR] [--workspace DIR] [--config FILE] COMMAND\n"
-              "Commands: chat [CLI arguments], web, paths, check-install, doctor [--json], init [--plan] [--json], upgrade --plan, backup, rollback\n"
+              "Commands: start [--plan] [--json], extensions, chat [CLI arguments], web, paths, check-install, doctor [--json], init [--plan] [--json], upgrade --plan, backup, rollback\n"
               "Other arguments are passed to the existing LFL CLI.\n"
               "--version prints the installed version without starting services.")
         return 0
@@ -1429,6 +1429,31 @@ def application_main(argv: list[str] | None = None) -> int:
             return exc.code if isinstance(exc.code, int) else 2
         return run_rollback(source=options.backup_from, target=options.into,
                             confirmed=options.confirm_services_stopped, as_json=options.json)
+    if remaining and remaining[0] == "extensions":
+        from llm_loop.extensions.cli import run_extensions
+
+        bundle = bundle_root()
+        root = default_home() if bundle else Path(__file__).resolve().parents[2]
+        return run_extensions(
+            remaining[1:], args=args, home=root, environment=legacy_env_snapshot(),
+        )
+    if remaining and remaining[0] == "start":
+        start_parser = argparse.ArgumentParser(prog="lfl start", description="首次配置、诊断并启动 Web")
+        start_parser.add_argument("--plan", action="store_true", help="只读预览，不配置或启动服务")
+        start_parser.add_argument("--json", action="store_true", help="仅搭配 --plan 使用")
+        try:
+            options = start_parser.parse_args(remaining[1:])
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 2
+        from llm_loop.runtime.onboarding import run_start
+
+        bundle = bundle_root()
+        return run_start(
+            args=args, root=default_home() if bundle else Path(__file__).resolve().parents[2],
+            bundle=bundle, environment=legacy_env_snapshot(), check_install=check_install,
+            preview=options.plan, as_json=options.json,
+            launch_web=lambda: application_main([*argv[:boundary], "web"]),
+        )
     if remaining and remaining[0] == "init":
         # Setup is a separate consent-bound workflow; never invoke the normal
         # stateful bootstrap, build an Engine, or open a provider connection.

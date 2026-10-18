@@ -28,6 +28,13 @@ lfl --config /absolute/path/to/lfl.env chat "你好"
 lfl --config /absolute/path/to/lfl.env web
 ~~~
 
+**首次启动建议直接运行 `lfl start`**：如果尚未配置，先调用现有 `lfl init`
+交互向导；随后调用 `lfl doctor` 复核，就绪后使用原有 Web 启动入口。
+`start` 不跳过新建配置的双重确认，不自动联网验证密钥，也不新建服务控制平面。
+再次运行 `lfl start` 可复用现有配置；Web 仍遵循原有认证、地址和工作目录绑定，
+按 Ctrl+C 退出。`lfl start --plan` 或 `lfl start --plan --json` 可离线只读预览，
+不会启动模型或 Web。非交互环境缺配置时明确拒绝，绝不静默生成密钥。
+
 ## 首次使用诊断（P1 doctor）
 
 ~~~bash
@@ -151,6 +158,25 @@ uv tool uninstall llm-first-loop 移除应用环境，保留独立数据目录�
 扩展更新按组件类型与名称保留原启停状态。全部组件已禁用的安装，更新新增组件也保持禁用；
 部分启用安装中的新组件保持既有默认策略。插件实例数据在更新与卸载安装记录时保留。
 本变更不新增插件凭证授权、跨版本依赖求解或完整插件管理界面。
+
+### 本地扩展管理入口（P1）
+
+~~~bash
+lfl extensions list
+lfl extensions list --json
+lfl extensions inspect /absolute/local/plugin-directory
+lfl extensions install /absolute/local/plugin-directory
+lfl extensions disable demo-plugin
+lfl extensions enable demo-plugin
+lfl extensions update /absolute/local/plugin-directory
+lfl extensions remove demo-plugin
+~~~
+
+`inspect` / `list` 只读；变更类命令在交互终端要求输入 `yes`，非交互运行
+需要显式添加 `--yes`。只支持**本地已取得的扩展目录**，不会自行下载远端包
+或执行安装 hook。安装前可 `inspect` 查看组件兼容性，MCP Server 后续是否运行
+继续遵循现有启动和权限规则。管理入口复用 `DATA_DIR/extensions` 的安装记录、
+修订号 CAS、禁用状态及实例数据目录。`remove` 只移除安装记录，**不删除插件数据**。
 
 ## 构建与验收
 
