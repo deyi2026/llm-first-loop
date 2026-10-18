@@ -2960,6 +2960,9 @@ async def evolution_review_batch(request: Request) -> Response:
         body = {}
     items = body.get("items") or []
     default_decision = (body.get("decision") or "").strip()
+    # 方案A EVO-20260929 / EVO-20261018-f5f7580a：人工逐条显式授权可随批量下传
+    # （顶层默认，条目可覆盖）。此前批量只置 accepted，档位 0 下永远到不了 executing。
+    default_override = bool(body.get("exec_override", False))
     if not items or default_decision not in {"accepted", "rejected"}:
         return UTF8JSONResponse(
             status_code=400,
@@ -2972,6 +2975,7 @@ async def evolution_review_batch(request: Request) -> Response:
         decision = str(it.get("decision") or default_decision).strip()
         reason = str(it.get("reason") or "").strip()
         expected = str(it.get("expected_status") or "").strip()
+        exec_override = bool(it.get("exec_override", default_override))
         if not evo_id or decision not in {"accepted", "rejected"}:
             results.append({"id": evo_id, "ok": False, "message": "参数非法"})
             fail_count += 1
@@ -2989,7 +2993,18 @@ async def evolution_review_batch(request: Request) -> Response:
             continue
         try:
             if decision == "accepted":
-                ok, resp, reviewed = approve(store, evo_id)
+                ok, resp, reviewed = approve(store, evo_id, exec_override=exec_override)
+                if ok and reviewed:
+                    # EVO-20261018：批量路径此前只置 accepted、从不触发执行推进，与单条审批
+                    # 行为分叉（单条在 approve 后调 maybe_auto_execute_from_engine）。此处对齐。
+                    from llm_loop.introspection.evolution_exec import maybe_auto_execute_from_engine
+
+                    cur_after = _find_suggestion(store, evo_id)
+                    if cur_after is not None:
+                        try:
+                            resp += "\n" + maybe_auto_execute_from_engine(engine, store, cur_after)
+                        except Exception as exc:  # noqa: BLE001 — 执行触发失败不影响审批
+                            resp += f"\n⚠️ 自动执行触发异常：{type(exc).__name__}"
             else:
                 if not reason:
                     results.append({"id": evo_id, "ok": False, "message": "拒绝须提供理由"})

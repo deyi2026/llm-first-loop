@@ -657,17 +657,17 @@ export function EvolutionPanel() {
                     我已知悉此建议涉及安全边界，确认单条批准
                   </label>
                 )}
-                {confirm.requires_human && (
-                  <label className="v2-evo-modal-check">
-                    <input
-                      type="checkbox"
-                      data-testid="evo-authorize-exec"
-                      checked={authorizeExecChecked}
-                      onChange={(e) => setAuthorizeExecChecked(e.target.checked)}
-                    />
-                    批准并显式授权 AI 自动执行（方案A：越过边界拦截，仍过权限级别门禁；勾选即视为安全边界确认）
-                  </label>
-                )}
+                <label className="v2-evo-modal-check">
+                  <input
+                    type="checkbox"
+                    data-testid="evo-authorize-exec"
+                    checked={authorizeExecChecked}
+                    onChange={(e) => setAuthorizeExecChecked(e.target.checked)}
+                  />
+                  {confirm.requires_human
+                    ? "批准并显式授权 AI 自动执行（方案A：越过边界拦截，仍过权限级别门禁；勾选即视为安全边界确认）"
+                    : "批准并显式授权 AI 自动执行（EVOLVE_LOCAL_EXEC 档位对人工逐条授权不设限；AI 仍不得自授该字段）"}
+                </label>
               </div>
             ) : (
               <div className="v2-evo-modal-note">
@@ -709,7 +709,7 @@ export function EvolutionPanel() {
                     confirm.decision,
                     confirm.decision === "rejected" ? rejectReason.trim() : "",
                     confirm.requires_human ? extraConfirmChecked : false,
-                    confirm.requires_human ? authorizeExecChecked : false
+                    authorizeExecChecked
                   ).then((ok) => {
                     if (ok) {
                       setConfirm(null); // UX 修复: 成功才关弹窗；失败保持弹窗可重试（消息面板级显示）

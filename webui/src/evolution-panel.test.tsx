@@ -218,4 +218,27 @@ describe("EvolutionPanel approval feedback", () => {
     expect(bar).toBeInTheDocument();
     expect(screen.getByTestId("evo-scroll-region")).not.toContainElement(bar);
   });
+
+  it("offers explicit exec authorization for non-boundary items (EVO-20261018-f5f7580a)", async () => {
+    // 修复前授权勾选框只在 requires_human 时渲染，非边界条目在档位 0 下无入口可授权。
+    const { calls } = installFetch({ requiresHuman: false });
+    render(<EvolutionPanel />);
+
+    await screen.findByText(baseItem.id);
+    fireEvent.click(screen.getByText(baseItem.id));
+    fireEvent.click(await screen.findByTestId("evo-approve"));
+
+    const authorize = screen.getByTestId("evo-authorize-exec");
+    expect(authorize).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
+    fireEvent.click(authorize);
+    fireEvent.click(screen.getByTestId("evo-confirm-ok"));
+
+    await waitFor(() => expect(screen.queryByTestId("evo-confirm-modal")).not.toBeInTheDocument());
+    const post = calls.find((call) => call.url === "/api/v1/evolution/review");
+    expect(post).toBeDefined();
+    const body = JSON.parse(String(post?.init?.body ?? "{}"));
+    expect(body.exec_override).toBe(true);
+    expect(body.extra_confirm).toBe(false);
+  });
 });
