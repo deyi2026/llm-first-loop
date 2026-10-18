@@ -204,13 +204,12 @@ def _interactive_setup(*, target: Path, report: dict[str, Any], root: Path, bund
     try:
         print("LFL 首次配置（离线）。只新建配置，绝不覆盖已有文件。")
         print("目标：" + str(target))
-        if input("开始填写？输入 yes 继续：").strip() != "yes":
-            return 1
+        print("填写结束后会显示摘要；只有最后确认 yes 才会写入。API Key 不会显示。")
         base_url = _validate_value(input("LLM_BASE_URL（HTTP(S)）：").strip(), key="LLM_BASE_URL")
         model = _validate_value(input("LLM_MODEL（可留空）：").strip(), key="LLM_MODEL", optional=True)
         key = _validate_value(getpass.getpass("LLM_API_KEY（隐藏输入）："), key="LLM_API_KEY")
         print("即将新建0600权限配置：LLM_BASE_URL=已输入，LLM_API_KEY=已隐藏，LLM_MODEL=" + ("已输入" if model else "默认"))
-        if input("确认写入？输入 yes：").strip() != "yes":
+        if input("确认新建配置？输入 yes 写入：").strip() != "yes":
             return 1
     except (EOFError, KeyboardInterrupt):
         print("\n已取消，未写入配置。", file=sys.stderr)
@@ -219,7 +218,7 @@ def _interactive_setup(*, target: Path, report: dict[str, Any], root: Path, bund
         print("输入值不符合安全格式，未写入配置。", file=sys.stderr)
         return 1
 
-    # Close the confirmation-to-write gap with another mechanical target check.
+    # Close the confirmation-to-write gap with a mechanical target recheck.
     if _unsafe_path(target, bundle, allow_default_parent=Path(os.path.realpath(root)) if report["target"]["source"] == "default" else None) or target.exists():
         print("配置目标在确认后已变化，拒绝覆盖。", file=sys.stderr)
         return 1

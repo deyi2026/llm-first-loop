@@ -174,7 +174,7 @@ def test_confirmed_setup_creates_exactly_one_private_config(
     clean_install: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     key = "test-token # with literal tag"
-    _interactive(monkeypatch, key=key, responses=["yes", "https://example.invalid/v1?q=a#frag", "glm/glm-5.3", "yes"])
+    _interactive(monkeypatch, key=key, responses=["https://example.invalid/v1?q=a#frag", "glm/glm-5.3", "yes"])
     before_env = dict(os.environ)
     rc = cli.application_main(["init"])
     output = capsys.readouterr()
@@ -199,7 +199,7 @@ def test_confirmed_setup_creates_exactly_one_private_config(
 def test_final_confirmation_rejection_creates_nothing(
     clean_install: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _interactive(monkeypatch, key="hidden-value", responses=["yes", "https://example.invalid/v1", "", "no"])
+    _interactive(monkeypatch, key="hidden-value", responses=["https://example.invalid/v1", "", "no"])
     assert cli.application_main(["init"]) == 1
     assert not (clean_install / "lfl-home").exists()
 
@@ -209,7 +209,7 @@ def test_existing_file_cannot_be_overridden_in_interactive_mode(
 ) -> None:
     config = clean_install / "already.env"
     config.write_bytes(b"API_KEY=keep-exact-original\n")
-    _interactive(monkeypatch, key="new-secret", responses=["yes", "https://example.invalid/v1", "", "yes"])
+    _interactive(monkeypatch, key="new-secret", responses=["https://example.invalid/v1", "", "yes"])
     assert cli.application_main(["--config", str(config), "init"]) == 0
     assert config.read_bytes() == b"API_KEY=keep-exact-original\n"
 
@@ -218,7 +218,7 @@ def test_new_config_rejects_injected_newline_or_control_character(
     clean_install: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     injected = "a\nLLM_BASE_URL=http://malicious.invalid/v1"
-    _interactive(monkeypatch, key=injected, responses=["yes", "https://example.invalid/v1", "", "yes"])
+    _interactive(monkeypatch, key=injected, responses=["https://example.invalid/v1", "", "yes"])
     assert cli.application_main(["init"]) == 1
     out = capsys.readouterr()
     assert injected not in out.out + out.err
@@ -250,11 +250,11 @@ def test_last_moment_config_race_never_clobbers_existing_file(
     clean_install: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = clean_install / "race.env"
-    responses = iter(["yes", "https://example.invalid/v1", "", "yes"])
+    responses = iter(["https://example.invalid/v1", "", "yes"])
 
     def create_racing_config(_prompt: str = "") -> str:
         answer = next(responses)
-        # Only the final confirmation, not the first start prompt, races.
+        # The single final write confirmation races.
         if answer == "yes" and config.parent.exists() and not config.exists() and ("race" in _prompt or "写入" in _prompt):
             config.write_bytes(b"RACE_WINNER=untouched\n")
         return answer
@@ -296,7 +296,7 @@ def test_explicit_parent_symlink_is_canonicalized_before_consent(
     assert rc == 0 and plan["status"] == "needs_setup"
     assert plan["target"]["can_create"] is True
     assert not (outside / "setup.env").exists()
-    _interactive(monkeypatch, key="dummy-value", responses=["yes", "https://example.invalid/v1", "", "yes"])
+    _interactive(monkeypatch, key="dummy-value", responses=["https://example.invalid/v1", "", "yes"])
     assert cli.application_main(["--config", str(alias / "setup.env"), "init"]) == 0
     output = capsys.readouterr()
     assert str(outside / "setup.env") in output.out  # canonical destination shown for consent
@@ -368,7 +368,7 @@ def test_default_home_via_symlink_parent_is_usable(
     rc, plan, output = _plan(capsys)
     assert rc == 0 and plan["target"]["can_create"] is True
     assert str(real_parent) not in output.out + output.err
-    _interactive(monkeypatch, key="test-token", responses=["yes", "https://example.invalid/v1", "", "yes"])
+    _interactive(monkeypatch, key="test-token", responses=["https://example.invalid/v1", "", "yes"])
     assert cli.application_main(["init"]) == 0
     capsys.readouterr()
     assert (real_parent / "state" / ".env").is_file()
