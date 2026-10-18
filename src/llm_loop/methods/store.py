@@ -46,6 +46,15 @@ from llm_loop.use_ledger import (
 )
 
 _VALID_STATUSES = {"teacher", "candidate", "qualified", "active", "hold", "invalidated", "retired"}
+# These are status-only labels, not access tiers. They must never acquire a
+# qualification/proof prerequisite: applicability and use remain model-owned.
+_QUALITY_LABEL_STATUSES = frozenset({"candidate", "qualified", "active", "hold"})
+_DISPOSITION_STATUSES = frozenset({"invalidated", "retired"})
+# Used only to distribute a bounded amount of embedding work across the corpus.
+# This order does not filter discovery, choose a relevant method, or authorize use.
+_SEMANTIC_PREWARM_STATUS_ORDER = (
+    "teacher", "active", "qualified", "candidate", "hold", "invalidated",
+)
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _SAFE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _STORE_LOCK_FILE = ".__method_store.lock"
@@ -827,13 +836,37 @@ class MethodStore:
 
         The projection exposes content for vectorization only; it does not assert task
         applicability and retired records stay excluded exactly as in lexical discovery.
+        Status-stratified round-robin order gives each lifecycle bucket a chance to enter
+        the bounded background/startup embedding queue. All discoverable statuses remain
+        present; this is a cache-warming fairness rule, not a retrieval or use gate.
         """
-        result: list[dict[str, Any]] = []
+        grouped: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
+            status: [] for status in _SEMANTIC_PREWARM_STATUS_ORDER
+        }
         for path in self._iter_paths():
             record = self._load_path(path)
             if record is None or record.status == "retired":
                 continue
-            result.append(self.semantic_candidate(record))
+            grouped.setdefault(record.status, []).append((
+                record.updated_at or record.created_at,
+                record.method_id,
+                self.semantic_candidate(record),
+            ))
+        for rows in grouped.values():
+            rows.sort(key=lambda row: (row[0], row[1]), reverse=True)
+        positions = {status: 0 for status in grouped}
+        result: list[dict[str, Any]] = []
+        while True:
+            added = False
+            for status in _SEMANTIC_PREWARM_STATUS_ORDER:
+                rows = grouped[status]
+                position = positions[status]
+                if position < len(rows):
+                    result.append(rows[position][2])
+                    positions[status] = position + 1
+                    added = True
+            if not added:
+                break
         return result
 
     def _ensure_runtime_copy(self, record: MethodRecord) -> MethodRecord:
@@ -1477,8 +1510,12 @@ class MethodStore:
         # factual basis. The program never decides a Method *should* die; it only
         # refuses to record a conviction resting solely on one session's own
         # self-judgment. reopen stays permanently available (nothing is deleted).
-        if (
-            target in {"invalidated", "retired"}
+        if target in _QUALITY_LABEL_STATUSES:
+            # Explicit no-gate contract: qualification receipts are optional
+            # evidence, never prerequisites for changing a quality/status badge.
+            pass
+        elif (
+            target in _DISPOSITION_STATUSES
             and record.status not in {"invalidated", "retired"}
             and not self._disposition_basis(record)
         ):

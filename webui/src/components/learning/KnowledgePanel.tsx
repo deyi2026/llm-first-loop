@@ -23,9 +23,9 @@ const EXPERIENCE_STATUS_LABELS: Record<string, string> = {
 };
 
 const METHOD_STATUS_LABELS: Record<string, string> = {
-  candidate: "候选",
+  candidate: "候选（可用）",
   qualified: "已验证",
-  active: "启用",
+  active: "常用",
   hold: "暂停",
   invalidated: "已失效",
   retired: "已退役",
@@ -34,7 +34,7 @@ const METHOD_STATUS_LABELS: Record<string, string> = {
 
 const METHOD_TRANSITIONS: { value: MethodTransition; label: string }[] = [
   { value: "qualify", label: "转已验证" },
-  { value: "activate", label: "启用" },
+  { value: "activate", label: "标为常用" },
   { value: "hold", label: "暂停" },
   { value: "invalidate", label: "失效" },
   { value: "retire", label: "退役" },
@@ -141,8 +141,8 @@ function MethodCard({
       </div>
       <footer className="v2-knowledge-actions">
         <code title={id}>{id.slice(-28)}</code>
-        <select value={pending} onChange={(e) => setPending(e.target.value as MethodTransition | "")}>
-          <option value="">流转…</option>
+        <select aria-label="更改方法状态" value={pending} onChange={(e) => setPending(e.target.value as MethodTransition | "")}>
+          <option value="">更改状态</option>
           {METHOD_TRANSITIONS.map((t) => (
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
@@ -304,7 +304,7 @@ export function KnowledgePanel() {
       <header className="v2-knowledge-header">
         <div>
           <h2>📚 知识管理</h2>
-          <p>经验库与方法库全生命周期视图 · 与模型工具同一 store 路径与门禁</p>
+          <p>经验与方法按任务检索使用，状态和验证信息供参考。</p>
         </div>
         <nav className="v2-knowledge-tabs">
           <button className={tab === "experiences" ? "on" : ""} onClick={() => setTab("experiences")}>
@@ -361,6 +361,9 @@ export function KnowledgePanel() {
         </>
       ) : tab === "methods" ? (
         <>
+          <p className="v2-knowledge-desc">
+            候选方法可直接检索、按任务使用，无需先改为“常用”或完成验证；适用性由模型判断。已退役方法不参与常规检索。
+          </p>
           {methods ? statusChips(methods.counts, methodStatus, setMethodStatus) : null}
           <div className="v2-knowledge-list">
             {loading ? (

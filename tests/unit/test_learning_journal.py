@@ -230,7 +230,7 @@ def test_factory_separates_learning_journal_producer_from_dedicated_consumer(tmp
     plane = engine_learning.learning_plane
     try:
         assert plane is not None and plane._thread.is_alive()
-        assert plane._method_discovery is None  # semantic Method OFF = no hidden retrieval
+        assert callable(plane._method_discovery)  # lexical recall works without embeddings
         assert engine_learning.resource_governor is plane._resource_governor
         assert plane._provider_call_coordinator is engine_learning.provider_call_coordinator
         assert engine_learning.provider_call_coordinator.governor is engine_learning.resource_governor
@@ -258,71 +258,53 @@ def test_factory_separates_learning_journal_producer_from_dedicated_consumer(tmp
         engine_learning_method.close()
 
 
-def test_learning_method_semantic_filters_unqualified_candidates(tmp_path) -> None:
-    """Learning reuse recall admits only qualified/active Methods, not candidate noise."""
+@pytest.mark.parametrize(
+    ("semantic_enabled", "embedding_provider", "effective"),
+    [(False, "hash", False), (True, "hash", True), (True, "none", False)],
+)
+def test_learning_reuses_candidates_without_promotion(tmp_path, semantic_enabled, embedding_provider, effective) -> None:
+    """Both lexical and semantic Learning recall share ordinary Method visibility."""
     from llm_loop.config import Settings
     from llm_loop.factory import build_engine
     from llm_loop.methods.store import MethodStore
 
-    runtime_methods = tmp_path / "filtered-methods"
-    seed_methods = tmp_path / "empty-seed"
+    runtime_methods = tmp_path / "methods"
+    seed_methods = tmp_path / "seed"
     seed_methods.mkdir()
     store = MethodStore(runtime_methods, seed_dir=seed_methods)
-    for i in range(35):
-        store.save_candidate(
-            name=f"candidate-noise-{i:02d}",
-            description="service restart runtime provenance pid manifest import path",
-            body=(
-                "## Trigger\nnoise\n\n## Discriminator\nunqualified\n\n## Short path\nnone\n\n"
-                "## Stop conditions\nalways\n\n## Verification\nnone\n\n## Counterexamples\nnone"
-            ),
-            source_model="test",
-        )
     target = store.save_candidate(
-        name="verified restart provenance",
-        description="verify pid manifest git head and imported module path after restart",
+        name="restart provenance",
+        description="verify pid manifest imported module provenance",
         body=(
-            "## Trigger\nafter service restart\n\n## Discriminator\nlong-lived replacement process\n\n"
-            "## Short path\nverify pid manifest git head imported module path\n\n"
-            "## Stop conditions\nidentity confirmed\n\n## Verification\nmanifest matches\n\n"
-            "## Counterexamples\nstale config trust"
+            "## Trigger\nservice restart\n\n## Discriminator\nloaded code\n\n"
+            "## Short path\nverify pid manifest\n\n## Stop conditions\nidentity confirmed\n\n"
+            "## Verification\nimported module matches\n\n## Counterexamples\nstale config"
         ),
         source_model="test",
     )
-    store.record_qualification(
-        target.method_ref,
-        task_ref="episode:qualification:1:independent",
-        verdict="pass",
-        mechanism="pass",
-        task_benefit="pass",
-        promotion="pass",
-        evaluator="test",
+    retired = seed_methods / "retired-restart"
+    retired.mkdir()
+    (retired / "METHOD.md").write_text(
+        "---\nmethod_id: retired-restart\nname: restart provenance\nstatus: retired\n"
+        "description: verify pid manifest imported module provenance\n---\nold mechanism\n"
     )
-    store.update_status(target.method_ref, "qualified")
-
     settings = Settings(
-        llm_api_key="k",
-        llm_base_url="https://x.invalid/v1",
-        llm_model="m",
-        data_dir=str(tmp_path / "filtered-data"),
-        methods_dir=str(runtime_methods),
-        method_seed_dir=str(seed_methods),
-        extract_enabled=False,
-        learning_plane_enabled=True,
-        embedding_provider="hash",
-        semantic_method_enabled=True,
+        llm_api_key="k", llm_base_url="https://x.invalid/v1", llm_model="m",
+        data_dir=str(tmp_path / "data"), methods_dir=str(runtime_methods),
+        method_seed_dir=str(seed_methods), extract_enabled=False, learning_plane_enabled=True,
+        embedding_provider=embedding_provider, semantic_method_enabled=semantic_enabled,
     )
     engine = build_engine(settings, runtime_role="learning")
-    plane = engine.learning_plane
     try:
+        plane = engine.learning_plane
         assert plane is not None and callable(plane._method_discovery)
-        rows, diag = plane._method_discovery(
-            "service restart verify pid manifest imported module provenance", 6
-        )
-        assert [row["key"] for row in rows] == [target.method_ref]
-        assert all(row["status"] in {"active", "qualified"} for row in rows)
-        assert diag is not None and diag["eligible_method_count"] == 1
-        assert diag["semantic_effective"] is True
+        rows, diag = plane._method_discovery("restart provenance verify pid manifest", 6)
+        assert target.method_ref in {row["key"] for row in rows}
+        assert all(row["status"] != "retired" for row in rows)
+        assert next(row for row in rows if row["key"] == target.method_ref)["status"] == "candidate"
+        assert diag["semantic_requested"] is semantic_enabled
+        assert diag["semantic_effective"] is effective
+        assert store.get(target.method_ref).status == "candidate"
     finally:
         engine.close()
 

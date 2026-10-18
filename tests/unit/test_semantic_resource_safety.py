@@ -30,6 +30,7 @@ class _FakeAPI:
         self.rank_batch_classes: list[str] = []
         self.rank_batch_chunk_sizes: list[int] = []
         self.batch_calls = 0
+        self.batch_inputs: list[str] = []
 
     def embed_with_timeout(self, text: str, *, timeout_s: float, request_class: str):
         self.query_timeouts.append(timeout_s)
@@ -45,6 +46,7 @@ class _FakeAPI:
 
     def embed_batch(self, texts: list[str]):
         self.batch_calls += 1
+        self.batch_inputs.extend(texts)
         if self.prewarm_delay:
             time.sleep(self.prewarm_delay)
         return [[1.0, 0.0] for _ in texts]
@@ -366,6 +368,44 @@ def test_method_startup_warm_makes_existing_candidates_hot(tmp_path):
     )
     assert result.diagnostics["candidate_missing_count"] == 0
     assert result.entries and result.entries[0]["key"] == target.method_ref
+
+
+def test_method_startup_warmup_has_a_hard_candidate_budget_and_status_diversity(tmp_path):
+    methods = MethodStore(tmp_path / "methods")
+    body = (
+        "## Trigger\nafter a change\n\n## Discriminator\ncurrent behavior\n\n"
+        "## Short path\ninspect the source\n\n## Stop conditions\nnew evidence is absent\n\n"
+        "## Verification\nrun the targeted check\n\n## Counterexamples\nsource has not changed"
+    )
+    for status, count in (("candidate", 5), ("active", 1), ("qualified", 1)):
+        for index in range(count):
+            record = methods.save_candidate(
+                name=f"{status} priority method {index}",
+                description=f"Reusable {status} method for a bounded verification task {index}.",
+                body=body,
+            )
+            if status != "candidate":
+                methods.update_status(record.method_ref, status)
+
+    emb = _FakeAPI()
+    retriever = SemanticRetriever(emb, timeout_s=1.0)  # type: ignore[arg-type]
+    retriever.configure_method_dir(tmp_path / "methods")
+
+    diag = retriever.warm_method_store(methods, max_candidates=3)
+
+    semantic_candidates = methods.semantic_candidates()
+    assert len(semantic_candidates) == 7, "the startup budget must not remove candidates from semantic discovery"
+    assert diag["candidate_count"] == 7
+    assert diag["warmup_candidate_count"] == 3
+    assert diag["deferred_candidates"] == 4
+    assert diag["warmup_initial_missing"] == 3
+    assert diag["warmup_remaining_missing"] == 0
+    assert diag["deferred_missing"] == 4
+    assert diag["remaining_missing"] == 4
+    assert len(emb.batch_inputs) == 3, "startup warmup must not embed the entire growing candidate pool"
+    assert any("active priority method 0" in text for text in emb.batch_inputs)
+    assert any("qualified priority method 0" in text for text in emb.batch_inputs)
+    assert any("candidate priority method" in text for text in emb.batch_inputs)
 
 
 def test_new_method_candidate_vectors_after_durable_write(tmp_path):

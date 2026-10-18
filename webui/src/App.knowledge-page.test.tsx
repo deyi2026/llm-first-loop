@@ -222,6 +222,9 @@ describe("知识页：打分徽标与打分明细页签（阶段2）", () => {
     });
     const cards = await screen.findAllByTestId("method-card");
     expect(cards.length).toBe(2);
+    expect(within(cards[0]).getByText("候选（可用）")).toBeTruthy();
+    expect(within(cards[0]).getByRole("combobox", { name: "更改方法状态" })).toBeTruthy();
+    expect(screen.queryByText("流转…")).toBeNull();
     // 打分卡：徽标精确文案（短模型名·标签 置信度）
     const badge = within(cards[0]).getByTestId("score-badge");
     expect(badge.textContent).toBe("27B·显著帮助 0.61");

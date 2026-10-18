@@ -4,9 +4,9 @@
 
 Method Learning lets LFL accumulate reusable **ways of narrowing and acting on a problem** without turning those methods into a second programmatic decision system.
 
-The lifecycle is:
-
-`episode/evidence -> self-distill -> candidate -> reuse/qualification -> qualified -> active -> revise/hold/invalidate/retire`
+Learning produces a candidate from episode/evidence. Candidate methods can immediately
+be discovered, read and used just like experiences. Lifecycle labels describe quality
+and disposition; qualification and promotion are optional metadata work, not use permits.
 
 A Method is distinct from:
 
@@ -94,11 +94,23 @@ The candidate body should contain trigger/discriminator/short path/branches/stop
 
 `method_manage(action=refine)` controls explicit lifecycle transitions. Mechanical fences include:
 
-- `candidate -> active` is forbidden;
-- `candidate -> qualified` requires at least one qualification receipt with `promotion=pass` and runtime Episode provenance; that qualification Episode cannot equal the candidate source Episode ref;
+- Candidate methods may be marked qualified or active directly; neither transition is needed for use.
 - Teacher assets are immutable as teachers; a learned derivative must be a new Candidate.
+- Invalidation and retirement retain their evidence requirements to protect stored assets.
 
-These fences mechanically prevent the source episode itself from authorizing promotion and prevent same-episode self-distillation from silently becoming active policy. They do **not** claim the program can judge qualification quality.
+Independent qualification receipts remain available to record evidence quality. Status does
+not make a method mandatory, establish current applicability, or grant execution authority.
+Foreground search and background Learning recall include all discoverable statuses; explicitly
+retired methods remain available by exact ref but are excluded from ordinary discovery.
+Learning uses keyword recall even when semantic embeddings are disabled or unavailable.
+
+Semantic vectors are an optimization, not a discovery prerequisite. Service startup warms at
+most 128 status-stratified Method vectors synchronously; remaining candidates stay in the full
+semantic/keyword candidate set and may be warmed incrementally in background batches of at most
+32. This bounds startup embedding work without quarantining or hiding candidates. Reflection
+dedup context is independently bounded to 30 briefs / 4,800 characters and reserves space for
+Teacher, active, qualified, candidate, hold and invalidated records so a large candidate pool
+cannot crowd every established method out of the summary.
 
 ## Post-run self-distillation
 
@@ -135,7 +147,8 @@ When a run exact-hydrates `method:<id>` through `search_records`, LFL emits `met
 
 This intentionally avoids claiming that loading means applying. Qualification remains explicit through independent A/B/counterexample evidence.
 
-After the model has actually considered one hydrated Method in a real task, it may call `method_manage(action=record_use)` with one explicit declaration:
+Reading or applying a method does not require a use declaration and never delays the final
+answer for accounting. After actually considering a hydrated Method in a real task, the model may call `method_manage(action=record_use)` with one explicit declaration:
 
 - `applied`: followed the Method substantially as written;
 - `adapted`: used it but materially adapted the path;

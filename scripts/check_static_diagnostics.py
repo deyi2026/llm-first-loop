@@ -126,7 +126,10 @@ def run_analyzer(
         [python, "-m", "ruff", "check", "src", "tests", "scripts", "--output-format=json"]
         if tool == "ruff" else [python, "-m", "pyright", "--outputjson"]
     )
-    completed = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, timeout=240)
+    # Full-tree Pyright on this repository takes about 325s; 240s aborted valid
+    # ratchet runs before diagnostics were available. Keep Ruff's timeout unchanged.
+    analyzer_timeout = 420 if tool == "pyright" else 240
+    completed = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, timeout=analyzer_timeout)
     if completed.returncode not in (0, 1):
         raise RuntimeError(f"{tool} runner crashed (exit={completed.returncode}): {completed.stderr[-300:]}")
     try:
