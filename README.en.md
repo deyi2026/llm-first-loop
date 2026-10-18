@@ -161,4 +161,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) (project philosophy / gates / PR process)
 - Open-source framework-ization roadmap: `docs/ROADMAP-B-20260814.md`
 - Development-process specs (spec/design/tasks) are local CodeArts workflow documents and are not distributed with the open-source repo.
 
-See the [CLI reference](docs/cli.md) for input modes, script output, keyboard controls and display preferences, and the [execution record](docs/plans/PLAN-20261018-cli-ux-execution.md) for qualification status.
+See the [CLI reference](docs/cli.md) for input modes, script output, keyboard controls and display preferences.

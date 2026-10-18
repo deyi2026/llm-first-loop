@@ -86,7 +86,11 @@ def dispatch_query(argv: list[str], options: Any = None) -> int | None:
     try:
         ns = parser.parse_args(rest)
         data, workspace, values = query_context(options)
-        return _execute_query(cmd, ns, data, workspace, values)
+        workspace_explicit = bool(
+            getattr(options, "workspace", None) or values.get("LFL_WORKSPACE_ROOT")
+        )
+        return _execute_query(cmd, ns, data, workspace, values,
+                              workspace_explicit=workspace_explicit)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
     except (OSError, ValueError, TypeError) as exc:
@@ -94,9 +98,10 @@ def dispatch_query(argv: list[str], options: Any = None) -> int | None:
         return 1
 
 
-def _execute_query(cmd: str, ns: Any, data: Path, workspace: Path, values: dict) -> int:
+def _execute_query(cmd: str, ns: Any, data: Path, workspace: Path, values: dict, *,
+                   workspace_explicit: bool = False) -> int:
     if cmd == "sessions":
-        return _sessions(ns, data, workspace, values)
+        return _sessions(ns, data, workspace, values, workspace_explicit=workspace_explicit)
     if cmd in {"identity", "config"}:
         # Whitelist fields, never serialize Settings/env dictionaries or URL credentials.
         report = {"schema": "lfl.cli-identity/v1", "data_dir": str(data),
@@ -117,8 +122,9 @@ def _execute_query(cmd: str, ns: Any, data: Path, workspace: Path, values: dict)
     return 0
 
 
-def _sessions(ns: Any, data: Path, workspace: Path, values: dict) -> int:
-    root = session_root(data, workspace)
+def _sessions(ns: Any, data: Path, workspace: Path, values: dict, *,
+              workspace_explicit: bool = False) -> int:
+    root = session_root(data, workspace, require_registered=workspace_explicit)
     source = values.get("READ_PATH_SOURCE", "session_json")
     if ns.action in {"list", "search"}:
         if ns.action == "search" and not ns.value:

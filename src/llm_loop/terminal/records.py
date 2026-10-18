@@ -14,9 +14,13 @@ from llm_loop.terminal.presentation import safe_text
 from llm_loop.workspace.store import WorkspaceStore
 
 
-def session_root(data: Path, workspace: Path | None = None) -> Path:
+def session_root(data: Path, workspace: Path | None = None, *, require_registered: bool = False) -> Path:
     base = data / "sessions"
-    if workspace is None or not (data / "workspaces.json").exists():
+    if workspace is None:
+        return base
+    if not (data / "workspaces.json").exists():
+        if require_registered:
+            raise ValueError("Workspace is not registered; read-only queries do not register it")
         return base
     store = WorkspaceStore(data)  # data already exists; constructor only reads registry
     store._load(strict=True)

@@ -132,6 +132,21 @@ def test_external_editor_failure_preserves_draft(monkeypatch, tmp_path):
     assert composer.draft == "  original\n中文 👩‍💻  "
 
 
+def test_external_editor_missing_binary_reports_value_error_and_preserves_draft(monkeypatch, tmp_path):
+    from llm_loop.terminal.editor import Composer
+
+    composer = Composer(UISettings(), tmp_path)
+    composer.draft = "exact draft\r\n第二行"
+    monkeypatch.setenv("EDITOR", "missing-editor-for-test")
+    monkeypatch.setattr(
+        "llm_loop.terminal.editor.subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("editor not found")),
+    )
+    with pytest.raises(ValueError, match="Cannot start external editor"):
+        composer.external_edit()
+    assert composer.draft == "exact draft\r\n第二行"
+
+
 def test_corrupt_ui_settings_fall_back_without_starting_a_run(monkeypatch, tmp_path, capsys):
     from llm_loop.core.session import SessionStore
     from llm_loop.terminal.shell import interactive_session
@@ -724,6 +739,41 @@ def test_workspace_queries_validate_native_partition_and_tombstone(tmp_path):
     identity.write_text(json.dumps({"owner": wa.id, "deleted_at": "deleted"}))
     with pytest.raises(ValueError, match="deleted"):
         read_session(data, "s", root=root_a)
+
+
+def test_explicit_workspace_query_refuses_global_fallback_without_registry(tmp_path, capsys):
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    selected_workspace = tmp_path / "workspace"
+    selected_workspace.mkdir()
+    global_sessions = data / "sessions"
+    global_sessions.mkdir(exist_ok=True)
+    (global_sessions / "other-session.json").write_text(
+        json.dumps({"session_id": "other-session", "messages": []}), encoding="utf-8"
+    )
+    options = SimpleNamespace(config=None, data_dir=str(data), workspace=str(selected_workspace),
+                              _query_home=tmp_path)
+    assert dispatch_query(["list", "--json"], options) == 1
+    captured = capsys.readouterr()
+    assert "Workspace is not registered" in captured.err
+    assert "other-session" not in captured.out
+
+
+def test_tasks_query_handles_goal_without_id_without_crashing(monkeypatch, tmp_path):
+    from llm_loop.terminal.shell import task_snapshot
+
+    audit = tmp_path / "audit"
+    (audit / "tasks").mkdir(parents=True)
+    engine = SimpleNamespace(settings=SimpleNamespace(audit_dir=audit), subagent_runner=None)
+    monkeypatch.setattr("llm_loop.terminal.shell.GoalStore.get", lambda *a, **k: {"status": "active"})
+    monkeypatch.setattr(
+        "llm_loop.terminal.shell.TaskStore.list_for_goal",
+        lambda *a, **k: pytest.fail("malformed Goal must not query tasks without a stable id"),
+    )
+    report = task_snapshot(engine, "session")
+    assert report["goal"] == {"status": "active"}
+    assert report["tasks"] == []
+    assert report["tasks_error"] == "Goal record has no valid id"
 
 
 def test_event_log_query_uses_native_replay_with_no_snapshot_write(tmp_path):

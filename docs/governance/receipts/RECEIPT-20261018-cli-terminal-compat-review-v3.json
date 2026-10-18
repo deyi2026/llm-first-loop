@@ -36,5 +36,10 @@
   ],
   "review_answer_sha256": "0a78878175d6fb5758d51456df8accc280b79101d89fb3c3e451e588694d3890",
   "r9_status": "pending",
-  "release_status": "not merged, not pushed, not deployed"
+  "release_status": "not merged, not pushed, not deployed",
+  "scope_warning": "Historical terminal-compatibility review for base_head 9cd3674547451ecec4cabb6baf9533c124bc48e and reviewed_candidate_tree 52a3c25b3defe719c4740c91c4b8d0a5e9321c8f. It does not qualify the latest-main candidate based on 4ba016dac2e59064405f3573059554d7db292ba1.",
+  "subsequent_evidence": {
+    "r9_passed_on_commit": "47b757625766f88232e71ce04aaaee2b312bd0c6",
+    "latest_main_candidate_requires_fresh_review_and_r9": true
+  }
 }

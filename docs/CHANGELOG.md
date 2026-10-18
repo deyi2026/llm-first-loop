@@ -2,20 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
-### CLI input and exit contract (2026-10-18)
+### CLI 输入与退出契约（2026-10-18）
 
-- Single-run CLI exits 1 for a missing explicit session or authoritative incomplete,
-  truncated, projection-failed or cancelled outcome; argument/input errors exit 2.
-  History compaction alone does not imply failure.
-- Use one input source: positional message, `--stdin` or UTF-8 `--message-file`.
-  These conflict with `--interactive`; whitespace-only messages are rejected.
-  Scripts relying on the old ambiguous combinations must choose one mode.
-- An explicit startup `--model` failure stops before the user message runs.
-  The shared `/model` handler returns None only for non-commands; an unexpected
-  None is also a startup failure.
-- Interactive exit status describes the shell session: ordinary exit/EOF returns 0.
-  Each turn displays its own outcome; ending the shell does not certify every turn.
-  Non-interactive approval cannot consume pipeline input.
+- 单次运行遇到指定会话不存在、权威事实表明运行未完整结束、输出截断、投影失败或取消时返回非零；参数/输入错误返回 2。仅发生历史压缩不代表运行失败。
+- 每次运行只能选择一种输入：位置消息、`--stdin` 或 UTF-8 `--message-file`；它们与 `--interactive` 互斥，纯空白消息会被拒绝。此前依赖这些歧义组合的脚本需要明确选择输入模式，这是有意收紧的兼容性变化。
+- 显式启动 `--model` 失败时，不会继续执行用户消息，也不会静默改用默认模型。
+- 交互模式退出码表示终端会话本身；正常退出/EOF 返回 0，每轮结果单独显示，退出 Shell 不代表此前每轮均成功。
+- 非交互审批不会读取或消费管道输入，也不会自动批准受限操作。
 
 ### honesty_rate 口径修复 + 声明审计 cohort 分层 + 引用内容二次抽取修复（2026-09-30）
 

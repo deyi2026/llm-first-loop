@@ -304,7 +304,7 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
     try:
         message = args.message
         if args.stdin:
-            message = sys.stdin.read()
+            message = _read_stdin_exact()
         elif args.message_file is not None:
             with Path(args.message_file).open(encoding="utf-8", newline="") as source:
                 message = source.read()
@@ -353,6 +353,17 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
     finally:
         # P2-4(2026-08-15): 关闭引擎（含 LLM httpx 连接；fail-open 幂等，不遮蔽返回值）
         engine.close()
+
+
+def _read_stdin_exact() -> str:
+    """Read one UTF-8 stdin message without universal-newline rewriting."""
+    stream = sys.stdin
+    binary = getattr(stream, "buffer", None)
+    if binary is None:
+        # In-memory streams used by embedders/tests are already text and have no
+        # newline translation unless their owner explicitly applied it.
+        return stream.read()
+    return binary.read().decode("utf-8")
 
 
 def _prepare_cli_process() -> None:

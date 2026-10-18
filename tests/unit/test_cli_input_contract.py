@@ -74,6 +74,7 @@ def test_incomplete_engine_facts_cannot_be_success(runtime, flag):
 def test_cancelled_engine_result_cannot_be_success(runtime):
     runtime.result.cancel_reason = "user_stop"
     assert cli.main(["hello"]) == 1
+    assert runtime.closed == [True]
 
 
 def test_history_compaction_alone_is_not_a_failed_run(runtime):
@@ -104,6 +105,14 @@ def test_explicit_stdin_is_one_exact_message(runtime, monkeypatch):
     assert runtime.approvals == []
 
 
+def test_stdin_preserves_crlf_and_bare_cr_exactly(runtime, monkeypatch):
+    raw = b"first\r\nsecond\rthird\n"
+    stream = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8", newline=None)
+    monkeypatch.setattr(cli.sys, "stdin", stream)
+    assert cli.main(["--stdin"]) == 0
+    assert [text for _, text in runtime.calls] == [raw.decode("utf-8")]
+
+
 @pytest.mark.parametrize("argv", [
     ["hello", "--stdin"],
     ["--interactive", "--stdin"],
@@ -127,6 +136,7 @@ def test_empty_stdin_does_not_create_a_run(runtime, monkeypatch, content):
     monkeypatch.setattr(cli.sys, "stdin", io.StringIO(content))
     assert cli.main(["--stdin"]) == 2
     assert runtime.engines == []
+    assert runtime.closed == []
 
 
 def test_message_file_preserves_utf8_bytes_as_text(runtime, tmp_path):
@@ -162,6 +172,7 @@ def test_failed_model_switch_stops_before_run(runtime, monkeypatch):
     )
     assert cli.main(["hello", "--model", "bad/model"]) == 1
     assert runtime.calls == []
+    assert runtime.closed == [True]
 
 
 @pytest.mark.parametrize("argv", [
@@ -178,6 +189,7 @@ def test_failed_startup_model_does_not_leave_new_empty_session(runtime, monkeypa
     assert cli.main(argv) == 1
     assert runtime.calls == []
     assert runtime.sessions.list_sessions() == before
+    assert runtime.closed == [True]
 
 
 def test_non_tty_approval_cannot_consume_pipeline_input(monkeypatch):

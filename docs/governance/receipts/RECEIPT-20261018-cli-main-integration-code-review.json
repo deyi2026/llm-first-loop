@@ -47,5 +47,10 @@
     }
   ],
   "answer_sha256": "a984bb5ac2eb65742ffbb67a0657de5b1f3da030efc7ff58db587f1b1d0dd555",
-  "review_receipt_note": "This receipt records the independent review of the integration seam. The current combined tree still requires its own original full R9 and installed-distribution qualification."
+  "review_receipt_note": "Historical receipt for the integration seam only; it does not qualify later main bases or combined trees.",
+  "scope_warning": "This review used base_main 59f51e3e58d802994cf07c998c6ec7c99355e3c4 and integration_tree c216c886fba0a22dcf6fd5e003014a3784fa87f3. It does not qualify the latest-main candidate based on 4ba016dac2e59064405f3573059554d7db292ba1.",
+  "subsequent_evidence": {
+    "r9_passed_on_prior_integration_commit": "9cd3674547451ecec4cabb6baf9533c124bc48e",
+    "latest_main_candidate_requires_fresh_review_and_r9": true
+  }
 }

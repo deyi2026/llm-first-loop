@@ -228,5 +228,9 @@ class Composer:
                 subprocess.run([*command, str(path)], check=True)
             except subprocess.CalledProcessError as exc:
                 raise ValueError(f"External editor exited {exc.returncode}; draft unchanged") from exc
+            except OSError as exc:
+                raise ValueError(
+                    f"Cannot start external editor {command[0]!r}; draft unchanged"
+                ) from exc
             with path.open(encoding="utf-8", newline="") as edited:
                 self.draft = edited.read()

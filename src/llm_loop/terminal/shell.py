@@ -188,7 +188,13 @@ def task_snapshot(engine: Any, sid: str) -> dict:
         goal = GoalStore(audit).get(prefer_session_id=sid, strict_session=True)
         report["goal"] = goal
         if goal is not None and (Path(audit) / "tasks").is_dir():
-            report["tasks"] = [asdict(task) for task in TaskStore(audit).list_for_goal(goal["id"])]
+            goal_id = goal.get("id") if isinstance(goal, dict) else None
+            if isinstance(goal_id, str) and goal_id.strip():
+                report["tasks"] = [
+                    asdict(task) for task in TaskStore(audit).list_for_goal(goal_id)
+                ]
+            else:
+                report["tasks_error"] = "Goal record has no valid id"
     runner = getattr(engine, "subagent_runner", None)
     if runner is not None:
         ok, detail, view = runner.topology_lease_view(parent_id=sid)
