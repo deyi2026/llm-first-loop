@@ -320,8 +320,9 @@ def test_cli_main_finally_closes_engine(monkeypatch):
     # load_settings 在 cli 模块顶层按值导入 → 需 patch llm_loop.cli.load_settings
     monkeypatch.setattr(cli_mod, "load_settings", lambda: object())
     monkeypatch.setattr("llm_loop.factory.build_engine", lambda settings: _FakeEngine())
-    monkeypatch.setattr(cli_mod, "_run_single", lambda engine, text, session_id=None: None)
-    monkeypatch.setattr(cli_mod, "_run_interactive", lambda engine, session_id=None: None)
+    monkeypatch.setattr(cli_mod, "_run_single", lambda engine, text, session_id=None: 0)
+    monkeypatch.setattr(cli_mod, "_run_interactive", lambda engine, session_id=None: 0)
+    monkeypatch.setattr(cli_mod.sys, "stdin", mock.Mock(isatty=lambda: True))
 
     assert cli_mod.main(["hello"]) == 0
     assert closed == [1]

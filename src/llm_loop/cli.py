@@ -15,6 +15,7 @@ import sys
 from collections import Counter
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.core.session import (
@@ -24,70 +25,44 @@ from llm_loop.core.session import (
 )
 from llm_loop.runtime.installation import bundle_root
 from llm_loop.runtime.resolver import apply_to_environ, legacy_env_snapshot
+from llm_loop.terminal.approval import ApprovalBridge
+from llm_loop.terminal.execution import run_turn
+from llm_loop.terminal.presentation import Presenter
+from llm_loop.terminal.queries import HELP, dispatch_query
+from llm_loop.terminal.shell import interactive_session
 from llm_loop.timekeeping import system_local_now
 
 
-def _run_single(engine, text: str, session_id: str | None = None) -> None:
-    """单条消息跑通最小闭环并打印真诚回答（可复用既有会话）.
-
-    M50 启动参数 `--model <provider/model>` 支持: 启动时写入会话 model_override（交互模式即时生效;
-    单条消息模式应用于本次运行的 session 上下文, 与设计 §六 三端一致性对齐）。
-    """
-    session_store: SessionStore = engine.session
-    if session_id:
-        if not session_store.exists(session_id):
-            from llm_loop.feedback.honesty import session_not_found_message
-
-            print(session_not_found_message(session_id))
-            return
-        sid = session_id
-    else:
-        sid = session_store.create()
-    # M50: 启动参数 --model 写会话 override (复用 M48 switch_model 路径，零代码重复)
-    if getattr(engine, "_cli_startup_model", None):
-        _apply_cli_startup_model(engine, session_store, sid, engine._cli_startup_model)
-    # agent_trace_leak 3.7: CLI 人类输入通道签发 ingress 凭据（B2 双因子判定）
-    from llm_loop.core.trace_leak.ingress_token import issue_ingress
-
-    result = engine.run(sid, text, ingress=issue_ingress("cli"))
-    print("\n" + "─" * 60)
-    stats = f"[会话 {sid[:8]}] 轮数={result.rounds} 工具调用={len(result.tool_calls)}"
-    if result.tokens_in or result.tokens_out:
-        from llm_loop.core.loop import format_tokens
-
-        stats += f" tokens={format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
-    print(stats)
-    if getattr(result, "provider_output_truncated", result.truncated):
-        print("[提示] 模型输出被截断，已生成内容保留在对话中")
-    elif getattr(result, "run_incomplete", False):
-        print("[提示] 本轮未完整收口，请查看具体原因")
-    if result.verification_note:
-        print(f"[校验] {result.verification_note.splitlines()[0][:100]}")
-    print(result.final_answer)
-    if result.fallback_receipt:
-        fb = result.fallback_receipt
-        print(f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]" )
-    if result.model_used:
-        from llm_loop.core.loop import format_tokens
-
-        footer = f"—— {result.model_used}"
-        if result.tokens_in or result.tokens_out:
-            footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
-        print(footer)
-    print("─" * 60)
+def _run_single(engine, text: str, session_id: str | None = None) -> int:
+    """Run once through the native stream; preserve the selected stdout protocol."""
+    view = Presenter(
+        getattr(engine, "_cli_output", "text"),
+        stream=not getattr(engine, "_cli_no_stream", False),
+        plain=getattr(engine, "_cli_plain", False),
+    )
+    store = engine.session
+    if session_id and not store.exists(session_id):
+        return view.error(f"Session not found: {session_id}", "session_not_found")
+    sid = session_id or store.create()
+    model = getattr(engine, "_cli_startup_model", None)
+    if model and not _apply_cli_startup_model(engine, store, sid, model):
+        if session_id is None:
+            store.delete(sid)  # No run began; do not leave a new empty session.
+        return view.error("Explicit startup model was not applied; no user run started.", "startup_model_failed")
+    return run_turn(engine, sid, text, view)
 
 
-def _apply_cli_startup_model(engine, session_store, session_id: str, model_ref: str) -> None:
+def _apply_cli_startup_model(engine, session_store, session_id: str, model_ref: str) -> bool:
     """M50 启动参数 `--model` 落地: 复用 M48 切换路径, 写会话 override + 持久化.
 
-    失败不阻断主流程(对齐 design §三 原则 2 如实反馈) — 仅打印失败原因, 后续 run() 仍用默认装配.
+    显式选模失败时不得继续以其他模型运行；调用者负责终止本次启动。
     """
     from llm_loop.introspection.model_command import handle_model_command
 
     ctx = getattr(engine, "correction_ctx", None)
     if ctx is None:
-        print("[--model 启动失败] correction_ctx 缺失; 请改用 /model 交互指令切换。")
-        return
+        print("[--model 启动失败] correction_ctx 缺失; 请改用 /model 交互指令切换。", file=sys.stderr)
+        return False
     sess = session_store.load(session_id)
     session_store.save(sess)  # 确保会话 JSON 落盘存在
     # 强制 reload (load 一次后若 start 内已写入，需拿到 in-memory sess 引用)
@@ -96,11 +71,14 @@ def _apply_cli_startup_model(engine, session_store, session_id: str, model_ref: 
         f"/model {model_ref}", ctx, sess, session_store, audit=None
     )
     if result is not None:
-        print(result.reply)
+        print(result.reply, file=sys.stderr)
+    return result is not None and result.success
 
 
 def _cli_approval_prompt(tool_name: str, args_summary: str) -> bool:
     """T5a: 人工审批一次性 prompt（终端 y/N；无终端/异常 → 拒绝 fail-closed）."""
+    if not sys.stdin.isatty():
+        return False
     try:
         print(
             f"\n[人工审批] AI 请求执行被 EXEC_MODE 限制的操作:\n"
@@ -108,100 +86,25 @@ def _cli_approval_prompt(tool_name: str, args_summary: str) -> bool:
         )
         answer = input("批准执行? [y/N]: ").strip().lower()
         return answer in ("y", "yes")
-    except EOFError:
+    except (EOFError, KeyboardInterrupt):
         return False  # 无终端（重定向等）→ 拒绝
 
 
-def _run_interactive(engine, session_id: str | None = None) -> None:
-    """交互模式（连续会话，验证记忆贯穿；可复用既有会话）.
-
-    M50 三端一致性: 交互模式 /model 命令（设计与飞书桥共用）
-    - /model → 列出当前会话模型 + 目录
-    - /model <ref> → 切换 (provider/model 或裸模型名)
-    - /model default → 清除 override 回装配默认
-    """
-    from llm_loop.introspection.model_command import handle_model_command
-
-    session_store: SessionStore = engine.session
-    if session_id and not session_store.exists(session_id):
-        from llm_loop.feedback.honesty import session_not_found_message
-
-        print(session_not_found_message(session_id))
-        return
-    sid = session_id or session_store.create()
-    # M50: 启动参数 --model 写会话 override (复用 handle_model_command 路径)
-    startup_model = getattr(engine, "_cli_startup_model", None)
-    if startup_model:
-        # 触发 handle_model_command 走切换路径, 复用 M48 同套审计/回执
-        sess = session_store.load(sid)
-        result = handle_model_command(
-            f"/model {startup_model}",
-            engine.correction_ctx,
-            sess,
-            session_store,
-            audit=None,
-        )
-        if result is not None:
-            print(f"[--model 启动] {result.reply}")
-    print(f"LLM-First Core Loop 交互模式（会话 {sid[:8]}，输入 exit 退出；M50: /model [provider/model|default] 切换模型）")
-    # Operator-owned control surface: pending evolution review is checked here,
-    # outside the model loop. Web/Feishu/single-shot runs never get maintenance prose.
-    detector = getattr(engine, "loop_signal_detector", None)
-    if detector is not None:
-        detector.popup_pending_review = True
-    while True:
-        if detector is not None:
-            try:
-                store = getattr(getattr(engine, "correction_ctx", None), "evolution_store", None)
-                detector.check_pending_review(store)
-            except Exception as exc:
-                print(f"[程序异常] 待审演进检查失败（{type(exc).__name__}: {exc}）；聊天输入仍可继续。")
-        try:
-            text = input("\n你> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n再见")
-            break
-        if not text:
-            continue
-        if text.lower() in {"exit", "quit", "退出"}:
-            break
-        # M55: /new·/clear 会话指令拦截 (与飞书桥/Web 快捷命令对齐)
-        if text.strip().lower() in {"/new", "/clear"}:
-            # M52-fix: 新会话继承当前模型覆盖（不回落装配默认）
-            current = session_store.load(sid)
-            sid = session_store.create(model_override=current.model_override)
-            print(f"\n[新会话] 已切换到新会话 {sid[:8]}（旧会话保留，可 list 查看）")
-            continue
-        # M50: /model 指令拦截 (与飞书桥共用同一套处理逻辑)
-        ctx = getattr(engine, "correction_ctx", None)
-        if ctx is not None:
-            sess = session_store.load(sid)
-            cmd_result = handle_model_command(
-                text, ctx, sess, session_store, audit=None
-            )
-            if cmd_result is not None:
-                print(f"\n[模型指令] {cmd_result.reply}")
-                continue
-        # agent_trace_leak 3.7: CLI 交互循环人类输入签发 ingress 凭据
-        from llm_loop.core.trace_leak.ingress_token import issue_ingress
-
-        result = engine.run(sid, text, ingress=issue_ingress("cli"))
-        print(f"\nAI> {result.final_answer}")
-        if result.fallback_receipt:
-            fb = result.fallback_receipt
-            print(f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]" )
-        if result.model_used:
-            from llm_loop.core.loop import format_tokens
-
-            footer = f"—— {result.model_used}"
-            if result.tokens_in or result.tokens_out:
-                footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
-            print(footer)
-        if result.verification_note:
-            print(f"[校验提示] {result.verification_note}")
+def _run_interactive(engine, session_id: str | None = None) -> int:
+    """Interactive shell owns input and presentation; the core owns execution."""
+    store = engine.session
+    if session_id and not store.exists(session_id):
+        print(f"Session not found: {session_id}", file=sys.stderr)
+        return 1
+    sid = session_id or store.create()
+    model = getattr(engine, "_cli_startup_model", None)
+    if model and not _apply_cli_startup_model(engine, store, sid, model):
+        if session_id is None:
+            store.delete(sid)  # Preserve existing sessions; clean up only this new one.
+        return 1
+    return interactive_session(engine, sid)
 
 
-# ── P1 会话管理命令（T26）──
 def _cmd_list(engine, include_archived: bool) -> int:
     metas = engine.session.list_sessions(include_archived=include_archived)
     if not metas:
@@ -331,18 +234,12 @@ def _cmd_faults(args: list[str]) -> int:
 
 def main(argv: list[str] | None = None, *, workspace_root: str | None = None) -> int:
     argv = list(argv) if argv is not None else list(sys.argv[1:])
-    # M63 配置加载统一: CLI 先加载项目 .env（环境变量优先），与 web/feishu 进程配置一致
-    from llm_loop.config import load_env_file
-
-    env_file = legacy_env_snapshot().get("LFL_ENV_FILE")
-    if env_file:
-        load_env_file(env_file)
-    else:
-        load_env_file()
-    # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
-    from llm_loop.introspection.proc_version import record_process_start
-
-    record_process_start("cli")
+    query_root = default_home() if bundle_root() else Path(__file__).resolve().parents[2]
+    query = dispatch_query(argv, argparse.Namespace(
+        config=None, data_dir=None, workspace=workspace_root, _query_home=query_root,
+    ))
+    if query is not None:
+        return query
     # 手动分派子命令（避免 subparsers 吃掉位置参数 message）
     _cmds = {
         "list",
@@ -372,12 +269,20 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
         "faults",  # A-⑤（EVO-20260924-40755734）: 工具故障台账聚合查询（只读，不装配 engine）
     }
     if argv and argv[0] in _cmds:
+        _prepare_cli_process()
         return _dispatch_command(argv, workspace_root=workspace_root)
 
     parser = argparse.ArgumentParser(prog="llm_loop", description="LLM-First Core Loop")
     parser.add_argument("message", nargs="?", help="单条消息（不填则进入交互模式）")
     parser.add_argument("--interactive", action="store_true", help="交互模式")
     parser.add_argument("--session", help="复用指定会话（单条/交互）")
+    parser.add_argument("--stdin", action="store_true", help="标准输入全文作为一个用户消息")
+    parser.add_argument("--message-file", help="UTF-8 文件全文作为一个用户消息")
+    parser.add_argument("--output", choices=("text", "json", "jsonl"), default="text", help="stdout protocol")
+    parser.add_argument("--plain", action="store_true", help="关闭终端增强；保留完整内容")
+    parser.add_argument("--no-stream", action="store_true", help="仅显示最终回答（仍消费真实事件）")
+    parser.add_argument("--theme", choices=("auto", "dark", "light", "high-contrast", "mono"), default=None)
+
     parser.add_argument(
         "--model",
         dest="model",
@@ -385,6 +290,32 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
         help="M50: 启动时为会话装配模型（provider/model 或裸模型名；与 Web /model 一致, 复用同一 session override）",
     )
     args = parser.parse_args(argv)
+    inputs = int(args.message is not None) + int(args.stdin) + int(args.message_file is not None)
+    if inputs > 1 or (args.interactive and inputs):
+        print("请选择一种输入方式：消息、--stdin、--message-file 或 --interactive。", file=sys.stderr)
+        return 2
+    interactive = inputs == 0
+    if interactive and args.output != "text":
+        print("Structured output requires an explicit message, --stdin or --message-file.", file=sys.stderr)
+        return 2
+    if interactive and not (sys.stdin and sys.stdin.isatty()):
+        print("交互模式需要终端；管道输入请使用 --stdin。", file=sys.stderr)
+        return 2
+    try:
+        message = args.message
+        if args.stdin:
+            message = sys.stdin.read()
+        elif args.message_file is not None:
+            with Path(args.message_file).open(encoding="utf-8", newline="") as source:
+                message = source.read()
+    except (OSError, UnicodeError) as exc:
+        print(f"无法读取消息输入（{type(exc).__name__}）；请检查文件和编码。", file=sys.stderr)
+        return 2
+    if not interactive and (message is None or not message.strip()):
+        print("消息输入为空，未启动运行。", file=sys.stderr)
+        return 2
+
+    _prepare_cli_process()
 
     try:
         settings = load_settings()
@@ -394,7 +325,7 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
 
     from llm_loop.factory import build_engine
 
-    engine = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
+    engine: Any = build_engine(settings) if workspace_root is None else build_engine(settings, workspace_root=workspace_root)
     # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
     # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
     # （单条消息模式 / 交互模式退出）。
@@ -405,17 +336,33 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
 
         # T5a: 交互模式注入人工审批回调（EXEC_MODE 拦截项可经终端确认放行；
         # 单条消息模式/web/feishu 不注入 → 拦截即拒绝 fail-closed）
-        if args.interactive:
-            engine.registry.set_approval_callback(_cli_approval_prompt)
+        engine._cli_output = args.output
+        engine._cli_plain = args.plain
+        engine._cli_no_stream = args.no_stream
+        engine._cli_theme = args.theme
+        engine._cli_workspace = workspace_root or str(Path.cwd())
+        if interactive:
+            bridge = ApprovalBridge()
+            engine._cli_approval_bridge = bridge
+            engine.registry.set_approval_callback(bridge)
 
-        if args.message:
-            _run_single(engine, args.message, session_id=args.session)
-            return 0
-        _run_interactive(engine, session_id=args.session)
-        return 0
+        if not interactive:
+            assert message is not None
+            return _run_single(engine, message, session_id=args.session)
+        return _run_interactive(engine, session_id=args.session)
     finally:
         # P2-4(2026-08-15): 关闭引擎（含 LLM httpx 连接；fail-open 幂等，不遮蔽返回值）
         engine.close()
+
+
+def _prepare_cli_process() -> None:
+    """Load selected config and register identity only after input validation."""
+    from llm_loop.config import load_env_file
+    from llm_loop.introspection.proc_version import record_process_start
+
+    env_file = legacy_env_snapshot().get("LFL_ENV_FILE")
+    load_env_file(env_file) if env_file else load_env_file()
+    record_process_start("cli")
 
 
 def _dispatch_command(argv: list[str], *, workspace_root: str | None = None) -> int:
@@ -1330,16 +1277,19 @@ def application_main(argv: list[str] | None = None) -> int:
         else:
             break
     args = parser.parse_args(argv[:boundary])
+    args._query_home = default_home() if bundle_root() else Path(__file__).resolve().parents[2]
     remaining = argv[boundary:]
     if args.version:
         print(version("llm-first-loop"))
         return 0
     if remaining == ["--help"] or remaining == ["-h"]:
-        print("lfl [--data-dir DIR] [--workspace DIR] [--config FILE] COMMAND\n"
-              "Commands: start [--plan] [--json], extensions, chat [CLI arguments], web, paths, check-install, doctor [--json], init [--plan] [--json], upgrade --plan, backup, rollback\n"
-              "Other arguments are passed to the existing LFL CLI.\n"
-              "--version prints the installed version without starting services.")
+        print(HELP)
         return 0
+    query = dispatch_query(remaining, args)
+    if query is not None:
+        return query
+    if remaining[:1] == ["chat"] and remaining[1:] in (["--help"], ["-h"]):
+        return main(remaining[1:])
     if remaining == ["check-install"]:
         report = check_install()
         print(json.dumps(report, ensure_ascii=False, indent=2))

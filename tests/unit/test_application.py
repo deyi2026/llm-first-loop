@@ -197,7 +197,7 @@ def test_export_defaults_follow_bound_data_and_explicit_paths_survive(isolated, 
     capsys.readouterr()
 
 
-@pytest.mark.parametrize("command", ["chat", "list", "web"])
+@pytest.mark.parametrize("command", ["chat", "rename", "web"])
 def test_selected_workspace_reaches_entry_assembly(isolated, monkeypatch, command):
     from llm_loop import factory, web
 

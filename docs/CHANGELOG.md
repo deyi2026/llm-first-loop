@@ -2,6 +2,21 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### CLI input and exit contract (2026-10-18)
+
+- Single-run CLI exits 1 for a missing explicit session or authoritative incomplete,
+  truncated, projection-failed or cancelled outcome; argument/input errors exit 2.
+  History compaction alone does not imply failure.
+- Use one input source: positional message, `--stdin` or UTF-8 `--message-file`.
+  These conflict with `--interactive`; whitespace-only messages are rejected.
+  Scripts relying on the old ambiguous combinations must choose one mode.
+- An explicit startup `--model` failure stops before the user message runs.
+  The shared `/model` handler returns None only for non-commands; an unexpected
+  None is also a startup failure.
+- Interactive exit status describes the shell session: ordinary exit/EOF returns 0.
+  Each turn displays its own outcome; ending the shell does not certify every turn.
+  Non-interactive approval cannot consume pipeline input.
+
 ### honesty_rate 口径修复 + 声明审计 cohort 分层 + 引用内容二次抽取修复（2026-09-30）
 
 - **口径修复（measurement contract）**：`honesty_rate` 旧口径把「声明列表为空→自动通过」的行计入分母，产出的是回答级联合通过率（全量 3069 行 0.7582），会被误读为诚实率/条件率（同数据条件率实为 0.5380，联合的"有声明且一致"率 0.2816——三个数字此前混称）。现改为**条件率**：分母仅含有声明的检查记录（claim-bearing），空声明与历史缺 `declarations` 字段行计 `not_evaluable` 不进分母；其规模由新增辅助指标 `claim_bearing_rate`（近 50 条窗口 0.48——一半是空声明自动通过，此前不可见）单独披露。note 文案同步修正（"X 条声明"实为"X 条检查记录"）。self_eval 报告新增 `evaluator_version` 代次字段。

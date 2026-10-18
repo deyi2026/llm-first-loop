@@ -33,7 +33,7 @@ def test_no_callback_blocked_as_before(tmp_path):
     reg = _registry(exec_mode="blocked", audit_path=tmp_path / "audit" / "approval.jsonl")
     r = _reg_execute(reg)
     assert r.status == ToolResultStatus.BLOCKED
-    assert "人工执行" in r.error_detail
+    assert "人工执行" in (r.error_detail or "")
     # no_callback 审计落盘
     recs = [
         json.loads(line)
@@ -159,11 +159,13 @@ def test_cli_approval_prompt_no_terminal():
 
 def test_cli_approval_prompt_yes():
     """终端输入 y → 批准."""
+    import sys
     from unittest import mock
 
     from llm_loop.cli import _cli_approval_prompt
 
-    with mock.patch("builtins.input", return_value="y"):
-        assert _cli_approval_prompt("execute_command", "cmd") is True
-    with mock.patch("builtins.input", return_value="n"):
-        assert _cli_approval_prompt("execute_command", "cmd") is False
+    with mock.patch.object(sys, "stdin", mock.Mock(isatty=lambda: True)):
+        with mock.patch("builtins.input", return_value="y"):
+            assert _cli_approval_prompt("execute_command", "cmd") is True
+        with mock.patch("builtins.input", return_value="n"):
+            assert _cli_approval_prompt("execute_command", "cmd") is False
