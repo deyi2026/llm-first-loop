@@ -6,7 +6,11 @@ Specification: LFL-CLI评估与需求实现计划-20261018.md, frozen design v2.
 Frozen SHA256: `3bff19001452387db1d1378c1e0f36763c5cfbaad3fba0d3fca107b8bd4b4630`.
 Initial base: `e3424f615b6312c2e6331faa762adeb423003bfa`.
 Initial implementation branch: `feat/cli-ux-20261018`.
-Current integration branch: `integrate/cli-ux-main-20261018`; main base: `302948e3c61499356feaa37ba173b9028f237dc2`.
+Current integration branch: `integrate/cli-ux-main-20261018`; starting main base: `302948e3c61499356feaa37ba173b9028f237dc2`.
+While this branch remained isolated, local `main` advanced to `ab4672009ecb943086775698449ca13e2382fd46`
+(`fix(review-admission): tighten manuscript gate 0.6->0.9 with bounded samples; degrade page cap to truncation`).
+The current branch's merge-base with main is `59f51e3e58d802994cf07c998c6ec7c99355e3c4`, so it does not yet contain
+that newer main commit; this is a separate integration step, not an implicit merge.
 
 **Active integration candidate.** The initial CLI candidate is independently reviewed,
 committed, and R9/install-validated. The current integration base commit
@@ -29,7 +33,7 @@ No additional model policy, semantic success judge, scheduler or conversation st
 | R01 | Authoritative incomplete/truncated/projection/cancel facts drive nonzero status; shell exit versus turn status documented |
 | R02 | Effective interactive approval; non-TTY never consumes pipeline approval |
 | R03 | Exact stdin/UTF-8 file, conflict checks, explicit startup model failure stops |
-| R04 | Native `run_stream`/BackgroundRunner events; exact-generation cancellation; SIGINT one-shot=130 vs interactive round cancel=1 (including worker-error settlement); SIGTERM=143; startup handler is installed before worker start; real foreground `execute_command` SIGTERM and background-job BrokenPipe tests prove process/job termination and unknown-delivery messaging. Current R04 patch has 142 relevant tests passing and independent review PASS (P0/P1/P2=0); original R9 for this new patch is pending. No real Provider canary was used. |
+| R04 | Native `run_stream`/BackgroundRunner events; exact-generation cancellation; SIGINT one-shot=130 vs interactive round cancel=1 (including worker-error settlement); SIGTERM=143; startup handler is installed before worker start; real foreground `execute_command` SIGTERM and background-job BrokenPipe tests prove process/job termination and unknown-delivery messaging. Current R04 patch has 142 relevant tests passing and independent review PASS (P0/P1/P2=0); original full R9 passed on isolated commit `55f78344208d73f7ec91fdc02d33a7ee7a5044d6`. No real Provider canary was used. |
 | R05 | text stdout versus stderr; one JSON object or sequenced JSONL; delivery unknown on broken pipe |
 | R06 | Stateless new help/query namespaces; legacy command-specific pre-bootstrap parsing/help remains to be unified |
 | R07 | Full IDs, search/show/export; native workspace mapping, owner/deletion validation, native event replay; no Engine/bootstrap |
@@ -76,7 +80,7 @@ offline installed smoke: 345 resource hashes, Web health/UI 200, correct workspa
 0 real Provider calls and no source-checkout path. The wheel was **not** signed or
 published. These facts qualify the pre-integration CLI tree, not this new combined tree.
 
-### Current R04 follow-up candidate (not yet accepted)
+### Current R04 follow-up acceptance (isolated integration branch)
 
 - RED confirmed the default noninteractive `run_turn()` SIGINT path returned 1 instead of
   the specified 130. The fix records SIGINT separately from SIGTERM; interactive Ctrl-C
@@ -91,13 +95,15 @@ published. These facts qualify the pre-integration CLI tree, not this new combin
   `uv lock --check --offline` PASS.
 - Modified code paths: `src/llm_loop/terminal/execution.py`,
   `src/llm_loop/terminal/shell.py`, and `tests/unit/test_terminal_cli.py`.
-- The current R04 delta has received a fresh, completed, isolated GLM-5.3 review:
+- The current R04 delta received a fresh, completed, isolated GLM-5.3 review:
   `subagent_cd13a2cc94f2`, result `result-d5f9af8fc0b043f3a1fef89ce8f49a32`, PASS,
   P0/P1/P2=0, reviewed patch SHA
   `fdc62f74480bbd558d31560d3f82141ffc2c54446fc2a457c4eabf9e58481765`.
-  The original full R9 remains pending for this delta; the previous commit's R9 receipt does
-  not qualify the current changes. The one-line R04 status-table update below records this
-  verified review result and does not change implementation code.
+- Original full R9 passed on commit `55f78344208d73f7ec91fdc02d33a7ee7a5044d6`:
+  `scripts/r9_commit.sh` returned EXIT=0, the `ci_gate` full chain returned EXIT=0, the
+  five-rule `r9_commit_check` passed before and after commit, the fixture manifest passed,
+  and final security scans passed. The wrapper's temporary detailed pytest log was not
+  retained, so no new full-suite pass/skip count is claimed here.
 - The first exact incremental review returned PASS/P0=P1=P2=0 and five P3 suggestions.
   The follow-up closes the directly actionable ones: interactive Ctrl-C now has an explicit
   prompt-resumption test; SIGTERM during `runner.start()` or a worker `error` preserves
@@ -137,8 +143,9 @@ new combined tree based on `59f51e3e`; the integration delta below needs its own
 
 ## Next work
 
-1. Complete the current R04 follow-up with exact-tree independent GLM-5.3 PASS and original
-   R9; then commit only to the isolated integration branch.
+1. Reconcile this isolated branch with latest local main `ab4672009` in a new isolated
+   integration candidate. Its current base is `59f51e3e`; do not merge automatically or
+   treat the R04 R9 result as validation of the newer main commit.
 2. Continue mandatory gaps in R06/R08/R09/R13/R14/R16/R18/R19 and the T01-T18 terminal
    compatibility matrix, keeping each implemented/verified/pending state evidence-backed.
 3. Rebuild wheel/sdist from the latest accepted integration commit and rerun fresh-venv
