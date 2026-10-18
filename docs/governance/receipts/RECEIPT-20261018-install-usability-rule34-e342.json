@@ -1,0 +1,95 @@
+{
+  "P0": 0,
+  "P1": 0,
+  "P2": 2,
+  "branch": "integrate/install-usability-main-e342-20261018",
+  "branch_tip_reviewed": "3fa872a58061f07af74d4de8bd93cd276c5c8458",
+  "changed_files": [
+    "docs/installation.md",
+    "src/llm_loop/cli.py",
+    "src/llm_loop/extensions/cli.py",
+    "src/llm_loop/runtime/onboarding.py",
+    "tests/unit/test_application_extensions_cli.py",
+    "tests/unit/test_application_start.py"
+  ],
+  "deploy": false,
+  "gate": "merge",
+  "integration_focused": {
+    "failed": 0,
+    "log_sha256": "934be3ea2bab0d42a70c5851609f310dbbecb20948be85cd6de868ae28ae65ce",
+    "passed": 77
+  },
+  "integration_offline_wheel_smoke": {
+    "fresh_venv": true,
+    "installed_resources_checked": 345,
+    "provider_calls": 0,
+    "receipt_sha256": "71d0426018fb99f5ccffabaa36fe044eb12807b0eca48fc94e112de68db12ab4",
+    "web_health": 200,
+    "web_ui": 200,
+    "wheel_sha256": "24c49fab12d3d3160f95966246c4f1916724d87555a3eefa6e53ad4feb035857"
+  },
+  "integration_quick": {
+    "failed": 0,
+    "log_sha256": "0a9c2435d7aa023a8e929abbfa8062d135891980331321f0611831d826f30df1",
+    "passed": 319
+  },
+  "limits": [
+    "macOS installer still requires Python3.13, uv and local verified wheel",
+    "not a signed/notarized one-click native desktop installer",
+    "extensions CLI handles local packages, not remote marketplace",
+    "automated upgrade prepare/commit/abort or production restore still not implemented",
+    "no real Provider/test of production account"
+  ],
+  "main_sha_after": null,
+  "main_sha_at_review": "e3424f615b6312c2e6331faa762adeb423003bfa",
+  "merge_executed": false,
+  "merge_mode": "ff-only",
+  "original_install_ecosystem_goal_id": "2f012545-4f89-478b-ab87-53668e3004b2",
+  "production_data_changed": false,
+  "production_upgrade": false,
+  "public_release": false,
+  "push": false,
+  "qualification": "PASS",
+  "raw_rule34_review_sha256": "72f237f58ea847c25aeb9617d4c6f0200725107ae49e91a418544dbe4cb3cca1",
+  "real_new_user_start_extensions_journey": {
+    "extensions_local_inspect_install_disable_enable_remove": true,
+    "new_user_install": true,
+    "plugin_data_preserved_after_remove_and_uninstall": true,
+    "receipt_sha256": "32eb8a1c63ee4621b5a42c85322c2c4e463cce06213e0f6903c3a72e7776f5e6",
+    "result": "PASS",
+    "source_commit": "6b8b7699bb945cd78e91d39dd0da21ee11168c14",
+    "start_pty_init_doctor_web_health_200": true
+  },
+  "remaining_P2": [
+    "extensions CLI human-facing output minor inconsistency in one edge path",
+    "--component argparse validation can be clearer"
+  ],
+  "requires_separate_explicit_local_main_merge_authorization": true,
+  "restart": false,
+  "review_isolated_attested": true,
+  "review_material_sha256": "a8de0a758c0fdf602943dc47b32dedb38dd8ca8ba3054b57baf81374844c5569",
+  "review_scope": "Independent reviewer examined only exact code delta at branch_tip_reviewed; this later docs-only receipt is historical evidence, not merged state",
+  "reviewed_code_patch_sha256": "93922ef5d4b28ac06803e324f1d408eda3f71ac59731ba96d1da124440c0be6b",
+  "reviewer": "subagent_da97d8d1f110",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_terminal_count": 1,
+  "rule34_review_text_sha256": "8b58da56db69511c197dfa77eaa2244b041b76f4883f168523b1725173979bd0",
+  "schema": "lfl.rule34.merge_qualification/v1",
+  "source_commit": "6b8b7699bb945cd78e91d39dd0da21ee11168c14",
+  "source_full_R9": {
+    "exit": 0,
+    "failed": 0,
+    "log_sha256": "bdfcd020329353167e6b1f6bcc5fa57658a7d8616f0b42de7c38ff6c74037672",
+    "passed": 9485,
+    "skipped": 146
+  },
+  "source_review": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 2,
+    "qual": "PASS",
+    "receipt_sha256": "bd4d9b3d71ae427ecb6ceec78d3ab0de2d58264142c87c780ec21165e7c4544c",
+    "reviewer": "subagent_34f0db312764"
+  },
+  "verdict": "PASS"
+}
