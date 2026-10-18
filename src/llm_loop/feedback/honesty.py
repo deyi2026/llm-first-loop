@@ -28,6 +28,7 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMHTTPError,
+    LLMStreamInterruptedError,
     LLMTimeoutError,
     is_quota_error,
     parse_provider_error_code,
@@ -118,6 +119,17 @@ def llm_error_text(error: Exception) -> str:
             f"原因: {type(error).__name__}: {error}\n"
             f"建议: 多为瞬态抖动（流被截断/模型异常），请直接重试；"
             f"本次未能获得回答。"
+        )
+    if isinstance(error, LLMStreamInterruptedError):
+        return (
+            "[LLM 调用异常] 事实: 模型响应流中断，本轮已结束。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            f"调用: {error.provider}/{error.model}；耗时 {error.elapsed_s:.2f} 秒；"
+            f"已接收正文 {error.content_chars} 字符、思考 {error.reasoning_chars} 字符；"
+            f"工具调用片段={'有' if error.tool_delta_seen else '无'}；"
+            f"同请求已重试 {error.retries} 次。\n"
+            "边界: HTTP 响应已开始，响应体未完整传输；现有证据不能确定是服务端、网关还是网络链路断开。\n"
+            "建议: 可在当前会话重试或继续；已有工具执行结果需先核对，避免重复执行。"
         )
     if isinstance(error, LLMTimeoutError):
         return (

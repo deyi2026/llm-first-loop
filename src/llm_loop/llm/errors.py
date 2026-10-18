@@ -25,6 +25,22 @@ class LLMNetworkError(LLMError):
     """网络不可达."""
 
 
+class LLMStreamInterruptedError(LLMNetworkError):
+    """A successful HTTP response ended before its body was fully received."""
+
+    def __init__(
+        self, message: str, *, provider: str, model: str, elapsed_s: float,
+        content_chars: int, reasoning_chars: int, tool_delta_seen: bool, retries: int,
+    ) -> None:
+        super().__init__(message, provider=provider)
+        self.model = model
+        self.elapsed_s = max(0.0, elapsed_s)
+        self.content_chars = content_chars
+        self.reasoning_chars = reasoning_chars
+        self.tool_delta_seen = tool_delta_seen
+        self.retries = retries
+
+
 class LLMHTTPError(LLMError):
     """非 2xx 响应（含 400 协议错误）."""
 
@@ -341,6 +357,11 @@ def classify_llm_error(exc: LLMError) -> LLMErrorSemantics:
     if isinstance(exc, LLMTimeoutError):
         return LLMErrorSemantics(
             "timeout", "请求超时", same_identity_retry=True,
+            same_account_other_models=True, independent_provider=True,
+        )
+    if isinstance(exc, LLMStreamInterruptedError):
+        return LLMErrorSemantics(
+            "network", "响应流中断", same_identity_retry=True,
             same_account_other_models=True, independent_provider=True,
         )
     if isinstance(exc, LLMNetworkError):

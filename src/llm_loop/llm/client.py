@@ -50,6 +50,7 @@ from llm_loop.llm.errors import (
     LLMHTTPError,
     LLMNetworkError,
     LLMProjectionError,
+    LLMStreamInterruptedError,
     LLMStreamProviderError,
     LLMTimeoutError,
 )
@@ -2117,11 +2118,14 @@ class LLMClient:
         # EVO-20260824: 大上下文流式断连重试（默认 1 次；P1-C1 后由启动快照可调/关）——
         # 观测: 150K+ 字符上下文下 deepseek 流式偶发 peer closed connection
         # （incomplete chunked read），同请求重试因前缀缓存命中率高、代价极低；
-        # 仅在「尚无任何输出已产出」时重试（已有 content/reasoning/tool delta
-        # 产出则重试会造成 UI 重复/工具重复执行，故不重试）。
+        # 零输出沿用既有重试；2026-10-18 扩展仅普通思考的断连恢复一次，
+        # 明示显示边界。正文、工具片段、签名状态和 timeout 不扩展重试。
         _retry_disconnect = int(self.retry_disconnect)
         _tc_seen = False
         _raw_output_seen = False
+        _non_plain_reasoning_seen = False
+        _response_started = False
+        _attempt_started = time.monotonic()
         _deadline: float | None = None
 
         def _retry_cancelled() -> bool:
@@ -2156,6 +2160,10 @@ class LLMClient:
             _note_settled_response_facts 逐 attempt 记录），不因重试被丢弃。
             """
             nonlocal _tc_seen, _raw_output_seen, _deadline, acc, agg
+            nonlocal _non_plain_reasoning_seen, _response_started, _attempt_started
+            _non_plain_reasoning_seen = False
+            _response_started = False
+            _attempt_started = time.monotonic()
             _raw_output_seen = False
             _deadline = None
             acc = _StreamAcc()
@@ -2176,6 +2184,7 @@ class LLMClient:
             ) as resp:
                 self._raise_for_status(resp, model_id=str(payload["model"]))
                 self._observe_transport_response(resp, model_id=str(payload["model"]))
+                _response_started = True
                 _deadline = _stream_total_deadline(effective_timeout)
                 _observed_model: str | None = None
                 for line in _iter_task_budget_checked_lines(resp):
@@ -2234,7 +2243,15 @@ class LLMClient:
                     _raw_output_seen = _raw_output_seen or any(
                         delta.get(key) for key in (
                             "content", "reasoning_content", "reasoning",
-                            "reasoning_details", "tool_calls",
+                            "reasoning_details", "tool_calls", "function_call",
+                        )
+                    )
+                    # Only explicit plain reasoning fields qualify for recovery.
+                    # Content (including buffered <think>), signed/opaque replay,
+                    # and even partial tool/function calls stay non-replayable.
+                    _non_plain_reasoning_seen = _non_plain_reasoning_seen or any(
+                        delta.get(key) for key in (
+                            "content", "reasoning_details", "tool_calls", "function_call",
                         )
                     )
                     content = delta.get("content")
@@ -2359,18 +2376,35 @@ class LLMClient:
                 self._notify_transport_failure(exc)
                 if _deadline is not None:
                     _check_stream_deadline(_deadline, effective_timeout)
-                # ASSESS-20261008 BUG-12: 重试判定读取失败 attempt 的已投递事实
-                # （acc 在下一 attempt 开始时才重置）——content/reasoning/details/
-                # 工具任一已投递即不重试，避免 UI 重复与工具重复执行。
+                # The GLM 2026-10-18 incident delivered only plain reasoning.
+                # A single same-payload retry may recover it without re-executing
+                # tools. Keep this inside the existing shared transport budget;
+                # timeouts, opaque replay and any content/tool draft remain excluded.
+                _reasoning_only_retry = bool(
+                    _attempt == 1
+                    and acc.reasoning_parts
+                    and not _non_plain_reasoning_seen
+                    and not acc.content_parts
+                    and not _tc_seen
+                    and not acc.finish_reason
+                )
                 if (
                     _attempt <= _retry_disconnect
-                    and not _output_seen()
+                    and (not _output_seen() or _reasoning_only_retry)
                     and not _retry_cancelled()
                 ):
                     logger.warning(
-                        "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
+                        "LLM 流式传输中断（%s），重试 %d/%d: %s",
+                        "仅有思考" if _reasoning_only_retry else "尚无输出",
                         _attempt, _retry_disconnect, exc,
                     )
+                    if _reasoning_only_retry:
+                        _retry_disconnect = min(_retry_disconnect, 1)
+                        # Display-only boundary: never append failed reasoning or
+                        # this program notice to the successful response/wire replay.
+                        yield StreamDelta(reasoning=(
+                            "\n[响应流中断：以上思考未完成；正在按原请求同模型重新请求一次。]\n"
+                        ))
                     # 连接被瞬时拒绝时，毫秒级原地重试无意义（实测两次尝试相隔 2.8ms 同因失败）：
                     # 换连接前短退避；超时类失败不退避，保持既有节奏。
                     if isinstance(exc, httpx.ConnectError):
@@ -2379,6 +2413,15 @@ class LLMClient:
                     # owner again immediately before issuing another request.
                     if not _retry_cancelled():
                         continue
+                if _response_started:
+                    raise LLMStreamInterruptedError(
+                        f"模型响应流中断: {exc}", provider=self.provider,
+                        model=str(payload["model"]),
+                        elapsed_s=time.monotonic() - _attempt_started,
+                        content_chars=sum(map(len, acc.content_parts)),
+                        reasoning_chars=sum(map(len, acc.reasoning_parts)),
+                        tool_delta_seen=_tc_seen, retries=_attempt - 1,
+                    ) from exc
                 raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
             except LLMHTTPError:
                 raise
