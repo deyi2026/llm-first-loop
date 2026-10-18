@@ -553,7 +553,14 @@ _BROWSER_TEXT_ATTRS = ("name", "value_text", "value", "text", "alt", "title")
 _BROWSER_CONTROL_KINDS = frozenset({"button", "link", "option", "checkbox", "radio", "select"})
 _MAX_REVIEW_ARTIFACTS = 24
 _MAX_REVIEW_FILE_BYTES = 1_000_000
-_MANUSCRIPT_MATCH_RATIO = 0.6
+# 0.6 let a page whose editor content had drifted a third from the reviewed
+# manuscript still mint a permit; this gate exists to stop publish-B-after-
+# reviewing-A, so the tolerance shrinks to line-level noise only.
+_MANUSCRIPT_MATCH_RATIO = 0.9
+_CONSISTENCY_SAMPLE_LINES = 5
+_CONSISTENCY_SAMPLE_CHARS = 120
+_PAGE_EXTRA_PROSE_MIN_CHARS = 12
+_BROWSER_TEXT_SEND_CHARS = 20_000
 
 
 def _browser_nodes(raw: dict[str, Any]) -> list[dict[str, Any]]:
@@ -636,21 +643,42 @@ def _comparable_lines(text: str) -> list[str]:
 
 
 def _manuscript_consistency(page_text: str, manuscript_text: str) -> dict[str, Any]:
-    """Does the on-disk manuscript actually match what the editor will publish?"""
+    """Does the on-disk manuscript actually match what the editor will publish?
+
+    The forward match (manuscript -> page) is the hard gate: a permit must not
+    cover a page whose editor content drifted from the reviewed manuscript.
+    The reverse direction is deliberately informational: real publish pages
+    carry toolbar/recommendation prose that never appears in a manuscript, so
+    a hard bidirectional ratio would reject every legitimate page. Extra page
+    prose is instead surfaced as a bounded sample the reviewer must judge.
+    """
     lines = _comparable_lines(manuscript_text)
     flat_page = " ".join(page_text.split())
     if not lines:
         return {"consistent": False, "reason": "manuscript_has_no_comparable_line"}
     if not flat_page:
         return {"consistent": False, "reason": "page_visible_text_empty", "manuscript_lines": len(lines)}
-    matched = sum(1 for line in lines if line in flat_page)
+    unmatched = [line for line in lines if line not in flat_page]
+    matched = len(lines) - len(unmatched)
     ratio = matched / len(lines)
+    flat_manuscript = " ".join(manuscript_text.split())
+    extra_prose = [
+        line for line in _comparable_lines(page_text)
+        if len(line) >= _PAGE_EXTRA_PROSE_MIN_CHARS and line not in flat_manuscript
+    ]
+
+    def _sample(rows: list[str]) -> list[str]:
+        return [row[:_CONSISTENCY_SAMPLE_CHARS] for row in rows[:_CONSISTENCY_SAMPLE_LINES]]
+
     return {
         "consistent": ratio >= _MANUSCRIPT_MATCH_RATIO,
         "manuscript_lines": len(lines),
         "matched_lines": matched,
         "match_ratio": round(ratio, 4),
         "threshold": _MANUSCRIPT_MATCH_RATIO,
+        "unmatched_sample": _sample(unmatched),
+        "page_extra_prose_lines": len(extra_prose),
+        "page_extra_prose_sample": _sample(extra_prose),
     }
 
 
@@ -697,7 +725,18 @@ def _browser_binding(
     encoded = json.dumps(material, ensure_ascii=False, sort_keys=True)
     size = len(encoded.encode("utf-8"))
     if size > _BROWSER_PAGE_MAX_BYTES:
-        raise ValueError(f"browser_page_review_cap_exceeded:{size}>{_BROWSER_PAGE_MAX_BYTES}")
+        # Degrade instead of refusing: budget only the page-context portion.
+        # The permit still binds the FULL visible text (digest above), and the
+        # consistency verdict was computed on the full text, so truncation
+        # never weakens the publish-B-after-reviewing-A gate.
+        sent = text[:_BROWSER_TEXT_SEND_CHARS]
+        material["visible_text"] = sent
+        material["visible_text_truncated"] = True
+        material["visible_text_chars_sent"] = len(sent)
+        encoded = json.dumps(material, ensure_ascii=False, sort_keys=True)
+        size = len(encoded.encode("utf-8"))
+        if size > _BROWSER_PAGE_MAX_BYTES:
+            raise ValueError(f"browser_page_review_cap_exceeded:{size}>{_BROWSER_PAGE_MAX_BYTES}")
     return _digest(_canonical(binding)), encoded
 
 
@@ -837,7 +876,12 @@ class HostReviewAdmission:
                 "finished publishable prose (no placeholders, no TODO, no half sentences) and "
                 "whether publication_controls contains the button that will be clicked. When a "
                 "manuscript block is present, check its consistency verdict: the on-disk manuscript "
-                "must be the text the page will actually publish. Judge the content, not the DOM."
+                "must be the text the page will actually publish. Judge the content, not the DOM. "
+                "If visible_text_truncated is true, page context was cut to fit the review budget; "
+                "the manuscript block (full text, verdict computed on the full page) is the "
+                "authoritative content evidence. Inspect unmatched_sample (manuscript lines absent "
+                "from the page) and page_extra_prose_sample (page prose absent from the manuscript, "
+                "e.g. injected or leftover content) and factor both into the verdict."
             )
         with self._guard:
             if len(self._records) >= self._max_records:

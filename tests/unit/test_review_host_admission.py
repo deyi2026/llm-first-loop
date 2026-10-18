@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ import pytest
 from llm_loop.tools.review_host_admission import (
     HostReviewAdmission,
     _browser_binding,
+    _page_visible_text,
     classify_host_shell,
     is_publication_button,
 )
@@ -498,17 +500,67 @@ def test_article_publish_material_carries_content_not_the_whole_dom() -> None:
     assert len(runner.task.encode("utf-8")) < 78_000
 
 
-def test_article_publish_cap_exceeded_reports_measured_bytes() -> None:
+def test_article_publish_cap_truncates_page_context_instead_of_refusing() -> None:
+    """A giant page used to void the whole admission; budget the context, keep the gate."""
     raw = _editor_page(body="文" * 30_000)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    host.attach_browser_capture(lambda: raw)
+    issued = host.start("author-1", "article_publish", target_name="确认发布")
+    assert issued["accepted"], issued.get("reason")
+    assert '"visible_text_truncated": true' in runner.task
+    assert len(runner.task.encode("utf-8")) < 78_000
+
+
+def test_browser_binding_truncation_keeps_full_text_hash_and_consistency() -> None:
+    """Truncation may shrink the page context, never the bound evidence."""
+    raw = _editor_page(body="文" * 30_000)
+    _sha, material_json = _browser_binding(raw)
+    material = json.loads(material_json)
+    assert material["visible_text_truncated"] is True
+    assert material["visible_text_chars_sent"] == 20_000
+    assert len(material["visible_text"]) == 20_000
+    full_text = _page_visible_text(raw)
+    assert len(full_text) > 30_000
+    assert material["visible_text_sha256"] == hashlib.sha256(full_text.encode("utf-8")).hexdigest()
+
+
+def test_article_publish_cap_backstop_when_content_alone_exceeds_budget(tmp_path: Path) -> None:
+    """Truncation may not hide content: if the manuscript itself cannot fit, refuse."""
+    body = "稿件正文" * 8_000  # one comparable line, 32k chars
+    manuscript = tmp_path / "post.md"
+    manuscript.write_text(body + "\n", encoding="utf-8")
+    raw = _editor_page(body=body)
     host = HostReviewAdmission()
     host.attach_runner(FakeChildRunner())
     host.attach_browser_capture(lambda: raw)
-    issued = host.start("author-1", "article_publish", target_name="确认发布")
+    issued = host.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
     assert not issued["accepted"]
     reason = issued["reason"]
     assert reason.startswith("browser_page_review_cap_exceeded:")
     measured, _, limit = reason.partition(":")[2].partition(">")
     assert int(measured) > int(limit) == 78_000
+
+
+def test_manuscript_threshold_tolerates_line_noise_not_a_fifth_of_the_article(tmp_path: Path) -> None:
+    """0.9: one noisy line in ten still passes; two missing lines must not."""
+    lines = [f"这是第{str(i).zfill(2)}段正文，每一行都足够长从而参与一致性核对。" for i in range(10)]
+    manuscript = tmp_path / "post.md"
+    manuscript.write_text("\n\n".join(lines) + "\n", encoding="utf-8")
+    host9 = HostReviewAdmission()
+    host9.attach_runner(FakeChildRunner())
+    host9.attach_browser_capture(lambda: _editor_page(body="  ".join(lines[:9])))
+    ok = host9.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
+    assert ok["accepted"], ok.get("reason")
+    host8 = HostReviewAdmission()
+    host8.attach_runner(FakeChildRunner())
+    host8.attach_browser_capture(lambda: _editor_page(body="  ".join(lines[:8])))
+    bad = host8.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
+    assert not bad["accepted"]
+    assert bad["reason"].startswith("manuscript_page_text_mismatch:")
+    assert "unmatched_sample" in bad["reason"]
+    assert "page_extra_prose_sample" in bad["reason"]
 
 
 def test_article_publish_binding_ignores_volatile_capture_bookkeeping() -> None:
