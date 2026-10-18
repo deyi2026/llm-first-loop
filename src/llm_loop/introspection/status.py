@@ -393,7 +393,11 @@ class ArchitectureStatusProvider:
                         event_type=ArchitectureEventType.EXCEPTION,
                         fact=f"{item.phase} 同形态故障 {count} 次（{item.error_type}）",
                         reason="工具回执故障重复形态达到提醒阈值",
-                        suggestion="search_records(kind=exception_log) 查该签名完整记录并定位根因",
+                        suggestion=(
+                            f"search_records(kind=method, query=\"{item.phase.removeprefix('tool.')} {item.error_type} 处置\")"
+                            " 找同类故障的已验证处置方法（候选卡与 active 同等可用，读到即可照做）；"
+                            "再 search_records(kind=exception_log) 查该签名完整记录并定位根因"
+                        ),
                     )
                 )
         except Exception:  # noqa: BLE001 — 台账 fail-open

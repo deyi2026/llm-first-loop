@@ -289,7 +289,11 @@ class MethodRecord:
             "ts": self.updated_at or self.created_at,
             "id": self.method_id,
             "key": self.method_ref,
-            "summary": self.name,
+            # 2026-10-18 method-summary-parity：summary 是检索结果里"扫一眼判断相关性"
+            # 的主字段。经验行放自然语言标题；实测 98% 方法卡的 name 是 kebab-case 机器
+            # ID，近 7 天方法深读率 10.5%（经验 53%）。对齐经验：summary 放 description
+            # 首句，机器 ID 保留在 id/key 位；description 为空时回退 name。
+            "summary": (self.description or "").strip()[:120] or self.name,
             "description": self.description[:500],
             "status": self.status,
             "source_model": self.source_model,

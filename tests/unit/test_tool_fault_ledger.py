@@ -207,3 +207,17 @@ def test_tool_fault_repeat_alert_at_threshold(tmp_path: Path):
     provider.record_tool_fault("tool.read_file", "failure", "miss")
     rows3 = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     assert all(r["phase"] != "tool.read_file" or r["error_type"] != "tool_fault_repeat" for r in rows3)
+
+
+def test_tool_fault_repeat_suggestion_points_to_method_first(tmp_path: Path):
+    """2026-10-18 method-parity：重复故障提醒先指向方法库再指向台账（提高方法在故障时刻的可见性）."""
+    captured: list = []
+    provider = ArchitectureStatusProvider(audit_dir=tmp_path, enabled=True)
+    provider.report_event = lambda e: (captured.append(e), True)[1]
+    for _ in range(3):
+        provider.record_tool_fault("tool.web_fetch", "failure", "403 blocked")
+    assert captured, "达阈值应上报事件"
+    suggestion = captured[0].suggestion
+    assert "search_records(kind=method" in suggestion
+    assert suggestion.index("kind=method") < suggestion.index("kind=exception_log")
+    assert "web_fetch" in suggestion

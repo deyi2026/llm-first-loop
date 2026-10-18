@@ -1116,3 +1116,28 @@ def test_hydrated_projection_includes_last_signal_age(tmp_path):
     assert "last_signal_age_days" in cards[0]
     assert cards[0]["last_signal_age_days"] is None
 
+
+def test_discovery_summary_uses_description_not_machine_id() -> None:
+    """2026-10-18 method-summary-parity：行 summary 放 description 首句（对齐经验行的自然语言标题），机器 ID 留在 id/key。"""
+    from llm_loop.methods.store import MethodRecord
+
+    rec = MethodRecord(
+        method_id="vague-referent-x-1a2b3c4d5e",
+        name="vague-referent-x-1a2b3c4d5e",  # 98% 现存卡的 name 即 kebab 机器 ID
+        description="用户以含糊指称引用未给路径的交付物时，先取语义匹配提交的 git log。",
+        status="candidate",
+        body="BODY",
+        path="methods/vague-referent-x-1a2b3c4d5e/method.md",
+        content_hash="abc123",
+    )
+    card = rec.card()
+    assert card["summary"].startswith("用户以含糊指称")
+    assert card["id"] == "vague-referent-x-1a2b3c4d5e"
+    assert card["key"] == "method:vague-referent-x-1a2b3c4d5e"
+    # description 为空时回退 name，不产生空 summary
+    rec2 = MethodRecord(
+        method_id="no-desc-1a2b3c4d", name="no-desc-1a2b3c4d", description="",
+        status="candidate", body="B", path="p", content_hash="h",
+    )
+    assert rec2.card()["summary"] == "no-desc-1a2b3c4d"
+
