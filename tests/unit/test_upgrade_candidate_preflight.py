@@ -125,7 +125,7 @@ def test_invalid_wheel_and_mismatched_distribution_are_rejected(
     assert status == 1 and info["reason"] == "candidate_invalid_metadata"
 
 
-def test_empty_digest_is_invalid_syntax_and_mutation_verbs_are_not_available(
+def test_empty_digest_and_unqualified_mutation_verbs_fail_closed(
     candidate: tuple[Path, str, Path], capsys: pytest.CaptureFixture[str],
 ) -> None:
     wheel, _, home = candidate
@@ -134,14 +134,16 @@ def test_empty_digest_is_invalid_syntax_and_mutation_verbs_are_not_available(
     capsys.readouterr()
     assert cli.application_main(["upgrade", "--plan", "--candidate", str(wheel), "--json"]) == 2
     capsys.readouterr()
+    # The commands are now recognized but are still explicitly ineligible for
+    # production cutover: even the operator's checkbox is not stop evidence.
     assert cli.application_main(["upgrade", "--prepare", "--candidate", str(wheel),
-                                 "--confirm-services-stopped", "--json"]) == 2
-    capsys.readouterr()
+                                 "--confirm-services-stopped", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "service_identity_unverified"
     assert cli.application_main(["upgrade", "--commit", "--receipt", str(home / "fake.json"),
-                                 "--confirm-cutover", "--json"]) == 2
-    capsys.readouterr()
+                                 "--confirm-cutover", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "transaction_unverified"
     assert cli.application_main(["upgrade", "--abort", "--receipt", str(home / "fake.json"),
-                                 "--json"]) == 2
-    capsys.readouterr()
+                                 "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "unknown_transaction"
     assert not (home / "upgrade-staging").exists()
     assert (home / "data/session.jsonl").read_bytes() == b"original-user-data"

@@ -129,6 +129,29 @@ lfl rollback --from /absolute/private/snapshots/before-upgrade --into /absolute/
 `uv`、访问网络、创建 staging 或切换应用程序。正式自动升级的 `prepare`、
 `commit`、`abort` 尚未实现，不能使用这些命令开展生产切换。
 
+**可用的升级前隔离候选管理（无需停机）：**
+
+~~~bash
+lfl upgrade --stage --candidate /absolute/private/llm_first_loop-VERSION-py3-none-any.whl --expected-sha256 SHA256 --json
+# 记录输出的 24 位 stage_id：
+lfl upgrade --verify-stage --id STAGE_ID --json
+lfl upgrade --abort --id STAGE_ID --json
+~~~
+
+`--stage` 只将通过完整性检查的 wheel 复制到应用私有 `upgrade-staging`，
+`--verify-stage` 只读重新计算复制品摘要，`--abort` 仅删除结构和字节均经过复核的
+本应用暂存候选；有新增文件、内容篡改、目录非私有或非本应用交易时**拒绝删除**。
+这三项不启动候选代码、不安装软件、不读取真实密钥、不影响活动版本或用户数据，
+也不要求暂停 Web/Feishu/Learning。它们**不代表自动升级已经执行**：暂存文件仍
+是未获来源认证的隔离字节，不承诺用户已安装到目标版本。`--require-trust` 和
+`--require-data-compatibility` 用于隔离暂存时也会安全拒绝，因为当前没有可信签名
+和完整数据 schema 兼容性证据。
+
+`--prepare`、`--commit` 保留明确的安全阻断：没有权威服务停机和所有外部写入者
+退出证明时只报告拒绝，不改版本指针或生产环境；`--abort --id` 只撤销**未执行过
+切换的隔离候选**，不能恢复已经切换的生产代码。需要实际恢复用户数据时继续使用
+上面的 `backup verify` 和 `rollback --into NEW_DIR`，绝不覆盖原 data 目录。
+
 冷备份及隔离恢复必须显式确认受影响服务已停止；**该参数只是操作者声明，程序尚未证明服务真的
 停止**，运行中的数据复制可能不一致。先通过现有运维/服务控制通道确认停机并协调
 其他写入者，必要时暂缓操作。备份目录和恢复目录必须以前从未存在且父目录可访问，
@@ -179,6 +202,29 @@ lfl extensions remove demo-plugin
 修订号 CAS、禁用状态及实例数据目录。`remove` 只移除安装记录，**不删除插件数据**。
 
 ## 构建与验收
+
+### Apple Silicon 原生 `.pkg` 候选（免用户安装 Python/uv）
+
+构建者可在 **macOS arm64** 上，从已经完成代码审查、完整测试及来源核验的
+wheel 离线构建带 Python 3.13 运行时的自包含安装包。`pkgbuild` 只在私有临时
+目录工作，生成的 `.pkg` 默认**不签名、不公证、不执行系统安装**。安装包包含
+`/Applications/LFL.app` 和双击打开终端向导的 `LFL Start.command`，不用用户
+自行准备 Python、uv、Git 或 Node；内部仍复用 `lfl start` 和原有服务权限。
+
+~~~bash
+python scripts/build_macos_cli_pkg.py --wheel /absolute/private/llm_first_loop-VERSION-py3-none-any.whl --expected-sha256 WHEEL_SHA256 --out-dir /absolute/never-before-existing/pkg-output
+python scripts/verify_macos_cli_pkg.py --pkg /absolute/pkg-output/LFL-VERSION-macos-arm64-unsigned.pkg --expected-sha256 PKG_SHA256 --report /absolute/private/pkg-smoke.json
+~~~
+
+验证器会**仅解包到临时目录**、检查应用结构、跨目录独立 Python 可执行、
+`lfl --version`、`check-install`、首次启动只读预览，以及模拟配置下真实 Web
+health/UI 200；只停止验证时由它启动的服务。不得以此替代真实系统安装测试。
+
+**正式面向公众发行的阻断条件：**需经过经授权的 Apple Developer ID
+代码签名、Installer 签名、公证和 Gatekeeper 验证，复核安装目标碰撞、卸载后
+用户数据保留及签名成品真实安装；没有签名密钥时，此 `.pkg` 仅是本地验收候选，
+**禁止声称已上架、已公证或已公开发布**。当前仅 arm64；Intel、Windows
+和其他架构未验收。
 
 构建者需要 Node 与 Python 构建环境：
 

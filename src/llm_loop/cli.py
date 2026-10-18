@@ -1358,10 +1358,101 @@ def application_main(argv: list[str] | None = None) -> int:
             upgrade_parser.add_argument("--expected-sha256")
             upgrade_parser.add_argument("--require-trust", action="store_true")
             upgrade_parser.add_argument("--require-data-compatibility", action="store_true")
+            upgrade_parser.add_argument("--stage", action="store_true", help="仅隔离保存经摘要校验的候选包")
+            upgrade_parser.add_argument("--verify-stage", action="store_true", help="只读复核先前隔离的候选包")
+            upgrade_parser.add_argument("--prepare", action="store_true", help="受控升级事务：缺少真实停机资格时安全拒绝")
+            upgrade_parser.add_argument("--commit", action="store_true", help="生产切换：无权威事务资格时安全拒绝")
+            upgrade_parser.add_argument("--abort", action="store_true", help="仅撤销已核验的本应用隔离候选")
+            upgrade_parser.add_argument("--id", help="隔离候选的短 ID，不接受文件路径")
+            upgrade_parser.add_argument("--receipt", help="受控事务回执（不等同隔离候选 ID）")
+            upgrade_parser.add_argument("--snapshot")
+            upgrade_parser.add_argument("--into")
+            upgrade_parser.add_argument("--confirm-services-stopped", action="store_true")
+            upgrade_parser.add_argument("--confirm-cutover", action="store_true")
             try:
                 options = upgrade_parser.parse_args(remaining[1:])
             except SystemExit as exc:
                 return exc.code if isinstance(exc.code, int) else 2
+            actions = (options.stage, options.verify_stage, options.prepare,
+                       options.commit, options.abort, options.plan)
+            if sum(bool(value) for value in actions) > 1:
+                return 2
+            if any((options.stage, options.verify_stage, options.prepare,
+                    options.commit, options.abort)):
+                from llm_loop.runtime.upgrade_stage import inspect_stage, stage_candidate
+
+                bundle = bundle_root()
+                home = default_home() if bundle else Path(__file__).resolve().parents[2]
+                if options.stage:
+                    if (options.candidate is None or options.expected_sha256 is None
+                            or len(options.expected_sha256) != 64
+                            or any(c not in "0123456789abcdefABCDEF" for c in options.expected_sha256)
+                            or any((options.id, options.receipt, options.snapshot,
+                                    options.into, options.confirm_services_stopped,
+                                    options.confirm_cutover))):
+                        return 2
+                    if options.require_trust or options.require_data_compatibility:
+                        status, report = 1, {"staged": False, "reason": (
+                            "candidate_trust_unknown" if options.require_trust
+                            else "schema_compatibility_unknown")}
+                    elif bundle is None:
+                        status, report = 1, {"reason": "installed_bundle_required", "staged": False}
+                    else:
+                        status, report = stage_candidate(
+                            home=home, candidate=options.candidate,
+                            expected=options.expected_sha256,
+                            current_version=version("llm-first-loop"),
+                        )
+                elif options.verify_stage or options.abort:
+                    if (options.candidate or options.expected_sha256 or options.snapshot
+                            or options.into or options.confirm_cutover
+                            or options.confirm_services_stopped or options.require_trust
+                            or options.require_data_compatibility):
+                        return 2
+                    if not options.id or options.receipt:
+                        status, report = 1, {"reason": "unknown_transaction", "valid": False}
+                    elif bundle is None:
+                        status, report = 1, {"reason": "installed_bundle_required", "valid": False}
+                    else:
+                        status, report = inspect_stage(
+                            home=home, stage_id=options.id, abort=options.abort,
+                        )
+                elif options.prepare:
+                    # A cold-stop checkbox does not attest every service and
+                    # JSONL/SQLite writer. Never stage or install here.
+                    if options.snapshot:
+                        from llm_loop.runtime.install_recovery import (
+                            BackupRejectedError,
+                            verify_backup,
+                        )
+
+                        try:
+                            verified = verify_backup(options.snapshot)
+                        except (BackupRejectedError, OSError, ValueError):
+                            verified = {"valid": False}
+                        reason = ("service_identity_unverified" if verified["valid"]
+                                  else "snapshot_unverified")
+                    else:
+                        reason = "service_identity_unverified"
+                    status, report = 1, {"reason": reason, "prepared": False,
+                                         "active_version_changed": False}
+                else:
+                    status, report = 1, {"reason": "transaction_unverified",
+                                         "committed": False, "active_version_changed": False}
+                if options.json:
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
+                else:
+                    if status == 0 and options.abort:
+                        print("隔离候选已撤销；安装、备份与用户数据未改变。")
+                    elif status == 0 and options.verify_stage:
+                        print("隔离候选完整性通过；尚未安装或切换版本。")
+                    elif status == 0:
+                        print("候选 wheel 已隔离保存；尚未安装或切换版本。")
+                    else:
+                        print("升级操作已安全拒绝（" + report.get("reason", "") + "）")
+                    if report.get("stage_id"):
+                        print("候选 ID：" + report["stage_id"])
+                return status
             if options.candidate is not None or options.expected_sha256 is not None or (
                 options.require_trust or options.require_data_compatibility
             ):

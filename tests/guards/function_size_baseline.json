@@ -1025,6 +1025,15 @@
           "src/llm_loop/introspection/event_scan_cache.py"
         ],
         "rationale": "settlement event_logs 增量扫描缓存（.scan_cache/events_*.json，tmp+replace 原子写，flock 并发，5s 抢锁失败 fail-open 用旧快照）；可删重建派生物非真值源，损坏冷启全量重建；缓解 GB 级 event_logs 全量重扫导致的 60s settlement 超时（2026-10-17 事故）。"
+      },
+      "install_upgrade_quarantine": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "installation",
+        "paths": [
+          "src/llm_loop/runtime/upgrade_stage.py"
+        ],
+        "rationale": "LFL 用户显式 upgrade --stage 创建的私有候选 wheel+stage.json 是隔离候选 verify/abort 的短期权威身份；按预期 SHA 重读复制字节，wheel 与 manifest O_EXCL/0600+fsync，stage 目录 0700，verify/abort 再核完整库存和内容，拒绝外来文件、symlink 和篡改，永不触碰活动版本或用户备份。阶段仅是隔离字节存储，不是已授权升级事务或可信签名；并发/断电故障专项及真实签名资格尚未验证，T2 observe 不宣称完整合规。"
       }
     },
     "write_exemptions": {
