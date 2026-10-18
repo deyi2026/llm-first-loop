@@ -16,12 +16,16 @@ import pytest
 
 from llm_loop.extensions.store import ExtensionStore
 from llm_loop.tools.mcp_assembly import (
+    LAYER_FILE_USER,
+    LAYER_FILE_WORKSPACE,
     LAYER_LEGACY,
     LAYER_USER,
     LAYER_WORKSPACE,
+    FileConfigSource,
     _reset_assembly_state_for_tests,
     assemble_mcp_tools,
     assembly_catalog_epoch,
+    default_file_sources,
     effective_mcp_servers,
     mcp_catalog_changed_since_assembly,
 )
@@ -204,3 +208,150 @@ def test_sse_entry_in_package_binds_legacy_transport(tmp_path, reset_assembly):
     identities = {s.identity for s in plan.servers}
     assert any(i.startswith("sse|") for i in identities)
     assert any(i.startswith("http|") for i in identities)
+
+
+# ────────────────────────── P0-1：文件配置层 ──────────────────────────
+
+
+def _file_source(tmp_path: Path, layer: str, servers: dict) -> FileConfigSource:
+    """构造文件配置源：workspace 层写 tmp_path/.mcp.json，user 层写独立目录."""
+    base = tmp_path / ("ws-root" if layer == LAYER_FILE_WORKSPACE else "user-root")
+    path = base / (".mcp.json" if layer == LAYER_FILE_WORKSPACE else "mcp.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mcpServers": servers}))
+    return FileConfigSource(
+        path=path,
+        layer=layer,
+        base_dir=base,
+        data_dir=tmp_path / "data",
+    )
+
+
+def test_file_layers_beat_installed_and_legacy(tmp_path):
+    """五层优先级：file@workspace > file@user > installed > legacy（同身份不叠加）."""
+    store = ExtensionStore(tmp_path / "ext")
+    _write_pkg(
+        tmp_path / "pkg",
+        "demo-plugin",
+        {"shared": {"type": "http", "url": "http://127.0.0.1:9000/mcp"}},
+    )
+    store.install(tmp_path / "pkg", source="local", expected_revision=0)
+    identity = {"type": "http", "url": "http://127.0.0.1:9000/mcp"}
+    legacy = json.dumps([{"name": "shared", **identity}])
+    sources = (
+        _file_source(tmp_path, LAYER_FILE_USER, {"shared": dict(identity)}),
+        _file_source(tmp_path, LAYER_FILE_WORKSPACE, {"shared": dict(identity)}),
+    )
+
+    plan = effective_mcp_servers(store, legacy, sources)
+    assert len(plan.servers) == 1, "五层同身份仍只生效一台"
+    assert plan.servers[0].layer == LAYER_FILE_WORKSPACE
+    conflict = plan.conflicts[0]
+    assert conflict.winner_layer == LAYER_FILE_WORKSPACE
+    assert conflict.loser_layers == [LAYER_FILE_USER, LAYER_USER, LAYER_LEGACY]
+
+
+def test_file_entry_type_inference_ecosystem_compat(tmp_path):
+    """生态兼容：无 type 字段按 command/url 推断（Cursor/Claude Desktop 风格）."""
+    sources = (
+        _file_source(
+            tmp_path,
+            LAYER_FILE_WORKSPACE,
+            {
+                "local": {"command": "python3", "args": ["-m", "some.server"]},
+                "remote": {"url": "http://127.0.0.1:9100/mcp"},
+                "broken": {"command": ""},
+            },
+        ),
+    )
+    plan = effective_mcp_servers(None, "[]", sources)
+    by_name = {s.name: s.entry for s in plan.servers}
+    assert by_name["local"]["type"] == "stdio"
+    assert by_name["local"]["command"] == "python3"
+    assert by_name["local"]["enabled"] is True
+    assert by_name["remote"]["type"] == "http"
+    assert "broken" not in by_name, "缺 command/url 且无 type 的条目隔离跳过"
+
+
+def test_file_entry_explicit_disabled(tmp_path):
+    """文件条目 enabled=false：进 plan（register 侧跳过），字段级可见."""
+    sources = (
+        _file_source(
+            tmp_path,
+            LAYER_FILE_USER,
+            {"paused": {"type": "stdio", "command": "echo", "enabled": False}},
+        ),
+    )
+    plan = effective_mcp_servers(None, "[]", sources)
+    assert len(plan.servers) == 1
+    assert plan.servers[0].entry["enabled"] is False
+
+
+def test_file_bad_json_isolated_fail_open(tmp_path):
+    """坏 JSON / 缺 mcpServers / 条目非对象：整层或单条隔离，不影响其他层."""
+    bad = FileConfigSource(
+        path=tmp_path / "ws-root" / ".mcp.json",
+        layer=LAYER_FILE_WORKSPACE,
+        base_dir=tmp_path / "ws-root",
+        data_dir=tmp_path / "data",
+    )
+    bad.path.parent.mkdir(parents=True, exist_ok=True)
+    bad.path.write_text("{not json")
+    good = _file_source(tmp_path, LAYER_FILE_USER, {"echo": {"type": "stdio", "command": "echo"}})
+
+    plan = effective_mcp_servers(None, "[]", (bad, good))
+    assert [s.name for s in plan.servers] == ["echo"]
+    assert plan.servers[0].layer == LAYER_FILE_USER
+
+    bad.path.write_text(json.dumps({"servers": {}}))  # 缺 mcpServers 键
+    plan = effective_mcp_servers(None, "[]", (bad, good))
+    assert [s.name for s in plan.servers] == ["echo"]
+
+    bad.path.write_text(json.dumps({"mcpServers": {"x": "not-an-object", "y": {"type": "stdio", "command": "cat"}}}))
+    plan = effective_mcp_servers(None, "[]", (bad, good))
+    assert {s.name for s in plan.servers} == {"echo", "y"}
+
+
+def test_file_plugin_root_expansion(tmp_path):
+    """文件层变量展开：${PLUGIN_ROOT}=该层 base_dir，${PLUGIN_DATA}=data_dir."""
+    sources = (
+        _file_source(
+            tmp_path,
+            LAYER_FILE_WORKSPACE,
+            {
+                "local": {
+                    "type": "stdio",
+                    "command": "${PLUGIN_ROOT}/bin/server",
+                    "args": ["--data", "${PLUGIN_DATA}"],
+                }
+            },
+        ),
+    )
+    plan = effective_mcp_servers(None, "[]", sources)
+    entry = plan.servers[0].entry
+    assert entry["command"] == str(tmp_path / "ws-root" / "bin" / "server")
+    assert entry["args"] == ["--data", str(tmp_path / "data")]
+
+
+def test_default_file_sources_modes(tmp_path):
+    """MCP_FILE_CONFIG 档位：off=()；user=仅用户级；auto/未知=两层."""
+    assert default_file_sources(tmp_path / "data", tmp_path, mode="off") == ()
+    assert default_file_sources(tmp_path / "data", tmp_path, mode="OFF") == ()
+    user_only = default_file_sources(tmp_path / "data", tmp_path, mode="user")
+    assert [s.layer for s in user_only] == [LAYER_FILE_USER]
+    both = default_file_sources(tmp_path / "data", tmp_path, mode="")
+    assert [s.layer for s in both] == [LAYER_FILE_USER, LAYER_FILE_WORKSPACE]
+    assert default_file_sources(tmp_path / "data", tmp_path, mode="bogus") == both, "未知值按 auto 处理"
+
+
+def test_missing_file_is_empty_layer_not_error(tmp_path):
+    """文件不存在=空层（默认无 .mcp.json 的环境行为完全不变）."""
+    ghost = FileConfigSource(
+        path=tmp_path / "nope" / ".mcp.json",
+        layer=LAYER_FILE_WORKSPACE,
+        base_dir=tmp_path,
+        data_dir=tmp_path / "data",
+    )
+    plan = effective_mcp_servers(None, "[]", (ghost,))
+    assert plan.servers == []
+    assert plan.conflicts == []

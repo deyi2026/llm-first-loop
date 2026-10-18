@@ -24,7 +24,8 @@
 | `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数。**坑**：工具密集任务（读→改→验证）20 轮常触顶（2026-08-14 已 20→40）；达 80% 时程序注入 `[轮数预警]`，AI 可经 adjust_strategy 调大（白名单，硬上限 500） |
 | `EXEC_SANDBOX` | none | bash 沙箱（P3-3）：`bwrap`=bubblewrap 隔离 execute_command（只读系统目录/独立命名空间/工作区可写，回执如实标注）；显式开启而 bwrap 缺失 → fail-closed 命令不执行；空=none 不启用 |
 | `LLM_WIRE_PROTOCOL` | openai | 默认 client 线协议（P3-5）：openai / anthropic / google；provider 模型条目可用 `wire_protocol` 元数据逐模型覆盖 |
-| `MCP_SERVERS` | — | MCP stdio 服务器 JSON 数组（P3-1）：`[{"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]}]`；工具以 `mcp.<server>.<tool>` 名注册（schema 透传、五态包装、超时/审计复用；单服务器失败 fail-open） |
+| `MCP_SERVERS` | — | MCP 服务器 JSON 数组（legacy，P3-1）：`[{"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]}]`；支持 stdio 与 http/sse（`type`/`url`/`headers`）。**注册名是下划线形式** `mcp_<server>_<tool>`（点号 `mcp.<server>.<tool>` 仅为内部原始身份，2026-10-19 勘误；同名冲突按身份 digest 消歧）。schema 透传、五态包装、超时/审计复用；单服务器失败 fail-open。**迁移**：多行长 JSON 建议改用文件配置（见 `MCP_FILE_CONFIG`），可版本管理且支持 Cursor/VS Code/Claude Desktop 格式直接粘贴 |
+| `MCP_FILE_CONFIG` | auto | MCP 文件配置开关（P0-1）：空/auto=读 `~/.lfl/mcp.json`（用户级）+ 项目根 `.mcp.json`（工作区级）两层；`user`=仅用户级；`off`=均不读。**安全**：clone 不可信仓库时设 `off` 或 `user`，防其 `.mcp.json` 自动拉起任意进程 |
 | `WEB_VISION_BACKEND` | provider | 图片识别后端：provider（默认，注册表 multimodal 模型，如 Kimi k3）/ arkcli（团队多模态工具，需 `arkcli auth` 登录）/ minimax（旧路径，仅显式 opt-in） |
 | `WEB_VISION_MODEL` | — | 视觉模型指定：`provider/model`（如 `kimi/k3`）；缺省扫描注册表首个 multimodal 模型 |
 | `LLM_MAX_TOKENS` | 8192 | 单次 LLM 输出预算（token）。思考链模型思考也占此预算——默认 4096 时思考占大半、最终分析被截断（2026-08-15 现场）。**provider 级覆盖**：`data/providers.json` 条目加 `"max_tokens": 16384`（长分析模型放大） |
@@ -147,6 +148,49 @@
 | `SKILLS_DIR` | ./skills | 插件化 Skill 目录（skills/<name>/SKILL.md；不存在=零行为） |
 | `METHOD_SEED_DIR` | ./methods | reviewed Method/Teacher seed 资产目录（tracked） |
 | `METHODS_DIR` | ./data/methods | runtime-learned Method candidate/lifecycle 状态目录（默认被 data/ 忽略，不自动发布） |
+
+## 十二、MCP 配置（文件配置 + legacy 环境变量）
+
+### 优先级（同名/同身份服务器，高者胜，其余记冲突不叠加）
+
+| 层 | 来源 | 说明 |
+|:---|:---|:---|
+| `file@workspace` | 项目根 `.mcp.json` | 工作区显式；linked release snapshot 运行时从主 worktree（`git_common_root`）读 |
+| `file@user` | `~/.lfl/mcp.json` | 用户级显式；`${PLUGIN_ROOT}` 展开为 HOME |
+| `installed@workspace` | `data/extensions` 安装实例 | scopes 含 workspace |
+| `installed@user` | `data/extensions` 安装实例 | user 作用域 |
+| `legacy:MCP_SERVERS` | 环境变量 | 旧入口，保留兼容 |
+
+### 文件格式（Cursor / VS Code / Claude Desktop 兼容）
+
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": { "USER_AGENT": "lfl-demo" }
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" },
+      "enabled": true
+    },
+    "paused": { "type": "stdio", "command": "echo", "enabled": false }
+  }
+}
+```
+
+- `type` 可省略：有 `command` 推断 stdio，有 `url` 推断 http（生态惯例）
+- `enabled` 缺省 true；显式 `false` 该条不装配
+- 坏文件/坏条目隔离跳过（fail-open），不影响其他层
+- `${PLUGIN_ROOT}` = 该配置文件所在项目根（用户级为 HOME）；`${PLUGIN_DATA}` = DATA_DIR；headers 原样透传不做变量展开
+
+### 安全注意
+
+项目根 `.mcp.json` 随仓库走：clone 不可信仓库前设 `MCP_FILE_CONFIG=user`（或 `off`），
+防止其声明的 stdio 命令被自动拉起。LFL 无连接器批准 UI，此档位即供应链防线。
 
 ---
 

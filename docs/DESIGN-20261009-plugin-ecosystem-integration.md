@@ -68,6 +68,7 @@
 当前项目依赖未声明 MCP SDK、完整 YAML parser 或 JSON Schema validator。本设计不假定安装某个 SDK 就能覆盖最新协议；依赖选择须在实现阶段做资格验证。
 
 `docs/configuration.md` 仍写点号形式的 MCP 注册名，而源码使用下划线形式。后续实现需同步修正文档，并保留历史工具名迁移说明。
+（2026-10-19 已修正：configuration.md 明确注册名为下划线 `mcp_<server>_<tool>`、点号仅为内部原始身份并附迁移说明；同日 P0-1 落地文件配置层 `file@workspace`/`file@user` 与 `MCP_FILE_CONFIG` 开关。）
 
 ## 2. 需求目标、使用场景与范围
 

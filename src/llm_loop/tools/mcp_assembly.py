@@ -4,10 +4,16 @@
 （MCP_SERVERS）；同一精确身份冲突必须报告，不静默叠加；覆盖不隐式扩大
 授权；保留每个 effective 字段的 provenance。
 
-层次实现（当前权威源）：
+层次实现（当前权威源，rank 高者胜）：
+- file@workspace：项目根 .mcp.json（工作区显式文件配置；Cursor/VS Code/
+  Claude Desktop 兼容 mcpServers 格式）
+- file@user：~/.lfl/mcp.json（用户级显式文件配置）
 - installed@workspace：扩展安装实例（store 记录 scopes 含 workspace）
 - installed@user：扩展安装实例（user 作用域）
 - legacy:MCP_SERVERS：旧环境变量配置（列表 JSON）
+
+文件配置开关 MCP_FILE_CONFIG：空/auto=两层文件配置均读（单 operator
+信任模型）；user=仅用户级；off=均不读（clone 不可信仓库时的供应链防护）。
 
 身份语义：精确身份 = (name, transport, 端点规范形)——http 为
 scheme://netloc/path；stdio 为 command+argv。同名不同端点同样不得叠加
@@ -37,12 +43,36 @@ from llm_loop.tools.mcp_client import (
 
 logger = logging.getLogger(__name__)
 
+LAYER_FILE_WORKSPACE = "file@workspace"
+LAYER_FILE_USER = "file@user"
 LAYER_WORKSPACE = "installed@workspace"
 LAYER_USER = "installed@user"
 LAYER_LEGACY = "legacy:MCP_SERVERS"
-_LAYER_RANK = {LAYER_WORKSPACE: 2, LAYER_USER: 1, LAYER_LEGACY: 0}
+_LAYER_RANK = {
+    LAYER_FILE_WORKSPACE: 5,
+    LAYER_FILE_USER: 4,
+    LAYER_WORKSPACE: 3,
+    LAYER_USER: 2,
+    LAYER_LEGACY: 1,
+}
 
 _MCP_FILE = "mcp.json"
+_USER_CONFIG_DIR = ".lfl"
+_USER_CONFIG_FILE = "mcp.json"
+
+
+@dataclass(frozen=True)
+class FileConfigSource:
+    """文件配置层描述：路径 + 层名 + 变量展开基准.
+
+    base_dir 决定该层中 ${PLUGIN_ROOT} 的展开值（项目级=项目根；用户级=HOME）；
+    data_dir 决定 ${PLUGIN_DATA} 展开值（与安装实例共用运行时数据目录）。
+    """
+
+    path: Path
+    layer: str  # LAYER_FILE_WORKSPACE / LAYER_FILE_USER
+    base_dir: Path
+    data_dir: Path
 
 
 @dataclass
@@ -272,9 +302,116 @@ def _legacy_servers(legacy_raw: str) -> list[LayeredServer]:
     return out
 
 
-def effective_mcp_servers(store: Any = None, legacy_raw: str = "") -> AssemblyPlan:
-    """合并三层候选：同名（含同精确身份）只生效最高优先层，其余报告不叠加."""
+def default_file_sources(
+    data_dir: Path,
+    project_root: Path,
+    mode: str = "",
+) -> tuple[FileConfigSource, ...]:
+    """默认文件配置层：MCP_FILE_CONFIG 过滤后的 (user, workspace) 顺序.
+
+    mode：空/auto/all/on=true=两层全读；user=仅 ~/.lfl/mcp.json；
+    off/none=均不读。未知值告警并按 auto 处理（fail-open 与其余层一致）。
+    """
+    normalized = (mode or "").strip().lower()
+    if normalized in {"off", "disabled", "none", "false"}:
+        return ()
+    home = Path.home()
+    user = FileConfigSource(
+        path=home / _USER_CONFIG_DIR / _USER_CONFIG_FILE,
+        layer=LAYER_FILE_USER,
+        base_dir=home,
+        data_dir=data_dir,
+    )
+    workspace = FileConfigSource(
+        path=project_root / ".mcp.json",
+        layer=LAYER_FILE_WORKSPACE,
+        base_dir=project_root,
+        data_dir=data_dir,
+    )
+    if normalized in {"user", "user-only"}:
+        return (user,)
+    if normalized and normalized not in {"", "auto", "all", "on", "true"}:
+        logger.warning("MCP_FILE_CONFIG 未知值 %r，按默认 auto（两层全读）处理", mode)
+    return (user, workspace)
+
+
+def _normalize_file_entry(
+    name: str,
+    raw_entry: dict[str, Any],
+    base_dir: Path,
+    data_dir: Path,
+) -> dict[str, Any] | None:
+    """文件配置条目 → register 兼容条目（生态兼容归一化）.
+
+    与包条目的差异：Cursor/VS Code/Claude Desktop 的 stdio 条目通常不带
+    type 字段，这里按 command/url 字段推断 transport（缺省 stdio 优先）；
+    enabled 与 legacy 层同语义（缺省启用，显式 false 才禁用）。
+    """
+    server_type = str(raw_entry.get("type", "") or "").strip().lower()
+    if not server_type:
+        if isinstance(raw_entry.get("command"), str) and str(raw_entry["command"]).strip():
+            server_type = "stdio"
+        elif str(raw_entry.get("url") or "").strip():
+            server_type = "http"
+        else:
+            logger.warning("MCP 文件配置服务器 %s 无法推断 transport（缺 type/command/url），隔离跳过", name)
+            return None
+    patched = dict(raw_entry)
+    patched["type"] = server_type
+    entry = _normalize_package_entry(name, patched, base_dir, data_dir)
+    if entry is None:
+        return None
+    enabled = raw_entry.get("enabled", True)
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() != "false"
+    entry["enabled"] = bool(enabled)
+    return entry
+
+
+def _file_servers(source: FileConfigSource) -> list[LayeredServer]:
+    """文件配置层：单文件 → LayeredServer 列表（文件缺失=空层；坏文件整层隔离）."""
+    if not source.path.is_file():
+        return []
+    try:
+        data = json.loads(source.path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.warning("MCP 文件配置 %s 不可读，整层隔离跳过: %s", source.path, exc)
+        return []
+    raw_servers = data.get("mcpServers") if isinstance(data, dict) else None
+    if not isinstance(raw_servers, dict):
+        logger.warning("MCP 文件配置 %s 缺 mcpServers 对象，整层隔离跳过", source.path)
+        return []
+    out: list[LayeredServer] = []
+    for name in sorted(raw_servers):
+        raw_entry = raw_servers[name]
+        if not isinstance(raw_entry, dict):
+            logger.warning("MCP 文件配置 %s 条目 %s 非对象，隔离跳过", source.path, name)
+            continue
+        entry = _normalize_file_entry(name, raw_entry, source.base_dir, source.data_dir)
+        if entry is None:
+            continue
+        out.append(
+            LayeredServer(
+                entry=entry,
+                name=name,
+                layer=source.layer,
+                install_id=None,
+                identity=_identity(entry),
+                provenance=_provenance(entry, source.layer),
+            )
+        )
+    return out
+
+
+def effective_mcp_servers(
+    store: Any = None,
+    legacy_raw: str = "",
+    file_sources: tuple[FileConfigSource, ...] | list[FileConfigSource] = (),
+) -> AssemblyPlan:
+    """合并五层候选：同名（含同精确身份）只生效最高优先层，其余报告不叠加."""
     candidates: list[LayeredServer] = []
+    for source in file_sources:
+        candidates.extend(_file_servers(source))
     if store is not None:
         try:
             candidates.extend(_installed_servers(store))
@@ -307,10 +444,15 @@ def effective_mcp_servers(store: Any = None, legacy_raw: str = "") -> AssemblyPl
     return AssemblyPlan(raw=raw, servers=effective, conflicts=conflicts)
 
 
-def assemble_mcp_tools(registry: Any, store: Any = None, legacy_raw: str = "") -> list[str]:
+def assemble_mcp_tools(
+    registry: Any,
+    store: Any = None,
+    legacy_raw: str = "",
+    file_sources: tuple[FileConfigSource, ...] | list[FileConfigSource] = (),
+) -> list[str]:
     """装配入口：合并 → 注册 → 冲突报告 → 记录装配 epoch 基线."""
     global _ASSEMBLY_EPOCH
-    plan = effective_mcp_servers(store, legacy_raw)
+    plan = effective_mcp_servers(store, legacy_raw, file_sources)
     for conflict in plan.conflicts:
         logger.warning(
             "MCP 配置身份冲突（server=%s，identity=%s）：生效 %s，覆盖 %s（不叠加）",

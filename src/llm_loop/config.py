@@ -421,6 +421,9 @@ class Settings:
     # 默认 8000：常规工具输出（grep/读文件片段/短日志）不触发折叠，大输出（长日志/抓取全文）才降级；
     # 折叠时提取关键事实摘要优先、首尾截断兜底；越小越省 token，越大越少折叠触发）
     mcp_servers_raw: str = ""  # P3-1/P1-B: MCP_SERVERS JSON（stdio 与 http(Streamable HTTP) 服务器列表）
+    # P0-1 文件配置开关：空/auto=读 ~/.lfl/mcp.json + 项目根 .mcp.json 两层；
+    # user=仅用户级；off=均不读（clone 不可信仓库时防其 .mcp.json 拉起任意进程）
+    mcp_file_config: str = ""
     # EVO-20260912-10818cb5: smx 感知层 opt-in（LFL_SMX_PERCEIVE=smx.py 路径；空=默认不注册该工具）
     smx_perceive_path: str = ""
     # SMC Browser Phase 1 live perception: 显式 loopback CDP endpoint 才注册；
@@ -1010,6 +1013,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         tool_timeout_s=float(env_int("TOOL_TIMEOUT_S", 60)),
         tool_max_output_chars=env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         mcp_servers_raw=env_values.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
+        mcp_file_config=env_values.get("MCP_FILE_CONFIG", "").strip(),  # P0-1 MCP 文件配置开关
         smx_perceive_path=env_values.get("LFL_SMX_PERCEIVE", "").strip(),  # EVO-20260912-10818cb5 smx 感知层 opt-in
         # fleet slice 4 (G1): LFL_FLEET_WORKSPACE_ROOT 空=关闭（缺省），非空=接线
         fleet_workspace_root=env_values.get("LFL_FLEET_WORKSPACE_ROOT", "").strip(),

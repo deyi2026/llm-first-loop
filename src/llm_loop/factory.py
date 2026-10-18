@@ -1479,7 +1479,7 @@ def build_engine(
     # 装配后记录 catalog epoch 基线（热刷新失效判据）
     try:
         from llm_loop.extensions.store import ExtensionStore  # r9-import-exempt: plugin
-        from llm_loop.tools.mcp_assembly import assemble_mcp_tools
+        from llm_loop.tools.mcp_assembly import assemble_mcp_tools, default_file_sources
 
         _mcp_ext_paths = settings._extra.get("runtime_paths")
         if not isinstance(_mcp_ext_paths, RuntimePaths):
@@ -1487,10 +1487,19 @@ def build_engine(
                 data_dir=settings.data_dir,
                 code_root=Path(__file__).resolve().parents[2],
             )
+        # P0-1：文件配置层与 skills 同规则——linked release snapshot 运行时
+        # 项目级 .mcp.json 从主 worktree（git_common_root）读，否则 code_root。
+        _mcp_project_root = _mcp_ext_paths.git_common_root or _mcp_ext_paths.code_root
+        _mcp_file_sources = default_file_sources(
+            data_dir=_mcp_ext_paths.data_dir,
+            project_root=_mcp_project_root,
+            mode=settings.mcp_file_config,
+        )
         _mcp_tools = assemble_mcp_tools(
             registry,
             ExtensionStore(_mcp_ext_paths.extensions_dir),
             settings.mcp_servers_raw,
+            _mcp_file_sources,
         )
         if _mcp_tools:
             logger.info("MCP 工具注册 %d 个: %s", len(_mcp_tools), ", ".join(_mcp_tools[:6]))
