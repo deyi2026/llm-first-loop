@@ -10,9 +10,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from llm_loop.tools import review_host_admission as rha
 from llm_loop.tools.review_host_admission import (
     HostReviewAdmission,
     _browser_binding,
+    _classify_reviewer_failure,
+    _page_controls,
     _page_visible_text,
     classify_host_shell,
     is_publication_button,
@@ -26,6 +29,7 @@ class FakeChildRunner:
         self.state = "running"
         self.answer = ""
         self.parent = "author-1"
+        self.refusals: list[str] = []  # queued start failures; empty -> success
 
     def start(self, task: str, **kwargs):
         self.started += 1
@@ -34,6 +38,8 @@ class FakeChildRunner:
         assert kwargs["inherit"] is False
         assert kwargs["max_rounds"] == 1
         assert kwargs["review_isolated"] is True
+        if self.refusals:
+            return {"accepted": False, "detail": self.refusals.pop(0)}
         return {"accepted": True, "child_id": "child-review-1", "state": "running"}
 
     def review_terminal_current(self, child_id: str, parent_id: str):
@@ -645,3 +651,152 @@ def test_article_publish_missing_artifact_file_blocks_admission(tmp_path: Path) 
     )
     assert not issued["accepted"]
     assert issued["reason"].startswith("review_material_not_a_file:")
+
+
+class FakeEventStore:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict]] = []
+        self.enabled = True
+
+    def append(self, parent: str, event_type: str, payload: dict) -> None:
+        self.events.append((parent, event_type, payload))
+
+
+def test_classify_reviewer_failure_taxonomy() -> None:
+    assert _classify_reviewer_failure("HTTP 429 too many requests") == "reviewer_rate_limited"
+    assert _classify_reviewer_failure("RateLimitError: rate limit reached") == "reviewer_rate_limited"
+    assert _classify_reviewer_failure("RateLimitError") == "reviewer_rate_limited"  # bare class name
+    assert _classify_reviewer_failure("401 unauthorized: invalid_api_key") == "reviewer_auth_error"
+    assert _classify_reviewer_failure("AuthenticationError: bad token") == "reviewer_auth_error"
+    assert _classify_reviewer_failure("PermissionError: permission denied") == "reviewer_auth_error"
+    # Mixed text: auth wins over rate (never retry on unfixable credentials).
+    assert _classify_reviewer_failure("403 forbidden ... quota exceeded") == "reviewer_auth_error"
+    assert _classify_reviewer_failure("ReadTimeout: request timed out") == "reviewer_timeout"
+    assert _classify_reviewer_failure("deadline exceeded after 30s") == "reviewer_timeout"
+    assert _classify_reviewer_failure("child refused: depth limit") == "reviewer_unavailable"
+    assert _classify_reviewer_failure("") == "reviewer_unavailable"
+
+
+def test_page_controls_falls_back_to_text_when_name_missing() -> None:
+    raw = {"dom": {"nodes": [
+        {"kind": "button", "attributes": {"role": "button", "text": "发布"}},
+        {"kind": "button", "attributes": {"name": "Save draft", "text": "存草稿"}},
+        {"kind": "button", "attributes": {"role": "button", "text": ""}},
+    ]}}
+    # The gate face resolves the nameless control via _publish_label; the
+    # reviewer's control list must show the same label or the button that will
+    # be clicked is invisible to the reviewer.
+    assert _page_controls(raw) == ["发布", "Save draft"]
+
+
+def test_start_retries_rate_limit_then_succeeds(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(rha, "_REVIEWER_RETRY_DELAYS", (0.0, 0.0))
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    runner.refusals = ["HTTP 429 too many requests", "RateLimitError: rate limit reached"]
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    assert runner.started == 3  # initial + 2 bounded retries
+
+
+def test_start_rate_limit_retries_exhausted_fails_closed(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(rha, "_REVIEWER_RETRY_DELAYS", (0.0, 0.0))
+    repo = _repo(tmp_path)
+    store = FakeEventStore()
+    runner = FakeChildRunner()
+    runner.refusals = ["HTTP 429", "HTTP 429", "HTTP 429"]
+    host = HostReviewAdmission()
+    host.attach_event_store(store)
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert not issued["accepted"]
+    assert issued["reviewer_failure"] == "reviewer_rate_limited"
+    assert issued["reason"].startswith("reviewer_rate_limited:")
+    assert runner.started == 3  # bounded: never more than initial + 2
+    assert store.events and store.events[-1][1] == "review_admission_reviewer_unavailable"
+    assert store.events[-1][2]["reviewer_failure"] == "reviewer_rate_limited"
+    assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+
+def test_start_auth_error_never_retries(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    runner.refusals = ["401 unauthorized: invalid_api_key"]
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert not issued["accepted"]
+    assert issued["reviewer_failure"] == "reviewer_auth_error"
+    assert issued["reason"].startswith("reviewer_auth_error:")
+    assert runner.started == 1  # credentials must be fixed, not retried
+
+
+def test_poll_classifies_failed_child_as_reviewer_unavailable(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    store = FakeEventStore()
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_event_store(store)
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"]
+    runner.state = "failed"
+    runner.answer = "RateLimitError: 429 rate limit exceeded"
+    outcome = host.poll("author-1", "child-review-1")
+    # A dead reviewer is not a verdict on the artifact, and not a fake
+    # attestation denial either: the caller must see "retry later".
+    assert outcome["qualification"] == "REVISE"
+    assert outcome["reviewer_failure"] == "reviewer_rate_limited"
+    assert outcome["reason"] == "reviewer_failed:reviewer_rate_limited"
+    assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
+    assert store.events[-1][1] == "review_admission_reviewer_unavailable"
+    # Repeated polls on the same dead child re-classify but never spam audit.
+    again = host.poll("author-1", "child-review-1")
+    assert again["reviewer_failure"] == "reviewer_rate_limited"
+    assert sum(1 for e in store.events if e[1] == "review_admission_reviewer_unavailable") == 1
+
+
+def test_start_retries_timeout_then_succeeds(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(rha, "_REVIEWER_RETRY_DELAYS", (0.0, 0.0))
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    runner.refusals = ["ReadTimeout: request timed out"]
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    assert runner.started == 2
+
+
+def test_poll_failed_child_without_text_is_generic_unavailable(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"]
+    runner.state = "failed"
+    runner.answer = ""  # no diagnostics at all: still closed, just unlabeled
+    outcome = host.poll("author-1", "child-review-1")
+    assert outcome["qualification"] == "REVISE"
+    assert outcome["reviewer_failure"] == "reviewer_unavailable"
+    assert outcome["reason"] == "reviewer_failed:reviewer_unavailable"
+
+
+def test_poll_malformed_verdict_returns_review_tail(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"]
+    runner.state = "completed"
+    runner.answer = "审查完毕，整体质量可接受。\n结论：PASS\nP0=0 P1=0 P2=0\nSHA256: <见冻结清单>"
+    outcome = host.poll("author-1", "child-review-1")
+    # A localized verdict line is not the machine contract: fail closed, but
+    # echo the reviewer's own tail so the cause is diagnosable.
+    assert outcome["qualification"] == "REVISE"
+    assert outcome["reason"] == "review_verdict_incomplete_or_not_pass"
+    assert "结论：PASS" in outcome["review_tail"]
