@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import io
 import json
+import re
+import subprocess
+import sys
 import threading
 import time
+import tracemalloc
 from types import SimpleNamespace
 
 import pytest
@@ -51,6 +55,220 @@ def test_jsonl_monotonic_protocol_and_authoritative_incomplete(capsys):
     assert all(row["run_generation"] == "g" for row in lines)
     assert "PRIVATE ARG" not in json.dumps(lines)
     assert lines[-1]["status"] == "incomplete"
+
+
+def test_ten_thousand_stream_events_remain_ordered_lossless_and_bounded(monkeypatch):
+    class StreamingSink:
+        def __init__(self):
+            self.pending = ""
+            self.rows = 0
+            self.last_seq = 0
+            self.text_parts = []
+            self.result = None
+
+        def isatty(self):
+            return False
+
+        def write(self, chunk):
+            self.pending += chunk
+            while "\n" in self.pending:
+                line, self.pending = self.pending.split("\n", 1)
+                if not line:
+                    continue
+                row = json.loads(line)
+                self.rows += 1
+                assert row["seq"] == self.rows
+                self.last_seq = row["seq"]
+                if row["type"] == "text_delta":
+                    self.text_parts.append(row["text"])
+                elif row["type"] == "result":
+                    self.result = row
+            return len(chunk)
+
+        def flush(self):
+            return None
+
+    sink = StreamingSink()
+    monkeypatch.setattr(sys, "stdout", sink)
+    view = Presenter("jsonl")
+    expected_parts = [f"{number:05d}," for number in range(10_000)]
+    expected = "".join(expected_parts)
+    durations = []
+    tracemalloc.start()
+    try:
+        view.started("stress-session", "stress-generation")
+        for part in expected_parts:
+            started = time.perf_counter()
+            view.delta(StreamDelta(text=part))
+            durations.append(time.perf_counter() - started)
+        assert view.finish(LoopResult("stress-session", expected)) == 0
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert sink.rows == 10_002 and sink.last_seq == 10_002
+    assert "".join(sink.text_parts) == expected
+    assert sink.result is not None
+    assert sink.result["final_answer"] == expected and sink.result["status"] == "completed"
+    # The fixed 10k-event workload must remain comfortably below 8 MiB even
+    # with exact final-text retention and per-event JSON framing.
+    assert peak_bytes < 8 * 1024 * 1024
+    assert sorted(durations)[int(len(durations) * 0.95)] < 0.2
+
+
+def test_external_editor_failure_preserves_draft(monkeypatch, tmp_path):
+    from llm_loop.terminal.editor import Composer
+
+    composer = Composer(UISettings(), tmp_path)
+    composer.draft = "  original\n中文 👩‍💻  "
+    monkeypatch.setenv("EDITOR", "failing-editor")
+    monkeypatch.setattr(
+        "llm_loop.terminal.editor.subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.CalledProcessError(9, ["failing-editor"])),
+    )
+    with pytest.raises(ValueError, match="draft unchanged"):
+        composer.external_edit()
+    assert composer.draft == "  original\n中文 👩‍💻  "
+
+
+def test_corrupt_ui_settings_fall_back_without_starting_a_run(monkeypatch, tmp_path, capsys):
+    from llm_loop.core.session import SessionStore
+    from llm_loop.terminal.shell import interactive_session
+
+    store = SessionStore(str(tmp_path / "data"))
+    sid = store.create()
+    callbacks = []
+    engine = SimpleNamespace(
+        session=store,
+        registry=SimpleNamespace(set_approval_callback=callbacks.append),
+        correction_ctx=None,
+        settings=None,
+    )
+    monkeypatch.setattr(
+        "llm_loop.terminal.shell.load_ui",
+        lambda: (_ for _ in ()).throw(ValueError("corrupt display settings")),
+    )
+    monkeypatch.setattr("llm_loop.terminal.shell.Composer.read", lambda self, *_a: "/exit")
+    assert interactive_session(engine, sid) == 0
+    assert len(callbacks) == 1
+    assert "using defaults" in capsys.readouterr().err
+
+
+def test_saved_terminal_installs_guard_before_snapshot_and_preserves_body_handler(monkeypatch):
+    import signal
+    import termios
+
+    from llm_loop.terminal import state
+
+    class TTY:
+        @staticmethod
+        def isatty():
+            return True
+
+        @staticmethod
+        def fileno():
+            return 42
+
+    events = []
+    current: dict[str, object] = {"handler": signal.SIG_DFL}
+
+    def get_handler(_signum):
+        return current["handler"]
+
+    def set_handler(_signum, handler):
+        events.append("handler")
+        current["handler"] = handler
+
+    def get_modes(fd):
+        assert fd == 42
+        events.append("snapshot")
+        return [1, 2, 3]
+
+    def set_modes(fd, when, modes):
+        assert (fd, when, modes) == (42, termios.TCSANOW, [1, 2, 3])
+        events.append("restore")
+
+    monkeypatch.setattr(state.sys, "stdin", TTY())
+    monkeypatch.setattr(state.signal, "getsignal", get_handler)
+    monkeypatch.setattr(state.signal, "signal", set_handler)
+    monkeypatch.setattr(termios, "tcgetattr", get_modes)
+    monkeypatch.setattr(termios, "tcsetattr", set_modes)
+    def body_handler(_signum: int, _frame: object) -> None:
+        return None
+
+    with state.saved_terminal():
+        outer_handler = current["handler"]
+        assert outer_handler is not signal.SIG_DFL
+        with state.saved_terminal():
+            assert current["handler"] is outer_handler
+            current["handler"] = body_handler
+
+    assert events.index("handler") < events.index("snapshot")
+    assert events.count("snapshot") == 2 and events.count("restore") == 2
+    assert current["handler"] is body_handler
+
+
+def test_resume_switches_exact_session_without_creating_or_running(monkeypatch, tmp_path):
+    from llm_loop.core.session import SessionStore
+    from llm_loop.terminal.shell import interactive_session
+
+    store = SessionStore(str(tmp_path / "data"))
+    first, second = store.create(), store.create()
+    before = {meta.session_id for meta in store.list_sessions()}
+    reads = []
+    commands = iter((f"/resume {second}", "/exit"))
+    callbacks = []
+    engine = SimpleNamespace(
+        session=store,
+        registry=SimpleNamespace(set_approval_callback=callbacks.append),
+        correction_ctx=None,
+        settings=None,
+        run=lambda *_a, **_kw: pytest.fail("local resume must not start a model run"),
+    )
+
+    def read(_composer, sid, *_args):
+        reads.append(sid)
+        return next(commands)
+
+    monkeypatch.setattr("llm_loop.terminal.shell.Composer.read", read)
+    assert interactive_session(engine, first) == 0
+    assert reads == [first, second]
+    assert {meta.session_id for meta in store.list_sessions()} == before
+    assert len(callbacks) == 1
+
+
+def test_no_color_markdown_projection_is_linear_and_inert(monkeypatch):
+    from llm_loop.terminal.markdown import render_markdown
+
+    class TTY(io.StringIO):
+        def isatty(self):
+            return True
+
+    output = TTY()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setattr("llm_loop.terminal.markdown.legacy_env_snapshot", lambda: {})
+    source = "# Title\n\n```python\nprint('safe')\n```"
+    render_markdown(source, width=80)
+    colored = output.getvalue()
+    assert re.search(r"\x1b\[(?:[0-9;]*;)?(?:3[0-7]|9[0-7]|38)(?:;|m)", colored), (
+        "positive control must demonstrate that this terminal emits color without NO_COLOR"
+    )
+    output.seek(0)
+    output.truncate(0)
+    monkeypatch.setattr("llm_loop.terminal.markdown.legacy_env_snapshot", lambda: {"NO_COLOR": "1"})
+    render_markdown(source, width=80)
+    rendered = output.getvalue()
+    assert "Title" in rendered and "safe" in rendered
+    # NO_COLOR disables color, not semantic emphasis such as bold/underline.
+    for sequence in re.findall(r"\x1b\[([0-9;]*)m", rendered):
+        params = [int(item or "0") for item in sequence.split(";")]
+        assert not any(
+            30 <= item <= 37 or 90 <= item <= 97 or 40 <= item <= 47
+            or 100 <= item <= 107 or item in {38, 48}
+            for item in params
+        ), sequence
 
 
 def test_native_background_runner_streams_and_settles(capsys):

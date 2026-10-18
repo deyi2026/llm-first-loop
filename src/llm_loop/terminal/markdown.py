@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 
+from llm_loop.runtime.resolver import legacy_env_snapshot
 from llm_loop.terminal.presentation import safe_text
 
 
@@ -16,4 +17,7 @@ def render_markdown(text: str, width: int = 100, plain: bool = False) -> None:
     except ImportError:
         print(safe_text(text))
         return
-    Console(width=min(width, Console().width), markup=False).print(Markdown(safe_text(text)))
+    no_color = bool(legacy_env_snapshot().get("NO_COLOR"))
+    Console(width=min(width, Console().width), markup=False, no_color=no_color).print(
+        Markdown(safe_text(text))
+    )
