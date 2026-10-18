@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -236,6 +238,174 @@ def test_resume_switches_exact_session_without_creating_or_running(monkeypatch, 
     assert len(callbacks) == 1
 
 
+def test_interactive_session_propagates_sigterm_and_exits_shell(
+    monkeypatch, tmp_path,
+):
+    from llm_loop.core.session import SessionStore
+    from llm_loop.terminal.shell import interactive_session
+
+    store = SessionStore(str(tmp_path / "sessions"))
+    sid = store.create()
+    callbacks = []
+    interactive_flags = []
+    engine = SimpleNamespace(
+        session=store,
+        registry=SimpleNamespace(set_approval_callback=callbacks.append),
+        correction_ctx=None,
+        settings=None,
+        _cli_workspace=tmp_path,
+    )
+    monkeypatch.setattr("llm_loop.terminal.shell.load_ui", lambda: UISettings())
+    monkeypatch.setattr("llm_loop.terminal.shell.Composer.read", lambda *_args: "hello")
+
+    def run(_engine, _sid, _text, _view, _approval=None, *, interactive=False):
+        interactive_flags.append(interactive)
+        return 143
+
+    monkeypatch.setattr("llm_loop.terminal.shell.run_turn", run)
+    assert interactive_session(engine, sid) == 143
+    assert interactive_flags == [True]
+    assert len(callbacks) == 1
+
+
+def test_interactive_session_returns_to_prompt_after_ctrl_c_round_cancel(monkeypatch, tmp_path):
+    from llm_loop.core.session import SessionStore
+    from llm_loop.terminal.shell import interactive_session
+
+    store = SessionStore(str(tmp_path / "sessions"))
+    sid = store.create()
+    callbacks = []
+    interactive_flags = []
+    commands = iter(("hello", "/exit"))
+    engine = SimpleNamespace(
+        session=store,
+        registry=SimpleNamespace(set_approval_callback=callbacks.append),
+        correction_ctx=None,
+        settings=None,
+        _cli_workspace=tmp_path,
+    )
+    monkeypatch.setattr("llm_loop.terminal.shell.load_ui", lambda: UISettings())
+    monkeypatch.setattr("llm_loop.terminal.shell.Composer.read", lambda *_args: next(commands))
+
+    def run(_engine, _sid, _text, _view, _approval=None, *, interactive=False):
+        interactive_flags.append(interactive)
+        return 1  # settled Ctrl-C cancellation of this round; prompt remains usable
+
+    monkeypatch.setattr("llm_loop.terminal.shell.run_turn", run)
+    assert interactive_session(engine, sid) == 0
+    assert interactive_flags == [True]
+    assert len(callbacks) == 1
+
+
+@pytest.mark.skipif(os.name != "posix", reason="real signal/process-group cancellation is POSIX-specific")
+def test_cli_sigterm_physically_stops_owned_execute_command(build_test_engine, capsys):
+    from llm_loop.core.message import ToolCall
+
+    engine, fake = build_test_engine([
+        {"content": "start tool", "tool_calls": [
+            ToolCall(id="cli-sleep", name="execute_command", arguments={"command": "sleep 30"}),
+        ]},
+        {"content": "must not run after cancellation"},
+    ])
+    sid = engine.session.create()
+    engine.runner = BackgroundRunner(engine)
+    tool = engine.registry.get("execute_command")
+    handler_ready = threading.Event()
+    observed_processes = []
+
+    class ObservedPresenter(Presenter):
+        def started(self, session_id, generation):
+            super().started(session_id, generation)
+            handler_ready.set()
+
+    def stop_when_real_process_is_running():
+        if not handler_ready.wait(timeout=5):
+            return
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            with tool._active_proc_guard:
+                process = tool._active_procs.get(sid)
+            if process is not None and process.poll() is None:
+                observed_processes.append(process)
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
+            time.sleep(0.01)
+
+    sender = threading.Thread(target=stop_when_real_process_is_running, daemon=True)
+    sender.start()
+    result = run_turn(engine, sid, "run a long foreground tool", ObservedPresenter("jsonl"))
+    sender.join(timeout=10)
+
+    assert not sender.is_alive()
+    assert observed_processes, "the test must observe a real live execute_command subprocess"
+    assert observed_processes[0].poll() is not None, "SIGTERM must settle the owned process"
+    with tool._active_proc_guard:
+        assert sid not in tool._active_procs, "terminal tool settlement must clear the active process slot"
+    assert result == 143
+    assert len(fake.calls) == 1, "cancellation must not dispatch a second model round"
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows[-1]["type"] == "result" and rows[-1]["exit_code"] == 143
+    assert rows[-1]["status"] in {"cancelled", "incomplete"}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="sleep process-group cancellation is POSIX-specific")
+def test_cli_broken_pipe_cancels_owned_background_job_and_marks_delivery_unknown(
+    build_test_engine, capsys, tmp_path, monkeypatch,
+):
+    from pathlib import Path
+
+    from llm_loop.core.message import ToolCall
+    from llm_loop.tools.builtin.job_registry import JobRegistry
+
+    engine, fake = build_test_engine([
+        {"content": "start background tool", "tool_calls": [
+            ToolCall(
+                id="cli-background-sleep", name="execute_command",
+                arguments={"command": "sleep 30", "run_in_background": True},
+            ),
+        ]},
+        {"content": "this answer will hit the closed pipe"},
+    ])
+    fake.enable_stream({"deltas": ["first", "second", "third"], "delta_delay_s": 0.08})
+    sid = engine.session.create()
+    engine.runner = BackgroundRunner(engine)
+    jobs = JobRegistry()
+    jobs.configure(event_store=None, data_dir=Path(tmp_path / "job-data"))
+    monkeypatch.setattr(JobRegistry, "_instance", jobs)
+    engine.registry.add_session_cancel_hook(jobs.cancel_session)
+    observed = {}
+
+    class BrokenPipePresenter(Presenter):
+        def delta(self, delta):
+            info = getattr(delta, "tool_result", None)
+            if info is not None:
+                active = jobs.active_for_session(sid)
+                if active:
+                    observed["job_id"] = active[0].id
+                super().delta(delta)
+                return
+            if observed.get("job_id") and getattr(delta, "text", ""):
+                raise BrokenPipeError("simulated downstream pipe close")
+            super().delta(delta)
+
+    try:
+        result = run_turn(engine, sid, "start a background tool then stream", BrokenPipePresenter("jsonl"))
+        assert result == 1
+        job_id = observed.get("job_id")
+        assert job_id, "test must observe the real background job id before pipe failure"
+        deadline = time.monotonic() + 5
+        snapshot = jobs.snapshot(job_id, session_id=sid) or {}
+        while str(snapshot.get("state", "")).lower() not in {"killed", "completed", "failed", "orphaned"} and time.monotonic() < deadline:
+            time.sleep(0.02)
+            snapshot = jobs.snapshot(job_id, session_id=sid) or {}
+        assert str(snapshot.get("state", "")).lower() == "killed", snapshot
+        assert len(fake.calls) == 2, "pipe failure must not dispatch another model round"
+        stderr = capsys.readouterr().err
+        assert "Delivery/resource settlement is unknown" in stderr
+    finally:
+        jobs.cancel_session(sid)
+
+
 def test_no_color_markdown_projection_is_linear_and_inert(monkeypatch):
     from llm_loop.terminal.markdown import render_markdown
 
@@ -317,6 +487,107 @@ def test_cancel_is_bound_to_owned_generation_and_waits_for_native_terminal(capsy
     assert rows[1]["type"] == "cancel_requested" and rows[1]["accepted"]
     assert rows[-1]["cancel_reason"] == "user_stop"
     engine.runner.unsubscribe("owned", events)
+
+
+@pytest.mark.parametrize(("signum", "interactive", "expected_exit"), [
+    (signal.SIGINT, False, 130),
+    (signal.SIGINT, True, 1),
+    (signal.SIGTERM, False, 143),
+    (signal.SIGTERM, True, 143),
+])
+@pytest.mark.skipif(os.name != "posix", reason="real process signal delivery is POSIX-specific")
+def test_run_turn_real_signal_cancels_owned_generation_and_reports_process_exit(
+    capsys, signum, interactive, expected_exit,
+):
+    from typing import Any, cast
+
+    first_delta = threading.Event()
+    cancelled = []
+    handles = []
+
+    class Engine:
+        runner: BackgroundRunner
+
+        def run_stream(self, sid, text, model, **kwargs):
+            yield StreamDelta(text="ready")
+            deadline = time.monotonic() + 3
+            while not self.runner.is_cancelled(sid) and time.monotonic() < deadline:
+                time.sleep(0.005)
+            if not self.runner.is_cancelled(sid):
+                return LoopResult(sid, "completed-without-cancel")
+            yield StreamDelta(text="partial")
+            return LoopResult(sid, "partial", run_incomplete=True, cancel_reason="user_stop")
+
+    engine = Engine()
+    engine.runner = BackgroundRunner(engine)
+    original_start = engine.runner.start
+    original_cancel = engine.runner.cancel
+
+    def start(sid, text, **kwargs):
+        handle, events = original_start(sid, text, **kwargs)
+        if handle is not None:
+            handles.append(handle)
+        return handle, events
+
+    def cancel(sid, **kwargs):
+        cancelled.append((sid, kwargs))
+        return original_cancel(sid, **kwargs)
+
+    cast(Any, engine.runner).start = start
+    cast(Any, engine.runner).cancel = cancel
+
+    class ObservedPresenter(Presenter):
+        def delta(self, delta):
+            super().delta(delta)
+            if delta.text == "ready":
+                first_delta.set()
+
+    def send_signal():
+        if first_delta.wait(timeout=5):
+            os.kill(os.getpid(), signum)
+
+    sender = threading.Thread(target=send_signal, daemon=True)
+    sender.start()
+    sid = f"signal-owned-{signum}"
+    result = run_turn(
+        engine, sid, "cancel this generation", ObservedPresenter("jsonl"),
+        interactive=interactive,
+    )
+    sender.join(timeout=5)
+
+    assert not sender.is_alive()
+    assert handles and handles[0].status == "done" and handles[0].cancelled
+    assert cancelled == [(sid, {"expected_run_generation": handles[0].run_generation})]
+    assert result == expected_exit
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows[-1]["type"] == "result"
+    assert rows[-1]["status"] == "cancelled"
+    assert rows[-1]["exit_code"] == expected_exit
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM handler semantics are POSIX-specific")
+def test_sigterm_during_runner_start_is_reported_as_termination_pending(capsys):
+    original_int = signal.getsignal(signal.SIGINT)
+    original_term = signal.getsignal(signal.SIGTERM)
+
+    def start(_sid, _text, **_kwargs):
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler) and handler is not original_term, (
+            "run_turn must replace the SIGTERM handler before runner.start"
+        )
+        assert signal.getsignal(signal.SIGINT) is not original_int
+        handler(signal.SIGTERM, None)
+        raise RuntimeError("start interrupted before admission")
+
+    engine = SimpleNamespace(runner=SimpleNamespace(enabled=True, start=start))
+    result = run_turn(engine, "startup-sigterm", "hello", Presenter("jsonl"))
+    assert result == 143
+    assert signal.getsignal(signal.SIGINT) == original_int
+    assert signal.getsignal(signal.SIGTERM) == original_term
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows[-1]["type"] == "error"
+    assert rows[-1]["error_code"] == "termination_pending"
+    assert rows[-1]["exit_code"] == 143
 
 
 @pytest.fixture
@@ -506,3 +777,51 @@ def test_sigterm_result_and_process_status_agree(capsys):
     assert cancelled == [("s", {"expected_run_generation": "owned-generation"})]
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert records[-1]["exit_code"] == 143
+
+
+def test_sigterm_cleanup_preserves_143_if_runner_emits_error(capsys):
+    import queue
+
+    cancelled = []
+    runner = SimpleNamespace(cancel=lambda sid, **kwargs: cancelled.append((sid, kwargs)) or True)
+    handle = SimpleNamespace(session_id="s", run_generation="owned-generation")
+    events = queue.Queue()
+    events.put({"type": "error", "error": "worker errored during cleanup", "error_code": "run_error"})
+    interrupt, terminated = threading.Event(), threading.Event()
+    interrupt.set()
+    terminated.set()
+    view = Presenter("jsonl")
+    view.started("s", "owned-generation")
+    assert _pump(runner, handle, events, view, interrupt, None, terminated) == 143
+    assert cancelled == [("s", {"expected_run_generation": "owned-generation"})]
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert records[-1]["type"] == "error"
+    assert records[-1]["error_code"] == "termination_pending"
+    assert records[-1]["exit_code"] == 143
+
+
+@pytest.mark.parametrize(("interactive", "expected_exit"), [(False, 130), (True, 1)])
+def test_sigint_cleanup_preserves_cancel_status_if_runner_emits_error(
+    capsys, interactive, expected_exit,
+):
+    import queue
+
+    cancelled = []
+    runner = SimpleNamespace(cancel=lambda sid, **kwargs: cancelled.append((sid, kwargs)) or True)
+    handle = SimpleNamespace(session_id="s", run_generation="owned-generation")
+    events = queue.Queue()
+    events.put({"type": "error", "error": "worker errored during cancellation", "error_code": "run_error"})
+    interrupt, sigint_received = threading.Event(), threading.Event()
+    interrupt.set()
+    sigint_received.set()
+    view = Presenter("jsonl")
+    view.started("s", "owned-generation")
+    assert _pump(
+        runner, handle, events, view, interrupt, None,
+        sigint_received=sigint_received, interactive=interactive,
+    ) == expected_exit
+    assert cancelled == [("s", {"expected_run_generation": "owned-generation"})]
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert records[-1]["type"] == "error"
+    assert records[-1]["error_code"] == "interrupted"
+    assert records[-1]["exit_code"] == expected_exit

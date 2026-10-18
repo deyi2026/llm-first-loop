@@ -76,7 +76,9 @@ def interactive_session(engine: Any, sid: str) -> int:
             if text.startswith("/"):
                 print("[unknown command] Use /palette; use a regular message for model input.")
                 continue
-            run_turn(engine, sid, text, Presenter(plain=ui.plain), approval)
+            run_exit = run_turn(engine, sid, text, Presenter(plain=ui.plain), approval, interactive=True)
+            if run_exit == 143:
+                return run_exit
     finally:
         approval.close()
 

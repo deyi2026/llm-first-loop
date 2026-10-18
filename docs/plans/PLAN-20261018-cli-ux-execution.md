@@ -4,15 +4,18 @@ Goal: f3ca85bb-9b12-4c05-8bb0-9b17cdf8437c
 
 Specification: LFL-CLI评估与需求实现计划-20261018.md, frozen design v2.
 Frozen SHA256: `3bff19001452387db1d1378c1e0f36763c5cfbaad3fba0d3fca107b8bd4b4630`.
-Base: `e3424f615b6312c2e6331faa762adeb423003bfa`.
-Branch: `feat/cli-ux-20261018`.
+Initial base: `e3424f615b6312c2e6331faa762adeb423003bfa`.
+Initial implementation branch: `feat/cli-ux-20261018`.
+Current integration branch: `integrate/cli-ux-main-20261018`; main base: `302948e3c61499356feaa37ba173b9028f237dc2`.
 
-**Active integration candidate. Initial CLI work is independently reviewed, committed,
-and R9/install-validated; integration has not merged into main, been pushed, or deployed.**
-The user explicitly requested creation of this Goal and implementation until completion.
-A later automatic approval review rejected the next real GLM-5.3 review because private
-patch disclosure to that external provider needs explicit authorization. Do not retry
-indirectly or substitute another model. Local implementation and targeted checks continued.
+**Active integration candidate.** The initial CLI candidate is independently reviewed,
+committed, and R9/install-validated. The current integration base commit
+`9cd3674547451ecec4cabb6baf9533c124bc48e` passed its own R9 and fresh installed-wheel smoke;
+the terminal compatibility follow-up was independently reviewed by GLM-5.3 (PASS, P0/P1/P2=0)
+and committed as `47b757625766f88232e71ce04aaaee2b312bd0c6`, then passed original R9.
+No work has merged into local main, been pushed, or been deployed. The user explicitly
+authorized external GLM-5.3 review of the private candidate; that permission applies to
+independent review of the current CLI candidate, not to main merge, push, or release.
 
 ## Candidate scope
 
@@ -26,7 +29,7 @@ No additional model policy, semantic success judge, scheduler or conversation st
 | R01 | Authoritative incomplete/truncated/projection/cancel facts drive nonzero status; shell exit versus turn status documented |
 | R02 | Effective interactive approval; non-TTY never consumes pipeline approval |
 | R03 | Exact stdin/UTF-8 file, conflict checks, explicit startup model failure stops |
-| R04 | Native runner streaming and generation-bound cancel; SIGTERM/BrokenPipe facts; real-provider/tool physical settlement and broader interruption matrix remain |
+| R04 | Native `run_stream`/BackgroundRunner events; exact-generation cancellation; SIGINT one-shot=130 vs interactive round cancel=1 (including worker-error settlement); SIGTERM=143; startup handler is installed before worker start; real foreground `execute_command` SIGTERM and background-job BrokenPipe tests prove process/job termination and unknown-delivery messaging. Current R04 patch has 142 relevant tests passing and independent review PASS (P0/P1/P2=0); original R9 for this new patch is pending. No real Provider canary was used. |
 | R05 | text stdout versus stderr; one JSON object or sequenced JSONL; delivery unknown on broken pipe |
 | R06 | Stateless new help/query namespaces; legacy command-specific pre-bootstrap parsing/help remains to be unified |
 | R07 | Full IDs, search/show/export; native workspace mapping, owner/deletion validation, native event replay; no Engine/bootstrap |
@@ -73,6 +76,43 @@ offline installed smoke: 345 resource hashes, Web health/UI 200, correct workspa
 0 real Provider calls and no source-checkout path. The wheel was **not** signed or
 published. These facts qualify the pre-integration CLI tree, not this new combined tree.
 
+### Current R04 follow-up candidate (not yet accepted)
+
+- RED confirmed the default noninteractive `run_turn()` SIGINT path returned 1 instead of
+  the specified 130. The fix records SIGINT separately from SIGTERM; interactive Ctrl-C
+  returns the cancelled-round status so the shell can continue, while SIGTERM returns 143
+  and exits the interactive shell.
+- Signal handlers now install before `BackgroundRunner.start()` so a worker cannot launch a
+  real tool process before the CLI has claimed signal handling.
+- Real signal matrix + interactive-shell propagation + real foreground process termination
+  + real background-job BrokenPipe settlement are covered with FakeLLM and real local
+  subprocesses (no external Provider requests). The full R04-related suite is
+  **142 passed / 1 warning / 0 failed**; Ruff PASS; scoped Pyright 0 errors/0 warnings;
+  `uv lock --check --offline` PASS.
+- Modified code paths: `src/llm_loop/terminal/execution.py`,
+  `src/llm_loop/terminal/shell.py`, and `tests/unit/test_terminal_cli.py`.
+- The current R04 delta has received a fresh, completed, isolated GLM-5.3 review:
+  `subagent_cd13a2cc94f2`, result `result-d5f9af8fc0b043f3a1fef89ce8f49a32`, PASS,
+  P0/P1/P2=0, reviewed patch SHA
+  `fdc62f74480bbd558d31560d3f82141ffc2c54446fc2a457c4eabf9e58481765`.
+  The original full R9 remains pending for this delta; the previous commit's R9 receipt does
+  not qualify the current changes. The one-line R04 status-table update below records this
+  verified review result and does not change implementation code.
+- The first exact incremental review returned PASS/P0=P1=P2=0 and five P3 suggestions.
+  The follow-up closes the directly actionable ones: interactive Ctrl-C now has an explicit
+  prompt-resumption test; SIGTERM during `runner.start()` or a worker `error` preserves
+  exit 143/unknown settlement; the BrokenPipe test uses a fresh monkeypatched JobRegistry
+  instance rather than leaking singleton configuration. Those changes were rerun, reviewed,
+  and passed as the exact R04 delta recorded above.
+- The second exact incremental review also returned PASS/P0=P1=P2=0 and recommended explicit
+  POSIX skips for real process/signal tests, a deterministic startup-handler probe, and
+  fixing SIGINT cancellation if the worker emits `error` rather than `done`. Those refinements
+  are now included and covered by the 142-test final run.
+- SIGINT intentionally waits for the core's terminal fact without a separate timeout so an
+  interactive prompt cannot overlap a still-running generation; repeated Ctrl-C reports that
+  settlement is still pending. SIGTERM is the bounded hard-cleanup path (five seconds), after
+  which exit 143 is reported with settlement explicitly unknown.
+
 ## Independent review record
 
 The original 27-file candidate received a genuine, completed, isolated GLM-5.3 full review:
@@ -97,14 +137,14 @@ new combined tree based on `59f51e3e`; the integration delta below needs its own
 
 ## Next work
 
-1. Initial independent GLM-5.3 full PASS and two exact narrow PASS reviews completed;
-   3 RED defects and 2 full-R9 defects fixed with regression evidence, no ratchet widening.
-2. Initial source candidate passed original full R9 and fresh-installed wheel/sdist smoke.
-3. New independent integration worktree at `59f51e3e` retains main's upgrade/start/extensions
-   capabilities and adds detailed CLI help. Integration candidate still requires focused
-   tests, a new GLM-5.3 merge review and original full R9 on **its own** final tree.
-4. Obtain specific authorization before any actual local `main` merge; do not interpret
-   isolated integration, commit or smoke as production installation or release.
-5. Continue outstanding mandatory CLI acceptance, keep optional F/G separately scoped,
-   and mark this Goal complete only after its mandatory scope and integration are truly met.
-   Never label the optional F/G milestones or unverified platforms complete by implication.
+1. Complete the current R04 follow-up with exact-tree independent GLM-5.3 PASS and original
+   R9; then commit only to the isolated integration branch.
+2. Continue mandatory gaps in R06/R08/R09/R13/R14/R16/R18/R19 and the T01-T18 terminal
+   compatibility matrix, keeping each implemented/verified/pending state evidence-backed.
+3. Rebuild wheel/sdist from the latest accepted integration commit and rerun fresh-venv
+   installed CLI smoke; do not infer installation qualification from the older commit.
+4. Coordinate the separate G upgrade-transaction milestone without duplicating the already
+   completed first-use simplification; unsigned `.pkg` is not eligible for public release.
+5. Obtain specific authorization before any actual local `main` merge; no push/deploy/restart
+   is authorized. Mark Goal complete only after mandatory scope and integration are truly met;
+   optional F/G milestones and unverified platforms must not be implied complete.
