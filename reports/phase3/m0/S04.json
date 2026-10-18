@@ -2,27 +2,27 @@
   "scenario": "S04",
   "title": "停止后台 execute_command job",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-18T14:24:15",
+  "started_at": "2026-10-18T14:45:48",
   "steps": [],
   "wall": {
-    "job_terminal_observed": 1792304655.578
+    "job_terminal_observed": 1792305948.417
   },
   "dur_ms": {
-    "cancel_session_call_ms": 0.2,
+    "cancel_session_call_ms": 0.3,
     "stop_to_terminal_observed_ms": 0.3
   },
   "obs": {
     "assembly": "production_fair: session_cancel_hook registered (factory.py:731)",
-    "bg_start_result_head": "[后台任务已启动] job_id=job-10153a45793a4fcd8185 status=running\n命令: sleep 30\nshell_mode=default\n等进程终态用 wait(seconds=120, job_id=job-10153a45793a4fcd8185)；用 job_output(job_id=job-10153a45793a4fcd8185) 查询退出码与输出。",
+    "bg_start_result_head": "[后台任务已启动] job_id=job-0a8d5648724b464c9031 status=running\n命令: sleep 30\nshell_mode=default\n等进程终态用 wait(seconds=120, job_id=job-0a8d5648724b464c9031)；用 job_output(job_id=job-0a8d5648724b464c9031) 查询退出码与输出。",
     "job_state_before_stop": {
       "state": "running"
     },
     "cancel_session_count": 1,
     "job_state_after_stop": {
-      "job_id": "job-10153a45793a4fcd8185",
-      "session_id": "a9c2452a-f49b-4329-b781-f9b2e03a0f57",
+      "job_id": "job-0a8d5648724b464c9031",
+      "session_id": "db796599-cc6f-41fb-ba77-687d454b8925",
       "origin_run_generation": "",
-      "workspace_root": "/private/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/pytest-of-yyj/pytest-6195/popen-gw0/test_s04_stop_background_job0",
+      "workspace_root": "/private/var/folders/yx/8g0p8_wj103_3494s8_z26ch0000gn/T/pytest-of-yyj/pytest-6206/popen-gw2/test_s04_stop_background_job0",
       "executor": "execute_command",
       "state": "killed",
       "exit_code": null,
@@ -34,11 +34,11 @@
       "auto_reclaim": false,
       "output": [],
       "command": "sleep 30",
-      "started_at": 1792304655.5760581,
+      "started_at": 1792305948.415125,
       "finished_at": null
     }
   },
   "endpoints": {},
-  "finished_at": "2026-10-18T14:24:15",
+  "finished_at": "2026-10-18T14:45:48",
   "status": "ok"
 }

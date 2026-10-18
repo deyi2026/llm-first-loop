@@ -1,6 +1,6 @@
 # Phase5 M3 度量验收（G1/G2）
 
-- G1 llm_stream_interrupt：n=10，P50=5.2ms（门≤500），P95=9.8ms（门≤900）→ PASS
-- G2 llm_stream 保守（开关关闭）：n=10，P50=965.5ms（门≤1550）→ PASS
+- G1 llm_stream_interrupt：n=10，P50=4.5ms（门≤500），P95=5.7ms（门≤900）→ PASS
+- G2 llm_stream 保守（开关关闭）：n=10，P50=962.8ms（门≤1550）→ PASS
 
 样本明细见 M3_ACCEPTANCE.json；场景形态=S17-M1/M4（确定性注入钩子）。
