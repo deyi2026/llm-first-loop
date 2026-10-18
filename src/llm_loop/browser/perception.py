@@ -376,6 +376,78 @@ def _content_hash_object_basis(
 _ZERO_WIDTH_NAME_RUNES = "\u200b\u200c\u200d\u00ad\ufeff"
 _WHITESPACE_RUN_PATTERN = re.compile(r"\s+")
 
+# EVO-20261018: ARIA name-from-content fallback for DOM-projected nodes.
+# A control whose label lives in a child element
+# (``<button><span>确认发布</span></button>``) carries neither ``aria-label``
+# nor ``name``, so the DOM projection used to publish it with an empty name.
+# That made it unaddressable by ``kind+name`` and, downstream, made
+# ``is_publication_button`` unable to recognize the control at all.
+# Only tags whose accessible name may legitimately come from content are
+# eligible; generic container tags stay unnamed so the ``kind+name`` addressing
+# space is not flooded with repeated body text.
+# ``td``/``th`` are deliberately absent: a single table would contribute
+# thousands of cell names into the ``kind+name`` addressing space while adding
+# no addressing power, and ``normalize_semantic_name`` collapses them onto one
+# recurring string.
+_NAME_FROM_CONTENT_TAGS = frozenset({
+    "button", "a", "option", "summary", "label", "legend", "caption",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+})
+_NAME_FROM_CONTENT_CAP = 200
+_NAME_FROM_CONTENT_MAX_NODES = 400
+
+
+def _build_children_index(node_count: int, parent_indexes: list[int]) -> dict[int, list[int]]:
+    """Child-index lists keyed by parent, in document order."""
+    children: dict[int, list[int]] = {}
+    for child_idx, parent_idx in enumerate(parent_indexes):
+        if isinstance(parent_idx, int) and 0 <= parent_idx < node_count:
+            children.setdefault(parent_idx, []).append(child_idx)
+    return children
+
+
+def _name_from_content(
+    target: int,
+    *,
+    children_by_parent: dict[int, list[int]],
+    direct_text_by_parent: dict[int, list[str]],
+    direct_text_nodes_by_parent: dict[int, list[int]],
+) -> str:
+    """Resolve ``target``'s ARIA name from its own descendants.
+
+    A node's own text and its element children are merged in document order:
+    emitting all of the node's text first would reorder an interleaved label such
+    as ``<button>A<span>B</span>C</button>`` into ``ACB``.  Bounded by both a
+    character budget and a visited-node budget, so malformed parentIndex input
+    cannot make this unbounded.
+    """
+    budget = _NAME_FROM_CONTENT_CAP
+    parts: list[str] = []
+    visited = 0
+    stack: list[tuple[int, str | None]] = [(target, None)]
+    while stack and visited < _NAME_FROM_CONTENT_MAX_NODES and budget > 0:
+        current, piece = stack.pop()
+        visited += 1
+        if piece is None:
+            merged: list[tuple[int, str | None]] = [
+                (node_idx, text)
+                for node_idx, text in zip(
+                    direct_text_nodes_by_parent.get(current, ()),
+                    direct_text_by_parent.get(current, ()),
+                    strict=True,
+                )
+            ]
+            merged.extend(
+                (child_idx, None) for child_idx in children_by_parent.get(current, ())
+            )
+            merged.sort(key=lambda item: item[0])
+            stack.extend(reversed(merged))
+            continue
+        take = piece[:budget]
+        parts.append(take)
+        budget -= len(take)
+    return _WHITESPACE_RUN_PATTERN.sub(" ", "".join(parts)).strip()
+
 
 def normalize_semantic_name(value: str) -> str:
     """Deterministic name canonicalization for the secondary addressing key.
@@ -2839,6 +2911,7 @@ class PlaywrightPageCaptureBackend:
             backend_ids = list(nodes.get("backendNodeId") or [])
             attributes = list(nodes.get("attributes") or [])
             direct_text_by_parent: dict[int, list[str]] = {}
+            direct_text_nodes_by_parent: dict[int, list[int]] = {}
             for child_idx, node_name in enumerate(node_names):
                 if _string(strings, node_name).lower() != "#text":
                     continue
@@ -2850,9 +2923,14 @@ class PlaywrightPageCaptureBackend:
                 text_value = _string(strings, node_values[child_idx])
                 if text_value.strip():
                     direct_text_by_parent.setdefault(parent_idx, []).append(text_value)
+                    direct_text_nodes_by_parent.setdefault(parent_idx, []).append(child_idx)
             frame_id = _string_index_or_literal(strings, document.get("frameId"))
             frame_token = None if frame_id == main_frame_id else (f"frame:{frame_id}" if frame_id else None)
             shadow_types = _rare_string_values(nodes.get("shadowRootType"), strings)
+            # ARIA name-from-content: a control's label is allowed to live in its
+            # descendants.  The child index is built lazily so a control that
+            # already carries ``aria-label``/``name`` pays nothing.
+            children_by_parent: dict[int, list[int]] | None = None
             for idx in range(len(node_names)):
                 tag = _string(strings, node_names[idx]).lower()
                 if not tag or tag.startswith("#"):
@@ -2863,6 +2941,15 @@ class PlaywrightPageCaptureBackend:
                 raw_attrs = _attrs(strings, attributes[idx] if idx < len(attributes) else [])
                 role = raw_attrs.get("role", "")
                 name = raw_attrs.get("aria-label") or raw_attrs.get("name") or ""
+                if not name and tag in _NAME_FROM_CONTENT_TAGS:
+                    if children_by_parent is None:
+                        children_by_parent = _build_children_index(len(node_names), parent_indexes)
+                    name = _name_from_content(
+                        idx,
+                        children_by_parent=children_by_parent,
+                        direct_text_by_parent=direct_text_by_parent,
+                        direct_text_nodes_by_parent=direct_text_nodes_by_parent,
+                    )
                 dom_attributes: dict[str, Any] = {"tag": tag}
                 if role:
                     dom_attributes["role"] = role

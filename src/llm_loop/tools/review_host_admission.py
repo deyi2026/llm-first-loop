@@ -87,13 +87,47 @@ def _has_document_editor(raw: dict[str, Any]) -> bool:
     return scan(raw.get("dom") or {}) or scan(raw.get("ax") or {})
 
 
+def _publish_label_candidates(obj: Any) -> dict[str, str]:
+    """Ordered label candidates for a control: ``name`` then ``text``.
+
+    The HTML ``name`` attribute is a machine identifier, not an accessible name,
+    so it can shadow the label a user actually sees --
+    ``<button name="commit"><span>发布</span></button>`` carries ``name="commit"``
+    while its visible label is ``发布``.  Gate decisions must therefore test every
+    candidate instead of letting the first one mask the rest.
+    """
+    if not isinstance(obj, dict):
+        return {}
+    attrs = obj.get("attributes")
+    if not isinstance(attrs, dict):
+        return {}
+    labels: dict[str, str] = {}
+    for key in ("name", "text"):
+        value = str(attrs.get(key) or "").strip()
+        if value:
+            labels[key] = value
+    return labels
+
+
+def _publish_label(obj: Any) -> str:
+    """Preferred single label (``name`` then ``text``), for stable binding keys."""
+    labels = _publish_label_candidates(obj)
+    return labels.get("name") or labels.get("text") or ""
+
+
 def _is_article_publish(raw: dict[str, Any], obj: dict[str, Any] | None) -> bool:
     if not is_publication_button(obj):
         return False
-    label = str(((obj or {}).get("attributes") or {}).get("name") or "").strip()
+    # Only the label that actually reads as a publish control may supply the
+    # article cue.  An arbitrary sibling label (e.g. text="文章列表" next to
+    # name="publish") must not relax the editor-evidence requirement.
+    matched = [
+        label for label in _publish_label_candidates(obj).values()
+        if _PUBLISH_LABEL_RE.fullmatch(label)
+    ]
     # Explicit article naming is sufficient; bare 'Publish/Post' must have
     # evidence of a document editor or it could be code deployment.
-    return ("article" in label.lower() or "文章" in label
+    return (any("article" in label.lower() or "文章" in label for label in matched)
             or _has_document_editor(raw))
 
 
@@ -116,8 +150,10 @@ def is_publication_button(obj: dict[str, Any] | None) -> bool:
     role = str(attrs.get("role") or "").strip().lower()
     if kind != "button" and role != "button":
         return False
-    name = str(attrs.get("name") or "").strip()
-    return bool(_PUBLISH_LABEL_RE.fullmatch(name))
+    return any(
+        _PUBLISH_LABEL_RE.fullmatch(label)
+        for label in _publish_label_candidates(obj).values()
+    )
 
 
 def _shell_segments(command: str) -> list[list[str]]:
@@ -667,7 +703,7 @@ def _browser_binding(
 
 def _contains_publication_target(raw: Any, name: str) -> bool:
     if isinstance(raw, dict):
-        if is_publication_button(raw) and str(raw["attributes"]["name"]).strip() == name:
+        if is_publication_button(raw) and name in set(_publish_label_candidates(raw).values()):
             return True
         return any(_contains_publication_target(x, name) for x in raw.values())
     if isinstance(raw, list):
@@ -950,7 +986,7 @@ class HostReviewAdmission:
             return _ALLOWED
         if not parent:
             return self._deny("缺少父会话身份")
-        label = str((semantic_object or {}).get("attributes", {}).get("name") or "").strip()
+        label = _publish_label(semantic_object)
         try:
             sha, _ = _browser_binding(before_raw)
         except (ValueError, TypeError) as exc:
