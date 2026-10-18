@@ -241,4 +241,28 @@ describe("EvolutionPanel approval feedback", () => {
     expect(body.exec_override).toBe(true);
     expect(body.extra_confirm).toBe(false);
   });
+
+  it("labels boundary authorization truthfully and sends exec_override (RULE-AI-28 P1-1)", async () => {
+    // 文案必须与实现一致：override 越过边界与档位，不能再写"仍过权限级别门禁"。
+    const { calls } = installFetch({ requiresHuman: true });
+    render(<EvolutionPanel />);
+
+    await screen.findByText(baseItem.id);
+    fireEvent.click(screen.getByText(baseItem.id));
+    fireEvent.click(await screen.findByTestId("evo-approve"));
+
+    const authorize = screen.getByTestId("evo-authorize-exec");
+    expect(authorize.parentElement?.textContent).toContain("越过边界拦截与执行档位");
+    expect(authorize.parentElement?.textContent).not.toContain("仍过权限级别门禁");
+
+    fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
+    fireEvent.click(authorize);
+    fireEvent.click(screen.getByTestId("evo-confirm-ok"));
+
+    await waitFor(() => expect(screen.queryByTestId("evo-confirm-modal")).not.toBeInTheDocument());
+    const post = calls.find((call) => call.url === "/api/v1/evolution/review");
+    const body = JSON.parse(String(post?.init?.body ?? "{}"));
+    expect(body.exec_override).toBe(true);
+    expect(body.extra_confirm).toBe(false);
+  });
 });

@@ -4,8 +4,8 @@
 
 ## Unreleased
 
-- **审批入口补齐执行授权（EVO-20261018-f5f7580a 收尾）**：批量审批支持 `exec_override`（顶层默认、条目可覆盖），accepted 后真正触发执行推进——此前批量路径只置 `accepted`、从不调用执行引擎，档位 0 下永远到不了 `executing`；面板授权勾选框不再只对涉边界条目显示，非边界条目也可逐条显式授权。
-- **method 状态转为质量标注（EVO-20261017-lifecycle-alignment）**：知识库六态全部可检索（hold/invalidated/teacher 不再隐藏）；候选卡与 active 同等可用，`record_use` 与评分均为可选；`candidate → active` 一次写入即合法（原 `promotion=pass` 与跨任务类型门禁移除）；排序去掉 lifecycle 权重与零信号衰减，body 权重提高。
+- **审批入口补齐执行授权（EVO-20261018-f5f7580a 收尾）**：批量审批支持 `exec_override`（顶层默认、条目可覆盖，非布尔值直接 400 拒绝），accepted 后真正触发执行推进——此前批量路径只置 `accepted`、从不调用执行引擎，档位 0 下永远到不了 `executing`；面板授权勾选框不再只对涉边界条目显示，非边界条目也可逐条显式授权（涉边界条目仍须单条审批 + 安全边界确认）。
+- **method 状态转为质量标注（EVO-20261017-lifecycle-alignment）**：知识库除已弃用 `retired` 外全部状态可检索（hold/invalidated/teacher 不再隐藏）；候选卡与 active 同等可用，`record_use` 与评分均为可选；`candidate → active` 一次写入即合法（原 `promotion=pass` 与跨任务类型门禁移除）；排序去掉 lifecycle 权重与零信号衰减，body 权重提高。
 - **人工逐条授权不再被执行档位压制（EVO-20261018-f5f7580a）**：`EVOLVE_LOCAL_EXEC=0` 下，人工审批显式勾选 `exec_override` 的演进条目此前永远停在 `accepted`（判定链先命中"仅建议级"，引擎入口更在 level==0 直接 early return，override 根本不被读取），审批通道承诺的自动执行不发生、`evolution_complete` 随之被拒。现改为人工逐条授权优先于全局档位：该授权越过边界/档位/白名单门禁并正常进入 `executing`；`EVOLVE_LOCAL_EXEC` 仍完整约束 AI 自主执行（无授权时 level 0 行为不变），AI 仍不得自授该字段。
 - **移除 goal 级知识库 use 硬门（EVO-20261018-f4ca0fc4）**：`create_goal` 的 `method_use_gate`、`task_update` 的 `method_no_contact` 与 Goal 存储字段一并删除。该门默认关闭、从未在生产开启，且自带 `method_no_contact` 免费出口（一条自报声明即可 `→done`），既与不设硬门的规则冲突，也不构成完整性防线；删除不改变运行时默认行为。方法回记收尾提醒（`method_use_reminder`）保留，其专项用例不变。
 - **贡献入口对齐**：规则 SoT 按需读取，贡献指南和文档索引不再要求把 playbook 镜像进 universal prompt；中英文 README 的当前版本与评测场景数量对齐权威定义。

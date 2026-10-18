@@ -84,3 +84,18 @@ def test_batch_item_level_override_overrides_default(build_test_engine, tmp_path
     body = resp.json()
     assert body["ok_count"] == 1
     assert _status(store, sug.id) == "accepted"
+
+
+def test_batch_rejects_non_boolean_override(build_test_engine, tmp_path, monkeypatch):
+    """授权标志必须严格布尔：JSON "false" 字符串不得被强转成"已授权"。"""
+    client, store = _client(build_test_engine, tmp_path, monkeypatch)
+    sug = store.submit(content="优化超时参数", impact_scope="timeout_s")
+
+    resp = client.post(
+        "/api/v1/evolution/review-batch",
+        json={"decision": "accepted", "items": [{"id": sug.id}], "exec_override": "false"},
+    )
+
+    assert resp.status_code == 400
+    assert "布尔" in resp.json()["detail"]
+    assert _status(store, sug.id) == "pending_review"

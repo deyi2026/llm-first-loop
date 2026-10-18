@@ -2962,7 +2962,14 @@ async def evolution_review_batch(request: Request) -> Response:
     default_decision = (body.get("decision") or "").strip()
     # 方案A EVO-20260929 / EVO-20261018-f5f7580a：人工逐条显式授权可随批量下传
     # （顶层默认，条目可覆盖）。此前批量只置 accepted，档位 0 下永远到不了 executing。
-    default_override = bool(body.get("exec_override", False))
+    raw_default_override = body.get("exec_override", False)
+    if not isinstance(raw_default_override, bool):
+        # 授权标志必须严格布尔：JSON 的 "false"/0/null 之类真值强转会变成"想拒绝实际授权"。
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_params", "detail": "exec_override 必须为布尔。"},
+        )
+    default_override = raw_default_override
     if not items or default_decision not in {"accepted", "rejected"}:
         return UTF8JSONResponse(
             status_code=400,
@@ -2975,7 +2982,12 @@ async def evolution_review_batch(request: Request) -> Response:
         decision = str(it.get("decision") or default_decision).strip()
         reason = str(it.get("reason") or "").strip()
         expected = str(it.get("expected_status") or "").strip()
-        exec_override = bool(it.get("exec_override", default_override))
+        raw_item_override = it.get("exec_override", default_override)
+        if not isinstance(raw_item_override, bool):
+            results.append({"id": evo_id, "ok": False, "message": "exec_override 必须为布尔"})
+            fail_count += 1
+            continue
+        exec_override = raw_item_override
         if not evo_id or decision not in {"accepted", "rejected"}:
             results.append({"id": evo_id, "ok": False, "message": "参数非法"})
             fail_count += 1

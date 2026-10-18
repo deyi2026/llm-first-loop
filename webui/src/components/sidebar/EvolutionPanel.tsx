@@ -442,6 +442,7 @@ export function EvolutionPanel() {
                           e.stopPropagation();
                           setRejectReason("");
                           setExtraConfirmChecked(false);
+                          setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
                           setConfirmMsg("");
                           setConfirm({ id: it.id, decision: "accepted", requires_human: it.requires_human });
@@ -457,6 +458,7 @@ export function EvolutionPanel() {
                           e.stopPropagation();
                           setRejectReason("");
                           setExtraConfirmChecked(false);
+                          setAuthorizeExecChecked(false);
                   setPromptSurfaceChecked(false);
                           setConfirmMsg("");
                           setConfirm({ id: it.id, decision: "rejected", requires_human: it.requires_human });
@@ -665,8 +667,8 @@ export function EvolutionPanel() {
                     onChange={(e) => setAuthorizeExecChecked(e.target.checked)}
                   />
                   {confirm.requires_human
-                    ? "批准并显式授权 AI 自动执行（方案A：越过边界拦截，仍过权限级别门禁；勾选即视为安全边界确认）"
-                    : "批准并显式授权 AI 自动执行（EVOLVE_LOCAL_EXEC 档位对人工逐条授权不设限；AI 仍不得自授该字段）"}
+                    ? "批准并显式授权 AI 自动执行（方案A：人工逐条授权越过边界拦截与执行档位；勾选即视为安全边界确认）"
+                    : "批准并显式授权 AI 自动执行（人工逐条授权越过 EVOLVE_LOCAL_EXEC 档位；AI 仍不得自授该字段）"}
                 </label>
               </div>
             ) : (
