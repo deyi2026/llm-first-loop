@@ -18,7 +18,7 @@ import shlex
 import subprocess
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -512,14 +512,157 @@ def _stable_browser_projection(raw: dict[str, Any]) -> object:
     return walk(raw)
 
 
-def _browser_page(raw: dict[str, Any]) -> tuple[str, str]:
+_BROWSER_PAGE_MAX_BYTES = 78_000
+_BROWSER_TEXT_ATTRS = ("name", "value_text", "value", "text", "alt", "title")
+_BROWSER_CONTROL_KINDS = frozenset({"button", "link", "option", "checkbox", "radio", "select"})
+_MAX_REVIEW_ARTIFACTS = 24
+_MAX_REVIEW_FILE_BYTES = 1_000_000
+_MANUSCRIPT_MATCH_RATIO = 0.6
+
+
+def _browser_nodes(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """DOM/AX nodes of a capture; the editor body text only lives inside these."""
+    nodes: list[dict[str, Any]] = []
+    for section in ("dom", "ax"):
+        block = raw.get(section)
+        if isinstance(block, dict):
+            for node in block.get("nodes") or []:
+                if isinstance(node, dict):
+                    nodes.append(node)
+    return nodes
+
+
+def _node_attributes(node: dict[str, Any]) -> dict[str, Any]:
+    attrs = node.get("attributes")
+    return attrs if isinstance(attrs, dict) else {}
+
+
+def _page_visible_text(raw: dict[str, Any]) -> str:
+    """What the page actually shows: node names/values, deduped, order preserved."""
+    seen: set[str] = set()
+    lines: list[str] = []
+    for node in _browser_nodes(raw):
+        attrs = _node_attributes(node)
+        for key in _BROWSER_TEXT_ATTRS:
+            value = attrs.get(key)
+            if not isinstance(value, str):
+                continue
+            text = " ".join(value.split())
+            if len(text) < 2 or text in seen:
+                continue
+            seen.add(text)
+            lines.append(text)
+    return "\n".join(lines)
+
+
+def _page_controls(raw: dict[str, Any]) -> list[str]:
+    """Labels of the actionable controls, so the reviewer sees what will be clicked."""
+    controls: list[str] = []
+    seen: set[str] = set()
+    for node in _browser_nodes(raw):
+        if str(node.get("kind") or "").strip().lower() not in _BROWSER_CONTROL_KINDS:
+            continue
+        name = _node_attributes(node).get("name")
+        if not isinstance(name, str):
+            continue
+        label = " ".join(name.split())
+        if label and label not in seen:
+            seen.add(label)
+            controls.append(label)
+    return controls[:40]
+
+
+def _section_truncated(raw: dict[str, Any], section: str) -> bool:
+    block = raw.get(section)
+    return bool(block.get("truncated")) if isinstance(block, dict) else False
+
+
+def _file_fingerprint(path: str) -> dict[str, Any]:
+    target = Path(path).expanduser()
+    if not target.is_file():
+        raise ValueError(f"review_material_not_a_file:{target.name}")
+    data = target.read_bytes()
+    if len(data) > _MAX_REVIEW_FILE_BYTES:
+        raise ValueError("review_material_file_too_large")
+    return {"path": str(target.resolve()), "bytes": len(data), "sha256": _digest(data)}
+
+
+def _comparable_lines(text: str) -> list[str]:
+    """Lines a reader would see as prose; markdown/quote/list markers are noise."""
+    lines: list[str] = []
+    for raw_line in re.split(r"[\r\n]+", text):
+        cleaned = re.sub(r"[*`]", "", raw_line)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        cleaned = re.sub(r"^(?:[#>\-+\d.、)）]+\s*)+", "", cleaned)
+        if len(cleaned) >= 8:
+            lines.append(cleaned)
+    return lines
+
+
+def _manuscript_consistency(page_text: str, manuscript_text: str) -> dict[str, Any]:
+    """Does the on-disk manuscript actually match what the editor will publish?"""
+    lines = _comparable_lines(manuscript_text)
+    flat_page = " ".join(page_text.split())
+    if not lines:
+        return {"consistent": False, "reason": "manuscript_has_no_comparable_line"}
+    if not flat_page:
+        return {"consistent": False, "reason": "page_visible_text_empty", "manuscript_lines": len(lines)}
+    matched = sum(1 for line in lines if line in flat_page)
+    ratio = matched / len(lines)
+    return {
+        "consistent": ratio >= _MANUSCRIPT_MATCH_RATIO,
+        "manuscript_lines": len(lines),
+        "matched_lines": matched,
+        "match_ratio": round(ratio, 4),
+        "threshold": _MANUSCRIPT_MATCH_RATIO,
+    }
+
+
+def _browser_binding(
+    raw: dict[str, Any], *, manuscript_path: str = "", artifact_paths: Sequence[str] = (),
+) -> tuple[str, str]:
+    """Content-bearing review material: page text + fingerprints, not the whole DOM.
+
+    Dumping the entire semantic projection made article publishing structurally
+    unreviewable (a real editor page projects far past the review budget). The
+    reviewer instead receives the publishable content itself, and the permit stays
+    bound to exactly what the reviewer saw -- url, visible text and control labels
+    -- so any edit before the click still invalidates it.
+    """
     if not isinstance(raw, dict) or not raw.get("url"):
         raise ValueError("browser_page_url_unavailable")
-    projection = _stable_browser_projection(raw)
-    material = json.dumps(projection, ensure_ascii=False, sort_keys=True)
-    if len(material.encode("utf-8")) > 78_000:
-        raise ValueError("browser_page_review_too_large")
-    return _digest(_canonical(projection)), material
+    text = _page_visible_text(raw)
+    if not text.strip():
+        raise ValueError("browser_page_visible_text_empty")
+    controls = _page_controls(raw)
+    binding = {"url": str(raw["url"]), "visible_text": text, "publication_controls": controls}
+    material: dict[str, Any] = {
+        "kind": "article_publish_page",
+        "url": binding["url"],
+        "visible_text": text,
+        "visible_text_sha256": _digest(text.encode("utf-8")),
+        "visible_text_chars": len(text),
+        "publication_controls": controls,
+        "dom_truncated": _section_truncated(raw, "dom"),
+        "ax_truncated": _section_truncated(raw, "ax"),
+    }
+    if manuscript_path:
+        fingerprint = _file_fingerprint(manuscript_path)
+        manuscript_text = Path(fingerprint["path"]).read_text(encoding="utf-8", errors="replace")
+        consistency = _manuscript_consistency(text, manuscript_text)
+        if not consistency["consistent"]:
+            raise ValueError(
+                "manuscript_page_text_mismatch:" + json.dumps(consistency, ensure_ascii=False, sort_keys=True)
+            )
+        material["manuscript"] = {**fingerprint, "consistency": consistency, "text": manuscript_text}
+    artifacts = [_file_fingerprint(str(path)) for path in list(artifact_paths)[:_MAX_REVIEW_ARTIFACTS]]
+    if artifacts:
+        material["artifacts"] = artifacts
+    encoded = json.dumps(material, ensure_ascii=False, sort_keys=True)
+    size = len(encoded.encode("utf-8"))
+    if size > _BROWSER_PAGE_MAX_BYTES:
+        raise ValueError(f"browser_page_review_cap_exceeded:{size}>{_BROWSER_PAGE_MAX_BYTES}")
+    return _digest(_canonical(binding)), encoded
 
 
 def _contains_publication_target(raw: Any, name: str) -> bool:
@@ -570,7 +713,8 @@ class HostReviewAdmission:
 
     @staticmethod
     def _target(
-        kind: str, workdir: str, command: str, target_name: str, capture: Callable[[], dict[str, Any]] | None
+        kind: str, workdir: str, command: str, target_name: str, capture: Callable[[], dict[str, Any]] | None,
+        manuscript_path: str = "", artifact_paths: Sequence[str] = (),
     ) -> tuple[str, str, str]:
         if kind == "article_publish":
             if not target_name or _PUBLISH_LABEL_RE.fullmatch(target_name) is None:
@@ -582,7 +726,7 @@ class HostReviewAdmission:
                 raise ValueError("publication_button_not_observed")
             if not _has_document_editor(page) and "article" not in target_name.lower() and "文章" not in target_name:
                 raise ValueError("publication_article_editor_not_observed")
-            sha, text = _browser_page(page)
+            sha, text = _browser_binding(page, manuscript_path=manuscript_path, artifact_paths=artifact_paths)
             return sha, f"article_publish:{target_name}", text
         if kind not in {"full_test", "git_push"} or classify_host_shell(command) != kind:
             raise ValueError("review_kind_command_mismatch")
@@ -626,11 +770,15 @@ class HostReviewAdmission:
 
     def start(
         self, parent: str, kind: str, *, workdir: str = "", command: str = "", target_name: str = "",
+        manuscript_path: str = "", artifact_paths: Sequence[str] = (),
     ) -> dict[str, Any]:
         if not parent or self._runner is None:
             return {"accepted": False, "reason": "review_host_unavailable"}
         try:
-            sha, target, material = self._target(kind, workdir, command, target_name, self._browser_capture)
+            sha, target, material = self._target(
+                kind, workdir, command, target_name, self._browser_capture,
+                manuscript_path=manuscript_path, artifact_paths=artifact_paths,
+            )
         except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
             return {"accepted": False, "reason": str(exc)}
         task = (
@@ -647,6 +795,14 @@ class HostReviewAdmission:
             "----- BEGIN UNTRUSTED FROZEN ARTIFACT -----\n"
             + material + "\n----- END UNTRUSTED FROZEN ARTIFACT -----"
         )
+        if kind == "article_publish":
+            task += (
+                "\nThe frozen artifact is an article publish page. Judge whether visible_text is "
+                "finished publishable prose (no placeholders, no TODO, no half sentences) and "
+                "whether publication_controls contains the button that will be clicked. When a "
+                "manuscript block is present, check its consistency verdict: the on-disk manuscript "
+                "must be the text the page will actually publish. Judge the content, not the DOM."
+            )
         with self._guard:
             if len(self._records) >= self._max_records:
                 for key, row in tuple(self._records.items()):
@@ -796,7 +952,7 @@ class HostReviewAdmission:
             return self._deny("缺少父会话身份")
         label = str((semantic_object or {}).get("attributes", {}).get("name") or "").strip()
         try:
-            sha, _ = _browser_page(before_raw)
+            sha, _ = _browser_binding(before_raw)
         except (ValueError, TypeError) as exc:
             return self._deny(f"发布页面无法绑定:{exc}")
         return self._consume(parent, "article_publish", f"article_publish:{label}", sha)
@@ -821,6 +977,22 @@ class ReviewAdmissionTool:
             "workdir": {"type": "string"},
             "command": {"type": "string"},
             "target_name": {"type": "string"},
+            "manuscript_path": {
+                "type": "string",
+                "description": (
+                    "article_publish 可选：落盘稿件文件绝对路径。Host 会计算其 SHA256，"
+                    "并要求稿件正文行与页面可见正文一致（低于阈值即拒绝准入），"
+                    "审查材料因此绑定'文件+指纹+页面可见正文'，而不是整页 DOM。"
+                ),
+            },
+            "artifact_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "article_publish 可选：随稿产物（如配图）文件路径列表，"
+                    "Host 仅取路径/SHA256/字节数作为指纹交给 reviewer，不读入图片内容。"
+                ),
+            },
             "child_id": {"type": "string"},
         },
         "required": ["action"],
@@ -834,11 +1006,20 @@ class ReviewAdmissionTool:
         from llm_loop.core.message import ToolResult, ToolResultStatus
         sid = str(current_session_id.get() or "")
         if kwargs.get("action") == "start":
+            declared_artifacts = kwargs.get("artifact_paths") or []
+            if not isinstance(declared_artifacts, (list, tuple)):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="review_admission artifact_paths 必须为字符串数组",
+                    tool_call_id="", tool_name=self.name,
+                )
             data = self._authority.start(
                 sid, str(kwargs.get("kind") or ""),
                 workdir=str(kwargs.get("workdir") or ""),
                 command=str(kwargs.get("command") or ""),
                 target_name=str(kwargs.get("target_name") or ""),
+                manuscript_path=str(kwargs.get("manuscript_path") or ""),
+                artifact_paths=[str(item) for item in declared_artifacts],
             )
         elif kwargs.get("action") == "status":
             data = self._authority.poll(sid, str(kwargs.get("child_id") or ""))

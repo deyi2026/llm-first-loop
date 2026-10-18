@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 
 from llm_loop.tools.review_host_admission import (
     HostReviewAdmission,
+    _browser_binding,
     classify_host_shell,
     is_publication_button,
 )
@@ -468,3 +470,126 @@ def test_host_git_snapshot_disables_textconv_and_external_diff(
     assert result["accepted"]
     assert len(git_diffs) >= 4
     assert all("--no-textconv" in args and "--no-ext-diff" in args for args in git_diffs)
+
+
+def _editor_page(noise_nodes: int = 0, body: str = "这是第一段正文，足够长以便进入可见文本。") -> dict:
+    nodes = [
+        {"kind": "heading", "attributes": {"tag": "input", "name": "同一个大模型，凭什么他用着顺手、你用着费劲"}},
+        {"kind": "input", "attributes": {"tag": "div", "role": "textbox", "value_text": body}},
+        {"kind": "button", "attributes": {"tag": "button", "name": "确认发布"}},
+    ]
+    for index in range(noise_nodes):
+        nodes.append({"kind": "generic", "attributes": {"tag": "div", "data-noise": "y" * 400, "data-index": str(index)}})
+    return {"url": "https://mp.toutiao.com/profile_v4/graphic/publish", "observed_at": 1, "dom": {"available": True, "nodes": nodes}}
+
+
+def test_article_publish_material_carries_content_not_the_whole_dom() -> None:
+    """A real editor page projects far past the review budget; the material must not be the DOM."""
+    raw = _editor_page(noise_nodes=600)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    host.attach_browser_capture(lambda: raw)
+    issued = host.start("author-1", "article_publish", target_name="确认发布")
+    assert issued["accepted"], issued.get("reason")
+    assert "y" * 400 not in runner.task
+    assert "这是第一段正文" in runner.task
+    assert "确认发布" in runner.task
+    assert len(runner.task.encode("utf-8")) < 78_000
+
+
+def test_article_publish_cap_exceeded_reports_measured_bytes() -> None:
+    raw = _editor_page(body="文" * 30_000)
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    host.attach_browser_capture(lambda: raw)
+    issued = host.start("author-1", "article_publish", target_name="确认发布")
+    assert not issued["accepted"]
+    reason = issued["reason"]
+    assert reason.startswith("browser_page_review_cap_exceeded:")
+    measured, _, limit = reason.partition(":")[2].partition(">")
+    assert int(measured) > int(limit) == 78_000
+
+
+def test_article_publish_binding_ignores_volatile_capture_bookkeeping() -> None:
+    raw = _editor_page()
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    host.attach_browser_capture(lambda: raw)
+    issued = host.start("author-1", "article_publish", target_name="确认发布")
+    runner.state = "completed"
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+
+    recaptured = _editor_page()
+    recaptured["observed_at"] = 99
+    recaptured["dom"]["nodes"][0]["attributes"]["data-stamp"] = "later"
+    target = recaptured["dom"]["nodes"][2]
+    assert host.check_browser("author-1", {"verb": "click"}, target, recaptured).allowed
+
+
+def test_article_publish_denied_without_an_article_editor() -> None:
+    raw = {"url": "https://mp.toutiao.com/publish", "dom": {"available": True, "nodes": [
+        {"kind": "button", "attributes": {"tag": "button", "name": "确认发布"}},
+    ]}}
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    host.attach_browser_capture(lambda: raw)
+    issued = host.start("author-1", "article_publish", target_name="确认发布")
+    assert not issued["accepted"] and issued["reason"] == "publication_article_editor_not_observed"
+
+
+def test_browser_binding_refuses_a_page_the_reviewer_cannot_read() -> None:
+    """Fail closed: a publish page with no readable content is not reviewable."""
+    raw = {"url": "https://mp.toutiao.com/publish", "dom": {"available": True, "nodes": [
+        {"kind": "input", "attributes": {"tag": "div", "role": "textbox", "value_text": ""}},
+        {"kind": "button", "attributes": {"tag": "button", "name": "x"}},
+    ]}}
+    with pytest.raises(ValueError, match="browser_page_visible_text_empty"):
+        _browser_binding(raw)
+
+
+def test_article_publish_manuscript_mismatch_blocks_admission(tmp_path: Path) -> None:
+    manuscript = tmp_path / "post.md"
+    manuscript.write_text("# 完全不同的稿子\n\n这里讲的是另一件事，和编辑器里显示的正文没有任何重合之处。\n", encoding="utf-8")
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    host.attach_browser_capture(lambda: _editor_page())
+    issued = host.start("author-1", "article_publish", target_name="确认发布", manuscript_path=str(manuscript))
+    assert not issued["accepted"]
+    assert issued["reason"].startswith("manuscript_page_text_mismatch:")
+    assert "match_ratio" in issued["reason"]
+
+
+def test_article_publish_manuscript_match_binds_file_and_artifact_fingerprints(tmp_path: Path) -> None:
+    manuscript = tmp_path / "post.md"
+    manuscript.write_text("这是第一段正文，足够长以便进入可见文本。\n\n这是第二段正文，同样足够长以通过一致性核对。\n", encoding="utf-8")
+    raw = _editor_page(body="这是第一段正文，足够长以便进入可见文本。  这是第二段正文，同样足够长以通过一致性核对。")
+    figure = tmp_path / "fig-62.png"
+    figure.write_bytes(b"\x89PNG\r\n\x1a\nfigure-bytes")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    host.attach_browser_capture(lambda: raw)
+    issued = host.start(
+        "author-1", "article_publish", target_name="确认发布",
+        manuscript_path=str(manuscript), artifact_paths=[str(figure)],
+    )
+    assert issued["accepted"], issued.get("reason")
+    assert "manuscript_page_text_mismatch" not in runner.task
+    digest = hashlib.sha256(manuscript.read_bytes()).hexdigest()
+    assert digest in runner.task
+    assert hashlib.sha256(figure.read_bytes()).hexdigest() in runner.task
+
+
+def test_article_publish_missing_artifact_file_blocks_admission(tmp_path: Path) -> None:
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    host.attach_browser_capture(lambda: _editor_page())
+    issued = host.start(
+        "author-1", "article_publish", target_name="确认发布",
+        artifact_paths=[str(tmp_path / "absent.png")],
+    )
+    assert not issued["accepted"]
+    assert issued["reason"].startswith("review_material_not_a_file:")
