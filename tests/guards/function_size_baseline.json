@@ -1016,6 +1016,15 @@
           "src/llm_loop/web/a2a_task_admission.py"
         ],
         "rationale": "离线 A2A Task 准入记录是跨重启恢复 SoT，按 T2 state_file 分类，不是非持久化豁免。现有实现为 per-task flock、O_EXCL 临时文件、file fsync、link create-if-absent 与目录/parent fsync；损坏 fail-closed，post-link uncertain 禁止盲重派发，重启同请求返回 newly_reserved=False。tests/unit/test_a2a_task_admission.py 覆盖并发、重启与 fsync 故障。本项 observe 仅登记已核实写入面，不宣称完整合规或 Huawei 主体验证、路由接线、实际 dispatch、生产 A2A 已获资格；依据 durable-run-contract §10 以 guard(r9): 可见提交。"
+      },
+      "event_scan_cache": {
+        "tier": "T2",
+        "status": "observe",
+        "owner": "settlement",
+        "paths": [
+          "src/llm_loop/introspection/event_scan_cache.py"
+        ],
+        "rationale": "settlement event_logs 增量扫描缓存（.scan_cache/events_*.json，tmp+replace 原子写，flock 并发，5s 抢锁失败 fail-open 用旧快照）；可删重建派生物非真值源，损坏冷启全量重建；缓解 GB 级 event_logs 全量重扫导致的 60s settlement 超时（2026-10-17 事故）。"
       }
     },
     "write_exemptions": {

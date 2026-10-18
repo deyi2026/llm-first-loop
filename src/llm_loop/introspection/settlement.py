@@ -25,7 +25,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
@@ -34,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypedDict
 
+from llm_loop.introspection.event_scan_cache import scan_event_files
 from llm_loop.use_ledger import derive_slot_id, derive_submission_hash
 
 logger = logging.getLogger(__name__)
@@ -252,9 +252,8 @@ def _scan_rule_feedback_rows(root: Path, *, work_unit_id: str) -> list[dict]:
     if not wu or not root.is_dir():
         return []
     rows: list[dict] = []
-    for row in _scan_event_files(root):
-        if str(row.get("type") or "") != RULE_FEEDBACK_EVENT_TYPE:
-            continue
+    scan_rows, _wm = scan_event_files(root, keep_types=(RULE_FEEDBACK_EVENT_TYPE,))
+    for row in scan_rows:
         raw_payload = row.get("payload")
         payload = raw_payload if isinstance(raw_payload, dict) else {}
         if str(payload.get("work_unit_id") or "") != wu:
@@ -817,34 +816,6 @@ def _submit_one(
 # ── 规则反馈投影（P1 注释通道数据源）──
 
 
-def _scan_event_files(root: Path) -> Iterable[dict]:
-    """扫描 event_logs_dir 的单文件与多段布局，产出机械事件 dict（fail-open）."""
-    if not root.is_dir():
-        return
-    for path in sorted(root.glob("*.jsonl")):
-        yield from _parse_event_file(path)
-    for seg_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-        for path in sorted(seg_dir.glob("*.jsonl")):
-            yield from _parse_event_file(path)
-
-
-def _parse_event_file(path: Path) -> Iterable[dict]:
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(row, dict):
-                    yield row
-    except OSError:
-        return
-
-
 class _ProjectionCache(TypedDict):
     """RuleFeedbackProjection 的 TTL 缓存载荷（三视图一次性物化 + 覆盖水位）.
 
@@ -888,16 +859,16 @@ class RuleFeedbackProjection:
         watermark: dict[str, str] = {}
         # TASK-fdc7603b-001 C 线：投影覆盖边界水位——本次扫描已见到的最新事件
         # ts（含无 ref 事件）。TTL 命中的旧快照以旧 indexed_watermark 披露。
-        indexed_watermark = ""
-        for row in _scan_event_files(self._dir):
+        scan_rows, indexed_watermark = scan_event_files(
+            self._dir, keep_types=(RULE_FEEDBACK_EVENT_TYPE, KNOWLEDGE_READ_EVENT_TYPE)
+        )
+        for row in scan_rows:
             event_type = str(row.get("type") or "")
             # 先落名再 isinstance：调用表达式不可收窄，直接内联会让 payload
             # 残留 None 分支；经局部名收窄后恒为 mapping（else 分支 {}）。
             raw_payload = row.get("payload")
             payload = raw_payload if isinstance(raw_payload, dict) else {}
             ts = str(row.get("ts") or "")
-            if ts > indexed_watermark:
-                indexed_watermark = ts
             ref = str(payload.get("ref") or row.get("ref") or "").strip()
             # P-SET-5：规则 ref 入投影前归一（RULE-AI-N 模式统一大写）——
             # 与查询侧 upper() 对称，legacy 小写载荷行同样收敛到同一键；
