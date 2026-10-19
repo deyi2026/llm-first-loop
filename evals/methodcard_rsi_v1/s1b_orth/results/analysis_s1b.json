@@ -1,0 +1,245 @@
+{
+  "grader": "v1.4",
+  "instances": 120,
+  "arms": {
+    "no_card": {
+      "n": 120,
+      "c1": 1.0,
+      "c2": 0.3667,
+      "c3": 0.0,
+      "c4": 1.0,
+      "case_pass": 0,
+      "rate": 0.0,
+      "ci95": [
+        -0.0,
+        0.031
+      ]
+    },
+    "gold_card": {
+      "n": 120,
+      "c1": 0.9833,
+      "c2": 0.8917,
+      "c3": 0.6,
+      "c4": 0.9917,
+      "case_pass": 65,
+      "rate": 0.5417,
+      "ci95": [
+        0.4526,
+        0.6281
+      ]
+    },
+    "filler_orth_card": {
+      "n": 120,
+      "c1": 1.0,
+      "c2": 0.2167,
+      "c3": 0.0,
+      "c4": 1.0,
+      "case_pass": 0,
+      "rate": 0.0,
+      "ci95": [
+        -0.0,
+        0.031
+      ]
+    }
+  },
+  "s1b": {
+    "v1.4_D": {
+      "n": 30,
+      "G1": 16,
+      "G1_ids": [
+        "P28-018",
+        "P28-028",
+        "P28-032",
+        "P28-035",
+        "P28-039",
+        "P28-054",
+        "P28-055",
+        "P28-056",
+        "P28-064",
+        "P28-065",
+        "P28-073",
+        "P28-079",
+        "P28-091",
+        "P28-112",
+        "P28-113",
+        "P28-120"
+      ],
+      "G2_n": 2,
+      "G2": [
+        "c2",
+        "c3"
+      ],
+      "gold_pass": true
+    },
+    "v1.3_D": {
+      "n": 28,
+      "G1": 16,
+      "G1_ids": [
+        "P28-027",
+        "P28-041",
+        "P28-051",
+        "P28-053",
+        "P28-054",
+        "P28-055",
+        "P28-056",
+        "P28-058",
+        "P28-064",
+        "P28-073",
+        "P28-074",
+        "P28-076",
+        "P28-091",
+        "P28-110",
+        "P28-112",
+        "P28-120"
+      ],
+      "G2_n": 2,
+      "G2": [
+        "c2",
+        "c3"
+      ],
+      "gold_pass": true
+    },
+    "F1": {
+      "n": 0,
+      "ids": [],
+      "pass": true
+    },
+    "flips_gold": {
+      "c1": {
+        "fail2pass": 0,
+        "pass2fail": 2
+      },
+      "c2": {
+        "fail2pass": 70,
+        "pass2fail": 7
+      },
+      "c3": {
+        "fail2pass": 72,
+        "pass2fail": 0
+      },
+      "c4": {
+        "fail2pass": 0,
+        "pass2fail": 1
+      }
+    },
+    "flips_filler_orth": {
+      "c1": {
+        "fail2pass": 0,
+        "pass2fail": 0
+      },
+      "c2": {
+        "fail2pass": 16,
+        "pass2fail": 34
+      },
+      "c3": {
+        "fail2pass": 0,
+        "pass2fail": 0
+      },
+      "c4": {
+        "fail2pass": 0,
+        "pass2fail": 0
+      }
+    }
+  },
+  "integrity": {
+    "arms": {
+      "gold_card": {
+        "n_ok": 120,
+        "n_err": 0,
+        "dup_keys": 0,
+        "prompt_versions": [
+          "p2"
+        ],
+        "models": [
+          "glm-5.3-flash"
+        ],
+        "card_sha256": [
+          "4c9d22cad90a42378ef917b6ac585119c6d11e01cbf5b2afa6172f147ad4f8a6"
+        ]
+      },
+      "filler_orth_card": {
+        "n_ok": 120,
+        "n_err": 0,
+        "dup_keys": 0,
+        "prompt_versions": [
+          "p2"
+        ],
+        "models": [
+          "glm-5.3-flash"
+        ],
+        "card_sha256": [
+          "58275883879b49f7a1dbe67b43289f00de22b5b3cf0356e095121fc35855e9d1"
+        ]
+      }
+    },
+    "expected_instances": 120
+  },
+  "s0": {
+    "D": 30,
+    "R": 0,
+    "D_ids": [
+      "P28-001",
+      "P28-018",
+      "P28-026",
+      "P28-028",
+      "P28-032",
+      "P28-035",
+      "P28-039",
+      "P28-042",
+      "P28-044",
+      "P28-054",
+      "P28-055",
+      "P28-056",
+      "P28-064",
+      "P28-065",
+      "P28-068",
+      "P28-073",
+      "P28-079",
+      "P28-081",
+      "P28-087",
+      "P28-091",
+      "P28-092",
+      "P28-093",
+      "P28-103",
+      "P28-105",
+      "P28-111",
+      "P28-112",
+      "P28-113",
+      "P28-118",
+      "P28-119",
+      "P28-120"
+    ],
+    "R_ids": []
+  },
+  "gold_batch_consistency": {
+    "n": 120,
+    "agree": 62,
+    "agree_rate": 0.5167,
+    "both_pass": 42,
+    "old_pass": 77,
+    "new_pass": 65
+  },
+  "injection_test": {
+    "arms": {
+      "no_card": {
+        "pass_before": 0,
+        "pass_after_inject": 20,
+        "newly": 20
+      },
+      "gold_card": {
+        "pass_before": 65,
+        "pass_after_inject": 97,
+        "newly": 32
+      },
+      "filler_orth_card": {
+        "pass_before": 0,
+        "pass_after_inject": 1,
+        "newly": 1
+      }
+    },
+    "F1_after_inject": 1,
+    "F1_ids_after_inject": [
+      "P28-035"
+    ]
+  }
+}

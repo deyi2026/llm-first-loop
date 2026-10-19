@@ -1,0 +1,80 @@
+{
+  "baseline": {
+    "note": "no_card 继承 S0，不在 S1b 重跑；D/R 由 analyze_s1b 现算核对",
+    "s0_calls": {
+      "path": "evals/methodcard_rsi_v1/s0_p28/results/calls.jsonl",
+      "sha256": "bf0aec406e03c8c23c016c796072b4c5288b0e4a3692c428637cd1631fb62e89"
+    },
+    "s0_d_v14": 30,
+    "s0_r_v14": 0
+  },
+  "cards": {
+    "filler_orth": {
+      "chars": 757,
+      "cjk": 375,
+      "path": "evals/methodcard_rsi_v1/s1b_orth/cards/filler_orth.md",
+      "sha256": "58275883879b49f7a1dbe67b43289f00de22b5b3cf0356e095121fc35855e9d1",
+      "utf8_bytes": 1583
+    },
+    "gold": {
+      "chars": 744,
+      "cjk": 388,
+      "path": "evals/methodcard_rsi_v1/s1_gold_filler/cards/gold.md",
+      "sha256": "4c9d22cad90a42378ef917b6ac585119c6d11e01cbf5b2afa6172f147ad4f8a6",
+      "utf8_bytes": 1638
+    }
+  },
+  "frozen_at": "2026-10-19T21:50:44+08:00",
+  "grader": {
+    "grade_v14": {
+      "path": "evals/methodcard_rsi_v1/s0_p28/grade_v14.py",
+      "sha256": "ccbbcd0135a9c372a193a06978dc8e5a75986d0910af1be5239d71863bc917f4"
+    }
+  },
+  "lint": {
+    "path": "evals/methodcard_rsi_v1/s1b_orth/LINT-S1B.md",
+    "result": "PASS",
+    "sha256": "1075b688542fafe7b563ebd6c7a3d967015ef71ca3dea34b680361184cf82c24"
+  },
+  "pool": {
+    "instances": 120,
+    "path": "evals/methodcard_rsi_v1/s0_p28/pool_p28.jsonl",
+    "sha256": "e4dda4f1d9199615364af5399575f8076a6c9e35ae19daca3c266c9a0aa90c3a"
+  },
+  "prompt_equivalence": {
+    "checked_at": "2026-10-19T21:50:44+08:00",
+    "mechanism": "run_s1b imports run_s1.build_prompt / PROMPT_TMPL; no copied template",
+    "prompt_version": "p2"
+  },
+  "purpose": "S1b orthogonal negative control: gold vs unrelated-skill filler (list sort/dedupe)",
+  "scripts": {
+    "agent_harness": {
+      "path": "evals/methodcard_rsi_v1/agent_harness.py",
+      "sha256": "bc945cabc8893ae24def82547b0aacf3a48d02556b32dd7450376ae68c421a15"
+    },
+    "analyze_s1b": {
+      "path": "evals/methodcard_rsi_v1/s1b_orth/analyze_s1b.py",
+      "sha256": "34877c6087f987a10606209ae3cbf208ee6a9516e57c9a7a2aedafbbe2f6fcbb"
+    },
+    "lint_s1b": {
+      "path": "evals/methodcard_rsi_v1/s1b_orth/lint_s1b.py",
+      "sha256": "aa1b65129f8995b2f81e8f3ad663baae06b5cb2b5fd28928c14f7dbd5a085680"
+    },
+    "run_s0": {
+      "path": "evals/methodcard_rsi_v1/s0_p28/run_s0.py",
+      "sha256": "e8e50ec0710071de0b12961b905fca89a8ab09c296c33e0bdb4349eee48a3d0f"
+    },
+    "run_s1": {
+      "path": "evals/methodcard_rsi_v1/s1_gold_filler/run_s1.py",
+      "sha256": "6a8c9cc3af1dc2a0c49a0bb36ca139ed224ea2e5d7a02e56adc9bbf126b2e69d"
+    },
+    "run_s1b": {
+      "path": "evals/methodcard_rsi_v1/s1b_orth/run_s1b.py",
+      "sha256": "baff27705f47609ecdb66fcd75dac5348e5019d193fcdeab86ec32d8ade51ff5"
+    }
+  },
+  "spec": {
+    "path": "evals/methodcard_rsi_v1/s1b_orth/S1B-SPEC.md",
+    "sha256": "fbf75c56275f645a2e25d3d25649d7c0cc24bf9c0dd29c2f8f9313f6ab7f78cd"
+  }
+}

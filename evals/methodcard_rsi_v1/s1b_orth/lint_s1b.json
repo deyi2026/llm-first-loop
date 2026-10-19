@@ -1,0 +1,24 @@
+{
+  "gold": {
+    "chars": 744,
+    "cjk": 388,
+    "utf8_bytes": 1638
+  },
+  "filler_orth": {
+    "chars": 757,
+    "cjk": 375,
+    "utf8_bytes": 1583
+  },
+  "len_diff_pct": 1.75,
+  "cjk_diff_pct": 3.35,
+  "sections_ok": true,
+  "missing_sections": [],
+  "forbidden_hits": {},
+  "ngram8": {
+    "max_cover_of_card": 0.0,
+    "max_jaccard": 0.0,
+    "threshold": 0.3,
+    "pass": true
+  },
+  "pass": true
+}
