@@ -1,0 +1,14 @@
+{
+  "seed": 20261019,
+  "per_family": 6,
+  "pair_count": 30,
+  "pool_size": 1215,
+  "families": {
+    "F1_effectiveness": 6,
+    "F2_completion": 6,
+    "F3_dedupe": 6,
+    "F4_edit_verify": 6,
+    "F5_other": 6
+  },
+  "sha256": "c1e8c63b53389541a3de3aa263ffc0fcaab996485e6641c6b5afccf288366bae"
+}
