@@ -18,7 +18,15 @@ lfl chat --session FULL_SESSION_ID "继续"
 显式指定的会话不存在返回 1，不创建替代会话；显式启动选模失败时不使用默认模型继续执行。
 
 `lfl chat --help`、`lfl help`、`lfl keys` 无需模型凭证。
-旧裸消息入口继续支持；脚本推荐显式 `chat`，避免顶层词语与维护命令重名。
+所有命令均可使用命令级帮助，例如 `lfl delete --help`、`lfl event-migrate --help`、
+`lfl check-install --help`。帮助与参数校验在环境准备、CLI 进程登记和 Engine 装配之前完成；
+已知旧命令中的未知参数、缺少参数或类型错误返回 2，不会先启动模型或执行命令。
+
+旧裸消息入口继续支持：`lfl "分析这段需求"` 仍是一次聊天消息；为避免兼容性破坏，
+未知的顶层单词（例如 `lfl doctro`）仍按裸消息处理，不自动猜测为拼错的命令。
+脚本和新用法推荐显式 `lfl chat ...`。已知命令命名空间中的错误子命令/参数则明确拒绝，
+不会降级成聊天消息。旧 `list/search/delete/archive/unarchive/extract/fork/rename` 与
+`evolve-*`、`event-*` 命令继续保留；参数由共享契约在副作用前验证。
 
 ## stdout、退出码和脚本
 

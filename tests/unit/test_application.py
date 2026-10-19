@@ -218,8 +218,9 @@ def test_selected_workspace_reaches_entry_assembly(isolated, monkeypatch, comman
             seen.append(kwargs)
             raise CapturedError
         monkeypatch.setattr(factory, "build_engine", capture)
+        command_args = ["hello"] if command == "chat" else ["session-id", "new", "title"]
         with pytest.raises(CapturedError):
-            application.application_main(["--workspace", str(selected), command, *(["hello"] if command == "chat" else [])])
+            application.application_main(["--workspace", str(selected), command, *command_args])
     assert seen == [{"workspace_root": str(selected)}]
 
 

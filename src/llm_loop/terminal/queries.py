@@ -58,17 +58,20 @@ def query_context(options: Any = None) -> tuple[Path, Path, dict]:
 def dispatch_query(argv: list[str], options: Any = None) -> int | None:
     if not argv or argv[0] not in READ_COMMANDS | {"list", "search"}:
         return None
+    invoked_as = argv[0]
     cmd, rest = argv[0], argv[1:]
     cmd = {"session": "sessions", "model": "models", "status": "identity"}.get(cmd, cmd)
     if cmd == "models" and rest[:1] in (["list"], ["show"]):
         rest = rest[1:]
-    if cmd == "help":
-        print(HELP)
+    if cmd in {"help", "keys"}:
+        help_parser = argparse.ArgumentParser(prog=f"lfl {invoked_as}")
+        try:
+            help_parser.parse_args(rest)
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 2
+        print(HELP if cmd == "help" else KEY_HELP)
         return 0
-    if cmd == "keys":
-        print(KEY_HELP)
-        return 0
-    parser = argparse.ArgumentParser(prog=f"lfl {cmd}")
+    parser = argparse.ArgumentParser(prog=f"lfl {invoked_as}")
     parser.add_argument("--json", action="store_true")
     if cmd == "list":
         cmd, rest = "sessions", ["list", *rest]
@@ -76,15 +79,35 @@ def dispatch_query(argv: list[str], options: Any = None) -> int | None:
         cmd, rest = "sessions", ["search", *rest]
     if cmd == "sessions":
         parser.add_argument("action", choices=("list", "show", "search", "export"))
-        parser.add_argument("value", nargs="?")
+        # `search` historically accepted unquoted multi-word terms. Keep that
+        # behavior for both `search ...` and the canonical `sessions search ...`.
+        parser.add_argument("value", nargs="*")
         parser.add_argument("--archived", action="store_true")
         parser.add_argument("--raw", action="store_true")
         parser.add_argument("--to")
-        parser.add_argument("--format", choices=("json", "markdown"), default="json")
+        parser.add_argument("--format", choices=("json", "markdown"), default=None)
     elif cmd == "config":
         parser.add_argument("action", choices=("show",))
     try:
         ns = parser.parse_args(rest)
+        if cmd == "sessions":
+            values = ns.value if isinstance(ns.value, list) else ([ns.value] if ns.value else [])
+            if ns.action == "list" and values:
+                parser.error("sessions list does not accept a positional value")
+            if ns.action in {"show", "export"} and len(values) != 1:
+                parser.error(f"sessions {ns.action} requires exactly one session ID")
+            if ns.action == "search" and not " ".join(values).strip():
+                parser.error("sessions search requires a query")
+            if ns.action == "export" and not ns.to:
+                parser.error("sessions export requires --to FILE")
+            if ns.action != "export" and ns.to:
+                parser.error("--to is only valid with sessions export")
+            if ns.action != "show" and ns.raw:
+                parser.error("--raw is only valid with sessions show")
+            if ns.action not in {"list", "search"} and ns.archived:
+                parser.error("--archived is only valid with sessions list/search")
+            if ns.action != "export" and ns.format is not None:
+                parser.error("--format is only valid with sessions export")
         data, workspace, values = query_context(options)
         workspace_explicit = bool(
             getattr(options, "workspace", None) or values.get("LFL_WORKSPACE_ROOT")
@@ -127,20 +150,24 @@ def _sessions(ns: Any, data: Path, workspace: Path, values: dict, *,
     root = session_root(data, workspace, require_registered=workspace_explicit)
     source = values.get("READ_PATH_SOURCE", "session_json")
     if ns.action in {"list", "search"}:
-        if ns.action == "search" and not ns.value:
+        if ns.action == "list" and ns.value:
+            raise ValueError("sessions list does not accept a positional value")
+        query = " ".join(ns.value) if isinstance(ns.value, list) else str(ns.value or "")
+        if ns.action == "search" and not query.strip():
             raise ValueError("sessions search requires a query")
-        rows = session_rows(data, archived=ns.archived, query=ns.value if ns.action == "search" else "", root=root, source=source)
+        rows = session_rows(data, archived=ns.archived, query=query if ns.action == "search" else "", root=root, source=source)
         print(json.dumps(rows, ensure_ascii=False, indent=2) if ns.json else safe_text("\n".join(
             f"{row['session_id']}  {row.get('title') or '(untitled)'}  "
             f"{row.get('message_count', '?')} messages {row.get('error', '')}" for row in rows)))
         return int(any("error" in row for row in rows))
-    if not ns.value:
+    values_list = ns.value if isinstance(ns.value, list) else ([ns.value] if ns.value else [])
+    if len(values_list) != 1 or not values_list[0]:
         raise ValueError("Session ID required")
-    raw = read_session(data, ns.value, source, root)
+    raw = read_session(data, values_list[0], source, root)
     if ns.action == "export":
         if not ns.to:
             raise ValueError("sessions export requires --to FILE")
-        export_record(raw, Path(ns.to).expanduser(), ns.format)
+        export_record(raw, Path(ns.to).expanduser(), ns.format or "json")
         return 0
     content = json.dumps(raw, ensure_ascii=False, indent=2) if ns.raw or ns.json else transcript(raw)
     print(content if ns.json else safe_text(content))

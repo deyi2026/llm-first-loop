@@ -17,6 +17,15 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+from llm_loop.cli_contracts import (
+    LEGACY_COMMANDS as _LEGACY_COMMANDS,
+)
+from llm_loop.cli_contracts import (
+    build_chat_parser as _chat_parser,
+)
+from llm_loop.cli_contracts import (
+    build_legacy_parser as _legacy_parser,
+)
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.core.session import (
     SessionExternalResourceBusyError,
@@ -31,6 +40,21 @@ from llm_loop.terminal.presentation import Presenter
 from llm_loop.terminal.queries import HELP, dispatch_query
 from llm_loop.terminal.shell import interactive_session
 from llm_loop.timekeeping import system_local_now
+
+
+def _parse_preflight(parser: argparse.ArgumentParser, argv: list[str]) -> int | None:
+    """Return a help/error exit code, or None when arguments are valid."""
+    try:
+        parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+    return None
+
+
+def _preflight_legacy_command(argv: list[str]) -> int | None:
+    if not argv or argv[0] not in _LEGACY_COMMANDS:
+        return None
+    return _parse_preflight(_legacy_parser(argv[0]), argv[1:])
 
 
 def _run_single(engine, text: str, session_id: str | None = None) -> int:
@@ -193,9 +217,7 @@ def _cmd_faults(args: list[str]) -> int:
     用法: llm_loop faults [--limit N] [--data-dir DIR]
     只读 exception_log.jsonl：按 (phase, error_type) 签名聚合 + 最近明细。
     """
-    parser = argparse.ArgumentParser(prog="llm_loop faults")
-    parser.add_argument("--limit", type=int, default=15, help="最近明细条数（默认 15）")
-    parser.add_argument("--data-dir", help="数据目录（默认取项目配置 audit_dir）")
+    parser = _legacy_parser("faults")
     ns = parser.parse_args(args)
 
     if ns.data_dir:
@@ -240,55 +262,14 @@ def main(argv: list[str] | None = None, *, workspace_root: str | None = None) ->
     ))
     if query is not None:
         return query
-    # 手动分派子命令（避免 subparsers 吃掉位置参数 message）
-    _cmds = {
-        "list",
-        "delete",
-        "archive",
-        "unarchive",
-        "search",
-        "extract",
-        "fork",
-        "rename",
-        "evolve-list",
-        "evolve-review",
-        "evolve-complete",  # M17 FR-REVIEW-AI-01: 人工完成登记（涉边界演进）
-        "evolve-verify",  # EVO-20260813-8279507f: 人工核验确认（executed → verified_at 标记）
-        "export-distill",  # export_distill: 蒸馏数据集导出（薄壳只读，不装配 engine）
-        "export-serve-mcp",  # P0-2: 只读导出 MCP server（stdio，不装配 engine）
-        "event-inventory",  # D1: 存量存储盘点（只读，不装配 engine）
-        "archive-index",  # R3: 压缩档案存量段索引重建（纯存储操作，不装配 engine）
-        "event-migrate",  # D1: 存量迁移为事件日志（纯存储操作，不装配 engine）
-        "event-verify",  # D1: 事件重放 vs 源逐字段校验（只读，不装配 engine）
-        "event-rollback",  # D1: 从备份恢复源数据（纯存储操作，不装配 engine）
-        "session-fork",  # D3: 会话 fork（事件日志物理复制 + session JSON 双轨，不装配 engine）
-        "event-retire",  # D1后续批次2: 三套存储退役（对账+归档+读路径切换）
-        "event-retire-rollback",  # D1后续批次2: 退役回滚
-        "event-rotate-status",  # D1后续批次3:, 事件日志滚动段清单
-        "event-hooks",  # D1后续批次4: pre-step 过滤钩子管理
-        "faults",  # A-⑤（EVO-20260924-40755734）: 工具故障台账聚合查询（只读，不装配 engine）
-    }
-    if argv and argv[0] in _cmds:
+    legacy_status = _preflight_legacy_command(argv)
+    if legacy_status is not None:
+        return legacy_status
+    if argv and argv[0] in _LEGACY_COMMANDS:
         _prepare_cli_process()
         return _dispatch_command(argv, workspace_root=workspace_root)
 
-    parser = argparse.ArgumentParser(prog="llm_loop", description="LLM-First Core Loop")
-    parser.add_argument("message", nargs="?", help="单条消息（不填则进入交互模式）")
-    parser.add_argument("--interactive", action="store_true", help="交互模式")
-    parser.add_argument("--session", help="复用指定会话（单条/交互）")
-    parser.add_argument("--stdin", action="store_true", help="标准输入全文作为一个用户消息")
-    parser.add_argument("--message-file", help="UTF-8 文件全文作为一个用户消息")
-    parser.add_argument("--output", choices=("text", "json", "jsonl"), default="text", help="stdout protocol")
-    parser.add_argument("--plain", action="store_true", help="关闭终端增强；保留完整内容")
-    parser.add_argument("--no-stream", action="store_true", help="仅显示最终回答（仍消费真实事件）")
-    parser.add_argument("--theme", choices=("auto", "dark", "light", "high-contrast", "mono"), default=None)
-
-    parser.add_argument(
-        "--model",
-        dest="model",
-        default="",
-        help="M50: 启动时为会话装配模型（provider/model 或裸模型名；与 Web /model 一致, 复用同一 session override）",
-    )
+    parser = _chat_parser()
     args = parser.parse_args(argv)
     inputs = int(args.message is not None) + int(args.stdin) + int(args.message_file is not None)
     if inputs > 1 or (args.interactive and inputs):
@@ -386,7 +367,7 @@ def _dispatch_command(argv: list[str], *, workspace_root: str | None = None) -> 
     if cmd == "export-serve-mcp":
         from llm_loop.export.mcp_server import main as _serve_export_main
 
-        return _serve_export_main(argv[1:])
+        return _serve_export_main(argv[1:], parser=_legacy_parser(cmd))
     # D1: event-* 纯存储/只读命令，入口特判（早于 build_engine，避免无谓 LLM 装配）
     if cmd == "event-inventory":
         return _cmd_event_inventory(argv[1:])
@@ -422,75 +403,40 @@ def _dispatch_command(argv: list[str], *, workspace_root: str | None = None) -> 
     # P2-4(2026-08-15): 子命令分派同样装配 engine（持有 LLM httpx 连接），
     # 统一 try/finally 在退出前 close（fail-open 幂等）——覆盖本分派全部 return 出口。
     def _dispatch() -> int:
+        try:
+            parser = _legacy_parser(cmd)
+            parsed = parser.parse_args(argv[1:])
+        except ValueError as exc:
+            # Keep the lower-level dispatcher contract stable for internal callers;
+            # application_main normally rejects this before engine construction.
+            print(f"❌ {exc}", file=sys.stderr)
+            return 2
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 2
         if cmd == "list":
-            return _cmd_list(engine, "--archived" in argv)
+            return _cmd_list(engine, parsed.archived)
         if cmd == "delete":
-            if len(argv) < 2:
-                print("用法: llm_loop delete <session_id> [--yes]")
-                return 2
-            return _cmd_delete(engine, argv[1], "--yes" in argv)
+            return _cmd_delete(engine, parsed.session_id, parsed.yes)
         if cmd == "archive":
-            if len(argv) < 2:
-                print("用法: llm_loop archive <session_id>")
-                return 2
-            return _cmd_archive(engine, argv[1], True)
+            return _cmd_archive(engine, parsed.session_id, True)
         if cmd == "unarchive":
-            if len(argv) < 2:
-                print("用法: llm_loop unarchive <session_id>")
-                return 2
-            return _cmd_archive(engine, argv[1], False)
+            return _cmd_archive(engine, parsed.session_id, False)
         if cmd == "search":
-            if len(argv) < 2:
-                print("用法: llm_loop search <query>")
-                return 2
-            return _cmd_search(engine, " ".join(argv[1:]))
+            return _cmd_search(engine, " ".join(parsed.query))
         if cmd == "extract":
-            if len(argv) < 2:
-                print("用法: llm_loop extract <session_id>")
-                return 2
-            return _cmd_extract(engine, argv[1])
+            return _cmd_extract(engine, parsed.session_id)
         if cmd == "rename":
-            if len(argv) < 3:
-                print("用法: llm_loop rename <session_id> \"<新标题>\"")
-                return 2
-            return _cmd_rename(engine, argv[1], " ".join(argv[2:]))
+            return _cmd_rename(engine, parsed.session_id, " ".join(parsed.new_title))
         if cmd == "fork":
-            if len(argv) < 2:
-                print("用法: llm_loop fork <session_id> [--at <索引>] [--summary \"<摘要>\"]")
-                return 2
-            at = None
-            summary = ""
-            rest = argv[2:]
-            for i, tok in enumerate(rest):
-                if tok == "--at" and i + 1 < len(rest):
-                    try:
-                        at = int(rest[i + 1])
-                    except ValueError:
-                        print("❌ --at 需为整数", file=sys.stderr)
-                        return 2
-                elif tok == "--summary" and i + 1 < len(rest):
-                    summary = rest[i + 1]
-            return _cmd_fork(engine, argv[1], at=at, summary=summary)
+            return _cmd_fork(engine, parsed.session_id, at=parsed.at, summary=parsed.summary)
         if cmd == "evolve-list":
-            return _cmd_evolve_list(engine, argv[1] if len(argv) > 1 else None)
+            return _cmd_evolve_list(engine, parsed.status)
         if cmd == "evolve-review":
-            extra = [a for a in argv[3:] if a]
-            authorize = "--authorize-exec" in extra
-            unknown = [a for a in extra if a != "--authorize-exec"]
-            if len(argv) < 3 or unknown:
-                print("用法: llm_loop evolve-review <suggestion_id> <accepted|rejected> [--authorize-exec]")
-                return 2
-            return _cmd_evolve_review(engine, argv[1], argv[2], authorize)
+            return _cmd_evolve_review(engine, parsed.suggestion_id, parsed.decision, parsed.authorize_exec)
         if cmd == "evolve-complete":
-            if len(argv) < 3:
-                print('用法: llm_loop evolve-complete <suggestion_id> "<执行结果说明>"')
-                return 2
-            return _cmd_evolve_complete(engine, argv[1], " ".join(argv[2:]))
+            return _cmd_evolve_complete(engine, parsed.suggestion_id, " ".join(parsed.result))
         if cmd == "evolve-verify":
-            if len(argv) < 3:
-                print('用法: llm_loop evolve-verify <suggestion_id> "<核验说明>"')
-                return 2
-            return _cmd_evolve_verify(engine, argv[1], " ".join(argv[2:]))
+            return _cmd_evolve_verify(engine, parsed.suggestion_id, " ".join(parsed.note))
         return 2
 
     try:
@@ -587,32 +533,7 @@ def _cmd_export_distill(argv: list[str]) -> int:
     from llm_loop.introspection.export_distill import run_export
 
     data = Path(legacy_env_snapshot().get("DATA_DIR") or "data")
-    default_input = str(data / "sessions") + os.sep
-
-    parser = argparse.ArgumentParser(
-        prog="llm_loop export-distill",
-        description="导出带思考链的 ReAct 蒸馏数据集（薄壳只读，不装配 engine）",
-    )
-    parser.add_argument(
-        "--input-dir",
-        default=default_input,
-        help=f"会话输入目录（默认 {default_input}）",
-    )
-    parser.add_argument(
-        "--output",
-        default="",
-        help="JSONL 输出路径（默认 data/export_distill/distill_<YYYYmmdd-HHMMSS>.jsonl）",
-    )
-    parser.add_argument(
-        "--report",
-        default="",
-        help="统计报告路径（默认同输出目录 report_<YYYYmmdd-HHMMSS>.json）",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="覆盖既有输出文件（默认拒绝已存在的输出，杜绝静默追加）",
-    )
+    parser = _legacy_parser("export-distill")
     args = parser.parse_args(argv)
 
     ts = system_local_now().strftime("%Y%m%d-%H%M%S")
@@ -638,7 +559,6 @@ def _cmd_export_distill(argv: list[str]) -> int:
 
 # ── D1 事件源化 CLI 子命令（event-*，纯存储/只读操作，不装配 engine）──
 
-_DEFAULT_DATA_DIR = "./data"
 
 
 def _cmd_archive_index(argv: list[str]) -> int:
@@ -649,11 +569,7 @@ def _cmd_archive_index(argv: list[str]) -> int:
     """
     from llm_loop.memory.archive import ArchiveStore
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop archive-index",
-        description="压缩档案存量段索引重建（幂等，可重复执行）",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser = _legacy_parser("archive-index")
     args = parser.parse_args(argv)
 
     try:
@@ -679,11 +595,7 @@ def _cmd_event_inventory(argv: list[str]) -> int:
     """
     from llm_loop.event_log.inventory import run_inventory
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-inventory",
-        description="存量存储只读盘点（sessions/archives/compressed_archive/action_trace）",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser = _legacy_parser("event-inventory")
     args = parser.parse_args(argv)
 
     try:
@@ -702,14 +614,7 @@ def _cmd_event_migrate(argv: list[str]) -> int:
     """
     from llm_loop.event_log.migrate import run_migration
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-migrate",
-        description="存量会话 → 事件日志迁移（备份先行、幂等、迁移后校验闭环）",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    parser.add_argument(
-        "--force", action="store_true", help="跳过幂等检查强制重建既有事件日志（修复不一致）"
-    )
+    parser = _legacy_parser("event-migrate")
     args = parser.parse_args(argv)
 
     data_dir = args.data_dir
@@ -735,14 +640,7 @@ def _cmd_event_verify(argv: list[str]) -> int:
     from llm_loop.event_log.replay import replay_session
     from llm_loop.event_log.store import EventStore, _validate_session_id
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-verify",
-        description="事件重放 vs 源 session 逐字段校验（通过+失败=总数闭环）",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--session", default="", help="单会话校验（默认全部）")
-    group.add_argument("--all", action="store_true", help="全量校验（默认行为）")
+    parser = _legacy_parser("event-verify")
     args = parser.parse_args(argv)
 
     data_dir = args.data_dir
@@ -819,15 +717,7 @@ def _cmd_event_rollback(argv: list[str]) -> int:
     """
     from llm_loop.event_log.migrate import run_rollback
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-rollback",
-        description="从备份区恢复源 session JSON（--remove-events 时清除迁移事件日志）",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    parser.add_argument("--session", default="", help="单会话回滚（默认全部备份）")
-    parser.add_argument(
-        "--remove-events", action="store_true", help="同时清除对应事件日志（需操作者显式确认）"
-    )
+    parser = _legacy_parser("event-rollback")
     args = parser.parse_args(argv)
 
     data_dir = args.data_dir
@@ -869,14 +759,7 @@ def _cmd_session_fork(argv: list[str]) -> int:
     from llm_loop.event_log.fork import fork_session
     from llm_loop.event_log.store import EventStore
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop session-fork",
-        description="会话 fork（事件日志物理复制继承 + session JSON 双轨）",
-    )
-    parser.add_argument("--session", required=True, help="源会话 ID")
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    parser.add_argument("--fork-point", type=int, default=None, help="fork 点（保留前 N 条消息；缺省=全部）")
-    parser.add_argument("--summary", default="", help="分支摘要（缺省自动提炼）")
+    parser = _legacy_parser("session-fork")
     args = parser.parse_args(argv)
 
     try:
@@ -925,12 +808,7 @@ def _cmd_event_retire(argv: list[str]) -> int:
     """
     from llm_loop.event_log.retire import run_retire
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-retire",
-        description="三套存储退役（双轨对账前置 + 归档 + 读路径切换）",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    parser.add_argument("--force", action="store_true", help="跳过幂等检查强制退役")
+    parser = _legacy_parser("event-retire")
     args = parser.parse_args(argv)
 
     try:
@@ -967,12 +845,7 @@ def _cmd_event_retire_rollback(argv: list[str]) -> int:
     """
     from llm_loop.event_log.retire import run_retire_rollback
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-retire-rollback",
-        description="从备份区恢复源 session JSON + action_trace",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    parser.add_argument("--backup-dir", required=True, help="备份区目录")
+    parser = _legacy_parser("event-retire-rollback")
     args = parser.parse_args(argv)
 
     try:
@@ -999,12 +872,7 @@ def _cmd_event_rotate_status(argv: list[str]) -> int:
     """
     from llm_loop.event_log.rotate import RotateManager
 
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-rotate-status",
-        description="事件日志滚动段清单（序号/事件数/时间范围/大小/活跃状态）",
-    )
-    parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or _DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    parser.add_argument("--session", default="", help="单会话段清单（缺省列出全部多段会话）")
+    parser = _legacy_parser("event-rotate-status")
     args = parser.parse_args(argv)
 
     event_logs_dir = Path(f"{args.data_dir}/event_logs")
@@ -1035,12 +903,7 @@ def _cmd_event_hooks(argv: list[str]) -> int:
 
     用法: llm_loop event-hooks {list,test} [--event <json>]
     """
-    parser = argparse.ArgumentParser(
-        prog="llm_loop event-hooks",
-        description="pre-step 过滤钩子管理（list/test）",
-    )
-    parser.add_argument("subcommand", choices=["list", "test"], help="子命令")
-    parser.add_argument("--event", default="", help="测试事件 JSON（test 子命令）")
+    parser = _legacy_parser("event-hooks")
     args = parser.parse_args(argv)
 
     if args.subcommand == "list":
@@ -1299,8 +1162,18 @@ def application_main(argv: list[str] | None = None) -> int:
     query = dispatch_query(remaining, args)
     if query is not None:
         return query
-    if remaining[:1] == ["chat"] and remaining[1:] in (["--help"], ["-h"]):
-        return main(remaining[1:])
+    legacy_status = _preflight_legacy_command(remaining)
+    if legacy_status is not None:
+        return legacy_status
+    if remaining[:1] == ["chat"]:
+        chat_status = _parse_preflight(_chat_parser("lfl chat"), remaining[1:])
+        if chat_status is not None:
+            return chat_status
+    if remaining and remaining[0] in {"check-install", "paths", "web"}:
+        command_parser = argparse.ArgumentParser(prog=f"lfl {remaining[0]}")
+        command_status = _parse_preflight(command_parser, remaining[1:])
+        if command_status is not None:
+            return command_status
     if remaining == ["check-install"]:
         report = check_install()
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -1547,6 +1420,10 @@ def application_main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(report, ensure_ascii=False, indent=2) if doctor_args.json else human_report(report))
         return 0 if report["ready"] else 1
+    if remaining and remaining[0] != "chat" and remaining[0] not in _LEGACY_COMMANDS:
+        chat_status = _parse_preflight(_chat_parser("lfl"), remaining)
+        if chat_status is not None:
+            return chat_status
     try:
         bindings = prepare_environment(args)
     except ValueError as exc:

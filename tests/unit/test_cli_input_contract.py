@@ -208,3 +208,15 @@ def test_unexpected_none_model_reply_stops_before_run(runtime, monkeypatch):
     assert cli.main(["hello", "--model", "fixture/model"]) == 1
     assert runtime.calls == []
     assert runtime.closed == [True]
+
+
+def test_installed_entry_preserves_legacy_bare_message_compatibility(runtime, monkeypatch, tmp_path):
+    observed = []
+    monkeypatch.setattr(
+        cli, "prepare_environment", lambda _args: {"LFL_WORKSPACE_ROOT": str(tmp_path)}
+    )
+    monkeypatch.setattr(
+        cli, "run_turn", lambda _engine, _sid, text, _view, **_kwargs: observed.append(text) or 0
+    )
+    assert cli.application_main(["doctro"]) == 0
+    assert observed == ["doctro"]

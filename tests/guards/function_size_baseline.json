@@ -106,6 +106,7 @@
     },
     "modules": {
       "cli.py": "Action（入口）",
+      "cli_contracts.py": "delivery（共享CLI参数契约；不拥有Engine执行权）",
       "config.py": "kernel-candidate（runtime 配置）",
       "factory.py": "kernel-candidate（装配根）",
       "learning_runtime.py": "Learning",

@@ -649,6 +649,198 @@ def test_integrated_help_keeps_existing_installer_and_extension_commands(capsys)
         assert command in help_text
 
 
+@pytest.mark.parametrize("argv", [
+    ["delete", "session-id", "--typo"],
+    ["archive", "session-id", "--typo"],
+    ["rename"],
+    ["evolve-review", "suggestion-id", "accepted", "--typo"],
+    ["event-migrate", "--typo"],
+    ["export-serve-mcp", "--typo"],
+    ["session-fork", "--session", "session-id", "--fork-point", "not-an-int"],
+    ["export-distill", "--typo"],
+    ["check-install", "--typo"],
+    ["paths", "--typo"],
+    ["web", "--typo"],
+    ["extensions", "--typo"],
+    ["start", "--typo"],
+    ["init", "--typo"],
+    ["doctor", "--typo"],
+    ["upgrade", "--typo"],
+    ["backup", "--typo"],
+    ["rollback", "--typo"],
+])
+def test_legacy_unknown_or_invalid_arguments_fail_before_environment_or_engine(
+    monkeypatch, argv,
+):
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("invalid legacy CLI arguments must fail before environment preparation or Engine")
+
+    monkeypatch.setattr(cli, "prepare_environment", unexpected)
+    monkeypatch.setattr(cli, "_prepare_cli_process", unexpected)
+    monkeypatch.setattr("llm_loop.factory.build_engine", unexpected)
+    assert cli.application_main(argv) == 2
+
+
+def test_export_serve_mcp_handler_consumes_the_shared_legacy_parser(monkeypatch, tmp_path):
+    from llm_loop.export import mcp_server
+
+    observed = {}
+
+    def serve(argv, *, parser=None):
+        assert parser is not None
+        observed["args"] = parser.parse_args(argv)
+        return 0
+
+    monkeypatch.setattr(mcp_server, "main", serve)
+    monkeypatch.setattr(cli, "prepare_environment", lambda _args: {"LFL_WORKSPACE_ROOT": str(tmp_path)})
+    monkeypatch.setattr(cli, "_prepare_cli_process", lambda: None)
+    assert cli.application_main(["export-serve-mcp", "--evidence-owner", "workspace/session"]) == 0
+    assert observed["args"].evidence_owner == "workspace/session"
+
+
+def test_export_serve_mcp_direct_entry_uses_neutral_shared_parser(monkeypatch):
+    from llm_loop.export import mcp_server
+
+    observed = {}
+    bundle = SimpleNamespace(evidence=None)
+
+    def create_bundle(**kwargs):
+        observed.update(kwargs)
+        return bundle
+
+    monkeypatch.setattr(mcp_server, "create_bundle", create_bundle)
+    monkeypatch.setattr(mcp_server, "serve", lambda _bundle: None)
+    assert mcp_server.main(["--evidence-owner", "workspace/session"]) == 0
+    assert observed["evidence_owner"] == "workspace/session"
+
+
+@pytest.mark.parametrize("argv", [
+    ["list", "--help"],
+    ["search", "--help"],
+    ["session", "--help"],
+    ["model", "--help"],
+    ["status", "--help"],
+    ["help", "--help"],
+    ["keys", "--help"],
+    ["delete", "--help"],
+    ["archive", "--help"],
+    ["unarchive", "--help"],
+    ["extract", "--help"],
+    ["fork", "--help"],
+    ["rename", "--help"],
+    ["evolve-list", "--help"],
+    ["evolve-review", "--help"],
+    ["evolve-complete", "--help"],
+    ["evolve-verify", "--help"],
+    ["event-migrate", "--help"],
+    ["event-inventory", "--help"],
+    ["archive-index", "--help"],
+    ["event-verify", "--help"],
+    ["event-rollback", "--help"],
+    ["session-fork", "--help"],
+    ["event-retire", "--help"],
+    ["event-retire-rollback", "--help"],
+    ["event-rotate-status", "--help"],
+    ["event-hooks", "--help"],
+    ["faults", "--help"],
+    ["export-distill", "--help"],
+    ["export-serve-mcp", "--help"],
+    ["chat", "--help"],
+    ["extensions", "--help"],
+    ["start", "--help"],
+    ["init", "--help"],
+    ["doctor", "--help"],
+    ["upgrade", "--help"],
+    ["backup", "--help"],
+    ["rollback", "--help"],
+    ["models", "--help"],
+    ["identity", "--help"],
+    ["config", "--help"],
+    ["check-install", "--help"],
+    ["paths", "--help"],
+    ["web", "--help"],
+])
+def test_legacy_command_help_is_command_specific_and_prebootstrap(monkeypatch, capsys, argv):
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("command help must not prepare environment, register process, or build Engine")
+
+    monkeypatch.setattr(cli, "prepare_environment", unexpected)
+    monkeypatch.setattr(cli, "_prepare_cli_process", unexpected)
+    monkeypatch.setattr("llm_loop.factory.build_engine", unexpected)
+    assert cli.application_main(argv) == 0
+    output = capsys.readouterr().out
+    command = argv[0]
+    assert f"usage: lfl {command}" in output
+
+
+@pytest.mark.parametrize(("argv", "help_fragment"), [
+    (["export-serve-mcp", "--help"], "workspace_id/session_id"),
+    (["event-migrate", "--help"], "跳过幂等检查强制迁移"),
+    (["faults", "--help"], "最多显示条数（默认 15）"),
+])
+def test_legacy_option_help_preserves_useful_option_descriptions(
+    monkeypatch, capsys, argv, help_fragment,
+):
+    monkeypatch.setattr(
+        cli, "prepare_environment",
+        lambda *_a, **_k: pytest.fail("help must exit before environment preparation"),
+    )
+    assert cli.application_main(argv) == 0
+    assert help_fragment in capsys.readouterr().out
+
+
+def test_known_query_namespace_rejects_unknown_arguments_before_environment(monkeypatch):
+    monkeypatch.setattr(
+        cli, "prepare_environment",
+        lambda *_a, **_k: pytest.fail("query validation must happen before environment preparation"),
+    )
+    assert cli.application_main(["sessions", "list", "--typo"]) == 2
+
+
+@pytest.mark.parametrize("argv", [["help", "--typo"], ["keys", "--typo"]])
+def test_help_only_commands_reject_unknown_arguments(monkeypatch, argv):
+    monkeypatch.setattr(
+        cli, "_prepare_cli_process",
+        lambda: pytest.fail("help argument errors must be handled before process registration"),
+    )
+    assert cli.main(argv) == 2
+
+
+@pytest.mark.parametrize("argv", [
+    ["search", "method", "system"],
+    ["sessions", "search", "method", "system"],
+])
+def test_legacy_search_keeps_unquoted_multiword_query(query_env, monkeypatch, argv):
+    from llm_loop.terminal import queries
+
+    observed = {}
+    monkeypatch.setattr(
+        queries, "session_rows",
+        lambda *_args, **kwargs: observed.setdefault("query", kwargs["query"]) and [],
+    )
+    assert cli.main(argv) == 0
+    assert observed["query"] == "method system"
+
+
+@pytest.mark.parametrize("argv", [
+    ["sessions", "list", "unexpected"],
+    ["sessions", "show", "one", "two"],
+    ["sessions", "export", "one"],
+    ["sessions", "show", "one", "--format", "markdown"],
+    ["sessions", "export", "one", "--to", "out.json", "--archived"],
+])
+def test_query_argument_shape_errors_return_usage_status_before_query_io(
+    monkeypatch, argv,
+):
+    from llm_loop.terminal import queries
+
+    monkeypatch.setattr(
+        queries, "query_context",
+        lambda *_a, **_k: pytest.fail("invalid query shape must be rejected before config/path reads"),
+    )
+    assert cli.main(argv) == 2
+
+
 def test_legacy_module_query_uses_installed_home_not_site_packages(query_env, monkeypatch, capsys):
     installed_home = query_env / "installed-state"
     monkeypatch.delenv("DATA_DIR", raising=False)
