@@ -88,15 +88,16 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 见 `docs/ROADMAP-B-20260814.md`（P1 可用性 / P2 差异化 / P3 社区化）与 `CHANGELOG.md`。
 欢迎在 issue 讨论新方向后再动手大改。
 
-## 发布流程（B11 月度节奏）
+## 版本与 GitHub 发行流程
 
-1. **PR 标题规范**：`feat:` / `fix:` / `docs:` / `chore:` / `test:` / `refactor:` / `perf:` 前缀
-   ——Release Drafter 按前缀自动归类 changelog 草稿（`.github/release-drafter.yml`）。
-2. **PR 合并后**：`release-drafter.yml` 工作流自动更新 Draft Release（草稿，无副作用）。
-3. **发版（维护者）**：
-   - 核对 Draft Release 内容 → 与 `CHANGELOG.md` 最新段一致（公开面原则：只含使用者可见变更）
-   - 先同步 `CHANGELOG.md` 版本段与 `pyproject.toml`/Web/README 版本号，并通过版本一致性测试
-   - 正式仓 remote 为 `lfl`：`git tag vX.Y.Z && git push lfl vX.Y.Z`（触发 `release.yml`：门禁复核 + 生成 Release 草稿）。不要把 legacy `origin` 当正式发布目标。
-   - 人工确认发布 Release；出现回归时优先回滚到上一个已验证 tag/commit，再单独修复，不在已发布 tag 上改写历史
-4. **版本语义**：0.x 内小版本可增补能力，不破坏既有行为；公共 API 语义变更必须升版本
-   （`docs/api.md` §1 稳定声明 + 签名快照测试保护）。
+版本单一真值是 `pyproject.toml`；完整维护者操作步骤见 [`docs/releasing.md`](docs/releasing.md)。
+
+PR 的每次新提交还需在 `docs/governance/submissions/` 提交恰好一份 A.5 架构清单，覆盖 PR 的 base...head **所有**变更路径并如实声明 G1–G4 控制组件；执行 `python scripts/check_architecture_submission.py --base <public-main-sha> --head <candidate-sha>`，不可通过关闭该门禁绕过。
+
+1. 在**正式仓** `deyi2026/llm-first-loop`（本机 remote `lfl`，不是 legacy `origin`）基于 GitHub `main` 建受审隔离分支；开 PR，保留范围明确的 diff，检查 `CI` 的 pytest/Ruff/Pyright、安全扫描与平台安装验收；不得夹带本地开发 `main` 尚未公开的祖先提交。
+2. 用户可见变更同步 `CHANGELOG.md`；对外版本统一修改 `pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、中英文 README 及 CHANGELOG，并通过版本一致性测试、独立审查与完整 R9。正式仓 `main` 的合并应从 GitHub 精确已批准的 PR/commit 完成。
+3. 核对远端最新 tag，不覆盖或移动已有 `vX.Y.Z`；仅对已合入 GitHub `main`、通过 CI 的精确提交创建新 tag。推送正式仓 tag 会运行**唯一写者** `.github/workflows/release.yml`，先重复校验 tag↔包版本/静态检查/测试，再构建 wheel、sdist、安装脚本、验收 JSON 与 `SHA256SUMS`，生成与 tag 同名的 **Draft Release**。
+4. 核对真实工作流结果、Draft 附件、SHA256SUMS 和安装器与 Release API 的兼容性，再由维护者把 Draft 发布为稳定 Release；对用户公开的安装入口 `releases/latest` 只包含已正式发布的版本。旧 Draft（例如缺少附件的旧发行草稿）不得当成成功发行或直接发布。
+5. 发布后从真正的稳定 Release 下载并重新校验 wheel/摘要、执行干净 Linux 用户级安装与版本/数据保护检查。已发布 tag/commit 不得修改，修复使用新 patch tag；回滚要明确当前安装实例和用户数据边界，不做静默破坏性覆盖。
+
+发布不等于生产环境部署/服务重启。PR 标题建议使用 `feat:` / `fix:` / `docs:` / `chore:` / `test:` / `refactor:` / `perf:`。当前仅使用 tag 触发的 `release.yml` 写 Draft；旧 Release Drafter 不得再作为并行写入口。

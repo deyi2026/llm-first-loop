@@ -1,0 +1,153 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261019-linux-installer-v0633-github-release",
+  "summary": "Public-main-only Linux user-level installer + v0.6.33 release: PR CI, exact version surfaces, immutable tags, verified assets; no local-main WIP or service deployment.",
+  "components": [
+    {
+      "component_id": "linux-user-level-installer",
+      "paths": [
+        "scripts/install_linux.sh",
+        "scripts/uninstall_linux.sh",
+        "scripts/verify_linux_installer.py",
+        "tests/unit/test_linux_installer_scripts.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Linux user-scoped installer and release-pointer transaction",
+      "disposition": "Reuse user-level atomic install/upgrade/rollback/uninstall; no sudo, system daemon or deletion of user data.",
+      "evidence": [
+        "Isolated GLM-5.3 CodeReview PASS and full original R9 PASS for the 7-file installer.",
+        "GitHub Ubuntu x86_64/glibc CI run 39228552571: real install/upgrade/failure recovery/rollback/uninstall PASS."
+      ],
+      "verification_level": "Native Ubuntu smoke, staged security scan and complete R9; final PR CI required.",
+      "model_evidence_veto_recovery_exit": "Reject invalid platforms, release assets and hashes before switching. Model/human may veto; restore retained version.",
+      "rollback_route": "Revert reviewed PR and issue new patch version; never rewrite published tags.",
+      "declaration_id": "installer-decision"
+    },
+    {
+      "component_id": "github-release-ci-workflows",
+      "paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "GitHub CI and single tag-triggered Release writer",
+      "disposition": "Reuse existing push/PR gate and v* tag Release workflow; only create a Draft after successful gate.",
+      "evidence": [
+        "release.yml builds wheel/sdist/scripts/smoke/SHA256SUMS after tag/version gate.",
+        "GitHub maintainers manually publish a verified Draft; no second Release writer."
+      ],
+      "verification_level": "Exact GitHub PR/tag CI jobs, asset SHA256SUMS and stable Release API.",
+      "model_evidence_veto_recovery_exit": "Block publish on failed gate or missing assets; allow reviewer/human veto; retain old immutable tag.",
+      "rollback_route": "Revert reviewed PR and issue new patch version; never rewrite published tags.",
+      "declaration_id": "release-workflow"
+    },
+    {
+      "component_id": "public-version-surfaces",
+      "paths": [
+        "pyproject.toml",
+        "uv.lock",
+        "src/llm_loop/web/routes.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Package, Web and lockfile version identities",
+      "disposition": "Set project/Web/root lockfile to 0.6.33 without altering dependencies or provider behavior.",
+      "evidence": [
+        "Version consistency tests PASS and original v0.6.33 complete R9 PASS.",
+        "Fix old editable uv.lock project version 0.6.28 only; locked dependencies unchanged."
+      ],
+      "verification_level": "Version unit tests + GitHub uv sync --frozen gate.",
+      "model_evidence_veto_recovery_exit": "Fail on tag/pkg/Web divergence; revert with a new version (never retag).",
+      "rollback_route": "Revert reviewed PR and issue new patch version; never rewrite published tags."
+    },
+    {
+      "component_id": "public-installation-release-docs",
+      "paths": [
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "README.en.md",
+        "README.md",
+        "docs/INDEX.md",
+        "docs/installation.md",
+        "docs/releasing.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Public installation, rollback and version-management guides",
+      "disposition": "State Ubuntu glibc/x86_64 proof, ARM64 caveat, PR/A.5 gate, Draft/tag/asset policies.",
+      "evidence": [
+        "Compare public main and PR exact SHA/diff; installer uses stable Release API with SHA256SUMS.",
+        "Ubuntu x86_64 verified; ARM64 native run and musl support not claimed."
+      ],
+      "verification_level": "Readme/document links, version tests and independent review.",
+      "model_evidence_veto_recovery_exit": "Refuse partial Release metadata; document safe revert/new patch and preserved user data.",
+      "rollback_route": "Revert reviewed PR and issue new patch version; never rewrite published tags."
+    },
+    {
+      "component_id": "a5-exact-submission-record",
+      "paths": [
+        "docs/governance/submissions/20261019-linux-installer-v0633-github-release.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "GitHub public A.5 architecture submission metadata",
+      "disposition": "Exactly one submission covers every PR base...head changed file, including this manifest.",
+      "evidence": [
+        "Previous PR#1 run 39238051765 failed solely because no submission manifest existed.",
+        "check_architecture_submission.py validates changed-path coverage and G1-G4 structure."
+      ],
+      "verification_level": "Local exact-base path coverage and fresh PR A.5 CI success.",
+      "model_evidence_veto_recovery_exit": "A.5 rejects missing paths; independent model/human reviews scope and semantics.",
+      "rollback_route": "Revert reviewed PR and issue new patch version; never rewrite published tags."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "installer-decision",
+      "g1": {
+        "necessity": "Filesystem/process version-pointer switches and rollback need atomic program control; prose cannot guarantee data consistency."
+      },
+      "g2": {
+        "authority_owner": "User LFL_HOME + official stable GitHub release",
+        "relationship": "reuse",
+        "non_duplication": "No sudo/system service; production managed deployment stays separate."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent GLM-5.3 review + full R9 PASS.",
+          "Native Ubuntu installation/upgrade/rollback CI 39228552571 PASS."
+        ],
+        "recovery_or_reason": "Fail closed on unsupported platform/assets/hash; user can restore saved release; reviewer/human may veto."
+      },
+      "g4": {
+        "rollback": "Retain old app version/data; revert scoped PR with a new patch release.",
+        "verification": [
+          "Real Ubuntu x86_64/glibc install/rollback/uninstall with rejected bad hashes.",
+          "Original R9 and exact-head public PR CI without Provider calls."
+        ]
+      }
+    },
+    {
+      "declaration_id": "release-workflow",
+      "g1": {
+        "necessity": "Tag/package identity, CI, build artifacts and checksums need enforceable GitHub runner evidence, not model claims."
+      },
+      "g2": {
+        "authority_owner": "Public GitHub main, immutable tag, single release.yml writer",
+        "relationship": "reuse",
+        "non_duplication": "Existing tag gate only; no parallel Draft writer or production deployment."
+      },
+      "g3": {
+        "model_evidence": [
+          "GLM-5.3 reviewer and full R9 for exact release candidate.",
+          "Ubuntu native smoke plus tag CI, checksums and human asset inspection."
+        ],
+        "recovery_or_reason": "Failed gate/partial assets remain Draft; human/reviewer veto; fix with new tag."
+      },
+      "g4": {
+        "rollback": "Do not mutate published tags. Revert scoped main PR and issue new patch.",
+        "verification": [
+          "Tag equals pyproject/Web/README/CHANGELOG version.",
+          "Ruff/Pyright/pytest/security, native installer smoke, SHA256SUMS asset checks."
+        ]
+      }
+    }
+  ]
+}

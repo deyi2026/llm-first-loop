@@ -18,6 +18,8 @@
 | `event_sourcing.md` | 事件溯源设计（单一真相源 + 迁移/回滚指南） |
 | `eval_scenarios.md` | 评测集贡献指南（场景 schema + 判定注册 + 30 分钟新增路径 + PR 验收） |
 | `README.md` | 项目入口（功能/快速开始/CLI/配置） |
+| `installation.md` | Linux 稳定 Release 的安装、升级、回滚和卸载；wheel/源码运行差异 |
+| `releasing.md` | GitHub PR/主线、语义版本、Tag/Draft、发行资产验证与稳定 Release 发布流程 |
 
 ## 更新约定
 

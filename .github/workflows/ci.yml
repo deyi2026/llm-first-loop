@@ -49,6 +49,38 @@ jobs:
       - name: pytest（非真实 LLM）
         run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm"
 
+  linux-installer:
+    name: Linux 用户级安装/卸载真实成品验收（glibc）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - name: 构建绑定当前源码的 Web UI
+        working-directory: webui
+        run: npm ci --ignore-scripts && npm run build
+      - name: 构建真实 wheel
+        run: uv build --out-dir dist
+      - name: 真实 Linux 用户级安装、重复安装、错误摘要拒绝与卸载保留数据
+        run: python scripts/verify_linux_installer.py --wheel dist/*.whl --report dist/linux-installer-smoke.json
+      - name: 保存 Linux 安装验收报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer-smoke
+          path: dist/linux-installer-smoke.json
+          if-no-files-found: ignore
+          retention-days: 14
+
   nightly-real:
     name: nightly 真实 LLM 冒烟 + 评测集
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

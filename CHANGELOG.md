@@ -1,3 +1,17 @@
+## v0.6.34 — 修复稳定 Linux Release 下载校验和契约（2026-10-19）
+
+- **修复真实用户安装阻断**：Release `SHA256SUMS` 现在在 `dist/` 目录中生成，资产名为纯文件名（与 `install_linux.sh` 解析器一致），同一工作流立即执行 `sha256sum --check SHA256SUMS` 自检。此前 `v0.6.33` 标签工作流生成 `dist/文件名`，与安装器严格匹配条件冲突；该标签保留不可变历史，其 Draft 不作为稳定版本发布。
+- **反回归验收**：用独立的临时 `dist/` 真实执行 GitHub 工作流的校验和命令，核实 wheel 的文件名与 SHA256 均可被安装器识别；公开稳定 Release 的 assets、校验和、真实 Linux 用户级安装和回滚须完整通过后才发布。
+- **版本管理**：主线 `pyproject.toml`、`uv.lock`、Web 运行版本、README（中英）、安装示例和发布文档更新为 `0.6.34`。GitHub 保留既有 `v0.6.33` 标签，使用独立修复分支/PR/新 tag，绝不移动旧 tag 或用手动覆写校验和伪造 tag 的发行成品。
+
+## v0.6.33 — Linux 安装器与 GitHub 主线集成（未公开的发行候选，2026-10-19）
+
+- **Linux 用户级安装器**：面向 glibc Linux 的普通用户提供无需 `sudo` 的 `install_linux.sh` / `uninstall_linux.sh`，从 GitHub 已发布的稳定 Release 获取 wheel 与 `SHA256SUMS`；下载时核验内容摘要，不将摘要校验误称为发行者数字签名。
+- **无数据丢失的版本切换**：支持重复安装、保留旧版本、失败升级不切换活动版本、离线回滚及卸载保留 `.env`、会话、方法和经验数据；版本切换前应退出运行中的 LFL 进程。
+- **真实 Linux 验收**：GitHub Actions Ubuntu `x86_64/glibc` runner 对全新隔离环境、345 个包内资源、doctor 只读、升级/失败保护/回滚/卸载完成端到端验收；ARM64 属脚本支持目标，尚需独立原生 runner 验收。
+- **GitHub 发行管理**：正式 GitHub `main`、不可变 `vX.Y.Z` tag、单写者 `release.yml`、Draft 审查、wheel/sdist/安装脚本/验收 JSON/`SHA256SUMS` 构成统一发布过程；细节见 `docs/releasing.md` 和 `docs/installation.md`。
+- **版本面一致性**：`pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、中英文 README 与 CHANGELOG 同步到 `0.6.33`；从仓库本地开发 `main` 直接推送会携带尚未公开的提交，正式发布只从受审候选与 GitHub `main` 进行精确集成。
+
 # Changelog（公开变更记录）
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
