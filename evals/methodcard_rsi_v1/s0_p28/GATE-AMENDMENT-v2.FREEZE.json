@@ -1,0 +1,16 @@
+{
+  "frozen_at": "2026-10-19T19:35:54+08:00",
+  "paired_at_freeze": 92,
+  "calls_lines_at_freeze": 187,
+  "calls_ok_at_freeze": 186,
+  "calls_fail_at_freeze": 1,
+  "failed_key": "s0|orig_card|P28-002|r1",
+  "calls_sha_at_freeze": "0ea15413afcebf754c0d531cef2e61c6abbc47d77f1323f664cee8c9447d5b59",
+  "sha256_static_files": {
+    "GATE-AMENDMENT-v2.md": "de47ee878cca9c9c87771f2e235cdc274cfd7d2bf82cbd090a41a1bd3026b9c3",
+    "run_s0.py": "e8e50ec0710071de0b12961b905fca89a8ab09c296c33e0bdb4349eee48a3d0f",
+    "build_pool_p28.py": "a4c1ff50663c97f4b946bd6b6e4f780b549973e709d2228b24da31a9b3692473",
+    "pool_p28.jsonl": "e4dda4f1d9199615364af5399575f8076a6c9e35ae19daca3c266c9a0aa90c3a"
+  },
+  "note": "calls.jsonl is append-only; its hash changes as the run progresses and is therefore fixed to the freeze snapshot in GATE-AMENDMENT-v2.md, not re-read here."
+}

@@ -1,0 +1,533 @@
+{
+  "v1.0": {
+    "grader": "v1.0",
+    "calls_ok": 240,
+    "paired": 120,
+    "arms": {
+      "no_card": {
+        "n": 120,
+        "case_pass": 30,
+        "case_pass_rate": 0.25,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 83,
+            "rate": 0.6917
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 67,
+            "rate": 0.5583
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 72,
+            "rate": 0.6
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 120,
+            "rate": 1.0
+          }
+        },
+        "median_reply_chars": 353
+      },
+      "orig_card": {
+        "n": 120,
+        "case_pass": 11,
+        "case_pass_rate": 0.0917,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 86,
+            "rate": 0.7167
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 35,
+            "rate": 0.2917
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 72,
+            "rate": 0.6
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 85,
+            "rate": 0.7083
+          }
+        },
+        "median_reply_chars": 496
+      }
+    },
+    "D_case_level": 6,
+    "R_case_level": 25,
+    "both_pass": 5,
+    "both_fail": 84,
+    "identical_texts": 0,
+    "check_flips": {
+      "c1": {
+        "fail2pass": 23,
+        "pass2fail": 20
+      },
+      "c2": {
+        "fail2pass": 16,
+        "pass2fail": 48
+      },
+      "c3": {
+        "fail2pass": 29,
+        "pass2fail": 29
+      },
+      "c4": {
+        "fail2pass": 0,
+        "pass2fail": 35
+      }
+    },
+    "gate_pass_D_ge_30": false,
+    "D_ids": [
+      "P28-027|1",
+      "P28-053|1",
+      "P28-070|1",
+      "P28-074|1",
+      "P28-105|1",
+      "P28-114|1"
+    ],
+    "R_ids": [
+      "P28-001|1",
+      "P28-005|1",
+      "P28-012|1",
+      "P28-014|1",
+      "P28-017|1",
+      "P28-019|1",
+      "P28-024|1",
+      "P28-025|1",
+      "P28-036|1",
+      "P28-039|1",
+      "P28-042|1",
+      "P28-045|1",
+      "P28-046|1",
+      "P28-047|1",
+      "P28-062|1",
+      "P28-072|1",
+      "P28-080|1",
+      "P28-081|1",
+      "P28-084|1",
+      "P28-086|1",
+      "P28-087|1",
+      "P28-093|1",
+      "P28-098|1",
+      "P28-103|1",
+      "P28-116|1"
+    ]
+  },
+  "v1.1": {
+    "grader": "v1.1",
+    "calls_ok": 240,
+    "paired": 120,
+    "arms": {
+      "no_card": {
+        "n": 120,
+        "case_pass": 31,
+        "case_pass_rate": 0.2583,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 83,
+            "rate": 0.6917
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 67,
+            "rate": 0.5583
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 73,
+            "rate": 0.6083
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 120,
+            "rate": 1.0
+          }
+        },
+        "median_reply_chars": 353
+      },
+      "orig_card": {
+        "n": 120,
+        "case_pass": 17,
+        "case_pass_rate": 0.1417,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 86,
+            "rate": 0.7167
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 35,
+            "rate": 0.2917
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 106,
+            "rate": 0.8833
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 85,
+            "rate": 0.7083
+          }
+        },
+        "median_reply_chars": 496
+      }
+    },
+    "D_case_level": 10,
+    "R_case_level": 24,
+    "both_pass": 7,
+    "both_fail": 79,
+    "identical_texts": 0,
+    "check_flips": {
+      "c1": {
+        "fail2pass": 23,
+        "pass2fail": 20
+      },
+      "c2": {
+        "fail2pass": 16,
+        "pass2fail": 48
+      },
+      "c3": {
+        "fail2pass": 43,
+        "pass2fail": 10
+      },
+      "c4": {
+        "fail2pass": 0,
+        "pass2fail": 35
+      }
+    },
+    "gate_pass_D_ge_30": false,
+    "D_ids": [
+      "P28-027|1",
+      "P28-028|1",
+      "P28-048|1",
+      "P28-053|1",
+      "P28-070|1",
+      "P28-074|1",
+      "P28-079|1",
+      "P28-105|1",
+      "P28-112|1",
+      "P28-114|1"
+    ],
+    "R_ids": [
+      "P28-001|1",
+      "P28-012|1",
+      "P28-014|1",
+      "P28-017|1",
+      "P28-024|1",
+      "P28-025|1",
+      "P28-036|1",
+      "P28-039|1",
+      "P28-042|1",
+      "P28-045|1",
+      "P28-046|1",
+      "P28-047|1",
+      "P28-062|1",
+      "P28-072|1",
+      "P28-080|1",
+      "P28-081|1",
+      "P28-084|1",
+      "P28-086|1",
+      "P28-087|1",
+      "P28-093|1",
+      "P28-098|1",
+      "P28-103|1",
+      "P28-116|1",
+      "P28-117|1"
+    ]
+  },
+  "v1.2": {
+    "grader": "v1.2",
+    "calls_ok": 240,
+    "paired": 120,
+    "arms": {
+      "no_card": {
+        "n": 120,
+        "case_pass": 31,
+        "case_pass_rate": 0.2583,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 83,
+            "rate": 0.6917
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 68,
+            "rate": 0.5667
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 73,
+            "rate": 0.6083
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 120,
+            "rate": 1.0
+          }
+        },
+        "median_reply_chars": 353
+      },
+      "orig_card": {
+        "n": 120,
+        "case_pass": 29,
+        "case_pass_rate": 0.2417,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 86,
+            "rate": 0.7167
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 41,
+            "rate": 0.3417
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 106,
+            "rate": 0.8833
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 120,
+            "rate": 1.0
+          }
+        },
+        "median_reply_chars": 496
+      }
+    },
+    "D_case_level": 19,
+    "R_case_level": 21,
+    "both_pass": 10,
+    "both_fail": 70,
+    "identical_texts": 0,
+    "check_flips": {
+      "c1": {
+        "fail2pass": 23,
+        "pass2fail": 20
+      },
+      "c2": {
+        "fail2pass": 18,
+        "pass2fail": 45
+      },
+      "c3": {
+        "fail2pass": 43,
+        "pass2fail": 10
+      },
+      "c4": {
+        "fail2pass": 0,
+        "pass2fail": 0
+      }
+    },
+    "gate_pass_D_ge_30": false,
+    "D_ids": [
+      "P28-015|1",
+      "P28-027|1",
+      "P28-028|1",
+      "P28-030|1",
+      "P28-037|1",
+      "P28-044|1",
+      "P28-048|1",
+      "P28-053|1",
+      "P28-054|1",
+      "P28-056|1",
+      "P28-058|1",
+      "P28-070|1",
+      "P28-074|1",
+      "P28-079|1",
+      "P28-105|1",
+      "P28-112|1",
+      "P28-114|1",
+      "P28-118|1",
+      "P28-119|1"
+    ],
+    "R_ids": [
+      "P28-001|1",
+      "P28-012|1",
+      "P28-014|1",
+      "P28-017|1",
+      "P28-024|1",
+      "P28-025|1",
+      "P28-036|1",
+      "P28-039|1",
+      "P28-045|1",
+      "P28-046|1",
+      "P28-047|1",
+      "P28-072|1",
+      "P28-080|1",
+      "P28-081|1",
+      "P28-084|1",
+      "P28-086|1",
+      "P28-087|1",
+      "P28-098|1",
+      "P28-103|1",
+      "P28-116|1",
+      "P28-117|1"
+    ]
+  },
+  "v1.3": {
+    "grader": "v1.3",
+    "calls_ok": 240,
+    "paired": 120,
+    "arms": {
+      "no_card": {
+        "n": 120,
+        "case_pass": 42,
+        "case_pass_rate": 0.35,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 83,
+            "rate": 0.6917
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 105,
+            "rate": 0.875
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 73,
+            "rate": 0.6083
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 120,
+            "rate": 1.0
+          }
+        },
+        "median_reply_chars": 353
+      },
+      "orig_card": {
+        "n": 120,
+        "case_pass": 54,
+        "case_pass_rate": 0.45,
+        "checks": {
+          "c1": {
+            "counted": 120,
+            "pass": 86,
+            "rate": 0.7167
+          },
+          "c2": {
+            "counted": 120,
+            "pass": 82,
+            "rate": 0.6833
+          },
+          "c3": {
+            "counted": 120,
+            "pass": 106,
+            "rate": 0.8833
+          },
+          "c4": {
+            "counted": 120,
+            "pass": 120,
+            "rate": 1.0
+          }
+        },
+        "median_reply_chars": 496
+      }
+    },
+    "D_case_level": 28,
+    "R_case_level": 16,
+    "both_pass": 26,
+    "both_fail": 50,
+    "identical_texts": 0,
+    "check_flips": {
+      "c1": {
+        "fail2pass": 23,
+        "pass2fail": 20
+      },
+      "c2": {
+        "fail2pass": 9,
+        "pass2fail": 32
+      },
+      "c3": {
+        "fail2pass": 43,
+        "pass2fail": 10
+      },
+      "c4": {
+        "fail2pass": 0,
+        "pass2fail": 0
+      }
+    },
+    "gate_pass_D_ge_30": false,
+    "D_ids": [
+      "P28-003|1",
+      "P28-002|1",
+      "P28-015|1",
+      "P28-026|1",
+      "P28-027|1",
+      "P28-030|1",
+      "P28-041|1",
+      "P28-044|1",
+      "P28-048|1",
+      "P28-051|1",
+      "P28-053|1",
+      "P28-054|1",
+      "P28-055|1",
+      "P28-056|1",
+      "P28-058|1",
+      "P28-064|1",
+      "P28-073|1",
+      "P28-074|1",
+      "P28-076|1",
+      "P28-091|1",
+      "P28-101|1",
+      "P28-107|1",
+      "P28-108|1",
+      "P28-110|1",
+      "P28-112|1",
+      "P28-118|1",
+      "P28-119|1",
+      "P28-120|1"
+    ],
+    "R_ids": [
+      "P28-012|1",
+      "P28-013|1",
+      "P28-014|1",
+      "P28-017|1",
+      "P28-025|1",
+      "P28-029|1",
+      "P28-035|1",
+      "P28-036|1",
+      "P28-045|1",
+      "P28-047|1",
+      "P28-069|1",
+      "P28-084|1",
+      "P28-098|1",
+      "P28-103|1",
+      "P28-116|1",
+      "P28-117|1"
+    ]
+  },
+  "gate_both": false,
+  "D_by_url_kind": {
+    "v1.0": {
+      "external": 5,
+      "local": 1
+    },
+    "v1.1": {
+      "external": 9,
+      "local": 1
+    },
+    "v1.2": {
+      "external": 18,
+      "local": 1
+    },
+    "v1.3": {
+      "external": 28
+    }
+  }
+}

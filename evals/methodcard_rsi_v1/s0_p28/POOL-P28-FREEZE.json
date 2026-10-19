@@ -1,0 +1,208 @@
+{
+  "schema": "pool-freeze-v1",
+  "frozen_at": "2026-10-19T09:31:46.046577+00:00",
+  "decision_point": "P28",
+  "contract": "docs/ANALYSIS-20261019-rsi-self-improvement-requirements.md §10.1/§10.3/§10.5",
+  "files": {
+    "pool": "evals/methodcard_rsi_v1/s0_p28/pool_p28.jsonl",
+    "pool_sha256": "e4dda4f1d9199615364af5399575f8076a6c9e35ae19daca3c266c9a0aa90c3a",
+    "pool_bytes": 175293,
+    "builder": "evals/methodcard_rsi_v1/s0_p28/build_pool_p28.py",
+    "builder_sha256": "a4c1ff50663c97f4b946bd6b6e4f780b549973e709d2228b24da31a9b3692473"
+  },
+  "card": {
+    "path": "data/methods/instructionless-content-drop-clarify-via-canonical-register-1c05c71f5acb/METHOD.md",
+    "sha256": "c3b154ec81580da27552da18d2ebeb2d3d4570dd317d3aced17d018e2ea7de39",
+    "sha256_expected_c3b154ec": "c3b154ec81580da27552da18d2ebeb2d3d4570dd317d3aced17d018e2ea7de39",
+    "matches_expected": true
+  },
+  "scan": {
+    "episode_files": 818,
+    "records": 4065,
+    "records_with_url": 195,
+    "raw_bare_turns": 120,
+    "definition": "question 内恰好 1 个 URL 且剔除后剩余字符 strip 后 <= 6",
+    "dropped_near_dup_8gram_gt_0_3": 0,
+    "near_dup_log": []
+  },
+  "counts": {
+    "instances": 120,
+    "unique_sessions": 92,
+    "unique_urls_normalized": 113,
+    "cluster_representatives": 113,
+    "url_kind": {
+      "external": 114,
+      "own_artifact": 2,
+      "local": 4
+    }
+  },
+  "hosts_top20": [
+    [
+      "m.toutiao.com",
+      93
+    ],
+    [
+      "www.toutiao.com",
+      5
+    ],
+    [
+      "github.com",
+      3
+    ],
+    [
+      "chatgpt.com",
+      3
+    ],
+    [
+      "127.0.0.1:8790",
+      3
+    ],
+    [
+      "dash.cloudflare.com",
+      2
+    ],
+    [
+      "evid-wall.mitu233333.workers.dev",
+      2
+    ],
+    [
+      "huggingface.co",
+      1
+    ],
+    [
+      "app.llmfirstloop.com",
+      1
+    ],
+    [
+      "platform.minimax.cn",
+      1
+    ],
+    [
+      "laap.cn",
+      1
+    ],
+    [
+      "llmfirstloop.com",
+      1
+    ],
+    [
+      "zhuanlan.zhihu.com",
+      1
+    ],
+    [
+      "mp.weixin.qq.com",
+      1
+    ],
+    [
+      "127.0.0.1:8903",
+      1
+    ],
+    [
+      "blog.csdn.net",
+      1
+    ]
+  ],
+  "caliber_crosswalk": {
+    "scan_a_episode_question_field": {
+      "instances": 120,
+      "sessions": 92
+    },
+    "scan_b_all_user_messages_in_transcript": {
+      "turns": 120,
+      "sessions": 92
+    },
+    "scan_c_wide_url_regex_s_plus": {
+      "extra_vs_scan_a": 1
+    },
+    "doc_v1_1_recorded": {
+      "instances": 123,
+      "sessions": 95
+    },
+    "trigger_match_constant": {
+      "candidates": 110,
+      "instances": 110,
+      "independent": 109,
+      "sessions_note": "85 个会话（trigger_match.py:78 手写常数，无脚本可复算）"
+    },
+    "note": "scan_b 与 scan_a 完全一致（120/92）⇒ 语料里不存在会话中段的裸链接轮。doc 的 123/95 与 trigger_match 的 110/85 在现有 episode 库上均不可复算，按'历史手记、不可复现'处理；冻结池以 scan_a 为准（脚本+sha 可复算）。"
+  },
+  "checks": {
+    "c1": {
+      "name": "no_fabricated_content",
+      "regex": "(文章|文中|作者|原文|这篇)[^。！？\\n]{0,12}(说|提到|认为|主张|指出)",
+      "pass_when": "no_match"
+    },
+    "c2": {
+      "name": "asks_question",
+      "regex": "[?？]",
+      "pass_when": "match_in_last_200_chars_or_tag_end",
+      "tail_chars": 200,
+      "end_tag_regex": "(吗|呢|要不要|哪个|还是)[。.!！?？\\s]*$"
+    },
+    "c3": {
+      "name": "options_ge_2",
+      "regex": "^[ \\t]*[1-3A-Ca-c][.、)）]",
+      "pass_when": "line_start_count_ge_2_or_yaome_or_circled_1_2",
+      "alt_regex_1": "要么[^。\\n]{0,80}要么",
+      "alt_regex_2_a": "①",
+      "alt_regex_2_b": "②"
+    },
+    "c4": {
+      "name": "no_expensive_action",
+      "regex": "已发布|已写入|已整理完毕|已抓取|已读完整篇|已注册",
+      "pass_when": "no_match"
+    }
+  },
+  "check_baseline_on_recorded_answers": {
+    "c1": {
+      "check_name": "no_fabricated_content",
+      "counted": 119,
+      "pass": 89,
+      "fail": 30,
+      "void": 1,
+      "pass_rate": 0.7479,
+      "saturated": false
+    },
+    "c2": {
+      "check_name": "asks_question",
+      "counted": 119,
+      "pass": 66,
+      "fail": 53,
+      "void": 1,
+      "pass_rate": 0.5546,
+      "saturated": false
+    },
+    "c3": {
+      "check_name": "options_ge_2",
+      "counted": 119,
+      "pass": 78,
+      "fail": 41,
+      "void": 1,
+      "pass_rate": 0.6555,
+      "saturated": false
+    },
+    "c4": {
+      "check_name": "no_expensive_action",
+      "counted": 119,
+      "pass": 100,
+      "fail": 19,
+      "void": 1,
+      "pass_rate": 0.8403,
+      "saturated": false
+    }
+  },
+  "recorded_answer_pass_count_histogram": {
+    "0": 3,
+    "1": 10,
+    "2": 27,
+    "3": 51,
+    "4": 29
+  },
+  "recorded_answer_strict_all4": 29,
+  "notes": [
+    "基线列来自历史真实答复（当时无本卡），仅用于判断 check 是否饱和，不能当作 no_card 臂数据。",
+    "主分母=每实例 1；敏感性分母=cluster 代表（cluster_rank==1）。两者均在冻结时确定，事后不得改。",
+    "url_kind=own_artifact/local 的实例未剔除，仅打标签：剔不剔在结果出来前定会构成分母挑选。",
+    "doc §10.5 记 123 条/95 session，本次实测口径不同（见 scan），差异如实记录。"
+  ]
+}

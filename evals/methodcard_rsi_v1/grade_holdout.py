@@ -26,13 +26,25 @@ FREEZE = HERE / "FREEZE.json"
 EXIT_FREEZE = 4
 
 
-def load_cases() -> tuple[list[dict], str]:
-    raw = JSONL.read_bytes()
+def _resolve_paths(heldout: Path | None = None) -> tuple[Path, Path]:
+    """默认 heldout_v1.jsonl + FREEZE.json；指定 --heldout 时用 <stem> 与 <stem>.FREEZE.json。
+
+    v2 走 heldout_v2.jsonl + heldout_v2.FREEZE.json，不改动 v1 的冻结事实。
+    """
+    if heldout is None:
+        return JSONL, FREEZE
+    p = heldout if heldout.is_absolute() else (HERE / heldout)
+    return p, p.with_suffix(".FREEZE.json")
+
+
+def load_cases(heldout: Path | None = None) -> tuple[list[dict], str]:
+    jsonl, freeze_path = _resolve_paths(heldout)
+    raw = jsonl.read_bytes()
     sha = hashlib.sha256(raw).hexdigest()
-    freeze = json.loads(FREEZE.read_text(encoding="utf-8"))
+    freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
     if sha != freeze["sha256"]:
         raise SystemExit(
-            f"[FREEZE] heldout_v1.jsonl sha256={sha[:16]}… != FREEZE.json {freeze['sha256'][:16]}…；拒绝判分"
+            f"[FREEZE] {jsonl.name} sha256={sha[:16]}… != {freeze_path.name} {freeze['sha256'][:16]}…；拒绝判分"
         )
     cases = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
     if len(cases) != freeze["case_count"]:
@@ -115,8 +127,8 @@ def check_one(case: dict, artifact: dict) -> list[dict]:
     return results
 
 
-def grade(artifact_dir: Path) -> dict:
-    cases, sha = load_cases()
+def grade(artifact_dir: Path, heldout: Path | None = None) -> dict:
+    cases, sha = load_cases(heldout)
     rows, missing = [], []
     for case in cases:
         path = artifact_dir / f"{case['id']}.json"
@@ -155,16 +167,18 @@ def _synthesize(case: dict) -> dict:
                 art.setdefault(base, [None] * int(chk["value"]))
             else:
                 art[base] = chk["value"]
+        elif k == "in_set":
+            art[f] = chk["values"][0]
         elif k == "lte":
             art[f] = chk["value"]
         elif k == "gte":
             base = f[: -len("_len")] if f.endswith("_len") else f
-            if f.endswith("_len"):
-                art.setdefault(base, [None] * int(chk["value"]))
-            else:
+            if not f.endswith("_len"):
                 art[base] = chk["value"]
         elif k == "subset_of":
-            art.setdefault(f, list(chk["allowed"])[:1] or [])
+            cur = art.get(f)
+            if not isinstance(cur, list) or any(x is None for x in cur):
+                art[f] = list(chk["allowed"])[:1] or []
         elif k == "ref_resolves":
             src = case["inputs"][0]
             art[f] = [f"{src['name']}:1"]
@@ -178,14 +192,18 @@ def _synthesize(case: dict) -> dict:
             filler = None
             if pad and pad["allowed"]:
                 filler = pad["allowed"][0]
-            while len(cur) < need:
+            elif base.endswith("refs") and case.get("inputs"):
+                filler = f"{case['inputs'][0]['name']}:1"
+            else:
+                filler = "item"
+            while len(cur) < need and filler is not None:
                 cur.append(filler)
             art[base] = cur
     return art
 
 
-def selftest() -> int:
-    cases, _ = load_cases()
+def selftest(heldout: Path | None = None) -> int:
+    cases, _ = load_cases(heldout)
     ok_all = True
     for case in cases:
         good = _synthesize(case)
@@ -209,6 +227,8 @@ def selftest() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--heldout", type=Path,
+                    help="题库文件；默认 heldout_v1.jsonl，v2 传 heldout_v2.jsonl")
     ap.add_argument("--artifact-dir", type=Path)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--selftest", action="store_true")
@@ -217,16 +237,16 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.verify_freeze:
-        _, sha = load_cases()
+        _, sha = load_cases(args.heldout)
         print(f"FREEZE OK sha256={sha}")
         return 0
     if args.selftest:
-        return selftest()
+        return selftest(args.heldout)
     if not args.artifact_dir:
         ap.print_help()
         return 2
 
-    res = grade(args.artifact_dir)
+    res = grade(args.artifact_dir, args.heldout)
     if args.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:

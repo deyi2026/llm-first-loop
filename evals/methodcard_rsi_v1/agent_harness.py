@@ -65,7 +65,8 @@ SEM = threading.Semaphore(int(ENV.get("HARNESS_CONCURRENCY", "2") or 2))
 LOCK = threading.Lock()
 
 
-def call(messages: list[dict], max_tokens: int = 3000, attempts: int = 5) -> dict:
+def call(messages: list[dict], max_tokens: int = 3000, attempts: int = 5,
+         timeout: int = 120) -> dict:
     body = json.dumps({"model": MODEL, "messages": messages,
                        "temperature": 0, "max_tokens": max_tokens}).encode()
     last = ""
@@ -75,7 +76,7 @@ def call(messages: list[dict], max_tokens: int = 3000, attempts: int = 5) -> dic
                 req = urllib.request.Request(
                     BASE + "/chat/completions", data=body,
                     headers={"Authorization": "Bearer " + KEY, "Content-Type": "application/json"})
-                with urllib.request.urlopen(req, timeout=120) as r:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
                     data = json.load(r)
             ch = data["choices"][0]
             txt = (ch["message"].get("content") or "").strip()

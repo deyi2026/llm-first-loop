@@ -1,0 +1,1037 @@
+{
+  "c2_negative_audit": {
+    "arms": {
+      "no_card": {
+        "classes": {
+          "a_option_choice": {
+            "count": 0,
+            "desc": "a: 编号选择（C2_V13 分支1：(回复|回我|按|选|选择|挑)+[A-Ca-c1-3①-③]）",
+            "first10_ids": []
+          },
+          "b_handback": {
+            "count": 38,
+            "desc": "b: 交回语（C2_V13 分支2：要哪个|哪一个|你定|等你选|等你确认|请你选|告诉我）",
+            "first10_ids": [
+              "s0|no_card|P28-004|r1",
+              "s0|no_card|P28-006|r1",
+              "s0|no_card|P28-013|r1",
+              "s0|no_card|P28-015|r1",
+              "s0|no_card|P28-016|r1",
+              "s0|no_card|P28-022|r1",
+              "s0|no_card|P28-027|r1",
+              "s0|no_card|P28-028|r1",
+              "s0|no_card|P28-029|r1",
+              "s0|no_card|P28-030|r1"
+            ]
+          },
+          "c_qmark_201_300": {
+            "count": 0,
+            "desc": "c: 问号落在第 201-300 字符尾窗（v1.0 尾窗 200 之外、v1.3 尾窗 300 之内）",
+            "first10_ids": []
+          },
+          "d_qmark_earlier": {
+            "count": 0,
+            "desc": "d: 问号在更早位置（300 字符尾窗之前）",
+            "first10_ids": []
+          },
+          "e_other": {
+            "count": 0,
+            "desc": "e: 其他（a-d 均未命中）",
+            "first10_ids": []
+          }
+        },
+        "flipped_to_v1_3_true": 38,
+        "n_v1_0_c2_false": 53,
+        "stayed_false": 15,
+        "zero_marker": {
+          "count": 15,
+          "desc": "v1.0 c2=False 且 v1.3 c2=False（零标记）",
+          "first10_ids": [
+            "s0|no_card|P28-003|r1",
+            "s0|no_card|P28-002|r1",
+            "s0|no_card|P28-020|r1",
+            "s0|no_card|P28-049|r1",
+            "s0|no_card|P28-058|r1",
+            "s0|no_card|P28-061|r1",
+            "s0|no_card|P28-064|r1",
+            "s0|no_card|P28-065|r1",
+            "s0|no_card|P28-074|r1",
+            "s0|no_card|P28-076|r1"
+          ]
+        }
+      },
+      "orig_card": {
+        "classes": {
+          "a_option_choice": {
+            "count": 20,
+            "desc": "a: 编号选择（C2_V13 分支1：(回复|回我|按|选|选择|挑)+[A-Ca-c1-3①-③]）",
+            "first10_ids": [
+              "s0|orig_card|P28-001|r1",
+              "s0|orig_card|P28-003|r1",
+              "s0|orig_card|P28-011|r1",
+              "s0|orig_card|P28-016|r1",
+              "s0|orig_card|P28-018|r1",
+              "s0|orig_card|P28-021|r1",
+              "s0|orig_card|P28-026|r1",
+              "s0|orig_card|P28-031|r1",
+              "s0|orig_card|P28-032|r1",
+              "s0|orig_card|P28-042|r1"
+            ]
+          },
+          "b_handback": {
+            "count": 23,
+            "desc": "b: 交回语（C2_V13 分支2：要哪个|哪一个|你定|等你选|等你确认|请你选|告诉我）",
+            "first10_ids": [
+              "s0|orig_card|P28-002|r1",
+              "s0|orig_card|P28-007|r1",
+              "s0|orig_card|P28-020|r1",
+              "s0|orig_card|P28-022|r1",
+              "s0|orig_card|P28-024|r1",
+              "s0|orig_card|P28-039|r1",
+              "s0|orig_card|P28-041|r1",
+              "s0|orig_card|P28-046|r1",
+              "s0|orig_card|P28-051|r1",
+              "s0|orig_card|P28-062|r1"
+            ]
+          },
+          "c_qmark_201_300": {
+            "count": 4,
+            "desc": "c: 问号落在第 201-300 字符尾窗（v1.0 尾窗 200 之外、v1.3 尾窗 300 之内）",
+            "first10_ids": [
+              "s0|orig_card|P28-023|r1",
+              "s0|orig_card|P28-054|r1",
+              "s0|orig_card|P28-058|r1",
+              "s0|orig_card|P28-118|r1"
+            ]
+          },
+          "d_qmark_earlier": {
+            "count": 0,
+            "desc": "d: 问号在更早位置（300 字符尾窗之前）",
+            "first10_ids": []
+          },
+          "e_other": {
+            "count": 0,
+            "desc": "e: 其他（a-d 均未命中）",
+            "first10_ids": []
+          }
+        },
+        "flipped_to_v1_3_true": 47,
+        "n_v1_0_c2_false": 85,
+        "stayed_false": 38,
+        "zero_marker": {
+          "count": 38,
+          "desc": "v1.0 c2=False 且 v1.3 c2=False（零标记）",
+          "first10_ids": [
+            "s0|orig_card|P28-006|r1",
+            "s0|orig_card|P28-012|r1",
+            "s0|orig_card|P28-014|r1",
+            "s0|orig_card|P28-017|r1",
+            "s0|orig_card|P28-025|r1",
+            "s0|orig_card|P28-029|r1",
+            "s0|orig_card|P28-033|r1",
+            "s0|orig_card|P28-036|r1",
+            "s0|orig_card|P28-038|r1",
+            "s0|orig_card|P28-040|r1"
+          ]
+        }
+      }
+    },
+    "branch_split_consistent_with_C2_V13": true,
+    "definition": "每臂 dedupe 后 ok 行中 v1.0 c2=False 的集合：分类 v1.3 c2=True 的原因（优先级 a>b>c>d>e）；v1.0=False 且 v1.3=False 计零标记"
+  },
+  "c3_length_strata": {
+    "bin_definition": "按配对中 no_card 回复字符数固定分层 [0,300)/[300,600)/[600,inf)",
+    "bins": {
+      "[0,300)": {
+        "n_pairs": 30,
+        "per_grader": {
+          "v1.0": {
+            "D": 1,
+            "R": 6,
+            "paired": 30
+          },
+          "v1.1": {
+            "D": 3,
+            "R": 6,
+            "paired": 30
+          },
+          "v1.2": {
+            "D": 6,
+            "R": 5,
+            "paired": 30
+          },
+          "v1.3": {
+            "D": 7,
+            "R": 4,
+            "paired": 30
+          }
+        },
+        "v1_3_arms_case_pass": {
+          "no_card": {
+            "case_pass": 8,
+            "case_pass_rate": 0.2667,
+            "n": 30
+          },
+          "orig_card": {
+            "case_pass": 11,
+            "case_pass_rate": 0.3667,
+            "n": 30
+          }
+        }
+      },
+      "[300,600)": {
+        "n_pairs": 80,
+        "per_grader": {
+          "v1.0": {
+            "D": 4,
+            "R": 15,
+            "paired": 80
+          },
+          "v1.1": {
+            "D": 6,
+            "R": 13,
+            "paired": 80
+          },
+          "v1.2": {
+            "D": 12,
+            "R": 11,
+            "paired": 80
+          },
+          "v1.3": {
+            "D": 18,
+            "R": 9,
+            "paired": 80
+          }
+        },
+        "v1_3_arms_case_pass": {
+          "no_card": {
+            "case_pass": 27,
+            "case_pass_rate": 0.3375,
+            "n": 80
+          },
+          "orig_card": {
+            "case_pass": 36,
+            "case_pass_rate": 0.45,
+            "n": 80
+          }
+        }
+      },
+      "[600,inf)": {
+        "n_pairs": 10,
+        "per_grader": {
+          "v1.0": {
+            "D": 1,
+            "R": 4,
+            "paired": 10
+          },
+          "v1.1": {
+            "D": 1,
+            "R": 5,
+            "paired": 10
+          },
+          "v1.2": {
+            "D": 1,
+            "R": 5,
+            "paired": 10
+          },
+          "v1.3": {
+            "D": 3,
+            "R": 3,
+            "paired": 10
+          }
+        },
+        "v1_3_arms_case_pass": {
+          "no_card": {
+            "case_pass": 7,
+            "case_pass_rate": 0.7,
+            "n": 10
+          },
+          "orig_card": {
+            "case_pass": 7,
+            "case_pass_rate": 0.7,
+            "n": 10
+          }
+        }
+      }
+    },
+    "consistency": {
+      "pairing_structure_matches_summarize_one": true,
+      "quartiles_v1_3": {
+        "D_sum_equal": true,
+        "R_sum_equal": true,
+        "pairs_sum_equal": true
+      },
+      "v1.0": {
+        "bin_D_sum_equal": true,
+        "bin_R_sum_equal": true,
+        "bin_paired_sum_equal": true
+      },
+      "v1.1": {
+        "bin_D_sum_equal": true,
+        "bin_R_sum_equal": true,
+        "bin_paired_sum_equal": true
+      },
+      "v1.2": {
+        "bin_D_sum_equal": true,
+        "bin_R_sum_equal": true,
+        "bin_paired_sum_equal": true
+      },
+      "v1.3": {
+        "bin_D_sum_equal": true,
+        "bin_R_sum_equal": true,
+        "bin_paired_sum_equal": true
+      }
+    },
+    "quartiles_v1_3": {
+      "assignment": "bisect_left(cuts, L)：L<=q1→Q1；q1<L<=q2→Q2；q2<L<=q3→Q3；L>q3→Q4",
+      "cut_points_q1_q2_q3": [
+        299.5,
+        353.0,
+        391.0
+      ],
+      "method": "statistics.quantiles(n=4, method='exclusive')（R type-7 同族）",
+      "quartiles": [
+        {
+          "D": 7,
+          "R": 4,
+          "len_max": 299,
+          "len_min": 177,
+          "n_pairs": 30,
+          "paired": 30,
+          "quartile": "Q1"
+        },
+        {
+          "D": 7,
+          "R": 4,
+          "len_max": 353,
+          "len_min": 301,
+          "n_pairs": 31,
+          "paired": 31,
+          "quartile": "Q2"
+        },
+        {
+          "D": 6,
+          "R": 3,
+          "len_max": 391,
+          "len_min": 354,
+          "n_pairs": 30,
+          "paired": 30,
+          "quartile": "Q3"
+        },
+        {
+          "D": 8,
+          "R": 5,
+          "len_max": 1418,
+          "len_min": 396,
+          "n_pairs": 29,
+          "paired": 29,
+          "quartile": "Q4"
+        }
+      ]
+    }
+  },
+  "data_quality": {
+    "duplicate_ok": {
+      "extra_rows_dropped": 0,
+      "keys_with_multiple_ok": 0,
+      "per_key_occurrences": {}
+    },
+    "fail_rows": {
+      "count": 2,
+      "note": null,
+      "rows": [
+        {
+          "error": "RuntimeError: call failed after 4: TimeoutError: The read operation timed out",
+          "key": "s0|orig_card|P28-002|r1",
+          "latency_s": 457.1
+        },
+        {
+          "error": "RuntimeError: call failed after 2: TimeoutError: The read operation timed out",
+          "key": "s0|orig_card|P28-117|r1",
+          "latency_s": 424.6
+        }
+      ]
+    },
+    "missing_paired_keys": []
+  },
+  "gates": {
+    "label_rule": "主判据满足且三旧版均 D>=R → 第1个标签；主判据满足但任一旧版 D<R → 第2个；主判据不满足 → 第3个。标签逐字取自修正案 §2，不得出现表外裁决语。",
+    "new_gate_frozen": {
+      "all_old_versions_D_ge_R": false,
+      "direction_consistency_v1_0_v1_1_v1_2": {
+        "v1.0": {
+          "D": 6,
+          "D_ge_R": false,
+          "R": 25
+        },
+        "v1.1": {
+          "D": 10,
+          "D_ge_R": false,
+          "R": 24
+        },
+        "v1.2": {
+          "D": 19,
+          "D_ge_R": false,
+          "R": 21
+        }
+      },
+      "label": "S0 no detectable effect under this instrument",
+      "main_criterion": "v1.3 D_case_level >= 30",
+      "main_satisfied": false,
+      "source": "GATE-AMENDMENT-v2.md（终值前冻结；sha256 见 meta.amendment_sha256）",
+      "v1_0_direction_deviation": {
+        "D": 6,
+        "R": 25
+      },
+      "v1_3_D": 28
+    },
+    "old_gate_both": {
+      "definition": "旧口径：四版同时 D_case_level>=30（即 run_s0.summarize 的 gate_both；并列报告，不作主判据）",
+      "gate_both": false,
+      "per_grader": {
+        "v1.0": false,
+        "v1.1": false,
+        "v1.2": false,
+        "v1.3": false
+      }
+    }
+  },
+  "graders": {
+    "v1.0": {
+      "D_case_level": 6,
+      "D_ids": [
+        "P28-027|1",
+        "P28-053|1",
+        "P28-070|1",
+        "P28-074|1",
+        "P28-105|1",
+        "P28-114|1"
+      ],
+      "D_minus_R": -19,
+      "R_case_level": 25,
+      "R_ids": [
+        "P28-001|1",
+        "P28-005|1",
+        "P28-012|1",
+        "P28-014|1",
+        "P28-017|1",
+        "P28-019|1",
+        "P28-024|1",
+        "P28-025|1",
+        "P28-036|1",
+        "P28-039|1",
+        "P28-042|1",
+        "P28-045|1",
+        "P28-046|1",
+        "P28-047|1",
+        "P28-062|1",
+        "P28-072|1",
+        "P28-080|1",
+        "P28-081|1",
+        "P28-084|1",
+        "P28-086|1",
+        "P28-087|1",
+        "P28-093|1",
+        "P28-098|1",
+        "P28-103|1",
+        "P28-116|1"
+      ],
+      "arms": {
+        "no_card": {
+          "case_pass": 30,
+          "case_pass_rate": 0.25,
+          "case_pass_wilson95": {
+            "hi": 0.334411,
+            "k": 30,
+            "lo": 0.181098,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 83,
+              "rate": 0.6917
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 67,
+              "rate": 0.5583
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 72,
+              "rate": 0.6
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 120,
+              "rate": 1.0
+            }
+          },
+          "median_reply_chars": 353,
+          "n": 120
+        },
+        "orig_card": {
+          "case_pass": 11,
+          "case_pass_rate": 0.0917,
+          "case_pass_wilson95": {
+            "hi": 0.156708,
+            "k": 11,
+            "lo": 0.051957,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 86,
+              "rate": 0.7167
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 35,
+              "rate": 0.2917
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 72,
+              "rate": 0.6
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 85,
+              "rate": 0.7083
+            }
+          },
+          "median_reply_chars": 496,
+          "n": 120
+        }
+      },
+      "both_fail": 84,
+      "both_pass": 5,
+      "calls_ok": 240,
+      "check_flips": {
+        "c1": {
+          "fail2pass": 23,
+          "pass2fail": 20
+        },
+        "c2": {
+          "fail2pass": 16,
+          "pass2fail": 48
+        },
+        "c3": {
+          "fail2pass": 29,
+          "pass2fail": 29
+        },
+        "c4": {
+          "fail2pass": 0,
+          "pass2fail": 35
+        }
+      },
+      "gate_pass_D_ge_30": false,
+      "grader": "v1.0",
+      "identical_texts": 0,
+      "mcnemar_exact": {
+        "b_D": 6,
+        "c_R": 25,
+        "method": "exact binomial two-sided: X~Bin(D+R,0.5), p=sum P(X=k) for P(k)<=P(min(D,R))",
+        "n_discordant": 31,
+        "note": null,
+        "p_two_sided": 0.000878
+      },
+      "paired": 120
+    },
+    "v1.1": {
+      "D_case_level": 10,
+      "D_ids": [
+        "P28-027|1",
+        "P28-028|1",
+        "P28-048|1",
+        "P28-053|1",
+        "P28-070|1",
+        "P28-074|1",
+        "P28-079|1",
+        "P28-105|1",
+        "P28-112|1",
+        "P28-114|1"
+      ],
+      "D_minus_R": -14,
+      "R_case_level": 24,
+      "R_ids": [
+        "P28-001|1",
+        "P28-012|1",
+        "P28-014|1",
+        "P28-017|1",
+        "P28-024|1",
+        "P28-025|1",
+        "P28-036|1",
+        "P28-039|1",
+        "P28-042|1",
+        "P28-045|1",
+        "P28-046|1",
+        "P28-047|1",
+        "P28-062|1",
+        "P28-072|1",
+        "P28-080|1",
+        "P28-081|1",
+        "P28-084|1",
+        "P28-086|1",
+        "P28-087|1",
+        "P28-093|1",
+        "P28-098|1",
+        "P28-103|1",
+        "P28-116|1",
+        "P28-117|1"
+      ],
+      "arms": {
+        "no_card": {
+          "case_pass": 31,
+          "case_pass_rate": 0.2583,
+          "case_pass_wilson95": {
+            "hi": 0.343285,
+            "k": 31,
+            "lo": 0.188374,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 83,
+              "rate": 0.6917
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 67,
+              "rate": 0.5583
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 73,
+              "rate": 0.6083
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 120,
+              "rate": 1.0
+            }
+          },
+          "median_reply_chars": 353,
+          "n": 120
+        },
+        "orig_card": {
+          "case_pass": 17,
+          "case_pass_rate": 0.1417,
+          "case_pass_wilson95": {
+            "hi": 0.215195,
+            "k": 17,
+            "lo": 0.090369,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 86,
+              "rate": 0.7167
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 35,
+              "rate": 0.2917
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 106,
+              "rate": 0.8833
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 85,
+              "rate": 0.7083
+            }
+          },
+          "median_reply_chars": 496,
+          "n": 120
+        }
+      },
+      "both_fail": 79,
+      "both_pass": 7,
+      "calls_ok": 240,
+      "check_flips": {
+        "c1": {
+          "fail2pass": 23,
+          "pass2fail": 20
+        },
+        "c2": {
+          "fail2pass": 16,
+          "pass2fail": 48
+        },
+        "c3": {
+          "fail2pass": 43,
+          "pass2fail": 10
+        },
+        "c4": {
+          "fail2pass": 0,
+          "pass2fail": 35
+        }
+      },
+      "gate_pass_D_ge_30": false,
+      "grader": "v1.1",
+      "identical_texts": 0,
+      "mcnemar_exact": {
+        "b_D": 10,
+        "c_R": 24,
+        "method": "exact binomial two-sided: X~Bin(D+R,0.5), p=sum P(X=k) for P(k)<=P(min(D,R))",
+        "n_discordant": 34,
+        "note": null,
+        "p_two_sided": 0.024307
+      },
+      "paired": 120
+    },
+    "v1.2": {
+      "D_case_level": 19,
+      "D_ids": [
+        "P28-015|1",
+        "P28-027|1",
+        "P28-028|1",
+        "P28-030|1",
+        "P28-037|1",
+        "P28-044|1",
+        "P28-048|1",
+        "P28-053|1",
+        "P28-054|1",
+        "P28-056|1",
+        "P28-058|1",
+        "P28-070|1",
+        "P28-074|1",
+        "P28-079|1",
+        "P28-105|1",
+        "P28-112|1",
+        "P28-114|1",
+        "P28-118|1",
+        "P28-119|1"
+      ],
+      "D_minus_R": -2,
+      "R_case_level": 21,
+      "R_ids": [
+        "P28-001|1",
+        "P28-012|1",
+        "P28-014|1",
+        "P28-017|1",
+        "P28-024|1",
+        "P28-025|1",
+        "P28-036|1",
+        "P28-039|1",
+        "P28-045|1",
+        "P28-046|1",
+        "P28-047|1",
+        "P28-072|1",
+        "P28-080|1",
+        "P28-081|1",
+        "P28-084|1",
+        "P28-086|1",
+        "P28-087|1",
+        "P28-098|1",
+        "P28-103|1",
+        "P28-116|1",
+        "P28-117|1"
+      ],
+      "arms": {
+        "no_card": {
+          "case_pass": 31,
+          "case_pass_rate": 0.2583,
+          "case_pass_wilson95": {
+            "hi": 0.343285,
+            "k": 31,
+            "lo": 0.188374,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 83,
+              "rate": 0.6917
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 68,
+              "rate": 0.5667
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 73,
+              "rate": 0.6083
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 120,
+              "rate": 1.0
+            }
+          },
+          "median_reply_chars": 353,
+          "n": 120
+        },
+        "orig_card": {
+          "case_pass": 29,
+          "case_pass_rate": 0.2417,
+          "case_pass_wilson95": {
+            "hi": 0.325501,
+            "k": 29,
+            "lo": 0.173858,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 86,
+              "rate": 0.7167
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 41,
+              "rate": 0.3417
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 106,
+              "rate": 0.8833
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 120,
+              "rate": 1.0
+            }
+          },
+          "median_reply_chars": 496,
+          "n": 120
+        }
+      },
+      "both_fail": 70,
+      "both_pass": 10,
+      "calls_ok": 240,
+      "check_flips": {
+        "c1": {
+          "fail2pass": 23,
+          "pass2fail": 20
+        },
+        "c2": {
+          "fail2pass": 18,
+          "pass2fail": 45
+        },
+        "c3": {
+          "fail2pass": 43,
+          "pass2fail": 10
+        },
+        "c4": {
+          "fail2pass": 0,
+          "pass2fail": 0
+        }
+      },
+      "gate_pass_D_ge_30": false,
+      "grader": "v1.2",
+      "identical_texts": 0,
+      "mcnemar_exact": {
+        "b_D": 19,
+        "c_R": 21,
+        "method": "exact binomial two-sided: X~Bin(D+R,0.5), p=sum P(X=k) for P(k)<=P(min(D,R))",
+        "n_discordant": 40,
+        "note": null,
+        "p_two_sided": 0.874629
+      },
+      "paired": 120
+    },
+    "v1.3": {
+      "D_case_level": 28,
+      "D_ids": [
+        "P28-003|1",
+        "P28-002|1",
+        "P28-015|1",
+        "P28-026|1",
+        "P28-027|1",
+        "P28-030|1",
+        "P28-041|1",
+        "P28-044|1",
+        "P28-048|1",
+        "P28-051|1",
+        "P28-053|1",
+        "P28-054|1",
+        "P28-055|1",
+        "P28-056|1",
+        "P28-058|1",
+        "P28-064|1",
+        "P28-073|1",
+        "P28-074|1",
+        "P28-076|1",
+        "P28-091|1",
+        "P28-101|1",
+        "P28-107|1",
+        "P28-108|1",
+        "P28-110|1",
+        "P28-112|1",
+        "P28-118|1",
+        "P28-119|1",
+        "P28-120|1"
+      ],
+      "D_minus_R": 12,
+      "R_case_level": 16,
+      "R_ids": [
+        "P28-012|1",
+        "P28-013|1",
+        "P28-014|1",
+        "P28-017|1",
+        "P28-025|1",
+        "P28-029|1",
+        "P28-035|1",
+        "P28-036|1",
+        "P28-045|1",
+        "P28-047|1",
+        "P28-069|1",
+        "P28-084|1",
+        "P28-098|1",
+        "P28-103|1",
+        "P28-116|1",
+        "P28-117|1"
+      ],
+      "arms": {
+        "no_card": {
+          "case_pass": 42,
+          "case_pass_rate": 0.35,
+          "case_pass_wilson95": {
+            "hi": 0.438787,
+            "k": 42,
+            "lo": 0.270519,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 83,
+              "rate": 0.6917
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 105,
+              "rate": 0.875
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 73,
+              "rate": 0.6083
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 120,
+              "rate": 1.0
+            }
+          },
+          "median_reply_chars": 353,
+          "n": 120
+        },
+        "orig_card": {
+          "case_pass": 54,
+          "case_pass_rate": 0.45,
+          "case_pass_wilson95": {
+            "hi": 0.539185,
+            "k": 54,
+            "lo": 0.363917,
+            "n": 120,
+            "note": null
+          },
+          "checks": {
+            "c1": {
+              "counted": 120,
+              "pass": 86,
+              "rate": 0.7167
+            },
+            "c2": {
+              "counted": 120,
+              "pass": 82,
+              "rate": 0.6833
+            },
+            "c3": {
+              "counted": 120,
+              "pass": 106,
+              "rate": 0.8833
+            },
+            "c4": {
+              "counted": 120,
+              "pass": 120,
+              "rate": 1.0
+            }
+          },
+          "median_reply_chars": 496,
+          "n": 120
+        }
+      },
+      "both_fail": 50,
+      "both_pass": 26,
+      "calls_ok": 240,
+      "check_flips": {
+        "c1": {
+          "fail2pass": 23,
+          "pass2fail": 20
+        },
+        "c2": {
+          "fail2pass": 9,
+          "pass2fail": 32
+        },
+        "c3": {
+          "fail2pass": 43,
+          "pass2fail": 10
+        },
+        "c4": {
+          "fail2pass": 0,
+          "pass2fail": 0
+        }
+      },
+      "gate_pass_D_ge_30": false,
+      "grader": "v1.3",
+      "identical_texts": 0,
+      "mcnemar_exact": {
+        "b_D": 28,
+        "c_R": 16,
+        "method": "exact binomial two-sided: X~Bin(D+R,0.5), p=sum P(X=k) for P(k)<=P(min(D,R))",
+        "n_discordant": 44,
+        "note": null,
+        "p_two_sided": 0.096142
+      },
+      "paired": 120
+    }
+  },
+  "meta": {
+    "amendment_file": "GATE-AMENDMENT-v2.md",
+    "amendment_sha256": "de47ee878cca9c9c87771f2e235cdc274cfd7d2bf82cbd090a41a1bd3026b9c3",
+    "analyzer": "analyze_s0.py",
+    "calls_bytes": 410050,
+    "calls_path": "results/calls.jsonl",
+    "calls_sha256": "bf0aec406e03c8c23c016c796072b4c5288b0e4a3692c428637cd1631fb62e89",
+    "dedupe_rule": "run_s0.dedupe：同 key 保留最早一条 ok",
+    "expected_pairs_complete": 120,
+    "generated_at": "2026-10-19T20:13:20+0800",
+    "graders_used": [
+      "v1.0",
+      "v1.1",
+      "v1.2",
+      "v1.3"
+    ],
+    "lines_fail": 2,
+    "lines_ok": 240,
+    "lines_total": 242,
+    "lines_unparsable": 0,
+    "missing_paired_keys": [],
+    "now_injected": true,
+    "paired": 120,
+    "provenance_sha256": {
+      "build_pool_p28.py": "a4c1ff50663c97f4b946bd6b6e4f780b549973e709d2228b24da31a9b3692473",
+      "pool_p28.jsonl": "e4dda4f1d9199615364af5399575f8076a6c9e35ae19daca3c266c9a0aa90c3a",
+      "run_s0.py": "e8e50ec0710071de0b12961b905fca89a8ab09c296c33e0bdb4349eee48a3d0f"
+    },
+    "snapshot_note": "calls.jsonl 为读入时刻的快照（该文件可能仍在被追加；本分析不回写任何数据文件）",
+    "unparsable_details": []
+  }
+}
