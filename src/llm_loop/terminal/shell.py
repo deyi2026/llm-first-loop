@@ -116,7 +116,7 @@ def interactive_session(engine: Any, sid: str) -> int:
                 print("[unknown command] Use /palette; use a regular message for model input.")
                 continue
             preinput = composer if composer.supports_preinput else None
-            view = Presenter(plain=ui.plain)
+            view = Presenter(plain=ui.plain, width=ui.width)
             if preinput is None:
                 # Keep the legacy call shape for plain/non-TTY sessions and injected adapters.
                 run_exit = run_turn(engine, sid, text, view, approval, interactive=True)

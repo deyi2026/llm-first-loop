@@ -113,6 +113,7 @@ def _pump(runner: Any, handle: Any, events: Any, view: Presenter,
         try:
             item = events.get(timeout=0.1)
         except queue.Empty:
+            view.tick()
             continue
         kind = item.get("type")
         if kind == "delta":
@@ -140,6 +141,7 @@ def _pump(runner: Any, handle: Any, events: Any, view: Presenter,
 
 def _synchronous_turn(engine: Any, sid: str, text: str, view: Presenter) -> int:
     """Compatibility for explicit RUNNER_BACKGROUND=0; no second scheduler."""
+    view.use_raw_stream()
     view.started(sid, "")
     try:
         stream = getattr(engine, "run_stream", None)

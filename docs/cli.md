@@ -46,6 +46,10 @@ lfl chat "hello" --plain --no-stream > answer.txt
 
 默认文本 stdout 只交付正文；工具状态、模型、用量和诊断走 stderr。
 `--no-stream` 只改变显示，不减少模型输出或跳过原生事件。
+增强 TTY 的文字流在单一 CLI 输出线程逐块渲染稳定的 Markdown 标题、段落、列表；
+未闭合代码块按原样逐行显示，未闭合段落在短暂等待后按原文继续输出，而不反复重画终端历史。
+颜色遵守 `NO_COLOR`，控制字符只作为可见文字展示。`TERM=dumb`、纯文本、管道、JSON/JSONL
+保持线性/机器输出契约。终端投影不回写会话原文；可用 `/render` 对已存回答重新完整渲染。
 `--output json` 输出一个最终对象；`jsonl` 按序输出事件，schema 为 `lfl.cli/v1`。
 
 JSONL 共有字段：`schema`、`type`、`seq`、`session_id`、`run_generation`。
