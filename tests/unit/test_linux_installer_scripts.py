@@ -486,3 +486,52 @@ def test_uninstaller_refuses_unmanaged_launcher_without_deleting_data(linux_shel
     assert "unmanaged launcher" in result.stderr
     assert config.read_text(encoding="utf-8") == "preserve=yes\n"
     assert launcher.exists()
+
+
+def test_github_release_checksums_have_bare_asset_names_consumable_by_installer(tmp_path: Path) -> None:
+    """Actual release.yml checksum step must match the public installer's exact wheel-name check.
+
+    v0.6.33 generated ``dist/wheel.whl`` in SHA256SUMS; published assets instead
+    expose ``wheel.whl`` at the release root. A local-wheel-only smoke missed it.
+    """
+    import re
+
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    expected_prefix = "run: cd dist && sha256sum * > SHA256SUMS && sha256sum --check SHA256SUMS"
+    matching = [line.strip() for line in workflow.splitlines() if line.strip().startswith("run: cd dist && sha256sum")]
+    assert matching == [expected_prefix], "release checksums must use names relative to the download directory"
+    assert "match.group(2) == sys.argv[2]" in INSTALLER.read_text(encoding="utf-8"), "installer parser contract changed"
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    wheel = dist / "llm_first_loop-0.6.34-py3-none-any.whl"
+    wheel.write_bytes(b"stable-public-release-wheel-fixture")
+    (dist / "install_linux.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    workflow_command = matching[0].removeprefix("run: ")
+    if shutil.which("sha256sum") is None:
+        assert shutil.which("shasum") is not None, "a SHA-256 utility is required for the contract check"
+        workflow_command = workflow_command.replace("sha256sum", "shasum -a 256")
+    completed = subprocess.run(["bash", "-c", workflow_command], cwd=tmp_path, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    manifest = (dist / "SHA256SUMS").read_text(encoding="utf-8")
+    entries = [re.fullmatch(r"([0-9a-fA-F]{64})\s+\*?(.+?)\s*", line) for line in manifest.splitlines()]
+    assert entries and all(entries)
+    items = [(entry.group(2), entry.group(1).lower()) for entry in entries if entry is not None]
+    assert len([digest for name, digest in items if name == wheel.name]) == 1
+    assert dict(items)[wheel.name] == hashlib.sha256(wheel.read_bytes()).hexdigest()
+    assert all("/" not in name and "\\" not in name for name, _ in items)
+
+    # softprops/action-gh-release accepts dotfiles in dist/* (observed:
+    # Draft v0.6.33 contained a spurious 1-byte default.gitignore absent from
+    # SHA256SUMS). Whitelist exactly the required release assets instead.
+    assert "          files: |\n" in workflow
+    asset_lines = workflow.split("          files: |\n", 1)[1].splitlines()
+    assert {line.strip() for line in asset_lines if line.strip()} == {
+        "dist/llm_first_loop-*.whl",
+        "dist/llm_first_loop-*.tar.gz",
+        "dist/install_linux.sh",
+        "dist/uninstall_linux.sh",
+        "dist/installation-smoke.json",
+        "dist/linux-installer-smoke.json",
+        "dist/SHA256SUMS",
+    }, "Release asset scope must exclude hidden/unchecksummed files"

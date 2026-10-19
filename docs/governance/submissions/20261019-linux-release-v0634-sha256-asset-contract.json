@@ -1,0 +1,103 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261019-linux-release-v0634-sha256-asset-contract",
+  "summary": "Public-main successor release v0.6.34 fixes source-tag v0.6.33 Draft SHA256SUMS basename mismatch; preserves old immutable tag/Draft and scopes new review/PR/CI/tag/Release.",
+  "components": [
+    {
+      "component_id": "release-manifest-generator-control",
+      "paths": [
+        ".github/workflows/release.yml",
+        "tests/unit/test_linux_installer_scripts.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "GitHub tag Release artifact checksum producer plus true filename unit contract",
+      "disposition": "Reuse existing single tag-triggered release.yml writer, normalize SHA256SUMS to asset basenames at dist root and immediately validate sha256sum --check (no separate writer).",
+      "evidence": [
+        "Actual v0.6.33 release.yml used sha256sum dist/* and generated dist/wheel.whl whereas public install_linux.sh requires bare wheel.whl.",
+        "Local exact-producer/consumer reproduction failed pre-fix, new isolated shell-based checksum contract unit passes post-fix."
+      ],
+      "verification_level": "Exact unit regression + original full R9 + GitHub PR CI + v0.6.34 tag gate/Draft asset digest verification",
+      "model_evidence_veto_recovery_exit": "If manifest names/bytes are invalid, step fails and prevents Draft; independent reviewer and maintainer may veto before publication.",
+      "rollback_route": "Revert reviewed PR and ship a new patch tag; never overwrite or move a published v* tag.",
+      "declaration_id": "release-sha256-contract"
+    },
+    {
+      "component_id": "public-package-and-installer-version",
+      "paths": [
+        "pyproject.toml",
+        "uv.lock",
+        "src/llm_loop/web/routes.py",
+        "scripts/install_linux.sh"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Version identity and user-facing Linux help examples",
+      "disposition": "Move package, lock root, Web SERVICE_VERSION and installer examples to 0.6.34; no algorithm or dependency changes.",
+      "evidence": [
+        "v0.6.33 annotated public tag must remain immutable; new v0.6.34 tag is distinct."
+      ],
+      "verification_level": "Version consistency tests, original R9, tag/package gate",
+      "model_evidence_veto_recovery_exit": "Reject mismatch or missing public wheel and digest before any user install.",
+      "rollback_route": "Revert reviewed PR and ship a new patch tag; never overwrite or move a published v* tag."
+    },
+    {
+      "component_id": "public-change-and-release-documentation",
+      "paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "README.en.md",
+        "docs/releasing.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "GitHub user/maintainer release guidance",
+      "disposition": "Document v0.6.33 Draft held due checksum mismatch, fix/retest in v0.6.34 and immutable tag and native x86_64/glibc support limits; README points users to published stable release only.",
+      "evidence": [
+        "The release script strictly matches SHA256SUMS bare asset name; original contract reproduced false with dist/ name."
+      ],
+      "verification_level": "Docs/Release peer review, URLs, public stable package download and checksum test",
+      "model_evidence_veto_recovery_exit": "No Draft publish with invalid SHA256SUMS; user installer aborts before activation.",
+      "rollback_route": "Revert reviewed PR and ship a new patch tag; never overwrite or move a published v* tag."
+    },
+    {
+      "component_id": "architecture-A5-submission",
+      "paths": [
+        "docs/governance/submissions/20261019-linux-release-v0634-sha256-asset-contract.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Public GitHub A.5 PR submission",
+      "disposition": "Single schema-valid manifest accurately covers every public base..candidate changed path, including itself.",
+      "evidence": [
+        "A.5 PR gate requires exactly one submissions/*.json covering full PR diff."
+      ],
+      "verification_level": "A.5 exact public-main diff and GitHub pull_request job",
+      "model_evidence_veto_recovery_exit": "PR architecture gate rejects missing paths, reviewers may veto false classification.",
+      "rollback_route": "Revert reviewed PR and ship a new patch tag; never overwrite or move a published v* tag."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "release-sha256-contract",
+      "g1": {
+        "necessity": "GitHub tag build must match the public installers strict manifest filename identity; plain text instructions cannot verify bytes or prevent unsafe publication."
+      },
+      "g2": {
+        "authority_owner": "Existing GitHub v* tag release.yml single writer",
+        "relationship": "reuse",
+        "non_duplication": "No second writer, no new publisher, no root/service deployment; only fix checksum command plus regression."
+      },
+      "g3": {
+        "model_evidence": [
+          "Public tag v0.6.33 manifest path dist/* vs installer bare basename mismatch reproduced on actual wheel.",
+          "New exact command in dist and unit test rejects relative paths, verifies real SHA256; independent GLM-5.3 code review and complete original R9 still required."
+        ],
+        "recovery_or_reason": "Keep v0.6.33 Draft unpublished and tagged SHA immutable; if new CI or asset check fails, block publication, inspect and fix via new patch tag."
+      },
+      "g4": {
+        "rollback": "Leave published tags immutable; revert scoped public PR through independent review and issue another patch if necessary.",
+        "verification": [
+          "Regression unit for output basenames and valid checksums, no Provider call.",
+          "Exact PR A.5, full R9, GitHub PR and tag gates, uploaded asset SHA256 and native Ubuntu installer acceptance."
+        ]
+      }
+    }
+  ]
+}

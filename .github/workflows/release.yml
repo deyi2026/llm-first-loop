@@ -72,7 +72,7 @@ jobs:
       - name: Linux 安装器真实 wheel 安装冒烟（隔离 HOME，不触碰用户数据）
         run: python scripts/verify_linux_installer.py --wheel dist/*.whl --report dist/linux-installer-smoke.json
       - name: 分发成品校验和
-        run: sha256sum dist/* > SHA256SUMS && mv SHA256SUMS dist/
+        run: cd dist && sha256sum * > SHA256SUMS && sha256sum --check SHA256SUMS
       - name: 生成 Release（草稿, 人工确认发布）
         uses: softprops/action-gh-release@v2
         with:
@@ -80,4 +80,11 @@ jobs:
           generate_release_notes: true
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          files: dist/*
+          files: |
+            dist/llm_first_loop-*.whl
+            dist/llm_first_loop-*.tar.gz
+            dist/install_linux.sh
+            dist/uninstall_linux.sh
+            dist/installation-smoke.json
+            dist/linux-installer-smoke.json
+            dist/SHA256SUMS

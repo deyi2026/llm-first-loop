@@ -27,12 +27,12 @@ bash lfl-install.sh
 lfl doctor
 
 # 指定已正式发布的稳定版本
-bash lfl-install.sh --version 0.6.33
+bash lfl-install.sh --version 0.6.34
 # 安全离线回滚（需有旧安装版本）
 bash lfl-install.sh --rollback
 ```
 
-应用采用用户级目录、无需 sudo；Linux `x86_64/glibc` 有原生 Ubuntu CI 验收，ARM64 需补独立 native CI 才宣称等价覆盖；Alpine/musl 不受支持。安装脚本和 wheel 版本以**真正已公开的 Release**为准；如 `v0.6.33` 尚是 Draft，则命令应安全拒绝而非静默拉取候选。详情见 [安装与升级](installation.md)。
+应用采用用户级目录、无需 sudo；Linux `x86_64/glibc` 有原生 Ubuntu CI 验收，ARM64 需补独立 native CI 才宣称等价覆盖；Alpine/musl 不受支持。安装脚本和 wheel 版本以**真正已公开的 Release**为准；如 `v0.6.34` 尚是 Draft，则命令应安全拒绝而非静默拉取候选。详情见 [安装与升级](installation.md)。
 
 ## 回滚、历史与职责边界
 
