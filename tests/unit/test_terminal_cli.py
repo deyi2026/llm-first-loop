@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import tracemalloc
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -640,6 +641,233 @@ def test_query_uses_selected_installed_data_and_workspace(query_env, capsys):
     assert report["data_dir"] == str(query_env / "selected")
     assert report["workspace"] == str(query_env / "workspace")
     assert report["actual_model"] is None
+
+
+def test_identity_reports_effective_config_file_source_without_values(query_env, capsys, monkeypatch):
+    config = query_env / "operator.env"
+    config.write_text(
+        "LLM_MODEL=file-provider/model-a\n"
+        "LLM_BASE_URL=https://user:password@provider.invalid/path?token=secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    options = SimpleNamespace(config=str(config), data_dir=str(query_env / "data"),
+                              workspace=str(query_env), _query_home=query_env)
+    assert dispatch_query(["identity", "--json"], options) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["configured_model"] == "file-provider/model-a"
+    assert report["configuration"]["sources"]["LLM_MODEL"] == "explicit_config_file"
+    serialized = json.dumps(report)
+    assert "password" not in serialized and "token=secret" not in serialized
+
+
+def test_identity_reports_environment_override_source(query_env, capsys, monkeypatch):
+    config = query_env / "operator.env"
+    config.write_text("LLM_MODEL=file-provider/model-a\n", encoding="utf-8")
+    monkeypatch.setenv("LLM_MODEL", "shell-provider/model-b")
+    options = SimpleNamespace(config=str(config), data_dir=str(query_env / "data"),
+                              workspace=str(query_env), _query_home=query_env)
+    assert dispatch_query(["identity", "--json"], options) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["configured_model"] == "shell-provider/model-b"
+    assert report["configuration"]["sources"]["LLM_MODEL"] == "environment"
+
+
+def test_identity_reports_canonical_runtime_toml_precedence(query_env, capsys, monkeypatch):
+    (query_env / "runtime.toml").write_text(
+        '[llm]\nmodel = "runtime-provider/model-r"\n', encoding="utf-8"
+    )
+    (query_env / ".env").write_text("LLM_MODEL=dotenv-provider/model-d\n", encoding="utf-8")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(query_env))
+    options = SimpleNamespace(config=None, data_dir=str(query_env / "data"),
+                              workspace=str(query_env), _query_home=query_env)
+    assert dispatch_query(["identity", "--json"], options) == 0
+    report = json.loads(capsys.readouterr().out)
+    runtime_config = report["configuration"]["runtime_effective"]
+    assert runtime_config["available"] is True
+    assert runtime_config["configured_model"] == "runtime-provider/model-r"
+    assert runtime_config["configured_model_source"] == "runtime_toml"
+
+
+def test_identity_data_dir_source_matches_empty_primary_env_fallback(query_env, capsys, monkeypatch):
+    legacy_data = query_env / "legacy-data"
+    monkeypatch.setenv("DATA_DIR", "")
+    monkeypatch.setenv("LFL_DATA_DIR", str(legacy_data))
+    options = SimpleNamespace(config=None, data_dir=None, workspace=str(query_env),
+                              _query_home=query_env)
+    assert dispatch_query(["identity", "--json"], options) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["data_dir"] == str(legacy_data)
+    assert report["configuration"]["sources"]["DATA_DIR"] == "environment:LFL_DATA_DIR"
+
+
+def test_identity_uses_last_persisted_loopresult_model_for_explicit_session(
+    query_env, capsys, monkeypatch,
+):
+    from llm_loop.terminal import queries
+
+    options = SimpleNamespace(config=None, data_dir=str(query_env / "data"),
+                              workspace=str(query_env), _query_home=query_env)
+    monkeypatch.setattr(queries, "session_root", lambda *_a, **_k: query_env / "sessions")
+    monkeypatch.setattr(
+        queries, "read_session",
+        lambda *_a, **_k: {"session_id": "session-1", "messages": [
+            {"role": "assistant", "model_used": "glm/glm-5.2"},
+            {"role": "user", "content": "next"},
+            {"role": "assistant", "model_used": "glm/glm-5.3"},
+        ]},
+    )
+    assert dispatch_query(["identity", "--session", "session-1", "--json"], options) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["actual_model"] == "glm/glm-5.3"
+    assert report["actual_model_session"] == "session-1"
+    assert report["actual_model_source"] == "LoopResult.model_used"
+
+
+def test_identity_explains_missing_model_for_already_selected_session(
+    query_env, capsys, monkeypatch,
+):
+    from llm_loop.terminal import queries
+
+    options = SimpleNamespace(config=None, data_dir=str(query_env / "data"),
+                              workspace=str(query_env), _query_home=query_env)
+    monkeypatch.setattr(queries, "session_root", lambda *_a, **_k: query_env / "sessions")
+    monkeypatch.setattr(
+        queries, "read_session",
+        lambda *_a, **_k: {"session_id": "session-empty", "messages": [
+            {"role": "assistant", "content": "legacy message without model metadata"},
+        ]},
+    )
+    assert dispatch_query(["identity", "--session", "session-empty", "--json"], options) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["actual_model"] is None
+    assert report["actual_model_note"] == "No persisted assistant model_used was found for session session-empty"
+
+
+def test_last_actual_model_matches_real_session_serialization_shape():
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.core.session import Session
+    from llm_loop.terminal.queries import _last_actual_model
+
+    session = Session(session_id="session-serialized")
+    session.messages.append(
+        Message(role="assistant", source=MessageSource.SYSTEM, content="answer",
+                model_used="glm/glm-5.3")
+    )
+    persisted = session.to_dict()
+    assert persisted["messages"][-1]["model_used"] == "glm/glm-5.3"
+    assert json.loads(json.dumps(persisted))["messages"][-1]["model_used"] == "glm/glm-5.3"
+    assert _last_actual_model(persisted) == "glm/glm-5.3"
+
+
+def test_identity_reports_installed_distribution_separately_from_source(monkeypatch, tmp_path):
+    from llm_loop.terminal import queries
+
+    monkeypatch.setattr(
+        "llm_loop.runtime.identity.installed_identity",
+        lambda _module: {"name": "llm-first-loop", "version": "0.6.32",
+                         "package_root": str(tmp_path / "site-packages" / "llm_loop")},
+    )
+    monkeypatch.setattr(
+        "llm_loop.runtime.build_identity.compute_build_identity",
+        lambda *_a, **_k: pytest.fail("installed package identity must not be confused with workspace source"),
+    )
+    report = queries._runtime_identity_report(tmp_path)
+    assert report["kind"] == "installed_distribution"
+    assert report["distribution"]["version"] == "0.6.32"
+
+
+def test_default_query_home_uses_cwd_for_installed_package(monkeypatch, tmp_path):
+    from llm_loop.terminal import queries
+
+    fake_module = (
+        tmp_path / "venv" / "lib" / "python3.13" / "site-packages"
+        / "llm_loop" / "terminal" / "queries.py"
+    )
+    monkeypatch.setattr(queries, "__file__", str(fake_module))
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path / "operator-workspace")
+    assert queries._default_query_home() == tmp_path / "operator-workspace"
+
+
+def test_identity_reports_source_checkout_build_separately(monkeypatch):
+    from llm_loop.terminal import queries
+
+    workspace = Path(__file__).resolve().parents[2]
+    # Even an editable distribution record must not relabel the source tree as a wheel install.
+    monkeypatch.setattr(
+        "llm_loop.runtime.identity.installed_identity",
+        lambda _module: {"name": "llm-first-loop", "version": "0.6.32",
+                         "package_root": str(workspace / "src" / "llm_loop")},
+    )
+    monkeypatch.delenv("LFL_RUNTIME_ROOT", raising=False)
+    report = queries._runtime_identity_report(workspace)
+    assert report["kind"] == "source_checkout"
+    assert report["build_identity"]["git_head"]
+    assert isinstance(json.loads(json.dumps(report)), dict)
+
+
+def test_identity_service_projection_is_read_only_and_separates_live_from_desired(
+    query_env, monkeypatch,
+):
+    from llm_loop.terminal import queries
+
+    data = query_env / "service-data"
+    runtime = data / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "runtime_manifest.web.json").write_text(
+        json.dumps({"config_sources": {
+            "LLM_MODEL": "runtime_toml",
+            "LLM_API_KEY": "secret",
+            "LLM_BASE_URL": "https://user:password@provider.invalid/?token=secret",
+        }}),
+        encoding="utf-8",
+    )
+    before_paths = {(p.relative_to(data), p.is_dir()) for p in data.rglob("*")}
+    before = {p.relative_to(data): p.read_bytes() for p in data.rglob("*") if p.is_file()}
+    monkeypatch.setattr(
+        "llm_loop.runtime.service_control.compose_service_identity_view",
+        lambda _store: {
+            "deployment": {"generation": 8, "git_head": "desired-head"},
+            "services": {
+                "web": {
+                    "live": {"manifest_present": True, "pid_alive": True,
+                             "git_head": "live-head", "model_ref": "glm/glm-5.3",
+                             "config_hash": "abc", "build": {"display": "v0.6.32-dev"}},
+                    "stable": {"generation": 7, "git_head": None,
+                               "matches_desired_generation": False},
+                    "restart_required": True,
+                }
+            },
+        },
+    )
+    report = queries._service_identity_report(data)
+    assert report["services"]["web"]["live"]["git_head"] == "live-head"
+    assert report["services"]["web"]["live"]["config_sources"] == {
+        "LLM_MODEL": "runtime_toml", "LLM_BASE_URL": "unknown"
+    }
+    assert "password" not in json.dumps(report) and "token=secret" not in json.dumps(report)
+    assert report["desired_generation"] == 8
+    assert report["services"]["web"]["stable_generation"] == 7
+    after = {p.relative_to(data): p.read_bytes() for p in data.rglob("*") if p.is_file()}
+    assert after == before
+    after_paths = {(p.relative_to(data), p.is_dir()) for p in data.rglob("*")}
+    assert after_paths == before_paths
+
+
+def test_identity_malformed_service_view_is_reported_without_traceback(query_env, monkeypatch):
+    from llm_loop.terminal import queries
+
+    data = query_env / "malformed-service-data"
+    (data / "runtime").mkdir(parents=True)
+    monkeypatch.setattr(
+        "llm_loop.runtime.service_control.compose_service_identity_view",
+        lambda _store: {"services": []},
+    )
+    report = queries._service_identity_report(data)
+    assert report["available"] is False
+    assert report["error"] == "InvalidServiceIdentityView"
+    assert report["services"] == {}
 
 
 def test_integrated_help_keeps_existing_installer_and_extension_commands(capsys):

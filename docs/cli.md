@@ -127,6 +127,7 @@ lfl sessions show FULL_ID --raw
 lfl sessions export FULL_ID --format json --to session.json
 lfl models --json
 lfl identity --json
+lfl identity --session FULL_ID --json
 lfl config show --json
 ```
 
@@ -136,7 +137,16 @@ lfl config show --json
 `READ_PATH_SOURCE=event_log` 时使用原生事件重放，不以旧 JSON 冒充当前真相。
 
 模型目录只展示已配置能力；`configured_model` 与 `actual_model` 分开。
-只读查询没有运行观测时，实际模型如实为 unknown/null；不输出密钥或整份环境变量。
+`identity` 是只读诊断：显示当前查询使用的配置来源、canonical `runtime.toml`/`.env`
+有效模型及来源、Python/venv/module 路径，以及可读取到的 Web/Feishu/Learning 服务
+desired/live/stable 身份。服务 live 身份来自启动 manifest，stable 是已成功受控重启
+回执；二者分别展示，不用旧回执伪装当前运行事实。查询不启动 Engine、不创建数据目录、
+不发起模型请求，也不修复/重启服务。输出不包含密钥或完整 provider URL；配置的模型名
+与服务 manifest 的 `model_ref` 是有意显示的诊断字段，环境中其他值不会被整体输出。
+
+不带 `--session` 时，`actual_model` 明确为未观测；带 `--session FULL_ID` 时，只从该
+工作区授权范围内的持久 assistant 消息读取 `LoopResult.model_used`，如实显示最后一次
+有记录的实际生成模型，不以默认配置或会话覆盖猜测实际模型。
 
 交互中可用：
 
