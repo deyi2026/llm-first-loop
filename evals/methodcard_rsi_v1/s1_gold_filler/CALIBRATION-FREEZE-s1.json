@@ -1,0 +1,83 @@
+{
+  "analyze_s1": {
+    "path": "evals/methodcard_rsi_v1/s1_gold_filler/analyze_s1.py",
+    "sha256": "3c3065cfb8f3d91f88560679627a5061714ff39202e5f792d8558f2eb8177225"
+  },
+  "baseline": {
+    "s0_calls": {
+      "path": "evals/methodcard_rsi_v1/s0_p28/results/calls.jsonl",
+      "sha256": "bf0aec406e03c8c23c016c796072b4c5288b0e4a3692c428637cd1631fb62e89"
+    },
+    "s0_d_v13": 28,
+    "s0_r_v13": 16
+  },
+  "cards": {
+    "filler": {
+      "chars": 719,
+      "cjk": 356,
+      "path": "evals/methodcard_rsi_v1/s1_gold_filler/cards/filler.md",
+      "sha256": "2967e0c8e9235f3d247870824875f644ac23bf26870a7d95447967af0c2d439b",
+      "utf8_bytes": 1519
+    },
+    "gold": {
+      "chars": 744,
+      "cjk": 388,
+      "path": "evals/methodcard_rsi_v1/s1_gold_filler/cards/gold.md",
+      "sha256": "4c9d22cad90a42378ef917b6ac585119c6d11e01cbf5b2afa6172f147ad4f8a6",
+      "utf8_bytes": 1638
+    }
+  },
+  "equality": {
+    "char_diff_pct": 3.36,
+    "filler_chars": 719,
+    "gold_chars": 744,
+    "token_proxy": "character_count (same language, same Markdown structure)"
+  },
+  "frozen_at": "2026-10-19T20:41:55+08:00",
+  "graders": {
+    "agent_harness": {
+      "path": "evals/methodcard_rsi_v1/agent_harness.py",
+      "sha256": "bc945cabc8893ae24def82547b0aacf3a48d02556b32dd7450376ae68c421a15"
+    },
+    "analyze_s0": {
+      "path": "evals/methodcard_rsi_v1/s0_p28/analyze_s0.py",
+      "sha256": "d45292c753d9b5962823dc18a6a78d277d681b106e6a9f9ac94f2ade9a9093f5"
+    },
+    "build_pool_p28": {
+      "path": "evals/methodcard_rsi_v1/s0_p28/build_pool_p28.py",
+      "sha256": "a4c1ff50663c97f4b946bd6b6e4f780b549973e709d2228b24da31a9b3692473"
+    },
+    "run_s0": {
+      "path": "evals/methodcard_rsi_v1/s0_p28/run_s0.py",
+      "sha256": "e8e50ec0710071de0b12961b905fca89a8ab09c296c33e0bdb4349eee48a3d0f"
+    }
+  },
+  "lint": {
+    "path": "evals/methodcard_rsi_v1/s1_gold_filler/LINT-S1.md",
+    "sha256": "ab1b4975e125150520526d302259a9158bc1506b41e98d7dc0304f0666e7ba15"
+  },
+  "pool": {
+    "instances": 120,
+    "path": "evals/methodcard_rsi_v1/s0_p28/pool_p28.jsonl",
+    "sha256": "e4dda4f1d9199615364af5399575f8076a6c9e35ae19daca3c266c9a0aa90c3a"
+  },
+  "prompt_equivalence": {
+    "checked_at": "2026-10-19T20:41:55+08:00",
+    "run_s1_PROMPT_TMPL_eq_run_s0": true,
+    "run_s1_build_prompt_eq_run_s0": true
+  },
+  "purpose": "S1 gold/filler positive-negative control (R15)",
+  "run_s1": {
+    "path": "evals/methodcard_rsi_v1/s1_gold_filler/run_s1.py",
+    "sha256": "6a8c9cc3af1dc2a0c49a0bb36ca139ed224ea2e5d7a02e56adc9bbf126b2e69d"
+  },
+  "s0_v13_review": {
+    "path": "docs/REVIEW-S0-V13-PATH-20261019.md",
+    "sha256": "a73e98ab59b850cb548a121f649c2da369207d949c0b3912a41a928f391ac4d5",
+    "verdict": "PASS (P0=0)"
+  },
+  "spec": {
+    "path": "evals/methodcard_rsi_v1/s1_gold_filler/S1-SPEC.md",
+    "sha256": "da91169080f8d71364b0be6fed5019d2a80d79eadf3b2b280b04e72e68d21245"
+  }
+}
