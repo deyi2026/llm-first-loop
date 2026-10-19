@@ -5,6 +5,7 @@ import queue
 import signal
 import threading
 import time
+from contextlib import suppress
 from typing import Any
 
 from llm_loop.core.trace_leak.ingress_token import issue_ingress
@@ -13,7 +14,7 @@ from llm_loop.terminal.presentation import Presenter
 
 def run_turn(
     engine: Any, sid: str, text: str, view: Presenter, approval: Any = None, *,
-    interactive: bool = False,
+    interactive: bool = False, preinput: Any = None, model: str = "",
 ) -> int:
     runner = getattr(engine, "runner", None)
     if runner is None or not runner.enabled:
@@ -26,6 +27,7 @@ def run_turn(
     previous_term = None
     terminated = threading.Event()
     main_thread = threading.current_thread() is threading.main_thread()
+    pump_returned = False
     handle = None
     events = None
     # Install signal ownership before starting the background worker: start() can
@@ -48,16 +50,35 @@ def run_turn(
         if handle is None or events is None:
             return view.error("Session is busy; no run was attached or started.", "session_busy")
         view.started(sid, handle.run_generation)
-        return _pump(
+        if interactive and preinput is not None:
+            try:
+                preinput.start_preinput(sid, model, cancel_callback=interrupt.set)
+            except Exception as exc:  # noqa: BLE001 - keep the admitted run authoritative
+                view.notice(
+                    f"Next-turn draft input unavailable ({type(exc).__name__}); "
+                    "the current run continues unchanged."
+                )
+        exit_code = _pump(
             runner, handle, events, view, interrupt, approval, terminated,
             sigint_received=sigint_received, interactive=interactive,
         )
+        pump_returned = True
+        return exit_code
     except BrokenPipeError:
         if handle is not None:
             runner.cancel(sid, expected_run_generation=handle.run_generation)
         view.notice("Output pipe closed; cancellation requested. Delivery/resource settlement is unknown.")
         return 1
     finally:
+        # Keep the next draft only when the owned run exited the event pump normally.
+        # A signalled or exceptional exit must close the input owner's terminal.
+        if preinput is not None and (terminated.is_set() or sigint_received.is_set() or not pump_returned):
+            try:
+                if not preinput.abort_preinput():
+                    with suppress(Exception):
+                        view.notice("Draft input cleanup incomplete; terminal recovery is unknown.")
+            except Exception:  # noqa: BLE001 - do not mask the original run outcome
+                pass
         if main_thread:
             signal.signal(signal.SIGINT, previous)
             signal.signal(signal.SIGTERM, previous_term)

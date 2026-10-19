@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import shlex
+import signal
 import sys
+import threading
+from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -18,6 +21,37 @@ from llm_loop.terminal.markdown import render_markdown
 from llm_loop.terminal.presentation import Presenter, safe_text
 from llm_loop.terminal.records import copy_answer, export_record, message_detail, transcript
 from llm_loop.terminal.settings import load_ui, save_ui, validate_ui
+
+
+@contextmanager
+def _preinput_signal_guard(composer: Composer):
+    """Own terminal signals until the next-turn prompt has actually closed."""
+    interrupted = threading.Event()
+    terminated = threading.Event()
+    if threading.current_thread() is not threading.main_thread():
+        yield interrupted, terminated
+        return
+
+    previous_int = signal.getsignal(signal.SIGINT)
+    previous_term = signal.getsignal(signal.SIGTERM)
+
+    def on_interrupt(_signum, _frame):
+        interrupted.set()
+        with suppress(Exception):
+            composer.request_abort_preinput()
+
+    def on_terminate(_signum, _frame):
+        terminated.set()
+        with suppress(Exception):
+            composer.request_abort_preinput()
+
+    signal.signal(signal.SIGINT, on_interrupt)
+    signal.signal(signal.SIGTERM, on_terminate)
+    try:
+        yield interrupted, terminated
+    finally:
+        signal.signal(signal.SIGINT, previous_int)
+        signal.signal(signal.SIGTERM, previous_term)
 
 
 def interactive_session(engine: Any, sid: str) -> int:
@@ -38,17 +72,22 @@ def interactive_session(engine: Any, sid: str) -> int:
     detector = getattr(engine, "loop_signal_detector", None)
     if detector is not None:
         detector.popup_pending_review = True
+    queued_text: str | None = None
     try:
         while True:
             _pending_review(engine, detector)
             session = engine.session.load(sid)
-            try:
-                text = composer.read(sid, session.model_override or "")
-            except EOFError:
-                return 0
-            except KeyboardInterrupt:
-                print("Use Ctrl+D on an empty composer or /exit.")
-                continue
+            if queued_text is None:
+                try:
+                    text = composer.read(sid, session.model_override or "")
+                except EOFError:
+                    return 0
+                except KeyboardInterrupt:
+                    print("Use Ctrl+D on an empty composer or /exit.")
+                    continue
+            else:
+                # A queued draft is promoted to a user message only after run_turn settled.
+                text, queued_text = queued_text, None
             if not text.strip():
                 continue
             control = text.strip()
@@ -76,7 +115,40 @@ def interactive_session(engine: Any, sid: str) -> int:
             if text.startswith("/"):
                 print("[unknown command] Use /palette; use a regular message for model input.")
                 continue
-            run_exit = run_turn(engine, sid, text, Presenter(plain=ui.plain), approval, interactive=True)
+            preinput = composer if composer.supports_preinput else None
+            view = Presenter(plain=ui.plain)
+            if preinput is None:
+                # Keep the legacy call shape for plain/non-TTY sessions and injected adapters.
+                run_exit = run_turn(engine, sid, text, view, approval, interactive=True)
+            else:
+                with _preinput_signal_guard(composer) as (draft_interrupted, draft_terminated):
+                    run_exit = run_turn(
+                        engine, sid, text, view, approval,
+                        interactive=True, preinput=preinput, model=session.model_override or "",
+                    )
+                    if run_exit == 143:
+                        return run_exit
+                    composer.mark_preinput_run_settled()
+                    draft_eof = False
+                    try:
+                        queued_text = composer.finish_preinput()
+                    except EOFError:
+                        queued_text, draft_eof = None, True
+                    except Exception as exc:  # noqa: BLE001 - current run is already settled
+                        print(
+                            f"[next-turn draft] {type(exc).__name__}: {safe_text(exc)}; "
+                            "the current run remains settled.",
+                            file=sys.stderr,
+                        )
+                        queued_text = None
+                    if draft_terminated.is_set():
+                        return 143
+                    if draft_interrupted.is_set():
+                        queued_text = None
+                    if draft_eof:
+                        return 0
+                    if queued_text is not None and not queued_text.strip():
+                        queued_text = None
             if run_exit == 143:
                 return run_exit
     finally:

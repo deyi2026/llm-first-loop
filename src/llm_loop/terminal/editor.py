@@ -1,11 +1,19 @@
 """Enhanced inline composer using prompt_toolkit, with an explicit plain fallback."""
 from __future__ import annotations
 
+import importlib.util
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
+import time
+from collections.abc import Callable
+from contextlib import suppress
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 from llm_loop.runtime.resolver import legacy_env_snapshot
 from llm_loop.terminal.presentation import safe_text
@@ -63,6 +71,185 @@ class Composer:
         self.sessions = {}
         self.history = {}
         self.enhanced = not ui.plain and legacy_env_snapshot().get("TERM") != "dumb"
+        self._preinput_lock = threading.RLock()
+        self._preinput_done = threading.Event()
+        self._preinput_thread: threading.Thread | None = None
+        self._preinput_result: str | None = None
+        self._preinput_error: BaseException | None = None
+        self._preinput_eof = False
+        self._preinput_cancel_callback: Callable[[], None] | None = None
+        self._preinput_app: Any = None
+        self._preinput_session: Any = None
+        self._preinput_active = False
+        self._preinput_run_settled = False
+        self._preinput_abort_requested = False
+
+    @property
+    def supports_preinput(self) -> bool:
+        """Only enable concurrent drafting when both streams are real TTYs."""
+        if not self.enhanced or self.ui.plain:
+            return False
+        if not getattr(sys.stdin, "isatty", lambda: False)() or not getattr(
+            sys.stdout, "isatty", lambda: False
+        )():
+            return False
+        try:
+            return importlib.util.find_spec("prompt_toolkit") is not None
+        except (ImportError, ValueError):
+            return False
+
+    @property
+    def preinput_active(self) -> bool:
+        with self._preinput_lock:
+            return self._preinput_active
+
+    def start_preinput(
+        self, sid: str, model: str = "", *, cancel_callback: Callable[[], None] | None = None
+    ) -> bool:
+        """Read one next-turn draft off-thread; never submit it to the active run."""
+        if not self.supports_preinput:
+            return False
+        with self._preinput_lock:
+            if self._preinput_thread is not None and self._preinput_thread.is_alive():
+                return False
+            self._preinput_done.clear()
+            self._preinput_result = None
+            self._preinput_error = None
+            self._preinput_eof = False
+            self._preinput_cancel_callback = cancel_callback
+            self._preinput_app = None
+            self._preinput_session = None
+            self._preinput_active = True
+            self._preinput_run_settled = False
+            self._preinput_abort_requested = False
+
+            def collect() -> None:
+                try:
+                    self._preinput_result = self.read(sid, model)
+                except EOFError:
+                    self._preinput_eof = True
+                except BaseException as exc:  # preserve the actual input-thread failure
+                    self._preinput_error = exc
+                finally:
+                    with self._preinput_lock:
+                        if self._preinput_abort_requested and self._preinput_session is not None:
+                            # The terminal may still deliver buffered input after SIGTERM.
+                            # Capture once more when the input owner has actually stopped.
+                            with suppress(Exception):
+                                final_draft = self._preinput_session.default_buffer.text
+                                if final_draft:
+                                    self.stashed = final_draft
+                        self._preinput_active = False
+                        app = self._preinput_app
+                        self._preinput_done.set()
+                    if app is not None:
+                        with suppress(Exception):
+                            app.invalidate()
+
+            thread = threading.Thread(
+                target=collect, name="lfl-cli-next-turn-draft", daemon=True
+            )
+            self._preinput_thread = thread
+            try:
+                thread.start()
+            except RuntimeError:
+                self._preinput_thread = None
+                self._preinput_active = False
+                self._preinput_cancel_callback = None
+                return False
+        return True
+
+    def mark_preinput_run_settled(self) -> None:
+        """Update the draft toolbar after the owned run reaches a terminal fact."""
+        with self._preinput_lock:
+            if self._preinput_thread is None:
+                return
+            self._preinput_run_settled = True
+            app = self._preinput_app
+        if app is not None:
+            with suppress(Exception):
+                app.invalidate()
+
+    def finish_preinput(self) -> str | None:
+        """Return the draft only after the active run has already settled."""
+        with self._preinput_lock:
+            thread = self._preinput_thread
+        if thread is None:
+            return None
+        self._preinput_done.wait()
+        thread.join()
+        with self._preinput_lock:
+            result = self._preinput_result
+            error = self._preinput_error
+            eof = self._preinput_eof
+            self._preinput_thread = None
+            self._preinput_result = None
+            self._preinput_error = None
+            self._preinput_eof = False
+            self._preinput_cancel_callback = None
+            self._preinput_app = None
+            self._preinput_session = None
+            self._preinput_active = False
+            self._preinput_run_settled = False
+            self._preinput_abort_requested = False
+            self._preinput_done.clear()
+        if error is not None:
+            raise error
+        if eof:
+            raise EOFError
+        return result
+
+    def request_abort_preinput(self) -> None:
+        """Non-blockingly close the active prompt and preserve its local draft."""
+        with self._preinput_lock:
+            thread = self._preinput_thread
+            session = self._preinput_session
+            app = self._preinput_app
+            if thread is None:
+                return
+            if not thread.is_alive():
+                if self._preinput_result:
+                    self.stashed = self._preinput_result
+                    self._preinput_result = ""
+                return
+        if session is not None:
+            try:
+                current = session.default_buffer.text
+            except Exception:  # noqa: BLE001 - preserve best-effort draft only
+                current = ""
+            if current:
+                self.stashed = current
+        # Narrow Optional[Application] before accessing the exit callback.
+        if app is None:
+            return
+        loop = getattr(app, "loop", None)
+        if loop is not None and not loop.is_closed():
+            with self._preinput_lock:
+                if self._preinput_abort_requested:
+                    return
+                self._preinput_abort_requested = True
+            # Application.exit mutates an asyncio Future; schedule it on its owner loop.
+            try:
+                loop.call_soon_threadsafe(partial(app.exit, result=""))
+            except Exception:  # noqa: BLE001 - allow a later bounded retry
+                with self._preinput_lock:
+                    self._preinput_abort_requested = False
+
+    def abort_preinput(self, timeout: float = 5.0) -> bool:
+        """Close the prompt and wait boundedly for terminal restoration."""
+        with self._preinput_lock:
+            thread = self._preinput_thread
+        if thread is None:
+            return True
+        deadline = time.monotonic() + max(0.0, timeout)
+        while thread.is_alive():
+            self.request_abort_preinput()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._preinput_done.wait(min(0.05, remaining))
+        thread.join(timeout=0)
+        return not thread.is_alive()
 
     def read(self, sid: str, model: str = "") -> str:
         with saved_terminal():
@@ -93,8 +280,24 @@ class Composer:
         width, height = shutil.get_terminal_size((80, 24))
         toolbar = None if height < 16 else lambda: self._toolbar(sid, model, width)
         current, self.draft = self.draft, ""
+        preinput_thread = threading.current_thread() is self._preinput_thread
+        if preinput_thread:
+            with self._preinput_lock:
+                self._preinput_session = session
+                self._preinput_app = session.app
         try:
             with saved_terminal():
+                if preinput_thread:
+                    # Stream/tool prints are routed above this prompt and cannot corrupt the draft.
+                    from prompt_toolkit.patch_stdout import patch_stdout
+
+                    with patch_stdout():
+                        return session.prompt(
+                            [("class:prompt", "你 > ")], default=current, bottom_toolbar=toolbar,
+                            style=Style.from_dict(editor_style(self.ui.theme)),
+                            reserve_space_for_menu=4 if height >= 16 else 0,
+                            color_depth=None,
+                        )
                 return session.prompt(
                     [("class:prompt", "你 > ")], default=current, bottom_toolbar=toolbar,
                     style=Style.from_dict(editor_style(self.ui.theme)),
@@ -103,11 +306,24 @@ class Composer:
                 )
         except KeyboardInterrupt:
             self.stashed = session.default_buffer.text or current
+            if preinput_thread:
+                callback = self._preinput_cancel_callback
+                if callback is not None:
+                    callback()
             print("[draft stashed] Ctrl+D exits an empty composer; /draft restores.")
             return ""
 
     def _toolbar(self, sid: str, model: str, width: int) -> str:
-        mode = "MULTILINE · C-x s send" if self.ui.multiline else "Enter send · C-j newline"
+        with self._preinput_lock:
+            preinput_active = self._preinput_active
+            run_settled = self._preinput_run_settled
+        if preinput_active:
+            state = "run settled" if run_settled else "run active"
+            mode = f"NEXT TURN DRAFT · {state} · " + (
+                "C-x s queue" if self.ui.multiline else "Enter queue"
+            )
+        else:
+            mode = "MULTILINE · C-x s send" if self.ui.multiline else "Enter send · C-j newline"
         short = f" {safe_text(sid[:8])} · {mode} · F1 keys "
         if width < 80:
             return short
