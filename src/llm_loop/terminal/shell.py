@@ -20,7 +20,6 @@ from llm_loop.terminal.execution import run_turn
 from llm_loop.terminal.markdown import render_markdown
 from llm_loop.terminal.presentation import Presenter, safe_text
 from llm_loop.terminal.records import (
-    RecordBrowser,
     copy_answer,
     export_record,
     message_detail,
@@ -71,6 +70,7 @@ def interactive_session(engine: Any, sid: str) -> int:
     if getattr(engine, "_cli_theme", None):
         ui.theme = engine._cli_theme
     composer = Composer(ui, Path(getattr(engine, "_cli_workspace", Path.cwd())))
+    composer.record_source = lambda session_id: engine.session.load(session_id).to_dict()
     approval = getattr(engine, "_cli_approval_bridge", None)
     if approval is None:
         approval = ApprovalBridge()
@@ -124,6 +124,7 @@ def interactive_session(engine: Any, sid: str) -> int:
                 continue
             preinput = composer if composer.supports_preinput else None
             view = Presenter(plain=ui.plain, width=ui.width)
+            view.activity_hook = lambda sid=sid: composer.note_stream_update(sid)
             if preinput is None:
                 # Keep the legacy call shape for plain/non-TTY sessions and injected adapters.
                 run_exit = run_turn(engine, sid, text, view, approval, interactive=True)
@@ -241,9 +242,14 @@ def _dispatch_local(engine: Any, session: Any, name: str, args: list[str], compo
             print(json.dumps(asdict(composer.ui), ensure_ascii=False, indent=2))
     elif name in {"/transcript", "/raw", "/details", "/diff", "/copy", "/export"}:
         _record_command(session.to_dict(), name, args)
-    elif name == "/browse":
-        cursor = composer.record_views.setdefault(session.session_id, RecordBrowser())
-        print(safe_text(cursor.navigate(session.to_dict(), args)))
+    elif name in {"/browse", "/fullscreen"}:
+        # Existing CLI tests can dispatch with a fake session and no Engine.
+        # The real interactive shell always attaches a read-only session source.
+        if composer.record_source is None:
+            composer.record_source = lambda _sid: session.to_dict()
+        print(safe_text(composer.show_records(
+            session.session_id, args if name == "/browse" else ["full"
+        ])))
     elif name == "/sessions":
         for row in engine.session.list_sessions():
             print(safe_text(f"{row.session_id}  {row.title}  {row.message_count} messages"))

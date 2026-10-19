@@ -165,20 +165,51 @@ class RecordBrowser:
     offset: int = 0
     mode: str = "content"
     page_size: int = 32
+    horizontal: int = 0
+    page_width: int = 100
+    seen_messages: int | None = None
+    new_messages: int = 0
+    follow_latest: bool = False
+
+    def observe(self, raw: dict) -> int:
+        """Count newly saved messages without moving a reader's position."""
+        messages = raw.get("messages", [])
+        if self.seen_messages is None:
+            self.seen_messages = len(messages)
+        self.new_messages = max(0, len(messages) - self.seen_messages)
+        return self.new_messages
 
     def navigate(self, raw: dict, args: list[str]) -> str:
         messages = raw.get("messages", [])
         if not messages:
             return "No stored messages."
+        self.observe(raw)
         if self.index < 0 or self.index >= len(messages):
-            self.index = len(messages) - 1
+            self.index = len(messages) - 1 if self.index < 0 else min(
+                self.index, len(messages) - 1
+            )
             self.offset = 0
         action = args[0] if args else "show"
+        if action == "latest":
+            self.index = len(messages) - 1
+            self.offset = self.horizontal = 0
+            self.follow_latest = True
+        elif action == "follow":
+            self.follow_latest = not self.follow_latest
+            if self.follow_latest:
+                self.index = len(messages) - 1
+                self.offset = self.horizontal = 0
+        elif action in {"left", "right"}:
+            self.horizontal = max(0, self.horizontal + (
+                self.page_width if action == "right" else -self.page_width
+            ))
         if action in {"next", "prev"}:
+            self.follow_latest = False
             delta = 1 if action == "next" else -1
             self.index = max(0, min(self.index + delta, len(messages) - 1))
             self.offset = 0
         elif action == "goto":
+            self.follow_latest = False
             if len(args) != 2:
                 raise ValueError("/browse goto MESSAGE_INDEX")
             index = int(args[1])
@@ -186,12 +217,14 @@ class RecordBrowser:
                 raise ValueError("Message index outside transcript")
             self.index, self.offset = index, 0
         elif action in {"page", "back"}:
+            self.follow_latest = False
             delta = self.page_size if action == "page" else -self.page_size
             self.offset = max(0, self.offset + delta)
         elif action in {"content", "details", "diff"}:
             self.mode = action
             self.offset = 0
         elif action == "search":
+            self.follow_latest = False
             if len(args) < 2 or not " ".join(args[1:]).strip():
                 raise ValueError("/browse search SEARCH_TEXT")
             query = " ".join(args[1:]).casefold()
@@ -202,8 +235,18 @@ class RecordBrowser:
                 return f"No stored message contains {query!r}; cursor unchanged."
             self.index, self.offset = found, 0
             self.mode = "content"
-        elif action != "show":
-            raise ValueError("/browse [next|prev|goto N|page|back|content|details|diff|search TEXT]")
+        elif action not in {
+            "show", "latest", "follow", "left", "right",
+        }:
+            raise ValueError(
+                "/browse [next|prev|goto N|latest|follow|page|back|left|right|"
+                "content|details|diff|search TEXT]"
+            )
+
+        if self.follow_latest:
+            self.index = len(messages) - 1
+            self.seen_messages = len(messages)
+            self.new_messages = 0
 
         message = messages[self.index]
         if self.mode == "diff":
@@ -217,16 +260,25 @@ class RecordBrowser:
         if self.offset >= len(lines):
             self.offset = (len(lines) - 1) // self.page_size * self.page_size
         end = min(self.offset + self.page_size, len(lines))
-        page = "".join(lines[self.offset:end])
+        # Horizontal clipping must never splice two distinct physical lines.
+        page = "".join(
+            line.rstrip("\r\n")[self.horizontal:self.horizontal + self.page_width]
+            + ("\n" if line.endswith("\n") else "")
+            for line in lines[self.offset:end]
+        )
         header = (
             f"[message {self.index + 1}/{len(messages)}; "
             f"role={message.get('role') or 'unknown'}; mode={self.mode}; "
-            f"lines {self.offset + 1}-{end}/{len(lines)}]"
+            f"lines {self.offset + 1}-{end}/{len(lines)}; "
+            f"column {self.horizontal + 1}; +{self.new_messages} new saved; "
+            f"{'follow' if self.follow_latest else 'paused'}]"
         )
         hint = (f"\n[next page: /browse page (offset {end}); /browse back; "
-                "/browse next|prev|goto N|search TEXT; /browse diff|details|content]"
+                "/browse next|prev|goto N|latest|follow|left|right|search TEXT; "
+                "/browse diff|details|content]"
                 if end < len(lines) else
-                "\n[/browse next|prev|goto N|search TEXT; /browse diff|details|content]")
+                "\n[/browse next|prev|goto N|latest|follow|left|right|search TEXT; "
+                "/browse diff|details|content]")
         return header + "\n" + page + hint
 
 

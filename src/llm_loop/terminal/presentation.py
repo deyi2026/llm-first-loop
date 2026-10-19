@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
@@ -51,6 +53,7 @@ class Presenter:
         self.generation = ""
         self.session_id = ""
         self.seq = 0
+        self.activity_hook: Callable[[], None] | None = None
 
     def event(self, kind: str, **values: Any) -> None:
         if self.mode != "jsonl":
@@ -65,6 +68,10 @@ class Presenter:
         self.event("run_started")
 
     def delta(self, delta: Any) -> None:
+        hook = self.activity_hook
+        if hook is not None:
+            with suppress(Exception):  # UI observation must not abort a running model
+                hook()
         if delta.text:
             self.text += delta.text
             self.event("text_delta", text=delta.text)

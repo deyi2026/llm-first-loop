@@ -42,6 +42,43 @@ timeout is retained as evidence, not erased.
 | T17 | NOT_APPLICABLE | Optional full-screen feature F not enabled; no full-screen success claim |
 | T18 | PARTIAL | Existing 10,000 fake-event protocol test proves exact sequence, bounded 8 MiB peak, p95 under 200ms; real PTY high-volume redraw/keyboard responsiveness pending |
 
+## Addendum: T08/T17 optional viewer and real terminal follow-up (isolated)
+
+This addendum belongs to the distinct, **not yet reviewed or released**
+`feat/cli-t08-terminal-closure-20261019` candidate, based on integrated
+commit 59cc3b2230a10ceb54ad62bfd2852946e7bce427. The table above is
+retained as the exact record of the previously reviewed R14-R19 commit.
+Never reinterpret that older acceptance as a review or R9 permit for this new patch.
+
+| ID | New candidate evidence | Qualification / remaining blocker |
+| --- | --- | --- |
+| T03 | Actual macOS PTY: Alt+Enter inserts a newline in single-line mode; explicit multi-line sends only via Ctrl+X s; Unicode and combining characters round-trip | Improved automated fallback; Shift+Enter hardware translations still vary |
+| T04 | Actual PTY CJK/emoji/combining marks and explicit send tests pass | Physical OS Pinyin/Japanese IME candidate selection remains MANUAL_PENDING |
+| T07 | Existing 29-action keymap, new real PTY full-screen focus/close/return to cooked mode | Partial; terminal-specific focus and shortcut combinations need physical terminal run |
+| T08 | Real POSIX PTY opens a read-only viewer while 10,000 simulated stream deltas occur and a newly saved message arrives; reports +1 saved separately from +10,000 streamed, retains old message cursor, exits preserving draft | Automated fake-provider/real-PTY integration PASS; no external Provider call |
+| T09 | Real PTY full-screen diff viewer: keypresses l/h move horizontal column window 1→101→1; raw stored diff remains unchanged | Horizontal viewing PASS; physical system clipboard remains untested to avoid modifying user clipboard |
+| T13 | Real isolated localhost OpenSSH server/SSH -tt on macOS, earlier tmux 3.7b installed-Wheel input roundtrip, **Ubuntu 26.04 LTS ARM64 guest** fresh virtualenv installation with 345/345 resource integrity and native PTY Unicode submit; macOS-to-Ubuntu authenticated SSH -tt gave real Linux /dev/pts | Native Linux+SSH verified on prior integrated 59cc3b2 Wheel; new T08/T17 Wheel must be retested; macOS GUI/IME still separate |
+| T14 | Session-scoped cursor remains while fake streamed events and a new persisted assistant message appear; no model re-submission | Partial; real child Agent event stream during viewing remains unverified |
+| T17 | Explicit /fullscreen or /browse full enters PromptToolkit alternate-screen viewer and exits via q/Esc; PTY tests show recovered original draft and cooked termios; plain mode remains text only | Opt-in full-screen AUTOMATED_PASS, not on by default |
+| T18 | 10,000-event JSONL original benchmark retained; fake stream causes one redraw request when 10,000 updates arrive at the same monotonic tick; real PTY remains interactive while it receives the 10,000-event status | Improved macOS real-PTY endurance; real slow remote terminal latency p95 still to qualify |
+
+Local availability: Docker CLI was present but its daemon initially unreachable
+at the Unix socket. OrbStack's CLI existed inside its application bundle rather
+than PATH; a real Ubuntu 26.04 LTS ARM64 instance became available. Because the
+Ubuntu guest lacked ensurepip, a SHA-observed official PyPA pip.pyz bootstrap
+was used exclusively inside a temporary `venv --without-pip`, without apt or
+root package modifications. The prior integrated Wheel 0.6.32 installed,
+`pip check` passed, `lfl --version` and `lfl check-install` passed (345 files),
+and a real Linux PTY accepted/sent Unicode. A real SSH connection from macOS
+via OrbStack into Ubuntu produced Linux `/dev/pts`; another isolated macOS
+OpenSSH server test used ephemeral keys and loopback only. The guest test
+removed temporary virtualenv and files; no model Provider was contacted.
+The exact new T08/T17 Wheel still needs its own Linux retest after full R9.
+Human-triggered IME acceptance requires physically selecting a suggestion in
+the target terminal and verifying that neither Enter nor candidate confirmation
+accidentally submits a model turn; the fallback /input multiline + Ctrl+X s
+provides explicit separation when modifier-key reporting is ambiguous.
+
 AUTOMATED_PASS means the stated executable assertions actually ran on this Mac.
 PARTIAL means only part of the criterion is covered; MANUAL_PENDING means the
 target terminal was not available; PENDING is a functional gap;

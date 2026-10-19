@@ -30,6 +30,7 @@ COMMANDS = {
     "/theme": "auto/dark/light/high-contrast/mono", "/settings": "Display settings",
     "/transcript": "Readable session transcript", "/raw": "Exact session JSON",
     "/browse": "Browse saved messages, paginate/search/diff",
+    "/fullscreen": "Optional read-only full-screen transcript viewer",
     "/details": "Tool/result detail by message index", "/diff": "Stored diff text",
     "/export": "Export JSON or Markdown to a new file", "/copy": "Copy last answer",
     "/draft": "Stash/restore draft", "/history": "Input history", "/editor": "External editor for local draft", "/render": "Render last answer as Markdown",
@@ -43,6 +44,8 @@ Ctrl+A/E line edges; Ctrl+U/K cut; Ctrl+W/Y word cut/yank; Ctrl+_ undo
 Ctrl+P/N history; Ctrl+R search; arrows edit/history; Tab/Shift+Tab completion
 Ctrl+X e external editor; Ctrl+X p commands; Ctrl+X n new; Ctrl+X l sessions
 Ctrl+X m model; Ctrl+X t tasks; Ctrl+X o details; Ctrl+X y copy; Ctrl+X b draft
+Ctrl+X o during a run: browse saved records without submitting the next draft.
+/browse full or /fullscreen: optional read-only alternate-screen viewer (q/Esc exits).
 F1 / Ctrl+X ? help; Ctrl+L redraw; Esc closes completion/search
 Ctrl+X is a two-key leader (wait for the second key; timeout does nothing).
 Ctrl+C running: cancel this generation; composing: stash and clear
@@ -76,6 +79,10 @@ class Composer:
         self.sessions = {}
         self.history = {}
         self.record_views = {}
+        self.record_source: Callable[[str], dict] | None = None
+        self._stream_updates: dict[str, int] = {}
+        self._viewer_app: Any = None
+        self._last_viewer_redraw = 0.0
         self.enhanced = not ui.plain and legacy_env_snapshot().get("TERM") != "dumb"
         self._preinput_lock = threading.RLock()
         self._preinput_done = threading.Event()
@@ -131,7 +138,14 @@ class Composer:
 
             def collect() -> None:
                 try:
-                    self._preinput_result = self.read(sid, model)
+                    while True:
+                        submitted = self.read(sid, model)
+                        if self._preinput_abort_requested:
+                            break
+                        if self._consume_record_command(sid, submitted):
+                            continue
+                        self._preinput_result = submitted
+                        break
                 except EOFError:
                     self._preinput_eof = True
                 except BaseException as exc:  # preserve the actual input-thread failure
@@ -338,6 +352,10 @@ class Composer:
         pending = getattr(processor, "key_buffer", ())
         if len(pending) == 1 and str(getattr(pending[0], "key", "")) == "Keys.ControlX":
             mode = "Ctrl+X: waiting for action key · " + mode
+        cursor = self.record_views.get(sid)
+        if cursor is not None:
+            mode += (f" · records +{cursor.new_messages} saved"
+                     f" / +{self._stream_updates.get(sid, 0)} streaming updates")
         short = f" {safe_text(sid[:8])} · {mode} · F1 keys "
         if width < 80:
             return short
@@ -452,13 +470,65 @@ class Composer:
                     event.current_buffer.open_in_editor()
                 else:
                     self.draft = event.current_buffer.text
-                    event.app.exit(result=commands[action])
+                    result = (
+                        "/browse full" if action == "view.details" and self.preinput_active
+                        else commands[action]
+                    )
+                    event.app.exit(result=result)
 
             kb.add(*keys)(callback)
         return kb
 
     def swap_draft(self) -> None:
         self.draft, self.stashed = self.stashed, self.draft
+
+    def note_stream_update(self, sid: str) -> None:
+        """UI-only observation; never reclassify a stream chunk as a message."""
+        self._stream_updates[sid] = self._stream_updates.get(sid, 0) + 1
+        app = self._viewer_app
+        now = time.monotonic()
+        # A 10k-token stream must not create 10k full-screen render jobs.
+        if app is not None and now - self._last_viewer_redraw >= 0.1:
+            self._last_viewer_redraw = now
+            with suppress(Exception):
+                app.invalidate()
+
+    def show_records(self, sid: str, args: list[str]) -> str:
+        """Read only the active session; model messages and draft stay unchanged."""
+        from llm_loop.terminal.records import RecordBrowser
+
+        source = self.record_source
+        if source is None:
+            return "[records unavailable: no read-only session source]"
+        cursor = self.record_views.setdefault(sid, RecordBrowser())
+        if args in (["full"], ["fullscreen"]):
+            from llm_loop.terminal.fullscreen import open_viewer
+
+            if self.enhanced and open_viewer(
+                lambda: source(sid), cursor,
+                live_updates=lambda: self._stream_updates.get(sid, 0),
+                on_app=lambda app: setattr(self, "_viewer_app", app),
+            ):
+                return "[full-screen viewer closed; draft retained]"
+            return "[full-screen unavailable: use /browse in this terminal]"
+        return cursor.navigate(source(sid), args)
+
+    def _consume_record_command(self, sid: str, text: str) -> bool:
+        """Handle local viewer commands while a different run is still active."""
+        if not text.startswith(("/browse", "/fullscreen")):
+            return False
+        try:
+            tokens = shlex.split(text.strip())
+        except ValueError:
+            return False
+        if not tokens or tokens[0] not in {"/browse", "/fullscreen"}:
+            return False
+        args = tokens[1:] if tokens[0] == "/browse" else ["full"]
+        try:
+            print(safe_text(self.show_records(sid, args)), flush=True)
+        except (ValueError, OSError, TypeError, IndexError) as exc:
+            print(safe_text(f"[record browse failed: {type(exc).__name__}]"), flush=True)
+        return True
 
     def select_command(self) -> str | None:
         """Select a command in the existing input toolkit; never execute it."""
