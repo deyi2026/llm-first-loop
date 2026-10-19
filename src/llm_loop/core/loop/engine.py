@@ -968,8 +968,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # （6aec21cb）被带偏为"身份问题凭原生知识直答、不调工具"，凭空自称
         # DeepSeek-V4；对照组（f66027f9）行为正确。无条件正文投喂同时违背 L2-2
         # （retrievable != injectable）。方法可见性保留在 search_records(kind=method)
-        # 的 schema 入口；方法 use 回记提醒（状态层，仅在本 run 已精确水合时触发）
-        # 不受影响，见 method_injection.py。
+        # 的 schema 入口；使用回记为可选，不插入收尾提醒或额外模型轮次。
         # Agency-first: memory/history is retrieved explicitly by the model when needed.
         # Ordinary user turns do not trigger automatic retrieval or persisted snapshots.
         _turn_memory_msgs: list[Message] = []
@@ -1028,8 +1027,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # model.  One in-process retry is allowed without persisting the echo; a second
         # exact echo is a truthful output fault, never a completed answer.
         _program_final_echo_retries = 0
-        # EVO-20260923-618f7fd1 ①: 收尾 use 回记提醒，每 run 至多触发一次（不阻塞）
-        _method_use_reminder_fired = False
 
         while True:
             # 后台 Stop：轮次边界兜底；LLM 流内另有细粒度检查（原因捕获，2.3）。
@@ -2664,32 +2661,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     final_answer = ""
                     resp = None
                     continue
-                # EVO-20260923-618f7fd1 ①: 收尾 use 回记提醒（fail-open、每 run 一次、
-                # 不阻塞——模型再次无工具调用即放行最终答复）
-                if not _method_use_reminder_fired:
-                    try:
-                        from llm_loop.core.loop.engine_services.method_injection import (
-                            build_use_reminder_message,
-                            scan_method_use_ledger,
-                        )
-
-                        _unrecorded = scan_method_use_ledger(tool_trace).unrecorded()
-                        if _unrecorded:
-                            _method_use_reminder_fired = True
-                            sess.messages.append(build_use_reminder_message(_unrecorded))
-                            with contextlib.suppress(Exception):
-                                self._record_action(
-                                    "method.use_reminder",
-                                    "continued_before_final",
-                                    f"round={rounds}; refs={','.join(_unrecorded[:6])}",
-                                )
-                            final_answer = ""
-                            resp = None
-                            continue
-                    except Exception:  # noqa: BLE001 — fail-open：提醒失败不阻塞收尾
-                        logger.debug(
-                            "method use reminder skipped (fail-open)", exc_info=True
-                        )
                 final_answer = resp.content or ""
                 # Internal protocol tokens are not model answers.  Historical builds
                 # leaked ``[program-final]`` into provider-visible assistant content;

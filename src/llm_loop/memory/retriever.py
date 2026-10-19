@@ -22,7 +22,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from llm_loop.memory.embedder import Embedder, cosine_similarity
 
@@ -105,6 +105,9 @@ class SemanticRetriever:
     # Runtime auto-prewarm is only an incremental repair path. Full cold-corpus
     # warmup belongs to the explicit scripts/embedding_warmup.py job.
     _BACKGROUND_PREWARM_MAX = 32
+    # Service startup must not synchronously embed an unbounded growing Method pool.
+    # Deferred candidates remain available to keyword retrieval and incremental warmup.
+    _METHOD_STARTUP_WARMUP_MAX = 128
 
     def __init__(
         self,
@@ -340,34 +343,62 @@ class SemanticRetriever:
         # Rebuild lazy fallback state so its Method cache/path uses the same authority.
         self._fb_state = None
 
-    def warm_method_store(self, method: Any, *, max_passes: int = 3) -> dict[str, Any]:
-        """Synchronously warm existing Method candidates before semantic enablement."""
+    def warm_method_store(
+        self,
+        method: Any,
+        *,
+        max_passes: int = 3,
+        max_candidates: int = _METHOD_STARTUP_WARMUP_MAX,
+    ) -> dict[str, Any]:
+        """Warm a bounded, status-diverse slice of Method vectors at service startup.
+
+        The entire Method pool remains discoverable. This startup budget only bounds
+        synchronous embedding work; missing vectors outside the slice are eligible for
+        incremental background prewarm, while lexical recall remains available immediately.
+        """
         if (
             method is None
             or self.embedder is None
             or getattr(self.embedder, "provider", "") != "api"
         ):
-            return {"requested": False, "initial_missing": 0, "remaining_missing": 0}
+            return {
+                "requested": False, "candidate_count": 0,
+                "warmup_candidate_count": 0, "deferred_candidates": 0,
+                "initial_missing": 0, "remaining_missing": 0,
+                "warmup_initial_missing": 0, "warmup_remaining_missing": 0,
+                "deferred_missing": 0,
+            }
         engine = self._primary_engine()
         candidates = list(method.semantic_candidates())
+        warmup_limit = max(0, int(max_candidates))
+        warmup_candidates = candidates[:warmup_limit]
+        deferred_candidates = candidates[warmup_limit:]
         initial_missing = self._missing_candidate_count(candidates, engine)
+        warmup_initial_missing = self._missing_candidate_count(warmup_candidates, engine)
         started = time.monotonic()
         passes = 0
-        previous_missing = initial_missing
+        previous_missing = warmup_initial_missing
         while previous_missing and passes < max(1, int(max_passes)):
             passes += 1
-            pre_sizes = self._prewarm_batch(candidates, engine, deadline=None)
+            pre_sizes = self._prewarm_batch(warmup_candidates, engine, deadline=None)
             self._flush_dirty_caches(engine, pre_sizes)
-            remaining = self._missing_candidate_count(candidates, engine)
+            remaining = self._missing_candidate_count(warmup_candidates, engine)
             if remaining >= previous_missing:
                 previous_missing = remaining
                 break
             previous_missing = remaining
+        deferred_missing = self._missing_candidate_count(deferred_candidates, engine)
+        warmup_remaining_missing = previous_missing
         return {
             "requested": True,
             "candidate_count": len(candidates),
             "initial_missing": initial_missing,
-            "remaining_missing": previous_missing,
+            "remaining_missing": warmup_remaining_missing + deferred_missing,
+            "warmup_candidate_count": len(warmup_candidates),
+            "deferred_candidates": len(deferred_candidates),
+            "warmup_initial_missing": warmup_initial_missing,
+            "warmup_remaining_missing": warmup_remaining_missing,
+            "deferred_missing": deferred_missing,
             "passes": passes,
             "elapsed_ms": round((time.monotonic() - started) * 1000.0, 3),
         }
@@ -610,7 +641,7 @@ class SemanticRetriever:
             vec = None
         elapsed_ms = (time.monotonic() - started) * 1000.0
         if vec is not None:
-            return vec, elapsed_ms, ""
+            return cast(list[float], vec), elapsed_ms, ""
         transport_diag = dict(getattr(embedder, "last_diagnostics", {}) or {})
         transport_error = str(transport_diag.get("error") or "")
         if transport_error == "queue_timeout":
@@ -698,11 +729,14 @@ class SemanticRetriever:
             return []
         if callable(batch_with_timeout):
             try:
-                vectors = batch_with_timeout(
-                    candidates,
-                    timeout_s=remaining,
-                    request_class="foreground",
-                    chunk_size=8,
+                vectors = cast(
+                    list[list[float] | None],
+                    batch_with_timeout(
+                        candidates,
+                        timeout_s=remaining,
+                        request_class="foreground",
+                        chunk_size=8,
+                    ),
                 )
             except Exception:  # noqa: BLE001 - fail-open to lexical
                 vectors = [None] * len(candidates)
@@ -710,7 +744,7 @@ class SemanticRetriever:
             batch = getattr(active, "embed_batch", None)
             if callable(batch) and getattr(active, "provider", "") != "api":
                 try:
-                    vectors = batch(candidates)
+                    vectors = cast(list[list[float] | None], batch(candidates))
                 except Exception:  # noqa: BLE001
                     vectors = [None] * len(candidates)
             else:
@@ -731,7 +765,7 @@ class SemanticRetriever:
                             vec = active.embed(text)
                     except Exception:  # noqa: BLE001
                         vec = None
-                    vectors.append(vec)
+                    vectors.append(cast(list[float] | None, vec))
                 if len(vectors) < len(candidates):
                     vectors.extend([None] * (len(candidates) - len(vectors)))
 

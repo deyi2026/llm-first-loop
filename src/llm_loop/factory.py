@@ -92,7 +92,6 @@ from llm_loop.memory.synopsis import (
 )
 from llm_loop.methods.learning_journal import LearningJournal
 from llm_loop.methods.learning_plane import LearningPlane
-from llm_loop.methods.reflection import MethodDiscovery
 from llm_loop.methods.store import (
     MethodStore,  # Method Learning v1：方法卡存储（顶层装配供 corrections/检索共享）
 )
@@ -1824,48 +1823,19 @@ def build_engine(
         seed_dir=_runtime_paths.method_seed_dir,
         write_guard=_knowledge_write_guard,
     )
-    _learning_method_statuses = frozenset({"active", "qualified"})
-
-    class _LearningMethodSemanticView:
-        """Read-only active/qualified Method projection for Learning dedup recall.
-
-        Generic ``search_records(kind=method)`` intentionally keeps its broader lifecycle
-        visibility.  Learning Reflection has a narrower authority: only Methods already
-        active/qualified may be presented as reusable/duplicate candidates, so hundreds
-        of unqualified candidates must not consume its semantic top-k or warmup budget.
-        """
-
-        def semantic_candidates(self) -> list[dict[str, Any]]:
-            eligible = {
-                str(card.get("key") or "")
-                for card in method_store.list("", limit=10000)
-                if str(card.get("status") or "") in _learning_method_statuses
-            }
-            return [
-                cand
-                for cand in method_store.semantic_candidates()
-                if str(cand.get("key") or "") in eligible
-            ]
-
-    _learning_method_semantic_view = _LearningMethodSemanticView()
-
-    def _learning_method_lexical(query: str, limit: int) -> list[dict[str, Any]]:
-        rows = method_store.list(str(query or ""), limit=10000)
-        return [
-            row
-            for row in rows
-            if str(row.get("status") or "") in _learning_method_statuses
-        ][: max(0, int(limit))]
-
     if semantic_retriever is not None and settings.semantic_method_enabled:
-        _method_warm_source = (
-            _learning_method_semantic_view if runtime_role == "learning" else method_store
-        )
-        _method_warm = semantic_retriever.warm_method_store(_method_warm_source)
+        _method_warm = semantic_retriever.warm_method_store(method_store)
         logger.info("semantic method startup warmup: %s", _method_warm)
-        if int(_method_warm.get("remaining_missing", 0) or 0) > 0:
+        if int(_method_warm.get("warmup_remaining_missing", 0) or 0) > 0:
             logger.warning(
-                "semantic method startup warmup incomplete: %s", _method_warm
+                "semantic method startup warmup incomplete within its bounded candidate slice: %s",
+                _method_warm,
+            )
+        elif int(_method_warm.get("deferred_missing", 0) or 0) > 0:
+            logger.info(
+                "semantic method startup warmup deferred %d candidates by its bounded budget; "
+                "keyword recall remains available and vectors warm incrementally",
+                int(_method_warm.get("deferred_candidates", 0) or 0),
             )
         def _method_post_save_hook(record: Any) -> None:
             # fail-open observer：丢弃入队结果（bool），符合 hook 契约
@@ -2262,54 +2232,57 @@ def build_engine(
                     return learning_resource_target
                 return model_pool.registry.resolve(model_ref or settings.llm_model)
 
-            _learning_method_discovery: MethodDiscovery | None = None
-            if settings.semantic_method_enabled:
-                def _learning_method_discovery_impl(
-                    query: str, limit: int
-                ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-                    lexical = _learning_method_lexical(query, max(limit * 4, 20))
-                    if semantic_retriever is None or not semantic_retriever.semantic_available():
-                        return lexical[:limit], {
-                            "scope": "method",
-                            "semantic_requested": True,
-                            "semantic_effective": False,
-                            "semantic_fallback_reason": "unavailable",
-                            "semantic_hit_count": 0,
-                            "keyword_hit_count": len(lexical),
-                            "fused_hit_count": min(len(lexical), limit),
-                        }
-                    result = semantic_retriever.search(
-                        query,
-                        top_k=limit,
-                        scope="method",
-                        method=_learning_method_semantic_view,
-                        keyword_results=lexical,
-                    )
-                    rows: list[dict[str, Any]] = []
-                    failures = 0
-                    for hit in result.entries:
-                        ref = str(hit.get("key") or "")
-                        record = method_store.get(ref)
-                        if record is None:
-                            failures += 1
-                            continue
-                        if str(record.status or "") not in _learning_method_statuses:
-                            continue
-                        card = record.card()
-                        if record.freshness_refs:
-                            card["freshness"] = method_store.freshness(record.method_ref)
-                        rows.append(card)
-                        if len(rows) >= limit:
-                            break
-                    diag = dict(result.diagnostics or {})
-                    diag["scope"] = "method"
-                    diag["canonical_hydration_failures"] = failures
-                    diag["eligible_method_count"] = len(
-                        _learning_method_semantic_view.semantic_candidates()
-                    )
-                    return rows, diag
-
-                _learning_method_discovery = _learning_method_discovery_impl
+            def _learning_method_discovery(
+                query: str, limit: int
+            ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+                # Learning and foreground tasks share the same discoverable pool.
+                # Embeddings are an optional recall enhancement, never a prerequisite
+                # for reusing an existing candidate.
+                lexical = method_store.list(str(query or ""), max(limit * 4, 20))
+                if (
+                    not settings.semantic_method_enabled
+                    or semantic_retriever is None
+                    or not semantic_retriever.semantic_available()
+                ):
+                    return lexical[:limit], {
+                        "scope": "method",
+                        "semantic_requested": settings.semantic_method_enabled,
+                        "semantic_effective": False,
+                        "semantic_fallback_reason": (
+                            "disabled" if not settings.semantic_method_enabled else "unavailable"
+                        ),
+                        "semantic_hit_count": 0,
+                        "keyword_hit_count": len(lexical),
+                        "fused_hit_count": min(len(lexical), limit),
+                    }
+                result = semantic_retriever.search(
+                    query,
+                    top_k=limit,
+                    scope="method",
+                    method=method_store,
+                    keyword_results=lexical,
+                )
+                rows: list[dict[str, Any]] = []
+                failures = 0
+                for hit in result.entries:
+                    ref = str(hit.get("key") or "")
+                    record = method_store.get(ref)
+                    if record is None:
+                        failures += 1
+                        continue
+                    if record.status == "retired":
+                        continue
+                    card = record.card()
+                    if record.freshness_refs:
+                        card["freshness"] = method_store.freshness(record.method_ref)
+                    rows.append(card)
+                    if len(rows) >= limit:
+                        break
+                diag = dict(result.diagnostics or {})
+                diag["scope"] = "method"
+                diag["canonical_hydration_failures"] = failures
+                diag["eligible_method_count"] = len(method_store.semantic_candidates())
+                return rows, diag
 
             learning_plane = LearningPlane(
                 journal=learning_journal,

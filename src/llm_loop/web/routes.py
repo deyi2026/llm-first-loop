@@ -797,8 +797,8 @@ def knowledge_method_transition(
 ) -> Response:
     """方法生命周期流转（人工管理权威）：qualify/activate/hold/invalidate/retire/reopen.
 
-    复用模型工具同一 store.update_status 路径与门禁（activate 需 ≥2 类任务 pass
-    qualification；invalidate/retire 需处置依据），非法流转 store 层拒绝并如实 409。
+    复用模型工具同一 store.update_status 路径；qualify/activate 不设资格前置条件，
+    invalidate/retire 仍需处置依据。状态不构成使用许可，非法流转如实返回 409。
     """
     engine = _engine_from(request)
     _, store = _knowledge_stores(engine)

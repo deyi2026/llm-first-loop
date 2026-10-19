@@ -1,7 +1,7 @@
 """Learning 面板 counts 全历史口径 + reflection 防重复门（2026-09-24）.
 
 改进 A：counts.saved 不再随 recent_jobs 窗口滚动回退（terminal 单调累计）。
-改进 B：reflection payload 注入 existing_methods（active/qualified 摘要）+
+改进 B：reflection payload 注入 existing_methods（可检索方法摘要）+
 system 指令 dup 短路，防止语义重复卡重复产 token。
 """
 
@@ -73,7 +73,7 @@ def test_learning_status_counts_use_all_history(tmp_path: Path) -> None:
 
 
 def test_reflection_payload_carries_existing_methods_gate() -> None:
-    """existing_methods 只含 active/qualified 卡；system 含 dup 短路指令。"""
+    """Candidate methods participate in dedup without a promotion prerequisite."""
     from llm_loop.methods import reflection as refl
 
     class _Store:
@@ -90,13 +90,68 @@ def test_reflection_payload_carries_existing_methods_gate() -> None:
                 {"id": "qual-two", "status": "qualified", "description": "d2"},
                 {"id": "cand-three", "status": "candidate", "description": "d3"},
                 {"id": "hold-four", "status": "hold", "description": "d4"},
+                {"id": "retired-five", "status": "retired", "description": "d5"},
             ]
 
     store = _Store()
     briefs = refl._existing_method_briefs(store)  # type: ignore[arg-type]
     joined = "\n".join(briefs)
     assert "active-one" in joined and "qual-two" in joined
-    assert "cand-three" not in joined and "hold-four" not in joined
+    assert "cand-three" in joined and "hold-four" in joined
+    assert "retired-five" not in joined
+
+
+def test_reflection_briefs_reserve_status_coverage_and_obey_character_budget() -> None:
+    """A large candidate tail must not evict active/qualified/teacher dedup context."""
+    from llm_loop.methods import reflection as refl
+
+    cards = []
+    for status, prefix, count in (
+        ("candidate", "candidate", 250),
+        ("active", "active", 12),
+        ("qualified", "qualified", 12),
+        ("teacher", "teacher", 3),
+        ("hold", "hold", 8),
+        ("invalidated", "invalidated", 8),
+        ("retired", "retired", 8),
+    ):
+        for index in range(count):
+            cards.append({
+                "id": f"{prefix}-{index:03d}",
+                "key": f"method:{prefix}-{index:03d}",
+                "status": status,
+                "description": f"{status} reusable approach " + ("x" * 180),
+                "ts": f"2026-10-{(index % 18) + 1:02d}T00:00:00+00:00",
+            })
+
+    class _CrowdedStore:
+        def __init__(self) -> None:
+            self.inventory_calls = 0
+            self.list_calls = 0
+
+        def inventory(self, query: str = "", limit: int = 200):
+            assert query == ""
+            self.inventory_calls += 1
+            return {"records": cards[:limit], "counts": {}}
+
+        def list(self, query: str = "", limit: int = 20):
+            self.list_calls += 1
+            return cards[:limit]
+
+    store = _CrowdedStore()
+    briefs = refl._existing_method_briefs(store)  # type: ignore[arg-type]
+    joined = "\n".join(briefs)
+
+    assert store.inventory_calls == 1, "brief selection must inspect status-diverse inventory, not the ID-sorted first page"
+    assert store.list_calls == 0
+    assert "teacher-" in joined
+    assert "active-" in joined
+    assert "qualified-" in joined
+    assert "candidate-" in joined
+    assert "retired-000" not in joined
+    assert len(briefs) <= 30
+    assert len(joined) <= 4800
+    assert sum("candidate-" in row for row in briefs) >= 6
 
 
 def test_reflection_briefs_fail_open_on_store_error() -> None:
@@ -163,7 +218,7 @@ def test_reflection_method_semantic_related_methods_are_advisory_and_diagnostic(
                 {
                     "id": "restart-check",
                     "key": "method:restart-check",
-                    "status": "qualified",
+                    "status": "candidate",
                     "summary": "Verify restarted process provenance",
                     "description": "Cross-check PID, manifest head, and imported module path.",
                     "task_applicability": "not_evaluated",

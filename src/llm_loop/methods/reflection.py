@@ -308,8 +308,21 @@ def render_candidate_body(value: dict[str, Any]) -> str:
 
 
 _MAX_EXISTING_BRIEFS = 30
+_MAX_EXISTING_BRIEF_CHARS = 4800
+_MAX_EXISTING_METHOD_SCAN = 2000
 _BRIEF_DESC_CHARS = 110
-_DEDUP_STATUSES = frozenset({"active", "qualified"})
+_DEDUP_STATUSES = frozenset({"teacher", "candidate", "qualified", "active", "hold", "invalidated"})
+_BRIEF_STATUS_ORDER = ("teacher", "active", "qualified", "candidate", "hold", "invalidated")
+# Reserve prompt space for the most useful cards without letting any large status
+# bucket monopolize dedup context. Unused slots are redistributed below.
+_BRIEF_STATUS_QUOTAS = {
+    "teacher": 4,
+    "active": 8,
+    "qualified": 6,
+    "candidate": 6,
+    "hold": 3,
+    "invalidated": 3,
+}
 _METHOD_DISCOVERY_LIMIT = 6
 _METHOD_DISCOVERY_QUERY_CHARS = 1200
 _METHOD_QUERY_USER_CHARS = 760
@@ -322,26 +335,83 @@ MethodDiscovery = Callable[
 
 
 def _existing_method_briefs(store: MethodStore) -> list[str]:
-    """One-line briefs of active/qualified methods as a reflection dedup gate.
+    """Status-stratified, character-bounded briefs for model-judged reflection dedup.
 
     Injected into the reflection payload so the model can short-circuit
     semantic duplicates to decision=none. Byte-level idempotence in
     MethodStore only blocks identical bodies; near-identical rewrites mint
     new ids (different content hash) and both waste reflection tokens and
-    grow the pool with redundant cards (2026-09-24). Fail-open: an empty list
-    degrades to pre-existing behaviour, never blocks reflection.
+    grow the pool with redundant cards (2026-09-24). Status quotas keep
+    important established methods visible beside a large candidate pool.
+    Fail-open: an empty list degrades to pre-existing behaviour, never blocks reflection.
     """
-    briefs: list[str] = []
     try:
-        for card in store.list(query="", limit=200):
-            if str(card.get("status") or "") not in _DEDUP_STATUSES:
-                continue
-            desc = str(card.get("description") or "").strip().replace("\n", " ")
-            briefs.append(f"{card.get('id')} — {desc[:_BRIEF_DESC_CHARS]}")
-            if len(briefs) >= _MAX_EXISTING_BRIEFS:
-                break
+        inventory = getattr(store, "inventory", None)
+        if callable(inventory):
+            snapshot = inventory(query="", limit=_MAX_EXISTING_METHOD_SCAN)
+            cards = snapshot.get("records", []) if isinstance(snapshot, dict) else []
+        else:
+            # Compatibility for small adapters/fakes that expose only list().
+            cards = store.list(query="", limit=_MAX_EXISTING_METHOD_SCAN)
     except Exception:  # noqa: BLE001 — 清单不可得时反思照常进行
         return []
+
+    grouped: dict[str, list[dict[str, Any]]] = {
+        status: [] for status in _BRIEF_STATUS_ORDER
+    }
+    seen: set[str] = set()
+    for card in cards if isinstance(cards, list) else []:
+        if not isinstance(card, dict):
+            continue
+        status = str(card.get("status") or "")
+        if status not in _DEDUP_STATUSES:
+            continue
+        method_id = str(card.get("id") or "").strip()
+        if not method_id or method_id in seen:
+            continue
+        seen.add(method_id)
+        grouped[status].append(card)
+    for rows in grouped.values():
+        rows.sort(
+            key=lambda row: (str(row.get("ts") or ""), str(row.get("id") or "")),
+            reverse=True,
+        )
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+
+    def take(rows: list[dict[str, Any]], amount: int) -> None:
+        for row in rows[:amount]:
+            method_id = str(row.get("id") or "").strip()
+            if method_id and method_id not in selected_ids and len(selected) < _MAX_EXISTING_BRIEFS:
+                selected.append(row)
+                selected_ids.add(method_id)
+
+    for status in _BRIEF_STATUS_ORDER:
+        take(grouped[status], _BRIEF_STATUS_QUOTAS[status])
+    if len(selected) < _MAX_EXISTING_BRIEFS:
+        for status in _BRIEF_STATUS_ORDER:
+            take(
+                [row for row in grouped[status] if str(row.get("id") or "") not in selected_ids],
+                _MAX_EXISTING_BRIEFS - len(selected),
+            )
+            if len(selected) >= _MAX_EXISTING_BRIEFS:
+                break
+
+    briefs: list[str] = []
+    used_chars = 0
+    for card in selected:
+        method_id = str(card.get("id") or "").strip()
+        prefix = f"{method_id} — "
+        separator_chars = 1 if briefs else 0
+        available = _MAX_EXISTING_BRIEF_CHARS - used_chars - separator_chars - len(prefix)
+        if available <= 0:
+            break
+        desc = " ".join(str(card.get("description") or "").split())
+        desc = (desc or str(card.get("name") or "method"))[: min(_BRIEF_DESC_CHARS, available)]
+        brief = prefix + desc
+        briefs.append(brief)
+        used_chars += separator_chars + len(brief)
     return briefs
 
 
@@ -383,7 +453,7 @@ def _method_discovery_query(
 def _related_method_projection(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Project discovery cards into a compact advisory model-visible shape.
 
-    Only active/qualified Methods may influence the duplicate/reuse context.  Discovery
+    Lifecycle quality labels never exclude a discoverable Method. Discovery
     never asserts applicability; that remains an explicit model judgment grounded in the
     current episode.
     """
@@ -501,7 +571,7 @@ def reflect_on_episode(
         "episode_material": material,
         "tool_trace": tool_trace[-40:],
         "final_outcome": {"reason": run_end_reason, "answer_preview": final_answer[:800]},
-        # 防重复门（2026-09-24）：方法池 active/qualified 卡一行摘要；语义重复 → none
+        # Existing discoverable methods; the model judges duplication, regardless of status.
         "existing_methods": _existing_method_briefs(store),
         # Learning semantic Method discovery is advisory context only. Applicability is
         # deliberately not evaluated by retrieval; the model must compare it to this episode.
@@ -529,7 +599,8 @@ def reflect_on_episode(
         'If there is no reusable method, return {"decision":"none","reason":"..."}. If there is one, return '
         "decision=candidate with ALL required fields (name, description, trigger, discriminator, short_path, "
         "stop_conditions, verification, counterexamples). Do not copy task-private literals unless necessary.\n"
-        "existing_methods lists the current pool's active/qualified cards. If the method you would distil "
+        "existing_methods lists discoverable cards, including candidates; lifecycle status is not a use permit. "
+        "Related cards may be used without qualification or record_use. If the method you would distil "
         "is a semantic duplicate of any listed entry (same trigger and mechanism, cosmetic rewording), "
         'return {"decision":"none","reason":"dup:<that method id>"} instead of minting a redundant card; '
         "candidate is for genuinely new discriminators only.\n"
