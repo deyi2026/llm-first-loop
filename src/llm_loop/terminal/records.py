@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from llm_loop.core.session import _validate_session_id
@@ -130,6 +131,103 @@ def message_detail(raw: dict, index: int | None = None) -> str:
     if not 0 <= selected < len(messages):
         raise ValueError("Message index outside transcript")
     return json.dumps({"index": selected, **messages[selected]}, ensure_ascii=False, indent=2)
+
+
+def stored_diff(raw: dict, index: int | None = None) -> str:
+    """Return the exact persisted diff, never fabricate a patch from a summary."""
+    messages = raw.get("messages", [])
+    if index is None:
+        candidates = reversed(messages)
+    elif 0 <= index < len(messages):
+        candidates = [messages[index]]
+    else:
+        raise ValueError("Message index outside transcript")
+    for item in candidates:
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict) and isinstance(metadata.get("diff"), str):
+            return metadata["diff"]
+        if isinstance(item.get("diff"), str):
+            return item["diff"]
+        content = item.get("content")
+        if isinstance(content, str) and (
+            content.startswith("diff --git ") or
+            (content.startswith("--- ") and "\n+++ " in content)
+        ):
+            return content
+    return "No persisted diff available; /details INDEX or /raw displays the original record."
+
+
+@dataclass
+class RecordBrowser:
+    """Per-session, read-only cursor. Pages never modify persisted messages."""
+
+    index: int = -1
+    offset: int = 0
+    mode: str = "content"
+    page_size: int = 32
+
+    def navigate(self, raw: dict, args: list[str]) -> str:
+        messages = raw.get("messages", [])
+        if not messages:
+            return "No stored messages."
+        if self.index < 0 or self.index >= len(messages):
+            self.index = len(messages) - 1
+            self.offset = 0
+        action = args[0] if args else "show"
+        if action in {"next", "prev"}:
+            delta = 1 if action == "next" else -1
+            self.index = max(0, min(self.index + delta, len(messages) - 1))
+            self.offset = 0
+        elif action == "goto":
+            if len(args) != 2:
+                raise ValueError("/browse goto MESSAGE_INDEX")
+            index = int(args[1])
+            if not 0 <= index < len(messages):
+                raise ValueError("Message index outside transcript")
+            self.index, self.offset = index, 0
+        elif action in {"page", "back"}:
+            delta = self.page_size if action == "page" else -self.page_size
+            self.offset = max(0, self.offset + delta)
+        elif action in {"content", "details", "diff"}:
+            self.mode = action
+            self.offset = 0
+        elif action == "search":
+            if len(args) < 2 or not " ".join(args[1:]).strip():
+                raise ValueError("/browse search SEARCH_TEXT")
+            query = " ".join(args[1:]).casefold()
+            order = (*range(self.index + 1, len(messages)), *range(self.index + 1))
+            found = next((index for index in order
+                          if query in str(messages[index].get("content") or "").casefold()), None)
+            if found is None:
+                return f"No stored message contains {query!r}; cursor unchanged."
+            self.index, self.offset = found, 0
+            self.mode = "content"
+        elif action != "show":
+            raise ValueError("/browse [next|prev|goto N|page|back|content|details|diff|search TEXT]")
+
+        message = messages[self.index]
+        if self.mode == "diff":
+            content = stored_diff(raw, self.index)
+        elif self.mode == "details":
+            content = message_detail(raw, self.index)
+        else:
+            content = str(message.get("content") or "")
+        lines = content.splitlines(keepends=True) or [""]
+        # The last page clamps when records changed underneath the viewer.
+        if self.offset >= len(lines):
+            self.offset = (len(lines) - 1) // self.page_size * self.page_size
+        end = min(self.offset + self.page_size, len(lines))
+        page = "".join(lines[self.offset:end])
+        header = (
+            f"[message {self.index + 1}/{len(messages)}; "
+            f"role={message.get('role') or 'unknown'}; mode={self.mode}; "
+            f"lines {self.offset + 1}-{end}/{len(lines)}]"
+        )
+        hint = (f"\n[next page: /browse page (offset {end}); /browse back; "
+                "/browse next|prev|goto N|search TEXT; /browse diff|details|content]"
+                if end < len(lines) else
+                "\n[/browse next|prev|goto N|search TEXT; /browse diff|details|content]")
+        return header + "\n" + page + hint
 
 
 def export_record(raw: dict, path: Path, fmt: str) -> None:

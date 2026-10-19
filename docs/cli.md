@@ -119,6 +119,18 @@ SIGKILL、断电或输出断管时，不能保证消费者收到最终对象；�
 `/settings bind 动作` 后不带键序列表示禁用；同键或前缀冲突会拒绝。
 文字命令保持可用。取消键、EOF、提交键和 Unix 流控/作业控制键保持保留。
 
+/keymap 显示 29 个操作的默认按键、实际重映射、焦点和文字替代入口；其中
+12 个 CLI 应用动作可以配置，其余仍由终端及输入库控制。/settings unbind view.copy
+暂时停用一个动作；/settings keymap-reset 只重置键位而不改变主题，预览后
+用 /settings save 持久化。Ctrl+X 是两次按键的应用前缀，等待期间显示提示；
+前缀超时不执行半个动作。
+
+Ctrl+X p、/palette、/commands 在增强交互终端提供可选择的命令面板：
+箭头/Tab 导航、Enter 确认、Esc 取消。选中的命令先插入本地草稿，必须再次
+提交才执行；若草稿已有正文，保留原草稿不覆盖。纯文本终端退化为文字命令列表。
+@ 文件补全在工作区内最多提供 50 个候选，并显示目录/文件及字节大小；
+不会读取内容、越过工作区边界或自动上传。
+
 只有 `/settings save` 持久化到用户 `$XDG_CONFIG_HOME/lfl/terminal.json`，
 默认 `~/.config/lfl/terminal.json`。原子替换用户设置，不读取项目目录中的键位配置。
 显示设置不能修改 Provider、密钥、EXEC_MODE 或工具权限。
@@ -163,6 +175,16 @@ desired/live/stable 身份。服务 live 身份来自启动 manifest，stable �
 /model default
 /tasks
 /transcript
+/browse
+/browse goto MESSAGE_INDEX
+/browse next
+/browse prev
+/browse page
+/browse back
+/browse search 文本
+/browse details
+/browse diff
+/browse content
 /details MESSAGE_INDEX
 /diff MESSAGE_INDEX
 /raw
@@ -178,6 +200,12 @@ desired/live/stable 身份。服务 live 身份来自启动 manifest，stable �
 终端控制字符显示为可见转义；JSON 和导出保留原文。
 复制只在明确请求时调用系统剪贴板；不可用时给出可选择的文本。
 导出只创建新文件，已存在的目的文件会拒绝覆盖。
+
+/browse 在当前会话按持久消息索引导航与搜索，并以 32 行分页阅读正文、
+完整详情或真实 diff；每页显示可核对的行号和后续页入口，不截断唯一原始来源。
+当前会话与其他会话的浏览游标分开保存。/diff 只显示已持久化的真实 diff，
+没有可读取的 diff 时明确告知缺失，不以“修改了若干行”的描述推断补丁。
+/details、/raw、复制和导出仍提供原始记录保真通路。
 
 ## 审批、取消与恢复
 

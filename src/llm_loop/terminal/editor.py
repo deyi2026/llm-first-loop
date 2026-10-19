@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import shlex
 import shutil
 import subprocess
@@ -22,15 +23,18 @@ from llm_loop.terminal.state import saved_terminal
 
 COMMANDS = {
     "/help": "Commands and input help", "/keys": "Keyboard and focus help",
+    "/keymap": "29-action key/focus matrix and remapping status",
     "/new": "New session; old history retained", "/sessions": "List sessions",
     "/resume": "Resume an exact session ID", "/model": "Model catalog or selection",
     "/tasks": "Read-only tasks and child states", "/input": "single or multiline",
     "/theme": "auto/dark/light/high-contrast/mono", "/settings": "Display settings",
     "/transcript": "Readable session transcript", "/raw": "Exact session JSON",
+    "/browse": "Browse saved messages, paginate/search/diff",
     "/details": "Tool/result detail by message index", "/diff": "Stored diff text",
     "/export": "Export JSON or Markdown to a new file", "/copy": "Copy last answer",
     "/draft": "Stash/restore draft", "/history": "Input history", "/editor": "External editor for local draft", "/render": "Render last answer as Markdown",
-    "/redraw": "Repaint composer", "/palette": "Discover commands", "/exit": "Exit",
+    "/redraw": "Repaint composer", "/palette": "Select a local command",
+    "/commands": "Select a local command", "/exit": "Exit",
 }
 
 KEY_HELP = """Enter submit (completion menu consumes Enter first); Ctrl+J / Alt+Enter newline
@@ -40,6 +44,7 @@ Ctrl+P/N history; Ctrl+R search; arrows edit/history; Tab/Shift+Tab completion
 Ctrl+X e external editor; Ctrl+X p commands; Ctrl+X n new; Ctrl+X l sessions
 Ctrl+X m model; Ctrl+X t tasks; Ctrl+X o details; Ctrl+X y copy; Ctrl+X b draft
 F1 / Ctrl+X ? help; Ctrl+L redraw; Esc closes completion/search
+Ctrl+X is a two-key leader (wait for the second key; timeout does nothing).
 Ctrl+C running: cancel this generation; composing: stash and clear
 Ctrl+D empty composer: exit. Terminal selection/copy, tmux Ctrl+B and Ctrl+S/Q/Z stay native.
 Use /input multiline where the terminal cannot distinguish modified Enter.
@@ -70,6 +75,7 @@ class Composer:
         self.saved_theme = ui.theme
         self.sessions = {}
         self.history = {}
+        self.record_views = {}
         self.enhanced = not ui.plain and legacy_env_snapshot().get("TERM") != "dumb"
         self._preinput_lock = threading.RLock()
         self._preinput_done = threading.Event()
@@ -324,6 +330,14 @@ class Composer:
             )
         else:
             mode = "MULTILINE · C-x s send" if self.ui.multiline else "Enter send · C-j newline"
+        # PTK buffers unresolved multi-key sequences until timeoutlen. Make the
+        # leader visibly discoverable without consuming, reinserting, or
+        # submitting any of the pending keys.
+        session = self.sessions.get(sid)
+        processor = getattr(getattr(session, "app", None), "key_processor", None)
+        pending = getattr(processor, "key_buffer", ())
+        if len(pending) == 1 and str(getattr(pending[0], "key", "")) == "Keys.ControlX":
+            mode = "Ctrl+X: waiting for action key · " + mode
         short = f" {safe_text(sid[:8])} · {mode} · F1 keys "
         if width < 80:
             return short
@@ -343,7 +357,7 @@ class Composer:
     def _completer(self):
         from prompt_toolkit.completion import Completer, Completion
 
-        workspace = self.workspace
+        workspace = self.workspace.resolve()
 
         class LocalCompleter(Completer):
             def get_completions(self, document, complete_event):
@@ -360,14 +374,27 @@ class Composer:
                 folder = path if prefix.endswith("/") else path.parent
                 root = folder if folder.is_absolute() else workspace / folder
                 try:
-                    for entry in sorted(root.iterdir()):
+                    # Completion is a local, bounded *reference* lookup. It neither
+                    # reads file bodies nor authorizes access outside the workspace.
+                    if not root.resolve().is_relative_to(workspace):
+                        return
+                    matches = []
+                    for entry in itertools.islice(root.iterdir(), 2000):
+                        if not entry.resolve().is_relative_to(workspace):
+                            continue  # never follow a symlink outside the workspace
                         candidate = str(folder / entry.name)
                         if candidate.startswith("./"):
                             candidate = candidate[2:]
                         if candidate.startswith(prefix):
                             value = "@" + candidate + ("/" if entry.is_dir() else "")
-                            yield Completion(value, start_position=-len(token), display_meta="file reference (not attached)")
-                except OSError:
+                            kind = "directory" if entry.is_dir() else "file"
+                            size = "" if entry.is_dir() else f", {entry.stat().st_size} bytes"
+                            matches.append((value, f"{kind}{size}; not attached"))
+                            if len(matches) >= 50:
+                                break
+                    for value, label in sorted(matches):
+                        yield Completion(value, start_position=-len(token), display_meta=label)
+                except (OSError, ValueError):
                     return
 
         return LocalCompleter()
@@ -432,6 +459,34 @@ class Composer:
 
     def swap_draft(self) -> None:
         self.draft, self.stashed = self.stashed, self.draft
+
+    def select_command(self) -> str | None:
+        """Select a command in the existing input toolkit; never execute it."""
+        if not self.enhanced or not sys.stdin.isatty() or not sys.stdout.isatty():
+            return None
+        try:
+            from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+            from prompt_toolkit.shortcuts import radiolist_dialog
+        except ImportError:
+            return None
+        values = [(name, f"{name:<16} {description}") for name, description in COMMANDS.items()]
+        dialog = radiolist_dialog(
+            title="LFL commands",
+            text="Arrow keys/Tab choose; Enter selects; Esc cancels. No command is run.",
+            values=values,
+            ok_text="Insert into draft",
+            cancel_text="Cancel",
+        )
+        keys = KeyBindings()
+
+        @keys.add("escape")
+        def dismiss(event):
+            event.app.exit(result=None)
+
+        dialog.key_bindings = merge_key_bindings([dialog.key_bindings, keys])
+        with saved_terminal():
+            result = dialog.run()
+        return result if isinstance(result, str) and result in COMMANDS else None
 
 
     def external_edit(self) -> None:

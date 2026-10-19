@@ -19,7 +19,14 @@ from llm_loop.terminal.editor import KEY_HELP, Composer, palette_text
 from llm_loop.terminal.execution import run_turn
 from llm_loop.terminal.markdown import render_markdown
 from llm_loop.terminal.presentation import Presenter, safe_text
-from llm_loop.terminal.records import copy_answer, export_record, message_detail, transcript
+from llm_loop.terminal.records import (
+    RecordBrowser,
+    copy_answer,
+    export_record,
+    message_detail,
+    stored_diff,
+    transcript,
+)
 from llm_loop.terminal.settings import load_ui, save_ui, validate_ui
 
 
@@ -178,11 +185,25 @@ def _local_command(engine: Any, session: Any, text: str, composer: Composer) -> 
 
 
 def _dispatch_local(engine: Any, session: Any, name: str, args: list[str], composer: Composer) -> bool:
-    if name in {"/help", "/palette"}:
+    if name == "/help":
         print(palette_text())
+    elif name in {"/palette", "/commands"}:
+        selected = composer.select_command()
+        if selected and not composer.draft:
+            composer.draft = selected + " "
+            print(f"Selected {selected}; edit and explicitly submit to run the local action.")
+        elif selected:
+            print(f"Selected {selected}; preserved your existing draft. "
+                  f"Use {selected} after sending or stashing it.")
+        else:
+            # Plain/SSH/dumb terminals retain full keyboard-discoverable text fallback.
+            print(palette_text())
     elif name == "/keys":
         print(KEY_HELP)
         print("User overrides: " + json.dumps(composer.ui.keybindings, ensure_ascii=False))
+    elif name == "/keymap":
+        from llm_loop.terminal.settings import keymap_report
+        print(keymap_report(composer.ui))
     elif name == "/input":
         if args not in (["single"], ["multiline"]):
             raise ValueError("/input single|multiline")
@@ -205,11 +226,24 @@ def _dispatch_local(engine: Any, session: Any, name: str, args: list[str], compo
             bindings = composer.ui.keybindings | {args[1]: args[2:]}
             composer.ui = validate_ui(asdict(composer.ui) | {"keybindings": bindings})
             composer.sessions.clear()
-            print("Binding preview applied; /settings save persists it.")
+            print("Binding preview applied; /settings save persists it."
+                  if args[2:] else "Action disabled in this shell; /settings save persists it.")
+        elif len(args) == 2 and args[0] == "unbind":
+            bindings = composer.ui.keybindings | {args[1]: []}
+            composer.ui = validate_ui(asdict(composer.ui) | {"keybindings": bindings})
+            composer.sessions.clear()
+            print("Action disabled in this shell; /settings save persists it.")
+        elif args == ["keymap-reset"]:
+            composer.ui = validate_ui(asdict(composer.ui) | {"keybindings": {}})
+            composer.sessions.clear()
+            print("Default keybindings restored; /settings save persists them.")
         else:
             print(json.dumps(asdict(composer.ui), ensure_ascii=False, indent=2))
     elif name in {"/transcript", "/raw", "/details", "/diff", "/copy", "/export"}:
         _record_command(session.to_dict(), name, args)
+    elif name == "/browse":
+        cursor = composer.record_views.setdefault(session.session_id, RecordBrowser())
+        print(safe_text(cursor.navigate(session.to_dict(), args)))
     elif name == "/sessions":
         for row in engine.session.list_sessions():
             print(safe_text(f"{row.session_id}  {row.title}  {row.message_count} messages"))
@@ -243,7 +277,8 @@ def _record_command(raw: dict, name: str, args: list[str]) -> None:
         print(safe_text(transcript(raw)))
     elif name in {"/details", "/diff"}:
         # A diff is stored content, never a reconstructed/guessed patch.
-        print(safe_text(message_detail(raw, int(args[0]) if args else None)))
+        index = int(args[0]) if args else None
+        print(safe_text(stored_diff(raw, index) if name == "/diff" else message_detail(raw, index)))
     elif name == "/copy":
         copy_answer(raw)
     elif name == "/export":

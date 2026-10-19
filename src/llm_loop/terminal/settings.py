@@ -19,6 +19,42 @@ ACTIONS = {
     "view.copy": ["c-x", "y"], "editor.draft": ["c-x", "b"],
 }
 
+# User-facing action matrix. Prompt-toolkit owns the native editing bindings;
+# only entries in ACTIONS are rebindable by LFL. Reporting them separately
+# avoids claiming that an application hotkey can override terminal/IME keys.
+# Each entry is (action, native/default keys, active focus, text alternative).
+KEYMAP_MATRIX = (
+    ("editor.send", "Enter", "composer", "explicit send"),
+    ("editor.newline", "Ctrl+J", "composer", "/input multiline"),
+    ("editor.submit", "Ctrl+X s", "composer", "Enter in single-line mode"),
+    ("editor.move_character", "Left/Right, Ctrl+B/F", "composer", "native editor"),
+    ("editor.line_edges", "Ctrl+A/E", "composer", "native editor"),
+    ("editor.word_motion", "Alt+B/F", "composer (Meta only)", "character movement"),
+    ("editor.cut_line", "Ctrl+U/K", "composer", "native editor"),
+    ("editor.word_cut_yank", "Ctrl+W/Y", "composer", "native editor"),
+    ("editor.undo", "Ctrl+_", "composer", "native editor"),
+    ("history.step", "Ctrl+P/N", "composer", "/history"),
+    ("history.search", "Ctrl+R", "composer", "/history"),
+    ("completion.accept", "Tab", "completion", "select candidate"),
+    ("completion.previous", "Shift+Tab", "completion", "list navigation"),
+    ("view.palette", "Ctrl+X p", "composer", "/palette"),
+    ("editor.external", "Ctrl+X e", "composer", "/editor"),
+    ("session.new", "Ctrl+X n", "composer", "/new"),
+    ("view.sessions", "Ctrl+X l", "composer", "/sessions"),
+    ("view.model", "Ctrl+X m", "composer", "/model"),
+    ("view.tasks", "Ctrl+X t", "composer", "/tasks"),
+    ("view.details", "Ctrl+X o", "composer", "/details"),
+    ("view.keys", "F1", "composer", "/keys"),
+    ("view.redraw", "Ctrl+L", "composer", "/redraw"),
+    ("run.cancel", "Ctrl+C", "run", "/stop (owned run only)"),
+    ("view.close", "Esc", "popup/completion", "return"),
+    ("session.exit", "Ctrl+D (empty input)", "composer", "/exit"),
+    ("view.page", "PageUp/Down", "viewer", "/transcript"),
+    ("view.latest", "End (viewer only)", "viewer", "/transcript"),
+    ("view.copy", "Ctrl+X y", "composer", "/copy"),
+    ("editor.draft", "Ctrl+X b", "composer", "/draft"),
+)
+
 
 @dataclass
 class UISettings:
@@ -67,10 +103,43 @@ def validate_ui(raw: dict) -> UISettings:
             raise ValueError(f"Key sequence conflicts with an existing prefix: {action}")
         if seq in used:
             raise ValueError(f"Key conflict: {action} and {used[seq]}")
-        if seq[0] in {"c-c", "c-d", "c-s", "c-q", "c-z", "enter", "c-m"}:
+        if seq[0] in {
+            "c-c", "c-d", "c-s", "c-q", "c-z", "enter", "c-m",
+            "escape", "tab", "s-tab",
+        } or seq == ("c-x", "?"):
             raise ValueError("Reserved terminal/editing key")
         used[seq] = action
     return value
+
+
+def keymap_report(ui: UISettings) -> str:
+    """Complete 29-action focus/keyboard contract, including real overrides."""
+    names = {row[0] for row in KEYMAP_MATRIX}
+    if len(KEYMAP_MATRIX) != 29 or len(names) != 29 or not set(ACTIONS) <= names:
+        raise ValueError("CLI action matrix is incomplete")
+
+    def display(keys: list[str]) -> str:
+        def label(key: str) -> str:
+            if key.startswith("c-"):
+                return "Ctrl+" + key[2:].upper()
+            if key.startswith("f") and key[1:].isdigit():
+                return key.upper()
+            return {"escape": "Esc", "s-tab": "Shift+Tab"}.get(key, key)
+        return " ".join(label(key) for key in keys)
+
+    lines = [
+        "CLI keymap: 29 actions. Editable actions use /settings bind ACTION KEY...",
+        "Use /settings unbind ACTION to disable, /settings keymap-reset to restore.",
+        "Native/terminal actions cannot be remapped by the LFL UI settings.",
+    ]
+    for action, native, focus, alternative in KEYMAP_MATRIX:
+        if action in ACTIONS:
+            keys = ui.keybindings.get(action, ACTIONS[action])
+            binding = display(keys) if keys else "disabled"
+        else:
+            binding = native
+        lines.append(f"{action:25} {binding:22} [{focus}] {alternative}")
+    return "\n".join(lines)
 
 
 def load_ui(path: Path | None = None) -> UISettings:

@@ -30,12 +30,12 @@ class ApprovalBridge:
             return False
         item = Approval(tool, arguments)
         if threading.current_thread() is threading.main_thread():
-            return self._ask(item)
+            return self._ask(item) and not self.closed.is_set()
         self.pending.put(item)
         while not item.ready.wait(0.1):
             if self.closed.is_set():
                 return False
-        return item.accepted
+        return item.accepted and not self.closed.is_set()
 
     def service(self) -> None:
         try:
@@ -43,7 +43,9 @@ class ApprovalBridge:
         except queue.Empty:
             return
         try:
-            item.accepted = self._ask(item)
+            # A late confirmation after the input owner closes is not an
+            # approval. The original request remains denied once closed.
+            item.accepted = self._ask(item) and not self.closed.is_set()
         finally:
             item.ready.set()
 
