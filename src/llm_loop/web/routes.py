@@ -3746,7 +3746,11 @@ def _schedule_store(request: Request):
     return store
 
 
-def _schedule_row(entry: dict, delivery_facts: dict | None = None) -> dict:
+def _schedule_row(
+    entry: dict,
+    delivery_facts: dict | None = None,
+    pool_facts: dict | None = None,
+) -> dict:
     """会话级只读投影：保留展示所需的机械事实，剥宿主/租约/wake 授权内部字段."""
     repeat_interval = float(entry.get("repeat_interval") or 0.0)
     return {
@@ -3760,6 +3764,20 @@ def _schedule_row(entry: dict, delivery_facts: dict | None = None) -> dict:
         "max_count": int(entry.get("max_count") or 1),
         "count": int(entry.get("count") or 0),
         "wake": bool(entry.get("wake")),
+        # 任务语义（设计 20261019）：常驻授权的额度/有效期/落点，供面板显示
+        "task_mode": str(
+            entry.get("task_mode") or ("task_once" if entry.get("wake") else "remind")
+        ),
+        "wake_fires_total": int(
+            (pool_facts or {}).get("fires_total") or entry.get("wake_fires_total") or 0
+        ),
+        "wake_fires_used": int(
+            (pool_facts or {}).get("fires_used") or entry.get("wake_fires_used") or 0
+        ),
+        "wake_expires_at": float(
+            (pool_facts or {}).get("expires_at") or entry.get("wake_expires_at") or 0.0
+        ),
+        "wake_child_session_id": str(entry.get("wake_child_session_id") or ""),
         "created_at": float(entry.get("created_at") or 0.0),
         "scheduled_trigger_at": float(entry.get("scheduled_trigger_at") or entry.get("trigger_at") or 0.0),
         **(delivery_facts or {}),
@@ -3776,8 +3794,13 @@ def list_session_schedule(session_id: str, request: Request) -> Response:
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
     store = _schedule_store(request)
+    # 池成员共用一份额度：展示层投影池的权威计数，避免同池条目各显示各自开火次数。
     rows = [
-        _schedule_row(entry, store.wake_delivery_facts(entry))
+        _schedule_row(
+            entry,
+            store.wake_delivery_facts(entry),
+            store.pool_facts(str(entry.get("wake_pool") or "")),
+        )
         for entry in store.list()
         if str(entry.get("session_id") or "") == session_id
     ]

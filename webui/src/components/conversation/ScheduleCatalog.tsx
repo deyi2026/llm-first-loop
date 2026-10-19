@@ -66,6 +66,26 @@ function formatLocalTime(epochS: number): string {
   }).format(new Date(epochS * 1000));
 }
 
+// 常驻授权额度/到期：后端已签名的机械投影，前端只做格式化，不派生语义。
+// 用尽或到期后该条目只会降级为通知，因此给 warn 样式而不是隐藏。
+export function formatQuota(
+  item: ScheduleItem,
+  nowMs: number
+): { text: string; warn: boolean } | null {
+  if (item.task_mode !== "task_recurring") return null;
+  const total = item.wake_fires_total ?? 0;
+  const used = item.wake_fires_used ?? 0;
+  const expiresAt = item.wake_expires_at ?? 0;
+  if (total > 0 && used >= total) return { text: zh.quotaExhausted, warn: true };
+  if (expiresAt > 0 && expiresAt * 1000 <= nowMs) return { text: zh.expired, warn: true };
+  const quota = zh.quota(used, total);
+  if (expiresAt <= 0) return { text: quota, warn: false };
+  // 手写格式：不依赖运行环境 ICU 的短日期形态（不同 Node/浏览器会给出 10/29 或 10月29日）
+  const expiry = new Date(expiresAt * 1000);
+  const day = `${expiry.getMonth() + 1}月${expiry.getDate()}日`;
+  return { text: `${quota} · ${zh.expires(day)}`, warn: false };
+}
+
 // 相对时间：未来 ceil、过去 floor（对齐 DSH formatScheduleRelative）
 function formatRelative(epochS: number, nowMs: number): string {
   const difference = epochS * 1000 - nowMs;
@@ -209,6 +229,7 @@ export function ScheduleCatalog() {
         <ul className="v2-catalog-menu" aria-label={zh.listAria} data-testid="schedule-catalog-menu">
           {rows.map((item) => {
             const overdue = item.trigger_at * 1000 <= now;
+            const quota = formatQuota(item, now);
             return (
               <li
                 key={item.sid}
@@ -234,6 +255,14 @@ export function ScheduleCatalog() {
                     {formatRelative(item.trigger_at, now)}
                   </span>
                   {item.wake ? <span className="v2-catalog-wake">{zh.wakeBadge}</span> : null}
+                  {quota ? (
+                    <span
+                      className={`v2-catalog-quota ${quota.warn ? "warn" : ""}`}
+                      data-testid="schedule-quota"
+                    >
+                      {quota.text}
+                    </span>
+                  ) : null}
                 </span>
                 <button
                   type="button"

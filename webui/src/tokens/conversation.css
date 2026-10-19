@@ -3094,6 +3094,17 @@ select.v2-control-pill {
   background: var(--dsw-alias-state-warn-tertiary);
   color: var(--dsw-alias-state-warn-label);
 }
+.v2-catalog-quota {
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-secondary, rgba(0, 0, 0, 0.12));
+  white-space: nowrap;
+}
+.v2-catalog-quota.warn {
+  border-color: transparent;
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
 .v2-catalog-cancel {
   position: absolute;
   top: 6px;

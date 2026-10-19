@@ -22,6 +22,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from llm_loop.core import schedule_task_grant as task_grant
 from llm_loop.runtime.resolver import business_config_snapshot
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,15 @@ class ScheduleEntry:
         trigger_at: float,  # epoch 秒（首次触发）
         repeat_interval: float = 0.0,  # 0=单次；>0 重复间隔
         max_count: int = 1,  # 最多触发次数
+        task_mode: str = "",  # remind | task_once | task_recurring（空=老数据）
+        wake_dispatch: str = "",  # session | new_session（空=按 mode 推导）
+        wake_fires_total: int = 0,  # 常驻授权总次数
+        wake_fires_used: int = 0,  # 已消费次数（与授权账本同步）
+        wake_expires_at: float = 0.0,  # 常驻授权有效期（epoch 秒）
+        wake_external: bool = False,  # 是否允许外部副作用
+        wake_workdir: str = "",  # 授权时钉死的工作目录（R7）
+        wake_pool: str = "",  # Goal 级授权池（v1.1，显式加入才写入）
+        wake_child_session_id: str = "",  # 最近一次分叉出的会话
         created_at: float | None = None,
         count: int = 0,
         wake: bool = False,
@@ -127,6 +137,15 @@ class ScheduleEntry:
         self.trigger_at = trigger_at
         self.repeat_interval = repeat_interval
         self.max_count = max_count
+        self.task_mode = str(task_mode or "")
+        self.wake_dispatch = str(wake_dispatch or "")
+        self.wake_fires_total = int(wake_fires_total or 0)
+        self.wake_fires_used = int(wake_fires_used or 0)
+        self.wake_expires_at = float(wake_expires_at or 0.0)
+        self.wake_external = bool(wake_external)
+        self.wake_workdir = str(wake_workdir or "")
+        self.wake_pool = str(wake_pool or "")
+        self.wake_child_session_id = str(wake_child_session_id or "")
         self.created_at = created_at or time.time()
         self.count = count
         self.wake = bool(wake)
@@ -189,6 +208,20 @@ class ScheduleEntry:
             d["event_won"] = self.event_won
         if self.event_fired_at:
             d["event_fired_at"] = self.event_fired_at
+        # 任务语义字段只在显式设置时写入：老条目形态与现状逐字一致（回归项）
+        if self.task_mode:
+            d["task_mode"] = self.task_mode
+            d["wake_dispatch"] = self.wake_dispatch
+            d["wake_fires_total"] = self.wake_fires_total
+            d["wake_fires_used"] = self.wake_fires_used
+            d["wake_expires_at"] = self.wake_expires_at
+            d["wake_external"] = self.wake_external
+            if self.wake_workdir:
+                d["wake_workdir"] = self.wake_workdir
+            if self.wake_pool:
+                d["wake_pool"] = self.wake_pool
+            if self.wake_child_session_id:
+                d["wake_child_session_id"] = self.wake_child_session_id
         return d
 
     @classmethod
@@ -199,6 +232,15 @@ class ScheduleEntry:
             trigger_at=float(d.get("trigger_at", 0)),
             repeat_interval=float(d.get("repeat_interval", 0) or 0),
             max_count=int(d.get("max_count", 1) or 1),
+            task_mode=str(d.get("task_mode", "") or ""),
+            wake_dispatch=str(d.get("wake_dispatch", "") or ""),
+            wake_fires_total=int(d.get("wake_fires_total", 0) or 0),
+            wake_fires_used=int(d.get("wake_fires_used", 0) or 0),
+            wake_expires_at=float(d.get("wake_expires_at", 0.0) or 0.0),
+            wake_external=bool(d.get("wake_external", False)),
+            wake_workdir=str(d.get("wake_workdir", "") or ""),
+            wake_pool=str(d.get("wake_pool", "") or ""),
+            wake_child_session_id=str(d.get("wake_child_session_id", "") or ""),
             created_at=float(d.get("created_at", 0) or 0),
             count=int(d.get("count", 0) or 0),
             wake=bool(d.get("wake", False)),
@@ -635,13 +677,54 @@ class ScheduleStore:
         subject_refs: list | None = None,
         event_predicate: str = "",
         predicate_ref: str = "",
+        task_mode: str = "",
+        wake_dispatch: str = "",
+        wake_fires: int = 0,
+        wake_expires_at: float = 0.0,
+        wake_external: bool = False,
+        wake_workdir: str = "",
+        wake_pool: str = "",
     ) -> str:
         """新增提醒；返回 sid.
 
         Phase3 M4（G4）：event_predicate 要求 ①wake=True（谓词不携带授权语义，
         授权仍由 wake_grant 委派链独占，D8）②非重复条目（armed 一次性语义）。
         违反即 ValueError——失败在落盘之前，不留半登记状态。
+
+        task_mode=task_recurring 表示「常驻授权」：真人创建时一次签发 N 次，
+        每次到点开新会话执行（设计 §2/§5）。次数与 max_count 取同一值，
+        额度用尽/过期即降级为通知。
         """
+        mode = str(task_mode or (task_grant.MODE_ONCE if wake else task_grant.MODE_REMIND))
+        if mode not in (task_grant.MODE_REMIND, task_grant.MODE_ONCE, task_grant.MODE_RECURRING):
+            raise ValueError(f"unknown task_mode: {mode}")
+        standing = mode == task_grant.MODE_RECURRING
+        if mode == task_grant.MODE_REMIND:
+            wake = False
+        if standing:
+            if repeat_interval <= 0:
+                raise ValueError("task_recurring requires repeat_interval>0")
+            if int(wake_fires) < 1:
+                raise ValueError("task_recurring requires wake_fires>=1")
+            if float(wake_expires_at or 0.0) <= time.time():
+                raise ValueError("task_recurring requires a future wake_expires_at (hard cap 90d)")
+            if float(wake_expires_at) > time.time() + task_grant.MAX_WAKE_EXPIRY_S:
+                raise ValueError("task_recurring wake_expires_at exceeds the 90d hard cap")
+            if int(wake_fires) > task_grant.MAX_WAKE_FIRES:
+                raise ValueError("task_recurring wake_fires exceeds the 90 hard cap")
+            if not str(wake_workdir or "").strip():
+                # 空 workdir 会让投递侧跳过 R7 目录固定，等于把「授权时钉死的目录」变成任意目录。
+                raise ValueError("task_recurring requires a pinned workdir")
+            wake = True
+            max_count = int(wake_fires)  # 额度即上限：不会出现「第 N+1 次」无授权 run
+            wake_dispatch = wake_dispatch or task_grant.DISPATCH_NEW_SESSION
+        if wake_pool:
+            # Goal 级授权池：一个 goal 一份额度，成员资格写进签名 scope；
+            # 不允许用别的 goal 借池，也不允许非常驻条目入池。
+            if not standing:
+                raise ValueError("wake_pool requires task_recurring")
+            if not goal_id or wake_pool != goal_id:
+                raise ValueError("wake_pool must equal a non-empty goal_id")
         trigger = at if at is not None else time.time() + max(0.0, after)
         if event_predicate:
             if not wake:
@@ -664,6 +747,14 @@ class ScheduleStore:
             event_predicate=event_predicate,
             predicate_ref=predicate_ref,
             armed=bool(event_predicate),  # M4：登记即 armed，一次性即焚
+            task_mode=(mode if wake else ""),
+            wake_dispatch=(str(wake_dispatch or "") if wake else ""),
+            wake_fires_total=(int(wake_fires) if standing else 0),
+            wake_fires_used=0,
+            wake_expires_at=(float(wake_expires_at or 0.0) if standing else 0.0),
+            wake_external=(bool(wake_external) if standing else False),
+            wake_workdir=(str(wake_workdir or "") if standing else ""),
+            wake_pool=(str(wake_pool or "") if standing else ""),
         )
         # Capability must exist before the persisted entry becomes claimable. This removes
         # the after=0 window where a scheduler could see wake=True but no grant yet.
@@ -726,8 +817,11 @@ class ScheduleStore:
             if owner and (e is None or e.lease_owner != owner or e.lease_until <= now or e.scheduled_trigger_at > now):
                 raise ValueError("wake claim cancelled, replaced or expired before admission")
             if e is not None and e.wake and e.wake_started_at <= 0.0:
-                self._authority.consume(e.to_dict())
+                used = self._authority.consume(e.to_dict(), occurrence=e.count + 1)
                 e.wake_started_at = now
+                if e.task_mode == task_grant.MODE_RECURRING:
+                    # 账本权威计数镜像到条目，供 UI 与终结判定；一次性委派保持 0。
+                    e.wake_fires_used = int(used)
                 e.wake_delivery_state = "started"
                 e.wake_wait_reason = ""
                 marked.append(True)
@@ -743,6 +837,23 @@ class ScheduleStore:
         )
         if owner and not marked:
             raise ValueError("wake start could not be persisted")
+
+    def note_wake_child(self, sid: str, child_session_id: str, *, owner: str = "") -> None:
+        """记录常驻授权本次分叉出的会话（审计/Web 面板跳转用，best-effort）。"""
+
+        def _note(entries: dict[str, ScheduleEntry]) -> None:
+            e = entries.get(sid)
+            if e is None or (owner and e.lease_owner != owner):
+                return
+            e.wake_child_session_id = str(child_session_id or "")
+
+        self._mutate_reconciled(
+            _note,
+            operation="note_wake_child",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
 
     def defer_wake_retry(self, sid: str, *, owner: str = "", reason: str = "") -> WakeDefer:
         """EVO-20260919-f119847d: wake 交付瞬态失败 → 有界指数退避。
@@ -801,6 +912,132 @@ class ScheduleStore:
         self._authority.revoke(sid)
         return bool(removed and removed[0])
 
+    def upgrade_to_standing(
+        self,
+        sid: str,
+        *,
+        grant: Any,
+        session_id: str,
+        fires: int,
+        expires_at: float,
+        external: bool,
+        workdir: str,
+        pool: str = "",
+    ) -> None:
+        """把已有周期提醒原地升级为常驻授权任务（保留 sid/正文/节奏）。
+
+        先签账本、后写条目：账本签发失败则条目原样不动；条目写入失败最多留下
+        一份未被引用的授权（到期即失效），不会出现「条目自称能唤醒、账本却没有授权」。
+        """
+        row = next((entry for entry in self.list() if entry["sid"] == sid), None)
+        if row is None:
+            raise KeyError(sid)
+        if float(row.get("repeat_interval") or 0.0) <= 0:
+            raise ValueError("only periodic entries can become standing")
+        if row.get("wake"):
+            raise ValueError("entry already has a wake grant")
+        if pool and pool != str(row.get("goal_id") or ""):
+            raise ValueError("wake pool must equal the entry's goal_id")
+        if not str(workdir or "").strip():
+            raise ValueError("standing grants require a pinned workdir")
+        prospective = dict(row)
+        prospective.update({
+            "session_id": session_id,
+            "wake": True,
+            "task_mode": task_grant.MODE_RECURRING,
+            "wake_dispatch": task_grant.DISPATCH_NEW_SESSION,
+            "wake_fires_total": int(fires),
+            "wake_fires_used": 0,
+            "wake_expires_at": float(expires_at),
+            "wake_external": bool(external),
+            "wake_workdir": str(workdir or ""),
+            "wake_pool": pool,
+            "count": 0,
+            "max_count": int(fires),
+            "wake_started_at": 0.0,
+            "wake_delivery_state": "",
+            "wake_wait_reason": "",
+            "wake_owner_pid": 0,
+        })
+        if not self._authority.issue(prospective, grant):
+            raise ValueError("standing grant rejected")
+        applied: list[bool] = []
+
+        def _apply(entries: dict[str, ScheduleEntry]) -> None:
+            entry = entries.get(sid)
+            if entry is None:
+                return
+            entry.session_id = session_id
+            entry.wake = True
+            entry.task_mode = task_grant.MODE_RECURRING
+            entry.wake_dispatch = task_grant.DISPATCH_NEW_SESSION
+            entry.wake_fires_total = int(fires)
+            entry.wake_fires_used = 0
+            entry.wake_expires_at = float(expires_at)
+            entry.wake_external = bool(external)
+            entry.wake_workdir = str(workdir or "")
+            entry.wake_pool = pool
+            entry.count = 0
+            entry.max_count = int(fires)
+            entry.wake_started_at = 0.0
+            entry.wake_delivery_state = ""
+            entry.wake_wait_reason = ""
+            entry.wake_owner_pid = 0
+            applied.append(True)
+
+        self._mutate_reconciled(
+            _apply,
+            operation="upgrade_to_standing",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
+        if not applied:
+            raise ValueError("schedule entry vanished during upgrade")
+
+    def revoke_wake_grant(self, sid: str) -> bool:
+        """只撤销常驻授权，条目本身继续按通知提醒（schedule_cancel --revoke-only）。
+
+        先降级条目再撤销账本：任一步失败都只会更保守（通知），不会留下
+        「条目写着唤醒、账本却已撤销」的可疑中间态继续被 claim。
+        """
+        row = next((e for e in self.list() if e["sid"] == sid), None)
+        if row is None or not row.get("wake"):
+            return False
+        downgraded: list[bool] = []
+
+        def _downgrade(entries: dict[str, ScheduleEntry]) -> None:
+            e = entries.get(sid)
+            if e is None or not e.wake:
+                return
+            e.wake = False
+            e.task_mode = ""
+            e.wake_dispatch = ""
+            e.wake_fires_total = 0
+            e.wake_fires_used = 0
+            e.wake_expires_at = 0.0
+            e.wake_external = False
+            e.wake_workdir = ""
+            e.wake_pool = ""
+            e.wake_started_at = 0.0
+            e.wake_delivery_state = "scheduled"
+            e.wake_wait_reason = ""
+            e.wake_owner_pid = 0
+            downgraded.append(True)
+
+        self._mutate_reconciled(
+            _downgrade,
+            operation="revoke_wake_grant",
+            sid=sid,
+            retry_safe=True,
+            accept_visible_match=True,
+        )
+        if not downgraded:
+            return False
+        self.clear_wake_grant(sid)
+        self._authority.revoke(sid)
+        return True
+
     def note_wake_waiting(self, sid: str, reason: str) -> None:
         def _note(entries: dict[str, ScheduleEntry]) -> None:
             e = entries.get(sid)
@@ -819,6 +1056,10 @@ class ScheduleStore:
     def authority_state(self, sid: str) -> str:
         row = next((e for e in self.list() if e["sid"] == sid), None)
         return self._authority.state(row) if row is not None else "missing"
+
+    def pool_facts(self, pool_id: str) -> dict[str, Any] | None:
+        """Goal 级授权池的只读投影（创建时对齐规格、面板展示用）。"""
+        return self._authority.pool_facts(pool_id) if pool_id else None
 
     def recover_wake_grant(self, sid: str) -> Any | None:
         row = next((e for e in self.list() if e["sid"] == sid), None)
@@ -968,12 +1209,14 @@ class ScheduleStore:
         """成功 ack 后推进；owner 非空时只允许 claim 持有者提交。"""
         now = now if now is not None else time.time()
         completed: list[bool] = []
+        final: list[bool] = []
 
         def _ack(entries: dict[str, ScheduleEntry]) -> None:
             e = entries.get(sid)
             if e is None or (owner and e.lease_owner != owner):
                 return
             completed.append(True)
+            final.append(task_grant.is_final_fire(e))
             _advance(entries, sid, now)
 
         self._mutate_reconciled(
@@ -983,7 +1226,8 @@ class ScheduleStore:
             retry_safe=True,
             accept_visible_match=True,
         )
-        if completed:
+        if completed and final and final[0]:
+            # 常驻授权额度未尽时保留凭据，下一周期继续复用同一签名记录。
             self.clear_wake_grant(sid)
             self._authority.revoke(sid)
 
@@ -1004,17 +1248,36 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _advance(entries: dict[str, ScheduleEntry], sid: str, now: float) -> None:
-    """mark_triggered 内部推进逻辑（供 _mutate 调用）."""
+    """mark_triggered 内部推进逻辑（供 _mutate 调用）.
+
+    设计 §5.4：锚定推进（scheduled_trigger_at + interval），避免 tick 延迟累积成
+    相位漂移；停机跨过多个周期时最多立即补一次。常驻授权每次推进后重置「本次
+    已启动」标记，额度/有效期由 ``task_grant.is_final_fire`` 决定是否终结。
+    """
     e = entries.get(sid)
     if e is None:
         return
     e.count += 1
     e.lease_owner = ""
     e.lease_until = 0.0
-    if e.repeat_interval > 0 and e.count < e.max_count:
-        e.trigger_at = now + e.repeat_interval
-    else:
+    standing = task_grant.is_standing(e)
+    keep = e.repeat_interval > 0 and e.count < e.max_count
+    if standing and keep and task_grant.is_final_fire(e):
+        keep = False
+    if not keep:
         entries.pop(sid, None)
+        return
+    if standing:
+        e.trigger_at = task_grant.next_anchor(e.scheduled_trigger_at, e.repeat_interval, now)
+        e.scheduled_trigger_at = e.trigger_at
+        e.wake_started_at = 0.0
+        e.wake_owner_pid = 0
+        e.wake_delivery_state = "scheduled"
+        e.wake_wait_reason = ""
+        e.retry_count = 0
+        e.retry_deadline_at = 0.0
+        return
+    e.trigger_at = now + e.repeat_interval
 
 
 def wake_goal_binding_state(
@@ -1236,14 +1499,19 @@ class SchedulerThread:
         occurrence = max(0, int(entry.count))
         effect_id = f"schedule:{entry.sid}:{occurrence}"
         fname = f"notify-{entry.sid}-occ-{occurrence}.json"
-        payload = {
+        payload: dict[str, Any] = {
             "id": effect_id,
             "from": "lfl-scheduler",
             "to": "lfl",
             "ts": now.isoformat(),
             "topic": "notify",
             "ref": entry.sid,
-            "body": f"[定时提醒] {entry.message}",
+            "body": (
+                f"[定时提醒] {entry.message}\n[自动执行已降级] {wake_degraded_reason}"
+                if wake_degraded_reason
+                and getattr(entry, "task_mode", "") == task_grant.MODE_RECURRING
+                else f"[定时提醒] {entry.message}"
+            ),
             "status": "pending",
         }
         if wake_degraded_reason:

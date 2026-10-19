@@ -176,6 +176,35 @@ describe("schedule catalog (DSH ScheduleCatalogAction parity)", () => {
     );
   });
 
+  it("常驻授权条目显示额度与到期，用尽时转 warn", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const recurring: ScheduleItem = {
+      ...items()[0],
+      sid: "sched-recurring",
+      message: "每日 RSI 迭代",
+      wake: true,
+      task_mode: "task_recurring",
+      wake_fires_total: 30,
+      wake_fires_used: 2,
+      wake_expires_at: now + 86400 * 10,
+    };
+    let rowsData: ScheduleItem[] = [recurring];
+    installFetch((url) => url.includes("/api/v1/sessions/s1/schedule")
+      ? new Response(JSON.stringify({ schedule: rowsData, count: rowsData.length }), { status: 200 })
+      : undefined);
+    render(<ScheduleCatalog />);
+    fireEvent.click(await screen.findByTestId("schedule-catalog-trigger"));
+    const quota = await screen.findByTestId("schedule-quota");
+    expect(quota).toHaveTextContent("额度 2/30");
+    expect(quota).toHaveTextContent(/授权至 \d+月\d+日/);
+    expect(quota).not.toHaveClass("warn");
+
+    rowsData = [{ ...recurring, wake_fires_used: 30 }];
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(screen.getByTestId("schedule-quota")).toHaveTextContent("额度已用尽"));
+    expect(screen.getByTestId("schedule-quota")).toHaveClass("warn");
+  });
+
   it("Escape 关闭菜单", async () => {
     installFetch(() => undefined);
     render(<ScheduleCatalog />);

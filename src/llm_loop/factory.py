@@ -141,7 +141,11 @@ from llm_loop.tools.builtin.present_files import PresentFilesTool
 from llm_loop.tools.builtin.read_attachment import ReadAttachmentTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.read_image import ReadImageTool
-from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
+from llm_loop.tools.builtin.schedule import (
+    ScheduleCancelTool,
+    ScheduleTool,
+    ScheduleUpgradeTool,
+)
 from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.service_control import ServiceControlTool
 from llm_loop.tools.builtin.smx_perceive import SmxPerceiveTool
@@ -1462,6 +1466,7 @@ def build_engine(
         ),
     )
     _register_basic("schedule_cancel", ScheduleCancelTool(store=_schedule_store))
+    _register_basic("schedule_upgrade", ScheduleUpgradeTool(store=_schedule_store))
     # 提权闭环（EVO-20260923-c58a0bb1 accepted）: 申请/等待人工决定（配套
     # execute_command.escalation_token + registry 灾难层令牌校验 + web 弹窗审批）
     _register_basic("escalation_request", EscalationRequestTool(store=_escalation_store))
@@ -2352,6 +2357,10 @@ def build_engine(
             ),
             jobs_facts=format_session_jobs_facts,
             subject_facts=lambda entry: _render_subject_refs_facts(entry, settings.data_dir),
+            # 常驻授权每次触发开新会话执行（设计 §5.3）：新会话不占原会话 run 槽。
+            new_session=lambda: session_store.create(),
+            # R7：授权时钉死的工作目录与运行时不符 → 降级为通知，不在新目录执行。
+            workspace_root=str(Path(workspace_root).resolve()) if workspace_root else str(Path.cwd()),
         )
 
         engine.scheduler = SchedulerThread(_schedule_store, notify=_deliver_schedule)

@@ -200,7 +200,8 @@ class TaskBudgetExecution:
         if name == "spawn_subagent" and snapshot["grant"]["profile"] == subagent_profile.PROFILE:
             return
         if name in {
-            "schedule", "schedule_cancel", "execute_command", "spawn_subagent"
+            "schedule", "schedule_cancel", "schedule_upgrade",
+            "execute_command", "spawn_subagent",
         }:
             # Neither the wake lineage recovery path nor shell/subagent child
             # process cleanup is bound to this new budget in I2/I3. Even an

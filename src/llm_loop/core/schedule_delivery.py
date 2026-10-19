@@ -7,6 +7,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from llm_loop.core import schedule_task_grant as task_grant
 from llm_loop.core.scheduler import (
     WAKE_DEFERRED,
     ScheduleEntry,
@@ -33,6 +34,8 @@ class ScheduleWakeDelivery:
         restart_barrier: Callable[[], Any] | None = None,
         jobs_facts: Callable[[str], str] | None = None,
         subject_facts: Callable[[ScheduleEntry], str] | None = None,
+        new_session: Callable[[], str] | None = None,
+        workspace_root: str = "",
     ) -> None:
         self.store = store
         self.runner = runner
@@ -42,6 +45,9 @@ class ScheduleWakeDelivery:
         self.restart_barrier = restart_barrier
         self.jobs_facts = jobs_facts
         self.subject_facts = subject_facts
+        # 常驻授权每次触发开新会话执行（设计 §5.3）；缺省回退原会话，保持可测。
+        self.new_session = new_session
+        self.workspace_root = workspace_root
 
     def _degrade(self, entry: ScheduleEntry, reason: str) -> bool:
         # EVO-20261007-8057c39a 案2: 降级通知携带再锚定 payload——sid/原因之外
@@ -82,6 +88,26 @@ class ScheduleWakeDelivery:
         )
         return WAKE_DEFERRED
 
+    def _spawn_session(self, entry: ScheduleEntry) -> str:
+        """每次触发开新会话：不占用原会话的 run 槽位，也不污染其上下文。
+
+        审查边距：会话是先分配后启动的，``runner.start`` 若被拒会留下空会话；
+        这是可接受的审计残留（有 ``wake_child_session_id`` 指向），不回收以免误删
+        并发写入的会话。
+        """
+        try:
+            sid = str(self.new_session() if self.new_session is not None else "")
+        except Exception:  # noqa: BLE001 - allocation failure is a transient deferral
+            logger.warning("new session allocation failed sid=%s", entry.sid, exc_info=True)
+            return ""
+        if not sid:
+            return ""
+        try:
+            self.store.note_wake_child(entry.sid, sid, owner=entry.lease_owner)
+        except Exception:  # noqa: BLE001 - audit link is best-effort after allocation
+            logger.warning("note_wake_child failed sid=%s child=%s", entry.sid, sid, exc_info=True)
+        return sid
+
     def __call__(self, entry: ScheduleEntry) -> object:
         if not entry.wake:
             SchedulerThread._notify_via_interop(entry, data_dir=self.data_dir)
@@ -95,6 +121,11 @@ class ScheduleWakeDelivery:
             return self._defer(entry, "goal_binding_unknown")
         grant = self.store.wake_grant(entry.sid)
         authority_state = self.store.authority_state(entry.sid)
+        if task_grant.is_standing(entry) and authority_state in {
+            "consumed", "expired", "invalid", "missing", "revoked",
+        }:
+            # 额度/有效期/签名任一失效：确定性降级为通知，不再退避重试（设计 §5.6）。
+            return self._degrade(entry, task_grant.degrade_reason(authority_state))
         if grant is None and entry.wake_started_at <= 0:
             grant = self.store.recover_wake_grant(entry.sid)
         if grant is None or not entry.session_id:
@@ -115,7 +146,36 @@ class ScheduleWakeDelivery:
                 return self._defer(entry, "service_restart_barrier")
         if not self.runner.enabled:
             return self._degrade(entry, "runner_disabled")
-        prompt = f"[定时续跑·先前真人授权的程序委派·非新真人输入] {entry.message}"
+        standing = task_grant.is_standing(entry)
+        if (
+            standing
+            and entry.wake_workdir
+            and self.workspace_root
+            and os.path.realpath(entry.wake_workdir) != os.path.realpath(self.workspace_root)
+        ):
+            # R7：授权时钉死工作目录；换了目录就是另一份代价函数，拒绝执行。
+            return self._degrade(entry, task_grant.degrade_reason("workdir_mismatch"))
+        if standing:
+            previous = str(entry.wake_child_session_id or "")
+            if previous:
+                try:
+                    busy = bool(self.runner.is_running(previous)) or bool(
+                        self.runner.is_sync_active(previous)
+                    )
+                except Exception:  # noqa: BLE001 - uncertainty must not start a concurrent fire
+                    return self._defer(entry, "previous_fire_state_unknown")
+                if busy:
+                    # 上一轮还没跑完（RSI 迭代可能超过间隔）：不并发跑同一任务。
+                    return self._defer(entry, "previous_fire_running")
+        target_session = entry.session_id
+        if standing and task_grant.dispatch(entry) == task_grant.DISPATCH_NEW_SESSION:
+            target_session = self._spawn_session(entry)
+            if not target_session:
+                return self._defer(entry, "new_session_unavailable")
+        if standing:
+            prompt = task_grant.prompt_header(entry) + "\n" + entry.message
+        else:
+            prompt = f"[定时续跑·先前真人授权的程序委派·非新真人输入] {entry.message}"
         for facts in (
             _optional_facts(self.jobs_facts, entry.session_id),
             _optional_facts(self.subject_facts, entry),
@@ -131,9 +191,11 @@ class ScheduleWakeDelivery:
             self.store.note_wake_started(entry.sid, owner=entry.lease_owner)
             admitted.set()
             self.store.mark_triggered(entry.sid, owner=entry.lease_owner)
+            started_session = getattr(_session, "session_id", "") or target_session
             self.record_action(
                 "schedule.wake", "started",
-                f"sid={entry.sid};session={entry.session_id};delegated=1",
+                f"sid={entry.sid};session={started_session};delegated=1"
+                + (f";mode={task_grant.MODE_RECURRING};fire={entry.wake_fires_used + 1}" if standing else ""),
             )
 
         def terminal(status: str, _detail: str | None) -> None:
@@ -148,7 +210,7 @@ class ScheduleWakeDelivery:
         self.store.note_wake_waiting(entry.sid, "awaiting_run_admission")
         try:
             handle, _queue = self.runner.start(
-                entry.session_id, prompt, ingress=grant,
+                target_session, prompt, ingress=grant,
                 before_start=on_acquired, terminal_callback=terminal,
             )
         except Exception:  # noqa: BLE001 - start rejection retains the unconsumed wake

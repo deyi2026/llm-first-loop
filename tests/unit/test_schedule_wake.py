@@ -125,7 +125,9 @@ def test_wake_rejects_recurring_autonomous_runs(tmp_path):
         current_ingress_token.reset(ing_tok)
         current_session_id.reset(sid_tok)
     assert result.status.value == "failure"
-    assert "一次性" in result.content
+    # 设计 20261019：周期续跑必须显式 task_mode=task_recurring（创建时签发常驻
+    # 授权）；裸 wake=true + repeat 仍被拒绝，防「通知被误当执行入口」。
+    assert "task_recurring" in result.content
 
 
 def test_wake_grant_exists_before_immediate_entry_can_be_claimed(tmp_path):

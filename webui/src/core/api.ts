@@ -787,6 +787,12 @@ export interface ScheduleItem {
   scheduled_trigger_at?: number;
   delivery_state?: "scheduled" | "waiting_human" | "retrying" | "queued" | "started" | "inactive";
   wait_reason?: string;
+  // 任务语义（设计 20261019）：常驻授权的额度/到期，机械投影，仅用于展示
+  task_mode?: "remind" | "task_once" | "task_recurring";
+  wake_fires_total?: number;
+  wake_fires_used?: number;
+  wake_expires_at?: number;
+  wake_child_session_id?: string;
 }
 
 export async function fetchSessionScheduleResult(
