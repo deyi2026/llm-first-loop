@@ -1,0 +1,1325 @@
+{
+  "D_detail": [
+    {
+      "filler_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c2"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c2"
+      ],
+      "instance_id": "P28-002",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c3"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c2",
+        "c3"
+      ],
+      "instance_id": "P28-003",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c3"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-015",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1",
+        "c3"
+      ],
+      "instance_id": "P28-026",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c3"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-027",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": false,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-030",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1",
+        "c3"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1",
+        "c3"
+      ],
+      "instance_id": "P28-041",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1"
+      ],
+      "instance_id": "P28-044",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-048",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-051",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [],
+      "instance_id": "P28-053",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1",
+        "c3"
+      ],
+      "instance_id": "P28-054",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1"
+      ],
+      "instance_id": "P28-055",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [],
+      "instance_id": "P28-056",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1",
+        "c2"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "instance_id": "P28-058",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": false,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c2"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c2"
+      ],
+      "instance_id": "P28-064",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c3"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1",
+        "c3"
+      ],
+      "instance_id": "P28-073",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c2"
+      ],
+      "instance_id": "P28-074",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c2"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c2"
+      ],
+      "instance_id": "P28-076",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [],
+      "instance_id": "P28-091",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1",
+        "c3"
+      ],
+      "instance_id": "P28-101",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1"
+      ],
+      "instance_id": "P28-107",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c3"
+      ],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-108",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c2"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c2"
+      ],
+      "instance_id": "P28-110",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c1"
+      ],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": false,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1"
+      ],
+      "instance_id": "P28-112",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c1"
+      ],
+      "instance_id": "P28-118",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "filler_flips": [
+        "c3"
+      ],
+      "gold_card": {
+        "case_pass": true,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-119",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    },
+    {
+      "filler_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "filler_flips": [],
+      "gold_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": false,
+          "c2": true,
+          "c3": true,
+          "c4": true
+        }
+      },
+      "gold_flips": [
+        "c3"
+      ],
+      "instance_id": "P28-120",
+      "no_card": {
+        "case_pass": false,
+        "checks": {
+          "c1": true,
+          "c2": true,
+          "c3": false,
+          "c4": true
+        }
+      },
+      "rep": 1
+    }
+  ],
+  "arms": {
+    "filler_card": {
+      "case_pass": 33,
+      "checks": {
+        "c1": {
+          "counted": 120,
+          "pass": 79,
+          "rate": 0.6583
+        },
+        "c2": {
+          "counted": 120,
+          "pass": 102,
+          "rate": 0.85
+        },
+        "c3": {
+          "counted": 120,
+          "pass": 62,
+          "rate": 0.5167
+        },
+        "c4": {
+          "counted": 120,
+          "pass": 120,
+          "rate": 1.0
+        }
+      },
+      "n_ok": 120,
+      "rate": 0.275,
+      "void": 0,
+      "wilson_95": {
+        "hi": 0.36093,
+        "k": 33,
+        "lo": 0.203029,
+        "n": 120,
+        "note": null
+      }
+    },
+    "gold_card": {
+      "case_pass": 98,
+      "checks": {
+        "c1": {
+          "counted": 120,
+          "pass": 101,
+          "rate": 0.8417
+        },
+        "c2": {
+          "counted": 120,
+          "pass": 117,
+          "rate": 0.975
+        },
+        "c3": {
+          "counted": 120,
+          "pass": 118,
+          "rate": 0.9833
+        },
+        "c4": {
+          "counted": 120,
+          "pass": 120,
+          "rate": 1.0
+        }
+      },
+      "n_ok": 120,
+      "rate": 0.8167,
+      "void": 0,
+      "wilson_95": {
+        "hi": 0.875697,
+        "k": 98,
+        "lo": 0.737991,
+        "n": 120,
+        "note": null
+      }
+    },
+    "no_card": {
+      "case_pass": 42,
+      "checks": {
+        "c1": {
+          "counted": 120,
+          "pass": 83,
+          "rate": 0.6917
+        },
+        "c2": {
+          "counted": 120,
+          "pass": 105,
+          "rate": 0.875
+        },
+        "c3": {
+          "counted": 120,
+          "pass": 73,
+          "rate": 0.6083
+        },
+        "c4": {
+          "counted": 120,
+          "pass": 120,
+          "rate": 1.0
+        }
+      },
+      "n_ok": 120,
+      "rate": 0.35,
+      "void": 0,
+      "wilson_95": {
+        "hi": 0.438787,
+        "k": 42,
+        "lo": 0.270519,
+        "n": 120,
+        "note": null
+      }
+    }
+  },
+  "baseline_s0": {
+    "d_ids": 28,
+    "d_ok": true,
+    "d_pairs": 28,
+    "expected_d": 28,
+    "frozen": {
+      "d": 28,
+      "mcnemar_p": 0.096,
+      "r": 16
+    },
+    "mcnemar_p_orig_vs_no_card": 0.09614175442061423,
+    "paired": 120,
+    "r_ids": 16,
+    "r_pairs": 16
+  },
+  "filler_verdict": "FAIL",
+  "gates": {
+    "filler": {
+      "F1": 21,
+      "F1_ids": [
+        "P28-002",
+        "P28-004",
+        "P28-011",
+        "P28-023",
+        "P28-033",
+        "P28-040",
+        "P28-041",
+        "P28-044",
+        "P28-057",
+        "P28-063",
+        "P28-064",
+        "P28-065",
+        "P28-071",
+        "P28-082",
+        "P28-094",
+        "P28-096",
+        "P28-099",
+        "P28-104",
+        "P28-107",
+        "P28-110",
+        "P28-119"
+      ],
+      "F1_threshold": 0,
+      "pass": false,
+      "pass_to_fail_desc": [
+        "P28-001",
+        "P28-005",
+        "P28-008",
+        "P28-009",
+        "P28-012",
+        "P28-013",
+        "P28-014",
+        "P28-019",
+        "P28-025",
+        "P28-029",
+        "P28-036",
+        "P28-037",
+        "P28-039",
+        "P28-045",
+        "P28-047",
+        "P28-050",
+        "P28-062",
+        "P28-068",
+        "P28-072",
+        "P28-079",
+        "P28-080",
+        "P28-081",
+        "P28-084",
+        "P28-087",
+        "P28-093",
+        "P28-098",
+        "P28-103",
+        "P28-105",
+        "P28-114",
+        "P28-116"
+      ],
+      "verdict": "FAIL"
+    },
+    "gold": {
+      "G1": 19,
+      "G1_ids": [
+        "P28-002",
+        "P28-003",
+        "P28-015",
+        "P28-026",
+        "P28-027",
+        "P28-041",
+        "P28-044",
+        "P28-054",
+        "P28-055",
+        "P28-058",
+        "P28-064",
+        "P28-073",
+        "P28-074",
+        "P28-076",
+        "P28-101",
+        "P28-107",
+        "P28-110",
+        "P28-118",
+        "P28-119"
+      ],
+      "G1_threshold": 2,
+      "G2": 3,
+      "G2_flip_kinds": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "G2_threshold": 2,
+      "pass": true,
+      "verdict": "PASS"
+    }
+  },
+  "gold_verdict": "PASS",
+  "grader": "v1.3",
+  "inputs": {
+    "calls_s1": {
+      "bytes": 430953,
+      "n_lines": 240,
+      "n_not_ok": 0,
+      "path": "<local-user>/Project/llm-first-loop-mirror/evals/methodcard_rsi_v1/s1_gold_filler/results/calls_s1.jsonl",
+      "sha256": "3bbca6d70ca3b7a47782074eba9a79158c0be2dd54fa28fe4b0d27b39cab2a69",
+      "unparsable": []
+    },
+    "freeze_sha256": "3df098c10aa59120d8c4d3f8b0a6e4836869355ed8d08d01bc390006abf88255",
+    "s0_calls": {
+      "bytes": 410050,
+      "n_lines": 242,
+      "n_not_ok": 2,
+      "path": "<local-user>/Project/llm-first-loop-mirror/evals/methodcard_rsi_v1/s0_p28/results/calls.jsonl",
+      "sha256": "bf0aec406e03c8c23c016c796072b4c5288b0e4a3692c428637cd1631fb62e89",
+      "unparsable": []
+    }
+  },
+  "integrity": {
+    "arms": {
+      "filler_card": {
+        "card_sha256_expected": "2967e0c8e9235f3d247870824875f644ac23bf26870a7d95447967af0c2d439b",
+        "card_sha256_ok": true,
+        "card_sha256_values": [
+          "2967e0c8e9235f3d247870824875f644ac23bf26870a7d95447967af0c2d439b"
+        ],
+        "dup_keys": 0,
+        "expected_n": 120,
+        "n_ok": 120,
+        "ok": true,
+        "prompt_versions": [
+          "p2"
+        ]
+      },
+      "gold_card": {
+        "card_sha256_expected": "4c9d22cad90a42378ef917b6ac585119c6d11e01cbf5b2afa6172f147ad4f8a6",
+        "card_sha256_ok": true,
+        "card_sha256_values": [
+          "4c9d22cad90a42378ef917b6ac585119c6d11e01cbf5b2afa6172f147ad4f8a6"
+        ],
+        "dup_keys": 0,
+        "expected_n": 120,
+        "n_ok": 120,
+        "ok": true,
+        "prompt_versions": [
+          "p2"
+        ]
+      }
+    },
+    "expected_instances_per_arm": 120,
+    "ok": true,
+    "s0_calls_sha256_expected": "bf0aec406e03c8c23c016c796072b4c5288b0e4a3692c428637cd1631fb62e89",
+    "s0_calls_sha256_ok": true
+  },
+  "mcnemar_descriptive": {
+    "filler_vs_no_card": {
+      "b_fail_to_pass": 21,
+      "c_pass_to_fail": 30,
+      "exact_p": 0.2624375357110438,
+      "n_common": 120
+    },
+    "gold_vs_no_card": {
+      "b_fail_to_pass": 60,
+      "c_pass_to_fail": 4,
+      "exact_p": 7.363044635805283e-14,
+      "n_common": 120
+    }
+  },
+  "now": "2026-10-19T21:26:00+08:00",
+  "reused": {
+    "case_pass_semantics": "run_s0.summarize_one",
+    "dedupe": "run_s0.dedupe",
+    "mcnemar_exact": "analyze_s0.mcnemar_exact_two_sided_p",
+    "wilson_ci": "analyze_s0.wilson_ci"
+  },
+  "schema": "analysis_s1/v1",
+  "status": "ok",
+  "verdict": "FAIL"
+}
