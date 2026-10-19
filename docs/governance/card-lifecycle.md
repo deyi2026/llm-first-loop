@@ -21,13 +21,14 @@
 2. 命中 ⇒ 二选一：
    - 新卡正文必须写**区别声明**（本卡比命中卡多管什么）；
    - 或改走对应池的 `record_use(use_decision=adapted)`——experience 池用 `refine_experience`，method 池用 `method_manage`——不新建。
-3. 正文按卡类走**不同模板**，缺一不建：
+3. 正文按卡类选**模板或形态**——是写法参考，不是准入条件：
    - **experience / lesson**（`save_experience`）：三段式（附录 A-1）——(a) 适用信号；(b) 不管什么（边界、易混邻卡点名、常见误用）；(c) 核验方法（1–3 个可执行核验点，附期望结果）。
-   - **method 卡**（`method_manage(save_candidate)`）：程序强制六段式 `## Trigger / ## Discriminator / ## Short path / ## Stop conditions / ## Verification / ## Counterexamples`，缺任一节**写入即被拒**（附录 A-2）。三段式内容映射：适用信号→Trigger，不管什么→Discriminator，核验方法→Verification，其余三节按语义补齐。
-4. 核验结果落进正文「核验记录」段（experience）或 Verification 节（method），append-only。
+   - **method 卡**（`method_manage(save_candidate)`）：正文至少一行非标题内容即可写入。六段式 `## Trigger / ## Discriminator / ## Short path / ## Stop conditions / ## Verification / ## Counterexamples` 是**可选排版**，缺节不再拒写（2026-10-20 起）。形态任选：提醒型（一句话）/ 索引型（指向规则、skill、脚本）/ 规程型（步骤确实不显然时）；详见 `docs/METHOD_CARD_WRITING.md`。
+4. 核验结果 append-only：experience 写进正文「核验记录」段；method 采用六段式时写进 Verification 节，否则紧跟结论写一行核验记录。
 
 > 存量卡不回填模板；由 R4 抽到时机会性补齐。
 > 修正记录（2026-10-12）：设计 §5.1 原定统一三段式；I2 落地时 `method_manage` 实测拒绝三段式正文（contract violation: missing Trigger/Discriminator/Short path/Stop conditions/Verification/Counterexamples），证实 method 卡另有程序强制六段式契约，本文据此分卡类修正。
+> 修正记录（2026-10-20）：写入边界取消六段式强制，只校验正文有可读内容；六段式降为可选排版（见 `docs/METHOD_CARD_WRITING.md`）。
 
 ## R2 收口转化（晚班 20:00 固定步骤）
 
@@ -106,7 +107,7 @@
 - YYYY-MM-DD：<证据摘录> → <成立/失效>
 ```
 
-### A-2 method 卡（`method_manage(save_candidate)`）六段式（程序强制，缺节即拒）
+### A-2 method 卡（`method_manage(save_candidate)`）六段式（可选排版，不强制）
 
 ```markdown
 ## Trigger
@@ -128,7 +129,7 @@
 - <反例：如果只按朴素做法会踩什么坑，实证案例>
 ```
 
-> 映射关系：三段式 适用信号→Trigger；不管什么→Discriminator；核验方法→Verification。六段式多出的 Short path / Stop conditions / Counterexamples 是 method 卡的程序契约要求，须按语义补齐，不可留空。
+> 映射关系（仅在采用六段式时参考）：三段式 适用信号→Trigger；不管什么→Discriminator；核验方法→Verification。Short path / Stop conditions / Counterexamples 是可选排版，不要求填写，留空不再是写入错误。
 
 ## 附录 B：失效决策树
 

@@ -176,35 +176,18 @@ def _visible_state(path: Path, payload: bytes) -> str:
 # independent factual basis) and for human review, both of which protect assets
 # rather than restrict use.
 
-# EVO-20260929-5283ab1b P2 (R5 Card Contract): the persistence layer requires the
-# same six sections the generation protocol demands, so a weak model cannot
-# bypass structure at the write boundary. Structure only — content quality stays
-# model-owned. Matches the reflection renderer exactly (## Trigger ...).
-_CARD_SECTIONS: tuple[str, ...] = (
-    "Trigger",
-    "Discriminator",
-    "Short path",
-    "Stop conditions",
-    "Verification",
-    "Counterexamples",
-)
-
-
-def _card_contract_missing(body: str) -> list[str]:
-    """Return required sections that are absent, empty, or placeholder ``(none)``."""
-    missing: list[str] = []
-    for title in _CARD_SECTIONS:
-        match = re.search(rf"^##\s+{re.escape(title)}\s*$", body, re.MULTILINE)
-        if match is None:
-            missing.append(title)
+# 2026-10-20 卡片形态自由: the write boundary checks only that a card carries
+# readable content, never what shape it takes. Procedure, index, and one-line
+# reminder cards are equally valid (docs/METHOD_CARD_WRITING.md). Same posture as
+# Experience: formatting is not an admission rule, only usability is.
+def _card_content_missing(body: str) -> list[str]:
+    """Return ``["body"]`` when the body has no non-heading content line."""
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line in {"---", "***", "```"}:
             continue
-        rest = body[match.end():]
-        nxt = re.search(r"^##\s+", rest, re.MULTILINE)
-        chunk = rest[: nxt.start()] if nxt else rest
-        text = chunk.strip()
-        if not text or text == "(none)":
-            missing.append(title)
-    return missing
+        return []
+    return ["body"]
 
 
 def _checked_freshness_refs(refs: list[str]) -> list[str]:
@@ -1589,14 +1572,12 @@ class MethodStore:
         freshness_refs: list[str] | None = None,
     ) -> tuple[MethodRecord, bool]:
         """Persist semantic content supplied by the model; never overwrite or auto-promote."""
-        # P2 Card Contract: the persistence boundary demands the same structure
-        # the generation protocol promises. Applies to new writes only; the
-        # existing pool is never retroactively rescanned.
-        missing_sections = _card_contract_missing(body)
-        if missing_sections:
+        # Shape is model-owned: procedure/index/reminder cards all pass. The boundary
+        # only refuses a body with no readable content (blank or headings-only).
+        if _card_content_missing(body):
             raise ValueError(
-                "Method Card contract violation: body must contain non-empty sections "
-                f"{list(_CARD_SECTIONS)} (missing/empty: {missing_sections})"
+                "Method Card needs at least one non-heading line of content in body; "
+                "a blank or headings-only card cannot help a later reader"
             )
         # P3 freshness_refs: model-declared workspace-relative paths baselined at
         # qualification time; freshness() later reports current/changed/missing

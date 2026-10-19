@@ -85,7 +85,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             },
             "name": {"type": "string", "description": "save_candidate: Method 名称"},
             "description": {"type": "string", "description": "save_candidate: 触发条件/用途简介"},
-            "body": {"type": "string", "description": "save_candidate: 完整 Method Card，必须含六个非空节 ## Trigger / ## Discriminator / ## Short path / ## Stop conditions / ## Verification / ## Counterexamples（缺失将拒绝写入）；refine 需持久化的内容也应通过 save_candidate（parent_ref 关联来源）修订"},
+            "body": {"type": "string", "description": "save_candidate: 卡片正文。一句话提醒、索引或完整规程都可以；name/description 非空、正文至少有一行非标题内容即可写入。建议至少说清：何时用 / 做什么或看哪里 / 怎么算成功。六节（## Trigger / ## Discriminator / ## Short path / ## Stop conditions / ## Verification / ## Counterexamples）是可选结构，不是准入条件；写法见 docs/METHOD_CARD_WRITING.md。refine 需持久化的内容也应通过 save_candidate（parent_ref 关联来源）修订"},
             "parent_ref": {"type": "string", "description": "save_candidate: 修订来源 method ref（可选）"},
             "freshness_refs": {"type": "array", "items": {"type": "string"}, "description": "save_candidate/annotate_freshness: 该 Method 依赖的 workspace 相对路径；qualification 时按 SHA 基线化，之后 freshness 只报告 current/changed/missing 事实，不自动降级生命周期。存量卡补声明走 annotate_freshness（只改这一个 frontmatter 键，卡体与其余字段逐字节不变）"},
             "verdict": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},

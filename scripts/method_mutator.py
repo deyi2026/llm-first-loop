@@ -28,10 +28,10 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 MUTATOR_VERSION = "0.1.0"
 
@@ -136,7 +136,7 @@ def detect_defects(card: Card) -> list[Defect]:
             defects.append(Defect("missing_section", req, f"缺少必备段 ## {req}"))
         else:
             body_lines = dict(card.sections)[req]
-            if not any(l.strip() for l in body_lines):
+            if not any(line.strip() for line in body_lines):
                 defects.append(Defect("empty_section", req, f"## {req} 为空"))
 
     seen: dict[str, tuple[str, int]] = {}
@@ -383,7 +383,7 @@ def run(
         "edits": result["planned"],
         "review_required": True,
         "status": "candidate",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     (target / "MANIFEST.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"

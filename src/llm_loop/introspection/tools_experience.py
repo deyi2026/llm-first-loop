@@ -21,7 +21,7 @@ from llm_loop.tools.arg_coerce import coerce_obj, coerce_str_list
 _FRESHNESS_ACTION_RE = re.compile(
     r"grep|\bsed\b|\bcat\b|\bls\b|\bstat\b|\bfind\b|\bgit\b|read_file|execute_command|"
     r"search_files|inspect_code|web_fetch|playwright|\bdsh\b|pytest|\bcurl\b|"
-    r"当前性验证|验证动作|验证步骤|复现|实测|"
+    r"当前性验证|验证动作|验证步骤|验证|核对|复核|复现|实测|"
     r"先[^\n。；;]{0,40}(确认|验证|核对|检查|跑|查)",
     re.IGNORECASE,
 )

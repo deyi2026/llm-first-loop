@@ -161,7 +161,9 @@ def reflect_after_run(
         "You are performing isolated post-task Method self-distillation. Never reveal or reconstruct hidden chain-of-thought. "
         "Use only the observable facts supplied by the caller. Return exactly one JSON object. If there is no reusable method, "
         "return {\"decision\":\"none\",\"reason\":\"...\"}. If there is one, return decision=candidate with name, description, body. "
-        "The body must include trigger/discriminator/short_path/stop_conditions/verification/counterexamples and must not copy task-private literals unless necessary.\n\n"
+        "The body should be usable on its own: when it applies, what to do or where to look, and how to tell it worked. "
+        "Section headings (trigger/discriminator/short_path/...) are optional; use them only when they help. "
+        "Do not copy task-private literals unless necessary.\n\n"
         + core.body
     )
     try:

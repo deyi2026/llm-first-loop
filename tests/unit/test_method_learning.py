@@ -953,23 +953,105 @@ def test_disposition_via_independent_qualification_fail(tmp_path: Path) -> None:
     assert retired.status == "retired"
 
 
-def test_card_contract_rejects_incomplete_bodies(tmp_path: Path) -> None:
-    """R5: structure is checked mechanically at the persistence boundary."""
-    import pytest
+def test_card_shape_is_free_and_content_is_required(tmp_path: Path) -> None:
+    """Shape is model-owned; the boundary only refuses bodies with no content."""
 
     store = MethodStore(tmp_path / "methods")
 
-    with pytest.raises(ValueError) as info:
-        store.save_candidate(name="no sections", description="plain prose", body="just prose, no structure")
-    assert "Trigger" in str(info.value)
+    # One-line reminder: no sections, still actionable.
+    reminder = store.save_candidate(
+        name="reminder", description="发布前先核对回执", body="发布前先核对 review_admission 回执里的 SHA"
+    )
+    assert reminder.status == "candidate"
 
-    placeholder_body = _CONTRACT_BODY.replace("SSR page", "(none)")
-    with pytest.raises(ValueError) as info:
-        store.save_candidate(name="placeholder", description="empty section", body=placeholder_body)
-    assert "Counterexamples" in str(info.value)  # placeholder counts as missing
+    # Index card: points at maintained assets instead of restating them.
+    index = store.save_candidate(
+        name="index",
+        description="对外发表前的审查入口",
+        body="读 docs/ai_rules.md 规则二十八；按 skills/article-review-gate 起审查。",
+    )
+    assert index.status == "candidate"
 
-    ok = store.save_candidate(name="compliant", description="six sections", body=_CONTRACT_BODY)
+    with pytest.raises(ValueError):
+        store.save_candidate(name="blank", description="blank", body="   \n\n")
+
+    with pytest.raises(ValueError):
+        store.save_candidate(name="headings only", description="empty shell", body="## Trigger\n## Short path\n")
+
+    ok = store.save_candidate(name="compliant", description="six sections still fine", body=_CONTRACT_BODY)
     assert ok.status == "candidate"
+
+
+def test_tool_save_accepts_one_line_reminder(tmp_path: Path) -> None:
+    """The tool path enforces the freshness floor, not a shape contract."""
+
+    store = MethodStore(tmp_path / "methods")
+    host = _Host(store)
+
+    saved = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "save_candidate",
+            "name": "reminder-through-tool",
+            "description": "发布前先核对回执",
+            "body": "发布前先核对 review_admission 回执里的 SHA 与 P0/P1，再发。",
+        },
+        cast(Any, host),
+    )
+    assert saved is not None and saved.status.value == "success", saved.content if saved else ""
+    assert "status=candidate" in saved.content
+
+    empty_shell = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "save_candidate",
+            "name": "empty-shell",
+            "description": "先核对空壳",
+            "body": "## Trigger\n## Short path\n",
+        },
+        cast(Any, host),
+    )
+    assert empty_shell is not None and empty_shell.status.value == "failure"
+
+
+def test_one_line_card_with_plain_verification_word_saves(tmp_path: Path) -> None:
+    """单独出现的『验证/核对』也算合法当前性验证信号（2026-10-20 写入校验放宽）。"""
+
+    store = MethodStore(tmp_path / "methods")
+    host = _Host(store)
+
+    saved = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "save_candidate",
+            "name": "plain-verification-word",
+            "description": "遇到 X 时的处置提醒",
+            "body": "遇到 X 先停；验证 Y 是否仍为 Z。",
+        },
+        cast(Any, host),
+    )
+    assert saved is not None and saved.status.value == "success", saved.content if saved else ""
+    assert "status=candidate" in saved.content
+
+
+def test_statement_only_card_without_verification_still_rejected(tmp_path: Path) -> None:
+    """纯陈述、无任何验证信号的一句话卡仍被写入校验拒绝。"""
+
+    store = MethodStore(tmp_path / "methods")
+    host = _Host(store)
+
+    rejected = execute_experience_tool(
+        "method_manage",
+        {
+            "action": "save_candidate",
+            "name": "statement-only",
+            "description": "关于 A 与 B 的顺序陈述",
+            "body": "这个方法就是先做 A 再做 B。",
+        },
+        cast(Any, host),
+    )
+    assert rejected is not None and rejected.status.value == "failure"
+    assert "当前性验证动作" in rejected.content
 
 
 def test_freshness_refs_persist_and_validate(tmp_path: Path) -> None:
