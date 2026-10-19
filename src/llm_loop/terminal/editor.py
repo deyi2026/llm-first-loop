@@ -340,10 +340,14 @@ class Composer:
         if preinput_active:
             state = "run settled" if run_settled else "run active"
             mode = f"NEXT TURN DRAFT · {state} · " + (
-                "C-x s queue" if self.ui.multiline else "Enter queue"
+                "C-x s queue · /send+Enter alternative"
+                if self.ui.multiline else "Enter queue"
             )
         else:
-            mode = "MULTILINE · C-x s send" if self.ui.multiline else "Enter send · C-j newline"
+            mode = (
+                "MULTILINE · C-x s send · /send+Enter alternative"
+                if self.ui.multiline else "Enter send · C-j newline"
+            )
         # PTK buffers unresolved multi-key sequences until timeoutlen. Make the
         # leader visibly discoverable without consuming, reinserting, or
         # submitting any of the pending keys.
@@ -364,13 +368,14 @@ class Composer:
     def _plain_read(self) -> str:
         if not self.ui.multiline:
             return input("\n你> ")
-        print("[multiline] Enter inserts lines; a single '.' sends, '..' inserts '.'.")
+        print("[multiline] Enter inserts lines; a single '.' or '/send' sends.")
+        print("[multiline] '..' inserts '.', '//send' inserts a literal '/send'.")
         lines = []
         while True:
             line = input("... ")
-            if line == ".":
+            if line in {".", "/send"}:
                 return "\n".join(lines)
-            lines.append("." if line == ".." else line)
+            lines.append("." if line == ".." else "/send" if line == "//send" else line)
 
     def _completer(self):
         from prompt_toolkit.completion import Completer, Completion
@@ -432,6 +437,22 @@ class Composer:
                     buffer.cancel_completion()
                 return
             if self.ui.multiline:
+                # The IME can consume Ctrl+X before prompt_toolkit ever sees the
+                # leader. Never rely solely on a terminal modifier to send a
+                # multi-line message: an exact /send line followed by Enter is
+                # an explicit, input-method-independent alternative.
+                document = buffer.document
+                if (
+                    document.current_line_before_cursor == "/send"
+                    and not document.current_line_after_cursor
+                    and document.cursor_position == len(buffer.text)
+                    and "\n" in buffer.text
+                ):
+                    body, _, _ = buffer.text.rpartition("\n")
+                    if body.strip():
+                        buffer.text = body
+                        buffer.validate_and_handle()
+                        return
                 buffer.insert_text("\n")
             elif buffer.document.current_line_before_cursor.endswith("\\"):
                 buffer.delete_before_cursor(1)

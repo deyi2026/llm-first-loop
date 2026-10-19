@@ -79,6 +79,23 @@ the target terminal and verifying that neither Enter nor candidate confirmation
 accidentally submits a model turn; the fallback /input multiline + Ctrl+X s
 provides explicit separation when modifier-key reporting is ambiguous.
 
+### 2026-10-19 T04 Mac Terminal incident — incomplete modifier sequence
+
+The real user entered Chinese text 你好 using the Mac IME. The first diagnostic
+timed out after 75 seconds without a send; in the second attempt the editor
+showed an extra literal s before the Chinese text instead of submitting.
+This proves that the multi-key send was not recognized in that interaction,
+but cannot identify which layer (IME, Terminal, prompt_toolkit or prefix
+interval) intercepted the leader. No model/provider call occurred.
+T04 remains MANUAL_PENDING.
+
+The separate isolated fix/cli-ime-explicit-send-20261019 candidate provides
+an independent text-only way to finish multiline entry: put /send alone on
+the last line and press Enter. The sentinel and its separating newline are
+removed from the submitted message; Enter on other lines remains a newline.
+Real PTY regression verifies this fallback and retains Ctrl+X s. It is
+NOT evidence that physical macOS Chinese IME candidate selection has passed.
+
 AUTOMATED_PASS means the stated executable assertions actually ran on this Mac.
 PARTIAL means only part of the criterion is covered; MANUAL_PENDING means the
 target terminal was not available; PENDING is a functional gap;
