@@ -10,6 +10,8 @@
 
 ## 从候选到公开 Release
 
+**PR 架构审查规则**：所有 PR 都需要恰好一份本轮变更的 `docs/governance/submissions/*.json` 清单，内容覆盖公共基线到 PR HEAD 的所有路径（包括清单自身），涉及实际控制代码的组件填写 G1–G4；使用 `scripts/check_architecture_submission.py --base <base> --head <head>` 验证，再等待 GitHub A.5 Architecture Review 通过。不得禁用或绕过此门禁。
+
 1. 检查 `git ls-remote lfl 'refs/heads/main' 'refs/tags/v*'`、`gh release list -R deyi2026/llm-first-loop` 与 PR/工作树无漂移。确认版本 `vX.Y.Z` 尚不存在，包/README/Web/锁文件/CHANGELOG 均一致。
 2. 完成正式独立审核及完整原版 `bash scripts/ci_gate.sh`，对准确候选做安全扫描、发布/Push 审查；只合并指定 PR 的批准集合到 GitHub `main`，复核 Actions CI 全绿。仅在合入后打指向**公共 main 精确提交**的 `vX.Y.Z` tag，并用 `git push lfl vX.Y.Z` 发起 Release 工作流（不是 `origin`）。
 3. `.github/workflows/release.yml` 是唯一自动 Release 写者：`v*` tag 推送 → 校验 tag 与 `pyproject.toml`、冻结环境 Ruff/Pyright/pytest 门禁 → 构建 Web UI、wheel、sdist → 真实安装/卸载验收 → 生成包含所有成品摘要的 `SHA256SUMS` → 生成同 tag **Draft Release**。Draft 不会出现在 `releases/latest`，也不是安装器的合法来源。

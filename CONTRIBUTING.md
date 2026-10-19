@@ -92,6 +92,8 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 版本单一真值是 `pyproject.toml`；完整维护者操作步骤见 [`docs/releasing.md`](docs/releasing.md)。
 
+PR 的每次新提交还需在 `docs/governance/submissions/` 提交恰好一份 A.5 架构清单，覆盖 PR 的 base...head **所有**变更路径并如实声明 G1–G4 控制组件；执行 `python scripts/check_architecture_submission.py --base <public-main-sha> --head <candidate-sha>`，不可通过关闭该门禁绕过。
+
 1. 在**正式仓** `deyi2026/llm-first-loop`（本机 remote `lfl`，不是 legacy `origin`）基于 GitHub `main` 建受审隔离分支；开 PR，保留范围明确的 diff，检查 `CI` 的 pytest/Ruff/Pyright、安全扫描与平台安装验收；不得夹带本地开发 `main` 尚未公开的祖先提交。
 2. 用户可见变更同步 `CHANGELOG.md`；对外版本统一修改 `pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、中英文 README 及 CHANGELOG，并通过版本一致性测试、独立审查与完整 R9。正式仓 `main` 的合并应从 GitHub 精确已批准的 PR/commit 完成。
 3. 核对远端最新 tag，不覆盖或移动已有 `vX.Y.Z`；仅对已合入 GitHub `main`、通过 CI 的精确提交创建新 tag。推送正式仓 tag 会运行**唯一写者** `.github/workflows/release.yml`，先重复校验 tag↔包版本/静态检查/测试，再构建 wheel、sdist、安装脚本、验收 JSON 与 `SHA256SUMS`，生成与 tag 同名的 **Draft Release**。
