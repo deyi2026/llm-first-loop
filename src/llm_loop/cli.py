@@ -54,7 +54,31 @@ def _parse_preflight(parser: argparse.ArgumentParser, argv: list[str]) -> int | 
 def _preflight_legacy_command(argv: list[str]) -> int | None:
     if not argv or argv[0] not in _LEGACY_COMMANDS:
         return None
-    return _parse_preflight(_legacy_parser(argv[0]), argv[1:])
+    return _parse_preflight(_legacy_parser(argv[0]), _normalize_legacy_arguments(argv[0], argv[1:]))
+
+
+def _normalize_legacy_arguments(command: str, arguments: list[str]) -> list[str]:
+    """Retain dash-leading free text without overriding shared parser contracts.
+
+    Only the four historical commands that join subsequent argv into user
+    text may receive argparse's option terminator. Commands with real option
+    flags keep strict unknown-option and preflight validation.
+    """
+    free_text_after = {
+        "search": 0,
+        "rename": 1,
+        "evolve-complete": 1,
+        "evolve-verify": 1,
+    }.get(command)
+    if free_text_after is None:
+        return arguments
+    for index in range(free_text_after, len(arguments)):
+        token = arguments[index]
+        if token == "--":
+            return arguments
+        if token.startswith("-"):
+            return [*arguments[:index], "--", *arguments[index:]]
+    return arguments
 
 
 def _run_single(engine, text: str, session_id: str | None = None) -> int:
@@ -405,7 +429,7 @@ def _dispatch_command(argv: list[str], *, workspace_root: str | None = None) -> 
     def _dispatch() -> int:
         try:
             parser = _legacy_parser(cmd)
-            parsed = parser.parse_args(argv[1:])
+            parsed = parser.parse_args(_normalize_legacy_arguments(cmd, argv[1:]))
         except ValueError as exc:
             # Keep the lower-level dispatcher contract stable for internal callers;
             # application_main normally rejects this before engine construction.

@@ -1051,6 +1051,37 @@ def test_legacy_search_keeps_unquoted_multiword_query(query_env, monkeypatch, ar
 
 
 @pytest.mark.parametrize("argv", [
+    ["search", "--draft"],
+    ["sessions", "search", "--draft"],
+    ["search", "--json", "--draft"],
+    ["sessions", "search", "method", "--draft", "system"],
+])
+def test_legacy_search_keeps_dash_leading_terms_as_query_text(query_env, monkeypatch, argv):
+    from llm_loop.terminal import queries
+
+    observed = {}
+    monkeypatch.setattr(
+        queries, "session_rows",
+        lambda *_args, **kwargs: (observed.setdefault("query", kwargs["query"]) and []),
+    )
+    assert cli.main(argv) == 0
+    expected = "--draft" if argv[-1] == "--draft" else "method --draft system"
+    assert observed["query"] == expected
+
+
+@pytest.mark.parametrize(("command", "arguments", "field", "expected"), [
+    ("search", ["--draft"], "query", ["--draft"]),
+    ("rename", ["session-id", "--new", "title"], "new_title", ["--new", "title"]),
+    ("evolve-complete", ["suggestion-id", "--failed"], "result", ["--failed"]),
+    ("evolve-verify", ["suggestion-id", "--not-yet"], "note", ["--not-yet"]),
+])
+def test_legacy_free_text_contract_accepts_dash_leading_values(command, arguments, field, expected):
+    normalized = cli._normalize_legacy_arguments(command, arguments)
+    parsed = cli._legacy_parser(command).parse_args(normalized)
+    assert getattr(parsed, field) == expected
+
+
+@pytest.mark.parametrize("argv", [
     ["sessions", "list", "unexpected"],
     ["sessions", "show", "one", "two"],
     ["sessions", "export", "one"],

@@ -309,6 +309,17 @@ def dispatch_query(argv: list[str], options: Any = None) -> int | None:
         cmd, rest = "sessions", ["list", *rest]
     elif cmd == "search":
         cmd, rest = "sessions", ["search", *rest]
+    if cmd == "sessions" and rest[:1] == ["search"]:
+        # The old `search` command treated all remaining words as query text.
+        # Preserve dash-leading terms while still recognizing supported flags
+        # such as --json/--archived that appear before the free-text tail.
+        known_flags = {"--json", "--archived", "--help", "-h"}
+        for index, token in enumerate(rest[1:], start=1):
+            if token == "--":
+                break
+            if token.startswith("-") and token not in known_flags:
+                rest = [*rest[:index], "--", *rest[index:]]
+                break
     if cmd == "sessions":
         parser.add_argument("action", choices=("list", "show", "search", "export"))
         # `search` historically accepted unquoted multi-word terms. Keep that
