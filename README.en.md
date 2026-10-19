@@ -160,3 +160,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) (project philosophy / gates / PR process)
 - AI autonomy rules (single source of truth for rules): `docs/ai_rules.md`
 - Open-source framework-ization roadmap: `docs/ROADMAP-B-20260814.md`
 - Development-process specs (spec/design/tasks) are local CodeArts workflow documents and are not distributed with the open-source repo.
+
+See the [CLI reference](docs/cli.md) for input modes, script output, keyboard controls and display preferences.

@@ -471,20 +471,13 @@ def serve(
         out.flush()
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="llm_loop export-serve-mcp",
-        description="LFL 只读导出 MCP server（stdio）：经验/方法/能力目录，证据面 opt-in",
-    )
-    parser.add_argument("--experiences-dir", default=None, help="覆盖经验库目录（缺省读 Settings）")
-    parser.add_argument("--methods-dir", default=None, help="覆盖方法库目录")
-    parser.add_argument("--method-seed-dir", default=None, help="覆盖方法 seed 目录")
-    parser.add_argument("--evidence-root", default=None, help="覆盖证据 ledger 根目录")
-    parser.add_argument(
-        "--evidence-owner",
-        default=None,
-        help="workspace_id/session_id；缺省读 LFL_EXPORT_EVIDENCE_OWNER",
-    )
+def main(argv: list[str] | None = None, *, parser: argparse.ArgumentParser | None = None) -> int:
+    if parser is None:
+        # Keep the direct `python -m` entry point on the same argument contract
+        # as the installed `lfl export-serve-mcp` command.
+        from llm_loop.cli_contracts import build_legacy_parser
+
+        parser = build_legacy_parser("export-serve-mcp")
     args = parser.parse_args(argv)
     bundle = create_bundle(
         experiences_dir=args.experiences_dir,
