@@ -1,16 +1,15 @@
 # LFL 安装与升级
 
-此文描述安装分发 MVP。只有包含本变更并通过成品验收的 Release 才提供下述成品；
-已有源码安装继续使用原入口。当前不承诺桌面安装器、自动更新、包仓库上架或 Windows 运行支持。
+此文描述 Linux 用户级稳定发行及源码/uv wheel 安装。可下载的稳定版本以 GitHub 已公开发布且包含 wheel 和 `SHA256SUMS` 的 Release 为准；Draft/Prerelease 不可安装。已有源码安装继续使用原入口。当前不承诺桌面安装器、自动更新、包仓库上架或 Windows 运行支持。
 
-## Linux 用户级安装器（候选验收）
+## Linux 用户级安装器（稳定发行）
 
 Linux 安装器采用用户级安装，不要求 `sudo`，不创建 systemd 服务，也不改写 shell 启动文件。
-当前实现目标是 glibc Linux（例如 Ubuntu/Debian）x86-64 与 ARM64；Alpine/musl 和其他架构
+Ubuntu `x86_64/glibc` 已通过 GitHub Actions 原生安装/回滚/卸载验收；ARM64 为安装脚本支持目标，尚未通过独立的原生 runner 验收。Alpine/musl 和其他架构
 会在写入前拒绝。安装脚本需要系统提供 `curl`、`python3`、`getconf` 和 `sha256sum`；不要求预装
 Python 3.13 或 `uv`，缺少 `uv` 时会从官方发布下载并核验其 SHA-256，再由 `uv` 准备 Python 3.13。
 
-**正式发布稳定 Release 后**，普通用户下载并运行安装脚本：
+**只从已公开的稳定 Release 安装**。普通用户下载并运行安装脚本（脚本自动选择 GitHub 最新稳定版本）：
 
 ~~~bash
 curl -fsSL https://raw.githubusercontent.com/deyi2026/llm-first-loop/main/scripts/install_linux.sh -o lfl-install.sh
@@ -41,8 +40,7 @@ bash lfl-uninstall.sh
 
 如果 `~/.local/bin` 不在 `PATH` 中，安装器会提示该目录；不会擅自编辑 `.bashrc` 或 `.profile`。
 卸载只删除由安装器管理的应用版本和启动入口，不删除 `.env`、`data/`、Methods、Experiences
-或 `uv` 引导工具。安装脚本/事务契约测试通过不等于正式支持已完成；Linux 原生干净环境的首次安装、
-升级、失败恢复与卸载验收通过前，不应把该候选宣称为已正式支持的 Linux 发行包。
+或 `uv` 引导工具。真实 Ubuntu x86-64 的完整安装和回滚验收已在 [GitHub Actions](https://github.com/deyi2026/llm-first-loop/actions) 完成；对 ARM64 不声称已有等价原生验证。详见 [GitHub 版本与发布流程](releasing.md)。
 
 ## 使用 wheel
 
@@ -143,6 +141,6 @@ editable 开发安装保留源码布局，不要求预先构建界面。
 成品脚本创建不共享 site-packages 的临时虚拟环境、安装声明依赖，从非 Git 目录验证入口、
 资源清单、存储目录和真实 Web health/UI/静态资源。测试禁用 Learning 与 Reflection，
 仅使用虚构凭证，Python 网络探针拒绝 Provider 与外部连接；测试只停止自己启动的 Web 进程。
-Release 工作流完成这些步骤后，向原有待人工确认的 Release 草稿附加成品、验收报告和校验和。
+Release 工作流在 `vX.Y.Z` tag 的门禁通过后创建同 tag 的 Draft 并附加 wheel、sdist、Linux 脚本、真实安装验收报告和 SHA256SUMS；维护者核对全部成品后才将 Draft 发布为稳定 Release。发布前的 Draft 不可作为普通用户的安装源。
 
 交互式首次使用向导、自动升级恢复、桌面安装器、OCI 和生态目录仍为后续执行单元。

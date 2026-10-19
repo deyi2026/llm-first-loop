@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.32 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.33 ｜ **Python**: >= 3.13 ｜ **Status**: Open-source framework-ization (Track B) in progress ｜ **中文版**: [README.md](README.md)
 
 The LLM is the core, and every action revolves around it. Architecture core = **message in → understand → act → answer honestly → remember**.
 
@@ -24,6 +24,18 @@ Program code assists the LLM (timely feedback, honest feedback), never constrain
 - **Documentation rules = judgment discipline**: `docs/ai_rules.md` is the maintenance/evolution rule SoT; the ordinary system prompt keeps only a minimal static responsibility root. Task/tool-specific behavior is supplied at the decision point by the user request, tool schema, or an on-demand skill.
 - **Architecture = serving the AI's execution capability**: program minimalism (what the AI can do autonomously + via rules needs no program), programs are convenience and complement rather than constraint, avoiding program errors affecting the LLM.
 - **Hard constraints are not handed over**: the C1-C6 protocol (tool_call_id binding, etc.) / FR-SAFE-01 catastrophic safety / data integrity remain hard-executed by the program (the AI cannot do them itself); only decision-type judgments are handed over to AI + rules.
+
+## Linux User-Level Installer (glibc)
+
+Download the [latest published stable release](https://github.com/deyi2026/llm-first-loop/releases/latest) or fetch the installer below. Installation does not require `sudo`. Real Ubuntu x86-64 CI has validated first install, upgrades, failure recovery, offline rollback and data-preserving uninstall.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/deyi2026/llm-first-loop/main/scripts/install_linux.sh -o lfl-install.sh
+bash lfl-install.sh
+lfl doctor
+```
+
+Configure your model provider before running `lfl start`. Re-run the script to upgrade; use `bash lfl-install.sh --rollback` to restore a retained version after stopping running LFL processes. See the [installation guide](docs/installation.md) and [GitHub release policy](docs/releasing.md). musl/Alpine is unsupported; ARM64 needs independent native-CI validation. Draft releases are not installable stable releases.
 
 ## Quick Start
 
@@ -74,7 +86,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **Human approval flow** (T5a): EXEC_MODE-blocked items can be released via terminal confirmation in CLI interactive mode (`_cli_approval_prompt`; without a terminal, fail-closed rejection); approval audits persist to `data/audit/approval_audit.jsonl` (decision/tool/argument summary, no secrets); catastrophic-safety hard blocks cannot be approved
 - **symlink write protection** (T5b): edit_file refuses writes when the write path contains a symlink (itself or a parent directory) to prevent escaping (fail-closed + realpath guidance); read_file honestly labels reads of symlinks without refusing them
 - **Evaluation suite** (T4): a fixed evaluation set `tests/eval_sets/scenarios_v1.json` (currently 7 scenarios with 6 samples each; this file is authoritative for counts; verdict criteria derived from an internal empirical baseline) + a runner `scripts/run_eval.py` (real LLM / `--dry` pipeline validation; verdict + Wilson CI + reports persisted to `docs/metrics/`) + automatic CI nightly runs
-- **CI + versioning** (T7/B11): GitHub Actions three-gate checks (pytest/ruff/pyright) + nightly real evaluation; current semantic version v0.6.32 (authoritative version in `pyproject.toml`); tag-triggered gate re-check + single-writer Release draft + GitHub-generated release notes (institutionalized release cadence)
+- **CI + versioning** (T7/B11): GitHub Actions three-gate checks (pytest/ruff/pyright) + nightly real evaluation; current semantic version v0.6.33 (authoritative version in `pyproject.toml`); tag-triggered gate re-check + single-writer Release draft + GitHub-generated release notes (institutionalized release cadence)
 - **Plugin-style Skills** (B3): automatic directory scan of `skills/<name>/SKILL.md` (`SKILLS_DIR`, default ./skills); the AI discovers and loads external skills via `skill_list`/`skill_load` and executes them — external developers extend framework capabilities with zero code; corrupted/missing files fail-open and are skipped; the repo ships example skills (`skills/`: notebook-session/incident-report) discoverable directly via `skill_list`
 - **web_fetch SSRF intranet blocking** (HARNESS-03 + P0-2/P0-3 deepening): `WEB_FETCH_BLOCK_PRIVATE` (on by default) blocks private/loopback/link-local/reserved address ranges (dual path: IP literals + DNS resolution) against cloud-metadata and other intranet probing; on a hit it returns BLOCKED `[内网拦截]`; **per-hop redirect validation** (both httpx and curl disable automatic following; a manual loop with a cap of 5 hops re-validates every hop — a public URL that 302-redirects to the intranet no longer leaks); **DNS-rebinding narrowing** (curl `--resolve` pins the validated IP for pre-connect pinning; httpx re-checks the actual peer IP after connecting and drops on a hit — honestly labeled: on the httpx channel the GET has already been sent; to prevent data readback, stronger isolation uses the curl pinning channel)
 - **Context budget warning** (HARNESS-04): when context usage reaches ≥80% of the budget, a one-time `[预算预警]` is injected (with usage % and char count); "compress/wrap up" decisions belong to the AI — the program never auto-compresses

@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.32 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.6.33 ｜ **Python**: ≥ 3.13 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 大模型是核心，所有动作围绕大模型展开。架构核心 = **消息进 → 理解 → 行动 → 真诚回答 → 记住**。
 
@@ -24,6 +24,18 @@
 - **文档规则 = 判断纪律**：`docs/ai_rules.md` 为维护/演进规则 SoT；普通 user run 的 system prompt 只保留最小身份/职责边界，具体工具/任务行为在实际决策点通过 user request、tool schema 或按需 skill 获得。
 - **架构 = 服务于 AI 执行力发挥**：程序最小化（能 AI 自主 + 规则完成的不用程序），程序是便利与补充非约束，避免程序错误影响大模型。
 - **硬约束不移交**：C1-C6 协议（tool_call_id 绑定等）/ FR-SAFE-01 灾难性安全 / 数据完整性仍由程序硬执行（AI 无法自完成），仅决策类判断移交 AI + 规则。
+
+## Linux 用户级安装（glibc）
+
+可从 [最新稳定 GitHub Release](https://github.com/deyi2026/llm-first-loop/releases/latest) 获取 wheel、安装脚本和 `SHA256SUMS`，或下载仓库安装脚本。无需管理员权限；已在真实 Ubuntu x86-64 上完成首次安装、升级、失败保护、回滚和卸载保留数据验收。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/deyi2026/llm-first-loop/main/scripts/install_linux.sh -o lfl-install.sh
+bash lfl-install.sh
+lfl doctor
+```
+
+配置自己的模型服务后可运行 `lfl start`。升级重跑安装脚本，离线回滚执行 `bash lfl-install.sh --rollback`；请先停止正在使用该应用版本的进程。详见 [安装与升级说明](docs/installation.md) 与 [GitHub 版本与发布流程](docs/releasing.md)。Alpine/musl 不支持；ARM64 尚未通过单独的原生 CI 验收。**尚未公开的 Draft 不是可安装的稳定 Release。**
 
 ## 快速开始
 
@@ -118,7 +130,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **人工审批流**（T5a）：EXEC_MODE 拦截项在 CLI 交互模式可经终端确认放行（`_cli_approval_prompt`，无终端 fail-closed 拒绝）；审批审计落盘 `data/audit/approval_audit.jsonl`（decision/tool/参数摘要，不含密钥）；灾难性安全硬阻断不可审批
 - **symlink 写防护**（T5b）：edit_file 写路径含符号链接（自身/父目录）拒绝写入防越界（fail-closed + realpath 引导）；read_file 读 symlink 如实标注不拒绝
 - **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（当前 7 场景、每场景 6 样本；数量以该文件为准，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
-- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；当前语义化版本 v0.6.32（版本真值见 `pyproject.toml`）；tag 触发门禁复核 + 单写者 Release 草稿 + GitHub 自动生成发布说明（发布节奏制度化）
+- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；当前语义化版本 v0.6.33（版本真值见 `pyproject.toml`）；tag 触发门禁复核 + 单写者 Release 草稿 + GitHub 自动生成发布说明（发布节奏制度化）
 - **插件化 Skill**（B3）：`skills/<name>/SKILL.md` 目录自动扫描（`SKILLS_DIR`，默认 ./skills），AI 经 `skill_list`/`skill_load` 发现并加载外部技能执行——外部开发者零代码扩展框架能力；损坏/缺失文件 fail-open 跳过；仓库自带示例技能（`skills/`：notebook-session/incident-report）可直接 `skill_list` 发现体验
 - **Method Learning v1**：`search_records(kind=method)` 渐进发现/精确水合，支持 Teacher/Candidate/qualified/active/hold 等生命周期与独立 qualification；运行时 candidate 默认写 `data/methods/`，不自动注入 prompt。`METHOD_REFLECTION_MODE` 默认 `auto`——run 完成后按机械 friction（≥6 轮 / ≥6 工具 / ≥2 失败 / 重复调用 ≥2 / 停滞）触发一次隔离 self-distill，每次入队至多产生 1 次后台模型调用；`off` 显式关闭（非法值 fail-safe 回 off）。
 - **Learning Plane 装配**（DESIGN-20260910 §6）：`LEARNING_PLANE_ENABLED=1` 时 `engine.learning_journal` 注入（工厂/直接构造两路径反查断链=0），episode 完成后 LearningJournal 落 durable 队列，LearningPlane 后台消费执行 ReflectionRun（前台运行让位：进程内注册表 + 跨进程 `*.run.lock` 探测，requeue 不忙等），candidate 经 MethodStore 写入并带运行时推导 provenance（真实 episode ref + learning job ref）；**默认开启**（2026-09-17 起学习闭环为一等能力；`LEARNING_PLANE_ENABLED=0` 显式关闭，置空同 0——空 journal 时仅空闲守护线程、零模型调用）；method qualification 的 verdict（pass/fail/mixed/insufficient）判定权在模型——程序只证 episode 身份与 provenance（qualification episode ≠ source episode 防自证），旧 verdict ≠ 当前源真相，适用性由模型按当前任务自主判断
