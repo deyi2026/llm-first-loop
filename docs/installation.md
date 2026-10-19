@@ -3,6 +3,47 @@
 此文描述安装分发 MVP。只有包含本变更并通过成品验收的 Release 才提供下述成品；
 已有源码安装继续使用原入口。当前不承诺桌面安装器、自动更新、包仓库上架或 Windows 运行支持。
 
+## Linux 用户级安装器（候选验收）
+
+Linux 安装器采用用户级安装，不要求 `sudo`，不创建 systemd 服务，也不改写 shell 启动文件。
+当前实现目标是 glibc Linux（例如 Ubuntu/Debian）x86-64 与 ARM64；Alpine/musl 和其他架构
+会在写入前拒绝。安装脚本需要系统提供 `curl`、`python3`、`getconf` 和 `sha256sum`；不要求预装
+Python 3.13 或 `uv`，缺少 `uv` 时会从官方发布下载并核验其 SHA-256，再由 `uv` 准备 Python 3.13。
+
+**正式发布稳定 Release 后**，普通用户下载并运行安装脚本：
+
+~~~bash
+curl -fsSL https://raw.githubusercontent.com/deyi2026/llm-first-loop/main/scripts/install_linux.sh -o lfl-install.sh
+bash lfl-install.sh
+lfl doctor
+lfl start
+~~~
+
+脚本只安装已发布的稳定 Release（不安装 GitHub Draft/Prerelease），并核验 Release 的 `SHA256SUMS`
+和 wheel 摘要。摘要验证检查下载完整性，**不等于发布者数字签名或独立来源认证**。在仓库还没有
+公开稳定 Release 时，脚本会安全拒绝且不切换活动版本；本地候选使用 `--candidate FILE
+--expected-sha256 SHA256`，仅供维护者隔离验收，不是普通用户安装方式。
+
+应用版本分别保存在 `$LFL_HOME/releases/`，默认 `$XDG_DATA_HOME/lfl/releases/` 或
+`~/.local/share/lfl/releases/`；配置和用户数据在这些版本目录之外。重复运行脚本会复用相同
+版本，不会覆盖现有数据。升级会保留旧版本并原子切换活动版本；升级、回滚和卸载前应先退出
+正在运行的 LFL 服务/命令。安装器会拒绝已识别的托管版本或旧 `uv tool` 进程仍在运行的切换。
+
+~~~bash
+# 更新到最新已发布稳定版本（使用先前下载的脚本）
+bash lfl-install.sh
+# 离线回滚到保留的前一版本
+bash lfl-install.sh --rollback
+# 卸载应用文件；交互时需要输入 yes，配置与用户数据保留
+curl -fsSL https://raw.githubusercontent.com/deyi2026/llm-first-loop/main/scripts/uninstall_linux.sh -o lfl-uninstall.sh
+bash lfl-uninstall.sh
+~~~
+
+如果 `~/.local/bin` 不在 `PATH` 中，安装器会提示该目录；不会擅自编辑 `.bashrc` 或 `.profile`。
+卸载只删除由安装器管理的应用版本和启动入口，不删除 `.env`、`data/`、Methods、Experiences
+或 `uv` 引导工具。安装脚本/事务契约测试通过不等于正式支持已完成；Linux 原生干净环境的首次安装、
+升级、失败恢复与卸载验收通过前，不应把该候选宣称为已正式支持的 Linux 发行包。
+
 ## 使用 wheel
 
 安装 uv 后，下载目标 Release 的 wheel 与 SHA256SUMS，核对文件摘要。

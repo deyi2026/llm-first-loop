@@ -65,8 +65,12 @@ jobs:
         run: npm ci --ignore-scripts && npm run build
       - name: 构建 wheel 与 sdist
         run: uv build
+      - name: 将 Linux 用户级安装/卸载脚本纳入发行工件
+        run: cp scripts/install_linux.sh scripts/uninstall_linux.sh dist/
       - name: 独立安装与本地 Web 验收（禁止模型调用）
         run: python scripts/verify_install_distribution.py --wheel dist/*.whl --report dist/installation-smoke.json
+      - name: Linux 安装器真实 wheel 安装冒烟（隔离 HOME，不触碰用户数据）
+        run: python scripts/verify_linux_installer.py --wheel dist/*.whl --report dist/linux-installer-smoke.json
       - name: 分发成品校验和
         run: sha256sum dist/* > SHA256SUMS && mv SHA256SUMS dist/
       - name: 生成 Release（草稿, 人工确认发布）
