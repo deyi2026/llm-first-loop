@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-19243ce4efa6",
+  "parent_ref": "gate-reuse-by-input-stability-not-receipt-archaeology-52cc715fc1ec",
+  "parent_sha256": "bcd8d2de2bc82ac1a90453e69dded6d6b47d775f6c9ac0b902f82666ac839c41",
+  "candidate_sha256": "9867fd06c12b8bc722f0c67940d2ded14ebc9db5855be9520257a6ada2666a48",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "1 条验证条目未被任何 Stop condition 引用：回退噪声前后各一次 git status：确认仅时间戳类噪声…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:18:05.370683+00:00"
+}

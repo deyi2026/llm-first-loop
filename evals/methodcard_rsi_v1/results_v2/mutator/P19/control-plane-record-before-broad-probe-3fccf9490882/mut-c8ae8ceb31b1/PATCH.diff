@@ -1,0 +1,11 @@
+--- a/METHOD.md
++++ b/METHOD.md
+@@ -28,6 +28,8 @@
+ - 定向探测命中的 pid/端口与回执一致
+ - 确认等待卡点是自己所在会话（活动 run）后，立即结束而不再产生任何新调用
+ 
++- Verification 未逐条通过前不结案（覆盖全部 3 条验证条目）
++
+ ## Verification
+ - 状态文件 status、回执 git_head/pid、部署记录 generation 三者相互一致
+ - 定向 ps/lsof 结果与回执 pid/port 一一对应

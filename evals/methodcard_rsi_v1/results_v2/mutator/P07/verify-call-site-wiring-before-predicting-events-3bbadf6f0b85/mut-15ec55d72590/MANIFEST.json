@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-15ec55d72590",
+  "parent_ref": "verify-call-site-wiring-before-predicting-events-3bbadf6f0b85",
+  "parent_sha256": "74c902e06cab1d732a66433a99a1de51441c78e5e3097d812ec28fcbffd15a5d",
+  "candidate_sha256": "852a70d2dde1cbcd3ceb95ca79c9ea1ca9ea4c9d1c66fae0caf141f1d033a761",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "3 条验证条目未被任何 Stop condition 引用：引用搜索命中清单，证明 src 下除定义模块与单测外零引用（…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:51:40.157342+00:00"
+}

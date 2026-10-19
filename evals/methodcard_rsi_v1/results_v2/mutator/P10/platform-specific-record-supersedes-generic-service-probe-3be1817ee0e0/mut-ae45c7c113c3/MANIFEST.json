@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-ae45c7c113c3",
+  "parent_ref": "platform-specific-record-supersedes-generic-service-probe-3be1817ee0e0",
+  "parent_sha256": "db98c01cebf1fb11447d7db3437fad013ee35b3b681370e307c65ad034d307b8",
+  "candidate_sha256": "063e1645f0d2aa6dff8d957c14216b97067da8713482df19986e4366625be3a7",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "2 条验证条目未被任何 Stop condition 引用：最终结论只引用平台正确命令的输出；任何平台不匹配命令的空结果…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:18:05.547789+00:00"
+}

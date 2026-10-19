@@ -1,0 +1,16 @@
+# 变异理由 — rule-sot-first-audit-when-user-cites-paraphrased-rule-700081268716
+
+mutator 0.1.0；检出缺陷 1 项，采纳算子 1 条。
+
+## 逐条
+
+### unlinked_verification @ Stop conditions
+
+- 缺陷：2 条验证条目未被任何 Stop condition 引用：核对定位到的规则原文措辞确与用户转述不同（解释首轮未命中，确…
+- 编辑：`append_bullet`
+- 理由：验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。
+
+## 未采纳
+
+- 变异器只做结构修复，不生成新的事实断言、不引入新证据、不改 frontmatter。
+- 需要语义改写时由人工或 LLM 变异器另开一轮，产物同样须过预注册评估。

@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-11341b5e4bdf",
+  "parent_ref": "claim-audit-resolve-embedded-record-pointers-directly-e1cbfa1977d0",
+  "parent_sha256": "1854e76be9e7ab4ca4c899d66ff6451acfcd5cac609335b4e5c4825dbc62a95b",
+  "candidate_sha256": "6dd0eefa2aacddd8a1724c17367558503772ae36016fa9d5a7ad3aa70c6b1e03",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "2 条验证条目未被任何 Stop condition 引用：结论表中每个 ✓ 都引用实际读到的记录（文件+表格/行），而…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:51:40.196080+00:00"
+}

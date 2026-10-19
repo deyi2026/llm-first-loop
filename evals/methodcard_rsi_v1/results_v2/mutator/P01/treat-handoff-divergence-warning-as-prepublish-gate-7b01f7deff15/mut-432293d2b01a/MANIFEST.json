@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-432293d2b01a",
+  "parent_ref": "treat-handoff-divergence-warning-as-prepublish-gate-7b01f7deff15",
+  "parent_sha256": "7736e8144568585f65b6674d2fde9ba79db6e25f237dac363e8e772558104dde",
+  "candidate_sha256": "24442e9cd0c477fad7e822ddbee144e4d9be84e353ec723c48fec587b131b018",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "1 条验证条目未被任何 Stop condition 引用：发布后：主线推进为纯快进、远端无分叉、部署回执与目标 SHA…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:51:40.118965+00:00"
+}

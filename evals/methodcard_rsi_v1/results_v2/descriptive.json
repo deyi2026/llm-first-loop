@@ -1,0 +1,137 @@
+{
+  "pairs": {
+    "P01": {
+      "orig": {
+        "checks": "11/13",
+        "rate": 0.846,
+        "q": "2/4"
+      },
+      "mutator": {
+        "checks": "10/13",
+        "rate": 0.769,
+        "q": "1/4"
+      },
+      "human_equivalent": {
+        "checks": "10/13",
+        "rate": 0.769,
+        "q": "1/4"
+      },
+      "dA_minus_B": 0.0,
+      "dA_minus_orig": -0.077,
+      "dB_minus_orig": -0.077
+    },
+    "P07": {
+      "orig": {
+        "checks": "11/11",
+        "rate": 1.0,
+        "q": "4/4"
+      },
+      "mutator": {
+        "checks": "11/11",
+        "rate": 1.0,
+        "q": "4/4"
+      },
+      "human_equivalent": {
+        "checks": "11/11",
+        "rate": 1.0,
+        "q": "4/4"
+      },
+      "dA_minus_B": 0.0,
+      "dA_minus_orig": 0.0,
+      "dB_minus_orig": 0.0
+    },
+    "P08": {
+      "orig": {
+        "checks": "11/11",
+        "rate": 1.0,
+        "q": "4/4"
+      }
+    },
+    "P13": {
+      "orig": {
+        "checks": "9/9",
+        "rate": 1.0,
+        "q": "4/4"
+      },
+      "mutator": {
+        "checks": "9/9",
+        "rate": 1.0,
+        "q": "4/4"
+      },
+      "human_equivalent": {
+        "checks": "9/9",
+        "rate": 1.0,
+        "q": "4/4"
+      },
+      "dA_minus_B": 0.0,
+      "dA_minus_orig": 0.0,
+      "dB_minus_orig": 0.0
+    },
+    "P14": {
+      "orig": {
+        "checks": "9/9",
+        "rate": 1.0,
+        "q": "4/4"
+      }
+    },
+    "P19": {
+      "orig": {
+        "checks": "9/10",
+        "rate": 0.9,
+        "q": "3/4"
+      },
+      "mutator": {
+        "checks": "9/10",
+        "rate": 0.9,
+        "q": "3/4"
+      },
+      "human_equivalent": {
+        "checks": "9/10",
+        "rate": 0.9,
+        "q": "3/4"
+      },
+      "dA_minus_B": 0.0,
+      "dA_minus_orig": 0.0,
+      "dB_minus_orig": 0.0
+    },
+    "P20": {
+      "orig": {
+        "checks": "9/10",
+        "rate": 0.9,
+        "q": "3/4"
+      }
+    }
+  },
+  "summary": {
+    "n_pairs_AB": 4,
+    "dA_minus_B": {
+      "mean": 0.0,
+      "ci95": [
+        0.0,
+        0.0
+      ]
+    },
+    "dA_minus_orig": {
+      "mean": -0.019,
+      "ci95": [
+        -0.057,
+        0.018
+      ]
+    },
+    "dB_minus_orig": {
+      "mean": -0.019,
+      "ci95": [
+        -0.057,
+        0.018
+      ]
+    }
+  },
+  "protocol": {
+    "rewrites_ok": 10,
+    "rewrites_no_change": 0,
+    "arm_a_violations": 7,
+    "arm_a_pairs_with_violation": 6,
+    "frontmatter_changed": 0,
+    "chars_orig_vs_A": null
+  }
+}

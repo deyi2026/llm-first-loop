@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-6525400a3068",
+  "parent_ref": "lost-handle-regenerate-forward-3a6d0088a08d",
+  "parent_sha256": "95462d0d7a2a786230d8e6c6f6d4901089ef235b550dc4493b58e3a1e13e3c93",
+  "candidate_sha256": "70a7b0ee9c58b0b968f0f22ce19d49d59ad91dbea7269e87fc28ccd7afbfda48",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "1 条验证条目未被任何 Stop condition 引用：最终结论必须取自持久化捕获（文件/回执），而不是会被行数上限…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:18:05.618270+00:00"
+}

@@ -1,0 +1,11 @@
+--- a/METHOD.md
++++ b/METHOD.md
+@@ -27,6 +27,8 @@
+ - 效果已由独立重感知的语义锚确认（receipt.status=ok 不构成停止条件）
+ - 回执 complete=true 或目标记录已完整读出，立即停止继续翻页/继续确认
+ 
++- Verification 未逐条通过前不结案（覆盖全部 3 条验证条目）
++
+ ## Verification
+ - 采用的 ref 所属 observed_version 与当前快照版本一致，跨版本、跨 mutation 不复用旧 ref
+ - 跳读偏移命中的记录，其锚属性与 search_evidence 命中的锚一致，防止对象顺序不稳定时错读

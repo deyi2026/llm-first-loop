@@ -1,0 +1,1024 @@
+{
+  "P01": {
+    "human_equivalent": {
+      "grade": {
+        "per_case": {
+          "H01": {
+            "artifact": {
+              "evidence_refs": [
+                "cache_manager.py:3",
+                "cache_manager.py:4",
+                "cache_manager.py:6",
+                "settings.py:2",
+                "ui_pinned.py:1"
+              ],
+              "keyword_families_used": 3,
+              "verdict": "not_effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='not_effective' want='not_effective'"
+              },
+              {
+                "check": "c2",
+                "kind": "lte",
+                "pass": false,
+                "detail": "keyword_families_used=3 <= 2"
+              },
+              {
+                "check": "c3",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c4",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": false
+          },
+          "H02": {
+            "artifact": {
+              "evidence_refs": [
+                "test_rate_limiter.py:1",
+                "test_rate_limiter.py:3",
+                "server.py:1",
+                "server.py:4"
+              ],
+              "keyword_families_used": 3,
+              "verdict": "not_effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='not_effective' want='not_effective'"
+              },
+              {
+                "check": "c2",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c3",
+                "kind": "lte",
+                "pass": false,
+                "detail": "keyword_families_used=3 <= 2"
+              }
+            ],
+            "pass": false
+          },
+          "H03": {
+            "artifact": {
+              "evidence_refs": [
+                "buffer.py:2",
+                "server.py:1",
+                "server.py:2",
+                "server.py:5"
+              ],
+              "keyword_families_used": 3,
+              "verdict": "effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='effective' want='effective'"
+              },
+              {
+                "check": "c2",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          },
+          "H04": {
+            "artifact": {
+              "evidence_refs": [
+                "quota.py:2",
+                "quota.py:3",
+                "quota.py:4",
+                "docs/quota.md:1"
+              ],
+              "keyword_families_used": 3,
+              "verdict": "effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": false,
+                "detail": "verdict='effective' want='unknown'"
+              },
+              {
+                "check": "c2",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": false
+          }
+        },
+        "checks_pass": 10,
+        "checks_total": 13,
+        "q_pass": 1,
+        "q_total": 4
+      },
+      "tokens": 7853,
+      "parse_error": null,
+      "latency_s": 95.4
+    },
+    "mutator": {
+      "grade": {
+        "per_case": {
+          "H01": {
+            "artifact": {
+              "evidence_refs": [
+                "cache_manager.py:3",
+                "cache_manager.py:6",
+                "settings.py:2",
+                "ui_pinned.py:1"
+              ],
+              "keyword_families_used": 4,
+              "verdict": "not_effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='not_effective' want='not_effective'"
+              },
+              {
+                "check": "c2",
+                "kind": "lte",
+                "pass": false,
+                "detail": "keyword_families_used=4 <= 2"
+              },
+              {
+                "check": "c3",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c4",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": false
+          },
+          "H02": {
+            "artifact": {
+              "evidence_refs": [
+                "rate_limiter.py:2",
+                "test_rate_limiter.py:1",
+                "server.py:1",
+                "server.py:4"
+              ],
+              "keyword_families_used": 3,
+              "verdict": "not_effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='not_effective' want='not_effective'"
+              },
+              {
+                "check": "c2",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c3",
+                "kind": "lte",
+                "pass": false,
+                "detail": "keyword_families_used=3 <= 2"
+              }
+            ],
+            "pass": false
+          },
+          "H03": {
+            "artifact": {
+              "evidence_refs": [
+                "buffer.py:2",
+                "server.py:1",
+                "server.py:2",
+                "server.py:5"
+              ],
+              "keyword_families_used": 3,
+              "verdict": "effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='effective' want='effective'"
+              },
+              {
+                "check": "c2",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          },
+          "H04": {
+            "artifact": {
+              "evidence_refs": [
+                "quota.py:2",
+                "quota.py:3",
+                "docs/quota.md:1"
+              ],
+              "keyword_families_used": 2,
+              "verdict": "not_effective"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": false,
+                "detail": "verdict='not_effective' want='unknown'"
+              },
+              {
+                "check": "c2",
+                "kind": "ref_resolves",
+                "pass": true,
+                "detail": "引用可解析"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": false
+          }
+        },
+        "checks_pass": 10,
+        "checks_total": 13,
+        "q_pass": 1,
+        "q_total": 4
+      },
+      "tokens": 4608,
+      "parse_error": null,
+      "latency_s": 173.5
+    }
+  },
+  "P07": {
+    "mutator": {
+      "grade": {
+        "per_case": {
+          "H05": {
+            "artifact": {
+              "decision": "block",
+              "gaps": [
+                "A5",
+                "A6"
+              ],
+              "gate_basis": [
+                "A5 失败：回滚后 generation 未回退",
+                "A6 未执行"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='block' want='block'"
+              },
+              {
+                "check": "c2",
+                "kind": "subset_of",
+                "pass": true,
+                "detail": "gaps=['A5', 'A6'] ⊆ ['A5', 'A6']"
+              },
+              {
+                "check": "c3",
+                "kind": "gte",
+                "pass": true,
+                "detail": "gaps_len=2 >= 2"
+              },
+              {
+                "check": "c4",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          },
+          "H06": {
+            "artifact": {
+              "decision": "block",
+              "gaps": [
+                "A2"
+              ],
+              "gate_basis": [
+                "A2 计划：稍后跑 playwright 冒烟（未执行）"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='block' want='block'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "gaps=['A2'] want=['A2']"
+              }
+            ],
+            "pass": true
+          },
+          "H07": {
+            "artifact": {
+              "decision": "done",
+              "gaps": [],
+              "gate_basis": [
+                "A1 通过：pytest 88 passed（run 2026-10-19T09:12Z）",
+                "A2 通过：playwright 3/3 passed（同 run）"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='done' want='done'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "gaps=[] want=[]"
+              },
+              {
+                "check": "c3",
+                "kind": "gte",
+                "pass": true,
+                "detail": "gate_basis_len=2 >= 2"
+              }
+            ],
+            "pass": true
+          },
+          "H08": {
+            "artifact": {
+              "decision": "block",
+              "gaps": [
+                "A2"
+              ],
+              "gate_basis": [
+                "A2 无证据"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='block' want='block'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "gaps=['A2'] want=['A2']"
+              }
+            ],
+            "pass": true
+          }
+        },
+        "checks_pass": 11,
+        "checks_total": 11,
+        "q_pass": 4,
+        "q_total": 4
+      },
+      "tokens": 2557,
+      "parse_error": null,
+      "latency_s": 13.7
+    },
+    "human_equivalent": {
+      "grade": {
+        "per_case": {
+          "H05": {
+            "artifact": {
+              "decision": "block",
+              "gaps": [
+                "A5",
+                "A6"
+              ],
+              "gate_basis": [
+                "A5 失败：回滚后 generation 未回退（回滚演练未通过，硬性验收项失败）",
+                "A6 未执行：审计日志可重放缺少任何核验记录"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='block' want='block'"
+              },
+              {
+                "check": "c2",
+                "kind": "subset_of",
+                "pass": true,
+                "detail": "gaps=['A5', 'A6'] ⊆ ['A5', 'A6']"
+              },
+              {
+                "check": "c3",
+                "kind": "gte",
+                "pass": true,
+                "detail": "gaps_len=2 >= 2"
+              },
+              {
+                "check": "c4",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          },
+          "H06": {
+            "artifact": {
+              "decision": "block",
+              "gaps": [
+                "A2"
+              ],
+              "gate_basis": [
+                "A2 证据为计划而非事实：'稍后跑 playwright 冒烟（未执行）'，计划不构成验收证据"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='block' want='block'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "gaps=['A2'] want=['A2']"
+              }
+            ],
+            "pass": true
+          },
+          "H07": {
+            "artifact": {
+              "decision": "done",
+              "gaps": [],
+              "gate_basis": [
+                "A1 通过：pytest 88 passed（run 2026-10-19T09:12Z）",
+                "A2 通过：playwright 3/3 passed（同 run 2026-10-19T09:12Z），逐条有可核证据且指向同一 run"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='done' want='done'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "gaps=[] want=[]"
+              },
+              {
+                "check": "c3",
+                "kind": "gte",
+                "pass": true,
+                "detail": "gate_basis_len=2 >= 2"
+              }
+            ],
+            "pass": true
+          },
+          "H08": {
+            "artifact": {
+              "decision": "block",
+              "gaps": [
+                "A2"
+              ],
+              "gate_basis": [
+                "A2 无证据：'用户观感良好'为主观验收项，无任何用户反馈/评分/核验记录支撑，不得默认通过"
+              ]
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "decision='block' want='block'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "gaps=['A2'] want=['A2']"
+              }
+            ],
+            "pass": true
+          }
+        },
+        "checks_pass": 11,
+        "checks_total": 11,
+        "q_pass": 4,
+        "q_total": 4
+      },
+      "tokens": 3656,
+      "parse_error": null,
+      "latency_s": 20.3
+    }
+  },
+  "P13": {
+    "mutator": {
+      "grade": {
+        "per_case": {
+          "H17": {
+            "artifact": {
+              "action": "record_use",
+              "matched_id": "M1",
+              "reason": "新教训与 M1 完全同义：补丁后 grep 复核，要求新串≥1 且旧串=0 才算改成功。属于对已有卡的重复表述，应记录为 M1 的复用，而非新建。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='record_use' want='record_use'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id='M1' want='M1'"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          },
+          "H18": {
+            "artifact": {
+              "action": "new_card",
+              "matched_id": null,
+              "reason": "定时任务改期后注销旧触发器以防双跑，属于调度器状态生命周期管理问题，与 M1（grep 文本复核）、M2（快照）、M3（浏览器 schema）均不同域，无卡可复用；教训具体、可执行且有明确失败模式，应新建卡片。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='new_card' want='new_card'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id=None want=None"
+              }
+            ],
+            "pass": true
+          },
+          "H19": {
+            "artifact": {
+              "action": "reject",
+              "matched_id": "M4",
+              "reason": "该主张与 M4 直接冲突：M4 已处于 disproven 状态，且有 2 条证据表明 context 塞满后中段信息命中率显著下降、检索仍必要。新教训重复了已被证伪的观点，应驳回，不得新建。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='reject' want='reject'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id='M4' want='M4'"
+              }
+            ],
+            "pass": true
+          },
+          "H20": {
+            "artifact": {
+              "action": "record_use",
+              "matched_id": "M6",
+              "reason": "M6 已显式覆盖所有'改完就以为改好'场景并注明覆盖所有文件类型：补丁后 grep 新串≥1、旧串=0。scheduler.py 改写盘路径后 grep 旧字段名正是 M6 的一个具体实例，应记录为 M6 的复用。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='record_use' want='record_use'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id='M6' want='M6'"
+              }
+            ],
+            "pass": true
+          }
+        },
+        "checks_pass": 9,
+        "checks_total": 9,
+        "q_pass": 4,
+        "q_total": 4
+      },
+      "tokens": 3244,
+      "parse_error": null,
+      "latency_s": 27.1
+    },
+    "human_equivalent": {
+      "grade": {
+        "per_case": {
+          "H17": {
+            "artifact": {
+              "action": "record_use",
+              "matched_id": "M1",
+              "reason": "与 M1 完全同义：改完后 grep 新串≥1 且旧串=0 才算改成功，新教训未增加新维度，应复用已有卡，避免重复建卡。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='record_use' want='record_use'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id='M1' want='M1'"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          },
+          "H18": {
+            "artifact": {
+              "action": "new_card",
+              "matched_id": null,
+              "reason": "主题是定时任务触发器注销防双跑，属于调度生命周期管理，与 M1 补丁 grep 复核、M2 快照、M3 浏览器 schema 均不重叠，本地无已有卡覆盖，应新建。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='new_card' want='new_card'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id=None want=None"
+              }
+            ],
+            "pass": true
+          },
+          "H19": {
+            "artifact": {
+              "action": "reject",
+              "matched_id": "M4",
+              "reason": "新教训断言 context 够大即可免检索，而 M4 已记录该主张被反例证伪（中段命中率显著下降，检索仍必要，证据 2 条）。采纳将引入已被证伪的结论，应驳回。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='reject' want='reject'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id='M4' want='M4'"
+              }
+            ],
+            "pass": true
+          },
+          "H20": {
+            "artifact": {
+              "action": "record_use",
+              "matched_id": "M6",
+              "reason": "M6 已泛化覆盖所有'改完就以为改好'场景及所有文件类型，补丁后 grep 新串≥1 旧串=0。scheduler.py 写盘路径改后 grep 旧字段名即该模式的具体实例，复用 M6 即可。"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "action='record_use' want='record_use'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "matched_id='M6' want='M6'"
+              }
+            ],
+            "pass": true
+          }
+        },
+        "checks_pass": 9,
+        "checks_total": 9,
+        "q_pass": 4,
+        "q_total": 4
+      },
+      "tokens": 3382,
+      "parse_error": null,
+      "latency_s": 22.1
+    }
+  },
+  "P19": {
+    "mutator": {
+      "grade": {
+        "per_case": {
+          "H13": {
+            "artifact": {
+              "new_hits": 3,
+              "old_hits": 0,
+              "verdict": "pass"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='pass' want='pass'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "new_hits=3 want=3"
+              },
+              {
+                "check": "c3",
+                "kind": "eq",
+                "pass": true,
+                "detail": "old_hits=0 want=0"
+              }
+            ],
+            "pass": true
+          },
+          "H14": {
+            "artifact": {
+              "new_hits": 2,
+              "old_hits": 2,
+              "verdict": "fail"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='fail' want='fail'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "old_hits=2 want=2"
+              }
+            ],
+            "pass": true
+          },
+          "H15": {
+            "artifact": {
+              "new_hits": 0,
+              "old_hits": 0,
+              "verdict": "unknown"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": false,
+                "detail": "verdict='unknown' want='fail'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "new_hits=0 want=0"
+              }
+            ],
+            "pass": false
+          },
+          "H16": {
+            "artifact": {
+              "new_hits": null,
+              "old_hits": null,
+              "verdict": "unknown"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='unknown' want='unknown'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "new_hits=None want=None"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          }
+        },
+        "checks_pass": 9,
+        "checks_total": 10,
+        "q_pass": 3,
+        "q_total": 4
+      },
+      "tokens": 2265,
+      "parse_error": null,
+      "latency_s": 22.3
+    },
+    "human_equivalent": {
+      "grade": {
+        "per_case": {
+          "H13": {
+            "artifact": {
+              "new_hits": 3,
+              "old_hits": 0,
+              "verdict": "pass"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='pass' want='pass'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "new_hits=3 want=3"
+              },
+              {
+                "check": "c3",
+                "kind": "eq",
+                "pass": true,
+                "detail": "old_hits=0 want=0"
+              }
+            ],
+            "pass": true
+          },
+          "H14": {
+            "artifact": {
+              "new_hits": 2,
+              "old_hits": 2,
+              "verdict": "fail"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='fail' want='fail'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "old_hits=2 want=2"
+              }
+            ],
+            "pass": true
+          },
+          "H15": {
+            "artifact": {
+              "new_hits": 0,
+              "old_hits": 0,
+              "verdict": "unknown"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": false,
+                "detail": "verdict='unknown' want='fail'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "new_hits=0 want=0"
+              }
+            ],
+            "pass": false
+          },
+          "H16": {
+            "artifact": {
+              "new_hits": null,
+              "old_hits": null,
+              "verdict": "unknown"
+            },
+            "checks": [
+              {
+                "check": "c1",
+                "kind": "eq",
+                "pass": true,
+                "detail": "verdict='unknown' want='unknown'"
+              },
+              {
+                "check": "c2",
+                "kind": "eq",
+                "pass": true,
+                "detail": "new_hits=None want=None"
+              },
+              {
+                "check": "c3",
+                "kind": "regex_absent",
+                "pass": true,
+                "detail": "无禁用表述"
+              }
+            ],
+            "pass": true
+          }
+        },
+        "checks_pass": 9,
+        "checks_total": 10,
+        "q_pass": 3,
+        "q_total": 4
+      },
+      "tokens": 2503,
+      "parse_error": null,
+      "latency_s": 10.6
+    }
+  }
+}

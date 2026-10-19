@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-1f850e57a216",
+  "parent_ref": "own-authorship-beats-verified-reuse-in-creation-tests-b1b7de23fb53",
+  "parent_sha256": "64514e1f167d110dfbb483ae32dda7e49889bd4448a9c0b256562d5e7c3ae389",
+  "candidate_sha256": "c4d39bed234d6c2e95df807890362aeeaf3f1b57b5e928ef61467a0f4010bb6c",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "3 条验证条目未被任何 Stop condition 引用：对产物做真实运行并多点采样：各采样点输出哈希互不相同，证明动…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:18:05.512388+00:00"
+}

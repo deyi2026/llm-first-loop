@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-08e1c7deaed5",
+  "parent_ref": "verify-explicit-handles-before-broad-status-discovery-d6262d31f6b1",
+  "parent_sha256": "ae33e29c31ba85be57d377299a11e5243c06d2e033f17d75bc764e86ff7b8b86",
+  "candidate_sha256": "56e07f5919510cf9a55b943538d5e4ab20c5f089f779842ca00d866747d811d1",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "2 条验证条目未被任何 Stop condition 引用：ps -p <回执 pids> 输出包含这些 pid 且 l…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:18:05.839582+00:00"
+}

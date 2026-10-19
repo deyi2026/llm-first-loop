@@ -1,0 +1,30 @@
+{
+  "candidate_id": "mut-c15d589184cf",
+  "parent_ref": "wip-ownership-by-freshness-not-history-fbad1497a281",
+  "parent_sha256": "f3e03bd010d31deca8a5e645798f8361263b444ef774a5d5cab7849e698cb904",
+  "candidate_sha256": "28f3728b1add1c68ca5837e31751d6aaffa336c5e178ee8569da2f8451d412c5",
+  "mutator_version": "0.1.0",
+  "ops": [
+    "dup",
+    "unlinked_ver",
+    "vague"
+  ],
+  "defects": [
+    {
+      "kind": "unlinked_verification",
+      "section": "Verification",
+      "detail": "1 条验证条目未被任何 Stop condition 引用：判定依据自洽：无关文件 mtime 晚于疑似旧会话的最后活动…"
+    }
+  ],
+  "edits": [
+    {
+      "defect": "unlinked_verification",
+      "op": "append_bullet",
+      "section": "Stop conditions",
+      "rationale": "验证条目没有任何停止条件引用它 = 验证与结案脱钩；补一条把验证结果绑到结案动作的规则。"
+    }
+  ],
+  "review_required": true,
+  "status": "candidate",
+  "created_at": "2026-10-19T04:18:05.407815+00:00"
+}
