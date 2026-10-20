@@ -535,3 +535,17 @@ def test_github_release_checksums_have_bare_asset_names_consumable_by_installer(
         "dist/linux-installer-smoke.json",
         "dist/SHA256SUMS",
     }, "Release asset scope must exclude hidden/unchecksummed files"
+
+
+def test_github_ci_runs_linux_installer_on_native_x86_64_and_aarch64() -> None:
+    """An x86-only CI result must never be presented as ARM64 native coverage."""
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    linux_job = workflow.split("  linux-installer:\n", 1)[1].split("\n  nightly-real:\n", 1)[0]
+    assert "      fail-fast: false\n" in linux_job
+    assert "          - os: ubuntu-24.04\n            arch: x86_64\n" in linux_job
+    assert "          - os: ubuntu-24.04-arm\n            arch: aarch64\n" in linux_job
+    assert "    runs-on: ${{ matrix.os }}\n" in linux_job
+    assert 'test "$(uname -m)" = "${{ matrix.arch }}"' in linux_job
+    assert "getconf GNU_LIBC_VERSION | grep -q '^glibc '" in linux_job
+    assert "python scripts/verify_linux_installer.py --wheel dist/*.whl --report dist/linux-installer-smoke.json" in linux_job
+    assert "name: linux-installer-smoke-${{ matrix.arch }}" in linux_job
