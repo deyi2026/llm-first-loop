@@ -1,15 +1,47 @@
 """R15 interactive discovery: selecting a command never runs a model or tool."""
 from __future__ import annotations
 
+import sys
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
+from prompt_toolkit.key_binding import KeyBindings, KeyBindingsBase
 
 from llm_loop.terminal.editor import COMMANDS, Composer
 from llm_loop.terminal.settings import UISettings
 from llm_loop.terminal.shell import _dispatch_local
+
+
+@pytest.mark.parametrize("existing_bindings", [False, True])
+def test_command_palette_optional_key_bindings_preserve_escape_and_existing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_bindings: bool,
+) -> None:
+    """CI parity: prompt_toolkit Application.key_bindings may be None."""
+    import llm_loop.terminal.editor as editor
+
+    initial = KeyBindings() if existing_bindings else None
+    if initial is not None:
+        @initial.add("f1")
+        def old_binding(_event):
+            pass
+
+    dialog = SimpleNamespace(key_bindings=initial, run=lambda: "/sessions")
+    monkeypatch.setattr("prompt_toolkit.shortcuts.radiolist_dialog", lambda **_kwargs: dialog)
+    monkeypatch.setattr(editor, "saved_terminal", nullcontext)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: True))
+
+    composer = Composer(UISettings(), tmp_path)
+    composer.enhanced = True
+    assert composer.select_command() == "/sessions"
+    assert isinstance(dialog.key_bindings, KeyBindingsBase)
+    assert dialog.key_bindings.get_bindings_for_keys(("escape",))
+    if existing_bindings:
+        assert dialog.key_bindings.get_bindings_for_keys(("f1",))
 
 
 def test_palette_populates_only_a_draft(tmp_path: Path, monkeypatch, capsys) -> None:

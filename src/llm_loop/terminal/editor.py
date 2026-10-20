@@ -574,7 +574,13 @@ class Composer:
         def dismiss(event):
             event.app.exit(result=None)
 
-        dialog.key_bindings = merge_key_bindings([dialog.key_bindings, keys])
+        # prompt_toolkit declares Application.key_bindings as optional. Keep
+        # any existing dialog bindings, but never pass None to the merger.
+        existing_bindings = dialog.key_bindings
+        dialog.key_bindings = (
+            merge_key_bindings([existing_bindings, keys])
+            if existing_bindings is not None else keys
+        )
         with saved_terminal():
             result = dialog.run()
         return result if isinstance(result, str) and result in COMMANDS else None
