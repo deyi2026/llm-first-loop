@@ -2500,6 +2500,18 @@ class SubAgentRunner:
             )
         except Exception as exc:  # noqa: BLE001 — cannot claim recoverability on failed archive
             return [], f"上下文压缩/原文归档失败（未向Provider发送）: {type(exc).__name__}"
+        # The child wire is sent through ``LLMClient.chat`` without a
+        # GuardRequestContext, so the engine-only active-ingress marker cannot be
+        # validated on this path; final provider-structure validation would reject
+        # the call as ``active_run_ingress_unexpected_marker`` at the first
+        # compaction round (INC-20261020 subagent_5fb2aef276c1).  The marker is
+        # transport bookkeeping, not provider content: drop it before sending, the
+        # same way engine.py does when it hands a projection off.
+        projected = [
+            {k: v for k, v in m.items() if k != "_active_run_ingress_ref"}
+            for m in projected
+            if isinstance(m, dict)
+        ]
         measured = sum(dict_wire_chars(m) for m in projected)
         if measured > budget:
             return [], (
