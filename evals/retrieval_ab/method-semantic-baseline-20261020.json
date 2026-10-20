@@ -1,0 +1,1724 @@
+{
+ "schema": "method-retrieval-baseline/v1",
+ "ran_at": "2026-10-20T08:03:42+0800",
+ "goldset": {
+  "path": "evals/retrieval_ab/method-goldset-20261020.json",
+  "sha256": "ff5168969193e00cefc351ba1618f51c939ee91c428cd9d566b8f96736a2ecab",
+  "queries": 30
+ },
+ "config": {
+  "provider": "api",
+  "model": "bge",
+  "dim_setting": 128,
+  "dim_actual": 512,
+  "semantic_available": true,
+  "semantic_top_k": 20,
+  "method_limit": 5,
+  "warm": {
+   "requested": true,
+   "candidate_count": 1246,
+   "initial_missing": 0,
+   "remaining_missing": 0,
+   "warmup_candidate_count": 1246,
+   "deferred_candidates": 0,
+   "warmup_initial_missing": 0,
+   "warmup_remaining_missing": 0,
+   "deferred_missing": 0,
+   "passes": 0,
+   "elapsed_ms": 0.001
+  }
+ },
+ "channels": {
+  "keyword": {
+   "hit@1": 0.0,
+   "hit@3": 0.0,
+   "hit@5": 0.0,
+   "hit@10": 0.0,
+   "mrr@10": 0.0,
+   "latency_ms": {
+    "mean": 88.68,
+    "p50": 88.01,
+    "p95": 93.99
+   }
+  },
+  "bigram": {
+   "hit@1": 0.3333,
+   "hit@3": 0.5667,
+   "hit@5": 0.7,
+   "hit@10": 0.7,
+   "mrr@10": 0.4728,
+   "latency_ms": {
+    "mean": 125.03,
+    "p50": 123.47,
+    "p95": 144.23
+   }
+  },
+  "semantic": {
+   "hit@1": 0.3333,
+   "hit@3": 0.5333,
+   "hit@5": 0.6,
+   "hit@10": 0.7333,
+   "mrr@10": 0.4636,
+   "latency_ms": {
+    "mean": 156.44,
+    "p50": 122.95,
+    "p95": 268.71
+   }
+  },
+  "prod": {
+   "hit@1": 0.2667,
+   "hit@3": 0.5,
+   "hit@5": 0.5667,
+   "hit@10": 0.7,
+   "mrr@10": 0.4114,
+   "latency_ms": {
+    "mean": 157.34,
+    "p50": 124.49,
+    "p95": 270.57
+   }
+  }
+ },
+ "by_status": {
+  "active": {
+   "keyword": {
+    "hit@1": 0.0,
+    "hit@3": 0.0,
+    "hit@5": 0.0,
+    "hit@10": 0.0,
+    "mrr@10": 0.0,
+    "latency_ms": {
+     "mean": 90.28,
+     "p50": 91.03,
+     "p95": 93.99
+    }
+   },
+   "bigram": {
+    "hit@1": 0.3333,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 0.6667,
+    "latency_ms": {
+     "mean": 125.37,
+     "p50": 126.17,
+     "p95": 126.4
+    }
+   },
+   "semantic": {
+    "hit@1": 0.6667,
+    "hit@3": 0.6667,
+    "hit@5": 0.6667,
+    "hit@10": 0.6667,
+    "mrr@10": 0.6667,
+    "latency_ms": {
+     "mean": 172.07,
+     "p50": 124.64,
+     "p95": 269.2
+    }
+   },
+   "prod": {
+    "hit@1": 0.6667,
+    "hit@3": 0.6667,
+    "hit@5": 0.6667,
+    "hit@10": 0.6667,
+    "mrr@10": 0.6667,
+    "latency_ms": {
+     "mean": 173.11,
+     "p50": 124.72,
+     "p95": 270.57
+    }
+   }
+  },
+  "candidate": {
+   "keyword": {
+    "hit@1": 0.0,
+    "hit@3": 0.0,
+    "hit@5": 0.0,
+    "hit@10": 0.0,
+    "mrr@10": 0.0,
+    "latency_ms": {
+     "mean": 87.93,
+     "p50": 86.79,
+     "p95": 91.3
+    }
+   },
+   "bigram": {
+    "hit@1": 0.3043,
+    "hit@3": 0.4783,
+    "hit@5": 0.6522,
+    "hit@10": 0.6522,
+    "mrr@10": 0.421,
+    "latency_ms": {
+     "mean": 124.68,
+     "p50": 123.13,
+     "p95": 144.23
+    }
+   },
+   "semantic": {
+    "hit@1": 0.3478,
+    "hit@3": 0.5652,
+    "hit@5": 0.6522,
+    "hit@10": 0.7826,
+    "mrr@10": 0.4888,
+    "latency_ms": {
+     "mean": 141.68,
+     "p50": 122.55,
+     "p95": 263.58
+    }
+   },
+   "prod": {
+    "hit@1": 0.2609,
+    "hit@3": 0.5217,
+    "hit@5": 0.6087,
+    "hit@10": 0.7391,
+    "mrr@10": 0.4207,
+    "latency_ms": {
+     "mean": 142.79,
+     "p50": 124.04,
+     "p95": 266.5
+    }
+   }
+  },
+  "hold": {
+   "keyword": {
+    "hit@1": 0.0,
+    "hit@3": 0.0,
+    "hit@5": 0.0,
+    "hit@10": 0.0,
+    "mrr@10": 0.0,
+    "latency_ms": {
+     "mean": 91.74,
+     "p50": 86.51,
+     "p95": 103.56
+    }
+   },
+   "bigram": {
+    "hit@1": 0.3333,
+    "hit@3": 0.6667,
+    "hit@5": 0.6667,
+    "hit@10": 0.6667,
+    "mrr@10": 0.5,
+    "latency_ms": {
+     "mean": 123.2,
+     "p50": 123.2,
+     "p95": 123.39
+    }
+   },
+   "semantic": {
+    "hit@1": 0.0,
+    "hit@3": 0.0,
+    "hit@5": 0.0,
+    "hit@10": 0.3333,
+    "mrr@10": 0.0556,
+    "latency_ms": {
+     "mean": 216.55,
+     "p50": 260.52,
+     "p95": 263.87
+    }
+   },
+   "prod": {
+    "hit@1": 0.0,
+    "hit@3": 0.0,
+    "hit@5": 0.0,
+    "hit@10": 0.3333,
+    "mrr@10": 0.0556,
+    "latency_ms": {
+     "mean": 217.6,
+     "p50": 263.72,
+     "p95": 264.08
+    }
+   }
+  },
+  "qualified": {
+   "keyword": {
+    "hit@1": 0.0,
+    "hit@3": 0.0,
+    "hit@5": 0.0,
+    "hit@10": 0.0,
+    "mrr@10": 0.0,
+    "latency_ms": {
+     "mean": 92.01,
+     "p50": 92.01,
+     "p95": 92.01
+    }
+   },
+   "bigram": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 137.56,
+     "p50": 137.56,
+     "p95": 137.56
+    }
+   },
+   "semantic": {
+    "hit@1": 0.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 0.5,
+    "latency_ms": {
+     "mean": 268.71,
+     "p50": 268.71,
+     "p95": 268.71
+    }
+   },
+   "prod": {
+    "hit@1": 0.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 0.5,
+    "latency_ms": {
+     "mean": 264.08,
+     "p50": 264.08,
+     "p95": 264.08
+    }
+   }
+  }
+ },
+ "rows": [
+  {
+   "id": "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+   "status": "candidate",
+   "query": "控制面操作卡在运行中不动了，我知道它的 action_id，该去哪儿看这条操作自己的记录和补救步骤？",
+   "keyword_ms": 89.10154178738594,
+   "keyword_ids": [
+    "inspect-resulting-state-before-repeating-non-idempotent-action-41c95818b7b7",
+    "authoritative-completion-before-reexecute-nonidempotent-action-a4c98eec8017",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac",
+    "verify-disputed-action-via-issuing-session-receipt-timeline-ec2c1b9f77f8"
+   ],
+   "bigram_ms": 131.88029173761606,
+   "bigram_ids": [
+    "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+    "check-completion-gate-before-polling-detached-action-13436a62132d",
+    "follow-named-mechanism-identifier-into-code-before-record-sweep-54f607702c00",
+    "gate-receipt-names-resolver-characterize-foreign-wip-then-escalate-af0444aa3164",
+    "platform-specific-record-supersedes-generic-service-probe-3be1817ee0e0"
+   ],
+   "semantic_ms": 123.31325002014637,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "control-plane-record-before-broad-probe-3fccf9490882",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac",
+    "destructive-replay-failure-shift-work-into-stable-paste-payload-67917b175573",
+    "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+    "attribute-run-origin-via-session-record-not-action-logs-f9106ca09382",
+    "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+    "act-on-out-of-band-notification-via-exact-id-record-hydration-978e53da7a53",
+    "id-2a4e1585a9f5",
+    "external-receipt-store-miss-pivots-to-store-location-f1e40be0a4f0",
+    "live-process-fd-map-before-fuzzy-log-search-f876c55bcf3e"
+   ],
+   "prod_ms": 126.41683407127857,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac",
+    "control-plane-record-before-broad-probe-3fccf9490882",
+    "inspect-resulting-state-before-repeating-non-idempotent-action-41c95818b7b7",
+    "authoritative-completion-before-reexecute-nonidempotent-action-a4c98eec8017",
+    "destructive-replay-failure-shift-work-into-stable-paste-payload-67917b175573",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+    "attribute-run-origin-via-session-record-not-action-logs-f9106ca09382",
+    "verify-disputed-action-via-issuing-session-receipt-timeline-ec2c1b9f77f8",
+    "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": 6,
+   "prod_rank": 10
+  },
+  {
+   "id": "isolate-sibling-paths-in-negative-tests-2a915029c432",
+   "status": "candidate",
+   "query": "写『不该命中的输入应返回不存在』的测试时，测试样例总被另一条匹配路径接住而假失败，动笔前要先确认什么？",
+   "keyword_ms": 93.47933251410723,
+   "keyword_ids": [
+    "sample-before-parse-pattern-8c52e5e48491",
+    "poc-a-b-6dd78baba7e8",
+    "zero-hit-query-localize-via-scan-metadata-d60d143f9139",
+    "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+    "zero-hit-contradiction-verify-search-anchor-7093472d945d"
+   ],
+   "bigram_ms": 147.67312537878752,
+   "bigram_ids": [
+    "isolate-sibling-paths-in-negative-tests-2a915029c432",
+    "cross-merge-test-failure-fixture-vs-new-gate-951e932c8902",
+    "live-config-first-sibling-diff-gap-audit-3837d578ee9e",
+    "runner-silence-is-invocation-error-6ddc25716e1a",
+    "offline-replay-rejected-frame-from-eventlog-archive-projection-f9fb318bd944"
+   ],
+   "semantic_ms": 262.53158412873745,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "runner-silence-is-invocation-error-6ddc25716e1a",
+    "failure-scoped-ci-log-triage-f602c22331b4",
+    "follow-error-named-remediation-to-subsystem-interface-568c647646cb",
+    "repair-query-on-explicit-syntax-error-receipt-1d3b71a68e1c",
+    "error-self-provenance-attribution-before-config-blame-111060210cd9",
+    "live-rerun-over-history-recovery-5920494e9147",
+    "isolate-sibling-paths-in-negative-tests-2a915029c432",
+    "validate-instrument-before-absence-claim-3a2756c9c06d",
+    "stop-identical-failure-loop-switch-or-renegotiate-scope-2aa6f65ff24e"
+   ],
+   "prod_ms": 266.5025005117059,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "sample-before-parse-pattern-8c52e5e48491",
+    "runner-silence-is-invocation-error-6ddc25716e1a",
+    "poc-a-b-6dd78baba7e8",
+    "failure-scoped-ci-log-triage-f602c22331b4",
+    "zero-hit-query-localize-via-scan-metadata-d60d143f9139",
+    "follow-error-named-remediation-to-subsystem-interface-568c647646cb",
+    "zero-hit-from-indexed-search-is-not-code-absence-proof-fa972dda9005",
+    "repair-query-on-explicit-syntax-error-receipt-1d3b71a68e1c",
+    "zero-hit-contradiction-verify-search-anchor-7093472d945d"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": 8,
+   "prod_rank": null
+  },
+  {
+   "id": "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+   "status": "candidate",
+   "query": "同事说这个失败在他机器上也一样、属于预存问题，我只在自己环境跑了一次就反驳，这样下结论可靠吗？",
+   "keyword_ms": 90.53404070436954,
+   "keyword_ids": [],
+   "bigram_ms": 144.23412550240755,
+   "bigram_ids": [
+    "isolation-delta-config-cache-shadowing-f8ead0b047a4",
+    "alien-literal-polluter-hunt-fceef795e7c0",
+    "classify-dep-missing-errors-by-interpreter-differential-probe-28934bce0162",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "gate-rerun-exitcode-logfile-discipline-4718d9fcc0ad"
+   ],
+   "semantic_ms": 121.57354224473238,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "a-b-environment-before-preexisting-baseline-b4cda1c9bdee",
+    "locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "classify-dep-missing-errors-by-interpreter-differential-probe-28934bce0162",
+    "failing-daemon-own-log-first-fix-at-real-supervisor-297cab3af0ce",
+    "residual-classified-error-verify-live-config-then-documented-boundary-effc5e38b02c",
+    "live-rerun-over-history-recovery-5920494e9147",
+    "classify-failure-stage-from-output-before-adopting-correction-remedy-aad732109179",
+    "excluded-artifact-tests-reuse-sibling-availability-gate-020629ebf0a8",
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3"
+   ],
+   "prod_ms": 122.80395813286304,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "a-b-environment-before-preexisting-baseline-b4cda1c9bdee",
+    "locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "classify-dep-missing-errors-by-interpreter-differential-probe-28934bce0162",
+    "failing-daemon-own-log-first-fix-at-real-supervisor-297cab3af0ce",
+    "residual-classified-error-verify-live-config-then-documented-boundary-effc5e38b02c",
+    "live-rerun-over-history-recovery-5920494e9147",
+    "classify-failure-stage-from-output-before-adopting-correction-remedy-aad732109179",
+    "excluded-artifact-tests-reuse-sibling-availability-gate-020629ebf0a8",
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "irreversible-action-lossless-reconciliation-4266e4ab4385",
+   "status": "candidate",
+   "query": "批量发出通知之后，怎么确认一个都没漏？抽查几个锚点感觉不踏实。",
+   "keyword_ms": 84.98075045645237,
+   "keyword_ids": [],
+   "bigram_ms": 116.3000836968422,
+   "bigram_ids": [
+    "irreversible-action-lossless-reconciliation-4266e4ab4385",
+    "preflight-pin-freshness-before-cas-gated-restart-orders-e4f59f756260",
+    "novelty-gated-facet-enumeration-keyword-only-store-1c3087ae48c3",
+    "author-index-cards-point-to-maintained-sources-from-rendered-field-347d22998d9c",
+    "timestamp-align-status-flag-with-artifact-mtime-before-restart-verdict-9842c70519c5"
+   ],
+   "semantic_ms": 122.93095886707306,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "degraded-search-fallback-unverified-not-absent-e7fa27de3105",
+    "anchor-first-claim-audit-81071f5c9dc1",
+    "deterministic-404-is-an-answer-pivot-to-canonical-candidate-daaa7d2b6d35",
+    "locator-answered-checklist-edit-not-resweep-0e7df520d3ab",
+    "pin-inherited-label-scope-via-closeout-chain-and-source-gap-844e278b0626",
+    "verify-claims-by-cited-anchors-then-scale-calibration-e996055d863d",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9",
+    "verify-claimed-side-effects-against-durable-state-not-session-history-fe7643f36afd",
+    "anchor-verification-over-narrative-recovery-73fa76a07438",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e"
+   ],
+   "prod_ms": 124.0397086367011,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "degraded-search-fallback-unverified-not-absent-e7fa27de3105",
+    "anchor-first-claim-audit-81071f5c9dc1",
+    "deterministic-404-is-an-answer-pivot-to-canonical-candidate-daaa7d2b6d35",
+    "locator-answered-checklist-edit-not-resweep-0e7df520d3ab",
+    "pin-inherited-label-scope-via-closeout-chain-and-source-gap-844e278b0626",
+    "verify-claims-by-cited-anchors-then-scale-calibration-e996055d863d",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9",
+    "verify-claimed-side-effects-against-durable-state-not-session-history-fe7643f36afd",
+    "anchor-verification-over-narrative-recovery-73fa76a07438",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "reuse-or-requery-exact-identifiers-from-receipts-def44c81977d",
+   "status": "candidate",
+   "query": "接着上一轮继续做，需要的文件路径之前的命令回执里已经出现过，还要再搜一遍吗？",
+   "keyword_ms": 84.79895815253258,
+   "keyword_ids": [],
+   "bigram_ms": 124.69033244997263,
+   "bigram_ids": [
+    "route-semantics-verification-to-authoritative-tree-c9192f9ea607",
+    "unique-self-describing-hit-ends-discovery-switch-to-reading-4895bc8ec5eb",
+    "claim-audit-resolve-embedded-record-pointers-directly-e1cbfa1977d0",
+    "session-evidence-before-broad-search-14dfe01a6c75",
+    "records-name-flags-verify-at-source-stop-pool-sweeps-cbef0b46530f"
+   ],
+   "semantic_ms": 122.38824926316738,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2",
+    "reuse-or-requery-exact-identifiers-from-receipts-def44c81977d",
+    "recover-prior-session-state-via-command-provenance-not-keyword-search-5e12bd254b8d",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "filter-vendor-tree-hits-and-pin-source-layout-before-reads-41c79a675c78",
+    "definitive-failure-swap-source-not-restart-discovery-5abed48afb10",
+    "claim-to-receipt-reconcile-via-mtime-and-per-claim-grep-0a5adf76eb6d",
+    "defer-async-action-verification-via-single-wakeup-6b488fda4817",
+    "in-session-provenance-before-refetch-aa9132287223",
+    "rerun-own-plan-via-precondition-source-checks-9921357d823c"
+   ],
+   "prod_ms": 123.99908248335123,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2",
+    "reuse-or-requery-exact-identifiers-from-receipts-def44c81977d",
+    "recover-prior-session-state-via-command-provenance-not-keyword-search-5e12bd254b8d",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "filter-vendor-tree-hits-and-pin-source-layout-before-reads-41c79a675c78",
+    "definitive-failure-swap-source-not-restart-discovery-5abed48afb10",
+    "claim-to-receipt-reconcile-via-mtime-and-per-claim-grep-0a5adf76eb6d",
+    "defer-async-action-verification-via-single-wakeup-6b488fda4817",
+    "in-session-provenance-before-refetch-aa9132287223",
+    "rerun-own-plan-via-precondition-source-checks-9921357d823c"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 2,
+   "prod_rank": 2
+  },
+  {
+   "id": "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+   "status": "candidate",
+   "query": "有条记录在网页列表里看不到，怀疑根本没保存，第一步查什么能最快缩小范围？",
+   "keyword_ms": 88.00504170358181,
+   "keyword_ids": [],
+   "bigram_ms": 123.55741579085588,
+   "bigram_ids": [
+    "spawner-runtime-log-before-config-enumeration-6548e714a07f",
+    "zero-feedback-miss-then-self-contained-deposit-b2585c7e9430",
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "primary-artifact-before-evidence-store-retrial-dbcb75b044d5",
+    "pin-consumption-surface-before-model-facing-format-refactor-af0ec3de7fad"
+   ],
+   "semantic_ms": 122.402667067945,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9",
+    "current-state-from-live-authority-not-history-paging-989ce02cadb5",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "search-miss-is-tool-domain-question-read-store-then-matcher-493354d9df7a",
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "verify-derived-claims-at-production-layer-354ba2285d00",
+    "verify-presupposed-failure-via-live-metrics-and-record-scope-3ea547be8a84",
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "verified-ledger-single-read-over-evidence-paging-975c835fd129"
+   ],
+   "prod_ms": 122.51129280775785,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9",
+    "current-state-from-live-authority-not-history-paging-989ce02cadb5",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "search-miss-is-tool-domain-question-read-store-then-matcher-493354d9df7a",
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "verify-derived-claims-at-production-layer-354ba2285d00",
+    "verify-presupposed-failure-via-live-metrics-and-record-scope-3ea547be8a84",
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "verified-ledger-single-read-over-evidence-paging-975c835fd129"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "time-anchored-regression-window-first-30fc83e9a5ae",
+   "status": "candidate",
+   "query": "用户反馈昨天下午三点之前都正常，之后开始变坏，排查应该从哪条线索入手？",
+   "keyword_ms": 86.64641715586185,
+   "keyword_ids": [],
+   "bigram_ms": 123.4694579616189,
+   "bigram_ids": [
+    "zero-feedback-miss-then-self-contained-deposit-b2585c7e9430",
+    "recency-proximity-referent-resolution-with-echo-before-act-fade4fec9baf",
+    "gate-each-tool-call-against-explicit-script-prohibitions-6c8db79dc6f1",
+    "validate-residual-state-premise-before-bulk-status-convergence-bb1c057e8724",
+    "time-anchored-regression-window-first-30fc83e9a5ae"
+   ],
+   "semantic_ms": 122.94579204171896,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "traffic-log-bisect-before-hop-config-audit-28bd50eb2968",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "route-diagnostic-logs-by-writer-privilege-and-mtime-779c573f4fc9",
+    "consume-authoritative-hits-before-parallel-discovery-f28827831140",
+    "id-2a4e1585a9f5",
+    "shape-delta-differential-probing-before-log-hunt-0e1aed754c4a",
+    "candidate-aa0d6b3be4d9",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "official-endpoint-first-for-source-class-locked-facts-81e5ab17055c"
+   ],
+   "prod_ms": 122.4532499909401,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "traffic-log-bisect-before-hop-config-audit-28bd50eb2968",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "route-diagnostic-logs-by-writer-privilege-and-mtime-779c573f4fc9",
+    "consume-authoritative-hits-before-parallel-discovery-f28827831140",
+    "id-2a4e1585a9f5",
+    "shape-delta-differential-probing-before-log-hunt-0e1aed754c4a",
+    "candidate-aa0d6b3be4d9",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "official-endpoint-first-for-source-class-locked-facts-81e5ab17055c"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 5,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+   "status": "candidate",
+   "query": "开了代理软件后某个应用连不上，排除规则加了很多还是断，下一步该看什么？",
+   "keyword_ms": 86.29429247230291,
+   "keyword_ids": [],
+   "bigram_ms": 124.36866667121649,
+   "bigram_ids": [
+    "daemon-log-stage-triage-baa9e20016ae",
+    "self-describing-403-plus-liveness-triage-50963831cd87",
+    "resolve-artifact-via-in-context-named-store-path-before-tree-wide-scan-7bd072d0a325",
+    "tunnel-502-probe-local-origin-leg-first-af982e477878",
+    "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c"
+   ],
+   "semantic_ms": 122.20287509262562,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "verified-search-miss-switch-to-filesystem-enumeration-9eaff56f4b92",
+    "live-process-fd-map-before-fuzzy-log-search-f876c55bcf3e",
+    "binary-intervention-sufficiency-gate-7631f80e335c",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "own-execution-log-first-timeout-diagnosis-d96f59fcee0d",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19"
+   ],
+   "prod_ms": 123.07416647672653,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "verified-search-miss-switch-to-filesystem-enumeration-9eaff56f4b92",
+    "live-process-fd-map-before-fuzzy-log-search-f876c55bcf3e",
+    "binary-intervention-sufficiency-gate-7631f80e335c",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "own-execution-log-first-timeout-diagnosis-d96f59fcee0d",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 5,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "lost-handle-regenerate-forward-3a6d0088a08d",
+   "status": "candidate",
+   "query": "后台任务的 job id 丢了，输出也找不到，是继续翻历史还是重新跑一遍？",
+   "keyword_ms": 91.30216669291258,
+   "keyword_ids": [
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "sync-via-receipt-named-terminal-queries-not-blind-timers-55c714f10e09",
+    "verify-claimed-side-effects-against-durable-state-not-session-history-fe7643f36afd",
+    "verified-ledger-single-read-over-evidence-paging-975c835fd129",
+    "trust-durable-completion-evidence-on-resume-ab903c1cdc9e"
+   ],
+   "bigram_ms": 115.8470418304205,
+   "bigram_ids": [
+    "resolve-async-job-verdict-via-its-receipt-104cc1a9b9dd",
+    "recover-original-invocation-from-durable-record-before-rerun-72e8da19e8f6",
+    "long-job-observe-by-estimate-efe14a4ca321",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "measured-timeout-as-poll-lower-bound-4da80a3cf9e3"
+   ],
+   "semantic_ms": 122.73395899683237,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "lost-handle-regenerate-forward-3a6d0088a08d",
+    "timed-harvest-instead-of-interim-polling-for-characterized-jobs-17289414e24c",
+    "resolve-async-job-verdict-via-its-receipt-104cc1a9b9dd",
+    "anchor-background-job-polling-to-duration-prior-1dfd748c4afb",
+    "attribute-own-job-status-by-durable-receipt-not-ambient-process-28a05ddde0fb",
+    "single-live-job-scheduled-recheck-e377df22c7b1",
+    "platform-specific-record-supersedes-generic-service-probe-3be1817ee0e0",
+    "route-status-questions-via-explicit-refs-before-artifact-sweep-ad10dee4f015",
+    "durable-job-defer-terminal-check-2a5ca0503c58",
+    "live-rerun-over-history-recovery-5920494e9147"
+   ],
+   "prod_ms": 122.85020761191845,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "timed-harvest-instead-of-interim-polling-for-characterized-jobs-17289414e24c",
+    "resolve-async-job-verdict-via-its-receipt-104cc1a9b9dd",
+    "single-live-job-scheduled-recheck-e377df22c7b1",
+    "attribute-own-job-status-by-durable-receipt-not-ambient-process-28a05ddde0fb",
+    "durable-job-defer-terminal-check-2a5ca0503c58",
+    "live-job-handle-before-index-and-telemetry-enumeration-afa65afe53fc",
+    "attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3",
+    "lost-handle-regenerate-forward-3a6d0088a08d",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "sync-via-receipt-named-terminal-queries-not-blind-timers-55c714f10e09"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 1,
+   "prod_rank": 8
+  },
+  {
+   "id": "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+   "status": "candidate",
+   "query": "评审意见只写了文件名和行号，没给目录，怎么定位到那段代码？",
+   "keyword_ms": 86.34179178625345,
+   "keyword_ids": [],
+   "bigram_ms": 113.85170929133892,
+   "bigram_ids": [
+    "verify-named-symbol-claims-via-live-tree-scoped-reads-dc2b42b80d1f",
+    "deletion-audit-scope-live-tree-and-bypass-exclusivity-b0979e7f27b1",
+    "continuation-opens-cited-design-doc-before-corpus-search-15d915f867fd",
+    "collapse-mirror-polluted-search-onto-live-tree-paths-54e0423a4a5b",
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb"
+   ],
+   "semantic_ms": 121.45133409649134,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "id-2a4e1585a9f5",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "named-label-check-against-authoritative-registry-before-implementation-a6207ad19e5c",
+    "execute-approved-proposal-from-held-record-one-read-per-target-9befafb3af1b",
+    "line-anchored-windowed-read-not-read-to-eof-d4021b82c0c9",
+    "source-doc-as-state-truth-and-acceptance-contract-ed223c7eecde",
+    "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+    "anchor-index-for-positional-unknowns-not-repeat-reads-72e11512f200",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d"
+   ],
+   "prod_ms": 122.87370767444372,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "id-2a4e1585a9f5",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "named-label-check-against-authoritative-registry-before-implementation-a6207ad19e5c",
+    "execute-approved-proposal-from-held-record-one-read-per-target-9befafb3af1b",
+    "line-anchored-windowed-read-not-read-to-eof-d4021b82c0c9",
+    "source-doc-as-state-truth-and-acceptance-contract-ed223c7eecde",
+    "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+    "anchor-index-for-positional-unknowns-not-repeat-reads-72e11512f200",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 5,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+   "status": "candidate",
+   "query": "工具返回的结构化结果被截断了，换关键词反复检索也只看到同一段，怎么办？",
+   "keyword_ms": 86.78875025361776,
+   "keyword_ids": [],
+   "bigram_ms": 128.85658349841833,
+   "bigram_ids": [
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+    "zero-feedback-miss-then-self-contained-deposit-b2585c7e9430",
+    "usage-audit-via-authoritative-mutation-ledger-52801413e616",
+    "registry-first-lookup-for-named-artifact-verification-74024ca56ef7"
+   ],
+   "semantic_ms": 124.92804229259491,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "keyed-in-blob-search-before-linear-receipt-pagination-65ddc0c5ae1f",
+    "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+    "atomic-re-resolve-and-act-on-silent-hit-bfe6811182f1",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "single-decisive-range-hydration-for-truncated-receipts-2b3d199f587a",
+    "range-receipt-driven-evidence-recovery-d259013dab32",
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "receipt-time-partition-for-repeated-no-effect-05d5cbaa455b",
+    "close-full-defect-list-before-recheck-b05eaa027921"
+   ],
+   "prod_ms": 123.71829152107239,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "keyed-in-blob-search-before-linear-receipt-pagination-65ddc0c5ae1f",
+    "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+    "atomic-re-resolve-and-act-on-silent-hit-bfe6811182f1",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "single-decisive-range-hydration-for-truncated-receipts-2b3d199f587a",
+    "range-receipt-driven-evidence-recovery-d259013dab32",
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "receipt-time-partition-for-repeated-no-effect-05d5cbaa455b",
+    "close-full-defect-list-before-recheck-b05eaa027921"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 2,
+   "semantic_rank": 3,
+   "prod_rank": 3
+  },
+  {
+   "id": "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+   "status": "candidate",
+   "query": "某个实验特性为什么默认关闭，这个决定的依据写在哪里？",
+   "keyword_ms": 86.59620769321918,
+   "keyword_ids": [],
+   "bigram_ms": 114.2523754388094,
+   "bigram_ids": [
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "adjudicate-proposal-by-verifying-self-cited-anchors-against-current-arti-0707b8da16b5",
+    "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "live-config-first-sibling-diff-gap-audit-3837d578ee9e"
+   ],
+   "semantic_ms": 128.01516614854336,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "ground-derived-label-claims-in-semantics-and-existence-probe-39d27fc2e645",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e",
+    "falsify-detector-criterion-and-patch-gate-loop-before-detector-driven-ru-720ca0ed7acd",
+    "check-prior-rejection-receipt-before-explaining-or-retrying-61e708c56bfa",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "verify-external-state-by-identity-not-count-before-resume-retry-a52a205e88cc",
+    "read-mechanism-arbiter-field-before-immutable-submission-1d477dabfac4"
+   ],
+   "prod_ms": 123.76970797777176,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "ground-derived-label-claims-in-semantics-and-existence-probe-39d27fc2e645",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e",
+    "falsify-detector-criterion-and-patch-gate-loop-before-detector-driven-ru-720ca0ed7acd",
+    "check-prior-rejection-receipt-before-explaining-or-retrying-61e708c56bfa",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "verify-external-state-by-identity-not-count-before-resume-retry-a52a205e88cc",
+    "read-mechanism-arbiter-field-before-immutable-submission-1d477dabfac4"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 3,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+   "status": "candidate",
+   "query": "上一轮讨论说系统已经支持某机制，现在要定稿，怎么判断这个断言还成不成立？",
+   "keyword_ms": 89.60854075849056,
+   "keyword_ids": [],
+   "bigram_ms": 128.1899157911539,
+   "bigram_ids": [
+    "reconcile-done-action-authorization-before-button-hunt-8c4f4d942c90",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "verify-inherited-premise-then-fix-producer-dc7ec29f3a65",
+    "route-lookup-to-artifact-home-store-27b5dc818c4f"
+   ],
+   "semantic_ms": 263.5759999975562,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+    "verify-audit-claims-by-probing-named-live-artifacts-33c35d83ffb8",
+    "arithmetic-preverdict-then-load-bearing-first-verification-801d60f8fa7a",
+    "verify-code-baseline-before-design-md-9dd7dc0b8c59",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "verify-cited-stat-against-recorded-source-scope-before-review-913fbe7a21b6",
+    "verify-claims-by-cited-anchors-then-scale-calibration-e996055d863d"
+   ],
+   "prod_ms": 264.20695800334215,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+    "verify-audit-claims-by-probing-named-live-artifacts-33c35d83ffb8",
+    "arithmetic-preverdict-then-load-bearing-first-verification-801d60f8fa7a",
+    "verify-code-baseline-before-design-md-9dd7dc0b8c59",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "verify-cited-stat-against-recorded-source-scope-before-review-913fbe7a21b6",
+    "verify-claims-by-cited-anchors-then-scale-calibration-e996055d863d"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 4,
+   "prod_rank": 4
+  },
+  {
+   "id": "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+   "status": "candidate",
+   "query": "想把浏览器自动化接到一个已经打开的窗口，但连接被拒，先检查什么？",
+   "keyword_ms": 90.76900035142899,
+   "keyword_ids": [],
+   "bigram_ms": 119.17862575501204,
+   "bigram_ids": [
+    "probe-attach-target-endpoint-before-automation-717ea9067afe",
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+    "ui-generic-error-read-network-response-first-8fa71055b05f",
+    "least-invasive-sufficient-channel-first-f7c59cb213c7",
+    "editor-framework-signature-before-event-paste-iteration-71d7a8d9286a"
+   ],
+   "semantic_ms": 120.88483292609453,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "check-prior-rejection-receipt-before-explaining-or-retrying-61e708c56bfa",
+    "least-invasive-sufficient-channel-first-f7c59cb213c7",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "traffic-log-bisect-before-hop-config-audit-28bd50eb2968",
+    "persistent-403-pivot-once-to-alternate-surface-6e07cce4ab60",
+    "connection-refused-resolve-actual-port-via-pid-socket-table-a77a0862065a",
+    "ui-generic-error-read-network-response-first-8fa71055b05f",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec"
+   ],
+   "prod_ms": 124.57016669213772,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "check-prior-rejection-receipt-before-explaining-or-retrying-61e708c56bfa",
+    "least-invasive-sufficient-channel-first-f7c59cb213c7",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "traffic-log-bisect-before-hop-config-audit-28bd50eb2968",
+    "persistent-403-pivot-once-to-alternate-surface-6e07cce4ab60",
+    "connection-refused-resolve-actual-port-via-pid-socket-table-a77a0862065a",
+    "ui-generic-error-read-network-response-first-8fa71055b05f",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 2,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+   "status": "candidate",
+   "query": "拿着记录 ID 想读完整内容，可检索视图每次都只给同一段截断文本，源头在哪？",
+   "keyword_ms": 90.45950043946505,
+   "keyword_ids": [
+    "writeback-only-receipt-backed-identifiers-db1ea44b81ca",
+    "verify-tool-binding-identity-before-explanation-search-0c189d3fefdf",
+    "verify-self-cited-evidence-list-before-discovery-bf6b94aa690e",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac",
+    "verify-external-state-by-identity-not-count-before-resume-retry-a52a205e88cc"
+   ],
+   "bigram_ms": 121.64354138076305,
+   "bigram_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "identical-truncation-author-provenance-first-dda883f6db50",
+    "continue-subject-matched-truncated-read-before-lateral-evidence-sampling-7444afc88878"
+   ],
+   "semantic_ms": 121.82529177516699,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "anchor-driven-reads-from-authoritative-record-2da4c04b01dc",
+    "truncated-record-hit-recover-from-same-store-2d655d402037",
+    "authoritative-record-first-when-preview-truncated-0155675ee421",
+    "identical-truncation-author-provenance-first-dda883f6db50",
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "truncated-hit-follow-author-persistence-provenance-877574075533",
+    "id-2a4e1585a9f5",
+    "complete-truncated-record-via-id-then-read-embedded-anchors-69deb757880b"
+   ],
+   "prod_ms": 123.40995855629444,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "writeback-only-receipt-backed-identifiers-db1ea44b81ca",
+    "verify-tool-binding-identity-before-explanation-search-0c189d3fefdf",
+    "anchor-driven-reads-from-authoritative-record-2da4c04b01dc",
+    "verify-self-cited-evidence-list-before-discovery-bf6b94aa690e",
+    "truncated-record-hit-recover-from-same-store-2d655d402037",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac",
+    "authoritative-record-first-when-preview-truncated-0155675ee421",
+    "verify-external-state-by-identity-not-count-before-resume-retry-a52a205e88cc"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 2
+  },
+  {
+   "id": "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+   "status": "candidate",
+   "query": "部署脚本提示还有人占着、不能重启，怎么确认那些锁是活的还是残留的？",
+   "keyword_ms": 86.18020731955767,
+   "keyword_ids": [],
+   "bigram_ms": 121.03095836937428,
+   "bigram_ids": [
+    "partition-dated-history-vs-live-policy-before-stale-protocol-correction-243dcf561377",
+    "verify-claimed-side-effects-against-durable-state-not-session-history-fe7643f36afd",
+    "runtime-activation-verify-artifact-and-import-resolution-e80b42b787ec",
+    "control-plane-record-before-broad-probe-3fccf9490882",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172"
+   ],
+   "semantic_ms": 141.22687466442585,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "verify-out-of-band-receipt-against-gating-fields-in-authoritative-store-e9ffb0455373",
+    "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "external-receipt-store-miss-pivots-to-store-location-f1e40be0a4f0",
+    "reground-state-over-inherited-failure-stale-daemon-restart-8e1faf15697b",
+    "fakeip-dial-target-x-interface-bind-unselfhealing-restart-0fb68c88db26",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb",
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2",
+    "live-source-verify-pending-external-items-4574e64b5649",
+    "binary-intervention-sufficiency-gate-7631f80e335c"
+   ],
+   "prod_ms": 129.16637491434813,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "verify-out-of-band-receipt-against-gating-fields-in-authoritative-store-e9ffb0455373",
+    "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "external-receipt-store-miss-pivots-to-store-location-f1e40be0a4f0",
+    "reground-state-over-inherited-failure-stale-daemon-restart-8e1faf15697b",
+    "fakeip-dial-target-x-interface-bind-unselfhealing-restart-0fb68c88db26",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb",
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2",
+    "live-source-verify-pending-external-items-4574e64b5649",
+    "binary-intervention-sufficiency-gate-7631f80e335c"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 2,
+   "prod_rank": 2
+  },
+  {
+   "id": "pin-write-contract-before-redefining-persisted-record-format-f6491cd164ad",
+   "status": "candidate",
+   "query": "要改方法卡这种持久化记录的字段格式，先确认什么才能保证写入不被拒？",
+   "keyword_ms": 85.63495893031359,
+   "keyword_ids": [],
+   "bigram_ms": 122.6724162697792,
+   "bigram_ids": [
+    "pin-write-contract-before-redefining-persisted-record-format-f6491cd164ad",
+    "strip-format-gates-by-doc-delta-redundancy-and-sibling-parity-45b84ba0edfa",
+    "honor-prescriptive-rejection-before-retry-96c602058bfc",
+    "boundary-delta-audit-via-recorded-per-request-fingerprints-f42fb4c4e6c3",
+    "state-questions-read-persisted-record-not-implementation-bdc629a6cc3e"
+   ],
+   "semantic_ms": 119.75283361971378,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+    "hydrate-matching-verified-card-before-reimplementing-b3015a473bda",
+    "authoritative-parser-first-for-record-statistics-ca68b260488d",
+    "verify-persisted-state-over-success-receipt-be322e1c66c0",
+    "selective-strip-signature-concurrent-old-writer-on-shared-store-37369bc3984c",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb",
+    "schema-precondition-check-before-instructed-state-transition-fa2c9a20cfbd",
+    "memory-gap-audit-stream-verify-and-fix-owner-routing-fa9741a96fc7",
+    "schema-enum-as-capability-boundary-then-persistence-layer-field-check-4ac21e5456ab",
+    "verify-persistence-on-writer-medium-not-search-index-71cf19cb0dac"
+   ],
+   "prod_ms": 124.12245944142342,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+    "hydrate-matching-verified-card-before-reimplementing-b3015a473bda",
+    "authoritative-parser-first-for-record-statistics-ca68b260488d",
+    "verify-persisted-state-over-success-receipt-be322e1c66c0",
+    "selective-strip-signature-concurrent-old-writer-on-shared-store-37369bc3984c",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb",
+    "schema-precondition-check-before-instructed-state-transition-fa2c9a20cfbd",
+    "memory-gap-audit-stream-verify-and-fix-owner-routing-fa9741a96fc7",
+    "schema-enum-as-capability-boundary-then-persistence-layer-field-check-4ac21e5456ab",
+    "verify-persistence-on-writer-medium-not-search-index-71cf19cb0dac"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "probe-real-routes-from-local-source-not-guessed-paths-796113098ac1",
+   "status": "candidate",
+   "query": "线上服务的接口文档过期了，想确认本地代码实际暴露了哪些端点，怎么查最快？",
+   "keyword_ms": 86.62520814687014,
+   "keyword_ids": [],
+   "bigram_ms": 123.09087533503771,
+   "bigram_ids": [
+    "runtime-switch-manager-docs-before-build-enumeration-691f22a6e92d",
+    "reuse-by-reference-audit-dependency-observability-2555efb9880c",
+    "reconcile-secondhand-state-report-via-authoritative-record-48bf01698e45",
+    "verify-guest-protocol-before-picking-host-integration-path-3695cebc3ff9",
+    "runtime-introspection-over-source-scan-for-live-version-check-41be7d0a8ab8"
+   ],
+   "semantic_ms": 267.9104171693325,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "live-process-anchor-verify-deployment-claims-b3abbf2f86e4",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "chained-timeout-stage-triage-then-authoritative-fallback-0377f5544852",
+    "traverse-live-process-edge-before-path-guessing-ae43cfe9f739",
+    "resolve-self-owned-service-endpoint-from-declared-source-not-port-scan-d8c741db314e",
+    "fetch-user-given-official-doc-before-plan-name-web-search-c1390111f35f",
+    "citation-id-lookup-before-fuzzy-web-rediscovery-038657a70874",
+    "shape-delta-differential-probing-before-log-hunt-0e1aed754c4a",
+    "closure-declaration-plus-route-definition-for-absence-questions-764ba82a2c3a",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260"
+   ],
+   "prod_ms": 271.7000003904104,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "live-process-anchor-verify-deployment-claims-b3abbf2f86e4",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "chained-timeout-stage-triage-then-authoritative-fallback-0377f5544852",
+    "traverse-live-process-edge-before-path-guessing-ae43cfe9f739",
+    "resolve-self-owned-service-endpoint-from-declared-source-not-port-scan-d8c741db314e",
+    "fetch-user-given-official-doc-before-plan-name-web-search-c1390111f35f",
+    "citation-id-lookup-before-fuzzy-web-rediscovery-038657a70874",
+    "shape-delta-differential-probing-before-log-hunt-0e1aed754c4a",
+    "closure-declaration-plus-route-definition-for-absence-questions-764ba82a2c3a",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+   "status": "candidate",
+   "query": "只知道厂商名字和大致能力，没有具体地址，怎么快速确认能不能用、报错代表什么？",
+   "keyword_ms": 88.25291693210602,
+   "keyword_ids": [],
+   "bigram_ms": 124.66966733336449,
+   "bigram_ids": [
+    "repo-owned-qualification-harness-first-cd229cd17718",
+    "ground-internal-term-via-authoritative-doc-02de45463890",
+    "branch-on-failure-receipt-class-not-retry-ladders-b84477792d2c",
+    "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+    "existence-proof-mine-persisted-audit-for-prior-channel-fcfaf2892610"
+   ],
+   "semantic_ms": 120.0615419074893,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "fetch-user-given-official-doc-before-plan-name-web-search-c1390111f35f",
+    "named-product-ops-identity-and-verified-experience-first-e521c85e2825",
+    "registry-first-ambiguous-entity-reference-ab3ee592aa78",
+    "named-entity-verification-via-canonical-url-fetch-d7d09edf826b",
+    "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "parity-map-before-borrow-f4c7fa867f41",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "named-producer-fact-fetch-canonical-source-not-generic-search-09db57a70349"
+   ],
+   "prod_ms": 125.74366759508848,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "fetch-user-given-official-doc-before-plan-name-web-search-c1390111f35f",
+    "named-product-ops-identity-and-verified-experience-first-e521c85e2825",
+    "registry-first-ambiguous-entity-reference-ab3ee592aa78",
+    "named-entity-verification-via-canonical-url-fetch-d7d09edf826b",
+    "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "parity-map-before-borrow-f4c7fa867f41",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "named-producer-fact-fetch-canonical-source-not-generic-search-09db57a70349"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 4,
+   "semantic_rank": 5,
+   "prod_rank": 5
+  },
+  {
+   "id": "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+   "status": "candidate",
+   "query": "修复上线了但日志里没有出现预期的那行，这能说明修复没生效吗？",
+   "keyword_ms": 86.17699984461069,
+   "keyword_ids": [],
+   "bigram_ms": 119.19012572616339,
+   "bigram_ids": [
+    "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+    "verify-integration-effect-on-declared-host-surface-099f129a8322",
+    "fakeip-dial-target-x-interface-bind-unselfhealing-restart-0fb68c88db26",
+    "version-field-inert-until-a-consumer-enforces-it-aa27e025967b",
+    "verify-runtime-feature-via-live-artifacts-before-static-archaeology-f70f70ef8de9"
+   ],
+   "semantic_ms": 122.55191709846258,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "fix-verification-by-residual-signature-scan-be7e078b60f3",
+    "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+    "verify-fix-activation-and-event-arrival-before-failure-diagnosis-416cd64e46a3",
+    "receipt-time-partition-for-repeated-no-effect-05d5cbaa455b",
+    "remediation-failure-alert-verify-subject-first-7bf9a595d6ab",
+    "route-diagnostic-logs-by-writer-privilege-and-mtime-779c573f4fc9",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "replay-minimal-failing-repro-before-environment-recheck-0b5dae3dee4f",
+    "replay-minimal-failing-probe-after-restart-e97ff1f6191e"
+   ],
+   "prod_ms": 122.18649964779615,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "fix-verification-by-residual-signature-scan-be7e078b60f3",
+    "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+    "verify-fix-activation-and-event-arrival-before-failure-diagnosis-416cd64e46a3",
+    "receipt-time-partition-for-repeated-no-effect-05d5cbaa455b",
+    "remediation-failure-alert-verify-subject-first-7bf9a595d6ab",
+    "route-diagnostic-logs-by-writer-privilege-and-mtime-779c573f4fc9",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "replay-minimal-failing-repro-before-environment-recheck-0b5dae3dee4f",
+    "replay-minimal-failing-probe-after-restart-e97ff1f6191e"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": 2,
+   "prod_rank": 2
+  },
+  {
+   "id": "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+   "status": "candidate",
+   "query": "页面快照特别大还被截断，我只想点其中一个输入框，怎么找到它的引用？",
+   "keyword_ms": 85.35354118794203,
+   "keyword_ids": [],
+   "bigram_ms": 123.13237506896257,
+   "bigram_ids": [
+    "targeted-range-recovery-before-full-pagination-4afd292bd116",
+    "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9",
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2",
+    "official-docs-verify-via-raw-md-index-abf14ff6a0dc"
+   ],
+   "semantic_ms": 123.32237511873245,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "truncated-snapshot-pivot-to-targeted-query-0402881bada8",
+    "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+    "official-docs-verify-via-raw-md-index-abf14ff6a0dc",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "targeted-range-recovery-before-full-pagination-4afd292bd116",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260",
+    "fetch-user-cited-source-before-broad-search-a64b7143ad48",
+    "truncated-hit-follow-author-persistence-provenance-877574075533",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "identity-check-before-reenumeration-1348df6535d1"
+   ],
+   "prod_ms": 124.04433265328407,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "truncated-snapshot-pivot-to-targeted-query-0402881bada8",
+    "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+    "official-docs-verify-via-raw-md-index-abf14ff6a0dc",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "targeted-range-recovery-before-full-pagination-4afd292bd116",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260",
+    "fetch-user-cited-source-before-broad-search-a64b7143ad48",
+    "truncated-hit-follow-author-persistence-provenance-877574075533",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "identity-check-before-reenumeration-1348df6535d1"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 2,
+   "semantic_rank": 2,
+   "prod_rank": 2
+  },
+  {
+   "id": "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+   "status": "candidate",
+   "query": "校验脚本报错，但它检查的契约在权威测试里明明是绿的，怀疑脚本抄了一份过时的期望，怎么改？",
+   "keyword_ms": 88.7410007417202,
+   "keyword_ids": [
+    "records-name-flags-verify-at-source-stop-pool-sweeps-cbef0b46530f",
+    "minimal-injection-probe-before-accepting-tightened-grader-gate-e602f6a5ebb2"
+   ],
+   "bigram_ms": 134.28087532520294,
+   "bigram_ids": [
+    "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+    "locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+    "reverify-claimed-numbers-via-structural-recompute-and-value-compare-aa187f0ae1ae",
+    "gate-named-symbol-provenance-first-c98d1d0291f0",
+    "verify-artifact-identity-before-trusting-probe-contradiction-73cb470fb725"
+   ],
+   "semantic_ms": 122.33816739171743,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+    "release-pr-green-is-not-closure-check-declared-version-tag-ff5276d62c7f",
+    "reconcile-verification-set-with-change-manifest-before-green-6270b7b51333",
+    "deploy-acceptance-follow-change-identity-b334d83e67f1",
+    "authoritative-parser-first-for-record-statistics-ca68b260488d",
+    "spot-verify-report-claims-at-pinned-primary-sources-d9f7bc5a0caa",
+    "font-metrics-over-vision-loop-for-generated-figures-8db5b38fec16",
+    "resolve-probe-targets-from-control-plane-records-abd429d76940",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb",
+    "fetch-current-spec-before-implementing-post-cutoff-protocol-a092d0be5b2a"
+   ],
+   "prod_ms": 125.46174973249435,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+    "records-name-flags-verify-at-source-stop-pool-sweeps-cbef0b46530f",
+    "release-pr-green-is-not-closure-check-declared-version-tag-ff5276d62c7f",
+    "minimal-injection-probe-before-accepting-tightened-grader-gate-e602f6a5ebb2",
+    "reconcile-verification-set-with-change-manifest-before-green-6270b7b51333",
+    "deploy-acceptance-follow-change-identity-b334d83e67f1",
+    "authoritative-parser-first-for-record-statistics-ca68b260488d",
+    "spot-verify-report-claims-at-pinned-primary-sources-d9f7bc5a0caa",
+    "font-metrics-over-vision-loop-for-generated-figures-8db5b38fec16",
+    "resolve-probe-targets-from-control-plane-records-abd429d76940"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7",
+   "status": "candidate",
+   "query": "我记得之前被告知操作已经完成，但用户说根本没生效，该信谁、去哪儿查终态？",
+   "keyword_ms": 89.80958443135023,
+   "keyword_ids": [],
+   "bigram_ms": 121.59787490963936,
+   "bigram_ids": [
+    "verify-persisted-state-over-success-receipt-be322e1c66c0",
+    "deferred-wakeup-verify-async-action-terminal-states-e9c597e4c1e4",
+    "content-digest-equivalence-over-identity-reproduction-e1ad1f052b50",
+    "check-completion-gate-before-polling-detached-action-13436a62132d",
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f"
+   ],
+   "semantic_ms": 117.8667088970542,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "live-source-verify-pending-external-items-4574e64b5649",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d",
+    "verify-live-state-at-authoritative-source-before-memory-reformulation-1f25a0d8651e",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34",
+    "verify-named-deliverable-before-honoring-fulfillment-claim-094fc57acf52"
+   ],
+   "prod_ms": 124.48779121041298,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "live-source-verify-pending-external-items-4574e64b5649",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d",
+    "verify-live-state-at-authoritative-source-before-memory-reformulation-1f25a0d8651e",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34",
+    "verify-named-deliverable-before-honoring-fulfillment-claim-094fc57acf52"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 6,
+   "prod_rank": 6
+  },
+  {
+   "id": "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+   "status": "hold",
+   "query": "给这个仓库的常驻服务换上新代码，从检查到验收的完整流程是什么？",
+   "keyword_ms": 86.50949969887733,
+   "keyword_ids": [],
+   "bigram_ms": 123.39300010353327,
+   "bigram_ids": [
+    "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+    "authority-gate-drift-map-before-lifecycle-plan-23f0e2d2ae69",
+    "managed-restart-target-config-preflight-and-rollback-binding-356473240ac6",
+    "failed-ci-gate-diagnose-from-local-gate-script-repro-04eed411f3de",
+    "derive-validator-contract-from-pinned-source-dd2083babf34"
+   ],
+   "semantic_ms": 260.515708476305,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "verify-change-liveness-via-per-process-start-head-ancestry-8a0b1c8ba6f7",
+    "runtime-introspection-over-source-scan-for-live-version-check-41be7d0a8ab8",
+    "git-bounded-discovery-and-guard-test-as-surface-checklist-c63c51b9c3b1",
+    "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+    "claim-by-claim-authoritative-state-audit-6785f55f3b95",
+    "pin-target-repo-from-provenance-before-repo-scoped-queries-6105351a8608",
+    "external-service-behavior-from-first-party-integration-code-f29c9b0e03de",
+    "resolve-target-locally-before-broad-web-scan-36eb89e276c5",
+    "scoped-identifier-grep-for-service-wiring-not-numeric-workspace-search-3950c1d54518",
+    "deploy-acceptance-follow-change-identity-b334d83e67f1"
+   ],
+   "prod_ms": 264.0758343040943,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "verify-change-liveness-via-per-process-start-head-ancestry-8a0b1c8ba6f7",
+    "runtime-introspection-over-source-scan-for-live-version-check-41be7d0a8ab8",
+    "git-bounded-discovery-and-guard-test-as-surface-checklist-c63c51b9c3b1",
+    "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+    "claim-by-claim-authoritative-state-audit-6785f55f3b95",
+    "pin-target-repo-from-provenance-before-repo-scoped-queries-6105351a8608",
+    "external-service-behavior-from-first-party-integration-code-f29c9b0e03de",
+    "resolve-target-locally-before-broad-web-scan-36eb89e276c5",
+    "scoped-identifier-grep-for-service-wiring-not-numeric-workspace-search-3950c1d54518",
+    "deploy-acceptance-follow-change-identity-b334d83e67f1"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "poc-a-b-6dd78baba7e8",
+   "status": "hold",
+   "query": "想验证一个新能力到底有没有用，实验怎么设计才不会被事后解释带偏？",
+   "keyword_ms": 85.14616638422012,
+   "keyword_ids": [],
+   "bigram_ms": 123.19508288055658,
+   "bigram_ids": [
+    "spec-first-execution-contract-before-infra-reuse-7a07677f7092",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "inventory-driven-salvage-commit-5b505795e3f4",
+    "verify-named-deliverable-before-honoring-fulfillment-claim-094fc57acf52"
+   ],
+   "semantic_ms": 125.26120897382498,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "falsify-detector-criterion-and-patch-gate-loop-before-detector-driven-ru-720ca0ed7acd",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "quota-constrained-zero-side-effect-failure-discrimination-a0c71878ecc3",
+    "parity-map-before-borrow-f4c7fa867f41",
+    "memory-as-hypothesis-live-schema-as-authority-041838a41b0f",
+    "arithmetic-preverdict-then-load-bearing-first-verification-801d60f8fa7a",
+    "validate-instrument-before-absence-claim-3a2756c9c06d",
+    "verify-invariant-defining-lines-before-skip-guard-d5825c6c4f9e",
+    "pin-artifact-native-conventions-before-geometry-verification-7d0568cd9091"
+   ],
+   "prod_ms": 124.99920837581158,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "falsify-detector-criterion-and-patch-gate-loop-before-detector-driven-ru-720ca0ed7acd",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "quota-constrained-zero-side-effect-failure-discrimination-a0c71878ecc3",
+    "parity-map-before-borrow-f4c7fa867f41",
+    "memory-as-hypothesis-live-schema-as-authority-041838a41b0f",
+    "arithmetic-preverdict-then-load-bearing-first-verification-801d60f8fa7a",
+    "validate-instrument-before-absence-claim-3a2756c9c06d",
+    "verify-invariant-defining-lines-before-skip-guard-d5825c6c4f9e",
+    "pin-artifact-native-conventions-before-geometry-verification-7d0568cd9091"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "ff-window-first-shared-ref-advance-25c56c2869fa",
+   "status": "hold",
+   "query": "好几个工作树同时占着仓库，怎么判断能不能安全地把分支快进到主干？",
+   "keyword_ms": 103.55979204177856,
+   "keyword_ids": [],
+   "bigram_ms": 123.01587499678135,
+   "bigram_ids": [
+    "route-deleted-ref-recovery-by-reachability-class-not-fsck-80bb70f65836",
+    "ff-window-first-shared-ref-advance-25c56c2869fa",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "receipt-state-first-verify-refs-not-tree-on-resume-adc543cfb7fd",
+    "provenance-before-defaults-advisory-state-4debbe308f39"
+   ],
+   "semantic_ms": 263.8736255466938,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "clean-tree-per-gate-boundary-under-concurrent-writers-bfda48ecb3bd",
+    "worktree-env-root-leak-pin-before-source-crawl-dd964e8ecafd",
+    "name-keyed-git-ref-lookup-before-enumeration-398f57241d7f",
+    "clone-first-for-bulk-repo-ingestion-63c81319e94c",
+    "bind-tree-reading-gates-to-artifact-ref-worktree-ece00051f244",
+    "ff-window-first-shared-ref-advance-25c56c2869fa",
+    "anchor-declared-worktree-root-before-commands-695487311c0e",
+    "git-metadata-isolation-convention-before-broad-doc-search-0ec3c92ebd6b",
+    "layered-merge-gap-adjudication-cherry-vs-integration-signal-ddf15fea71c0",
+    "exhaustive-search-hits-decide-implementation-location-10d261abf6c4"
+   ],
+   "prod_ms": 263.7218330055475,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "clean-tree-per-gate-boundary-under-concurrent-writers-bfda48ecb3bd",
+    "worktree-env-root-leak-pin-before-source-crawl-dd964e8ecafd",
+    "name-keyed-git-ref-lookup-before-enumeration-398f57241d7f",
+    "clone-first-for-bulk-repo-ingestion-63c81319e94c",
+    "bind-tree-reading-gates-to-artifact-ref-worktree-ece00051f244",
+    "ff-window-first-shared-ref-advance-25c56c2869fa",
+    "anchor-declared-worktree-root-before-commands-695487311c0e",
+    "git-metadata-isolation-convention-before-broad-doc-search-0ec3c92ebd6b",
+    "layered-merge-gap-adjudication-cherry-vs-integration-signal-ddf15fea71c0",
+    "exhaustive-search-hits-decide-implementation-location-10d261abf6c4"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 2,
+   "semantic_rank": 6,
+   "prod_rank": 6
+  },
+  {
+   "id": "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+   "status": "active",
+   "query": "子代理任务跑到一半因为上下文爆了挂掉，剩下的活是原样重派还是拆小？",
+   "keyword_ms": 85.8181668445468,
+   "keyword_ids": [],
+   "bigram_ms": 123.5533757135272,
+   "bigram_ids": [
+    "classify-cancelled-child-mutations-from-receipt-trace-before-redispatch-b5fb4ae4209e",
+    "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "collect-turn-bound-child-before-turn-end-0ccce4ae9927",
+    "rule-sot-first-audit-when-user-cites-paraphrased-rule-700081268716"
+   ],
+   "semantic_ms": 122.37887550145388,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+    "attribute-delegation-failure-via-receipt-and-cross-session-scope-31ba83df00f2",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "authority-contract-before-managed-mutation-62e4436f179e",
+    "classify-cancelled-child-mutations-from-receipt-trace-before-redispatch-b5fb4ae4209e",
+    "collect-turn-bound-child-before-turn-end-0ccce4ae9927",
+    "ground-derived-label-claims-in-semantics-and-existence-probe-39d27fc2e645",
+    "rerun-own-plan-via-precondition-source-checks-9921357d823c",
+    "rebuild-lost-derivative-from-surviving-sources-80c49aa15bef"
+   ],
+   "prod_ms": 124.02604147791862,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+    "attribute-delegation-failure-via-receipt-and-cross-session-scope-31ba83df00f2",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "authority-contract-before-managed-mutation-62e4436f179e",
+    "classify-cancelled-child-mutations-from-receipt-trace-before-redispatch-b5fb4ae4209e",
+    "collect-turn-bound-child-before-turn-end-0ccce4ae9927",
+    "ground-derived-label-claims-in-semantics-and-existence-probe-39d27fc2e645",
+    "rerun-own-plan-via-precondition-source-checks-9921357d823c",
+    "rebuild-lost-derivative-from-surviving-sources-80c49aa15bef"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 2,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "locate-authoritative-record-via-handler-store-code-c1394db56200",
+   "status": "active",
+   "query": "我之前提交的那条审批建议，系统到底存到哪里了、现在是什么状态？",
+   "keyword_ms": 91.0275001078844,
+   "keyword_ids": [
+    "resume-evidence-tier-ladder-memory-record-live-721a5447548c"
+   ],
+   "bigram_ms": 126.17249973118305,
+   "bigram_ids": [
+    "locate-authoritative-record-via-handler-store-code-c1394db56200",
+    "reconcile-done-action-authorization-before-button-hunt-8c4f4d942c90",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "vcs-provenance-first-on-vanished-artifacts-1d74b7177840",
+    "resume-evidence-tier-ladder-memory-record-live-721a5447548c"
+   ],
+   "semantic_ms": 124.64162521064281,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "status-question-provenance-first-035c5e2ab5cf",
+    "state-questions-read-persisted-record-not-implementation-bdc629a6cc3e",
+    "validate-residual-state-premise-before-bulk-status-convergence-bb1c057e8724",
+    "route-lifecycle-state-unknowns-to-status-surface-not-record-research-341213490e49",
+    "current-state-from-live-authority-not-history-paging-989ce02cadb5",
+    "verify-live-state-at-authoritative-source-before-memory-reformulation-1f25a0d8651e",
+    "live-state-first-for-forward-looking-ops-questions-c18cb8033d16",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "id-2a4e1585a9f5",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d"
+   ],
+   "prod_ms": 124.72299952059984,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "status-question-provenance-first-035c5e2ab5cf",
+    "resume-evidence-tier-ladder-memory-record-live-721a5447548c",
+    "state-questions-read-persisted-record-not-implementation-bdc629a6cc3e",
+    "validate-residual-state-premise-before-bulk-status-convergence-bb1c057e8724",
+    "route-lifecycle-state-unknowns-to-status-surface-not-record-research-341213490e49",
+    "current-state-from-live-authority-not-history-paging-989ce02cadb5",
+    "verify-live-state-at-authoritative-source-before-memory-reformulation-1f25a0d8651e",
+    "live-state-first-for-forward-looking-ops-questions-c18cb8033d16",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "id-2a4e1585a9f5"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": null,
+   "prod_rank": null
+  },
+  {
+   "id": "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+   "status": "active",
+   "query": "仓库配了好几个远端，我想知道本地比『正主』领先多少提交，该跟哪个比？",
+   "keyword_ms": 93.99424958974123,
+   "keyword_ids": [],
+   "bigram_ms": 126.39624997973442,
+   "bigram_ids": [
+    "mirror-ci-triage-local-fix-attribution-and-sibling-remote-oracle-9363433bcbf1",
+    "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+    "route-deleted-ref-recovery-by-reachability-class-not-fsck-80bb70f65836",
+    "propagation-decision-via-consumer-dependency-and-authoritative-target-0b04c104927e",
+    "pin-remote-identity-and-history-relatedness-before-sync-ops-6d3fa7ef9164"
+   ],
+   "semantic_ms": 269.19758319854736,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+    "propagation-decision-via-consumer-dependency-and-authoritative-target-0b04c104927e",
+    "mirror-ci-triage-local-fix-attribution-and-sibling-remote-oracle-9363433bcbf1",
+    "merge-base-probe-first-no-push-history-archaeology-52268e021e44",
+    "pin-remote-identity-and-history-relatedness-before-sync-ops-6d3fa7ef9164",
+    "preflight-fetch-and-collision-check-before-remote-mutation-a75ff2674055",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "scoped-identifier-grep-for-service-wiring-not-numeric-workspace-search-3950c1d54518",
+    "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558"
+   ],
+   "prod_ms": 270.5666245892644,
+   "prod_mode": "semantic",
+   "prod_ids": [
+    "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+    "propagation-decision-via-consumer-dependency-and-authoritative-target-0b04c104927e",
+    "mirror-ci-triage-local-fix-attribution-and-sibling-remote-oracle-9363433bcbf1",
+    "merge-base-probe-first-no-push-history-archaeology-52268e021e44",
+    "pin-remote-identity-and-history-relatedness-before-sync-ops-6d3fa7ef9164",
+    "preflight-fetch-and-collision-check-before-remote-mutation-a75ff2674055",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "scoped-identifier-grep-for-service-wiring-not-numeric-workspace-search-3950c1d54518",
+    "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 2,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+   "status": "qualified",
+   "query": "评审工具返回了一堆标题和说明，但一条实际问题都没有，是不是可以跳过这次评审？",
+   "keyword_ms": 92.01375022530556,
+   "keyword_ids": [],
+   "bigram_ms": 137.5589594244957,
+   "bigram_ids": [
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "surface-audit-via-definition-module-and-render-call-sites-85dec4cea238",
+    "ground-enumerable-scale-assumptions-before-design-finalization-83a4fb4a2c33",
+    "usage-audit-via-authoritative-mutation-ledger-52801413e616",
+    "triage-review-checklist-verify-suspects-in-source-before-fix-32a18804dd22"
+   ],
+   "semantic_ms": 268.70799995958805,
+   "semantic_mode": "mixed",
+   "semantic_ids": [
+    "triage-review-checklist-verify-suspects-in-source-before-fix-32a18804dd22",
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "ground-enumerable-scale-assumptions-before-design-finalization-83a4fb4a2c33",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34",
+    "pivot-to-model-owned-judgment-on-protocol-shell-receipt-dd6794c31bf8",
+    "rater-context-readset-firewall-when-agent-is-designated-rater-211e17b7ba35",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "surface-audit-via-definition-module-and-render-call-sites-85dec4cea238",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "audit-report-by-resolving-cited-pointers-4cbbd66a7689"
+   ],
+   "prod_ms": 264.079874381423,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "triage-review-checklist-verify-suspects-in-source-before-fix-32a18804dd22",
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "ground-enumerable-scale-assumptions-before-design-finalization-83a4fb4a2c33",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34",
+    "pivot-to-model-owned-judgment-on-protocol-shell-receipt-dd6794c31bf8",
+    "rater-context-readset-firewall-when-agent-is-designated-rater-211e17b7ba35",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "surface-audit-via-definition-module-and-render-call-sites-85dec4cea238",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "audit-report-by-resolving-cited-pointers-4cbbd66a7689"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": 1,
+   "semantic_rank": 2,
+   "prod_rank": 2
+  }
+ ]
+}

@@ -1,0 +1,184 @@
+{
+ "schema": "method-retrieval-goldset/v1",
+ "created_at": "2026-10-20T07:57:00+08:00",
+ "corpus": {
+  "dir": "data/methods",
+  "cards": 1248,
+  "counts": {
+   "candidate": 1194,
+   "hold": 28,
+   "active": 23,
+   "qualified": 1,
+   "retired": 2
+  }
+ },
+ "sampling": {
+  "method": "stratified random, one query per card",
+  "seed": 20261020,
+  "strata": {
+   "candidate": 23,
+   "hold": 3,
+   "active": 3,
+   "qualified": 1
+  }
+ },
+ "query_style": "task-style Chinese utterance written from the card description; target card name/title not reused",
+ "decision_rule_preregistered": {
+  "keep": "semantic hit@1 >= keyword hit@1 + 20pp AND semantic p95 <= 3s",
+  "revert": "semantic hit@1 < keyword hit@1 OR semantic p95 > 5s",
+  "note": "keyword here means the then-current MethodStore.list CJK term matching; bigram channel is a diagnostic, not part of the rule"
+ },
+ "disclosure": "Queries were fixed in a scratch file at 07:57 before the first run; this committed file is the same content, hashed below. First run was exploratory before commit; reproduction run after commit is recorded in the results file.",
+ "queries": [
+  {
+   "id": "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+   "status": "candidate",
+   "query": "控制面操作卡在运行中不动了，我知道它的 action_id，该去哪儿看这条操作自己的记录和补救步骤？"
+  },
+  {
+   "id": "isolate-sibling-paths-in-negative-tests-2a915029c432",
+   "status": "candidate",
+   "query": "写『不该命中的输入应返回不存在』的测试时，测试样例总被另一条匹配路径接住而假失败，动笔前要先确认什么？"
+  },
+  {
+   "id": "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+   "status": "candidate",
+   "query": "同事说这个失败在他机器上也一样、属于预存问题，我只在自己环境跑了一次就反驳，这样下结论可靠吗？"
+  },
+  {
+   "id": "irreversible-action-lossless-reconciliation-4266e4ab4385",
+   "status": "candidate",
+   "query": "批量发出通知之后，怎么确认一个都没漏？抽查几个锚点感觉不踏实。"
+  },
+  {
+   "id": "reuse-or-requery-exact-identifiers-from-receipts-def44c81977d",
+   "status": "candidate",
+   "query": "接着上一轮继续做，需要的文件路径之前的命令回执里已经出现过，还要再搜一遍吗？"
+  },
+  {
+   "id": "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+   "status": "candidate",
+   "query": "有条记录在网页列表里看不到，怀疑根本没保存，第一步查什么能最快缩小范围？"
+  },
+  {
+   "id": "time-anchored-regression-window-first-30fc83e9a5ae",
+   "status": "candidate",
+   "query": "用户反馈昨天下午三点之前都正常，之后开始变坏，排查应该从哪条线索入手？"
+  },
+  {
+   "id": "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+   "status": "candidate",
+   "query": "开了代理软件后某个应用连不上，排除规则加了很多还是断，下一步该看什么？"
+  },
+  {
+   "id": "lost-handle-regenerate-forward-3a6d0088a08d",
+   "status": "candidate",
+   "query": "后台任务的 job id 丢了，输出也找不到，是继续翻历史还是重新跑一遍？"
+  },
+  {
+   "id": "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+   "status": "candidate",
+   "query": "评审意见只写了文件名和行号，没给目录，怎么定位到那段代码？"
+  },
+  {
+   "id": "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+   "status": "candidate",
+   "query": "工具返回的结构化结果被截断了，换关键词反复检索也只看到同一段，怎么办？"
+  },
+  {
+   "id": "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+   "status": "candidate",
+   "query": "某个实验特性为什么默认关闭，这个决定的依据写在哪里？"
+  },
+  {
+   "id": "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+   "status": "candidate",
+   "query": "上一轮讨论说系统已经支持某机制，现在要定稿，怎么判断这个断言还成不成立？"
+  },
+  {
+   "id": "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+   "status": "candidate",
+   "query": "想把浏览器自动化接到一个已经打开的窗口，但连接被拒，先检查什么？"
+  },
+  {
+   "id": "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+   "status": "candidate",
+   "query": "拿着记录 ID 想读完整内容，可检索视图每次都只给同一段截断文本，源头在哪？"
+  },
+  {
+   "id": "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+   "status": "candidate",
+   "query": "部署脚本提示还有人占着、不能重启，怎么确认那些锁是活的还是残留的？"
+  },
+  {
+   "id": "pin-write-contract-before-redefining-persisted-record-format-f6491cd164ad",
+   "status": "candidate",
+   "query": "要改方法卡这种持久化记录的字段格式，先确认什么才能保证写入不被拒？"
+  },
+  {
+   "id": "probe-real-routes-from-local-source-not-guessed-paths-796113098ac1",
+   "status": "candidate",
+   "query": "线上服务的接口文档过期了，想确认本地代码实际暴露了哪些端点，怎么查最快？"
+  },
+  {
+   "id": "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+   "status": "candidate",
+   "query": "只知道厂商名字和大致能力，没有具体地址，怎么快速确认能不能用、报错代表什么？"
+  },
+  {
+   "id": "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+   "status": "candidate",
+   "query": "修复上线了但日志里没有出现预期的那行，这能说明修复没生效吗？"
+  },
+  {
+   "id": "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+   "status": "candidate",
+   "query": "页面快照特别大还被截断，我只想点其中一个输入框，怎么找到它的引用？"
+  },
+  {
+   "id": "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+   "status": "candidate",
+   "query": "校验脚本报错，但它检查的契约在权威测试里明明是绿的，怀疑脚本抄了一份过时的期望，怎么改？"
+  },
+  {
+   "id": "adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7",
+   "status": "candidate",
+   "query": "我记得之前被告知操作已经完成，但用户说根本没生效，该信谁、去哪儿查终态？"
+  },
+  {
+   "id": "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+   "status": "hold",
+   "query": "给这个仓库的常驻服务换上新代码，从检查到验收的完整流程是什么？"
+  },
+  {
+   "id": "poc-a-b-6dd78baba7e8",
+   "status": "hold",
+   "query": "想验证一个新能力到底有没有用，实验怎么设计才不会被事后解释带偏？"
+  },
+  {
+   "id": "ff-window-first-shared-ref-advance-25c56c2869fa",
+   "status": "hold",
+   "query": "好几个工作树同时占着仓库，怎么判断能不能安全地把分支快进到主干？"
+  },
+  {
+   "id": "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+   "status": "active",
+   "query": "子代理任务跑到一半因为上下文爆了挂掉，剩下的活是原样重派还是拆小？"
+  },
+  {
+   "id": "locate-authoritative-record-via-handler-store-code-c1394db56200",
+   "status": "active",
+   "query": "我之前提交的那条审批建议，系统到底存到哪里了、现在是什么状态？"
+  },
+  {
+   "id": "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+   "status": "active",
+   "query": "仓库配了好几个远端，我想知道本地比『正主』领先多少提交，该跟哪个比？"
+  },
+  {
+   "id": "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+   "status": "qualified",
+   "query": "评审工具返回了一堆标题和说明，但一条实际问题都没有，是不是可以跳过这次评审？"
+  }
+ ]
+}
