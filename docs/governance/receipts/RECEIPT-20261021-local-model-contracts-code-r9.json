@@ -1,0 +1,183 @@
+{
+  "gate": "code",
+  "review_kind": "full_test",
+  "reviewer": "subagent_9e3347e7c23b",
+  "reviewer_model": "glm/glm-5.3",
+  "parent_session_id": "8dbfab0e-9cff-48a9-81dd-b47aa351a4f8",
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "p2": 6,
+  "review_isolated": true,
+  "candidate_base_commit": "bfe949a53285bb302a527d200f0dcfe4c1cfdd1f",
+  "candidate_head_commit": "59e23149b661893b343066c1ef019f79e5f799f2",
+  "artifact_sha256": "f67d764ac3252983f4342ce5a5ad90ec5923ab975fd4fd935c8d8818a6f00993",
+  "scope_files": [
+    "docs/RUNBOOK-20261021-local-model-contract-recovery.md",
+    "docs/config/local-model-reasoning-recovery-20261021.json",
+    "docs/governance/receipts/RECEIPT-20261021-compaction-contract-recovery-code-r9.json",
+    "src/llm_loop/core/compaction_contract.py",
+    "src/llm_loop/core/history.py",
+    "src/llm_loop/core/loop/build.py",
+    "src/llm_loop/core/loop/engine.py",
+    "src/llm_loop/core/loop/engine_services/archive.py",
+    "src/llm_loop/core/loop/engine_services/compaction_gate.py",
+    "src/llm_loop/core/prompt_build/stages/history_pipeline.py",
+    "src/llm_loop/core/prompt_build/stages/history_postprocess.py",
+    "src/llm_loop/core/prompt_build/stages/history_projection.py",
+    "src/llm_loop/event_log/replay.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/llm/client.py",
+    "src/llm_loop/tools/builtin/task_state.py",
+    "tests/unit/test_compaction_logical_contract.py",
+    "tests/unit/test_llm_client.py",
+    "tests/unit/test_local_model_contract_profiles.py",
+    "tests/unit/test_task_state_recovery.py"
+  ],
+  "covered_file_sha256": {
+    "docs/RUNBOOK-20261021-local-model-contract-recovery.md": "454d5173617a48bebeb7a35f1f57195add4952bc8cba5280a272e0b2062f1f6c",
+    "docs/config/local-model-reasoning-recovery-20261021.json": "b24438bc5b463d927435819069e5199d54912d9d847aa82087c48427429afc35",
+    "docs/governance/receipts/RECEIPT-20261021-compaction-contract-recovery-code-r9.json": "48c39babb70f99c43a6cf9fd6b6e9b4d777cbf7133f49284fe38e10b3bb6fcf5",
+    "src/llm_loop/core/compaction_contract.py": "ebca6248e06020be7c7a335ce757cfcc20c3d8071d0d2d9bc53965d810d1bc76",
+    "src/llm_loop/core/history.py": "50783cec174159415c9929dd4950b65cc65dffad606c34dbbc90514070971f29",
+    "src/llm_loop/core/loop/build.py": "fec366b77062b550ef4a22886dbe4c7fa26bdb9e27ef638179c8c534e49f0d78",
+    "src/llm_loop/core/loop/engine.py": "47dafccf1cb4370c2d2b862e7680ff1ebe8113c80ee14a1b53ca31b9ca2fe522",
+    "src/llm_loop/core/loop/engine_services/archive.py": "02dfb632eadf72a0fe750b9bf7653212255133ca5a0294779643b7866ca2fff0",
+    "src/llm_loop/core/loop/engine_services/compaction_gate.py": "5d1f199e5ccdb259113f7537c7dc512015af7d46123bddf7412eaaf511f7fb01",
+    "src/llm_loop/core/prompt_build/stages/history_pipeline.py": "569046862a87686e9e09cc13d9848b19270f007ce82811578c44fd03f73b9706",
+    "src/llm_loop/core/prompt_build/stages/history_postprocess.py": "08ad1405300bfa9185267f8dc6ffd89ee5be1cdf4f278f43251f461987bd93b8",
+    "src/llm_loop/core/prompt_build/stages/history_projection.py": "49f2fb378cd3ff8c203709468c105e4de0042f007ee1793655002d51f1c6a533",
+    "src/llm_loop/event_log/replay.py": "9d98370c34715600e18ecc736618dbe340b6842ab05e082ab04973ca3bda4fba",
+    "src/llm_loop/factory.py": "6e36925cda2a881dee8bca594cc96f90f5f4eefdab3b76ae7460f08a1b599f0c",
+    "src/llm_loop/llm/client.py": "a331e15de0f2b2db8b581a0f5aba3d08e6ce05247a8b9d392a62869b8846a3dd",
+    "src/llm_loop/tools/builtin/task_state.py": "3b1450c656b06c81a639578cca423ccb132c945123742483d1f6bcb3f5e556f2",
+    "tests/unit/test_compaction_logical_contract.py": "9bcfb904b34ba2f563992f556b2fbabae269e5ce6b44e30515e7efed466e9d53",
+    "tests/unit/test_llm_client.py": "265ceae8b3427828cd7d095fc736ea14873a069e9f0625c1f6fe83af6ed942ae",
+    "tests/unit/test_local_model_contract_profiles.py": "c3048bf2185ba8c94bd7628d4ba1adc2e413073a0f174fb472029547ebf375f6",
+    "tests/unit/test_task_state_recovery.py": "446dc4191158c3df33214afa3f9fa6abcbb602aa022fb0582cbfc02716cba280"
+  },
+  "covered_source_tree_sha256": "5338d4974797dd5c88e789b07fba346d7eb6690765c95a5ab847d469fab7090f",
+  "scope_note": "Exact main-relative candidate frozen and Host-reviewed before full R9; this receipt alone was added afterwards as evidence metadata. Old compaction receipt is historical; current per-file SHA map supersedes its coverage claim for this candidate.",
+  "evidence_directory": "data/local-model-recovery-20261021/evidence",
+  "evidence_sha256": {
+    "host-start.json": "d00a1cc1f650fd0ecd185c0d9ca5fae6416dfeb38b33af4a353802ce620618b7",
+    "host-qualification.json": "a7bb52234c96c22bb3e3d15e02116d6b0e65a2adba2f49e5cca21a22af6da751",
+    "review.txt": "a94cd73ebe2613e5aa7ba69955feb7906114910961841cd978e823db1e9c192b",
+    "review-observation.json": "aeb716ffffe6633841df8c4fd3d237fb8b18bb9695c71e133e694f6fcd63ba1f",
+    "full-test-admission.json": "5a4ab052fcca814a3a4c5b46ba9ca4f85f73bc444713958328bd835cfd3dc4f6",
+    "full-test-result.json": "7405cab14314730fdf2c1b6f5726f6f37a905b47f571dbdd8987f2a6d307f629",
+    "full-test.log": "16c1871d93ee75d36ebbe7c77a4c8c9210667c3816ed1f33702732b60fbd7c46"
+  },
+  "review_text": "Independent read-only review of frozen candidate f67d764a… (full_test gate). Note on discipline: the delegated instruction forbids tool use, so the records-base methodology search is inapplicable; this review proceeds solely from the frozen artifact (committed delta + receipt evidence + uncommitted delta).\n\n**Intent & scope**: The uncommitted delta completes the stated purpose of the worktree (\"compaction-local-model-contracts\"): it fixes a real defect where an explicit per-model `reasoning_effort_map` was silently dropped in auto mode (`_openai_chat_template_kwargs` returned None whenever `reasoning_requested is None`), which also desynchronized the tool-schema token counter from actual generation kwargs. It ships a dated, explicit per-model config profile (docs/config JSON), a runbook, three regression surfaces, and one more shared-compaction label. No unrelated changes, no loop breakers, semantic judges, or automatic model switching were introduced, matching the runbook's explicit non-goals.\n\n**Correctness of `client.py` change**: The semantic delta is exactly one case: `reasoning_requested=None` (auto) with an `effort_map` configured. Previously → None; now → `{\"reasoning_effort\": <mapped>}` without `enable_thinking` (native on/off ownership preserved). `True`/`False` modes are byte-identical to before (`False` still suppresses effort via `is not False`; `True` still sends `enable_thinking` plus optional effort). `kwargs or None` correctly restores None when nothing applies. Blast radius on the shared path is confined to models explicitly configured with an effort map — all other providers keep prior behavior. Both new client tests pin the intended wire shape (`{\"reasoning_effort\": \"xhigh\"}` with `enable_thinking` absent) and counter/generation kwargs equality via mocked httpx; no live network is reachable (all endpoints are 127.0.0.1/.invalid and fully mocked).\n\n**Config/docs artifacts**: The profile JSON contains no endpoints or credentials, is a merge patch (not a full providers file), and its qualification notes correctly refuse to transfer Qwen's verified template behavior to the unloaded MLX Ornith model (no borrowed effort/sampling recipe — asserted in `test_local_model_contract_profiles`). Context window (65536), max_tokens (32768), provider input cap (184000), and unrelated models' settings are asserted unchanged. Runtime status in the receipt (not merged/pushed/deployed/restarted) is consistent with the delegation boundary; nothing here expands authorization.\n\n**Security/leak check**: No secrets or credentials; dummy keys and `.invalid`/loopback URLs only. `reasoning_replay=full` re-sends only the model's own prior in-session reasoning to the same provider (same trust domain). No new prompt-injection surface: the delta adds no instruction-bearing content to any request path; `temperature: null` merely removes a client-side field so the backend default applies.\n\n**Findings (all minor, none blocking)**:\n1. (P2) The runbook claims the `count_tool_schema_tokens` cache key includes template kwargs, but the presented diff shows no cache-key code; the new counter test exercises only a single effort value, so cross-effort cache staleness is not regression-covered. Verify the key incorporates `_openai_chat_template_kwargs()` output; impact if absent is bounded token-estimate drift.\n2. (P2) Evidence continuity: the committed R9 receipt's `covered_file_sha256` for `tests/unit/test_compaction_logical_contract.py` (c4e7f82f…) is stale after the uncommitted label addition (d927f94f3…). The receipt's full-run evidence covers only the pre-uncommitted scope; this full_test gate on f67d764a… must stand as the evidence of record for the updated suite.\n3. (P2) The auto-mode wire change is shared-path semantics: any model elsewhere configured with an effort map under auto will now receive `reasoning_effort` without `enable_thinking`. Correct for the verified Qwen template; per-model template verification (as the profile's qualification notes demand) remains the guardrail for future models.\n4. (P2) `test_local_model_contract_profiles.py` reads the dated artifact at `docs/config/local-model-reasoning-recovery-20261021.json` by path; moving/renaming that ops artifact breaks the test (test-to-doc coupling, maintainability only).\n5. (P2) The new tests rely on pre-existing helpers not shown in the delta (`_client`, `_FakeStreamCtx`, `_FakeJSONResponse`, `_reasoning_tail_for`, `_apply_reasoning_tail`) and on the registry loader honoring explicit `\"temperature\": null` as None rather than a 0.0 default; correctness is confirmed only indirectly via the suite run (same disposition class as prior P2-1).\n6. (P2) The counter test's `transport.post.side_effect` sequence hard-codes the exact apply-template/tokenize call pattern (assert `count == 2` derived from `[1]` vs `[1,2,3]`); opaque breakage if the counter's internal call shape changes.\n\n**Side effects**: Config is generated but not activated; production providers, defaults, and credentials are untouched. The client change is behavior-neutral for all models without explicit effort maps. No session data is cleared or rewritten by the uncommitted delta.\n\nVERDICT: PASS\nP0=0 P1=0 P2=6\nSHA256: f67d764ac3252983f4342ce5a5ad90ec5923ab975fd4fd935c8d8818a6f00993\n",
+  "p2_disposition": [
+    {
+      "id": "P2-1",
+      "decision": "verified existing cache key",
+      "evidence": "client.py canonicalizes tools and chat_template_kwargs before hashing; different explicit efforts cannot share this key"
+    },
+    {
+      "id": "P2-2",
+      "decision": "new current receipt",
+      "evidence": "Current complete file SHA map, true GLM Host session and terminal full R9 replace old receipt coverage for changed files"
+    },
+    {
+      "id": "P2-3",
+      "decision": "retain explicit model-owned semantics",
+      "reason": "Only models declaring an effort map gain the auto mapping. No map, unsupported models and off retain their prior behavior; seven auxiliary combinations and actual Qwen backend verified"
+    },
+    {
+      "id": "P2-4",
+      "decision": "retain frozen dated profile fixture",
+      "reason": "This test qualifies this exact operational profile, so an intentional profile move must update the fixture path"
+    },
+    {
+      "id": "P2-5",
+      "decision": "verified existing helpers and null ownership",
+      "evidence": "Existing helpers resolved; real Registry/ModelClientPool profile regression, 266 targeted tests and full R9 passed; native HTTP payload omitted temperature"
+    },
+    {
+      "id": "P2-6",
+      "decision": "retain mechanical HTTP counter regression",
+      "reason": "Exact template/tokenize sequence is part of the protocol exercised; native backend template comparison and three real tasks provide separate evidence"
+    }
+  ],
+  "full_r9": {
+    "command": "bash scripts/ci_gate.sh",
+    "exit_code": 0,
+    "tier0_passed": 319,
+    "full_passed": 9964,
+    "full_skipped": 149,
+    "full_warnings": 9,
+    "full_seconds": 233.05,
+    "final_contract_probe_passed": 1,
+    "host_admission": {
+      "allowed": true,
+      "same_process_permit_consumed": true
+    },
+    "ruff": "PASS; historical=67 current=34 new=0 changed_file_diagnostics=0",
+    "pyright": "PASS; historical=45 current=11 new=0 changed_file_diagnostics=0",
+    "env_pins": "932 test files; 0 undeclared dependencies",
+    "scope": "Frozen candidate unchanged after test; only test-generated reports restored to HEAD; receipt added after gate as metadata"
+  },
+  "targeted": {
+    "red_regression_failed": 2,
+    "final_passed": 266,
+    "ruff_changed_files": "PASS",
+    "pyright_client_errors": 0,
+    "pyright_client_warnings": 0
+  },
+  "native_local_model_qualification": {
+    "scope": "candidate history pipeline + real configured LLM client + synthetic in-memory tools; not production engine or before/after task A/B",
+    "model": "cognilocal/qwen3.8-flash-next",
+    "backend": "llamacpp",
+    "runs": 3,
+    "correct": 3,
+    "wrong_target_runs": 0,
+    "actual_provider_requests": 14,
+    "reported_total_tokens": 47747,
+    "reported_prompt_tokens": 44455,
+    "reported_completion_tokens": 3292,
+    "duplicate_effects": 0,
+    "effects": 6,
+    "compaction_source_projected": 14,
+    "reset_events": 0,
+    "elapsed_seconds": [
+      184.48,
+      120.67,
+      65.21
+    ],
+    "rounds": [
+      6,
+      4,
+      4
+    ],
+    "session_ids": [
+      "e2ee808f-4565-4553-8568-1e02667d17f4",
+      "8496d98e-b40a-4bb4-be3a-0286f6abd864",
+      "2c6ecf86-2658-4610-b6e7-c5cb2b59766e"
+    ],
+    "ornith_mlx_qualification": "not run; registered model is not loaded; no automatic backend load/switch",
+    "claims_limit": "Three corrected-candidate successes do not prove all repetition eliminated or quantify task improvement without a matched baseline."
+  },
+  "native_evidence_sha256": {
+    "config-delta.json": "6654cad699f831accbe3d6e65b9949c582e297c21faa2aafd20ba7d81a36f143",
+    "backend-template-qualification.json": "5d8e8be93ff79d5d728188f5f3b56b57f93d72a9e92f3d133fb1b13f2998df33",
+    "backend-after-sandbox.json": "92ad0fd264fd0c4a8433e5b7020e32174c2fd98a9233d158278bb1aa560d056b",
+    "sandbox/results.json": "db4d92ef38ab0e744bd270ff705ae9fc254f2a466adcd5c9192bb73761561a33",
+    "sandbox/request-facts.jsonl": "30eb23d9a3ddad5f8c49e47d69ed681bffcbf9171b72aada751ebe6ea48e48ee",
+    "sandbox/request-facts.canonical.json": "d5b7428490debcf502e37dc77e092eef24e504d32662d4c7e67c14aad1868186",
+    "sandbox/summary.json": "ee221dde9ebbb3818108bd81520e69dde1cb43353ca52d225f76860558ada402",
+    "sandbox/plan.json": "2b3806bea62118ee56276622132d40683cf5f6d34f6cae5dd84aacd511a94c61",
+    "sandbox/qualification-harness.py": "e9053fca7ab907e004e22e0a92f6f11e9ca945e8dad2a88a1ccce9fae72a7614"
+  },
+  "production_config_sha256": "6808a86e768526c0049a55463b830c193ccd5fcc189cb2fdf0e0d49b39f83c04",
+  "runtime_status": {
+    "main_merged": false,
+    "pushed": false,
+    "production_config_activated": false,
+    "deployed": false,
+    "services_restarted": false,
+    "ornith_mlx_native_qualified": false
+  },
+  "narrow_recheck": null
+}

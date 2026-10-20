@@ -1,0 +1,38 @@
+{
+  "profile_id": "local-model-reasoning-recovery-20261021",
+  "model_patches": {
+    "qwen3.8-flash-next": {
+      "reasoning_replay": "full",
+      "reasoning_control": "chat_template",
+      "reasoning_efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "reasoning_default_effort": "max",
+      "reasoning_effort_map": {
+        "low": "low",
+        "medium": "medium",
+        "high": "xhigh",
+        "xhigh": "xhigh",
+        "max": "xhigh"
+      },
+      "temperature": null
+    },
+    "ornith-ai/Ornith-1.5-35B-A3B-MLX": {
+      "reasoning_replay": "full",
+      "temperature": null
+    }
+  },
+  "qualification": {
+    "qwen3.8-flash-next": "Current llama.cpp template supports reasoning_content, preserved thinking and effort; template verification only; task qualification is recorded separately and must not be inferred from capabilities.",
+    "ornith-ai/Ornith-1.5-35B-A3B-MLX": "Author template uses reasoning_content; current backend does not have this model loaded. Do not infer MLX runtime qualification from Qwen."
+  },
+  "scope": "Explicit per-model config patch; no automatic loader defaults, model switch, context/output cap changes or service activation.",
+  "sources": [
+    "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+    "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B/blob/main/chat_template.jinja"
+  ]
+}

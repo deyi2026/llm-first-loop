@@ -1842,3 +1842,69 @@ def test_empty_response_is_fallback_eligible():
     from llm_loop.llm.errors import LLMEmptyResponseError
 
     assert FallbackService._is_fallback_eligible_error(LLMEmptyResponseError("empty")) is True
+
+def test_local_auto_effort_mapping_reaches_wire_without_overriding_thinking(monkeypatch):
+    """auto keeps native on/off ownership while honoring explicit model effort mapping."""
+    from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
+    monkeypatch.delenv("LOCAL_ENABLE_THINKING", raising=False)
+    payloads = []
+    def stream(_self, _method, _url, **kwargs):
+        payloads.append(kwargs["json"])
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "OK"}}]}',
+            'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+    with mock.patch("httpx.Client.stream", stream):
+        client = _client(api_key="", base_url="http://127.0.0.1:8901/v1",
+            reasoning_control="chat_template", reasoning_capable=True, thinking_supported=True,
+            reasoning_effort_map={"max": "xhigh", "low": "low"})
+        mode = current_reasoning_mode.set("auto")
+        try:
+            for effort in ["max", "low"]:
+                token = current_reasoning_effort.set(effort)
+                try:
+                    client.chat([{"role": "user", "content": "test"}], [])
+                finally:
+                    current_reasoning_effort.reset(token)
+        finally:
+            current_reasoning_mode.reset(mode)
+            client.close()
+    assert payloads[0]["chat_template_kwargs"] == {"reasoning_effort": "xhigh"}
+    assert payloads[1]["chat_template_kwargs"] == {"reasoning_effort": "low"}
+    assert all("enable_thinking" not in p["chat_template_kwargs"] for p in payloads)
+
+
+def test_local_auto_counter_and_generation_share_mapped_effort(monkeypatch):
+    from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
+    monkeypatch.delenv("LOCAL_ENABLE_THINKING", raising=False)
+    with mock.patch("httpx.Client") as cls:
+        transport = cls.return_value
+        transport.post.side_effect = [
+            _FakeJSONResponse({"prompt": "BASE"}),
+            _FakeJSONResponse({"tokens": [1]}),
+            _FakeJSONResponse({"prompt": "BASE TOOL"}),
+            _FakeJSONResponse({"tokens": [1, 2, 3]}),
+        ]
+        transport.stream.return_value = _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "OK"}}]}',
+            'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+        client = _client(api_key="", base_url="http://127.0.0.1:8901/v1",
+            reasoning_control="chat_template", reasoning_capable=True, thinking_supported=True,
+            reasoning_effort_map={"max": "xhigh"})
+        mode = current_reasoning_mode.set("auto")
+        effort = current_reasoning_effort.set("max")
+        try:
+            tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+            assert client.count_tool_schema_tokens(tools) == 2
+            client.chat([{"role": "user", "content": "test"}], tools)
+        finally:
+            current_reasoning_effort.reset(effort)
+            current_reasoning_mode.reset(mode)
+            client.close()
+        applies = [c for c in transport.post.call_args_list if c.args[0].endswith("/apply-template")]
+        generated = transport.stream.call_args.kwargs["json"]
+        assert generated["chat_template_kwargs"] == {"reasoning_effort": "xhigh"}
+        assert all(c.kwargs["json"]["chat_template_kwargs"] == generated["chat_template_kwargs"] for c in applies)

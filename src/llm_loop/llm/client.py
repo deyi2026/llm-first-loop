@@ -1162,10 +1162,14 @@ class LLMClient:
             return None
         # reasoning_contract_state already owns the operator/env compatibility path.
         # Do not create a second direct env authority here; consume its resolved fact.
-        if reasoning_requested is None or not reasoning_supported:
+        if not reasoning_supported:
             return None
-        kwargs: dict[str, Any] = {"enable_thinking": reasoning_requested}
-        if reasoning_requested and self.reasoning_effort_map:
+        kwargs: dict[str, Any] = {}
+        if reasoning_requested is not None:
+            kwargs["enable_thinking"] = reasoning_requested
+        # auto leaves native on/off ownership intact, but an explicit model-owned
+        # effort map still applies (and must match the token-counter template).
+        if reasoning_requested is not False and self.reasoning_effort_map:
             requested_effort = self._effective_reasoning_effort()
             mapped_effort = (
                 self.reasoning_effort_map.get(requested_effort)
@@ -1174,7 +1178,7 @@ class LLMClient:
             )
             if mapped_effort:
                 kwargs["reasoning_effort"] = mapped_effort
-        return kwargs
+        return kwargs or None
 
     def _notify_transport_failure(self, exc: BaseException) -> None:
         """Report a transport-level connection failure to the owner (ModelClientPool).

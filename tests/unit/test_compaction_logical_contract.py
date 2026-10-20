@@ -10,7 +10,8 @@ from llm_loop.core.prompt_build.context import BuildDecision
 from llm_loop.core.prompt_build.stages.history_pipeline import run_history_pipeline
 
 LABELS = ["minimax/MiniMax-M3.1-Flash-Preview", "glm/glm-5.3",
-          "glm/glm-5.3-flash", "deepseek/deepseek-v4-flash", "cognilocal/qwen3.8-flash-next"]
+          "glm/glm-5.3-flash", "deepseek/deepseek-v4-flash", "cognilocal/qwen3.8-flash-next",
+          "cognilocal/ornith-ai/Ornith-1.5-35B-A3B-MLX"]
 
 
 def project(sess, budget, label, *, tokens=184000, events=None):
