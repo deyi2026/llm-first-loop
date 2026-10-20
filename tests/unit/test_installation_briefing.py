@@ -29,10 +29,14 @@ def _fixture_tree(tmp_path):
 
 
 def _env(tmp_path, monkeypatch):
+    # The engine's own dir bindings (runtime/paths.py) — no bespoke root knob.
     for key in ("LFL_RUNTIME_ROOT", "DATA_DIR", "DOCS_DIR", "METHOD_SEED_DIR",
                 "EXPERIENCES_DIR", "SKILLS_DIR"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("LFL_RUNTIME_ROOT", str(tmp_path))
+    monkeypatch.setenv("DOCS_DIR", str(tmp_path / "docs"))
+    monkeypatch.setenv("METHOD_SEED_DIR", str(tmp_path / "methods"))
+    monkeypatch.setenv("EXPERIENCES_DIR", str(tmp_path / "experiences"))
+    monkeypatch.setenv("SKILLS_DIR", str(tmp_path / "skills"))
 
 
 def test_briefing_indexes_rules_experience_and_skills(tmp_path, monkeypatch):

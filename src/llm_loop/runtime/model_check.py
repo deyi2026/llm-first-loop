@@ -6,8 +6,10 @@ It does not build an Engine, write configuration, retry, switch models or probe
 beyond the single user-facing request needed to answer one question: "does the
 configured endpoint accept this key and model right now?"
 
-The result never contains credential values.  Provider response bodies are
-truncated and redacted before they leave this module.
+The result never contains credential or configuration values: no API key, no
+model name, no endpoint host.  Provider response bodies are truncated and
+redacted before they leave this module.  Redirects are not followed, so the
+credential-bearing request is never forwarded to a different host.
 """
 
 from __future__ import annotations
@@ -25,6 +27,21 @@ from typing import Any
 DEFAULT_TIMEOUT_S = 15.0
 _MAX_BODY_CHARS = 4096
 _MAX_MESSAGE_CHARS = 300
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects: follow nothing, forward credentials nowhere."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirectHandler)
+
+
+def _open(request: urllib.request.Request, timeout: float):
+    """Single dispatch seam (tests patch this) that never follows redirects."""
+    return _OPENER.open(request, timeout=timeout)
 
 
 def _text(value: Any) -> str:
@@ -102,7 +119,7 @@ def _extract_error_message(body: str, secrets: list[str]) -> str:
     return _redact(message, secrets)[:_MAX_MESSAGE_CHARS]
 
 
-def _network_status(exc: BaseException) -> tuple[str, str]:
+def _network_status(exc: BaseException) -> tuple[str, str, str]:
     reason = getattr(exc, "reason", exc)
     text = str(reason).lower()
     if isinstance(reason, (socket.timeout, TimeoutError)) or "timed out" in text:
@@ -143,6 +160,13 @@ def _http_status(
 ) -> tuple[str, str, str]:
     message = _extract_error_message(body, secrets)
     text = (message + " " + body).lower()
+    if 300 <= status < 400:
+        return (
+            "redirect",
+            "LLM_BASE_URL 返回了重定向（HTTP " + str(status) + "），本检测不跟随重定向。",
+            "把服务商文档中的最终 API 地址（通常含 /v1 路径）直接填入 LLM_BASE_URL；"
+            "本检测不跟随重定向，避免凭据被转发到其他主机。",
+        )
     if status in (401, 403):
         return (
             "unauthorized",
@@ -166,7 +190,8 @@ def _http_status(
             "GLM 常用 glm-4.5 / glm-4.6，以服务商控制台为准。",
         )
     if status == 429 or "rate limit" in text or "too many requests" in text:
-        quota = any(k in text for k in ("quota", "balance", "insufficient", "exceeded", "credit"))
+        # Quota/balance wording only; a bare "rate limit exceeded" stays a limit.
+        quota = any(k in text for k in ("quota", "balance", "insufficient", "credit", "billing"))
         if quota:
             return (
                 "quota_exceeded",
@@ -237,9 +262,9 @@ def check_model_config(
             "latency_ms": int((time.monotonic() - started) * 1000),
             "message": _redact(message, secrets)[:_MAX_MESSAGE_CHARS],
             "action": _redact(action, secrets),
-            "model": model,
-            "endpoint_host": urllib.parse.urlsplit(base_url).hostname or "",
         }
+        # No config values here on purpose: no model name, no endpoint host.
+        # The interactive init prints its own local hint; reports stay value-free.
         if http_status is not None:
             payload["http_status"] = http_status
         if body:
@@ -265,7 +290,7 @@ def check_model_config(
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=max(1.0, float(timeout_s))) as response:
+        with _open(request, timeout=max(1.0, float(timeout_s))) as response:
             raw = response.read(_MAX_BODY_CHARS)
             body = raw.decode("utf-8", errors="replace")
             status_code = int(getattr(response, "status", 200))

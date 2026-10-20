@@ -174,7 +174,7 @@ def inspect_first_use(
             "experiences": asset_path("EXPERIENCES_DIR"),
             "skills": asset_path("SKILLS_DIR"),
         })
-        summary = ("规则 {rules} 条、方法 {methods} 条、经验 {experiences} 条、技能 {skills} 个"
+        summary = ("规则索引 {rules} 条、方法 {methods} 条、经验 {experiences} 条、技能 {skills} 个"
                    .format(**assets))
         if assets["rules"] and (assets["methods"] or assets["experiences"] or assets["skills"]):
             add("context_assets", "pass", "安装上下文资产可加载：" + summary + "。")

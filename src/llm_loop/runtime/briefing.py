@@ -13,7 +13,6 @@ underlying resources actually changed.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -32,19 +31,28 @@ _RULE_RE = re.compile(r"^##\s+[^：\n]*：(.*?)（(RULE-AI-\d+)", re.MULTILINE)
 _CACHE: dict[str, str] = {}
 
 
-def _env_path(name: str, default: Path) -> Path:
-    raw = os.environ.get(name, "").strip()
-    return Path(raw).expanduser() if raw else default
-
-
 def _root() -> Path:
-    raw = os.environ.get("LFL_RUNTIME_ROOT", "").strip()
-    if raw:
-        return Path(raw).expanduser()
     # Source layout: <repo>/src/llm_loop/runtime/briefing.py
     # Bundle layout: <bundle>/llm_loop/runtime/briefing.py
     candidate = Path(__file__).resolve().parents[2]
     return candidate.parent if candidate.name == "src" else candidate
+
+
+def _paths() -> dict[str, Path]:
+    # Bindings intentionally reuse runtime/paths.py resolution (no direct env
+    # reads here): experiences state-root inference, METHOD_SEED_DIR, SKILLS_DIR
+    # and the linked-worktree skill rebind all follow the engine's own truth.
+    # The methods key indexes the seed directory — the same key doctor passes
+    # as an override.
+    from .paths import resolve_runtime_paths
+
+    resolved = resolve_runtime_paths(data_dir=None, code_root=_root())
+    return {
+        "docs": resolved.docs_dir,
+        "methods": resolved.method_seed_dir,
+        "experiences": resolved.experiences_dir,
+        "skills": resolved.skills_dir,
+    }
 
 
 def _rule_index(docs_dir: Path) -> list[str]:
@@ -91,12 +99,26 @@ def _count_files(directory: Path, pattern: str) -> int:
         return 0
 
 
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 def _skill_index(skills_dir: Path) -> tuple[int, list[str]]:
+    """Count loadable skills: a directory only counts when SKILL.md exists.
+
+    This mirrors what skill_list can actually load, so the index never
+    overstates the installation.  Names are filtered to a conservative charset
+    before they can enter the context prefix.
+    """
     try:
-        entries = sorted(p.name for p in skills_dir.iterdir() if p.is_dir() and not p.name.startswith("."))
+        entries = sorted(
+            p.name
+            for p in skills_dir.iterdir()
+            if p.is_dir() and not p.name.startswith(".") and (p / "SKILL.md").is_file()
+        )
     except OSError:
         return (0, [])
-    return (len(entries), entries)
+    loadable = [name for name in entries if _SKILL_NAME_RE.match(name)]
+    return (len(loadable), loadable)
 
 
 def _signature(*paths: Path) -> str:
@@ -109,18 +131,6 @@ def _signature(*paths: Path) -> str:
     return "|".join(parts)
 
 
-def _paths() -> dict[str, Path]:
-    code = _root()
-    data = _env_path("DATA_DIR", code / "data")
-    state = data.parent if data.name == "data" else data
-    return {
-        "docs": _env_path("DOCS_DIR", code / "docs"),
-        "methods": _env_path("METHOD_SEED_DIR", code / "methods"),
-        "experiences": _env_path("EXPERIENCES_DIR", state / "experiences"),
-        "skills": _env_path("SKILLS_DIR", code / "skills"),
-    }
-
-
 def inspect_installation_assets(overrides: Mapping[str, str] | None = None) -> dict[str, int]:
     """Count the three asset classes the briefing would load (read-only).
 
@@ -128,7 +138,6 @@ def inspect_installation_assets(overrides: Mapping[str, str] | None = None) -> d
     bind from configuration (docs/methods/experiences/skills) without mutating
     the process environment.
     """
-
     paths = _paths()
     for key in ("docs", "methods", "experiences", "skills"):
         raw = str((overrides or {}).get(key, "") or "").strip()
@@ -144,7 +153,14 @@ def inspect_installation_assets(overrides: Mapping[str, str] | None = None) -> d
 
 
 def build_installation_briefing() -> str:
-    """Return a bounded, deterministic installation index (empty on failure)."""
+    """Return a bounded, deterministic installation index (empty on failure).
+
+    The cache lives for the process lifetime: the signature keys on directory
+    mtimes (plus ai_rules.md's own mtime), so an in-place edit of a METHOD.md
+    or experience file shows up in the index on the next process start, not
+    mid-run.  That is deliberate — the prefix must stay byte-stable within a
+    session to keep hitting the provider's prefix cache.
+    """
 
     paths = _paths()
     docs_dir = paths["docs"]
@@ -191,7 +207,7 @@ def build_installation_briefing() -> str:
                      "完成后可用 save_experience 沉淀可复用结论。")
 
     lines += ["", "### 工具与技能"]
-    lines.append("工具参数以 API schema 为真值；陌生工具先 get_tool_schema，不猜参数。"
+    lines.append("工具参数以 API schema 为真值；参数语义不明时先读该工具的完整 Schema 再调用，不猜参数。"
                  "常用类别：文件读写、代码/内容搜索、命令执行、浏览器感知与操作、"
                  "证据/记录检索、任务与子代理。技能用 skill_list 发现、skill_load 加载。")
     if skill_count:
