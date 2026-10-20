@@ -4,6 +4,7 @@
 - 动机论文：*Rethinking the Evaluation of Harness Evolution for Agents*（AI2+UW，arXiv 2607.12227 v2）
   - 摘要已核对原文：同反馈/推理预算下与 test-time scaling 基线对照 + held-out 泛化评估；结论 = 自动 harness evolution 不能稳定胜出、泛化有限
   - 具体数字（86.0 vs 75.8、迁移 +0.6 等）出自新闻稿转述，**未逐条核对论文正文**，引用时须注明
+  - **2026-10-21 修订**：本结论基于 2607.12227 单篇。晚于本提案的 *Harness²*（arXiv 2610.14224，2026-10-09）声称在包含 Harness Scaling 的基线上取胜，但自认使用额外 test-time compute、未做预算对齐。因此本行“不能稳定胜出”应弱化为 **“尚无 budget-matched 胜出证据”**：“稳定胜出”未被证伪，只是未被证明。详见 `docs/agent-harness-landscape-2026.md` §6 / §8。
 
 ## 0. 问题定义（为什么 LFL 需要这套）
 
