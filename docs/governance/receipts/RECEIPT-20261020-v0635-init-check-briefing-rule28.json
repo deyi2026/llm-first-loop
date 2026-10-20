@@ -1,0 +1,53 @@
+{
+  "receipt_kind": "RULE-AI-28 full_test gate evidence",
+  "created_at": "2026-10-20T13:55:00+08:00",
+  "subject": "v0.6.35：init 模型连通检测 + doctor --online + 安装期规则/经验/工具 briefing 前缀；随窗发布 ba629d241 子代理压缩 wire 修复",
+  "commit_under_test": "93519acd2",
+  "canonical_command": "bash scripts/ci_gate.sh",
+  "physical_exit_code": 0,
+  "independent_admission": [
+    {
+      "kind": "full_test",
+      "child_id": "subagent_eeb4fccc47aa",
+      "candidate_sha256": "dc8bacf6d3295b6b4422726ba60692216c938dc2317e64ac742d40ad6181abdd",
+      "qualification": "PASS",
+      "target_name": "v0.6.35 候选四审（v0635-candidate 93519acd2，基线 main=32606b145）",
+      "scope": "覆盖窗口 32606b145..93519acd2（ba629d241/0a47ca146/d447fbcf1/93519acd2）全量门禁命令 bash scripts/ci_gate.sh；一次性资格在本次执行后消耗"
+    }
+  ],
+  "review_history": [
+    {
+      "child_id": "subagent_ed63455fe12d",
+      "verdict": "REVISE P0=0 P1=1 P2=8",
+      "candidate_sha256": "959aa733586877e762182d54a96606860f55cf840c40ea8a654b637aad7ee8d2",
+      "fixes_applied": "P1-1 回执移除 model/endpoint_host；P2 429 误判收敛；redirect 不跟随；技能计数含 SKILL.md；CHANGELOG 补记与措辞如实；缓存/路径绑定语义注明"
+    },
+    {
+      "child_id": "subagent_1bb3ba40e058",
+      "verdict": "PASS P0=0 P1=0 P2=0",
+      "candidate_sha256": "c2788caff2eaa26b1c18c2c8a3fdbba44918c19e4ed0316fc0d45290678875c8",
+      "note": "18d3649d6 材料 PASS，但该轮 ci_gate 执行在 pyright 棘轮失败（_network_status 标注 6 项新增），资格随失败运行消耗"
+    }
+  ],
+  "results": {
+    "stage_1_ruff": "PASS historical=67 current=34 new=0 changed_file_diagnostics=0",
+    "stage_2_env_pin": "PASS scanned 908 test files, 0 undeclared COMPACT_RATIO dependents",
+    "stage_3_pyright": "PASS historical=45 current=11 new=0 changed_file_diagnostics=0",
+    "stage_4_tier0": "319 passed, 9466 deselected in 21.45s",
+    "stage_5_full_pytest": "xdist 全量绿（物理退出码 0，job-c5a1661d2d714bd590f3）",
+    "side_effect_audit": "51 处真实provider base_url 告警（既有基线，仅告警不阻断）"
+  },
+  "behavior_change": {
+    "before": "init 写入配置后直接宣告完成，错误配置要等首次真实会话才暴露；doctor 仅离线检查；会话前缀不含安装级规则/经验/工具索引",
+    "after": "init 写入后一次有界探测（15s，分类+修复指引，失败保留配置退出非零）；doctor --online 显式探测且回执无任何配置值（无 Key/模型名/端点主机）；前缀含 RULE-AI 索引、方法/经验计数与检索入口、工具类别与技能名；检测不跟随重定向，凭据不外发",
+    "unchanged": "doctor 默认仍离线只读；无网环境 init 检测失败不阻断配置保留；briefing 资源缺失时降级为入口提示"
+  },
+  "scope_decisions": {
+    "p2_unfixed": [
+      "P2-5 经验路径启发式：核实与 runtime/paths.py infer_state_root 完全一致（doctor 传同键覆盖），已注明而非改码",
+      "P2-8 init ready:false 仍 exit 1：保留——配置保留+指引已打印，start 不依赖 doctor ready，属既定设计"
+    ],
+    "window_ratchet_notes": "本窗口另含 ba629d241（子代理压缩 wire 剥离 ingress 标记，第 10 轮熔断修复，此前已单独提交）随 v0.6.35 一同发布并在 CHANGELOG 补记"
+  },
+  "workspace_hygiene": "ci_gate 运行会重写 reports/phase*/**.json（18 文件约 323KB），已 git restore 还原；提交前工作区干净（untracked 仅本地排除的研究目录，不入推送）。"
+}
