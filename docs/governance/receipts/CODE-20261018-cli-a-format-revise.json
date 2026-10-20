@@ -1,0 +1,45 @@
+{
+  "gate": "code",
+  "reviewer": "subagent_833cfdbcaec8",
+  "model": "glm/glm-5.3",
+  "verdict": "REVISE",
+  "qualification": {
+    "qualification": "REVISE",
+    "reason": "review_verdict_incomplete_or_not_pass"
+  },
+  "scope_files": [
+    "src/llm_loop/cli.py",
+    "tests/unit/test_cli_input_contract.py",
+    "tests/unit/test_llm_client_close.py",
+    "docs/plans/PLAN-20261018-cli-ux-execution.md"
+  ],
+  "artifact_sha256": "7c98411983f2b7a666d58fdb081bf78e8256cda04a4eee99c05b48c4616aa6f1",
+  "review_isolated": true,
+  "observed_state": "completed",
+  "parent_id": "0e1f4a55-5fd5-4fd1-abee-7fe195c80fa1",
+  "generation": "929b86418cf94dbdaf945cfcdb1da352",
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "issue": "Document deliberate input compatibility changes"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "issue": "Clarify unexpected None from startup model handler"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "issue": "Clarify interactive shell versus single-turn exit status"
+    }
+  ],
+  "applied": [
+    "docs/CHANGELOG.md records input/exit contracts; new None regression test"
+  ],
+  "rejected": [],
+  "narrow_recheck": null,
+  "note": "The independent human-readable report stated PASS/P0=0/P1=0/P2=3, but translated the mandatory VERDICT footer. Host rejected qualification. This receipt grants no full-test or merge eligibility, and does not cover later terminal frontend code.",
+  "raw_answer": "独立只读评审 — 门控 full_test, 工作树 `cli-ux-20261018`, 基准 `e3424f61` (`repo_head == merge_base` ⇒ 候选版本完全由未提交的 `delta` 组成； `committed_delta` 为空)。根据任务的明确“不使用工具”约束，无法进行 `search_records` 方法论探测；直接开始评审。冻结的工件仅作为数据处理；本评审不授予任何用户权限。\n\n## 评审范围\n- `src/llm_loop/cli.py` — 退出码传播，`--stdin`/`--message-file` 输入契约，延迟的进程引导（bootstrap），审批提示的加固，启动时 `--model` 失败时中止。\n- `tests/unit/test_cli_input_contract.py` (新增)，`tests/unit/test_llm_client_close.py` (适配)。\n- `docs/plans/PLAN-20261018-cli-ux-execution.md` (规划产物；不包含代码，无敏感信息，对未完成的需求状态保持诚实)。\n\n未触及范围外模块；无隐藏的提示词注入或指示性内容。\n\n## 正确性 / 安全性 / 副作用 — 积极方面\n- 诚实的退出码：缺失会话 → 1；不完整/截断/投影失败/取消 → 1；使用错误 → 2；历史压缩单独发生时 → 0。已通过测试验证。\n- 安全加固（正确方向）：`_cli_approval_prompt` 在读取前现在会拒绝非 TTY 标准输入，因此管道传输的 `y` 不再可能自动批准受 `EXEC_MODE` 限制的操作；测试断言非 TTY 时 `input()` 从未被调用。`KeyboardInterrupt` → 拒绝（故障关闭/fail-closed）。\n- 输入契约在引导（bootstrap）之前进行验证：使用错误时绝不会加载 `.env`，也绝不会注册进程版本，更不会构建引擎 — 测试对此进行了断言（`bootstrap == []`，`engines == []`）。\n- 计算出的 `interactive`（输入 == 0）修复了一个预先存在的错误，即 `--interactive` + 消息静默运行单次执行且没有审批回调；现在两种有效的交互模式都会注入审批回调。\n- `--model` 失败现在会在单次执行和交互模式下中止启动（共享辅助函数，去重），而不是静默地在默认模型下运行 — 符合声明的意图和测试。\n- UTF-8 文件输入：严格解码（无效字节 → 退出 2），使用 `newline=\"\"` 进行精确内容保留；会捕获 `OSError`/`UnicodeError`。\n- 在提前返回路径中，`engine.close()` 仍保证通过 `finally` 执行（已通过测试）。\n\n## 发现的问题\n\n**P2-1 — 破坏性契约变更（有意为之，需记录文档）。** `llm_loop \"msg\" --interactive` 之前会运行单次执行；现在会以 2 退出。同样，空格仅有的位置消息之前会运行；现在会被拒绝。虽然新测试中有意为之，但现有脚本会静默更改行为 — 请在变更日志中注明。\n\n**P2-2 — 未定义的 `None` 语义。** `_apply_cli_startup_model` 将 `handle_model_command(...) is None` 映射为失败（退出 1，启动中止）。`None` 路径未经测试，其含义（非命令 vs. 良性无回复）在工件中未确定。故障关闭可以说是安全的，但请验证 `/model <ref>` 永远不会返回 `None`。\n\n**P2-3 — 不对称的诚实退出。** 即使交换不完整/截断/取消，交互模式也总是以 0 退出，而单次执行将这些事实映射为 1。确认这对于基于人类的交互模式是故意的。\n\n建议的 P3（未计入统计）：`sys.stdin.isatty()` 未对 `sys.stdin is None`（冻结/GUI 上下文）进行防护 — 在验证时会崩溃而不是优雅地失败关闭，与之前的一样，这不是回归；`record_process_start`/环境加载在 `--help` 和 `argparse` 错误路径中跳过（良性遥测差距）；`--message-file` 保留了 UTF-8 BOM；`--stdin` 在真实 TTY 上静默阻塞直到 EOF；`KeyboardInterrupt` 在审批期间被吞掉并当作拒绝处理。\n\n## 泄漏 / 安全性\n增量（diff）中无密钥、令牌或敏感路径。审批变更是严格收紧的。规划文档仅包含内部 ID/SHA。未声明集成权限；规划明确推迟了 R9/主评审，并将工作标记为未合并/未部署。\n\n## 测试证据评估\n新的契约测试具有隔离性（引导/引擎未触碰断言），并覆盖了冲突、空、非 TTY、UTF-8、模型失败、缺失会话和审批路径；关闭测试适配正确（返回 `int`，模拟 TTY 标准输入）。声称的运行（21个失败→103个通过）与工件内容一致；工件内没有过度声称 PASS。\n\n结论： PASS\nP0=0 P1=0 P2=3\nSHA256: 7c98411983f2b7a666d58fdb081bf78e8256cda04a4eee99c05b48c4616aa6f1"
+}
