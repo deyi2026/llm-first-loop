@@ -22,7 +22,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from llm_loop.core.run_context import current_session_id
 from llm_loop.tools.review_gate import classify_review_gate_command
@@ -487,7 +487,10 @@ def _source_snapshot(workdir: str) -> tuple[str, str]:
     # The integrated Rule28 patch exceeds the former 128KB ceiling; 192KB
     # supports that real candidate without truncation while larger scopes
     # deterministically require splitting or a complete multi-part review.
-    if len(material.encode("utf-8")) > 192_000:
+    # This static check is the conservative floor; the dynamic spawn-gate
+    # pre-check in start() may impose a tighter live-registry cap (EVO-
+    # 20261021-5bf26586).
+    if len(material.encode("utf-8")) > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
         raise ValueError("review_artifact_exceeds_192kb")
     identity = _digest(_canonical({
         "head": head, "base": base, "repo": str(repo), "material": material,
@@ -632,6 +635,18 @@ def _page_visible_text(raw: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# EVO-20261021-5bf26586: the reviewer input ceiling is dynamic, not static.
+# The reviewer child (empty tool scope) gets its real history budget from the
+# live registry via the runner; a frozen task that cannot fit it must be
+# refused before any child is spawned instead of dying mid-review as a
+# misleading "reviewer_unavailable". When the registry cannot resolve the
+# reviewer model the conservative static ceiling below stays authoritative;
+# when it can, the effective cap is the min of both. The headroom factor
+# leaves room for task-contract framing and the JSON wire envelope.
+_REVIEWER_MODEL = "glm/glm-5.3"
+_REVIEWER_STATIC_MATERIAL_CAP_BYTES = 192_000  # keep in sync with review_artifact_exceeds_192kb
+_REVIEWER_WIRE_HEADROOM = 0.8
+
 _REVIEWER_FAILURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Auth first: a mixed failure like "403 forbidden ... quota exceeded" must
     # burn zero retries on unfixable credentials. Tail boundaries are omitted
@@ -639,6 +654,14 @@ _REVIEWER_FAILURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("reviewer_auth_error", re.compile(
         r"\b(?:401|403|unauthorized|forbidden|invalid[ _-]*api[ _-]*key|"
         r"permission denied|authentication|authorization)", re.I)),
+    # Input-size failures are deterministic and must never retry (EVO-20261021-
+    # 5bf26586): a re-spawn hits the same projection and burns budget. The
+    # Chinese arms mirror SubAgentRunner's own budget-refusal strings, which
+    # previously fell through to the reviewer_unavailable catch-all.
+    ("reviewer_input_too_large", re.compile(
+        r"(?:input[ _-]*too[ _-]*large|prompt[ _-]*too[ _-]*long|"
+        r"context[ _-]*length|maximum[ _-]*context|context[ _-]*window|"
+        r"token[ _-]*limit|输入接近.{0,8}窗口|已耗尽.{0,8}输入容量|输出预留已占满|上下文预检)", re.I)),
     ("reviewer_rate_limited", re.compile(
         r"\b(?:429|rate[ _-]*limit|too many requests|quota)", re.I)),
     ("reviewer_timeout", re.compile(
@@ -985,6 +1008,48 @@ class HostReviewAdmission:
             "The Host parser accepts only these exact English standalone lines; "
             "localized labels (e.g. '结论：') are INVALID and fail the gate."
         )
+        # EVO-20261021-5bf26586: dynamic spawn-gate pre-check. A frozen task
+        # that cannot fit the reviewer model's live registry budget must be
+        # refused deterministically BEFORE a child is spawned: the spawned
+        # reviewer would die on its own input projection (surfacing as a
+        # misleading "reviewer_unavailable") and burn the retry budget for
+        # nothing. Registry unresolved -> the static 192KB ceiling stands;
+        # resolved -> effective cap is the min of static and budget×headroom.
+        task_bytes = len(task.encode("utf-8"))
+        model_budget: int | None = None
+        probe = cast(
+            "Callable[[str], int | None] | None",
+            getattr(self._runner, "child_input_budget_chars", None),
+        )
+        if probe is not None:
+            try:
+                model_budget = probe(_REVIEWER_MODEL)
+            except Exception:  # noqa: BLE001 — a failing probe must never widen admission
+                model_budget = None
+        effective_cap = _REVIEWER_STATIC_MATERIAL_CAP_BYTES
+        if isinstance(model_budget, int) and model_budget >= 0:
+            effective_cap = min(
+                _REVIEWER_STATIC_MATERIAL_CAP_BYTES,
+                int(model_budget * _REVIEWER_WIRE_HEADROOM),
+            )
+        if task_bytes > effective_cap:
+            split_hint = max(2, -(-task_bytes // max(1, effective_cap)))
+            self._audit_reviewer_unavailable(
+                parent, kind, "reviewer_input_too_large",
+                f"pre-check task={task_bytes}B>cap={effective_cap}B "
+                f"budget={model_budget!r} static={_REVIEWER_STATIC_MATERIAL_CAP_BYTES}B",
+            )
+            return {
+                "accepted": False,
+                "reason": (
+                    "reviewer_input_too_large:"
+                    f"task={task_bytes}B>cap={effective_cap}B "
+                    f"(model_budget={model_budget if model_budget is not None else 'unresolved'}B, "
+                    f"headroom={_REVIEWER_WIRE_HEADROOM}); split the frozen "
+                    f"scope into ~{split_hint} smaller reviews and resubmit"
+                ),
+                "reviewer_failure": "reviewer_input_too_large",
+            }
         with self._guard:
             if len(self._records) >= self._max_records:
                 for key, row in tuple(self._records.items()):
@@ -1003,7 +1068,7 @@ class HostReviewAdmission:
                     try:
                         started = self._runner.start(
                             task, inherit=False, depth=0, max_rounds=1,
-                            required_tools=[], model="glm/glm-5.3", review_isolated=True,
+                            required_tools=[], model=_REVIEWER_MODEL, review_isolated=True,
                             acceptance=["explicit P0/P1/P2, target scope, actual SHA and independent verdict"],
                         )
                         if started.get("accepted") and started.get("child_id"):

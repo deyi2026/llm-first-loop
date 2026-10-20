@@ -2448,6 +2448,41 @@ class SubAgentRunner:
                         return found
         return found
 
+    def child_input_budget_chars(self, model_ref: str) -> int | None:
+        """Tool-less child input budget in chars (same limits math as _bounded_child_wire).
+
+        EVO-20261021-5bf26586: trusted Host callers (review admission) must
+        pre-check that frozen material fits the reviewer model's *live*
+        registry budget instead of a static cap that silently drifts after
+        registry hot-reload. A reviewer child carries an empty tool scope
+        (required_tools=[]), so the wire budget equals
+        floor(allowed_input_tokens * chars_per_token) exactly as
+        reserve_history_after_tools projects it for zero tool-schema chars.
+        Returns None when the resolver/registry cannot resolve the model:
+        the caller must fall back to its own conservative ceiling, never
+        to "unlimited".
+        """
+        ref = str(model_ref or "").strip()
+        if self._context_limits_resolver is None:
+            return None
+        try:
+            limits = self._context_limits_resolver(ref)
+            child_llm, _ = self._resolve_child_llm(ref)
+        except Exception:  # noqa: BLE001 — pre-check degrades to caller's static cap
+            return None
+        if limits is None:
+            return None
+        context_window, provider_input_limit, chars_per_token = limits
+        if context_window <= 0 or chars_per_token <= 0:
+            return None
+        output_reserve = max(0, int(getattr(child_llm, "max_tokens", 0) or 0))
+        if output_reserve >= context_window:
+            return 0
+        allowed = min(int(context_window * 0.9), context_window - output_reserve)
+        if provider_input_limit is not None and provider_input_limit > 0:
+            allowed = min(allowed, provider_input_limit)
+        return int(allowed * chars_per_token)
+
     def _bounded_child_wire(
         self,
         sess: Session,

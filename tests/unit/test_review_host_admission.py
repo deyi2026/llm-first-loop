@@ -800,3 +800,90 @@ def test_poll_malformed_verdict_returns_review_tail(tmp_path: Path) -> None:
     assert outcome["qualification"] == "REVISE"
     assert outcome["reason"] == "review_verdict_incomplete_or_not_pass"
     assert "结论：PASS" in outcome["review_tail"]
+
+
+class BudgetProbeRunner(FakeChildRunner):
+    """EVO-20261021-5bf26586: runner exposing the live-registry budget probe."""
+
+    def __init__(self, budget: int | None | Exception) -> None:
+        super().__init__()
+        self.budget = budget
+
+    def child_input_budget_chars(self, model_ref: str) -> int | None:
+        assert model_ref == "glm/glm-5.3"
+        if isinstance(self.budget, Exception):
+            raise self.budget
+        return self.budget
+
+
+def test_dynamic_budget_pre_check_rejects_oversized_task_before_spawn(
+    tmp_path: Path,
+) -> None:
+    # Material below the static 192KB ceiling but above the live-registry cap
+    # (60_000B budget -> 48_000B effective after 0.8 headroom) must be refused
+    # deterministically BEFORE any child is spawned, with the budget numbers
+    # and a split suggestion in the refusal reason.
+    repo = _repo(tmp_path)
+    (repo / "mid.py").write_text("y = " + repr("b" * 90_000) + "\n")
+    host = HostReviewAdmission()
+    runner = BudgetProbeRunner(60_000)
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert blocked["reviewer_failure"] == "reviewer_input_too_large"
+    assert "reviewer_input_too_large:" in blocked["reason"]
+    assert "cap=48000B" in blocked["reason"]
+    assert "model_budget=60000B" in blocked["reason"]
+    assert "~2 smaller reviews" in blocked["reason"]
+    assert runner.started == 0  # no spawn: refusal precedes child creation
+
+
+def test_chinese_input_budget_refusal_is_classified_and_never_retried(
+    tmp_path: Path,
+) -> None:
+    # SubAgentRunner's own Chinese budget-refusal wording previously fell
+    # through to the reviewer_unavailable catch-all and, when mistaken for a
+    # transient, burned retries that could never succeed.
+    assert _classify_reviewer_failure(
+        "模型输入接近实际窗口，但当前子代理没有可调用的 search_archive"
+    ) == "reviewer_input_too_large"
+    assert _classify_reviewer_failure(
+        "工具 schema 已耗尽本模型输入容量，输出预留已占满该模型的物理窗口"
+    ) == "reviewer_input_too_large"
+    assert _classify_reviewer_failure(
+        "This model's maximum context length is 4096 tokens"
+    ) == "reviewer_input_too_large"
+    # Unrelated limit wording must not be swallowed by the new pattern.
+    assert _classify_reviewer_failure("child refused: depth limit") == "reviewer_unavailable"
+    # Via the spawn path: one refusal, zero retries (non-retryable label).
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    runner.refusals = ["模型输入接近实际窗口，但当前子代理没有可调用的 search_archive"]
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert blocked["reviewer_failure"] == "reviewer_input_too_large"
+    assert blocked["reason"].startswith("reviewer_input_too_large:")
+    assert runner.started == 1  # refused once, never retried
+
+
+def test_unresolved_registry_falls_back_to_static_ceiling(tmp_path: Path) -> None:
+    # Probe returns None (registry cannot resolve the reviewer model): the
+    # legacy 192KB static ceiling stays authoritative — never "unlimited",
+    # never a crash. A crashing probe must degrade the same way.
+    repo = _repo(tmp_path)
+    (repo / "big.py").write_text("z = " + repr("c" * 150_000) + "\n")  # <192KB material
+    host = HostReviewAdmission()
+    runner = BudgetProbeRunner(None)
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+
+    host2 = HostReviewAdmission()
+    runner2 = BudgetProbeRunner(RuntimeError("registry snapshot gone"))
+    host2.attach_runner(runner2)
+    allowed2 = host2.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed2["accepted"] is True
+    assert runner2.started == 1
