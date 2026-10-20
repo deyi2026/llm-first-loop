@@ -126,9 +126,12 @@ def run_analyzer(
         [python, "-m", "ruff", "check", "src", "tests", "scripts", "--output-format=json"]
         if tool == "ruff" else [python, "-m", "pyright", "--outputjson"]
     )
-    # Full-tree Pyright on this repository takes about 325s; 240s aborted valid
-    # ratchet runs before diagnostics were available. Keep Ruff's timeout unchanged.
-    analyzer_timeout = 420 if tool == "pyright" else 240
+    # Full-tree Pyright on this repository takes about 325s on a warm local
+    # M-series; hosted GitHub runners run roughly twice as slow (observed
+    # >420s on 2026-10-20, fail-closing four straight CI/Release runs without
+    # any diagnostic regression). Budget 900s keeps the ratchet meaningful on
+    # hosted runners; Ruff's timeout is unchanged.
+    analyzer_timeout = 900 if tool == "pyright" else 240
     completed = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, timeout=analyzer_timeout)
     if completed.returncode not in (0, 1):
         raise RuntimeError(f"{tool} runner crashed (exit={completed.returncode}): {completed.stderr[-300:]}")
