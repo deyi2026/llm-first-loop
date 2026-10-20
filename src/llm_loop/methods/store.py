@@ -559,10 +559,24 @@ class MethodStore:
         """Normalize discovery terms without assigning semantic applicability.
 
         Hyphenated stable-id fragments become separately searchable (``poc-a-b`` ->
-        ``poc``), while CJK runs remain intact. This is intentionally mechanical.
+        ``poc``). CJK runs expand into overlapping bigrams: a whole natural-language
+        Chinese sentence is one unsplittable run, so matching it as a single
+        substring missed every query in the frozen 30-query baseline (0/30 top-1).
+        Bigrams are mechanical and dependency-free; on that same frozen set they
+        reached 10/30 top-1, equal to semantic recall. Applicability is still left
+        to the model — this only decides which cards are candidates.
         """
         raw = query.lower().strip()
-        return [t for t in re.findall(r"[a-z0-9]{2,}|[\u4e00-\u9fff]+", raw) if t]
+        terms: list[str] = []
+        for token in re.findall(r"[a-z0-9]{2,}|[\u4e00-\u9fff]+", raw):
+            if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+                if len(token) == 1:
+                    terms.append(token)
+                else:
+                    terms.extend(token[i : i + 2] for i in range(len(token) - 1))
+            else:
+                terms.append(token)
+        return terms
 
     @staticmethod
     def _normalized_search_text(value: str) -> str:

@@ -125,6 +125,29 @@ def test_method_discovery_v2_matches_id_fragments_and_partial_terms(tmp_path: Pa
     assert navigate[0]["key"] == "method:semantic-operation"
 
 
+def test_method_discovery_splits_cjk_runs_into_bigrams(tmp_path: Path) -> None:
+    """A CJK run is one unsplittable regex match, so the whole natural-language
+    query used to be a single term and matched nothing unless that exact sentence
+    appeared verbatim. Bigrams restore recall without adding a dependency."""
+    root = tmp_path / "methods"
+    _seed_method(
+        root,
+        "cjk-bigram-recall",
+        status="active",
+        body="检索中文长句时按二元组切分，避免整句被当作单一不可匹配片段",
+    )
+    _seed_method(root, "unrelated-english", status="active", body="unrelated english filler")
+
+    # 与卡片正文没有连续子串重合，只有二元组共享；整段匹配会全 miss。
+    cards = MethodStore(root).list("中文长句检索怎么做", 5)
+    assert cards[0]["key"] == "method:cjk-bigram-recall"
+
+    terms = MethodStore._search_terms("中文 长句")
+    assert terms == ["中文", "长句"]  # 空格两侧不成组，不产生 "文长"
+    assert MethodStore._search_terms("中") == ["中"]  # 单字游程不丢
+    assert MethodStore._search_terms("poc-a-b") == ["poc"]  # 既有稳定 id 片段行为不变
+
+
 def test_method_freshness_reports_contract_change_without_judging_applicability(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     seed = workspace / "methods"
