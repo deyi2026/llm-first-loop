@@ -2673,6 +2673,75 @@ class BrowserPerceptionAdapter:
     def hydrate(self, session_id: str, grounding_ref: str) -> dict[str, Any]:
         return self.store.hydrate(session_id, grounding_ref)
 
+    def identity_search(
+        self,
+        session_id: str,
+        identity: dict[str, Any],
+        *,
+        snapshot_id: str = "",
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        """Search the FULL canonical object list of a snapshot for an identity.
+
+        EVO-20261020-91de7f8c: the model-facing snapshot projects only a bounded
+        window in model projection order (``snapshot(projection_limit=...)``),
+        but identity addressing (``{kind,name}`` / ``{kind,name_normalized}``)
+        must still be able to ground objects that fall beyond that window —
+        e.g. a footer publish button on a ~1550-object editor page. This loads
+        the immutable bundle persisted with the given snapshot (or the session's
+        latest known snapshot) and applies the same exact-match semantics the
+        operate tool applies to the projection window.
+        """
+        empty: dict[str, Any] = {
+            "schema": "browser.identity_search.v0.1",
+            "snapshot_id": "",
+            "total": 0,
+            "objects": [],
+        }
+        state = self.store.load_session_state(session_id) or {}
+        if snapshot_id:
+            resolved = str(snapshot_id)
+        else:
+            ids = state.get("snapshot_ids") or []
+            if not ids:
+                return empty
+            resolved = str(ids[-1])
+        bundle = self.store.load_snapshot_bundle(session_id, resolved)
+        objects = bundle.get("objects") if isinstance(bundle, dict) else None
+        if not isinstance(objects, list):
+            return {**empty, "snapshot_id": resolved}
+        matched = [obj for obj in objects if _identity_matches(obj, identity)]
+        bounded = matched[:limit]
+        projected = [
+            {
+                "kind": obj.get("kind"),
+                "name": (obj.get("attributes") or {}).get("name"),
+                "name_normalized": (obj.get("attributes") or {}).get("name_normalized"),
+                "grounding_ref": obj.get("grounding_ref"),
+            }
+            for obj in bounded
+            if isinstance(obj, dict)
+        ]
+        return {
+            "schema": "browser.identity_search.v0.1",
+            "snapshot_id": resolved,
+            "total": len(matched),
+            "objects": projected,
+        }
+
+
+def _identity_matches(obj: Any, identity: dict[str, Any]) -> bool:
+    """Exact identity semantics shared with the operate tool's window matching."""
+    if not isinstance(obj, dict) or not isinstance(identity, dict):
+        return False
+    raw_attrs = obj.get("attributes")
+    attrs: dict[str, Any] = raw_attrs if isinstance(raw_attrs, dict) else {}
+    for key, expected in identity.items():
+        observed = obj.get("kind") if key == "kind" else attrs.get(key)
+        if not isinstance(observed, str) or observed != expected:
+            return False
+    return True
+
 
 def _rare_string_values(raw: Any, strings: list[str]) -> dict[int, str]:
     if not isinstance(raw, dict):

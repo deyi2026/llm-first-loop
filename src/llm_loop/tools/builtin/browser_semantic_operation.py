@@ -710,6 +710,23 @@ class BrowserSemanticOperationTool:
         raw = self._capture_backend.capture()
         return self._perception.snapshot(session_id, raw, projection_limit=100)
 
+    def _identity_search_safe(
+        self, session_id: str, identity: dict[str, str]
+    ) -> dict[str, Any] | None:
+        """Full-list identity search, failure-tolerant (EVO-20261020-91de7f8c).
+
+        Observability is fail-open: an adapter without the method, or a store
+        read failure, degrades to the previous window-only behaviour instead
+        of failing the dispatch.
+        """
+        try:
+            search = getattr(self._perception, "identity_search", None)
+            if not callable(search):
+                return None
+            return search(session_id, identity)
+        except Exception:
+            return None
+
     def _ground_object(
         self, session_id: str, target: Any
     ) -> tuple[str | None, int, dict[str, str], dict[str, Any], dict[str, Any]]:
@@ -745,7 +762,24 @@ class BrowserSemanticOperationTool:
         snapshot_result = self._snapshot(session_id)
         objects = [obj for obj in snapshot_result.get("objects", []) if isinstance(obj, dict)]
         matches = [obj for obj in objects if self._matches_identity(obj, identity)]
+        # EVO-20261020-91de7f8c: the window above is bounded by model projection
+        # order (first N projected objects); identity addressing must reach the
+        # full canonical list, otherwise elements like a footer publish button
+        # on a ~1550-object editor page can never be grounded by {kind,name}.
+        # On a non-unique window match, search the same snapshot's full object
+        # list and surface it in the receipt for candidate projection.
         if len(matches) != 1:
+            search = self._identity_search_safe(session_id, identity)
+            if search:
+                snapshot_result["identity_search"] = search
+            if len(matches) == 0 and isinstance(search, dict) and search.get("total") == 1:
+                found = search.get("objects") or []
+                if len(found) == 1 and isinstance(found[0], dict):
+                    ref = str(found[0].get("grounding_ref") or "").strip()
+                    if ref:
+                        return ref, 1, identity, snapshot_result, {
+                            "matched_via": "identity_search_full_list"
+                        }
             return None, len(matches), identity, snapshot_result, {}
         ref = str(matches[0].get("grounding_ref") or "").strip()
         if not ref:
@@ -1087,6 +1121,35 @@ class BrowserSemanticOperationTool:
                 if isinstance(value, str):
                     entry[key] = value
             items.append(entry)
+        # EVO-20261020-91de7f8c: when the window missed but a full-list
+        # identity search produced matches, those matches are the actionable
+        # candidates — put them first so the model can retry with the exact
+        # grounding_ref even when the object lies beyond the projection window.
+        if isinstance(snapshot_result, dict):
+            search = snapshot_result.get("identity_search")
+            if isinstance(search, dict):
+                seen = {item.get("grounding_ref") for item in items}
+                extra: list[dict[str, Any]] = []
+                for raw in search.get("objects") or []:
+                    if not isinstance(raw, dict):
+                        continue
+                    ref = raw.get("grounding_ref")
+                    if ref in seen:
+                        continue
+                    seen.add(ref)
+                    extra.append(
+                        {
+                            "grounding_ref": ref,
+                            "kind": raw.get("kind"),
+                            **{
+                                key: raw[key]
+                                for key in ("name", "name_normalized")
+                                if isinstance(raw.get(key), str)
+                            },
+                        }
+                    )
+                items[:0] = extra[:_MAX_CANDIDATE_PROJECTION]
+                items = items[:_MAX_CANDIDATE_PROJECTION]
         return {
             "count": len(objects),
             "returned": len(items),

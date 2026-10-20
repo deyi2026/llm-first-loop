@@ -11,6 +11,7 @@ import contextvars
 import hashlib
 import json
 import logging
+import re
 import threading
 import uuid
 from collections import OrderedDict
@@ -52,6 +53,7 @@ from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMError,
     LLMHTTPError,
+    LLMProjectionError,
     is_overflow_error,
 )
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
@@ -89,6 +91,25 @@ _CURRENT_SUBAGENT_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
 def next_subagent_depth() -> int:
     """返回下一层真实子代理深度（仅由程序运行上下文计算）."""
     return _CURRENT_SUBAGENT_DEPTH.get() + 1
+
+
+def _strip_ingress_markers(messages: list[dict]) -> list[dict]:
+    """Drop engine-only ``_active_run_ingress_ref`` markers from a child wire.
+
+    EVO-20261020-b1c00127: the subagent wire is sent without a
+    GuardRequestContext, so any marker that survives into the provider request
+    trips ``active_run_ingress_unexpected_marker`` before transport. Markers are
+    transport bookkeeping, never provider content; strip them defensively on
+    every wire exit path (no-op when none are present).
+    """
+    if not any(isinstance(m, dict) and "_active_run_ingress_ref" in m for m in messages):
+        return messages
+    return [
+        {k: v for k, v in m.items() if k != "_active_run_ingress_ref"}
+        if isinstance(m, dict)
+        else m
+        for m in messages
+    ]
 
 
 @dataclass
@@ -2402,6 +2423,31 @@ class SubAgentRunner:
         # Save failure is a hard execution boundary: provider/tool work must not start.
         self.session_store.save(sess)
 
+    _EVIDENCE_REF_RE = re.compile(r"evidence://v[0-9]+/[0-9a-f]{8,128}")
+
+    @classmethod
+    def _collect_evidence_refs(cls, sess: Session, *, limit: int = 20) -> list[str]:
+        """EVO-20261020-b1c00127: harvest persisted evidence refs from the child
+        transcript (most recent first, order of appearance preserved per message).
+
+        A circuit-break or projection-failure receipt carries these refs so the
+        parent agent can take over losslessly instead of re-fetching everything
+        the child already acquired.
+        """
+        found: list[str] = []
+        seen: set[str] = set()
+        for msg in reversed(sess.messages):
+            content = msg.content if isinstance(msg.content, str) else ""
+            if "evidence://" not in content:
+                continue
+            for ref in cls._EVIDENCE_REF_RE.findall(content):
+                if ref not in seen:
+                    seen.add(ref)
+                    found.append(ref)
+                    if len(found) >= limit:
+                        return found
+        return found
+
     def _bounded_child_wire(
         self,
         sess: Session,
@@ -2418,6 +2464,13 @@ class SubAgentRunner:
         the call instead of silently clipping or repeating the provider request.
         """
         messages = [m.to_llm_dict() for m in sess.messages]
+        # EVO-20261020-b1c00127: the child wire is never sent with a
+        # GuardRequestContext, so a leaked `_active_run_ingress_ref` marker trips
+        # `active_run_ingress_unexpected_marker` before any transport. The
+        # compaction path already strips markers after build_history_messages
+        # (INC-20261020 fix); this defensive strip additionally covers every
+        # non-compaction path so the marker class cannot regress.
+        messages = _strip_ingress_markers(messages)
         if self._context_limits_resolver is None:
             return messages, ""
         limits = self._context_limits_resolver(model_label)
@@ -2753,6 +2806,42 @@ class SubAgentRunner:
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
                     )
+                if isinstance(exc, LLMProjectionError):
+                    # EVO-20261020-b1c00127: a projection violation is a LOCAL wire
+                    # defect raised before any transport or provider interaction.
+                    # Replaying the identical wire replays the identical error
+                    # (the 8/8 fleet failure burned three rounds per child on
+                    # exactly this), and every provider would surface the same
+                    # signature, so the cross-provider-identical case is judged
+                    # runtime-side by construction. Fail fast once, with the
+                    # violations and the evidence refs the child already produced.
+                    violations = list(getattr(exc, "violations", ()) or ())
+                    provider = str(getattr(exc, "provider", "") or "")
+                    evidence_refs = self._collect_evidence_refs(sess)
+                    evidence_note = (
+                        "已采集证据 refs："
+                        + "，".join(evidence_refs)
+                        + "。父代理可据此无损接管。"
+                        if evidence_refs
+                        else "子会话未采集到 evidence refs。"
+                    )
+                    return SubAgentResult(
+                        final_answer=(
+                            "[状态: failure] 子代理请求投影违反机械 wire 不变量"
+                            f"（violations={violations or 'n/a'}，provider={provider or 'n/a'}）："
+                            f"{str(exc)[:300]}。"
+                            "该错误在进入传输前本地抛出，对同一 wire 是确定性的，"
+                            "换 provider 也会得到同一签名，故不做重放；"
+                            + evidence_note
+                            + "子会话原始历史保持持久化。"
+                        ),
+                        outcome="failed",
+                        rounds=rounds,
+                        tool_calls=tool_trace,
+                        depth=depth,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                    )
                 signature = f"{type(exc).__name__}:{str(exc)[:200]}"
                 if signature == last_error_signature:
                     same_error_streak += 1
@@ -2762,12 +2851,23 @@ class SubAgentRunner:
                 if same_error_streak >= 3:
                     # Same failure three times on an unchanged wire: transient retries
                     # no longer explain it, so stop instead of burning the round budget.
+                    # EVO-20261020-b1c00127: carry the child's already-acquired
+                    # evidence refs so the parent can take over losslessly.
+                    evidence_refs = self._collect_evidence_refs(sess)
+                    evidence_note = (
+                        f"已采集证据 refs（{len(evidence_refs)} 个）："
+                        + "，".join(evidence_refs[:10])
+                        + "。父代理可据此无损接管。"
+                        if evidence_refs
+                        else ""
+                    )
                     return SubAgentResult(
                         final_answer=(
                             "[状态: failure] 子代理连续 "
                             f"{same_error_streak} 次收到同一模型错误，"
                             f"已熔断停止重放：{last_llm_error[:400]}。"
-                            "子会话原始历史保持持久化。"
+                            + evidence_note
+                            + "子会话原始历史保持持久化。"
                         ),
                         outcome="failed",
                         rounds=rounds,

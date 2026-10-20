@@ -55,6 +55,23 @@ _PUBLISH_LABEL_RE = re.compile(
     r"confirm\s+publish|发表(?:文章)?|发布(?:文章)?|立即发布|确认(?:发布|发表))$",
     re.IGNORECASE,
 )
+# EVO-20261020-91de7f8c: page visible text keeps drifting while the review
+# window is open because relative timestamps ("刚刚", "3 分钟前", "5 min ago")
+# auto-increment every minute; normalize them to a stable token before any
+# fingerprint hashing so a content-identical page hashes identically at
+# review time and at gate time.
+_RELATIVE_TIME_RE = re.compile(
+    r"(?:刚刚|刚才)"
+    r"|[0-9０-９一二两三四五六七八九十]{1,4}\s*(?:秒|分钟|分鐘|小时|小時|天|日|周|週)\s*前"
+    r"|[0-9]{1,4}\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?)\s*ago",
+    re.IGNORECASE,
+)
+
+
+def _normalize_volatile_time_labels(text: str) -> str:
+    return _RELATIVE_TIME_RE.sub("<rel-time>", text)
+
+
 _SHELL_FULL = re.compile(r"(?:^|[/\s])(?:bash\s+)?(?:\./)?scripts/ci_gate\.sh(?:\s|$)")
 _GIT_PUSH = re.compile(r"(?:^|\W)git\b.*?\bpush\b", re.I | re.S)
 _SENSITIVE_FILENAME = re.compile(
@@ -96,6 +113,11 @@ def _publish_label_candidates(obj: Any) -> dict[str, str]:
     ``<button name="commit"><span>发布</span></button>`` carries ``name="commit"``
     while its visible label is ``发布``.  Gate decisions must therefore test every
     candidate instead of letting the first one mask the rest.
+
+    EVO-20261020-91de7f8c: candidates are normalized deterministically (zero-
+    width characters stripped, whitespace collapsed) so a projected
+    ``name_normalized``-style label still matches the publish regex instead of
+    failing the gate on invisible-byte differences alone.
     """
     if not isinstance(obj, dict):
         return {}
@@ -104,7 +126,10 @@ def _publish_label_candidates(obj: Any) -> dict[str, str]:
         return {}
     labels: dict[str, str] = {}
     for key in ("name", "text"):
-        value = str(attrs.get(key) or "").strip()
+        value = str(attrs.get(key) or "")
+        value = " ".join(
+            re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", value).split()
+        )
         if value:
             labels[key] = value
     return labels
@@ -542,7 +567,11 @@ def _stable_browser_projection(raw: dict[str, Any]) -> object:
             return {k: walk(v) for k, v in sorted(item.items()) if k not in excluded}
         if isinstance(item, list):
             return [walk(v) for v in item]
-        if isinstance(item, (str, int, float, bool)) or item is None:
+        if isinstance(item, str):
+            # EVO-20261020-91de7f8c: normalize drifting relative-time labels so
+            # a content-identical page hashes stably across the review window.
+            return _normalize_volatile_time_labels(item)
+        if isinstance(item, (int, float, bool)) or item is None:
             return item
         raise ValueError("browser_projection_not_json")
 
@@ -592,6 +621,10 @@ def _page_visible_text(raw: dict[str, Any]) -> str:
             if not isinstance(value, str):
                 continue
             text = " ".join(value.split())
+            # EVO-20261020-91de7f8c: normalize drifting relative-time labels
+            # before dedup/hash so "刚刚 · 草稿" and "1 分钟前 · 草稿" project to
+            # the same visible-text fingerprint.
+            text = _normalize_volatile_time_labels(text)
             if len(text) < 2 or text in seen:
                 continue
             seen.add(text)
