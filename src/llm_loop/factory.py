@@ -159,6 +159,7 @@ from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
+from llm_loop.tools.builtin.task_state import TaskStateTool
 from llm_loop.tools.builtin.wait import WaitTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
@@ -973,7 +974,14 @@ def build_engine(
                 session_id: str, msg, msg_seq: int | None, archive_id: str | None
             ) -> str | None:
                 owner = _evidence_owner_for_session(session_id)
-                existing = str((msg.metadata or {}).get("evidence_ref", "") or "")
+                # A history envelope includes protocol state that plain content refs do not.
+                envelope = msg.role == "assistant" and bool(msg.tool_calls or msg.reasoning_content or (msg.metadata or {}).get("provider_replay"))
+                source_text = (
+                    json.dumps({"kind": "archived_assistant_message", "message": msg.to_llm_dict()},
+                               ensure_ascii=False, sort_keys=True)
+                    if envelope else msg.content
+                )
+                existing = "" if envelope else str((msg.metadata or {}).get("evidence_ref", "") or "")
                 if existing:
                     try:
                         existing_ref = EvidenceRef(existing)
@@ -983,7 +991,7 @@ def build_engine(
                         logger.debug(
                             "compressed message evidence_ref 无法复用，重新建立记录", exc_info=True
                         )
-                if msg.tool_call_id:
+                if msg.tool_call_id and not envelope:
                     for prior in evidence_ledger.find_by_tool_call_id(owner, msg.tool_call_id):
                         if not msg.tool_name or prior.tool_name == msg.tool_name:
                             return prior.evidence_ref.ref
@@ -991,7 +999,7 @@ def build_engine(
                     f"{msg.role}\0{msg.tool_call_id or ''}\0{msg.content}".encode()
                 ).hexdigest()
                 if msg_seq is not None:
-                    stable_capture_id = f"history-msg:{msg_seq}"
+                    stable_capture_id = f"history-envelope-msg:{msg_seq}" if envelope else f"history-msg:{msg_seq}"
                     source_slot = str(msg_seq)
                 elif archive_id:
                     stable_capture_id = f"history-archive:{archive_id}"
@@ -1008,7 +1016,7 @@ def build_engine(
                     make_capture_request(
                         owner=owner,
                         stable_capture_id=stable_capture_id,
-                        raw_observation=msg.content,
+                        raw_observation=source_text,
                         acquired_at=acquired_at,
                         tool_name=msg.tool_name or f"history_{msg.role}",
                         tool_call_id=msg.tool_call_id,
@@ -1220,6 +1228,7 @@ def build_engine(
         "source_synopsis",
         SourceSynopsisTool(_synopsis_store, _resolve_synopsis_source),
     )
+    _register_basic("task_state", TaskStateTool(session_store, event_store, data_dir=settings.data_dir))
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
     # EVO-20260912-10818cb5: smx 感知层 opt-in（wait 谓词轮询 + snapshot/diff + 回执查询；

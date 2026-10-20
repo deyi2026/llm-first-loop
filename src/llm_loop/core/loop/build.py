@@ -513,6 +513,7 @@ class _BuildMixin:
         base = _asm.base
         prefix_len = _asm.prefix_len
         _state = self._run_state()
+        decision.budget = dict(_state.last_budget_info or {})
         _state.cache_gate_stable_fp = _asm.stable_fp
         _state.cache_gate_system_fp = _asm.system_fp
         _cache_protected_messages, _cache_protected_chars = _cache_boundary_protection(

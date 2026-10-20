@@ -12,12 +12,14 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from llm_loop.core.compaction_contract import scope_matches
 from llm_loop.core.injection_labels import (
     PROGRAM_APPENDIX_NOTICE,
     PROGRAM_RECOVERY_LABEL,
@@ -370,6 +372,7 @@ def is_cache_compacted_for(
     *,
     model_ref: str = "",
     effective_budget: int | None = None,
+    compaction_contract: dict | None = None,
 ) -> bool:
     """Return whether a provider-scoped compaction marker is valid *now*.
 
@@ -402,21 +405,9 @@ def is_cache_compacted_for(
     scope = scopes.get(provider_id) if isinstance(scopes, dict) else None
     if not isinstance(scope, dict):
         return False  # legacy provider-only marker: stale under a concrete contract
-    try:
-        version = int(scope.get("version", 0) or 0)
-        marker_budget = int(scope.get("effective_budget", 0) or 0)
-    except (TypeError, ValueError):
-        return False
-    if version != _CACHE_COMPACTION_SCOPE_VERSION:
-        return False
-    if str(scope.get("model") or "") != model_ref:
-        return False
-    if marker_budget <= 0:
-        return False
-    # Smaller/equal current budget is at least as restrictive: keeping the old
-    # hidden set is safe and the current build may compact further.  A larger
-    # budget must re-open candidates so the new model can actually use its window.
-    return int(effective_budget) <= marker_budget
+    return scope_matches(
+        scope, model=model_ref, budget=int(effective_budget), contract=compaction_contract
+    )
 
 
 def _mark_cache_compacted_for(
@@ -425,6 +416,7 @@ def _mark_cache_compacted_for(
     *,
     model_ref: str = "",
     effective_budget: int | None = None,
+    compaction_contract: dict | None = None,
 ) -> bool:
     """Persist/update a provider-scoped prompt-view compaction marker contract."""
     if not provider_id:
@@ -446,10 +438,12 @@ def _mark_cache_compacted_for(
         scopes_raw = meta.get(_CACHE_COMPACTION_SCOPE_META)
         scopes = dict(scopes_raw) if isinstance(scopes_raw, dict) else {}
         new_scope = {
-            "version": _CACHE_COMPACTION_SCOPE_VERSION,
+            "version": 2 if compaction_contract is not None else _CACHE_COMPACTION_SCOPE_VERSION,
             "model": model_ref,
             "effective_budget": int(effective_budget),
         }
+        if compaction_contract is not None:
+            new_scope["logical_contract"] = copy.deepcopy(compaction_contract)
         scope_changed = scopes.get(provider_id) != new_scope
         scopes[provider_id] = new_scope
         meta[_CACHE_COMPACTION_SCOPE_META] = scopes
@@ -463,6 +457,7 @@ def mark_cache_compacted_for(
     *,
     model_ref: str = "",
     effective_budget: int | None = None,
+    compaction_contract: dict | None = None,
 ) -> bool:
     """Persist one provider-scoped compaction marker on the canonical live message.
 
@@ -482,6 +477,7 @@ def mark_cache_compacted_for(
         provider_id,
         model_ref=model_ref,
         effective_budget=effective_budget,
+        compaction_contract=compaction_contract,
     )
 
 
@@ -848,6 +844,7 @@ def build_history_messages(
     cache_archive_provider: str = "",  # provider级提交视图压缩标记；非空时中段只折一次
     cache_archive_model: str = "",  # P4: marker provenance，模型变化可重算旧 provider 折叠
     cache_archive_budget: int | None = None,  # P4: marker provenance，预算扩容可重算旧折叠
+    cache_archive_contract: dict | None = None,
     cache_compacted_out: list[Message] | None = None,  # 本轮新写标记的原消息，供事件链同步
     cache_compacted_index_out: list[int] | None = None,  # 对应消息在原始 session_messages/base 中的精确索引
     cache_protected_prefix_messages: int = 0,  # P1: 上轮已确认 cached 的历史消息数（system 后）
@@ -1014,6 +1011,7 @@ def build_history_messages(
             cache_archive_provider,
             model_ref=cache_archive_model,
             effective_budget=cache_archive_budget,
+            compaction_contract=cache_archive_contract,
         )
 
     # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
@@ -1421,6 +1419,7 @@ def build_history_messages(
                 cache_archive_provider,
                 model_ref=cache_archive_model,
                 effective_budget=cache_archive_budget,
+                compaction_contract=cache_archive_contract,
             ):
                 if cache_compacted_out is not None:
                     cache_compacted_out.append(m)

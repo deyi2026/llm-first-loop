@@ -8,13 +8,12 @@ postprocess（锚点事件/降级记账）。调 history 现函数，Phase 7 前
 from dataclasses import dataclass
 from typing import Any
 
+from llm_loop.core.compaction_contract import contract_from_budget, scope_matches
 from llm_loop.core.history import clear_cache_compacted_for
 from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
 from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
 from llm_loop.core.prompt_build.stages.history_projection import run_history_projection
 from llm_loop.event_log.model import EVENT_HISTORY_COMPACTION_STATE_RESET
-
-_ANCHOR_SCOPE_VERSION = 1
 
 
 def _anchor_for_current_contract(
@@ -24,6 +23,7 @@ def _anchor_for_current_contract(
     resolved_label: str,
     sess_anchor: int,
     effective_budget: int,
+    compaction_contract: dict | None = None,
 ) -> int:
     """Return a persisted anchor only when its model/budget provenance is still valid.
 
@@ -38,16 +38,9 @@ def _anchor_for_current_contract(
         return 0
     scopes = getattr(sess, "history_anchor_scopes", None)
     scope = scopes.get(provider_id) if isinstance(scopes, dict) else None
-    valid = False
-    if isinstance(scope, dict):
-        try:
-            valid = (
-                int(scope.get("version", 0) or 0) == _ANCHOR_SCOPE_VERSION
-                and str(scope.get("model") or "") == resolved_label
-                and int(effective_budget) <= int(scope.get("effective_budget", 0) or 0)
-            )
-        except (TypeError, ValueError):
-            valid = False
+    valid = scope_matches(
+        scope, model=resolved_label, budget=effective_budget, contract=compaction_contract
+    )
     if valid:
         return anchor
 
@@ -137,6 +130,16 @@ def run_history_pipeline(
         ),
     )
     archive_sink = _prep.archive_sink
+    provider = (getattr(registry_snapshot, "providers", None) or {}).get(provider_id)
+    model_spec = (getattr(provider, "models", None) or {}).get(resolved_label.partition("/")[2])
+    wire = getattr(model_spec, "wire_protocol", None) or getattr(provider, "wire_protocol", None) or "openai"
+    budget_info = getattr(decision, "budget", None)
+    if isinstance(budget_info, dict) and budget_info.get("model") != resolved_label:
+        budget_info = None
+    compaction_contract = contract_from_budget(
+        budget_info, wire_protocol=wire,
+        policy=getattr(settings, "history_policy", None),
+    )
     effective_budget = _prep.effective_budget
     effective_sess_anchor = _anchor_for_current_contract(
         sess,
@@ -144,6 +147,7 @@ def run_history_pipeline(
         resolved_label=resolved_label,
         sess_anchor=sess_anchor,
         effective_budget=effective_budget,
+        compaction_contract=compaction_contract,
     )
     legacy_anchor_reset = int(sess_anchor or 0) > 0 and effective_sess_anchor == 0
     _proj = run_history_projection(
@@ -169,6 +173,7 @@ def run_history_pipeline(
         registry=registry,
         cache_monitor=cache_monitor,
         effective_budget=effective_budget,
+        compaction_contract=compaction_contract,
         cache_protected_prefix_messages=cache_protected_prefix_messages,
         cache_protected_prefix_chars=cache_protected_prefix_chars,
         current_turn_ref=current_turn_ref,
@@ -181,16 +186,9 @@ def run_history_pipeline(
     compact_view_box = _proj.compact_view_box
     compaction_state_reset = legacy_anchor_reset or _proj.reopened_marker_count > 0
     if compaction_state_reset:
-        # Keep the live Session state byte-for-byte aligned with replay semantics.
-        # EVENT_HISTORY_COMPACTION_STATE_RESET clears every marker for this provider
-        # during event replay; doing less in the current process leaves stale markers
-        # behind whenever ingress/history worked on provider-view copies (for example
-        # tool-result receipts).  The current build's newly compacted exact msg_seq
-        # markers are re-applied below by run_history_postprocess under the new
-        # model/budget contract.
-        if provider_id:
-            for _message in getattr(sess, "messages", []):
-                clear_cache_compacted_for(_message, provider_id)
+        # Exact source identities: one stale marker must not clear still-valid groups.
+        for index in _proj.reopened_source_indices:
+            clear_cache_compacted_for(sess.messages[index], provider_id)
         event_append(
             sess.session_id,
             EVENT_HISTORY_COMPACTION_STATE_RESET,
@@ -202,6 +200,8 @@ def run_history_pipeline(
                 "anchor_before": int(sess_anchor or 0),
                 "reopened_marker_count": _proj.reopened_marker_count,
                 "reason": "compaction_contract_changed",
+                "logical_contract": compaction_contract,
+                "msg_seqs": list(_proj.reopened_source_indices),
             },
         )
     _post = run_history_postprocess(
@@ -216,6 +216,7 @@ def run_history_pipeline(
         provider_id=provider_id,
         resolved_label=resolved_label,
         effective_budget=effective_budget,
+        compaction_contract=compaction_contract,
         compact_event_seq=compact_event_seq,
         compact_event_was_compacted=compact_event_was_compacted,
         cache_monitor=cache_monitor,
@@ -244,6 +245,7 @@ def run_history_pipeline(
             "built_messages": len(built),
             "history_total_chars": int(decision.history_total_chars or 0),
             "effective_budget": int(effective_budget or 0),
+            "logical_contract": compaction_contract,
             "compacted": bool(_post.last_history_compacted),
             "anchor_before": int(effective_sess_anchor or 0),
             "anchor_moved": bool(_post.anchor_moved),

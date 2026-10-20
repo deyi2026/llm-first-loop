@@ -1,0 +1,110 @@
+{
+  "gate": "code",
+  "reviewer": "subagent_d0ab1a11af97",
+  "reviewer_model": "glm/glm-5.3",
+  "parent_session_id": "2b7d2923-ad41-43f7-87a9-80e8190e376e",
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "p2": 6,
+  "review_isolated": true,
+  "candidate_base_commit": "eff8a31eeab8402e292e2df04f530e7a0a70a22f",
+  "artifact_sha256": "85964c091459291990e318e734a069ac54b380ce73254b1722d0ed810e84557e",
+  "scope_files": [
+    "src/llm_loop/core/compaction_contract.py",
+    "src/llm_loop/core/history.py",
+    "src/llm_loop/core/loop/build.py",
+    "src/llm_loop/core/loop/engine.py",
+    "src/llm_loop/core/loop/engine_services/archive.py",
+    "src/llm_loop/core/loop/engine_services/compaction_gate.py",
+    "src/llm_loop/core/prompt_build/stages/history_pipeline.py",
+    "src/llm_loop/core/prompt_build/stages/history_postprocess.py",
+    "src/llm_loop/core/prompt_build/stages/history_projection.py",
+    "src/llm_loop/event_log/replay.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/tools/builtin/task_state.py",
+    "tests/unit/test_compaction_logical_contract.py",
+    "tests/unit/test_task_state_recovery.py"
+  ],
+  "covered_file_sha256": {
+    "src/llm_loop/core/compaction_contract.py": "ebca6248e06020be7c7a335ce757cfcc20c3d8071d0d2d9bc53965d810d1bc76",
+    "src/llm_loop/core/history.py": "50783cec174159415c9929dd4950b65cc65dffad606c34dbbc90514070971f29",
+    "src/llm_loop/core/loop/build.py": "fec366b77062b550ef4a22886dbe4c7fa26bdb9e27ef638179c8c534e49f0d78",
+    "src/llm_loop/core/loop/engine.py": "47dafccf1cb4370c2d2b862e7680ff1ebe8113c80ee14a1b53ca31b9ca2fe522",
+    "src/llm_loop/core/loop/engine_services/archive.py": "02dfb632eadf72a0fe750b9bf7653212255133ca5a0294779643b7866ca2fff0",
+    "src/llm_loop/core/loop/engine_services/compaction_gate.py": "5d1f199e5ccdb259113f7537c7dc512015af7d46123bddf7412eaaf511f7fb01",
+    "src/llm_loop/core/prompt_build/stages/history_pipeline.py": "569046862a87686e9e09cc13d9848b19270f007ce82811578c44fd03f73b9706",
+    "src/llm_loop/core/prompt_build/stages/history_postprocess.py": "08ad1405300bfa9185267f8dc6ffd89ee5be1cdf4f278f43251f461987bd93b8",
+    "src/llm_loop/core/prompt_build/stages/history_projection.py": "49f2fb378cd3ff8c203709468c105e4de0042f007ee1793655002d51f1c6a533",
+    "src/llm_loop/event_log/replay.py": "9d98370c34715600e18ecc736618dbe340b6842ab05e082ab04973ca3bda4fba",
+    "src/llm_loop/factory.py": "ac3fce1f3a675e33c9bda320cde2dda5b1592ace3afd4df8f4414daca77f2db4",
+    "src/llm_loop/tools/builtin/task_state.py": "3b1450c656b06c81a639578cca423ccb132c945123742483d1f6bcb3f5e556f2",
+    "tests/unit/test_compaction_logical_contract.py": "c4e7f82f3673cc6a740534848803772528e13d2d2ae9ab5223086065e658d572",
+    "tests/unit/test_task_state_recovery.py": "446dc4191158c3df33214afa3f9fa6abcbb602aa022fb0582cbfc02716cba280"
+  },
+  "covered_source_tree_sha256": "f1d1a6b5d62c43c5b4c683ce3cf300f69a2442a7e736ca5b912a4b0031f029a7",
+  "evidence_directory": "data/compaction-contract-recovery-20261021/evidence",
+  "evidence_sha256": {
+    "host-start.json": "73dab148c3de8168a8a073e7d879e6dc1cc6e65bafefacbabda5242306c8637a",
+    "host-qualification.json": "09b99ee62598deb03c0d24c087bccf1f7d7258b6ab6f605b81b94e483a784872",
+    "review.txt": "5661140b67d5008f4aa3137f75dec8f62f6bc028d7d64bbaea3a0340ecba5056",
+    "review-observation.json": "173c634b2f320e54a4f3fd1e6e82ed9e6eacade6d761f6726c2d6f0d5582d0c4",
+    "full-test-admission.json": "5a4ab052fcca814a3a4c5b46ba9ca4f85f73bc444713958328bd835cfd3dc4f6",
+    "full-test-result.json": "787847e1e835c37c7a28b52f56fdaf1dd19f080d698274518f49dd496e501d53",
+    "full-test.log": "b3df9062a12c93dea750164de109547c391678089153414c39efbbdc66febef8"
+  },
+  "review_text": "Independent read-only review of the frozen uncommitted delta (candidate 85964c09…). Note on discipline: the delegated instruction forbids tool use, so the records-base methodology search is inapplicable here; review proceeds directly from the frozen artifact only.\n\n**Intent & scope**: The patch addresses a compaction incident where density recalibration (fluctuating effective char budgets) invalidated compaction markers/anchors, causing repeated history reopening. It introduces a stable \"logical contract\" (input-token capacity, wire protocol, policy ratios) as provenance, converts provider-wide marker resets into exact per-message scoped resets (with matching replay semantics), and adds recovery affordances: a `task_state` tool (model-authored state, `read_manifest`, `read_message`, `recent_tools`), a neutral `compaction_source` locator projected at legal message boundaries, and full protocol-envelope evidence capture for archived assistant messages. Scope matches the stated purpose; no unrelated changes detected.\n\n**Correctness (positive)**:\n- `scope_matches` v2 path correctly ignores char-budget drift while requiring `input_tokens` non-growth, `char_limit` non-growth, and identical wire/policy — shrinking capacity preserves retirement, real expansion reopens. Bool/int hygiene is careful throughout.\n- Path traversal is well guarded in both `compaction_source_wire` (hex sha, prefix, `..` check, resolved `is_relative_to` session snapshot dir) and `task_state.read_manifest` (resolved `is_relative_to` + dual hash verification over canonical JSON).\n- Stale-write fencing via `current_effect_mutation_authority` and persistence-failure handling in `task_state.save` are correct; session/workspace scoping prevents cross-session reads.\n- Scoped replay reset validates `msg_seqs` types and falls back to legacy full-provider reset for old events — backward compatible.\n- Injection carrier respects tool-pair integrity (never splits assistant/tool groups, never prefills an assistant turn, no legal slot ⇒ no projection), and content is a locator, not instructions.\n\n**Findings (all minor, none blocking)**:\n1. (P2) `history_projection.py` calls `_map_compacted_source_indices(...)` which is not defined anywhere in this delta; it must pre-exist at repo head or the build raises NameError. The included tests exercise this path (`test_mixed_legacy_reset_preserves_valid_v2_markers` asserts `msg_seqs`), so the full-test gate would catch absence — verify it exists at head.\n2. (P2) When `decision.budget` is absent/empty or its `model` key mismatches (e.g., cold start before `last_budget_info` is populated, or any `is_cache_compacted_for` caller not passing the contract), the contract is None and all v2 markers/anchors are treated stale, forcing an extra reopen/re-compact cycle. Direction is safe (recompute, not data loss) and self-healing, but it is churn and cache invalidation.\n3. (P2) One-time migration cost: on first contract-present build, all legacy v1 markers and anchors are invalidated (full reopen + rewrite to v2). Intentional and covered by `test_legacy_migration_occurs_only_once`, but operators should expect a one-time compaction reset after deploy.\n4. (P2) `compaction_source_wire` embeds an absolute host filesystem path (`manifest_path`) in a model-visible message. Low risk (same trust domain as existing file tools), but a relative/rel_path form would disclose less.\n5. (P2) In `factory.py` envelope capture, the dedupe fingerprint still hashes `msg.content` (frequently empty for assistant envelopes), so distinct tool-call/reasoning envelopes share fingerprints; the per-`msg_seq` `stable_capture_id` (`history-envelope-msg:{seq}`) appears to disambiguate, but confirm the evidence ledger lookup cannot return a wrong-capture ref via fingerprint alone.\n6. (P2) `task_state.read_message` serializes `asdict(message)`; non-JSON-serializable metadata would raise TypeError outside the caught `(ValueError, OSError, KeyError)` set (relies on the outer tool wrapper). Also `wire_protocol` lookup via `resolved_label.partition(\"/\")[2]` assumes provider model-key shape; a miss silently falls back to `\"openai\"`, at worst causing a one-time marker reopen.\n\n**Security/leak check**: No secrets, keys, or credentials introduced. Archived protocol state (reasoning, tool args) is the model's own prior output within the same session. Manifest reads are hash-verified against the event log; writes are authority-fenced. No injection of task judgments or completion claims (`task_progress: \"not_evaluated\"`, `authority/instruction: False` flags are consistently applied).\n\n**Side effects**: Engine hook is fail-open with debug logging (pre-existing pattern); injection occurs only on the request-time message list, and the hook explicitly writes no session messages. Replay, event payloads, and live state stay aligned via `logical_contract`/`msg_seqs`.\n\nOverall the patch is well-structured, carefully validated, and the residual issues are robustness/verification notes rather than correctness or security defects.\n\nVERDICT: PASS\nP0=0 P1=0 P2=6\nSHA256: 85964c091459291990e318e734a069ac54b380ce73254b1722d0ed810e84557e\n",
+  "p2_disposition": [
+    {
+      "id": "P2-1",
+      "decision": "verified existing helper",
+      "evidence": "history_projection.py:24 defines _map_compacted_source_indices; regression and full R9 passed"
+    },
+    {
+      "id": "P2-2",
+      "decision": "retain explicit legacy compatibility",
+      "reason": "Unknown/mismatched budget has no invented stable capacity; may reopen once, never discard canonical source"
+    },
+    {
+      "id": "P2-3",
+      "decision": "intentional version migration",
+      "reason": "Legacy v1 converted once; old snapshots/events remain readable; migration regression passed"
+    },
+    {
+      "id": "P2-4",
+      "decision": "retain usable same-session absolute locator",
+      "reason": "Relative source previously resolved against workspace instead of data_dir; task_state offers scoped manifest read"
+    },
+    {
+      "id": "P2-5",
+      "decision": "verified capture identity includes blob hash",
+      "evidence": "EvidenceCapture.capture make_evidence_ref(owner, stable_capture_id, blob_ref); lookup is not content-only fingerprint"
+    },
+    {
+      "id": "P2-6",
+      "decision": "record invalid in-memory metadata limitation",
+      "reason": "Supported persisted Session metadata is JSON; invalid non-JSON in-memory objects may return outer-wrapper ERROR; no false successful hydration. Unknown registry wire uses explicit fallback"
+    }
+  ],
+  "full_r9": {
+    "command": "bash scripts/ci_gate.sh",
+    "exit_code": 0,
+    "tier0_passed": 319,
+    "full_passed": 9927,
+    "full_skipped": 146,
+    "full_seconds": 217.2,
+    "full_warnings": 13,
+    "final_contract_probe_passed": 1,
+    "host_admission": {
+      "allowed": true,
+      "same_process_permit_consumed": true
+    },
+    "scope": "unchanged 14 code/test files; receipt added after gate as evidence metadata only"
+  },
+  "runtime_status": {
+    "main_merged": false,
+    "pushed": false,
+    "deployed": false,
+    "services_restarted": false
+  }
+}

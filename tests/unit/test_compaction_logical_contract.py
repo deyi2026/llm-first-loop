@@ -1,0 +1,178 @@
+"""Regression: density recalibration must not reset the logical history contract."""
+from types import SimpleNamespace
+
+import pytest
+
+from llm_loop.config import HistoryPolicySettings
+from llm_loop.core.cache_health import CacheHealthMonitor
+from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.prompt_build.context import BuildDecision
+from llm_loop.core.prompt_build.stages.history_pipeline import run_history_pipeline
+
+LABELS = ["minimax/MiniMax-M3.1-Flash-Preview", "glm/glm-5.3",
+          "glm/glm-5.3-flash", "deepseek/deepseek-v4-flash", "cognilocal/qwen3.8-flash-next"]
+
+
+def project(sess, budget, label, *, tokens=184000, events=None):
+    pid = label.split("/")[0]
+    return run_history_pipeline(
+        sess=sess, provider_id=pid, sess_anchor=sess.history_anchors.get(pid, 0),
+        max_chars=budget, base=list(sess.messages), system_prompt="",
+        filtered_indices=list(range(len(sess.messages))), prefix_len=0,
+        resolved_label=label, decision=BuildDecision(budget={
+            "model": label, "allowed_input_tokens": tokens,
+            "configured_global_budget": None, "provider_budget": None,
+            "runtime_override": None,
+        }),
+        runtime_history_budget=lambda: budget, archive=object(),
+        registry=SimpleNamespace(evidence_mode="off"),
+        archive_sink_cb=lambda *_args: None, record_action=lambda *_args: None,
+        settings=SimpleNamespace(history_policy=HistoryPolicySettings(), exact_duplicate_tool_fold=False),
+        cache_monitor=CacheHealthMonitor(),
+        event_append=lambda _sid, kind, payload: (events if events is not None else []).append((kind, payload)),
+        provider_visible_chars_fn=lambda *_args: 0,
+        growth_nudge_kind_fn=lambda *_args, **_kw: None,
+        reasoning_tail_fn=lambda *_args, **_kw: 0,
+    )
+
+
+def session():
+    return SimpleNamespace(
+        session_id="density-incident",
+        messages=[Message(role="assistant", content=f"{i}:" + "x" * 1000,
+                          source=MessageSource.SYSTEM) for i in range(80)]
+        + [Message(role="user", content="archive old sandbox sessions", source=MessageSource.USER)],
+        history_anchors={}, history_anchor_scopes={},
+    )
+
+
+@pytest.mark.parametrize("label", LABELS)
+def test_density_growth_does_not_reopen_compacted_history(label):
+    sess = session()
+    project(sess, 12000, label)
+    events = []
+    project(sess, 12001, label, events=events)
+    assert not [p for kind, p in events if kind == "history.compaction_state_reset"]
+
+
+def test_real_input_capacity_growth_still_reopens_history():
+    sess = session()
+    project(sess, 12000, LABELS[0])
+    events = []
+    project(sess, 100000, LABELS[0], tokens=900000, events=events)
+    assert any(kind == "history.compaction_state_reset" for kind, _ in events)
+
+def test_mixed_legacy_reset_preserves_valid_v2_markers():
+    from llm_loop.core.history import mark_cache_compacted_for
+    sess = session()
+    project(sess, 12000, LABELS[0])
+    pid = "minimax"
+    original = [i for i, m in enumerate(sess.messages)
+                if pid in m.metadata.get("cache_compacted_for", [])]
+    mark_cache_compacted_for(sess.messages[-2], pid, model_ref=LABELS[0], effective_budget=12000)
+    events = []
+    project(sess, 12001, LABELS[0], events=events)
+    assert all(pid in sess.messages[i].metadata.get("cache_compacted_for", []) for i in original)
+    reset = next(p for kind, p in events if kind == "history.compaction_state_reset")
+    assert reset["msg_seqs"] == [len(sess.messages) - 2]
+
+
+def test_drift_roundtrip_and_shrink_preserve_history_scope():
+    sess = session()
+    project(sess, 12000, LABELS[0])
+    events = []
+    for budget in [12001, 11999, 14000, 10000, 14001]:
+        project(sess, budget, LABELS[0], tokens=180000, events=events)
+    assert not [kind for kind, _ in events if kind == "history.compaction_state_reset"]
+
+
+def test_legacy_migration_occurs_only_once():
+    from llm_loop.core.history import mark_cache_compacted_for
+    sess = session()
+    for m in sess.messages[:30]:
+        mark_cache_compacted_for(m, "minimax", model_ref=LABELS[0], effective_budget=12000)
+    events = []
+    project(sess, 12000, LABELS[0], events=events)
+    project(sess, 12001, LABELS[0], events=events)
+    assert len([kind for kind, _ in events if kind == "history.compaction_state_reset"]) == 1
+
+
+def test_contract_mutation_does_not_rewrite_marker():
+    from llm_loop.core.compaction_contract import contract_from_budget
+    from llm_loop.core.history import mark_cache_compacted_for
+    contract = contract_from_budget({"allowed_input_tokens": 1000})
+    m = session().messages[0]
+    mark_cache_compacted_for(m, "minimax", model_ref=LABELS[0], effective_budget=12000,
+                            compaction_contract=contract)
+    contract["input_tokens"] = 2000
+    contract["policy"]["compact_ratio"] = 0.1
+    stored = m.metadata["cache_compaction_scope"]["minimax"]["logical_contract"]
+    assert stored["input_tokens"] == 1000
+    assert stored["policy"]["compact_ratio"] is None
+
+
+def test_nonzero_anchor_survives_density_recalibration():
+    from llm_loop.core.compaction_contract import contract_from_budget
+    from llm_loop.core.prompt_build.stages.history_pipeline import _anchor_for_current_contract
+    contract = contract_from_budget({"allowed_input_tokens": 184000})
+    sess = session()
+    sess.history_anchors["minimax"] = 20
+    sess.history_anchor_scopes["minimax"] = {
+        "version": 2, "model": LABELS[0], "effective_budget": 12000,
+        "logical_contract": contract,
+    }
+    assert _anchor_for_current_contract(
+        sess, provider_id="minimax", resolved_label=LABELS[0], sess_anchor=20,
+        effective_budget=12001, compaction_contract=contract,
+    ) == 20
+
+
+def test_explicit_char_capacity_and_wire_changes():
+    from llm_loop.core.compaction_contract import contract_from_budget, scope_matches
+    old = contract_from_budget({"allowed_input_tokens": 1000, "configured_global_budget": 12000})
+    scope = {"version": 2, "model": LABELS[0], "effective_budget": 12000, "logical_contract": old}
+    small = contract_from_budget({"allowed_input_tokens": 900, "configured_global_budget": 10000})
+    assert scope_matches(scope, model=LABELS[0], budget=14000, contract=small)
+    larger = contract_from_budget({"allowed_input_tokens": 1000, "configured_global_budget": 14000})
+    assert not scope_matches(scope, model=LABELS[0], budget=14000, contract=larger)
+    wire = contract_from_budget({"allowed_input_tokens": 1000, "configured_global_budget": 12000},
+                                wire_protocol="anthropic")
+    assert not scope_matches(scope, model=LABELS[0], budget=12000, contract=wire)
+
+
+def test_v2_marker_and_scoped_reset_replay_are_exact():
+    from llm_loop.core.compaction_contract import contract_from_budget
+    from llm_loop.event_log.model import Event
+    from llm_loop.event_log.replay import replay_session
+    contract = contract_from_budget({"allowed_input_tokens": 184000})
+    rows = [
+        ("message.appended", {"index": i, "role": "assistant", "content": str(i)})
+        for i in range(3)
+    ]
+    rows += [("message.cache_compacted", {
+        "msg_seq": i, "provider_id": "minimax", "marker_version": 2,
+        "model": LABELS[0], "effective_budget": 12000, "logical_contract": contract,
+    }) for i in range(3)]
+    rows += [("history.compaction_state_reset", {"provider_id": "minimax", "msg_seqs": [1]})]
+    events = [Event(event_id=str(i), session_id="s", seq=i+1, type=k,
+                    ts="2026-10-20T00:00:00Z", payload=p) for i, (k, p) in enumerate(rows)]
+    messages = replay_session(events)["messages"]
+    assert [i for i, m in enumerate(messages) if "minimax" in m["metadata"].get("cache_compacted_for", [])] == [0, 2]
+    assert messages[0]["metadata"]["cache_compaction_scope"]["minimax"]["logical_contract"] == contract
+
+
+def test_incident_scale_677_messages_do_not_reopen_on_density_roundtrip():
+    sess = session()
+    sess.messages = [
+        Message(role="assistant", content=f"source-{i}:" + "x" * 4000, source=MessageSource.SYSTEM)
+        for i in range(677)
+    ] + [Message(role="user", content="archive only sandbox sessions", source=MessageSource.USER)]
+    original = [(m.role, m.content, m.reasoning_content, m.tool_calls) for m in sess.messages]
+    events = []
+    project(sess, 447331, LABELS[0], events=events)
+    assert any(kind == "history.compaction" for kind, _ in events)
+    events.clear()
+    for budget in [447332, 626478, 558495, 447331]:
+        project(sess, budget, LABELS[0], events=events)
+    assert not any(kind == "history.compaction_state_reset" for kind, _ in events)
+    assert [(m.role, m.content, m.reasoning_content, m.tool_calls) for m in sess.messages] == original

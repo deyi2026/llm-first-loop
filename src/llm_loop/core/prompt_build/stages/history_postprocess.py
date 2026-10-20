@@ -9,6 +9,7 @@ EVO-20260825 任务6.2 视图体积验证（压缩风暴前兆归因）+ P1-10
 from __future__ import annotations
 
 import contextlib
+import copy
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ def run_history_postprocess(
     provider_id: str,
     resolved_label: str,
     effective_budget: int,
+    compaction_contract: dict | None = None,
     compact_event_seq: int,
     compact_event_was_compacted: bool,
     cache_monitor: Any,
@@ -71,6 +73,7 @@ def run_history_postprocess(
                 provider_id,
                 model_ref=resolved_label,
                 effective_budget=effective_budget,
+                compaction_contract=compaction_contract,
             )
         event_append(
             sess.session_id,
@@ -78,7 +81,8 @@ def run_history_postprocess(
             {
                 "msg_seq": _msg_seq,
                 "provider_id": provider_id,
-                "marker_version": 1,
+                "marker_version": 2 if compaction_contract is not None else 1,
+                "logical_contract": copy.deepcopy(compaction_contract),
                 "model": resolved_label,
                 "effective_budget": int(effective_budget),
             },
@@ -150,7 +154,8 @@ def run_history_postprocess(
             sess.history_anchor_scopes = {}
         if new_anchor > 0:
             sess.history_anchor_scopes[provider_id] = {
-                "version": 1,
+                "version": 2 if compaction_contract is not None else 1,
+                "logical_contract": copy.deepcopy(compaction_contract),
                 "model": resolved_label,
                 "effective_budget": int(effective_budget),
             }

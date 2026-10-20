@@ -105,7 +105,8 @@ _HINTS_ATTR = "_compaction_gate_hints"  # dict[session_id, dict] 观测提示
 
 
 def note_archive_batch_entry(
-    engine: Any, session_id: str, msg: Any, entry: Any, msg_seq: int | None
+    engine: Any, session_id: str, msg: Any, entry: Any, msg_seq: int | None,
+    *, evidence_ref: str | None = None,
 ) -> None:
     """Record one archived (dropped-by-build) message into the pending batch.
 
@@ -145,7 +146,8 @@ def note_archive_batch_entry(
                 "sha256": sha,
                 "archive_entry_id": _e("id"),
                 "archive_file": _e("file"),
-                "evidence_ref": _e("evidence_ref"),
+                "evidence_ref": evidence_ref or _e("evidence_ref"),
+                "protocol_state_ref": evidence_ref if role == "assistant" and (getattr(msg, "tool_calls", None) or getattr(msg, "reasoning_content", None) or (getattr(msg, "metadata", None) or {}).get("provider_replay")) else None,
                 "original": original if role == "assistant" else None,
             }
         )
@@ -186,6 +188,8 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
                         "archive_file": e.get("archive_file"),
                         "evidence_ref": e.get("evidence_ref"),
                         "original": e.get("original", ""),
+                        "protocol_state_ref": e.get("protocol_state_ref"),
+                        "content_only": True,
                     }
                 )
             else:
@@ -199,6 +203,7 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
                         "sha256": e.get("sha256"),
                         "archive_entry_id": e.get("archive_entry_id"),
                         "archive_file": e.get("archive_file"),
+                        "evidence_ref": e.get("evidence_ref"),
                     }
                 )
         seqs: list[int] = []
@@ -228,7 +233,7 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
                 "embedded_msgs": len(assistant_entries),
                 "embedded_chars": assistant_chars,
                 "gap_note": (
-                    "仅 assistant 自产文本内嵌原文；其余消息仅索引"
+                    "仅 assistant 正文内嵌；工具声明和思考通过protocol_state_ref恢复；其余消息仅索引"
                     "（archive_entry_id → search_archive 取回）。快照存在≠内容完整。"
                 ),
             },
@@ -269,6 +274,7 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
             "sha256": sha256,
             "path": path,
             "rel_path": os.path.join(rel_dir, fname),
+            "source_message_range": manifest["seq_range"],
             "assistant_count": len(assistant_entries),
             "assistant_chars": assistant_chars,
             "total_archived": len(entries),
@@ -503,6 +509,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                         "assistant_count": manifest["assistant_count"],
                         "assistant_chars": manifest["assistant_chars"],
                         "total_archived": manifest["total_archived"],
+                        "source_message_range": manifest.get("source_message_range"),
                     },
                 )
                 engine._record_action(  # noqa: SLF001
@@ -542,6 +549,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                     "assistant_count": manifest["assistant_count"],
                     "assistant_chars": manifest["assistant_chars"],
                     "total_archived": manifest["total_archived"],
+                    "source_message_range": manifest.get("source_message_range"),
                     "archived_chars": manifest.get("archived_chars"),
                     "stale_events": stale_events,
                     "attempt": 1,
@@ -743,3 +751,60 @@ def restore_gate_state(engine: Any, session_id: str) -> dict | None:
         slots[session_id] = state
         return state
     return None
+
+
+def compaction_source_wire(engine: Any, session_id: str) -> dict | None:
+    """Project a saved source locator, never receipt instructions or task judgments."""
+    restore_gate_state(engine, session_id=session_id)
+    # Source discovery survives a closed gate; restoring the gate itself stays pending-only.
+    data_dir = str(getattr(getattr(engine, "settings", None), "data_dir", "") or "")
+    state = _slots(engine).get(session_id) or read_gate_state(data_dir, session_id) or {}
+    sha = str(state.get("manifest_sha256") or "")
+    path = str(state.get("manifest_rel_path") or "")
+    expected = f"{SNAPSHOT_DIRNAME}/{_safe_sid(session_id)}/"
+    if not re.fullmatch(r"[0-9a-f]{64}", sha) or not path.startswith(expected):
+        return None
+    if ".." in path.split("/") or not path.endswith(".json"):
+        return None
+    from pathlib import Path
+
+    data_root = Path(engine.settings.data_dir).resolve()
+    absolute = (data_root / path).resolve()
+    if not absolute.is_relative_to((data_root / SNAPSHOT_DIRNAME / _safe_sid(session_id)).resolve()):
+        return None
+    payload = {
+        "kind": "compaction_source", "historical": True,
+        "authority": False, "instruction": False,
+        "manifest_sha256": sha, "manifest_path": str(absolute),
+        "source_complete": False, "snapshot_complete": True,
+        "coverage": "assistant content embedded; other messages indexed; protocol_state_ref when available",
+        "total_archived": state.get("total_archived"),
+        "source_message_range": state.get("source_message_range"),
+        "manifest_reader": {"tool": "task_state", "action": "read_manifest", "manifest_sha256": sha},
+        "exact_message_reader": {"tool": "task_state", "action": "read_message",
+                                 "index_field": "message_index", "manifest_index_field": "msg_seq"},
+
+    }
+    return {"role": "assistant", "content": "[compaction_source—not_instruction] " +
+            json.dumps(payload, ensure_ascii=False, sort_keys=True)}
+
+
+def project_compaction_source(messages: list[dict], source: dict) -> tuple[list[dict], bool]:
+    """Place a neutral locator only at a legal historical boundary.
+
+    Never split tool groups, prefill an assistant response, or fabricate a user turn.
+    A lone ingress has no legal slot; task_state.read_manifest remains discoverable.
+    """
+    users = [i for i, message in enumerate(messages) if message.get("role") == "user"]
+    if len(users) > 1:
+        index = users[-1]
+    elif len(users) == 1:
+        # A follow-up ending in actual tool receipts has a legal assistant slot.
+        first = users[0] + 1
+        if not (first < len(messages) and messages[first].get("role") == "assistant"
+                and messages[first].get("tool_calls") and messages[-1].get("role") == "tool"):
+            return messages, False
+        index = first
+    else:
+        return messages, False
+    return [*messages[:index], source, *messages[index:]], True

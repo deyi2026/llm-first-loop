@@ -1208,12 +1208,25 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             # 认知包槽在下一次 build 交付（enforce），本钩子不写任何会话消息（R4）。
             try:
                 from llm_loop.core.loop.engine_services.compaction_gate import (
+                    compaction_source_wire,
+                    project_compaction_source,
                     run_compaction_gate_step,
                 )
 
                 run_compaction_gate_step(
                     self, sess, new_compaction=bool(getattr(self, "_last_history_compacted", False))
                 )
+                _compaction_source = compaction_source_wire(self, sess.session_id)
+                if _compaction_source is not None:
+                    messages, _source_projected = project_compaction_source(messages, _compaction_source)
+                    _source_state = self._run_state()
+                    _source_state.last_request_influence = {
+                        **(_source_state.last_request_influence or {}),
+                        "compaction_source": {
+                            "projected": _source_projected, "instruction": False,
+                            "delivery": "projected" if _source_projected else "no_protocol_safe_slot",
+                        },
+                    }
             except Exception:  # noqa: BLE001 — 门禁 fail-open
                 logger.debug("compaction gate step dispatch failed", exc_info=True)
                 # B9（P2-1 二轮复审）：fail-open 但失败必须可观测

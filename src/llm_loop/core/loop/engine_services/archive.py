@@ -83,6 +83,13 @@ class ArchiveService:
 
         if self._host.archive is None:
             if evidence_ref:
+                from llm_loop.core.loop.engine_services.compaction_gate import (
+                    note_archive_batch_entry,
+                )
+
+                note_archive_batch_entry(
+                    self._host, session_id, msg, {}, msg_seq, evidence_ref=evidence_ref
+                )
                 self._host._event_append(
                     session_id,
                     "context.compressed",
@@ -144,7 +151,8 @@ class ArchiveService:
                     note_archive_batch_entry,
                 )
 
-                note_archive_batch_entry(self._host, session_id, msg, entry, msg_seq)
+                note_archive_batch_entry(self._host, session_id, msg, entry, msg_seq,
+                                         evidence_ref=evidence_ref)
             except Exception:  # noqa: BLE001 — 批次收集失败不影响归档本体
                 logger.debug("compaction manifest batch note dispatch failed", exc_info=True)
             # RULE-AI-00 自动摘要边界内: 压缩档案自动回填语义摘要（async 后台/off 跳过）

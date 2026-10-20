@@ -91,6 +91,7 @@ class HistoryProjection:
     cache_compacted_source_box: list[int] = field(default_factory=list)
     compact_view_box: list[dict] = field(default_factory=list)
     reopened_marker_count: int = 0
+    reopened_source_indices: list[int] = field(default_factory=list)
     duplicate_tool_projection_stats: dict[str, int | bool] = field(default_factory=dict)
 
 
@@ -114,6 +115,7 @@ def run_history_projection(
     registry: Any,
     cache_monitor: Any,
     effective_budget: int,
+    compaction_contract: dict | None = None,
     cache_protected_prefix_messages: int = 0,
     cache_protected_prefix_chars: int = 0,
     current_turn_ref: int | None = None,
@@ -138,6 +140,7 @@ def run_history_projection(
     compact_view_box: list[dict] = []
     freeze_compression = cache_monitor.breaker_freeze_compression(session_id)
     reopened_marker_count = 0
+    stale_markers: list[Message] = []
     if (cache_archive_provider := provider_id) and not freeze_compression:
         stale_markers = [
             m
@@ -148,6 +151,7 @@ def run_history_projection(
                 cache_archive_provider,
                 model_ref=resolved_label,
                 effective_budget=effective_budget,
+                compaction_contract=compaction_contract,
             )
         ]
         reopened_marker_count = len(stale_markers)
@@ -209,6 +213,7 @@ def run_history_projection(
         cache_archive_provider=provider_id,
         cache_archive_model=resolved_label,
         cache_archive_budget=effective_budget,
+        cache_archive_contract=compaction_contract,
         cache_compacted_out=cache_compacted_box,
         cache_compacted_index_out=cache_compacted_local_index_box,
         cache_protected_prefix_messages=cache_protected_prefix_messages,
@@ -239,6 +244,7 @@ def run_history_projection(
         prefix_len=prefix_len,
         filtered_indices=filtered_indices,
     )
+    stale_marker_ids = {id(m) for m in stale_markers}
     return HistoryProjection(
         built=built,
         anchor_arg=anchor_arg,
@@ -248,5 +254,10 @@ def run_history_projection(
         cache_compacted_source_box=cache_compacted_source_box,
         compact_view_box=compact_view_box,
         reopened_marker_count=reopened_marker_count,
+        reopened_source_indices=_map_compacted_source_indices(
+            [i for i, m in enumerate(base) if id(m) in stale_marker_ids]
+            if provider_id and not freeze_compression else [],
+            prefix_len=prefix_len, filtered_indices=filtered_indices,
+        ),
         duplicate_tool_projection_stats=duplicate_tool_projection_stats,
     )

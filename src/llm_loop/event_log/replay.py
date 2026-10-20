@@ -51,6 +51,7 @@ def _apply_cache_compacted(
     marker_version: int | None = None,
     model: str = "",
     effective_budget: int | None = None,
+    logical_contract: dict | None = None,
 ) -> None:
     """Replay provider-scoped prompt-view compaction into message metadata."""
     metadata = message.get("metadata")
@@ -74,6 +75,8 @@ def _apply_cache_compacted(
             "model": model,
             "effective_budget": int(effective_budget),
         }
+        if logical_contract is not None:
+            scopes[provider_id]["logical_contract"] = logical_contract
         metadata["cache_compaction_scope"] = scopes
     message["metadata"] = metadata
 
@@ -186,8 +189,15 @@ def replay_session(events: list[Event]) -> dict:
         elif event.type == EVENT_HISTORY_COMPACTION_STATE_RESET:
             provider_id = str(event.payload.get("provider_id") or "")
             if provider_id:
-                for message in messages_by_index.values():
-                    _clear_cache_compacted(message, provider_id)
+                selected = event.payload.get("msg_seqs")
+                if isinstance(selected, list):
+                    for index in selected:
+                        if isinstance(index, int) and not isinstance(index, bool) and index in messages_by_index:
+                            _clear_cache_compacted(messages_by_index[index], provider_id)
+                else:
+                    # Legacy events intentionally reset the entire provider scope.
+                    for message in messages_by_index.values():
+                        _clear_cache_compacted(message, provider_id)
         elif event.type == EVENT_MESSAGE_CACHE_COMPACTED:
             idx = _as_int(event.payload.get("msg_seq"))
             provider_id = str(event.payload.get("provider_id") or "")
@@ -198,6 +208,7 @@ def replay_session(events: list[Event]) -> dict:
                     marker_version=_as_int(event.payload.get("marker_version")),
                     model=str(event.payload.get("model") or ""),
                     effective_budget=_as_int(event.payload.get("effective_budget")),
+                    logical_contract=event.payload.get("logical_contract") if isinstance(event.payload.get("logical_contract"), dict) else None,
                 )
         elif event.type == "session.forked":
             # D3: 提取 fork 元信息写入视图标注字段（不改变既有顶层字段重建语义）
