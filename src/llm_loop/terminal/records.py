@@ -15,20 +15,37 @@ from llm_loop.terminal.presentation import safe_text
 from llm_loop.workspace.store import WorkspaceStore
 
 
-def session_root(data: Path, workspace: Path | None = None, *, require_registered: bool = False) -> Path:
+def workspace_lookup(
+    data: Path, workspace: Path | None = None, *, require_registered: bool = False
+) -> tuple[Path, bool]:
+    """Resolve the session root; the flag reports a degraded base-root listing."""
     base = data / "sessions"
     if workspace is None:
-        return base
+        return base, False
     if not (data / "workspaces.json").exists():
         if require_registered:
             raise ValueError("Workspace is not registered; read-only queries do not register it")
-        return base
+        return base, False
     store = WorkspaceStore(data)  # data already exists; constructor only reads registry
     store._load(strict=True)
     selected = store.get_by_path(workspace)
     if selected is None:
-        raise ValueError("Workspace is not registered; read-only queries do not register it")
-    return base / selected.id
+        registered = store.list()
+        if len(registered) == 1:
+            print(
+                "warning: workspace is not registered; listing base sessions root (degraded)",
+                file=sys.stderr,
+            )
+            return base, True
+        raise ValueError(
+            f"Workspace is not registered and the registry holds {len(registered)} workspaces; "
+            "pass --workspace PATH to disambiguate"
+        )
+    return base / selected.id, False
+
+
+def session_root(data: Path, workspace: Path | None = None, *, require_registered: bool = False) -> Path:
+    return workspace_lookup(data, workspace, require_registered=require_registered)[0]
 
 
 def _check_owner(data: Path, root: Path, sid: str) -> bytes | None:

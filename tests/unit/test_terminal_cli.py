@@ -709,7 +709,9 @@ def test_identity_uses_last_persisted_loopresult_model_for_explicit_session(
 
     options = SimpleNamespace(config=None, data_dir=str(query_env / "data"),
                               workspace=str(query_env), _query_home=query_env)
-    monkeypatch.setattr(queries, "session_root", lambda *_a, **_k: query_env / "sessions")
+    monkeypatch.setattr(
+        queries, "workspace_lookup",
+        lambda *_a, **_k: (query_env / "sessions", False))
     monkeypatch.setattr(
         queries, "read_session",
         lambda *_a, **_k: {"session_id": "session-1", "messages": [
@@ -732,7 +734,9 @@ def test_identity_explains_missing_model_for_already_selected_session(
 
     options = SimpleNamespace(config=None, data_dir=str(query_env / "data"),
                               workspace=str(query_env), _query_home=query_env)
-    monkeypatch.setattr(queries, "session_root", lambda *_a, **_k: query_env / "sessions")
+    monkeypatch.setattr(
+        queries, "workspace_lookup",
+        lambda *_a, **_k: (query_env / "sessions", False))
     monkeypatch.setattr(
         queries, "read_session",
         lambda *_a, **_k: {"session_id": "session-empty", "messages": [

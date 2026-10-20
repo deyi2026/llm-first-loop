@@ -47,7 +47,7 @@ jobs:
       - name: pyright
         run: uv run --no-sync python scripts/check_static_diagnostics.py --tool pyright
       - name: pytest（非真实 LLM）
-        run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm"
+        run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm and not serial_signal"
 
   linux-installer:
     name: Linux 用户级安装/卸载真实成品验收（glibc）
@@ -112,3 +112,45 @@ jobs:
       - name: 评测集真实运行（指标落盘）
         if: steps.keycheck.outputs.skip != 'true'
         run: python scripts/run_eval.py --output docs/metrics/eval_ci
+
+  serial-signal-stress:
+    name: nightly 信号类测试 50 次稳定性
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # D3（2026-10-20）: 信号类测试（serial_signal marker）物理发信号、时序敏感，
+      # 门禁并行跑已排除；本 job 顺序连跑 50 次验证稳定性。步骤结构与 test 门禁一致。
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+      - name: 安装依赖（uv.lock 冻结环境，与门禁同一面）
+        run: uv sync --frozen --extra dev
+      - name: 信号类测试连续 50 次
+        run: bash scripts/verify_serial_signal_stability.sh --runs 50
+
+  ambient-env-gate:
+    name: 部署 env 泄漏门禁（D4）
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # D4（2026-10-20）: LFL web/execute_command 派生 shell 继承部署绑定
+      # LFL_WORKSPACE_ROOT；本 job 在 ambient 泄漏注入下跑泄漏敏感切片——
+      # subprocess 免疫测试主导（显式构造 env，不依赖本 job 注入），并验证
+      # conftest 批次5 剥离对进程内测试的保护面。步骤结构与门禁同一面。
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --extra dev
+      - name: 注入 ambient 部署变量并跑泄漏敏感切片
+        run: |
+          set -euo pipefail
+          VARS=$(uv run --no-sync python -c "from tests.conftest import _DEPLOYED_WORKSPACE_IDENTITY_VARS as v; print(' '.join(v))")
+          echo "ambient vars under gate: $VARS"
+          for var in $VARS; do export "${var}=ci-ambient-leak-stub"; done
+          uv run --no-sync python -m pytest tests/unit/test_ambient_leak_immunity.py tests/unit/test_workspace_resolution.py tests/unit/test_terminal_cli.py tests/unit/test_runtime_identity_enforce.py tests/unit/test_runtime_manifest.py tests/unit/test_runtime_config_p0.py -q -m "not real_llm and not serial_signal"

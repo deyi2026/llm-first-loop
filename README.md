@@ -67,10 +67,10 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 .venv/bin/python -m llm_loop.cli --session <id> "继续对话"
 
 # 5. 测试
-.venv/bin/python -m pytest tests/ -q
+uv run python -m pytest tests/ -q
 
 # 6. CI 同款三件套门禁（本地一条命令复现；R9-IMM-03 可复现口径）
-.venv/bin/ruff check src tests && .venv/bin/pyright && .venv/bin/python -m pytest tests/ -q
+uv run ruff check src tests && uv run pyright && uv run python -m pytest tests/ -q
 ```
 
 ## R9 提交流程（机检 + 门禁；spec `r9_arch_refactor` T2-C / R9-P1-03）

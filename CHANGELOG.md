@@ -1,3 +1,11 @@
+## v0.6.36 — workspace 解析优先级修复与 ambient 泄漏门禁（2026-10-20）
+
+- **修复（B1）**：`lfl query` workspace 解析优先级反转（`--workspace` > cwd 向上找 `pyproject.toml` > 部署绑定 `LFL_WORKSPACE_ROOT`（stderr 警告）> 裸 cwd）；cwd 位于部署根内且与绑定重合时拒绝猜测并以 exit 3 输出双候选；未注册 workspace 仅在注册表唯一时降级 base 根列举（JSON 输出新增 `degraded` 字段），多注册表时拒绝且不列举路径。
+- **修复（B2）**：`_bounded_child_wire` 投影契约改为全量 dict 校验，违规整批拒绝（`投影契约失败(第N项 type=...)`）+ ERROR 日志（有界 repr），不再静默丢弃。
+- **治理（B3）**：终端信号类测试单点 `serial_signal` marker（conftest 路径清单驱动），门禁并行跑排除，nightly `serial-signal-stress` 连续 50 次验证（`scripts/verify_serial_signal_stability.sh`）。
+- **门禁（D4）**：CI 新增 `ambient-env-gate`（ambient 部署变量注入下泄漏敏感切片必须全绿，变量清单从 `tests/conftest.py` 派生）+ subprocess 泄漏免疫测试。
+- **注**：v0.6.36 webui 提交产物在独立 repo（发布流水线直接发布），本 mirror 仅含 docs/pyproject 等工程文件。
+
 ## v0.6.35 — 安装即检测：init 模型连通检测、doctor --online 与安装期规则/经验 briefing（2026-10-20）
 
 - **init 装完即检测**：`lfl init` 写入配置后对所配模型发起一次有界探测（默认 15 秒），按凭据无效、模型不存在、限流、余额/配额不足、DNS/连接拒绝/超时、TLS、HTTP 5xx、非 JSON 响应分类，每类给出可操作修复指引；检测失败时保留配置并以非零码退出，不自动改写配置。

@@ -2464,6 +2464,17 @@ class SubAgentRunner:
         the call instead of silently clipping or repeating the provider request.
         """
         messages = [m.to_llm_dict() for m in sess.messages]
+        # D2（2026-10-20 投影契约）: 校验必须先于任何投影——非 dict 项一旦进入
+        # wire 即为 Provider 结构违规；拒绝整个 wire（空列表+错误串，不发任何
+        # 消息），绝不静默丢弃（有界 repr 200 字符，ERROR 级留痕）。
+        violations = [(i, m) for i, m in enumerate(messages) if not isinstance(m, dict)]
+        if violations:
+            i, bad = violations[0]
+            logging.getLogger(__name__).error(
+                "投影契约失败(第%d项 type=%s): %s",
+                i, type(bad).__name__, repr(bad)[:200],
+            )
+            return [], f"投影契约失败(第{i}项 type={type(bad).__name__})"
         # EVO-20261020-b1c00127: the child wire is never sent with a
         # GuardRequestContext, so a leaked `_active_run_ingress_ref` marker trips
         # `active_run_ingress_unexpected_marker` before any transport. The
@@ -2560,10 +2571,19 @@ class SubAgentRunner:
         # compaction round (INC-20261020 subagent_5fb2aef276c1).  The marker is
         # transport bookkeeping, not provider content: drop it before sending, the
         # same way engine.py does when it hands a projection off.
+        # D2（2026-10-20 投影契约）: 同一契约作用于压缩投影产物——校验先于投影，
+        # 非 dict 项拒绝整个 wire（不发送、不静默丢弃，与入口处同一错误语义）。
+        violations = [(i, m) for i, m in enumerate(projected) if not isinstance(m, dict)]
+        if violations:
+            i, bad = violations[0]
+            logging.getLogger(__name__).error(
+                "投影契约失败(第%d项 type=%s): %s",
+                i, type(bad).__name__, repr(bad)[:200],
+            )
+            return [], f"投影契约失败(第{i}项 type={type(bad).__name__})"
         projected = [
             {k: v for k, v in m.items() if k != "_active_run_ingress_ref"}
             for m in projected
-            if isinstance(m, dict)
         ]
         measured = sum(dict_wire_chars(m) for m in projected)
         if measured > budget:

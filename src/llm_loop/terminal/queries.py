@@ -15,13 +15,14 @@ from llm_loop.terminal.presentation import safe_text
 from llm_loop.terminal.records import (
     export_record,
     read_session,
-    session_root,
     session_rows,
     transcript,
+    workspace_lookup,
 )
 
 READ_COMMANDS = {"session", "sessions", "model", "models", "identity", "status", "config", "keys", "help"}
 HELP = """lfl [--config FILE] [--data-dir DIR] [--workspace DIR] COMMAND
+Workspace resolves as: --workspace > cwd-upward pyproject.toml > LFL_WORKSPACE_ROOT (deployment binding, warned) > cwd; ambiguous deployment binding exits 3
 chat [MESSAGE | --stdin | --message-file FILE] [--session ID] [--model REF]
      [--interactive] [--output text|json|jsonl] [--plain] [--no-stream] [--theme THEME]
 sessions list [--archived] [--json]
@@ -72,6 +73,54 @@ def _safe_config_source_label(value: Any) -> str:
     return "unknown"
 
 
+class WorkspaceAmbiguityError(Exception):
+    """cwd-derived and deployment-bound workspace candidates coincide; refuse to guess."""
+
+    def __init__(self, cwd_candidate: Path, bound_candidate: Path):
+        super().__init__(f"cwd-derived={cwd_candidate} deployment-bound={bound_candidate}")
+        self.cwd_candidate = cwd_candidate
+        self.bound_candidate = bound_candidate
+
+
+def _normalize_workspace_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _cwd_project_root() -> Path | None:
+    here = Path.cwd()
+    for candidate in (here, *here.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return None
+
+
+def _resolve_query_workspace(supplied: Any, values: dict) -> Path:
+    # Priority: --workspace > cwd-upward pyproject.toml > deployment binding (warn) > bare cwd.
+    raw_explicit = getattr(supplied, "workspace", None)
+    explicit = _normalize_workspace_value(raw_explicit)
+    if raw_explicit is not None and explicit is None:
+        print("warning: blank --workspace value ignored", file=sys.stderr)
+    if explicit is not None:
+        return Path(explicit).expanduser()
+    bound = _normalize_workspace_value(values.get("LFL_WORKSPACE_ROOT"))
+    cwd_root = _cwd_project_root()
+    if cwd_root is None:
+        if bound is None:
+            return Path.cwd()
+        print(
+            "warning: LFL_WORKSPACE_ROOT is a deployment binding; "
+            "pass --workspace PATH to be explicit",
+            file=sys.stderr,
+        )
+        return Path(bound).expanduser()
+    if bound is not None and cwd_root.resolve() == Path(bound).expanduser().resolve():
+        # cwd sits inside a deployed release tree: both candidates collapse onto the
+        # deployment root and prove nothing about user intent (B1 leak signature).
+        raise WorkspaceAmbiguityError(cwd_root, Path(bound).expanduser())
+    return cwd_root
+
+
 def query_context(options: Any = None) -> tuple[Path, Path, dict]:
     supplied = options or argparse.Namespace(config=None, data_dir=None, workspace=None)
     environment = legacy_env_snapshot()
@@ -84,7 +133,7 @@ def query_context(options: Any = None) -> tuple[Path, Path, dict]:
     if not data.is_absolute():
         base = Path.cwd() if supplied.data_dir or environment.get("DATA_DIR") or environment.get("LFL_DATA_DIR") else config.parent
         data = base / data
-    workspace = Path(supplied.workspace or values.get("LFL_WORKSPACE_ROOT") or Path.cwd()).expanduser()
+    workspace = _resolve_query_workspace(supplied, values)
     return data.resolve(), workspace.resolve(), values
 
 
@@ -354,13 +403,18 @@ def dispatch_query(argv: list[str], options: Any = None) -> int | None:
             if ns.action != "export" and ns.format is not None:
                 parser.error("--format is only valid with sessions export")
         data, workspace, values = query_context(options)
-        workspace_explicit = bool(
-            getattr(options, "workspace", None) or values.get("LFL_WORKSPACE_ROOT")
-        )
+        workspace_explicit = _normalize_workspace_value(getattr(options, "workspace", None)) is not None
         return _execute_query(cmd, ns, data, workspace, values, options=options,
                               workspace_explicit=workspace_explicit)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
+    except WorkspaceAmbiguityError as exc:
+        print(safe_text(
+            f"workspace ambiguous: cwd-derived={exc.cwd_candidate} "
+            f"deployment-bound={exc.bound_candidate}; "
+            "pass --workspace PATH to choose one explicitly"
+        ), file=sys.stderr)
+        return 3
     except (OSError, ValueError, TypeError) as exc:
         print(safe_text(f"{type(exc).__name__}: {exc}"), file=sys.stderr)
         return 1
@@ -375,7 +429,14 @@ def _execute_query(cmd: str, ns: Any, data: Path, workspace: Path, values: dict,
         selected_session = getattr(ns, "session", None) if cmd == "identity" else None
         actual_model = None
         if selected_session:
-            root = session_root(data, workspace, require_registered=workspace_explicit)
+            # Review fix P2-1 (T8 consistency): do not swallow workspace_lookup refusals
+            # here. The multi-registry rejection message also contains the
+            # "Workspace is not registered" substring, so the former base-root fallback
+            # let identity --session through where sessions show/list refused. The
+            # single-registry degradation already returns base from workspace_lookup
+            # itself; multi-registry refusals propagate and exit 1 via dispatch_query,
+            # matching the sessions branch.
+            root = workspace_lookup(data, workspace, require_registered=workspace_explicit)[0]
             raw_session = read_session(
                 data, selected_session, values.get("READ_PATH_SOURCE", "session_json"), root
             )
@@ -421,7 +482,7 @@ def _execute_query(cmd: str, ns: Any, data: Path, workspace: Path, values: dict,
 
 def _sessions(ns: Any, data: Path, workspace: Path, values: dict, *,
               workspace_explicit: bool = False) -> int:
-    root = session_root(data, workspace, require_registered=workspace_explicit)
+    root, degraded = workspace_lookup(data, workspace, require_registered=workspace_explicit)
     source = values.get("READ_PATH_SOURCE", "session_json")
     if ns.action in {"list", "search"}:
         if ns.action == "list" and ns.value:
@@ -430,7 +491,7 @@ def _sessions(ns: Any, data: Path, workspace: Path, values: dict, *,
         if ns.action == "search" and not query.strip():
             raise ValueError("sessions search requires a query")
         rows = session_rows(data, archived=ns.archived, query=query if ns.action == "search" else "", root=root, source=source)
-        print(json.dumps(rows, ensure_ascii=False, indent=2) if ns.json else safe_text("\n".join(
+        print(json.dumps({"schema": "lfl.cli-sessions/v1", "degraded": degraded, "sessions": rows}, ensure_ascii=False, indent=2) if ns.json else safe_text("\n".join(
             f"{row['session_id']}  {row.get('title') or '(untitled)'}  "
             f"{row.get('message_count', '?')} messages {row.get('error', '')}" for row in rows)))
         return int(any("error" in row for row in rows))

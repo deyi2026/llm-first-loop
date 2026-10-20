@@ -63,13 +63,32 @@ TIER0_FILES = (
 )
 
 
+# ── D3（2026-10-20 终端信号类测试偶发治理，审查修订 P1-1 改函数级粒度）：物理发信号
+# （SIGTERM/SIGINT）的用例时序敏感，仅这些用例在并行门禁排除、nightly 顺序 50 次验证；
+# 其余用例（含同文件内非信号用例）保持 push 门禁全覆盖（tier0 原则：门禁不降级）。
+SERIAL_SIGNAL_TESTS = (
+    "tests/unit/test_terminal_cli.py::test_interactive_session_propagates_sigterm_and_exits_shell",
+    "tests/unit/test_terminal_cli.py::test_cli_sigterm_physically_stops_owned_execute_command",
+    "tests/unit/test_terminal_cli.py::test_run_turn_real_signal_cancels_owned_generation_and_reports_process_exit",
+    "tests/unit/test_terminal_cli.py::test_sigterm_during_runner_start_is_reported_as_termination_pending",
+)
+
+
 def pytest_collection_modifyitems(config, items):
-    """tier0 单点打标（路径清单驱动，不侵入测试文件）."""
+    """tier0/serial_signal 单点打标（清单驱动，不侵入测试文件；tier0 文件级、serial_signal 函数级）."""
     tier0_marker = pytest.mark.tier0
     for item in items:
         fpath = str(item.path).replace(str(Path(__file__).resolve().parent.parent) + "/", "")
         if fpath in TIER0_FILES:
             item.add_marker(tier0_marker)
+    serial_signal_marker = pytest.mark.serial_signal
+    for item in items:
+        # 审查修订 P1-1：serial_signal 改函数级粒度。item.nodeid 是相对 repo root 的
+        # "路径::函数名"形式，参数化用例带 [params] 后缀，故对清单条目做 startswith
+        # 前缀匹配；仅物理发信号的 4 个函数被打标，同文件其余用例保持门禁全覆盖。
+        nodeid = str(item.nodeid)
+        if any(nodeid.startswith(entry) for entry in SERIAL_SIGNAL_TESTS):
+            item.add_marker(serial_signal_marker)
 
 
 # ── M64 测试环境污染全局防御（pytest 收集前执行）──
@@ -180,6 +199,15 @@ _DEPLOYED_TASK_BUDGET_VARS = (
     "LFL_TASK_BUDGET_WEB_CANARY_CONFIG",
 )
 
+# 部署泄漏隔离（批次5，2026-10-20 B1 归因）：LFL web/execute_command 派生 shell 继承
+# 部署绑定 LFL_WORKSPACE_ROOT（指向 .releases/<hash>），查询 CLI 曾把它当用户 workspace
+# 选择，导致未注册硬失败或静默列出错误 workspace 的会话。queries.py 现按
+# --workspace > cwd-upward > env 解析并在歧义时 exit 3；本批次剥离 ambient 值，
+# 测试体内显式 setenv 的用例（monkeypatch 顺序在 fixture 之后）不受影响。
+_DEPLOYED_WORKSPACE_IDENTITY_VARS = (
+    "LFL_WORKSPACE_ROOT",
+)
+
 
 @pytest.fixture(autouse=True)
 def isolate_deployed_web_auth_env(monkeypatch, tmp_path):
@@ -192,6 +220,8 @@ def isolate_deployed_web_auth_env(monkeypatch, tmp_path):
         monkeypatch.delenv(var, raising=False)
     for var in _DEPLOYED_TASK_BUDGET_VARS:
         monkeypatch.delenv(var, raising=False)
+    for key in _DEPLOYED_WORKSPACE_IDENTITY_VARS:
+        monkeypatch.delenv(key, raising=False)
     # 批次4：宿主 LFL_RUNTIME_ROOT 指向生产 runtime.toml（含 canary 等生产键）；
     # 指到空临时目录使 resolver 回退 defaults。函数级 setenv 的 resolver 用例
     # 在本 fixture 之后执行，优先级不变。
