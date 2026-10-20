@@ -80,8 +80,10 @@ lfl --config /absolute/path/to/lfl.env web
 ~~~
 
 **首次启动建议直接运行 `lfl start`**：如果尚未配置，先调用现有 `lfl init`
-交互向导；随后调用 `lfl doctor` 复核，就绪后使用原有 Web 启动入口。
-`start` 仅在最后写入前要求一次明确确认，不自动联网验证密钥，也不新建服务控制平面。
+交互向导；向导写入配置后会做一次模型连通性检测并给出排障建议，随后调用
+`lfl doctor` 复核，就绪后使用原有 Web 启动入口。
+`start` 仅在最后写入前要求一次明确确认，不新建服务控制平面；联网只发生在
+`lfl init` 写入后的那一次检测，`start` 本身不额外联网。
 再次运行 `lfl start` 可复用现有配置；Web 仍遵循原有认证、地址和工作目录绑定，
 按 Ctrl+C 退出。`lfl start --plan` 或 `lfl start --plan --json` 可离线只读预览，
 不会启动模型或 Web。非交互环境缺配置时明确拒绝，绝不静默生成密钥。
@@ -91,20 +93,27 @@ lfl --config /absolute/path/to/lfl.env web
 ~~~bash
 lfl doctor
 lfl doctor --json
+lfl doctor --online
 lfl --config /absolute/path/to/lfl.env doctor --json
 ~~~
 
-doctor 是**离线、只读**预检：不装配 Engine、不访问 Provider、不启动/重启服务、
+doctor 默认是**离线、只读**预检：不装配 Engine、不访问 Provider、不启动/重启服务、
 不创建用户目录、不写入环境变量。检查安装包资源清单（源码运行时标明不适用）、
 配置文件的存在与可读取性、必需模型配置键是否设置、数据目录和工作目录可用性、
-以及自定义技能/文档/界面资源目录是否有效。
+以及自定义技能/文档/界面资源目录是否有效；还会报告本次会话将加载的
+规则/方法/经验/技能数量（上下文资产）。
 
-JSON 输出遵循 `lfl.doctor/v1`，含 `ready/status/read_only/sources/checks`；
+`--online` 额外发起**一次**最小真实请求（约 15 秒超时），验证 `LLM_API_KEY`、
+`LLM_BASE_URL` 与 `LLM_MODEL` 是否真的可用；失败时按 401/403、404、429、
+网络超时/DNS/TLS、HTTP 5xx 等分类给出可执行的修复建议，且响应与错误信息中
+的密钥会被替换为 `***`。不带 `--online` 时绝不触网。
+
+JSON 输出遵循 `lfl.doctor/v1`，含 `ready/status/read_only/online/sources/checks`；
 配置项只报告来源（命令行/进程环境/配置文件/默认），**绝不回显配置值、密钥或配置路径**。
 每条诊断使用 `pass/warn/fail` 与可执行修复建议；全部通过返回退出码 0，
-有任何待配置或失败项返回 1，非法命令参数返回 2。
+有任何待配置或失败项返回 1，非法命令参数返回 2。`--online` 失败同样返回 1。
 
-doctor 不能证明远端密钥有效、模型可调用、Web 正在运行，也不是来源签名验证。
+doctor 不能证明额度、并发或长期可用性，也不是来源签名验证。
 诊断通过后仍需由用户明确选择启动方式；doctor 不自动修复配置或覆盖旧数据。
 
 ## 首次使用配置向导（P1 init）
@@ -125,13 +134,31 @@ lfl init
 应用默认新建目录以 `0700` 模式创建。无终端、取消、非法输入或目标竞争失败时
 不会覆盖任何已有配置。出现残余临时目录/文件时应停止，切勿自动清空用户数据。
 
-单独运行 `lfl init` 只配置，不自动验证远端密钥、不启动 LLM、Web、Learning 或 Feishu，
-也不安装扩展。通过安装器启动的 `LFL Start.command` 使用 `lfl start`：配置写入后先做
-本机诊断，只有就绪才启动 Web；若只想配置而不启动，请直接运行 `lfl init`。
+单独运行 `lfl init` 会配置并在写入成功后做一次模型连通性检测；它不启动 LLM、
+Web、Learning 或 Feishu，也不安装扩展。检测失败时配置仍已保存，命令打印分类原因
+（凭据、模型名、限流/配额、网络/代理/TLS 等）和修复建议并返回退出码 1；按建议修正后
+运行 `lfl doctor --online` 复检，或再次运行 `lfl init`（不会覆盖已有文件）。
+通过安装器启动的 `LFL Start.command` 使用 `lfl start`：配置写入后先做本机诊断，
+只有就绪才启动 Web；若只想配置而不启动，请直接运行 `lfl init`。
 
 web 复用原有 Web 入口、认证与生命周期清理，默认绑定本机环回地址。
 运行目录与用户工作目录分别绑定，身份守卫继续生效。
 数据目录与现有业务路径显式分开；这条独立应用启动路径不替代源码工作区的受管发布/重启流程。
+
+## 安装后的会话上下文
+
+安装完成后，每次会话的稳定前缀除 SOUL 与通用核心认知外，还会加载一份**有界索引**
+（`llm_loop.runtime.briefing`）：
+
+- **规则**：`docs/ai_rules.md` 中核心 RULE-AI 的编号与标题（完整正文仍按需读取）；
+- **经验**：本安装已有的方法/经验数量与前若干方法索引，并提示用
+  `search_records(kind=method|experience|lesson, query=…)` 检索；
+- **工具与技能**：工具参数以 API schema 为真值、陌生工具先读 schema，以及
+  `skill_list`/`skill_load` 的入口与已安装技能名称。
+
+索引只包含文件名、标题和计数，不含凭据或用户内容；资源不变时字节稳定，
+可继续命中前缀缓存。资源缺失时降级为入口提示而不是报错，`lfl doctor` 的
+“上下文资产”一项会报告实际加载到的规则/方法/经验/技能数量。
 
 ## 数据与资源
 

@@ -689,4 +689,4 @@ fi
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   printf 'Add this directory to PATH to use lfl from any terminal: %s\n' "$BIN_DIR"
 fi
-printf 'Next: lfl doctor (offline setup check), then lfl start.\n'
+printf 'Next: lfl start (first run configures and live-checks the model), or lfl doctor --online to verify credentials.\n'

@@ -35,9 +35,24 @@ def clean_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(cli, "check_install", lambda: {"ok": True})
 
     def no_network(*_args, **_kw):
-        pytest.fail("init tried network access")
+        pytest.fail("init tried network access outside the injected live check")
 
     monkeypatch.setattr(socket.socket, "connect", no_network)
+
+    from llm_loop.runtime import model_check
+
+    monkeypatch.setattr(
+        model_check,
+        "check_model_config",
+        lambda *_a, **_k: {
+            "status": "ok",
+            "ok": True,
+            "latency_ms": 1,
+            "message": "模型可用（测试替身）。",
+            "action": "",
+            "http_status": 200,
+        },
+    )
     return tmp_path
 
 

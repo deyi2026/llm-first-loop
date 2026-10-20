@@ -192,3 +192,65 @@ def test_doctor_parser_preserves_cli_quoted_inline_comment_and_first_duplicate(d
     monkeypatch.delenv("LFL_DATA_DIR", raising=False)
     load_env_file(cfg)
     assert os.environ["LFL_DATA_DIR"] == parsed["LFL_DATA_DIR"]
+
+
+def _run_json_online(argv, capsys):
+    rc = cli.application_main([*argv, "doctor", "--online", "--json"])
+    return rc, json.loads(capsys.readouterr().out)
+
+
+def test_doctor_defaults_remain_offline(doctor_home, capsys, monkeypatch):
+    from llm_loop.runtime import model_check
+
+    monkeypatch.setattr(
+        model_check, "check_model_config", lambda *_a, **_k: pytest.fail("offline doctor went online")
+    )
+    rc, report = _run_json([], capsys)
+    assert rc == 1
+    assert report["online"] is None
+
+
+def test_doctor_online_reports_live_failure_with_action(doctor_home, capsys, monkeypatch):
+    from llm_loop.runtime import model_check
+
+    monkeypatch.setenv("LLM_API_KEY", "fake-live-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("LLM_MODEL", "fake-model")
+    monkeypatch.setattr(
+        model_check,
+        "check_model_config",
+        lambda settings: {
+            "status": "unauthorized",
+            "ok": False,
+            "latency_ms": 12,
+            "message": "模型服务拒绝凭据（HTTP 401）。",
+            "action": "检查 LLM_API_KEY 是否有效。",
+        },
+    )
+    rc, report = _run_json_online([], capsys)
+    assert rc == 1
+    assert report["ready"] is False
+    assert report["online"]["status"] == "unauthorized"
+    assert _checks(report)["model_live"]["status"] == "fail"
+    assert "LLM_API_KEY" in _checks(report)["model_live"]["action"]
+    assert "fake-live-key" not in json.dumps(report)
+
+
+def test_doctor_online_success_keeps_ready(doctor_home, capsys, monkeypatch):
+    from llm_loop.runtime import model_check
+
+    monkeypatch.setenv("LLM_API_KEY", "fake-live-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setattr(
+        model_check,
+        "check_model_config",
+        lambda settings: {
+            "status": "ok", "ok": True, "latency_ms": 5,
+            "message": "模型可用。", "action": "", "http_status": 200,
+        },
+    )
+    rc, report = _run_json_online([], capsys)
+    assert rc == 0
+    assert report["ready"] is True
+    assert report["online"]["ok"] is True
+    assert _checks(report)["model_live"]["status"] == "pass"

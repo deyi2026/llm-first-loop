@@ -1,7 +1,10 @@
-"""Offline first-use CLI configuration; one exclusive new file, never an update.
+"""First-use CLI configuration; one exclusive new file, never an update.
 
 The installed application's authoritative paths and read-only doctor remain the
-only configuration/control plane. No provider, engine or service is created here.
+only configuration/control plane. No provider client, engine or service is created
+here.  After a successful write, one bounded live model check tells the operator
+whether the configured endpoint actually accepts the key and model; it never
+rewrites configuration.
 """
 
 from __future__ import annotations
@@ -202,7 +205,7 @@ def _interactive_setup(*, target: Path, report: dict[str, Any], root: Path, bund
         print("现有配置或进程环境已存在；不会覆盖。请运行 lfl doctor。")
         return 0
     try:
-        print("LFL 首次配置（离线）。只新建配置，绝不覆盖已有文件。")
+        print("LFL 首次配置。写入前不联网，只新建配置，绝不覆盖已有文件。")
         print("目标：" + str(target))
         print("填写结束后会显示摘要；只有最后确认 yes 才会写入。API Key 不会显示。")
         base_url = _validate_value(input("LLM_BASE_URL（HTTP(S)）：").strip(), key="LLM_BASE_URL")
@@ -240,12 +243,33 @@ def _interactive_setup(*, target: Path, report: dict[str, Any], root: Path, bund
         return 1
 
     from llm_loop.runtime.doctor import human_report, inspect_first_use
+    from llm_loop.runtime.model_check import check_model_config
 
-    print("已创建新配置（没有联网或启动服务）。")
+    print("已创建新配置。正在做一次模型连通性检测（单次请求，最多 15 秒）…")
+    live = check_model_config(
+        {"llm_api_key": key, "llm_base_url": base_url, "llm_model": model or "deepseek-flash"}
+    )
+    if live.get("ok"):
+        print("[通过] 模型在线检测：" + str(live.get("message", "")) +
+              "（" + str(live.get("latency_ms", 0)) + " ms）")
+    else:
+        print("[失败] 模型在线检测：" + str(live.get("message", "")))
+        if live.get("action"):
+            print("  解决建议：" + str(live["action"]))
     result = inspect_first_use(args=args, root=root, bundle=bundle, environment=environment, check_install=check_install)
     print(human_report(result))
-    print("后续可自行选择运行 lfl chat 或 lfl web，必要时先运行 lfl doctor。")
-    return 0 if result["ready"] else 1
+    # Missing context assets degrade the briefing (reported above); they must not
+    # turn a successfully written configuration into a failed init.
+    blocking = [c for c in result["checks"] if c["status"] != "pass" and c["id"] != "context_assets"]
+    if live.get("ok") and not blocking:
+        print("配置可用。后续可运行 lfl start（首次启动会继续引导），或直接运行 lfl chat / lfl web。")
+        return 0
+    if not live.get("ok"):
+        print("配置已保存，但模型当前不可用。按上面的建议修正后运行 lfl doctor --online 复检；"
+              "修正配置可再次运行 lfl init，已有文件不会被自动覆盖。")
+        return 1
+    print("本地检查已通过，但仍有待处理项；按上面的建议处理后运行 lfl doctor。")
+    return 1
 
 
 def run_first_use(*, args: Any, root: Path, bundle: Path | None, environment: Mapping[str, str],

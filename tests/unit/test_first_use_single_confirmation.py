@@ -17,6 +17,23 @@ class _InteractiveStdin:
         return True
 
 
+def _stub_live_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    from llm_loop.runtime import model_check
+
+    monkeypatch.setattr(
+        model_check,
+        "check_model_config",
+        lambda *_a, **_k: {
+            "status": "ok",
+            "ok": True,
+            "latency_ms": 1,
+            "message": "模型可用（测试替身）。",
+            "action": "",
+            "http_status": 200,
+        },
+    )
+
+
 def _run_init(monkeypatch: pytest.MonkeyPatch, root: Path,
               responses: list[str]) -> tuple[int, list[str]]:
     prompts: list[str] = []
@@ -29,6 +46,7 @@ def _run_init(monkeypatch: pytest.MonkeyPatch, root: Path,
     monkeypatch.setattr(first_use.sys, "stdin", _InteractiveStdin())
     monkeypatch.setattr(builtins, "input", answer)
     monkeypatch.setattr(first_use.getpass, "getpass", lambda _prompt: "fake-key-for-test")
+    _stub_live_check(monkeypatch)
     result = first_use.run_first_use(
         args=SimpleNamespace(config=None, data_dir=None, workspace=None), root=root, bundle=None,
         environment={}, check_install=lambda: {"ok": True},

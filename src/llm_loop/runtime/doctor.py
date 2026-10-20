@@ -1,7 +1,9 @@
-"""P1 first-use diagnostics: read-only, offline and credential-value-free.
+"""P1 first-use diagnostics: read-only, credential-value-free.
 
-This is a human preflight, not an Engine, service, provider or deployment probe.
-It describes local prerequisites; it does not assert that a live model works.
+By default this is an offline human preflight: it describes local prerequisites and
+does not assert that a live model works.  ``online=True`` (``lfl doctor --online``)
+adds exactly one bounded live request through :mod:`llm_loop.runtime.model_check`
+so installation guidance can distinguish "configured" from "usable".
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ def inspect_first_use(
     bundle: Path | None,
     environment: Mapping[str, str],
     check_install: Callable[[], dict[str, Any]],
+    online: bool = False,
 ) -> dict[str, Any]:
     """Return only whitelisted structural facts, never config or secret values.
 
@@ -150,6 +153,72 @@ def inspect_first_use(
     else:
         add("resources", "pass", "未发现无效的自定义资源目录。")
 
+    # Installation briefing: the same three asset classes the context prefix will
+    # load.  Missing resources degrade the briefing, not the runtime; report it so
+    # a fresh install can be fixed before the first conversation.
+    try:
+        from llm_loop.runtime.briefing import inspect_installation_assets
+
+        def asset_path(key: str) -> str:
+            raw = str(merged.get(key, "")).strip()
+            if not raw:
+                return ""
+            try:
+                return str(_select_path(raw, source=source(key), config=config))
+            except (OSError, ValueError):
+                return ""
+
+        assets = inspect_installation_assets({
+            "docs": asset_path("DOCS_DIR"),
+            "methods": asset_path("METHOD_SEED_DIR"),
+            "experiences": asset_path("EXPERIENCES_DIR"),
+            "skills": asset_path("SKILLS_DIR"),
+        })
+        summary = ("规则 {rules} 条、方法 {methods} 条、经验 {experiences} 条、技能 {skills} 个"
+                   .format(**assets))
+        if assets["rules"] and (assets["methods"] or assets["experiences"] or assets["skills"]):
+            add("context_assets", "pass", "安装上下文资产可加载：" + summary + "。")
+        elif assets["rules"] or assets["methods"] or assets["experiences"] or assets["skills"]:
+            add("context_assets", "warn", "安装上下文资产不完整：" + summary + "。",
+                "运行 lfl check-install 核对安装包；源码运行时检查 docs/、methods/、skills/ 是否存在。")
+        else:
+            add("context_assets", "warn", "未找到规则/经验/技能资产，会话只加载通用提示。",
+                "确认安装包包含 docs/ai_rules.md、methods/、skills/；源码运行时确认仓库资源目录。")
+    except Exception:  # noqa: BLE001 - a broken index must not break diagnostics
+        add("context_assets", "warn", "安装上下文资产索引不可用。",
+            "检查 docs/ai_rules.md 与资源目录权限；运行 lfl doctor 复检。")
+
+    # Optional live check: exactly one bounded request, only when explicitly asked.
+    # It answers a different question from the local "model" check above and never
+    # writes configuration or starts the Engine.
+    online_report: dict[str, Any] | None = None
+    if online:
+        from llm_loop.runtime.model_check import check_model_config
+
+        if missing:
+            online_report = {
+                "status": "not_configured",
+                "ok": False,
+                "message": "缺少模型配置，未发起在线检测。",
+                "action": "先完成 LLM_API_KEY / LLM_BASE_URL 配置，再运行 lfl doctor --online。",
+            }
+            add("model_live", "fail", online_report["message"], online_report["action"])
+        else:
+            online_report = check_model_config(
+                {
+                    "llm_api_key": str(merged.get("LLM_API_KEY", "")),
+                    "llm_base_url": str(merged.get("LLM_BASE_URL", "")),
+                    "llm_model": str(merged.get("LLM_MODEL", "") or "deepseek-flash"),
+                    "llm_wire_protocol": str(merged.get("LLM_WIRE_PROTOCOL", "") or "openai"),
+                }
+            )
+            add(
+                "model_live",
+                "pass" if online_report.get("ok") else "fail",
+                str(online_report.get("message", "")),
+                str(online_report.get("action", "")),
+            )
+
     status = "error" if any(c["status"] == "fail" for c in checks) else (
         "needs_setup" if any(c["status"] == "warn" for c in checks) else "ready"
     )
@@ -158,6 +227,7 @@ def inspect_first_use(
         "status": status,
         "ready": status == "ready",
         "read_only": True,
+        "online": online_report,
         "sources": {
             "LFL_ENV_FILE": config_source,
             "LLM_API_KEY": source("LLM_API_KEY"),
@@ -173,11 +243,17 @@ def inspect_first_use(
 def human_report(report: Mapping[str, Any]) -> str:
     labels = {"pass": "通过", "warn": "待配置", "fail": "失败"}
     names = {"installation": "安装包", "config": "配置文件", "model": "模型配置",
-             "data_dir": "数据目录", "workspace": "工作目录", "resources": "扩展资源"}
-    lines = ["LFL doctor（只读 / 离线）", "状态：" + str(report["status"])]
+             "model_live": "模型在线检测", "data_dir": "数据目录", "workspace": "工作目录",
+             "resources": "扩展资源", "context_assets": "上下文资产"}
+    online = report.get("online") is not None
+    lines = ["LFL doctor（只读 / " + ("含在线检测" if online else "离线") + "）",
+             "状态：" + str(report["status"])]
     for check in report["checks"]:
         lines.append(f"[{labels[check['status']]}] {names[check['id']]}：{check['message']}")
         if check["action"]:
             lines.append("  建议：" + check["action"])
-    lines.append("仅检查本地先决条件，不代表模型、远端服务或生产环境已验收。")
+    if online:
+        lines.append("在线检测只证明本次一次最小请求可用，不代表额度、并发或长期可用性。")
+    else:
+        lines.append("仅检查本地先决条件；如需验证凭据与模型，运行 lfl doctor --online。")
     return "\n".join(lines)

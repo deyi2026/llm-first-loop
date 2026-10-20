@@ -54,7 +54,10 @@ def run_start(
         args=args, root=root, bundle=bundle, environment=environment,
         check_install=check_install,
     )
-    if not diagnosis["ready"]:
+    # Missing context assets degrade the briefing, not the start path; only real
+    # configuration/installation problems block Web launch.
+    blocking = [c for c in diagnosis["checks"] if c["status"] != "pass" and c["id"] != "context_assets"]
+    if blocking:
         print(human_report(diagnosis))
         print("配置尚未就绪；不会启动 Web。按诊断建议修复后重试 lfl start。")
         return 1

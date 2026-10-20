@@ -1336,7 +1336,7 @@ def application_main(argv: list[str] | None = None) -> int:
         return 0
     if remaining == ["--help"] or remaining == ["-h"]:
         print("lfl [--data-dir DIR] [--workspace DIR] [--config FILE] COMMAND\n"
-              "Commands: start [--plan] [--json], extensions, chat [CLI arguments], web, paths, check-install, doctor [--json], init [--plan] [--json], upgrade --plan, backup, rollback\n"
+              "Commands: start [--plan] [--json], extensions, chat [CLI arguments], web, paths, check-install, doctor [--json] [--online], init [--plan] [--json], upgrade --plan, backup, rollback\n"
               "Other arguments are passed to the existing LFL CLI.\n"
               "--version prints the installed version without starting services.")
         return 0
@@ -1547,8 +1547,9 @@ def application_main(argv: list[str] | None = None) -> int:
         )
     if remaining and remaining[0] == "init":
         # Setup is a separate consent-bound workflow; never invoke the normal
-        # stateful bootstrap, build an Engine, or open a provider connection.
-        init_parser = argparse.ArgumentParser(prog="lfl init", description="离线首次使用配置向导")
+        # stateful bootstrap or build an Engine.  It opens exactly one provider
+        # connection after writing, solely for the live model check.
+        init_parser = argparse.ArgumentParser(prog="lfl init", description="首次使用配置向导")
         init_parser.add_argument("--plan", action="store_true", help="只读预览，不写配置")
         init_parser.add_argument("--json", action="store_true", help="仅用于 --plan 的脱敏 JSON 预览")
         try:
@@ -1566,9 +1567,14 @@ def application_main(argv: list[str] | None = None) -> int:
         )
     if remaining and remaining[0] == "doctor":
         # P1: diagnostics must not call prepare_environment (env mutations),
-        # build_engine, network clients, or any managed service lifecycle code.
-        doctor_parser = argparse.ArgumentParser(prog="lfl doctor", description="离线只读首用配置诊断")
+        # build_engine or any managed service lifecycle code.  Default stays
+        # offline; --online adds one bounded provider request via model_check.
+        doctor_parser = argparse.ArgumentParser(prog="lfl doctor", description="只读首用配置诊断")
         doctor_parser.add_argument("--json", action="store_true", help="输出机器可读且不含配置值的 JSON")
+        doctor_parser.add_argument(
+            "--online", action="store_true",
+            help="额外发起一次最小真实请求，验证凭据与模型是否可用（默认离线）",
+        )
         try:
             doctor_args = doctor_parser.parse_args(remaining[1:])
         except SystemExit as exc:
@@ -1583,6 +1589,7 @@ def application_main(argv: list[str] | None = None) -> int:
             bundle=bundle,
             environment=legacy_env_snapshot(),
             check_install=check_install,
+            online=doctor_args.online,
         )
         print(json.dumps(report, ensure_ascii=False, indent=2) if doctor_args.json else human_report(report))
         return 0 if report["ready"] else 1

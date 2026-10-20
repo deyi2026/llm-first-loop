@@ -34,6 +34,7 @@ from llm_loop.core.prompt_eligibility import (
     memory_snapshot_prompt_eligible,
 )
 from llm_loop.core.user_truth_wire import current_ingress_user_truth
+from llm_loop.runtime.briefing import build_installation_briefing
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,9 @@ def run_ingress_prelude(
     provider_id = resolved_label.partition("/")[0] or "default"
     anchors = sess.history_anchors or {}
     sess_anchor = int(anchors.get(provider_id, 0) or 0)
-    system_prompt = build_system_prompt()
+    # Installation index: rules/experience/tools this deployment actually carries.
+    # Generated locally and bounded; it must never contain credentials or user data.
+    system_prompt = build_system_prompt(installation_index=build_installation_briefing())
     # EVO-2026XXXX（spec §5.3.1-1c）: memory 检索注入不再前置——检索结果（top_k 语义/
     # 关键词召回）随本轮查询变化，前置在 system 之后会每轮改变前缀首段 → 前缀断
     # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
