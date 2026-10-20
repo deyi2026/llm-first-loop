@@ -28,6 +28,14 @@
 
 ## Unreleased
 
+_目前暂无未发布变更。_
+
+## v0.6.36 — 手机 Web 右侧箭头恢复及版本对齐（2026-10-20）
+
+- **手机 Web 右侧栏入口修复**：此前 PC 侧边栏箭头被 `!isMobile` 条件隐藏，手机只剩顶栏 `▤` 图标，真实用户无法发现右侧抽屉入口。现统一为 `◂` 展开 / `▸` 收起，手机固定在右侧屏幕边缘并提供 ≥44px 触摸宽度，安全区适配、抽屉遮罩层级与键盘/屏幕阅读器属性同步更新；PC 保持原箭头位置。
+- **反回归测试**：从真实浏览器视口检查箭头贴右屏边、方向、可见性、开合、关闭恢复与滚动；补充 React 状态断言及右侧面板关联可访问性。生产验收须回读实际代码 SHA、WebUI 来源绑定与三服务身份，不能把 HTTP 200 或模拟宽度单独当作实机验收。
+- **版本及文档**：`pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、README 中英、Linux 安装示例与发布指引同步为 `0.6.36`；安装仍只允许 GitHub 已公开稳定 Release，Draft/未签名 macOS 候选不得视为正式安装包。
+
 - **审批入口补齐执行授权（EVO-20261018-f5f7580a 收尾）**：批量审批支持 `exec_override`（顶层默认、条目可覆盖，非布尔值直接 400 拒绝），accepted 后真正触发执行推进——此前批量路径只置 `accepted`、从不调用执行引擎，档位 0 下永远到不了 `executing`；面板授权勾选框不再只对涉边界条目显示，非边界条目也可逐条显式授权（涉边界条目仍须单条审批 + 安全边界确认）。
 - **method 状态转为质量标注（EVO-20261017-lifecycle-alignment）**：知识库除已弃用 `retired` 外全部状态可检索（hold/invalidated/teacher 不再隐藏）；候选卡与 active 同等可用，`record_use` 与评分均为可选；`candidate → active` 一次写入即合法（原 `promotion=pass` 与跨任务类型门禁移除）；排序去掉 lifecycle 权重与零信号衰减，body 权重提高。
 - **人工逐条授权不再被执行档位压制（EVO-20261018-f5f7580a）**：`EVOLVE_LOCAL_EXEC=0` 下，人工审批显式勾选 `exec_override` 的演进条目此前永远停在 `accepted`（判定链先命中"仅建议级"，引擎入口更在 level==0 直接 early return，override 根本不被读取），审批通道承诺的自动执行不发生、`evolution_complete` 随之被拒。现改为人工逐条授权优先于全局档位：该授权越过边界/档位/白名单门禁并正常进入 `executing`；`EVOLVE_LOCAL_EXEC` 仍完整约束 AI 自主执行（无授权时 level 0 行为不变），AI 仍不得自授该字段。

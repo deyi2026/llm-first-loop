@@ -128,12 +128,25 @@ with sync_playwright() as p:
                 )
                 check(viewport["doc"] <= viewport["w"] + 1, f"horizontal page overflow: {viewport}")
                 if mobile:
-                    panel_toggle = page.get_by_role("button", name="右侧面板").first
+                    panel_toggle = page.get_by_test_id("right-panel-toggle")
                     toggle_rect = panel_toggle.bounding_box()
                     check(
                         toggle_rect is not None and toggle_rect["x"] >= 0
                         and toggle_rect["x"] + toggle_rect["width"] <= width + 1,
                         f"right-panel entry missing or pushed outside viewport: {toggle_rect}",
+                    )
+                    check(
+                        toggle_rect["x"] + toggle_rect["width"] >= width - 2,
+                        f"mobile panel arrow not attached to right screen edge: {toggle_rect}",
+                    )
+                    check(
+                        panel_toggle.inner_text().strip() == "◂"
+                        and panel_toggle.get_attribute("aria-expanded") == "false",
+                        "mobile panel missing the desktop-equivalent closed arrow",
+                    )
+                    check(
+                        panel_toggle.evaluate("(e) => getComputedStyle(e).position") == "fixed",
+                        "mobile arrow is not fixed to the phone viewport",
                     )
                     page.locator("[data-testid=topbar] button").first.click()
                     check(
@@ -169,11 +182,23 @@ with sync_playwright() as p:
                     )
                     panel_toggle.click()
                     check(
+                        panel_toggle.inner_text().strip() == "▸"
+                        and panel_toggle.get_attribute("aria-expanded") == "true",
+                        "mobile panel missing the opened-state arrow",
+                    )
+                    check(
                         page.get_by_role("button", name="关闭右侧面板").count() == 1,
                         "panel scrim missing",
                     )
                     panel = page.locator('[data-testid="right-panel"]')
                     panel.wait_for(state="visible")
+                    arrow_open = panel_toggle.bounding_box()
+                    panel_open = panel.bounding_box()
+                    check(
+                        arrow_open is not None and panel_open is not None
+                        and abs(arrow_open["x"] + arrow_open["width"] - panel_open["x"]) <= 2,
+                        f"open arrow covers panel or is detached from its edge: arrow={arrow_open}, panel={panel_open}",
+                    )
                     tab_boxes = panel.locator(".v2-panel-tabs > button").evaluate_all(
                         """(buttons) => buttons.map(node => ({
                            text: node.textContent?.trim(),
@@ -191,6 +216,12 @@ with sync_playwright() as p:
                     )
                     panel.get_by_role("button", name="预览").click()
                     panel.get_by_role("button", name="设置").click()
+                    if width in (320, 375, 390):
+                        page.screenshot(path=str(ROOT / f"viewport-{width}-right-panel-open.png"))
+                    panel_toggle.click()
+                    page.locator("[data-testid=right-panel]").wait_for(state="detached", timeout=5000)
+                    check(panel_toggle.inner_text().strip() == "◂", "arrow did not restore after closing")
+                    panel_toggle.click()
                     page.keyboard.press("Escape")
                     check(
                         not page.locator("[data-testid=app-shell]").evaluate(

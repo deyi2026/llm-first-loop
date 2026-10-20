@@ -13,8 +13,8 @@ LFL Linux installer
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/deyi2026/llm-first-loop/main/scripts/install_linux.sh -o lfl-install.sh && bash lfl-install.sh
-  bash install_linux.sh --version 0.6.35
-  bash install_linux.sh --candidate ./llm_first_loop-0.6.35-py3-none-any.whl --expected-sha256 SHA256
+  bash install_linux.sh --version 0.6.36
+  bash install_linux.sh --candidate ./llm_first_loop-0.6.36-py3-none-any.whl --expected-sha256 SHA256
   bash install_linux.sh --rollback
 
 Options:

@@ -246,9 +246,6 @@ export function App() {
         <TopBar
           onToggleSidebar={toggleSidebar}
           onShowFiles={showConversationFiles}
-          onTogglePanel={togglePanel}
-          panelOpen={panelOpen}
-          isMobile={isMobile}
         />
         {mainView === "chat" ? <InteropNotice /> : null}
         {mainView === "learning" ? (
@@ -259,16 +256,18 @@ export function App() {
           <Conversation />
         )}
       </div>
-      {!isMobile && <button
+      <button
         type="button"
-        className="v2-icon-btn"
-        style={{ alignSelf: "center" }}
+        className={`v2-icon-btn v2-panel-edge-toggle ${isMobile ? "mobile" : "desktop"}`}
+        data-testid="right-panel-toggle"
         onClick={togglePanel}
         title="右侧面板"
         aria-label="右侧面板"
+        aria-expanded={panelOpen}
+        aria-controls={panelOpen ? "lfl-right-panel" : undefined}
       >
         {panelOpen ? "▸" : "◂"}
-      </button>}
+      </button>
       {panelOpen && !isMobile ? (
         <div
           className="v2-panel-resize-handle"

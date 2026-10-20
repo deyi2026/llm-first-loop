@@ -85,21 +85,29 @@ describe("App 布局壳", () => {
     expect(within(panel).getByTestId("services-grid")).not.toHaveClass("v2-learning-grid");
   });
 
-  it("移动端面板开关在顶栏内，不侵占聊天主区宽度", async () => {
+  it("移动端使用与 PC 相同的右侧箭头，固定于主区外且可反复开合", async () => {
     vi.stubGlobal("matchMedia", vi.fn(() => ({
       matches: true, media: "(max-width: 900px)", onchange: null,
       addEventListener: vi.fn(), removeEventListener: vi.fn(),
       addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
     })));
     await renderAppSettled();
-    const toggle = within(screen.getByTestId("topbar")).getByRole("button", { name: "右侧面板" });
-    const actions = screen.getByTestId("session-header-actions");
-    expect(toggle.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(toggle).toHaveClass("v2-mobile-panel-toggle");
+    const toggle = screen.getByTestId("right-panel-toggle");
+    expect(toggle).toHaveClass("v2-panel-edge-toggle", "mobile");
+    expect(toggle).toHaveTextContent("◂");
+    expect(toggle).not.toHaveAttribute("aria-controls");
+    expect(within(screen.getByTestId("topbar")).queryByRole("button", { name: "右侧面板" })).toBeNull();
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAttribute("aria-controls", "lfl-right-panel");
+    expect(toggle).toHaveTextContent("▸");
     expect(screen.getByTestId("panel-scrim")).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).not.toHaveAttribute("aria-controls");
+    expect(toggle).toHaveTextContent("◂");
+    expect(screen.queryByTestId("right-panel")).toBeNull();
   });
 
   it("手机抽屉支持 Escape 关闭并提供屏幕阅读器遮罩按钮", async () => {
@@ -116,7 +124,7 @@ describe("App 布局壳", () => {
     expect(screen.getByRole("button", { name: "关闭会话侧栏" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(shell).not.toHaveClass("mobile-sidebar-open");
-    fireEvent.click(within(topbar).getByRole("button", { name: "右侧面板" }));
+    fireEvent.click(screen.getByTestId("right-panel-toggle"));
     expect(shell).toHaveClass("mobile-panel-open");
     expect(screen.getByRole("button", { name: "关闭右侧面板" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
@@ -206,6 +214,8 @@ describe("App 布局壳", () => {
     expect(sidebar).toHaveClass("collapsed");
     fireEvent.click(screen.getByTitle("右侧面板"));
     expect(screen.queryByTestId("right-panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("right-panel-toggle")).toHaveClass("desktop");
+    expect(screen.getByTestId("right-panel-toggle")).toHaveTextContent("◂");
   });
 
   it("移动端侧栏使用完整抽屉而不是 collapsed 空壳", async () => {

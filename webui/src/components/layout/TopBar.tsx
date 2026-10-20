@@ -9,15 +9,9 @@ import { SessionHeaderActions } from "./SessionHeaderActions";
 export function TopBar({
   onToggleSidebar,
   onShowFiles,
-  onTogglePanel,
-  panelOpen = false,
-  isMobile = false,
 }: {
   onToggleSidebar: () => void;
   onShowFiles?: () => void;
-  onTogglePanel?: () => void;
-  panelOpen?: boolean;
-  isMobile?: boolean;
 }) {
   const { ok, version, build, checked } = useConnection();
   const mainView = useMainView();
@@ -73,18 +67,6 @@ export function TopBar({
       </button>
       <span className="v2-topbar-view">{viewTitle}</span>
       <div style={{ flex: 1 }} />
-      {isMobile && onTogglePanel ? (
-        <button
-          type="button"
-          className="v2-icon-btn v2-mobile-panel-toggle"
-          onClick={onTogglePanel}
-          title="右侧面板"
-          aria-label="右侧面板"
-          aria-expanded={panelOpen}
-        >
-          ▤
-        </button>
-      ) : null}
       <SessionHeaderActions onShowFiles={onShowFiles} />
       {browserAuthenticated && (
         <button

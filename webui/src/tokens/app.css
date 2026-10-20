@@ -55,6 +55,12 @@
   border-left: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* Both screen modes share the same directional arrow. */
+.v2-panel-edge-toggle.desktop {
+  align-self: center;
+  flex: none;
+}
+
 /* 面板宽度拖拽把手（对齐 DSH 可调右侧栏）：桌面渲染，移动端抽屉不渲染 */
 .v2-panel-resize-handle {
   flex: none;
@@ -1277,11 +1283,45 @@
 
 /* ── 移动端响应式（对齐原版 P4-2：抽屉式侧栏/面板） ── */
 @media (max-width: 900px) {
-  .v2-mobile-panel-toggle {
-    flex: 0 0 var(--v2-mobile-touch-target);
+  /* Mobile users need the same visible arrow at the RIGHT edge as desktop.
+     The previous ▤ in the crowded topbar was not the desktop arrow. */
+  .v2-panel-edge-toggle.mobile {
+    position: fixed;
+    z-index: 210;
+    top: 50%;
+    right: env(safe-area-inset-right, 0px);
+    transform: translateY(-50%);
     width: var(--v2-mobile-touch-target);
     min-width: var(--v2-mobile-touch-target);
-    height: var(--v2-mobile-touch-target);
+    height: 56px;
+    min-height: var(--v2-mobile-touch-target);
+    padding: 0;
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-right: 0;
+    border-radius: 12px 0 0 12px;
+    background: var(--dsw-alias-bg-layer-1);
+    color: var(--dsw-alias-label-primary);
+    font-size: 24px;
+    font-weight: 700;
+    box-shadow: var(--dsw-shadow-lv3);
+    touch-action: manipulation;
+  }
+
+  .v2-panel-edge-toggle.mobile:focus-visible {
+    outline: 3px solid var(--dsw-alias-state-business-primary);
+    outline-offset: -3px;
+  }
+
+  /* When open, dock the arrow OUTSIDE the panel instead of covering its
+     interactive content. The panel itself is min(320px, 85vw) wide. */
+  .v2-shell.mobile-panel-open .v2-panel-edge-toggle.mobile {
+    right: min(320px, 85vw);
+  }
+
+  /* The left drawer's modal scrim must not be bypassed by the right toggle. */
+  .v2-shell.mobile-sidebar-open .v2-panel-edge-toggle.mobile {
+    pointer-events: none;
+    visibility: hidden;
   }
 
   /* Keep every right-panel tab and its close action reachable at 320px. */
@@ -1443,7 +1483,6 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  .v2-topbar > .v2-mobile-panel-toggle { flex-shrink: 0; }
   .v2-header-actions { flex: 0 0 auto; }
   .v2-topbar > .v2-status-badge { position: relative; flex: 0 1 34px; padding-inline: 6px; }
 

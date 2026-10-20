@@ -102,6 +102,7 @@ export function RightPanel({ open, width }: { open: boolean; width?: number }) {
   return (
     <aside
       className="v2-panel"
+      id="lfl-right-panel"
       data-testid="right-panel"
       style={width !== undefined ? { width, flex: "none" } : undefined}
     >
