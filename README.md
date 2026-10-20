@@ -223,3 +223,5 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - AI 自主规则（唯一规则真相源）：`docs/ai_rules.md`
 - 开源框架化路线图：`docs/ROADMAP-B-20260814.md`
 - 开发过程规格（spec/design/tasks）为本地 CodeArts 工作流文档，不随开源仓库分发
+
+CLI 输入、脚本协议、快捷键与主题参考见 [CLI 使用文档](docs/cli.md)。

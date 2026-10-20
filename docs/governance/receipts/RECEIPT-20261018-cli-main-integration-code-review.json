@@ -1,0 +1,56 @@
+{
+  "schema": "lfl.code-review/v1",
+  "gate": "code",
+  "reviewer": "subagent_365dba1691d9",
+  "reviewer_model": "glm/glm-5.3",
+  "result_id": "result-a1cd07d270614487a8b645a321817ebd",
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "p2": 0,
+  "base_main": "59f51e3e58d802994cf07c998c6ec7c99355e3c4",
+  "integration_tree": "c216c886fba0a22dcf6fd5e003014a3784fa87f3",
+  "candidate_sha256_before_receipt": "0588be0ec286cf34baa6bd16bea6014c1721993dae611696d6d078cd1ffd0b20",
+  "reviewed_delta_sha256": "a6bda3b578a96c611217b6bc11456ee5d127b67b394d6cd5862c8123eeb8bf30",
+  "scope_files": [
+    "src/llm_loop/cli.py",
+    "src/llm_loop/terminal/queries.py",
+    "tests/unit/test_terminal_cli.py",
+    "tests/guards/function_size_baseline.json",
+    "docs/plans/PLAN-20261018-cli-ux-execution.md"
+  ],
+  "findings": [],
+  "prior_coverage": [
+    {
+      "reviewer": "subagent_325b99246b98",
+      "verdict": "PASS",
+      "p0": 0,
+      "p1": 0,
+      "p2": 2,
+      "candidate_sha256": "c7c248bd9d63513fd6c197f05d8e723f10809d923575845642c3812003652b98"
+    },
+    {
+      "reviewer": "subagent_cf1871aaf86b",
+      "verdict": "PASS",
+      "p0": 0,
+      "p1": 0,
+      "p2": 1,
+      "candidate_sha256": "b5397622f5bdae83d4eb5d8df84bfbec168621c9c7fb113bc864a4063c5a9c95"
+    },
+    {
+      "reviewer": "subagent_d2bd11393b92",
+      "verdict": "PASS",
+      "p0": 0,
+      "p1": 0,
+      "p2": 0,
+      "candidate_sha256": "a32a3adfa488d5ed3e2d21c91e4bd0cf22abbfe96e49e3f1aefb0c2264ea683e"
+    }
+  ],
+  "answer_sha256": "a984bb5ac2eb65742ffbb67a0657de5b1f3da030efc7ff58db587f1b1d0dd555",
+  "review_receipt_note": "Historical receipt for the integration seam only; it does not qualify later main bases or combined trees.",
+  "scope_warning": "This review used base_main 59f51e3e58d802994cf07c998c6ec7c99355e3c4 and integration_tree c216c886fba0a22dcf6fd5e003014a3784fa87f3. It does not qualify the latest-main candidate based on 4ba016dac2e59064405f3573059554d7db292ba1.",
+  "subsequent_evidence": {
+    "r9_passed_on_prior_integration_commit": "9cd3674547451ecec4cabb6baf9533c124bc48e",
+    "latest_main_candidate_requires_fresh_review_and_r9": true
+  }
+}
