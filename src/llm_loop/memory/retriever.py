@@ -25,8 +25,21 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from llm_loop.memory.embedder import Embedder, cosine_similarity
+from llm_loop.memory.retrieve import extract_keywords
 
 logger = logging.getLogger(__name__)
+
+# D7-2: 两段式重排模型标识（进向量缓存 key 的模型分量——见 _rerank_cache_key /
+# _persist_rerank_cache）。修订（批次2 D7 后审）：不再手抄常量副本——换模型即
+# 缓存跨模型污染；改为延迟派生自 embedder.LocalOnnxEmbedder.MODEL_ID（惰性
+# import 防环；仅导入失败时回退字面量，语义 = 上次已知模型 id）。
+def _rerank_model_id() -> str:
+    try:
+        from llm_loop.memory.embedder import LocalOnnxEmbedder
+
+        return str(LocalOnnxEmbedder.MODEL_ID)
+    except Exception:  # noqa: BLE001 — embedder 模块不可导入时回退已知 id
+        return "bge-small-zh-v1.5-int8"
 
 # ── Phase 5: 实体提取（mem0 式 Entity Linking 轻量实现，零依赖规则）──
 _ENTITY_RE = re.compile(r"\b[A-Z][A-Za-z]{2,}\b")  # 首字母大写、长度≥3 的英文专有名词
@@ -108,6 +121,9 @@ class SemanticRetriever:
     # Service startup must not synchronously embed an unbounded growing Method pool.
     # Deferred candidates remain available to keyword retrieval and incremental warmup.
     _METHOD_STARTUP_WARMUP_MAX = 128
+    # D7-2 两段式语义检索: 词法/bigram 粗筛池上限（重排仅对 pool 计算向量，
+    # 候选向量成本与语料规模解耦；不可用/超预算 → 保持现有排序，行为零变化）
+    RERANK_POOL = 200
 
     def __init__(
         self,
@@ -119,6 +135,7 @@ class SemanticRetriever:
         memory_dir: str | Path | None = None,
         archive_dir: str | Path | None = None,
         fallback_embedder: Embedder | None = None,
+        semantic_reranker: Embedder | None = None,
     ) -> None:
         self.embedder = embedder
         # T0-B（2026-09-16）: 主嵌入（生产 api@8765）不可用时整套回退 hash——查询向量/
@@ -133,6 +150,16 @@ class SemanticRetriever:
         if threshold is None:
             threshold = self._default_threshold(embedder)
         self.threshold = threshold
+        # D7-2 两段式重排器: 显式注入优先（测试/装配点）；未注入时惰性探测本地
+        # ONNX 模型（LFL_SEMANTIC_MODEL_DIR > ~/.cache/lfl/models/...）。
+        # 主嵌入（hash/api）可用时重排不参与——仅降级分支启用，行为零变化。
+        # 模型 id 构造时派生一次存实例属性（缓存文件名/v 字段/诊断共用）。
+        self._rerank_model_id = _rerank_model_id()
+        self._reranker_override = semantic_reranker
+        self._reranker: Any | None = None
+        self._rerank_emb_cache: dict[str, list[float]] = {}
+        self._rerank_cache_path: Path | None = None
+        self.last_rerank_diagnostics: dict[str, Any] = {}
         # M59 配置面收敛: 运行时动态 top_k 提供器（AI 经 adjust_strategy 可调；未注入用构造值）
         self._top_k_provider: Callable[[], int] | None = None
         self._mem_emb_cache: dict[str, list[float]] = {}
@@ -162,6 +189,13 @@ class SemanticRetriever:
             self._arch_emb_cache = self._load_emb_cache_versioned(Path(archive_dir))
         self._mem_cache_path = self._cache_path(Path(memory_dir)) if memory_dir else None
         self._arch_cache_path = self._cache_path(Path(archive_dir)) if archive_dir else None
+        # D7-2: 重排向量缓存默认与 memory 缓存同目录（独立文件名，按 MODEL_ID 隔离）；
+        # 装配点可用 configure_rerank_cache_dir 重绑到 RuntimePaths 权威目录。
+        if memory_dir:
+            self._rerank_cache_path = self._rerank_cache_file(Path(memory_dir))
+            self._rerank_emb_cache = self._load_rerank_cache_file(
+                self._rerank_cache_path
+            )
         self._method_cache_path: Path | None = None
         self._experience_cache_path: Path | None = None
         self.last_cached_rank_diagnostics: dict[str, Any] = {}
@@ -185,6 +219,12 @@ class SemanticRetriever:
         directory = Path(cache_dir)
         self._experience_emb_cache = self._load_emb_cache_versioned(directory)
         self._experience_cache_path = self._cache_path(directory)
+
+    def configure_rerank_cache_dir(self, cache_dir: str | Path) -> None:
+        """D7-2: 绑定两段式重排向量缓存目录（RuntimePaths authority，fail-open）."""
+        directory = Path(cache_dir)
+        self._rerank_cache_path = self._rerank_cache_file(directory)
+        self._rerank_emb_cache = self._load_rerank_cache_file(self._rerank_cache_path)
 
     def warm_experience_store(self, experience: Any, *, max_passes: int = 3) -> dict[str, Any]:
         """Warm active Experience/Lesson candidate vectors before semantic enablement."""
@@ -616,7 +656,342 @@ class SemanticRetriever:
 
     # ── 语义可用性 ──
     def semantic_available(self) -> bool:
-        return self.embedder is not None and self.embedder.provider != "none"
+        """语义可用 = 主嵌入可用 or 本地两段式重排器可用（D7）.
+
+        重排器可用性: 显式注入 → True；否则惰性探测本地 ONNX 模型文件在否
+        （廉价 stat，不触发 onnxruntime 加载）。主嵌入（hash/api）可用时以主
+        嵌入为准，重排不参与；主嵌入不可用且无重排器 → False（现状不变）。
+        """
+        if self.embedder is not None and self.embedder.provider != "none":
+            return True
+        return self._reranker_ready()
+
+    def _reranker_ready(self) -> bool:
+        """本地重排器是否可用（探测不加载；已判死（加载失败 latch）不再复活）."""
+        if self._reranker_override is not None:
+            return True
+        if self._reranker is not None:
+            return not bool(getattr(self._reranker, "semantic_unavailable", False))
+        from llm_loop.memory.embedder import LocalOnnxEmbedder
+
+        try:
+            probe = LocalOnnxEmbedder()
+            present = probe.model_files_present()
+        except Exception:  # noqa: BLE001 — 无 HOME 等环境异常 → 视为不可用（fail-open）
+            return False
+        if not present:
+            return False  # 模型未下载：本次 False（不 latch，落盘后无需重启即生效）
+        self._reranker = probe
+        return True
+
+    def _get_reranker(self) -> Embedder | None:
+        """获取重排器实例（注入优先；模型文件在场才保留实例供后续真正加载）."""
+        if self._reranker_override is not None:
+            return self._reranker_override
+        return self._reranker if self._reranker_ready() else None
+
+    # ── D7-2: 两段式语义检索（词法粗筛 → 本地 ONNX cosine 重排）──
+    def _rerank_cache_file(self, directory: Path) -> Path:
+        return directory / f"embeddings-rerank-{self._rerank_model_id}.json"
+
+    @staticmethod
+    def _rerank_cache_key(text: str) -> str:
+        """key=(text_sha256, MODEL_ID): sha256 进 data key，MODEL_ID 进文件级 v 字段."""
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def _load_rerank_cache_file(self, path: Path) -> dict[str, list[float]]:
+        """载入重排向量缓存（JSON: {"v": MODEL_ID, "data": {sha256: vec}}）.
+
+        读失败（损坏/截断/版本不符）→ 返回空 dict = cache miss 重建，不抛错。
+        """
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            return {}
+        if not isinstance(raw, dict) or raw.get("v") != self._rerank_model_id:
+            return {}
+        data = raw.get("data")
+        if not isinstance(data, dict):
+            return {}
+        cache: dict[str, list[float]] = {}
+        for key, vec in data.items():
+            if isinstance(key, str) and isinstance(vec, list) and vec:
+                cache[key] = vec
+        return cache
+
+    def _persist_rerank_cache(self) -> None:
+        """重排向量缓存落盘: 磁盘∪内存合并后临时文件 + os.replace 原子写.
+
+        写失败仅影响下次冷启动（fail-open，与 _persist_emb_cache 同语义）。
+        """
+        path = self._rerank_cache_path
+        if path is None:
+            return
+        try:
+            with self._cache_state_lock:
+                # 修订（批次2 D7 后审）: 锁内快照后只在快照上 update——并发插入
+                # （_rerank_vectors 已同样持本锁）不再使 dict.update 迭代抛
+                # RuntimeError: dictionary changed size during iteration。
+                snapshot = dict(self._rerank_emb_cache)
+                merged = self._load_rerank_cache_file(path)
+                merged.update(snapshot)
+                payload = {"v": self._rerank_model_id, "data": merged}
+                tmp = path.with_name(
+                    f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+                )
+                tmp.write_text(json.dumps(payload), encoding="utf-8")
+                os.replace(tmp, path)
+                # 原地更新（不清引用）: 并发线程持有的 dict 视图保持有效
+                self._rerank_emb_cache.clear()
+                self._rerank_emb_cache.update(merged)
+        except OSError as exc:
+            logger.debug("rerank 向量缓存写失败（fail-open）: %s", exc)
+
+    def _rerank_vectors(
+        self, texts: list[str], reranker: Embedder, *, deadline: float | None = None
+    ) -> list[list[float] | None] | None:
+        """查询/候选共用向量读取: 命中直取，缺失批量推理回填并落盘.
+
+        返回与 texts 按位对齐；整体不可用（批量失败/超预算）→ None（重排降级）。
+        """
+        out: list[list[float] | None] = [None] * len(texts)
+        missing: list[int] = []
+        for i, text in enumerate(texts):
+            cached = self._rerank_emb_cache.get(self._rerank_cache_key(text))
+            if cached is not None:
+                out[i] = cached
+            else:
+                missing.append(i)
+        if not missing:
+            return out
+        if deadline is not None and time.monotonic() > deadline:
+            return None
+        vectors: list[list[float] | None] = []
+        embed_batch = getattr(reranker, "embed_batch", None)
+        if callable(embed_batch):
+            try:
+                vectors = cast(list[list[float] | None], embed_batch([texts[i] for i in missing]))
+            except Exception:  # noqa: BLE001 — 重排 fail-open
+                return None
+            if not isinstance(vectors, list) or len(vectors) != len(missing):
+                return None
+        else:
+            for i in missing:
+                if deadline is not None and time.monotonic() > deadline:
+                    return None
+                try:
+                    vectors.append(cast(list[float] | None, reranker.embed(texts[i])))
+                except Exception:  # noqa: BLE001
+                    return None
+        # 修订（批次2 D7 后审）: 新向量先收集到本地 dict，再一次性锁内批量写
+        # 回缓存——无锁插入会与 _persist_rerank_cache 锁内迭代并发冲突
+        # （dict changed size during iteration），违反"降级不失败"契约。
+        fresh: dict[str, list[float]] = {}
+        for i, vec in zip(missing, vectors, strict=True):
+            if vec:
+                out[i] = vec
+                fresh[self._rerank_cache_key(texts[i])] = vec
+        if fresh:
+            with self._cache_state_lock:
+                self._rerank_emb_cache.update(fresh)
+            self._persist_rerank_cache()
+        return out
+
+    @staticmethod
+    def _lexical_score(query_keywords: list[str], cand: dict) -> int:
+        """现有词法/bigram 打分（与 MemoryStore.search 同式: 关键词子串命中计数）."""
+        hay = f"{cand.get('content', '')} {' '.join(cand.get('keywords', []) or [])}".lower()
+        return sum(1 for k in query_keywords if k.lower() in hay)
+
+    def _lexical_pool(self, query: str, candidates: list[dict]) -> list[dict]:
+        """粗筛: 词法/bigram 打分降序取 top-RERANK_POOL（0 分不入池）."""
+        keywords = extract_keywords(query)
+        if not keywords:
+            return []
+        scored: list[tuple[int, int, dict]] = []
+        for idx, cand in enumerate(candidates):
+            score = self._lexical_score(keywords, cand)
+            if score > 0:
+                scored.append((score, idx, cand))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [cand for _, _, cand in scored[: self.RERANK_POOL]]
+
+    def _two_stage_rerank(
+        self,
+        query: str,
+        scope: str,
+        session_id: str,
+        memory: Any,
+        archive: Any,
+        method: Any,
+        *,
+        keyword_results: list[dict],
+        top_k: int,
+        deadline: float,
+        start: float,
+    ) -> RetrievalResult | None:
+        """D7-2 两段式: 词法粗筛 top-RERANK_POOL → 本地 ONNX cosine 重排 top-K.
+
+        返回 None = 任一阶段不可用（无重排器/无候选/空 pool/嵌入失败/超预算/
+        阈值全不过）→ 调用方保持现有 keyword 返回，行为零变化。
+        """
+        self.last_rerank_diagnostics = {
+            "rerank_requested": True,
+            "rerank_effective": False,
+            "rerank_fallback_reason": "",
+            "rerank_model": self._rerank_model_id,
+            "rerank_pool_size": 0,
+            "rerank_candidate_count": 0,
+            "rerank_latency_ms": 0.0,
+        }
+        reranker = self._get_reranker()
+        if reranker is None:
+            self.last_rerank_diagnostics["rerank_fallback_reason"] = "unavailable"
+            return None
+        if not query:
+            self.last_rerank_diagnostics["rerank_fallback_reason"] = "empty_query"
+            return None
+        candidates = self._candidates(scope, session_id, memory, archive, method)
+        self.last_rerank_diagnostics["rerank_candidate_count"] = len(candidates)
+        if not candidates:
+            self.last_rerank_diagnostics["rerank_fallback_reason"] = "no_candidates"
+            return None
+        pool = self._lexical_pool(query, candidates)
+        self.last_rerank_diagnostics["rerank_pool_size"] = len(pool)
+        if not pool:
+            self.last_rerank_diagnostics["rerank_fallback_reason"] = "empty_pool"
+            return None
+        texts = [query] + [str(c.get("content") or "") for c in pool]
+        vectors = self._rerank_vectors(texts, reranker, deadline=deadline)
+        if vectors is None:
+            self.last_rerank_diagnostics.update(
+                {
+                    "rerank_fallback_reason": "candidate_embedding_unavailable",
+                    "rerank_latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+                }
+            )
+            return None
+        q_vec = vectors[0]
+        if q_vec is None:
+            self.last_rerank_diagnostics.update(
+                {
+                    "rerank_fallback_reason": "query_embedding_unavailable",
+                    "rerank_latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+                }
+            )
+            return None
+        semantic_hits: list[dict] = []
+        for cand, vec in zip(pool, vectors[1:], strict=True):
+            if vec is None:
+                continue  # 单条退化输入（空 tokenize/零范数）跳过，不整体降级
+            score = cosine_similarity(q_vec, vec)
+            if score >= float(self.threshold):
+                semantic_hits.append({**cand, "_semantic_score": round(score, 3)})
+        if not semantic_hits:
+            self.last_rerank_diagnostics.update(
+                {
+                    "rerank_fallback_reason": "threshold_miss",
+                    "rerank_latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+                }
+            )
+            return None
+        semantic_hits.sort(key=lambda x: x["_semantic_score"], reverse=True)
+        semantic_hits = semantic_hits[: self._semantic_top_k()]
+
+        # 实体通道 + RRF 融合（与主语义通道同式；多信号 → mixed）
+        entity_hits: list[dict] = []
+        q_entities = extract_entities(query)
+        if q_entities:
+            for c in candidates:
+                if time.monotonic() - start > self.timeout_s:
+                    break  # 同一时间预算，超时跳过（不阻塞）
+                overlap = self._entity_overlap(q_entities, extract_entities(c.get("content", "")))
+                if overlap > 0:
+                    entity_hits.append({**c, "_entity_score": overlap})
+            entity_hits.sort(key=lambda x: x["_entity_score"], reverse=True)
+            entity_hits = entity_hits[: self._semantic_top_k()]
+        fused = self._rrf_fuse(semantic_hits, keyword_results, entity_hits, top_k=top_k)
+        keyword_count = len(keyword_results)
+        signals = sum(1 for x in (semantic_hits, keyword_results, entity_hits) if x)
+        mode: RetrieveMode = "mixed" if signals >= 2 else "semantic"
+        self.last_rerank_diagnostics.update(
+            {
+                "rerank_effective": True,
+                "rerank_pool_size": len(pool),
+                "rerank_latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+            }
+        )
+        return RetrievalResult(
+            entries=fused,
+            mode=mode,
+            note="主嵌入不可用，已启用本地两段式语义重排（词法粗筛→ONNX cosine）",
+            diagnostics={
+                "semantic_requested": True,
+                "semantic_effective": True,
+                "semantic_fallback_reason": "",
+                "semantic_latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+                "semantic_rerank": True,
+                "rerank_model": self._rerank_model_id,
+                "rerank_pool_size": len(pool),
+                "rerank_candidate_count": len(candidates),
+                "semantic_hit_count": len(semantic_hits),
+                "keyword_hit_count": keyword_count,
+                "fused_hit_count": len(fused),
+            },
+        )
+
+    def _rank_texts_with_reranker(
+        self,
+        query: str,
+        candidates: list[str],
+        *,
+        top_k: int | None,
+        deadline: float,
+        start: float,
+    ) -> list[tuple[int, float]]:
+        """rank_texts 的本地重排器分支（D7-2）: 查询+候选共用重排向量缓存排序.
+
+        失败返回空列表 → 调用方（docs search）如实回退其词法顺序，语义不变。
+        """
+        reranker = self._get_reranker()
+        if reranker is None:
+            self.last_rank_texts_diagnostics.update(
+                {
+                    "semantic_fallback_reason": "reranker_unavailable",
+                    "engine": "rerank",
+                    "latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+                }
+            )
+            return []
+        vectors = self._rerank_vectors(
+            [query] + list(candidates), reranker, deadline=deadline
+        )
+        if vectors is None or vectors[0] is None or any(v is None for v in vectors[1:]):
+            self.last_rank_texts_diagnostics.update(
+                {
+                    "semantic_fallback_reason": "candidate_embedding_unavailable",
+                    "engine": "rerank",
+                    "latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+                }
+            )
+            return []
+        query_vec = vectors[0]
+        assert query_vec is not None
+        scored: list[tuple[int, float]] = []
+        for index, vec in enumerate(vectors[1:]):
+            assert vec is not None
+            scored.append((index, float(cosine_similarity(query_vec, vec))))
+        scored.sort(key=lambda item: item[1], reverse=True)
+        cap = len(scored) if top_k is None else max(0, int(top_k))
+        self.last_rank_texts_diagnostics.update(
+            {
+                "semantic_effective": True,
+                "engine": "rerank",
+                "latency_ms": round((time.monotonic() - start) * 1000.0, 3),
+            }
+        )
+        return scored[:cap]
+
 
     def _embed_query_with_deadline(
         self, embedder: Embedder, query: str, deadline: float
@@ -699,12 +1074,17 @@ class SemanticRetriever:
         start = time.monotonic()
         deadline = start + self.timeout_s
         active = self.embedder
+        if active is None or active.provider == "none":
+            # D7-2: 主嵌入不在/none（EMBEDDING_PROVIDER=none）但本地重排器在场 →
+            # docs 词法候选集直接进入本地 ONNX 排序（共用重排向量缓存）。
+            return self._rank_texts_with_reranker(
+                query, candidates, top_k=top_k, deadline=deadline, start=start
+            )
         query_vec: list[float] | None = None
         primary_error = ""
-        if active is not None:
-            query_vec, _query_ms, primary_error = self._embed_query_with_deadline(
-                active, query, deadline
-            )
+        query_vec, _query_ms, primary_error = self._embed_query_with_deadline(
+            active, query, deadline
+        )
         engine_name = "primary"
         if query_vec is None or active is None:
             self.last_rank_texts_diagnostics.update(
@@ -989,7 +1369,24 @@ class SemanticRetriever:
         start = time.monotonic()
         deadline = start + self.timeout_s
         keyword_count = len(keyword_results or [])
-        if not self.semantic_available() or self.embedder is None:
+        if self.embedder is None or self.embedder.provider == "none":
+            # D7-2 两段式: 主语义通道不可用（none/未装配）时尝试本地重排
+            # （词法粗筛→ONNX cosine）；任一阶段不可用 → 与现状完全一致的
+            # keyword 返回（行为零变化）。
+            reranked = self._two_stage_rerank(
+                query,
+                scope,
+                session_id,
+                memory,
+                archive,
+                method,
+                keyword_results=keyword_results or [],
+                top_k=top_k,
+                deadline=deadline,
+                start=start,
+            )
+            if reranked is not None:
+                return reranked
             return RetrievalResult(
                 entries=keyword_results or [],
                 mode="keyword",
@@ -998,6 +1395,9 @@ class SemanticRetriever:
                     "semantic_requested": True,
                     "semantic_effective": False,
                     "semantic_fallback_reason": "unavailable",
+                    # D7: 模型缺失/加载失败 → 降级纯词法并在结果如实标记
+                    # semantic_unavailable（不失败）；细分原因见 last_rerank_diagnostics.
+                    "semantic_unavailable": True,
                     "semantic_latency_ms": 0.0,
                     "semantic_hit_count": 0,
                     "keyword_hit_count": keyword_count,

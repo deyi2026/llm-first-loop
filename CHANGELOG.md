@@ -1,3 +1,11 @@
+## v0.6.36 — 批次2：检索两段式重排与运维体验优化（2026-10-20）
+
+- **语义检索（D7）**：memory/docs 检索新增两段式重排——词法粗筛 top-200 → 本地 ONNX 语义重排 top-20（`bge-small-zh-v1.5` int8，24MB，sha256 锁定，`scripts/download_semantic_model.sh` 首启下载至 `~/.cache/lfl/models/`）；向量缓存按 `(text_sha256, model_id)` 键原子写（tempfile + os.replace），并发安全（锁内快照更新 + 8 线程×50 轮零丢失测试）；模型缺失/加载失败/推理超时一律降级回词法排序（diagnostics 标记 `semantic_unavailable`），行为零回归；内嵌评估集 AUC 词法 0.6875 → 两段式 0.9375（8 query × 16 对）。
+- **惰性迁移（D5）**：legacy sidecar 迁移从 workspace 激活路径移至首次 evidence 使用（`SessionLifecycle.reconcile` 一次性触发，锁内 re-arm 防竞态，失败不阻断）。实施期复测证伪审查携带值：700 项扫描实测 0.04s（非 ~30s），增量索引按设计预案省略。
+- **静态诊断（D6）**：pyright 900s 墙钟超时降级为 advisory 遥测（写入诊断报告 + stderr 警告，不拦截门禁；version-check 240s 超时保持硬失败），ruff/pyright count-ratchet 硬门禁不变。
+- **安装简报（D8）**：`lfl doctor` briefing 新增知识健康度段（最新分 + Δ + 趋势符号，≤3 行）；分数账本缺失或最新评分超 7 天 TTL 时整段省略，不输出占位。
+- **依赖**：新增 `onnxruntime`/`tokenizers`（语义重排推理；延迟导入，未下载模型的环境零影响）。
+
 ## v0.6.36 — workspace 解析优先级修复与 ambient 泄漏门禁（2026-10-20）
 
 - **修复（B1）**：`lfl query` workspace 解析优先级反转（`--workspace` > cwd 向上找 `pyproject.toml` > 部署绑定 `LFL_WORKSPACE_ROOT`（stderr 警告）> 裸 cwd）；cwd 位于部署根内且与绑定重合时拒绝猜测并以 exit 3 输出双候选；未注册 workspace 仅在注册表唯一时降级 base 根列举（JSON 输出新增 `degraded` 字段），多注册表时拒绝且不列举路径。

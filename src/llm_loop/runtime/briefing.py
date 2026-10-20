@@ -13,15 +13,27 @@ underlying resources actually changed.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 
 from llm_loop.core.prompt import INSTALLATION_INDEX_HEADING
+from llm_loop.timekeeping import system_local_now
 
 _MAX_RULES = 12
 _MAX_METHODS = 8
 _MAX_SKILLS = 12
+# D8：知识健康度段 TTL——ledger 最新成功行时间戳距今超过该值即整段省略。
+KNOWLEDGE_SCORE_TTL_SECONDS = 7 * 86400
+# D8：趋势符号判定容差（|Δ| ≤ 该值视为 →）。
+_KNOWLEDGE_TREND_EPSILON = 0.005
+# D8：knowledge_score ledger 磁盘契约落点，与 knowledge_score/ledger.py 的
+# KnowledgeScoreLedger.for_root 保持同步。kernel 平面按文件契约只读数据、
+# 不 import capability 模块（kernel_import_edges 冻结基线只减不增）；
+# 口径一致性由 test_briefing_knowledge_health_matches_ledger_read 锁定。
+_KNOWLEDGE_LEDGER_REL = ("data", "knowledge_scores", "ledger.jsonl")
 _CORE_RULE_IDS = (
     "RULE-AI-00", "RULE-AI-01", "RULE-AI-02", "RULE-AI-07",
     "RULE-AI-08", "RULE-AI-18", "RULE-AI-23", "RULE-AI-24",
@@ -52,6 +64,7 @@ def _paths() -> dict[str, Path]:
         "methods": resolved.method_seed_dir,
         "experiences": resolved.experiences_dir,
         "skills": resolved.skills_dir,
+        "state_root": resolved.state_root,
     }
 
 
@@ -131,6 +144,69 @@ def _signature(*paths: Path) -> str:
     return "|".join(parts)
 
 
+def _knowledge_score_ledger_path(state_root: Path) -> Path:
+    return state_root.joinpath(*_KNOWLEDGE_LEDGER_REL)
+
+
+def _knowledge_health_lines(
+    state_root: Path, *, now: datetime | None = None
+) -> list[str]:
+    """知识健康度段（D8）：ledger 最后两条成功打分行 → 最新分/Δ/趋势.
+
+    数据源：``<state_root>/data/knowledge_scores/ledger.jsonl``（磁盘契约落点，
+    与 ``KnowledgeScoreLedger.for_root`` 及 CLI/web 落点一致）。输出仅
+    数字与符号，不含任何会话内容/条目文本。整段省略（返回空，不输出标题行）：
+    ledger 文件不存在 / 无成功行 / 最新成功行时间戳距今超过
+    ``KNOWLEDGE_SCORE_TTL_SECONDS``。读取异常按省略处理（fail-open）。
+    """
+    path = _knowledge_score_ledger_path(state_root)
+    if not path.is_file():
+        return []
+    scored: list[tuple[float, str]] = []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # torn 尾行：跳过不炸（与恢复扫描同为 fail-open）
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("error") or ""):
+                    continue  # error 行不是成功打分（与 covered_slot_keys 同口径）
+                raw_expected = row.get("expected")
+                if isinstance(raw_expected, bool) or not isinstance(raw_expected, (int, float)):
+                    continue
+                scored.append((float(raw_expected), str(row.get("ts") or "")))
+    except Exception:  # noqa: BLE001 — 健康度段 fail-open：账本不可读不破坏简报
+        return []
+    if not scored:
+        return []
+    latest_score, latest_ts = scored[-1]
+    try:
+        stamped = datetime.fromisoformat(latest_ts)
+    except ValueError:
+        return []
+    if stamped.tzinfo is None:
+        stamped = stamped.astimezone()
+    reference = now or system_local_now()
+    if (reference - stamped).total_seconds() > KNOWLEDGE_SCORE_TTL_SECONDS:
+        return []
+    if len(scored) >= 2:
+        delta = latest_score - scored[-2][0]
+        if delta > _KNOWLEDGE_TREND_EPSILON:
+            trend = "↗"
+        elif delta < -_KNOWLEDGE_TREND_EPSILON:
+            trend = "↘"
+        else:
+            trend = "→"
+        return [f"知识健康度: {latest_score:.2f} ({delta:+.2f} {trend})"]
+    return [f"知识健康度: {latest_score:.2f}"]
+
+
 def inspect_installation_assets(overrides: Mapping[str, str] | None = None) -> dict[str, int]:
     """Count the three asset classes the briefing would load (read-only).
 
@@ -167,6 +243,7 @@ def build_installation_briefing() -> str:
     methods_dir = paths["methods"]
     experiences_dir = paths["experiences"]
     skills_dir = paths["skills"]
+    state_root = paths["state_root"]
     signature = _signature(docs_dir, methods_dir, experiences_dir, skills_dir)
     # Directory mtimes do not change when a file's content changes; include the
     # one file whose contents feed the index.
@@ -174,6 +251,13 @@ def build_installation_briefing() -> str:
         signature += "|rules:" + str((docs_dir / "ai_rules.md").stat().st_mtime_ns)
     except OSError:
         signature += "|rules:missing"
+    # D8: 知识健康度段同样由文件内容驱动——ledger mtime 进入签名，新打分行
+    # 在下次构建时如实反映（与 ai_rules.md 同一原则）。
+    score_ledger_path = _knowledge_score_ledger_path(state_root)
+    try:
+        signature += "|knowledge:" + str(score_ledger_path.stat().st_mtime_ns)
+    except OSError:
+        signature += "|knowledge:missing"
     if _CACHE.get("signature") == signature:
         return _CACHE.get("text", "")
 
@@ -213,6 +297,12 @@ def build_installation_briefing() -> str:
     if skill_count:
         lines.append(f"已安装技能 {skill_count} 个：" + "、".join(skill_names[:_MAX_SKILLS]) +
                      ("…" if skill_count > _MAX_SKILLS else ""))
+
+    # D8：知识健康度段（method/skill 段之后）——ledger 缺失/为空/TTL 过期整段省略。
+    health = _knowledge_health_lines(state_root)
+    if health:
+        lines += ["", "### 知识健康度"]
+        lines.extend(health)
 
     text = "\n".join(lines).strip()
     if len(text) > 4000:

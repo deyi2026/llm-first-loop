@@ -214,3 +214,70 @@ def test_analyzer_version_drift_reports_uv_sync_hint(
     monkeypatch.setattr(sys, "argv", ["check_static_diagnostics.py", "--tool", "ruff"])
     with pytest.raises(ValueError, match="uv sync --frozen"):
         gate.main()
+
+
+def _fake_wallclock_run(timeout_s: int, version_line: str):
+    """Intercept only the ``python -m <tool>`` subprocesses; git stays real."""
+    real_run = subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if len(cmd) > 1 and cmd[1] == "-m":
+            if "--version" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout=version_line, stderr="")
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", timeout_s))
+        return real_run(cmd, *args, **kwargs)
+
+    return fake_run
+
+
+def test_pyright_wallclock_timeout_is_advisory_not_blocking(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """D6: pyright 900s 墙钟超限 → advisory 字段落 ratchet 报告 + stderr 警告 + 不拦截."""
+    monkeypatch.setattr(
+        gate.subprocess, "run", _fake_wallclock_run(900, "pyright 1.1.411\n")
+    )
+    monkeypatch.setattr(sys, "argv", ["check_static_diagnostics.py", "--tool", "pyright"])
+    assert gate.main() == 0
+    captured = capsys.readouterr()
+    assert "pyright_wallclock_advisory" in captured.out
+    assert "exceeded_900s" in captured.out
+    assert "count-ratchet 沿用既有 ledger" in captured.out
+    assert "WARNING" in captured.err
+
+
+def test_ruff_wallclock_timeout_stays_hard_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """D6: ruff 240s 超时保持硬失败（TimeoutExpired 直通，不走 advisory）."""
+    monkeypatch.setattr(
+        gate.subprocess, "run", _fake_wallclock_run(240, "ruff 0.16.5\n")
+    )
+    monkeypatch.setattr(sys, "argv", ["check_static_diagnostics.py", "--tool", "ruff"])
+    with pytest.raises(subprocess.TimeoutExpired):
+        gate.main()
+    assert "pyright_wallclock_advisory" not in capsys.readouterr().out
+
+
+def test_run_analyzer_pyright_timeout_maps_to_advisory_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gate.subprocess, "run", _fake_wallclock_run(900, "pyright 1.1.411\n")
+    )
+    with pytest.raises(gate.AnalyzerWallclockExceededError) as excinfo:
+        gate.run_analyzer(tmp_path, sys.executable, "pyright")
+    assert "exceeded_900s" in excinfo.value.advisory
+    assert "本 run 无 pyright 诊断数据" in excinfo.value.advisory
+
+
+def test_run_analyzer_ruff_timeout_propagates_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gate.subprocess, "run", _fake_wallclock_run(240, "ruff 0.16.5\n")
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        gate.run_analyzer(tmp_path, sys.executable, "ruff")

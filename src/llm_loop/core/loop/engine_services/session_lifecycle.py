@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import logging
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -58,6 +59,11 @@ class SessionLifecycle:
 
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
+        # D5（惰性迁移，复测修订版 2026-10-20）：激活路径只记标记，
+        # 首次 evidence 访问经 _migrate_legacy_once 一次性补跑。
+        self._pending_legacy_migration: str | None = None
+        self._legacy_migration_lock = threading.Lock()
+        self._legacy_migration_done = False
 
     def _sync_cancel_discard(self, session_id: str) -> None:
         """移除会话级同步取消标记（经 runner.discard_sync_cancel；fail-open 兼容旧装配）."""
@@ -173,16 +179,54 @@ class SessionLifecycle:
             self._host.workspace_root = new_root
             if changed:
                 self._host._workspace_epoch += 1
+            # D5（惰性迁移，复测修订版 2026-10-20）：legacy sidecar 扫描 700 项实测
+            # ~0.04s（携带值 ~30s 证伪），但迁移含会话全量 load；按设计书开放问题 2
+            # 预案，激活路径不再同步迁移，仅记录惰性标记，由激活后首次 engine
+            # 使用（run 前段 reconcile → evidence 访问面）经 _migrate_legacy_once
+            # 一次性补跑。异常吞掉语义保留在 _migrate_legacy_once。
+            # 修订（批次2 D5 后审）: re-arm（置 pending + 复位 done）必须持
+            # _legacy_migration_lock——否则与在飞的 _migrate_legacy_once 竞态
+            # （其完成后才置 done=True，无锁 re-arm 可能被覆盖/搁浅新 flag）。
             migrate_legacy = getattr(self._host, "_evidence_legacy_migrate_workspace_fn", None)
             if callable(migrate_legacy):
-                try:
-                    report = migrate_legacy(str(new_root))
-                    logger.info("Evidence legacy sidecar migration after workspace activation: %s", report)
-                except Exception:  # noqa: BLE001 - unproven legacy files remain model-invisible
-                    logger.exception(
-                        "Evidence legacy sidecar migration failed after workspace activation; "
-                        "legacy files remain quarantined/unowned"
-                    )
+                with self._legacy_migration_lock:
+                    self._pending_legacy_migration = str(new_root)
+                    self._legacy_migration_done = False
+                logger.debug(
+                    "Evidence legacy sidecar migration deferred to first evidence access: %s",
+                    new_root,
+                )
+
+    def _migrate_legacy_once(self) -> None:
+        """首次 evidence 访问时一次性补跑 legacy sidecar 迁移（D5；异常吞掉不阻断）.
+
+        激活路径只记 ``_pending_legacy_migration`` 标记；evidence 读取/捕获只发生在
+        run 内的工具面（tools/evidence_*，装配在 factory，非本职责面可触达），run
+        前段 reconcile 是激活后首个 engine 使用点，故惰性触发挂在该入口。Lock+once
+        保证并发下最多执行一次；迁移失败同样标记完成不重试——未证明归属的 legacy
+        文件保持模型不可见/隔离语义，绝不阻断 evidence 访问路径。
+        """
+        if self._legacy_migration_done:
+            return
+        with self._legacy_migration_lock:
+            if self._legacy_migration_done:
+                return
+            root = self._pending_legacy_migration
+            migrate_legacy = getattr(self._host, "_evidence_legacy_migrate_workspace_fn", None)
+            if not root or not callable(migrate_legacy):
+                return
+            try:
+                report = migrate_legacy(root)
+                logger.info(
+                    "Evidence legacy sidecar migration (lazy, on first evidence access): %s",
+                    report,
+                )
+            except Exception:  # noqa: BLE001 - unproven legacy files remain model-invisible
+                logger.exception(
+                    "Evidence legacy sidecar migration failed after workspace activation; "
+                    "legacy files remain quarantined/unowned"
+                )
+            self._legacy_migration_done = True
 
     def _persist_with_recovery_note(
         self,
@@ -250,6 +294,10 @@ class SessionLifecycle:
         逐字平移自 engine._run_stream_inner 前段（B5-W2-01）；fail-open 语义与
         fault 观测面（_fault_feedback/_record_program_fault/_record_action）保持。
         """
+        # D5：惰性 legacy 迁移挂钩——workspace 激活不再同步迁移；run 前段是激活后
+        # 首个 engine 使用点（evidence 读取/捕获均发生在 run 内工具面），在此
+        # 一次性补跑，后续 no-op、失败不阻断。
+        self._migrate_legacy_once()
         # 会话恢复（重启继续对话，DFX-REL-03）
         session_existed = self._host.session.exists(session_id)
         sess = self._host.session.load(session_id)

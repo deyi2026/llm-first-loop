@@ -7,7 +7,7 @@
     "dynamic_secret": 8,
     "secret": 7
   },
-  "access_count": 153,
+  "access_count": 154,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -61,7 +61,7 @@
     "dynamic_secret": 1,
     "secret": 5
   },
-  "direct_access_count": 153,
+  "direct_access_count": 154,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -1070,6 +1070,7 @@
     "src/llm_loop/llm/client.py|_trace_payload_fingerprint|read|LLM_PAYLOAD_TRACE_PATH": 1,
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>": 1,
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|LMS_DIRECT": 1,
+    "src/llm_loop/memory/embedder.py|LocalOnnxEmbedder/_resolve_model_dir|read|LFL_SEMANTIC_MODEL_DIR": 1,
     "src/llm_loop/resources/content_digest.py|_data_dir|read|LFL_DATA_DIR": 1,
     "src/llm_loop/resources/content_digest.py|default_key_file|read|LFL_CONTENT_HMAC_KEY_FILE": 1,
     "src/llm_loop/resources/content_digest.py|resolve_content_hmac_key|read|LFL_CONTENT_HMAC_KEY_ID": 2,

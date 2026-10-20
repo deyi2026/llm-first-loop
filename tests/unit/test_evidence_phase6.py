@@ -329,6 +329,9 @@ def test_factory_enforce_auto_migrates_and_compression_reuses_full_legacy_eviden
 
     settings = _factory_settings(data_dir, mode="enforce")
     engine = build_engine(settings)
+    # D5（惰性迁移）：workspace 激活不再同步迁移，run 前段 reconcile 是激活后
+    # 首个 engine 使用点——在此触发一次性补跑后再断言 ledger 归属。
+    engine._session_lifecycle.reconcile(sid)
     ledger = EvidenceLedgerStore(settings.evidence_dir / "ledger")
     owners = ledger.owners_for_session(sid)
     assert len(owners) == 1

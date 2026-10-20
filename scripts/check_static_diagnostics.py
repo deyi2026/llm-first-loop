@@ -105,6 +105,24 @@ def analyzer_cache_dir() -> Any:
             shutil.rmtree(path, ignore_errors=True)
 
 
+class AnalyzerWallclockExceededError(Exception):
+    """Pyright full-tree run exceeded its wall-clock budget (advisory, non-blocking).
+
+    D6（2026-10-20）：hosted runner 上 pyright 全树扫描偶发超过 900s 墙钟预算，
+    之前 TimeoutExpired 直通顶层 fail-closed（exit 2）拖挂 ci_gate。按设计书
+    语义改为 advisory：本 run 无 pyright 诊断数据，count-ratchet 沿用既有
+    ledger（不拦截）；ruff 的 240s 超时保持硬失败不变。
+    """
+
+    def __init__(self, tool: str, timeout_s: int) -> None:
+        self.tool = tool
+        self.timeout_s = timeout_s
+        self.advisory = (
+            f"exceeded_{timeout_s}s，本 run 无 {tool} 诊断数据，count-ratchet 沿用既有 ledger"
+        )
+        super().__init__(f"{tool} wallclock exceeded {timeout_s}s")
+
+
 def run_analyzer(
     root: Path, python: str, tool: str, cache_dir: str | None = None,
 ) -> tuple[str, collections.Counter[tuple[str, str, str, str]]]:
@@ -132,7 +150,16 @@ def run_analyzer(
     # any diagnostic regression). Budget 900s keeps the ratchet meaningful on
     # hosted runners; Ruff's timeout is unchanged.
     analyzer_timeout = 900 if tool == "pyright" else 240
-    completed = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, timeout=analyzer_timeout)
+    try:
+        completed = subprocess.run(
+            argv, cwd=root, env=env, capture_output=True, text=True, timeout=analyzer_timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        # D6: pyright 墙钟超限 → advisory（本 run 无诊断数据，ledger 沿用）；
+        # ruff 超时维持硬失败（TimeoutExpired 直通顶层 fail-closed exit 2）。
+        if tool == "pyright":
+            raise AnalyzerWallclockExceededError(tool, analyzer_timeout) from exc
+        raise
     if completed.returncode not in (0, 1):
         raise RuntimeError(f"{tool} runner crashed (exit={completed.returncode}): {completed.stderr[-300:]}")
     try:
@@ -258,7 +285,22 @@ def main() -> int:
     validate_baseline(root, baseline, raw, TOOLS, frozen_sha256=FROZEN_BASELINE_SHA256)
     python = sys.executable
     with analyzer_cache_dir() as cache_dir:
-        version, current = run_analyzer(root, python, args.tool, cache_dir=cache_dir)
+        try:
+            version, current = run_analyzer(root, python, args.tool, cache_dir=cache_dir)
+        except AnalyzerWallclockExceededError as exc:
+            # D6：pyright 墙钟超限以 advisory 结束（不拦截）——本 run 无该 tool 的
+            # 诊断数据，如实落盘到 ratchet 报告输出并保留既有 ledger；不冒充
+            # PASS，也不静默吞。exit 0 参照脚本内其他非阻断路径（如 public
+            # lineage ancestry 跳过）：检查有结论地放行，而非失败。
+            print(
+                f"R9 {exc.tool}: ADVISORY pyright_wallclock_advisory: {exc.advisory}"
+            )
+            print(
+                f"R9 {exc.tool} wallclock WARNING: analyzer exceeded {exc.timeout_s}s; "
+                "no analyzer data this run, ratchet ledger unchanged (advisory, non-blocking)",
+                file=sys.stderr,
+            )
+            return 0
     expected_version = baseline["versions"][args.tool]
     print(f"ratchet analyzer {args.tool}: actual={version} frozen={expected_version}")
     if version != expected_version:

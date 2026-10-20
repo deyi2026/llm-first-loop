@@ -1541,7 +1541,7 @@ def build_engine(
             base_url=settings.embedding_base_url,
             model=settings.embedding_model,
         )
-    # none → embedder 保持 None（SemanticRetriever.semantic_available()=False → 关键词路径）
+    # none → embedder 保持 None；D7: 检索器壳仍装配（本地 ONNX 重排可用时承接降级分支）
 
     # P1: 语义检索器（RETRIEVE_*, §3.6）
     semantic_retriever = None
@@ -1563,6 +1563,20 @@ def build_engine(
             memory_dir=settings.memory_dir,
             archive_dir=settings.archive_dir,
             fallback_embedder=_fallback_embedder,
+        )
+    else:
+        # D7 两段式语义检索: EMBEDDING_PROVIDER=none 时仍装配检索器壳——主语义
+        # 通道为空，但本地 ONNX 重排器（模型已下载至 LFL_SEMANTIC_MODEL_DIR 或
+        # 默认缓存目录时）在 search() 降级分支提供 词法粗筛→cosine 重排；
+        # 模型不存在 → semantic_available()=False，各消费方行为与 None 完全一致。
+        from llm_loop.memory.retriever import SemanticRetriever
+
+        semantic_retriever = SemanticRetriever(
+            None,
+            timeout_s=settings.retrieve_timeout_s,
+            semantic_top_k=settings.retrieve_semantic_top_k,
+            memory_dir=settings.memory_dir,
+            archive_dir=settings.archive_dir,
         )
 
 
@@ -1595,6 +1609,11 @@ def build_engine(
         semantic_retriever.configure_method_dir(_runtime_paths.methods_dir)
         semantic_retriever.configure_experience_cache_dir(
             _runtime_paths.data_dir / "experience-embeddings"
+        )
+        # D7-2: 两段式重排向量缓存同归 RuntimePaths 权威目录（(text_sha256,
+        # MODEL_ID) 键控，独立于主嵌入缓存文件）
+        semantic_retriever.configure_rerank_cache_dir(
+            _runtime_paths.data_dir / "semantic-rerank-embeddings"
         )
         if settings.semantic_memory_enabled:
             # Semantic enablement is explicit, so make existing memory hot before this
