@@ -723,9 +723,12 @@ class BrowserSemanticOperationTool:
             search = getattr(self._perception, "identity_search", None)
             if not callable(search):
                 return None
-            return search(session_id, identity)
+            result = search(session_id, identity)
         except Exception:
             return None
+        # Duck-typed adapters (tests inject SimpleNamespace) make the callable's
+        # return statically ``object``; narrow to dict so fail-open stays total.
+        return result if isinstance(result, dict) else None
 
     def _ground_object(
         self, session_id: str, target: Any
