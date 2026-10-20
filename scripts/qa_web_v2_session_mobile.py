@@ -1,21 +1,24 @@
 """Opt-in headless Chrome touch/viewport E2E for isolated Web V2 (no real API writes).
 
 Start candidate Vite on 127.0.0.1:5187; run from repo root with Python Playwright.
+LFL_WEB_MOBILE_QA_URL and LFL_WEB_MOBILE_QA_DIR optionally select a
+candidate URL and a dedicated local output directory; do not use production paths.
 All /api/* traffic is fulfilled with synthetic fixtures before reaching a backend.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from contextlib import suppress
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import sync_playwright
 
-ROOT = Path("data/web-v2-mobile-qa-20261017")
+ROOT = Path(os.environ.get("LFL_WEB_MOBILE_QA_DIR", "data/web-v2-mobile-qa-20261017"))
 ROOT.mkdir(parents=True, exist_ok=True)
-BASE = "http://127.0.0.1:5187/ui/v2/?session=qa-a"
+BASE = os.environ.get("LFL_WEB_MOBILE_QA_URL", "http://127.0.0.1:5187/ui/v2/?session=qa-a")
 SESSIONS = [
     dict(
         session_id=s,
@@ -125,6 +128,13 @@ with sync_playwright() as p:
                 )
                 check(viewport["doc"] <= viewport["w"] + 1, f"horizontal page overflow: {viewport}")
                 if mobile:
+                    panel_toggle = page.get_by_role("button", name="右侧面板").first
+                    toggle_rect = panel_toggle.bounding_box()
+                    check(
+                        toggle_rect is not None and toggle_rect["x"] >= 0
+                        and toggle_rect["x"] + toggle_rect["width"] <= width + 1,
+                        f"right-panel entry missing or pushed outside viewport: {toggle_rect}",
+                    )
                     page.locator("[data-testid=topbar] button").first.click()
                     check(
                         page.locator("[data-testid=app-shell]").evaluate(
@@ -157,11 +167,30 @@ with sync_playwright() as p:
                         ),
                         "Escape did not close sidebar",
                     )
-                    page.get_by_role("button", name="右侧面板").first.click()
+                    panel_toggle.click()
                     check(
                         page.get_by_role("button", name="关闭右侧面板").count() == 1,
                         "panel scrim missing",
                     )
+                    panel = page.locator('[data-testid="right-panel"]')
+                    panel.wait_for(state="visible")
+                    tab_boxes = panel.locator(".v2-panel-tabs > button").evaluate_all(
+                        """(buttons) => buttons.map(node => ({
+                           text: node.textContent?.trim(),
+                           rect: node.getBoundingClientRect().toJSON(),
+                           panel: node.closest('aside').getBoundingClientRect().toJSON()
+                        }))"""
+                    )
+                    check(
+                        bool(tab_boxes) and all(
+                            item["rect"]["left"] >= item["panel"]["left"] - 1
+                            and item["rect"]["right"] <= item["panel"]["right"] + 1
+                            for item in tab_boxes
+                        ),
+                        f"right-panel tabs are clipped: {tab_boxes}",
+                    )
+                    panel.get_by_role("button", name="预览").click()
+                    panel.get_by_role("button", name="设置").click()
                     page.keyboard.press("Escape")
                     check(
                         not page.locator("[data-testid=app-shell]").evaluate(
@@ -169,6 +198,9 @@ with sync_playwright() as p:
                         ),
                         "Escape did not close panel",
                     )
+                    panel_toggle.click()
+                    panel.get_by_role("button", name="收起右侧面板").click()
+                    page.locator("[data-testid=right-panel]").wait_for(state="detached", timeout=5000)
                 else:
                     page.get_by_text("会话乙", exact=True).first.click()
                     page.get_by_text("qa-b history item #119", exact=False).first.wait_for(

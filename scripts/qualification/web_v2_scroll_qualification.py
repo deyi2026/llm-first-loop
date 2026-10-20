@@ -18,6 +18,24 @@ from playwright.async_api import Page, async_playwright
 
 
 def fixtures() -> dict[str, object]:
+    sessions = [
+        {
+            "session_id": f"scroll-qa-{i}",
+            "title": f"滚动验收会话 {i}",
+            "message_count": 120,
+            "channel": "web",
+            "status": "active",
+            "pinned": False,
+            "created_at": "2026-10-13T00:00:00Z",
+            "updated_at": "2026-10-13T00:00:00Z",
+            "last_message_preview": "只读测试历史",
+        }
+        for i in range(3)
+    ]
+    messages = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"只读测试消息 {i}"}
+        for i in range(120)
+    ]
     suggestions = [
         {
             "id": f"EVO-SCROLL-{i:03d}",
@@ -94,6 +112,9 @@ def fixtures() -> dict[str, object]:
         "impact_files": [f"docs/review-{i}.md" for i in range(35)],
     }
     return {
+        "sessions": {"sessions": sessions, "count": len(sessions)},
+        "current": {"current": "scroll-qa-0"},
+        "messages": {"session_id": "scroll-qa-0", "total": len(messages), "has_more": False, "messages": messages},
         "suggestions": {"suggestions": suggestions},
         "services": services,
         "archive": {"sessions": archived, "count": len(archived)},
@@ -180,7 +201,9 @@ async def run_viewport(browser: object, url: str, width: int, height: int) -> li
         if route.request.method != "GET":
             await route.fulfill(status=403, json={"detail": "qualification is read-only"})
         else:
-            await route.continue_()
+            # This is a disposable, fully fixture-backed context, not a live
+            # backend smoke test. Unknown endpoints never reach production.
+            await route.fulfill(status=200, json={})
 
     await page.route("**/api/**", no_mutation)
     def fixture_response(body: object):
@@ -189,6 +212,10 @@ async def run_viewport(browser: object, url: str, width: int, height: int) -> li
         return respond
 
     for pattern, key in (
+        ("**/api/v1/sessions", "sessions"),
+        ("**/api/v1/sessions?*", "sessions"),
+        ("**/api/v1/session/current", "current"),
+        ("**/api/v1/sessions/*/messages*", "messages"),
         ("**/api/v1/evolution/list?*", "suggestions"),
         ("**/api/v1/evolution/detail?*", "detail"),
         ("**/api/v1/evolution/diff?*", "diff"),

@@ -93,6 +93,9 @@ describe("App 布局壳", () => {
     })));
     await renderAppSettled();
     const toggle = within(screen.getByTestId("topbar")).getByRole("button", { name: "右侧面板" });
+    const actions = screen.getByTestId("session-header-actions");
+    expect(toggle.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toggle).toHaveClass("v2-mobile-panel-toggle");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");

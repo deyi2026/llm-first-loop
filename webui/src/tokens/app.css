@@ -91,6 +91,7 @@
   gap: var(--dsw-space-2);
   padding: 0 var(--dsw-space-4);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+  min-width: 0;
 }
 
 .v2-topbar-view {
@@ -1277,9 +1278,28 @@
 /* ── 移动端响应式（对齐原版 P4-2：抽屉式侧栏/面板） ── */
 @media (max-width: 900px) {
   .v2-mobile-panel-toggle {
+    flex: 0 0 var(--v2-mobile-touch-target);
     width: var(--v2-mobile-touch-target);
     min-width: var(--v2-mobile-touch-target);
     height: var(--v2-mobile-touch-target);
+  }
+
+  /* Keep every right-panel tab and its close action reachable at 320px. */
+  .v2-panel-tabs {
+    gap: 0;
+    padding: 4px 2px 0;
+  }
+
+  .v2-panel-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    height: var(--v2-mobile-touch-target);
+    padding-inline: 2px;
+    font-size: 12px;
+  }
+
+  .v2-panel-tab.v2-panel-collapse {
+    flex: 0 0 var(--v2-mobile-touch-target);
   }
 
   .v2-sidebar {
@@ -1407,7 +1427,25 @@
   .v2-status-badge {
     flex: 0 1 88px;
     max-width: 88px;
+    min-width: 0;
   }
+
+  /* Retain the current view and connection state in the accessibility tree
+     without letting either label crowd the mobile drawer controls. */
+  .v2-topbar-view,
+  .v2-topbar > .v2-status-badge > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .v2-topbar > .v2-mobile-panel-toggle { flex-shrink: 0; }
+  .v2-header-actions { flex: 0 0 auto; }
+  .v2-topbar > .v2-status-badge { position: relative; flex: 0 1 34px; padding-inline: 6px; }
 
   .v2-header-notice {
     right: 0;

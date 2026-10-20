@@ -73,7 +73,6 @@ export function TopBar({
       </button>
       <span className="v2-topbar-view">{viewTitle}</span>
       <div style={{ flex: 1 }} />
-      <SessionHeaderActions onShowFiles={onShowFiles} />
       {isMobile && onTogglePanel ? (
         <button
           type="button"
@@ -86,6 +85,7 @@ export function TopBar({
           ▤
         </button>
       ) : null}
+      <SessionHeaderActions onShowFiles={onShowFiles} />
       {browserAuthenticated && (
         <button
           type="button"
