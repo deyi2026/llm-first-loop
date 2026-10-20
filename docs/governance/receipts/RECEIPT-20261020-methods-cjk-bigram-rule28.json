@@ -1,0 +1,38 @@
+{
+  "receipt_kind": "RULE-AI-28 full_test gate evidence",
+  "created_at": "2026-10-20T09:05:00+08:00",
+  "subject": "方法卡中文分词修复：_search_terms 按 CJK 二元组切词，恢复自然语言检索召回",
+  "commit_under_test": "5e21ec3ad",
+  "canonical_command": "bash scripts/ci_gate.sh",
+  "physical_exit_code": 0,
+  "independent_admission": [
+    {
+      "kind": "full_test",
+      "child_id": "subagent_04a7b96352f3",
+      "candidate_sha256": "66ff79f86bc76a9c51bb609bf3d1ef279b9a50257c7a1506ae7086578fdde6bd",
+      "qualification": "PASS",
+      "target_name": "main@5e21ec3ad 方法卡中文二元组切词（store.py + 回归测试 + 冻结集对照）",
+      "scope": "覆盖 5e21ec3ad 全量门禁命令 bash scripts/ci_gate.sh；一次性资格在本次执行后消耗"
+    }
+  ],
+  "results": {
+    "stage_1_ruff": "PASS historical=67 current=34 new=0 changed_file_diagnostics=0",
+    "stage_2_env_pin": "PASS scanned 905 test files, 0 undeclared COMPACT_RATIO dependents",
+    "stage_3_pyright": "PASS historical=45 current=11 new=0 changed_file_diagnostics=0",
+    "stage_4_tier0": "319 passed, 9440 deselected in 21.60s",
+    "stage_5_full_pytest": "xdist 全量绿（脚本仅在成功分支打印「✅ ci_gate 全链路通过」，本次已打印，物理退出码 0）",
+    "side_effect_audit": "51 处真实provider base_url 告警（既有基线，仅告警不阻断）"
+  },
+  "evidence_limits": "stage 5 的 pytest 计数行位于工具回执被省略的中段，未能取回；本回执只声明脚本终态绿（exit 0 + 末行全链路通过），不声明具体用例数。",
+  "behavior_change": {
+    "before": "CJK 游程整体作为单一 term，自然语言查询几乎必然 miss；30 条冻结集纯词法 hit@1=0.0%，线上等价融合 hit@1=26.7%",
+    "after": "CJK 游程按重叠二元组切分（单字游程保留、拉丁/数字/下划线片段不变、空格两侧不成组）；纯词法 hit@1=33.3%，融合 hit@1=56.7% / hit@5=90.0% / hit@10=96.7%",
+    "unchanged": "语义单路 hit@1=33.3%（与朴素词法持平），p95 277ms；语义仍只作融合候选，不当主召回",
+    "dataset": "evals/retrieval_ab/method-semantic-baseline-20261020-after-cjk.json（对照 1ceb731c8 冻结基线四通道）"
+  },
+  "scope_decision": {
+    "kept": "[semantic.web] method=true 与 [semantic.learning] method=true 均保持开启",
+    "reason": "先前『web 开关空转、关掉零损失』的判断被运行事实推翻：service_control status 显示 web 进程 semantic_scopes.method=true（来源 runtime_toml_service:web），build_engine 中 semantic_method_enabled 三处使用（预热、post-save 钩子、RecordSearcher）对 web 进程同样生效，web 会话的 search_records(kind=method) 因此走融合。关掉会把 web 侧方法召回退回纯词法 33.3%。故本次不改 runtime.toml。"
+  },
+  "workspace_hygiene": "ci_gate 运行会重写 reports/phase*/**.json 时间戳与耗时字段，已 git checkout 还原，提交前工作区干净。"
+}
