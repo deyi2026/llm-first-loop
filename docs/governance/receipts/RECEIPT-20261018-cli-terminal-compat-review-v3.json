@@ -1,0 +1,45 @@
+{
+  "gate": "code",
+  "review_type": "independent_glm53_terminal_compatibility_review",
+  "reviewer_model": "glm/glm-5.3",
+  "reviewer_subagent_id": "subagent_3f5fec867b82",
+  "review_result_id": "result-00e73b4e7b96490c91a6d48cf9385395",
+  "review_generation": "00e73b4e7b96490c91a6d48cf9385395",
+  "review_isolated": true,
+  "verdict": "PASS",
+  "p0": 0,
+  "p1": 0,
+  "p2": 0,
+  "reviewed_at": "2026-10-18T19:51:12+08:00",
+  "base_head": "9cd3674547451ecec4cabb6baf9533c124bc48e",
+  "reviewed_candidate_tree": "52a3c25b3defe719c4740c91c4b8d0a5e9321c8f",
+  "reviewed_candidate_source_sha256": "65e098a1d33bd6488079ec9ed17ce190ba6150f1104a81800b17382b0c2cb424",
+  "reviewed_patch_sha256": "9c4ff2da3d2e50eaa37dc2e19250a6c1f1670f83dd7f7c5d1d13e5372d6955c0",
+  "reviewed_patch_bytes": 21085,
+  "scope_files": [
+    "src/llm_loop/terminal/markdown.py",
+    "src/llm_loop/terminal/state.py",
+    "tests/unit/test_terminal_cli.py",
+    "tests/unit/test_terminal_pty.py"
+  ],
+  "findings": [],
+  "verified_evidence": {
+    "targeted_tests": "82 passed",
+    "ruff": "PASS",
+    "pyright": "0 errors, 0 warnings",
+    "uv_lock_check_offline": "PASS",
+    "diff_check": "PASS"
+  },
+  "limitations": [
+    "Reviewer performed read-only code review; targeted/full test results are execution-side evidence, not reviewer-run tests.",
+    "Original full R9 has not yet run for this candidate at receipt creation."
+  ],
+  "review_answer_sha256": "0a78878175d6fb5758d51456df8accc280b79101d89fb3c3e451e588694d3890",
+  "r9_status": "pending",
+  "release_status": "not merged, not pushed, not deployed",
+  "scope_warning": "Historical terminal-compatibility review for base_head 9cd3674547451ecec4cabb6baf9533c124bc48e and reviewed_candidate_tree 52a3c25b3defe719c4740c91c4b8d0a5e9321c8f. It does not qualify the latest-main candidate based on 4ba016dac2e59064405f3573059554d7db292ba1.",
+  "subsequent_evidence": {
+    "r9_passed_on_commit": "47b757625766f88232e71ce04aaaee2b312bd0c6",
+    "latest_main_candidate_requires_fresh_review_and_r9": true
+  }
+}
