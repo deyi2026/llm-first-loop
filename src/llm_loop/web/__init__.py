@@ -475,6 +475,17 @@ def main(*, workspace_root: str | None = None) -> None:
     _score_loop.start()
     app.state.knowledge_score_loop = _score_loop
 
+    # 定期自动归档（2026-10-21）：daemon 线程按周期真跑 workspace.archive_stale
+    # 的同一核心例程（判定语义与 CLI 完全一致）；到期判定基于持久状态文件
+    # data/reports/archive_stale/auto_state.json——服务重启不会重复跑。
+    # 环境变量（LFL_ARCHIVE_STALE_AUTO/DAYS/TICK_S/PERIOD_S）在模块内解析；
+    # 测试注入引擎的 build_app 路径不经过这里，PYTEST 下线程自行禁用。
+    from llm_loop.workspace.archive_stale import ArchiveStaleLoop
+
+    _archive_loop = ArchiveStaleLoop(_data_dir)
+    _archive_loop.start()
+    app.state.archive_stale_loop = _archive_loop
+
     # web-carveout M3（D1）：chatgpt binding 观测面（health probe + alert
     # notifier + webui 路由族）随页面 client 一并剥离至 lfl-web-providers；
     # 中间件 webui 不再挂载（app.state.chatgpt_binding_alert_notifier 移除）。
@@ -490,6 +501,8 @@ def main(*, workspace_root: str | None = None) -> None:
         # 先停调度线程（daemon，最多等到当前 wait 返回），再关引擎连接。
         _score_loop.stop()
         _score_loop.join(timeout=5)
+        _archive_loop.stop()
+        _archive_loop.join(timeout=5)
         # P2-4(2026-08-15): 服务退出关闭 LLM 连接（httpx Client 连接池不泄漏）
         engine.close()
 

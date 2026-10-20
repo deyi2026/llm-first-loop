@@ -1040,6 +1040,7 @@
     },
     "write_exemptions": {
       "src/llm_loop/eval/oracle_1210.py": "评测命令显式生成 report.json/report.md；属于测试/评测输出工件，不是运行态恢复 SoT。",
+      "src/llm_loop/workspace/archive_stale.py": "archive-stale 核心例程落盘两类非恢复态文件：jsonl 运维报告工件（同 evidence_report 口径）与 auto_state.json 调度游标（fail-open：损坏/丢失仅导致幂等批次重跑一轮）；会话 JSON 的 durable 变更全部经 core/session.py（session_store surface 已登记）。",
       "src/llm_loop/introspection/export_distill.py": "用户显式 export_distill 生成导出数据与报告；目标是交付工件而非内部 durable runtime state。",
       "src/llm_loop/methods/evidence_report.py": "Method census/declaration 离线普查命令，仅按用户显式 --output 参数生成一次性报告工件（mkdir+write_text 单点），不承载运行态恢复 SoT（F批整合经全量R9 tier0 守卫暴露后补登记）。",
       "src/llm_loop/introspection/tools_recovery.py": "恢复工具按用户/恢复流程指定目标路径写回文件，属于外部文件效果，不是工具自身持久化状态。",

@@ -278,6 +278,43 @@ def _cmd_faults(args: list[str]) -> int:
     return 0
 
 
+def _cmd_archive_stale(args: list[str]) -> int:
+    """archive-stale: 批量归档超过 N 天未更新的 active 会话（薄壳命令，不装配引擎）.
+
+    口径（与 2026-10-20 手工批跑验证一致；详见 docs/RUNBOOK-20261021-archive-stale.md；
+    实现移至 llm_loop.workspace.archive_stale.run_archive_stale，与 web 自动归档线程共用）:
+    - 锚点 = 本命令启动时刻；过期 = updated_at 严格早于 锚点-<days> 天（恰好等于不过期）
+    - 范围 = 工作区注册表全部未退休工作区分区（data/sessions/<ws-id>）；注册表为空回退平铺根
+    - 只处理 status=active 且未 pinned 的会话，最老优先
+    - 运行中（busy）/ 身份冲突 / 并发消失逐条跳过并报告，不中断批次
+    - 归档成功后若该工作区 shared_current 指针指向此会话则清空（防跨端解析到归档态）
+    - 幂等可续跑：已归档会话 status 非 active，重跑不再命中
+
+    用法: lfl archive-stale [--days N] [--dry-run] [--data-dir DIR] [--report FILE]
+    退出码: 0=无处理错误（含 0 候选与 busy/冲突跳过） 1=存在处理错误 2=参数/致命错误
+    """
+    from llm_loop.workspace.archive_stale import ArchiveStaleFatalError, run_archive_stale
+
+    parser = _legacy_parser("archive-stale")
+    ns = parser.parse_args(args)
+    if ns.days < 1:
+        print("[archive-stale] --days 必须 >= 1", file=sys.stderr)
+        return 2
+
+    try:
+        result = run_archive_stale(
+            ns.data_dir,
+            days=ns.days,
+            dry_run=ns.dry_run,
+            report_path=ns.report or None,
+            log=print,
+        )
+    except ArchiveStaleFatalError as exc:
+        print(f"[archive-stale] 工作区注册表读取失败: {exc}", file=sys.stderr)
+        return 2
+    return result.exit_code
+
+
 def main(argv: list[str] | None = None, *, workspace_root: str | None = None) -> int:
     argv = list(argv) if argv is not None else list(sys.argv[1:])
     query_root = default_home() if bundle_root() else Path(__file__).resolve().parents[2]
@@ -415,6 +452,8 @@ def _dispatch_command(argv: list[str], *, workspace_root: str | None = None) -> 
         return _cmd_event_hooks(argv[1:])
     if cmd == "faults":
         return _cmd_faults(argv[1:])
+    if cmd == "archive-stale":
+        return _cmd_archive_stale(argv[1:])
     try:
         settings = load_settings()
     except ValueError as exc:

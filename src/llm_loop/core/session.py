@@ -1479,6 +1479,25 @@ class SessionStore:
         except OSError:
             pass  # fail-open（共享会话写入失败不阻断 Web/飞书主链路）
 
+    def clear_shared_current(self) -> None:
+        """清空跨端共享当前会话指针（原子写 + 跨进程文件锁，fail-open）.
+
+        维护命令（如 archive-stale）归档会话后调用：指针指向已归档会话时清空，
+        避免跨端继续把"当前会话"解析到归档态。与 set_shared_current 对称，不校验 sid。
+        """
+        p = self._dir / self._SHARED_SESSION_FILE
+        try:
+            with self._shared_file_lock("shared_current_session"):
+                p.parent.mkdir(parents=True, exist_ok=True)
+                tmp = p.with_suffix(".tmp")
+                tmp.write_text(
+                    json.dumps({"current": "", "updated_at": _now()}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                tmp.replace(p)
+        except OSError:
+            pass  # fail-open（指针清空失败不阻断归档主链路）
+
     def _path(self, session_id: str) -> str:
         session_id = _validate_session_id(session_id)
         return os.path.join(self._session_dir_fs(session_id), f"{session_id}.json")

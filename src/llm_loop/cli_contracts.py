@@ -20,7 +20,7 @@ LEGACY_COMMANDS = {
     "evolve-list", "evolve-review", "evolve-complete", "evolve-verify", "export-distill",
     "export-serve-mcp", "event-inventory", "archive-index", "event-migrate", "event-verify",
     "event-rollback", "session-fork", "event-retire", "event-retire-rollback",
-    "event-rotate-status", "event-hooks", "faults",
+    "event-rotate-status", "event-hooks", "faults", "archive-stale",
 }
 
 
@@ -59,6 +59,7 @@ def build_legacy_parser(command: str) -> argparse.ArgumentParser:
         "event-retire": "对账并退役旧存储", "event-retire-rollback": "恢复退役前的源文件",
         "event-rotate-status": "查看事件日志分段", "event-hooks": "查看或测试事件钩子",
         "faults": "汇总工具故障台账",
+        "archive-stale": "批量归档超过 N 天未更新的 active 会话（薄壳命令，不装配引擎）",
     }
     if command not in LEGACY_COMMANDS:
         raise ValueError(f"Unknown legacy command: {command}")
@@ -150,4 +151,13 @@ def build_legacy_parser(command: str) -> argparse.ArgumentParser:
     elif command == "faults":
         parser.add_argument("--limit", type=int, default=15, help="最多显示条数（默认 15）")
         parser.add_argument("--data-dir", help="数据目录；缺省使用配置目录")
+    elif command == "archive-stale":
+        parser.add_argument("--days", type=int, default=5,
+                            help="过期阈值天数（默认 5；updated_at 严格早于 锚点-days 视为过期）")
+        parser.add_argument("--dry-run", action="store_true",
+                            help="只列候选并写报告，不执行归档")
+        parser.add_argument("--data-dir", default=legacy_env_snapshot().get("DATA_DIR") or DEFAULT_DATA_DIR,
+                            help="数据目录（默认 ./data）")
+        parser.add_argument("--report", default="",
+                            help="jsonl 报告路径（默认 data/reports/archive_stale/<ts>.jsonl）")
     return parser
