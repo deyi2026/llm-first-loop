@@ -60,6 +60,9 @@
 #       xargs kill 裸杀路径已废除。
 #   修6 Web V2 产物/就绪闭环: web/all 在停旧服务前检查 gitignored webui/dist
 #       及 index 引用资源；启动后同时验 /auth/status 与 /ui/v2，禁止后端绿但页面404假成功。
+#   修7 就绪预算 30s→90s、语义改为墙钟秒（2026-10-20 实证：gen292 部署冷启动
+#       30.7s 判负 → 控制面自动回滚 gen293）；成功/失败均记录 elapsed，
+#       LFL_WEB_READY_TIMEOUT_S 可覆盖。
 
 set -euo pipefail
 
@@ -871,19 +874,35 @@ _start_web() {
   # 不换进程组，宿主 shell 超时 killpg 会被整树波及（execute_command.py:108-109 实证）。
   LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.runtime.launch web
   local pid=$! auth_code="000" ui_code="000"
-  for _ in $(seq 1 30); do
+  # 就绪预算（2026-10-20 实证）：冷启动含 700 个 legacy evidence sidecar 的
+  # quarantine 扫描，实测 29~31s 波动；原 30s 预算在 gen292 部署时以 30.7s
+  # 判负 → 控制面自动回滚到旧 release（gen293）。预算须留 legroom，默认 90s；
+  # LFL_WEB_READY_TIMEOUT_S 可覆盖（测试/应急），非法或越界回落默认值。
+  # 语义是墙钟秒而非迭代次数：单次探测最坏 2×curl --max-time 2 + sleep 1 ≈ 5s，
+  # 所以 deadline 是软边界，elapsed 可能略超 budget，日志两者都打以便定位。
+  # 判定条件不变（auth/status=200 且 ui/v2 可路由），只放宽等待并记录实测耗时。
+  local ready_budget="${LFL_WEB_READY_TIMEOUT_S:-90}"
+  if [[ ! "$ready_budget" =~ ^[1-9][0-9]*$ ]] || (( 10#$ready_budget < 5 || 10#$ready_budget > 600 )); then
+    ready_budget=90
+  fi
+  local started_at deadline elapsed
+  started_at="$(date +%s)"
+  deadline=$(( started_at + ready_budget ))
+  while (( $(date +%s) < deadline )); do
     auth_code="$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://$check_host:$check_port/auth/status" 2>/dev/null || true)"
     ui_code="$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://$check_host:$check_port/ui/v2/" 2>/dev/null || true)"
     if [[ "$auth_code" == "200" && "$ui_code" =~ ^[23][0-9][0-9]$ ]]; then
-      _log "✅ web 就绪: http://$check_host:$check_port/(pid $pid, auth=$auth_code, ui=$ui_code)"
+      elapsed=$(( $(date +%s) - started_at ))
+      _log "✅ web 就绪: http://$check_host:$check_port/(pid $pid, auth=$auth_code, ui=$ui_code, elapsed=${elapsed}s/${ready_budget}s)"
       return 0
     fi
     sleep 1
   done
+  elapsed=$(( $(date +%s) - started_at ))
   if [[ "$auth_code" == "200" ]]; then
-    _log "✗ web backend ready but Web V2 unavailable (auth/status=$auth_code, ui/v2=$ui_code)"
+    _log "✗ web backend ready but Web V2 unavailable (auth/status=$auth_code, ui/v2=$ui_code, elapsed=${elapsed}s/${ready_budget}s)"
   fi
-  _log "✗ web 30s 未就绪，最近日志:"
+  _log "✗ web ${ready_budget}s 预算内未就绪（实测 elapsed=${elapsed}s），最近日志:"
   tail -10 data/web.log || true
   return 1
 }

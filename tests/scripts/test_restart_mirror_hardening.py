@@ -425,3 +425,59 @@ def test_restart_system_dual_face_probes_and_idempotent_port():
     # 启动撞端口幂等：本项目进程 → _stop_service 后继续；非本项目 → 仍 _die
     assert "_die" in script.split("幂等停止后重启", 1)[1][:400] or True
     assert "被非本项目进程占用" in script
+
+
+def test_web_readiness_budget_has_legroom_and_reports_elapsed():
+    """修7（2026-10-20 实证）: 30s 预算贴着实测冷启动 29~31s。
+
+    gen292 部署时 web 冷启动 30.7s 判负 → 控制面自动回滚到旧 release（gen293）。
+    就绪条件不变，只放宽预算并留下实测耗时供下次排障。
+    """
+    body = _src().split("_start_web()", 1)[1].split("\n}", 1)[0]
+    assert "seq 1 30" not in body
+    assert 'LFL_WEB_READY_TIMEOUT_S:-90' in body
+    # 墙钟语义：deadline 而非迭代次数（单次探测最坏约 5s，迭代数会放大 3~5 倍）
+    assert "deadline=$(( started_at + ready_budget ))" in body
+    assert "while (( $(date +%s) < deadline ))" in body
+    assert "elapsed=" in body
+    assert "未就绪" in body
+    # 判定条件本身不变：仍须 auth/status=200 且 ui/v2 可路由
+    assert '"$auth_code" == "200"' in body
+    assert "ui_code" in body
+
+
+def _web_ready_budget_block() -> str:
+    body = _src().split("_start_web()", 1)[1].split("\n}", 1)[0]
+    start = body.index("local ready_budget=")
+    end = body.index("local started_at")
+    return body[start:end]
+
+
+def test_web_readiness_budget_env_override_and_fallback():
+    """预算来自 LFL_WEB_READY_TIMEOUT_S，非法/越界回落 90（防 set -e 下静默退出）。"""
+    # 片段来自函数体；bash -c 顶层不接受 local，脱掉前缀后语义等价。
+    block = _web_ready_budget_block().replace("local ready_budget=", "ready_budget=")
+
+    def resolve(env_value=None):
+        env = {k: v for k, v in os.environ.items() if k != "LFL_WEB_READY_TIMEOUT_S"}
+        if env_value is not None:
+            env["LFL_WEB_READY_TIMEOUT_S"] = env_value
+        r = subprocess.run(
+            ["bash", "-c", block + '\necho "$ready_budget"'],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip()
+
+    assert resolve(None) == "90"
+    assert resolve("150") == "150"
+    assert resolve("abc") == "90"
+    assert resolve("3") == "90"
+    assert resolve("900") == "90"
+    # 前导零（08/09）会触发 bash 八进制解析，必须被正则挡回默认值
+    assert resolve("08") == "90"
+    assert resolve("09") == "90"
+
