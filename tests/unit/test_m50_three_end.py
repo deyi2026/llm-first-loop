@@ -209,7 +209,10 @@ def test_cli_model_command_listing(tmp_path, capsys):
     settings = _make_settings(tmp_path)
     session_store = SessionStore(str(tmp_path / "sessions"))
     pool = _make_pool(settings, _FakeLLM())
-    engine = mock.Mock()
+    engine = mock.Mock(
+        _cli_workspace=tmp_path, _cli_plain=True, _cli_theme=None,
+        _cli_approval_bridge=None, loop_signal_detector=None,
+    )
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
     engine.session = session_store
@@ -236,7 +239,10 @@ def test_cli_model_command_switch(tmp_path, capsys):
     settings = _make_settings(tmp_path)
     session_store = SessionStore(str(tmp_path / "sessions"))
     pool = _make_pool(settings, _FakeLLM())
-    engine = mock.Mock()
+    engine = mock.Mock(
+        _cli_workspace=tmp_path, _cli_plain=True, _cli_theme=None,
+        _cli_approval_bridge=None, loop_signal_detector=None,
+    )
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
     engine.session = session_store
@@ -264,7 +270,10 @@ def test_cli_model_command_default(tmp_path, capsys):
     settings = _make_settings(tmp_path)
     session_store = SessionStore(str(tmp_path / "sessions"))
     pool = _make_pool(settings, _FakeLLM())
-    engine = mock.Mock()
+    engine = mock.Mock(
+        _cli_workspace=tmp_path, _cli_plain=True, _cli_theme=None,
+        _cli_approval_bridge=None, loop_signal_detector=None,
+    )
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
     engine.session = session_store
@@ -294,7 +303,10 @@ def test_cli_model_command_unknown_does_not_change(tmp_path, capsys):
     settings = _make_settings(tmp_path)
     session_store = SessionStore(str(tmp_path / "sessions"))
     pool = _make_pool(settings, _FakeLLM())
-    engine = mock.Mock()
+    engine = mock.Mock(
+        _cli_workspace=tmp_path, _cli_plain=True, _cli_theme=None,
+        _cli_approval_bridge=None, loop_signal_detector=None,
+    )
     engine.correction_ctx = mock.Mock()
     engine.correction_ctx.model_pool = pool
     engine.session = session_store
