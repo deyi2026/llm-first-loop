@@ -83,6 +83,11 @@ from llm_loop.memory.embedder import HashEmbedder
 from llm_loop.memory.episode import EpisodeStore
 from llm_loop.memory.evidence import EvidenceError
 from llm_loop.memory.multiquery_shadow import MultiqueryShadowProbe, make_llm_rewriter
+
+# 2026-10-21 修复：SemanticRetriever 顶层化——批次2（D7）在 embedder 为空分支
+# 新增第二处函数内 import 使 local_imports 棘轮 63→64（豁免仅 optional/plugin，
+# 非两类语义）；retriever 只依赖 memory.embedder/retrieve，无回边不构成环。
+from llm_loop.memory.retriever import SemanticRetriever
 from llm_loop.memory.store import MemoryStore
 from llm_loop.memory.synopsis import (
     MAX_SOURCE_SNAPSHOT_CHARS,
@@ -1546,8 +1551,7 @@ def build_engine(
     # P1: 语义检索器（RETRIEVE_*, §3.6）
     semantic_retriever = None
     if embedder is not None:
-        # HashEmbedder 已提升为模块级导入（local_imports ratchet 63 基线不增）
-        from llm_loop.memory.retriever import SemanticRetriever
+        # HashEmbedder/SemanticRetriever 均已提升为模块级导入（local_imports 棘轮只减不增）
 
         # T0-B（2026-09-16）: 主嵌入=api（8765/bge）时注入 hash 回退引擎——
         # 8765 不可用 → 查询/缓存/阈值整套切 hash 空间，绝不混向量空间（见 retriever T0-B）。
@@ -1569,8 +1573,6 @@ def build_engine(
         # 通道为空，但本地 ONNX 重排器（模型已下载至 LFL_SEMANTIC_MODEL_DIR 或
         # 默认缓存目录时）在 search() 降级分支提供 词法粗筛→cosine 重排；
         # 模型不存在 → semantic_available()=False，各消费方行为与 None 完全一致。
-        from llm_loop.memory.retriever import SemanticRetriever
-
         semantic_retriever = SemanticRetriever(
             None,
             timeout_s=settings.retrieve_timeout_s,
