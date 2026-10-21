@@ -1443,6 +1443,8 @@ class ReviewAdmissionTool:
         "或浏览器文稿发表生成 Host 冻结任务并启动独立 GLM-5.3 Reviewer；"
         "action=status 根据真实 child_id 查询终态并由 Host 内存签发一次性资格。"
         "单纯自述PASS、任意JSON、旧审查回执、未经检查的不同目标均无效。"
+        "护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前按 RULE-AI-35 "
+        "构造应拦输入实测拦截，未实测只可称'代码已提交'。"
         "完整工具描述和参数用 get_tool_schema 精确读取。审查不取代用户对外发布/push授权。"
     )
     parameters = {

@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — Agent/maintenance playbook (version=19; epistemic honesty + factual failure receipts + tool-contract truth + development/repair safety + current-task authority + agency-first; 2026-09-23)
+# docs/ai_rules.lite.md — Agent/maintenance playbook (version=20; epistemic honesty + factual failure receipts + tool-contract truth + development/repair safety + current-task authority + agency-first; 2026-10-21)
 
 > **Role (R8.24-A A-D2)**: reclassified from "universal model execution rules" to an
 > **Agent/maintenance playbook** — read on demand by maintenance runs and operators;

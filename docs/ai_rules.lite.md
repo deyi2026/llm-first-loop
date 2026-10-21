@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — Agent/维护 playbook（version=19；epistemic honesty + factual failure receipts + tool-contract truth + development/repair safety + current-first + agency-first；2026-09-23）
+# docs/ai_rules.lite.md — Agent/维护 playbook（version=20；epistemic honesty + factual failure receipts + tool-contract truth + development/repair safety + current-first + agency-first；2026-10-21）
 
 > **角色声明（R8.24-A A-D2）**：本文件已从"通用模型执行规则（模型执行视图）"重分类为
 > **Agent/维护 playbook**——维护 run、operator 场景按需读取；普通用户 run 零引用、

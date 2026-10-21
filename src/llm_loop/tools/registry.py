@@ -83,7 +83,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "present_files": "声明已存在的输出文件为最终交付物（对齐 DSH present）：写入完成→最终答复前调用；Web 出产物面板可点击打开/预览；execute_command 创建的产物必须显式声明；工作区内、全有或全无。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",
-    "execute_command": "独立shell；fail_fast=true 用bash -e -o pipefail，否则退出码仅代表最后命令。后台返job_id；wait等终态，job_output查输出；灾难命令硬阻断。全量测试/push前按RULE-AI-28取得独立审查覆盖当前产物的有效PASS回执，未满足暂缓。",
+    "execute_command": "独立shell；fail_fast=true 用bash -e -o pipefail，否则退出码仅代表最后命令。后台返job_id；wait等终态，job_output查输出；灾难命令硬阻断。全量测试/push前按RULE-AI-28取得独立审查覆盖当前产物的有效PASS回执，未满足暂缓。护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前按RULE-AI-35构造应拦输入实测拦截，未实测只可称'代码已提交'。",
     "review_admission": "Rule28 Host审核准入：action=start(kind=full_test|git_push|article_publish,workdir,command,target_name)冻结真实产物，启动独立只读 GLM-5.3 reviewer；action=status(child_id)查真实完成、核对精确SHA与P0/P1并签发一次性内存资格，正文PASS/旧回执/不同目标均不能放行；不代替用户授权。",
     "service_control": "共享Web/Feishu/Learning生命周期控制：status只读（快照观察，CAS与受理复检才是权威）；publish发布新desired deployment（自动以当前代做CAS+干净git树+webui产物hash绑定）；restart异步走desired-state绑定的official restart（建议显式带expected_generation=最新status观察值，缺省取当前代）。generation冲突回执即当前事实：直接以回执current重试（存活owner≤一poll可过；死worker由reaper按30s/120s/2100s分档回收后可过），不等待、不询问；终态failed/等待中陈旧action的屏障由等待循环与reaper按档释放，新restart可接管（自恢复）。",
     "job_output": "查询 execute_command 后台任务的状态与已收集输出。",

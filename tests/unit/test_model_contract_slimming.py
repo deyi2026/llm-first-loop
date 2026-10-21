@@ -243,11 +243,13 @@ def test_legacy_playbook_counterexample_exercises_banned_topics():
 # ---------- rules_version 联动（A-2.3 复核）----------
 
 
-def test_rules_version_reflects_v19():
-    """lite 头部 version=19 且 _rules_version() 解析一致。
+def test_rules_version_reflects_v20():
+    """lite 头部 version=20 且 _rules_version() 解析一致。
 
-    v19 增加回传/规模纪律（RULE-AI-25：结论+ref+短摘要≤200字符、跨阶段传
-    ref 不粘贴、并行默认 ≤3）；v18 收正失败回执边界；v17 全模型认识论诚实。
+    v20 补 RULE-AI-35(3) 用户豁免路径（与 28(a) 对齐：记录范围与依据，泛化
+    指示不构成豁免）；v19 增加回传/规模纪律（RULE-AI-25：结论+ref+短摘要≤
+    200字符、跨阶段传 ref 不粘贴、并行默认 ≤3）；v18 收正失败回执边界；
+    v17 全模型认识论诚实。
     """
     import sys
 
@@ -256,5 +258,5 @@ def test_rules_version_reflects_v19():
 
     lite = _read("docs/ai_rules.lite.md")
     m = re.search(r"version=(\d+)", lite.splitlines()[0])
-    assert m and m.group(1) == "19", "lite 头部应为 version=19"
-    assert _rules_version() == "19", "_rules_version() 应反映 v19"
+    assert m and m.group(1) == "20", "lite 头部应为 version=20"
+    assert _rules_version() == "20", "_rules_version() 应反映 v20"

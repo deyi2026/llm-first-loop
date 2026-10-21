@@ -234,6 +234,8 @@ class ExecuteCommandTool:
         "命令输出默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断，并由统一 durable recovery 负责恢复；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
         + "RULE-AI-28：" + REVIEW_GATE_OBLIGATION
+        + "RULE-AI-35：护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前，"
+          "须构造应拦输入实测拦截；未实测的完成声明只可停在'代码已提交'。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.COMMAND_SNAPSHOT)
     )
