@@ -60,6 +60,7 @@ webui/node_modules/
 webui/node_modules
 webui/dist/
 webui/tsconfig.tsbuildinfo
+webui/.typecheck-shadow.jsonl
 
 # SWE-bench 评测产物（本地跑评测输出，不入库——22 个 json 污染工作区）
 llm-first-loop.swe-*.json
