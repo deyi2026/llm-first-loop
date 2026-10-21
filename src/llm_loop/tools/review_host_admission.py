@@ -435,6 +435,28 @@ def _git(root: Path, *argv: str) -> bytes:
     return run.stdout
 
 
+# EVO-20261021-ea18d5ce (human-approved 2026-10-21): runtime-output exclusion
+# list. Full runs rewrite tracked reports (reports/**; one regenerated report
+# is a single 302KB line, so its own diff text already exceeds the material
+# ceiling). That churn is runtime OUTPUT, not review-bound input: it must
+# neither refuse admission nor churn the frozen SHA that check_shell re-binds
+# after the run — otherwise "review PASS -> restore runtime state -> full
+# test" is structurally impossible. Scope is deliberately narrow and
+# human-approved: only UNCOMMITTED changes (working-tree dirt and untracked
+# files) under these prefixes are omitted from the reviewer material; anything
+# COMMITTED stays fully reviewed, and the sensitive-filename refusal still
+# applies to every changed path, excluded or not. The model must not extend
+# this list ad hoc; changes require an approved evolution.
+_RUNTIME_OUTPUT_EXCLUDES: tuple[str, ...] = ("reports/",)
+
+
+def _is_runtime_output(name: str) -> bool:
+    return any(
+        name == prefix.rstrip("/") or name.startswith(prefix)
+        for prefix in _RUNTIME_OUTPUT_EXCLUDES
+    )
+
+
 def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
@@ -461,25 +483,47 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
     # The untrusted checkout may configure a textconv driver in .gitattributes.
     # Git diff must remain a read-only operation: disable both external diff
     # programs and text conversion before generating reviewer source material.
-    committed = _git(repo, "diff", "--binary", "--no-ext-diff", "--no-textconv", base, "HEAD")
-    working = _git(repo, "diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD")
-    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
-    changed_names = (
-        _git(repo, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", base, "HEAD")
-        + _git(repo, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD")
-    ).split(b"\0")
-    new_files: list[tuple[str, str, str]] = []
-    if any(_SENSITIVE_FILENAME.search(name.decode("utf-8", "replace"))
-           for name in changed_names if name):
+
+    def _diff_names(*ref_args: str) -> list[str]:
+        raw = _git(repo, "diff", "--no-ext-diff", "--no-textconv",
+                   "--name-only", "-z", *ref_args)
+        return [n.decode("utf-8", "replace") for n in raw.split(b"\0") if n]
+
+    def _path_diffs(names: list[str], *ref_args: str) -> list[tuple[str, str]]:
+        # Per-path diffs with :(literal) pathspec magic: union is byte-equal
+        # to the whole diff (no rename detection is enabled), keeps each
+        # section independently attributable, and never lets glob
+        # metacharacters in a filename widen the pathspec.
+        out: list[tuple[str, str]] = []
+        for name in names:
+            blob = _git(repo, "diff", "--binary", "--no-ext-diff", "--no-textconv",
+                        *ref_args, "--", f":(literal){name}")
+            out.append((name, blob.decode("utf-8", "replace")))
+        return out
+
+    committed_names = _diff_names(base, "HEAD")
+    working_names = _diff_names("HEAD")
+    # Sensitive-path refusal covers EVERY changed path, including excluded
+    # runtime-output paths: exclusion may not become a smuggling channel.
+    if any(_SENSITIVE_FILENAME.search(name) for name in committed_names + working_names):
         raise ValueError("review_sensitive_tracked_path_refused")
+    committed = _path_diffs(committed_names, base, "HEAD")
+    kept_working_names = [n for n in working_names if not _is_runtime_output(n)]
+    working = _path_diffs(kept_working_names, "HEAD")
+    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    new_files: list[tuple[str, str, str]] = []
+    excluded_untracked = 0
     for raw_name in untracked:
         if not raw_name:
             continue
-        if len(new_files) >= 40:
-            raise ValueError("review_untracked_file_limit")
         name = raw_name.decode("utf-8", "strict")
         if _SENSITIVE_FILENAME.search(name):
             raise ValueError("review_sensitive_untracked_path_refused")
+        if _is_runtime_output(name):
+            excluded_untracked += 1
+            continue
+        if len(new_files) >= 40:
+            raise ValueError("review_untracked_file_limit")
         path = (repo / name)
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(repo):
             raise ValueError("review_untracked_path_unsafe")
@@ -490,10 +534,14 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
     # A push review must state the base it diffed against so the reviewer and
     # the admission receipt can be cross-checked against remote facts.
     base_line = f"push_remote_base={base}" if push_base is not None else f"merge_base={base}"
+    excludes_line = (
+        "runtime_output_excludes=" + ",".join(_RUNTIME_OUTPUT_EXCLUDES) + "\n"
+        if _RUNTIME_OUTPUT_EXCLUDES else ""
+    )
     material = (
-        f"repo_head={head}\n{base_line}\n"
-        f"committed_delta:\n{committed.decode('utf-8', 'replace')}\n"
-        f"uncommitted_delta:\n{working.decode('utf-8', 'replace')}\n"
+        f"repo_head={head}\n{base_line}{excludes_line}"
+        "committed_delta:\n" + "".join(text for _, text in committed)
+        + "uncommitted_delta:\n" + "".join(text for _, text in working)
         + "\n".join(f"untracked {name} sha={sha}\n{text}" for name, sha, text in new_files)
     )
     # Bounded complete snapshot, not a summary masquerading as full review.
@@ -503,8 +551,20 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
     # This static check is the conservative floor; the dynamic spawn-gate
     # pre-check in start() may impose a tighter live-registry cap (EVO-
     # 20261021-5bf26586).
-    if len(material.encode("utf-8")) > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
-        raise ValueError("review_artifact_exceeds_192kb")
+    total = len(material.encode("utf-8"))
+    if total > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
+        # EVO-20261021-ea18d5ce: refuse WITH attribution so the caller can
+        # act (split/stash/commit) without a manual numstat/ls -la hunt.
+        sections = [(f"committed:{n}", len(t.encode("utf-8"))) for n, t in committed]
+        sections += [(f"working:{n}", len(t.encode("utf-8"))) for n, t in working]
+        sections += [(f"untracked:{n}", len(t.encode("utf-8"))) for n, _, t in new_files]
+        top = sorted(sections, key=lambda kv: kv[1], reverse=True)[:3]
+        raise ValueError(
+            "review_artifact_exceeds_192kb"
+            f": material={total}B cap={_REVIEWER_STATIC_MATERIAL_CAP_BYTES}B"
+            " largest=[" + "; ".join(f"{label}={size}B" for label, size in top) + "]"
+            + (f" excluded_untracked={excluded_untracked}" if excluded_untracked else "")
+        )
     identity = _digest(_canonical({
         "head": head, "base": base, "repo": str(repo), "material": material,
         "untracked_shas": [(n, s) for n, s, _ in new_files],

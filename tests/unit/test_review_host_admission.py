@@ -494,8 +494,79 @@ def test_large_but_bounded_multi_file_artifact_is_reviewable(tmp_path: Path) -> 
     (repo / "many_tests.py").write_text("x = " + repr("a" * 193_000) + "\n")
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
-    assert blocked["reason"] == "review_artifact_exceeds_192kb"
+    assert blocked["reason"].startswith("review_artifact_exceeds_192kb")
+    # EVO-20261021-ea18d5ce: the refusal must attribute its largest sections
+    # so the caller can act without a manual numstat/ls -la hunt.
+    assert "many_tests.py" in blocked["reason"]
     assert runner.started == 1
+
+
+def _commit_runtime_report(repo: Path) -> None:
+    d = repo / "reports" / "phase3" / "m0"
+    d.mkdir(parents=True)
+    (d / "S10.json").write_text('{"baseline":true}')
+    subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "report baseline"], check=True)
+
+
+def test_runtime_report_regeneration_keeps_full_test_binding_alive(tmp_path: Path) -> None:
+    # EVO-20261021-ea18d5ce: a full run rewrites tracked runtime reports
+    # (reports/**, one regenerated file is a single 302KB line). That churn
+    # must neither blow the 192KB material ceiling nor change the frozen SHA
+    # that check_shell re-binds after the run.
+    repo = _repo(tmp_path)
+    _commit_runtime_report(repo)
+    (repo / "reports" / "phase3" / "m0" / "S10.json").write_text("x" * 302_000)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert "runtime_output_excludes=reports/" in runner.task
+    assert "example.py" in runner.task  # real source dirt stays fully reviewed
+    assert "x" * 1000 not in runner.task  # regenerated report content is out
+    sha_before, _ = rha._source_snapshot(str(repo))
+    (repo / "reports" / "phase3" / "m0" / "S10.json").write_text("y" * 302_000)
+    sha_after, _ = rha._source_snapshot(str(repo))
+    assert sha_before == sha_after  # regeneration churns reports, not identity
+
+
+def test_committed_report_growth_is_still_reviewed_not_excluded(tmp_path: Path) -> None:
+    # The exclusion blinds only *uncommitted* material: anything committed
+    # (and therefore pushable) stays inside the frozen delta.
+    repo = _repo(tmp_path)
+    # The fixture's initial branch IS main and HEAD sits on it, so
+    # merge-base(HEAD, main)==HEAD would freeze an EMPTY committed delta;
+    # advance HEAD onto a side branch so the committed report is genuinely
+    # inside the frozen delta.
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    d = repo / "reports" / "phase3" / "m0"
+    d.mkdir(parents=True)
+    (d / "S10.json").write_text("z" * 302_000)
+    subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big committed report"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert blocked["reason"].startswith("review_artifact_exceeds_192kb")
+    assert "S10.json" in blocked["reason"]  # committed_delta attribution names it
+
+
+def test_untracked_runtime_output_under_reports_is_not_material(tmp_path: Path) -> None:
+    # Full runs also CREATE new report files; those must not trip the 200KB
+    # per-untracked-file bound or enter the reviewer material either.
+    repo = _repo(tmp_path)
+    d = repo / "reports" / "newrun"
+    d.mkdir(parents=True)
+    (d / "BIG.json").write_text("w" * 250_000)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert "w" * 1000 not in runner.task
 
 
 @pytest.mark.parametrize(
@@ -534,7 +605,9 @@ def test_host_git_snapshot_disables_textconv_and_external_diff(
     host.attach_runner(FakeChildRunner())
     result = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert result["accepted"]
-    assert len(git_diffs) >= 4
+    # EVO-20261021-ea18d5ce: the committed delta is now built per-path, so
+    # a clean fixture yields 2 name-only probes + 1 content diff.
+    assert len(git_diffs) >= 3
     assert all("--no-textconv" in args and "--no-ext-diff" in args for args in git_diffs)
 
 
