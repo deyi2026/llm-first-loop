@@ -950,8 +950,11 @@ def test_push_review_freezes_remote_ahead_commits_and_drift_denies(tmp_path: Pat
     assert not verdict.allowed
 
 
-def test_push_base_falls_back_to_tracking_ref_offline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _, repo, base = _bare_origin_and_repo(tmp_path)
+def test_push_base_refuses_offline_even_with_tracking_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # EVO-20261021-89256d43 review Finding 1: a local tracking ref is
+    # attacker-writable (`git update-ref`) and must never substitute for
+    # remote facts — otherwise the frozen delta could be shrunk arbitrarily.
+    _, repo, _base = _bare_origin_and_repo(tmp_path)
     (repo / "example.py").write_text("x = 3\n")
     subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ahead offline"], check=True)
@@ -964,14 +967,13 @@ def test_push_base_falls_back_to_tracking_ref_offline(tmp_path: Path, monkeypatc
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(rha.subprocess, "run", offline_ls_remote)
-    runner = FakeChildRunner()
     host = HostReviewAdmission()
+    runner = FakeChildRunner()
     host.attach_runner(runner)
-    issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
-    assert issued["accepted"]
-    assert issued["push_remote_commit"] == base
-    committed = runner.task.split("committed_delta")[1].split("uncommitted_delta")[0]
-    assert "+x = 3" in committed  # tracking-ref base(x=1)..HEAD(x=3)
+    verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert verdict["accepted"] is False
+    assert "push_base_unresolvable_fail_closed" in str(verdict)
+    assert runner.started == 0
 
 
 def test_push_fails_closed_without_any_remote_fact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

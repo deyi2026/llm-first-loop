@@ -581,30 +581,36 @@ def _push_dst_ref(refspec: str) -> str:
 def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> str:
     """Current commit of the push destination ref; fail closed without remote facts.
 
-    The push delta the gate must freeze is <this commit>..HEAD. Authoritative
-    source is ls-remote at admission time; if that is unavailable, fall back
-    to the local remote-tracking ref — it can only lag the real remote, which
-    widens (never shrinks) the reviewed delta, and git push itself compares
-    against it. Neither fact available -> refuse admission (EVO-20261021-89256d43).
+    The push delta the gate must freeze is <this commit>..HEAD. Query the PUSH
+    URL — the exact destination `git push` will use (same resolution as
+    `_push_target`) — so a checkout with divergent fetch/push URLs cannot make
+    the gate review one remote while pushing to another. There is deliberately
+    NO local fallback: remote-tracking refs are attacker-writable via `git
+    update-ref` and could shrink the frozen delta arbitrarily (even to empty)
+    while the push uploads everything the remote lacks
+    (EVO-20261021-89256d43, independent-review Finding 1). Remote facts
+    unavailable or the ref absent -> refuse admission.
     """
+    try:
+        push_url = _git(repo, "remote", "get-url", "--push", remote).decode().strip()
+    except (ValueError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("push_base_unresolvable_fail_closed") from exc
+    if not push_url:
+        raise ValueError("push_base_unresolvable_fail_closed")
     run = subprocess.run(
-        ["git", "--no-replace-objects", "-C", str(repo), "ls-remote", remote, dst_ref],
+        ["git", "--no-replace-objects", "-C", str(repo), "ls-remote", push_url, dst_ref],
         capture_output=True, timeout=12, check=False,
     )
-    if run.returncode == 0:
-        for line in run.stdout.decode("utf-8", "replace").splitlines():
-            sha, _, ref = line.partition("\t")
-            if ref.strip() == dst_ref and sha.strip():
-                return sha.strip()
-        # ls-remote answered but the destination ref does not exist yet: the
-        # first push would upload the entire history, which the material cap
-        # cannot honestly cover. Refuse instead of freezing an empty delta.
-        raise ValueError("push_remote_ref_absent_first_push_scope_unreviewable")
-    tracking = f"refs/remotes/{remote}/" + dst_ref.removeprefix("refs/heads/")
-    try:
-        return _git(repo, "rev-parse", "--verify", tracking + "^{commit}").decode().strip()
-    except ValueError as exc:
-        raise ValueError("push_base_unresolvable_fail_closed") from exc
+    if run.returncode != 0:
+        raise ValueError("push_base_unresolvable_fail_closed")
+    for line in run.stdout.decode("utf-8", "replace").splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref.strip() == dst_ref and sha.strip():
+            return sha.strip()
+    # ls-remote answered but the destination ref does not exist yet: the
+    # first push would upload the entire history, which the material cap
+    # cannot honestly cover. Refuse instead of freezing an empty delta.
+    raise ValueError("push_remote_ref_absent_first_push_scope_unreviewable")
 
 
 def _push_target(command: str, workdir: str) -> str:
