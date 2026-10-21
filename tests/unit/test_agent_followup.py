@@ -170,3 +170,39 @@ def test_followup_tool_wraps_runner(build_test_engine):
         assert r3.status.value == "failure" and "no-such-child" in r3.content
     finally:
         current_session_id.reset(tok)
+
+
+def test_followup_rejects_review_isolated_child(build_test_engine):
+    # EVO-20261021-e46f2431: 审查资格子代理（review_isolated）禁用 followup——续话会把
+    # child 置为 settled，永久失去 review_terminal_current 签发资格；与运行中 steer
+    # 禁令保持一致。reviewer 走后台 spawn 路径（handle 常驻至 prune），此处以真实
+    # runner.start(review_isolated=True) 复现该路径。
+    engine, fake = build_test_engine([])
+    parent = engine.session.create()
+    runner = _make_runner(engine)
+    fake._responses = [{"content": "审查完成"}]
+    tok = current_session_id.set(parent)
+    try:
+        out = runner.start(task="审查任务", depth=0, review_isolated=True)
+        assert out["accepted"], out
+        child_id = out["child_id"]
+        for _ in range(100):
+            ok, _, snapshot = runner.result_current(child_id, wait_seconds=0.05)
+            assert ok
+            if snapshot.get("state") != "running":
+                break
+        else:
+            raise AssertionError("review child never completed")
+        with runner._children_guard:
+            handle = runner._handles.get(child_id)
+            assert handle is not None and handle.review_isolated is True
+            assert handle.state == "completed"
+        ok2, detail, result = runner.followup_current(child_id, "请修正结论格式")
+        assert not ok2
+        assert "review_isolated" in detail and "review_admission" in detail
+        assert result is None
+        # 拒绝不改变 child 状态（未被置 settled，资格未被烧掉）。
+        with runner._children_guard:
+            assert runner._handles[child_id].state == "completed"
+    finally:
+        current_session_id.reset(tok)

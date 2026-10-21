@@ -2030,6 +2030,16 @@ class SubAgentRunner:
         if handle is not None:
             if handle.parent_id != requester:
                 return False, f"拒绝: {sid} 不是当前会话的直接 child。", None
+            if handle.review_isolated:
+                # EVO-20261021-e46f2431: 独立审查 child 与运行中 steer 同等禁止父会话
+                # 续话——followup 会把 child 置为 settled，防重放契约下其终态
+                # attestation 从此永久失效（review_terminal_current 只认 terminal
+                # completed），等于烧掉本次审查的签发能力。
+                return False, (
+                    f"审查资格子代理 {sid} 禁用 followup（review_isolated）：续话会把它置为 "
+                    "settled 并永久失去审查资格签发。需要新审查结论时用 review_admission "
+                    "重开一次。"
+                ), None
             if handle.state == "running":
                 return False, f"{sid} 仍在运行；运行中转向请用 agent_message。", None
             generation = handle.generation

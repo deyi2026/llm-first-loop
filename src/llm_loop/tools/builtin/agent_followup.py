@@ -22,6 +22,8 @@ class AgentFollowupTool:
         "同深度，本轮最多 6 轮。预算由程序硬记账：每 child 最多 2 次、"
         "每父会话最多 4 次、child 终止后 15 分钟内有效；超限/过期/非直接 child/运行中"
         "均显式拒绝，此时改用 spawn_subagent 新开 child 并在 task 中携带必要上下文。"
+        "审查资格子代理（review_admission 发起的独立 reviewer）禁用 followup：续话会把 "
+        "child 置为 settled 并永久失去资格签发；需要新审查结论用 review_admission 重开。"
     )
     parameters = {
         "type": "object",

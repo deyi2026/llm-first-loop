@@ -1274,14 +1274,24 @@ class HostReviewAdmission:
             return {"qualification": "REVISE", "reason": "review_not_successfully_completed"}
         answer = str(getattr(result, "final_answer", "") or "")
         verdicts = re.findall(r"(?m)^VERDICT:\s*(PASS|REVISE|BLOCK)\s*$", answer)
-        lines = re.findall(r"(?m)^P0=(\d+) P1=(\d+) P2=(\d+)\s*$", answer)
-        mentions = {n: re.findall(r"\b" + n + r"\s*[:=]\s*(\d+)\b", answer) for n in ("P0","P1","P2")}
+        # EVO-20261021-e46f2431: 审查材料常内嵌历史回执/评审 JSON，reviewer 在正文
+        # 引用其中的 P0/P1/P2 与 SHA256 数字是合法行为；全文扫描曾把这些引用误判为
+        # 自相矛盾而 fail-closed。数值一致性检查只看尾部结论块（最后一个 VERDICT:
+        # 行之后的文本，即 reviewer 自述结论的三行契约区），正文引用不再误伤；
+        # 结论块内任何不一致仍 fail-closed。VERDICT 行唯一性仍在全文范围。
+        last_verdict = None
+        for m in re.finditer(r"(?m)^VERDICT:\s*(PASS|REVISE|BLOCK)\s*$", answer):
+            last_verdict = m
+        conclusion = answer[last_verdict.end():] if last_verdict is not None else ""
+        lines = re.findall(r"(?m)^P0=(\d+) P1=(\d+) P2=(\d+)\s*$", conclusion)
+        sha_lines = re.findall(r"(?m)^SHA256:\s*([0-9a-f]{64})\s*$", conclusion)
+        mentions = {n: re.findall(r"\b" + n + r"\s*[:=]\s*(\d+)\b", conclusion) for n in ("P0","P1","P2")}
         qualifying = (
             len(verdicts) == 1 and verdicts[0] == "PASS"
             and len(lines) == 1 and lines[0][:2] == ("0", "0")
             and all(len(set(rows)) == 1 and len(rows) >= 1 for rows in mentions.values())
-            and len(re.findall(r"(?m)^SHA256:\s*([0-9a-f]{64})\s*$", answer)) == 1
-            and f"SHA256: {frozen.sha}" in answer
+            and len(sha_lines) == 1
+            and sha_lines[0] == frozen.sha
         )
         if not qualifying:
             # Fail closed, but surface the reviewer's own words so a malformed
