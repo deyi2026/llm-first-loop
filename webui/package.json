@@ -9,7 +9,9 @@
     "build": "node scripts/build-with-source-binding.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "typecheck:fast": "tsrs -p tsconfig.json"
   },
   "dependencies": {
     "dompurify": "^3.4.13",
@@ -25,6 +27,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^25.0.1",
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "typescript": "^5.7.2",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"
