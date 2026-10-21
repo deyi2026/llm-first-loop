@@ -887,3 +887,130 @@ def test_unresolved_registry_falls_back_to_static_ceiling(tmp_path: Path) -> Non
     allowed2 = host2.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert allowed2["accepted"] is True
     assert runner2.started == 1
+
+
+def _work_repo(tmp_path: Path) -> Path:
+    work = tmp_path / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    return _repo(work)
+
+
+def _bare_origin_and_repo(tmp_path: Path) -> tuple[Path, Path, str]:
+    """A repo on main whose origin already has main at the baseline commit."""
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "-b", "main", "--bare", str(bare)], check=True)
+    repo = _work_repo(tmp_path)  # main @ baseline commit, example.py dirty
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(bare)], check=True)
+    subprocess.run(["git", "-C", str(repo), "push", "-q", "origin", "main"], check=True)
+    subprocess.run(["git", "-C", str(repo), "fetch", "-q", "origin"], check=True)
+    base = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "origin/main"],
+        capture_output=True, check=True,
+    ).stdout.decode().strip()
+    return bare, repo, base
+
+
+def test_push_review_freezes_remote_ahead_commits_and_drift_denies(tmp_path: Path) -> None:
+    """commit-first-review-later flow: the frozen delta must be remote..HEAD,
+    never an empty merge-base(HEAD, main) delta (EVO-20261021-89256d43)."""
+    bare, repo, base = _bare_origin_and_repo(tmp_path)
+    # Two local commits on main ahead of origin — the real push payload.
+    (repo / "example.py").write_text("x = 3\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ahead one"], check=True)
+    (repo / "example.py").write_text("x = 4\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ahead two"], check=True)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert issued["accepted"]
+    assert issued["push_remote_commit"] == base
+    # Material must state the remote base and actually contain the payload:
+    # committed_delta is a file diff (base x=1 -> HEAD x=4), no log lines.
+    assert f"push_remote_base={base}" in runner.task
+    committed = runner.task.split("committed_delta")[1].split("uncommitted_delta")[0]
+    assert "+x = 4" in committed and "-x = 1" in committed and "-x = 2" not in committed
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+    assert host.check_shell("author-1", "git push origin main", str(repo)).allowed
+    # The remote ref moves after admission (another writer pushed): the frozen
+    # candidate no longer matches recomputed remote facts — deny, re-review.
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+    subprocess.run(["git", "-C", str(other), "config", "user.name", "Other"], check=True)
+    subprocess.run(["git", "-C", str(other), "config", "user.email", "o@example.invalid"], check=True)
+    (other / "example.py").write_text("x = 5\n")
+    subprocess.run(["git", "-C", str(other), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(other), "commit", "-qm", "remote moved"], check=True)
+    subprocess.run(["git", "-C", str(other), "push", "-q", "origin", "main"], check=True)
+    verdict = host.check_shell("author-1", "git push origin main", str(repo))
+    assert not verdict.allowed
+
+
+def test_push_base_falls_back_to_tracking_ref_offline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, repo, base = _bare_origin_and_repo(tmp_path)
+    (repo / "example.py").write_text("x = 3\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ahead offline"], check=True)
+
+    real_run = subprocess.run
+
+    def offline_ls_remote(args, **kwargs):
+        if "ls-remote" in args:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"network down")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(rha.subprocess, "run", offline_ls_remote)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert issued["accepted"]
+    assert issued["push_remote_commit"] == base
+    committed = runner.task.split("committed_delta")[1].split("uncommitted_delta")[0]
+    assert "+x = 3" in committed  # tracking-ref base(x=1)..HEAD(x=3)
+
+
+def test_push_fails_closed_without_any_remote_fact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _repo(tmp_path)
+    # Remote exists but was never fetched: no tracking ref anywhere.
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(tmp_path / "never-cloned.git")], check=True)
+    (repo / "example.py").write_text("x = 3\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "no facts"], check=True)
+
+    real_run = subprocess.run
+
+    def offline_ls_remote(args, **kwargs):
+        if "ls-remote" in args:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"network down")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(rha.subprocess, "run", offline_ls_remote)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert verdict["accepted"] is False
+    assert "push_base_unresolvable_fail_closed" in str(verdict)
+    assert runner.started == 0
+
+
+def test_first_push_of_absent_remote_branch_refused(tmp_path: Path) -> None:
+    bare = tmp_path / "empty-origin.git"
+    subprocess.run(["git", "init", "-q", "-b", "main", "--bare", str(bare)], check=True)
+    repo = _work_repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(bare)], check=True)
+    (repo / "example.py").write_text("x = 3\n")
+    subprocess.run(["git", "-C", str(repo), "add", "example.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "first push"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert verdict["accepted"] is False
+    assert "push_remote_ref_absent_first_push_scope_unreviewable" in str(verdict)
+    assert runner.started == 0

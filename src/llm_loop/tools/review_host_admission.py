@@ -435,8 +435,15 @@ def _git(root: Path, *argv: str) -> bytes:
     return run.stdout
 
 
-def _source_snapshot(workdir: str) -> tuple[str, str]:
-    """Freeze main-relative committed delta, all tracked changes and untracked source."""
+def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, str]:
+    """Freeze committed delta vs the review base, tracked changes and untracked source.
+
+    push_base is used by git_push: the base must be the push destination's
+    current commit. A normal commit-first-review-later flow keeps HEAD on the
+    main branch, so merge-base(HEAD, main)==HEAD and the old base froze an
+    EMPTY committed delta — the reviewer never saw what the push would
+    actually upload (EVO-20261021-89256d43).
+    """
     root = Path(workdir).expanduser().resolve(strict=True)
     if not root.is_dir():
         raise ValueError("workdir_not_directory")
@@ -444,10 +451,13 @@ def _source_snapshot(workdir: str) -> tuple[str, str]:
     if not root.is_relative_to(repo):
         raise ValueError("workdir_outside_repo")
     head = _git(repo, "rev-parse", "HEAD").decode().strip()
-    try:
-        base = _git(repo, "merge-base", "HEAD", "main").decode().strip()
-    except ValueError:
-        base = head
+    if push_base is None:
+        try:
+            base = _git(repo, "merge-base", "HEAD", "main").decode().strip()
+        except ValueError:
+            base = head
+    else:
+        base = push_base
     # The untrusted checkout may configure a textconv driver in .gitattributes.
     # Git diff must remain a read-only operation: disable both external diff
     # programs and text conversion before generating reviewer source material.
@@ -477,8 +487,11 @@ def _source_snapshot(workdir: str) -> tuple[str, str]:
         if len(body) > 200_000:
             raise ValueError("review_untracked_file_too_large")
         new_files.append((name, _digest(body), body.decode("utf-8", "replace")))
+    # A push review must state the base it diffed against so the reviewer and
+    # the admission receipt can be cross-checked against remote facts.
+    base_line = f"push_remote_base={base}" if push_base is not None else f"merge_base={base}"
     material = (
-        f"repo_head={head}\nmerge_base={base}\n"
+        f"repo_head={head}\n{base_line}\n"
         f"committed_delta:\n{committed.decode('utf-8', 'replace')}\n"
         f"uncommitted_delta:\n{working.decode('utf-8', 'replace')}\n"
         + "\n".join(f"untracked {name} sha={sha}\n{text}" for name, sha, text in new_files)
@@ -524,8 +537,9 @@ def _effective_push_workdir(command: str, workdir: str) -> str:
     return str(cwd)
 
 
-def _push_target(command: str, workdir: str) -> str:
-    """Require explicit remote/ref: no ambiguous implicit push.default or --all."""
+def _push_refspec(command: str) -> tuple[str, str]:
+    """Extract (remote, refspec) from a direct push command with the same
+    strictness as _push_target: explicit remote and ref, no implicit defaults."""
     try:
         words = shlex.split(command)
     except ValueError as exc:
@@ -552,6 +566,50 @@ def _push_target(command: str, workdir: str) -> str:
     remote, refspec = operands
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,90}", remote) or not re.fullmatch(r"[A-Za-z0-9_./:+-]{1,150}", refspec):
         raise ValueError("push_target_invalid")
+    return remote, refspec
+
+
+def _push_dst_ref(refspec: str) -> str:
+    """Destination ref of the refspec, normalized to a full ref name."""
+    dst = refspec.split(":", 1)[1] if ":" in refspec else refspec
+    dst = dst.lstrip("+")
+    if not dst or ":" in dst:
+        raise ValueError("push_target_invalid")
+    return dst if dst.startswith("refs/") else f"refs/heads/{dst}"
+
+
+def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> str:
+    """Current commit of the push destination ref; fail closed without remote facts.
+
+    The push delta the gate must freeze is <this commit>..HEAD. Authoritative
+    source is ls-remote at admission time; if that is unavailable, fall back
+    to the local remote-tracking ref — it can only lag the real remote, which
+    widens (never shrinks) the reviewed delta, and git push itself compares
+    against it. Neither fact available -> refuse admission (EVO-20261021-89256d43).
+    """
+    run = subprocess.run(
+        ["git", "--no-replace-objects", "-C", str(repo), "ls-remote", remote, dst_ref],
+        capture_output=True, timeout=12, check=False,
+    )
+    if run.returncode == 0:
+        for line in run.stdout.decode("utf-8", "replace").splitlines():
+            sha, _, ref = line.partition("\t")
+            if ref.strip() == dst_ref and sha.strip():
+                return sha.strip()
+        # ls-remote answered but the destination ref does not exist yet: the
+        # first push would upload the entire history, which the material cap
+        # cannot honestly cover. Refuse instead of freezing an empty delta.
+        raise ValueError("push_remote_ref_absent_first_push_scope_unreviewable")
+    tracking = f"refs/remotes/{remote}/" + dst_ref.removeprefix("refs/heads/")
+    try:
+        return _git(repo, "rev-parse", "--verify", tracking + "^{commit}").decode().strip()
+    except ValueError as exc:
+        raise ValueError("push_base_unresolvable_fail_closed") from exc
+
+
+def _push_target(command: str, workdir: str) -> str:
+    """Require explicit remote/ref: no ambiguous implicit push.default or --all."""
+    remote, refspec = _push_refspec(command)
     root = Path(workdir).expanduser().resolve(strict=True)
     url = _git(root, "remote", "get-url", "--push", remote).strip()
     return _digest(_canonical({"remote": remote, "refspec": refspec, "remote_url_sha256": _digest(url)}))
@@ -898,7 +956,7 @@ class HostReviewAdmission:
     def _target(
         kind: str, workdir: str, command: str, target_name: str, capture: Callable[[], dict[str, Any]] | None,
         manuscript_path: str = "", artifact_paths: Sequence[str] = (),
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str, str, str]:
         if kind == "article_publish":
             if not target_name or _PUBLISH_LABEL_RE.fullmatch(target_name) is None:
                 raise ValueError("publication_target_name_required")
@@ -910,7 +968,7 @@ class HostReviewAdmission:
             if not _has_document_editor(page) and "article" not in target_name.lower() and "文章" not in target_name:
                 raise ValueError("publication_article_editor_not_observed")
             sha, text = _browser_binding(page, manuscript_path=manuscript_path, artifact_paths=artifact_paths)
-            return sha, f"article_publish:{target_name}", text
+            return sha, f"article_publish:{target_name}", text, ""
         if kind not in {"full_test", "git_push"} or classify_host_shell(command) != kind:
             raise ValueError("review_kind_command_mismatch")
         if not workdir:
@@ -942,14 +1000,29 @@ class HostReviewAdmission:
                 # or change artifacts after freezing. Caller must dispatch the
                 # actual pytest/ci_gate command with an explicit workdir.
                 raise ValueError("full_test_shell_c_requires_direct_command")
-        true_dir = _effective_push_workdir(command, workdir) if kind == "git_push" else workdir
-        sha, text = _source_snapshot(true_dir)
-        dest = (
-            _push_target(command, true_dir)
-            if kind == "git_push"
-            else str(Path(true_dir).expanduser().resolve(strict=True))
-        )
-        return sha, f"{kind}:{dest}:command:{_digest(command.encode('utf-8'))}", text
+        push_base = ""
+        if kind == "git_push":
+            true_dir = _effective_push_workdir(command, workdir)
+            # The review base for a push is the destination ref's current
+            # commit (ls-remote, tracking-ref fallback), never merge-base
+            # against the local main: committing on main before review must
+            # not empty out the frozen delta (EVO-20261021-89256d43).
+            remote, refspec = _push_refspec(command)
+            repo = Path(_git(Path(true_dir), "rev-parse", "--show-toplevel").decode().strip()).resolve()
+            push_base = _push_base_commit(repo, remote, _push_dst_ref(refspec))
+            try:
+                _git(repo, "cat-file", "-e", push_base + "^{commit}")
+            except ValueError as exc:
+                # Remote moved ahead of this clone; the diff base must exist
+                # locally or the reviewed delta cannot be computed at all.
+                raise ValueError("push_remote_commit_not_local_fetch_first") from exc
+            sha, text = _source_snapshot(true_dir, push_base=push_base)
+            dest = _push_target(command, true_dir)
+        else:
+            true_dir = workdir
+            sha, text = _source_snapshot(true_dir)
+            dest = str(Path(true_dir).expanduser().resolve(strict=True))
+        return sha, f"{kind}:{dest}:command:{_digest(command.encode('utf-8'))}", text, push_base
 
     def start(
         self, parent: str, kind: str, *, workdir: str = "", command: str = "", target_name: str = "",
@@ -958,7 +1031,7 @@ class HostReviewAdmission:
         if not parent or self._runner is None:
             return {"accepted": False, "reason": "review_host_unavailable"}
         try:
-            sha, target, material = self._target(
+            sha, target, material, push_remote_commit = self._target(
                 kind, workdir, command, target_name, self._browser_capture,
                 manuscript_path=manuscript_path, artifact_paths=artifact_paths,
             )
@@ -1099,7 +1172,12 @@ class HostReviewAdmission:
             if child in self._records:
                 return {"accepted": False, "reason": "review_child_id_reused"}
             self._records[child] = _Frozen(kind, parent, target, sha, child_id=child)
-        return {"accepted": True, "child_id": child, "candidate_sha256": sha, "kind": kind, "target": target}
+        receipt = {"accepted": True, "child_id": child, "candidate_sha256": sha, "kind": kind, "target": target}
+        if kind == "git_push":
+            # Mechanical cross-check anchor: the exact remote commit the
+            # frozen delta is diffed against (EVO-20261021-89256d43 fix #3).
+            receipt["push_remote_commit"] = push_remote_commit
+        return receipt
 
     def poll(self, parent: str, child_id: str) -> dict[str, str]:
         with self._guard:
@@ -1233,7 +1311,10 @@ class HostReviewAdmission:
         if kind is None:
             return _ALLOWED
         try:
-            sha, target, _ = self._target(kind, workdir, command, "", None)
+            # Re-resolves the push base (ls-remote) too: if the remote ref moved
+            # after admission, the candidate SHA changes and the grant will not
+            # match — the drift check is built into recomputation.
+            sha, target, _, _ = self._target(kind, workdir, command, "", None)
         except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
             return self._deny(f"当前命令/产物无法绑定:{exc}")
         return self._consume(parent, kind, target, sha)
