@@ -1,0 +1,45 @@
+{
+ "ts": "2026-10-21T19:01:10+0800",
+ "task_round_repeat": {
+  "pre_r0": {
+   "calls": [
+    [
+     "execute_command",
+     "{\"command\":\"echo gate-check-ok\"}"
+    ]
+   ],
+   "content": "",
+   "exact_cmd": true
+  },
+  "post_r0": {
+   "calls": [
+    [
+     "execute_command",
+     "{\"command\":\"echo gate-check-ok\"}"
+    ]
+   ],
+   "content": "",
+   "exact_cmd": true
+  },
+  "pre_r1": {
+   "calls": [
+    [
+     "execute_command",
+     "{\"command\":\"echo gate-check-ok\"}"
+    ]
+   ],
+   "content": "",
+   "exact_cmd": true
+  },
+  "post_r1": {
+   "calls": [
+    [
+     "execute_command",
+     "{\"command\":\"echo gate-check-ok\"}"
+    ]
+   ],
+   "content": "",
+   "exact_cmd": true
+  }
+ }
+}
