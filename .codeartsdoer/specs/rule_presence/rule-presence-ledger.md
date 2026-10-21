@@ -10,9 +10,9 @@
 |---|---|
 | `generated_at` | 2026-10-15（RuleIndex 主线精确整合专项，只读盘点补登 Rule31；保留原 Rule32/Rule33 权威正文及历史证据） |
 | `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
-| `lite_version` | 19 |
+| `lite_version` | 20 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 38（2026-10-17 按当前 `scripts/rule_presence_audit.py` **全文去重 ref** 口径只读实测：35 个 `RULE-AI-xx` 文本编号，**包含仅在空缺说明中提到、并非正式规则的 RULE-AI-21**，再加附则/子规则/方法层 3 条；真正以 SoT `##` 标题定义的正式 Rule 是 **34 条**（2026-10-17 新增 RULE-AI-34），对应本台账 34 个正式规则行，另有 3 个 scope 登记项，共 **37 条真实登记项**。脚本观测 38 不得误称“正式规则 38”或“真实登记项 38”。Rule31 在原 main 台账漏登、Rule32/33 原条目完整保留、Rule34 于 2026-10-17 机械补登；gaps=3、uncovered=0） |
+| `records` | 39（2026-10-21 按当前 `scripts/rule_presence_audit.py` **全文去重 ref** 口径只读实测：36 个 `RULE-AI-xx` 文本编号，**包含仅在空缺说明中提到、并非正式规则的 RULE-AI-21**，再加附则/子规则/方法层 3 条；真正以 SoT `##` 标题定义的正式 Rule 是 **35 条**（2026-10-21 新增 RULE-AI-35），对应本台账 35 个正式规则行，另有 3 个 scope 登记项，共 **38 条真实登记项**。脚本观测 39 不得误称“正式规则 39”或“真实登记项 39”。Rule31 在原 main 台账漏登、Rule32/33 原条目完整保留、Rule34 于 2026-10-17 机械补登、Rule35 于 2026-10-21 CI 红灯修复机械补登；gaps=3、uncovered=0） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |
@@ -113,6 +113,7 @@
 | RULE-AI-32 | 共享文件格式化纪律——禁全文件 ruff format，hunk 级最小化或独立提交（SoT 2026-10-14） | 在库未注入 | EVO-20261014-a731be2b 人工批准新增：对非本次任务新引入的共享/存量文件禁止 `ruff format <file>` 全文件重排；格式化只允许作用于本次任务实际新增/修改的 hunk；确需全文件 format 时先 `ruff format --diff` 评估并独立提交（不与语义改动混提）；动机=M1b 实测全文件重排引入 ~400 行噪声污染审查面（ANALYSIS §7 实施纪律记录）；程序角色=无新增（规则层条款化，RULE 卡检索命中）。〔2026-10-14 可观测性 M1c-rev 全量回归期机械补登：内容取自 docs/ai_rules.md L527-535 真值源，登记缺口非本任务引入〕 |
 | RULE-AI-33 | service_control generation 冲突即事实——冲突回执直接重试、显式带代（SoT 2026-10-14） | 在库未注入 | 2026-10-14 终审组合实施同步登记（非漏登，SoT 规则三十三）：模型侧调用纪律条款——generation 冲突回执即当前事实，直接以回执 current 重试（存活 owner ≤一 poll；死 worker 由 reaper 按 30s/120s/2100s 分档回收），不等待/不询问；首选显式 expected_generation=最新 status 观察值；等待中旧 action 不构成重试前置；A 方案（publish 时全量 supersede 非终态 action）rejected 留档于条款第 4 条。程序角色=程序侧已实现（等待循环 stale 检测 + reaper accepted 覆盖，同一变更集），规则只管模型侧。 |
 | RULE-AI-34 | 分支收口合并闸——分支 Goal 完成必经专门合并审查并入 main（SoT 2026-10-17） | 在库未注入 | 用户指示 2026-10-17 新增（SoT docs/ai_rules.md L560）：分支 Goal 完成必经 merge-review-gate 专门子代理审查后并入 main，防分支工作白做；程序承载=skills/merge-review-gate 任务书与回执通道（main b184edf9c）。〔2026-10-17 F 批集成分支机械补登：RULE-AI-34 加入会话未同步台账，登记缺口非本任务引入；存在性按 scripts/rule_presence_audit.py 实测，与既有规则行同档〕 |
+| RULE-AI-35 | 门槛/护栏类变更的验收硬性要求——宣称“生效”前必须实测“应拦输入”（SoT 2026-10-21） | 在库未注入 | EVO-20261021-031db968（2026-10-21 人工批准）新增：拦截判据/阻断清单/正则/阈值等门槛护栏类变更，宣称“已生效”前必须构造应拦输入实测拦截，未实测只可称“代码已提交”；程序承载=execute_command/review_host_admission 工具契约提示（68d117dac/f68fcb0d2）。〔2026-10-21 CI 红灯修复机械补登：RULE-AI-35 入库会话未同步台账，登记缺口非本任务引入；存在性按 scripts/rule_presence_audit.py 实测（records=39），与既有规则行同档〕 |
 
 > RULE-AI-22 同时出现在 §2.2（B3 子缺口：discover→hydrate 触发时机）与本节（主条款设计性零注入），二者不冲突：本特性只补"触发时机"子语义，不改主条款。
 

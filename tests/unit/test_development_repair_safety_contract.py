@@ -61,12 +61,12 @@ def test_lfl_rule_sot_exposes_rule24_exactly_without_prompt_injection() -> None:
     assert "DEVELOPMENT_REPAIR_SAFETY" not in prompt
 
 
-def test_lite_playbooks_are_v19_and_keep_compact_maintenance_contracts() -> None:
+def test_lite_playbooks_are_v20_and_keep_compact_maintenance_contracts() -> None:
     zh = _read("docs/ai_rules.lite.md")
     en = _read("docs/ai_rules.lite.en.md")
     for text in (zh, en):
         first = text.splitlines()[0]
-        assert re.search(r"version=19\b", first)
+        assert re.search(r"version=20\b", first)
         assert "RULE-AI-24" in text
         assert "RULE-AI-25" in text
         assert "docs/DEVELOPMENT_REPAIR_SAFETY.md" in text
