@@ -566,6 +566,13 @@ def _push_refspec(command: str) -> tuple[str, str]:
     remote, refspec = operands
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,90}", remote) or not re.fullmatch(r"[A-Za-z0-9_./:+-]{1,150}", refspec):
         raise ValueError("push_target_invalid")
+    src = refspec.split(":", 1)[0] if ":" in refspec else refspec
+    if refspec.startswith("+") or not src:
+        # Force pushes and ref deletions are destructive operations whose
+        # effect the frozen push-base..HEAD delta cannot represent
+        # (a deletion freezes an ordinary-looking delta; a force push can
+        # discard remote commits absent from that delta).
+        raise ValueError("push_destructive_refspec_not_reviewable")
     return remote, refspec
 
 
@@ -595,10 +602,26 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> str:
         push_url = _git(repo, "remote", "get-url", "--push", remote).decode().strip()
     except (ValueError, subprocess.TimeoutExpired) as exc:
         raise ValueError("push_base_unresolvable_fail_closed") from exc
-    if not push_url:
-        raise ValueError("push_base_unresolvable_fail_closed")
+    if not push_url or push_url.startswith("-") or any(ch.isspace() for ch in push_url):
+        # The URL comes from attacker-writable git config: it must never parse
+        # as an option (option injection -> upload-pack RCE) and whitespace
+        # cannot appear in a legitimate transport destination.
+        raise ValueError("push_remote_url_untrusted")
+    scheme, sep, _rest = push_url.partition("://")
+    if (sep and scheme.lower() not in {"http", "https", "ssh", "git", "file"}) or (
+        not sep and "::" in push_url
+    ):
+        # ext:: / fd:: and unknown helper transports execute
+        # attacker-controlled commands or reach inherited descriptors.
+        # Note helper syntax is `helper::address` (no slashes), so a plain
+        # scheme allowlist on `...://` would miss it entirely.
+        raise ValueError("push_remote_url_untrusted")
     run = subprocess.run(
-        ["git", "--no-replace-objects", "-C", str(repo), "ls-remote", push_url, dst_ref],
+        ["git", "--no-replace-objects",
+         # Neutralize shell-executed transport hooks sourced from the same
+         # attacker-writable config before contacting the remote.
+         "-c", "core.sshCommand=", "-c", "core.gitProxy=",
+         "-C", str(repo), "ls-remote", "--", push_url, dst_ref],
         capture_output=True, timeout=12, check=False,
     )
     if run.returncode != 0:

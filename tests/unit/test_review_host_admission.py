@@ -1015,4 +1015,43 @@ def test_first_push_of_absent_remote_branch_refused(tmp_path: Path) -> None:
     verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
     assert verdict["accepted"] is False
     assert "push_remote_ref_absent_first_push_scope_unreviewable" in str(verdict)
+
+
+def test_push_base_rejects_hostile_push_url(tmp_path: Path) -> None:
+    # Attacker-writable git config must never smuggle ls-remote options,
+    # shell transports, or ext:: helper transports via the push URL
+    # (independent-review Finding: option injection -> upload-pack RCE).
+    _origin, repo, _base = _bare_origin_and_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "remote.origin.pushurl", "--upload-pack=evil-command"],
+        check=True,
+    )
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    verdict = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert verdict["accepted"] is False
+    assert "push_remote_url_untrusted" in str(verdict)
+    assert runner.started == 0
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "remote.origin.pushurl", "ext::sh-c-evil"],
+        check=True,
+    )
+    verdict = host.start("author-2", "git_push", workdir=str(repo), command="git push origin main")
+    assert verdict["accepted"] is False
+    assert "push_remote_url_untrusted" in str(verdict)
+    assert runner.started == 0
+
+
+def test_push_refspec_rejects_deletion_and_force(tmp_path: Path) -> None:
+    # A push-base..HEAD delta cannot honestly represent ref deletion or a
+    # forced rewrite; both must be refused at admission time.
+    _origin, repo, _base = _bare_origin_and_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    for command in ("git push origin :main", "git push origin +main:main"):
+        verdict = host.start("author-1", "git_push", workdir=str(repo), command=command)
+        assert verdict["accepted"] is False
+        assert "push_destructive_refspec_not_reviewable" in str(verdict)
     assert runner.started == 0
