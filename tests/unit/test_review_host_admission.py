@@ -531,9 +531,14 @@ def test_runtime_report_regeneration_keeps_full_test_binding_alive(tmp_path: Pat
     assert sha_before == sha_after  # regeneration churns reports, not identity
 
 
-def test_committed_report_growth_is_still_reviewed_not_excluded(tmp_path: Path) -> None:
-    # The exclusion blinds only *uncommitted* material: anything committed
-    # (and therefore pushable) stays inside the frozen delta.
+def test_committed_runtime_monster_diff_is_truncated_not_deadlocked(tmp_path: Path) -> None:
+    # EVO-20261021-2f22aae5 (proposal A, human-approved 2026-10-22): a
+    # committed single-line runtime report (302KB) used to structurally
+    # exceed the 192KB ceiling — while publish's clean-tree requirement
+    # forces that very commit first (deadlock verified 2026-10-21). Committed
+    # runtime-output diffs above the projection bound now render as head/tail
+    # evidence plus an explicit truncation marker: the deadlock is gone and
+    # the change stays visible to the reviewer.
     repo = _repo(tmp_path)
     # The fixture's initial branch IS main and HEAD sits on it, so
     # merge-base(HEAD, main)==HEAD would freeze an EMPTY committed delta;
@@ -548,10 +553,76 @@ def test_committed_report_growth_is_still_reviewed_not_excluded(tmp_path: Path) 
     host = HostReviewAdmission()
     runner = FakeChildRunner()
     host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+    # The reviewer material names the file, keeps the diff header edges and
+    # states the truncation fact with byte counts.
+    assert "S10.json" in runner.task
+    assert "EVO-20261021-2f22aae5 TRUNCATED committed runtime output diff" in runner.task
+    assert "omitted " in runner.task and "B of " in runner.task
+    assert "diff --git" in runner.task
+    assert "z" * 60_000 not in runner.task  # the omitted middle is really out
+
+
+def test_committed_non_runtime_monster_still_refused(tmp_path: Path) -> None:
+    # EVO-20261021-2f22aae5 guardrail: the truncated projection unlocks ONLY
+    # _RUNTIME_OUTPUT_EXCLUDES paths. A committed single-line monster anywhere
+    # else keeps the full-review rule and the 192KB refusal, unchanged.
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "big.py").write_text("z" * 302_000)
+    subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big committed source"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
     assert blocked["reason"].startswith("review_artifact_exceeds_192kb")
-    assert "S10.json" in blocked["reason"]  # committed_delta attribution names it
+    assert "big.py" in blocked["reason"]  # attribution names the real culprit
+    assert runner.started == 0
+
+
+def test_committed_runtime_projection_keeps_the_192kb_ceiling(tmp_path: Path) -> None:
+    # EVO-20261021-2f22aae5 guardrail: the ceiling itself is unchanged.
+    # Five projected runtime monsters (~48KB each) still exceed 192KB and the
+    # admission is refused with attribution — split or shrink, no free pass.
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    for i in range(5):
+        p = repo / "reports" / f"run{i}" / "S.json"
+        p.parent.mkdir(parents=True)
+        p.write_text("z" * 302_000)
+    subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "many committed reports"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert blocked["reason"].startswith("review_artifact_exceeds_192kb")
+    assert runner.started == 0
+
+
+def test_small_committed_runtime_diff_stays_verbatim(tmp_path: Path) -> None:
+    # EVO-20261021-2f22aae5 guardrail: runtime diffs BELOW the projection
+    # bound pass through untouched — no marker, no truncation, byte for byte.
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    d = repo / "reports" / "m0"
+    d.mkdir(parents=True)
+    (d / "S.json").write_text('{"baseline":true}')
+    subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "small report"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert "TRUNCATED committed runtime output diff" not in runner.task
+    assert '{"baseline":true}' in runner.task
 
 
 def test_untracked_runtime_output_under_reports_is_not_material(tmp_path: Path) -> None:
