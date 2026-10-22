@@ -1,0 +1,71 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261022-ledger-recheck-policy",
+  "summary": "小批收口提交：(1) 经验使用账本 41→43 两条增量（2026-10-22 13:55，均 applied/helped/observation_linked 且带 evidence_refs）；(2) 检索基线同口径复测留痕 evals/retrieval_ab/method-semantic-baseline-20261020-recheck-20261022.json（同一冻结 goldset sha256 ff516896…、同一 runner：prod hit@1 26.7%→56.7%，与修复提交自带 after-cjk 结果 prod 通道逐条 100% 一致）；(3) docs/RUNBOOK-20261021-archive-stale.md 记录维护者 2026-10-22 确认：Web 宿主自动归档默认启用策略保留。无任何代码/门禁/控制机器变更。",
+  "components": [
+    {
+      "component_id": "usage-ledger-increment",
+      "paths": [
+        "experiences/usage.jsonl",
+        "experiences/.usage_watermark.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "经验使用声明账本（append-only 观测数据）",
+      "disposition": "追加 2 条真实使用记录（42/43：头条 syl-editor 发布链路第 5 次使用、攻击载荷字样安全写入通路经验新建当日使用），水位 41→43；不改历史条目。",
+      "evidence": [
+        "两条均带 evidence_refs（receipts/20261022-daily29-toutiao-submitted.json、docs/promotion/20261022-lfl-daily-29.md）。",
+        "git_security_scan --staged 4 文件通过。"
+      ],
+      "verification_level": "git_security_scan + GitHub PR CI",
+      "model_evidence_veto_recovery_exit": "账本为观测数据；如与实际使用不符可单独 revert 本提交，不影响代码。",
+      "rollback_route": "revert 本提交。"
+    },
+    {
+      "component_id": "retrieval-recheck-artifact",
+      "paths": [
+        "evals/retrieval_ab/method-semantic-baseline-20261020-recheck-20261022.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "检索评测产物",
+      "disposition": "同口径复测结果落盘：同一冻结 goldset（sha256 与基线一致）+ 同一 runner（基线后未改动）在切词修复后代码上的独立复跑；不修改基线与 after-cjk 原始结果文件。",
+      "evidence": [
+        "goldset sha256 三方一致（基线/after-cjk/复跑）。",
+        "prod 通道 17/30 命中与 after-cjk 逐条完全一致；keyword/bigram 逐条一致；semantic 仅 wire-truth-before-pr 1 条运行间波动。"
+      ],
+      "verification_level": "结果文件内含逐查询 rank/延迟，可由 runner 一键复现",
+      "model_evidence_veto_recovery_exit": "复现命令公开（run_method_semantic_baseline.py）；数字不符即以复现结果为准。",
+      "rollback_route": "revert 本提交。"
+    },
+    {
+      "component_id": "archive-runbook-policy-confirmation",
+      "paths": [
+        "docs/RUNBOOK-20261021-archive-stale.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "自动归档运行手册",
+      "disposition": "在背景节追加维护者决策记录：默认启用（60s 首延/24h 周期/5 天阈值）经 2026-10-22 明确确认保留，不做 opt-in；关闭此前审查的\"默认启用未见授权\"事项。纯文档，不改代码与配置。",
+      "evidence": [
+        "决策来源：维护者 2026-10-22 会话指示（保留默认启动）。"
+      ],
+      "verification_level": "文档评审",
+      "model_evidence_veto_recovery_exit": "若后续推翻决策，另提修订 PR。",
+      "rollback_route": "revert 本提交。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261022-ledger-recheck-policy.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交清单自身",
+      "disposition": "覆盖本 PR 全部 changed path（含清单自身）。",
+      "evidence": [
+        "check_architecture_submission.py --base <main HEAD> --head HEAD 本地通过。"
+      ],
+      "verification_level": "本地 checker + GitHub PR A.5 工作流",
+      "model_evidence_veto_recovery_exit": "覆盖不全时 checker 失败阻断 PR。",
+      "rollback_route": "修正清单后重推分支。"
+    }
+  ],
+  "declarations": []
+}
