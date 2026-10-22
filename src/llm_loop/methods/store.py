@@ -58,10 +58,12 @@ _DISPOSITION_STATUSES = frozenset({"invalidated", "retired"})
 # 证据（可能只是顺带提及），退回基础值 4 —— 保留 EVO-20261017 的“body 实质命中 > 描述顺带
 # 提及”口径。仅 idf 加权时保持 desc=4 作对照；运行期只读。
 _FIELD_WEIGHTS: dict[str, int] = {"id": 10, "name": 8, "desc": 4, "body": 5}
-# 2026-10-22 method-alias-retrieval：aliases 复用 name 的权重（_FIELD_WEIGHTS["name"]），
-# 不新增常量。理由是别名与 name 同为作者手写的"何时适用"表述，只是措辞更口语/更同义；
-# 给别名单独权重等于额外引入一个无人消融过的调参维度。别名只在 list() 词法排序里与
-# name 同权参与，不改变 idf/identifier_bonus/description 佐证逻辑。
+# 2026-10-22 method-alias-retrieval：别名是"检索提示"（retrieval hint），不是权威字段。
+# 权重必须严格低于 desc(4)：任何权威字段（id/name/desc/body）的命中都必须压过别名命中，
+# 否则通用 bigram 一旦被写进 aliases 就能把无关卡顶到 top-1（实测回归：锁存活查询的
+# top-1 被别名卡抢走）。别名只加进 lexical，不进 term_hits/coverage —— 它不证明该卡
+# 覆盖了 query 的任何词项。
+_ALIAS_WEIGHT = 3
 # 2026-10-22：description 命中 ≥2 个不同 query 词项时的佐证权重。
 _DESC_CORROBORATED_WEIGHT = 8
 # Used only to distribute a bounded amount of embedding work across the corpus.
@@ -773,9 +775,11 @@ class MethodStore:
         raw_chunks = [chunk for chunk in re.split(r"\s+", query.lower()) if chunk]
         # 2026-10-22 retrieval-idf: one directory scan computes every record's per-term
         # field scores and accumulates document frequencies in the same pass. df counts
-        # discoverable records whose score for that term is > 0 — the exact criterion
-        # lexical uses — and N is the discoverable corpus size, so no second disk I/O.
-        rows: list[tuple[MethodRecord, list[tuple[str, int]], int]] = []
+        # discoverable records whose authoritative score for that term is > 0 — the same
+        # criterion coverage uses — and N is the discoverable corpus size, so no second
+        # disk I/O. Alias-only hits stay out of df: they are hints, not evidence of
+        # term coverage.
+        rows: list[tuple[MethodRecord, list[tuple[str, int]], list[tuple[str, int]], int]] = []
         df: dict[str, int] = {}
         discoverable = 0
         for path in self._iter_paths():
@@ -787,10 +791,10 @@ class MethodStore:
             name_text = self._normalized_search_text(record.name)
             desc_text = self._normalized_search_text(record.description)
             body_text = self._normalized_search_text(record.body)
-            # 2026-10-22 method-alias-retrieval：别名是作者声明的"何时适用"同义/口语
-            # 表述，与 name 同级，所以复用 _FIELD_WEIGHTS["name"]，不加新权重常量。
-            # 别名只在检索同义通道里起作用：它不判断适用性、不构成使用许可、与
-            # status 无关。空别名得到 ""，`term in ""` 恒假，因此对该卡零贡献 ——
+            # 2026-10-22 method-alias-retrieval：别名是作者声明的检索提示（口语/同义
+            # 写法），不是权威字段。它只进 lexical，权重 _ALIAS_WEIGHT 严格低于 desc，
+            # 因此任何 id/name/desc/body 命中都压过它。别名不判断适用性、不构成使用
+            # 许可、与 status 无关。空别名得到 ""，`term in ""` 恒假，零贡献 ——
             # 没有 aliases 的卡与引入本字段前逐字等价。
             alias_text = self._normalized_search_text(" ".join(record.aliases))
             # 2026-10-22 retrieval-idf: name is the author-written "when to use" summary
@@ -807,16 +811,24 @@ class MethodStore:
             fields = (
                 (id_text, _FIELD_WEIGHTS["id"]),
                 (name_text, _FIELD_WEIGHTS["name"]),
-                # 别名与 name 同权（_FIELD_WEIGHTS["name"]）：同为作者手写的适用表述。
-                (alias_text, _FIELD_WEIGHTS["name"]),
                 (desc_text, desc_weight),
                 (body_text, _FIELD_WEIGHTS["body"]),
             )
+            # Two separate accumulators, and that split is the whole point of this fix:
+            # - term_hits: authoritative-field hits only -> matched / coverage / df. A
+            #   card that only matched through an alias has NOT covered a query term.
+            # - lexical_terms: what lexical sums, taking max(authoritative, alias) per
+            #   term, so an alias still surfaces the card without pretending coverage.
             term_hits: list[tuple[str, int]] = []
+            lexical_terms: list[tuple[str, int]] = []
             for term in terms:
-                term_score = max((weight for text, weight in fields if term in text), default=0)
-                if term_score:
-                    term_hits.append((term, term_score))
+                core = max((weight for text, weight in fields if term in text), default=0)
+                alias = _ALIAS_WEIGHT if term in alias_text else 0
+                weight = max(core, alias)
+                if weight:
+                    lexical_terms.append((term, weight))
+                if core:
+                    term_hits.append((term, core))
             identifier_bonus = 0
             for chunk in raw_chunks:
                 # A stable-id-like fragment is strong mechanical evidence of identity.
@@ -827,22 +839,26 @@ class MethodStore:
                 chunk_norm = self._normalized_search_text(chunk)
                 if len(chunk_norm) >= 3 and chunk_norm in id_text:
                     identifier_bonus = max(identifier_bonus, 250)
-            if terms and not term_hits and identifier_bonus == 0:
+            if terms and not lexical_terms and identifier_bonus == 0:
                 continue
-            rows.append((record, term_hits, identifier_bonus))
-            # dict.fromkeys keeps per-record df increments unique and ordered.
+            rows.append((record, term_hits, lexical_terms, identifier_bonus))
+            # dict.fromkeys keeps per-record df increments unique and ordered. df stays
+            # count-of-authoritative-hits so alias-only terms simply never appear in it
+            # (read back with .get(term, 0) below) — idf itself is untouched.
             for term in dict.fromkeys(hit_term for hit_term, _ in term_hits):
                 df[term] = df.get(term, 0) + 1
         ranked: list[tuple[float, float, MethodRecord]] = []
-        for record, term_hits, identifier_bonus in rows:
+        for record, term_hits, lexical_terms, identifier_bonus in rows:
             # idf = log((N+1)/(df+1)) + 1: ubiquitous terms trend toward 1.0 while rare
             # discriminative terms rise, so a noise card matching many shared bigrams
             # no longer ties or beats the card holding the rare term. Summation follows
             # the (deterministic) query-term order; round(...,4) before comparing keeps
             # repeated runs bit-identical.
             lexical = 0.0
-            for term, weight in term_hits:
-                lexical += (math.log((discoverable + 1) / (df[term] + 1)) + 1.0) * weight
+            for term, weight in lexical_terms:
+                lexical += (math.log((discoverable + 1) / (df.get(term, 0) + 1)) + 1.0) * weight
+            # matched/coverage count authoritative hits only: an alias-only term must not
+            # move a card across a coverage band (+50 each) and out-rank a real hit.
             matched = len(term_hits)
             coverage = (matched / len(terms)) if terms else 0.0
             score = round(identifier_bonus + round(lexical, 4) * 10 + int(coverage * 50), 4)
@@ -1620,7 +1636,11 @@ class MethodStore:
         meta, body = _parse_frontmatter(raw)
         meta["status"] = target
         meta["updated_at"] = _now()
-        ordered = ["method_id", "name", "description", "status", "source_model", "teacher_refs", "source_episode_refs", "evidence_refs", "freshness_refs", "parent_ref", "supersedes", "created_at", "updated_at"]
+        # aliases sits right after description on purpose: update_status rewrites the
+        # frontmatter from this whitelist, and without it a status flip would drop
+        # aliases to the alphabetically-sorted tail and churn the key order of every
+        # card it touches.
+        ordered = ["method_id", "name", "description", "aliases", "status", "source_model", "teacher_refs", "source_episode_refs", "evidence_refs", "freshness_refs", "parent_ref", "supersedes", "created_at", "updated_at"]
         lines: list[str] = []
         for key in ordered:
             value = meta.pop(key, None)
