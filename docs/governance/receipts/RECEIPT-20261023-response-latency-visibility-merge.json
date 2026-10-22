@@ -1,0 +1,118 @@
+{
+  "gate": "merge",
+  "reviewer": "/root/merge_review_response_progress",
+  "reviewer_terminal_state": "completed",
+  "verdict": "PASS",
+  "goal_id": null,
+  "related_goal_id": "d5975821-ed7a-4db6-8979-1e204981f191",
+  "task": "Surface provider retries and finalize fresh/resumed conversation progress",
+  "done_when": [
+    "One authorized independent GLM-5.3 review of the exact frozen 10-file patch passes with P0/P1=0",
+    "Original full bash scripts/ci_gate.sh passes for that source tree",
+    "Independent merge review passes, local main is fast-forwarded, and affected main smoke passes"
+  ],
+  "branch": "fix/response-latency-visibility-20261023",
+  "based_on_main": true,
+  "main_sha_before": "4000e7887df25100a5b4091788eb230c4ad9772e",
+  "candidate_tree": "f17192596d3446b24a4a99a14ead9f2831197a1a",
+  "patch_sha256": "42c7654c6284dd5f15a83c72c846219b2dc066db431123c4d1f60eceb458a07d",
+  "patch_bytes": 24730,
+  "commits": [
+    "67e61b70219bbf5345b0b986b080e0248d843e1f"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "main_sha_after": "67e61b70219bbf5345b0b986b080e0248d843e1f",
+  "main_sha_after_semantics": "Code integration HEAD immediately after fast-forward; this receipt is recorded separately as audit-only metadata.",
+  "code_review": {
+    "reviewer": "subagent_d4a63c7a8e12",
+    "provider": "glm",
+    "model": "glm-5.3",
+    "transport_http_status": 200,
+    "verdict": "PASS",
+    "P0": 0,
+    "P1": 0,
+    "P2": 3,
+    "report_sha256": "317436520648f9fbae8a6fe175557b1d2e49ade6a68b8e0b87b738a6e28fccdd",
+    "source_changed_after_review": false,
+    "p2_disposition": "Nonblocking UI cleanup and robustness notes retained; frozen candidate unchanged."
+  },
+  "full_r9": {
+    "command": "bash scripts/ci_gate.sh",
+    "exit_code": 0,
+    "duration_s": 346.59,
+    "tier0_passed": 319,
+    "full_test_summary": {
+      "passed": 10018,
+      "skipped": 149,
+      "warnings": 9
+    },
+    "additional_check_passed": 1,
+    "log_sha256": "bdcb1735b4274131194278489c38ab6273899233cc8f7a4042f30e8641803a2e",
+    "source_tree": "f17192596d3446b24a4a99a14ead9f2831197a1a",
+    "candidate_unchanged": true,
+    "generated_report_qualification": "Original whole-worktree NOT_PASS observation retained. Only 18 test-generated report outputs changed; exact bytes, patch, and hashes archived before restoring those worktree reports from the unchanged index. Source tree and patch stayed identical.",
+    "earlier_timeout": "Separate 60-second executor interruption retained; not counted as PASS."
+  },
+  "focused_gates": [
+    {
+      "name": "pre-merge Python focused",
+      "passed": 106
+    },
+    {
+      "name": "pre-merge WebUI full",
+      "passed": 314,
+      "files": 42
+    },
+    {
+      "name": "TypeScript, Ruff ratchet, diff check, WebUI build",
+      "verdict": "PASS"
+    },
+    {
+      "name": "post-merge Python retry and SSE",
+      "passed": 7,
+      "exit_code": 0,
+      "log_sha256": "d595218839a2db90479f71d16e643f6f7d8620985d34563360f9b8a409ef2ce4"
+    },
+    {
+      "name": "post-merge frontend fresh and resumed streams",
+      "passed": 2,
+      "exit_code": 0,
+      "log_sha256": "4b3451483b754f4a82a74d05a8233deb03c3a89256c35d9f379b0060613b08df"
+    }
+  ],
+  "post_merge": {
+    "verdict": "PASS",
+    "main_commit": "67e61b70219bbf5345b0b986b080e0248d843e1f",
+    "main_tree": "f17192596d3446b24a4a99a14ead9f2831197a1a",
+    "working_tree_clean": true,
+    "log_three_checked": true,
+    "frontend_warnings": "React act warnings observed; all assertions and test exit passed."
+  },
+  "evidence_dir": ".worktrees/response-latency-visibility-20261023/data/response-latency-visibility-20261023",
+  "evidence_refs": [
+    "code-review.json",
+    "code-review.txt",
+    "full-r9.json",
+    "full-r9-qualified.json",
+    "full-r9.log",
+    "r9-generated-reports/manifest.json",
+    "commit.json",
+    "merge-review.json",
+    "merge-execution.json",
+    "main-smoke.json",
+    "main-smoke-python.log",
+    "main-smoke-frontend.log"
+  ],
+  "branch_disposition": "kept:temporary audit and rollback of the exact reviewed candidate",
+  "scope": {
+    "local_main_merged": true,
+    "push_performed": false,
+    "restart_performed": false,
+    "unrelated_root_ledger_edits_preserved": true,
+    "broader_goal_completed": false
+  },
+  "merged_at": "2026-10-22T23:51:42.392218+00:00",
+  "post_merge_smoke_at": "2026-10-22T23:51:59.035288+00:00",
+  "receipt_created_at": "2026-10-22T23:52:26.679305+00:00"
+}
