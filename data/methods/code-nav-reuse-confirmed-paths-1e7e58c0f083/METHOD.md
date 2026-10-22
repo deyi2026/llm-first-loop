@@ -2,6 +2,7 @@
 method_id: code-nav-reuse-confirmed-paths-1e7e58c0f083
 name: code-nav-reuse-confirmed-paths
 description: 在多前端/混合布局仓库中做跨层代码定位时，把历史成功 grep/read 的命中路径当作下一跳的 provenance edge：新查询必须复用已验证路径或在已确认目录内窄 grep，只有无任何已确认路径覆盖目标 artifact 时才做目录级/全仓发现，且同一函数不重复整段重读。
+aliases: 又找不到那行代码,全仓搜索太慢太吵,多前端混合布局仓库,复用已验证过的路径,在确认目录内窄搜
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:4d6c551c-a50d-4ef1-90cf-b0af9f557745

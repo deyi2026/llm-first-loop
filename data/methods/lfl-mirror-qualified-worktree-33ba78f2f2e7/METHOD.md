@@ -2,6 +2,7 @@
 method_id: lfl-mirror-qualified-worktree-33ba78f2f2e7
 name: LFL mirror 新代码上线：qualified worktree + 代次推进全流程
 description: 把"给 mirror 常驻服务上新代码"从触发到验收的完整可复用序列：血统资格检查（防回滚）→ 独立 merge worktree → 冲突骨架移植 → dist 复用/构建 → 记录推进代次 → service_control 按记录执行 → §6 全项验收 → 回滚留底。
+aliases: 新代码怎么上线到服务,上线后要验哪几项,给常驻服务换新版本,先做血统资格检查,按代次推进记录执行
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: episode:010fcc8e-3ba8-4948-9ae5-66a30cc8ea6e:609:d5332e08b75dbdbd3962

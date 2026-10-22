@@ -2,6 +2,7 @@
 method_id: trust-durable-completion-evidence-on-resume-ab903c1cdc9e
 name: trust-durable-completion-evidence-on-resume
 description: 会话中断后恢复任务时，先用落盘的完成哨兵（追加的 EXIT 行、终态进度标记、mtime 稳定）判定后台验证是否在中断前已正常结束且结果仍有效；已被持久证据闭合的未知量不再重验，只闭合真正开放的剩余未知量（如委派规定的提交细节），避免整轮重跑长时验证。
+aliases: 中断后到底跑完没有,还要不要重跑一遍,会话中断后接着干,看落盘的完成哨兵,末行退出标记与稳定时间戳
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c

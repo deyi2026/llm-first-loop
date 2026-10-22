@@ -2,6 +2,7 @@
 method_id: adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7
 name: adjudicate-contradicted-action-via-execution-receipt
 description: 当用户的事实断言与模型先前汇报的动作结果矛盾时（尤其 restart/publish 这类'受理≠执行'的异步动作），未知量是'该动作的执行终态'。唯一裁决层是按 action_id 索引的服务端执行回执/审计记录；会话 evidence 搜索、快照长文分页、event_stream 摘要都是派生层，结构上不含终态回执，先查它们必然绕远。正确顺序：先冻结用户叫停的变更动作→按已知 action_id 直查回执拿 rc/stage_fact/时间戳/接手动作→拉一次当前 status 建立健康基线→基于回执明确收回先前错误说法并汇报时间线。本集该路径约 3-4 次只读调用即可收口，实际为拿到同样事实多花了约 6 次派生层查询（evidence miss、快照分页×2、event_stream×2、误路径探测）。
+aliases: 你说成功了到底成没成,和我看到的对不上,用户说法和我汇报矛盾,按动作编号查执行回执,action_id
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:e80a8cde-8a96-4b11-ad03-3f16341a32f5:1831:1b7649ba74fd5124ee61

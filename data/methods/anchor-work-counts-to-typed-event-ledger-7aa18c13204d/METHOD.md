@@ -2,6 +2,7 @@
 method_id: anchor-work-counts-to-typed-event-ledger-7aa18c13204d
 name: anchor-work-counts-to-typed-event-ledger
 description: 当需要量化或核验“某时间窗口内引擎/模型实际跑了多少工作”时，直接用带身份字段（round/run/model/duration）的类型化事件台账按窗口过滤计数；禁止把更繁忙的相邻日志（HTTP access/SSE/heartbeat）的行数当作工作单位。对“比以前慢/行为变了”类问题，把机制健康（每轮延迟趋势）与使用组合变化分开归因。
+aliases: 实际跑了多少活,比以前慢是真变差吗,报某时间窗口工作量,带身份字段的事件账本,别拿访问日志行数算工作
 status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab

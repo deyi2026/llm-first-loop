@@ -2,6 +2,7 @@
 method_id: derive-direct-run-from-wrapper-source-9d61b63a698c
 name: derive-direct-run-from-wrapper-source
 description: 当包装脚本（entry script）跑通但不显示所需指标时，不要盲 grep 日志、也不要裸调底层命令；从已读过的包装脚本源码导出直调姿势：复刻其环境注入（如从 env 文件 grep key）并只改输出可见性标志。
+aliases: 脚本跑通了却没指标,日志里找不到那个数,从包装脚本源码推直调,复刻它的环境注入,只改输出可见开关
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c

@@ -1246,3 +1246,114 @@ def test_discovery_summary_uses_description_not_machine_id() -> None:
     )
     assert rec2.card()["summary"] == "no-desc-1a2b3c4d"
 
+
+# ---- 2026-10-22 retrieval-idf：词法通道 idf 加权 + invalidated 不进发现视图 ----
+
+
+def _write_raw_card(
+    root: Path, method_id: str, *, status: str = "candidate", description: str = "", body: str = "",
+) -> None:
+    d = root / method_id
+    d.mkdir(parents=True)
+    (d / "METHOD.md").write_text(
+        "---\n"
+        f"method_id: {method_id}\n"
+        f"name: {method_id}\n"
+        f"description: {description}\n"
+        f"status: {status}\n"
+        "---\n"
+        f"{body}\n",
+        encoding="utf-8",
+    )
+
+
+def test_idf_rare_discriminative_term_outranks_common_noise(tmp_path):
+    """2026-10-22 retrieval-idf：只隔离 idf 这一个变量。
+
+    所有卡都只命中 1 个 query 词项（coverage 相同、字段相同=body），唯一差别是词项是否稀有：
+    “commonterm” 出现在 6 张卡里 → idf≈1；“rareterm” 只出现在目标卡 → idf≈2.25。
+    旧公式给两者同权（命中数×字段权重），只能靠 id 排序分出胜负；idf 加权后目标卡必须排第一。
+    """
+    root = tmp_path / "methods"
+    for i in range(4):
+        _write_raw_card(root, f"filler-common-{i}", body="commonterm 通用说明")
+    _write_raw_card(root, "zzz-common-noise", body="commonterm 常见问答")
+    _write_raw_card(root, "aaa-rare-target", body="rareterm 判别入口")
+
+    store = MethodStore(root)
+    ids = [c["id"] for c in store.list("commonterm rareterm", 10)]
+    assert ids[0] == "aaa-rare-target"
+    # 噪声卡仍被返回（是排序被纠正，不是被过滤）。
+    assert "zzz-common-noise" in ids
+    assert [c["id"] for c in store.list("commonterm rareterm", 10)] == ids
+
+
+def test_invalidated_leaves_discovery_but_exact_ref_and_inventory_keep_it(tmp_path):
+    """invalidated 与 retired 同等不进发现视图（词法臂与语义臂）；
+    精确 method:<id> 引用与 inventory() 管理视图仍完整可见。"""
+    root = tmp_path / "methods"
+    _write_raw_card(
+        root, "dead-method", status="invalidated",
+        description="invalidate probe", body="invalidate probe body",
+    )
+    _write_raw_card(
+        root, "live-method", status="active",
+        description="invalidate probe", body="invalidate probe body",
+    )
+    store = MethodStore(root)
+
+    assert [c["key"] for c in store.list("invalidate probe", 10)] == ["method:live-method"]
+    assert [c["key"] for c in store.list("", 10)] == ["method:live-method"]  # 空 query 同样不进
+    exact = store.get("method:dead-method")
+    assert exact is not None and exact.status == "invalidated"
+
+    inv = store.inventory()
+    assert inv["counts"].get("invalidated") == 1
+    assert {e["id"] for e in inv["records"]} == {"dead-method", "live-method"}
+
+    assert {c["id"] for c in store.semantic_candidates()} == {"live-method"}
+
+
+def test_equal_scores_tie_break_stably_by_method_id(tmp_path):
+    """同分（同字段命中、同 coverage）时按 method_id 倒序稳定排序，重复调用一致。"""
+    root = tmp_path / "methods"
+    for mid in ("beta-twin", "alpha-twin", "gamma-twin"):
+        _write_raw_card(root, mid, description="同分探针 unique-zephyr", body="同分探针 unique-zephyr")
+
+    store = MethodStore(root)
+    first = [c["id"] for c in store.list("unique-zephyr", 10)]
+    assert first == ["gamma-twin", "beta-twin", "alpha-twin"]
+    assert [c["id"] for c in store.list("unique-zephyr", 10)] == first
+    assert [c["id"] for c in store.list("unique-zephyr", 2)] == first[:2]
+
+
+def test_empty_and_ascii_queries_do_not_crash(tmp_path):
+    """空 query / 纯空白 / 纯 ASCII 无命中与命中路径都正常返回。"""
+    root = tmp_path / "methods"
+    _write_raw_card(root, "ascii-probe", description="ascii probe card", body="ascii probe body")
+    store = MethodStore(root)
+
+    assert [c["id"] for c in store.list("", 10)] == ["ascii-probe"]
+    assert [c["id"] for c in store.list("   ", 10)] == ["ascii-probe"]
+    assert store.list("zzz-no-match-qqq", 10) == []
+    assert [c["id"] for c in store.list("ascii probe", 10)] == ["ascii-probe"]
+    assert store.list("", 0) == []
+
+
+
+def test_single_description_term_is_not_applicability_corroboration(tmp_path):
+    """2026-10-22 佐证规则：description 只有命中 ≥2 个不同 query 词项才升权。
+
+    一个词项在描述里出现可能只是顺带提及（EVO-20261017：body 实质命中应压过描述顺带
+    提及），只有多个词项同时命中才说明这张卡的“何时用”摘要真的覆盖了这个 query。
+    """
+    root = tmp_path / "methods"
+    # 同一内容分别落在 description（短摘要）与 body（正文）两个槽位，便于控制变量。
+    _write_raw_card(root, "card-desc", description="alpha beta", body="")
+    _write_raw_card(root, "card-body", description="", body="alpha beta")
+    store = MethodStore(root)
+
+    # 双词 query：描述命中两个不同词项 → 佐证生效（8 > body 5），描述卡在前。
+    assert [c["id"] for c in store.list("alpha beta", 10)] == ["card-desc", "card-body"]
+    # 单词 query：描述只命中一个词项 → 弱证据，退回基础权重 4 < body 5，正文卡在前。
+    assert [c["id"] for c in store.list("alpha", 10)] == ["card-body", "card-desc"]

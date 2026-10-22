@@ -2,6 +2,7 @@
 method_id: audit-warm-state-from-receipt-before-rediscovery-1e16e716d8fc
 name: audit-warm-state-from-receipt-before-rediscovery
 description: 当用户质疑某个缓存类指标是否在全新（冷）状态下测得时，先从手头报告/回执中找'热状态泄漏'证据（首请求已有命中），再用唯一标记冷启动对照补一个真冷数字；而不是先在证据库/代码库里反复换关键词重搜。
+aliases: 这数字是冷启动测的吗,是不是热缓存跑出来的,用户质疑冷启动数据,回执里首请求就已命中,打唯一标记做冷启动对照
 status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab

@@ -2,6 +2,7 @@
 method_id: bounded-wait-probe-not-echo-f0cde4eefa61
 name: bounded-wait-probe-not-echo
 description: 识别'原样重复一个输出已确定为常量的动作'为无信息循环：任何等待必须要么探测所等条件、要么声明有先验上界的预算；每个重复动作的输出都应能决定继续或停止，而不是只能靠用户取消终止。
+aliases: 一直等却没新信息,输出每次都是同一行,同一动作反复执行,等待要先探测所等条件,预算必须先给上界
 status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab

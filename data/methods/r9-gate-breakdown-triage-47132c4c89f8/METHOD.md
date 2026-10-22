@@ -2,6 +2,7 @@
 method_id: r9-gate-breakdown-triage-47132c4c89f8
 name: r9-gate-breakdown-triage
 description: r9 提交门禁在合并后 HEAD 反复中止/暴露未知红时的分流诊断：基建失败（探针标记失配/mktemp 沙盒/manifest 漂移）与测试红（我方带入 vs 外部演进链配对面缺口）分离处置
+aliases: 门禁又中止了是谁的锅,冒出一堆陌生的失败,合并后门禁反复中止,先分基建失败和测试红,检查探针标记是否失配
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:2274a444-654d-46a3-a72b-2d83058b2289
