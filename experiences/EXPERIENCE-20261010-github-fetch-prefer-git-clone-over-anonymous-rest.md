@@ -14,3 +14,6 @@ updated_at: "2026-10-10T21:16:22.279119+08:00"
 ---
 
 2026-10-10 会话 40eeca85 实测：连续使用匿名 api.github.com（60 req/hr/IP，且同 IP 可能被共享）后 remaining=0，REST 查询全部 403，浪费多轮。改用 git clone --filter=blob:none --single-branch 后一次成功取到所需数据。教训：对"拉取仓库内容"类需求，默认 git 协议；REST API 仅用于元数据（stars/release 等单点查询），且失败时立即换路而非重试。附带纪律：在大型仓库上跑全量 find/grep 前先限定子目录或文件名模式（本会话一次 45 万行仓库 find 超 60s 超时）。
+
+## 核验记录
+- 2026-10-22：curl -sI https://api.github.com/zen → HTTP/2 200, x-ratelimit-limit: 60（匿名限额仍 60/hr；remaining=3 当日即实证配额耗尽现象）；GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/octocat/Hello-World.git HEAD → 7fd1a60b01f9（git 协议路径通） → 成立
