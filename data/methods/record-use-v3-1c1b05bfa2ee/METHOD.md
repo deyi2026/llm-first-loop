@@ -2,6 +2,7 @@
 method_id: record-use-v3-1c1b05bfa2ee
 name: record_use证据披露与评估纪律（v3·去强制降级）
 description: EVO-20260919-eabe3d37 阶段1落地（v3）：正式评估时的证据披露与判定纪律；第5条移除源自提案原文的"强制降级"歧义，改为归属/口径/相关性三查+有效反证修正+insufficient。普通 record_use 保持轻量。
+aliases: 证据归属口径相关性三查, 反证成立就改判, insufficient 结论怎么落, record_use 该轻量就轻量
 status: candidate
 source_model: glm/glm-5.3-flash
 source_episode_refs: episode:863879fe-d8f5-48d9-bbdc-6ddc6eaf4b8b:138:78cf216493a800c1bd1a

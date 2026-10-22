@@ -2,6 +2,7 @@
 method_id: check-desired-head-binding-before-restart-choose-update-2e3637e8aef7
 name: check-desired-head-binding-before-restart-choose-update
 description: 在 desired-state 生命周期控制面（desired 与物理生效分离）下，"重启使新代码生效"不能默认发 restart：restart 只按当前 desired 绑定的 code_root/HEAD 重放旧代码，会"成功"却不加载新提交（静默失效）。先读 status 回执，对比 desired 绑定的 git_head/generation、本地目标 HEAD 与 runtime 进程启动时间：绑定落后⇒选 update（publish+restart 单语义），且只重启承载目标改动的 target；发布前核 tracked 树干净，外部工具造成的脏改动先备份再恢复；提交后 action 若 waiting_for_requester_exit，用定时唤醒在会话结束后核验而非阻塞等待。不要用宽泛环境枚举（多变体 ps/lsof/全库 grep）替代控制面回执已给出的事实。
+aliases: 重启完新代码怎么没生效, restart 只重放旧 git_head, desired 绑的 commit 落后了, 该发 update 别发 restart
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:6011132d-5da7-46ed-9be9-40d1379ec22d:1093:4c33ef3d6ae744ce829e

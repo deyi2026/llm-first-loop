@@ -2,6 +2,7 @@
 method_id: multiplatform-publish-order-by-irreversibility-d9f5c7ea6b4d
 name: multiplatform-publish-order-by-irreversibility
 description: 多平台发布同一篇定稿时，按「发布后能否自助修改」排序：可编辑的平台先发并当流程演练场，不可回滚的平台最后发。
+aliases: 同一篇稿先发哪个平台, 能改的平台先发试水, 公众号最后发因为删不掉, 头条当演练场先试一遍
 status: candidate
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:9f3f9ab8-30d9-4a2d-9f58-148054503778:1077:59dab84e9a0b2b7d36bd

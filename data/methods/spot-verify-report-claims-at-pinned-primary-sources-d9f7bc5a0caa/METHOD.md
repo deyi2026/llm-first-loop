@@ -2,6 +2,7 @@
 method_id: spot-verify-report-claims-at-pinned-primary-sources-d9f7bc5a0caa
 name: spot-verify-report-claims-at-pinned-primary-sources
 description: 当任务是审查/复核一份结论依赖可核对引用（固定 commit SHA、file:line 代码引用、自带复现配方）的审计/评估文档时，不要复述结论，也不要重跑整个原审查流程或全库重查。把文档自身声明的引用纪律当作判别器：对提交身份与代码引用直接在 pin 定源上抽查核验（git show SHA:path），对其最高证据级声明用隔离临时目录独立复现报告自带的脚本，并核对关键缺陷在当前 HEAD 是否仍存在（pin 会滞后）。交付'已核验/未核验'对照表加缺口评估，明确 pin 基线/当前/线上三层边界。核验成本与抽查规模成比例，不随报告篇幅增长。
+aliases: 核这份报告别全量重跑, 按 pin 的 commit 抽查引用, git show SHA:path 对不上, 报告自带脚本在空目录复现
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:18e51b8e-580f-47b5-a867-ad21b62684b1:0:b9811fba3b7507ff635f

@@ -2,6 +2,7 @@
 method_id: destructive-replay-failure-shift-work-into-stable-paste-payload-67917b175573
 name: destructive-replay-failure-shift-work-into-stable-paste-payload
 description: 重放已验证浏览器自动化经验卡操作第三方编辑器时，若某子步骤出现破坏性失败（清空已录入内容），先按经验卡自身的通道可靠性分层判断：整段 HTML 粘贴=历史稳定通道，上传控件/面板=历史脆弱通道。用最小牺牲态确认失效范围后，把失败子任务迁移进稳定通道——如资产以 data-URI 内嵌进一次粘贴，由编辑器导入逻辑自动转存图床——而不是枚举新 widget 交互或盲目整段重放。非破坏性、卡内已记可重试的失败不适用；自控代码故障请走根因分析方法。
+aliases: 粘一次整段把已写正文冲掉了, 图片用 data-URI 塞进粘贴, 绕开上传控件别再点它, 别整段重放经验卡
 status: candidate
 source_model: glm/glm-5.3-flash
 source_episode_refs: episode:52de39d5-c559-4d5f-be79-cf20cb120cfa:74:39da7a8260119a275ff1

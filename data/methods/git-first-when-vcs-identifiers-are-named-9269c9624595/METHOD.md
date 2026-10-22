@@ -2,6 +2,7 @@
 method_id: git-first-when-vcs-identifiers-are-named-9269c9624595
 name: git-first-when-vcs-identifiers-are-named
 description: 当用户消息/已见工件中已出现版本库对象的精确标识符（commit SHA、分支名、tag），且任务未知量是这些对象的可机判事实（是否包含、是否祖先、改动面、拓扑关系）时，第一跳直接用 git 按 ID 查询，而不是按叙述关键词枚举 evidence/record 库。本集在用户首条消息已给出两条 SHA（993f9c2f8、14352cc6f）及“插件分支未含修复”断言的情况下，仍对同一类事实做了 4 次库关键词搜索（'restart CLI recovery…'、'端口 回滚 身份' 等）全部未命中，而 git 三两条命令即可全部判定。库搜索只留给 git 答不了的 narrative 未知量。
+aliases: 都给了 SHA 还在翻记忆库, git show 那个 commit 就行, 这提交在不在这个分支里, merge-base 判祖先关系
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:fd840981-a906-404c-8c80-1c3452e1c66a:27:d026d218ee73538ff3ba

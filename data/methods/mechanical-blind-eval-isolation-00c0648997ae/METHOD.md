@@ -2,6 +2,7 @@
 method_id: mechanical-blind-eval-isolation-00c0648997ae
 name: mechanical-blind-eval-isolation
 description: LLM 评分者对带答案的评测池评分时，通过"评分窗口内答案物理移出 + 隔离子代理 + sha 校验恢复"实现机械级盲评，而非仅靠指令承诺。适用于 agent 工作区内的一次性盲评/双盲裁决。
+aliases: 评者会不会偷看答案, 评分窗口把答案物理移出, 隔离子代理 机械盲评, sha256 校验后复原答案, blind grading isolation
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:abda90a9-c633-4664-b777-2ef993c8f7d9:649:1c308e6cb7880f6316d7

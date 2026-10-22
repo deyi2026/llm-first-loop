@@ -2,6 +2,7 @@
 method_id: receipt-state-first-verify-refs-not-tree-on-resume-adc543cfb7fd
 name: receipt-state-first-verify-refs-not-tree-on-resume
 description: 中断恢复时，先把 hydration 回执中的状态字段（分支名、commit SHA、退出码、远端 ref）当作定位器，直接做 ref 级权威验证，而不是在当前工作树枚举文件或遍历全部 worktree。本 episode 的回执已同时给出 '[feature-branch 5e4b2a74d]' 与 '当前 checkout 已切回 main' 两条事实，此时在 main 工作树里搜目标 manifest 必然落空；直接验证三元组（本地 head、远端 ref、提交内容）即可省去多次文件搜索与全量 worktree 枚举。附带纪律：对 gate 失败下全称因果断言前，必须核对前一 SHA 的逐项 check 历史。
+aliases: 中断恢复先读回执里的分支与 SHA, 已经切回 main 所以文件搜不到, 别在工作树里逐个翻, commit SHA 对远端 ref
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:855926d8-3b7a-4a6d-9c5e-34631b59df2b:738:41d6cf9b17915eff60ce

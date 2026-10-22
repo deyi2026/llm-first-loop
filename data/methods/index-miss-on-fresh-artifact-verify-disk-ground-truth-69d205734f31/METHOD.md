@@ -2,6 +2,7 @@
 method_id: index-miss-on-fresh-artifact-verify-disk-ground-truth-69d205734f31
 name: index-miss-on-fresh-artifact-verify-disk-ground-truth
 description: 用户按精确名断言某个近期创建的 artifact 并询问其状态/效力，首次索引搜索未命中且回执 success 无错误、同一索引刚列出同目录其他近期文档时，不要换措辞或加通配符扩大枚举：先把『索引未命中』当作索引新鲜度问题的候选，用一次非索引层查询（pwd+ls/stat）证实或证伪存在性。索引/检索视图是缓存，不是存在性判据。命中后沿文件头部自声明、SoT 引用 grep、git 跟踪状态三个可审计事实回答效力类问题；凡要构造『文件在另一个工作区/本会话看不到』这类假设，必须先被 pwd/ls 证实才可作为中间结论推进。
+aliases: 搜不到不代表文件不存在, 用 ls 直接看磁盘有没有, 刚建的产物检索不到, 索引缓存不是存在性判据
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:96d621f5-1690-49cb-8e4d-e05d75600791:210:c74287d7d5290da8b1f0

@@ -2,6 +2,7 @@
 method_id: treat-derived-transcription-as-hypothesis-anchored-to-brief-3bc42539be4a
 name: treat-derived-transcription-as-hypothesis-anchored-to-brief
 description: 审稿/核查中，artifact 内容若经派生工具（视觉转写/OCR/摘要器）获得，该输出只是假设而非证据：其中与任务简报或已读正文相矛盾的『世界元断言』（如『当前是2024–2025年，故该编号可能伪造』）应直接按简报/正文已有事实否证，不进入裁决、不引发额外真伪侦查（对来源的核验按简报原计划直读一次即可）。其中对 artifact 文本的『缺陷断言』（疑似错字）若与正文转述冲突，只做一次针对该精确区域的高保真重读（放大裁剪）即裁决，不做全图/全目录重扫。总裁决只引用直接回执（sha256、页面直读、git diff），转写仅作线索。
+aliases: 图片转成文字 说编号是假的, 疑似错字 裁一次放大图确认, 转写只当线索 不当证据, 直读 sha256 才算裁决
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:f72c7b3b-1d83-4db3-ba99-8f218141d122:1:bed03eda9d3b27945f87

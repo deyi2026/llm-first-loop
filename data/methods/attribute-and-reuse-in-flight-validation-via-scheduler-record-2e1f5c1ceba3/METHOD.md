@@ -2,6 +2,7 @@
 method_id: attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3
 name: attribute-and-reuse-in-flight-validation-via-scheduler-record
 description: 在跑的重型验证（全量回归/扫描）归属不明、甚至被口头状态误归为“对方会话”时，不要接受口头归属去猜测或另起一轮重复的昂贵验证；用调度器/runner 的持久 job 记录（job id、完整命令行、起跑时间、exit code）一跳定归属与覆盖，并在其 done 后直接取最终回执作权威仲裁。覆盖判定只看记录可查事实：起跑时间晚于两套改动落盘、scope 为超集（tests/ ⊇ tests/unit）即构成合并仲裁，本集由此省掉一次 300s 级重复回归。
+aliases: 跑着的全量回归是谁起的, 别重复再跑一遍重活, 查 job id 和起跑时间认领, scheduler job record
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:9571992a-d742-4a48-824b-b1f635b8674f:419:ada80e841e958e78bb2b

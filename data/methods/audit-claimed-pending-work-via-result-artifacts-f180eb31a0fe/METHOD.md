@@ -2,6 +2,7 @@
 method_id: audit-claimed-pending-work-via-result-artifacts-f180eb31a0fe
 name: audit-claimed-pending-work-via-result-artifacts
 description: 当用户的计划建立在对系统当前状态的假设上（如'X 尚未跑通，下一步是执行 X'）时，先用一手结果工件核验该假设再规划执行。读被点名文档时留意其带日期的状态行；若文档自称'待实现规格'而用户当作'已存在的 pilot'，说明文档快照可能已过期——此时不要全库关键词搜索（会被 .venv/依赖目录污染），而是沿 claim 锚点导航：具名文档 → 其治理的 eval/结果目录 → 最新权威 run 目录 → 实际行数 vs manifest 计划数 → 相邻注释文件里的停止理由与已知缺陷。用一手工件确认或推翻前提之后才回答，并让推翻前提的工件决定计划是否需要重排。
+aliases: 文档写着待实现 其实早跑了, 先看一手结果工件再排计划, 别全库 grep 沿着具名文档走, 实读行数 对 manifest 计划数, run 目录里的停机理由
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:8d524014-5137-4d7f-bb82-9755dd05c8b4:55:f83e22d5f596d2afb517

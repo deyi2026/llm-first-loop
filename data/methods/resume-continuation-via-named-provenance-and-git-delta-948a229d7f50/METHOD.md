@@ -2,6 +2,7 @@
 method_id: resume-continuation-via-named-provenance-and-git-delta-948a229d7f50
 name: resume-continuation-via-named-provenance-and-git-delta
 description: 极简续跑指令（如 'X 继续'）且无活动 goal 时，不要对同一 evidence 库反复换措辞搜索。首次 search miss 的回执通常已显式列出项目最新权威文档参考；schedule/wakeup evidence 常已点名续跑备忘；而版本库 unmerged commits 是『还剩什么』的真值账。沿这三条已点名的 provenance edge（最新停点文档、被点名备忘、git cherry/diff 量化 delta）重建状态，把『继续』转成『N 条未吸收 commits + 冲突面』的量化事实后再执行，可省去重复查询，并让分批移植有客观依据。
+aliases: 只说一句继续 怎么接着干, 同一证据库反复换词搜, git cherry 看还剩多少未吸收, unmerged commits delta, 停点文档点名续跑备忘
 status: active
 source_model: glm/glm-5.3
 source_episode_refs: episode:32d694c9-dbcd-4dc8-a941-0885c617868c:934:f2ef065cb2f23088db80
