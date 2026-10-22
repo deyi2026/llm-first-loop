@@ -1,0 +1,67 @@
+{
+  "receipt_id": "20261023-branch-cleanup-round2",
+  "created_at": "2026-10-23T00:25:00+08:00",
+  "scope": "origin(legacy)远程分支清理 + 本地worktree/分支清理 + feat/method-retrieval-idf合入main",
+  "remote_legacy": {
+    "repo": "deyi2026/llm-first-loop-legacy",
+    "deleted_branches": {
+      "feature/webui-live-parity-20260909": "bf39e4407920e485a74c830594e50acd543160d6",
+      "feature/webui-product-closure-20260909": "f217baf4c67dd20540b7a4d972b99b5e39c5ab11",
+      "fix/err1210-retire-legacy-recovery": "0c867649fa20d9647d3c80977300964b1362d29f",
+      "fix/web-evolution-approval-20260909": "2bdc2c422c9c0254018ad05702f2a19566403039",
+      "hotfix/web-evolution-approval-live-20260909": "0db66fd60e952470e01daf316fc7c49a27d1f5c6",
+      "public/promotion-20260908": "1dff04c1aa5886d0717147b123c70f449394b5be"
+    },
+    "remaining_heads": ["main"],
+    "preservation": {
+      "local_tags": "archive/{feature,fix,hotfix,public}/<原名> 共6枚（镜像仓库本地）",
+      "bundle": "仓库父目录 lfl-legacy-branches-archive-20261023.bundle（7.97MB，git bundle verify 完整）",
+      "remote_tag_push": "未执行：RULE-AI-28 review_admission 6次拒签 review_sensitive_tracked_path_refused——tag delta 涉及 src/llm_loop/codearts/credential.py，文件名命中敏感正则；该文件为凭据处理代码模块非密钥本体，且当前 lfl/main 亦包含此文件。硬闸不绕行，留本地 tag+bundle 两份。"
+    },
+    "correction": "上一轮会话称 origin 约20个分支系误计：fetch --prune 清理3个陈旧跟踪引用后实际 7 头（6 分支+main）。"
+  },
+  "local_cleanup": {
+    "deleted_branches_verified_in_main": [
+      "feat/harmonyos-native-agent-poc-20261011(反补丁干净通过)",
+      "feat/install-distribution-mvp-20261016(CI安装验收在main持续绿)",
+      "feat/knowledge-consumption-receipts-20261009(结算工具在main运行时可用)",
+      "feat/linux-installer-review-v4-20261019(同上CI)",
+      "fix/architecture-guard-and-agency-20261014", "fix/review-prerequisite-20261015",
+      "fix/rule-boundary-agency-20261014", "fix/rule28-host-admission-20261015",
+      "fix/rule28-main-c8e50-joint-20261015", "fix/rule28-main-gates-20261015",
+      "fix/rule28-p0c-current-main-20261015",
+      "fix/rsi-r9-ruff-unblock-20261019(修复标记 datetime.now(UTC)/body_lines 在main; 变量名演化为idx)",
+      "integrate/cli-ux-main-r06-current-20261019(CLI在main可操作)"
+    ],
+    "receipt_byte_evidence": "7个docs/receipts分支新增回执文件与main逐字节一致(diff --quiet 全过)",
+    "deleted_branches_tag_preserved": {
+      "chore/harness-evidence-20261006": "evals/harness_evidence_v1 bundle 135文件不在main → archive/local/wt-harness-evidence-20261006",
+      "feat/cli-ux-20261018": "docs/plans/PLAN-20261018-cli-ux-execution.md 不在main → archive/local/wt-cli-ux-20261018",
+      "feat/macos-release-qualification-20261018": "scripts/verify_macos_release.py 不在main(后继为verify_macos_cli_pkg.py,指纹函数无交集) → archive/local/wt-macos-release-qualification-20261018",
+      "feat/upgrade-transaction-cutover-20261018": "src/llm_loop/runtime/installer_transaction.py 不在main → archive/local/wt-upgrade-transaction-cutover-20261018",
+      "integrate/install-upgrade-backup-main-c397-20261017": "c397回执不在main(main含c46b版) → archive/local/wt-integrate-install-upgrade-backup-main-c397-20261017"
+    },
+    "unreachable_tip_tags": "17枚 archive/local/wt-*（所有不在main历史的worktree tip，含上5项）",
+    "worktrees_removed": 30,
+    "dirty_state_archive": "仓库父目录 lfl-worktree-archive-20261023/（26 manifest + 7 dirty tar.gz，含review-r123暂存37文件、compaction-qwen报告18x2、canary fixtures等）",
+    "worktrees_kept": ["root(活跃开发,检出feat/method-retrieval-idf)", "branch-cleanup-20261023(本轮,推送后删)", "lfl-child-subagent_856a200d0b2a(运行时管理)", ".releases/*(发布机制)"],
+    "branches_kept": ["main", "feat/method-retrieval-idf(活跃)", "archive/dev-line-20261022-pre-merge", "chore/runtime-artifacts-refresh-20261022", "integrate/method-retrieval-main-20261023(推送后删)"]
+  },
+  "merge_to_main": {
+    "branch": "feat/method-retrieval-idf",
+    "commits": ["868c90eec feat(methods): idf加权检索+描述命中佐证+处置态退出发现视图", "0d15f3e8c feat(methods): method-alias retrieval(上个会话完成未提交,本会话验证后补提交)"],
+    "merge_commit": "baa6175f1",
+    "gates": {
+      "focused_pytest": "53 passed(test_method_alias_retrieval+test_method_learning)@integration树",
+      "ruff_ratchet": "PASS new=0 touched clean",
+      "pyright_ratchet": "PASS new=0 touched clean(historical 45→current 11)",
+      "security_scan": "pre-commit git_security_scan PASS@0d15f3e8c",
+      "ci_gate": "推送后CI门禁全量复核(参照run 39805524105重跑)"
+    },
+    "eval": "IDF: hit@1 .333→.600 hit@5 .667→.900 MRR .459→.726; alias: prod hit@1 .6333→.7333 hit@5 .9333→1.0 MRR .7489→.8389"
+  },
+  "observations": [
+    "并行写入者: root worktree 的 store.py/tests 在本会话提交后(00:14-00:21+)持续被修改(+173/-49未提交),系活跃开发(用户或另一会话)。本轮不触碰该未提交内容,root 保持 feat/method-retrieval-idf 检出不切换不删除。",
+    "CI run 39805524105 门禁 job 曾红: test_m3_four_buckets 满负载偶发断言(_wait_tool_started),定时回查run本地复跑通过并已沉淀lesson;已触发 gh run rerun --failed,回执时点仍在跑。"
+  ]
+}
