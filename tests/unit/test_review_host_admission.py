@@ -348,6 +348,94 @@ def test_push_target_is_bound_and_dry_run_unblocked(tmp_path: Path) -> None:
     assert host.check_shell("author-1", "git push origin main", str(repo)).allowed
 
 
+def _commit(repo: Path, name: str, text: str, msg: str) -> str:
+    (repo / name).write_text(text)
+    subprocess.run(["git", "-C", str(repo), "add", name], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", msg], check=True)
+    out = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True)
+    return out.stdout.strip()
+
+
+def _seed_bare_remote(repo: Path, tmp_path: Path, sha: str) -> Path:
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "-b", "main", "--bare", str(bare)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(bare)], check=True)
+    subprocess.run(["git", "-C", str(repo), "push", "-q", "origin", sha + ":refs/heads/main"], check=True)
+    return bare
+
+
+def test_push_range_follows_target_commit_not_head(tmp_path: Path) -> None:
+    # EVO-20261022-331eee17: pushing <commit>:<ref> must freeze only the
+    # remote-base..<commit> delta; later HEAD commits, working tree and
+    # untracked files are not part of the upload and must stay OUT of the
+    # frozen material, while the identity binds the target commit.
+    repo = _repo(tmp_path)
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    target = _commit(repo, "example.py", "x = 2\n", "b2")
+    _seed_bare_remote(repo, tmp_path, base)
+    _commit(repo, "later.py", "later = 1\n", "b3")  # HEAD beyond the push target
+    (repo / "dirty.txt").write_text("dirty working state\n")  # never uploaded
+    (repo / "untracked.txt").write_text("untracked note\n")  # never uploaded
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo),
+                        command=f"git push origin {target}:main")
+    assert issued["accepted"], issued
+    assert issued["push_src_commit"] == target
+    assert issued["push_remote_commit"] == base
+    assert "first_push_anchor" not in issued
+    assert f"frozen_head={target}" in runner.task
+    assert "x = 2" in runner.task            # target commit delta IS frozen
+    assert "later = 1" not in runner.task    # HEAD-beyond-target excluded
+    assert "dirty working state" not in runner.task
+    assert "untracked note" not in runner.task
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+    assert host.check_shell("author-1", f"git push origin {target}:main", str(repo)).allowed
+    # A permit minted for the target commit must not cover the full HEAD push.
+    assert not host.check_shell("author-1", "git push origin HEAD:main", str(repo)).allowed
+
+
+def test_first_push_anchors_on_remote_default_branch(tmp_path: Path) -> None:
+    # EVO-20261022-331eee17: a destination ref absent on the remote anchors
+    # the review on the remote default branch (HEAD symref) instead of
+    # refusing; the target ref is recorded explicitly. An empty remote with
+    # no resolvable HEAD still fails closed.
+    repo = _repo(tmp_path)
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    _seed_bare_remote(repo, tmp_path, base)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feature"], check=True)
+    head = _commit(repo, "feature.py", "value = 7\n", "f1")
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo),
+                        command="git push origin feature")
+    assert issued["accepted"], issued
+    assert issued["first_push_anchor"] == base
+    assert issued["first_push_target_ref"] == "refs/heads/feature"
+    assert issued["push_src_commit"] == head
+    assert f"push_first_push_anchor={base} push_target_ref=refs/heads/feature" in runner.task
+    assert "value = 7" in runner.task
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+    assert host.check_shell("author-1", "git push origin feature", str(repo)).allowed
+    # Empty remote: destination ref absent AND no resolvable HEAD anchor.
+    empty = tmp_path / "empty.git"
+    subprocess.run(["git", "init", "-q", "-b", "main", "--bare", str(empty)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin", str(empty)], check=True)
+    refused = host.start("author-2", "git_push", workdir=str(repo),
+                         command="git push origin feature")
+    assert not refused["accepted"]
+    assert "first_push_scope_unreviewable" in str(refused["reason"])
+
+
 def test_browser_publication_freezes_page_and_target(tmp_path: Path) -> None:
     state = {
         "url": "https://example.org/editor",
