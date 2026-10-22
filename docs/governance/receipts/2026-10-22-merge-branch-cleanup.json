@@ -1,0 +1,35 @@
+{
+  "gate": "merge",
+  "reviewer": "merge-review-gate-subagent-20261022 (subagent_7ec04158a227, 独立复跑全部 focused gate)",
+  "verdict": "PASS",
+  "goal_id": "branch-cleanup-20261022",
+  "branch": "tmp/branch-cleanup-20261022",
+  "based_on_main": true,
+  "commits": [
+    "e56967d9d (fix/archive-store-durability-flaky)",
+    "40d709100 (fix/review-host-pyright-tuple-annot)",
+    "c6c5e30fb (feat/linux-arm64-native-ci-20261020)"
+  ],
+  "merge_mode": "merge-commit(3x, then ff main->tmp)",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "pytest test_archive_store_durability.py 3x17 passed (reviewer re-run)",
+    "pyright review_host_admission.py 0e/0w (reviewer re-run)",
+    "pytest review_host x2 133 passed (reviewer re-run)",
+    "pytest test_linux_installer_scripts.py 13 passed (reviewer re-run)",
+    "yaml.safe_load ci.yml ok"
+  ],
+  "main_sha_before": "b5708f9f9d5bd857fdfa51c684b2ecb6450c1d86",
+  "main_sha_after": "3bd8f309606876a51297326baee077378c9843b2",
+  "merge_tree_replay_verified": {"d9fdc1f6d": "257118f0", "c4e6f5e95": "a9c5585d", "3bd8f3096": "6a53b18c"},
+  "branch_disposition": "deleted: 3 fix/feat (local+lfl/, tips MATCH, ancestors of post-ff main); lfl/docs/changelog-v0636-note-fix + lfl/release/ledger-recheck-20261022 + lfl/release/v0.6.36-controlled-integration (--merged main); local release/ledger-recheck-20261022 (patch-id==83856c3ff); local evo/review-host-push-material-20261022 (files byte-identical in tmp tree)",
+  "findings": {
+    "P0": [],
+    "P1": [],
+    "P2": [
+      "real aarch64 acceptance only on GitHub Actions post-push; watch linux-installer matrix legs after push",
+      "delete remote lfl/ branches strictly after lfl/main advanced to 3bd8f3096"
+    ]
+  },
+  "user_instruction": "github没必要开过多的分支，分支没什么问题要及时合并到main，合并后把分支删除 (2026-10-22)"
+}
