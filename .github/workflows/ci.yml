@@ -50,12 +50,25 @@ jobs:
         run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm and not serial_signal"
 
   linux-installer:
-    name: Linux 用户级安装/卸载真实成品验收（glibc）
-    runs-on: ubuntu-latest
+    name: Linux 用户级安装/卸载真实成品验收（${{ matrix.arch }} / glibc）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: 核验 Linux 原生 CPU 架构与 glibc
+        run: |
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          getconf GNU_LIBC_VERSION | grep -q '^glibc '
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -76,7 +89,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: linux-installer-smoke
+          name: linux-installer-smoke-${{ matrix.arch }}
           path: dist/linux-installer-smoke.json
           if-no-files-found: ignore
           retention-days: 14
