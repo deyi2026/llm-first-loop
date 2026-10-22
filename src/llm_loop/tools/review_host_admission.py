@@ -1170,7 +1170,7 @@ class HostReviewAdmission:
     def _target(
         kind: str, workdir: str, command: str, target_name: str, capture: Callable[[], dict[str, Any]] | None,
         manuscript_path: str = "", artifact_paths: Sequence[str] = (),
-    ) -> tuple[str, str, str, str]:
+    ) -> tuple[str, str, str, str, dict[str, str]]:
         if kind == "article_publish":
             if not target_name or _PUBLISH_LABEL_RE.fullmatch(target_name) is None:
                 raise ValueError("publication_target_name_required")
