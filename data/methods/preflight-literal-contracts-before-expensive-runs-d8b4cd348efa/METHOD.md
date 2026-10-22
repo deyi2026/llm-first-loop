@@ -2,6 +2,7 @@
 method_id: preflight-literal-contracts-before-expensive-runs-d8b4cd348efa
 name: preflight-literal-contracts-before-expensive-runs
 description: 启动耗时门禁/包装脚本整跑前，静态枚举并批量校验 consumer 对 producer 的全部字面量契约（进度标记、清单哈希、临时文件模板），把『每轮整跑串行发现一个失配』压成启动前一次秒级预检。
+aliases: 每跑一轮才发现一个错,等半天又被小问题打断,要跑很贵的一次整跑,先把字面量契约列出来,进度标记和清单哈希
 status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab

@@ -2,6 +2,7 @@
 method_id: gh-device-push-v2-5a5db8a6b474
 name: gh-device-push 设备码推送链 v2
 description: GitHub 设备码流程推送的可复用链：scope 选型→设备码轮询→一次性 credential helper→身份/scope 预检→git 防分叉预检→推送+SHA 精确校验→token 销毁清理；含 gh 缺 read:org 的直接推送兜底与 macOS 清理可移植性修复
+aliases: 推不上去提示没权限,设备码登录卡在轮询,用设备码流程推送,推完要核对提交哈希,一次性凭证助手
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: episode:94e5a13e-232e-436f-8f03-dd4e725ce24f:89:b107f433d81549216fe4

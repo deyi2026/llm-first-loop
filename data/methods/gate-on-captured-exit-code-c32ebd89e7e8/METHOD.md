@@ -2,6 +2,7 @@
 method_id: gate-on-captured-exit-code-c32ebd89e7e8
 name: gate-on-captured-exit-code
 description: 当门禁命令的退出码已被刻意捕获进日志时，退出码+完成度标记即权威判定；统计行被插件吞掉不应触发多轮取证，精确计数只在验收确需时做一次机械推导。
+aliases: 统计行没打出来算挂吗,这个门禁到底过没过,退出码已被记进日志,已捕获退出码就是判定,完成度标记一起看
 status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab

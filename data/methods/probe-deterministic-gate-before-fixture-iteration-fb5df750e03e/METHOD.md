@@ -2,6 +2,7 @@
 method_id: probe-deterministic-gate-before-fixture-iteration-fb5df750e03e
 name: probe-deterministic-gate-before-fixture-iteration
 description: 当阈值/预算门控分支在测试中未按预期触发时，先用最小探针直接对 fixture 内容求值门控函数、解出确切数值，再一次性写对测试；不要用反复改 fixture 字面量+跑全量测试来搜索答案。
+aliases: 这个分支怎么就是不触发,阈值到底该写多少,测试里门控分支没触发,用最小探针直接求值,先解出确切阈值
 status: hold
 source_model: glm/glm-5.3
 teacher_refs: method:method-self-distill-root-cause,method:method-self-distill-repo-api,method:method-self-distill-ab

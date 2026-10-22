@@ -2,6 +2,7 @@
 method_id: attribute-gate-failures-before-deep-dive-b541c0704b8e
 name: attribute-gate-failures-before-deep-dive
 description: 当作为提交门禁的验证运行（全量测试等）报失败时，先用两个机械可查的事实归因——失败工件与改动文件集的路径重叠、运行 workdir/分支与改动所在 worktree 是否一致——再决定是否深挖失败内部；改动位于独立 worktree 时，门禁运行必须在该 worktree 内启动或重跑。
+aliases: 门禁红了是不是我改的,这个失败算不算我头上,改动在另一个工作树,失败路径与改动是否重叠,运行目录分支要能对上
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:4d6c551c-a50d-4ef1-90cf-b0af9f557745

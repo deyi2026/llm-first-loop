@@ -2,6 +2,7 @@
 method_id: ff-window-first-shared-ref-advance-25c56c2869fa
 name: ff-window-first-shared-ref-advance
 description: 在多 worktree 并发仓库中决定/执行把 feature 分支合入共享主干时，先用一次标量比较（merge-base vs rev-parse）判定 fast-forward 窗口是否开启；窗口开启且目标 ref 未被任何 worktree 占用时，从侧 worktree 用 git push . HEAD:main 无副作用地推进共享 ref，结构性避开被并发占用的主 worktree。
+aliases: 能不能直接快进,主工作树被占没法切,多工作树同时占仓库,先判快进窗口是否打开,合并基点对比分支头
 status: hold
 source_model: glm/glm-5.3
 source_episode_refs: session:d3e8d89f-0695-48ca-8061-5ba53bfe928c

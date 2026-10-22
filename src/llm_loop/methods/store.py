@@ -58,6 +58,10 @@ _DISPOSITION_STATUSES = frozenset({"invalidated", "retired"})
 # 证据（可能只是顺带提及），退回基础值 4 —— 保留 EVO-20261017 的“body 实质命中 > 描述顺带
 # 提及”口径。仅 idf 加权时保持 desc=4 作对照；运行期只读。
 _FIELD_WEIGHTS: dict[str, int] = {"id": 10, "name": 8, "desc": 4, "body": 5}
+# 2026-10-22 method-alias-retrieval：aliases 复用 name 的权重（_FIELD_WEIGHTS["name"]），
+# 不新增常量。理由是别名与 name 同为作者手写的"何时适用"表述，只是措辞更口语/更同义；
+# 给别名单独权重等于额外引入一个无人消融过的调参维度。别名只在 list() 词法排序里与
+# name 同权参与，不改变 idf/identifier_bonus/description 佐证逻辑。
 # 2026-10-22：description 命中 ≥2 个不同 query 词项时的佐证权重。
 _DESC_CORROBORATED_WEIGHT = 8
 # Used only to distribute a bounded amount of embedding work across the corpus.
@@ -280,13 +284,20 @@ class MethodRecord:
     updated_at: str = ""
     qualification: dict[str, Any] = field(default_factory=dict)
     freshness_refs: tuple[str, ...] = ()
+    # 2026-10-22 method-alias-retrieval：作者声明的"何时适用"同义/口语表述
+    # （front matter `aliases: a, b, c`）。它只是一条检索同义通道：参与词法排序、
+    # 进入语义候选文本与 inventory 关键词匹配，并可在 card() 里投影给作者自查。
+    # 别名不判断适用性、不构成使用许可、与 status（仅是质量徽标）无关——能否用某张卡
+    # 仍然只由阅读正文的模型决定。空元组表示作者未声明别名，此时每条读取路径都与
+    # 未引入该字段前逐字等价。放在字段末尾以保持既有位置参数构造兼容。
+    aliases: tuple[str, ...] = ()
 
     @property
     def method_ref(self) -> str:
         return f"method:{self.method_id}"
 
     def card(self) -> dict[str, Any]:
-        return {
+        card: dict[str, Any] = {
             "kind": "method",
             "ts": self.updated_at or self.created_at,
             "id": self.method_id,
@@ -304,6 +315,13 @@ class MethodRecord:
             "task_applicability": "not_evaluated",
             "file": self.path,
         }
+        # 2026-10-22 method-alias-retrieval：只有作者真声明了别名才投影该键。
+        # 绝大多数卡没有 aliases，无条件输出空列表会让每条检索结果多一个恒空字段；
+        # 空别名 = 键不存在，调用方据此区分"未声明别名"与"声明了空别名"。
+        # 别名只是可检索的同义表述，不判断适用性、不构成使用许可、与 status 无关。
+        if self.aliases:
+            card["aliases"] = list(self.aliases)
+        return card
 
     def hydrated(self) -> dict[str, Any]:
         result = self.card()
@@ -511,6 +529,9 @@ class MethodStore:
             updated_at=str(meta.get("updated_at") or ""),
             qualification=qualification,
             freshness_refs=tuple_field("freshness_refs"),
+            # 2026-10-22 method-alias-retrieval：逗号切分、逐项 strip、丢空项。
+            # `aliases:`（空值）与完全缺省该键都得到 ()，两条路径逐字等价。
+            aliases=tuple_field("aliases"),
         )
 
     def get(self, method_ref: str) -> MethodRecord | None:
@@ -766,6 +787,12 @@ class MethodStore:
             name_text = self._normalized_search_text(record.name)
             desc_text = self._normalized_search_text(record.description)
             body_text = self._normalized_search_text(record.body)
+            # 2026-10-22 method-alias-retrieval：别名是作者声明的"何时适用"同义/口语
+            # 表述，与 name 同级，所以复用 _FIELD_WEIGHTS["name"]，不加新权重常量。
+            # 别名只在检索同义通道里起作用：它不判断适用性、不构成使用许可、与
+            # status 无关。空别名得到 ""，`term in ""` 恒假，因此对该卡零贡献 ——
+            # 没有 aliases 的卡与引入本字段前逐字等价。
+            alias_text = self._normalized_search_text(" ".join(record.aliases))
             # 2026-10-22 retrieval-idf: name is the author-written "when to use" summary
             # (8); body carries the procedure (5); id is the identity slot (10).
             # description is conditional: one incidental term is weak evidence, so it
@@ -780,6 +807,8 @@ class MethodStore:
             fields = (
                 (id_text, _FIELD_WEIGHTS["id"]),
                 (name_text, _FIELD_WEIGHTS["name"]),
+                # 别名与 name 同权（_FIELD_WEIGHTS["name"]）：同为作者手写的适用表述。
+                (alias_text, _FIELD_WEIGHTS["name"]),
                 (desc_text, desc_weight),
                 (body_text, _FIELD_WEIGHTS["body"]),
             )
@@ -854,8 +883,12 @@ class MethodStore:
             if status and record_status != status:
                 continue
             if needle:
+                # 2026-10-22 method-alias-retrieval：管理页关键词匹配也认别名，作者/模型
+                # 用口语词能查到同一张卡。别名仍是检索同义表述，不是适用性或使用许可。
+                # `" ".join(())` == ""：无别名的卡 haystack 与改动前逐字相同。
                 haystack = self._normalized_search_text(
-                    f"{record.method_id} {record.method_ref} {record.name} {record.description}"
+                    f"{record.method_id} {record.method_ref} {record.name} "
+                    f"{' '.join(record.aliases)} {record.description}"
                 )
                 if needle not in haystack:
                     continue
@@ -870,13 +903,18 @@ class MethodStore:
 
     @staticmethod
     def semantic_candidate(record: MethodRecord) -> dict[str, Any]:
+        # 2026-10-22 method-alias-retrieval：别名排在 name 之后、description 之前，让语义
+        # 召回也能被作者声明的口头叫法收敛到同一张卡。别名为空时 content 与引入本字段前
+        # 逐字相同（不插入多余空格）。别名只是检索同义通道：不判断适用性、不构成使用许可、
+        # 与 status 无关——是否用这张卡仍由阅读正文的模型决定。
+        prefix = f"{record.method_id} {record.name}"
+        if record.aliases:
+            prefix = f"{prefix} {' '.join(record.aliases)}"
         return {
             "kind": "method",
             "id": record.method_id,
             "key": record.method_ref,
-            "content": (
-                f"{record.method_id} {record.name} {record.description} {record.body}"
-            ),
+            "content": f"{prefix} {record.description} {record.body}",
         }
 
     def semantic_candidates(self) -> list[dict[str, Any]]:
