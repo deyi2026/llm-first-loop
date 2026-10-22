@@ -50,7 +50,21 @@ echo "═══ [2/5] 测试环境声明门禁（精确压缩预算断言必须�
 "$PY" scripts/check_test_env_pins.py
 
 echo "═══ [3/5] Pyright 全树静态诊断门禁（精确历史债 ratchet；修改文件零红）═══"
-"$PY" scripts/check_static_diagnostics.py --tool pyright
+# D6 收尾（2026-10-22）：墙钟超限时该步以 advisory 放行（exit 0），本轮没有类型
+# 诊断数据，脚本落机器可读态 status=unknown（scripts/check_static_diagnostics.py）。
+# 放行语义保持不变——环境性超时不该把开发侧 push 门禁变成永久红；但结论行不得
+# 再声称「pyright 已通过」。此处捕获该状态，末行按实际状态二分呈现。
+set +e
+PYRIGHT_OUT="$("$PY" scripts/check_static_diagnostics.py --tool pyright 2>&1)"
+PYRIGHT_RC=$?
+set -e
+printf '%s\n' "$PYRIGHT_OUT"
+[[ "$PYRIGHT_RC" -eq 0 ]] || exit "$PYRIGHT_RC"
+if [[ "$PYRIGHT_OUT" == *"status=unknown"* ]]; then
+  PYRIGHT_STATUS=unknown
+else
+  PYRIGHT_STATUS=complete
+fi
 
 echo "═══ [4/5] 测试运行前置：隔离 HOME + 从候选源码构建 WebUI ═══"
 # The MCP sandbox HOME is under /var/...; CatastrophicGuard intentionally
@@ -146,4 +160,10 @@ rm -f "$GATE_OUT" "$GATE_SER"
 # Phase 2 接线（B2-P2-08）：守卫 WARN 汇总呈现（不阻断；FAIL 用例已在 [4/4] 全量天然覆盖）
 "$PY" -m pytest tests/unit/test_arch_guards.py -m guard_report -q
 
-echo "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁）"
+if [[ "$PYRIGHT_STATUS" == "unknown" ]]; then
+  echo "⚠️ ci_gate 全链路完成，但 pyright=UNKNOWN（本轮无类型诊断数据，非 PASS）："
+  echo "   ruff + env-pin 声明门禁 + tier0 预检 + 全量门禁均已通过；"
+  echo "   发布资格（release.yml 带 --require-complete）不得引用本次结果作为类型检查通过。"
+else
+  echo "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁）"
+fi

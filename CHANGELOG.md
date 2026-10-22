@@ -1,18 +1,34 @@
-## v0.6.36 — 批次2：检索两段式重排与运维体验优化（2026-10-20）
+# Changelog（公开变更记录）
+
+> 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
+
+## Unreleased
+
+_目前暂无未发布变更。_
+
+## v0.6.36 — 检索两段式重排、workspace 解析修复、手机 Web 与治理语义对齐（2026-10-20）
 
 - **语义检索（D7）**：memory/docs 检索新增两段式重排——词法粗筛 top-200 → 本地 ONNX 语义重排 top-20（`bge-small-zh-v1.5` int8，24MB，sha256 锁定，`scripts/download_semantic_model.sh` 首启下载至 `~/.cache/lfl/models/`）；向量缓存按 `(text_sha256, model_id)` 键原子写（tempfile + os.replace），并发安全（锁内快照更新 + 8 线程×50 轮零丢失测试）；模型缺失/加载失败/推理超时一律降级回词法排序（diagnostics 标记 `semantic_unavailable`），行为零回归；内嵌评估集 AUC 词法 0.6875 → 两段式 0.9375（8 query × 16 对）。
 - **惰性迁移（D5）**：legacy sidecar 迁移从 workspace 激活路径移至首次 evidence 使用（`SessionLifecycle.reconcile` 一次性触发，锁内 re-arm 防竞态，失败不阻断）。实施期复测证伪审查携带值：700 项扫描实测 0.04s（非 ~30s），增量索引按设计预案省略。
 - **静态诊断（D6）**：pyright 900s 墙钟超时降级为 advisory 遥测（写入诊断报告 + stderr 警告，不拦截门禁；version-check 240s 超时保持硬失败），ruff/pyright count-ratchet 硬门禁不变。
 - **安装简报（D8）**：`lfl doctor` briefing 新增知识健康度段（最新分 + Δ + 趋势符号，≤3 行）；分数账本缺失或最新评分超 7 天 TTL 时整段省略，不输出占位。
 - **依赖**：新增 `onnxruntime`/`tokenizers`（语义重排推理；延迟导入，未下载模型的环境零影响）。
-
-## v0.6.36 — workspace 解析优先级修复与 ambient 泄漏门禁（2026-10-20）
-
 - **修复（B1）**：`lfl query` workspace 解析优先级反转（`--workspace` > cwd 向上找 `pyproject.toml` > 部署绑定 `LFL_WORKSPACE_ROOT`（stderr 警告）> 裸 cwd）；cwd 位于部署根内且与绑定重合时拒绝猜测并以 exit 3 输出双候选；未注册 workspace 仅在注册表唯一时降级 base 根列举（JSON 输出新增 `degraded` 字段），多注册表时拒绝且不列举路径。
 - **修复（B2）**：`_bounded_child_wire` 投影契约改为全量 dict 校验，违规整批拒绝（`投影契约失败(第N项 type=...)`）+ ERROR 日志（有界 repr），不再静默丢弃。
 - **治理（B3）**：终端信号类测试单点 `serial_signal` marker（conftest 路径清单驱动），门禁并行跑排除，nightly `serial-signal-stress` 连续 50 次验证（`scripts/verify_serial_signal_stability.sh`）。
 - **门禁（D4）**：CI 新增 `ambient-env-gate`（ambient 部署变量注入下泄漏敏感切片必须全绿，变量清单从 `tests/conftest.py` 派生）+ subprocess 泄漏免疫测试。
 - **注**：v0.6.36 webui 提交产物在独立 repo（发布流水线直接发布），本 mirror 仅含 docs/pyproject 等工程文件。
+- **手机 Web 右侧栏入口修复**：此前 PC 侧边栏箭头被 `!isMobile` 条件隐藏，手机只剩顶栏 `▤` 图标，真实用户无法发现右侧抽屉入口。现统一为 `◂` 展开 / `▸` 收起，手机固定在右侧屏幕边缘并提供 ≥44px 触摸宽度，安全区适配、抽屉遮罩层级与键盘/屏幕阅读器属性同步更新；PC 保持原箭头位置。
+- **反回归测试**：从真实浏览器视口检查箭头贴右屏边、方向、可见性、开合、关闭恢复与滚动；补充 React 状态断言及右侧面板关联可访问性。生产验收须回读实际代码 SHA、WebUI 来源绑定与三服务身份，不能把 HTTP 200 或模拟宽度单独当作实机验收。
+- **版本及文档**：`pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、README 中英、Linux 安装示例与发布指引同步为 `0.6.36`；安装仍只允许 GitHub 已公开稳定 Release，Draft/未签名 macOS 候选不得视为正式安装包。
+- **审批入口补齐执行授权（EVO-20261018-f5f7580a 收尾）**：批量审批支持 `exec_override`（顶层默认、条目可覆盖，非布尔值直接 400 拒绝），accepted 后真正触发执行推进——此前批量路径只置 `accepted`、从不调用执行引擎，档位 0 下永远到不了 `executing`；面板授权勾选框不再只对涉边界条目显示，非边界条目也可逐条显式授权（涉边界条目仍须单条审批 + 安全边界确认）。
+- **method 状态转为质量标注（EVO-20261017-lifecycle-alignment）**：知识库除已弃用 `retired` 外全部状态可检索（hold/invalidated/teacher 不再隐藏）；候选卡与 active 同等可用，`record_use` 与评分均为可选；`candidate → active` 一次写入即合法（原 `promotion=pass` 与跨任务类型门禁移除）；排序去掉 lifecycle 权重与零信号衰减，body 权重提高。
+- **人工逐条授权不再被执行档位压制（EVO-20261018-f5f7580a）**：`EVOLVE_LOCAL_EXEC=0` 下，人工审批显式勾选 `exec_override` 的演进条目此前永远停在 `accepted`（判定链先命中"仅建议级"，引擎入口更在 level==0 直接 early return，override 根本不被读取），审批通道承诺的自动执行不发生、`evolution_complete` 随之被拒。现改为人工逐条授权优先于全局档位：该授权越过边界/档位/白名单门禁并正常进入 `executing`；`EVOLVE_LOCAL_EXEC` 仍完整约束 AI 自主执行（无授权时 level 0 行为不变），AI 仍不得自授该字段。
+- **移除 goal 级知识库 use 硬门（EVO-20261018-f4ca0fc4）**：`create_goal` 的 `method_use_gate`、`task_update` 的 `method_no_contact` 与 Goal 存储字段一并删除。该门默认关闭、从未在生产开启，且自带 `method_no_contact` 免费出口（一条自报声明即可 `→done`），既与不设硬门的规则冲突，也不构成完整性防线；删除不改变运行时默认行为。方法回记收尾提醒（`method_use_reminder`）保留，其专项用例不变。
+- **贡献入口对齐**：规则 SoT 按需读取，贡献指南和文档索引不再要求把 playbook 镜像进 universal prompt；中英文 README 的当前版本与评测场景数量对齐权威定义。
+- **浏览器测试前置条件如实呈现**：Playwright Chromium 文件缺失时，语义守卫 E2E 按既有可选测试契约标记 skipped，不再因启动不存在的路径产生 setup error。文件缺失和既有 CDP 未就绪分支的 skipped 均表示该环境未验证浏览器能力，不产生浏览器部署资格。
+- **Phase4 类型门禁**：分段等待在调用可选打断回调前显式确认其非空；缺失回调时仍继续等待，满足既有保守退化契约和 Pyright 检查。
+- **Phase4 保守矩阵测试同步**：确认工具真实进入在途后再入队，以显式事件保持断言窗口并在清理时释放；恢复测试临时修改的 run-generation context。保留原有全部保守矩阵断言，减少入队消费与 run 结束的时序竞争。
 
 ## v0.6.35 — 安装即检测：init 模型连通检测、doctor --online 与安装期规则/经验 briefing（2026-10-20）
 
@@ -37,29 +53,6 @@
 - **真实 Linux 验收**：GitHub Actions Ubuntu `x86_64/glibc` runner 对全新隔离环境、345 个包内资源、doctor 只读、升级/失败保护/回滚/卸载完成端到端验收；ARM64 属脚本支持目标，尚需独立原生 runner 验收。
 - **GitHub 发行管理**：正式 GitHub `main`、不可变 `vX.Y.Z` tag、单写者 `release.yml`、Draft 审查、wheel/sdist/安装脚本/验收 JSON/`SHA256SUMS` 构成统一发布过程；细节见 `docs/releasing.md` 和 `docs/installation.md`。
 - **版本面一致性**：`pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、中英文 README 与 CHANGELOG 同步到 `0.6.33`；从仓库本地开发 `main` 直接推送会携带尚未公开的提交，正式发布只从受审候选与 GitHub `main` 进行精确集成。
-
-# Changelog（公开变更记录）
-
-> 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
-
-## Unreleased
-
-_目前暂无未发布变更。_
-
-## v0.6.36 — 手机 Web 右侧箭头恢复及版本对齐（2026-10-20）
-
-- **手机 Web 右侧栏入口修复**：此前 PC 侧边栏箭头被 `!isMobile` 条件隐藏，手机只剩顶栏 `▤` 图标，真实用户无法发现右侧抽屉入口。现统一为 `◂` 展开 / `▸` 收起，手机固定在右侧屏幕边缘并提供 ≥44px 触摸宽度，安全区适配、抽屉遮罩层级与键盘/屏幕阅读器属性同步更新；PC 保持原箭头位置。
-- **反回归测试**：从真实浏览器视口检查箭头贴右屏边、方向、可见性、开合、关闭恢复与滚动；补充 React 状态断言及右侧面板关联可访问性。生产验收须回读实际代码 SHA、WebUI 来源绑定与三服务身份，不能把 HTTP 200 或模拟宽度单独当作实机验收。
-- **版本及文档**：`pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、README 中英、Linux 安装示例与发布指引同步为 `0.6.36`；安装仍只允许 GitHub 已公开稳定 Release，Draft/未签名 macOS 候选不得视为正式安装包。
-
-- **审批入口补齐执行授权（EVO-20261018-f5f7580a 收尾）**：批量审批支持 `exec_override`（顶层默认、条目可覆盖，非布尔值直接 400 拒绝），accepted 后真正触发执行推进——此前批量路径只置 `accepted`、从不调用执行引擎，档位 0 下永远到不了 `executing`；面板授权勾选框不再只对涉边界条目显示，非边界条目也可逐条显式授权（涉边界条目仍须单条审批 + 安全边界确认）。
-- **method 状态转为质量标注（EVO-20261017-lifecycle-alignment）**：知识库除已弃用 `retired` 外全部状态可检索（hold/invalidated/teacher 不再隐藏）；候选卡与 active 同等可用，`record_use` 与评分均为可选；`candidate → active` 一次写入即合法（原 `promotion=pass` 与跨任务类型门禁移除）；排序去掉 lifecycle 权重与零信号衰减，body 权重提高。
-- **人工逐条授权不再被执行档位压制（EVO-20261018-f5f7580a）**：`EVOLVE_LOCAL_EXEC=0` 下，人工审批显式勾选 `exec_override` 的演进条目此前永远停在 `accepted`（判定链先命中"仅建议级"，引擎入口更在 level==0 直接 early return，override 根本不被读取），审批通道承诺的自动执行不发生、`evolution_complete` 随之被拒。现改为人工逐条授权优先于全局档位：该授权越过边界/档位/白名单门禁并正常进入 `executing`；`EVOLVE_LOCAL_EXEC` 仍完整约束 AI 自主执行（无授权时 level 0 行为不变），AI 仍不得自授该字段。
-- **移除 goal 级知识库 use 硬门（EVO-20261018-f4ca0fc4）**：`create_goal` 的 `method_use_gate`、`task_update` 的 `method_no_contact` 与 Goal 存储字段一并删除。该门默认关闭、从未在生产开启，且自带 `method_no_contact` 免费出口（一条自报声明即可 `→done`），既与不设硬门的规则冲突，也不构成完整性防线；删除不改变运行时默认行为。方法回记收尾提醒（`method_use_reminder`）保留，其专项用例不变。
-- **贡献入口对齐**：规则 SoT 按需读取，贡献指南和文档索引不再要求把 playbook 镜像进 universal prompt；中英文 README 的当前版本与评测场景数量对齐权威定义。
-- **浏览器测试前置条件如实呈现**：Playwright Chromium 文件缺失时，语义守卫 E2E 按既有可选测试契约标记 skipped，不再因启动不存在的路径产生 setup error。文件缺失和既有 CDP 未就绪分支的 skipped 均表示该环境未验证浏览器能力，不产生浏览器部署资格。
-- **Phase4 类型门禁**：分段等待在调用可选打断回调前显式确认其非空；缺失回调时仍继续等待，满足既有保守退化契约和 Pyright 检查。
-- **Phase4 保守矩阵测试同步**：确认工具真实进入在途后再入队，以显式事件保持断言窗口并在清理时释放；恢复测试临时修改的 run-generation context。保留原有全部保守矩阵断言，减少入队消费与 run 结束的时序竞争。
 
 ## v0.6.32 — 提权闭环安全批次公开披露（2026-10-12）
 

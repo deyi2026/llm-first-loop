@@ -39,7 +39,9 @@ jobs:
       - name: ruff
         run: uv run --no-sync python scripts/check_static_diagnostics.py --tool ruff
       - name: pyright
-        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool pyright
+        # 发版资格要求本轮真实诊断数据：900s 墙钟超限不再以 advisory 放行（exit 3 拦截），
+        # 避免「类型检查没跑完」被当成「类型检查通过」写进发行基线。
+        run: uv run --no-sync python scripts/check_static_diagnostics.py --tool pyright --require-complete
       - name: pytest（非真实 LLM）
         run: uv run --no-sync python -m pytest tests/ -q -m "not real_llm"
 

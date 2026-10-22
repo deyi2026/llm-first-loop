@@ -447,6 +447,12 @@ def _git(root: Path, *argv: str) -> bytes:
 # COMMITTED stays fully reviewed, and the sensitive-filename refusal still
 # applies to every changed path, excluded or not. The model must not extend
 # this list ad hoc; changes require an approved evolution.
+# Revision (EVO-20261021-2f22aae5, proposal A, human-approved 2026-10-22):
+# "anything COMMITTED stays fully reviewed" now has ONE narrow, explicitly
+# marked exception — committed diffs under these very prefixes whose diff text
+# alone exceeds the projection bound render as head/tail evidence plus a
+# truncation marker instead of the full single-line monster. See
+# _COMMITTED_RUNTIME_PROJECTION_BYTES below for the rationale.
 _RUNTIME_OUTPUT_EXCLUDES: tuple[str, ...] = ("reports/",)
 
 
@@ -454,6 +460,50 @@ def _is_runtime_output(name: str) -> bool:
     return any(
         name == prefix.rstrip("/") or name.startswith(prefix)
         for prefix in _RUNTIME_OUTPUT_EXCLUDES
+    )
+
+
+# EVO-20261021-2f22aae5 (human-approved 2026-10-22, exec_override, proposal A):
+# committed runtime-output reports may legitimately contain single-line JSON
+# monsters (one regenerated report is a 302KB single line), so ANY net
+# committed change to such a file structurally exceeded the 192KB material
+# ceiling — while service_control publish's clean-tree requirement forces that
+# very commit first. Deadlock verified 2026-10-21 (material=339158B with
+# largest=committed:reports/phase3/m0/S10.json=302187B). Unblocking rule:
+# a committed diff under _RUNTIME_OUTPUT_EXCLUDES whose diff text alone exceeds
+# the projection bound is replaced by a file-level truncated projection —
+# head and tail evidence plus an explicit marker stating the omitted byte
+# count. The reviewer still sees WHAT changed (path, blob hashes, sizes,
+# content edges, truncation fact); the 192KB ceiling itself, the
+# sensitive-path refusal and the full-review rule for every path OUTSIDE the
+# runtime-output prefixes are unchanged. The model must not widen this
+# projection to other prefixes or raise the bound ad hoc; changes require an
+# approved evolution.
+_COMMITTED_RUNTIME_PROJECTION_BYTES = 48_000
+
+
+def _project_committed_runtime_diff(name: str, diff_text: str) -> str:
+    """Truncated projection for committed runtime-output monster diffs.
+
+    Applies ONLY to _RUNTIME_OUTPUT_EXCLUDES paths; everything else is
+    returned verbatim so the full-review rule is untouched.
+    """
+    if not _is_runtime_output(name):
+        return diff_text
+    raw = diff_text.encode("utf-8")
+    if len(raw) <= _COMMITTED_RUNTIME_PROJECTION_BYTES:
+        return diff_text
+    keep = _COMMITTED_RUNTIME_PROJECTION_BYTES // 2
+    omitted = len(raw) - 2 * keep
+    marker = (
+        "\n<<<EVO-20261021-2f22aae5 TRUNCATED committed runtime output diff: "
+        f"omitted {omitted}B of {len(raw)}B for {name}; "
+        f"spot-check the full content of {name} between review base and HEAD>>>\n"
+    )
+    return (
+        raw[:keep].decode("utf-8", "replace")
+        + marker
+        + raw[-keep:].decode("utf-8", "replace")
     )
 
 
@@ -508,6 +558,14 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
     if any(_SENSITIVE_FILENAME.search(name) for name in committed_names + working_names):
         raise ValueError("review_sensitive_tracked_path_refused")
     committed = _path_diffs(committed_names, base, "HEAD")
+    # EVO-20261021-2f22aae5 (proposal A): committed runtime-output monster
+    # diffs are projection-truncated with an explicit marker (see
+    # _project_committed_runtime_diff); every other committed path keeps the
+    # full-review rule byte for byte.
+    committed = [
+        (name, _project_committed_runtime_diff(name, text))
+        for name, text in committed
+    ]
     kept_working_names = [n for n in working_names if not _is_runtime_output(n)]
     working = _path_diffs(kept_working_names, "HEAD")
     untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")

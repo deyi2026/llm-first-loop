@@ -270,6 +270,14 @@ def evaluate(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tool", choices=TOOLS, required=True)
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help=(
+            "本轮必须取得该工具的真实诊断数据：墙钟超限（advisory）以 exit 3 结束。"
+            "发布/发行资格门禁必须带此开关——advisory 放行只适用于开发侧 push 门禁。"
+        ),
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     head = _git(root, "rev-parse", "HEAD").decode().strip()
@@ -300,6 +308,18 @@ def main() -> int:
                 "no analyzer data this run, ratchet ledger unchanged (advisory, non-blocking)",
                 file=sys.stderr,
             )
+            # D6 收口（2026-10-22）：advisory 不再用 exit 0 冒充「检查通过」。
+            # 机器可读状态 status=unknown 落地——本轮该工具既非 PASS 也非 FAIL。
+            # 开发侧 push 门禁维持非阻断（exit 0）；发布资格门禁带 --require-complete
+            # 时必须取得真实数据，故 advisory → exit 3。
+            print(f"R9 {exc.tool} status=unknown reason=wallclock_advisory timeout_s={exc.timeout_s}")
+            if args.require_complete:
+                print(
+                    f"R9 {exc.tool} DENIED: --require-complete 要求本轮真实诊断数据，"
+                    "却只拿到 wallclock advisory（资格不成立）",
+                    file=sys.stderr,
+                )
+                return 3
             return 0
     expected_version = baseline["versions"][args.tool]
     print(f"ratchet analyzer {args.tool}: actual={version} frozen={expected_version}")
@@ -325,6 +345,7 @@ def main() -> int:
         print("R9 static diagnostic ratchet DENIED: do not silently expand legacy debt", file=sys.stderr)
         return 1
     print(f"R9 {args.tool}: PASS (historical debt visible; no new errors; touched files clean)")
+    print(f"R9 {args.tool} status=complete")
     return 0
 
 

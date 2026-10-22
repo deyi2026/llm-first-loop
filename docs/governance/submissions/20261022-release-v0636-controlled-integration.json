@@ -1,0 +1,221 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261022-release-v0636-controlled-integration",
+  "summary": "v0.6.36 受控集成候选：base 320f9ef23（公开 lfl/main HEAD）→ 本 PR HEAD。含 4 项控制机器的窄修（审查 Host 对已提交 reports/ 巨型差分的截断投影、发布资格要求 pyright 真实完成、ci_gate 结论行按 pyright 状态二分、Phase4 M3 idle 桶有界补采样）与 CHANGELOG 版本段落合并；不含算法行为变更，不改变任何发布拦截判据的退出码语义。边界：本地开发线上的运行时工件刷新（reports/**、experiences/**）刻意不进入本 PR——它们是本地验收证据，且单文件 302KB 会使审查材料超过 192KB 上限；该刷新仍留在本地开发线，不随发行交付。",
+  "components": [
+    {
+      "component_id": "review-host-committed-runtime-projection",
+      "paths": [
+        "src/llm_loop/tools/review_host_admission.py",
+        "tests/unit/test_review_host_admission.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Host 审核准入的材料投影（review_admission 冻结源码材料生成）",
+      "disposition": "在既有 _RUNTIME_OUTPUT_EXCLUDES=('reports/',) 之内新增唯一窄例外：仅当已提交 reports/ diff 文本自身超过 48KB 投影界时，以头尾保留 + 显式截断标记（含 omitted 字节数）投影；192KB 总材料上限、敏感路径拒绝、reports/ 之外逐字全文审查规则全部不变。对应 EVO-20261021-2f22aae5（方案 A，人工批准）。",
+      "evidence": [
+        "实测材料=339158B，最大单文件 committed:reports/phase3/m0/S10.json=302187B，结构上必然超过 192KB 上限。",
+        "测试覆盖 reports/ 路径 >48KB 时出现截断标记且保留头尾证据；非 reports/ 的超大源码路径仍被拒绝。"
+      ],
+      "verification_level": "定向单测（tests/unit/test_review_host_admission.py）+ 原版 R9 全量 + GitHub PR CI",
+      "model_evidence_veto_recovery_exit": "截断标记明示被省略字节数与路径，审查者可自行 spot-check 完整文件后否决；材料缺失不自动放行。",
+      "rollback_route": "回退本 PR 并另发新补丁发行；不移动已发布 tag 或改写 Release 历史。",
+      "declaration_id": "review-host-projection-exception"
+    },
+    {
+      "component_id": "static-diagnostics-complete-requirement",
+      "paths": [
+        "scripts/check_static_diagnostics.py",
+        "tests/unit/test_static_diagnostic_gate.py",
+        ".github/workflows/release.yml"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "静态诊断门禁（ruff/pyright ratchet）与发行工作流",
+      "disposition": "墙钟 advisory 分支新增机器可读 status=unknown；新增 --require-complete：advisory 时 exit 3 拒绝签发资格。release.yml 的 pyright 步骤改为 --require-complete；开发侧 push 门禁维持 exit 0 非阻断。ruff/pyright count-ratchet 硬门禁未改。",
+      "evidence": [
+        "修复前 advisory 与 PASS 在退出码上不可区分（同 exit 0），发行基线可能把「类型检查没跑完」记成「通过」。",
+        "新增测试断言：--require-complete + advisory → exit 3；无该开关时保持 exit 0 且输出 status=unknown；正常完成 → status=complete。"
+      ],
+      "verification_level": "定向单测（tests/unit/test_static_diagnostic_gate.py）+ 原版 R9 全量（pyright status=complete）+ GitHub PR CI",
+      "model_evidence_veto_recovery_exit": "发布资格判定取 status=complete；advisory 时明确 DENIED 并给出原因，不产生资格。",
+      "rollback_route": "回退本 PR 并另发新补丁；advisory 语义与 release.yml 同步回退，避免单侧生效的不对称门禁。",
+      "declaration_id": "static-diagnostics-status-truth"
+    },
+    {
+      "component_id": "ci-gate-conclusion-line",
+      "paths": [
+        "scripts/ci_gate.sh",
+        "tests/unit/test_ci_gate_conclusion_line.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "本地/CI 统一门禁脚本 ci_gate.sh 的结论行",
+      "disposition": "pyright 步骤捕获输出与退出码后按状态二分末行：complete → 保留「✅ 全链路通过」；unknown → 输出「⚠️ 全链路完成，但 pyright=UNKNOWN」并注明不得引用为发布资格。退出码语义（含 advisory 仍 exit 0）与 release.yml 路径均未改动。",
+      "evidence": [
+        "新增测试在临时根目录用桩 python/npm 运行真实 ci_gate.sh，断言 unknown 分支不出现 ✅ 行、complete 分支保留该行，两者 returncode 均为 0。",
+        "红对照：把 ci_gate.sh 换回父提交版本时 unknown 用例 FAILED，证明该测试非空测。"
+      ],
+      "verification_level": "定向单测 + 红对照（旧脚本必须失败）+ 原版 R9 全量 + GitHub PR CI",
+      "model_evidence_veto_recovery_exit": "结论行不再冒充通过；unknown 出现时维护者可要求重跑而不是沿用旧结论。",
+      "rollback_route": "回退本 PR 并另发新补丁；恢复措辞时须保留 status=unknown 输出以免再次冒充。",
+      "declaration_id": "ci-gate-conclusion-truth"
+    },
+    {
+      "component_id": "phase4-m3-idle-bucket-bounded-sampling",
+      "paths": [
+        "tests/phase4/test_m3_bucket_metrics.py"
+      ],
+      "control_machinery": true,
+      "owning_subsystem": "Phase4 M3 四桶指标验收断言",
+      "disposition": "idle 桶改为有界补采样（≤10 轮）：命中不足 need=3 时补采，用尽仍不足才 FAIL；机制断言（命中样本收割 p50 ≤50ms、错失如实归属 round_start、零假打断）保持，并把 sampling_rounds/hit_rate/missed_boundary/other_via 落进 M3_ACCEPTANCE.json。",
+      "evidence": [
+        "定时 CI 39689641019 红：idle hit=2/5（单轮满足 p≈0.32），失败点是采样运气而非机制时延。",
+        "同时收紧：新增 assert not other_via，确保除 gap_harvest/round_start 外的归属仍判缺陷。"
+      ],
+      "verification_level": "tests/phase4 定向重跑 + 原版 R9 全量 + GitHub PR CI",
+      "model_evidence_veto_recovery_exit": "补采样用尽仍不足即 FAIL，不无限重试；采样统计随报告落盘可复核是否被用来掩盖机制回归。",
+      "rollback_route": "回退本 PR 并另发新补丁；恢复单轮断言需同时保留 CI 红样本作为已知不稳定记录。",
+      "declaration_id": "m3-idle-bounded-sampling"
+    },
+    {
+      "component_id": "public-changelog-version-narrative",
+      "paths": [
+        "CHANGELOG.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "公开发布说明",
+      "disposition": "把 4 个重复的 v0.6.36 段落合并为单一版本段并恢复版本倒序；bullet 总数 427 不变，条目内容未改写。",
+      "evidence": [
+        "合并前后 '^## v0.6.36' 段数 4→1；'^- ' 行数 427→427。",
+        "pyproject/uv.lock/SERVICE_VERSION/README 中英均为 0.6.36，版本一致性测试通过。"
+      ],
+      "verification_level": "tests/unit/test_version_consistency.py + 结构计数核对 + GitHub PR CI",
+      "model_evidence_veto_recovery_exit": "CHANGELOG 不影响运行时；版本说明与代码不符时以 pyproject.toml 为单一真值修正文档。",
+      "rollback_route": "回退该提交恢复原文本，不涉运行时。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261022-release-v0636-controlled-integration.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交清单自身",
+      "disposition": "本清单逐路径覆盖 base..head 的精确 changed-path 集合（含清单自身）。",
+      "evidence": [
+        "check_architecture_submission.py --base 320f9ef23 --head <head> 本地通过。",
+        "A.5 Architecture Review 工作流在 PR 上复跑同一检查。"
+      ],
+      "verification_level": "本地 checker + GitHub PR A.5 工作流",
+      "model_evidence_veto_recovery_exit": "清单不覆盖或分类错误时 checker 失败并阻断 PR。",
+      "rollback_route": "修正清单后重推同一 PR 分支。"
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "review-host-projection-exception",
+      "g1": {
+        "necessity": "已提交 reports/ 巨型单行 JSON 使任何净变更都超过 192KB 材料上限，与干净树发布要求形成死锁；不放宽则无法完成对精确候选的 Host 审查。"
+      },
+      "g2": {
+        "authority_owner": "人工批准 EVO-20261021-2f22aae5 方案 A（exec_override）；模型不得自授、不得扩大前缀或提高阈值。",
+        "relationship": "reuse",
+        "non_duplication": "复用既有 _RUNTIME_OUTPUT_EXCLUDES 与 192KB 上限机制，只在其内部新增截断投影，不新建并行材料通道。"
+      },
+      "g3": {
+        "model_evidence": [
+          "HEAD 版本 _project_committed_runtime_diff 源码",
+          "tests/unit/test_review_host_admission.py 边界用例",
+          "原版 R9 全量回执"
+        ],
+        "recovery_or_reason": "截断以显式标记暴露，不静默丢内容；审查者可直接读取工作树完整文件复核。"
+      },
+      "g4": {
+        "rollback": "回退提交并另发补丁；tag/Release 不可移动。",
+        "verification": [
+          "定向单测",
+          "原版 R9 全量",
+          "GitHub PR CI"
+        ]
+      }
+    },
+    {
+      "declaration_id": "static-diagnostics-status-truth",
+      "g1": {
+        "necessity": "advisory 与 PASS 在退出码上不可区分，发行基线可能把未完成的类型检查当成通过。"
+      },
+      "g2": {
+        "authority_owner": "维护者（发行资格门禁）；AI 不得以开关替代审查。",
+        "relationship": "reuse",
+        "non_duplication": "复用既有 advisory 机制与 ratchet 账本，仅补机器可读状态与 opt-in 严格开关。"
+      },
+      "g3": {
+        "model_evidence": [
+          "check_static_diagnostics.py 改动源码",
+          "tests/unit/test_static_diagnostic_gate.py",
+          "R9 回执 pyright status=complete"
+        ],
+        "recovery_or_reason": "advisory 时显式 DENIED 并说明缺少真实诊断数据，宁可拒绝资格也不假装通过。"
+      },
+      "g4": {
+        "rollback": "回退本 PR 并同步回退 release.yml，避免单侧生效。",
+        "verification": [
+          "定向单测",
+          "原版 R9 全量",
+          "GitHub PR CI"
+        ]
+      }
+    },
+    {
+      "declaration_id": "ci-gate-conclusion-truth",
+      "g1": {
+        "necessity": "门禁末行无条件打印「全链路通过」，在 pyright advisory 时会给出与事实相反的可发布印象。"
+      },
+      "g2": {
+        "authority_owner": "维护者；结论行措辞属门禁契约。",
+        "relationship": "reuse",
+        "non_duplication": "不新增门禁阶段，只让既有末行结论与实际状态一致。"
+      },
+      "g3": {
+        "model_evidence": [
+          "scripts/ci_gate.sh 改动",
+          "tests/unit/test_ci_gate_conclusion_line.py 两分支用例",
+          "旧脚本红对照结果"
+        ],
+        "recovery_or_reason": "unknown 分支保留真实耗时与工具名，便于定位重跑。"
+      },
+      "g4": {
+        "rollback": "回退本 PR；恢复措辞时必须保留 status=unknown 输出。",
+        "verification": [
+          "定向单测 + 红对照",
+          "原版 R9 全量",
+          "GitHub PR CI"
+        ]
+      }
+    },
+    {
+      "declaration_id": "m3-idle-bounded-sampling",
+      "g1": {
+        "necessity": "idle 桶命中依赖外部注入线程调度抖动，单轮断言把采样运气当机制门槛，造成定时 CI 假红。"
+      },
+      "g2": {
+        "authority_owner": "维护者（Phase4 验收口径）。",
+        "relationship": "reuse",
+        "non_duplication": "复用既有 _bucket 构造与机械断言，仅增加有界补采样与统计落盘。"
+      },
+      "g3": {
+        "model_evidence": [
+          "tests/phase4/test_m3_bucket_metrics.py 改动",
+          "CI 39689641019 红样本 hit=2/5",
+          "本机 sampling_rounds=1 hit_rate=0.8"
+        ],
+        "recovery_or_reason": "补采样上限 10 轮且用尽即 FAIL；机制时延与零假打断断言未放宽。"
+      },
+      "g4": {
+        "rollback": "回退本 PR；保留红样本记录以免重复踩坑。",
+        "verification": [
+          "Phase4 M3 定向重跑",
+          "原版 R9 全量",
+          "GitHub PR CI"
+        ]
+      }
+    }
+  ]
+}
