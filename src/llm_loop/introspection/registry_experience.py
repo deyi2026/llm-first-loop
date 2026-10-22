@@ -66,7 +66,8 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
     "name": "method_manage",
     "description": (
         "Method Learning 生命周期入口：保存 candidate、声明本任务如何使用 Method、记录独立 qualification、或显式流转状态。"
-        "使用无前置条件：检索到的任意 status 卡（含 candidate）读后即可照做；status 只是质量标注，不参与检索排序、不限制可用性，也不阻断 qualify/activate/hold/reopen 流转。"
+        "使用无前置条件：检索到的任意 status 卡（含 candidate）读后即可照做；质量标注（candidate/qualified/active/hold）只是质量标注，不参与检索排序、不限制可用性，也不阻断 qualify/activate/hold/reopen 流转。"
+        "处置态（invalidated 已知失效、retired 已退役）不进检索发现视图，但仍可用 method:<id> 精确读取、也在 inventory 管理目录里可见。"
         "record_use 完全可选，写与不写都不影响后续可用性；它只保存模型自己的 applied/adapted/not_applicable/rejected 声明。不自动 promotion，不替模型判断适用性，不保存隐藏思维链。"
     ),
     "parameters": {

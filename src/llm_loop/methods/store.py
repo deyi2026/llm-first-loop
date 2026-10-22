@@ -9,6 +9,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -50,6 +51,15 @@ _VALID_STATUSES = {"teacher", "candidate", "qualified", "active", "hold", "inval
 # qualification/proof prerequisite: applicability and use remain model-owned.
 _QUALITY_LABEL_STATUSES = frozenset({"candidate", "qualified", "active", "hold"})
 _DISPOSITION_STATUSES = frozenset({"invalidated", "retired"})
+# 2026-10-22 retrieval-idf 字段基础权重（冻结 goldset 30 条中文任务式 query 消融，见报告表）：
+# name 是作者手写的“何时用”摘要 → 8；body 是正文细节 → 5；id 仍是身份位 10。
+# description 的实际权重是条件值，见 _DESC_CORROBORATED_WEIGHT：只有当一个 query 的**多个**
+# 不同词项同时命中 description（≥2）才算“适用场景佐证”，才升到 8；单个词项出现在描述里属弱
+# 证据（可能只是顺带提及），退回基础值 4 —— 保留 EVO-20261017 的“body 实质命中 > 描述顺带
+# 提及”口径。仅 idf 加权时保持 desc=4 作对照；运行期只读。
+_FIELD_WEIGHTS: dict[str, int] = {"id": 10, "name": 8, "desc": 4, "body": 5}
+# 2026-10-22：description 命中 ≥2 个不同 query 词项时的佐证权重。
+_DESC_CORROBORATED_WEIGHT = 8
 # Used only to distribute a bounded amount of embedding work across the corpus.
 # This order does not filter discovery, choose a relevant method, or authorize use.
 _SEMANTIC_PREWARM_STATUS_ORDER = (
@@ -713,6 +723,15 @@ class MethodStore:
         card["last_signal_age_days"] = _age_days(last)
 
     def list(self, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
+        """Discovery view over discoverable cards (2026-10-22 retrieval-idf rules).
+
+        Lifecycle: ``retired`` and ``invalidated`` are known-dead knowledge and never
+        enter discovery; an exact ``method:<id>`` ref still hydrates any status via
+        get(), and inventory() keeps every status visible for the admin view.
+        Ranking: idf-weighted lexical field scores (rare discriminative terms outweigh
+        high-frequency filler bigrams such as 怎么/一个) + identifier_bonus + coverage,
+        ties broken deterministically by method_id.
+        """
         query = query.strip()
         if query.lower().startswith("method:"):
             record = self.get(query)
@@ -731,27 +750,44 @@ class MethodStore:
             if specific:
                 terms = specific
         raw_chunks = [chunk for chunk in re.split(r"\s+", query.lower()) if chunk]
-        ranked: list[tuple[int, float, MethodRecord]] = []
+        # 2026-10-22 retrieval-idf: one directory scan computes every record's per-term
+        # field scores and accumulates document frequencies in the same pass. df counts
+        # discoverable records whose score for that term is > 0 — the exact criterion
+        # lexical uses — and N is the discoverable corpus size, so no second disk I/O.
+        rows: list[tuple[MethodRecord, list[tuple[str, int]], int]] = []
+        df: dict[str, int] = {}
+        discoverable = 0
         for path in self._iter_paths():
             record = self._load_path(path)
-            if record is None or record.status == "retired":
+            if record is None or record.status in _DISPOSITION_STATUSES:
                 continue
+            discoverable += 1
             id_text = self._normalized_search_text(record.method_id + " " + record.method_ref)
             name_text = self._normalized_search_text(record.name)
             desc_text = self._normalized_search_text(record.description)
             body_text = self._normalized_search_text(record.body)
-            # EVO-20261017-lifecycle-alignment: body carries the substance of a method,
-            # so a query term appearing in the body outranks an incidental mention in
-            # the one-line description. This replaces the old reliance on a lifecycle
-            # weight to promote verified cards over lexically noisy ones.
-            fields = ((id_text, 10), (name_text, 8), (desc_text, 4), (body_text, 5))
-            matched = 0
-            lexical = 0
+            # 2026-10-22 retrieval-idf: name is the author-written "when to use" summary
+            # (8); body carries the procedure (5); id is the identity slot (10).
+            # description is conditional: one incidental term is weak evidence, so it
+            # keeps the base weight; >=2 distinct query terms is corroboration and
+            # promotes it to _DESC_CORROBORATED_WEIGHT. That keeps EVO-20261017's
+            # "substantive body hit beats an incidental description mention" rule.
+            desc_weight = (
+                _DESC_CORROBORATED_WEIGHT
+                if sum(1 for term in terms if term in desc_text) >= 2
+                else _FIELD_WEIGHTS["desc"]
+            )
+            fields = (
+                (id_text, _FIELD_WEIGHTS["id"]),
+                (name_text, _FIELD_WEIGHTS["name"]),
+                (desc_text, desc_weight),
+                (body_text, _FIELD_WEIGHTS["body"]),
+            )
+            term_hits: list[tuple[str, int]] = []
             for term in terms:
                 term_score = max((weight for text, weight in fields if term in text), default=0)
                 if term_score:
-                    matched += 1
-                    lexical += term_score
+                    term_hits.append((term, term_score))
             identifier_bonus = 0
             for chunk in raw_chunks:
                 # A stable-id-like fragment is strong mechanical evidence of identity.
@@ -762,10 +798,25 @@ class MethodStore:
                 chunk_norm = self._normalized_search_text(chunk)
                 if len(chunk_norm) >= 3 and chunk_norm in id_text:
                     identifier_bonus = max(identifier_bonus, 250)
-            if terms and matched == 0 and identifier_bonus == 0:
+            if terms and not term_hits and identifier_bonus == 0:
                 continue
+            rows.append((record, term_hits, identifier_bonus))
+            # dict.fromkeys keeps per-record df increments unique and ordered.
+            for term in dict.fromkeys(hit_term for hit_term, _ in term_hits):
+                df[term] = df.get(term, 0) + 1
+        ranked: list[tuple[float, float, MethodRecord]] = []
+        for record, term_hits, identifier_bonus in rows:
+            # idf = log((N+1)/(df+1)) + 1: ubiquitous terms trend toward 1.0 while rare
+            # discriminative terms rise, so a noise card matching many shared bigrams
+            # no longer ties or beats the card holding the rare term. Summation follows
+            # the (deterministic) query-term order; round(...,4) before comparing keeps
+            # repeated runs bit-identical.
+            lexical = 0.0
+            for term, weight in term_hits:
+                lexical += (math.log((discoverable + 1) / (df[term] + 1)) + 1.0) * weight
+            matched = len(term_hits)
             coverage = (matched / len(terms)) if terms else 0.0
-            score = identifier_bonus + lexical * 10 + int(coverage * 50)
+            score = round(identifier_bonus + round(lexical, 4) * 10 + int(coverage * 50), 4)
             ranked.append((score, coverage, record))
         ranked.sort(key=lambda item: (item[0], item[1], item[2].method_id), reverse=True)
         result: list[dict[str, Any]] = []
@@ -786,7 +837,7 @@ class MethodStore:
     ) -> dict[str, Any]:
         """管理/可观测性目录：全生命周期状态分组 + 记录列表（含 retired/invalidated）.
 
-        与 list()（检索视图，跳过 retired）不同，inventory 面向 web 管理页：
+        与 list()（检索视图，跳过 retired/invalidated 两个处置态）不同，inventory 面向 web 管理页：
         所有状态同列并带 status 徽标，供人工审视与生命周期流转。只读、
         关键词子串匹配（id/name/description）、按 ts 倒序；counts 为全量
         统计（不受 query/limit 影响），无语义排序与零信号衰减。
@@ -832,17 +883,21 @@ class MethodStore:
         """Project Method records for mechanical semantic recall.
 
         The projection exposes content for vectorization only; it does not assert task
-        applicability and retired records stay excluded exactly as in lexical discovery.
-        Status-stratified round-robin order gives each lifecycle bucket a chance to enter
-        the bounded background/startup embedding queue. All discoverable statuses remain
-        present; this is a cache-warming fairness rule, not a retrieval or use gate.
+        applicability. 2026-10-22 retrieval-idf: retired and invalidated records are
+        excluded with the exact same口径 as lexical ``list()`` discovery — both
+        disposition statuses are invisible to every discovery view, so an invalidated
+        card can no longer re-enter results through the semantic arm (prewarm included:
+        its bucket stays empty). Exact ``method:<id>`` refs and inventory() still expose
+        them. Status-stratified round-robin order gives each discoverable lifecycle
+        bucket a chance to enter the bounded background/startup embedding queue; this
+        is a cache-warming fairness rule, not a retrieval or use gate.
         """
         grouped: dict[str, list[tuple[str, str, dict[str, Any]]]] = {
             status: [] for status in _SEMANTIC_PREWARM_STATUS_ORDER
         }
         for path in self._iter_paths():
             record = self._load_path(path)
-            if record is None or record.status == "retired":
+            if record is None or record.status in _DISPOSITION_STATUSES:
                 continue
             grouped.setdefault(record.status, []).append((
                 record.updated_at or record.created_at,
