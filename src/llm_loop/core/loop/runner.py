@@ -189,6 +189,8 @@ class EventBus:
             return None
         if getattr(delta, "tool_result", None) is not None:
             return None
+        if getattr(delta, "provider_retry", None) is not None:
+            return None
         text = str(getattr(delta, "text", "") or "")
         reasoning = str(getattr(delta, "reasoning", "") or "")
         if text and not reasoning:

@@ -381,12 +381,12 @@ async function resumeBackgroundStream(
       content: acc.answer,
       progressStage: "answering",
       progressUpdatedAt: Date.now(),
-    }));
+    }), () => resumeAbort === controller && sessionStore.getState().currentSessionId === sid);
     const patchReasoning = makeCoalescedPatch(() => patchStreaming({
       reasoningContent: acc.reasoning,
       progressStage: "analyzing",
       progressUpdatedAt: Date.now(),
-    }));
+    }), () => resumeAbort === controller && sessionStore.getState().currentSessionId === sid);
     const outcome = await streamChatRequest(
       { message: "resume", session_id: sid, resume: true, run_generation: runGeneration },
       {
@@ -400,6 +400,12 @@ async function resumeBackgroundStream(
           if (sessionStore.getState().currentSessionId !== sid) return;
           acc.reasoning += d;
           patchReasoning();
+        },
+        onProviderRetry: (event) => {
+          if (resumeAbort !== controller || sessionStore.getState().currentSessionId !== sid) return;
+          patchAnswer.flush();
+          patchReasoning.flush();
+          patchStreaming({ providerRetry: event, progressStage: "retrying", progressUpdatedAt: Date.now() });
         },
         onToolRound: (event: ToolRoundEvent) => {
           if (sessionStore.getState().currentSessionId !== sid) return;
@@ -428,14 +434,24 @@ async function resumeBackgroundStream(
       },
       controller.signal
     );
+    patchAnswer.flush();
+    patchReasoning.flush();
+    patchAnswer.dispose();
+    patchReasoning.dispose();
     if (resumeAbort === controller) {
       resumeAbort = null;
       resumeSessionId = null;
     }
     if (sessionStore.getState().currentSessionId !== sessionId) return true;
     if (outcome.ok && outcome.data) {
+      patchStreaming({
+        content: outcome.data.final_answer ?? acc.answer,
+        reasoningContent: outcome.data.reasoning_content ?? (acc.reasoning || null),
+        streaming: false,
+      });
       conversationStore.setState({
         streaming: false,
+        streamingIndex: -1,
         backgroundRunning: false,
         activeRunGeneration: null,
       });
@@ -613,12 +629,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     content: acc.answer,
     progressStage: "answering",
     progressUpdatedAt: Date.now(),
-  }));
+  }), () => abortCtrl === controller && sessionStore.getState().currentSessionId === ownerSessionId);
   const patchReasoning = makeCoalescedPatch(() => patchStreaming({
     reasoningContent: acc.reasoning,
     progressStage: "analyzing",
     progressUpdatedAt: Date.now(),
-  }));
+  }), () => abortCtrl === controller && sessionStore.getState().currentSessionId === ownerSessionId);
 
   const outcome = await streamChatRequest(
     body,
@@ -666,6 +682,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         acc.reasoning += d;
         patchReasoning();
       },
+      onProviderRetry: (event) => {
+        if (abortCtrl !== controller || sessionStore.getState().currentSessionId !== ownerSessionId) return;
+        patchAnswer.flush();
+        patchReasoning.flush();
+        patchStreaming({ providerRetry: event, progressStage: "retrying", progressUpdatedAt: Date.now() });
+      },
       onToolRound: (event: ToolRoundEvent) => {
         if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         const current = conversationStore.getState();
@@ -695,6 +717,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     },
     controller.signal
   );
+  patchAnswer.dispose();
+  patchReasoning.dispose();
   if (abortCtrl === controller) {
     abortCtrl = null;
     abortSessionId = null;
@@ -856,17 +880,22 @@ function patchStreaming(partial: Partial<ChatMessage>): void {
 // finalize/done 覆盖全量），视觉延迟 ≤120ms。
 const PATCH_COALESCE_MS = 120;
 
-function makeCoalescedPatch(apply: () => void): () => void {
+function makeCoalescedPatch(
+  apply: () => void,
+  canApply: () => boolean = () => true
+): (() => void) & { flush: () => void; dispose: () => void } {
   let lastAt = 0;
   let pending = false;
+  let timer: number | undefined;
   let alive = true;
   const force = () => {
-    if (!alive) return;
-    lastAt = Date.now();
+    timer = undefined;
     pending = false;
+    if (!alive || !canApply()) return;
+    lastAt = Date.now();
     apply();
   };
-  return () => {
+  const schedule = () => {
     if (!alive) return;
     if (Date.now() - lastAt >= PATCH_COALESCE_MS) {
       force();
@@ -874,8 +903,21 @@ function makeCoalescedPatch(apply: () => void): () => void {
     }
     if (pending) return;
     pending = true;
-    window.setTimeout(force, PATCH_COALESCE_MS);
+    timer = window.setTimeout(force, PATCH_COALESCE_MS);
   };
+  return Object.assign(schedule, {
+    flush: () => {
+      if (!alive || !pending) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      force();
+    },
+    dispose: () => {
+      alive = false;
+      pending = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = undefined;
+    },
+  });
 }
 
 // ══ Human Turn 排队（生成中 cmd/ctrl+Enter；后端 durable 事实）══

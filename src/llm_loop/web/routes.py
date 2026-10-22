@@ -1476,6 +1476,14 @@ def _stream_background(
                     continue
             etype = ev["type"]
             if etype == "delta":
+                retry = getattr(ev["delta"], "provider_retry", None)
+                if retry is not None:
+                    yield _sse("provider_retry", {
+                        "reason": retry.reason,
+                        "retry_index": retry.retry_index,
+                        "max_retries": retry.max_retries,
+                    })
+                    continue
                 # 2026-09-23 CPU #1：合并窗口内连续 delta 同通道拼接为一帧；
                 # 非.delta 事件经 pending 保序穿透（终态/工具事件零延迟）。
                 text_parts: list[str] = []
@@ -1508,7 +1516,10 @@ def _stream_background(
                         except queue.Empty:
                             nxt = None
                             break
-                    if nxt is None or nxt["type"] != "delta":
+                    if (
+                        nxt is None or nxt["type"] != "delta"
+                        or getattr(nxt.get("delta"), "provider_retry", None) is not None
+                    ):
                         pending_event = nxt
                         break
                     cur = nxt["delta"]
@@ -1855,6 +1866,13 @@ def chat_stream(
             while True:
                 try:
                     delta = next(it)
+                    retry = getattr(delta, "provider_retry", None)
+                    if retry is not None:
+                        yield _sse("provider_retry", {
+                            "reason": retry.reason,
+                            "retry_index": retry.retry_index,
+                            "max_retries": retry.max_retries,
+                        })
                     # P1-1: text/reasoning 分片独立 yield（并行互不阻塞，spec 4.1.1）
                     # P2-1: tool_round 工具轮次进展独立 yield（三事件并行互不阻塞）
                     if delta.text:

@@ -59,7 +59,14 @@ export type ProgressStage =
   | "tool"
   | "integrating"
   | "answering"
+  | "retrying"
   | "recovering";
+
+export interface ProviderRetryEvent {
+  reason: "timeout" | "disconnect";
+  retry_index: number;
+  max_retries: number;
+}
 
 export interface ToolCallDelta {
   id?: string;
@@ -88,6 +95,7 @@ export interface ChatMessage {
   toolActivities?: ToolActivity[];
   /** UI-only high-level progress projection for a live run. */
   progressStage?: ProgressStage;
+  providerRetry?: ProviderRetryEvent | null;
   /** Last mechanical progress event timestamp (ms since epoch), used for local heartbeat. */
   progressUpdatedAt?: number | null;
   toolCallId?: string | null;
