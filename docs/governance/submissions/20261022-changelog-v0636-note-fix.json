@@ -1,0 +1,40 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261022-changelog-v0636-note-fix",
+  "summary": "纯文档更正：v0.6.36 的「注」条目原称 mirror 仅含 docs/pyproject 等工程文件，与 tag 树事实不符——v0.6.36 树的 webui/ 有 105 个源码/脚手架文件（无 webui/dist 构建产物）。本次只把该句改为如实描述，不改任何代码、版本号、门禁或行为。",
+  "components": [
+    {
+      "component_id": "public-changelog-mirror-scope-correction",
+      "paths": [
+        "CHANGELOG.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "公开发布说明",
+      "disposition": "v0.6.36「注」条目改为「含 webui 源码与工程脚手架，但不含其构建产物（webui/dist 不入库）」；其余 426 条 bullet 与版本段落结构不动。",
+      "evidence": [
+        "git ls-tree -r v0.6.36^{} -- webui 计数 105，含 webui/src/*.tsx、package-lock.json 等源码与脚手架。",
+        "git ls-tree -r v0.6.36^{} -- webui/dist 计数 0，构建产物确未入库。"
+      ],
+      "verification_level": "git 树计数核对 + tests/unit/test_version_consistency.py + GitHub PR CI",
+      "model_evidence_veto_recovery_exit": "若表述仍与实际树不符，审查者可据 git ls-tree 复核并否决；文档更正不改变任何运行时行为。",
+      "rollback_route": "revert 该提交恢复原措辞，不涉运行时。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261022-changelog-v0636-note-fix.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 架构提交清单自身",
+      "disposition": "本清单逐路径覆盖 base..head 的精确 changed-path 集合（含清单自身）。",
+      "evidence": [
+        "check_architecture_submission.py --base d8abd5331 --head HEAD 本地通过。",
+        "A.5 Architecture Review 在 PR 上复跑同一检查。"
+      ],
+      "verification_level": "本地 checker + GitHub PR A.5 工作流",
+      "model_evidence_veto_recovery_exit": "清单不覆盖或分类错误时 checker 失败并阻断 PR。",
+      "rollback_route": "修正清单后重推同一 PR 分支。"
+    }
+  ],
+  "declarations": []
+}

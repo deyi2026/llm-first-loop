@@ -17,7 +17,7 @@ _目前暂无未发布变更。_
 - **修复（B2）**：`_bounded_child_wire` 投影契约改为全量 dict 校验，违规整批拒绝（`投影契约失败(第N项 type=...)`）+ ERROR 日志（有界 repr），不再静默丢弃。
 - **治理（B3）**：终端信号类测试单点 `serial_signal` marker（conftest 路径清单驱动），门禁并行跑排除，nightly `serial-signal-stress` 连续 50 次验证（`scripts/verify_serial_signal_stability.sh`）。
 - **门禁（D4）**：CI 新增 `ambient-env-gate`（ambient 部署变量注入下泄漏敏感切片必须全绿，变量清单从 `tests/conftest.py` 派生）+ subprocess 泄漏免疫测试。
-- **注**：v0.6.36 webui 提交产物在独立 repo（发布流水线直接发布），本 mirror 仅含 docs/pyproject 等工程文件。
+- **注**：v0.6.36 webui 提交产物在独立 repo（发布流水线直接发布）；本 mirror 含 webui 源码与工程脚手架，但不含其构建产物（`webui/dist` 不入库）。
 - **手机 Web 右侧栏入口修复**：此前 PC 侧边栏箭头被 `!isMobile` 条件隐藏，手机只剩顶栏 `▤` 图标，真实用户无法发现右侧抽屉入口。现统一为 `◂` 展开 / `▸` 收起，手机固定在右侧屏幕边缘并提供 ≥44px 触摸宽度，安全区适配、抽屉遮罩层级与键盘/屏幕阅读器属性同步更新；PC 保持原箭头位置。
 - **反回归测试**：从真实浏览器视口检查箭头贴右屏边、方向、可见性、开合、关闭恢复与滚动；补充 React 状态断言及右侧面板关联可访问性。生产验收须回读实际代码 SHA、WebUI 来源绑定与三服务身份，不能把 HTTP 200 或模拟宽度单独当作实机验收。
 - **版本及文档**：`pyproject.toml`、`uv.lock`、Web `SERVICE_VERSION`、README 中英、Linux 安装示例与发布指引同步为 `0.6.36`；安装仍只允许 GitHub 已公开稳定 Release，Draft/未签名 macOS 候选不得视为正式安装包。
