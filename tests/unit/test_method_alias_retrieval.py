@@ -167,7 +167,7 @@ def test_alias_weight_is_literal_three_below_every_authoritative_field() -> None
     """
     assert _ALIAS_WEIGHT == 3
     assert _FIELD_WEIGHTS["desc"] == 4
-    assert all(_ALIAS_WEIGHT < weight for weight in _FIELD_WEIGHTS.values())
+    assert all(weight > _ALIAS_WEIGHT for weight in _FIELD_WEIGHTS.values())
 
 
 def test_alias_hit_surfaces_its_card_but_never_outranks_an_authoritative_hit(
