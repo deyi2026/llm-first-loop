@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -39,6 +40,35 @@ def _entries(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line]
 
 
+def _segment_fsync_injector(path: Path, *, always: bool) -> Callable[[int], None]:
+    """fsync 注入按目标文件身份（inode）匹配，不按调用序号.
+
+    旧 fail_once 语义是"patch 生效后进程内第 1 次 os.fsync 失败"：窗口期内
+    任何其他线程的一次 os.fsync（典型为泄漏的后台写线程，fail-open 路径吞错
+    继续）都会消耗掉该次注入，被测 append 的 fsync 反而成功，pytest.raises
+    假红（CI 偶发根因，机制已独立复现）。改为仅对被测 segment 的 fd 注入、
+    其余 fd 透传真实 fsync：注入结果与进程内并发 fsync 活动完全解耦，外来
+    调用者也不再被误伤。always=False 恰好失败一次（append 失败、rollback
+    成功 → PersistError）；always=True 恒失败（rollback 也不确认 → Uncertain）。
+    """
+    original_fsync = module.os.fsync
+    seg_stat = path.stat()
+    failed = False
+
+    def injected(fd: int) -> None:
+        nonlocal failed
+        try:
+            on_segment = os.path.samestat(os.fstat(fd), seg_stat)
+        except OSError:
+            on_segment = False
+        if on_segment and (always or not failed):
+            failed = True
+            raise OSError("injected segment fsync failure")
+        original_fsync(fd)
+
+    return injected
+
+
 def test_append_file_fsync_and_derived_index_readback(tmp_path: Path) -> None:
     store = _store(tmp_path)
     record = store.archive(SID, role="tool", source="test", content="durable one", tool_call_id="tc1")
@@ -56,18 +86,9 @@ def test_append_single_fsync_failure_rolls_back_before_side_effect(
     old = path.read_bytes()
     seen: list[str] = []
     store.add_post_save_hook(lambda entry: seen.append(entry.id))
-    original_fsync = module.os.fsync
-    count = 0
-
-    def fail_once(fd: int) -> None:
-        nonlocal count
-        count += 1
-        if count == 1:
-            raise OSError("file fsync failure")
-        original_fsync(fd)
 
     with monkeypatch.context() as m:
-        m.setattr(module.os, "fsync", fail_once)
+        m.setattr(module.os, "fsync", _segment_fsync_injector(_segment(tmp_path), always=False))
         with pytest.raises(ArchivePersistError, match="rolled back"):
             store.archive(SID, role="tool", source="test", content="must not appear")
     assert path.read_bytes() == old
@@ -82,7 +103,7 @@ def test_append_rollback_failure_is_uncertain_and_hook_not_called(
     seen: list[str] = []
     store.add_post_save_hook(lambda entry: seen.append(entry.id))
     with monkeypatch.context() as m:
-        m.setattr(module.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("always fail")))
+        m.setattr(module.os, "fsync", _segment_fsync_injector(_segment(tmp_path), always=True))
         with pytest.raises(ArchiveCommitUncertainError) as error:
             store.archive(SID, role="tool", source="test", content="maybe visible")
     assert error.value.operation == "archive_append"
