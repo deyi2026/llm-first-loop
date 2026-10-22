@@ -2,13 +2,13 @@
 method_id: rehead-search-query-on-dictionary-degradation-8da50263deb1
 name: rehead-search-query-on-dictionary-degradation
 description: web_search 结果集整体退化为对 query 首个常见词的词典/百科释义时，这是后端按首词做词义降级匹配的机械签名，与查询语言和其余关键词无关。此时不要在语义层连续改写措辞（换语言/加限定词/换序），而应重构 query 使其以最罕见的专名/缩写/模型名开头，并对每个新 query 预检首词。本集 8 次 query 中 5 次被降级（production/端/具/real/speculative），仅有的两次有效 query 均以罕见术语 VLA 开头；降级规则被总结出后仍在 query 8 复发，说明需要把'首词检查'程序化为发 query 前置步骤。
-aliases: 搜出来全是词典释义, 把生僻词挪到最前面, web_search 首词降级, 同一需求改三次措辞没用
+aliases: 搜出来全是词典释义, 把生僻词挪到最前面, web_search 首词降级, 同一需求改三次措辞没用, 搜索全是百科条目, 换说法还是搜不到
 status: candidate
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:40eeca85-e561-4f26-9faf-efda5823cb4b:75:469167882b8b147403c8
 evidence_refs: learning:learn:14132ef7124d
 created_at: 2026-10-10T14:41:55.021212+08:00
-updated_at: 2026-10-10T14:41:55.021212+08:00
+updated_at: 2026-10-23T05:52:03.570382+08:00
 ---
 ## Trigger
 使用 web_search 类工具做知识检索时：某次结果集几乎全部是词典/百科条目且命中词等于 query 首词；或同一信息需求已连续 2 次以上改写措辞检索仍失败。

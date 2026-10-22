@@ -8,7 +8,7 @@ source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:6198b7b1-67ec-407c-8e94-f9f028f1f197:316:cc65d9ad68eb32f6a821
 evidence_refs: learning:learn:6e7d5f588fa0
 created_at: 2026-10-13T22:00:49.976130+08:00
-updated_at: 2026-10-13T22:00:49.976130+08:00
+updated_at: 2026-10-23T05:53:15.416484+08:00
 ---
 ## Trigger
 需要对二手来源转述的精确数字（百分比、区间、对比值）做一手源核对，且已存在或将形成质疑点（数字对不上、口径存疑、疑似隐去信息）时；典型场景是媒体文章 vs 论文 PDF/HTML 的逐数事实核查

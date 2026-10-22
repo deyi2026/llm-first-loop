@@ -2,13 +2,13 @@
 method_id: rederive-carried-scope-claims-before-design-d3984e4fc520
 name: rederive-carried-scope-claims-before-design
 description: 当新任务/新阶段要把先前上下文携带的具体断言（文件数、行号区间、测试数、清单）当作设计输入，而当前会话查不到对应工具回执时，先把断言降级为假设：用两步机械重验（文件名前缀清单搜索 + 双向 import 边内容搜索）重建影响面，再与旧数字 diff，每个漂移项逐一判定归属而非照搬。本集实测：旧称 10 文件，重验后发现 12+ 迁出候选、观测面 webui 3 处耦合、vendor_adapters 不迁，直接改写剥离边界与呈报决策点。
-aliases: 上次说只有 10 个文件靠谱吗, 上条消息里的清单先当假设, 双向 import 边重算影响面, 数字对不上要逐项判归属, vendor_adapters 到底迁不迁
+aliases: 上次说只有 10 个文件靠谱吗, 上条消息里的清单先当假设, 双向 import 边重算影响面, 数字对不上要逐项判归属, vendor_adapters 到底迁不迁, 摘要里的数字别当真
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:1897dc0c-c278-413c-b54d-22c50b97372f:57:5764e4598627baeb34a1
 evidence_refs: learning:learn:3e992a8e231a
 created_at: 2026-10-13T23:39:58.221175+08:00
-updated_at: 2026-10-13T23:39:58.221175+08:00
+updated_at: 2026-10-23T05:52:05.640725+08:00
 ---
 ## Trigger
 任务起点存在来自先前上下文（上一条消息、记忆、摘要）的量化或定位断言（数量/路径/行号/清单），且这些断言将进入设计、评审或施工，而当前会话没有它们的工具回执。

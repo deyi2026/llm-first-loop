@@ -8,7 +8,7 @@ source_model: glm/glm-5.3
 source_episode_refs: episode:0db9f81d-904e-4748-9ffe-692f23789e9a:858:cf30b371cf28d12a9df6
 evidence_refs: learning:learn:8c1538988615
 created_at: 2026-09-24T00:24:03.014982+00:00
-updated_at: 2026-09-24T00:24:03.014982+00:00
+updated_at: 2026-10-23T05:53:08.417104+08:00
 ---
 ## Trigger
 用户或系统观测到某个先前已受理的异步动作迟迟未产生预期效果，需要归因；或即将向用户解释某异步动作为何未生效/仍在等待，且手上已有该动作的 action_id 或受理回执。

@@ -67,7 +67,7 @@ _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
 
 _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
     "name": "search_records",
-    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、lesson、self_eval、resolved/truncated episode、synopsis、rule 等。episode 表示已解决/退休的对话片段，不代表当前活动任务；experience=正向/legacy 经验 discovery，lesson=失败/未验证/已证伪教训；两者 exact 内容均用 stable experience:<id> 水合。当前 Goal/Task 状态用 get_goal/task_frontier。实质多步/工具任务开局从method/experience/lesson中选≤2类、每类≤5，按任务关键词检索一次，同一任务窗口不重复；简单问答、闲聊、纯复述豁免，零命中不反复换词。kind=method 用普通关键词发现已有方法：失败重试/换源、编辑冲突、超时判定、浏览器定位、检索与验证纪律；只以搜索结果返回的完整 method:<id> stable ref 精确水合，不猜 method:<关键词>。候选卡（status=candidate）与 active 卡同等可用：status 只是质量标注，不参与检索排序、不限制使用；读到即可照做，无需先 qualification 或状态流转。命中后来源时效与任务适用性由模型判断，不由程序自动采用；停滞/当前事实不足/需要规则依据时，可按需用 kind=rule 水合 RULE-AI-xx；非每轮强制、不强制检索顺序。",
+    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、lesson、self_eval、resolved/truncated episode、synopsis、rule 等。episode 表示已解决/退休的对话片段，不代表当前活动任务；experience=正向/legacy 经验 discovery，lesson=失败/未验证/已证伪教训；两者 exact 内容均用 stable experience:<id> 水合。当前 Goal/Task 状态用 get_goal/task_frontier。实质多步/工具任务开局从method/experience/lesson中选≤2类、每类≤5，按任务关键词检索一次，同一任务窗口不重复；简单问答、闲聊、纯复述豁免，零命中不反复换词。kind=method 用普通关键词发现已有方法：失败重试/换源、编辑冲突、超时判定、浏览器定位、检索与验证纪律；只以搜索结果返回的完整 method:<id> stable ref 精确水合，不猜 method:<关键词>。候选卡（status=candidate）与 active 卡同等可用：status 不限制使用，只在分数与 coverage 打平时定次序（active>qualified>candidate>hold）；读到即可照做，无需先 qualification 或状态流转。方法检索有准入门槛：命中 name、命中≥2 个查询词、或单词稀有命中才进结果，单个常见词命中被拦（结果不足 5 条时按分数回填），所以命中少不等于库里没有——换成更具体的任务词再检一次。命中后来源时效与任务适用性由模型判断，不由程序自动采用；停滞/当前事实不足/需要规则依据时，可按需用 kind=rule 水合 RULE-AI-xx；非每轮强制、不强制检索顺序。",
     "parameters": {
         "type": "object",
         "properties": {

@@ -543,6 +543,7 @@ class LearningPlane:
                         source_model=job.source_model,
                         source_episode_refs=[job.source_episode_ref],
                         evidence_refs=[f"learning:{job.job_id}"],
+                        aliases=outcome.candidate_payload.get("aliases") or None,
                     )
                 except Exception:  # noqa: BLE001
                     logger.warning(

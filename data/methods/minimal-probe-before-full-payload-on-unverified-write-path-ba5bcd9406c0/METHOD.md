@@ -2,13 +2,13 @@
 method_id: minimal-probe-before-full-payload-on-unverified-write-path-ba5bcd9406c0
 name: minimal-probe-before-full-payload-on-unverified-write-path
 description: 向具有自身内部状态的外部编辑器/应用（富文本、Draft.js 类状态机、框架管理表单）写入大块内容前，若当前会话没有该写入机制成功的回执，且目标不可回滚或面向生产，先用极小探针（<100 字、含格式样本）在隔离草稿上验证机制是否真正进入平台内部状态（计数器变化、格式被解析、按钮状态响应），通过后才载入真实正文；机制被拒则换机制再探，上限 2-3 次。禁止用完整正文当试错载体，禁止在正式草稿上做格式实验。与『按可逆性排序』卡互补：那张卡管平台先后顺序，本卡管单平台内写入机制本身的演练。
-aliases: 第一次往编辑器里灌大段正文, 先用几十字在草稿探一探, 格式被吃掉了就换注入方式, Draft.js 内部状态有没有变, CDP 注入先小样本
+aliases: 第一次往编辑器里灌大段正文, 先用几十字在草稿探一探, 格式被吃掉了就换注入方式, Draft.js 内部状态有没有变, CDP 注入先小样本, 先写两行试试
 status: candidate
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:9f3f9ab8-30d9-4a2d-9f58-148054503778:1400:6c97a509e9a3e96f615a
 evidence_refs: learning:learn:57100b2d8d89
 created_at: 2026-10-10T23:30:47.253744+08:00
-updated_at: 2026-10-10T23:30:47.253744+08:00
+updated_at: 2026-10-23T05:52:05.342587+08:00
 ---
 ## Trigger
 准备通过未经本会话验证的写入机制（DOM/CDP 注入、剪贴板、脚本模拟输入等）向外部编辑器/应用提交大块或不可回滚的内容。

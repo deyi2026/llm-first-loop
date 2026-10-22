@@ -66,7 +66,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
     "name": "method_manage",
     "description": (
         "Method Learning 生命周期入口：保存 candidate、声明本任务如何使用 Method、记录独立 qualification、或显式流转状态。"
-        "使用无前置条件：检索到的任意 status 卡（含 candidate）读后即可照做；质量标注（candidate/qualified/active/hold）只是质量标注，不参与检索排序、不限制可用性，也不阻断 qualify/activate/hold/reopen 流转。"
+        "使用无前置条件：检索到的任意 status 卡（含 candidate）读后即可照做；质量标注（candidate/qualified/active/hold）不限制可用性，只在分数与 coverage 完全打平时定先后（active>qualified>candidate>hold），也不阻断 qualify/activate/hold/reopen 流转。"
         "处置态（invalidated 已知失效、retired 已退役）不进检索发现视图，但仍可用 method:<id> 精确读取、也在 inventory 管理目录里可见。"
         "record_use 完全可选，写与不写都不影响后续可用性；它只保存模型自己的 applied/adapted/not_applicable/rejected 声明。不自动 promotion，不替模型判断适用性，不保存隐藏思维链。"
     ),
@@ -88,6 +88,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "description": {"type": "string", "description": "save_candidate: 触发条件/用途简介"},
             "body": {"type": "string", "description": "save_candidate: 卡片正文。一句话提醒、索引或完整规程都可以；name/description 非空、正文至少有一行非标题内容即可写入。建议至少说清：何时用 / 做什么或看哪里 / 怎么算成功。六节（## Trigger / ## Discriminator / ## Short path / ## Stop conditions / ## Verification / ## Counterexamples）是可选结构，不是准入条件；写法见 docs/METHOD_CARD_WRITING.md。refine 需持久化的内容也应通过 save_candidate（parent_ref 关联来源）修订"},
             "parent_ref": {"type": "string", "description": "save_candidate: 修订来源 method ref（可选）"},
+            "aliases": {"type": "array", "items": {"type": "string"}, "description": "save_candidate: 2-6 条检索同义/口语说法（用户真实说法、术语变体），须含本卡 name/description/body 里没有的词。写入时按区分度自检：过短、生命周期通用词、与 name 重复、或池内高频（df 超阈值）的项自动丢弃，并在回执说明原因"},
             "freshness_refs": {"type": "array", "items": {"type": "string"}, "description": "save_candidate/annotate_freshness: 该 Method 依赖的 workspace 相对路径；qualification 时按 SHA 基线化，之后 freshness 只报告 current/changed/missing 事实，不自动降级生命周期。存量卡补声明走 annotate_freshness（只改这一个 frontmatter 键，卡体与其余字段逐字节不变）"},
             "verdict": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
             "mechanism": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"], "description": "仅 record_qualification 消费；其余 action 忽略"},
@@ -554,6 +555,7 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
         episode_ref = str(host.current_episode_ref() or "")
         if not episode_ref.startswith("episode:"):
             return _method_failure(tool_name, "[Method candidate 写入失败] 当前 Episode provenance 不可用")
+        alias_drops: list[dict] = []
         record = store.save_candidate(
             name=name,
             description=description,
@@ -563,6 +565,8 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
             evidence_refs=[str(v) for v in (args.get("evidence_refs") or [])],
             parent_ref=str(args.get("parent_ref", "")),
             freshness_refs=[str(v) for v in (args.get("freshness_refs") or [])],
+            aliases=[str(v) for v in (args.get("aliases") or [])] or None,
+            alias_drops=alias_drops,
         )
     except MethodCommitUncertainError as exc:
         return _method_uncertain_receipt(tool_name, exc)
@@ -571,7 +575,18 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
     except (OSError, ValueError, RuntimeError) as exc:
         return _method_failure(tool_name, f"[Method candidate 写入失败] {type(exc).__name__}: {exc}")
     host.audit("save_method_candidate", {"method_ref": record.method_ref, "content_hash": record.content_hash}, "success")
-    return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[save_method_candidate] {record.method_ref} status=candidate content_hash={record.content_hash}", tool_call_id="", tool_name=tool_name)
+    # Report the gate's decision rather than silently dropping hints: the writer is the
+    # only actor who can rephrase an alias into something discriminative. Kept aliases are
+    # reported only when present, so an alias-free write keeps the pre-feature receipt
+    # byte-identical (duck-typed stores in tests do not have to grow an ``aliases`` field).
+    kept_aliases = getattr(record, "aliases", ()) or ()
+    alias_note = f" aliases={len(kept_aliases)} kept" if kept_aliases else ""
+    if alias_drops:
+        reasons = ", ".join(
+            f"{d['reason']} df={d['df']} {d['alias']!r}" for d in alias_drops[:3]
+        )
+        alias_note += f"; dropped {len(alias_drops)}: {reasons}"
+    return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[save_method_candidate] {record.method_ref} status=candidate content_hash={record.content_hash}{alias_note}", tool_call_id="", tool_name=tool_name)
 
 
 def _run_record_method_use(args: dict, host: RegistryHost, *, tool_name: str = "record_method_use") -> ToolResult:

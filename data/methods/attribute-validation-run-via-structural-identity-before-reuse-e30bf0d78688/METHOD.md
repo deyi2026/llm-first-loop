@@ -8,7 +8,7 @@ source_model: glm/glm-5.3
 source_episode_refs: episode:f8beea3a-4ad1-4248-9dd6-815807df0073:3:d36cfddf0c94d3b8b75a
 evidence_refs: learning:learn:717f2ab4536d
 created_at: 2026-10-10T14:21:37.143415+08:00
-updated_at: 2026-10-10T14:21:37.143415+08:00
+updated_at: 2026-10-23T05:53:08.623538+08:00
 ---
 ## Trigger
 已有多个异步验证/测试 job 的调度记录（含 tree 快照、起跑时间、归属、命令串），需要裁决其绿/红结果是否适用于当前候选状态，或决定是否需要自行发起验证；同时存在弱证据（聊天传闻、转贴输出）试图影响归属判断。

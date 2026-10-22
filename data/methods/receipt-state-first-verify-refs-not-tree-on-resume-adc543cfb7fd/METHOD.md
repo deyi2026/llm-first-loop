@@ -8,7 +8,7 @@ source_model: glm/glm-5.3
 source_episode_refs: episode:855926d8-3b7a-4a6d-9c5e-34631b59df2b:738:41d6cf9b17915eff60ce
 evidence_refs: learning:learn:4a4775f0cc61
 created_at: 2026-09-19T10:58:52.688357+00:00
-updated_at: 2026-09-19T10:58:52.688357+00:00
+updated_at: 2026-10-23T05:53:13.181768+08:00
 ---
 ## Trigger
 任务中断后恢复执行（如用户仅说'按建议执行'），已 hydration 到含分支名/commit SHA/退出码/当前 checkout 状态的命令回执，且待办动作依赖定位先前产物或仓库状态

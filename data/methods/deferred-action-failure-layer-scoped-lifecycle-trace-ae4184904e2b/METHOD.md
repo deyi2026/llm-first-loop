@@ -8,7 +8,7 @@ source_model: glm/glm-5.3
 source_episode_refs: episode:5adf278f-405b-44db-95e5-3d3b94e1b8d9:126:aa0fbf465606e1312a4d
 evidence_refs: learning:learn:807c18de983e
 created_at: 2026-09-19T12:10:56.689975+00:00
-updated_at: 2026-09-19T12:10:56.689975+00:00
+updated_at: 2026-10-23T05:53:07.661889+08:00
 ---
 ## Trigger
 用户报告某个已注册的定时/延迟唤醒（schedule/wake/deferred job）没有执行，需要定位原因；环境中存在事件流或调度日志可查

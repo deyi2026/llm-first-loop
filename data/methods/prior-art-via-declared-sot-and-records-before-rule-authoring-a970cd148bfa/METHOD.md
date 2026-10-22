@@ -2,13 +2,13 @@
 method_id: prior-art-via-declared-sot-and-records-before-rule-authoring-a970cd148bfa
 name: prior-art-via-declared-sot-and-records-before-rule-authoring
 description: 在自声明为唯一真相源的治理/规则文件中新增条款前，'是否已有类似条款或先例方法'只从两个已验证来源回答：SoT 本身（相邻条款、编号空缺）与 records 有界检索（kind 限 method/experience，命中后一行裁决）。不做 repo 级文件名枚举——生成工件（eval 结果、浏览器 profile、备份）会淹没治理内容命中。新条款映射到既有记账/执行通道，不建平行账本。写后验证分两层：跑同步测试并枚举其断言确认覆盖语义；测试未覆盖的轴（如编号唯一性）用 grep 直接核验。
-aliases: 加条款前先查有没有同款先例, 别按文件名在仓库里乱翻, 生成物会淹没治理条款, 不新开平行账本, single source of truth
+aliases: 加条款前先查有没有同款先例, 别按文件名在仓库里乱翻, 生成物会淹没治理条款, 不新开平行账本, single source of truth, 条款编号撞车了
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:775390eb-191e-4f71-9b0c-745ac8f072db:0:3b4cbc74133f8f596cb7
 evidence_refs: learning:learn:121985059115
 created_at: 2026-10-14T08:09:07.255393+08:00
-updated_at: 2026-10-14T08:09:07.255393+08:00
+updated_at: 2026-10-23T05:52:04.357625+08:00
 ---
 ## Trigger
 需要向存在自声明'唯一真相源'的治理/规则文件新增或修改条款，且当前未知量是'是否已有类似条款/先例方法'时；尤其在仓库含大量生成工件（eval 输出、浏览器 profile、备份目录）使文件名搜索退化为噪声源的环境。

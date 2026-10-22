@@ -2,13 +2,13 @@
 method_id: wip-ownership-by-freshness-not-history-fbad1497a281
 name: wip-ownership-by-freshness-not-history
 description: 共享工作树存在多方并发会话时，任何树变更（commit/stash/revert）前先用“当前新鲜度”判定无关 M 文件的归属：对比文件 mtime 与各会话 lock/日志的新鲜度，而不是回溯事件流关键词搜索；服务 build 报告里的 git_dirty/head 只是进程启动时快照，工作树真相必须用直接 git status 实核。若 mtime 是分钟级且锁文件新鲜→第三方正在活跃写入，其 WIP 不碰、不 stash、不吸收，只以显式路径提交自己的产物，并在文档记录解释边界。
-aliases: 工作区里别人的改动别动, 看修改时间判断谁在写, git status 实看别信快照字段, stash 前先确认不是别人的活
+aliases: 工作区里别人的改动别动, 看修改时间判断谁在写, git status 实看别信快照字段, stash 前先确认不是别人的活, 两个会话抢一个工作区
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:16a8c1d8-ae5f-4244-8906-98819ee583ec:1477:2bf774230fe743a8d74d
 evidence_refs: learning:learn:3b2722693423
 created_at: 2026-09-18T19:29:02.334519+00:00
-updated_at: 2026-09-18T19:29:02.334519+00:00
+updated_at: 2026-10-23T05:53:13.499014+08:00
 ---
 ## Trigger
 共享/多会话工作树中，自己的提交需与他人的未提交 M/?? 文件共存处理；或服务状态快照字段（如 git_dirty=false）与疑似当前树状态矛盾；或两次相邻观察之间无关文件集合仍在增长。

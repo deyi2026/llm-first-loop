@@ -2,13 +2,13 @@
 method_id: audit-done-by-joining-plan-phase-table-with-vcs-topology-23d6a945eec7
 name: audit-done-by-joining-plan-phase-table-with-vcs-topology
 description: 回答『多阶段工程是否全部做完』时，判据=冻结计划的工作包表 × 版本库拓扑的 join，而不是反复查询进度记录：逐包核对集成分支归属、未合并计数与未开工阶段。进度/状态记录只是断言，且天然只覆盖已做部分（本集记录称『整合完成』，计划表仍有三个未开工阶段）。表内每包状态确定即停止，不对同一记录库换词重查；回答时区分『已交付』与『验收条件已逐条核验』。计划文档 ID 应从检索回执逐字取用，不凭记忆重构。
-aliases: 这活儿到底做完没有 还剩几个阶段, 冻结计划 join 未合并拓扑, 未合并计数看还剩多少, 进度记录说整合完成 可信吗, 冻结计划工作包逐条核
+aliases: 这活儿到底做完没有 还剩几个阶段, 冻结计划 join 未合并拓扑, 未合并计数看还剩多少, 进度记录说整合完成 可信吗, 冻结计划工作包逐条核, 是不是真的全部交付
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:0f0a5645-b407-4183-bd45-9c5d82003d93:380:8574fc8226c590c0096a
 evidence_refs: learning:learn:24455f64dd95
 created_at: 2026-10-10T05:58:17.045442+08:00
-updated_at: 2026-10-10T05:58:17.045442+08:00
+updated_at: 2026-10-23T05:52:04.651577+08:00
 ---
 ## Trigger
 用户追问某条多阶段/分期工程『是否完全做完、还剩哪些没做』，且检索回执或记录中已出现该工作的冻结计划文档（含分期表或冻结阶段顺序）。

@@ -2,13 +2,13 @@
 method_id: locate-via-quoted-ui-literals-before-broad-filename-search-c867a42a91f8
 name: locate-via-quoted-ui-literals-before-broad-filename-search
 description: 用户请求原文引用界面可见文本（面板名、按钮文案、卡片字段等）要求改 UI 或数据展示时，先用这些高区分度字面量在源码根内做内容 grep 定位实现，而不是先做全库文件名搜索：文件名搜索匹配不到内容标签，还会扫过 evals/node_modules/chrome-profile 等生成物树，产生纯噪音甚至超时。定位到组件后，字段存在性沿『前端 api 类型层 → endpoint 字符串 → 后端路由 → store 投影』一条链一次查清。
-aliases: 按界面上的按钮文案去源码里搜, 文件名搜界面文字全是噪音, 别扫 node_modules 生成目录, content grep 定位组件, store 投影一条链查清
+aliases: 按界面上的按钮文案去源码里搜, 文件名搜界面文字全是噪音, 别扫 node_modules 生成目录, content grep 定位组件, store 投影一条链查清, 这个按钮的代码在哪
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:073925d0-5718-467d-8ea0-bd5d603daeb9:1:9e3300536577561607c7
 evidence_refs: learning:learn:32877aa46dd6
 created_at: 2026-10-13T21:26:47.937952+08:00
-updated_at: 2026-10-13T21:26:47.937952+08:00
+updated_at: 2026-10-23T05:52:04.749434+08:00
 ---
 ## Trigger
 任务请求原文中出现界面可见的专属标签/功能名（如面板名、按钮文案、卡片字段），需要在代码库中定位并修改其实现；或全库文件名搜索已返回生成物噪音、发生超时

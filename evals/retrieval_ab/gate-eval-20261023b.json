@@ -1,0 +1,1877 @@
+{
+ "schema": "method-retrieval-baseline/v1",
+ "ran_at": "2026-10-23T05:15:05+0800",
+ "goldset": {
+  "path": "evals/retrieval_ab/method-goldset-20261020.json",
+  "sha256": "ff5168969193e00cefc351ba1618f51c939ee91c428cd9d566b8f96736a2ecab",
+  "queries": 30
+ },
+ "config": {
+  "provider": "api",
+  "model": "bge",
+  "dim_setting": 128,
+  "dim_actual": 512,
+  "semantic_available": true,
+  "semantic_top_k": 20,
+  "method_limit": 5,
+  "warm": null,
+  "alias_mode": "weak",
+  "aliased_cards": 72,
+  "alias_off_ids": 0,
+  "provenance": {
+   "llm_loop_file": "src/llm_loop/__init__.py",
+   "store_file": "src/llm_loop/methods/store.py",
+   "store_sha256": "313fb04c5793dbcb079d2673621474902cc1471bff9275121845eaeeb3e2ab34",
+   "alias_weight": 3,
+   "git_head": "a2fc16c7b4db937468f6a440584593bffd1493e7",
+   "pythonpath": [
+    ".releases/4000e7887df25100a5b4091788eb230c4ad9772e/src"
+   ],
+   "imported_from_working_tree": true
+  }
+ },
+ "channels": {
+  "keyword": {
+   "hit@1": 0.6333,
+   "hit@3": 0.8667,
+   "hit@5": 0.9333,
+   "hit@10": 0.9333,
+   "mrr@10": 0.7594,
+   "latency_ms": {
+    "mean": 164.26,
+    "p50": 160.49,
+    "p95": 201.33
+   }
+  },
+  "bigram": {
+   "hit@1": 0.6333,
+   "hit@3": 0.8667,
+   "hit@5": 0.9333,
+   "hit@10": 0.9333,
+   "mrr@10": 0.7594,
+   "latency_ms": {
+    "mean": 163.91,
+    "p50": 160.36,
+    "p95": 197.88
+   }
+  },
+  "semantic": {
+   "hit@1": 0.4,
+   "hit@3": 0.5667,
+   "hit@5": 0.7,
+   "hit@10": 0.8,
+   "mrr@10": 0.5269,
+   "latency_ms": {
+    "mean": 178.94,
+    "p50": 141.76,
+    "p95": 312.43
+   }
+  },
+  "prod": {
+   "hit@1": 0.7333,
+   "hit@3": 0.9333,
+   "hit@5": 0.9667,
+   "hit@10": 1.0,
+   "mrr@10": 0.8361,
+   "latency_ms": {
+    "mean": 179.96,
+    "p50": 141.97,
+    "p95": 311.51
+   }
+  }
+ },
+ "by_status": {
+  "active": {
+   "keyword": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 155.76,
+     "p50": 154.15,
+     "p95": 163.68
+    }
+   },
+   "bigram": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 155.67,
+     "p50": 153.47,
+     "p95": 164.79
+    }
+   },
+   "semantic": {
+    "hit@1": 0.6667,
+    "hit@3": 0.6667,
+    "hit@5": 0.6667,
+    "hit@10": 0.6667,
+    "mrr@10": 0.6667,
+    "latency_ms": {
+     "mean": 195.73,
+     "p50": 147.86,
+     "p95": 301.18
+    }
+   },
+   "prod": {
+    "hit@1": 0.6667,
+    "hit@3": 0.6667,
+    "hit@5": 0.6667,
+    "hit@10": 1.0,
+    "mrr@10": 0.7222,
+    "latency_ms": {
+     "mean": 198.15,
+     "p50": 142.88,
+     "p95": 311.51
+    }
+   }
+  },
+  "candidate": {
+   "keyword": {
+    "hit@1": 0.5217,
+    "hit@3": 0.8261,
+    "hit@5": 0.913,
+    "hit@10": 0.913,
+    "mrr@10": 0.6862,
+    "latency_ms": {
+     "mean": 165.27,
+     "p50": 160.49,
+     "p95": 201.33
+    }
+   },
+   "bigram": {
+    "hit@1": 0.5217,
+    "hit@3": 0.8261,
+    "hit@5": 0.913,
+    "hit@10": 0.913,
+    "mrr@10": 0.6862,
+    "latency_ms": {
+     "mean": 163.25,
+     "p50": 159.95,
+     "p95": 191.45
+    }
+   },
+   "semantic": {
+    "hit@1": 0.3043,
+    "hit@3": 0.5217,
+    "hit@5": 0.6957,
+    "hit@10": 0.7826,
+    "mrr@10": 0.4627,
+    "latency_ms": {
+     "mean": 161.92,
+     "p50": 141.14,
+     "p95": 305.85
+    }
+   },
+   "prod": {
+    "hit@1": 0.6957,
+    "hit@3": 0.9565,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 0.8225,
+    "latency_ms": {
+     "mean": 162.85,
+     "p50": 140.86,
+     "p95": 307.94
+    }
+   }
+  },
+  "hold": {
+   "keyword": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 162.04,
+     "p50": 160.45,
+     "p95": 166.44
+    }
+   },
+   "bigram": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 165.88,
+     "p50": 161.6,
+     "p95": 178.01
+    }
+   },
+   "semantic": {
+    "hit@1": 0.6667,
+    "hit@3": 0.6667,
+    "hit@5": 0.6667,
+    "hit@10": 1.0,
+    "mrr@10": 0.7222,
+    "latency_ms": {
+     "mean": 253.03,
+     "p50": 305.13,
+     "p95": 312.43
+    }
+   },
+   "prod": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 250.85,
+     "p50": 302.92,
+     "p95": 311.51
+    }
+   }
+  },
+  "qualified": {
+   "keyword": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 173.44,
+     "p50": 173.44,
+     "p95": 173.44
+    }
+   },
+   "bigram": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 197.88,
+     "p50": 197.88,
+     "p95": 197.88
+    }
+   },
+   "semantic": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 297.8,
+     "p50": 297.8,
+     "p95": 297.8
+    }
+   },
+   "prod": {
+    "hit@1": 1.0,
+    "hit@3": 1.0,
+    "hit@5": 1.0,
+    "hit@10": 1.0,
+    "mrr@10": 1.0,
+    "latency_ms": {
+     "mean": 306.27,
+     "p50": 306.27,
+     "p95": 306.27
+    }
+   }
+  }
+ },
+ "rows": [
+  {
+   "id": "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+   "status": "candidate",
+   "query": "控制面操作卡在运行中不动了，我知道它的 action_id，该去哪儿看这条操作自己的记录和补救步骤？",
+   "keyword_ms": 208.31633359193802,
+   "keyword_ids": [
+    "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+    "check-completion-gate-before-polling-detached-action-13436a62132d",
+    "gate-receipt-names-resolver-characterize-foreign-wip-then-escalate-af0444aa3164",
+    "follow-named-mechanism-identifier-into-code-before-record-sweep-54f607702c00",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac"
+   ],
+   "bigram_ms": 179.28104288876057,
+   "bigram_ids": [
+    "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+    "check-completion-gate-before-polling-detached-action-13436a62132d",
+    "gate-receipt-names-resolver-characterize-foreign-wip-then-escalate-af0444aa3164",
+    "follow-named-mechanism-identifier-into-code-before-record-sweep-54f607702c00",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac"
+   ],
+   "semantic_ms": 144.14212480187416,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "control-plane-record-before-broad-probe-3fccf9490882",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac",
+    "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+    "attribute-run-origin-via-session-record-not-action-logs-f9106ca09382",
+    "destructive-replay-failure-shift-work-into-stable-paste-payload-67917b175573",
+    "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+    "act-on-out-of-band-notification-via-exact-id-record-hydration-978e53da7a53",
+    "id-2a4e1585a9f5",
+    "external-receipt-store-miss-pivots-to-store-location-f1e40be0a4f0",
+    "live-process-fd-map-before-fuzzy-log-search-f876c55bcf3e"
+   ],
+   "prod_ms": 142.58904196321964,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "failed-action-keyed-ledger-lookup-then-prescribed-remediation-efed0f93c3f4",
+    "verify-external-state-change-via-registry-record-by-id-32916de375ac",
+    "control-plane-record-before-broad-probe-3fccf9490882",
+    "gate-receipt-names-resolver-characterize-foreign-wip-then-escalate-af0444aa3164",
+    "terminal-receipt-first-async-reconciliation-07335601d625",
+    "check-completion-gate-before-polling-detached-action-13436a62132d",
+    "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+    "attribute-run-origin-via-session-record-not-action-logs-f9106ca09382",
+    "follow-named-mechanism-identifier-into-code-before-record-sweep-54f607702c00",
+    "destructive-replay-failure-shift-work-into-stable-paste-payload-67917b175573"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 6,
+   "prod_rank": 1
+  },
+  {
+   "id": "isolate-sibling-paths-in-negative-tests-2a915029c432",
+   "status": "candidate",
+   "query": "写『不该命中的输入应返回不存在』的测试时，测试样例总被另一条匹配路径接住而假失败，动笔前要先确认什么？",
+   "keyword_ms": 201.33229158818722,
+   "keyword_ids": [
+    "isolate-sibling-paths-in-negative-tests-2a915029c432",
+    "bind-tree-reading-gates-to-artifact-ref-worktree-ece00051f244",
+    "behavior-lock-tests-derive-fixtures-from-callee-body-guards-73499161b3db",
+    "cross-merge-test-failure-fixture-vs-new-gate-951e932c8902",
+    "author-index-cards-point-to-maintained-sources-from-rendered-field-347d22998d9c"
+   ],
+   "bigram_ms": 191.448625177145,
+   "bigram_ids": [
+    "isolate-sibling-paths-in-negative-tests-2a915029c432",
+    "bind-tree-reading-gates-to-artifact-ref-worktree-ece00051f244",
+    "behavior-lock-tests-derive-fixtures-from-callee-body-guards-73499161b3db",
+    "cross-merge-test-failure-fixture-vs-new-gate-951e932c8902",
+    "author-index-cards-point-to-maintained-sources-from-rendered-field-347d22998d9c"
+   ],
+   "semantic_ms": 313.32054175436497,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "runner-silence-is-invocation-error-6ddc25716e1a",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "failure-scoped-ci-log-triage-f602c22331b4",
+    "follow-error-named-remediation-to-subsystem-interface-568c647646cb",
+    "repair-query-on-explicit-syntax-error-receipt-1d3b71a68e1c",
+    "error-self-provenance-attribution-before-config-blame-111060210cd9",
+    "live-rerun-over-history-recovery-5920494e9147",
+    "isolate-sibling-paths-in-negative-tests-2a915029c432",
+    "validate-instrument-before-absence-claim-3a2756c9c06d",
+    "stop-identical-failure-loop-switch-or-renegotiate-scope-2aa6f65ff24e"
+   ],
+   "prod_ms": 307.9368341714144,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "isolate-sibling-paths-in-negative-tests-2a915029c432",
+    "runner-silence-is-invocation-error-6ddc25716e1a",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "bind-tree-reading-gates-to-artifact-ref-worktree-ece00051f244",
+    "failure-scoped-ci-log-triage-f602c22331b4",
+    "behavior-lock-tests-derive-fixtures-from-callee-body-guards-73499161b3db",
+    "follow-error-named-remediation-to-subsystem-interface-568c647646cb",
+    "cross-merge-test-failure-fixture-vs-new-gate-951e932c8902",
+    "repair-query-on-explicit-syntax-error-receipt-1d3b71a68e1c",
+    "author-index-cards-point-to-maintained-sources-from-rendered-field-347d22998d9c"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 8,
+   "prod_rank": 1
+  },
+  {
+   "id": "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+   "status": "candidate",
+   "query": "同事说这个失败在他机器上也一样、属于预存问题，我只在自己环境跑了一次就反驳，这样下结论可靠吗？",
+   "keyword_ms": 183.63500013947487,
+   "keyword_ids": [
+    "classify-dep-missing-errors-by-interpreter-differential-probe-28934bce0162",
+    "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "resolve-coined-nickname-via-session-provenance-then-ground-at-source-5756d1e2fcbb",
+    "route-status-questions-via-explicit-refs-before-artifact-sweep-ad10dee4f015"
+   ],
+   "bigram_ms": 202.5089580565691,
+   "bigram_ids": [
+    "classify-dep-missing-errors-by-interpreter-differential-probe-28934bce0162",
+    "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "resolve-coined-nickname-via-session-provenance-then-ground-at-source-5756d1e2fcbb",
+    "route-status-questions-via-explicit-refs-before-artifact-sweep-ad10dee4f015"
+   ],
+   "semantic_ms": 141.14429149776697,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+    "a-b-environment-before-preexisting-baseline-b4cda1c9bdee",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "classify-dep-missing-errors-by-interpreter-differential-probe-28934bce0162",
+    "failing-daemon-own-log-first-fix-at-real-supervisor-297cab3af0ce",
+    "residual-classified-error-verify-live-config-then-documented-boundary-effc5e38b02c",
+    "live-rerun-over-history-recovery-5920494e9147",
+    "runner-silence-is-invocation-error-6ddc25716e1a",
+    "classify-failure-stage-from-output-before-adopting-correction-remedy-aad732109179",
+    "excluded-artifact-tests-reuse-sibling-availability-gate-020629ebf0a8"
+   ],
+   "prod_ms": 138.15208431333303,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "classify-dep-missing-errors-by-interpreter-differential-probe-28934bce0162",
+    "a-b-environment-before-preexisting-baseline-b4cda1c9bdee",
+    "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+    "re-anchor-environment-via-runtime-self-introspection-6ebf2f77b467",
+    "locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d",
+    "resolve-coined-nickname-via-session-provenance-then-ground-at-source-5756d1e2fcbb",
+    "failing-daemon-own-log-first-fix-at-real-supervisor-297cab3af0ce",
+    "route-status-questions-via-explicit-refs-before-artifact-sweep-ad10dee4f015"
+   ],
+   "keyword_rank": 2,
+   "bigram_rank": 2,
+   "semantic_rank": null,
+   "prod_rank": 3
+  },
+  {
+   "id": "irreversible-action-lossless-reconciliation-4266e4ab4385",
+   "status": "candidate",
+   "query": "批量发出通知之后，怎么确认一个都没漏？抽查几个锚点感觉不踏实。",
+   "keyword_ms": 150.57262498885393,
+   "keyword_ids": [
+    "irreversible-action-lossless-reconciliation-4266e4ab4385",
+    "lossless-verify-before-irreversible-publish-0d0481739cfc",
+    "serialize-cas-writes-by-chaining-snapshot-refs-65d014ca9b9a",
+    "novelty-gated-facet-enumeration-keyword-only-store-1c3087ae48c3",
+    "remediation-failure-alert-verify-subject-first-7bf9a595d6ab"
+   ],
+   "bigram_ms": 149.35174956917763,
+   "bigram_ids": [
+    "irreversible-action-lossless-reconciliation-4266e4ab4385",
+    "lossless-verify-before-irreversible-publish-0d0481739cfc",
+    "serialize-cas-writes-by-chaining-snapshot-refs-65d014ca9b9a",
+    "novelty-gated-facet-enumeration-keyword-only-store-1c3087ae48c3",
+    "remediation-failure-alert-verify-subject-first-7bf9a595d6ab"
+   ],
+   "semantic_ms": 135.7464585453272,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "degraded-search-fallback-unverified-not-absent-e7fa27de3105",
+    "anchor-token-content-search-to-scope-test-regression-before-local-edit-14b054335f59",
+    "anchor-first-claim-audit-81071f5c9dc1",
+    "deterministic-404-is-an-answer-pivot-to-canonical-candidate-daaa7d2b6d35",
+    "trust-durable-completion-evidence-on-resume-ab903c1cdc9e",
+    "attribute-cause-and-consumer-census-before-conditional-disable-c9d77348e196",
+    "locator-answered-checklist-edit-not-resweep-0e7df520d3ab",
+    "pin-inherited-label-scope-via-closeout-chain-and-source-gap-844e278b0626",
+    "verify-claims-by-cited-anchors-then-scale-calibration-e996055d863d",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9"
+   ],
+   "prod_ms": 136.9221666827798,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "verify-claims-by-cited-anchors-then-scale-calibration-e996055d863d",
+    "anchor-verification-over-narrative-recovery-73fa76a07438",
+    "degraded-search-fallback-unverified-not-absent-e7fa27de3105",
+    "irreversible-action-lossless-reconciliation-4266e4ab4385",
+    "anchor-token-content-search-to-scope-test-regression-before-local-edit-14b054335f59",
+    "lossless-verify-before-irreversible-publish-0d0481739cfc",
+    "anchor-first-claim-audit-81071f5c9dc1",
+    "serialize-cas-writes-by-chaining-snapshot-refs-65d014ca9b9a",
+    "deterministic-404-is-an-answer-pivot-to-canonical-candidate-daaa7d2b6d35",
+    "novelty-gated-facet-enumeration-keyword-only-store-1c3087ae48c3"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": null,
+   "prod_rank": 4
+  },
+  {
+   "id": "reuse-or-requery-exact-identifiers-from-receipts-def44c81977d",
+   "status": "candidate",
+   "query": "接着上一轮继续做，需要的文件路径之前的命令回执里已经出现过，还要再搜一遍吗？",
+   "keyword_ms": 162.46758308261633,
+   "keyword_ids": [
+    "truncated-record-hit-recover-from-same-store-2d655d402037",
+    "match-git-add-mode-to-status-change-class-ee1d2bb36f21",
+    "resolve-claim-targets-name-stem-and-latest-run-before-reading-artifacts-1df9dfbb4a4c",
+    "records-name-flags-verify-at-source-stop-pool-sweeps-cbef0b46530f",
+    "rescan-surfaced-hits-before-guessing-module-names-83285d6b29c9"
+   ],
+   "bigram_ms": 161.63687501102686,
+   "bigram_ids": [
+    "truncated-record-hit-recover-from-same-store-2d655d402037",
+    "match-git-add-mode-to-status-change-class-ee1d2bb36f21",
+    "resolve-claim-targets-name-stem-and-latest-run-before-reading-artifacts-1df9dfbb4a4c",
+    "records-name-flags-verify-at-source-stop-pool-sweeps-cbef0b46530f",
+    "rescan-surfaced-hits-before-guessing-module-names-83285d6b29c9"
+   ],
+   "semantic_ms": 140.90741705149412,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2",
+    "reuse-or-requery-exact-identifiers-from-receipts-def44c81977d",
+    "recover-prior-session-state-via-command-provenance-not-keyword-search-5e12bd254b8d",
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "receipt-path-verify-before-write-through-pivot-on-enoent-b6155110c270",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "filter-vendor-tree-hits-and-pin-source-layout-before-reads-41c79a675c78",
+    "definitive-failure-swap-source-not-restart-discovery-5abed48afb10",
+    "claim-to-receipt-reconcile-via-mtime-and-per-claim-grep-0a5adf76eb6d",
+    "defer-async-action-verification-via-single-wakeup-6b488fda4817"
+   ],
+   "prod_ms": 140.6870000064373,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "recover-prior-session-state-via-command-provenance-not-keyword-search-5e12bd254b8d",
+    "reuse-or-requery-exact-identifiers-from-receipts-def44c81977d",
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2",
+    "truncated-record-hit-recover-from-same-store-2d655d402037",
+    "match-git-add-mode-to-status-change-class-ee1d2bb36f21",
+    "resolve-claim-targets-name-stem-and-latest-run-before-reading-artifacts-1df9dfbb4a4c",
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "records-name-flags-verify-at-source-stop-pool-sweeps-cbef0b46530f",
+    "receipt-path-verify-before-write-through-pivot-on-enoent-b6155110c270",
+    "rescan-surfaced-hits-before-guessing-module-names-83285d6b29c9"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 2,
+   "prod_rank": 2
+  },
+  {
+   "id": "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+   "status": "candidate",
+   "query": "有条记录在网页列表里看不到，怀疑根本没保存，第一步查什么能最快缩小范围？",
+   "keyword_ms": 161.70158330351114,
+   "keyword_ids": [
+    "spawner-runtime-log-before-config-enumeration-6548e714a07f",
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "noop-delta-check-before-bulk-field-backfill-4a058f7f9b98",
+    "hydrate-only-observations-not-already-in-hand-331c0db953f9",
+    "route-feature-existence-questions-to-owner-artifacts-d7c3a7152d01"
+   ],
+   "bigram_ms": 161.09870839864016,
+   "bigram_ids": [
+    "spawner-runtime-log-before-config-enumeration-6548e714a07f",
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "noop-delta-check-before-bulk-field-backfill-4a058f7f9b98",
+    "hydrate-only-observations-not-already-in-hand-331c0db953f9",
+    "route-feature-existence-questions-to-owner-artifacts-d7c3a7152d01"
+   ],
+   "semantic_ms": 143.60487461090088,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9",
+    "current-state-from-live-authority-not-history-paging-989ce02cadb5",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "search-miss-is-tool-domain-question-read-store-then-matcher-493354d9df7a",
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "verify-derived-claims-at-production-layer-354ba2285d00",
+    "verify-presupposed-failure-via-live-metrics-and-record-scope-3ea547be8a84",
+    "scope-search-surface-before-scanning-large-workspace-8ab6d7e7de27",
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb"
+   ],
+   "prod_ms": 140.59679210186005,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "spawner-runtime-log-before-config-enumeration-6548e714a07f",
+    "route-derivable-facts-to-producer-command-not-store-rewording-be5bd70318f9",
+    "current-state-from-live-authority-not-history-paging-989ce02cadb5",
+    "noop-delta-check-before-bulk-field-backfill-4a058f7f9b98",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "hydrate-only-observations-not-already-in-hand-331c0db953f9",
+    "search-miss-is-tool-domain-question-read-store-then-matcher-493354d9df7a",
+    "route-feature-existence-questions-to-owner-artifacts-d7c3a7152d01",
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3"
+   ],
+   "keyword_rank": 2,
+   "bigram_rank": 2,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "time-anchored-regression-window-first-30fc83e9a5ae",
+   "status": "candidate",
+   "query": "用户反馈昨天下午三点之前都正常，之后开始变坏，排查应该从哪条线索入手？",
+   "keyword_ms": 160.49037501215935,
+   "keyword_ids": [
+    "time-anchored-regression-window-first-30fc83e9a5ae",
+    "async-action-terminal-ledger-first-7f9a435b6e99",
+    "silent-failure-read-serving-log-before-input-enumeration-ec29474a51e1",
+    "recency-proximity-referent-resolution-with-echo-before-act-fade4fec9baf",
+    "gate-each-tool-call-against-explicit-script-prohibitions-6c8db79dc6f1"
+   ],
+   "bigram_ms": 160.7192074880004,
+   "bigram_ids": [
+    "time-anchored-regression-window-first-30fc83e9a5ae",
+    "async-action-terminal-ledger-first-7f9a435b6e99",
+    "silent-failure-read-serving-log-before-input-enumeration-ec29474a51e1",
+    "recency-proximity-referent-resolution-with-echo-before-act-fade4fec9baf",
+    "gate-each-tool-call-against-explicit-script-prohibitions-6c8db79dc6f1"
+   ],
+   "semantic_ms": 142.30958372354507,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "traffic-log-bisect-before-hop-config-audit-28bd50eb2968",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "route-diagnostic-logs-by-writer-privilege-and-mtime-779c573f4fc9",
+    "consume-authoritative-hits-before-parallel-discovery-f28827831140",
+    "id-2a4e1585a9f5",
+    "shape-delta-differential-probing-before-log-hunt-0e1aed754c4a",
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "candidate-aa0d6b3be4d9",
+    "native-logs-before-heavy-probes-on-live-shared-services-5bcd812f372c"
+   ],
+   "prod_ms": 140.82133304327726,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "silent-failure-read-serving-log-before-input-enumeration-ec29474a51e1",
+    "traffic-log-bisect-before-hop-config-audit-28bd50eb2968",
+    "time-anchored-regression-window-first-30fc83e9a5ae",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "async-action-terminal-ledger-first-7f9a435b6e99",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "route-diagnostic-logs-by-writer-privilege-and-mtime-779c573f4fc9",
+    "recency-proximity-referent-resolution-with-echo-before-act-fade4fec9baf",
+    "consume-authoritative-hits-before-parallel-discovery-f28827831140",
+    "gate-each-tool-call-against-explicit-script-prohibitions-6c8db79dc6f1"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": null,
+   "prod_rank": 3
+  },
+  {
+   "id": "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+   "status": "candidate",
+   "query": "开了代理软件后某个应用连不上，排除规则加了很多还是断，下一步该看什么？",
+   "keyword_ms": 159.38887558877468,
+   "keyword_ids": [
+    "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+    "daemon-log-stage-triage-baa9e20016ae",
+    "binary-intervention-sufficiency-gate-7631f80e335c",
+    "self-describing-403-plus-liveness-triage-50963831cd87",
+    "tunnel-502-probe-local-origin-leg-first-af982e477878"
+   ],
+   "bigram_ms": 160.35529132932425,
+   "bigram_ids": [
+    "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+    "daemon-log-stage-triage-baa9e20016ae",
+    "binary-intervention-sufficiency-gate-7631f80e335c",
+    "self-describing-403-plus-liveness-triage-50963831cd87",
+    "tunnel-502-probe-local-origin-leg-first-af982e477878"
+   ],
+   "semantic_ms": 141.55449997633696,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "open-source-inclusion-questions-answer-via-git-tracking-not-filesystem-s-e27643228327",
+    "store-api-existence-oracle-over-layout-scan-2cef3d6550d8",
+    "shared-gate-check-when-multiple-ui-paths-fail-at-commit-47368b12a4d9",
+    "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "verified-search-miss-switch-to-filesystem-enumeration-9eaff56f4b92",
+    "live-process-fd-map-before-fuzzy-log-search-f876c55bcf3e",
+    "binary-intervention-sufficiency-gate-7631f80e335c",
+    "chromeless-capture-attribute-session-layer-via-control-app-0e8d34da0d08",
+    "timeout-symptom-read-new-scanning-code-first-0a5d95cd9ddd"
+   ],
+   "prod_ms": 139.2649170011282,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "wire-truth-before-proxy-exclusion-tuning-c467334b7e2c",
+    "binary-intervention-sufficiency-gate-7631f80e335c",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "open-source-inclusion-questions-answer-via-git-tracking-not-filesystem-s-e27643228327",
+    "store-api-existence-oracle-over-layout-scan-2cef3d6550d8",
+    "daemon-log-stage-triage-baa9e20016ae",
+    "shared-gate-check-when-multiple-ui-paths-fail-at-commit-47368b12a4d9",
+    "self-describing-403-plus-liveness-triage-50963831cd87",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "tunnel-502-probe-local-origin-leg-first-af982e477878"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 4,
+   "prod_rank": 1
+  },
+  {
+   "id": "lost-handle-regenerate-forward-3a6d0088a08d",
+   "status": "candidate",
+   "query": "后台任务的 job id 丢了，输出也找不到，是继续翻历史还是重新跑一遍？",
+   "keyword_ms": 151.4817913994193,
+   "keyword_ids": [
+    "recover-original-invocation-from-durable-record-before-rerun-72e8da19e8f6",
+    "resolve-async-job-verdict-via-its-receipt-104cc1a9b9dd",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "lost-handle-regenerate-forward-3a6d0088a08d",
+    "follow-process-provenance-before-path-guessing-491e9b2f03c8"
+   ],
+   "bigram_ms": 156.54649958014488,
+   "bigram_ids": [
+    "recover-original-invocation-from-durable-record-before-rerun-72e8da19e8f6",
+    "resolve-async-job-verdict-via-its-receipt-104cc1a9b9dd",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "lost-handle-regenerate-forward-3a6d0088a08d",
+    "follow-process-provenance-before-path-guessing-491e9b2f03c8"
+   ],
+   "semantic_ms": 143.0139997974038,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "lost-handle-regenerate-forward-3a6d0088a08d",
+    "timed-harvest-instead-of-interim-polling-for-characterized-jobs-17289414e24c",
+    "resolve-async-job-verdict-via-its-receipt-104cc1a9b9dd",
+    "anchor-background-job-polling-to-duration-prior-1dfd748c4afb",
+    "attribute-own-job-status-by-durable-receipt-not-ambient-process-28a05ddde0fb",
+    "single-live-job-scheduled-recheck-e377df22c7b1",
+    "platform-specific-record-supersedes-generic-service-probe-3be1817ee0e0",
+    "route-status-questions-via-explicit-refs-before-artifact-sweep-ad10dee4f015",
+    "durable-job-defer-terminal-check-2a5ca0503c58",
+    "live-rerun-over-history-recovery-5920494e9147"
+   ],
+   "prod_ms": 140.8647494390607,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "lost-handle-regenerate-forward-3a6d0088a08d",
+    "resolve-async-job-verdict-via-its-receipt-104cc1a9b9dd",
+    "attribute-own-job-status-by-durable-receipt-not-ambient-process-28a05ddde0fb",
+    "anchor-background-job-polling-to-duration-prior-1dfd748c4afb",
+    "durable-job-defer-terminal-check-2a5ca0503c58",
+    "trust-durable-completion-evidence-on-resume-ab903c1cdc9e",
+    "recover-original-invocation-from-durable-record-before-rerun-72e8da19e8f6",
+    "timed-harvest-instead-of-interim-polling-for-characterized-jobs-17289414e24c",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "follow-process-provenance-before-path-guessing-491e9b2f03c8"
+   ],
+   "keyword_rank": 4,
+   "bigram_rank": 4,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+   "status": "candidate",
+   "query": "评审意见只写了文件名和行号，没给目录，怎么定位到那段代码？",
+   "keyword_ms": 147.387582808733,
+   "keyword_ids": [
+    "resolve-named-data-artifact-path-via-defining-code-677f185639af",
+    "read-cited-spec-anchor-before-coding-88bd2aae3498",
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "verify-named-symbol-claims-via-live-tree-scoped-reads-dc2b42b80d1f",
+    "deletion-audit-scope-live-tree-and-bypass-exclusivity-b0979e7f27b1"
+   ],
+   "bigram_ms": 148.84233381599188,
+   "bigram_ids": [
+    "resolve-named-data-artifact-path-via-defining-code-677f185639af",
+    "read-cited-spec-anchor-before-coding-88bd2aae3498",
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "verify-named-symbol-claims-via-live-tree-scoped-reads-dc2b42b80d1f",
+    "deletion-audit-scope-live-tree-and-bypass-exclusivity-b0979e7f27b1"
+   ],
+   "semantic_ms": 139.60187509655952,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "id-2a4e1585a9f5",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "named-label-check-against-authoritative-registry-before-implementation-a6207ad19e5c",
+    "execute-approved-proposal-from-held-record-one-read-per-target-9befafb3af1b",
+    "line-anchored-windowed-read-not-read-to-eof-d4021b82c0c9",
+    "source-doc-as-state-truth-and-acceptance-contract-ed223c7eecde",
+    "plan-stage-directive-resolve-via-dated-doc-namespace-first-71417927e3b9",
+    "id-keyed-state-lookup-before-layout-enumeration-e1448b14a10d",
+    "anchor-index-for-positional-unknowns-not-repeat-reads-72e11512f200"
+   ],
+   "prod_ms": 141.96604117751122,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "citation-path-resolution-exact-search-before-guess-50770b6534eb",
+    "resolve-named-data-artifact-path-via-defining-code-677f185639af",
+    "id-2a4e1585a9f5",
+    "read-cited-spec-anchor-before-coding-88bd2aae3498",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "named-label-check-against-authoritative-registry-before-implementation-a6207ad19e5c",
+    "verify-named-symbol-claims-via-live-tree-scoped-reads-dc2b42b80d1f",
+    "execute-approved-proposal-from-held-record-one-read-per-target-9befafb3af1b",
+    "deletion-audit-scope-live-tree-and-bypass-exclusivity-b0979e7f27b1",
+    "line-anchored-windowed-read-not-read-to-eof-d4021b82c0c9"
+   ],
+   "keyword_rank": 3,
+   "bigram_rank": 3,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+   "status": "candidate",
+   "query": "工具返回的结构化结果被截断了，换关键词反复检索也只看到同一段，怎么办？",
+   "keyword_ms": 162.22974937409163,
+   "keyword_ids": [
+    "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+    "gate-on-authoritative-verdict-field-not-payload-prose-4755e0acfb16",
+    "identified-artifact-truncated-previews-read-primary-store-by-owner-id-285e30bdc2e4",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "truncated-hit-hydrate-from-kind-store-41b8fbd1d7ad"
+   ],
+   "bigram_ms": 159.9455839022994,
+   "bigram_ids": [
+    "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+    "gate-on-authoritative-verdict-field-not-payload-prose-4755e0acfb16",
+    "identified-artifact-truncated-previews-read-primary-store-by-owner-id-285e30bdc2e4",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "truncated-hit-hydrate-from-kind-store-41b8fbd1d7ad"
+   ],
+   "semantic_ms": 139.18349985033274,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "fetch-surfaced-primary-once-authority-named-stop-variant-search-on-noise-018f906d6122",
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "capped-view-receipt-retarget-span-or-advance-on-visible-anchor-2682e5752b1c",
+    "keyed-in-blob-search-before-linear-receipt-pagination-65ddc0c5ae1f",
+    "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+    "atomic-re-resolve-and-act-on-silent-hit-bfe6811182f1",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "single-decisive-range-hydration-for-truncated-receipts-2b3d199f587a",
+    "range-receipt-driven-evidence-recovery-d259013dab32",
+    "receipt-time-partition-for-repeated-no-effect-05d5cbaa455b"
+   ],
+   "prod_ms": 137.1807074174285,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "truncated-receipt-switch-to-underlying-source-record-7ebe34ada3ff",
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771",
+    "fetch-surfaced-primary-once-authority-named-stop-variant-search-on-noise-018f906d6122",
+    "gate-on-authoritative-verdict-field-not-payload-prose-4755e0acfb16",
+    "capped-view-receipt-retarget-span-or-advance-on-visible-anchor-2682e5752b1c",
+    "identified-artifact-truncated-previews-read-primary-store-by-owner-id-285e30bdc2e4",
+    "keyed-in-blob-search-before-linear-receipt-pagination-65ddc0c5ae1f",
+    "truncated-hit-hydrate-from-kind-store-41b8fbd1d7ad",
+    "atomic-re-resolve-and-act-on-silent-hit-bfe6811182f1"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 5,
+   "prod_rank": 1
+  },
+  {
+   "id": "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+   "status": "candidate",
+   "query": "某个实验特性为什么默认关闭，这个决定的依据写在哪里？",
+   "keyword_ms": 162.9964578896761,
+   "keyword_ids": [
+    "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d"
+   ],
+   "bigram_ms": 141.55987557023764,
+   "bigram_ids": [
+    "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d"
+   ],
+   "semantic_ms": 138.5330418124795,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "ground-derived-label-claims-in-semantics-and-existence-probe-39d27fc2e645",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e",
+    "falsify-detector-criterion-and-patch-gate-loop-before-detector-driven-ru-720ca0ed7acd",
+    "check-prior-rejection-receipt-before-explaining-or-retrying-61e708c56bfa",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "verify-external-state-by-identity-not-count-before-resume-retry-a52a205e88cc",
+    "read-mechanism-arbiter-field-before-immutable-submission-1d477dabfac4"
+   ],
+   "prod_ms": 138.55408318340778,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "config-why-via-referenced-design-doc-plus-code-default-29dd04a03941",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "adjudicate-proposal-by-verifying-self-cited-anchors-against-current-arti-0707b8da16b5",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "ground-derived-label-claims-in-semantics-and-existence-probe-39d27fc2e645",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e",
+    "triage-legacy-boundary-tests-by-scope-before-adapting-24e64c3bea5d"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+   "status": "candidate",
+   "query": "上一轮讨论说系统已经支持某机制，现在要定稿，怎么判断这个断言还成不成立？",
+   "keyword_ms": 158.0729577690363,
+   "keyword_ids": [
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+    "verify-presupposed-failure-via-live-metrics-and-record-scope-3ea547be8a84",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "unique-violation-emitter-decompose-writer-vs-expectation-d11c8ee61742"
+   ],
+   "bigram_ms": 157.35241770744324,
+   "bigram_ids": [
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+    "verify-presupposed-failure-via-live-metrics-and-record-scope-3ea547be8a84",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "unique-violation-emitter-decompose-writer-vs-expectation-d11c8ee61742"
+   ],
+   "semantic_ms": 298.00591710954905,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "refute-convention-premise-via-doc-and-release-history-before-structural--ace31bbdf08d",
+    "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+    "verify-audit-claims-by-probing-named-live-artifacts-33c35d83ffb8",
+    "arithmetic-preverdict-then-load-bearing-first-verification-801d60f8fa7a",
+    "verify-code-baseline-before-design-md-9dd7dc0b8c59",
+    "verify-claims-at-attributed-source-class-not-adjacent-authority-7415667a03b2",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356"
+   ],
+   "prod_ms": 305.6615833193064,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e",
+    "arithmetic-preverdict-then-load-bearing-first-verification-801d60f8fa7a",
+    "ground-enumerable-scale-assumptions-before-design-finalization-83a4fb4a2c33",
+    "agent-report-audit-claim-class-triage-verbatim-citation-4318ac62173a",
+    "verify-inherited-claims-before-action-planning-e5cb48848b9f",
+    "capability-catalog-first-for-existence-claims-671f3cfe5de8",
+    "verify-comparative-claims-via-their-own-axes-29adcf57b7d1",
+    "premise-claim-to-authoritative-probe-41892ba053e7",
+    "verify-presupposed-failure-via-live-metrics-and-record-scope-3ea547be8a84",
+    "refute-convention-premise-via-doc-and-release-history-before-structural--ace31bbdf08d"
+   ],
+   "keyword_rank": 2,
+   "bigram_rank": 2,
+   "semantic_rank": 5,
+   "prod_rank": 1
+  },
+  {
+   "id": "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+   "status": "candidate",
+   "query": "想把浏览器自动化接到一个已经打开的窗口，但连接被拒，先检查什么？",
+   "keyword_ms": 160.0747499614954,
+   "keyword_ids": [
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+    "probe-attach-target-endpoint-before-automation-717ea9067afe",
+    "ui-generic-error-read-network-response-first-8fa71055b05f",
+    "least-invasive-sufficient-channel-first-f7c59cb213c7",
+    "inspect-resulting-state-before-repeating-non-idempotent-action-41c95818b7b7"
+   ],
+   "bigram_ms": 158.63858442753553,
+   "bigram_ids": [
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+    "probe-attach-target-endpoint-before-automation-717ea9067afe",
+    "ui-generic-error-read-network-response-first-8fa71055b05f",
+    "least-invasive-sufficient-channel-first-f7c59cb213c7",
+    "inspect-resulting-state-before-repeating-non-idempotent-action-41c95818b7b7"
+   ],
+   "semantic_ms": 134.00716613978148,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+    "chromeless-capture-attribute-session-layer-via-control-app-0e8d34da0d08",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "check-prior-rejection-receipt-before-explaining-or-retrying-61e708c56bfa",
+    "least-invasive-sufficient-channel-first-f7c59cb213c7",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "traffic-log-bisect-before-hop-config-audit-28bd50eb2968",
+    "persistent-403-pivot-once-to-alternate-surface-6e07cce4ab60",
+    "connection-refused-resolve-actual-port-via-pid-socket-table-a77a0862065a",
+    "ui-generic-error-read-network-response-first-8fa71055b05f"
+   ],
+   "prod_ms": 137.21733260899782,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "attach-feasibility-gate-then-authoritative-config-42e640eda0c3",
+    "least-invasive-sufficient-channel-first-f7c59cb213c7",
+    "ui-generic-error-read-network-response-first-8fa71055b05f",
+    "check-prior-rejection-receipt-before-explaining-or-retrying-61e708c56bfa",
+    "probe-attach-target-endpoint-before-automation-717ea9067afe",
+    "inspect-resulting-state-before-repeating-non-idempotent-action-41c95818b7b7",
+    "destructive-replay-failure-shift-work-into-stable-paste-payload-67917b175573",
+    "chromeless-capture-attribute-session-layer-via-control-app-0e8d34da0d08",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+   "status": "candidate",
+   "query": "拿着记录 ID 想读完整内容，可检索视图每次都只给同一段截断文本，源头在哪？",
+   "keyword_ms": 159.53695960342884,
+   "keyword_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "identical-truncation-author-provenance-first-dda883f6db50",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771"
+   ],
+   "bigram_ms": 158.75574946403503,
+   "bigram_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "identical-truncation-author-provenance-first-dda883f6db50",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260",
+    "field-targeted-retrieval-before-linear-receipt-pagination-180c1e26f771"
+   ],
+   "semantic_ms": 140.91045875102282,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "anchor-driven-reads-from-authoritative-record-2da4c04b01dc",
+    "truncated-record-hit-recover-from-same-store-2d655d402037",
+    "authoritative-record-first-when-preview-truncated-0155675ee421",
+    "identical-truncation-author-provenance-first-dda883f6db50",
+    "record-status-field-before-ui-invisibility-forensics-8c035e25e0bc",
+    "truncated-hit-follow-author-persistence-provenance-877574075533",
+    "capped-view-receipt-retarget-span-or-advance-on-visible-anchor-2682e5752b1c",
+    "id-2a4e1585a9f5"
+   ],
+   "prod_ms": 139.85579181462526,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "producer-source-resolves-record-sink-before-view-requery-or-fs-enumerati-81e06ad15fe3",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "identical-truncation-author-provenance-first-dda883f6db50",
+    "truncated-record-hit-recover-from-same-store-2d655d402037",
+    "capped-view-receipt-retarget-span-or-advance-on-visible-anchor-2682e5752b1c",
+    "truncated-hit-follow-author-persistence-provenance-877574075533",
+    "requery-authoritative-record-store-before-full-text-fanout-84df4a56cf63",
+    "anchor-driven-reads-from-authoritative-record-2da4c04b01dc",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260",
+    "authoritative-record-first-when-preview-truncated-0155675ee421"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+   "status": "candidate",
+   "query": "部署脚本提示还有人占着、不能重启，怎么确认那些锁是活的还是残留的？",
+   "keyword_ms": 160.3205418214202,
+   "keyword_ids": [
+    "partition-dated-history-vs-live-policy-before-stale-protocol-correction-243dcf561377",
+    "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+    "artifact-provenance-forensics-for-similarity-influence-challenges-d051a439ba9c",
+    "verify-claimed-side-effects-against-durable-state-not-session-history-fe7643f36afd",
+    "verify-effective-config-via-loader-source-enumeration-b6fb501a82d4"
+   ],
+   "bigram_ms": 157.23391715437174,
+   "bigram_ids": [
+    "partition-dated-history-vs-live-policy-before-stale-protocol-correction-243dcf561377",
+    "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+    "artifact-provenance-forensics-for-similarity-influence-challenges-d051a439ba9c",
+    "verify-claimed-side-effects-against-durable-state-not-session-history-fe7643f36afd",
+    "verify-effective-config-via-loader-source-enumeration-b6fb501a82d4"
+   ],
+   "semantic_ms": 138.79245799034834,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "verify-out-of-band-receipt-against-gating-fields-in-authoritative-store-e9ffb0455373",
+    "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "restart-binds-pinned-desired-state-compare-receipt-head-to-pushed-sha-7c4354481ad7",
+    "external-receipt-store-miss-pivots-to-store-location-f1e40be0a4f0",
+    "reground-state-over-inherited-failure-stale-daemon-restart-8e1faf15697b",
+    "salvage-durable-artifacts-before-redispatch-on-child-run-death-c3d10d64cb30",
+    "fakeip-dial-target-x-interface-bind-unselfhealing-restart-0fb68c88db26",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb",
+    "reconsult-held-files-by-bounded-span-not-full-reread-ef2caf33f4a2"
+   ],
+   "prod_ms": 138.50375078618526,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "verify-lock-liveness-in-guard-scope-8bf5f714ea6d",
+    "binary-intervention-sufficiency-gate-7631f80e335c",
+    "verify-out-of-band-receipt-against-gating-fields-in-authoritative-store-e9ffb0455373",
+    "partition-dated-history-vs-live-policy-before-stale-protocol-correction-243dcf561377",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "artifact-provenance-forensics-for-similarity-influence-challenges-d051a439ba9c",
+    "restart-binds-pinned-desired-state-compare-receipt-head-to-pushed-sha-7c4354481ad7",
+    "verify-claimed-side-effects-against-durable-state-not-session-history-fe7643f36afd",
+    "external-receipt-store-miss-pivots-to-store-location-f1e40be0a4f0",
+    "verify-effective-config-via-loader-source-enumeration-b6fb501a82d4"
+   ],
+   "keyword_rank": 2,
+   "bigram_rank": 2,
+   "semantic_rank": 2,
+   "prod_rank": 1
+  },
+  {
+   "id": "pin-write-contract-before-redefining-persisted-record-format-f6491cd164ad",
+   "status": "candidate",
+   "query": "要改方法卡这种持久化记录的字段格式，先确认什么才能保证写入不被拒？",
+   "keyword_ms": 162.4045418575406,
+   "keyword_ids": [
+    "strip-format-gates-by-doc-delta-redundancy-and-sibling-parity-45b84ba0edfa",
+    "pin-write-contract-before-redefining-persisted-record-format-f6491cd164ad",
+    "preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+    "transcribe-evidence-refs-from-receipts-never-compose-3330cd1aba26",
+    "defer-shared-store-schema-migration-until-old-writer-exit-d438adc4236f"
+   ],
+   "bigram_ms": 163.99891674518585,
+   "bigram_ids": [
+    "strip-format-gates-by-doc-delta-redundancy-and-sibling-parity-45b84ba0edfa",
+    "pin-write-contract-before-redefining-persisted-record-format-f6491cd164ad",
+    "preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+    "transcribe-evidence-refs-from-receipts-never-compose-3330cd1aba26",
+    "defer-shared-store-schema-migration-until-old-writer-exit-d438adc4236f"
+   ],
+   "semantic_ms": 138.32754269242287,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+    "include-executable-verification-line-when-depositing-method-cards-91668dcab954",
+    "hydrate-matching-verified-card-before-reimplementing-b3015a473bda",
+    "authoritative-parser-first-for-record-statistics-ca68b260488d",
+    "verify-persisted-state-over-success-receipt-be322e1c66c0",
+    "selective-strip-signature-concurrent-old-writer-on-shared-store-37369bc3984c",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb",
+    "schema-precondition-check-before-instructed-state-transition-fa2c9a20cfbd",
+    "memory-gap-audit-stream-verify-and-fix-owner-routing-fa9741a96fc7",
+    "schema-enum-as-capability-boundary-then-persistence-layer-field-check-4ac21e5456ab"
+   ],
+   "prod_ms": 142.2713752835989,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+    "pin-write-contract-before-redefining-persisted-record-format-f6491cd164ad",
+    "decode-validator-rejection-into-single-structural-repair-b63129f3e4bd",
+    "defer-shared-store-schema-migration-until-old-writer-exit-d438adc4236f",
+    "harvest-full-write-contract-on-first-gate-rejection-76b1a4f39cee",
+    "strip-format-gates-by-doc-delta-redundancy-and-sibling-parity-45b84ba0edfa",
+    "include-executable-verification-line-when-depositing-method-cards-91668dcab954",
+    "hydrate-matching-verified-card-before-reimplementing-b3015a473bda",
+    "authoritative-parser-first-for-record-statistics-ca68b260488d",
+    "transcribe-evidence-refs-from-receipts-never-compose-3330cd1aba26"
+   ],
+   "keyword_rank": 2,
+   "bigram_rank": 2,
+   "semantic_rank": null,
+   "prod_rank": 2
+  },
+  {
+   "id": "probe-real-routes-from-local-source-not-guessed-paths-796113098ac1",
+   "status": "candidate",
+   "query": "线上服务的接口文档过期了，想确认本地代码实际暴露了哪些端点，怎么查最快？",
+   "keyword_ms": 164.2954172566533,
+   "keyword_ids": [
+    "reuse-by-reference-audit-dependency-observability-2555efb9880c",
+    "verify-guest-protocol-before-picking-host-integration-path-3695cebc3ff9",
+    "producer-self-report-before-endpoint-or-value-enumeration-30c84b03d55e",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "probe-real-routes-from-local-source-not-guessed-paths-796113098ac1"
+   ],
+   "bigram_ms": 164.9356670677662,
+   "bigram_ids": [
+    "reuse-by-reference-audit-dependency-observability-2555efb9880c",
+    "verify-guest-protocol-before-picking-host-integration-path-3695cebc3ff9",
+    "producer-self-report-before-endpoint-or-value-enumeration-30c84b03d55e",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "probe-real-routes-from-local-source-not-guessed-paths-796113098ac1"
+   ],
+   "semantic_ms": 305.85287511348724,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "live-process-anchor-verify-deployment-claims-b3abbf2f86e4",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "chained-timeout-stage-triage-then-authoritative-fallback-0377f5544852",
+    "traverse-live-process-edge-before-path-guessing-ae43cfe9f739",
+    "resolve-self-owned-service-endpoint-from-declared-source-not-port-scan-d8c741db314e",
+    "fetch-user-given-official-doc-before-plan-name-web-search-c1390111f35f",
+    "citation-id-lookup-before-fuzzy-web-rediscovery-038657a70874",
+    "shape-delta-differential-probing-before-log-hunt-0e1aed754c4a",
+    "closure-declaration-plus-route-definition-for-absence-questions-764ba82a2c3a",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260"
+   ],
+   "prod_ms": 319.61104087531567,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "resolve-self-owned-service-endpoint-from-declared-source-not-port-scan-d8c741db314e",
+    "probe-real-routes-from-local-source-not-guessed-paths-796113098ac1",
+    "runtime-introspection-over-source-scan-for-live-version-check-41be7d0a8ab8",
+    "live-process-anchor-verify-deployment-claims-b3abbf2f86e4",
+    "reuse-by-reference-audit-dependency-observability-2555efb9880c",
+    "read-fixed-review-target-before-bare-short-id-search-2232763548ec",
+    "verify-guest-protocol-before-picking-host-integration-path-3695cebc3ff9",
+    "chained-timeout-stage-triage-then-authoritative-fallback-0377f5544852",
+    "producer-self-report-before-endpoint-or-value-enumeration-30c84b03d55e",
+    "traverse-live-process-edge-before-path-guessing-ae43cfe9f739"
+   ],
+   "keyword_rank": 5,
+   "bigram_rank": 5,
+   "semantic_rank": null,
+   "prod_rank": 2
+  },
+  {
+   "id": "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+   "status": "candidate",
+   "query": "只知道厂商名字和大致能力，没有具体地址，怎么快速确认能不能用、报错代表什么？",
+   "keyword_ms": 166.82016663253307,
+   "keyword_ids": [
+    "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+    "existence-proof-mine-persisted-audit-for-prior-channel-fcfaf2892610",
+    "branch-on-failure-receipt-class-not-retry-ladders-b84477792d2c",
+    "rich-editor-automation-feasibility-gate-0bd35f77aa22",
+    "owner-docstring-contract-before-ungrounded-greps-d0a47d3965ac"
+   ],
+   "bigram_ms": 168.75170916318893,
+   "bigram_ids": [
+    "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+    "existence-proof-mine-persisted-audit-for-prior-channel-fcfaf2892610",
+    "branch-on-failure-receipt-class-not-retry-ladders-b84477792d2c",
+    "rich-editor-automation-feasibility-gate-0bd35f77aa22",
+    "owner-docstring-contract-before-ungrounded-greps-d0a47d3965ac"
+   ],
+   "semantic_ms": 143.4856252744794,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "fetch-user-given-official-doc-before-plan-name-web-search-c1390111f35f",
+    "named-product-ops-identity-and-verified-experience-first-e521c85e2825",
+    "registry-first-ambiguous-entity-reference-ab3ee592aa78",
+    "named-entity-verification-via-canonical-url-fetch-d7d09edf826b",
+    "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "parity-map-before-borrow-f4c7fa867f41",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "named-producer-fact-fetch-canonical-source-not-generic-search-09db57a70349"
+   ],
+   "prod_ms": 142.684125341475,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "named-target-lookup-plus-error-coded-probe-2d520339e0c0",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "repo-owned-qualification-harness-first-cd229cd17718",
+    "fetch-user-given-official-doc-before-plan-name-web-search-c1390111f35f",
+    "named-product-ops-identity-and-verified-experience-first-e521c85e2825",
+    "existence-proof-mine-persisted-audit-for-prior-channel-fcfaf2892610",
+    "registry-first-ambiguous-entity-reference-ab3ee592aa78",
+    "branch-on-failure-receipt-class-not-retry-ladders-b84477792d2c",
+    "named-entity-verification-via-canonical-url-fetch-d7d09edf826b",
+    "rich-editor-automation-feasibility-gate-0bd35f77aa22"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 5,
+   "prod_rank": 1
+  },
+  {
+   "id": "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+   "status": "candidate",
+   "query": "修复上线了但日志里没有出现预期的那行，这能说明修复没生效吗？",
+   "keyword_ms": 158.13050046563148,
+   "keyword_ids": [
+    "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+    "status-question-provenance-first-035c5e2ab5cf",
+    "verify-fix-live-via-layered-artifact-truth-not-timestamps-bdfe00aba284",
+    "fakeip-dial-target-x-interface-bind-unselfhealing-restart-0fb68c88db26",
+    "verify-fix-activation-and-event-arrival-before-failure-diagnosis-416cd64e46a3"
+   ],
+   "bigram_ms": 156.38862550258636,
+   "bigram_ids": [
+    "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+    "status-question-provenance-first-035c5e2ab5cf",
+    "verify-fix-live-via-layered-artifact-truth-not-timestamps-bdfe00aba284",
+    "fakeip-dial-target-x-interface-bind-unselfhealing-restart-0fb68c88db26",
+    "verify-fix-activation-and-event-arrival-before-failure-diagnosis-416cd64e46a3"
+   ],
+   "semantic_ms": 138.51279206573963,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "fix-verification-by-residual-signature-scan-be7e078b60f3",
+    "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+    "verify-fix-activation-and-event-arrival-before-failure-diagnosis-416cd64e46a3",
+    "receipt-time-partition-for-repeated-no-effect-05d5cbaa455b",
+    "remediation-failure-alert-verify-subject-first-7bf9a595d6ab",
+    "route-diagnostic-logs-by-writer-privilege-and-mtime-779c573f4fc9",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "verify-end-to-end-once-then-triage-reporter-side-f39a011fedad",
+    "replay-minimal-failing-repro-before-environment-recheck-0b5dae3dee4f",
+    "replay-minimal-failing-probe-after-restart-e97ff1f6191e"
+   ],
+   "prod_ms": 143.36454216390848,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "emission-level-gate-before-log-absence-evidence-1ca78b9733ac",
+    "verify-fix-activation-and-event-arrival-before-failure-diagnosis-416cd64e46a3",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "replay-minimal-failing-probe-after-restart-e97ff1f6191e",
+    "activation-proof-via-path-exclusive-runtime-artifact-7820b3887881",
+    "fix-verification-by-residual-signature-scan-be7e078b60f3",
+    "status-question-provenance-first-035c5e2ab5cf",
+    "verify-fix-live-via-layered-artifact-truth-not-timestamps-bdfe00aba284",
+    "receipt-time-partition-for-repeated-no-effect-05d5cbaa455b",
+    "fakeip-dial-target-x-interface-bind-unselfhealing-restart-0fb68c88db26"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 2,
+   "prod_rank": 1
+  },
+  {
+   "id": "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+   "status": "candidate",
+   "query": "页面快照特别大还被截断，我只想点其中一个输入框，怎么找到它的引用？",
+   "keyword_ms": 159.33429170399904,
+   "keyword_ids": [
+    "targeted-range-recovery-before-full-pagination-4afd292bd116",
+    "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+    "official-docs-verify-via-raw-md-index-abf14ff6a0dc",
+    "operate-target-not-found-enumerate-snapshot-index-b5fa1def1994",
+    "filter-first-when-pattern-already-in-hand-e3ab57d7561c"
+   ],
+   "bigram_ms": 158.23908429592848,
+   "bigram_ids": [
+    "targeted-range-recovery-before-full-pagination-4afd292bd116",
+    "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+    "official-docs-verify-via-raw-md-index-abf14ff6a0dc",
+    "operate-target-not-found-enumerate-snapshot-index-b5fa1def1994",
+    "filter-first-when-pattern-already-in-hand-e3ab57d7561c"
+   ],
+   "semantic_ms": 139.1261676326394,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "truncated-snapshot-pivot-to-targeted-query-0402881bada8",
+    "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+    "official-docs-verify-via-raw-md-index-abf14ff6a0dc",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "targeted-range-recovery-before-full-pagination-4afd292bd116",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260",
+    "fetch-user-cited-source-before-broad-search-a64b7143ad48",
+    "truncated-hit-follow-author-persistence-provenance-877574075533",
+    "unique-id-store-lookup-after-retrieval-truncation-351b4091918b",
+    "identity-check-before-reenumeration-1348df6535d1"
+   ],
+   "prod_ms": 143.91404204070568,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "role-projected-snapshot-for-interaction-targets-7b9da98b63e3",
+    "targeted-range-recovery-before-full-pagination-4afd292bd116",
+    "official-docs-verify-via-raw-md-index-abf14ff6a0dc",
+    "truncated-snapshot-pivot-to-targeted-query-0402881bada8",
+    "match-evidence-modality-to-user-complaint-752a2d104abd",
+    "identity-check-before-reenumeration-1348df6535d1",
+    "resolve-possessive-referent-via-local-ownership-source-before-portal-bro-e8a525dafdb8",
+    "operate-target-not-found-enumerate-snapshot-index-b5fa1def1994",
+    "filter-first-when-pattern-already-in-hand-e3ab57d7561c",
+    "verify-truncation-at-named-raw-source-before-web-copy-search-cd984f3b1260"
+   ],
+   "keyword_rank": 2,
+   "bigram_rank": 2,
+   "semantic_rank": 2,
+   "prod_rank": 1
+  },
+  {
+   "id": "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+   "status": "candidate",
+   "query": "校验脚本报错，但它检查的契约在权威测试里明明是绿的，怀疑脚本抄了一份过时的期望，怎么改？",
+   "keyword_ms": 179.63320761919022,
+   "keyword_ids": [
+    "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+    "gate-named-symbol-provenance-first-c98d1d0291f0",
+    "reverify-claimed-numbers-via-structural-recompute-and-value-compare-aa187f0ae1ae",
+    "repo-owned-qualification-harness-first-cd229cd17718",
+    "derive-gate-passability-from-source-before-first-run-2e3ce81ea1d9"
+   ],
+   "bigram_ms": 177.48829163610935,
+   "bigram_ids": [
+    "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+    "gate-named-symbol-provenance-first-c98d1d0291f0",
+    "reverify-claimed-numbers-via-structural-recompute-and-value-compare-aa187f0ae1ae",
+    "repo-owned-qualification-harness-first-cd229cd17718",
+    "derive-gate-passability-from-source-before-first-run-2e3ce81ea1d9"
+   ],
+   "semantic_ms": 141.75879210233688,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+    "release-pr-green-is-not-closure-check-declared-version-tag-ff5276d62c7f",
+    "reconcile-verification-set-with-change-manifest-before-green-6270b7b51333",
+    "deploy-acceptance-follow-change-identity-b334d83e67f1",
+    "spot-verify-report-claims-at-pinned-primary-sources-d9f7bc5a0caa",
+    "authoritative-parser-first-for-record-statistics-ca68b260488d",
+    "font-metrics-over-vision-loop-for-generated-figures-8db5b38fec16",
+    "runner-silence-is-invocation-error-6ddc25716e1a",
+    "resolve-probe-targets-from-control-plane-records-abd429d76940",
+    "verify-reissue-contract-before-destructive-revoke-on-tamper-ledger-78a651ac79fb"
+   ],
+   "prod_ms": 141.88620913773775,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "false-red-guard-delegate-to-truth-source-e38f5294fa10",
+    "font-metrics-over-vision-loop-for-generated-figures-8db5b38fec16",
+    "resolve-probe-targets-from-control-plane-records-abd429d76940",
+    "verify-artifact-identity-before-trusting-probe-contradiction-73cb470fb725",
+    "release-pr-green-is-not-closure-check-declared-version-tag-ff5276d62c7f",
+    "gate-named-symbol-provenance-first-c98d1d0291f0",
+    "reconcile-verification-set-with-change-manifest-before-green-6270b7b51333",
+    "reverify-claimed-numbers-via-structural-recompute-and-value-compare-aa187f0ae1ae",
+    "deploy-acceptance-follow-change-identity-b334d83e67f1",
+    "repo-owned-qualification-harness-first-cd229cd17718"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7",
+   "status": "candidate",
+   "query": "我记得之前被告知操作已经完成，但用户说根本没生效，该信谁、去哪儿查终态？",
+   "keyword_ms": 160.479124635458,
+   "keyword_ids": [
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "verify-persisted-state-over-success-receipt-be322e1c66c0",
+    "locate-authoritative-record-via-handler-store-code-c1394db56200",
+    "receipt-verbatim-args-and-terminal-state-claims-in-gated-pipelines-a8b04551b15a",
+    "check-completion-gate-before-polling-detached-action-13436a62132d"
+   ],
+   "bigram_ms": 159.6954995766282,
+   "bigram_ids": [
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "verify-persisted-state-over-success-receipt-be322e1c66c0",
+    "locate-authoritative-record-via-handler-store-code-c1394db56200",
+    "receipt-verbatim-args-and-terminal-state-claims-in-gated-pipelines-a8b04551b15a",
+    "check-completion-gate-before-polling-detached-action-13436a62132d"
+   ],
+   "semantic_ms": 142.343582585454,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "live-source-verify-pending-external-items-4574e64b5649",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d",
+    "verify-live-state-at-authoritative-source-before-memory-reformulation-1f25a0d8651e",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34",
+    "verify-named-deliverable-before-honoring-fulfillment-claim-094fc57acf52"
+   ],
+   "prod_ms": 144.94812488555908,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+    "adjudicate-contradicted-action-via-execution-receipt-cc18383a0df7",
+    "verify-persisted-state-over-success-receipt-be322e1c66c0",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "locate-authoritative-record-via-handler-store-code-c1394db56200",
+    "live-source-verify-pending-external-items-4574e64b5649",
+    "receipt-verbatim-args-and-terminal-state-claims-in-gated-pipelines-a8b04551b15a",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "check-completion-gate-before-polling-detached-action-13436a62132d",
+    "user-perceived-outcomes-ask-user-before-sweeping-stores-30b2e5fc8315"
+   ],
+   "keyword_rank": null,
+   "bigram_rank": null,
+   "semantic_rank": 2,
+   "prod_rank": 2
+  },
+  {
+   "id": "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+   "status": "hold",
+   "query": "给这个仓库的常驻服务换上新代码，从检查到验收的完整流程是什么？",
+   "keyword_ms": 166.4375001564622,
+   "keyword_ids": [
+    "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+    "audit-done-by-joining-plan-phase-table-with-vcs-topology-23d6a945eec7",
+    "verify-runtime-feature-via-live-artifacts-before-static-archaeology-f70f70ef8de9",
+    "anchor-on-unique-identifier-to-find-mechanism-ae14900fecb5",
+    "authority-gate-drift-map-before-lifecycle-plan-23f0e2d2ae69"
+   ],
+   "bigram_ms": 161.60245798528194,
+   "bigram_ids": [
+    "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+    "audit-done-by-joining-plan-phase-table-with-vcs-topology-23d6a945eec7",
+    "verify-runtime-feature-via-live-artifacts-before-static-archaeology-f70f70ef8de9",
+    "anchor-on-unique-identifier-to-find-mechanism-ae14900fecb5",
+    "authority-gate-drift-map-before-lifecycle-plan-23f0e2d2ae69"
+   ],
+   "semantic_ms": 312.4305000528693,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+    "verify-change-liveness-via-per-process-start-head-ancestry-8a0b1c8ba6f7",
+    "runtime-introspection-over-source-scan-for-live-version-check-41be7d0a8ab8",
+    "git-bounded-discovery-and-guard-test-as-surface-checklist-c63c51b9c3b1",
+    "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+    "claim-by-claim-authoritative-state-audit-6785f55f3b95",
+    "pin-target-repo-from-provenance-before-repo-scoped-queries-6105351a8608",
+    "external-service-behavior-from-first-party-integration-code-f29c9b0e03de",
+    "resolve-target-locally-before-broad-web-scan-36eb89e276c5",
+    "scoped-identifier-grep-for-service-wiring-not-numeric-workspace-search-3950c1d54518"
+   ],
+   "prod_ms": 302.9157919809222,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "lfl-mirror-qualified-worktree-33ba78f2f2e7",
+    "runtime-introspection-over-source-scan-for-live-version-check-41be7d0a8ab8",
+    "verify-change-liveness-via-per-process-start-head-ancestry-8a0b1c8ba6f7",
+    "audit-done-by-joining-plan-phase-table-with-vcs-topology-23d6a945eec7",
+    "verify-runtime-feature-via-live-artifacts-before-static-archaeology-f70f70ef8de9",
+    "git-bounded-discovery-and-guard-test-as-surface-checklist-c63c51b9c3b1",
+    "anchor-on-unique-identifier-to-find-mechanism-ae14900fecb5",
+    "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558",
+    "authority-gate-drift-map-before-lifecycle-plan-23f0e2d2ae69",
+    "claim-by-claim-authoritative-state-audit-6785f55f3b95"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "poc-a-b-6dd78baba7e8",
+   "status": "hold",
+   "query": "想验证一个新能力到底有没有用，实验怎么设计才不会被事后解释带偏？",
+   "keyword_ms": 159.2347091063857,
+   "keyword_ids": [
+    "poc-a-b-6dd78baba7e8",
+    "owner-docstring-contract-before-ungrounded-greps-d0a47d3965ac",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "restart-binds-pinned-desired-state-compare-receipt-head-to-pushed-sha-7c4354481ad7",
+    "spec-first-execution-contract-before-infra-reuse-7a07677f7092"
+   ],
+   "bigram_ms": 178.01187559962273,
+   "bigram_ids": [
+    "poc-a-b-6dd78baba7e8",
+    "owner-docstring-contract-before-ungrounded-greps-d0a47d3965ac",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "restart-binds-pinned-desired-state-compare-receipt-head-to-pushed-sha-7c4354481ad7",
+    "spec-first-execution-contract-before-infra-reuse-7a07677f7092"
+   ],
+   "semantic_ms": 141.54424984008074,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "falsify-detector-criterion-and-patch-gate-loop-before-detector-driven-ru-720ca0ed7acd",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "quota-constrained-zero-side-effect-failure-discrimination-a0c71878ecc3",
+    "parity-map-before-borrow-f4c7fa867f41",
+    "poc-a-b-6dd78baba7e8",
+    "memory-as-hypothesis-live-schema-as-authority-041838a41b0f",
+    "arithmetic-preverdict-then-load-bearing-first-verification-801d60f8fa7a",
+    "validate-instrument-before-absence-claim-3a2756c9c06d",
+    "rederive-carried-scope-claims-before-design-d3984e4fc520"
+   ],
+   "prod_ms": 138.136625289917,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "poc-a-b-6dd78baba7e8",
+    "probe-supply-check-retirement-history-before-building-missing-mechanism-a0707d0bf926",
+    "falsify-detector-criterion-and-patch-gate-loop-before-detector-driven-ru-720ca0ed7acd",
+    "owner-docstring-contract-before-ungrounded-greps-d0a47d3965ac",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "smoke-one-job-verify-capability-receipt-before-parallel-fan-out-5394d1c03bc4",
+    "quota-constrained-zero-side-effect-failure-discrimination-a0c71878ecc3",
+    "restart-binds-pinned-desired-state-compare-receipt-head-to-pushed-sha-7c4354481ad7",
+    "parity-map-before-borrow-f4c7fa867f41",
+    "spec-first-execution-contract-before-infra-reuse-7a07677f7092"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 6,
+   "prod_rank": 1
+  },
+  {
+   "id": "ff-window-first-shared-ref-advance-25c56c2869fa",
+   "status": "hold",
+   "query": "好几个工作树同时占着仓库，怎么判断能不能安全地把分支快进到主干？",
+   "keyword_ms": 160.44879239052534,
+   "keyword_ids": [
+    "ff-window-first-shared-ref-advance-25c56c2869fa",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "ff-ancestry-before-conflict-surface-bbca6df4f924",
+    "route-deleted-ref-recovery-by-reachability-class-not-fsck-80bb70f65836",
+    "receipt-state-first-verify-refs-not-tree-on-resume-adc543cfb7fd"
+   ],
+   "bigram_ms": 158.0394171178341,
+   "bigram_ids": [
+    "ff-window-first-shared-ref-advance-25c56c2869fa",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "ff-ancestry-before-conflict-surface-bbca6df4f924",
+    "route-deleted-ref-recovery-by-reachability-class-not-fsck-80bb70f65836",
+    "receipt-state-first-verify-refs-not-tree-on-resume-adc543cfb7fd"
+   ],
+   "semantic_ms": 305.12762535363436,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "ff-window-first-shared-ref-advance-25c56c2869fa",
+    "clean-tree-per-gate-boundary-under-concurrent-writers-bfda48ecb3bd",
+    "worktree-env-root-leak-pin-before-source-crawl-dd964e8ecafd",
+    "name-keyed-git-ref-lookup-before-enumeration-398f57241d7f",
+    "pin-host-remote-then-predicate-classify-branch-cleanup-a9a97c29a9bf",
+    "family-containment-gate-before-batch-branch-merge-519261763620",
+    "clone-first-for-bulk-repo-ingestion-63c81319e94c",
+    "bind-tree-reading-gates-to-artifact-ref-worktree-ece00051f244",
+    "anchor-declared-worktree-root-before-commands-695487311c0e",
+    "git-metadata-isolation-convention-before-broad-doc-search-0ec3c92ebd6b"
+   ],
+   "prod_ms": 311.5114588290453,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "ff-window-first-shared-ref-advance-25c56c2869fa",
+    "bind-tree-reading-gates-to-artifact-ref-worktree-ece00051f244",
+    "family-containment-gate-before-batch-branch-merge-519261763620",
+    "tier-branch-equivalence-before-merge-disposition-129b1493be12",
+    "clean-tree-per-gate-boundary-under-concurrent-writers-bfda48ecb3bd",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "worktree-env-root-leak-pin-before-source-crawl-dd964e8ecafd",
+    "ff-ancestry-before-conflict-surface-bbca6df4f924",
+    "name-keyed-git-ref-lookup-before-enumeration-398f57241d7f",
+    "route-deleted-ref-recovery-by-reachability-class-not-fsck-80bb70f65836"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+   "status": "active",
+   "query": "子代理任务跑到一半因为上下文爆了挂掉，剩下的活是原样重派还是拆小？",
+   "keyword_ms": 163.67749962955713,
+   "keyword_ids": [
+    "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+    "classify-cancelled-child-mutations-from-receipt-trace-before-redispatch-b5fb4ae4209e",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "collect-turn-bound-child-before-turn-end-0ccce4ae9927",
+    "salvage-durable-artifacts-before-redispatch-on-child-run-death-c3d10d64cb30"
+   ],
+   "bigram_ms": 164.7879583761096,
+   "bigram_ids": [
+    "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+    "classify-cancelled-child-mutations-from-receipt-trace-before-redispatch-b5fb4ae4209e",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "collect-turn-bound-child-before-turn-end-0ccce4ae9927",
+    "salvage-durable-artifacts-before-redispatch-on-child-run-death-c3d10d64cb30"
+   ],
+   "semantic_ms": 147.8578746318817,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+    "subtask-split-why-pending-decisions-1d61c11a3f04",
+    "salvage-durable-artifacts-before-redispatch-on-child-run-death-c3d10d64cb30",
+    "attribute-delegation-failure-via-receipt-and-cross-session-scope-31ba83df00f2",
+    "cap-delegated-child-input-by-contract-not-segment-size-76fd07467873",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "authority-contract-before-managed-mutation-62e4436f179e",
+    "positioning-by-explicitly-excluded-scope-820e9acfd7f4",
+    "classify-cancelled-child-mutations-from-receipt-trace-before-redispatch-b5fb4ae4209e"
+   ],
+   "prod_ms": 142.87816733121872,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "classify-child-run-failure-then-resegment-delegated-scope-6b0c4093fef1",
+    "salvage-durable-artifacts-before-redispatch-on-child-run-death-c3d10d64cb30",
+    "spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+    "cap-delegated-child-input-by-contract-not-segment-size-76fd07467873",
+    "classify-cancelled-child-mutations-from-receipt-trace-before-redispatch-b5fb4ae4209e",
+    "collect-turn-bound-child-before-turn-end-0ccce4ae9927",
+    "attribute-delegation-failure-via-receipt-and-cross-session-scope-31ba83df00f2",
+    "subtask-split-why-pending-decisions-1d61c11a3f04",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "bounded-blocking-polls-honor-wait-and-cap-on-async-child-862e9ccee3bd"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "locate-authoritative-record-via-handler-store-code-c1394db56200",
+   "status": "active",
+   "query": "我之前提交的那条审批建议，系统到底存到哪里了、现在是什么状态？",
+   "keyword_ms": 154.14854139089584,
+   "keyword_ids": [
+    "locate-authoritative-record-via-handler-store-code-c1394db56200",
+    "known-issue-citation-resolve-originating-record-first-23882c95be22",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e",
+    "resume-evidence-tier-ladder-memory-record-live-721a5447548c"
+   ],
+   "bigram_ms": 153.47187500447035,
+   "bigram_ids": [
+    "locate-authoritative-record-via-handler-store-code-c1394db56200",
+    "known-issue-citation-resolve-originating-record-first-23882c95be22",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e",
+    "resume-evidence-tier-ladder-memory-record-live-721a5447548c"
+   ],
+   "semantic_ms": 138.15033249557018,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "status-question-provenance-first-035c5e2ab5cf",
+    "state-questions-read-persisted-record-not-implementation-bdc629a6cc3e",
+    "validate-residual-state-premise-before-bulk-status-convergence-bb1c057e8724",
+    "route-lifecycle-state-unknowns-to-status-surface-not-record-research-341213490e49",
+    "current-state-from-live-authority-not-history-paging-989ce02cadb5",
+    "verify-live-state-at-authoritative-source-before-memory-reformulation-1f25a0d8651e",
+    "live-state-first-for-forward-looking-ops-questions-c18cb8033d16",
+    "verify-current-window-before-historical-premise-remediation-0417191a7a19",
+    "id-2a4e1585a9f5",
+    "reconstruct-opaque-plan-item-via-conclusion-state-diff-92e3ae87763d"
+   ],
+   "prod_ms": 140.05033392459154,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "anchor-vague-status-on-freshest-conclusion-artifact-06146068f19e",
+    "state-questions-read-persisted-record-not-implementation-bdc629a6cc3e",
+    "live-source-verify-pending-external-items-4574e64b5649",
+    "query-receipts-by-action-class-not-history-replay-a8dba3e9e172",
+    "status-question-provenance-first-035c5e2ab5cf",
+    "locate-authoritative-record-via-handler-store-code-c1394db56200",
+    "known-issue-citation-resolve-originating-record-first-23882c95be22",
+    "validate-residual-state-premise-before-bulk-status-convergence-bb1c057e8724",
+    "check-unknown-version-delta-before-mechanism-tracing-f82bbba9d65b",
+    "route-lifecycle-state-unknowns-to-status-surface-not-record-research-341213490e49"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": null,
+   "prod_rank": 6
+  },
+  {
+   "id": "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+   "status": "active",
+   "query": "仓库配了好几个远端，我想知道本地比『正主』领先多少提交，该跟哪个比？",
+   "keyword_ms": 149.44874960929155,
+   "keyword_ids": [
+    "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+    "mirror-ci-triage-local-fix-attribution-and-sibling-remote-oracle-9363433bcbf1",
+    "pin-remote-identity-and-history-relatedness-before-sync-ops-6d3fa7ef9164",
+    "propagation-decision-via-consumer-dependency-and-authoritative-target-0b04c104927e",
+    "open-source-inclusion-questions-answer-via-git-tracking-not-filesystem-s-e27643228327"
+   ],
+   "bigram_ms": 148.74012488871813,
+   "bigram_ids": [
+    "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+    "mirror-ci-triage-local-fix-attribution-and-sibling-remote-oracle-9363433bcbf1",
+    "pin-remote-identity-and-history-relatedness-before-sync-ops-6d3fa7ef9164",
+    "propagation-decision-via-consumer-dependency-and-authoritative-target-0b04c104927e",
+    "open-source-inclusion-questions-answer-via-git-tracking-not-filesystem-s-e27643228327"
+   ],
+   "semantic_ms": 301.1786248534918,
+   "semantic_mode": "semantic",
+   "semantic_ids": [
+    "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+    "propagation-decision-via-consumer-dependency-and-authoritative-target-0b04c104927e",
+    "mirror-ci-triage-local-fix-attribution-and-sibling-remote-oracle-9363433bcbf1",
+    "merge-base-probe-first-no-push-history-archaeology-52268e021e44",
+    "pin-remote-identity-and-history-relatedness-before-sync-ops-6d3fa7ef9164",
+    "zero-delta-push-quantify-residual-refs-then-scope-decision-e14e25e80269",
+    "preflight-fetch-and-collision-check-before-remote-mutation-a75ff2674055",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "named-remote-containment-answer-for-merge-status-questions-97d1bcfd9fdb",
+    "ff-window-first-shared-ref-advance-25c56c2869fa"
+   ],
+   "prod_ms": 311.51387467980385,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "pin-authoritative-remote-before-sync-comparison-5c856047d85e",
+    "mirror-ci-triage-local-fix-attribution-and-sibling-remote-oracle-9363433bcbf1",
+    "propagation-decision-via-consumer-dependency-and-authoritative-target-0b04c104927e",
+    "pin-remote-identity-and-history-relatedness-before-sync-ops-6d3fa7ef9164",
+    "zero-delta-push-quantify-residual-refs-then-scope-decision-e14e25e80269",
+    "pin-host-remote-then-predicate-classify-branch-cleanup-a9a97c29a9bf",
+    "fetch-before-remote-state-judgment-39e9db9b5bd4",
+    "fetch-refresh-before-shared-remote-push-d4c26f4e9abb",
+    "verify-repo-claims-via-clone-and-page-skip-dead-api-channel-197cceecda39",
+    "derive-delivery-gates-from-repo-history-preverify-locally-0f4fbb2a1558"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  },
+  {
+   "id": "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+   "status": "qualified",
+   "query": "评审工具返回了一堆标题和说明，但一条实际问题都没有，是不是可以跳过这次评审？",
+   "keyword_ms": 173.44262450933456,
+   "keyword_ids": [
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "identical-retry-receipt-after-productive-first-call-self-execute-progres-2949ae0bea24",
+    "surface-audit-via-definition-module-and-render-call-sites-85dec4cea238",
+    "triage-review-checklist-verify-suspects-in-source-before-fix-32a18804dd22",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34"
+   ],
+   "bigram_ms": 197.87829089909792,
+   "bigram_ids": [
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "identical-retry-receipt-after-productive-first-call-self-execute-progres-2949ae0bea24",
+    "surface-audit-via-definition-module-and-render-call-sites-85dec4cea238",
+    "triage-review-checklist-verify-suspects-in-source-before-fix-32a18804dd22",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34"
+   ],
+   "semantic_ms": 297.8022089228034,
+   "semantic_mode": "mixed",
+   "semantic_ids": [
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "triage-review-checklist-verify-suspects-in-source-before-fix-32a18804dd22",
+    "identical-retry-receipt-after-productive-first-call-self-execute-progres-2949ae0bea24",
+    "ground-enumerable-scale-assumptions-before-design-finalization-83a4fb4a2c33",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34",
+    "pivot-to-model-owned-judgment-on-protocol-shell-receipt-dd6794c31bf8",
+    "rater-context-readset-firewall-when-agent-is-designated-rater-211e17b7ba35",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "surface-audit-via-definition-module-and-render-call-sites-85dec4cea238",
+    "fetch-surfaced-primary-once-authority-named-stop-variant-search-on-noise-018f906d6122"
+   ],
+   "prod_ms": 306.26870784908533,
+   "prod_mode": "mixed",
+   "prod_ids": [
+    "self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+    "triage-review-checklist-verify-suspects-in-source-before-fix-32a18804dd22",
+    "identical-retry-receipt-after-productive-first-call-self-execute-progres-2949ae0bea24",
+    "resolve-self-flagged-unverified-premises-before-review-answers-c24232b01d34",
+    "surface-audit-via-definition-module-and-render-call-sites-85dec4cea238",
+    "pivot-to-model-owned-judgment-on-protocol-shell-receipt-dd6794c31bf8",
+    "ground-enumerable-scale-assumptions-before-design-finalization-83a4fb4a2c33",
+    "rater-context-readset-firewall-when-agent-is-designated-rater-211e17b7ba35",
+    "ground-review-answers-in-load-bearing-facts-46a13f0bc356",
+    "fetch-surfaced-primary-once-authority-named-stop-variant-search-on-noise-018f906d6122"
+   ],
+   "keyword_rank": 1,
+   "bigram_rank": 1,
+   "semantic_rank": 1,
+   "prod_rank": 1
+  }
+ ]
+}

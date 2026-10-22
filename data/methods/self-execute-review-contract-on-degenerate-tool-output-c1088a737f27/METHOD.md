@@ -8,7 +8,7 @@ source_model: glm/glm-5.3
 source_episode_refs: episode:5adf278f-405b-44db-95e5-3d3b94e1b8d9:929:c7443243ca1518a56db6
 evidence_refs: learning:learn:6e490939226f
 created_at: 2026-09-19T12:22:32.468542+00:00
-updated_at: 2026-09-29T23:46:00.409868+08:00
+updated_at: 2026-10-23T05:53:06.662890+08:00
 ---
 ## Trigger
 调用评审/拷问/审查类工具对一份规程或设计做强制盘问时，工具返回结构壳但未生成实际追问内容

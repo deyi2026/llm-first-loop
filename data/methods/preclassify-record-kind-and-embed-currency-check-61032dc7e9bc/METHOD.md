@@ -2,13 +2,13 @@
 method_id: preclassify-record-kind-and-embed-currency-check-61032dc7e9bc
 name: preclassify-record-kind-and-embed-currency-check
 description: 向带类型与校验契约的记忆载体（save_experience/record store）写入知识、约定或交接内容前，先按内容的验证出处选 record_kind：本回合有直接回执证明生效的正向经验→experience；源自 candidate 方法卡、纯阅读交接、未复用约定或教训→lesson 且 verification_state=unverified，正文必须预写一条可执行的当前性验证动作（如 grep -n <关键字> <路径> 应命中，或跑 <命令> 应得 <结果>）。被拒时把回执当契约机械修正，最多重试一次。核心是把'靠拒收回执逐次学习存储契约'前移为写前判定，避免用写失败当探针。
-aliases: 这条该记成哪一类记忆, 没回执就按 unverified 存, 写教训前先想好怎么自证, record_kind 写前就定
+aliases: 这条该记成哪一类记忆, 没回执就按 unverified 存, 写教训前先想好怎么自证, record_kind 写前就定, 存经验还是存教训, 这条经验还没被证明
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:fd840981-a906-404c-8c80-1c3452e1c66a:496:89d1d3f08cdb0bff200c
 evidence_refs: learning:learn:20b624d0e72c
 created_at: 2026-10-09T20:05:05.645934+08:00
-updated_at: 2026-10-09T20:05:05.645934+08:00
+updated_at: 2026-10-23T05:52:02.873655+08:00
 ---
 ## Trigger
 即将把知识/约定/交接/教训写入带类型与校验契约的记忆载体（如 save_experience 的 record_kind），尤其当内容源自 status=candidate/未验证的方法卡、纯阅读型知识交接或尚未复用的工作约定时。

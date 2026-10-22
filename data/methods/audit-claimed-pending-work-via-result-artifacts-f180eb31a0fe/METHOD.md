@@ -8,7 +8,7 @@ source_model: glm/glm-5.3
 source_episode_refs: episode:8d524014-5137-4d7f-bb82-9755dd05c8b4:55:f83e22d5f596d2afb517
 evidence_refs: learning:learn:b5913e4b7b7f
 created_at: 2026-09-20T21:44:07.513889+00:00
-updated_at: 2026-09-20T21:44:07.513889+00:00
+updated_at: 2026-10-23T05:53:09.262582+08:00
 ---
 ## Trigger
 用户建议/计划中包含对仓库或系统当前状态的可核查断言（某 pilot 未运行、某文档代表最新状态、某机制缺失），且该断言引用了具名文档或带日期的工件；文档状态行与用户措辞存在张力。
