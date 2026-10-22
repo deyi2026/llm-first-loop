@@ -2,7 +2,7 @@
 
 - 日期：2026-10-23
 - 范围：`src/llm_loop/methods/store.py`、`methods/*/METHOD.md`、`data/methods/*/METHOD.md`、`evals/retrieval_ab/`
-- 结论状态：代码与数据已本地验证；部署与复审结论见「上线」一节
+- 结论状态：代码与数据已本地验证；部署回执见「§二.1 上线回执」，复审结论见「§六」
 
 ## 一、结论摘要
 
@@ -23,6 +23,18 @@
 | 平手排序 | 同上 | 排序键 = (-score, -coverage)，id 降序由预排序保证；**status 不进排序键** |
 
 关键设计取舍：门槛**不做召回裁剪**。当严格池不足 `limit` 时，被拦卡按分数回填满页——因为语义腿调用 `list(query, max(limit*4,20))`，一旦页长被压，下游 RRF 会被静默改写（这正是第 1 轮审查的 P0）。
+
+### 2.1 上线回执（2026-10-23T06:14–06:15）
+
+| 事实 | 回执 |
+|---|---|
+| 部署 | `publish` → `deployment_id=deploy-239b8ca7f63b4e0caec37bba9c7f51e7`，`generation=307`，`git_head=48e87f398234`，`code_root=.releases/48e87f398…` |
+| 发布产物含全部改动 | 在 release 快照里逐条 grep：`need = max(0, limit)` / `def annotate_aliases` / `unsafe_chars` / `refusing to replace aliases` / 内置卡 aliases，均命中 |
+| feishu | restart `succeeded`，`verify=confirmed_ok`，pid 27408，head `48e87f398234` |
+| learning | restart `succeeded`，`verify=confirmed_ok`，pid 27716，head `48e87f398234` |
+| web | restart `waiting_for_requester_exit`（action `svc-56f7c8b5…`）：本会话结束后才重启，避免中断在跑的对话 |
+
+> 因此「web 已跑上新代码」在本文写成时**尚未成为事实**：它绑定本会话退出。下一轮对话/新请求生效后可再核 `service_control(status, action_id=svc-56f7c8b5fd3b4f09a5951ab221e4bb34)`。
 
 ## 三、别名补齐（数据）
 
