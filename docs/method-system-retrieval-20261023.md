@@ -75,9 +75,13 @@ keyword p50 65ms / p95 4.3s（长查询），prod p50 300ms——延迟由查询
 
 ## 六、独立审查
 
-- 第 1 轮：REVISE，P0×1（页长被压到 5）、P1×3、P2×3。
-- 已修：P0 页长、P1 status 排序键、P1 写后校验、P2 别名分隔符注入。
-- 复审：（见提交说明/本次交付回复）
+- 第 1 轮（独立子代理）：**REVISE**，P0×1（`limit=20` 的调用被压成 5 条，会静默改写语义腿 RRF）、P1×3、P2×3。
+- 已修 4 项：P0 页长契约、P1 status 移出排序键、P1 写前复检 frontmatter、P2 别名分隔符注入。
+- 第 2 轮窄复审：**REVISE**，剩 1 条 P1——`mode="replace"` 且新别名被门槛全数丢弃时会写入 `aliases: ` 并清空原别名（空标量能通过 round-trip 校验）。已修：全被拒且卡上已有别名时直接 `raise ValueError`，并补 `test_replace_with_nothing_kept_refuses_instead_of_wiping`。
+- 第 3 轮确认：**未取得**。审查子代理两次被 fleet 租约回收（`refused`，lease 失效），最后一条修订只有我的复核 + 测试覆盖，**没有第三份独立 PASS 回执**。
+- 数据面复核：本次 replace 清理未损坏任何卡（备份对比：0 张被清空、0 张别名变少）。
+
+> 规则边界：RULE-AI-28 的代码闸绑定「全量测试前」，push 闸绑定 `git push`，`service_control publish` 明确属代码部署而非文章发表。本轮未跑全量 pytest、未 push，因此部署不受三闸阻断；但**不应**把本文读作「已过全部审查闸」。
 
 ## 七、下一步（按杠杆排序）
 
