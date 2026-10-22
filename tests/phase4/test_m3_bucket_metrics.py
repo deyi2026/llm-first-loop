@@ -142,12 +142,50 @@ def _bucket(build_test_engine, n=5, mode="interruptible"):
     }
 
 
+def _idle_bucket_sampled(build_test_engine, need=3, max_rounds=10, n=5):
+    """idle 桶采样：命中 µs 级间隙本身是随机量，机制门槛不能建在命中率上。
+
+    Phase4-M3 修复（2026-10-22；定时 CI 39689641019 红：idle hit=2/5）。
+    idle 构造靠外部 HTTP 注入去撞「工具已完成、下一轮未开」的间隙：注入线程的
+    调度抖动直接决定本样本是 gap_harvest 还是 round_start——这是采样运气，不是机制。
+    机制验收是「命中间隙时收割 ≤50ms」+「错失如实归属、零假打断」，与命中率无关。
+    故：命中不足则有界补采样，补齐后仍不足才 FAIL；轮次/命中/错失/命中率全部
+    落 M3_ACCEPTANCE.json，不再把命中率藏进 assert。
+    上限取 10 轮的依据：CI 39689641019 实测单轮命中 2/5（p≈0.4），单轮凑够 3 个
+    命中的概率仅 ≈0.32，补 10 轮后仍不足的概率 0.683^10 ≈ 2%；本机常态 p≈0.8，
+    通常首轮即满足（实测 sampling_rounds=1, hit_rate=0.8, 机制时延 31.9ms）。
+    """
+    merged = _bucket(build_test_engine, n, "idle")
+    rounds = 1
+    while True:
+        hits = sum(v == "gap_harvest" for v in merged["consumed_via"])
+        if hits >= need or rounds >= max_rounds:
+            merged["sampling_rounds"] = rounds
+            merged["gap_harvest_hits"] = hits
+            merged["needed_hits"] = need
+            merged["missed_boundary"] = sum(
+                v == "round_start" for v in merged["consumed_via"]
+            )
+            merged["other_via"] = sorted(
+                v for v in merged["consumed_via"] if v not in ("gap_harvest", "round_start")
+            )
+            merged["hit_rate"] = round(hits / merged["n"], 3)
+            return merged
+        extra = _bucket(build_test_engine, n, "idle")
+        rounds += 1
+        for key in ("t_effect_samples", "consumed_via", "interrupt_receipts"):
+            merged[key] = merged[key] + extra[key]
+        merged["n"] = merged["n"] + extra["n"]
+        merged["p50"] = _pct(merged["t_effect_samples"], 0.50)
+        merged["p95"] = _pct(merged["t_effect_samples"], 0.95)
+
+
 def test_m3_four_buckets(build_test_engine):
     out = {}
     out["interruptible"] = _bucket(build_test_engine, 5, "interruptible")
     out["natural_boundary"] = _bucket(build_test_engine, 5, "natural_boundary")
     out["llm_stream"] = _bucket(build_test_engine, 5, "llm_stream")
-    out["idle"] = _bucket(build_test_engine, 5, "idle")
+    out["idle"] = _idle_bucket_sampled(build_test_engine)
 
     # 机械归属断言（consumed_via/interrupt_receipt 与桶构造一致）
     assert all(out["interruptible"]["interrupt_receipts"]), out["interruptible"]
@@ -157,12 +195,14 @@ def test_m3_four_buckets(build_test_engine):
     # Phase6 M1 后：同步 LLM 窗口内插话默认被窗口轮询截获（via=sync_window_poll，
     # 新口径即设计 §5.6 T1 度量依据）；final_gate 归属保留给晚到/关闸回退。
     assert all(v == "sync_window_poll" for v in out["llm_stream"]["consumed_via"]), out["llm_stream"]
-    # idle 桶为「到达-边界」竞速构造（外部 HTTP 注入对 µs 级间隙有 ±30ms 抖动）：
-    # 命中间隙的样本测收割机制时延（via=gap_harvest，目标 ≤50ms）；错失边界的
-    # 样本落入 natural_boundary（轮转消费，如实归属，不打断零误标）。≥3/5 命中
-    # 保证统计意义。
+    # idle 桶为「到达-边界」竞速构造（外部 HTTP 注入对 µs 级间隙有 ±抖动）：
+    # 命中间隙的样本测收割机制时延（via=gap_harvest，目标 ≤50ms）；错失边界的样本
+    # 落入 round_start 轮转消费（如实归属、不打断零误标）。
+    # 命中数由 _idle_bucket_sampled 有界补采样保证（采样运气 ≠ 机制）；
+    # 补采样用尽仍不足 need → 此时才是机制真没命中。
     idle_hits = [v == "gap_harvest" for v in out["idle"]["consumed_via"]]
-    assert sum(idle_hits) >= 3, out["idle"]
+    assert sum(idle_hits) >= out["idle"]["needed_hits"], out["idle"]
+    assert not out["idle"]["other_via"], out["idle"]
     idle_p50 = _pct(
         [t for t, hit in zip(out["idle"]["t_effect_samples"], idle_hits, strict=False) if hit],
         0.50,
@@ -173,7 +213,10 @@ def test_m3_four_buckets(build_test_engine):
 
     # 达标断言（§7 目标桶）
     assert out["interruptible"]["p50"] <= 500 and out["interruptible"]["p95"] <= 1000, out["interruptible"]
-    assert out["idle"]["p50"] <= 50, out["idle"]
+    # idle 机制时延口径 = 上方 mechanism_p50_t_effect_ms（hit-only，≤50ms）。
+    # 全样本 p50 会混入合法错失样本（t_effect≈工具时长≈2000ms），不是机制指标；
+    # 补采样后其算术值必然跨过 50，故仅留作诊断字段、不设门槛
+    # （原断言只在恰好命中≥3/5 时才偶然成立）。
 
     # 对照 M0 基线
     try:

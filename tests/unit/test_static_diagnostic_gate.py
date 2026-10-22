@@ -281,3 +281,29 @@ def test_run_analyzer_ruff_timeout_propagates_unchanged(
     )
     with pytest.raises(subprocess.TimeoutExpired):
         gate.run_analyzer(tmp_path, sys.executable, "ruff")
+
+
+def test_pyright_wallclock_advisory_denies_release_qualification(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """D6 收口（2026-10-22）: --require-complete 下 advisory 不得冒充资格 → exit 3.
+
+    发布门禁此前与开发门禁同用 exit 0，导致「类型检查没跑完」与「类型检查通过」
+    在退出码上不可区分。本用例锁定：① status=unknown 机器可读态必现；
+    ② 带 --require-complete 时 exit 3（资格不成立）；③ 不得出现 status=complete。
+    """
+    monkeypatch.setattr(
+        gate.subprocess, "run", _fake_wallclock_run(900, "pyright 1.1.411\n")
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["check_static_diagnostics.py", "--tool", "pyright", "--require-complete"],
+    )
+    assert gate.main() == 3
+    captured = capsys.readouterr()
+    assert "status=unknown" in captured.out
+    assert "reason=wallclock_advisory" in captured.out
+    assert "status=complete" not in captured.out
+    assert "--require-complete" in captured.err
