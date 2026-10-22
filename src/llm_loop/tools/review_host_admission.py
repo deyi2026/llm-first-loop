@@ -507,7 +507,10 @@ def _project_committed_runtime_diff(name: str, diff_text: str) -> str:
     )
 
 
-def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, str]:
+def _source_snapshot(
+    workdir: str, push_base: str | None = None, push_head: str | None = None,
+    first_push_ref: str = "",
+) -> tuple[str, str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
     push_base is used by git_push: the base must be the push destination's
@@ -515,6 +518,15 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
     main branch, so merge-base(HEAD, main)==HEAD and the old base froze an
     EMPTY committed delta — the reviewer never saw what the push would
     actually upload (EVO-20261021-89256d43).
+
+    push_head (EVO-20261022-331eee17): the concrete commit the refspec
+    source resolves to. The committed delta is base..push_head so the frozen
+    material follows the push target instead of the checkout HEAD. Working
+    tree and untracked files are part of the material ONLY when push_head is
+    HEAD (a commit refspec never uploads the working tree); for a non-HEAD
+    source the material is exactly what the upload would send.
+    first_push_ref: non-empty when the destination ref is new on the remote;
+    recorded verbatim in the material header together with the anchor base.
     """
     root = Path(workdir).expanduser().resolve(strict=True)
     if not root.is_dir():
@@ -551,13 +563,15 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
             out.append((name, blob.decode("utf-8", "replace")))
         return out
 
-    committed_names = _diff_names(base, "HEAD")
-    working_names = _diff_names("HEAD")
+    frozen_head = push_head if push_head is not None else head
+    include_worktree = push_head is None or push_head == head
+    committed_names = _diff_names(base, frozen_head)
+    working_names = _diff_names("HEAD") if include_worktree else []
     # Sensitive-path refusal covers EVERY changed path, including excluded
     # runtime-output paths: exclusion may not become a smuggling channel.
     if any(_SENSITIVE_FILENAME.search(name) for name in committed_names + working_names):
         raise ValueError("review_sensitive_tracked_path_refused")
-    committed = _path_diffs(committed_names, base, "HEAD")
+    committed = _path_diffs(committed_names, base, frozen_head)
     # EVO-20261021-2f22aae5 (proposal A): committed runtime-output monster
     # diffs are projection-truncated with an explicit marker (see
     # _project_committed_runtime_diff); every other committed path keeps the
@@ -567,10 +581,12 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
         for name, text in committed
     ]
     kept_working_names = [n for n in working_names if not _is_runtime_output(n)]
-    working = _path_diffs(kept_working_names, "HEAD")
-    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    working = _path_diffs(kept_working_names, "HEAD") if include_worktree else []
     new_files: list[tuple[str, str, str]] = []
     excluded_untracked = 0
+    untracked: list[bytes] = []
+    if include_worktree:
+        untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
     for raw_name in untracked:
         if not raw_name:
             continue
@@ -592,12 +608,17 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
     # A push review must state the base it diffed against so the reviewer and
     # the admission receipt can be cross-checked against remote facts.
     base_line = f"push_remote_base={base}" if push_base is not None else f"merge_base={base}"
+    head_line = f"frozen_head={frozen_head}\n" if push_head is not None else ""
+    first_push_line = (
+        f"push_first_push_anchor={base} push_target_ref={first_push_ref}\n"
+        if first_push_ref else ""
+    )
     excludes_line = (
         "runtime_output_excludes=" + ",".join(_RUNTIME_OUTPUT_EXCLUDES) + "\n"
         if _RUNTIME_OUTPUT_EXCLUDES else ""
     )
     material = (
-        f"repo_head={head}\n{base_line}{excludes_line}"
+        f"repo_head={head}\n{base_line}{head_line}{first_push_line}{excludes_line}"
         "committed_delta:\n" + "".join(text for _, text in committed)
         + "uncommitted_delta:\n" + "".join(text for _, text in working)
         + "\n".join(f"untracked {name} sha={sha}\n{text}" for name, sha, text in new_files)
@@ -624,7 +645,8 @@ def _source_snapshot(workdir: str, push_base: str | None = None) -> tuple[str, s
             + (f" excluded_untracked={excluded_untracked}" if excluded_untracked else "")
         )
     identity = _digest(_canonical({
-        "head": head, "base": base, "repo": str(repo), "material": material,
+        "head": head, "frozen_head": frozen_head, "base": base, "repo": str(repo),
+        "material": material, "first_push_ref": first_push_ref,
         "untracked_shas": [(n, s) for n, s, _ in new_files],
     }))
     return identity, material
@@ -694,6 +716,25 @@ def _push_refspec(command: str) -> tuple[str, str]:
     return remote, refspec
 
 
+def _push_src_commit(repo: Path, refspec: str) -> str:
+    """Resolve the refspec source to a concrete local commit.
+
+    EVO-20261022-331eee17: the frozen material must follow the push TARGET,
+    not the checkout HEAD. A target-commit refspec uploads commits reachable
+    from that commit which the remote lacks; HEAD may be several commits
+    ahead with material that is NOT part of this upload. Fail closed when the
+    source cannot be resolved to a commit in this clone.
+    """
+    src = refspec.split(":", 1)[0]
+    try:
+        sha = _git(repo, "rev-parse", "--verify", src + "^{commit}").decode().strip()
+    except (ValueError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("push_source_commit_unresolvable_fail_closed") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("push_source_commit_unresolvable_fail_closed")
+    return sha
+
+
 def _push_dst_ref(refspec: str) -> str:
     """Destination ref of the refspec, normalized to a full ref name."""
     dst = refspec.split(":", 1)[1] if ":" in refspec else refspec
@@ -703,7 +744,7 @@ def _push_dst_ref(refspec: str) -> str:
     return dst if dst.startswith("refs/") else f"refs/heads/{dst}"
 
 
-def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> str:
+def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> tuple[str, bool]:
     """Current commit of the push destination ref; fail closed without remote facts.
 
     The push delta the gate must freeze is <this commit>..HEAD. Query the PUSH
@@ -715,6 +756,16 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> str:
     while the push uploads everything the remote lacks
     (EVO-20261021-89256d43, independent-review Finding 1). Remote facts
     unavailable or the ref absent -> refuse admission.
+
+    EVO-20261022-331eee17 (human-approved 2026-10-22, executing): when the
+    destination ref does not exist yet (first upload of a new branch), the
+    review anchor falls back to the remote default branch (ls-remote
+    --symref HEAD) instead of refusing outright: the frozen delta becomes
+    <remote default-branch commit>..<push source commit>, and the admission
+    receipt records the anchor plus the explicit target ref. Still fail-closed
+    when the anchor cannot be resolved from remote facts (e.g. an empty
+    remote): no local refs are ever trusted for the base (unchanged).
+    Returns (base_sha, first_push: bool).
     """
     try:
         push_url = _git(repo, "remote", "get-url", "--push", remote).decode().strip()
@@ -747,10 +798,26 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> str:
     for line in run.stdout.decode("utf-8", "replace").splitlines():
         sha, _, ref = line.partition("\t")
         if ref.strip() == dst_ref and sha.strip():
-            return sha.strip()
-    # ls-remote answered but the destination ref does not exist yet: the
-    # first push would upload the entire history, which the material cap
-    # cannot honestly cover. Refuse instead of freezing an empty delta.
+            return sha.strip(), False
+    # ls-remote answered but the destination ref does not exist yet (first
+    # upload of a new branch). EVO-20261022-331eee17: anchor the review on
+    # the remote default branch (HEAD symref) instead of refusing; the
+    # target ref name is recorded explicitly so the reviewer and the receipt
+    # both show that this is a first upload against that anchor.
+    sym_run = subprocess.run(
+        ["git", "--no-replace-objects",
+         "-c", "core.sshCommand=", "-c", "core.gitProxy=",
+         "-C", str(repo), "ls-remote", "--symref", "--", push_url, "HEAD"],
+        capture_output=True, timeout=12, check=False,
+    )
+    if sym_run.returncode == 0:
+        for line in sym_run.stdout.decode("utf-8", "replace").splitlines():
+            sha, _, ref = line.partition("\t")
+            if ref.strip() == "HEAD" and sha.strip() and len(sha.strip()) == 40:
+                return sha.strip(), True
+    # Anchor unresolvable (e.g. empty remote): the first upload would send
+    # the entire history, which the material cap cannot honestly cover.
+    # Refuse instead of freezing an unanchored delta.
     raise ValueError("push_remote_ref_absent_first_push_scope_unreviewable")
 
 
@@ -1115,7 +1182,10 @@ class HostReviewAdmission:
             if not _has_document_editor(page) and "article" not in target_name.lower() and "文章" not in target_name:
                 raise ValueError("publication_article_editor_not_observed")
             sha, text = _browser_binding(page, manuscript_path=manuscript_path, artifact_paths=artifact_paths)
-            return sha, f"article_publish:{target_name}", text, ""
+            # article_publish carries no push metadata; keep the 5-tuple shape
+            # stable for callers (EVO-20261022-331eee17 arity change).
+            return sha, f"article_publish:{target_name}", text, "", {}
+        push_extra: dict[str, str] = {}
         if kind not in {"full_test", "git_push"} or classify_host_shell(command) != kind:
             raise ValueError("review_kind_command_mismatch")
         if not workdir:
@@ -1156,20 +1226,29 @@ class HostReviewAdmission:
             # not empty out the frozen delta (EVO-20261021-89256d43).
             remote, refspec = _push_refspec(command)
             repo = Path(_git(Path(true_dir), "rev-parse", "--show-toplevel").decode().strip()).resolve()
-            push_base = _push_base_commit(repo, remote, _push_dst_ref(refspec))
+            dst_ref = _push_dst_ref(refspec)
+            push_base, first_push = _push_base_commit(repo, remote, dst_ref)
             try:
                 _git(repo, "cat-file", "-e", push_base + "^{commit}")
             except ValueError as exc:
                 # Remote moved ahead of this clone; the diff base must exist
                 # locally or the reviewed delta cannot be computed at all.
                 raise ValueError("push_remote_commit_not_local_fetch_first") from exc
-            sha, text = _source_snapshot(true_dir, push_base=push_base)
+            push_head = _push_src_commit(repo, refspec)
+            sha, text = _source_snapshot(
+                true_dir, push_base=push_base, push_head=push_head,
+                first_push_ref=dst_ref if first_push else "",
+            )
             dest = _push_target(command, true_dir)
+            push_extra = {"src_commit": push_head,
+                          "first_push": "1" if first_push else "",
+                          "target_ref": dst_ref if first_push else ""}
         else:
             true_dir = workdir
             sha, text = _source_snapshot(true_dir)
             dest = str(Path(true_dir).expanduser().resolve(strict=True))
-        return sha, f"{kind}:{dest}:command:{_digest(command.encode('utf-8'))}", text, push_base
+        return (sha, f"{kind}:{dest}:command:{_digest(command.encode('utf-8'))}", text,
+                push_base, push_extra)
 
     def start(
         self, parent: str, kind: str, *, workdir: str = "", command: str = "", target_name: str = "",
@@ -1178,7 +1257,7 @@ class HostReviewAdmission:
         if not parent or self._runner is None:
             return {"accepted": False, "reason": "review_host_unavailable"}
         try:
-            sha, target, material, push_remote_commit = self._target(
+            sha, target, material, push_remote_commit, push_extra = self._target(
                 kind, workdir, command, target_name, self._browser_capture,
                 manuscript_path=manuscript_path, artifact_paths=artifact_paths,
             )
@@ -1324,6 +1403,11 @@ class HostReviewAdmission:
             # Mechanical cross-check anchor: the exact remote commit the
             # frozen delta is diffed against (EVO-20261021-89256d43 fix #3).
             receipt["push_remote_commit"] = push_remote_commit
+            # EVO-20261022-331eee17: the frozen range follows the push target.
+            receipt["push_src_commit"] = push_extra.get("src_commit", "")
+            if push_extra.get("first_push"):
+                receipt["first_push_anchor"] = push_remote_commit
+                receipt["first_push_target_ref"] = push_extra.get("target_ref", "")
         return receipt
 
     def poll(self, parent: str, child_id: str) -> dict[str, str]:
@@ -1471,7 +1555,7 @@ class HostReviewAdmission:
             # Re-resolves the push base (ls-remote) too: if the remote ref moved
             # after admission, the candidate SHA changes and the grant will not
             # match — the drift check is built into recomputation.
-            sha, target, _, _ = self._target(kind, workdir, command, "", None)
+            sha, target, _, _, _ = self._target(kind, workdir, command, "", None)
         except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
             return self._deny(f"当前命令/产物无法绑定:{exc}")
         return self._consume(parent, kind, target, sha)
