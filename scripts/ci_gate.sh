@@ -131,7 +131,11 @@ echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (full test selection 
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
 # 2026-10-23（P1 出口判据③ CI 红数对账）：产出 junitxml 供红数对账脚本消费。
 # 实测红项与登记基线 eval/rules/known_reds_current.json 对账：超出登记项 = 新红 = 阻断。
-GATE_XML="$(mktemp /tmp/ci_gate_report.XXXXXX.xml)"
+# 2026-10-23 修（macOS 可重跑性）：`mktemp <template>.XXXXXX.xml` 在 BSD mktemp 下
+# 只会把 "XXXXXX.xml" 当字面量 → 第二次调用即 "File exists" 失败，残留文件让
+# 后续每次运行都挂（2026-10-23 14:01 实测：2 个 ci_gate 结论行测试因此变红）。
+# 改为"独立临时目录 + 固定文件名"，跨平台且可反复运行。
+GATE_TMP="$(mktemp -d /tmp/ci_gate.XXXXXX)"; GATE_XML="$GATE_TMP/report.xml"
 if "$PY" -m pytest --dist loadfile -n auto -q --junitxml="$GATE_XML" >"$GATE_OUT" 2>&1; then
   cat "$GATE_OUT"
   echo "（xdist 全量绿）"

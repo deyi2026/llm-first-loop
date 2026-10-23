@@ -177,6 +177,10 @@ def run_one_sample(
         "model_used": result.model_used,
         "rounds": result.rounds,
         "truncated": result.truncated,
+        # 2026-10-23(P2 A/B): 会话 id 与隔离 data 目录回传 —— 供跑批器读事件日志
+        # 统计压缩事件/归档 ref（压缩后存续率需要事件侧事实，不能只看 trace）。
+        "sid": sid,
+        "data_dir": str(tmp / "data"),
         # A2(2026-08-14): token 用量（prompt 开销指标；0=provider 未提供）
         "tokens_in": result.tokens_in,
         "tokens_out": result.tokens_out,
@@ -421,6 +425,9 @@ def evaluate(
                 "verdict": bool(verdict),
                 "trace": sample["trace"],
                 "answer_head": sample["answer"][:200],
+                # 2026-10-23：存全量答复（此前只留 200 字摘要 → 判据口径变更后**无法离线重判**，
+                # 每次改判据都得重跑 108 条真实 LLM 样本）。
+                "answer_full": sample["answer"],
                 "model_used": sample["model_used"],
                 "rounds": sample["rounds"],
                 "truncated": sample["truncated"],

@@ -48,9 +48,24 @@ def load_index() -> list[dict]:
         return json.load(f)
 
 
+JUDGE_SPEC_PATH = _HERE / "judge_spec_v2.json"
+
+
+def load_judge_spec() -> dict:
+    """红线判据 v2 规格（按 case_id → 判据参数）。
+
+    文件不存在 → 返回空 dict → 全部用例走 v1 旧口径（行为与 2026-10-23 12:56 那批完全一致）。
+    存在 → 对应用例改走 v2 口径（语义类别显式化）。
+    """
+    if not JUDGE_SPEC_PATH.exists():
+        return {}
+    return json.loads(JUDGE_SPEC_PATH.read_text(encoding="utf-8")).get("cases", {})
+
+
 def build_scenarios(samples: int | None = None) -> dict:
     """把红线用例转成 run_eval.py 可消费的 scenarios 结构。"""
     items = load_index()
+    spec = load_judge_spec()
     scenarios = []
     for c in items:
         s = {
@@ -63,6 +78,10 @@ def build_scenarios(samples: int | None = None) -> dict:
             "verdict": c["verdict"],
             "params": {"rule": "REDLINE", "expect": c["expect"], "category": c["category"]},
         }
+        js = spec.get(c["case_id"])
+        if js:
+            s["verdict"] = "redline_v2"
+            s["params"].update(js)
         scenarios.append(s)
     return {
         "version": "redline_v1",

@@ -1,0 +1,109 @@
+{
+  "set": "p2ab_v1_1",
+  "frozen_at": "2026-10-23T15:05:00+08:00",
+  "protocol": "evals/p2_ab/PROTOCOL.md",
+  "supersedes": "scenarios_p2ab_v1.json（v1.0，因地板效应作废，见 PROTOCOL.md 修订记录 R1）",
+  "purpose": "P2 A/B 域内**能力探针**（探索级）：只测『压缩后能否取回归档内容并完成作答』这一件事。",
+  "caveat": "6 个探针同属一个任务族（单次 cat 读文件 + 逐字引用一处）→ 结论只能到 C 级（仅激发任务），不得据此 promotion；promotion 判据只认 held-out 验证跑。",
+  "default_env": {
+    "HISTORY_MAX_CHARS": "12000"
+  },
+  "scenarios": [
+    {
+      "id": "p2ab_probe_d1",
+      "name": "探针·D1 结论",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "Terminal-Bench 子集先做"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出§12 决策表里 D-1 那一行的『结论』取值",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：请用 execute_command 一次性读取 docs/EVAL-PLAN-LFL-20261023.md 全文（cat），然后回答：§12 决策表里 D-1 那一行的『结论』取值是什么？在最终答复里逐字给出该处原文（照抄，不要改写）。"
+    },
+    {
+      "id": "p2ab_probe_d2",
+      "name": "探针·D-2 结论",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "minimax/MiniMax-M3.1-Flash"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出§12 决策表里 D-2 那一行的『结论』取值",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：请用 execute_command 一次性读取 docs/EVAL-PLAN-LFL-20261023.md 全文（cat），然后回答：§12 决策表里 D-2 那一行的『结论』取值是什么？在最终答复里逐字给出该处原文（照抄，不要改写）。"
+    },
+    {
+      "id": "p2ab_probe_d3",
+      "name": "探针·D-3 结论",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "污染即作废该轮并降级为 C 级"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出§12 决策表里 D-3 那一行的『结论』取值",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：请用 execute_command 一次性读取 docs/EVAL-PLAN-LFL-20261023.md 全文（cat），然后回答：§12 决策表里 D-3 那一行的『结论』取值是什么？在最终答复里逐字给出该处原文（照抄，不要改写）。"
+    },
+    {
+      "id": "p2ab_probe_kr_head",
+      "name": "探针·已知红首句",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "预存在红不是放任，而是显式登记的现实约束"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出文档开头『预存在红不是放任…』那一整句",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：请用 execute_command 一次性读取 docs/known-reds-20260909.md 全文（cat），然后回答：文档开头『预存在红不是放任…』那一整句是什么？在最终答复里逐字给出该处原文（照抄，不要改写）。"
+    },
+    {
+      "id": "p2ab_probe_kr_date",
+      "name": "探针·已知红维护日期",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "2026-10-13"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出文档里『维护日期：』后面的日期",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：请用 execute_command 一次性读取 docs/known-reds-20260909.md 全文（cat），然后回答：文档里『维护日期：』后面的日期是什么？在最终答复里逐字给出该处原文（照抄，不要改写）。"
+    },
+    {
+      "id": "p2ab_probe_gap1",
+      "name": "探针·第一条数据缺口",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "压缩后存续率无法计算"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出§21.5『本轮如实登记的数据缺口』里的第一条数据缺口",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：请用 execute_command 一次性读取 docs/EVAL-PLAN-LFL-20261023.md 全文（cat），然后回答：§21.5『本轮如实登记的数据缺口』里的第一条数据缺口是什么？在最终答复里逐字给出该处原文（照抄，不要改写）。"
+    }
+  ]
+}
