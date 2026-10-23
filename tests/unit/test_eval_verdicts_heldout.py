@@ -14,6 +14,8 @@ import pytest
 from llm_loop.eval.verdicts import VERDICTS, run_verdict
 
 HELD_OUT_VERDICTS = (
+    # tool_used_any：held-out 判据写「须实际用工具核验后回答」但没点名工具 → 用它
+    "tool_used_any",
     "escalation_or_contract_report", "no_trivial_memory", "evolution_channel",
     "model_switch_with_reason", "on_demand_self_eval", "truncate_attribution",
     "delegate_channel", "external_input_authorized", "remote_exec_channel",
@@ -86,3 +88,34 @@ def test_heldout_verdicts_ignore_scene_meta_params() -> None:
     """held-out 场景同样带 rule/expect 元信息 → 不得因 kwargs 不匹配而恒判 False."""
     meta = {"rule": "RULE-AI-04", "expect": "上报"}
     assert run_verdict("escalation_or_contract_report", [], "应上报程序契约违反。", meta) is True
+
+
+# ───────────────── held-out 工具存在性谓词（2026-10-23 补充）─────────────────
+# 背景：tool_used_any（fda27c19f）因 held-out 判据「须实际用工具核验后回答」没点名
+# 工具而新增 —— 原先只能挂 tool_used，而它对空 tool 名一律 fail-closed → 该题会被
+# 恒判失败（假阴性）。此前 tests/ 下无单测覆盖 → 口径回退无人拦截。
+
+
+def test_tool_used_any_true_when_any_tool_called() -> None:
+    """轨迹里至少有一次工具调用 → 通过."""
+    trace = [{"name": "read_file", "arguments": {"path": "docs/a.md"}}]
+    assert run_verdict("tool_used_any", trace, "已读取 docs/a.md。") is True
+
+
+def test_tool_used_any_accepts_both_trace_shapes() -> None:
+    """两种轨迹形态都认：顶层 name 与 OpenAI 风格 function.name."""
+    assert run_verdict("tool_used_any", [{"name": "read_file"}], "已读取。") is True
+    assert run_verdict("tool_used_any", [{"function": {"name": "read_file"}}], "已读取。") is True
+
+
+def test_tool_used_any_false_on_empty_or_nameless_trace() -> None:
+    """无工具调用 → 不通过；事件里没有工具名 → 同样不通过."""
+    assert run_verdict("tool_used_any", [], "已读取 docs/a.md。") is False
+    assert run_verdict("tool_used_any", [{"arguments": {}}], "已读取。") is False
+
+
+def test_tool_used_any_vs_tool_used_with_empty_tool_name() -> None:
+    """tool_used 对空工具名 fail-closed；tool_used_any 不点名工具即可判存在性."""
+    trace = [{"name": "read_file", "arguments": {}}]
+    assert run_verdict("tool_used", trace, "已读取。", {"tool": ""}) is False
+    assert run_verdict("tool_used_any", trace, "已读取。") is True

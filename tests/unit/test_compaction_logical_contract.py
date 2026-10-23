@@ -1,4 +1,9 @@
-"""Regression: density recalibration must not reset the logical history contract."""
+"""Regression: density recalibration must not reset the logical history contract.
+
+The lower half pins the v2 logical-contract comparison semantics directly
+(capacity inputs, char-cap selection, scope matching) so a future change to
+``llm_loop.core.compaction_contract`` has to be a deliberate decision.
+"""
 from types import SimpleNamespace
 
 import pytest
@@ -177,3 +182,122 @@ def test_incident_scale_677_messages_do_not_reopen_on_density_roundtrip():
         project(sess, budget, LABELS[0], events=events)
     assert not any(kind == "history.compaction_state_reset" for kind, _ in events)
     assert [(m.role, m.content, m.reasoning_content, m.tool_calls) for m in sess.messages] == original
+
+
+def _contract(*, policy=None, wire_protocol="openai", **overrides):
+    """Build a v2 logical contract from budget info with test-friendly defaults."""
+    from llm_loop.core.compaction_contract import contract_from_budget
+    info = {"allowed_input_tokens": 1000, "configured_global_budget": 12000,
+            "provider_budget": None, "runtime_override": None}
+    info.update(overrides)
+    return contract_from_budget(info, wire_protocol=wire_protocol, policy=policy)
+
+
+def _scope(contract, *, version=2, model=None, effective_budget=12000):
+    return {"version": version, "model": model or LABELS[0],
+            "effective_budget": effective_budget, "logical_contract": contract}
+
+
+def test_contract_rejects_unusable_capacity_inputs():
+    from llm_loop.core.compaction_contract import contract_from_budget
+    assert contract_from_budget(None) is None
+    assert contract_from_budget("not-a-dict") is None
+    assert contract_from_budget({}) is None
+    assert contract_from_budget({"allowed_input_tokens": True}) is None
+    assert contract_from_budget({"allowed_input_tokens": 0}) is None
+    assert contract_from_budget({"allowed_input_tokens": -1}) is None
+    assert contract_from_budget({"allowed_input_tokens": "1000"}) is None
+    assert contract_from_budget({"allowed_input_tokens": 1000.0}) is None
+
+
+def test_contract_char_limit_picks_explicit_then_provider_budget():
+    assert _contract(runtime_override=5000, provider_budget=8000)["char_limit"] == 5000
+    assert _contract(provider_budget=8000)["char_limit"] == 8000
+    assert _contract(runtime_override=None, configured_global_budget=None,
+                     provider_budget=None)["char_limit"] is None
+
+
+def test_contract_falsy_explicit_override_suppresses_configured_fallback():
+    # Characterization of current semantics: runtime_override=0 is not None, so it
+    # wins over configured_global_budget and leaves "no explicit char cap".
+    assert _contract(runtime_override=0, configured_global_budget=12000)["char_limit"] is None
+
+
+def test_contract_records_wire_protocol_and_policy_snapshot():
+    policy = SimpleNamespace(compact_ratio=0.5, compress_target_ratio=0.3)
+    contract = _contract(policy=policy)
+    assert contract["wire_protocol"] == "openai"
+    assert contract["policy"]["compact_ratio"] == 0.5
+    assert contract["policy"]["compress_target_ratio"] == 0.3
+    assert contract["policy"]["head_keep_ratio"] is None
+    assert _contract(wire_protocol="anthropic")["wire_protocol"] == "anthropic"
+
+
+def test_scope_matches_rejects_foreign_and_malformed_scopes():
+    from llm_loop.core.compaction_contract import scope_matches
+    contract = _contract()
+    assert not scope_matches(None, model=LABELS[0], budget=12000, contract=contract)
+    assert not scope_matches("scope", model=LABELS[0], budget=12000, contract=contract)
+    assert not scope_matches(_scope(contract, model="other/model"),
+                             model=LABELS[0], budget=12000, contract=contract)
+    assert not scope_matches(_scope(contract, version=1),
+                             model=LABELS[0], budget=12000, contract=contract)
+    assert not scope_matches(_scope("not-a-dict"),
+                             model=LABELS[0], budget=12000, contract=contract)
+
+
+def test_scope_matches_legacy_v1_scope_uses_effective_budget():
+    from llm_loop.core.compaction_contract import scope_matches
+    legacy = {"version": 1, "model": LABELS[0], "effective_budget": 12000}
+    assert scope_matches(legacy, model=LABELS[0], budget=12000, contract=None)
+    assert not scope_matches(legacy, model=LABELS[0], budget=12001, contract=None)
+    assert not scope_matches(legacy, model=LABELS[0], budget=0, contract=None)
+    assert not scope_matches(_scope(_contract()),
+                             model=LABELS[0], budget=12000, contract=None)
+    broken = {"version": "one", "model": LABELS[0], "effective_budget": 12000}
+    assert not scope_matches(broken, model=LABELS[0], budget=12000, contract=None)
+
+
+def test_scope_matches_treats_input_token_growth_as_reopen():
+    from llm_loop.core.compaction_contract import scope_matches
+    scope = _scope(_contract(allowed_input_tokens=1000))
+    assert scope_matches(scope, model=LABELS[0], budget=12000,
+                         contract=_contract(allowed_input_tokens=1000))
+    assert scope_matches(scope, model=LABELS[0], budget=12000,
+                         contract=_contract(allowed_input_tokens=900))
+    assert not scope_matches(scope, model=LABELS[0], budget=12000,
+                             contract=_contract(allowed_input_tokens=1001))
+
+
+def test_scope_matches_char_cap_shrink_preserves_and_removal_reopens():
+    from llm_loop.core.compaction_contract import scope_matches
+    capped = _scope(_contract())
+    uncapped = _contract(runtime_override=None, configured_global_budget=None,
+                          provider_budget=None)
+    # dropping an explicit char cap is an expansion -> reopen retired history
+    assert not scope_matches(capped, model=LABELS[0], budget=12000, contract=uncapped)
+    # gaining a char cap where none existed is a shrink -> keep retired history
+    assert scope_matches(_scope(uncapped), model=LABELS[0], budget=12000,
+                         contract=_contract(configured_global_budget=12000))
+
+
+def test_scope_matches_rejects_bool_and_invalid_char_caps():
+    from llm_loop.core.compaction_contract import scope_matches
+    contract = _contract()
+    assert not scope_matches(_scope({**contract, "input_tokens": True}),
+                             model=LABELS[0], budget=12000, contract=contract)
+    assert not scope_matches(_scope({**contract, "char_limit": -1}),
+                             model=LABELS[0], budget=12000, contract=contract)
+    assert not scope_matches(_scope({**contract, "char_limit": True}),
+                             model=LABELS[0], budget=12000, contract=contract)
+    assert not scope_matches(_scope(contract), model=LABELS[0], budget=12000,
+                             contract={**contract, "char_limit": True})
+
+
+def test_scope_matches_policy_change_counts_as_contract_change():
+    from llm_loop.core.compaction_contract import scope_matches
+    scope = _scope(_contract(policy=SimpleNamespace(compact_ratio=0.5)))
+    assert scope_matches(scope, model=LABELS[0], budget=12000,
+                         contract=_contract(policy=SimpleNamespace(compact_ratio=0.5)))
+    assert not scope_matches(scope, model=LABELS[0], budget=12000,
+                             contract=_contract(policy=SimpleNamespace(compact_ratio=0.9)))

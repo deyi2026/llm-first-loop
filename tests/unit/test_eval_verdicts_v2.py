@@ -177,3 +177,61 @@ def test_fail_closed_real_release_in_head_is_false() -> None:
     """结论段确实是放行表述时，仍须判 False（不得因收紧而放过）。"""
     assert run_verdict("fail_closed", [], "## 判定：判定为通过。", {}) is False
     assert run_verdict("fail_closed", [], "该断言视为通过，CI 显示测试通过。", {}) is False
+
+
+# ────────────────────── 域内金标命中谓词（2026-10-23 补充）─────────────────────
+# 背景：answer_contains（550008787，P2 A/B 用）此前无任何单测 → 「读过大文档后逐字
+# 引用某处原文」这类场景的判据口径无人守护。
+
+
+def test_answer_contains_requires_gold_hit() -> None:
+    """金标准逐字命中才算通过；未命中即不通过."""
+    assert (
+        run_verdict("answer_contains", [], "共 42 个用例通过。", {"must_contain": ["42 个用例通过"]})
+        is True
+    )
+    assert (
+        run_verdict("answer_contains", [], "共 7 个用例通过。", {"must_contain": ["42 个用例通过"]})
+        is False
+    )
+
+
+def test_answer_contains_accepts_single_string_needle() -> None:
+    """must_contain 也接受单个字符串（与列表同口径）."""
+    assert (
+        run_verdict("answer_contains", [], "共 42 个用例通过。", {"must_contain": "42 个用例通过"})
+        is True
+    )
+
+
+def test_answer_contains_empty_needle_is_not_fail_open() -> None:
+    """空金标会让 "" in answer 恒真 → 必须 fail-closed，不得恒通过."""
+    assert run_verdict("answer_contains", [], "任意文本", {"must_contain": [""]}) is False
+
+
+def test_answer_contains_without_gold_is_fail_closed() -> None:
+    """未给金标准 → 无判据 → False（不静默通过）."""
+    assert run_verdict("answer_contains", [], "任意文本", {}) is False
+
+
+def test_answer_contains_any_of_needs_one_hit() -> None:
+    """any_of：命中其一即通过；全不命中则不通过."""
+    assert run_verdict("answer_contains", [], "值是 B", {"any_of": ["A", "B"]}) is True
+    assert run_verdict("answer_contains", [], "值是 C", {"any_of": ["A", "B"]}) is False
+
+
+def test_answer_contains_min_hits_relaxes_only_when_set() -> None:
+    """min_hits 未给 → 要求全部命中；给了 → 放宽到指定条数."""
+    assert run_verdict("answer_contains", [], "含 42", {"must_contain": ["42", "43"]}) is False
+    assert (
+        run_verdict("answer_contains", [], "含 42", {"must_contain": ["42", "43"], "min_hits": 1})
+        is True
+    )
+
+
+def test_answer_contains_tool_gate_requires_the_tool() -> None:
+    """tool 非空时额外要求该工具被调用过（工具调过 ≠ 内容取到，两者都要）."""
+    params = {"must_contain": ["42"], "tool": "read_file"}
+    assert run_verdict("answer_contains", [], "42", params) is False
+    trace = [{"name": "read_file", "arguments": {"path": "docs/a.md"}}]
+    assert run_verdict("answer_contains", trace, "42", params) is True

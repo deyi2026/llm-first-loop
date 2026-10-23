@@ -6,6 +6,10 @@ are part of the write path, and every write passes a mechanical discrimination
 gate (length / lifecycle-generic / duplicate / document frequency / cap) so a
 noisy hint can never become durable state.
 
+Separator characters (comma / colon / hash / newline) are refused for a second
+reason: aliases are joined into one YAML scalar, so a separator would either split
+into bogus aliases or forge a frontmatter key on the way back in.
+
 The gate is not cosmetic: measured on the real pool (337 aliases), 333 had df=1
 while three carried df=4/11/66 (cross-card symbols such as ``action_id``). Those
 are exactly the aliases that let an unrelated card ride a query term, so the
@@ -19,7 +23,7 @@ from __future__ import annotations
 
 from llm_loop.methods import store as store_module
 from llm_loop.methods.reflection import validate_candidate
-from llm_loop.methods.store import MethodStore, gate_aliases
+from llm_loop.methods.store import MethodStore, alias_df_threshold, gate_aliases
 
 
 def _candidate(store: MethodStore, name: str, *, body: str = "## Trigger\n测试触发条件足够长\n", **kwargs):
@@ -164,3 +168,99 @@ def test_validate_candidate_alias_shape():
     ok_long, errors_long = validate_candidate({**base, "aliases": ["a" * 61]})
     assert not ok_long
     assert any("exceeds 60 chars" in e for e in errors_long)
+
+
+def test_df_threshold_follows_the_measured_calibration():
+    """The threshold is a calibration on the measured df distribution, not a guess.
+
+    Measured 2026-10-23: 337 real aliases, 333 of them df=1, three noise symbols at
+    df=4/11/66. The ladder widens with the pool but never leaves [2, 5]; pin it so a
+    silent re-tuning can only change which aliases survive together with a red test.
+    """
+    assert alias_df_threshold(0) == 2
+    assert alias_df_threshold(400) == 2
+    assert alias_df_threshold(1199) == 2
+    assert alias_df_threshold(1200) == 3
+    assert alias_df_threshold(1600) == 4
+    assert alias_df_threshold(2000) == 5
+    assert alias_df_threshold(100_000) == 5
+
+
+def test_df_boundary_keeps_at_threshold_and_drops_one_more():
+    """df == threshold survives, df == threshold + 1 does not. The boundary is the
+    whole contract: an off-by-one here silently re-admits cross-card symbols."""
+    corpus = ["probe needle", "probe needle"]
+    kept, dropped = gate_aliases(
+        ["needle"], name="boundary probe", corpus=corpus, pool_size=800
+    )
+    assert kept == ["needle"]
+    assert dropped == []
+
+    kept_one_more, dropped_one_more = gate_aliases(
+        ["needle"], name="boundary probe", corpus=[*corpus, "probe needle"], pool_size=800
+    )
+    assert kept_one_more == []
+    assert [d["reason"] for d in dropped_one_more] == ["low_discrimination"]
+    assert dropped_one_more[0]["df"] == 3
+
+
+def test_alias_equal_to_the_card_name_is_a_duplicate():
+    """An alias that merely repeats the card's own name opens no retrieval channel;
+    it must not survive as a second copy of the authoritative field."""
+    kept, dropped = gate_aliases(["dup name"], name="dup name", corpus=[], pool_size=100)
+    assert kept == []
+    assert [d["reason"] for d in dropped] == ["duplicate"]
+
+    kept_case, dropped_case = gate_aliases(
+        ["Dup Name"], name="dup name", corpus=[], pool_size=100
+    )
+    assert kept_case == []
+    assert [d["reason"] for d in dropped_case] == ["duplicate"]
+
+
+def test_duplicate_detection_is_normalization_insensitive():
+    """Duplicates are judged on the normalized form, so a case or spacing variant
+    cannot smuggle the same phrase into the card twice."""
+    kept, dropped = gate_aliases(
+        ["Foo Bar", "foo  bar"], name="norm probe", corpus=[], pool_size=100
+    )
+    assert kept == ["Foo Bar"]
+    assert [d["reason"] for d in dropped] == ["duplicate"]
+
+
+def test_blank_alias_is_absent_input_not_a_rejected_alias():
+    """A blank string is absent input, not a rejected alias: it must show up neither
+    in kept nor in the drop report, or every writer sees phantom rejections."""
+    kept, dropped = gate_aliases(["   ", ""], name="blank probe", corpus=[], pool_size=100)
+    assert kept == []
+    assert dropped == []
+
+
+def test_separator_aliases_never_reach_the_frontmatter(tmp_path):
+    """Aliases are joined into one YAML scalar, so a comma / colon / hash / newline
+    would either split into bogus aliases or forge a frontmatter key. The gate must
+    drop them at write time, and the stored card must re-parse to exactly the kept
+    aliases."""
+    store = MethodStore(tmp_path)
+    drops: list[dict] = []
+    record = _candidate(
+        store,
+        "separator probe",
+        aliases=["合法别名甲", "逗号,后截断", "换行\n伪键: 值"],
+        alias_drops=drops,
+    )
+    text = (tmp_path / record.method_id / "METHOD.md").read_text(encoding="utf-8")
+    assert list(record.aliases) == ["合法别名甲"]
+    assert [d["reason"] for d in drops] == ["unsafe_chars", "unsafe_chars"]
+    assert store.get(record.method_ref).aliases == ("合法别名甲",)
+    assert _frontmatter(text) == [
+        "method_id",
+        "name",
+        "description",
+        "aliases",
+        "status",
+        "created_at",
+        "updated_at",
+    ]
+    assert "逗号" not in text
+    assert "伪键" not in text

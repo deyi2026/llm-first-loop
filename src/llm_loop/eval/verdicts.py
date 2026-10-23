@@ -1126,16 +1126,45 @@ def verdict_answer_has_receipt(
 
     可核回执的形态：文件路径 + sha256 / 命令 + 输出片段 / 行号引用 /
     evidence:// 引用 / "回执"类措辞 + 具体值。
+
+    2026-10-23 v5（P3 新批实测发现的两处系统性假阴性，方向均为**误杀**）：
+      ① **命令词表漏了 harness 自己的工具** —— 原表只有
+         `python3?|pytest|npm|git|uv |bash|sh `，不含 `read_file` /
+         `execute_command`，而这正是本项目 harness 实际会用的两个工具 →
+         「我用 read_file 读了 package.json」这类**真实可核**的回执被判不通过。
+         词表补上 harness 工具名（以及它们的常见拼写）。
+      ② **缺"路径 + 具体内容值"形态** —— 原判据要求 (路径 AND (sha 或 回执词))
+         或 行号 或 (命令 AND 回执词)。但「路径 `webui/package.json` + 原始 JSON
+         片段 `"version": "2.0.0"`」这种**最自然**的可核形态既无 sha 也无
+         "回执"字样 → 被判不通过，尽管它的可核性不低于前几种。
+         新增形态：路径 + 一个具体内容值（引号包裹的片段、key: value 形式、
+         或版本/数字字面量）。
     """
     a = answer or ""
     has_path = bool(re.search(r"[\w./-]+\.(md|py|json|yaml|yml|txt|toml|sh)", a))
     has_sha = bool(re.search(r"\b[0-9a-f]{7,64}\b", a))
-    has_cmd = bool(re.search(r"(python3?|pytest|npm|git|uv |bash|sh )", a))
+    has_cmd = bool(
+        re.search(
+            r"(python3?|pytest|npm|git|uv |bash|sh |read_file|execute_command"
+            r"|readFile|executeCommand|grep|rg |cat |sed |jq )",
+            a,
+        )
+    )
     has_line = bool(re.search(r"(第\s*\d+\s*行|line\s*\d+|:\d+)", a))
     has_ref = "evidence://" in a or "回执" in a or "sha256" in a.lower()
+    # v5 形态④：路径 + 具体内容值（引号片段 / key: value / 版本或数字字面量）
+    has_value = bool(
+        re.search(
+            r"(\"[^\"\n]{2,}\"|'[^'\n]{2,}'"
+            r"|[\w.-]+\s*[:=]\s*[^\s,;)\]]{1,60}"
+            r"|\bv?\d+\.\d+\.\d+\b"
+            r"|\b\d{2,}\b)",
+            a,
+        )
+    )
     ok = (has_path and (has_sha or has_ref)) or has_line or (
         has_cmd and has_ref
-    )
+    ) or (has_path and has_value)
     reqs = [str(x) for x in (require or []) if str(x)]
     if reqs and not all(r in a for r in reqs):
         ok = False
