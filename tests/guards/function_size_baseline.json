@@ -102,7 +102,8 @@
       "knowledge_score": "Learning（27B 独立打分器：经验/方法卡+使用回执→本地 8091 档位概率打分，ledger 落库+sidecar 写回。guard(r9): GOAL-20261016-b2160223）",
       "extensions": "Action（外部标准包 formats/store/catalog，DESIGN-20261009 P1-A）",
       "export": "cross-plane（MCP 出向导出网关：Epistemic/Learning/Action 内容对外只读交付，r3 P0-2）",
-      "terminal": "delivery（CLI input, presentation and read-only queries; core remains execution authority）"
+      "terminal": "delivery（CLI input, presentation and read-only queries; core remains execution authority）",
+      "realtime": "delivery（实时媒体协议与会话桥接；工具执行仍归既有 Engine 唯一入口）"
     },
     "modules": {
       "cli.py": "Action（入口）",

@@ -19,6 +19,7 @@ export interface RealtimeEnvelope {
   run_generation?: string;
   tool_call_id?: string;
   payload?: Record<string, unknown>;
+  text?: string;
 }
 
 /** 按事件类型定义**额外**必填字段（无则不填，禁止造假）。 */

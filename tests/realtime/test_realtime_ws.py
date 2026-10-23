@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from llm_loop.realtime.media_registry import MediaSessionRegistry
 from llm_loop.web.auth import SESSION_COOKIE_NAME, WebSessionStore
 from llm_loop.web.realtime_ws import (
     CLOSE_CROSS_SITE_ORIGIN,
@@ -160,19 +161,28 @@ class TestHandshakeEndpoint:
         assert registry.calls == [("foreign-session", token)]
 
     def test_owned_target_with_valid_session_is_accepted(self):
-        registry = _FakeRegistry(owned=True)
+        registry = MediaSessionRegistry()
         app, store = _make_app(registry)
         token = store.create(ttl_seconds=60)
+        record = registry.create(session_id="sess-1", workspace_scope="ws", owner_cookie=token)
+        class QuietTransport:
+            def next_event(self, *, timeout=None):
+                return None
+
+            def close(self):
+                pass
+
+        app.state.realtime_transport_factory = lambda: (QuietTransport(), "http://127.0.0.1:8000")
         client = TestClient(app)
         with client.websocket_connect(
-            _path("mine"),
+            _path(record.media_session_id),
             headers={
                 "origin": "http://testserver",
                 "cookie": f"{SESSION_COOKIE_NAME}={token}",
             },
         ) as ws:
             ws.close()
-        assert registry.calls == [("mine", token)]
+        assert registry.count_active() == 0
 
     def test_missing_registry_rejects_unknown_target(self):
         app, store = _make_app(None)

@@ -56,3 +56,61 @@ export function downmixToMono(input: Float32Array, channels: number): Float32Arr
   }
   return out;
 }
+
+/** Continuous linear interpolation across AudioWorklet chunk boundaries.
+ * Independent Math.round(chunk.length / ratio) calls accumulate clock drift.
+ */
+export class StreamingPcm16Resampler {
+  private received = 0;
+  private emitted = 0;
+  private previousSample = 0;
+  private sourceRate: number | null = null;
+
+  push(input: Float32Array, inputRate: number, outputRate = TARGET_SAMPLE_RATE): Int16Array {
+    if (!Number.isFinite(inputRate) || !Number.isFinite(outputRate) || inputRate <= 0 || outputRate <= 0) {
+      throw new Error("sample rates must be positive finite numbers");
+    }
+    if (this.sourceRate !== null && this.sourceRate !== inputRate) {
+      throw new Error("input sample rate changed within one capture");
+    }
+    this.sourceRate = inputRate;
+    if (!input.length) return new Int16Array(0);
+    const first = this.received;
+    const last = first + input.length - 1;
+    const ratio = inputRate / outputRate;
+    const result: number[] = [];
+    while (this.emitted * ratio <= last) {
+      const position = this.emitted * ratio;
+      const leftIndex = Math.floor(position);
+      const fraction = position - leftIndex;
+      // Defer an interpolation until its right-hand sample arrives.
+      if (fraction > 0 && leftIndex + 1 > last) break;
+      const left = leftIndex < first ? this.previousSample : input[leftIndex - first];
+      const right = leftIndex + 1 <= last ? input[leftIndex + 1 - first] : left;
+      result.push(floatToPcm16(left + (right - left) * fraction));
+      this.emitted++;
+    }
+    this.received += input.length;
+    this.previousSample = input[input.length - 1];
+    return Int16Array.from(result);
+  }
+
+  /** Finish an incomplete interpolation by holding only the final physical sample. */
+  flush(targetRate = TARGET_SAMPLE_RATE): Int16Array {
+    const result: number[] = [];
+    if (this.sourceRate !== null) {
+      // Compute from the absolute output count, not repeatedly added floating
+      // fractions (44100 Hz would otherwise drift by one sample per second).
+      const expected = Math.ceil((this.received * targetRate) / this.sourceRate);
+      while (this.emitted < expected) {
+        result.push(floatToPcm16(this.previousSample));
+        this.emitted++;
+      }
+    }
+    this.received = 0;
+    this.emitted = 0;
+    this.previousSample = 0;
+    this.sourceRate = null;
+    return Int16Array.from(result);
+  }
+}

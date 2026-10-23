@@ -205,6 +205,23 @@ class _CanonicalOriginMiddleware:
         await send({"type": "http.response.body", "body": b"permanent redirect"})
 
 
+def _local_stack_preflight() -> bool:
+    """本地语音栈 preflight：本机 `mlx-audio` 可达（CAP-14）。
+
+    fail-safe：不可达/超时 → False（REST A1 返回 503），**不静默伪装可用**。
+    浏览器不直连该端口；仅受信服务端回环探测（SEC-08）。
+    """
+    import httpx
+
+    from llm_loop.realtime.local_voice_stack_transport import DEFAULT_MLX_AUDIO_BASE
+
+    try:
+        response = httpx.get(f"{DEFAULT_MLX_AUDIO_BASE}/v1/models", timeout=1.0)
+    except Exception:  # noqa: BLE001 - 本地服务未起：显式缺项
+        return False
+    return response.status_code < 400
+
+
 def build_app(settings=None, engine=None) -> FastAPI:
     """装配 FastAPI 应用（薄壳）。
 
@@ -257,6 +274,7 @@ def build_app(settings=None, engine=None) -> FastAPI:
     from llm_loop.web.realtime_ws import register_realtime_ws
 
     app.state.realtime_media_sessions = MediaSessionRegistry()
+    app.state.realtime_preflight = _local_stack_preflight
     app.include_router(realtime_router, dependencies=[Depends(require_api_key)])
     register_realtime_ws(app)
 

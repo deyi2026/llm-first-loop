@@ -175,9 +175,12 @@ class InMemoryClaimStore:
                 raise KeyError(f"unknown call_key: {call_key}")
             mapping = record.mapping
             if engine_execution_id or round_no is not None:
+                bound_round = mapping.round_no if round_no is None else round_no
+                if bound_round is None:
+                    raise ValueError("round_no must be a non-negative integer")
                 mapping = mapping.with_engine_binding(
                     engine_execution_id=engine_execution_id or mapping.engine_execution_id,
-                    round_no=mapping.round_no if round_no is None else round_no,
+                    round_no=bound_round,
                 )
             updated = ClaimRecord(mapping=mapping, state=state)
             self._records[call_key] = updated

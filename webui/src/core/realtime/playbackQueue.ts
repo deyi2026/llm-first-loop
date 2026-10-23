@@ -75,6 +75,11 @@ export class PlaybackQueue {
     this.stoppedReason = "cleared";
   }
 
+  /** 当前待播放分片（不改队列，供输出接线读取数据）。 */
+  peek(): PlaybackChunk | null {
+    return this.current;
+  }
+
   snapshot(): PlaybackSnapshot {
     return {
       playing: this.current !== null,

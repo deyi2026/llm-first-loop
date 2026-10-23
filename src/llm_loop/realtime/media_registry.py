@@ -35,6 +35,10 @@ def _new_media_session_id() -> str:
     return "ms-" + secrets.token_hex(8)
 
 
+class MediaWriterConflictError(ValueError):
+    """An active writer cannot be replaced without same-owner takeover."""
+
+
 class MediaSessionRegistry:
     """线程安全的媒体会话登记表。"""
 
@@ -43,7 +47,7 @@ class MediaSessionRegistry:
         self._by_id: dict[str, MediaSessionRecord] = {}
 
     def active_writer_conflict(self, session_id: str) -> bool:
-        """同 LFL 会话是否已有未关闭的媒体写入者（用于 409 需显式接管）。"""
+        """Read-only diagnostic; create() enforces admission under the same lock."""
         with self._lock:
             return any(
                 rec.session_id == session_id and not rec.closed
@@ -60,31 +64,35 @@ class MediaSessionRegistry:
         enable_on_demand_vision: bool = False,
         take_over: bool = False,
     ) -> MediaSessionRecord:
-        epoch = 1
         with self._lock:
-            for rec in self._by_id.values():
-                if rec.session_id == session_id and not rec.closed:
-                    epoch = rec.connection_epoch + 1
-                    if take_over:
-                        # 显式接管：先关闭旧写入者，避免并存两个活动 writer
-                        rec.session.close()
-                        rec.closed = True
-        media_session_id = _new_media_session_id()
-        session = MediaSession(media_session_id)
-        session.start(epoch=epoch)
-        record = MediaSessionRecord(
-            media_session_id=media_session_id,
-            session_id=session_id,
-            workspace_scope=workspace_scope,
-            owner_cookie=owner_cookie,
-            connection_epoch=epoch,
-            session=session,
-            audio_mode=audio_mode,
-            enable_on_demand_vision=enable_on_demand_vision,
-        )
-        with self._lock:
+            previous = [rec for rec in self._by_id.values() if rec.session_id == session_id]
+            active = [rec for rec in previous if not rec.closed]
+            if active and (
+                not take_over
+                or not owner_cookie
+                or any(not secrets.compare_digest(rec.owner_cookie, owner_cookie) for rec in active)
+            ):
+                raise MediaWriterConflictError("media session already has an active writer")
+            epoch = max((rec.connection_epoch for rec in previous), default=0) + 1
+            # Lease revocation, generation allocation and new writer creation are atomic.
+            for rec in active:
+                rec.session.close()
+                rec.closed = True
+            media_session_id = _new_media_session_id()
+            session = MediaSession(media_session_id)
+            session.start(epoch=epoch)
+            record = MediaSessionRecord(
+                media_session_id=media_session_id,
+                session_id=session_id,
+                workspace_scope=workspace_scope,
+                owner_cookie=owner_cookie,
+                connection_epoch=epoch,
+                session=session,
+                audio_mode=audio_mode,
+                enable_on_demand_vision=enable_on_demand_vision,
+            )
             self._by_id[media_session_id] = record
-        return record
+            return record
 
     def owns(self, media_session_id: str, *, session_cookie: str) -> bool:
         """归属校验：ID + 所有者 cookie 均匹配且未关闭（越权/未知统一返回 False）。"""

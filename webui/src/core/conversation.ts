@@ -548,7 +548,7 @@ export interface SendQueueOpts {
   frozenReasoningMode: string | null;
 }
 
-export async function sendMessage(text: string, attachments: SendAttachment[], opts?: SendQueueOpts): Promise<void> {
+export async function sendMessage(text: string, attachments: SendAttachment[], opts?: SendQueueOpts, onSuccess?: (answer: string) => void): Promise<void> {
   const cur = conversationStore.getState();
   // 空串归一为 null：新工作区/新会话无会话时后端按"新建会话"处理
   // （不可在此 return，否则新工作区发消息被静默拦截）
@@ -860,6 +860,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     if (sessionId) void relayNextQueued(sessionId);
     return;
   }
+  // Voice uses this exact successful run receipt, never an unrelated history tail.
+  if (!controller.signal.aborted) onSuccess?.(outcome.data?.final_answer ?? acc.answer);
   // 成功终态：FIFO 接力下一条排队消息（冻结事实派发）
   if (opts && sessionId) await refreshQueue(sessionId);
   if (sessionId) void relayNextQueued(sessionId);

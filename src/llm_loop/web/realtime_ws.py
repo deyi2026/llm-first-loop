@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
@@ -159,19 +161,80 @@ def collect_handshake_facts(websocket: WebSocket) -> HandshakeFacts:
     )
 
 
-async def _serve(websocket: WebSocket, media_session_id: str) -> None:
-    """已鉴权连接的事件循环占位：M1 接线时在此处理文本/音频二进制帧。
+def _default_transport_factory():
+    """默认本地栈传输：经回环连接本机 `mlx-audio`（终稿/TTS 走 HTTP；流式可选）。"""
+    import httpx
 
-    首版契约阶段只保证：鉴权后 accept，收到断开即正常结束；不在此处建立
-    媒体/任务副作用（副作用由后续 `T-CONTRACT-6` / `T-M2-3` 承接）。
-    """
+    from llm_loop.realtime.local_voice_stack_transport import (
+        DEFAULT_MLX_AUDIO_BASE,
+        DEFAULT_MLX_AUDIO_WS,
+        LocalVoiceStackTransport,
+        default_websocket_connector,
+    )
+
+    transport = LocalVoiceStackTransport(
+        http_client=httpx.Client(timeout=30.0, follow_redirects=False),
+        ws_connector=default_websocket_connector,
+    )
+    with contextlib.suppress(Exception):  # 流式通道可选，不可用不影响终稿
+        transport.connect(DEFAULT_MLX_AUDIO_WS)
+    return transport, f"{DEFAULT_MLX_AUDIO_BASE}/v1/audio/transcriptions"
+
+
+async def _serve(websocket: WebSocket, media_session_id: str) -> None:
+    """Authenticated media only; task execution remains in the existing chat ingress."""
+    from llm_loop.realtime.realtime_session_runtime import RealtimeSessionRuntime
+
+    registry = websocket.app.state.realtime_media_sessions
+    cookie = websocket.cookies.get(SESSION_COOKIE_NAME, "")
+    record = registry.get(media_session_id, session_cookie=cookie)
+    if record is None:
+        await websocket.close(code=4404)
+        return
+    def active() -> bool:
+        return _target_owned(websocket, media_session_id)
+    factory = getattr(websocket.app.state, "realtime_transport_factory", _default_transport_factory)
     try:
-        while True:
-            message = await websocket.receive()
+        transport, transcription_url = await asyncio.to_thread(factory)
+    except Exception:
+        await websocket.close(code=1011)
+        return
+    runtime = RealtimeSessionRuntime(
+        media_session_id=media_session_id, session_id=record.session_id,
+        connection_epoch=record.connection_epoch, transport=transport,
+        transcription_url=transcription_url, send_text=websocket.send_text,
+        send_binary=websocket.send_bytes, is_active=active,
+    )
+    pump = asyncio.create_task(runtime.pump_deltas())
+    try:
+        while active():
+            try:
+                # Revocation must close a quiet old writer as well as a chatty one.
+                message = await asyncio.wait_for(websocket.receive(), timeout=0.25)
+            except TimeoutError:
+                continue
             if message.get("type") == "websocket.disconnect":
                 return
-    except Exception:  # noqa: BLE001 - 客户端断开为正常结束路径
-        return
+            if not active():
+                await websocket.close(code=4404)
+                return
+            if message.get("bytes") is not None:
+                await runtime.handle_binary(message["bytes"])
+            elif message.get("text") is not None:
+                await runtime.handle_text(message["text"])
+        with contextlib.suppress(Exception):
+            await websocket.close(code=4404)
+    except Exception:
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1011)
+    finally:
+        runtime.stop()
+        pump.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await pump
+        await asyncio.to_thread(transport.close)
+        registry.close(media_session_id, session_cookie=cookie)
+
 
 
 def register_realtime_ws(app: FastAPI) -> None:

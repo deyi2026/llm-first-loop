@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security.utils import get_authorization_scheme_param
 from pydantic import BaseModel
 
-from llm_loop.realtime.media_registry import MediaSessionRegistry
+from llm_loop.realtime.media_registry import MediaSessionRegistry, MediaWriterConflictError
 from llm_loop.realtime.media_usage import UsageStatus
 from llm_loop.web.auth import SESSION_COOKIE_NAME, require_api_key
 
@@ -80,16 +80,17 @@ def create_realtime_session(request: Request, body: CreateRealtimeSessionBody) -
         raise HTTPException(status_code=401, detail="unauthenticated")
     _preflight(request)
     registry = _registry(request)
-    if registry.active_writer_conflict(body.session_id) and not body.take_over:
-        raise HTTPException(status_code=409, detail="media session already has an active writer")
-    record = registry.create(
-        session_id=body.session_id,
-        workspace_scope=body.session_id,
-        owner_cookie=owner,
-        audio_mode=body.audio_mode,
-        enable_on_demand_vision=body.enable_on_demand_vision,
-        take_over=body.take_over,
-    )
+    try:
+        record = registry.create(
+            session_id=body.session_id,
+            workspace_scope=body.session_id,
+            owner_cookie=owner,
+            audio_mode=body.audio_mode,
+            enable_on_demand_vision=body.enable_on_demand_vision,
+            take_over=body.take_over,
+        )
+    except MediaWriterConflictError as exc:
+        raise HTTPException(status_code=409, detail="media session already has an active writer") from exc
     return {
         "media_session_id": record.media_session_id,
         "connection_epoch": record.connection_epoch,

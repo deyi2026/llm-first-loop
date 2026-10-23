@@ -1,19 +1,7 @@
-// M1：实时媒体会话控制通道 WS 客户端（`T-M1-9/10/12`）。
-//
-// 语义（对齐服务端 `media_session` / `realtime_ws`，RTM-SES-01/05、REC-03/09、IDN-03/07、CAP-14）：
-// - `ready` = 握手完成 + 传输就绪（**不要求先收到首帧**）；`opening` 未就绪前**不得上传媒体**；
-// - **非可重试关闭码**（4401 未登录 / 4403 跨站 / 4404 越权）→ `failed`，**不循环重连**；
-// - 其他断开 → **有界重连**（默认 3 次，0.5/1/2s 抖动）；
-// - 旧 `connection_epoch` 事件不得更新当前会话；
-// - 下行二进制 = 本地 TTS 音频 → 交 `PlaybackQueue`；**开口打断本地立即停播**。
-//
-// 本模块以**注入式 Socket/定时器**实现纯逻辑（可 vitest 验证）；真实网络与设备不在此验证。
-
 import { PlaybackQueue } from "./playbackQueue";
 import { assertEnvelope, type RealtimeEnvelope } from "./realtimeEvents";
 
 export type ConnectionState = "opening" | "ready" | "reconnecting" | "failed" | "closing" | "closed";
-
 export interface SocketLike {
   send(data: string | ArrayBuffer): void;
   close(code?: number): void;
@@ -22,19 +10,19 @@ export interface SocketLike {
   onclose: ((event: { code: number }) => void) | null;
   onerror: ((event: unknown) => void) | null;
 }
-
-/** 非可重试关闭码：鉴权失效/跨站/越权（RTM-REC-09、RTM-CAP-14）。 */
 export const NON_RETRYABLE_CLOSE_CODES: ReadonlySet<number> = new Set([4401, 4403, 4404]);
-
 export interface MediaSessionClientOptions {
   url: string;
   createSocket: (url: string) => SocketLike;
   playback: PlaybackQueue;
+  sessionId?: string;
+  mediaSessionId?: string;
+  onStateChange?: (state: ConnectionState) => void;
+  onAudio?: () => void;
   backoffMs?: readonly number[];
   scheduleTimeout?: (fn: () => void, ms: number) => void;
 }
-
-const DEFAULT_BACKOFF: readonly number[] = [500, 1000, 2000];
+const DEFAULT_BACKOFF = [500, 1000, 2000] as const;
 
 export class MediaSessionClient {
   private state: ConnectionState = "closed";
@@ -42,126 +30,131 @@ export class MediaSessionClient {
   private attempts = 0;
   private socket: SocketLike | null = null;
   private currentResponseId: string | null = null;
+  private requestedTtsResponseId: string | null = null;
+  private expectedAudioResponseId: string | null = null;
+  private readonly ignoredAudioResponses = new Set<string>();
+  private generation = 0;
+  private seq = 0;
   private readonly listeners: ((event: RealtimeEnvelope) => void)[] = [];
-
   constructor(private readonly options: MediaSessionClientOptions) {}
-
-  get connectionState(): ConnectionState {
-    return this.state;
+  get connectionState(): ConnectionState { return this.state; }
+  get connectionEpoch(): number { return this.epoch; }
+  get reconnectAttempts(): number { return this.attempts; }
+  private setState(state: ConnectionState): void {
+    this.state = state;
+    this.options.onStateChange?.(state);
   }
-
-  get connectionEpoch(): number {
-    return this.epoch;
-  }
-
-  get reconnectAttempts(): number {
-    return this.attempts;
-  }
-
   connect(epoch = 1): void {
-    if (this.state === "opening" || this.state === "ready") {
-      return;
-    }
+    if (this.state === "opening" || this.state === "ready") return;
     this.epoch = epoch;
     this.attempts = 0;
-    this.openSocket();
+    this.generation++;
+    this.openSocket(this.generation);
   }
-
-  onEvent(listener: (event: RealtimeEnvelope) => void): void {
-    this.listeners.push(listener);
-  }
-
-  private openSocket(): void {
-    this.state = "opening";
+  onEvent(listener: (event: RealtimeEnvelope) => void): void { this.listeners.push(listener); }
+  private openSocket(generation: number): void {
+    if (generation !== this.generation) return;
+    this.setState("opening");
     const socket = this.options.createSocket(this.options.url);
     this.socket = socket;
-    socket.onopen = (): void => {
-      this.state = "ready";
-      this.attempts = 0;
-    };
-    socket.onmessage = (event): void => this.handleMessage(event.data);
-    socket.onerror = (): void => {
-      /* 等待 onclose 决定重连或失败 */
-    };
-    socket.onclose = (event): void => this.handleClose(event.code);
+    const active = () => generation === this.generation && this.socket === socket;
+    socket.onopen = () => { if (active()) this.setState("ready"); };
+    socket.onmessage = (event) => { if (active()) this.handleMessage(event.data); };
+    socket.onerror = () => { /* onclose owns retry/failure. */ };
+    socket.onclose = (event) => { if (active()) this.handleClose(event.code, generation); };
   }
-
-  private handleClose(code: number): void {
+  private handleClose(code: number, generation: number): void {
     this.socket = null;
-    if (this.state === "closing") {
-      this.state = "closed";
-      return;
-    }
-    if (NON_RETRYABLE_CLOSE_CODES.has(code)) {
-      this.state = "failed";
-      return;
-    }
+    this.requestedTtsResponseId = null;
+    this.expectedAudioResponseId = null;
+    if (NON_RETRYABLE_CLOSE_CODES.has(code)) { this.setState("failed"); return; }
     const backoff = this.options.backoffMs ?? DEFAULT_BACKOFF;
-    if (this.attempts >= backoff.length) {
-      this.state = "failed";
-      return;
-    }
-    const delay = backoff[this.attempts];
-    this.attempts += 1;
-    this.state = "reconnecting";
+    if (this.attempts >= backoff.length) { this.setState("failed"); return; }
+    const delay = backoff[this.attempts++];
+    this.setState("reconnecting");
     const schedule = this.options.scheduleTimeout ?? ((fn, ms) => setTimeout(fn, ms));
-    schedule(() => this.openSocket(), delay);
+    schedule(() => this.openSocket(generation), delay);
   }
-
   close(): void {
-    if (this.state === "closed") {
-      return;
-    }
-    this.state = "closing";
+    this.generation++; // Fences callbacks and queued reconnect timers.
     const socket = this.socket;
     this.socket = null;
-    if (socket) {
-      socket.close(1000);
-    }
-    this.state = "closed";
+    this.requestedTtsResponseId = null;
+    this.expectedAudioResponseId = null;
+    this.setState("closing");
+    socket?.close(1000);
+    this.options.playback.clear();
+    this.setState("closed");
   }
-
-  /** 仅 `ready` 允许上传 16k PCM16 音频（RTM-SES-01）。 */
   sendAudioFrame(pcm: Int16Array): boolean {
-    if (this.state !== "ready" || this.socket === null) {
-      return false;
-    }
-    this.socket.send(pcm.buffer as ArrayBuffer);
+    if (this.state !== "ready" || this.socket === null) return false;
+    this.socket.send(pcm.slice().buffer as ArrayBuffer);
     return true;
   }
-
   sendEvent(envelope: RealtimeEnvelope): boolean {
-    if (this.state !== "ready" || this.socket === null) {
-      return false;
-    }
+    if (this.state !== "ready" || this.socket === null) return false;
     this.socket.send(JSON.stringify(envelope));
     return true;
   }
-
-  /** 客户端开口打断：**本地立即停播**（不等服务端确认，D27）。 */
+  sendControl(type: string, payload: Record<string, unknown> = {}): boolean {
+    if (!this.options.sessionId || !this.options.mediaSessionId) return false;
+    const sent = this.sendEvent({
+      ...payload, version: 1, type, event_id: crypto.randomUUID(), seq: ++this.seq,
+      connection_epoch: this.epoch, session_id: this.options.sessionId,
+      media_session_id: this.options.mediaSessionId,
+    });
+    if (sent && (type === "tts.request" || type === "tts.cancel")) {
+      // Only binary introduced by the latest owned TTS request is playable.
+      this.requestedTtsResponseId = type === "tts.request" && typeof payload.response_id === "string"
+        ? payload.response_id : null;
+      this.expectedAudioResponseId = null;
+    }
+    return sent;
+  }
   requestLocalInterrupt(responseId?: string): boolean {
+    const ignored = responseId ?? this.currentResponseId;
+    if (ignored) {
+      this.ignoredAudioResponses.add(ignored);
+      if (this.ignoredAudioResponses.size > 64) {
+        this.ignoredAudioResponses.delete(this.ignoredAudioResponses.values().next().value!);
+      }
+    }
+    this.requestedTtsResponseId = null;
+    this.expectedAudioResponseId = null;
     return this.options.playback.interrupt(responseId);
   }
-
   handleMessage(data: string | ArrayBuffer): void {
     if (typeof data !== "string") {
-      this.options.playback.enqueue({
-        responseId: this.currentResponseId ?? "local_tts",
-        connectionEpoch: this.epoch,
-        data,
-      });
+      const responseId = this.expectedAudioResponseId;
+      this.expectedAudioResponseId = null; // One binary chunk per audio.playback marker.
+      if (!responseId || this.ignoredAudioResponses.has(responseId)) return;
+      if (this.options.playback.enqueue({ responseId, connectionEpoch: this.epoch, data })) {
+        this.options.onAudio?.();
+      }
       return;
     }
-    const envelope = JSON.parse(data) as RealtimeEnvelope;
-    assertEnvelope(envelope);
-    if (envelope.connection_epoch < this.epoch) {
-      return; // 旧代次不得更新当前会话
+    let envelope: RealtimeEnvelope;
+    try {
+      envelope = JSON.parse(data) as RealtimeEnvelope;
+      assertEnvelope(envelope);
+    } catch {
+      this.close();
+      this.setState("failed");
+      return;
     }
-    if (envelope.response_id !== undefined) {
-      this.currentResponseId = envelope.response_id;
+    if (envelope.connection_epoch !== this.epoch) return;
+    if (this.options.sessionId && envelope.session_id !== this.options.sessionId) return;
+    if (this.options.mediaSessionId && envelope.media_session_id !== this.options.mediaSessionId) return;
+    if (envelope.type === "audio.playback") {
+      const responseId = envelope.response_id;
+      if (!responseId || this.ignoredAudioResponses.has(responseId)) return;
+      if (this.options.sessionId && this.options.mediaSessionId) {
+        if (this.requestedTtsResponseId !== responseId) return;
+        this.requestedTtsResponseId = null;
+      }
+      this.expectedAudioResponseId = responseId;
     }
-    for (const listener of this.listeners) {
-      listener(envelope);
-    }
+    if (envelope.response_id !== undefined) this.currentResponseId = envelope.response_id;
+    for (const listener of this.listeners) listener(envelope);
   }
 }

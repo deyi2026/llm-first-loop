@@ -12,6 +12,8 @@ import { InsertMenu } from "./InsertMenu";
 import { ModelControls } from "./ModelControls";
 import type { ComposerAttachment } from "./composerTypes";
 import { DictationButton } from "./DictationButton";
+import { RealtimeVoiceBar } from "./realtime/RealtimeVoiceBar";
+import { useRealtimeVoice } from "../../core/realtime/useRealtimeVoice";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const LONG_PASTE_ATTACHMENT_CHARS = 20_000;
@@ -61,6 +63,16 @@ interface CommandDef {
 export function Composer() {
   const caps = useCapabilities();
   const conv = useConversation();
+  const realtime = useRealtimeVoice(sessionStore.getState().currentSessionId ?? "", async (final) => {
+    const sid = sessionStore.getState().currentSessionId;
+    if (!sid || conversationStore.getState().streaming || conversationStore.getState().backgroundRunning) {
+      setText((old) => old ? `${old}\n${final}` : final);
+      return null;
+    }
+    let answer: string | null = null;
+    await sendMessage(final, [], undefined, (text) => { answer = text; });
+    return sessionStore.getState().currentSessionId === sid ? answer : null;
+  });
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -646,6 +658,32 @@ export function Composer() {
             <ModelControls catalog={modelCatalog} />
           </div>
           <div className="v2-composer-tools-right">
+            {realtime.enabled ? (
+              <RealtimeVoiceBar
+                connectionState={realtime.connectionState}
+                micEnabled={realtime.micEnabled}
+                modality={realtime.modality}
+                chainLabel={realtime.chainLabel}
+                onPress={realtime.press}
+                onRelease={realtime.release}
+                onFallbackText={() => taRef.current?.focus()}
+                onClose={realtime.disable}
+                transcript={realtime.transcript}
+                error={realtime.error}
+                disabled={conv.streaming || conv.backgroundRunning}
+              />
+            ) : (
+              <button
+                type="button"
+                className="v2-btn"
+                data-testid="realtime-enable"
+                disabled={conv.streaming || realtime.modality === "screenshot_fallback"}
+                onClick={() => void realtime.enable()}
+              >
+                实时语音
+              </button>
+            )}
+            {!realtime.enabled && realtime.error ? <span role="alert">{realtime.error}</span> : null}
             <DictationButton
               disabled={conv.streaming}
               onTranscript={(transcript) => {

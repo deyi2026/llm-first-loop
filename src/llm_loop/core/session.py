@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import copy
 import errno
 import json
 import logging
@@ -1374,10 +1375,13 @@ class SessionStore:
             if not store.exists(session.session_id):
                 payload = {k: getattr(session, k, None) for k in _EVENT_TOP_FIELDS}
                 payload["version"] = session.to_dict().get("version", 4)
-                store.append(session.session_id, "session.created", payload)
+                store.append(session.session_id, "session.created", copy.deepcopy(payload))
                 existing: set[int] = set()
             else:
-                events = store.read(session.session_id)
+                # Tool batches save every round. Reuse the exact parsed snapshot:
+                # same-store appends extend it; external appends invalidate by seq.
+                # Backfill still checks every message and current summary field.
+                events = getattr(store, "read_cached", store.read)(session.session_id)
                 existing = {
                     e.payload.get("index")
                     for e in events
@@ -1387,7 +1391,17 @@ class SessionStore:
                 # event_log 读路径永远看到空摘要；用已有 meta_changed 事件表达完整当前值。
                 from llm_loop.event_log.replay import replay_session
 
-                view = replay_session(events)
+                # Replay projects compaction/retraction into message metadata.
+                # Keep the shared cached facts and live messages unchanged while
+                # retaining the complete replay semantics (including checkpoint reset).
+                replay_events = [
+                    dataclasses_replace(
+                        e, payload={**e.payload, "metadata": copy.deepcopy(e.payload.get("metadata"))}
+                    )
+                    if e.type == "message.appended" else e
+                    for e in events
+                ]
+                view = replay_session(replay_events)
                 changes = {}
                 for field_name in ("fixed_summary", "summary_chain", "working_state_checkpoint"):
                     current = getattr(session, field_name)
@@ -1404,7 +1418,7 @@ class SessionStore:
                     store.append(
                         session.session_id,
                         "session.meta_changed",
-                        {"field": "summary_state", "changes": changes},
+                        copy.deepcopy({"field": "summary_state", "changes": changes}),
                     )
             for i, m in enumerate(session.messages):
                 if i in existing:
@@ -1412,7 +1426,7 @@ class SessionStore:
                 store.append(
                     session.session_id,
                     "message.appended",
-                    build_message_payload(
+                    copy.deepcopy(build_message_payload(
                         index=i,
                         role=m.role,
                         content=m.content,
@@ -1424,7 +1438,7 @@ class SessionStore:
                         tool_calls=m.tool_calls,
                         reasoning_content=m.reasoning_content,
                         metadata=m.metadata,
-                    ),
+                    )),
                 )
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("事件兜底写入失败（fail-open）: %s", exc)
