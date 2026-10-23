@@ -538,6 +538,35 @@ export async function fetchSharedCurrent(): Promise<string | null> {
   return status === 200 ? data.current ?? null : null;
 }
 
+export interface HandoffResult {
+  status?: string;
+  new_session_id?: string;
+  source_session_id?: string;
+  source_message_count?: number;
+  inherited_message_count?: number;
+  inherited_event_count?: number;
+  goal_id?: string;
+  open_task_count?: number;
+  continuation_prompt?: string;
+}
+
+/** Create an empty conversation linked by a bounded handoff, not a history fork. */
+export async function prepareSessionHandoff(sessionId: string): Promise<HandoffResult | null> {
+  const { status, data } = await api<HandoffResult>(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/handoff`,
+    { method: "POST" }
+  );
+  return status === 200 && data?.new_session_id && data.source_session_id === sessionId && data.new_session_id !== sessionId ? data : null;
+}
+
+/** Reload a prepared handoff when opening a direct session link. */
+export async function fetchPreparedHandoff(sessionId: string): Promise<HandoffResult | null> {
+  const { status, data } = await api<HandoffResult>(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/handoff`
+  );
+  return status === 200 && data?.new_session_id === sessionId ? data : null;
+}
+
 export interface ForkResult {
   status?: string;
   new_session_id?: string;

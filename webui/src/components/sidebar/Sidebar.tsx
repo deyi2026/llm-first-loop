@@ -2,7 +2,7 @@
 // 阶段 3：管理交互（pin/delete 两步确认/fork）——删除与分支后自动刷新并切换。
 
 import { useEffect, useRef, useState } from "react";
-import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSessionsResult, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
+import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSessionsResult, forkSession, prepareSessionHandoff, setSessionPin, type SessionMeta } from "../../core/api";
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { useCapabilities } from "../../core/capabilities";
 import {
@@ -16,7 +16,7 @@ import {
   useSessions,
   useSidebarView,
 } from "../../core/stores";
-import { conversationStore } from "../../core/conversation";
+import { conversationStore, prefillHandoffComposer } from "../../core/conversation";
 import { loadHistory } from "../../core/conversation";
 import { WorkspaceGroups, formatRelative } from "./WorkspaceGroups";
 import { FileTree } from "./FileTree";
@@ -172,6 +172,26 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
       });
     }
     await refreshSessionsAndCurrent();
+    finishAction();
+  };
+
+  const handleHandoff = async (sid: string) => {
+    if (!beginAction(`handoff:${sid}`)) return;
+    const report = await prepareSessionHandoff(sid);
+    if (!report?.new_session_id || !report.continuation_prompt) {
+      setActionError("轻量交接失败；原会话未修改，请重试。");
+      finishAction();
+      return;
+    }
+    mainViewStore.setView("chat");
+    sessionStore.setNewSessionPending(false);
+    sessionStore.setCurrentSession(report.new_session_id);
+    // Historical facts are handed off as an editable human draft, never auto-run
+    // while the old session may have unsettled external side effects.
+    prefillHandoffComposer(report.new_session_id, report.continuation_prompt);
+    onNavigate?.();
+    await refreshSessionsAndCurrent();
+    await loadHistory(report.new_session_id);
     finishAction();
   };
 
@@ -475,6 +495,17 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
                         onClick={() => void handlePin(s.session_id, !s.pinned)}
                       >
                         📌
+                      </button>
+                    ) : null}
+                    {caps.handoff ? (
+                      <button
+                        type="button"
+                        className="v2-icon-btn"
+                        title="轻量交接到新会话（不复制历史）"
+                        disabled={Boolean(busyAction)}
+                        onClick={() => void handleHandoff(s.session_id)}
+                      >
+                        ↗
                       </button>
                     ) : null}
                     {caps.fork ? (

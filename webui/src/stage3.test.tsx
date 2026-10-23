@@ -5,7 +5,7 @@ import { act, render, screen, fireEvent, cleanup, waitFor, within } from "@testi
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { RightPanel } from "./components/layout/RightPanel";
 import { sessionStore } from "./core/stores";
-import { conversationStore } from "./core/conversation";
+import { conversationStore, loadHistory } from "./core/conversation";
 
 const SESSIONS = [
   { session_id: "s1", title: "会话一", message_count: 3, channel: "web", pinned: false, last_message_preview: "预览1", updated_at: "2026-08-15T10:00:00Z", created_at: "", status: "active" },
@@ -17,6 +17,22 @@ function mockApi() {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push(`${init?.method ?? "GET"} ${url}`);
+    if (url.endsWith("/handoff") && init?.method === "POST") {
+      return new Response(JSON.stringify({
+        status: "ok", new_session_id: "handoff-s1", source_session_id: "s1",
+        source_message_count: 6000, inherited_message_count: 0, inherited_event_count: 0,
+        continuation_prompt: "来源会话：s1\n待续任务：核对评测回执",
+      }), { status: 200 });
+    }
+    if (url.endsWith("/handoff")) {
+      return new Response(JSON.stringify({
+        status: "ok", new_session_id: "handoff-direct", source_session_id: "s1",
+        continuation_prompt: "来源会话：s1\n待续任务：核对评测回执",
+      }), { status: 200 });
+    }
+    if (url.includes("/messages")) {
+      return new Response(JSON.stringify({ messages: [], has_more: false, total: 0 }), { status: 200 });
+    }
     if (url.includes("/api/v1/sessions")) {
       return new Response(JSON.stringify({ sessions: SESSIONS, count: 2 }), { status: 200 });
     }
@@ -102,6 +118,29 @@ describe("Sidebar 会话管理", () => {
     await waitFor(() => expect(screen.getAllByTitle("在新会话中分支").length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByTitle("在新会话中分支")[0]);
     await waitFor(() => expect(calls.some((c) => c.includes("/fork"))).toBe(true));
+  });
+
+  it("轻量交接 → 新会话预创建、空历史、准备可编辑接力草稿", async () => {
+    const calls = mockApi();
+    render(<Sidebar collapsed={false} />);
+    await waitFor(() => expect(screen.getAllByTitle("轻量交接到新会话（不复制历史）").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByTitle("轻量交接到新会话（不复制历史）")[0]);
+    await waitFor(() => expect(sessionStore.getState().currentSessionId).toBe("handoff-s1"));
+    expect(calls).toContain("POST /api/v1/sessions/s1/handoff");
+    expect(conversationStore.getState().messages).toEqual([]);
+    expect(conversationStore.getState().composerPrefill?.text).toContain("核对评测回执");
+  });
+
+  it("会话链接刷新可从持久化接力端点恢复草稿，不触发新 run", async () => {
+    const calls = mockApi();
+    localStorage.removeItem("lfl-draft-handoff-direct");
+    sessionStore.setCurrentSession("handoff-direct");
+    conversationStore.setState({ composerPrefill: null });
+    await loadHistory("handoff-direct");
+    expect(calls).toContain("GET /api/v1/sessions/handoff-direct/messages?limit=100&offset=0");
+    expect(calls).toContain("GET /api/v1/sessions/handoff-direct/handoff");
+    await waitFor(() => expect(conversationStore.getState().composerPrefill?.text).toContain("核对评测回执"));
+    expect(conversationStore.getState().messages).toEqual([]);
   });
 
   it("新会话 → 清空当前会话（下条消息创建）", async () => {

@@ -22,6 +22,7 @@ import {
   claimNextQueued,
 } from "./chat";
 import { sessionStore } from "./stores";
+import { fetchPreparedHandoff } from "./api";
 import {
   mergeFinalToolCalls,
   settleRunningActivities,
@@ -109,6 +110,14 @@ export function prefillComposer(text: string, attachments: AttachmentFact[] = []
   conversationStore.setState({
     composerPrefill: { text, attachments: [...attachments] },
   });
+}
+
+// Exactly-once draft prefill per browser lifetime, never automatic tool replay.
+const handoffPrefilledSessions = new Set<string>();
+export function prefillHandoffComposer(sessionId: string, text: string): void {
+  if (!text || handoffPrefilledSessions.has(sessionId)) return;
+  handoffPrefilledSessions.add(sessionId);
+  prefillComposer(text);
 }
 
 function abortForegroundSubscription(): void {
@@ -275,6 +284,15 @@ export async function loadHistory(sessionId: string): Promise<void> {
     backgroundRunning: false,
     activeRunGeneration: null,
   });
+  if (messages.length === 0 && !handoffPrefilledSessions.has(sessionId)) {
+    // Direct-link/reload recovery: a prepared handoff is a human-editable draft.
+    void fetchPreparedHandoff(sessionId).then((handoff) => {
+      if (sessionStore.getState().currentSessionId !== sessionId || !handoff?.continuation_prompt) return;
+      if (conversationStore.getState().composerPrefill) return;
+      if (window.localStorage.getItem(`lfl-draft-${sessionId}`)) return;
+      prefillHandoffComposer(sessionId, handoff.continuation_prompt);
+    });
+  }
   // EVO 后台 run：加载后查后台生成状态——running 则轮询直到完成（刷新/切换后可见进行中任务）
   // 空闲增量轮询：飞书桥等外部写入 → Web 20s 内自动刷新；基线指纹直接取自本次加载，省一次探针
   ensureIdlePoll(sessionId);

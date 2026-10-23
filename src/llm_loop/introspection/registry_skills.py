@@ -60,7 +60,10 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
     if name == "handoff_now":
         from llm_loop.introspection.tools_handoff import run_handoff_now
 
-        return run_handoff_now(host.ctx, host.audit, args)
+        return run_handoff_now(
+            host.ctx, host.audit, args,
+            session_store=host.recovery_session_store, audit_dir=host.audit_dir,
+        )
     if name == "brainstorm_design":
         from llm_loop.introspection.tools_superpowers import run_brainstorm_design
 

@@ -3449,6 +3449,54 @@ def set_session_archive(session_id: str, request: Request, archived: bool = Fals
     return UTF8JSONResponse(content={"status": "ok", "session_id": session_id, "archived": archived})
 
 
+@router.post("/api/v1/sessions/{session_id}/handoff", response_model=None)
+def prepare_session_handoff(session_id: str, request: Request) -> Response:
+    """Lightweight explicit handoff: new empty session, not history-copy fork."""
+    from llm_loop.introspection.session_handoff import create_handoff_session
+
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404, content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    if not _web_session_reusable(engine, session_id):
+        return _session_ingress_mismatch_response(session_id)
+    try:
+        result = create_handoff_session(
+            engine.session, session_id,
+            audit_dir=Path(engine.settings.data_dir) / "audit",
+        )
+    except ValueError as exc:
+        if str(exc) == "source_session_not_active":
+            return UTF8JSONResponse(
+                status_code=409,
+                content={"error": "source_session_not_active", "detail": "来源会话已归档，不能作为新的接力源。"},
+            )
+        return UTF8JSONResponse(status_code=404, content={"error": "session_not_found"})
+    except Exception:
+        logger.exception("prepare handoff failed: session_id=%s", session_id)
+        return UTF8JSONResponse(
+            status_code=500, content={"error": "handoff_failed", "detail": "生成接力新会话失败；来源会话未修改。"},
+        )
+    return UTF8JSONResponse(content={"status": "ok", **result})
+
+
+@router.get("/api/v1/sessions/{session_id}/handoff", response_model=None)
+def read_session_handoff(session_id: str, request: Request) -> Response:
+    """Recover a prepared handoff prompt on direct link/reload; do not start a run."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(status_code=404, content={"error": "session_not_found"})
+    child = engine.session.load(session_id)
+    if not child.parent_id or not child.branch_summary.startswith("[跨会话接力快照"):
+        return UTF8JSONResponse(status_code=404, content={"error": "handoff_not_found"})
+    return UTF8JSONResponse(content={
+        "status": "ok", "new_session_id": session_id,
+        "source_session_id": child.parent_id,
+        "continuation_prompt": child.branch_summary,
+    })
+
+
 @router.post(
     "/api/v1/sessions/{session_id}/fork",
     response_model=None,
@@ -4622,6 +4670,7 @@ _CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
     "archive": (("POST", "/api/v1/sessions/{session_id}/archive"),),
     "delete": (("DELETE", "/api/v1/sessions/{session_id}"),),
     "fork": (("POST", "/api/v1/sessions/{session_id}/fork"),),
+    "handoff": (("POST", "/api/v1/sessions/{session_id}/handoff"),),
     "feedback": (("POST", "/api/v1/sessions/{session_id}/feedback"),),
     "jobs": (
         ("GET", "/api/v1/sessions/{session_id}/jobs"),
