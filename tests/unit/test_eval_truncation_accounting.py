@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import run_eval  # noqa: E402
+
 from llm_loop.eval.verdicts import is_truncated_answer, run_verdict  # noqa: E402
 
 

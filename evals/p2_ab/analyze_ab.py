@@ -156,6 +156,23 @@ def main() -> int:
             }
         )
 
+    # ── 共同子集对照（2026-10-23 新增）────────────────────────────────
+    # 两臂**进度不同**时（实测 A 21 条 / B 32 条），总体 Δ 是"不同场景组合"的差值，
+    # 不可解释（混淆：场景 mix 不同）。这里额外给一档"只比两臂都跑过的场景"的对照，
+    # 中间结论只认这一档。
+    common = sorted({r["scenario_id"] for r in a} & {r["scenario_id"] for r in b})
+    ca = [r for r in a if r["scenario_id"] in common]
+    cb = [r for r in b if r["scenario_id"] in common]
+    csa, csb = _arm_stats(ca), _arm_stats(cb)
+    cd, cdlo, cdhi = _newcombe_diff(
+        csb.get("pass", 0), csb.get("n", 0), csa.get("pass", 0), csa.get("n", 0)
+    )
+    cd_txt = (
+        f"{cd:+.1%}，CI [{cdlo:+.1%}, {cdhi:+.1%}]"
+        if cd is not None and cdlo is not None and cdhi is not None
+        else "—（有一侧无样本，无口径）"
+    )
+
     report = {
         "generated_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
         "arms": {"A": sa, "B": sb},
@@ -163,6 +180,13 @@ def main() -> int:
         "delta_pass1_ci95": [round(dlo, 4), round(dhi, 4)],
         "delta_rate_scored": round(d_sc, 4) if (sa_scored and sb_scored) else None,
         "delta_rate_scored_ci95": [round(d_sc_lo, 4), round(d_sc_hi, 4)] if (sa_scored and sb_scored) else None,
+        "common_subset": {
+            "scenario_ids": common,
+            "A": csa,
+            "B": csb,
+            "delta_pass1": round(cd, 4) if cd is not None else None,
+            "delta_pass1_ci95": [round(cdlo, 4), round(cdhi, 4)] if cdlo is not None else None,
+        },
         "per_scenario": per_scen,
         "caveats": [
             "域内 A/B 用的是 P1 的域内 v2 场景集（14 场景 × 6 样本 = 84/臂）→ 结论只到 C 级"
@@ -200,6 +224,18 @@ def main() -> int:
         f"**Δpass@1（B−A，主口径）= {d_txt}**（Newcombe 95% CI）",
         "",
         f"Δrate_scored（B−A，排除截断）= {d_sc_txt}",
+        "",
+        "## 共同子集对照（只比两臂都跑过的场景 —— 中间结论只认这一档）",
+        "",
+        f"- 共同场景 {len(common)} 个：{', '.join(common) if common else '（无）'}",
+        f"- A：n={csa.get('n',0)}　通过={csa.get('pass',0)}　主口径={_fmt_pct(csa.get('rate'))}"
+        f"　参考口径={_fmt_pct(csa.get('rate_scored'))}",
+        f"- B：n={csb.get('n',0)}　通过={csb.get('pass',0)}　主口径={_fmt_pct(csb.get('rate'))}"
+        f"　参考口径={_fmt_pct(csb.get('rate_scored'))}",
+        f"- **Δpass@1（共同子集）= {cd_txt}**",
+        "",
+        "> 总体 Δ 的两臂**进度/场景组合不同**（跑批中常见）→ 总体 Δ 混了场景 mix 差异，",
+        "> 不可解释；本档把两臂都跑过的场景单独取出来再比。",
         "",
         "## 压缩后存续率（压缩发生的样本中，取回归档证据的比例）",
         "",

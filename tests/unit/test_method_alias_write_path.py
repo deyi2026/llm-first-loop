@@ -17,8 +17,6 @@ pre-feature rendering, including key order and the absence of an empty key.
 
 from __future__ import annotations
 
-import pytest
-
 from llm_loop.methods import store as store_module
 from llm_loop.methods.reflection import validate_candidate
 from llm_loop.methods.store import MethodStore, gate_aliases

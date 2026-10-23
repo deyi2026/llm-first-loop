@@ -380,8 +380,6 @@ def evaluate(
     checkpoint_path: Path | None = None,
     resume: bool = False,
 ) -> dict:
-    import os
-
     key = ""
     if not dry:
         # 2026-10-23: key 来源按 **provider 实际使用的 api_key_env** 解析，

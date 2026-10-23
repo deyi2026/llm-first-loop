@@ -79,8 +79,8 @@ def test_content_and_decision_change_detected(tmp_path):
 
 
 def test_missing_file_returns_2(tmp_path, monkeypatch):
-    import io
     import contextlib
+    import io
 
     monkeypatch.setattr(sys, "argv", ["domain_baseline.py", "--diff", str(tmp_path / "x.json"), str(tmp_path / "y.json")])
     buf = io.StringIO()
@@ -90,8 +90,8 @@ def test_missing_file_returns_2(tmp_path, monkeypatch):
 
 
 def test_cli_diff_flag_runs(tmp_path, monkeypatch):
-    import io
     import contextlib
+    import io
 
     a = _write(tmp_path / "a.json", _base())
     b = _write(tmp_path / "b.json", _base())
