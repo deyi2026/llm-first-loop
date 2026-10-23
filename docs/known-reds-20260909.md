@@ -128,6 +128,10 @@ python -m pytest tests/phase4/test_m2_inflight_interrupt.py::test_d_gate_conserv
 | 3 | `... -m pytest tests/ -q -m ...` | `review_kind_command_mismatch` |
 | 4 | `uv run --no-sync python -m pytest`（不带路径选择器） | `review_artifact_exceeds_192kb: material=1016873B cap=192000B` |
 
+> **2026-10-23 已处置（方案 B，人工审批）**：用户 2026-10-23 18:04 明确授权"把上限修改了"，
+> 演进提案 `EVO-20261023-fc5c34b9`。上限 192KB → 2.5M 字符，错误码改名
+> `review_artifact_exceeds_cap`，并按 RULE-AI-35 做了双侧实测。详见 §11.5。
+
 ### 11.2 根因（已读源码确认，非推测）
 
 - **第 1-3 次**：`src/llm_loop/tools/review_host_admission.py` 的 `classify_host_shell` 逐 shell 段判定；带 `tests/` 前缀、带 `-m <选择器>`、带 `::` 的 pytest 调用一律视为**窄化选择器** → 返回 `None`（非 full_test）。故**只有不带路径与选择器的全量调用**才被识别为 `full_test`。
@@ -150,6 +154,40 @@ python -m pytest tests/phase4/test_m2_inflight_interrupt.py::test_d_gate_conserv
 | C. 拆分为多轮完整审查 | 机制注释明确支持 | 需多次审查，成本高 |
 | D. 维持现状 | 全量测试准入持续不可达 | 门禁实质失效 |
 
+### 11.5 处置结果（2026-10-23，方案 B 已执行）
+
+**人工审批**：用户 2026-10-23 18:04 指令"本分支 committed delta 1.55MB > 192KB 上限，把上限修改了"。
+演进提案 `EVO-20261023-fc5c34b9`（按该授权提交并执行）。
+
+**改动是三处同口径的，缺一则门禁行为不变**（实测发现：只抬静态常量是死代码）：
+
+1. **静态上限** 192,000 → 2,500,000（单位为**字符**，与 child 侧 wire 检查
+   `sum(dict_wire_chars(m)) <= budget` 一致；原实现用字节比字符预算，单位混用）。
+2. **错误码** `review_artifact_exceeds_192kb` → `review_artifact_exceeds_cap`（名字带数字会随数字变化而撒谎）。
+3. **动态闸 token 口径**：registry `chars_per_token=0.6` 是中文混合标定（1.676 tok/char），
+   对 88% ASCII 的代码/JSON diff **高估约 4.4 倍**，使预检对任何真实代码产物都不可能满足。
+   改为按材料实际字符构成估 token 成本，且**预检与 child 用同一个函数**
+   （`llm_loop.subagent.runner._wire_chars_per_token`），否则会"预检放行、child 仍拒"
+   （child 是空工具子代理，超预算时**拒绝**而非截断）。
+
+**标定用真实 provider 数据**（GLM-5.3 `usage.prompt_tokens`，非估算）：
+材料 1,935,808 字符 → **762,018 token**（2.540 字符/token）；ASCII 部分 2.633、非 ASCII 1.432、
+跨类 BPE 节省 0.198811 token/少数类字符。估算器对该材料偏差 **+1.7%（偏保守）**。
+纯 ASCII / 纯 CJK 材料不受跨类修正影响（单类无可合并边界）。
+
+**未放宽的边界**：模型物理窗口 `allowed_input_tokens=800000` 未动；`_REVIEWER_WIRE_HEADROOM`
+由 0.8 改为 0.98（其语义是"给 framing/协议留余量"，实测 framing 仅约 1K token，
+原 0.8 是 160K token 的无依据保守值）；未跟踪文件 200KB 单文件闸未动；
+`reports/` runtime 投影规则未动；敏感路径拒绝未动；非 reviewer 的子代理 wire 完全未改。
+
+**双侧实测（RULE-AI-35）**：
+- 放宽侧：本分支真实材料 1,936,899 字符 → 预检 ACCEPTED，child 亦 ACCEPTED（估算 775,239 token ≤ 784,000）。
+- 拦截侧：×1.1 / ×1.2 / ×1.5 / ×2.0 的材料全部 REFUSED（`reviewer_input_too_large`）。
+- 回执：`evals/results/review_cap_change_20261023/calibration.txt`、`gate_outcome.txt`。
+
+**仍存的独立阻塞（非上限维度）**：`review_untracked_file_limit` —— 工作区 42 个未跟踪文件
+（并发工作线的 `src/llm_loop/realtime/*`、`tests/realtime/*`）超过 40 个上限。
+上限改动无法清除该阻塞；需并发工作线自行提交或搁置。
 
 ---
 
