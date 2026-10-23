@@ -986,3 +986,23 @@ uv run --no-sync python -m pytest tests/ -q -m "not real_llm and not serial_sign
 > （`6eabd43e6`）引入的**门禁脚本可重跑性缺陷**。门禁自己坏了还让两个测试变红 ——
 > 这正是"先修尺子再报数"的反面教材：**尺子坏了也要如实报，而不是把它当基线接受**。
 
+### 25.3 修复后复跑整轮窄化 CI（14:19-14:34）→ 红数对账 **PASS**
+
+- 命令：`pytest tests/ -q -m "not real_llm and not serial_signal" --junitxml=/tmp/ci_gate_1425.xml`
+  （分类器豁免的窄化运行，可直接执行；耗时 14:08）
+- 结果：**3 failed / 10157 passed / 134 skipped / 23 deselected**
+- 对账 `eval/rules/red_reconciliation.py --report /tmp/ci_gate_1425.xml`：
+  **实测红 3 条 = 登记红 3 条，命中 3，新红 0 → [GATE] 红数对账 = PASS**
+- 3 条红全部是 `eval/rules/known_reds_current.json` 里**已登记**的红
+  （`test_memory_phase3_rrf::test_rrf_keyword_only_fallback`、
+  `test_learning_journal::test_learning_reuses_candidates_without_promotion[True-none-False]`、
+  `test_static_diagnostic_gate::test_unwritable_analyzer_cache_env_does_not_crash_main`），
+  属学习/记忆域的历史登记红，**与本轮评测改动无关**。
+- 上一轮的两条 `ci_gate_conclusion_line` 红**已转绿**；`task_budget_store` 的 fsync 那条**也未复现**
+  （隔离 3/3 通过）→ 判定为负载型偶发，**不登记豁免**。
+- 结论：**P1 出口判据②「CI 窄化门禁通过 + 红数对账通过」达成**（P1 整体 done）。
+
+> 口径说明：这是**分类器豁免的窄化运行**（排除 `real_llm` 与 `serial_signal` 标记的用例）。
+> 全量套件未在本轮跑（§18.3 已登记 RULE-AI-28 全量准入当前不可达的原因），
+> 因此"CI 通过"应读作"**窄化门禁通过**"，不得写成"全量测试通过"。
+

@@ -98,6 +98,22 @@ def verdict_tool_used(trace: list[dict], answer: str, *, tool: str = "") -> bool
     return _has_tool(trace, tool)
 
 
+@_register("tool_used_any")
+def verdict_tool_used_any(trace: list[dict], answer: str) -> bool:
+    """工具存在性（不指定具体工具）：轨迹里**至少有一次**工具调用。
+
+    用于判据写"须实际用工具核验后回答"但没点名工具的场景
+    （held-out 里 1 条：expect="须实际用工具核验后回答"）。
+    2026-10-23：原先只能挂 `tool_used`，而它对空 tool 一律 fail-closed
+    → 该任务会被**恒判失败**（假阴性）。本谓词只认"调过工具"，不认"调对了工具"。
+    """
+    for ev in trace or []:
+        name = str((ev.get("function") or {}).get("name") or ev.get("name") or "")
+        if name:
+            return True
+    return False
+
+
 @_register("answer_contains")
 def verdict_answer_contains(
     trace: list[dict],

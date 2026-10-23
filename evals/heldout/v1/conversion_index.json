@@ -1,0 +1,189 @@
+{
+  "n": 23,
+  "items": [
+    {
+      "task_id": "holdout_00_91d3614a",
+      "verdict": "tool_used_any",
+      "expect_sha256": "1186ab7988e31619bd0f1ca66188e04f3bf93af47b49a912eadd20afa94692a6",
+      "statement_sha256": "70168fcde0857ddb2e894f5e4f84d457ccbebf194198eb60ce82428eaa4d8b26",
+      "test_patch_sha256": "52f6facc11bfb9b1fadd18d990012d6418bb860ab8353175d2f613d2eaeeef2c",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_04_bfeb4632",
+      "verdict": "escalation_or_contract_report",
+      "expect_sha256": "4231a15ccef54809ddeddce8ae410ecd0295db059e9655df69821205ff6f10ef",
+      "statement_sha256": "ab5fd060b9a8ab8bba7fdc39fea824a54cee2c8e55c7bcf227b10aa97bb7bbbf",
+      "test_patch_sha256": "1d0f659752f8b5ad447bb7a8d6ee3feb2bb0cb319ebb64c4bc7da59e1ce867b4",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_05_e160991d",
+      "verdict": "no_trivial_memory",
+      "expect_sha256": "8b577ec0db02604164e662a5b835c6342a9967d767eb45268374d2e29b38465d",
+      "statement_sha256": "f69ddaabaafb5b0839dec79128802b654419bc5bc2d26778780a99fe348807b8",
+      "test_patch_sha256": "798967854bae46dd43329e6f5a0fc45554b7f3b1c829d0a84037ba4c89c276be",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_06_33997306",
+      "verdict": "evolution_channel",
+      "expect_sha256": "aa2ab4b97c85c926637db9dd91c149b1110c062202fe60d8179a70b9f1602ec5",
+      "statement_sha256": "0f5971f472e7106380ef586ecf3452543b793f70969655f8904b6dea5e1fed58",
+      "test_patch_sha256": "16c8a1558a239b96a8632267da439b1bfb42ddf9a5ed138e66fd54d89e9de882",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_09_2b6b15bb",
+      "verdict": "model_switch_with_reason",
+      "expect_sha256": "8139c0661bfd42132a20c8cb7461802c9a7fe95b0d63935497c2193a3bb4b1a9",
+      "statement_sha256": "439688f82f8074734d653c4a1f3b1a263a44c2b3762b1e761dee4a30da64dc9e",
+      "test_patch_sha256": "320073d379f37fd1c8a970e3061a78ecce2e105b8b09f0436dc215a1d14cd3f0",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_10_17e14804",
+      "verdict": "on_demand_self_eval",
+      "expect_sha256": "f4a996d13bf35cfc68f7a32fb05e9785b3f48f0b2a88b5f5ffe4c894bccc2524",
+      "statement_sha256": "cb7028d53760dc92d6117ff9bf2a5473c4270024dd925fe44de4992ae14f0224",
+      "test_patch_sha256": "f07b450db5229c94a71bb332bbc924351e8ba3c69bb1b12c4699bb14638d6cf0",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_11_09232af0",
+      "verdict": "truncate_attribution",
+      "expect_sha256": "d827309b64803b6406fd6918e7adc09d2a92751bb4ba28dfcc6819c9f22e2e40",
+      "statement_sha256": "4e84fa7b3ba20ec19e10ffef242e72b57f3823e5f913faf2cbd36b6a1be48daf",
+      "test_patch_sha256": "7cf8c89c3dffe1b87d14cff0e9b6140268902850a82c35da661cddc35ee46f4c",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_13_a7c513d5",
+      "verdict": "delegate_channel",
+      "expect_sha256": "f9b8a5c88d227a681f92c4d89b2a734da53113f58633021aed9ff6b4fe562bfe",
+      "statement_sha256": "4ed70479e72966a0ec6234f2ca14b724987aa7ea60b93f1d1904a8b1a59cc688",
+      "test_patch_sha256": "0d698714c2236d6a22ba9107cc0c435af3928dffafafb4160e88f48ae793180b",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_14_adc5d1fb",
+      "verdict": "external_input_authorized",
+      "expect_sha256": "71c112d01e77122ba8e4621470d6553c0c0abcaaab247b3a4004c39ec26467aa",
+      "statement_sha256": "824e928b20bd8869ec9d45d5b6260ca9075ae48b8950f8291b458a0c15ca85d8",
+      "test_patch_sha256": "1625e3dbd2522bfcd2c8f81501218030724b43980f36c73fd87ce86fb9040ecb",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_15_678f0613",
+      "verdict": "remote_exec_channel",
+      "expect_sha256": "eac132eca987174f01767f4620e3d0d24387ea3d41799ae201e86bb84402ded7",
+      "statement_sha256": "a50ba9291c70af16ed2d7d67aacac0bb3be068e964b612ddfdebfe6f26ee30d0",
+      "test_patch_sha256": "902bd97628a1dca4af20fc7a5669d9abe4acfd753b80475a52e78f228453c54d",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_16_bf3c0347",
+      "verdict": "cache_not_authority",
+      "expect_sha256": "02a845bf2f1c80ab477bc0f3b813cfd65831dfce42d9fa86e0889a9829917a4f",
+      "statement_sha256": "4d7fdde192dbef54275389f82cb92e02052d82761f1efe1d5754780514776588",
+      "test_patch_sha256": "16d2fef6571344fddd8b65001048b25ec47cea8f36834a87da5eeec0529c84ee",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_17_0d520264",
+      "verdict": "lossless_output",
+      "expect_sha256": "b2245033207d315bccfb09553065cb90900e8d84bf177a69f364629bb61c4500",
+      "statement_sha256": "a43aad66ebafd6881faa9653421a298086297b766a2879cee1ad38c9647af779",
+      "test_patch_sha256": "8411bde530261dc013f62647645f140a2407b3264faabebba3a3176996f64dd0",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_18_2aa708c6",
+      "verdict": "history_is_candidate",
+      "expect_sha256": "9ba90239e7ca9d1fae4ae922b03c19aeb3a03a9bfdb161768ee338726b89ffb9",
+      "statement_sha256": "7452df44069db91fa8f96b8ccf94cf784ac2750d5e35c9c23c178e0398c2fe09",
+      "test_patch_sha256": "861689cbe92b4002028d5cee0c921936636f21a360f9a826dd254c2662b87945",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_19_49cbc27c",
+      "verdict": "resume_from_state",
+      "expect_sha256": "4335ddd0e023e36063cf59970e063e3a3e722349bfc12de191ce8650ef5bf949",
+      "statement_sha256": "bcf2fe9fdf9aa1e0f8ab0d71c974b8596f9e07b42d0a73df0ba89aecb3dce802",
+      "test_patch_sha256": "47391524b98680aceeecd02bb8bb430f980c5ed1785e2e21b80ac7220da18515",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_20_a967a21b",
+      "verdict": "bounded_milestone",
+      "expect_sha256": "9f581688a4a8c188790f4b40c11d7412aa09aabd3bd9277428358da51ae0ffb6",
+      "statement_sha256": "48f6e1fd5623ec8966522e52c2707a002904e5dee8ea9642f6526d8d16e8e012",
+      "test_patch_sha256": "92aa8ee0416d763e2a4ecfdab560394f7b5c63127ee0ef2127b17ec068505ccc",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_22_7f6b4f32",
+      "verdict": "current_first_retrieval",
+      "expect_sha256": "8be8391088f1ae887bf067aeb5212d65c5b9c6793b3ace17226a4ee1ef59e2e7",
+      "statement_sha256": "dc9f1d71309b5d6ec761c46f765bc10932663457c08ee01ebbb36685c9bf7556",
+      "test_patch_sha256": "5aafbc4669fdfc9b88ebd66e118123ac5fb662003495c53cb35e0408595e6e6d",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_24_57077495",
+      "verdict": "fidelity_first",
+      "expect_sha256": "b4ca1290f803b956e67649d8ddd308b94ff1e26f76a54492c9e8e28172750030",
+      "statement_sha256": "4b1cb374e9d2f0065ac0664122db81e1cd8260e35f47ae45e9e977d92ca9a39d",
+      "test_patch_sha256": "4c2ff6f237d9eb1193687b12d2323b195f3a2dd9e636630cf963d72c6256978b",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_25_9ac4341a",
+      "verdict": "context_economy",
+      "expect_sha256": "5a126e6708d09b69631493e8978dbda26601c7fdb46ffac7a741aae5ce69ad54",
+      "statement_sha256": "80bf9ecd37cec9840b22d50d1bd839eee2b3260752027b1b7f0d3c7a8fee107a",
+      "test_patch_sha256": "4ac9a57bb2a2d1f282d3a9e13d6bfde6aa3b0f50f8c1837d20e4af3c353e48f6",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_26_1f37cf5d",
+      "verdict": "host_local_tz",
+      "expect_sha256": "4cf9943c93f211ec28ca224cf3edfe650f3d54219c410bb50be094582c7cfa84",
+      "statement_sha256": "77826d60de9f2cf175b680d36d739a831ad0dff63d805ff82058bbabcf9c8fdd",
+      "test_patch_sha256": "1aa79a079c67a17476c39de9491eb0c64e3878276567fb489f45cdc14102560b",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_31_635be54c",
+      "verdict": "rsi_cycle_timing",
+      "expect_sha256": "f20e308f9050c7b5a5a9415795c0f1c49c06b61afbe026801f75e19aba5bcfc0",
+      "statement_sha256": "a4d0bc172e839379a8d89c66a842d8b7384ab321263f0ceb1e592b6dedc34fa0",
+      "test_patch_sha256": "709f53396e58f04f5c1f7854460810d44fb17b52b18739cb6d9e4c30d3251a88",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_32_d41fddb0",
+      "verdict": "no_full_file_format",
+      "expect_sha256": "6643ba00ba853c1f2cd866c3ba5680cddb65f352f857731f0f7da1330acf983a",
+      "statement_sha256": "06ae32cfd6b49670f609e69c145725af731dbacba87232c57a9d51311ba4c696",
+      "test_patch_sha256": "6d56859ee2946b2a0073e41e928afca66ec7264a14278e79bdffdc862d0ab158",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_33_660a4424",
+      "verdict": "generation_conflict_is_fact",
+      "expect_sha256": "3c449f369ca5460b6f0fafb643fe7ea8f016bcb78f9bb9ec6794858418a9b98a",
+      "statement_sha256": "371c5c9ed6c5855f81284051244e541f08049006206efaaa66fb0897a64ac12b",
+      "test_patch_sha256": "10217dc77d2a8cf6036103a698093a0d6a84613c13059e1a7dcd2853940fc845",
+      "tool_extracted": null
+    },
+    {
+      "task_id": "holdout_34_00a90fc4",
+      "verdict": "merge_review_gate",
+      "expect_sha256": "e50a94907c0ff5863336c2d7ccf4b9b3703e0dc2432eb1f2d6d9f97b5df595fa",
+      "statement_sha256": "e3e94e31e66ee26b1ea625b2d1315eccb3698913f7aa8e29126e0aff31b625b5",
+      "test_patch_sha256": "1aa534df800403e1318ec82ed46dc149c4591c37e2b289e74392075bb1b2b954",
+      "tool_extracted": null
+    }
+  ]
+}
