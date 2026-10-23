@@ -20,6 +20,40 @@ pip 0.2.18，见下方「实测结果」）。P4 冒烟完成 1 题（`crack-7z-
 
 **这是 1 题冒烟，不是基准结论**：n=1 无统计意义，不能对外表述为"LFL 在 TB 上的准确率"。
 
+## ⚠️ 第二题实测暴露的 TB harness 时序竞态（比 adapter 更重要的坑）
+
+`configure-git-webserver` 实跑（2026-10-23 13:09）：agent **在容器里把活干完了**
+（`git push` 成功、`curl` 返回 `hello world`、最终 ref 校验通过），
+`sessions/tests.log` 里 pytest 也是 **1 passed in 20.92s**，
+但 TB 判为 **`failure_mode=parse_error`、`resolved=None`、tokens 0/0**。
+
+**根因链**（不是 adapter 缺陷）：
+1. agent 超过默认 **360s** 全局超时 → TB 触发 agent timeout 分支；
+2. TB 采样 `panes/post-test.txt` 时**测试还没跑完**（该题测试耗时 20.92s；
+   对比第 1 题 `crack-7z-hash` 测试 0.00s，post-test pane 完整含 summary）；
+3. `pytest_parser.parse()` 要求 pane 里有 `short test summary info` 段
+   （`terminal_bench/parsers/pytest_parser.py:83-93`，缺失即 `raise ValueError`）；
+4. → harness 记 `FailureMode.PARSE_ERROR`（`harness/harness.py:611`），
+   **任务实际已解出但被判失败**。
+
+**判别方法**（下次遇到别误判成 agent 不行）：
+- `sessions/tests.log` 有 `N passed` 而 `panes/post-test.txt` 无
+  `short test summary info` → 是这个竞态，**不是**能力失败；
+- `sessions/lfl_agent_error.txt` 存在 → 才是 adapter 侧异常。
+
+**规避**：给足超时（CLI 有 `--global-agent-timeout-sec` / `--global-test-timeout-sec`，
+默认 360s 对复杂题偏紧）：
+
+```bash
+/tmp/tb13/bin/tb run --dataset terminal-bench-core==0.1.1 \
+  --task-id <task> --agent-import-path lfl_agent:LflAgent \
+  --n-concurrent 1 --n-attempts 1 --no-livestream \
+  --global-agent-timeout-sec 1200 --global-test-timeout-sec 600
+```
+
+**结论口径纪律**：TB 报的 `parse_error` 必须回查 `tests.log` 才能定性，
+不得直接计入 agent 失败率。
+
 ## 版本事实（引用本仓库结论时必须同时说明）
 
 - 本次实跑用 **terminal-bench pip 0.2.18（TB 1.x）**。
