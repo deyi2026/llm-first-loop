@@ -2,12 +2,13 @@
 method_id: deferred-action-failure-layer-scoped-lifecycle-trace-ae4184904e2b
 name: deferred-action-failure-layer-scoped-lifecycle-trace
 description: 当定时/延迟动作未按期执行时，先取系统快照（待办数、运行时健康、执行槽并发）判定失败层级；若待办为0且运行时健康但并发=1，失败锁定在'触发→run交接'层，其生命周期事件通常不归属于请求会话——应直接按系统/全局范围查触发时刻前后的调度生命周期事件（注册/触发/降级/通知去向），而不是在会话日志上反复加大窗口重查。定位为共享授权竞争且降级不重试后，用不依赖该授权的兜底（程序侧轮询/重试策略）而非原样重挂同一唤醒。
+aliases: 闹钟设了到点却没响, 待办为 0 但并发只有 1, 翻会话记录再久也没用, deferred job 未执行, lifecycle event 在系统域
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:5adf278f-405b-44db-95e5-3d3b94e1b8d9:126:aa0fbf465606e1312a4d
 evidence_refs: learning:learn:807c18de983e
 created_at: 2026-09-19T12:10:56.689975+00:00
-updated_at: 2026-09-19T12:10:56.689975+00:00
+updated_at: 2026-10-23T05:53:07.661889+08:00
 ---
 ## Trigger
 用户报告某个已注册的定时/延迟唤醒（schedule/wake/deferred job）没有执行，需要定位原因；环境中存在事件流或调度日志可查

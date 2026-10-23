@@ -11,12 +11,14 @@ production data directory and its embedding cache are never written.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
 import re
 import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -25,10 +27,97 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+import llm_loop  # noqa: E402
 from llm_loop.config import load_settings  # noqa: E402
 from llm_loop.memory.embedder import APIEmbedder, HashEmbedder  # noqa: E402
 from llm_loop.memory.retriever import SemanticRetriever  # noqa: E402
+from llm_loop.methods import store as store_module  # noqa: E402
 from llm_loop.methods.store import MethodStore  # noqa: E402
+
+ALIAS_MODES = ("weak", "off")
+
+
+def repo_relative(path: str | Path) -> str:
+    """Repo-relative label for artifacts; absolute paths must not leak into commits."""
+    try:
+        return str(Path(path).resolve().relative_to(ROOT.resolve()))
+    except (ValueError, OSError):
+        return f"<outside-repo>/{Path(path).name}"
+
+
+def code_provenance() -> dict:
+    """Measure which code this harness actually imported.
+
+    The repo keeps deployed snapshots under ``.releases/`` and shells may export
+    ``PYTHONPATH`` pointing at one, so an eval can silently score the wrong tree.
+    Every number below is measured here, never assumed. Paths are recorded
+    repo-relative so the artifact stays portable and commit-safe.
+    """
+    store_file = Path(store_module.__file__).resolve()
+    head = ""
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        head = ""
+    return {
+        "llm_loop_file": repo_relative(Path(llm_loop.__file__).resolve()),
+        "store_file": repo_relative(store_file),
+        "store_sha256": hashlib.sha256(store_file.read_bytes()).hexdigest(),
+        "alias_weight": getattr(store_module, "_ALIAS_WEIGHT", None),
+        "git_head": head,
+        "pythonpath": [repo_relative(entry) for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep) if entry],
+    }
+
+
+def without_aliases(store: MethodStore, only_ids: frozenset[str] | None = None) -> MethodStore:
+    """Eval-only ablation: drop author aliases right after parsing.
+
+    Both the lexical arm and the semantic candidate projection read records through
+    ``_load_path``, so one wrapper removes the alias channel from both arms. This
+    mutates the temporary-corpus store instance only; production code is untouched.
+    ``only_ids`` restricts the ablation to named cards, which is how a later alias
+    batch is separated from an earlier one without rewriting any card on disk.
+    """
+    original = store._load_path
+
+    def load_without_aliases(path: Path):
+        record = original(path)
+        if record is None or not record.aliases:
+            return record
+        if only_ids is not None and record.method_id not in only_ids:
+            return record
+        return dataclasses.replace(record, aliases=())
+
+    store._load_path = load_without_aliases  # type: ignore[method-assign]
+    return store
+
+
+def is_working_tree_module(module_file: str, src_root: Path) -> bool:
+    """True only when the scored module lives under this repo's ``src/`` tree.
+
+    Pure and side-effect free so a unit test can feed the exact paths the guard
+    must reject (``.releases/<sha>/src/...``) without running a full eval.
+    """
+    try:
+        return Path(module_file).resolve().is_relative_to(Path(src_root).resolve())
+    except OSError:
+        return False
+
+
+def count_aliased_cards(corpus: Path) -> int:
+    total = 0
+    for card in corpus.iterdir():
+        method = card / "METHOD.md"
+        if not method.is_file():
+            continue
+        if re.search(r"^aliases:", method.read_text(encoding="utf-8", errors="replace"), re.M):
+            total += 1
+    return total
 
 TOKEN = re.compile(r"[a-z0-9]{2,}|[\u4e00-\u9fff]+")
 HAN = re.compile(r"[\u4e00-\u9fff]")
@@ -112,7 +201,38 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=5, help="production method limit")
     parser.add_argument("--semantic-top-k", type=int, default=10, help="rank depth measured")
     parser.add_argument("--no-warm", action="store_true")
+    parser.add_argument(
+        "--alias-mode",
+        choices=ALIAS_MODES,
+        default="weak",
+        help="weak: production behaviour (_ALIAS_WEIGHT channel); off: neutralize author aliases",
+    )
+    parser.add_argument(
+        "--allow-foreign-code",
+        action="store_true",
+        help="permit scoring code imported from outside <repo>/src (default: fail closed)",
+    )
+    parser.add_argument(
+        "--alias-off-ids",
+        default="",
+        help="path to newline-separated method_ids whose aliases are neutralized (batch ablation)",
+    )
     args = parser.parse_args()
+
+    provenance = code_provenance()
+    src_root = (ROOT / "src").resolve()
+    inside_tree = is_working_tree_module(str(Path(llm_loop.__file__).resolve()), src_root)
+    provenance["imported_from_working_tree"] = inside_tree
+    if not inside_tree and not args.allow_foreign_code:
+        print(
+            "[fail-closed] llm_loop resolved outside the working tree:\n"
+            f"  imported: {provenance['llm_loop_file']}\n"
+            f"  expected under: {src_root}\n"
+            "This usually means PYTHONPATH points at a .releases/ snapshot. "
+            "Re-run with PYTHONPATH= (or pass --allow-foreign-code to score it deliberately).",
+            file=sys.stderr,
+        )
+        return 2
 
     load_env(ROOT / ".env")
     settings = load_settings()
@@ -123,6 +243,18 @@ def main() -> int:
     corpus = tempdir / "methods"
     shutil.copytree(args.methods_dir, corpus)
     store = MethodStore(str(corpus), workspace_root=str(ROOT))
+    aliased_cards = count_aliased_cards(corpus)
+    drop_ids: frozenset[str] | None = None
+    if args.alias_off_ids:
+        drop_ids = frozenset(
+            line.strip()
+            for line in Path(args.alias_off_ids).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    if args.alias_mode == "off":
+        store = without_aliases(store)
+    elif drop_ids is not None:
+        store = without_aliases(store, only_ids=drop_ids)
     embedder = APIEmbedder(
         api_key=settings.embedding_api_key,
         base_url=settings.embedding_base_url,
@@ -200,6 +332,10 @@ def main() -> int:
             "semantic_top_k": settings.retrieve_semantic_top_k,
             "method_limit": args.limit,
             "warm": warm,
+            "alias_mode": args.alias_mode,
+            "aliased_cards": aliased_cards,
+            "alias_off_ids": len(drop_ids) if drop_ids is not None else 0,
+            "provenance": provenance,
         },
         "channels": {},
         "by_status": {},

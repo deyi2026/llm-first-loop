@@ -1,0 +1,116 @@
+{
+  "set": "p2ab_v1",
+  "frozen_at": "2026-10-23T14:05:00+08:00",
+  "protocol": "evals/p2_ab/PROTOCOL.md",
+  "purpose": "P2 A/B 域内候选场景（探索级）。只覆盖『长会话压缩存续 / 证据分页恢复』家族，与 held-out v1 的 23 条规则不重叠。",
+  "caveat": "任务族单一（读大文件 + 逐字引用）→ 结论只能到 C 级（仅激发任务），不得据此 promotion；promotion 判据只认 held-out 验证跑。",
+  "default_env": {
+    "HISTORY_MAX_CHARS": "12000"
+  },
+  "scenarios": [
+    {
+      "id": "p2ab_d12_three_facts",
+      "name": "§12 三个决策点逐字引用",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "Terminal-Bench 子集先做",
+          "minimax/MiniMax-M3.1-Flash",
+          "污染即作废该轮并降级为 C 级"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出 §12 三个决策点各自的结论取值",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：核对仓库文档 docs/EVAL-PLAN-LFL-20261023.md 的 §12『三个决策点』，在最终答复里逐字给出 D-1、D-2、D-3 三行各自的『结论』列取值（照抄原文，不要改写、不要概括）。请用 read_file 读取该文件全文后核对。"
+    },
+    {
+      "id": "p2ab_gap_and_limit",
+      "name": "数据缺口 + 已知局限逐字引用",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "压缩后存续率无法计算",
+          "只够发现大效应"
+        ],
+        "min_hits": 2,
+        "rule": "P2AB",
+        "expect": "逐字给出 §21.5 第一条数据缺口与 §13 中 held-out 相关表述",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：核对 docs/EVAL-PLAN-LFL-20261023.md，在最终答复里逐字给出两处原文：(1) §21.5『本轮如实登记的数据缺口』里的第一条数据缺口；(2) §13『本计划自身的已知局限』中提到 held-out 题面的那一处表述。请用 read_file 读取该文件全文后核对。"
+    },
+    {
+      "id": "p2ab_knownreds_two_facts",
+      "name": "已知红清单两处逐字引用",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "预存在红不是放任，而是显式登记的现实约束",
+          "2026-10-13"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出开头那句与维护日期",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：核对 docs/known-reds-20260909.md，在最终答复里逐字给出：(1) 开头『预存在红不是放任…』那一整句；(2) 文档中『维护日期：』后面的日期。请用 read_file 读取该文件全文后核对。"
+    },
+    {
+      "id": "p2ab_engine_two_lines",
+      "name": "引擎源码两处逐字引用",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "模型可见面零预警",
+          "已达轮数硬边界"
+        ],
+        "rule": "P2AB",
+        "expect": "逐字给出零预警注释与轮数硬边界字符串所在行",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：在 src/llm_loop/core/loop/engine.py 里找轮数硬边界相关的两处文本，在最终答复里逐字给出：(1) 提到『零预警』的那句注释里的关键词；(2) 字符串常量『已达轮数硬边界』所在的完整那行。请用 read_file 读取该文件全文后核对。"
+    },
+    {
+      "id": "p2ab_crossfile_two_facts",
+      "name": "跨两个文件各取一处逐字引用",
+      "samples": 5,
+      "max_iterations": 12,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "污染即作废该轮并降级为 C 级",
+          "已达轮数硬边界"
+        ],
+        "rule": "P2AB",
+        "expect": "跨两文件各逐字给出一处",
+        "category": "长会话压缩存续"
+      },
+      "prompt": "任务：分别核对 docs/EVAL-PLAN-LFL-20261023.md 与 src/llm_loop/core/loop/engine.py，在最终答复里逐字给出：(1) 前者 §12 中 D-3 的结论取值；(2) 后者中字符串常量『已达轮数硬边界』所在的完整那行。请用 read_file 分别读取两个文件后核对。"
+    },
+    {
+      "id": "p2ab_paged_evidence",
+      "name": "分页取回长证据后引用事实",
+      "samples": 5,
+      "max_iterations": 14,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "minimax/MiniMax-M3.1-Flash"
+        ],
+        "tool": "read_evidence",
+        "rule": "P2AB",
+        "expect": "用 read_evidence 分页取回证据后逐字给出 D-2 结论取值",
+        "category": "证据分页恢复"
+      },
+      "prompt": "任务：先用 execute_command 读取 docs/EVAL-PLAN-LFL-20261023.md 全文（cat），再用 read_evidence 对返回的证据分页取回（按 start/limit 翻页找到 §12 那一段），然后在最终答复里逐字给出 §12 中 D-2 的结论取值。"
+    }
+  ]
+}

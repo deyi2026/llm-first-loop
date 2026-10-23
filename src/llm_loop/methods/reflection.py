@@ -285,6 +285,22 @@ def validate_candidate(value: dict[str, Any] | None) -> tuple[bool, list[str]]:
         for i, item in enumerate(items):
             if not isinstance(item, str) or not item.strip():
                 errors.append(f"{key}[{i}] must be a non-empty string")
+    # Aliases are retrieval hints, so a missing list must not throw away an otherwise
+    # valid card: the hint is cheap to add later, the content is not recoverable.
+    # Malformed aliases still fail, because a bad shape would only reach the store
+    # gate as noise.
+    aliases = value.get("aliases")
+    if aliases is not None and aliases != []:
+        if not isinstance(aliases, list):
+            errors.append("aliases must be a list of strings")
+        elif len(aliases) > 8:
+            errors.append("aliases exceeds 8 items")
+        else:
+            for i, item in enumerate(aliases):
+                if not isinstance(item, str) or not item.strip():
+                    errors.append(f"aliases[{i}] must be a non-empty string")
+                elif len(item) > 60:
+                    errors.append(f"aliases[{i}] exceeds 60 chars")
     return (not errors), errors
 
 
@@ -590,6 +606,9 @@ def reflect_on_episode(
                 "stop_conditions": "non-empty list of strings",
                 "verification": "non-empty list of strings",
                 "counterexamples": "non-empty list of strings",
+                "aliases": "2-6 retrieval phrasings (colloquial or field-specific wording a future "
+                           "query would use); must add vocabulary absent from name/description/body, "
+                           "never lifecycle words or bare code symbols",
             },
             "none_reason": "short string",
         },
@@ -601,6 +620,10 @@ def reflect_on_episode(
         'If there is no reusable method, return {"decision":"none","reason":"..."}. If there is one, return '
         "decision=candidate with ALL required fields (name, description, trigger, discriminator, short_path, "
         "stop_conditions, verification, counterexamples). Do not copy task-private literals unless necessary.\n"
+        "aliases is the retrieval surface: 2-6 short phrasings a future query would plausibly use for this "
+        "method, ideally colloquial or domain wording that does not already appear in the card. Write them "
+        "in the language the user actually speaks. Never use lifecycle words (candidate/active/hold) or bare "
+        "identifiers; the store drops low-discrimination aliases mechanically.\n"
         "existing_methods lists discoverable cards, including candidates; lifecycle status is not a use permit. "
         "Related cards may be used without qualification or record_use. If the method you would distil "
         "is a semantic duplicate of any listed entry (same trigger and mechanism, cosmetic rewording), "

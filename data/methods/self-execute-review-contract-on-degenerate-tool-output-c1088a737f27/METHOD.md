@@ -2,12 +2,13 @@
 method_id: self-execute-review-contract-on-degenerate-tool-output-c1088a737f27
 name: self-execute-review-contract-on-degenerate-tool-output
 description: 当对抗式评审工具（如 grill_me）返回退化输出：壳结构完整（分层标题、使用说明）但第一层零实际问题时，不要跳过评审也不要循环重试。返回体中声明的'重点领域'清单本身就是评审契约：按每个已声明领域自问'该步骤在什么条件下失效'并强制逐条回答（跳过=假装完整）。对退化工具最多做一次输入显著改变的诊断性重试以区分输入触发 vs 工具损坏。落库时如实标注 verification_state=unverified、评审来源为自驱非工具产出。附带：历史检索在前两次各命中 10 条且已覆盖全部已知相关教训后停止，不再用变体词追查空命中。
+aliases: 评审工具只回空壳零追问, 拷问稿只有标题没有实际提问, 按声明领域逐条自问何时失效, 自驱结论要标 unverified, grill_me 空返回
 status: qualified
 source_model: glm/glm-5.3
 source_episode_refs: episode:5adf278f-405b-44db-95e5-3d3b94e1b8d9:929:c7443243ca1518a56db6
 evidence_refs: learning:learn:6e490939226f
 created_at: 2026-09-19T12:22:32.468542+00:00
-updated_at: 2026-09-29T23:46:00.409868+08:00
+updated_at: 2026-10-23T05:53:06.662890+08:00
 ---
 ## Trigger
 调用评审/拷问/审查类工具对一份规程或设计做强制盘问时，工具返回结构壳但未生成实际追问内容

@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_25_9ac4341a",
+  "rule": "RULE-AI-25",
+  "verdict": "context_economy",
+  "expect": "须强调精简回传/预算",
+  "samples": 6
+}

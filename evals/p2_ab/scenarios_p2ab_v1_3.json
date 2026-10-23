@@ -1,0 +1,155 @@
+{
+  "set": "p2ab_v1_3",
+  "frozen_at": "2026-10-23T16:00:00+08:00",
+  "protocol": "evals/p2_ab/PROTOCOL.md",
+  "supersedes": "scenarios_p2ab_v1_2.json（v1.2：模型改用 grep 定点取行 → 未产生压缩压力，见修订记录 R3）",
+  "purpose": "P2 A/B **合成存续探针**（探索级）：测『被压缩归档的内容，事后能否取回并复述』。",
+  "mechanism": "HISTORY_MAX_CHARS=6000 使压缩在每轮发生（事件侧可核）→ 第 1 步的一次性随机值 RVAL 必被归档 → 第 3 步要模型复述 RVAL（不可重算，取回是唯一路径）。",
+  "control_group": "p2ab_ctl_* 把第 2 步换成定点取行（短输出）→ 用于检验探针难度来自压缩而非任务本身。",
+  "caveat": "合成探针、任务族单一 → 结论封顶 C 级，不得据此 promotion。",
+  "default_env": {
+    "HISTORY_MAX_CHARS": "6000"
+  },
+  "scenarios": [
+    {
+      "id": "p2ab_mem_d1",
+      "name": "存续探针·计划文档 D-1",
+      "samples": 5,
+      "max_iterations": 20,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "Terminal-Bench 子集先做"
+        ],
+        "gold_from_tool_output": {
+          "tool": "execute_command",
+          "match": "after_marker:RVAL="
+        },
+        "rule": "P2AB",
+        "expect": "§12 决策表里 D-1 那一行的『结论』取值",
+        "category": "压缩存续"
+      },
+      "prompt": "任务分三步，请按顺序完成：\n1) 用 execute_command 运行这一条，并记住输出里的 RVAL 数值（记作 R）：\n   python3 -c \"import random;print('RVAL='+str(random.random()))\"\n2) 用 read_file 读取 docs/EVAL-PLAN-LFL-20261023.md 的全文，并告诉我 §12 决策表里 D-1 那一行的『结论』取值。\n3) 在最终答复里同时给出：(a) 第 2 步要的那处原文（逐字照抄）；(b) 第 1 步的 R 的数值。"
+    },
+    {
+      "id": "p2ab_mem_d2",
+      "name": "存续探针·计划文档 D-2",
+      "samples": 5,
+      "max_iterations": 20,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "minimax/MiniMax-M3.1-Flash"
+        ],
+        "gold_from_tool_output": {
+          "tool": "execute_command",
+          "match": "after_marker:RVAL="
+        },
+        "rule": "P2AB",
+        "expect": "§12 决策表里 D-2 那一行的『结论』取值",
+        "category": "压缩存续"
+      },
+      "prompt": "任务分三步，请按顺序完成：\n1) 用 execute_command 运行这一条，并记住输出里的 RVAL 数值（记作 R）：\n   python3 -c \"import random;print('RVAL='+str(random.random()))\"\n2) 用 read_file 读取 docs/EVAL-PLAN-LFL-20261023.md 的全文，并告诉我 §12 决策表里 D-2 那一行的『结论』取值。\n3) 在最终答复里同时给出：(a) 第 2 步要的那处原文（逐字照抄）；(b) 第 1 步的 R 的数值。"
+    },
+    {
+      "id": "p2ab_mem_d3",
+      "name": "存续探针·计划文档 D-3",
+      "samples": 5,
+      "max_iterations": 20,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "污染即作废该轮并降级为 C 级"
+        ],
+        "gold_from_tool_output": {
+          "tool": "execute_command",
+          "match": "after_marker:RVAL="
+        },
+        "rule": "P2AB",
+        "expect": "§12 决策表里 D-3 那一行的『结论』取值",
+        "category": "压缩存续"
+      },
+      "prompt": "任务分三步，请按顺序完成：\n1) 用 execute_command 运行这一条，并记住输出里的 RVAL 数值（记作 R）：\n   python3 -c \"import random;print('RVAL='+str(random.random()))\"\n2) 用 read_file 读取 docs/EVAL-PLAN-L-20261023.md 的全文，并告诉我 §12 决策表里 D-3 那一行的『结论』取值。\n3) 在最终答复里同时给出：(a) 第 2 步要的那处原文（逐字照抄）；(b) 第 1 步的 R 的数值。"
+    },
+    {
+      "id": "p2ab_mem_kr",
+      "name": "存续探针·已知红首句",
+      "samples": 5,
+      "max_iterations": 20,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "预存在红不是放任，而是显式登记的现实约束"
+        ],
+        "gold_from_tool_output": {
+          "tool": "execute_command",
+          "match": "after_marker:RVAL="
+        },
+        "rule": "P2AB",
+        "expect": "文档开头『预存在红不是放任…』那一整句",
+        "category": "压缩存续"
+      },
+      "prompt": "任务分三步，请按顺序完成：\n1) 用 execute_command 运行这一条，并记住输出里的 RVAL 数值（记作 R）：\n   python3 -c \"import random;print('RVAL='+str(random.random()))\"\n2) 用 read_file 读取 docs/known-reds-20260909.md 的全文，并告诉我 文档开头『预存在红不是放任…』那一整句。\n3) 在最终答复里同时给出：(a) 第 2 步要的那处原文（逐字照抄）；(b) 第 1 步的 R 的数值。"
+    },
+    {
+      "id": "p2ab_mem_krdate",
+      "name": "存续探针·已知红维护日期",
+      "samples": 5,
+      "max_iterations": 20,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "2026-10-13"
+        ],
+        "gold_from_tool_output": {
+          "tool": "execute_command",
+          "match": "after_marker:RVAL="
+        },
+        "rule": "P2AB",
+        "expect": "文档里『维护日期：』后面的日期",
+        "category": "压缩存续"
+      },
+      "prompt": "任务分三步，请按顺序完成：\n1) 用 execute_command 运行这一条，并记住输出里的 RVAL 数值（记作 R）：\n   python3 -c \"import random;print('RVAL='+str(random.random()))\"\n2) 用 read_file 读取 docs/known-reds-20260909.md 的全文，并告诉我 文档里『维护日期：』后面的日期。\n3) 在最终答复里同时给出：(a) 第 2 步要的那处原文（逐字照抄）；(b) 第 1 步的 R 的数值。"
+    },
+    {
+      "id": "p2ab_ctl_krdate",
+      "name": "对照探针·已知红维护日期（定点取行）",
+      "samples": 5,
+      "max_iterations": 20,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "2026-10-13"
+        ],
+        "gold_from_tool_output": {
+          "tool": "execute_command",
+          "match": "after_marker:RVAL="
+        },
+        "rule": "P2AB",
+        "expect": "文档里『维护日期：』后面的日期",
+        "category": "对照"
+      },
+      "prompt": "任务分三步，请按顺序完成：\n1) 用 execute_command 运行这一条，并记住输出里的 RVAL 数值（记作 R）：\n   python3 -c \"import random;print('RVAL='+str(random.random()))\"\n2) 用 execute_command 取 docs/known-reds-20260909.md 里 文档里『维护日期：』后面的日期 那一处原文（用 grep -n 定位后 sed 取该行即可）。\n3) 在最终答复里同时给出：(a) 第 2 步要的那处原文（逐字照抄）；(b) 第 1 步的 R 的数值。"
+    },
+    {
+      "id": "p2ab_ctl_d1",
+      "name": "对照探针·计划文档 D-1（定点取行）",
+      "samples": 5,
+      "max_iterations": 20,
+      "verdict": "answer_contains",
+      "params": {
+        "must_contain": [
+          "Terminal-Bench 子集先做"
+        ],
+        "gold_from_tool_output": {
+          "tool": "execute_command",
+          "match": "after_marker:RVAL="
+        },
+        "rule": "P2AB",
+        "expect": "§12 决策表里 D-1 那一行的『结论』取值",
+        "category": "对照"
+      },
+      "prompt": "任务分三步，请按顺序完成：\n1) 用 execute_command 运行这一条，并记住输出里的 RVAL 数值（记作 R）：\n   python3 -c \"import random;print('RVAL='+str(random.random()))\"\n2) 用 execute_command 取 docs/EVAL-PLAN-LFL-20261023.md 里 §12 决策表里 D-1 那一行的『结论』取值 那一处原文（用 grep -n 定位后 sed 取该行即可）。\n3) 在最终答复里同时给出：(a) 第 2 步要的那处原文（逐字照抄）；(b) 第 1 步的 R 的数值。"
+    }
+  ]
+}

@@ -1270,22 +1270,25 @@ def _write_raw_card(
 def test_idf_rare_discriminative_term_outranks_common_noise(tmp_path):
     """2026-10-22 retrieval-idf：只隔离 idf 这一个变量。
 
-    所有卡都只命中 1 个 query 词项（coverage 相同、字段相同=body），唯一差别是词项是否稀有：
+    每张卡都命中同样的 2 个 query 词项（coverage 相同、字段相同=body），唯一差别是
     “commonterm” 出现在 6 张卡里 → idf≈1；“rareterm” 只出现在目标卡 → idf≈2.25。
     旧公式给两者同权（命中数×字段权重），只能靠 id 排序分出胜负；idf 加权后目标卡必须排第一。
+
+    2026-10-23 门槛上线后，共同的 `sharedprobe` 让噪声卡走「≥2 词准入」而不是被
+    「单个常见词」丢掉：本用例要守的是排序，不是准入。
     """
     root = tmp_path / "methods"
     for i in range(4):
-        _write_raw_card(root, f"filler-common-{i}", body="commonterm 通用说明")
-    _write_raw_card(root, "zzz-common-noise", body="commonterm 常见问答")
-    _write_raw_card(root, "aaa-rare-target", body="rareterm 判别入口")
+        _write_raw_card(root, f"filler-common-{i}", body="commonterm sharedprobe 通用说明")
+    _write_raw_card(root, "zzz-common-noise", body="commonterm sharedprobe 常见问答")
+    _write_raw_card(root, "aaa-rare-target", body="rareterm sharedprobe 判别入口")
 
     store = MethodStore(root)
-    ids = [c["id"] for c in store.list("commonterm rareterm", 10)]
+    ids = [c["id"] for c in store.list("commonterm rareterm sharedprobe", 10)]
     assert ids[0] == "aaa-rare-target"
     # 噪声卡仍被返回（是排序被纠正，不是被过滤）。
     assert "zzz-common-noise" in ids
-    assert [c["id"] for c in store.list("commonterm rareterm", 10)] == ids
+    assert [c["id"] for c in store.list("commonterm rareterm sharedprobe", 10)] == ids
 
 
 def test_invalidated_leaves_discovery_but_exact_ref_and_inventory_keep_it(tmp_path):

@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_16_bf3c0347",
+  "rule": "RULE-AI-16",
+  "verdict": "cache_not_authority",
+  "expect": "须否定直接断言",
+  "samples": 6
+}

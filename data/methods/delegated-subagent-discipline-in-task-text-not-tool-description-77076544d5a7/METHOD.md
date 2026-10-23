@@ -2,12 +2,13 @@
 method_id: delegated-subagent-discipline-in-task-text-not-tool-description-77076544d5a7
 name: delegated-subagent-discipline-in-task-text-not-tool-description
 description: 当必须由被委派子代理自主触发的行为纪律（如先查方法库、先写验证动作）只写在工具描述/系统提示里且实测零触发时，不要改写工具描述或加系统规则，而是把纪律压成一行追加到委派任务文本的最后一行（模板级统一追加、父任务已含等价标记则去重），并用单变量对照验证。依据本集可观测对比：同一句纪律在工具描述中可见但 0/17 触发；放任务末行后 3/3 首调触发，有适用卡时行为+成本双改善（-43%），无适用卡时固定开销约 +1 调用/+10-16k tokens。可见≠执行：子代理首动作由任务末行近因锚定，不由工具描述锚定。
+aliases: 子代理从不主动查方法库, 写在工具描述里 0 次触发, 塞到委派任务最后一行才动, spawn 子代理末行锚定, 说了要查就是不查
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:0f0a5645-b407-4183-bd45-9c5d82003d93:106:9b3a6f7384b54e590918
 evidence_refs: learning:learn:c5247962e6e1
 created_at: 2026-10-10T01:23:59.984309+08:00
-updated_at: 2026-10-10T01:23:59.984309+08:00
+updated_at: 2026-10-23T05:53:10.553820+08:00
 ---
 ## Trigger
 委派/spawn 的子代理任务流中，某个要求自主发起的行为（如方法论检索、预写验证）在多个 run 中持续不触发（如 0/17），而含该纪律句的工具描述对子代理可见——即『描述可见但行为缺失』的实测事实。

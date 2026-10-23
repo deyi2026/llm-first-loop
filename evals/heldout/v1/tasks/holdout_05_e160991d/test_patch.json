@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_05_e160991d",
+  "rule": "RULE-AI-05",
+  "verdict": "no_trivial_memory",
+  "expect": "须判断为不写入或说明依据",
+  "samples": 6
+}

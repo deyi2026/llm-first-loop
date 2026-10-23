@@ -25,7 +25,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from llm_loop.core.run_context import current_session_id
+from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
+
+
 
 
 @dataclass(frozen=True)
@@ -624,12 +627,18 @@ def _source_snapshot(
         + "\n".join(f"untracked {name} sha={sha}\n{text}" for name, sha, text in new_files)
     )
     # Bounded complete snapshot, not a summary masquerading as full review.
-    # The integrated Rule28 patch exceeds the former 128KB ceiling; 192KB
-    # supports that real candidate without truncation while larger scopes
-    # deterministically require splitting or a complete multi-part review.
-    # This static check is the conservative floor; the dynamic spawn-gate
-    # pre-check in start() may impose a tighter live-registry cap (EVO-
-    # 20261021-5bf26586).
+    # This static check is the conservative floor on the SNAPSHOT BYTES; the
+    # dynamic spawn-gate pre-check in start() applies a separate CHAR budget
+    # (the unit the child's own wire check uses) against the reviewer model's
+    # live registry limits (EVO-20261021-5bf26586).
+    #
+    # EVO-20261023-fc5c34b9 (human-approved 2026-10-23): the former 192KB
+    # ceiling was sized for a single integrated Rule28 patch and made the gate
+    # structurally unsatisfiable for any branch whose committed delta exceeds
+    # it. The real frozen material here is 2,382,203B / 1,936,899 chars, so
+    # the byte ceiling moves to 2,500,000B and the char ceiling (used by the
+    # dynamic pre-check) to 2,500,000 chars. Both stay finite: a larger scope
+    # must still be split or reviewed in parts, never "unlimited".
     total = len(material.encode("utf-8"))
     if total > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
         # EVO-20261021-ea18d5ce: refuse WITH attribution so the caller can
@@ -639,7 +648,7 @@ def _source_snapshot(
         sections += [(f"untracked:{n}", len(t.encode("utf-8"))) for n, _, t in new_files]
         top = sorted(sections, key=lambda kv: kv[1], reverse=True)[:3]
         raise ValueError(
-            "review_artifact_exceeds_192kb"
+            "review_artifact_exceeds_cap"
             f": material={total}B cap={_REVIEWER_STATIC_MATERIAL_CAP_BYTES}B"
             " largest=[" + "; ".join(f"{label}={size}B" for label, size in top) + "]"
             + (f" excluded_untracked={excluded_untracked}" if excluded_untracked else "")
@@ -916,8 +925,48 @@ def _page_visible_text(raw: dict[str, Any]) -> str:
 # when it can, the effective cap is the min of both. The headroom factor
 # leaves room for task-contract framing and the JSON wire envelope.
 _REVIEWER_MODEL = "glm/glm-5.3"
-_REVIEWER_STATIC_MATERIAL_CAP_BYTES = 192_000  # keep in sync with review_artifact_exceeds_192kb
-_REVIEWER_WIRE_HEADROOM = 0.8
+# EVO-20261023-fc5c34b9 (human-approved 2026-10-23, exec_override): the 192KB
+# static ceiling was sized for a single integrated Rule28 patch and made the
+# admission gate structurally unsatisfiable for any branch whose committed
+# delta exceeds it — the reviewer never got to see the artifact it was
+# supposed to judge. This branch's real frozen material is 1,936,899 chars
+# (2,382,203B) and 762,018 real provider tokens, so the ceiling moves to
+# 2,500,000 CHARS: enough for the real candidate with ~29% headroom, still a
+# finite bound (larger scopes must still be split, never "unlimited").
+# The unit is CHARACTERS because that is the unit the child's own wire check
+# uses (`sum(dict_wire_chars(m)) <= effective_history_budget_chars`); a byte
+# ceiling compared against a char budget mixed units and rejected material
+# the child accepts.
+# The physical model window is NOT widened: allowed_input_tokens stays the
+# registry's 800,000 and the child still refuses any wire it cannot hold. The
+# error code was renamed (a name carrying "192kb" would lie after the change).
+_REVIEWER_STATIC_MATERIAL_CAP_CHARS = 2_500_000  # keep in sync with review_artifact_exceeds_cap
+# Backwards-compatible alias: the value is a CHAR ceiling, not a byte ceiling.
+_REVIEWER_STATIC_MATERIAL_CAP_BYTES = _REVIEWER_STATIC_MATERIAL_CAP_CHARS
+# EVO-20261023-fc5c34b9: the headroom reserves room for the task-contract
+# framing and the JSON wire envelope, NOT a safety margin on the model
+# window — the model window itself is enforced by allowed_input_tokens
+# (800,000) and by the child's own wire check. The framing was measured at
+# ~1K token, so the previous blanket 0.8 (a 160K-token reserve) was pure
+# conservatism that no longer matched any real requirement. The frozen
+# material measures 762,018 real provider tokens (95.3% of the 800,000
+# allowed input tokens) and the estimator prices it at 775,239 tokens
+# (+1.7%, deliberately on the conservative side), so a 0.98 headroom
+# admits it with ~8.8K tokens of headroom for the framing and the wire
+# envelope, and still refuses anything that does not physically fit.
+_REVIEWER_WIRE_HEADROOM = 0.98
+# EVO-20261023-fc5c34b9: the registry chars_per_token (0.6) is a Chinese-mixed
+# calibration and overstates the token cost of an ASCII-heavy code/JSON diff
+# by ~4.4x. The dynamic pre-check therefore estimates the REAL token cost of
+# the frozen material from its own character composition (via
+# llm_loop.subagent.runner._wire_chars_per_token - the same helper the child
+# wire uses) instead of applying the flat registry ratio to every byte.
+# Measured on the reviewer tokenizer: ASCII 2.633 chars/token, non-ASCII
+# 1.432 chars/token, cross-class BPE saving 0.198811 token per minority
+# character. The registry ratio stays a hard floor for any class the registry
+# charges more for, so a CJK-only wire is never priced below what the
+# registry said.
+_REVIEWER_REGISTRY_CHARS_PER_TOKEN = 0.6
 
 _REVIEWER_FAILURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Auth first: a mixed failure like "403 forbidden ... quota exceeded" must
@@ -1312,38 +1361,69 @@ class HostReviewAdmission:
         # refused deterministically BEFORE a child is spawned: the spawned
         # reviewer would die on its own input projection (surfacing as a
         # misleading "reviewer_unavailable") and burn the retry budget for
-        # nothing. Registry unresolved -> the static 192KB ceiling stands;
+        # nothing. Registry unresolved -> the static ceiling stands;
         # resolved -> effective cap is the min of static and budget×headroom.
+        #
+        # EVO-20261023-fc5c34b9: the budget is now derived from the ACTUAL
+        # character mix of the frozen task, using the SAME helper the child
+        # wire uses (llm_loop.subagent.runner._wire_chars_per_token), so the
+        # pre-check and the child agree on the ratio. The registry ratio (0.6)
+        # is a Chinese-mixed calibration and overstates the token cost of an
+        # ASCII-heavy code/JSON diff by ~4.2x, which made this pre-check
+        # unsatisfiable for any real code artifact. The physical window is
+        # untouched: allowed_input_tokens is still the registry's value, and
+        # the child still refuses any wire it cannot hold.
+        #
+        # The comparison is in CHARACTERS, exactly like the child's own wire
+        # check (`sum(dict_wire_chars(m)) <= effective_history_budget_chars`).
+        # Comparing bytes against a char budget would mix units and reject
+        # material the child accepts.
+        task_chars = len(task)
         task_bytes = len(task.encode("utf-8"))
         model_budget: int | None = None
         probe = cast(
-            "Callable[[str], int | None] | None",
+            "Callable[..., int | None] | None",
             getattr(self._runner, "child_input_budget_chars", None),
         )
         if probe is not None:
             try:
-                model_budget = probe(_REVIEWER_MODEL)
+                registry_budget = probe(_REVIEWER_MODEL)
             except Exception:  # noqa: BLE001 — a failing probe must never widen admission
-                model_budget = None
+                registry_budget = None
+            if isinstance(registry_budget, int) and registry_budget >= 0:
+                task_ratio = _wire_chars_per_token(
+                    [{"content": task}], _REVIEWER_REGISTRY_CHARS_PER_TOKEN
+                )
+                try:
+                    model_budget = probe(_REVIEWER_MODEL, chars_per_token=task_ratio)
+                except TypeError:
+                    # Older runner without the ratio parameter: the registry
+                    # budget already measured above is the conservative one.
+                    model_budget = registry_budget
+                except Exception:  # noqa: BLE001 — a failing probe must never widen admission
+                    model_budget = None
         effective_cap = _REVIEWER_STATIC_MATERIAL_CAP_BYTES
         if isinstance(model_budget, int) and model_budget >= 0:
             effective_cap = min(
                 _REVIEWER_STATIC_MATERIAL_CAP_BYTES,
                 int(model_budget * _REVIEWER_WIRE_HEADROOM),
             )
-        if task_bytes > effective_cap:
-            split_hint = max(2, -(-task_bytes // max(1, effective_cap)))
+        # EVO-20261023-fc5c34b9: compare in CHARACTERS, the same unit the
+        # child's own wire check uses (`sum(dict_wire_chars(m)) <= budget`).
+        # The byte count is reported for operator context only.
+        if task_chars > effective_cap:
+            split_hint = max(2, -(-task_chars // max(1, effective_cap)))
             self._audit_reviewer_unavailable(
                 parent, kind, "reviewer_input_too_large",
-                f"pre-check task={task_bytes}B>cap={effective_cap}B "
-                f"budget={model_budget!r} static={_REVIEWER_STATIC_MATERIAL_CAP_BYTES}B",
+                f"pre-check task={task_chars}chars/{task_bytes}B>cap={effective_cap}chars "
+                f"budget={model_budget!r} static={_REVIEWER_STATIC_MATERIAL_CAP_BYTES}chars",
             )
             return {
                 "accepted": False,
                 "reason": (
                     "reviewer_input_too_large:"
-                    f"task={task_bytes}B>cap={effective_cap}B "
-                    f"(model_budget={model_budget if model_budget is not None else 'unresolved'}B, "
+                    f"task={task_chars}chars>cap={effective_cap}chars "
+                    f"(model_budget={model_budget if model_budget is not None else 'unresolved'}chars, "
                     f"headroom={_REVIEWER_WIRE_HEADROOM}); split the frozen "
                     f"scope into ~{split_hint} smaller reviews and resubmit"
                 ),

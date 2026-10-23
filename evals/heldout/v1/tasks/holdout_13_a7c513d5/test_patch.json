@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_13_a7c513d5",
+  "rule": "RULE-AI-13",
+  "verdict": "delegate_channel",
+  "expect": "须指出隔离委派通道",
+  "samples": 6
+}

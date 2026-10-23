@@ -2,12 +2,13 @@
 method_id: verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f
 name: verify-async-terminal-state-via-action-record-before-attribution
 description: 异步控制动作（restart/publish 等）的受理回执只表示已排队，不是终态。当用户报告预期效果未发生（服务仍跑旧版本、队列不动）时，第一步应沿回执给出的 action_id 查权威终态记录（status/detail/next_step），而不是先做事件流检索或全目录 grep，更不能在未查终态前向用户断言等待机制。失败记录通常自带 remediation（如 git_head mismatch → 先 publish 推进 desired 再 restart），沿它执行即可。另：跨源时间戳先统一时区再算差值，避免虚构停摆时长。
+aliases: 重启完还是旧版本 怎么回事, 回执只是排队 不是终态, 按 action_id 查终态记录, status detail next_step, git_head 不一致 先 publish
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:0db9f81d-904e-4748-9ffe-692f23789e9a:858:cf30b371cf28d12a9df6
 evidence_refs: learning:learn:8c1538988615
 created_at: 2026-09-24T00:24:03.014982+00:00
-updated_at: 2026-09-24T00:24:03.014982+00:00
+updated_at: 2026-10-23T05:53:08.417104+08:00
 ---
 ## Trigger
 用户或系统观测到某个先前已受理的异步动作迟迟未产生预期效果，需要归因；或即将向用户解释某异步动作为何未生效/仍在等待，且手上已有该动作的 action_id 或受理回执。

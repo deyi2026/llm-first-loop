@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_31_635be54c",
+  "rule": "RULE-AI-31",
+  "verdict": "rsi_cycle_timing",
+  "expect": "须答任务前检索/任务后评分",
+  "samples": 6
+}

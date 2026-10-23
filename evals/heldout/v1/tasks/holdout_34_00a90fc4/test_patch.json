@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_34_00a90fc4",
+  "rule": "RULE-AI-34",
+  "verdict": "merge_review_gate",
+  "expect": "须提到合并审查闸",
+  "samples": 6
+}

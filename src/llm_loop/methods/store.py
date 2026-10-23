@@ -66,6 +66,19 @@ _FIELD_WEIGHTS: dict[str, int] = {"id": 10, "name": 8, "desc": 4, "body": 5}
 _ALIAS_WEIGHT = 3
 # 2026-10-22：description 命中 ≥2 个不同 query 词项时的佐证权重。
 _DESC_CORROBORATED_WEIGHT = 8
+# 2026-10-23 retrieval-gate (P1-1①)：一个词命中就进排序池，等于把 limit 顶满 —— 实测
+# 6 个查询里 5 个 `list(q, 200)` 返回 200 条（同一主题上千张卡时几乎全是噪声）。准入
+# 门槛：候选须满足任一才进池 —— ①命中 name（作者写的"何时用"摘要）；②命中 ≥2 个不同
+# query 词项（只看权威字段，alias 不计入 coverage）；③只命中一个词，但该词在池内
+# df ≤ _GATE_RARE_DF（罕见词本身就是判别证据）。闸门用的是同一次扫描已经算好的 df，
+# 不额外读盘、不改 idf，所以被放行的卡分数与加闸门前逐位相同，变化只在"谁进池"。
+_GATE_RARE_DF = 3
+# 门槛是降噪，不是限召回：严格池不足 limit 条时按分数回填被拦卡，保证「页长不变、只换人选」。
+_GATE_BACKFILL_MIN = 5
+# 2026-10-23 tie-break：分数与 coverage 打平时仍按 method_id 倒序（与加闸门前逐位一致）。
+# status 只作展示字段，不进排序键 —— 不同 status 的平手若被重排，调用方钉住的顺序就变了。
+_GATE_STATUS_ORDER = {"active": 0, "qualified": 1, "candidate": 2, "hold": 3}
+_ALIAS_SEPARATORS_RE = re.compile(r"[,:#\n\r\t]")
 # Used only to distribute a bounded amount of embedding work across the corpus.
 # This order does not filter discovery, choose a relevant method, or authorize use.
 _SEMANTIC_PREWARM_STATUS_ORDER = (
@@ -220,6 +233,88 @@ def _checked_freshness_refs(refs: list[str]) -> list[str]:
         if clean not in checked:
             checked.append(clean)
     return checked
+
+
+# --- alias gate -------------------------------------------------------------
+# Aliases are a retrieval hint channel only (store.list scores them below the
+# description baseline). Their value is vocabulary the card does NOT already
+# contain; a string copied from the description cannot move the score, while a
+# string shared by dozens of cards pushes unrelated cards up. So every write
+# self-checks: too-short, lifecycle-generic, duplicate, and high-document-frequency
+# aliases are dropped before they reach the frontmatter.
+_GENERIC_ALIAS_TOKENS = frozenset(
+    {"method", "candidate", "qualified", "active", "hold", "invalidated", "retired", "teacher"}
+)
+_ALIAS_MAX_PER_CARD = 6  # observed pool maximum is 5; keep one slot of headroom
+_ALIAS_MIN_CHARS = 3
+
+
+def _alias_text(value: str) -> str:
+    """Normalize like the search index does: latin/number runs and CJK runs, lowercased."""
+    return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", value.lower()))
+
+
+def alias_df_threshold(pool_size: int) -> int:
+    """Highest document frequency an alias may have and still discriminate.
+
+    Measured 2026-10-23 on a 1369-card pool with 337 existing aliases: 333 had
+    df=1 and only 3 exceeded it (df=4/11/66 — cross-card symbols such as
+    ``action_id``). A threshold of 3 blocks exactly that known noise class while
+    still letting two or three cards in a small pool share a phrasing; the cap of
+    5 keeps the gate from drifting into "blocks nothing" as the pool grows.
+    """
+    return max(2, min(5, pool_size // 400))
+
+
+def gate_aliases(
+    aliases: list[str] | None,
+    *,
+    name: str,
+    corpus: list[str],
+    pool_size: int,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Filter author-supplied aliases; return (kept, dropped-with-reason).
+
+    Order of checks is first-match: too_short -> generic -> duplicate ->
+    low_discrimination -> cap, so every dropped entry carries exactly one reason
+    the caller can report. Empty strings are ignored outright: they are not a
+    rejected alias, they are absent input.
+    """
+    kept: list[str] = []
+    dropped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    name_norm = _alias_text(name)
+    threshold = alias_df_threshold(pool_size)
+    for raw in aliases or []:
+        alias = str(raw).strip()
+        if not alias:
+            continue
+        norm = _alias_text(alias)
+        df = sum(1 for text in corpus if norm and norm in text)
+        if len(alias) < _ALIAS_MIN_CHARS:
+            dropped.append({"alias": alias, "reason": "too_short", "df": df})
+            continue
+        if _ALIAS_SEPARATORS_RE.search(alias):
+            # aliases are joined with ", " into a single YAML scalar, so a comma/hash/
+            # colon would either split into bogus aliases or start a comment. Reject at
+            # the gate: the write path must stay an injection-free round trip.
+            dropped.append({"alias": alias, "reason": "unsafe_chars", "df": df})
+            continue
+        if norm in _GENERIC_ALIAS_TOKENS:
+            dropped.append({"alias": alias, "reason": "generic", "df": df})
+            continue
+        if not norm or norm == name_norm or norm in seen:
+            dropped.append({"alias": alias, "reason": "duplicate", "df": df})
+            continue
+        if df > threshold:
+            dropped.append({"alias": alias, "reason": "low_discrimination", "df": df})
+            continue
+        if len(kept) >= _ALIAS_MAX_PER_CARD:
+            dropped.append({"alias": alias, "reason": "cap", "df": df})
+            continue
+        seen.add(norm)
+        kept.append(alias)
+    return kept, dropped
 
 
 def _now() -> str:
@@ -615,6 +710,36 @@ class MethodStore:
     def _normalized_search_text(value: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", value.lower()))
 
+    def _admission_block(
+        self,
+        record: MethodRecord,
+        term_hits: list[tuple[str, int]],
+        lexical_terms: list[tuple[str, int]],
+        identifier_bonus: int,
+        df: dict[str, int],
+    ) -> str:
+        """P1-1① gate: "" when the candidate may be ranked, else the drop reason.
+
+        Alias hits are hints, not coverage evidence, so a card reached only through an
+        alias keeps working (the author declared the term) but a card whose single
+        common-term hit is alias-backed cannot claim authoritative coverage.
+        """
+        if identifier_bonus > 0:
+            # A stable-id fragment is identity evidence, not a topic term.
+            return ""
+        matched = list(dict.fromkeys(term for term, _ in term_hits))
+        if not matched:
+            # alias-only: keep the declared hint channel, never counted as coverage.
+            return "" if lexical_terms else "no_evidence"
+        if len(matched) >= 2:
+            return ""  # (2) two distinct query terms corroborate each other
+        term = matched[0]
+        if term in self._normalized_search_text(record.name):
+            return ""  # (1) name is the author-written "when to use" summary
+        if df.get(term, 0) <= _GATE_RARE_DF:
+            return ""  # (3) a rare term is itself discriminative evidence
+        return "common_single_term"
+
     def _freshness_snapshot(self, record: MethodRecord) -> dict[str, str]:
         if not record.freshness_refs or self._workspace_root is None:
             return {}
@@ -745,15 +870,23 @@ class MethodStore:
         last = self._last_signal_ts(record)
         card["last_signal_age_days"] = _age_days(last)
 
-    def list(self, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    def list(
+        self, query: str = "", limit: int = 20, *, stats: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Discovery view over discoverable cards (2026-10-22 retrieval-idf rules).
 
         Lifecycle: ``retired`` and ``invalidated`` are known-dead knowledge and never
         enter discovery; an exact ``method:<id>`` ref still hydrates any status via
         get(), and inventory() keeps every status visible for the admin view.
+        Admission (2026-10-23 gate): a candidate enters the ranking pool only on a name
+        hit, or >=2 distinct authoritative query terms, or one term whose in-pool df is
+        rare (_GATE_RARE_DF). Alias-only hits keep their declared channel but never
+        count as coverage. ``stats`` is a pure observation sink (pool_before/admitted/
+        dropped_by_gate/dropped_terms); leaving it None changes no behaviour.
         Ranking: idf-weighted lexical field scores (rare discriminative terms outweigh
         high-frequency filler bigrams such as 怎么/一个) + identifier_bonus + coverage,
-        ties broken deterministically by method_id.
+        ties broken by status quality (active > qualified > candidate > hold) then by
+        ascending method_id.
         """
         query = query.strip()
         if query.lower().startswith("method:"):
@@ -847,8 +980,41 @@ class MethodStore:
             # (read back with .get(term, 0) below) — idf itself is untouched.
             for term in dict.fromkeys(hit_term for hit_term, _ in term_hits):
                 df[term] = df.get(term, 0) + 1
-        ranked: list[tuple[float, float, MethodRecord]] = []
-        for record, term_hits, lexical_terms, identifier_bonus in rows:
+        # 2026-10-23 retrieval-gate (P1-1①): the scan above already produced df, so the
+        # gate costs no extra I/O and cannot move idf. Only pool membership changes.
+        pool_before = len(rows)
+        dropped_terms: dict[str, int] = {}
+        blocked_rows: list[
+            tuple[MethodRecord, list[tuple[str, int]], list[tuple[str, int]], int]
+        ] = []
+        admitted: list[
+            tuple[MethodRecord, list[tuple[str, int]], list[tuple[str, int]], int]
+        ] = []
+        for row in rows:
+            record, term_hits, lexical_terms, identifier_bonus = row
+            # No query terms means "browse the inventory", not "answer a question": an
+            # empty/whitespace query must keep returning every discoverable card (the
+            # gate exists to stop a *shared term* from crowding out the right card, and
+            # there is no shared term here). Skipping it also keeps `list("")` usable as
+            # the admin/seed-completeness view.
+            if not terms or not self._admission_block(
+                record, term_hits, lexical_terms, identifier_bonus, df
+            ):
+                admitted.append(row)
+                continue
+            blocked_rows.append(row)
+            # dropped_terms explains the noise per query term: attribute each discard to
+            # the authoritative terms it hit (alias-only discards fall back to lexical).
+            for term in dict.fromkeys(
+                [hit for hit, _ in term_hits] or [hit for hit, _ in lexical_terms]
+            ):
+                dropped_terms[term] = dropped_terms.get(term, 0) + 1
+        rows = admitted
+
+        def _score(
+            row: tuple[MethodRecord, list[tuple[str, int]], list[tuple[str, int]], int],
+        ) -> tuple[float, float, MethodRecord]:
+            record, term_hits, lexical_terms, identifier_bonus = row
             # idf = log((N+1)/(df+1)) + 1: ubiquitous terms trend toward 1.0 while rare
             # discriminative terms rise, so a noise card matching many shared bigrams
             # no longer ties or beats the card holding the rare term. Summation follows
@@ -862,8 +1028,53 @@ class MethodStore:
             matched = len(term_hits)
             coverage = (matched / len(terms)) if terms else 0.0
             score = round(identifier_bonus + round(lexical, 4) * 10 + int(coverage * 50), 4)
-            ranked.append((score, coverage, record))
-        ranked.sort(key=lambda item: (item[0], item[1], item[2].method_id), reverse=True)
+            return (score, coverage, record)
+
+        def _order(
+            items: list[tuple[float, float, MethodRecord]],
+        ) -> list[tuple[float, float, MethodRecord]]:
+            # Tie-break: score then coverage, both descending, then method_id descending
+            # via the stable pre-sort. status is deliberately NOT a key: the gate already
+            # changed which cards enter the page, and re-ordering equal-score ties by
+            # status would also rewrite the order callers had pinned (id descending).
+            # Two stable passes express "id descending" inside one ascending-key sort.
+            items.sort(key=lambda item: item[2].method_id, reverse=True)
+            items.sort(key=lambda item: (-item[0], -item[1]))
+            return items
+
+        ranked = _order([_score(row) for row in rows])
+        # Backfill (2026-10-23, revised after review): the gate is a page-filler filter,
+        # never a page-shortener. It may change *which* cards occupy the page, never how
+        # many: a caller that asked for 20 and had 2 cards clear the gate still gets 20,
+        # because the semantic leg calls with limit=max(limit*4,20) and a shrunken page
+        # would silently rewrite the RRF fusion downstream. So `need` is the caller's
+        # limit, not a fixed floor: blocked cards re-enter only to fill the page, and on
+        # a narrow query the returned set is byte-identical to pre-gate behaviour.
+        need = max(0, limit)
+        strict_total = len(ranked)
+        backfilled = 0
+        if strict_total < need and blocked_rows:
+            extras = _order([_score(row) for row in blocked_rows])[: need - strict_total]
+            ranked = _order(ranked + list(extras))
+            backfilled = len(extras)
+
+        if stats is not None:
+            stats.update(
+                {
+                    "pool_before": pool_before,
+                    # admitted/dropped describe the *gate*; returned describes the page.
+                    # Keeping them separate lets a reader tell "the gate rejected it" from
+                    # "the page backfilled it", which is the number needed to tune the
+                    # threshold later.
+                    "admitted": strict_total,
+                    "dropped_by_gate": pool_before - strict_total,
+                    "backfilled": backfilled,
+                    "returned": min(len(ranked), max(0, limit)),
+                    "dropped_terms": dict(
+                        sorted(dropped_terms.items(), key=lambda kv: (-kv[1], kv[0]))
+                    ),
+                }
+            )
         result: list[dict[str, Any]] = []
         for _, _, record in ranked[:max(0, limit)]:
             card = record.card()
@@ -1659,6 +1870,34 @@ class MethodStore:
             raise RuntimeError("method lifecycle update did not round-trip")
         return updated
 
+    def _alias_corpus(self) -> tuple[list[str], int]:
+        """Normalized text of every discoverable card, for the alias df check.
+
+        Deliberately uncached: one save scans the pool once (~25ms at 1369 cards),
+        which is cheaper than keeping an index consistent with concurrent writes.
+        Retired cards are skipped so their ids/aliases cannot inflate df.
+        """
+        texts: list[str] = []
+        for path in self._iter_paths():
+            record = self._load_path(path)
+            if record is None or record.status == "retired":
+                continue
+            texts.append(
+                self._normalized_search_text(
+                    " ".join(
+                        (
+                            record.method_id,
+                            record.method_ref,
+                            record.name,
+                            record.description,
+                            record.body,
+                            " ".join(record.aliases),
+                        )
+                    )
+                )
+            )
+        return texts, len(texts)
+
     def save_candidate(
         self,
         *,
@@ -1671,8 +1910,16 @@ class MethodStore:
         evidence_refs: list[str] | None = None,
         parent_ref: str = "",
         freshness_refs: list[str] | None = None,
+        aliases: list[str] | None = None,
+        alias_drops: list[dict[str, Any]] | None = None,
     ) -> MethodRecord:
-        """Write-once candidate publication; derived hooks run only on certain commits."""
+        """Write-once candidate publication; derived hooks run only on certain commits.
+
+        ``aliases`` are retrieval hints, not card content: they are gated here and
+        never rewrite an existing card (write-once). ``alias_drops`` is an optional
+        out-parameter the caller may pass to report why a supplied alias was not
+        persisted; it is filled only when a new card is actually written.
+        """
         self._require_write_safe()
         with _store_lock(self._dir):
             record, created = self._save_candidate_locked(
@@ -1680,6 +1927,7 @@ class MethodStore:
                 source_model=source_model, teacher_refs=teacher_refs,
                 source_episode_refs=source_episode_refs, evidence_refs=evidence_refs,
                 parent_ref=parent_ref, freshness_refs=freshness_refs,
+                aliases=aliases, alias_drops=alias_drops,
             )
         if created:
             self._notify_post_save(record)
@@ -1697,8 +1945,14 @@ class MethodStore:
         evidence_refs: list[str] | None = None,
         parent_ref: str = "",
         freshness_refs: list[str] | None = None,
+        aliases: list[str] | None = None,
+        alias_drops: list[dict[str, Any]] | None = None,
     ) -> tuple[MethodRecord, bool]:
-        """Persist semantic content supplied by the model; never overwrite or auto-promote."""
+        """Persist semantic content supplied by the model; never overwrite or auto-promote.
+
+        Aliases are gated mechanically before the write (see ``gate_aliases``); the
+        card body and every other frontmatter key stay exactly as supplied.
+        """
         # Shape is model-owned: procedure/index/reminder cards all pass. The boundary
         # only refuses a body with no readable content (blank or headings-only).
         if _card_content_missing(body):
@@ -1728,6 +1982,17 @@ class MethodStore:
                     f"source_episode_refs entries must be real episode refs (episode:...), got: {clean}"
                 )
             checked_episode_refs.append(clean)
+        # Gate aliases before the write so a noisy hint never becomes durable state.
+        # The scan is skipped entirely when no aliases were supplied, which keeps the
+        # alias-free write path byte-identical to before this feature existed.
+        kept_aliases: list[str] = []
+        if aliases:
+            corpus_texts, pool_size = self._alias_corpus()
+            kept_aliases, dropped_aliases = gate_aliases(
+                aliases, name=name, corpus=corpus_texts, pool_size=pool_size
+            )
+            if alias_drops is not None:
+                alias_drops.extend(dropped_aliases)
         base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:72] or "candidate"
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
         method_id = self._safe_id(f"{base}-{digest}")
@@ -1745,6 +2010,7 @@ class MethodStore:
             clean = v.replace("\n", " ").strip()
             return f"{k}: {clean}\n" if clean else ""
         front = "---\n" + line("method_id", method_id) + line("name", name) + line("description", description)
+        front += line("aliases", ", ".join(kept_aliases))
         front += "status: candidate\n" + line("source_model", source_model) + line("teacher_refs", ",".join(checked_teachers))
         front += line("source_episode_refs", ",".join(checked_episode_refs)) + line("evidence_refs", ",".join(evidence_refs or []))
         front += line("freshness_refs", ",".join(checked_freshness_refs))
@@ -1820,6 +2086,117 @@ class MethodStore:
             # annotation itself succeeded; the journal is best-effort provenance
             pass
         return record
+
+    def annotate_aliases(
+        self,
+        method_ref: str,
+        aliases: list[str],
+        *,
+        mode: str = "merge",
+    ) -> tuple[MethodRecord, list[dict[str, Any]]]:
+        """Add/replace the retrieval-hint aliases of an existing card.
+
+        ``save_candidate`` is idempotent by design and never rewrites, so cards
+        created before aliases existed had no in-band way to gain them; the only
+        alternative was hand-editing frontmatter (bypassing the gate). This is the
+        same one-key read-modify-write as ``annotate_freshness``: body and every
+        other field stay byte-identical, ``mode="merge"`` appends to the aliases
+        already on the card, ``mode="replace"`` overwrites, and the same
+        mechanical gate (length / generic / duplicate / df / cap) runs on whatever
+        would be persisted. Returns ``(record, dropped)``; a no-op returns the
+        record without touching the file.
+        """
+        if mode not in {"merge", "replace"}:
+            raise ValueError(f"mode must be merge|replace, got {mode!r}")
+        self._require_write_safe()
+        with _store_lock(self._dir):
+            return self._annotate_aliases_locked(method_ref, aliases, mode)
+
+    def _annotate_aliases_locked(
+        self, method_ref: str, aliases: list[str], mode: str
+    ) -> tuple[MethodRecord, list[dict[str, Any]]]:
+        method_id = method_ref.removeprefix("method:").strip().lower()
+        if not _SAFE_ID_RE.fullmatch(method_id):
+            raise ValueError(f"invalid method ref: {method_ref}")
+        path = self._dir / method_id / "METHOD.md"
+        if not path.is_file():
+            raise ValueError(f"method not found in runtime store: {method_ref}")
+        raw = path.read_text(encoding="utf-8")
+        match = _FRONTMATTER_RE.match(raw)
+        if match is None:
+            raise ValueError("card has no parseable frontmatter")
+        front = match.group(1)
+        body = raw[match.end():]
+        existing = self._load_path(path)
+        if existing is None:
+            raise ValueError("card is unreadable")
+        old_aliases = list(existing.aliases)
+        requested = list(aliases if mode == "replace" else [*old_aliases, *aliases])
+        corpus_texts, pool_size = self._alias_corpus()
+        kept, dropped = gate_aliases(
+            requested, name=existing.name, corpus=corpus_texts, pool_size=pool_size
+        )
+        if kept == old_aliases:
+            # Nothing survived the gate (or nothing changed): do not churn mtime,
+            # updated_at, or key order for a write that would be a no-op.
+            return existing, dropped
+        now = _now()
+        old_match = re.search(r"^aliases:.*$", front, re.MULTILINE)
+        if not kept and old_aliases:
+            # Review P1 (2nd round): mode="replace" with everything dropped would write
+            # `aliases: ` — an empty scalar that round-trips cleanly and therefore passes
+            # the check below, silently wiping aliases the caller never asked to delete.
+            # Refuse instead: pruning to zero is a decision the caller must make explicitly.
+            raise ValueError(
+                "refusing to replace aliases with an empty set while the card has "
+                f"{len(old_aliases)} alias(es); pass mode='merge' or delete explicitly"
+            )
+        old_value = old_match.group(0).split(":", 1)[1].strip() if old_match else ""
+        new_line = f"aliases: {', '.join(kept)}"
+        if old_match:
+            front = front[: old_match.start()] + new_line + front[old_match.end():]
+        else:
+            desc_match = re.search(r"^description:.*$", front, re.MULTILINE)
+            anchor = desc_match.end() if desc_match is not None else 0
+            front = front[:anchor] + "\n" + new_line + front[anchor:]
+        updated_match = re.search(r"^updated_at:.*$", front, re.MULTILINE)
+        if updated_match:
+            front = front[: updated_match.start()] + f"updated_at: {now}" + front[updated_match.end():]
+        payload = "---\n" + front + "\n---\n" + body
+        # Validate before writing (review P1-2): a composed payload that no longer parses
+        # back to the requested aliases must fail here, not after _replace_card has already
+        # replaced the card on disk — otherwise a bad join leaves a corrupt card behind and
+        # the raise happens on top of the damage.
+        reparsed, reparsed_body = _parse_frontmatter(payload)
+        if reparsed.get("aliases") != ", ".join(kept) or reparsed_body != body:
+            raise ValueError(
+                f"alias annotation would not round-trip (aliases={reparsed.get('aliases')!r}, "
+                f"kept={kept!r}); refusing to write"
+            )
+        self._replace_card(path, payload, operation="annotate_aliases")
+        record = self._load_path(path)
+        if record is None:
+            raise RuntimeError("annotation did not round-trip")
+        try:
+            with (self._dir / "annotations.jsonl").open("a", encoding="utf-8") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": now,
+                            "event": "annotate_aliases",
+                            "method_ref": method_id,
+                            "mode": mode,
+                            "old": old_value,
+                            "new": kept,
+                            "dropped": dropped,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        except OSError:
+            pass
+        return record, dropped
 
     def find_by_evidence(self, evidence_ref: str) -> str | None:
         """Return ``method_ref`` whose ``evidence_refs`` contains ``evidence_ref``.

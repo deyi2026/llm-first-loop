@@ -2,12 +2,13 @@
 method_id: literal-grep-and-source-scope-before-disputing-numbers-0595645fda7f
 name: literal-grep-and-source-scope-before-disputing-numbers
 description: 核查二手来源（媒体转述、摘要）引用的具体数字是否与一手论文/文档一致时：先在一手全文对精确字面量做本地 grep；命中即读上下文整句取一手自述口径；只有字面量全文不存在、且按一手自述口径复算仍不符时才发起质疑。数字类质疑的假阳性多数来自两点：没先 grep 原文原句就复算，或复算时自选了列子集/口径（漏列、把 pp 当 %）。长文档应一次性取全文落地再本地检索，替代分页 partial hydrate。
+aliases: 媒体转述的数字对不上, 先在原文搜那个确切字面, 复算别自己挑列子集, 百分点当成百分比, literal grep 再质疑
 status: candidate
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:6198b7b1-67ec-407c-8e94-f9f028f1f197:316:cc65d9ad68eb32f6a821
 evidence_refs: learning:learn:6e7d5f588fa0
 created_at: 2026-10-13T22:00:49.976130+08:00
-updated_at: 2026-10-13T22:00:49.976130+08:00
+updated_at: 2026-10-23T05:53:15.416484+08:00
 ---
 ## Trigger
 需要对二手来源转述的精确数字（百分比、区间、对比值）做一手源核对，且已存在或将形成质疑点（数字对不上、口径存疑、疑似隐去信息）时；典型场景是媒体文章 vs 论文 PDF/HTML 的逐数事实核查

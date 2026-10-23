@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_33_660a4424",
+  "rule": "RULE-AI-33",
+  "verdict": "generation_conflict_is_fact",
+  "expect": "须以回执为事实重试/不等待",
+  "samples": 6
+}

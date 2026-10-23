@@ -3,6 +3,7 @@ name: method-self-distill
 method_id: method-self-distill
 description: 在一个 Agent/工具任务已经完成或明确失败后，如果出现长路径、反复试错、多个失败工具、明显绕路、用户纠正后才成功或希望把本次教训转成下次更短行动路径时使用。基于可观察的任务、工具动作、Evidence/结果和用户反馈进行独立 Method 蒸馏；重点学习“如何从轨迹抽出判别方法”，不保存或复述原始思维链，不把候选自动升级成规则或强制工作流。
 status: active
+aliases: 下次少走弯路, 这次绕远了, 把经验存下来, 复盘沉淀
 ---
 # Method Self-Distillation
 

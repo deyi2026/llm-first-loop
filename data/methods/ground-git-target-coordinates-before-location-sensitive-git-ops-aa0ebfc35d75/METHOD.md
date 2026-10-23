@@ -2,12 +2,13 @@
 method_id: ground-git-target-coordinates-before-location-sensitive-git-ops-aa0ebfc35d75
 name: ground-git-target-coordinates-before-location-sensitive-git-ops
 description: 在多分支/多 remote/多 worktree 仓库中，默认名只是未验证假设：读待改文件前假设当前 checkout 即目标分支、建 worktree 时假设系统 tmp 可用、push 时假设 origin 是权威 remote。首个 `git status --short --branch` 回执其实已同时给出三个坐标：当前分支与 upstream remote 名、既有 worktree 约定目录、checkout 是否为目标 baseline。先解析这些命名事实再选目标，可避免错 baseline 读取、scope 外 worktree 返工、误推 legacy remote 三类绕路；push 回执混杂时不推断，用 ls-remote 单点重验。
+aliases: push 到错 remote 了, 建 worktree 建到项目外, 读错 baseline 的文件, status --branch 先看三坐标, 混杂回执用 ls-remote 重验, 不知道当前在哪个分支
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:855926d8-3b7a-4a6d-9c5e-34631b59df2b:777:f5b0aebaf75976f643fa
 evidence_refs: learning:learn:47ccb29f49c7
 created_at: 2026-09-19T11:02:09.325066+00:00
-updated_at: 2026-09-19T11:02:09.325066+00:00
+updated_at: 2026-10-23T05:52:04.258772+08:00
 ---
 ## Trigger
 多分支/多 remote/多 worktree 仓库中，即将执行位置敏感 git 操作（读取待修改文件、新建 worktree、push 到某 remote），或收到混杂 push 回执（传输错误 + up-to-date + exit 0）时

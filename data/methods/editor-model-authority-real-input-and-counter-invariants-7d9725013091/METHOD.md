@@ -2,12 +2,13 @@
 method_id: editor-model-authority-real-input-and-counter-invariants-7d9725013091
 name: editor-model-authority-real-input-and-counter-invariants
 description: 用 CDP/语义操作向富文本编辑器（页面自带“草稿自动保存”、实时字数统计、纯图标工具栏=ProseMirror 类自定义编辑器）批量写入时，DOM 只是投影，权威状态在编辑器模型与服务端草稿。由此在写第一笔之前即可导出操作契约：所有内容走真实输入事件管线（Input.insertText/原生按键），不用原生 property setter 或直接 DOM 写；每次结构变更（粘贴/清空/插图）后立即重读编辑器自己的计数器（共 N 字、图片元素个数）作不变量，出现无法解释的 delta（字数翻倍、图片数下降）立即停止回滚。本集五处缺陷（Backspace 误并图片、粘贴退化成追加、setter 填写被草稿重载清空、setStartAfter 残留空标题、转义符上屏）全部属于违反该契约的可预防事故。
+aliases: 富文本批量填稿 字数对不上, 粘完字数翻倍 图片反而少了, 草稿自动保存 把内容清空, 走 Input.insertText 真输入, ProseMirror 计数器不变量, 字数统计跳来跳去
 status: candidate
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:9f3f9ab8-30d9-4a2d-9f58-148054503778:156:59ecb11fe79eef3d3f26
 evidence_refs: learning:learn:97c79f9596ac
 created_at: 2026-10-10T18:08:30.028014+08:00
-updated_at: 2026-10-10T18:08:30.028014+08:00
+updated_at: 2026-10-23T05:52:05.047959+08:00
 ---
 ## Trigger
 目标页面已显示“草稿将自动保存”、实时字数统计与图标式富文本工具栏，需要经 CDP/语义操作做粘贴、清空空标题、插入图片或批量填 description 等结构变更。

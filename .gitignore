@@ -142,3 +142,9 @@ outputs/lfl-article/*-embed*.html
 # Jev P1b：vendored SemIf（~1GB）与源 tarball 不入库；重物按目录精确排除
 outputs/jev-p1b-20261015/vendor/
 outputs/jev-p1b-20261015/semif.tar.gz
+
+# 2026-10-23 评测执行产物（可再生，不入库；同 evals/*/results/ 惯例）
+# - evals/results/  : 域内 v2 场景跑批输出（逐样本 checkpoint + report）
+# - runs/            : Terminal-Bench 每次 tb run 的容器会话与判定记录
+evals/results/
+runs/

@@ -3,6 +3,7 @@ name: method-root-cause
 method_id: method-root-cause
 description: 面对回归、性能骤降、缓存异常、协议错误、行为变化或“最近改了什么导致问题”这类根因分析任务时使用。要求先冻结真实 baseline、建立可证伪假设、用单变量实验区分数据/协议/runtime/模型/验证方式，再做最小修复；适用于避免看到异常就 patch 或多变量一起修改造成伪归因。根因和修复已由直接证据明确时无需加载。
 status: active
+aliases: 改完就坏, 突然变慢, 老问题又冒出来, 行为和以前不一样
 ---
 # Root Cause Analysis
 

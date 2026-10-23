@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_17_0d520264",
+  "rule": "RULE-AI-17",
+  "verdict": "lossless_output",
+  "expect": "须说明无损承接/原文转述",
+  "samples": 6
+}

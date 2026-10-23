@@ -129,7 +129,14 @@ echo "═══ [5/5] pytest 全量门禁（xdist loadfile 并行；提交门禁
 export PYTEST_XDIST_AUTO_NUM_WORKERS="${PYTEST_XDIST_AUTO_NUM_WORKERS:-4}"
 echo "xdist worker budget=${PYTEST_XDIST_AUTO_NUM_WORKERS} (full test selection unchanged)"
 GATE_OUT="$(mktemp /tmp/ci_gate_out.XXXXXX)"; GATE_SER="$(mktemp /tmp/ci_gate_ser.XXXXXX)"
-if "$PY" -m pytest --dist loadfile -n auto -q >"$GATE_OUT" 2>&1; then
+# 2026-10-23（P1 出口判据③ CI 红数对账）：产出 junitxml 供红数对账脚本消费。
+# 实测红项与登记基线 eval/rules/known_reds_current.json 对账：超出登记项 = 新红 = 阻断。
+# 2026-10-23 修（macOS 可重跑性）：`mktemp <template>.XXXXXX.xml` 在 BSD mktemp 下
+# 只会把 "XXXXXX.xml" 当字面量 → 第二次调用即 "File exists" 失败，残留文件让
+# 后续每次运行都挂（2026-10-23 14:01 实测：2 个 ci_gate 结论行测试因此变红）。
+# 改为"独立临时目录 + 固定文件名"，跨平台且可反复运行。
+GATE_TMP="$(mktemp -d /tmp/ci_gate.XXXXXX)"; GATE_XML="$GATE_TMP/report.xml"
+if "$PY" -m pytest --dist loadfile -n auto -q --junitxml="$GATE_XML" >"$GATE_OUT" 2>&1; then
   cat "$GATE_OUT"
   echo "（xdist 全量绿）"
 else
@@ -142,20 +149,35 @@ else
   fail_files="$({ grep '^FAILED ' "$GATE_OUT" || true; grep '^ERROR ' "$GATE_OUT" || true; } \
     | sed -E 's/^(FAILED|ERROR) //' | cut -d: -f1 | sort -u)"
   if [ -z "$fail_files" ]; then
-    cat "$GATE_OUT"; rm -f "$GATE_OUT" "$GATE_SER"; exit 1
+    cat "$GATE_OUT"; rm -f "$GATE_OUT" "$GATE_SER" "$GATE_XML"; exit 1
   fi
   n_files="$(echo "$fail_files" | wc -l | tr -d ' ')"
   echo "── xdist 红（${n_files} 文件）→ serial 单点复核（D-B2-09 降级流程）──"
   cat "$GATE_OUT"
-  if "$PY" -m pytest $fail_files -q >"$GATE_SER" 2>&1; then  # shellcheck disable=SC2086
+  if "$PY" -m pytest $fail_files -q --junitxml="$GATE_SER.xml" >"$GATE_SER" 2>&1; then  # shellcheck disable=SC2086
     cat "$GATE_SER"
     echo "⚠️ serial 复核绿 = xdist 分布假红（不阻断；文件清单如下，登记观察）"
     echo "$fail_files"
   else
-    cat "$GATE_SER"; rm -f "$GATE_OUT" "$GATE_SER"; exit 1
+    cat "$GATE_SER"
+    # 2026-10-23（P1 出口判据③）：真回归（serial 复现红）→ 先做红数对账。
+    #   * 红项全部已登记（存量债）→ 呈现归因后放行（本次提交未引入新红）
+    #   * 出现未登记新红 → 阻断（超出登记项）
+    # 对账用 serial 的 junitxml（xdist 下 FAILED 行含随机 worker 前缀，文本解析不可靠）。
+    echo "── CI 红数对账（known-reds 登记基线）──"
+    set +e
+    "$PY" eval/rules/red_reconciliation.py --report "$GATE_SER.xml"
+    RED_RC=$?
+    set -e
+    rm -f "$GATE_OUT" "$GATE_SER" "$GATE_XML" "$GATE_SER.xml"
+    if [ "$RED_RC" -ne 0 ]; then
+      echo "❌ 红数对账失败：存在未登记新红（阻断）"
+      exit 1
+    fi
+    echo "✅ 红项均为已登记存量红（本次提交未引入新红）"
+    exit 0
   fi
 fi
-rm -f "$GATE_OUT" "$GATE_SER"
 
 # Phase 2 接线（B2-P2-08）：守卫 WARN 汇总呈现（不阻断；FAIL 用例已在 [4/4] 全量天然覆盖）
 "$PY" -m pytest tests/unit/test_arch_guards.py -m guard_report -q

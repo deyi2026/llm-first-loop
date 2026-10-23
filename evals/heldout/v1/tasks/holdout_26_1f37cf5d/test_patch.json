@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_26_1f37cf5d",
+  "rule": "RULE-AI-26",
+  "verdict": "host_local_tz",
+  "expect": "须答宿主本地时区",
+  "samples": 6
+}

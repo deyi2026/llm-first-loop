@@ -2,12 +2,13 @@
 method_id: probe-live-end-state-before-resuming-stale-failure-bd8bc0adafd0
 name: probe-live-end-state-before-resuming-stale-failure
 description: 恢复一个『阻塞/失败』前提来自上一会话时间戳快照的任务时，不要先按旧前提准备重做材料；若目标系统（发布平台、远端服务）存在只读可观测的线上终态（已登录会话、live URL、页面清单），第一动作应是探测线上状态、先解决『是否其实已完成』。本集：19:26 记录称『知乎卡计数器』，当前时刻已 00:11，先列浏览器页面即发现第3期已发布（p/2092...0422），任务整体降级为核验，省去约 10 次本地材料定位与绕障准备。与 exit 侧的 fresh-read-before-finality-claim 卡互补：那张管『下终局断言前重读』，这张管『按旧失败记录行动前先验证前提』。
+aliases: 旧记录说卡住了其实早完成, 先开浏览器看线上发布没, 别按老快照现状准备重做, live URL 只读探测, 昨天卡住今天还卡吗, 先上网看发没发
 status: candidate
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:fb4a0414-5394-4ff0-af09-8f5511f928f7:16:07ec33f7ce1f66a9453b
 evidence_refs: learning:learn:e57901e9b1a1
 created_at: 2026-10-11T02:14:13.053654+08:00
-updated_at: 2026-10-11T02:14:13.053654+08:00
+updated_at: 2026-10-23T05:52:03.471879+08:00
 ---
 ## Trigger
 恢复 ready/blocked 任务，其『失败/阻塞』前提来自上一会话带时间戳的记录；且操作对象是外部可变系统，其线上终态可只读探测（已登录浏览器会话、live URL、列表接口）。

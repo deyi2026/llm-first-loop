@@ -2,12 +2,13 @@
 method_id: attribute-validation-run-via-structural-identity-before-reuse-e30bf0d78688
 name: attribute-validation-run-via-structural-identity-before-reuse
 description: 当存在多个测试/验证 job 回执，需要判断哪个结果可作为当前候选状态（代码树/构建物）的证据时，用调度器记录中的结构身份字段做四维匹配：tree/workspace 快照哈希、起跑时间是否晚于最后落盘时间（快照包含性）、会话/owner 归属、命令口径是否覆盖验收范围。任一维不匹配即结构性排除（单条即够，例如起跑早于落盘的绿只证明旧树）；全部匹配才可复用。聊天传闻或转贴的他 job PASS 输出属弱证据，不能推翻结构匹配的权威记录。据此在『复用在跑 job』与『自行重跑』之间裁决，避免误采他人/旧树结果与冗余重跑。
+aliases: 别人的绿灯算不算数, 绿是旧代码树跑出来的, 起跑早于落盘只证明旧树, tree snapshot hash 对不上, owner 归属不匹配
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:f8beea3a-4ad1-4248-9dd6-815807df0073:3:d36cfddf0c94d3b8b75a
 evidence_refs: learning:learn:717f2ab4536d
 created_at: 2026-10-10T14:21:37.143415+08:00
-updated_at: 2026-10-10T14:21:37.143415+08:00
+updated_at: 2026-10-23T05:53:08.623538+08:00
 ---
 ## Trigger
 已有多个异步验证/测试 job 的调度记录（含 tree 快照、起跑时间、归属、命令串），需要裁决其绿/红结果是否适用于当前候选状态，或决定是否需要自行发起验证；同时存在弱证据（聊天传闻、转贴输出）试图影响归属判断。

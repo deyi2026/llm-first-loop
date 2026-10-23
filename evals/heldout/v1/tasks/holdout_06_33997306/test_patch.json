@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_06_33997306",
+  "rule": "RULE-AI-06",
+  "verdict": "evolution_channel",
+  "expect": "须提到演进/建议通道",
+  "samples": 6
+}
