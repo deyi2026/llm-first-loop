@@ -208,18 +208,23 @@ def main() -> int:
         "",
         "## 总体",
         "",
-        "| 臂 | n | 通过 | 主口径 rate | 参考率 rate_scored | 截断率 | 压缩发生率 |",
-        "|---|---|---|---|---|---|---|",
+        "| 臂 | n | 通过 | 主口径 rate | 参考率 rate_scored | 截断率 | 压缩发生率 | tokens_in 均值 | 轮数均值 |",
+        "|---|---|---|---|---|---|---|---|---|",
         f"| A 基线（EVIDENCE_MODE=off） | {sa.get('n',0)} | {sa.get('pass',0)} | "
         f"{sa.get('rate',0):.1%} [{sa.get('rate_ci95',[0,0])[0]:.1%},{sa.get('rate_ci95',[0,0])[1]:.1%}] | "
-        f"{_fmt_pct(sa.get('rate_scored'))} | {sa.get('truncated_rate',0):.1%} | {sa.get('compaction_rate',0):.1%} |"
+        f"{_fmt_pct(sa.get('rate_scored'))} | {sa.get('truncated_rate',0):.1%} | {sa.get('compaction_rate',0):.1%} | "
+        f"{sa.get('tokens_in_avg',0):,.0f} | {sa.get('rounds_avg',0):.1f} |"
         if sa.get("n")
-        else "| A 基线 | （无样本） | — | — | — | — | — |",
+        else "| A 基线 | （无样本） | — | — | — | — | — | — | — |",
         f"| B 候选（EVIDENCE_MODE=enforce） | {sb.get('n',0)} | {sb.get('pass',0)} | "
         f"{sb.get('rate',0):.1%} [{sb.get('rate_ci95',[0,0])[0]:.1%},{sb.get('rate_ci95',[0,0])[1]:.1%}] | "
-        f"{_fmt_pct(sb.get('rate_scored'))} | {sb.get('truncated_rate',0):.1%} | {sb.get('compaction_rate',0):.1%} |"
+        f"{_fmt_pct(sb.get('rate_scored'))} | {sb.get('truncated_rate',0):.1%} | {sb.get('compaction_rate',0):.1%} | "
+        f"{sb.get('tokens_in_avg',0):,.0f} | {sb.get('rounds_avg',0):.1f} |"
         if sb.get("n")
-        else "| B 候选 | （无样本） | — | — | — | — | — |",
+        else "| B 候选 | （无样本） | — | — | — | — | — | — | — |",
+        "",
+        "> tokens_in / 轮数两列是**同预算**证据：两臂同一场景集、同一模型、同一 max_iterations，",
+        "> 差异只来自候选开关 → 轮数与 token 的变化可直接归给候选。",
         "",
         f"**Δpass@1（B−A，主口径）= {d_txt}**（Newcombe 95% CI）",
         "",

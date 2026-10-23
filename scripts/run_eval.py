@@ -549,6 +549,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="断点续跑：复用 checkpoint 中已完成的样本，只跑未完成部分",
     )
+    parser.add_argument(
+        "--only",
+        default=None,
+        help="只跑这些场景（逗号分隔的 scenario id）——用于针对性补跑",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help=(
+            "覆盖场景的 max_iterations（针对性补跑用）。"
+            "改了预算的跑批是**另一种配置**，报告里必须单列，不得并进主跑批的分母"
+        ),
+    )
     args = parser.parse_args(argv)
 
     # M63 对齐: 与 CLI/Web/飞书一致从项目 .env 加载（环境变量优先），
@@ -559,6 +573,19 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         scenarios = load_scenarios(args.scenarios)
+        if args.only:
+            keep = {s.strip() for s in str(args.only).split(",") if s.strip()}
+            known = {s.get("id") for s in scenarios["scenarios"]}
+            missing = keep - known
+            if missing:
+                raise SystemExit(f"--only 指定了不存在的场景: {sorted(missing)}")
+            scenarios = {
+                **scenarios,
+                "scenarios": [s for s in scenarios["scenarios"] if s.get("id") in keep],
+            }
+        if args.max_iterations:
+            for s in scenarios["scenarios"]:
+                s["max_iterations"] = args.max_iterations
         workdir = Path(__file__).resolve().parent.parent / "data" / "e2e"
         workdir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
