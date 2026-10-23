@@ -158,6 +158,18 @@ def test_is_truncated_answer_detects_history_checkpoints():
     assert not is_truncated_answer("")
 
 
+def test_is_truncated_answer_keeps_v4_intent_and_covers_engine_banners():
+    """v4 原意保留：题面要求解释"达到上限如何处理"时，正文出现该短语**不算**截断。
+
+    v5 补：引擎自己发的 run 结束横幅（core/loop/engine.py）与子代理横幅
+    也要被识别 —— 否则历史 checkpoint 离线重判会把截断当正常回答。
+    """
+    assert not is_truncated_answer("已达到最大循环轮数时应先归因、压缩收尾或交由扩额决定。")
+    assert not is_truncated_answer("## 结论\n已达到最大循环轮数，按规则收口。")
+    assert is_truncated_answer("（已达轮数硬边界，run 已结束；发送\"继续\"可开新 run 接续任务。）")
+    assert is_truncated_answer("（子代理已达轮数上限，结果未完整收敛——请父级基于已有工具反馈整合）")
+
+
 def test_scenario_level_max_iterations_is_passed_through(monkeypatch, tmp_path):
     """场景级 max_iterations 透传到 runner（2026-10-23 新增）。"""
     scen = _scenario()

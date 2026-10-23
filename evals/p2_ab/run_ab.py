@@ -115,12 +115,25 @@ def _tool_outputs(events: list) -> list[tuple[str, str]]:
     return out
 
 
-def _dynamic_gold(spec: dict, outputs: list[tuple[str, str]]) -> str:
-    """按 {tool, match} 从工具回执里取动态金标准。
+def _is_plain_value(token: str) -> bool:
+    """裸值不含引号/括号/反斜杠等代码字符 → 判为"真实输出值"而非命令回显片段。"""
+    return bool(token) and not any(ch in token for ch in "\"'()[]{}<>\\`")
+
+
+def _gold_candidates(spec: dict, outputs: list[tuple[str, str]]) -> list[str]:
+    """按 {tool, match} 从工具回执里取动态金标准候选（按出现顺序）。
 
     match: first_token —— 回执正文里第一个空白分隔的 token（如随机数）
            first_line  —— 回执正文第一行（去掉首尾空白）
-    取不到 → 返回空串（该样本判失败，并在记录里写明 gold=""，不静默通过）。
+           after_marker:M —— 取 marker 之后的 token
+
+    **命令回显陷阱（2026-10-23 实测定位）**：工具回执第一行会回显命令源码，
+    回显里同样含 marker（例：`print('RVAL='+str(random.random()))`）→ 若"取第一个
+    含 marker 的行"，取到的是**源码片段**而不是真实输出值（PROTOCOL R2 登记的修法
+    当时**没有真正落到代码里**，本次修掉）。
+    → 这里先剔掉"回显伪值"（含引号/括号/反斜杠的 token），只留干净值；
+      有多个干净值时取**最早**那个（探针语义 = 模型被要求记住的那一次执行），
+      并由调用方把"多值歧义"记进样本记录。
     """
     tool = spec.get("tool", "execute_command")
     match = spec.get("match", "first_token")
@@ -131,22 +144,28 @@ def _dynamic_gold(spec: dict, outputs: list[tuple[str, str]]) -> str:
         if not text:
             continue
         if match == "first_line":
-            return text.splitlines()[0].strip()
+            return [text.splitlines()[0].strip()]
         if match.startswith("after_marker:"):
             marker = match.split(":", 1)[1]
+            tails: list[str] = []
             for nm, cont in outputs:
                 if nm != tool:
                     continue
                 for line in cont.splitlines():
                     if marker in line:
-                        # 工具回执里"命令回显"与"实际输出"都含 marker → 取**最后一次**出现
-                        # 之后的 token（回显在前，输出在后）。
                         tail = line.rsplit(marker, 1)[1].strip()
                         if tail:
-                            return tail.split()[0]
-            return ""
-        return text.split()[0].strip()
-    return ""
+                            tails.append(tail.split()[0])
+            clean = [t for t in tails if _is_plain_value(t)]
+            return clean or tails
+        return [text.split()[0].strip()]
+    return []
+
+
+def _dynamic_gold(spec: dict, outputs: list[tuple[str, str]]) -> str:
+    """取动态金标准（空串 = 取不到 → 该样本判失败并记录 gold=""，不静默通过）。"""
+    cands = _gold_candidates(spec, outputs)
+    return cands[0] if cands else ""
 
 
 def main() -> int:
@@ -245,9 +264,12 @@ def main() -> int:
             outputs = _tool_outputs(events)
             params = dict(sc.get("params") or {})
             gold = ""
+            gold_ambiguous = False
             gold_spec = params.pop("gold_from_tool_output", None)
             if gold_spec:
-                gold = _dynamic_gold(gold_spec, outputs)
+                cands = _gold_candidates(gold_spec, outputs)
+                gold = cands[0] if cands else ""
+                gold_ambiguous = len(set(cands)) > 1
                 if gold:
                     params["must_contain"] = list(params.get("must_contain", [])) + [gold]
                     params.setdefault("min_hits", len(params["must_contain"]))
@@ -294,6 +316,7 @@ def main() -> int:
                 "survived_compaction": bool(archived)
                 and (n_read_evidence > 0 or n_search_archive > 0),
                 "gold": gold,
+                "gold_ambiguous": gold_ambiguous,
                 "n_tool_outputs": len(outputs),
                 "answer_len": len(sample["answer"] or ""),
                 "answer_head": (sample["answer"] or "")[:400],

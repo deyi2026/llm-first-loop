@@ -297,10 +297,12 @@ def cmd_compare(args: argparse.Namespace) -> int:
     jd = {j["item_id"]: j for j in judg}
 
     rows = []
+    missing: list[str] = []
     for it in items:
         iid = it["item_id"]
         j = jd.get(iid)
         if j is None:
+            missing.append(iid)
             continue
         s = sealed_by_id.get(iid, {})
         rows.append(
@@ -331,8 +333,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
     rate_nt = (agree_nt / n_nt) if n_nt else 0.0
     lo_nt, hi_nt = wilson_ci(agree_nt, n_nt) if n_nt else (0.0, 0.0)
 
+    if missing:
+        print(
+            f"[WARN] {len(missing)}/{len(items)} 条**没有审阅结论**（{', '.join(missing)}）"
+            f" → 已从分母剔除；一致率的分母因此小于抽检数，报告里必须写明"
+        )
     report = {
-        "n_items": len(rows),
+        "n_items": len(items),
+        "n_missing_judgment": len(missing),
+        "missing_judgment_ids": missing,
         "n_scored": n,
         "n_truncated": n_trunc,
         "n_agree": agree,

@@ -51,6 +51,40 @@ def load_scenarios(path: Path) -> dict:
 _SCENARIOS_DEFAULT = Path(__file__).resolve().parent.parent / "tests" / "eval_sets" / "scenarios_v1.json"
 
 
+_DEFAULT_MODEL_REF = "deepseek-v4-flash"
+
+
+def resolve_model_ref() -> str:
+    """本次评测**实际使用**的模型标识（provider/model），全脚本唯一真源。
+
+    2026-10-23 修正（v5.1，独立审查 P1-2）：此前"引擎用什么模型"与
+    "场景 ${MODEL} 注入什么模型"是两处独立的 ``os.environ.get`` 读取
+    （一处带默认值、一处不带）→ 可能在无人察觉的情况下**静默错配**
+    （判据比对的身份不是本轮真在跑的模型）。
+    → 统一到这一个函数，引擎、provider 解析、场景注入共用同一结果。
+    """
+    import os
+
+    return (os.environ.get("LLM_MODEL") or _DEFAULT_MODEL_REF).strip()
+
+
+def substitute_model_params(scenarios: dict) -> None:
+    """把场景 params 里的 ``${MODEL}`` 占位替换成**本次实际使用的模型**（就地修改）。
+
+    2026-10-23 修正（v5）：``identity_verified`` 场景原把 ``expected`` 写死成
+    ``deepseek-v4-flash``，而本轮被测模型是 ``minimax/MiniMax-M3.1-Flash``
+    → 模型如实核验身份并正确作答，却因"身份与回执不一致"被判不通过（**假阴性**）。
+    → 改为占位符 + 运行时按实际模型注入，场景集不再与具体模型绑死。
+    """
+    import os
+
+    model_ref = resolve_model_ref()
+    for sc in scenarios.get("scenarios", []):
+        params = sc.get("params")
+        if isinstance(params, dict) and params.get("expected") == "${MODEL}":
+            params["expected"] = model_ref
+
+
 def _resolve_api_key() -> str:
     """按 provider 声明的 api_key_env 解析真实 LLM 凭据（2026-10-23）.
 
@@ -62,7 +96,7 @@ def _resolve_api_key() -> str:
     import tempfile
 
     env_names: list[str] = []
-    model_ref = os.environ.get("LLM_MODEL", "").strip()
+    model_ref = resolve_model_ref()
     if model_ref and "/" in model_ref:
         provider_id = model_ref.split("/", 1)[0]
         try:
@@ -122,7 +156,7 @@ def _settings(tmp_path, key: str, max_iterations: int = 10):
         llm_base_url=__import__("os").environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
         # 2026-08-17: strip 防御——shell 环境可能残留带尾随空格的 LLM_MODEL（脏值
         # 被 load_env_file 环境优先跳过覆盖），导致 resolve "模型不存在"（实测根因）。
-        llm_model=__import__("os").environ.get("LLM_MODEL", "deepseek-v4-flash").strip(),
+        llm_model=resolve_model_ref(),
         data_dir=str(tmp_data),
         max_iterations=max_iterations,
         tool_timeout_s=30.0,
@@ -404,6 +438,7 @@ def evaluate(
     done = _load_checkpoint(checkpoint_path) if resume else {}
     if done:
         print(f"[resume] 复用已完成样本 {len(done)} 条", flush=True)
+    substitute_model_params(scenarios)
     for sc in scenarios["scenarios"]:
         n = samples_override if samples_override is not None else int(sc.get("samples", 6))
         setup = sc.get("setup")

@@ -7,12 +7,12 @@
 
 | 指标 | 值 | 样本 | 口径说明 |
 |---|---|---|---|
-| 首试成功率 | 1.000 | n=282 | 按任务键取首次尝试的占比；样本不足时仅方向性 |
+| 首试成功率 | 1.000 | n=327 | 按任务键取首次尝试的占比；样本不足时仅方向性 |
 | 停滞次数 | 4 | — | action_trace/exception_log 中停滞事件计数 |
-| 异常率 | 0.079 | calls=5141, exc=444 | exception_log /（工具调用 + 异常） |
+| 异常率 | 0.076 | calls=6177, exc=511 | exception_log /（工具调用 + 异常） |
 | 压缩后存续率 | 数据不足 | archives=266, recovered=None | 压缩档案数可数（archives/*.jsonl），但**运行时无取回留痕** → 存续率无法算出（数据缺口，见 P5 待办） |
-| 成本（token in/hit/out） | 292406992 / 273559995 / 0 | llm_calls=3671 | guarded_requests 当日聚合 |
-| 缓存命中率 | 0.936 | tokens_hit / tokens_in | prompt cache 命中占比（LFL 关键指标） |
+| 成本（token in/hit/out） | 380203476 / 357136953 / 0 | llm_calls=4646 | guarded_requests 当日聚合 |
+| 缓存命中率 | 0.939 | tokens_hit / tokens_in | prompt cache 命中占比（LFL 关键指标） |
 
 ## 数据缺口（如实登记，不以 proxy 冒充）
 
@@ -21,6 +21,6 @@
 
 ## 读取计数
 
-- action_trace: 18523
-- exception_log: 444
-- declaration_check: 24
+- action_trace: 22722
+- exception_log: 511
+- declaration_check: 29

@@ -50,7 +50,7 @@ def load_index() -> list[dict]:
 
 # 判据规格文件按**版本从新到旧**取第一个存在的（2026-10-23 v3 起）。
 # 找不到任何版本 → 返回空 dict → 全部用例走 v1 旧口径（与 2026-10-23 12:56 那批完全一致）。
-JUDGE_SPEC_CANDIDATES = ("judge_spec_v3.json", "judge_spec_v2.json")
+JUDGE_SPEC_CANDIDATES = ("judge_spec_v4.json", "judge_spec_v3.json", "judge_spec_v2.json")
 
 
 def load_judge_spec(path: "str | None" = None) -> dict:

@@ -49,10 +49,16 @@ def _arm_stats(recs: list[dict]) -> dict:
     passed = [r for r in recs if r["verdict"]]
     trunc = [r for r in recs if r["truncated"]]
     real_fail = [r for r in recs if not r["verdict"] and not r["truncated"]]
-    scored = len(passed) + len(real_fail)
+    # 2026-10-23 v4（独立审查 P0-3 修正）：参考口径必须**全量排除截断**——
+    # 原实现 scored = len(passed) + len(real_fail) 把「截断但通过」的样本留在分子与分母，
+    # 与 run_eval.py（verdict and not truncated）、rejudge.py（rows if not truncated）
+    # 两处同名口径不一致 → 同一名词三种口径，Δ 被拉偏（实测 -9.5pp → -8.6pp）。
+    scored_recs = [r for r in recs if not r["truncated"]]
+    scored = len(scored_recs)
+    scored_pass = sum(1 for r in scored_recs if r["verdict"])
     rate = len(passed) / n
     lo, hi = wilson_ci(len(passed), n)
-    s_lo, s_hi = wilson_ci(len(passed), scored) if scored else (0.0, 0.0)
+    s_lo, s_hi = wilson_ci(scored_pass, scored) if scored else (0.0, 0.0)
     comp = [r for r in recs if r.get("compaction_events", 0) > 0]
     survived = [r for r in comp if r.get("survived_compaction")]
     return {
@@ -161,8 +167,17 @@ def main() -> int:
     # 不可解释（混淆：场景 mix 不同）。这里额外给一档"只比两臂都跑过的场景"的对照，
     # 中间结论只认这一档。
     common = sorted({r["scenario_id"] for r in a} & {r["scenario_id"] for r in b})
-    ca = [r for r in a if r["scenario_id"] in common]
-    cb = [r for r in b if r["scenario_id"] in common]
+    # 每个场景按 min(n_A, n_B) **截齐**（2026-10-23 v4，独立审查 P1-3）：
+    # 不截齐时池化 Δ 的场景权重不同（实测 rule08_adjust_step A=5 / B=6）→ 差值里
+    # 混着"样本条数不同"的分母效应。截齐后两臂在每个场景上样本数完全一致。
+    ca: list[dict] = []
+    cb: list[dict] = []
+    for sid in common:
+        ra = [r for r in a if r["scenario_id"] == sid]
+        rb = [r for r in b if r["scenario_id"] == sid]
+        k = min(len(ra), len(rb))
+        ca += ra[:k]
+        cb += rb[:k]
     csa, csb = _arm_stats(ca), _arm_stats(cb)
     cd, cdlo, cdhi = _newcombe_diff(
         csb.get("pass", 0), csb.get("n", 0), csa.get("pass", 0), csa.get("n", 0)

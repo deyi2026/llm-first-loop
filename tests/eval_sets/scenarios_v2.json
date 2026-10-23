@@ -79,7 +79,7 @@
       "samples": 6,
       "verdict": "identity_verified",
       "params": {
-        "expected": "deepseek-v4-flash"
+        "expected": "${MODEL}"
       }
     },
     {

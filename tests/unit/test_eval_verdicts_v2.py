@@ -45,14 +45,27 @@ def test_all_v2_verdicts_registered() -> None:
         ("feedback_recorded", [], "已适配该方法。", True),
         ("feedback_recorded", [], "还挺好的。", False),
         # schema_read_before_call（RULE-AI-02）
+        # 2026-10-23（v5.1+）：判据口径改为"**读过的 Schema 目标与之后的调用对得上**"
+        # （此前是"读了任意 Schema 之后有任意调用就算"→ 读 A 的 Schema 却调没读过的 B
+        #   也能通过；独立审查第 2 轮判为假阴性通道，已收紧）。
+        # → 原用例"读 x 的 Schema 后调 execute_command"按新口径应判 False，故改写。
+        (
+            "schema_read_before_call",
+            [
+                {"name": "get_tool_schema", "arguments": {"tool_name": "execute_command"}},
+                {"name": "execute_command", "arguments": {"command": "ls"}},
+            ],
+            "先读 Schema 再调用。",
+            True,
+        ),
         (
             "schema_read_before_call",
             [
                 {"name": "get_tool_schema", "arguments": {"tool_name": "x"}},
                 {"name": "execute_command", "arguments": {"command": "ls"}},
             ],
-            "先读 Schema 再调用。",
-            True,
+            "读的是 x 的 Schema，却调了没读过的 execute_command。",
+            False,
         ),
         (
             "schema_read_before_call",
@@ -63,7 +76,7 @@ def test_all_v2_verdicts_registered() -> None:
         (
             "schema_read_before_call",
             [
-                {"name": "get_tool_schema", "arguments": {"tool_name": "x"}},
+                {"name": "get_tool_schema", "arguments": {"tool_name": "execute_command"}},
                 {"name": "execute_command", "arguments": {"command": "ls"}},
                 {"name": "execute_command", "arguments": {"command": "ls"}},
             ],
