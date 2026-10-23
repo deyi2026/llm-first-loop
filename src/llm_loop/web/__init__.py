@@ -250,6 +250,16 @@ def build_app(settings=None, engine=None) -> FastAPI:
     # 公网域名/隧道请求使用浏览器 session 或 Bearer。
     app.include_router(router, dependencies=[Depends(require_api_key)])
 
+    # 实时多模态（realtime_multimodal，M1 服务端骨架）：媒体会话登记 + REST 生命周期 +
+    # 控制通道 WS。WS 握手在 accept 前显式鉴权（复用 auth），失败即拒绝且不建副作用。
+    from llm_loop.realtime.media_registry import MediaSessionRegistry
+    from llm_loop.web.realtime_routes import router as realtime_router
+    from llm_loop.web.realtime_ws import register_realtime_ws
+
+    app.state.realtime_media_sessions = MediaSessionRegistry()
+    app.include_router(realtime_router, dependencies=[Depends(require_api_key)])
+    register_realtime_ws(app)
+
     # v1（原版 M37 前端 /static）已弃用：保留 static/ 历史产物，但不再挂载路由。
 
     # Web V2（React+TS，2026-08-15，对齐 DeepSeek Harness Web 端）：
