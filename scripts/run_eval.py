@@ -28,6 +28,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 2026-10-23 修复：只插入项目根会让 `import llm_loop` 落到 **PYTHONPATH**。
+# 本机 PYTHONPATH 指向 `.releases/<commit>/src`（发布快照），于是评测脚本加载的是
+# **release 快照源码**而非工作树 —— 本地新增的判定谓词/修复全部静默失效
+# （实测：新场景恒 0/1，因为快照里没有新谓词）。
+# 处置：把 `src` 显式插到 sys.path 最前，与 eval/rules/selfcheck.py 及 pytest 入口一致；
+# 项目根本身仍在路径中（兼容 `data/` 等以根为基准的相对路径读取）。
+sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from llm_loop.eval.verdicts import run_verdict, wilson_ci  # noqa: E402
@@ -42,6 +49,51 @@ def load_scenarios(path: Path) -> dict:
 
 
 _SCENARIOS_DEFAULT = Path(__file__).resolve().parent.parent / "tests" / "eval_sets" / "scenarios_v1.json"
+
+
+def _resolve_api_key() -> str:
+    """按 provider 声明的 api_key_env 解析真实 LLM 凭据（2026-10-23）.
+
+    顺序：registry 中 provider 的 api_key_env → DEEPSEEK_API_KEY → LLM_API_KEY。
+    解析 provider 时用 LLM_MODEL 的 provider 前缀；无法解析时退化为后两者。
+    """
+    import os
+    import shutil
+    import tempfile
+
+    env_names: list[str] = []
+    model_ref = os.environ.get("LLM_MODEL", "").strip()
+    if model_ref and "/" in model_ref:
+        provider_id = model_ref.split("/", 1)[0]
+        try:
+            from llm_loop.config import Settings
+            from llm_loop.llm.providers import load_registry
+
+            tmp = Path(tempfile.mkdtemp(prefix="eval-keyprobe-"))
+            tmp_data = tmp / "data"
+            tmp_data.mkdir(parents=True, exist_ok=True)
+            src_providers = Path(__file__).resolve().parent.parent / "data" / "providers.json"
+            if src_providers.exists():
+                shutil.copy2(src_providers, tmp_data / "providers.json")
+            reg = load_registry(
+                Settings(
+                    llm_api_key="probe",
+                    llm_base_url="https://api.deepseek.com/v1",
+                    llm_model=model_ref,
+                    data_dir=str(tmp_data),
+                )
+            )
+            spec = reg.providers.get(provider_id)
+            if spec is not None and spec.api_key_env:
+                env_names.append(spec.api_key_env)
+        except Exception:  # noqa: BLE001 — 探测失败不改变后续行为
+            pass
+    env_names += ["DEEPSEEK_API_KEY", "LLM_API_KEY"]
+    for name in env_names:
+        val = os.environ.get(name, "").strip()
+        if val:
+            return val
+    return ""
 
 
 def _settings(tmp_path, key: str):
@@ -89,7 +141,20 @@ def run_one_sample(prompt: str, workdir: Path, key: str, setup: dict | None = No
     if setup:
         _apply_setup(engine, setup)
     sid = engine.session.create()
-    result = engine.run(sid, prompt)
+    # R8.24-D 修订②：LFL_LEAK_GUARD_MODE 默认 fail-closed —— 无 ingress 凭据的
+    # role=user 写入会被 user_ingress_guard 拒绝（engine.run 直接返回
+    # "[写入被拒] … leak.channel_denied"，rounds=0，模型根本未被调用）。
+    # 评测框架是**测试后门**而非人类入口，故显式签发 test_harness 凭据
+    # （issue_test_ingress 为测试专用入口，spec 5.3.3-4a；生产代码禁止使用）。
+    # 不改动 guard 的 fail-closed 语义，只补齐本入口的合法凭据。
+    ingress = None
+    try:
+        from llm_loop.core.trace_leak.ingress_token import issue_test_ingress
+
+        ingress = issue_test_ingress()
+    except Exception:  # noqa: BLE001 — 凭据不可得时保持原行为，不静默改语义
+        ingress = None
+    result = engine.run(sid, prompt, ingress=ingress)
     trace = [
         {"name": tc.get("name", ""), "arguments": tc.get("arguments", {})}
         for tc in result.tool_calls
@@ -234,14 +299,76 @@ def _dry_injection_selfcheck() -> None:
         )
 
 
-def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdir: Path) -> dict:
+def _atomic_write_text(path: Path, text: str) -> None:
+    """原子写文本（先写临时文件再 replace）：中断不产生半截报告."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_checkpoint(path: Path | None) -> dict[tuple[str, int], dict]:
+    """读回已完成的样本记录（键 = (scenario_id, sample_index) → 样本详情）.
+
+    2026-10-23：长跑批（84 样本真实 LLM）此前**只在 84 样本全跑完后**才写
+    report.json，中途被 kill 即全部产出丢失（实测 evals/results/
+    eval_v2_m31flash_20261023/ 为空 = 零产出）。本函数配合逐样本 checkpoint
+    实现断点续跑。
+    末行可能因中断被截断 → JSON 解析失败如实跳过该行（不静默改写已完成语义）。
+    """
+    done: dict[tuple[str, int], dict] = {}
+    if path is None or not path.exists():
+        return done
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        sid = rec.get("scenario_id")
+        idx = rec.get("sample")
+        detail = rec.get("detail")
+        if sid is None or idx is None or not isinstance(detail, dict):
+            continue
+        try:
+            done[(str(sid), int(idx))] = detail
+        except (TypeError, ValueError):
+            continue
+    return done
+
+
+def _append_checkpoint(path: Path, scenario_id: str, sample_index: int, detail: dict) -> None:
+    """追加一条样本记录并 flush（逐样本落盘 → 中断只丢当前样本）."""
+    rec = {"scenario_id": scenario_id, "sample": sample_index, "detail": detail}
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        fh.flush()
+
+
+def evaluate(
+    scenarios: dict,
+    *,
+    dry: bool,
+    samples_override: int | None,
+    workdir: Path,
+    checkpoint_path: Path | None = None,
+    resume: bool = False,
+) -> dict:
     import os
 
     key = ""
     if not dry:
-        key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY", "")
+        # 2026-10-23: key 来源按 **provider 实际使用的 api_key_env** 解析，
+        # 不再只认 DEEPSEEK_API_KEY/LLM_API_KEY —— 否则换 provider（如 minimax）
+        # 时 registry 取不到凭据，client_params 抛 "缺少 api_key"。
+        # 解析顺序：provider 声明的 api_key_env → DEEPSEEK_API_KEY → LLM_API_KEY。
+        key = _resolve_api_key()
         if not key:
-            raise RuntimeError("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）；使用 --dry 验证管道")
+            raise RuntimeError(
+                "无真实 LLM key（provider 声明的 api_key_env / DEEPSEEK_API_KEY / LLM_API_KEY）；"
+                "使用 --dry 验证管道"
+            )
     else:
         # P2-5(2026-08-15): dry 路径开头做注入可见性自检——adjust_step 等依赖预置失败
         # 信号的场景必须在 dry 下同样可被发现（注入不可见 → 如实失败，防 dry 假绿）
@@ -249,25 +376,41 @@ def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdi
 
     runner = run_dry_sample if dry else run_one_sample
     results: list[dict] = []
+    # 断点续跑：已完成的 (scenario_id, sample_index) 直接复用，不再调 LLM。
+    # 复用样本的 verdict 是**上次真实运行**的判定结果，不重算（重算需再跑 LLM）。
+    done = _load_checkpoint(checkpoint_path) if resume else {}
+    if done:
+        print(f"[resume] 复用已完成样本 {len(done)} 条", flush=True)
     for sc in scenarios["scenarios"]:
         n = samples_override if samples_override is not None else int(sc.get("samples", 6))
         setup = sc.get("setup")
         per_scenario: list[dict] = []
         for i in range(n):
+            ck_key = (str(sc["id"]), i + 1)
+            if ck_key in done:
+                per_scenario.append(done[ck_key])
+                continue
             sample = runner(sc["prompt"], workdir, key, setup)
             verdict = run_verdict(sc["verdict"], sample["trace"], sample["answer"], sc.get("params"))
-            per_scenario.append(
-                {
-                    "sample": i + 1,
-                    "verdict": bool(verdict),
-                    "trace": sample["trace"],
-                    "answer_head": sample["answer"][:200],
-                    "model_used": sample["model_used"],
-                    "rounds": sample["rounds"],
-                    "truncated": sample["truncated"],
-                    "tokens_in": sample.get("tokens_in", 0),
-                    "tokens_out": sample.get("tokens_out", 0),
-                }
+            detail = {
+                "sample": i + 1,
+                "verdict": bool(verdict),
+                "trace": sample["trace"],
+                "answer_head": sample["answer"][:200],
+                "model_used": sample["model_used"],
+                "rounds": sample["rounds"],
+                "truncated": sample["truncated"],
+                "tokens_in": sample.get("tokens_in", 0),
+                "tokens_out": sample.get("tokens_out", 0),
+            }
+            per_scenario.append(detail)
+            # 逐样本落盘：中断只丢当前样本，不丢已跑完的部分
+            if checkpoint_path is not None:
+                _append_checkpoint(checkpoint_path, str(sc["id"]), i + 1, detail)
+            print(
+                f"[sample] {sc['id']} #{i + 1}/{n} verdict={bool(verdict)} "
+                f"rounds={sample['rounds']} model={sample['model_used']}",
+                flush=True,
             )
         k = sum(1 for s in per_scenario if s["verdict"])
         lo, hi = wilson_ci(k, n)
@@ -334,6 +477,18 @@ def main(argv: list[str] | None = None) -> int:
         help="报告输出目录（默认 docs/metrics/eval_<ts>/，自动创建）",
     )
     parser.add_argument("--dry", action="store_true", help="dry 模式：fixture 轨迹验证管道（零 LLM）")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="逐样本 checkpoint 路径（默认 <output>/checkpoint.jsonl）：每样本跑完即落盘，"
+        "中断后可 --resume 续跑（2026-10-23 长跑批中断零产出修复）",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="断点续跑：复用 checkpoint 中已完成的样本，只跑未完成部分",
+    )
     args = parser.parse_args(argv)
 
     # M63 对齐: 与 CLI/Web/飞书一致从项目 .env 加载（环境变量优先），
@@ -349,18 +504,25 @@ def main(argv: list[str] | None = None) -> int:
         ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         out_dir = args.output or (Path(__file__).resolve().parent.parent / "docs" / "metrics" / f"eval_{ts}")
         out_dir.mkdir(parents=True, exist_ok=True)
+        ck_path = args.checkpoint or (out_dir / "checkpoint.jsonl")
+        ck_path.parent.mkdir(parents=True, exist_ok=True)
         eval_out = evaluate(
-            scenarios, dry=args.dry, samples_override=args.samples, workdir=workdir
+            scenarios,
+            dry=args.dry,
+            samples_override=args.samples,
+            workdir=workdir,
+            checkpoint_path=ck_path,
+            resume=args.resume,
         )
-        (out_dir / "report.json").write_text(
+        _atomic_write_text(
+            out_dir / "report.json",
             json.dumps(
                 {"scenario_version": scenarios["version"], "generated": ts, **eval_out},
                 ensure_ascii=False,
                 indent=2,
             ),
-            encoding="utf-8",
         )
-        (out_dir / "report.md").write_text(render_markdown(scenarios, eval_out), encoding="utf-8")
+        _atomic_write_text(out_dir / "report.md", render_markdown(scenarios, eval_out))
         print(f"评测完成（{'dry' if args.dry else 'real'}）: {out_dir}")
         for r in eval_out["results"]:
             print(f"  {r['name']}: {r['passed']}/{r['samples']} = {r['rate']:.2f} CI {r['ci']}")

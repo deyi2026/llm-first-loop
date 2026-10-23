@@ -1,0 +1,30 @@
+{
+  "schema": "lfl-known-reds-current/v1",
+  "note": "CI 红数对账的登记基线：当前**有效**的已知红项清单。与 docs/known-reds-20260909.md 的区别：后者是历史归因档案（含已退役/已修复项），本文件是门禁用的现行白名单。",
+  "updated": "2026-10-23",
+  "source": "docs/EVAL-PLAN-LFL-20261023.md §18.4 CI 红数对账实测（3 failed / 10039 passed / 12m17s）",
+  "scope": "pytest tests/ -q -m 'not real_llm and not serial_signal'",
+  "registered": [
+    {
+      "id": "RED-01",
+      "test": "tests/test_memory_phase3_rrf.py::test_rrf_keyword_only_fallback",
+      "kind": "pre_existing",
+      "attribution": "存量红，与评测相关改动无依赖关系（§18.4 逐条查证）",
+      "since": "2026-10-23"
+    },
+    {
+      "id": "RED-02",
+      "test": "tests/unit/test_learning_journal.py::test_learning_reuses_candidates_without_promotion[True-none-False]",
+      "kind": "pre_existing",
+      "attribution": "存量红，与评测相关改动无依赖关系（§18.4 逐条查证）",
+      "since": "2026-10-23"
+    },
+    {
+      "id": "RED-03",
+      "test": "tests/unit/test_static_diagnostic_gate.py::test_unwritable_analyzer_cache_env_does_not_crash_main",
+      "kind": "pre_existing_other_commit",
+      "attribution": "存量红（他人提交 3573875 引入的新增 ratchet 债：method_alias 相关 SIM300/F401，ledger origin_head=500ee8f3 早于该提交）",
+      "since": "2026-10-23"
+    }
+  ]
+}

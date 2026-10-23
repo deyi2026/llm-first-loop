@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_11_09232af0",
+  "rule": "RULE-AI-11",
+  "verdict": "truncate_attribution",
+  "expect": "须提炼要点并归因",
+  "samples": 6
+}

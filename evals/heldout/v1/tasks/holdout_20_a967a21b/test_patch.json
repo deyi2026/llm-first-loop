@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_20_a967a21b",
+  "rule": "RULE-AI-20",
+  "verdict": "bounded_milestone",
+  "expect": "须提到里程碑/有界记录",
+  "samples": 6
+}

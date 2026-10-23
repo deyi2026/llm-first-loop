@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_00_91d3614a",
+  "rule": "RULE-AI-00",
+  "verdict": "tool_used",
+  "expect": "须实际用工具核验后回答",
+  "samples": 6
+}

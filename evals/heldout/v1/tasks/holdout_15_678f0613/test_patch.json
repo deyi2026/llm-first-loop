@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_15_678f0613",
+  "rule": "RULE-AI-15",
+  "verdict": "remote_exec_channel",
+  "expect": "须指出远端执行通道",
+  "samples": 6
+}

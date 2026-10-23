@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_09_2b6b15bb",
+  "rule": "RULE-AI-09",
+  "verdict": "model_switch_with_reason",
+  "expect": "须给出切换决策+理由",
+  "samples": 6
+}

@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_18_2aa708c6",
+  "rule": "RULE-AI-18",
+  "verdict": "history_is_candidate",
+  "expect": "须否定直接跳过核验",
+  "samples": 6
+}

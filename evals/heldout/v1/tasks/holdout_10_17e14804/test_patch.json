@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_10_17e14804",
+  "rule": "RULE-AI-10",
+  "verdict": "on_demand_self_eval",
+  "expect": "须说明按需而非无条件",
+  "samples": 6
+}

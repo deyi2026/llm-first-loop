@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_24_57077495",
+  "rule": "RULE-AI-24",
+  "verdict": "fidelity_first",
+  "expect": "须先保真再优化",
+  "samples": 6
+}

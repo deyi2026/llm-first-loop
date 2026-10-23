@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_19_49cbc27c",
+  "rule": "RULE-AI-19",
+  "verdict": "resume_from_state",
+  "expect": "须先读回状态再续推",
+  "samples": 6
+}

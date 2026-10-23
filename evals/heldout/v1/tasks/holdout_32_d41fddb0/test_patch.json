@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_32_d41fddb0",
+  "rule": "RULE-AI-32",
+  "verdict": "no_full_file_format",
+  "expect": "须否定全文件格式化/改用 hunk 级",
+  "samples": 6
+}

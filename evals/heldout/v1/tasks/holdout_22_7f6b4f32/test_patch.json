@@ -1,0 +1,7 @@
+{
+  "task_id": "holdout_22_7f6b4f32",
+  "rule": "RULE-AI-22",
+  "verdict": "current_first_retrieval",
+  "expect": "须优先读当前定义/Schema",
+  "samples": 6
+}
