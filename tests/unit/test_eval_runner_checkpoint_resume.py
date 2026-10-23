@@ -50,7 +50,7 @@ _SCENARIOS = {
 def _fake_runner(calls: list):
     """返回假 runner：记录调用并给出固定 trace/answer."""
 
-    def _run(prompt, workdir, key, setup=None):
+    def _run(prompt, workdir, key, setup=None, max_iterations=10):
         calls.append((prompt, len(calls)))
         return {
             "trace": [{"name": "read_file", "arguments": {}}],

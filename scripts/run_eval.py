@@ -96,8 +96,14 @@ def _resolve_api_key() -> str:
     return ""
 
 
-def _settings(tmp_path, key: str):
-    """真实 LLM Settings（对齐 test_real_llm_smoke._real_llm_settings 口径）."""
+def _settings(tmp_path, key: str, max_iterations: int = 10):
+    """真实 LLM Settings（对齐 test_real_llm_smoke._real_llm_settings 口径）.
+
+    ``max_iterations``（2026-10-23 新增，可按场景覆盖）：此前硬编码 10，
+    场景集无法按任务复杂度配置轮数 → 多步链式场景（rule08_chain_complete 等）
+    被 10 轮上限截断（实测 23 样本中 10 个截断，截断率 43.5%）。
+    截断不是能力失败，是**预算不足**；不同量级的任务需要不同预算。
+    """
     import shutil
 
     from llm_loop.config import Settings
@@ -118,14 +124,20 @@ def _settings(tmp_path, key: str):
         # 被 load_env_file 环境优先跳过覆盖），导致 resolve "模型不存在"（实测根因）。
         llm_model=__import__("os").environ.get("LLM_MODEL", "deepseek-v4-flash").strip(),
         data_dir=str(tmp_data),
-        max_iterations=10,
+        max_iterations=max_iterations,
         tool_timeout_s=30.0,
         thinking_mode=__import__("os").environ.get("LLM_THINKING_MODE", "enabled") != "disabled",
         reasoning_effort=__import__("os").environ.get("LLM_REASONING_EFFORT", "high"),
     )
 
 
-def run_one_sample(prompt: str, workdir: Path, key: str, setup: dict | None = None) -> dict:
+def run_one_sample(
+    prompt: str,
+    workdir: Path,
+    key: str,
+    setup: dict | None = None,
+    max_iterations: int = 10,
+) -> dict:
     """单样本真实执行：engine.run → (trace, answer)。
 
     会话/数据目录全部隔离到临时目录（M64 防污染真实 data/ 的独立实现）。
@@ -137,7 +149,7 @@ def run_one_sample(prompt: str, workdir: Path, key: str, setup: dict | None = No
     from llm_loop.factory import build_engine
 
     tmp = Path(tempfile.mkdtemp(prefix="eval-run-", dir=str(workdir)))
-    engine = build_engine(_settings(tmp, key))  # type: ignore[arg-type]
+    engine = build_engine(_settings(tmp, key, max_iterations=max_iterations))  # type: ignore[arg-type]
     if setup:
         _apply_setup(engine, setup)
     sid = engine.session.create()
@@ -225,8 +237,17 @@ def _apply_setup(engine, setup: dict) -> None:
         pass
 
 
-def run_dry_sample(prompt: str, workdir: Path, key: str, setup: dict | None = None) -> dict:
-    """dry 模式：固定 fixture 轨迹验证管道（零 LLM；trace 含自查+调整，answer 提及工具名）."""
+def run_dry_sample(
+    prompt: str,
+    workdir: Path,
+    key: str,
+    setup: dict | None = None,
+    max_iterations: int = 10,
+) -> dict:
+    """dry 模式：固定 fixture 轨迹验证管道（零 LLM；trace 含自查+调整，answer 提及工具名）.
+
+    ``max_iterations`` 与 run_one_sample 同签名（dry 不实际跑 LLM，仅保持调用一致）。
+    """
     return {
         "trace": [
             {"name": "architecture_status", "arguments": {}},
@@ -384,13 +405,16 @@ def evaluate(
     for sc in scenarios["scenarios"]:
         n = samples_override if samples_override is not None else int(sc.get("samples", 6))
         setup = sc.get("setup")
+        # 场景级轮数预算（2026-10-23 新增）：缺省 10（与历史行为一致），
+        # 场景可写 "max_iterations" 覆盖 → 多步链式场景不再被 10 轮硬上限截断。
+        sc_max_iter = int(sc.get("max_iterations", 10))
         per_scenario: list[dict] = []
         for i in range(n):
             ck_key = (str(sc["id"]), i + 1)
             if ck_key in done:
                 per_scenario.append(done[ck_key])
                 continue
-            sample = runner(sc["prompt"], workdir, key, setup)
+            sample = runner(sc["prompt"], workdir, key, setup, sc_max_iter)
             verdict = run_verdict(sc["verdict"], sample["trace"], sample["answer"], sc.get("params"))
             detail = {
                 "sample": i + 1,
@@ -412,8 +436,23 @@ def evaluate(
                 f"rounds={sample['rounds']} model={sample['model_used']}",
                 flush=True,
             )
-        k = sum(1 for s in per_scenario if s["verdict"])
-        lo, hi = wilson_ci(k, n)
+        # ── 统计口径（2026-10-23 修正）────────────────────────────────
+        # 轮数耗尽（truncated）的样本**不是**被测能力的失败，是执行预算不足。
+        # 但**不能因此把它们从分母里删掉** —— 那会把通过率抬高（负结果被藏起来，
+        # 违反"负结果同等呈现"）。实测 v2 跑批 22 样本：9 个截断；
+        #   删掉截断 → 12/13 = 92.3%（虚高）；保留全样本 → 17/22 = 77.3%（真实）
+        # 口径（两个都报，不藏负结果）：
+        #   主口径 rate = 通过 / 全部样本          ← 保守，作为对外结论
+        #   参考 rate_scored = 通过 / (通过 + 真失败) ← 排除截断后的能力上界
+        #   truncated_rate = 截断 / 全部样本        ← 预算不足的直接度量
+        n_trunc = sum(1 for s in per_scenario if s.get("truncated"))
+        n_pass_all = sum(1 for s in per_scenario if s["verdict"])
+        n_pass_scored = sum(1 for s in per_scenario if s["verdict"] and not s.get("truncated"))
+        n_fail = sum(1 for s in per_scenario if not s["verdict"] and not s.get("truncated"))
+        n_scored = n_pass_scored + n_fail
+        k = n_pass_all
+        lo, hi = wilson_ci(k, n) if n else (0.0, 0.0)
+        lo_s, hi_s = wilson_ci(n_pass_scored, n_scored) if n_scored else (0.0, 0.0)
         # A2: 场景级 token 开销统计（provider 未提供用量时如实 0）
         _toks_in = [s["tokens_in"] for s in per_scenario]
         _toks_out = [s["tokens_out"] for s in per_scenario]
@@ -430,9 +469,15 @@ def evaluate(
                 "verdict": sc["verdict"],
                 "samples": n,
                 "passed": k,
+                "truncated": n_trunc,
+                "failed": n_fail,
+                "scored": n_scored,
                 "tokens": tokens_stats,
-                "rate": k / n if n else 0.0,
+                "rate": (k / n) if n else 0.0,
+                "rate_scored": (n_pass_scored / n_scored) if n_scored else 0.0,
+                "truncated_rate": (n_trunc / n) if n else 0.0,
                 "ci": [round(lo, 3), round(hi, 3)],
+                "ci_scored": [round(lo_s, 3), round(hi_s, 3)],
                 "samples_detail": per_scenario,
             }
         )
@@ -448,17 +493,27 @@ def render_markdown(scenarios: dict, eval_out: dict) -> str:
         f"> 生成: {datetime.now(UTC).isoformat()}",
         f"> 基线引用: {scenarios.get('baseline_ref', '')}（各验收报告为数据唯一出处）",
         "",
-        "| 场景 | 判定 | 通过/样本 | 率 | Wilson 95% CI | 平均 token/样本 |",
-        "|:---|:---|:---|:---|:---|:---|",
+        "| 场景 | 判定 | 通过/全部 | 截断 | 真失败 | 主口径率 | 参考率(排除截断) | Wilson 95% CI(主) | 平均 token/样本 |",
+        "|:---|:---|:---|:---|:---|:---|:---|:---|:---|",
     ]
     for r in eval_out["results"]:
         lines.append(
             f"| {r['name']} | {r['verdict']} | {r['passed']}/{r['samples']} "
-            f"| {r['rate']:.2f} | [{r['ci'][0]:.3f}, {r['ci'][1]:.3f}] "
+            f"| {r.get('truncated', 0)} | {r.get('failed', 0)} "
+            f"| {r['rate']:.2f} | {r.get('rate_scored', 0.0):.2f} "
+            f"| [{r['ci'][0]:.3f}, {r['ci'][1]:.3f}] "
             f"| {r.get('tokens', {}).get('avg_per_sample', 0):.0f} |"
         )
     lines.append("")
-    lines.append("> 纪律：样本不足如实标注；CI 区间重叠即不宣称统计显著；负结果同等呈现。")
+    lines.append(
+        "> 口径（2026-10-23 修正）：**主口径率 = 通过 / 全部样本**（保守，对外结论用）；"
+        "「截断」= 达到最大轮数被中断的样本，单列且**仍计入全样本分母** —— "
+        "轮数耗尽是执行预算不足而非能力失败，但把它从分母删掉会让通过率虚高、藏掉负结果。"
+        "「参考率」= 通过 / (通过 + 真失败)，是排除截断后的能力上界；两者同报，不藏负结果。"
+    )
+    lines.append(
+        "> 纪律：样本不足如实标注；CI 区间重叠即不宣称统计显著；负结果同等呈现。"
+    )
     return "\n".join(lines)
 
 

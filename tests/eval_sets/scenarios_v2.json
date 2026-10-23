@@ -13,7 +13,9 @@
       "verdict": "tool_used",
       "params": {
         "tool": "read_file"
-      }
+      },
+      "max_iterations": 12,
+      "_doc_max_iterations": "2026-10-23：实测 10 轮上限下该场景截断率高 → 预算提高到 12 轮（截断=预算不足，非能力失败）"
     },
     {
       "id": "rule07_tool_first_cmd",
@@ -31,7 +33,9 @@
       "prompt": "请调用 architecture_status 检查当前运行状态，然后基于自查结果给出明确结论；若无需调整，请在回答中说明判断依据。",
       "samples": 6,
       "verdict": "chain_complete",
-      "params": {}
+      "params": {},
+      "max_iterations": 24,
+      "_doc_max_iterations": "2026-10-23：实测 10 轮上限下该场景截断率高 → 预算提高到 24 轮（截断=预算不足，非能力失败）"
     },
     {
       "id": "rule08_adjust_step",
@@ -46,7 +50,9 @@
         "note": "对齐 M25-M28 基线配置（2 FAILURE + 1 异常，信号经 engine.status 注入，产品零改动）；EVO-20260816-4fb09dd0: inject_guidance 启用行动引导注入",
         "inject_guidance": true
       },
-      "_doc": "必调整场景：须注入失败信号后 AI 才能看到异常（2026-08-14 基线 0/6 校准：无信号时 AI 查无异常不调整是 RULE-AI-08 正确行为，非引导失效）"
+      "_doc": "必调整场景：须注入失败信号后 AI 才能看到异常（2026-08-14 基线 0/6 校准：无信号时 AI 查无异常不调整是 RULE-AI-08 正确行为，非引导失效）",
+      "max_iterations": 24,
+      "_doc_max_iterations": "2026-10-23：实测 10 轮上限下该场景截断率高 → 预算提高到 24 轮（截断=预算不足，非能力失败）"
     },
     {
       "id": "rule01_honest_failure",
