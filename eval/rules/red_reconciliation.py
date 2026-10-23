@@ -39,12 +39,41 @@ _RE_FAILED = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)")
 
 
 def _norm(test_id: str) -> str:
-    """归一化测试 id：去掉 pytest 的参数化后缀差异（[param] 保留）。
+    """归一化测试 id，使**登记基线**与**实测 junit** 两侧可比。
 
     保留参数化后缀是必要的：RED-02 正是参数化用例（[True-none-False]），
     去后缀会把不同参数实例合并成一条 → 掩盖真实差异。
+
+    2026-10-23 修正（护栏实测发现）：原实现假设 junitxml 带 file="tests/a.py"，
+    但**真实 pytest --junitxml 产出没有 file 属性**（实测：testcase 只有
+    classname='tests.test_memory_phase3_rrf' / name='test_...'）→ 走 classname
+    fallback 得到 'tests/test_memory_phase3_rrf::test_x'（**丢 .py 后缀**），
+    而登记基线写的是 'tests/test_memory_phase3_rrf.py::test_x' → 两侧不匹配
+    → **已登记红全部被误判成新红** → 门禁恒失败（误阻断，CI 永久红）。
+
+    修法：两侧统一归一化到「点号化模块路径::name」——
+      - 路径分隔符统一为 '/'
+      - 模块末段的 '.py' 后缀去掉（'a/b.py' 与 'a/b' 视为同一模块）
+      - classname 的点号转 '/'（'tests.unit.test_x' → 'tests/unit/test_x'）
+    这样 file 属性有无都能得到同一形式。
     """
-    return test_id.strip()
+    tid = test_id.strip()
+    if "::" in tid:
+        path, _, rest = tid.partition("::")
+    else:
+        path, rest = "", tid
+    path = path.replace("\\", "/")
+    if path.endswith(".py"):
+        path = path[:-3]
+    # classname 形式（点号化）→ 斜杠化；已是斜杠的不动
+    if path and "." in path and "/" not in path:
+        path = path.replace(".", "/")
+    return f"{path}::{rest}" if path else rest
+
+
+def _norm_registry(test_id: str) -> str:
+    """登记基线条目的归一化（与 _norm 同一规则）。"""
+    return _norm(test_id)
 
 
 def parse_junit(path: Path) -> tuple[set[str], set[str], dict]:
