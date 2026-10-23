@@ -48,18 +48,27 @@ def load_index() -> list[dict]:
         return json.load(f)
 
 
-JUDGE_SPEC_PATH = _HERE / "judge_spec_v2.json"
+# 判据规格文件按**版本从新到旧**取第一个存在的（2026-10-23 v3 起）。
+# 找不到任何版本 → 返回空 dict → 全部用例走 v1 旧口径（与 2026-10-23 12:56 那批完全一致）。
+JUDGE_SPEC_CANDIDATES = ("judge_spec_v3.json", "judge_spec_v2.json")
 
 
-def load_judge_spec() -> dict:
-    """红线判据 v2 规格（按 case_id → 判据参数）。
+def load_judge_spec(path: "str | None" = None) -> dict:
+    """红线判据规格（按 case_id → 判据参数）。
 
     文件不存在 → 返回空 dict → 全部用例走 v1 旧口径（行为与 2026-10-23 12:56 那批完全一致）。
-    存在 → 对应用例改走 v2 口径（语义类别显式化）。
+    存在 → 对应用例改走 v2/v3 口径（语义类别显式化）。
     """
-    if not JUDGE_SPEC_PATH.exists():
-        return {}
-    return json.loads(JUDGE_SPEC_PATH.read_text(encoding="utf-8")).get("cases", {})
+    if path is not None:
+        p = _HERE / path if not str(path).startswith("/") else Path(path)
+        if not p.exists():
+            return {}
+        return json.loads(p.read_text(encoding="utf-8")).get("cases", {})
+    for name in JUDGE_SPEC_CANDIDATES:
+        p = _HERE / name
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8")).get("cases", {})
+    return {}
 
 
 def build_scenarios(samples: int | None = None) -> dict:
