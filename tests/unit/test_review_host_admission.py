@@ -567,8 +567,12 @@ def test_host_review_record_capacity_exhausts_without_unbounded_memory(tmp_path:
 
 def test_large_but_bounded_multi_file_artifact_is_reviewable(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    # The real Rule28 integrated candidate itself is over 128KB.
-    # Review complete 155KB payloads; refuse beyond 192KB, never truncate.
+    # EVO-20261023-fc5c34b9: the complete-review ceiling moved from 192KB to
+    # 2.5MB (bytes) so a real branch's frozen material can be reviewed whole
+    # instead of being refused for being large. The invariant under test is
+    # unchanged: a payload UNDER the ceiling is reviewed complete, a payload
+    # OVER it is refused with attribution, and nothing is ever truncated.
+    cap = 2_500_000
     (repo / "many_tests.py").write_text("x = " + repr("a" * 155_000) + "\n")
     host = HostReviewAdmission()
     runner = FakeChildRunner()
@@ -577,15 +581,19 @@ def test_large_but_bounded_multi_file_artifact_is_reviewable(tmp_path: Path) -> 
     assert allowed["accepted"] is True
     assert runner.started == 1
     assert "many_tests.py" in runner.task
-    # Remain below the separate per-untracked-file 200KB bound so the
-    # complete-review 192KB limit, not the per-file guard, is what rejects.
-    (repo / "many_tests.py").write_text("x = " + repr("a" * 193_000) + "\n")
+    # Stay below the separate per-untracked-file 200KB bound by splitting the
+    # over-cap payload across several files, so the complete-review ceiling,
+    # not the per-file guard, is what rejects.
+    for i in range(20):
+        (repo / f"big_{i}.py").write_text("x = " + repr("a" * 199_000) + "\n")
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
-    assert blocked["reason"].startswith("review_artifact_exceeds_192kb")
+    assert blocked["reason"].startswith("review_artifact_exceeds_cap")
     # EVO-20261021-ea18d5ce: the refusal must attribute its largest sections
-    # so the caller can act without a manual numstat/ls -la hunt.
-    assert "many_tests.py" in blocked["reason"]
+    # so the caller can act without a manual numstat/ls -la hunt. The largest
+    # section here is one of the over-cap payloads (they dominate the
+    # material), so the attribution names it.
+    assert "big_0.py" in blocked["reason"]
     assert runner.started == 1
 
 
@@ -656,11 +664,21 @@ def test_committed_runtime_monster_diff_is_truncated_not_deadlocked(tmp_path: Pa
 def test_committed_non_runtime_monster_still_refused(tmp_path: Path) -> None:
     # EVO-20261021-2f22aae5 guardrail: the truncated projection unlocks ONLY
     # _RUNTIME_OUTPUT_EXCLUDES paths. A committed single-line monster anywhere
-    # else keeps the full-review rule and the 192KB refusal, unchanged.
+    # else keeps the full-review rule and the complete-review refusal,
+    # unchanged.
+    #
+    # EVO-20261023-fc5c34b9: the ceiling moved from 192KB to 2.5MB, so the
+    # fixture must exceed the CURRENT ceiling for this guardrail to still be
+    # exercised. The intent (a non-runtime monster is never given a free
+    # pass) is unchanged. The monster is split across several files because a
+    # single 2.6MB one-line diff trips the separate `git_state_too_large`
+    # guard (git output > 400KB) before the complete-review ceiling is even
+    # reached — that guard is a different, still-intact rule.
     repo = _repo(tmp_path)
     subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
     (repo / "src").mkdir()
-    (repo / "src" / "big.py").write_text("z" * 302_000)
+    for i in range(12):
+        (repo / "src" / f"big_{i}.py").write_text("z" * 220_000)
     subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big committed source"], check=True)
     host = HostReviewAdmission()
@@ -668,18 +686,23 @@ def test_committed_non_runtime_monster_still_refused(tmp_path: Path) -> None:
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
-    assert blocked["reason"].startswith("review_artifact_exceeds_192kb")
-    assert "big.py" in blocked["reason"]  # attribution names the real culprit
+    assert blocked["reason"].startswith("review_artifact_exceeds_cap")
+    assert "big_0.py" in blocked["reason"]  # attribution names the real culprit
     assert runner.started == 0
 
 
 def test_committed_runtime_projection_keeps_the_192kb_ceiling(tmp_path: Path) -> None:
     # EVO-20261021-2f22aae5 guardrail: the ceiling itself is unchanged.
-    # Five projected runtime monsters (~48KB each) still exceed 192KB and the
-    # admission is refused with attribution — split or shrink, no free pass.
+    # Projected runtime monsters still exceed the ceiling and the admission is
+    # refused with attribution — split or shrink, no free pass.
+    #
+    # EVO-20261023-fc5c34b9: the ceiling moved from 192KB to 2.5MB, so the
+    # fixture must project to MORE than 2.5MB to keep exercising this
+    # guardrail (each committed runtime monster projects to ~48KB, so 60 of
+    # them clear the new ceiling). The intent is unchanged.
     repo = _repo(tmp_path)
     subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
-    for i in range(5):
+    for i in range(60):
         p = repo / "reports" / f"run{i}" / "S.json"
         p.parent.mkdir(parents=True)
         p.write_text("z" * 302_000)
@@ -690,7 +713,7 @@ def test_committed_runtime_projection_keeps_the_192kb_ceiling(tmp_path: Path) ->
     host.attach_runner(runner)
     blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert blocked["accepted"] is False
-    assert blocked["reason"].startswith("review_artifact_exceeds_192kb")
+    assert blocked["reason"].startswith("review_artifact_exceeds_cap")
     assert runner.started == 0
 
 
@@ -1099,7 +1122,12 @@ class BudgetProbeRunner(FakeChildRunner):
         super().__init__()
         self.budget = budget
 
-    def child_input_budget_chars(self, model_ref: str) -> int | None:
+    def child_input_budget_chars(
+        self,
+        model_ref: str,
+        *,
+        chars_per_token: float | None = None,
+    ) -> int | None:
         assert model_ref == "glm/glm-5.3"
         if isinstance(self.budget, Exception):
             raise self.budget
@@ -1109,10 +1137,15 @@ class BudgetProbeRunner(FakeChildRunner):
 def test_dynamic_budget_pre_check_rejects_oversized_task_before_spawn(
     tmp_path: Path,
 ) -> None:
-    # Material below the static 192KB ceiling but above the live-registry cap
-    # (60_000B budget -> 48_000B effective after 0.8 headroom) must be refused
-    # deterministically BEFORE any child is spawned, with the budget numbers
-    # and a split suggestion in the refusal reason.
+    # Material below the static complete-review ceiling but above the
+    # live-registry cap (60_000 chars budget -> 58_800 chars effective after
+    # the 0.98 headroom) must be refused deterministically BEFORE any child
+    # is spawned, with the budget numbers and a split suggestion in the
+    # refusal reason.
+    #
+    # EVO-20261023-fc5c34b9: the pre-check now compares in CHARACTERS (the
+    # unit the child's own wire check uses) and the headroom is 0.98, so the
+    # expected cap moved from 48_000B to 58_800 chars.
     repo = _repo(tmp_path)
     (repo / "mid.py").write_text("y = " + repr("b" * 90_000) + "\n")
     host = HostReviewAdmission()
@@ -1122,8 +1155,8 @@ def test_dynamic_budget_pre_check_rejects_oversized_task_before_spawn(
     assert blocked["accepted"] is False
     assert blocked["reviewer_failure"] == "reviewer_input_too_large"
     assert "reviewer_input_too_large:" in blocked["reason"]
-    assert "cap=48000B" in blocked["reason"]
-    assert "model_budget=60000B" in blocked["reason"]
+    assert "cap=58800chars" in blocked["reason"]
+    assert "model_budget=60000chars" in blocked["reason"]
     assert "~2 smaller reviews" in blocked["reason"]
     assert runner.started == 0  # no spawn: refusal precedes child creation
 
@@ -1345,3 +1378,77 @@ def test_push_refspec_rejects_deletion_and_force(tmp_path: Path) -> None:
         assert verdict["accepted"] is False
         assert "push_destructive_refspec_not_reviewable" in str(verdict)
     assert runner.started == 0
+
+
+# ---------------------------------------------------------------------------
+# EVO-20261023-fc5c34b9: reviewer material ceiling + token-cost calibration
+# ---------------------------------------------------------------------------
+
+
+def test_wire_chars_per_token_uses_measured_class_ratios() -> None:
+    # The registry ratio (0.6) is a Chinese-mixed calibration that overstates
+    # the token cost of ASCII code/JSON by ~4x. The measured ratios must be
+    # used for a mixed wire, and the registry ratio must remain a floor.
+    from llm_loop.subagent.runner import _wire_chars_per_token
+
+    ascii_only = _wire_chars_per_token([{"content": "x" * 10_000}], 0.6)
+    cjk_only = _wire_chars_per_token([{"content": "中" * 10_000}], 0.6)
+    mixed = _wire_chars_per_token([{"content": ("a" * 9_000) + ("中" * 1_000)}], 0.6)
+
+    # ASCII is charged at its measured ratio (not the registry 0.6).
+    assert ascii_only > 2.0
+    # CJK is charged at its own measured ratio, and that ratio is never BELOW
+    # the registry's conservative 0.6 for the same class.
+    assert cjk_only >= 0.6
+    assert cjk_only == pytest.approx(1.432, rel=1e-3)
+    # A mixed wire lands between the two class ratios.
+    assert cjk_only <= mixed <= ascii_only
+    # A measured class ratio may only correct an OVER-charge: when the
+    # registry already charges a class more densely than the measurement
+    # says, the registry rate stands (the measurement never invents a
+    # discount). A CJK wire measured at 1.432 chars/token is therefore
+    # priced at 1.432 even against a 0.3 registry (the measurement is the
+    # evidence), while a class with no measurement falls back to the
+    # registry.
+    dense = _wire_chars_per_token([{"content": "中" * 1_000}], 0.3)
+    assert dense == pytest.approx(1.432, rel=1e-3)
+    # An EMPTY wire has no measured composition: the registry rate is used
+    # unchanged (no measurement, no correction).
+    empty = _wire_chars_per_token([{"content": ""}], 0.3)
+    assert empty == pytest.approx(0.3, rel=1e-6)
+
+
+def test_wire_chars_per_token_never_exceeds_the_measured_ceiling() -> None:
+    from llm_loop.subagent.runner import _wire_chars_per_token
+
+    for text in ("x" * 5_000, "中" * 5_000, ("ab" * 2_000) + ("中" * 500), ""):
+        ratio = _wire_chars_per_token([{"content": text}], 0.6)
+        assert 0.6 <= ratio <= 3.0
+
+
+def test_pre_check_and_child_wire_agree_on_the_ratio() -> None:
+    # The pre-check and the child must price the SAME material with the SAME
+    # ratio, otherwise the pre-check admits material the child then refuses
+    # (which surfaces as a misleading "reviewer_unavailable").
+    from llm_loop.subagent.runner import _wire_chars_per_token
+
+    material = ("diff --git a/x b/x\n" + "y" * 4_000) * 20
+    pre_check_ratio = _wire_chars_per_token([{"content": material}], 0.6)
+    child_ratio = _wire_chars_per_token([{"content": material}], 0.6)
+    assert pre_check_ratio == child_ratio
+
+
+def test_dynamic_pre_check_compares_chars_not_bytes(tmp_path: Path) -> None:
+    # A CJK-heavy material is measured in bytes and characters; comparing
+    # bytes against a char budget would reject material the child accepts
+    # (the child compares sum(dict_wire_chars(m)) <= budget, i.e. chars).
+    repo = _repo(tmp_path)
+    (repo / "cjk.py").write_text("注释 = " + repr("中" * 40_000) + "\n")
+    host = HostReviewAdmission()
+    runner = BudgetProbeRunner(120_000)
+    host.attach_runner(runner)
+    verdict = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    # 40,000 CJK chars are 120,000 bytes but only 40,000 chars: a byte
+    # comparison against the 120,000-char budget would wrongly refuse.
+    assert verdict["accepted"] is True
+    assert runner.started == 1

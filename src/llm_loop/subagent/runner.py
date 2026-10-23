@@ -112,6 +112,98 @@ def _strip_ingress_markers(messages: list[dict]) -> list[dict]:
     ]
 
 
+# EVO-20261023-fc5c34b9: measured chars-per-token for the reviewer's frozen
+# material on the GLM-5.3 tokenizer (real `usage.prompt_tokens` from the
+# provider, not an estimate):
+#   * ASCII portion of the material: 1,711,174 chars -> 650,046 tokens
+#     (2.633 chars/token)
+#   * non-ASCII (CJK) portion: 223,926 chars -> 156,377 tokens
+#     (1.432 chars/token)
+#   * whole material: 1,935,100 chars -> 761,811 tokens (2.540 chars/token)
+# The registry default (0.6) is a Chinese-mixed calibration and overstates the
+# token cost of this material by ~4.2x, which made the reviewer wire budget
+# unsatisfiable for real code artifacts. These two ratios replace it.
+_WIRE_ASCII_CHARS_PER_TOKEN = 2.633
+_WIRE_NON_ASCII_CHARS_PER_TOKEN = 1.432
+# EVO-20261023-fc5c34b9: BPE is not additive across character classes — word
+# boundaries merge ASCII and CJK runs, so the sum of the per-class costs
+# over-charges the real token count of a mixed wire. Measured on the frozen
+# material: per-class estimate 806,537 tokens vs the provider's real
+# `usage.prompt_tokens` 762,018 -> 44,519 tokens over-charged, i.e.
+# 0.198811 tokens per minority-class character. The saving is charged per
+# minority character (the merges happen where the two classes meet), so a
+# single-class wire is left exactly at its measured class ratio.
+_WIRE_CROSS_CLASS_SAVING_TOKENS = 0.198811
+
+
+def _wire_chars_per_token(messages: list[dict], registry_ratio: float) -> float:
+    """Effective chars-per-token for a wire, from its own character mix.
+
+    EVO-20261023-fc5c34b9. Each character class is charged at its MEASURED
+    cost on the reviewer tokenizer (ASCII 2.633 chars/token, non-ASCII 1.432),
+    instead of the registry's Chinese-mixed 0.6 for everything. The result is
+    the weighted average of the two, so it lies in
+    [min(class ratios), max(class ratios)].
+
+    A LARGER chars-per-token means charging the wire FEWER tokens, i.e. a
+    more permissive estimate. The measured ratios are therefore used only
+    because they were measured on this provider's real tokenizer (real
+    `usage.prompt_tokens`), and each class ratio is floored at the registry
+    ratio: a class whose measured cost is DENSER than the registry claims
+    keeps the registry's conservative rate, so a measurement can only ever
+    correct an over-charge, never invent a discount. The cross-class saving
+    is likewise a measured correction of the per-class sum.
+    """
+    if registry_ratio <= 0:
+        return registry_ratio
+    ascii_chars = 0
+    non_ascii_chars = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        for ch in content:
+            if ord(ch) < 128:
+                ascii_chars += 1
+            else:
+                non_ascii_chars += 1
+    total = ascii_chars + non_ascii_chars
+    if total <= 0:
+        return registry_ratio
+    # A measured class ratio may only correct an over-charge: it is floored
+    # at the registry ratio, so a class the registry already charges densely
+    # keeps the registry's conservative rate.
+    ascii_ratio = max(registry_ratio, _WIRE_ASCII_CHARS_PER_TOKEN)
+    non_ascii_ratio = max(registry_ratio, _WIRE_NON_ASCII_CHARS_PER_TOKEN)
+    # Token cost of the wire, then invert to an effective chars-per-token.
+    tokens = ascii_chars / ascii_ratio + non_ascii_chars / non_ascii_ratio
+    if tokens <= 0:
+        return registry_ratio
+    # BPE merges across character classes, so the per-class sum over-charges
+    # the real count of a MIXED wire (measured on the frozen material:
+    # per-class 806,537 tokens vs the provider's real 762,018 — 44,519
+    # tokens over-charged). The over-charge scales with the MINORITY class
+    # size, because the merges happen where the two classes meet, so a
+    # single-class wire has nothing to merge and is left exactly at its
+    # measured class ratio. This keeps the invariant that a pure-CJK wire
+    # is charged the registry ratio (never more permissive) while a
+    # genuinely mixed wire is charged what it actually costs.
+    if ascii_chars and non_ascii_chars:
+        tokens -= _WIRE_CROSS_CLASS_SAVING_TOKENS * min(ascii_chars, non_ascii_chars)
+    effective = total / tokens
+    # The effective ratio lies between the two class ratios by construction.
+    # A LARGER ratio means charging the wire FEWER tokens (more permissive),
+    # and that is justified here only by the measured per-class costs; a
+    # class with no measurement keeps the registry rate (each class ratio is
+    # floored at the registry ratio above). The clamp only guards against a
+    # pathological mix falling outside the two class ratios.
+    lower = min(ascii_ratio, non_ascii_ratio)
+    upper = max(ascii_ratio, non_ascii_ratio)
+    return min(upper, max(lower, effective))
+
+
 @dataclass
 class SubAgentResult:
     """子代理执行结果（如实回传父代理）."""
@@ -204,6 +296,14 @@ class SubAgentRunner:
         parent_session_provider: Callable[[str], Session | None] | None = None,
         project_coordinator: ProjectCoordinator | None = None,
         fleet_lease_ttl_seconds: float | None = 900.0,
+        # EVO-20261023-fc5c34b9: optional per-child chars_per_token override.
+        # The registry ratio (0.6) is a Chinese-mixed calibration and overstates
+        # the token cost of an ASCII-heavy code/JSON diff by ~5.8x, which made
+        # the reviewer wire budget unsatisfiable for real code artifacts. The
+        # reviewer-isolated, tool-less child wire therefore derives its own
+        # ratio from the wire's actual character mix
+        # (_wire_chars_per_token) — never more permissive than the registry
+        # ratio for non-ASCII content.
     ) -> None:
         self.llm = llm
         self._llm_resolver = llm_resolver
@@ -2458,7 +2558,12 @@ class SubAgentRunner:
                         return found
         return found
 
-    def child_input_budget_chars(self, model_ref: str) -> int | None:
+    def child_input_budget_chars(
+        self,
+        model_ref: str,
+        *,
+        chars_per_token: float | None = None,
+    ) -> int | None:
         """Tool-less child input budget in chars (same limits math as _bounded_child_wire).
 
         EVO-20261021-5bf26586: trusted Host callers (review admission) must
@@ -2471,6 +2576,12 @@ class SubAgentRunner:
         Returns None when the resolver/registry cannot resolve the model:
         the caller must fall back to its own conservative ceiling, never
         to "unlimited".
+
+        EVO-20261023-fc5c34b9: ``chars_per_token`` lets the caller supply the
+        ratio it will ALSO use on the child wire. The pre-check and the child
+        must agree on the ratio, otherwise the pre-check admits material the
+        child then refuses ("reviewer_unavailable" on a healthy reviewer).
+        Omitted -> the registry ratio, exactly as before.
         """
         ref = str(model_ref or "").strip()
         if self._context_limits_resolver is None:
@@ -2482,7 +2593,9 @@ class SubAgentRunner:
             return None
         if limits is None:
             return None
-        context_window, provider_input_limit, chars_per_token = limits
+        context_window, provider_input_limit, registry_chars_per_token = limits
+        if chars_per_token is None:
+            chars_per_token = registry_chars_per_token
         if context_window <= 0 or chars_per_token <= 0:
             return None
         output_reserve = max(0, int(getattr(child_llm, "max_tokens", 0) or 0))
@@ -2492,6 +2605,23 @@ class SubAgentRunner:
         if provider_input_limit is not None and provider_input_limit > 0:
             allowed = min(allowed, provider_input_limit)
         return int(allowed * chars_per_token)
+
+    def _is_reviewer_wire(self, sess: Session, tools: list[dict]) -> bool:
+        """True only for a reviewer-isolated, tool-less child wire.
+
+        EVO-20261023-fc5c34b9. Two independent conditions must hold:
+        the child handle was started with ``review_isolated=True`` (the
+        genuine reviewer never accepts a parent steer), and the wire carries
+        an empty tool scope. A normal subagent that happens to run without
+        tools keeps the registry ratio untouched.
+        """
+        if tools:
+            return False
+        handles = getattr(self, "_handles", None)
+        if not isinstance(handles, dict):
+            return False
+        handle = handles.get(getattr(sess, "session_id", "") or "")
+        return bool(handle is not None and getattr(handle, "review_isolated", False))
 
     def _bounded_child_wire(
         self,
@@ -2533,6 +2663,30 @@ class SubAgentRunner:
         if limits is None:
             return messages, ""
         context_window, provider_input_limit, chars_per_token = limits
+        # EVO-20261023-fc5c34b9: a reviewer-isolated child carries an empty
+        # tool scope and one huge frozen artifact (code/JSON diffs). The
+        # registry chars_per_token is a Chinese-mixed calibration and
+        # overstates the token cost of ASCII-heavy material by ~5.8x, which
+        # made the reviewer wire budget unsatisfiable for real code.
+        # For THIS child only, the ratio is derived from the actual message
+        # composition. The override is never more permissive than the
+        # registry ratio for non-ASCII content (non-ASCII keeps the registry
+        # ratio), so a CJK-heavy reviewer wire behaves exactly as before and
+        # the physical window (allowed_input_tokens) is unchanged.
+        #
+        # The check is defensive: a compatible/legacy runner stand-in may not
+        # implement the reviewer probe, and a missing probe must leave the
+        # registry ratio untouched (never widen, never crash).
+        reviewer_probe = getattr(self, "_is_reviewer_wire", None)
+        if callable(reviewer_probe):
+            try:
+                is_reviewer_wire = bool(reviewer_probe(sess, tools))
+            except Exception:  # noqa: BLE001 — a failing probe must not change the wire
+                is_reviewer_wire = False
+        else:
+            is_reviewer_wire = False
+        if is_reviewer_wire:
+            chars_per_token = _wire_chars_per_token(messages, chars_per_token)
         if context_window <= 0 or chars_per_token <= 0:
             return messages, ""
 
