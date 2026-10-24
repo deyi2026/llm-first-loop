@@ -34,6 +34,11 @@ function closeWriter(mediaId: string): void {
   void fetch(`/api/v1/realtime/sessions/${encodeURIComponent(mediaId)}`, { method: "DELETE", keepalive: true }).catch(() => undefined);
 }
 
+function newPendingVoiceScopeId(): string {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `voice-pending-${random}`;
+}
+
 export function useRealtimeVoice(
   sessionId: string,
   onFinal?: (text: string) => Promise<string | null>,
@@ -46,6 +51,11 @@ export function useRealtimeVoice(
   const [error, setError] = useState("");
   const activeRef = useRef<ActiveVoice | null>(null);
   const pendingContext = useRef<AudioContext | null>(null);
+  // A new chat has no server session ID until the first human turn. Realtime
+  // media still needs an isolated scope, so use a unique temporary scope and
+  // promote to the real chat session without tearing down the live voice turn.
+  const mediaScopeId = useRef(sessionId || newPendingVoiceScopeId());
+  const previousSessionId = useRef(sessionId);
   const generation = useRef(0);
   const pressEpoch = useRef(0);
   const autoStartMic = useRef<number | null>(null);
@@ -73,14 +83,27 @@ export function useRealtimeVoice(
   }, []);
   const disable = useCallback(() => {
     dispose();
+    mediaScopeId.current = sessionId || newPendingVoiceScopeId();
     setEnabled(false); setMicEnabled(false); setMicStarting(false);
     setConnectionState("closed"); setError(""); setTranscript("");
-  }, [dispose]);
+  }, [dispose, sessionId]);
   useEffect(() => {
+    const previous = previousSessionId.current;
+    previousSessionId.current = sessionId;
+    if (!previous && sessionId && activeRef.current) {
+      // The first spoken turn created its real chat session. Keep this voice
+      // connection alive so the answer can still be spoken back through TTS.
+      return;
+    }
+    if (previous && previous !== sessionId) dispose();
+    mediaScopeId.current = sessionId || newPendingVoiceScopeId();
     setEnabled(false); setMicEnabled(false); setMicStarting(false);
     setConnectionState("closed"); setTranscript(""); setError("");
-    return dispose;
   }, [sessionId, dispose]);
+  // One unconditional owner cleanup handles real unmounts, including after
+  // an empty-chat -> real-session promotion. The promotion effect above only
+  // suppresses the *session-change* disposal, never component-unmount cleanup.
+  useEffect(() => () => dispose(), [dispose]);
 
   const press = useCallback(() => {
     const active = activeRef.current;
@@ -106,10 +129,6 @@ export function useRealtimeVoice(
     if (enabling.current) return false;
     // Show an always-dismissable status surface before awaiting REST or browser audio.
     setEnabled(true); setConnectionState("opening"); setError(""); setTranscript("");
-    if (!sessionId) {
-      setConnectionState("failed"); setError("请先选择会话或发送一条文字消息建立会话");
-      return false;
-    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setConnectionState("failed");
       setError("此浏览器无法使用麦克风；手机请使用 HTTPS 站点，并允许麦克风权限");
@@ -117,6 +136,8 @@ export function useRealtimeVoice(
     }
     enabling.current = true;
     const owner = ++generation.current;
+    const scopeId = sessionId || mediaScopeId.current || newPendingVoiceScopeId();
+    mediaScopeId.current = scopeId;
     autoStartMic.current = owner;
     setMicStarting(false);
     let mediaId: string | null = null;
@@ -130,7 +151,7 @@ export function useRealtimeVoice(
       if (owner !== generation.current) return false;
       const response = await fetch("/api/v1/realtime/sessions", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId }),
+        body: JSON.stringify({ session_id: scopeId }),
       });
       if (response.status === 401) {
         throw new Error("语音连接失败（HTTP 401）：登录状态已失效，请重新登录后重试");
@@ -144,7 +165,7 @@ export function useRealtimeVoice(
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
       const client = new MediaSessionClient({
         url: `${scheme}://${window.location.host}/api/v1/realtime/sessions/${encodeURIComponent(mediaId)}/events`,
-        sessionId, mediaSessionId: mediaId, playback: queue,
+        sessionId: scopeId, mediaSessionId: mediaId, playback: queue,
         // A disconnected voice segment is never automatically replayed.
         backoffMs: [],
         createSocket: (target) => {

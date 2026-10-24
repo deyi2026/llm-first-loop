@@ -67,13 +67,23 @@ export function Composer() {
   const voiceSessionId = useCurrentSessionId() ?? "";
   const realtime = useRealtimeVoice(voiceSessionId, async (final) => {
     const sid = sessionStore.getState().currentSessionId;
-    if (!sid || conversationStore.getState().streaming || conversationStore.getState().backgroundRunning) {
+    if (conversationStore.getState().streaming || conversationStore.getState().backgroundRunning) {
       setText((old) => old ? `${old}\n${final}` : final);
       return null;
     }
+    // A blank/new chat intentionally has no session ID until its first human
+    // turn. Voice is that first turn too: request a real new session instead
+    // of demoting recognized speech into the text box or reusing shared_current.
+    if (!sid) sessionStore.setNewSessionPending(true);
     let answer: string | null = null;
-    await sendMessage(final, [], undefined, (text) => { answer = text; });
-    return sessionStore.getState().currentSessionId === sid ? answer : null;
+    let answerSessionId: string | null = null;
+    await sendMessage(final, [], undefined, (text) => {
+      answer = text;
+      answerSessionId = sessionStore.getState().currentSessionId;
+    });
+    const currentSessionId = sessionStore.getState().currentSessionId;
+    if (!answerSessionId || currentSessionId !== answerSessionId) return null;
+    return sid && answerSessionId !== sid ? null : answer;
   });
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);

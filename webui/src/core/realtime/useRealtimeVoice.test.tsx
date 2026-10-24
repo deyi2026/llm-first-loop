@@ -9,10 +9,11 @@ class Socket {
   onclose: ((event: { code: number }) => void) | null = null;
   onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null;
   onerror = null;
+  closed = false;
   sent: (string | ArrayBuffer)[] = [];
   constructor() { Socket.instances.push(this); }
   send(data: string | ArrayBuffer) { this.sent.push(data); }
-  close() { this.onclose?.({ code: 1000 }); }
+  close() { this.closed = true; this.onclose?.({ code: 1000 }); }
 }
 
 function setup() {
@@ -56,6 +57,64 @@ it("explains HTTP 401 as an expired login instead of an audio-provider failure",
   expect(Socket.instances).toHaveLength(0);
   expect(deps.getUserMedia).not.toHaveBeenCalled();
   hook.unmount();
+});
+
+it("allows realtime voice to start from a brand-new chat with no chat session id", async () => {
+  const deps = setup();
+  const hook = renderHook(() => useRealtimeVoice(""));
+  await act(async () => { expect(await hook.result.current.enable()).toBe(true); });
+  const request = deps.fetcher.mock.calls.find(([url, init]) =>
+    url === "/api/v1/realtime/sessions" && init?.method === "POST",
+  );
+  expect(request).toBeDefined();
+  const body = JSON.parse(String(request?.[1]?.body)) as { session_id: string };
+  expect(body.session_id).toMatch(/^voice-pending-/);
+  expect(body.session_id).not.toBe("");
+  expect(Socket.instances).toHaveLength(1);
+  act(() => Socket.instances[0].onopen?.());
+  await waitFor(() => expect(deps.getUserMedia).toHaveBeenCalledOnce());
+  await waitFor(() => expect(hook.result.current.micEnabled).toBe(true));
+  hook.unmount();
+});
+
+it("keeps voice connected when the first spoken turn creates its real chat session", async () => {
+  const deps = setup();
+  const hook = renderHook(({ sessionId }: { sessionId: string }) => useRealtimeVoice(sessionId), {
+    initialProps: { sessionId: "" },
+  });
+  await act(async () => { expect(await hook.result.current.enable()).toBe(true); });
+  const socket = Socket.instances[0];
+  act(() => socket.onopen?.());
+  await waitFor(() => expect(hook.result.current.micEnabled).toBe(true));
+  hook.rerender({ sessionId: "created-by-first-voice-turn" });
+  expect(hook.result.current.enabled).toBe(true);
+  expect(hook.result.current.connectionState).toBe("ready");
+  expect(hook.result.current.micEnabled).toBe(true);
+  expect(socket.closed).toBe(false);
+  expect(Socket.instances).toHaveLength(1);
+  expect(deps.fetcher).not.toHaveBeenCalledWith(
+    "/api/v1/realtime/sessions/media-1", expect.objectContaining({ method: "DELETE" }),
+  );
+  hook.unmount();
+});
+
+it("always releases the media writer when unmounted after chat-session promotion", async () => {
+  const deps = setup();
+  const hook = renderHook(({ sessionId }: { sessionId: string }) => useRealtimeVoice(sessionId), {
+    initialProps: { sessionId: "" },
+  });
+  await act(async () => { expect(await hook.result.current.enable()).toBe(true); });
+  const socket = Socket.instances[0];
+  act(() => socket.onopen?.());
+  await waitFor(() => expect(hook.result.current.micEnabled).toBe(true));
+  hook.rerender({ sessionId: "created-by-first-voice-turn" });
+  expect(socket.closed).toBe(false);
+  hook.unmount();
+  expect(socket.closed).toBe(true);
+  expect(deps.context.close).toHaveBeenCalled();
+  expect(deps.fetcher).toHaveBeenCalledWith(
+    "/api/v1/realtime/sessions/media-1", expect.objectContaining({ method: "DELETE", keepalive: true }),
+  );
 });
 
 it("shows the voice panel while connecting and lets close cancel an in-flight setup", async () => {
