@@ -11,6 +11,7 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
   const onPress = vi.fn();
   const onRelease = vi.fn();
   const onFallbackText = vi.fn();
+  const onClose = vi.fn();
   const props = {
     connectionState: "ready" as const,
     micEnabled: false,
@@ -19,35 +20,90 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
     onPress,
     onRelease,
     onFallbackText,
+    onClose,
     ...over,
   };
   render(<RealtimeVoiceBar {...props} />);
-  return { onPress, onRelease, onFallbackText };
+  return { onPress, onRelease, onFallbackText, onClose };
 }
 
 describe("RealtimeVoiceBar", () => {
-  it("renders and exposes push-to-talk when ready", () => {
+  it("shows an explicit inactive microphone state and a permanent close action", () => {
     renderBar();
     const button = screen.getByTestId("realtime-push-to-talk");
     expect(button).toBeEnabled();
-    expect(screen.getByTestId("realtime-state").textContent).toContain("可以说话");
+    expect(button).toHaveTextContent("开始说话");
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("麦克风未开启");
+    expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
   });
 
-  it("presses on pointer down and releases on pointer up", () => {
+  it("click or mobile tap toggles recording instead of releasing when the finger lifts", () => {
     const { onPress, onRelease } = renderBar();
     const button = screen.getByTestId("realtime-push-to-talk");
     fireEvent.pointerDown(button);
-    expect(onPress).toHaveBeenCalledTimes(1);
     fireEvent.pointerUp(button);
+    expect(onPress).not.toHaveBeenCalled();
+    expect(onRelease).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(onRelease).not.toHaveBeenCalled();
+  });
+
+  it("explains that the first tap starts listening automatically after connecting", () => {
+    renderBar({ connectionState: "opening" });
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("连接后自动开始收音");
+    expect(screen.getByTestId("realtime-push-to-talk")).toHaveTextContent("正在连接");
+    expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
+  });
+
+  it("shows visible live recording with an explicit finish action", () => {
+    const { onRelease } = renderBar({ micEnabled: true });
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在语音输入");
+    const button = screen.getByTestId("realtime-push-to-talk");
+    expect(button).toHaveTextContent("结束并发送");
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(button);
+    expect(onRelease).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
+  });
+
+  it("shows permission wait and allows cancelling microphone startup", () => {
+    const { onRelease } = renderBar({ micStarting: true });
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("等待麦克风权限");
+    const button = screen.getByTestId("realtime-push-to-talk");
+    expect(button).toHaveTextContent("取消收音");
+    fireEvent.click(button);
     expect(onRelease).toHaveBeenCalledTimes(1);
   });
 
-  it("releases on pointer leave and blur", () => {
-    const { onRelease } = renderBar();
+  it("allows mobile microphone input without screen sharing capability", () => {
+    const { onPress } = renderBar({ modality: "voice_text_fallback" });
     const button = screen.getByTestId("realtime-push-to-talk");
-    fireEvent.pointerLeave(button);
-    fireEvent.blur(button);
-    expect(onRelease).toHaveBeenCalledTimes(2);
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(onPress).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("realtime-fallback")).toBeInTheDocument();
+  });
+
+  it("never disables finish and close while a text reply starts in the background", () => {
+    const { onRelease, onClose } = renderBar({ disabled: true, micEnabled: true });
+    const finish = screen.getByTestId("realtime-push-to-talk");
+    expect(finish).toBeEnabled();
+    fireEvent.click(finish);
+    fireEvent.click(screen.getByRole("button", { name: "关闭语音" }));
+    expect(onRelease).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the close action visible through opening, connection failure and streaming", () => {
+    for (const connectionState of ["opening", "failed", "reconnecting"] as const) {
+      cleanup();
+      const { onClose } = renderBar({ connectionState, disabled: true });
+      const close = screen.getByRole("button", { name: "关闭语音" });
+      fireEvent.click(close);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("disables talk when connection is not ready", () => {

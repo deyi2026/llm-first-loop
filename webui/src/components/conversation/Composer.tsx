@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zh, queueZh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn, steerAllQueued } from "../../core/conversation";
 import { MODEL_CATALOG_CHANGED_EVENT, fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
-import { sessionStore } from "../../core/stores";
+import { sessionStore, useCurrentSessionId } from "../../core/stores";
 import { useCapabilities } from "../../core/capabilities";
 import { InsertMenu } from "./InsertMenu";
 import { ModelControls } from "./ModelControls";
@@ -63,7 +63,9 @@ interface CommandDef {
 export function Composer() {
   const caps = useCapabilities();
   const conv = useConversation();
-  const realtime = useRealtimeVoice(sessionStore.getState().currentSessionId ?? "", async (final) => {
+  // Follow session switches through the store subscription, not an inert snapshot.
+  const voiceSessionId = useCurrentSessionId() ?? "";
+  const realtime = useRealtimeVoice(voiceSessionId, async (final) => {
     const sid = sessionStore.getState().currentSessionId;
     if (!sid || conversationStore.getState().streaming || conversationStore.getState().backgroundRunning) {
       setText((old) => old ? `${old}\n${final}` : final);
@@ -602,6 +604,23 @@ export function Composer() {
             ))}
         </div>
       )}
+      {realtime.enabled ? (
+        <RealtimeVoiceBar
+          connectionState={realtime.connectionState}
+          micEnabled={realtime.micEnabled}
+          micStarting={realtime.micStarting}
+          modality={realtime.modality}
+          chainLabel={realtime.chainLabel}
+          onPress={realtime.press}
+          onRelease={realtime.release}
+          onFallbackText={() => { realtime.disable(); taRef.current?.focus(); }}
+          onClose={realtime.disable}
+          onRetry={() => { void realtime.enable(); }}
+          transcript={realtime.transcript}
+          error={realtime.error}
+          disabled={conv.streaming || conv.backgroundRunning}
+        />
+      ) : null}
       <div
         className={`v2-composer-bar ${dragActive ? "drag-active" : ""}`}
         onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
@@ -658,31 +677,17 @@ export function Composer() {
             <ModelControls catalog={modelCatalog} />
           </div>
           <div className="v2-composer-tools-right">
-            {realtime.enabled ? (
-              <RealtimeVoiceBar
-                connectionState={realtime.connectionState}
-                micEnabled={realtime.micEnabled}
-                modality={realtime.modality}
-                chainLabel={realtime.chainLabel}
-                onPress={realtime.press}
-                onRelease={realtime.release}
-                onFallbackText={() => taRef.current?.focus()}
-                onClose={realtime.disable}
-                transcript={realtime.transcript}
-                error={realtime.error}
-                disabled={conv.streaming || conv.backgroundRunning}
-              />
-            ) : (
+            {!realtime.enabled ? (
               <button
                 type="button"
                 className="v2-btn"
                 data-testid="realtime-enable"
-                disabled={conv.streaming || realtime.modality === "screenshot_fallback"}
+                disabled={conv.streaming || conv.backgroundRunning}
                 onClick={() => void realtime.enable()}
               >
                 实时语音
               </button>
-            )}
+            ) : null}
             {!realtime.enabled && realtime.error ? <span role="alert">{realtime.error}</span> : null}
             <DictationButton
               disabled={conv.streaming}
