@@ -619,6 +619,8 @@ export function Composer() {
           connectionState={realtime.connectionState}
           micEnabled={realtime.micEnabled}
           micStarting={realtime.micStarting}
+          inputState={realtime.inputState}
+          onInterrupt={realtime.interrupt}
           playbackState={realtime.playbackState}
           modality={realtime.modality}
           chainLabel={realtime.chainLabel}
@@ -697,7 +699,7 @@ export function Composer() {
                 disabled={conv.streaming || conv.backgroundRunning}
                 onClick={() => void realtime.enable()}
               >
-                实时语音
+                语音对话
               </button>
             ) : null}
             {!realtime.enabled && realtime.error ? <span role="alert">{realtime.error}</span> : null}

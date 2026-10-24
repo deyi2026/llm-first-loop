@@ -1473,6 +1473,8 @@ def _stream_background(
                 except queue.Empty:
                     # 防御超时（正常 run 必有终态）；后台长时间无 delta（如工具执行）时
                     # 保持连接等待。断连由 ASGI 在 yield 挂起点注入 GeneratorExit。
+                    # Transport liveness only, never model output or a new run.
+                    yield ": keepalive\n\n"
                     continue
             etype = ev["type"]
             if etype == "delta":

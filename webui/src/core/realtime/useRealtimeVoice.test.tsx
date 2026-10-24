@@ -292,6 +292,30 @@ it("closes the old media writer on a session switch and never sends its late fin
   expect(onFinal).not.toHaveBeenCalled(); hook.unmount();
 });
 
+it("shows recognition and model processing instead of accepting speech it cannot submit", async () => {
+  const deps = setup();
+  let complete!: (answer: string) => void;
+  const hook = renderHook(() => useRealtimeVoice("session-1", () => new Promise<string>((resolve) => { complete = resolve; })));
+  await act(async () => { await hook.result.current.enable(); });
+  const socket = Socket.instances[0];
+  act(() => socket.onopen?.());
+  await waitFor(() => expect(hook.result.current.micEnabled).toBe(true));
+  act(() => deps.node.port.onmessage?.({ data: { samples: new Float32Array(480), sampleRate: 48000 } }));
+  act(() => hook.result.current.release());
+  expect(hook.result.current.inputState).toBe("recognizing");
+  await act(async () => { socket.onmessage?.({ data: JSON.stringify({
+    version: 1, type: "input.final", event_id: "busy-final", seq: 1,
+    connection_epoch: 1, session_id: "session-1", media_session_id: "media-1",
+    turn_id: "busy-turn", text: "请回答",
+  }) }); });
+  expect(hook.result.current.inputState).toBe("processing");
+  act(() => hook.result.current.press());
+  expect(deps.getUserMedia).toHaveBeenCalledTimes(1);
+  await act(async () => { complete("回答"); });
+  expect(hook.result.current.inputState).toBe("idle");
+  hook.unmount();
+});
+
 it("surfaces TTS synthesis failure and allows retrying the last spoken answer", async () => {
   setup();
   const onFinal = vi.fn(async () => "可朗读的回答");
@@ -318,5 +342,52 @@ it("surfaces TTS synthesis failure and allows retrying the last spoken answer", 
   act(() => hook.result.current.retryPlayback());
   expect(socket.sent.filter((value) => typeof value === "string" && JSON.parse(value).type === "tts.request")).toHaveLength(2);
   expect(hook.result.current.playbackState).toBe("synthesizing");
+  hook.unmount();
+});
+
+
+it("plays three distinct replies on the same voice connection", async () => {
+  const deps = setup();
+  const onFinal = vi.fn(async (text: string) => `回答：${text}`);
+  const hook = renderHook(() => useRealtimeVoice("session-1", onFinal));
+  await act(async () => { await hook.result.current.enable(); });
+  const socket = Socket.instances[0];
+  act(() => socket.onopen?.());
+  for (let turn = 1; turn <= 3; turn++) {
+    if (turn > 1) act(() => hook.result.current.press());
+    await waitFor(() => expect(hook.result.current.micEnabled).toBe(true));
+    act(() => deps.node.port.onmessage?.({ data: { samples: new Float32Array(480), sampleRate: 48000 } }));
+    act(() => hook.result.current.release());
+    const common = { version: 1, connection_epoch: 1, session_id: "session-1", media_session_id: "media-1" };
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({
+      ...common, type: "input.final", event_id: `final-${turn}`, seq: turn * 2,
+      turn_id: `turn-${turn}`, text: `问题${turn}`,
+    }) }); });
+    await waitFor(() => expect(hook.result.current.playbackState).toBe("synthesizing"));
+    await act(async () => {
+      socket.onmessage?.({ data: JSON.stringify({ ...common, type: "audio.playback", event_id: `audio-${turn}`, seq: turn * 2 + 1, response_id: `turn-${turn}` }) });
+      socket.onmessage?.({ data: new ArrayBuffer(4) });
+    });
+    await waitFor(() => expect(deps.audioSource.start).toHaveBeenCalledTimes(turn));
+    act(() => deps.audioSource.onended?.());
+    expect(hook.result.current.playbackState).toBe("idle");
+  }
+  expect(onFinal).toHaveBeenCalledTimes(3);
+  expect(Socket.instances).toHaveLength(1);
+  hook.unmount();
+});
+
+
+it("does not wait forever for ASR after a tap captured no audio frames", async () => {
+  setup();
+  const hook = renderHook(() => useRealtimeVoice("session-1"));
+  await act(async () => { await hook.result.current.enable(); });
+  const socket = Socket.instances[0];
+  act(() => socket.onopen?.());
+  await waitFor(() => expect(hook.result.current.micEnabled).toBe(true));
+  act(() => hook.result.current.release());
+  expect(hook.result.current.inputState).toBe("idle");
+  expect(hook.result.current.error).toContain("没有收到麦克风音频");
+  expect(socket.sent.some((v) => typeof v === "string" && JSON.parse(v).type === "input.commit")).toBe(false);
   hook.unmount();
 });

@@ -61,7 +61,7 @@ describe("RealtimeVoiceBar", () => {
 
   it("shows visible live recording with an explicit finish action", () => {
     const { onRelease } = renderBar({ micEnabled: true });
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在语音输入");
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在听你说话");
     const button = screen.getByTestId("realtime-push-to-talk");
     expect(button).toHaveTextContent("结束并发送");
     expect(button).toHaveAttribute("aria-pressed", "true");
@@ -162,4 +162,20 @@ describe("RealtimeVoiceBar", () => {
     renderBar({ disabled: true });
     expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
   });
+});
+
+it("distinguishes recognition and model processing from a ready microphone", () => {
+  renderBar({ inputState: "processing" });
+  expect(screen.getByTestId("realtime-state")).toHaveTextContent("LFL 正在回复");
+  expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
+});
+
+it("stops only playback through the dedicated voice action", () => {
+  const onInterrupt = vi.fn();
+  const { onPress } = renderBar({ playbackState: "playing", onInterrupt });
+  fireEvent.click(screen.getByRole("button", { name: "停止播报" }));
+  expect(onInterrupt).toHaveBeenCalledOnce();
+  expect(onPress).not.toHaveBeenCalled();
+  expect(screen.getByTestId("realtime-push-to-talk")).toHaveTextContent("打断并说话");
 });

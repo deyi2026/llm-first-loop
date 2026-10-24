@@ -344,7 +344,8 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
 async function resumeBackgroundStream(
   sessionId: string,
   runGeneration: string,
-  reuseCurrentStreamingMessage = false
+  reuseCurrentStreamingMessage = false,
+  onSuccess?: (answer: string) => void,
 ): Promise<boolean> {
   const controller = new AbortController();
   resumeAbort = controller;
@@ -473,6 +474,7 @@ async function resumeBackgroundStream(
         backgroundRunning: false,
         activeRunGeneration: null,
       });
+      if (!controller.signal.aborted) onSuccess?.(outcome.data.final_answer ?? acc.answer);
       void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
       return true;
     }
@@ -767,7 +769,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     ownerSessionId &&
     runGeneration
   ) {
-    const resumed = await resumeBackgroundStream(ownerSessionId, runGeneration, true);
+    const resumed = await resumeBackgroundStream(ownerSessionId, runGeneration, true, onSuccess);
     if (resumed) return;
   }
 
@@ -848,12 +850,15 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     // Preserve the visible explanation on the old session; only the *next* human send
     // carries new_session=true, so no user message is silently replayed or auto-routed.
     const ingressMismatch = errorCode === "session_ingress_mismatch";
-    const note = outcome.errorType === "network" || ingressMismatch ? detail : `[程序异常] ${detail}`;
+    const connectionLost = outcome.errorType === "network" && !controller.signal.aborted;
+    const note = connectionLost
+      ? "网页连接已断开，任务状态待确认；这不代表 LFL 已停止。已保留收到的内容，请重新连接查看任务进度。"
+      : outcome.errorType === "network" || ingressMismatch ? detail : `[程序异常] ${detail}`;
     finalize({
       role: "assistant",
       content: acc.answer || "",
       reasoningContent: acc.reasoning || null,
-      toolActivities: settleRunningActivities(liveActivities, "interrupted"),
+      toolActivities: settleRunningActivities(liveActivities, connectionLost ? "unknown" : "interrupted"),
       note,
       streaming: false,
       ts: Date.now() / 1000,

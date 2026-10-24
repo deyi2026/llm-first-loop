@@ -9,6 +9,7 @@ export interface RealtimeVoiceBarProps {
   connectionState: ConnectionState;
   micEnabled: boolean;
   micStarting?: boolean;
+  inputState?: "idle" | "recognizing" | "processing";
   playbackState?: "idle" | "synthesizing" | "playing" | "failed";
   modality: ModalityMode;
   chainLabel: string;
@@ -19,13 +20,14 @@ export interface RealtimeVoiceBarProps {
   onClose?: () => void;
   onRetry?: () => void;
   onRetryPlayback?: () => void;
+  onInterrupt?: () => void;
   transcript?: string;
   error?: string;
 }
 
 const STATE_LABEL: Record<ConnectionState, string> = {
   opening: "正在连接语音，连接后自动开始收音…",
-  ready: "已连接 · 麦克风未开启",
+  ready: "语音已就绪 · 麦克风未开启",
   reconnecting: "连接中断，重连中…",
   failed: "连接失败，请改用文字",
   closing: "正在结束…",
@@ -36,6 +38,7 @@ export function RealtimeVoiceBar({
   connectionState,
   micEnabled,
   micStarting = false,
+  inputState = "idle",
   playbackState = "idle",
   modality,
   chainLabel,
@@ -43,43 +46,37 @@ export function RealtimeVoiceBar({
   onRelease,
   onFallbackText,
   disabled,
-  onClose, onRetry, onRetryPlayback, transcript, error,
+  onClose, onRetry, onRetryPlayback, onInterrupt, transcript, error,
 }: RealtimeVoiceBarProps) {
   const capturing = micEnabled || micStarting;
-  const canTalk = capturing || (!disabled && modality !== "screenshot_fallback" && connectionState === "ready");
-  const status = playbackState === "playing"
-    ? "正在播放语音回复"
-    : playbackState === "synthesizing"
-      ? "正在生成语音回复…"
-      : playbackState === "failed"
-        ? "语音回复未播放"
-        : micEnabled
-          ? "正在语音输入 · 点击结束并发送"
-          : micStarting
-            ? "等待麦克风权限…"
-            : STATE_LABEL[connectionState];
-  const actionLabel = micEnabled
-    ? "结束并发送"
-    : micStarting
-      ? "取消收音"
-      : connectionState === "opening" || connectionState === "reconnecting"
-        ? "正在连接…"
-        : connectionState === "failed"
-          ? "暂不可用"
-          : "开始说话";
-  const guidance = playbackState === "playing"
-    ? "请听回答；需要打断时可以直接开始说话"
-    : playbackState === "synthesizing"
-      ? "文字回答已生成，正在合成并准备播放"
-      : playbackState === "failed"
-        ? "文字回答仍保留；可以重试语音回复"
-        : micEnabled
-          ? "麦克风已打开"
-          : micStarting
-            ? "请在浏览器中允许麦克风访问"
-            : connectionState === "opening" || connectionState === "reconnecting"
-              ? "无需再次点击，连接后会自动开始收音"
-              : "点击开始说话，再点击结束并发送";
+  const inputPending = inputState !== "idle";
+  const canTalk = capturing || (!disabled && !inputPending && modality !== "screenshot_fallback" && connectionState === "ready");
+  const status = micEnabled ? "正在听你说话 · 点击结束并发送"
+    : micStarting ? "等待麦克风权限…"
+    : inputState === "recognizing" ? "正在识别刚才的语音…"
+    : inputState === "processing" ? "LFL 正在回复 · 完成后自动播报"
+    : playbackState === "playing" ? "正在播放语音回复"
+    : playbackState === "synthesizing" ? "正在生成语音回复…"
+    : playbackState === "failed" ? "语音回复未播放"
+    : STATE_LABEL[connectionState];
+  const actionLabel = micEnabled ? "结束并发送"
+    : micStarting ? "取消收音"
+    : inputState === "recognizing" ? "正在识别…"
+    : inputState === "processing" ? "等待回复…"
+    : connectionState === "opening" || connectionState === "reconnecting" ? "正在连接…"
+    : connectionState === "failed" ? "暂不可用"
+    : playbackState === "playing" || playbackState === "synthesizing" ? "打断并说话"
+    : "开始说话";
+  const guidance = micEnabled ? "麦克风已打开；说完后点击结束并发送"
+    : micStarting ? "请在浏览器中允许麦克风访问"
+    : inputState === "recognizing" ? "语音已收下，正在生成文字"
+    : inputState === "processing" ? "当前问题仍在处理，请等待回复后继续下一轮"
+    : playbackState === "playing" ? "点击打断并说话可输入下一轮；停止播报只关闭当前声音"
+    : playbackState === "synthesizing" ? "文字回答已生成，正在合成并准备播放"
+    : playbackState === "failed" ? "文字回答仍保留；可以重试语音回复"
+    : connectionState === "opening" || connectionState === "reconnecting" ? "无需再次点击，连接后会自动开始收音"
+    : disabled ? "当前任务仍在处理，结束后可继续语音"
+    : "分轮语音对话：点击开始说话，说完点击结束并发送；每轮回复会自动播报";
 
   return (
     <section
@@ -88,6 +85,7 @@ export function RealtimeVoiceBar({
       data-testid="realtime-voice-bar"
       data-state={connectionState}
       data-playback={playbackState}
+      data-input={inputState}
       data-recording={micEnabled ? "true" : "false"}
     >
       <div className="realtime-voice-header">
@@ -113,6 +111,14 @@ export function RealtimeVoiceBar({
           {actionLabel}
         </button>
         <span className="realtime-voice-guidance">{guidance}</span>
+        {onFallbackText ? (
+          <button type="button" data-testid="realtime-fallback-text" onClick={onFallbackText}>
+            改用文字输入
+          </button>
+        ) : null}
+        {(playbackState === "playing" || playbackState === "synthesizing") && onInterrupt ? (
+          <button type="button" className="realtime-voice-retry" onClick={onInterrupt}>停止播报</button>
+        ) : null}
         {connectionState === "failed" && onRetry ? (
           <button type="button" className="realtime-voice-retry" onClick={onRetry}>重新连接</button>
         ) : null}
@@ -127,18 +133,15 @@ export function RealtimeVoiceBar({
           重新登录
         </a>
       ) : null}
-      <div className="realtime-voice-details">
+      <details className="realtime-voice-details">
+        <summary>语音连接信息</summary>
         <span data-testid="realtime-chain">{chainLabel}</span>
         <span className="realtime-voice-modality" data-testid="realtime-modality">{modality}</span>
         {modality !== "voice_full" ? (
           <span data-testid="realtime-fallback">{FALLBACK_HINT}</span>
         ) : null}
-        {onFallbackText ? (
-          <button type="button" data-testid="realtime-fallback-text" onClick={onFallbackText}>
-            改用文字输入
-          </button>
-        ) : null}
-      </div>
+
+      </details>
     </section>
   );
 }

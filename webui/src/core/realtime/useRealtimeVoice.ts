@@ -13,6 +13,7 @@ export interface RealtimeVoiceWiring {
   connectionState: ConnectionState;
   micEnabled: boolean;
   micStarting: boolean;
+  inputState: "idle" | "recognizing" | "processing";
   playbackState: PlaybackState;
   modality: ModalityMode;
   chainLabel: string;
@@ -50,6 +51,9 @@ export function useRealtimeVoice(
   const [connectionState, setConnectionState] = useState<ConnectionState>("closed");
   const [micEnabled, setMicEnabled] = useState(false);
   const [micStarting, setMicStarting] = useState(false);
+  const [inputState, setInputState] = useState<"idle" | "recognizing" | "processing">("idle");
+  const inputBusy = useRef(false);
+  const capturedFrames = useRef(0);
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
@@ -71,6 +75,7 @@ export function useRealtimeVoice(
   const modality = resolveModality({ mic: Boolean(caps?.getUserMedia), screenShare: Boolean(caps?.getDisplayMedia) });
 
   const dispose = useCallback(() => {
+    inputBusy.current = false;
     generation.current++;
     pressEpoch.current++;
     autoStartMic.current = null;
@@ -90,7 +95,7 @@ export function useRealtimeVoice(
   const disable = useCallback(() => {
     dispose();
     mediaScopeId.current = sessionId || newPendingVoiceScopeId();
-    setEnabled(false); setMicEnabled(false); setMicStarting(false);
+    setEnabled(false); setMicEnabled(false); setMicStarting(false); setInputState("idle");
     setPlaybackState("idle");
     setConnectionState("closed"); setError(""); setTranscript("");
   }, [dispose, sessionId]);
@@ -104,7 +109,7 @@ export function useRealtimeVoice(
     }
     if (previous && previous !== sessionId) dispose();
     mediaScopeId.current = sessionId || newPendingVoiceScopeId();
-    setEnabled(false); setMicEnabled(false); setMicStarting(false);
+    setEnabled(false); setMicEnabled(false); setMicStarting(false); setInputState("idle");
     setPlaybackState("idle");
     setConnectionState("closed"); setTranscript(""); setError("");
   }, [sessionId, dispose]);
@@ -115,9 +120,11 @@ export function useRealtimeVoice(
 
   const press = useCallback(() => {
     const active = activeRef.current;
-    if (!active || active.client.connectionState !== "ready" || active.controller.pressedDown) return;
+    if (!active || inputBusy.current || active.client.connectionState !== "ready" || active.controller.pressedDown) return;
     const epoch = ++pressEpoch.current;
     active.controller.interrupt();
+    capturedFrames.current = 0;
+    setPlaybackState("idle");
     setTranscript(""); setError(""); setMicStarting(true); setPlaybackState("idle");
     void active.controller.press().then((started) => {
       if (activeRef.current === active && pressEpoch.current === epoch) {
@@ -210,6 +217,8 @@ export function useRealtimeVoice(
             setError("语音连接已中断，请关闭后重试");
             activeRef.current?.controller.cancel();
             pressEpoch.current++;
+            inputBusy.current = false;
+            setInputState("idle");
             setMicEnabled(false); setMicStarting(false);
           }
         },
@@ -218,11 +227,19 @@ export function useRealtimeVoice(
       const capture = new MicCapture({
         mediaDevices: navigator.mediaDevices as unknown as MediaDevicesLike,
         pipeline: new CapturePipeline({}),
-        onFrame: (frame) => { client.sendAudioFrame(frame); },
+        onFrame: (frame) => { if (client.sendAudioFrame(frame)) capturedFrames.current++; },
         createPort: createBrowserCapturePort,
       });
       const controller = new RealtimeSessionController({
-        client, capture, playback, onCommit: () => { client.sendControl("input.commit"); },
+        client, capture, playback, onCommit: () => {
+          if (!capturedFrames.current) {
+            inputBusy.current = false;
+            setInputState("idle");
+            setError("没有收到麦克风音频，请点击开始说话后再试。");
+            return;
+          }
+          client.sendControl("input.commit");
+        },
         onCancel: () => { client.sendControl("input.clear"); },
       });
       const seen = new Set<string>();
@@ -241,13 +258,21 @@ export function useRealtimeVoice(
         const text = typeof event.text === "string" ? event.text : "";
         if (event.type === "input.delta") { setTranscript((old) => old + text); return; }
         if (event.type === "input.streaming_unavailable") { setError("增量字幕不可用，松开后仍会生成终稿"); return; }
-        if (event.type !== "input.final" || !text.trim() || !event.turn_id) return;
+        if (event.type !== "input.final" || !event.turn_id) return;
+        if (!text.trim()) {
+          inputBusy.current = false;
+          setInputState("idle");
+          setError("没有识别到语音，请点击开始说话后重试。");
+          return;
+        }
         const responseId = event.turn_id;
         const key = `${event.media_session_id}:${event.connection_epoch}:${responseId}`;
         if (seen.has(key)) return;
         seen.add(key); setTranscript(text);
         if (submitting) { setError("上一条语音仍在处理，请使用文字输入"); return; }
         submitting = true;
+        inputBusy.current = true;
+        setInputState("processing");
         void (async () => {
           try {
             const answer = await finalRef.current?.(text);
@@ -266,7 +291,13 @@ export function useRealtimeVoice(
             }
             setPlaybackState("synthesizing");
           } catch { if (owner === generation.current) setError("语音发送失败，识别文字已保留"); }
-          finally { submitting = false; }
+          finally {
+            submitting = false;
+            if (owner === generation.current) {
+              inputBusy.current = false;
+              setInputState("idle");
+            }
+          }
         })();
       });
       activeRef.current = { controller, client, context, mediaId, generation: owner };
@@ -295,11 +326,18 @@ export function useRealtimeVoice(
     const controller = activeRef.current?.controller;
     // A tap while the permission prompt is pending is cancellation, not a
     // zero-length voice turn. Commit only audio that was actually recording.
-    if (controller?.micEnabled) controller.release();
+    if (controller?.micEnabled) {
+      inputBusy.current = true;
+      setInputState("recognizing");
+      controller.release();
+    }
     else controller?.cancel();
     setMicStarting(false); setMicEnabled(false);
   }, []);
-  const interrupt = useCallback(() => { activeRef.current?.controller.interrupt(); }, []);
+  const interrupt = useCallback(() => {
+    activeRef.current?.controller.interrupt();
+    setPlaybackState("idle");
+  }, []);
   const retryPlayback = useCallback(() => {
     const active = activeRef.current;
     const request = lastTtsRequest.current;
@@ -315,5 +353,5 @@ export function useRealtimeVoice(
       setError("语音回复请求未发送，连接可能已断开。请重新连接后再试。");
     }
   }, []);
-  return { enabled, connectionState, micEnabled, micStarting, playbackState, modality, chainLabel: chainDisclosure({ cascade: true }).label, transcript, error, enable, disable, press, release, interrupt, retryPlayback };
+  return { enabled, connectionState, micEnabled, micStarting, inputState, playbackState, modality, chainLabel: chainDisclosure({ cascade: true }).label, transcript, error, enable, disable, press, release, interrupt, retryPlayback };
 }
