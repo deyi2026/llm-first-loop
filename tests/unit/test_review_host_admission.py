@@ -572,7 +572,6 @@ def test_large_but_bounded_multi_file_artifact_is_reviewable(tmp_path: Path) -> 
     # instead of being refused for being large. The invariant under test is
     # unchanged: a payload UNDER the ceiling is reviewed complete, a payload
     # OVER it is refused with attribution, and nothing is ever truncated.
-    cap = 2_500_000
     (repo / "many_tests.py").write_text("x = " + repr("a" * 155_000) + "\n")
     host = HostReviewAdmission()
     runner = FakeChildRunner()

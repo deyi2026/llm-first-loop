@@ -27,10 +27,10 @@ import pytest
 
 import llm_loop.tools.builtin.execute_command as ec_module
 from llm_loop.core.message import ToolCall, ToolResultStatus
+from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
-from llm_loop.timekeeping import system_local_now
 
 # 灾难样本运行时拼接（源文件不出现整字面形态）
 _ROOT = chr(47)  # 根本体

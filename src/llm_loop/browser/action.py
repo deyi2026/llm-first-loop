@@ -599,12 +599,10 @@ class BrowserActionAdapter:
         if landed_ok:
             return None
         # 落地被拒：尽力中断暴露（about:blank）；逃生失败不影响失败回执本身。
-        try:
+        with suppress(Exception):  # noqa: BLE001 — best-effort escape
             self.actuator.dispatch(
                 verb="navigate", physical_target=None, args={"url": "about:blank"}
             )
-        except Exception:  # noqa: BLE001 — best-effort escape
-            pass
         return str(landed_reason or "blocked")
 
     def execute(self, session_id: str, action: dict[str, Any]) -> dict[str, Any]:

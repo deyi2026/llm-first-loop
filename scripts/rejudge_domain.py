@@ -40,7 +40,7 @@ def main() -> int:
 
     sc_data = json.loads(Path(args.scenarios).read_text(encoding="utf-8"))
     scenarios = {s["id"]: s for s in sc_data["scenarios"]}
-    rows = [json.loads(l) for l in Path(args.checkpoint).read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(line) for line in Path(args.checkpoint).read_text(encoding="utf-8").splitlines() if line.strip()]
 
     by_scn: dict[str, list[dict]] = defaultdict(list)
     diffs: list[dict] = []

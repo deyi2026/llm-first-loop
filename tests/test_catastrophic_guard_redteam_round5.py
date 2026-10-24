@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import os
 
-_HOME_DIR = "/Users/" + os.environ.get("USER", "yyj")
-
 import pytest
 
 from llm_loop.tools.safety import CatastrophicGuard
+
+_HOME_DIR = "/Users/" + os.environ.get("USER", "yyj")
 
 BLOCKED_CASES = [
     (

@@ -29,8 +29,6 @@ from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
 
 
-
-
 @dataclass(frozen=True)
 class AdmissionDecision:
     allowed: bool

@@ -25,7 +25,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 _SKILL_FILE = "SKILL.md"

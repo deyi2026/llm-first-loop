@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import os
 
-# 运行时拼接本机家目录，避免源码内嵌本地绝对路径字面量
-_HOME_DIR = "/Users/" + os.environ.get("USER", "yyj")
-
 import pytest
 
 from llm_loop.tools.safety import CatastrophicGuard
+
+# 运行时拼接本机家目录，避免源码内嵌本地绝对路径字面量
+_HOME_DIR = "/Users/" + os.environ.get("USER", "yyj")
 
 RM = "r" + "m"
 RF = "-r" + "f"

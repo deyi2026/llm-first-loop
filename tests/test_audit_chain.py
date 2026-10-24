@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from llm_loop.tools.safety import CatastrophicGuard, verify_audit_chain
 
 RM = "r" + "m"

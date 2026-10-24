@@ -632,9 +632,7 @@ def _execution_tokens(tokens: list[str]) -> list[str]:
             parts = parts[1:]
             continue
         cmd = os.path.basename(parts[0]).lower()
-        if cmd in {"command", "builtin", "exec", "nohup"}:
-            parts = parts[1:]
-        elif cmd in _LEAD_KEYWORDS:
+        if cmd in {"command", "builtin", "exec", "nohup"} or cmd in _LEAD_KEYWORDS:
             parts = parts[1:]
         elif cmd == "eval":
             # eval 把余下参数拼回一条命令：交回外层按整串重新分词
@@ -841,9 +839,10 @@ def _payload_deletes_dangerous(payload: str, cwd: str | None) -> str | None:
     # 无引号形态：按词取绝对路径再判定
     for tok in re.split(r"\s+", payload):
         tok = tok.strip("'\",()[]{};")
-        if tok.startswith("/") or tok.startswith("~"):
-            if _is_dangerous_rm_target(_expand(tok), cwd):
-                return tok
+        if (tok.startswith("/") or tok.startswith("~")) and _is_dangerous_rm_target(
+            _expand(tok), cwd
+        ):
+            return tok
     return None
 
 
@@ -1005,13 +1004,16 @@ class CatastrophicGuard:
         # P2-5（2026-10-25）：破坏性命令放行前必须留下审计；写不进就 fail-closed。
         # 只在配置了 audit_dir 时生效——默认 CatastrophicGuard() 不带审计目录，
         # 纯判定场景（单测、离线扫描）行为不变。
-        if self._audit_dir is not None and _is_destructive_surface(command):
-            if not self._audit_allow(tool_name, command):
-                return BlockDecision(
-                    blocked=True,
-                    reason="破坏性操作的审计记录无法写入，已按 fail-closed 阻断（建议书 P2-5）。",
-                    evidence=f"命令: {command[:200]}; 审计目录: {self._audit_dir}",
-                )
+        if (
+            self._audit_dir is not None
+            and _is_destructive_surface(command)
+            and not self._audit_allow(tool_name, command)
+        ):
+            return BlockDecision(
+                blocked=True,
+                reason="破坏性操作的审计记录无法写入，已按 fail-closed 阻断（建议书 P2-5）。",
+                evidence=f"命令: {command[:200]}; 审计目录: {self._audit_dir}",
+            )
         return decision
 
     def _scan_command(
@@ -1084,7 +1086,7 @@ class CatastrophicGuard:
         # 但"出现 rm 这个字"≠"执行 rm"：`echo rm -rf /etc`、日志文本、文档字符串里
         # rm 只是普通参数（2026-10-25 全量回归：旧逻辑把 echo 参数当命令，误拦）。
         # 只有 rm 处于执行位（首位或 xargs/busybox/git/find -exec 等执行上下文）才判定。
-        _RM_EXEC_PREDECESSORS = frozenset(
+        _rm_exec_predecessors = frozenset(
             {"xargs", "busybox", "git", "find", "sudo", "env", "command", "nohup",
              "timeout", "nice", "stdbuf", "watch", "exec", "builtin"}
         )
@@ -1093,7 +1095,7 @@ class CatastrophicGuard:
             if index == 0:
                 return True
             prev = os.path.basename(toks[index - 1]).lower()
-            return prev in _RM_EXEC_PREDECESSORS or prev.startswith("-exec")
+            return prev in _rm_exec_predecessors or prev.startswith("-exec")
 
         rm_idx = next(
             (

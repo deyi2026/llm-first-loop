@@ -185,16 +185,17 @@ def test_v5_spec_does_not_change_verdicts_on_real_batches(spec_v5: dict, spec_v4
         pytest.skip("24 轮新批 checkpoint 不在本地")
     rows = []
     for path in files:
-        for line in open(path, encoding="utf-8"):
-            rec = json.loads(line)
-            detail = rec.get("detail") or {}
-            rows.append(
-                {
-                    "cid": rec.get("scenario_id"),
-                    "answer": detail.get("answer_full") or detail.get("answer_head") or "",
-                    "trace": detail.get("trace") or [],
-                }
-            )
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                rec = json.loads(line)
+                detail = rec.get("detail") or {}
+                rows.append(
+                    {
+                        "cid": rec.get("scenario_id"),
+                        "answer": detail.get("answer_full") or detail.get("answer_head") or "",
+                        "trace": detail.get("trace") or [],
+                    }
+                )
     keys = ("semantic_class", "forbidden", "context", "require", "legacy_verdict",
             "legacy_params", "allow_refusal_escape", "neg_scope")
     diffs = []

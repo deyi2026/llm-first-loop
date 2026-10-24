@@ -27,12 +27,17 @@ from llm_loop.core.run_context import (
     workspace_base,
 )
 from llm_loop.tools.builtin.job_registry import JobDurabilityError, JobLimitExceeded, JobRegistry
+
+# P2-2/P2-3（安全建议书 2026-10-25）: argv 结构化执行 + 提权令牌覆盖守卫阻断。
+# 置于顶层第一方 import 块安全：safety/escalation 均为独立叶子模块，此处仅类型与工具类。
+from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.review_gate import (
     REVIEW_GATE_OBLIGATION,
     classify_review_gate_command,
     is_read_only_probe,
     review_gate_note,
 )
+from llm_loop.tools.safety import CatastrophicGuard
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
@@ -45,11 +50,6 @@ from llm_loop.workspace.worktree_isolation import (
     prepare_worktree,
     release_worktree,
 )
-
-# P2-2/P2-3（安全建议书 2026-10-25）: argv 结构化执行 + 提权令牌覆盖守卫阻断。
-# 延迟 import 避免装配期循环（safety/escalation 均为独立叶子模块，此处仅类型与工具类）。
-from llm_loop.tools.escalation import EscalationStore
-from llm_loop.tools.safety import CatastrophicGuard
 
 _argv_logger = logging.getLogger(__name__)
 
@@ -474,7 +474,7 @@ class ExecuteCommandTool:
         # argv 模式: shell=False 直执行（不经 /bin/sh），守卫按 shlex.join(argv)
         # 判定；command 模式: 保持既有 shell 语义（exec_mode=shell，零回归）。
         command = str(kwargs.get("command", "") or "").strip()
-        argv_arg = kwargs.get("argv", None)
+        argv_arg = kwargs.get("argv")
         exec_argv: list[str] | None = None
         exec_mode = "shell"
         if argv_arg is not None:

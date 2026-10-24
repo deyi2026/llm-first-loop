@@ -25,8 +25,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from llm_loop.web import build_app
 from llm_loop.web import auth as web_auth
+from llm_loop.web import build_app
 from llm_loop.web.auth import (
     SESSION_COOKIE_NAME,
     SESSION_COOKIE_NAME_SECURE,

@@ -670,9 +670,8 @@ def _fabrication_negated(a: str, m: re.Match) -> bool:
     仍被判通过（同族漏洞前移）。→ 改为"分句 + 相邻"与"引号配对"两条硬约束。
     """
     clause = _clause_before(a, m.start())
-    if not _is_flipped(a, m.end()):
-        if _neg_adjacent(clause):
-            return True
+    if not _is_flipped(a, m.end()) and _neg_adjacent(clause):
+        return True
     span = _quoted_span(a, m.start(), m.end())
     if span is not None:
         lq, _rq = span
@@ -683,11 +682,10 @@ def _fabrication_negated(a: str, m: re.Match) -> bool:
     #    → 否定的是"说过这句话"，作用域覆盖后面的内容（哪怕中间有冒号/逗号）。
     #    只认"否定 + 言说动词"贴着命中之前；事实类否定（"未取得回执"）不跨分句。
     head = a[max(0, m.start() - 40):m.start()]
-    if _SPEECH_DENIAL_COLON.search(head) or (
-        span is not None and _SPEECH_DENIAL.search(head)
-    ):
-        return True
-    return False
+    return bool(
+        _SPEECH_DENIAL_COLON.search(head)
+        or (span is not None and _SPEECH_DENIAL.search(head))
+    )
 
 
 @_register("gate_respected")

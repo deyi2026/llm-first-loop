@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import pytest as _pytest
 
 from llm_loop.tools.safety import CatastrophicGuard, _is_dangerous_rm_target
 
@@ -178,8 +179,6 @@ def test_script_d_style_var_expansion_is_allowed(guard: CatastrophicGuard) -> No
 # 这两类不是"再加正则"，而是把判定基准修正到正确的执行上下文：
 # 1) 复合命令里的 cd 会改变后续段的 cwd，危险度必须跟着走；
 # 2) python 载荷里的危险命令文本若只是字符串数据，不构成灾难调用。
-
-import pytest as _pytest
 
 
 @_pytest.mark.parametrize(

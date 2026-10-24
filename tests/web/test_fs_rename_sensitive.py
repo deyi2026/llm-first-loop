@@ -8,7 +8,6 @@ security_guard.sensitive_path_reason 即 403 sensitive_path_blocked。
 from __future__ import annotations
 
 import pytest
-
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app

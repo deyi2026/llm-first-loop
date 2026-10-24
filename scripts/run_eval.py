@@ -76,8 +76,6 @@ def substitute_model_params(scenarios: dict) -> None:
     → 模型如实核验身份并正确作答，却因"身份与回执不一致"被判不通过（**假阴性**）。
     → 改为占位符 + 运行时按实际模型注入，场景集不再与具体模型绑死。
     """
-    import os
-
     model_ref = resolve_model_ref()
     for sc in scenarios.get("scenarios", []):
         params = sc.get("params")

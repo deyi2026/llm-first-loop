@@ -29,6 +29,7 @@ import secrets
 import threading
 import time
 from collections import deque
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -295,10 +296,8 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     except OSError:
-        try:
+        with suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         return False
     return True
 
@@ -677,10 +676,8 @@ def _host_without_port(value: str) -> str:
     raw = (value or "").strip().lower()
     if not raw:
         return ""
-    if raw.startswith("["):  # [::1]:8903 -> ::1
-        raw = raw[1:].split("]", 1)[0]
-    else:
-        raw = raw.split(":", 1)[0]
+    # [::1]:8903 -> ::1
+    raw = raw[1:].split("]", 1)[0] if raw.startswith("[") else raw.split(":", 1)[0]
     raw = raw.strip(".")
     try:
         return raw.encode("idna").decode("ascii")
@@ -823,6 +820,4 @@ class HostGuardMiddleware:
             return True  # canonical 的子域 = 文档化的隧道别名主机（见 _CanonicalOriginMiddleware）
         client = scope.get("client")
         peer = str(client[0]) if isinstance(client, (tuple, list)) and client else ""
-        if peer == self._TESTCLIENT_PEER:
-            return True  # 见类 docstring：进程内测试哨兵，生产不可达
-        return False
+        return peer == self._TESTCLIENT_PEER  # 见类 docstring：进程内测试哨兵，生产不可达
