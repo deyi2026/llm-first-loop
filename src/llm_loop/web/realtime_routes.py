@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from llm_loop.realtime.media_registry import MediaSessionRegistry
 from llm_loop.realtime.media_usage import UsageStatus
-from llm_loop.web.auth import SESSION_COOKIE_NAME, require_api_key
+from llm_loop.web.auth import require_api_key, session_cookie_value
 
 router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 
@@ -39,7 +39,9 @@ def _registry(request: Request) -> MediaSessionRegistry:
 
 
 def _owner_identity(request: Request) -> str:
-    cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
+    # S3-6 双名读取（__Host- 前缀名优先，旧名兼容）：secure 部署下会话 cookie
+    # 已迁移前缀名，此处必须能读到，否则浏览器建会话将退化为 Bearer 身份。
+    cookie = session_cookie_value(request.cookies)
     if cookie:
         return cookie
     scheme, token = get_authorization_scheme_param(request.headers.get("authorization", ""))
@@ -128,6 +130,12 @@ def delete_realtime_session(request: Request, media_session_id: str) -> dict:
     if record is None:
         # 幂等：未知/越权不泄露存在性，按未找到处理
         raise HTTPException(status_code=404, detail="media session not found")
+    # M3（RET-02）：会话清理 → 关键帧全部到期（回读明确失效；未装配视觉链则跳过）
+    keyframes = getattr(request.app.state, "realtime_keyframes", None)
+    if keyframes is not None:
+        with_expire = getattr(keyframes, "close_session", None)
+        if callable(with_expire):
+            with_expire(media_session_id)
     return {
         "close_state": record.session.state.value,
         "task_state": record.session.facts().task_state.value,

@@ -9,6 +9,11 @@ export interface PlaybackChunk {
   responseId: string;
   connectionEpoch: number;
   data: ArrayBuffer;
+  /**
+   * 下行二进制分片格式：`pcm16` = 无头 16k 单声道 PCM16（控制通道 TTS 下行契约）；
+   * `encoded` = 可直接 `decodeAudioData` 的容器（WAV 等）。缺省按 `encoded` 处理（向后兼容）。
+   */
+  format?: "pcm16" | "encoded";
 }
 
 export interface PlaybackSnapshot {
@@ -23,7 +28,14 @@ export class PlaybackQueue {
   private current: PlaybackChunk | null = null;
   private stoppedReason: string | null = null;
 
-  constructor(private readonly epochProvider: () => number) {}
+  constructor(
+    private readonly epochProvider: () => number,
+    /**
+     * 分片**成为当前待播**（此前无在播分片）时通知一次；排队追加（`queue.push`）不回调。
+     * 供播放输出接线在该时刻触发 `playNext`（自然接续由 `PlaybackOutput` 自行完成）。
+     */
+    private readonly onEnqueued?: (chunk: PlaybackChunk) => void,
+  ) {}
 
   /** 入队一段本地 TTS 音频；旧代次直接拒绝（不得更新当前会话）。 */
   enqueue(chunk: PlaybackChunk): boolean {
@@ -33,6 +45,7 @@ export class PlaybackQueue {
     if (this.current === null) {
       this.current = chunk;
       this.stoppedReason = null;
+      this.onEnqueued?.(chunk);
       return true;
     }
     this.queue.push(chunk);
@@ -73,6 +86,11 @@ export class PlaybackQueue {
     this.queue.length = 0;
     this.current = null;
     this.stoppedReason = "cleared";
+  }
+
+  /** 当前待播放分片（不改队列，供输出接线读取数据）。 */
+  peek(): PlaybackChunk | null {
+    return this.current;
   }
 
   snapshot(): PlaybackSnapshot {
