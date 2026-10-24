@@ -2,14 +2,14 @@
   "scenario": "S06",
   "title": "前台长工具停止：requested→local_terminated",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-23T18:56:34",
+  "started_at": "2026-10-25T04:49:13",
   "steps": [],
   "wall": {
-    "tool_started": 1792752995.109
+    "tool_started": 1792874953.744
   },
   "dur_ms": {
-    "runner_cancel_ms": 29.5,
-    "cancel_to_run_terminal_ms": 51.8
+    "runner_cancel_ms": 1.2,
+    "cancel_to_run_terminal_ms": 31.2
   },
   "obs": {
     "runner_cancel_returned": true,
@@ -18,11 +18,11 @@
     "llm_call_count": 1,
     "final_session_texts": [
       "前台慢",
-      "[状态: failure] [命令] sleep 30 [退出码 -9] [输出 1 行]\n（命令执行成功，无输出）",
+      "[状态: failure] [命令] sleep 30 [退出码 -9] [输出 1 行] [exec_mode=shell]\n（命令执行成功，无输出）",
       ""
     ]
   },
   "endpoints": {},
-  "finished_at": "2026-10-23T18:56:35",
+  "finished_at": "2026-10-25T04:49:13",
   "status": "ok"
 }
