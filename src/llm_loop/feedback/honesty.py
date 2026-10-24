@@ -95,6 +95,23 @@ def llm_error_text(error: Exception) -> str:
             f"原因: {type(error).__name__}: {error}\n"
             f"边界: 该错误码属于 provider 请求结构校验；本次未能获得模型回答。"
         )
+    # The provider explicitly identifies a reasoning replay protocol failure.
+    # Keep this narrow: other HTTP 400 failures retain their existing feedback.
+    if isinstance(error, LLMHTTPError) and error.status_code == 400:
+        try:
+            body = json.loads(error.body or "")
+        except (TypeError, ValueError):
+            body = None
+        detail = body.get("error") if isinstance(body, dict) else None
+        message = detail.get("message") if isinstance(detail, dict) else None
+        if isinstance(message, str) and message.startswith(
+            "The `reasoning_content` in the thinking mode must be passed back to the API."
+        ):
+            return (
+                "[LLM 调用异常] 事实: provider 拒绝了本次请求的思考内容回传（HTTP 400）。\n"
+                f"原因: {type(error).__name__}: {error}\n"
+                "边界: 这是请求结构与思考内容回传的协议校验失败；本次未能获得模型回答。"
+            )
     # An explicit provider length stop is output exhaustion, not a transient empty stream.
     if isinstance(error, LLMEmptyResponseError) and error.finish_reason.lower() in {
         "length", "max_tokens",

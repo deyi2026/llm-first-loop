@@ -793,18 +793,14 @@ def project_compaction_source(messages: list[dict], source: dict) -> tuple[list[
     """Place a neutral locator only at a legal historical boundary.
 
     Never split tool groups, prefill an assistant response, or fabricate a user turn.
-    A lone ingress has no legal slot; task_state.read_manifest remains discoverable.
+    A program assistant has no provider-generated reasoning_content. Inserting it
+    after the latest user enters the active thinking/tool turn and can cause a
+    provider HTTP 400 even when the real model reasoning is preserved. Only a
+    historical boundary before the latest user is eligible. With one ingress,
+    task_state.read_manifest still discovers the exact saved source on demand.
     """
     users = [i for i, message in enumerate(messages) if message.get("role") == "user"]
-    if len(users) > 1:
-        index = users[-1]
-    elif len(users) == 1:
-        # A follow-up ending in actual tool receipts has a legal assistant slot.
-        first = users[0] + 1
-        if not (first < len(messages) and messages[first].get("role") == "assistant"
-                and messages[first].get("tool_calls") and messages[-1].get("role") == "tool"):
-            return messages, False
-        index = first
-    else:
+    if len(users) < 2:
         return messages, False
+    index = users[-1]
     return [*messages[:index], source, *messages[index:]], True
