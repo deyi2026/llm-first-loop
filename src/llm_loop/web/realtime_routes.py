@@ -13,13 +13,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security.utils import get_authorization_scheme_param
 from pydantic import BaseModel
 
 from llm_loop.realtime.media_registry import MediaSessionRegistry, MediaWriterConflictError
 from llm_loop.realtime.media_usage import UsageStatus
-from llm_loop.web.auth import SESSION_COOKIE_NAME, require_api_key
+from llm_loop.web.auth import (
+    SESSION_COOKIE_NAME,
+    WebSessionStore,
+    request_is_trusted_local,
+    require_api_key,
+    session_ttl_seconds,
+)
 
 router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 
@@ -44,6 +50,28 @@ def _owner_identity(request: Request) -> str:
         return cookie
     scheme, token = get_authorization_scheme_param(request.headers.get("authorization", ""))
     return token if scheme.lower() == "bearer" and token else ""
+
+
+def _create_owner_identity(request: Request) -> tuple[str, int | None]:
+    """Bind an anonymous *direct loopback* client to a real revocable media owner.
+
+    Other Web routes deliberately allow trusted localhost without login. The
+    media WS still needs an unguessable cookie for ownership and reconnects;
+    never use one shared ``local`` owner or waive the WebSocket identity check.
+    A stale cookie from a Web restart must not be trusted as an owner either.
+    Proxied/public requests never receive an implicit session here.
+    """
+    if not request_is_trusted_local(request):
+        return _owner_identity(request), None
+    store = getattr(request.app.state, "web_sessions", None)
+    if not isinstance(store, WebSessionStore):
+        raise HTTPException(status_code=503, detail="browser session store unavailable")
+    cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if store.valid(cookie):
+        return cookie, None
+    ttl = session_ttl_seconds()
+    token = store.create(ttl_seconds=ttl)
+    return token, ttl
 
 
 def _capability_profile(request: Request) -> dict:
@@ -72,14 +100,14 @@ def _preflight(request: Request) -> None:
 
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_api_key)])
-def create_realtime_session(request: Request, body: CreateRealtimeSessionBody) -> dict:
+def create_realtime_session(request: Request, response: Response, body: CreateRealtimeSessionBody) -> dict:
     if not body.session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
-    owner = _owner_identity(request)
-    if not owner:
-        raise HTTPException(status_code=401, detail="unauthenticated")
     _preflight(request)
     registry = _registry(request)
+    owner, minted_ttl = _create_owner_identity(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="unauthenticated")
     try:
         record = registry.create(
             session_id=body.session_id,
@@ -90,7 +118,21 @@ def create_realtime_session(request: Request, body: CreateRealtimeSessionBody) -
             take_over=body.take_over,
         )
     except MediaWriterConflictError as exc:
+        if minted_ttl is not None:
+            request.app.state.web_sessions.revoke(owner)
         raise HTTPException(status_code=409, detail="media session already has an active writer") from exc
+    if minted_ttl is not None:
+        # The cookie is only issued after a writer was successfully admitted.
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=owner,
+            max_age=minted_ttl,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            path="/",
+        )
+        response.headers["Cache-Control"] = "no-store"
     return {
         "media_session_id": record.media_session_id,
         "connection_epoch": record.connection_epoch,

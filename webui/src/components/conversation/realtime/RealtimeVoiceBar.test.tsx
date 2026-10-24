@@ -56,6 +56,14 @@ describe("RealtimeVoiceBar", () => {
     expect(screen.getByTestId("realtime-state").textContent).toContain("改用文字");
   });
 
+  it("offers a same-origin login link for expired browser sessions", () => {
+    renderBar({ connectionState: "failed", error: "登录状态已失效，请重新登录后重试" });
+    const link = screen.getByRole("link", { name: "重新登录" });
+    expect(link.getAttribute("href")).toBe(
+      `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+    );
+  });
+
   it("shows fallback hint and disables talk in screenshot fallback", () => {
     renderBar({ modality: "screenshot_fallback" });
     expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();

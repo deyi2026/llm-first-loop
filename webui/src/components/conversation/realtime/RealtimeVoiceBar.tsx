@@ -72,6 +72,11 @@ export function RealtimeVoiceBar({
       {onClose ? <button type="button" onClick={onClose}>关闭语音</button> : null}
       {transcript ? <span aria-live="polite">{transcript}</span> : null}
       {error ? <span role="alert">{error}</span> : null}
+      {error?.includes("请重新登录") ? (
+        <a href={`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`}>
+          重新登录
+        </a>
+      ) : null}
       <span data-testid="realtime-state">{STATE_LABEL[connectionState]}</span>
       <span data-testid="realtime-chain">{chainLabel}</span>
       <span data-testid="realtime-modality">{modality}</span>

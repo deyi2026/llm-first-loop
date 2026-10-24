@@ -83,6 +83,9 @@ export function useRealtimeVoice(
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId }),
       });
+      if (response.status === 401) {
+        throw new Error("语音连接失败（HTTP 401）：登录状态已失效，请重新登录后重试");
+      }
       if (!response.ok) throw new Error(`语音连接失败（HTTP ${response.status}）`);
       const body = await response.json() as { media_session_id: string; connection_epoch: number };
       mediaId = body.media_session_id;

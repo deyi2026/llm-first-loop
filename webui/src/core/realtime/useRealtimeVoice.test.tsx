@@ -35,6 +35,7 @@ function setup() {
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
   const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => ({
     ok: true,
+    status: init?.method === "POST" ? 201 : 200,
     json: async () => init?.method === "POST" ? { media_session_id: "media-1", connection_epoch: 1 } : {},
   }));
   vi.stubGlobal("fetch", fetcher);
@@ -42,6 +43,18 @@ function setup() {
 }
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it("explains HTTP 401 as an expired login instead of an audio-provider failure", async () => {
+  const deps = setup();
+  deps.fetcher.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+  const hook = renderHook(() => useRealtimeVoice("session-1"));
+  await act(async () => { expect(await hook.result.current.enable()).toBe(false); });
+  expect(hook.result.current.error).toContain("HTTP 401");
+  expect(hook.result.current.error).toContain("重新登录");
+  expect(Socket.instances).toHaveLength(0);
+  expect(deps.getUserMedia).not.toHaveBeenCalled();
+  hook.unmount();
+});
 
 it("uses the browser graph, reaches ready, commits flushed audio, and delivers final through the existing chat callback", async () => {
   const deps = setup();

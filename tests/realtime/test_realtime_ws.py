@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
@@ -182,6 +184,11 @@ class TestHandshakeEndpoint:
             },
         ) as ws:
             ws.close()
+        # The server's async close/finally can complete just after TestClient
+        # returns from its WS context. Observe the actual release, bounded.
+        deadline = time.monotonic() + 1.0
+        while registry.count_active() and time.monotonic() < deadline:
+            time.sleep(0.005)
         assert registry.count_active() == 0
 
     def test_missing_registry_rejects_unknown_target(self):
