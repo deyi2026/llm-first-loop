@@ -189,6 +189,13 @@ python -m pytest tests/phase4/test_m2_inflight_interrupt.py::test_d_gate_conserv
 （并发工作线的 `src/llm_loop/realtime/*`、`tests/realtime/*`）超过 40 个上限。
 上限改动无法清除该阻塞；需并发工作线自行提交或搁置。
 
+> **2026-10-24 闭环**：web 面板 22:33 正式批准（exec_override → executing）。后续会话 f4fefaa7
+> 复核：代码已随 `3d90eae3c` 在分支内、HEAD 单测 129 passed、双侧实测回执齐备；
+> 补齐规则真值源同步（`ai_rules.md` 实现事实 192KB → 2.5M 字符，`f7409b320`）。
+> 归属会话 ff393732 已不活跃，模型侧 `evolution_complete` 被跨会话归属护栏拒绝，
+> 按子规则 4 经 CLI `evolve-complete` 登记（executor=human，verify=unverified——
+> 无人独立复核前不标 verified；证据指针见登记 note）。
+
 ---
 
 ## 12. 评测框架真实 LLM 路径失效（2026-10-23，P1 期间发现并修复）
