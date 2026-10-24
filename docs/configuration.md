@@ -22,7 +22,7 @@
 | 变量 | 默认 | 说明 / 坑 |
 |:---|:---|:---|
 | `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数。**坑**：工具密集任务（读→改→验证）20 轮常触顶（2026-08-14 已 20→40）；达 80% 时程序注入 `[轮数预警]`，AI 可经 adjust_strategy 调大（白名单，硬上限 500） |
-| `EXEC_SANDBOX` | none | bash 沙箱（P3-3）：`bwrap`=bubblewrap 隔离 execute_command（只读系统目录/独立命名空间/工作区可写，回执如实标注）；显式开启而 bwrap 缺失 → fail-closed 命令不执行；空=none 不启用 |
+| `EXEC_SANDBOX` | auto | bash 沙箱（P3-3；2026-10-25 默认 none→auto）：`auto`=按平台自动解析 bwrap(优先) → docker(daemon 可用) → sandbox-exec(macOS) → none(附一次性 warning)；也可显式 `bwrap`/`docker`/`sandbox-exec`/`none`。显式开启而后端缺失 → fail-closed 不执行；`EXEC_SANDBOX_STRICT=1` 时 auto 降级到 none 也直接报错。macOS sandbox-exec 只约束**写**（工作区/`/tmp`/常见缓存可写，网络与读未隔离，回执如实标注） |
 | `LLM_WIRE_PROTOCOL` | openai | 默认 client 线协议（P3-5）：openai / anthropic / google；provider 模型条目可用 `wire_protocol` 元数据逐模型覆盖 |
 | `MCP_SERVERS` | — | MCP 服务器 JSON 数组（legacy，P3-1）：`[{"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]}]`；支持 stdio 与 http/sse（`type`/`url`/`headers`）。**注册名是下划线形式** `mcp_<server>_<tool>`（点号 `mcp.<server>.<tool>` 仅为内部原始身份，2026-10-19 勘误；同名冲突按身份 digest 消歧）。schema 透传、五态包装、超时/审计复用；单服务器失败 fail-open。**迁移**：多行长 JSON 建议改用文件配置（见 `MCP_FILE_CONFIG`），可版本管理且支持 Cursor/VS Code/Claude Desktop 格式直接粘贴 |
 | `MCP_FILE_CONFIG` | auto | MCP 文件配置开关（P0-1）：空/auto=读 `~/.lfl/mcp.json`（用户级）+ 项目根 `.mcp.json`（工作区级）两层；`user`=仅用户级；`off`=均不读。**安全**：clone 不可信仓库时设 `off` 或 `user`，防其 `.mcp.json` 自动拉起任意进程 |

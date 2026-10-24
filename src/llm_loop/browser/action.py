@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
 from llm_loop.core.tool_execution_journal import current_effect_mutation_authority
+from llm_loop.net_guard import browser_allowed_hosts, check_url
 
 _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
     "click": {"version_scopes": {"object"}, "args": set()},
@@ -82,6 +83,28 @@ def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
     if verb == "scroll":
         return {"delta_pages": args.get("delta_pages")}
     return {}
+
+
+def _landing_url_key(url: str) -> tuple[Any, ...]:
+    """R2-7: normalization key for comparing requested vs landed URLs.
+
+    Ignores the fragment, lowercases scheme/host, and treats an empty path as
+    "/" so a plain ``https://example.com`` -> ``https://example.com/`` hop is
+    NOT misreported as a redirect. Any genuinely different host/path still
+    compares unequal and triggers the landing recheck.
+    """
+    try:
+        p = urlparse(str(url or ""))
+        return (
+            p.scheme.lower(),
+            (p.hostname or "").lower(),
+            p.port,
+            p.path or "/",
+            p.params,
+            p.query,
+        )
+    except ValueError:
+        return (str(url or ""),)
 
 
 @dataclass(frozen=True)
@@ -393,6 +416,20 @@ class BrowserActionAdapter:
                 return "navigate_url_scheme_rejected"
             if parsed.username or parsed.password:
                 return "navigate_url_credentials_rejected"
+            # P1-2/S1-4（建议书 2026-10-25）：navigate 出站闸门（net_guard 单一事实源）。
+            # 默认拒绝私网/回环/链路本地/保留/CGNAT/非全球单播目标；显式站点授权经
+            # LFL_BROWSER_ALLOWED_HOSTS（逗号分隔，支持 `*.suffix`）。闸门自身异常
+            # fail-closed：宁可拒绝导航，不可放行到本机/内网控制面。
+            try:
+                host_ok, host_reason = check_url(
+                    str(args.get("url") or ""),
+                    mode="browser",
+                    allowed_hosts=browser_allowed_hosts(),
+                )
+            except Exception as exc:  # noqa: BLE001 — 判定内部异常必须拒绝导航
+                return f"navigate_host_blocked:check_error:{type(exc).__name__}"
+            if not host_ok:
+                return f"navigate_host_blocked:{host_reason}"
         if verb == "scroll":
             delta = args.get("delta_pages")
             if isinstance(delta, bool) or not isinstance(delta, (int, float)):
@@ -514,6 +551,61 @@ class BrowserActionAdapter:
                 "observed": {},
             }
         return self.perception.assess_guard(baseline=baseline, raw=raw)
+
+    def _recheck_navigate_landing(self, *, requested_url: str) -> str | None:
+        """R2-7 (red-team round 2 #7): post-navigate landing-URL recheck.
+
+        The pre-dispatch gate only validates the URL the model ASKED for. A
+        server-side 30x (or meta/JS hop) can move the page after the
+        Page.navigate ack — classic public->loopback pivot onto the local web
+        control plane. After an acknowledged navigate we therefore read the
+        page's CURRENT url through the read-only page-target probe channel
+        (same source as the lightweight pre-dispatch probe); when it differs
+        from the request (normalized: fragment ignored, empty path == "/")
+        the landed URL is re-run through net_guard.check_url(mode="browser")
+        with the same allowlist/private policy. A rejected landing triggers a
+        best-effort escape navigation to about:blank and a failure reason
+        ("redirect_blocked:<net_guard reason>"); an accepted landing keeps
+        the ok path. Channel honesty: backends without the probe keep the
+        legacy behavior (no recheck possible); a probe that RAISES is
+        fail-closed ("redirect_recheck_unavailable:<type>") rather than
+        silently trusting an unobservable landing.
+        """
+        probe = getattr(self.capture_backend, "probe_page_target", None)
+        if not callable(probe):
+            return None  # 旧捕获后端无只读探针：无从复检，维持既有行为
+        try:
+            info = probe() or {}
+            current_url = str(info.get("url") or "")
+        except Exception as exc:  # noqa: BLE001 - unreadable landing == unprovable safety
+            return f"redirect_recheck_unavailable:{type(exc).__name__}"
+        try:
+            current_scheme = urlparse(current_url).scheme.lower()
+        except ValueError:
+            current_scheme = ""
+        # 未落地（about:blank / 空串）：无外部落地面可观，交由后续观察如实暴露。
+        if not current_url or current_scheme == "about":
+            return None
+        if _landing_url_key(current_url) == _landing_url_key(requested_url):
+            return None
+        try:
+            landed_ok, landed_reason = check_url(
+                current_url,
+                mode="browser",
+                allowed_hosts=browser_allowed_hosts(),
+            )
+        except Exception as exc:  # noqa: BLE001 — 复检通道异常 fail-closed
+            return f"check_error:{type(exc).__name__}"
+        if landed_ok:
+            return None
+        # 落地被拒：尽力中断暴露（about:blank）；逃生失败不影响失败回执本身。
+        try:
+            self.actuator.dispatch(
+                verb="navigate", physical_target=None, args={"url": "about:blank"}
+            )
+        except Exception:  # noqa: BLE001 — best-effort escape
+            pass
+        return str(landed_reason or "blocked")
 
     def execute(self, session_id: str, action: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
@@ -768,6 +860,21 @@ class BrowserActionAdapter:
                 except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
                     dispatch_error = exc
 
+        # R2-7: navigate 被确认后复检落地 URL（重定向闸门）。仅在 dispatch 已被
+        # acknowledge 时执行；被拒时已尽力导航到 about:blank，receipt 落 failed
+        # （retry.reason=redirect_blocked:<reason>），不改变其它动词的任何路径。
+        redirect_block_reason: str | None = None
+        if (
+            str(action["verb"]) == "navigate"
+            and not dispatch_authority_lost
+            and dispatch_error is None
+            and dispatch_result is not None
+            and dispatch_result.acknowledged
+        ):
+            redirect_block_reason = self._recheck_navigate_landing(
+                requested_url=str(dict(action["args"]).get("url") or "")
+            )
+
         # FR-2: post-dispatch settle window between the acknowledged dispatch
         # and the post-capture, so the first valid observation after an
         # interaction lands one polling cycle earlier (DESIGN-20261007). Runs
@@ -878,6 +985,12 @@ class BrowserActionAdapter:
             terminal["status"] = "failed"
             reasons.append("dispatch_not_acknowledged")
             terminal["retry"]["reason"] = "dispatch_not_acknowledged"
+        elif redirect_block_reason is not None:
+            # R2-7: 落地 URL 被 net_guard 拒绝（重定向公网→内网/回环等）——已尽力
+            # 导航 about:blank 中断暴露；如实落 failed，不宣称 ok。
+            terminal["status"] = "failed"
+            reasons.append(f"redirect_blocked:{redirect_block_reason}")
+            terminal["retry"]["reason"] = f"redirect_blocked:{redirect_block_reason}"
         else:
             terminal["status"] = "ok"
             terminal["boundary_events"] = [dict(x) for x in dispatch_result.boundary_events]

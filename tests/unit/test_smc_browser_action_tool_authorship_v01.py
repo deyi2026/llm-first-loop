@@ -24,6 +24,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from llm_loop.browser.action import (
     BrowserActionAdapter,
     BrowserActionReceiptStore,
@@ -40,6 +42,16 @@ FIXTURES = json.loads(
 
 _URL = "http://127.0.0.1/example"
 _PASSTHROUGH = {"applied": False, "rule": None}
+
+
+@pytest.fixture(autouse=True)
+def _allow_loopback_navigate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """本文件用 http://127.0.0.1 作为 URL 夹具（测字段契约，不是测站点策略）。
+
+    P1-2 之后浏览器默认拒绝环回目标；这里显式授权，保持契约测试语义，
+    不放宽生产默认（生产默认仍为拒绝，见 tests/test_browser_site_policy.py）。
+    """
+    monkeypatch.setenv("LFL_BROWSER_ALLOWED_HOSTS", "127.0.0.1")
 
 
 class _CaptureBackend:

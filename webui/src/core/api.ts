@@ -934,12 +934,122 @@ export async function fsRename(path: string, newName: string): Promise<boolean> 
   return status === 200;
 }
 
-export async function fsDelete(path: string): Promise<boolean> {
-  const { status } = await api(
-    `/api/v1/fs/delete?path=${encodeURIComponent(path)}&confirm=true`,
-    { method: "DELETE" }
+/** P0-2 第一步：领取一次性删除令牌（TTL 300s，绑定 realpath+调用者身份；同身份+路径重复领取使旧令牌失效）。 */
+async function fetchFsDeleteToken(path: string): Promise<{ token: string | null; error?: string }> {
+  const { status, data } = await api<{ token?: string; expires_in?: number; path?: string; error?: string; detail?: string }>(
+    `/api/v1/fs/delete-token?path=${encodeURIComponent(path)}`
   );
-  return status === 200;
+  if (status === 200 && typeof data.token === "string" && data.token) return { token: data.token };
+  const reason =
+    status === 0
+      ? "网络错误或服务不可用"
+      : `${data.error || `HTTP ${status}`}${typeof data.detail === "string" && data.detail ? `：${data.detail}` : ""}`;
+  return { token: null, error: `删除失败（无法领取删除令牌：${reason}）` };
+}
+
+/** P2-4 删除结果：默认进回收站（trashed，撤销窗口内可还原）；hard=true 为不可逆删除（deleted）。 */
+export interface FsDeleteResult {
+  ok: boolean;
+  status?: "trashed" | "deleted";
+  /** 仅 trashed 时存在：撤销令牌（POST /api/v1/fs/restore?token=...，单次使用）。 */
+  undoToken?: string;
+  /** 撤销窗口秒数（后端契约 600）。 */
+  expiresIn?: number;
+  /** ok=false 时的可读错误（含后端 error 码；绝不包含 token 原文）。 */
+  error?: string;
+}
+
+/** 删除文件/目录（P2-4：默认进回收站可撤销；hard=true 不可逆）：两步令牌——
+ * 先 GET delete-token，再 DELETE confirm=true+token（hard=true 时附 &hard=true）。
+ * 成功：{ok:true, status:"trashed", undoToken, expiresIn}（回收站）或 {ok:true, status:"deleted"}；
+ * 409 confirm_token_required / token_invalid → 重取令牌再试一次（仅一次，防死循环）；
+ * 其余失败（网络/409/500/越界/受保护/不存在等）一律 {ok:false, error}，不抛异常。 */
+export async function fsDelete(path: string, opts: { hard?: boolean } = {}): Promise<FsDeleteResult> {
+  const hard = opts.hard === true;
+  const fail = (status: number, data: { error?: string; detail?: string }): FsDeleteResult => ({
+    ok: false,
+    error: `删除失败（${data.error || `HTTP ${status}`}）${
+      typeof data.detail === "string" && data.detail ? `：${data.detail}` : ""
+    }`,
+  });
+  const seenTokens: string[] = [];
+  // 防御性脱敏：错误消息绝不包含任何已领取 token 的原文。
+  const sanitize = (result: FsDeleteResult): FsDeleteResult => {
+    let error = result.error ?? "";
+    for (const t of seenTokens) if (t) error = error.split(t).join("[token已隐藏]");
+    return { ...result, error };
+  };
+  const first = await fetchFsDeleteToken(path);
+  if (first.token === null) return { ok: false, error: first.error ?? "删除失败（无法领取删除令牌）" };
+  let token = first.token;
+  seenTokens.push(token);
+  for (let attempt = 0; ; attempt++) {
+    const { status, data } = await api<{
+      error?: string;
+      detail?: string;
+      status?: string;
+      undo_token?: string;
+      expires_in?: number;
+    }>(
+      `/api/v1/fs/delete?path=${encodeURIComponent(path)}&confirm=true&token=${encodeURIComponent(token)}${
+        hard ? "&hard=true" : ""
+      }`,
+      { method: "DELETE" }
+    );
+    if (status === 200) {
+      if (data.status === "trashed" && typeof data.undo_token === "string" && data.undo_token) {
+        return {
+          ok: true,
+          status: "trashed",
+          undoToken: data.undo_token,
+          expiresIn: typeof data.expires_in === "number" && data.expires_in > 0 ? data.expires_in : 600,
+        };
+      }
+      // hard=true 不可逆删除完成；旧版 {status:"ok"} 契约同样视为已删除。
+      return { ok: true, status: "deleted" };
+    }
+    const error = typeof data.error === "string" ? data.error : "";
+    const retryable = status === 409 && (error === "confirm_token_required" || error === "token_invalid");
+    // 非令牌类失败直接返回；令牌类重试已用尽（attempt>0）同样返回 ok=false，不再抛错。
+    if (!retryable || attempt > 0) return sanitize(fail(status, data));
+    const reissue = await fetchFsDeleteToken(path);
+    if (reissue.token === null) {
+      return { ok: false, error: reissue.error ?? "删除失败（delete_token_unavailable）：无法重新领取删除令牌，请重试。" };
+    }
+    token = reissue.token;
+    seenTokens.push(token);
+  }
+}
+
+/** P2-4 撤销删除结果：成功 {ok:true}；失败 {ok:false, error}（中文文案，按后端错误码区分失效/冲突/丢失）。 */
+export interface FsRestoreResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** 撤销删除（P2-4）：POST /api/v1/fs/restore?token=undo_token（10 分钟窗口，单次使用）。
+ * 成功 {ok:true}（已还原到原路径）；失败不抛异常——按后端错误码给出中文文案并透出 detail：
+ * undo_token_invalid（过期/失效）、restore_conflict（原路径被占）、trash_missing（回收站条目丢失）。 */
+export async function fsRestore(token: string): Promise<FsRestoreResult> {
+  const { status, data } = await api<{ status?: string; error?: string; detail?: string }>(
+    `/api/v1/fs/restore?token=${encodeURIComponent(token)}`,
+    { method: "POST" }
+  );
+  if (status === 200) return { ok: true };
+  if (status === 0) {
+    return { ok: false, error: "恢复失败（网络错误或服务不可用）；结果未知，文件仍在回收站，请稍后重试。" };
+  }
+  const detail = typeof data.detail === "string" && data.detail ? `：${data.detail}` : "";
+  switch (data.error) {
+    case "undo_token_invalid":
+      return { ok: false, error: `撤销窗口已过期或令牌失效，无法自动恢复${detail}。` };
+    case "restore_conflict":
+      return { ok: false, error: `原路径已被占用，拒绝覆盖${detail}；文件仍保留在回收站。` };
+    case "trash_missing":
+      return { ok: false, error: `回收站条目不存在（可能已被清理），无法恢复${detail}。` };
+    default:
+      return { ok: false, error: `恢复失败（${data.error || `HTTP ${status}`}）${detail}。` };
+  }
 }
 
 /** 会话/子代理树（对齐 DSH agents 树：按 parent_id 组层级） */

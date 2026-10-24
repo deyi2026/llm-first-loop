@@ -10,6 +10,7 @@ import {
   fsDelete,
   fsMkdir,
   fsRename,
+  fsRestore,
   observeHumanFile,
   saveHumanFile,
   type FsTree,
@@ -18,6 +19,7 @@ import {
 import { writeClipboardText } from "../../core/clipboard";
 import { previewTabsStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
+import { UndoDeleteToast } from "./UndoDeleteToast";
 
 interface TreeNode {
   path: string;
@@ -55,6 +57,11 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorStatus, setEditorStatus] = useState("");
   const [pendingSave, setPendingSave] = useState<{ key: string; requestId: string } | null>(null);
+  // P2-4：删除进回收站后的撤销态（token 只存内存，不落盘不外显）
+  const [undo, setUndo] = useState<{ name: string; parent: string; token: string; expiresAt: number } | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [undoError, setUndoError] = useState("");
+  const [undoDone, setUndoDone] = useState("");
 
   useEffect(() => {
     setEditor(null);
@@ -202,18 +209,52 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
     if (!confirmDelete || busy) return;
     setBusy(true);
     setActionError("");
-    const ok = await fsDelete(confirmDelete.path);
+    const target = confirmDelete;
+    const res = await fsDelete(target.path);
     setBusy(false);
-    if (!ok) {
+    if (!res.ok) {
       setActionError("删除失败；原文件/目录仍保留，请重试。");
       return;
     }
-    if (ok) {
-      setActionError("");
-      const parent = confirmDelete.path.split("/").slice(0, -1).join("/");
-      setConfirmDelete(null);
-      await refreshAfterMutation(parent || root);
+    setActionError("");
+    const parent = target.path.split("/").slice(0, -1).join("/");
+    setConfirmDelete(null);
+    await refreshAfterMutation(parent || root);
+    // P2-4：默认删除进回收站——展示撤销入口（10 分钟窗口，倒计时在 Toast 内）。
+    if (res.status === "trashed" && res.undoToken) {
+      setUndoError("");
+      setUndoDone("");
+      setUndo({
+        name: target.name,
+        parent: parent || root,
+        token: res.undoToken,
+        expiresAt: Date.now() + (res.expiresIn ?? 600) * 1000,
+      });
     }
+  };
+
+  // P2-4：撤销删除——POST /fs/restore?token=undo_token；成功刷新父目录并提示"已恢复"，
+  // 失败按错误码提示（过期/冲突/丢失），不刷新目录（文件仍在回收站，入口保留可重试/关闭）。
+  const doUndo = async () => {
+    if (!undo || undoBusy) return;
+    setUndoBusy(true);
+    setUndoError("");
+    const res = await fsRestore(undo.token);
+    setUndoBusy(false);
+    if (!res.ok) {
+      setUndoError(res.error ?? "恢复失败；文件仍保留在回收站。");
+      return;
+    }
+    const name = undo.name;
+    const parent = undo.parent;
+    setUndo(null);
+    setUndoError("");
+    setUndoDone(`已恢复：${name}`);
+    window.setTimeout(
+      () => setUndoDone((v) => (v === `已恢复：${name}` ? "" : v)),
+      6000
+    );
+    await refreshAfterMutation(parent);
   };
 
   const relativePath = (path: string): string => {
@@ -422,6 +463,22 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
       </div>
       {actionError ? (
         <div className="v2-tree-action-error" role="status">{actionError}</div>
+      ) : null}
+      {undo ? (
+        <UndoDeleteToast
+          name={undo.name}
+          expiresAt={undo.expiresAt}
+          busy={undoBusy}
+          error={undoError}
+          onUndo={() => void doUndo()}
+          onClose={() => {
+            setUndo(null);
+            setUndoError("");
+          }}
+        />
+      ) : null}
+      {!undo && undoDone ? (
+        <div className="v2-tree-loading" role="status" data-testid="undo-done">{undoDone}</div>
       ) : null}
       <div className="v2-tree-body">
         {loadingRoot ? (

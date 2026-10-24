@@ -33,6 +33,7 @@ from llm_loop.core.run_context import (
     current_evidence_enforce_enabled,
     current_evidence_shadow_enabled,
 )
+from llm_loop.net_guard import classify_ip
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
@@ -288,17 +289,16 @@ def _block_private_enabled() -> bool:
 
 
 def _blocked_ip_label(ip_str: str) -> str:
-    """单个 IP 字符串的私网/保留命中说明（未命中返回空串）."""
-    import ipaddress
+    """单个 IP 字符串的私网/保留命中说明（未命中返回空串）——委托 net_guard.classify_ip（单一事实源）.
 
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return ""
-    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-        kind = "私网" if ip.is_private else "回环" if ip.is_loopback else "链路本地" if ip.is_link_local else "保留地址"
-        return f"{ip_str}（{kind}）"
-    return ""
+    2026-10-25（建议书 S2-2）：判定从旧四条件（is_private/is_loopback/is_link_local/
+    is_reserved）升级为 net_guard 的并集语义（not is_global ∪ 四条件），新增拦截
+    CGNAT 100.64.0.0/10（含阿里云元数据 100.100.100.200），对既有拦截面只收紧、
+    不放宽。198.18/15 代理假 IP 例外仍由 _resolve_checked_ips 在调用本函数之前
+    处理（全部解析地址落段 + WEB_FETCH_BLOCK_FAKE_IP≠1 才放行），本函数对该段
+    语义不变地返回拦截标签（"私网"）。
+    """
+    return classify_ip(ip_str)
 
 
 def _resolve_checked_ips(url: str) -> tuple[str, list[str], str, int, bool]:

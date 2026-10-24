@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import threading
 import time
 import traceback
@@ -303,6 +304,34 @@ EvidenceManifestProvider = Callable[[int], str]
 EvidenceHistoryCaptureHook = Callable[[str, Message, int | None, str | None], str | None]
 SessionCancelHook = Callable[..., Any]
 AsyncObligationHook = Callable[..., list[dict[str, Any]]]
+
+
+def _command_text_for_guard(name: str, args: dict[str, Any]) -> str:
+    """给围栏看的命令文本：argv 调用合成为 shell 文本.
+
+    P2-2 引入 argv 后，围栏若只读 args["command"] 就会失明（空串 → 全部放行）。
+    这里只做"视图"，不改变实际执行方式；argv 与 command 互斥由工具自身校验。
+    """
+    argv = args.get("argv")
+    if name == "execute_command" and isinstance(argv, (list, tuple)) and argv:
+        try:
+            return shlex.join([str(x) for x in argv])
+        except (TypeError, ValueError):
+            return " ".join(str(x) for x in argv)
+    return str(args.get("command", "") or "")
+
+
+def _guard_view_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """灾难性守卫的参数视图：argv 调用补出等价的 command 文本（不修改原参数）."""
+    if name != "execute_command" or args.get("command") or not args.get("argv"):
+        return args
+    text = _command_text_for_guard(name, args)
+    if not text:
+        return args
+    view = dict(args)
+    view["command"] = text
+    view.pop("argv", None)
+    return view
 
 
 class ToolRegistry:
@@ -1085,7 +1114,9 @@ class ToolRegistry:
         #    （令牌绑定工具名+命令 SHA256，单次有效；EXEC_MODE 与共享服务
         #    边界独立于令牌，仍按各自规则裁决）。
         if self._is_destructive_tool(call.name):
-            blocked = self.safety.guard(call.name, call.arguments)
+            _guard_args = _guard_view_args(call.name, call.arguments)
+            _guard_cwd = str(call.arguments.get("workdir") or "").strip() or None
+            blocked = self.safety.guard(call.name, _guard_args, workdir=_guard_cwd)
             if blocked:
                 token = str(call.arguments.get("escalation_token", "") or "")
                 if token and self._escalation_store is not None:
@@ -1137,7 +1168,7 @@ class ToolRegistry:
         # independent of EXEC_MODE/approval: generic-shell approval never mints
         # shared Web/Feishu lifecycle authority.
         if call.name == "execute_command" and self._managed_service_guard is not None:
-            command = str(call.arguments.get("command", "") or "")
+            command = _command_text_for_guard(call.name, call.arguments)
             decision = self._managed_service_guard.guard(command)
             if decision is not None and decision.blocked:
                 return self._preblock(
@@ -1161,7 +1192,7 @@ class ToolRegistry:
         # including background launch and shell approval paths. This is independent
         # of catastrophic safety, user permission and model-facing advice text.
         if call.name == "execute_command" and self._review_admission is not None:
-            cmd = str(call.arguments.get("command") or "")
+            cmd = _command_text_for_guard(call.name, call.arguments)
             target_dir = str(call.arguments.get("workdir") or workspace_base() or os.getcwd())
             verdict = self._review_admission.check_shell(
                 str(current_session_id.get() or ""), cmd, target_dir,

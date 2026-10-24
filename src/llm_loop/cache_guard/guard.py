@@ -145,7 +145,8 @@ _SENSITIVE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
     re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),  # GitHub token
-    re.compile(r"BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY"),  # 私钥
+    # 拼接书写避免本文件自身字面量被 CacheGuard 拦截（审查材料会包含本源码）。
+    re.compile("BEGIN " + r"(RSA |EC |OPENSSH )?" + "PRIVATE KEY"),  # 私钥
 ]
 _SENSITIVE_ENV_NAMES = {"DEEPSEEK_API_KEY", "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "KIMI_API_KEY", "MINIMAX_API_KEY"}
 

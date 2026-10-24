@@ -5,13 +5,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
 
+# P1-3 / S2-1：预览路由不再回退项目根，未绑定工作区一律 503。
+# 本文件前 5 个用例是"以仓库根为预览根"的旧契约，显式绑定即可保持原断言。
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _client(build_test_engine):
     engine, _ = build_test_engine([{"content": "ok"}])
+    engine.workspace_root = str(_REPO_ROOT)
     return TestClient(build_app(engine=engine))
 
 

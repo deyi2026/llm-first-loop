@@ -11,15 +11,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .auth import (
     SESSION_COOKIE_NAME,
+    SESSION_COOKIE_NAME_SECURE,
     LoginRateLimiter,
     WebSessionStore,
     browser_login_configured,
     client_rate_limit_key,
     is_loopback,
     normalize_origin,
+    rehash_login_password_if_needed,
     request_auth_required,
     request_authenticated,
     session_cookie_domain,
+    session_cookie_name,
     session_ttl_seconds,
     verify_login_password,
 )
@@ -92,7 +95,7 @@ small{{display:block;margin-top:18px;color:#768396;line-height:1.5}}
 <small class="paste-hint">手机端使用普通键盘，可直接长按粘贴或调用系统剪贴板；WebKit 会用圆点遮挡输入内容。服务器仍按原文校验，不 trim、不改写。</small>
 <button type="submit"{disabled}>登录</button>
 </form>
-<small>会话 Cookie 为 HttpOnly + SameSite=Strict；公网 HTTPS 下强制 Secure。脚本访问仍可使用独立 Bearer API key。</small>
+<small>会话 Cookie 为 HttpOnly + SameSite=Lax（登录跳转后立即 GET 需要携带；跨站写由 Origin 白名单独立拦截）；公网 HTTPS 下强制 Secure 并使用 __Host- 前缀精确主机绑定。脚本访问仍可使用独立 Bearer API key。</small>
 </main></body></html>"""
 
 
@@ -233,6 +236,8 @@ async def login(request: Request):
         return _login_response(next_path=next_path, error="密码错误。", status_code=401)
 
     limiter.record_success(key)
+    # S3-4/P2-6b: 旧迭代数哈希登录成功后原地升级（内部自校验，任何失败不影响本次登录）。
+    rehash_login_password_if_needed(password)
     store = getattr(request.app.state, "web_sessions", None)
     if not isinstance(store, WebSessionStore):
         store = WebSessionStore()
@@ -244,16 +249,23 @@ async def login(request: Request):
         response = JSONResponse({"status": "ok", "next": next_path})
     else:
         response = RedirectResponse(next_path, status_code=303)
+    # S3-6/P2-6c: Secure 且未设 Domain 时用 __Host- 前缀名（浏览器强制
+    # Secure+Path=/+无 Domain 精确主机绑定）。同时保留旧名"孪生"cookie 过渡：
+    # routes.py / fs_tree.py 等仅读旧名的既有读者（本任务禁改）在 HTTPS 部署
+    # 下仍能识别会话；两 cookie 值相同、属性相同（均 host-only），不扩大暴露面。
+    cookie_domain = session_cookie_domain(request.url.hostname or "")
+    cookie_secure = _secure_cookie(request)
+    cookie_name = session_cookie_name(secure=cookie_secure, domain=cookie_domain)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
         max_age=ttl,
         httponly=True,
-        secure=_secure_cookie(request),
+        secure=cookie_secure,
         # Parent-domain scope (WEB_SESSION_COOKIE_DOMAIN) lets sibling
         # hostnames of one tunnel share the same login session; unset keeps
         # the cookie host-only.
-        domain=session_cookie_domain(request.url.hostname or ""),
+        domain=cookie_domain,
         # Lax is the correct browser-login boundary here: it allows the
         # immediate top-level GET after a successful login redirect while
         # still withholding the cookie from cross-site POST/subresource
@@ -262,22 +274,36 @@ async def login(request: Request):
         samesite="lax",
         path="/",
     )
+    if cookie_name != SESSION_COOKIE_NAME:
+        response.set_cookie(
+            key=cookie_name,
+            value=token,
+            max_age=ttl,
+            httponly=True,
+            secure=True,
+            domain=None,  # __Host- 前缀要求无 Domain
+            samesite="lax",
+            path="/",
+        )
     response.headers["Cache-Control"] = "no-store"
     return response
 
 
 @router.post("/auth/logout")
 def logout(request: Request):
-    token = request.cookies.get(SESSION_COOKIE_NAME, "")
-    store = getattr(request.app.state, "web_sessions", None)
-    if isinstance(store, WebSessionStore):
-        store.revoke(token)
+    # S3-6 双名读取：__Host- 前缀名与旧名都撤销/删除。
+    for cookie_name in (SESSION_COOKIE_NAME_SECURE, SESSION_COOKIE_NAME):
+        token = request.cookies.get(cookie_name, "")
+        store = getattr(request.app.state, "web_sessions", None)
+        if token and isinstance(store, WebSessionStore):
+            store.revoke(token)
     response = JSONResponse({"status": "ok"})
     response.delete_cookie(
         SESSION_COOKIE_NAME,
         path="/",
         domain=session_cookie_domain(request.url.hostname or ""),
     )
+    response.delete_cookie(SESSION_COOKIE_NAME_SECURE, path="/", secure=True)
     response.headers["Cache-Control"] = "no-store"
     return response
 
