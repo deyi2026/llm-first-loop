@@ -12,6 +12,7 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
   const onRelease = vi.fn();
   const onFallbackText = vi.fn();
   const onClose = vi.fn();
+  const onRetryPlayback = vi.fn();
   const props = {
     connectionState: "ready" as const,
     micEnabled: false,
@@ -21,10 +22,11 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
     onRelease,
     onFallbackText,
     onClose,
+    onRetryPlayback,
     ...over,
   };
   render(<RealtimeVoiceBar {...props} />);
-  return { onPress, onRelease, onFallbackText, onClose };
+  return { onPress, onRelease, onFallbackText, onClose, onRetryPlayback };
 }
 
 describe("RealtimeVoiceBar", () => {
@@ -110,6 +112,19 @@ describe("RealtimeVoiceBar", () => {
     renderBar({ connectionState: "failed" });
     expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
     expect(screen.getByTestId("realtime-state").textContent).toContain("改用文字");
+  });
+
+  it("shows generation/playback status and a retry action when speech output fails", () => {
+    renderBar({ playbackState: "synthesizing" });
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在生成语音回复");
+    cleanup();
+    renderBar({ playbackState: "playing" });
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在播放语音回复");
+    cleanup();
+    const { onRetryPlayback } = renderBar({ playbackState: "failed", error: "本地 TTS 合成失败" });
+    expect(screen.getByTestId("realtime-state")).toHaveTextContent("语音回复未播放");
+    fireEvent.click(screen.getByRole("button", { name: "重试语音回复" }));
+    expect(onRetryPlayback).toHaveBeenCalledOnce();
   });
 
   it("offers a same-origin login link for expired browser sessions", () => {

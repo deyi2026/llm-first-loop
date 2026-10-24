@@ -619,6 +619,7 @@ export function Composer() {
           connectionState={realtime.connectionState}
           micEnabled={realtime.micEnabled}
           micStarting={realtime.micStarting}
+          playbackState={realtime.playbackState}
           modality={realtime.modality}
           chainLabel={realtime.chainLabel}
           onPress={realtime.press}
@@ -626,6 +627,7 @@ export function Composer() {
           onFallbackText={() => { realtime.disable(); taRef.current?.focus(); }}
           onClose={realtime.disable}
           onRetry={() => { void realtime.enable(); }}
+          onRetryPlayback={realtime.retryPlayback}
           transcript={realtime.transcript}
           error={realtime.error}
           disabled={conv.streaming || conv.backgroundRunning}

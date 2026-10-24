@@ -21,14 +21,23 @@ function setup() {
   const track = { stop: vi.fn() };
   const stream = { getTracks: () => [track] };
   const source = { connect: vi.fn(), disconnect: vi.fn() };
+  const audioSource = {
+    buffer: null as unknown,
+    connect: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    onended: null as null | (() => void),
+  };
   const node = { port: { onmessage: null as ((event: { data: unknown }) => void) | null, close: vi.fn() }, connect: vi.fn(), disconnect: vi.fn() };
   const context = {
+    state: "running",
     audioWorklet: { addModule: vi.fn(async () => undefined) },
     createMediaStreamSource: vi.fn(() => source),
     destination: {}, resume: vi.fn(async () => undefined), close: vi.fn(async () => undefined),
     decodeAudioData: vi.fn(async () => ({})),
-    createBufferSource: vi.fn(() => ({ connect: vi.fn(), start: vi.fn(), stop: vi.fn(), onended: null })),
+    createBufferSource: vi.fn(() => audioSource),
   };
+  context.resume.mockImplementation(async () => { context.state = "running"; });
   vi.stubGlobal("WebSocket", Socket);
   vi.stubGlobal("AudioContext", function () { return context; });
   vi.stubGlobal("AudioWorkletNode", function () { return node; });
@@ -40,7 +49,7 @@ function setup() {
     json: async () => init?.method === "POST" ? { media_session_id: "media-1", connection_epoch: 1 } : {},
   }));
   vi.stubGlobal("fetch", fetcher);
-  return { track, source, node, context, getUserMedia, stream, fetcher };
+  return { track, source, audioSource, node, context, getUserMedia, stream, fetcher };
 }
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -232,6 +241,20 @@ it("starts listening after the first voice click, commits audio, and delivers fi
   await act(async () => { socket.onmessage?.({ data: JSON.stringify(final) }); });
   expect(onFinal).toHaveBeenCalledWith("你好");
   expect(socket.sent.some((item) => typeof item === "string" && JSON.parse(item).type === "tts.request")).toBe(true);
+  const resumesBeforePlayback = deps.context.resume.mock.calls.length;
+  (deps.context as { state: string }).state = "suspended";
+  const playbackEvent = {
+    version: 1, type: "audio.playback", event_id: "playback-event", seq: 2,
+    connection_epoch: 1, session_id: "session-1", media_session_id: "media-1", response_id: "turn-1",
+  };
+  act(() => socket.onmessage?.({ data: JSON.stringify(playbackEvent) }));
+  await act(async () => {
+    socket.onmessage?.({ data: new Uint8Array([82, 73, 70, 70, 1, 2, 3, 4]).buffer });
+    await waitFor(() => expect(deps.audioSource.start).toHaveBeenCalledOnce());
+  });
+  expect(deps.context.resume).toHaveBeenCalledTimes(resumesBeforePlayback + 1);
+  expect(deps.context.decodeAudioData).toHaveBeenCalledOnce();
+  expect(hook.result.current.playbackState).toBe("playing");
   await act(async () => { socket.onmessage?.({ data: JSON.stringify(final) }); });
   expect(onFinal).toHaveBeenCalledTimes(1);
   hook.unmount();
@@ -267,4 +290,33 @@ it("closes the old media writer on a session switch and never sends its late fin
   expect(deps.fetcher).toHaveBeenCalledWith("/api/v1/realtime/sessions/media-1", expect.objectContaining({ method: "DELETE" }));
   act(() => old.onmessage?.({ data: JSON.stringify({ version: 1, type: "input.final", event_id: "late", seq: 2, connection_epoch: 1, session_id: "session-1", media_session_id: "media-1", turn_id: "late-turn", text: "旧输入" }) }));
   expect(onFinal).not.toHaveBeenCalled(); hook.unmount();
+});
+
+it("surfaces TTS synthesis failure and allows retrying the last spoken answer", async () => {
+  setup();
+  const onFinal = vi.fn(async () => "可朗读的回答");
+  const hook = renderHook(() => useRealtimeVoice("session-1", onFinal));
+  await act(async () => { await hook.result.current.enable(); });
+  const socket = Socket.instances[0];
+  act(() => socket.onopen?.());
+  await waitFor(() => expect(hook.result.current.micEnabled).toBe(true));
+  act(() => hook.result.current.release());
+  const final = {
+    version: 1, type: "input.final", event_id: "input-final", seq: 1,
+    connection_epoch: 1, session_id: "session-1", media_session_id: "media-1",
+    turn_id: "turn-tts-fail", text: "请回答",
+  };
+  await act(async () => { socket.onmessage?.({ data: JSON.stringify(final) }); });
+  await waitFor(() => expect(socket.sent.some((value) => typeof value === "string" && JSON.parse(value).type === "tts.request")).toBe(true));
+  const unavailable = {
+    version: 1, type: "audio.playback_unavailable", event_id: "tts-failed", seq: 2,
+    connection_epoch: 1, session_id: "session-1", media_session_id: "media-1", response_id: "turn-tts-fail",
+  };
+  act(() => socket.onmessage?.({ data: JSON.stringify(unavailable) }));
+  expect(hook.result.current.playbackState).toBe("failed");
+  expect(hook.result.current.error).toContain("本地 TTS 合成失败");
+  act(() => hook.result.current.retryPlayback());
+  expect(socket.sent.filter((value) => typeof value === "string" && JSON.parse(value).type === "tts.request")).toHaveLength(2);
+  expect(hook.result.current.playbackState).toBe("synthesizing");
+  hook.unmount();
 });

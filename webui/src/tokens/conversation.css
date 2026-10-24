@@ -1332,6 +1332,15 @@
   background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, var(--dsw-alias-bg-layer-1));
 }
 
+.realtime-voice-bar[data-playback="synthesizing"],
+.realtime-voice-bar[data-playback="playing"] {
+  border-color: var(--dsw-alias-brand-primary-new-color);
+}
+
+.realtime-voice-bar[data-playback="failed"] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
 .realtime-voice-header,
 .realtime-voice-actions,
 .realtime-voice-details {
@@ -1365,6 +1374,19 @@
 .realtime-voice-bar[data-recording="true"] .realtime-voice-indicator {
   background: var(--dsw-alias-state-error-primary);
   animation: realtime-voice-pulse 1.35s ease-in-out infinite;
+}
+
+.realtime-voice-bar[data-playback="synthesizing"] .realtime-voice-indicator,
+.realtime-voice-bar[data-playback="playing"] .realtime-voice-indicator {
+  background: var(--dsw-alias-brand-primary-new-color);
+}
+
+.realtime-voice-bar[data-playback="playing"] .realtime-voice-indicator {
+  animation: realtime-voice-pulse 1.35s ease-in-out infinite;
+}
+
+.realtime-voice-bar[data-playback="failed"] .realtime-voice-indicator {
+  background: var(--dsw-alias-state-error-primary);
 }
 
 @keyframes realtime-voice-pulse {

@@ -13,6 +13,7 @@ export interface RealtimeVoiceWiring {
   connectionState: ConnectionState;
   micEnabled: boolean;
   micStarting: boolean;
+  playbackState: PlaybackState;
   modality: ModalityMode;
   chainLabel: string;
   transcript: string;
@@ -22,7 +23,9 @@ export interface RealtimeVoiceWiring {
   press: () => void;
   release: () => void;
   interrupt: () => void;
+  retryPlayback: () => void;
 }
+export type PlaybackState = "idle" | "synthesizing" | "playing" | "failed";
 interface ActiveVoice {
   controller: RealtimeSessionController;
   client: MediaSessionClient;
@@ -47,6 +50,7 @@ export function useRealtimeVoice(
   const [connectionState, setConnectionState] = useState<ConnectionState>("closed");
   const [micEnabled, setMicEnabled] = useState(false);
   const [micStarting, setMicStarting] = useState(false);
+  const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
   const activeRef = useRef<ActiveVoice | null>(null);
@@ -59,6 +63,7 @@ export function useRealtimeVoice(
   const generation = useRef(0);
   const pressEpoch = useRef(0);
   const autoStartMic = useRef<number | null>(null);
+  const lastTtsRequest = useRef<{ text: string; response_id: string } | null>(null);
   const enabling = useRef(false);
   const finalRef = useRef(onFinal);
   finalRef.current = onFinal;
@@ -69,6 +74,7 @@ export function useRealtimeVoice(
     generation.current++;
     pressEpoch.current++;
     autoStartMic.current = null;
+    lastTtsRequest.current = null;
     enabling.current = false;
     const active = activeRef.current;
     activeRef.current = null;
@@ -85,6 +91,7 @@ export function useRealtimeVoice(
     dispose();
     mediaScopeId.current = sessionId || newPendingVoiceScopeId();
     setEnabled(false); setMicEnabled(false); setMicStarting(false);
+    setPlaybackState("idle");
     setConnectionState("closed"); setError(""); setTranscript("");
   }, [dispose, sessionId]);
   useEffect(() => {
@@ -98,6 +105,7 @@ export function useRealtimeVoice(
     if (previous && previous !== sessionId) dispose();
     mediaScopeId.current = sessionId || newPendingVoiceScopeId();
     setEnabled(false); setMicEnabled(false); setMicStarting(false);
+    setPlaybackState("idle");
     setConnectionState("closed"); setTranscript(""); setError("");
   }, [sessionId, dispose]);
   // One unconditional owner cleanup handles real unmounts, including after
@@ -110,7 +118,7 @@ export function useRealtimeVoice(
     if (!active || active.client.connectionState !== "ready" || active.controller.pressedDown) return;
     const epoch = ++pressEpoch.current;
     active.controller.interrupt();
-    setTranscript(""); setError(""); setMicStarting(true);
+    setTranscript(""); setError(""); setMicStarting(true); setPlaybackState("idle");
     void active.controller.press().then((started) => {
       if (activeRef.current === active && pressEpoch.current === epoch) {
         setMicStarting(false);
@@ -161,7 +169,23 @@ export function useRealtimeVoice(
       mediaId = body.media_session_id;
       if (owner !== generation.current) { closeWriter(mediaId); return false; }
       const queue = new PlaybackQueue(() => body.connection_epoch);
-      const playback = new PlaybackOutput({ playback: queue, audioContext: context as unknown as AudioContextLike });
+      const playback = new PlaybackOutput({
+        playback: queue,
+        audioContext: context as unknown as AudioContextLike,
+        callbacks: {
+          onPlaybackStart: () => {
+            if (owner === generation.current) setPlaybackState("playing");
+          },
+          onPlaybackEnd: () => {
+            if (owner === generation.current) setPlaybackState("idle");
+          },
+          onPlaybackError: () => {
+            if (owner !== generation.current) return;
+            setPlaybackState("failed");
+            setError("文字回复已生成，但浏览器无法播放语音。请检查设备音量后重试语音回复。");
+          },
+        },
+      });
       const scheme = window.location.protocol === "https:" ? "wss" : "ws";
       const client = new MediaSessionClient({
         url: `${scheme}://${window.location.host}/api/v1/realtime/sessions/${encodeURIComponent(mediaId)}/events`,
@@ -205,11 +229,21 @@ export function useRealtimeVoice(
       let submitting = false;
       client.onEvent((event) => {
         if (owner !== generation.current) return;
+        if (event.type === "audio.playback_unavailable") {
+          setPlaybackState("failed");
+          setError("文字回复已生成，但本地 TTS 合成失败。请确认本地语音服务正常后重试。");
+          return;
+        }
+        if (event.type === "audio.playback") {
+          setPlaybackState("synthesizing");
+          return;
+        }
         const text = typeof event.text === "string" ? event.text : "";
         if (event.type === "input.delta") { setTranscript((old) => old + text); return; }
         if (event.type === "input.streaming_unavailable") { setError("增量字幕不可用，松开后仍会生成终稿"); return; }
         if (event.type !== "input.final" || !text.trim() || !event.turn_id) return;
-        const key = `${event.media_session_id}:${event.connection_epoch}:${event.turn_id}`;
+        const responseId = event.turn_id;
+        const key = `${event.media_session_id}:${event.connection_epoch}:${responseId}`;
         if (seen.has(key)) return;
         seen.add(key); setTranscript(text);
         if (submitting) { setError("上一条语音仍在处理，请使用文字输入"); return; }
@@ -217,7 +251,20 @@ export function useRealtimeVoice(
         void (async () => {
           try {
             const answer = await finalRef.current?.(text);
-            if (owner === generation.current && answer) client.sendControl("tts.request", { text: answer, response_id: event.turn_id });
+            if (owner !== generation.current) return;
+            if (!answer?.trim()) {
+              setPlaybackState("failed");
+              setError("语音文字已发送，但模型没有返回可朗读的文字内容。");
+              return;
+            }
+            const request = { text: answer, response_id: responseId };
+            lastTtsRequest.current = request;
+            if (!client.sendControl("tts.request", request)) {
+              setPlaybackState("failed");
+              setError("文字回复已生成，但语音通道已断开，语音回复未发送。请重新连接语音后再试。");
+              return;
+            }
+            setPlaybackState("synthesizing");
           } catch { if (owner === generation.current) setError("语音发送失败，识别文字已保留"); }
           finally { submitting = false; }
         })();
@@ -253,5 +300,20 @@ export function useRealtimeVoice(
     setMicStarting(false); setMicEnabled(false);
   }, []);
   const interrupt = useCallback(() => { activeRef.current?.controller.interrupt(); }, []);
-  return { enabled, connectionState, micEnabled, micStarting, modality, chainLabel: chainDisclosure({ cascade: true }).label, transcript, error, enable, disable, press, release, interrupt };
+  const retryPlayback = useCallback(() => {
+    const active = activeRef.current;
+    const request = lastTtsRequest.current;
+    if (!active || !request || active.client.connectionState !== "ready") {
+      setPlaybackState("failed");
+      setError("语音通道未连接，无法重试语音回复。请重新连接后再试。");
+      return;
+    }
+    setError("");
+    setPlaybackState("synthesizing");
+    if (!active.client.sendControl("tts.request", request)) {
+      setPlaybackState("failed");
+      setError("语音回复请求未发送，连接可能已断开。请重新连接后再试。");
+    }
+  }, []);
+  return { enabled, connectionState, micEnabled, micStarting, playbackState, modality, chainLabel: chainDisclosure({ cascade: true }).label, transcript, error, enable, disable, press, release, interrupt, retryPlayback };
 }
