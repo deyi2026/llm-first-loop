@@ -210,6 +210,35 @@ class TestRuntimeSinkFailureRollback:
         assert ok_events[-1]["visual"][0]["frame_id"] == "kf-1"
         assert pipeline._store.is_bound("kf-1") is True  # noqa: SLF001
 
+    def test_rollback_failure_still_503_no_crash(self, tmp_path, monkeypatch, caplog):
+        # (f) P2-3：回滚自身抛错 → 不崩、不二次抛出，错误面仍 503
+        # task_submit_failed，且 warning 留痕（turn_id + 帧数）。
+        import logging as _logging
+
+        pipeline = _pipeline(tmp_path)
+
+        def boom(record) -> str:  # noqa: ARG001 - 模拟入队故障
+            raise RuntimeError("queue down")
+
+        def rollback_boom(*, turn_id, frame_ids):  # noqa: ARG001 - 模拟回滚故障
+            raise RuntimeError("rollback down")
+
+        monkeypatch.setattr(pipeline, "unbind_commit", rollback_boom)
+        runtime, text_out = _runtime(pipeline, sink=boom, epoch=1)
+        with caplog.at_level(_logging.WARNING, logger="llm_loop.realtime.realtime_session_runtime"):
+            asyncio.run(runtime.handle_text(_commit(1, epoch=1)))  # 不抛 = 不崩
+        events = [json.loads(payload) for payload in text_out]
+        assert [e["type"] for e in events] == ["input.final", "error"]
+        assert events[-1]["code"] == 503
+        assert events[-1]["reason"] == "task_submit_failed"  # 异常面不变
+        warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+        assert len(warnings) == 1
+        msg = warnings[0].getMessage()
+        assert "turn_id=turn-1-" in msg and "frames=1" in msg  # turn_id 与帧数留痕
+        assert warnings[0].exc_info is not None  # 回滚异常栈随日志留痕
+        # 绑定残留（回滚失败的真实后果），但错误面如实 503
+        assert pipeline._store.is_bound("kf-1") is True  # noqa: SLF001
+
     def test_sink_success_keeps_binding(self, tmp_path):
         # (e) sink 成功 → 绑定保持；互斥不变量不受回滚能力影响
         pipeline = _pipeline(tmp_path)

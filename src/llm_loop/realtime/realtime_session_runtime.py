@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import time
 import uuid
 import wave
@@ -35,6 +36,8 @@ from llm_loop.realtime.provider_adapter import (
     TranscriptionEventKind,
     VoiceStackTransport,
 )
+
+logger = logging.getLogger(__name__)
 
 SendText = Callable[[str], Awaitable[None]]
 SendBinary = Callable[[bytes], Awaitable[None]]
@@ -408,12 +411,21 @@ class RealtimeSessionRuntime:
             except Exception:  # noqa: BLE001 - 提交失败如实报错，不伪造成功
                 # P2-1：sink 失败 → 回滚本次绑定（否则帧永久绑给 doomed turn，
                 # 重试拿新 turn_id 会 frame_already_bound，视觉轮次走死）。回滚
-                # 自身故障不顶替既有错误面（suppress，最多回到修复前状态）。
-                with contextlib.suppress(Exception):
+                # 自身故障不顶替既有错误面、不二次抛出（P2-3：warning 留痕带
+                # turn_id 与帧数——残留绑定时这条日志是唯一线索），仍走 503。
+                try:
                     await asyncio.to_thread(
                         self._keyframes.unbind_commit,
                         turn_id=turn_id,
                         frame_ids=[e.frame_id for e in evidences],
+                    )
+                except Exception:  # noqa: BLE001 - 回滚故障只留痕，错误面保持 503
+                    logger.warning(
+                        "rollback unbind_commit failed after commit_sink error: "
+                        "turn_id=%s frames=%d（绑定残留，重试该帧前需人工核查）",
+                        turn_id,
+                        len(evidences),
+                        exc_info=True,
                     )
                 await self._emit("error", {"code": 503, "reason": "task_submit_failed", **reply_to})
                 return  # P2-4：音频保留；绑定已回滚，同帧可随新 turn_id 重提交
