@@ -208,7 +208,7 @@ class _StubGuard:
         reason = "stub: 灾难形态（测试）"
         evidence = "stub"
 
-    def guard(self, tool_name: str, arguments: dict):
+    def guard(self, tool_name: str, arguments: dict, **kwargs):
         if arguments.get("command", "").startswith("echo esc-bypass-ran >"):
             return self._Blocked()
         return None

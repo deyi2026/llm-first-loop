@@ -492,6 +492,29 @@ class EscalationReviewRequest(BaseModel):
     ttl_minutes: int = Field(
         default=10, ge=1, le=60, description="批准令牌有效期（分钟，默认 10）"
     )
+    # P0-5（安全审查建议书 2026-10-25 S0-2）追加字段：
+    expected_sha256: str = Field(
+        default="",
+        max_length=128,
+        description=(
+            "展示-审批绑定（防 TOCTOU）: 审批者看到的待审命令 sha256，"
+            "来自 escalation/list 返回的 command_sha256；"
+            "web 端点必填（缺失 400），与当前待审记录不一致 → 409 stale_review"
+        ),
+    )
+    decided_by: str = Field(
+        default="",
+        max_length=200,
+        description=(
+            "已废弃（P0-5）: 审批者身份由服务端派生，本字段一律忽略、不采信；"
+            "仅在审计中记为 client_claimed_by（客户端自报）"
+        ),
+    )
+    reviewer: str = Field(
+        default="",
+        max_length=200,
+        description="已废弃（P0-5）: 同 decided_by，忽略不采信，仅审计记录",
+    )
 
 
 class HumanFileEditRequest(BaseModel):

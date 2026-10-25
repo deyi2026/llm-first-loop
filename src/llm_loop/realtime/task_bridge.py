@@ -93,11 +93,11 @@ class ToolCallMapping:
         ):
             raise ValueError("round_no must be a non-negative integer or None")
 
-    def with_engine_binding(self, *, engine_execution_id: str, round_no: int) -> ToolCallMapping:
+    def with_engine_binding(self, *, engine_execution_id: str, round_no: int | None) -> ToolCallMapping:
         """显式绑定内层（引擎执行标识 + 轮次），保持外层不变。"""
         if not engine_execution_id:
             raise ValueError("engine_execution_id is required")
-        if isinstance(round_no, bool) or not isinstance(round_no, int) or round_no < 0:
+        if round_no is None or isinstance(round_no, bool) or not isinstance(round_no, int) or round_no < 0:
             raise ValueError("round_no must be a non-negative integer")
         return ToolCallMapping(
             call_key=self.call_key,

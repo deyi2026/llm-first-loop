@@ -434,8 +434,10 @@ def test_sse_events_endpoint(build_test_engine, fake_settings):
     engine.session.create()
     fp_after = _sessions_fingerprint(engine.settings.sessions_dir)
     assert fp_before != fp_after
-    # 端点已注册（OpenAPI schema）
-    schema = client.get("/openapi.json").json()
+    # 端点已注册（OpenAPI schema）——P2-6 后 /openapi.json 默认关闭，
+    # 攻击面收缩不改变"端点存在"这一事实，改为直接读 app.openapi()
+    assert client.get("/openapi.json").status_code == 404
+    schema = client.app.openapi()
     assert "/api/v1/events" in schema["paths"]
     # 端点信息含在 /api/info
     info = client.get("/api/info").json()

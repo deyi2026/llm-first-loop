@@ -81,6 +81,19 @@ MIRROR_DIR="$RUNTIME_ROOT"  # compatibility alias: every operational path stays 
 DUAL_ROOT=0
 [[ "$RUNTIME_ROOT" != "$CODE_ROOT" ]] && DUAL_ROOT=1
 RESTART_ARG1="${1:-web}"  # S1(2026-09-22): 函数内 $1 被遮蔽；根检查中止的回执需要脚本目标
+# P1-3(2026-10-25): 默认工作区根（AI 默认可写区）。与 LFL_WORKSPACE_ROOT（代码
+# 身份锚，指向 $CODE_ROOT 不可改）语义无关；下方三处 spawn 前缀注入同名变量。
+# 过渡锚（R2 修正）: 实迁完成前缺省锚回 $CODE_ROOT——保持与迁移前行为完全一致
+# （current 已是代码根键，幂等无切换），防止 guard 自动拉起时空切到未迁移的
+# ~/lfl-workspace。实迁 runbook（docs/P1-3-实施方案 §8）执行时把缺省改为
+# $HOME/lfl-workspace 或显式 export，完成切换后本注释随 runbook 清理。
+LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$CODE_ROOT}"
+# 锚根存在性自检（对 $CODE_ROOT 幂等无害；显式配置错误路径时 fail-fast 中止，
+# 防止放行到 spawn 后的服务崩溃循环——准入审核 P2-4）。
+if ! mkdir -p -m 700 "$LFL_DEFAULT_WORKSPACE_ROOT" 2>/dev/null; then
+  echo "[restart] FATAL: 无法创建默认工作区根 $LFL_DEFAULT_WORKSPACE_ROOT（权限或路径错误）；请手工 mkdir -m 700 或修正 LFL_DEFAULT_WORKSPACE_ROOT" >&2
+  exit 78
+fi
 
 # ── lifecycle_agency：结构化阶段事实 + 模型举证推进（tasks 3.1 / 2.3 / 5.x）──
 # STAGE_FACT: 结构化阶段事实（L4 取代 marker 白名单推断副作用）。worker 只读该
@@ -872,7 +885,7 @@ _start_web() {
   # 且覆盖 shell 残留的旧主区 PYTHONPATH）。
   # 修3(2026-09-09): 启动改走 _spawn_detached（可移植 setsid+execvp）——nohup+&
   # 不换进程组，宿主 shell 超时 killpg 会被整树波及（execute_command.py:108-109 实证）。
-  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.runtime.launch web
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_DEFAULT_WORKSPACE_ROOT="$LFL_DEFAULT_WORKSPACE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/web.log "$VENV_PY" -m llm_loop.runtime.launch web
   local pid=$! auth_code="000" ui_code="000"
   # 就绪预算（2026-10-20 实证）：冷启动含 700 个 legacy evidence sidecar 的
   # quarantine 扫描，实测 29~31s 波动；原 30s 预算在 gen292 部署时以 30.7s
@@ -914,7 +927,7 @@ _start_feishu() {
   # PYTHONPATH=镜像 src 显式注入（协议 §3，同 _start_web 注释）。
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
   # 修3(2026-09-09): 同 _start_web——经 _spawn_detached 脱离进程组再 exec。
-  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.runtime.launch feishu
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_DEFAULT_WORKSPACE_ROOT="$LFL_DEFAULT_WORKSPACE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/feishu.log "$VENV_PY" -m llm_loop.runtime.launch feishu
   local pid=$!
   # 校验: 预检失败会立即退出；WS 连接成功后心跳文件写 state=connected。
   # 心跳文件优先（权威；lsof 查 feishu.cn 连接有时序误报）。WS 握手含 token 获取+
@@ -951,7 +964,7 @@ _start_learning() {
   _log "启动专门 Learning Plane worker..."
   _prep_dsh_env
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
-  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/learning.log "$VENV_PY" -m llm_loop.runtime.launch learning
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_DEFAULT_WORKSPACE_ROOT="$LFL_DEFAULT_WORKSPACE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/learning.log "$VENV_PY" -m llm_loop.runtime.launch learning
   local pid=$!
   local mf="$MIRROR_DIR/data/runtime/runtime_manifest.learning.json"
   for _ in $(seq 1 30); do

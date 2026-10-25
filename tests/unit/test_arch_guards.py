@@ -4,7 +4,8 @@
 更名扩展——文件历史可追溯。v2 基线五节（design T3-C）：
 
 - ``function_lines``：全函数 ≥120 行登记（三层红线联动阈值）
-- ``legacy_super_functions``：四函数专属棘轮（build/engine/factory/history）
+- ``legacy_super_functions``：实测 >300 超大函数棘轮（EVO-20261025-e0bff8ee
+  起由原四函数 build/engine/factory/history 扩展为全量登记）
 - ``local_imports``：文件级函数内 import 总量（只减不增；豁免仅 optional/plugin）
 - ``known_cycles``：环登记（Phase 3 断两环后清空并断言空）
 - ``exemptions``：OQ-7 强约束豁免清单（reason ≥10 字符 + deadline ≤30 天 + 数量单调不增）
@@ -75,7 +76,10 @@ def _classify_redlines(
     **红线管辖 = 未登记函数（防新增膨胀）**；已登记函数（function_lines ∪
     legacy_super_functions）归棘轮管辖（`test_function_lines_ratchet_within_baseline`
     零增长断言——比红线更严：214 行登记函数长到 215 即红，无需等 300）。
-    legacy 四函数（1702/1126/1004/721）同为登记存量，Phase 6/7 拆分目标
+    legacy 为实测 >300 的超大函数棘轮（原四函数 build/engine/factory/history，
+    EVO-20261025-e0bff8ee 扩展全量登记并按实测重定：721→745 / 866→2219 /
+    1004→2157，_build_llm_messages 199→197 收缩回 function_lines；清单与数值
+    以基线 JSON 为准，此处数字仅为重登记时点快照），Phase 6/7 拆分目标
     （D10 收编延续：v1 硬顶 2000 从不拦 1732 存量——红线语义自始是防新增）。
     """
     if registered_keys is None:
@@ -320,6 +324,294 @@ def test_baseline_v2_schema():
     assert not overlap, f"legacy 键不得同时出现在 function_lines: {overlap}"
 
 
+# ── EVO-20261025-e0bff8ee：基线↔实测双向对账（堵"登记即豁免"）───────────────
+# 漏洞链：_classify_redlines 只对未登记函数设红线，而登记值从不与实测对账——
+# 任何函数一旦进 function_lines 即永久免于红线，死键还掩盖真实违规。本节把
+# "登记"从豁免变成棘轮锚点：键必须存活、登记值必须 ≥ 实测、>300 必须进
+# legacy、≥120 必须登记（阈值带内不得存在未登记增长）；新登记/改值的登记值
+# 必须等于当次实测（规则 f，HEAD 锚定——登记是当次实测快照，不留"增长空间"）。
+
+
+def _ratchet_problems(
+    measured: dict[str, int],
+    function_lines: dict[str, int],
+    legacy: dict[str, int],
+    include_threshold: int = INCLUDE_THRESHOLD,
+) -> list[str]:
+    """基线登记 × AST 实测双向对账，返回问题清单（纯函数，不 assert）。
+
+    规则清单 a..f（a..e 为本函数规则，每条独立可红，合成数据单测 test_ratchet_rule_*）：
+    a ``[死键]``：登记键（fl ∪ legacy）在实测中不存在——防死键掩盖真实违规；
+    b ``[棘轮增长]``：实测 > 登记值——零增长，登记函数长 1 行即红（fl/legacy 同检）；
+    c ``[超限未进legacy]``：function_lines 键的登记值或实测 >300——>300 只能进 legacy；
+    d ``[未登记]``：实测 ≥ include_threshold 且不在 fl ∪ legacy——阈值带内不得
+      未登记（<120 的存活历史小键允许保留在 fl，承载"曾经很大"的棘轮锚）；
+    e ``[legacy 未超限]``：legacy 键实测 ≤300——legacy 语义上只收 >300 存量，否则
+      任何小函数都能被登记成巨值而彻底脱锚（独立审查 P2-2）。
+    f ``[登记脱锚]``：本次改动触及的键（相对 HEAD 基线同节同键为新登记或改值）
+      登记值必须等于当次实测——堵「fl 键 ≤300 内抬高留增长空间」「实测 299
+      登记 300」的脱锚余量通道（独立审查 P2-2 余项）。需 HEAD 基线上下文，
+      由纯函数 `_registration_anchor_problems` 实现（合成负例
+      test_ratchet_rule_registration_anchor；真实树接线
+      test_registration_anchor_matches_measured）。
+    """
+    problems: list[str] = []
+    for key in sorted(set(function_lines) | set(legacy)):
+        if key not in measured:
+            problems.append(f"  [死键] {key}: 登记存在但实测不存在（请随拆分/删除提交清理）")
+    for key, reg in sorted(function_lines.items()):
+        m = measured.get(key)
+        if m is None:
+            continue  # 已按 a 计死键
+        if m > reg:
+            problems.append(f"  [棘轮增长] {key}: 登记 {reg} → 实测 {m}（零增长）")
+        if reg > GLOBAL_FAIL or m > GLOBAL_FAIL:
+            problems.append(
+                f"  [超限未进legacy] {key}: 登记 {reg}/实测 {m} >{GLOBAL_FAIL}（>300 只能进 legacy）"
+            )
+    for key, reg in sorted(legacy.items()):
+        m = measured.get(key)
+        if m is not None and m > reg:
+            problems.append(f"  [棘轮增长] {key}: 登记 {reg} → 实测 {m}（零增长）")
+        if m is not None and m <= GLOBAL_FAIL:
+            problems.append(
+                f"  [legacy未超限] {key}: 实测 {m} ≤{GLOBAL_FAIL}"
+                "（legacy 只收 >300 存量，请移入 function_lines）"
+            )
+    for key, lines in sorted(measured.items()):
+        if lines >= include_threshold and key not in function_lines and key not in legacy:
+            problems.append(
+                f"  [未登记] {key}: 实测 {lines} ≥{include_threshold} 且不在 function_lines∪legacy"
+            )
+    return problems
+
+
+def _registration_anchor_problems(
+    head_base: dict[str, Any],
+    cur_base: dict[str, Any],
+    measured: dict[str, int],
+) -> list[str]:
+    """规则 f（登记脱锚，纯函数）：本次改动触及的键，登记值必须等于当次实测。
+
+    「触及键」= 当前 function_lines ∪ legacy 中，相对 head_base 同节同键
+    (a) 键不存在（新登记）或 (b) 数值不同（改值）的键。v1 兼容沿用
+    `_numeric_raises` 既有口径：head schema<2 时以 head 的 ``functions`` 视图
+    为锚（fl ∪ legacy 逐键与之比对，v1 无 fl/legacy 分节），不另发明语义。
+
+    - 触及键且 measured 中存在：reg != measured → ``[登记脱锚]``（新键/改值
+      必须等于当次实测，重登记脚本口径——独立审查 P2-2：fl 键 ≤300 内抬高
+      留"增长空间"、小函数塞 legacy 巨值的脱锚通道从此关死）。
+    - measured 中不存在的键跳过（死键由规则 a 负责）；未触及键不判（存量
+      登记余量不追溯，避免一次性红掉全部历史登记）。
+    """
+    head_schema = head_base.get("_meta", {}).get("schema", 1)
+    problems: list[str] = []
+    for sec in ("function_lines", "legacy_super_functions"):
+        head_sec: dict[str, Any] = (
+            head_base.get("functions", {}) if head_schema < 2 else head_base.get(sec, {})
+        )
+        for key, reg in sorted(cur_base.get(sec, {}).items()):
+            if key in head_sec and head_sec[key] == reg:
+                continue  # 未触及（同节同键且数值相同）：存量余量不追溯
+            m = measured.get(key)
+            if m is None:
+                continue  # 登记键实测不存在：死键由规则 a 负责
+            if reg != m:
+                problems.append(
+                    f"  [登记脱锚] {sec}:{key}: 登记 {reg} ≠ 实测 {m}"
+                    "（新键/改值必须等于当次实测，重登记脚本口径）"
+                )
+    return problems
+
+
+def test_function_lines_ratchet_within_baseline():
+    """真实树 × 真实基线五规则对账：problems 必须为空（EVO-20261025-e0bff8ee）。
+
+    `_classify_redlines` docstring 曾承诺而不存在的断言在此真实落地：登记集
+    不再"登记即豁免"——死键/实测增长/>300 误置 fl/≥120 未登记均红。
+    """
+    b = _load_baseline()
+    problems = _ratchet_problems(
+        _measure_functions_cached(), b["function_lines"], b["legacy_super_functions"]
+    )
+    assert not problems, (
+        "基线登记与 AST 实测不一致（EVO-20261025-e0bff8ee 五规则对账）：\n"
+        + "\n".join(problems)
+        + "\n重登记：python scripts/regen_function_size_baseline.py（guard(r9): 前缀提交）"
+    )
+
+
+def test_global_redline_300():
+    """真实树口径全局红线：所有实测 >300 的函数必须登记且登记 ≥ 实测。
+
+    未登记者逐条列出即 FAIL；登记 < 实测（无论登记在 legacy 还是 fl）同样
+    FAIL——与 [棘轮增长] 同语义的红线视角；>300 键误置 function_lines 由
+    `_ratchet_problems` 规则 c（[超限未进legacy]）另检。
+    """
+    b = _load_baseline()
+    fl, legacy = b["function_lines"], b["legacy_super_functions"]
+    problems: list[str] = []
+    for key, lines in sorted(_measure_functions_cached().items()):
+        if lines <= GLOBAL_FAIL:
+            continue
+        if key in legacy:
+            reg, where = legacy[key], "legacy_super_functions"
+        elif key in fl:
+            reg, where = fl[key], "function_lines"
+        else:
+            problems.append(f"  [全局红线>{GLOBAL_FAIL}] {key}: 实测 {lines}，未登记（legacy/fl 均无）")
+            continue
+        if reg < lines:
+            problems.append(f"  [全局红线>{GLOBAL_FAIL}] {key}: 实测 {lines} > {where} 登记 {reg}")
+    assert not problems, (
+        f"实测 >{GLOBAL_FAIL} 的函数存在未登记/低登记（全量重登记："
+        "python scripts/regen_function_size_baseline.py，guard(r9): 前缀提交）：\n"
+        + "\n".join(problems)
+    )
+
+
+def test_ratchet_rule_dead_key():
+    """规则 a 红证据（合成数据）：登记键实测不存在 → [死键]，其余规则不误报。"""
+    problems = _ratchet_problems(
+        measured={"src/x.py::keep": 130},
+        function_lines={"src/x.py::gone": 130, "src/x.py::keep": 130},
+        legacy={"src/y.py::gone_l": 400},
+    )
+    dead = [p for p in problems if "[死键]" in p]
+    assert any("src/x.py::gone" in p for p in dead)
+    assert any("src/y.py::gone_l" in p for p in dead)
+    assert len(problems) == 2, f"除两条死键外不应有其他问题: {problems}"
+
+
+def test_ratchet_rule_growth():
+    """规则 b 红证据（合成数据）：实测 > 登记 → [棘轮增长]（fl 与 legacy 同检）。"""
+    problems = _ratchet_problems(
+        measured={"src/x.py::f": 131, "src/y.py::g": 401},
+        function_lines={"src/x.py::f": 130},
+        legacy={"src/y.py::g": 400},
+    )
+    growth = [p for p in problems if "[棘轮增长]" in p]
+    assert any("src/x.py::f" in p and "131" in p for p in growth)
+    assert any("src/y.py::g" in p and "401" in p for p in growth)
+    assert len(problems) == 2, f"除两条增长外不应有其他问题: {problems}"
+
+
+def test_ratchet_rule_over300_must_be_legacy():
+    """规则 c 红证据（合成数据）：>300 键登记在 function_lines → [超限未进legacy]。"""
+    problems = _ratchet_problems(
+        measured={"src/x.py::big": 350},
+        function_lines={"src/x.py::big": 350},
+        legacy={},
+    )
+    assert any("[超限未进legacy]" in p and "src/x.py::big" in p for p in problems)
+    # 同数据进 legacy 后干净（d 规则视角：已登记；数值仍 >300，故 e 也不报）
+    assert _ratchet_problems({"src/x.py::big": 350}, {}, {"src/x.py::big": 350}) == []
+
+
+def test_ratchet_rule_legacy_not_oversized():
+    """规则 e 红证据（合成数据）：legacy 塞小函数巨值 → [legacy未超限]。
+
+    独立审查 P2-2 的反例：实测 50 行的函数登记成 legacy 5000 行，旧四规则下
+    全部安静（非死键、无增长、>300 只在 fl 检、已登记故 d 不报）——等于把任意
+    小函数抬到"永不可能触线"的巨值锚上。规则 e 把这条脱锚通道关死。
+    """
+    problems = _ratchet_problems(
+        measured={"src/x.py::small": 50},
+        function_lines={},
+        legacy={"src/x.py::small": 5000},
+    )
+    assert any("[legacy未超限]" in p and "src/x.py::small" in p for p in problems)
+    # 真正 >300 的存量进 legacy 仍然干净（e 不误报）
+    assert _ratchet_problems({"src/x.py::big": 301}, {}, {"src/x.py::big": 301}) == []
+
+
+def test_ratchet_rule_unregistered_threshold_band():
+    """规则 d 红证据（合成数据）：实测 ≥120 未登记 → [未登记]；<120 不要求。"""
+    problems = _ratchet_problems(
+        measured={"src/x.py::f": 120, "src/x.py::small": 119},
+        function_lines={},
+        legacy={},
+    )
+    unreg = [p for p in problems if "[未登记]" in p]
+    assert len(unreg) == 1 and "src/x.py::f" in unreg[0] and "120" in unreg[0]
+    assert not any("src/x.py::small" in p for p in problems)
+
+
+def test_ratchet_rule_registration_anchor():
+    """规则 f 红证据（合成数据，直调纯函数）：独立审查 P2-2 三种脱锚构造逐条检出。
+
+    - fl 键 head 130 / 现 300、实测 130：≤300 内抬高登记留"增长空间"；
+    - 新 legacy 键实测 301 登记 5000：实测 >300 故规则 e 管不到，只有 f 能拦；
+    - fl 新键实测 299 登记 300：审查实测「299 登记 300 也通过」的余量通道。
+    未触及存量（head 300 / 现 300 / 实测 130）不追溯，不得误报。
+    """
+    head = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/x.py::f": 130, "src/old.py::keep": 300},
+        "legacy_super_functions": {},
+    }
+    cur = {
+        "_meta": {"schema": 2},
+        "function_lines": {
+            "src/x.py::f": 300,       # 触及（改值）：130 → 300
+            "src/old.py::keep": 300,  # 未触及：存量余量不追溯
+            "src/new.py::n": 300,     # 触及（新登记）：实测 299
+        },
+        "legacy_super_functions": {"src/y.py::g": 5000},  # 触及（新登记）：实测 301
+    }
+    measured = {
+        "src/x.py::f": 130, "src/old.py::keep": 130,
+        "src/new.py::n": 299, "src/y.py::g": 301,
+    }
+    problems = _registration_anchor_problems(head, cur, measured)
+    assert any(
+        "[登记脱锚]" in p and "function_lines:src/x.py::f" in p and "130" in p
+        for p in problems
+    )
+    assert any(
+        "[登记脱锚]" in p and "legacy_super_functions:src/y.py::g" in p and "5000" in p
+        for p in problems
+    )
+    assert any(
+        "[登记脱锚]" in p and "function_lines:src/new.py::n" in p and "299" in p
+        for p in problems
+    )
+    assert len(problems) == 3, f"应恰好 3 条脱锚（未触及存量不得误报）: {problems}"
+
+
+def test_registration_anchor_positive_cases():
+    """规则 f 正例：触及键登记=实测 → 干净；死键跳过（归规则 a）；v1 同口径。"""
+    head = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/x.py::f": 130},
+        "legacy_super_functions": {},
+    }
+    cur = {
+        "_meta": {"schema": 2},
+        # 改值=实测 / 新键=实测 / 新键死键（measured 无此键，规则 a 管辖）
+        "function_lines": {"src/x.py::f": 135, "src/new.py::n": 150, "src/gone.py::d": 500},
+        "legacy_super_functions": {"src/big.py::b": 350},
+    }
+    measured = {"src/x.py::f": 135, "src/new.py::n": 150, "src/big.py::b": 350}
+    assert _registration_anchor_problems(head, cur, measured) == []
+
+    # v1 迁移视图（head schema<2）：functions 为锚——登记=实测干净、脱锚可检出
+    v1_head = {"functions": {"src/x.py::f": 100}}
+    clean = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/x.py::f": 100},
+        "legacy_super_functions": {},
+    }
+    assert _registration_anchor_problems(v1_head, clean, {"src/x.py::f": 100}) == []
+    detached = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/x.py::f": 105},
+        "legacy_super_functions": {},
+    }
+    assert any(
+        "登记 105 ≠ 实测 100" in p
+        for p in _registration_anchor_problems(v1_head, detached, {"src/x.py::f": 100})
+    )
 
 
 _IMPORT_EXEMPT_RE = re.compile(r"#\s*r9-import-exempt:\s*(\w+)\s*$")
@@ -781,8 +1073,13 @@ def test_baseline_tamper_negative_cases():
     assert any("105" in r for r in _numeric_raises(v1_head, v1_check))
 
 
-def test_baseline_ratchet_not_raised():
-    """防篡改层 2（全节）：基线 JSON 任何数值较 git HEAD 上升即 FAIL（无论实测）。"""
+def _load_head_baseline() -> dict[str, Any] | None:
+    """读基线 JSON 的 git HEAD 版本；未提交/不可解析 → None（调用方 skip）。
+
+    供 `test_baseline_ratchet_not_raised` 与 `test_registration_anchor_matches_measured`
+    共用（防篡改层 2 与规则 f 的 HEAD 锚定同一数据源）；None 语义与旧
+    try/except→pytest.skip 完全一致，不改变既有 skip 行为。
+    """
     rel = BASELINE_PATH.relative_to(ROOT).as_posix()
     try:
         proc = subprocess.run(
@@ -792,14 +1089,44 @@ def test_baseline_ratchet_not_raised():
             check=True,
             cwd=ROOT,
         )
-        head_base = json.loads(proc.stdout)
+        return json.loads(proc.stdout)
     except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+
+
+def test_baseline_ratchet_not_raised():
+    """防篡改层 2（全节）：基线 JSON 任何数值较 git HEAD 上升即 FAIL（无论实测）。"""
+    head_base = _load_head_baseline()
+    if head_base is None:
+        rel = BASELINE_PATH.relative_to(ROOT).as_posix()
         pytest.skip(f"基线文件尚未提交到 git（{rel}），提交后棘轮生效")
 
     problems = _numeric_raises(head_base, _load_baseline())
     assert not problems, (
         "基线被上调（棘轮只允许下降）。如为有意放宽，请走 exemptions（reason + deadline），"
         "不要直接改基线值：\n" + "\n".join(problems)
+    )
+
+
+def test_registration_anchor_matches_measured():
+    """规则 f（真实树接线）：新登记/改值的键，登记值必须等于当次实测（P2-2）。
+
+    与 `_numeric_raises` 互补：那边只拦「同键上调」（新键放行），本规则要求
+    本次提交触及的 fl/legacy 键登记=当次实测——现基线全部 reg==measured，零
+    基线成本接线；此后任何「抬高留余量」的重登记提交在此即红。
+    """
+    head_base = _load_head_baseline()
+    if head_base is None:
+        rel = BASELINE_PATH.relative_to(ROOT).as_posix()
+        pytest.skip(f"基线文件尚未提交到 git（{rel}），提交后锚定规则生效")
+
+    problems = _registration_anchor_problems(
+        head_base, _load_baseline(), _measure_functions_cached()
+    )
+    assert not problems, (
+        "基线登记脱锚（规则 f：新键/改值必须等于当次实测，不留增长空间）：\n"
+        + "\n".join(problems)
+        + "\n重登记：python scripts/regen_function_size_baseline.py（guard(r9): 前缀提交）"
     )
 
 

@@ -96,16 +96,30 @@ def test_fs_delete_requires_confirm(client, tmp_path):
 def test_fs_delete_with_confirm(client, tmp_path):
     cli, _ = client
     (tmp_path / "ws" / "del.txt").write_text("x", encoding="utf-8")
-    r = cli.delete("/api/v1/fs/delete", params={"path": "del.txt", "confirm": "true"})
+    # P0-2 两步令牌：先 GET delete-token，再带 token + confirm=true 删除
+    tok = cli.get("/api/v1/fs/delete-token", params={"path": "del.txt"})
+    assert tok.status_code == 200
+    token = tok.json()["token"]
+    r = cli.delete(
+        "/api/v1/fs/delete",
+        params={"path": "del.txt", "confirm": "true", "token": token},
+    )
     assert r.status_code == 200
     assert not (tmp_path / "ws" / "del.txt").exists()
+    # 令牌单次使用：同一 token 不能重放
+    replay = cli.delete(
+        "/api/v1/fs/delete",
+        params={"path": "del.txt", "confirm": "true", "token": token},
+    )
+    assert replay.status_code == 409
 
 
 def test_fs_delete_dangerous_denied(client):
     cli, _ = client
-    r = cli.delete("/api/v1/fs/delete", params={"path": ".git", "confirm": "true"})
+    # P0-2 后危险路径在令牌签发阶段即被拒（删除端点仍独立复核，纵深防御）
+    r = cli.get("/api/v1/fs/delete-token", params={"path": "../../etc/passwd"})
     assert r.status_code == 400
-    assert r.json()["error"] == "invalid_path"
+    assert r.json()["error"] == "out_of_bounds"
 
 
 def test_fs_audit_written(client, tmp_path):

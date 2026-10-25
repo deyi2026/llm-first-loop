@@ -1,0 +1,10 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`jsdom caps > probes 1`] = `
+{
+  "matchMedia": "undefined",
+  "maxTouchPoints": undefined,
+  "mediaDevices": "undefined",
+  "ua": "Mozilla/5.0 (darwin) AppleWebKit/537.36 (KHTML, like Gecko) jsdom/25.0.1",
+}
+`;

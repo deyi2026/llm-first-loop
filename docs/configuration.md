@@ -22,7 +22,16 @@
 | 变量 | 默认 | 说明 / 坑 |
 |:---|:---|:---|
 | `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数。**坑**：工具密集任务（读→改→验证）20 轮常触顶（2026-08-14 已 20→40）；达 80% 时程序注入 `[轮数预警]`，AI 可经 adjust_strategy 调大（白名单，硬上限 500） |
-| `EXEC_SANDBOX` | none | bash 沙箱（P3-3）：`bwrap`=bubblewrap 隔离 execute_command（只读系统目录/独立命名空间/工作区可写，回执如实标注）；显式开启而 bwrap 缺失 → fail-closed 命令不执行；空=none 不启用 |
+| `EXEC_SANDBOX` | auto | bash 沙箱（P3-3；2026-10-25 默认 none→auto）：`auto`=按平台自动解析 bwrap(优先) → docker(daemon 可用) → sandbox-exec(macOS) → none(附一次性 warning)；也可显式 `bwrap`/`docker`/`sandbox-exec`/`none`。显式开启而后端缺失 → fail-closed 不执行；`EXEC_SANDBOX_STRICT=1` 时 auto 降级到 none 也直接报错。macOS sandbox-exec 只约束**写**（工作区/`/tmp`/常见缓存可写，网络与读未隔离，回执如实标注） |
+| `EXEC_SANDBOX_MACOS_WRITABLE` | — | macOS sandbox-exec 额外可写目录（冒号分隔；默认工作区 + `/tmp` + 常见缓存） |
+| `LFL_WORKSPACE_ALLOWED_ROOTS` | — | 工作区注册白名单（colon 分隔）：默认只允许 代码仓根 / cwd / `<data>/workspace`；扩展项逐个白名单化，不做前缀放行 |
+| `LFL_BROWSER_ALLOWED_HOSTS` | — | 浏览器按站点授权（P1-2）：默认拒绝环回/私网；逗号分隔，支持 `*.example.com` |
+| `LFL_NET_ALLOW_PRIVATE` | 0 | 出站私网放行（**仅调试**，默认 0=拒绝环回/私网目标） |
+| `FEISHU_OUTBOUND_ALLOW_ALL` | 0 | 显式放开"允许所有人"（**危险**，仅测试用；正常用 `FEISHU_OUTBOUND_ALLOWED_USERS`） |
+| `FEISHU_DOC_FOLDER_ALLOWLIST` | — | 文档目标文件夹白名单（留空=只允许机器人根目录） |
+| `LFL_FEISHU_ALLOW_SECRETS` | 0 | 允许外发含高置信密钥的内容（**危险**，默认 0=拦截） |
+| `LFL_SKILLS_REQUIRE_MANIFEST` | 0 | 技能完整性（P1-5）：`1` 时只加载清单内且哈希一致的技能 |
+| `LFL_ALLOW_DECLARED_FS_ISOLATION` | 0 | 子代理 `fs_isolation`（S2-5）：该能力**尚未实现**，默认拒绝声明；`1` 表示接受"仅声明、不隔离"，回执会标注 `declarative_only` |
 | `LLM_WIRE_PROTOCOL` | openai | 默认 client 线协议（P3-5）：openai / anthropic / google；provider 模型条目可用 `wire_protocol` 元数据逐模型覆盖 |
 | `MCP_SERVERS` | — | MCP 服务器 JSON 数组（legacy，P3-1）：`[{"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]}]`；支持 stdio 与 http/sse（`type`/`url`/`headers`）。**注册名是下划线形式** `mcp_<server>_<tool>`（点号 `mcp.<server>.<tool>` 仅为内部原始身份，2026-10-19 勘误；同名冲突按身份 digest 消歧）。schema 透传、五态包装、超时/审计复用；单服务器失败 fail-open。**迁移**：多行长 JSON 建议改用文件配置（见 `MCP_FILE_CONFIG`），可版本管理且支持 Cursor/VS Code/Claude Desktop 格式直接粘贴 |
 | `MCP_FILE_CONFIG` | auto | MCP 文件配置开关（P0-1）：空/auto=读 `~/.lfl/mcp.json`（用户级）+ 项目根 `.mcp.json`（工作区级）两层；`user`=仅用户级；`off`=均不读。**安全**：clone 不可信仓库时设 `off` 或 `user`，防其 `.mcp.json` 自动拉起任意进程 |

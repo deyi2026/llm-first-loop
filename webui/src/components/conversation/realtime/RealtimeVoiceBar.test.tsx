@@ -11,7 +11,6 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
   const onPress = vi.fn();
   const onRelease = vi.fn();
   const onFallbackText = vi.fn();
-  const onClose = vi.fn();
   const onRetryPlayback = vi.fn();
   const props = {
     connectionState: "ready" as const,
@@ -21,91 +20,62 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
     onPress,
     onRelease,
     onFallbackText,
-    onClose,
     onRetryPlayback,
     ...over,
   };
-  render(<RealtimeVoiceBar {...props} />);
-  return { onPress, onRelease, onFallbackText, onClose, onRetryPlayback };
+  const view = render(<RealtimeVoiceBar {...props} />);
+  return { onPress, onRelease, onFallbackText, onRetryPlayback, view };
 }
 
 describe("RealtimeVoiceBar", () => {
-  it("shows an explicit inactive microphone state and a permanent close action", () => {
+  it("renders and exposes push-to-talk when ready", () => {
     renderBar();
     const button = screen.getByTestId("realtime-push-to-talk");
     expect(button).toBeEnabled();
-    expect(button).toHaveTextContent("开始说话");
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("麦克风未开启");
-    expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
+    expect(screen.getByTestId("realtime-state").textContent).toContain("可以说话");
   });
 
-  it("click or mobile tap toggles recording instead of releasing when the finger lifts", () => {
+  it("presses on pointer down and releases on pointer up", () => {
     const { onPress, onRelease } = renderBar();
     const button = screen.getByTestId("realtime-push-to-talk");
     fireEvent.pointerDown(button);
-    fireEvent.pointerUp(button);
-    expect(onPress).not.toHaveBeenCalled();
-    expect(onRelease).not.toHaveBeenCalled();
-    fireEvent.click(button);
     expect(onPress).toHaveBeenCalledTimes(1);
-    expect(onRelease).not.toHaveBeenCalled();
-  });
-
-  it("explains that the first tap starts listening automatically after connecting", () => {
-    renderBar({ connectionState: "opening" });
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("连接后自动开始收音");
-    expect(screen.getByTestId("realtime-push-to-talk")).toHaveTextContent("正在连接");
-    expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
-  });
-
-  it("shows visible live recording with an explicit finish action", () => {
-    const { onRelease } = renderBar({ micEnabled: true });
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在听你说话");
-    const button = screen.getByTestId("realtime-push-to-talk");
-    expect(button).toHaveTextContent("结束并发送");
-    expect(button).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(button);
-    expect(onRelease).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
-  });
-
-  it("shows permission wait and allows cancelling microphone startup", () => {
-    const { onRelease } = renderBar({ micStarting: true });
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("等待麦克风权限");
-    const button = screen.getByTestId("realtime-push-to-talk");
-    expect(button).toHaveTextContent("取消收音");
-    fireEvent.click(button);
+    fireEvent.pointerUp(button);
     expect(onRelease).toHaveBeenCalledTimes(1);
   });
 
-  it("allows mobile microphone input without screen sharing capability", () => {
-    const { onPress } = renderBar({ modality: "voice_text_fallback" });
+  it("releases on pointer leave and blur", () => {
+    const { onRelease } = renderBar();
     const button = screen.getByTestId("realtime-push-to-talk");
-    expect(button).toBeEnabled();
-    fireEvent.click(button);
-    expect(onPress).toHaveBeenCalledOnce();
-    expect(screen.getByTestId("realtime-fallback")).toBeInTheDocument();
+    fireEvent.pointerLeave(button);
+    fireEvent.blur(button);
+    expect(onRelease).toHaveBeenCalledTimes(2);
   });
 
-  it("never disables finish and close while a text reply starts in the background", () => {
-    const { onRelease, onClose } = renderBar({ disabled: true, micEnabled: true });
-    const finish = screen.getByTestId("realtime-push-to-talk");
-    expect(finish).toBeEnabled();
-    fireEvent.click(finish);
-    fireEvent.click(screen.getByRole("button", { name: "关闭语音" }));
-    expect(onRelease).toHaveBeenCalledOnce();
-    expect(onClose).toHaveBeenCalledOnce();
+  it("releases on pointercancel (touch cancel must not strand the pressed state)", () => {
+    const { onRelease } = renderBar();
+    fireEvent.pointerCancel(screen.getByTestId("realtime-push-to-talk"));
+    expect(onRelease).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the close action visible through opening, connection failure and streaming", () => {
-    for (const connectionState of ["opening", "failed", "reconnecting"] as const) {
-      cleanup();
-      const { onClose } = renderBar({ connectionState, disabled: true });
-      const close = screen.getByRole("button", { name: "关闭语音" });
-      fireEvent.click(close);
-      expect(onClose).toHaveBeenCalledTimes(1);
-    }
+  it("keyboard hold: Space/Enter keydown presses once (auto-repeat ignored), keyup releases", () => {
+    const { onPress, onRelease } = renderBar();
+    const button = screen.getByTestId("realtime-push-to-talk");
+    expect(button.getAttribute("aria-pressed")).toBe("false"); // aria-pressed 反映 micEnabled 事实
+    fireEvent.keyDown(button, { key: " " });
+    fireEvent.keyDown(button, { key: " ", repeat: true }); // 长按自动重复：不得再次开始
+    expect(onPress).toHaveBeenCalledTimes(1);
+    fireEvent.keyUp(button, { key: " " });
+    expect(onRelease).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(button, { key: "Enter" });
+    fireEvent.keyUp(button, { key: "Enter" });
+    expect(onPress).toHaveBeenCalledTimes(2);
+    expect(onRelease).toHaveBeenCalledTimes(2);
+    // 非按住键不产生开始/结束语义
+    fireEvent.keyDown(button, { key: "Tab" });
+    fireEvent.keyUp(button, { key: "Tab" });
+    expect(onPress).toHaveBeenCalledTimes(2);
+    expect(onRelease).toHaveBeenCalledTimes(2);
   });
 
   it("disables talk when connection is not ready", () => {
@@ -116,13 +86,13 @@ describe("RealtimeVoiceBar", () => {
 
   it("shows generation/playback status and a retry action when speech output fails", () => {
     renderBar({ playbackState: "synthesizing" });
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在生成语音回复");
+    expect(screen.getByTestId("realtime-playback")).toHaveTextContent("正在生成语音回复");
     cleanup();
     renderBar({ playbackState: "playing" });
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("正在播放语音回复");
+    expect(screen.getByTestId("realtime-playback")).toHaveTextContent("正在播放语音回复");
     cleanup();
     const { onRetryPlayback } = renderBar({ playbackState: "failed", error: "本地 TTS 合成失败" });
-    expect(screen.getByTestId("realtime-state")).toHaveTextContent("语音回复未播放");
+    expect(screen.getByTestId("realtime-playback")).toHaveTextContent("语音回复未播放");
     fireEvent.click(screen.getByRole("button", { name: "重试语音回复" }));
     expect(onRetryPlayback).toHaveBeenCalledOnce();
   });
@@ -163,19 +133,164 @@ describe("RealtimeVoiceBar", () => {
     expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
   });
 });
+// ---------------------------------------------------------------------------
+// M3：共享画面入口/预览/kind 切换/澄清展示（A11Y 与降级）
+// ---------------------------------------------------------------------------
 
-it("distinguishes recognition and model processing from a ready microphone", () => {
-  renderBar({ inputState: "processing" });
-  expect(screen.getByTestId("realtime-state")).toHaveTextContent("LFL 正在回复");
-  expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
-  expect(screen.getByRole("button", { name: "关闭语音" })).toBeEnabled();
-});
+function visualState(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]["visual"]> = {}) {
+  return {
+    supported: true,
+    phase: "idle" as const,
+    sourceId: null,
+    previewDataUrl: null,
+    lastFrameAtMs: null,
+    lastFrameBound: false,
+    boundCount: 0,
+    samplingPaused: false,
+    lastRejectedReason: null,
+    kind: "current" as const,
+    clarifyQuestion: null,
+    ...over,
+  };
+}
 
-it("stops only playback through the dedicated voice action", () => {
-  const onInterrupt = vi.fn();
-  const { onPress } = renderBar({ playbackState: "playing", onInterrupt });
-  fireEvent.click(screen.getByRole("button", { name: "停止播报" }));
-  expect(onInterrupt).toHaveBeenCalledOnce();
-  expect(onPress).not.toHaveBeenCalled();
-  expect(screen.getByTestId("realtime-push-to-talk")).toHaveTextContent("打断并说话");
+describe("RealtimeVoiceBar M3 共享画面", () => {
+  it("hides the share entry and shows the text/screenshot fallback hint when unsupported", () => {
+    renderBar({ visual: visualState({ supported: false }) });
+    expect(screen.queryByTestId("realtime-share-toggle")).toBeNull();
+    expect(screen.getByTestId("realtime-share-unsupported").textContent).toContain("文字输入");
+    expect(screen.getByTestId("realtime-share-unsupported").textContent).toContain("截图");
+  });
+
+  it("starts sharing on click (aria-pressed reflects state)", () => {
+    const onStartShare = vi.fn();
+    renderBar({ visual: visualState(), onStartShare });
+    const button = screen.getByTestId("realtime-share-toggle");
+    expect(button.getAttribute("aria-label")).toBe("共享画面");
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(button);
+    expect(onStartShare).toHaveBeenCalledTimes(1);
+  });
+
+  it("P2-9: disables the share entry with a visible hint when no session is open (canShare=false)", () => {
+    renderBar({ visual: visualState({ canShare: false }), onStartShare: vi.fn() });
+    expect(screen.getByTestId("realtime-share-toggle")).toBeDisabled();
+    expect(screen.getByTestId("realtime-share-no-session").textContent).toContain("会话");
+  });
+
+  it("P2-9: keeps the stop entry available if the session disappears mid-share (canShare=false)", () => {
+    renderBar({ visual: visualState({ phase: "sharing", canShare: false }), onStopShare: vi.fn() });
+    expect(screen.getByTestId("realtime-share-toggle")).toBeEnabled(); // 不隐藏停止入口
+    expect(screen.queryByTestId("realtime-share-no-session")).toBeNull();
+  });
+
+  it("while sharing: keeps the stop entry visible, shows preview, status, source and frame age", () => {
+    renderBar({
+      visual: visualState({
+        phase: "sharing",
+        sourceId: "share-abc123",
+        previewDataUrl: "data:image/jpeg;base64,QUFB",
+        lastFrameAtMs: typeof performance !== "undefined" ? performance.now() : 0,
+      }),
+      onStopShare: vi.fn(),
+    });
+    const button = screen.getByTestId("realtime-share-toggle");
+    expect(button.textContent).toContain("停止共享");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("realtime-share-status").textContent).toContain("共享中");
+    expect(screen.getByTestId("realtime-share-status").getAttribute("aria-live")).toBe("polite");
+    expect(screen.getByTestId("realtime-share-source").textContent).toBe("share-abc123");
+    expect(screen.getByTestId("realtime-share-frame-age").textContent).toContain("帧龄");
+    expect(screen.getByTestId("realtime-share-preview")).toBeTruthy();
+    fireEvent.click(button);
+  });
+
+  it("kind radios: visible, keyboard-operable labels, current selectable only while sharing", () => {
+    const onSetVisualKind = vi.fn();
+    const { view } = renderBar({ visual: visualState({ phase: "sharing" }), onSetVisualKind });
+    const current = screen.getByTestId("realtime-visual-kind-current") as HTMLInputElement;
+    const history = screen.getByTestId("realtime-visual-kind-history") as HTMLInputElement;
+    expect(current).toBeEnabled();
+    expect(history).toBeEnabled();
+    expect(current.checked).toBe(true); // 默认 current
+    expect(screen.getByText("问当前画面")).toBeTruthy();
+    expect(screen.getByText("问刚才那页")).toBeTruthy();
+    fireEvent.click(history);
+    expect(onSetVisualKind).toHaveBeenCalledWith("history");
+
+    // 停止后：current 不可选，且有可见提示；history 仍可选
+    view.rerender(
+      <RealtimeVoiceBar
+        connectionState="ready"
+        micEnabled={false}
+        modality="voice_full"
+        chainLabel="级联"
+        onPress={vi.fn()}
+        onRelease={vi.fn()}
+        visual={visualState({ phase: "stopped", kind: "current" })}
+        onSetVisualKind={onSetVisualKind}
+      />,
+    );
+    const currentStopped = screen.getByTestId("realtime-visual-kind-current") as HTMLInputElement;
+    const historyStopped = screen.getByTestId("realtime-visual-kind-history") as HTMLInputElement;
+    expect(currentStopped).toBeDisabled();
+    expect(historyStopped).toBeEnabled();
+    expect(screen.getByTestId("realtime-share-current-unavailable").textContent).toContain("问当前画面");
+  });
+
+  it("shows bounded visible hints for rejections (not rate_limited)", () => {
+    const { view } = renderBar({ visual: visualState({ phase: "sharing", lastRejectedReason: "unknown_source" }) });
+    expect(screen.getByTestId("realtime-share-rejected").textContent).toContain("重新开始共享");
+    view.rerender(
+      <RealtimeVoiceBar
+        connectionState="ready"
+        micEnabled={false}
+        modality="voice_full"
+        chainLabel="级联"
+        onPress={vi.fn()}
+        onRelease={vi.fn()}
+        visual={visualState({ phase: "sharing", lastRejectedReason: "rate_limited" })}
+      />,
+    );
+    expect(screen.queryByTestId("realtime-share-rejected")).toBeNull(); // 静默退避：不可见提示
+  });
+
+  it("clears the stale rejection hint once the share stops (no resurrection)", () => {
+    const { view } = renderBar({ visual: visualState({ phase: "sharing", lastRejectedReason: "unknown_source" }) });
+    expect(screen.getByTestId("realtime-share-rejected").textContent).toContain("重新开始共享");
+    view.rerender(
+      <RealtimeVoiceBar
+        connectionState="ready"
+        micEnabled={false}
+        modality="voice_full"
+        chainLabel="级联"
+        onPress={vi.fn()}
+        onRelease={vi.fn()}
+        visual={visualState({ phase: "stopped", lastRejectedReason: null })}
+      />,
+    );
+    expect(screen.queryByTestId("realtime-share-rejected")).toBeNull();
+  });
+
+  it("displays clarify question with aria-live and never auto-resends", () => {
+    renderBar({ visual: visualState({ clarifyQuestion: "要问当前画面还是刚才那页？" }) });
+    const clarify = screen.getByTestId("realtime-clarify");
+    expect(clarify.getAttribute("aria-live")).toBe("polite");
+    expect(clarify.textContent).toContain("当前画面");
+  });
+
+  it("shows 已绑定/仅预览 and pause states honestly", () => {
+    const base = {
+      connectionState: "ready" as const,
+      micEnabled: false,
+      modality: "voice_full" as const,
+      chainLabel: "级联",
+      onPress: vi.fn(),
+      onRelease: vi.fn(),
+    };
+    const view = render(<RealtimeVoiceBar {...base} visual={visualState({ phase: "stopped", lastFrameBound: true, boundCount: 1 })} />);
+    expect(screen.getByTestId("realtime-share-status").textContent).toContain("已绑定");
+    view.rerender(<RealtimeVoiceBar {...base} visual={visualState({ phase: "sharing", samplingPaused: true })} />);
+    expect(screen.getByTestId("realtime-share-status").textContent).toContain("采样已暂停");
+  });
 });

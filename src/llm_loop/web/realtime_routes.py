@@ -24,6 +24,7 @@ from llm_loop.web.auth import (
     WebSessionStore,
     request_is_trusted_local,
     require_api_key,
+    session_cookie_value,
     session_ttl_seconds,
 )
 
@@ -45,7 +46,9 @@ def _registry(request: Request) -> MediaSessionRegistry:
 
 
 def _owner_identity(request: Request) -> str:
-    cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
+    # S3-6 双名读取（__Host- 前缀名优先，旧名兼容）：secure 部署下会话 cookie
+    # 已迁移前缀名，此处必须能读到，否则浏览器建会话将退化为 Bearer 身份。
+    cookie = session_cookie_value(request.cookies)
     if cookie:
         return cookie
     scheme, token = get_authorization_scheme_param(request.headers.get("authorization", ""))
@@ -55,18 +58,18 @@ def _owner_identity(request: Request) -> str:
 def _create_owner_identity(request: Request) -> tuple[str, int | None]:
     """Bind an anonymous *direct loopback* client to a real revocable media owner.
 
-    Other Web routes deliberately allow trusted localhost without login. The
-    media WS still needs an unguessable cookie for ownership and reconnects;
-    never use one shared ``local`` owner or waive the WebSocket identity check.
-    A stale cookie from a Web restart must not be trusted as an owner either.
-    Proxied/public requests never receive an implicit session here.
+    6a45f1741 语义移植（候选 S3-2/S3-6 架构下保留本地免登录语音 UX）：
+    其他 Web 路由刻意放行受信 localhost 免登录；媒体 WS 仍需不可猜测 cookie
+    做归属与重连，绝不用共享 local owner、绝不豁免 WS 身份校验。Web 重启
+    后的陈旧 cookie 也不得继续当 owner。代理/公网请求在这里不会获得隐式会话。
+    读取走 S3-6 双名（__Host- 优先），铸造仅在受信直连回环且现值无效时发生。
     """
     if not request_is_trusted_local(request):
         return _owner_identity(request), None
     store = getattr(request.app.state, "web_sessions", None)
     if not isinstance(store, WebSessionStore):
         raise HTTPException(status_code=503, detail="browser session store unavailable")
-    cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
+    cookie = session_cookie_value(request.cookies)
     if store.valid(cookie):
         return cookie, None
     ttl = session_ttl_seconds()
@@ -108,6 +111,10 @@ def create_realtime_session(request: Request, response: Response, body: CreateRe
     owner, minted_ttl = _create_owner_identity(request)
     if not owner:
         raise HTTPException(status_code=401, detail="unauthenticated")
+    if registry.active_writer_conflict(body.session_id) and not body.take_over:
+        if minted_ttl is not None:
+            request.app.state.web_sessions.revoke(owner)
+        raise HTTPException(status_code=409, detail="media session already has an active writer")
     try:
         record = registry.create(
             session_id=body.session_id,
@@ -118,11 +125,12 @@ def create_realtime_session(request: Request, response: Response, body: CreateRe
             take_over=body.take_over,
         )
     except MediaWriterConflictError as exc:
+        # 预检查与 create 之间的竞态兜底：铸造出的 cookie 立即撤销（6a45f1741）。
         if minted_ttl is not None:
             request.app.state.web_sessions.revoke(owner)
         raise HTTPException(status_code=409, detail="media session already has an active writer") from exc
     if minted_ttl is not None:
-        # The cookie is only issued after a writer was successfully admitted.
+        # Cookie 仅在 writer 成功准入后下发（6a45f1741）。
         response.set_cookie(
             key=SESSION_COOKIE_NAME,
             value=owner,
@@ -171,6 +179,12 @@ def delete_realtime_session(request: Request, media_session_id: str) -> dict:
     if record is None:
         # 幂等：未知/越权不泄露存在性，按未找到处理
         raise HTTPException(status_code=404, detail="media session not found")
+    # M3（RET-02）：会话清理 → 关键帧全部到期（回读明确失效；未装配视觉链则跳过）
+    keyframes = getattr(request.app.state, "realtime_keyframes", None)
+    if keyframes is not None:
+        with_expire = getattr(keyframes, "close_session", None)
+        if callable(with_expire):
+            with_expire(media_session_id)
     return {
         "close_state": record.session.state.value,
         "task_state": record.session.facts().task_state.value,

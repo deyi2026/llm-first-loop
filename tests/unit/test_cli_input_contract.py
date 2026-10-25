@@ -220,3 +220,46 @@ def test_installed_entry_preserves_legacy_bare_message_compatibility(runtime, mo
     )
     assert cli.application_main(["doctro"]) == 0
     assert observed == ["doctro"]
+
+
+# ── P1-3（2026-10-25）CLI workspace_root 边界语义固化 ──
+def test_main_with_workspace_root_passes_it_explicitly_to_build_engine(runtime, monkeypatch, tmp_path):
+    """安装入口恒显式传 workspace_root（application_main → main(workspace_root=...)）.
+
+    P1-3 把 factory 的 workspace_root=None 分支改为 LFL_DEFAULT_WORKSPACE_ROOT
+    env 解析（缺省 ~/lfl-workspace）。CLI（prepare_environment 的
+    LFL_WORKSPACE_ROOT 身份锚，cli.py:1153/1516-1517）恒显式传参，不触发该
+    默认根分支——真人显式意图=产品语义，本用例固定该边界（如 cli.py 改为
+    隐式落默认根会在此红灯）。
+    """
+    captured: list[dict] = []
+
+    def _build(_settings, **kwargs):
+        captured.append(kwargs)
+        return runtime.engine
+
+    monkeypatch.setattr("llm_loop.factory.build_engine", _build)
+    ws = tmp_path / "cli-explicit-workspace"
+    ws.mkdir()
+    assert cli.main(["hello"], workspace_root=str(ws)) == 0
+    assert captured and captured[0].get("workspace_root") == str(ws)
+
+
+def test_prepare_environment_workspace_binding_ignores_default_root_env(runtime, monkeypatch, tmp_path):
+    """CLI 绑定面只认 --workspace / LFL_WORKSPACE_ROOT / cwd；不读默认根 env.
+
+    LFL_WORKSPACE_ROOT 是代码身份锚（identity.py enforce），LFL_DEFAULT_WORKSPACE_ROOT
+    只作用于 factory 的 workspace_root=None 分支——两个变量职责互不渗透，
+    CLI 绑定结果里不得出现默认根键。
+    """
+    monkeypatch.setattr(cli, "load_env_file", lambda *a, **k: None)
+    applied: dict = {}
+    monkeypatch.setattr(cli, "apply_to_environ", lambda payload: applied.update(payload))
+    explicit = tmp_path / "cli-binding-ws"
+    explicit.mkdir()
+    monkeypatch.setenv("LFL_DEFAULT_WORKSPACE_ROOT", str(tmp_path / "should-not-appear"))
+    args = SimpleNamespace(config=None, data_dir=None, workspace=str(explicit))
+    bindings = cli.prepare_environment(args)
+    assert bindings["LFL_WORKSPACE_ROOT"] == str(explicit)
+    assert "LFL_DEFAULT_WORKSPACE_ROOT" not in bindings
+    assert "LFL_DEFAULT_WORKSPACE_ROOT" not in applied

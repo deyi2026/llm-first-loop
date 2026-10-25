@@ -40,7 +40,7 @@ def test_sandbox_argv_bwrap_ok(monkeypatch):
     with mock.patch("llm_loop.tools.sandbox.shutil.which", return_value="/usr/bin/bwrap"):
         argv, note = sandbox_argv("echo hi", "/w", mode="bwrap")
     assert argv is not None and argv[0] == "bwrap"
-    assert note == "（已启用 bwrap 沙箱）"
+    assert note == "（已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络）"
 
 
 def test_sandbox_argv_bwrap_missing_fail_closed(monkeypatch):

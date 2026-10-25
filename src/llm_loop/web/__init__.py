@@ -20,6 +20,7 @@ from llm_loop.timekeeping import system_local_now
 
 from .auth import (
     SESSION_COOKIE_NAME,
+    HostGuardMiddleware,
     LoginRateLimiter,
     WebSessionStore,
     canonical_host,
@@ -222,6 +223,77 @@ def _local_stack_preflight() -> bool:
     return response.status_code < 400
 
 
+def _build_realtime_commit_sink(app: FastAPI):
+    """M3：视觉提交 commit_sink（复用现有 Web 任务提交入口，不新造队列/线程）。
+
+    真实调用链：
+    ``HumanTurnQueue.enqueue``（durable 单例，``app.state.human_turn_queues`` 按
+    data_dir 缓存，缺省时按 routes._human_turn_queue 同构构造）→
+    ``dispatch_claim``（浏览器 /api/v1/chat/queue/dispatch 或服务端
+    QueueServerFallback 竞争领取，原子 FIFO 单赢家）→ 正式执行：
+    浏览器领取方经 /chat/stream（实时视觉 facts 由**服务端冻结值**注入 run 输入，
+    浏览器不重建、不补传），服务端兜底经 ``QueueServerFallback._execute_claimed``
+    直接 ``runner.start(user_metadata={"attachments": 冻结 facts, ...})``。
+
+    只送入「已提交文本 + 视觉证据 refs（独立结构化字段 attachment_facts）」：
+    - ``message`` = 用户终稿原文（不修改、不拼接视觉注记）；
+    - ``attachment_facts[0]`` = 视觉证据结构化注记（evidence_refs + 帧公共事实）；
+    - ``origin=realtime_visual`` + ``origin_operation_id=turn_id`` 机械溯源；
+    - 返回 ``queue_id`` 作为 task_ref；入队失败抛出（runtime 如实回 503
+      ``task_submit_failed``，不伪造 turn.committed）；
+    - P2-9a：入队前校验目标会话存在（``engine.session.exists``），不存在即拒绝
+      ——不产生 durable 队列中永不可执行的项（如前端 fallback "local"）。
+    """
+    from pathlib import Path as _Path
+
+    from llm_loop.realtime.keyframe_pipeline import CommitRecord
+    from llm_loop.web.human_turn_queue import HumanTurnQueue
+
+    def _sink(record: CommitRecord) -> str:
+        if not getattr(record, "session_id", ""):
+            raise ValueError("realtime commit sink requires a session_id")
+        engine = app.state.engine
+        # P2-9a（审查 2026-10-25 第 9 条，服务端部分）：目标会话不存在（如前端
+        # 无会话时 fallback "local"）→ 拒绝入队，绝不产生 durable 队列中永不可
+        # 执行的项。无法核实存在性（engine 未装配 session store）同样拒绝
+        # （fail-closed：生产 LoopEngine 恒有 engine.session）。
+        session_store = getattr(engine, "session", None)
+        if session_store is None or not session_store.exists(str(record.session_id)):
+            raise ValueError("realtime commit sink target session does not exist")
+        data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+        key = str(_Path(str(data_dir)).expanduser().resolve())
+        store = getattr(app.state, "human_turn_queues", None) or {}
+        hq = store.get(key)
+        if hq is None:
+            from llm_loop.web.routes import _queue_claim_state
+
+            hq = HumanTurnQueue(
+                data_dir,
+                claim_state_probe=lambda sid, qid: _queue_claim_state(engine, sid, qid),
+            )
+            store[key] = hq
+            app.state.human_turn_queues = store  # 与请求侧单例同 key 同构造，后续复用
+        evidences = tuple(getattr(record, "visual_evidence", ()) or ())
+        item = hq.enqueue(
+            str(record.session_id),
+            record.text,
+            attachment_facts=[
+                {
+                    "kind": "realtime_visual_evidence",
+                    "media_session_id": record.media_session_id,
+                    "turn_id": record.turn_id,
+                    "evidence_refs": [e.content_ref for e in evidences],
+                    "frames": [e.to_public_dict() for e in evidences],
+                }
+            ],
+            origin="realtime_visual",
+            origin_operation_id=record.turn_id,
+        )
+        return str(item.get("queue_id") or "")
+
+    return _sink
+
+
 def build_app(settings=None, engine=None) -> FastAPI:
     """装配 FastAPI 应用（薄壳）。
 
@@ -234,8 +306,16 @@ def build_app(settings=None, engine=None) -> FastAPI:
             settings = load_settings()
         engine = build_engine(settings)
 
+    # S3-1/P2-6a（建议书 2026-10-25）：默认关闭 openapi/docs/redoc——未认证
+    # 泄露完整路由清单；LFL_WEB_OPENAPI=1 时恢复（本地调试用）。
+    _openapi_enabled = os.environ.get("LFL_WEB_OPENAPI", "").strip() == "1"
     app = FastAPI(
-        title="llm-first-loop-web", version="0.6.6", default_response_class=UTF8JSONResponse
+        title="llm-first-loop-web",
+        version="0.6.6",
+        default_response_class=UTF8JSONResponse,
+        openapi_url="/openapi.json" if _openapi_enabled else None,
+        docs_url="/docs" if _openapi_enabled else None,
+        redoc_url="/redoc" if _openapi_enabled else None,
     )
     app.state.engine = engine
     # Default OFF. A single preconfigured Web session can use the admin-once
@@ -275,6 +355,28 @@ def build_app(settings=None, engine=None) -> FastAPI:
 
     app.state.realtime_media_sessions = MediaSessionRegistry()
     app.state.realtime_preflight = _local_stack_preflight
+
+    # M3 收尾：生产装配视觉证据链——registry 按 media_session 隔离惰建 pipeline
+    # （帧字节进既有 WorkspaceArtifactStore(data_dir)，与 factory/routes 同一模式）；
+    # commit_sink 复用现有 Web 任务提交入口（HumanTurnQueue，见 _build_realtime_commit_sink）。
+    # 装配后 WS 的 visual 消息不再 fail-safe 503（仅测试/显式禁用路径仍可 503）。
+    from llm_loop.realtime.keyframe_pipeline import KeyframeServiceRegistry
+    from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+
+    def _realtime_artifact_store():
+        data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+        return WorkspaceArtifactStore(data_dir)
+
+    def _realtime_workspace_root() -> str:
+        # engine.workspace_root 由启动装配（_activate_default_workspace）设定；兜底 CWD。
+        return str(getattr(engine, "workspace_root", "") or "") or str(Path.cwd())
+
+    app.state.realtime_keyframes = KeyframeServiceRegistry(
+        artifact_store_factory=_realtime_artifact_store,
+        workspace_root_factory=_realtime_workspace_root,
+    )
+    app.state.realtime_commit_sink = _build_realtime_commit_sink(app)
+
     app.include_router(realtime_router, dependencies=[Depends(require_api_key)])
     register_realtime_ws(app)
 
@@ -333,6 +435,9 @@ def build_app(settings=None, engine=None) -> FastAPI:
     # （首版实现即栽在此：/ui/v2/ 的 http 请求被 auth gate 303 到相对路径 /login，
     # 仍停留在 http）。
     app.add_middleware(_CanonicalOriginMiddleware)
+    # P1-4b（建议书 2026-10-25）：Host 头白名单（DNS rebinding 独立防线）。
+    # 最后注册 = 最外层：先于 canonical 308 / auth gate / 路由拒绝非法 Host。
+    app.add_middleware(HostGuardMiddleware)
 
     return app
 

@@ -218,6 +218,16 @@ class QueueServerFallback:
                     sid[:8], qid, status,
                 )
 
+        # P1-1：冻结 attachment_facts（含 realtime 视觉证据 evidence_refs）必须
+        # 进入 run 输入（runner.start → run_stream user_metadata，与
+        # /chat/stream 同构契约）；否则兜底派发的视觉 turn 会静默丢失证据。
+        frozen_facts = list(claimed.get("attachment_facts") or [])
+        user_metadata: dict[str, Any] | None = None
+        if qid:
+            user_metadata = {"human_turn_queue_id": qid}
+            if frozen_facts:
+                user_metadata["attachments"] = frozen_facts
+
         try:
             from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
@@ -229,6 +239,7 @@ class QueueServerFallback:
                 reasoning_mode=str(claimed.get("reasoning_mode") or "auto"),
                 ingress=issue_ingress("web"),
                 terminal_callback=_terminal,
+                user_metadata=user_metadata,
             )
         except Exception:  # noqa: BLE001 - 启动异常回滚保持 FIFO
             logger.exception("queue fallback start failed: sid=%s qid=%s", sid[:8], qid)

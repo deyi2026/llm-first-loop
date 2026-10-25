@@ -57,6 +57,97 @@ class WorkspaceChangedError(RuntimeError):
     """请求解析session后workspace已变化；旧session归属不能安全沿用。"""
 
 
+class WorkspaceNotAllowedError(ValueError):
+    """工作区路径不在允许根之下（P0-3 白名单）；信息含环境变量扩展指引."""
+
+
+_ALLOWED_ROOTS_ENV = "LFL_WORKSPACE_ALLOWED_ROOTS"
+
+
+def _workspace_allowed_roots(data_dir: str | Path) -> list[Path]:
+    """允许根 = 环境变量 LFL_WORKSPACE_ALLOWED_ROOTS（os.pathsep 分隔）∪ 默认集合.
+
+    默认集合: {代码仓根, <data_dir>/workspace, 家目录子树, 当前 cwd（安全时）}。
+    - 家目录：P0-3 验收要求"home 下新目录可注册"；家目录本身仍由
+      _validate_workspace_allowed 显式拒绝，只放行其子树。
+    - cwd：R2-5（红队第二轮 #5）指出服务以 cwd=/ 启动时白名单退化为全盘。这里
+      不再一刀切移除 cwd，而是只在 cwd 既不是文件系统根、也不是家目录/家目录
+      祖先时纳入——上述退化 cwd 一律跳过，其它根需显式设置环境变量。
+    每次注册时动态求值（env 可热扩展；测试可 monkeypatch）。
+    """
+    roots: list[Path] = []
+    repo_root = Path(__file__).resolve().parents[3]  # 代码仓根
+    candidates: list[Path] = [repo_root, Path(data_dir) / "workspace"]
+    try:
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    if home is not None:
+        candidates.append(home)
+    try:
+        cwd = Path.cwd().resolve()
+    except (OSError, RuntimeError):
+        cwd = None
+    if cwd is not None:
+        fs_root = Path(cwd.anchor) if cwd.anchor else Path("/")
+        unsafe_cwd = cwd == fs_root or (home is not None and home.is_relative_to(cwd))
+        if not unsafe_cwd:
+            candidates.append(cwd)
+    for cand in candidates:
+        try:
+            r = cand.expanduser().resolve()
+        except (OSError, ValueError, RuntimeError):
+            continue
+        if r not in roots:
+            roots.append(r)
+    for part in os.environ.get(_ALLOWED_ROOTS_ENV, "").split(os.pathsep):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            r = Path(part).expanduser().resolve()
+        except (OSError, ValueError, RuntimeError):
+            logger.warning("忽略无法解析的工作区允许根 %r（%s）", part, _ALLOWED_ROOTS_ENV)
+            continue
+        if r not in roots:
+            roots.append(r)
+    return roots
+
+
+def _validate_workspace_allowed(p: Path, data_dir: str | Path) -> None:
+    """P0-3: 注册路径必须在允许根之下（is_relative_to，含等于允许根本身）.
+
+    显式拒绝: 文件系统根 /、家目录本身、家目录的祖先、任何比允许根
+    更宽的祖先路径。失败抛 WorkspaceNotAllowedError，信息写明扩展方式。
+    """
+    roots = _workspace_allowed_roots(data_dir)
+    hint = (
+        f"如需扩展允许范围，设置环境变量 {_ALLOWED_ROOTS_ENV}"
+        "（os.pathsep 分隔的绝对路径列表）。"
+    )
+    fs_root = Path(p.anchor) if p.anchor else Path("/")
+    if p == fs_root:
+        raise WorkspaceNotAllowedError(f"不允许把文件系统根 {fs_root} 注册为工作区；{hint}")
+    try:
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    if home is not None and (p == home or home.is_relative_to(p)):
+        raise WorkspaceNotAllowedError(
+            f"不允许把家目录或其祖先注册为工作区: {p}；{hint}"
+        )
+    if any(p.is_relative_to(r) for r in roots):
+        return
+    wider = next((r for r in roots if r != p and r.is_relative_to(p)), None)
+    if wider is not None:
+        raise WorkspaceNotAllowedError(
+            f"工作区路径 {p} 比允许根更宽（{wider} 的祖先），拒绝注册；{hint}"
+        )
+    raise WorkspaceNotAllowedError(
+        f"工作区路径不在允许根之下: {p}；当前允许根: {[str(r) for r in roots]}；{hint}"
+    )
+
+
 def _process_lock_for(path: Path) -> threading.RLock:
     key = str(path.resolve())
     with _PROCESS_LOCKS_GUARD:
@@ -354,10 +445,16 @@ class WorkspaceStore:
         return ws, True
 
     def register(self, path: str | Path) -> Workspace:
-        """注册工作区；锁内重载磁盘再RMW，避免多进程stale覆盖。"""
+        """注册工作区；锁内重载磁盘再RMW，避免多进程stale覆盖。
+
+        P0-3: resolve 后校验允许根白名单（LFL_WORKSPACE_ALLOWED_ROOTS ∪
+        {代码仓根, <data_dir>/workspace}，R2-5 起不含 cwd）；白名单外抛
+        WorkspaceNotAllowedError。
+        """
         p = Path(path).expanduser().resolve()
         if not p.is_dir():
             raise ValueError(f"工作区路径不是存在的目录: {p}")
+        _validate_workspace_allowed(p, self._data_dir)
         with self._file_lock():
             self._load(strict=True)
             before_workspaces = self._workspaces.copy()
@@ -381,10 +478,13 @@ class WorkspaceStore:
         ``precommit`` 在最终 workspace id 已确定、registry 尚未保存时执行。
         它只应做可能失败但无 registry 副作用的准备工作；若失败，本方法恢复
         锁内加载后的 workspaces/retired/current 快照并原样抛出。
+
+        P0-3: 与 register 同受允许根白名单约束（注册即信任决策）。
         """
         p = Path(path).expanduser().resolve()
         if not p.is_dir():
             raise ValueError(f"工作区路径不是存在的目录: {p}")
+        _validate_workspace_allowed(p, self._data_dir)
         with self._file_lock():
             self._load(strict=True)
             before_workspaces = self._workspaces.copy()
@@ -413,7 +513,11 @@ class WorkspaceStore:
         *,
         precommit: Callable[[Workspace], None] | None = None,
     ) -> Workspace:
-        """切换当前工作区；runtime预检成功后才提交current。"""
+        """切换当前工作区；runtime预检成功后才提交current。
+
+        P0-3 语义: 不做允许根白名单复检——注册已是信任决策，switch 只做
+        状态切换；但保留既有路径可用性检查（目录不存在 → 不可切换）。
+        """
         ws_id = _validate_workspace_id(ws_id)
         with self._file_lock():
             self._load(strict=True)

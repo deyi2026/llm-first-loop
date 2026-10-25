@@ -1451,3 +1451,172 @@ def test_dynamic_pre_check_compares_chars_not_bytes(tmp_path: Path) -> None:
     # comparison against the 120,000-char budget would wrongly refuse.
     assert verdict["accepted"] is True
     assert runner.started == 1
+
+
+# ---------------------------------------------------------------------------
+# EVO-20261025-4c041655: 模板名（.example/.sample/.template/.dist）放行 + 内容级
+# 密钥强特征复核；非模板敏感名（.env/.env.local 等）的拒绝保持逐字不变。
+# 每条都断言 runner.started：拒绝必须发生在审查子会话启动之前。
+# ---------------------------------------------------------------------------
+
+
+def test_untracked_env_example_template_is_admitted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".env.example").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+
+
+def test_untracked_env_example_template_with_real_secret_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
+    (repo / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert refused["accepted"] is False
+    assert refused["reason"] == "review_sensitive_untracked_path_refused"
+    assert runner.started == 0
+
+
+def test_staged_env_example_template_is_admitted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".env.example").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
+    subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+
+
+def test_env_local_is_still_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".env.local").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert refused["accepted"] is False
+    assert refused["reason"] == "review_sensitive_untracked_path_refused"
+    assert runner.started == 0  # 模板后缀白名单不放行 .local
+
+
+def test_committed_env_example_template_is_admitted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feat"], check=True)
+    (repo / ".env.example").write_text("LFL_API_KEY=\nLFL_BASE_URL=\n")
+    subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "env template"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True  # committed 分支走 git show frozen_head 的复核路径
+    assert runner.started == 1
+
+
+def test_committed_env_example_with_real_secret_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feat"], check=True)
+    fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
+    (repo / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
+    subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "env template"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert refused["accepted"] is False
+    assert refused["reason"] == "review_sensitive_tracked_path_refused"
+    assert runner.started == 0
+
+
+def test_env_file_itself_is_still_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".env").write_text("LFL_API_KEY=abc\n")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert refused["accepted"] is False
+    assert refused["reason"] == "review_sensitive_untracked_path_refused"
+    assert runner.started == 0
+
+
+def test_committed_large_env_example_with_secret_is_refused(tmp_path: Path) -> None:
+    """committed 大模板不得因 _git 回传上限读不出而免检（审查 P1-1 回归）.
+
+    448KB > _git 的 400_000 回传上限：改动前 show 抛 git_state_too_large 被当成
+    "路径已删除"→放行；修复后 cat-file -e 证明路径存在 → 按命中处理。
+    """
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feat"], check=True)
+    fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
+    filler = "FILLER_LINE\n" * 40_000  # ~480KB
+    (repo / ".env.example").write_text(filler + f"AWS_ACCESS_KEY_ID={fake_key}\n")
+    subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "large env template"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert refused["accepted"] is False
+    assert refused["reason"] == "review_sensitive_tracked_path_refused"
+    assert runner.started == 0
+
+
+def test_runtime_output_env_example_with_secret_is_refused(tmp_path: Path) -> None:
+    """runtime-output 排除不得让模板内容复核失效（审查 P2-1 回归）."""
+    repo = _repo(tmp_path)
+    (repo / "reports").mkdir()
+    fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
+    (repo / "reports" / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert refused["accepted"] is False
+    assert refused["reason"] == "review_sensitive_untracked_path_refused"
+    assert runner.started == 0
+
+
+def test_control_char_template_name_fails_closed(tmp_path: Path) -> None:
+    """名字含控制字符的模板 fail closed（审查 P2-3）：ref 与工作树两分支统一入口判定.
+
+    git 对含控制字符的路径名 show / cat-file -e 都不可靠，"双失败"曾被等同
+    "不存在"→跳过内容复核（fail-open）；修复后名字本身即按命中处理。
+    """
+    repo = _repo(tmp_path)
+    # (1) 工作树分支（ref=None）：名字含 "\n" 即按命中处理，不读任何内容
+    assert rha._template_body_has_secret(repo, "evil\n.env.example", None) is True
+    # (2) 真实 commit 一个名字含 "\n" 的模板后按该 name 调（ref 分支）
+    name = "evil\ncommitted.env.example"
+    (repo / name).write_text("LFL_API_KEY=\n")
+    subprocess.run(["git", "-C", str(repo), "add", name], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "newline template"], check=True)
+    assert rha._template_body_has_secret(repo, name, "HEAD") is True
+    # DEL（0x7f）同样入口拦截
+    assert rha._template_body_has_secret(repo, "del\x7f.env.example", "HEAD") is True
+
+
+def test_normal_template_names_keep_existing_branches(tmp_path: Path) -> None:
+    """控制字符判定不得改变既有正常路径行为（不回归）."""
+    repo = _repo(tmp_path)
+    (repo / ".env.example").write_text("LFL_API_KEY=\n")
+    assert rha._template_body_has_secret(repo, ".env.example", None) is False
+    subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "env template"], check=True)
+    fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
+    (repo / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
+    # HEAD 仍是占位符 -> False；工作树已被写真密钥 -> True（两分支语义原样）
+    assert rha._template_body_has_secret(repo, ".env.example", "HEAD") is False
+    assert rha._template_body_has_secret(repo, ".env.example", None) is True
+    # ref 下不存在（从未登记的路径）-> False 维持
+    assert rha._template_body_has_secret(repo, "never.env.example", "HEAD") is False

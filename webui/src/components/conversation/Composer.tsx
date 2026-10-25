@@ -63,27 +63,27 @@ interface CommandDef {
 export function Composer() {
   const caps = useCapabilities();
   const conv = useConversation();
-  // Follow session switches through the store subscription, not an inert snapshot.
-  const voiceSessionId = useCurrentSessionId() ?? "";
-  const realtime = useRealtimeVoice(voiceSessionId, async (final) => {
-    const sid = sessionStore.getState().currentSessionId;
-    if (conversationStore.getState().streaming || conversationStore.getState().backgroundRunning) {
-      setText((old) => old ? `${old}\n${final}` : final);
-      return null;
-    }
-    // A blank/new chat intentionally has no session ID until its first human
-    // turn. Voice is that first turn too: request a real new session instead
-    // of demoting recognized speech into the text box or reusing shared_current.
-    if (!sid) sessionStore.setNewSessionPending(true);
-    let answer: string | null = null;
-    let answerSessionId: string | null = null;
-    await sendMessage(final, [], undefined, (text) => {
-      answer = text;
-      answerSessionId = sessionStore.getState().currentSessionId;
-    });
-    const currentSessionId = sessionStore.getState().currentSessionId;
-    if (!answerSessionId || currentSessionId !== answerSessionId) return null;
-    return sid && answerSessionId !== sid ? null : answer;
+  // 实时语音（M1 客户端闭环）：终稿复用既有 sendMessage 提交；降级提示走 composer hint。
+  // 回调闭包在渲染后才触发，flashHint（下方 const）此时已完成赋值。
+  // P2-9：sessionId 用既有 useCurrentSessionId hook 响应式订阅（切换会话即生效，
+  // 下次 enable() 的 POST 体带新 id）；无会话传 null——不再伪造 "local"：
+  // 语音仍可用（hook 内部生成一次性临时 id），视觉共享被禁用并给可见提示；
+  // 空串（/new 后）与 null 同义，与 sendMessage 的空串归一约定一致。
+  const currentSessionId = useCurrentSessionId();
+  const realtime = useRealtimeVoice({
+    sessionId: currentSessionId || null,
+    onCommittedTranscript: (transcript) => {
+      const trimmed = transcript.trim();
+      if (!trimmed) return; // 空终稿由 onNotice 提示，不伪造用户消息
+      if (conversationStore.getState().streaming || conversationStore.getState().backgroundRunning) {
+        // 回复进行中：不并发提交（sendMessage 与 streaming 状态互斥）；终稿回填输入框待用户发送
+        setText((current) => (current ? `${current}\n${trimmed}` : trimmed));
+        flashHint("助手正在回复，语音终稿已填入输入框（回复结束后手动发送）");
+        return;
+      }
+      void sendMessage(trimmed, []);
+    },
+    onNotice: (message) => flashHint(message),
   });
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -614,27 +614,6 @@ export function Composer() {
             ))}
         </div>
       )}
-      {realtime.enabled ? (
-        <RealtimeVoiceBar
-          connectionState={realtime.connectionState}
-          micEnabled={realtime.micEnabled}
-          micStarting={realtime.micStarting}
-          inputState={realtime.inputState}
-          onInterrupt={realtime.interrupt}
-          playbackState={realtime.playbackState}
-          modality={realtime.modality}
-          chainLabel={realtime.chainLabel}
-          onPress={realtime.press}
-          onRelease={realtime.release}
-          onFallbackText={() => { realtime.disable(); taRef.current?.focus(); }}
-          onClose={realtime.disable}
-          onRetry={() => { void realtime.enable(); }}
-          onRetryPlayback={realtime.retryPlayback}
-          transcript={realtime.transcript}
-          error={realtime.error}
-          disabled={conv.streaming || conv.backgroundRunning}
-        />
-      ) : null}
       <div
         className={`v2-composer-bar ${dragActive ? "drag-active" : ""}`}
         onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
@@ -691,18 +670,34 @@ export function Composer() {
             <ModelControls catalog={modelCatalog} />
           </div>
           <div className="v2-composer-tools-right">
-            {!realtime.enabled ? (
+            {realtime.enabled ? (
+              <RealtimeVoiceBar
+                connectionState={realtime.connectionState}
+                micEnabled={realtime.micEnabled}
+                modality={realtime.modality}
+                chainLabel={realtime.chainLabel}
+                playbackState={realtime.playbackState}
+                error={realtime.error}
+                onRetryPlayback={realtime.retryPlayback}
+                onPress={realtime.press}
+                onRelease={realtime.release}
+                onFallbackText={() => taRef.current?.focus()}
+                visual={realtime.visual}
+                onStartShare={() => void realtime.startShare()}
+                onStopShare={() => realtime.stopShare()}
+                onSetVisualKind={(kind) => realtime.setVisualKind(kind)}
+              />
+            ) : (
               <button
                 type="button"
                 className="v2-btn"
                 data-testid="realtime-enable"
-                disabled={conv.streaming || conv.backgroundRunning}
+                disabled={conv.streaming || realtime.modality === "screenshot_fallback"}
                 onClick={() => void realtime.enable()}
               >
-                语音对话
+                实时语音
               </button>
-            ) : null}
-            {!realtime.enabled && realtime.error ? <span role="alert">{realtime.error}</span> : null}
+            )}
             <DictationButton
               disabled={conv.streaming}
               onTranscript={(transcript) => {

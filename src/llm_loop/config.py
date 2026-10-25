@@ -49,7 +49,10 @@ class ToolRuntimeSettings:
     # Canary requires an exact, explicitly approved Web session allowlist.
     knowledge_advisor_mode: str = "off"
     knowledge_advisor_sessions: str = ""
-    exec_sandbox: str = "none"
+    # P2-1/S2-6（2026-10-25）：默认 auto——首次执行时按 bwrap→docker→sandbox-exec→none
+    # 解析（实现见 tools/sandbox.py；解析到 none 必写 warning；EXEC_SANDBOX_STRICT=1
+    # 时解析到 none 改为 fail-closed 拒绝执行）。
+    exec_sandbox: str = "auto"
     exec_sandbox_image: str = "python:3.13-slim"
     nonconvergence_fuse_windows: int = 3
     nonconvergence_fuse_jaccard: float = 0.6
@@ -962,7 +965,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             env_values.get("LFL_KNOWLEDGE_ADVISOR_SESSIONS", "") or ""
         ),
         exec_sandbox=_mode(
-            "EXEC_SANDBOX", "none", {"none", "bwrap", "docker"}
+            "EXEC_SANDBOX", "auto", {"auto", "none", "bwrap", "docker", "sandbox-exec"}
         ),
         exec_sandbox_image=str(
             env_values.get("EXEC_SANDBOX_IMAGE", "python:3.13-slim")

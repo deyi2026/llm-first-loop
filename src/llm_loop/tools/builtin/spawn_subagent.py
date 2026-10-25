@@ -17,11 +17,14 @@ class SpawnSubAgentTool:
     registry_timeout_s = 5.0
     description = (
         "非阻塞启动子代理并立即返回 child_id。何时用: 复杂任务需要拆解成独立子任务"
-        "（如独立调研/独立计算/并行验证）时，让 child 在隔离上下文中后台真实执行，父代理继续决策。"
+        "（如独立调研/独立计算/并行验证）时，让 child 在独立会话上下文中后台真实执行，"
+        "父代理继续决策（默认隔离的是会话上下文，不含文件系统隔离）。"
         "何时不用: 任务简单直接处理时；子任务依赖父上下文大量状态时。"
         "启动成功后可用 agent_message(target_id=child_id, ...) 中途纠偏；"
         "用 subagent_result(child_id, wait_seconds=...) 查询/等待报告与最终结果。"
-        "注意: 子代理继承父代理当前工具执行域（授权只降不升）。"
+        "注意: 子代理继承父代理当前工具执行域（授权只降不升）；"
+        "requires.fs_isolation=true 仅提供 best-effort 施工面隔离（独立 git worktree，"
+        "非安全沙箱：execute_command 经绝对路径/跨目录操作仍可越界）。"
         "requires.tools 一旦声明即程序级强制白名单（EVO-20261012-bb3022f4）：child 的"
         "工具发现面与执行面都被截断到声明集，调用声明外工具由运行时确定性拒绝；"
         "声明超出父执行域时 spawn 直接拒绝。spawn_subagent 默认不在 child 工具面"
@@ -108,7 +111,9 @@ class SpawnSubAgentTool:
                     "network/fs/session_continuity 在 child 启动前比对执行面能力矩阵，"
                     "缺口即在启动前拒绝并给出替代执行面提示（只提前'必然失败'，"
                     "不放宽任何授权边界）。fs_isolation=true 额外将 child 施工面切到独立 git "
-                    "worktree（EVO-20261016-ac47e850）。不声明则 child 继承父执行域"
+                    "worktree（EVO-20261016-ac47e850；best-effort 施工面隔离，非安全沙箱："
+                    "child 的 execute_command 经绝对路径/跨目录操作仍可越界，不可用于约束"
+                    "不可信代码）。不声明则 child 继承父执行域"
                     "（spawn_subagent 除外，默认防递归）。"
                 ),
             },
@@ -253,7 +258,9 @@ class SpawnSubAgentTool:
                 else ""
             ),
             (
-                f"worktree={worktree}（fs 隔离施工区，终态不自动合并；合并是父会话显式动作）"
+                f"worktree={worktree}（声明式 git worktree 施工面隔离，best-effort、"
+                "非安全沙箱：execute_command 经绝对路径/跨目录操作仍可越界；"
+                "终态不自动合并，合并是父会话显式动作）"
                 if worktree
                 else ""
             ),

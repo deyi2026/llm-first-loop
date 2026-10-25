@@ -11,8 +11,18 @@
   unsupported_binary 空态（对齐 DSH：never issues a read）。
 - 文本严格 UTF-8 + 拒绝 NUL：解码失败如实报 not_text，不用替换字符冒充。
 
-安全边界：拒绝越界路径（resolve 后必须仍在工作区根/项目根内）；仅限普通
-文件；分页参数非法（0/负/超上限）拒绝，不静默纠正。
+安全边界（安全建议书 2026-10-25 P1-3 / S2-1 收紧后）：
+- 预览根 = 当前工作区根；workspace_root 为空/不可解析/目录不存在 → 503
+  workspace_unconfigured，绝不回退项目根（旧回退曾把仓库 .env、data/ 会话
+  整面暴露给预览端点，S2-1 实测 200/808B）。
+- 拒绝越界路径（resolve 后必须仍在工作区根内）；仅限普通文件；分页参数
+  非法（0/负/超上限）拒绝，不静默纠正。
+- 敏感文件拒绝（共享 security_guard.sensitive_path_reason，不另立名单）：
+  命中 → 403 sensitive_file_blocked，不读取内容、不返回大小/预览。
+- 版本库元数据与运行时状态目录拒绝（R2-6）：路径组件命中 .git/
+  .lfs_checkpoints（任意段，大小写不敏感）或顶层 data（第 1 段）→ 403
+  sensitive_file_blocked（reason dir:<名>）；按组件精确比较，不影响
+  data_analysis.py / src/data_loader.py 这类文件名。
 """
 
 from __future__ import annotations
@@ -24,13 +34,13 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
+from llm_loop import security_guard
 from llm_loop.web.routes import UTF8JSONResponse
 
 logger = logging.getLogger(__name__)
 
 preview_router = APIRouter()
 
-_PREVIEW_ROOT = Path(__file__).resolve().parents[3]  # 项目根（与 _ui_v2_dir 同模式）
 _PREVIEW_PAGE_MAX_LINES = 5_000  # 单页行数硬上限（对齐 DSH maxLines）
 _PREVIEW_PAGE_DEFAULT_LINES = 2_000  # 默认页大小
 _PREVIEW_PAGE_MAX_BYTES = 2 * 1024 * 1024  # 单页字节上限（对齐 DSH maxBytes）
@@ -83,6 +93,90 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 
+def _workspace_root_or_none(engine: Any) -> Path | None:
+    """解析当前工作区根（P1-3：未配置即拒绝，绝不回退项目根）.
+
+    workspace_root 为空 / 不可解析 / 目录不存在 → None；调用方必须以
+    503 workspace_unconfigured 拒绝（旧实现静默回退仓库根，把 .env、
+    data/ 会话整面暴露给预览端点——建议书 S2-1 实测 200/808B）。
+    """
+    raw = getattr(engine, "workspace_root", "") or ""
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        root = Path(text).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return root if root.is_dir() else None
+
+
+def _workspace_unconfigured_response() -> Response:
+    return UTF8JSONResponse(
+        status_code=503,
+        content={
+            "error": "workspace_unconfigured",
+            "detail": "工作区未配置或不可用；预览面不回退项目根，已拒绝。",
+        },
+    )
+
+
+def _sensitive_blocked_response(reason: str) -> Response:
+    return UTF8JSONResponse(
+        status_code=403,
+        content={"error": "sensitive_file_blocked", "reason": reason},
+    )
+
+
+# R2-6（红队第二轮 #6 + 父代理补充）：预览面拒绝版本库元数据与运行时状态目录。
+# - .git / .lfs_checkpoints：工作区相对路径**任意段**命中即拒（大小写不敏感）；
+# - data：仅**第 1 段**命中即拒（会话 JSON、escalation 日志、审计等运行时状态）。
+# 判定按路径组件精确比较（先 lower 再整名等值）——data_analysis.py /
+# src/data_loader.py 这类文件名不受影响（不做子串匹配）。
+_PREVIEW_BLOCKED_ANY_SEGMENT = frozenset({".git", ".lfs_checkpoints"})
+_PREVIEW_BLOCKED_TOP_SEGMENT = frozenset({"data"})
+
+# N11（2026-10-25 第四轮红队）：模板后缀内容复核的读取上限（强密钥特征
+# 都在文件头部；超大模板也只扫前 256KiB，防内容扫描被大文件放大）。
+_TEMPLATE_SECRET_SCAN_MAX_BYTES = 256 * 1024
+
+
+def _template_content_has_strong_secret(target: Path) -> bool:
+    """模板后缀文件的内容强密钥复核（复用 security_guard.has_strong_secret）.
+
+    名字豁免（.example 等）只覆盖"占位符模板"预期；`.env` 内容被 cp/改名
+    洗到模板名下时，内容层必须复核。读取失败按未命中处理（后续正常读取
+    路径会如实报错，不在此处吞掉 IO 异常语义）。
+    """
+    try:
+        if not target.is_file():
+            return False
+        with target.open("rb") as f:
+            blob = f.read(_TEMPLATE_SECRET_SCAN_MAX_BYTES)
+    except OSError:
+        return False
+    return security_guard.has_strong_secret(blob.decode("utf-8", "replace"))
+
+
+def _runtime_state_blocked_reason(target: Path, root_resolved: Path) -> str | None:
+    """预览目标命中版本库/运行时状态目录 → 403 原因（``dir:<小写规范名>``）.
+
+    调用点均已先通过"resolve 后仍在工作区根内"的越界检查，relative_to 不会
+    失败；防御分支返回 None 由外层越界检查兜底（本函数不另立根语义）。
+    """
+    try:
+        parts = target.relative_to(root_resolved).parts
+    except ValueError:
+        return None
+    lowered = [str(p).lower() for p in parts]
+    for name in lowered:
+        if name in _PREVIEW_BLOCKED_ANY_SEGMENT:
+            return f"dir:{name}"
+    if lowered and lowered[0] in _PREVIEW_BLOCKED_TOP_SEGMENT:
+        return f"dir:{lowered[0]}"
+    return None
+
+
 def _read_text_page(target: Path, offset: int, limit: int) -> dict[str, Any]:
     """流式读取一个文本页：跳过 offset-1 行，收集至多 limit 行.
 
@@ -130,7 +224,8 @@ def preview_file(
 ) -> Response:
     """只读文件预览（出产物点击打开；文本分页 + 图片/pdf/html 完整字节 + 目录浏览）.
 
-    安全边界：拒绝绝对路径与越界路径（resolve 后必须仍在项目根内）；
+    安全边界：拒绝绝对路径与越界路径（resolve 后必须仍在工作区根内；
+    工作区未配置 → 503 不回退项目根）；敏感文件名命中 → 403 不读内容；
     仅限普通文件；分页参数非法（0/负/超上限）拒绝，不静默纠正。
     """
     if offset < 1 or limit < 1 or limit > _PREVIEW_PAGE_MAX_LINES:
@@ -146,10 +241,12 @@ def preview_file(
             status_code=400,
             content={"error": "invalid_path", "detail": "缺少 path。"},
         )
-    # 工作区跟随: 预览根 = 当前工作区根（无工作区 → 仓库根兜底）
+    # 工作区跟随（P1-3 收紧）：预览根 = 当前工作区根；未配置/不可用 → 503，
+    # 绝不回退仓库根。
     engine = _engine_from(request)
-    root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
-    root_resolved = root.resolve()
+    root_resolved = _workspace_root_or_none(engine)
+    if root_resolved is None:
+        return _workspace_unconfigured_response()
     # 相对路径基于工作区根；绝对路径亦接受（resolve 后必须仍在根内，越界拒绝）
     raw = Path(path)
     target = raw.resolve() if raw.is_absolute() else (root_resolved / raw).resolve()
@@ -198,6 +295,23 @@ def preview_file(
             status_code=400,
             content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
         )
+    # 敏感文件拒绝（P1-3，共享 security_guard 原语）：判定只看路径形态，
+    # 先于存在性检查（避免泄露敏感文件存在性）；命中即 403，不读内容、
+    # 不返回大小/预览（敏感目录同样不列清单）。
+    sensitive_reason = security_guard.sensitive_path_reason(target)
+    if sensitive_reason is not None:
+        return _sensitive_blocked_response(sensitive_reason)
+    # N11 / M9（2026-10-25 第五轮红队）：内容层强密钥复核必须覆盖**所有文本预览**，
+    # 而不是只看模板后缀名。`.env` 被复制/改名为 a.md、notes.txt 等普通名时，
+    # 名字层不会命中敏感名单；若只对 *.example 复核，就等于把"复制即洗白"留在原地。
+    # 命中即 403（不返回内容、不泄露大小）；大文件/二进制按 helper 的读取上限处理。
+    if target.is_file() and _template_content_has_strong_secret(target):
+        return _sensitive_blocked_response("content:strong-secret")
+    # R2-6：版本库元数据（.git/.lfs_checkpoints，任意段）与顶层运行时状态目录
+    # （data，第 1 段）同样 403——先于目录列举/存在性检查，不泄露清单。
+    runtime_reason = _runtime_state_blocked_reason(target, root_resolved)
+    if runtime_reason is not None:
+        return _sensitive_blocked_response(runtime_reason)
     # 目录 → 单层列表预览（对齐 fs/tree 语义：文档/文件夹/文件皆可点开浏览）
     if target.is_dir():
         try:
@@ -322,10 +436,12 @@ def preview_file(
     )
 
 
-def _resolve_in_root(raw: str, engine: Any) -> Path | None:
-    """按 preview 同规则解析路径：相对基于工作区根，绝对 resolve 后须在根内."""
-    root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
-    root_resolved = root.resolve()
+def _resolve_in_root(raw: str, root_resolved: Path) -> Path | None:
+    """按 preview 同规则解析路径：相对基于工作区根，绝对 resolve 后须在根内.
+
+    调用方先用 _workspace_root_or_none 取根（None → 503，不回退项目根）；
+    本函数只做纯解析与越界判定，不另立根语义。
+    """
     try:
         p = Path(raw).expanduser()
         target = p.resolve() if p.is_absolute() else (root_resolved / p).resolve()
@@ -343,6 +459,7 @@ def related_file(request: Request, base: str, path: str) -> Response:
     对齐 DSH workspace-files.readRelated 的安全面：target 由 Host 从 base 的
     目录解析（含 ../），resolve 后必须仍在根内；仅 .js/.css；单资产 4MiB
     上限拒绝不截断；内容须为合法 UTF-8（内联前置校验，失败即失败不部分发布）。
+    工作区未配置 → 503；base 或依赖命中敏感名单 → 403（P1-3）。
     """
     import base64
 
@@ -352,12 +469,23 @@ def related_file(request: Request, base: str, path: str) -> Response:
             content={"error": "invalid_path", "detail": "缺少 base/path。"},
         )
     engine = _engine_from(request)
-    base_target = _resolve_in_root(base, engine)
+    root_resolved = _workspace_root_or_none(engine)
+    if root_resolved is None:
+        return _workspace_unconfigured_response()
+    base_target = _resolve_in_root(base, root_resolved)
     if base_target is None:
         return UTF8JSONResponse(
             status_code=400,
             content={"error": "out_of_bounds", "detail": "base 路径越出项目根，已拒绝。"},
         )
+    # base 本身命中敏感名（如以 .env 为打包基点）→ 403，不读内容。
+    base_sensitive = security_guard.sensitive_path_reason(base_target)
+    if base_sensitive is not None:
+        return _sensitive_blocked_response(base_sensitive)
+    # R2-6：base 命中 .git/.lfs_checkpoints（任意段）或顶层 data → 403。
+    base_runtime = _runtime_state_blocked_reason(base_target, root_resolved)
+    if base_runtime is not None:
+        return _sensitive_blocked_response(base_runtime)
     if not base_target.is_file():
         return UTF8JSONResponse(
             status_code=404,
@@ -370,13 +498,20 @@ def related_file(request: Request, base: str, path: str) -> Response:
             status_code=400,
             content={"error": "out_of_bounds", "detail": "依赖路径非法。"},
         )
-    root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
-    root_resolved = root.resolve()
     if not target.is_relative_to(root_resolved):
         return UTF8JSONResponse(
             status_code=400,
             content={"error": "out_of_bounds", "detail": "依赖路径越出项目根，已拒绝。"},
         )
+    # 敏感依赖拒绝（P1-3）：先于扩展名白名单——id_ed25519/*.pem 无白名单
+    # 扩展名，也必须落 403 而非 unsupported 分支；命中不读内容、不返回大小。
+    target_sensitive = security_guard.sensitive_path_reason(target)
+    if target_sensitive is not None:
+        return _sensitive_blocked_response(target_sensitive)
+    # R2-6：依赖目标命中 .git/.lfs_checkpoints（任意段）或顶层 data → 403。
+    target_runtime = _runtime_state_blocked_reason(target, root_resolved)
+    if target_runtime is not None:
+        return _sensitive_blocked_response(target_runtime)
     ext = target.suffix.lower()
     mime = _RELATED_MIME.get(ext)
     if mime is None:
@@ -434,7 +569,8 @@ def stat_file(request: Request, path: str) -> Response:
     """文件版本指纹（对齐 DSH workspace-files.stat 的事实面）.
 
     返回 size + mtime_ns 供预览观察器比较（changes 流的轮询等价物：程序
-    只报机械事实，不判断内容语义）。仅普通文件；缺路径/越界/目录如实报错。
+    只报机械事实，不判断内容语义）。仅普通文件；缺路径/越界/目录如实报错；
+    工作区未配置 → 503；敏感文件名命中 → 403（P1-3）。
     """
     if not path:
         return UTF8JSONResponse(
@@ -442,12 +578,25 @@ def stat_file(request: Request, path: str) -> Response:
             content={"error": "invalid_path", "detail": "缺少 path。"},
         )
     engine = _engine_from(request)
-    target = _resolve_in_root(path, engine)
+    root_resolved = _workspace_root_or_none(engine)
+    if root_resolved is None:
+        return _workspace_unconfigured_response()
+    target = _resolve_in_root(path, root_resolved)
     if target is None:
         return UTF8JSONResponse(
             status_code=400,
             content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
         )
+    # 敏感文件拒绝（P1-3）：先于存在性检查（不泄露敏感文件存在性）；
+    # 命中即 403，不返回 size/mtime 版本指纹。
+    sensitive_reason = security_guard.sensitive_path_reason(target)
+    if sensitive_reason is not None:
+        return _sensitive_blocked_response(sensitive_reason)
+    # R2-6：版本库元数据/运行时状态目录（.git/.lfs_checkpoints 任意段、data
+    # 第 1 段）同样 403——不返回运行时状态文件（会话/日志/审计）的版本指纹。
+    runtime_reason = _runtime_state_blocked_reason(target, root_resolved)
+    if runtime_reason is not None:
+        return _sensitive_blocked_response(runtime_reason)
     if not target.exists():
         return UTF8JSONResponse(
             status_code=404,

@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -42,17 +43,26 @@ from llm_loop.runtime.admission_barrier import (
     ServiceAdmissionBarrier,
     task_admission_barrier,
 )
+from llm_loop.security_guard import sensitive_path_reason
 from llm_loop.timekeeping import system_local_now
 from llm_loop.workspace.artifacts import ArtifactError, WorkspaceArtifactStore
 from llm_loop.workspace.store import (
     WorkspaceBusyError,
     WorkspaceChangedError,
+    WorkspaceNotAllowedError,
     WorkspacePathUnavailableError,
     WorkspacePersistenceError,
 )
 
 from .attachments import AttachmentError, AttachmentStore
 from .attachments import workspace_scope as attachment_workspace_scope
+from .auth import (
+    WebSessionStore,
+    auth_required,
+    request_authenticated,
+    request_is_trusted_local,
+    session_cookie_value,
+)
 from .human_turn_queue import HumanTurnQueue, QueuePersistError
 from .local_runtime_admin import router as local_runtime_router
 from .provider_routes import router as provider_admin_router
@@ -289,17 +299,28 @@ def _queue_claim_state(engine: Any, session_id: str, queue_id: str) -> str:
 def _queue_claim_matches(
     payload: ChatRequest, claimed: dict[str, Any], attachment_facts: list[dict[str, Any]]
 ) -> bool:
-    """Exact mechanical handoff check: queue_id cannot authorize different request bytes."""
+    """Exact mechanical handoff check: queue_id cannot authorize different request bytes.
+
+    Realtime 视觉证据 facts（``kind=realtime_visual_evidence``）由服务端在 commit
+    sink enqueue 时冻结；浏览器 relay 无法重建它们（无 ``ref``），正式请求只带
+    普通上传附件。因此本比对只要求**普通上传 facts** 全等；冻结的 realtime
+    facts 一律以服务端存储值为 run 输入（见 chat_stream），不信任客户端补传。
+    """
     payload_refs = [str(getattr(ref, "ref", "") or "") for ref in payload.attachments]
     frozen_refs = [
         str(ref.get("ref") or "")
         for ref in claimed.get("attachments", [])
         if isinstance(ref, dict)
     ]
+    ordinary_facts = [
+        fact
+        for fact in claimed.get("attachment_facts") or []
+        if not _is_realtime_visual_fact(fact)
+    ]
     return bool(
         str(claimed.get("message") or "") == payload.message
         and frozen_refs == payload_refs
-        and list(claimed.get("attachment_facts") or []) == list(attachment_facts)
+        and ordinary_facts == list(attachment_facts)
         and (claimed.get("model") or None) == (payload.model or None)
         and bool(claimed.get("model_change", False)) == bool(payload.model_change)
         and (claimed.get("reasoning_effort") or None) == (payload.reasoning_effort or None)
@@ -307,20 +328,89 @@ def _queue_claim_matches(
     )
 
 
+def _is_realtime_visual_fact(fact: object) -> bool:
+    """服务端冻结的 realtime 视觉证据注记（web/__init__ commit sink 产生）。"""
+    return isinstance(fact, dict) and str(fact.get("kind") or "") == "realtime_visual_evidence"
+
+
+def _frozen_realtime_visual_facts(claimed: dict[str, Any]) -> list[dict[str, Any]]:
+    """领取项中冻结的 realtime 视觉证据 facts（仅服务端存储值，客户端不可注入）。"""
+    return [
+        fact
+        for fact in claimed.get("attachment_facts") or []
+        if _is_realtime_visual_fact(fact)
+    ]
+
+
 def _current_attachment_workspace_scope(engine: Any) -> str:
     return attachment_workspace_scope(getattr(engine, "workspace_root", "") or None)
 
 
+class WorkspaceFileAccessError(Exception):
+    """`_resolve_workspace_file` 的统一拒绝信号（建议书 P1-3/S3-7）.
+
+    携带状态码与响应体，端点层原样转 UTF8JSONResponse——新增调用方只需
+    捕获本类即可获得同一套拒绝语义，不再各自散写判定。
+    """
+
+    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
+        super().__init__(str(payload.get("error", "workspace_file_error")))
+        self.status_code = status_code
+        self.payload = payload
+
+
 def _resolve_workspace_file(engine: Any, raw_path: str) -> Path | None:
-    """Resolve one ordinary file inside the current workspace (no escape)."""
-    root = Path(
-        getattr(engine, "workspace_root", "") or Path(__file__).resolve().parents[3]
-    ).expanduser().resolve()
+    """Resolve one ordinary file inside the current workspace (no escape).
+
+    P1-3/S3-7 收口（所有调用方经异常自动生效）：
+    - 工作区未配置（空/不可解析/不存在）→ 503 ``workspace_unconfigured``。
+      此前空根回退项目根（parents[3]）会让未配置部署退化为"整个代码仓可读"，
+      属 preview_routes 同类缺陷，这里根语义改为显式失败；
+    - 路径含 NUL → 400 ``invalid_path``（S3-7：此前 ``embedded null byte``
+      ValueError 逃逸为 500）；
+    - 命中敏感名单（security_guard 单一事实源，模板 .env.example 等豁免）→
+      403 ``sensitive_file_blocked``。判定先于越界/存在性：绝对路径
+      ``~/.ssh/id_ed25519`` 与"敏感名 symlink 别名"同样拒绝，不给探测面；
+    - 越界或非普通文件 → 维持返回 None（调用方 404 原语义不变）；
+      resolve() 后做包含性检查，symlink 指向根外目标即在此被挡下。
+    """
+    raw_root = str(getattr(engine, "workspace_root", "") or "").strip()
     try:
-        raw = Path(str(raw_path or "")).expanduser()
+        root = Path(raw_root).expanduser().resolve() if raw_root else None
+    except (OSError, ValueError, RuntimeError):
+        root = None
+    if root is None or not root.is_dir():
+        raise WorkspaceFileAccessError(
+            503,
+            {
+                "error": "workspace_unconfigured",
+                "detail": "当前工作区根未配置或不存在；文件读写面不可用，请先注册/切换工作区。",
+            },
+        )
+    raw_text = str(raw_path or "")
+    if "\x00" in raw_text:
+        raise WorkspaceFileAccessError(
+            400,
+            {"error": "invalid_path", "detail": "路径包含 NUL 字节。"},
+        )
+    try:
+        raw = Path(raw_text).expanduser()
         target = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
-    except OSError:
+    except (OSError, ValueError):
         return None
+    # 敏感名判定同时看"用户给的路径"与"resolve 后真实目标"：前者挡
+    # .env/id_rsa 这类名字，后者挡"敏感名只是 symlink 别名"的绕过。
+    for candidate in (raw, target):
+        reason = sensitive_path_reason(candidate)
+        if reason is not None:
+            raise WorkspaceFileAccessError(
+                403,
+                {
+                    "error": "sensitive_file_blocked",
+                    "reason": reason,
+                    "detail": "敏感文件（凭据/密钥类名单命中）禁止经 Web 文件面读取或导入。",
+                },
+            )
     if not target.is_relative_to(root) or not target.is_file():
         return None
     return target
@@ -1677,6 +1767,12 @@ def chat_stream(
                     "detail": "queue_id 不存在、未处于 claimed，或请求事实与领取时冻结值不一致",
                 },
             )
+        # P1-1：realtime 视觉证据 facts 以**服务端冻结值**进入 run 输入——浏览器
+        # relay 不带这些附件（无法重建、不得补传伪造），run 的 user_metadata
+        # 仍完整包含 evidence_refs（契约 §2.4：任务输入可见 artifact ref）。
+        _frozen_visual_facts = _frozen_realtime_visual_facts(_claimed)
+        if _frozen_visual_facts:
+            attachment_facts = [*attachment_facts, *_frozen_visual_facts]
 
     # §8.2-2 消息准入屏障：waiting 窗口内不得发起正式 run。
     # - 有 queue_id：服务端把 claim 回滚为 queued（保 FIFO），回执仍带
@@ -2650,6 +2746,39 @@ def architecture_status_web(request: Request, session_id: str = "") -> Response:
         )
 
 
+# P0-5（安全审查建议书 2026-10-25 S0-2）: 超长命令的 web 展示上限。
+# 审批绑定以 command_sha256 为准（review 必须带匹配的 expected_sha256），
+# 因此截断只影响"看到多少"，不影响"批准的是什么"。
+_ESC_MAX_DISPLAY_COMMAND = 2000
+
+
+def _escalation_reviewer_identity(request: Request) -> tuple[str, str, str]:
+    """P0-5: 服务端派生审批者身份——绝不信任何客户端自报字段.
+
+    返回 (decided_by, channel, reject_reason):
+    - 有效浏览器会话 cookie → ("web:session:<token sha256 前 8 位>", "web_session", "")
+    - 仅有 Bearer API key（AI/自动化通道）→ ("", "bearer_api_key", "human_channel_required")
+    - 未启用鉴权的本机回环 → ("web:loopback", "loopback_unauthenticated", "")
+    - 其余（无法证明人类）→ ("", "unauthenticated", "human_channel_required")
+    """
+    # R2-3（红队第二轮 #3）：S3-6 双名读取——`__Host-` 前缀会话（Secure 无 Domain
+    # 部署）与 legacy `lfl_web_session_v2` 同等采信；只读旧名会把合法浏览器审批
+    # 误判为 bearer_api_key → 403。Bearer-only（无有效会话）仍 403 不变。
+    token = session_cookie_value(request.cookies)
+    sessions = getattr(request.app.state, "web_sessions", None)
+    if token and isinstance(sessions, WebSessionStore) and sessions.valid(token):
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:8]
+        return f"web:session:{digest}", "web_session", ""
+    if request_authenticated(request):
+        # 无有效浏览器会话但通过鉴权 = Bearer API key（AI 通道，不得审批）。
+        return "", "bearer_api_key", "human_channel_required"
+    if not auth_required() and request_is_trusted_local(request):
+        # 未启用鉴权部署的本机回环人工浏览器。残余风险（本机 AI 亦可直连回环）
+        # 如实标注 channel，后续以 P2-4 双通道确认为正解。
+        return "web:loopback", "loopback_unauthenticated", ""
+    return "", "unauthenticated", "human_channel_required"
+
+
 @router.get("/api/v1/escalation/list")
 def escalation_list(request: Request, limit: int = 50, status: str = "") -> Response:
     """提权申请列表（只读；EVO-20260923-c58a0bb1 提权闭环 web 端）.
@@ -2658,6 +2787,9 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
     含令牌**（令牌只由 AI 侧 escalation_wait 从存储读取，不经 web 通道）。
     前端轮询此端点驱动弹窗。本地 web（127.0.0.1）默认可信；WEB_AUTH_REQUIRE=1
     时受统一 Bearer 保护（与 evolution 审批一致）。
+    P0-5 展示-审批绑定: 每条含 command_sha256 / command_len；超长命令截断
+    展示时置 command_truncated=true，审批时 review 仍按完整原文的 sha256
+    绑定（expected_sha256 必须等于 command_sha256）。
     """
     from pathlib import Path
 
@@ -2670,6 +2802,13 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
         pending = store.pending_count()
     except OSError:
         items, pending = [], 0
+    for item in items:
+        command = item.get("command")
+        if isinstance(command, str) and len(command) > _ESC_MAX_DISPLAY_COMMAND:
+            item["command"] = command[:_ESC_MAX_DISPLAY_COMMAND]
+            item["command_truncated"] = True
+        else:
+            item["command_truncated"] = False
     return JSONResponse(content={"requests": items, "pending_count": pending})
 
 
@@ -2679,6 +2818,14 @@ async def escalation_review(request: Request) -> Response:
 
     请求体见 schemas.EscalationReviewRequest；幂等约束: 仅 pending 可决，
     重复审批返回 409 语义（fail-closed 到首个决定）。
+
+    P0-5（安全审查建议书 2026-10-25 S0-2）人工因子修复:
+    - decided_by 服务端派生（浏览器会话 → web:session:<指纹>；未启用鉴权的
+      本机回环 → web:loopback）；请求体任何自报身份（decided_by/reviewer）
+      一律忽略，仅审计记 client_claimed_by（不采信）。
+    - Bearer API key（AI/自动化通道）不得审批 → 403 human_channel_required。
+    - 展示-审批绑定（防 TOCTOU）: expected_sha256 必填且须等于待审记录的
+      command_sha256，否则 409 stale_review（提示重新打开详情）。
     """
     from pathlib import Path
 
@@ -2690,33 +2837,102 @@ async def escalation_review(request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001 — 参数校验失败统一 400
         return JSONResponse(content={"error": f"参数校验失败: {exc}"}, status_code=400)
 
+    remote_addr = request.client.host if request.client else ""
+    client_claimed_by = (payload.decided_by or payload.reviewer or "").strip()[:200]
+
     base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
     audit_file = base / "audit" / "escalation_review_log.jsonl"
-    try:
-        audit_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _audit(outcome: str, *, decided_by: str, channel: str, command_sha256: str = "", detail: str = "") -> None:
+        # P0-5 审计补全: 身份/通道/命令哈希/来源地址；写失败不阻断主流程但要告警
+        # （store 侧另有 escalation_log.jsonl 双写）。
         audit_line = {
             "ts": system_local_now().isoformat(),
             "action": "ESCALATION_REVIEW_WEB",
             "id": payload.id,
             "decision": payload.decision,
             "note": payload.note,
+            "decided_by": decided_by,
+            "channel": channel,
+            "command_sha256": command_sha256,
+            "remote_addr": remote_addr,
+            "outcome": outcome,
         }
-        with audit_file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(audit_line, ensure_ascii=False) + "\n")
-    except OSError:
-        pass  # 审计写失败不阻断审批主流程（store 侧另有 escalation_log.jsonl 双写）
+        if detail:
+            audit_line["detail"] = detail[:300]
+        if client_claimed_by:
+            audit_line["client_claimed_by"] = client_claimed_by  # 客户端自报，一律不采信
+        try:
+            audit_file.parent.mkdir(parents=True, exist_ok=True)
+            with audit_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(audit_line, ensure_ascii=False) + "\n")
+        except OSError:
+            logger.warning("提权审批审计写失败（不阻断主流程）", exc_info=True)
+
+    # ── P0-5 人类因子: 服务端派生身份；AI 通道（Bearer-only）一律 403 ──
+    decided_by, channel, reject_reason = _escalation_reviewer_identity(request)
+    if reject_reason:
+        _audit("rejected_human_channel_required", decided_by="", channel=channel)
+        return JSONResponse(
+            content={
+                "error": reject_reason,
+                "detail": "提权审批必须来自人类浏览器会话；Bearer API key（AI/自动化通道）不得审批。",
+            },
+            status_code=403,
+        )
 
     store = EscalationStore(base / "audit" / "escalation_requests.json")
+    rec = store.get(payload.id)
+    if rec is None:
+        _audit("not_found", decided_by=decided_by, channel=channel)
+        return JSONResponse(content={"error": f"请求不存在: {payload.id}"}, status_code=404)
+
+    # ── P0-5 展示-审批绑定: expected_sha256 必填且等于待审记录 command_sha256 ──
+    command_sha256 = str(rec.get("command_sha256") or "")
+    expected = (payload.expected_sha256 or "").strip().lower()
+    if not expected:
+        _audit(
+            "missing_expected_sha256",
+            decided_by=decided_by, channel=channel, command_sha256=command_sha256,
+        )
+        return JSONResponse(
+            content={
+                "error": "missing_expected_sha256",
+                "detail": "审批请求必须携带 expected_sha256（= 列表/详情返回的 command_sha256），确保批准的就是展示给审批者的命令。",
+            },
+            status_code=400,
+        )
+    if expected != command_sha256.lower():
+        _audit(
+            "stale_review",
+            decided_by=decided_by, channel=channel, command_sha256=command_sha256,
+            detail=f"expected={expected}",
+        )
+        return JSONResponse(
+            content={
+                "error": "stale_review",
+                "detail": "expected_sha256 与当前待审记录不一致（命令已变化或视图过期），请重新打开详情后再审批。",
+            },
+            status_code=409,
+        )
+
     rec, reason = store.decide(
         payload.id,
         payload.decision,
-        decided_by="web_panel",
+        decided_by=decided_by,
+        channel=channel,
         note=payload.note,
         ttl_minutes=payload.ttl_minutes,
+        expected_sha256=expected,
     )
     if rec is None:
         code = 404 if "不存在" in reason else 409
+        _audit(
+            "conflict", decided_by=decided_by, channel=channel,
+            command_sha256=command_sha256, detail=reason,
+        )
         return JSONResponse(content={"error": reason}, status_code=code)
+    _audit("decided", decided_by=decided_by, channel=channel, command_sha256=command_sha256)
     return JSONResponse(content={"ok": True, "request": rec})
 
 
@@ -4394,7 +4610,13 @@ def import_workspace_attachment(
     try:
         with engine.workspace_snapshot():
             scope = _current_attachment_workspace_scope(engine)
-            target = _resolve_workspace_file(engine, payload.path)
+            try:
+                target = _resolve_workspace_file(engine, payload.path)
+            except WorkspaceFileAccessError as denied:
+                # P1-3/S3-7：503 未配置 / 400 NUL / 403 敏感名单，统一在此转响应
+                return UTF8JSONResponse(
+                    status_code=denied.status_code, content=denied.payload
+                )
             if target is None:
                 return UTF8JSONResponse(
                     status_code=404,
@@ -4531,6 +4753,13 @@ def register_workspace(request: Request, body: WorkspaceRequest) -> Response:
             status_code=500,
             content={"error": "workspace_runtime_prepare_failed", "detail": str(exc)},
         )
+    except WorkspaceNotAllowedError as exc:
+        # P0-3 白名单外注册 → 403；detail 原样透出 LFL_WORKSPACE_ALLOWED_ROOTS
+        # 扩展指引。必须在 ValueError 之前捕获（它是 ValueError 子类）。
+        return UTF8JSONResponse(
+            status_code=403,
+            content={"error": "workspace_not_allowed", "detail": str(exc)},
+        )
     except ValueError as exc:
         return UTF8JSONResponse(
             status_code=400,
@@ -4580,6 +4809,13 @@ def switch_workspace(request: Request, body: WorkspaceSwitchRequest) -> Response
         return UTF8JSONResponse(
             status_code=500,
             content={"error": "workspace_runtime_prepare_failed", "detail": str(exc)},
+        )
+    except WorkspaceNotAllowedError as exc:
+        # 与注册端点同映射：store 侧若对已注册路径重校验白名单（如允许根收窄后
+        # 切换到现存越界条目），拒绝为 403 而非笼统 400。
+        return UTF8JSONResponse(
+            status_code=403,
+            content={"error": "workspace_not_allowed", "detail": str(exc)},
         )
     except ValueError as exc:
         return UTF8JSONResponse(

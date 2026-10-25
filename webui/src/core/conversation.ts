@@ -1099,16 +1099,22 @@ export async function relayNextQueued(sessionId: string): Promise<void> {
       return;
     }
     await refreshQueue(sessionId); // claimed 状态立即反映到 UI
-    // 以冻结事实发起正式发送（模型/effort 用冻结值；queue_id 让后端终态回写队列）
-    const frozenAttachments: SendAttachment[] = (claimed.attachment_facts ?? []).map((f) => ({
-      filename: f.filename,
-      result_text: "",
-      status: "ok",
-      attachment_ref: f.ref,
-      content_type: f.content_type,
-      size_bytes: f.size_bytes,
-      sha256: f.sha256,
-    }));
+    // 以冻结事实发起正式发送（模型/effort 用冻结值；queue_id 让后端终态回写队列）。
+    // P1-1：realtime 视觉证据 fact（kind=realtime_visual_evidence）无客户端可回放的
+    // attachment ref——它由**服务端冻结值**注入 run 输入；浏览器不得重建（也不能补传
+    // 伪造）。这里只回放真正上传过的附件（有 ref），避免把无 ref 的 fact 映射成
+    // attachment_ref=undefined 的假附件被 sendable 过滤后静默吞掉。
+    const frozenAttachments: SendAttachment[] = (claimed.attachment_facts ?? [])
+      .filter((f) => typeof f.ref === "string" && f.ref !== "")
+      .map((f) => ({
+        filename: f.filename,
+        result_text: "",
+        status: "ok",
+        attachment_ref: f.ref,
+        content_type: f.content_type,
+        size_bytes: f.size_bytes,
+        sha256: f.sha256,
+      }));
     // sendMessage 终态（done/error）会再次触发 relayNextQueued → 链式消费。
     // 不 await（fire-and-forget）：await 会让本函数直到 run 终态才结束，
     // 防重入闸 relayInFlight 迟迟不清，反而拦死 sendMessage 终态处的链式接力。

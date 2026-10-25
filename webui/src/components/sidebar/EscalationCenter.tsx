@@ -17,6 +17,11 @@ export interface EscalationRequest {
   decided_by: string;
   decision_note: string;
   token_expires_at?: string;
+  /** P0-5 展示-审批绑定（防 TOCTOU）：审批时须回传 expected_sha256 = command_sha256。
+   * command 为超长截断展示时 command_truncated=true，但 sha256/len 仍按完整原文。 */
+  command_sha256?: string;
+  command_len?: number;
+  command_truncated?: boolean;
 }
 
 interface ListResp {
@@ -39,19 +44,29 @@ async function fetchEscalations(): Promise<ListResp | null> {
 async function reviewEscalation(
   id: string,
   decision: "approved" | "denied",
-  note: string
-): Promise<{ ok: boolean; message: string }> {
+  note: string,
+  expectedSha256: string
+): Promise<{ ok: boolean; message: string; stale: boolean }> {
   try {
     const r = await fetch("/api/v1/escalation/review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, decision, note }),
+      // P0-5 展示-审批绑定：expected_sha256 必须等于列表返回的 command_sha256，
+      // 确保批准的就是展示给审批者的那条命令（缺字段时后端 400 兜底提示）。
+      body: JSON.stringify({ id, decision, note, expected_sha256: expectedSha256 }),
     });
     const d = await r.json().catch(() => ({}));
-    if (r.ok) return { ok: true, message: decision === "approved" ? "已批准（AI 将收到一次性令牌）" : "已拒绝（AI 将收到拒绝理由）" };
-    return { ok: false, message: `⚠️ ${String((d as { error?: string }).error || `失败(${r.status})`)}` };
+    if (r.ok) return { ok: true, message: decision === "approved" ? "已批准（AI 将收到一次性令牌）" : "已拒绝（AI 将收到拒绝理由）", stale: false };
+    const error = String((d as { error?: string }).error || "");
+    if (r.status === 409 && error.includes("stale_review")) {
+      return { ok: false, message: "⚠️ 待审内容已变化，请重新打开", stale: true };
+    }
+    if (r.status === 400 && error.includes("missing_expected_sha256")) {
+      return { ok: false, message: "⚠️ 审批缺少命令哈希绑定，请重新打开详情后再试", stale: false };
+    }
+    return { ok: false, message: `⚠️ ${error || `失败(${r.status})`}`, stale: false };
   } catch (err) {
-    return { ok: false, message: `请求失败: ${String(err)}` };
+    return { ok: false, message: `请求失败: ${String(err)}`, stale: false };
   }
 }
 
@@ -103,7 +118,7 @@ function PendingCard({
 }: {
   req: EscalationRequest;
   busy: boolean;
-  onDecide: (id: string, decision: "approved" | "denied", note: string) => void;
+  onDecide: (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => void;
 }) {
   const [note, setNote] = useState("");
   const badge = statusBadge(req.status);
@@ -116,6 +131,16 @@ function PendingCard({
       <div className="v2-esc-cmd" data-testid={`esc-cmd-${req.id}`}>
         <code>{req.command}</code>
       </div>
+      {(req.command_sha256 || typeof req.command_len === "number") && (
+        <div className="v2-esc-hash" data-testid={`esc-hash-${req.id}`}>
+          🔗 命令指纹 sha256:{req.command_sha256 ? req.command_sha256.slice(0, 16) : "—"} · 长度 {req.command_len ?? "？"}
+        </div>
+      )}
+      {req.command_truncated && (
+        <div className="v2-esc-hash warn" data-testid={`esc-truncated-${req.id}`}>
+          ⚠️ 命令过长，已按哈希绑定，请核对完整命令
+        </div>
+      )}
       <div className="v2-esc-just">{req.justification}</div>
       <textarea
         className="v2-esc-note"
@@ -129,7 +154,7 @@ function PendingCard({
           type="button"
           className="v2-evo-btn approve"
           disabled={busy}
-          onClick={() => onDecide(req.id, "approved", note)}
+          onClick={() => onDecide(req.id, "approved", note, req.command_sha256 || "")}
         >
           批准
         </button>
@@ -137,7 +162,7 @@ function PendingCard({
           type="button"
           className="v2-evo-btn reject"
           disabled={busy}
-          onClick={() => onDecide(req.id, "denied", note)}
+          onClick={() => onDecide(req.id, "denied", note, req.command_sha256 || "")}
         >
           拒绝
         </button>
@@ -172,15 +197,16 @@ export function EscalationWatcher() {
   const visible = newArrival && pending.filter((r) => !mutedIds.has(r.id)).length > 0;
   const mutedPending = pending.filter((r) => mutedIds.has(r.id));
 
-  const decide = (id: string, decision: "approved" | "denied", note: string) => {
+  const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
     setBusy(true);
-    void reviewEscalation(id, decision, note).then((res) => {
+    void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
       setResultMsg(res.message);
       if (res.ok) {
         setMutedIds((prev) => new Set(prev).add(id));
         if (pending.filter((r) => r.id !== id && !mutedIds.has(r.id)).length === 0) setNewArrival(false);
-        reload();
       }
+      // stale_review：待审内容已变化 → 刷新列表让用户基于最新命令重新决定。
+      if (res.ok || res.stale) reload();
       setBusy(false);
     });
   };
@@ -234,11 +260,11 @@ export function EscalationPanel() {
   const { data, loadErr, reload } = useEscalations(true);
   const [busy, setBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
-  const decide = (id: string, decision: "approved" | "denied", note: string) => {
+  const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
     setBusy(true);
-    void reviewEscalation(id, decision, note).then((res) => {
+    void reviewEscalation(id, decision, note, expectedSha256).then((res) => {
       setActionMsg(res.message);
-      if (res.ok) reload();
+      if (res.ok || res.stale) reload();
       setBusy(false);
     });
   };

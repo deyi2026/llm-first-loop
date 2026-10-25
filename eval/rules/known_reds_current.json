@@ -1,9 +1,9 @@
 {
   "schema": "lfl-known-reds-current/v1",
-  "note": "CI 红数对账的登记基线：当前**有效**的已知红项清单。与 docs/known-reds-20260909.md 的区别：后者是历史归因档案（含已退役/已修复项），本文件是门禁用的现行白名单。",
-  "updated": "2026-10-23",
-  "source": "docs/EVAL-PLAN-LFL-20261023.md §18.4 CI 红数对账实测（3 failed / 10039 passed / 12m17s）",
-  "scope": "pytest tests/ -q -m 'not real_llm and not serial_signal'",
+  "note": "CI 红数对账的登记基线：当前**有效**的已知红项清单。与 docs/known-reds-20260909.md 的区别：后者是历史归因档案（含已退役/已修复项），本文件是门禁用的现行白名单。2026-10-25 清理 4 条实测已绿登记（串行×2）。",
+  "updated": "2026-10-25",
+  "source": "docs/P1-3 全量门实测（serial 23 failed/11218 passed；1 条 env_gate 新签名已显式审查登记 runtime_env_access_baseline.json 后修复）",
+  "scope": "pytest tests/ -q -m \"not real_llm and not serial_signal\"（xdist 全量与红数对账的 serial 复现阶段共用本基线；serial 阶段按 ci_gate 逻辑仅重跑 xdist 红文件，同键对账）",
   "registered": [
     {
       "id": "RED-01",
@@ -20,11 +20,186 @@
       "since": "2026-10-23"
     },
     {
-      "id": "RED-03",
-      "test": "tests/unit/test_static_diagnostic_gate.py::test_unwritable_analyzer_cache_env_does_not_crash_main",
-      "kind": "pre_existing_other_commit",
-      "attribution": "存量红（他人提交 3573875 引入的新增 ratchet 债：method_alias 相关 SIM300/F401，ledger origin_head=500ee8f3 早于该提交）",
-      "since": "2026-10-23"
+      "id": "RED-04",
+      "test": "tests/unit/test_safety_bypass.py::test_find_delete_safe_startpoint_allowed",
+      "kind": "environment_tool_sandbox",
+      "attribution": "find 起点判定依赖真实 fs 语义，工具层沙箱下受限【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-05",
+      "test": "tests/test_catastrophic_guard_redteam_round3.py::test_round3_bypasses_are_blocked[node_rm_sync]",
+      "kind": "environment_tool_sandbox",
+      "attribution": "node --rm 子进程在嵌套 sandbox-exec 下行为受限【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-06",
+      "test": "tests/test_feishu_outbound_guard.py::test_attachment_outside_workspace_denied",
+      "kind": "environment_tool_sandbox",
+      "attribution": "沙箱 TMPDIR=/tmp 使 pytest tmp_path 落在允许根 /tmp 内，测试前置假设（tmp_path 在 /private/var）失效；guard 行为符合 P0-4/S1-3 规格【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-07",
+      "test": "tests/test_feishu_outbound_guard.py::test_attachment_symlink_escape_denied",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上 TMPDIR 重定向【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-08",
+      "test": "tests/test_sandbox_backend.py::test_sandbox_exec_real_write_domain",
+      "kind": "environment_tool_sandbox",
+      "attribution": "测试自起 sandbox-exec 与工具层沙箱嵌套：sandbox_apply Operation not permitted【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-10",
+      "test": "tests/unit/test_linux_installer_scripts.py::test_install_upgrade_rollback_failed_upgrade_and_uninstall_preserve_user_data",
+      "kind": "environment_tool_sandbox",
+      "attribution": "安装脚本 spawn 子进程链在嵌套沙箱受限【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-11",
+      "test": "tests/unit/test_linux_installer_scripts.py::test_active_pointer_write_failure_restores_both_version_pointers",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-12",
+      "test": "tests/unit/test_task_budget_operator_mailbox.py::test_exact_human_challenge_durable_one_shot_and_valid_op1",
+      "kind": "environment_tool_sandbox",
+      "attribution": "依赖 operator 人工审批邮箱环境（本环境无已审批 mailbox）：operator_human_review_or_mailbox_not_qualified【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-13",
+      "test": "tests/unit/test_task_budget_operator_mailbox.py::test_actual_same_uid_denied_as_independent_web",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-14",
+      "test": "tests/unit/test_task_budget_operator_mailbox.py::test_mailbox_fsync_uncertainty_cannot_auto_retry",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-15",
+      "test": "tests/unit/test_task_budget_operator_mailbox.py::test_bridge_valid_signed_op1_sends_only_bound_event_to_service",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-16",
+      "test": "tests/scripts/test_restart_preflight_source.py::test_mutating_root_abort_writes_whitelisted_receipt",
+      "kind": "environment_tool_sandbox",
+      "attribution": "子进程 spawn 回执落盘在嵌套沙箱受限【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-17",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_prior_executor_process_exit_does_not_cancel_independent_review",
+      "kind": "environment_tool_sandbox",
+      "attribution": "sandbox_apply Operation not permitted（stderr.log 实证）【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-18",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_reviewer_running_when_executor_process_normally_exits",
+      "kind": "environment_tool_sandbox",
+      "attribution": "子进程里程碑 flag 超时（嵌套沙箱）【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-19",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_model_shell_attempt_denied_even_when_llm_claims_completion",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-20",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_os_sandbox_blocks_write_network_and_nested_process_escape",
+      "kind": "environment_tool_sandbox",
+      "attribution": "测试自起 sandbox-exec 嵌套受限【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-21",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_persistent_user_stop_kills_blocked_child_and_no_review_pass",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-22",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_uncooperative_child_escalated_to_os_kill_after_stop",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-23",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_post_review_candidate_drift_disqualifies_existing_receipt",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-24",
+      "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_stop_is_scoped_to_its_exact_task_not_neighbor_review",
+      "kind": "environment_tool_sandbox",
+      "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-28",
+      "test": "tests/unit/test_eval_runner_ingress_and_key.py::test_resolve_api_key_prefers_provider_declared_env",
+      "kind": "environment_gate_worktree",
+      "attribution": "provider env 解析：worktree 无生产 .env，环境差异；主树绿【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-29",
+      "test": "tests/test_execute_argv_and_override.py::test_argv_python_print",
+      "kind": "environment_gate_worktree",
+      "attribution": "env 脱敏白名单集在隔离 HOME/worktree 环境下不同；主树绿【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-30",
+      "test": "tests/unit/test_execute_command_scrubs_env.py::test_nonsecret_env_preserved",
+      "kind": "environment_gate_worktree",
+      "attribution": "同上【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-31",
+      "test": "tests/unit/test_execute_command_scrubs_env.py::test_secret_env_vars_scrubbed",
+      "kind": "environment_gate_worktree",
+      "attribution": "同上【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-32",
+      "test": "tests/unit/test_execute_command_scrubs_env.py::test_whitelist_env_preserved",
+      "kind": "environment_gate_worktree",
+      "attribution": "同上【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-34",
+      "test": "tests/unit/test_execute_command_scrubs_env.py::test_control_plane_env_scrubbed",
+      "kind": "environment_gate_worktree",
+      "attribution": "env 脱敏白名单集在隔离 HOME/worktree 环境下不同（同 RED-30..32 组）；主树绿；非代码回归【2026-10-25 补登记：前轮清单落盘错位漏项】",
+      "since": "2026-10-25"
     }
   ]
 }

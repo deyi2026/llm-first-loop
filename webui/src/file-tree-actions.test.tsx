@@ -88,6 +88,10 @@ describe("file tree mutation controls", () => {
     let deleted = false;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      // P0-2 两步令牌：删除前先领取一次性 token
+      if (url.includes("/api/v1/fs/delete-token")) {
+        return new Response(JSON.stringify({ token: "tok-1", expires_in: 300, path: "/ws/a.txt" }), { status: 200 });
+      }
       if (url.includes("/api/v1/fs/delete") && init?.method === "DELETE") {
         deleted = true;
         return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
@@ -138,6 +142,10 @@ describe("file tree mutation controls", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/v1/fs/tree")) return treeResponse();
+      // P0-2 两步令牌：token 领取成功，删除本身失败（非令牌类 409 不重试）
+      if (url.includes("/api/v1/fs/delete-token")) {
+        return new Response(JSON.stringify({ token: "tok-1", expires_in: 300, path: "/ws/a.txt" }), { status: 200 });
+      }
       if (url.includes("/api/v1/fs/delete") && init?.method === "DELETE") {
         return new Response(JSON.stringify({ error: "busy" }), { status: 409 });
       }

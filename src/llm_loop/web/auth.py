@@ -9,6 +9,11 @@ Public exposure is fail-closed.  ``WEB_AUTH_REQUIRE=1``, a non-loopback
 ``WEB_HOST``, or a non-empty ``WEB_ORIGIN_ALLOWLIST`` all make authentication
 mandatory.  A Cloudflare tunnel therefore cannot become public merely because
 the origin service itself listens on 127.0.0.1.
+
+能力边界（S3-5，建议书 2026-10-25）：浏览器会话**仅存于进程内存**
+（``WebSessionStore``），Web 进程重启即全部失效（"重启 = 撤销全部会话"是
+既定运维特性，不是持久化能力）；多 worker / 多实例部署之间**不共享**会话，
+如需跨进程会话须外接存储（Redis/SQLite），本模块不提供。
 """
 
 from __future__ import annotations
@@ -17,12 +22,16 @@ import base64
 import hashlib
 import hmac
 import ipaddress
+import json
+import logging
 import os
 import secrets
 import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
+from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -31,6 +40,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
 
 _bearer = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE_NAME = "lfl_web_session_v2"
 # v2 (2026-09-30): rename from lfl_web_session. During the dual-hostname era
@@ -40,8 +50,18 @@ SESSION_COOKIE_NAME = "lfl_web_session_v2"
 # parser-order-dependently, which intermittently served a dead token from the
 # pre-restart store. Renaming guarantees every historical cookie is simply
 # never sent again; users re-login once.
+# S3-6/P2-6c (2026-10-25): when the cookie is Secure and carries no Domain
+# attribute, the ``__Host-`` prefixed twin name below is used instead — exact
+# host pinning (Path=/ + no Domain + Secure enforced by browsers). Readers
+# accept BOTH names during the transition (see session_cookie_value /
+# valid_browser_session); non-secure (loopback HTTP) keeps the legacy name.
+SESSION_COOKIE_NAME_SECURE = "__Host-lfl_web_session_v2"
 _PASSWORD_SCHEME = "pbkdf2_sha256"
-_PASSWORD_ITERATIONS = 310_000
+# S3-4/P2-6b (2026-10-25): 310k -> 600k (OWASP 2023 PBKDF2-SHA256 guidance).
+# Verification always honors the iteration count recorded inside the stored
+# hash string; successful logins with a weaker recorded count are re-hashed
+# in place (rehash-on-login, see rehash_login_password_if_needed).
+_PASSWORD_ITERATIONS = 600_000
 _PASSWORD_MIN_ITERATIONS = 100_000
 _PASSWORD_MAX_ITERATIONS = 2_000_000
 _DEFAULT_SESSION_TTL_S = 12 * 60 * 60
@@ -228,6 +248,101 @@ def validate_login_password_hash() -> None:
         _parse_password_hash(encoded)
 
 
+_REHASH_LOCK = threading.Lock()
+
+
+def _env_file_path() -> Path:
+    """The operator .env honored by the web entry point (cwd-anchored, main() 同源)."""
+    raw = os.environ.get("LFL_ENV_FILE", "").strip()
+    return Path(raw).expanduser() if raw else Path.cwd() / ".env"
+
+
+def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> bool:
+    """Atomically rewrite one existing ``KEY=VALUE`` line in the .env file.
+
+    Only touches the file when it already declares ``key`` with exactly the
+    value currently active in this process — a .env whose content diverged
+    from the process environment is never silently rewritten. Failures are
+    swallowed (return False): persistence is best-effort and must never
+    affect the already-successful login.
+    """
+    path = _env_file_path()
+    try:
+        if not path.is_file():
+            return False
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    lines = text.splitlines(keepends=True)
+    target = None
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        for prefix in (f"{key}=", f"export {key}="):
+            if stripped.startswith(prefix):
+                if stripped[len(prefix):].strip() != old_value:
+                    return False  # 文件内容与进程环境不一致：不动磁盘
+                target = (index, "export " if stripped.startswith("export ") else "")
+                break
+        if target is not None:
+            break
+    if target is None:
+        return False
+    index, prefix = target
+    trailing = "" if lines[index].endswith("\n") else "\n"
+    lines[index] = f"{prefix}{key}={new_value}{trailing}"
+    tmp = path.with_name(f".{path.name}.rehash.tmp")
+    try:
+        tmp.write_text("".join(lines), encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except OSError:
+        with suppress(OSError):
+            tmp.unlink()
+        return False
+    return True
+
+
+def rehash_login_password_if_needed(password: str) -> bool:
+    """S3-4/P2-6b: upgrade a verified-but-weak PBKDF2 hash after a successful login.
+
+    The recorded iteration count inside the stored hash decides: anything below
+    ``_PASSWORD_ITERATIONS`` is re-derived with the same plaintext and written
+    back atomically (process env + the .env line). Any failure — wrong password
+    (re-verified here so a bug can never clobber the verifier), derivation or
+    persistence — leaves the login flow untouched and returns False.
+    """
+    encoded = _web_login_password_hash()
+    if not encoded:
+        return False
+    try:
+        iterations, salt, expected = _parse_password_hash(encoded)
+    except ValueError:
+        return False
+    if iterations >= _PASSWORD_ITERATIONS:
+        return False
+    # 密码必须先在本地重新验证成功：绝不允许错误口令改写存储校验子。
+    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    if not hmac.compare_digest(actual, expected):
+        return False
+    with _REHASH_LOCK:
+        try:
+            upgraded = hash_login_password(password, iterations=_PASSWORD_ITERATIONS)
+        except ValueError:
+            return False
+        os.environ["WEB_LOGIN_PASSWORD_HASH"] = upgraded
+        persisted = _persist_rehashed_env_value("WEB_LOGIN_PASSWORD_HASH", encoded, upgraded)
+        if persisted:
+            logger.info("login password hash upgraded in-place: %s -> %s iterations", iterations, _PASSWORD_ITERATIONS)
+        else:
+            logger.warning(
+                "login password hash upgraded in process env only (%s -> %s iterations); "
+                ".env persistence skipped (file missing, unchanged line not found, or write failed)",
+                iterations,
+                _PASSWORD_ITERATIONS,
+            )
+        return True
+
+
 def session_ttl_seconds() -> int:
     raw = os.environ.get("WEB_SESSION_TTL_SECONDS", str(_DEFAULT_SESSION_TTL_S)).strip()
     try:
@@ -295,6 +410,36 @@ def canonical_host() -> str:
     return host
 
 
+def session_cookie_name(*, secure: bool, domain: str | None) -> str:
+    """S3-6/P2-6c: pick the cookie name for the current response.
+
+    ``__Host-`` prefix (exact-host pinning: Secure + Path=/ + no Domain,
+    enforced by browsers) is used only when the cookie is Secure AND carries
+    no Domain attribute — a ``__Host-`` cookie with ``Domain`` would be
+    rejected by every browser. Non-secure (loopback HTTP) and parent-domain
+    deployments keep the legacy ``lfl_web_session_v2`` name.
+    """
+    if secure and not domain:
+        return SESSION_COOKIE_NAME_SECURE
+    return SESSION_COOKIE_NAME
+
+
+def session_cookie_value(cookies) -> str:
+    """Read the session cookie value under EITHER name (S3-6 dual-read).
+
+    Prefers the ``__Host-`` prefixed name; falls back to the legacy
+    ``lfl_web_session_v2`` name so pre-upgrade browsers stay logged in.
+    """
+    getter = getattr(cookies, "get", None)
+    if not callable(getter):
+        return ""
+    for name in (SESSION_COOKIE_NAME_SECURE, SESSION_COOKIE_NAME):
+        value = str(getter(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 class WebSessionStore:
     """In-memory, revocable browser sessions.
 
@@ -347,20 +492,26 @@ class RateLimitDecision:
 
 
 class LoginRateLimiter:
-    """Small per-client brute-force limiter for the single-owner login page."""
+    """Small per-client brute-force limiter for the single-owner login page.
 
-    def __init__(self, *, max_failures: int = 5, window_seconds: int = 300) -> None:
+    S3-8 (建议书 2026-10-25): the failure map is bounded (``max_keys``) and
+    prunes expired buckets on every access — a forged-header flood cannot grow
+    it without bound. Eviction is least-recently-recorded first.
+    """
+
+    def __init__(self, *, max_failures: int = 5, window_seconds: int = 300, max_keys: int = 4096) -> None:
         self.max_failures = max_failures
         self.window_seconds = window_seconds
+        self.max_keys = max_keys
         self._lock = threading.Lock()
-        self._failures: dict[str, deque[float]] = defaultdict(deque)
+        self._failures: dict[str, deque[float]] = {}
 
     def check(self, key: str) -> RateLimitDecision:
         now = time.monotonic()
         with self._lock:
-            bucket = self._failures[key]
-            self._prune(bucket, now)
-            if len(bucket) < self.max_failures:
+            self._purge_locked(now)
+            bucket = self._failures.get(key)
+            if bucket is None or len(bucket) < self.max_failures:
                 return RateLimitDecision(True)
             retry_after = max(1, int(self.window_seconds - (now - bucket[0])))
             return RateLimitDecision(False, retry_after)
@@ -368,31 +519,49 @@ class LoginRateLimiter:
     def record_failure(self, key: str) -> None:
         now = time.monotonic()
         with self._lock:
-            bucket = self._failures[key]
-            self._prune(bucket, now)
+            self._purge_locked(now)
+            bucket = self._failures.pop(key, None)
+            if bucket is None:
+                bucket = deque()
+            self._failures[key] = bucket  # 重新插入 = 移到末端（LRU recency）
             bucket.append(now)
+            while len(self._failures) > self.max_keys:
+                oldest = next(iter(self._failures))
+                self._failures.pop(oldest)
 
     def record_success(self, key: str) -> None:
         with self._lock:
             self._failures.pop(key, None)
 
-    def _prune(self, bucket: deque[float], now: float) -> None:
+    def _purge_locked(self, now: float) -> None:
         cutoff = now - self.window_seconds
-        while bucket and bucket[0] <= cutoff:
-            bucket.popleft()
+        stale = [key for key, bucket in self._failures.items() if not bucket or bucket[-1] <= cutoff]
+        for key in stale:
+            self._failures.pop(key, None)
 
 
 def client_rate_limit_key(request: Request) -> str:
-    """Prefer Cloudflare's client IP only when the immediate peer is loopback."""
+    """S3-8: rate-limit key that a client cannot forge with request headers.
+
+    Forwarded identity headers (``cf-connecting-ip`` / ``x-forwarded-for``)
+    are honored ONLY when the operator explicitly declared a trusted reverse
+    proxy (``LFL_WEB_TRUST_PROXY=1``). In the default direct-listener mode a
+    forged ``cf-connecting-ip`` no longer rotates the key (the historical
+    loopback-peer loophole) — the immediate peer address is the key.
+    """
     peer = request.client.host if request.client else ""
     candidate = ""
-    if is_loopback(peer):
-        candidate = request.headers.get("cf-connecting-ip", "").strip()
-        if candidate:
+    if os.environ.get("LFL_WEB_TRUST_PROXY", "").strip() == "1":
+        for header in ("cf-connecting-ip", "x-forwarded-for"):
+            value = request.headers.get(header, "").split(",")[0].strip()
+            if not value:
+                continue
             try:
-                ipaddress.ip_address(candidate)
+                ipaddress.ip_address(value)
             except ValueError:
-                candidate = ""
+                continue
+            candidate = value
+            break
     return candidate or peer or "unknown"
 
 
@@ -403,13 +572,33 @@ def _bearer_valid(credentials: HTTPAuthorizationCredentials | None) -> bool:
     return hmac.compare_digest(credentials.credentials, expected)
 
 
+def valid_browser_session(connection) -> bool:
+    """Whether the request/WS carries a VALID browser session cookie (either name).
+
+    Works for both ``Request`` and ``WebSocket`` (both are HTTPConnection
+    subclasses with ``.app.state`` / ``.cookies``). Dual-name read keeps
+    pre-upgrade browsers (legacy ``lfl_web_session_v2``) logged in after the
+    ``__Host-`` rollout (S3-6).
+    """
+    state = getattr(getattr(connection, "app", None), "state", None)
+    store = getattr(state, "web_sessions", None)
+    if not isinstance(store, WebSessionStore):
+        return False
+    cookies = getattr(connection, "cookies", None)
+    getter = getattr(cookies, "get", None)
+    if not callable(getter):
+        return False
+    for name in (SESSION_COOKIE_NAME_SECURE, SESSION_COOKIE_NAME):
+        token = str(getter(name) or "").strip()
+        if token and store.valid(token):
+            return True
+    return False
+
+
 def _cookie_valid(request: Request | None) -> bool:
     if request is None:
         return False
-    store = getattr(request.app.state, "web_sessions", None)
-    if not isinstance(store, WebSessionStore):
-        return False
-    return store.valid(request.cookies.get(SESSION_COOKIE_NAME, ""))
+    return valid_browser_session(request)
 
 
 def request_authenticated(
@@ -480,3 +669,155 @@ def validate_origin_allowlist() -> None:
             "WEB_ORIGIN_ALLOWLIST 非空（隧道/反代公网暴露意图）但没有可用鉴权："
             "请先配置 WEB_LOGIN_PASSWORD_HASH 或 WEB_API_KEY。"
         )
+
+
+def _host_without_port(value: str) -> str:
+    """Normalize a Host/allowlist entry: lowercase, port stripped, IDNA."""
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    # [::1]:8903 -> ::1
+    raw = raw[1:].split("]", 1)[0] if raw.startswith("[") else raw.split(":", 1)[0]
+    raw = raw.strip(".")
+    try:
+        return raw.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        return raw
+
+
+def configured_allowed_hosts() -> frozenset[str]:
+    """P1-4b: explicit hostnames HostGuard accepts (loopback is always allowed).
+
+    Sources: the ``WEB_HOST`` binding name, ``LFL_WEB_ALLOWED_HOSTS`` (comma
+    separated, ports tolerated), ``WEB_CANONICAL_HOST`` (its subdomains are
+    accepted separately — they are the documented tunnel aliases that
+    ``_CanonicalOriginMiddleware`` 308-redirects to the canonical host), and
+    the hosts inside ``WEB_ORIGIN_ALLOWLIST`` origins.
+    """
+    hosts: set[str] = set()
+    bind = _host_without_port(os.environ.get("WEB_HOST", "127.0.0.1"))
+    if bind:
+        hosts.add(bind)
+    for entry in os.environ.get("LFL_WEB_ALLOWED_HOSTS", "").split(","):
+        host = _host_without_port(entry)
+        if host:
+            hosts.add(host)
+    canonical = canonical_host()
+    if canonical:
+        hosts.add(canonical)
+    for origin in configured_origin_allowlist():
+        host = _host_without_port(origin.split("://", 1)[-1])
+        if host:
+            hosts.add(host)
+    return frozenset(hosts)
+
+
+def configured_extra_origin_allowlist() -> frozenset[str]:
+    """S3-2: optional extra browser Origins for the realtime WS handshake.
+
+    ``LFL_WEB_ALLOWED_ORIGINS`` (comma separated, full origins; bare hosts
+    mean HTTPS like ``WEB_ORIGIN_ALLOWLIST``). Invalid entries are skipped
+    rather than fatal — this augments, never replaces, the same-origin rule.
+    """
+    raw = os.environ.get("LFL_WEB_ALLOWED_ORIGINS", "").strip()
+    if not raw:
+        return frozenset()
+    origins: set[str] = set()
+    for item in raw.split(","):
+        value = item.strip()
+        if not value:
+            continue
+        try:
+            origins.add(normalize_origin(value))
+        except ValueError:
+            logger.warning("LFL_WEB_ALLOWED_ORIGINS 条目无效，已跳过: %r", value)
+    return frozenset(origins)
+
+
+class HostGuardMiddleware:
+    """P1-4b / S1-5（建议书 2026-10-25）：Host 头白名单，DNS rebinding 独立防线.
+
+    规则（不依赖认证状态，先于一切路由/中间件逻辑执行）：
+
+    - 生效 Host = ``Host`` 头去端口/IDNA；仅当 ``LFL_WEB_TRUST_PROXY=1`` 时
+      ``X-Forwarded-Host``（首跳）参与判定并优先（可信反代后的浏览器可见主机）；
+    - 允许集合 = 回环族（127.0.0.1/localhost/::1 及任意 loopback IP）∪
+      ``WEB_HOST`` 绑定主机名 ∪ ``LFL_WEB_ALLOWED_HOSTS`` ∪ ``WEB_CANONICAL_HOST``
+      （含其子域）∪ ``WEB_ORIGIN_ALLOWLIST`` 各 origin 的 host；
+    - 其余 → 400 ``host_not_allowed``（websocket 握手则拒绝建立）。
+
+    生产豁免说明：Starlette TestClient 的进程内哨兵对端 ``("testclient", …)``
+    由测试传输层写入 ASGI scope，不可能来自真实网络套接字（生产 uvicorn 的
+    scope client 恒为内核给出的真实 IP），对其跳过 Host 校验以保持既有测试
+    套件兼容；这不是对生产默认的放宽。
+    """
+
+    _TESTCLIENT_PEER = "testclient"
+
+    def __init__(self, app) -> None:
+        self.app = app
+        # 与 _OriginGuardMiddleware 同约定：构建期读一次 env（main() 已装配 .env）。
+        self._allowed = configured_allowed_hosts()
+        self._canonical = canonical_host()
+        self._trust_proxy = os.environ.get("LFL_WEB_TRUST_PROXY", "").strip() == "1"
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        host = self._effective_host(scope)
+        if self._host_allowed(host, scope):
+            await self.app(scope, receive, send)
+            return
+        logger.warning("host_guard_rejected host=%r path=%r", host, scope.get("path", ""))
+        body = json.dumps(
+            {
+                "error": "host_not_allowed",
+                "detail": f"Host '{host or '(空)'}' 不在允许清单（回环/绑定主机/LFL_WEB_ALLOWED_HOSTS/WEB_CANONICAL_HOST/WEB_ORIGIN_ALLOWLIST）。",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        if scope["type"] == "websocket":
+            # 握手前拒绝：websocket.close 在 accept 前由服务器转为 HTTP 拒绝响应。
+            await send({"type": "websocket.close", "code": 4400, "reason": "host_not_allowed"})
+            return
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    @staticmethod
+    def _header(scope, name: bytes) -> str:
+        for key, value in scope.get("headers") or []:
+            if key.lower() == name:
+                return value.decode("latin-1", errors="replace").strip()
+        return ""
+
+    def _effective_host(self, scope) -> str:
+        host = self._header(scope, b"host")
+        if self._trust_proxy:
+            forwarded = self._header(scope, b"x-forwarded-host").split(",")[0].strip()
+            if forwarded:
+                host = forwarded
+        return _host_without_port(host)
+
+    def _host_allowed(self, host: str, scope) -> bool:
+        if not host:
+            return False
+        if is_loopback(host):
+            return True
+        if host in self._allowed:
+            return True
+        if self._canonical and host.endswith(f".{self._canonical}"):
+            return True  # canonical 的子域 = 文档化的隧道别名主机（见 _CanonicalOriginMiddleware）
+        client = scope.get("client")
+        peer = str(client[0]) if isinstance(client, (tuple, list)) and client else ""
+        return peer == self._TESTCLIENT_PEER  # 见类 docstring：进程内测试哨兵，生产不可达

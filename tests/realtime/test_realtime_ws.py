@@ -9,7 +9,8 @@
 
 from __future__ import annotations
 
-import time
+import json
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -25,6 +26,7 @@ from llm_loop.web.realtime_ws import (
     REALTIME_WS_PATH,
     HandshakeFacts,
     HandshakeRejection,
+    _record_closed,
     close_code_for,
     evaluate_handshake,
     register_realtime_ws,
@@ -163,10 +165,135 @@ class TestHandshakeEndpoint:
         assert registry.calls == [("foreign-session", token)]
 
     def test_owned_target_with_valid_session_is_accepted(self):
+        registry = _FakeRegistry(owned=True)
+        app, store = _make_app(registry)
+        token = store.create(ttl_seconds=60)
+        client = TestClient(app)
+        with client.websocket_connect(
+            _path("mine"),
+            headers={
+                "origin": "http://testserver",
+                "cookie": f"{SESSION_COOKIE_NAME}={token}",
+            },
+        ) as ws:
+            ws.close()
+        assert registry.calls == [("mine", token)]
+
+    def test_missing_registry_rejects_unknown_target(self):
+        app, store = _make_app(None)
+        token = store.create(ttl_seconds=60)
+        client = TestClient(app)
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+            _path(),
+            headers={
+                "origin": "http://testserver",
+                "cookie": f"{SESSION_COOKIE_NAME}={token}",
+            },
+        ):
+            pass
+
+
+class _ClosableMediaRegistry:
+    """带 closed 标志的登记替身：驱动 _serve 收包循环的 take_over 场景。"""
+
+    def __init__(self) -> None:
+        self.record = SimpleNamespace(session_id="sess-1", connection_epoch=1, closed=False)
+        self._by_id = {"ms-1": self.record}
+
+    def owns(self, media_session_id: str, *, session_cookie: str) -> bool:
+        return media_session_id == "ms-1" and bool(session_cookie)
+
+
+class _ServeTransport:
+    """_serve 最小传输替身：只记录 append/synthesize/close（不触网）。"""
+
+    def __init__(self) -> None:
+        self.appended: list[bytes] = []
+        self.closed = False
+
+    def append(self, frame: bytes) -> None:
+        self.appended.append(frame)
+
+    def synthesize(self, text: str) -> bytes:  # noqa: ARG002 - 回 PCM 即可
+        return b"PCM"
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestClosedRecordGuard:
+    """缺陷②回归：take_over 置 closed 后，旧 WS 下一条消息即退出并清理。"""
+
+    def _app_with(self, registry: _ClosableMediaRegistry) -> tuple[FastAPI, WebSessionStore, _ServeTransport]:
+        app, store = _make_app(registry)
+        transport = _ServeTransport()
+        app.state.realtime_transport_factory = lambda: (
+            transport,
+            "http://127.0.0.1:8000/v1/audio/transcriptions",
+        )
+        return app, store, transport
+
+    def _headers(self, token: str) -> dict[str, str]:
+        return {"origin": "http://testserver", "cookie": f"{SESSION_COOKIE_NAME}={token}"}
+
+    def test_record_closed_reflects_registry_closed_flag(self):
+        registry = _ClosableMediaRegistry()
+        fake_ws = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(realtime_media_sessions=registry))
+        )
+        assert _record_closed(fake_ws, "ms-1") is False
+        registry.record.closed = True  # take_over：旧记录被置 closed
+        assert _record_closed(fake_ws, "ms-1") is True
+        assert _record_closed(fake_ws, "ms-2") is False  # 无记录不误杀
+
+    def test_missing_registry_keeps_connection_open(self):
+        fake_ws = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+        assert _record_closed(fake_ws, "ms-1") is False
+
+    def test_closed_record_next_message_exits_loop_and_cleans_up(self):
+        registry = _ClosableMediaRegistry()
+        app, store, transport = self._app_with(registry)
+        token = store.create(ttl_seconds=60)
+        client = TestClient(app)
+        with client.websocket_connect(_path("ms-1"), headers=self._headers(token)) as ws:
+            registry.record.closed = True  # 新连接 take_over：旧记录被置 closed
+            ws.send_bytes(b"\x00\x00" * 8)  # 旧连接仍在说话：下一条消息
+            error = json.loads(ws.receive_text())
+            assert error["type"] == "error"
+            assert error["code"] == 409
+            assert error["reason"] == "session_closed"  # 契约 §5 枚举值，非自造
+            assert error["media_session_id"] == "ms-1"
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_text()  # 收包循环已退出：连接随后关闭
+        assert transport.appended == []  # closed 后不再 ingest（无双写窗口）
+        assert transport.closed is True  # 既有 finally 清理：transport.close 已调用
+
+    def test_open_record_keeps_serving(self):
+        # 反例：未 closed 时同一循环继续 ingest/应答（守卫不误伤正常路径）
+        registry = _ClosableMediaRegistry()
+        app, store, transport = self._app_with(registry)
+        token = store.create(ttl_seconds=60)
+        client = TestClient(app)
+        with client.websocket_connect(_path("ms-1"), headers=self._headers(token)) as ws:
+            ws.send_bytes(b"\x00\x00" * 8)
+            ws.send_text(json.dumps({"type": "tts.request", "text": "hi", "response_id": "r1"}))
+            assert ws.receive_bytes() == b"PCM"  # tts 先下行二进制音频
+            playback = json.loads(ws.receive_text())
+            assert playback["type"] == "audio.playback"
+        assert transport.appended == [b"\x00\x00" * 8]  # 帧在回包前已被正常处理
+
+
+class TestMainlinePortedSemantics:
+    """main 侧 e8a1d0a19 语义移植到候选架构（closed 标志 + 0.25s 轮询）的回归。"""
+
+    def test_revoked_quiet_writer_is_evicted_without_new_messages(self):
+        # 撤销（DELETE/take_over 置 closed）必须能驱逐**安静**的旧写入者：
+        # 旧连接不发任何新帧，也应在有界轮询内收到 409 session_closed 并被关闭。
         registry = MediaSessionRegistry()
         app, store = _make_app(registry)
         token = store.create(ttl_seconds=60)
         record = registry.create(session_id="sess-1", workspace_scope="ws", owner_cookie=token)
+
         class QuietTransport:
             def next_event(self, *, timeout=None):
                 return None
@@ -183,23 +310,12 @@ class TestHandshakeEndpoint:
                 "cookie": f"{SESSION_COOKIE_NAME}={token}",
             },
         ) as ws:
-            ws.close()
-        # The server's async close/finally can complete just after TestClient
-        # returns from its WS context. Observe the actual release, bounded.
-        deadline = time.monotonic() + 1.0
-        while registry.count_active() and time.monotonic() < deadline:
-            time.sleep(0.005)
+            closed = registry.close(record.media_session_id, session_cookie=token)  # 等价 DELETE
+            assert closed is not None
+            error = json.loads(ws.receive_text())  # 无需新消息：轮询即送达
+            assert error["type"] == "error"
+            assert error["code"] == 409
+            assert error["reason"] == "session_closed"
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_text()
         assert registry.count_active() == 0
-
-    def test_missing_registry_rejects_unknown_target(self):
-        app, store = _make_app(None)
-        token = store.create(ttl_seconds=60)
-        client = TestClient(app)
-        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
-            _path(),
-            headers={
-                "origin": "http://testserver",
-                "cookie": f"{SESSION_COOKIE_NAME}={token}",
-            },
-        ):
-            pass

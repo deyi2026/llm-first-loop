@@ -185,8 +185,8 @@ def test_v5_spec_does_not_change_verdicts_on_real_batches(spec_v5: dict, spec_v4
         pytest.skip("24 轮新批 checkpoint 不在本地")
     rows = []
     for path in files:
-        with open(path, encoding="utf-8") as stream:
-            for line in stream:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
                 rec = json.loads(line)
                 detail = rec.get("detail") or {}
                 rows.append(

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import threading
 import time
 import traceback
@@ -303,6 +304,60 @@ EvidenceManifestProvider = Callable[[int], str]
 EvidenceHistoryCaptureHook = Callable[[str, Message, int | None, str | None], str | None]
 SessionCancelHook = Callable[..., Any]
 AsyncObligationHook = Callable[..., list[dict[str, Any]]]
+
+
+def _command_text_for_guard(name: str, args: dict[str, Any]) -> str:
+    """给围栏看的命令文本：argv 调用合成为 shell 文本.
+
+    P2-2 引入 argv 后，围栏若只读 args["command"] 就会失明（空串 → 全部放行）。
+    这里只做"视图"，不改变实际执行方式；argv 与 command 互斥由工具自身校验。
+    """
+    argv = args.get("argv")
+    if name == "execute_command" and isinstance(argv, (list, tuple)) and argv:
+        try:
+            return shlex.join([str(x) for x in argv])
+        except (TypeError, ValueError):
+            return " ".join(str(x) for x in argv)
+    return str(args.get("command", "") or "")
+
+
+def _guard_view_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """灾难性守卫的参数视图：argv 调用补出等价的 command 文本（不修改原参数）."""
+    if name != "execute_command" or args.get("command") or not args.get("argv"):
+        return args
+    text = _command_text_for_guard(name, args)
+    if not text:
+        return args
+    view = dict(args)
+    view["command"] = text
+    view.pop("argv", None)
+    return view
+
+
+def _escalation_deferred_to_tool(name: str, args: dict[str, Any]) -> bool:
+    """execute_command 的提权令牌裁决是否完全 defer 给工具层（P1-1，准入审核第四轮）.
+
+    - arguments 携带 escalation_id（任何模式）：工具层经
+      EscalationStore.consume_for_execution 三重绑定（id+令牌+命令哈希）唯一消费；
+      registry 层不再本地 consume——旧消费块按 args["command"] 取文本，argv 形态
+      下为空串，已批准令牌的 command-sha 永不匹配（永远拒绝），且若本层先消费，
+      工具层的合法消费会变成"已使用过"（双重消耗）。
+    - argv 模式携令牌但缺 escalation_id（schema 声明 argv 下须成对）：工具层守卫
+      兜底阻断（id+token 成对才可能覆盖），本层不消费、不烧令牌。
+    - command 模式单传 escalation_token（无 id）：保持 registry 层既有闭环
+      （本层 consume 消费，工具层让位），行为不变。
+    - 其余破坏性工具（delete_file 等）无工具层消费路径：不在 defer 范围。
+    """
+    if name != "execute_command":
+        return False
+    if str(args.get("escalation_id", "") or "").strip():
+        return True
+    argv = args.get("argv")
+    return (
+        bool(str(args.get("escalation_token", "") or ""))
+        and isinstance(argv, (list, tuple))
+        and bool(argv)
+    )
 
 
 class ToolRegistry:
@@ -1085,11 +1140,27 @@ class ToolRegistry:
         #    （令牌绑定工具名+命令 SHA256，单次有效；EXEC_MODE 与共享服务
         #    边界独立于令牌，仍按各自规则裁决）。
         if self._is_destructive_tool(call.name):
-            blocked = self.safety.guard(call.name, call.arguments)
+            _guard_args = _guard_view_args(call.name, call.arguments)
+            _guard_cwd = str(call.arguments.get("workdir") or "").strip() or None
+            blocked = self.safety.guard(call.name, _guard_args, workdir=_guard_cwd)
             if blocked:
                 token = str(call.arguments.get("escalation_token", "") or "")
-                if token and self._escalation_store is not None:
-                    command = str(call.arguments.get("command", "") or "")
+                if _escalation_deferred_to_tool(call.name, call.arguments):
+                    # P1-1: execute_command 携带 escalation_id（或 argv+令牌）时，
+                    # 令牌裁决完全 defer 工具层（唯一 consume_for_execution 点）。
+                    # 本层不消费——防 argv 空 command 哈希永不匹配，也防与工具层
+                    # 双重消耗；后续围栏（共享服务/审核准入/EXEC_MODE）照常裁决。
+                    logger.info(
+                        "[提权让位] execute_command 灾难阻断携带 escalation 参数，"
+                        "令牌裁决 defer 工具层（escalation_id=%s, argv 形态=%s）",
+                        str(call.arguments.get("escalation_id", "") or "").strip() or "<empty>",
+                        bool(call.arguments.get("argv")),
+                    )
+                    blocked = None
+                elif token and self._escalation_store is not None:
+                    # P1-1: 哈希键经 _command_text_for_guard 取文本（单一事实源；
+                    # command 模式下与原 args["command"] 逐字等价，行为不变）。
+                    command = _command_text_for_guard(call.name, call.arguments)
                     rec, reject_reason = self._escalation_store.consume(token, call.name, command)
                     if rec is not None:
                         logger.info(
@@ -1137,7 +1208,7 @@ class ToolRegistry:
         # independent of EXEC_MODE/approval: generic-shell approval never mints
         # shared Web/Feishu lifecycle authority.
         if call.name == "execute_command" and self._managed_service_guard is not None:
-            command = str(call.arguments.get("command", "") or "")
+            command = _command_text_for_guard(call.name, call.arguments)
             decision = self._managed_service_guard.guard(command)
             if decision is not None and decision.blocked:
                 return self._preblock(
@@ -1161,7 +1232,7 @@ class ToolRegistry:
         # including background launch and shell approval paths. This is independent
         # of catastrophic safety, user permission and model-facing advice text.
         if call.name == "execute_command" and self._review_admission is not None:
-            cmd = str(call.arguments.get("command") or "")
+            cmd = _command_text_for_guard(call.name, call.arguments)
             target_dir = str(call.arguments.get("workdir") or workspace_base() or os.getcwd())
             verdict = self._review_admission.check_shell(
                 str(current_session_id.get() or ""), cmd, target_dir,

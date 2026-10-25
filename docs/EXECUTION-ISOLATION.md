@@ -3,18 +3,23 @@
 > 状态：v0.6.14 起生效。本文如实声明 `execute_command` 在不同配置下的**实际**隔离能力与边界，
 > 不宣称未实现的安全性。代码实现见 `src/llm_loop/tools/sandbox.py`。
 
-## 三种运行条件（由 `EXEC_SANDBOX` 决定）
+## 运行条件（由 `EXEC_SANDBOX` 决定）
 
 | 条件 | 配置 | 平台 | 隔离强度 | 网络隔离 |
 |---|---|---|---|---|
-| A. 个人受信宿主（默认） | `EXEC_SANDBOX` 空 | 任意 | 无内核隔离 | 无 |
-| B. bwrap 沙箱 | `EXEC_SANDBOX=bwrap` | 仅 Linux | 命名空间 + 只读系统目录 | **无**（未 unshare network） |
-| C. docker 容器 | `EXEC_SANDBOX=docker` | macOS/Linux | 容器边界 + 断网 + 只读 rootfs | 有（`--network=none`） |
+| A. 个人受信宿主 | `EXEC_SANDBOX=none` 或 `auto` 解析到 none | 任意 | 无内核隔离 | 无 |
+| B. bwrap 沙箱 | `EXEC_SANDBOX=bwrap` / `auto`（Linux 命中） | 仅 Linux | 命名空间 + 只读系统目录 | **无**（未 unshare network） |
+| C. docker 容器 | `EXEC_SANDBOX=docker` / `auto`（daemon 在跑） | macOS/Linux | 容器边界 + 断网 + 只读 rootfs | 有（`--network=none`） |
+| D. sandbox-exec | `EXEC_SANDBOX=sandbox-exec` / `auto`（darwin） | 仅 macOS | 仅写域约束（工作区 + 缓存目录） | **无** |
 
-**fail-closed 契约**：显式配置 B/C 而对应后端（`bwrap`/`docker` CLI）缺失 → 命令**拒绝执行**，
-不静默降级到无沙箱路径。
+**fail-closed 契约**：显式配置 B/C/D 而对应后端（`bwrap` / `docker` CLI / `/usr/bin/sandbox-exec`）
+缺失 → 命令**拒绝执行**，不静默降级到无沙箱路径；`auto` 解析到 none 时默认放行为无沙箱执行，
+但**必写一次 warning**（列出全部原因，不静默），`EXEC_SANDBOX_STRICT=1` 时同样 fail-closed。
 
-## 条件 A：个人受信宿主（当前默认）
+> 2026-10-25（P2-1）：`EXEC_SANDBOX` 默认值从空/none 改为 **`auto`**——首次执行时按
+> bwrap → docker → sandbox-exec → none 解析，详见文末「auto 解析与平台矩阵」。
+
+## 条件 A：个人受信宿主（EXEC_SANDBOX=none，或 auto 解析到 none）
 
 **适用**：开发者本机、单用户、自己对自己负责的运行环境。
 
@@ -56,3 +61,43 @@
 
 container 方案后续可扩展：CI runner 上以条件 B/C 为门禁（未启用沙箱的执行视为环境异常）；
 受限镜像白名单（按任务类型锁定可用运行时）；`--unshare-net` 纳入 bwrap 配置以对齐 C 的网络边界。
+
+## auto 解析与平台矩阵（2026-10-25，P2-1/S2-6）
+
+`EXEC_SANDBOX` 默认值从空/none 改为 `auto`。auto 在**首次执行时**按以下顺序解析，
+结果**进程内缓存**，并写一次日志（解析到 none → warning，明确列出全部原因，绝不静默）：
+
+1. `bwrap`——`shutil.which("bwrap")` 命中；
+2. `docker`——docker CLI 存在且 `docker info` 在 2s 内成功（daemon 在跑；探测结果进程内缓存）；
+3. `sandbox-exec`——仅 darwin 且 `/usr/bin/sandbox-exec` 存在且可执行；
+4. 都不可用 → `none`。
+
+`EXEC_SANDBOX_STRICT=1`：auto 解析到 none → 命令 fail-closed 拒绝执行（RuntimeError，回执如实失败）。
+默认不 strict——docker daemon 未启动等场景下常规命令仍可用（落到次优后端，或 none + 告警），
+避免默认配置把本机命令全部锁死。显式 `none` 不受 strict 影响（明确意图不拦截）。
+
+### 平台矩阵
+
+| 平台/环境 | auto 实际落到 | 隔离强度 | 网络隔离 | 回执 note |
+|---|---|---|---|---|
+| Linux + bwrap 已装 | `bwrap` | 命名空间 + 只读系统目录 + 工作区可写 | 无 | 已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络 |
+| 任意 + docker daemon 运行 | `docker` | 容器边界 + 断网 + 只读 rootfs + 工作区可写 | 有 | 已启用 docker 沙箱：断网/只读 rootfs/工作区可写 |
+| macOS（无 docker daemon） | `sandbox-exec` | **仅写域约束**（工作区 + /tmp + /dev + 缓存目录） | 无 | 已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络 |
+| 全无 | `none` | 无内核隔离（仅 CatastrophicGuard deny-list） | 无 | 不加任何"已隔离"措辞 |
+
+### 条件 D：sandbox-exec（macOS）如实边界
+
+- profile：`(version 1)(allow default)(deny file-write*)(allow file-write* (subpath <root>))`
+  ——**只约束写**。可写根 = 工作区 + `/tmp` + `/private/tmp` + `/dev` + `~/.cache` +
+  `~/Library/Caches` + `~/.npm`，可用 `EXEC_SANDBOX_MACOS_WRITABLE`（os.pathsep 分隔）追加；
+  路径在 profile 中做 S 表达式转义（双引号/反斜杠），防策略注入。
+- **不隔离网络、不限制读**：沙箱内进程可联网、可读用户全部可达文件（含 `~/.ssh`、`.env`）——
+  外泄面必须依赖出站闸门与环境脱敏，**不能**指望本后端。
+- 执行形态：`/usr/bin/sandbox-exec -p <profile> /bin/bash -lc <command>`（shell=False）。
+- 非 darwin 平台或 sandbox-exec 不可用时显式配置 → fail-closed 拒绝执行。
+
+### worktree 语义（S2-6）
+
+`execute_command(isolation=true)` 是 git worktree **施工面**隔离（防未提交改动互扰），
+**不是系统沙箱**：命令经绝对路径/跨目录操作仍可越界。工具描述与回执附注统一携带
+"（worktree 隔离，非系统沙箱）"从句，防止调用方把 `isolation=true` 误读为安全隔离。

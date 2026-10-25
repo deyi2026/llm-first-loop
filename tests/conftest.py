@@ -204,8 +204,11 @@ _DEPLOYED_TASK_BUDGET_VARS = (
 # 选择，导致未注册硬失败或静默列出错误 workspace 的会话。queries.py 现按
 # --workspace > cwd-upward > env 解析并在歧义时 exit 3；本批次剥离 ambient 值，
 # 测试体内显式 setenv 的用例（monkeypatch 顺序在 fixture 之后）不受影响。
+# P1-3(2026-10-25)：LFL_DEFAULT_WORKSPACE_ROOT（AI 默认可写工作区根，非身份锚）
+# 同属 ambient workspace 解析面——一并剥离；isolated_data_dir 随后注入 tmp 值。
 _DEPLOYED_WORKSPACE_IDENTITY_VARS = (
     "LFL_WORKSPACE_ROOT",
+    "LFL_DEFAULT_WORKSPACE_ROOT",
 )
 
 
@@ -323,6 +326,11 @@ def isolated_data_dir(tmp_path, monkeypatch):
     data_dir.mkdir()
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("LFL_DATA_DIR", str(data_dir))
+    # P1-3（2026-10-25，设计 §7.4）: 默认工作区根同样钉进 tmp——任何经
+    # build_engine(workspace_root=None) 的测试在 _resolve_default_workspace_root
+    # 解析 env 时落到 tmp_path，绝不在真实 home 建 ~/lfl-workspace（测试污染
+    # 防线；与下方 chdir(tmp_path) 的旧 cwd 语义保持行为等价）。
+    monkeypatch.setenv("LFL_DEFAULT_WORKSPACE_ROOT", str(tmp_path))
     # R9-IMM-02（D6 双修·测试面纵深防御）: cwd 锁进沙箱——任何残余相对路径写入
     # （含 path_registry 曾静默回落 "data/" 的洞）都落在 tmp 而非真实仓库 data/。
     # 与生产面 fallback 抛错独立成立。
