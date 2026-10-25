@@ -7,7 +7,7 @@
     "dynamic_secret": 8,
     "secret": 9
   },
-  "access_count": 175,
+  "access_count": 177,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -66,7 +66,7 @@
     "dynamic_secret": 1,
     "secret": 6
   },
-  "direct_access_count": 175,
+  "direct_access_count": 177,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -374,7 +374,9 @@
     "src/llm_loop/workspace/archive_stale.py|ArchiveStaleLoop/__init__|read|LFL_ARCHIVE_STALE_AUTO": 1,
     "src/llm_loop/workspace/archive_stale.py|ArchiveStaleLoop/__init__|read|PYTEST_CURRENT_TEST": 1,
     "src/llm_loop/workspace/archive_stale.py|_env_number|read|<dynamic>": 1,
-    "src/llm_loop/workspace/store.py|_workspace_allowed_roots|read|<dynamic>": 1
+    "src/llm_loop/workspace/store.py|_workspace_allowed_roots|read|<dynamic>": 1,
+    "src/llm_loop/factory.py|_resolve_default_workspace_root|read|<dynamic>": 1,
+    "src/llm_loop/knowledge/heldout_guard.py|find_manifest|read|LFL_HELDOUT_MANIFEST": 1
   },
   "unique_key_count": 81
 }
