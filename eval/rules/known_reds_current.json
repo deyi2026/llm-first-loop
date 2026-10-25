@@ -1,6 +1,6 @@
 {
   "schema": "lfl-known-reds-current/v1",
-  "note": "CI 红数对账的登记基线：当前**有效**的已知红项清单。与 docs/known-reds-20260909.md 的区别：后者是历史归因档案（含已退役/已修复项），本文件是门禁用的现行白名单。",
+  "note": "CI 红数对账的登记基线：当前**有效**的已知红项清单。与 docs/known-reds-20260909.md 的区别：后者是历史归因档案（含已退役/已修复项），本文件是门禁用的现行白名单。2026-10-25 清理 4 条实测已绿登记（串行×2）。",
   "updated": "2026-10-25",
   "source": "docs/P1-3 全量门实测（serial 23 failed/11218 passed；1 条 env_gate 新签名已显式审查登记 runtime_env_access_baseline.json 后修复）",
   "scope": "pytest tests/ -q -m \"not real_llm and not serial_signal\"（xdist 全量与红数对账的 serial 复现阶段共用本基线；serial 阶段按 ci_gate 逻辑仅重跑 xdist 红文件，同键对账）",
@@ -17,13 +17,6 @@
       "test": "tests/unit/test_learning_journal.py::test_learning_reuses_candidates_without_promotion[True-none-False]",
       "kind": "pre_existing",
       "attribution": "存量红，与评测相关改动无依赖关系（§18.4 逐条查证）",
-      "since": "2026-10-23"
-    },
-    {
-      "id": "RED-03",
-      "test": "tests/unit/test_static_diagnostic_gate.py::test_unwritable_analyzer_cache_env_does_not_crash_main",
-      "kind": "pre_existing_other_commit",
-      "attribution": "存量红（他人提交 3573875 引入的新增 ratchet 债：method_alias 相关 SIM300/F401，ledger origin_head=500ee8f3 早于该提交）",
       "since": "2026-10-23"
     },
     {
@@ -59,13 +52,6 @@
       "test": "tests/test_sandbox_backend.py::test_sandbox_exec_real_write_domain",
       "kind": "environment_tool_sandbox",
       "attribution": "测试自起 sandbox-exec 与工具层沙箱嵌套：sandbox_apply Operation not permitted【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
-      "since": "2026-10-25"
-    },
-    {
-      "id": "RED-09",
-      "test": "tests/unit/test_terminal_pty.py::test_sigterm_while_waiting_for_next_draft_after_run_settled_restores_terminal",
-      "kind": "environment_tool_sandbox",
-      "attribution": "PTY/signal 依赖真实终端语义，嵌套沙箱受限【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
       "since": "2026-10-25"
     },
     {
@@ -171,20 +157,6 @@
       "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_stop_is_scoped_to_its_exact_task_not_neighbor_review",
       "kind": "environment_tool_sandbox",
       "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
-      "since": "2026-10-25"
-    },
-    {
-      "id": "RED-25",
-      "test": "tests/scripts/test_restart_preflight_source.py::test_same_repo_worktree_root_defers_to_verify[LFL_RESTART_CODE_ROOT]",
-      "kind": "environment_gate_worktree",
-      "attribution": "测试本身就是 same_repo_worktree 场景：在 worktree 门通道里跑，重启预检的根 defer 分支行为不同；主树绿【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
-      "since": "2026-10-25"
-    },
-    {
-      "id": "RED-26",
-      "test": "tests/scripts/test_restart_preflight_source.py::test_same_repo_worktree_root_defers_to_verify[LFL_RESTART_RUNTIME_ROOT]",
-      "kind": "environment_gate_worktree",
-      "attribution": "同上【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
       "since": "2026-10-25"
     },
     {
