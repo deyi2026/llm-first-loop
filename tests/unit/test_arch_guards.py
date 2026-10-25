@@ -339,12 +339,14 @@ def _ratchet_problems(
 ) -> list[str]:
     """基线登记 × AST 实测双向对账，返回问题清单（纯函数，不 assert）。
 
-    四规则（每条独立可红，合成数据单测 test_ratchet_rule_*）：
+    五规则（每条独立可红，合成数据单测 test_ratchet_rule_*）：
     a ``[死键]``：登记键（fl ∪ legacy）在实测中不存在——防死键掩盖真实违规；
     b ``[棘轮增长]``：实测 > 登记值——零增长，登记函数长 1 行即红（fl/legacy 同检）；
     c ``[超限未进legacy]``：function_lines 键的登记值或实测 >300——>300 只能进 legacy；
     d ``[未登记]``：实测 ≥ include_threshold 且不在 fl ∪ legacy——阈值带内不得
-      未登记（<120 的存活历史小键允许保留在 fl，承载"曾经很大"的棘轮锚）。
+      未登记（<120 的存活历史小键允许保留在 fl，承载"曾经很大"的棘轮锚）；
+    e ``[legacy 未超限]``：legacy 键实测 ≤300——legacy 语义上只收 >300 存量，否则
+      任何小函数都能被登记成巨值而彻底脱锚（独立审查 P2-2）。
     """
     problems: list[str] = []
     for key in sorted(set(function_lines) | set(legacy)):
@@ -364,6 +366,11 @@ def _ratchet_problems(
         m = measured.get(key)
         if m is not None and m > reg:
             problems.append(f"  [棘轮增长] {key}: 登记 {reg} → 实测 {m}（零增长）")
+        if m is not None and m <= GLOBAL_FAIL:
+            problems.append(
+                f"  [legacy未超限] {key}: 实测 {m} ≤{GLOBAL_FAIL}"
+                "（legacy 只收 >300 存量，请移入 function_lines）"
+            )
     for key, lines in sorted(measured.items()):
         if lines >= include_threshold and key not in function_lines and key not in legacy:
             problems.append(
@@ -373,7 +380,7 @@ def _ratchet_problems(
 
 
 def test_function_lines_ratchet_within_baseline():
-    """真实树 × 真实基线四规则对账：problems 必须为空（EVO-20261025-e0bff8ee）。
+    """真实树 × 真实基线五规则对账：problems 必须为空（EVO-20261025-e0bff8ee）。
 
     `_classify_redlines` docstring 曾承诺而不存在的断言在此真实落地：登记集
     不再"登记即豁免"——死键/实测增长/>300 误置 fl/≥120 未登记均红。
@@ -383,7 +390,7 @@ def test_function_lines_ratchet_within_baseline():
         _measure_functions_cached(), b["function_lines"], b["legacy_super_functions"]
     )
     assert not problems, (
-        "基线登记与 AST 实测不一致（EVO-20261025-e0bff8ee 四规则对账）：\n"
+        "基线登记与 AST 实测不一致（EVO-20261025-e0bff8ee 五规则对账）：\n"
         + "\n".join(problems)
         + "\n重登记：python scripts/regen_function_size_baseline.py（guard(r9): 前缀提交）"
     )
@@ -452,8 +459,25 @@ def test_ratchet_rule_over300_must_be_legacy():
         legacy={},
     )
     assert any("[超限未进legacy]" in p and "src/x.py::big" in p for p in problems)
-    # 同数据进 legacy 后干净（d 规则视角：已登记，无论数值多大）
+    # 同数据进 legacy 后干净（d 规则视角：已登记；数值仍 >300，故 e 也不报）
     assert _ratchet_problems({"src/x.py::big": 350}, {}, {"src/x.py::big": 350}) == []
+
+
+def test_ratchet_rule_legacy_not_oversized():
+    """规则 e 红证据（合成数据）：legacy 塞小函数巨值 → [legacy未超限]。
+
+    独立审查 P2-2 的反例：实测 50 行的函数登记成 legacy 5000 行，旧四规则下
+    全部安静（非死键、无增长、>300 只在 fl 检、已登记故 d 不报）——等于把任意
+    小函数抬到"永不可能触线"的巨值锚上。规则 e 把这条脱锚通道关死。
+    """
+    problems = _ratchet_problems(
+        measured={"src/x.py::small": 50},
+        function_lines={},
+        legacy={"src/x.py::small": 5000},
+    )
+    assert any("[legacy未超限]" in p and "src/x.py::small" in p for p in problems)
+    # 真正 >300 的存量进 legacy 仍然干净（e 不误报）
+    assert _ratchet_problems({"src/x.py::big": 301}, {}, {"src/x.py::big": 301}) == []
 
 
 def test_ratchet_rule_unregistered_threshold_band():
