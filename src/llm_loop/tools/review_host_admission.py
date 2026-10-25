@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from llm_loop.core.run_context import current_session_id
+from llm_loop.security_guard import has_strong_secret, is_template_name, sensitive_path_reason
 from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
 
@@ -83,6 +84,65 @@ _SENSITIVE_FILENAME = re.compile(
     r"(?:json|yaml|yml|toml|ini|txt|env|key))$",
     re.IGNORECASE,
 )
+
+# EVO-20261025-4c041655（人工批准）: 模板名豁免后的内容复核上限——超过该字节数的
+# 模板无法完整证明"只含占位符"，按命中处理（fail closed），不放宽、不跳过。
+# 取 400_000 而不是更大的值：committed 分支走 _git("show")，它的回传上限就是
+# 400_000（超限抛 git_state_too_large）；两个分支共用同一条边界，才不会出现
+# "committed 大模板静默跳过内容复核"的 fail-open（独立审查实测反例：448KB 模板）。
+_TEMPLATE_SCAN_MAX_BYTES = 400_000
+
+
+def _name_is_sensitive(name: str) -> bool:
+    """Changed-path 名字级敏感判定；模板名放行，内容由 _template_body_has_secret 复核.
+
+    EVO-20261025-4c041655: `.env.example` 等模板名此前被 _SENSITIVE_FILENAME 整名
+    拒绝，导致任何动过模板的提交范围永久拿不到 full_test/git_push 准入；产品侧
+    security_guard 的契约相反（模板名放行 + 内容强特征扫描）。此处对齐该契约：
+    仅模板名（.example/.sample/.template/.dist，见 security_guard.is_template_name）
+    豁免名字级拒绝，非模板名保持原行为。
+    """
+    if is_template_name(name):
+        return False
+    # 语义要求：非模板名的判定是「原正则 OR security_guard」的并集，只许更严不许放松。
+    return bool(_SENSITIVE_FILENAME.search(name)) or sensitive_path_reason(name) is not None
+
+
+def _template_body_has_secret(repo: Path, name: str, ref: str | None) -> bool:
+    """模板文件内容级复核：ref=None 读工作树，否则读该 ref 下的 blob；无法证明只含占位符时 fail closed.
+
+    EVO-20261025-4c041655: 名字豁免只代表"预期是占位符模板"，真实密钥仍必须拒绝。
+    边界：
+    - ref 下路径不存在（删除/从未存在）-> False：没有内容可提交。
+    - ref 下存在但读不出来（超 _git 回传上限、git 异常）-> True：读不完就按命中处理。
+    - 工作树路径已删除/非普通文件/符号链接 -> False：不读内容（其内容不进 commit
+      物料，committed blob 仍由上面的 git show 分支复核；未跟踪的符号链接由未跟踪
+      循环的 review_untracked_path_unsafe 直接拒绝）。
+    - 工作树读不到（OSError）或内容超过 _TEMPLATE_SCAN_MAX_BYTES -> True。
+    """
+    if ref is not None:
+        try:
+            body = _git(repo, "show", f"{ref}:{name}")
+        except ValueError:
+            # 不能把 ValueError 一律当成"已删除"：_git 在 blob 超 400_000 字节时抛
+            # git_state_too_large，按已删除处理就等于大模板免检（fail-open）。
+            # 用 cat-file -e 把"不存在"与"存在但读不出来"分开，后者 fail closed。
+            try:
+                _git(repo, "cat-file", "-e", f"{ref}:{name}")
+            except ValueError:
+                return False      # 该 ref 下确实没有这个路径
+            return True
+    else:
+        path = repo / name
+        if path.is_symlink() or not path.is_file():
+            return False          # 工作树已删除/非普通文件
+        try:
+            body = path.read_bytes()
+        except OSError:
+            return True           # 读不到就按命中处理
+    if len(body) > _TEMPLATE_SCAN_MAX_BYTES:
+        return True
+    return has_strong_secret(body.decode("utf-8", "replace"))
 
 
 def _has_document_editor(raw: dict[str, Any]) -> bool:
@@ -570,8 +630,19 @@ def _source_snapshot(
     working_names = _diff_names("HEAD") if include_worktree else []
     # Sensitive-path refusal covers EVERY changed path, including excluded
     # runtime-output paths: exclusion may not become a smuggling channel.
-    if any(_SENSITIVE_FILENAME.search(name) for name in committed_names + working_names):
-        raise ValueError("review_sensitive_tracked_path_refused")
+    # EVO-20261025-4c041655: 模板名在 _name_is_sensitive 中豁免，但必须通过
+    # 内容级复核——committed 读 frozen_head 下的 blob，working 读工作树；
+    # 占位符模板可审，内容含真实密钥仍拒，拒绝码不变。
+    for name in committed_names + working_names:
+        if _name_is_sensitive(name):
+            raise ValueError("review_sensitive_tracked_path_refused")
+    for name in committed_names:
+        if is_template_name(name) and _template_body_has_secret(repo, name, frozen_head):
+            raise ValueError("review_sensitive_tracked_path_refused")
+    if include_worktree:
+        for name in working_names:
+            if is_template_name(name) and _template_body_has_secret(repo, name, None):
+                raise ValueError("review_sensitive_tracked_path_refused")
     committed = _path_diffs(committed_names, base, frozen_head)
     # EVO-20261021-2f22aae5 (proposal A): committed runtime-output monster
     # diffs are projection-truncated with an explicit marker (see
@@ -592,7 +663,12 @@ def _source_snapshot(
         if not raw_name:
             continue
         name = raw_name.decode("utf-8", "strict")
-        if _SENSITIVE_FILENAME.search(name):
+        if _name_is_sensitive(name):
+            raise ValueError("review_sensitive_untracked_path_refused")
+        # EVO-20261025-4c041655: 模板名的内容复核也先于 runtime-output 排除——名字级
+        # 检查本就在排除之前（排除不得成为夹带通道），模板名若只看排除之后，reports/
+        # 下带真实密钥的模板就会被静默放行（独立审查实测反例）。
+        if is_template_name(name) and _template_body_has_secret(repo, name, None):
             raise ValueError("review_sensitive_untracked_path_refused")
         if _is_runtime_output(name):
             excluded_untracked += 1
