@@ -128,6 +128,11 @@ def main() -> int:
     OUT_SCENARIOS.write_text(
         json.dumps(
             {
+                # name/version 供 run_eval.py 报告头部与 report.json 的
+                # scenario_version 消费；version 读自 manifest.json
+                # （单一出处，防与 manifest 漂移），name 为本集稳定标识。
+                "name": "heldout-v1",
+                "version": manifest["version"],
                 "source": "evals/heldout/v1/manifest.json",
                 "note": "机械转换产物；题面原样搬运。转换清单见 conversion_index.json",
                 "scenarios": scenarios,

@@ -1,4 +1,6 @@
 {
+  "name": "heldout-v1",
+  "version": "v1",
   "source": "evals/heldout/v1/manifest.json",
   "note": "机械转换产物；题面原样搬运。转换清单见 conversion_index.json",
   "scenarios": [
