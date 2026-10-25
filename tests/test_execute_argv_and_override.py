@@ -31,6 +31,7 @@ from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
+from tests import env_channel
 
 # 灾难样本运行时拼接（源文件不出现整字面形态）
 _ROOT = chr(47)  # 根本体
@@ -91,6 +92,10 @@ def record_popen(monkeypatch):
 # ── A. argv 结构化执行（P2-2） ──
 
 
+@pytest.mark.skipif(
+    env_channel.in_git_worktree_detached_root(),
+    reason="环境受限：worktree 门通道隔离 HOME 下 env 脱敏白名单集不同（主树绿，非代码回归）【RED-29】",
+)
 def test_argv_python_print(tmp_path):
     """argv=['python','-c','print(1)'] 成功执行，stdout 如实回传并标注 exec_mode."""
     tool, _ = _make(tmp_path)

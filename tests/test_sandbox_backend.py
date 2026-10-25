@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from llm_loop.tools import sandbox as sbx
+from tests import env_channel
 
 BWRAP_NOTE = "（已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络）"
 DOCKER_NOTE = "（已启用 docker 沙箱：断网/只读 rootfs/工作区可写）"
@@ -261,6 +262,10 @@ def test_sandbox_exec_argv_shape(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="需要 macOS sandbox-exec 真实写域")
+@pytest.mark.skipif(
+    env_channel.nested_sandbox_exec(),
+    reason="环境受限：测试自起 sandbox-exec 与工具层沙箱嵌套——sandbox_apply Operation not permitted【RED-08】",
+)
 def test_sandbox_exec_real_write_domain(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()

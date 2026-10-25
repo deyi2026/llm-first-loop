@@ -25,6 +25,7 @@ from llm_loop.resources.task_budget_operator_mailbox import (
 )
 from llm_loop.resources.task_budget_operator_proof import OperatorApprovalVerifier
 from llm_loop.resources.task_budget_store import TaskBudgetDeniedError
+from tests import env_channel
 
 
 def _fixture(tmp_path: Path):
@@ -81,6 +82,11 @@ def _review(config, event, monkeypatch):
     )
 
 
+@pytest.mark.skipif(
+    env_channel.operator_mailbox_absent(),
+    reason="环境受限：本通道 tmp 根目录 gid=wheel 且 SGID 不可设置，合格 operator "
+           "mailbox ACL 前置不可达成（operator_human_review_or_mailbox_not_qualified）【RED-12】",
+)
 def test_exact_human_challenge_durable_one_shot_and_valid_op1(tmp_path: Path, monkeypatch) -> None:
     config, event, verifier = _fixture(tmp_path)
     approval_path = _review(config, event, monkeypatch)
@@ -113,6 +119,10 @@ def test_not_tty_never_approves(tmp_path: Path, monkeypatch) -> None:
                             event_id=event.event_id)
 
 
+@pytest.mark.skipif(
+    env_channel.operator_mailbox_absent(),
+    reason="环境受限：同 RED-12——mailbox ACL 资格前置不可达成【RED-13】",
+)
 def test_actual_same_uid_denied_as_independent_web(tmp_path: Path, monkeypatch) -> None:
     config, event, _ = _fixture(tmp_path)
     _review(config, event, monkeypatch)
@@ -167,6 +177,10 @@ def test_changed_event_after_human_review_denied(tmp_path: Path, monkeypatch) ->
     assert list(config.mailbox_dir.glob("*.json")) == []
 
 
+@pytest.mark.skipif(
+    env_channel.operator_mailbox_absent(),
+    reason="环境受限：同 RED-12——mailbox ACL 资格前置不可达成【RED-14】",
+)
 def test_mailbox_fsync_uncertainty_cannot_auto_retry(tmp_path: Path, monkeypatch) -> None:
     config, event, _ = _fixture(tmp_path)
     _tty(monkeypatch)
@@ -219,6 +233,10 @@ def test_bridge_missing_mailbox_only_waits_bounded_time(tmp_path: Path, monkeypa
         bridge.issue_for_event(event)
 
 
+@pytest.mark.skipif(
+    env_channel.operator_mailbox_absent(),
+    reason="环境受限：同 RED-12——mailbox ACL 资格前置不可达成【RED-15】",
+)
 def test_bridge_valid_signed_op1_sends_only_bound_event_to_service(
     tmp_path: Path, monkeypatch,
 ) -> None:

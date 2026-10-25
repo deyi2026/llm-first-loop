@@ -21,6 +21,7 @@ import pytest
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.introspection import tools_feishu_outbound as tfo
+from tests import env_channel
 
 # 高置信密钥样例（格式真实、值伪造，仅用于触发 security_guard.anthropic_key 模式）
 _FAKE_ANTHROPIC_KEY = "sk-ant-api03-FAKE000000000000000000000000000000"
@@ -187,6 +188,11 @@ def test_attachment_inside_workspace_data_passes(ws_root, mock_feishu, monkeypat
     assert mock_feishu["send_file"].called
 
 
+@pytest.mark.skipif(
+    env_channel.tmpdir_redirected(),
+    reason="环境受限：沙箱写域令 tempfile 回落 /tmp，tmp_path 落入允许根，"
+           "outside_workspace 前置假设（tmp_path 在 /private/var）失效【RED-06】",
+)
 def test_attachment_outside_workspace_denied(ws_root, mock_feishu, tmp_path, monkeypatch):
     """工作区/data//tmp 之外的文件拒绝：attachment_path_outside_workspace."""
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_user12345678")
@@ -241,6 +247,10 @@ def test_attachment_env_file_denied(ws_root, mock_feishu, monkeypatch):
     assert not mock_feishu["send_file"].called
 
 
+@pytest.mark.skipif(
+    env_channel.tmpdir_redirected(),
+    reason="环境受限：同 RED-06——tmp_path 落入 /tmp 允许根，symlink 越界目标不再越界【RED-07】",
+)
 def test_attachment_symlink_escape_denied(ws_root, mock_feishu, tmp_path, monkeypatch):
     """工作区内 symlink 指向工作区外文件 → realpath 越界拒绝."""
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_user12345678")
