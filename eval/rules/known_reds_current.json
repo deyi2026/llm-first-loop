@@ -203,7 +203,7 @@
     },
     {
       "id": "RED-29",
-      "test": "tests/unit/test_execute_command_scrubs_env.py::test_control_plane_env_scrubbed",
+      "test": "tests/test_execute_argv_and_override.py::test_argv_python_print",
       "kind": "environment_gate_worktree",
       "attribution": "env 脱敏白名单集在隔离 HOME/worktree 环境下不同；主树绿【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
       "since": "2026-10-25"
