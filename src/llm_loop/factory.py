@@ -397,6 +397,43 @@ def _registry_is_production_default(settings: Any) -> bool:
         return False
 
 
+_DEFAULT_WORKSPACE_ROOT_ENV = "LFL_DEFAULT_WORKSPACE_ROOT"
+
+
+class DefaultWorkspaceRootError(RuntimeError):
+    """P1-3: 默认工作区根不可用（env 显式指向不存在/不可建目录）.
+
+    fail-fast 防配置漂移时静默回退代码根或误建任意显式路径。
+    """
+
+
+def _resolve_default_workspace_root() -> Path:
+    """P1-3: workspace_root 未显式给定时的默认工作区根解析.
+
+    优先级: LFL_DEFAULT_WORKSPACE_ROOT env > ~/lfl-workspace（缺省）。
+    - env 显式设置（非空白）但目录不存在 → DefaultWorkspaceRootError
+      （不自动创建显式配置路径——缺省值才允许 mkdir，防手误静默建目录）；
+    - env 指向存在目录 / 缺省值 → 幂等 mkdir(parents, 0700) 后使用。
+    与 LFL_WORKSPACE_ROOT（代码身份锚，runtime/identity.py enforce 校验）
+    语义完全无关：本变量只决定「AI 默认可写工作区根」，绝不参与身份校验。
+    """
+    raw = os.environ.get(_DEFAULT_WORKSPACE_ROOT_ENV, "").strip()
+    if raw:
+        root = Path(raw).expanduser().resolve()
+        if not root.is_dir():
+            raise DefaultWorkspaceRootError(
+                f"{_DEFAULT_WORKSPACE_ROOT_ENV}={raw} 指向的目录不存在: {root}；"
+                "默认工作区根 fail-fast（显式配置不自动创建，防静默漂移）"
+            )
+    else:
+        root = (Path.home() / "lfl-workspace").resolve()
+    try:
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise DefaultWorkspaceRootError(f"默认工作区根不可创建/不可访问: {root}: {exc}") from exc
+    return root
+
+
 def _activate_default_workspace(engine: Any, settings: Any, *, workspace_root: str | None = None) -> None:
     """工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区.
 
@@ -404,26 +441,33 @@ def _activate_default_workspace(engine: Any, settings: Any, *, workspace_root: s
     learning 引擎的 session 根停留在平铺 data/sessions（owner key "."），
     读取 web 分桶会话全部 SessionIdConflictError（9.3h 240 次
     worker_exception）。两分支共用本函数，杜绝再次分叉。
-    默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）；
-    例外（EVO-20260923 根治）：cwd 位于系统临时目录且注册表为生产默认
+    P1-3（2026-10-25）默认工作区根迁出代码根：workspace_root 未显式给定时
+    默认根 = LFL_DEFAULT_WORKSPACE_ROOT env（缺省 ~/lfl-workspace，
+    _resolve_default_workspace_root 解析+幂等 mkdir 0700；env 显式指向
+    不存在目录 → fail-fast），不再是启动 cwd——AI 默认可写区与代码根分离。
+    显式 workspace_root 参数（installed CLI 绑定/服务显式装配）仍最高优先。
+    例外（EVO-20260923 根治，语义保留）：根位于系统临时目录且注册表为生产默认
     data 目录时不自动注册（评测/子代理/一次性调试目录不再进注册表）。
     """
     from llm_loop.workspace.store import WorkspaceMigrationConflictError, WorkspaceStore
 
     workspace_store = WorkspaceStore(settings.data_dir)
-    cwd = Path(workspace_root).expanduser().resolve() if workspace_root is not None else Path.cwd()
-    if _cwd_in_system_temp(cwd) and _registry_is_production_default(settings):
-        # 根治点：临时 cwd 不写入生产注册表。隔离运行（DATA_DIR 显式指向
+    if workspace_root is not None:
+        root = Path(workspace_root).expanduser().resolve()
+    else:
+        root = _resolve_default_workspace_root()
+    if _cwd_in_system_temp(root) and _registry_is_production_default(settings):
+        # 根治点：临时根不写入生产注册表。隔离运行（DATA_DIR 显式指向
         # 临时/评测目录）不受影响——那类注册表本身就是一次性的，照常注册。
         logger.info(
-            "[workspace] cwd 位于系统临时目录，跳过默认工作区自动注册: %s", cwd
+            "[workspace] 默认工作区根位于系统临时目录，跳过自动注册: %s", root
         )
         engine.workspace_store = workspace_store
         current_ws = workspace_store.get_current()
         if current_ws is not None:
             engine.set_workspace(current_ws.path, current_ws.id)
         return
-    default_ws = workspace_store.register(str(cwd))  # 幂等注册
+    default_ws = workspace_store.register(str(root))  # 幂等注册
     try:
         workspace_store.migrate_legacy_sessions(settings.data_dir, default_ws)
     except WorkspaceMigrationConflictError:

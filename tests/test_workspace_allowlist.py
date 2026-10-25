@@ -209,3 +209,31 @@ def test_degenerate_cwd_not_added_as_allowed_root(tmp_path, monkeypatch):
     monkeypatch.chdir(proj)
     roots = _workspace_allowed_roots(tmp_path / "data")
     assert proj.resolve() in roots  # 安全 cwd 仍可注册（安装式部署）
+
+
+# ── P1-3（2026-10-25）默认工作区根 ~/lfl-workspace：注册+switch 断言 ──
+def test_default_workspace_root_under_fakehome_register_and_switch(tmp_path, monkeypatch):
+    """P1-3 设计 §7.1：HOME→tmp 假家目录时 ~/lfl-workspace 必须可注册可切换.
+
+    默认工作区根迁出代码根后，factory 的 _resolve_default_workspace_root 解析
+    出 ~/lfl-workspace 并注册为默认工作区——本用例固化"家目录子树里的
+    lfl-workspace 注册+switch 全链路可用"（迁移前后语义不断链）。
+    """
+    fake_home = tmp_path / "fakehome-lfl"
+    ws_root = fake_home / "lfl-workspace"
+    ws_root.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    store = _store(tmp_path)
+
+    ws = store.register(str(ws_root))
+    assert ws.path == str(ws_root.resolve())
+    assert ws.id == workspace_key(ws_root)
+
+    store.switch(ws.id)
+    current = store.get_current()
+    assert current is not None
+    assert current.id == ws.id and current.path == str(ws_root.resolve())
+    # 幂等：重复注册同一路径不产生第二个条目
+    again = store.register(str(ws_root))
+    assert again.id == ws.id
+    assert [w.id for w in store.list()] == [ws.id]
