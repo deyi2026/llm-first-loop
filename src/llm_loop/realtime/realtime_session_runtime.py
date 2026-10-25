@@ -406,8 +406,17 @@ class RealtimeSessionRuntime:
             try:
                 task_ref = await asyncio.to_thread(self._commit_sink, record)
             except Exception:  # noqa: BLE001 - 提交失败如实报错，不伪造成功
+                # P2-1：sink 失败 → 回滚本次绑定（否则帧永久绑给 doomed turn，
+                # 重试拿新 turn_id 会 frame_already_bound，视觉轮次走死）。回滚
+                # 自身故障不顶替既有错误面（suppress，最多回到修复前状态）。
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(
+                        self._keyframes.unbind_commit,
+                        turn_id=turn_id,
+                        frame_ids=[e.frame_id for e in evidences],
+                    )
                 await self._emit("error", {"code": 503, "reason": "task_submit_failed", **reply_to})
-                return  # P2-4：音频保留；同帧已绑定本 turn，重提交须换新帧（否则 frame_already_bound）
+                return  # P2-4：音频保留；绑定已回滚，同帧可随新 turn_id 重提交
         # P2-4：仅当绑定成功且任务已入队（即将发 turn.committed）才消费音频。
         # 只移除本次转写过的快照长度——等待期间新到的帧保留在缓存继续累积
         # （仍受 max_pcm_bytes/max_pcm_seconds 双限与既有超限降级路径约束，

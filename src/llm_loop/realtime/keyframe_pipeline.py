@@ -33,7 +33,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -528,6 +528,23 @@ class KeyframePipeline:
             evidence.kind,
         )
         return "bound", (evidence,)
+
+    def unbind_commit(self, *, turn_id: str, frame_ids: Iterable[str]) -> int:
+        """P2-1：提交点绑定回滚——仅释放恰好绑定到 ``turn_id`` 的给定帧。
+
+        commit sink 失败时由 runtime 调用：帧回到未绑定态，可随新 turn 重新提交
+        （否则帧永久绑给 doomed turn，重试会 ``frame_already_bound``）。turn 不
+        匹配/未知帧为 no-op（见 :meth:`KeyframeStore.unbind`）；返回释放帧数。
+        """
+        released = sum(1 for fid in frame_ids if self._store.unbind(fid, turn_id=turn_id))
+        if released:
+            logger.info(
+                "realtime_visual_unbound media_session_id=%s turn_id=%s frames=%s",
+                self._media_session_id,
+                turn_id,
+                released,
+            )
+        return released
 
     def readback(self, frame_id: str) -> str:
         """授权回读入口：保留期内返回 content_ref；到期/删除 → 明确失效。"""
