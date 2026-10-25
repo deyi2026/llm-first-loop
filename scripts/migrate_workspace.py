@@ -473,6 +473,12 @@ def run_rehearsal_checks(
     identity_root = mirror_data / "sessions" / ".identity"
     pre_owners = _owner_distribution(identity_root)
     pre_registry = _registry_snapshot(mirror_data)
+    # R5(2026-10-25 实测): 校验 1 基准=镜像内快照（复制后、迁移前统计），非调用方
+    # 复制前统计的源——真实 data/ 是活数据（活跃会话持续写入），源统计与复制
+    # 之间存在 TOCTOU 竞态（实测 5320 文件一致但字节差 3058）。镜像内自一致
+    # （改名前后镜像统计相等）才是"迁移逻辑保真"的判定；源→镜像复制保真由
+    # Phase 1 backup 的逐文件 SHA256SUMS 机制独立保证。
+    mirror_pre_stats = _dir_stats(mirror_data / "sessions" / old_key)
 
     audit_stub = AuditLog(mirror_data.parent / "rehearsal-audit.json")
     results = run_core_migration(
@@ -485,12 +491,15 @@ def run_rehearsal_checks(
         audit=audit_stub,
     )
 
-    # 1) 分区改名后文件数与总字节和源一致
+    # 1) 分区改名后文件数与总字节与镜像快照一致（源统计仅作参考：活数据有竞态）
     post_stats = _dir_stats(mirror_data / "sessions" / new_key)
     checks["partition_stats_match"] = {
-        "pass": post_stats == source_partition_stats,
-        "source": source_partition_stats,
+        "pass": post_stats == mirror_pre_stats,
+        "baseline": "mirror_snapshot_before_migration",
+        "mirror_before": mirror_pre_stats,
         "mirror": post_stats,
+        "source_reference": source_partition_stats,
+        "source_reference_note": "活数据源，统计时刻≠复制时刻，仅参考不判定",
     }
     # 2) .identity：old_key 全部改写为 new_key；其它 owner 逐一不变
     post_owners = _owner_distribution(identity_root)
