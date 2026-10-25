@@ -18,6 +18,7 @@ auth.py 内实现并有既有测试覆盖，此处不重复。
 from __future__ import annotations
 
 import os
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -527,3 +528,112 @@ def test_auth_module_docstring_declares_in_memory_session_boundary():
     assert web_auth.__doc__ is not None
     assert "内存" in web_auth.__doc__
     assert "重启" in web_auth.__doc__
+
+
+# ── P0(2026-10-25)：rehash 写回保行边界；写回后独立重读 .env 必须仍有效 ──────
+# 事故：trailing 逻辑写反（有 \n 反删、无 \n 反加），把下一配置项拼入哈希行
+# （实测 WEB_SESSION_TTL_SECONDS 并入 WEB_LOGIN_PASSWORD_HASH），旧进程内存
+# 哈希掩盖，迁移重启重读 .env 后登录全拒。以下用例直接锁死该回归面。
+
+_HASH_LINE_RE = re.compile(
+    r"^(?:export )?WEB_LOGIN_PASSWORD_HASH=pbkdf2_sha256\$(\d+)\$(\S+)$"
+)
+
+
+def _reload_env_and_validate(env_file):
+    """模拟重启：从磁盘独立重读 .env，校验哈希行独立完整、下一配置项完好。"""
+    lines = env_file.read_text(encoding="utf-8").splitlines()
+    hash_lines = [
+        ln
+        for ln in lines
+        if ln.startswith(("WEB_LOGIN_PASSWORD_HASH=", "export WEB_LOGIN_PASSWORD_HASH="))
+    ]
+    assert len(hash_lines) == 1, f"哈希行必须恰好一行，实际 {len(hash_lines)}"
+    match = _HASH_LINE_RE.match(hash_lines[0])
+    assert match, f"哈希行不得与其他配置拼接: {hash_lines[0][:48]}…"
+    assert match.group(1) == "600000"
+    assert "WEB_SESSION_TTL_SECONDS=43200" in lines, "下一配置项必须独立成行且值完整"
+    return match
+
+
+@pytest.mark.parametrize("hash_last", [False, True])
+def test_persist_rehash_preserves_line_boundaries(tmp_path, monkeypatch, hash_last):
+    """哈希行带换行时写回必须保留换行（中位与末位两种布局）。"""
+    old_hash = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    new_hash = hash_login_password(_TEST_PASSWORD, iterations=600_000)
+    if hash_last:
+        content = f"WEB_SESSION_TTL_SECONDS=43200\nWEB_LOGIN_PASSWORD_HASH={old_hash}\n"
+    else:
+        content = f"WEB_LOGIN_PASSWORD_HASH={old_hash}\nWEB_SESSION_TTL_SECONDS=43200\n"
+    env_file = tmp_path / ".env"
+    env_file.write_text(content, encoding="utf-8")
+    monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
+
+    assert (
+        web_auth._persist_rehashed_env_value(
+            "WEB_LOGIN_PASSWORD_HASH", old_hash, new_hash
+        )
+        is True
+    )
+    _reload_env_and_validate(env_file)
+
+
+def test_persist_rehash_last_line_without_trailing_newline(tmp_path, monkeypatch):
+    """末行原本无换行：写回保持无换行，不引入行尾差异。"""
+    old_hash = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    new_hash = hash_login_password(_TEST_PASSWORD, iterations=600_000)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"WEB_SESSION_TTL_SECONDS=43200\nWEB_LOGIN_PASSWORD_HASH={old_hash}",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
+
+    assert (
+        web_auth._persist_rehashed_env_value(
+            "WEB_LOGIN_PASSWORD_HASH", old_hash, new_hash
+        )
+        is True
+    )
+    raw = env_file.read_text(encoding="utf-8")
+    assert raw.endswith(new_hash) and not raw.endswith("\n")
+
+
+def test_login_upgrade_then_full_reload_still_authenticates(
+    build_test_engine, fake_settings, monkeypatch, tmp_path
+):
+    """端到端：升级写回后清空进程态模拟重启重读 .env，登录必须仍成功。"""
+    old_hash = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"WEB_LOGIN_PASSWORD_HASH={old_hash}\nWEB_SESSION_TTL_SECONDS=43200\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
+    monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", old_hash)
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    engine, _ = build_test_engine([])
+    client = TestClient(build_app(engine=engine), base_url="https://app.example.com")
+
+    first = client.post(
+        "/auth/login",
+        data={"password": _TEST_PASSWORD, "next": "/ui/v2/"},
+        headers={"Origin": "https://app.example.com"},
+        follow_redirects=False,
+    )
+    assert first.status_code == 303
+    _reload_env_and_validate(env_file)
+
+    reloaded = env_file.read_text(encoding="utf-8")
+    for ln in reloaded.splitlines():
+        key, _, value = ln.partition("=")
+        monkeypatch.setenv(key, value)
+    engine2, _ = build_test_engine([])
+    client2 = TestClient(build_app(engine=engine2), base_url="https://app.example.com")
+    second = client2.post(
+        "/auth/login",
+        data={"password": _TEST_PASSWORD, "next": "/ui/v2/"},
+        headers={"Origin": "https://app.example.com"},
+        follow_redirects=False,
+    )
+    assert second.status_code == 303, "重读磁盘后的哈希必须仍能通过认证（事故回归点）"

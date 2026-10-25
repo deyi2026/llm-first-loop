@@ -288,7 +288,10 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
     if target is None:
         return False
     index, prefix = target
-    trailing = "" if lines[index].endswith("\n") else "\n"
+    # P0(2026-10-25): 原行有换行必须保留换行。此前写反（有\n反删、无\n反加），
+    # 会把下一配置项拼进本行——实测曾将 WEB_SESSION_TTL_SECONDS 拼入哈希行，
+    # 重启重读 .env 后登录全拒（07:52 升级写回触发，迁移重启爆发）。
+    trailing = "\n" if lines[index].endswith("\n") else ""
     lines[index] = f"{prefix}{key}={new_value}{trailing}"
     tmp = path.with_name(f".{path.name}.rehash.tmp")
     try:
