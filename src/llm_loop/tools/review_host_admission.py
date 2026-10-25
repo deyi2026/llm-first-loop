@@ -113,6 +113,10 @@ def _template_body_has_secret(repo: Path, name: str, ref: str | None) -> bool:
 
     EVO-20261025-4c041655: 名字豁免只代表"预期是占位符模板"，真实密钥仍必须拒绝。
     边界：
+    - 名字含控制字符（码位 <0x20 或 ==0x7f）-> True：git 对此类路径的
+      show / cat-file -e 都不可靠，"双失败"不能等同"不存在"（否则病态名
+      模板静默跳过内容复核——fail-open，独立审查 P2-3）；ref 与工作树
+      两分支统一在入口判定。
     - ref 下路径不存在（删除/从未存在）-> False：没有内容可提交。
     - ref 下存在但读不出来（超 _git 回传上限、git 异常）-> True：读不完就按命中处理。
     - 工作树路径已删除/非普通文件/符号链接 -> False：不读内容（其内容不进 commit
@@ -120,6 +124,12 @@ def _template_body_has_secret(repo: Path, name: str, ref: str | None) -> bool:
       循环的 review_untracked_path_unsafe 直接拒绝）。
     - 工作树读不到（OSError）或内容超过 _TEMPLATE_SCAN_MAX_BYTES -> True。
     """
+    # git 对含控制字符（换行/DEL 等）的路径，show 与 cat-file -e 都不可靠：
+    # 二者双失败在既有代码里会走「该 ref 下确实没有这个路径」→ False，等于把
+    # 病态名模板从内容复核里静默放走（独立审查 P2-3）。名字本身已不可信，
+    # 统一按命中处理 fail closed（ref 分支与工作树分支共用本入口判定）。
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+        return True
     if ref is not None:
         try:
             body = _git(repo, "show", f"{ref}:{name}")

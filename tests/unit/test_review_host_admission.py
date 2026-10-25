@@ -1585,3 +1585,38 @@ def test_runtime_output_env_example_with_secret_is_refused(tmp_path: Path) -> No
     assert refused["accepted"] is False
     assert refused["reason"] == "review_sensitive_untracked_path_refused"
     assert runner.started == 0
+
+
+def test_control_char_template_name_fails_closed(tmp_path: Path) -> None:
+    """名字含控制字符的模板 fail closed（审查 P2-3）：ref 与工作树两分支统一入口判定.
+
+    git 对含控制字符的路径名 show / cat-file -e 都不可靠，"双失败"曾被等同
+    "不存在"→跳过内容复核（fail-open）；修复后名字本身即按命中处理。
+    """
+    repo = _repo(tmp_path)
+    # (1) 工作树分支（ref=None）：名字含 "\n" 即按命中处理，不读任何内容
+    assert rha._template_body_has_secret(repo, "evil\n.env.example", None) is True
+    # (2) 真实 commit 一个名字含 "\n" 的模板后按该 name 调（ref 分支）
+    name = "evil\ncommitted.env.example"
+    (repo / name).write_text("LFL_API_KEY=\n")
+    subprocess.run(["git", "-C", str(repo), "add", name], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "newline template"], check=True)
+    assert rha._template_body_has_secret(repo, name, "HEAD") is True
+    # DEL（0x7f）同样入口拦截
+    assert rha._template_body_has_secret(repo, "del\x7f.env.example", "HEAD") is True
+
+
+def test_normal_template_names_keep_existing_branches(tmp_path: Path) -> None:
+    """控制字符判定不得改变既有正常路径行为（不回归）."""
+    repo = _repo(tmp_path)
+    (repo / ".env.example").write_text("LFL_API_KEY=\n")
+    assert rha._template_body_has_secret(repo, ".env.example", None) is False
+    subprocess.run(["git", "-C", str(repo), "add", ".env.example"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "env template"], check=True)
+    fake_key = "AKIA" + "A" * 16  # 拼接构造假密钥，避免测试源码出现密钥形态字面量
+    (repo / ".env.example").write_text(f"AWS_ACCESS_KEY_ID={fake_key}\n")
+    # HEAD 仍是占位符 -> False；工作树已被写真密钥 -> True（两分支语义原样）
+    assert rha._template_body_has_secret(repo, ".env.example", "HEAD") is False
+    assert rha._template_body_has_secret(repo, ".env.example", None) is True
+    # ref 下不存在（从未登记的路径）-> False 维持
+    assert rha._template_body_has_secret(repo, "never.env.example", "HEAD") is False
