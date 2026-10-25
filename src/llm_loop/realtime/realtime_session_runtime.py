@@ -31,8 +31,9 @@ from llm_loop.realtime.keyframe_pipeline import (
 )
 from llm_loop.realtime.provider_adapter import (
     AudioFormat,
+    TranscriptionEvent,
     TranscriptionEventKind,
-    TranscriptionTransport,
+    VoiceStackTransport,
 )
 
 SendText = Callable[[str], Awaitable[None]]
@@ -71,7 +72,7 @@ class RealtimeSessionRuntime:
         *,
         media_session_id: str,
         session_id: str,
-        transport: TranscriptionTransport,
+        transport: VoiceStackTransport,
         transcription_url: str,
         send_text: SendText,
         send_binary: SendBinary,
@@ -135,7 +136,7 @@ class RealtimeSessionRuntime:
         self._pcm_started = None
         self._pcm_generation += 1
 
-    def _poll_event(self) -> object:
+    def _poll_event(self) -> TranscriptionEvent | None:
         """非阻塞取一个流式事件；传输不支持 `timeout` 时退化为阻塞取。"""
         try:
             return self._transport.next_event(timeout=0.05)
@@ -347,6 +348,9 @@ class RealtimeSessionRuntime:
         if problem:
             await self._emit("error", {"code": 409, "reason": problem, **reply_to})
             return  # 无副作用：音频保留，客户端修正后可重提交
+        # validate_commit_visual 的首检即 isinstance(visual, dict)，通过 ⇒ 必为映射。
+        # 显式收窄而不是 cast，让「校验通过」这个事实留在可检查的类型里。
+        assert isinstance(visual, dict), "validated visual must be a mapping"
         if self._session_probe is not None:
             # P2-9a：目标会话不存在（如前端无会话 fallback "local"）→ 在消费
             # 音频/bind 之前拒绝（409 wrong_session，契约 §4 已枚举集合）。
@@ -386,6 +390,9 @@ class RealtimeSessionRuntime:
         if outcome == "rejected":
             await self._emit("error", {"code": 409, "reason": str(detail), **reply_to})
             return  # P2-4：音频保留（如 frame_already_bound），客户端修正后可重提交
+        # clarify/rejected 已在上方返回；走到这里 outcome 只能是 "bound"，detail 只能是
+        # 证据序列。用断言把这条不变式写成可检查的事实（而不是 cast 掩盖它）。
+        assert isinstance(detail, tuple), "bind_commit('bound') must carry an evidence tuple"
         evidences = detail
         task_ref = ""
         if self._commit_sink is not None:

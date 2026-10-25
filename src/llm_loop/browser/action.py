@@ -571,7 +571,12 @@ class BrowserActionAdapter:
         fail-closed ("redirect_recheck_unavailable:<type>") rather than
         silently trusting an unobservable landing.
         """
-        probe = getattr(self.capture_backend, "probe_page_target", None)
+        # 可选能力（`BrowserCaptureBackend` 契约里没有，旧后端也不实现）：
+        # 显式声明探针形状，而不是依赖 getattr 的隐式 Any——契约本身是动态的，
+        # 但动态边界应当写在类型上（下方 `info.get` 与 fail-closed 分支都依赖它）。
+        probe: Callable[[], dict[str, Any]] | None = getattr(
+            self.capture_backend, "probe_page_target", None
+        )
         if not callable(probe):
             return None  # 旧捕获后端无只读探针：无从复检，维持既有行为
         try:

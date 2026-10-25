@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import quote
@@ -27,15 +28,39 @@ from llm_loop.realtime.provider_adapter import (
 
 
 class HttpResponseLike(Protocol):
-    status_code: int
-    content: bytes
-    text: str
+    """响应最小形状（`httpx.Response` 满足它）。
+
+    三个成员都用只读 property 声明：`httpx.Response.content/text/status_code`
+    是只读 property，若协议声明成可写属性，真实响应会因「不可赋值」被判不兼容。
+    """
+
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def content(self) -> bytes: ...
+
+    @property
+    def text(self) -> str: ...
 
 
 class HttpClientLike(Protocol):
-    def post(self, url: str, **kwargs: object) -> HttpResponseLike: ...
+    """HTTP 客户端最小形状（`httpx.Client` 满足它；测试的 `FakeHttp` 也可）。
 
-    def get(self, url: str, **kwargs: object) -> HttpResponseLike: ...
+    参数逐个列出而不是 `**kwargs`：`httpx.Client.post` 用的是显式关键字参数、
+    没有 ``**kwargs``，把协议写成 ``**kwargs: Any`` 反而无法被它满足。
+    """
+
+    def post(
+        self,
+        url: str,
+        *,
+        files: Mapping[str, tuple[str, bytes, str]] | None = None,
+        data: Mapping[str, object] | None = None,
+        json: Mapping[str, object] | None = None,
+    ) -> HttpResponseLike: ...
+
+    def get(self, url: str) -> HttpResponseLike: ...
 
 
 class WsConnectionLike(Protocol):

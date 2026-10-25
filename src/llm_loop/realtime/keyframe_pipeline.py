@@ -36,6 +36,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from llm_loop.realtime.keyframe import Keyframe, KeyframeReadbackError, RetentionState, Selection
 from llm_loop.realtime.keyframe_store import KeyframeCacheFullError, KeyframeStore
@@ -46,7 +47,19 @@ logger = logging.getLogger(__name__)
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 ALLOWED_MIMES = frozenset({"image/jpeg", "image/png", "image/webp"})
 _EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-_MALFORMED_SELECTION = object()  # 哨兵：selection 字段畸形
+
+
+class _MalformedSelection:
+    """哨兵类型：``selection`` 字段畸形（唯一实例，见 `_MALFORMED_SELECTION`）。
+
+    用类型而非裸 ``object()`` 承载，才能让「畸形」与「已解析的 Selection」在
+    类型层面可区分，调用点无需 cast 即可收窄（行为与原先的同一性判断等价）。
+    """
+
+    __slots__ = ()
+
+
+_MALFORMED_SELECTION = _MalformedSelection()  # 哨兵：selection 字段畸形
 
 
 # 有界拒绝码（visual.frame.rejected / share 失败 reason；不携带内部细节）
@@ -133,6 +146,15 @@ class VisualEvidence:
         }
 
 
+# 提交点绑定结果：三态判别式联合（``outcome`` 收窄 ``detail`` 的类型）。
+# ``bound`` 携带证据序列；``clarify``/``rejected`` 携带有界原因串。
+CommitBinding = (
+    tuple[Literal["bound"], tuple[VisualEvidence, ...]]
+    | tuple[Literal["clarify"], str]
+    | tuple[Literal["rejected"], str]
+)
+
+
 @dataclass(frozen=True)
 class CommitRecord:
     """视觉提交点产物：用户原文原样 + 独立视觉证据注记（不篡改原文）。"""
@@ -192,9 +214,13 @@ class KeyframePipeline:
     # ------------------------------------------------------------------ 共享源
 
     def share_start(
-        self, source_id: str, source_epoch: int, label: str | None = None
+        self, source_id: object, source_epoch: object, label: object = None
     ) -> tuple[str, dict[str, object]]:
-        """登记活动共享源（allowlist）。epoch 变化 = 旧帧当前有效性失效（证据保留）。"""
+        """登记活动共享源（allowlist）。epoch 变化 = 旧帧当前有效性失效（证据保留）。
+
+        参数按上行信封原样接收（``object``）并在下方逐项校验：畸形值一律以
+        `MALFORMED` 有界拒绝，与侵入前的行为一致。
+        """
         if self._closed:
             return "rejected", {"reason": SESSION_CLOSED}
         if not isinstance(source_id, str) or not _NAME.fullmatch(source_id):
@@ -229,11 +255,15 @@ class KeyframePipeline:
             "resumed": resumed,
         }
 
-    def share_stop(self, source_id: str, source_epoch: int | None = None) -> tuple[str, dict[str, object]]:
+    def share_stop(self, source_id: object, source_epoch: object = None) -> tuple[str, dict[str, object]]:
         """停止共享：当前有效性失效；**证据仍保留**（Stale ≠ 删除，历史可答）。
 
         带 ``source_epoch`` 时必须与当前登记 epoch 一致，否则拒绝（不误停新代次源）。
+        参数按上行信封原样接收（``object``）：非字符串 ``source_id`` 不可能命中已登记
+        源，故与字典未命中同样以 `UNKNOWN_SOURCE` 拒绝（行为不变）。
         """
+        if not isinstance(source_id, str):
+            return "rejected", {"reason": UNKNOWN_SOURCE}
         state = self._sources.get(source_id)
         if state is None:
             return "rejected", {"reason": UNKNOWN_SOURCE}
@@ -313,7 +343,7 @@ class KeyframePipeline:
         if not data or not _magic_matches(data, str(mime)):
             return self._reject(MIME_UNSUPPORTED)  # 魔数与声明不符：拒绝
         selection = self._parse_selection(message.get("selection"))
-        if selection is _MALFORMED_SELECTION:
+        if isinstance(selection, _MalformedSelection):
             return self._reject(MALFORMED)
         data_sha = hashlib.sha256(data).hexdigest()
         existing = self._store.get(frame_id)
@@ -403,7 +433,7 @@ class KeyframePipeline:
             received_at_s=now,
         )
 
-    def _parse_selection(self, raw: object) -> object:
+    def _parse_selection(self, raw: object) -> Selection | None | _MalformedSelection:
         if raw is None:
             return None
         if not isinstance(raw, dict):
@@ -445,7 +475,7 @@ class KeyframePipeline:
             return UNKNOWN_SOURCE  # 从未共享：拒绝，不回退到任意最新帧
         return ""
 
-    def bind_commit(self, *, turn_id: str, visual: dict[str, object], text: str = "") -> tuple[str, object]:
+    def bind_commit(self, *, turn_id: str, visual: dict[str, object], text: str = "") -> CommitBinding:
         """提交点绑定候选帧：``("bound", evidences)`` / ``("clarify", question)`` /
         ``("rejected", reason)``（如该帧已绑给其他 turn：绑定互斥，见 KeyframeStore）。
 

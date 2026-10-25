@@ -55,7 +55,7 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return raw in _TRUTHY
 
 
-def _blocked_by_union(ip: ipaddress._BaseAddress) -> bool:  # noqa: SLF001 - 同模块内联使用
+def _blocked_by_union(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """拦截判定 = CGNAT ∪ not is_global ∪ 旧四条件（只收紧不放宽）."""
     if ip.version == 4 and ip in _CGNAT_V4:
         return True

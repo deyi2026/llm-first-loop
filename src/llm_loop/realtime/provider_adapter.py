@@ -164,13 +164,33 @@ class TranscriptionTransport(Protocol):
 
     def commit(self) -> None: ...
 
-    def next_event(self, timeout: float | None = None) -> TranscriptionEvent | None: ...
+    def next_event(self, *, timeout: float | None = None) -> TranscriptionEvent | None: ...
 
     def transcribe(self, url: str, segment: bytes) -> str: ...
 
     def flush(self) -> None: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class SpeechSynthesisTransport(Protocol):
+    """本地语音栈的**合成**能力（与转写能力分离声明）。
+
+    D1 转写契约刻意**不含**合成（`RTM-CAP-12` 结构性保证），因此 TTS 单列一条
+    协议，而不是往 `TranscriptionTransport` 里加 `response.create` 一类方法。
+    运行时同时需要两者时用 `VoiceStackTransport` 组合，能力边界仍然可分辨。
+    """
+
+    def synthesize(self, text: str) -> bytes: ...
+
+
+@runtime_checkable
+class VoiceStackTransport(TranscriptionTransport, SpeechSynthesisTransport, Protocol):
+    """本地语音栈传输：转写 + 合成（生产实现 `LocalVoiceStackTransport`）。
+
+    仅用于**类型组合**，不引入任何运行时分支；转写与合成仍各自独立可替换。
+    """
 
 
 @runtime_checkable
