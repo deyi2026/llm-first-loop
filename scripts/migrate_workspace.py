@@ -606,10 +606,15 @@ def cmd_backup(args: argparse.Namespace) -> int:
 
 def cmd_rehearse(args: argparse.Namespace) -> int:
     data_dir: Path = args.data_dir
-    failures = phase0_precheck(data_dir, args.old_key, args.new_root, args.web_port)
+    # R3(准入审核第九轮 P2-4): 演练按 runbook 在停机窗口前执行（真实 data/ 只读，
+    # 仅 backup 副本被复制到镜像），不需要服务全停——跳过"服务存活"类预检，
+    # 保留磁盘/目标根/run.lock 等只读安全预检。migrate/rollback 仍走完整 Phase 0。
+    full = phase0_precheck(data_dir, args.old_key, args.new_root, args.web_port)
+    failures = [f for f in full if "服务" not in f and "port" not in f.lower()]
     audit = AuditLog(args.audit_file)
     audit.append("rehearse.precheck", data_dir=str(data_dir), failures=failures,
-                 result="pass" if not failures else "fail")
+                 result="pass" if not failures else "fail",
+                 skipped_service_checks=[f for f in full if f not in failures])
     if failures:
         for f in failures:
             print(f"✗ [rehearse] 预检失败: {f}", file=sys.stderr)

@@ -3,7 +3,7 @@
   "note": "CI 红数对账的登记基线：当前**有效**的已知红项清单。与 docs/known-reds-20260909.md 的区别：后者是历史归因档案（含已退役/已修复项），本文件是门禁用的现行白名单。",
   "updated": "2026-10-25",
   "source": "docs/P1-3 全量门实测（serial 23 failed/11218 passed；1 条 env_gate 新签名已显式审查登记 runtime_env_access_baseline.json 后修复）",
-  "scope": "pytest tests/ -q -m 'not real_llm and not serial_signal'",
+  "scope": "pytest tests/ -q -m \"not real_llm and not serial_signal\"（xdist 全量与红数对账的 serial 复现阶段共用本基线；serial 阶段按 ci_gate 逻辑仅重跑 xdist 红文件，同键对账）",
   "registered": [
     {
       "id": "RED-01",
@@ -171,13 +171,6 @@
       "test": "tests/unit/test_assurance_p1_process_reviewer.py::test_stop_is_scoped_to_its_exact_task_not_neighbor_review",
       "kind": "environment_tool_sandbox",
       "attribution": "同上【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
-      "since": "2026-10-25"
-    },
-    {
-      "id": "RED-25",
-      "test": "tests/unit/test_eval_truncation_accounting.py::test_default_max_iterations_is_10",
-      "kind": "environment_tool_sandbox",
-      "attribution": "生产 .env LLM_MAX_ITERATIONS=500 注入，非代码回归【2026-10-25 P1-3 全量门实测归因；10-23 基线 3 红佐证（彼时工具层沙箱未上线）；非代码回归】",
       "since": "2026-10-25"
     }
   ]
