@@ -196,7 +196,11 @@ def check_env_structure(env_file: Path, *, strict_missing_hash: bool = False) ->
                     f"WEB_SESSION_TTL_SECONDS 第 {idx} 行值非纯整数秒（结构异常）"
                 )
         else:
-            # 关键键名出现在其它行内（非行首独立赋值）→ 拼接污染特征
+            # 关键键名出现在其它行内（非行首独立赋值）→ 拼接污染特征。
+            # 审核P2-3: 与 auth.py:286 对称，export KEY= 形式视为独立赋值行
+            # （否则合法 export 形式会被误判"疑似拼入"而 fail-closed 误拒）。
+            if any(re.fullmatch(rf"export\s+{re.escape(k)}=.*", line) for k in CRITICAL_KEYS):
+                continue
             for key in CRITICAL_KEYS:
                 if re.search(rf"{key}=", line):
                     issues.append(

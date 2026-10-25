@@ -557,14 +557,20 @@ def _reload_env_and_validate(env_file):
 
 
 @pytest.mark.parametrize("hash_last", [False, True])
-def test_persist_rehash_preserves_line_boundaries(tmp_path, monkeypatch, hash_last):
-    """哈希行带换行时写回必须保留换行（中位与末位两种布局）。"""
+@pytest.mark.parametrize("eol", ["\n", "\r\n", "\r", ""])
+def test_persist_rehash_preserves_line_boundaries(
+    tmp_path, monkeypatch, hash_last, eol
+):
+    """写回必须保留原行终止符（LF/CRLF/lone CR/末行无终止符）。"""
     old_hash = hash_login_password(_TEST_PASSWORD, iterations=310_000)
     new_hash = hash_login_password(_TEST_PASSWORD, iterations=600_000)
     if hash_last:
-        content = f"WEB_SESSION_TTL_SECONDS=43200\nWEB_LOGIN_PASSWORD_HASH={old_hash}\n"
+        content = f"WEB_SESSION_TTL_SECONDS=43200\nWEB_LOGIN_PASSWORD_HASH={old_hash}{eol}"
     else:
-        content = f"WEB_LOGIN_PASSWORD_HASH={old_hash}\nWEB_SESSION_TTL_SECONDS=43200\n"
+        # 行间分隔必须是真实终止符；eol="" 在中位=构造拼接坏文件（persist 会
+        # fail-closed 拒写，属正确防御），此处退化为 LF 避免语义误用。
+        sep = eol if eol else "\n"
+        content = f"WEB_LOGIN_PASSWORD_HASH={old_hash}{sep}WEB_SESSION_TTL_SECONDS=43200\n"
     env_file = tmp_path / ".env"
     env_file.write_text(content, encoding="utf-8")
     monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
@@ -576,6 +582,31 @@ def test_persist_rehash_preserves_line_boundaries(tmp_path, monkeypatch, hash_la
         is True
     )
     _reload_env_and_validate(env_file)
+    # 终止符保真：哈希行以新哈希结尾（无任何拼接尾巴）
+    raw = env_file.read_text(encoding="utf-8")
+    hash_idx = 1 if hash_last else 0
+    assert raw.splitlines()[hash_idx].endswith(new_hash), "哈希独立成行无拼接"
+
+
+def test_persist_rehash_export_prefix_roundtrip(tmp_path, monkeypatch):
+    """export 前缀行：前缀保留，值替换，行边界不变（审核 P2-3 对称面）。"""
+    old_hash = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    new_hash = hash_login_password(_TEST_PASSWORD, iterations=600_000)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"export WEB_LOGIN_PASSWORD_HASH={old_hash}\nWEB_SESSION_TTL_SECONDS=43200\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
+    assert (
+        web_auth._persist_rehashed_env_value(
+            "WEB_LOGIN_PASSWORD_HASH", old_hash, new_hash
+        )
+        is True
+    )
+    lines = env_file.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == f"export WEB_LOGIN_PASSWORD_HASH={new_hash}"
+    assert lines[1] == "WEB_SESSION_TTL_SECONDS=43200"
 
 
 def test_persist_rehash_last_line_without_trailing_newline(tmp_path, monkeypatch):

@@ -357,6 +357,8 @@ if ! start_services "$REQUESTER" "$START_TIMEOUT_S"; then
       exit 1
     fi
   else
+    # 审核P2-4: 此分支当前不可达（migrate 失败已在 L320-335 exit），保留为
+    # 纵深防御——若未来 migrate 路径变化（软失败），此分支保证数据回滚兜底。
     emit recover_rollback started "迁移未完成：回滚数据布局后起服恢复"
     if ! migrate_cmd rollback --yes; then
       emit recover_rollback warn "rollback 非零退出（继续尝试起服）"

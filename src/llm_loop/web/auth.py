@@ -257,6 +257,10 @@ def _env_file_path() -> Path:
     return Path(raw).expanduser() if raw else Path.cwd() / ".env"
 
 
+# splitlines 识别的全部行终止符（保真回写用；见 _persist_rehashed_env_value）
+_LINE_TERMINATORS = ("\r\n", "\r", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+
+
 def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> bool:
     """Atomically rewrite one existing ``KEY=VALUE`` line in the .env file.
 
@@ -288,11 +292,15 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
     if target is None:
         return False
     index, prefix = target
-    # P0(2026-10-25): 原行有换行必须保留换行。此前写反（有\n反删、无\n反加），
-    # 会把下一配置项拼进本行——实测曾将 WEB_SESSION_TTL_SECONDS 拼入哈希行，
+    # P0(2026-10-25): 原行终止符必须原样保留。此前写反（有\n反删、无\n反加），
+    # 把下一配置项拼进本行——实测曾将 WEB_SESSION_TTL_SECONDS 拼入哈希行，
     # 重启重读 .env 后登录全拒（07:52 升级写回触发，迁移重启爆发）。
-    trailing = "\n" if lines[index].endswith("\n") else ""
-    lines[index] = f"{prefix}{key}={new_value}{trailing}"
+    # 审核P2-1/P2-2: 保真扩展到 str.splitlines 识别的全部行终止符
+    # （CRLF/lone CR 及 \v\f\x1c-\x1e\x85\u2028\u2029），杜绝边缘拼接复发。
+    terminator = next(
+        (t for t in _LINE_TERMINATORS if lines[index].endswith(t)), ""
+    )
+    lines[index] = f"{prefix}{key}={new_value}{terminator}"
     tmp = path.with_name(f".{path.name}.rehash.tmp")
     try:
         tmp.write_text("".join(lines), encoding="utf-8")
