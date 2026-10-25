@@ -198,6 +198,7 @@ def _default_transport_factory():
     transport = LocalVoiceStackTransport(
         http_client=httpx.Client(timeout=30.0),
         ws_connector=default_websocket_connector,
+        owns_http_client=True,  # P2-2：工厂自建客户端，所有权移交 transport，随会话 close 关闭
     )
     with contextlib.suppress(Exception):  # 流式通道可选，不可用不影响终稿
         transport.connect(DEFAULT_MLX_AUDIO_WS)
