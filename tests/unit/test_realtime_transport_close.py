@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from llm_loop.realtime.local_voice_stack_transport import LocalVoiceStackTransport
+from llm_loop.realtime.realtime_session_runtime import RealtimeSessionRuntime
 from llm_loop.web.auth import SESSION_COOKIE_NAME, WebSessionStore
 from llm_loop.web.realtime_ws import REALTIME_WS_PATH, register_realtime_ws
 
@@ -163,9 +164,8 @@ class TestWsSessionEndClosesOwnedClient:
         with client.websocket_connect(
             REALTIME_WS_PATH.replace("{media_session_id}", "ms-1"),
             headers={"origin": "http://testserver", "cookie": f"{SESSION_COOKIE_NAME}={token}"},
-        ) as ws:
-            with pytest.raises(WebSocketDisconnect) as excinfo:
-                ws.receive_text()
+        ) as ws, pytest.raises(WebSocketDisconnect) as excinfo:
+            ws.receive_text()
         assert excinfo.value.code == 1011  # 明确失败，不伪装可用
         assert http.close_calls == 1  # 兜底路径：自有 httpx client 恰好关闭一次
 
