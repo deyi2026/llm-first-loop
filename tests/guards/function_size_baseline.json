@@ -1024,6 +1024,7 @@
       "net_guard.py": "Action（出站 egress 闸门单一事实源：IP/URL 分类，web_fetch 与 browser navigate 共用；安全建议书 P1-1/S1-4/S2-2，GOAL-20261025-79262297）",
       "notify.py": "Action",
       "security_guard.py": "Action（敏感数据识别共享原语：文件名启发式 + 高置信密钥扫描，供 Feishu 出站/预览/删除复用；安全建议书 P0-4/P1-3，GOAL-20261025-79262297）",
+      "sealed_paths.py": "Evaluation（held-out 读侧封条：evals/heldout/v1 任务材料的工具触达闸门，接线 read/search/inspect/synopsis/edit/execute_command；env 开关 LFL_HELDOUT_SEALED，设计内 env 读取见 runtime_env_access_baseline。决策：docs/HELDOUT-GUARD-20261025.md）",
       "timekeeping.py": "kernel-candidate",
       "usage_net.py": "Learning（usage-net 净分派生视图：search_records 命中行注记 + record_use 回执阈值提醒，RULE-AI-31 程序支持，EVO-20261014-7299aec2）",
       "use_ledger.py": "Learning（两侧 usage ledger 共用原语：slot_id/submission_hash 幂等键、行级 integrity 凭据、JSONL 追加与 torn-tail 恢复扫描；净分统计裁决归 usage_net.py。guard(r9): GOAL-20261015-ac085ab1）"

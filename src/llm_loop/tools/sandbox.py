@@ -1,12 +1,16 @@
 """bash 沙箱后端（P3-3，2026-08-15；docker 后端 2026-09-12；auto/sandbox-exec 2026-10-25，P2-1）.
 
 `EXEC_SANDBOX` env：
-- `auto`（config 默认值）：首次执行时按序解析可用后端并进程内缓存，解析结果写一次日志
+- `auto`（config 默认值）：首次执行时按平台顺序解析可用后端并进程内缓存，解析结果写一次日志
   （落到 none → warning，明确列出原因，绝不静默）：
-  1. `bwrap`——`shutil.which("bwrap")` 命中；
-  2. `docker`——CLI 存在且 `docker info` 2s 内成功（daemon 在跑，结果进程内缓存）；
-  3. `sandbox-exec`——仅 darwin 且 /usr/bin/sandbox-exec 可执行；
-  4. 都不可用 → none（`EXEC_SANDBOX_STRICT=1` 时 fail-closed，见下）。
+  - darwin：`sandbox-exec` → `docker`（P1-1，Rule28 修复轮：docker 后端跑 Linux 镜像，
+    宿主 .venv 的 Mach-O 解释器在容器内 exec-format 失败，且首个用户会被 image pull
+    卡住，故 macOS 原生 sandbox-exec 优先；auto 落到 docker-on-darwin 时打一条
+    warning，提示显式设 EXEC_SANDBOX=none/docker）；
+  - 其余平台：`bwrap`（`shutil.which("bwrap")` 命中）→ `docker`（CLI 存在且
+    `docker info` 2s 内成功，daemon 在跑，结果进程内缓存）→ `sandbox-exec`（仅
+    darwin，其余平台恒不可用）→ 都不可用 → none（`EXEC_SANDBOX_STRICT=1` 时
+    fail-closed，见下）。
 - `bwrap`：用 bubblewrap 隔离 execute_command——只读系统目录（/usr /etc /lib /lib64 /bin /sbin）、
   /dev /proc 挂载、/tmp 临时文件系统、工作区可写绑定、独立 PID/UTS/IPC 命名空间；
   **bwrap 缺失时拒绝执行**（fail-closed：显式安全意图不静默降级，回执如实说明）。
@@ -123,10 +127,37 @@ def _probe_sandbox_exec() -> bool:
 
 
 def resolve_auto_backend() -> tuple[str, list[str]]:
-    """auto 解析：bwrap → docker → sandbox-exec → none（进程内缓存，结果日志写一次）."""
+    """auto 解析（进程内缓存，结果日志写一次）.
+
+    - darwin：sandbox-exec → docker → none（P1-1：docker 跑 Linux 镜像，
+      宿主 .venv（Mach-O）不兼容，sandbox-exec 优先）；
+    - 其余平台：bwrap → docker → sandbox-exec → none（维持既有顺序不变）。
+    """
     global _auto_cache, _auto_logged
     if _auto_cache is None:
-        if _probe_bwrap():
+        if sys.platform == "darwin":
+            # P1-1（Rule28 修复轮）：darwin 上 sandbox-exec 优先于 docker——
+            # docker-on-darwin 跑 Linux 镜像（--network=none 的 python:3.13-slim），
+            # 宿主 .venv（Mach-O）进容器 exec-format 失败，首用户还会被 image pull 卡住。
+            if _probe_sandbox_exec():
+                _auto_cache = ("sandbox-exec", [_sandbox_exec_detail])
+            elif _probe_docker():
+                _auto_cache = ("docker", [_docker_probe_detail])
+                logger.warning(
+                    "EXEC_SANDBOX=auto 在 darwin 上解析到 docker："
+                    "docker on darwin runs linux images; host venv incompatible; "
+                    "set EXEC_SANDBOX=none/docker consciously"
+                )
+            else:
+                _auto_cache = (
+                    "none",
+                    [
+                        f"sandbox-exec 不可用（{_sandbox_exec_detail}）",
+                        f"docker 不可用（{_docker_probe_detail}）",
+                        "bwrap 不参与 darwin auto 探测（darwin 顺序：sandbox-exec → docker）",
+                    ],
+                )
+        elif _probe_bwrap():
             _auto_cache = ("bwrap", ["bwrap 已安装"])
         elif _probe_docker():
             _auto_cache = ("docker", [_docker_probe_detail])
