@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from llm_loop.realtime.local_voice_stack_transport import LocalVoiceStackTransport
 from llm_loop.web.auth import SESSION_COOKIE_NAME, WebSessionStore
@@ -134,6 +135,40 @@ class _OwnedRegistry:
 
 
 class TestWsSessionEndClosesOwnedClient:
+    def test_runtime_setup_failure_closes_transport_and_ws_1011(self, monkeypatch):
+        # P2-2 空窗回归：factory() 成功后、收包 try/finally 接管前，runtime
+        # 构造抛错 → transport（自有 httpx client）必须被兜底关闭且 WS 以
+        # 1011 收口（旧行为：两者都不关，连接池每会话泄漏）。
+        import llm_loop.realtime.realtime_session_runtime as rt_mod
+
+        def boom(*args: object, **kwargs: object) -> RealtimeSessionRuntime:
+            raise RuntimeError("runtime construction boom")
+
+        monkeypatch.setattr(rt_mod, "RealtimeSessionRuntime", boom)
+        app = FastAPI()
+        store = WebSessionStore()
+        app.state.web_sessions = store
+        app.state.realtime_media_sessions = _OwnedRegistry()
+        http = CloseCountingHttp()
+        transport = LocalVoiceStackTransport(
+            http_client=http, ws_connector=FakeConnector(FakeWs()), owns_http_client=True
+        )
+        app.state.realtime_transport_factory = lambda: (
+            transport,
+            "http://127.0.0.1:8000/v1/audio/transcriptions",
+        )
+        register_realtime_ws(app)
+        token = store.create(ttl_seconds=60)
+        client = TestClient(app)
+        with client.websocket_connect(
+            REALTIME_WS_PATH.replace("{media_session_id}", "ms-1"),
+            headers={"origin": "http://testserver", "cookie": f"{SESSION_COOKIE_NAME}={token}"},
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as excinfo:
+                ws.receive_text()
+        assert excinfo.value.code == 1011  # 明确失败，不伪装可用
+        assert http.close_calls == 1  # 兜底路径：自有 httpx client 恰好关闭一次
+
     def test_disconnect_closes_transport_owned_client_via_serve_finally(self):
         app = FastAPI()
         store = WebSessionStore()

@@ -290,21 +290,32 @@ async def _serve(websocket: WebSocket, media_session_id: str) -> None:
         await websocket.close(code=1011)
         return
 
-    runtime = RealtimeSessionRuntime(
-        media_session_id=media_session_id,
-        session_id=_session_id_for(websocket, media_session_id),
-        transport=transport,
-        transcription_url=transcription_url,
-        send_text=websocket.send_text,
-        send_binary=websocket.send_bytes,
-        connection_epoch=_connection_epoch_for(websocket, media_session_id),
-        keyframes=_keyframes_for(websocket, media_session_id),
-        commit_sink=getattr(websocket.app.state, "realtime_commit_sink", None),
-        session_probe=_session_probe_for(websocket),  # P2-9a：bind/入队前拒绝不存在的目标会话
-    )
-    import asyncio
+    # P2-2：factory() 成功后、下方收包 try/finally 接管前是所有权空窗——
+    # runtime 构造或起泵（create_task）若抛错，transport（含自有 httpx client）
+    # 将无人关闭。兜底：先关 transport（与 finally 同口径 getattr+callable 判空）
+    # 再以 1011 收口；正常路径零变化（关闭责任仍由既有 finally 负责）。
+    try:
+        runtime = RealtimeSessionRuntime(
+            media_session_id=media_session_id,
+            session_id=_session_id_for(websocket, media_session_id),
+            transport=transport,
+            transcription_url=transcription_url,
+            send_text=websocket.send_text,
+            send_binary=websocket.send_bytes,
+            connection_epoch=_connection_epoch_for(websocket, media_session_id),
+            keyframes=_keyframes_for(websocket, media_session_id),
+            commit_sink=getattr(websocket.app.state, "realtime_commit_sink", None),
+            session_probe=_session_probe_for(websocket),  # P2-9a：bind/入队前拒绝不存在的目标会话
+        )
+        import asyncio
 
-    pump = asyncio.create_task(runtime.pump_deltas())  # 增量字幕下行（流式可选）
+        pump = asyncio.create_task(runtime.pump_deltas())  # 增量字幕下行（流式可选）
+    except Exception:  # noqa: BLE001 - 兜底：不泄漏自有连接池，不伪装可用
+        close = getattr(transport, "close", None)
+        if callable(close):
+            close()
+        await websocket.close(code=1011)
+        return
     try:
         while True:
             message = await websocket.receive()
