@@ -6,11 +6,14 @@ solution: 给用户任何 CLI 命令前必须先核对当前代码：inspect_cod
 evidence: "src/llm_loop/runtime/service_control.py L1225-1246：argparse 仅 add_parser(\"publish\"/\"show\"/\"verify\"/\"worker\")；publish 分支仅做 build_deployment+compare_and_swap(generation=expected+1)，无任何重启逻辑。service_control status 回执（2026-09-19）：action_id=svc-d1be262039cc4111bcd0105fe94725eb, generation=51, 三服务 git_head=c9f33b4c…, pid_alive=true, matches_desired_generation=true。"
 tags: []
 source: {}
-status: active
+status: superseded
 record_kind: lesson
 verification_state: verified
 created_at: "2026-09-19T19:30:25.006629+08:00"
-updated_at: "2026-09-19T19:30:25.006629+08:00"
+updated_at: "2026-10-25T23:06:13+08:00"
+superseded_by: EXPERIENCE-20261025-受管重启认证写回与代次判读
 ---
 
 时间线：用户要求重启共享服务 → 我直接给出 CLI 命令，其中使用了不存在的子命令 → 用户执行失败/被纠正 → 实际正确路径：用户跑 publish 发布 desired deployment，我调工具层 service_control restart 登记 action 并拉起 worker → status 验证 generation 51 成功。
+
+> 2026-10-25 当前性纠偏：本记录描述 2026-09-19 的当时接口，不是今天的运行指令。当前 `python -m llm_loop.runtime.service_control restart --help` 已存在 `restart`，该旧操作结论不再成立；受管服务应按当前目标版本 CLI/工具和真实 action 终态执行。参见 `EXPERIENCE-20261025-受管重启认证写回与代次判读.md`。

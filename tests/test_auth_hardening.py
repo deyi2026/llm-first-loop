@@ -227,6 +227,107 @@ def test_old_310k_hash_login_succeeds_and_upgrades_in_place(
     assert second.status_code == 303
 
 
+@pytest.mark.parametrize("line_end", ["\n", "\r\n", "\r"])
+def test_rehash_env_writeback_reloads_hash_and_next_assignment(tmp_path, monkeypatch, line_end):
+    """2026-10-25 regression: rehash must not consume WEB_SESSION_TTL_SECONDS.
+
+    Read the file *again from disk*, not os.environ or an in-memory preview,
+    and require every non-target byte and original newline convention to survive.
+    """
+    old = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    env = tmp_path / ".env"
+    original = (
+        f"# retain prior entry{line_end}"
+        f"WEB_LOGIN_PASSWORD_HASH={old}{line_end}"
+        f"WEB_SESSION_TTL_SECONDS=43200{line_end}"
+        f"WEB_PORT=8903{line_end}"
+    )
+    env.write_bytes(original.encode("utf-8"))
+    env.chmod(0o600)
+    monkeypatch.setenv("LFL_ENV_FILE", str(env))
+    monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", old)
+
+    assert rehash_login_password_if_needed(_TEST_PASSWORD) is True
+    updated = os.environ["WEB_LOGIN_PASSWORD_HASH"]
+    # Emulate an independent restart reading the *persisted* .env file.
+    disk = env.read_bytes().decode("utf-8")
+    assert disk == original.replace(f"WEB_LOGIN_PASSWORD_HASH={old}", f"WEB_LOGIN_PASSWORD_HASH={updated}")
+    disk_lines = disk.split(line_end)
+    assert f"WEB_LOGIN_PASSWORD_HASH={updated}" in disk_lines
+    assert "WEB_SESSION_TTL_SECONDS=43200" in disk_lines
+    assert "WEB_PORT=8903" in disk_lines
+    web_auth._parse_password_hash(next(line.split("=", 1)[1] for line in disk_lines if line.startswith("WEB_LOGIN_PASSWORD_HASH=")))
+    assert env.stat().st_mode & 0o077 == 0
+
+
+def test_rehash_env_writeback_preserves_missing_final_newline(tmp_path, monkeypatch):
+    old = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    env = tmp_path / ".env"
+    env.write_text(f"WEB_PORT=8903\nWEB_LOGIN_PASSWORD_HASH={old}", encoding="utf-8")
+    monkeypatch.setenv("LFL_ENV_FILE", str(env))
+    monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", old)
+
+    assert rehash_login_password_if_needed(_TEST_PASSWORD) is True
+    updated = os.environ["WEB_LOGIN_PASSWORD_HASH"]
+    assert env.read_text(encoding="utf-8") == f"WEB_PORT=8903\nWEB_LOGIN_PASSWORD_HASH={updated}"
+    web_auth._parse_password_hash(updated)
+
+
+@pytest.mark.parametrize("second_prefix", ["", "export "])
+def test_rehash_env_writeback_refuses_duplicate_key(tmp_path, monkeypatch, second_prefix):
+    old = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    env = tmp_path / ".env"
+    original = (
+        f"WEB_LOGIN_PASSWORD_HASH={old}\n"
+        f"{second_prefix}WEB_LOGIN_PASSWORD_HASH={old}\n"
+        "WEB_SESSION_TTL_SECONDS=43200\n"
+    ).encode()
+    env.write_bytes(original)
+    monkeypatch.setenv("LFL_ENV_FILE", str(env))
+
+    assert web_auth._persist_rehashed_env_value(
+        "WEB_LOGIN_PASSWORD_HASH", old, "replacement"
+    ) is False
+    assert env.read_bytes() == original
+
+
+def test_rehash_env_writeback_does_not_remove_preexisting_temp(tmp_path, monkeypatch):
+    old = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    env = tmp_path / ".env"
+    original = f"WEB_LOGIN_PASSWORD_HASH={old}\nWEB_PORT=8903\n"
+    env.write_text(original, encoding="utf-8")
+    temp = env.with_name(f".{env.name}.rehash.tmp")
+    temp.write_text("preexisting sentinel", encoding="utf-8")
+    monkeypatch.setenv("LFL_ENV_FILE", str(env))
+
+    assert web_auth._persist_rehashed_env_value(
+        "WEB_LOGIN_PASSWORD_HASH", old, "replacement"
+    ) is False
+    assert env.read_text(encoding="utf-8") == original
+    assert temp.read_text(encoding="utf-8") == "preexisting sentinel"
+
+
+def test_rehash_temp_file_is_private_at_creation(tmp_path, monkeypatch):
+    old = hash_login_password(_TEST_PASSWORD, iterations=310_000)
+    env = tmp_path / ".env"
+    env.write_text(f"WEB_LOGIN_PASSWORD_HASH={old}\n", encoding="utf-8")
+    monkeypatch.setenv("LFL_ENV_FILE", str(env))
+    temp = env.with_name(f".{env.name}.rehash.tmp")
+    real_fdopen = os.fdopen
+    seen_permissions = []
+
+    def verify_private_at_open(fd, *args, **kwargs):
+        seen_permissions.append(temp.stat().st_mode & 0o777)
+        return real_fdopen(fd, *args, **kwargs)
+
+    monkeypatch.setattr(web_auth.os, "fdopen", verify_private_at_open)
+    assert web_auth._persist_rehashed_env_value(
+        "WEB_LOGIN_PASSWORD_HASH", old, "replacement"
+    ) is True
+    assert seen_permissions == [0o600]
+    assert env.stat().st_mode & 0o077 == 0
+
+
 def test_rehash_never_clobbers_hash_with_wrong_password(monkeypatch):
     old_hash = hash_login_password(_TEST_PASSWORD, iterations=310_000)
     monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", old_hash)

@@ -249,6 +249,9 @@ def validate_login_password_hash() -> None:
 
 
 _REHASH_LOCK = threading.Lock()
+# Preserve the original line ending byte-for-byte when replacing a verifier.
+# str.splitlines(keepends=True) recognizes these Unicode and ASCII separators.
+_LINE_TERMINATORS = ("\r\n", "\r", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
 
 
 def _env_file_path() -> Path:
@@ -270,7 +273,9 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
     try:
         if not path.is_file():
             return False
-        text = path.read_text(encoding="utf-8")
+        # newline="" prevents universal-newline conversion of CRLF/lone CR.
+        with path.open("r", encoding="utf-8", newline="") as source:
+            text = source.read()
     except OSError:
         return False
     lines = text.splitlines(keepends=True)
@@ -281,23 +286,36 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
             if stripped.startswith(prefix):
                 if stripped[len(prefix):].strip() != old_value:
                     return False  # 文件内容与进程环境不一致：不动磁盘
-                target = (index, "export " if stripped.startswith("export ") else "")
+                if target is not None:
+                    return False  # 重复 key：避免写入一个而运行时解析另一个
+                # Derive indentation from lstrip explicitly; a full strip()
+                # would also count the line terminator as leading whitespace.
+                leading = line[: len(line) - len(line.lstrip())]
+                target = (index, leading + ("export " if stripped.startswith("export ") else ""))
                 break
-        if target is not None:
-            break
     if target is None:
         return False
     index, prefix = target
-    trailing = "" if lines[index].endswith("\n") else "\n"
-    lines[index] = f"{prefix}{key}={new_value}{trailing}"
+    terminator = next((t for t in _LINE_TERMINATORS if lines[index].endswith(t)), "")
+    lines[index] = f"{prefix}{key}={new_value}{terminator}"
     tmp = path.with_name(f".{path.name}.rehash.tmp")
+    tmp_created = False
     try:
-        tmp.write_text("".join(lines), encoding="utf-8")
-        os.chmod(tmp, 0o600)
+        # Create privately *before* writing verifier bytes (no 0644 window).
+        # O_EXCL refuses a leftover/symlink temp path instead of clobbering it.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        tmp_created = True
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as destination:
+            destination.write("".join(lines))
+        mode = path.stat().st_mode & 0o777
+        os.chmod(tmp, mode if mode & 0o077 == 0 else 0o600)
         os.replace(tmp, path)
     except OSError:
-        with suppress(OSError):
-            tmp.unlink()
+        # Only remove the file created by this invocation, never a preexisting
+        # residue/symlink that caused O_EXCL to refuse the operation.
+        if tmp_created:
+            with suppress(OSError):
+                tmp.unlink()
         return False
     return True
 

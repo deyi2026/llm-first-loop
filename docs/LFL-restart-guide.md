@@ -167,6 +167,26 @@ PY
 
 这些检查不替代功能测试、候选资格审查或真实登录验收。
 
+### 4.3.1 Web 认证配置写回后的独立重载预检（2026-10-25 事故）
+
+`runtime.toml` 校验、现存进程可用，不等于**重启后的认证配置可用**。
+2026-10-25 的 Web 端曾在登录哈希迭代升级后把 `.env` 的下一键
+`WEB_SESSION_TTL_SECONDS=43200` 拼进 `WEB_LOGIN_PASSWORD_HASH`，当前
+Web 尚能响应时未暴露，重启时却连续报「密码哈希格式无效」并退出。
+
+针对准备启动的 **Web 版本**，停服务前从磁盘全新打开 `.env`：
+
+- 仅在 Web 登录确实启用时核验哈希唯一、合法；`WEB_SESSION_TTL_SECONDS`
+  必须是可选的**独立配置行**，不能成为前一行哈希的一部分；若存在须
+  落在当前版本允许区间。**不要输出真实哈希、口令、配置全文。**
+- 对任何登录哈希轮换/写回，必须验证原行终止符、下一配置项以及目标版本
+  重新加载后的解析结果；保持原有权限（不放宽至组/其他可读），保留受限
+  备份，校验目标版本对新旧配置的兼容性。原值完整与精确附加键都经验证时，
+  才允许进行保真拆行恢复；否则停止并单独诊断，不得生成伪哈希或关闭鉴权。
+- 如果预检不通过，**先修配置再重启**；不靠循环 restart、清理屏障或
+  翻转 `desired` 代次来掩盖确定性错误。修复后从磁盘独立重读，确认
+  变更仅涉及目标行，并继续正式服务控制流程及登录/健康验收。
+
 ### 4.4 发布共享服务 desired deployment（P0-A）
 
 从 P0-A 起，Web/Feishu 的“当前 PID”只是观测事实，**不是生命周期控制权**。正式重启前必须先由 operator 发布一个 closed-schema desired deployment，把本次准许运行的 `code root + runtime root + exact Git SHA + WebUI artifact tree SHA256` 固化为 generation。`scripts/restart_mirror.sh` 会在停任何健康服务之前机械验证该 binding；缺失或不一致即 fail-closed。
@@ -322,6 +342,25 @@ lsof -nP -iTCP:8901 -sTCP:LISTEN
 `data/runtime/runtime_manifest.json` 是共享的最后写入者视图。`all` 重启后它常由 Feishu 写入，**不能据此单独证明 Web 身份**。Web 应结合自己的启动回执、PID 对应版本记录、启动路径记录，以及需要时真实请求的 `runtime_pid` 核验。
 
 回执也可能被另一轮重启覆盖。只要发现 SHA/PID 不符合本次预期，就重新核对，不要覆盖、回退或宣称本轮验收通过。
+
+#### 6.1.1 不要把 live 代码匹配与 stable 回执收敛混为一谈
+
+`desired.generation` 是管理层部署代次，并非进程版本号；`live.git_head`
+与 `desired.git_head` 的关系决定**运行代码身份**；`stable.generation`
+是该服务最近一次成功受控重启的**历史回执**。单服务重启时三个服务的
+stable 代次可以不同，且旧代回执的 `git_head` 在与当前 desired 不同的情形下
+不得声称为当前代码身份。应同时展示并分别验证：
+
+- live PID 存活、SHA 与 desired 一致且 `restart_required=false`：当前运行身份匹配。
+- stable 早于 desired：回执尚未收敛，单独显示代差；**这不是重启理由**。
+- 只有存在真实运行漂移、启动/健康失败或另有独立授权的版本切换需求时，
+  才按作用域执行对应服务重启。不要为了让数字相同而重启相邻服务，
+  更不能手改 durable 回执制造「已收敛」。
+
+2026-10-25 gen319 的 Web PID43317 通过认证接口，Feishu/Learning
+PID91278/91766 与 Web 的 live HEAD 同为 `7ad21715d...`；后两者
+stable 仍 gen315，`restart_required=false`，属于**运行一致、回执相差4代**，
+不是服务未上线。审查前先核当前 status，以上 PID 只作为本次事故历史证据。
 
 ### 6.2 Web 页面与登录
 
