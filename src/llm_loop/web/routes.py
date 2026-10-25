@@ -96,6 +96,7 @@ from .upload_handlers import (
     validate_upload,
     validate_upload_b64_size,
 )
+from .video_routes import router as video_router
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ router = APIRouter()
 
 router.include_router(provider_admin_router)
 router.include_router(local_runtime_router)
+router.include_router(video_router)
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:

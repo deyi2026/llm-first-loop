@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { LocalRuntimePanel } from "./LocalRuntimePanel";
+import { VideoPanel } from "./VideoPanel";
 import {
   createProvider,
   deleteProviderConfig,
@@ -312,6 +313,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       </div>
 
       <LocalRuntimePanel onSynced={() => finish("本地运行时已同步。")} />
+      <VideoPanel />
 
       {editor ? (
         <ProviderEditor

@@ -60,6 +60,7 @@ def test_factory_does_not_register_convergence_meta_router(tmp_path):
     engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
 
     assert "convergence_decide" not in engine.registry.names()
+    assert "video_generation" in engine.registry.names()
     assert "read_file" in engine.registry.names()
     assert "execute_command" in engine.registry.names()
 

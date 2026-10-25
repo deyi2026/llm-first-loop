@@ -546,6 +546,16 @@
         "status": "observe",
         "tier": "T1"
       },
+      "local_video_store": {
+        "owner": "video",
+        "paths": [
+          "src/llm_loop/video/runtime.py",
+          "src/llm_loop/video/worker.py"
+        ],
+        "rationale": "本地视频配置、冻结请求、任务状态、原始参考图与派生媒体的跨重启持久化，由中性 video 运行模块拥有，Web 只转交输入/文件响应。JSON 采用独占临时文件+file fsync+replace，配置 CAS 与执行 flock 分别串行化；worker/guardian 保留执行所有权，不自动重试。媒体输出绑定 SHA256。目录 fsync 与全面电源故障恢复尚未资格验证，保持 T2 observe，不冒充 conform/T3；没有放宽数值棘轮或增加豁免。",
+        "status": "observe",
+        "tier": "T2"
+      },
       "loop_signals": {
         "owner": "introspection",
         "paths": [
@@ -1159,6 +1169,7 @@
       "task_quality": "Evaluation",
       "terminal": "delivery（CLI input, presentation and read-only queries; core remains execution authority）",
       "tools": "Action",
+      "video": "Action（本地视频生成、任务与参考图存储；Web 仅为交付适配器，独立于聊天 Provider）",
       "web": "delivery（六面外交付面）",
       "workspace": "cross-plane"
     }

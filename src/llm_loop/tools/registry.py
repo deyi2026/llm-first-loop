@@ -81,6 +81,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "browser_semantic_execute": "Browser低层语义执行：exact GroundingRef/resource_ref + verb/args；内部编译scope/version/action_id并single-dispatch。ActionReceipt已有post-capture/diff；仅需更广语义或证据不完整时再snapshot；不retry/rebind/完成判断。",
     "browser_operate": "Browser操作：一次调用一个已决定mutation；do=navigate/click/set_text/append_text/select/scroll，target三选一寻址(EVO-20261010-1e06d6b4)：exact kind+name(+role)｜kind+name_normalized(snapshot暴露的零宽剥离/空白折叠归一形式)｜grounding_ref(先前snapshot/未命中候选清单，受retention约束)；identity未命中回执有界候选清单；wait属于browser_perceive；程序只做ground/version/single-dispatch/post-capture；不fuzzy/rebind/retry/完成判断。" + ARTICLE_REVIEW_OBLIGATION,
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
+    "video_generation": "MiniMax H3 本地视频与原生音频；status 查配置/就绪，generate 异步生成，job 查终态及播放链接，cancel 取消。共用 Web 视频配置与单任务槽。",
     "present_files": "声明已存在的输出文件为最终交付物（对齐 DSH present）：写入完成→最终答复前调用；Web 出产物面板可点击打开/预览；execute_command 创建的产物必须显式声明；工作区内、全有或全无。",
     "edit_file": "精确修改已有文件；正式 Factory 写入先 read_file(snapshot=true) 取 snapshot_ref，再原样传入 expected_snapshot_ref；dry_run 可只预览。",
     "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。参数语义不明或调用因参数/协议失败时精确读取当前 Schema。",

@@ -160,6 +160,7 @@ from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
 from llm_loop.tools.builtin.task_state import TaskStateTool
+from llm_loop.tools.builtin.video_generation import VideoGenerationTool
 from llm_loop.tools.builtin.wait import WaitTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
@@ -536,6 +537,25 @@ def _render_subject_refs_facts(entry: Any, data_dir: str | Path) -> str:
     if not lines:
         return ""
     return "[程序投影·排程对象现状（机械事实·非建议）]\n" + "\n".join(lines)
+
+
+def _register_service_tools(
+    register: Callable[[str, Any], None], settings: Settings, review_gate_recorder: Any
+) -> None:
+    """Register adapters sharing the configured service and media lifecycle stores."""
+    register(
+        "service_control",
+        ServiceControlTool(
+            store=ManagedServiceDeploymentStore(settings.data_dir),
+            review_gate_recorder=review_gate_recorder,
+        ),
+    )
+    register(
+        "video_generation",
+        VideoGenerationTool(
+            settings.data_dir, model_root=settings.video_model_root, sd_cli=settings.video_sd_cli
+        ),
+    )
 
 
 def build_engine(
@@ -1488,13 +1508,7 @@ def build_engine(
         ),
     )
     # P0-A: shared Web/Feishu lifecycle uses a generation-bound dedicated surface.
-    _register_basic(
-        "service_control",
-        ServiceControlTool(
-            store=ManagedServiceDeploymentStore(settings.data_dir),
-            review_gate_recorder=_review_gate_recorder,
-        ),
-    )
+    _register_service_tools(_register_basic, settings, _review_gate_recorder)
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
     _register_basic("job_output", JobOutputTool())
     _register_basic("job_kill", JobKillTool())

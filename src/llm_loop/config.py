@@ -11,7 +11,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from llm_loop.codearts.config import CodeArtsSettings
 
@@ -522,6 +522,8 @@ class Settings:
     local_runtime_observer: str = "disabled"
     local_runtime_admission_authority: str = "legacy"
     lfrt_cli: str = ""
+    video_sd_cli: str = ""
+    video_model_root: str = ""
 
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
@@ -789,6 +791,21 @@ class Settings:
             # T3: env 未显式设置的可自适应配置项（AI 可经 architecture_status 感知哪些参数在自适应）
             "auto_adaptive_keys": sorted(self.auto_adaptive_keys),
         }
+
+
+class _LocalRuntimePaths(TypedDict):
+    lfrt_cli: str
+    video_sd_cli: str
+    video_model_root: str
+
+
+def _local_runtime_paths(env: Mapping[str, str]) -> _LocalRuntimePaths:
+    """Resolve local backend paths once, from the canonical settings input."""
+    return {
+        "lfrt_cli": str(env.get("LFL_LFRT_CLI", "") or "").strip(),
+        "video_sd_cli": str(env.get("LFL_VIDEO_SD_CLI", "") or "").strip(),
+        "video_model_root": str(env.get("LFL_VIDEO_MODEL_ROOT", "") or "").strip(),
+    }
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -1073,7 +1090,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         local_runtime_admission_authority=_mode(
             "LFL_LOCAL_RUNTIME_ADMISSION_AUTHORITY", "legacy", {"legacy", "lfrt"}
         ),
-        lfrt_cli=str(env_values.get("LFL_LFRT_CLI", "") or "").strip(),
+        **_local_runtime_paths(env_values),
         archive_enabled=env_bool("ARCHIVE_ENABLED", True),
         experiences_dir=str(_resolved_paths.experiences_dir),
         methods_dir=str(_resolved_paths.methods_dir),
