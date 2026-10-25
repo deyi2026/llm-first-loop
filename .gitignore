@@ -18,6 +18,11 @@ data/*
 !data/methods/
 /data/methods/usage.jsonl
 /data/methods/.usage_watermark.json
+# 经验卡 *.md 是学习资产，入库保全（与 data/methods 同策略）；运行时水位/向量文件由 experiences/* 排除
+experiences/*
+!experiences/*.md
+/experiences/usage.jsonl
+/experiences/.usage_watermark.json
 # SMX 感知运行时数据（快照/回执/runs——不入库，任意层级）
 .smx/
 
