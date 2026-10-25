@@ -152,7 +152,16 @@ class RealtimeSessionRuntime:
         终稿仍以 `input.commit` 的**高精度重转写**为准，避免两份终稿冲突（`INP-09`）。
         """
         while not self._closed:
-            event = await asyncio.to_thread(self._poll_event)
+            try:
+                event = await asyncio.to_thread(self._poll_event)
+            except Exception:
+                # e8a1d0a19 语义移植：转写后端中途死亡 → 有界降级（单条
+                # input.streaming_unavailable，负载空——前端 realtimeEvents.ts
+                # 未给该类型登记额外必填字段，base envelope 即可解码）后泵退出，
+                # 不再静默失联；终稿链路（input.commit 高精度重转写）不受影响，
+                # 无需断开重连。
+                await self._emit("input.streaming_unavailable", {})
+                return
             if event is None:
                 await asyncio.sleep(0.02)
                 continue

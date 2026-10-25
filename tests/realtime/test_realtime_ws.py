@@ -214,6 +214,11 @@ class _ServeTransport:
     def append(self, frame: bytes) -> None:
         self.appended.append(frame)
 
+    def next_event(self, *, timeout: float | None = None):  # noqa: ARG002 - 空闲态
+        # 协议契约成员（TranscriptionTransport）：健康流式后端空闲返回 None，
+        # 泵空转；缺失会被 pump 级有界降级（e8a1d0a19）暴露并污染事件序列断言。
+        return None
+
     def synthesize(self, text: str) -> bytes:  # noqa: ARG002 - 回 PCM 即可
         return b"PCM"
 
