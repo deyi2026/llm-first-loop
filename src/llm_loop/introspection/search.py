@@ -24,6 +24,7 @@ from typing import Any
 
 from llm_loop.core.run_context import workspace_base
 from llm_loop.introspection.rule_index import RuleIndex
+from llm_loop.knowledge import heldout_guard
 from llm_loop.runtime.installation import bundle_root
 from llm_loop.timekeeping import system_local_now
 from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
@@ -84,6 +85,13 @@ _VALID_KINDS = {
     "method",  # Method Learning compact discovery / exact hydration
     "all",
 }
+
+# held-out 读侧可见过滤（fail-open）**不做字段挑选**：对注解完成后的最终返回行
+# 整行 json.dumps 后交 heldout_guard 检查（见 RecordSearcher._heldout_row_text）。
+# 第一轮的字段白名单漏掉了注解阶段注入的键（freshness_refs / recent_issue），
+# 第二轮改为整行序列化——任何阶段（card()/hydrated() 投影、annotate_card_age、
+# _annotate_usage 的 usage_feedback 合并、语义卡构造）写入行的模型文本都在
+# 检查面内；调用契约：过滤必须发生在所有注解之后、knowledge_read 打点之前。
 
 
 class InvalidSearchKindError(ValueError):
@@ -262,6 +270,9 @@ class RecordSearcher:
         # R3(P0-3/D11): experience 检索诊断透传——search() 入口重置，experience/all 路径回填
         self._last_diagnostics: dict[str, Any] | None = None
         self._last_semantic_diagnostics: dict[str, Any] | None = None
+        # held-out 读侧可见过滤（fail-open）：丢弃行计数与 task_id；
+        # search() 入口重置为 None（None=本次未发生丢弃，含未走 method/experience 路径）。
+        self._last_heldout_filter: dict[str, Any] | None = None
 
     @property
     def last_diagnostics(self) -> dict[str, Any] | None:
@@ -311,6 +322,7 @@ class RecordSearcher:
         # R3(P0-3): 每次检索重置诊断，防上一次 experience/all 检索的陈旧诊断跨 kind 泄漏
         self._last_diagnostics = None
         self._last_semantic_diagnostics = None
+        self._last_heldout_filter = None
         if kind not in _VALID_KINDS:
             raise InvalidSearchKindError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
         special = self._search_special(kind, query, limit, session_id)
@@ -865,6 +877,58 @@ class RecordSearcher:
                 annotated.append(row)
         return annotated
 
+    @staticmethod
+    def _heldout_row_text(row: dict) -> str:
+        """整行最终序列化（不挑字段）：注解阶段注入的任何键都在检查面内.
+
+        第一轮按字段白名单拼接待检文本，漏掉了注解阶段新增的键
+        （freshness_refs / recent_issue 等）——漏检的根因正是"挑选"本身。
+        改为对整行 ``json.dumps(..., ensure_ascii=False, default=str)`` 检查：
+        dict/list 叶子值天然展平进序列化文本，非 str 叶子经 default=str 进入，
+        行里任何来源（卡片投影、usage_feedback 合并、card_age 注记）的模型
+        文本都无法借"字段不在表里"逃逸。行均为小对象，每行一次调用可接受。
+        """
+        return json.dumps(row, ensure_ascii=False, default=str)
+
+    def _filter_heldout_rows(self, rows: list[dict], *, kind: str) -> list[dict]:
+        """held-out 读侧可见过滤（fail-open，eval/rules/holdout.md §4）.
+
+        在行生成（含 limit 截断）与**全部注解完成之后**逐行整行检查：命中
+        探针的行直接丢弃——不补位（不把截断外的下一行提上来）、不重排、
+        不改行结构。调用方契约：必须先跑 ``_annotate_usage`` /
+        ``annotate_card_age`` / 语义卡构造，再调本方法——否则注解阶段注入
+        的字段（如 usage_feedback 的 recent_issue）会绕过过滤（P1-B 回流
+        的根因）；knowledge_read 打点必须在本方法之后（被丢弃的行未"返回
+        给调用方"）。
+        guard unavailable/内部异常由 check_text 映射为非 blocked → 放行；
+        丢弃事实写入 ``self._last_heldout_filter``（``{"dropped": int,
+        "task_ids": [str, ...]}``，search() 入口重置为 None），kind=all 时
+        method/experience 两条路径的计数自然累加。每次丢弃记一条 INFO 日志，
+        只含 kind/task_id/类别（task_id/statement_probe），绝不携带行正文
+        （``kind`` 由调用方传入固定字面量，不取行内可控值）。
+        """
+        kept: list[dict] = []
+        for row in rows:
+            verdict = heldout_guard.check_text(self._heldout_row_text(row))
+            if verdict.get("status") == "blocked":
+                stat = self._last_heldout_filter
+                if stat is None:
+                    stat = {"dropped": 0, "task_ids": []}
+                    self._last_heldout_filter = stat
+                stat["dropped"] += 1
+                task_id = str(verdict.get("task_id") or "")
+                if task_id and task_id not in stat["task_ids"]:
+                    stat["task_ids"].append(task_id)
+                _LOGGER.info(
+                    "heldout read filter dropped row: kind=%s reason=%s task_id=%s",
+                    kind,
+                    verdict.get("reason"),
+                    task_id,
+                )
+                continue
+            kept.append(row)
+        return kept
+
     def _search_method(self, query: str, limit: int, *, session_id: str = "") -> list[dict]:
         """Method discovery uses lexical cards plus optional semantic RRF.
 
@@ -875,7 +939,13 @@ class RecordSearcher:
             return []
         raw = str(query or "").strip()
         if raw.lower().startswith("method:"):
-            rows = self._method_store.list(raw, limit)
+            # P1-B 读侧修复：过滤必须在 _annotate_usage（usage_feedback 的
+            # recent_issue 合并）**之后**——第一轮先过滤后注解，note 回流字段
+            # 绕过了过滤；knowledge_read 打点仍在过滤之后（丢弃行未返回调用方）。
+            rows = self._filter_heldout_rows(
+                self._annotate_usage(self._method_store.list(raw, limit), side="method"),
+                kind="method",
+            )
             for row in rows:
                 # 打点仅发生在精确水合成功路径；版本=同一份内存记录快照的 content_hash
                 self._emit_knowledge_read(
@@ -884,7 +954,7 @@ class RecordSearcher:
                     version=str(row.get("content_hash") or ""),
                     session_id=session_id,
                 )
-            return self._annotate_usage(rows, side="method")
+            return rows
         keyword_limit = max(limit * 4, 20)
         keyword = self._method_store.list(raw, keyword_limit)
         if (
@@ -893,8 +963,11 @@ class RecordSearcher:
             or not self._semantic.semantic_available()
             or not raw
         ):
-            return self._annotate_usage(  # EVO-20260923-6fe23c9b F2(b) + EVO-20261014-7299aec2
-                annotate_card_age(keyword[:limit]), side="method"
+            return self._filter_heldout_rows(  # held-out 读侧可见过滤（limit 截断后，不补位）
+                self._annotate_usage(  # EVO-20260923-6fe23c9b F2(b) + EVO-20261014-7299aec2
+                    annotate_card_age(keyword[:limit]), side="method"
+                ),
+                kind="method",
             )
         result = self._semantic.search(
             raw,
@@ -925,7 +998,7 @@ class RecordSearcher:
             canonical_hydration_failures=failures,
             rows=rows,
         )
-        return rows
+        return self._filter_heldout_rows(rows, kind="method")
 
     def _search_experience(
         self,
@@ -953,21 +1026,29 @@ class RecordSearcher:
                 self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
                 self._last_semantic_diagnostics = None
                 stem = exact.removesuffix(".md")
-                # TASK-ac085ab1-002: 精确水合成功路径打点；版本哈希取自同一份 doc 快照
-                try:
-                    version = hashlib.sha256(doc.to_md().encode("utf-8")).hexdigest()
-                except Exception:  # noqa: BLE001 — 打点失败不阻断水合
-                    version = ""
-                self._emit_knowledge_read(
-                    kind=str(getattr(doc, "record_kind", "") or "experience"),
-                    ref=f"experience:{stem}",
-                    version=version,
-                    session_id=session_id,
+                # P1-B 读侧修复：过滤必须在 _annotate_usage（usage_feedback 的
+                # recent_issue 合并）**之后**；knowledge_read 打点仍在过滤之后
+                # （丢弃行未返回调用方）。
+                rows = self._filter_heldout_rows(
+                    self._annotate_usage(  # EVO-20261014-7299aec2
+                        [self._experience_store.to_hydrated_record(stem, doc)][:limit],
+                        side="experience",
+                    ),
+                    kind="experience",
                 )
-                return self._annotate_usage(  # EVO-20261014-7299aec2
-                    [self._experience_store.to_hydrated_record(stem, doc)][:limit],
-                    side="experience",
-                )
+                if rows:
+                    # TASK-ac085ab1-002: 精确水合成功路径打点；版本哈希取自同一份 doc 快照
+                    try:
+                        version = hashlib.sha256(doc.to_md().encode("utf-8")).hexdigest()
+                    except Exception:  # noqa: BLE001 — 打点失败不阻断水合
+                        version = ""
+                    self._emit_knowledge_read(
+                        kind=str(getattr(doc, "record_kind", "") or "experience"),
+                        ref=f"experience:{stem}",
+                        version=version,
+                        session_id=session_id,
+                    )
+                return rows
         # R3(P0-3): 三态扫描 Outcome——诊断独立于 results[:limit] 截断照常回填
         #（kind=all 聚合中 experience 记录被挤出返回集时，诊断仍到达模型）
         outcome = self._experience_store.search_outcome(
@@ -983,8 +1064,11 @@ class RecordSearcher:
         }
         semantic_diag = getattr(self._experience_store, "last_semantic_diagnostics", None)
         self._last_semantic_diagnostics = dict(semantic_diag or {}) or None
-        return self._annotate_usage(  # EVO-20260923-6fe23c9b F2(b) + EVO-20261014-7299aec2
-            annotate_card_age(outcome.records), side="experience"
+        return self._filter_heldout_rows(  # held-out 读侧可见过滤（limit 截断后，不补位）
+            self._annotate_usage(  # EVO-20260923-6fe23c9b F2(b) + EVO-20261014-7299aec2
+                annotate_card_age(outcome.records), side="experience"
+            ),
+            kind="experience",
         )
 
     @staticmethod

@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.experiences.document import ExperienceDocument
+from llm_loop.knowledge import heldout_guard
+from llm_loop.knowledge.heldout_guard import HeldoutContaminationError
 from llm_loop.timekeeping import system_local_now
 from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
 from llm_loop.usage_net import summarize_since_last_transition
@@ -38,6 +40,7 @@ from llm_loop.use_ledger import (
 )
 from llm_loop.use_ledger import (
     append_ledger_line,
+    canonical_json,
     count_valid_lines,
     dedupe_slot_heads,
     derive_slot_id,
@@ -159,12 +162,16 @@ class ExperienceStore:
         embedder: Any | None = None,
         semantic_ranker: Callable[..., list[tuple[int, float]]] | None = None,
         write_guard: Callable[[], bool] | None = None,
+        contamination_guard: Callable[[str], dict[str, Any]] | None = None,
         near_dup_threshold: float = 0.80,
     ) -> None:
         self._dir = Path(experiences_dir)
         # DRC T2：非 POSIX 无 fcntl 运行时的进程内写锁 fallback（不声称跨进程保证）
         self._thread_lock = threading.RLock()
         self._write_guard = write_guard
+        # held-out 写侧防线（fail-closed）：None 时惰性走 heldout_guard.check_text，
+        # 不在构造期解析 manifest（env/工作区在构造后仍可变化）。
+        self._contamination_guard = contamination_guard
         self._embedder = embedder  # T5: 可选 embedder 注入（None 时走关键词匹配，零回归）
         self._semantic_ranker = semantic_ranker
         self._post_save_hooks: list[Callable[[dict[str, Any]], Any]] = []
@@ -191,6 +198,24 @@ class ExperienceStore:
             raise PermissionError("knowledge store quarantined: write health unavailable") from exc
         if not allowed:
             raise PermissionError("knowledge store quarantined: mutation disabled")
+
+    def _reject_heldout_contamination(self, text: str) -> None:
+        """写侧 fail-closed：命中 held-out 探针即拒写（eval/rules/holdout.md §4）.
+
+        只判 ``status == "blocked"``：guard unavailable/内部异常由 heldout_guard
+        映射为非 blocked → 放行（fail-open 由 guard 自身保证）。
+        异常消息只含类别（task_id/statement_probe）与 task_id，绝不携带待检文本。
+        """
+        verdict = (
+            self._contamination_guard(text)
+            if self._contamination_guard is not None
+            else heldout_guard.check_text(text)
+        )
+        if verdict.get("status") == "blocked":
+            raise HeldoutContaminationError(
+                "experience save rejected: held-out contamination "
+                f"({verdict.get('reason')}): task_id={verdict.get('task_id')}"
+            )
 
     @property
     def workspace_root(self) -> Path:
@@ -275,6 +300,9 @@ class ExperienceStore:
         目录 fsync 耗尽=ExperienceCommitUncertainError（禁止盲重放，先 get() 逐字
         readback）。post_save_hooks 仅在确定提交后运行（derived work 不参与回滚）。
         """
+        # held-out 写侧防线先于一切写入路径（含 _require_write_safe/mkdir/锁）：
+        # 拒写时目录零副作用。待检文本 = doc.to_md()（front matter + body 全量序列化）。
+        self._reject_heldout_contamination(doc.to_md())
         self._require_write_safe()
         self._dir.mkdir(parents=True, exist_ok=True)
         date_str = system_local_now().strftime("%Y%m%d")
@@ -300,6 +328,11 @@ class ExperienceStore:
             except Exception:  # noqa: BLE001 — 链接探测失败不影响写入本身
                 logger.warning("[经验库] 近重复探测异常，本次跳过链接（fail-open）", exc_info=True)
             payload = doc.to_md()
+            # held-out 写侧防线（F3 最终载荷复检）：上面的入口预检先于 near-dup
+            # 链接，而链接会向 doc.supersedes 追加 stem 后重新序列化——对即将
+            # 写盘的最终 payload 在锁内、tmp 写入前再过一次检，保证落盘的每个
+            # 字节都在检查面内（追加的 stem 若带入污染同样拒写，零落盘）。
+            self._reject_heldout_contamination(payload)
             temp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:12]}.tmp")
             try:
                 _write_temp_exclusive(temp, payload)
@@ -848,6 +881,11 @@ class ExperienceStore:
             doc.status = status
             doc.updated_at = system_local_now().isoformat()
             payload = doc.to_md()
+            # held-out 写侧防线（最终载荷复检）：status 为枚举值、时间戳为程序
+            # 生成，但 body/其余字段是既有内容透传——对 RMW 最终序列化载荷
+            # 过检，与 MethodStore._replace_card 封堵点②同构（存量污染卡在
+            # 改写时 fail-closed，不会借状态流转重新落盘扩散）。
+            self._reject_heldout_contamination(payload)
             temp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:12]}.tmp")
             try:
                 _write_temp_exclusive(temp, payload)
@@ -1000,6 +1038,11 @@ class ExperienceStore:
             )
             entry["ledger_seq"] = ledger_seq
             entry["ledger_watermark"] = ledger_seq
+            # held-out 写侧防线（P1-B）：note/suggestion/model/evidence_refs/attribution
+            # 等模型可达字段在最终序列化整行入账前过检（canonical_json 与
+            # append_ledger_line 落盘序列化同构；integrity 凭据是程序追加的
+            # sha256，不引入新文本）——检查的正是即将持久化的载荷。
+            self._reject_heldout_contamination(canonical_json(entry))
             try:
                 entry = append_ledger_line(path, entry)
             except OSError as exc:
