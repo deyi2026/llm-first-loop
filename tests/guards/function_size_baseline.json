@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "b6ec02e03",
+    "head_commit": "cf19597f8",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1016,7 +1016,7 @@
     "src/llm_loop/methods/store.py::_record_use_locked": 144,
     "src/llm_loop/methods/store.py::list": 213,
     "src/llm_loop/realtime/keyframe_pipeline.py::ingest": 142,
-    "src/llm_loop/realtime/realtime_session_runtime.py::_finalize_with_visual": 121,
+    "src/llm_loop/realtime/realtime_session_runtime.py::_finalize_with_visual": 130,
     "src/llm_loop/resources/lfrt_runtime.py::parse_lfrt_status": 124,
     "src/llm_loop/resources/vendor_adapters/minimax.py::map_token_plan_remains_response": 130,
     "src/llm_loop/runtime/doctor.py::inspect_first_use": 204,
