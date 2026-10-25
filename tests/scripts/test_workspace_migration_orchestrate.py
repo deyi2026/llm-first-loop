@@ -15,8 +15,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
 PRECHECK = SCRIPTS / "workspace_env_precheck.py"
@@ -103,7 +101,6 @@ def _orch_src() -> str:
 class TestOrchestrateScript:
 
     def test_bash_syntax(self):
-        orch_src = _orch_src()
         for f in (ORCH, DRILL):
             proc = subprocess.run(["bash", "-n", str(f)], capture_output=True, text=True, check=False)
             assert proc.returncode == 0, f"{f}: {proc.stderr}"

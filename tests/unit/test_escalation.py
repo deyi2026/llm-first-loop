@@ -322,7 +322,6 @@ def test_cross_process_record_survives_save_not_decidable(tmp_path, monkeypatch)
     # 本进程（他视角）再写自己的记录：原记录必须存活（不销毁）
     other.create(tool_name="tool_y", command="safe --cmd", justification="other")
     after = esc.EscalationStore(tmp_path / "esc.json")._load()
-    ids = {r.get("tool_name") if "tool_name" in r else r.get("id") for r in after}
     assert len(after) == 2, f"跨进程记录被销毁: {len(after)}"
     assert sum(1 for r in after if r.get("_sig_unverified")) == 1
 
