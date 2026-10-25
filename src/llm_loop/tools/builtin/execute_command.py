@@ -17,6 +17,7 @@ import subprocess
 import threading
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,7 +38,7 @@ from llm_loop.tools.review_gate import (
     is_read_only_probe,
     review_gate_note,
 )
-from llm_loop.tools.safety import CatastrophicGuard
+from llm_loop.tools.safety import BlockDecision, CatastrophicGuard
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
@@ -232,6 +233,28 @@ def _release_cmd_worktree_note(lease: WorktreeLease) -> str:
             f"path={lease.path}{_WORKTREE_NON_SYSTEM_CLAUSE}"
         )
     return format_release_note(report, lease.path) + _WORKTREE_NON_SYSTEM_CLAUSE
+
+
+@dataclass(frozen=True)
+class _CommandSpec:
+    """execute() 参数裁决后的执行规格（纯提取重构：阶段间状态显式化，不经全局/闭包共享）."""
+
+    command: str
+    exec_argv: list[str] | None
+    exec_mode: str
+    run_bg: bool
+    fail_fast: bool
+    isolation: bool
+    launch_command: str
+
+
+@dataclass(frozen=True)
+class _ForegroundOutcome:
+    """前台 communicate 完成后的结果载体（proc 句柄与输出，供终态回执组装）."""
+
+    proc: subprocess.Popen
+    stdout: str
+    stderr: str
 
 
 class ExecuteCommandTool:
@@ -469,10 +492,10 @@ class ExecuteCommandTool:
             fact = "unknown（未注入探测器）"
         return review_gate_note(kind, fact, action_label=label)
 
-    def execute(self, **kwargs) -> ToolResult:
-        # ── P2-2（2026-10-25）: command / argv 二选一的结构化执行入口 ──
-        # argv 模式: shell=False 直执行（不经 /bin/sh），守卫按 shlex.join(argv)
-        # 判定；command 模式: 保持既有 shell 语义（exec_mode=shell，零回归）。
+    def _parse_command_mode(
+        self, kwargs: dict
+    ) -> tuple[str, list[str] | None, str] | ToolResult:
+        """command / argv 二选一裁决（P2-2）: 参数错误原样返回 FAILURE 回执."""
         command = str(kwargs.get("command", "") or "").strip()
         argv_arg = kwargs.get("argv")
         exec_argv: list[str] | None = None
@@ -522,6 +545,12 @@ class ExecuteCommandTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        return command, exec_argv, exec_mode
+
+    def _resolve_flags_and_workdir(
+        self, kwargs: dict, command: str, exec_argv: list[str] | None
+    ) -> tuple[str | None, bool, bool, bool, str] | ToolResult:
+        """workdir / run_bg / fail_fast / isolation 参数裁决并构造 launch_command."""
         workdir = str(kwargs.get("workdir", "") or "").strip() or None
         if workdir is not None:
             wd = Path(workdir).expanduser()
@@ -560,7 +589,8 @@ class ExecuteCommandTool:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content="[参数错误] isolation 需为 boolean",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         if isolation and run_bg:
             return ToolResult(
@@ -570,7 +600,8 @@ class ExecuteCommandTool:
                     "后台任务生命周期超出单次回执，无法确定性释放隔离树。"
                     "长隔离施工请改用 spawn_subagent(requires.fs_isolation=true)"
                 ),
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         if isolation and workdir is not None:
             return ToolResult(
@@ -579,9 +610,16 @@ class ExecuteCommandTool:
                     "[参数错误] isolation=true 不支持显式 workdir：隔离树根即本次 cwd"
                     "（基于父工作区当前 HEAD）；需要子目录请在命令内用相对路径 cd"
                 ),
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         launch_command = "bash -e -o pipefail -c " + shlex.quote(command) if fail_fast else command
+        return workdir, run_bg, fail_fast, isolation, launch_command
+
+    def _apply_execution_guards(
+        self, spec: _CommandSpec, workdir: str | None, esc_id: str, esc_token: str
+    ) -> tuple[str, ToolResult | None]:
+        """工具层灾难守卫链（P2-2/P2-3）: 守卫判定，阻断时走提权覆盖；返回 (附注, 错误回执)."""
         # ── P2-2/P2-3（2026-10-25）: 工具层灾难守卫 + 提权令牌定向覆盖 ──
         # 判定基准文本: argv 模式 = shlex.join(argv)（结构化执行不绕过守卫）；
         # command 模式 = command 原文（注册表层已判，工具层兜底重复判定，
@@ -593,72 +631,449 @@ class ExecuteCommandTool:
         #   该形态是 registry 层既有闭环（注册表已消耗令牌并裁决），工具层
         #   重复裁决会二次消费/误阻断已批准执行，故工具层让位（单一裁决权）。
         guard_override_note = ""
-        esc_id = str(kwargs.get("escalation_id", "") or "").strip()
-        esc_token = str(kwargs.get("escalation_token", "") or "").strip()
-        run_tool_guard = exec_argv is not None or bool(esc_id) or not esc_token
+        run_tool_guard = spec.exec_argv is not None or bool(esc_id) or not esc_token
         if run_tool_guard:
             decision = self._guard().guard(
                 self.name,
-                {"command": command, "run_in_background": run_bg},
+                {"command": spec.command, "run_in_background": spec.run_bg},
                 workdir=workdir,
             )
             if decision is not None and decision.blocked:
-                if not (esc_id and esc_token):
-                    return ToolResult(
-                        status=ToolResultStatus.BLOCKED,
-                        content=(
-                            f"[安全硬阻断][E6_CATASTROPHIC_HARD] 已阻止可能造成不可逆破坏的行动"
-                            f"（exec_mode={exec_mode}）。{decision.reason}"
-                            " 如确属必要: escalation_request 提交提权申请（web 弹窗人工审批），"
-                            "批准后凭一次性令牌重发。"
-                        ),
-                        tool_call_id="",
-                        tool_name=self.name,
-                        error_type="E6_CATASTROPHIC_HARD",
-                        error_detail=f"判定依据: {decision.evidence}",
-                    )
-                store = self._escalation()
-                if store is None:
-                    return ToolResult(
-                        status=ToolResultStatus.BLOCKED,
-                        content=(
-                            "[安全硬阻断][E6_CATASTROPHIC_HARD] 已阻止可能造成不可逆破坏的行动。"
-                            f"{decision.reason} [提权覆盖不可用] 提权存储未装配/不可达，保持阻断。"
-                        ),
-                        tool_call_id="",
-                        tool_name=self.name,
-                        error_type="E6_CATASTROPHIC_HARD",
-                        error_detail=f"判定依据: {decision.evidence}; escalation store unavailable",
-                    )
-                command_sha256 = hashlib.sha256(command.encode("utf-8")).hexdigest()
-                rec, reject_reason = store.consume_for_execution(
-                    esc_id, esc_token, command_sha256
+                note, err = self._resolve_escalation_override(
+                    decision, spec, esc_id, esc_token
                 )
-                if rec is None:
-                    return ToolResult(
-                        status=ToolResultStatus.BLOCKED,
-                        content=(
-                            f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
-                            "如仍必要请重新 escalation_request 提交申请。"
-                            "（原阻断保持）"
-                        ),
-                        tool_call_id="",
-                        tool_name=self.name,
-                        error_type="E6_ESCALATION_TOKEN",
-                        error_detail=f"escalation token rejected: {reject_reason}",
+                if err is not None:
+                    return "", err
+                guard_override_note = note
+        return guard_override_note, None
+
+    def _resolve_escalation_override(
+        self, decision: BlockDecision, spec: _CommandSpec, esc_id: str, esc_token: str
+    ) -> tuple[str, ToolResult | None]:
+        """守卫已阻断时的 (escalation_id, escalation_token) 三重绑定一次性覆盖（P2-3）."""
+        if not (esc_id and esc_token):
+            return "", ToolResult(
+                status=ToolResultStatus.BLOCKED,
+                content=(
+                    f"[安全硬阻断][E6_CATASTROPHIC_HARD] 已阻止可能造成不可逆破坏的行动"
+                    f"（exec_mode={spec.exec_mode}）。{decision.reason}"
+                    " 如确属必要: escalation_request 提交提权申请（web 弹窗人工审批），"
+                    "批准后凭一次性令牌重发。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="E6_CATASTROPHIC_HARD",
+                error_detail=f"判定依据: {decision.evidence}",
+            )
+        store = self._escalation()
+        if store is None:
+            return "", ToolResult(
+                status=ToolResultStatus.BLOCKED,
+                content=(
+                    "[安全硬阻断][E6_CATASTROPHIC_HARD] 已阻止可能造成不可逆破坏的行动。"
+                    f"{decision.reason} [提权覆盖不可用] 提权存储未装配/不可达，保持阻断。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="E6_CATASTROPHIC_HARD",
+                error_detail=f"判定依据: {decision.evidence}; escalation store unavailable",
+            )
+        command_sha256 = hashlib.sha256(spec.command.encode("utf-8")).hexdigest()
+        rec, reject_reason = store.consume_for_execution(
+            esc_id, esc_token, command_sha256
+        )
+        if rec is None:
+            return "", ToolResult(
+                status=ToolResultStatus.BLOCKED,
+                content=(
+                    f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
+                    "如仍必要请重新 escalation_request 提交申请。"
+                    "（原阻断保持）"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="E6_ESCALATION_TOKEN",
+                error_detail=f"escalation token rejected: {reject_reason}",
+            )
+        guard_override_note = (
+            f'guard_override="escalation:{esc_id}"'
+            "（人工批准令牌已消费：单次有效、绑定精确命令哈希）"
+        )
+        _argv_logger.info(
+            "[提权覆盖放行] exec_mode=%s argv_len=%s escalation_id=%s "
+            "command_sha256=%s（令牌已消费，单次）",
+            spec.exec_mode,
+            len(spec.exec_argv) if spec.exec_argv is not None else "",
+            esc_id,
+            command_sha256,
+        )
+        return guard_override_note, None
+
+    def _prepare_isolation_lease(self) -> WorktreeLease | ToolResult:
+        """准备命令级 worktree 隔离租约（EVO-20261016-96abc163）；失败整条拒绝，不降级共享工作区."""
+        try:
+            return prepare_worktree(
+                f"lfl-cmd-{uuid4().hex[:16]}",
+                parent_root=workspace_base(),
+            )
+        except WorktreeIsolationError as exc:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    f"[worktree 隔离准备失败] reason_code={exc.reason_code}，"
+                    f"命令未执行（未降级共享工作区执行）: {exc.detail or exc}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+    def _apply_sandbox_policy(
+        self, spec: _CommandSpec, workdir: str | None, wt_note_in: Callable[[str], str]
+    ) -> tuple[list[str] | None, str] | ToolResult:
+        """EXEC_SANDBOX 沙箱包装 + argv 模式包装尾部替换（P3-3/P2-2，前台/后台共用）."""
+        # P3-3(2026-08-15)/P2-1(2026-10-25): EXEC_SANDBOX=auto/bwrap/docker/sandbox-exec →
+        # 沙箱 argv（shell=False）；显式开启而后端缺失 → fail-closed 如实失败；
+        # note 文案与实际后端一一对应（S2-6，不夸大隔离范围）
+        from llm_loop.tools.sandbox import sandbox_argv
+
+        try:
+            sandbox_cmd, sandbox_note = sandbox_argv(
+                spec.launch_command,
+                str(workdir or "."),
+                mode=self._sandbox_mode,
+                image=self._sandbox_image,
+            )
+        except RuntimeError as exc:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=wt_note_in(f"[沙箱不可用] {exc}"),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        # P2-2: 沙箱启用时 argv 模式替换包装尾部为 argv 本体（沙箱内仍不经
+        # shell）；包装结构不认识 → 确定性拒绝，绝不静默降级回 shell。
+        if spec.exec_argv is not None and sandbox_cmd is not None:
+            sandbox_cmd, _argv_sandbox_ok = self._sandbox_exec_argv(
+                sandbox_cmd, spec.command, spec.exec_argv
+            )
+            if not _argv_sandbox_ok:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=wt_note_in(
+                        "[参数错误] argv 模式与当前沙箱后端包装结构不兼容"
+                        "（拒绝降级为 shell 执行）；请改用 command 模式或调整沙箱配置"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+        return sandbox_cmd, sandbox_note
+
+    def _register_background_job(
+        self, proc: subprocess.Popen, spec: _CommandSpec, workdir: str | None
+    ) -> str | ToolResult:
+        """后台 job 登记: JobRegistry create + 读线程 + 副作用面登记；超限释放进程并拒绝."""
+        # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
+        # （current_session_id 用模块级 import：函数内重复 import 会遮蔽 198/320 行引用）
+        _sid = current_session_id.get() or ""
+        try:
+            job_id = JobRegistry.instance().create(
+                proc,
+                # P2-2: argv 模式持久化标签用 join 文本（可读且与守卫/哈希基准一致）
+                spec.command if spec.exec_argv is not None else spec.launch_command,
+                session_id=_sid,
+                workspace_root=str(workdir or ""),
+                executor="execute_command",
+            )
+        except (JobLimitExceeded, JobDurabilityError) as exc:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.terminate()  # 兜底：单进程 SIGTERM
+            kind = "任务超限拒绝" if isinstance(exc, JobLimitExceeded) else "后台任务持久化失败"
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[{kind}] {exc}\n后台进程已释放，不返回 false-success: {spec.command}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        JobRegistry.instance().start_readers(job_id)
+        # Phase3 M3（G3）：后台 job 是可回收副作用，登记进副作用面
+        # （停止语义=JobRegistry cancel hook 已回收；revocable=True）。
+        # D6：target 只含 job_id+命令头，不含输出/正文。
+        try:
+            from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+            SideEffectRegistry.instance().register(
+                _sid,
+                "execute_command",
+                f"job:{job_id} cmd:{spec.command[:80]}",
+                "process_bg",
+                revocable=True,
+                detail="停止路径: JobRegistry.cancel_session hook (factory)",
+            )
+        except Exception:  # noqa: BLE001 — 登记失败不阻断工具（观测面 fail-open）
+            pass
+        return job_id
+
+    def _run_background(
+        self,
+        spec: _CommandSpec,
+        workdir: str | None,
+        env: dict[str, str],
+        gate_line: str,
+        guard_override_note: str,
+        wt_note_in: Callable[[str], str],
+    ) -> ToolResult:
+        """后台分支: effect fence 下 Popen 不阻塞 + JobRegistry 登记 + 启动回执组装."""
+        # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
+        wrapped = self._apply_sandbox_policy(spec, workdir, wt_note_in)
+        if isinstance(wrapped, ToolResult):
+            return wrapped
+        bg_cmd, bg_sandbox_note = wrapped
+        from llm_loop.core.tool_execution_journal import (
+            current_effect_mutation_authority,
+            format_effect_denial,
+        )
+
+        # EVO-20261014-459a8a1e: 确定只读探测（--help/--dry-run/status/diff/
+        # log/ls 类）无 durable 副作用提交点，shell 围栏层确定性放行；
+        # 其余命令仍 fail-closed，拒绝回执带分层码指认真实层。
+        read_only_probe = is_read_only_probe(spec.command)
+        with current_effect_mutation_authority() as verdict:
+            # R1 effect fence: 进程 spawn 即副作用提交点。lease 权威
+            # 丢失（过期/被接管）时拒绝 spawn，fail-closed。
+            if not verdict and not read_only_probe:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=format_effect_denial(
+                        verdict, action=f"后台命令拒绝启动: {spec.command}"
+                    ),
+                    error_type=verdict.code or "E0_EFFECT_AUTHORITY",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            # P2-2: argv 模式 shell=False 直执行；沙箱启用时执行替换后的包装 argv
+            if bg_cmd is not None:
+                _bg_target, _bg_shell = bg_cmd, False
+            elif spec.exec_argv is not None:
+                _bg_target, _bg_shell = spec.exec_argv, False
+            else:
+                _bg_target, _bg_shell = spec.launch_command, True
+            proc = subprocess.Popen(
+                _bg_target,
+                shell=_bg_shell,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                cwd=workdir,
+                env=env,
+                start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
+            )
+        job_id = self._register_background_job(proc, spec, workdir)
+        if isinstance(job_id, ToolResult):
+            return job_id
+        bg_content = f"[后台任务已启动] job_id={job_id} status=running\n命令: {spec.command}\n"
+        if bg_sandbox_note:
+            # S2-6: 后台回执同样如实标注沙箱（文案与实际后端一一对应）
+            bg_content += f"{bg_sandbox_note}\n"
+        if gate_line:
+            bg_content = f"{gate_line}\n{bg_content}"
+        if guard_override_note:
+            bg_content += f"{guard_override_note}\n"
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=bg_content
+                    + f"shell_mode={'fail_fast' if spec.fail_fast else 'default'}\n"
+                    + (
+                        f"exec_mode={spec.exec_mode} argv_len={len(spec.exec_argv)}\n"
+                        if spec.exec_argv is not None
+                        else f"exec_mode={spec.exec_mode}\n"
                     )
-                guard_override_note = (
-                    f'guard_override="escalation:{esc_id}"'
-                    "（人工批准令牌已消费：单次有效、绑定精确命令哈希）"
+                    + f"等进程终态用 wait(seconds=120, job_id={job_id})；"
+                    f"用 job_output(job_id={job_id}) 查询退出码与输出。",
+            tool_call_id="",
+            tool_name=self.name,
+            # R2 P1-7: 回执文案与结构化字段同一构造点产出（活跃句柄 → 下轮投影选入）
+            capability_requirements=("job_output", "wait"),
+        )
+
+    def _run_foreground(
+        self,
+        spec: _CommandSpec,
+        workdir: str | None,
+        env: dict[str, str],
+        gate_line: str,
+        wt_note_in: Callable[[str], str],
+    ) -> ToolResult | _ForegroundOutcome:
+        """前台分支: 沙箱包装 + effect fence + Popen + communicate 兜底超时与句柄清理."""
+        wrapped = self._apply_sandbox_policy(spec, workdir, wt_note_in)
+        if isinstance(wrapped, ToolResult):
+            return wrapped
+        sandbox_cmd, sandbox_note = wrapped
+        from llm_loop.core.tool_execution_journal import (
+            current_effect_mutation_authority,
+            format_effect_denial,
+        )
+
+        # EVO-20261014-459a8a1e: 同后台路径——只读探测围栏层放行，其余 fail-closed
+        # 且拒绝回执带分层码（E3/E4）指认真实层。
+        read_only_probe = is_read_only_probe(spec.command)
+        with current_effect_mutation_authority() as verdict:
+            # R1 effect fence: 进程 spawn 即副作用提交点（同后台路径）。
+            if not verdict and not read_only_probe:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=wt_note_in(format_effect_denial(
+                        verdict, action=f"命令拒绝执行: {spec.command}"
+                    )),
+                    error_type=verdict.code or "E0_EFFECT_AUTHORITY",
+                    tool_call_id="",
+                    tool_name=self.name,
                 )
-                _argv_logger.info(
-                    "[提权覆盖放行] exec_mode=%s argv_len=%s escalation_id=%s "
-                    "command_sha256=%s（令牌已消费，单次）",
-                    exec_mode,
-                    len(exec_argv) if exec_argv is not None else "",
-                    esc_id,
-                    command_sha256,
-                )
+            # P2-2: argv 模式 shell=False 直执行；沙箱启用时执行替换后的包装 argv
+            if sandbox_cmd is not None:
+                _fg_target, _fg_shell = sandbox_cmd, False
+            elif spec.exec_argv is not None:
+                _fg_target, _fg_shell = spec.exec_argv, False
+            else:
+                _fg_target, _fg_shell = spec.launch_command, True
+            proc = subprocess.Popen(
+                _fg_target,
+                shell=_fg_shell,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=workdir,  # B: workdir 支持（fresh shell，对齐 Harness）
+                env=env,  # EVO-20260814-61a52baf: 环境清洗，密钥不外泄 + LLM_EXEC_CWD 事实
+                # P1-5(审计发现 #11): 独立进程组——注册表超时 terminate 可整树终止（防孤儿）。
+                # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
+                start_new_session=True,
+            )
+        self._sandbox_note = sandbox_note
+        _proc_key = current_session_id.get() or "__default__"
+        with self._active_proc_guard:
+            self._active_procs[_proc_key] = proc
+        try:
+            stdout, stderr = proc.communicate(timeout=self._timeout_s)
+        except subprocess.TimeoutExpired:
+            # 工具内兜底超时（communicate 只抛异常不杀进程）→ 整树终止防孤儿
+            self.terminate()
+            with suppress(Exception):
+                proc.wait(timeout=5)  # 收尸（SIGKILL 后立即退出；失败不阻断回执）
+            return ToolResult(
+                status=ToolResultStatus.TIMEOUT,
+                content=wt_note_in(
+                    f"[执行超时] 命令超过 {self._timeout_s:.0f}s 未完成"
+                    + (f"\n{gate_line}" if gate_line else "")
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        finally:
+            with self._active_proc_guard:
+                if self._active_procs.get(_proc_key) is proc:
+                    self._active_procs.pop(_proc_key, None)
+        return _ForegroundOutcome(proc=proc, stdout=stdout, stderr=stderr)
+
+    def _compose_foreground_result(
+        self,
+        outcome: _ForegroundOutcome,
+        spec: _CommandSpec,
+        env: dict[str, str],
+        gate_line: str,
+        guard_override_note: str,
+        wt_note_in: Callable[[str], str],
+    ) -> ToolResult:
+        """前台终态回执组装: 摘要前置 + stdout/stderr + python 事实 + 隔离附注."""
+        parts: list[str] = []
+        if self._sandbox_note:
+            parts.append(self._sandbox_note)  # 沙箱启用如实标注
+        if outcome.stdout:
+            parts.append(outcome.stdout.rstrip())
+        if outcome.stderr:
+            parts.append(f"[stderr] {outcome.stderr.rstrip()}")
+        runtime_fact = _python_runtime_fact(
+            spec.command, outcome.proc.returncode, outcome.stderr, env
+        )
+        if runtime_fact:
+            parts.append(runtime_fact)
+        interpreter_fact = _python_interpreter_fact(spec.command, env)
+        # 仅故障/异常形态附指纹（非零退出码或 runtime_fact）——保住"成功回执首内容
+        # 即纯 stdout"既有契约（test_execute_command_scrubs_env 断言纯 stdout）。
+        if interpreter_fact and (outcome.proc.returncode != 0 or runtime_fact):
+            parts.append(interpreter_fact)
+        content = "\n".join(parts) if parts else "（命令执行成功，无输出）"
+
+        status = (
+            ToolResultStatus.SUCCESS
+            if outcome.proc.returncode == 0
+            else ToolResultStatus.FAILURE
+        )
+        # 2026-08-21 摘要前置（用户洞察: 截断区保留必要信息）: 统一前置
+        # [命令] + 退出码 + 输出行数——成功/失败都可见元信息，截断时首行即摘要。
+        # （原实现仅失败时前置退出码，成功时直接是输出内容）
+        _cmd_preview = " ".join(spec.command.split()[:8]) if spec.command else "?"
+        _out_lines = len(content.splitlines())
+        # P2-2: 回执如实记录执行模式（argv=结构化不经 shell / shell=经 /bin/sh）与 argv 长度。
+        _exec_mode_tag = (
+            f"exec_mode={spec.exec_mode} argv_len={len(spec.exec_argv)}"
+            if spec.exec_argv is not None
+            else f"exec_mode={spec.exec_mode}"
+        )
+        # EVO-20261014-7ba73d88: 闸提示行紧随 [命令] 摘要行（成功回执首内容契约保持纯 stdout 紧随其后）。
+        _summary_line = (
+            f"[命令] {_cmd_preview} [退出码 {outcome.proc.returncode}]"
+            f" [输出 {_out_lines} 行] [{_exec_mode_tag}]"
+        )
+        content = "\n".join(
+            line
+            for line in (_summary_line, gate_line or None, guard_override_note or None, content)
+            if line is not None
+        )
+        # EVO-20261016-96abc163: 隔离树终态附注（干净=已删除；脏=保留路径+HEAD）
+        content = wt_note_in(content)
+
+        raw_observation = content if current_evidence_shadow_enabled.get() else None
+
+        return ToolResult(
+            status=status,
+            content=content,
+            tool_call_id="",
+            tool_name=self.name,
+            raw_observation=raw_observation,
+        )
+
+    def execute(self, **kwargs) -> ToolResult:
+        # ── P2-2（2026-10-25）: command / argv 二选一的结构化执行入口 ──
+        # argv 模式: shell=False 直执行（不经 /bin/sh），守卫按 shlex.join(argv)
+        # 判定；command 模式: 保持既有 shell 语义（exec_mode=shell，零回归）。
+        mode = self._parse_command_mode(kwargs)
+        if isinstance(mode, ToolResult):
+            return mode
+        command, exec_argv, exec_mode = mode
+        flags = self._resolve_flags_and_workdir(kwargs, command, exec_argv)
+        if isinstance(flags, ToolResult):
+            return flags
+        workdir, run_bg, fail_fast, isolation, launch_command = flags
+        spec = _CommandSpec(
+            command=command,
+            exec_argv=exec_argv,
+            exec_mode=exec_mode,
+            run_bg=run_bg,
+            fail_fast=fail_fast,
+            isolation=isolation,
+            launch_command=launch_command,
+        )
+        # ── P2-2/P2-3（2026-10-25）: 工具层灾难守卫 + 提权令牌定向覆盖 ──
+        # （判定基准/覆盖通道/让位语义详见 _apply_execution_guards 文档）
+        esc_id = str(kwargs.get("escalation_id", "") or "").strip()
+        esc_token = str(kwargs.get("escalation_token", "") or "").strip()
+        guard_override_note, guard_err = self._apply_execution_guards(
+            spec, workdir, esc_id, esc_token
+        )
+        if guard_err is not None:
+            return guard_err
         # RULE-AI-28: caller-visible obligation is in the schema before invocation;
         # the returned annotation reports observations, not automatic admission.
         gate_line = self._review_gate_line(command)
@@ -691,261 +1106,24 @@ class ExecuteCommandTool:
             return f"{content}\n{note}" if note else content
 
         if isolation:
-            try:
-                wt_lease = prepare_worktree(
-                    f"lfl-cmd-{uuid4().hex[:16]}",
-                    parent_root=workspace_base(),
-                )
-            except WorktreeIsolationError as exc:
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content=(
-                        f"[worktree 隔离准备失败] reason_code={exc.reason_code}，"
-                        f"命令未执行（未降级共享工作区执行）: {exc.detail or exc}"
-                    ),
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
+            lease = self._prepare_isolation_lease()
+            if isinstance(lease, ToolResult):
+                return lease
+            wt_lease = lease
             workdir = wt_lease.path
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()
             env = _workspace_python_env(env, workdir, command)
             env["LLM_EXEC_CWD"] = workdir or os.getcwd()
+            # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
             if run_bg:
-                # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
-                from llm_loop.tools.sandbox import sandbox_argv
-
-                try:
-                    bg_cmd, bg_sandbox_note = sandbox_argv(
-                        launch_command,
-                        str(workdir or "."),
-                        mode=self._sandbox_mode,
-                        image=self._sandbox_image,
-                    )
-                except RuntimeError as exc:
-                    return ToolResult(
-                        status=ToolResultStatus.ERROR,
-                        content=_wt_note_in(f"[沙箱不可用] {exc}"),
-                        tool_call_id="",
-                        tool_name=self.name,
-                    )
-                # P2-2: 沙箱启用时 argv 模式替换包装尾部为 argv 本体（沙箱内仍不经
-                # shell）；包装结构不认识 → 确定性拒绝，绝不静默降级回 shell。
-                if exec_argv is not None and bg_cmd is not None:
-                    bg_cmd, _argv_sandbox_ok = self._sandbox_exec_argv(
-                        bg_cmd, command, exec_argv
-                    )
-                    if not _argv_sandbox_ok:
-                        return ToolResult(
-                            status=ToolResultStatus.FAILURE,
-                            content=_wt_note_in(
-                                "[参数错误] argv 模式与当前沙箱后端包装结构不兼容"
-                                "（拒绝降级为 shell 执行）；请改用 command 模式或调整沙箱配置"
-                            ),
-                            tool_call_id="",
-                            tool_name=self.name,
-                        )
-                from llm_loop.core.tool_execution_journal import (
-                    current_effect_mutation_authority,
-                    format_effect_denial,
+                return self._run_background(
+                    spec, workdir, env, gate_line, guard_override_note, _wt_note_in
                 )
-
-                # EVO-20261014-459a8a1e: 确定只读探测（--help/--dry-run/status/diff/
-                # log/ls 类）无 durable 副作用提交点，shell 围栏层确定性放行；
-                # 其余命令仍 fail-closed，拒绝回执带分层码指认真实层。
-                read_only_probe = is_read_only_probe(command)
-                with current_effect_mutation_authority() as verdict:
-                    # R1 effect fence: 进程 spawn 即副作用提交点。lease 权威
-                    # 丢失（过期/被接管）时拒绝 spawn，fail-closed。
-                    if not verdict and not read_only_probe:
-                        return ToolResult(
-                            status=ToolResultStatus.UNAUTHORIZED,
-                            content=format_effect_denial(
-                                verdict, action=f"后台命令拒绝启动: {command}"
-                            ),
-                            error_type=verdict.code or "E0_EFFECT_AUTHORITY",
-                            tool_call_id="",
-                            tool_name=self.name,
-                        )
-                    # P2-2: argv 模式 shell=False 直执行；沙箱启用时执行替换后的包装 argv
-                    if bg_cmd is not None:
-                        _bg_target, _bg_shell = bg_cmd, False
-                    elif exec_argv is not None:
-                        _bg_target, _bg_shell = exec_argv, False
-                    else:
-                        _bg_target, _bg_shell = launch_command, True
-                    proc = subprocess.Popen(
-                        _bg_target,
-                        shell=_bg_shell,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        bufsize=1,
-                        cwd=workdir,
-                        env=env,
-                        start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
-                    )
-                # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
-                # （current_session_id 用模块级 import：函数内重复 import 会遮蔽 198/320 行引用）
-                _sid = current_session_id.get() or ""
-                try:
-                    job_id = JobRegistry.instance().create(
-                        proc,
-                        # P2-2: argv 模式持久化标签用 join 文本（可读且与守卫/哈希基准一致）
-                        command if exec_argv is not None else launch_command,
-                        session_id=_sid,
-                        workspace_root=str(workdir or ""),
-                        executor="execute_command",
-                    )
-                except (JobLimitExceeded, JobDurabilityError) as exc:
-                    try:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                    except (ProcessLookupError, PermissionError, OSError):
-                        proc.terminate()  # 兜底：单进程 SIGTERM
-                    kind = "任务超限拒绝" if isinstance(exc, JobLimitExceeded) else "后台任务持久化失败"
-                    return ToolResult(
-                        status=ToolResultStatus.FAILURE,
-                        content=f"[{kind}] {exc}\n后台进程已释放，不返回 false-success: {command}",
-                        tool_call_id="",
-                        tool_name=self.name,
-                    )
-                JobRegistry.instance().start_readers(job_id)
-                # Phase3 M3（G3）：后台 job 是可回收副作用，登记进副作用面
-                # （停止语义=JobRegistry cancel hook 已回收；revocable=True）。
-                # D6：target 只含 job_id+命令头，不含输出/正文。
-                try:
-                    from llm_loop.core.loop.side_effects import SideEffectRegistry
-
-                    SideEffectRegistry.instance().register(
-                        _sid,
-                        "execute_command",
-                        f"job:{job_id} cmd:{command[:80]}",
-                        "process_bg",
-                        revocable=True,
-                        detail="停止路径: JobRegistry.cancel_session hook (factory)",
-                    )
-                except Exception:  # noqa: BLE001 — 登记失败不阻断工具（观测面 fail-open）
-                    pass
-                bg_content = f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"
-                if bg_sandbox_note:
-                    # S2-6: 后台回执同样如实标注沙箱（文案与实际后端一一对应）
-                    bg_content += f"{bg_sandbox_note}\n"
-                if gate_line:
-                    bg_content = f"{gate_line}\n{bg_content}"
-                if guard_override_note:
-                    bg_content += f"{guard_override_note}\n"
-                return ToolResult(
-                    status=ToolResultStatus.SUCCESS,
-                    content=bg_content
-                            + f"shell_mode={'fail_fast' if fail_fast else 'default'}\n"
-                            + (
-                                f"exec_mode={exec_mode} argv_len={len(exec_argv)}\n"
-                                if exec_argv is not None
-                                else f"exec_mode={exec_mode}\n"
-                            )
-                            + f"等进程终态用 wait(seconds=120, job_id={job_id})；"
-                            f"用 job_output(job_id={job_id}) 查询退出码与输出。",
-                    tool_call_id="",
-                    tool_name=self.name,
-                    # R2 P1-7: 回执文案与结构化字段同一构造点产出（活跃句柄 → 下轮投影选入）
-                    capability_requirements=("job_output", "wait"),
-                )
-            # P3-3(2026-08-15)/P2-1(2026-10-25): EXEC_SANDBOX=auto/bwrap/docker/sandbox-exec →
-            # 沙箱 argv（shell=False）；显式开启而后端缺失 → fail-closed 如实失败；
-            # note 文案与实际后端一一对应（S2-6，不夸大隔离范围）
-            from llm_loop.tools.sandbox import sandbox_argv
-
-            sandbox_note = ""
-            try:
-                sandbox_cmd, sandbox_note = sandbox_argv(
-                    launch_command,
-                    str(workdir or "."),
-                    mode=self._sandbox_mode,
-                    image=self._sandbox_image,
-                )
-            except RuntimeError as exc:
-                return ToolResult(
-                    status=ToolResultStatus.ERROR,
-                    content=_wt_note_in(f"[沙箱不可用] {exc}"),
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
-            # P2-2: 沙箱启用时 argv 模式替换包装尾部为 argv 本体（沙箱内仍不经
-            # shell）；包装结构不认识 → 确定性拒绝，绝不静默降级回 shell。
-            if exec_argv is not None and sandbox_cmd is not None:
-                sandbox_cmd, _argv_sandbox_ok = self._sandbox_exec_argv(
-                    sandbox_cmd, command, exec_argv
-                )
-                if not _argv_sandbox_ok:
-                    return ToolResult(
-                        status=ToolResultStatus.FAILURE,
-                        content=_wt_note_in(
-                            "[参数错误] argv 模式与当前沙箱后端包装结构不兼容"
-                            "（拒绝降级为 shell 执行）；请改用 command 模式或调整沙箱配置"
-                        ),
-                        tool_call_id="",
-                        tool_name=self.name,
-                    )
-            from llm_loop.core.tool_execution_journal import (
-                current_effect_mutation_authority,
-                format_effect_denial,
-            )
-
-            # EVO-20261014-459a8a1e: 同后台路径——只读探测围栏层放行，其余 fail-closed
-            # 且拒绝回执带分层码（E3/E4）指认真实层。
-            read_only_probe = is_read_only_probe(command)
-            with current_effect_mutation_authority() as verdict:
-                # R1 effect fence: 进程 spawn 即副作用提交点（同后台路径）。
-                if not verdict and not read_only_probe:
-                    return ToolResult(
-                        status=ToolResultStatus.UNAUTHORIZED,
-                        content=_wt_note_in(format_effect_denial(
-                            verdict, action=f"命令拒绝执行: {command}"
-                        )),
-                        error_type=verdict.code or "E0_EFFECT_AUTHORITY",
-                        tool_call_id="",
-                        tool_name=self.name,
-                    )
-                # P2-2: argv 模式 shell=False 直执行；沙箱启用时执行替换后的包装 argv
-                if sandbox_cmd is not None:
-                    _fg_target, _fg_shell = sandbox_cmd, False
-                elif exec_argv is not None:
-                    _fg_target, _fg_shell = exec_argv, False
-                else:
-                    _fg_target, _fg_shell = launch_command, True
-                proc = subprocess.Popen(
-                    _fg_target,
-                    shell=_fg_shell,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=workdir,  # B: workdir 支持（fresh shell，对齐 Harness）
-                    env=env,  # EVO-20260814-61a52baf: 环境清洗，密钥不外泄 + LLM_EXEC_CWD 事实
-                    # P1-5(审计发现 #11): 独立进程组——注册表超时 terminate 可整树终止（防孤儿）。
-                    # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
-                    start_new_session=True,
-                )
-            self._sandbox_note = sandbox_note
-            _proc_key = current_session_id.get() or "__default__"
-            with self._active_proc_guard:
-                self._active_procs[_proc_key] = proc
-            try:
-                stdout, stderr = proc.communicate(timeout=self._timeout_s)
-            except subprocess.TimeoutExpired:
-                # 工具内兜底超时（communicate 只抛异常不杀进程）→ 整树终止防孤儿
-                self.terminate()
-                with suppress(Exception):
-                    proc.wait(timeout=5)  # 收尸（SIGKILL 后立即退出；失败不阻断回执）
-                return ToolResult(
-                    status=ToolResultStatus.TIMEOUT,
-                    content=_wt_note_in(
-                        f"[执行超时] 命令超过 {self._timeout_s:.0f}s 未完成"
-                        + (f"\n{gate_line}" if gate_line else "")
-                    ),
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
+            fg = self._run_foreground(spec, workdir, env, gate_line, _wt_note_in)
+            if isinstance(fg, ToolResult):
+                return fg
         except OSError as exc:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
@@ -965,60 +1143,7 @@ class ExecuteCommandTool:
                     wt_note = _release_cmd_worktree_note(wt_lease)
                 finally:
                     wt_lease = None
-            _proc_key = locals().get("_proc_key")
-            _proc = locals().get("proc")
-            if _proc_key is not None:
-                with self._active_proc_guard:
-                    if self._active_procs.get(_proc_key) is _proc:
-                        self._active_procs.pop(_proc_key, None)
 
-        parts: list[str] = []
-        if self._sandbox_note:
-            parts.append(self._sandbox_note)  # 沙箱启用如实标注
-        if stdout:
-            parts.append(stdout.rstrip())
-        if stderr:
-            parts.append(f"[stderr] {stderr.rstrip()}")
-        runtime_fact = _python_runtime_fact(command, proc.returncode, stderr, env)
-        if runtime_fact:
-            parts.append(runtime_fact)
-        interpreter_fact = _python_interpreter_fact(command, env)
-        # 仅故障/异常形态附指纹（非零退出码或 runtime_fact）——保住"成功回执首内容
-        # 即纯 stdout"既有契约（test_execute_command_scrubs_env 断言纯 stdout）。
-        if interpreter_fact and (proc.returncode != 0 or runtime_fact):
-            parts.append(interpreter_fact)
-        content = "\n".join(parts) if parts else "（命令执行成功，无输出）"
-
-        status = ToolResultStatus.SUCCESS if proc.returncode == 0 else ToolResultStatus.FAILURE
-        # 2026-08-21 摘要前置（用户洞察: 截断区保留必要信息）: 统一前置
-        # [命令] + 退出码 + 输出行数——成功/失败都可见元信息，截断时首行即摘要。
-        # （原实现仅失败时前置退出码，成功时直接是输出内容）
-        _cmd_preview = " ".join(command.split()[:8]) if command else "?"
-        _out_lines = len(content.splitlines())
-        # P2-2: 回执如实记录执行模式（argv=结构化不经 shell / shell=经 /bin/sh）与 argv 长度。
-        _exec_mode_tag = (
-            f"exec_mode={exec_mode} argv_len={len(exec_argv)}"
-            if exec_argv is not None
-            else f"exec_mode={exec_mode}"
-        )
-        # EVO-20261014-7ba73d88: 闸提示行紧随 [命令] 摘要行（成功回执首内容契约保持纯 stdout 紧随其后）。
-        _summary_line = (
-            f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行] [{_exec_mode_tag}]"
-        )
-        content = "\n".join(
-            line
-            for line in (_summary_line, gate_line or None, guard_override_note or None, content)
-            if line is not None
-        )
-        # EVO-20261016-96abc163: 隔离树终态附注（干净=已删除；脏=保留路径+HEAD）
-        content = _wt_note_in(content)
-
-        raw_observation = content if current_evidence_shadow_enabled.get() else None
-
-        return ToolResult(
-            status=status,
-            content=content,
-            tool_call_id="",
-            tool_name=self.name,
-            raw_observation=raw_observation,
+        return self._compose_foreground_result(
+            fg, spec, env, gate_line, guard_override_note, _wt_note_in
         )

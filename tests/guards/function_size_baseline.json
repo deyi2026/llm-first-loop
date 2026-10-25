@@ -966,7 +966,6 @@
     "src/llm_loop/subagent/runner.py::_execute_subagent": 160,
     "src/llm_loop/task_quality/fix_loop.py::execute": 153,
     "src/llm_loop/tools/builtin/edit_file.py::run": 181,
-    "src/llm_loop/tools/builtin/execute_command.py::execute": 170,
     "src/llm_loop/tools/builtin/read_file.py::execute": 149,
     "src/llm_loop/tools/builtin/search_files.py::execute": 153,
     "src/llm_loop/tools/builtin/web_fetch.py::execute": 186,
