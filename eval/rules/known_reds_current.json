@@ -188,13 +188,6 @@
       "since": "2026-10-25"
     },
     {
-      "id": "RED-27",
-      "test": "tests/unit/test_execute_argv_and_override.py::test_argv_python_print",
-      "kind": "environment_gate_worktree",
-      "attribution": "argv python 打印：worktree venv 回落路径/HOME 隔离差异；主树绿【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
-      "since": "2026-10-25"
-    },
-    {
       "id": "RED-28",
       "test": "tests/unit/test_eval_runner_ingress_and_key.py::test_resolve_api_key_prefers_provider_declared_env",
       "kind": "environment_gate_worktree",
@@ -227,6 +220,13 @@
       "test": "tests/unit/test_execute_command_scrubs_env.py::test_whitelist_env_preserved",
       "kind": "environment_gate_worktree",
       "attribution": "同上【仅干净 worktree 全量门通道红（RULE-AI-28 竞态规避方案）；主树执行绿；非代码回归】",
+      "since": "2026-10-25"
+    },
+    {
+      "id": "RED-34",
+      "test": "tests/unit/test_execute_command_scrubs_env.py::test_control_plane_env_scrubbed",
+      "kind": "environment_gate_worktree",
+      "attribution": "env 脱敏白名单集在隔离 HOME/worktree 环境下不同（同 RED-30..32 组）；主树绿；非代码回归【2026-10-25 补登记：前轮清单落盘错位漏项】",
       "since": "2026-10-25"
     }
   ]
