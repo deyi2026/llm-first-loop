@@ -46,7 +46,7 @@ def _stub_runner(per_sample_truncated):
     """返回 run_one_sample 的替身：按调用次序给出预设 truncated 标志。"""
     seq = list(per_sample_truncated)
 
-    def _run(prompt, workdir, key, setup=None, max_iterations=10):
+    def _run(prompt, workdir, key, setup=None, max_iterations=10, knowledge_binding=None):
         trunc = seq.pop(0) if seq else False
         return {
             "trace": [{"name": "execute_command", "args": {"command": "ls"}}],
@@ -67,8 +67,15 @@ def test_truncated_samples_excluded_from_denominator(monkeypatch, tmp_path):
     # 顺序：pass, fail, pass, trunc
     trunc_flags = [False, False, False, True]
     idx = {"i": 0}
+    # E1' P1 修复配套（2026-10-25）：evaluate 非 dry 路径无条件逐样本传 knowledge_binding
+    # kwarg。构造真实 empty binding（全落 tmp_path，不碰生产目录），替身记录收到的
+    # kwarg 以锁定透传契约（只为断言改测试，不改产品代码）。
+    binding = run_eval.prepare_knowledge_binding(tmp_path / "kb-scratch", "empty")
+    assert binding["mode"] == "empty"
+    received_kb: list = []
 
-    def _run(prompt, workdir, key, setup=None, max_iterations=10):
+    def _run(prompt, workdir, key, setup=None, max_iterations=10, knowledge_binding=None):
+        received_kb.append(knowledge_binding)
         t = trunc_flags[idx["i"]]
         idx["i"] += 1
         # 第 2 个样本判失败：trace 无工具调用
@@ -90,7 +97,8 @@ def test_truncated_samples_excluded_from_denominator(monkeypatch, tmp_path):
     monkeypatch.setattr(run_eval, "run_one_sample", _run)
     monkeypatch.setattr(run_eval, "_resolve_api_key", lambda: "test-key")
     out = run_eval.evaluate(
-        scen, dry=False, samples_override=4, workdir=tmp_path, checkpoint_path=None, resume=False
+        scen, dry=False, samples_override=4, workdir=tmp_path, checkpoint_path=None, resume=False,
+        knowledge_binding=binding,
     )
     r = out["results"][0]
     assert r["truncated"] == 1, f"截断数应为 1，实际 {r['truncated']}"
@@ -102,6 +110,13 @@ def test_truncated_samples_excluded_from_denominator(monkeypatch, tmp_path):
     assert r["scored"] == 3, f"计分子集应为 3（4-1截断），实际 {r['scored']}"
     assert abs(r["rate_scored"] - 2 / 3) < 1e-9, f"参考率应为 2/3，实际 {r['rate_scored']}"
     assert abs(r["truncated_rate"] - 0.25) < 1e-9
+    # 锁"evaluate 逐样本透传 binding"：非空 binding 应原样传给每个样本
+    #（对象同一、mode 与构造一致；替身只记录 kwarg，不消费内容）
+    assert len(received_kb) == 4, f"应逐样本收到 binding 4 次，实际 {len(received_kb)}"
+    assert all(kb is binding for kb in received_kb), "每个样本应收到同一个 binding 对象"
+    assert received_kb[0]["mode"] == "empty", (
+        f"透传 binding 的 mode 应与构造一致（empty），实际 {received_kb[0]['mode']}"
+    )
 
 
 def test_truncated_but_verdict_true_not_counted_as_pass(monkeypatch, tmp_path):
@@ -176,7 +191,7 @@ def test_scenario_level_max_iterations_is_passed_through(monkeypatch, tmp_path):
     scen["scenarios"][0]["max_iterations"] = 24
     seen: list[int] = []
 
-    def _run(prompt, workdir, key, setup=None, max_iterations=10):
+    def _run(prompt, workdir, key, setup=None, max_iterations=10, knowledge_binding=None):
         seen.append(max_iterations)
         return {
             "trace": [{"name": "execute_command", "args": {"command": "ls"}}],
@@ -196,29 +211,87 @@ def test_scenario_level_max_iterations_is_passed_through(monkeypatch, tmp_path):
     assert seen == [24], f"场景轮数预算应透传为 24，实际 {seen}"
 
 
-def test_default_max_iterations_is_10(monkeypatch, tmp_path):
-    """未配置 max_iterations 的场景保持历史行为（10 轮），不静默改语义。"""
-    scen = _scenario()
-    seen: list[int] = []
+def test_default_max_iterations_follows_product_budget(monkeypatch, tmp_path):
+    """缺省轮数预算 = 产品口径（预算对齐契约变更，2026-10-25 取代旧"硬编码 10"契约）.
 
-    def _run(prompt, workdir, key, setup=None, max_iterations=10):
-        seen.append(max_iterations)
-        return {
-            "trace": [{"name": "execute_command", "args": {"command": "ls"}}],
-            "answer": "done",
-            "model_used": "m",
-            "rounds": 3,
-            "truncated": False,
-            "tokens_in": 1,
-            "tokens_out": 1,
-        }
+    三条断言锁定新契约：
+      1. LLM_MAX_ITERATIONS 未设置 → 跑批默认 = Settings.max_iterations 字段值
+         （与产品配置同源取，不硬编码数值，避免再被环境/字段演进钉死）；
+      2. env=10 → 默认 = 10（env 优先，与 Settings.from_env 同口径）；
+      3. budget_profile=pinned10 → 基准强制 10，即使 env 设成 500（复现历史跑批）。
+    """
+    import dataclasses
 
-    monkeypatch.setattr(run_eval, "run_one_sample", _run)
-    monkeypatch.setattr(run_eval, "_resolve_api_key", lambda: "test-key")
-    run_eval.evaluate(
-        scen, dry=False, samples_override=1, workdir=tmp_path, checkpoint_path=None, resume=False
+    from llm_loop.config import Settings
+
+    field_default = next(
+        f.default for f in dataclasses.fields(Settings) if f.name == "max_iterations"
     )
-    assert seen == [10], f"缺省轮数应为 10，实际 {seen}"
+
+    def _capture_runner():
+        """记录 max_iterations 实参的假 runner（与同文件其它测试同套路）。"""
+        seen: list[int] = []
+
+        def _run(prompt, workdir, key, setup=None, max_iterations=10, knowledge_binding=None):
+            seen.append(max_iterations)
+            return {
+                "trace": [{"name": "execute_command", "args": {"command": "ls"}}],
+                "answer": "done",
+                "model_used": "m",
+                "rounds": 3,
+                "truncated": False,
+                "tokens_in": 1,
+                "tokens_out": 1,
+            }
+
+        return seen, _run
+
+    monkeypatch.setattr(run_eval, "_resolve_api_key", lambda: "test-key")
+
+    # 1) env 未设置 → Settings.max_iterations 字段默认（不硬编码 500）
+    monkeypatch.delenv("LLM_MAX_ITERATIONS", raising=False)
+    seen, _run = _capture_runner()
+    monkeypatch.setattr(run_eval, "run_one_sample", _run)
+    run_eval.evaluate(
+        _scenario(), dry=False, samples_override=1, workdir=tmp_path,
+        checkpoint_path=None, resume=False,
+    )
+    assert seen == [field_default], (
+        f"缺省预算应为 Settings.max_iterations 字段默认（{field_default}），实际 {seen}"
+    )
+
+    # 2) env=10 → 默认 10（env 优先）
+    monkeypatch.setenv("LLM_MAX_ITERATIONS", "10")
+    seen, _run = _capture_runner()
+    monkeypatch.setattr(run_eval, "run_one_sample", _run)
+    run_eval.evaluate(
+        _scenario(), dry=False, samples_override=1, workdir=tmp_path,
+        checkpoint_path=None, resume=False,
+    )
+    assert seen == [10], f"env LLM_MAX_ITERATIONS=10 时缺省预算应为 10，实际 {seen}"
+
+    # 3) pinned10：忽略 env（500）强制 10（复现历史跑批行为的 CLI 语义）
+    monkeypatch.setenv("LLM_MAX_ITERATIONS", "500")
+    scen = _scenario()
+    budget = run_eval._resolve_run_budget(
+        scen,
+        product_default=run_eval._product_default_max_iterations(),
+        profile="pinned10",
+        ignore_scenario_pins=False,
+        force_max_iterations=None,
+    )
+    seen, _run = _capture_runner()
+    monkeypatch.setattr(run_eval, "run_one_sample", _run)
+    run_eval.evaluate(
+        scen,
+        dry=False,
+        samples_override=1,
+        workdir=tmp_path,
+        checkpoint_path=None,
+        resume=False,
+        budget=budget,
+    )
+    assert seen == [10], f"pinned10 基准应强制 10（无视 env=500），实际 {seen}"
 
 
 def test_main_rate_keeps_truncated_in_denominator(monkeypatch, tmp_path):
@@ -233,7 +306,7 @@ def test_main_rate_keeps_truncated_in_denominator(monkeypatch, tmp_path):
     ]
     idx = {"i": 0}
 
-    def _run(prompt, workdir, key, setup=None, max_iterations=10):
+    def _run(prompt, workdir, key, setup=None, max_iterations=10, knowledge_binding=None):
         v, t = seq[idx["i"]]
         idx["i"] += 1
         trace = [{"name": "execute_command", "args": {"command": "ls"}}] if v else []

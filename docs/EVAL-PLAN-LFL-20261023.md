@@ -65,7 +65,9 @@ LFL **不缺评测资产，缺的是收口与纪律**。仓库里已有 48 套�
 1. **外部基线当前不可用**（**P0 已归因完毕 → 已定案为"不可用基线"**）：`results.json` 判定 **7/79 = 8.86%**；80 个任务目录中 `path-tracing` 无结果（未判定，根因=harness 阶段 Errno24）。失败模式分布：`unknown_agent_error 52`、`test_timeout 9`、`unset 8`、`parse_error 5`、`agent_timeout 5`。→ **原 v1 稿称"68% 失败是未归因的 agent 侧错误"，经逐类归因后不成立**：52 例 `unknown_agent_error` 全部为环境/供应商侧（Docker 装配 27 + 宿主 fd 耗尽 16 + 模型 API 5xx 9），**占全部失败的 72.2%**。agent 真实运行过的 27 题通过 7（25.93%，Wilson 95% CI 13.2%–44.7%，n 小仅方向性）。该数字不能代表 LFL 能力。详见 §15 与 `eval/baselines/baseline_v0.md`。
 2. **基线文档缺失**（**P0 已补** → `eval/baselines/baseline_v0.md`）。
 3. **规则文档缺失**（**P0 已补** → `eval/rules/statistics.md` + `eval/rules/holdout.md`）。
-4. **隔离任务集不存在**（**未做，P2**）：`evals/heldout/` 不存在 → 按 PROPOSAL 的证据分级，当前任何 harness 增益声明只能是 **C 级**。
+4. **隔离任务集**：`evals/heldout/` 已于 2026-10-23 建成（23 题 / 138 样本，`evals/heldout/v1/`），但**运行时未接线**。
+   > 2026-10-25 更新：隔离机制已接入运行时（写侧 fail-closed / 读侧可见过滤 / `evals/heldout/v1/filter.py` 收敛为薄 CLI），见 `docs/HELDOUT-GUARD-20261025.md`。
+   > 仍未闭合：held-out **尚未实跑**（`eval/results/` 无产物）→ 目前 A/C 级结论都还不存在；且 `scripts/run_eval.py` 的 knowledge store 绑定仍会继承生产 `METHODS_DIR`/`EXPERIENCES_DIR`（跑批前必须先做存储隔离）。
 
 ### 2.3 可用模型矩阵（`model_catalog` 实测）
 
