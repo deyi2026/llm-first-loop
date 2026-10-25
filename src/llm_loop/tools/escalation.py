@@ -148,16 +148,29 @@ class EscalationStore:
             raise ValueError("escalation state not a list; refusing overwrite")
         valid: list[dict] = []
         dropped = 0
+        cross_process = 0
         for rec in data:
-            if isinstance(rec, dict) and hmac.compare_digest(
-                str(rec.get("sig") or ""), _record_mac(rec)
-            ):
-                valid.append(rec)
-            else:
+            if not isinstance(rec, dict):
                 dropped += 1
+                continue
+            if hmac.compare_digest(str(rec.get("sig") or ""), _record_mac(rec)):
+                valid.append(rec)
+                continue
+            # 准入审核P1-1(2026-10-25): 跨进程记录（他进程以其进程内密钥所签）
+            # 原样保留+标记，不再静默丢弃——否则 _save 写回即销毁他进程 pending。
+            # 审批/消费类状态变更对未验证记录拒绝（防伪造，P0-5 防线不回退）；
+            # 重启后本进程旧记录同样带标记（fail-closed：未决请求需重新发起）。
+            rec["_sig_unverified"] = True
+            valid.append(rec)
+            cross_process += 1
         if dropped:
             logger.warning(
-                "escalation 状态含 %d 条未签名/签名不符记录，已忽略（防手工伪造审批）", dropped
+                "escalation 状态含 %d 条结构损坏记录（非 dict），已忽略", dropped
+            )
+        if cross_process:
+            logger.info(
+                "escalation 状态含 %d 条他进程签名记录（保留展示；审批/消费拒绝）",
+                cross_process,
             )
         return valid
 
@@ -165,6 +178,10 @@ class EscalationStore:
         self._private_parent()
         for rec in records:
             if isinstance(rec, dict):
+                if rec.get("_sig_unverified"):
+                    # 他进程签名记录原样写回（保留原 sig）：防销毁且不代签。
+                    continue
+                rec.pop("_sig_unverified", None)
                 rec["sig"] = _record_mac(rec)
         # Explicit O_EXCL | O_NOFOLLOW durable-create primitive is both
         # race-safe and visible to the repository durability-write scanner.
@@ -289,7 +306,12 @@ class EscalationStore:
         return out
 
     def pending_count(self) -> int:
-        return sum(1 for r in self._load() if r.get("status") == "pending")
+        # 未验证记录不可审批，不计入可操作 pending（防伪造刷量）。
+        return sum(
+            1
+            for r in self._load()
+            if r.get("status") == "pending" and not r.get("_sig_unverified")
+        )
 
     def decide(
         self,
@@ -324,6 +346,11 @@ class EscalationStore:
             for r in records:
                 if r.get("id") != rid:
                     continue
+                if r.get("_sig_unverified"):
+                    # 准入审核P1-1: 他进程/跨重启签名记录，无法验证来源，
+                    # 拒绝审批（防伪造；P0-5 防线不回退）。
+                    reason = "该请求由其他进程签名发起，本面板无法验证来源，拒绝审批"
+                    return records
                 if r.get("status") != "pending":
                     reason = f"请求当前状态为 {r.get('status')}，仅 pending 可审批"
                     return records
@@ -384,6 +411,10 @@ class EscalationStore:
             hit = next((r for r in records if r.get("token") and r.get("token") == token), None)
             if hit is None:
                 reason = "令牌不存在（或从未批准）"
+                return records
+            if hit.get("_sig_unverified"):
+                # 准入审核P1-1: 他进程签名记录，本进程无法验证，拒绝消费（防伪造）。
+                reason = "令牌记录由其他进程签名，本进程无法验证，拒绝消费"
                 return records
             if hit.get("status") == "consumed":
                 reason = f"令牌已使用过（单次有效，请求 {hit.get('id')}）"
@@ -449,6 +480,10 @@ class EscalationStore:
             hit = next((r for r in records if r.get("id") == escalation_id), None)
             if hit is None:
                 reason = f"提权请求不存在: {escalation_id}"
+                return records
+            if hit.get("_sig_unverified"):
+                # 准入审核P1-1: 他进程签名记录，本进程无法验证，拒绝消费（防伪造）。
+                reason = "提权记录由其他进程签名，本进程无法验证，拒绝消费"
                 return records
             stored_token = str(hit.get("token") or "")
             if not stored_token or not secrets.compare_digest(stored_token, token):
