@@ -178,7 +178,10 @@ stop_one() { # stop_one <name> <manifest_pid> [port]
 # ── 修复1：停机前 .env 配置预检 ──
 env_precheck() {
   local out
-  if ! out="$("$VENV_PY" "$ENV_PRECHECK" "$ENV_FILE" 2>&1)"; then
+  # --strict-missing-hash（precheck 自身契约：生产启用登录时使用）——非 strict 下
+  # WEB_LOGIN_PASSWORD_HASH 整体缺失仅提示不阻断，会在停服→迁移→健康检查链上
+  # 复发断服窗口（本编排器面向的生产恰启用密码登录）。
+  if ! out="$("$VENV_PY" "$ENV_PRECHECK" --strict-missing-hash "$ENV_FILE" 2>&1)"; then
     emit env_precheck fail "停服前 .env 结构校验未通过（中止于停服前，服务未动）: $(printf '%s' "$out" | head -c 700)"
     return 1
   fi
@@ -199,7 +202,10 @@ wait_worker_terminal() { # wait_worker_terminal <action_id> <timeout_s> <progres
     now="$(date +%s)"
     if (( now - last >= 60 )); then
       last="$now"
-      emit "$step" pending "worker 状态=${st:-未知}，继续等待真实终态（action_id=$aid）"
+      # >&2：本函数被 start_services 以 $( ) 捕获返回值，pending 进度行走 stdout
+      # 会污染 $st（如 "pending 行\nsucceeded" → 判非 succeeded → recover_start
+      # 二次重启）。emit 全局行为不变（jsonl 照写、log 行改道 stderr→LOGF）。
+      emit "$step" pending "worker 状态=${st:-未知}，继续等待真实终态（action_id=$aid）" >&2
     fi
     sleep 3
   done
