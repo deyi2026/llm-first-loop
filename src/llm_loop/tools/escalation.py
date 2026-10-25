@@ -229,7 +229,15 @@ class EscalationStore:
         session_id: str = "",
         requested_by: str = "ai",
     ) -> dict:
-        """创建提权申请（同会话同命令的 pending 请求幂等复用）。"""
+        """创建提权申请（同会话同命令的 pending 请求幂等复用）.
+
+        哈希基准契约：``command`` 即令牌绑定的**精确命令文本**（SHA256，改一字符即废）。
+        argv 结构化执行类申请**必须提交 ``shlex.join(argv)`` 规范化文本**——上游
+        ``execute_command.py`` 以 ``shlex.join(argv)`` 为守卫与令牌校验的统一哈希
+        基准；此处若提交其他拼法（如手工空格拼接、repr、json），审批落库的哈希
+        与执行侧实际基准不一致，令牌在 consume/consume_for_execution 时必然校验
+        失败（fail-closed，放行永远不会发生，只是浪费一轮人工审批）。
+        """
         sha = hashlib.sha256(command.encode("utf-8")).hexdigest()
         created: dict | None = None
 
@@ -373,7 +381,10 @@ class EscalationStore:
             time.sleep(interval)
 
     def consume(self, token: str, tool_name: str, command: str) -> tuple[dict | None, str]:
-        """消耗一次性令牌（成功 = 本次灾难层放行；失败给出精确原因）。"""
+        """消耗一次性令牌（成功 = 本次灾难层放行；失败给出精确原因）.
+
+        ``command`` 口径与 create() 契约一致：argv 类申请传 ``shlex.join(argv)``。
+        """
         sha = hashlib.sha256(command.encode("utf-8")).hexdigest()
 
         result: dict | None = None
