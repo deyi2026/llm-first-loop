@@ -2,7 +2,7 @@
 
 > **复审与修复记录（2026-10-25 04:5x，LFL 追加；细节见文末"复审闭环"章节）**
 > 首轮 FAIL 后已完成 5 轮修复 + 3 轮独立复审：服务端半 PASS、前端半 PASS、修复集聚焦复审 PASS（均 P0=0/P1=0）。
-> 全量门禁**未运行**（2026-10-25 复核口径：当时未提交的安全批次现已提交；本候选 = 分支 `fix/evo-e0bff8ee-p2-int-rebase-20261025`，其 R9 函数体积基线已由本分支 guard(r9) 基线重登记提交全量重登记，全量数字待最终门实测填充，详见文末）。
+> 全量门禁**已实测通过**（2026-10-25 14:18，门禁脚本按 CI 原样执行、退出码 0；本候选 = 分支 `fix/evo-e0bff8ee-p2-int-rebase-20261025`，代码提交 `b56cb5025`，R9 基线已由本分支 guard(r9) 提交全量重登记。权威数字见文末「全量门禁」节；记录本结果的提交为 docs-only，不改代码）。
 
 - 审查者：独立代码审查子代理（GLM-5.3，只读审查，未修改任何代码/测试）
 - 仓库：llm-first-loop-mirror 本地镜像工作树（全部审查对象均为**未提交改动**）
@@ -167,10 +167,17 @@ it.skip。系统性盲区有三：① 派发链 mock 断层（P1-1 测试止于 
 - mediaSessionClient 测试注入式调度器与生产句柄映射不精确（测试侧）。
 - `_finalize_with_visual` 中视觉拒收路径重复卫语句（无行为影响）。
 
-### 全量门禁：未运行（本候选待最终门实测填充）
+### 全量门禁：已实测通过（本候选，2026-10-25 14:18）
+- 候选：分支 `fix/evo-e0bff8ee-p2-int-rebase-20261025`，代码提交 `b56cb5025`（基座 `a6a5ec456`；候选含 13 个提交，分支 tip 为其后一个 docs/reports-only 提交），工作树 `.worktrees/gate-evo-p2int-20261025`；记录本结果的提交为 docs-only，不改代码（`git diff b56cb5025 tip -- . ':(exclude)docs' ':(exclude)reports'` 为空）。
+- 门禁脚本 `scripts/ci_gate.sh` 按 CI 原样执行：**退出码 0**，5 步全过。
+- Host 独立准入审查（RULE-AI-28，`review_admission kind=full_test`，审查子代理 GLM-5.3）：**PASS**，candidate_sha256 `26ddb6fa…`，P0=0 / P1=0 / P2=14（均非阻塞，逐条见审查回执）。
+- 增量审查（`b56cb5025` 修 ruff F821/SIM117，另起只读审查子代理）：**PASS**，P0=0 / P1=0 / P2=2（观察项）。
+- 各步实测：`[1/5]` ruff 棘轮 historical=67 / current=34 / new=0 / resolved=33 / changed_file_diagnostics=0 → PASS；`[2/5]` env-pin 扫描 1006 个测试文件、0 处未声明 `COMPACT_RATIO` 依赖 → PASS；`[3/5]` pyright 棘轮 historical=45 / current=11 / new=0 / resolved=34 / changed_file_diagnostics=0 → PASS；`[4/5]` WebUI 由候选源码构建成功，tier0 预检 `326 passed, 2 skipped, 11048 deselected`（34.69s）；`[5/5]` 全量并行（xdist 4 workers）**28 failed / 11185 passed / 146 skipped（305.23s）**。
+- 红数对账：串行复跑失败文件得 **28 failed / 138 passed**，`eval/rules/red_reconciliation.py` 判定 **实测红 28 / 登记命中 28 / 登记基线 32 → PASS（本次提交未引入新红）**；另报 4 条过期登记项（实测已不红），仅建议清理、不阻断。
+- 与同一任务的前一候选对照（同口径、同环境）：`659cafc81`（2026-10-25 11:06）为 30 failed / 11181 passed / 146 skipped；本候选为 28 failed / 11185 passed / 146 skipped——失败 30→28、通过 11181→11185、skipped 不变，总数 11357→11359（+2 为新增用例）。
 - 历史时点记录（2026-10-25 04:07–04:41，**非本候选**）：当时工作树同时含另一条工作流的**未提交安全加固批次**（security_guard、cache_guard、auth、escalation HMAC、fs delete token 等）仍在写入 → `review_admission` 冻结 sha 在 PASS 后数秒漂移，连续 4 次无法取得资格（reviewer_unavailable / 敏感模式命中）。
 - 历史时点记录（隔离快照 = 当时 HEAD + 全部未提交改动，**非本候选**）：门禁审查员 **REVISE**——唯一 P1 为 `tests/guards/function_size_baseline.json` 未刷新而 `ExecuteCommandTool.execute` 170→约 368 行（属安全批次改动）；同时明确 realtime 改动逐项有回归测试、三个 P1 已真正修复。
-- 现状（EVO-20261025-e0bff8ee，随基座前进重述）：安全批次已提交；新基座上游提交 `01e612802` 已把 execute_command.execute 拆分为编排+六阶段函数（守卫口径实测最大 103 行，均低于 120 行登记阈值），故 R9 基线经本分支（`fix/evo-e0bff8ee-p2-int-rebase-20261025`）guard(r9) 基线重登记提交全量重登记后，已无任何 execute_command 键（此前“execute 实测 553 行进 legacy”仅适用于旧基座）。本候选全量门禁 = **未运行**，数字待最终门实测填充——本文不引用任何历史数字冒充本候选结果。
+- 现状（EVO-20261025-e0bff8ee，随基座前进重述）：安全批次已提交；新基座上游提交 `01e612802` 已把 execute_command.execute 拆分为编排+六阶段函数（守卫口径实测最大 103 行，均低于 120 行登记阈值），故 R9 基线经本分支（`fix/evo-e0bff8ee-p2-int-rebase-20261025`）guard(r9) 基线重登记提交全量重登记后，已无任何 execute_command 键（此前“execute 实测 553 行进 legacy”仅适用于旧基座）。本候选全量门禁结果见本节首段（已实测通过），上述历史时点数字不作为本候选结果。
 
 ### 本报告未验证边界（不可视为已验证）
 真机探针（M0）、30 分钟长会话、真实设备弱网、真实屏幕共享帧率/延迟、视觉任务真实端到端执行、以及上述 4 条残留项。
