@@ -262,8 +262,15 @@ def test_factory_separates_learning_journal_producer_from_dedicated_consumer(tmp
     ("semantic_enabled", "embedding_provider", "effective"),
     [(False, "hash", False), (True, "hash", True), (True, "none", False)],
 )
-def test_learning_reuses_candidates_without_promotion(tmp_path, semantic_enabled, embedding_provider, effective) -> None:
+def test_learning_reuses_candidates_without_promotion(tmp_path, monkeypatch, semantic_enabled, embedding_provider, effective) -> None:
     """Both lexical and semantic Learning recall share ordinary Method visibility."""
+    # 隔离宿主机本地 ONNX 模型缓存（Rule28 修复轮 2026-10-25）：provider="none" 语境下
+    # semantic_available() 会惰性探测本地重排器（retriever.py D7），本机
+    # ~/.cache/lfl/models/bge-small-zh-v1.5 已于 2026-10-20 落盘 → 探测翻 True、
+    # semantic_effective=True（产品行为为 D7 设计内，非回归）。本参数化验证的是
+    # "无 embedding 后端时 semantic 不 effective"，须把 LFL_SEMANTIC_MODEL_DIR 指
+    # 到空目录使探测确定性返回 False。
+    monkeypatch.setenv("LFL_SEMANTIC_MODEL_DIR", str(tmp_path / "no-local-onnx-models"))
     from llm_loop.config import Settings
     from llm_loop.factory import build_engine
     from llm_loop.methods.store import MethodStore
