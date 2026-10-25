@@ -83,7 +83,17 @@ DUAL_ROOT=0
 RESTART_ARG1="${1:-web}"  # S1(2026-09-22): 函数内 $1 被遮蔽；根检查中止的回执需要脚本目标
 # P1-3(2026-10-25): 默认工作区根（AI 默认可写区）。与 LFL_WORKSPACE_ROOT（代码
 # 身份锚，指向 $CODE_ROOT 不可改）语义无关；下方三处 spawn 前缀注入同名变量。
-LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$HOME/lfl-workspace}"
+# 过渡锚（R2 修正）: 实迁完成前缺省锚回 $CODE_ROOT——保持与迁移前行为完全一致
+# （current 已是代码根键，幂等无切换），防止 guard 自动拉起时空切到未迁移的
+# ~/lfl-workspace。实迁 runbook（docs/P1-3-实施方案 §8）执行时把缺省改为
+# $HOME/lfl-workspace 或显式 export，完成切换后本注释随 runbook 清理。
+LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$CODE_ROOT}"
+# 锚根存在性自检（对 $CODE_ROOT 幂等无害；显式配置错误路径时 fail-fast 中止，
+# 防止放行到 spawn 后的服务崩溃循环——准入审核 P2-4）。
+if ! mkdir -p -m 700 "$LFL_DEFAULT_WORKSPACE_ROOT" 2>/dev/null; then
+  echo "[restart] FATAL: 无法创建默认工作区根 $LFL_DEFAULT_WORKSPACE_ROOT（权限或路径错误）；请手工 mkdir -m 700 或修正 LFL_DEFAULT_WORKSPACE_ROOT" >&2
+  exit 78
+fi
 
 # ── lifecycle_agency：结构化阶段事实 + 模型举证推进（tasks 3.1 / 2.3 / 5.x）──
 # STAGE_FACT: 结构化阶段事实（L4 取代 marker 白名单推断副作用）。worker 只读该

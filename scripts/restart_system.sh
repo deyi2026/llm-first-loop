@@ -321,7 +321,15 @@ _start_service() {
       # P1-3(2026-10-25): 默认工作区根（AI 默认可写区，缺省 ~/lfl-workspace）。
       # 与 LFL_WORKSPACE_ROOT（代码身份锚）语义无关；factory 无显式
       # workspace_root 时消费本变量，不再回落 cwd=代码根。
-      export LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$HOME/lfl-workspace}"
+      # P1-3(2026-10-25): 默认工作区根（AI 默认可写区）。与 LFL_WORKSPACE_ROOT（代码
+      # 身份锚）语义无关；factory 无显式 workspace_root 时消费本变量，不再回落 cwd=代码根。
+      # 过渡锚（R2 修正，同 restart_mirror.sh）: 实迁完成前缺省锚回 $PROJECT_DIR 防空切。
+      export LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$PROJECT_DIR}"
+      # 锚根存在性自检（准入审核 P2-4）：显式配置错误路径时 fail-fast 中止。
+      if ! mkdir -p -m 700 "$LFL_DEFAULT_WORKSPACE_ROOT" 2>/dev/null; then
+        _log "[web] FATAL: 无法创建默认工作区根 $LFL_DEFAULT_WORKSPACE_ROOT；请手工 mkdir -m 700 或修正 LFL_DEFAULT_WORKSPACE_ROOT"
+        exit 78
+      fi
       nohup "$VENV_PY" -m llm_loop.web >> "$DATA_DIR/web.log" 2>&1 &
       echo "$!" > "$DATA_DIR/web.pid"   # 2026-08-17: 启动即落盘 pid（防"空 pid 文件→stop 误判未运行→端口占用"复发，DSH 036 建议）
       ;;
@@ -330,8 +338,12 @@ _start_service() {
       # P1-3-R2: 注入优雅退出时间契约（wait+drain ≤ GRACE_S−余量；10+3=13 ≤ 15，env 可覆盖）
       export FEISHU_EXIT_WAIT_S="${FEISHU_EXIT_WAIT_S:-10}"
       export FEISHU_EXIT_DRAIN_S="${FEISHU_EXIT_DRAIN_S:-3}"
-      # P1-3(2026-10-25): 同 web 分支——默认工作区根注入（见上方注释）。
-      export LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$HOME/lfl-workspace}"
+      # P1-3(2026-10-25): 同 web 分支——默认工作区根注入；过渡锚回 $PROJECT_DIR（见上）。
+      export LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$PROJECT_DIR}"
+      if ! mkdir -p -m 700 "$LFL_DEFAULT_WORKSPACE_ROOT" 2>/dev/null; then
+        _log "[feishu] FATAL: 无法创建默认工作区根 $LFL_DEFAULT_WORKSPACE_ROOT；请手工 mkdir -m 700 或修正 LFL_DEFAULT_WORKSPACE_ROOT"
+        exit 78
+      fi
       _log "[feishu] 启动飞书桥（日志: ${DATA_DIR}/feishu_bridge.log）..."
       # 统一走 runtime.launch：启动进程必须同步刷新 runtime_manifest.feishu.json。
       # 直接 python -m llm_loop.feishu 会让 heartbeat 已换代但 startup manifest
