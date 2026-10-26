@@ -316,7 +316,10 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
             destination.write("".join(lines))
         # 审核P2-3: 保留原 .env 权限位（部署可能自定义 0640 等）；仅当原权限
         # 比组/其他可读更宽时收紧到 0600（fail-closed：密钥文件不因回写放宽）。
-        mode = path.stat().st_mode & 0o777
+        try:
+            mode = path.stat().st_mode & 0o777
+        except OSError:
+            mode = 0o600
         os.chmod(tmp, mode if mode & 0o077 == 0 else 0o600)
         os.replace(tmp, path)
     except OSError:

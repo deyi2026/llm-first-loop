@@ -11,6 +11,27 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.subagent.runner import child_spawn_grant_allowed
 
 
+def _canary_zero_tool_parent() -> bool:
+    """当前父会话是否为程序 pin 的 canary 直发（EVO-20261025-9ba80656）。
+
+    canary dispatch 层把 spawn 参数 pin 为恰 {"tools": []}（零工具诊断
+    child），该路径的空数组是程序构造、非模型笔误；除它之外，模型调用面的
+    requires.tools=[] 一律在 spawn 时确定性拒绝。检测方式与 runner 侧
+    canary 判定保持一致（budget grant profile）。
+    """
+    try:
+        from llm_loop.resources import task_budget_subagent_profile as canary_profile
+        from llm_loop.resources.task_budget_dispatch import active_task_budget
+
+        parent_budget = active_task_budget()
+        return (
+            parent_budget is not None
+            and parent_budget._get_validated()["grant"]["profile"] == canary_profile.PROFILE
+        )
+    except Exception:  # noqa: BLE001 — 预算面不可用时按普通调用处理（走拒绝路径）
+        return False
+
+
 class SpawnSubAgentTool:
     name = "spawn_subagent"
     # nonblocking start 只负责登记 handle + 启线程，不再同步等待 child。
@@ -167,6 +188,30 @@ class SpawnSubAgentTool:
                 content=(
                     "[参数错误] requires 需为对象 {tools?: [工具名], network?: bool, "
                     "fs?: bool, fs_isolation?: bool, session_continuity?: bool}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        # EVO-20261025-9ba80656: requires.tools=[]（或全空白项）历史上被静默当作
+        # "零工具强制白名单"传给 runner——child 启动后才发现任何工具都调不了，
+        # 浪费整轮子会话 token 才暴露。现改为 spawn 时确定性拒绝并给出正确写法；
+        # 唯一豁免：程序 pin 的 canary 直发零工具诊断 child（其 dispatch 层强制
+        # requires 恰为 {"tools": []}，见 task_budget_subagent_profile）。
+        if (
+            reqs is not None
+            and isinstance(requires_raw, dict)
+            and "tools" in requires_raw
+            and not [t for t in (reqs.tools or []) if str(t).strip()]
+            and not _canary_zero_tool_parent()
+        ):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[参数错误] requires.tools 为空数组（或全空白项）：这会把 child "
+                    "工具面强制截断到空集（任何工具都不可用），几乎必然是笔误，child 未启动。"
+                    "正确写法：继承父域请整个省略 requires 或省略 tools 键；显式白名单请列全"
+                    "所需工具名（至少一个非空项）。零工具纯推理 child 仅程序内部 canary "
+                    "路径使用，模型调用面不开放。"
                 ),
                 tool_call_id="",
                 tool_name=self.name,

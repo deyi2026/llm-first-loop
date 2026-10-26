@@ -583,8 +583,16 @@ def test_real_registry_spawn_and_result_tool_reaches_zero_tool_budgeted_child(tm
     assert report["used_or_reserved"]["tool_invocations"] == 2
 
 
-def test_spawn_tool_preserves_explicit_empty_vs_omitted_tools_without_provider():
-    """Only explicit requires.tools=[] produces a hard zero-tool child scope."""
+def test_spawn_tool_rejects_empty_tools_whitelist_without_provider():
+    """EVO-20261025-9ba80656: model-facing requires.tools=[] fails fast at spawn.
+
+    The old behavior silently forwarded an empty whitelist to the runner and the
+    child only discovered its zero-tool scope after burning a full round. Now
+    the empty (or all-blank) whitelist is rejected deterministically before any
+    runner.start call; the program-pinned canary dispatch path stays exempt
+    (covered by the real-registry canary tests above). Omitted and non-empty
+    semantics are unchanged.
+    """
     from types import SimpleNamespace
 
     from llm_loop.core.message import ToolResultStatus
@@ -602,14 +610,23 @@ def test_spawn_tool_preserves_explicit_empty_vs_omitted_tools_without_provider()
     fake_runner = _RecordingRunner()
     tool = SpawnSubAgentTool(fake_runner)
     for kw in (
-        {"task": "zero tools", "requires": {"tools": []}},
+        {"task": "empty whitelist typo", "requires": {"tools": []}},
+        {"task": "blank items typo", "requires": {"tools": ["", "  "]}},
+    ):
+        result = tool.execute(**kw)
+        assert result.status == ToolResultStatus.FAILURE, result.content
+        assert "requires.tools 为空数组" in result.content
+    # 空数组是确定性拒绝：runner.start 根本不被调用，不消耗 child 槽位。
+    assert fake_runner.kwargs == []
+    # 省略 requires / 非空白名单：语义保持（runner 收到 None / ["wait"]）。
+    for kw in (
         {"task": "legacy omitted"},
         {"task": "nonempty", "requires": {"tools": ["wait"]}},
     ):
         result = tool.execute(**kw)
         assert result.status == ToolResultStatus.FAILURE
     assert [row["required_tools"] for row in fake_runner.kwargs] == [
-        [], None, ["wait"]
+        None, ["wait"]
     ]
 
 

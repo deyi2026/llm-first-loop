@@ -1419,9 +1419,27 @@
   background: var(--dsw-alias-state-error-primary);
 }
 
-.realtime-voice-talk:disabled {
+.realtime-voice-talk:disabled,
+.realtime-voice-talk[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 按住说话：触摸防护三件套——
+   - touch-action: none：按住期间页面平移滚动不再触发 pointercancel 提前松开；
+   - user-select / -webkit-touch-callout：抑制长按选词与 iOS 系统呼出菜单。 */
+.realtime-voice-talk {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.realtime-voice-talk:not([aria-disabled="true"]):active {
+  filter: brightness(0.9);
+  transform: translateY(1px);
+}
+.realtime-voice-talk[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--dsw-alias-state-error-primary) inset;
 }
 
 .realtime-voice-close,
@@ -1446,6 +1464,23 @@
   color: var(--dsw-alias-state-error-primary);
   overflow-wrap: anywhere;
 }
+.realtime-voice-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: var(--dsw-radius-sm);
+  padding: 6px 10px;
+  overflow-wrap: anywhere;
+}
+/* 状态点分态着色：连接语义一眼可辨（ready 绿 / 进行中琥珀 / 失败红 / 结束灰）。 */
+.realtime-voice-indicator[data-state="ready"] { background: var(--dsw-alias-state-success-primary, #34c759); }
+.realtime-voice-indicator[data-state="opening"],
+.realtime-voice-indicator[data-state="reconnecting"],
+.realtime-voice-indicator[data-state="closing"] { background: var(--dsw-alias-state-warning-primary, #ff9f0a); }
+.realtime-voice-indicator[data-state="failed"] { background: var(--dsw-alias-state-error-primary); }
+.realtime-voice-indicator[data-state="closed"] { background: var(--dsw-alias-label-secondary); }
 .realtime-voice-transcript {
   margin: 0;
   max-height: 88px;

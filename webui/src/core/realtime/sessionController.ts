@@ -9,7 +9,7 @@
 
 import type { PlaybackOutput } from "./audioPlayback";
 import type { MediaSessionClient } from "./mediaSessionClient";
-import type { MicCapture } from "./micCapture";
+import type { MicCapture, MicPressErrorKind } from "./micCapture";
 import {
   REALTIME_PROTOCOL_VERSION,
   type RealtimeEnvelope,
@@ -92,6 +92,11 @@ export class RealtimeSessionController {
       this.uploadedFrames = 0;
     }
     return started;
+  }
+
+  /** 最近一次 press 失败的原因分类（转发采集层）；成功或从未按下 → null。 */
+  get lastPressError(): MicPressErrorKind | null {
+    return this.deps.capture.pressError;
   }
 
   /**

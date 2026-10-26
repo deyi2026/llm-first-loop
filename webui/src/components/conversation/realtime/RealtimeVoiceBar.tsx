@@ -9,7 +9,8 @@
 //   `visual.clarify` 问题 aria-live 展示（不自动重发）；不展示任何伪造的画面理解结果；
 // - 纯展示 + 交互，真实采集/播放/采样由父组件注入（`MicCapture`/`VisualShareController`）。
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 
 import type { ConnectionState } from "../../../core/realtime/mediaSessionClient";
 import { FALLBACK_HINT, type ModalityMode } from "../../../core/realtime/modality";
@@ -54,6 +55,8 @@ export interface RealtimeVoiceBarProps {
   error?: string;
   /** 87aa41fd2 语义移植：重试语音回复。 */
   onRetryPlayback?: () => void;
+  /** 连接失败后的重试入口（重走 enable 建连；未提供则不展示该按钮）。 */
+  onRetryConnection?: () => void;
   onPress: () => void;
   onRelease: () => void;
   onFallbackText?: () => void;
@@ -103,6 +106,7 @@ export function RealtimeVoiceBar({
   playbackState = "idle",
   error = "",
   onRetryPlayback,
+  onRetryConnection,
   onPress,
   onRelease,
   onFallbackText,
@@ -114,9 +118,78 @@ export function RealtimeVoiceBar({
 }: RealtimeVoiceBarProps) {
   const canTalk = !disabled && modality !== "screenshot_fallback" && connectionState === "ready";
 
+  // 未就绪时的按压即时反馈：disabled 语义保留（aria-disabled + 样式），
+  // 但不再静默吞掉按压——按下即闪示原因（连接中/失败/会话结束等）。
+  const [hint, setHint] = useState<string | null>(null);
+  const hintTimerRef = useRef<number | null>(null);
+  const showHint = useCallback((message: string) => {
+    setHint(message);
+    if (hintTimerRef.current !== null) {
+      window.clearTimeout(hintTimerRef.current);
+    }
+    hintTimerRef.current = window.setTimeout(() => setHint(null), 1600);
+  }, []);
+  useEffect(
+    () => () => {
+      if (hintTimerRef.current !== null) {
+        window.clearTimeout(hintTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const blockedReason =
+    modality === "screenshot_fallback"
+      ? "当前环境不支持语音，请改用文字或截图"
+      : connectionState === "opening" || connectionState === "reconnecting"
+        ? "语音连接建立中，稍候即可按住说话"
+        : connectionState === "failed"
+          ? "语音连接失败：可点「重试连接」或改用文字输入"
+          : connectionState === "closing" || connectionState === "closed"
+            ? "语音会话已结束"
+            : disabled
+              ? "当前不可语音输入"
+              : "";
+
+  const talkLabel = micEnabled ? "正在聆听…松开发送" : canTalk ? "按住说话" : "语音未就绪";
+
   const release = useCallback((): void => {
     onRelease();
   }, [onRelease]);
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!canTalk) {
+        if (blockedReason !== "") {
+          showHint(blockedReason);
+        }
+        return;
+      }
+      // Pointer capture：按住期间手指/鼠标滑出按钮不再被判定为松开
+      //（此前 onPointerLeave 直接 release，触摸微滑即断，形同“没反应”）。
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      onPress();
+    },
+    [canTalk, blockedReason, onPress, showHint],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      // A11Y-05：键盘按住 = keydown 开始、keyup 结束；
+      // preventDefault 抑制 Space 滚屏与按键原生 click（避免与按住语义重复触发）。
+      if (!HOLD_KEYS.has(event.key)) return;
+      event.preventDefault();
+      if (event.repeat) return; // 自动重复的 keydown 不重复开始采集
+      if (!canTalk) {
+        if (blockedReason !== "") {
+          showHint(blockedReason);
+        }
+        return;
+      }
+      onPress();
+    },
+    [canTalk, blockedReason, onPress, showHint],
+  );
 
   const sharing = visual?.phase === "sharing";
   const starting = visual?.phase === "starting";
@@ -132,45 +205,79 @@ export function RealtimeVoiceBar({
       : "—";
 
   return (
-    <div className="realtime-voice-bar" data-testid="realtime-voice-bar" data-state={connectionState}>
-      <button
-        type="button"
-        aria-label="按住说话"
-        aria-pressed={micEnabled}
-        disabled={!canTalk}
-        data-testid="realtime-push-to-talk"
-        onPointerDown={() => onPress()}
-        onPointerUp={release}
-        onPointerLeave={release}
-        onPointerCancel={release}
-        onBlur={release}
-        onKeyDown={(event) => {
-          // A11Y-05：键盘按住 = keydown 开始、keyup 结束；
-          // preventDefault 抑制 Space 滚屏与按键原生 click（避免与按住语义重复触发）。
-          if (!HOLD_KEYS.has(event.key)) return;
-          event.preventDefault();
-          if (event.repeat) return; // 自动重复的 keydown 不重复开始采集
-          onPress();
-        }}
-        onKeyUp={(event) => {
-          if (!HOLD_KEYS.has(event.key)) return;
-          release();
-        }}
-      >
-        按住说话
-      </button>
-      <span data-testid="realtime-state">{STATE_LABEL[connectionState]}</span>
-      <span data-testid="realtime-chain">{chainLabel}</span>
-      {playbackState !== "idle" ? (
-        <span data-testid="realtime-playback" data-playback={playbackState} role="status">
-          {PLAYBACK_LABEL[playbackState]}
+    <div
+      className="realtime-voice-bar"
+      data-testid="realtime-voice-bar"
+      data-state={connectionState}
+      data-recording={micEnabled ? "true" : undefined}
+      data-playback={playbackState !== "idle" ? playbackState : undefined}
+    >
+      <div className="realtime-voice-header">
+        <span className="realtime-voice-status">
+          <span className="realtime-voice-indicator" data-state={connectionState} aria-hidden="true" />
+          <span data-testid="realtime-state">{STATE_LABEL[connectionState]}</span>
         </span>
-      ) : null}
-      {playbackState === "failed" && connectionState === "ready" && onRetryPlayback ? (
-        <button type="button" data-testid="realtime-retry-playback" onClick={() => onRetryPlayback()}>
-          重试语音回复
+        <span data-testid="realtime-chain">{chainLabel}</span>
+        {playbackState !== "idle" ? (
+          <span data-testid="realtime-playback" data-playback={playbackState} role="status">
+            {PLAYBACK_LABEL[playbackState]}
+          </span>
+        ) : null}
+      </div>
+      <div className="realtime-voice-actions">
+        {connectionState === "failed" && onRetryConnection ? (
+          <button
+            type="button"
+            className="realtime-voice-retry"
+            data-testid="realtime-retry-connection"
+            onClick={() => onRetryConnection()}
+          >
+            重试连接
+          </button>
+        ) : null}
+        <button
+          type="button"
+          aria-label="按住说话"
+          aria-pressed={micEnabled}
+          aria-disabled={!canTalk || undefined}
+          className="realtime-voice-talk"
+          data-testid="realtime-push-to-talk"
+          data-state={canTalk ? "ready" : connectionState}
+          onPointerDown={handlePointerDown}
+          onPointerUp={release}
+          onPointerLeave={release}
+          onPointerCancel={release}
+          onBlur={release}
+          onContextMenu={(event) => event.preventDefault()}
+          onKeyDown={handleKeyDown}
+          onKeyUp={(event) => {
+            if (!HOLD_KEYS.has(event.key)) return;
+            release();
+          }}
+        >
+          {talkLabel}
         </button>
-      ) : null}
+        {playbackState === "failed" && connectionState === "ready" && onRetryPlayback ? (
+          <button
+            type="button"
+            className="realtime-voice-retry"
+            data-testid="realtime-retry-playback"
+            onClick={() => onRetryPlayback()}
+          >
+            重试语音回复
+          </button>
+        ) : null}
+        {onFallbackText ? (
+          <button
+            type="button"
+            className="realtime-voice-close"
+            data-testid="realtime-fallback-text"
+            onClick={() => onFallbackText()}
+          >
+            改用文字输入
+          </button>
+        ) : null}
+      </div>
       {error ? (
         <p className="realtime-voice-error" role="alert" data-testid="realtime-error">
           {error}
@@ -184,14 +291,14 @@ export function RealtimeVoiceBar({
           ) : null}
         </p>
       ) : null}
+      {hint ? (
+        <p className="realtime-voice-hint" role="status" data-testid="realtime-hint">
+          {hint}
+        </p>
+      ) : null}
       <span data-testid="realtime-modality">{modality}</span>
       {modality !== "voice_full" ? (
         <span data-testid="realtime-fallback">{FALLBACK_HINT}</span>
-      ) : null}
-      {onFallbackText ? (
-        <button type="button" data-testid="realtime-fallback-text" onClick={() => onFallbackText()}>
-          改用文字输入
-        </button>
       ) : null}
       {visual !== undefined && !visual.supported ? (
         <span data-testid="realtime-share-unsupported">
