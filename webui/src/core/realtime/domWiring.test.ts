@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { CapturePipeline } from "./capturePipeline";
 import { PlaybackOutput, type AudioBufferSourceLike, type AudioContextLike } from "./audioPlayback";
@@ -60,13 +60,14 @@ class FakeAudioContext implements AudioContextLike {
   }
 }
 
-function makeCapture(devices: MediaDevicesLike) {
+function makeCapture(devices: MediaDevicesLike, onNotice?: (message: string) => void) {
   const frames: Int16Array[] = [];
   const ports: FakePort[] = [];
   const capture = new MicCapture({
     mediaDevices: devices,
     pipeline: new CapturePipeline({ frameSamples: 320 }),
     onFrame: (frame) => frames.push(frame),
+    onNotice,
     createPort: () => {
       const port = new FakePort();
       ports.push(port);
@@ -94,6 +95,69 @@ describe("MicCapture", () => {
     });
     expect(await capture.press()).toBe(false);
     expect(capture.micEnabled).toBe(false);
+  });
+
+  it("press returns false with a visible notice when getUserMedia hangs past the 10s bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const notices: string[] = [];
+      const { capture } = makeCapture(
+        { getUserMedia: () => new Promise<MediaStreamLike>(() => {}) },
+        (message) => notices.push(message),
+      );
+      const pending = capture.press();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toBe(false);
+      expect(notices).toEqual(["麦克风启动超时，请检查权限/设备后重试"]);
+      expect(capture.micEnabled).toBe(false); // 不伪造采集：超时即失败
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases tracks of a stream that resolves after the timeout (no mic leak)", async () => {
+    vi.useFakeTimers();
+    try {
+      const track = new FakeTrack();
+      let resolveLate!: (stream: MediaStreamLike) => void;
+      const { capture } = makeCapture({
+        getUserMedia: () => new Promise<MediaStreamLike>((resolve) => { resolveLate = resolve; }),
+      });
+      const pending = capture.press();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toBe(false);
+      resolveLate(new FakeStream(track));
+      await vi.advanceTimersByTimeAsync(0); // flush 微任务：迟到 stream 的轨道必须被停掉
+      await Promise.resolve();
+      expect(track.stopped).toBe(true);
+      expect(capture.micEnabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("normal resolve inside the bound is unaffected (no notice)", async () => {
+    vi.useFakeTimers();
+    try {
+      const track = new FakeTrack();
+      const notices: string[] = [];
+      const { capture } = makeCapture(
+        {
+          getUserMedia: () =>
+            new Promise<MediaStreamLike>((resolve) => {
+              setTimeout(() => resolve(new FakeStream(track)), 2_000);
+            }),
+        },
+        (message) => notices.push(message),
+      );
+      const pending = capture.press();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await pending).toBe(true);
+      expect(notices).toEqual([]);
+      expect(capture.micEnabled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("release stops tracks and flushes the remainder", async () => {

@@ -290,6 +290,8 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
         },
         createPort: optionsRef.current.transport?.createPort
           ?? (() => ({ onmessage: null, close: () => undefined })),
+        // M3 后续修复：gUM 启动超时等采集降级提示经既有 notice 通道
+        onNotice: (message) => optionsRef.current.onNotice?.(message),
       });
       const audioContext = optionsRef.current.transport?.createAudioContext
         ? optionsRef.current.transport.createAudioContext()
