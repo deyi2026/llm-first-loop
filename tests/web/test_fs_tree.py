@@ -319,3 +319,86 @@ def test_delta_relay_coalesces_same_channel_burst():
     assert len(deltas) == 1, f"3 个同通道突发 delta 应合并为 1 帧，实际 {len(deltas)}"
     assert deltas[0]["data"]["data"] == "阿尔法贝塔伽马"
     assert frames[-1]["type"] == "done"
+
+
+# ── M3 验收后续：agents/tree 进程内 TTL 缓存（源站 5-13s）──
+def test_agents_tree_ttl_cache_hit_skips_recompute(client, monkeypatch):
+    """30s TTL 内重复请求命中缓存不重算；响应字节等价；TTL 过期重算."""
+    from llm_loop.web import fs_tree as fs_tree_mod
+
+    fs_tree_mod._reset_agents_tree_cache_for_tests()
+    cli, engine = client
+    sid1 = engine.session.create()
+    calls = {"n": 0}
+    orig = engine.session.list_sessions
+
+    def counting_list_sessions(*args, **kwargs):  # noqa: ANN002, ANN003
+        calls["n"] += 1
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(engine.session, "list_sessions", counting_list_sessions)
+    r1 = cli.get("/api/v1/agents/tree")
+    assert r1.status_code == 200
+    assert calls["n"] == 1
+    assert sid1 in {n["id"] for n in r1.json()["nodes"]}
+
+    # TTL 窗口内新落盘会话不触发重算；命中缓存且响应字节等价（30s 内陈旧是契约语义）
+    sid2 = engine.session.create()
+    r2 = cli.get("/api/v1/agents/tree")
+    assert calls["n"] == 1
+    assert r2.content == r1.content
+    assert sid2 not in {n["id"] for n in r2.json()["nodes"]}
+
+    # TTL 过期 → 重算，新会话可见
+    with fs_tree_mod._agents_tree_cache_lock:
+        key = next(iter(fs_tree_mod._agents_tree_cache))
+        cached_at, cached_engine, payload = fs_tree_mod._agents_tree_cache[key]
+        fs_tree_mod._agents_tree_cache[key] = (
+            cached_at - fs_tree_mod._AGENTS_TREE_CACHE_TTL_SECONDS,
+            cached_engine,
+            payload,
+        )
+    r3 = cli.get("/api/v1/agents/tree")
+    assert calls["n"] == 2
+    assert sid2 in {n["id"] for n in r3.json()["nodes"]}
+
+
+def test_agents_tree_cache_not_populated_on_error(client, monkeypatch):
+    """list_sessions 失败 → 500 不入缓存；恢复后立即重算成功."""
+    from llm_loop.web import fs_tree as fs_tree_mod
+
+    fs_tree_mod._reset_agents_tree_cache_for_tests()
+    cli, engine = client
+    sid = engine.session.create()
+    orig = engine.session.list_sessions
+
+    def boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("list boom")
+
+    monkeypatch.setattr(engine.session, "list_sessions", boom)
+    r = cli.get("/api/v1/agents/tree")
+    assert r.status_code == 500
+    assert fs_tree_mod._agents_tree_cache == {}  # 失败不缓存 → 下次调用即重算
+
+    # 显式恢复（monkeypatch.undo() 会连带撤销 conftest 鉴权隔离，勿用）
+    monkeypatch.setattr(engine.session, "list_sessions", orig)
+    r2 = cli.get("/api/v1/agents/tree")
+    assert r2.status_code == 200
+    assert sid in {n["id"] for n in r2.json()["nodes"]}
+
+
+def test_agents_tree_cache_is_per_engine_and_bounded():
+    from llm_loop.web import fs_tree as fs_tree_mod
+
+    fs_tree_mod._reset_agents_tree_cache_for_tests()
+    try:
+        e1, e2 = object(), object()
+        fs_tree_mod._agents_tree_cache_put(e1, {"nodes": [{"id": "a"}]})
+        assert fs_tree_mod._agents_tree_cache_get(e1) == {"nodes": [{"id": "a"}]}
+        # 不同 engine 不共享（缓存值持有 engine 强引用，id 复用不会串数据）
+        assert fs_tree_mod._agents_tree_cache_get(e2) is None
+        for i in range(10):
+            fs_tree_mod._agents_tree_cache_put(object(), {"i": i})
+        assert len(fs_tree_mod._agents_tree_cache) <= 8  # 有界（生产进程实际 = 1 个 engine）
+    finally:
+        fs_tree_mod._reset_agents_tree_cache_for_tests()

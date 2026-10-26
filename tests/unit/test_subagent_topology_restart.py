@@ -380,3 +380,59 @@ def test_restart_topology_cache_is_bounded_and_old_children_recover_on_demand(tm
     assert snapshot is not None
     assert snapshot["terminal"] is True
     assert snapshot["outcome"] == "completed"
+
+
+def test_durable_state_parent_cross_check_uses_lightweight_read(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M3 后续：_durable_state 交叉验证走 parent_id_of 轻量只读，不再全量 load.
+
+    agents/tree 对 707 个候选逐个 recover + load（全量 JSON 解析）是源站 5-13s
+    的主因之一；session/event parent 一致性语义保持不变。
+    """
+    store = _store(tmp_path)
+    child_id = "subagent_light_read"
+    parent_id = "parent-light"
+    sess = store.load(child_id)
+    sess.parent_id = parent_id
+    store.save(sess)
+    events = store.event_store
+    assert events is not None
+    events.append(
+        child_id,
+        "subagent.linked",
+        {"child_id": child_id, "parent_id": parent_id, "generation": "g1", "depth": 0},
+    )
+    events.append(
+        child_id,
+        "subagent.generation.started",
+        {
+            "child_id": child_id,
+            "parent_id": parent_id,
+            "generation": "g1",
+            "owner_id": "owner",
+            "depth": 0,
+        },
+    )
+
+    recovered = _runner(_FinalLLM(), store)
+    calls = {"n": 0}
+    orig_load = store.load
+
+    def counting_load(sid):  # noqa: ANN001, ANN202
+        calls["n"] += 1
+        return orig_load(sid)
+
+    monkeypatch.setattr(store, "load", counting_load)
+    snapshot = recovered.topology_snapshot(child_id)
+    assert snapshot is not None
+    assert snapshot["parent_id"] == parent_id
+    assert calls["n"] == 0  # 交叉验证零全量 load（一致才放行的语义不变）
+
+    # 语义不变：session 侧 parent 改写后与 event 不一致 → fail-closed 不恢复
+    monkeypatch.undo()
+    sess2 = store.load(child_id)
+    sess2.parent_id = "parent-other"
+    store.save(sess2)
+    recovered2 = _runner(_FinalLLM(), store)
+    assert recovered2.topology_snapshot(child_id) is None

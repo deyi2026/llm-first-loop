@@ -539,3 +539,57 @@ def test_delete_partial_sidecar_failure_is_retryable(tmp_path):
     assert store.delete(sid) is True
     assert store.exists(sid) is False
     assert attempts == 2
+
+
+# ── M3 验收后续：parent_id_of 轻量只读（agents/tree 源站 5-13s 缓解之一）──
+def test_parent_id_of_matches_load_and_uses_meta_cache(tmp_path, monkeypatch):
+    """parent_id_of 与 load().parent_id 等价；缓存优先，miss 按需读一次入缓存."""
+    import llm_loop.core.session as session_mod
+    from llm_loop.core.session import _SESSION_META_CACHE
+
+    store = _store(tmp_path)
+    parent = store.create()
+    child = store.create()
+    sess = store.load(child)
+    sess.parent_id = parent
+    store.save(sess)
+
+    # 等价性：session_json 读路径下 load() 的 parent_id 即文件顶层 parent_id
+    assert store.parent_id_of(child) == (store.load(child).parent_id or "")
+    assert store.parent_id_of(child) == parent
+
+    # miss → 按需读一次入缓存（与 list_sessions 同一 _SESSION_META_CACHE 机制）
+    path = store._path(child)  # noqa: SLF001 - 测试直接验证缓存条目
+    _SESSION_META_CACHE.pop(path, None)
+    calls = {"n": 0}
+    orig_load_json = session_mod.json.load
+
+    def counting_load_json(f):  # noqa: ANN001, ANN202
+        calls["n"] += 1
+        return orig_load_json(f)
+
+    monkeypatch.setattr(session_mod.json, "load", counting_load_json)
+    assert store.parent_id_of(child) == parent
+    assert calls["n"] == 1
+    assert path in _SESSION_META_CACHE
+
+    # 缓存命中：不再读文件
+    assert store.parent_id_of(child) == parent
+    assert calls["n"] == 1
+
+    # 文件变更（save 更新 mtime）即失效重读：语义与全量解析一致
+    other = store.create()
+    sess2 = store.load(child)
+    sess2.parent_id = other
+    store.save(sess2)
+    assert store.parent_id_of(child) == other
+    assert calls["n"] == 2
+
+
+def test_parent_id_of_missing_session_returns_empty_like_load_fail_open(tmp_path):
+    """会话不存在 → ""（与 load() fail-open 新会话 parent_id=None 的取空一致）."""
+    store = _store(tmp_path)
+    assert store.parent_id_of("no_such_session") == ""
+    assert (store.load("no_such_session").parent_id or "") == ""
+    # 非法 id（ValueError）同样返回 ""，不抛出
+    assert store.parent_id_of("../escape") == ""

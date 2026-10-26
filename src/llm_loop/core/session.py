@@ -298,6 +298,27 @@ def first_human_ingress_channel(messages: list[Any]) -> str:
     return ""
 
 
+def _session_meta_from_disk_json(data: dict, fallback_session_id: str) -> SessionMeta:
+    """磁盘会话 JSON → SessionMeta（list_sessions 与 parent_id_of 共用同一解析，保证两个入口写入 _SESSION_META_CACHE 的条目构造一致）."""
+    messages = data.get("messages", [])
+    preview = messages[-1].get("content", "")[:80] if messages else ""
+    return SessionMeta(
+        session_id=data.get("session_id", fallback_session_id),
+        title=data.get("title") or "未命名",
+        created_at=data.get("created_at", ""),
+        updated_at=data.get("updated_at", data.get("created_at", "")),
+        message_count=len(messages),
+        status=data.get("status", _ACTIVE),
+        last_message_preview=preview,
+        # M56: pinned/channel 透传（缺省向后兼容）
+        pinned=bool(data.get("pinned", False)),
+        channel=data.get("channel", "web"),
+        origin_channel=first_human_ingress_channel(messages),
+        model_override=data.get("model_override"),
+        parent_id=data.get("parent_id"),  # 2026-09-22 CPU 契约：agents/tree 经 meta 透传，不再全量 load
+    )
+
+
 class SessionStore:
     """会话持久化（JSON 文件，P0 + P1 多会话方法）.
 
@@ -2028,26 +2049,7 @@ class SessionStore:
                         data = json.load(f)
                 except (json.JSONDecodeError, OSError):
                     continue
-                status = data.get("status", _ACTIVE)
-                messages = data.get("messages", [])
-                preview = messages[-1].get("content", "")[:80] if messages else ""
-                meta = SessionMeta(
-                    session_id=data.get(
-                        "session_id", os.path.splitext(entry.name)[0]
-                    ),
-                    title=data.get("title") or "未命名",
-                    created_at=data.get("created_at", ""),
-                    updated_at=data.get("updated_at", data.get("created_at", "")),
-                    message_count=len(messages),
-                    status=status,
-                    last_message_preview=preview,
-                    # M56: pinned/channel 透传（缺省向后兼容）
-                    pinned=bool(data.get("pinned", False)),
-                    channel=data.get("channel", "web"),
-                    origin_channel=first_human_ingress_channel(messages),
-                    model_override=data.get("model_override"),
-                    parent_id=data.get("parent_id"),  # 2026-09-22 CPU 契约：agents/tree 经 meta 透传，不再全量 load
-                )
+                meta = _session_meta_from_disk_json(data, os.path.splitext(entry.name)[0])
                 new_cache[p] = (fkey, meta)
             new_cache.move_to_end(p)
             while len(new_cache) > cache_limit:
@@ -2074,6 +2076,49 @@ class SessionStore:
         if not self.exists(session_id):
             return None
         return self._to_meta(self.load(session_id))
+
+    def parent_id_of(self, session_id: str) -> str:
+        """轻量只读：会话的 parent_id（缓存优先；与 load().parent_id 等价）.
+
+        M3 验收后续（agents/tree 源站 5-13s）：subagent runner 的
+        durable 拓扑交叉验证原先走全量 load()（707 候选 ×
+        全量 JSON 解析 + pin/identity/replay 重路径）。本方法：
+        - 缓存优先：复用 _SESSION_META_CACHE（(mtime_ns,size) 键，文件
+          变更即失效）；miss 时按需读一次该文件入缓存（同时
+          为 list_sessions 预热；条目构造共用
+          _session_meta_from_disk_json，与列表路径一致）。
+        - 与 load().parent_id 等价：session_json 读路径（默认）下 load()
+          返回的 parent_id 即本文件顶层 parent_id；会话文件不存在/
+          不可解析时 load() fail-open 返回新会话（parent_id=None）→
+          此处同样返回 ""（调用方 fail-closed 交叉验证语义
+          不变）。不做 load() 的归属 pin/身份校验/retraction
+          overlay/event replay 等重路径，也不产生任何写副作用。
+        """
+        try:
+            path = self._path(session_id)
+        except ValueError:
+            return ""
+        try:
+            st = os.stat(path)
+            fkey = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return ""
+        with _SESSION_META_CACHE_LOCK:
+            cached = _SESSION_META_CACHE.get(path)
+        if cached is not None and cached[0] == fkey:
+            return str(cached[1].parent_id or "")
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return ""
+        meta = _session_meta_from_disk_json(data, str(session_id))
+        with _SESSION_META_CACHE_LOCK:
+            _SESSION_META_CACHE[path] = (fkey, meta)
+            _SESSION_META_CACHE.move_to_end(path)
+            while len(_SESSION_META_CACHE) > _SESSION_META_CACHE_MAX:
+                _SESSION_META_CACHE.popitem(last=False)
+        return str(meta.parent_id or "")
 
     # ── M56（Web/飞书会话同步）：置顶 + 来源通道 ──
     def set_pinned(self, session_id: str, pinned: bool) -> bool:

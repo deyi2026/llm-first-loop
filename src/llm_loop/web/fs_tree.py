@@ -783,6 +783,46 @@ def fs_restore(request: Request, token: str = "") -> JSONResponse:
 
 
 # ── B. 会话树 ──
+# M3 验收后续（agents/tree 源站实测 5-13s）：进程内 TTL 缓存。
+# 根因：707 个 subagent 候选 × topology_snapshot → 事件日志恢复
+# （EventStore.read 全读+fold）+ 会话 parent 交叉验证；目录面板 1s
+# 心跳 × 多标签页持续打满事件循环。命中直接返回缓存
+# 响应（不重算）；TTL 过期重算；仅缓存成功（200）
+# 响应，list 失败/异常不入缓存（下次调用即重算）。
+# JSON 响应字节等价：缓存 payload 为 dict（插入序确定），
+# 重包 JSONResponse 序列化字节与首次相同。键控 id(engine)
+# 并在值中持有 engine 强引用作身份校验（id 复用不会跨
+# engine 串数据；有界 8 条防泄漏，生产进程实际=1 个 engine）。
+_AGENTS_TREE_CACHE_TTL_SECONDS = 30.0
+_agents_tree_cache_lock = threading.Lock()
+_agents_tree_cache: dict[int, tuple[float, object, dict[str, object]]] = {}
+
+
+def _reset_agents_tree_cache_for_tests() -> None:
+    with _agents_tree_cache_lock:
+        _agents_tree_cache.clear()
+
+
+def _agents_tree_cache_get(engine: object) -> dict[str, object] | None:
+    with _agents_tree_cache_lock:
+        entry = _agents_tree_cache.get(id(engine))
+        if entry is None:
+            return None
+        cached_at, cached_engine, payload = entry
+        if cached_engine is not engine:
+            return None
+        if time.monotonic() - cached_at >= _AGENTS_TREE_CACHE_TTL_SECONDS:
+            return None
+        return payload
+
+
+def _agents_tree_cache_put(engine: object, payload: dict[str, object]) -> None:
+    with _agents_tree_cache_lock:
+        _agents_tree_cache[id(engine)] = (time.monotonic(), engine, payload)
+        while len(_agents_tree_cache) > 8:
+            _agents_tree_cache.pop(next(iter(_agents_tree_cache)))
+
+
 @fs_router.get("/api/v1/agents/tree")
 def agents_tree(request: Request) -> JSONResponse:
     """会话→子代理层级树（对齐 DSH agents 树）.
@@ -793,6 +833,9 @@ def agents_tree(request: Request) -> JSONResponse:
     事实；runner 缺失或拓扑未知时字段缺省——不伪造 inactive。
     """
     engine = _engine_from(request)
+    cached_payload = _agents_tree_cache_get(engine)
+    if cached_payload is not None:
+        return JSONResponse(content=cached_payload)
     topology = getattr(engine, "subagent_runner", None)
     try:
         metas = engine.session.list_sessions()
@@ -829,4 +872,6 @@ def agents_tree(request: Request) -> JSONResponse:
             nodes.append(node)
         except Exception:  # noqa: BLE001 — 单会话拓扑附着失败跳过（节点仍返回）
             nodes.append({"id": sid, "parent_id": getattr(meta, "parent_id", None)})
-    return JSONResponse(content={"nodes": nodes})
+    payload = {"nodes": nodes}
+    _agents_tree_cache_put(engine, payload)
+    return JSONResponse(content=payload)

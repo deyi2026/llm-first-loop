@@ -30,6 +30,11 @@ def _client(engine) -> TestClient:
 
 
 def _nodes(engine, sid: str):
+    # M3 后续：agents/tree 有 30s TTL 进程内缓存——本文件逐断言读取最新事实
+    # （含 runner=None 的第二次请求），先清缓存避免命中旧响应掩盖覆盖路径。
+    from llm_loop.web.fs_tree import _reset_agents_tree_cache_for_tests
+
+    _reset_agents_tree_cache_for_tests()
     resp = _client(engine).get("/api/v1/agents/tree")
     assert resp.status_code == 200
     return {n["id"]: n for n in resp.json()["nodes"] if n["id"] == sid}
