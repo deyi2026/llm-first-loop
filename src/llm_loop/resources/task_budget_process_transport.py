@@ -18,7 +18,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
 from multiprocessing.connection import Connection
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -279,7 +279,7 @@ def isolated_provider_stream(
         raise TaskBudgetDeniedError("isolated_transport_endpoint_unqualified")
     if url_obj.scheme == "http" and url_obj.host not in {"127.0.0.1", "localhost", "::1"}:
         raise TaskBudgetDeniedError("isolated_transport_plain_http_requires_loopback")
-    wire_timeout = timeout.read if isinstance(timeout, httpx.Timeout) else timeout
+    wire_timeout = cast(httpx.Timeout, timeout).read if isinstance(timeout, httpx.Timeout) else timeout
     if wire_timeout is None or not 0 < float(wire_timeout) <= 60:
         raise TaskBudgetDeniedError("isolated_transport_timeout_unqualified")
 

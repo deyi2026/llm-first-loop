@@ -1,0 +1,109 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261026-v0637-publicmain-release",
+  "summary": "从 GitHub 公共 main 2894beda731737e10fbdf647c5e773be68d7c456 出发的 v0.6.37 最小发行差分：版本与运行依赖元数据、发行说明及安装文档、等价超时类型标注、umask测试夹具修正和macOS隔离验收工作区修正；不携带未公开功能提交。原十文件候选独立审查PASS与原版R9真实exit0之后，干净macOS包Web启动依次暴露PIL和python-multipart缺失，修订后官方隔离pkg smoke在HTTP health/UI=200且无宿主安装下真实exit0。此修订候选必须重新独审和完整R9后才具备进入Apple签名/公证资格，未声称正式发行成功。",
+  "components": [
+    {
+      "component_id": "release-version-surfaces",
+      "paths": [
+        "pyproject.toml",
+        "uv.lock",
+        "src/llm_loop/web/routes.py",
+        "README.md",
+        "README.en.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "版本单一真值与干净安装依赖",
+      "disposition": "把项目版本、锁文件项目包、Web SERVICE_VERSION 和双语 README 的公开版本声明由 0.6.36 调整为 0.6.37；同时把已在 Web 启动链静态使用的 Pillow>=10.0 从仅dev依赖移到运行依赖，把视频路由注册FastAPI的File/UploadFile必需python-multipart>=0.0.20加入运行依赖，并按原版uv锁定，不修改 Web 路由行为或发布门禁判据。",
+      "evidence": [
+        "公共 main 精确基线 2894beda731737e10fbdf647c5e773be68d7c456",
+        "发行候选版本一致性由 tests/unit/test_version_consistency.py 定向验证；原本十文件候选的干净macOS包Web启动真实报ModuleNotFoundError: No module named PIL，补Pillow后在video_routes FastAPI File路由注册处真实报缺少python-multipart，两者都是发行包运行依赖缺失"
+      ],
+      "verification_level": "版本一致性定向测试、uv lock --check、干净wheel运行时依赖安装及Web启动（新版未签名pkg隔离smoke真实exit0）、正式独立 GLM-5.3 CodeReview 与原版完整 R9（修订后待重新执行）",
+      "model_evidence_veto_recovery_exit": "pyproject.toml 为版本唯一真值；干净安装运行时Pillow/python-multipart缺失、任何版本面不一致或审查回执不匹配均否决发行，修正后必须重新冻结、审查与原版R9。",
+      "rollback_route": "中止候选/撤销发行分支变更，不改变已公开版本、main 或 tag。"
+    },
+    {
+      "component_id": "release-notes-and-installation",
+      "paths": [
+        "CHANGELOG.md",
+        "docs/installation.md"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "公开变更说明与 macOS 安装引导",
+      "disposition": "以已有公开源码和提交记录为基础撰写 0.6.37 说明，保留实际语音体验需要额外验收的边界；安装文档改为以真正公开且已签名公证的 Release 资产为准，不提前宣布内部候选可公开安装。",
+      "evidence": [
+        "公共 main 已包含 realtime/transcription/auth-boundary 的已提交修改，且正式合入的 video_router 注册位于 src/llm_loop/web/routes.py；本候选仅修改其中的 SERVICE_VERSION",
+        "旧本地 macOS 发行分支不是此候选的祖先，未公开功能不得通过本次发布补丁附带"
+      ],
+      "verification_level": "公开源码与提交对照、独立审查、正式发行资产和 Gatekeeper 验收（后两项待执行）",
+      "model_evidence_veto_recovery_exit": "发行叙述不得把历史未公开功能、旧公证回执或仅文字流转写冒称本次已验收；审查者可以拒绝任何无凭证的功能宣称。",
+      "rollback_route": "撤回候选文档，不修改旧稳定版或既有 Release。"
+    },
+    {
+      "component_id": "isolated-transport-timeout-type-narrowing",
+      "paths": [
+        "src/llm_loop/resources/task_budget_process_transport.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "任务预算隔离传输的静态类型正确性",
+      "disposition": "仅在已由 isinstance(timeout, httpx.Timeout) 检查的条件表达式内加 cast(httpx.Timeout, timeout)，让 Pyright 在 Host 沙箱依赖视图下识别 timeout.read；cast 运行时不改变值、超时约束、Provider 发送或 Stop 行为，也不改变任何准入判据。",
+      "evidence": [
+        "原8文件候选连续两次真实原版 R9 exit=1，Pyright 1.1.411 在未修改的该文件报告 float.read 新红1处；在公开 main 与原候选普通隔离环境复核时均 new=0",
+        "增加类型标注后，原生 LFL Host 沙箱内同一严格 Pyright 诊断真实 exit=0、new=0、status=complete；Ruff、编译检查与相关17个单测通过"
+      ],
+      "verification_level": "Ruff/语法、TaskBudget 两组定向测试17项、Host沙箱 Pyright 严格检查、随后新候选独立 GLM-5.3 审查与原版完整 R9（后两项待执行）",
+      "model_evidence_veto_recovery_exit": "若不同 runtime 对 httpx.Timeout 的类型判断存在实际行为差异，或相同 Host 再报诊断，立即否决并定位，不扩大历史债登记、不以定向验证代替原版 R9。",
+      "rollback_route": "在未发行前单独撤回这处类型标注，并重新进行独审与完整门禁；不得改写旧稳定 tag。"
+    },
+    {
+      "component_id": "workspace-fixture-umask-stability",
+      "paths": [
+        "tests/unit/test_default_workspace_root.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "默认工作区根的隔离测试夹具",
+      "disposition": "已有目录测试先mkdir(mode=0755)再显式chmod(0755)，避免Host沙箱umask=077把测试前提悄悄收紧为0700；保留原有0755权限保持断言与全部生产目录权限处理逻辑，绝不调整产品安全默认或放宽沙箱。",
+      "evidence": [
+        "九文件候选的真实原版R9已进入第5阶段全量pytest，在该测试报告1 failed/9 passed且门禁exit1；实际临时目录mode为0700而断言0755",
+        "同一未更改用例在umask077下单独真实exit1，在umask022下真实exit0；仅修改测试夹具、非降低assert安全标准"
+      ],
+      "verification_level": "umask077和umask022同用例正反验证、完整测试文件定向回归、独立GLM-5.3代码审查及原版完整R9（后两项待执行）",
+      "model_evidence_veto_recovery_exit": "若该chmod不能在正式Host沙箱成功执行或出现真实产品权限语义变化，立即停止并撤回此夹具修正，不登记虚假旧红、不得豁免失败。",
+      "rollback_route": "候选尚未发布时单独撤回测试夹具改变，仍以原版完整R9作为必须通过的发行条件。"
+    },
+    {
+      "component_id": "macos-quarantine-workspace-fixture",
+      "paths": [
+        "scripts/verify_macos_cli_pkg.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "macOS未签名安装包的隔离验收入口",
+      "disposition": "原验收脚本将HOME本身作为CLI/Web工作区，触发当前安全边界禁止注册家目录或其祖先的正确拒绝。改为创建HOME/workspace独立子目录，并将只读版本/安装/启动验收与临时Web进程cwd都绑定此目录；HOME仍隔离，不变更产品工作区授权规则、不安装宿主系统、不触网Provider。",
+      "evidence": [
+        "补齐Pillow和python-multipart后，原验证脚本仍真实失败bundled_web_not_ready，独立进程日志指向WorkspaceNotAllowedError且拒绝把HOME注册为工作区",
+        "改用HOME/workspace子目录后，同一新未签名pkg官方scripts/verify_macos_cli_pkg.py返回真实exit0：version0.6.37、内置Python及依赖、check-install、start --plan只读、/health HTTP200、/ui/v2/ HTTP200，未执行系统安装或外部Provider调用"
+      ],
+      "verification_level": "原版未签名pkg隔离抽取安装/本地Web启动验收、正式独立GLM-5.3审查及完整R9（修订后待执行）",
+      "model_evidence_veto_recovery_exit": "必须保持家目录注册禁止规则；若安全守卫、安装/数据隔离或Web实际启动失败则否决，不得将HTTP200冒称签名公证或正式发行成功。",
+      "rollback_route": "撤回本次验收脚本夹具变更；已封存的旧pkg只作反例，不以其旧回执发布。"
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261026-v0637-publicmain-release.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "GitHub PR A.5 架构提交清单",
+      "disposition": "本清单明确覆盖候选 base..head 的全部 11 条路径（包含清单自身）；版本与依赖变更、等价静态类型标注及两处验收夹具修正不增设新的模型裁决、权限或门禁控制机构。",
+      "evidence": [
+        "正式提交前须执行 scripts/check_architecture_submission.py 并匹配全部十一个变更路径",
+        "GitHub PR 的 A.5 实际成功终态尚待回读"
+      ],
+      "verification_level": "本地 architecture-submission 检查与 GitHub PR A.5（后者待执行）",
+      "model_evidence_veto_recovery_exit": "若实际变更路径、控制机械分类或事实陈述发生变化，必须重新修订清单、审查并复测，不使用清单自行宣布过闸。",
+      "rollback_route": "随同该独立发行候选撤回清单，不影响既有公开 main 或其他工作树。"
+    }
+  ],
+  "declarations": []
+}

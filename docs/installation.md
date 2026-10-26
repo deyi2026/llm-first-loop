@@ -1,6 +1,6 @@
 # LFL 安装与升级
 
-此文描述 Linux 用户级稳定发行、macOS 候选与源码/uv wheel 安装。可下载的稳定版本以 GitHub 已公开发布且包含 wheel 和 `SHA256SUMS` 的 Release 为准；Draft/Prerelease 不可安装。已有源码安装继续使用原入口。当前不承诺桌面安装器、自动更新、包仓库上架或 Windows 运行支持。macOS `.pkg` 仍是本地未签名候选，**尚无可公开发行的签名/公证安装包**；不要安装内部候选或绕过 Gatekeeper。
+此文描述 Linux 用户级稳定发行、macOS 候选与源码/uv wheel 安装。可下载的稳定版本以 GitHub 已公开发布且包含 wheel 和 `SHA256SUMS` 的 Release 为准；Draft/Prerelease 不可安装。已有源码安装继续使用原入口。当前不承诺独立桌面客户端、自动更新、包仓库上架或 Windows 运行支持。macOS Apple Silicon `.pkg` 是否完成签名、公证并可供普通用户安装，以同版本 GitHub 公开稳定 Release 的实际资产和验收结果为准；发布前的本地候选不得分发或绕过 Gatekeeper。
 
 ## Linux 用户级安装器（稳定发行）
 
