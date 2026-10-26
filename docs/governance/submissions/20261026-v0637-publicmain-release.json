@@ -89,15 +89,35 @@
       "rollback_route": "撤回本次验收脚本夹具变更；已封存的旧pkg只作反例，不以其旧回执发布。"
     },
     {
+      "component_id": "ci-linux-test-fixture-portability",
+      "paths": [
+        "tests/test_env_channel.py",
+        "tests/test_feishu_outbound_guard.py",
+        "tests/unit/test_safety_bypass.py",
+        "tests/phase6/test_m1_sync_interrupt.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "跨平台CI环境与Feishu/安全守卫测试夹具",
+      "disposition": "仅修正测试的操作系统前提：darwin临时目录按/private/tmp的canonical路径模拟；Feishu越界与symlink拒绝用macOS/Linux共存的/etc/hosts真实外部路径，并保持SDK全Mock；find /tmp允许性测试固定workdir=/且增加find /etc拒绝反例。未修改生产Feishu附件允许根、出站行为、灾难操作拦截器、安装包或GitHub门禁。；Phase6 S4 的真实多插话消费断言改为要求两条均被 interject_received 且进入本次Run至少一个后续模型请求，避免第一条触发下一轮后第二条合法进入第三轮时按错误“必须同在第2轮”前提判失败；不删除安全/必达断言或修改Runtime。",
+      "evidence": [
+        "GitHub v0.6.37 PR#8 push CI job 121659207180 与pull_request job 121661027826均在同4项测试失败（其余11567项成功）；根因是Linux /tmp路径和pytest cwd与旧测试前提不同，不是业务安全策略需放宽。",
+        "本机相关三测试文件67 passed、2 skipped；Ruff PASS；独立GLM-5.3 Rule28 Reviewer subagent_072d9ceacfac completed/PASS/P0=0/P1=0、Host full_test资格PASS、同一候选原版完整R9 job-a495f803a85a40a789a4 exit=0，冻结三文件差分SHA256=0887d6370815de132a23b8b30c2eb693738ae12912c067e96d2fad962ec2ed2b。",
+        "GitHub PR#8新push/PR两套CI中push通过、pull_request job 121697584332仅Phase6 S4 1 failed/11570 passed；本机原版S4单测复现同一偶发失败；修正断言后独立启动的60次S4子进程测试全部PASS，且同时检查每个queue_id 的 interject_received 回执与所有后续provider决策投影。"
+      ],
+      "verification_level": "保持Feishu SDK Mock和安全边界负例的三文件定向回归、Ruff、GLM-5.3正式独立审查、原版完整R9；新增提交覆盖后的GitHub push/PR CI与A.5必须均成功才合并/发行。；Phase6 S4定向并发压力60轮（全PASS）、run级持久队列收到和后续模型调用双向断言。",
+      "model_evidence_veto_recovery_exit": "凡发现修改生产外发范围、弱化CatastrophicGuard、用skip隐藏Linux失败，或GitHub push/PR/A.5任一必需检查未绿，立即阻止合并；修订精确提交、独立再审并运行原版完整R9。；若第二条仅接受未消费或未出现在任何后续模型调用则必须失败，不能仅因多模型轮次而宣告成功。",
+      "rollback_route": "仅撤回这三处测试环境修正和对应架构清单覆盖，保持未发布的v0.6.37源码、正式Apple公证安装包与其他worktree不变。"
+    },
+    {
       "component_id": "architecture-submission-manifest",
       "paths": [
         "docs/governance/submissions/20261026-v0637-publicmain-release.json"
       ],
       "control_machinery": false,
       "owning_subsystem": "GitHub PR A.5 架构提交清单",
-      "disposition": "本清单明确覆盖候选 base..head 的全部 11 条路径（包含清单自身）；版本与依赖变更、等价静态类型标注及两处验收夹具修正不增设新的模型裁决、权限或门禁控制机构。",
+      "disposition": "本清单明确覆盖候选 base..head 的全部 15 条路径（包含清单自身）；版本与依赖变更、等价静态类型标注及两处验收夹具修正不增设新的模型裁决、权限或门禁控制机构；包含本次Linux CI跨平台测试夹具的三条新增路径。",
       "evidence": [
-        "正式提交前须执行 scripts/check_architecture_submission.py 并匹配全部十一个变更路径",
+        "正式提交前须执行 scripts/check_architecture_submission.py 并匹配全部十五个变更路径",
         "GitHub PR 的 A.5 实际成功终态尚待回读"
       ],
       "verification_level": "本地 architecture-submission 检查与 GitHub PR A.5（后者待执行）",
