@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from llm_loop.knowledge import heldout_guard
+from llm_loop.knowledge.heldout_guard import HeldoutContaminationError
 from llm_loop.timekeeping import system_local_now
 from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
 from llm_loop.usage_net import summarize_since_last_transition
@@ -35,6 +37,7 @@ from llm_loop.use_ledger import (
 )
 from llm_loop.use_ledger import (
     append_ledger_line,
+    canonical_json,
     count_valid_lines,
     dedupe_slot_heads,
     derive_slot_id,
@@ -445,11 +448,15 @@ class MethodStore:
         *,
         seed_dir: str | Path | None = None,
         write_guard: Callable[[], bool] | None = None,
+        contamination_guard: Callable[[str], dict[str, Any]] | None = None,
         workspace_root: str | Path | None = None,
     ) -> None:
         self._dir = Path(methods_dir)
         self._seed_dir = Path(seed_dir) if seed_dir is not None else None
         self._write_guard = write_guard
+        # held-out 写侧防线（fail-closed）：None 时惰性走 heldout_guard.check_text，
+        # 不在构造期解析 manifest（env/工作区在构造后仍可变化）。
+        self._contamination_guard = contamination_guard
         self._post_save_hooks: list[Callable[[MethodRecord], None]] = []
         # EVO-20260930-429f7c12: per-file signal cache keyed by path; value stamp
         # is (mtime_ns, size) so external lifecycle writes invalidate correctly.
@@ -484,6 +491,24 @@ class MethodStore:
         if not allowed:
             raise PermissionError("knowledge store quarantined: mutation disabled")
 
+    def _reject_heldout_contamination(self, text: str) -> None:
+        """写侧 fail-closed：命中 held-out 探针即拒写（eval/rules/holdout.md §4）.
+
+        只判 ``status == "blocked"``：guard unavailable/内部异常由 heldout_guard
+        映射为非 blocked → 放行（fail-open 由 guard 自身保证）。
+        异常消息只含类别（task_id/statement_probe）与 task_id，绝不携带待检文本。
+        """
+        verdict = (
+            self._contamination_guard(text)
+            if self._contamination_guard is not None
+            else heldout_guard.check_text(text)
+        )
+        if verdict.get("status") == "blocked":
+            raise HeldoutContaminationError(
+                "method candidate rejected: held-out contamination "
+                f"({verdict.get('reason')}): task_id={verdict.get('task_id')}"
+            )
+
     def _fsync_or_uncertain(
         self, path: Path, payload: bytes, method_ref: str,
         operation: str, directories: tuple[Path, ...],
@@ -516,6 +541,12 @@ class MethodStore:
         not expose in-flight cards. Only the final rename makes them visible.
         Call under the store's single-writer lock.
         """
+        # held-out 写侧防线（最终载荷封堵点①）：所有"整目录落卡"路径
+        # （save_candidate 首写 / seed overlay）在创建任何 staging 字节之前，
+        # 对即将落盘的 METHOD.md 全文过检——拒写时目录/staging 零副作用。
+        # 检查对象是落盘原文本身，不按字段拼装（拼装遗漏正是第一轮
+        # aliases/freshness_refs 漏检的根因）。
+        self._reject_heldout_contamination(files["METHOD.md"].decode("utf-8", errors="replace"))
         dest = self._dir / method_id
         if dest.exists():
             raise FileExistsError(f"Method runtime directory exists: {dest}")
@@ -546,6 +577,12 @@ class MethodStore:
 
     def _replace_card(self, path: Path, payload: str, *, operation: str) -> None:
         """Single-writer atomic RMW card replacement; no in-place truncation."""
+        # held-out 写侧防线（最终载荷封堵点②）：所有 RMW 卡片改写
+        # （update_status / annotate_freshness / annotate_aliases 及未来新入口）
+        # 在写 tmp 之前对完整序列化载荷过检——注解入口注入的任何 frontmatter
+        # 字段（如 freshness_refs/aliases）天然全部在检查面内，新增改写入口
+        # 无法绕过。P1-A（annotate_freshness 旁路）由此封堵。
+        self._reject_heldout_contamination(payload)
         data = payload.encode("utf-8")
         temp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:12]}.tmp")
         try:
@@ -1393,6 +1430,11 @@ class MethodStore:
         )
         entry["ledger_seq"] = ledger_seq
         entry["ledger_watermark"] = ledger_seq
+        # held-out 写侧防线（P1-B）：note/suggestion/model/evidence_refs/attribution
+        # 等模型可达字段在最终序列化整行入账前过检。canonical_json 与
+        # append_ledger_line 落盘序列化同构（其后再追加的 integrity 凭据是
+        # 程序计算的 sha256，不引入新文本）——检查的正是即将持久化的载荷。
+        self._reject_heldout_contamination(canonical_json(entry))
         entry = append_ledger_line(path, entry)
         self._refresh_usage_watermark_locked()
         return entry
@@ -1670,6 +1712,9 @@ class MethodStore:
         if freshness_hashes:
             entry["freshness_hashes"] = freshness_hashes
         qpath = Path(record.path).parent / "qualification.jsonl"
+        # held-out 写侧防线：note/evidence_refs/task_type 等模型可达字段最终
+        # 序列化后的整行（与下方落盘 write 的字节同构）入账前过检。
+        self._reject_heldout_contamination(json.dumps(entry, ensure_ascii=False, sort_keys=True))
         with qpath.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
             f.flush()
@@ -1920,6 +1965,9 @@ class MethodStore:
         out-parameter the caller may pass to report why a supplied alias was not
         persisted; it is filled only when a new card is actually written.
         """
+        # held-out 写侧防线：不在入口手工拼字段预检（第一轮的拼装遗漏正是
+        # 漏检根因）；权威封堵在 _commit_new_directory 对最终落盘卡片全文
+        # 执行（封堵点①），拒写时目录/staging 零副作用。
         self._require_write_safe()
         with _store_lock(self._dir):
             record, created = self._save_candidate_locked(
@@ -2015,7 +2063,10 @@ class MethodStore:
         front += line("source_episode_refs", ",".join(checked_episode_refs)) + line("evidence_refs", ",".join(evidence_refs or []))
         front += line("freshness_refs", ",".join(checked_freshness_refs))
         front += line("parent_ref", parent_ref) + line("created_at", now) + line("updated_at", now) + "---\n"
-        self._commit_new_directory(method_id, {"METHOD.md": (front + body.strip() + "\n").encode("utf-8")}, operation="save_candidate")
+        # held-out 写侧防线：card_text 的权威检查在 _commit_new_directory
+        # （封堵点①）对这份最终序列化全文执行，此处不重复拼检。
+        card_text = front + body.strip() + "\n"
+        self._commit_new_directory(method_id, {"METHOD.md": card_text.encode("utf-8")}, operation="save_candidate")
         record = self._load_path(path)
         if record is None:
             raise RuntimeError("candidate write did not round-trip")

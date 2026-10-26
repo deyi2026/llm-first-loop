@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import env_channel
+
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="PTY is a POSIX terminal contract")
 
 
@@ -555,6 +557,10 @@ def test_sigterm_during_run_aborts_next_draft_and_restores_terminal(tmp_path):
         os.close(slave)
 
 
+@pytest.mark.skipif(
+    env_channel.nested_sandbox_exec(),
+    reason="环境受限：PTY/signal 依赖真实终端语义，嵌套 sandbox-exec 通道受限【RED-09】",
+)
 def test_sigterm_while_waiting_for_next_draft_after_run_settled_restores_terminal(tmp_path):
     pytest.importorskip("prompt_toolkit")
     import pty

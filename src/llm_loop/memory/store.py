@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 
+from llm_loop.knowledge import heldout_guard
+from llm_loop.knowledge.heldout_guard import HeldoutContaminationError
 from llm_loop.timekeeping import system_local_now
 
 
@@ -101,12 +103,20 @@ class MemorySchemaMismatchError(RuntimeError):
 class MemoryStore:
     """记忆条目存取（JSON 单文件索引，P0）."""
 
-    def __init__(self, memory_dir: str | Path) -> None:
+    def __init__(
+        self,
+        memory_dir: str | Path,
+        *,
+        contamination_guard: Callable[[str], dict] | None = None,
+    ) -> None:
         self._dir = Path(memory_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "index.json"
         self._entries: list[MemoryEntry] = []
         self._post_save_hooks: list[Callable[[MemoryEntry], None]] = []
+        # held-out 写侧防线（fail-closed）：None 时惰性走 heldout_guard.check_text，
+        # 不在构造期解析 manifest（env/工作区在构造后仍可变化）。
+        self._contamination_guard = contamination_guard
         # 2026-09-15 事故根治: 索引 schema 高于本 reader 时置为诊断消息并禁写（fail-closed）
         self._schema_locked: str | None = None
         # 2026-08-20（d8a76517, 镜像）: 跨进程/线程并发写防护——写前合并磁盘最新态
@@ -396,6 +406,46 @@ class MemoryStore:
         if not entry.content_fingerprint:
             entry.content_fingerprint = self._compute_fingerprint(entry)
 
+    def _reject_heldout_contamination(self, entry: MemoryEntry) -> None:
+        """写侧 fail-closed：命中 held-out 探针即拒写（eval/rules/holdout.md §4）.
+
+        待检文本 = 条目全部 model 可控文本字段：content + summary + keywords +
+        citations + version_history（P2-7，Rule28 修复轮：后两者原被当作"溯源/历史
+        元数据"排除在检查面外，但字段内容 model 可控，可经 citations 绕探针——现以
+        确定性 JSON 序列化并入同一条 check_text 载荷；save_entry 与
+        save_entry_if_observed 两条路径共用本函数，RMW/覆盖路径同覆盖）。
+        只判 ``status == "blocked"``：guard unavailable/内部异常由 heldout_guard
+        映射为非 blocked → 放行（fail-open 由 guard 自身保证）。
+        异常消息只含类别（task_id/statement_probe）与 task_id，绝不携带待检文本。
+        在锁外、_prepare_entry 之前执行：拒写时 entry 与索引零副作用。
+        """
+        parts = [
+            part
+            for part in (entry.content, entry.summary, " ".join(entry.keywords))
+            if part
+        ]
+        # P2-7：citations / version_history 并入送检载荷（序列化失败降级 repr，仍送检）。
+        for extra in (entry.citations, entry.version_history):
+            if not extra:
+                continue
+            try:
+                parts.append(
+                    json.dumps(extra, ensure_ascii=False, sort_keys=True, default=str)
+                )
+            except (TypeError, ValueError):
+                parts.append(repr(extra))
+        text = "\n".join(parts)
+        verdict = (
+            self._contamination_guard(text)
+            if self._contamination_guard is not None
+            else heldout_guard.check_text(text)
+        )
+        if verdict.get("status") == "blocked":
+            raise HeldoutContaminationError(
+                "memory entry rejected: held-out contamination "
+                f"({verdict.get('reason')}): task_id={verdict.get('task_id')}"
+            )
+
     def save_entry_if_observed(
         self, entry: MemoryEntry, *, observed_versions: dict[str, int]
     ) -> tuple[MemoryEntry, bool]:
@@ -406,6 +456,8 @@ class MemoryStore:
         producer's snapshot; the candidate is retained in observation_history but is not
         promoted to current.
         """
+        # held-out 写侧防线先于锁与 CAS 判定：拒写时 entry/索引零副作用。
+        self._reject_heldout_contamination(entry)
         result: MemoryEntry
         promoted = False
         with self._lock:
@@ -448,6 +500,8 @@ class MemoryStore:
 
     def save_entry(self, entry: MemoryEntry) -> MemoryEntry:
         result: MemoryEntry
+        # held-out 写侧防线先于锁与磁盘合并：拒写时 entry/索引零副作用。
+        self._reject_heldout_contamination(entry)
         with self._lock:
             # Refresh before matching, not only before the final file write.  Otherwise a
             # concurrent writer can create the same fact after this process loaded its

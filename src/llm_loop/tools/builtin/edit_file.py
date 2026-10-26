@@ -18,6 +18,7 @@ from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_evidence_shadow_enabled, workspace_base
+from llm_loop.sealed_paths import sealed_path_reason
 from llm_loop.tools.safety import link_shaped_paths
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 from llm_loop.workspace.file_service import FileEditResult, FileService, FileServiceError
@@ -202,6 +203,17 @@ class EditFileTool:
 
         if not path_str:
             return self._fail("缺少必填参数 path")
+        # held-out 读侧封条: 写侧同 guard（防复制/篡改 held-out 材料）
+        _sealed_reason = sealed_path_reason(path_str)
+        if _sealed_reason is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[held-out 封条] {path_str} 命中封条: {_sealed_reason}"
+                "（评测期禁止读取/修改 held-out 材料）",
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="HeldoutSealed",
+            )
         if old is None or new is None:
             return self._fail("缺少必填参数 old_string/new_string")
         old, new = str(old), str(new)

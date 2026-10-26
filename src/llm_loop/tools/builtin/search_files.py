@@ -16,6 +16,7 @@ from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import workspace_base
+from llm_loop.sealed_paths import seal_enabled, sealed_path_reason
 
 
 class SearchFilesTool:
@@ -75,6 +76,18 @@ class SearchFilesTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # held-out 读侧封条: root/path 参数指向 held-out 目录即拒（相对路径按工作区根归一）
+        if seal_enabled():
+            for _label, _raw in (("path", path_q), ("root", root)):
+                _sealed_reason = sealed_path_reason(_raw) if _raw else None
+                if _sealed_reason is not None:
+                    return ToolResult(
+                        status=ToolResultStatus.FAILURE,
+                        content=f"[held-out 封条] {_label}={_raw} 命中封条: {_sealed_reason}",
+                        tool_call_id="",
+                        tool_name=self.name,
+                        error_type="HeldoutSealed",
+                    )
         # EVO-20260823-12be9cac 三层文件事实: path 精确查询分支（O(1) stat 对账）
         if path_q:
             return self._query_path(path_q)
@@ -171,6 +184,7 @@ class SearchFilesTool:
         }
 
         results: list[str] = []
+        _abs_results: list[str] = []  # 与 results 一一对应的绝对路径（封条过滤用）
         try:
             if content:
                 regex = re.compile(content, re.IGNORECASE)
@@ -194,6 +208,7 @@ class SearchFilesTool:
                                         rel = fp.relative_to(base)
                                         snippet = line.strip()[:120]
                                         results.append(f"{rel}:{i}: {snippet}")
+                                        _abs_results.append(str(fp))
                                         if len(results) >= max_results:
                                             break
                                     if i > 5000:
@@ -219,6 +234,7 @@ class SearchFilesTool:
                         # PurePath.match 原生支持 ** 跨目录；fnmatch 兜底 basename 匹配
                         if fnmatch.fnmatch(fn, pattern) or rel.match(pattern):
                             results.append(rel_str)
+                            _abs_results.append(str(Path(dirpath) / fn))
                             if len(results) >= max_results:
                                 break
                     if len(results) >= max_results:
@@ -231,10 +247,28 @@ class SearchFilesTool:
                 tool_name=self.name,
             )
 
+        # held-out 读侧封条: 结果列表逐条过滤（不补位；回执如实报告过滤条数）
+        _sealed_filtered = 0
+        if seal_enabled() and results:
+            _kept: list[str] = []
+            for _idx, _item in enumerate(results):
+                _abs = _abs_results[_idx] if _idx < len(_abs_results) else ""
+                if _abs and sealed_path_reason(_abs) is not None:
+                    _sealed_filtered += 1
+                    continue
+                _kept.append(_item)
+            results = _kept
+        _sealed_note = (
+            f"\n[held-out 封条] 已过滤 {_sealed_filtered} 条封条内路径" if _sealed_filtered else ""
+        )
+
         if not results:
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                content=f"[search_files] 无匹配（pattern={pattern or '-'}, content={content or '-'}）",
+                content=(
+                    f"[search_files] 无匹配（pattern={pattern or '-'}, content={content or '-'}）"
+                    f"{_sealed_note}"
+                ),
                 tool_call_id="",
                 tool_name=self.name,
             )
@@ -243,6 +277,7 @@ class SearchFilesTool:
         body += "\n".join(results[:max_results])
         if len(results) > max_results:
             body += f"\n…（共 {len(results)} 条，已截断）"
+        body += _sealed_note
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=body,

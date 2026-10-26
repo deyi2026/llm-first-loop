@@ -296,7 +296,14 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
     if target is None:
         return False
     index, prefix = target
-    terminator = next((t for t in _LINE_TERMINATORS if lines[index].endswith(t)), "")
+    # P0(2026-10-25): 原行终止符必须原样保留。此前写反（有\n反删、无\n反加），
+    # 把下一配置项拼进本行——实测曾将 WEB_SESSION_TTL_SECONDS 拼入哈希行，
+    # 重启重读 .env 后登录全拒（07:52 升级写回触发，迁移重启爆发）。
+    # 审核P2-1/P2-2: 保真扩展到 str.splitlines 识别的全部行终止符
+    # （CRLF/lone CR 及 \v\f\x1c-\x1e\x85\u2028\u2029），杜绝边缘拼接复发。
+    terminator = next(
+        (t for t in _LINE_TERMINATORS if lines[index].endswith(t)), ""
+    )
     lines[index] = f"{prefix}{key}={new_value}{terminator}"
     tmp = path.with_name(f".{path.name}.rehash.tmp")
     tmp_created = False
@@ -307,6 +314,8 @@ def _persist_rehashed_env_value(key: str, old_value: str, new_value: str) -> boo
         tmp_created = True
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as destination:
             destination.write("".join(lines))
+        # 审核P2-3: 保留原 .env 权限位（部署可能自定义 0640 等）；仅当原权限
+        # 比组/其他可读更宽时收紧到 0600（fail-closed：密钥文件不因回写放宽）。
         mode = path.stat().st_mode & 0o777
         os.chmod(tmp, mode if mode & 0o077 == 0 else 0o600)
         os.replace(tmp, path)

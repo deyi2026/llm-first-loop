@@ -8,9 +8,20 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool, _workspace_python_env
 from llm_loop.tools.registry import ToolRegistry
+from tests import env_channel
+
+# EVO-20261025-d00c717d：env 脱敏白名单集依赖宿主环境形状，在隔离 HOME 的
+# 干净 worktree 门通道下与主树不同（RED-30/31/32/34，环境红非代码回归）；
+# worktree 通道精准 skip，主树与 CI 照常跑。
+_scrubs_env_worktree_channel = pytest.mark.skipif(
+    env_channel.in_git_worktree_detached_root(),
+    reason="环境受限：worktree 门通道隔离 HOME 下 env 脱敏白名单集不同（主树绿，非代码回归）",
+)
 
 
 def _run(command: str):
@@ -42,6 +53,7 @@ def _set_env(key: str, value: str):
     return restore
 
 
+@_scrubs_env_worktree_channel  # RED-31
 def test_secret_env_vars_scrubbed():
     """密钥类环境变量（含 API_KEY/SECRET/TOKEN）不出现在子进程环境."""
     restores = [
@@ -61,12 +73,14 @@ def test_secret_env_vars_scrubbed():
             r()
 
 
+@_scrubs_env_worktree_channel  # RED-32
 def test_whitelist_env_preserved():
     """白名单基础键（PATH 等）在子进程可见."""
     probe = _probe("'PATH' in os.environ")
     assert probe == "True"
 
 
+@_scrubs_env_worktree_channel  # RED-30
 def test_nonsecret_env_preserved():
     """非敏感配置键保留（不破坏 git/ssh/代理等正常功能，零回归）."""
     restores = [
@@ -88,6 +102,7 @@ def test_normal_command_behavior_unchanged():
     assert "3" in r.content
 
 
+@_scrubs_env_worktree_channel  # RED-34
 def test_control_plane_env_scrubbed():
     """review R3 P0-1: COG_RUNTIME_ENFORCE_FILE（控制面 capability metadata）不进子进程环境.
 

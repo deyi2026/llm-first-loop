@@ -11,6 +11,7 @@ from llm_loop.core.run_context import (
     current_session_id,
     workspace_base,
 )
+from llm_loop.sealed_paths import seal_enabled, sealed_path_reason
 from llm_loop.tools.safety import link_shaped_paths
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
@@ -137,6 +138,17 @@ class ReadFileTool:
         if not p.is_absolute():
 
             p = Path(workspace_base()) / p
+        # held-out 读侧封条: 在任何磁盘 IO / path_registry 登记之前判定（命中即拒，回显类别）
+        _sealed_on = seal_enabled()
+        _sealed_reason = sealed_path_reason(p) if _sealed_on else None
+        if _sealed_reason is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[held-out 封条] {_sealed_reason}",
+                tool_call_id="",  # 由注册表填充
+                tool_name=self.name,
+                error_type="HeldoutSealed",
+            )
         # T5b: symlink 透明标注（读放行，信息不隐藏；写路径在 edit_file 拒绝）
         # R9-IMM-04 三态化：探测结果透传——links_found 标注链；probe_failed 标注
         # 探测障碍（读面 fail-open 不拒读；写面由 edit_file 对 probe_failed 拒写）

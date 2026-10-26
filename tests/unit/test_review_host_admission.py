@@ -750,6 +750,103 @@ def test_untracked_runtime_output_under_reports_is_not_material(tmp_path: Path) 
     assert "w" * 1000 not in runner.task
 
 
+def test_untracked_knowledge_pool_outputs_are_not_material(tmp_path: Path) -> None:
+    # EVO-20261026-d778bc78 (human-approved 2026-10-26): data/methods/ and
+    # experiences/ are the learning subsystem's runtime OUTPUT (method and
+    # experience writes plus usage receipts), not review-bound input. Like
+    # reports/, untracked pool files must neither enter the reviewer material
+    # nor trip the untracked file-count limit (the 614-file real pool
+    # structurally exceeds it), while real untracked source keeps full review.
+    repo = _repo(tmp_path)
+    d = repo / "data" / "methods" / "x"
+    d.mkdir(parents=True)
+    (d / "METHOD.md").write_text("hypothetical-method-body\n")
+    e = repo / "experiences"
+    e.mkdir()
+    (e / "EXP-1.md").write_text("hypothetical-experience-1\n")
+    for i in range(2, 46):  # 45 pool files total: over the 40-file untracked limit
+        (e / f"EXP-{i}.md").write_text(f"hypothetical-experience-{i}\n")
+    (repo / "src").mkdir()
+    (repo / "src" / "foo.py").write_text("y = 3\n")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+    assert "runtime_output_excludes=reports/,data/methods/,experiences/" in runner.task
+    assert "hypothetical-method-body" not in runner.task
+    assert "hypothetical-experience-1" not in runner.task
+    assert "untracked data/methods/x/METHOD.md" not in runner.task
+    assert "untracked experiences/EXP-1.md" not in runner.task
+    assert "untracked src/foo.py" in runner.task  # real untracked source stays reviewed
+
+
+def test_committed_knowledge_pool_diff_stays_fully_reviewed(tmp_path: Path) -> None:
+    # EVO-20261026-d778bc78: the new prefixes exempt only UNCOMMITTED
+    # changes. A committed diff under experiences/ stays in the reviewer
+    # material verbatim (no exemption), and a committed monster under
+    # data/methods/ gets the pre-existing EVO-20261021-2f22aae5 truncated
+    # projection — the same committed semantics reports/ already has.
+    repo = _repo(tmp_path)
+    # The fixture's initial branch IS main and HEAD sits on it, so
+    # merge-base(HEAD, main)==HEAD would freeze an EMPTY committed delta;
+    # advance HEAD onto a side branch so the pool files are genuinely inside
+    # the frozen delta.
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    e = repo / "experiences"
+    e.mkdir()
+    (e / "EXP-1.md").write_text("committed small experience body\n")
+    d = repo / "data" / "methods" / "x"
+    d.mkdir(parents=True)
+    (d / "BIG.json").write_text("z" * 302_000)
+    subprocess.run(["git", "-C", str(repo), "add", "experiences", "data"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "committed pool"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+    assert "committed small experience body" in runner.task  # committed stays fully reviewed
+    assert "EVO-20261021-2f22aae5 TRUNCATED committed runtime output diff" in runner.task
+    assert "z" * 60_000 not in runner.task  # the omitted middle is really out
+
+
+def test_sensitive_refusal_applies_under_knowledge_pool_prefixes(tmp_path: Path) -> None:
+    # EVO-20261026-d778bc78: the prefix exemption may not become a smuggling
+    # channel — the sensitive-filename refusal still applies to every changed
+    # path under data/methods/ and experiences/, exactly as it already does
+    # for reports/ and everywhere else.
+    repo = _repo(tmp_path)
+    e = repo / "experiences"
+    e.mkdir()
+    (e / "secret.json").write_text('{"api_token": "hypothetical"}\n')
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert blocked["reason"] == "review_sensitive_untracked_path_refused"
+    assert runner.started == 0
+
+    (tmp_path / "tracked").mkdir()  # _repo() mkdirs without parents
+    repo2 = _repo(tmp_path / "tracked")
+    d2 = repo2 / "data" / "methods" / "x"
+    d2.mkdir(parents=True)
+    (d2 / "credentials.json").write_text("{}\n")
+    subprocess.run(["git", "-C", str(repo2), "add", "data"], check=True)
+    subprocess.run(["git", "-C", str(repo2), "commit", "-qm", "pool baseline"], check=True)
+    (d2 / "credentials.json").write_text('{"c": 1}\n')  # tracked dirt under the prefix
+    host2 = HostReviewAdmission()
+    runner2 = FakeChildRunner()
+    host2.attach_runner(runner2)
+    blocked2 = host2.start("author-1", "full_test", workdir=str(repo2), command="pytest -q")
+    assert blocked2["accepted"] is False
+    assert blocked2["reason"] == "review_sensitive_tracked_path_refused"
+    assert runner2.started == 0
+
+
 @pytest.mark.parametrize(
     "command", ["uv run --directory ../other pytest -q", "uv run --project ../other pytest -q"]
 )

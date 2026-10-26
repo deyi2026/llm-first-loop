@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES  # P0-B3
+from llm_loop.knowledge import heldout_guard
 from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
 from llm_loop.memory.store import MemoryEntry, MemoryStore
 from llm_loop.resources.contracts import ExecutionClass, ServicePriority
@@ -377,11 +378,17 @@ class MemoryExtractor:
         note: str = "",
         entries: int = 0,
     ) -> None:
-        """审计落盘（FR-P1-EXT-06，可被 search_records kind=memory_extract 检索）."""
+        """审计落盘（FR-P1-EXT-06，可被 search_records kind=memory_extract 检索）.
+
+        held-out 写侧防线（F5 接线）：failures 内嵌模型输出解析失败的原文摘录、
+        note 是程序注记——最终序列化整行落盘前过检；blocked 时跳过该条审计写
+        （fail-open 通道：审计缺失不阻断提取主流程，warning 只含类别与 task_id，
+        绝不携带待检文本），使 heldout_guard docstring 声称的 memory_extract
+        覆盖与实际实现一致。
+        """
         if self._audit_dir is None:
             return
         try:
-            self._audit_dir.mkdir(parents=True, exist_ok=True)
             record = ExtractRecord(
                 ts=system_local_now().isoformat(),
                 session_id=session_id,
@@ -392,8 +399,19 @@ class MemoryExtractor:
                 failures=failures,
                 note=note,
             )
+            payload = json.dumps(record.to_dict(), ensure_ascii=False)
+            verdict = heldout_guard.check_text(payload)
+            if verdict.get("status") == "blocked":
+                logger.warning(
+                    "memory_extract audit record rejected: held-out contamination "
+                    "(%s) task_id=%s; record not persisted",
+                    verdict.get("reason"),
+                    verdict.get("task_id"),
+                )
+                return
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
             with (self._audit_dir / "memory_extract_log.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
+                f.write(payload + "\n")
             self._last_record_store = record
         except OSError:
             pass  # fail-open

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -13,6 +14,10 @@ from llm_loop.memory.synopsis import (
     SynopsisError,
     SynopsisStore,
 )
+from llm_loop.sealed_paths import sealed_path_reason
+
+# source_ref 带 scheme（artifact:// / evidence:// / attachment:// …）即非文件路径，交原解析链处理
+_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 
 SourceResolver = Callable[[str], SourceSnapshot]
 
@@ -73,6 +78,15 @@ class SourceSynopsisTool:
             return self._failure("[参数错误] save 缺少 source_ref。")
         if not summary.strip():
             return self._failure("[参数错误] save 缺少非空 summary。")
+        # held-out 读侧封条: source_ref 为文件路径时入口 guard（scheme 形态交原解析链）
+        if not _SCHEME_RE.match(source_ref):
+            sealed_reason = sealed_path_reason(source_ref)
+            if sealed_reason is not None:
+                return self._failure(
+                    f"[held-out 封条] {source_ref} 命中封条: {sealed_reason}"
+                    "（评测期禁止读取 held-out 材料）",
+                    error_type="HeldoutSealed",
+                )
         try:
             source = self.source_resolver(source_ref)
             end_raw = kwargs.get("source_end")
@@ -183,12 +197,13 @@ class SourceSynopsisTool:
             tool_name=self.name,
         )
 
-    def _failure(self, content: str) -> ToolResult:
+    def _failure(self, content: str, error_type: str | None = None) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=content,
             tool_call_id="",
             tool_name=self.name,
+            **({"error_type": error_type} if error_type else {}),
         )
 
 

@@ -17,9 +17,17 @@ _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+import pytest  # noqa: E402  — sys.path 引导后的第三方导入
 import run_eval  # noqa: E402  — scripts 层模块（sys.path 注入后导入）
 
+from tests import env_channel  # noqa: E402  — conftest 已注入 repo 根到 sys.path
 
+
+@pytest.mark.skipif(
+    env_channel.in_git_worktree_detached_root(),
+    reason="环境受限：干净 worktree 门通道无生产 .env，provider env 解析存在环境差异"
+           "（主树绿，非代码回归）【RED-28】",
+)
 def test_resolve_api_key_prefers_provider_declared_env(monkeypatch):
     """明确 Provider 声明，避免依赖未跟踪的私有 providers.json。"""
     monkeypatch.setattr(

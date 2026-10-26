@@ -64,8 +64,16 @@ def test_rrf_semantic_only_keeps_original_order(tmp_path):
     assert any("蓝色" in h["content"] for h in result.entries)  # 语义召回蓝色（关键词不重叠）
 
 
-def test_rrf_keyword_only_fallback(tmp_path):
+def test_rrf_keyword_only_fallback(tmp_path, monkeypatch):
     """语义不可用（NullEmbedder）→ 关键词结果原样返回，mode=keyword（P0 回归安全）."""
+    # 隔离宿主机本地 ONNX 模型缓存（Rule28 修复轮 2026-10-25）：semantic_available()
+    # = 主嵌入 or 本地重排器（retriever.py D7 两段式）。本机
+    # ~/.cache/lfl/models/bge-small-zh-v1.5 已于 2026-10-20 落盘，NullEmbedder 语境下
+    # _reranker_ready() 惰性探测翻 True → 降级分支激活 mode=mixed（产品行为是 D7
+    # 设计内，见 factory.py "EMBEDDING_PROVIDER=none 时仍装配检索器壳"注释）。
+    # 本测试验证的是"语义完全不可用"的 keyword 回退安全路径，须把
+    # LFL_SEMANTIC_MODEL_DIR 指到空目录，使探测确定性返回 False。
+    monkeypatch.setenv("LFL_SEMANTIC_MODEL_DIR", str(tmp_path / "no-local-onnx-models"))
     mem = _mem(tmp_path)
     retriever = SemanticRetriever(NullEmbedder(), memory_dir=tmp_path / "memory")
     kw = [{"kind": "memory", "id": "x", "content": "Python 内容", "key": "memory:x"}]

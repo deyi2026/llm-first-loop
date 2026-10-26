@@ -17,6 +17,7 @@ import ast
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.sealed_paths import sealed_path_reason
 
 _MAX_FILES = 40          # 单次扫描最大文件数（目录模式）
 _MAX_DEPTH = 3           # 目录递归最大深度
@@ -53,6 +54,15 @@ class InspectCodeTool:
                 content="[参数错误] 缺少必填参数 'path'",
                 tool_call_id="", tool_name=self.name,
             )
+        # held-out 读侧封条: 入口 guard（解析/遍历/解析 AST 之前）
+        _sealed_reason = sealed_path_reason(path)
+        if _sealed_reason is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[held-out 封条] {path} 命中封条: {_sealed_reason}（评测期禁止读取 held-out 材料）",
+                tool_call_id="", tool_name=self.name,
+                error_type="HeldoutSealed",
+            )
         try:
             depth = max(1, min(int(kwargs.get("depth", 2) or 2), _MAX_DEPTH))
         except (TypeError, ValueError):
@@ -74,6 +84,8 @@ class InspectCodeTool:
                 tool_call_id="", tool_name=self.name,
             )
         files = [p] if p.is_file() else self._collect_files(p, depth)
+        # held-out 读侧封条: 目录遍历结果逐条过滤（父目录不是封条根时仍拦住内部文件）
+        files = [f for f in files if sealed_path_reason(f) is None]
 
         if not files:
             return ToolResult(

@@ -1,39 +1,39 @@
 ---
 method_id: verify-deployment-state-via-runtime-receipt-not-unrelated-local-mirror-921affe7d537
 name: verify-deployment-state-via-runtime-receipt-not-unrelated-local-mirror
-description: 核验『已重启/已收口』这类部署态声明时，服务自身 status 回执通常已内嵌权威代码身份（版本串 g<hash>、git_dirty），它就是该声明的首要 provenance；本机 checkout 只是未验证候选副本。先由回执裁决声明；如需报告本地残留，在 cwd 直接 git status（不枚举 home、不沿用过期绝对路径）；把本地 status 解读为证据前，先确认与回执 commit 同源（remote URL / ancestry），否则未跟踪文件只是无关 lineage 的本地残留；fetch 不得丢弃 stderr，防止 remote 名猜错时静默拿到陈旧数据。
+description: 部署事实核验优先使用运行服务自身的 desired/live 身份与精确 action 终态，不把 stable 旧代当成实时 Git 版本；只有当追查本地修改时才核验 checkout 与运行源码的 git-common-dir/commit lineage。单个 HTTP 200、current HEAD、accepted 都不足以证明新版本生效。
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:1e362f1c-6242-47df-8cfd-2b1de1b0b20e:18:c20454aa750a4e095891
 evidence_refs: learning:learn:48d1e6dced4b
 created_at: 2026-10-13T21:33:40.339963+08:00
-updated_at: 2026-10-13T21:33:40.339963+08:00
+updated_at: 2026-10-26T06:56:06+08:00
 ---
 ## Trigger
 需要核验关于已部署服务的状态声明（已重启/代码已收口干净），且工具回执报记忆中的 workdir 无效、或本机存在多个可能不同源的 checkout
 
 ## Discriminator
-服务 status/版本回执是否已内嵌运行时代码身份（commit hash、git_dirty/version 串）——它在任何文件系统搜索之前就已可裁决声明；以及本地 checkout 的 remote 与 ancestry 是否与该 commit 同源
+先问回执是不是**当前**服务/当前 desired 的运行身份：live SHA+PID 与 desired SHA 直接裁决代码身份；stable 是历史成功动作，只有与当前 desired 对应时才可声明 Git 身份。检索仓库、git_dirty、当前 checkout HEAD 不能替代 live。若涉及多工作树发布，须确认 code_root 的 `git-common-dir` 与正式运行根同源。
 
 ## Short path
-- 读服务 status 回执，一次解析两个未知量：重启是否生效（当前代次 stable）、服务 repo 是否干净（HEAD + git_dirty）
-- 声明若指向服务 repo：此处即已核验，不发起本地文件系统搜索；仅当还需报告本机残留时继续
-- 在 cwd 直接 git status（pwd 已示 checkout 位置，不 ls 枚举全目录、不使用过期绝对路径）
-- 把本地 status 解读为证据前：git remote -v + ancestry 对比回执 commit；不同源则标记为本地-only 残留、非权威、不阻塞
-- fetch/pull 保留 stderr 或先确认 remote 名存在，防止静默 no-op 后把陈旧 log 当新数据
-- 结论按对象拆分：服务侧由回执证实；本地尾巴如实单列交用户决定，然后停止
+- 首先取 `service_control show/status`：desired SHA/代次、每服务 live PID/SHA 与 stable 回执、restart_required、action 终态；缺失的字段用对应 manifest 定向补齐。
+- **运行已生效**应依据 live SHA == desired SHA、PID 活着、精确 action=succeeded/confirmed_ok（若讨论该次重启）；stable 旧代只报代差、不猜旧 SHA、不以它单独触发重启。
+- Web 还需用户入口 `/ui/v2/`、鉴权 `/auth/status` 等探针；“200 但挂载旧资源”不能宣称 UI 修复上线。
+- 如需判断源码/worktree 是否干净，再在实际 code_root 或 cwd 读取 `git status`；不同源先 `git rev-parse --path-format=absolute --git-common-dir` 并比对 commit/ancestry，不枚举全 home。
+- fetch/pull 必须保留错误信息；把**服务状态**与**本地残留**分别报告，不为无关目录里的未跟踪文件阻断受管服务判读。
 
 ## Stop conditions
-- 服务回执已同时证实重启生效与运行代码树干净（HEAD 与 dirty 明确）
-- 本地 checkout 已被证实与回执 commit 不同源，其未跟踪文件已标注为本地残留
-- 声明所指对象（服务 repo vs 本地工作区）已分别核验并区分表述
+- 每个服务的当前 desired/live/stable 已分别核验，不把 historical receipt 误称当前代码。
+- 已核实对应 action 是真实终态，或报告 pending/failed 而非强行成功。
+- 本地代码/产物差异只在证实同源时影响当前部署声明，达到声明所需证据即停止。
 
 ## Verification
-- 最终报告引用的 HEAD 与回执中的 commit/版本字段一致
-- 本地 checkout 的 remote URL 与服务 repo 对应，ancestry 检查给出同源/无关的明确判定
-- 任何 fetch 的 stderr 无『remote 不存在』类错误，或已先经 git remote -v 确认 remote 名
+- Web Gen 323 发行 SHA=`2cf3ada5e…`、action `svc-2fee46dc41e04067b8a1c29dc807c753` 的 succeeded 与 live SHA/HTTP 一致；Feishu/Learning 仍运行先前 SHA，不错误宣称全部服务升级。
+- 若 stable.generation < desired.generation，要以 live SHA 而非 stable 代次判断实际版本，并明确 stable 的历史性。
+- 检查发布根的 Git common-dir、不可变 release SHA、WebUI dist/source binding；只有被请求时才检查本地 checkout 和 remote ancestry。
 
 ## Counterexamples
-- 声明本身针对本地工作区（如『把我本地两个文件提交』）——本地 git status 即权威目标，服务回执无关
-- 回执不含 git 身份字段（无 commit/dirty）——必须定位服务真实 checkout，文件系统搜索成为必要路径而非绕路
-- 唯一 checkout 且 remote 名确定——lineage 预检是纯开销，直接 fetch+比较即可
+- 用户只问本地 worktree 提交/修改：本地 Git 状态才是主证据，服务 manifest 无关。
+- 运行 manifest 无可信 SHA 或 action 缺终态：回到实际部署代码根/日志与健康检查，不凭空推断。
+- 唯一 checkout 且 remote 确定、问题不涉部署根身份：额外 lineage 检查无益。
+- 只有 stable 旧代的回执不等于服务运行旧代码；只有 HTTP 200 也不等于 WebUI 新版本生效。

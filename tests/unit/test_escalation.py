@@ -294,3 +294,48 @@ def test_wait_returns_denied(tmp_path):
     w = EscalationWaitTool(store=s)
     r = w.execute(request_id=rec["id"], timeout_s=1)
     assert "已拒绝" in r.content and "不要动这个目录" in r.content
+
+
+# ── 准入审核P1-1(2026-10-25): 跨进程记录不销毁/不审批/不消费 ────────────────
+
+def test_cross_process_record_survives_save_not_decidable(tmp_path, monkeypatch):
+    """他进程签名记录：_save 不销毁、list 可见带标记、审批拒绝、计数排除。"""
+    import llm_loop.tools.escalation as esc
+
+    store = esc.EscalationStore(tmp_path / "esc.json")
+    store.create(tool_name="tool_x", command="dangerous --cmd", justification="test")["id"]
+
+    # 模拟另一进程：换进程内密钥后新实例（同状态文件）
+    monkeypatch.setattr(esc, "_STATE_SIGNING_KEY", esc.secrets.token_bytes(32))
+    other = esc.EscalationStore(tmp_path / "esc.json")
+
+    recs = other._load()
+    assert len(recs) == 1 and recs[0]["_sig_unverified"] is True
+    listed = other.list()
+    assert listed and listed[0]["_sig_unverified"] is True  # 可见（不静默隐藏）
+    assert other.pending_count() == 0  # 不可审批的不计可操作 pending
+
+    # 审批拒绝
+    _, reason = other.decide(recs[0]["id"], "denied", decided_by="tester")
+    assert "其他进程" in reason or "无法验证" in reason
+
+    # 本进程（他视角）再写自己的记录：原记录必须存活（不销毁）
+    other.create(tool_name="tool_y", command="safe --cmd", justification="other")
+    after = esc.EscalationStore(tmp_path / "esc.json")._load()
+    assert len(after) == 2, f"跨进程记录被销毁: {len(after)}"
+    assert sum(1 for r in after if r.get("_sig_unverified")) == 1
+
+
+def test_cross_process_token_not_consumable(tmp_path, monkeypatch):
+    import llm_loop.tools.escalation as esc
+
+    store = esc.EscalationStore(tmp_path / "esc.json")
+    rid = store.create(tool_name="tool_x", command="dangerous --cmd", justification="test")["id"]
+    store.decide(rid, "approved", decided_by="tester")
+    rec = store.get(rid)
+    token = rec["token"]
+
+    monkeypatch.setattr(esc, "_STATE_SIGNING_KEY", esc.secrets.token_bytes(32))
+    other = esc.EscalationStore(tmp_path / "esc.json")
+    result, reason = other.consume(token, "tool_x", "dangerous --cmd")
+    assert result is None and ("其他进程" in reason or "无法验证" in reason)

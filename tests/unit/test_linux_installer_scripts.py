@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import env_channel
+
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts" / "install_linux.sh"
 UNINSTALLER = ROOT / "scripts" / "uninstall_linux.sh"
@@ -344,6 +346,10 @@ def test_musl_or_unknown_libc_is_rejected_without_mutation(linux_shell: dict[str
     assert not Path(linux_shell["LFL_HOME"]).exists()
 
 
+@pytest.mark.skipif(
+    env_channel.nested_sandbox_exec(),
+    reason="环境受限：安装脚本 spawn 子进程链在嵌套 sandbox-exec 通道受限【RED-10】",
+)
 def test_install_upgrade_rollback_failed_upgrade_and_uninstall_preserve_user_data(
     linux_shell: dict[str, str], tmp_path: Path,
 ) -> None:
@@ -423,6 +429,10 @@ def test_install_upgrade_rollback_failed_upgrade_and_uninstall_preserve_user_dat
 
 
 
+@pytest.mark.skipif(
+    env_channel.nested_sandbox_exec(),
+    reason="环境受限：安装脚本 spawn 子进程链在嵌套 sandbox-exec 通道受限【RED-11】",
+)
 def test_active_pointer_write_failure_restores_both_version_pointers(
     linux_shell: dict[str, str], tmp_path: Path,
 ) -> None:

@@ -524,7 +524,20 @@ def _git(root: Path, *argv: str) -> bytes:
 # alone exceeds the projection bound render as head/tail evidence plus a
 # truncation marker instead of the full single-line monster. See
 # _COMMITTED_RUNTIME_PROJECTION_BYTES below for the rationale.
-_RUNTIME_OUTPUT_EXCLUDES: tuple[str, ...] = ("reports/",)
+# Revision (EVO-20261026-d778bc78, human-approved 2026-10-26): the knowledge
+# pool prefixes data/methods/ and experiences/ join the list. They are the
+# learning subsystem's runtime OUTPUT (method/experience writes and usage
+# receipts), not review-bound input. Deadlock measured 2026-10-26: with the
+# pool left untracked, 614 pool files trip the untracked file-count limit;
+# once committed to satisfy the clean-tree rule, the frozen material alone is
+# 3.18MB > the 2.5MB cap — mutually exclusive refusals, the same shape as the
+# reports/ churn above. Semantics are identical to reports/: only the
+# UNCOMMITTED projection is exempt; anything COMMITTED stays fully reviewed
+# (subject only to the pre-existing _COMMITTED_RUNTIME_PROJECTION_BYTES
+# truncation projection), the sensitive-path refusal is NOT exempted, and the
+# model must not extend this list ad hoc; changes require an approved
+# evolution.
+_RUNTIME_OUTPUT_EXCLUDES: tuple[str, ...] = ("reports/", "data/methods/", "experiences/")
 
 
 def _is_runtime_output(name: str) -> bool:

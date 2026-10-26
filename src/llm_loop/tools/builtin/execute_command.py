@@ -27,6 +27,11 @@ from llm_loop.core.run_context import (
     current_session_id,
     workspace_base,
 )
+
+# P2-8（Rule28 修复轮）: held-out 读侧封条——命令串字面片段拒绝。
+# sealed_paths 为独立叶子模块（仅 stdlib + 惰性 run_context），无循环导入风险；
+# 与 read_file/search_files/edit_file 等既有封条接线同模式。
+from llm_loop.sealed_paths import sealed_command_reason
 from llm_loop.tools.builtin.job_registry import JobDurabilityError, JobLimitExceeded, JobRegistry
 
 # P2-2/P2-3（安全建议书 2026-10-25）: argv 结构化执行 + 提权令牌覆盖守卫阻断。
@@ -1052,6 +1057,22 @@ class ExecuteCommandTool:
         if isinstance(mode, ToolResult):
             return mode
         command, exec_argv, exec_mode = mode
+        # ── P2-8（Rule28 修复轮）: held-out 读侧封条——命令串字面片段拒绝 ──
+        # 置于一切守卫/解析副作用之前（参数裁决之后才能拿到统一文本基准 command：
+        # argv 模式经 shlex.join 归一，与既有灾难守卫同一基准）。封条未启用时
+        # sealed_command_reason 恒 None（零行为变化）。已知边界：变量拼接/间接构造
+        # 可绕过字面片段拒绝（第一道门，配合事后 verify_isolation.py），见
+        # sealed_paths.sealed_command_reason docstring。
+        _sealed_cmd_reason = sealed_command_reason(command)
+        if _sealed_cmd_reason is not None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[held-out 封条] execute_command 命令被拒绝: "
+                f"{_sealed_cmd_reason}",
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="HeldoutSealed",
+            )
         flags = self._resolve_flags_and_workdir(kwargs, command, exec_argv)
         if isinstance(flags, ToolResult):
             return flags

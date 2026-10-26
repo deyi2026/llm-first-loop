@@ -16,6 +16,7 @@ import os
 import pytest
 
 from llm_loop.tools.safety import CatastrophicGuard
+from tests import env_channel
 
 # 运行时拼接本机家目录，避免源码内嵌本地绝对路径字面量
 _HOME_DIR = "/Users/" + os.environ.get("USER", "yyj")
@@ -62,7 +63,21 @@ ALLOWED_CASES = [
 ]
 
 
-@pytest.mark.parametrize("name,command", BLOCKED_CASES, ids=[c[0] for c in BLOCKED_CASES])
+@pytest.mark.parametrize(
+    "name,command",
+    [
+        pytest.param(
+            name, command, id=name,
+            marks=[
+                pytest.mark.skipif(
+                    env_channel.nested_sandbox_exec(),
+                    reason="环境受限：嵌套 sandbox-exec 通道下 node --rm 子进程行为受限【RED-05】",
+                ),
+            ] if name == "node_rm_sync" else [],
+        )
+        for name, command in BLOCKED_CASES
+    ],
+)
 def test_round3_bypasses_are_blocked(name: str, command: str):
     guard = CatastrophicGuard(audit_dir=None)
     decision = guard.guard("execute_command", {"command": command})

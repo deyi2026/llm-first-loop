@@ -150,42 +150,58 @@ def _nearest_existing_ancestor(path: Path) -> Path:
     return cur
 
 
-def phase0_precheck(data_dir: Path, old_key: str, new_root: Path, web_port: int) -> list[str]:
-    """停机与前置条件核对；返回失败清单（空=通过）。纯读，不改任何状态."""
+def phase0_precheck(
+    data_dir: Path, old_key: str, new_root: Path, web_port: int, *, online: bool = False
+) -> list[str]:
+    """停机与前置条件核对；返回失败清单（空=通过）。纯读，不改任何状态.
+
+    online=True（backup/rehearse 专用，R4 2026-10-25）：跳过 1-4 项停机类检查
+    （服务存活/端口/心跳/run.lock）——backup 是纯读复制、rehearse 只在镜像上写，
+    均可安全运行于服务在线状态（设计 §5.1 backup=纯读；排期计划要求演练在
+    停机窗口前完成）。保留磁盘余量与新根检查。migrate/rollback 恒用全检。
+    """
     failures: list[str] = []
     # 1) 三服务 manifest pid 不存活
-    for svc in ("web", "feishu", "learning"):
-        mf = data_dir / "runtime" / f"runtime_manifest.{svc}.json"
-        if not mf.exists():
-            continue
-        try:
-            pid = int(json.loads(mf.read_text(encoding="utf-8")).get("pid", 0))
-        except (OSError, json.JSONDecodeError, ValueError):
-            failures.append(f"{svc} manifest 不可读: {mf}")
-            continue
-        if pid > 0 and _pid_alive(pid):
-            failures.append(f"{svc} 进程仍在运行 (pid {pid})——须停机窗口执行")
-    # 2) web 端口无监听
-    with socket.socket() as s:
-        s.settimeout(0.5)
-        if s.connect_ex(("127.0.0.1", web_port)) == 0:
-            failures.append(f"端口 {web_port} 有进程监听——web 可能未停")
-    # 3) feishu 心跳 pid 不存活
-    hb = data_dir / "feishu_heartbeat.json"
-    if hb.exists():
-        try:
-            pid = int(json.loads(hb.read_text(encoding="utf-8")).get("pid", 0))
+    if not online:
+        for svc in ("web", "feishu", "learning"):
+            mf = data_dir / "runtime" / f"runtime_manifest.{svc}.json"
+            if not mf.exists():
+                continue
+            try:
+                pid = int(json.loads(mf.read_text(encoding="utf-8")).get("pid", 0))
+            except (OSError, json.JSONDecodeError, ValueError):
+                failures.append(f"{svc} manifest 不可读: {mf}")
+                continue
             if pid > 0 and _pid_alive(pid):
-                failures.append(f"feishu 心跳 pid 仍存活 (pid {pid})")
-        except (OSError, json.JSONDecodeError, ValueError):
-            pass  # 心跳损坏按无新鲜 pid 处理，manifest/端口双探针兜底
-    # 4) 旧分区无活跃 run 锁（正在运行的会话钉住分区）
-    old_partition = data_dir / "sessions" / old_key
-    if old_partition.is_dir():
-        locks = sorted(old_partition.rglob("*.run.lock"))
-        if locks:
-            failures.append(f"旧分区存在 {len(locks)} 个 *.run.lock（示例 {locks[0]}）")
+                failures.append(f"{svc} 进程仍在运行 (pid {pid})——须停机窗口执行")
+        # 2) web 端口无监听
+        with socket.socket() as s:
+            s.settimeout(0.5)
+            if s.connect_ex(("127.0.0.1", web_port)) == 0:
+                failures.append(f"端口 {web_port} 有进程监听——web 可能未停")
+        # 3) feishu 心跳 pid 不存活
+        hb = data_dir / "feishu_heartbeat.json"
+        if hb.exists():
+            try:
+                pid = int(json.loads(hb.read_text(encoding="utf-8")).get("pid", 0))
+                if pid > 0 and _pid_alive(pid):
+                    failures.append(f"feishu 心跳 pid 仍存活 (pid {pid})")
+            except (OSError, json.JSONDecodeError, ValueError):
+                pass  # 心跳损坏按无新鲜 pid 处理，manifest/端口双探针兜底
+        # 4) 旧分区无活跃 run 锁（正在运行的会话钉住分区；仅停机类操作需要）
+        #    R4(P0-1 修复, 2026-10-25): run.lock 文件是稳定墓碑设计（存在≠活跃），
+        #    活跃性由 flock 判定——复用权威实现 resources.foreground.active_run_locks
+        #    （此前按文件存在计数 1755 个必误拦，见编排审核报告）。
+        from llm_loop.resources.foreground import active_run_locks
+        old_partition = data_dir / "sessions" / old_key
+        if old_partition.is_dir():
+            active = active_run_locks(old_partition)
+            if active:
+                failures.append(
+                    f"旧分区存在 {len(active)} 个活跃(flock) *.run.lock（示例 {active[0]}）"
+                )
     # 5) 磁盘余量 ≥ 2×源分区（备份+桶复制峰值）
+    old_partition = data_dir / "sessions" / old_key
     if old_partition.is_dir():
         need = 2 * _dir_stats(old_partition)["bytes"]
         free = shutil.disk_usage(data_dir).free
@@ -457,6 +473,12 @@ def run_rehearsal_checks(
     identity_root = mirror_data / "sessions" / ".identity"
     pre_owners = _owner_distribution(identity_root)
     pre_registry = _registry_snapshot(mirror_data)
+    # R5(2026-10-25 实测): 校验 1 基准=镜像内快照（复制后、迁移前统计），非调用方
+    # 复制前统计的源——真实 data/ 是活数据（活跃会话持续写入），源统计与复制
+    # 之间存在 TOCTOU 竞态（实测 5320 文件一致但字节差 3058）。镜像内自一致
+    # （改名前后镜像统计相等）才是"迁移逻辑保真"的判定；源→镜像复制保真由
+    # Phase 1 backup 的逐文件 SHA256SUMS 机制独立保证。
+    mirror_pre_stats = _dir_stats(mirror_data / "sessions" / old_key)
 
     audit_stub = AuditLog(mirror_data.parent / "rehearsal-audit.json")
     results = run_core_migration(
@@ -469,12 +491,15 @@ def run_rehearsal_checks(
         audit=audit_stub,
     )
 
-    # 1) 分区改名后文件数与总字节和源一致
+    # 1) 分区改名后文件数与总字节与镜像快照一致（源统计仅作参考：活数据有竞态）
     post_stats = _dir_stats(mirror_data / "sessions" / new_key)
     checks["partition_stats_match"] = {
-        "pass": post_stats == source_partition_stats,
-        "source": source_partition_stats,
+        "pass": post_stats == mirror_pre_stats,
+        "baseline": "mirror_snapshot_before_migration",
+        "mirror_before": mirror_pre_stats,
         "mirror": post_stats,
+        "source_reference": source_partition_stats,
+        "source_reference_note": "活数据源，统计时刻≠复制时刻，仅参考不判定",
     }
     # 2) .identity：old_key 全部改写为 new_key；其它 owner 逐一不变
     post_owners = _owner_distribution(identity_root)
@@ -570,7 +595,7 @@ def run_rehearsal_checks(
 
 def cmd_backup(args: argparse.Namespace) -> int:
     data_dir: Path = args.data_dir
-    failures = phase0_precheck(data_dir, args.old_key, args.new_root, args.web_port)
+    failures = phase0_precheck(data_dir, args.old_key, args.new_root, args.web_port, online=True)
     audit = AuditLog(args.audit_file)
     audit.append("backup.precheck", data_dir=str(data_dir), old_key=args.old_key,
                  failures=failures, result="pass" if not failures else "fail")
@@ -607,14 +632,17 @@ def cmd_backup(args: argparse.Namespace) -> int:
 def cmd_rehearse(args: argparse.Namespace) -> int:
     data_dir: Path = args.data_dir
     # R3(准入审核第九轮 P2-4): 演练按 runbook 在停机窗口前执行（真实 data/ 只读，
-    # 仅 backup 副本被复制到镜像），不需要服务全停——跳过"服务存活"类预检，
-    # 保留磁盘/目标根/run.lock 等只读安全预检。migrate/rollback 仍走完整 Phase 0。
-    full = phase0_precheck(data_dir, args.old_key, args.new_root, args.web_port)
-    failures = [f for f in full if "服务" not in f and "port" not in f.lower()]
+    # 仅 backup 副本被复制到镜像），不需要服务全停。R4(2026-10-25): 改用参数化
+    # online=True（跳过服务/端口/心跳/run.lock 停机类检查）——原字符串过滤
+    # （"服务"/"port" 子串）与实际消息文本（"进程"/"端口"）不匹配，运行态恒误拦。
+    # 保留磁盘余量与新根检查。migrate/rollback 仍走完整 Phase 0。
+    failures = phase0_precheck(
+        data_dir, args.old_key, args.new_root, args.web_port, online=True
+    )
     audit = AuditLog(args.audit_file)
     audit.append("rehearse.precheck", data_dir=str(data_dir), failures=failures,
                  result="pass" if not failures else "fail",
-                 skipped_service_checks=[f for f in full if f not in failures])
+                 skipped_service_checks="online=True（1-4 项停机类检查跳过）")
     if failures:
         for f in failures:
             print(f"✗ [rehearse] 预检失败: {f}", file=sys.stderr)

@@ -9,15 +9,16 @@
 |---|---|---|---|---|
 | A. 个人受信宿主 | `EXEC_SANDBOX=none` 或 `auto` 解析到 none | 任意 | 无内核隔离 | 无 |
 | B. bwrap 沙箱 | `EXEC_SANDBOX=bwrap` / `auto`（Linux 命中） | 仅 Linux | 命名空间 + 只读系统目录 | **无**（未 unshare network） |
-| C. docker 容器 | `EXEC_SANDBOX=docker` / `auto`（daemon 在跑） | macOS/Linux | 容器边界 + 断网 + 只读 rootfs | 有（`--network=none`） |
-| D. sandbox-exec | `EXEC_SANDBOX=sandbox-exec` / `auto`（darwin） | 仅 macOS | 仅写域约束（工作区 + 缓存目录） | **无** |
+| C. docker 容器 | `EXEC_SANDBOX=docker` / `auto`（daemon 在跑且未命中平台首选——darwin 首选 sandbox-exec） | macOS/Linux | 容器边界 + 断网 + 只读 rootfs | 有（`--network=none`） |
+| D. sandbox-exec | `EXEC_SANDBOX=sandbox-exec` / `auto`（darwin 首选） | 仅 macOS | 仅写域约束（工作区 + 缓存目录） | **无** |
 
 **fail-closed 契约**：显式配置 B/C/D 而对应后端（`bwrap` / `docker` CLI / `/usr/bin/sandbox-exec`）
 缺失 → 命令**拒绝执行**，不静默降级到无沙箱路径；`auto` 解析到 none 时默认放行为无沙箱执行，
 但**必写一次 warning**（列出全部原因，不静默），`EXEC_SANDBOX_STRICT=1` 时同样 fail-closed。
 
-> 2026-10-25（P2-1）：`EXEC_SANDBOX` 默认值从空/none 改为 **`auto`**——首次执行时按
-> bwrap → docker → sandbox-exec → none 解析，详见文末「auto 解析与平台矩阵」。
+> 2026-10-25（P2-1）：`EXEC_SANDBOX` 默认值从空/none 改为 **`auto`**——首次执行时按平台
+> 顺序解析（darwin：sandbox-exec → docker；其余：bwrap → docker → sandbox-exec → none），
+> 详见文末「auto 解析与平台矩阵」。
 
 ## 条件 A：个人受信宿主（EXEC_SANDBOX=none，或 auto 解析到 none）
 
@@ -64,13 +65,18 @@ container 方案后续可扩展：CI runner 上以条件 B/C 为门禁（未启�
 
 ## auto 解析与平台矩阵（2026-10-25，P2-1/S2-6）
 
-`EXEC_SANDBOX` 默认值从空/none 改为 `auto`。auto 在**首次执行时**按以下顺序解析，
+`EXEC_SANDBOX` 默认值从空/none 改为 `auto`。auto 在**首次执行时**按平台顺序解析，
 结果**进程内缓存**，并写一次日志（解析到 none → warning，明确列出全部原因，绝不静默）：
 
-1. `bwrap`——`shutil.which("bwrap")` 命中；
-2. `docker`——docker CLI 存在且 `docker info` 在 2s 内成功（daemon 在跑；探测结果进程内缓存）；
-3. `sandbox-exec`——仅 darwin 且 `/usr/bin/sandbox-exec` 存在且可执行；
-4. 都不可用 → `none`。
+- **darwin**（P1-1，Rule28 修复轮）：`sandbox-exec` → `docker` → `none`。
+  顺序理由：docker-on-darwin 运行的是 Linux 镜像（`--network=none` 的
+  `python:3.13-slim`），宿主 `.venv`（Mach-O）在容器内 exec-format 失败，且首个
+  用户会被 image pull 卡住；macOS 原生 sandbox-exec 无此问题，故 darwin 上首选。
+  auto 落到 docker-on-darwin 时打一条 `logger.warning`（提示显式设
+  `EXEC_SANDBOX=none/docker` consciously）。
+- **其余平台**（维持既有顺序不变）：`bwrap`（`shutil.which("bwrap")` 命中）→
+  `docker`（docker CLI 存在且 `docker info` 在 2s 内成功；探测结果进程内缓存）→
+  `sandbox-exec`（仅 darwin，其余平台恒不可用）→ `none`。
 
 `EXEC_SANDBOX_STRICT=1`：auto 解析到 none → 命令 fail-closed 拒绝执行（RuntimeError，回执如实失败）。
 默认不 strict——docker daemon 未启动等场景下常规命令仍可用（落到次优后端，或 none + 告警），
@@ -81,8 +87,9 @@ container 方案后续可扩展：CI runner 上以条件 B/C 为门禁（未启�
 | 平台/环境 | auto 实际落到 | 隔离强度 | 网络隔离 | 回执 note |
 |---|---|---|---|---|
 | Linux + bwrap 已装 | `bwrap` | 命名空间 + 只读系统目录 + 工作区可写 | 无 | 已启用 bwrap 沙箱：只读系统目录/工作区可写/未隔离网络 |
-| 任意 + docker daemon 运行 | `docker` | 容器边界 + 断网 + 只读 rootfs + 工作区可写 | 有 | 已启用 docker 沙箱：断网/只读 rootfs/工作区可写 |
-| macOS（无 docker daemon） | `sandbox-exec` | **仅写域约束**（工作区 + /tmp + /dev + 缓存目录） | 无 | 已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络 |
+| Linux（无 bwrap）+ docker daemon 运行 | `docker` | 容器边界 + 断网 + 只读 rootfs + 工作区可写 | 有 | 已启用 docker 沙箱：断网/只读 rootfs/工作区可写 |
+| darwin + sandbox-exec 可用（即使 docker daemon 也在跑） | `sandbox-exec` | **仅写域约束**（工作区 + /tmp + /dev + 缓存目录） | 无 | 已启用 macOS sandbox-exec 沙箱：仅允许写工作区与缓存目录/未隔离网络 |
+| darwin + sandbox-exec 不可用 + docker daemon 运行 | `docker`（附 warning：宿主 venv 不兼容，建议显式选择） | 容器边界 + 断网 + 只读 rootfs + 工作区可写 | 有 | 已启用 docker 沙箱：断网/只读 rootfs/工作区可写 |
 | 全无 | `none` | 无内核隔离（仅 CatastrophicGuard deny-list） | 无 | 不加任何"已隔离"措辞 |
 
 ### 条件 D：sandbox-exec（macOS）如实边界
