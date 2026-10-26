@@ -14,7 +14,7 @@ updated_at: "2026-10-26T03:09:17.578549+08:00"
 ---
 
 通道（父会话与子代理均已实测）：
-1. 子代理（与重启后的主会话）的 read_file/edit_file 作用域 = 各自工作区（如 /Users/yyj/lfl-workspace），对仓库绝对路径报 WorkspaceScopeMismatch。
+1. 子代理（与重启后的主会话）的 read_file/edit_file 作用域 = 各自工作区（如 ~/lfl-workspace），对仓库绝对路径报 WorkspaceScopeMismatch。
 2. 写仓库唯一可靠通道：execute_command(workdir=REPO) 下的 shell 重定向（cat WS副本 > REPO目标）或 cp；`sed -i`/python 进程内写 REPO 会 Operation not permitted；mv 跨工作区也会 EPERM。
 3. 因此标准工作法：cp REPO文件 → WS，WS 内 edit_file，cat/cp 回 REPO。每个子代理任务必须把这三步写进任务书（不写，子代理平均浪费 60+ 轮自己撞墙）。
 

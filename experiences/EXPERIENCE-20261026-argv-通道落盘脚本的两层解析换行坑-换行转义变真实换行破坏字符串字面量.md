@@ -7,7 +7,7 @@ evidence: "docs/promotion/STATUS-20261026-daily40.md §六（教训收口）；_
 tags: []
 source:
   session: sched-0300b296 早班 d40
-  workspace: /Users/yyj/lfl-workspace/docs/promotion
+  workspace: ~/lfl-workspace/docs/promotion
 status: active
 record_kind: lesson
 verification_state: verified

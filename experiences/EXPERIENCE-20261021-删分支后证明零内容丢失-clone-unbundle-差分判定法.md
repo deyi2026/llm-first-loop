@@ -3,7 +3,7 @@ title: 删分支后证明零内容丢失：clone+unbundle 差分判定法
 scenario: "批量删除已合并分支后，验证\"零内容丢失\"的判定方法与陷阱"
 root_cause: ""
 solution: 用 clone+unbundle 后再 fsck 的差分作决定性判定，配合逐条 git cherry 确认 patch-id 等价；避免大集合运算超时
-evidence: "本地 /Users/yyj/Project/llm-first-loop-mirror：unbundle 前 dangling commit=1758，clone+unbundle 后=21；21 条逐条 git cherry 全部返回 '-'（内容已在 main）。归档 /Users/yyj/Project/lfl-merged-branch-archive-20261021/ 含 patch-merged-25-branches.bundle 与 rule31-bgroup-4-branches.bundle，git bundle verify 均 is okay。evidence://v1/f3bb6dc99fa84a3aa04875f958d5de1d1fa62459e50ffd607e65203d59287b92, evidence://v1/a69e27d9dd2fb4824d99ece02980cd9eb2550cbe599c8b9bcb6954dce40c30bc, evidence://v1/a12855aebdf7cc9f747d89154cdced94b8f2c31cfd83939aff0dadca13011ac2"
+evidence: "本地 ~/Project/llm-first-loop-mirror：unbundle 前 dangling commit=1758，clone+unbundle 后=21；21 条逐条 git cherry 全部返回 '-'（内容已在 main）。归档 ~/Project/lfl-merged-branch-archive-20261021/ 含 patch-merged-25-branches.bundle 与 rule31-bgroup-4-branches.bundle，git bundle verify 均 is okay。evidence://v1/f3bb6dc99fa84a3aa04875f958d5de1d1fa62459e50ffd607e65203d59287b92, evidence://v1/a69e27d9dd2fb4824d99ece02980cd9eb2550cbe599c8b9bcb6954dce40c30bc, evidence://v1/a12855aebdf7cc9f747d89154cdced94b8f2c31cfd83939aff0dadca13011ac2"
 tags: [git, branch-cleanup, reversibility, fsck, bundle, self-check]
 source: {}
 status: active

@@ -3,7 +3,7 @@ title: 信息图双栏/条形布局两条固定起点规则：横跨卡取各栏
 scenario: LFL 每日推广稿的信息图绘制：1000px 宽画布，左侧纵向阶梯/条形多行 + 右侧短栏 + 底部横跨说明卡的复合布局；或条形图带文字备注
 root_cause: ""
 solution: "横卡起点=max(各栏 maxY)+间距；条旁备注改条下小字行；写码时先逐栏累计 Y 再定横卡位置，生成后 bottom_check+read_image 复验。当前性验证：grep -n '244 + 8 \\* 50 + 34' 与 'y + 48), note' docs/promotion/figures/_d39.py 两处均在"
-evidence: "/Users/yyj/lfl-workspace/docs/promotion/figures/_d39.py（fig166/fig168 两段修订 diff）；read_image 首轮发现遮挡与截断、修订后复验 PASS（2026-10-25 20:16-20:29）"
+evidence: "~/lfl-workspace/docs/promotion/figures/_d39.py（fig166/fig168 两段修订 diff）；read_image 首轮发现遮挡与截断、修订后复验 PASS（2026-10-25 20:16-20:29）"
 tags: [promotion, 信息图, PIL, 布局]
 source: {}
 status: active

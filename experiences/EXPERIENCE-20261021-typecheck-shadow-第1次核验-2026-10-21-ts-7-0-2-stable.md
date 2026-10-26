@@ -1,6 +1,6 @@
 ---
 title: "typecheck:shadow 第1次核验（2026-10-21）：TS 7.0.2 stable 已发布，shadow 样本仅1次，暂缓接入构建链"
-scenario: "typecheck:shadow 定时跟踪（sched-f5536c3c，每2周×6次，工作目录 /Users/yyj/Project/llm-first-loop-mirror）触发条件核验"
+scenario: "typecheck:shadow 定时跟踪（sched-f5536c3c，每2周×6次，工作目录 ~/Project/llm-first-loop-mirror）触发条件核验"
 root_cause: ""
 solution: "按完成判据汇总了 shadow 数据并给出\"暂不接入构建链\"评估报告；触发条件(1) typescript 7.x stable 已成立且不会回退，后续次数无需重复完整评估，只增量核对 shadow jsonl 新记录与 tsrs 版本变化"
 evidence: npm view typescript/tsrs dist-tags 回执（本 run）：typescript latest=7.0.2 stable；tsrs latest=0.18.0-ts7.1.0-dev.20260929 未变；webui/.typecheck-shadow.jsonl 共 1 行
