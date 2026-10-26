@@ -171,7 +171,12 @@ _CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 # rm -rf 的灾难性目标（变量展开 + ~ 展开后判定，审计发现 #3：$HOME/${HOME}/~ 绕过修复）
-_SYSTEM_DIRS = ("/etc", "/boot", "/usr", "/bin", "/sbin", "/lib", "/var", "/home")
+# P0（2026-10-26）：补 /Users——macOS 多用户区，语义等价 Linux 的 /home。原先缺失，
+# 隔离 HOME（CI 把 HOME 指到 /tmp/xxx）下 rm -rf /Users、rm -rf /Users/*、
+# rmSync(/Users/<u>/…)、Deno.remove("/Users/<u>") 全部漏拦；真实 HOME 下靠下方
+# "HOME 祖先"分支兜住纯属环境耦合侥幸。全平台生效：Linux 上 /Users 非真实系统
+# 目录、无正当删除场景，误拦风险为零。
+_SYSTEM_DIRS = ("/etc", "/boot", "/usr", "/bin", "/sbin", "/lib", "/var", "/home", "/Users")
 
 # P0-1（2026-10-25）：凭证目录本体被删即不可逆地失去身份/密钥，
 # 不再享受 HOME 子路径豁免。
@@ -453,20 +458,26 @@ def _is_dangerous_rm_target(target: str, cwd: str | None = None) -> bool:
         if _within(canonical, cred):
             return True
     cwd_real = os.path.realpath(cwd or os.getcwd()).rstrip("/") or "/"
-    # 3) HOME 的祖先（如 /Users）：一次删除抹掉整台机器的多用户区
-    if home != "/" and not _same(canonical, home) and _within(home, canonical):
-        return True
     # 4) cwd 的祖先（如从 repo 内 `rm -rf ..`）：一次删除抹掉当前项目。
     #    必须早于临时区豁免：临时区内的 `rm -rf ..` 同样会一次抹掉当前工作
     #    目录的父级（含其它会话/进程的数据），不属于"会话内清理"。
     if cwd_real != "/" and not _same(canonical, cwd_real) and _within(cwd_real, canonical):
         return True
     # 5) 临时区目标：判定与字面拼写（相对/绝对）无关，一律视为会话内可清理。
-    #    必须早于 /private 子树判定——否则 /private/tmp/* 全被当成系统区误杀。
+    #    必须早于 /private 子树判定——否则 /private/tmp/* 全被当成系统区误杀；
+    #    也必须早于下方 3) HOME 祖先判定（P0，2026-10-26）：CI/测试常把 HOME
+    #    隔离进 /tmp（如 /tmp/cihome-fix），此时 /private/tmp 是 HOME 的祖先，
+    #    若 3) 先行，cd /tmp 后的 rm -rf * 会被误判为"删 HOME 祖先"而拦。
+    #    HOME 本体与凭证目录已由上方判定先拦，不受此顺序影响。
     for root in (tempfile.gettempdir(), *_TEMP_ROOTS):
         root_real = os.path.realpath(root).rstrip("/") or "/"
         if root_real != "/" and _within(canonical, root_real):
             return False
+    # 3) HOME 的祖先（如 /Users）：一次删除抹掉整台机器的多用户区。
+    #    排在 5) 之后（P0，2026-10-26）：隔离 HOME 位于临时区内时，其祖先链是
+    #    临时区根——属"会话内可清理"面（5 已放行），不按灾难拦。
+    if home != "/" and not _same(canonical, home) and _within(home, canonical):
+        return True
     # 2) 主机系统顶层目录本体（macOS 的 /private 等 OS 别名不在 _SYSTEM_DIRS）
     # P0-1 复核：/System/Library、/Library/Preferences 等同属灾难面，按子树判定
     if any(_within(canonical, root) for root in _HOST_TOPLEVEL_PROTECTED):
