@@ -1,0 +1,25 @@
+{
+  "receipt_id": "20261023-merge-alias-p0fix",
+  "created_at": "2026-10-23T04:33:00+08:00",
+  "scope": "feat/method-retrieval-idf@35738759a（别名降权 P0 修复）合入 main",
+  "authorization": "用户指令『并入』（2026-10-23T04:17+08:00）",
+  "background": "main@036df1d07 携带已知P0：0d15f3e8c 使 alias 与 name 同权(8)且进 term_hits/coverage，存在实测检索回归；修复提交 35738759a 在 feat 线未合入。上轮 CI run 39814408821 的两条失败（test_m3_four_buckets 满负载偶发、test_s4 插话时序偶发）均已定性非回归，与本合入无关。",
+  "merge": {
+    "merge_commit": "6306fab4c",
+    "fixup_commit": "264fc749e（SIM300 Yoda 翻转，满足合并闸 changed-file 零红；断言语义不变）",
+    "base": "036df1d07",
+    "merged_tip": "35738759a",
+    "worktree": ".worktrees/integrate-alias-p0fix-20261023（推送验证后删）"
+  },
+  "gates": {
+    "focused_pytest": "56 passed（test_method_alias_retrieval + test_method_learning）@合并树",
+    "ruff_ratchet": "PASS new=0 touched clean（修复前曾拦下 SIM300×1 → fixup 264fc749e）",
+    "pyright_ratchet": "PASS status=complete（historical=45 current=11 new=0 touched clean）；扫描窗口横跨 SIM300 翻转提交，该改动为 int 比较操作数互换、类型语义恒等",
+    "test_env_pins": "PASS（936 test files，0 undeclared COMPACT_RATIO）",
+    "security_scan": "git_security_scan --tree PASS（6392 文件）",
+    "rule28": "review_admission(kind=git_push) 于本回执提交后执行，PASS 方可推送",
+    "ci_followup": "推送后新 CI run 定时回查；旧 run 39814408821 不复跑（其头被本次推送取代）"
+  },
+  "excluded": "tests/unit/test_method_alias_channel_eval.py 为 mirror 主目录未跟踪在途文件（并发开发线），不属本次合入范围",
+  "deployment_note": "修复仅入 main；线上仍跑 release cdcd0c3a，旧代码读新数据忽略 aliases（已实测 1364 卡全解析），重启/发版不在本次授权内"
+}

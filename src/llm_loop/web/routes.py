@@ -96,6 +96,7 @@ from .upload_handlers import (
     validate_upload,
     validate_upload_b64_size,
 )
+from .video_routes import router as video_router
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ router = APIRouter()
 
 router.include_router(provider_admin_router)
 router.include_router(local_runtime_router)
+router.include_router(video_router)
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:
@@ -1563,9 +1565,19 @@ def _stream_background(
                 except queue.Empty:
                     # 防御超时（正常 run 必有终态）；后台长时间无 delta（如工具执行）时
                     # 保持连接等待。断连由 ASGI 在 yield 挂起点注入 GeneratorExit。
+                    # Transport liveness only, never model output or a new run.
+                    yield ": keepalive\n\n"
                     continue
             etype = ev["type"]
             if etype == "delta":
+                retry = getattr(ev["delta"], "provider_retry", None)
+                if retry is not None:
+                    yield _sse("provider_retry", {
+                        "reason": retry.reason,
+                        "retry_index": retry.retry_index,
+                        "max_retries": retry.max_retries,
+                    })
+                    continue
                 # 2026-09-23 CPU #1：合并窗口内连续 delta 同通道拼接为一帧；
                 # 非.delta 事件经 pending 保序穿透（终态/工具事件零延迟）。
                 text_parts: list[str] = []
@@ -1598,7 +1610,10 @@ def _stream_background(
                         except queue.Empty:
                             nxt = None
                             break
-                    if nxt is None or nxt["type"] != "delta":
+                    if (
+                        nxt is None or nxt["type"] != "delta"
+                        or getattr(nxt.get("delta"), "provider_retry", None) is not None
+                    ):
                         pending_event = nxt
                         break
                     cur = nxt["delta"]
@@ -1951,6 +1966,13 @@ def chat_stream(
             while True:
                 try:
                     delta = next(it)
+                    retry = getattr(delta, "provider_retry", None)
+                    if retry is not None:
+                        yield _sse("provider_retry", {
+                            "reason": retry.reason,
+                            "retry_index": retry.retry_index,
+                            "max_retries": retry.max_retries,
+                        })
                     # P1-1: text/reasoning 分片独立 yield（并行互不阻塞，spec 4.1.1）
                     # P2-1: tool_round 工具轮次进展独立 yield（三事件并行互不阻塞）
                     if delta.text:
@@ -3647,6 +3669,54 @@ def set_session_archive(session_id: str, request: Request, archived: bool = Fals
     return UTF8JSONResponse(content={"status": "ok", "session_id": session_id, "archived": archived})
 
 
+@router.post("/api/v1/sessions/{session_id}/handoff", response_model=None)
+def prepare_session_handoff(session_id: str, request: Request) -> Response:
+    """Lightweight explicit handoff: new empty session, not history-copy fork."""
+    from llm_loop.introspection.session_handoff import create_handoff_session
+
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404, content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    if not _web_session_reusable(engine, session_id):
+        return _session_ingress_mismatch_response(session_id)
+    try:
+        result = create_handoff_session(
+            engine.session, session_id,
+            audit_dir=Path(engine.settings.data_dir) / "audit",
+        )
+    except ValueError as exc:
+        if str(exc) == "source_session_not_active":
+            return UTF8JSONResponse(
+                status_code=409,
+                content={"error": "source_session_not_active", "detail": "来源会话已归档，不能作为新的接力源。"},
+            )
+        return UTF8JSONResponse(status_code=404, content={"error": "session_not_found"})
+    except Exception:
+        logger.exception("prepare handoff failed: session_id=%s", session_id)
+        return UTF8JSONResponse(
+            status_code=500, content={"error": "handoff_failed", "detail": "生成接力新会话失败；来源会话未修改。"},
+        )
+    return UTF8JSONResponse(content={"status": "ok", **result})
+
+
+@router.get("/api/v1/sessions/{session_id}/handoff", response_model=None)
+def read_session_handoff(session_id: str, request: Request) -> Response:
+    """Recover a prepared handoff prompt on direct link/reload; do not start a run."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(status_code=404, content={"error": "session_not_found"})
+    child = engine.session.load(session_id)
+    if not child.parent_id or not child.branch_summary.startswith("[跨会话接力快照"):
+        return UTF8JSONResponse(status_code=404, content={"error": "handoff_not_found"})
+    return UTF8JSONResponse(content={
+        "status": "ok", "new_session_id": session_id,
+        "source_session_id": child.parent_id,
+        "continuation_prompt": child.branch_summary,
+    })
+
+
 @router.post(
     "/api/v1/sessions/{session_id}/fork",
     response_model=None,
@@ -4840,6 +4910,7 @@ _CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
     "archive": (("POST", "/api/v1/sessions/{session_id}/archive"),),
     "delete": (("DELETE", "/api/v1/sessions/{session_id}"),),
     "fork": (("POST", "/api/v1/sessions/{session_id}/fork"),),
+    "handoff": (("POST", "/api/v1/sessions/{session_id}/handoff"),),
     "feedback": (("POST", "/api/v1/sessions/{session_id}/feedback"),),
     "jobs": (
         ("GET", "/api/v1/sessions/{session_id}/jobs"),

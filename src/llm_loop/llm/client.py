@@ -256,12 +256,22 @@ class ToolResultInfo:
     result_chars: int | None = None
 
 
+@dataclass(frozen=True)
+class ProviderRetryInfo:
+    """Display-only transport facts; never part of model content or replay."""
+
+    reason: str
+    retry_index: int
+    max_retries: int
+
+
 @dataclass
 class StreamDelta:
     text: str = ""
     reasoning: str | None = None
     tool_round: ToolRoundInfo | None = None
     tool_result: ToolResultInfo | None = None
+    provider_retry: ProviderRetryInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -2371,6 +2381,14 @@ class LLMClient:
                         "LLM 流式请求超时（尚无输出已产出），同模型重试 %d/%d: %s",
                         _attempt, _retry_disconnect, type(exc).__name__,
                     )
+                    yield StreamDelta(provider_retry=ProviderRetryInfo(
+                        "timeout", _attempt, _retry_disconnect,
+                    ))
+                    # The UI/caller may Stop while this generator is suspended.
+                    if _retry_cancelled():
+                        raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+                    if _deadline is not None:
+                        _check_stream_deadline(_deadline, effective_timeout)
                     continue
                 raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
             except (httpx.NetworkError, httpx.ProtocolError) as exc:
@@ -2409,6 +2427,12 @@ class LLMClient:
                         yield StreamDelta(reasoning=(
                             "\n[响应流中断：以上思考未完成；正在按原请求同模型重新请求一次。]\n"
                         ))
+                    if not _retry_cancelled():
+                        yield StreamDelta(provider_retry=ProviderRetryInfo(
+                            "disconnect", _attempt, _retry_disconnect,
+                        ))
+                    if _deadline is not None:
+                        _check_stream_deadline(_deadline, effective_timeout)
                     # 连接被瞬时拒绝时，毫秒级原地重试无意义（实测两次尝试相隔 2.8ms 同因失败）：
                     # 换连接前短退避；超时类失败不退避，保持既有节奏。
                     if isinstance(exc, httpx.ConnectError):

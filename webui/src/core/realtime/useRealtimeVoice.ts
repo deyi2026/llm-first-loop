@@ -98,6 +98,8 @@ export interface RealtimeVisualWiring {
   clarifyQuestion: string | null;
 }
 
+export type PlaybackState = "idle" | "synthesizing" | "playing" | "failed";
+
 export interface RealtimeVoiceWiring {
   enabled: boolean;
   connectionState: ConnectionState;
@@ -105,6 +107,12 @@ export interface RealtimeVoiceWiring {
   modality: ModalityMode;
   chainLabel: string;
   visual: RealtimeVisualWiring;
+  /** 87aa41fd2 语义移植：语音回复可见状态（生成中/播放中/未播放）。 */
+  playbackState: PlaybackState;
+  /** 87aa41fd2 语义移植：重试语音回复（原样重发最近一次 TTS 请求）。 */
+  retryPlayback: () => void;
+  /** 6a45f1741 语义移植：连接层错误（含 401 重新登录指引；空串 = 无错）。 */
+  error: string;
   enable: () => Promise<boolean>;
   disable: () => void;
   press: () => void;
@@ -175,6 +183,9 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
   const activeSessionIdRef = useRef<string | null>(null);
   /** 语音终稿提交后期待的回合：只有它触发 tts.request（纯文本路径不播报）。 */
   const voiceReplyPendingRef = useRef(false);
+  // 87aa41fd2 语义移植：语音回复可见状态 + 连接层错误（401 等）。
+  const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
+  const [error, setError] = useState("");
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -218,11 +229,19 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
         // P1-2：已有活跃 writer（旧标签页残留等）→ 自动接管重试一次（仅一次）。
         created = await postSession(true);
       }
+      if (created.status === 401) {
+        // 6a45f1741 语义移植：登录态失效给出明确指引（语音条渲染重新登录入口）。
+        setConnectionState("failed");
+        setError("语音连接失败（HTTP 401）：登录状态已失效，请重新登录后重试");
+        return false;
+      }
       if (!created.ok) {
         setConnectionState("failed");
+        setError("");
         optionsRef.current.onNotice?.("实时语音会话建立失败，可继续使用文字输入");
         return false;
       }
+      setError("");
       const body = (await created.json()) as { media_session_id: string };
       mediaSessionIdRef.current = body.media_session_id;
       // P2-9c：记住 enable 时固定的会话 id（无会话时为上面的 adhoc 临时 id）。
@@ -272,10 +291,13 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
         audioContext,
         onError: (_error, responseId) => {
           // autoplay 被拒/解码失败：按回复去重提示一次，不轰炸
+          setPlaybackState("failed"); // 87aa41fd2：可见「未播放」状态 + 重试入口
           if (noticedPlaybackFailures.has(responseId)) return;
           noticedPlaybackFailures.add(responseId);
           optionsRef.current.onNotice?.("语音播报不可用（浏览器未授权自动播放），回复文本已保留在对话中");
         },
+        onStart: () => setPlaybackState("playing"),
+        onEnd: () => setPlaybackState("idle"),
       });
       playbackRef.current = playbackOutput; // P2：teardown（disable/卸载/装配失败）时 dispose
       // M3：视觉共享控制器（同一条控制通道；devices/grabber 注入，jsdom 下 fake 驱动）
@@ -319,6 +341,7 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
             setClarifyQuestion(question); // 只展示；用户改选后重新提问，不自动重发
           },
           onNotice: (message) => optionsRef.current.onNotice?.(message),
+          onPlaybackUnavailable: () => setPlaybackState("failed"), // 87aa41fd2：合成失败可重试
         },
       });
       controllerRefForCapture = controller;
@@ -356,6 +379,8 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
     activeSessionIdRef.current = null; // P2-9c：媒体会话 identity 随 teardown 清空（重新 enable 前共享不可用）
     voiceReplyPendingRef.current = false;
     setClarifyQuestion(null);
+    setPlaybackState("idle");
+    setError("");
     setEnabled(false);
     setMicEnabled(false);
     setConnectionState("closed");
@@ -421,7 +446,9 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
         if (message.role !== "assistant") continue;
         if (message.content.trim() === "") continue;
         const responseKey = `${String(message.ts ?? 0)}:${String(message.content.length)}`;
-        controller.requestTts(message.content, responseKey);
+        if (controller.requestTts(message.content, responseKey)) {
+          setPlaybackState("synthesizing"); // 87aa41fd2：合成中可见状态
+        }
         return;
       }
     });
@@ -446,6 +473,13 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
 
   const interrupt = useCallback((): void => {
     controllerRef.current?.interrupt();
+  }, []);
+
+  // 87aa41fd2 语义移植：重试语音回复——原样重发最近一次 TTS 请求。
+  const retryPlayback = useCallback((): void => {
+    if (controllerRef.current?.retryTts()) {
+      setPlaybackState("synthesizing");
+    }
   }, []);
 
   const startShare = useCallback(async (): Promise<boolean> => {
@@ -495,6 +529,9 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
     micEnabled,
     modality,
     chainLabel: chain.label,
+    playbackState,
+    retryPlayback,
+    error,
     visual: {
       supported: shareSupported,
       // P2-9c：sessionId 非空 且 === enable 时固定的 identity（否则禁用共享入口，

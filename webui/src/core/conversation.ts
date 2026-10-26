@@ -22,6 +22,7 @@ import {
   claimNextQueued,
 } from "./chat";
 import { sessionStore } from "./stores";
+import { fetchPreparedHandoff } from "./api";
 import {
   mergeFinalToolCalls,
   settleRunningActivities,
@@ -109,6 +110,14 @@ export function prefillComposer(text: string, attachments: AttachmentFact[] = []
   conversationStore.setState({
     composerPrefill: { text, attachments: [...attachments] },
   });
+}
+
+// Exactly-once draft prefill per browser lifetime, never automatic tool replay.
+const handoffPrefilledSessions = new Set<string>();
+export function prefillHandoffComposer(sessionId: string, text: string): void {
+  if (!text || handoffPrefilledSessions.has(sessionId)) return;
+  handoffPrefilledSessions.add(sessionId);
+  prefillComposer(text);
 }
 
 function abortForegroundSubscription(): void {
@@ -275,6 +284,15 @@ export async function loadHistory(sessionId: string): Promise<void> {
     backgroundRunning: false,
     activeRunGeneration: null,
   });
+  if (messages.length === 0 && !handoffPrefilledSessions.has(sessionId)) {
+    // Direct-link/reload recovery: a prepared handoff is a human-editable draft.
+    void fetchPreparedHandoff(sessionId).then((handoff) => {
+      if (sessionStore.getState().currentSessionId !== sessionId || !handoff?.continuation_prompt) return;
+      if (conversationStore.getState().composerPrefill) return;
+      if (window.localStorage.getItem(`lfl-draft-${sessionId}`)) return;
+      prefillHandoffComposer(sessionId, handoff.continuation_prompt);
+    });
+  }
   // EVO 后台 run：加载后查后台生成状态——running 则轮询直到完成（刷新/切换后可见进行中任务）
   // 空闲增量轮询：飞书桥等外部写入 → Web 20s 内自动刷新；基线指纹直接取自本次加载，省一次探针
   ensureIdlePoll(sessionId);
@@ -326,7 +344,8 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
 async function resumeBackgroundStream(
   sessionId: string,
   runGeneration: string,
-  reuseCurrentStreamingMessage = false
+  reuseCurrentStreamingMessage = false,
+  onSuccess?: (answer: string) => void,
 ): Promise<boolean> {
   const controller = new AbortController();
   resumeAbort = controller;
@@ -381,12 +400,12 @@ async function resumeBackgroundStream(
       content: acc.answer,
       progressStage: "answering",
       progressUpdatedAt: Date.now(),
-    }));
+    }), () => resumeAbort === controller && sessionStore.getState().currentSessionId === sid);
     const patchReasoning = makeCoalescedPatch(() => patchStreaming({
       reasoningContent: acc.reasoning,
       progressStage: "analyzing",
       progressUpdatedAt: Date.now(),
-    }));
+    }), () => resumeAbort === controller && sessionStore.getState().currentSessionId === sid);
     const outcome = await streamChatRequest(
       { message: "resume", session_id: sid, resume: true, run_generation: runGeneration },
       {
@@ -400,6 +419,12 @@ async function resumeBackgroundStream(
           if (sessionStore.getState().currentSessionId !== sid) return;
           acc.reasoning += d;
           patchReasoning();
+        },
+        onProviderRetry: (event) => {
+          if (resumeAbort !== controller || sessionStore.getState().currentSessionId !== sid) return;
+          patchAnswer.flush();
+          patchReasoning.flush();
+          patchStreaming({ providerRetry: event, progressStage: "retrying", progressUpdatedAt: Date.now() });
         },
         onToolRound: (event: ToolRoundEvent) => {
           if (sessionStore.getState().currentSessionId !== sid) return;
@@ -428,17 +453,28 @@ async function resumeBackgroundStream(
       },
       controller.signal
     );
+    patchAnswer.flush();
+    patchReasoning.flush();
+    patchAnswer.dispose();
+    patchReasoning.dispose();
     if (resumeAbort === controller) {
       resumeAbort = null;
       resumeSessionId = null;
     }
     if (sessionStore.getState().currentSessionId !== sessionId) return true;
     if (outcome.ok && outcome.data) {
+      patchStreaming({
+        content: outcome.data.final_answer ?? acc.answer,
+        reasoningContent: outcome.data.reasoning_content ?? (acc.reasoning || null),
+        streaming: false,
+      });
       conversationStore.setState({
         streaming: false,
+        streamingIndex: -1,
         backgroundRunning: false,
         activeRunGeneration: null,
       });
+      if (!controller.signal.aborted) onSuccess?.(outcome.data.final_answer ?? acc.answer);
       void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
       return true;
     }
@@ -532,7 +568,7 @@ export interface SendQueueOpts {
   frozenReasoningMode: string | null;
 }
 
-export async function sendMessage(text: string, attachments: SendAttachment[], opts?: SendQueueOpts): Promise<void> {
+export async function sendMessage(text: string, attachments: SendAttachment[], opts?: SendQueueOpts, onSuccess?: (answer: string) => void): Promise<void> {
   const cur = conversationStore.getState();
   // 空串归一为 null：新工作区/新会话无会话时后端按"新建会话"处理
   // （不可在此 return，否则新工作区发消息被静默拦截）
@@ -613,12 +649,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     content: acc.answer,
     progressStage: "answering",
     progressUpdatedAt: Date.now(),
-  }));
+  }), () => abortCtrl === controller && sessionStore.getState().currentSessionId === ownerSessionId);
   const patchReasoning = makeCoalescedPatch(() => patchStreaming({
     reasoningContent: acc.reasoning,
     progressStage: "analyzing",
     progressUpdatedAt: Date.now(),
-  }));
+  }), () => abortCtrl === controller && sessionStore.getState().currentSessionId === ownerSessionId);
 
   const outcome = await streamChatRequest(
     body,
@@ -666,6 +702,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
         acc.reasoning += d;
         patchReasoning();
       },
+      onProviderRetry: (event) => {
+        if (abortCtrl !== controller || sessionStore.getState().currentSessionId !== ownerSessionId) return;
+        patchAnswer.flush();
+        patchReasoning.flush();
+        patchStreaming({ providerRetry: event, progressStage: "retrying", progressUpdatedAt: Date.now() });
+      },
       onToolRound: (event: ToolRoundEvent) => {
         if (sessionStore.getState().currentSessionId !== ownerSessionId) return;
         const current = conversationStore.getState();
@@ -695,6 +737,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     },
     controller.signal
   );
+  patchAnswer.dispose();
+  patchReasoning.dispose();
   if (abortCtrl === controller) {
     abortCtrl = null;
     abortSessionId = null;
@@ -725,7 +769,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     ownerSessionId &&
     runGeneration
   ) {
-    const resumed = await resumeBackgroundStream(ownerSessionId, runGeneration, true);
+    const resumed = await resumeBackgroundStream(ownerSessionId, runGeneration, true, onSuccess);
     if (resumed) return;
   }
 
@@ -806,12 +850,15 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     // Preserve the visible explanation on the old session; only the *next* human send
     // carries new_session=true, so no user message is silently replayed or auto-routed.
     const ingressMismatch = errorCode === "session_ingress_mismatch";
-    const note = outcome.errorType === "network" || ingressMismatch ? detail : `[程序异常] ${detail}`;
+    const connectionLost = outcome.errorType === "network" && !controller.signal.aborted;
+    const note = connectionLost
+      ? "网页连接已断开，任务状态待确认；这不代表 LFL 已停止。已保留收到的内容，请重新连接查看任务进度。"
+      : outcome.errorType === "network" || ingressMismatch ? detail : `[程序异常] ${detail}`;
     finalize({
       role: "assistant",
       content: acc.answer || "",
       reasoningContent: acc.reasoning || null,
-      toolActivities: settleRunningActivities(liveActivities, "interrupted"),
+      toolActivities: settleRunningActivities(liveActivities, connectionLost ? "unknown" : "interrupted"),
       note,
       streaming: false,
       ts: Date.now() / 1000,
@@ -836,6 +883,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[], o
     if (sessionId) void relayNextQueued(sessionId);
     return;
   }
+  // Voice uses this exact successful run receipt, never an unrelated history tail.
+  if (!controller.signal.aborted) onSuccess?.(outcome.data?.final_answer ?? acc.answer);
   // 成功终态：FIFO 接力下一条排队消息（冻结事实派发）
   if (opts && sessionId) await refreshQueue(sessionId);
   if (sessionId) void relayNextQueued(sessionId);
@@ -856,17 +905,22 @@ function patchStreaming(partial: Partial<ChatMessage>): void {
 // finalize/done 覆盖全量），视觉延迟 ≤120ms。
 const PATCH_COALESCE_MS = 120;
 
-function makeCoalescedPatch(apply: () => void): () => void {
+function makeCoalescedPatch(
+  apply: () => void,
+  canApply: () => boolean = () => true
+): (() => void) & { flush: () => void; dispose: () => void } {
   let lastAt = 0;
   let pending = false;
+  let timer: number | undefined;
   let alive = true;
   const force = () => {
-    if (!alive) return;
-    lastAt = Date.now();
+    timer = undefined;
     pending = false;
+    if (!alive || !canApply()) return;
+    lastAt = Date.now();
     apply();
   };
-  return () => {
+  const schedule = () => {
     if (!alive) return;
     if (Date.now() - lastAt >= PATCH_COALESCE_MS) {
       force();
@@ -874,8 +928,21 @@ function makeCoalescedPatch(apply: () => void): () => void {
     }
     if (pending) return;
     pending = true;
-    window.setTimeout(force, PATCH_COALESCE_MS);
+    timer = window.setTimeout(force, PATCH_COALESCE_MS);
   };
+  return Object.assign(schedule, {
+    flush: () => {
+      if (!alive || !pending) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      force();
+    },
+    dispose: () => {
+      alive = false;
+      pending = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = undefined;
+    },
+  });
 }
 
 // ══ Human Turn 排队（生成中 cmd/ctrl+Enter；后端 durable 事实）══

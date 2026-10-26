@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from llm_loop.realtime.provider_adapter import TranscriptionEvent, TranscriptionEventKind
 from llm_loop.realtime.realtime_session_runtime import RealtimeSessionRuntime, pcm16_to_wav
 
 ASR_URL = "http://127.0.0.1:8000/v1/audio/transcriptions"
@@ -99,6 +100,55 @@ class TestAudioFrames:
         runtime, _, _ = _runtime(BoomTransport())
         _run(runtime.handle_binary(b"\x00\x00" * 160))  # 不抛
         assert runtime.buffered_bytes == 320
+
+
+class TestPumpDeltas:
+    """P2-1 收尾：pump 级转写流中断有界降级（移植 main e8a1d0a19 语义）。"""
+
+    def test_next_event_death_emits_streaming_unavailable_and_pump_exits(self):
+        class DyingTransport(FakeTransport):
+            """第一次正常吐增量；第二次转写后端死亡（next_event 抛异常）。"""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls = 0
+
+            def next_event(self, *, timeout: float | None = None):
+                self.calls += 1
+                if self.calls == 1:
+                    return TranscriptionEvent(
+                        kind=TranscriptionEventKind.DELTA, text="流式增量"
+                    )
+                raise RuntimeError("transcription backend died")
+
+        transport = DyingTransport()
+        runtime, text_out, _ = _runtime(transport)
+        _run(runtime.pump_deltas())  # 正常返回：泵任务不崩
+        events = _events(text_out)
+        # 中断前的增量照常下行；随后恰好一条有界降级事件（无风暴）
+        assert [e["type"] for e in events] == [
+            "input.delta",
+            "input.streaming_unavailable",
+        ]
+        assert events[0]["text"] == "流式增量"
+        # 负载形状对齐 webui/src/core/realtime/realtimeEvents.ts：该类型未登记
+        # 额外必填字段，e8a1d0a19 负载为空 dict → 除 base envelope 外零额外字段
+        assert set(events[-1]) == {
+            "version",
+            "type",
+            "event_id",
+            "seq",
+            "connection_epoch",
+            "session_id",
+            "media_session_id",
+            "input_audio_format",
+        }
+        assert events[-1]["version"] == 1
+        assert events[-1]["session_id"] == "sess-1"
+        assert events[-1]["media_session_id"] == "ms-1"
+        assert events[-1]["seq"] == 2
+        # 有界：降级后泵退出、不再轮询（不静默失联也不无限重试）
+        assert transport.calls == 2
 
 
 class TestPcmRunwayLimits:
@@ -367,3 +417,49 @@ class TestCommitBufferGenerationGuard:
         assert [e["type"] for e in _events(text_out)] == ["input.final", "turn.committed"]
         assert runtime.buffered_bytes == 0
         assert runtime._pcm_started is None  # noqa: SLF001
+
+
+class TestMainlinePortedSemantics:
+    """main 侧 e8a1d0a19 / 87aa41fd2 语义移植到候选架构的回归。
+
+    - stop 后不得下行任何信封/二进制（含陈旧 TTS）；
+    - TTS 合成失败 → audio.playback_unavailable 有界降级，连接与会话存活；
+    - 纯文本（无视觉）提交不派发聊天任务：终稿由浏览器走既有 chat 入口。
+    """
+
+    def test_stopped_runtime_tts_emits_nothing(self):
+        runtime, text_out, binary_out = _runtime(FakeTransport(audio=b"STALE"))
+        runtime.stop()
+        _run(runtime.handle_text(json.dumps({"type": "tts.request", "text": "旧回复", "response_id": "r-old"})))
+        assert text_out == [] and binary_out == []
+
+    def test_tts_failure_emits_playback_unavailable_and_keeps_session(self):
+        class FailingTransport(FakeTransport):
+            def synthesize(self, text: str) -> bytes:
+                raise RuntimeError("tts down")
+
+        runtime, text_out, binary_out = _runtime(FailingTransport())
+        _run(runtime.handle_text(json.dumps({"type": "tts.request", "text": "你好", "response_id": "r1"})))
+        events = _events(text_out)
+        assert [e["type"] for e in events] == ["audio.playback_unavailable"]
+        assert events[0]["response_id"] == "r1"
+        assert binary_out == []
+        # 会话存活：后续音频提交仍完成终稿（异常不冒泡断连）
+        _run(runtime.handle_binary(b"\x00\x00" * 8))
+        _run(runtime.handle_text(json.dumps({"type": "input.commit"})))
+        types = [e["type"] for e in _events(text_out)]
+        assert "input.final" in types and "turn.committed" in types
+
+    def test_text_only_commit_does_not_dispatch_chat_task(self):
+        calls: list[str] = []
+
+        def sink(record) -> str:  # noqa: ARG001
+            calls.append(str(record.text))
+            return "q-1"
+
+        runtime, text_out, _binary = _runtime(FakeTransport(), commit_sink=sink)
+        _run(runtime.handle_binary(b"\x00\x00" * 8))
+        _run(runtime.handle_text(json.dumps({"type": "input.commit"})))
+        assert calls == []  # 不伪造任务派发（e8a1d0a19 语义）
+        types = [e["type"] for e in _events(text_out)]
+        assert "input.final" in types

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -28,7 +29,13 @@ from tests import env_channel  # noqa: E402  — conftest 已注入 repo 根到 
            "（主树绿，非代码回归）【RED-28】",
 )
 def test_resolve_api_key_prefers_provider_declared_env(monkeypatch):
-    """provider 声明的 api_key_env 优先于 DEEPSEEK_API_KEY / LLM_API_KEY."""
+    """明确 Provider 声明，避免依赖未跟踪的私有 providers.json。"""
+    monkeypatch.setattr(
+        "llm_loop.llm.providers.load_registry",
+        lambda _settings: SimpleNamespace(
+            providers={"minimax": SimpleNamespace(api_key_env="MINIMAX_API_KEY")},
+        ),
+    )
     monkeypatch.setenv("LLM_MODEL", "minimax/MiniMax-M3.1-Flash")
     monkeypatch.setenv("MINIMAX_API_KEY", "key-from-provider")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "key-from-deepseek")
@@ -37,7 +44,11 @@ def test_resolve_api_key_prefers_provider_declared_env(monkeypatch):
 
 
 def test_resolve_api_key_falls_back_to_legacy_env(monkeypatch):
-    """provider 探测失败时退化为 DEEPSEEK_API_KEY / LLM_API_KEY."""
+    """无 Provider 声明时回退旧环境变量，不依赖开发者私有配置。"""
+    monkeypatch.setattr(
+        "llm_loop.llm.providers.load_registry",
+        lambda _settings: SimpleNamespace(providers={}),
+    )
     monkeypatch.setenv("LLM_MODEL", "minimax/MiniMax-M3.1-Flash")
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "key-from-deepseek")

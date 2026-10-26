@@ -75,7 +75,7 @@ export function Composer() {
     onCommittedTranscript: (transcript) => {
       const trimmed = transcript.trim();
       if (!trimmed) return; // 空终稿由 onNotice 提示，不伪造用户消息
-      if (conversationStore.getState().streaming) {
+      if (conversationStore.getState().streaming || conversationStore.getState().backgroundRunning) {
         // 回复进行中：不并发提交（sendMessage 与 streaming 状态互斥）；终稿回填输入框待用户发送
         setText((current) => (current ? `${current}\n${trimmed}` : trimmed));
         flashHint("助手正在回复，语音终稿已填入输入框（回复结束后手动发送）");
@@ -676,6 +676,9 @@ export function Composer() {
                 micEnabled={realtime.micEnabled}
                 modality={realtime.modality}
                 chainLabel={realtime.chainLabel}
+                playbackState={realtime.playbackState}
+                error={realtime.error}
+                onRetryPlayback={realtime.retryPlayback}
                 onPress={realtime.press}
                 onRelease={realtime.release}
                 onFallbackText={() => taRef.current?.focus()}

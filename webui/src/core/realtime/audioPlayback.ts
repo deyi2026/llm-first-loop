@@ -23,6 +23,8 @@ export interface AudioContextLike {
   createBufferSource(): AudioBufferSourceLike;
   /** 浏览器 AudioContext 原生字段；fake 可不提供（缺省视为未挂起）。 */
   state?: string;
+  /** 87aa41fd2 语义移植：autoplay 策略下挂起的 context 靠用户手势 resume 才能出声。 */
+  resume?(): Promise<void>;
   /** 释放底层上下文（浏览器原生 `close()`；fake 可不提供 = 无需释放）。 */
   close?(): Promise<void>;
 }
@@ -66,6 +68,9 @@ export class PlaybackOutput {
       audioContext: AudioContextLike;
       /** 播放降级（autoplay 被拒/解码失败）：携带分片归属 `responseId`，由上层按回复去重提示。 */
       onError?: (error: unknown, responseId: string) => void;
+      /** 87aa41fd2 语义移植：实际出声/全部播完的可见状态钩子（驱动 playbackState）。 */
+      onStart?: () => void;
+      onEnd?: () => void;
     },
   ) {}
 
@@ -83,9 +88,17 @@ export class PlaybackOutput {
       return false;
     }
     if (this.options.audioContext.state === "suspended") {
-      // autoplay 被拒：如实降级（分片保留在队列，context 恢复后可再触发），不报错轰炸。
-      this.options.onError?.(new Error("audio_context_suspended"), chunk.responseId);
-      return false;
+      // 87aa41fd2 语义移植：挂起 context 先尝试一次 resume()（用户手势后的合成请求
+      // 常因此恢复出声）；resume 不可用/仍挂起才如实降级（分片保留，不报错轰炸）。
+      try {
+        await this.options.audioContext.resume?.();
+      } catch {
+        /* resume 失败走既有降级路径 */
+      }
+      if (this.options.audioContext.state === "suspended") {
+        this.options.onError?.(new Error("audio_context_suspended"), chunk.responseId);
+        return false;
+      }
     }
     try {
       const data = this.prepareData(chunk);
@@ -99,11 +112,14 @@ export class PlaybackOutput {
         const next = this.options.playback.advance();
         if (next !== null) {
           void this.playNext();
+        } else {
+          this.options.onEnd?.();
         }
       };
       source.start();
       this.source = source;
       this.playing = true;
+      this.options.onStart?.();
       return true;
     } catch (error) {
       // 解码失败：丢弃该分片（避免同一分片反复失败重试），保留文本并如实回调。

@@ -16,6 +16,7 @@ export type CapabilityKey =
   | "archive"
   | "delete"
   | "fork"
+  | "handoff"
   | "feedback"
   | "jobs"
   | "schedule"
@@ -34,6 +35,7 @@ const GLOBAL_PROBES: ReadonlyArray<readonly [CapabilityKey, string]> = [
   ["archive", "/api/v1/sessions/__capability_probe__/archive"],
   ["delete", "/api/v1/sessions/__capability_probe__"],
   ["fork", "/api/v1/sessions/__capability_probe__/fork"],
+  ["handoff", "/api/v1/sessions/__capability_probe__/handoff"],
   ["feedback", "/api/v1/sessions/__capability_probe__/feedback"],
 ];
 
@@ -48,6 +50,7 @@ let state: Capabilities = {
   archive: true,
   delete: true,
   fork: true,
+  handoff: true,
   feedback: true,
   jobs: true,
   schedule: true,
@@ -170,6 +173,7 @@ export function __resetCapabilitiesForTest(): void {
     archive: true,
     delete: true,
     fork: true,
+    handoff: true,
     feedback: true,
     jobs: true,
     schedule: true,

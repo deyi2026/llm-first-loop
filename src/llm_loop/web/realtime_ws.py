@@ -198,6 +198,7 @@ def _default_transport_factory():
     transport = LocalVoiceStackTransport(
         http_client=httpx.Client(timeout=30.0),
         ws_connector=default_websocket_connector,
+        owns_http_client=True,  # P2-2：工厂自建客户端，所有权移交 transport，随会话 close 关闭
     )
     with contextlib.suppress(Exception):  # 流式通道可选，不可用不影响终稿
         transport.connect(DEFAULT_MLX_AUDIO_WS)
@@ -289,24 +290,44 @@ async def _serve(websocket: WebSocket, media_session_id: str) -> None:
         await websocket.close(code=1011)
         return
 
-    runtime = RealtimeSessionRuntime(
-        media_session_id=media_session_id,
-        session_id=_session_id_for(websocket, media_session_id),
-        transport=transport,
-        transcription_url=transcription_url,
-        send_text=websocket.send_text,
-        send_binary=websocket.send_bytes,
-        connection_epoch=_connection_epoch_for(websocket, media_session_id),
-        keyframes=_keyframes_for(websocket, media_session_id),
-        commit_sink=getattr(websocket.app.state, "realtime_commit_sink", None),
-        session_probe=_session_probe_for(websocket),  # P2-9a：bind/入队前拒绝不存在的目标会话
-    )
-    import asyncio
+    # P2-2：factory() 成功后、下方收包 try/finally 接管前是所有权空窗——
+    # runtime 构造或起泵（create_task）若抛错，transport（含自有 httpx client）
+    # 将无人关闭。兜底：先关 transport（与 finally 同口径 getattr+callable 判空）
+    # 再以 1011 收口；正常路径零变化（关闭责任仍由既有 finally 负责）。
+    try:
+        runtime = RealtimeSessionRuntime(
+            media_session_id=media_session_id,
+            session_id=_session_id_for(websocket, media_session_id),
+            transport=transport,
+            transcription_url=transcription_url,
+            send_text=websocket.send_text,
+            send_binary=websocket.send_bytes,
+            connection_epoch=_connection_epoch_for(websocket, media_session_id),
+            keyframes=_keyframes_for(websocket, media_session_id),
+            commit_sink=getattr(websocket.app.state, "realtime_commit_sink", None),
+            session_probe=_session_probe_for(websocket),  # P2-9a：bind/入队前拒绝不存在的目标会话
+        )
+        import asyncio
 
-    pump = asyncio.create_task(runtime.pump_deltas())  # 增量字幕下行（流式可选）
+        pump = asyncio.create_task(runtime.pump_deltas())  # 增量字幕下行（流式可选）
+    except Exception:  # noqa: BLE001 - 兜底：不泄漏自有连接池，不伪装可用
+        close = getattr(transport, "close", None)
+        if callable(close):
+            close()
+        await websocket.close(code=1011)
+        return
     try:
         while True:
-            message = await websocket.receive()
+            try:
+                # e8a1d0a19 语义移植：撤销必须也能驱逐**安静**的旧写入者——
+                # 0.25s 有界轮询登记 closed 标志；chatty 连接仍由下方每消息检查覆盖。
+                message = await asyncio.wait_for(websocket.receive(), timeout=0.25)
+            except TimeoutError:
+                if _record_closed(websocket, media_session_id):
+                    await runtime.notify_session_closed()
+                    await websocket.close(code=1000)
+                    break
+                continue
             if message.get("type") == "websocket.disconnect":
                 return
             if _record_closed(websocket, media_session_id):

@@ -18,7 +18,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from llm_loop.realtime.provider_adapter import (
     AudioFormat,
@@ -94,9 +94,15 @@ class LoopbackOnlyError(ValueError):
 
 
 def assert_loopback(url: str) -> None:
-    lowered = url.lower()
-    allowed = ("http://127.0.0.1", "http://localhost", "ws://127.0.0.1", "ws://localhost")
-    if not any(lowered.startswith(prefix) for prefix in allowed):
+    # 严格解析校验（e8a1d0a19 语义移植）：前缀匹配会放过 127.0.0.1.evil.com
+    # 这类后缀伪装与 userinfo；必须精确解析 scheme/hostname 并拒绝凭据。
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme not in {"http", "ws"}
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         raise LoopbackOnlyError(f"local voice stack must be loopback-only: {url}")
 
 
@@ -122,10 +128,14 @@ class LocalVoiceStackTransport:
         ws_model: str = DEFAULT_WS_MODEL,
         final_model: str = DEFAULT_FINAL_MODEL,
         tts_model: str = DEFAULT_TTS_MODEL,
+        owns_http_client: bool = False,
     ) -> None:
         assert_loopback(base_url)
         assert_loopback(ws_url)
         self._http = http_client
+        # P2-2：仅当调用方显式移交所有权（工厂自建客户端）时，close 才负责关闭；
+        # 注入的客户端归调用方所有，transport 不得代关。
+        self._owns_http_client = owns_http_client
         self._ws_connector = ws_connector
         self._base_url = base_url.rstrip("/")
         self._ws_url = ws_url
@@ -218,9 +228,18 @@ class LocalVoiceStackTransport:
         self._send_json({"type": "input_audio_buffer.commit"})
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        # P2-2：会话结束收口——先摘除引用再关（重复 close 幂等、恰好一次）；
+        # 自有 httpx 客户端在 try/finally 内关闭：WS 关闭抛错也不漏掉连接池。
+        conn, self._conn = self._conn, None
+        try:
+            if conn is not None:
+                conn.close()
+        finally:
+            if self._owns_http_client:
+                self._owns_http_client = False  # 先翻转所有权标志：重入/取消下不二次关
+                http_close = getattr(self._http, "close", None)
+                if callable(http_close):
+                    http_close()
 
     # ---- 本地 TTS（PLY-07）----
 

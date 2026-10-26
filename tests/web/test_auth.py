@@ -99,6 +99,8 @@ def test_direct_loopback_bypasses_public_auth_policy(
 def test_local_auth_bypass_fails_closed_for_nonlocal_request_facts(
     base_url, client_addr, headers, build_test_engine, fake_settings, monkeypatch
 ):
+    # Reach the authentication boundary after the independent Host guard accepts this fixture host.
+    monkeypatch.setenv("LFL_WEB_ALLOWED_HOSTS", "app.llmfirstloop.com")
     monkeypatch.setenv("WEB_API_KEY", "secret-key")
     monkeypatch.setenv("WEB_HOST", "127.0.0.1")
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")

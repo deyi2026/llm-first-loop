@@ -97,9 +97,9 @@ export function ServicesPanel() {
             <strong>
               {name}{" "}
               {svc.restart_required ? (
-                <span style={{ color: "#d46b08" }}>⚠ 需要重启</span>
+                <span style={{ color: "#d46b08" }}>⚠ 运行身份需核验/重启</span>
               ) : (
-                <span style={{ color: "#237804" }}>✓ 与 desired 一致</span>
+                <span style={{ color: "#237804" }}>✓ 运行代码与 desired 一致</span>
               )}
             </strong>
             {svc.live.manifest_present ? (
@@ -127,6 +127,20 @@ export function ServicesPanel() {
                 "（尚无成功重启回执）"
               )}
             </div>
+            {deployment && svc.stable && svc.stable.generation < deployment.generation ? (
+              <div style={{ fontSize: 12, color: "#ad6800" }} data-testid={"stable-lag-" + name}>
+                ○ 稳定回执未追平：距 desired gen {deployment.generation} 差 {deployment.generation - svc.stable.generation} 代。
+                {svc.restart_required ? "运行身份需单独核验。" : "运行代码已匹配，无需仅为追平代次重启。"}
+              </div>
+            ) : deployment && svc.stable && svc.stable.generation > deployment.generation ? (
+              <div style={{ fontSize: 12, color: "#ad6800" }}>
+                ⚠ 稳定回执代次高于当前 desired，请核验部署历史。
+              </div>
+            ) : deployment && svc.stable && svc.stable.matches_desired_generation ? (
+              <div style={{ fontSize: 12, color: "#237804" }}>✓ 稳定回执已追平 desired</div>
+            ) : deployment && svc.stable ? (
+              <div style={{ fontSize: 12, color: "#ad6800" }}>⚠ 稳定回执尚未确认与 desired 匹配</div>
+            ) : null}
             {svc.reasons.length > 0 ? (
               <div style={{ fontSize: 12, color: "#d46b08" }}>
                 {svc.reasons.map((reason) => (

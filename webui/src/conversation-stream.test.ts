@@ -177,6 +177,41 @@ describe("conversation stream ownership", () => {
     });
   });
 
+  it("delivers voice answers for consecutive turns even when the second stream reconnects", async () => {
+    const onSuccess = vi.fn();
+    h.streamChatRequest.mockResolvedValueOnce({
+      ok: true, errorType: null, error: null,
+      data: { session_id: "s1", final_answer: "第一轮回答" },
+    } satisfies StreamOutcome);
+    await sendMessage("第一轮", [], undefined, onSuccess);
+    h.streamChatRequest.mockImplementationOnce(async (_body: Record<string, unknown>, handlers: any) => {
+      handlers.onRunStarted?.({ session_id: "s1", run_generation: "voice-turn-2" });
+      return { ok: false, errorType: "network", error: { detail: "连接中断" }, data: null } satisfies StreamOutcome;
+    }).mockResolvedValueOnce({
+      ok: true, errorType: null, error: null,
+      data: { session_id: "s1", final_answer: "第二轮完整回答" },
+    } satisfies StreamOutcome);
+    await sendMessage("第二轮", [], undefined, onSuccess);
+    expect(onSuccess.mock.calls).toEqual([["第一轮回答"], ["第二轮完整回答"]]);
+    expect(h.streamChatRequest.mock.calls[2]?.[0]).toMatchObject({ resume: true, run_generation: "voice-turn-2" });
+  });
+
+  it("does not speak a recovered answer after the user stops that run", async () => {
+    const onSuccess = vi.fn();
+    h.streamChatRequest.mockImplementationOnce(async (_body: Record<string, unknown>, handlers: any) => {
+      handlers.onRunStarted?.({ session_id: "s1", run_generation: "voice-stopped" });
+      return { ok: false, errorType: "network", error: { detail: "连接中断" }, data: null } satisfies StreamOutcome;
+    });
+    const running = sendMessage("语音请求", [], undefined, onSuccess);
+    await nextTurn();
+    expect(h.pending).toHaveLength(1);
+    stopStreaming();
+    expect(h.pending[0].signal?.aborted).toBe(true);
+    h.pending[0].resolve({ ok: true, errorType: null, error: null, data: { session_id: "s1", final_answer: "过时回复" } });
+    await running;
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
   it("刷新/切回后台 run 时 resume 必须精确携带 status 的 run_generation", async () => {
     h.fetchStreamStatus.mockResolvedValueOnce({ running: true, run_generation: "gen-live-1" });
     h.streamChatRequest.mockResolvedValueOnce({
@@ -464,7 +499,8 @@ describe("conversation stream ownership", () => {
 
     await sendMessage("A", []);
     const msg = conversationStore.getState().messages.at(-1);
-    expect(msg?.toolActivities?.[0]?.status).toBe("interrupted");
+    expect(msg?.toolActivities?.[0]?.status).toBe("unknown");
+    expect(msg?.note).toContain("不代表 LFL 已停止");
   });
 
   it("空正文 done 保留已流式 reasoning，并展示 fallback/推理实际状态", async () => {

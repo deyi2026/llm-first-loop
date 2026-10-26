@@ -135,6 +135,24 @@ def test_completion_facts_survive_every_delivery_path(build_test_engine, deliver
         assert data[field] is getattr(result, field), (delivery, field)
 
 
+def test_background_stream_sends_heartbeat_during_silence_without_cancelling_run():
+    import queue
+    from types import SimpleNamespace
+
+    from llm_loop.web.routes import _stream_background
+
+    q = mock.Mock()
+    q.get.side_effect = [queue.Empty, {"type": "done", "result": LoopResult(session_id="voice", final_answer="ok")}]
+    runner = mock.Mock()
+    runner.start.return_value = (SimpleNamespace(run_generation="voice-g1"), q)
+    stream = _stream_background(runner, "voice", "hello", None)
+    assert "run_started" in next(stream)
+    assert next(stream).startswith(":")
+    stream.close()
+    runner.unsubscribe.assert_called_once_with("voice", q)
+    runner.cancel.assert_not_called()
+
+
 def test_chat_stream_resume_requires_run_generation_at_schema_boundary(build_test_engine):
     engine, fake = build_test_engine([{"content": "must-not-run"}])
     sid = engine.session.create()

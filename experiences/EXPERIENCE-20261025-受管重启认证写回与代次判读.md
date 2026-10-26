@@ -10,7 +10,7 @@ status: active
 record_kind: lesson
 verification_state: verified
 created_at: "2026-10-25T22:38:00+08:00"
-updated_at: "2026-10-26T06:56:06+08:00"
+updated_at: "2026-10-25T22:38:00+08:00"
 supersedes: [EXPERIENCE-20260919-service-control-cli-restart, EXPERIENCE-20260919-lfl-web-feishu-learning]
 ---
 
@@ -32,12 +32,3 @@ supersedes: [EXPERIENCE-20260919-service-control-cli-restart, EXPERIENCE-2026091
 - 不应把旧 `git checkout HEAD` 与发布的不可变 release HEAD 混为一谈；后者才是运行版本身份。
 - 历史 2026-09-19 记录中“CLI 没有 restart”是当时事实，在当前 2026-10-25 CLI 已被证伪。历史材料保留供溯源，但停止作为现行操作指南。
 - 本案例没有证明所有配置错误都能以拆分两行修复。只有**精确确认末尾附加键且原哈希内容完整**时才允许这种保真恢复；其他情况必须单独诊断，不得造哈希或禁用认证。
-
-### 2026-10-26 Gen 323 真实生产收口：发行根与 WebUI 先构建后切换
-
-- 第一次尝试 Gen 322 被 `dual_root_rejected` 阻止，根因是 release worktree 与 LFL 生产 root 的 `git-common-dir` 不属于同一 Git 仓库；不是“Web 重启成功后版本没换”。
-- 第二次 Gen 322 被 `webui artifact unavailable` 拦在停机前，根因是目标 worktree 缺失被 Git 忽略的 `webui/dist`。此时 `/auth/status` HTTP 200 仍是旧 Web，不证明新前端已部署。
-- 正确收口：从当前 `main` 建立同一 Git 公共目录的隔离工作树，精确移植 9 文件修复；GLM-5.3 独立 Host 审查 PASS/P0/P1=0；用真实原版完整 `bash scripts/ci_gate.sh`、正常 `umask 0022` 和可写 Git worktree 环境取得 exit 0、红数对账 PASS。不要让 `sandbox-exec` 阻止 `.git/worktrees` 生成，把 `Operation not permitted` 冒充代码红；也不能用 `umask 077` 导致测试预期 `0755` 实际 `0700` 后篡改测试来“绿”。
-- 把审查与 R9 对齐的 Git 树 fast-forward 到本地 `main`，创建同一 Git 公共目录的不可变发行 worktree；**在发布根执行 WebUI 构建**，校验 `dist/index.html`、66 个资源文件及来源指纹，预检 `.env` 的登录哈希、独立 TTL 行与 0600 权限。
-- CAS 发布 Desired Gen 323、正式 `service_control verify` 通过后，**仅 Web** action `svc-2fee46dc41e04067b8a1c29dc807c753` 获得 `succeeded/confirmed_ok`；Web Live SHA `2cf3ada5ed0040f543eced0a742eabfe00ff38b8`，PID 10734，`/auth/status`、`/health`、`/ui/v2/` 均 HTTP 200。Feishu/Learning 保留旧 PID/旧 live SHA，不能为 Gen 数字一致而自动重启。
-- 上述事实是一个**已验证实例**，不是“任何目标服务都必须跑 Canary”或“所有 R9 在任意沙箱可复现”的普遍定律。每次应依据当前 CLI/schema、真实配置、具体发行产物、action 终态和用户授权决定最小动作范围。

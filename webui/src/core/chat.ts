@@ -8,6 +8,7 @@ import type {
   HistoryMessage,
   HistoryResponse,
   QueueItem,
+  ProviderRetryEvent,
   StreamOutcome,
   ToolCallDelta,
   ToolCallInfo,
@@ -22,6 +23,7 @@ export interface StreamHandlers {
   onReasoningDelta?: (text: string) => void;
   onToolRound?: (data: ToolRoundEvent) => void;
   onToolResult?: (data: ToolResultEvent) => void;
+  onProviderRetry?: (data: ProviderRetryEvent) => void;
   onToolCallDeltas?: (deltas: ToolCallDelta[]) => void;
 }
 
@@ -101,6 +103,7 @@ export async function streamChatRequest(
       else if (evt.type === "reasoning_delta") handlers.onReasoningDelta?.(String(d?.data ?? ""));
       else if (evt.type === "tool_round") handlers.onToolRound?.((d ?? {}) as ToolRoundEvent);
       else if (evt.type === "tool_result") handlers.onToolResult?.((d ?? {}) as ToolResultEvent);
+      else if (evt.type === "provider_retry") handlers.onProviderRetry?.((d ?? {}) as unknown as ProviderRetryEvent);
       else if (evt.type === "tool_call_deltas" && Array.isArray(d?.deltas)) {
         toolAccum = toolAccum.concat(d.deltas as ToolCallDelta[]);
         handlers.onToolCallDeltas?.(toolAccum);

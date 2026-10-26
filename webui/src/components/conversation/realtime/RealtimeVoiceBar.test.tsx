@@ -11,6 +11,7 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
   const onPress = vi.fn();
   const onRelease = vi.fn();
   const onFallbackText = vi.fn();
+  const onRetryPlayback = vi.fn();
   const props = {
     connectionState: "ready" as const,
     micEnabled: false,
@@ -19,10 +20,11 @@ function renderBar(over: Partial<Parameters<typeof RealtimeVoiceBar>[0]> = {}) {
     onPress,
     onRelease,
     onFallbackText,
+    onRetryPlayback,
     ...over,
   };
   const view = render(<RealtimeVoiceBar {...props} />);
-  return { onPress, onRelease, onFallbackText, view };
+  return { onPress, onRelease, onFallbackText, onRetryPlayback, view };
 }
 
 describe("RealtimeVoiceBar", () => {
@@ -80,6 +82,27 @@ describe("RealtimeVoiceBar", () => {
     renderBar({ connectionState: "failed" });
     expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
     expect(screen.getByTestId("realtime-state").textContent).toContain("改用文字");
+  });
+
+  it("shows generation/playback status and a retry action when speech output fails", () => {
+    renderBar({ playbackState: "synthesizing" });
+    expect(screen.getByTestId("realtime-playback")).toHaveTextContent("正在生成语音回复");
+    cleanup();
+    renderBar({ playbackState: "playing" });
+    expect(screen.getByTestId("realtime-playback")).toHaveTextContent("正在播放语音回复");
+    cleanup();
+    const { onRetryPlayback } = renderBar({ playbackState: "failed", error: "本地 TTS 合成失败" });
+    expect(screen.getByTestId("realtime-playback")).toHaveTextContent("语音回复未播放");
+    fireEvent.click(screen.getByRole("button", { name: "重试语音回复" }));
+    expect(onRetryPlayback).toHaveBeenCalledOnce();
+  });
+
+  it("offers a same-origin login link for expired browser sessions", () => {
+    renderBar({ connectionState: "failed", error: "登录状态已失效，请重新登录后重试" });
+    const link = screen.getByRole("link", { name: "重新登录" });
+    expect(link.getAttribute("href")).toBe(
+      `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`,
+    );
   });
 
   it("shows fallback hint and disables talk in screenshot fallback", () => {

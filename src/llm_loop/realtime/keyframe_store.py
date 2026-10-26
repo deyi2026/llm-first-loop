@@ -102,6 +102,20 @@ class KeyframeStore:
             self._bound[frame_id] = turn_id
             return frame
 
+    def unbind(self, frame_id: str, *, turn_id: str) -> bool:
+        """P2-1：仅当帧当前恰好绑定到 ``turn_id`` 时释放该绑定并返回 True。
+
+        提交点回滚用（sink 失败）：turn_id 不匹配 / 帧不存在 / 未绑定（含重复
+        解绑的幂等重放）→ False，**不抛异常**。只移除绑定登记：不改动
+        retention/current_validity（不复活已过期/已淘汰帧），其余帧的
+        「绑定中的帧不被淘汰」等既有不变量不受影响。
+        """
+        with self._lock:
+            if self._bound.get(frame_id) != turn_id:
+                return False
+            del self._bound[frame_id]
+            return True
+
     def is_bound(self, frame_id: str) -> bool:
         with self._lock:
             return frame_id in self._bound

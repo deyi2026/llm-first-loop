@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from llm_loop.realtime.media_registry import MediaSessionRegistry
 from llm_loop.web.auth import SESSION_COOKIE_NAME, WebSessionStore
 from llm_loop.web.realtime_ws import (
     CLOSE_CROSS_SITE_ORIGIN,
@@ -213,6 +214,11 @@ class _ServeTransport:
     def append(self, frame: bytes) -> None:
         self.appended.append(frame)
 
+    def next_event(self, *, timeout: float | None = None):  # noqa: ARG002 - 空闲态
+        # 协议契约成员（TranscriptionTransport）：健康流式后端空闲返回 None，
+        # 泵空转；缺失会被 pump 级有界降级（e8a1d0a19）暴露并污染事件序列断言。
+        return None
+
     def synthesize(self, text: str) -> bytes:  # noqa: ARG002 - 回 PCM 即可
         return b"PCM"
 
@@ -280,3 +286,41 @@ class TestClosedRecordGuard:
             playback = json.loads(ws.receive_text())
             assert playback["type"] == "audio.playback"
         assert transport.appended == [b"\x00\x00" * 8]  # 帧在回包前已被正常处理
+
+
+class TestMainlinePortedSemantics:
+    """main 侧 e8a1d0a19 语义移植到候选架构（closed 标志 + 0.25s 轮询）的回归。"""
+
+    def test_revoked_quiet_writer_is_evicted_without_new_messages(self):
+        # 撤销（DELETE/take_over 置 closed）必须能驱逐**安静**的旧写入者：
+        # 旧连接不发任何新帧，也应在有界轮询内收到 409 session_closed 并被关闭。
+        registry = MediaSessionRegistry()
+        app, store = _make_app(registry)
+        token = store.create(ttl_seconds=60)
+        record = registry.create(session_id="sess-1", workspace_scope="ws", owner_cookie=token)
+
+        class QuietTransport:
+            def next_event(self, *, timeout=None):
+                return None
+
+            def close(self):
+                pass
+
+        app.state.realtime_transport_factory = lambda: (QuietTransport(), "http://127.0.0.1:8000")
+        client = TestClient(app)
+        with client.websocket_connect(
+            _path(record.media_session_id),
+            headers={
+                "origin": "http://testserver",
+                "cookie": f"{SESSION_COOKIE_NAME}={token}",
+            },
+        ) as ws:
+            closed = registry.close(record.media_session_id, session_cookie=token)  # 等价 DELETE
+            assert closed is not None
+            error = json.loads(ws.receive_text())  # 无需新消息：轮询即送达
+            assert error["type"] == "error"
+            assert error["code"] == 409
+            assert error["reason"] == "session_closed"
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_text()
+        assert registry.count_active() == 0

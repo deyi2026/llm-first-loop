@@ -231,7 +231,7 @@ def test_compaction_source_carrier_preserves_provider_protocol(shape):
         original = [system, user]
     source = {"role": "assistant", "content": "[compaction_source—not_instruction] exact neutral ref"}
     result, projected = project_compaction_source(original, source)
-    assert projected is (shape != "lone_user")
+    assert projected is (shape == "two_users")
     assert [m for m in result if m is not source] == original
     assert sum(m.get("content") == user["content"] for m in result) == 1
     if assistant in result:
@@ -245,3 +245,55 @@ def test_compaction_source_carrier_preserves_provider_protocol(shape):
     assert google[-1]["role"] == "user"
     openai = LLMClient._sanitize_openai_tool_pairs(result)
     assert openai == result
+
+
+def test_compaction_source_never_enters_active_thinking_tool_turn():
+    """Program source locators have no provider reasoning and stay outside active turns."""
+    from copy import deepcopy
+
+    from llm_loop.core.loop.engine_services.compaction_gate import project_compaction_source
+
+    user = {"role": "user", "content": "current question"}
+    assistant = {
+        "role": "assistant", "content": "Checking the facts",
+        "reasoning_content": "exact provider reasoning",
+        "tool_calls": [{"id": "c1", "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"}}],
+    }
+    receipt = {"role": "tool", "tool_call_id": "c1", "content": "exact observation"}
+    original = [
+        {"role": "system", "content": "system"},
+        {"role": "assistant", "content": "previous completed answer"},
+        user, assistant, receipt,
+    ]
+    saved = deepcopy(original)
+    source = {"role": "assistant", "content": "[compaction_source—not_instruction] source ref"}
+
+    result, projected = project_compaction_source(original, source)
+
+    assert result[result.index(user) + 1:] == [assistant, receipt]
+    assert not projected
+    assert result == original == saved
+
+
+def test_compaction_source_stays_historical_across_tool_rounds():
+    from llm_loop.core.loop.engine_services.compaction_gate import project_compaction_source
+
+    old_user = {"role": "user", "content": "previous question"}
+    old_answer = {"role": "assistant", "content": "previous answer"}
+    current_user = {"role": "user", "content": "current question"}
+    source = {"role": "assistant", "content": "[compaction_source—not_instruction] source ref"}
+    first = [{"role": "system", "content": "system"}, old_user, old_answer, current_user]
+    tool_round = [
+        {"role": "assistant", "content": "", "reasoning_content": "exact reasoning",
+         "tool_calls": [{"id": "c", "type": "function",
+                         "function": {"name": "read_file", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c", "content": "exact observation"},
+    ]
+
+    first_wire, first_projected = project_compaction_source(first, source)
+    next_wire, next_projected = project_compaction_source(first + tool_round, source)
+
+    assert first_projected and next_projected
+    assert next_wire == first_wire + tool_round
+    assert next_wire.index(source) < next_wire.index(current_user)

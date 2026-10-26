@@ -35,6 +35,7 @@ from llm_loop.realtime.keyframe_pipeline import (
     KeyframePipeline,
     KeyframeServiceRegistry,
 )
+from llm_loop.realtime.provider_adapter import TranscriptionEvent
 from llm_loop.realtime.realtime_session_runtime import RealtimeSessionRuntime
 from llm_loop.web.auth import SESSION_COOKIE_NAME, WebSessionStore
 from llm_loop.web.realtime_routes import router as realtime_router
@@ -55,6 +56,12 @@ class FakeTransport:
 
     def append(self, frame: bytes) -> None:
         self.appended.append(frame)
+
+    def next_event(self, *, timeout: float | None = None) -> TranscriptionEvent | None:
+        # 协议契约成员（TranscriptionTransport）：健康流式后端空闲态返回 None，
+        # 泵保持空转——缺失该方法会被 pump 级有界降级（e8a1d0a19）暴露为
+        # input.streaming_unavailable，污染 WS 事件序列断言。
+        return None
 
     def transcribe(self, url: str, segment: bytes) -> str:
         self.transcribed.append((url, segment))

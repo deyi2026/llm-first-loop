@@ -98,11 +98,18 @@ describe("MediaSessionClient", () => {
     sockets[0].onclose?.({ code: 1006 });
     expect(client.connectionState).toBe("reconnecting");
     expect(scheduled[0].ms).toBe(500);
+    // Each timer creates a new socket. Repeating an obsolete socket's close
+    // callback cannot spend the retry budget a second time.
     sockets[0].onclose?.({ code: 1006 });
+    expect(scheduled).toHaveLength(1);
+    scheduled[0].fn();
+    sockets[1].onclose?.({ code: 1006 });
     expect(scheduled[1].ms).toBe(1000);
-    sockets[0].onclose?.({ code: 1006 });
+    scheduled[1].fn();
+    sockets[2].onclose?.({ code: 1006 });
     expect(scheduled[2].ms).toBe(2000);
-    sockets[0].onclose?.({ code: 1006 });
+    scheduled[2].fn();
+    sockets[3].onclose?.({ code: 1006 });
     expect(client.connectionState).toBe("failed"); // 超过 3 次上限
     expect(scheduled.length).toBe(3);
   });
@@ -122,6 +129,7 @@ describe("MediaSessionClient", () => {
     const { client, playback, sockets } = makeClient();
     client.connect();
     sockets[0].onopen?.();
+    client.handleMessage(envelope({ type: "audio.playback", response_id: "r1" }));
     client.handleMessage(new ArrayBuffer(16));
     expect(playback.snapshot().playing).toBe(true);
   });
@@ -130,9 +138,24 @@ describe("MediaSessionClient", () => {
     const { client, playback, sockets } = makeClient();
     client.connect();
     sockets[0].onopen?.();
+    client.handleMessage(envelope({ type: "audio.playback", response_id: "r1" }));
     client.handleMessage(new ArrayBuffer(16));
     expect(client.requestLocalInterrupt()).toBe(true);
     expect(playback.snapshot().playing).toBe(false);
+  });
+
+  it("does not replay delayed binary from an interrupted response", () => {
+    const { client, sockets, playback } = makeClient();
+    client.connect();
+    sockets[0].onopen?.();
+    client.noteActiveResponse("r-old");
+    client.handleMessage(new ArrayBuffer(12)); // 旧回复分片按请求预绑定入队（noteActiveResponse）
+    expect(playback.peek()?.responseId).toBe("r-old");
+    client.requestLocalInterrupt("r-old"); // 用户打断：本地立即丢弃该回复的排队分片（D27）
+    expect(playback.peek()).toBeNull();
+    client.noteActiveResponse("r-new");
+    client.handleMessage(new ArrayBuffer(16)); // 下一个请求的分片照常入队
+    expect(playback.peek()?.responseId).toBe("r-new");
   });
 
   it("close moves to closed", () => {
@@ -401,6 +424,32 @@ describe("CapturePipeline", () => {
     const pipeline = new CapturePipeline({ frameSamples: 160 });
     const frames = pipeline.push(new Float32Array(4800), 48000);
     expect(frames.length).toBe(10); // 4800/3 = 1600 样本 → 10 帧
+  });
+
+  it("preserves long capture duration across 128-sample worklet chunks", () => {
+    for (const sourceRate of [48000, 44100]) {
+      const pipeline = new CapturePipeline();
+      let emitted = 0;
+      for (let index = 0; index < sourceRate; index += 128) {
+        const count = Math.min(128, sourceRate - index);
+        for (const frame of pipeline.push(new Float32Array(count), sourceRate)) emitted += frame.length;
+      }
+      for (const frame of pipeline.flush()) emitted += frame.length;
+      expect(emitted).toBe(16000);
+    }
+  });
+
+  it("streaming PCM is invariant to worklet chunk boundaries", () => {
+    const input = Float32Array.from({ length: 4410 }, (_, i) => Math.sin(i * 0.03));
+    const whole = new CapturePipeline();
+    const fragmented = new CapturePipeline();
+    const joined = [...whole.push(input, 44100), ...whole.flush()].flatMap((frame) => [...frame]);
+    const chunks: Int16Array[] = [];
+    for (let index = 0; index < input.length; index += 128) {
+      chunks.push(...fragmented.push(input.slice(index, index + 128), 44100));
+    }
+    chunks.push(...fragmented.flush());
+    expect(chunks.flatMap((frame) => [...frame])).toEqual(joined);
   });
 
   it("downmixes stereo before framing", () => {

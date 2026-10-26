@@ -34,11 +34,26 @@ export interface RealtimeVisualBarState {
   canShare?: boolean;
 }
 
+export type BarPlaybackState = "idle" | "synthesizing" | "playing" | "failed";
+
+const PLAYBACK_LABEL: Record<BarPlaybackState, string> = {
+  idle: "",
+  synthesizing: "正在生成语音回复",
+  playing: "正在播放语音回复",
+  failed: "语音回复未播放",
+};
+
 export interface RealtimeVoiceBarProps {
   connectionState: ConnectionState;
   micEnabled: boolean;
   modality: ModalityMode;
   chainLabel: string;
+  /** 87aa41fd2 语义移植：语音回复可见状态（缺省 idle = 不展示，向后兼容）。 */
+  playbackState?: BarPlaybackState;
+  /** 6a45f1741 语义移植：连接层错误（含 401 时展示同源重新登录入口）。 */
+  error?: string;
+  /** 87aa41fd2 语义移植：重试语音回复。 */
+  onRetryPlayback?: () => void;
   onPress: () => void;
   onRelease: () => void;
   onFallbackText?: () => void;
@@ -85,6 +100,9 @@ export function RealtimeVoiceBar({
   micEnabled,
   modality,
   chainLabel,
+  playbackState = "idle",
+  error = "",
+  onRetryPlayback,
   onPress,
   onRelease,
   onFallbackText,
@@ -143,6 +161,29 @@ export function RealtimeVoiceBar({
       </button>
       <span data-testid="realtime-state">{STATE_LABEL[connectionState]}</span>
       <span data-testid="realtime-chain">{chainLabel}</span>
+      {playbackState !== "idle" ? (
+        <span data-testid="realtime-playback" data-playback={playbackState} role="status">
+          {PLAYBACK_LABEL[playbackState]}
+        </span>
+      ) : null}
+      {playbackState === "failed" && connectionState === "ready" && onRetryPlayback ? (
+        <button type="button" data-testid="realtime-retry-playback" onClick={() => onRetryPlayback()}>
+          重试语音回复
+        </button>
+      ) : null}
+      {error ? (
+        <p className="realtime-voice-error" role="alert" data-testid="realtime-error">
+          {error}
+          {error.includes("请重新登录") ? (
+            <>
+              {" "}
+              <a href={'/login?next=' + encodeURIComponent(window.location.pathname + window.location.search)}>
+                重新登录
+              </a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       <span data-testid="realtime-modality">{modality}</span>
       {modality !== "voice_full" ? (
         <span data-testid="realtime-fallback">{FALLBACK_HINT}</span>

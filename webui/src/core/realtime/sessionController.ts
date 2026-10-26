@@ -38,6 +38,11 @@ export interface RealtimeSessionSink {
   onVisualClarify?: (question: string, turnId: string) => void;
   /** 可见但非阻塞的降级提示（发送失败/空终稿/播放被拒等）。 */
   onNotice?: (message: string) => void;
+  /**
+   * 87aa41fd2 语义移植：服务端 TTS 合成失败（audio.playback_unavailable）——
+   * 上层据此把 playbackState 置 failed 并提供「重试语音回复」入口。
+   */
+  onPlaybackUnavailable?: (responseId: string) => void;
 }
 
 export interface RealtimeSessionDeps {
@@ -64,6 +69,8 @@ export class RealtimeSessionController {
   private readonly committedTurns = new Set<string>();
   private readonly finalTexts = new Map<string, string>();
   private readonly ttsRequested = new Set<string>();
+  /** 最近一次成功上送的 TTS 请求（text+responseId）：供「重试语音回复」原样重发。 */
+  private lastTtsRequest: { text: string; responseId: string } | null = null;
 
   constructor(private readonly deps: RealtimeSessionDeps) {
     this.deps.client.onEvent?.((envelope) => this.handleEvent(envelope));
@@ -153,8 +160,30 @@ export class RealtimeSessionController {
       return false;
     }
     this.ttsRequested.add(responseId);
+    this.lastTtsRequest = { text: trimmed, responseId };
     this.deps.client.noteActiveResponse?.(responseId);
     return true;
+  }
+
+  /**
+   * 87aa41fd2 语义移植：重试语音回复——把最近一次 TTS 请求原样重发一次
+   * （绕过同回复去重：失败重试不等于重复播报）。无可用请求返回 false。
+   */
+  retryTts(): boolean {
+    const last = this.lastTtsRequest;
+    if (last === null) {
+      return false;
+    }
+    if (this.deps.client.connectionState !== "ready") {
+      this.notify("实时连接未就绪，暂不能重试语音回复");
+      return false;
+    }
+    this.ttsRequested.delete(last.responseId);
+    const sent = this.sendEvent("tts.request", { response_id: last.responseId, text: last.text });
+    if (sent) {
+      this.ttsRequested.add(last.responseId);
+    }
+    return sent;
   }
 
   /** 开口打断：**本地立即停播**，并通知服务端（区分请求与完成，D27）。 */
@@ -242,6 +271,13 @@ export class RealtimeSessionController {
       if (question !== "") {
         this.deps.sink?.onVisualClarify?.(question, turnId);
       }
+      return;
+    }
+    if (envelope.type === "audio.playback_unavailable") {
+      // 87aa41fd2 语义移植：TTS 合成失败 → 有界降级（文本已保留），提供重试入口。
+      const responseId = typeof envelope.response_id === "string" ? envelope.response_id : "";
+      this.notify("语音回复未播放（本地语音合成失败）；回复文本已保留，可重试语音回复");
+      this.deps.sink?.onPlaybackUnavailable?.(responseId);
       return;
     }
     if (envelope.type === "error") {

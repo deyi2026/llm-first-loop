@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import time
 import uuid
 import wave
@@ -35,6 +36,8 @@ from llm_loop.realtime.provider_adapter import (
     TranscriptionEventKind,
     VoiceStackTransport,
 )
+
+logger = logging.getLogger(__name__)
 
 SendText = Callable[[str], Awaitable[None]]
 SendBinary = Callable[[bytes], Awaitable[None]]
@@ -149,7 +152,16 @@ class RealtimeSessionRuntime:
         终稿仍以 `input.commit` 的**高精度重转写**为准，避免两份终稿冲突（`INP-09`）。
         """
         while not self._closed:
-            event = await asyncio.to_thread(self._poll_event)
+            try:
+                event = await asyncio.to_thread(self._poll_event)
+            except Exception:
+                # e8a1d0a19 语义移植：转写后端中途死亡 → 有界降级（单条
+                # input.streaming_unavailable，负载空——前端 realtimeEvents.ts
+                # 未给该类型登记额外必填字段，base envelope 即可解码）后泵退出，
+                # 不再静默失联；终稿链路（input.commit 高精度重转写）不受影响，
+                # 无需断开重连。
+                await self._emit("input.streaming_unavailable", {})
+                return
             if event is None:
                 await asyncio.sleep(0.02)
                 continue
@@ -222,7 +234,17 @@ class RealtimeSessionRuntime:
             return
         if event_type == "tts.request":
             text = str(payload.get("text", ""))
-            audio = await asyncio.to_thread(self._transport.synthesize, text)
+            try:
+                audio = await asyncio.to_thread(self._transport.synthesize, text)
+            except Exception:  # noqa: BLE001 - TTS 合成失败：有界降级通知，不断连（87aa41fd2 语义移植）
+                logger.exception("tts synthesize failed")
+                await self._emit(
+                    "audio.playback_unavailable",
+                    {"response_id": str(payload.get("response_id", ""))},
+                )
+                return
+            if self._closed:  # e8a1d0a19 语义：stop 后不得再吐陈旧音频
+                return
             await self._send_binary(audio)
             await self._emit("audio.playback", {"response_id": str(payload.get("response_id", ""))})
             return
@@ -406,8 +428,26 @@ class RealtimeSessionRuntime:
             try:
                 task_ref = await asyncio.to_thread(self._commit_sink, record)
             except Exception:  # noqa: BLE001 - 提交失败如实报错，不伪造成功
+                # P2-1：sink 失败 → 回滚本次绑定（否则帧永久绑给 doomed turn，
+                # 重试拿新 turn_id 会 frame_already_bound，视觉轮次走死）。回滚
+                # 自身故障不顶替既有错误面、不二次抛出（P2-3：warning 留痕带
+                # turn_id 与帧数——残留绑定时这条日志是唯一线索），仍走 503。
+                try:
+                    await asyncio.to_thread(
+                        self._keyframes.unbind_commit,
+                        turn_id=turn_id,
+                        frame_ids=[e.frame_id for e in evidences],
+                    )
+                except Exception:  # noqa: BLE001 - 回滚故障只留痕，错误面保持 503
+                    logger.warning(
+                        "rollback unbind_commit failed after commit_sink error: "
+                        "turn_id=%s frames=%d（绑定残留，重试该帧前需人工核查）",
+                        turn_id,
+                        len(evidences),
+                        exc_info=True,
+                    )
                 await self._emit("error", {"code": 503, "reason": "task_submit_failed", **reply_to})
-                return  # P2-4：音频保留；同帧已绑定本 turn，重提交须换新帧（否则 frame_already_bound）
+                return  # P2-4：音频保留；绑定已回滚，同帧可随新 turn_id 重提交
         # P2-4：仅当绑定成功且任务已入队（即将发 turn.committed）才消费音频。
         # 只移除本次转写过的快照长度——等待期间新到的帧保留在缓存继续累积
         # （仍受 max_pcm_bytes/max_pcm_seconds 双限与既有超限降级路径约束，
@@ -455,6 +495,8 @@ class RealtimeSessionRuntime:
         await self._emit("error", {"code": 409, "reason": "session_closed"})
 
     async def _emit(self, event_type: str, extra: dict[str, object]) -> None:
+        if self._closed:  # e8a1d0a19 语义移植：已 stop 的运行时不再下行任何信封（含陈旧转写/TTS）
+            return
         self._seq += 1
         envelope: dict[str, object] = {
             "version": PROTOCOL_VERSION,

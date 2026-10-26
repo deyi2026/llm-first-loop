@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import copy
 import errno
 import json
 import logging
@@ -1374,10 +1375,13 @@ class SessionStore:
             if not store.exists(session.session_id):
                 payload = {k: getattr(session, k, None) for k in _EVENT_TOP_FIELDS}
                 payload["version"] = session.to_dict().get("version", 4)
-                store.append(session.session_id, "session.created", payload)
+                store.append(session.session_id, "session.created", copy.deepcopy(payload))
                 existing: set[int] = set()
             else:
-                events = store.read(session.session_id)
+                # Tool batches save every round. Reuse the exact parsed snapshot:
+                # same-store appends extend it; external appends invalidate by seq.
+                # Backfill still checks every message and current summary field.
+                events = getattr(store, "read_cached", store.read)(session.session_id)
                 existing = {
                     e.payload.get("index")
                     for e in events
@@ -1387,7 +1391,17 @@ class SessionStore:
                 # event_log 读路径永远看到空摘要；用已有 meta_changed 事件表达完整当前值。
                 from llm_loop.event_log.replay import replay_session
 
-                view = replay_session(events)
+                # Replay projects compaction/retraction into message metadata.
+                # Keep the shared cached facts and live messages unchanged while
+                # retaining the complete replay semantics (including checkpoint reset).
+                replay_events = [
+                    dataclasses_replace(
+                        e, payload={**e.payload, "metadata": copy.deepcopy(e.payload.get("metadata"))}
+                    )
+                    if e.type == "message.appended" else e
+                    for e in events
+                ]
+                view = replay_session(replay_events)
                 changes = {}
                 for field_name in ("fixed_summary", "summary_chain", "working_state_checkpoint"):
                     current = getattr(session, field_name)
@@ -1404,7 +1418,7 @@ class SessionStore:
                     store.append(
                         session.session_id,
                         "session.meta_changed",
-                        {"field": "summary_state", "changes": changes},
+                        copy.deepcopy({"field": "summary_state", "changes": changes}),
                     )
             for i, m in enumerate(session.messages):
                 if i in existing:
@@ -1412,7 +1426,7 @@ class SessionStore:
                 store.append(
                     session.session_id,
                     "message.appended",
-                    build_message_payload(
+                    copy.deepcopy(build_message_payload(
                         index=i,
                         role=m.role,
                         content=m.content,
@@ -1424,19 +1438,30 @@ class SessionStore:
                         tool_calls=m.tool_calls,
                         reasoning_content=m.reasoning_content,
                         metadata=m.metadata,
-                    ),
+                    )),
                 )
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("事件兜底写入失败（fail-open）: %s", exc)
 
-    def create(self, model_override: str | None = None) -> str:
-        """生成唯一 session_id 并初始化会话文件.
+    def create(
+        self,
+        model_override: str | None = None,
+        *,
+        parent_id: str | None = None,
+        branch_summary: str = "",
+        title: str = "",
+    ) -> str:
+        """原子初始化新会话及其来源元数据（如明确授权的轻量交接）。
 
-        model_override: 可选模型覆盖（M52）。/new·/clear 新建会话时传入当前会话的
-        override，使新会话继承用户所选模型而非回落装配默认（M52-fix）。
+        model_override: /new·/clear 继承用户所选模型；新建交接会话的 parent_id
+        和 branch_summary 在首次 session.created 事件中同时持久化，禁止后补字段
+        导致 EventStore replay 丢失来源链。默认参数保持既有 create() 行为。
         """
         sid = str(uuid.uuid4())
-        session = Session(session_id=sid, model_override=model_override)
+        session = Session(
+            session_id=sid, model_override=model_override,
+            parent_id=parent_id, branch_summary=branch_summary, title=title,
+        )
         # EVO-20260920: 新会话归属锚定当前根；此后根切换不影响该 sid 的路径/身份。
         self._pin_session_location(sid)
         self.save(session)

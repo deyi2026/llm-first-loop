@@ -138,7 +138,12 @@ export class MediaSessionClient {
     socket.onerror = (): void => {
       /* 等待 onclose 决定重连或失败 */
     };
-    socket.onclose = (event): void => this.handleClose(event.code);
+    socket.onclose = (event): void => {
+      // e8a1d0a19 语义移植：废弃 socket 的重复/迟到 onclose 不得再次消耗重试预算
+      // （handleClose 已置空 this.socket、或新连接已替换旧 socket 时，直接忽略）。
+      if (this.socket !== socket) return;
+      this.handleClose(event.code);
+    };
   }
 
   private handleClose(code: number): void {

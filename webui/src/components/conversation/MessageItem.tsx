@@ -325,6 +325,7 @@ function progressStageLabel(stage: ProgressStage | undefined): string {
     case "tool": return "正在使用工具";
     case "integrating": return "正在整理结果";
     case "answering": return "正在生成回答";
+    case "retrying": return "正在重试模型请求";
     case "recovering": return "正在恢复连接";
     default: return "正在处理";
   }
@@ -348,7 +349,12 @@ function progressSnapshot(msg: ChatMessage, now: number): {
 
   let summary = "正在提交请求并等待运行确认。";
   let next = "收到运行回执后继续显示模型与工具阶段。";
-  if (msg.progressStage === "recovering") {
+  if (msg.progressStage === "retrying" && msg.providerRetry) {
+    const retry = msg.providerRetry;
+    const reason = retry.reason === "timeout" ? "模型请求超时" : "模型连接中断";
+    summary = `${reason}，正在重试（${retry.retry_index}/${retry.max_retries}）。`;
+    next = "收到响应后继续当前任务。";
+  } else if (msg.progressStage === "recovering") {
     summary = "正在重新连接当前后台 run，并恢复可重放的执行事实。";
     next = "恢复后继续显示原 run 的工具和输出进展。";
   } else if (activeTool) {

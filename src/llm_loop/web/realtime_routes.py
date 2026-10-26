@@ -13,13 +13,20 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security.utils import get_authorization_scheme_param
 from pydantic import BaseModel
 
-from llm_loop.realtime.media_registry import MediaSessionRegistry
+from llm_loop.realtime.media_registry import MediaSessionRegistry, MediaWriterConflictError
 from llm_loop.realtime.media_usage import UsageStatus
-from llm_loop.web.auth import require_api_key, session_cookie_value
+from llm_loop.web.auth import (
+    SESSION_COOKIE_NAME,
+    WebSessionStore,
+    request_is_trusted_local,
+    require_api_key,
+    session_cookie_value,
+    session_ttl_seconds,
+)
 
 router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 
@@ -48,6 +55,28 @@ def _owner_identity(request: Request) -> str:
     return token if scheme.lower() == "bearer" and token else ""
 
 
+def _create_owner_identity(request: Request) -> tuple[str, int | None]:
+    """Bind an anonymous *direct loopback* client to a real revocable media owner.
+
+    6a45f1741 语义移植（候选 S3-2/S3-6 架构下保留本地免登录语音 UX）：
+    其他 Web 路由刻意放行受信 localhost 免登录；媒体 WS 仍需不可猜测 cookie
+    做归属与重连，绝不用共享 local owner、绝不豁免 WS 身份校验。Web 重启
+    后的陈旧 cookie 也不得继续当 owner。代理/公网请求在这里不会获得隐式会话。
+    读取走 S3-6 双名（__Host- 优先），铸造仅在受信直连回环且现值无效时发生。
+    """
+    if not request_is_trusted_local(request):
+        return _owner_identity(request), None
+    store = getattr(request.app.state, "web_sessions", None)
+    if not isinstance(store, WebSessionStore):
+        raise HTTPException(status_code=503, detail="browser session store unavailable")
+    cookie = session_cookie_value(request.cookies)
+    if store.valid(cookie):
+        return cookie, None
+    ttl = session_ttl_seconds()
+    token = store.create(ttl_seconds=ttl)
+    return token, ttl
+
+
 def _capability_profile(request: Request) -> dict:
     profile = getattr(request.app.state, "realtime_capability_profile", None)
     if isinstance(profile, dict):
@@ -74,24 +103,44 @@ def _preflight(request: Request) -> None:
 
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_api_key)])
-def create_realtime_session(request: Request, body: CreateRealtimeSessionBody) -> dict:
+def create_realtime_session(request: Request, response: Response, body: CreateRealtimeSessionBody) -> dict:
     if not body.session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
-    owner = _owner_identity(request)
-    if not owner:
-        raise HTTPException(status_code=401, detail="unauthenticated")
     _preflight(request)
     registry = _registry(request)
+    owner, minted_ttl = _create_owner_identity(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="unauthenticated")
     if registry.active_writer_conflict(body.session_id) and not body.take_over:
+        if minted_ttl is not None:
+            request.app.state.web_sessions.revoke(owner)
         raise HTTPException(status_code=409, detail="media session already has an active writer")
-    record = registry.create(
-        session_id=body.session_id,
-        workspace_scope=body.session_id,
-        owner_cookie=owner,
-        audio_mode=body.audio_mode,
-        enable_on_demand_vision=body.enable_on_demand_vision,
-        take_over=body.take_over,
-    )
+    try:
+        record = registry.create(
+            session_id=body.session_id,
+            workspace_scope=body.session_id,
+            owner_cookie=owner,
+            audio_mode=body.audio_mode,
+            enable_on_demand_vision=body.enable_on_demand_vision,
+            take_over=body.take_over,
+        )
+    except MediaWriterConflictError as exc:
+        # 预检查与 create 之间的竞态兜底：铸造出的 cookie 立即撤销（6a45f1741）。
+        if minted_ttl is not None:
+            request.app.state.web_sessions.revoke(owner)
+        raise HTTPException(status_code=409, detail="media session already has an active writer") from exc
+    if minted_ttl is not None:
+        # Cookie 仅在 writer 成功准入后下发（6a45f1741）。
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=owner,
+            max_age=minted_ttl,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            path="/",
+        )
+        response.headers["Cache-Control"] = "no-store"
     return {
         "media_session_id": record.media_session_id,
         "connection_epoch": record.connection_epoch,

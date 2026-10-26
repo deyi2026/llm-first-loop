@@ -43,7 +43,13 @@ class FakeSource implements AudioBufferSourceLike {
 
 class FakeAudioContext implements AudioContextLike {
   destination = {};
+  state = "suspended";
+  resumed = false;
   readonly sources: FakeSource[] = [];
+  async resume(): Promise<void> {
+    this.state = "running";
+    this.resumed = true;
+  }
   async decodeAudioData(): Promise<unknown> {
     return { decoded: true };
   }
@@ -136,6 +142,7 @@ describe("PlaybackOutput", () => {
     const output = new PlaybackOutput({ playback, audioContext: ctx });
     expect(await output.playNext()).toBe(true);
     expect(output.isPlaying).toBe(true);
+    expect(ctx.resumed).toBe(true);
     expect(ctx.sources[0].started).toBe(true);
   });
 

@@ -1,0 +1,14 @@
+.v2-video-panel { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--dsw-alias-border-l1); overflow-wrap: anywhere; }
+.v2-video-panel p { margin: 8px 0; font-size: 13px; line-height: 1.6; }
+.v2-video-panel label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; font-size: 13px; min-width: 0; }
+.v2-video-panel input:not([type="checkbox"]), .v2-video-panel textarea, .v2-video-panel select { width: 100%; min-width: 0; box-sizing: border-box; font: inherit; padding: 8px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; }
+.v2-video-panel .v2-video-check { flex-direction: row; align-items: center; }
+.v2-video-panel summary { cursor: pointer; padding: 10px 0; }
+.v2-video-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.v2-video-missing { padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; font-size: 13px; }
+.v2-video-note { opacity: .75; }
+.v2-video-reference { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.v2-video-job { margin-top: 16px; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; }
+.v2-video-job video { display: block; width: 100%; max-height: 420px; margin-bottom: 10px; border-radius: 6px; }
+.v2-video-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 12px; }
+@media (max-width: 420px) { .v2-video-grid { grid-template-columns: 1fr; } }

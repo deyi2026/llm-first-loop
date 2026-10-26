@@ -1273,3 +1273,89 @@ describe("useRealtimeVoice M3 视觉接线", () => {
     expect(env.grabs.closed).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("useRealtimeVoice main 侧修复语义移植（87aa41fd2 / 6a45f1741）", () => {
+  it("POST 401 surfaces a re-login error instead of a generic notice (6a45f1741)", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 401 }));
+    const sockets: FakeSocket[] = [];
+    const transport = {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      createSocket: (url: string) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket;
+      },
+      createAudioContext: () => new FakeAudioContext(),
+    };
+    const view = renderHook(() =>
+      useRealtimeVoice({ sessionId: "sess-1", transport: transport as unknown as RealtimeVoiceTransport }),
+    );
+    await act(async () => {
+      await view.result.current.enable();
+    });
+    expect(view.result.current.connectionState).toBe("failed");
+    expect(view.result.current.error).toContain("HTTP 401");
+    expect(view.result.current.error).toContain("请重新登录");
+    expect(view.result.current.enabled).toBe(false);
+    view.unmount();
+  });
+
+  it("playbackState goes synthesizing → playing → idle across a served voice reply (87aa41fd2)", async () => {
+    const env = makeEnv();
+    const view = await enableAndOpen(env);
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t1", text: "看下天气" }) });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("今天晴，25 度")] });
+    });
+    expect(view.result.current.playbackState).toBe("synthesizing");
+    await act(async () => {
+      env.sockets[0].onmessage?.({ data: new Int16Array(160).buffer });
+      await Promise.resolve();
+    });
+    expect(view.result.current.playbackState).toBe("playing");
+    act(() => {
+      env.contexts[0].sources[0].onended?.();
+    });
+    expect(view.result.current.playbackState).toBe("idle");
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+
+  it("audio.playback_unavailable marks failed and retryPlayback re-sends the same tts.request (87aa41fd2)", async () => {
+    const env = makeEnv();
+    const view = await enableAndOpen(env);
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t1", text: "看下天气" }) });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("今天晴，25 度")] });
+    });
+    expect(view.result.current.playbackState).toBe("synthesizing");
+    act(() => {
+      env.sockets[0].onmessage?.({
+        data: serverEvent({ type: "audio.playback_unavailable", response_id: "123.45:8" }),
+      });
+    });
+    expect(view.result.current.playbackState).toBe("failed");
+    expect(env.notices).toHaveBeenCalled();
+    act(() => {
+      view.result.current.retryPlayback();
+    });
+    const tts = env.sockets[0].sentTextEvents().filter((event) => event.type === "tts.request");
+    expect(tts).toHaveLength(2);
+    expect(tts[1]).toMatchObject({ text: "今天晴，25 度", response_id: "123.45:8" });
+    expect(view.result.current.playbackState).toBe("synthesizing");
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+});
