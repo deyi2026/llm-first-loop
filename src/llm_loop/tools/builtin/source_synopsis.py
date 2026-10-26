@@ -203,7 +203,7 @@ class SourceSynopsisTool:
             content=content,
             tool_call_id="",
             tool_name=self.name,
-            **({"error_type": error_type} if error_type else {}),
+            error_type=error_type if error_type else None,
         )
 
 
