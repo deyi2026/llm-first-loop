@@ -872,6 +872,6 @@ def agents_tree(request: Request) -> JSONResponse:
             nodes.append(node)
         except Exception:  # noqa: BLE001 — 单会话拓扑附着失败跳过（节点仍返回）
             nodes.append({"id": sid, "parent_id": getattr(meta, "parent_id", None)})
-    payload = {"nodes": nodes}
+    payload: dict[str, object] = {"nodes": nodes}
     _agents_tree_cache_put(engine, payload)
     return JSONResponse(content=payload)
