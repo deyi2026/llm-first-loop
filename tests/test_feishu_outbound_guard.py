@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.introspection import tools_feishu_outbound as tfo
-from tests import env_channel
 
 # 高置信密钥样例（格式真实、值伪造，仅用于触发 security_guard.anthropic_key 模式）
 _FAKE_ANTHROPIC_KEY = "sk-ant-api03-FAKE000000000000000000000000000000"
@@ -188,17 +188,12 @@ def test_attachment_inside_workspace_data_passes(ws_root, mock_feishu, monkeypat
     assert mock_feishu["send_file"].called
 
 
-@pytest.mark.skipif(
-    env_channel.tmpdir_redirected(),
-    reason="环境受限：沙箱写域令 tempfile 回落 /tmp，tmp_path 落入允许根，"
-           "outside_workspace 前置假设（tmp_path 在 /private/var）失效【RED-06】",
-)
-def test_attachment_outside_workspace_denied(ws_root, mock_feishu, tmp_path, monkeypatch):
-    """工作区/data//tmp 之外的文件拒绝：attachment_path_outside_workspace."""
+def test_attachment_outside_workspace_denied(ws_root, mock_feishu, monkeypatch):
+    """默认允许 /tmp，但 /etc/hosts 不在任何附件允许根内；不得触达 SDK."""
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_user12345678")
-    outside = tmp_path / "outside_ws" / "leak.txt"  # tmp_path 在 /private/var/...，不属于 /tmp
-    outside.parent.mkdir(parents=True)
-    outside.write_text("x", encoding="utf-8")
+    # /etc/hosts exists on macOS and Linux; unlike tmp_path it is outside /tmp.
+    outside = Path("/etc/hosts")
+    assert outside.is_file()
     result = tfo.run_send_feishu_attachment(
         MagicMock(), MagicMock(),
         {"receive_id": "ou_user12345678", "file_path": str(outside), "confirm": True},
@@ -247,16 +242,11 @@ def test_attachment_env_file_denied(ws_root, mock_feishu, monkeypatch):
     assert not mock_feishu["send_file"].called
 
 
-@pytest.mark.skipif(
-    env_channel.tmpdir_redirected(),
-    reason="环境受限：同 RED-06——tmp_path 落入 /tmp 允许根，symlink 越界目标不再越界【RED-07】",
-)
-def test_attachment_symlink_escape_denied(ws_root, mock_feishu, tmp_path, monkeypatch):
-    """工作区内 symlink 指向工作区外文件 → realpath 越界拒绝."""
+def test_attachment_symlink_escape_denied(ws_root, mock_feishu, monkeypatch):
+    """工作区内 symlink 指向 /etc/hosts → realpath 越界拒绝."""
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_user12345678")
-    target = tmp_path / "outside_ws" / "real_leak.txt"
-    target.parent.mkdir(parents=True)
-    target.write_text("x", encoding="utf-8")
+    target = Path("/etc/hosts")
+    assert target.is_file()
     link = ws_root / "data" / "link.txt"
     link.symlink_to(target)
     result = tfo.run_send_feishu_attachment(
