@@ -679,6 +679,7 @@ export function Composer() {
                 playbackState={realtime.playbackState}
                 error={realtime.error}
                 onRetryPlayback={realtime.retryPlayback}
+                onRetryConnection={() => void realtime.enable()}
                 onPress={realtime.press}
                 onRelease={realtime.release}
                 onFallbackText={() => taRef.current?.focus()}
@@ -693,6 +694,8 @@ export function Composer() {
                 className="v2-btn"
                 data-testid="realtime-enable"
                 disabled={conv.streaming || realtime.modality === "screenshot_fallback"}
+                title="点击开启实时语音；连接就绪后按住麦克风按钮说话"
+                aria-label="开启实时语音（点击开启，连接就绪后按住说话）"
                 onClick={() => void realtime.enable()}
               >
                 实时语音

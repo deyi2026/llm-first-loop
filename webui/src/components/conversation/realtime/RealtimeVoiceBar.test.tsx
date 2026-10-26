@@ -80,7 +80,8 @@ describe("RealtimeVoiceBar", () => {
 
   it("disables talk when connection is not ready", () => {
     renderBar({ connectionState: "failed" });
-    expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
+    // aria-disabled 语义（原生 disabled 会静默吞掉按压，改用可解释的禁用态）
+    expect(screen.getByTestId("realtime-push-to-talk")).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByTestId("realtime-state").textContent).toContain("改用文字");
   });
 
@@ -107,7 +108,7 @@ describe("RealtimeVoiceBar", () => {
 
   it("shows fallback hint and disables talk in screenshot fallback", () => {
     renderBar({ modality: "screenshot_fallback" });
-    expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
+    expect(screen.getByTestId("realtime-push-to-talk")).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByTestId("realtime-fallback").textContent).toContain("文字输入");
   });
 
@@ -130,7 +131,40 @@ describe("RealtimeVoiceBar", () => {
 
   it("respects the disabled prop", () => {
     renderBar({ disabled: true });
-    expect(screen.getByTestId("realtime-push-to-talk")).toBeDisabled();
+    expect(screen.getByTestId("realtime-push-to-talk")).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("explains why talk is blocked instead of swallowing the press", () => {
+    const { onPress } = renderBar({ connectionState: "opening" });
+    const button = screen.getByTestId("realtime-push-to-talk");
+    fireEvent.pointerDown(button);
+    // 未就绪：不开始采集，但给出即时原因提示（不再"按了没反应"）
+    expect(onPress).not.toHaveBeenCalled();
+    expect(screen.getByTestId("realtime-hint").textContent).toContain("语音连接建立中");
+  });
+
+  it("captures the pointer on press so sliding off does not end the hold", () => {
+    const { onPress } = renderBar({ connectionState: "ready" });
+    const button = screen.getByTestId("realtime-push-to-talk");
+    const capture = vi.fn();
+    button.setPointerCapture = capture;
+    fireEvent.pointerDown(button, { pointerId: 7 });
+    expect(onPress).toHaveBeenCalledTimes(1);
+    // jsdom 合成事件不透传 pointerId（真实浏览器必有），断言捕获动作本身
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a retry connection entry when the connection failed", () => {
+    const onRetryConnection = vi.fn();
+    renderBar({ connectionState: "failed", onRetryConnection });
+    fireEvent.click(screen.getByTestId("realtime-retry-connection"));
+    expect(onRetryConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the listening label while held", () => {
+    renderBar({ connectionState: "ready", micEnabled: true });
+    expect(screen.getByTestId("realtime-push-to-talk").textContent).toBe("正在聆听…松开发送");
+    expect(screen.getByTestId("realtime-voice-bar")).toHaveAttribute("data-recording", "true");
   });
 });
 // ---------------------------------------------------------------------------

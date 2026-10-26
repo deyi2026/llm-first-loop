@@ -34,6 +34,21 @@ import {
   type DisplayMediaDevicesLike,
   type ScreenShareCapabilityEnv,
 } from "./screenShare";
+import type { MicPressErrorKind } from "./micCapture";
+
+/** 采集失败 → 面向用户的可操作提示（分类驱动，避免裸报设备错误名）。 */
+export function micPressErrorMessage(kind: MicPressErrorKind | null): string {
+  switch (kind) {
+    case "not-allowed":
+      return "麦克风权限被拒绝：请在浏览器地址栏允许麦克风访问后重试";
+    case "not-found":
+      return "未检测到麦克风设备：请确认麦克风已连接后重试";
+    case "not-readable":
+      return "麦克风无法读取：可能被其他应用占用，请关闭占用后重试";
+    default:
+      return "麦克风启动失败：请检查设备与权限后重试";
+  }
+}
 
 export interface RealtimeVoiceTransport {
   /** 建会话 REST（默认 `fetch`；测试注入）。 */
@@ -462,7 +477,13 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
     if (controller === null) {
       return;
     }
-    void controller.press().then((started) => setMicEnabled(started));
+    void controller.press().then((started) => {
+      setMicEnabled(started);
+      if (!started) {
+        // 采集失败不得静默（此前只有 micEnabled=false，用户零反馈"按了没反应"）
+        setError((previous) => (previous ? previous : micPressErrorMessage(controller.lastPressError)));
+      }
+    });
   }, []);
 
   const release = useCallback((): void => {
