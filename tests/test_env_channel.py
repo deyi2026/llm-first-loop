@@ -80,9 +80,10 @@ def test_nested_probe_unrelated_failure_not_restricted(monkeypatch):
 # ── tmpdir_redirected：逻辑测试 ──
 
 
-def test_tmpdir_redirected_when_darwin_tmp(monkeypatch):
+def test_tmpdir_redirected_when_darwin_private_tmp(monkeypatch):
+    # Darwin resolves /tmp to /private/tmp; Linux does not. Mock the canonical root.
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: "/tmp")
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: "/private/tmp")
     assert env_channel.tmpdir_redirected() is True
 
 
