@@ -395,7 +395,10 @@ class SubAgentRunner:
         if state is None or not state.parent_id:
             return None
         try:
-            session_parent = str(self.session_store.load(sid).parent_id or "")
+            # M3 验收后续：交叉验证走 SessionStore.parent_id_of 轻量只读
+            # （meta 缓存，与 load().parent_id 等价）——agents/tree 对 707 个
+            # 候选逐个 recover+load（全量 JSON 解析）是源站 5-13s 的主因之一。
+            session_parent = str(self.session_store.parent_id_of(sid))
         except Exception:  # noqa: BLE001 - recovery is read-only and fail-closed
             return None
         if session_parent != state.parent_id:

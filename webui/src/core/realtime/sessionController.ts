@@ -76,9 +76,16 @@ export class RealtimeSessionController {
     this.deps.client.onEvent?.((envelope) => this.handleEvent(envelope));
   }
 
-  /** 按下说话：**先本地停播**（开口打断）再开始采集。设备/权限失败 → false（不伪装）。 */
+  /** 按下说话：**先本地停播**（开口打断）、尽力恢复挂起的 AudioContext（自愈，失败不阻断），再开始采集。设备/权限失败/启动超时 → false（不伪装）。 */
   async press(): Promise<boolean> {
     this.interrupt();
+    // M3 后续自愈：新一轮按住手势是解除 autoplay 挂起的最佳时机；resume 尽力而为，
+    // 失败不阻断按压流程（播放侧仍有 playNext 的降级路径兜底）。
+    try {
+      await this.deps.playback.recoverIfSuspended();
+    } catch {
+      /* 自愈失败不影响本轮按压 */
+    }
     const started = await this.deps.capture.press();
     if (started) {
       this.pressActive = true;

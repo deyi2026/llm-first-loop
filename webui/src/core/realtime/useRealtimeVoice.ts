@@ -9,6 +9,8 @@
 // M1 客户端闭环：
 // - `turn.committed` 终稿 → `onCommittedTranscript`（由上层复用既有 sendMessage 提交，不另造路径）；
 // - 语音终稿触发的回复在 streaming 结束后自动 `tts.request`（仅语音来源的回合；纯文本路径零变化）；
+// - streaming 进行中收到的新终稿并入待发队列（\n 连接），streaming 收敛后合并提交一次
+//   （M3 后续：服务端同会话 durable FIFO 串行执行，逐条立即提交会堆积超时）；
 // - 降级提示经 `onNotice`（可见非阻塞）；组件卸载/disable 立即本地停播并释放连接。
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -183,6 +185,12 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
   const activeSessionIdRef = useRef<string | null>(null);
   /** 语音终稿提交后期待的回合：只有它触发 tts.request（纯文本路径不播报）。 */
   const voiceReplyPendingRef = useRef(false);
+  /**
+   * M3 后续（LLM 队列积压修复）：上一语音轮 streaming 未完成时收到的新终稿排队处
+   * （\n 连接合并为一次请求；语义=用户在助手回复期间继续说）。streaming 收敛
+   * （完成/错误终态均为 streaming:false）后立即 drain 提交并清空。
+   */
+  const pendingVoiceTranscriptRef = useRef<{ text: string; turnId: string } | null>(null);
   // 87aa41fd2 语义移植：语音回复可见状态 + 连接层错误（401 等）。
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
   const [error, setError] = useState("");
@@ -282,10 +290,18 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
         },
         createPort: optionsRef.current.transport?.createPort
           ?? (() => ({ onmessage: null, close: () => undefined })),
+        // M3 后续修复：gUM 启动超时等采集降级提示经既有 notice 通道
+        onNotice: (message) => optionsRef.current.onNotice?.(message),
       });
       const audioContext = optionsRef.current.transport?.createAudioContext
         ? optionsRef.current.transport.createAudioContext()
         : (new AudioContext() as unknown as AudioContextLike);
+      // M3 后续修复：enable 处于用户手势内——context 挂起（autoplay 门）时立即预热
+      // resume（手势内成功率最高）；尽力而为，失败不阻断装配（press/playNext 仍会自愈）。
+      if (audioContext.state === "suspended" && audioContext.resume !== undefined) {
+        void audioContext.resume().catch(() => undefined);
+      }
+
       playbackOutput = new PlaybackOutput({
         playback: playbackQueue,
         audioContext,
@@ -325,10 +341,20 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
         visual: visualController,
         sink: {
           onCommittedTranscript: (text, turnId) => {
-            const wasStreaming = conversationStore.getState().streaming;
+            // M3 后续修复：上一语音轮回复仍在 streaming → 新终稿并入待发队列（\n 连接，
+            // 合并为一次请求），streaming 收敛后再提交。服务端同会话 durable FIFO 串行
+            // 执行，逐条立即提交会连续堆积（实测连续语音轮末轮 50s+ 超时）。
+            if (conversationStore.getState().streaming) {
+              const pending = pendingVoiceTranscriptRef.current;
+              pendingVoiceTranscriptRef.current = {
+                text: pending === null ? text : `${pending.text}\n${text}`,
+                turnId,
+              };
+              return;
+            }
             optionsRef.current.onCommittedTranscript?.(text, turnId);
-            // 会话空闲时提交的终稿 → 期待本轮回复合成播报；若上层因 streaming 延迟提交则不期待
-            voiceReplyPendingRef.current = !wasStreaming;
+            // 会话空闲时提交的终稿 → 期待本轮回复合成播报（纯文本路径不置位）
+            voiceReplyPendingRef.current = true;
           },
           onVisualTurnCommitted: (info) => {
             // 带视觉的 turn 由服务端提交任务：客户端不回投终稿，仅可见状态
@@ -378,6 +404,7 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
     releaseServerSession();
     activeSessionIdRef.current = null; // P2-9c：媒体会话 identity 随 teardown 清空（重新 enable 前共享不可用）
     voiceReplyPendingRef.current = false;
+    pendingVoiceTranscriptRef.current = null; // M3 后续：未 drain 的排队终稿随语音关闭丢弃
     setClarifyQuestion(null);
     setPlaybackState("idle");
     setError("");
@@ -419,6 +446,21 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
     optionsRef.current.onNotice?.("会话已切换，已停止画面共享");
   }, [sessionId]);
 
+  /**
+   * M3 后续（LLM 队列积压修复）：streaming 收敛（完成/错误终态均为 streaming:false）
+   * 后排空待发语音终稿——合并文本作为一次请求立即提交并清空；drain 发出的回合仍按
+   * 语音来源处理（期待其回复合成播报），与空闲提交路径语义一致。
+   */
+  const drainPendingVoiceTranscript = useCallback((): void => {
+    const pending = pendingVoiceTranscriptRef.current;
+    if (pending === null) {
+      return;
+    }
+    pendingVoiceTranscriptRef.current = null;
+    voiceReplyPendingRef.current = true;
+    optionsRef.current.onCommittedTranscript?.(pending.text, pending.turnId);
+  }, []);
+
   // 语音回合的回复完成后请求本地 TTS（仅 voiceReplyPending 的回合；同一回复只请求一次）。
   useEffect(() => {
     if (!enabled) {
@@ -432,30 +474,31 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
       if (wasStreaming !== true || state.streaming !== false) {
         return;
       }
-      if (!voiceReplyPendingRef.current) {
-        return; // 非语音来源的回合（纯文本路径）：不播报
-      }
-      voiceReplyPendingRef.current = false;
-      const controller = controllerRef.current;
-      if (controller === null) {
-        return;
-      }
-      // 最后一条 assistant 消息（streaming 占位已收敛为完成消息）；按消息键去重
-      for (let i = state.messages.length - 1; i >= 0; i -= 1) {
-        const message = state.messages[i];
-        if (message.role !== "assistant") continue;
-        if (message.content.trim() === "") continue;
-        const responseKey = `${String(message.ts ?? 0)}:${String(message.content.length)}`;
-        if (controller.requestTts(message.content, responseKey)) {
-          setPlaybackState("synthesizing"); // 87aa41fd2：合成中可见状态
+      // 本轮语音来源的回复 → 请求本地 TTS（既有语义；非语音回合不播报）
+      if (voiceReplyPendingRef.current) {
+        voiceReplyPendingRef.current = false;
+        const controller = controllerRef.current;
+        if (controller !== null) {
+          // 最后一条 assistant 消息（streaming 占位已收敛为完成消息）；按消息键去重
+          for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+            const message = state.messages[i];
+            if (message.role !== "assistant") continue;
+            if (message.content.trim() === "") continue;
+            const responseKey = `${String(message.ts ?? 0)}:${String(message.content.length)}`;
+            if (controller.requestTts(message.content, responseKey)) {
+              setPlaybackState("synthesizing"); // 87aa41fd2：合成中可见状态
+            }
+            break;
+          }
         }
-        return;
       }
+      // M3 后续：streaming 收敛（完成/错误）→ 立即 drain 排队中的语音终稿（合并为一次请求）
+      drainPendingVoiceTranscript();
     });
     return () => {
       unsubscribe();
     };
-  }, [enabled]);
+  }, [enabled, drainPendingVoiceTranscript]);
 
   const press = useCallback((): void => {
     const controller = controllerRef.current;

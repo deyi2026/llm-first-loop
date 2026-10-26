@@ -39,6 +39,7 @@ function makeDeps(over: { connectionState?: MediaSessionClient["connectionState"
   } as unknown as MediaSessionClient;
   const playback = {
     stop: vi.fn(() => true),
+    recoverIfSuspended: vi.fn(async () => undefined),
   } as unknown as PlaybackOutput;
   const sink = { onCommittedTranscript: vi.fn(), onNotice: vi.fn() };
   const deps = {
@@ -75,6 +76,17 @@ describe("RealtimeSessionController", () => {
     (capture.press as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
     expect(await controller.press()).toBe(false);
   });
+  it("press self-heals a suspended AudioContext; resume failure does not block pressing", async () => {
+    const { deps, capture, playback } = makeDeps();
+    (playback.recoverIfSuspended as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("resume denied"),
+    );
+    const controller = new RealtimeSessionController(deps);
+    expect(await controller.press()).toBe(true); // 自愈失败仍照常开始采集
+    expect(playback.recoverIfSuspended).toHaveBeenCalledTimes(1);
+    expect(capture.press).toHaveBeenCalledTimes(1);
+  });
+
 
   it("release and cancel delegate to capture", () => {
     const { deps, capture } = makeDeps();
