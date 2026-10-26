@@ -296,6 +296,12 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
       const audioContext = optionsRef.current.transport?.createAudioContext
         ? optionsRef.current.transport.createAudioContext()
         : (new AudioContext() as unknown as AudioContextLike);
+      // M3 后续修复：enable 处于用户手势内——context 挂起（autoplay 门）时立即预热
+      // resume（手势内成功率最高）；尽力而为，失败不阻断装配（press/playNext 仍会自愈）。
+      if (audioContext.state === "suspended" && audioContext.resume !== undefined) {
+        void audioContext.resume().catch(() => undefined);
+      }
+
       playbackOutput = new PlaybackOutput({
         playback: playbackQueue,
         audioContext,

@@ -129,6 +129,22 @@ export class PlaybackOutput {
     }
   }
 
+  /**
+   * 自愈（M3 后续）：`AudioContext` 挂起（autoplay 门）时尽力 `resume()` 一次。
+   * 供新一轮用户手势（enable / press）调用——手势内恢复成功率最高；失败静默不抛，
+   * 播放队列语义不变（仍挂起时 `playNext` 走既有降级路径）。
+   */
+  async recoverIfSuspended(): Promise<void> {
+    if (this.options.audioContext.state !== "suspended") {
+      return;
+    }
+    try {
+      await this.options.audioContext.resume?.();
+    } catch {
+      /* 尽力而为：自愈失败不影响调用方流程 */
+    }
+  }
+
   private prepareData(chunk: PlaybackChunk): ArrayBuffer {
     return chunk.format === "pcm16" ? pcm16ToWav(chunk.data) : chunk.data;
   }

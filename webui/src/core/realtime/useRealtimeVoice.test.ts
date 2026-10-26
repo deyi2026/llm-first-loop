@@ -282,6 +282,37 @@ describe("useRealtimeVoice M1 客户端闭环", () => {
     view.unmount();
     expect(env.sockets[0].closedWith).toBe(1000);
   });
+  // ---- M3 后续：autoplay 恢复路径（enable 手势内预热 resume） ------------------------
+
+  it("enable warms up a suspended AudioContext with resume inside the user gesture", async () => {
+    const env = makeEnv();
+    const resumeCalls: string[] = [];
+    (env.transport as RealtimeVoiceTransport).createAudioContext = () =>
+      ({
+        destination: {},
+        state: "suspended",
+        resume: () => {
+          resumeCalls.push("warmup");
+          return Promise.reject(new Error("autoplay gate")); // 预热失败也必须不阻断装配
+        },
+        decodeAudioData: async () => ({ decoded: true }),
+        createBufferSource: () => new FakeSource(),
+        close: () => Promise.resolve(),
+      }) as unknown as AudioContextLike;
+    const view = env.render();
+    await act(async () => {
+      await view.result.current.enable();
+    });
+    act(() => {
+      env.sockets[0].onopen?.();
+    });
+    expect(view.result.current.connectionState).toBe("ready"); // 装配完成未受阻
+    expect(resumeCalls).toEqual(["warmup"]);
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+
 
   it("surfaces session creation failure via a visible notice and stays disabled", async () => {
     const env = makeEnv();

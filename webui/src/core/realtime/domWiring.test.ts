@@ -302,3 +302,28 @@ describe("PlaybackOutput", () => {
     expect(output.isPlaying).toBe(false);
   });
 });
+  it("recoverIfSuspended resumes a hung context once without touching the queue", async () => {
+    const ctx = new FakeAudioContext(); // 初始 state="suspended"
+    const output = new PlaybackOutput({ playback: new PlaybackQueue(() => 1), audioContext: ctx });
+    await output.recoverIfSuspended();
+    expect(ctx.resumed).toBe(true);
+    expect(ctx.state).toBe("running");
+    expect(output.isPlaying).toBe(false); // 只自愈，不偷跑播放队列
+  });
+
+  it("recoverIfSuspended swallows resume failure (self-heal never throws)", async () => {
+    let resumeCalls = 0;
+    const ctx: AudioContextLike = {
+      destination: {},
+      state: "suspended",
+      resume: () => {
+        resumeCalls += 1;
+        return Promise.reject(new Error("NotAllowedError"));
+      },
+      decodeAudioData: async () => ({ decoded: true }),
+      createBufferSource: () => new FakeSource(),
+    };
+    const output = new PlaybackOutput({ playback: new PlaybackQueue(() => 1), audioContext: ctx });
+    await expect(output.recoverIfSuspended()).resolves.toBeUndefined();
+    expect(resumeCalls).toBe(1);
+  });
