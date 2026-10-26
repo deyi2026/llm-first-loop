@@ -1358,4 +1358,141 @@ describe("useRealtimeVoice main 侧修复语义移植（87aa41fd2 / 6a45f1741）
       view.result.current.disable();
     });
   });
+
 });
+
+// ---------------------------------------------------------------------------
+// M3 后续：语音轮合并（上一轮 streaming 期间的新终稿排队，收敛后合并提交一次）
+// 根因：turn.committed 立即 sendMessage，服务端同会话 durable FIFO 串行执行，
+// 连续语音轮堆积（实测末轮 50s+ 超时）。
+// ---------------------------------------------------------------------------
+
+describe("useRealtimeVoice 语音轮合并（M3 后续：LLM 队列积压）", () => {
+  beforeEach(() => {
+    conversationStore.setState({
+      messages: [],
+      streaming: false,
+      streamingIndex: -1,
+      lastError: null,
+      streamStartedAt: null,
+      backgroundRunning: false,
+      activeRunGeneration: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("空闲时收到 committed 立即提交（不排队；收敛也不补发）", async () => {
+    const env = makeEnv();
+    const view = await enableAndOpen(env);
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t1", text: "第一句" }) });
+    });
+    expect(env.committed).toHaveBeenCalledTimes(1);
+    expect(env.committed).toHaveBeenCalledWith("第一句", "t1");
+    // 无排队终稿：streaming 收敛不产生任何补发
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("好的")] });
+    });
+    expect(env.committed).toHaveBeenCalledTimes(1);
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+
+  it("streaming 中的 committed 排队合并，收敛后 drain 为一次提交（仍按语音来源播报）", async () => {
+    const env = makeEnv();
+    const view = await enableAndOpen(env);
+    // 第一轮：空闲提交 → 期待播报
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t1", text: "看下天气" }) });
+    });
+    expect(env.committed).toHaveBeenCalledTimes(1);
+    // 回复 streaming 进行中，用户继续说两轮 → 排队合并（\n 连接），不立即提交
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t2", text: "顺便查下湿度" }) });
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t3", text: "再看看明天" }) });
+    });
+    expect(env.committed).toHaveBeenCalledTimes(1); // 排队期间零提交
+    // 第一轮回复收敛 → 第一轮 tts.request + 合并终稿一次 drain（携带最后 turn id）
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("今天晴，25 度")] });
+    });
+    expect(env.committed).toHaveBeenCalledTimes(2);
+    expect(env.committed).toHaveBeenLastCalledWith("顺便查下湿度\n再看看明天", "t3");
+    // drain 发出的回合按语音来源处理：其回复收敛后触发第二次 tts.request
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("晴；湿度 60%", 234.56)] });
+    });
+    const tts = env.sockets[0].sentTextEvents().filter((event) => event.type === "tts.request");
+    expect(tts).toHaveLength(2);
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+
+  it("被打断的是纯文本回复时，排队终稿照常 drain 且后续回合按语音来源播报", async () => {
+    const env = makeEnv();
+    const view = await enableAndOpen(env);
+    // 用户手打字的回复 streaming 中（voiceReplyPending=false）→ 语音终稿排队
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t1", text: "接着我的话继续" }) });
+    });
+    expect(env.committed).not.toHaveBeenCalled();
+    // 文本回复收敛（非语音来源：不触发 tts.request）→ drain 排队终稿
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("手打字的回复")] });
+    });
+    expect(env.committed).toHaveBeenCalledTimes(1);
+    expect(env.committed).toHaveBeenCalledWith("接着我的话继续", "t1");
+    expect(env.sockets[0].sentTextEvents().filter((event) => event.type === "tts.request")).toHaveLength(0);
+    // drain 回合的回复收敛 → 播报（drain 回合按语音来源处理）
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("语音回复内容")] });
+    });
+    expect(env.sockets[0].sentTextEvents().filter((event) => event.type === "tts.request")).toHaveLength(1);
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+
+  it("disable 丢弃未 drain 的排队终稿（会话收敛后不补发）", async () => {
+    const env = makeEnv();
+    const view = await enableAndOpen(env);
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t1", text: "第一句" }) });
+    });
+    act(() => {
+      conversationStore.setState({ streaming: true });
+    });
+    act(() => {
+      env.sockets[0].onmessage?.({ data: serverEvent({ type: "turn.committed", turn_id: "t2", text: "排队后关闭" }) });
+    });
+    act(() => {
+      view.result.current.disable();
+    });
+    act(() => {
+      conversationStore.setState({ streaming: false, messages: [assistantMessage("收尾")] });
+    });
+    expect(env.committed).toHaveBeenCalledTimes(1); // 仅第一句；排队终稿随 disable 丢弃
+  });
+});
+
+
