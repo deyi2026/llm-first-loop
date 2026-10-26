@@ -136,8 +136,11 @@ def verify(wheel, *, offline):
         assert Path(paths["SKILLS_DIR"]).is_relative_to(venv)
         run([lfl, "chat", "--help"], cwd=workspace, env=env)
         run([lfl, "event-inventory"], cwd=workspace, env=env)
-        selected = root / "selected-workspace"
-        selected.mkdir()
+        # The selected workspace is independent of the process CWD, but must
+        # stay under an explicitly allowed root. Do not weaken workspace policy
+        # just to make the isolated wheel smoke work on Linux /tmp.
+        selected = root / "state" / "selected-workspace"
+        selected.mkdir(parents=True)
         server = verify_server([lfl, "--workspace", str(selected), "web"], root, env, port, selected)
         assert not (root / "unexpected-network.log").exists(), "Smoke attempted provider/external access"
         assert not (workspace / "data").exists(), "State leaked into arbitrary CWD"
