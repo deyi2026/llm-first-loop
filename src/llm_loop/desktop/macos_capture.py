@@ -18,7 +18,6 @@ import hashlib
 import struct
 import subprocess
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.desktop import macos_permissions
@@ -30,6 +29,7 @@ from llm_loop.desktop.models import (
     ImageInfo,
     WindowInfo,
 )
+from llm_loop.timekeeping import system_local_now
 
 CAPTURE_TIMEOUT_S = 10.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -76,7 +76,7 @@ def capture_window(
             detail="屏幕录制授权未授予；已拒绝调用 screencapture（无授权会静默产出黑图/壁纸）",
         )
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%f")
+    stamp = system_local_now().strftime("%Y%m%dT%H%M%S_%f")
     path = out_dir / f"win-{window.window_id}-{stamp}.png"
     run = runner or subprocess.run
     try:
@@ -122,7 +122,7 @@ def capture_window(
         height=height,
         scale=scale,
         bounds_pt=window.bounds_pt,
-        captured_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        captured_at=system_local_now().isoformat(timespec="seconds"),
         bytes=len(data),
     )
     return CaptureOutcome(image=image, error=None, degraded=degraded)

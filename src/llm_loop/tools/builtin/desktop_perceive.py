@@ -22,7 +22,6 @@ import json
 import platform as _platform
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +36,7 @@ from llm_loop.desktop.models import (
     jsonable,
 )
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
+from llm_loop.timekeeping import system_local_now
 
 _ACTIONS = ("status", "apps", "windows", "snapshot")
 _ALLOWED_FIELDS: dict[str, set[str]] = {
@@ -212,7 +212,7 @@ class DesktopPerceiveTool:
         if self._audit is None:
             return
         row = {
-            "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
+            "ts": system_local_now().isoformat(timespec="milliseconds"),
             "session_id": str(self._session_id_getter() or ""),
             "tool": self.name,
             "window_id": window_id,

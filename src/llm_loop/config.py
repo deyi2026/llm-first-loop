@@ -1067,6 +1067,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         desktop_privacy_extra=env_values.get("LFL_DESKTOP_PRIVACY_EXTRA", "").strip(),
         desktop_see_allowlist=env_values.get("LFL_DESKTOP_SEE_ALLOWLIST", "").strip(),
         browser_receipt_diff_summary_enabled=env_bool("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False),
+        exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=env_one(_env_run_mode, "RUN_MODE"),
         tool_schema_lazy=env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
