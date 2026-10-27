@@ -28,21 +28,11 @@ from llm_loop.runtime.service_control import (
     release_admission_barrier,
     spawn_service_control_worker,
 )
+from llm_loop.runtime.service_control_derivation import (
+    RestartTargetDerivation,
+    derive_restart_target,
+)
 from llm_loop.tools.review_gate import GATE_NOTE_PREFIX
-
-
-def _derive_restart_target(code_root: str) -> str:
-    """update 缺省目标：按 code_root 路径名推导，推导不出则 all.
-
-    Web/Feishu/Learning 通常同源单 worktree（路径不含服务名）→ all；若部署按
-    服务拆分 worktree（路径含服务名）则只重启该服务。缺省值可被显式
-    ``restart_target`` 覆盖。
-    """
-    name = Path(code_root).expanduser().name.lower()
-    for service in ("web", "feishu", "learning"):
-        if service in name:
-            return service
-    return "all"
 
 
 def _missing_artifacts(code_root: str) -> list[str]:
@@ -185,7 +175,10 @@ class ServiceControlTool:
             "restart_target": {
                 "type": "string",
                 "enum": ["web", "feishu", "learning", "all"],
-                "description": "update 可选：物理生效目标，缺省按 code_root 推导（推导不出则 all）",
+                "description": (
+                    "update 可选：物理生效目标；缺省按 code_root basename 的 token 精确推导"
+                    "（如 feishu-code→feishu），推导不出则 NEEDS_TARGET 拒绝，需显式指定"
+                ),
             },
             "expected_generation": {
                 "type": "integer",
@@ -502,18 +495,37 @@ class ServiceControlTool:
         return deployment, None
 
     def _update(self, kwargs: dict) -> ToolResult:
-        """L12/L13/L15: 单语义更新——内部编排 publish 的绑定+CAS 与 restart 两阶段."""
+        """L12/L13/L15: 单语义更新——内部编排 publish 的绑定+CAS 与 restart 两阶段.
+
+        T2（2026-10-27）：缺省目标按 basename token 精确推导（单实现源
+        ``service_control_derivation``），推导不出不得静默兜底 all——校验阶段
+        NEEDS_TARGET 拒绝（先于 publish/CAS，零副作用）；显式传参优先，回执
+        仅在推导生效时标注 derived_from。
+        """
         code_root = str(kwargs.get("code_root", "") or "").strip()
         reason = str(kwargs.get("reason", "") or "").strip()
         if not code_root:
             return self._failure("[参数错误] update 必须提供 code_root（待上线的 git 代码根）")
         if not reason:
             return self._failure("[参数错误] update 必须提供非空 reason（本次更新意图）")
-        restart_target = str(
+        explicit_target = str(
             kwargs.get("restart_target", "") or kwargs.get("target", "") or ""
         ).strip().lower()
-        if not restart_target:
-            restart_target = _derive_restart_target(code_root)
+        derivation: RestartTargetDerivation | None = None
+        if explicit_target:
+            restart_target = explicit_target
+        else:
+            derivation = derive_restart_target(code_root)
+            if derivation.target is None:
+                return self._failure(
+                    "[service_control update rejected] NEEDS_TARGET: code_root basename "
+                    f"{derivation.basename!r} 无法唯一推导 restart_target（token 精确匹配"
+                    "要求恰好一个服务名 token；无服务名或多服务歧义均不推导）；可选 "
+                    "target=web/feishu/learning/all；示例: service_control(action=update, "
+                    f"code_root={code_root}, restart_target=web, reason=<意图>)；"
+                    "本次未产生任何 publish/CAS 写入，请显式指定后重试"
+                )
+            restart_target = derivation.target
         if restart_target not in {"web", "feishu", "learning", "all"}:
             return self._failure(
                 "[参数错误] update restart_target 必须是 web/feishu/learning/all"
@@ -561,15 +573,26 @@ class ServiceControlTool:
             )
 
         live_hint = self._live_identity_hint(deployment, restart_target)
+        # 先组装局部 updated（dict[str, object]），最后整体赋给 body["updated"]；
+        # 直接对 body["updated"] 下标赋值会触发 pyright reportIndexIssue（值为
+        # object），且键集、层级、出现条件必须保持不变。
+        updated: dict[str, object] = {
+            "action_id": receipt.action_id,
+            "target": restart_target,
+            "generation": deployment.generation,
+            "git_head": deployment.git_head,
+            "webui_artifact_sha256": deployment.webui_artifact_sha256,
+            "reason": reason,
+        }
+        if derivation is not None:
+            # T2：目标由推导得来 → 显式标注推导依据（basename 与命中 token）；
+            # 显式传参时不标注。
+            updated["derived_from"] = {
+                "basename": derivation.basename,
+                "matched_token": derivation.matched_token,
+            }
         body: dict[str, object] = {
-            "updated": {
-                "action_id": receipt.action_id,
-                "target": restart_target,
-                "generation": deployment.generation,
-                "git_head": deployment.git_head,
-                "webui_artifact_sha256": deployment.webui_artifact_sha256,
-                "reason": reason,
-            },
+            "updated": updated,
             "next": (
                 "desired 已固化并已受理物理重启（异步）；用 "
                 f"service_control(action=status, action_id={receipt.action_id}) 查询实际生效身份与证据"

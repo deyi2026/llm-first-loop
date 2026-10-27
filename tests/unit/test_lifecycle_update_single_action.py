@@ -84,7 +84,11 @@ def test_update_single_action_publishes_and_restarts(tmp_path: Path) -> None:
     store = _store_with_initial_desired(tmp_path, code, runtime)
     spawned: list[str] = []
     result = _tool(store, spawned).execute(
-        action="update", code_root=str(code), reason="上线 cache-hit 修复"
+        # T2（2026-10-27）：all 兜底已移除——AC-13 编排语义改为显式指定目标
+        action="update",
+        code_root=str(code),
+        reason="上线 cache-hit 修复",
+        restart_target="all",
     )
     assert result.status.value == "success", result.content
     # 固化期望部署：generation +1，git_head/产物 hash 如实回报。
@@ -99,7 +103,7 @@ def test_update_single_action_publishes_and_restarts(tmp_path: Path) -> None:
     assert len(spawned) == 1
     receipt = store.read_action(spawned[0])
     assert receipt is not None
-    assert receipt.target == "all"  # code_root 路径不含服务名 → all
+    assert receipt.target == "all"  # 显式 restart_target=all（T2 后缺省不再兜底 all）
     assert receipt.deployment_generation == 2
 
 
@@ -123,6 +127,12 @@ def test_update_derives_target_from_code_root_name(tmp_path: Path) -> None:
     )
     assert result.status.value == "success", result.content
     assert store.read_action(spawned[0]).target == "feishu"
+    # T2：目标由推导得来 → 回执显式标注推导依据（basename 与命中 token）。
+    body = json.loads(result.content)
+    assert body["updated"]["derived_from"] == {
+        "basename": "feishu-code",
+        "matched_token": "feishu",
+    }
 
 
 def test_update_requires_code_root_and_reason(tmp_path: Path) -> None:
@@ -145,7 +155,7 @@ def test_update_reports_artifact_missing_with_path(tmp_path: Path) -> None:
 
     shutil.rmtree(code / "webui" / "dist")
     result = _tool(store, []).execute(
-        action="update", code_root=str(code), reason="缺失产物"
+        action="update", code_root=str(code), reason="缺失产物", restart_target="web"
     )
     assert result.status.value == "failure"
     assert "artifact_missing" in result.content
@@ -158,7 +168,11 @@ def test_update_generation_conflict_returns_current_value(tmp_path: Path) -> Non
     code, runtime = _git_fixture(tmp_path)
     store = _store_with_initial_desired(tmp_path, code, runtime)
     result = _tool(store, []).execute(
-        action="update", code_root=str(code), reason="并发冲突", expected_generation=99
+        action="update",
+        code_root=str(code),
+        reason="并发冲突",
+        expected_generation=99,
+        restart_target="all",
     )
     assert result.status.value == "failure"
     assert "generation_conflict" in result.content
@@ -173,7 +187,7 @@ def test_update_reports_live_identity_unchanged(tmp_path: Path) -> None:
     _write_live_manifests(runtime, _git_head(code), ("web", "feishu", "learning"))
     spawned: list[str] = []
     result = _tool(store, spawned).execute(
-        action="update", code_root=str(code), reason="同版本重发"
+        action="update", code_root=str(code), reason="同版本重发", restart_target="all"
     )
     assert result.status.value == "success", result.content
     body = json.loads(result.content)
@@ -214,3 +228,120 @@ def test_cli_publish_conflict_returns_current_value(
     assert "generation_conflict" in err
     assert '"current": 1' in err
     assert store.read().generation == 1
+
+
+# --------------------------------------------------------------------------
+# T2（2026-10-27）：update 缺省目标 token 精确推导——拒绝语义与零副作用
+# --------------------------------------------------------------------------
+
+
+def test_update_rejects_when_no_service_token_needs_target(tmp_path: Path) -> None:
+    """T2: basename 无服务名 token → NEEDS_TARGET 校验阶段拒绝，零副作用。"""
+    code, runtime = _git_fixture(tmp_path, name="shared-root")
+    store = _store_with_initial_desired(tmp_path, code, runtime)
+    spawned: list[str] = []
+    result = _tool(store, spawned).execute(
+        action="update", code_root=str(code), reason="无服务名路径"
+    )
+    assert result.status.value == "failure"
+    assert "NEEDS_TARGET" in result.content
+    assert "web/feishu/learning/all" in result.content  # 可选 target 列表
+    assert "restart_target=web" in result.content  # 一条示例命令
+    assert store.read().generation == 1  # 未推进 desired（无 CAS 写入）
+    assert spawned == []
+    assert list(store.actions_dir.glob("*.json")) == []  # 无任何 action 落盘
+
+
+def test_update_rejects_ambiguous_multi_service_derivation(tmp_path: Path) -> None:
+    """T2: basename 含多个服务名 token（web-and-feishu）→ 歧义拒绝，零副作用。"""
+    code, runtime = _git_fixture(tmp_path, name="web-and-feishu")
+    store = _store_with_initial_desired(tmp_path, code, runtime)
+    spawned: list[str] = []
+    result = _tool(store, spawned).execute(
+        action="update", code_root=str(code), reason="多服务歧义路径"
+    )
+    assert result.status.value == "failure"
+    assert "NEEDS_TARGET" in result.content
+    assert store.read().generation == 1  # 未推进 desired（无 CAS 写入）
+    assert spawned == []
+    assert list(store.actions_dir.glob("*.json")) == []
+
+
+def test_update_explicit_target_overrides_derivable_name(tmp_path: Path) -> None:
+    """T2: 显式传参优先——路径可推导 feishu，但显式 restart_target=all 时用 all，
+    且回执不标注 derived_from（仅推导得来时标注）。"""
+    code, runtime = _git_fixture(tmp_path, name="feishu-code")
+    store = _store_with_initial_desired(tmp_path, code, runtime)
+    spawned: list[str] = []
+    result = _tool(store, spawned).execute(
+        action="update", code_root=str(code), reason="显式优先", restart_target="all"
+    )
+    assert result.status.value == "success", result.content
+    assert store.read_action(spawned[0]).target == "all"
+    assert "derived_from" not in json.loads(result.content)["updated"]
+
+
+def test_cli_update_rejects_needs_target_before_any_publish(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """T2（CLI 面）：推导不出 → rc=2 + NEEDS_TARGET，先于 publish/CAS，零副作用。"""
+    code, runtime = _git_fixture(tmp_path, name="shared-root")
+    store = _store_with_initial_desired(tmp_path, code, runtime)
+    monkeypatch.setattr(sc, "spawn_service_control_worker", lambda *args, **kwargs: None)
+
+    rc = sc.main(["update", "--code-root", str(code), "--runtime-root", str(runtime)])
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert payload["error"] == "NEEDS_TARGET"
+    assert payload["targets"] == ["web", "feishu", "learning", "all"]  # 可选列表
+    assert "--target web" in payload["example"]  # 一条示例命令
+    assert store.read().generation == 1  # 未推进 desired（无 CAS 写入）
+    assert list(store.actions_dir.glob("*.json")) == []
+
+
+def test_cli_update_derived_target_receipt_annotates_derivation(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """T2（CLI 面）：推导生效 → 回执 target=learning 并标注 derived_from。"""
+    code, runtime = _git_fixture(tmp_path, name="mirror-learning")
+    store = _store_with_initial_desired(tmp_path, code, runtime)
+    monkeypatch.setattr(sc, "spawn_service_control_worker", lambda *args, **kwargs: None)
+
+    rc = sc.main(["update", "--code-root", str(code), "--runtime-root", str(runtime)])
+
+    assert rc == 0
+    accepted = json.loads(capsys.readouterr().out.strip().splitlines()[0])
+    assert accepted["target"] == "learning"
+    assert accepted["derived_from"] == {
+        "basename": "mirror-learning",
+        "matched_token": "learning",
+    }
+    assert store.read().generation == 2  # publish/CAS 正常推进（拒绝不影响合法路径）
+
+
+def test_cli_update_explicit_target_wins_without_derivation_annotation(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """T2（CLI 面）：显式 --target 优先于可推导路径名，且不标注 derived_from。"""
+    code, runtime = _git_fixture(tmp_path, name="feishu-code")
+    store = _store_with_initial_desired(tmp_path, code, runtime)
+    monkeypatch.setattr(sc, "spawn_service_control_worker", lambda *args, **kwargs: None)
+
+    rc = sc.main(
+        [
+            "update",
+            "--code-root",
+            str(code),
+            "--runtime-root",
+            str(runtime),
+            "--target",
+            "web",
+        ]
+    )
+
+    assert rc == 0
+    accepted = json.loads(capsys.readouterr().out.strip().splitlines()[0])
+    assert accepted["target"] == "web"
+    assert "derived_from" not in accepted
+    assert store.read().generation == 2
