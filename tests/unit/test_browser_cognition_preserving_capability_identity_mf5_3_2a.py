@@ -79,7 +79,7 @@ def test_mf5_3_2a_authority_split_is_unchanged() -> None:
     assert perceive_actions == {"snapshot", "hydrate", "diff", "wait"}
     assert "navigate" not in perceive_actions
     # M1 (DESIGN-20261027 B1/B2): upload/type are additive provider verbs.
-    # M2-A (DESIGN-20261027 B3): press_key is additive too (page-scoped).
+    # M2-A (DESIGN-20261027 B3/B4): press_key/hover are additive too.
     assert operate_verbs == {
         "navigate",
         "click",
@@ -90,6 +90,7 @@ def test_mf5_3_2a_authority_split_is_unchanged() -> None:
         "type",
         "upload",
         "press_key",
+        "hover",
     }
     assert "wait" not in operate_verbs
 

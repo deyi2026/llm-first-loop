@@ -40,6 +40,9 @@ _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
     # the key events land on the host-bound page's focused element, so the
     # precondition is the page grounding, exactly like navigate.
     "press_key": {"version_scopes": {"resource"}, "args": {"keys"}},
+    # M2-A (DESIGN-20261027 B4): object verb; zero-arg pointer move whose
+    # only actuation is one Input.dispatchMouseEvent(mouseMoved).
+    "hover": {"version_scopes": {"object"}, "args": set()},
 }
 _TERMINAL = frozenset({"ok", "failed", "rejected"})
 
@@ -839,7 +842,7 @@ class BrowserActionAdapter:
         if not self.guard_enabled or self.guard_collector is None:
             return None
         verb = str(action["verb"])
-        if verb not in {"click", "fill", "select", "scroll", "type", "upload"}:
+        if verb not in {"click", "fill", "select", "scroll", "type", "upload", "hover"}:
             return None
         try:
             baseline = self.perception.guard_baseline(
@@ -1161,7 +1164,7 @@ class BrowserActionAdapter:
         scope_ref = str(action["scope_ref"])
         physical_target: str | None = None
         semantic_object: dict[str, Any] | None = None
-        if verb in {"click", "fill", "select", "scroll", "type", "upload"}:
+        if verb in {"click", "fill", "select", "scroll", "type", "upload", "hover"}:
             object_grounding = (before_bundle.get("object_grounding") or {}).get(target_id)
             semantic_object = (object_grounding or {}).get("semantic_object") if isinstance(object_grounding, dict) else None
             if not isinstance(semantic_object, dict) or str(semantic_object.get("scope_ref") or "") != scope_ref:

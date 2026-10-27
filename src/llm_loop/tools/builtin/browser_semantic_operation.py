@@ -46,7 +46,7 @@ _IDENTITY_KEYS = {"kind", "role", "name", "name_normalized"}
 _MAX_CANDIDATE_PROJECTION = 20
 # M1 (DESIGN-20261027 B1/B2): upload/type join the object-verb vocabulary as
 # additive members; the five frozen verbs keep their exact pre-M1 semantics.
-_OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload"}
+_OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload", "hover"}
 # M2-A (DESIGN-20261027 B3): press_key is page-scoped (resource grounding);
 # hover/dialog join in their own commits. Pre-M2 verbs keep exact semantics.
 _MUTATION_VERBS = _OBJECT_VERBS | {"navigate", "press_key"}
@@ -412,6 +412,23 @@ def _press_key_step_clause(
     }
 
 
+def _hover_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M2-A B4: hover is a zero-arg object verb - the exact-target grounding
+    and version guard do all the validation; the positive-area gate runs in
+    the actuator on the measured rect (element_not_visible, zero pointer
+    events on rejection)."""
+    if set(step) != {"do", "target"}:
+        raise BrowserSemanticOperationContractError("hover_step_fields_mismatch")
+    return {
+        "kind": "mutate",
+        "verb": "hover",
+        "target": cls._short_target_to_clause_target(step.get("target")),
+        "args": {},
+    }
+
+
 def _wait_text_step_clause(step: dict[str, Any]) -> dict[str, Any]:
     """MF wait_text compile (extracted from _compile_short_steps verbatim:
     same field set, error codes, and timeout bounding - M2-A hygiene only)."""
@@ -491,7 +508,7 @@ def _lift_m1_compact_echoes(compact: dict[str, Any], last: dict[str, Any], statu
         compact["upload_files"] = last["upload_files"]
     if isinstance(last.get("type_echo"), dict):
         compact["type_echo"] = last["type_echo"]
-    if status == "halted" and str(last.get("verb") or "") in {"upload", "type", "press_key"}:
+    if status == "halted" and str(last.get("verb") or "") in {"upload", "type", "press_key", "hover"}:
         blocked_receipt = last.get("action_receipt")
         if isinstance(blocked_receipt, dict):
             retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
@@ -503,7 +520,7 @@ class BrowserSemanticOperationTool:
     name = "browser_operate"
     description = (
         "Browser 操作能力：一次调用只表达一个已经决定的 mutation。"
-        "do=navigate|click|set_text|append_text|select|scroll|type|upload|press_key；对象 target 三选一寻址"
+        "do=navigate|click|set_text|append_text|select|scroll|type|upload|press_key|hover；对象 target 三选一寻址"
         "(EVO-20261010-1e06d6b4)：{kind,name[,role]} 原始 name 逐字节 exact；"
         "{kind,name_normalized[,role]} 命中 browser_perceive snapshot 暴露的确定性归一形式"
         "(零宽剥离+空白折叠)；{grounding_ref} 复用先前 snapshot/未命中候选清单中的对象 ref"
@@ -522,6 +539,9 @@ class BrowserSemanticOperationTool:
         "走 Input.dispatchKeyEvent 成对 keyDown/keyUp；黑名单 Meta+W/Q/T/N/S/P/H/M/`、"
         "Meta+Tab、Meta+Space、Ctrl+Meta+Q、Escape+Meta 类确定性拒绝 key_not_allowed"
         "（编译期拒绝，零 CDP 请求，标签页不受影响）；键落在当前焦点元素。"
+        "M2-A B4：do=hover 移动指针到 exact 元素中心触发悬停（仅一次 "
+        "Input.dispatchMouseEvent mouseMoved，绝不 click）；坐标为 CSS px；"
+        "零面积元素确定性拒绝 element_not_visible 且零指针事件。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
         "不判断 task completion。"
@@ -796,6 +816,19 @@ class BrowserSemanticOperationTool:
             "additionalProperties": False,
         },
         {
+            # M2-A B4 (DESIGN-20261027 §5.1): pointer-only hover on an exact
+            # element center (one mouseMoved, never a click); zero-area
+            # targets reject element_not_visible before any pointer event.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["hover"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "target": _SHORT_TARGET_SCHEMA,
+            },
+            "required": ["do", "target"],
+            "additionalProperties": False,
+        },
+        {
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["wait"]},
@@ -844,13 +877,14 @@ class BrowserSemanticOperationTool:
     # but wait and batching are no longer part of the provider-facing cognitive contract.
     # M1: upload/type variants extend the mutation prefix (5 -> 7); wait variants stay last.
     # M2-A B3: press_key extends the mutation prefix (7 -> 8); wait stays last.
-    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:8]
+    # M2-A B4: hover extends it further (8 -> 9); wait stays last.
+    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:9]
     parameters = {
         "type": "object",
         "properties": {
             "do": {
                 "type": "string",
-                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key"],
+                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover"],
             },
             "url": {"type": "string", "minLength": 1},
             "target": _SHORT_TARGET_SCHEMA,
@@ -1088,7 +1122,7 @@ class BrowserSemanticOperationTool:
     # Phase3 M3（G4 审查 P0-1 修复）：clauses 是 dict 列表（_validate_clauses 契约），
     # 本方法必须用 .get 而非 getattr 访问——初版 getattr 对 dict 恒缺省，登记变死代码。
     # target 取 args.url（navigate）或 target 标识（click 等），D6：不含页面正文。
-    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload", "press_key"})
+    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload", "press_key", "hover"})
 
     @classmethod
     def _register_mutation_side_effects(cls, clauses: list[dict], session_id: str) -> int:
@@ -1221,6 +1255,10 @@ class BrowserSemanticOperationTool:
                 if verb == "press_key":
                     # M2-A B3: see _press_key_step_clause (blacklist at compile time).
                     clauses.append(_press_key_step_clause(cls, step))
+                    continue
+                if verb == "hover":
+                    # M2-A B4: see _hover_step_clause (zero-arg object verb).
+                    clauses.append(_hover_step_clause(cls, step))
                     continue
                 if verb == "wait_text":
                     # MF wait_text (helper extracted verbatim in M2-A).
@@ -1544,7 +1582,7 @@ class BrowserSemanticOperationTool:
                     ),
                 }
             return {"do": "rebind", "status": "ok", "rebound": rebound}
-        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key"}
+        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover"}
         direct_model_friendly = isinstance(request.get("do"), str) and "steps" not in request
         historical_steps = set(request) == {"steps"}
         model_friendly = direct_model_friendly or historical_steps

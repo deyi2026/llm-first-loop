@@ -19,7 +19,8 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 # M1 (DESIGN-20261027 B1/B2): two additive object verbs. The five frozen verbs
 # keep their exact pre-M1 spelling and mapping.
-_OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload"}
+# M2-A B4: hover joins the object verbs (exact target, one mouseMoved).
+_OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload", "hover"}
 # M2-A B3: press_key joins as a page-scoped verb (resource grounding like
 # navigate - key events land on the focused element, no object target).
 _SUPPORTED_VERBS = _OBJECT_VERBS | {"navigate", "press_key"}
@@ -35,7 +36,7 @@ class BrowserSemanticExecuteTool:
         SEMANTIC_OPERATION_METHOD_CARD
         + " 用法：必须先 browser_perceive(action=snapshot) 观察并取得 exact ref；没有 snapshot/ref 不要调用。"
         "模型按用户意图选择一个 exact "
-        "GroundingRef；对象操作调用 browser_semantic_execute(verb=click|fill|select|scroll|type|upload, "
+        "GroundingRef；对象操作调用 browser_semantic_execute(verb=click|fill|select|scroll|type|upload|hover, "
         "target_ref=<SemanticObject.grounding_ref>, args=<verb 参数>)；navigate 使用该 snapshot "
         "返回的 resource_ref；不要把 URL、名称或 scope_ref 猜作 target_ref。ActionReceipt 已携带 post-capture/diff "
         "机械证据；仅当下一步需要更广页面语义、diff 不完整或发生边界变化时再 browser_perceive snapshot。"
@@ -50,7 +51,9 @@ class BrowserSemanticExecuteTool:
         "press_key args={keys}（M2-A B3：页面级单键/组合键，走 Input.dispatchKeyEvent 成对 "
         "keyDown/keyUp；黑名单 Meta+W/Q/T/N/S/P/H/M/`、Meta+Tab、Meta+Space、Ctrl+Meta+Q、"
         "Escape+Meta 类确定性拒绝 key_not_allowed 且零 CDP 请求；target_ref 传 snapshot 的 "
-        "resource_ref，键落在当前焦点元素）。工具内部只把模型已选择的"
+        "resource_ref，键落在当前焦点元素）；"
+        "hover args={}（M2-A B4：exact 对象指针悬停，仅一次 mouseMoved 绝不 click；"
+        "坐标 CSS px；零面积元素 element_not_visible 且零指针事件）。工具内部只把模型已选择的"
         "exact ref 编译为 SemanticAction 的 scope/version/target/action_id 等机械字段，并交给既有"
         "single-dispatch/version guard；不自动选择目标，不自动 retry，不自动 rebind/latest，"
         "ActionReceipt ok 不等于任务完成，工具不判断任务完成。"
@@ -60,7 +63,7 @@ class BrowserSemanticExecuteTool:
         "properties": {
             "verb": {
                 "type": "string",
-                "enum": ["click", "fill", "select", "navigate", "scroll", "type", "upload"],
+                "enum": ["click", "fill", "select", "navigate", "scroll", "type", "upload", "press_key", "hover"],
             },
             "target_ref": {
                 "type": "string",
@@ -75,7 +78,7 @@ class BrowserSemanticExecuteTool:
                 "description": (
                     "closed verb args: click={}；fill={text,mode} mode=replace|append；"
                     "select={value}；navigate={url}；scroll={delta_pages}；"
-                    "type={text}；upload={paths}"
+                    "type={text}；upload={paths}；press_key={keys}；hover={}"
                 ),
             },
         },

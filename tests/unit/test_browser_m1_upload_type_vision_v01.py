@@ -619,14 +619,14 @@ def test_type_empty_text_is_acknowledged_noop_on_cdp_layer() -> None:
 
 
 def test_mutation_allowlist_gained_exactly_two_m1_methods() -> None:
-    # 4 frozen pre-M1 methods + the two M1 additions + the one M2-A B3 method.
-    # M2-A note: Input.dispatchKeyEvent (B3 press_key) shipped; dispatchMouseEvent
-    # (B4) / handleJavaScriptDialog (B5) / setDownloadBehavior (B6) follow in
-    # their own commits. Wide-surface methods stay rejected permanently.
+    # 4 frozen pre-M1 methods + the two M1 additions + the two M2-A methods
+    # (B3 press_key, B4 hover). handleJavaScriptDialog (B5) / setDownloadBehavior
+    # (B6) follow in their own commits. Wide-surface methods stay rejected.
     assert sorted(_ALLOWED) == [
         "DOM.resolveNode",
         "DOM.setFileInputFiles",
         "Input.dispatchKeyEvent",
+        "Input.dispatchMouseEvent",
         "Input.insertText",
         "Page.enable",
         "Page.navigate",
@@ -635,7 +635,6 @@ def test_mutation_allowlist_gained_exactly_two_m1_methods() -> None:
     session = _MutationCdpSession(_UploadTypeWs())
     # Wide-surface methods must stay rejected today and forever.
     for method in (
-        "Input.dispatchMouseEvent",
         "Page.handleJavaScriptDialog",
         "DOM.getDocument",
         "Runtime.evaluate",

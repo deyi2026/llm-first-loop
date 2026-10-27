@@ -58,6 +58,9 @@ _ALLOWED = frozenset(
         # M2-A B3: press_key actuates ONLY through this method (paired
         # keyDown/keyUp); no script/eval channel is opened for it.
         "Input.dispatchKeyEvent",
+        # M2-A B4: hover actuates ONLY through this method (exactly one
+        # mouseMoved event, never a click press/release pair).
+        "Input.dispatchMouseEvent",
     }
 )
 
@@ -176,6 +179,21 @@ def key_events_for_chord(keys: str) -> list[dict[str, Any]]:
 # input pipeline (beforeinput/input) lands on the intended element; this fixed
 # script replaces the PR2-era ``this.value`` assignment for the new verb only.
 _TYPE_FOCUS_JS = "function(){ this.focus(); }"
+
+# M2-A B4 (DESIGN-20261027 §5.1): scroll the exact element into view, then read
+# its post-scroll bounding rect in ONE fixed predicate call (scrollIntoView
+# forces synchronous layout, so the rect reflects the scrolled position).
+# getBoundingClientRect is CSS px relative to the viewport - the exact
+# coordinate space Input.dispatchMouseEvent consumes. The rect is also the
+# positive-area gate: a zero-area element raises element_not_visible BEFORE
+# any pointer event is dispatched.
+_HOVER_RECT_JS = (
+    "function(){"
+    "this.scrollIntoView({block:'center',inline:'nearest'});"
+    "const r=this.getBoundingClientRect();"
+    "return {x:r.x,y:r.y,w:r.width,h:r.height};"
+    "}"
+)
 
 # FR-2 (DESIGN-20261007-browser-semantic-guard): post-dispatch settle waits.
 # Fixed JS constants under version control; the only parameter surface is the
@@ -547,6 +565,43 @@ class CdpBrowserMutationActuator:
                     "CDP mutation connection lost; dropped session for same-target reconnect"
                 ) from exc
 
+    @staticmethod
+    def _hover_center(session: _MutationCdpSession, object_id: str) -> None:
+        """M2-A B4: move the pointer to the element center (one mouseMoved).
+
+        Positive-area gate runs on the measured rect BEFORE any pointer event:
+        a zero-area element is a deterministic contract rejection
+        (element_not_visible) with zero dispatchMouseEvent side effects.
+        """
+        result = session.send(
+            "Runtime.callFunctionOn",
+            {
+                "objectId": object_id,
+                "functionDeclaration": _HOVER_RECT_JS,
+                "arguments": [],
+                "returnByValue": True,
+                "awaitPromise": False,
+            },
+        )
+        if result.get("exceptionDetails"):
+            raise RuntimeError("fixed Browser actuator function raised")
+        value = (result.get("result") or {}).get("value")
+        rect = value if isinstance(value, dict) else {}
+        width = float(rect.get("w") or 0)
+        height = float(rect.get("h") or 0)
+        if width <= 0 or height <= 0:
+            raise _ActuatorContractError("element_not_visible")
+        session.send(
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mouseMoved",
+                "x": float(rect.get("x") or 0) + width / 2,
+                "y": float(rect.get("y") or 0) + height / 2,
+                "button": "none",
+                "pointerType": "mouse",
+            },
+        )
+
     def settle(self, *, physical_target: str | None, mode: str) -> dict[str, Any]:
         """FR-2: single-round-trip post-dispatch settle wait on the bound page.
 
@@ -641,6 +696,9 @@ class CdpBrowserMutationActuator:
         object_id = self._object_id(session, physical_target)
         if verb == "click":
             self._call(session, object_id, "function(){ this.click(); }")
+        elif verb == "hover":
+            # M2-A B4: pointer-only hover, never a click (see _hover_center).
+            self._hover_center(session, object_id)
         elif verb == "fill":
             self._call(
                 session,

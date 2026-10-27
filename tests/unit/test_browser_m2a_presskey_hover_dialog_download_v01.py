@@ -263,3 +263,165 @@ def test_b3_operate_malformed_keys_rejected_with_zero_dispatch(tmp_path: Path) -
     assert "key_args_invalid" in result.content
     assert actuator.calls == []
 
+
+# ---------------------------------------------------------------------------
+# D. B4 hover - actuator layer: one mouseMoved, never a click.
+# ---------------------------------------------------------------------------
+
+_HOVER_RECT = {"x": 100.0, "y": 50.0, "w": 200.0, "h": 60.0}
+
+
+def _hover_ws(rect: dict[str, float]) -> _RecordingWs:
+    return _RecordingWs(
+        results={
+            "DOM.resolveNode": {"object": {"objectId": "obj-1"}},
+            "Runtime.callFunctionOn": {"result": {"value": rect}},
+        }
+    )
+
+
+def test_b4_actuator_hover_moves_pointer_to_center_once_and_never_clicks() -> None:
+    ws = _hover_ws(_HOVER_RECT)
+    host = _cdp_host(ws)
+    result = host.dispatch(verb="hover", physical_target="dom:7", args={})
+    assert result.acknowledged is True
+    assert [req["method"] for req in ws.requests] == [
+        "Page.enable",
+        "DOM.resolveNode",
+        "Runtime.callFunctionOn",
+        "Input.dispatchMouseEvent",
+    ]
+    rect_call = next(req["params"] for req in ws.requests if req["method"] == "Runtime.callFunctionOn")
+    # scrollIntoView precedes the rect read in the same fixed predicate
+    assert "scrollIntoView" in rect_call["functionDeclaration"]
+    assert "getBoundingClientRect" in rect_call["functionDeclaration"]
+    moves = [req["params"] for req in ws.requests if req["method"] == "Input.dispatchMouseEvent"]
+    assert len(moves) == 1
+    assert moves[0] == {
+        "type": "mouseMoved",  # hover only: never mousePressed/mouseReleased
+        "x": 200.0,  # x + w/2, CSS px
+        "y": 80.0,  # y + h/2, CSS px
+        "button": "none",
+        "pointerType": "mouse",
+    }
+
+
+@pytest.mark.parametrize("rect", [{"x": 0, "y": 0, "w": 0, "h": 0}, {"x": 0, "y": 0, "w": 120, "h": 0}])
+def test_b4_actuator_zero_area_element_rejects_before_any_pointer_event(rect: dict[str, float]) -> None:
+    ws = _hover_ws(rect)
+    host = _cdp_host(ws)
+    with pytest.raises(RuntimeError, match="element_not_visible"):
+        host.dispatch(verb="hover", physical_target="dom:7", args={})
+    # zero pointer events: the only CDP traffic is session + resolve + measure
+    assert [req["method"] for req in ws.requests] == [
+        "Page.enable",
+        "DOM.resolveNode",
+        "Runtime.callFunctionOn",
+    ]
+    assert not any(req["method"] == "Input.dispatchMouseEvent" for req in ws.requests)
+
+
+# ---------------------------------------------------------------------------
+# E. B4 hover - tool layer (browser_operate do=hover).
+# ---------------------------------------------------------------------------
+
+
+def _raw_with_menu_shown() -> list[dict[str, Any]]:
+    """Capture sequence: grounding + adapter before-capture see the same page;
+    the post-dispatch capture sees the hover-menu node appear."""
+    before = json.loads(json.dumps(FIXTURES["base"]))
+    after = json.loads(json.dumps(FIXTURES["base"]))
+    after["dom"]["nodes"].append(
+        {
+            "physical_id": "n-menu",
+            "parent_id": "n-root",
+            "frame_token": None,
+            "kind": "menu",
+            "attributes": {"role": "menu", "name": "Hover menu", "tag": "div"},
+            "state": {"exists": True, "enabled": True, "visible": True, "editable": False},
+        }
+    )
+    return [before, json.loads(json.dumps(before)), after]
+
+
+class _SequenceBackend:
+    def __init__(self, captures: list[dict[str, Any]]) -> None:
+        self.captures = [json.loads(json.dumps(item)) for item in captures]
+        self.calls = 0
+
+    def capture(self) -> dict[str, Any]:
+        self.calls += 1
+        if len(self.captures) == 1:
+            return json.loads(json.dumps(self.captures[0]))
+        return json.loads(json.dumps(self.captures.pop(0)))
+
+
+def test_b4_operate_hover_receipt_shows_created_nodes_in_diff(tmp_path: Path) -> None:
+    perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
+    backend = _SequenceBackend(_raw_with_menu_shown())
+    actuator = _Actuator()
+    action = BrowserActionAdapter(
+        perception=perception,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    execute = BrowserSemanticExecuteTool(
+        perception=perception, action_adapter=action, session_id_getter=lambda: "s1"
+    )
+    tool = BrowserSemanticOperationTool(
+        perception=perception,
+        capture_backend=backend,
+        semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "operation_receipts"),
+        session_id_getter=lambda: "s1",
+    )
+    result = tool.execute(do="hover", target={"kind": "button", "name": "Submit"})
+    assert result.status.value == "success"
+    receipt = json.loads(result.content)
+    assert receipt["status"] == "completed"
+    assert [call["verb"] for call in actuator.calls] == ["hover"]
+    assert actuator.calls[0]["args"] == {}
+    # hover-positive acceptance: the post-dispatch snapshot diff shows the
+    # newly appeared hover-menu node through the real perception pipeline.
+    assert receipt["delta"]["counts"]["created"] == 1
+    assert receipt["delta"]["comparable"] is True
+
+
+def test_b4_operate_hover_element_not_visible_surfaces_stable_code(tmp_path: Path) -> None:
+    from llm_loop.browser.cdp_action_host import _ActuatorContractError
+
+    class _RejectingActuator:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def dispatch(self, **kwargs: Any) -> BrowserDispatchResult:
+            self.calls.append(kwargs)
+            raise _ActuatorContractError("element_not_visible")
+
+    perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
+    backend = _Backend(FIXTURES["base"])
+    actuator = _RejectingActuator()
+    action = BrowserActionAdapter(
+        perception=perception,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    execute = BrowserSemanticExecuteTool(
+        perception=perception, action_adapter=action, session_id_getter=lambda: "s1"
+    )
+    tool = BrowserSemanticOperationTool(
+        perception=perception,
+        capture_backend=backend,
+        semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "operation_receipts"),
+        session_id_getter=lambda: "s1",
+    )
+    result = tool.execute(do="hover", target={"kind": "button", "name": "Submit"})
+    assert result.status.value == "success"  # the compact receipt is returned
+    receipt = json.loads(result.content)
+    assert receipt["status"] == "halted"
+    assert receipt["reject_reason"] == "element_not_visible"
+    assert len(actuator.calls) == 1  # one rejected dispatch attempt, no retry
+
