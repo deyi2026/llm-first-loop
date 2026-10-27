@@ -78,7 +78,17 @@ def test_mf5_3_2a_authority_split_is_unchanged() -> None:
 
     assert perceive_actions == {"snapshot", "hydrate", "diff", "wait"}
     assert "navigate" not in perceive_actions
-    assert operate_verbs == {"navigate", "click", "set_text", "append_text", "select", "scroll"}
+    # M1 (DESIGN-20261027 B1/B2): upload/type are additive provider verbs.
+    assert operate_verbs == {
+        "navigate",
+        "click",
+        "set_text",
+        "append_text",
+        "select",
+        "scroll",
+        "type",
+        "upload",
+    }
     assert "wait" not in operate_verbs
 
 

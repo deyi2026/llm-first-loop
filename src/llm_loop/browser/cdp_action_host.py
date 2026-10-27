@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import contextlib
 import json
-import threading
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
@@ -39,7 +39,36 @@ from llm_loop.browser.errors import (
 
 _attest_logger = logging.getLogger("llm_loop.browser.cdp_action_host.attestation")
 
-_ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.enable", "Page.navigate"})
+# M1 (DESIGN-20261027 B1/B2): two additive methods only - file injection into an
+# exact input node and real text input. Everything else stays rejected by send().
+_ALLOWED = frozenset(
+    {
+        "DOM.resolveNode",
+        "Runtime.callFunctionOn",
+        "Page.enable",
+        "Page.navigate",
+        "DOM.setFileInputFiles",
+        "Input.insertText",
+    }
+)
+
+# M1 B1 (DESIGN-20261027 §4.1): fixed, version-controlled event dispatch for the
+# upload path. NFR-2 discipline as everywhere in this module: the script is a
+# frozen constant, the only parameter surface is the server-resolved objectId,
+# so the model never supplies JavaScript. Mirrors the proven single-session
+# pattern (M0 report §3.2 T3b): DOM.setFileInputFiles + input/change dispatch
+# complete on the same CDP session.
+_UPLOAD_EVENT_DISPATCH_JS = (
+    "function(){"
+    "this.dispatchEvent(new Event('input',{bubbles:true}));"
+    "this.dispatchEvent(new Event('change',{bubbles:true}));"
+    "}"
+)
+
+# M1 B2 (DESIGN-20261027 §4.1): focus precedes Input.insertText so the real
+# input pipeline (beforeinput/input) lands on the intended element; this fixed
+# script replaces the PR2-era ``this.value`` assignment for the new verb only.
+_TYPE_FOCUS_JS = "function(){ this.focus(); }"
 
 # FR-2 (DESIGN-20261007-browser-semantic-guard): post-dispatch settle waits.
 # Fixed JS constants under version control; the only parameter surface is the
@@ -449,7 +478,10 @@ class CdpBrowserMutationActuator:
         value = remote.get("value")
         if not isinstance(value, dict) or "settled" not in value:
             return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": "unexpected_predicate_shape"}
-        verdict = {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode}
+        # Mixed value types (str keys + int elapsed_ms fallback); the explicit
+        # annotation keeps pyright from inferring dict[str, str] (M1 changed-file
+        # hygiene; runtime behavior identical).
+        verdict: dict[str, Any] = {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode}
         verdict.update(value)
         if not isinstance(verdict.get("elapsed_ms"), int):
             verdict["elapsed_ms"] = -1
@@ -505,6 +537,28 @@ class CdpBrowserMutationActuator:
                 "function(pages){ this.scrollIntoView({block:'center',inline:'nearest'}); window.scrollBy(0, Number(pages)*window.innerHeight); }",
                 [{"value": float(args["delta_pages"])}],
             )
+        elif verb == "upload":
+            # M1 B1: resolved absolute paths arrive from the contract layer
+            # (action.py validated realpath/allow_roots/size/count BEFORE any
+            # CDP call). backendNodeId is the product's physical identity
+            # (dom:<id>), so no DOM.getDocument/querySelector chain is needed
+            # (M0 report §3.2 T2). The input/change dispatch happens on the
+            # same session right after injection (T3b single-session pattern).
+            backend_id = self._backend_node_id(physical_target)
+            session.send(
+                "DOM.setFileInputFiles",
+                {"files": [str(item) for item in args["paths"]], "backendNodeId": backend_id},
+            )
+            self._call(session, object_id, _UPLOAD_EVENT_DISPATCH_JS)
+        elif verb == "type":
+            # M1 B2: real input pipeline via Input.insertText after a fixed
+            # focus call - never a ``this.value`` assignment with synthesized
+            # events (PR2 root cause). Empty text is an explicit acknowledged
+            # no-op: no focus, no insert, no content change.
+            text = str(args["text"])
+            if text:
+                self._call(session, object_id, _TYPE_FOCUS_JS)
+                session.send("Input.insertText", {"text": text})
         else:
             raise ValueError(f"unsupported Browser mutation verb: {verb}")
         detected = self._boundary_events(session, before_page_ids=before_page_ids)

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
+import stat
 import threading
 from collections.abc import Callable
 from contextlib import suppress
@@ -19,6 +21,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
+from llm_loop.core.run_context import current_workspace_root
 from llm_loop.core.tool_execution_journal import current_effect_mutation_authority
 from llm_loop.net_guard import browser_allowed_hosts, check_url
 
@@ -28,8 +31,96 @@ _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
     "select": {"version_scopes": {"object"}, "args": {"value"}},
     "navigate": {"version_scopes": {"resource"}, "args": {"url"}},
     "scroll": {"version_scopes": {"object"}, "args": {"delta_pages"}},
+    # M1 (DESIGN-20261027 B1/B2): two additive object verbs. The six frozen
+    # verbs above are byte-identical to the pre-M1 contract.
+    "type": {"version_scopes": {"object"}, "args": {"text"}},
+    "upload": {"version_scopes": {"object"}, "args": {"paths"}},
 }
 _TERMINAL = frozenset({"ok", "failed", "rejected"})
+
+# M1 B1 (DESIGN-20261027 §4.1/§5.5, delegation order): upload path policy runs
+# entirely in Python BEFORE any CDP request. Check order per contract:
+#   realpath -> allow_roots -> existence -> regular file -> per-file size -> count.
+# Error codes are the design-book codes (path_not_allowed / path_not_found /
+# too_large / not_regular_file); the two count/text bounds get deterministic
+# codes of the same vocabulary (paths_count_invalid / type_text_too_long).
+_UPLOAD_MAX_FILES = 8
+_UPLOAD_MAX_FILE_BYTES_DEFAULT = 100 * 1024 * 1024
+_TYPE_MAX_TEXT_LENGTH = 2000
+_TYPE_PREVIEW_LENGTH = 20
+
+
+def upload_allow_roots() -> list[str]:
+    """Allowed upload roots: env override, else the current workspace root."""
+    raw = str(os.environ.get("LFL_BROWSER_UPLOAD_ALLOW_ROOTS") or "").strip()
+    if raw:
+        roots = [item.strip() for item in raw.split(",") if item.strip()]
+    else:
+        roots = [str(current_workspace_root.get() or os.getcwd())]
+    return [os.path.realpath(item) for item in roots]
+
+
+def upload_max_file_bytes() -> int:
+    raw = str(os.environ.get("LFL_BROWSER_UPLOAD_MAX_FILE_BYTES") or "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _UPLOAD_MAX_FILE_BYTES_DEFAULT
+    return value if value > 0 else _UPLOAD_MAX_FILE_BYTES_DEFAULT
+
+
+def resolve_upload_paths(paths: list[str]) -> list[str]:
+    """Canonicalize upload paths (symlinks resolved) for validation + dispatch."""
+    return [os.path.realpath(str(item)) for item in paths]
+
+
+def upload_paths_policy_error(paths: Any) -> str | None:
+    """Validate upload paths in the contract order; None means accepted.
+
+    Any failure here must surface as a deterministic rejection code and the
+    dispatcher must never be reached for this action (no CDP request).
+    """
+    if not isinstance(paths, list) or not all(
+        isinstance(item, str) and item.strip() for item in paths
+    ):
+        return "upload_args_invalid"
+    roots = upload_allow_roots()
+    max_bytes = upload_max_file_bytes()
+    for raw in paths:
+        resolved = os.path.realpath(raw)
+        if not any(
+            resolved == root or resolved.startswith(root + os.sep) for root in roots
+        ):
+            return "path_not_allowed"
+        if not os.path.exists(resolved):
+            return "path_not_found"
+        try:
+            mode = os.stat(resolved).st_mode
+        except OSError:
+            return "path_not_found"
+        if not stat.S_ISREG(mode):
+            # directories, devices, sockets, FIFOs all rejected here
+            return "not_regular_file"
+        if os.path.getsize(resolved) > max_bytes:
+            return "too_large"
+    if not 1 <= len(paths) <= _UPLOAD_MAX_FILES:
+        return "paths_count_invalid"
+    return None
+
+
+def upload_paths_facts(paths: list[str]) -> list[dict[str, Any]]:
+    """Per-file mechanical facts for receipts: ok/name/size/mime (no full paths)."""
+    facts: list[dict[str, Any]] = []
+    for raw in paths:
+        resolved = os.path.realpath(str(raw))
+        entry: dict[str, Any] = {"ok": os.path.isfile(resolved), "name": os.path.basename(resolved)}
+        try:
+            entry["size"] = os.path.getsize(resolved)
+        except OSError:
+            entry["size"] = None
+        entry["mime"] = mimetypes.guess_type(resolved)[0] or "application/octet-stream"
+        facts.append(entry)
+    return facts
 
 
 _ARGS_NORMALIZATION_RULES = {"verb_wrapper_unwrap"}
@@ -68,6 +159,35 @@ def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
             "text_length": len(text),
             "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         }
+    if verb == "type":
+        # M1 B2: same privacy shape as fill - length + digest only, never the
+        # text itself (the 20-char preview is model-facing compact output only).
+        text = str(args.get("text") or "")
+        return {
+            "text_length": len(text),
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        }
+    if verb == "upload":
+        # M1 B1: basename + size + content sha256 per file; full paths are
+        # never persisted (T1 mitigation alongside the allow_roots gate).
+        raw_paths = args.get("paths")
+        files: list[dict[str, Any]] = []
+        if isinstance(raw_paths, list):
+            for raw in raw_paths:
+                resolved = os.path.realpath(str(raw))
+                fact: dict[str, Any] = {"name": os.path.basename(resolved)}
+                try:
+                    fact["size"] = os.path.getsize(resolved)
+                    with open(resolved, "rb") as handle:
+                        digest = hashlib.sha256()
+                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    fact["sha256"] = digest.hexdigest()
+                except OSError:
+                    fact["size"] = None
+                    fact["sha256"] = None
+                files.append(fact)
+        return {"files": files}
     if verb == "select":
         value = str(args.get("value") or "")
         return {
@@ -434,6 +554,18 @@ class BrowserActionAdapter:
             delta = args.get("delta_pages")
             if isinstance(delta, bool) or not isinstance(delta, (int, float)):
                 return "scroll_args_invalid"
+        if verb == "type":
+            # M1 B2: empty text is a valid explicit no-op (not an error); only
+            # the >2000 bound is a deterministic rejection.
+            text = args.get("text")
+            if not isinstance(text, str):
+                return "type_args_invalid"
+            if len(text) > _TYPE_MAX_TEXT_LENGTH:
+                return "type_text_too_long"
+        if verb == "upload":
+            # M1 B1: full path policy (realpath/allow_roots/existence/regular
+            # file/size/count) - any failure rejects before any capture or CDP.
+            return upload_paths_policy_error(args.get("paths"))
         return None
 
     @staticmethod
@@ -525,7 +657,7 @@ class BrowserActionAdapter:
         if not self.guard_enabled or self.guard_collector is None:
             return None
         verb = str(action["verb"])
-        if verb not in {"click", "fill", "select", "scroll"}:
+        if verb not in {"click", "fill", "select", "scroll", "type", "upload"}:
             return None
         try:
             baseline = self.perception.guard_baseline(
@@ -765,7 +897,7 @@ class BrowserActionAdapter:
         scope_ref = str(action["scope_ref"])
         physical_target: str | None = None
         semantic_object: dict[str, Any] | None = None
-        if verb in {"click", "fill", "select", "scroll"}:
+        if verb in {"click", "fill", "select", "scroll", "type", "upload"}:
             object_grounding = (before_bundle.get("object_grounding") or {}).get(target_id)
             semantic_object = (object_grounding or {}).get("semantic_object") if isinstance(object_grounding, dict) else None
             if not isinstance(semantic_object, dict) or str(semantic_object.get("scope_ref") or "") != scope_ref:
@@ -855,10 +987,18 @@ class BrowserActionAdapter:
                 dispatch_authority_verdict = mutation_allowed
             else:
                 try:
+                    # M1 B1: the actuator receives canonicalized absolute paths
+                    # (symlinks resolved at dispatch time); the action contract
+                    # keeps the model-declared args untouched.
+                    dispatch_args = dict(action["args"])
+                    if str(action["verb"]) == "upload":
+                        raw_paths = dispatch_args.get("paths")
+                        if isinstance(raw_paths, list):
+                            dispatch_args["paths"] = resolve_upload_paths(raw_paths)
                     dispatch_result = self.actuator.dispatch(
                         verb=str(action["verb"]),
                         physical_target=physical_target,
-                        args=dict(action["args"]),
+                        args=dispatch_args,
                     )
                 except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
                     dispatch_error = exc

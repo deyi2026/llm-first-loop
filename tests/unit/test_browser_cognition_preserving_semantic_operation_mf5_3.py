@@ -188,13 +188,23 @@ def test_mf5_3_operate_provider_normal_form_is_one_direct_action() -> None:
     assert "steps" not in props
     assert "oneOf" in params
     branches = params["oneOf"]
-    assert len(branches) == 5
+    # M1 (DESIGN-20261027 B1/B2): upload/type join the direct mutation grammar.
+    assert len(branches) == 7
     assert params.get("additionalProperties") is False
 
 
 def test_mf5_3_operate_provider_surface_is_mutation_only() -> None:
     provider_verbs = _provider_do_values()
-    assert provider_verbs == {"navigate", "click", "set_text", "append_text", "select", "scroll"}
+    assert provider_verbs == {
+        "navigate",
+        "click",
+        "set_text",
+        "append_text",
+        "select",
+        "scroll",
+        "type",
+        "upload",
+    }
     assert "wait" not in provider_verbs
     assert "wait_text" not in provider_verbs
 

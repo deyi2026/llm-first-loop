@@ -18,6 +18,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from llm_loop.browser.action import (
+    _TYPE_MAX_TEXT_LENGTH,
+    _TYPE_PREVIEW_LENGTH,
+    upload_paths_facts,
+    upload_paths_policy_error,
+)
 from llm_loop.browser.errors import (
     MultiPageAmbiguityError,
     PageTargetNotFoundError,
@@ -37,7 +43,9 @@ logger = logging.getLogger(__name__)
 _MAX_CLAUSES = 8
 _IDENTITY_KEYS = {"kind", "role", "name", "name_normalized"}
 _MAX_CANDIDATE_PROJECTION = 20
-_OBJECT_VERBS = {"click", "fill", "select", "scroll"}
+# M1 (DESIGN-20261027 B1/B2): upload/type join the object-verb vocabulary as
+# additive members; the five frozen verbs keep their exact pre-M1 semantics.
+_OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload"}
 _MUTATION_VERBS = _OBJECT_VERBS | {"navigate"}
 
 _OPERATION_RECEIPT_PREFIX = "browser-operation-receipt://v0.1/"
@@ -319,12 +327,19 @@ class BrowserSemanticOperationTool:
     name = "browser_operate"
     description = (
         "Browser 操作能力：一次调用只表达一个已经决定的 mutation。"
-        "do=navigate|click|set_text|append_text|select|scroll；对象 target 三选一寻址"
+        "do=navigate|click|set_text|append_text|select|scroll|type|upload；对象 target 三选一寻址"
         "(EVO-20261010-1e06d6b4)：{kind,name[,role]} 原始 name 逐字节 exact；"
         "{kind,name_normalized[,role]} 命中 browser_perceive snapshot 暴露的确定性归一形式"
         "(零宽剥离+空白折叠)；{grounding_ref} 复用先前 snapshot/未命中候选清单中的对象 ref"
         "(受 world-version retention 约束)。混用形式确定性拒绝；仍不做 fuzzy/"
         "best-match/auto-target/latest/rebind/retry；identity 未命中时回执有界候选清单。"
+        "M1 B2：do=type 走 Input.insertText 真实输入管线（先聚焦；不再 this.value 赋值+合成事件），"
+        "text ≤2000 字符，空文本=明确 no-op（不报错、不改内容），回执只回长度+前 20 字符摘要；"
+        "set_text/append_text 旧通道保持不变（兼容入口）。"
+        "M1 B1：do=upload 向 input[type=file] 注入 1..8 个本地常规文件，单文件 ≤100MB；"
+        "路径经 realpath 后必须落在允许根内（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配），"
+        "/etc/passwd、~/.ssh/**、目录/设备/socket、超限、symlink 逃逸全部确定性拒绝"
+        "（path_not_allowed/path_not_found/too_large/not_regular_file），且拒绝发生在任何 CDP 请求之前。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
         "不判断 task completion。"
@@ -554,6 +569,38 @@ class BrowserSemanticOperationTool:
             "additionalProperties": False,
         },
         {
+            # M1 B1 (DESIGN-20261027 §5.1): file injection into an exact
+            # input[type=file]; path policy (realpath/allow_roots/size/count)
+            # is enforced before any capture or CDP request.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["upload"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "target": _SHORT_TARGET_SCHEMA,
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "minItems": 1,
+                    "maxItems": 8,
+                },
+            },
+            "required": ["do", "target", "paths"],
+            "additionalProperties": False,
+        },
+        {
+            # M1 B2 (DESIGN-20261027 §5.1): character-level typing through the
+            # real input pipeline (Input.insertText); not a this.value write.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["type"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "target": _SHORT_TARGET_SCHEMA,
+                "text": {"type": "string", "maxLength": 2000},
+            },
+            "required": ["do", "target", "text"],
+            "additionalProperties": False,
+        },
+        {
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["wait"]},
@@ -600,17 +647,29 @@ class BrowserSemanticOperationTool:
     # MF-5.3 provider normal form: one already-decided mutation per call.  The historical
     # steps compiler remains below as an internal/compatibility path for frozen evidence,
     # but wait and batching are no longer part of the provider-facing cognitive contract.
-    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:5]
+    # M1: upload/type variants extend the mutation prefix (5 -> 7); wait variants stay last.
+    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:7]
     parameters = {
         "type": "object",
         "properties": {
             "do": {
                 "type": "string",
-                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll"],
+                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload"],
             },
             "url": {"type": "string", "minLength": 1},
             "target": _SHORT_TARGET_SCHEMA,
             "text": {"type": "string"},
+            "paths": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,
+                "maxItems": 8,
+                "description": (
+                    "仅 do=upload（M1 B1）：1..8 个本地文件路径；realpath 后必须落在允许根内"
+                    "（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配），单文件 ≤100MB"
+                    "（LFL_BROWSER_UPLOAD_MAX_FILE_BYTES 可配）；违规确定性拒绝且零 CDP 请求"
+                ),
+            },
             "value": {"type": "string"},
             "delta_pages": {"type": "number"},
             "target_id": {
@@ -821,7 +880,7 @@ class BrowserSemanticOperationTool:
     # Phase3 M3（G4 审查 P0-1 修复）：clauses 是 dict 列表（_validate_clauses 契约），
     # 本方法必须用 .get 而非 getattr 访问——初版 getattr 对 dict 恒缺省，登记变死代码。
     # target 取 args.url（navigate）或 target 标识（click 等），D6：不含页面正文。
-    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select"})
+    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload"})
 
     @classmethod
     def _register_mutation_side_effects(cls, clauses: list[dict], session_id: str) -> int:
@@ -951,6 +1010,46 @@ class BrowserSemanticOperationTool:
                         "verb": "scroll",
                         "target": cls._short_target_to_clause_target(step.get("target")),
                         "args": {"delta_pages": delta},
+                    })
+                    continue
+                if verb == "upload":
+                    # M1 B1: the path policy runs at compile time so any
+                    # violation rejects before snapshot/grounding/dispatch -
+                    # the adapter re-validates the same policy as the
+                    # authoritative pre-dispatch gate (defense in depth).
+                    if set(step) != {"do", "target", "paths"}:
+                        raise BrowserSemanticOperationContractError("upload_step_fields_mismatch")
+                    paths = step.get("paths")
+                    if not isinstance(paths, list) or not all(
+                        isinstance(item, str) and item.strip() for item in paths
+                    ):
+                        raise BrowserSemanticOperationContractError("upload_args_invalid")
+                    policy_error = upload_paths_policy_error(paths)
+                    if policy_error is not None:
+                        raise BrowserSemanticOperationContractError(policy_error)
+                    clauses.append({
+                        "kind": "mutate",
+                        "verb": "upload",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "args": {"paths": [str(item) for item in paths]},
+                    })
+                    continue
+                if verb == "type":
+                    # M1 B2: empty text is accepted (explicit no-op); only the
+                    # >2000 bound rejects. The adapter re-validates (defense
+                    # in depth for direct semantic_execute callers).
+                    if set(step) != {"do", "target", "text"}:
+                        raise BrowserSemanticOperationContractError("type_step_fields_mismatch")
+                    text = step.get("text")
+                    if not isinstance(text, str):
+                        raise BrowserSemanticOperationContractError("type_args_invalid")
+                    if len(text) > _TYPE_MAX_TEXT_LENGTH:
+                        raise BrowserSemanticOperationContractError("type_text_too_long")
+                    clauses.append({
+                        "kind": "mutate",
+                        "verb": "type",
+                        "target": cls._short_target_to_clause_target(step.get("target")),
+                        "args": {"text": text},
                     })
                     continue
                 if verb == "wait_text":
@@ -1270,6 +1369,21 @@ class BrowserSemanticOperationTool:
             boundary_events = action_receipt.get("boundary_events")
             if isinstance(boundary_events, list) and boundary_events:
                 compact["boundary_events"] = boundary_events
+        # M1 B1/B2: lift the new-verb mechanical echoes into the compact
+        # receipt. Keys exist only for upload/type clauses, so every pre-M1
+        # compact receipt stays byte-identical.
+        if isinstance(last.get("upload_files"), list):
+            compact["upload_files"] = last["upload_files"]
+        if isinstance(last.get("type_echo"), dict):
+            compact["type_echo"] = last["type_echo"]
+        if status == "halted" and str(last.get("verb") or "") in {"upload", "type"}:
+            # Surface the adapter's exact rejection code (e.g. path_not_allowed)
+            # for the new verbs; existing verbs keep their pre-M1 halt surface.
+            blocked_receipt = last.get("action_receipt")
+            if isinstance(blocked_receipt, dict):
+                retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
+                if isinstance(retry_reason, str) and retry_reason:
+                    compact["reject_reason"] = retry_reason
         return compact
 
     def execute_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -1298,7 +1412,7 @@ class BrowserSemanticOperationTool:
                     ),
                 }
             return {"do": "rebind", "status": "ok", "rebound": rebound}
-        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll"}
+        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload"}
         direct_model_friendly = isinstance(request.get("do"), str) and "steps" not in request
         historical_steps = set(request) == {"steps"}
         model_friendly = direct_model_friendly or historical_steps
@@ -1394,6 +1508,20 @@ class BrowserSemanticOperationTool:
                     "status": "dispatched" if action_receipt.get("status") == "ok" else "blocked",
                     "action_receipt": action_receipt,
                 }
+                # M1 B1/B2: verb-specific mechanical echo on the model-facing
+                # clause receipt. upload files are only echoed as ok/name/size/
+                # mime when the dispatch actually acknowledged; type echoes
+                # length + preview only (never the full text).
+                if verb == "upload" and action_receipt.get("status") == "ok":
+                    clause_receipt["upload_files"] = upload_paths_facts(
+                        [str(item) for item in dict(args).get("paths") or []]
+                    )
+                elif verb == "type":
+                    typed_text = str(dict(args).get("text") or "")
+                    clause_receipt["type_echo"] = {
+                        "length": len(typed_text),
+                        "preview": typed_text[:_TYPE_PREVIEW_LENGTH],
+                    }
                 receipt["clauses"].append(clause_receipt)
                 if action_receipt.get("status") != "ok":
                     receipt["execution_status"] = "halted"
