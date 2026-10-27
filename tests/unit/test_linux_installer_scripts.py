@@ -535,8 +535,17 @@ def test_github_release_checksums_have_bare_asset_names_consumable_by_installer(
     # Draft v0.6.33 contained a spurious 1-byte default.gitignore absent from
     # SHA256SUMS). Whitelist exactly the required release assets instead.
     assert "          files: |\n" in workflow
-    asset_lines = workflow.split("          files: |\n", 1)[1].splitlines()
-    assert {line.strip() for line in asset_lines if line.strip()} == {
+    block_lines = workflow.split("          files: |\n", 1)[1].splitlines()
+    # files: 块之后自 04ff8664d 起还有「正文状态块」步骤：只取紧随其后的
+    # 连续 dist/ 资产行（遇首个非 dist/ 行即止），不得把块外步骤吞进来。
+    assets: list[str] = []
+    for line in block_lines:
+        stripped = line.strip()
+        if not stripped.startswith("dist/"):
+            break
+        assets.append(stripped)
+    assert assets, "release.yml files: 块应至少列出一项资产"
+    assert set(assets) == {
         "dist/llm_first_loop-*.whl",
         "dist/llm_first_loop-*.tar.gz",
         "dist/install_linux.sh",
@@ -544,6 +553,7 @@ def test_github_release_checksums_have_bare_asset_names_consumable_by_installer(
         "dist/installation-smoke.json",
         "dist/linux-installer-smoke.json",
         "dist/SHA256SUMS",
+        "dist/release-artifacts-manifest.json",
     }, "Release asset scope must exclude hidden/unchecksummed files"
 
 

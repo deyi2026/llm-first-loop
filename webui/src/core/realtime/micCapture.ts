@@ -6,6 +6,12 @@
 // - 设备/权限失败**如实返回失败**，不伪造采集；
 // - `getUserMedia` 有 10s 有界超时（浏览器层挂起时 `press()` 不得永久 pending）；
 //   超时返回 false 并经 `onNotice` 可见提示；迟到的 stream 释放轨道防泄漏；
+// - port 创建失败（worklet 加载失败等）同样**如实失败**：释放本轮全部轨道、置
+//   `lastError="port-init"`、`press()` 返回 false（不静默、不留半装配状态）；
+//   port 装配（worklet `addModule`）同样有 10s 有界超时（与 `getUserMedia` 同口径），
+//   超时按 port-init 分类处理，迟到的 port 关闭防泄漏（AudioContext/worklet 不残留）；
+// - 任何**未被 wiring 成功**的流必被停轨：叠压 press（press#2 压在途 press#1）/release/
+//   cancel 作废的轮次，其流轨道一律释放（幂等），麦克风不得悬挂整页生命周期；
 // - 依赖（`mediaDevices`、worklet 端口）**注入**，故本模块可在 jsdom 下用 fake 验证接线逻辑；
 //   真实设备与延迟**不在此验证**（RTM-EVD-06）。
 
@@ -31,19 +37,27 @@ export interface WorkletPortLike {
 /** getUserMedia 有界超时（M3 后续：浏览器层挂起时的反饨上限）。 */
 const GUM_TIMEOUT_MS = 10_000;
 const GUM_TIMEOUT_ERROR = "getUsermedia_start_timeout";
+/** port 装配有界超时（与 getUserMedia 同口径）：worklet `addModule` 挂起时 press 不得永久 pending。 */
+const PORT_TIMEOUT_MS = 10_000;
+const PORT_TIMEOUT_ERROR = "capture_port_init_timeout";
 
 export interface MicCaptureOptions {
   mediaDevices: MediaDevicesLike;
   pipeline: CapturePipeline;
   onFrame: (frame: Int16Array) => void;
-  createPort: () => WorkletPortLike;
+  /**
+   * worklet 端口工厂：在 `getUserMedia` 成功后收到本轮采集流（真实装配为
+   * `createBrowserCapturePort`，允许异步——worklet `addModule` 是 Promise）。
+   * 未注入时回退**空 port**（jsdom 无音频栈也能驱动接线逻辑，既有测试依赖）。
+   */
+  createPort?: (stream: MediaStreamLike) => WorkletPortLike | Promise<WorkletPortLike>;
   constraints?: { audio: unknown };
   /** M3 后续：可见降级提示（如启动超时）；可选注入。 */
   onNotice?: (message: string) => void;
 }
 
 /** 按下说话失败原因分类（供上层给出可操作的提示文案）。 */
-export type MicPressErrorKind = "not-allowed" | "not-found" | "not-readable" | "unknown";
+export type MicPressErrorKind = "not-allowed" | "not-found" | "not-readable" | "port-init" | "unknown";
 
 /** 把 getUserMedia 异常映射为稳定错误类（厂商历史 name 变体一并归并）。 */
 export function classifyPressError(error: unknown): MicPressErrorKind {
@@ -65,12 +79,22 @@ export function classifyPressError(error: unknown): MicPressErrorKind {
   }
 }
 
+/** 默认空 port：无音频栈环境（jsdom）的回退——不产帧、close 幂等，接线逻辑仍可驱动。 */
+function createEmptyPort(): WorkletPortLike {
+  return { onmessage: null, close: () => undefined };
+}
+
 export class MicCapture {
   private stream: MediaStreamLike | null = null;
   private port: WorkletPortLike | null = null;
   private pressed = false;
-  private pressGeneration = 0;
   private lastError: MicPressErrorKind | null = null;
+  /**
+   * 迟到守卫（沿用视觉共享 P2-9c「await 后复查」模式）：press 递增取号，
+   * release/cancel 再递增使在途 press 作废——getUserMedia/createPort 两个 await
+   * 窗口内被松开的轮次，迟到的流/port 一律丢弃并释放，不悬挂、不复活。
+   */
+  private pressGeneration = 0;
 
   constructor(private readonly options: MicCaptureOptions) {}
 
@@ -82,9 +106,10 @@ export class MicCapture {
     return this.pressed;
   }
 
-  /** 按下说话：开始采集。返回是否真正开始（权限/设备失败/启动超时 → false，不伪造）。 */
+  /** 按下说话失败原因分类（供上层给出可操作的提示文案）。 */
   get pressError(): MicPressErrorKind | null { return this.lastError; }
 
+  /** 按下说话：开始采集。返回是否真正开始（权限/设备失败/启动超时/port 创建失败 → false，不伪造）。 */
   async press(): Promise<boolean> {
     const generation = ++this.pressGeneration;
     this.lastError = null;
@@ -92,29 +117,55 @@ export class MicCapture {
       this.pressed = true;
       return true;
     }
+    let stream: MediaStreamLike;
     try {
-      const stream = await this.acquireStream();
-      if (generation !== this.pressGeneration) {
-        for (const track of stream.getTracks()) track.stop();
-        return false;
-      }
-      this.stream = stream;
+      stream = await this.acquireStream();
     } catch (error) {
-      if (generation !== this.pressGeneration) return false;
+      if (generation !== this.pressGeneration) {
+        return false; // 迟到失败：本轮已被 release/cancel/新 press 取代，不改写他人状态
+      }
       this.lastError = classifyPressError(error);
       this.stream = null;
       return false;
     }
-    const port = this.options.createPort();
-    port.onmessage = (event): void => this.handleSamples(event.data);
-    this.port = port;
-    this.pressed = true;
-    return true;
+    if (generation !== this.pressGeneration) {
+      // 迟到流：getUserMedia 等待期间已 release/cancel → 本轮作废，轨道立即释放
+      this.releaseTracks(stream);
+      return false;
+    }
+    this.stream = stream;
+    try {
+      const port = await this.acquirePort(stream);
+      if (generation !== this.pressGeneration) {
+        // 迟到 port：装配等待期间已 release/cancel/叠压新 press → 不接线，port 立即
+        // 关闭防泄漏（AudioContext/worklet 不得残留）；该流未被 wiring 成功，轨道必停
+        // （叠压 press 沿短路保留的流不得悬挂麦克风，也不得残留为「活跃」死流）。
+        port.close();
+        this.discardUnwiredStream(stream);
+        return false;
+      }
+      port.onmessage = (event): void => this.handleSamples(event.data);
+      this.port = port;
+      this.pressed = true;
+      return true;
+    } catch {
+      // port 创建失败/装配超时（worklet 加载失败等）：释放本轮全部轨道、如实置失败
+      // 分类，绝不静默伪造采集（上层据此给可见提示）。
+      if (generation === this.pressGeneration) {
+        this.releaseTracks(stream);
+        this.stream = null;
+        this.lastError = "port-init";
+      } else {
+        // 迟到失败：本轮已被取代，但该流同样未被 wiring 成功——轨道必停（幂等）。
+        this.discardUnwiredStream(stream);
+      }
+      return false;
+    }
   }
 
   /** 松开：结束输入（停止采集）；余量 flush 发出，不丢尾段。 */
   release(): void {
-    this.pressGeneration += 1;
+    this.pressGeneration += 1; // 在途 press 的迟到流/port 一并作废
     this.pressed = false;
     this.stopStream();
     for (const frame of this.options.pipeline.flush()) {
@@ -124,7 +175,7 @@ export class MicCapture {
 
   /** 触摸取消：结束输入且**丢弃**当前余量。 */
   cancel(): void {
-    this.pressGeneration += 1;
+    this.pressGeneration += 1; // 同 release：在途 press 作废
     this.pressed = false;
     this.stopStream();
   }
@@ -175,12 +226,64 @@ export class MicCapture {
     }
   }
 
+  /**
+   * port 装配加 10s 有界超时（与 `acquireStream` 同口径）：worklet `addModule`
+   * 挂起时 `press()` 不得永久 pending。超时按 port-init 分类如实失败并经
+   * `onNotice` 可见提示；迟到的 port 关闭防泄漏（AudioContext/worklet 不得残留），
+   * 迟到的拒绝静默（不再产生未处理拒绝）。
+   */
+  private async acquirePort(stream: MediaStreamLike): Promise<WorkletPortLike> {
+    const request = this.options.createPort?.(stream) ?? createEmptyPort();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(PORT_TIMEOUT_ERROR)), PORT_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([request, timeout]);
+    } catch (error) {
+      if (error instanceof Error && error.message === PORT_TIMEOUT_ERROR) {
+        this.options.onNotice?.("语音采集初始化超时，请重试");
+      }
+      // 装配请求仍可能迟到完成：resolve 则关闭 port（已创建的 AudioContext/worklet
+      // 不得残留），reject 则静默（不再产生未处理拒绝）。
+      void Promise.resolve(request).then(
+        (port) => {
+          port.close();
+        },
+        () => undefined,
+      );
+      throw error;
+    } finally {
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   handleSamples(data: { samples: Float32Array; sampleRate: number; channels?: number }): void {
     if (this.stream === null) {
       return;
     }
     for (const frame of this.options.pipeline.push(data.samples, data.sampleRate, data.channels ?? 1)) {
       this.options.onFrame(frame);
+    }
+  }
+
+  /**
+   * 作废一条**未被 wiring 成功**的流：轨道全停（幂等，已停不重复）；若它仍被记为
+   * 当前活跃流（叠压 press 经顶部短路沿用、尚无人清空），一并清掉——绝不让后续
+   * press 在一条永不接线的死流上短路（麦克风悬挂整页生命周期）。
+   */
+  private discardUnwiredStream(stream: MediaStreamLike): void {
+    this.releaseTracks(stream);
+    if (this.stream === stream) {
+      this.stream = null;
+    }
+  }
+
+  private releaseTracks(stream: MediaStreamLike): void {
+    for (const track of stream.getTracks()) {
+      track.stop();
     }
   }
 
@@ -191,9 +294,7 @@ export class MicCapture {
       this.port = null;
     }
     if (this.stream !== null) {
-      for (const track of this.stream.getTracks()) {
-        track.stop();
-      }
+      this.releaseTracks(this.stream);
       this.stream = null;
     }
   }

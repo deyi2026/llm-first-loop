@@ -166,6 +166,11 @@ class TestCliDispatch:
                 str(tmp_path),
                 "--data-dir",
                 str(tmp_path),
+                # T2（2026-10-27）：basename "repo" 推不出服务名 token，缺省
+                # --target 是 NEEDS_TARGET 拒绝（不隐式兜底 all）；本用例锚定
+                # 显式 --target 下的默认 detach 语义，故必须显式传 web。
+                "--target",
+                "web",
             ]
         )
         assert rc == 0
@@ -173,6 +178,53 @@ class TestCliDispatch:
         assert fake_store_cls["inline"] == 0
         receipt = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
         assert receipt["detached"] is True
+
+    def test_update_without_target_rejects_needs_target_zero_side_effect(
+        self, tmp_path: Path, fake_store_cls, capsys: pytest.CaptureFixture
+    ) -> None:
+        """T2（2026-10-27）契约锚定：basename 推不出服务名且未传 --target →
+        NEEDS_TARGET 拒绝（rc=2，stderr 末行 JSON），先于任何 publish/CAS
+        写入（fake store 零 spawn/inline）。不恢复隐式 all 兜底。"""
+        import subprocess
+
+        code_root = tmp_path / "repo"
+        code_root.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=code_root, check=True)
+        (code_root / "README").write_text("x", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "."], cwd=code_root, check=True,
+        )
+        subprocess.run(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"],
+            cwd=code_root,
+            check=True,
+        )
+        dist = code_root / "webui" / "dist"
+        dist.mkdir(parents=True)
+        (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+
+        rc = sc.main(
+            [
+                "update",
+                "--code-root",
+                str(code_root),
+                "--runtime-root",
+                str(tmp_path),
+                "--data-dir",
+                str(tmp_path),
+            ]
+        )
+
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+        assert payload["error"] == "NEEDS_TARGET"
+        assert payload["basename"] == "repo"
+        assert payload["targets"] == ["web", "feishu", "learning", "all"]
+        assert "--target" in payload["example"]
+        assert "未产生任何 publish/CAS 写入" in payload["detail"]
+        # 零副作用：拒绝发生在 build_deployment/CAS 之前，worker 未 spawn 也未内联。
+        assert fake_store_cls["spawn"] == []
+        assert fake_store_cls["inline"] == 0
 
 
 class TestWorkerPidField:

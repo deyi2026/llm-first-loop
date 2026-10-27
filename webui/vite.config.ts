@@ -17,6 +17,15 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // P1 采集接线：captureWorklet 经 `new URL(..., import.meta.url)` 引用且 <4KB，
+    // 默认会被内联成 data: URL——AudioWorklet.addModule 需要可寻址的同源模块 URL
+    // （data: URL 的 worklet 模块跨浏览器不保证可用），强制始终产出独立 asset 文件。
+    assetsInlineLimit(filePath) {
+      if (filePath.endsWith("captureWorklet.js")) {
+        return false;
+      }
+      return undefined;
+    },
   },
   test: {
     globals: true,

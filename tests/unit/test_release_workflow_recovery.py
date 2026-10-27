@@ -74,4 +74,5 @@ def test_recovery_replaces_only_pinned_smoke_harness_not_release_source():
         "dist/installation-smoke.json",
         "dist/linux-installer-smoke.json",
         "dist/SHA256SUMS",
+        "dist/release-artifacts-manifest.json",
     }
