@@ -660,55 +660,7 @@ class BrowserPerceiveTool:
                     projection_cursor=projection_cursor,
                 )
                 if vision_request == "evidence":
-                    # EVO-20260918-f2310800: evidence-layer vision only. The
-                    # DOM+AX snapshot above already succeeded; vision failure is
-                    # reported in the vision block and never masks the main result.
-                    capture_vision = getattr(self._backend, "capture_vision_evidence", None)
-                    if not callable(capture_vision):
-                        result["vision"] = {"status": "unavailable"}
-                    else:
-                        try:
-                            payload = capture_vision()
-                            # M1 B10 (DESIGN-20261027 §4.1): determinability
-                            # metadata for the evidence receipt - stamped right
-                            # at capture time. world_version is the snapshot_id
-                            # of the observation this screenshot belongs to;
-                            # page_id is the backend's bound target (absent on
-                            # backends without a bound page id).
-                            captured_at = datetime.now(UTC).isoformat(
-                                timespec="milliseconds"
-                            )
-                        except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
-                            result["vision"] = {
-                                "status": "failed",
-                                "error_type": type(vision_exc).__name__,
-                                "error": str(vision_exc),
-                            }
-                        else:
-                            if not isinstance(payload, bytes):
-                                # Mechanical payload boundary: the backend declared
-                                # the capability but did not return raw bytes.
-                                result["vision"] = {
-                                    "status": "unavailable",
-                                    "reason": "payload_not_bytes",
-                                }
-                            else:
-                                result["vision"] = {
-                                    "status": "ok",
-                                    **self._adapter.store_vision_evidence(
-                                        session_id,
-                                        payload,
-                                        page_id=(
-                                            str(getattr(self._backend, "bound_target_id", "") or "")
-                                            or None
-                                        ),
-                                        world_version=(
-                                            str((result.get("snapshot") or {}).get("snapshot_id") or "")
-                                            or None
-                                        ),
-                                        captured_at=captured_at,
-                                    ),
-                                }
+                    self._attach_vision_evidence(session_id, result)
                 return self._json_result(result)
             except Exception as exc:  # noqa: BLE001 - observation failure must remain explicit.
                 return ToolResult(
@@ -728,3 +680,55 @@ class BrowserPerceiveTool:
             tool_call_id="",
             tool_name=self.name,
         )
+
+    def _attach_vision_evidence(self, session_id: str, result: dict[str, Any]) -> None:
+        """EVO-20260918-f2310800: evidence-layer vision only.
+
+        The DOM+AX snapshot already succeeded; vision failure is reported in
+        the vision block and never masks the main result.
+        """
+        capture_vision = getattr(self._backend, "capture_vision_evidence", None)
+        if not callable(capture_vision):
+            result["vision"] = {"status": "unavailable"}
+            return
+        try:
+            payload = capture_vision()
+            # M1 B10 (DESIGN-20261027 §4.1): captured_at is stamped right at
+            # capture time.
+            captured_at = datetime.now(UTC).isoformat(timespec="milliseconds")
+        except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
+            result["vision"] = {
+                "status": "failed",
+                "error_type": type(vision_exc).__name__,
+                "error": str(vision_exc),
+            }
+            return
+        if not isinstance(payload, bytes):
+            # Mechanical payload boundary: the backend declared the capability
+            # but did not return raw bytes.
+            result["vision"] = {
+                "status": "unavailable",
+                "reason": "payload_not_bytes",
+            }
+            return
+        result["vision"] = {
+            "status": "ok",
+            **self._adapter.store_vision_evidence(
+                session_id,
+                payload,
+                **_vision_meta(self._backend, result, captured_at),
+            ),
+        }
+
+
+def _vision_meta(backend: Any, result: dict[str, Any], captured_at: str) -> dict[str, Any]:
+    """M1 B10 (DESIGN-20261027 §4.1): determinability metadata for the evidence
+    receipt. world_version is the snapshot_id of the observation this
+    screenshot belongs to; page_id is the backend's bound target (absent on
+    backends without a bound page id).
+    """
+    return {
+        "page_id": str(getattr(backend, "bound_target_id", "") or "") or None,
+        "world_version": (str((result.get("snapshot") or {}).get("snapshot_id") or "") or None),
+        "captured_at": captured_at,
+    }

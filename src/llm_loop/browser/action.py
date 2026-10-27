@@ -265,6 +265,22 @@ def _fingerprint_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
     return _safe_arg_facts(verb, args)
 
 
+def _dispatch_safe_arg_facts(
+    verb: str,
+    action: dict[str, Any],
+    dispatch_args: dict[str, Any],
+) -> dict[str, Any]:
+    """fix(P0-1): upload content digests are taken from the re-verified
+    resolved paths only (after the upload recheck), never from the declared
+    path strings still sitting in the action contract.
+    """
+    return _safe_arg_facts(
+        verb,
+        dict(action["args"]),
+        upload_files=(dispatch_args.get("paths") if verb == "upload" else None),
+    )
+
+
 def _landing_url_key(url: str) -> tuple[Any, ...]:
     """R2-7: normalization key for comparing requested vs landed URLs.
 
@@ -802,6 +818,86 @@ class BrowserActionAdapter:
             )
         return str(landed_reason or "blocked")
 
+    def _recheck_upload_dispatch_args(
+        self,
+        verb: str,
+        action: dict[str, Any],
+        session_id: str,
+        before_version: str,
+        before_ref: str | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """fix(P0-1, review-M1 A2): re-verify the FINAL resolved upload paths
+        right before any dispatch facts are taken and before the actuator is
+        called.
+
+        _validate approved the paths as DECLARED; the capture windows since
+        then are attacker swap time (deterministic probe: a symlink flip
+        inside the first capture hook used to send /private/etc/passwd
+        straight to dispatch with status=ok). Re-resolved absolute paths go
+        through the same policy once more; any failure rides the existing
+        rejected path (zero dispatch, zero dispatch.json). Residual window:
+        recheck -> browser file open (sub-millisecond); fd passing
+        (openat/O_NOFOLLOW) is registered as an M2 follow-up.
+
+        Returns ``(dispatch_args, None)`` on success, or
+        ``(None, rejected_receipt)`` when the recheck rejects.
+        """
+        dispatch_args = dict(action["args"])
+        if verb != "upload":
+            return dispatch_args, None
+        raw_paths = dispatch_args.get("paths")
+        if isinstance(raw_paths, list):
+            dispatch_args["paths"] = resolve_upload_paths(raw_paths)
+        recheck_error = upload_paths_policy_error(dispatch_args.get("paths"))
+        if recheck_error is not None:
+            return None, self._append_rejected(
+                session_id,
+                action,
+                recheck_error,
+                before_version=before_version,
+                before_ref=before_ref,
+            )
+        return dispatch_args, None
+
+    def _post_dispatch_observation(
+        self, session_id: str, before_version: str, dispatch_authority_lost: bool
+    ) -> tuple[str | None, str | None, str | None, dict[str, Any] | None, list[str]]:
+        """Post-dispatch after-observation + semantic diff (evidence only).
+
+        Returns ``(after_version, after_ref, diff_ref, semantic_diff,
+        post_reasons)``; an observation failure degrades evidence via
+        post_reasons and never gates the receipt. Authority-lost dispatches
+        skip the observation entirely (same semantics as the inline block).
+        """
+        after_version: str | None = None
+        after_ref: str | None = None
+        diff_ref: str | None = None
+        semantic_diff: dict[str, Any] | None = None
+        post_reasons: list[str] = []
+        if dispatch_authority_lost:
+            return after_version, after_ref, diff_ref, semantic_diff, post_reasons
+        try:
+            after_raw = self.capture_backend.capture()
+            after_result = self.perception.snapshot(session_id, after_raw, projection_limit=1)
+            after_snapshot = dict(after_result.get("snapshot") or {})
+            after_version = str(after_snapshot.get("snapshot_id") or "") or None
+            after_ref = str(after_snapshot.get("objects_ref") or "") or None
+            if after_version is not None:
+                diff = self.perception.diff(
+                    session_id,
+                    from_version=before_version,
+                    to_version=after_version,
+                )
+                semantic_diff = diff
+                diff_ref = str(diff.get("full_list_ref") or "") or None
+                if not bool((diff.get("completeness") or {}).get("complete")):
+                    post_reasons.extend(
+                        str(x) for x in (diff.get("completeness") or {}).get("reasons", [])
+                    )
+        except Exception as exc:  # noqa: BLE001 - post-observation failure degrades evidence only.
+            post_reasons.append(f"post_dispatch_observation_failed:{type(exc).__name__}")
+        return after_version, after_ref, diff_ref, semantic_diff, post_reasons
+
     def execute(self, session_id: str, action: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
@@ -1021,30 +1117,16 @@ class BrowserActionAdapter:
                     before_version=before_version, before_ref=before_ref,
                 )
 
-        # fix(P0-1, review-M1 A2): re-verify the FINAL resolved upload paths
-        # right before any dispatch facts are taken and before the actuator is
-        # called. _validate approved the paths as DECLARED; the capture windows
-        # since then are attacker swap time (deterministic probe: a symlink
-        # flip inside the first capture hook used to send /private/etc/passwd
-        # straight to dispatch with status=ok). Re-resolved absolute paths go
-        # through the same policy once more; any failure rides the existing
-        # rejected path (zero dispatch, zero dispatch.json). Residual window:
-        # recheck -> browser file open (sub-millisecond); fd passing
-        # (openat/O_NOFOLLOW) is registered as an M2 follow-up.
-        dispatch_args = dict(action["args"])
-        if verb == "upload":
-            raw_paths = dispatch_args.get("paths")
-            if isinstance(raw_paths, list):
-                dispatch_args["paths"] = resolve_upload_paths(raw_paths)
-            recheck_error = upload_paths_policy_error(dispatch_args.get("paths"))
-            if recheck_error is not None:
-                return self._append_rejected(
-                    session_id,
-                    action,
-                    recheck_error,
-                    before_version=before_version,
-                    before_ref=before_ref,
-                )
+        # fix(P0-1, review-M1 A2): upload paths are re-resolved and re-checked
+        # (same policy) after the capture windows, right before dispatch facts.
+        dispatch_args, upload_rejected = self._recheck_upload_dispatch_args(
+            verb, action, session_id, before_version, before_ref
+        )
+        if upload_rejected is not None:
+            return upload_rejected
+        # Invariant of _recheck_upload_dispatch_args: exactly one of the two
+        # tuple slots is None; the guard above leaves dispatch_args non-None.
+        assert dispatch_args is not None
 
         dispatch_ref = self.receipt_store.persist_dispatch_grounding(
             session_id,
@@ -1052,13 +1134,7 @@ class BrowserActionAdapter:
             action_fingerprint=fingerprint,
             verb=verb,
             physical_target=physical_target,
-            # fix(P0-1): upload content digests are taken from the re-verified
-            # resolved paths only (after the recheck above).
-            safe_args=_safe_arg_facts(
-                verb,
-                dict(action["args"]),
-                upload_files=(dispatch_args.get("paths") if verb == "upload" else None),
-            ),
+            safe_args=_dispatch_safe_arg_facts(verb, action, dispatch_args),
             before_version=before_version,
         )
         running = self._receipt_base(action)
@@ -1081,9 +1157,7 @@ class BrowserActionAdapter:
             else:
                 try:
                     # M1 B1 + fix(P0-1): dispatch_args carries the canonicalized
-                    # absolute upload paths, resolved AND policy-rechecked above
-                    # (before dispatch grounding); the action contract keeps the
-                    # model-declared args untouched.
+                    # absolute upload paths, rechecked above (see helper).
                     dispatch_result = self.actuator.dispatch(
                         verb=str(action["verb"]),
                         physical_target=physical_target,
@@ -1127,32 +1201,11 @@ class BrowserActionAdapter:
                 physical_target=physical_target,
             )
 
-        after_version: str | None = None
-        after_ref: str | None = None
-        diff_ref: str | None = None
-        semantic_diff: dict[str, Any] | None = None
-        post_reasons: list[str] = []
-        if not dispatch_authority_lost:
-            try:
-                after_raw = self.capture_backend.capture()
-                after_result = self.perception.snapshot(session_id, after_raw, projection_limit=1)
-                after_snapshot = dict(after_result.get("snapshot") or {})
-                after_version = str(after_snapshot.get("snapshot_id") or "") or None
-                after_ref = str(after_snapshot.get("objects_ref") or "") or None
-                if after_version is not None:
-                    diff = self.perception.diff(
-                        session_id,
-                        from_version=before_version,
-                        to_version=after_version,
-                    )
-                    semantic_diff = diff
-                    diff_ref = str(diff.get("full_list_ref") or "") or None
-                    if not bool((diff.get("completeness") or {}).get("complete")):
-                        post_reasons.extend(
-                            str(x) for x in (diff.get("completeness") or {}).get("reasons", [])
-                        )
-            except Exception as exc:  # noqa: BLE001 - post-observation failure degrades evidence only.
-                post_reasons.append(f"post_dispatch_observation_failed:{type(exc).__name__}")
+        # FR-2 tail + post-observation live in _post_dispatch_observation
+        # (evidence-only; failure degrades, never gates).
+        after_version, after_ref, diff_ref, semantic_diff, post_reasons = (
+            self._post_dispatch_observation(session_id, before_version, dispatch_authority_lost)
+        )
 
         terminal = self._receipt_base(action)
         terminal["before_version"] = before_version

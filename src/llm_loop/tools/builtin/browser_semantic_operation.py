@@ -323,6 +323,123 @@ def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
+def _navigate_step_clause(step: dict[str, Any]) -> dict[str, Any]:
+    if set(step) != {"do", "url"}:
+        raise BrowserSemanticOperationContractError("navigate_step_fields_mismatch")
+    url = str(step.get("url") or "").strip()
+    if not url:
+        raise BrowserSemanticOperationContractError("navigate_url_missing")
+    return {
+        "kind": "mutate",
+        "verb": "navigate",
+        "target": {"kind": "page"},
+        "args": {"url": url},
+    }
+
+
+def _upload_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M1 B1: the path policy runs at compile time so any violation rejects
+    before snapshot/grounding/dispatch - the adapter re-validates the same
+    policy as the authoritative pre-dispatch gate (defense in depth).
+    """
+    if set(step) != {"do", "target", "paths"}:
+        raise BrowserSemanticOperationContractError("upload_step_fields_mismatch")
+    paths = step.get("paths")
+    if not isinstance(paths, list) or not all(
+        isinstance(item, str) and item.strip() for item in paths
+    ):
+        raise BrowserSemanticOperationContractError("upload_args_invalid")
+    policy_error = upload_paths_policy_error(paths)
+    if policy_error is not None:
+        raise BrowserSemanticOperationContractError(policy_error)
+    return {
+        "kind": "mutate",
+        "verb": "upload",
+        "target": cls._short_target_to_clause_target(step.get("target")),
+        "args": {"paths": [str(item) for item in paths]},
+    }
+
+
+def _type_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M1 B2: empty text is accepted (explicit no-op); only the >2000 bound
+    rejects. The adapter re-validates (defense in depth for direct
+    semantic_execute callers).
+    """
+    if set(step) != {"do", "target", "text"}:
+        raise BrowserSemanticOperationContractError("type_step_fields_mismatch")
+    text = step.get("text")
+    if not isinstance(text, str):
+        raise BrowserSemanticOperationContractError("type_args_invalid")
+    if len(text) > _TYPE_MAX_TEXT_LENGTH:
+        raise BrowserSemanticOperationContractError("type_text_too_long")
+    return {
+        "kind": "mutate",
+        "verb": "type",
+        "target": cls._short_target_to_clause_target(step.get("target")),
+        "args": {"text": text},
+    }
+
+
+def _mutate_clause_receipt(
+    index: int,
+    kind: str,
+    verb: str,
+    identity: dict[str, str] | None,
+    exact_count: int,
+    args: dict[str, Any],
+    action_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """M1 B1/B2: verb-specific mechanical echo on the model-facing clause
+    receipt. upload files are only echoed as ok/name/size/mime when the
+    dispatch actually acknowledged; type echoes length + preview only (never
+    the full text).
+    """
+    clause_receipt: dict[str, Any] = {
+        "index": index,
+        "kind": kind,
+        "verb": verb,
+        "identity": identity,
+        "exact_match_count": exact_count,
+        "status": "dispatched" if action_receipt.get("status") == "ok" else "blocked",
+        "action_receipt": action_receipt,
+    }
+    if verb == "upload" and action_receipt.get("status") == "ok":
+        clause_receipt["upload_files"] = upload_paths_facts(
+            [str(item) for item in dict(args).get("paths") or []]
+        )
+    elif verb == "type":
+        typed_text = str(dict(args).get("text") or "")
+        clause_receipt["type_echo"] = {
+            "length": len(typed_text),
+            "preview": typed_text[:_TYPE_PREVIEW_LENGTH],
+        }
+    return clause_receipt
+
+
+def _lift_m1_compact_echoes(compact: dict[str, Any], last: dict[str, Any], status: str) -> None:
+    """M1 B1/B2: lift the new-verb mechanical echoes into the compact receipt.
+
+    Keys exist only for upload/type clauses, so every pre-M1 compact receipt
+    stays byte-identical. When halted, surface the adapter's exact rejection
+    code (e.g. path_not_allowed) for the new verbs; existing verbs keep their
+    pre-M1 halt surface.
+    """
+    if isinstance(last.get("upload_files"), list):
+        compact["upload_files"] = last["upload_files"]
+    if isinstance(last.get("type_echo"), dict):
+        compact["type_echo"] = last["type_echo"]
+    if status == "halted" and str(last.get("verb") or "") in {"upload", "type"}:
+        blocked_receipt = last.get("action_receipt")
+        if isinstance(blocked_receipt, dict):
+            retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
+            if isinstance(retry_reason, str) and retry_reason:
+                compact["reject_reason"] = retry_reason
+
+
 class BrowserSemanticOperationTool:
     name = "browser_operate"
     description = (
@@ -957,17 +1074,7 @@ class BrowserSemanticOperationTool:
             if "do" in step:
                 verb = str(step.get("do") or "").strip()
                 if verb == "navigate":
-                    if set(step) != {"do", "url"}:
-                        raise BrowserSemanticOperationContractError("navigate_step_fields_mismatch")
-                    url = str(step.get("url") or "").strip()
-                    if not url:
-                        raise BrowserSemanticOperationContractError("navigate_url_missing")
-                    clauses.append({
-                        "kind": "mutate",
-                        "verb": "navigate",
-                        "target": {"kind": "page"},
-                        "args": {"url": url},
-                    })
+                    clauses.append(_navigate_step_clause(step))
                     continue
                 if verb == "click":
                     if set(step) != {"do", "target"}:
@@ -1016,44 +1123,12 @@ class BrowserSemanticOperationTool:
                     })
                     continue
                 if verb == "upload":
-                    # M1 B1: the path policy runs at compile time so any
-                    # violation rejects before snapshot/grounding/dispatch -
-                    # the adapter re-validates the same policy as the
-                    # authoritative pre-dispatch gate (defense in depth).
-                    if set(step) != {"do", "target", "paths"}:
-                        raise BrowserSemanticOperationContractError("upload_step_fields_mismatch")
-                    paths = step.get("paths")
-                    if not isinstance(paths, list) or not all(
-                        isinstance(item, str) and item.strip() for item in paths
-                    ):
-                        raise BrowserSemanticOperationContractError("upload_args_invalid")
-                    policy_error = upload_paths_policy_error(paths)
-                    if policy_error is not None:
-                        raise BrowserSemanticOperationContractError(policy_error)
-                    clauses.append({
-                        "kind": "mutate",
-                        "verb": "upload",
-                        "target": cls._short_target_to_clause_target(step.get("target")),
-                        "args": {"paths": [str(item) for item in paths]},
-                    })
+                    # M1 B1: policy runs at compile time; see _upload_step_clause.
+                    clauses.append(_upload_step_clause(cls, step))
                     continue
                 if verb == "type":
-                    # M1 B2: empty text is accepted (explicit no-op); only the
-                    # >2000 bound rejects. The adapter re-validates (defense
-                    # in depth for direct semantic_execute callers).
-                    if set(step) != {"do", "target", "text"}:
-                        raise BrowserSemanticOperationContractError("type_step_fields_mismatch")
-                    text = step.get("text")
-                    if not isinstance(text, str):
-                        raise BrowserSemanticOperationContractError("type_args_invalid")
-                    if len(text) > _TYPE_MAX_TEXT_LENGTH:
-                        raise BrowserSemanticOperationContractError("type_text_too_long")
-                    clauses.append({
-                        "kind": "mutate",
-                        "verb": "type",
-                        "target": cls._short_target_to_clause_target(step.get("target")),
-                        "args": {"text": text},
-                    })
+                    # M1 B2: see _type_step_clause (empty text = explicit no-op).
+                    clauses.append(_type_step_clause(cls, step))
                     continue
                 if verb == "wait_text":
                     required = {"do", "target", "field", "match", "text"}
@@ -1372,21 +1447,9 @@ class BrowserSemanticOperationTool:
             boundary_events = action_receipt.get("boundary_events")
             if isinstance(boundary_events, list) and boundary_events:
                 compact["boundary_events"] = boundary_events
-        # M1 B1/B2: lift the new-verb mechanical echoes into the compact
-        # receipt. Keys exist only for upload/type clauses, so every pre-M1
-        # compact receipt stays byte-identical.
-        if isinstance(last.get("upload_files"), list):
-            compact["upload_files"] = last["upload_files"]
-        if isinstance(last.get("type_echo"), dict):
-            compact["type_echo"] = last["type_echo"]
-        if status == "halted" and str(last.get("verb") or "") in {"upload", "type"}:
-            # Surface the adapter's exact rejection code (e.g. path_not_allowed)
-            # for the new verbs; existing verbs keep their pre-M1 halt surface.
-            blocked_receipt = last.get("action_receipt")
-            if isinstance(blocked_receipt, dict):
-                retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
-                if isinstance(retry_reason, str) and retry_reason:
-                    compact["reject_reason"] = retry_reason
+        # M1 B1/B2 echoes: keys exist only for upload/type clauses, so every
+        # pre-M1 compact receipt stays byte-identical.
+        _lift_m1_compact_echoes(compact, last, status)
         return compact
 
     def execute_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -1502,29 +1565,9 @@ class BrowserSemanticOperationTool:
                     session_id,
                     {"verb": verb, "target_ref": target_ref, "args": dict(args)},
                 )
-                clause_receipt = {
-                    "index": index,
-                    "kind": kind,
-                    "verb": verb,
-                    "identity": identity,
-                    "exact_match_count": exact_count,
-                    "status": "dispatched" if action_receipt.get("status") == "ok" else "blocked",
-                    "action_receipt": action_receipt,
-                }
-                # M1 B1/B2: verb-specific mechanical echo on the model-facing
-                # clause receipt. upload files are only echoed as ok/name/size/
-                # mime when the dispatch actually acknowledged; type echoes
-                # length + preview only (never the full text).
-                if verb == "upload" and action_receipt.get("status") == "ok":
-                    clause_receipt["upload_files"] = upload_paths_facts(
-                        [str(item) for item in dict(args).get("paths") or []]
-                    )
-                elif verb == "type":
-                    typed_text = str(dict(args).get("text") or "")
-                    clause_receipt["type_echo"] = {
-                        "length": len(typed_text),
-                        "preview": typed_text[:_TYPE_PREVIEW_LENGTH],
-                    }
+                clause_receipt = _mutate_clause_receipt(
+                    index, kind, verb, identity, exact_count, args, action_receipt
+                )
                 receipt["clauses"].append(clause_receipt)
                 if action_receipt.get("status") != "ok":
                     receipt["execution_status"] = "halted"
