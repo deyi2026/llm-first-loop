@@ -87,7 +87,7 @@ def test_model_surface_keeps_diff_and_aggregated_wait_read_only(tmp_path: Path) 
         session_id_getter=lambda: "s1",
     )
     props = tool.parameters["properties"]
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait", "pages"]
     assert set(props) == {
         "action",
         "projection_limit",

@@ -76,8 +76,11 @@ def test_mf5_3_2a_authority_split_is_unchanged() -> None:
     perceive_actions = set(BrowserPerceiveTool.parameters["properties"]["action"]["enum"])
     operate_verbs = _operate_verbs()
 
-    assert perceive_actions == {"snapshot", "hydrate", "diff", "wait"}
+    assert perceive_actions == {"snapshot", "hydrate", "diff", "wait", "pages"}
     assert "navigate" not in perceive_actions
+    # M2-B B9 (DESIGN-20261027 §4.1/B9): pages is an additive READ-ONLY
+    # perceive action; it grants no mutation authority (authority split
+    # unchanged - operate verbs below remain the only mutation surface).
     # M1 (DESIGN-20261027 B1/B2): upload/type are additive provider verbs.
     # M2-A (DESIGN-20261027 B3/B4/B5): press_key/hover/dialog are additive too.
     assert operate_verbs == {

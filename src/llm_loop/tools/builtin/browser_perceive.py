@@ -43,6 +43,8 @@ class BrowserPerceiveTool:
         "M2-B B7：wait kind=object_absent 为负条件等待——元素消失需在窗口内累计稳定"
         " settle_ms（默认 300，可覆盖 50..10000）才成立，中途回闪重置计时；"
         "超时回执 state=present（明确失败）。"
+        "M2-B B9：action=pages 健康态只读页面清单（id/url/title/是否绑定 + 当前"
+        " world_version）；不换绑、不建会话——需要切页仍走显式 target_id 独立动作。"
         "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/auto-select/retry，"
         "多标签歧义时返回只读页面清单；可用显式 target_id 换绑指定页（EVO-20261007）。"
         "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
@@ -190,13 +192,25 @@ class BrowserPerceiveTool:
             "required": ["action", "kind", "grounding_ref"],
             "additionalProperties": False,
         },
+        {
+            # M2-B B9 (DESIGN-20261027 §4.1/B9): healthy-state read-only page
+            # listing. Same /json/list channel the multi-page miss receipt
+            # uses (EVO-20261007-11ae668f); NO target_id here - rebind is a
+            # separate explicit action, a listing must never side-effect one.
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["pages"]},
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        },
     ]
     parameters = {
         "type": "object",
         # Keep the shallow union for provider compatibility, while oneOf branches below
         # are the authority for action-specific closed fields.
         "properties": {
-            "action": {"type": "string", "enum": ["snapshot", "hydrate", "diff", "wait"]},
+            "action": {"type": "string", "enum": ["snapshot", "hydrate", "diff", "wait", "pages"]},
             "projection_kinds": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -378,6 +392,50 @@ class BrowserPerceiveTool:
         )
 
 
+    def _pages_action(self, session_id: str, request: dict[str, Any]) -> ToolResult:
+        """M2-B B9 (DESIGN-20261027 §4.1/B9): healthy-state read-only page listing.
+
+        Rides the SAME /json/list channel the multi-page miss receipt uses
+        (EVO-20261007-11ae668f) - no new CDP method, no session, no capture,
+        no store write.  target_id (or any extra field) is a deterministic
+        fields mismatch: a listing must never trigger the rebind path, and
+        rebind stays its own explicit single action.  The receipt echoes the
+        current binding and world_version so the caller can verify the
+        no-change contract on the receipt itself.
+        """
+        if set(request) != {"action"}:
+            extras = sorted(set(request) - {"action"})
+            return self._fail(
+                f"[browser_perceive:pages] fields_mismatch: 只读清单不接受字段 {extras}"
+                "（换绑 target_id 是独立动作）。"
+            )
+        if self._page_controller is None:
+            return self._fail(
+                "[browser_perceive:pages] page controller 未装配；页面清单不可用。"
+            )
+        try:
+            pages = self._page_controller.list_pages()
+            binding = self._page_controller.current_binding()
+        except Exception as exc:  # noqa: BLE001 - listing failure must stay explicit
+            return self._fail(
+                "[browser_perceive:pages] 页面清单读取失败："
+                f"error_type={type(exc).__name__}; error={exc}"
+            )
+        bound_id = str((binding or {}).get("target_id") or "") or str(
+            getattr(self._backend, "bound_target_id", "") or ""
+        )
+        payload = {
+            "action": "pages",
+            "read_only": True,
+            "pages": [
+                {**page.to_dict(), "bound": page.page_id == bound_id} for page in pages
+            ],
+            "page_count": len(pages),
+            "binding_page_id": bound_id or None,
+            "world_version": self._adapter.latest_world_version(session_id),
+        }
+        return self._json_result(payload)
+
     def _wait_download_state(
         self, *, expected: str, timeout_ms: int, interval_ms: int
     ) -> ToolResult:
@@ -493,6 +551,11 @@ class BrowserPerceiveTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # M2-B B9：pages 是只读清单动作，必须在通用 target_id 换绑拦截之前
+        # 分发——任何附带的 target_id 都在 _pages_action 内确定性拒绝，
+        # 读取路径绝不产生换绑副作用。
+        if action == "pages":
+            return self._pages_action(session_id, dict(kwargs))
         # EVO-20261007-11ae668f：显式 target_id ⇒ 先换绑（确定性，非静默），再执行观察。
         explicit_target_id = str(kwargs.get("target_id") or "").strip()
         if explicit_target_id:
@@ -820,7 +883,7 @@ class BrowserPerceiveTool:
                 )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
-            content="[browser_perceive] action 必须是 snapshot、hydrate、diff 或 wait。",
+            content="[browser_perceive] action 必须是 snapshot、hydrate、diff、wait 或 pages。",
             tool_call_id="",
             tool_name=self.name,
         )

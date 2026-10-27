@@ -108,7 +108,7 @@ def _object_tool(
 
 def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> None:
     perceive_props = BrowserPerceiveTool.parameters["properties"]
-    assert perceive_props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert perceive_props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait", "pages"]
     assert set(perceive_props) == {
         "action",
         "projection_limit",

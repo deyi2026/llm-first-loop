@@ -2772,6 +2772,20 @@ class BrowserPerceptionAdapter:
             ),
         )
 
+    def latest_world_version(self, session_id: str) -> str | None:
+        """M2-B B9: latest persisted snapshot id for the session, or None.
+
+        Read-only - never captures, never mutates state.  A missing or
+        unreadable lineage state degrades to None: the read-only pages
+        listing must stay available even when the snapshot ring is empty.
+        """
+        try:
+            state = self.store.load_session_state(session_id) or {}
+        except (RuntimeError, PermissionError):
+            return None
+        ids = state.get("snapshot_ids") or []
+        return str(ids[-1]) if ids else None
+
     def hydrate(self, session_id: str, grounding_ref: str) -> dict[str, Any]:
         return self.store.hydrate(session_id, grounding_ref)
 

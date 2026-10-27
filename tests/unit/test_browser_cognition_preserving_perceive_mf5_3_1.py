@@ -60,6 +60,9 @@ def test_mf5_3_1_perceive_provider_contract_is_root_direct_oneof() -> None:
         # M2-B B7 (DESIGN-20261027 §7.3.4): negative-condition wait branch
         # (absence + settle window; timeout reports state=present).
         ("wait", "object_absent"),
+        # M2-B B9 (DESIGN-20261027 §4.1/B9): read-only healthy-state page
+        # listing branch (no target_id - rebind stays a separate action).
+        ("pages", ""),
     }
     assert all(branch.get("additionalProperties") is False for branch in branches.values())
 
@@ -127,6 +130,8 @@ def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
             {"action", "kind", "grounding_ref", "settle_ms", "within_ms", "target_id"},
             {"action", "kind", "grounding_ref"},
         ),
+        # M2-B B9: read-only healthy-state page listing (closed to action).
+        ("pages", ""): ({"action"}, {"action"}),
     }
 
     for key, (property_names, required_names) in expected.items():

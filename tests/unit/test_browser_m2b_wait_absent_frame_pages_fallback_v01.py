@@ -411,3 +411,146 @@ def test_b8_identity_search_projects_frame_token(tmp_path: Path) -> None:
         _FRAME_TOKEN,
     ]
 
+
+# ---------------------------------------------------------------------------
+# C. B9 read-only pages listing (DESIGN-20261027 §4.1/B9)
+# ---------------------------------------------------------------------------
+
+
+class _PageController:
+    """B9 double: read-only /json/list-shaped listing + binding identity."""
+
+    def __init__(self, pages: list[dict[str, str]], binding: dict[str, str] | None):
+        from llm_loop.browser.errors import PageRecord
+
+        self.records = [
+            PageRecord(
+                page_id=str(p["page_id"]),
+                url=str(p["url"]),
+                title=str(p["title"]),
+                websocket_url=str(p["websocket_url"]),
+            )
+            for p in pages
+        ]
+        self._binding = binding
+        self.rebind_calls: list[str] = []
+        self.list_calls = 0
+
+    def list_pages(self) -> list[Any]:
+        self.list_calls += 1
+        return list(self.records)
+
+    def current_binding(self) -> dict[str, str] | None:
+        return dict(self._binding) if self._binding else None
+
+    def rebind(self, target_id: str) -> dict[str, str]:
+        self.rebind_calls.append(str(target_id))
+        return {"page_id": str(target_id)}
+
+
+_PAGES = [
+    {
+        "page_id": "target-a",
+        "url": "http://127.0.0.1/a",
+        "title": "Page A",
+        "websocket_url": "ws://127.0.0.1:9222/devtools/page/target-a",
+    },
+    {
+        "page_id": "target-b",
+        "url": "http://127.0.0.1/b",
+        "title": "Page B",
+        "websocket_url": "ws://127.0.0.1:9222/devtools/page/target-b",
+    },
+    {
+        "page_id": "target-c",
+        "url": "http://127.0.0.1/c",
+        "title": "Page C",
+        "websocket_url": "ws://127.0.0.1:9222/devtools/page/target-c",
+    },
+]
+
+
+def _b9_tool(
+    tmp_path: Path, controller: _PageController | None
+) -> tuple[BrowserPerceiveTool, Any]:
+    adapter = _adapter(tmp_path)
+    backend = _Backend([deepcopy(FIXTURES["base"])])
+    tool = BrowserPerceiveTool(
+        adapter=adapter,
+        backend=backend,
+        session_id_getter=lambda: "s1",
+        page_controller=controller,
+    )
+    return tool, adapter
+
+
+def test_b9_pages_lists_all_pages_in_healthy_state_without_rebinding(
+    tmp_path: Path,
+) -> None:
+    controller = _PageController(_PAGES, binding=None)
+    controller._binding = {
+        "browser_ws_uuid": "uuid-1",
+        "target_id": "target-b",
+        "target_ws_url": "ws://127.0.0.1:9222/devtools/page/target-b",
+    }
+    tool, adapter = _b9_tool(tmp_path, controller)
+    seeded = adapter.snapshot("s1", deepcopy(FIXTURES["base"]), projection_limit=5)
+    world_before = str(seeded["snapshot"]["snapshot_id"])
+    binding_before = controller.current_binding()
+
+    result = tool.execute(action="pages")
+    payload = json.loads(result.content)
+
+    assert payload["action"] == "pages" and payload["read_only"] is True
+    assert payload["page_count"] == 3
+    bound_flags = {page["page_id"]: page["bound"] for page in payload["pages"]}
+    assert bound_flags == {"target-a": False, "target-b": True, "target-c": False}
+    assert payload["binding_page_id"] == "target-b"
+    # 只读合同（不是口头保证）：调用前后绑定与 world_version 不变。
+    assert payload["world_version"] == world_before
+    assert controller.current_binding() == binding_before
+    assert controller.rebind_calls == []
+    assert adapter.latest_world_version("s1") == world_before
+    assert backend_never_touched(tool) is True
+
+
+def backend_never_touched(tool: BrowserPerceiveTool) -> bool:
+    # The pages action must not drive the capture backend at all.
+    backend = getattr(tool, "_backend", None)
+    return getattr(backend, "calls", -1) in (0, -1)
+
+
+def test_b9_pages_rejects_target_id_without_any_rebind(tmp_path: Path) -> None:
+    controller = _PageController(_PAGES, binding=None)
+    tool, _ = _b9_tool(tmp_path, controller)
+    result = tool.execute(action="pages", target_id="target-c")
+    assert result.status.value == "failure"
+    assert "fields_mismatch" in result.content
+    assert controller.rebind_calls == []  # the read path never rebinds
+    assert controller.list_calls == 0
+
+
+def test_b9_pages_rejects_unknown_fields(tmp_path: Path) -> None:
+    controller = _PageController(_PAGES, binding=None)
+    tool, _ = _b9_tool(tmp_path, controller)
+    result = tool.execute(action="pages", page_count=3)
+    assert result.status.value == "failure"
+    assert "fields_mismatch" in result.content
+    assert controller.list_calls == 0
+
+
+def test_b9_pages_without_controller_fails_deterministically(tmp_path: Path) -> None:
+    tool, _ = _b9_tool(tmp_path, None)
+    result = tool.execute(action="pages")
+    assert result.status.value == "failure"
+    assert "page controller" in result.content
+
+
+def test_b9_latest_world_version_is_none_before_any_snapshot(tmp_path: Path) -> None:
+    controller = _PageController(_PAGES, binding=None)
+    tool, adapter = _b9_tool(tmp_path, controller)
+    assert adapter.latest_world_version("s1") is None
+    result = tool.execute(action="pages")
+    payload = json.loads(result.content)
+    assert payload["world_version"] is None  # honest: no snapshot yet
+
