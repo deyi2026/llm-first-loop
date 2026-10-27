@@ -4,9 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conversationStore } from "../conversation";
 import type { AudioBufferSourceLike, AudioContextLike } from "./audioPlayback";
 import type { SocketLike } from "./mediaSessionClient";
+import type { MediaStreamLike, WorkletPortLike } from "./micCapture";
 import { resetShareSourceLedgerForTests } from "./visualShare";
 import { useRealtimeVoice, type RealtimeVoiceTransport } from "./useRealtimeVoice";
 import type { ChatMessage } from "../types";
+
+// P1 装配接线：默认 createPort 走真实适配器——mock browserCapture 模块断言被调用且收到流。
+// （仅默认路径使用它；既有测试均注入 transport.createPort 或不触发 press，互不影响。）
+const browserCaptureMock = vi.hoisted(() => ({ createBrowserCapturePort: vi.fn() }));
+vi.mock("./browserCapture", () => browserCaptureMock);
 
 class FakeSocket implements SocketLike {
   readonly sent: (string | ArrayBuffer)[] = [];
@@ -1527,3 +1533,113 @@ describe("useRealtimeVoice 语音轮合并（M3 后续：LLM 队列积压）", (
 });
 
 
+
+// ---------------------------------------------------------------------------
+// P1：采集 port 装配接线——默认真实适配器 + port 创建失败可见（jsdom fake 驱动）
+// ---------------------------------------------------------------------------
+
+class FakeMicTrack {
+  stopped = false;
+  stop(): void {
+    this.stopped = true;
+  }
+}
+
+class FakeMicStream implements MediaStreamLike {
+  constructor(readonly track: FakeMicTrack) {}
+  getTracks(): FakeMicTrack[] {
+    return [this.track];
+  }
+}
+
+describe("useRealtimeVoice P1 采集 port 装配", () => {
+  beforeEach(() => {
+    conversationStore.setState({
+      messages: [],
+      streaming: false,
+      streamingIndex: -1,
+      lastError: null,
+      streamStartedAt: null,
+      backgroundRunning: false,
+      activeRunGeneration: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    delete (navigator as unknown as { mediaDevices?: unknown }).mediaDevices;
+  });
+
+  function stubMic(stream: FakeMicStream): void {
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: { getUserMedia: async () => stream },
+      configurable: true,
+    });
+  }
+
+  it("wires createBrowserCapturePort by default and hands it the acquired stream (frames reach the uplink)", async () => {
+    const stream = new FakeMicStream(new FakeMicTrack());
+    stubMic(stream);
+    const port: WorkletPortLike = { onmessage: null, close: () => undefined };
+    browserCaptureMock.createBrowserCapturePort.mockResolvedValueOnce(port);
+    const env = makeEnv(); // 不注入 transport.createPort → 默认装配真实适配器
+    const view = await enableAndOpen(env);
+    await act(async () => {
+      await view.result.current.press();
+    });
+    expect(browserCaptureMock.createBrowserCapturePort).toHaveBeenCalledTimes(1);
+    expect(browserCaptureMock.createBrowserCapturePort).toHaveBeenCalledWith(stream); // 真实流进入 worklet 工厂
+    expect(view.result.current.micEnabled).toBe(true);
+    // port 帧驱动上行（帧计数 > 0 → release 发出 input.commit，证明采集闭环接通）
+    act(() => {
+      port.onmessage?.({ data: { samples: new Float32Array(320), sampleRate: 16000 } });
+    });
+    act(() => {
+      view.result.current.release();
+    });
+    expect(env.sockets[0].sentTextEvents().some((event) => event.type === "input.commit")).toBe(true);
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+
+  it("a rejecting createBrowserCapturePort stops tracks, fails visibly via onNotice, and never fakes capture", async () => {
+    const stream = new FakeMicStream(new FakeMicTrack());
+    stubMic(stream);
+    browserCaptureMock.createBrowserCapturePort.mockRejectedValueOnce(new Error("worklet addModule failed"));
+    const env = makeEnv();
+    const view = await enableAndOpen(env);
+    await act(async () => {
+      await view.result.current.press();
+    });
+    expect(stream.track.stopped).toBe(true); // 本轮轨道全部释放
+    expect(view.result.current.micEnabled).toBe(false); // press 未成功
+    expect(env.notices).toHaveBeenCalledWith("语音采集初始化失败，请重试"); // 可见非阻塞提示
+    expect(view.result.current.error).toContain("语音采集初始化失败");
+    expect(env.sockets[0].sentTextEvents().some((event) => event.type === "input.commit")).toBe(false);
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+
+  it("transport.createPort still overrides the default adapter (test injection path unchanged)", async () => {
+    const stream = new FakeMicStream(new FakeMicTrack());
+    stubMic(stream);
+    const env = makeEnv();
+    const injected = vi.fn(
+      (): WorkletPortLike => ({ onmessage: null, close: () => undefined }),
+    );
+    (env.transport as RealtimeVoiceTransport).createPort = injected;
+    const view = await enableAndOpen(env);
+    await act(async () => {
+      await view.result.current.press();
+    });
+    expect(injected).toHaveBeenCalledTimes(1);
+    expect(injected).toHaveBeenCalledWith(stream);
+    expect(browserCaptureMock.createBrowserCapturePort).not.toHaveBeenCalled(); // 覆盖默认适配器
+    expect(view.result.current.micEnabled).toBe(true);
+    act(() => {
+      view.result.current.disable();
+    });
+  });
+});

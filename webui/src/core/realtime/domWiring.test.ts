@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CapturePipeline } from "./capturePipeline";
 import { PlaybackOutput, type AudioBufferSourceLike, type AudioContextLike } from "./audioPlayback";
-import { MicCapture, type MediaDevicesLike, type MediaStreamLike, type WorkletPortLike } from "./micCapture";
+import {
+  MicCapture,
+  type MediaDevicesLike,
+  type MediaStreamLike,
+  type MicCaptureOptions,
+  type WorkletPortLike,
+} from "./micCapture";
 import { PlaybackQueue } from "./playbackQueue";
 
 class FakeTrack {
@@ -60,19 +66,29 @@ class FakeAudioContext implements AudioContextLike {
   }
 }
 
-function makeCapture(devices: MediaDevicesLike, onNotice?: (message: string) => void) {
+function makeCapture(
+  devices: MediaDevicesLike,
+  extras: {
+    /** M3 后续：gUM 启动超时等可见降级提示（超时用例注入）。 */
+    onNotice?: (message: string) => void;
+    /** P1：port 工厂注入（异步工厂/失败路径用例）；缺省 FakePort。 */
+    createPort?: MicCaptureOptions["createPort"];
+  } = {},
+) {
   const frames: Int16Array[] = [];
   const ports: FakePort[] = [];
   const capture = new MicCapture({
     mediaDevices: devices,
     pipeline: new CapturePipeline({ frameSamples: 320 }),
     onFrame: (frame) => frames.push(frame),
-    onNotice,
-    createPort: () => {
-      const port = new FakePort();
-      ports.push(port);
-      return port;
-    },
+    onNotice: extras.onNotice,
+    createPort:
+      extras.createPort ??
+      (() => {
+        const port = new FakePort();
+        ports.push(port);
+        return port;
+      }),
   });
   return { capture, frames, ports };
 }
@@ -116,7 +132,7 @@ describe("MicCapture", () => {
       const notices: string[] = [];
       const { capture } = makeCapture(
         { getUserMedia: () => new Promise<MediaStreamLike>(() => {}) },
-        (message) => notices.push(message),
+        { onNotice: (message) => notices.push(message) },
       );
       const pending = capture.press();
       await vi.advanceTimersByTimeAsync(10_000);
@@ -161,7 +177,7 @@ describe("MicCapture", () => {
               setTimeout(() => resolve(new FakeStream(track)), 2_000);
             }),
         },
-        (message) => notices.push(message),
+        { onNotice: (message) => notices.push(message) },
       );
       const pending = capture.press();
       await vi.advanceTimersByTimeAsync(2_000);
@@ -208,6 +224,122 @@ describe("MicCapture", () => {
     const { capture, frames } = makeCapture({ getUserMedia: async () => new FakeStream(new FakeTrack()) });
     capture.handleSamples({ samples: new Float32Array(320), sampleRate: 16000 });
     expect(frames.length).toBe(0);
+  });
+
+  // ---- P1 装配接线：createPort 带 stream、可异步、失败不静默 ---------------------
+
+  it("press passes the acquired stream to createPort and wires its frames", async () => {
+    const track = new FakeTrack();
+    const stream = new FakeStream(track);
+    let received: MediaStreamLike | null = null;
+    const ports: FakePort[] = [];
+    const { capture, frames } = makeCapture(
+      { getUserMedia: async () => stream },
+      { createPort: async (candidate) => {
+        received = candidate; // 异步工厂（真实 worklet addModule 也是 Promise）
+        const port = new FakePort();
+        ports.push(port);
+        return port;
+      } },
+    );
+    expect(await capture.press()).toBe(true);
+    expect(received).toBe(stream); // 真实采集流确实交给 port 工厂（P1 断链点）
+    ports[0].onmessage?.({ data: { samples: new Float32Array(320), sampleRate: 16000 } });
+    expect(frames.length).toBe(1); // port 帧接进管线（AudioWorklet → 16k PCM16）
+  });
+
+  it("port creation failure stops all tracks and reports honestly (no fabricated capture)", async () => {
+    const track = new FakeTrack();
+    const stream = new FakeStream(track);
+    let fail = true;
+    const { capture, ports } = makeCapture(
+      { getUserMedia: async () => stream },
+      { createPort: () => {
+        if (fail) throw new Error("worklet addModule failed");
+        const port = new FakePort();
+        ports.push(port);
+        return port;
+      } },
+    );
+    expect(await capture.press()).toBe(false);
+    expect(track.stopped).toBe(true); // 本轮轨道全部释放，不留悬挂采集
+    expect(capture.micEnabled).toBe(false);
+    expect(capture.pressError).toBe("port-init"); // 分类驱动上层可见提示
+    // 重试可恢复：port 工厂恢复后正常装配（失败不是永久态）
+    fail = false;
+    expect(await capture.press()).toBe(true);
+    expect(capture.micEnabled).toBe(true);
+    expect(ports).toHaveLength(1);
+  });
+
+  it("port creation rejection (async) also stops tracks and fails honestly", async () => {
+    const track = new FakeTrack();
+    const stream = new FakeStream(track);
+    const { capture } = makeCapture(
+      { getUserMedia: async () => stream },
+      { createPort: async () => {
+        throw new Error("AudioContext unavailable");
+      } },
+    );
+    expect(await capture.press()).toBe(false);
+    expect(track.stopped).toBe(true);
+    expect(capture.pressError).toBe("port-init");
+    expect(capture.micEnabled).toBe(false);
+  });
+
+  it("falls back to the default empty port when createPort is omitted (jsdom path)", async () => {
+    const track = new FakeTrack();
+    const frames: Int16Array[] = [];
+    const capture = new MicCapture({
+      mediaDevices: { getUserMedia: async () => new FakeStream(track) },
+      pipeline: new CapturePipeline({ frameSamples: 320 }),
+      onFrame: (frame) => frames.push(frame),
+      // 不注入 createPort：默认空 port（不产帧、close 幂等）——jsdom 既有依赖
+    });
+    expect(await capture.press()).toBe(true);
+    expect(capture.micEnabled).toBe(true);
+    capture.release();
+    expect(track.stopped).toBe(true);
+    expect(frames.length).toBe(0); // 空 port 不产帧，但接线/生命周期语义不变
+  });
+
+  it("a late stream after release is discarded with its tracks stopped (never resurrects)", async () => {
+    const track = new FakeTrack();
+    const stream = new FakeStream(track);
+    let resolveStream: ((stream: FakeStream) => void) | undefined;
+    const { capture } = makeCapture({
+      getUserMedia: () => new Promise<FakeStream>((resolve) => { resolveStream = resolve; }),
+    });
+    const pending = capture.press();
+    capture.release(); // 流尚未到达即松开：本轮作废
+    resolveStream?.(stream); // 迟到流
+    expect(await pending).toBe(false);
+    expect(track.stopped).toBe(true); // 迟到流轨道立即释放，不悬挂
+    expect(capture.micEnabled).toBe(false);
+    expect(capture.pressedDown).toBe(false);
+  });
+
+  it("a late release while createPort is pending closes the port without wiring it", async () => {
+    const track = new FakeTrack();
+    const stream = new FakeStream(track);
+    let resolvePort: ((port: WorkletPortLike) => void) | undefined;
+    let portRequested = false;
+    const { capture } = makeCapture(
+      { getUserMedia: async () => stream },
+      { createPort: () => {
+        portRequested = true;
+        return new Promise<WorkletPortLike>((resolve) => { resolvePort = resolve; });
+      } },
+    );
+    const pending = capture.press();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // 等 getUserMedia 微任务跑完 → createPort 已发起
+    expect(portRequested).toBe(true);
+    capture.release(); // worklet 加载期间用户已松开：轨道立即停止、流清空
+    expect(track.stopped).toBe(true);
+    resolvePort?.(new FakePort());
+    expect(await pending).toBe(false); // 迟到 port 不接线
+    expect(capture.micEnabled).toBe(false);
+    expect(capture.pressedDown).toBe(false);
   });
 });
 
