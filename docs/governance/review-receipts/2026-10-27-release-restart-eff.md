@@ -3,7 +3,7 @@
 - 审查者 id：独立审查子代理（本 run tool-execution id `05d6b8c60fc5243f53575e6d21ba7760`；运行上下文未披露具名 subagent id，以此 run id 代）
 - 时间：2026-10-27 18:0x–18:2x（UTC+8）
 - 被审基线 commit：`e535a11ab8c6917d6d5ac2721db7251d5240ad2a`（分支 feat/release-restart-eff-20261027，HEAD 实测一致）
-- 工作树：/Users/yyj/lfl-workspace/work/lfl-eff-20261027/repo
+- 工作树：~/lfl-workspace/work/lfl-eff-20261027/repo
 - 方法论检索：工具集无 search_records（核对可用工具清单），按纪律"不适用则直接开始"处理
 - 父代理补充事实（未经本审查独立复核，采信并留痕）：该基线的 ci.yml/release.yml/runtime service_control.py 三文件与 lfl/main blob 相同，本审查结论对 lfl/main 同样有效
 
@@ -13,7 +13,7 @@
 
 ## 产物 SHA 核对（11/11 OK）
 
-清单 /Users/yyj/lfl-workspace/work/lfl-eff-20261027/artifact-sha256.txt，`shasum -a 256 -c` 逐条 OK（a41760e0…ci.yml、00d6c603…finalize-release.yml、691371b1…release.yml、d74c90fc…基线报告、2914310b…release_finalize.py、6310961b…runtime/service_control.py、a57c545c…service_control_derivation.py、6cafa13e…builtin/service_control.py、6ceab2f5…test_lifecycle、ee4a110d…test_argument_contract、e13b5bf1…test_svc_deploy_next_step）。`git status` 7 M + 4 ?? 与清单一一对应。
+清单 ~/lfl-workspace/work/lfl-eff-20261027/artifact-sha256.txt，`shasum -a 256 -c` 逐条 OK（a41760e0…ci.yml、00d6c603…finalize-release.yml、691371b1…release.yml、d74c90fc…基线报告、2914310b…release_finalize.py、6310961b…runtime/service_control.py、a57c545c…service_control_derivation.py、6cafa13e…builtin/service_control.py、6ceab2f5…test_lifecycle、ee4a110d…test_argument_contract、e13b5bf1…test_svc_deploy_next_step）。`git status` 7 M + 4 ?? 与清单一一对应。
 
 ## P0/P1/P2 表
 
@@ -94,7 +94,7 @@
 
 ## 被审产物 SHA v2 核对（11/11 OK）
 
-清单 /Users/yyj/lfl-workspace/work/lfl-eff-20261027/artifact-sha256-v2.txt，`shasum -a 256 -c` 逐条 OK（ci.yml、finalize-release.yml、release.yml、基线报告、release_finalize.py、runtime/service_control.py、service_control_derivation.py、builtin/service_control.py、三个测试文件）。`git status` 7 M + 4 ?? 与清单一一对应（本回执文件不在被审清单内，为本次唯一允许写入）；`git diff HEAD --stat -- pyproject.toml` 为空 → 无 pyright/ruff 配置放宽。
+清单 ~/lfl-workspace/work/lfl-eff-20261027/artifact-sha256-v2.txt，`shasum -a 256 -c` 逐条 OK（ci.yml、finalize-release.yml、release.yml、基线报告、release_finalize.py、runtime/service_control.py、service_control_derivation.py、builtin/service_control.py、三个测试文件）。`git status` 7 M + 4 ?? 与清单一一对应（本回执文件不在被审清单内，为本次唯一允许写入）；`git diff HEAD --stat -- pyproject.toml` 为空 → 无 pyright/ruff 配置放宽。
 
 ## verdict: **PASS**（原 P1 已关闭；原三条 P2 已关闭；无新增 P0/P1/P2）
 
