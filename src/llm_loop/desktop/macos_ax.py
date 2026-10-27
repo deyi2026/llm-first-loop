@@ -257,6 +257,22 @@ def app_element(pid: int) -> MacAxElement | None:
     return MacAxElement(ref) if ref else None
 
 
+def ax_readable_probe(pid: int) -> int | None:
+    """只读能力探针：对指定 pid 读 ``AXWindows``，返回 AX 错误码（0=可读）。
+
+    与 ``ax_windows_view`` 走同一条底层路径（建 app 元素 → 读属性 → 释放），因此它
+    测到的就是工具真正要做的事；``AXIsProcessTrusted()`` 与 systemwide 探针都会假阴性。
+    """
+    app = app_element(pid)
+    if app is None:
+        return None
+    try:
+        err, value = ax_read_attr(app.ref, "AXWindows")
+    finally:
+        app.release()
+    return err
+
+
 def ax_windows_view(
     window: WindowInfo,
     depth: int,

@@ -1177,4 +1177,45 @@ def test_status_ax_guidance_when_probe_disabled_despite_trust_true():
     assert "辅助功能" in payload["guidance"]
 
 
+def test_frontmost_pid_skips_nonzero_layer():
+    from llm_loop.desktop.backend_macos import _frontmost_pid
+
+    rows = [
+        {"layer": 20, "pid": 11},
+        {"layer": None, "pid": 12},
+        {"layer": 0, "pid": 13},
+        {"layer": 0, "pid": 14},
+    ]
+    assert _frontmost_pid(rows) == 13
+    assert _frontmost_pid([]) is None
+
+
+def test_ax_readable_uses_real_app_probe_when_frontmost_known(monkeypatch):
+    """探针即实际路径：前台 pid 上 AXWindows 可读 → true（哪怕授权位与 systemwide 均为假）。"""
+    from llm_loop.desktop import backend_macos, macos_ax, macos_permissions
+
+    seen: list[int] = []
+
+    def fake_probe(pid: int) -> int:
+        seen.append(pid)
+        return 0
+
+    monkeypatch.setattr(macos_ax, "ax_readable_probe", fake_probe)
+    monkeypatch.setattr(macos_permissions, "ax_trusted", lambda: False)
+    monkeypatch.setattr(macos_permissions, "ax_error_probe", lambda: None)
+
+    assert backend_macos._ax_readable([{"layer": 0, "pid": 4242}]) is True
+    assert seen == [4242]
+
+
+def test_ax_readable_false_when_real_app_probe_denied(monkeypatch):
+    from llm_loop.desktop import backend_macos, macos_ax, macos_permissions
+
+    monkeypatch.setattr(macos_ax, "ax_readable_probe", lambda pid: AX_ERROR_API_DISABLED)
+    monkeypatch.setattr(macos_permissions, "ax_error_probe", lambda: AX_ERROR_API_DISABLED)
+    monkeypatch.setattr(macos_permissions, "ax_trusted", lambda: True)
+
+    assert backend_macos._ax_readable([{"layer": 0, "pid": 99}]) is False
+
+
 

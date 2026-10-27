@@ -42,15 +42,42 @@ class DesktopBackendError(RuntimeError):
     """后端确定性失败（lsappinfo 不可用等）；工具层映射为 backend_error 回执。"""
 
 
-def _ax_readable() -> bool:
+def _frontmost_pid(rows: list[dict]) -> int | None:
+    """front→back 序里第一个 layer==0 且有 owner pid 的窗口所属进程。
+
+    ``layer is None`` 视为解析失败而**跳过**，不按 0 处理：把读不到层级的窗口当成普通
+    应用窗口，会让「前台是谁」在解析退化时猜错。
+    """
+    for row in rows:
+        try:
+            layer = row.get("layer")
+            if layer is None or int(layer) != 0:
+                continue
+            pid = row.get("pid")
+            if pid:
+                return int(pid)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _ax_readable(rows: list[dict] | None = None) -> bool:
     """AX 能力取自**实测探针**，不取 ``AXIsProcessTrusted()``。
 
-    实测反证（2026-10-27 同一条父进程链路）：00:0x 时 ``ax_trusted=false``、
-    ``AXWindows`` 返回 -25211；00:5x 时同一 API 返回 true，而 AX 属性读取在两次测量
-    里都可用。即该 API 会给出**假阴性**，把它当成 ``can_read_ax`` 会把可用能力报成
-    不可用，并把用户赶去授权。因此：探针成功就以 ``ax_error == 0`` 为准；探针本身
-    失败（None）才回退授权字段。
+    实测反证（2026-10-28 01:0x，同一进程内 4/4 次一致）：``AXIsProcessTrusted()=false``
+    且 systemwide 探针返回 None，但 ``ax_snapshot()`` 对前台窗口照常返回
+    ``available=true``、22 个节点、``root_role=AXWindow``。即授权位与 systemwide 探针
+    都会给出**假阴性**，把它们当成 ``can_read_ax`` 会把可用能力报成不可用，并把用户
+    赶去授权。
+
+    因此探测顺序就是工具真正要做的那件事：先对前台 pid 读 ``AXWindows``（探针即实际
+    路径）；无前台窗口时才退回 systemwide 探针；再退回授权位。
     """
+    pid = _frontmost_pid(rows or [])
+    if pid is not None:
+        err = macos_ax.ax_readable_probe(pid)
+        if err is not None:
+            return err == 0
     err = macos_permissions.ax_error_probe()
     if err is None:
         return macos_permissions.ax_trusted()
@@ -84,14 +111,18 @@ class MacOSDesktopBackend:
         return macos_permissions.permission_snapshot()
 
     def capability_snapshot(self) -> dict[str, bool]:
+        rows: list[dict] = []
         can_list = False
         try:
-            can_list = isinstance(macos_windows.list_raw_windows(False), list)
+            raw = macos_windows.list_raw_windows(False)
+            if isinstance(raw, list):
+                rows = raw
+                can_list = True
         except Exception:  # noqa: BLE001 - 探测失败按不可用报告
             can_list = False
         return {
             "can_list_windows": can_list,
-            "can_read_ax": _ax_readable(),
+            "can_read_ax": _ax_readable(rows),
             "can_capture": macos_permissions.screen_capture_granted(),
         }
 
