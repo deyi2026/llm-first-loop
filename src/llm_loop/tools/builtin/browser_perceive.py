@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from llm_loop.browser.errors import (
@@ -20,6 +19,7 @@ from llm_loop.browser.errors import (
 from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_REF
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.builtin.browser_wait import (
     BrowserWaitObjectStateTool,
     BrowserWaitObjectTextTool,
@@ -694,8 +694,11 @@ class BrowserPerceiveTool:
         try:
             payload = capture_vision()
             # M1 B10 (DESIGN-20261027 §4.1): captured_at is stamped right at
-            # capture time.
-            captured_at = datetime.now(UTC).isoformat(timespec="milliseconds")
+            # capture time. fix(gate2, review-M1): host-local wall-clock
+            # authority (system_local_now) — aware, offset-bearing, comparable
+            # — replaces the former UTC wall clock per the LFL timekeeping
+            # contract.
+            captured_at = system_local_now().isoformat(timespec="milliseconds")
         except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
             result["vision"] = {
                 "status": "failed",

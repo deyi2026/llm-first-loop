@@ -44,3 +44,33 @@ src/llm_loop/tools/builtin/browser_semantic_operation.py
 
 - pyright 首轮抓到 1 处新增类型错（_recheck_upload_dispatch_args 原签名不允许首槽 None），已修正：返回类型改为 `tuple[dict | None, dict | None]` 并在 execute 内以不变量断言窄化（不变量恒真，无行为变化）；复跑 pyright new=0
 - 未跑全量 ci_gate（按委派约束，仅静态诊断棘轮 + 相关子集）
+
+## 门禁返工 2（fix(gate2)：环境访问层 + 本地时间权威）
+
+- 日期：2026-10-27；返工基线 HEAD=ad3f8f1c2；全量门禁红数对账确认 2 条代码级回归（另 5 条已排除为门禁子集状态污染，单独复跑全绿，不属本次改动）
+
+### 改动点
+
+1. **环境变量直读（test_runtime_env_access_gate，签名棘轮零容忍）**
+   - `src/llm_loop/browser/action.py` 的 `upload_allow_roots` / `upload_max_file_bytes` 原直读 `os.environ.get("LFL_BROWSER_UPLOAD_ALLOW_ROOTS" / "LFL_BROWSER_UPLOAD_MAX_FILE_BYTES")`，新增 2 条未登记签名
+   - 修法：借道 sanctioned 访问层 `llm_loop.config._raw_env`（与 `tools/mcp_auth.py` 同法——「环境访问点收口，不直读 os.environ」；调用点保持字面量 key 可审计）。`_raw_env` 内部读已在 baseline 登记（`src/llm_loop/config.py|_raw_env|bulk:raw|<all>`=1），跨模块调用零新增签名；语义等价（未设置/空值 → "" → 缺省边界），monkeypatch.setenv 即时生效性不变
+   - baseline 白名单与 ratchet 登记零改动、零豁免
+2. **UTC 墙钟（test_timekeeping_local：新 LFL-owned 墙钟记录必须用主机本地权威）**
+   - `src/llm_loop/tools/builtin/browser_perceive.py` 的 B10 `captured_at` 原为 `datetime.now(UTC).isoformat(timespec="milliseconds")`
+   - 修法：改用 `llm_loop.timekeeping.system_local_now()`（仓库既有时间权威，`datetime.now().astimezone()` 主机本地、带偏移）；删除 `from datetime import UTC, datetime`。字段名/格式不变（ISO 8601 毫秒 + 偏移），语义保持「截图时刻、可比较、带偏移」，M1 断言（`startswith("202")`）无需放宽
+   - 过程纪律：首轮复跑失败 1 次——修复注释里写了 `datetime.now(UTC)` 字面量，而该测试是纯文本子串扫描；改写注释措辞后全绿
+
+### 复跑结果（全部绿）
+
+- `tests/unit/test_runtime_env_access_gate.py`：**6 passed**（改后签名零新增）
+- `tests/unit/test_timekeeping_local.py`：**4 passed**
+- `tests/unit/test_browser_m1_upload_type_vision_v01.py`：**26 passed**
+- `tests/unit/test_arch_guards.py`：**40 passed**
+- 回归面：`tests/unit -k "browser"` 642 passed；`test_config_inline_comment` 6 passed（`_raw_env` 行为无变化）
+- ruff/pyright：改动两文件 clean（ruff All checks passed；pyright 0 errors/0 warnings）
+
+### captured_at 格式样例
+
+- 修复前：`2026-10-27T10:55:15.593+00:00`（UTC）
+- 修复后：`2026-10-27T18:55:15.593+08:00`（主机本地权威，偏移随宿主时区）
+

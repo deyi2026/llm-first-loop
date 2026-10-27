@@ -21,6 +21,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
+from llm_loop.config import _raw_env
 from llm_loop.core.run_context import current_workspace_root
 from llm_loop.core.tool_execution_journal import current_effect_mutation_authority
 from llm_loop.net_guard import browser_allowed_hosts, check_url
@@ -63,8 +64,13 @@ def upload_allow_roots() -> list[str]:
     workspace root applies (fail-bounded, same posture as
     upload_max_file_bytes). The env key is host-owned configuration — no
     in-session model path can write it.
+
+    fix(gate2, review-M1): reads route through the sanctioned access layer
+    ``config._raw_env`` (same pattern as tools/mcp_auth.py: 环境访问点收口，
+    不直读 os.environ); literal keys at the call site stay auditable.
+    Semantics are unchanged: unset/empty -> "" -> default workspace root.
     """
-    raw = str(os.environ.get("LFL_BROWSER_UPLOAD_ALLOW_ROOTS") or "").strip()
+    raw = _raw_env("LFL_BROWSER_UPLOAD_ALLOW_ROOTS").strip()
     if not raw:
         return [_default_upload_root()]
     resolved = [os.path.realpath(item.strip()) for item in raw.split(",") if item.strip()]
@@ -77,7 +83,9 @@ def upload_allow_roots() -> list[str]:
 
 
 def upload_max_file_bytes() -> int:
-    raw = str(os.environ.get("LFL_BROWSER_UPLOAD_MAX_FILE_BYTES") or "").strip()
+    # fix(gate2, review-M1): sanctioned env access layer (same as
+    # upload_allow_roots above); unset/empty/invalid -> default bound.
+    raw = _raw_env("LFL_BROWSER_UPLOAD_MAX_FILE_BYTES").strip()
     try:
         value = int(raw)
     except ValueError:
