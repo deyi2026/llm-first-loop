@@ -1,8 +1,10 @@
 """M1 (DESIGN-20261027) B1 upload / B2 type / B10 vision metadata.
 
 B1: do=upload path policy (realpath -> allow_roots -> existence -> regular
-file -> size -> count) enforced in Python before any CDP request; per-path
-design-book error codes; DOM.setFileInputFiles + same-session event dispatch.
+file -> size -> count) enforced in Python before any CDP request, plus a
+pre-dispatch recheck of the FINAL resolved paths (fix(P0-1) TOCTOU); per-path
+design-book error codes; DOM.setFileInputFiles with native input/change only
+(fix(P1-1): no synthetic event dispatch — Chrome natively fires one pair).
 B2: do=type via Input.insertText after a fixed focus call (never this.value);
 length+preview-only echo; >2000 rejected; empty text = explicit no-op.
 B10: vision evidence receipts carry page_id/world_version/captured_at and an
@@ -523,7 +525,7 @@ def _cdp_host(ws: _UploadTypeWs) -> CdpBrowserMutationActuator:
     )
 
 
-def test_upload_uses_backend_node_id_and_same_session_event_dispatch() -> None:
+def test_upload_uses_backend_node_id_and_native_event_dispatch_only() -> None:
     ws = _UploadTypeWs()
     host = _cdp_host(ws)
     host.dispatch(verb="upload", physical_target="dom:7", args={"paths": ["/ws/a.png", "/ws/b.txt"]})
@@ -532,21 +534,16 @@ def test_upload_uses_backend_node_id_and_same_session_event_dispatch() -> None:
         "Page.enable",
         "DOM.resolveNode",
         "DOM.setFileInputFiles",
-        "Runtime.callFunctionOn",
     ]
     assert ws.set_file_calls == [
         {"files": ["/ws/a.png", "/ws/b.txt"], "backendNodeId": 7}
     ]
-    # the input/change dispatch rides the same session right after injection
-    dispatch_call = next(
-        req["params"]
-        for req in ws.requests
-        if req["method"] == "Runtime.callFunctionOn"
-    )
-    assert "dispatchEvent(new Event('input'" in dispatch_call["functionDeclaration"]
-    assert "dispatchEvent(new Event('change'" in dispatch_call["functionDeclaration"]
-    # paths are protocol data, never script content (NFR-2)
-    assert "/ws/a.png" not in dispatch_call["functionDeclaration"]
+    # fix(P1-1): NO synthetic input/change dispatch — Chrome natively dispatches
+    # exactly one input+change pair on DOM.setFileInputFiles (review probe N1:
+    # 1/1). The old product-side dispatch doubled the pair (probe L6: 2/2) and
+    # would fire React-like onChange handlers twice. Live 1/1 recheck recorded
+    # in the dev report §审核返工.
+    assert not any(req["method"] == "Runtime.callFunctionOn" for req in ws.requests)
 
 
 def test_type_focuses_then_inserttext_with_text_as_protocol_param() -> None:

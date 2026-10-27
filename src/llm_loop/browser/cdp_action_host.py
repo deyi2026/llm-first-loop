@@ -52,18 +52,14 @@ _ALLOWED = frozenset(
     }
 )
 
-# M1 B1 (DESIGN-20261027 §4.1): fixed, version-controlled event dispatch for the
-# upload path. NFR-2 discipline as everywhere in this module: the script is a
-# frozen constant, the only parameter surface is the server-resolved objectId,
-# so the model never supplies JavaScript. Mirrors the proven single-session
-# pattern (M0 report §3.2 T3b): DOM.setFileInputFiles + input/change dispatch
-# complete on the same CDP session.
-_UPLOAD_EVENT_DISPATCH_JS = (
-    "function(){"
-    "this.dispatchEvent(new Event('input',{bubbles:true}));"
-    "this.dispatchEvent(new Event('change',{bubbles:true}));"
-    "}"
-)
+# fix(P1-1, review-M1 R-e2e-1): the M1-era synthetic input/change dispatch
+# (_UPLOAD_EVENT_DISPATCH_JS) after DOM.setFileInputFiles is REMOVED. Chrome
+# (this runtime is pinned 155) natively dispatches exactly one input+change
+# pair on DOM.setFileInputFiles (review probe N1: 1/1); the synthetic pair
+# doubled it (probe L6: 2/2), which would fire React-like onChange handlers
+# twice (double submit). If a future Chrome stops dispatching natively, the
+# correct fix is calibrating against a real upload page, not blindly
+# re-adding the synthetic pair.
 
 # M1 B2 (DESIGN-20261027 §4.1): focus precedes Input.insertText so the real
 # input pipeline (beforeinput/input) lands on the intended element; this fixed
@@ -540,16 +536,17 @@ class CdpBrowserMutationActuator:
         elif verb == "upload":
             # M1 B1: resolved absolute paths arrive from the contract layer
             # (action.py validated realpath/allow_roots/size/count BEFORE any
-            # CDP call). backendNodeId is the product's physical identity
-            # (dom:<id>), so no DOM.getDocument/querySelector chain is needed
-            # (M0 report §3.2 T2). The input/change dispatch happens on the
-            # same session right after injection (T3b single-session pattern).
+            # CDP call, and re-verified them right before dispatch — fix(P0-1)).
+            # backendNodeId is the product's physical identity (dom:<id>), so
+            # no DOM.getDocument/querySelector chain is needed (M0 §3.2 T2).
+            # fix(P1-1): NO synthetic input/change dispatch follows — Chrome
+            # natively dispatches one input+change pair here; the native pair
+            # alone keeps React-like onChange single-shot (review N1 vs L6).
             backend_id = self._backend_node_id(physical_target)
             session.send(
                 "DOM.setFileInputFiles",
                 {"files": [str(item) for item in args["paths"]], "backendNodeId": backend_id},
             )
-            self._call(session, object_id, _UPLOAD_EVENT_DISPATCH_JS)
         elif verb == "type":
             # M1 B2: real input pipeline via Input.insertText after a fixed
             # focus call - never a ``this.value`` assignment with synthesized
