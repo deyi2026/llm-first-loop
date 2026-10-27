@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from llm_loop.browser.errors import (
@@ -177,8 +178,9 @@ class BrowserPerceiveTool:
                 "enum": ["evidence"],
                 "description": (
                     "仅 snapshot（EVO-20260918-f2310800）：请求视觉证据。固定参数截图（PNG）落盘并"
-                    "在回执 vision 块返回 ref+path+sha256；视觉输出永远停在证据层，不进 objects/"
-                    "grounding/version；模型用 read_image 消费并自行裁决"
+                    "在回执 vision 块返回 ref+path+sha256；M1 B10 起回执另带 page_id/world_version/"
+                    "captured_at 与 content_unchanged（同 sha 复用同一 ref 时显式标注，不伪称新内容）；"
+                    "视觉输出永远停在证据层，不进 objects/grounding/version；模型用 read_image 消费并自行裁决"
                 ),
             },
             "projection_limit": {"type": "integer", "minimum": 1, "maximum": 500},
@@ -667,6 +669,15 @@ class BrowserPerceiveTool:
                     else:
                         try:
                             payload = capture_vision()
+                            # M1 B10 (DESIGN-20261027 §4.1): determinability
+                            # metadata for the evidence receipt - stamped right
+                            # at capture time. world_version is the snapshot_id
+                            # of the observation this screenshot belongs to;
+                            # page_id is the backend's bound target (absent on
+                            # backends without a bound page id).
+                            captured_at = datetime.now(UTC).isoformat(
+                                timespec="milliseconds"
+                            )
                         except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
                             result["vision"] = {
                                 "status": "failed",
@@ -684,7 +695,19 @@ class BrowserPerceiveTool:
                             else:
                                 result["vision"] = {
                                     "status": "ok",
-                                    **self._adapter.store_vision_evidence(session_id, payload),
+                                    **self._adapter.store_vision_evidence(
+                                        session_id,
+                                        payload,
+                                        page_id=(
+                                            str(getattr(self._backend, "bound_target_id", "") or "")
+                                            or None
+                                        ),
+                                        world_version=(
+                                            str((result.get("snapshot") or {}).get("snapshot_id") or "")
+                                            or None
+                                        ),
+                                        captured_at=captured_at,
+                                    ),
                                 }
                 return self._json_result(result)
             except Exception as exc:  # noqa: BLE001 - observation failure must remain explicit.

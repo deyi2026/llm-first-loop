@@ -2091,11 +2091,27 @@ class BrowserPerceptionAdapter:
             },
         }
 
-    def store_vision_evidence(self, session_id: str, payload: bytes) -> dict[str, Any]:
+    def store_vision_evidence(
+        self,
+        session_id: str,
+        payload: bytes,
+        *,
+        page_id: str | None = None,
+        world_version: str | None = None,
+        captured_at: str | None = None,
+    ) -> dict[str, Any]:
         """EVO-20260918-f2310800: persist a vision evidence blob (evidence layer only).
 
         The stored PNG never enters objects/grounding/version paths; the returned
         reference is consumed by the model via read_image and judged by the model.
+
+        M1 B10 (DESIGN-20261027 §4.1): the receipt now carries determinability
+        metadata (page_id / world_version / captured_at) and an explicit
+        ``content_unchanged`` marker. Storage stays content-addressed and the
+        cache key/screenshot path are untouched (M0 report §5: same sha == same
+        PNG bytes == same pixels). ``content_unchanged=True`` means identical
+        bytes were already stored under this content-addressed ref before, so
+        the reuse is declared instead of masquerading as fresh content.
         """
 
         if not isinstance(payload, (bytes, bytearray)) or not payload:
@@ -2105,20 +2121,29 @@ class BrowserPerceptionAdapter:
         vision_root = self.store.root / "vision"
         vision_root.mkdir(parents=True, exist_ok=True)
         path = vision_root / f"{digest}.png"
-        if not path.exists():
+        content_unchanged = path.exists()
+        if not content_unchanged:
             tmp = path.with_name(f".{path.name}.tmp")
             tmp.write_bytes(raw)
             os.replace(tmp, path)
-        return {
+        ref = f"vision://browser/v0.1/{digest}"
+        receipt: dict[str, Any] = {
             "schema": "smc.browser_vision_evidence.v0.1",
             "owner_session_sha256": _session_hash(session_id),
-            "ref": f"vision://browser/v0.1/{digest}",
+            "ref": ref,
             "path": str(path),
             "mime": "image/png",
             "bytes": len(raw),
             "sha256": digest,
             "invariant": "evidence_layer_only",
+            "page_id": page_id,
+            "world_version": world_version,
+            "captured_at": captured_at,
+            "content_unchanged": content_unchanged,
         }
+        if content_unchanged:
+            receipt["content_same_as_ref"] = ref
+        return receipt
 
     @staticmethod
     def _diff_scope_relation(
