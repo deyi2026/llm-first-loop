@@ -1062,14 +1062,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         browser_semantic_guard_enabled=env_bool("LFL_BROWSER_SEMANTIC_GUARD_ENABLED", False),
         browser_dispatch_settle_enabled=env_bool("LFL_BROWSER_DISPATCH_SETTLE_ENABLED", False),
-        browser_receipt_diff_summary_enabled=env_bool(
-            "LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False
-        ),
         browser_receipt_diff_summary_cap=env_int("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_CAP", 32),
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
         desktop_privacy_extra=env_values.get("LFL_DESKTOP_PRIVACY_EXTRA", "").strip(),
         desktop_see_allowlist=env_values.get("LFL_DESKTOP_SEE_ALLOWLIST", "").strip(),
-        exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
+        browser_receipt_diff_summary_enabled=env_bool("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=env_one(_env_run_mode, "RUN_MODE"),
         tool_schema_lazy=env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开

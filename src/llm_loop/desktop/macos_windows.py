@@ -97,7 +97,7 @@ def _display_scale(lib: ctypes.CDLL, display_id: int, bounds_width_pt: float) ->
         pixels_wide = int(lib.CGDisplayPixelsWide(ctypes.c_uint32(display_id)))
         if pixels_wide > 0:
             return round(pixels_wide / bounds_width_pt, 2)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - PixelsWide 回退也失败时按 1.0 报告（仅降级不失真其它字段）
         pass
     return 1.0
 
