@@ -44,13 +44,30 @@
       ],
       "control_machinery": false,
       "owning_subsystem": "A.5 architecture declaration gate",
-      "disposition": "Reports all 3 changed paths; workflow control machinery is declared under G1-G4; not self-authorizing.",
+      "disposition": "Reports all 4 changed paths; workflow control machinery is declared under G1-G4; not self-authorizing.",
       "evidence": [
         "The original scripts/check_architecture_submission.py mechanically compares the exact staged or commit diff against path coverage; model semantic review remains mandatory."
       ],
       "verification_level": "A.5 --staged then --base current main --head HEAD, plus GitHub A.5 PR result.",
       "model_evidence_veto_recovery_exit": "Any extra changed path, missing G1-G4 block, or independent review finding blocks merge/publish.",
       "rollback_route": "Remove only this recovery declaration with the two scoped recovery changes."
+    },
+    {
+      "component_id": "phase4-gap-harvest-ci-determinism",
+      "paths": [
+        "tests/phase4/test_m1_gap_checkpoint.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Phase4 M1 CK-A interjection tool sequence regression test fixture",
+      "disposition": "Both native Linux Push and PR full-CI runs (40437907422 and 40438026817) failed exactly the same Phase4 CK-A assertion: interjection accepted and model saw text but no remaining skipped receipt. The old first execute_command was revocable and subject to M2 in-flight interruption, consuming mailbox before CK-A. Replace only test first call with test-only explicitly nonrevocable SideEffectRegistry registered tool blocked on threading event. After queue/interject HTTP 202, release call1 to naturally finish; require single call2 skipped_for_interjection receipt with exact tool_call_id, consumed_via gap_harvest, natural call1 receipt, no interrupted/cancelled synthesis, second call never executed, model-visible interjection and original P50 <=150ms. No runtime code, test skips, branch exceptions, or relaxed invariants.",
+      "evidence": [
+        "GitHub CI Push job121970949471: 11573 pass, 1 fail, 162 skip; test_b_gap_harvest_skips_remaining skip=0, item_status=interject_received, final=done; PR job121971346585 independently same skip=0/one fail.",
+        "src/llm_loop/core/loop/engine_services/tool_cycle.py _execute_segments_with_gap_check emits skipped_for_interjection only from pending mailbox at segment boundary; M2 cancels revocable inflight tools along distinct execution path.",
+        "Original directed test with event-gated nonrevocable first tool passed locally; additional Phase4/M2 regression and native Linux CI required."
+      ],
+      "verification_level": "pytest tests/phase4/test_m1_gap_checkpoint.py and test_m2_inflight_interrupt.py, repeat strict S16-M1 direct case, Ruff, independent GLM-5.3 reviewer and original complete R9 exit0, GitHub Push and PR full CI native Linux success.",
+      "model_evidence_veto_recovery_exit": "STOP if skipped receipt absent, wrong second tool_call_id, consumed_via not gap_harvest, first interrupted/cancelled, second command executed, no model-visible interjection, P50>150ms, original full R9 failure, any production source change.",
+      "rollback_route": "Revert only test fixture and this declaration on isolated branch; immutable tag, installed pkg and production interjection/tool policies unchanged."
     }
   ],
   "declarations": [
