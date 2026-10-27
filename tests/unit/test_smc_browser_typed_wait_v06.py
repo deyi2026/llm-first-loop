@@ -122,11 +122,20 @@ def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> 
         "state",
         "match",
         "expected_url",
+        "expected",
         "value",
         "field",
         "text",
         "target_id",
         "within_ms",
+    }
+    # M2-A B6: download_state joins the flat wait-kind vocabulary.
+    assert set(perceive_props["kind"]["enum"]) == {
+        "page_ready",
+        "page_url",
+        "object_state",
+        "object_text",
+        "download_state",
     }
     assert "condition" not in perceive_props
     for forbidden in ("predicate", "timeout_ms", "interval_ms"):

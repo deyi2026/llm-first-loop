@@ -55,6 +55,8 @@ def test_mf5_3_1_perceive_provider_contract_is_root_direct_oneof() -> None:
         ("wait", "page_url"),
         ("wait", "object_state"),
         ("wait", "object_text"),
+        # M2-A B6 (DESIGN-20261027 §5.2): download completion wait branch.
+        ("wait", "download_state"),
     }
     assert all(branch.get("additionalProperties") is False for branch in branches.values())
 
@@ -111,6 +113,11 @@ def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
         ("wait", "object_text"): (
             {"action", "kind", "grounding_ref", "field", "match", "text", "within_ms", "target_id"},
             {"action", "kind", "grounding_ref", "field", "match", "text"},
+        ),
+        # M2-A B6: session download completion wait (§5.2).
+        ("wait", "download_state"): (
+            {"action", "kind", "expected", "within_ms", "target_id"},
+            {"action", "kind", "expected"},
         ),
     }
 

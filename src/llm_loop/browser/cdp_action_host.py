@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import threading
 from collections.abc import Callable
 from typing import Any, Protocol, cast
@@ -34,6 +35,7 @@ from llm_loop.browser.channel_binding import (
     BrowserChannelBindingCoordinator,
     extract_browser_ws_uuid,
 )
+from llm_loop.browser.download_contract import download_path_policy_error
 from llm_loop.browser.errors import (
     MultiPageAmbiguityError,
     PageRecord,
@@ -64,6 +66,9 @@ _ALLOWED = frozenset(
         # M2-A B5: accept/dismiss a blocking JS dialog; the call is gated by
         # drained dialog state (dialog_not_open rejects before any CDP).
         "Page.handleJavaScriptDialog",
+        # M2-A B6: pin Chrome downloads into the session-fenced dir; also the
+        # only switch that turns on downloadWillBegin/downloadProgress events.
+        "Page.setDownloadBehavior",
     }
 )
 
@@ -322,6 +327,23 @@ class _MutationCdpSession:
         self._events.clear()
         return events
 
+    def drain(self, max_events: int = 64, *, timeout_s: float = 0.05) -> None:
+        """M2-A B6: drain buffered events without sending a request.
+
+        recv() on a quiet socket raises TimeoutError; that is the normal
+        "nothing more to drain" signal (the observation caller suppresses
+        channel errors and keeps the last known state).
+        """
+        with self._lock:
+            for _ in range(max(1, max_events)):
+                try:
+                    raw = self._websocket.recv(timeout=timeout_s)
+                except TimeoutError:
+                    break
+                message = json.loads(raw)
+                if isinstance(message, dict) and isinstance(message.get("method"), str):
+                    self._events.append(message)
+
 
 class CdpBrowserMutationActuator:
     """Exact-target, single-dispatch Browser mutation actuator."""
@@ -338,6 +360,7 @@ class CdpBrowserMutationActuator:
         http_get_version_dict: Callable[[str], dict[str, Any]] | None = None,
         binding_policy: BindingPolicy | None = None,
         attest_fn: Callable[[str], AttestationVerdict] | None = None,
+        download_dir_provider: Callable[[], str] | None = None,
     ) -> None:
         if max_frame_bytes < 1:
             raise ValueError("max_frame_bytes must be >= 1")
@@ -369,6 +392,12 @@ class CdpBrowserMutationActuator:
         # successful Page.handleJavaScriptDialog.
         self._dialog_open = False
         self._dialog_detail: dict[str, Any] | None = None
+        # M2-A B6: download contract state. The provider resolves the CURRENT
+        # session's fenced dir (receipt-store shape); re-pinning on session
+        # change keeps downloads fenced per session, never per process.
+        self._download_dir_provider = download_dir_provider
+        self._configured_download_dir: str | None = None
+        self._downloads: dict[str, dict[str, Any]] = {}
 
     @property
     def bound_target_id(self) -> str:
@@ -472,6 +501,9 @@ class CdpBrowserMutationActuator:
             # (re)connecting must still gate the dialog verb.
             self._absorb_state_events(self._session.pop_events())
             self._page_events_enabled = True
+        # M2-A B6: keep the download dir pinned to the CURRENT session (no-op
+        # when unchanged); must precede any dispatch that could start one.
+        self._sync_download_behavior(self._session)
         return self._session
 
     def _page_target_ids(self) -> set[str]:
@@ -482,15 +514,81 @@ class CdpBrowserMutationActuator:
         }
 
     def _absorb_state_events(self, raw_events: list[dict[str, Any]]) -> None:
-        """M2-A B5: dialog state machine feed - the single consumer point of
-        drained events (F8). A javascriptDialogOpening means a blocking dialog
-        is open on the bound page; only a handled dialog closes it. Shared by
-        the session-enable drain and every dispatch's boundary drain."""
+        """M2-A B5/B6: the single consumer point of drained events (F8).
+
+        Dialog state: javascriptDialogOpening means a blocking dialog is open;
+        only a handled dialog closes it. Download state: WillBegin records the
+        page-suggested filename with an immediate realpath containment check
+        ('../' and symlink escapes are marked path_not_allowed at RECORD time,
+        before any fact is ever reported); Progress updates the state.
+        """
         for raw in raw_events:
-            if str(raw.get("method") or "") == "Page.javascriptDialogOpening":
-                params = raw.get("params")
+            method = str(raw.get("method") or "")
+            params = raw.get("params")
+            params = params if isinstance(params, dict) else {}
+            if method == "Page.javascriptDialogOpening":
                 self._dialog_open = True
-                self._dialog_detail = params if isinstance(params, dict) else {}
+                self._dialog_detail = params
+            elif method == "Page.downloadWillBegin":
+                guid = str(params.get("guid") or params.get("downloadId") or "")
+                if guid:
+                    filename = str(params.get("suggestedFilename") or "")
+                    self._downloads[guid] = {
+                        "guid": guid,
+                        "filename": filename,
+                        "url": str(params.get("url") or ""),
+                        "state": "inprogress",
+                        "received_bytes": 0,
+                        "policy_error": download_path_policy_error(
+                            self._configured_download_dir, filename
+                        ),
+                    }
+            elif method == "Page.downloadProgress":
+                guid = str(params.get("guid") or params.get("downloadId") or "")
+                entry = self._downloads.get(guid)
+                if entry is not None:
+                    entry["state"] = str(params.get("state") or "inprogress")
+                    if params.get("receivedBytes") is not None:
+                        entry["received_bytes"] = params.get("receivedBytes")
+
+    def download_state(self) -> dict[str, Any]:
+        """M2-A B6: best-effort drain of pending events + a state copy.
+
+        Observation surface: any channel failure keeps the last known state
+        (the wait layer degrades honestly to its timeout instead of failing
+        the whole perceive call on a quiet/closed channel).
+        """
+        session = self._session
+        if session is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001 - observation is fail-open
+                session.drain()
+                self._absorb_state_events(session.pop_events())
+        return {
+            "schema": "smc.browser_download_state.v0.1",
+            "download_dir": self._configured_download_dir,
+            "dialog_open": self._dialog_open,
+            "downloads": {guid: dict(entry) for guid, entry in self._downloads.items()},
+        }
+
+    def _sync_download_behavior(self, session: _MutationCdpSession) -> None:
+        """M2-A B6: pin Chrome downloads into the CURRENT session's fenced dir.
+
+        The provider is re-evaluated on every session ensure; a session change
+        re-sends setDownloadBehavior (idempotent per dir). behavior=allow +
+        eventsEnabled is what routes downloadWillBegin/downloadProgress through
+        the same drain the dialog state rides on.
+        """
+        if self._download_dir_provider is None:
+            return
+        target_dir = os.path.realpath(str(self._download_dir_provider() or ""))
+        if not target_dir or target_dir == self._configured_download_dir:
+            return
+        os.makedirs(target_dir, exist_ok=True)
+        session.send(
+            "Page.setDownloadBehavior",
+            {"behavior": "allow", "downloadPath": target_dir, "eventsEnabled": True},
+        )
+        self._configured_download_dir = target_dir
 
     def _boundary_events(
         self,

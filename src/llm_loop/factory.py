@@ -30,6 +30,7 @@ from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, atte
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.channel_binding import BrowserChannelBindingCoordinator
+from llm_loop.browser.download_contract import session_download_dir
 from llm_loop.browser.page_binding import BrowserPageBindingController
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.profile_policy import ack_digest, annotation_for, evaluate_profile_class
@@ -556,6 +557,20 @@ def _register_service_tools(
             settings.data_dir, model_root=settings.video_model_root, sd_cli=settings.video_sd_cli
         ),
     )
+
+
+def _browser_download_dir_provider(settings: Settings) -> Callable[[], str]:
+    """M2-A B6：会话级下载目录 provider（build_engine 装配 helper）。
+
+    每次解析取当前 session 的 <data_dir>/browser_downloads/<sha256(session)>/
+    downloads（receipt-store 同款围栏形状，session id 不落明文）。
+    """
+    root = str(Path(settings.data_dir) / "browser_downloads")
+
+    def _current_session_download_dir() -> str:
+        return session_download_dir(root, current_session_id_ctx.get() or "anonymous")
+
+    return _current_session_download_dir
 
 
 def build_engine(
@@ -1409,17 +1424,15 @@ def build_engine(
             _browser_operation_receipt_store = BrowserSemanticOperationReceiptStore(
                 Path(settings.data_dir) / "browser_semantic_operation"
             )
-            _register_basic(
-                "browser_perceive",
-                BrowserPerceiveTool(
-                    adapter=_browser_adapter,
-                    backend=_browser_host,
-                    session_id_getter=lambda: current_session_id_ctx.get(),
-                    exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
-                    profile_annotation=_browser_profile_annotation,
-                    page_controller=_browser_page_controller,
-                ),
+            _browser_perceive_tool = BrowserPerceiveTool(
+                adapter=_browser_adapter,
+                backend=_browser_host,
+                session_id_getter=lambda: current_session_id_ctx.get(),
+                exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
+                profile_annotation=_browser_profile_annotation,
+                page_controller=_browser_page_controller,
             )
+            _register_basic("browser_perceive", _browser_perceive_tool)
             # Mutation capability is independently opt-in.  Perception alone never grants
             # writes. 位于放行分支内：profile gate 拒绝 ⇒ browser_operate 一并不注册。
             if settings.browser_action_enabled:
@@ -1430,8 +1443,10 @@ def build_engine(
                     binding_coordinator=_browser_channel,
                     binding_policy=_browser_policy,
                     attest_fn=_browser_attest,
+                    download_dir_provider=_browser_download_dir_provider(settings),  # M2-A B6
                 )
                 _browser_page_controller.attach_mutation_host(_browser_actuator)
+                _browser_perceive_tool.attach_download_state_probe(_browser_actuator.download_state)  # M2-A B6
                 # The review freezes real page text from the same read-only
                 # capture backend; no model-supplied JSON can mint a PASS.
                 _host_review.attach_browser_capture(_browser_host.capture)

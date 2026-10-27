@@ -162,6 +162,7 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
     assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
     # v02-20260920 合并面：URL-role 分离改 url→expected_url；
     # grounding-ref 统一后对象等待引用统一为 grounding_ref（原 object_ref 退出）。
+    # M2-A B6：expected 加入扁平 wait 词表（download_state 完成等待）。
     assert set(props) == {
         "action",
         "projection_limit",
@@ -175,6 +176,7 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
         "state",
         "match",
         "expected_url",
+        "expected",
         "value",
         "field",
         "text",

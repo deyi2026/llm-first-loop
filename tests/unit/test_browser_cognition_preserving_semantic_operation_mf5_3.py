@@ -110,7 +110,14 @@ def test_mf5_3_perceive_wait_contract_covers_page_and_exact_object_conditions() 
         str((((branch.get("properties") or {}).get("kind") or {}).get("enum") or [""])[0]): branch
         for branch in branches
     }
-    assert set(by_kind) == {"page_ready", "page_url", "object_state", "object_text"}
+    # M2-A B6 (DESIGN-20261027 §5.2): download_state joins the wait kinds.
+    assert set(by_kind) == {
+        "page_ready",
+        "page_url",
+        "object_state",
+        "object_text",
+        "download_state",
+    }
 
     for kind in ("page_ready", "page_url"):
         props = by_kind[kind]["properties"]
@@ -322,6 +329,13 @@ def test_mf5_3_lazy_perceive_wait_schema_is_self_sufficient_on_first_call() -> N
         for branch in branches
     }
 
-    assert kinds == {"page_ready", "page_url", "object_state", "object_text"}
+    # M2-A B6: download_state joins the lazy wait kinds too.
+    assert kinds == {
+        "page_ready",
+        "page_url",
+        "object_state",
+        "object_text",
+        "download_state",
+    }
     assert "condition" not in props
     assert "interval_ms" not in props

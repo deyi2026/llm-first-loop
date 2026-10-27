@@ -9,6 +9,7 @@ poll cadence stays runtime-owned. Host/runtime activation is a separate integrat
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -152,6 +153,21 @@ class BrowserPerceiveTool:
             "required": ["action", "kind", "grounding_ref", "field", "match", "text"],
             "additionalProperties": False,
         },
+        {
+            # M2-A B6 (DESIGN-20261027 §5.2): download completion wait. The
+            # session-fenced dir + event state come from the mutation
+            # actuator's download_state; completed returns path/size/sha256.
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "enum": ["download_state"]},
+                "expected": {"type": "string", "enum": ["completed", "failed"]},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
+            },
+            "required": ["action", "kind", "expected"],
+            "additionalProperties": False,
+        },
     ]
     parameters = {
         "type": "object",
@@ -189,7 +205,16 @@ class BrowserPerceiveTool:
             "to_version": {"type": "string", "minLength": 1},
             "kind": {
                 "type": "string",
-                "enum": ["page_ready", "page_url", "object_state", "object_text"],
+                "enum": ["page_ready", "page_url", "object_state", "object_text", "download_state"],
+            },
+            "expected": {
+                "type": "string",
+                "enum": ["completed", "failed"],
+                "description": (
+                    "仅 wait kind=download_state（M2-A B6）：completed 返回会话下载目录内"
+                    "该下载的 path/size/sha256/completed_by；failed 等待 canceled/失败态；"
+                    "目录 realpath 围栏拒绝 ../ 与 symlink 逃逸（path_not_allowed）"
+                ),
             },
             "state": {"type": "string"},
             "match": {
@@ -236,6 +261,8 @@ class BrowserPerceiveTool:
             "within_ms",
             "target_id",
         },
+        # M2-A B6: flat provider wait on the session download state machine.
+        "download_state": {"action", "kind", "expected", "within_ms", "target_id"},
     }
 
     def __init__(
@@ -247,6 +274,7 @@ class BrowserPerceiveTool:
         exact_ref_hydrator: Callable[[str, str], dict[str, Any]] | None = None,
         profile_annotation: dict[str, Any] | None = None,
         page_controller: Any | None = None,
+        download_state_getter: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._backend = backend
@@ -257,6 +285,9 @@ class BrowserPerceiveTool:
         self._profile_annotation = profile_annotation
         # EVO-20261007-11ae668f：显式换页协调器（可选注入；缺省 ⇒ target_id 参数不可用）。
         self._page_controller = page_controller
+        # M2-A B6：下载状态探针（mutation actuator 的 download_state；可选注入，
+        # 缺省 ⇒ wait kind=download_state 确定性失败，不静默轮询空状态）。
+        self._download_state_getter = download_state_getter
         common_wait = {
             "adapter": adapter,
             "backend": backend,
@@ -266,6 +297,11 @@ class BrowserPerceiveTool:
         self._wait_scope_url = BrowserWaitScopeUrlTool(**common_wait)
         self._wait_object_state = BrowserWaitObjectStateTool(**common_wait)
         self._wait_object_text = BrowserWaitObjectTextTool(**common_wait)
+
+    def attach_download_state_probe(self, getter: Callable[[], dict[str, Any]]) -> None:
+        """M2-A B6：装配期后挂（factory 在 mutation actuator 建好后注入其
+        download_state 观察面；perceive 仍不获得任何 mutation 能力）。"""
+        self._download_state_getter = getter
 
     def _page_list_result(self, exc: MultiPageAmbiguityError) -> ToolResult:
         """多页歧义 ⇒ 结构化只读页面清单（不绑定、不建会话、无副作用）。"""
@@ -301,6 +337,53 @@ class BrowserPerceiveTool:
             tool_name=self.name,
         )
 
+
+    def _wait_download_state(
+        self, *, expected: str, timeout_ms: int, interval_ms: int
+    ) -> ToolResult:
+        """M2-A B6 (§5.2/§7.3.5): poll the session download state machine.
+
+        The getter IS the actuator's download_state (event drain + fenced-dir
+        facts); this layer only owns cadence and honest timeout receipts.
+        Runtime owns polling; no mutation capability leaks into perceive.
+        """
+        from llm_loop.browser.download_contract import download_wait_verdict
+
+        if self._download_state_getter is None:
+            return self._fail(
+                "[browser_perceive:wait] download_state 探针未装配"
+                "（本会话未启用 browser action / 下载通道）；未开始轮询。"
+            )
+        size_samples: dict[str, tuple[float, int]] = {}
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while True:
+            state = self._download_state_getter()
+            verdict = (
+                download_wait_verdict(state, expected, size_samples=size_samples)
+                if isinstance(state, dict)
+                else None
+            )
+            if verdict is not None:
+                if verdict.get("result") == "rejected":
+                    return self._fail(
+                        "[browser_perceive:wait] download_state 拒绝："
+                        f"{verdict.get('reason')}（路径未通过会话下载目录 realpath 围栏，"
+                        "未报告任何文件事实）。"
+                    )
+                payload = {
+                    "action": "wait",
+                    "kind": "download_state",
+                    **{k: v for k, v in verdict.items() if k != "status"},
+                }
+                return self._json_result(payload)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return self._fail(
+                    "[browser_perceive:wait] download_state 超时：期望 "
+                    f"{expected} 未在 {timeout_ms}ms 内出现"
+                    "（事件态未达终态且文件未满足稳定判据）。"
+                )
+            time.sleep(min(interval_ms / 1000.0, remaining))
 
     def _field_mismatch(self, action: str, kwargs: dict[str, Any]) -> ToolResult | None:
         allowed_by_action = {
@@ -532,10 +615,17 @@ class BrowserPerceiveTool:
                     "interval_ms": interval_ms,
                 }
                 result = self._wait_object_text.execute_request(session_id, request)
+            elif kind == "download_state":
+                # M2-A B6: session-scoped download completion wait (§5.2).
+                return self._wait_download_state(
+                    expected=str(condition.get("expected") or ""),
+                    timeout_ms=timeout_ms,
+                    interval_ms=interval_ms,
+                )
             else:
                 return self._fail(
                     "[browser_perceive:wait] condition.kind 必须是 "
-                    "page_ready/page_url/object_state/object_text。"
+                    "page_ready/page_url/object_state/object_text/download_state。"
                 )
             return ToolResult(
                 status=result.status,
