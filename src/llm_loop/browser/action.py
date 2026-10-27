@@ -150,7 +150,12 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
+def _safe_arg_facts(
+    verb: str,
+    args: dict[str, Any],
+    *,
+    upload_files: list[str] | None = None,
+) -> dict[str, Any]:
     """Return privacy-safe mechanical request facts; never persist sensitive values."""
     if verb == "fill":
         text = str(args.get("text") or "")
@@ -170,23 +175,35 @@ def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
     if verb == "upload":
         # M1 B1: basename + size + content sha256 per file; full paths are
         # never persisted (T1 mitigation alongside the allow_roots gate).
+        # fix(P0-1, review-M1): content reads happen only on the re-verified
+        # resolved absolute paths (upload_files), taken AFTER the pre-dispatch
+        # recheck in execute(); the reservation fingerprint uses
+        # _fingerprint_arg_facts instead, so a file swapped inside the
+        # validate->dispatch window can never get its digest persisted.
         raw_paths = args.get("paths")
+        resolved_paths = (
+            list(upload_files)
+            if upload_files is not None
+            else (
+                [os.path.realpath(str(item)) for item in raw_paths]
+                if isinstance(raw_paths, list)
+                else []
+            )
+        )
         files: list[dict[str, Any]] = []
-        if isinstance(raw_paths, list):
-            for raw in raw_paths:
-                resolved = os.path.realpath(str(raw))
-                fact: dict[str, Any] = {"name": os.path.basename(resolved)}
-                try:
-                    fact["size"] = os.path.getsize(resolved)
-                    with open(resolved, "rb") as handle:
-                        digest = hashlib.sha256()
-                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                            digest.update(chunk)
-                    fact["sha256"] = digest.hexdigest()
-                except OSError:
-                    fact["size"] = None
-                    fact["sha256"] = None
-                files.append(fact)
+        for resolved in resolved_paths:
+            fact: dict[str, Any] = {"name": os.path.basename(resolved)}
+            try:
+                fact["size"] = os.path.getsize(resolved)
+                with open(resolved, "rb") as handle:
+                    digest = hashlib.sha256()
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                fact["sha256"] = digest.hexdigest()
+            except OSError:
+                fact["size"] = None
+                fact["sha256"] = None
+            files.append(fact)
         return {"files": files}
     if verb == "select":
         value = str(args.get("value") or "")
@@ -203,6 +220,33 @@ def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
     if verb == "scroll":
         return {"delta_pages": args.get("delta_pages")}
     return {}
+
+
+def _fingerprint_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Reservation-fingerprint facts: declared action shape only, zero file I/O.
+
+    fix(P0-1, review-M1): the fingerprint is computed right after _validate,
+    i.e. inside the attacker-controlled swap window (validate -> captures ->
+    dispatch). Reading file contents there would digest a swapped sensitive
+    file into the persisted reservation marker. Content digests are now taken
+    exclusively from re-verified resolved paths at dispatch-grounding time
+    (_safe_arg_facts(upload_files=...)); the fingerprint digests the DECLARED
+    path strings instead, which keeps duplicate-action detection a pure
+    function of the declared action.
+    """
+    if verb == "upload":
+        raw_paths = args.get("paths")
+        declared = [str(item) for item in raw_paths] if isinstance(raw_paths, list) else []
+        return {
+            "files": [
+                {
+                    "name": os.path.basename(item),
+                    "declared_sha256": hashlib.sha256(item.encode("utf-8")).hexdigest(),
+                }
+                for item in declared
+            ]
+        }
+    return _safe_arg_facts(verb, args)
 
 
 def _landing_url_key(url: str) -> tuple[Any, ...]:
@@ -774,7 +818,9 @@ class BrowserActionAdapter:
                 "action_id": action_id,
                 "verb": action["verb"],
                 "target_id": action["target_id"],
-                "args": _safe_arg_facts(str(action["verb"]), dict(action["args"])),
+                # fix(P0-1): declared-shape facts only (no file reads) — the
+                # reservation marker must not digest a swapped file.
+                "args": _fingerprint_arg_facts(str(action["verb"]), dict(action["args"])),
                 "expected_version": action["expected_version"],
                 "version_scope": action["version_scope"],
             }
@@ -959,13 +1005,44 @@ class BrowserActionAdapter:
                     before_version=before_version, before_ref=before_ref,
                 )
 
+        # fix(P0-1, review-M1 A2): re-verify the FINAL resolved upload paths
+        # right before any dispatch facts are taken and before the actuator is
+        # called. _validate approved the paths as DECLARED; the capture windows
+        # since then are attacker swap time (deterministic probe: a symlink
+        # flip inside the first capture hook used to send /private/etc/passwd
+        # straight to dispatch with status=ok). Re-resolved absolute paths go
+        # through the same policy once more; any failure rides the existing
+        # rejected path (zero dispatch, zero dispatch.json). Residual window:
+        # recheck -> browser file open (sub-millisecond); fd passing
+        # (openat/O_NOFOLLOW) is registered as an M2 follow-up.
+        dispatch_args = dict(action["args"])
+        if verb == "upload":
+            raw_paths = dispatch_args.get("paths")
+            if isinstance(raw_paths, list):
+                dispatch_args["paths"] = resolve_upload_paths(raw_paths)
+            recheck_error = upload_paths_policy_error(dispatch_args.get("paths"))
+            if recheck_error is not None:
+                return self._append_rejected(
+                    session_id,
+                    action,
+                    recheck_error,
+                    before_version=before_version,
+                    before_ref=before_ref,
+                )
+
         dispatch_ref = self.receipt_store.persist_dispatch_grounding(
             session_id,
             action_id,
             action_fingerprint=fingerprint,
             verb=verb,
             physical_target=physical_target,
-            safe_args=_safe_arg_facts(verb, dict(action["args"])),
+            # fix(P0-1): upload content digests are taken from the re-verified
+            # resolved paths only (after the recheck above).
+            safe_args=_safe_arg_facts(
+                verb,
+                dict(action["args"]),
+                upload_files=(dispatch_args.get("paths") if verb == "upload" else None),
+            ),
             before_version=before_version,
         )
         running = self._receipt_base(action)
@@ -987,14 +1064,10 @@ class BrowserActionAdapter:
                 dispatch_authority_verdict = mutation_allowed
             else:
                 try:
-                    # M1 B1: the actuator receives canonicalized absolute paths
-                    # (symlinks resolved at dispatch time); the action contract
-                    # keeps the model-declared args untouched.
-                    dispatch_args = dict(action["args"])
-                    if str(action["verb"]) == "upload":
-                        raw_paths = dispatch_args.get("paths")
-                        if isinstance(raw_paths, list):
-                            dispatch_args["paths"] = resolve_upload_paths(raw_paths)
+                    # M1 B1 + fix(P0-1): dispatch_args carries the canonicalized
+                    # absolute upload paths, resolved AND policy-rechecked above
+                    # (before dispatch grounding); the action contract keeps the
+                    # model-declared args untouched.
                     dispatch_result = self.actuator.dispatch(
                         verb=str(action["verb"]),
                         physical_target=physical_target,

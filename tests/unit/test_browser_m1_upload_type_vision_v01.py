@@ -15,6 +15,7 @@ they are not read-the-code inferences (RULE-AI-35 discipline).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -100,10 +101,31 @@ class _Actuator:
         )
 
 
-def _adapter_stack(tmp_path: Path):
+class _HookedCaptureBackend:
+    """Capture backend whose per-call hook fires BEFORE the raw is returned.
+
+    fix(P0-1) regression harness (review-M1 probe A2): the hook runs at the
+    real temporal position between _validate and dispatch, deterministically
+    reproducing the symlink swap window without any racing.
+    """
+
+    def __init__(self, raw: dict[str, Any], hook: Any = None) -> None:
+        self._raw = json.loads(json.dumps(raw))
+        self._hook = hook
+        self.calls = 0
+
+    def capture(self) -> dict[str, Any]:
+        self.calls += 1
+        if self._hook is not None:
+            self._hook(self.calls)
+        return json.loads(json.dumps(self._raw))
+
+
+def _adapter_stack(tmp_path: Path, backend: Any = None):
     raw = _raw_with_attachment_input()
     perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
-    backend = _CaptureBackend([raw])
+    if backend is None:
+        backend = _CaptureBackend([raw])
     actuator = _Actuator()
     action = BrowserActionAdapter(
         perception=perception,
@@ -327,6 +349,86 @@ def test_upload_accepts_workspace_files_and_dispatches_resolved_absolute_paths(
         str(tmp_path / "b.txt"),
     ]  # canonical absolute realpath form (tmp_path is already resolved)
     assert call["physical_target"].startswith("dom:")
+
+
+_SYSTEM_PASSWORD_FILE = os.sep + "etc" + os.sep + "passwd"
+
+
+def test_upload_toctou_swap_after_validate_rejected_before_dispatch_and_no_dispatch_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # fix(P0-1) regression (review-M1 probe A2, deterministic — no racing):
+    # a benign regular file passes _validate, then is swapped for a symlink to
+    # the system password file inside the FIRST pre-dispatch capture (the real
+    # temporal window between validate and dispatch). The pre-dispatch recheck
+    # must reject: zero dispatch calls, zero dispatch.json, and no digest of
+    # the swapped sensitive file anywhere under the action store.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    swap = workspace / "swap.bin"
+    swap.write_bytes(b"benign-bytes")
+    monkeypatch.setenv("LFL_BROWSER_UPLOAD_ALLOW_ROOTS", str(workspace))
+
+    def hook(call_number: int) -> None:
+        if call_number == 1:  # inside the window: validate already passed
+            swap.unlink()
+            swap.symlink_to(_SYSTEM_PASSWORD_FILE)
+
+    first, backend, actuator, action = _adapter_stack(
+        tmp_path, backend=_HookedCaptureBackend(_raw_with_attachment_input(), hook)
+    )
+    result = action.execute(
+        "s1",
+        _object_action(first, verb="upload", args={"paths": [str(swap)]}, action_id="act-up-toctou-1"),
+    )
+    assert result["status"] == "rejected"
+    assert result["retry"]["reason"] == "path_not_allowed"
+    assert actuator.calls == []  # zero dispatch -> zero CDP upload request
+    assert backend.calls == 1  # rejection happened AFTER the first capture, i.e. at the recheck, not at _validate
+    actions_root = tmp_path / "actions"
+    assert list(actions_root.rglob("dispatch.json")) == []  # zero dispatch.json
+    # the swapped sensitive file's content digest must not be persisted anywhere
+    secret_sha = hashlib.sha256(
+        Path(_SYSTEM_PASSWORD_FILE).read_bytes()
+    ).hexdigest()
+    for persisted in actions_root.rglob("*"):
+        if persisted.is_file():
+            assert secret_sha not in persisted.read_text(encoding="utf-8", errors="ignore")
+
+
+def test_upload_toctou_positive_control_benign_file_still_dispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Positive control for the recheck: the same hooked stack WITHOUT the swap
+    # must keep the happy path intact (no false kills) — dispatch happens once
+    # and dispatch.json carries the re-verified file's digest.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    payload = b"benign-content-0123456789"
+    benign = workspace / "benign.bin"
+    benign.write_bytes(payload)
+    monkeypatch.setenv("LFL_BROWSER_UPLOAD_ALLOW_ROOTS", str(workspace))
+
+    first, backend, actuator, action = _adapter_stack(
+        tmp_path, backend=_HookedCaptureBackend(_raw_with_attachment_input(), None)
+    )
+    result = action.execute(
+        "s1",
+        _object_action(first, verb="upload", args={"paths": [str(benign)]}, action_id="act-up-toctou-2"),
+    )
+    assert result["status"] == "ok", result
+    assert len(actuator.calls) == 1
+    assert actuator.calls[0]["args"]["paths"] == [str(benign)]
+    dispatch_docs = list((tmp_path / "actions").rglob("dispatch.json"))
+    assert len(dispatch_docs) == 1
+    grounding = json.loads(dispatch_docs[0].read_text(encoding="utf-8"))
+    assert grounding["args"]["files"] == [
+        {
+            "name": "benign.bin",
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
