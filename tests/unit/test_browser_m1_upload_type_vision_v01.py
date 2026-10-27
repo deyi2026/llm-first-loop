@@ -29,6 +29,8 @@ from llm_loop.browser.action import (
     BrowserActionAdapter,
     BrowserActionReceiptStore,
     BrowserDispatchResult,
+    upload_allow_roots,
+    upload_paths_policy_error,
 )
 from llm_loop.browser.cdp_action_host import (
     _ALLOWED,
@@ -431,6 +433,44 @@ def test_upload_toctou_positive_control_benign_file_still_dispatches(
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# A2b. fix(P2-2): allow_roots configuration hardening (filesystem root).
+# ---------------------------------------------------------------------------
+
+
+def test_upload_allow_roots_rejects_filesystem_root_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A configured entry resolving to the filesystem root (os.sep) would allow
+    # every absolute host path; it must be rejected. Nothing valid remains ->
+    # fail-bounded fallback to the default workspace root (cwd here).
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LFL_BROWSER_UPLOAD_ALLOW_ROOTS", os.sep)
+    assert upload_allow_roots() == [os.path.realpath(str(tmp_path))]
+    # mixed list: the filesystem-root entry is dropped, the valid root stays
+    monkeypatch.setenv("LFL_BROWSER_UPLOAD_ALLOW_ROOTS", f"{os.sep},{tmp_path}")
+    assert upload_allow_roots() == [os.path.realpath(str(tmp_path))]
+    # degenerate empty entries keep the legacy fail-closed empty list (no
+    # valid entry existed to fall back from)
+    monkeypatch.setenv("LFL_BROWSER_UPLOAD_ALLOW_ROOTS", " , , ")
+    assert upload_allow_roots() == []
+
+
+def test_upload_policy_with_filesystem_root_env_still_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # policy-level effect: with allow_roots configured to the filesystem root,
+    # a host-sensitive path must STILL be rejected (fallback to workspace root)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    secret = tmp_path / "outside-secret.bin"
+    secret.write_bytes(b"host-secret")
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("LFL_BROWSER_UPLOAD_ALLOW_ROOTS", os.sep)
+    assert upload_paths_policy_error([str(secret)]) == "path_not_allowed"
+    assert upload_paths_policy_error(["../../outside-secret.bin"]) == "path_not_allowed"
 
 
 # ---------------------------------------------------------------------------

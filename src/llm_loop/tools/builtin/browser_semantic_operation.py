@@ -335,9 +335,11 @@ class BrowserSemanticOperationTool:
         "best-match/auto-target/latest/rebind/retry；identity 未命中时回执有界候选清单。"
         "M1 B2：do=type 走 Input.insertText 真实输入管线（先聚焦；不再 this.value 赋值+合成事件），"
         "text ≤2000 字符，空文本=明确 no-op（不报错、不改内容），回执只回长度+前 20 字符摘要；"
+        "插入点=程序化 focus 后光标位置（目标已有内容时在开头）；"
         "set_text/append_text 旧通道保持不变（兼容入口）。"
         "M1 B1：do=upload 向 input[type=file] 注入 1..8 个本地常规文件，单文件 ≤100MB；"
-        "路径经 realpath 后必须落在允许根内（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配），"
+        "路径经 realpath 后必须落在允许根内（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配——"
+        "host-owned 宿主配置、非模型可写；配置为文件系统根会被拒绝并回退默认），"
         "/etc/passwd、~/.ssh/**、目录/设备/socket、超限、symlink 逃逸全部确定性拒绝"
         "（path_not_allowed/path_not_found/too_large/not_regular_file），且拒绝发生在任何 CDP 请求之前。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
@@ -666,7 +668,8 @@ class BrowserSemanticOperationTool:
                 "maxItems": 8,
                 "description": (
                     "仅 do=upload（M1 B1）：1..8 个本地文件路径；realpath 后必须落在允许根内"
-                    "（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配），单文件 ≤100MB"
+                    "（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配——host-owned 宿主配置、"
+                    "非模型可写；配置为文件系统根会被拒绝并回退默认），单文件 ≤100MB"
                     "（LFL_BROWSER_UPLOAD_MAX_FILE_BYTES 可配）；违规确定性拒绝且零 CDP 请求"
                 ),
             },

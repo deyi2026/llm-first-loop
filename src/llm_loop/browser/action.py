@@ -50,14 +50,30 @@ _TYPE_MAX_TEXT_LENGTH = 2000
 _TYPE_PREVIEW_LENGTH = 20
 
 
+def _default_upload_root() -> str:
+    return os.path.realpath(str(current_workspace_root.get() or os.getcwd()))
+
+
 def upload_allow_roots() -> list[str]:
-    """Allowed upload roots: env override, else the current workspace root."""
+    """Allowed upload roots: env override, else the current workspace root.
+
+    fix(P2-2, review-M1): a configured entry that resolves to the filesystem
+    root (os.sep) would silently allow every absolute host path, so such
+    entries are rejected here; when nothing valid remains the default
+    workspace root applies (fail-bounded, same posture as
+    upload_max_file_bytes). The env key is host-owned configuration — no
+    in-session model path can write it.
+    """
     raw = str(os.environ.get("LFL_BROWSER_UPLOAD_ALLOW_ROOTS") or "").strip()
-    if raw:
-        roots = [item.strip() for item in raw.split(",") if item.strip()]
-    else:
-        roots = [str(current_workspace_root.get() or os.getcwd())]
-    return [os.path.realpath(item) for item in roots]
+    if not raw:
+        return [_default_upload_root()]
+    resolved = [os.path.realpath(item.strip()) for item in raw.split(",") if item.strip()]
+    bounded = [item for item in resolved if item != os.sep]
+    if resolved and not bounded:
+        # every configured entry was a filesystem root: fall back to the
+        # default workspace root instead of allowing the whole host.
+        return [_default_upload_root()]
+    return bounded
 
 
 def upload_max_file_bytes() -> int:
