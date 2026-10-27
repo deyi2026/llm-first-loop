@@ -57,6 +57,9 @@ def test_mf5_3_1_perceive_provider_contract_is_root_direct_oneof() -> None:
         ("wait", "object_text"),
         # M2-A B6 (DESIGN-20261027 §5.2): download completion wait branch.
         ("wait", "download_state"),
+        # M2-B B7 (DESIGN-20261027 §7.3.4): negative-condition wait branch
+        # (absence + settle window; timeout reports state=present).
+        ("wait", "object_absent"),
     }
     assert all(branch.get("additionalProperties") is False for branch in branches.values())
 
@@ -118,6 +121,11 @@ def test_mf5_3_1_action_specific_branches_exclude_cross_action_fields() -> None:
         ("wait", "download_state"): (
             {"action", "kind", "expected", "within_ms", "target_id"},
             {"action", "kind", "expected"},
+        ),
+        # M2-B B7: negative-condition wait (absence + settle window).
+        ("wait", "object_absent"): (
+            {"action", "kind", "grounding_ref", "settle_ms", "within_ms", "target_id"},
+            {"action", "kind", "grounding_ref"},
         ),
     }
 

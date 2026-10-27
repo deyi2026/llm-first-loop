@@ -22,6 +22,7 @@ from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.builtin.browser_wait import (
+    ABSENT_SETTLE_DEFAULT_MS,
     BrowserWaitObjectStateTool,
     BrowserWaitObjectTextTool,
     BrowserWaitScopeReadyTool,
@@ -39,8 +40,11 @@ class BrowserPerceiveTool:
         "Browser 只读感知：snapshot 读取 host 已绑定当前页面，hydrate 精确水合既有 ref，"
         "diff 比较两张 exact snapshot，wait 只读等待页面 ready/URL 或已观察对象 state/text。"
         "页面 wait 机械绑定当前 host-bound page；对象 wait 必须使用 exact grounding_ref。"
+        "M2-B B7：wait kind=object_absent 为负条件等待——元素消失需在窗口内累计稳定"
+        " settle_ms（默认 300，可覆盖 50..10000）才成立，中途回闪重置计时；"
+        "超时回执 state=present（明确失败）。"
         "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/auto-select/retry，"
-        "多标签歧义时返回只读页面清单；可用显式 target_id 换绑指定页（EVO-20261007-11ae668f）。"
+        "多标签歧义时返回只读页面清单；可用显式 target_id 换绑指定页（EVO-20261007）。"
         "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
         f"method_ref={SEMANTIC_OPERATION_METHOD_REF}。"
     )
@@ -168,6 +172,24 @@ class BrowserPerceiveTool:
             "required": ["action", "kind", "expected"],
             "additionalProperties": False,
         },
+        {
+            # M2-B B7 (DESIGN-20261027 §4.1/B7, §7.3.4): negative-condition
+            # wait. Absence only succeeds after settle_ms of UNBROKEN
+            # absence (default 300ms; mid-window re-appearance resets the
+            # timer); timeout reports state=present - an explicit failure,
+            # never a maybe-gone answer.
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "enum": ["object_absent"]},
+                "grounding_ref": {"type": "string", "minLength": 1},
+                "settle_ms": {"type": "integer", "minimum": 50, "maximum": 10_000},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
+            },
+            "required": ["action", "kind", "grounding_ref"],
+            "additionalProperties": False,
+        },
     ]
     parameters = {
         "type": "object",
@@ -205,7 +227,14 @@ class BrowserPerceiveTool:
             "to_version": {"type": "string", "minLength": 1},
             "kind": {
                 "type": "string",
-                "enum": ["page_ready", "page_url", "object_state", "object_text", "download_state"],
+                "enum": [
+                    "page_ready",
+                    "page_url",
+                    "object_state",
+                    "object_text",
+                    "download_state",
+                    "object_absent",
+                ],
             },
             "expected": {
                 "type": "string",
@@ -263,6 +292,8 @@ class BrowserPerceiveTool:
         },
         # M2-A B6: flat provider wait on the session download state machine.
         "download_state": {"action", "kind", "expected", "within_ms", "target_id"},
+        # M2-B B7: negative-condition wait (absence + settle window).
+        "object_absent": {"action", "kind", "grounding_ref", "settle_ms", "within_ms", "target_id"},
     }
 
     def __init__(
@@ -595,6 +626,20 @@ class BrowserPerceiveTool:
                     "interval_ms": interval_ms,
                 }
                 result = self._wait_object_state.execute_request(session_id, request)
+            elif kind == "object_absent":
+                # M2-B B7 (§7.3.4): the negative condition compiles to the
+                # canonical exists=false predicate; settle_ms (default 300)
+                # rides the waiter's stability window - mid-window
+                # re-appearance resets, timeout reports state=present.
+                request = {
+                    "object_ref": condition.get("grounding_ref"),
+                    "property": "exists",
+                    "value": False,
+                    "settle_ms": condition.get("settle_ms", ABSENT_SETTLE_DEFAULT_MS),
+                    "timeout_ms": timeout_ms,
+                    "interval_ms": interval_ms,
+                }
+                result = self._wait_object_state.execute_request(session_id, request)
             elif kind == "object_text":
                 match_to_operator = {
                     "equals": "eq",
@@ -625,7 +670,7 @@ class BrowserPerceiveTool:
             else:
                 return self._fail(
                     "[browser_perceive:wait] condition.kind 必须是 "
-                    "page_ready/page_url/object_state/object_text/download_state。"
+                    "page_ready/page_url/object_state/object_text/download_state/object_absent。"
                 )
             return ToolResult(
                 status=result.status,
