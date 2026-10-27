@@ -44,7 +44,18 @@ logger = logging.getLogger(__name__)
 _MAX_CLAUSES = 8
 # M2-B B8: frame_token joins the identity vocabulary as a QUALIFIER (None =
 # main frame, "frame:<frameId>" = child frame). It never replaces a name key.
-_IDENTITY_KEYS = {"kind", "role", "name", "name_normalized", "frame_token"}
+# M2-B B15: fallback + fallback_world_version form the world-version-scoped
+# addressing pair for NAMELESS elements (icon-only buttons); the pair must
+# arrive together and never mixes with name/name_normalized.
+_IDENTITY_KEYS = {
+    "kind",
+    "role",
+    "name",
+    "name_normalized",
+    "frame_token",
+    "fallback",
+    "fallback_world_version",
+}
 _MAX_CANDIDATE_PROJECTION = 20
 # M1 (DESIGN-20261027 B1/B2): upload/type join the object-verb vocabulary as
 # additive members; the five frozen verbs keep their exact pre-M1 semantics.
@@ -202,6 +213,24 @@ _SHORT_TARGET_SCHEMA = {
             "required": ["grounding_ref"],
             "additionalProperties": False,
         },
+        {
+            # M2-B B15 (DESIGN-20261027 §7.3.3): world-version-scoped fallback
+            # addressing for NAMELESS elements (icon-only buttons). The key
+            # comes verbatim from a snapshot receipt's fallback_key; the pair
+            # is only valid inside fallback_world_version.
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
+                "fallback": {"type": "string", "minLength": 1},
+                "fallback_world_version": {"type": "string", "minLength": 1},
+                "role": {"type": "string", "minLength": 1},
+                "frame_token": {
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+                },
+            },
+            "required": ["kind", "fallback", "fallback_world_version"],
+            "additionalProperties": False,
+        },
     ],
     "description": (
         "Exact target addressing (EVO-20261010-1e06d6b4). Pick one form: "
@@ -214,6 +243,10 @@ _SHORT_TARGET_SCHEMA = {
         "M2-B B8: 可选 frame_token 限定帧（null=主帧，字符串=子帧 "
         '"frame:<frameId>"，取自 snapshot 对象的 frame_token 字段）；'
         "跨帧重名而未指定 frame_token 时确定性歧义拒绝。"
+        "M2-B B15：无名元素用 {kind,fallback,fallback_world_version}——"
+        "fallback 取 snapshot 回执的 fallback_key（title→可见文本→placeholder→alt→"
+        "{kind}#序号），仅在 fallback_world_version 内有效；跨版本失效会显式"
+        "标注 stale 并要求重新取快照，绝不静默命中。"
     ),
 }
 
@@ -512,6 +545,20 @@ def _mutate_clause_receipt(
         "status": "dispatched" if action_receipt.get("status") == "ok" else "blocked",
         "action_receipt": action_receipt,
     }
+    if (
+        isinstance(identity, dict)
+        and "fallback" in identity
+        and str(action_receipt.get("status") or "") != "ok"
+    ):
+        # M2-B B15: a fallback address that resolved but failed the version
+        # guard is EXPLICITLY stale - annotate and route the model back to a
+        # fresh snapshot instead of letting a shifted retry guess.
+        clause_receipt["fallback_addressing"] = {
+            "status": "stale",
+            "key": identity.get("fallback"),
+            "stable_within": identity.get("fallback_world_version"),
+            "guidance": BrowserSemanticOperationTool._FALLBACK_STALE_GUIDANCE,
+        }
     if verb == "upload" and action_receipt.get("status") == "ok":
         clause_receipt["upload_files"] = upload_paths_facts(
             [str(item) for item in dict(args).get("paths") or []]
@@ -599,11 +646,15 @@ class BrowserSemanticOperationTool:
             "frame_token": {
                 "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
             },
+            # M2-B B15: world-version-scoped fallback addressing pair.
+            "fallback": {"type": "string", "minLength": 1},
+            "fallback_world_version": {"type": "string", "minLength": 1},
         },
         "required": ["kind"],
         "anyOf": [
             {"required": ["name"]},
             {"required": ["name_normalized"]},
+            {"required": ["fallback", "fallback_world_version"]},
         ],
         "additionalProperties": False,
     }
@@ -1052,8 +1103,23 @@ class BrowserSemanticOperationTool:
         # fallback between the two forms.
         if "name" in identity and "name_normalized" in identity:
             raise BrowserSemanticOperationContractError("identity_name_addressing_conflict")
-        if "name" not in identity and "name_normalized" not in identity:
+        # M2-B B15: the fallback pair is its own addressing form - both keys
+        # arrive together or not at all, and never mixed with a name key.
+        fallback_present = "fallback" in identity
+        world_present = "fallback_world_version" in identity
+        if fallback_present != world_present:
+            raise BrowserSemanticOperationContractError(
+                "identity_fallback_pair_incomplete"
+            )
+        if fallback_present and ("name" in identity or "name_normalized" in identity):
+            raise BrowserSemanticOperationContractError("identity_fallback_name_conflict")
+        if not fallback_present and "name" not in identity and "name_normalized" not in identity:
             raise BrowserSemanticOperationContractError("identity_fields_mismatch")
+        for fallback_key in ("fallback", "fallback_world_version"):
+            if fallback_key in identity and not str(identity[fallback_key] or "").strip():
+                raise BrowserSemanticOperationContractError(
+                    f"identity_{fallback_key}_missing"
+                )
         normalized: dict[str, Any] = {}
         for key, value in identity.items():
             if key == "frame_token":
@@ -1125,7 +1191,7 @@ class BrowserSemanticOperationTool:
 
     def _ground_object(
         self, session_id: str, target: Any
-    ) -> tuple[str | None, int, dict[str, str], dict[str, Any], dict[str, Any]]:
+    ) -> tuple[str | None, int, dict[str, Any], dict[str, Any], dict[str, Any]]:
         identity = self._normalize_identity(target)
         if "grounding_ref" in identity:
             # EVO-20261010-1e06d6b4 (B): hydrate reuses the perceive-side
@@ -1155,6 +1221,11 @@ class BrowserSemanticOperationTool:
             if not ref:
                 raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
             return ref, 1, identity, {}, detail
+        if "fallback" in identity:
+            # M2-B B15: fallback keys resolve ONLY inside the declared
+            # world_version's own bundle - never against a fresh snapshot
+            # (a shifted ordinal must never silently match).
+            return self._ground_fallback(session_id, identity)
         snapshot_result = self._snapshot(session_id)
         objects = [obj for obj in snapshot_result.get("objects", []) if isinstance(obj, dict)]
         matches = [obj for obj in objects if self._matches_identity(obj, identity)]
@@ -1181,6 +1252,89 @@ class BrowserSemanticOperationTool:
         if not ref:
             raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
         return ref, 1, identity, snapshot_result, {}
+
+    _FALLBACK_STALE_GUIDANCE = (
+        "fallback 键跨 world_version 失效（stable_within 已过）；"
+        "请重新 browser_perceive(action=snapshot) 取新快照，"
+        "并使用新回执中的 fallback_key + 新 world_version 重新寻址。"
+    )
+
+    def _ground_fallback(
+        self, session_id: str, identity: dict[str, Any]
+    ) -> tuple[str | None, int, dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """M2-B B15 (DESIGN-20261027 §7.3.3): resolve a fallback key strictly
+        inside the DECLARED world_version's immutable bundle.
+
+        Matching against the declared bundle makes cross-version drift
+        impossible to satisfy silently: an expired/unknown version, a key
+        that no longer matches, or a post-resolution world change all fail
+        deterministically with an explicit stale annotation + guidance
+        (never a silent hit on a shifted ordinal).
+        """
+        world_version = str(identity.get("fallback_world_version") or "")
+        probe = {
+            key: value
+            for key, value in identity.items()
+            if key in {"kind", "role", "fallback", "frame_token"}
+        }
+        note: dict[str, Any] = {
+            "key": identity.get("fallback"),
+            "stable_within": world_version,
+            "guidance": self._FALLBACK_STALE_GUIDANCE,
+        }
+        try:
+            bundle = self._perception.store.load_snapshot_bundle(
+                session_id, world_version
+            )
+            objects = [
+                obj
+                for obj in list(bundle.get("objects") or [])
+                if isinstance(obj, dict)
+            ]
+        except (ValueError, PermissionError) as exc:
+            note["status"] = "stale"
+            note["reason"] = f"{type(exc).__name__}: {exc}"
+            return None, 0, identity, {}, {
+                "fallback": note,
+                "halt_reason": "fallback_world_version_stale",
+            }
+        matches = [obj for obj in objects if self._matches_fallback(obj, probe)]
+        if len(matches) != 1:
+            note["status"] = "ambiguous" if matches else "stale"
+            return None, len(matches), identity, {}, {
+                "fallback": note,
+                "halt_reason": (
+                    "fallback_ambiguous"
+                    if matches
+                    else "fallback_key_not_in_world_version"
+                ),
+            }
+        ref = str(matches[0].get("grounding_ref") or "").strip()
+        if not ref:
+            raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
+        note["status"] = "matched"
+        return ref, 1, identity, {}, {"fallback": note}
+
+    @classmethod
+    def _matches_fallback(cls, obj: dict[str, Any], probe: dict[str, Any]) -> bool:
+        """Fallback probe = kind/role/frame_token + attributes.fallback_key."""
+        attrs = obj.get("attributes")
+        attrs = attrs if isinstance(attrs, dict) else {}
+        if attrs.get("fallback_key") != probe.get("fallback"):
+            return False
+        if str(obj.get("kind") or "") != str(probe.get("kind") or ""):
+            return False
+        if "role" in probe and attrs.get("role") != probe["role"]:
+            return False
+        if "frame_token" in probe:
+            expected_frame = probe["frame_token"]
+            observed_frame = obj.get("frame_token")
+            if expected_frame is None:
+                if observed_frame is not None:
+                    return False
+            elif observed_frame != expected_frame:
+                return False
+        return True
 
     def _ground_page(self, session_id: str, target: Any) -> tuple[str, dict[str, Any]]:
         if target != {"kind": "page"}:
@@ -1265,10 +1419,18 @@ class BrowserSemanticOperationTool:
         # new deterministic conflict error.
         if "name" in raw and "name_normalized" in raw:
             raise BrowserSemanticOperationContractError("short_target_name_addressing_conflict")
-        if "name" not in raw and "name_normalized" not in raw:
+        # M2-B B15: the fallback pair is a third addressing form (never mixed
+        # with a name key; both members required together).
+        fallback_present = "fallback" in raw
+        world_present = "fallback_world_version" in raw
+        if fallback_present != world_present:
+            raise BrowserSemanticOperationContractError("short_target_fallback_pair_incomplete")
+        if fallback_present and ("name" in raw or "name_normalized" in raw):
+            raise BrowserSemanticOperationContractError("short_target_fallback_name_conflict")
+        if not fallback_present and "name" not in raw and "name_normalized" not in raw:
             raise BrowserSemanticOperationContractError("short_target_fields_mismatch")
         identity: dict[str, Any] = {}
-        for key in ("kind", "name", "name_normalized", "role"):
+        for key in ("kind", "name", "name_normalized", "role", "fallback", "fallback_world_version"):
             if key not in raw:
                 continue
             value = str(raw.get(key) or "").strip()
@@ -1511,7 +1673,7 @@ class BrowserSemanticOperationTool:
                 # miss receipt lets the model qualify the next address.
                 "frame_token": obj.get("frame_token"),
             }
-            for key in ("name", "name_normalized"):
+            for key in ("name", "name_normalized", "fallback_key", "fallback_stable_within"):
                 value = attributes.get(key)
                 if isinstance(value, str):
                     entry[key] = value
@@ -1552,6 +1714,51 @@ class BrowserSemanticOperationTool:
             "items": items,
         }
 
+    def _blocked_grounding(
+        self,
+        *,
+        index: int,
+        kind: str,
+        verb: str,
+        identity: dict[str, Any] | None,
+        exact_count: int,
+        ground_detail: dict[str, Any],
+        snapshot_result: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        """Blocked-clause receipt + halt reason for a failed grounding.
+
+        EVO-20261010-1e06d6b4: deterministic miss receipts carry either the
+        snapshot candidate list (identity addressing) or the hydrate
+        availability detail (ref addressing) so the model can re-ground
+        explicitly instead of guessing.  M2-B B15 adds the fallback stale
+        annotation path; M2-B extraction (verbatim semantics, one builder
+        shared by the mutate and wait clause loops).
+        """
+        blocked: dict[str, Any] = {
+            "index": index,
+            "kind": kind,
+            "identity": identity,
+            "exact_match_count": exact_count,
+            "status": "blocked",
+        }
+        if verb:
+            blocked["verb"] = verb
+        probe_identity = identity if isinstance(identity, dict) else {}
+        if "grounding_ref" in probe_identity:
+            blocked["grounding_availability"] = ground_detail
+            return blocked, (
+                "grounding_ref_"
+                f"{ground_detail.get('availability', 'unavailable')}"
+            )
+        if "fallback" in probe_identity:
+            blocked["fallback_addressing"] = ground_detail.get("fallback")
+            return blocked, str(
+                ground_detail.get("halt_reason")
+                or f"exact_identity_match_count:{exact_count}"
+            )
+        blocked["candidates"] = self._candidate_projection(snapshot_result)
+        return blocked, f"exact_identity_match_count:{exact_count}"
+
     def _compact_projection(
         self, session_id: str, full_receipt: dict[str, Any], receipt_ref: str
     ) -> dict[str, Any]:
@@ -1585,6 +1792,10 @@ class BrowserSemanticOperationTool:
             compact["candidates"] = last["candidates"]
         if isinstance(last.get("grounding_availability"), dict):
             compact["grounding_availability"] = last["grounding_availability"]
+        # M2-B B15: surface the fallback stale annotation + guidance on the
+        # compact receipt too (blocked and dispatch-failure paths alike).
+        if isinstance(last.get("fallback_addressing"), dict):
+            compact["fallback_addressing"] = last["fallback_addressing"]
         action_receipt = last.get("action_receipt")
         if isinstance(action_receipt, dict):
             after_version = action_receipt.get("after_version")
@@ -1750,30 +1961,17 @@ class BrowserSemanticOperationTool:
                         self._ground_object(session_id, clause.get("target"))
                     )
                     if exact_count != 1 or target_ref is None:
-                        blocked_clause: dict[str, Any] = {
-                            "index": index,
-                            "kind": kind,
-                            "verb": verb,
-                            "identity": identity,
-                            "exact_match_count": exact_count,
-                            "status": "blocked",
-                        }
-                        # EVO-20261010-1e06d6b4: deterministic miss receipts carry
-                        # either the snapshot candidate list (identity addressing)
-                        # or the hydrate availability detail (ref addressing) so
-                        # the model can re-ground explicitly instead of guessing.
-                        if "grounding_ref" in identity:
-                            blocked_clause["grounding_availability"] = ground_detail
-                            receipt["halt_reason"] = (
-                                "grounding_ref_"
-                                f"{ground_detail.get('availability', 'unavailable')}"
-                            )
-                        else:
-                            blocked_clause["candidates"] = self._candidate_projection(
-                                snapshot_result
-                            )
-                            receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
+                        blocked_clause, halt_reason = self._blocked_grounding(
+                            index=index,
+                            kind=kind,
+                            verb=verb,
+                            identity=identity,
+                            exact_count=exact_count,
+                            ground_detail=ground_detail,
+                            snapshot_result=snapshot_result,
+                        )
                         receipt["clauses"].append(blocked_clause)
+                        receipt["halt_reason"] = halt_reason
                         receipt["execution_status"] = "halted"
                         return finalize()
                 action_receipt = self._semantic_execute.execute_request(
@@ -1816,26 +2014,17 @@ class BrowserSemanticOperationTool:
                     self._ground_object(session_id, clause.get("target"))
                 )
                 if exact_count != 1 or target_ref is None:
-                    blocked_clause: dict[str, Any] = {
-                        "index": index,
-                        "kind": kind,
-                        "identity": identity,
-                        "exact_match_count": exact_count,
-                        "status": "blocked",
-                    }
-                    # EVO-20261010-1e06d6b4: same miss-receipt policy as mutate.
-                    if "grounding_ref" in identity:
-                        blocked_clause["grounding_availability"] = ground_detail
-                        receipt["halt_reason"] = (
-                            "grounding_ref_"
-                            f"{ground_detail.get('availability', 'unavailable')}"
-                        )
-                    else:
-                        blocked_clause["candidates"] = self._candidate_projection(
-                            snapshot_result
-                        )
-                        receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
+                    blocked_clause, halt_reason = self._blocked_grounding(
+                        index=index,
+                        kind=kind,
+                        verb="",
+                        identity=identity,
+                        exact_count=exact_count,
+                        ground_detail=ground_detail,
+                        snapshot_result=snapshot_result,
+                    )
                     receipt["clauses"].append(blocked_clause)
+                    receipt["halt_reason"] = halt_reason
                     receipt["execution_status"] = "halted"
                     return finalize()
                 wait_result = self._wait_object.execute_request(

@@ -220,6 +220,15 @@ _ATTRIBUTE_FIELDS = {
     "href",
     "dom_region",
     "text",
+    # M2-B B15 (DESIGN-20261027 §7.3.3): fallback addressing sources and the
+    # derived fallback key (stable only within its world_version - the
+    # per-snapshot id lives in fallback_stable_within and is deliberately
+    # excluded from content_sha256 via _content_fact_basis).
+    "title",
+    "placeholder",
+    "alt",
+    "fallback_key",
+    "fallback_stable_within",
 }
 # M2-B B8/B9: bounded ring of recent snapshot ids kept per session state.
 _SESSION_SNAPSHOT_RING = 16
@@ -315,7 +324,10 @@ def _content_fact_basis(value: Any) -> Any:
         return {
             key: _content_fact_basis(child)
             for key, child in value.items()
-            if key not in {"grounding_ref", "observed_version"}
+            # fallback_stable_within is the per-snapshot world_version id:
+            # identical worlds must hash identically, so it rides the same
+            # exclusion list as grounding_ref/observed_version (M2-B B15).
+            if key not in {"grounding_ref", "observed_version", "fallback_stable_within"}
         }
     if isinstance(value, list):
         return [_content_fact_basis(child) for child in value]
@@ -397,6 +409,22 @@ _NAME_FROM_CONTENT_TAGS = frozenset({
 })
 _NAME_FROM_CONTENT_CAP = 200
 _NAME_FROM_CONTENT_MAX_NODES = 400
+# M2-B B15 (DESIGN-20261027 §7.3.3): deterministic fallback addressing for
+# elements WITHOUT an accessible name. aria-label already feeds the canonical
+# ``name`` (so named elements never reach this path); among the nameless the
+# key is the first non-empty of title -> visible text -> placeholder -> alt
+# (normalized + truncated), else the region ordinal ``{kind}#{ordinal}``.
+_FALLBACK_SOURCE_ORDER = ("title", "text", "placeholder", "alt")
+_FALLBACK_TEXT_CAP = 64
+
+
+def _fallback_addressing_key(attributes: dict[str, Any]) -> str:
+    """First deterministic fallback source for a NAMELESS element (""=none)."""
+    for source in _FALLBACK_SOURCE_ORDER:
+        value = normalize_semantic_name(str(attributes.get(source) or ""))
+        if value:
+            return value[:_FALLBACK_TEXT_CAP]
+    return ""
 
 
 def _build_children_index(node_count: int, parent_indexes: list[int]) -> dict[int, list[int]]:
@@ -1755,15 +1783,38 @@ class BrowserPerceptionAdapter:
         explicitly.  Empty normalizations are kept verbatim: the empty string
         is itself the honest canonical form of a name that contains only
         invisible runes.
+
+        M2-B B15 (§7.3.3): NAMELESS objects additionally receive
+        ``attributes.fallback_key`` (title -> text -> placeholder -> alt ->
+        ``{kind}#{ordinal}``; the ordinal counts ALL same-kind objects in
+        this snapshot's deterministic traversal order - DOM order per frame,
+        then AX-only cards) plus ``fallback_stable_within`` = the snapshot
+        id.  The key is explicitly ONLY stable within that world_version;
+        the operate tool rejects cross-version use instead of silently
+        re-matching a shifted ordinal.
         """
+        ordinal: dict[str, int] = {}
         for semantic_object in objects:
             semantic_attributes = semantic_object.get("attributes")
-            if isinstance(semantic_attributes, dict) and isinstance(
-                semantic_attributes.get("name"), str
-            ):
+            if not isinstance(semantic_attributes, dict):
+                continue
+            # The ordinal counts ALL same-kind objects in traversal order
+            # (named or not) so ``{kind}#{ordinal}`` is the Nth button of the
+            # snapshot in plain reading order.
+            kind = str(semantic_object.get("kind") or "")
+            ordinal[kind] = ordinal.get(kind, 0) + 1
+            raw_name = semantic_attributes.get("name")
+            if isinstance(raw_name, str):
                 semantic_attributes["name_normalized"] = normalize_semantic_name(
-                    semantic_attributes["name"]
+                    raw_name
                 )
+            if raw_name:
+                continue  # named elements keep the {kind,name} address only
+            fallback = _fallback_addressing_key(semantic_attributes)
+            semantic_attributes["fallback_key"] = (
+                fallback or f"{kind}#{ordinal[kind]}"
+            )
+            semantic_attributes["fallback_stable_within"] = snapshot_id
 
     def _attach_structural_relations(
         self,
@@ -2882,6 +2933,32 @@ def _rare_string_values(raw: Any, strings: list[str]) -> dict[int, str]:
     return out
 
 
+def _direct_text_indexes(
+    *,
+    node_names: list[Any],
+    node_values: list[Any],
+    parent_indexes: list[Any],
+    strings: list[str],
+) -> tuple[dict[int, list[str]], dict[int, list[int]]]:
+    """Per-parent direct text runs (verbatim M2-B hygiene extraction from
+    ``PlaywrightPageCaptureBackend.capture`` - same traversal, same skips)."""
+    direct_text_by_parent: dict[int, list[str]] = {}
+    direct_text_nodes_by_parent: dict[int, list[int]] = {}
+    for child_idx, node_name in enumerate(node_names):
+        if _string(strings, node_name).lower() != "#text":
+            continue
+        if child_idx >= len(parent_indexes) or child_idx >= len(node_values):
+            continue
+        parent_idx = parent_indexes[child_idx]
+        if not isinstance(parent_idx, int) or parent_idx < 0:
+            continue
+        text_value = _string(strings, node_values[child_idx])
+        if text_value.strip():
+            direct_text_by_parent.setdefault(parent_idx, []).append(text_value)
+            direct_text_nodes_by_parent.setdefault(parent_idx, []).append(child_idx)
+    return direct_text_by_parent, direct_text_nodes_by_parent
+
+
 def _string(strings: list[str], index: Any) -> str:
     if isinstance(index, int) and 0 <= index < len(strings):
         return strings[index]
@@ -3106,20 +3183,14 @@ class PlaywrightPageCaptureBackend:
             parent_indexes = list(nodes.get("parentIndex") or [])
             backend_ids = list(nodes.get("backendNodeId") or [])
             attributes = list(nodes.get("attributes") or [])
-            direct_text_by_parent: dict[int, list[str]] = {}
-            direct_text_nodes_by_parent: dict[int, list[int]] = {}
-            for child_idx, node_name in enumerate(node_names):
-                if _string(strings, node_name).lower() != "#text":
-                    continue
-                if child_idx >= len(parent_indexes) or child_idx >= len(node_values):
-                    continue
-                parent_idx = parent_indexes[child_idx]
-                if not isinstance(parent_idx, int) or parent_idx < 0:
-                    continue
-                text_value = _string(strings, node_values[child_idx])
-                if text_value.strip():
-                    direct_text_by_parent.setdefault(parent_idx, []).append(text_value)
-                    direct_text_nodes_by_parent.setdefault(parent_idx, []).append(child_idx)
+            direct_text_by_parent, direct_text_nodes_by_parent = (
+                _direct_text_indexes(
+                    node_names=node_names,
+                    node_values=node_values,
+                    parent_indexes=parent_indexes,
+                    strings=strings,
+                )
+            )
             frame_id = _string_index_or_literal(strings, document.get("frameId"))
             frame_token = None if frame_id == main_frame_id else (f"frame:{frame_id}" if frame_id else None)
             shadow_types = _rare_string_values(nodes.get("shadowRootType"), strings)
@@ -3163,6 +3234,11 @@ class PlaywrightPageCaptureBackend:
                     )
                 if raw_attrs.get("href"):
                     dom_attributes["href"] = raw_attrs["href"]
+                # M2-B B15 (§7.3.3): fallback sources for nameless elements
+                # (static UI strings; value_text redaction policy untouched).
+                for attr in ("title", "placeholder", "alt"):
+                    if raw_attrs.get(attr):
+                        dom_attributes[attr] = raw_attrs[attr]
                 if idx < len(node_values):
                     text = _string(strings, node_values[idx]).strip()
                     if text:

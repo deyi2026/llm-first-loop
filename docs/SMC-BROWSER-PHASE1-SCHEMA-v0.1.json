@@ -388,6 +388,41 @@
             "string",
             "null"
           ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: observed title attribute (fallback addressing source)."
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: observed placeholder attribute (fallback addressing source)."
+        },
+        "alt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: observed alt attribute (fallback addressing source)."
+        },
+        "fallback_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: deterministic fallback addressing key for NAMELESS elements (title -> text -> placeholder -> alt, normalized+truncated, else {kind}#{ordinal}). Present only on objects without an accessible name."
+        },
+        "fallback_stable_within": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: the world_version (snapshot id) inside which fallback_key is valid. Excluded from content_sha256 (per-capture reference identity)."
         }
       },
       "additionalProperties": false

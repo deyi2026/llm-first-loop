@@ -554,3 +554,253 @@ def test_b9_latest_world_version_is_none_before_any_snapshot(tmp_path: Path) -> 
     payload = json.loads(result.content)
     assert payload["world_version"] is None  # honest: no snapshot yet
 
+
+# ---------------------------------------------------------------------------
+# D. B15 fallback addressing for nameless (icon-only) elements (§7.3.3)
+# ---------------------------------------------------------------------------
+
+
+def _nameless_node(physical: str, extra_attributes: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "physical_id": physical,
+        "parent_id": None,
+        "frame_token": None,
+        "kind": "button",
+        "attributes": {"role": "button", "tag": "button", **extra_attributes},
+        "state": {"exists": True, "enabled": True, "visible": True},
+    }
+
+
+def _icon_fixture(*extra: dict[str, Any]) -> dict[str, Any]:
+    """base + one title-keyed icon button + one attribute-less icon button."""
+    raw = deepcopy(FIXTURES["base"])
+    raw["dom"]["nodes"].append(_nameless_node("n-icon-close", {"title": "Close panel"}))
+    raw["ax"]["nodes"].append(
+        {
+            "ax_id": "ax-icon-close",
+            "physical_id": "n-icon-close",
+            "frame_token": None,
+            "kind": "button",
+            "attributes": {"role": "button"},  # AX sees no name either
+            "state": {"exists": True, "enabled": True, "visible": True},
+        }
+    )
+    raw["dom"]["nodes"].append(_nameless_node("n-icon-bare", {}))
+    raw["ax"]["nodes"].append(
+        {
+            "ax_id": "ax-icon-bare",
+            "physical_id": "n-icon-bare",
+            "frame_token": None,
+            "kind": "button",
+            "attributes": {"role": "button"},
+            "state": {"exists": True, "enabled": True, "visible": True},
+        }
+    )
+    for node in extra:
+        raw["dom"]["nodes"].append(node)
+    return raw
+
+
+def _fallback_facts(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        (obj.get("attributes") or {}).get(
+            "fallback_key", (obj.get("attributes") or {}).get("name")
+        ): obj.get("attributes") or {}
+        for obj in result["objects"]
+        if obj.get("kind") == "button"
+    }
+
+
+def test_b15_snapshot_derives_deterministic_fallback_keys(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    result = adapter.snapshot("s1", _icon_fixture(), projection_limit=50)
+    snapshot_id = str(result["snapshot"]["snapshot_id"])
+    facts = _fallback_facts(result)
+    # Named buttons keep the {kind,name} address only - no fallback keys.
+    assert "fallback_key" not in facts["Submit"] and "fallback_key" not in facts["Cancel"]
+    # title beats ordinal for the titled icon button; the bare icon button
+    # falls to the region ordinal counting ALL buttons in traversal order
+    # (Submit=1, Cancel=2, icon-close=3, icon-bare=4).
+    assert facts["Close panel"]["fallback_key"] == "Close panel"
+    assert facts["Close panel"]["fallback_stable_within"] == snapshot_id
+    assert facts["button#4"]["fallback_key"] == "button#4"
+    assert facts["button#4"]["fallback_stable_within"] == snapshot_id
+
+
+def test_b15_icon_button_hit_via_fallback_key(tmp_path: Path) -> None:
+    raw = _icon_fixture()
+    adapter = _adapter(tmp_path)
+    seeded = adapter.snapshot("s1", deepcopy(raw), projection_limit=50)
+    world = str(seeded["snapshot"]["snapshot_id"])
+    backend = _Backend([deepcopy(raw)])
+    actuator = _Actuator()
+    action = BrowserActionAdapter(
+        perception=adapter,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    execute = BrowserSemanticExecuteTool(
+        perception=adapter, action_adapter=action, session_id_getter=lambda: "s1"
+    )
+    operation = BrowserSemanticOperationTool(
+        perception=adapter,
+        capture_backend=backend,
+        semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "receipts"),
+        session_id_getter=lambda: "s1",
+    )
+    result = json.loads(
+        operation.execute(
+            do="click",
+            target={
+                "kind": "button",
+                "fallback": "Close panel",
+                "fallback_world_version": world,
+            },
+        ).content
+    )
+    assert result["status"] == "completed"
+    assert actuator.calls and actuator.calls[0]["physical_target"] == "dom:n-icon-close"
+
+
+def test_b15_cross_world_version_fallback_is_explicitly_stale(tmp_path: Path) -> None:
+    raw = _icon_fixture()
+    adapter = _adapter(tmp_path)
+    seeded = adapter.snapshot("s1", deepcopy(raw), projection_limit=50)
+    world = str(seeded["snapshot"]["snapshot_id"])
+    # The live world CHANGED after the model's snapshot: the addressed icon
+    # button itself is GONE (the classic shifted/removed-ordinal case).
+    shifted = deepcopy(raw)
+    shifted["dom"]["nodes"] = [
+        node
+        for node in shifted["dom"]["nodes"]
+        if node.get("physical_id") != "n-icon-close"
+    ]
+    shifted["ax"]["nodes"] = [
+        node
+        for node in shifted["ax"]["nodes"]
+        if node.get("physical_id") != "n-icon-close"
+    ]
+    backend = _Backend([deepcopy(shifted)])
+    actuator = _Actuator()
+    action = BrowserActionAdapter(
+        perception=adapter,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    execute = BrowserSemanticExecuteTool(
+        perception=adapter, action_adapter=action, session_id_getter=lambda: "s1"
+    )
+    operation = BrowserSemanticOperationTool(
+        perception=adapter,
+        capture_backend=backend,
+        semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "receipts"),
+        session_id_getter=lambda: "s1",
+    )
+    result = json.loads(
+        operation.execute(
+            do="click",
+            target={
+                "kind": "button",
+                "fallback": "Close panel",
+                "fallback_world_version": world,
+            },
+        ).content
+    )
+    # The fallback resolved inside its own world_version but the dispatch-
+    # time version guard refused the drifted world (target absent): the
+    # receipt must say stale + guidance explicitly - never a silent hit.
+    assert result["status"] == "halted"
+    assert actuator.calls == []
+    annotation = result.get("fallback_addressing")
+    assert annotation is not None
+    assert annotation["status"] == "stale"
+    assert annotation["stable_within"] == world
+    assert "snapshot" in annotation["guidance"]
+
+
+def test_b15_unknown_world_version_rejected_with_guidance(tmp_path: Path) -> None:
+    raw = _icon_fixture()
+    operation, actuator, _ = _operate_stack(tmp_path, raw)
+    result = json.loads(
+        operation.execute(
+            do="click",
+            target={
+                "kind": "button",
+                "fallback": "Close panel",
+                "fallback_world_version": "bsnap-99-doesnotexist",
+            },
+        ).content
+    )
+    assert result["status"] == "halted"
+    assert result["halt_reason"] == "fallback_world_version_stale"
+    assert result["fallback_addressing"]["status"] == "stale"
+    assert actuator.calls == []
+
+
+def test_b15_duplicate_fallback_keys_are_ambiguous(tmp_path: Path) -> None:
+    raw = _icon_fixture(_nameless_node("n-icon-close-2", {"title": "Close panel"}))
+    raw["ax"]["nodes"].append(
+        {
+            "ax_id": "ax-icon-close-2",
+            "physical_id": "n-icon-close-2",
+            "frame_token": None,
+            "kind": "button",
+            "attributes": {"role": "button"},
+            "state": {"exists": True, "enabled": True, "visible": True},
+        }
+    )
+    adapter = _adapter(tmp_path)
+    seeded = adapter.snapshot("s1", deepcopy(raw), projection_limit=50)
+    world = str(seeded["snapshot"]["snapshot_id"])
+    operation, actuator, _ = _operate_stack(tmp_path, deepcopy(raw))
+    result = json.loads(
+        operation.execute(
+            do="click",
+            target={
+                "kind": "button",
+                "fallback": "Close panel",
+                "fallback_world_version": world,
+            },
+        ).content
+    )
+    assert result["status"] == "halted"
+    assert result["halt_reason"] == "fallback_ambiguous"
+    assert actuator.calls == []
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_error"),
+    [
+        (
+            {"kind": "button", "fallback": "Close panel"},
+            "short_target_fallback_pair_incomplete",
+        ),
+        (
+            {
+                "kind": "button",
+                "fallback": "Close panel",
+                "fallback_world_version": "bsnap-1-x",
+                "name": "Submit",
+            },
+            "short_target_fallback_name_conflict",
+        ),
+        (
+            {"kind": "button", "fallback": "  ", "fallback_world_version": "bsnap-1-x"},
+            "short_target_fallback_missing",
+        ),
+    ],
+)
+def test_b15_fallback_form_violations_rejected_at_compile(
+    tmp_path: Path, target: dict[str, Any], expected_error: str
+) -> None:
+    raw = _icon_fixture()
+    operation, actuator, _ = _operate_stack(tmp_path, raw)
+    tool_result = operation.execute(do="click", target=target)
+    assert tool_result.status.value == "failure"
+    assert expected_error in tool_result.content
+    assert actuator.calls == []
+
