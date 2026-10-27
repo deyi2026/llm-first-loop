@@ -11,10 +11,20 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   schedule:
     - cron: "0 20 * * *"
   workflow_dispatch:
+
+# D5（2026-10-27）: push 收敛 main（功能分支推送由 PR 事件覆盖，避免重复跑全套）；
+# concurrency 组按 workflow+event+ref 隔离：PR 同 ref 旧的自动取消；push main
+# 不取消（保留每次 main 验证记录）；schedule/workflow_dispatch 的 nightly 独立
+# 分组，不会被一次 push 打断。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   security-scan:
