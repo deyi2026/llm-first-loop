@@ -341,6 +341,128 @@ describe("MicCapture", () => {
     expect(capture.micEnabled).toBe(false);
     expect(capture.pressedDown).toBe(false);
   });
+  // ---- push 审查 P1/P2-1：叠压 press 的流收口 + createPort 有界超时 ----------------
+
+  it("a second press stacking over a pending createPort stops the superseded stream's tracks (no mic leak)", async () => {
+    const track1 = new FakeTrack();
+    const track2 = new FakeTrack();
+    const stalePort = new FakePort();
+    const wiredPorts: FakePort[] = [];
+    let resolvePort1: ((port: WorkletPortLike) => void) | undefined;
+    let gumCalls = 0;
+    let portCalls = 0;
+    const { capture, frames } = makeCapture(
+      {
+        getUserMedia: async () => {
+          gumCalls += 1;
+          return new FakeStream(gumCalls === 1 ? track1 : track2);
+        },
+      },
+      {
+        createPort: () => {
+          portCalls += 1;
+          if (portCalls === 1) {
+            return new Promise<WorkletPortLike>((resolve) => { resolvePort1 = resolve; });
+          }
+          const port = new FakePort();
+          wiredPorts.push(port);
+          return port;
+        },
+      },
+    );
+    const pending1 = capture.press(); // press#1：stream1 已装配为当前流，createPort 在途
+    await new Promise((resolve) => setTimeout(resolve, 0)); // 等 gUM 微任务 → port#1 已发起
+    expect(await capture.press()).toBe(true); // press#2 叠压：沿用活跃流短路按下（++generation）
+    resolvePort1?.(stalePort); // press#1 的迟到 port：stale → 不接线
+    expect(await pending1).toBe(false);
+    expect(stalePort.closed).toBe(true); // 迟到 port 关闭（AudioContext/worklet 不残留）
+    expect(track1.stopped).toBe(true); // stream1 轨道必被停（此前无人 stop → 悬挂泄漏）
+    expect(capture.micEnabled).toBe(false); // 未 wiring 成功的流不得残留为「活跃」
+    expect(await capture.press()).toBe(true); // 重新按下：全新装配 stream2
+    expect(wiredPorts).toHaveLength(1);
+    expect(track2.stopped).toBe(false); // 最终活跃流只有 stream2
+    wiredPorts[0].onmessage?.({ data: { samples: new Float32Array(320), sampleRate: 16000 } });
+    expect(frames.length).toBe(1); // stream2 完整接线产帧
+  });
+
+  it("a stale createPort rejection also stops the superseded stream's tracks (no silent leak)", async () => {
+    const track1 = new FakeTrack();
+    const track2 = new FakeTrack();
+    let rejectPort1: ((error: Error) => void) | undefined;
+    let gumCalls = 0;
+    let portCalls = 0;
+    const { capture } = makeCapture(
+      {
+        getUserMedia: async () => {
+          gumCalls += 1;
+          return new FakeStream(gumCalls === 1 ? track1 : track2);
+        },
+      },
+      {
+        createPort: () => {
+          portCalls += 1;
+          if (portCalls === 1) {
+            return new Promise<WorkletPortLike>((_, reject) => { rejectPort1 = reject; });
+          }
+          return new FakePort();
+        },
+      },
+    );
+    const pending1 = capture.press();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await capture.press()).toBe(true); // press#2 叠压（短路沿用）
+    rejectPort1?.(new Error("worklet addModule failed (late)"));
+    expect(await pending1).toBe(false);
+    expect(track1.stopped).toBe(true); // 迟到失败同样必停轨（此前静默丢弃 → 悬挂）
+    expect(capture.micEnabled).toBe(false);
+    expect(await capture.press()).toBe(true); // 重新按下全新装配，不被死流卡死
+    expect(track2.stopped).toBe(false);
+  });
+
+  it("press returns false with a visible port-init notice when createPort hangs past the 10s bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const track = new FakeTrack();
+      const notices: string[] = [];
+      const { capture } = makeCapture(
+        { getUserMedia: async () => new FakeStream(track) },
+        {
+          onNotice: (message) => notices.push(message),
+          createPort: () => new Promise<WorkletPortLike>(() => {}), // worklet addModule 挂起
+        },
+      );
+      const pending = capture.press();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toBe(false); // 有界等待：press 不得永久 pending
+      expect(notices).toEqual(["语音采集初始化超时，请重试"]);
+      expect(capture.pressError).toBe("port-init"); // 超时按 port-init 分类
+      expect(capture.micEnabled).toBe(false);
+      expect(track.stopped).toBe(true); // 超时释放本轮轨道
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a port that resolves after the createPort timeout (no worklet leak)", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolvePort: ((port: WorkletPortLike) => void) | undefined;
+      const { capture } = makeCapture(
+        { getUserMedia: async () => new FakeStream(new FakeTrack()) },
+        { createPort: () => new Promise<WorkletPortLike>((resolve) => { resolvePort = resolve; }) },
+      );
+      const pending = capture.press();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toBe(false);
+      const latePort = new FakePort();
+      resolvePort?.(latePort);
+      await vi.advanceTimersByTimeAsync(0); // flush 微任务：迟到 port 必被关闭
+      await Promise.resolve();
+      expect(latePort.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("PlaybackOutput", () => {
