@@ -16,7 +16,11 @@ from typing import Any, Protocol, cast
 
 from websockets.sync.client import connect as websocket_connect
 
-from llm_loop.browser.action import BrowserDispatchResult
+from llm_loop.browser.action import (
+    BrowserDispatchResult,
+    parse_key_chord,
+    press_key_policy_error,
+)
 from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, attest_debug_url
 from llm_loop.browser.cdp_host import (
     _CONNECTION_LOST_ERRORS,
@@ -41,6 +45,8 @@ _attest_logger = logging.getLogger("llm_loop.browser.cdp_action_host.attestation
 
 # M1 (DESIGN-20261027 B1/B2): two additive methods only - file injection into an
 # exact input node and real text input. Everything else stays rejected by send().
+# M2-A additions carry one-line necessity notes; wide-surface methods
+# (Runtime.evaluate, Page.evalOnNewDocument, DOM.getDocument, ...) stay out.
 _ALLOWED = frozenset(
     {
         "DOM.resolveNode",
@@ -49,8 +55,113 @@ _ALLOWED = frozenset(
         "Page.navigate",
         "DOM.setFileInputFiles",
         "Input.insertText",
+        # M2-A B3: press_key actuates ONLY through this method (paired
+        # keyDown/keyUp); no script/eval channel is opened for it.
+        "Input.dispatchKeyEvent",
     }
 )
+
+
+class _ActuatorContractError(RuntimeError):
+    """M2-A: deterministic actuator-boundary rejection with a stable receipt code.
+
+    Raised BEFORE any side-effecting CDP call (blacklist chord, invisible
+    hover target, no open dialog); the adapter surfaces ``error_code``
+    verbatim as the receipt retry reason instead of the ambiguous marker.
+    """
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.error_code = code
+
+
+# M2-A B3 (DESIGN-20261027 §5.1): CDP Input.dispatchKeyEvent parameter assembly
+# for a validated chord. Fixed tables under version control; the only variable
+# is the already-blacklist-checked chord string (no script surface opened).
+_CDP_MODIFIER_BITS = {"alt": 1, "control": 2, "meta": 4, "shift": 8}
+_MODIFIER_EVENT_PROPS = {
+    "alt": ("Alt", "AltLeft", 18),
+    "control": ("Control", "ControlLeft", 17),
+    "meta": ("Meta", "MetaLeft", 91),
+    "shift": ("Shift", "ShiftLeft", 16),
+}
+_KEY_NAMED_CODES: dict[str, tuple[str, int]] = {
+    "`": ("Backquote", 223),
+    "backquote": ("Backquote", 223),
+    "backtick": ("Backquote", 223),
+    "backspace": ("Backspace", 8),
+    "delete": ("Delete", 46),
+    "enter": ("Enter", 13),
+    "escape": ("Escape", 27),
+    "tab": ("Tab", 9),
+    "space": ("Space", 32),
+    "arrowleft": ("ArrowLeft", 37),
+    "arrowup": ("ArrowUp", 38),
+    "arrowright": ("ArrowRight", 39),
+    "arrowdown": ("ArrowDown", 40),
+    "home": ("Home", 36),
+    "end": ("End", 35),
+    "pageup": ("PageUp", 33),
+    "pagedown": ("PageDown", 34),
+}
+for _fn in range(1, 13):
+    _KEY_NAMED_CODES[f"f{_fn}"] = (f"F{_fn}", 111 + _fn)
+# Puppeteer parity: only these two keys carry text on keyDown so default
+# actions (form submit on Enter, focus traversal on Tab) actually fire.
+_KEY_TEXT_BY_KEY = {"enter": "\r", "tab": "\t"}
+
+
+def _key_code(key: str) -> tuple[str, int | None]:
+    if len(key) == 1 and key.isalpha():
+        return f"Key{key.upper()}", 65 + (ord(key) - 97)
+    if len(key) == 1 and key.isdigit():
+        return f"Digit{key}", 48 + int(key)
+    named = _KEY_NAMED_CODES.get(key)
+    if named is not None:
+        return named
+    return key, None
+
+
+def _key_event(
+    event_type: str, key: str, code: str, vk: int | None, *, modifiers: int, text: str = ""
+) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "type": event_type,
+        "key": key,
+        "code": code,
+        "modifiers": modifiers,
+    }
+    if vk is not None:
+        params["windowsVirtualKeyCode"] = vk
+        params["nativeVirtualKeyCode"] = vk
+    if text:
+        params["text"] = text
+    return params
+
+
+def key_events_for_chord(keys: str) -> list[dict[str, Any]]:
+    """Paired keyDown/keyUp params for one validated chord (B3).
+
+    Modifier keys press before the main key (sorted order) and release after
+    it in reverse; a held modifier stays in the bitmask during its own keyUp,
+    matching the real input pipeline semantics Puppeteer implements.
+    """
+    modifiers, key = parse_key_chord(keys)
+    if modifiers is None or not key:
+        raise _ActuatorContractError("key_args_invalid")
+    code, vk = _key_code(key)
+    bitmask = 0
+    events: list[dict[str, Any]] = []
+    for mod in modifiers:
+        events.append(_key_event("keyDown", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
+        bitmask |= _CDP_MODIFIER_BITS[mod]
+    text = _KEY_TEXT_BY_KEY.get(key, "")
+    events.append(_key_event("keyDown", key, code, vk, modifiers=bitmask, text=text))
+    events.append(_key_event("keyUp", key, code, vk, modifiers=bitmask))
+    for mod in reversed(modifiers):
+        events.append(_key_event("keyUp", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
+        bitmask &= ~_CDP_MODIFIER_BITS[mod]
+    return events
 
 # fix(P1-1, review-M1 R-e2e-1): the M1-era synthetic input/change dispatch
 # (_UPLOAD_EVENT_DISPATCH_JS) after DOM.setFileInputFiles is REMOVED. Chrome
@@ -506,6 +617,24 @@ class CdpBrowserMutationActuator:
                     },
                 )
                 + detected,
+                completeness_reasons=("boundary_detector_non_exhaustive",),
+            )
+
+        if verb == "press_key":
+            # M2-A B3: page-level chord via paired keyDown/keyUp. The shared
+            # blacklist re-runs here as the last defense in depth (compile and
+            # adapter _validate already rejected violations); a hit raises
+            # before any Input.dispatchKeyEvent leaves this host.
+            keys = str(args.get("keys") or "")
+            policy_error = press_key_policy_error(keys)
+            if policy_error is not None:
+                raise _ActuatorContractError(policy_error)
+            for event in key_events_for_chord(keys):
+                session.send("Input.dispatchKeyEvent", event)
+            detected = self._boundary_events(session, before_page_ids=before_page_ids)
+            return BrowserDispatchResult(
+                acknowledged=True,
+                boundary_events=detected,
                 completeness_reasons=("boundary_detector_non_exhaustive",),
             )
 

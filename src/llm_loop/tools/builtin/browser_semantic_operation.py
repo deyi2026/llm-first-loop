@@ -21,6 +21,7 @@ from typing import Any, Protocol
 from llm_loop.browser.action import (
     _TYPE_MAX_TEXT_LENGTH,
     _TYPE_PREVIEW_LENGTH,
+    press_key_policy_error,
     upload_paths_facts,
     upload_paths_policy_error,
 )
@@ -46,7 +47,10 @@ _MAX_CANDIDATE_PROJECTION = 20
 # M1 (DESIGN-20261027 B1/B2): upload/type join the object-verb vocabulary as
 # additive members; the five frozen verbs keep their exact pre-M1 semantics.
 _OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload"}
-_MUTATION_VERBS = _OBJECT_VERBS | {"navigate"}
+# M2-A (DESIGN-20261027 B3): press_key is page-scoped (resource grounding);
+# hover/dialog join in their own commits. Pre-M2 verbs keep exact semantics.
+_MUTATION_VERBS = _OBJECT_VERBS | {"navigate", "press_key"}
+_PAGE_SCOPED_VERBS = frozenset({"navigate", "press_key"})
 
 _OPERATION_RECEIPT_PREFIX = "browser-operation-receipt://v0.1/"
 _OPERATION_RECEIPT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -384,6 +388,61 @@ def _type_step_clause(
     }
 
 
+def _press_key_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M2-A B3: the chord blacklist runs at compile time so any violation
+    rejects before snapshot/grounding/dispatch - the adapter re-validates and
+    the cdp actuator boundary re-checks (three-layer defense in depth, same
+    single policy function). Page-scoped: target is the bound page.
+    """
+    if set(step) != {"do", "keys"}:
+        raise BrowserSemanticOperationContractError("press_key_step_fields_mismatch")
+    keys = step.get("keys")
+    if not isinstance(keys, str):
+        raise BrowserSemanticOperationContractError("key_args_invalid")
+    policy_error = press_key_policy_error(keys)
+    if policy_error is not None:
+        raise BrowserSemanticOperationContractError(policy_error)
+    return {
+        "kind": "mutate",
+        "verb": "press_key",
+        "target": {"kind": "page"},
+        "args": {"keys": keys},
+    }
+
+
+def _wait_text_step_clause(step: dict[str, Any]) -> dict[str, Any]:
+    """MF wait_text compile (extracted from _compile_short_steps verbatim:
+    same field set, error codes, and timeout bounding - M2-A hygiene only)."""
+    required = {"do", "target", "field", "match", "text"}
+    if not required.issubset(step) or not set(step).issubset(required | {"within_ms"}):
+        raise BrowserSemanticOperationContractError("wait_text_step_fields_mismatch")
+    field = str(step.get("field") or "").strip()
+    if field not in _MODEL_FRIENDLY_WAIT_TEXT_FIELDS:
+        raise BrowserSemanticOperationContractError("wait_text_field_not_supported")
+    match = str(step.get("match") or "").strip()
+    operator = _MODEL_FRIENDLY_WAIT_TEXT_MATCH.get(match)
+    if operator is None:
+        raise BrowserSemanticOperationContractError("wait_text_match_not_supported")
+    timeout = step.get("within_ms", _MODEL_FRIENDLY_DEFAULT_WAIT_MS)
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, int)
+        or not (1 <= timeout <= 60_000)
+    ):
+        raise BrowserSemanticOperationContractError("wait_timeout_invalid")
+    return {
+        "kind": "wait",
+        "target": BrowserSemanticOperationTool._short_target_to_clause_target(step.get("target")),
+        "property": field,
+        "operator": operator,
+        "value": str(step.get("text") or ""),
+        "timeout_ms": timeout,
+        "interval_ms": min(_MODEL_FRIENDLY_WAIT_INTERVAL_MS, timeout),
+    }
+
+
 def _mutate_clause_receipt(
     index: int,
     kind: str,
@@ -432,7 +491,7 @@ def _lift_m1_compact_echoes(compact: dict[str, Any], last: dict[str, Any], statu
         compact["upload_files"] = last["upload_files"]
     if isinstance(last.get("type_echo"), dict):
         compact["type_echo"] = last["type_echo"]
-    if status == "halted" and str(last.get("verb") or "") in {"upload", "type"}:
+    if status == "halted" and str(last.get("verb") or "") in {"upload", "type", "press_key"}:
         blocked_receipt = last.get("action_receipt")
         if isinstance(blocked_receipt, dict):
             retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
@@ -444,7 +503,7 @@ class BrowserSemanticOperationTool:
     name = "browser_operate"
     description = (
         "Browser 操作能力：一次调用只表达一个已经决定的 mutation。"
-        "do=navigate|click|set_text|append_text|select|scroll|type|upload；对象 target 三选一寻址"
+        "do=navigate|click|set_text|append_text|select|scroll|type|upload|press_key；对象 target 三选一寻址"
         "(EVO-20261010-1e06d6b4)：{kind,name[,role]} 原始 name 逐字节 exact；"
         "{kind,name_normalized[,role]} 命中 browser_perceive snapshot 暴露的确定性归一形式"
         "(零宽剥离+空白折叠)；{grounding_ref} 复用先前 snapshot/未命中候选清单中的对象 ref"
@@ -459,6 +518,10 @@ class BrowserSemanticOperationTool:
         "host-owned 宿主配置、非模型可写；配置为文件系统根会被拒绝并回退默认），"
         "/etc/passwd、~/.ssh/**、目录/设备/socket、超限、symlink 逃逸全部确定性拒绝"
         "（path_not_allowed/path_not_found/too_large/not_regular_file），且拒绝发生在任何 CDP 请求之前。"
+        "M2-A B3：do=press_key 页面级按键/组合键（keys，如 \"Enter\"、\"Meta+A\"），"
+        "走 Input.dispatchKeyEvent 成对 keyDown/keyUp；黑名单 Meta+W/Q/T/N/S/P/H/M/`、"
+        "Meta+Tab、Meta+Space、Ctrl+Meta+Q、Escape+Meta 类确定性拒绝 key_not_allowed"
+        "（编译期拒绝，零 CDP 请求，标签页不受影响）；键落在当前焦点元素。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
         "不判断 task completion。"
@@ -720,6 +783,19 @@ class BrowserSemanticOperationTool:
             "additionalProperties": False,
         },
         {
+            # M2-A B3 (DESIGN-20261027 §5.1): page-level key chord via paired
+            # Input.dispatchKeyEvent keyDown/keyUp; blacklist rejects at
+            # compile time (zero CDP), keys land on the focused element.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["press_key"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "keys": {"type": "string", "minLength": 1, "maxLength": 32},
+            },
+            "required": ["do", "keys"],
+            "additionalProperties": False,
+        },
+        {
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["wait"]},
@@ -767,17 +843,29 @@ class BrowserSemanticOperationTool:
     # steps compiler remains below as an internal/compatibility path for frozen evidence,
     # but wait and batching are no longer part of the provider-facing cognitive contract.
     # M1: upload/type variants extend the mutation prefix (5 -> 7); wait variants stay last.
-    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:7]
+    # M2-A B3: press_key extends the mutation prefix (7 -> 8); wait stays last.
+    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:8]
     parameters = {
         "type": "object",
         "properties": {
             "do": {
                 "type": "string",
-                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload"],
+                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key"],
             },
             "url": {"type": "string", "minLength": 1},
             "target": _SHORT_TARGET_SCHEMA,
             "text": {"type": "string"},
+            "keys": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "description": (
+                    "仅 do=press_key（M2-A B3）：单键或组合键（\"Enter\"、\"Meta+A\"）；"
+                    "黑名单 Meta+W/Q/T/N/S/P/H/M/`、Meta+Tab、Meta+Space、Ctrl+Meta+Q、"
+                    "Escape+Meta 类确定性拒绝 key_not_allowed 且零 CDP 请求；"
+                    "键通过 Input.dispatchKeyEvent 成对 keyDown/keyUp 派发到当前焦点元素"
+                ),
+            },
             "paths": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -1000,7 +1088,7 @@ class BrowserSemanticOperationTool:
     # Phase3 M3（G4 审查 P0-1 修复）：clauses 是 dict 列表（_validate_clauses 契约），
     # 本方法必须用 .get 而非 getattr 访问——初版 getattr 对 dict 恒缺省，登记变死代码。
     # target 取 args.url（navigate）或 target 标识（click 等），D6：不含页面正文。
-    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload"})
+    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload", "press_key"})
 
     @classmethod
     def _register_mutation_side_effects(cls, clauses: list[dict], session_id: str) -> int:
@@ -1130,35 +1218,13 @@ class BrowserSemanticOperationTool:
                     # M1 B2: see _type_step_clause (empty text = explicit no-op).
                     clauses.append(_type_step_clause(cls, step))
                     continue
+                if verb == "press_key":
+                    # M2-A B3: see _press_key_step_clause (blacklist at compile time).
+                    clauses.append(_press_key_step_clause(cls, step))
+                    continue
                 if verb == "wait_text":
-                    required = {"do", "target", "field", "match", "text"}
-                    if not required.issubset(step) or not set(step).issubset(
-                        required | {"within_ms"}
-                    ):
-                        raise BrowserSemanticOperationContractError("wait_text_step_fields_mismatch")
-                    field = str(step.get("field") or "").strip()
-                    if field not in _MODEL_FRIENDLY_WAIT_TEXT_FIELDS:
-                        raise BrowserSemanticOperationContractError("wait_text_field_not_supported")
-                    match = str(step.get("match") or "").strip()
-                    operator = _MODEL_FRIENDLY_WAIT_TEXT_MATCH.get(match)
-                    if operator is None:
-                        raise BrowserSemanticOperationContractError("wait_text_match_not_supported")
-                    timeout = step.get("within_ms", _MODEL_FRIENDLY_DEFAULT_WAIT_MS)
-                    if (
-                        isinstance(timeout, bool)
-                        or not isinstance(timeout, int)
-                        or not (1 <= timeout <= 60_000)
-                    ):
-                        raise BrowserSemanticOperationContractError("wait_timeout_invalid")
-                    clauses.append({
-                        "kind": "wait",
-                        "target": cls._short_target_to_clause_target(step.get("target")),
-                        "property": field,
-                        "operator": operator,
-                        "value": str(step.get("text") or ""),
-                        "timeout_ms": timeout,
-                        "interval_ms": min(_MODEL_FRIENDLY_WAIT_INTERVAL_MS, timeout),
-                    })
+                    # MF wait_text (helper extracted verbatim in M2-A).
+                    clauses.append(_wait_text_step_clause(step))
                     continue
                 if verb == "wait":
                     # Canonical model-facing path: ordinary state condition.  This is a
@@ -1478,7 +1544,7 @@ class BrowserSemanticOperationTool:
                     ),
                 }
             return {"do": "rebind", "status": "ok", "rebound": rebound}
-        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload"}
+        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key"}
         direct_model_friendly = isinstance(request.get("do"), str) and "steps" not in request
         historical_steps = set(request) == {"steps"}
         model_friendly = direct_model_friendly or historical_steps
@@ -1526,7 +1592,7 @@ class BrowserSemanticOperationTool:
                 args = clause.get("args")
                 if not isinstance(args, dict):
                     raise BrowserSemanticOperationContractError("mutation_args_must_be_object")
-                if verb == "navigate":
+                if verb in _PAGE_SCOPED_VERBS:
                     target_ref, _ = self._ground_page(session_id, clause.get("target"))
                     exact_count = 1
                     identity: dict[str, str] | None = None

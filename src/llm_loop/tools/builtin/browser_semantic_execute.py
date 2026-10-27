@@ -20,7 +20,9 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 # M1 (DESIGN-20261027 B1/B2): two additive object verbs. The five frozen verbs
 # keep their exact pre-M1 spelling and mapping.
 _OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload"}
-_SUPPORTED_VERBS = _OBJECT_VERBS | {"navigate"}
+# M2-A B3: press_key joins as a page-scoped verb (resource grounding like
+# navigate - key events land on the focused element, no object target).
+_SUPPORTED_VERBS = _OBJECT_VERBS | {"navigate", "press_key"}
 
 
 class BrowserSemanticExecuteCompileError(ValueError):
@@ -44,7 +46,11 @@ class BrowserSemanticExecuteTool:
         "插入点=程序化 focus 后光标位置，目标已有内容时在开头）；"
         "upload args={paths}（1..8 个工作区内常规文件，路径策略 realpath/allow_roots/≤100MB 在 "
         "dispatch 前强制，失败即拒、零 CDP 请求；allow_roots 默认工作区根，"
-        "LFL_BROWSER_UPLOAD_ALLOW_ROOTS 为 host-owned 宿主配置）。工具内部只把模型已选择的"
+        "LFL_BROWSER_UPLOAD_ALLOW_ROOTS 为 host-owned 宿主配置）；"
+        "press_key args={keys}（M2-A B3：页面级单键/组合键，走 Input.dispatchKeyEvent 成对 "
+        "keyDown/keyUp；黑名单 Meta+W/Q/T/N/S/P/H/M/`、Meta+Tab、Meta+Space、Ctrl+Meta+Q、"
+        "Escape+Meta 类确定性拒绝 key_not_allowed 且零 CDP 请求；target_ref 传 snapshot 的 "
+        "resource_ref，键落在当前焦点元素）。工具内部只把模型已选择的"
         "exact ref 编译为 SemanticAction 的 scope/version/target/action_id 等机械字段，并交给既有"
         "single-dispatch/version guard；不自动选择目标，不自动 retry，不自动 rebind/latest，"
         "ActionReceipt ok 不等于任务完成，工具不判断任务完成。"

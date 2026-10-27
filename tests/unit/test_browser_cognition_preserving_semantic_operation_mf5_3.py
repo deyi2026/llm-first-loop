@@ -189,7 +189,8 @@ def test_mf5_3_operate_provider_normal_form_is_one_direct_action() -> None:
     assert "oneOf" in params
     branches = params["oneOf"]
     # M1 (DESIGN-20261027 B1/B2): upload/type join the direct mutation grammar.
-    assert len(branches) == 7
+    # M2-A (DESIGN-20261027 B3): press_key joins too (page-scoped mutation).
+    assert len(branches) == 8
     assert params.get("additionalProperties") is False
 
 
@@ -204,6 +205,7 @@ def test_mf5_3_operate_provider_surface_is_mutation_only() -> None:
         "scroll",
         "type",
         "upload",
+        "press_key",
     }
     assert "wait" not in provider_verbs
     assert "wait_text" not in provider_verbs

@@ -36,6 +36,10 @@ _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
     # verbs above are byte-identical to the pre-M1 contract.
     "type": {"version_scopes": {"object"}, "args": {"text"}},
     "upload": {"version_scopes": {"object"}, "args": {"paths"}},
+    # M2-A (DESIGN-20261027 B3): page-level key chord verb. Resource scope:
+    # the key events land on the host-bound page's focused element, so the
+    # precondition is the page grounding, exactly like navigate.
+    "press_key": {"version_scopes": {"resource"}, "args": {"keys"}},
 }
 _TERMINAL = frozenset({"ok", "failed", "rejected"})
 
@@ -96,6 +100,80 @@ def upload_max_file_bytes() -> int:
 def resolve_upload_paths(paths: list[str]) -> list[str]:
     """Canonicalize upload paths (symlinks resolved) for validation + dispatch."""
     return [os.path.realpath(str(item)) for item in paths]
+
+
+# M2-A B3 (DESIGN-20261027 §4.1/§5.1, U5): the host-destroying chord blacklist
+# is a hardcoded constant, not configuration - exactly the four verb-table
+# additions of this milestone share this single policy function at three
+# enforcement points (semantic_operation compile -> adapter _validate ->
+# cdp actuator boundary), mirroring the M1 upload_paths_policy_error pattern.
+#   key_not_allowed : the chord would close/quit/switch the host tab or app
+#                     (Meta+W/Q/T/N/S/P/H/M, Meta+`, Meta+Tab, Meta+Space,
+#                      Ctrl+Meta+Q, Meta+Shift+Q, Escape+Meta-class system keys)
+#   key_args_invalid: not a single-key-or-modifier-chord string (empty, >32
+#                     chars, two non-modifier tokens, duplicate modifier).
+_PRESS_KEY_ALIASES = {
+    "cmd": "meta",
+    "command": "meta",
+    "meta": "meta",
+    "ctrl": "control",
+    "control": "control",
+    "alt": "alt",
+    "option": "alt",
+    "shift": "shift",
+}
+_PRESS_KEY_META_BLOCKED_KEYS = frozenset(
+    {"w", "q", "t", "n", "s", "p", "h", "m", "tab", "space", "`", "backquote", "backtick"}
+)
+
+
+def parse_key_chord(raw: Any) -> tuple[tuple[str, ...], str] | tuple[None, None]:
+    """Split "Meta+A" into canonical modifiers + key; (None, None) = invalid.
+
+    Contract: exactly one non-modifier key token plus 0..4 distinct modifier
+    tokens. Modifiers normalize through _PRESS_KEY_ALIASES (Cmd->Meta,
+    Ctrl->Control); the key token lowercases. Anything else - empty input,
+    a chord longer than 32 chars, two keys, a repeated modifier - is invalid.
+    """
+    if not isinstance(raw, str) or not raw.strip() or len(raw) > 32:
+        return None, None
+    tokens = [token.strip() for token in raw.split("+") if token.strip()]
+    if not tokens:
+        return None, None
+    modifiers: list[str] = []
+    key = ""
+    for token in tokens:
+        canonical = _PRESS_KEY_ALIASES.get(token.lower())
+        if canonical is not None:
+            if canonical in modifiers:
+                return None, None
+            modifiers.append(canonical)
+            continue
+        if key:
+            return None, None
+        key = token.lower()
+    if not key:
+        return None, None
+    return tuple(sorted(modifiers)), key
+
+
+def press_key_policy_error(keys: Any) -> str | None:
+    """Validate a key chord; None means accepted, else a deterministic code.
+
+    Any failure here must surface as a deterministic rejection code before the
+    dispatcher is reached (no snapshot, no grounding, no CDP request).
+    """
+    modifiers, key = parse_key_chord(keys)
+    if modifiers is None or not key:
+        return "key_args_invalid"
+    if "meta" in modifiers and key in _PRESS_KEY_META_BLOCKED_KEYS:
+        # Meta+Q already covers Ctrl+Meta+Q and Meta+Shift+Q (same key token).
+        return "key_not_allowed"
+    if "meta" in modifiers and key == "escape":
+        # Escape+Meta-class system chords (incl. Meta+Alt+Esc) close app-level
+        # UI irreversibly from the page's point of view.
+        return "key_not_allowed"
+    return None
 
 
 def upload_paths_policy_error(paths: Any) -> str | None:
@@ -241,6 +319,10 @@ def _safe_arg_facts(
             "url_length": len(url),
             "url_sha256": hashlib.sha256(url.encode("utf-8")).hexdigest(),
         }
+    if verb == "press_key":
+        # M2-A B3: key names are not user content (bounded, no free text);
+        # echoing the chord verbatim keeps receipts replay-auditable.
+        return {"keys": str(args.get("keys") or "")}
     if verb == "scroll":
         return {"delta_pages": args.get("delta_pages")}
     return {}
@@ -287,6 +369,18 @@ def _dispatch_safe_arg_facts(
         dict(action["args"]),
         upload_files=(dispatch_args.get("paths") if verb == "upload" else None),
     )
+
+
+def _dispatch_error_reason(exc: Exception, reasons: list[str]) -> str:
+    """M2-A: actuator contract rejections (duck-typed error_code, e.g.
+    key_not_allowed / element_not_visible / dialog_not_open) produced no side
+    effect by construction, so they surface their stable code instead of the
+    ambiguous-outcome marker; every other dispatch error stays ambiguous."""
+    code = getattr(exc, "error_code", None)
+    if isinstance(code, str) and code:
+        return code
+    reasons.append("dispatch_outcome_ambiguous")
+    return f"dispatch_error:{type(exc).__name__}"
 
 
 def _landing_url_key(url: str) -> tuple[Any, ...]:
@@ -650,6 +744,10 @@ class BrowserActionAdapter:
             # M1 B1: full path policy (realpath/allow_roots/existence/regular
             # file/size/count) - any failure rejects before any capture or CDP.
             return upload_paths_policy_error(args.get("paths"))
+        if verb == "press_key":
+            # M2-A B3: the chord blacklist re-runs here (defense in depth for
+            # direct semantic_execute callers); compile-time already rejected.
+            return press_key_policy_error(args.get("keys"))
         return None
 
     @staticmethod
@@ -1083,7 +1181,8 @@ class BrowserActionAdapter:
                     before_version=before_version,
                     before_ref=before_ref,
                 )
-        elif verb == "navigate":
+        # M2-A B3: press_key is resource-scoped like navigate (page grounding, no object target).
+        elif verb in {"navigate", "press_key"}:
             page_scope = next(
                 (
                     item
@@ -1272,8 +1371,7 @@ class BrowserActionAdapter:
                     }
         elif dispatch_error is not None:
             terminal["status"] = "failed"
-            reasons.append("dispatch_outcome_ambiguous")
-            terminal["retry"]["reason"] = f"dispatch_error:{type(dispatch_error).__name__}"
+            terminal["retry"]["reason"] = _dispatch_error_reason(dispatch_error, reasons)
         elif dispatch_result is None or not dispatch_result.acknowledged:
             terminal["status"] = "failed"
             reasons.append("dispatch_not_acknowledged")

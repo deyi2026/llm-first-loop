@@ -619,22 +619,26 @@ def test_type_empty_text_is_acknowledged_noop_on_cdp_layer() -> None:
 
 
 def test_mutation_allowlist_gained_exactly_two_m1_methods() -> None:
-    # 4 frozen pre-M1 methods + exactly the two M1 additions, nothing else.
+    # 4 frozen pre-M1 methods + the two M1 additions + the one M2-A B3 method.
+    # M2-A note: Input.dispatchKeyEvent (B3 press_key) shipped; dispatchMouseEvent
+    # (B4) / handleJavaScriptDialog (B5) / setDownloadBehavior (B6) follow in
+    # their own commits. Wide-surface methods stay rejected permanently.
     assert sorted(_ALLOWED) == [
         "DOM.resolveNode",
         "DOM.setFileInputFiles",
+        "Input.dispatchKeyEvent",
         "Input.insertText",
         "Page.enable",
         "Page.navigate",
         "Runtime.callFunctionOn",
     ]
     session = _MutationCdpSession(_UploadTypeWs())
-    # M2 surface must still be rejected today (press_key/hover/dialog not shipped)
+    # Wide-surface methods must stay rejected today and forever.
     for method in (
-        "Input.dispatchKeyEvent",
         "Input.dispatchMouseEvent",
         "Page.handleJavaScriptDialog",
         "DOM.getDocument",
+        "Runtime.evaluate",
     ):
         with pytest.raises(PermissionError, match="mutation actuator surface"):
             session.send(method, {})
