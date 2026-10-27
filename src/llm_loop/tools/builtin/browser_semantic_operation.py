@@ -47,10 +47,10 @@ _MAX_CANDIDATE_PROJECTION = 20
 # M1 (DESIGN-20261027 B1/B2): upload/type join the object-verb vocabulary as
 # additive members; the five frozen verbs keep their exact pre-M1 semantics.
 _OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload", "hover"}
-# M2-A (DESIGN-20261027 B3): press_key is page-scoped (resource grounding);
-# hover/dialog join in their own commits. Pre-M2 verbs keep exact semantics.
-_MUTATION_VERBS = _OBJECT_VERBS | {"navigate", "press_key"}
-_PAGE_SCOPED_VERBS = frozenset({"navigate", "press_key"})
+# M2-A (DESIGN-20261027 B3/B5): press_key/dialog are page-scoped (resource
+# grounding); pre-M2 verbs keep exact semantics.
+_MUTATION_VERBS = _OBJECT_VERBS | {"navigate", "press_key", "dialog"}
+_PAGE_SCOPED_VERBS = frozenset({"navigate", "press_key", "dialog"})
 
 _OPERATION_RECEIPT_PREFIX = "browser-operation-receipt://v0.1/"
 _OPERATION_RECEIPT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -429,6 +429,23 @@ def _hover_step_clause(
     }
 
 
+def _dialog_step_clause(step: dict[str, Any]) -> dict[str, Any]:
+    """M2-A B5: closed action vocabulary at compile time; the open/closed
+    gate lives in the actuator's drained dialog state (dialog_not_open with
+    guidance surfaces there). Page-scoped: target is the bound page."""
+    if set(step) != {"do", "action"}:
+        raise BrowserSemanticOperationContractError("dialog_step_fields_mismatch")
+    action = str(step.get("action") or "").strip()
+    if action not in {"accept", "dismiss"}:
+        raise BrowserSemanticOperationContractError("dialog_action_invalid")
+    return {
+        "kind": "mutate",
+        "verb": "dialog",
+        "target": {"kind": "page"},
+        "args": {"action": action},
+    }
+
+
 def _wait_text_step_clause(step: dict[str, Any]) -> dict[str, Any]:
     """MF wait_text compile (extracted from _compile_short_steps verbatim:
     same field set, error codes, and timeout bounding - M2-A hygiene only)."""
@@ -508,19 +525,27 @@ def _lift_m1_compact_echoes(compact: dict[str, Any], last: dict[str, Any], statu
         compact["upload_files"] = last["upload_files"]
     if isinstance(last.get("type_echo"), dict):
         compact["type_echo"] = last["type_echo"]
-    if status == "halted" and str(last.get("verb") or "") in {"upload", "type", "press_key", "hover"}:
+    if status == "halted" and str(last.get("verb") or "") in {"upload", "type", "press_key", "hover", "dialog"}:
         blocked_receipt = last.get("action_receipt")
         if isinstance(blocked_receipt, dict):
             retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
             if isinstance(retry_reason, str) and retry_reason:
                 compact["reject_reason"] = retry_reason
+                # M2-A B5 (§5.1 guidance): dialog_not_open is only actionable
+                # with a next step; attach it so the model does not retry blind.
+                if retry_reason == "dialog_not_open":
+                    compact["guidance"] = (
+                        "当前绑定页没有打开中的 JS 对话框；先执行会触发对话框的页面动作"
+                        "（如 click/press_key，其回执边界事件会出现 dialog_opened），"
+                        "再重试 do=dialog。"
+                    )
 
 
 class BrowserSemanticOperationTool:
     name = "browser_operate"
     description = (
         "Browser 操作能力：一次调用只表达一个已经决定的 mutation。"
-        "do=navigate|click|set_text|append_text|select|scroll|type|upload|press_key|hover；对象 target 三选一寻址"
+        "do=navigate|click|set_text|append_text|select|scroll|type|upload|press_key|hover|dialog；对象 target 三选一寻址"
         "(EVO-20261010-1e06d6b4)：{kind,name[,role]} 原始 name 逐字节 exact；"
         "{kind,name_normalized[,role]} 命中 browser_perceive snapshot 暴露的确定性归一形式"
         "(零宽剥离+空白折叠)；{grounding_ref} 复用先前 snapshot/未命中候选清单中的对象 ref"
@@ -542,6 +567,10 @@ class BrowserSemanticOperationTool:
         "M2-A B4：do=hover 移动指针到 exact 元素中心触发悬停（仅一次 "
         "Input.dispatchMouseEvent mouseMoved，绝不 click）；坐标为 CSS px；"
         "零面积元素确定性拒绝 element_not_visible 且零指针事件。"
+        "M2-A B5：do=dialog(action=accept|dismiss) 处理阻塞中的 JS 对话框"
+        "（Page.handleJavaScriptDialog）；对话框状态复用既有边界事件"
+        "（Page.javascriptDialogOpening ⇒ dialog_opened），无打开中的对话框时"
+        "确定性失败 dialog_not_open 并附 guidance，绝不盲发；accept 后页面脚本继续。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
         "不判断 task completion。"
@@ -829,6 +858,19 @@ class BrowserSemanticOperationTool:
             "additionalProperties": False,
         },
         {
+            # M2-A B5 (DESIGN-20261027 §5.1): accept/dismiss a blocking JS
+            # dialog; gated by drained dialog state - no open dialog rejects
+            # dialog_not_open BEFORE any CDP call (never a blind send).
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["dialog"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "action": {"type": "string", "enum": ["accept", "dismiss"]},
+            },
+            "required": ["do", "action"],
+            "additionalProperties": False,
+        },
+        {
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["wait"]},
@@ -878,13 +920,14 @@ class BrowserSemanticOperationTool:
     # M1: upload/type variants extend the mutation prefix (5 -> 7); wait variants stay last.
     # M2-A B3: press_key extends the mutation prefix (7 -> 8); wait stays last.
     # M2-A B4: hover extends it further (8 -> 9); wait stays last.
-    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:9]
+    # M2-A B5: dialog extends it further (9 -> 10); wait stays last.
+    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:10]
     parameters = {
         "type": "object",
         "properties": {
             "do": {
                 "type": "string",
-                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover"],
+                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover", "dialog"],
             },
             "url": {"type": "string", "minLength": 1},
             "target": _SHORT_TARGET_SCHEMA,
@@ -898,6 +941,15 @@ class BrowserSemanticOperationTool:
                     "黑名单 Meta+W/Q/T/N/S/P/H/M/`、Meta+Tab、Meta+Space、Ctrl+Meta+Q、"
                     "Escape+Meta 类确定性拒绝 key_not_allowed 且零 CDP 请求；"
                     "键通过 Input.dispatchKeyEvent 成对 keyDown/keyUp 派发到当前焦点元素"
+                ),
+            },
+            "action": {
+                "type": "string",
+                "enum": ["accept", "dismiss"],
+                "description": (
+                    "仅 do=dialog（M2-A B5）：accept/dismiss 阻塞中的 JS 对话框"
+                    "（Page.handleJavaScriptDialog）；无打开中的对话框时确定性失败"
+                    " dialog_not_open 并附 guidance，绝不盲发；accept 后页面脚本继续"
                 ),
             },
             "paths": {
@@ -1122,7 +1174,7 @@ class BrowserSemanticOperationTool:
     # Phase3 M3（G4 审查 P0-1 修复）：clauses 是 dict 列表（_validate_clauses 契约），
     # 本方法必须用 .get 而非 getattr 访问——初版 getattr 对 dict 恒缺省，登记变死代码。
     # target 取 args.url（navigate）或 target 标识（click 等），D6：不含页面正文。
-    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload", "press_key", "hover"})
+    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload", "press_key", "hover", "dialog"})
 
     @classmethod
     def _register_mutation_side_effects(cls, clauses: list[dict], session_id: str) -> int:
@@ -1259,6 +1311,10 @@ class BrowserSemanticOperationTool:
                 if verb == "hover":
                     # M2-A B4: see _hover_step_clause (zero-arg object verb).
                     clauses.append(_hover_step_clause(cls, step))
+                    continue
+                if verb == "dialog":
+                    # M2-A B5: see _dialog_step_clause (closed action set).
+                    clauses.append(_dialog_step_clause(step))
                     continue
                 if verb == "wait_text":
                     # MF wait_text (helper extracted verbatim in M2-A).
@@ -1582,7 +1638,7 @@ class BrowserSemanticOperationTool:
                     ),
                 }
             return {"do": "rebind", "status": "ok", "rebound": rebound}
-        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover"}
+        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover", "dialog"}
         direct_model_friendly = isinstance(request.get("do"), str) and "steps" not in request
         historical_steps = set(request) == {"steps"}
         model_friendly = direct_model_friendly or historical_steps

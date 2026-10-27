@@ -43,6 +43,9 @@ _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
     # M2-A (DESIGN-20261027 B4): object verb; zero-arg pointer move whose
     # only actuation is one Input.dispatchMouseEvent(mouseMoved).
     "hover": {"version_scopes": {"object"}, "args": set()},
+    # M2-A (DESIGN-20261027 B5): page-scoped dialog verb; "prompt_text" is a
+    # documented v1 simplification (see the dev report deviation note).
+    "dialog": {"version_scopes": {"resource"}, "args": {"action"}},
 }
 _TERMINAL = frozenset({"ok", "failed", "rejected"})
 
@@ -326,6 +329,10 @@ def _safe_arg_facts(
         # M2-A B3: key names are not user content (bounded, no free text);
         # echoing the chord verbatim keeps receipts replay-auditable.
         return {"keys": str(args.get("keys") or "")}
+    if verb == "dialog":
+        # M2-A B5: the action word only; the dialog message itself is page
+        # content and never persisted here.
+        return {"action": str(args.get("action") or "")}
     if verb == "scroll":
         return {"delta_pages": args.get("delta_pages")}
     return {}
@@ -751,6 +758,10 @@ class BrowserActionAdapter:
             # M2-A B3: the chord blacklist re-runs here (defense in depth for
             # direct semantic_execute callers); compile-time already rejected.
             return press_key_policy_error(args.get("keys"))
+        if verb == "dialog" and str(args.get("action") or "") not in {"accept", "dismiss"}:
+            # M2-A B5: closed action vocabulary; the open/closed gate itself
+            # lives in the actuator (drained dialog state).
+            return "dialog_action_invalid"
         return None
 
     @staticmethod
@@ -1075,8 +1086,11 @@ class BrowserActionAdapter:
             # the full pre-observation fails structurally we fall back to a
             # lightweight probe instead of killing the model's only escape verb.
             # Object verbs (click/fill/select/scroll) keep the full precondition.
+            # M2-A B5: dialog joins this class - a blocking JS dialog freezes
+            # the renderer (full capture impossible) while the browser-process
+            # probe channel stays alive.
             probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
-            if str(action["verb"]) == "navigate" and callable(probe_page_target):
+            if str(action["verb"]) in {"navigate", "dialog"} and callable(probe_page_target):
                 try:
                     probe_page_target()
                 except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
@@ -1184,8 +1198,9 @@ class BrowserActionAdapter:
                     before_version=before_version,
                     before_ref=before_ref,
                 )
-        # M2-A B3: press_key is resource-scoped like navigate (page grounding, no object target).
-        elif verb in {"navigate", "press_key"}:
+        # M2-A B3/B5: press_key and dialog are resource-scoped like navigate
+        # (page grounding, no object target).
+        elif verb in {"navigate", "press_key", "dialog"}:
             page_scope = next(
                 (
                     item

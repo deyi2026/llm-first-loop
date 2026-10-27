@@ -112,10 +112,12 @@ class _RecordingWs:
         self.requests.append(req)
         result = self.results.get(req["method"], {})
         self.pending.append(json.dumps({"id": req["id"], "result": result}))
-        # unsolicited events queued ahead of the response are buffered by the
-        # session's recv loop exactly like a real browser interleaves them
+        # Unsolicited events are appended AFTER this response: the current
+        # send's recv loop matches its own response and returns, and the next
+        # send's recv loop drains the leftover event into the session buffer -
+        # exactly how a real browser interleaves events between requests.
         while self.events:
-            self.pending.insert(0, json.dumps(self.events.pop(0)))
+            self.pending.append(json.dumps(self.events.pop(0)))
 
     def recv(self, timeout: float | None = None) -> str:  # noqa: ARG002
         if not self.pending:
@@ -424,4 +426,123 @@ def test_b4_operate_hover_element_not_visible_surfaces_stable_code(tmp_path: Pat
     assert receipt["status"] == "halted"
     assert receipt["reject_reason"] == "element_not_visible"
     assert len(actuator.calls) == 1  # one rejected dispatch attempt, no retry
+
+
+# ---------------------------------------------------------------------------
+# F. B5 dialog - actuator layer: state-gated, never a blind send.
+# ---------------------------------------------------------------------------
+
+_DIALOG_OPENING_EVENT = {
+    "method": "Page.javascriptDialogOpening",
+    "params": {"type": "alert", "message": "hello", "url": "http://127.0.0.1/a", "defaultPrompt": ""},
+}
+
+
+def test_b5_actuator_dialog_opened_via_event_then_accept_sends_handle_and_clears() -> None:
+    ws = _RecordingWs(events=[dict(_DIALOG_OPENING_EVENT)])
+    host = _cdp_host(ws)
+    # a trigger action (B3 Enter) drains the queued javascriptDialogOpening
+    # event into both the boundary receipt and the actuator's dialog state
+    trigger = host.dispatch(verb="press_key", physical_target=None, args={"keys": "Enter"})
+    assert {"event": "dialog_opened", "scope_ref": None, "detector": "Page.javascriptDialogOpening", "complete": False} in [
+        dict(item) for item in trigger.boundary_events
+    ]
+    assert host._dialog_open is True
+    # accept the blocking dialog; the page script then continues (session alive)
+    result = host.dispatch(verb="dialog", physical_target=None, args={"action": "accept"})
+    assert result.acknowledged is True
+    handles = [req for req in ws.requests if req["method"] == "Page.handleJavaScriptDialog"]
+    assert len(handles) == 1
+    assert handles[0]["params"] == {"accept": True}
+    assert host._dialog_open is False
+    # session still usable after accept: a subsequent key press dispatches fine
+    host.dispatch(verb="press_key", physical_target=None, args={"keys": "Escape"})
+    assert ws.requests[-1]["method"] == "Input.dispatchKeyEvent"
+
+
+def test_b5_actuator_dialog_without_open_dialog_rejects_before_any_traffic() -> None:
+    ws = _RecordingWs()
+    host = _cdp_host(ws)
+    with pytest.raises(RuntimeError, match="dialog_not_open"):
+        host.dispatch(verb="dialog", physical_target=None, args={"action": "accept"})
+    # deterministic rejection BEFORE _ensure_session: not even a websocket
+    # connection was opened - zero CDP of any kind, in particular no
+    # Page.handleJavaScriptDialog (never a blind send).
+    assert ws.requests == []
+    # and the tab is untouched: the page target still resolves
+    assert host.bound_target_id == ""
+
+
+def test_b5_actuator_dialog_state_not_reusable_after_accept() -> None:
+    ws = _RecordingWs(events=[dict(_DIALOG_OPENING_EVENT)])
+    host = _cdp_host(ws)
+    host.dispatch(verb="press_key", physical_target=None, args={"keys": "Enter"})
+    host.dispatch(verb="dialog", physical_target=None, args={"action": "dismiss"})
+    # the second dialog call must not blind-send: state was cleared
+    with pytest.raises(RuntimeError, match="dialog_not_open"):
+        host.dispatch(verb="dialog", physical_target=None, args={"action": "dismiss"})
+    assert [req["method"] for req in ws.requests].count("Page.handleJavaScriptDialog") == 1
+
+
+# ---------------------------------------------------------------------------
+# G. B5 dialog - tool layer (browser_operate do=dialog).
+# ---------------------------------------------------------------------------
+
+
+def test_b5_operate_dialog_accept_receipt_ok_and_page_scoped(tmp_path: Path) -> None:
+    tool, actuator = _tool_stack(tmp_path)
+    result = tool.execute(do="dialog", action="accept")
+    assert result.status.value == "success"
+    receipt = json.loads(result.content)
+    assert receipt["status"] == "completed"
+    assert [call["verb"] for call in actuator.calls] == ["dialog"]
+    assert actuator.calls[0]["args"] == {"action": "accept"}
+    assert actuator.calls[0]["physical_target"] is None
+
+
+def test_b5_operate_dialog_invalid_action_rejected_at_compile_time(tmp_path: Path) -> None:
+    tool, actuator = _tool_stack(tmp_path)
+    result = tool.execute(do="dialog", action="ok")
+    assert result.status.value == "failure"
+    assert "dialog_action_invalid" in result.content
+    assert actuator.calls == []
+
+
+def test_b5_operate_dialog_not_open_surfaces_code_and_guidance(tmp_path: Path) -> None:
+    from llm_loop.browser.cdp_action_host import _ActuatorContractError
+
+    class _DialogClosedActuator:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def dispatch(self, **kwargs: Any) -> BrowserDispatchResult:
+            self.calls.append(kwargs)
+            raise _ActuatorContractError("dialog_not_open")
+
+    perception = BrowserPerceptionAdapter(store=BrowserPerceptionStore(tmp_path / "perception"))
+    backend = _Backend(FIXTURES["base"])
+    actuator = _DialogClosedActuator()
+    action = BrowserActionAdapter(
+        perception=perception,
+        receipt_store=BrowserActionReceiptStore(tmp_path / "actions"),
+        capture_backend=backend,
+        actuator=actuator,
+    )
+    execute = BrowserSemanticExecuteTool(
+        perception=perception, action_adapter=action, session_id_getter=lambda: "s1"
+    )
+    tool = BrowserSemanticOperationTool(
+        perception=perception,
+        capture_backend=backend,
+        semantic_execute=execute,
+        receipt_store=BrowserSemanticOperationReceiptStore(tmp_path / "operation_receipts"),
+        session_id_getter=lambda: "s1",
+    )
+    result = tool.execute(do="dialog", action="accept")
+    receipt = json.loads(result.content)
+    assert receipt["status"] == "halted"
+    assert receipt["reject_reason"] == "dialog_not_open"
+    # §5.1 guidance: the model gets an actionable next step, not a bare code
+    assert "guidance" in receipt and "dialog_opened" in receipt["guidance"]
+    assert len(actuator.calls) == 1  # single attempt, no automatic retry
 

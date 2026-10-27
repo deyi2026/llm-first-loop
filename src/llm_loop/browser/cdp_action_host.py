@@ -61,6 +61,9 @@ _ALLOWED = frozenset(
         # M2-A B4: hover actuates ONLY through this method (exactly one
         # mouseMoved event, never a click press/release pair).
         "Input.dispatchMouseEvent",
+        # M2-A B5: accept/dismiss a blocking JS dialog; the call is gated by
+        # drained dialog state (dialog_not_open rejects before any CDP).
+        "Page.handleJavaScriptDialog",
     }
 )
 
@@ -361,6 +364,11 @@ class CdpBrowserMutationActuator:
         self._session: _MutationCdpSession | None = None
         self._dispatch_lock = threading.Lock()
         self._page_events_enabled = False
+        # M2-A B5 (F8): dialog state machine rides the existing boundary-event
+        # drain; True only between a drained javascriptDialogOpening and a
+        # successful Page.handleJavaScriptDialog.
+        self._dialog_open = False
+        self._dialog_detail: dict[str, Any] | None = None
 
     @property
     def bound_target_id(self) -> str:
@@ -459,7 +467,10 @@ class CdpBrowserMutationActuator:
             self._session = _MutationCdpSession(websocket)
         if not self._page_events_enabled:
             self._session.send("Page.enable")
-            self._session.pop_events()
+            # M2-A B5: the enable-time drain feeds the state machine instead of
+            # being discarded - a dialog that opened while the session was
+            # (re)connecting must still gate the dialog verb.
+            self._absorb_state_events(self._session.pop_events())
             self._page_events_enabled = True
         return self._session
 
@@ -470,6 +481,17 @@ class CdpBrowserMutationActuator:
             if str(item.get("type") or "") == "page" and str(item.get("id") or "")
         }
 
+    def _absorb_state_events(self, raw_events: list[dict[str, Any]]) -> None:
+        """M2-A B5: dialog state machine feed - the single consumer point of
+        drained events (F8). A javascriptDialogOpening means a blocking dialog
+        is open on the bound page; only a handled dialog closes it. Shared by
+        the session-enable drain and every dispatch's boundary drain."""
+        for raw in raw_events:
+            if str(raw.get("method") or "") == "Page.javascriptDialogOpening":
+                params = raw.get("params")
+                self._dialog_open = True
+                self._dialog_detail = params if isinstance(params, dict) else {}
+
     def _boundary_events(
         self,
         session: _MutationCdpSession,
@@ -478,7 +500,9 @@ class CdpBrowserMutationActuator:
     ) -> tuple[dict[str, Any], ...]:
         events: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
-        for raw in session.pop_events():
+        drained = session.pop_events()
+        self._absorb_state_events(drained)
+        for raw in drained:
             method = str(raw.get("method") or "")
             event_name = _BOUNDARY_EVENT_METHODS.get(method)
             if event_name is None:
@@ -653,9 +677,26 @@ class CdpBrowserMutationActuator:
             verdict["verdict"] = "timeout"
         return verdict
 
+    def _acknowledged(
+        self, session: _MutationCdpSession, before_page_ids: set[str]
+    ) -> BrowserDispatchResult:
+        """M2-A: shared acknowledged receipt for page-scoped verbs (drains
+        boundary events exactly like the legacy tail of _dispatch_locked)."""
+        return BrowserDispatchResult(
+            acknowledged=True,
+            boundary_events=self._boundary_events(session, before_page_ids=before_page_ids),
+            completeness_reasons=("boundary_detector_non_exhaustive",),
+        )
+
     def _dispatch_locked(
         self, *, verb: str, physical_target: str | None, args: dict[str, Any]
     ) -> BrowserDispatchResult:
+        # M2-A B5: no blocking dialog on the bound page (per drained event
+        # state, F8) - a blind Page.handleJavaScriptDialog would error or,
+        # worse, answer a dialog opened after our last drain. Rejected BEFORE
+        # any session/CDP traffic.
+        if verb == "dialog" and not self._dialog_open:
+            raise _ActuatorContractError("dialog_not_open")
         session = self._ensure_session()
         before_page_ids = self._page_target_ids()
         if verb == "navigate":
@@ -686,12 +727,18 @@ class CdpBrowserMutationActuator:
                 raise _ActuatorContractError(policy_error)
             for event in key_events_for_chord(keys):
                 session.send("Input.dispatchKeyEvent", event)
-            detected = self._boundary_events(session, before_page_ids=before_page_ids)
-            return BrowserDispatchResult(
-                acknowledged=True,
-                boundary_events=detected,
-                completeness_reasons=("boundary_detector_non_exhaustive",),
+            return self._acknowledged(session, before_page_ids)
+
+        if verb == "dialog":
+            # M2-A B5: state gate already passed above; handle the blocking
+            # dialog and clear the state (the page script then continues).
+            session.send(
+                "Page.handleJavaScriptDialog",
+                {"accept": str(args.get("action") or "") == "accept"},
             )
+            self._dialog_open = False
+            self._dialog_detail = None
+            return self._acknowledged(session, before_page_ids)
 
         object_id = self._object_id(session, physical_target)
         if verb == "click":

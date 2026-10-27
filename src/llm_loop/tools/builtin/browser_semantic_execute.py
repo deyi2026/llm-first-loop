@@ -21,9 +21,9 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 # keep their exact pre-M1 spelling and mapping.
 # M2-A B4: hover joins the object verbs (exact target, one mouseMoved).
 _OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload", "hover"}
-# M2-A B3: press_key joins as a page-scoped verb (resource grounding like
-# navigate - key events land on the focused element, no object target).
-_SUPPORTED_VERBS = _OBJECT_VERBS | {"navigate", "press_key"}
+# M2-A B3/B5: press_key/dialog join as page-scoped verbs (resource grounding
+# like navigate - no object target).
+_SUPPORTED_VERBS = _OBJECT_VERBS | {"navigate", "press_key", "dialog"}
 
 
 class BrowserSemanticExecuteCompileError(ValueError):
@@ -53,7 +53,10 @@ class BrowserSemanticExecuteTool:
         "Escape+Meta 类确定性拒绝 key_not_allowed 且零 CDP 请求；target_ref 传 snapshot 的 "
         "resource_ref，键落在当前焦点元素）；"
         "hover args={}（M2-A B4：exact 对象指针悬停，仅一次 mouseMoved 绝不 click；"
-        "坐标 CSS px；零面积元素 element_not_visible 且零指针事件）。工具内部只把模型已选择的"
+        "坐标 CSS px；零面积元素 element_not_visible 且零指针事件）；"
+        "dialog args={action}（M2-A B5：accept|dismiss 阻塞中的 JS 对话框，"
+        "Page.handleJavaScriptDialog；无对话框时 dialog_not_open+guidance 绝不盲发）。"
+        "工具内部只把模型已选择的"
         "exact ref 编译为 SemanticAction 的 scope/version/target/action_id 等机械字段，并交给既有"
         "single-dispatch/version guard；不自动选择目标，不自动 retry，不自动 rebind/latest，"
         "ActionReceipt ok 不等于任务完成，工具不判断任务完成。"
@@ -63,7 +66,7 @@ class BrowserSemanticExecuteTool:
         "properties": {
             "verb": {
                 "type": "string",
-                "enum": ["click", "fill", "select", "navigate", "scroll", "type", "upload", "press_key", "hover"],
+                "enum": ["click", "fill", "select", "navigate", "scroll", "type", "upload", "press_key", "hover", "dialog"],
             },
             "target_ref": {
                 "type": "string",
@@ -78,7 +81,7 @@ class BrowserSemanticExecuteTool:
                 "description": (
                     "closed verb args: click={}；fill={text,mode} mode=replace|append；"
                     "select={value}；navigate={url}；scroll={delta_pages}；"
-                    "type={text}；upload={paths}；press_key={keys}；hover={}"
+                    "type={text}；upload={paths}；press_key={keys}；hover={}；dialog={action}"
                 ),
             },
         },
