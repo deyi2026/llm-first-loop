@@ -369,7 +369,7 @@ class DesktopPerceiveTool:
                 platform_info=platform, session=session,
             )
         guidance_parts = []
-        if not perms.ax_trusted:
+        if not bool(capability.get("can_read_ax")):
             guidance_parts.append(GUIDANCE_AX)
         if not perms.screen_capture_granted:
             guidance_parts.append(GUIDANCE_CAPTURE)

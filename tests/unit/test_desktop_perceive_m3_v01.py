@@ -1120,4 +1120,61 @@ def test_config_env_names_parse(tmp_path, monkeypatch):
     assert settings.desktop_see_allowlist == "com.google.Chrome"
 
 
+# ── 能力真值取自实测探针，不取 AXIsProcessTrusted()（2026-10-27 假阴性反证） ──
+
+
+def test_ax_readable_prefers_probe_over_trust_flag(monkeypatch):
+    from llm_loop.desktop import backend_macos, macos_permissions
+
+    monkeypatch.setattr(macos_permissions, "ax_error_probe", lambda: 0)
+    monkeypatch.setattr(macos_permissions, "ax_trusted", lambda: False)
+    assert backend_macos._ax_readable() is True
+
+    monkeypatch.setattr(macos_permissions, "ax_error_probe", lambda: AX_ERROR_API_DISABLED)
+    monkeypatch.setattr(macos_permissions, "ax_trusted", lambda: True)
+    assert backend_macos._ax_readable() is False
+
+
+def test_ax_readable_falls_back_to_trust_when_probe_unavailable(monkeypatch):
+    from llm_loop.desktop import backend_macos, macos_permissions
+
+    monkeypatch.setattr(macos_permissions, "ax_error_probe", lambda: None)
+    monkeypatch.setattr(macos_permissions, "ax_trusted", lambda: True)
+    assert backend_macos._ax_readable() is True
+
+
+def test_status_no_ax_guidance_when_probe_readable_despite_trust_false():
+    """信任位为 false 但探针可读时，不得催用户去授权（假阴性会把用户赶去做无用动作）。"""
+    backend = FakeBackend(
+        perms=PermissionSnapshot(
+            ax_trusted=False, screen_capture_granted=True, ax_error=0
+        )
+    )
+    backend.capability_snapshot = lambda: {  # type: ignore[method-assign]
+        "can_list_windows": True,
+        "can_read_ax": True,
+        "can_capture": True,
+    }
+    payload = _payload(_tool(backend).execute(action="status"))
+    assert payload["permissions"]["ax_trusted"] is False
+    assert payload["capability"]["can_read_ax"] is True
+    assert payload["guidance"] is None
+
+
+def test_status_ax_guidance_when_probe_disabled_despite_trust_true():
+    backend = FakeBackend(
+        perms=PermissionSnapshot(
+            ax_trusted=True, screen_capture_granted=True, ax_error=AX_ERROR_API_DISABLED
+        )
+    )
+    backend.capability_snapshot = lambda: {  # type: ignore[method-assign]
+        "can_list_windows": True,
+        "can_read_ax": False,
+        "can_capture": True,
+    }
+    payload = _payload(_tool(backend).execute(action="status"))
+    assert payload["capability"]["can_read_ax"] is False
+    assert "辅助功能" in payload["guidance"]
+
+
 

@@ -42,6 +42,21 @@ class DesktopBackendError(RuntimeError):
     """后端确定性失败（lsappinfo 不可用等）；工具层映射为 backend_error 回执。"""
 
 
+def _ax_readable() -> bool:
+    """AX 能力取自**实测探针**，不取 ``AXIsProcessTrusted()``。
+
+    实测反证（2026-10-27 同一条父进程链路）：00:0x 时 ``ax_trusted=false``、
+    ``AXWindows`` 返回 -25211；00:5x 时同一 API 返回 true，而 AX 属性读取在两次测量
+    里都可用。即该 API 会给出**假阴性**，把它当成 ``can_read_ax`` 会把可用能力报成
+    不可用，并把用户赶去授权。因此：探针成功就以 ``ax_error == 0`` 为准；探针本身
+    失败（None）才回退授权字段。
+    """
+    err = macos_permissions.ax_error_probe()
+    if err is None:
+        return macos_permissions.ax_trusted()
+    return err == 0
+
+
 def backend_for_platform(platform_str: str, capture_dir: Path | str | None = None):
     """平台判定：darwin → macOS 后端；其余 → None（工具回 unsupported_platform）。
 
@@ -76,7 +91,7 @@ class MacOSDesktopBackend:
             can_list = False
         return {
             "can_list_windows": can_list,
-            "can_read_ax": macos_permissions.ax_trusted(),
+            "can_read_ax": _ax_readable(),
             "can_capture": macos_permissions.screen_capture_granted(),
         }
 
