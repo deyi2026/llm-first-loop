@@ -78,6 +78,19 @@ function makeCapture(devices: MediaDevicesLike, onNotice?: (message: string) => 
 }
 
 describe("MicCapture", () => {
+  it("releases a stream that arrives after the user has released the button", async () => {
+    let resolve!: (stream: FakeStream) => void;
+    const track = new FakeTrack();
+    const { capture, ports } = makeCapture({ getUserMedia: () => new Promise((r) => { resolve = r; }) });
+    const pending = capture.press();
+    capture.release();
+    resolve(new FakeStream(track));
+    expect(await pending).toBe(false);
+    expect(capture.micEnabled).toBe(false);
+    expect(ports).toHaveLength(0);
+    expect(track.stopped).toBe(true);
+  });
+
   it("press acquires stream and enables mic", async () => {
     const track = new FakeTrack();
     const { capture, ports } = makeCapture({ getUserMedia: async () => new FakeStream(track) });

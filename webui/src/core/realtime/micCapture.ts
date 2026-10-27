@@ -69,6 +69,7 @@ export class MicCapture {
   private stream: MediaStreamLike | null = null;
   private port: WorkletPortLike | null = null;
   private pressed = false;
+  private pressGeneration = 0;
   private lastError: MicPressErrorKind | null = null;
 
   constructor(private readonly options: MicCaptureOptions) {}
@@ -81,23 +82,27 @@ export class MicCapture {
     return this.pressed;
   }
 
-  /** 最近一次 press 失败的原因分类；成功或从未按下 → null。 */
-  get pressError(): MicPressErrorKind | null {
-    return this.lastError;
-  }
-
   /** 按下说话：开始采集。返回是否真正开始（权限/设备失败/启动超时 → false，不伪造）。 */
+  get pressError(): MicPressErrorKind | null { return this.lastError; }
+
   async press(): Promise<boolean> {
+    const generation = ++this.pressGeneration;
     this.lastError = null;
     if (this.stream !== null) {
       this.pressed = true;
       return true;
     }
     try {
-      this.stream = await this.acquireStream();
+      const stream = await this.acquireStream();
+      if (generation !== this.pressGeneration) {
+        for (const track of stream.getTracks()) track.stop();
+        return false;
+      }
+      this.stream = stream;
     } catch (error) {
-      this.stream = null;
+      if (generation !== this.pressGeneration) return false;
       this.lastError = classifyPressError(error);
+      this.stream = null;
       return false;
     }
     const port = this.options.createPort();
@@ -109,6 +114,7 @@ export class MicCapture {
 
   /** 松开：结束输入（停止采集）；余量 flush 发出，不丢尾段。 */
   release(): void {
+    this.pressGeneration += 1;
     this.pressed = false;
     this.stopStream();
     for (const frame of this.options.pipeline.flush()) {
@@ -118,6 +124,7 @@ export class MicCapture {
 
   /** 触摸取消：结束输入且**丢弃**当前余量。 */
   cancel(): void {
+    this.pressGeneration += 1;
     this.pressed = false;
     this.stopStream();
   }

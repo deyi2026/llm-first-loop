@@ -3692,3 +3692,9 @@ select.v2-control-pill {
   background: var(--dsw-alias-layer-panel);
   opacity: 0.92;
 }
+
+/* Voice is a dedicated composer panel with a visible exit on narrow screens. */
+.v2-composer-voice-panel { width: 100%; min-width: 0; padding: 8px 0; }
+.v2-composer-voice-panel > .realtime-voice-close { display: block; margin: 0 0 6px auto; }
+.v2-composer-voice-panel .realtime-voice-bar { width: 100%; box-sizing: border-box; border-radius: 16px; }
+.v2-composer-voice-panel .realtime-voice-talk { min-height: 52px; flex: 1; border-radius: 24px; }
