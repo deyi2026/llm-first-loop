@@ -111,12 +111,14 @@ def test_mf5_3_perceive_wait_contract_covers_page_and_exact_object_conditions() 
         for branch in branches
     }
     # M2-A B6 (DESIGN-20261027 §5.2): download_state joins the wait kinds.
+    # M2-B B7: object_absent joins (negative-condition wait + settle window).
     assert set(by_kind) == {
         "page_ready",
         "page_url",
         "object_state",
         "object_text",
         "download_state",
+        "object_absent",
     }
 
     for kind in ("page_ready", "page_url"):
@@ -330,12 +332,14 @@ def test_mf5_3_lazy_perceive_wait_schema_is_self_sufficient_on_first_call() -> N
     }
 
     # M2-A B6: download_state joins the lazy wait kinds too.
+    # M2-B B7: object_absent joins (negative-condition wait + settle window).
     assert kinds == {
         "page_ready",
         "page_url",
         "object_state",
         "object_text",
         "download_state",
+        "object_absent",
     }
     assert "condition" not in props
     assert "interval_ms" not in props

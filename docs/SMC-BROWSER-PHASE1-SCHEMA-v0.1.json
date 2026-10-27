@@ -103,6 +103,13 @@
             "null"
           ]
         },
+        "frame_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B8: frame-scope token ('frame:<frameId>'; present only on kind=frame scopes, null elsewhere). Same vocabulary the sensor nodes carry; no parallel frame_id field exists."
+        },
         "runtime_generation": {
           "type": "integer",
           "minimum": 1
@@ -515,6 +522,13 @@
         "id": {
           "type": "string",
           "minLength": 1
+        },
+        "frame_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B8: the object's frame-scope token (null = main frame, 'frame:<frameId>' = child frame). Surfaces for frame-scoped identity addressing; no parallel frame_id field exists."
         },
         "kind": {
           "type": "string",

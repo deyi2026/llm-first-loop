@@ -42,7 +42,9 @@ from llm_loop.tools.review_gate import ARTICLE_REVIEW_OBLIGATION
 logger = logging.getLogger(__name__)
 
 _MAX_CLAUSES = 8
-_IDENTITY_KEYS = {"kind", "role", "name", "name_normalized"}
+# M2-B B8: frame_token joins the identity vocabulary as a QUALIFIER (None =
+# main frame, "frame:<frameId>" = child frame). It never replaces a name key.
+_IDENTITY_KEYS = {"kind", "role", "name", "name_normalized", "frame_token"}
 _MAX_CANDIDATE_PROJECTION = 20
 # M1 (DESIGN-20261027 B1/B2): upload/type join the object-verb vocabulary as
 # additive members; the five frozen verbs keep their exact pre-M1 semantics.
@@ -171,6 +173,10 @@ _SHORT_TARGET_SCHEMA = {
                 "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
                 "name": {"type": "string", "minLength": 1},
                 "role": {"type": "string", "minLength": 1},
+                # M2-B B8: optional frame qualifier (null = main frame).
+                "frame_token": {
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+                },
             },
             "required": ["kind", "name"],
             "additionalProperties": False,
@@ -181,6 +187,9 @@ _SHORT_TARGET_SCHEMA = {
                 "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
                 "name_normalized": {"type": "string", "minLength": 1},
                 "role": {"type": "string", "minLength": 1},
+                "frame_token": {
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+                },
             },
             "required": ["kind", "name_normalized"],
             "additionalProperties": False,
@@ -201,7 +210,10 @@ _SHORT_TARGET_SCHEMA = {
         "whitespace-collapsed form exposed by browser_perceive snapshot objects; "
         "{grounding_ref} reuses an object ref from a prior snapshot or miss "
         "candidate list (world-version retention applies). Mixing forms or "
-        "empty values are rejected deterministically."
+        "empty values are rejected deterministically. "
+        "M2-B B8: 可选 frame_token 限定帧（null=主帧，字符串=子帧 "
+        '"frame:<frameId>"，取自 snapshot 对象的 frame_token 字段）；'
+        "跨帧重名而未指定 frame_token 时确定性歧义拒绝。"
     ),
 }
 
@@ -583,6 +595,10 @@ class BrowserSemanticOperationTool:
             "role": {"type": "string", "minLength": 1},
             "name": {"type": "string", "minLength": 1},
             "name_normalized": {"type": "string", "minLength": 1},
+            # M2-B B8: optional frame qualifier (null = main frame).
+            "frame_token": {
+                "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+            },
         },
         "required": ["kind"],
         "anyOf": [
@@ -1038,8 +1054,21 @@ class BrowserSemanticOperationTool:
             raise BrowserSemanticOperationContractError("identity_name_addressing_conflict")
         if "name" not in identity and "name_normalized" not in identity:
             raise BrowserSemanticOperationContractError("identity_fields_mismatch")
-        normalized: dict[str, str] = {}
+        normalized: dict[str, Any] = {}
         for key, value in identity.items():
+            if key == "frame_token":
+                # M2-B B8: JSON null addresses the MAIN frame; a non-empty
+                # string addresses one child frame's exact token.
+                if value is None:
+                    normalized[key] = None
+                    continue
+                token = str(value or "").strip()
+                if not token:
+                    raise BrowserSemanticOperationContractError(
+                        "identity_frame_token_invalid"
+                    )
+                normalized[key] = token
+                continue
             if key == "name_normalized":
                 text = normalize_semantic_name(str(value or ""))
             else:
@@ -1050,10 +1079,21 @@ class BrowserSemanticOperationTool:
         return normalized
 
     @staticmethod
-    def _matches_identity(obj: dict[str, Any], identity: dict[str, str]) -> bool:
+    def _matches_identity(obj: dict[str, Any], identity: dict[str, Any]) -> bool:
         raw_attrs = obj.get("attributes")
         attrs: dict[str, Any] = raw_attrs if isinstance(raw_attrs, dict) else {}
         for key, expected in identity.items():
+            if key == "frame_token":
+                # M2-B B8: frame qualifier matches the object's own
+                # frame_token (None = main frame), mirroring perception's
+                # _identity_matches semantics byte-for-byte.
+                observed_frame = obj.get("frame_token")
+                if expected is None:
+                    if observed_frame is not None:
+                        return False
+                elif observed_frame != expected:
+                    return False
+                continue
             observed = obj.get("kind") if key == "kind" else attrs.get(key)
             if not isinstance(observed, str) or observed != expected:
                 return False
@@ -1227,7 +1267,7 @@ class BrowserSemanticOperationTool:
             raise BrowserSemanticOperationContractError("short_target_name_addressing_conflict")
         if "name" not in raw and "name_normalized" not in raw:
             raise BrowserSemanticOperationContractError("short_target_fields_mismatch")
-        identity: dict[str, str] = {}
+        identity: dict[str, Any] = {}
         for key in ("kind", "name", "name_normalized", "role"):
             if key not in raw:
                 continue
@@ -1235,6 +1275,18 @@ class BrowserSemanticOperationTool:
             if not value:
                 raise BrowserSemanticOperationContractError(f"short_target_{key}_missing")
             identity[key] = value
+        if "frame_token" in raw:
+            # M2-B B8: null = main frame; non-empty string = child frame token.
+            frame_token = raw.get("frame_token")
+            if frame_token is None:
+                identity["frame_token"] = None
+            else:
+                token = str(frame_token or "").strip()
+                if not token:
+                    raise BrowserSemanticOperationContractError(
+                        "short_target_frame_token_invalid"
+                    )
+                identity["frame_token"] = token
         return {"kind": "object", "identity": identity}
 
     @classmethod
@@ -1455,6 +1507,9 @@ class BrowserSemanticOperationTool:
             entry: dict[str, Any] = {
                 "grounding_ref": obj.get("grounding_ref"),
                 "kind": obj.get("kind"),
+                # M2-B B8: frame ownership of each candidate so a cross-frame
+                # miss receipt lets the model qualify the next address.
+                "frame_token": obj.get("frame_token"),
             }
             for key in ("name", "name_normalized"):
                 value = attributes.get(key)

@@ -107,6 +107,8 @@ def test_model_surface_keeps_diff_and_aggregated_wait_read_only(tmp_path: Path) 
         "text",
         "target_id",
         "within_ms",
+        # M2-B B7: settle_ms joins the flat wait vocabulary (object_absent).
+        "settle_ms",
     }
     # M2-A B6: expected is the download_state wait vocabulary, still
     # read-only (no backend locator leaks below).

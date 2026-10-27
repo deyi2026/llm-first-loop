@@ -182,6 +182,8 @@ def test_model_surface_aggregates_wait_while_typed_primitives_remain_closed(tmp_
         "text",
         "target_id",
         "within_ms",
+        # M2-B B7：settle_ms 加入扁平 wait 词表（object_absent 稳定窗）。
+        "settle_ms",
     }
     assert "condition" not in props
     assert "interval_ms" not in props

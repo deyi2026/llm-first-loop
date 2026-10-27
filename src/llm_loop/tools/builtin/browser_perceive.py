@@ -245,6 +245,15 @@ class BrowserPerceiveTool:
                     "目录 realpath 围栏拒绝 ../ 与 symlink 逃逸（path_not_allowed）"
                 ),
             },
+            "settle_ms": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 10_000,
+                "description": (
+                    "仅 wait kind=object_absent（M2-B B7）：元素消失需在窗口内累计稳定"
+                    " settle_ms（默认 300）才成立，中途回闪即重置计时；超时回执 state=present"
+                ),
+            },
             "state": {"type": "string"},
             "match": {
                 "type": "string",
