@@ -143,6 +143,27 @@ def provider_admin_replace(
                 raise ProviderAdminError(
                     "provider_not_found", f"Provider 不存在：{provider_id}", status_code=404
                 )
+            # design §7.3：整包替换不得绕过默认模型停用/删除保护（与模型级 PUT/DELETE 同口径）。
+            existing_raw = config[provider_id]
+            existing: dict[str, Any] = existing_raw if isinstance(existing_raw, dict) else {}
+            prev_raw = existing.get("models")
+            prev_models: dict[str, Any] = prev_raw if isinstance(prev_raw, dict) else {}
+            next_raw = raw.get("models")
+            next_models: dict[str, Any] = next_raw if isinstance(next_raw, dict) else {}
+            for model_id, prev in prev_models.items():
+                prev_enabled = bool(prev.get("enabled", True)) if isinstance(prev, dict) else True
+                nxt = next_models.get(model_id)
+                still_enabled = isinstance(nxt, dict) and bool(nxt.get("enabled", True))
+                if (
+                    prev_enabled
+                    and not still_enabled
+                    and _ref_hosts_default(engine, provider_id, model_id)
+                ):
+                    raise ProviderAdminError(
+                        "default_model_cannot_disable",
+                        f"模型 {provider_id}/{model_id} 承载默认模型（配置或运行默认）；请先切换默认模型。",
+                        status_code=409,
+                    )
             # design FR-13/§8.1：整包替换也保留 schema 外的未知字段（含旧模型条目内）。
             config[provider_id] = merge_provider_unknown(config[provider_id], raw)
 
