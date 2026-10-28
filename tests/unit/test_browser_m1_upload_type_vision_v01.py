@@ -718,6 +718,25 @@ def test_operate_type_rejects_2001_chars_at_compile_time(tmp_path: Path) -> None
     assert actuator.calls == []
 
 
+def test_type_schema_does_not_preempt_runtime_length_guard() -> None:
+    """schema 不得声明 maxLength：否则协议层先拦，运行错误码永远不可达。
+
+    反证（2026-10-28）：`type.text` 曾写 maxLength=2000，调用方 2001 字符在协议层
+    就被拒，`type_text_too_long` 测不到。上限的单一真值源在运行时
+    `_TYPE_MAX_TEXT_LENGTH`，schema 只描述策略、不重复设限。
+    """
+    variants = BrowserSemanticOperationTool._SHORT_STEP_VARIANTS
+    type_variants = [
+        v
+        for v in variants
+        if v.get("properties", {}).get("do", {}).get("enum") == ["type"]
+    ]
+    assert len(type_variants) == 1, "type 变体应唯一"
+    text_schema = type_variants[0]["properties"]["text"]
+    assert "maxLength" not in text_schema
+    assert "type_text_too_long" in text_schema.get("description", "")
+
+
 def test_operate_type_empty_text_is_explicit_noop(tmp_path: Path) -> None:
     tool, actuator = _tool_stack(tmp_path)
     result = tool.execute(

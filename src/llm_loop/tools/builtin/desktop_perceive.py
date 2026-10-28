@@ -493,6 +493,13 @@ class DesktopPerceiveTool:
         }
         error_code: DesktopErrorCode | None = None
         guidance: str | None = None
+        if ax_view.available and ax_view.binding == "title_relaxed":
+            # 绑定不是"标题完全相等"，而是"同一位置 + 标题前缀相容"。回执必须显式标注：
+            # 调用方要能区分"确证同一窗口"与"按前缀相容认定"。
+            degraded.append("ax_title_relaxed")
+            ax_payload["binding"] = ax_view.binding
+        elif ax_view.available and ax_view.binding:
+            ax_payload["binding"] = ax_view.binding
         if not ax_view.available:
             failure = str(ax_view.failure or "ax_unavailable")
             degraded.append(failure)

@@ -31,7 +31,9 @@ from llm_loop.desktop.backend_macos import backend_for_platform
 from llm_loop.desktop.macos_ax import (
     bounds_within,
     match_ax_windows,
+    match_ax_windows_ex,
     node_from_element,
+    titles_compatible,
     traverse,
 )
 from llm_loop.desktop.macos_windows import display_scale_for_bounds, window_infos_from_raw
@@ -440,6 +442,55 @@ def test_match_ax_windows_zero_hits_and_bounds_only_fallback():
     # 标题不可用（无屏幕录制授权）→ 退化为纯 bounds 匹配（确定性，不猜前台）
     cg_untitled = _window(title=None, title_available=False, bounds=(0, 38, 1512, 877))
     assert match_ax_windows(cg_untitled, [_cand(0, "任意标题", (1, 39, 1513, 878))]) == [0]
+
+
+# ══ 4b. D4 标题前缀相容（实测反证驱动）═════════════════════════════════════
+# 反证来源：2026-10-28 09:59 活动监视器 pid 71527 —— CG 标题 "活动监视器"，
+# AX 标题 "活动监视器 – 所有进程"，bounds 完全相等；严格相等导致 ax_window_unbound。
+def test_match_ax_windows_ex_prefix_is_relaxed_not_exact():
+    cg = _window(title="活动监视器", title_available=True, bounds=(310, 100, 1064, 640))
+    hits, basis = match_ax_windows_ex(
+        cg, [_cand(0, "活动监视器 – 所有进程", (310, 100, 1064, 640))]
+    )
+    assert hits == [0]
+    assert basis == "title_relaxed"
+
+
+def test_match_ax_windows_ex_reverse_prefix():
+    # CG 标题更长、AX 标题是它的前缀，同样视为同一窗口
+    cg = _window(title="report.md — 编辑", title_available=True, bounds=(0, 0, 800, 600))
+    hits, basis = match_ax_windows_ex(cg, [_cand(0, "report.md", (0, 0, 800, 600))])
+    assert (hits, basis) == ([0], "title_relaxed")
+
+
+def test_match_ax_windows_ex_exact_keeps_strongest_basis():
+    cg = _window(title="主窗口", title_available=True, bounds=(0, 38, 1512, 877))
+    hits, basis = match_ax_windows_ex(cg, [_cand(1, "主窗口", (0, 38, 1512, 877))])
+    assert (hits, basis) == ([1], "title_exact")
+
+
+def test_match_ax_windows_ex_bounds_only_basis_when_title_missing():
+    cg = _window(title=None, title_available=False, bounds=(0, 38, 1512, 877))
+    hits, basis = match_ax_windows_ex(cg, [_cand(0, "任意标题", (1, 39, 1513, 878))])
+    assert (hits, basis) == ([0], "bounds_only")
+
+
+def test_match_ax_windows_ex_prefix_still_ambiguity_when_duplicated():
+    # 前缀相容也必须是"唯一"：两个候选都相容时照旧多命中，由调用方拒绝
+    cg = _window(title="同题", title_available=True, bounds=(0, 0, 800, 600))
+    hits, basis = match_ax_windows_ex(
+        cg, [_cand(0, "同题 – A", (0, 0, 800, 600)), _cand(1, "同题 – B", (1, 1, 800, 600))]
+    )
+    assert hits == [0, 1]
+    assert basis == "title_relaxed"
+
+
+def test_titles_compatible_rejects_unrelated_and_empty():
+    assert titles_compatible("主窗口", "不同标题") is False
+    assert titles_compatible("", "任意") is False
+    assert titles_compatible("任意", None) is False
+    # 归一化：空白差异不影响判定
+    assert titles_compatible("活动  监视器", "活动 监视器 – 所有进程") is True
 
 
 # ══ 5. 隐私与 U14 名单 ════════════════════════════════════════════════════

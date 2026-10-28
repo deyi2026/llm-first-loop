@@ -230,18 +230,67 @@ def bounds_within(a: BoundsPt, b: BoundsPt, tolerance: float = WINDOW_BIND_TOLER
     )
 
 
+def _norm_title(text: str | None) -> str:
+    """标题归一：折叠空白（AX 与 CG 的空格/换行不一致不该影响判定）。"""
+    return " ".join((text or "").split())
+
+
+def titles_compatible(cg_title: str | None, ax_title: str | None) -> bool:
+    """同一窗口的两种标题呈现：相等，或较短一方是较长一方的**前缀**。
+
+    实测反证（2026-10-28 09:59，活动监视器 pid 71527）：CG 标题 ``活动监视器``，
+    AX 标题 ``活动监视器 – 所有进程``，bounds 完全相等（310,100,1064×640）。
+    严格相等把这种窗口判成未绑定（``ax_window_unbound``），而它其实是同一窗口。
+    前缀相容仍以 bounds 差≤2pt 为前提——只承认"同一位置的这一个窗口"，歧义照旧拒绝。
+    """
+    a, b = _norm_title(cg_title), _norm_title(ax_title)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return b.startswith(a) or a.startswith(b)
+
+
+def match_ax_windows_ex(
+    cg_window: WindowInfo,
+    ax_candidates: list[tuple[int, str | None, BoundsPt]],
+    tolerance: float = WINDOW_BIND_TOLERANCE_PT,
+) -> tuple[list[int], str | None]:
+    """D4 绑定匹配（纯函数）。返回 ``(命中索引, 依据)``。
+
+    依据按强度取值：``title_exact`` > ``title_relaxed`` > ``bounds_only``（CG 标题
+    不可用时才退到纯 bounds，沿用原行为）。无命中返回 ``([], None)``；多命中即歧义，
+    由调用方 ``window_ambiguous`` 拒绝——本函数从不"挑一个"。
+    """
+    strong: list[int] = []
+    relaxed: list[int] = []
+    bounds_only: list[int] = []
+    for ax_index, ax_title, ax_bounds in ax_candidates:
+        if not bounds_within(cg_window.bounds_pt, ax_bounds, tolerance):
+            continue
+        if not cg_window.title_available or not cg_window.title:
+            bounds_only.append(ax_index)
+        elif _norm_title(cg_window.title) == _norm_title(ax_title):
+            strong.append(ax_index)
+        elif titles_compatible(cg_window.title, ax_title):
+            relaxed.append(ax_index)
+    for hits, basis in (
+        (strong, "title_exact"),
+        (relaxed, "title_relaxed"),
+        (bounds_only, "bounds_only"),
+    ):
+        if hits:
+            return hits, basis
+    return [], None
+
+
 def match_ax_windows(
     cg_window: WindowInfo,
     ax_candidates: list[tuple[int, str | None, BoundsPt]],
     tolerance: float = WINDOW_BIND_TOLERANCE_PT,
 ) -> list[int]:
-    """D4 绑定匹配（纯函数）。返回命中的 ax 索引列表（空/一/多为三态）。"""
-    hits: list[int] = []
-    for ax_index, ax_title, ax_bounds in ax_candidates:
-        title_mismatch = cg_window.title_available and cg_window.title and ax_title != cg_window.title
-        if not title_mismatch and bounds_within(cg_window.bounds_pt, ax_bounds, tolerance):
-            hits.append(ax_index)
-    return hits
+    """兼容入口：只返回命中的 ax 索引（依据见 ``match_ax_windows_ex``）。"""
+    return match_ax_windows_ex(cg_window, ax_candidates, tolerance)[0]
 
 
 def element_bounds(el: AxElementLike) -> BoundsPt | None:
@@ -301,7 +350,7 @@ def ax_windows_view(
             if bounds is None:
                 continue
             candidates.append((ax_index, _opt_str(el.attr("AXTitle")), bounds))
-        hits = match_ax_windows(window, candidates)
+        hits, basis = match_ax_windows_ex(window, candidates)
         if not hits:
             return AxView(available=False, failure="ax_window_unbound")
         if len(hits) > 1:
@@ -324,6 +373,7 @@ def ax_windows_view(
             root_role=root_role,
             nodes=tuple(nodes),
             truncated=truncated,
+            binding=basis,
         )
         return view
     finally:

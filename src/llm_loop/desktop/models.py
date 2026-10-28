@@ -215,6 +215,9 @@ class AxView:
     nodes: tuple[AxNode, ...] = field(default_factory=tuple)
     truncated: bool = False
     candidates: tuple[AxCandidate, ...] = field(default_factory=tuple)
+    # D4 绑定依据："title_exact"|"title_relaxed"|"bounds_only"（None=未绑定）。
+    # 记录它是因为 title_relaxed 意味着"按前缀相容认定同一窗口"，调用方应看到降级标注。
+    binding: str | None = None
 
 
 def jsonable(obj: Any) -> Any:

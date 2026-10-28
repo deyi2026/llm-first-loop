@@ -888,12 +888,23 @@ class BrowserSemanticOperationTool:
         {
             # M1 B2 (DESIGN-20261027 §5.1): character-level typing through the
             # real input pipeline (Input.insertText); not a this.value write.
+            # 上限不在 schema 里声明：schema 一旦写 maxLength=2000，"超长"就在
+            # 协议层被挡，运行时的 type_text_too_long 永远不可达、也无从实测
+            # （2026-10-28 实测：客户端 schema 先拦，运行错误码验不到）。
+            # 因此单一真值源留在运行时 _TYPE_MAX_TEXT_LENGTH，schema 只描述策略。
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["type"]},
                 "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
-                "text": {"type": "string", "maxLength": 2000},
+                "text": {
+                    "type": "string",
+                    "description": (
+                        "要键入的文本。上限 2000 字符由运行时强制，超出返回 "
+                        "type_text_too_long（不在此处设 maxLength，避免协议层"
+                        "抢先拦截而让运行错误码不可达）。"
+                    ),
+                },
             },
             "required": ["do", "target", "text"],
             "additionalProperties": False,
