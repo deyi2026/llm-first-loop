@@ -15,3 +15,9 @@ created_at: "2026-10-20T11:21:26.849859+08:00"
 updated_at: "2026-10-20T11:21:26.849859+08:00"
 supersedes: [EXPERIENCE-20261013-web-服务重启的-busy-级联与-requester-自锁死结-override-到脚本预检层即, EXPERIENCE-20261014-并行-run-持有-restart-准入屏障且绑定-stale-desired-时的接管姿势, EXPERIENCE-20261006-subject-binding-v1-cue-runtime-toml-canary-gen180]
 ---
+
+> **当前工具对齐（2026-10-28 复核，代码核对）**：结论仍成立——restart 的 busy 与 requester 无关，是上一轮 run 仍持有 run.lock；拿不到 physical 阶段就不要在本 run 内轮询等待。
+>
+> 需要更正两处表述：① 900s 不是"建议等待时长"，而是代码预算常量 `_REQUESTER_EXIT_TIMEOUT_S = 900.0`（src/llm_loop/runtime/service_control.py:133，`_requester_run_active` 在 :2819，超时 detail 仍输出 "~900+idle s+ before physical restart"）；② 验证依据是动作终态（status 的 succeeded/failed + deployment_generation + 新 pid/started_at）加外部观察，而不是凑满某个时长——结束当前 run 后下一次 status 查询就足以判定，无需空转到 900s。
+>
+> 派发时用 service_control.restart 带 `expected_generation=最新 status 观察值`，并保存 action_id 供后续核对；generation 冲突回执即当前事实，按回执 current 重试即可。

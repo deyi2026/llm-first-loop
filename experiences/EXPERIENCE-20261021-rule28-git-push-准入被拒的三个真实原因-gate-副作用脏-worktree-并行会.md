@@ -13,4 +13,6 @@ created_at: "2026-10-21T07:26:45.335096+08:00"
 updated_at: "2026-10-21T07:26:45.335096+08:00"
 ---
 
+> **当前适用性（2026-10-28 复核）**：审查材料上限已是 **2.5M 字符**（超限码 `review_artifact_exceeds_cap`），“单提交 54KB 也超 192KB”不再是有效理由；本例 323KB 的 gate 副作用脏树现在也远在限内。仍然成立、且与上限无关的两条更重要：① 准入资格绑定“当前产物”快照，并行会话写入会让资格失效；② 一次性干净 worktree + PASS 后立即同命令 push 仍是最稳做法（避免竞争，不是为了压体积）；③ ci_gate 重写 reports/ 的副作用仍需在验证 worktree 里 restore。
+
 Rule28 git_push/full_test 准入产物 = _source_snapshot(workdir)：merge-base(HEAD, 本地main)..HEAD 的 committed diff + 未提交 tracked 改动 + untracked 全文（≤40 个文件），合计硬上限 192KB。三个坑：① ci_gate 全量段会用测试重写已跟踪文件（reports/phase3/m0/*.json），在验证 worktree 里留下 ~320KB 脏改动，直接顶爆 git_push 准入；② 主工作区有并行会话持续写入时，准入冻结的产物快照会被对方新改动打陈旧（内存资格对"当前产物"绑定，status 仍显 PASS 但执行层拒绝）；③ 纯净一次性 worktree（git worktree add /tmp/xxx <SHA>）产物≈0 且无人竞争，是发起准入与执行 push 的首选位置。流程：checkout 目标提交→restore . 清副作用→admission start→PASS 后立刻 push（资格一次性）。另：ruff I001 要求注释块+import 前留空行成组。

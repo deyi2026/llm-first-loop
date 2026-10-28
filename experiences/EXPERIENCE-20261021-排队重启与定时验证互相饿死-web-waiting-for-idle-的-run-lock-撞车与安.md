@@ -14,4 +14,6 @@ updated_at: "2026-10-21T08:30:29.478170+08:00"
 supersedes: [EXPERIENCE-20261020-service-control-restart-在-requester-run-内必然排队-须结束当]
 ---
 
+> **当前工具对齐（2026-10-28 复核，代码核对）**：机制仍成立（waiting_for_idle 与定时任务争同一把 run lock、互相续命）。两点补充：① 900s 是代码预算常量 `_REQUESTER_EXIT_TIMEOUT_S = 900.0`（src/llm_loop/runtime/service_control.py:133），不是经验臆造的固定等待；"验证唤醒必须排在窗口闭合之后"仍然必须遵守——排程落在窗口内会饿死 idle。② 判定依据应是动作终态（status 的 succeeded/failed、deployment_generation、detail）加外部观察，而不是机械等满时长；override 仍只在 lsof + active_run_locks 确认没有真实用户对话在飞时使用（对活跃任务强推会连带杀掉进程内在飞的 run）。
+
 2026-10-21 gen298 部署：web 排队重启动作 svc-d5e8956c 在 waiting_for_idle 阶段 900s 超时 failed。直接原因：08:12 定时验证唤醒会话（前次部署为验证而注册的 task_once）在 08:12–08:16:53 持有唯一 run lock，把 idle 窗口饿死。证据：data/runtime/service-control-actions/svc-d5e8956c* 的 detail="target still busy after 900s: confirmed_busy: active run locks: 1"；失败时刻 08:16:53 = 前会话退出 08:01:53 + 900s，说明预算从 requester 退出后起算。修复模式：① 重发 restart(target=web, expected_generation=<desired>)；② 验证唤醒排程必须定在 idle 窗口闭合之后（requester 退出+900s），本例定 09:05；③ override 仅在 lsof+active_run_locks 确认无用户真实对话在飞时使用（排他锁全部由旧 web 进程持有，重启会连带杀掉进程内所有在飞 run）。诊断要点：web 的 busy 判定=零个排他 run.lock flock（src/llm_loop/resources/foreground.py::active_run_locks），锁文件存在≠活跃（墓碑设计）；macOS 下以 -- 开头的路径会让 lsof 当作选项，需用 ./ 前缀相对路径。

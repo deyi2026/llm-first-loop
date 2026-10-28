@@ -7,7 +7,7 @@ source_model: glm/glm-5.3
 source_episode_refs: episode:775390eb-191e-4f71-9b0c-745ac8f072db:237:31929a561ea43d3c9911
 evidence_refs: learning:learn:a53a668d03b4
 created_at: 2026-10-14T09:51:30.661709+08:00
-updated_at: 2026-10-14T09:51:30.661709+08:00
+updated_at: 2026-10-28T08:45:00+08:00
 ---
 ## Trigger
 受控异步两阶段动作（restart/update 类）已受理后进入门禁型状态（waiting_for_requester_exit / waiting_for_idle），需要决定继续轮询、override 还是结束回合时；以及首次对多动作生命周期控制面工具发起变更类调用之前。
@@ -19,7 +19,7 @@ updated_at: 2026-10-14T09:51:30.661709+08:00
 - restart 类指令先做只读 status + git 核对 desired 绑定：若 desired git_head 落后于工作区 HEAD（待生效提交不在其绑定内），必须 publish/update 而非裸 restart，否则重启到的仍是旧代码
 - 对变更类 action 首次调用前先 get_tool_schema：一次取得必填字段（如 code_root）、复合单语义动作（update=publish+restart）与门禁语义，替代猜参数的失败-重试
 - 按 schema 前置条件准备（tracked 树干净则按仓库先例做机械收口提交），单次 update 固化 desired 并派发物理重启，附可审计 reason
-- 门禁=waiting_for_requester_exit 且用户本轮指令已显式授权 → 立即 override 举证推进，不重演上轮干等到 failed 的模式
+- 门禁=waiting_for_requester_exit 且用户本轮指令已显式授权 → 用结构化入口推进：按回执 current 直接重试（generation 冲突回执即当前事实，不询问），或 service_control.restart/update 带 expected_generation 重派；不重演上轮干等到 failed 的模式。`override` 不是常规推进手段：它只在回执证明屏障属陈旧/死锁（owner 已死、无人会释放）时使用；对真实活跃任务强推会抢占并发写者并制造半成品状态
 - 门禁=waiting_for_idle 且命中自阻塞判别 → 停止 run 内 wait/poll；注册到点唤醒（提示词写明期望 generation/git_head 与 succeeded/卡住/failed 三分支报告要求），随即结束本轮回复
 - 唤醒后一次 status 读取终态并按分支向用户报告，不再追加确认性轮询
 
@@ -36,3 +36,4 @@ updated_at: 2026-10-14T09:51:30.661709+08:00
 - updated_at 冻结源于 worker 已死（worker_pid 无对应进程）：需要 release/adopt/重新派发动作，而非等 turn 结束
 - 本会话活动不构成目标服务的负载（如目标是不相关的外部服务）：waiting_for_idle 可能在 run 内自行通过，应再查一次 status 再决定是否结束回合
 - 同步调用、无两阶段门禁的简单重启：内联等待即可，排程唤醒只增加往返
+- 自阻塞门禁但本会话确有在飞的真实任务（并发子代理、未收口的写操作）：此时 override 会抢占活跃 owner、撞坏半成品状态，应等该任务终态或等 reaper 分档回收，不得把 override 当"省时间"手段

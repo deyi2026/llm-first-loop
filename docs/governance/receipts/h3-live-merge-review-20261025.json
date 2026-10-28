@@ -1,0 +1,106 @@
+{
+  "gate": "merge",
+  "reviewer": "/root/h3_merge_review",
+  "review_type": "independent-native-merge-review",
+  "verdict": "PASS",
+  "reviewed_at_unix": 1792943335.1317692,
+  "goal_id": null,
+  "task": "MiniMax H3 code integration for production deployment",
+  "completion_scope": "Code integration and post-merge verification complete. Operational deployment and live H3 generation acceptance remain parent-owned pending work; this receipt is not a deployment-complete claim.",
+  "branch": "feat/minimax-h3-live-20261025",
+  "based_on_main": true,
+  "main_sha_before": "26530f9f224bce9c852d3eef34e7ca5073e408ba",
+  "commits": [
+    "cee7fec38a2cfec3ca478438f0c973d203d622f5"
+  ],
+  "tree": "543e250cda28e8d80899a3af70d31f6c4000a23b",
+  "artifact_sha256": "c5fc16a5e38c99c211b736f5fffc648f878d8d32f5f84e7a10c21f0f81a1e124",
+  "patch_bytes": 90128,
+  "scope_file_count": 21,
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "main_sha_after": "cee7fec38a2cfec3ca478438f0c973d203d622f5",
+  "expected_main_sha_after": "cee7fec38a2cfec3ca478438f0c973d203d622f5",
+  "merge_performed": true,
+  "apply_precondition": "Parent must re-check main == main_sha_before and branch HEAD == reviewed commit immediately before --ff-only. Any code/main drift invalidates this qualification.",
+  "branch_disposition": "kept: preserve deployment and R9 audit data; merged branch source frozen, no unrelated changes",
+  "checklist": [
+    {
+      "item": "evidence",
+      "result": "PASS",
+      "detail": "Current native code receipt PASS P0=0/P1=0, matching exact patch/tree; final original R9 controller finished exit0 with matching patch SHA, raw log independently read. Prior r1/r2 failures preserved separately."
+    },
+    {
+      "item": "hygiene",
+      "result": "PASS",
+      "detail": "Branch full git status --porcelain empty; one atomic guard(r9) commit; no unexpected commits or artifacts. 18 test-generated report files independently verified restored to index hashes."
+    },
+    {
+      "item": "fresh_base",
+      "result": "PASS",
+      "detail": "main==merge-base==26530f9f; main is ancestor of reviewed branch. Main worktree tracked clean, one pre-existing unrelated untracked receipt must be preserved."
+    },
+    {
+      "item": "scope",
+      "result": "PASS",
+      "detail": "H3 runtime/API/Web selection and native video_generation adapter; factory extraction shrinks oversized build_engine. Architecture JSON only classifies new ownership/write surface. Auth fixture accepts its explicit test host to reach unchanged 401 boundary. Production auth, original ci_gate and known_reds files unchanged."
+    },
+    {
+      "item": "tests",
+      "result": "PASS with existing baseline limitations disclosed",
+      "detail": "Focused 73 and final auth/video 47 passed; native registry status success. Web H3 8 passed, typecheck/build logs successful, source binding independently verified. R9 raw parallel result 11291 passed/146 skipped/1 failed; serial 20 passed/1 failed. Only node_rm_sync matches pre-existing registered debt; original red reconciliation PASS. No zero-red claim."
+    },
+    {
+      "item": "post_merge",
+      "result": "PASS",
+      "detail": "Independent read-back main/branch HEAD cee7fec38 and exact frozen tree 543e250c; main affected smoke log 51 passed; frontend build log successful and actual source binding verified. Existing unrelated main untracked receipt preserved; branch clean and retained for costly audit evidence. No merge/deployment/R9 was executed by this reviewer."
+    }
+  ],
+  "focused_gates": [
+    "data/h3-deployment-20261025/revision-focused.log",
+    "data/h3-deployment-20261025/auth-fixture-focused.log",
+    "data/h3-deployment-20261025/registry-probe-result.json",
+    "data/h3-deployment-20261025/web-focused.log",
+    "data/h3-deployment-20261025/web-typecheck.log",
+    "data/h3-deployment-20261025/web-build.log"
+  ],
+  "evidence_refs": {
+    "code": "data/h3-deployment-20261025/native-review.json",
+    "r9_exit": "data/h3-deployment-20261025/r9-exit.json",
+    "r9_raw_log": "data/h3-deployment-20261025/r9-full.log",
+    "commit_proof": "data/h3-deployment-20261025/commit-proof.json",
+    "report_restore": "data/h3-deployment-20261025/r3-generated-report-manifest.json"
+  },
+  "baseline_limitations": [
+    {
+      "item": "node_rm_sync",
+      "detail": "Known-red registry debt remains visible and permitted by unchanged original R9; not introduced or fixed here."
+    },
+    {
+      "item": "Composer.realtime.test.tsx",
+      "detail": "Web full result 527 pass/1 fail. Independent exact production-base source export reproduces same failure, and test/Composer files are byte-identical. H3 did not change these; no skip or baseline widening. This is not a fully green Web suite claim.",
+      "proof": "data/h3-deployment-20261025/baseline-composer-review/result.json"
+    }
+  ],
+  "findings": [],
+  "P0": 0,
+  "P1": 0,
+  "source_changed_by_reviewer": false,
+  "post_merge_verified_at_unix": 1792943819.24384,
+  "post_merge_checks": {
+    "main_sha": "cee7fec38a2cfec3ca478438f0c973d203d622f5",
+    "tree": "543e250cda28e8d80899a3af70d31f6c4000a23b",
+    "branch_head": "cee7fec38a2cfec3ca478438f0c973d203d622f5",
+    "frozen_patch_unchanged": true,
+    "main_smoke": "51 passed in 6.43s",
+    "main_smoke_log": "data/h3-deployment-20261025/main-smoke.log",
+    "web_build": "PASS",
+    "web_source_binding": "1f37e0165a204bcd",
+    "actual_binding_verification": "PASS",
+    "main_merge_result": "data/h3-deployment-20261025/main-merge-result.json",
+    "main_tracked_clean": true,
+    "branch_full_status_clean": true,
+    "preexisting_main_untracked_receipt_preserved": true,
+    "live_deployment_qualified_by_this_review": false
+  }
+}
