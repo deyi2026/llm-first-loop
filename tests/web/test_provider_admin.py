@@ -623,6 +623,40 @@ def test_replace_provider_accepts_ui_projection_without_runtime_facts(
     assert catalog["alpha/m1"]["provider_name"] == "Alpha"
 
 
+def test_replace_provider_cannot_disable_default_model(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§7.3: 整包 PUT 也不得停用承载默认的模型（与模型级 PUT/DELETE 同口径）."""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("LLM_MODEL", "alpha/m1")
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _ui_projection_provider()},
+    )
+    assert created.status_code == 201, created.text
+    version = created.json()["config_version"]
+
+    body = _ui_projection_provider()
+    second = dict(body["models"][0])
+    second.update({"id": "m2", "name": "Alpha M2", "note": ""})
+    body["models"].append(second)
+    body["models"][0]["enabled"] = False
+    # 文档自身先保持一致（Provider 默认改指 m2），否则 schema 层先以 422 拒绝
+    # “启用 Provider 的 default_model 指向停用模型”，路由层 409 守卫根本不可达。
+    body["default_model"] = "m2"
+    blocked = client.put(
+        "/api/v1/providers/alpha", json={"expected_version": version, "provider": body}
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["error"] == "default_model_cannot_disable"
+
+    snap = client.get("/api/v1/providers").json()
+    assert snap["config_version"] == version
+    assert snap["providers"][0]["models"][0]["enabled"] is True
+
+
 def test_replace_provider_rejects_runtime_facts_with_field_path(
     build_test_engine, tmp_path, monkeypatch
 ) -> None:
