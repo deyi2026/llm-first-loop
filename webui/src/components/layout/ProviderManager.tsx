@@ -18,6 +18,7 @@ import {
   testProviderConnection,
   toModelConfig,
   toProviderConfig,
+  updateProviderCredential,
   type DiscoveredModel,
   type ProviderAdminFact,
   type ProviderAdminSnapshot,
@@ -383,7 +384,11 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
           : replaceProvider(snapshot.config_version, editor.draft),
       T.saved
     );
-    if (ok) setEditor(null);
+    if (!ok) return;
+    if (editor.mode === "edit" && editor.apiKey.trim() && editor.providerId) {
+      await runMutation("credential", () => updateProviderCredential(editor.providerId as string, editor.apiKey), T.saved);
+    }
+    setEditor(null);
   };
 
   const saveModel = async () => {
