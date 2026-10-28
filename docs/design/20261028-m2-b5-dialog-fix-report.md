@@ -102,7 +102,7 @@ plain 页 `do=dialog accept`：action_receipt `status=failed`、`retry.reason="d
 
 ## 7. 本 delta 包含的全部变更（相对生产 main `e10d08ac3`）
 
-审查口径是 `main..HEAD` 的 5 个提交，本文档前 6 节只覆盖 B5/R5 两条主线；其余同批变更在此登记，避免"报告与代码不一致"：
+审查口径是 `main..HEAD` 的全部提交（5 个内容提交 + 文档对齐/基线登记 2 个流程提交），本文档前 6 节只覆盖 B5/R5 两条主线；其余同批变更在此登记，避免"报告与代码不一致"：
 
 | commit | 内容 | 状态 |
 |---|---|---|
