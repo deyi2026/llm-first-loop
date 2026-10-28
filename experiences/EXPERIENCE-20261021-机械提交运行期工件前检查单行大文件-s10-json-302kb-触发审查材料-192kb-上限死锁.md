@@ -1,6 +1,6 @@
 ---
-title: 机械提交运行期工件前检查单行大文件（S10.json 302KB 触发审查材料 192KB 上限死锁）
-scenario: 发布前置树收口：publish 要求 tracked 树干净，需把运行期工件（reports/*.json 时间戳刷新、experiences usage 计数）机械提交；随后 push 走 RULE-AI-28 审查。
+title: 机械提交运行期工件前检查单行大文件（历史上限 192KB 时代的 302KB 死锁；现行 2.5M 字符不触发）
+scenario: 【历史现场，2026-10-21 当时上限 192KB；现行 2.5M 字符下 302KB 只占约 12%，不再构成死锁】发布前置树收口：publish 要求 tracked 树干净，需把运行期工件（reports/*.json 时间戳刷新、experiences usage 计数）机械提交；随后 push 走 RULE-AI-28 审查。
 root_cause: ""
 solution: 机械提交前先筛单行大文件（JSON 报告单行 302KB 类）；变更仅为运行期刷新时，restore 到已推送版本使净变化归零并单独 commit revert，材料恢复可审体量；实质内容变化的大单行文件当前无合规推送通道，提演进建议。
 evidence: 2026-10-21 回执链：review_admission start 拒绝 material=339158B cap=192000B（largest=S10.json 302187B）；恢复 S10.json 净变化归零（commit 5334efcad）后同口径材料约 37KB，review PASS（child_id=subagent_d692315b4370，candidate c4ac2fa…），push 成功 f68fcb0d2..5334efcad；publish 拒绝回执 tracked_worktree_dirty。
@@ -12,6 +12,8 @@ verification_state: verified
 created_at: "2026-10-21T19:29:15.195044+08:00"
 updated_at: "2026-10-21T19:29:15.195044+08:00"
 ---
+
+> **当前适用性（2026-10-28 复核）**：审查材料上限已是 **2.5M 字符**（超限码 `review_artifact_exceeds_cap`）。本卡“302KB 单行文件触发上限死锁、无合规推送通道”的结论**已不成立**：302KB 约占当前上限 12%，不应为过门 revert 一个正常刷新的报告文件，EVO-20261021-2f22aae5 的前提也已被上限调整消解。仍成立的部分：材料按 committed delta 计，单行大文件的一次字段刷新会贡献整行体积——只有逼近 2.5M 时才需要下面的处置。
 
 现象：机械提交运行期工件（publish 前置树收口）后，review_admission(git_push) 拒绝：review_artifact_exceeds_192kb，largest 指向 committed:reports/phase3/m0/S10.json=302187B。
 

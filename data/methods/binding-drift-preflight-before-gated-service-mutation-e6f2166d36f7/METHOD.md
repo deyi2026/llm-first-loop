@@ -1,7 +1,7 @@
 ---
 method_id: binding-drift-preflight-before-gated-service-mutation-e6f2166d36f7
 name: binding-drift-preflight-before-gated-service-mutation
-description: 对共享服务的变更操作（restart/publish 类）先做绑定漂移预检，再修模型侧前置，最后停在 operator 闸门：并行取部署记录与进程版本，若部署记录绑定的代码身份 ≠ 工作区当前 HEAD，直接执行必被 fail-closed；此时优先读并行会话在 dirty 增量中留下的、与该操作同名的教训记录，得到围栏机制与修复链。随后逐项收敛模型侧前置：先跑测试再补提交被已提交代码 import 的未跟踪模块；grep 验证 gitignore 的构建产物是否含新功能（防『后端新前端旧』的静默半上线），陈旧则重建并复验；从当前源码而非旧记录核对 operator-only 命令参数，最后向用户交付唯一一条命令与预期结果（新代数、绑定 HEAD、产物指纹），不反复试探被围栏拦截的操作。
+description: 对共享服务的变更操作（restart/publish 类）先做绑定漂移预检，再修模型侧前置，然后按当前 schema 自行执行（仅回执拒绝时交 operator）：并行取部署记录与进程版本，若部署记录绑定的代码身份 ≠ 工作区当前 HEAD，直接执行必被 fail-closed；此时优先读并行会话在 dirty 增量中留下的、与该操作同名的教训记录，得到围栏机制与修复链。随后逐项收敛模型侧前置：先跑测试再补提交被已提交代码 import 的未跟踪模块；grep 验证 gitignore 的构建产物是否含新功能（防『后端新前端旧』的静默半上线），陈旧则重建并复验；从当前源码而非旧记录核对 operator-only 命令参数，最后按当前 schema 自行执行（预期结果=新代数、绑定 HEAD、产物指纹），仅在回执明确拒绝时把同一条命令交 operator，不反复试探被围栏拦截的操作。**2026-10-28 复核**：service_control 已含 publish/update，不必再停在 operator 闸门；RULE-AI-28 三闸只覆盖 git_push/full_test/article_publish，纯 restart 已发布代码不需 review_admission 与完整 R9。
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:16fe103b-bd92-4cdd-984a-f6cd5b45235c:1256:b06ca686224c69e0d4e1
@@ -20,11 +20,11 @@ updated_at: 2026-09-20T17:26:06.259131+00:00
 - 发现绑定漂移 ⇒ 放弃直接 restart；扫描 dirty 增量中与本操作相关的教训记录并读取；未知量：围栏与修复链是什么？
 - 按记录逐项修模型侧前置：跑测试后补提交被已提交代码引用的未跟踪模块；grep 构建产物验证新功能是否在产物内，不在则重建并复验。
 - 从当前源码核对 operator-only 命令的准确参数（不照抄记录里的旧命令），可用一次轻量探测确认围栏仍活跃。
-- 向用户交付唯一一条经源码核实的命令 + 预期结果（新代数、绑定 HEAD、产物指纹），停止于用户闸门，待回报后再执行 restart 与核验。
+- 用 service_control.publish 自行执行（带 expected_generation 与产物绑定），预期结果=新代数、绑定 HEAD、产物指纹；仅在回执拒绝时把同一条命令交用户/operator，然后执行 restart 与核验。
 
 ## Stop conditions
 - 模型侧前置全部有回执变绿：测试通过、tracked-clean、新功能字符串已出现在构建产物中，且 operator 命令已按当前源码核实并交付。
-- 用户回报发布完成后才进入 restart 与结果核验；此前不重复试探已知会被围栏拦截的操作。
+- 发布终态 succeeded 且绑定核对通过后立即 restart 与核验；不把"等用户回报"当默认停点，也不重复试探已知会被围栏拦截的操作。
 
 ## Verification
 - restart 后出现新 pid、服务 git_head 等于发布绑定的 HEAD、启动时间为当下、新功能路由/面板可达。
