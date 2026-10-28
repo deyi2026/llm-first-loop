@@ -245,6 +245,8 @@ describe("provider admin contract（§9.3）", () => {
     context: 8192,
     cost_tier: "mid",
     reasoning_capable: false,
+    reasoning: false,
+    long_context: false,
     reasoning_control: "unknown",
     wire_protocol: "openai",
     send_tool_choice: true,
@@ -468,6 +470,25 @@ describe("provider admin contract（§9.3）", () => {
     const put = calls.find((call) => call.url.includes("/credential"))!;
     expect(put.body).toEqual({ api_key: "" });
     confirmSpy.mockRestore();
+  });
+
+  it("模型保存往返保留 reasoning 与 long_context（不静默清零）", async () => {
+    const alpha = provider("alpha", [{ ...model("m1"), reasoning: true, long_context: true }, model("m2")], "m1");
+    const calls = stubFetch(
+      (call) => (call.url === "/api/v1/providers/alpha/models/m1" && call.method === "PUT" ? json(snapshot()) : undefined),
+      snapshot({ providers: [alpha, provider("beta", [model("b1")], "b1")] })
+    );
+
+    render(<ProviderManager />);
+    await screen.findByTestId("provider-alpha");
+    fireEvent.click(screen.getByRole("button", { name: "编辑模型 m1" }));
+    const form = screen.getByRole("region", { name: "编辑" });
+    fireEvent.click(within(form).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
+    const payload = calls.find((call) => call.method === "PUT")!.body.model as Record<string, unknown>;
+    expect(payload.reasoning).toBe(true);
+    expect(payload.long_context).toBe(true);
   });
 
   it("发现模型后勾选添加：只写被选中的模型，不自动保存其它字段", async () => {

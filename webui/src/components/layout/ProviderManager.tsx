@@ -48,6 +48,8 @@ function blankModel(): ProviderModelConfigInput {
     multimodal: false,
     wire_protocol: "openai",
     thinking: false,
+    reasoning: false,
+    long_context: false,
     reasoning_capable: false,
     reasoning_control: "unknown",
     reasoning_efforts: [],
@@ -132,6 +134,22 @@ function ModelFields({ draft, isNew, onChange }: ModelFormProps) {
           value={text(draft.max_tokens)}
           onChange={(event) => onChange({ ...draft, max_tokens: num(event.target.value) })}
         />
+      </label>
+      <label className="v2-provider-check">
+        <input
+          type="checkbox"
+          checked={Boolean(draft.long_context)}
+          onChange={(event) => onChange({ ...draft, long_context: event.target.checked })}
+        />
+        {T.longContext}
+      </label>
+      <label className="v2-provider-check">
+        <input
+          type="checkbox"
+          checked={Boolean(draft.reasoning)}
+          onChange={(event) => onChange({ ...draft, reasoning: event.target.checked })}
+        />
+        {T.reasoningField}
       </label>
       <label>
         {T.reasoningEfforts}

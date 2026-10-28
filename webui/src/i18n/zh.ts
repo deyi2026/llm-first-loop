@@ -236,6 +236,8 @@ export const providerAdminZh = {
   clearKeyConfirm: "清除 {provider} 已保存的 API Key？清除后需重新配置凭证才能调用。",
   cleared: "已清除保存的 API Key",
   runtimeSynced: "本地运行时已同步到 Provider 配置。",
+  longContext: "长上下文",
+  reasoningField: "reasoning 字段",
   addModel: "+ 添加模型",
   save: "保存",
   saved: "已保存",

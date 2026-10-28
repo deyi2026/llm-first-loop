@@ -1219,6 +1219,8 @@ export interface ProviderModelAdminFact {
   max_tokens?: number | null;
   cost_tier?: string;
   thinking?: boolean;
+  reasoning?: boolean;
+  long_context?: boolean;
   reasoning_capable?: boolean;
   reasoning_control?: string;
   input_modalities?: ModelInputModality[];
@@ -1296,6 +1298,8 @@ export interface ProviderModelConfigInput {
   multimodal?: boolean;
   wire_protocol?: string;
   thinking?: boolean;
+  reasoning?: boolean;
+  long_context?: boolean;
   reasoning_capable?: boolean;
   reasoning_control?: string;
   reasoning_efforts?: string[];
@@ -1349,6 +1353,8 @@ export function toModelConfig(model: ProviderModelAdminFact): ProviderModelConfi
     multimodal: modalities.includes("image"),
     wire_protocol: model.wire_protocol ?? "openai",
     thinking: Boolean(model.thinking),
+    reasoning: Boolean(model.reasoning),
+    long_context: Boolean(model.long_context),
     reasoning_capable: Boolean(model.reasoning_capable),
     reasoning_control: model.reasoning_control ?? "unknown",
     reasoning_efforts: model.reasoning_efforts ?? [],
