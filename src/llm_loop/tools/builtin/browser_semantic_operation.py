@@ -1393,7 +1393,9 @@ class BrowserSemanticOperationTool:
         except MultiPageAmbiguityError:
             # binding decision - never auto-resolved from a stale world
             raise
-        except Exception:
+        except RuntimeError as exc:
+            if "capture_channel_degraded" not in str(exc):
+                raise
             # B5 fix (R2 end-to-end, TASK-009 2026-10-28 §6): a synchronous
             # JS dialog freezes the renderer - a fresh capture can only burn
             # its full recv timeout, which used to make browser_operate

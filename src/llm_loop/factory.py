@@ -602,6 +602,17 @@ def _register_desktop_perceive(register_basic: Any, settings: Settings) -> None:
     )
 
 
+def _attach_dialog_probes(perceive_tool: Any, operation_tool: Any, actuator: Any) -> None:
+    """R5：把只读 dialog 探针接到观察面与门控面（adapter 侧经构造参数单独注入）。
+
+    探针只读会话已知状态（不产生 CDP mutation）；dialog 打开时让 perceive/operate
+    免于支付注定失败的 20s 捕获超时。
+    """
+    probe = actuator.dialog_state
+    perceive_tool.attach_dialog_state_probe(probe)
+    operation_tool.attach_dialog_state_probe(probe)
+
+
 def build_engine(
     settings: Settings,
     *,
@@ -1476,7 +1487,6 @@ def build_engine(
                 )
                 _browser_page_controller.attach_mutation_host(_browser_actuator)
                 _browser_perceive_tool.attach_download_state_probe(_browser_actuator.download_state)  # M2-A B6
-                _browser_perceive_tool.attach_dialog_state_probe(_browser_actuator.dialog_state)  # R5
                 # The review freezes real page text from the same read-only
                 # capture backend; no model-supplied JSON can mint a PASS.
                 _host_review.attach_browser_capture(_browser_host.capture)
@@ -1485,8 +1495,6 @@ def build_engine(
                     receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
                     capture_backend=_browser_host,
                     actuator=_browser_actuator,
-                    # R5: read-only dialog probe - dialog-verb pre-observation
-                    # skips the doomed full capture while a modal is open.
                     dialog_state_probe=_browser_actuator.dialog_state,
                     # FR-1 local semantic guard (DESIGN-20261007): additive
                     # pre-dispatch gate. Collector is the host-bounded
@@ -1516,7 +1524,7 @@ def build_engine(
                     session_id_getter=lambda: current_session_id_ctx.get(),
                     page_controller=_browser_page_controller,
                 )
-                _browser_semantic_operation_tool.attach_dialog_state_probe(_browser_actuator.dialog_state)  # R5
+                _attach_dialog_probes(_browser_perceive_tool, _browser_semantic_operation_tool, _browser_actuator)
                 _register_basic("browser_operate", _browser_semantic_operation_tool)
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())

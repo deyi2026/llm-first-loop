@@ -352,10 +352,9 @@ class _MutationCdpSession:
                             early_return_on_dialog
                             and message.get("method") == "Page.javascriptDialogOpening"
                         ):
+                            opening_params = message.get("params")
                             raise _DialogOpeningInterruptedError(
-                                message.get("params")
-                                if isinstance(message.get("params"), dict)
-                                else {}
+                                opening_params if isinstance(opening_params, dict) else {}
                             )
                     continue
                 if "error" in message:
@@ -895,35 +894,53 @@ class CdpBrowserMutationActuator:
             completeness_reasons=("boundary_detector_non_exhaustive",),
         )
 
+    @staticmethod
+    def _dialog_accept_flag(args: dict[str, Any]) -> bool:
+        """dialog 动作只接受 accept|dismiss；其它值在 actuator 边界拒绝（不猜意图）。"""
+        action = str(args.get("action") or "").strip()
+        if action not in {"accept", "dismiss"}:
+            raise _ActuatorContractError("invalid_argument: dialog action must be accept|dismiss")
+        return action == "accept"
+
+    def _blind_dialog_self_heal(self, args: dict[str, Any]) -> bool:
+        """M2-A B5 + R3：dialog 状态缺失时的一次性盲 handle 自愈。
+
+        曾硬拒绝（gate False），导致错过 javascriptDialogOpening 后 dialog 永久锁死。
+        自愈：一次 drain；仍无状态就盲 handle 一次——Chrome 的
+        "No dialog is showing" 映射回同一 dialog_not_open 契约错误，成功即表示
+        请求的动作本身已完成。活跃会话上只多一条 handle 命令。
+        """
+        accept = self._dialog_accept_flag(args)
+        if self._dialog_open:
+            return False
+        session = self._ensure_session()
+        session.drain()
+        self._absorb_state_events(session.pop_events())
+        if self._dialog_open:
+            return False
+        try:
+            session.send("Page.handleJavaScriptDialog", {"accept": accept})
+        except RuntimeError as exc:
+            if "No dialog is showing" in str(exc):
+                raise _ActuatorContractError("dialog_not_open") from exc
+            raise
+        self._dialog_detail = None
+        return True
+
+    def _dispatch_dialog(
+        self, session: Any, args: dict[str, Any], before_page_ids: set[str], blind_handled: bool
+    ) -> BrowserDispatchResult:
+        """M2-A B5：状态门已过（或 R3 已盲 handle）时处理阻塞 dialog 并清状态。"""
+        if not blind_handled:
+            session.send("Page.handleJavaScriptDialog", {"accept": self._dialog_accept_flag(args)})
+        self._dialog_open = False
+        self._dialog_detail = None
+        return self._acknowledged(session, before_page_ids)
+
     def _dispatch_locked(
         self, *, verb: str, physical_target: str | None, args: dict[str, Any]
     ) -> BrowserDispatchResult:
-        # M2-A B5 + R3 (TASK-009 2026-10-28 §6): the dialog verb used to
-        # hard-reject on a False gate, which permanently locked it whenever the
-        # javascriptDialogOpening event was missed (page-initiated dialog that
-        # fired before this session enabled Page.enable, state lost across a
-        # drop, ...). Self-heal instead: one drain pass; if still no state,
-        # ONE blind handle attempt - Chrome's "No dialog is showing" error maps
-        # back to the same deterministic dialog_not_open contract error, and a
-        # success means the requested action itself completed. On a live
-        # session the only CDP command this adds is the handle itself.
-        dialog_blind_handled = False
-        if verb == "dialog" and not self._dialog_open:
-            session = self._ensure_session()
-            session.drain()
-            self._absorb_state_events(session.pop_events())
-            if not self._dialog_open:
-                try:
-                    session.send(
-                        "Page.handleJavaScriptDialog",
-                        {"accept": str(args.get("action") or "") == "accept"},
-                    )
-                except RuntimeError as exc:
-                    if "No dialog is showing" in str(exc):
-                        raise _ActuatorContractError("dialog_not_open") from exc
-                    raise
-                dialog_blind_handled = True
-                self._dialog_detail = None
+        dialog_blind_handled = self._blind_dialog_self_heal(args) if verb == "dialog" else False
         session = self._ensure_session()
         before_page_ids = self._page_target_ids()
         if verb == "navigate":
@@ -957,17 +974,7 @@ class CdpBrowserMutationActuator:
             return self._acknowledged(session, before_page_ids)
 
         if verb == "dialog":
-            # M2-A B5: state gate already passed above (or the R3 self-heal
-            # already blind-handled the dialog); handle the blocking dialog
-            # and clear the state (the page script then continues).
-            if not dialog_blind_handled:
-                session.send(
-                    "Page.handleJavaScriptDialog",
-                    {"accept": str(args.get("action") or "") == "accept"},
-                )
-            self._dialog_open = False
-            self._dialog_detail = None
-            return self._acknowledged(session, before_page_ids)
+            return self._dispatch_dialog(session, args, before_page_ids, dialog_blind_handled)
 
         object_id = self._object_id(session, physical_target)
         if verb == "click":

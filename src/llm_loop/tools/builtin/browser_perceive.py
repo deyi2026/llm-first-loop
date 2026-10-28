@@ -571,32 +571,31 @@ class BrowserPerceiveTool:
             )
         return None
 
-    def execute(self, **kwargs: Any) -> ToolResult:
-        action = str(kwargs.get("action") or "").strip()
-        if (
-            action == "wait"
-            and "condition" not in kwargs
-            and str(kwargs.get("kind") or "").strip() == "page_url"
-            and "expected_url" not in kwargs
-            and "url" in kwargs
-        ):
-            # Hidden compatibility for historical/internal direct callers.  The
-            # provider contract exposes only expected_url so destination navigation
-            # and observed-URL waiting no longer share the same argument role.
+    @staticmethod
+    def _accept_legacy_wait_aliases(action: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """历史/内部直调兼容：url→expected_url、object_ref→grounding_ref。
+
+        provider 契约只暴露 expected_url / grounding_ref，导航目标与已观察 URL 不再
+        共用同一参数角色；两个别名互斥（kind 不同），按 kind 分派。
+        """
+        if action != "wait" or "condition" in kwargs:
+            return kwargs
+        kind = str(kwargs.get("kind") or "").strip()
+        if kind == "page_url" and "expected_url" not in kwargs and "url" in kwargs:
             kwargs = dict(kwargs)
             kwargs["expected_url"] = kwargs.pop("url")
         if (
-            action == "wait"
-            and "condition" not in kwargs
-            and str(kwargs.get("kind") or "").strip() in {"object_state", "object_text"}
+            kind in {"object_state", "object_text"}
             and "grounding_ref" not in kwargs
             and "object_ref" in kwargs
         ):
-            # Hidden compatibility for historical/internal direct callers.  The
-            # provider contract exposes only grounding_ref so the model sees the
-            # same exact-ref name on snapshot objects, hydrate, and object waits.
             kwargs = dict(kwargs)
             kwargs["grounding_ref"] = kwargs.pop("object_ref")
+        return kwargs
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action") or "").strip()
+        kwargs = self._accept_legacy_wait_aliases(action, kwargs)
         session_id = str(self._session_id_getter() or "").strip()
         if not session_id:
             return ToolResult(
@@ -907,12 +906,8 @@ class BrowserPerceiveTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
-            # R5：第一次 capture 之前的只读 dialog 探测。同步 JS dialog 冻结
-            # renderer，capture 只能烧满 recv 超时（实测 ~20s）后抛错；探针
-            # 确认 dialog 打开 ⇒ <500ms 内返回显式 blocked_by_dialog 回执，
-            # 零 capture、零 CDP mutation。探针未挂载/异常 ⇒ 原路径不变。
-            blocked_state = self._dialog_block_facts()
-            if blocked_state is not None:
+            # R5：capture 前的只读 dialog 探测（探针未挂载/异常 ⇒ 原路径不变）。
+            if (blocked_state := self._dialog_block_facts()) is not None:
                 return self._dialog_blocked_snapshot_result(blocked_state, vision_request)
             try:
                 raw = self._backend.capture()

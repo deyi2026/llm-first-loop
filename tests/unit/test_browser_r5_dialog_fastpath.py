@@ -683,3 +683,55 @@ def test_regression_navigate_light_mode_fallback_unchanged(tmp_path: Path) -> No
     assert result["pre_observation_mode"] == "lightweight_probe"
     assert backend.calls >= 1
     assert [call["verb"] for call in actuator.calls] == ["navigate"]
+
+
+def test_dialog_action_enum_rejected_before_any_cdp_command() -> None:
+    """REVISE P2-3：actuator 边界只接受 accept|dismiss，其它值零 CDP 拒绝。"""
+    ws = _QuietWs()
+    actuator = _actuator(ws)
+    with pytest.raises(RuntimeError, match="invalid_argument"):
+        actuator.dispatch(verb="dialog", physical_target=None, args={"action": "maybe"})
+    assert ws.requests == []
+    assert actuator.dialog_state()["open"] is False
+
+
+def test_ground_page_non_capture_failure_propagates_instead_of_stale_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REVISE P2-1：回退只对 capture_channel_degraded 生效，其它异常必须透传。"""
+    backend = _FrozenUntilHandledBackend()
+    actuator = _DialogHandlingActuator(backend)
+    perception, _, tool = _operate_stack(tmp_path, backend, actuator, lambda: _DIALOG_CLOSED)
+    perception.snapshot("s1", FIXTURES["base"])  # a prior world exists to fall back to
+
+    def _boom(_session_id: str) -> dict[str, Any]:
+        raise RuntimeError("perception boom")
+
+    monkeypatch.setattr(tool, "_snapshot", _boom)
+    with pytest.raises(RuntimeError, match="perception boom"):
+        tool._ground_page("s1", {"kind": "page"})
+
+
+def test_attach_dialog_probes_wires_both_tools() -> None:
+    """REVISE P2-4：工厂接线单点必须同时挂到观察面与门控面。"""
+    from llm_loop.factory import _attach_dialog_probes
+
+    class _Sink:
+        def __init__(self) -> None:
+            self.probe: Any = None
+
+        def attach_dialog_state_probe(self, probe: Any) -> None:
+            self.probe = probe
+
+    class _Actuator:
+        def dialog_state(self) -> dict[str, Any]:
+            return _DIALOG_CLOSED
+
+    actuator = _Actuator()
+    perceive, operate = _Sink(), _Sink()
+    _attach_dialog_probes(perceive, operate, actuator)
+    assert perceive.probe is not None and operate.probe is not None
+    assert perceive.probe() == _DIALOG_CLOSED
+    assert operate.probe.__self__ is actuator
+
+

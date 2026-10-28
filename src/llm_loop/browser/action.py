@@ -17,7 +17,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
@@ -587,6 +587,17 @@ class BrowserActionReceiptStore:
         return doc
 
 
+class _BeforeObservation(NamedTuple):
+    """派发前观察结果：FR-1 门判定 + capture/light-mode 证据。"""
+
+    guard_verdict: Any
+    before_raw: dict[str, Any]
+    before_version: str
+    before_ref: str | None
+    light_mode: bool
+    rejected: Any
+
+
 class BrowserActionAdapter:
     """Mechanical Browser mutation guard + single-dispatch receipt orchestrator."""
 
@@ -807,6 +818,98 @@ class BrowserActionAdapter:
                 "reason": None,
             },
         }
+
+    def _dialog_open_confirmed(self, action: dict[str, Any]) -> bool:
+        """R5：只读 dialog 探针是否确认 dialog 已打开（未接线/异常 ⇒ False ⇒ 原路径）。"""
+        if str(action["verb"]) != "dialog" or not callable(self.dialog_state_probe):
+            return False
+        try:
+            state = self.dialog_state_probe()
+        except Exception:  # noqa: BLE001 - probe failure falls through to capture
+            return False
+        return isinstance(state, dict) and state.get("open") is True
+
+    def _observe_before_dispatch(
+        self, session_id: str, action: dict[str, Any]
+    ) -> _BeforeObservation:
+        """FR-1 语义门 + 派发前观察（全量 capture，或 dialog/导航的 light-mode 探测）。
+
+        R5 快路径：探针确认 dialog 已打开且 verb=dialog 时，全量 capture 结构性不可行
+        （同步 modal 冻结 renderer，capture 只能烧满 recv 超时后降级），直接进入既有
+        light-mode 语义——browser-process 的 page-target 探测仍是机械存在门，
+        before_version 取模型声明版本，探测失败照旧拒绝（不做静默降级）。
+        探针未接线（默认）或异常 ⇒ 回落到原路径，与 R5 之前逐字节一致。
+
+        拒绝时回执放进 `rejected`，由调用方原样返回。
+        """
+        guard_verdict = self._run_guard(session_id, action)
+        if isinstance(guard_verdict, dict) and guard_verdict.get("verdict") == "reject":
+            return _BeforeObservation(
+                guard_verdict, {}, "", None, False,
+                self._append_rejected(
+                    session_id, action,
+                    str(guard_verdict.get("reason") or "guard_rejected"),
+                    guard=guard_verdict,
+                ),
+            )
+        if self._dialog_open_confirmed(action):
+            probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
+            if not callable(probe_page_target):
+                return _BeforeObservation(
+                    None, {}, "", None, False,
+                    self._append_rejected(
+                        session_id, action,
+                        "pre_dispatch_observation_failed:dialog_open_fast_path"
+                        "; lightweight_probe_unavailable",
+                    ),
+                )
+            try:
+                probe_page_target()
+            except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
+                return _BeforeObservation(
+                    None, {}, "", None, False,
+                    self._append_rejected(
+                        session_id, action,
+                        "pre_dispatch_observation_failed:dialog_open_fast_path"
+                        f"; lightweight_probe_failed:{type(probe_exc).__name__}",
+                    ),
+                )
+            return _BeforeObservation(
+                None, {}, str(action["expected_version"]), None, True, None,
+            )
+        try:
+            before_raw = self.capture_backend.capture()
+            before_result = self.perception.snapshot(session_id, before_raw, projection_limit=1)
+            before_snapshot = dict(before_result.get("snapshot") or {})
+            before_version = str(before_snapshot.get("snapshot_id") or "")
+            before_ref = str(before_snapshot.get("objects_ref") or "") or None
+        except Exception as exc:  # noqa: BLE001 - observer failure is a mechanical rejection fact.
+            # EVO-20260918-4766011b + M2-A B5：navigate/dialog 是资源级转换动词，前置只需
+            # page target 存在；全量观察结构性失败时退回轻量探测，而不是砍掉唯一逃生动词。
+            probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
+            if str(action["verb"]) in {"navigate", "dialog"} and callable(probe_page_target):
+                try:
+                    probe_page_target()
+                except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
+                    return _BeforeObservation(
+                        None, {}, "", None, False,
+                        self._append_rejected(
+                            session_id, action,
+                            f"pre_dispatch_observation_failed:{type(exc).__name__}"
+                            f"; lightweight_probe_failed:{type(probe_exc).__name__}",
+                        ),
+                    )
+                return _BeforeObservation(
+                    None, {}, str(action["expected_version"]), None, True, None,
+                )
+            return _BeforeObservation(
+                None, {}, "", None, False,
+                self._append_rejected(
+                    session_id, action,
+                    f"pre_dispatch_observation_failed:{type(exc).__name__}",
+                ),
+            )
+        return _BeforeObservation(guard_verdict, before_raw, before_version, before_ref, False, None)
 
     def _append_rejected(
         self,
@@ -1065,101 +1168,14 @@ class BrowserActionAdapter:
         if not self.receipt_store.reserve(session_id, action_id, fingerprint):
             return self._append_rejected(session_id, action, "duplicate_action_id")
 
-        # FR-1: run the local semantic guard BEFORE the full before-capture so
-        # a guard rejection never pays the capture cost, and so the verdict is
-        # available to adjudicate a later version mismatch.
-        guard_verdict = self._run_guard(session_id, action)
-        if isinstance(guard_verdict, dict) and guard_verdict.get("verdict") == "reject":
-            return self._append_rejected(
-                session_id,
-                action,
-                str(guard_verdict.get("reason") or "guard_rejected"),
-                guard=guard_verdict,
-            )
-
-        light_mode = False
-        # R5 fast path: when the read-only dialog probe confirms a blocking JS
-        # dialog is open, a full pre-capture is structurally impossible (the
-        # synchronous modal holds the renderer; the capture can only burn its
-        # recv timeout before degrading). For verb=dialog - the one verb that
-        # frees the page - skip the doomed capture entirely and enter the
-        # existing light-mode semantics: the browser-process page-target probe
-        # stays the mechanical existence gate, before_version is the
-        # model-declared version, and a probe failure still rejects (no
-        # silent degradation). Probe unwired (default) or probe error =>
-        # fall through to the original path below, byte-identical to pre-R5.
-        _dialog_open_confirmed = False
-        if str(action["verb"]) == "dialog" and callable(self.dialog_state_probe):
-            try:
-                _probe_state = self.dialog_state_probe()
-            except Exception:  # noqa: BLE001 - probe failure falls through to capture
-                _probe_state = None
-            _dialog_open_confirmed = (
-                isinstance(_probe_state, dict) and _probe_state.get("open") is True
-            )
-        if _dialog_open_confirmed:
-            probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
-            if not callable(probe_page_target):
-                return self._append_rejected(
-                    session_id,
-                    action,
-                    "pre_dispatch_observation_failed:dialog_open_fast_path"
-                    "; lightweight_probe_unavailable",
-                )
-            try:
-                probe_page_target()
-            except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
-                return self._append_rejected(
-                    session_id,
-                    action,
-                    "pre_dispatch_observation_failed:dialog_open_fast_path"
-                    f"; lightweight_probe_failed:{type(probe_exc).__name__}",
-                )
-            before_version = str(action["expected_version"])
-            before_ref = None
-            # verb=dialog never reaches the review verifier's article-publish
-            # branch, but the argument must stay bound (the capture-failure
-            # fallback below leaves it unbound - a latent UnboundLocalError
-            # whenever a review authorizer is wired).
-            before_raw: dict[str, Any] = {}
-            light_mode = True
-        else:
-            try:
-                before_raw = self.capture_backend.capture()
-                before_result = self.perception.snapshot(session_id, before_raw, projection_limit=1)
-                before_snapshot = dict(before_result.get("snapshot") or {})
-                before_version = str(before_snapshot.get("snapshot_id") or "")
-                before_ref = str(before_snapshot.get("objects_ref") or "") or None
-            except Exception as exc:  # noqa: BLE001 - observer failure is a mechanical rejection fact.
-                # EVO-20260918-4766011b: navigate is a resource-level transition verb.
-                # Its precondition needs only the page target's existence, not a full
-                # DOM+AX snapshot of the (possibly uncapturable) current page, so when
-                # the full pre-observation fails structurally we fall back to a
-                # lightweight probe instead of killing the model's only escape verb.
-                # Object verbs (click/fill/select/scroll) keep the full precondition.
-                # M2-A B5: dialog joins this class - a blocking JS dialog freezes
-                # the renderer (full capture impossible) while the browser-process
-                # probe channel stays alive.
-                probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
-                if str(action["verb"]) in {"navigate", "dialog"} and callable(probe_page_target):
-                    try:
-                        probe_page_target()
-                    except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
-                        return self._append_rejected(
-                            session_id,
-                            action,
-                            f"pre_dispatch_observation_failed:{type(exc).__name__}"
-                            f"; lightweight_probe_failed:{type(probe_exc).__name__}",
-                        )
-                    before_version = str(action["expected_version"])
-                    before_ref = None
-                    light_mode = True
-                else:
-                    return self._append_rejected(
-                        session_id,
-                        action,
-                        f"pre_dispatch_observation_failed:{type(exc).__name__}",
-                    )
+        before = self._observe_before_dispatch(session_id, action)
+        if before.rejected is not None:
+            return before.rejected
+        guard_verdict = before.guard_verdict
+        before_raw = before.before_raw
+        before_version = before.before_version
+        before_ref = before.before_ref
+        light_mode = before.light_mode
 
         if not light_mode:
             assessment = self.perception.assess_version_precondition(
