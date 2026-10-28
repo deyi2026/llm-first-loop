@@ -575,6 +575,15 @@ class CdpBrowserMutationActuator:
             if method == "Page.javascriptDialogOpening":
                 self._dialog_open = True
                 self._dialog_detail = params
+            elif method == "Page.javascriptDialogClosed":
+                # review P1-1 (2026-10-28): Chrome is the authority on dialog
+                # liveness. A dialog dismissed by navigation, a renderer swap or
+                # an out-of-band handler emits Closed without this host sending
+                # any handle; without this branch _dialog_open latched True
+                # forever and every later perceive reported blocked_by_dialog
+                # for a dialog that no longer exists.
+                self._dialog_open = False
+                self._dialog_detail = None
             elif method == "Page.downloadWillBegin":
                 guid = str(params.get("guid") or params.get("downloadId") or "")
                 if guid:
@@ -763,6 +772,13 @@ class CdpBrowserMutationActuator:
         self._session = None
         self._websocket = None
         self._page_events_enabled = False
+        # review P1-1 (2026-10-28): dialog tracking is session-scoped. A dropped
+        # session can never deliver the Closed event for the dialog it opened
+        # (renderer crash, reconnect, rebind), so a latched True would outlive
+        # the very connection that invalidated it. Clearing here cannot hide a
+        # live dialog: the dialog verb re-asks Chrome through the blind handle.
+        self._dialog_open = False
+        self._dialog_detail = None
         if websocket is not None:
             with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort close of a dead socket
                 websocket.close()
@@ -931,11 +947,30 @@ class CdpBrowserMutationActuator:
         self, session: Any, args: dict[str, Any], before_page_ids: set[str], blind_handled: bool
     ) -> BrowserDispatchResult:
         """M2-A B5：状态门已过（或 R3 已盲 handle）时处理阻塞 dialog 并清状态。"""
+        cleared_reason: str | None = None
         if not blind_handled:
-            session.send("Page.handleJavaScriptDialog", {"accept": self._dialog_accept_flag(args)})
+            accept = self._dialog_accept_flag(args)
+            try:
+                session.send("Page.handleJavaScriptDialog", {"accept": accept})
+            except RuntimeError as exc:
+                if "No dialog is showing" not in str(exc):
+                    raise
+                # review P1-1 (2026-10-28): the tracked dialog is already gone
+                # (navigation, renderer swap, out-of-band handler). Chrome is
+                # authoritative about liveness; trusting the stale flag here
+                # latched _dialog_open True forever. Clear it and put the
+                # correction on the receipt instead of hiding it.
+                cleared_reason = "dialog_state_cleared:handle_not_open"
         self._dialog_open = False
         self._dialog_detail = None
-        return self._acknowledged(session, before_page_ids)
+        result = self._acknowledged(session, before_page_ids)
+        if cleared_reason is None:
+            return result
+        return BrowserDispatchResult(
+            acknowledged=result.acknowledged,
+            boundary_events=result.boundary_events,
+            completeness_reasons=result.completeness_reasons + (cleared_reason,),
+        )
 
     def _dispatch_locked(
         self, *, verb: str, physical_target: str | None, args: dict[str, Any]
@@ -1056,5 +1091,8 @@ class CdpBrowserMutationActuator:
         self._session = None
         self._websocket = None
         self._page_events_enabled = False
+        # review P1-1 (2026-10-28): same session-scoped reset as _drop_session.
+        self._dialog_open = False
+        self._dialog_detail = None
         if websocket is not None:
             websocket.close()

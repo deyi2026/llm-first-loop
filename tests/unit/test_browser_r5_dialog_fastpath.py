@@ -735,3 +735,61 @@ def test_attach_dialog_probes_wires_both_tools() -> None:
     assert operate.probe.__self__ is actuator
 
 
+
+
+def test_probe_state_clears_on_javascript_dialog_closed() -> None:
+    """REVISE P1-1 (2026-10-28): navigating away dismisses the dialog inside
+    Chrome and emits Page.javascriptDialogClosed without this host sending any
+    handle. The tracked flag must follow Chrome, otherwise every later perceive
+    keeps reporting blocked_by_dialog for a dialog that no longer exists."""
+    actuator = _actuator(_QuietWs())
+    actuator._absorb_state_events(
+        [{"method": "Page.javascriptDialogOpening", "params": {"type": "alert", "message": "m"}}]
+    )
+    assert actuator.dialog_state()["open"] is True
+
+    actuator._absorb_state_events(
+        [{"method": "Page.javascriptDialogClosed", "params": {"result": False, "userInput": ""}}]
+    )
+
+    assert actuator.dialog_state() == {
+        "schema": "smc.browser_dialog_state.v0.1",
+        "open": False,
+        "dialog": None,
+    }
+
+
+def test_adapter_light_mode_dialog_bundle_miss_is_recorded_on_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REVISE P1-2 (2026-10-28): the light-mode + dialog bundle miss degrades to
+    an empty mechanical floor; that degradation must be visible on the receipt
+    instead of being swallowed silently."""
+    backend = _FrozenUntilHandledBackend()
+    actuator = _DialogHandlingActuator(backend)
+    perception, adapter = _adapter(tmp_path, backend, actuator, lambda: _DIALOG_OPEN)
+    first = perception.snapshot("s1", FIXTURES["base"])
+
+    real_load = perception.store.load_snapshot_bundle
+
+    def flaky_load(session_id: str, snapshot_id: str) -> dict[str, Any]:
+        if snapshot_id == first["snapshot"]["snapshot_id"] and not getattr(
+            flaky_load, "tripped", False
+        ):
+            flaky_load.tripped = True  # type: ignore[attr-defined]
+            raise ValueError("bundle evicted between probe and pre-load")
+        return real_load(session_id, snapshot_id)
+
+    monkeypatch.setattr(perception.store, "load_snapshot_bundle", flaky_load)
+
+    result = adapter.execute("s1", _dialog_action(first, action_id="act-fp-bundle-miss-0001"))
+
+    # The empty floor can only end in the deterministic page-target rejection,
+    # and the receipt must say WHY the bundle was empty.
+    assert result["status"] == "rejected"
+    assert result["retry"]["reason"] == "navigate_page_target_mismatch"
+    assert result["completeness"]["reasons"] == [
+        "navigate_page_target_mismatch",
+        "snapshot_bundle_unavailable:ValueError",
+    ]

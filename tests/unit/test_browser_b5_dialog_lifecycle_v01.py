@@ -606,3 +606,47 @@ def test_r2_operate_dialog_without_prior_world_keeps_original_error(tmp_path: Pa
     assert result.status.value == "error"
     assert "capture_channel_degraded[mode=timeout]" in result.content
     assert actuator.calls == []  # never dispatched
+
+
+def test_r5_p1_dialog_state_does_not_outlive_the_session() -> None:
+    """REVISE P1-1 (2026-10-28): a crashed, reconnected or rebound target can
+    never deliver the Closed event for the dialog it opened, so the
+    session-scoped reset is the only thing keeping the flag from outliving the
+    connection that invalidated it."""
+    ws = _ScriptedWs([("Input.dispatchKeyEvent", "", _respond({}))])
+    actuator = _mutation_actuator(ws)
+    actuator.dispatch(verb="press_key", physical_target=None, args={"keys": "Escape"})
+    assert actuator._session is not None
+    actuator._absorb_state_events([_DIALOG_OPENING])
+    assert actuator.dialog_state()["open"] is True
+
+    actuator._drop_session()
+
+    assert ws.closed is True
+    assert actuator.dialog_state()["open"] is False
+
+
+def test_r5_p1_handle_not_open_clears_tracked_state_and_reports_it() -> None:
+    """REVISE P1-1 (2026-10-28): the tracked path used to raise "No dialog is
+    showing" and keep _dialog_open latched on, so every later perceive still
+    reported blocked_by_dialog. Chrome is authoritative: clear the flag and put
+    the correction on the receipt."""
+    ws = _ScriptedWs(
+        [
+            (
+                "Page.handleJavaScriptDialog",
+                "",
+                _respond(error={"code": -32603, "message": "No dialog is showing"}),
+            )
+        ]
+    )
+    actuator = _mutation_actuator(ws)
+    actuator._absorb_state_events([_DIALOG_OPENING])
+    assert actuator.dialog_state()["open"] is True
+
+    result = actuator.dispatch(verb="dialog", physical_target=None, args={"action": "accept"})
+
+    assert result.acknowledged is True
+    assert "dialog_state_cleared:handle_not_open" in result.completeness_reasons
+    assert actuator.dialog_state()["open"] is False
+    assert actuator._dialog_detail is None

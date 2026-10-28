@@ -920,12 +920,13 @@ class BrowserActionAdapter:
         before_version: str | None = None,
         before_ref: str | None = None,
         guard: dict[str, Any] | None = None,
+        extra_reasons: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         receipt = self._receipt_base(action)
         receipt["status"] = "rejected"
         receipt["before_version"] = before_version
         receipt["grounding_refs"]["before"] = before_ref
-        receipt["completeness"] = {"complete": False, "reasons": [reason]}
+        receipt["completeness"] = {"complete": False, "reasons": [reason, *extra_reasons]}
         receipt["retry"]["reason"] = reason
         if guard is not None:
             receipt["guard"] = guard
@@ -1239,6 +1240,7 @@ class BrowserActionAdapter:
                     before_ref=before_ref,
                 )
 
+        bundle_fallback_reason: str | None = None
         if light_mode and str(action["verb"]) == "dialog":
             # R5 minimal compat (light_mode+dialog only): the lightweight
             # assessment above already gates bundle availability, so a miss
@@ -1248,8 +1250,14 @@ class BrowserActionAdapter:
             # bundle, so an empty dict is a safe mechanical floor.
             try:
                 before_bundle = self.perception.store.load_snapshot_bundle(session_id, before_version)
-            except (ValueError, PermissionError):
+            except (ValueError, PermissionError) as exc:
                 before_bundle = {}
+                # review P1-2 (2026-10-28): the empty floor is a degradation, not
+                # a normal path - it can only end in the deterministic
+                # navigate_page_target_mismatch rejection below. Carry the fact
+                # onto that receipt instead of swallowing it silently (pre-R5
+                # the exception surfaced).
+                bundle_fallback_reason = f"snapshot_bundle_unavailable:{type(exc).__name__}"
         else:
             before_bundle = self.perception.store.load_snapshot_bundle(session_id, before_version)
         verb = str(action["verb"])
@@ -1299,6 +1307,9 @@ class BrowserActionAdapter:
                     "navigate_page_target_mismatch",
                     before_version=before_version,
                     before_ref=before_ref,
+                    extra_reasons=(
+                        (bundle_fallback_reason,) if bundle_fallback_reason is not None else ()
+                    ),
                 )
 
         # The final ground/target identity is known here, and the physical actuator
