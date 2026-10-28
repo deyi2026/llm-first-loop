@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 from pathlib import Path
 
 from llm_loop.runtime import installation
@@ -59,3 +60,53 @@ def test_wheel_payload_ships_lite_rule_file():
     assert '"ai_rules.lite.md"' in setup_py
     manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
     assert "include docs/ai_rules.lite.md" in manifest
+
+
+def _fake_wheel_module(prefix: Path) -> Path:
+    """伪造 venv 内的模块路径：<prefix>/lib/python3.11/site-packages/llm_loop/..."""
+    return (
+        prefix / "lib" / "python3.11" / "site-packages" / "llm_loop" / "runtime" / "installation.py"
+    )
+
+
+def test_no_fallback_to_sys_prefix_docs(monkeypatch, tmp_path):
+    """负向（0.6.37 旁路收敛）：sys.prefix/docs 上的同名 lite 永不被读取。"""
+    fake_venv = tmp_path / "fake-venv"
+    decoy = fake_venv / "docs" / "ai_rules.lite.md"
+    decoy.parent.mkdir(parents=True)
+    decoy.write_text("---\nversion=999\n", encoding="utf-8")
+    monkeypatch.setattr(installation, "bundle_root", lambda: None)
+    monkeypatch.setattr(installation, "__file__", str(_fake_wheel_module(fake_venv)))
+    monkeypatch.setattr(sys, "prefix", str(fake_venv))
+    assert decoy not in installation.rules_doc_candidates("ai_rules.lite.md")
+    assert installation.rules_version() == ""
+
+
+def test_no_fallback_to_site_packages_docs(monkeypatch, tmp_path):
+    """负向（0.6.37 旁路收敛）：site-packages/docs 上的同名 lite 永不被读取。"""
+    fake_venv = tmp_path / "fake-venv"
+    site_packages = fake_venv / "lib" / "python3.11" / "site-packages"
+    decoy = site_packages / "docs" / "ai_rules.lite.md"
+    decoy.parent.mkdir(parents=True)
+    decoy.write_text("---\nversion=888\n", encoding="utf-8")
+    monkeypatch.setattr(installation, "bundle_root", lambda: None)
+    monkeypatch.setattr(installation, "__file__", str(_fake_wheel_module(fake_venv)))
+    assert decoy not in installation.rules_doc_candidates("ai_rules.lite.md")
+    assert installation.rules_version() == ""
+
+
+def test_wheel_mode_does_not_cross_probe_source_root(monkeypatch, tmp_path):
+    """负向：wheel 模式只认 bundle 根，bundle 文档缺失时不跨根兜底。"""
+    fake_venv = tmp_path / "fake-venv"
+    module_file = _fake_wheel_module(fake_venv)
+    source_root = module_file.parents[3]
+    (source_root / "docs").mkdir(parents=True)
+    (source_root / "docs" / "ai_rules.lite.md").write_text("---\nversion=777\n", encoding="utf-8")
+    bundle = tmp_path / "_bundled"
+    bundle.mkdir()
+    monkeypatch.setattr(installation, "bundle_root", lambda: bundle)
+    monkeypatch.setattr(installation, "__file__", str(module_file))
+    assert installation.rules_doc_candidates("ai_rules.lite.md") == (
+        bundle / "docs" / "ai_rules.lite.md",
+    )
+    assert installation.rules_version() == ""

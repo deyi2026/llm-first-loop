@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
@@ -38,28 +37,18 @@ def installed_identity(module: Path) -> dict[str, str] | None:
 
 
 def rules_doc_candidates(name: str) -> tuple[Path, ...]:
-    """Candidate locations of a packaged rule document, most specific first.
+    """单一真值根下的规则文档候选路径（模式确定后不跨根试探）。
 
-    两种安装布局都必须能解析到同一个规则文件：wheel 安装把规则文档随包放在
-    ``llm_loop/_bundled/docs/``；源码检出把它们留在仓库根 ``docs/``。
-    任务工作区只存运行期数据，不是规则真值源，因此永不作为候选。
+    wheel 安装（bundle_root 命中）只看 ``llm_loop/_bundled/docs/``；源码检出
+    只看仓库根 ``docs/``。sys.prefix、site-packages、CWD、DATA_DIR、用户 home
+    永不作为回退候选——回退根上的同名文件只会掩盖 bundle 损坏（Linux 0.6.37
+    wheel 旁路事故的收敛项）。
     """
-    roots: list[Path] = []
     bundled = bundle_root()
     if bundled is not None:
-        roots.append(bundled)
+        return (bundled / "docs" / name,)
     module = Path(__file__).resolve()
-    roots.append(module.parents[3])   # 源码检出：<repo>/src/llm_loop/runtime/installation.py
-    roots.append(Path(sys.prefix))     # wheel 安装：<venv>/docs
-    roots.append(module.parents[2])   # site-packages（docs 与包同级）
-    seen: set[Path] = set()
-    candidates: list[Path] = []
-    for root in roots:
-        if root in seen:
-            continue
-        seen.add(root)
-        candidates.append(root / "docs" / name)
-    return tuple(candidates)
+    return (module.parents[3] / "docs" / name,)   # 源码检出：<repo>/src/llm_loop/runtime/installation.py
 
 
 def rules_version() -> str:
