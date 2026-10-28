@@ -5,6 +5,7 @@ import { providerAdminZh as T } from "../../i18n/zh";
 import {
   addProviderModel,
   createProvider,
+  deleteProviderConfig,
   deleteProviderModel,
   discoverProviderModels,
   fetchProviderAdmin,
@@ -327,6 +328,16 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     await runMutation(
       `model:${provider.id}/${model.id}`,
       () => deleteProviderModel(provider.id, model.id, snapshot.config_version),
+      T.saved
+    );
+  };
+
+  const removeProvider = async (provider: ProviderAdminFact) => {
+    if (!snapshot) return;
+    if (!window.confirm(T.removeProviderConfirm)) return;
+    await runMutation(
+      `provider:${provider.id}`,
+      () => deleteProviderConfig(provider.id, snapshot.config_version),
       T.saved
     );
   };
@@ -767,6 +778,9 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                     {provider.enabled === false ? T.enabled : T.disabled}
                   </button>
                   <button type="button" onClick={() => openEdit(provider)} disabled={readOnly}>{T.edit}</button>
+                  <button type="button" onClick={() => void removeProvider(provider)} disabled={readOnly || busy !== ""}>
+                    {T.remove}
+                  </button>
                   <button type="button" onClick={() => void runTest(provider, "")} disabled={busy !== ""}>
                     {busy === `test:${provider.id}/` ? T.testing : T.test}
                   </button>
