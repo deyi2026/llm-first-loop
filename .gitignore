@@ -18,6 +18,11 @@ data/*
 !data/methods/
 /data/methods/usage.jsonl
 /data/methods/.usage_watermark.json
+# 单卡验证池与门槛裁定是试验过程产物（非卡本体）；已入库 1005 个卡目录仅含 METHOD.md/qualification*，
+# 无 pool* / GATE-RESULT 先例，故保持不入库（文件仍留在工作区，不删除）
+/data/methods/*/pool.jsonl
+/data/methods/*/pool_status.json
+/data/methods/*/GATE-RESULT.md
 # 经验卡 *.md 是学习资产，入库保全（与 data/methods 同策略）；运行时水位/向量文件由 experiences/* 排除
 experiences/*
 !experiences/*.md
