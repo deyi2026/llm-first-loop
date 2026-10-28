@@ -911,6 +911,25 @@ class BrowserActionAdapter:
             )
         return _BeforeObservation(guard_verdict, before_raw, before_version, before_ref, False, None)
 
+    def _load_before_bundle_light_dialog(
+        self, session_id: str, before_version: str
+    ) -> tuple[dict[str, Any], str | None]:
+        """R5 minimal compat (light_mode+dialog only): degrade a bundle miss to an
+        empty mechanical floor and report the degradation.
+
+        The lightweight assessment above already gates bundle availability, so a
+        miss here can only be a sub-millisecond retention race, and dialog needs
+        no object_grounding - an empty dict is a safe floor. Review P1-2
+        (2026-10-28): the floor is a degradation, not a normal path, and it can
+        only end in the deterministic navigate_page_target_mismatch rejection;
+        the returned reason is carried onto that receipt instead of being
+        swallowed silently (pre-R5 the exception surfaced).
+        """
+        try:
+            return self.perception.store.load_snapshot_bundle(session_id, before_version), None
+        except (ValueError, PermissionError) as exc:
+            return {}, f"snapshot_bundle_unavailable:{type(exc).__name__}"
+
     def _append_rejected(
         self,
         session_id: str,
@@ -1242,22 +1261,9 @@ class BrowserActionAdapter:
 
         bundle_fallback_reason: str | None = None
         if light_mode and str(action["verb"]) == "dialog":
-            # R5 minimal compat (light_mode+dialog only): the lightweight
-            # assessment above already gates bundle availability, so a miss
-            # here can only be a sub-millisecond retention race - degrade to
-            # the deterministic page-target rejection below instead of an
-            # unhandled exception. dialog needs no object_grounding from the
-            # bundle, so an empty dict is a safe mechanical floor.
-            try:
-                before_bundle = self.perception.store.load_snapshot_bundle(session_id, before_version)
-            except (ValueError, PermissionError) as exc:
-                before_bundle = {}
-                # review P1-2 (2026-10-28): the empty floor is a degradation, not
-                # a normal path - it can only end in the deterministic
-                # navigate_page_target_mismatch rejection below. Carry the fact
-                # onto that receipt instead of swallowing it silently (pre-R5
-                # the exception surfaced).
-                bundle_fallback_reason = f"snapshot_bundle_unavailable:{type(exc).__name__}"
+            before_bundle, bundle_fallback_reason = self._load_before_bundle_light_dialog(
+                session_id, before_version
+            )
         else:
             before_bundle = self.perception.store.load_snapshot_bundle(session_id, before_version)
         verb = str(action["verb"])
@@ -1307,9 +1313,7 @@ class BrowserActionAdapter:
                     "navigate_page_target_mismatch",
                     before_version=before_version,
                     before_ref=before_ref,
-                    extra_reasons=(
-                        (bundle_fallback_reason,) if bundle_fallback_reason is not None else ()
-                    ),
+                    extra_reasons=(bundle_fallback_reason,) if bundle_fallback_reason else (),
                 )
 
         # The final ground/target identity is known here, and the physical actuator

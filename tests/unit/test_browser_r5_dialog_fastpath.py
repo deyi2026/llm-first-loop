@@ -735,8 +735,6 @@ def test_attach_dialog_probes_wires_both_tools() -> None:
     assert operate.probe.__self__ is actuator
 
 
-
-
 def test_probe_state_clears_on_javascript_dialog_closed() -> None:
     """REVISE P1-1 (2026-10-28): navigating away dismisses the dialog inside
     Chrome and emits Page.javascriptDialogClosed without this host sending any
@@ -793,3 +791,4 @@ def test_adapter_light_mode_dialog_bundle_miss_is_recorded_on_receipt(
         "navigate_page_target_mismatch",
         "snapshot_bundle_unavailable:ValueError",
     ]
+
