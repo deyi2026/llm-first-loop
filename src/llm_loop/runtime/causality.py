@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -60,14 +59,9 @@ def source_tree_fingerprint() -> str:
 
 
 def _rules_version() -> str:
-    workspace = Path(llm_loop.__file__).resolve().parents[2]
-    path = workspace / "docs" / "ai_rules.lite.md"
-    try:
-        head = path.read_text(encoding="utf-8")[:512]
-    except OSError:
-        return ""
-    match = re.search(r"version\s*=\s*(\d+)", head)
-    return match.group(1) if match else ""
+    from llm_loop.runtime.installation import rules_version
+
+    return rules_version()
 
 
 def _tool_registry_fingerprint(registry: Any, *, lazy: bool) -> str:
