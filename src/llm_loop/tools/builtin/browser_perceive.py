@@ -329,6 +329,7 @@ class BrowserPerceiveTool:
         profile_annotation: dict[str, Any] | None = None,
         page_controller: Any | None = None,
         download_state_getter: Callable[[], dict[str, Any]] | None = None,
+        dialog_state_getter: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._backend = backend
@@ -342,6 +343,9 @@ class BrowserPerceiveTool:
         # M2-A B6：下载状态探针（mutation actuator 的 download_state；可选注入，
         # 缺省 ⇒ wait kind=download_state 确定性失败，不静默轮询空状态）。
         self._download_state_getter = download_state_getter
+        # R5：dialog 状态探针（mutation actuator 的 dialog_state；可选注入，
+        # 缺省 ⇒ snapshot 快路径关闭，行为与之前逐字节一致）。
+        self._dialog_state_getter = dialog_state_getter
         common_wait = {
             "adapter": adapter,
             "backend": backend,
@@ -356,6 +360,56 @@ class BrowserPerceiveTool:
         """M2-A B6：装配期后挂（factory 在 mutation actuator 建好后注入其
         download_state 观察面；perceive 仍不获得任何 mutation 能力）。"""
         self._download_state_getter = getter
+
+    def attach_dialog_state_probe(self, getter: Callable[[], dict[str, Any]]) -> None:
+        """R5：装配期后挂（factory 注入 mutation actuator 的 dialog_state 观察面；
+        perceive 仍不获得任何 mutation 能力，探针只读）。"""
+        self._dialog_state_getter = getter
+
+    def _dialog_block_facts(self) -> dict[str, Any] | None:
+        """R5：capture 前的只读 dialog 探测；fail-open（探针自身异常一律
+        fall through 到原 capture 路径，绝不让探针弄坏 snapshot）。"""
+        if self._dialog_state_getter is None:
+            return None
+        try:
+            state = self._dialog_state_getter()
+        except Exception:  # noqa: BLE001 - probe failure must not break the snapshot path
+            return None
+        if isinstance(state, dict) and state.get("open") is True:
+            return state
+        return None
+
+    def _dialog_blocked_snapshot_result(self, state: dict[str, Any], vision_request: str | None) -> ToolResult:
+        """R5：dialog 打开期间的 snapshot 快路径回执。
+
+        显式事实（blocked_by_dialog），零 capture、零 CDP mutation、零落盘；
+        不伪装成正常快照（无 version/world_version——冻结页上不可能有新观察）。
+        """
+        dialog = state.get("dialog")
+        dialog = dialog if isinstance(dialog, dict) else {}
+        payload: dict[str, Any] = {
+            "action": "snapshot",
+            "observation_status": "blocked_by_dialog",
+            "blocked_reason": "dialog_open",
+            "dialog": {
+                "type": dialog.get("type") if dialog.get("type") is not None else "unknown",
+                "message": dialog.get("message"),
+                "default_prompt": dialog.get("default_prompt"),
+            },
+            "objects": [],
+            "degraded": False,
+            "guidance": (
+                "页面被同步 JS dialog 阻塞，快照通道冻结；请先调用 browser_operate "
+                "do=dialog（action=accept 或 dismiss）处理 dialog，再重新发起 snapshot。"
+            ),
+        }
+        if vision_request == "evidence":
+            # 冻结页不可能产出新视觉证据：显式 unavailable，不落盘假图。
+            payload["vision"] = {
+                "status": "capture_unavailable",
+                "reason": "dialog_open",
+            }
+        return self._json_result(payload)
 
     def _page_list_result(self, exc: MultiPageAmbiguityError) -> ToolResult:
         """多页歧义 ⇒ 结构化只读页面清单（不绑定、不建会话、无副作用）。"""
@@ -853,6 +907,13 @@ class BrowserPerceiveTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
+            # R5：第一次 capture 之前的只读 dialog 探测。同步 JS dialog 冻结
+            # renderer，capture 只能烧满 recv 超时（实测 ~20s）后抛错；探针
+            # 确认 dialog 打开 ⇒ <500ms 内返回显式 blocked_by_dialog 回执，
+            # 零 capture、零 CDP mutation。探针未挂载/异常 ⇒ 原路径不变。
+            blocked_state = self._dialog_block_facts()
+            if blocked_state is not None:
+                return self._dialog_blocked_snapshot_result(blocked_state, vision_request)
             try:
                 raw = self._backend.capture()
             except MultiPageAmbiguityError as ambiguity:

@@ -617,6 +617,42 @@ class CdpBrowserMutationActuator:
             "downloads": {guid: dict(entry) for guid, entry in self._downloads.items()},
         }
 
+    def dialog_state(self) -> dict[str, Any]:
+        """R5: best-effort drain of pending events + blocking-dialog state copy.
+
+        Observation-surface probe ONLY - never issues a CDP mutation. Same
+        fail-open semantics as download_state(): a channel failure keeps the
+        last known state so a quiet/closed session degrades honestly instead
+        of failing the caller. Truth stays the single dialog state machine
+        (_dialog_open/_dialog_detail from Page.javascriptDialogOpening) - no
+        second truth source. The dialog message is PAGE CONTENT (B5): it is
+        returned to the model on the current call only and must never be
+        persisted into any receipt/store.
+        """
+        session = self._session
+        if session is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001 - observation is fail-open
+                session.drain()
+                self._absorb_state_events(session.pop_events())
+        dialog: dict[str, Any] | None = None
+        if self._dialog_open:
+            detail = self._dialog_detail if isinstance(self._dialog_detail, dict) else {}
+            default_prompt = detail.get("defaultPrompt")
+            dialog = {
+                "type": str(detail.get("type") or "unknown") or "unknown",
+                # page content, capped at 300 chars; never persisted anywhere
+                "message": str(detail.get("message") or "")[:300],
+                "default_prompt": (
+                    str(default_prompt) if default_prompt is not None else None
+                ),
+                "url": str(detail.get("url") or "") or None,
+            }
+        return {
+            "schema": "smc.browser_dialog_state.v0.1",
+            "open": self._dialog_open,
+            "dialog": dialog,
+        }
+
     def _sync_download_behavior(self, session: _MutationCdpSession) -> None:
         """M2-A B6: pin Chrome downloads into the CURRENT session's fenced dir.
 

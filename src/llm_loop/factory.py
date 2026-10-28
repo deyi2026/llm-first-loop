@@ -1476,6 +1476,7 @@ def build_engine(
                 )
                 _browser_page_controller.attach_mutation_host(_browser_actuator)
                 _browser_perceive_tool.attach_download_state_probe(_browser_actuator.download_state)  # M2-A B6
+                _browser_perceive_tool.attach_dialog_state_probe(_browser_actuator.dialog_state)  # R5
                 # The review freezes real page text from the same read-only
                 # capture backend; no model-supplied JSON can mint a PASS.
                 _host_review.attach_browser_capture(_browser_host.capture)
@@ -1484,6 +1485,9 @@ def build_engine(
                     receipt_store=BrowserActionReceiptStore(Path(settings.data_dir) / "browser_action"),
                     capture_backend=_browser_host,
                     actuator=_browser_actuator,
+                    # R5: read-only dialog probe - dialog-verb pre-observation
+                    # skips the doomed full capture while a modal is open.
+                    dialog_state_probe=_browser_actuator.dialog_state,
                     # FR-1 local semantic guard (DESIGN-20261007): additive
                     # pre-dispatch gate. Collector is the host-bounded
                     # read-only probe; the switch stays explicit env-gated
@@ -1504,17 +1508,16 @@ def build_engine(
                     action_adapter=_browser_action_adapter,
                     session_id_getter=lambda: current_session_id_ctx.get(),
                 )
-                _register_basic(
-                    "browser_operate",
-                    BrowserSemanticOperationTool(
-                        perception=_browser_adapter,
-                        capture_backend=_browser_host,
-                        semantic_execute=_browser_semantic_execute,
-                        receipt_store=_browser_operation_receipt_store,
-                        session_id_getter=lambda: current_session_id_ctx.get(),
-                        page_controller=_browser_page_controller,
-                    ),
+                _browser_semantic_operation_tool = BrowserSemanticOperationTool(
+                    perception=_browser_adapter,
+                    capture_backend=_browser_host,
+                    semantic_execute=_browser_semantic_execute,
+                    receipt_store=_browser_operation_receipt_store,
+                    session_id_getter=lambda: current_session_id_ctx.get(),
+                    page_controller=_browser_page_controller,
                 )
+                _browser_semantic_operation_tool.attach_dialog_state_probe(_browser_actuator.dialog_state)  # R5
+                _register_basic("browser_operate", _browser_semantic_operation_tool)
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
     _register_basic("present_files", PresentFilesTool())

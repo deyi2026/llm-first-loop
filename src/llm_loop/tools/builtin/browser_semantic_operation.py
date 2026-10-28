@@ -1082,11 +1082,32 @@ class BrowserSemanticOperationTool:
         self._session_id_getter = session_id_getter
         # EVO-20261007-11ae668f：显式换页协调器（可选注入；缺省 ⇒ target_id 参数不可用）。
         self._page_controller = page_controller
+        # R5：dialog 状态探针（mutation actuator 的 dialog_state；可选注入，
+        # 缺省 ⇒ _ground_page 快路径关闭，行为与之前逐字节一致）。
+        self._dialog_state_getter: Callable[[], dict[str, Any]] | None = None
         self._wait_object = BrowserWaitObjectTool(
             adapter=perception,
             backend=capture_backend,
             session_id_getter=session_id_getter,
         )
+
+    def attach_dialog_state_probe(self, getter: Callable[[], dict[str, Any]]) -> None:
+        """R5：装配期后挂（factory 注入 mutation actuator 的 dialog_state 观察面；
+        operate 仍不因此获得任何新 mutation 能力，探针只读）。"""
+        self._dialog_state_getter = getter
+
+    def _dialog_open_facts(self) -> dict[str, Any] | None:
+        """R5：grounding 前的只读 dialog 探测；fail-open（探针自身异常一律
+        fall through 到原 snapshot 路径）。"""
+        if self._dialog_state_getter is None:
+            return None
+        try:
+            state = self._dialog_state_getter()
+        except Exception:  # noqa: BLE001 - probe failure must not break grounding
+            return None
+        if isinstance(state, dict) and state.get("open") is True:
+            return state
+        return None
 
     @staticmethod
     def _normalize_identity(target: Any) -> dict[str, str]:
@@ -1354,6 +1375,19 @@ class BrowserSemanticOperationTool:
     def _ground_page(self, session_id: str, target: Any) -> tuple[str, dict[str, Any]]:
         if target != {"kind": "page"}:
             raise BrowserSemanticOperationContractError("page_target_contract_mismatch")
+        # R5 快路径：同步 JS dialog 冻结 renderer，fresh capture 只能烧满
+        # recv 超时（实测 ~20s）。探针确认 dialog 打开 ⇒ 直接用地板 ref
+        # （只读、无新观察），不再尝试 capture；无既有世界则确定性契约
+        # 失败——"无观察不 mutation"保持原语义（不伪造世界）。
+        if self._dialog_open_facts() is not None:
+            fallback = getattr(self._perception, "latest_page_resource_ref", None)
+            latest_ref = fallback(session_id) if callable(fallback) else None
+            if latest_ref:
+                return str(latest_ref), {}
+            raise BrowserSemanticOperationContractError(
+                "dialog_open_no_prior_world: dialog 已打开但本会话无既有世界，"
+                "无法在不观察的情况下定位页面"
+            )
         try:
             snapshot_result = self._snapshot(session_id)
         except MultiPageAmbiguityError:
