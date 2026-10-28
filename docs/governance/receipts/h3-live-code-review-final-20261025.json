@@ -1,0 +1,148 @@
+{
+  "gate": "code",
+  "reviewer": "/root/h3_deploy_review",
+  "review_type": "independent-native-subagent",
+  "verdict": "PASS",
+  "P0": 0,
+  "P1": 0,
+  "P2": 1,
+  "reviewed_at_unix": 1792942619.948152,
+  "base": "26530f9f224bce9c852d3eef34e7ca5073e408ba",
+  "tree": "543e250cda28e8d80899a3af70d31f6c4000a23b",
+  "artifact_sha256": "c5fc16a5e38c99c211b736f5fffc648f878d8d32f5f84e7a10c21f0f81a1e124",
+  "patch_bytes": 90128,
+  "scope_files": [
+    "docs/INTEGRATION-20261025-minimax-h3-video.md",
+    "src/llm_loop/config.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/tools/builtin/video_generation.py",
+    "src/llm_loop/tools/registry.py",
+    "src/llm_loop/video/__init__.py",
+    "src/llm_loop/video/guardian.py",
+    "src/llm_loop/video/runtime.py",
+    "src/llm_loop/video/worker.py",
+    "src/llm_loop/web/routes.py",
+    "src/llm_loop/web/video_routes.py",
+    "tests/guards/function_size_baseline.json",
+    "tests/unit/test_factory.py",
+    "tests/unit/test_video_generation_tool.py",
+    "tests/web/test_auth.py",
+    "tests/web/test_video_generation.py",
+    "webui/src/components/layout/ProviderManager.tsx",
+    "webui/src/components/layout/VideoPanel.tsx",
+    "webui/src/components/layout/video-panel.css",
+    "webui/src/core/video-api.ts",
+    "webui/src/video-panel.test.tsx"
+  ],
+  "scope_note": "覆盖完整H3 delta及本轮测试Host fixture隔离修正；此前完整审查与factory窄审的其余20文件差分逐字节不变。不是R9或实际部署通过声明。",
+  "checklist": [
+    {
+      "item": "correctness",
+      "result": "PASS",
+      "evidence": "完整20文件diff全文；运行层/worker/guardian在新基线与已审版本逐字节相同；新增工具调用同一VideoRuntime，后台返回job_id，完成才有output_url；Web专用H3视频选择项，不混入chat provider。"
+    },
+    {
+      "item": "boundaries",
+      "result": "PASS with nonblocking P2",
+      "evidence": "校验shape/prompt/model/ref/jobID/unknown args；配置CAS和执行flock独立；guardian管道EOF、cancel与timeout回收。schema外action列表见P2-1，不触发后端。"
+    },
+    {
+      "item": "security",
+      "result": "PASS",
+      "evidence": "argv列表无shell；模型root/软链接边界、固定backend可执行项、原始参考图精确源；新Web routes继承既有auth+Origin middleware，focused public auth/foreign Origin拒绝实测通过；未发现新增secret或跨目录读取路径。"
+    },
+    {
+      "item": "regression",
+      "result": "PASS for review prerequisite",
+      "evidence": "独立27项focused通过；父任务新基线51 Python、8 Web、typecheck/build日志已核实；R9尚由父任务在本审查PASS后执行。"
+    },
+    {
+      "item": "consistency",
+      "result": "PASS",
+      "evidence": "video存储属Action中性模块，Web/工具为adapter；架构JSON只增加video owner/local_video_store登记，未放宽数值棘轮/增加豁免；源bound helper不依赖外部PYTHONPATH。"
+    },
+    {
+      "item": "guard-real-checks",
+      "result": "PASS",
+      "evidence": "现有机械输入拒绝、模型路径/软链接逃逸、foreign Origin、unauthenticated请求、占槽409、SIGKILL/timeout/取消子进程回收已由真实focused入口覆盖；新工具invalid-input-never-starts-backend测试通过。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "file": "src/llm_loop/tools/builtin/video_generation.py",
+      "line": 73,
+      "issue": "直接SDK传入schema外 action=[]，在集合membership处产生TypeError，未由本adapter的failure分支统一包装；registry外层仍会如实返回工具异常，且没有启动后端。",
+      "fix_hint": "后续可先验证action为字符串或使用独立Pydantic输入模型；本轮可保留精确候选。",
+      "evidence": "独立隔离TemporaryDirectory调用VideoGenerationTool.execute(action=[])观察TypeError unhashable type:list"
+    }
+  ],
+  "applied": [],
+  "rejected": [
+    {
+      "id": "P2-1",
+      "reason": "非阻断后续建议；本审查不修改候选，也不要求为此使本轮资格失效。由父任务记录处置。"
+    }
+  ],
+  "focused_checks": {
+    "command": "python -m pytest -q tests/unit/test_video_generation_tool.py tests/web/test_video_generation.py tests/unit/test_factory.py::test_factory_does_not_register_convergence_meta_router",
+    "summary": "27 passed in 3.08s",
+    "log": "data/h3-deployment-20261025/independent-review-focused.log",
+    "real_model_calls": 0,
+    "full_r9_run_by_reviewer": false
+  },
+  "new_base_recheck": {
+    "old_base": "7ad21715d0c34523414091fab9518c80463b3486",
+    "new_base": "26530f9f224bce9c852d3eef34e7ca5073e408ba",
+    "runtime_bytes_same": true,
+    "new_candidate_fingerprint_checked": true
+  },
+  "source_unchanged_by_reviewer": true,
+  "narrow_recheck": {
+    "reviewer": "/root/h3_deploy_review",
+    "verdict": "PASS",
+    "previous_artifact_sha256": "979fc27fd27c90a8397010dea8ecb809794f61790d0811702a03d44e1fd94139",
+    "artifact_sha256": "c5fc16a5e38c99c211b736f5fffc648f878d8d32f5f84e7a10c21f0f81a1e124",
+    "changed_files": [
+      "tests/web/test_auth.py"
+    ],
+    "coverage": "只为测试显式接受app.llmfirstloop.com fixture Host，使请求到达其原本要验证的认证层。生产HostGuard/auth未修改，401断言未修改，loopback/转发事实参数未修改；monkeypatch在用例结束恢复环境；不是放宽Host或auth边界。",
+    "independent_focused_checks": [
+      {
+        "summary": "6 passed in 0.65s",
+        "log": "data/h3-deployment-20261025/independent-auth-fixture-review.log"
+      },
+      {
+        "summary": "10 passed, 24 deselected in 0.58s",
+        "log": "data/h3-deployment-20261025/independent-hostguard-review.log"
+      }
+    ],
+    "P0": 0,
+    "P1": 0,
+    "P2": 1
+  },
+  "review_notes": {
+    "r1_r9": "先前候选R9 exit1因factory行数增长；保留原失败，不属于本新候选R9终态。新候选fullR9尚需父任务执行。",
+    "web_baseline_failure": "Composer.realtime.test.tsx在精确生产基线26530f9f独立源码导出中同样exit1，onFinal期望function/实为object(null)。测试及Composer源码与H3候选逐字节相同，不归因H3；未修改/跳过该测试。",
+    "web_baseline_proof": "data/h3-deployment-20261025/baseline-composer-review/result.json",
+    "r2_r9": "上一候选R9真实exit1，串行复核剩node_rm_sync已登记历史红与Host/auth测试环境冲突；原失败日志仍保留。当前新候选原版完整R9仍由父任务在PASS后执行，不冒充已绿。"
+  },
+  "narrow_recheck_history": [
+    {
+      "reviewer": "/root/h3_deploy_review",
+      "verdict": "PASS",
+      "previous_artifact_sha256": "df8069840699f731a0ee80ca5c7ae179600877960ac5a59de9d8108fb202571c",
+      "artifact_sha256": "979fc27fd27c90a8397010dea8ecb809794f61790d0811702a03d44e1fd94139",
+      "changed_files": [
+        "src/llm_loop/factory.py"
+      ],
+      "coverage": "其余19文件patch sections完全相同，沿用本代理上一轮完整审查；逐行审查factory helper提取，既有service_control构造参数/注册函数/调用位置不变，新增video工具共享settings配置和data目录；build_engine行数收缩，未改架构数值棘轮。",
+      "focused_summary": "9 passed in 0.33s",
+      "focused_log": "data/h3-deployment-20261025/independent-narrow-review-focused.log",
+      "P0": 0,
+      "P1": 0,
+      "P2": 1
+    }
+  ]
+}
