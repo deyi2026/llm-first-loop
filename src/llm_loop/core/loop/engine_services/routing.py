@@ -277,8 +277,11 @@ class RoutingService:
         live ref 非空 → 标签 = live ref、元数据用当前 registry；否则保持既有启动默认
         标签口径（零回归）。get_client 的 ValueError 不吞：由调用方决定回退。
         """
-        client = self._host.llm_pool.get_client(None)
-        live_getter = getattr(self._host.llm_pool, "live_default_ref", None)
+        pool = self._host.llm_pool
+        if pool is None:  # host 未注入 pool：交调用方回退（与 get_client 失败同路径）
+            raise ValueError("llm_pool 未初始化")
+        client = pool.get_client(None)
+        live_getter = getattr(pool, "live_default_ref", None)
         live_ref = str(live_getter() or "") if callable(live_getter) else ""
         if live_ref:
             return client, live_ref, current_registry
