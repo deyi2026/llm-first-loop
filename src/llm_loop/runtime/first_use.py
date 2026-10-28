@@ -56,7 +56,8 @@ def _unsafe_path(target: Path, bundle: Path | None, *, allow_default_parent: Pat
     return None
 
 
-def plan_first_use(*, args: Any, root: Path, bundle: Path | None, environment: Mapping[str, str]) -> tuple[dict[str, Any], Path | None]:
+def plan_first_use(*, args: Any, root: Path, bundle: Path | None, environment: Mapping[str, str],
+                   rule_lookup: Callable[[Path, str], bool] | None = None) -> tuple[dict[str, Any], Path | None]:
     """Compute a redacted snapshot; never create paths or mutate the process env."""
     shell = dict(environment)
     source = "command_line" if args.config else "environment" if shell.get("LFL_ENV_FILE") else "default"
@@ -194,7 +195,8 @@ def _exclusive_create(target: Path, content: bytes) -> None:
 
 
 def _interactive_setup(*, target: Path, report: dict[str, Any], root: Path, bundle: Path | None,
-                       args: Any, environment: Mapping[str, str], check_install: Callable[[], dict[str, Any]]) -> int:
+                       args: Any, environment: Mapping[str, str], check_install: Callable[[], dict[str, Any]],
+                       rule_lookup: Callable[[Path, str], bool] | None = None) -> int:
     if not sys.stdin.isatty():
         print("交互向导需要终端；可运行 lfl init --plan", file=sys.stderr)
         return 2
@@ -256,7 +258,8 @@ def _interactive_setup(*, target: Path, report: dict[str, Any], root: Path, bund
         print("[失败] 模型在线检测：" + str(live.get("message", "")))
         if live.get("action"):
             print("  解决建议：" + str(live["action"]))
-    result = inspect_first_use(args=args, root=root, bundle=bundle, environment=environment, check_install=check_install)
+    result = inspect_first_use(args=args, root=root, bundle=bundle, environment=environment,
+                               check_install=check_install, rule_lookup=rule_lookup)
     print(human_report(result))
     # Missing context assets degrade the briefing (reported above); they must not
     # turn a successfully written configuration into a failed init.
@@ -273,11 +276,13 @@ def _interactive_setup(*, target: Path, report: dict[str, Any], root: Path, bund
 
 
 def run_first_use(*, args: Any, root: Path, bundle: Path | None, environment: Mapping[str, str],
-                  check_install: Callable[[], dict[str, Any]], preview: bool, as_json: bool) -> int:
+                  check_install: Callable[[], dict[str, Any]], preview: bool, as_json: bool,
+                  rule_lookup: Callable[[Path, str], bool] | None = None) -> int:
     if as_json and not preview:
         print("--json 只能和 --plan 一起使用，不能通过 JSON 绕过交互确认。", file=sys.stderr)
         return 2
-    report, target = plan_first_use(args=args, root=root, bundle=bundle, environment=environment)
+    report, target = plan_first_use(args=args, root=root, bundle=bundle, environment=environment,
+                                    rule_lookup=rule_lookup)
     if preview:
         if as_json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -291,4 +296,5 @@ def run_first_use(*, args: Any, root: Path, bundle: Path | None, environment: Ma
         print("配置目标无效；请运行 lfl init --plan", file=sys.stderr)
         return 1
     return _interactive_setup(target=target, report=report, root=root, bundle=bundle,
-                              args=args, environment=environment, check_install=check_install)
+                              args=args, environment=environment, check_install=check_install,
+                              rule_lookup=rule_lookup)

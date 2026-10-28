@@ -76,6 +76,21 @@ def _normalize_volatile_time_labels(text: str) -> str:
 
 _SHELL_FULL = re.compile(r"(?:^|[/\s])(?:bash\s+)?(?:\./)?scripts/ci_gate\.sh(?:\s|$)")
 _GIT_PUSH = re.compile(r"(?:^|\W)git\b.*?\bpush\b", re.I | re.S)
+# EVO-20261029-65f6fe21（P1-1 补强）：python 载荷内 shell 调用的字符串实参
+# 就是运行时会执行的 shell 命令（与安全侧 N9 同构），按命令位分类。
+_PY_SHELL_CALL_LITERAL_RE = re.compile(
+    r"""(?:os\.system|os\.popen|subprocess\.(?:run|call|check_call|check_output|Popen))"""
+    r"""\s*\(\s*(?P<q>['"])(?P<arg>(?:\\.|(?!(?P=q)).)*)(?P=q)""",
+    re.S,
+)
+# P1-1 补强（第二轮审查）：list 形态 argv（subprocess.run(["uv","run","pytest"])）
+# ——把引号/逗号/括号归一后按命令位分类。允许 list 前最多 3 个位置/关键字
+# 参数（第八轮审查 P2-2b：首参非 list 的形态此前漏网）。
+_PY_SHELL_CALL_LIST_RE = re.compile(
+    r"""(?:os\.exec\w*|subprocess\.(?:run|call|check_call|check_output|Popen))"""
+    r"""\s*\(\s*(?:(?:\w+\s*=\s*)?[^,()\[\]]+,\s*){0,3}\[(?P<args>[^\]]*)\]""",
+    re.S,
+)
 _SENSITIVE_FILENAME = re.compile(
     r"(?:^|/)(?:\.env(?:\.[^/]*)?|\.netrc|\.npmrc|\.pypirc|"
     r"(?:secrets?|credentials?|api[-_]?tokens?)(?:\.[^/]*)?|"
@@ -258,15 +273,26 @@ def _shell_segments(command: str) -> list[list[str]]:
 
     This is a bounded trigger detector, not an interpreter: complex semantics
     remain non-grantable at _target() rather than deriving a false safe scope.
+
+    EVO-20261029-65f6fe21: self-contained payload units (here-doc bodies,
+    quoted interpreter -c/-e payloads) are stripped to opaque placeholder
+    tokens BEFORE lexing — payload is data, not a command position; protected
+    pairs are judged on skeleton command positions only. A skeleton that is
+    still unparseable after stripping raises a labelled ValueError so callers
+    fail closed (never half-parsed granting).
     """
+    skeleton, _payloads = _strip_payload_units(command)
     # shlex consumes the newline ending a shell comment. Emit a separator
     # *after* that newline so the following actual command remains visible.
     # A newline inside quotes remains quoted, never a new outer command.
-    lexer = shlex.shlex(command.replace("\n", "\n;"), posix=True, punctuation_chars=";&|<>()\n")
+    lexer = shlex.shlex(skeleton.replace("\n", "\n;"), posix=True, punctuation_chars=";&|<>()\n")
     lexer.whitespace_split = True
     lexer.whitespace = " \t\r"  # shell newline is a command boundary, not ordinary whitespace
     lexer.commenters = "#"
-    tokens = list(lexer)
+    try:
+        tokens = list(lexer)
+    except ValueError as exc:
+        raise ValueError(f"载荷剥离后骨架仍不可解析（fail-closed）: {exc}") from exc
     segments: list[list[str]] = []
     current: list[str] = []
     for token in tokens:
@@ -279,6 +305,123 @@ def _shell_segments(command: str) -> list[list[str]]:
     if current:
         segments.append(current)
     return segments
+
+
+# ── EVO-20261029-65f6fe21：自足语法单元剥离 ──
+_HEREDOC_OPENER_RE = re.compile(r"<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_+-]*)\1")
+_PAYLOAD_INTERPRETER_RE = (
+    r"""\b(?P<interp>python[0-9.]*|(?:b|z|k|d|a)?sh|node|nodejs|ruby|perl|php|osascript|deno|bun|awk)\b"""
+    r"""(?P<flags>(?:\s+-{1,2}[A-Za-z0-9][\w=.-]*)*?)"""
+    r"""(?P<marker>\s+-(?:l?c|e)\s+)"""
+)
+# 头正则只定位"解释器+flags+-c/-e+开引号"；闭合位置按引号类型精确扫描
+# （单引号 POSIX 无转义、首个同引号即闭合；双引号认可反斜杠转义）——
+# 先按开引号类型绑定，撇号在双引号载荷内不会再被误当闭合引号。
+_PAYLOAD_HEAD_RE = re.compile(_PAYLOAD_INTERPRETER_RE + r"""(?P<q>['"])""")
+
+
+def _strip_heredoc_units(text: str, payloads: list[str]) -> str:
+    """here-doc 体 → 占位 token（体逐行原样搬运；关闭行 `<<` 精确 / `<<-` 前导 tab）.
+
+    P2-3（审查 REVISE 第二轮）：`<<` 前文本若含未闭合引号（说明 `<<WORD`
+    在引号串/注释里），不当作 here-doc 引导——误吞后续骨架行会丢段结构；
+    该行原样保留，由骨架 shlex fail-closed。
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = _HEREDOC_OPENER_RE.search(line)
+        if m is None:
+            out.append(line)
+            i += 1
+            continue
+        head_txt = line[: m.start()]
+        if head_txt.count("'") % 2 or head_txt.count('"') % 2 or "#" in head_txt:
+            out.append(line)  # 开引号/注释内的 << 不是 here-doc 引导
+            i += 1
+            continue
+        delim = m.group(2)
+        strip_tabs = m.group(0).startswith("<<-")
+        head = line[: m.start()].rstrip()
+        ph = f"__XPL_{len(payloads)}__"
+        body: list[str] = []
+        j = i + 1
+        closed = False
+        while j < len(lines):
+            cand = lines[j]
+            is_close = cand.lstrip("\t") == delim if strip_tabs else cand == delim
+            if is_close:
+                closed = True
+                break
+            body.append(cand)
+            j += 1
+        if not closed:
+            # 未闭合：体吞到结尾（shell 语义）；残余不进骨架（fail-closed）
+            body.extend(lines[i + 1 :])
+            payloads.append("\n".join(body))
+            out.append((head + " " + ph).strip() if head else ph)
+            return "\n".join(out)
+        payloads.append("\n".join(body))
+        out.append((head + " " + ph).strip() if head else ph)
+        i = j + 1
+    return "\n".join(out)
+
+
+def _strip_interpreter_payloads(skeleton: str, payloads: list[str]) -> str:
+    """引号包裹的解释器 -c/-e 载荷 → 占位 token（单引号原样；双引号认可转义）.
+
+    只剥离"解释器 + flags + -c/-e + 闭合引号串"完整闭环；形态破碎（引号
+    未闭合）原样保留该段并继续找后续候选，最终交由骨架 shlex fail-closed。
+    """
+
+    def _close(text: str, start: int, q: str) -> int | None:
+        if q == "'":  # POSIX 单引号内无转义，首个同引号即闭合
+            idx = text.find(q, start)
+            return idx if idx >= 0 else None
+        i = start
+        while i < len(text):
+            c = text[i]
+            if c == "\\":
+                i += 2
+                continue
+            if c == q:
+                return i
+            i += 1
+        return None
+
+    out: list[str] = []
+    pos = 0
+    while True:
+        m = _PAYLOAD_HEAD_RE.search(skeleton, pos)
+        if m is None:
+            out.append(skeleton[pos:])
+            return "".join(out)
+        out.append(skeleton[pos : m.start()])
+        q = m.group("q")
+        close = _close(skeleton, m.end(), q)
+        if close is None:  # 未闭合：原样保留，从开引号后继续找下一候选
+            out.append(skeleton[m.start() : m.end()])
+            pos = m.end()
+            continue
+        payloads.append(skeleton[m.end() : close])
+        ph = f"__XPL_{len(payloads) - 1}__"
+        out.append(f"{m.group('interp')}{m.group('flags')}{m.group('marker')}{ph}")
+        pos = close + 1
+
+
+def _strip_payload_units(command: str) -> tuple[str, list[str]]:
+    """剥离自足语法单元（先 here-doc 体，后解释器 -c/-e 载荷）→ (骨架, payloads).
+
+    载荷内容只作数据；内容级规则在调用方不变：classify_host_shell 的
+    全文关键词网、_active_backtick_substitutions 反引号网、_target 的
+    kind 匹配仍看原始全文。骨架只承载 argv 结构与命令位分界。
+    """
+    payloads: list[str] = []
+    skeleton = _strip_heredoc_units(str(command or ""), payloads)
+    skeleton = _strip_interpreter_payloads(skeleton, payloads)
+    return skeleton, payloads
 
 
 def _active_backtick_substitutions(command: str) -> list[str]:
@@ -463,20 +606,49 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
 
     Dry-run, help, -k, :: and --quick exempt ONLY the segment to which they
     belong. Comments/quoted text cannot suppress a subsequent real push/test.
+
+    EVO-20261029-65f6fe21: self-contained payloads (here-doc bodies, quoted
+    interpreter -c/-e payloads) are stripped for segment detection (payload
+    is data, not a command position), but their CONTENT still runs the same
+    protected-keyword net — a python payload that invokes a protected action
+    classifies as that kind (fail-closed: denied at _target as an
+    uncertifiable wrapper, never silently allowed, never a crash).
     """
     value = str(command or "").strip()
     if not value:
         return None
+    skeleton, payloads = _strip_payload_units(value)
     try:
         results = [
             _shell_segment_kind(tokens, depth=_depth)
-            for tokens in _shell_segments(value)
+            for tokens in _shell_segments(skeleton)
         ]
         # Backticks execute even inside double quotes. They are opaque to shlex
         # argv0 matching, so inspect their literal bodies separately.
         if _depth < 3:
             for script in _active_backtick_substitutions(value):
                 results.append(classify_host_shell(script, _depth=_depth + 1))
+            # EVO-20261029-65f6fe21：剥离载荷的内容级网——载荷文本含受保护
+            # 动词时仍按保护效果分类（旧 ValueError 全文网的行为保持），
+            # 只是不再误报 compound 形态、不再以崩溃收场。
+            for payload in payloads:
+                if _GIT_PUSH.search(payload):
+                    results.append("git_push")
+                elif _SHELL_FULL.search(payload) or classify_review_gate_command(payload) == "full_test":
+                    results.append("full_test")
+                # P1-1 补强：python 载荷内 shell 调用的字符串实参
+                # （os.system/subprocess…）就是运行时执行的命令位，递归分类。
+                for m in _PY_SHELL_CALL_LITERAL_RE.finditer(payload):
+                    kind = classify_host_shell(m.group("arg"), _depth=_depth + 1)
+                    if kind is not None:
+                        results.append(kind)
+                # P1-1 补强（第二轮审查）：list 形态 argv 同为命令位。
+                for m in _PY_SHELL_CALL_LIST_RE.finditer(payload):
+                    argv = " ".join(re.sub(r"""["'\[\],()]""", " ", m.group("args")).split())
+                    if argv:
+                        kind = classify_host_shell(argv, _depth=_depth + 1)
+                        if kind is not None:
+                            results.append(kind)
     except ValueError:
         # Invalid shell quoting must not be silently interpreted as a safe
         # command when it has explicit protected-action keywords.

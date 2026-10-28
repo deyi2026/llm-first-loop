@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -254,3 +255,73 @@ def test_doctor_online_success_keeps_ready(doctor_home, capsys, monkeypatch):
     assert report["ready"] is True
     assert report["online"]["ok"] is True
     assert _checks(report)["model_live"]["status"] == "pass"
+
+
+def _rule_bundle(tmp_path: Path, *, lite: str | None, body: str | None) -> Path:
+    bundle = tmp_path / "_bundled"
+    (bundle / "docs").mkdir(parents=True)
+    if body is not None:
+        (bundle / "docs" / "ai_rules.md").write_text(body, encoding="utf-8")
+    if lite is not None:
+        (bundle / "docs" / "ai_rules.lite.md").write_text(lite, encoding="utf-8")
+    return bundle
+
+
+def _patch_rule_bundle(monkeypatch, bundle: Path | None):
+    from llm_loop.runtime import installation
+    monkeypatch.setattr(cli, "bundle_root", lambda: bundle)
+    monkeypatch.setattr(installation, "bundle_root", lambda: bundle)
+
+
+def test_doctor_rule_assets_pass_on_wheel_bundle(doctor_home, capsys, monkeypatch, tmp_path):
+    """三态之一：wheel 命中且 lite 可解析 → pass，facts 与真实检索路径一致。"""
+    body = "## RULE-AI-24 当前任务与授权来源\n\n正文\n"
+    _patch_rule_bundle(monkeypatch, _rule_bundle(tmp_path, lite="version=20\n", body=body))
+    rc, report = _run_json([], capsys)
+    check = _checks(report)["rule_assets"]
+    assert check["status"] == "pass"
+    facts = check["facts"]
+    assert facts["source_kind"] == "wheel"
+    assert facts["rule_body_retrievable"] is True
+    assert facts["rules_version"] == "20"
+    assert facts["rule_body_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+    assert facts["error_code"] is None
+    # P2-5（审查 REVISE 2026-10-29）：去掉 `or True` 恒真断言。pass 态
+    # message 契约 = "规则资产可检索：source_kind=… ref=… rules_version=…"
+    # （RULE-AI-24 只在规则正文/检索事实里，不在 message——原断言本就不成立）。
+    assert check["id"] == "rule_assets"
+    assert "规则资产可检索" in check["message"]
+    assert f"rules_version={facts['rules_version']}" in check["message"]
+    rendered = json.dumps(check)
+    assert str(tmp_path) not in rendered  # 默认输出逻辑路径，不暴露绝对磁盘路径
+
+
+def test_doctor_rule_assets_warn_on_missing_lite(doctor_home, capsys, monkeypatch, tmp_path):
+    """三态之二：pre-fix 存留（正文在、lite 缺）→ warn + error_code，不判死。"""
+    _patch_rule_bundle(monkeypatch, _rule_bundle(
+        tmp_path, lite=None, body="## RULE-AI-24 当前任务与授权来源\n\n正文\n"))
+    rc, report = _run_json([], capsys)
+    check = _checks(report)["rule_assets"]
+    assert check["status"] == "warn"
+    assert check["facts"]["error_code"] == "asset_missing"
+    assert check["facts"]["rule_body_retrievable"] is True
+
+
+def test_doctor_rule_assets_fail_on_missing_body(doctor_home, capsys, monkeypatch, tmp_path):
+    """三态之三：损坏 bundle（正文缺）→ fail + error_code=asset_missing。"""
+    _patch_rule_bundle(monkeypatch, _rule_bundle(tmp_path, lite="version=20\n", body=None))
+    rc, report = _run_json([], capsys)
+    check = _checks(report)["rule_assets"]
+    assert check["status"] == "fail"
+    assert check["facts"]["error_code"] == "asset_missing"
+    assert check["facts"]["rule_body_retrievable"] is False
+
+
+def test_doctor_rule_assets_fail_when_body_yields_no_rule_cards(doctor_home, capsys, monkeypatch, tmp_path):
+    """正文存在但 RuleIndex 解析不出规则卡 → error_code=rule_lookup_failed。"""
+    _patch_rule_bundle(monkeypatch, _rule_bundle(
+        tmp_path, lite="version=20\n", body="# 不是规则卡的普通文档\n\n没有 RULE-AI 标题\n"))
+    rc, report = _run_json([], capsys)
+    check = _checks(report)["rule_assets"]
+    assert check["status"] == "fail"
+    assert check["facts"]["error_code"] == "rule_lookup_failed"

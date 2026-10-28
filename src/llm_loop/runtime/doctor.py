@@ -34,6 +34,93 @@ def _check_data_dir(path: Path, bundle: Path | None) -> tuple[str, str, str]:
     return ("pass", "数据目录路径可用（未创建或写入任何文件）。", "")
 
 
+def _check_resource_overrides(
+    merged: Mapping[str, str],
+    source: Callable[[str], str],
+    config: Path | None,
+    add: Callable[..., None],
+) -> None:
+    """显式覆盖的资源目录诊断（包内默认已由 check_install 清单覆盖）.
+
+    EVO-20261029 收口拆解：自 inspect_first_use 原样搬移（零语义变更）。
+    """
+    overrides = ("SKILLS_DIR", "DOCS_DIR", "UI_V2_DIR", "METHOD_SEED_DIR")
+    invalid = []
+    for name in overrides:
+        if not str(merged.get(name, "")).strip():
+            continue
+        try:
+            if not _select_path(
+                str(merged[name]),
+                source=source(name),
+                # 第六轮审查 P2-1：原样保留 HEAD 的类型松散（config_file 源下
+                # config=None 属既有历史行为，迁移不改变其语义），仅压制迁移
+                # 触发的新诊断。
+                config=config,  # pyright: ignore[reportArgumentType]
+            ).is_dir():
+                invalid.append(name)
+        except (OSError, ValueError):
+            invalid.append(name)
+    if invalid:
+        add("resources", "fail", "资源目录不可用：" + ", ".join(invalid) + "。", "修正对应路径或移除无效覆盖以使用包内资源。")
+    else:
+        add("resources", "pass", "未发现无效的自定义资源目录。")
+
+
+def _check_rule_assets(
+    add: Callable[..., None],
+    checks: list[dict[str, Any]],
+    rule_lookup: Callable[[Path, str], bool] | None = None,
+) -> None:
+    """规则资产事实（评审 §4.2 / §3.4 任务 3）：与 rules_version()/RuleIndex 同源.
+
+    离线只读；错误带 error_code，lite 版本缺失不再静默当作健康。深度探测走
+    程序真实检索路径（RuleIndex），成功即视为可取回真实规则卡（评审 §5）；
+    探测函数由调用方（cli 应用壳）注入——runtime 平面不得依赖 introspection
+    （kernel v1 import 边棘轮只减不增，test_kernel_import_edges_*）。
+    EVO-20261029 收口拆解：自 inspect_first_use 原样搬移（零语义变更）。
+    """
+    try:
+        from llm_loop.runtime.installation import rule_asset_facts, rules_doc_candidates
+
+        facts = rule_asset_facts()
+        # 未注入（runtime 内部直调）时跳过深度探测：facts 三态语义不变，
+        # 仅少 rule_lookup_failed 一层判定；cli 入口注入后与原行为一致。
+        if rule_lookup is not None and facts["rule_body_retrievable"] and facts["error_code"] is None:
+            body_path = rules_doc_candidates("ai_rules.md")[0]
+            if not rule_lookup(body_path, "RULE-AI-24"):
+                facts["error_code"] = "rule_lookup_failed"
+        detail = (
+            "source_kind={source_kind} ref={rule_body_ref} rules_version={version} "
+            "rule_body_sha256={digest}".format(
+                source_kind=facts["source_kind"],
+                rule_body_ref=facts["rule_body_ref"],
+                version=str(facts["rules_version"]) or "?",
+                digest=str(facts["rule_body_sha256"])[:16],
+            )
+        )
+        error_code = facts["error_code"]
+        if error_code is None:
+            add("rule_assets", "pass", "规则资产可检索：" + detail)
+        elif error_code == "version_parse_error" or (
+            error_code == "asset_missing" and facts["rule_body_retrievable"]
+        ):
+            # 正文仍可检索，仅版本信号缺失（lite 缺失/不可解析）：warn 而非 fail，
+            # pre-fix 存留安装不应被诊断判死（评审 §3.4 任务 2 的互操作语义）。
+            add("rule_assets", "warn", "规则正文可检索但规则版本信号缺失：" + detail,
+                "修复或重装 docs/ai_rules.lite.md（lfl check-install 验证完整性）。")
+        else:
+            action = {
+                "asset_missing": "确认安装完整：重装包或恢复缺失资源，再运行 lfl check-install。",
+                "asset_unreadable": "检查文件权限或重装包，再运行 lfl check-install。",
+                "rule_lookup_failed": "docs/ai_rules.md 存在但解析不出规则卡：重装或修复包内容。",
+            }.get(str(error_code), "重装包并运行 lfl check-install。")
+            add("rule_assets", "fail", "规则资产不可用（error_code=" + str(error_code) + "）：" + detail, action)
+        checks[-1]["facts"] = facts
+    except Exception:  # noqa: BLE001 - report a bounded fact, never leak exception payload
+        add("rule_assets", "fail", "规则资产检查本身失败。", "请反馈给维护者。")
+
+
 def inspect_first_use(
     *,
     args: Any,
@@ -42,6 +129,7 @@ def inspect_first_use(
     environment: Mapping[str, str],
     check_install: Callable[[], dict[str, Any]],
     online: bool = False,
+    rule_lookup: Callable[[Path, str], bool] | None = None,
 ) -> dict[str, Any]:
     """Return only whitelisted structural facts, never config or secret values.
 
@@ -49,7 +137,7 @@ def inspect_first_use(
     production CLI's existing default selection. No global state is changed.
     """
     shell = dict(environment)
-    checks: list[dict[str, str]] = []
+    checks: list[dict[str, object]] = []
 
     def add(id_: str, status: str, message: str, action: str = "") -> None:
         checks.append({"id": id_, "status": status, "message": message, "action": action})
@@ -138,20 +226,8 @@ def inspect_first_use(
 
     # Only explicitly overridden resource directories can be diagnosed here;
     # the bundled defaults are already covered by check_install's manifest.
-    overrides = ("SKILLS_DIR", "DOCS_DIR", "UI_V2_DIR", "METHOD_SEED_DIR")
-    invalid = []
-    for name in overrides:
-        if not str(merged.get(name, "")).strip():
-            continue
-        try:
-            if not _select_path(str(merged[name]), source=source(name), config=config).is_dir():
-                invalid.append(name)
-        except (OSError, ValueError):
-            invalid.append(name)
-    if invalid:
-        add("resources", "fail", "资源目录不可用：" + ", ".join(invalid) + "。", "修正对应路径或移除无效覆盖以使用包内资源。")
-    else:
-        add("resources", "pass", "未发现无效的自定义资源目录。")
+    # （EVO-20261029 收口拆解：见 _check_resource_overrides，零语义变更）
+    _check_resource_overrides(merged, source, config, add)
 
     # Installation briefing: the same three asset classes the context prefix will
     # load.  Missing resources degrade the briefing, not the runtime; report it so
@@ -187,6 +263,9 @@ def inspect_first_use(
     except Exception:  # noqa: BLE001 - a broken index must not break diagnostics
         add("context_assets", "warn", "安装上下文资产索引不可用。",
             "检查 docs/ai_rules.md 与资源目录权限；运行 lfl doctor 复检。")
+
+    # 规则资产事实：见 _check_rule_assets（EVO-20261029 收口拆解，零语义变更）
+    _check_rule_assets(add, checks, rule_lookup)
 
     # Optional live check: exactly one bounded request, only when explicitly asked.
     # It answers a different question from the local "model" check above and never
@@ -244,7 +323,7 @@ def human_report(report: Mapping[str, Any]) -> str:
     labels = {"pass": "通过", "warn": "待配置", "fail": "失败"}
     names = {"installation": "安装包", "config": "配置文件", "model": "模型配置",
              "model_live": "模型在线检测", "data_dir": "数据目录", "workspace": "工作目录",
-             "resources": "扩展资源", "context_assets": "上下文资产"}
+             "resources": "扩展资源", "context_assets": "上下文资产", "rule_assets": "规则资产"}
     online = report.get("online") is not None
     lines = ["LFL doctor（只读 / " + ("含在线检测" if online else "离线") + "）",
              "状态：" + str(report["status"])]
