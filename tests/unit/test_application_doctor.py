@@ -286,7 +286,12 @@ def test_doctor_rule_assets_pass_on_wheel_bundle(doctor_home, capsys, monkeypatc
     assert facts["rules_version"] == "20"
     assert facts["rule_body_sha256"] == hashlib.sha256(body.encode()).hexdigest()
     assert facts["error_code"] is None
-    assert "message" in check and "RULE-AI-24" in check["message"] or True
+    # P2-5（审查 REVISE 2026-10-29）：去掉 `or True` 恒真断言。pass 态
+    # message 契约 = "规则资产可检索：source_kind=… ref=… rules_version=…"
+    # （RULE-AI-24 只在规则正文/检索事实里，不在 message——原断言本就不成立）。
+    assert check["id"] == "rule_assets"
+    assert "规则资产可检索" in check["message"]
+    assert f"rules_version={facts['rules_version']}" in check["message"]
     rendered = json.dumps(check)
     assert str(tmp_path) not in rendered  # 默认输出逻辑路径，不暴露绝对磁盘路径
 

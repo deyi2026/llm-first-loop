@@ -1141,51 +1141,84 @@ class ToolRegistry:
         #    EVO-20260923 提权闭环: 人工批准的一次性令牌可定向放行本层
         #    （令牌绑定工具名+命令 SHA256，单次有效；EXEC_MODE 与共享服务
         #    边界独立于令牌，仍按各自规则裁决）。
+        conversion_note = ""  # EVO-20261029-04c73530：静态源转换的回执备注
         if self._is_destructive_tool(call.name):
             _guard_args = _guard_view_args(call.name, call.arguments)
             _guard_cwd = str(call.arguments.get("workdir") or "").strip() or None
             blocked = self.safety.guard(call.name, _guard_args, workdir=_guard_cwd)
             if blocked:
-                token = str(call.arguments.get("escalation_token", "") or "")
-                if _escalation_deferred_to_tool(call.name, call.arguments):
-                    # P1-1: execute_command 携带 escalation_id（或 argv+令牌）时，
-                    # 令牌裁决完全 defer 工具层（唯一 consume_for_execution 点）。
-                    # 本层不消费——防 argv 空 command 哈希永不匹配，也防与工具层
-                    # 双重消耗；后续围栏（共享服务/审核准入/EXEC_MODE）照常裁决。
-                    logger.info(
-                        "[提权让位] execute_command 灾难阻断携带 escalation 参数，"
-                        "令牌裁决 defer 工具层（escalation_id=%s, argv 形态=%s）",
-                        str(call.arguments.get("escalation_id", "") or "").strip() or "<empty>",
-                        bool(call.arguments.get("argv")),
+                # EVO-20261029-04c73530/-3af37051：here-doc / 静态源管道唯一命中
+                # 且不带提权凭据（人工审批优先于机械转换）时，尝试转换为临时
+                # 文件形态重放。转换内部含载荷 -c 同级内容扫描与重组形态全量
+                # 重扫，任一失败都回退原阻断（fail-closed，见 safety.py）。
+                if (
+                    call.name == "execute_command"
+                    and not str(call.arguments.get("escalation_token", "") or "").strip()
+                    and not str(call.arguments.get("escalation_id", "") or "").strip()
+                    and getattr(blocked, "rule", "")
+                ):
+                    _conv_cmd = str(call.arguments.get("command", "") or "")
+                    _conv = self.safety.try_static_source_conversion(
+                        _conv_cmd, _guard_cwd, blocked_rule=blocked.rule
                     )
-                    blocked = None
-                elif token and self._escalation_store is not None:
-                    # P1-1: 哈希键经 _command_text_for_guard 取文本（单一事实源；
-                    # command 模式下与原 args["command"] 逐字等价，行为不变）。
-                    command = _command_text_for_guard(call.name, call.arguments)
-                    rec, reject_reason = self._escalation_store.consume(token, call.name, command)
-                    if rec is not None:
-                        logger.info(
-                            "[提权放行] %s 请求 %s 人工批准令牌已消耗（单次）",
+                    if _conv is not None:
+                        _converted_cmd, conversion_note = _conv
+                        _conv_args = dict(call.arguments)
+                        _conv_args["command"] = _converted_cmd
+                        _conv_reblock = self.safety.guard(
                             call.name,
-                            rec.get("id", ""),
+                            _guard_view_args(call.name, _conv_args),
+                            workdir=_guard_cwd,
+                        )
+                        if _conv_reblock is None:
+                            logger.info(
+                                "[静态源转换] execute_command 灾难阻断经载荷扫描后转换重放: %s",
+                                _converted_cmd[:160],
+                            )
+                            call = ToolCall(id=call.id, name=call.name, arguments=_conv_args)
+                            _guard_args = _conv_args
+                            blocked = None
+                if blocked:
+                    token = str(call.arguments.get("escalation_token", "") or "")
+                    if _escalation_deferred_to_tool(call.name, call.arguments):
+                        # P1-1: execute_command 携带 escalation_id（或 argv+令牌）时，
+                        # 令牌裁决完全 defer 工具层（唯一 consume_for_execution 点）。
+                        # 本层不消费——防 argv 空 command 哈希永不匹配，也防与工具层
+                        # 双重消耗；后续围栏（共享服务/审核准入/EXEC_MODE）照常裁决。
+                        logger.info(
+                            "[提权让位] execute_command 灾难阻断携带 escalation 参数，"
+                            "令牌裁决 defer 工具层（escalation_id=%s, argv 形态=%s）",
+                            str(call.arguments.get("escalation_id", "") or "").strip() or "<empty>",
+                            bool(call.arguments.get("argv")),
                         )
                         blocked = None
-                    else:
-                        return self._preblock(
-                            call,
-                            ToolResult(
-                                status=ToolResultStatus.BLOCKED,
-                                content=(
-                                    f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
-                                    f"如仍必要请重新 escalation_request 提交申请。"
+                    elif token and self._escalation_store is not None:
+                        # P1-1: 哈希键经 _command_text_for_guard 取文本（单一事实源；
+                        # command 模式下与原 args["command"] 逐字等价，行为不变）。
+                        command = _command_text_for_guard(call.name, call.arguments)
+                        rec, reject_reason = self._escalation_store.consume(token, call.name, command)
+                        if rec is not None:
+                            logger.info(
+                                "[提权放行] %s 请求 %s 人工批准令牌已消耗（单次）",
+                                call.name,
+                                rec.get("id", ""),
+                            )
+                            blocked = None
+                        else:
+                            return self._preblock(
+                                call,
+                                ToolResult(
+                                    status=ToolResultStatus.BLOCKED,
+                                    content=(
+                                        f"[提权令牌无效] {reject_reason}。请勿重试旧令牌；"
+                                        f"如仍必要请重新 escalation_request 提交申请。"
+                                    ),
+                                    tool_call_id=call.id,
+                                    tool_name=call.name,
+                                    error_detail=f"escalation token rejected: {reject_reason}",
+                                    duration_ms=0.0,
                                 ),
-                                tool_call_id=call.id,
-                                tool_name=call.name,
-                                error_detail=f"escalation token rejected: {reject_reason}",
-                                duration_ms=0.0,
-                            ),
-                        )
+                            )
             if blocked:
                 escalate_hint = (
                     " 如确属必要: escalation_request 提交提权申请（web 弹窗人工审批），"
@@ -1335,6 +1368,9 @@ class ToolRegistry:
                 budget_outcome["complete"] = result.status != ToolResultStatus.TIMEOUT
             duration_ms = (time.perf_counter() - start) * 1000
             result.duration_ms = duration_ms
+            # EVO-20261029-04c73530：静态源转换如实标注进回执（不伪装成原样执行）
+            if conversion_note:
+                result.content = (result.content or "") + f"\n[静态源转换] {conversion_note}"
             # EVO-20260813-9ced1f4c: post 快照（不可变 result + post 钩子，默认关闭零回归）
             if pipeline is not None and pipeline.config.enabled and pipeline._post_hooks:
                 snapshot = ImmutableResult(

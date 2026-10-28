@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 import os
@@ -621,10 +622,35 @@ class ExecuteCommandTool:
         launch_command = "bash -e -o pipefail -c " + shlex.quote(command) if fail_fast else command
         return workdir, run_bg, fail_fast, isolation, launch_command
 
+    def _heldout_sealed_result(self, command: str) -> ToolResult | None:
+        """held-out 读侧封条（P2-8）：命令串字面片段拒绝.
+
+        置于一切守卫/解析副作用之前（argv 模式经 shlex.join 归一，与灾难守卫
+        同一基准）。封条未启用时恒 None（零行为变化）。已知边界：变量拼接/
+        间接构造可绕过字面片段拒绝（第一道门，配合事后 verify_isolation.py）。
+        EVO-20261029 收口拆解：自 execute 原样搬移（零语义变更）。
+        """
+        _sealed_cmd_reason = sealed_command_reason(command)
+        if _sealed_cmd_reason is None:
+            return None
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[held-out 封条] execute_command 命令被拒绝: {_sealed_cmd_reason}",
+            tool_call_id="",
+            tool_name=self.name,
+            error_type="HeldoutSealed",
+        )
+
     def _apply_execution_guards(
         self, spec: _CommandSpec, workdir: str | None, esc_id: str, esc_token: str
-    ) -> tuple[str, ToolResult | None]:
-        """工具层灾难守卫链（P2-2/P2-3）: 守卫判定，阻断时走提权覆盖；返回 (附注, 错误回执)."""
+    ) -> tuple[_CommandSpec, str, ToolResult | None]:
+        """工具层灾难守卫链（P2-2/P2-3）: 守卫判定，阻断时走提权覆盖；返回 (规格, 附注, 错误回执).
+
+        EVO-20261029-04c73530/-3af37051（backstop）：注册表层未先行转换的直达
+        调用（如测试直调）在本层兜底尝试静态源转换；带提权凭据时不转换
+        （人工审批优先）。规格为不可变 dataclass，转换成功时返回替换后的
+        新规格（command/launch_command 同步重写）。
+        """
         # ── P2-2/P2-3（2026-10-25）: 工具层灾难守卫 + 提权令牌定向覆盖 ──
         # 判定基准文本: argv 模式 = shlex.join(argv)（结构化执行不绕过守卫）；
         # command 模式 = command 原文（注册表层已判，工具层兜底重复判定，
@@ -644,13 +670,42 @@ class ExecuteCommandTool:
                 workdir=workdir,
             )
             if decision is not None and decision.blocked:
+                # EVO-20261029-04c73530：静态源转换 backstop（无提权凭据、
+                # command 模式、模式标签非空才尝试；registry 层通常已先转换）。
+                if (
+                    spec.exec_argv is None
+                    and not esc_id
+                    and not esc_token
+                    and getattr(decision, "rule", "")
+                ):
+                    conv = self._guard().try_static_source_conversion(
+                        spec.command, workdir, blocked_rule=decision.rule
+                    )
+                    if conv is not None:
+                        converted, conv_note = conv
+                        reblock = self._guard().guard(
+                            self.name,
+                            {"command": converted, "run_in_background": spec.run_bg},
+                            workdir=workdir,
+                        )
+                        if reblock is None:
+                            new_launch = (
+                                "bash -e -o pipefail -c " + shlex.quote(converted)
+                                if spec.fail_fast
+                                else converted
+                            )
+                            spec = dataclasses.replace(
+                                spec, command=converted, launch_command=new_launch
+                            )
+                            guard_override_note = conv_note
+                            return spec, guard_override_note, None
                 note, err = self._resolve_escalation_override(
                     decision, spec, esc_id, esc_token
                 )
                 if err is not None:
-                    return "", err
+                    return spec, "", err
                 guard_override_note = note
-        return guard_override_note, None
+        return spec, guard_override_note, None
 
     def _resolve_escalation_override(
         self, decision: BlockDecision, spec: _CommandSpec, esc_id: str, esc_token: str
@@ -1057,22 +1112,10 @@ class ExecuteCommandTool:
         if isinstance(mode, ToolResult):
             return mode
         command, exec_argv, exec_mode = mode
-        # ── P2-8（Rule28 修复轮）: held-out 读侧封条——命令串字面片段拒绝 ──
-        # 置于一切守卫/解析副作用之前（参数裁决之后才能拿到统一文本基准 command：
-        # argv 模式经 shlex.join 归一，与既有灾难守卫同一基准）。封条未启用时
-        # sealed_command_reason 恒 None（零行为变化）。已知边界：变量拼接/间接构造
-        # 可绕过字面片段拒绝（第一道门，配合事后 verify_isolation.py），见
-        # sealed_paths.sealed_command_reason docstring。
-        _sealed_cmd_reason = sealed_command_reason(command)
-        if _sealed_cmd_reason is not None:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=f"[held-out 封条] execute_command 命令被拒绝: "
-                f"{_sealed_cmd_reason}",
-                tool_call_id="",
-                tool_name=self.name,
-                error_type="HeldoutSealed",
-            )
+        # ── P2-8（Rule28 修复轮）: held-out 读侧封条（细节见 _heldout_sealed_result）──
+        _sealed = self._heldout_sealed_result(command)
+        if _sealed is not None:
+            return _sealed
         flags = self._resolve_flags_and_workdir(kwargs, command, exec_argv)
         if isinstance(flags, ToolResult):
             return flags
@@ -1090,11 +1133,14 @@ class ExecuteCommandTool:
         # （判定基准/覆盖通道/让位语义详见 _apply_execution_guards 文档）
         esc_id = str(kwargs.get("escalation_id", "") or "").strip()
         esc_token = str(kwargs.get("escalation_token", "") or "").strip()
-        guard_override_note, guard_err = self._apply_execution_guards(
+        spec, guard_override_note, guard_err = self._apply_execution_guards(
             spec, workdir, esc_id, esc_token
         )
         if guard_err is not None:
             return guard_err
+        # EVO-20261029-04c73530：转换成功时后续一切（审核门/回执展示/执行）
+        # 都以转换后规格为准——回执如实展示转换形态，不伪装原样执行。
+        command = spec.command
         # RULE-AI-28: caller-visible obligation is in the schema before invocation;
         # the returned annotation reports observations, not automatic admission.
         gate_line = self._review_gate_line(command)

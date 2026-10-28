@@ -21,11 +21,19 @@ import os
 import re
 import shlex
 import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+# review_gate 为零内部依赖叶子模块（架构守卫核验），safety 直引不构成环；
+# 受保护动作分类用它做文本级网（review_host_admission 依赖 subagent.runner
+# → tools.registry，safety 反向引用会闭合模块环，故不可用）。
+# sealed_paths 同为纯标准库叶子模块：held-out 封条必须在转换管线内前置
+# （registry 层转换先于工具层封条执行——第六轮审查 P1-1）。
+from llm_loop.sealed_paths import sealed_command_reason
 from llm_loop.timekeeping import system_local_now
+from llm_loop.tools.review_gate import classify_review_gate_command
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +109,10 @@ class BlockDecision:
     blocked: bool
     reason: str = ""
     evidence: str = ""  # 判定依据（FR-SAFE-02 阻断信息透明）
+    # EVO-20261029-04c73530：命中本判定的灾难性模式标签（_CATASTROPHIC_PATTERNS
+    # 层的正则标签；内容级/载荷级直接构造的判定保持空串）。调用方据此判定
+    # "仅命中此模式且仅命中此模式"是否成立，以决定是否尝试静态源转换。
+    rule: str = ""
 
 
 # N6（2026-10-25 第四轮红队）：解释器名单单一事实源。
@@ -970,6 +982,263 @@ def _python_payload(tokens: list[str]) -> str | None:
     return None
 
 
+# ── EVO-20261029-04c73530 / EVO-20261029-3af37051：静态源转换 ──
+# 引号定界 here-doc 与 producer|解释器 静态源管道 → 工作区缓存目录临时文件
+# 形态重放。解析刻意保守：任何歧义（未引号定界、定界符后残余、多模式命中、
+# producer 白名单外）一律不转换，维持原硬阻断（fail-closed）。
+_CONVERT_HEREDOC_RULE = "here-doc 交给解释器执行"
+_CONVERT_PIPE_RULE = "任意管道直连解释器执行"
+
+_CONVERT_PY_FLAGS = frozenset({"-u", "-B", "-E", "-s", "-S", "-I", "-O", "-b", "-q"})
+_CONVERT_SHELL_FLAGS = frozenset({"-e", "-u", "-x", "-n"})
+_CONVERT_FAMILY_FLAGS: dict[str, frozenset[str]] = {
+    "python": _CONVERT_PY_FLAGS,
+    "shell": _CONVERT_SHELL_FLAGS,
+    "node": frozenset(),
+    "ruby": frozenset(),
+    "perl": frozenset(),
+}
+_CONVERT_FAMILY_EXTS: dict[str, str] = {
+    "python": ".py",
+    "shell": ".sh",
+    "node": ".js",
+    "ruby": ".rb",
+    "perl": ".pl",
+}
+# 解释器名 → 家族（basename 归一；绝对路径解释器按 basename 判定）
+_CONVERT_FAMILIES: dict[str, str] = {
+    "python": "python",
+    "python3": "python",
+    "node": "node",
+    "nodejs": "node",
+    "ruby": "ruby",
+    "perl": "perl",
+    "sh": "shell",
+    "bash": "shell",
+    "zsh": "shell",
+    "dash": "shell",
+    "ksh": "shell",
+}
+
+# P2-2（审查 REVISE 2026-10-29）：定界符引号必须成对同型（'X' 或 "X"），
+# 混合引号（'X"）在真实 shell 是未闭合引号语法错误，不转换。
+_HEREDOC_DELIM_RE = re.compile(r"^(?P<q>['\"])(?P<delim>[A-Za-z0-9_+.-]{1,64})(?P=q)$")
+# P1（审查 REVISE 第二轮 2026-10-29）：进程派生/间接执行构造——载荷含任一
+# 构造即拒绝转换（枚举式内容网对 list 形态/getattr/exec 等天然可绕；转换
+# 是便利通道，拒绝仅回退到原阻断+人工提权链路，无可用性损失）。
+# 进程内测试执行器（pytest.main/unittest.main）同列：全量测试属 RULE-AI-28
+# 受保护动作，不得经转换通道自动重放。
+_CONVERT_SPAWN_CONSTRUCT_RE = re.compile(
+    r"""\b(?:subprocess\b|os\.system|os\.popen|os\.exec\w*|os\.spawn\w*|os\.posix_spawn\w*|"""
+    r"""pty\.spawn|child_process\.|execSync|spawnSync|execFileSync|"""
+    r"""eval\s*\(|exec\s*\(|__import__\s*\(|importlib\b|getattr\s*\(|globals\s*\(|vars\s*\(|compile\s*\(|"""
+    r"""pytest\.main|pytest\.cmdline\.main|unittest\.main)"""
+)
+# P1（第七轮审查）：转换侧受保护动词宽松文本网。叶子分类器
+# （classify_review_gate_command）锚定命令位（行首/操作符后），here-doc
+# 载荷体内行首 git push、字符串实参（node execSync("git push")）等形态会
+# 漏判；转换是便利通道，此处宁误拒不放过（误拒=回退原阻断+人工链路）。
+# P1（第九轮审查）：跨度改懒匹配且不排除 ; & |——`g="git"; p="push"`
+# 变量间接形态必须命中；node 拼接形态由派生构造网兜底。
+_CONVERT_PROTECTED_TEXT_RE = re.compile(
+    r"""(?:^|\W)git(?:-[A-Za-z0-9._-]+)?\b.{0,120}?\bpush\b"""
+    r"""|\b(?:uv\s+run\s+pytest3?|scripts/ci_gate\.sh|pytest3?(?![\w-]))\b""",
+    re.IGNORECASE | re.DOTALL,
+)
+# P1（第八轮审查）：敏感文件读取网。转换后下游全文本准入网只见
+# `解释器 -I <临时文件>` 形态，载荷内的敏感路径引用（.env/credentials/
+# id_rsa/*.pem 等）必须在转换侧先行拦截（原命令与载荷体双查，宁误拒：
+# 误拒=回退原阻断+人工链路）。
+_CONVERT_SENSITIVE_READ_RE = re.compile(
+    r"""\.(?:env|netrc|npmrc|pypirc)(?:\.[\w.-]+)?\b"""
+    r"""|\b(?:secrets?|credentials?|api[-_]?tokens?)\.[\w.-]*\b"""
+    r"""|(?:^|[/\s~])credentials\b"""
+    r"""|/proc/[\w/]*environ\b"""
+    r"""|\bid_(?:rsa|ed25519)(?:\.[\w.-]+)?\b"""
+    r"""|[\w.-]+\.(?:pem|p12|pfx)\b"""
+    r"""|[\w.-]*(?:secret|credential|password|api[-_]?token|private[-_]?key)[\w.-]*\.(?:json|yaml|yml|toml|ini|txt|env|key)\b""",
+    re.IGNORECASE,
+)
+
+
+def _parse_quoted_heredoc(command: str) -> tuple[list[str], str, str] | None:
+    r"""解析 `解释器 [flags] [-] <<[-] 'DELIM' … \nDELIM` 严格形态.
+
+    返回 (前缀 tokens, 定界符, 载荷体)；不满足返回 None：
+    - 头行必须且只是 解释器 + flags + 引号定界 here-doc 引导（here-string
+      `<<<`、未引号定界、引导符之后残余 → None）；
+    - 关闭行（`<<` 精确行匹配；`<<-` 前导 tab 剥离后匹配）之后只允许空白——
+      残余在真实 shell 里是命令位，不转换；
+    - 定界符带引号（单/双引号定界均禁展开）。
+    """
+    text = command.replace("\r\n", "\n")
+    lines = text.split("\n")
+    if len(lines) < 2:
+        return None
+    head = lines[0].strip()
+    idx = head.find("<<")
+    if idx < 0:
+        return None
+    left = head[:idx].strip()
+    right = head[idx + 2 :]
+    if not left or not right or right.startswith("<"):  # here-string 不转换
+        return None
+    strip_tabs = right.startswith("-")
+    if strip_tabs:
+        right = right[1:]
+    m = _HEREDOC_DELIM_RE.match(right.strip())
+    if m is None:
+        return None
+    delim = m.group("delim")
+    prefix = left.split()
+    if not prefix:
+        return None
+    for i in range(1, len(lines)):
+        line = lines[i]
+        closed = line.lstrip("\t") == delim if strip_tabs else line == delim
+        if closed:
+            body_lines = lines[1:i]
+            rest = lines[i + 1 :]
+            if any(ln.strip() for ln in rest):
+                return None  # 关闭行后残余 = shell 会执行的命令位
+            return prefix, delim, "\n".join(body_lines)
+    return None  # 无关闭行（载荷吞到结尾）→ 不转换
+
+
+_ECHO_QUOTED_RE = re.compile(r"""echo(?:\s+-n)?\s+('([^']*)'|"([^"]*)")""", re.S)
+_ECHO_BARE_RE = re.compile(r"""echo(?:\s+-n)?\s+([A-Za-z0-9_+=,.:/%@-]+)\s*$""")
+
+
+def _parse_static_source_pipe(command: str, workdir: str | None) -> tuple[str, list[str], str] | None:
+    r"""解析 `producer | 解释器` 静态源管道（EVO-20261029-3af37051）.
+
+    返回 (解释器名, flags, 载荷体)；producer 白名单封闭：
+    - `cat <单文件>`：无 flag、恰好一个路径参数；相对路径按 workdir 解析；
+      resolve 后必须在工作区围栏内且当前可读（读失败 → None）；
+    - `echo [-n] <载荷>`：单引号字面量（原样）/ 双引号（禁 `\` 转义歧义）/
+      未引号单 token（受限字符集；`$` 反引号已全局拒绝）。
+    其余（curl/网络源、多级管道、tee 中转、gunzip 解压源、命令替换、
+    重定向、复合、sudo/env 包装、路径出围栏）一律 None。
+    """
+    text = command.strip()
+    # 结构性拒绝：命令替换/反引号/重定向/复合/多段管道
+    if any(ch in text for ch in ("`", "$", "<", ">", ";", "&")):
+        return None
+    if text.count("|") != 1:
+        return None
+    producer_s, _, interp_s = text.partition("|")
+    producer_s = producer_s.strip()
+    interp_s = interp_s.strip()
+    if not producer_s or not interp_s:
+        return None
+    try:
+        ptoks = shlex.split(producer_s, posix=True)
+        itoks = shlex.split(interp_s, posix=True)
+    except ValueError:
+        return None
+    if not ptoks or not itoks:
+        return None
+    base = (Path(workdir) if workdir else Path.cwd()).resolve()
+    body: str | None = None
+    p0 = os.path.basename(ptoks[0]).lower()
+    if p0 == "cat":
+        if len(ptoks) != 2 or ptoks[1].startswith("-"):
+            return None
+        # P1（第十轮审查）：敏感路径先于读取判定——读取即内存暴露，
+        # 且后续拒绝审计不得携带文件内容预览。
+        if _CONVERT_SENSITIVE_READ_RE.search(ptoks[1]):
+            return None
+        path = Path(_expand(ptoks[1]))
+        if not path.is_absolute():
+            path = base / path
+        try:
+            real = path.resolve(strict=True)
+            if real != base and base not in real.parents:
+                return None  # 围栏外路径不转换
+            body = real.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None  # 不可读/非文本 → 回退原阻断
+    elif p0 == "echo":
+        m = _ECHO_QUOTED_RE.fullmatch(producer_s)
+        if m is not None:
+            if m.group(2) is not None:  # 单引号：shell 字面量，原样
+                body = m.group(2)
+            elif "\\" not in (m.group(3) or ""):  # 双引号：禁反斜杠转义歧义
+                body = m.group(3)
+            else:
+                return None
+        else:
+            mb = _ECHO_BARE_RE.fullmatch(producer_s)
+            if mb is None:
+                return None
+            body = mb.group(1)
+    else:
+        return None
+    if body is None:
+        return None
+    interp = itoks[0]
+    if "/" in interp or "$" in interp or "`" in interp:
+        return None
+    fam = _CONVERT_FAMILIES.get(os.path.basename(interp).lower())
+    if fam is None:
+        return None
+    # P2-4（第十轮审查）：python/shell 家族尾部的裸 `-`（stdin 标记，
+    # `echo '...' | python3 -` 惯用形态）转换时丢弃——临时文件即标准输入。
+    flags = [] if fam in ("python", "shell") and itoks[1:] == ["-"] else list(itoks[1:])
+    if not all(f in _CONVERT_FAMILY_FLAGS[fam] for f in flags):
+        return None
+    return interp, flags, body
+
+
+def _write_convert_tmp(body: str, ext: str, workdir: str | None) -> Path | None:
+    """载荷写入工作区缓存目录临时文件（git 忽略区 .cache/，O_EXCL 防符号链接）.
+
+    P2-4（审查 REVISE 2026-10-29）：mkdir 后对缓存目录做 resolve 围栏校验
+    ——预置符号链接把写入重定向到工作区外时拒绝转换（fail-closed）。
+    """
+    try:
+        base = (Path(workdir) if workdir else Path.cwd()).resolve()
+        cache = base / ".cache" / "heredoc-convert"
+        cache.mkdir(parents=True, exist_ok=True)
+        resolved_cache = cache.resolve()
+        if not resolved_cache.is_relative_to(base):
+            return None  # 符号链接重定向出围栏 → 不转换
+        cache = resolved_cache
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        stamp = system_local_now().strftime("%Y%m%dT%H%M%S%f")
+        path = cache / f"hc-{stamp}-{digest[:12]}{ext}"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        _prune_convert_tmp(cache)
+        return path
+    except OSError:
+        return None  # 写失败 → 转换失败 → 回退原阻断（fail-closed）
+
+
+def _prune_convert_tmp(cache: Path, keep: int = 200) -> None:
+    """目录级容量上限：超出按 mtime 淘汰最旧（审计文件保留策略见提案 §4）.
+
+    stat 竞态（并发清理下文件消失）按 mtime=0 兜底，不让清理中断转换路径。
+    """
+    def _safe_mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    try:
+        entries = [p for p in cache.iterdir() if p.name.startswith("hc-")]
+        if len(entries) <= keep:
+            return
+        entries.sort(key=_safe_mtime, reverse=True)
+        for p in entries[keep:]:
+            with suppress(OSError):
+                p.unlink()
+    except OSError:
+        return
+
+
 class CatastrophicGuard:
     """灾难性行为判定与硬阻断（FR-SAFE 系列）.
 
@@ -1272,56 +1541,287 @@ class CatastrophicGuard:
                 )
 
         # 4) python -c 载荷检查（递归级无条件拦；单文件级字面目标判定）
+        # EVO-20261029-04c73530：载荷检查抽为 _check_python_payload，
+        # 与 here-doc / 静态源管道转换共用同一实现（单一事实源）。
         py_payload = _python_payload(toks)
         if py_payload:
+            payload_decision = self._check_python_payload(py_payload, sub, depth, cwd)
+            if payload_decision is not None:
+                return payload_decision
+
+        return None
+
+    def _check_python_payload(
+        self,
+        py_payload: str,
+        sub: str,
+        depth: int,
+        cwd: str | None,
+    ) -> BlockDecision | None:
+        """python 载荷内容级扫描（-c 与静态源转换共用同一实现——单一事实源）.
+
+        递归级（rmtree 调用点 / 递归级危险动词 + shell 调用）无条件拦；
+        单文件级字面目标经 _is_dangerous_rm_target 判定；shell 调用字符串
+        实参整串递归重扫（N9）。命中返回 BlockDecision，未命中返回 None。
+        """
             # 递归级：只认"真调用 + 字面目标是灾难目录"。
             # 字符串里出现删除命令只是数据（例如生成文档/测试时引用），
             # 按文本命中就拦会误杀诚实工作流，也会逼调用方改用更难审的写法。
-            stripped = _PY_STRING_LITERAL.sub("''", py_payload)
-            if _PY_RMTREE_CALL_SITE.search(stripped):
+        stripped = _PY_STRING_LITERAL.sub("''", py_payload)
+        if _PY_RMTREE_CALL_SITE.search(stripped):
+            return self._block(
+                "python 载荷递归删除调用（递归级一律拦，目标可能动态拼接）",
+                sub,
+                "调用点: " + stripped.strip()[:80],
+            )
+        for lm in _PY_SINGLE_FILE_CALL.finditer(py_payload):
+            target = lm.group(2)
+            if _is_dangerous_rm_target(_expand(target), cwd):
                 return self._block(
-                    "python -c 载荷递归删除调用（递归级一律拦，目标可能动态拼接）",
+                    "python 载荷单文件删除指向灾难目录",
                     sub,
-                    "调用点: " + stripped.strip()[:80],
+                    f"字面目标: {target[:80]}",
                 )
-            for lm in _PY_SINGLE_FILE_CALL.finditer(py_payload):
-                target = lm.group(2)
-                if _is_dangerous_rm_target(_expand(target), cwd):
-                    return self._block(
-                        "python -c 载荷单文件删除指向灾难目录",
-                        sub,
-                        f"字面目标: {target[:80]}",
-                    )
-            if _PY_SHELL_CALL.search(py_payload):
-                m = _PY_RECURSIVE_DANGER.search(py_payload)
-                if m:
-                    return self._block("python -c 载荷含递归级不可逆破坏调用", sub, f"载荷命中: {m.group(0)[:80]}")
-                # N9（2026-10-25 第四轮红队）：os.system/os.popen/subprocess.* 的
-                # 字符串实参整串递归重扫——`chmod -R 000 /etc`、`find /etc
-                # -delete` 等非 rm 动词复用全量规则（旧逻辑内层只查 rm）。
-                if depth < 4:
-                    for sm in _PY_SHELL_CALL_LITERAL.finditer(py_payload):
-                        arg = sm.group("arg")
-                        d = self._scan_command(arg, "execute_command", depth + 1, cwd=cwd)
-                        if d is not None and d.blocked:
-                            return BlockDecision(
-                                blocked=True,
-                                reason=d.reason,
-                                evidence=f"python 载荷 shell 调用实参: {arg[:80]} ← {d.evidence}",
+        if _PY_SHELL_CALL.search(py_payload):
+            m = _PY_RECURSIVE_DANGER.search(py_payload)
+            if m:
+                return self._block("python 载荷含递归级不可逆破坏调用", sub, f"载荷命中: {m.group(0)[:80]}")
+            # N9（2026-10-25 第四轮红队）：os.system/os.popen/subprocess.* 的
+            # 字符串实参整串递归重扫——`chmod -R 000 /etc`、`find /etc
+            # -delete` 等非 rm 动词复用全量规则（旧逻辑内层只查 rm）。
+            if depth < 4:
+                for sm in _PY_SHELL_CALL_LITERAL.finditer(py_payload):
+                    arg = sm.group("arg")
+                    d = self._scan_command(arg, "execute_command", depth + 1, cwd=cwd)
+                    if d is not None and d.blocked:
+                        return BlockDecision(
+                            blocked=True,
+                            reason=d.reason,
+                            evidence=f"python 载荷 shell 调用实参: {arg[:80]} ← {d.evidence}",
+                        )
+            # 引号/逗号归一后 token 扫描（shell 调用里的列表形态命令）
+            inner_toks = re.sub(r"['\",()\[\];]", " ", py_payload).split()
+            for i, t in enumerate(inner_toks):
+                if t == "rm" and _rm_recursive_force(inner_toks[i:]):
+                    for target in _rm_targets(inner_toks[i:]):
+                        if _is_dangerous_rm_target(target, cwd):
+                            return self._block(
+                                "python 载荷内嵌删除命令指向灾难目标",
+                                sub,
+                                f"载荷 rm 目标: {target}",
                             )
-                # 引号/逗号归一后 token 扫描（shell 调用里的列表形态命令）
-                inner_toks = re.sub(r"['\",()\[\];]", " ", py_payload).split()
-                for i, t in enumerate(inner_toks):
-                    if t == "rm" and _rm_recursive_force(inner_toks[i:]):
-                        for target in _rm_targets(inner_toks[i:]):
-                            if _is_dangerous_rm_target(target, cwd):
-                                return self._block(
-                                    "python -c 载荷内嵌删除命令指向灾难目标",
-                                    sub,
-                                    f"载荷 rm 目标: {target}",
-                                )
-
         return None
+
+    # ── EVO-20261029-04c73530 / -3af37051：静态源转换编排 ──
+
+    def _catastrophic_labels(self, command: str) -> set[str]:
+        """命令文本命中的灾难性模式标签集合（与 guard 正则层同一展开与匹配口径）."""
+        expanded = _expand(_normalize_ansi_c_quotes(command))
+        return {label for label, pattern in _CATASTROPHIC_PATTERNS if pattern.search(expanded)}
+
+    def _scan_interpreter_body(
+        self, body: str, family: str, sub: str, depth: int, cwd: str | None
+    ) -> BlockDecision | None:
+        """转换载荷的内容级扫描（与各解释器 -c 载荷同级——单一事实源）.
+
+        - python：_check_python_payload（递归级无条件拦 + shell 调用实参递归重扫）；
+        - shell 族：_scan_command 递归（与 sh -c 载荷同级，深度受限）；
+        - node/ruby/perl：_payload_deletes_dangerous（与解释器 -c 载荷同级）。
+        """
+        if family == "python":
+            return self._check_python_payload(body, sub, depth, cwd)
+        if family == "shell":
+            if depth < 8:
+                d = self._scan_command(body, "execute_command", depth + 1, cwd=cwd)
+                if d is not None and d.blocked:
+                    return BlockDecision(
+                        blocked=True,
+                        reason=d.reason,
+                        evidence=f"静态源载荷(shell): {body[:80]} ← {d.evidence}",
+                    )
+            return None
+        hit = _payload_deletes_dangerous(body, cwd)
+        if hit:
+            return self._block("解释器载荷含删除类调用", sub, hit[:80])
+        return None
+
+    def _audit_conversion(
+        self,
+        original: str,
+        converted: str,
+        body: str,
+        tmp_path: Path | None,
+        status: str,
+        *,
+        preview_suppress: bool = False,
+    ) -> None:
+        """转换路径审计留痕（safety_conversions.jsonl，与阻断审计同链式哈希）.
+
+        P1（第十轮审查）：preview_suppress=True 时载荷预览置空——
+        敏感读取拒绝不得把文件内容（如 .env 首行明文密钥）复制进审计。
+        """
+        self._append_audit(
+            "safety_conversions.jsonl",
+            {
+                "kind": "static_source_conversion",
+                "status": status,
+                "tool_name": "execute_command",
+                "command": original[:200],
+                "converted_command": converted[:200] if converted else "",
+                "payload_sha256_16": (
+                    hashlib.sha256(body.encode("utf-8")).hexdigest()[:16] if body else ""
+                ),
+                # P2-1（审查 REVISE）：审计同步带载荷预览（单行前 160 字）
+                "payload_preview": "" if preview_suppress else " ".join(body.split())[:160],
+                "temp_path": str(tmp_path) if tmp_path else "",
+            },
+        )
+
+    def _parse_static_source(
+        self, command: str, expected: str, workdir: str | None
+    ) -> tuple[str, str, list[str], str] | None:
+        """按目标模式解析静态源 → (解释器 token, 家族, flags, 载荷体)；歧义即 None.
+
+        EVO-20261029 收口拆解：自 try_static_source_conversion 原样搬移
+        （零语义变更），维持编排函数行数纪律（架构守卫 ≤120）。
+        """
+        if expected == _CONVERT_HEREDOC_RULE:
+            parsed = _parse_quoted_heredoc(command)
+            if parsed is None:
+                return None
+            prefix, _delim, candidate = parsed
+            interp_token = prefix[0]
+            if "$" in interp_token or "`" in interp_token:
+                return None
+            family = _CONVERT_FAMILIES.get(os.path.basename(interp_token).lower())
+            if family is None:
+                return None
+            rest = [t for t in prefix[1:] if t != "-"]
+            if not all(t in _CONVERT_FAMILY_FLAGS[family] for t in rest):
+                return None
+            return interp_token, family, rest, candidate
+        parsed = _parse_static_source_pipe(command, workdir)
+        if parsed is None:
+            return None
+        interp_token, pflags, candidate = parsed
+        return interp_token, _CONVERT_FAMILIES[interp_token.lower()], pflags, candidate
+
+    def try_static_source_conversion(
+        self, command: str, workdir: str | None = None, *, blocked_rule: str = ""
+    ) -> tuple[str, str] | None:
+        """引号定界 here-doc / 静态源管道 → 临时文件形态转换（人工审批链路之外）.
+
+        前置（调用方保证）：灾难守卫已因 here-doc / 管道直连解释器返回阻断，
+        且本次调用不携带提权令牌（人工审批优先于机械转换）。
+        流程（提案 EVO-20261029-04c73530 §方案）：
+        1. 标签集合恰为单一目标模式才继续（多模式命中不转换）；
+        2. 严格解析（引号定界 here-doc / producer 白名单管道），歧义即 None；
+        3. 载荷经 -c 同级内容扫描 + 进程派生/进程内测试执行构造检查（P1），
+           命中 → 审计 rejected_by_* 并返回 None（调用方维持原阻断与提权指引）；
+        4. 受保护动作文本级分类（叶子模块 review_gate；review_host_admission
+           依赖链会闭模块环不可用），命中 → 不转换；
+        5. 通过 → 写 .cache/heredoc-convert 临时文件 → 重组为
+           `<解释器> -I <临时文件>`（python）/<解释器> <文件>（其余）；
+        6. 重组形态再过全量守卫（防转换后仍命中其他模式），命中即回退；
+        7. 成功返回 (converted_command, 如实标注的回执备注)。
+        """
+        if not command or not command.strip():
+            return None
+        labels = self._catastrophic_labels(command)
+        if labels == {_CONVERT_HEREDOC_RULE}:
+            expected = _CONVERT_HEREDOC_RULE
+        elif labels == {_CONVERT_PIPE_RULE}:
+            expected = _CONVERT_PIPE_RULE
+        else:
+            return None
+        if blocked_rule and blocked_rule != expected:
+            return None
+        parsed = self._parse_static_source(command, expected, workdir)
+        if parsed is None:
+            return None
+        interp_token, family, flags, body = parsed
+        payload_decision = self._scan_interpreter_body(body, family, "execute_command", 0, workdir)
+        if payload_decision is not None and payload_decision.blocked:
+            self._audit_conversion(command, "", body, None, "rejected_by_payload_scan")
+            return None
+        # P1（审查 REVISE 第二轮 2026-10-29）：进程派生/间接执行构造——载荷含
+        # 任一构造即拒绝转换。枚举式"受保护动词"网对 list 形态 argv、
+        # getattr/exec/__import__ 间接派生天然可绕；转换是便利通道，拒绝仅
+        # 意味着回退原阻断+人工提权链路（审批面可见完整原命令），无损失。
+        if _CONVERT_SPAWN_CONSTRUCT_RE.search(body):
+            self._audit_conversion(command, "", body, None, "rejected_by_spawn_construct")
+            return None
+        # P1-1（审查 REVISE 2026-10-29）：受保护动作内容网。转换会让下游
+        # 审查门只见 `解释器 -I <临时文件>` 形态，若载荷执行受保护动作
+        # （git push / 全量测试）将绕过 RULE-AI-28 准入。故原命令文本级分类
+        # 为受保护类时不转换——维持原阻断，走人工提权/审查链路（审批面可
+        # 见完整原命令）。分类用叶子模块 review_gate（见文件头 import 注释）；
+        # 异常 → fail-closed 不转换（不中断原阻断链）。
+        try:
+            # P1（第七轮审查）：叶子分类器锚定命令位，载荷体内行首/字符串
+            # 实参形态会漏判——叠加宽松文本网与载荷体逐级分类（宁误拒）。
+            protected_hit = (
+                classify_review_gate_command(command) is not None
+                or classify_review_gate_command(body) is not None
+                or _CONVERT_PROTECTED_TEXT_RE.search(command) is not None
+                or _CONVERT_PROTECTED_TEXT_RE.search(body) is not None
+            )
+            if protected_hit:
+                self._audit_conversion(command, "", body, None, "rejected_by_protected_kind")
+                return None
+        except Exception:
+            self._audit_conversion(command, "", body, None, "rejected_by_classifier_error")
+            return None
+        # P1（第八轮审查）：敏感文件读取网——载荷读 .env/credentials/密钥
+        # 等敏感路径时拒绝转换（下游全文本网只见临时文件形态，看不见引用）。
+        if _CONVERT_SENSITIVE_READ_RE.search(command) or _CONVERT_SENSITIVE_READ_RE.search(body):
+            self._audit_conversion(
+                command, "", body, None, "rejected_by_sensitive_read", preview_suppress=True
+            )
+            return None
+        # P1-1（第六轮审查）：held-out 封条前置——registry 层转换先于工具层
+        # 封条执行，若不在此拦截，封条片段可藏进 here-doc 载荷经转换读出。
+        # 对原命令与载荷体分别判定（封条文件未配置时恒 None，零行为变化）。
+        seal_reason = sealed_command_reason(command) or sealed_command_reason(body)
+        if seal_reason is not None:
+            self._audit_conversion(command, "", body, None, "rejected_by_heldout_seal")
+            return None
+        # P1（第九轮审查）：shell 家族载荷含 $（变量/命令替换）一律拒绝——
+        # 变量间接（g="git"; p="push"; $g $p）等任意间接派生形态无法用文本网
+        # 穷举；良性 shell 载荷几乎不依赖变量（误拒=回退人工链路，零损失）。
+        if family == "shell" and "$" in body:
+            self._audit_conversion(command, "", body, None, "rejected_by_shell_indirection")
+            return None
+        tmp_path = _write_convert_tmp(body, _CONVERT_FAMILY_EXTS[family], workdir)
+        if tmp_path is None:
+            return None
+        run_flags = [*flags, "-I"] if family == "python" and "-I" not in flags else flags
+        # P2-2（第六轮审查）：临时文件路径引号化——含空格的工作区路径下
+        # 未引号的重组命令会被 shell 错误分词。
+        converted = " ".join([interp_token, *run_flags, shlex.quote(str(tmp_path))])
+        reblock = self._scan_command(converted, "execute_command", 0, cwd=workdir)
+        if reblock is not None and reblock.blocked:
+            # P2-3（第九轮审查）：重扫拒绝即清理临时文件，不留孤儿（尽力而为）。
+            with suppress(OSError):
+                tmp_path.unlink(missing_ok=True)
+            self._audit_conversion(command, converted, body, tmp_path, "rejected_by_rescan")
+            return None
+        digest12 = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+        # P2-1（审查 REVISE 2026-10-29）：回执/审计带载荷预览（单行前 160 字），
+        # 临时文件形态对审批面不再是不透明黑盒。
+        preview = " ".join(body.split())[:160]
+        if expected == _CONVERT_HEREDOC_RULE:
+            note = (
+                f"已由 here-doc 转换为临时文件执行（载荷 sha256 前 12 位 {digest12}；"
+                f"路径 {tmp_path}；载荷预览: {preview}）"
+            )
+        else:
+            note = (
+                f"静态源（cat/echo）已固化为临时文件执行（载荷 sha256 前 12 位 {digest12}；"
+                f"路径 {tmp_path}；载荷预览: {preview}）"
+            )
+        self._audit_conversion(command, converted, body, tmp_path, "converted")
+        return converted, note
 
     @staticmethod
     def _block(label: str, command: str, hit: str) -> BlockDecision:
@@ -1329,6 +1829,7 @@ class CatastrophicGuard:
             blocked=True,
             reason=f"检测到灾难性行为: {label}。该行为可能造成不可逆破坏，已硬阻断（FR-SAFE-01）。",
             evidence=f"命令: {command[:200]}; 命中: {hit[:80]}",
+            rule=label,  # EVO-20261029-04c73530：模式标签随判定透出
         )
 
     def _audit_block(self, tool_name: str, command: str, decision: BlockDecision) -> None:
