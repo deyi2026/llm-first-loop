@@ -74,7 +74,7 @@ def test_future_release_without_lite_manifest_entry_fails(monkeypatch, tmp_path)
     root = _fake_bundle(tmp_path, "0.6.39", lite_entry=False, lite_file=False)
     report = _check(monkeypatch, root, "0.6.39")
     assert report["ok"] is False
-    assert "0.6.39" > LITE_RULES_MIN_VERSION  # 保证用例版本确实高于门控下限
+    assert LITE_RULES_MIN_VERSION < "0.6.39"  # 保证用例版本确实高于门控下限
 
 
 def test_manifest_lists_lite_but_file_missing_fails(monkeypatch, tmp_path):
