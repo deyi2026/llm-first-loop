@@ -1301,3 +1301,104 @@ def test_registry_reload_failure_rolls_back_file_and_runtime(
     still_there = client.get("/api/v1/providers").json()
     assert still_there["source"] == "local"
     assert [p["id"] for p in still_there["providers"]] == ["alpha"]
+
+
+def test_set_default_rolls_back_env_and_environ_when_live_commit_fails(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§7.4/§9.2-7: live 提交失败时 .env 字节与 os.environ 都回到修改前，不留半持久化状态。"""
+    import os
+
+    engine, _ = build_test_engine([])
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_MODEL=alpha/m1\nKEEP_ME=1\n", encoding="utf-8")
+    monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
+    monkeypatch.setenv("LLM_MODEL", "alpha/m1")
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201, created.text
+    before_bytes = env_file.read_bytes()
+    assert os.environ["LLM_MODEL"] == "alpha/m1"
+
+    def boom(_model: str) -> None:
+        raise RuntimeError("pool commit failed at /private/secret/path")
+
+    original_setter = engine.llm_pool.set_default_model
+    monkeypatch.setattr(engine.llm_pool, "set_default_model", boom)
+    failed = client.post("/api/v1/providers/default-model", json={"model": "alpha/m1"})
+
+    assert failed.status_code == 500
+    assert failed.json()["error"] == "runtime_apply_failed"
+    assert "已恢复" in failed.json()["detail"]
+    assert "/private/secret/path" not in failed.text, "异常细节不得反射内部路径"
+    assert env_file.read_bytes() == before_bytes, "live 失败后 .env 必须回到修改前字节"
+    assert os.environ["LLM_MODEL"] == "alpha/m1", "live 失败后 os.environ 必须回到修改前值"
+    # 故障只影响本次提交：恢复 setter 后仍可成功切换并 live 生效。
+    monkeypatch.setattr(engine.llm_pool, "set_default_model", original_setter)
+    retried = client.post("/api/v1/providers/default-model", json={"model": "alpha/m1"})
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["default"]["persistence"] == "dotenv"
+    assert engine.llm_pool.get_default_ref() == "alpha/m1"
+
+
+def test_discover_models_timeout_reports_mechanical_fact_only(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§6.3.1/§7.5: 超时只透出异常类型与 timeout 标记，不反射 URL/密钥/响应体.
+
+    main 的 _discover_fetch_json 走 client.stream("GET", ...)（流式限幅）：
+    桩必须实现 stream 接口才会真实命中出站异常分支，只实现 get 的旧桩会静默绕过。
+    """
+    import httpx
+
+    from llm_loop.web import provider_admin as provider_admin_module
+
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+
+    stream_calls: list[tuple[str, str]] = []
+
+    class _TimeoutStream:
+        def __init__(self, url: str) -> None:
+            self._url = url
+
+        def __enter__(self) -> _TimeoutStream:
+            raise httpx.ReadTimeout(f"timed out: {self._url} key=sk-should-never-leak")
+
+        def __exit__(self, *_exc: object) -> bool:
+            return False
+
+    class _TimeoutClient:
+        def __enter__(self) -> _TimeoutClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> bool:
+            return False
+
+        def stream(self, method: str, url: str, headers: dict[str, str] | None = None):
+            stream_calls.append((method, url))
+            return _TimeoutStream(url)
+
+    monkeypatch.setattr(
+        provider_admin_module, "_new_discover_http_client", lambda: _TimeoutClient()
+    )
+    response = client.post(
+        "/api/v1/providers/discover-models",
+        json={
+            "base_url": "https://provider.example/v1",
+            "wire_protocol": "openai",
+            "api_key": "sk-should-never-leak",
+        },
+    )
+
+    # 桩的 stream 真实被调用（实现若退回 client.get，此断言立即红，杜绝空跑）。
+    assert stream_calls == [("GET", "https://provider.example/v1/models")]
+    assert response.status_code == 502
+    assert response.json()["error"] == "discovery_failed"
+    assert "timeout" in response.text.lower()
+    assert "sk-should-never-leak" not in response.text
+    assert "provider.example" not in response.text
