@@ -66,3 +66,21 @@ def rules_version() -> str:
         if match:
             return match.group(1)
     return ""
+
+
+# lite 自 0.6.38 起才保证随包并列入 bundle manifest；0.6.37 存在 pre-fix 与
+# 修复版两种同号 wheel，同号区分只能靠 manifest 是否显式列出 lite 条目，
+# 版本阈值只对更高发布号生效（Linux 0.6.37 wheel 事故评审 §3.4 任务 2）。
+LITE_RULES_MIN_VERSION = "0.6.38"
+
+
+def version_at_least(raw: str, floor: str) -> bool:
+    """点分数字版本比较；任一段非数字按 False 处理（宁降级告警，不砖化升级路径）。"""
+    def parse(value: str) -> tuple[int, ...] | None:
+        parts = value.strip().split(".")
+        if not value.strip() or not all(part.isdigit() for part in parts):
+            return None
+        return tuple(int(part) for part in parts)
+
+    left, right = parse(raw), parse(floor)
+    return left is not None and right is not None and left >= right
