@@ -628,8 +628,12 @@ class BrowserSemanticOperationTool:
         "零面积元素确定性拒绝 element_not_visible 且零指针事件。"
         "M2-A B5：do=dialog(action=accept|dismiss) 处理阻塞中的 JS 对话框"
         "（Page.handleJavaScriptDialog）；对话框状态复用既有边界事件"
-        "（Page.javascriptDialogOpening ⇒ dialog_opened），无打开中的对话框时"
-        "确定性失败 dialog_not_open 并附 guidance，绝不盲发；accept 后页面脚本继续。"
+        "（Page.javascriptDialogOpening ⇒ dialog_opened）。"
+        "B5 修复（2026-10-28）：click 弹出的对话框使 click 回执携带 dialog_opened 边界事件"
+        "且不再超时断连；dialog 动词在无已观测到的对话框状态时会先探一次"
+        "（drain 后允许一次 handle），确无对话框（Chrome 回 No dialog is showing）时"
+        "才确定性失败 dialog_not_open 并附 guidance——页面自主弹出的对话框因此可被处理；"
+        "accept 后页面脚本继续。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
         "不判断 task completion。"
@@ -1350,7 +1354,27 @@ class BrowserSemanticOperationTool:
     def _ground_page(self, session_id: str, target: Any) -> tuple[str, dict[str, Any]]:
         if target != {"kind": "page"}:
             raise BrowserSemanticOperationContractError("page_target_contract_mismatch")
-        snapshot_result = self._snapshot(session_id)
+        try:
+            snapshot_result = self._snapshot(session_id)
+        except MultiPageAmbiguityError:
+            # binding decision - never auto-resolved from a stale world
+            raise
+        except Exception:
+            # B5 fix (R2 end-to-end, TASK-009 2026-10-28 §6): a synchronous
+            # JS dialog freezes the renderer - a fresh capture can only burn
+            # its full recv timeout, which used to make browser_operate
+            # do=dialog structurally impossible exactly when it is needed
+            # (the page cannot render; that is a fact, not a failure). Fall
+            # back to the session's latest persisted world (read-only); the
+            # adapter still runs its own precondition (light-mode probe) and
+            # the actuator stays pinned to the exact bound target. With no
+            # prior world the original failure propagates unchanged
+            # ("no observation, no mutation" stays intact).
+            fallback = getattr(self._perception, "latest_page_resource_ref", None)
+            latest_ref = fallback(session_id) if callable(fallback) else None
+            if not latest_ref:
+                raise
+            return str(latest_ref), {}
         ref = str(snapshot_result.get("resource_ref") or "").strip()
         if not ref:
             raise BrowserSemanticOperationContractError("page_resource_ref_missing")

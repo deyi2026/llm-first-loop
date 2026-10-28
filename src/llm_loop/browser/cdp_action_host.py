@@ -26,6 +26,7 @@ from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, atte
 from llm_loop.browser.cdp_host import (
     _CONNECTION_LOST_ERRORS,
     DEFAULT_CDP_MAX_FRAME_BYTES,
+    _classify_connection_loss,
     _default_http_get_json,
     _default_http_get_version_dict,
     _normalize_loopback_debug_url,
@@ -63,8 +64,11 @@ _ALLOWED = frozenset(
         # M2-A B4: hover actuates ONLY through this method (exactly one
         # mouseMoved event, never a click press/release pair).
         "Input.dispatchMouseEvent",
-        # M2-A B5: accept/dismiss a blocking JS dialog; the call is gated by
-        # drained dialog state (dialog_not_open rejects before any CDP).
+        # M2-A B5 + R3 (TASK-009 2026-10-28 §6): accept/dismiss a blocking JS
+        # dialog. Gated by drained dialog state; when the gate is False the
+        # verb self-heals (one drain pass, then ONE blind handle attempt that
+        # maps Chrome's "No dialog is showing" back to dialog_not_open) so a
+        # page-initiated dialog missed by the event drain is still handleable.
         "Page.handleJavaScriptDialog",
         # M2-A B6: pin Chrome downloads into the session-fenced dir; also the
         # only switch that turns on downloadWillBegin/downloadProgress events.
@@ -84,6 +88,26 @@ class _ActuatorContractError(RuntimeError):
     def __init__(self, code: str, detail: str = "") -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.error_code = code
+
+
+class _DialogOpeningInterruptedError(Exception):
+    """R2 (TASK-009 2026-10-28 §6): dialog opened while a send loop was waiting.
+
+    Raised only when ``send(..., early_return_on_dialog=True)`` (the click
+    path): a synchronous JS dialog occupies the renderer main thread, so the
+    pending ``Runtime.callFunctionOn`` response for ``this.click()`` can never
+    arrive before the dialog is handled (verdict L1/M4). The opening event is
+    appended to the session event buffer BEFORE raising, so the boundary-event
+    drain semantics stay unchanged.
+
+    Deliberately a plain ``Exception`` (not OSError, not RuntimeError from the
+    CDP error branch): it must bypass every ``_CONNECTION_LOST_ERRORS``
+    handler and never be mistaken for a channel failure or a CDP error.
+    """
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        super().__init__("Page.javascriptDialogOpening")
+        self.params = params
 
 
 # M2-A B3 (DESIGN-20261027 §5.1): CDP Input.dispatchKeyEvent parameter assembly
@@ -295,7 +319,21 @@ class _MutationCdpSession:
         self._lock = threading.Lock()
         self._events: list[dict[str, Any]] = []
 
-    def send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def send(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        early_return_on_dialog: bool = False,
+    ) -> dict[str, Any]:
+        """Send one allowlisted CDP request and wait for its own response.
+
+        R2 (TASK-009 §6): with ``early_return_on_dialog=True`` (click path
+        only), a ``Page.javascriptDialogOpening`` event observed while waiting
+        aborts the wait via ``_DialogOpeningInterruptedError`` — the pending
+        response can never arrive while the modal holds the renderer. Default
+        False keeps settle/hover/press_key semantics byte-identical.
+        """
         if method not in _ALLOWED:
             raise PermissionError(f"CDP method is not in Browser mutation actuator surface: {method}")
         with self._lock:
@@ -310,6 +348,15 @@ class _MutationCdpSession:
                 if message.get("id") != request_id:
                     if isinstance(message.get("method"), str):
                         self._events.append(message)
+                        if (
+                            early_return_on_dialog
+                            and message.get("method") == "Page.javascriptDialogOpening"
+                        ):
+                            raise _DialogOpeningInterruptedError(
+                                message.get("params")
+                                if isinstance(message.get("params"), dict)
+                                else {}
+                            )
                     continue
                 if "error" in message:
                     error = message.get("error") or {}
@@ -652,7 +699,14 @@ class CdpBrowserMutationActuator:
         return object_id
 
     @staticmethod
-    def _call(session: _MutationCdpSession, object_id: str, function: str, arguments: list[dict[str, Any]] | None = None) -> None:
+    def _call(
+        session: _MutationCdpSession,
+        object_id: str,
+        function: str,
+        arguments: list[dict[str, Any]] | None = None,
+        *,
+        early_return_on_dialog: bool = False,
+    ) -> None:
         result = session.send(
             "Runtime.callFunctionOn",
             {
@@ -662,6 +716,7 @@ class CdpBrowserMutationActuator:
                 "returnByValue": True,
                 "awaitPromise": False,
             },
+            early_return_on_dialog=early_return_on_dialog,
         )
         if result.get("exceptionDetails"):
             raise RuntimeError("fixed Browser actuator function raised")
@@ -682,6 +737,18 @@ class CdpBrowserMutationActuator:
             try:
                 return self._dispatch_locked(verb=verb, physical_target=physical_target, args=args)
             except _CONNECTION_LOST_ERRORS as exc:
+                loss_mode = _classify_connection_loss(exc)
+                if loss_mode == "timeout":
+                    # R1 (TASK-009 2026-10-28 §6): a recv timeout is not a
+                    # connection loss. Dropping the session here used to sever
+                    # the only channel still able to handle a live blocking
+                    # dialog (click → alert → 5s timeout → drop → tab
+                    # permanently dead, verdict §4.4). Keep the session; only
+                    # frame_too_large / connection still drop.
+                    raise RuntimeError(
+                        "CDP mutation timed out; session kept for same-target retry"
+                        f"; error_type={type(exc).__name__}"
+                    ) from exc
                 self._drop_session()
                 raise RuntimeError(
                     "CDP mutation connection lost; dropped session for same-target reconnect"
@@ -752,6 +819,12 @@ class CdpBrowserMutationActuator:
                     },
                 )
             except _CONNECTION_LOST_ERRORS as exc:
+                loss_mode = _classify_connection_loss(exc)
+                if loss_mode == "timeout":
+                    # R1 (TASK-009 §6): timeout keeps the session (dialog-capable);
+                    # the settle verdict stays honest ("unavailable") instead of
+                    # tearing down the only channel that can still handle a dialog.
+                    return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": f"timeout: {exc}"}
                 self._drop_session()
                 return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": f"connection_lost: {exc}"}
         if result.get("exceptionDetails"):
@@ -789,12 +862,32 @@ class CdpBrowserMutationActuator:
     def _dispatch_locked(
         self, *, verb: str, physical_target: str | None, args: dict[str, Any]
     ) -> BrowserDispatchResult:
-        # M2-A B5: no blocking dialog on the bound page (per drained event
-        # state, F8) - a blind Page.handleJavaScriptDialog would error or,
-        # worse, answer a dialog opened after our last drain. Rejected BEFORE
-        # any session/CDP traffic.
+        # M2-A B5 + R3 (TASK-009 2026-10-28 §6): the dialog verb used to
+        # hard-reject on a False gate, which permanently locked it whenever the
+        # javascriptDialogOpening event was missed (page-initiated dialog that
+        # fired before this session enabled Page.enable, state lost across a
+        # drop, ...). Self-heal instead: one drain pass; if still no state,
+        # ONE blind handle attempt - Chrome's "No dialog is showing" error maps
+        # back to the same deterministic dialog_not_open contract error, and a
+        # success means the requested action itself completed. On a live
+        # session the only CDP command this adds is the handle itself.
+        dialog_blind_handled = False
         if verb == "dialog" and not self._dialog_open:
-            raise _ActuatorContractError("dialog_not_open")
+            session = self._ensure_session()
+            session.drain()
+            self._absorb_state_events(session.pop_events())
+            if not self._dialog_open:
+                try:
+                    session.send(
+                        "Page.handleJavaScriptDialog",
+                        {"accept": str(args.get("action") or "") == "accept"},
+                    )
+                except RuntimeError as exc:
+                    if "No dialog is showing" in str(exc):
+                        raise _ActuatorContractError("dialog_not_open") from exc
+                    raise
+                dialog_blind_handled = True
+                self._dialog_detail = None
         session = self._ensure_session()
         before_page_ids = self._page_target_ids()
         if verb == "navigate":
@@ -828,19 +921,37 @@ class CdpBrowserMutationActuator:
             return self._acknowledged(session, before_page_ids)
 
         if verb == "dialog":
-            # M2-A B5: state gate already passed above; handle the blocking
-            # dialog and clear the state (the page script then continues).
-            session.send(
-                "Page.handleJavaScriptDialog",
-                {"accept": str(args.get("action") or "") == "accept"},
-            )
+            # M2-A B5: state gate already passed above (or the R3 self-heal
+            # already blind-handled the dialog); handle the blocking dialog
+            # and clear the state (the page script then continues).
+            if not dialog_blind_handled:
+                session.send(
+                    "Page.handleJavaScriptDialog",
+                    {"accept": str(args.get("action") or "") == "accept"},
+                )
             self._dialog_open = False
             self._dialog_detail = None
             return self._acknowledged(session, before_page_ids)
 
         object_id = self._object_id(session, physical_target)
         if verb == "click":
-            self._call(session, object_id, "function(){ this.click(); }")
+            try:
+                self._call(session, object_id, "function(){ this.click(); }", early_return_on_dialog=True)
+            except _DialogOpeningInterruptedError as opening:
+                # R2 (TASK-009 §6): event-first click. The click DID dispatch;
+                # the opening event is the honest boundary fact. The pending
+                # Runtime response can only arrive after the dialog is handled
+                # (verdict L1), so waiting for it is a guaranteed timeout. Mark
+                # the dialog state, acknowledge now with the dialog_opened
+                # boundary event, and keep the session alive for the dialog
+                # verb - never a drop.
+                self._dialog_open = True
+                self._dialog_detail = opening.params
+                return BrowserDispatchResult(
+                    acknowledged=True,
+                    boundary_events=self._boundary_events(session, before_page_ids=before_page_ids),
+                    completeness_reasons=("boundary_detector_non_exhaustive",),
+                )
         elif verb == "hover":
             # M2-A B4: pointer-only hover, never a click (see _hover_center).
             self._hover_center(session, object_id)

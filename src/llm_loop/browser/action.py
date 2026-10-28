@@ -1326,11 +1326,33 @@ class BrowserActionAdapter:
                 physical_target=physical_target,
             )
 
+        # B5 fix (R2 end-to-end, TASK-009 2026-10-28 §6): when the
+        # acknowledged dispatch itself opened a blocking JS dialog, the
+        # renderer is held by the synchronous modal - a post-capture can only
+        # burn its full recv timeout before degrading. Skip it, record the
+        # honest fact on the receipt, and never turn the dispatch into an
+        # error for a page that structurally cannot render right now.
+        dispatch_opened_dialog = (
+            dispatch_result is not None
+            and dispatch_result.acknowledged
+            and any(
+                isinstance(item, dict) and str(item.get("event")) == "dialog_opened"
+                for item in (dispatch_result.boundary_events or ())
+            )
+        )
+
         # FR-2 tail + post-observation live in _post_dispatch_observation
         # (evidence-only; failure degrades, never gates).
-        after_version, after_ref, diff_ref, semantic_diff, post_reasons = (
-            self._post_dispatch_observation(session_id, before_version, dispatch_authority_lost)
-        )
+        if dispatch_opened_dialog:
+            after_version = None
+            after_ref = None
+            diff_ref = None
+            semantic_diff = None
+            post_reasons = ["post_capture_skipped:dialog_open"]
+        else:
+            after_version, after_ref, diff_ref, semantic_diff, post_reasons = (
+                self._post_dispatch_observation(session_id, before_version, dispatch_authority_lost)
+            )
 
         terminal = self._receipt_base(action)
         terminal["before_version"] = before_version
@@ -1404,6 +1426,10 @@ class BrowserActionAdapter:
             terminal["status"] = "ok"
             terminal["boundary_events"] = [dict(x) for x in dispatch_result.boundary_events]
             reasons.extend(dispatch_result.completeness_reasons)
+        if dispatch_opened_dialog:
+            # B5 fix (R2 end-to-end): honest skip annotation (additive field;
+            # absent when the post-capture ran normally).
+            terminal["post_capture"] = {"skipped": True, "reason": "dialog_open"}
         # v0.1 boundary detection is intentionally non-exhaustive; terminal evidence is provisional.
         if not reasons:
             reasons.append("boundary_detector_non_exhaustive")

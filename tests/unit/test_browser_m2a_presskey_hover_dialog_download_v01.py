@@ -433,13 +433,44 @@ def test_b4_operate_hover_element_not_visible_surfaces_stable_code(tmp_path: Pat
 
 
 # ---------------------------------------------------------------------------
-# F. B5 dialog - actuator layer: state-gated, never a blind send.
+# F. B5 dialog - actuator layer: state-gated with a one-shot blind probe
+#    (B5 fix 2026-10-28, R3): the M2-A "never a blind send" guarantee was
+#    deliberately dropped - see the two tests below for the exact rationale.
 # ---------------------------------------------------------------------------
 
 _DIALOG_OPENING_EVENT = {
     "method": "Page.javascriptDialogOpening",
     "params": {"type": "alert", "message": "hello", "url": "http://127.0.0.1/a", "defaultPrompt": ""},
 }
+
+
+class _NoDialogWs(_RecordingWs):
+    """Dialog-capable page fake for the R3 self-heal tests.
+
+    ``handles_ok`` counts how many Page.handleJavaScriptDialog calls succeed
+    (i.e. how many dialogs are actually open, one handle each). Any handle
+    beyond that gets Chrome's deterministic ``No dialog is showing`` error.
+    """
+
+    def __init__(self, *args: Any, handles_ok: int = 0, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._handles_ok = int(handles_ok)
+
+    def send(self, payload: str) -> None:
+        req = json.loads(payload)
+        if req["method"] == "Page.handleJavaScriptDialog":
+            self.requests.append(req)
+            if self._handles_ok > 0:
+                self._handles_ok -= 1
+                self.pending.append(json.dumps({"id": req["id"], "result": {}}))
+            else:
+                self.pending.append(
+                    json.dumps(
+                        {"id": req["id"], "error": {"code": -32603, "message": "No dialog is showing"}}
+                    )
+                )
+            return
+        super().send(payload)
 
 
 def test_b5_actuator_dialog_opened_via_event_then_accept_sends_handle_and_clears() -> None:
@@ -464,28 +495,44 @@ def test_b5_actuator_dialog_opened_via_event_then_accept_sends_handle_and_clears
     assert ws.requests[-1]["method"] == "Input.dispatchKeyEvent"
 
 
-def test_b5_actuator_dialog_without_open_dialog_rejects_before_any_traffic() -> None:
-    ws = _RecordingWs()
+def test_b5_actuator_dialog_without_open_dialog_probes_once_then_rejects() -> None:
+    # B5 fix (2026-10-28, R3): the M2-A "zero CDP of any kind" guarantee is
+    # GONE BY DESIGN. Reason: a dialog the page fires on its own (setTimeout
+    # alert, beforeunload, ...) can never be observed by this session's event
+    # drain, so the old hard gate permanently locked the verb with no recovery
+    # path. The dialog verb now self-heals: one drain pass, then exactly ONE
+    # blind Page.handleJavaScriptDialog. With no dialog Chrome answers
+    # "No dialog is showing" - a read-only fact with zero page-side side
+    # effects - and the verb maps that back to the SAME deterministic
+    # dialog_not_open contract error the model has always seen.
+    ws = _NoDialogWs()
     host = _cdp_host(ws)
     with pytest.raises(RuntimeError, match="dialog_not_open"):
         host.dispatch(verb="dialog", physical_target=None, args={"action": "accept"})
-    # deterministic rejection BEFORE _ensure_session: not even a websocket
-    # connection was opened - zero CDP of any kind, in particular no
-    # Page.handleJavaScriptDialog (never a blind send).
-    assert ws.requests == []
-    # and the tab is untouched: the page target still resolves
-    assert host.bound_target_id == ""
+    # Command sequence on a fresh session: establishment (Page.enable) + the
+    # single blind probe. Nothing else - in particular no Runtime.*, no
+    # DOM.*, and never a second handle attempt (single attempt, no retry).
+    assert [req["method"] for req in ws.requests] == [
+        "Page.enable",
+        "Page.handleJavaScriptDialog",
+    ]
+    # the failed probe must not tear down the session (R1 discipline)
+    assert host._session is not None
 
 
 def test_b5_actuator_dialog_state_not_reusable_after_accept() -> None:
-    ws = _RecordingWs(events=[dict(_DIALOG_OPENING_EVENT)])
+    ws = _NoDialogWs(events=[dict(_DIALOG_OPENING_EVENT)], handles_ok=1)
     host = _cdp_host(ws)
     host.dispatch(verb="press_key", physical_target=None, args={"keys": "Enter"})
     host.dispatch(verb="dialog", physical_target=None, args={"action": "dismiss"})
-    # the second dialog call must not blind-send: state was cleared
+    # state was cleared by the successful dismiss; a THIRD dialog call now
+    # self-heals (B5 fix R3): one drain + one blind handle. With no dialog
+    # open the probe gets "No dialog is showing" and surfaces the same
+    # deterministic dialog_not_open - the blind probe DID happen, so the
+    # lifetime handle count is 2 (dismiss + one probe), never more.
     with pytest.raises(RuntimeError, match="dialog_not_open"):
         host.dispatch(verb="dialog", physical_target=None, args={"action": "dismiss"})
-    assert [req["method"] for req in ws.requests].count("Page.handleJavaScriptDialog") == 1
+    assert [req["method"] for req in ws.requests].count("Page.handleJavaScriptDialog") == 2
 
 
 # ---------------------------------------------------------------------------

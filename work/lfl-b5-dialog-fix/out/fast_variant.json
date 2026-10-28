@@ -1,0 +1,15 @@
+{
+ "navigate": {
+  "status": "completed",
+  "elapsed_s": 0.1
+ },
+ "dialog_open_before": false,
+ "latest_world": "bsnap-1-0100b1eba28e5269",
+ "dialog_accept": {
+  "status": "completed",
+  "elapsed_s": 40.2,
+  "halt_reason": null
+ },
+ "t1_after": "t1:41682",
+ "capture_after_ok": true
+}

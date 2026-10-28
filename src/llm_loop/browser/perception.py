@@ -2837,6 +2837,19 @@ class BrowserPerceptionAdapter:
         ids = state.get("snapshot_ids") or []
         return str(ids[-1]) if ids else None
 
+    def latest_page_resource_ref(self, session_id: str) -> str | None:
+        """B5 fix (R2 end-to-end, TASK-009 2026-10-28): resource_ref of the
+        session's latest persisted world, or None.
+
+        Read-only - never captures. Frozen-page grounding fallback for
+        page-scoped verbs (dialog/navigate): while a synchronous JS dialog
+        holds the renderer, no fresh snapshot can exist, so the operate tool
+        grounds against the latest persisted world. The downstream version
+        guard / light-mode precondition still runs unchanged.
+        """
+        version = self.latest_world_version(session_id)
+        return self._resource_ref(version) if version else None
+
     def hydrate(self, session_id: str, grounding_ref: str) -> dict[str, Any]:
         return self.store.hydrate(session_id, grounding_ref)
 

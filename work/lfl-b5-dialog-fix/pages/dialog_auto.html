@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>LFL-B5-AUTO</title></head>
+<body>
+<h1>B5 fix live check: page-initiated alert (no click)</h1>
+<span id="t0" aria-label="lfl-t0-mirror">t0:pending</span>
+<span id="t1" aria-label="lfl-t1-mirror">t1:pending</span>
+<script>
+window.__t0 = performance.now();
+setTimeout(function(){
+  alert('LFL-AUTO-DIALOG');
+  window.__t1 = performance.now();
+  document.getElementById('t0').textContent = 't0:' + Math.round(window.__t0);
+  document.getElementById('t1').textContent = 't1:' + Math.round(window.__t1);
+}, 3000);
+</script>
+</body></html>

@@ -500,6 +500,19 @@ class CdpReadOnlyBrowserHost:
             except _CONNECTION_LOST_ERRORS as exc:
                 diag = dict(getattr(session, "last_diag", {}) or {})
                 mode = _classify_connection_loss(exc)
+                if mode == "timeout":
+                    # R1 (TASK-009 2026-10-28 §6, docs/design/20261028-task009-dialog-verdict.md):
+                    # a recv timeout is NOT a lost connection — the websocket is
+                    # still alive and may be the only channel still able to
+                    # handle a blocking JS dialog (verdict L1/L3/L7). Dropping
+                    # it here severed the last CDP connection and permanently
+                    # killed the tab (verdict L2/L5). Keep the session; only
+                    # frame_too_large / connection still drop.
+                    raise RuntimeError(
+                        f"capture_channel_degraded[mode={mode}]; "
+                        "CDP observation timed out; session kept (dialog-capable)"
+                        f"; diag={diag}; error_type={type(exc).__name__}"
+                    ) from exc
                 self._drop_session()
                 raise RuntimeError(
                     f"capture_channel_degraded[mode={mode}]; "
@@ -527,6 +540,14 @@ class CdpReadOnlyBrowserHost:
             except _CONNECTION_LOST_ERRORS as exc:
                 diag = dict(getattr(session, "last_diag", {}) or {})
                 mode = _classify_connection_loss(exc)
+                if mode == "timeout":
+                    # R1 (TASK-009 §6): same as capture() — a timeout keeps the
+                    # session; the live websocket stays dialog-capable.
+                    raise RuntimeError(
+                        f"guard_channel_degraded[mode={mode}]; "
+                        "CDP guard probe timed out; session kept (dialog-capable)"
+                        f"; diag={diag}; error_type={type(exc).__name__}"
+                    ) from exc
                 self._drop_session()
                 raise RuntimeError(
                     f"guard_channel_degraded[mode={mode}]; "

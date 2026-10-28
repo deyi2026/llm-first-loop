@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>LFL-B5-FAST</title></head>
+<body>
+<h1>B5 fix live check: page-initiated alert 300ms (no click, no observation)</h1>
+<span id="t1" aria-label="lfl-t1-mirror">t1:pending</span>
+<script>
+window.__t0 = performance.now();
+setTimeout(function(){
+  alert('LFL-FAST-DIALOG');
+  window.__t1 = performance.now();
+  document.getElementById('t1').textContent = 't1:' + Math.round(window.__t1);
+}, 300);
+</script>
+</body></html>

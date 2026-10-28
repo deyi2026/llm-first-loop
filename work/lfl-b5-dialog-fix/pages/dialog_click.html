@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>LFL-B5-CLICK</title></head>
+<body>
+<h1>B5 fix live check: click-triggered alert</h1>
+<button id="btn" aria-label="lfl-alert-btn" onclick="fire()">fire alert</button>
+<span id="t0" aria-label="lfl-t0-mirror">t0:pending</span>
+<span id="t1" aria-label="lfl-t1-mirror">t1:pending</span>
+<script>
+function fire(){
+  window.__t0 = performance.now();
+  alert('LFL-DIALOG-OK');
+  window.__t1 = performance.now();
+  document.getElementById('t0').textContent = 't0:' + Math.round(window.__t0);
+  document.getElementById('t1').textContent = 't1:' + Math.round(window.__t1);
+}
+</script>
+</body></html>

@@ -1,0 +1,187 @@
+{
+ "started_at": "2026-10-28T12:17:04",
+ "flows": {
+  "A_click": {
+   "target_id": "AA4AAB4DA9213CE395DB9D183642FBBF",
+   "navigate": {
+    "status": "completed",
+    "halt_reason": null
+   },
+   "snapshot1_objects": 22,
+   "click_compact": {
+    "automatic_retry": false,
+    "boundary_events": [
+     {
+      "complete": false,
+      "detector": "Page.javascriptDialogOpening",
+      "event": "dialog_opened",
+      "scope_ref": null
+     }
+    ],
+    "halt_reason": "undeclared_structural_transition",
+    "match_count": 1,
+    "receipt_ref": "browser-operation-receipt://v0.1/b2846b577679165345625771eef5a02b",
+    "schema": "smc.browser_semantic_operation_compact_receipt.v0.1",
+    "status": "halted",
+    "steps_executed": 1,
+    "task_completion": "not_evaluated",
+    "_tool_status": "success"
+   },
+   "click_elapsed_s": 0.03,
+   "click_action_status": "ok",
+   "click_boundary_events": [
+    {
+     "complete": false,
+     "detector": "Page.javascriptDialogOpening",
+     "event": "dialog_opened",
+     "scope_ref": null
+    }
+   ],
+   "click_post_capture": {
+    "reason": "dialog_open",
+    "skipped": true
+   },
+   "click_completeness_reasons": [
+    "boundary_detector_non_exhaustive",
+    "post_capture_skipped:dialog_open"
+   ],
+   "dialog_accept_compact": {
+    "automatic_retry": false,
+    "delta": {
+     "comparable": true,
+     "complete": false,
+     "counts": {
+      "changed": 3,
+      "created": 2,
+      "removed": 2
+     },
+     "reasons": [
+      "identity_unstable_objects"
+     ],
+     "ref": "grounding://browser/v0.1/bsnap-3-ee51cea226ff518e/diff/bsnap-3-3cac837f5c7afb6e",
+     "scope_relation": "same"
+    },
+    "diff_ref": "grounding://browser/v0.1/bsnap-3-ee51cea226ff518e/diff/bsnap-3-3cac837f5c7afb6e",
+    "match_count": 1,
+    "receipt_ref": "browser-operation-receipt://v0.1/4301451ad9e826c61416e1ca114da09c",
+    "schema": "smc.browser_semantic_operation_compact_receipt.v0.1",
+    "status": "completed",
+    "steps_executed": 1,
+    "task_completion": "not_evaluated",
+    "world_version": "bsnap-3-ee51cea226ff518e",
+    "_tool_status": "success"
+   },
+   "dialog_open_after_accept": false,
+   "resume_state": {
+    "page_url": "",
+    "t0": "t0:50",
+    "t1": "t1:40125"
+   },
+   "final_capture_keys": [
+    "ax",
+    "document_ready_state",
+    "document_token",
+    "dom",
+    "frames",
+    "observed_at",
+    "page_token",
+    "url"
+   ],
+   "final_capture_ok": true,
+   "mutation_session_alive": true,
+   "observation_session_alive": true
+  },
+  "B_auto": {
+   "target_id": "03010625E17527F91C0E7F3C6451FC25",
+   "navigate": {
+    "status": "completed",
+    "halt_reason": null
+   },
+   "pre_dialog_snapshot_objects": 19,
+   "dialog_open_before": false,
+   "frozen_perceive_elapsed_s": 20.0,
+   "frozen_perceive_status": "raised",
+   "frozen_perceive_excerpt": "RuntimeError: capture_channel_degraded[mode=timeout]; CDP observation timed out; session kept (dialog-capable); diag={'method': 'Target.getTargetInfo', 'resp_chars': 273, 'elapsed_ms': 0.5}; err",
+   "dialog_accept_elapsed_s": 40.2,
+   "dialog_accept_compact": {
+    "automatic_retry": false,
+    "delta": {
+     "comparable": true,
+     "complete": false,
+     "counts": {
+      "changed": 3,
+      "created": 2,
+      "removed": 2
+     },
+     "reasons": [
+      "identity_unstable_objects"
+     ],
+     "ref": "grounding://browser/v0.1/bsnap-3-00238d60cc43d0d2/diff/bsnap-3-39adf4988f1cfa48",
+     "scope_relation": "same"
+    },
+    "diff_ref": "grounding://browser/v0.1/bsnap-3-00238d60cc43d0d2/diff/bsnap-3-39adf4988f1cfa48",
+    "match_count": 1,
+    "receipt_ref": "browser-operation-receipt://v0.1/10f7d1cf0ac5ca195f777c631c5cd142",
+    "schema": "smc.browser_semantic_operation_compact_receipt.v0.1",
+    "status": "completed",
+    "steps_executed": 1,
+    "task_completion": "not_evaluated",
+    "world_version": "bsnap-3-00238d60cc43d0d2",
+    "_tool_status": "success"
+   },
+   "dialog_action_status": "ok",
+   "resume_state": {
+    "page_url": "",
+    "t0": "t0:4",
+    "t1": "t1:63806"
+   },
+   "final_capture_ok": true,
+   "mutation_session_alive": true
+  },
+  "C_negative": {
+   "target_id": "2ED182FD7D250B4A4C4D3E089DB770F0",
+   "navigate": {
+    "status": "completed",
+    "halt_reason": null
+   },
+   "dialog_accept_compact": {
+    "automatic_retry": false,
+    "delta": {
+     "comparable": true,
+     "complete": false,
+     "counts": {
+      "changed": 0,
+      "created": 0,
+      "removed": 0
+     },
+     "reasons": [
+      "identity_unstable_objects"
+     ],
+     "ref": "grounding://browser/v0.1/bsnap-1-f381d6e17779f562/diff/bsnap-1-36c8fef230dce5dd",
+     "scope_relation": "same"
+    },
+    "diff_ref": "grounding://browser/v0.1/bsnap-1-f381d6e17779f562/diff/bsnap-1-36c8fef230dce5dd",
+    "guidance": "当前绑定页没有打开中的 JS 对话框；先执行会触发对话框的页面动作（如 click/press_key，其回执边界事件会出现 dialog_opened），再重试 do=dialog。",
+    "halt_reason": "action_receipt_status:failed",
+    "match_count": 1,
+    "receipt_ref": "browser-operation-receipt://v0.1/2c7296c6d036fb697496e38278a16886",
+    "reject_reason": "dialog_not_open",
+    "schema": "smc.browser_semantic_operation_compact_receipt.v0.1",
+    "status": "halted",
+    "steps_executed": 1,
+    "task_completion": "not_evaluated",
+    "world_version": "bsnap-1-f381d6e17779f562",
+    "_tool_status": "success"
+   },
+   "dialog_action_status": "failed",
+   "dialog_action_retry_reason": "dialog_not_open",
+   "snapshot_after_reject_objects": 13,
+   "page_url_after_reject": "",
+   "final_capture_ok": true,
+   "mutation_session_alive": true,
+   "observation_session_alive": true
+  }
+ },
+ "verdict": "PASS",
+ "finished_at": "2026-10-28T12:18:49"
+}
