@@ -1,5 +1,6 @@
 include setup.py
 include docs/ai_rules.md
+include docs/ai_rules.lite.md
 include docs/configuration.md
 include docs/DEVELOPMENT_REPAIR_SAFETY.md
 include docs/governance/card-lifecycle.md

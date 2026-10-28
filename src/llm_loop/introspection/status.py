@@ -941,19 +941,15 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
 def _rules_version() -> str:
     """读 docs/ai_rules.lite.md 头部 version=N；失败/缺失返回空串.
 
-    根目录基于本模块位置推导（不受 DATA_DIR/测试隔离影响）。
+    解析与规则索引同源（bundle_root 优先，源码检出回退仓库根），使 wheel 安装
+    与源码检出在同一版本文件上得到一致结论；与 DATA_DIR/测试隔离无关。
     """
     try:
-        from pathlib import Path
+        from llm_loop.runtime.installation import rules_version
 
-        root = Path(__file__).resolve().parents[3]
-        p = root / "docs" / "ai_rules.lite.md"
-        for line in p.read_text(encoding="utf-8").splitlines()[:3]:
-            if "version=" in line:
-                return line.split("version=", 1)[1].split("；")[0].split(";")[0].strip()
+        return rules_version()
     except Exception:  # noqa: BLE001 — fail-open
-        pass
-    return ""
+        return ""
 
 
 # EVO-20260922 filter-first: snapshot 维度全集（与 snapshot() 内 avail 键一一对应，

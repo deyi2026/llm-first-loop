@@ -10,8 +10,8 @@ from setuptools.command.build_py import build_py
 
 ROOT = Path(__file__).resolve().parent
 DOCS = (
-    "ai_rules.md", "configuration.md", "DEVELOPMENT_REPAIR_SAFETY.md",
-    "governance/card-lifecycle.md",
+    "ai_rules.md", "ai_rules.lite.md", "configuration.md",
+    "DEVELOPMENT_REPAIR_SAFETY.md", "governance/card-lifecycle.md",
 )
 EXCLUDED = {"__pycache__", "node_modules"}
 
