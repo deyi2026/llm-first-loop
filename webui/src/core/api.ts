@@ -1282,7 +1282,7 @@ export interface ProviderAdminSnapshot {
   providers: ProviderAdminFact[];
 }
 
-/** §5.3 写入投影：仅可写模型配置字段（结构上排除 effective/credential_*/runtime）。 */
+/** §5.3 写入投影：仅可写模型配置字段（结构上排除 effective、credential_* 与 runtime）。 */
 export interface ProviderModelConfigInput {
   id: string;
   name?: string;

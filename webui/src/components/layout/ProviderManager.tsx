@@ -1,436 +1,859 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { LocalRuntimePanel } from "./LocalRuntimePanel";
 import { VideoPanel } from "./VideoPanel";
+import { providerAdminZh as T } from "../../i18n/zh";
 import {
+  addProviderModel,
   createProvider,
-  deleteProviderConfig,
+  deleteProviderModel,
+  discoverProviderModels,
   fetchProviderAdmin,
+  patchProvider,
   reloadProviderRegistry,
   replaceProvider,
+  replaceProviderModel,
   setConfiguredDefaultModel,
+  subscribeProvidersUpdated,
   testProviderConnection,
-  updateProviderCredential,
+  toModelConfig,
+  toProviderConfig,
+  type DiscoveredModel,
   type ProviderAdminFact,
-  type ProviderAdminInput,
   type ProviderAdminSnapshot,
-  type ProviderModelAdminInput,
+  type ProviderModelAdminFact,
+  type ProviderConfigInput,
+  type ProviderModelConfigInput,
 } from "../../core/api";
 import { notifyModelCatalogChanged } from "../../core/chat";
 
-const blankModel = (): ProviderModelAdminInput => ({
-  id: "",
-  enabled: true,
-  context: 131072,
-  max_input_tokens: null,
-  max_tokens: null,
-  cost_tier: "mid",
-  thinking: false,
-  reasoning_capable: false,
-  reasoning_control: "unknown",
-  reasoning: false,
-  long_context: false,
-  multimodal: false,
-  wire_protocol: "openai",
-  capability_tier: "unknown",
-  send_tool_choice: true,
-  reasoning_split: false,
-  reasoning_replay: "configured",
-  reasoning_effort_map: {},
-  reasoning_efforts: [],
-  reasoning_default_effort: null,
-  runtime_identity: "",
-  temperature: null,
-  top_p: null,
-  top_k: null,
-  min_p: null,
-});
+/** 错误码 → 可操作文案（§6.1.4/§7.7）：服务端 detail 优先，码兜底。 */
+function errorLabel(code?: string, raw?: string): string {
+  const known = code ? T.errors[code] : "";
+  return known || raw || T.errors.unknown;
+}
 
-const blankProvider = (): ProviderAdminInput => ({
-  id: "",
-  enabled: true,
-  base_url: "https://",
-  api_key_env: "",
-  default_model: "",
-  timeout_s: 120,
-  history_budget_chars: null,
-  max_input_tokens: null,
-  max_tokens: 16000,
-  chars_per_token: null,
-  models: [blankModel()],
-});
-
-function providerToInput(provider: ProviderAdminFact): ProviderAdminInput {
+function blankModel(): ProviderModelConfigInput {
   return {
-    id: provider.id,
-    enabled: provider.enabled !== false,
-    base_url: provider.base_url ?? "",
-    api_key_env: provider.api_key_env ?? "",
-    default_model: provider.default_model ?? "",
-    timeout_s: provider.timeout_s ?? null,
-    history_budget_chars: provider.history_budget_chars ?? null,
-    max_input_tokens: provider.max_input_tokens ?? null,
-    max_tokens: provider.max_tokens ?? null,
-    chars_per_token: provider.chars_per_token ?? null,
-    models: provider.models.map((model) => ({
-      ...blankModel(),
-      ...model,
-      enabled: model.enabled !== false,
-      reasoning_capable: Boolean(model.reasoning_capable),
-      multimodal: Boolean(model.multimodal),
-      send_tool_choice: model.send_tool_choice !== false,
-      reasoning_split: Boolean(model.reasoning_split),
-    })),
+    id: "",
+    name: "",
+    enabled: true,
+    context: 131072,
+    max_input_tokens: null,
+    max_tokens: null,
+    cost_tier: "mid",
+    capability_tier: "unknown",
+    input_modalities: ["text"],
+    multimodal: false,
+    wire_protocol: "openai",
+    thinking: false,
+    reasoning_capable: false,
+    reasoning_control: "unknown",
+    reasoning_efforts: [],
+    reasoning_effort_map: {},
+    reasoning_default_effort: null,
+    reasoning_replay: "configured",
+    send_tool_choice: true,
+    reasoning_split: false,
+    runtime_identity: "",
+    temperature: null,
+    top_p: null,
+    top_k: null,
+    min_p: null,
+    note: "",
+  };
+}
+
+function blankProvider(): ProviderConfigInput {
+  return {
+    id: "",
+    display_name: "",
+    enabled: true,
+    base_url: "https://",
+    api_key_env: "",
+    default_model: "",
+    timeout_s: 120,
+    history_budget_chars: null,
+    max_input_tokens: null,
+    max_tokens: 16000,
+    chars_per_token: null,
+    models: [blankModel()],
   };
 }
 
 function num(value: string): number | null {
-  if (!value.trim()) return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  if (value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () => Promise<void> | void }) {
-  const [snapshot, setSnapshot] = useState<ProviderAdminSnapshot | null>(null);
-  const [editor, setEditor] = useState<ProviderAdminInput | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState("");
-  const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [testFacts, setTestFacts] = useState<Record<string, string>>({});
+function text(value: number | null | undefined): string {
+  return value === null || value === undefined ? "" : String(value);
+}
 
-  const load = async () => {
-    const data = await fetchProviderAdmin();
-    setSnapshot(data);
-    return data;
-  };
+interface ModelFormProps {
+  draft: ProviderModelConfigInput;
+  isNew: boolean;
+  onChange: (next: ProviderModelConfigInput) => void;
+}
 
-  useEffect(() => { void load(); }, []);
-
-  const allModels = useMemo(() => {
-    if (!snapshot) return [];
-    return snapshot.providers.flatMap((provider) =>
-      provider.models
-        .filter((model) => model.enabled !== false && provider.enabled !== false)
-        .map((model) => `${provider.id}/${model.id}`)
-    );
-  }, [snapshot]);
-
-  const syncCatalogConsumers = async () => {
-    await onCatalogChanged?.();
-    notifyModelCatalogChanged();
-  };
-
-  const finish = async (text: string) => {
-    setMessage(text);
-    setError("");
-    await load();
-    await syncCatalogConsumers();
-  };
-
-  const fail = (text: string) => {
-    setError(text || "操作失败");
-    setMessage("");
-  };
-
-  const saveEditor = async () => {
-    if (!snapshot || !editor || busy) return;
-    setBusy("save");
-    setError("");
-    try {
-      const normalized: ProviderAdminInput = {
-        ...editor,
-        default_model: editor.default_model || editor.models[0]?.id || "",
-      };
-      const result = editingId
-        ? await replaceProvider(snapshot.config_version, normalized)
-        : await createProvider(snapshot.config_version, normalized, apiKey || undefined);
-      if (!result.ok) {
-        fail(result.detail);
-        return;
-      }
-      let finalResult = result;
-      if (editingId && apiKey) {
-        finalResult = await updateProviderCredential(editingId, apiKey);
-        if (!finalResult.ok) {
-          fail(`Provider 配置已保存；API Key 更新失败：${finalResult.detail}`);
-          await load();
-          await syncCatalogConsumers();
-          return;
-        }
-      }
-      setEditor(null);
-      setEditingId(null);
-      setApiKey("");
-      await finish(editingId ? "Provider 已保存并热重载。" : "Provider 已添加并热重载。");
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const toggleProvider = async (provider: ProviderAdminFact) => {
-    if (!snapshot || busy) return;
-    setBusy(`toggle:${provider.id}`);
-    const next = providerToInput(provider);
-    next.enabled = !next.enabled;
-    const result = await replaceProvider(snapshot.config_version, next);
-    if (result.ok) await finish(next.enabled ? "Provider 已启用。" : "Provider 已停用。");
-    else fail(result.detail);
-    setBusy("");
-  };
-
-  const removeProvider = async (provider: ProviderAdminFact) => {
-    if (!snapshot || busy) return;
-    if (!window.confirm(`删除 Provider “${provider.id}”？API Key 将保留，避免误删外部凭证。`)) return;
-    setBusy(`delete:${provider.id}`);
-    const result = await deleteProviderConfig(provider.id, snapshot.config_version);
-    if (result.ok) await finish("Provider 已删除；凭证按安全策略保留。" );
-    else fail(result.detail);
-    setBusy("");
-  };
-
-  const clearCredential = async (providerId: string) => {
-    if (!window.confirm(`清除 ${providerId} 的 Web 管理 API Key？`)) return;
-    setBusy(`credential:${providerId}`);
-    const result = await updateProviderCredential(providerId, "");
-    if (result.ok) await finish("API Key 已从本机 .env 清除。" );
-    else fail(result.detail);
-    setBusy("");
-  };
-
-  const test = async (provider: ProviderAdminFact) => {
-    if (busy) return;
-    setBusy(`test:${provider.id}`);
-    const result = await testProviderConnection(provider.id, provider.default_model ?? "");
-    setTestFacts((old) => ({ ...old, [provider.id]: result.detail }));
-    if (!result.ok) fail(result.detail);
-    setBusy("");
-  };
-
-  const setDefault = async (model: string) => {
-    if (!model || busy) return;
-    setBusy("default");
-    const result = await setConfiguredDefaultModel(model);
-    if (result.ok) await finish("默认模型配置已保存；共享默认 Client 将在 Web Runtime 重启后生效。" );
-    else fail(result.detail);
-    setBusy("");
-  };
-
-  const reload = async () => {
-    if (busy) return;
-    setBusy("reload");
-    const result = await reloadProviderRegistry();
-    if (result.ok) await finish("Provider Registry 已热重载；默认 Client 仍保持启动快照。" );
-    else fail(result.detail);
-    setBusy("");
-  };
-
-  if (!snapshot) return <div className="v2-placeholder">正在读取 Provider 配置…</div>;
-
+function ModelFields({ draft, isNew, onChange }: ModelFormProps) {
   return (
-    <div className="v2-provider-admin" data-testid="provider-admin">
-      <div className="v2-provider-summary">
-        <div><span>配置来源</span><strong>{snapshot.source}</strong></div>
-        <div><span>配置默认</span><strong>{snapshot.configured_default_model || "—"}</strong></div>
-        <div><span>运行默认</span><strong>{snapshot.runtime_default_model || "—"}</strong></div>
-      </div>
-      {snapshot.restart_required ? (
-        <div className="v2-provider-warning">默认模型配置已变化；动态选择可立即使用，新默认路由需重启 Web Runtime 后生效。</div>
-      ) : null}
-      {!snapshot.mutable ? (
-        <div className="v2-provider-warning">MODEL_PROVIDERS 环境变量当前拥有配置权；Web 仅只读展示，不写入被遮蔽的本地文件。</div>
-      ) : null}
-      {message ? <div className="v2-provider-ok">{message}</div> : null}
-      {error ? <div className="v2-panel-error">{error}</div> : null}
-
-      <div className="v2-provider-actions">
-        <select
-          aria-label="配置默认模型"
-          value={snapshot.configured_default_model ?? ""}
-          onChange={(event) => void setDefault(event.target.value)}
-          disabled={!snapshot.mutable || Boolean(busy)}
-        >
-          <option value="">选择全局默认模型</option>
-          {allModels.map((model) => <option value={model} key={model}>{model}</option>)}
-        </select>
-        <button type="button" className="v2-btn ghost" disabled={!snapshot.mutable || Boolean(busy)} onClick={() => void reload()}>
-          热重载 Registry
-        </button>
-        <button
-          type="button"
-          className="v2-btn"
-          disabled={!snapshot.mutable || Boolean(busy)}
-          onClick={() => { setEditor(blankProvider()); setEditingId(null); setApiKey(""); setError(""); }}
-        >
-          + 添加 Provider
-        </button>
-      </div>
-
-      <div className="v2-provider-list">
-        {snapshot.providers.map((provider) => (
-          <article className="v2-provider-card" key={provider.id} data-testid={`provider-${provider.id}`}>
-            <div className="v2-provider-head">
-              <div>
-                <strong>{provider.id}</strong>
-                <span className={`v2-status-chip ${provider.effective ? "ok" : "neutral"}`}>
-                  {provider.effective ? "已加载" : provider.enabled ? "未生效" : "已停用"}
-                </span>
-              </div>
-              <span>{provider.models.length} 个模型</span>
-            </div>
-            <code>{provider.base_url}</code>
-            <div className="v2-provider-meta">
-              <span>凭证：{provider.api_key_env ? (provider.credential_configured ? `已配置 · ${provider.credential_source}` : `缺失 · ${provider.api_key_env}`) : "无需凭证"}</span>
-              <span>Provider 默认：{provider.default_model || "—"}</span>
-            </div>
-            <div className="v2-provider-models">
-              {provider.models.map((model) => (
-                <span key={model.id} className={model.effective ? "effective" : ""}>
-                  {model.id} · {model.context ? `${Math.round(model.context / 1000)}k` : "ctx?"}
-                  {model.reasoning_capable ? ` · ${model.reasoning_control || "reasoning"}` : ""}
-                </span>
-              ))}
-            </div>
-            {testFacts[provider.id] ? <div className="v2-provider-test-fact">{testFacts[provider.id]}</div> : null}
-            <div className="v2-provider-card-actions">
-              <button type="button" className="v2-btn ghost" disabled={Boolean(busy)} onClick={() => { setEditor(providerToInput(provider)); setEditingId(provider.id); setApiKey(""); }}>
-                编辑
-              </button>
-              <button type="button" className="v2-btn ghost" disabled={!provider.effective || Boolean(busy)} title="会发起一次最多 8 token 的真实无工具模型请求" onClick={() => void test(provider)}>
-                {busy === `test:${provider.id}` ? "测试中…" : "测试连接"}
-              </button>
-              <button type="button" className="v2-btn ghost" disabled={!snapshot.mutable || Boolean(busy)} onClick={() => void toggleProvider(provider)}>
-                {provider.enabled ? "停用" : "启用"}
-              </button>
-              {provider.credential_configured && provider.credential_source === "dotenv" ? (
-                <button type="button" className="v2-btn ghost" disabled={Boolean(busy)} onClick={() => void clearCredential(provider.id)}>清除 Key</button>
-              ) : null}
-              <button type="button" className="v2-btn danger" disabled={!snapshot.mutable || Boolean(busy)} onClick={() => void removeProvider(provider)}>删除</button>
-            </div>
-          </article>
-        ))}
-        {snapshot.providers.length === 0 ? <div className="v2-placeholder">当前没有 Provider。可从 Web 添加云端或本地 OpenAI-compatible 端点。</div> : null}
-      </div>
-
-      <LocalRuntimePanel onSynced={() => finish("本地运行时已同步。")} />
-      <VideoPanel />
-
-      {editor ? (
-        <ProviderEditor
-          value={editor}
-          existing={editingId !== null}
-          apiKey={apiKey}
-          onApiKey={setApiKey}
-          onChange={setEditor}
-          onCancel={() => { setEditor(null); setEditingId(null); setApiKey(""); }}
-          onSave={() => void saveEditor()}
-          saving={busy === "save"}
+    <div className="v2-provider-model-grid">
+      <label>
+        {T.modelId}
+        <input
+          value={draft.id}
+          readOnly={!isNew}
+          aria-readonly={!isNew}
+          onChange={(event) => onChange({ ...draft, id: event.target.value })}
         />
-      ) : null}
+      </label>
+      <label>
+        {T.modelName}
+        <input
+          value={draft.name ?? ""}
+          onChange={(event) => onChange({ ...draft, name: event.target.value })}
+        />
+      </label>
+      <label>
+        {T.context}
+        <input
+          type="number"
+          value={text(draft.context)}
+          onChange={(event) => onChange({ ...draft, context: num(event.target.value) ?? 0 })}
+        />
+      </label>
+      <label>
+        {T.maxTokens}
+        <input
+          type="number"
+          value={text(draft.max_tokens)}
+          onChange={(event) => onChange({ ...draft, max_tokens: num(event.target.value) })}
+        />
+      </label>
+      <label>
+        {T.reasoningEfforts}
+        <input
+          value={(draft.reasoning_efforts ?? []).join(",")}
+          onChange={(event) =>
+            onChange({
+              ...draft,
+              reasoning_efforts: event.target.value
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+        />
+      </label>
+      <label>
+        {T.reasoningDefault}
+        <input
+          value={draft.reasoning_default_effort ?? ""}
+          onChange={(event) =>
+            onChange({ ...draft, reasoning_default_effort: event.target.value.trim() || null })
+          }
+        />
+      </label>
+      <label>
+        {T.wireProtocol}
+        <input
+          value={draft.wire_protocol ?? "openai"}
+          onChange={(event) => onChange({ ...draft, wire_protocol: event.target.value })}
+        />
+      </label>
+      <label>
+        {T.reasoning}
+        <select
+          value={draft.reasoning_capable ? "on" : "off"}
+          onChange={(event) =>
+            onChange({
+              ...draft,
+              reasoning_capable: event.target.value === "on",
+              reasoning_control: event.target.value === "on" ? draft.reasoning_control ?? "effort" : "unknown",
+            })
+          }
+        >
+          <option value="off">关</option>
+          <option value="on">开</option>
+        </select>
+      </label>
+      <label>
+        {T.note}
+        <input
+          value={draft.note ?? ""}
+          onChange={(event) => onChange({ ...draft, note: event.target.value })}
+        />
+      </label>
     </div>
   );
 }
 
-function ProviderEditor({
-  value,
-  existing,
-  apiKey,
-  onApiKey,
-  onChange,
-  onCancel,
-  onSave,
-  saving,
-}: {
-  value: ProviderAdminInput;
-  existing: boolean;
-  apiKey: string;
-  onApiKey: (value: string) => void;
-  onChange: (value: ProviderAdminInput) => void;
-  onCancel: () => void;
-  onSave: () => void;
-  saving: boolean;
-}) {
-  const patch = (next: Partial<ProviderAdminInput>) => onChange({ ...value, ...next });
-  const patchModel = (index: number, next: Partial<ProviderModelAdminInput>) => {
-    const models = value.models.map((model, i) => i === index ? { ...model, ...next } : model);
-    const defaultModel = value.default_model && value.models[index]?.id === value.default_model && next.id
-      ? String(next.id)
-      : value.default_model;
-    onChange({ ...value, models, default_model: defaultModel });
-  };
-  const removeModel = (index: number) => {
-    const removed = value.models[index];
-    const models = value.models.filter((_, i) => i !== index);
-    onChange({
-      ...value,
-      models,
-      default_model: removed?.id === value.default_model ? (models[0]?.id ?? "") : value.default_model,
-    });
+export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () => Promise<void> | void }) {
+  const [snapshot, setSnapshot] = useState<ProviderAdminSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState<{ message: string; conflict?: boolean } | null>(null);
+  const [flash, setFlash] = useState("");
+  const [tests, setTests] = useState<Record<string, string>>({});
+  const [editor, setEditor] = useState<{
+    mode: "create" | "edit";
+    providerId?: string;
+    draft: ProviderConfigInput;
+    apiKey: string;
+  } | null>(null);
+  const [modelForm, setModelForm] = useState<{
+    providerId: string;
+    mode: "add" | "edit";
+    originalId?: string;
+    draft: ProviderModelConfigInput;
+  } | null>(null);
+  const [discovery, setDiscovery] = useState<{
+    providerId: string;
+    candidates: DiscoveredModel[];
+    selected: string[];
+    error?: string;
+  } | null>(null);
+
+  const load = useCallback(async () => {
+    const next = await fetchProviderAdmin();
+    if (next) {
+      setSnapshot(next);
+      setError(null);
+    } else {
+      setError({ message: T.errors.load });
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => subscribeProvidersUpdated(() => void load()), [load]);
+
+  const readOnly = !snapshot?.mutable;
+  const def = snapshot?.default;
+  const defaultModel = def?.model ?? snapshot?.configured_default_model ?? "";
+  const runtimeModel = def?.runtime_model ?? snapshot?.runtime_default_model ?? "";
+  const restartRequired = Boolean(def ? def.restart_required : snapshot?.restart_required);
+
+  const modelOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [];
+    for (const provider of snapshot?.providers ?? []) {
+      for (const model of provider.models) {
+        if (model.enabled === false) continue;
+        options.push({
+          value: `${provider.id}/${model.id}`,
+          label: `${provider.display_name || provider.id} · ${model.name || model.id}`,
+        });
+      }
+    }
+    return options;
+  }, [snapshot]);
+
+  const runMutation = useCallback(
+    async (key: string, action: () => Promise<Awaited<ReturnType<typeof patchProvider>>>, success: string) => {
+      setBusy(key);
+      setError(null);
+      setFlash("");
+      try {
+        const result = await action();
+        if (result.snapshot) setSnapshot(result.snapshot);
+        else await load();
+        if (!result.ok) {
+          setError({
+            message: errorLabel(result.error, result.detail),
+            conflict: result.status === 409 || result.error === "provider_config_conflict",
+          });
+          return false;
+        }
+        setFlash(result.detail || success);
+        notifyModelCatalogChanged();
+        void onCatalogChanged?.();
+        return true;
+      } catch (err) {
+        setError({ message: err instanceof Error ? err.message : T.errors.unknown });
+        await load();
+        return false;
+      } finally {
+        setBusy("");
+      }
+    },
+    [load]
+  );
+
+  const setDefault = async (value: string) => {
+    if (!value) return;
+    await runMutation("default", () => setConfiguredDefaultModel(value), T.applied);
   };
 
-  return (
-    <div className="v2-provider-editor" data-testid="provider-editor">
+  const toggleProvider = async (provider: ProviderAdminFact) => {
+    if (!snapshot) return;
+    await runMutation(
+      `provider:${provider.id}`,
+      () => patchProvider(provider.id, snapshot.config_version, { enabled: provider.enabled === false }),
+      T.saved
+    );
+  };
+
+  const setProviderDefault = async (provider: ProviderAdminFact, value: string) => {
+    if (!snapshot) return;
+    await runMutation(
+      `provider:${provider.id}`,
+      () => patchProvider(provider.id, snapshot.config_version, { default_model: value }),
+      T.saved
+    );
+  };
+
+  const toggleModel = async (provider: ProviderAdminFact, model: ProviderModelAdminFact) => {
+    if (!snapshot) return;
+    await runMutation(
+      `model:${provider.id}/${model.id}`,
+      () =>
+        replaceProviderModel(
+          provider.id,
+          model.id,
+          snapshot.config_version,
+          toModelConfig({ ...model, enabled: model.enabled === false })
+        ),
+      T.saved
+    );
+  };
+
+  const removeModel = async (provider: ProviderAdminFact, model: ProviderModelAdminFact) => {
+    if (!snapshot) return;
+    if (!window.confirm(T.removeModelConfirm.replace("{model}", model.id))) return;
+    await runMutation(
+      `model:${provider.id}/${model.id}`,
+      () => deleteProviderModel(provider.id, model.id, snapshot.config_version),
+      T.saved
+    );
+  };
+
+  const runTest = async (provider: ProviderAdminFact, modelId: string) => {
+    const key = `${provider.id}/${modelId}`;
+    setBusy(`test:${key}`);
+    const result = await testProviderConnection(provider.id, modelId);
+    setTests((prev) => ({ ...prev, [key]: result.detail }));
+    setBusy("");
+  };
+
+  const openCreate = () => {
+    setError(null);
+    setEditor({ mode: "create", draft: blankProvider(), apiKey: "" });
+    setModelForm(null);
+    setDiscovery(null);
+  };
+
+  const openEdit = (provider: ProviderAdminFact) => {
+    setError(null);
+    setEditor({
+      mode: "edit",
+      providerId: provider.id,
+      draft: toProviderConfig(provider),
+      apiKey: "",
+    });
+    setModelForm(null);
+    setDiscovery(null);
+  };
+
+  const saveEditor = async () => {
+    if (!snapshot || !editor) return;
+    if (!editor.draft.id.trim()) {
+      setError({ message: `${T.providerId} 不能为空` });
+      return;
+    }
+    const ok = await runMutation(
+      "editor",
+      () =>
+        editor.mode === "create"
+          ? createProvider(snapshot.config_version, editor.draft, editor.apiKey)
+          : replaceProvider(snapshot.config_version, editor.draft),
+      T.saved
+    );
+    if (ok) setEditor(null);
+  };
+
+  const saveModel = async () => {
+    if (!snapshot || !modelForm) return;
+    if (!modelForm.draft.id.trim()) {
+      setError({ message: `${T.modelId} 不能为空` });
+      return;
+    }
+    const ok = await runMutation(
+      "model-form",
+      () =>
+        modelForm.mode === "edit"
+          ? replaceProviderModel(
+              modelForm.providerId,
+              modelForm.originalId ?? modelForm.draft.id,
+              snapshot.config_version,
+              modelForm.draft
+            )
+          : addProviderModel(modelForm.providerId, snapshot.config_version, modelForm.draft),
+      T.saved
+    );
+    if (ok) {
+      setModelForm(null);
+      setDiscovery(null);
+    }
+  };
+
+  const discover = async () => {
+    if (!snapshot || !modelForm) return;
+    const provider = snapshot.providers.find((item) => item.id === modelForm.providerId);
+    if (!provider) return;
+    setBusy("discover");
+    setDiscovery({ providerId: provider.id, candidates: [], selected: [], error: undefined });
+    const result = await discoverProviderModels({
+      base_url: provider.base_url,
+      wire_protocol: modelForm.draft.wire_protocol || "openai",
+      provider_id: provider.id,
+    });
+    setBusy("");
+    if (!result.ok) {
+      setDiscovery({
+        providerId: provider.id,
+        candidates: [],
+        selected: [],
+        error: errorLabel(result.errorCode, result.timeout ? T.errors.discovery_failed : T.errors.discovery_failed),
+      });
+      return;
+    }
+    setDiscovery({ providerId: provider.id, candidates: result.candidates, selected: [] });
+  };
+
+  const addSelected = async () => {
+    if (!snapshot || !discovery || !modelForm) return;
+    let version = snapshot.config_version;
+    let added = 0;
+    let failure = "";
+    setBusy("discover-add");
+    for (const id of discovery.selected) {
+      const candidate = discovery.candidates.find((item) => item.id === id);
+      const result = await addProviderModel(discovery.providerId, version, {
+        ...blankModel(),
+        id,
+        name: candidate?.name || id,
+        context: candidate?.context_window ?? 131072,
+        max_tokens: candidate?.max_output_tokens ?? null,
+        wire_protocol: modelForm.draft.wire_protocol || "openai",
+        note: "",
+      });
+      if (result.snapshot) {
+        setSnapshot(result.snapshot);
+        version = result.snapshot.config_version;
+      }
+      if (!result.ok) {
+        failure = errorLabel(result.error, result.detail);
+        break;
+      }
+      added += 1;
+    }
+    setBusy("");
+    if (failure) {
+      setError({ message: failure, conflict: false });
+      await load();
+      return;
+    }
+    setFlash(`${T.addSelected} ${added}`);
+    notifyModelCatalogChanged();
+    setDiscovery(null);
+    setModelForm(null);
+  };
+
+  const providerEditor = editor ? (
+    <section className="v2-provider-editor" data-testid="provider-editor" aria-label={editor.mode === "create" ? T.addProvider : T.edit}>
       <div className="v2-provider-editor-head">
-        <strong>{existing ? `编辑 ${value.id}` : "添加 Provider"}</strong>
-        <button type="button" className="v2-icon-btn" aria-label="关闭 Provider 编辑器" onClick={onCancel}>×</button>
+        <strong>{editor.mode === "create" ? T.addProvider : `${T.edit} · ${editor.providerId}`}</strong>
       </div>
       <div className="v2-provider-fields">
-        <label>Provider ID<input value={value.id} disabled={existing} onChange={(e) => patch({ id: e.target.value })} placeholder="glm / minimax / local" /></label>
-        <label>Base URL<input value={value.base_url} onChange={(e) => patch({ base_url: e.target.value })} placeholder="https://api.example.com/v1" /></label>
-        <label>API Key 环境变量<input value={value.api_key_env ?? ""} onChange={(e) => patch({ api_key_env: e.target.value })} placeholder="留空且填写 Key 时自动生成" /></label>
-        <label>API Key<input type="password" autoComplete="new-password" value={apiKey} onChange={(e) => onApiKey(e.target.value)} placeholder={existing ? "留空保持现有 Key" : "可选；仅写入本机 .env"} /></label>
-        <label>Provider 默认模型
-          <select value={value.default_model ?? ""} onChange={(e) => patch({ default_model: e.target.value })}>
-            <option value="">选择默认模型</option>
-            {value.models.map((model) => <option value={model.id} key={`${model.id}-${model.context}`}>{model.id || "(未命名模型)"}</option>)}
-          </select>
+        <label>
+          {T.providerId}
+          <input
+            value={editor.draft.id}
+            readOnly={editor.mode === "edit"}
+            onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, id: event.target.value } })}
+          />
         </label>
-        <label>超时(s)<input type="number" min="1" value={value.timeout_s ?? ""} onChange={(e) => patch({ timeout_s: num(e.target.value) })} /></label>
-        <label>Provider 最大输入 token<input type="number" min="1" value={value.max_input_tokens ?? ""} onChange={(e) => patch({ max_input_tokens: num(e.target.value) })} /></label>
-        <label>Provider 最大输出 token<input type="number" min="1" value={value.max_tokens ?? ""} onChange={(e) => patch({ max_tokens: num(e.target.value) })} /></label>
-        <label className="v2-check"><input type="checkbox" checked={value.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />启用 Provider</label>
+        <label>
+          {T.displayName}
+          <input
+            value={editor.draft.display_name ?? ""}
+            onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, display_name: event.target.value } })}
+          />
+        </label>
+        <label>
+          {T.baseUrl}
+          <input
+            value={editor.draft.base_url}
+            onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, base_url: event.target.value } })}
+          />
+        </label>
+        <label>
+          {editor.mode === "create" ? T.apiKey : T.apiKeyKeep}
+          <input
+            type="password"
+            value={editor.apiKey}
+            onChange={(event) => setEditor({ ...editor, apiKey: event.target.value })}
+          />
+        </label>
+        <label>
+          {T.apiKeyEnv}
+          <input
+            value={editor.draft.api_key_env ?? ""}
+            onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, api_key_env: event.target.value } })}
+          />
+        </label>
+        <label>
+          {T.providerDefault}
+          <input
+            value={editor.draft.default_model ?? ""}
+            onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, default_model: event.target.value } })}
+          />
+        </label>
       </div>
-
+      <details className="v2-provider-advanced">
+        <summary>{T.advanced}</summary>
+        <div className="v2-provider-fields">
+          <label>
+            {T.timeout}
+            <input
+              type="number"
+              value={text(editor.draft.timeout_s)}
+              onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, timeout_s: num(event.target.value) } })}
+            />
+          </label>
+          <label>
+            {T.maxTokens}
+            <input
+              type="number"
+              value={text(editor.draft.max_tokens)}
+              onChange={(event) => setEditor({ ...editor, draft: { ...editor.draft, max_tokens: num(event.target.value) } })}
+            />
+          </label>
+          <label>
+            {T.maxInputTokens}
+            <input
+              type="number"
+              value={text(editor.draft.max_input_tokens)}
+              onChange={(event) =>
+                setEditor({ ...editor, draft: { ...editor.draft, max_input_tokens: num(event.target.value) } })
+              }
+            />
+          </label>
+          <label>
+            {T.historyBudget}
+            <input
+              type="number"
+              value={text(editor.draft.history_budget_chars)}
+              onChange={(event) =>
+                setEditor({ ...editor, draft: { ...editor.draft, history_budget_chars: num(event.target.value) } })
+              }
+            />
+          </label>
+          <label>
+            {T.charsPerToken}
+            <input
+              type="number"
+              value={text(editor.draft.chars_per_token)}
+              onChange={(event) =>
+                setEditor({ ...editor, draft: { ...editor.draft, chars_per_token: num(event.target.value) } })
+              }
+            />
+          </label>
+        </div>
+        <pre className="v2-provider-raw">{JSON.stringify(editor.draft, null, 2)}</pre>
+      </details>
       <div className="v2-provider-model-editor-list">
-        <div className="v2-provider-subhead"><strong>模型</strong><button type="button" className="v2-btn ghost" onClick={() => patch({ models: [...value.models, blankModel()] })}>+ 添加模型</button></div>
-        {value.models.map((model, index) => (
-          <div className="v2-provider-model-editor" key={`${index}-${model.id}`}>
-            <div className="v2-provider-model-grid">
-              <label>Model ID<input value={model.id} onChange={(e) => patchModel(index, { id: e.target.value })} /></label>
-              <label>Context<input type="number" min="1024" value={model.context ?? 131072} onChange={(e) => patchModel(index, { context: num(e.target.value) ?? 131072 })} /></label>
-              <label>最大输入<input type="number" min="1" value={model.max_input_tokens ?? ""} onChange={(e) => patchModel(index, { max_input_tokens: num(e.target.value) })} /></label>
-              <label>最大输出<input type="number" min="1" value={model.max_tokens ?? ""} onChange={(e) => patchModel(index, { max_tokens: num(e.target.value) })} /></label>
-              <label>协议<select value={model.wire_protocol ?? "openai"} onChange={(e) => patchModel(index, { wire_protocol: e.target.value })}><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="google">Google</option><option value="lms-chat">LM Studio Chat</option></select></label>
-              <label>推理控制<select value={model.reasoning_control ?? "unknown"} onChange={(e) => patchModel(index, { reasoning_control: e.target.value })}><option value="unknown">未验证/unknown</option><option value="none">无显式控制</option><option value="thinking_type">thinking_type</option><option value="chat_template">chat_template</option><option value="always_on_effort">always_on_effort</option><option value="legacy">legacy</option></select></label>
-              <label>Reasoning replay<select value={model.reasoning_replay ?? "configured"} onChange={(e) => patchModel(index, { reasoning_replay: e.target.value })}><option value="configured">configured</option><option value="none">none</option><option value="tool_calls">tool_calls</option><option value="full">full</option></select></label>
-              <label>推理档位<input aria-label="推理档位" value={(model.reasoning_efforts ?? []).join(",")} onChange={(e) => {
-                const efforts = e.target.value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
-                patchModel(index, {
-                  reasoning_efforts: efforts,
-                  reasoning_default_effort: model.reasoning_default_effort && efforts.includes(model.reasoning_default_effort)
-                    ? model.reasoning_default_effort
-                    : null,
-                });
-              }} placeholder="low,high,max" /></label>
-              <label>默认推理档位<select aria-label="默认推理档位" value={model.reasoning_default_effort ?? ""} onChange={(e) => patchModel(index, { reasoning_default_effort: e.target.value || null })}><option value="">模型/provider 默认</option>{(model.reasoning_efforts ?? []).map((effort) => <option value={effort} key={effort}>{effort}</option>)}</select></label>
-              <label>Cost tier<input value={model.cost_tier ?? "mid"} onChange={(e) => patchModel(index, { cost_tier: e.target.value })} /></label>
-            </div>
-            <div className="v2-provider-model-flags">
-              <label><input type="checkbox" checked={model.enabled !== false} onChange={(e) => patchModel(index, { enabled: e.target.checked })} />启用</label>
-              <label><input type="checkbox" checked={Boolean(model.reasoning_capable)} onChange={(e) => patchModel(index, { reasoning_capable: e.target.checked })} />可产生 Reasoning</label>
-              <label><input type="checkbox" checked={Boolean(model.multimodal)} onChange={(e) => patchModel(index, { multimodal: e.target.checked })} />多模态</label>
-              <label><input type="checkbox" checked={model.send_tool_choice !== false} onChange={(e) => patchModel(index, { send_tool_choice: e.target.checked })} />发送 tool_choice</label>
-              <label><input type="checkbox" checked={Boolean(model.reasoning_split)} onChange={(e) => patchModel(index, { reasoning_split: e.target.checked })} />reasoning_split</label>
-              <button type="button" className="v2-btn danger" disabled={value.models.length <= 1} onClick={() => removeModel(index)}>删除模型</button>
+        {editor.draft.models.map((model, index) => (
+          <div className="v2-provider-model-editor" key={`${model.id}-${index}`}>
+            <ModelFields
+              draft={model}
+              isNew
+              onChange={(next) =>
+                setEditor({
+                  ...editor,
+                  draft: {
+                    ...editor.draft,
+                    models: editor.draft.models.map((item, i) => (i === index ? next : item)),
+                  },
+                })
+              }
+            />
+            <div className="v2-provider-card-actions">
+              <button
+                type="button"
+                onClick={() =>
+                  setEditor({
+                    ...editor,
+                    draft: { ...editor.draft, models: editor.draft.models.filter((_, i) => i !== index) },
+                  })
+                }
+              >
+                {T.remove}
+              </button>
             </div>
           </div>
         ))}
       </div>
       <div className="v2-provider-editor-actions">
-        <button type="button" className="v2-btn ghost" onClick={onCancel}>取消</button>
-        <button type="button" className="v2-btn" disabled={saving || !value.id || !value.base_url || value.models.some((m) => !m.id)} onClick={onSave}>{saving ? "保存中…" : "保存并热重载"}</button>
+        <button type="button" onClick={() => setEditor({ ...editor, draft: { ...editor.draft, models: [...editor.draft.models, blankModel()] } })}>
+          {T.addModel}
+        </button>
+        <button type="button" onClick={() => void saveEditor()} disabled={busy !== ""}>
+          {busy === "editor" ? T.saving : T.saveAndApply}
+        </button>
+        <button type="button" onClick={() => setEditor(null)}>
+          {T.cancel}
+        </button>
       </div>
-      <div className="v2-provider-footnote">能力字段是配置事实，不等于真实 qualification；“会推理”和“支持显式推理开关”分开记录。</div>
-    </div>
+    </section>
+  ) : null;
+
+  const modelEditor = modelForm ? (
+    <section className="v2-provider-editor" aria-label={modelForm.mode === "add" ? T.addModel : T.edit}>
+      <div className="v2-provider-editor-head">
+        <strong>{modelForm.mode === "add" ? `${T.addModel} · ${modelForm.providerId}` : `${T.edit} · ${modelForm.originalId}`}</strong>
+      </div>
+      <ModelFields
+        draft={modelForm.draft}
+        isNew={modelForm.mode === "add"}
+        onChange={(next) => setModelForm({ ...modelForm, draft: next })}
+      />
+      {modelForm.mode === "add" ? (
+        <div className="v2-provider-card-actions">
+          <button type="button" onClick={() => void discover()} disabled={busy !== ""}>
+            {busy === "discover" ? T.discovering : T.discover}
+          </button>
+        </div>
+      ) : null}
+      {discovery && discovery.providerId === modelForm.providerId ? (
+        <div className="v2-provider-model-editor">
+          {discovery.error ? (
+            <p className="v2-provider-warning" role="alert">{discovery.error}</p>
+          ) : discovery.candidates.length === 0 ? (
+            <p className="v2-provider-footnote">{T.discoverEmpty}</p>
+          ) : (
+            <>
+              <p className="v2-provider-footnote">{T.discoverPick}</p>
+              {discovery.candidates.map((candidate) => (
+                <label key={candidate.id} className="v2-provider-model-flags">
+                  <input
+                    type="checkbox"
+                    checked={discovery.selected.includes(candidate.id)}
+                    onChange={(event) =>
+                      setDiscovery({
+                        ...discovery,
+                        selected: event.target.checked
+                          ? [...discovery.selected, candidate.id]
+                          : discovery.selected.filter((id) => id !== candidate.id),
+                      })
+                    }
+                  />
+                  {candidate.name || candidate.id}
+                </label>
+              ))}
+              <button type="button" onClick={() => void addSelected()} disabled={discovery.selected.length === 0 || busy !== ""}>
+                {T.addSelected}
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
+      <div className="v2-provider-editor-actions">
+        <button type="button" onClick={() => void saveModel()} disabled={busy !== ""}>
+          {busy === "model-form" ? T.saving : T.save}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setModelForm(null);
+            setDiscovery(null);
+          }}
+        >
+          {T.cancel}
+        </button>
+      </div>
+    </section>
+  ) : null;
+
+  return (
+    <section className="v2-provider-admin">
+      <header className="v2-provider-head">
+        <div>
+          <h3>{T.title}</h3>
+          <p className="v2-provider-subhead">{T.subtitle}</p>
+        </div>
+        <div className="v2-provider-actions">
+          <button type="button" onClick={() => void load()} disabled={loading}>
+            {T.refresh}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runMutation("reload", () => reloadProviderRegistry(), T.applied)}
+            disabled={readOnly || busy !== ""}
+          >
+            {T.reload}
+          </button>
+          <button type="button" onClick={openCreate} disabled={readOnly || !snapshot}>
+            {T.addProvider}
+          </button>
+        </div>
+      </header>
+
+      {error ? (
+        <div className="v2-provider-warning" role="alert" aria-live="assertive">
+          {error.message}
+          {error.conflict ? <button type="button" onClick={() => void load()}>{T.refresh}</button> : null}
+        </div>
+      ) : null}
+      {flash ? <p className="v2-provider-ok" role="status">{flash}</p> : null}
+      {readOnly ? <p className="v2-provider-readonly-note">{T.envReadonly}</p> : null}
+
+      {snapshot ? (
+        <div className="v2-provider-summary" data-testid="provider-summary">
+          <div><span>{T.source}</span><strong>{snapshot.source}</strong></div>
+          <div><span>{T.configDefault}</span><strong>{defaultModel || "—"}</strong></div>
+          <div><span>{T.runtimeDefault}</span><strong>{runtimeModel || "—"}</strong></div>
+          <div><span>{T.persistence}</span><strong>{def?.persistence ?? "—"}</strong></div>
+          <div>
+            <span>{T.applied}</span>
+            <strong>{restartRequired ? T.restartRequired : T.applied}</strong>
+          </div>
+          {restartRequired ? <p className="v2-provider-warning">{T.restartHint}</p> : null}
+          {snapshot.degraded ? <p className="v2-provider-warning">{T.degraded}</p> : null}
+        </div>
+      ) : null}
+
+      {snapshot ? (
+        <label className="v2-provider-fields">
+          {T.defaultModel}
+          <select value={defaultModel} onChange={(event) => void setDefault(event.target.value)} disabled={readOnly || busy !== ""}>
+            {defaultModel && !modelOptions.some((option) => option.value === defaultModel) ? (
+              <option value={defaultModel}>{defaultModel}</option>
+            ) : null}
+            {modelOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      {providerEditor}
+      {modelEditor}
+
+      {loading ? <p>{T.loading}</p> : null}
+
+      <div className="v2-provider-list">
+        {(snapshot?.providers ?? []).map((provider) => {
+          const providerModels = provider.models;
+          const defaultChoices = providerModels.filter((model) => model.enabled !== false);
+          return (
+            <article className="v2-provider-card" key={provider.id} data-testid={`provider-${provider.id}`}>
+              <div className="v2-provider-head">
+                <div>
+                  <strong>{provider.display_name || provider.id}</strong>
+                  <p className="v2-provider-meta">
+                    <span>{provider.id}</span>
+                    <span>{provider.base_url}</span>
+                    <span>{provider.credential_configured ? "已配置" : "未配置"} · {provider.credential_source ?? "none"}</span>
+                    <span>{provider.enabled === false ? T.disabled : T.enabled}</span>
+                  </p>
+                </div>
+                <div className="v2-provider-card-actions">
+                  <button type="button" onClick={() => void toggleProvider(provider)} disabled={readOnly || busy !== ""}>
+                    {provider.enabled === false ? T.enabled : T.disabled}
+                  </button>
+                  <button type="button" onClick={() => openEdit(provider)} disabled={readOnly}>{T.edit}</button>
+                  <button type="button" onClick={() => void runTest(provider, "")} disabled={busy !== ""}>
+                    {busy === `test:${provider.id}/` ? T.testing : T.test}
+                  </button>
+                </div>
+              </div>
+
+              {tests[`${provider.id}/`] ? (
+                <p className="v2-provider-test-fact" role="status">{tests[`${provider.id}/`]}</p>
+              ) : null}
+
+              <label className="v2-provider-fields">
+                {T.providerDefault}
+                <select
+                  value={provider.default_model ?? ""}
+                  onChange={(event) => void setProviderDefault(provider, event.target.value)}
+                  disabled={readOnly || busy !== ""}
+                >
+                  <option value="">—</option>
+                  {defaultChoices.map((model) => (
+                    <option key={model.id} value={model.id}>{model.name || model.id}</option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="v2-provider-models">
+                {providerModels.length === 0 ? <p className="v2-provider-footnote">{T.noModels}</p> : null}
+                {providerModels.map((model) => {
+                  const key = `${provider.id}/${model.id}`;
+                  return (
+                    <div className="v2-provider-model-grid" key={key}>
+                      <div className="v2-provider-meta">
+                        <strong>{model.name || model.id}</strong>
+                        <span>{model.id}</span>
+                      </div>
+                      <div className="v2-provider-model-flags">
+                        <span>{T.context} {model.context ?? "—"}</span>
+                        <span>{model.cost_tier ?? "—"}</span>
+                        <span>{model.reasoning_capable ? `${T.reasoning} · ${model.reasoning_control ?? ""}` : ""}</span>
+                        <span>{model.enabled === false ? T.disabled : ""}</span>
+                        {model.effective === false ? <span>未生效</span> : null}
+                      </div>
+                      {model.note ? <p className="v2-provider-footnote">{model.note}</p> : null}
+                      <div className="v2-provider-card-actions">
+                        <button type="button" onClick={() => void toggleModel(provider, model)} disabled={readOnly || busy !== ""}>
+                          {model.enabled === false ? T.enabled : T.disabled}
+                        </button>
+                        <button type="button" onClick={() => void runTest(provider, model.id)} disabled={busy !== ""}>
+                          {busy === `test:${key}` ? T.testing : T.testModel}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModelForm({ providerId: provider.id, mode: "edit", originalId: model.id, draft: toModelConfig(model) });
+                            setDiscovery(null);
+                          }}
+                          disabled={readOnly}
+                        >
+                          {T.editModel}
+                        </button>
+                        <button type="button" onClick={() => void removeModel(provider, model)} disabled={readOnly || busy !== ""}>
+                          {T.remove}
+                        </button>
+                      </div>
+                      {tests[key] ? <span className="v2-provider-test-fact">{tests[key]}</span> : null}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="v2-provider-card-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModelForm({ providerId: provider.id, mode: "add", draft: { ...blankModel(), wire_protocol: provider.models[0]?.wire_protocol ?? "openai" } });
+                    setDiscovery(null);
+                  }}
+                  disabled={readOnly}
+                >
+                  {T.addModel}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <LocalRuntimePanel />
+      <VideoPanel />
+    </section>
   );
 }
