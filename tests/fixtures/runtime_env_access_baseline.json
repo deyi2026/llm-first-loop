@@ -7,7 +7,7 @@
     "dynamic_secret": 8,
     "secret": 9
   },
-  "access_count": 179,
+  "access_count": 183,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -61,6 +61,22 @@
       "direct_access_delta": 2,
       "doc": "docs/HELDOUT-GUARD-20261025.md",
       "reason": "held-out 封条 env 开关（Rule28 修复轮 2026-10-25 批次）：sealed_paths.py 的 seal_enabled（读 LFL_HELDOUT_SEALED）与 sealed_roots（读 LFL_HELDOUT_ROOT）两处 os.environ.get 为设计内读取——模块 docstring 声明 env 开关语义（关闭时任何判定立即放行，开发态零行为变化），用于评测/改进期读侧封条。默认值在拒绝侧之外（未设置=封条关闭，但封条本身只影响 held-out 材料触达判定，不涉密钥读取）。"
+    },
+    "web_model_admin_env_ratchet_20261028": {
+      "phase": "web-model-admin-env-ratchet-20261028",
+      "parent_commit": "19758ec79",
+      "introduced_by": "678b09e88 feat(web/model-admin): 后端 C0-C3（PATCH 启停、模型级 CRUD、live 默认、discover）",
+      "design_ref": "docs/DESIGN-20261028-web-model-admin-dsh-alignment.md 第 748-749 行（外部 env 拥有 LLM_MODEL 时只设 runtime default，persistence=process）与第 1046-1048 行（外部 env 时不写 .env、不假装 durable）",
+      "review_rationale": "模型管理 Web 端要求配置默认与运行默认分离：外部 env 托管 LLM_MODEL 时只切本进程路由事实，并在 live 提交失败时回滚到修改前的进程 env。该语义必须读写进程 env，无法用单 key helper 表达；_set_default_model_locked 的 read/write/bulk:pop 三个签名与 discover_models 的 <dynamic> 读均属设计内访问，失败即恢复原值，不写密钥。直接访问 179→183、literal helper 13→14，仅此 5 条签名新增，无其它文件新增 env 访问。",
+      "reviewed_direct_access_count": 183,
+      "reviewed_literal_helper_access_count": 14,
+      "reviewed_new_signatures": [
+        "src/llm_loop/web/provider_admin.py|_set_default_model_locked|bulk:pop|<all>",
+        "src/llm_loop/web/provider_admin.py|_set_default_model_locked|read|LLM_MODEL",
+        "src/llm_loop/web/provider_admin.py|_set_default_model_locked|write|LLM_MODEL",
+        "src/llm_loop/web/provider_admin.py|discover_models|read|<dynamic>"
+      ],
+      "untouched_aggregates_note": "effective_*/file_count/unique_key_count/class 计数本次保持原值：这些派生聚合在 54ef9534b 时已滞后于实测（实测 effective=195/file=62/unique=82 对文件 191/60/81），属既有滞后，不在本签名登记范围内顺带修改。"
     }
   },
   "class_key_counts": {
@@ -71,7 +87,7 @@
     "dynamic_secret": 1,
     "secret": 6
   },
-  "direct_access_count": 179,
+  "direct_access_count": 183,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -115,6 +131,7 @@
     "src/llm_loop/web/provider_admin.py|_credential_fact|read|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|_sanitize_provider|read|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|_set_credential_locked|write|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|_set_default_model_locked|read|LLM_MODEL": 1,
     "src/llm_loop/web/provider_admin.py|_set_default_model_locked|write|LLM_MODEL": 1,
     "src/llm_loop/web/provider_admin.py|snapshot|read|LLM_MODEL": 1,
     "src/llm_loop/workspace/archive_stale.py|ArchiveStaleLoop/__init__|read|LFL_ARCHIVE_STALE_DAYS": 1,
@@ -205,7 +222,7 @@
     "WEB_VISION_MODEL",
     "WEB_VISION_TIMEOUT"
   ],
-  "literal_helper_access_count": 13,
+  "literal_helper_access_count": 14,
   "module_import_access_count": 0,
   "module_import_direct_access_count": 0,
   "module_import_helper_access_count": 0,
@@ -354,7 +371,11 @@
     "src/llm_loop/web/provider_admin.py|_dotenv_value_source|read|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|_effective_config|read|MODEL_PROVIDERS": 1,
     "src/llm_loop/web/provider_admin.py|_ensure_mutable|read|MODEL_PROVIDERS": 1,
+    "src/llm_loop/web/provider_admin.py|_set_default_model_locked|bulk:pop|<all>": 1,
+    "src/llm_loop/web/provider_admin.py|_set_default_model_locked|read|LLM_MODEL": 1,
+    "src/llm_loop/web/provider_admin.py|_set_default_model_locked|write|LLM_MODEL": 1,
     "src/llm_loop/web/provider_admin.py|_set_dotenv_value|write|<dynamic>": 1,
+    "src/llm_loop/web/provider_admin.py|discover_models|read|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|env_file_path|read|LFL_ENV_FILE": 1,
     "src/llm_loop/web/routes.py|escalation_list|read|LFL_DATA_DIR": 1,
     "src/llm_loop/web/routes.py|escalation_review|read|LFL_DATA_DIR": 1,
