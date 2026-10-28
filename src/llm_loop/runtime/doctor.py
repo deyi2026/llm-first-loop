@@ -49,7 +49,7 @@ def inspect_first_use(
     production CLI's existing default selection. No global state is changed.
     """
     shell = dict(environment)
-    checks: list[dict[str, str]] = []
+    checks: list[dict[str, object]] = []
 
     def add(id_: str, status: str, message: str, action: str = "") -> None:
         checks.append({"id": id_, "status": status, "message": message, "action": action})
@@ -188,6 +188,48 @@ def inspect_first_use(
         add("context_assets", "warn", "安装上下文资产索引不可用。",
             "检查 docs/ai_rules.md 与资源目录权限；运行 lfl doctor 复检。")
 
+    # 规则资产事实（评审 §4.2 / §3.4 任务 3）：与 rules_version()/RuleIndex 同源，
+    # 离线只读；错误带 error_code，lite 版本缺失不再静默当作健康。探测走程序
+    # 真实检索路径（RuleIndex），成功即视为可取回真实规则卡（评审 §5）。
+    try:
+        from llm_loop.introspection.rule_index import RuleIndex
+        from llm_loop.runtime.installation import rule_asset_facts, rules_doc_candidates
+
+        facts = rule_asset_facts()
+        if facts["rule_body_retrievable"] and facts["error_code"] is None:
+            body_path = rules_doc_candidates("ai_rules.md")[0]
+            if not RuleIndex(body_path).search("RULE-AI-24", 1):
+                facts["error_code"] = "rule_lookup_failed"
+        detail = (
+            "source_kind={source_kind} ref={rule_body_ref} rules_version={version} "
+            "rule_body_sha256={digest}".format(
+                source_kind=facts["source_kind"],
+                rule_body_ref=facts["rule_body_ref"],
+                version=str(facts["rules_version"]) or "?",
+                digest=str(facts["rule_body_sha256"])[:16],
+            )
+        )
+        error_code = facts["error_code"]
+        if error_code is None:
+            add("rule_assets", "pass", "规则资产可检索：" + detail)
+        elif error_code == "version_parse_error" or (
+            error_code == "asset_missing" and facts["rule_body_retrievable"]
+        ):
+            # 正文仍可检索，仅版本信号缺失（lite 缺失/不可解析）：warn 而非 fail，
+            # pre-fix 存留安装不应被诊断判死（评审 §3.4 任务 2 的互操作语义）。
+            add("rule_assets", "warn", "规则正文可检索但规则版本信号缺失：" + detail,
+                "修复或重装 docs/ai_rules.lite.md（lfl check-install 验证完整性）。")
+        else:
+            action = {
+                "asset_missing": "确认安装完整：重装包或恢复缺失资源，再运行 lfl check-install。",
+                "asset_unreadable": "检查文件权限或重装包，再运行 lfl check-install。",
+                "rule_lookup_failed": "docs/ai_rules.md 存在但解析不出规则卡：重装或修复包内容。",
+            }.get(str(error_code), "重装包并运行 lfl check-install。")
+            add("rule_assets", "fail", "规则资产不可用（error_code=" + str(error_code) + "）：" + detail, action)
+        checks[-1]["facts"] = facts
+    except Exception:  # noqa: BLE001 - report a bounded fact, never leak exception payload
+        add("rule_assets", "fail", "规则资产检查本身失败。", "请反馈给维护者。")
+
     # Optional live check: exactly one bounded request, only when explicitly asked.
     # It answers a different question from the local "model" check above and never
     # writes configuration or starts the Engine.
@@ -244,7 +286,7 @@ def human_report(report: Mapping[str, Any]) -> str:
     labels = {"pass": "通过", "warn": "待配置", "fail": "失败"}
     names = {"installation": "安装包", "config": "配置文件", "model": "模型配置",
              "model_live": "模型在线检测", "data_dir": "数据目录", "workspace": "工作目录",
-             "resources": "扩展资源", "context_assets": "上下文资产"}
+             "resources": "扩展资源", "context_assets": "上下文资产", "rule_assets": "规则资产"}
     online = report.get("online") is not None
     lines = ["LFL doctor（只读 / " + ("含在线检测" if online else "离线") + "）",
              "状态：" + str(report["status"])]
