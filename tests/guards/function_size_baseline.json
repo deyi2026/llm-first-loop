@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "head_commit": "e9cbcf45f",
+    "head_commit": "f202ab93f",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
-    "生成时间": "2026-10-27",
+    "生成时间": "2026-10-28",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
     "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。",
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
@@ -932,24 +932,24 @@
       "src/llm_loop/terminal/editor.py": "Explicit external-editor scratch draft only; removed on return, never conversation or runtime evidence authority.",
       "src/llm_loop/terminal/records.py": "Explicit user export creates a new destination exclusively; original session is read-only and remains authority.",
       "src/llm_loop/terminal/settings.py": "User-owned optional display preferences only; atomic replace, never runtime/run evidence authority.",
+      "src/llm_loop/tools/builtin/desktop_perceive.py": "M3 桌面只读感知的落盘仅两类：append-only 审计 JSONL（§6.4 事件行）与窗口截图 PNG（content-addressed 证据，工厂默认 <data_dir>/desktop_perceive|audit）。两者均为会话证据工件，无任何读取-恢复路径依赖其完整性；损坏只影响审计追溯，不影响运行正确性，故按非 durable 豁免登记（DESIGN-20261027 §6.4）。",
       "src/llm_loop/web/auth.py": "P1-4/S3-8 登录口令重哈希：仅在人工登录成功后轮换 .env 中的 PBKDF2 参数，属人类触发的凭据配置变更（tmp+os.replace 原子替换并留 .bak），不是 runtime 恢复态；写失败只保留旧哈希（下次登录重试），最坏结果是维持旧迭代次数，不影响可登录性。",
       "src/llm_loop/web/fs_tree.py": "Web 文件树操作直接修改用户选择的 workspace 文件/目录，属于外部文件效果而非内部 runtime SoT。",
       "src/llm_loop/web/routes.py": "Web route 中的写入主要是用户上传/预览等 workspace 交付文件效果，不作为内部 durability surface。",
       "src/llm_loop/workspace/archive_stale.py": "archive-stale 核心例程落盘两类非恢复态文件：jsonl 运维报告工件（同 evidence_report 口径）与 auto_state.json 调度游标（fail-open：损坏/丢失仅导致幂等批次重跑一轮）；会话 JSON 的 durable 变更全部经 core/session.py（session_store surface 已登记）。",
       "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。",
-      "src/llm_loop/workspace/worktree_isolation.py": "worktree 隔离机制自身的 meta 簿记文件（.lfl-worktree.json），随隔离树创建/删除，是运行期同步载体而非 durable payload，不作为内部恢复 SoT（EVO-20261016-ac47e850）。",
-      "src/llm_loop/tools/builtin/desktop_perceive.py": "M3 桌面只读感知的落盘仅两类：append-only 审计 JSONL（§6.4 事件行）与窗口截图 PNG（content-addressed 证据，工厂默认 <data_dir>/desktop_perceive|audit）。两者均为会话证据工件，无任何读取-恢复路径依赖其完整性；损坏只影响审计追溯，不影响运行正确性，故按非 durable 豁免登记（DESIGN-20261027 §6.4）。"
+      "src/llm_loop/workspace/worktree_isolation.py": "worktree 隔离机制自身的 meta 簿记文件（.lfl-worktree.json），随隔离树创建/删除，是运行期同步载体而非 durable payload，不作为内部恢复 SoT（EVO-20261016-ac47e850）。"
     }
   },
   "exemptions": [],
   "function_lines": {
     "src/llm_loop/assurance/p112_offline_vertical.py::evaluate_offline_delivery": 124,
-    "src/llm_loop/browser/perception.py::_canonicalize_objects": 245,
+    "src/llm_loop/browser/perception.py::_canonicalize_objects": 204,
     "src/llm_loop/browser/perception.py::assess_guard": 140,
     "src/llm_loop/browser/perception.py::assess_version_precondition": 188,
-    "src/llm_loop/browser/perception.py::capture": 265,
+    "src/llm_loop/browser/perception.py::capture": 264,
     "src/llm_loop/browser/perception.py::diff": 161,
-    "src/llm_loop/browser/perception.py::snapshot": 200,
+    "src/llm_loop/browser/perception.py::snapshot": 193,
     "src/llm_loop/browser/predicate.py::evaluate_predicate": 216,
     "src/llm_loop/browser/profile_policy.py::evaluate_profile_class": 121,
     "src/llm_loop/codearts/scheduler.py::dispatch": 163,
@@ -1044,9 +1044,10 @@
     "src/llm_loop/subagent/runner.py::followup_current": 164,
     "src/llm_loop/subagent/runner.py::run": 214,
     "src/llm_loop/task_quality/fix_loop.py::execute": 153,
-    "src/llm_loop/tools/builtin/browser_semantic_operation.py::_compile_short_steps": 204,
-    "src/llm_loop/tools/builtin/browser_semantic_operation.py::execute_request": 228,
-    "src/llm_loop/tools/builtin/browser_wait.py::wait": 133,
+    "src/llm_loop/tools/builtin/browser_semantic_operation.py::_compile_short_steps": 188,
+    "src/llm_loop/tools/builtin/browser_semantic_operation.py::execute_request": 200,
+    "src/llm_loop/tools/builtin/browser_wait.py::wait": 130,
+    "src/llm_loop/tools/builtin/desktop_perceive.py::_snapshot_action": 121,
     "src/llm_loop/tools/builtin/edit_file.py::run": 68,
     "src/llm_loop/tools/builtin/read_file.py::execute": 157,
     "src/llm_loop/tools/builtin/search_files.py::execute": 223,
@@ -1102,7 +1103,7 @@
   ],
   "known_cycles": [],
   "legacy_super_functions": {
-    "src/llm_loop/browser/action.py::execute": 393,
+    "src/llm_loop/browser/action.py::execute": 388,
     "src/llm_loop/cli.py::application_main": 320,
     "src/llm_loop/config.py::load_settings": 388,
     "src/llm_loop/core/history.py::build_history_messages": 745,
@@ -1113,7 +1114,7 @@
     "src/llm_loop/runtime/service_control.py::main": 562,
     "src/llm_loop/subagent/runner.py::_execute_subagent": 570,
     "src/llm_loop/subagent/runner.py::start": 425,
-    "src/llm_loop/tools/builtin/browser_perceive.py::execute": 371,
+    "src/llm_loop/tools/builtin/browser_perceive.py::execute": 350,
     "src/llm_loop/web/routes.py::chat_stream": 383
   },
   "local_imports": {
@@ -1147,6 +1148,7 @@
       "codearts": "Action",
       "cognitive": "Evaluation（cache-tagging 机械辅助，原 Cognitive Runtime 已退役）",
       "core": "kernel-candidate（跨面聚合根）",
+      "desktop": "Action（M3 桌面只读感知：CG/AX/截屏 ctypes 通道 + privacy/see 名单 + §6.4 审计；无 M4 动作面，DESIGN-20261027 §5.3/D0-A′）",
       "eval": "Evaluation",
       "event_log": "kernel-candidate",
       "experiences": "Learning",
@@ -1173,8 +1175,7 @@
       "tools": "Action",
       "video": "Action（本地视频生成、任务与参考图存储；Web 仅为交付适配器，独立于聊天 Provider）",
       "web": "delivery（六面外交付面）",
-      "workspace": "cross-plane",
-      "desktop": "Action（M3 桌面只读感知：CG/AX/截屏 ctypes 通道 + privacy/see 名单 + §6.4 审计；无 M4 动作面，DESIGN-20261027 §5.3/D0-A′）"
+      "workspace": "cross-plane"
     }
   }
 }
