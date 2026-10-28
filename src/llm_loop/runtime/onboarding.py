@@ -19,12 +19,14 @@ def run_start(
     *, args: Any, root: Path, bundle: Path | None,
     environment: Mapping[str, str], check_install: Callable[[], dict[str, Any]],
     preview: bool, as_json: bool, launch_web: Callable[[], int],
+    rule_lookup: Callable[[Path, str], bool] | None = None,
 ) -> int:
     """Explicit start -> existing consent-bound init if needed -> doctor -> Web."""
     if as_json and not preview:
         print("--json 仅能与 --plan 搭配；不能静默启动 Web。", file=sys.stderr)
         return 2
-    plan, _ = plan_first_use(args=args, root=root, bundle=bundle, environment=environment)
+    plan, _ = plan_first_use(args=args, root=root, bundle=bundle, environment=environment,
+                             rule_lookup=rule_lookup)
     if preview:
         result = {
             "schema": "lfl.start.plan/v1",
@@ -47,12 +49,13 @@ def run_start(
         result = run_first_use(
             args=args, root=root, bundle=bundle, environment=environment,
             check_install=check_install, preview=False, as_json=False,
+            rule_lookup=rule_lookup,
         )
         if result != 0:
             return result
     diagnosis = inspect_first_use(
         args=args, root=root, bundle=bundle, environment=environment,
-        check_install=check_install,
+        check_install=check_install, rule_lookup=rule_lookup,
     )
     # Missing context assets degrade the briefing, not the start path; only real
     # configuration/installation problems block Web launch.

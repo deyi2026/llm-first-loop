@@ -70,21 +70,25 @@ def _check_resource_overrides(
 def _check_rule_assets(
     add: Callable[..., None],
     checks: list[dict[str, Any]],
+    rule_lookup: Callable[[Path, str], bool] | None = None,
 ) -> None:
     """规则资产事实（评审 §4.2 / §3.4 任务 3）：与 rules_version()/RuleIndex 同源.
 
-    离线只读；错误带 error_code，lite 版本缺失不再静默当作健康。探测走程序
-    真实检索路径（RuleIndex），成功即视为可取回真实规则卡（评审 §5）。
+    离线只读；错误带 error_code，lite 版本缺失不再静默当作健康。深度探测走
+    程序真实检索路径（RuleIndex），成功即视为可取回真实规则卡（评审 §5）；
+    探测函数由调用方（cli 应用壳）注入——runtime 平面不得依赖 introspection
+    （kernel v1 import 边棘轮只减不增，test_kernel_import_edges_*）。
     EVO-20261029 收口拆解：自 inspect_first_use 原样搬移（零语义变更）。
     """
     try:
-        from llm_loop.introspection.rule_index import RuleIndex
         from llm_loop.runtime.installation import rule_asset_facts, rules_doc_candidates
 
         facts = rule_asset_facts()
-        if facts["rule_body_retrievable"] and facts["error_code"] is None:
+        # 未注入（runtime 内部直调）时跳过深度探测：facts 三态语义不变，
+        # 仅少 rule_lookup_failed 一层判定；cli 入口注入后与原行为一致。
+        if rule_lookup is not None and facts["rule_body_retrievable"] and facts["error_code"] is None:
             body_path = rules_doc_candidates("ai_rules.md")[0]
-            if not RuleIndex(body_path).search("RULE-AI-24", 1):
+            if not rule_lookup(body_path, "RULE-AI-24"):
                 facts["error_code"] = "rule_lookup_failed"
         detail = (
             "source_kind={source_kind} ref={rule_body_ref} rules_version={version} "
@@ -125,6 +129,7 @@ def inspect_first_use(
     environment: Mapping[str, str],
     check_install: Callable[[], dict[str, Any]],
     online: bool = False,
+    rule_lookup: Callable[[Path, str], bool] | None = None,
 ) -> dict[str, Any]:
     """Return only whitelisted structural facts, never config or secret values.
 
@@ -260,7 +265,7 @@ def inspect_first_use(
             "检查 docs/ai_rules.md 与资源目录权限；运行 lfl doctor 复检。")
 
     # 规则资产事实：见 _check_rule_assets（EVO-20261029 收口拆解，零语义变更）
-    _check_rule_assets(add, checks)
+    _check_rule_assets(add, checks, rule_lookup)
 
     # Optional live check: exactly one bounded request, only when explicitly asked.
     # It answers a different question from the local "model" check above and never

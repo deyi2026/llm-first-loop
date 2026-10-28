@@ -1113,6 +1113,16 @@ def _cmd_rename(engine, session_id: str, new_title: str) -> int:
     print("❌ 重命名失败（新标题为空）", file=sys.stderr)
     return 2
 
+def _rule_lookup(body_path: Path, rule_id: str) -> bool:
+    """应用壳组装注入：doctor 深度规则卡探测（走 RuleIndex 真实检索路径）。
+
+    runtime 平面不得依赖 introspection（kernel v1 import 边棘轮只减不增），
+    cli 应用壳不受该棘轮约束，由这里统一装配注入。
+    """
+    from llm_loop.introspection.rule_index import RuleIndex
+
+    return bool(RuleIndex(body_path).search(rule_id, 1))
+
 def default_home() -> Path:
     values = legacy_env_snapshot()
     if raw := values.get("LFL_HOME", "").strip():
@@ -1452,6 +1462,7 @@ def application_main(argv: list[str] | None = None) -> int:
             bundle=bundle, environment=legacy_env_snapshot(), check_install=check_install,
             preview=options.plan, as_json=options.json,
             launch_web=lambda: application_main([*argv[:boundary], "web"]),
+            rule_lookup=_rule_lookup,
         )
     if remaining and remaining[0] == "init":
         # Setup is a separate consent-bound workflow; never invoke the normal
@@ -1472,6 +1483,7 @@ def application_main(argv: list[str] | None = None) -> int:
         return run_first_use(
             args=args, root=root, bundle=bundle, environment=legacy_env_snapshot(),
             check_install=check_install, preview=init_args.plan, as_json=init_args.json,
+            rule_lookup=_rule_lookup,
         )
     if remaining and remaining[0] == "doctor":
         # P1: diagnostics must not call prepare_environment (env mutations),
@@ -1498,6 +1510,7 @@ def application_main(argv: list[str] | None = None) -> int:
             environment=legacy_env_snapshot(),
             check_install=check_install,
             online=doctor_args.online,
+            rule_lookup=_rule_lookup,
         )
         print(json.dumps(report, ensure_ascii=False, indent=2) if doctor_args.json else human_report(report))
         return 0 if report["ready"] else 1
