@@ -934,42 +934,40 @@ def _discover_fetch_json(url: str, headers: dict[str, str]) -> Any:
     current = url
     with _new_discover_http_client() as client:
         for _hop in range(_DISCOVER_MAX_REDIRECTS + 1):
-            response = client.get(current, headers=headers)
-            if response.status_code // 100 == 3:
-                location = response.headers.get("location", "").strip()
-                response.close()
-                if not location:
-                    raise ProviderAdminError(
-                        "discovery_failed", "模型发现失败：重定向缺少 Location。", status_code=502
-                    )
-                from urllib.parse import urljoin
+            # 必须 stream()：否则 httpx 先整包缓冲，2MB 上限阻止不了超大下载先进内存。
+            with client.stream("GET", current, headers=headers) as response:
+                if response.status_code // 100 == 3:
+                    location = response.headers.get("location", "").strip()
+                    if not location:
+                        raise ProviderAdminError(
+                            "discovery_failed", "模型发现失败：重定向缺少 Location。", status_code=502
+                        )
+                    from urllib.parse import urljoin
 
-                target = urljoin(current, location)
-                parsed_old, parsed_new = urlsplit(current), urlsplit(target)
-                if parsed_new.scheme not in {"http", "https"} or not parsed_new.hostname:
-                    raise ProviderAdminError(
-                        "discovery_failed", "模型发现失败：重定向目标不是 http/https。", status_code=502
+                    target = urljoin(current, location)
+                    parsed_old, parsed_new = urlsplit(current), urlsplit(target)
+                    if parsed_new.scheme not in {"http", "https"} or not parsed_new.hostname:
+                        raise ProviderAdminError(
+                            "discovery_failed", "模型发现失败：重定向目标不是 http/https。", status_code=502
+                        )
+                    same_host = (
+                        parsed_old.hostname == parsed_new.hostname
+                        and parsed_old.port == parsed_new.port
+                        and parsed_old.scheme == parsed_new.scheme
                     )
-                same_host = (
-                    parsed_old.hostname == parsed_new.hostname
-                    and parsed_old.port == parsed_new.port
-                    and parsed_old.scheme == parsed_new.scheme
-                )
-                if not same_host:
+                    if not same_host:
+                        raise ProviderAdminError(
+                            "discovery_failed", "模型发现失败：跨 host 重定向已拒绝。", status_code=502
+                        )
+                    current = target
+                    continue
+                if response.status_code >= 400:
+                    status = int(response.status_code)
                     raise ProviderAdminError(
-                        "discovery_failed", "模型发现失败：跨 host 重定向已拒绝。", status_code=502
+                        "discovery_failed", f"模型发现失败：HTTP {status}", status_code=502
                     )
-                current = target
-                continue
-            if response.status_code >= 400:
-                status = int(response.status_code)
-                response.close()
-                raise ProviderAdminError(
-                    "discovery_failed", f"模型发现失败：HTTP {status}", status_code=502
-                )
-            chunks: list[bytes] = []
-            total = 0
-            try:
+                chunks: list[bytes] = []
+                total = 0
                 for chunk in response.iter_bytes():
                     total += len(chunk)
                     if total > _DISCOVER_MAX_BYTES:
@@ -979,12 +977,11 @@ def _discover_fetch_json(url: str, headers: dict[str, str]) -> Any:
                             status_code=502,
                         )
                     chunks.append(chunk)
-            finally:
-                response.close()
+                body = b"".join(chunks)
             import json as _json
 
             try:
-                return _json.loads(b"".join(chunks).decode("utf-8"))
+                return _json.loads(body.decode("utf-8"))
             except (UnicodeDecodeError, _json.JSONDecodeError) as exc:
                 raise ProviderAdminError(
                     "discovery_failed",
@@ -1060,6 +1057,15 @@ def discover_models(
         if not isinstance(val, dict):
             raise ProviderAdminError(
                 "provider_not_found", f"Provider 不存在：{provider_id}", status_code=404
+            )
+        configured_base = str(val.get("base_url", "") or "").strip().rstrip("/")
+        if configured_base and configured_base != base_url.strip().rstrip("/"):
+            # 凭据只能发往该 Provider 自己的端点：否则 base_url 可被换成攻击者主机，
+            # 形成“存储密钥被外带”的通道（凭据只写不读的不变量）。
+            raise ProviderAdminError(
+                "discovery_failed",
+                "模型发现失败：base_url 与已保存 Provider 不一致，拒绝复用存储凭据。",
+                status_code=400,
             )
         env_name = str(val.get("api_key_env", "") or "").strip()
         if env_name:

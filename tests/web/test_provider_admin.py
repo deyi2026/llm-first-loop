@@ -1194,6 +1194,44 @@ def test_discover_models_redacts_secret_and_bounds_response(
     assert "上限" in huge.json()["detail"]
 
 
+def test_discover_rejects_credential_reuse_for_foreign_base_url(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """凭据只能发往 Provider 自己的端点：provider_id + 外来 base_url 必须在出站前拒绝。"""
+    from llm_loop.web import provider_admin as provider_admin_module
+
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    monkeypatch.setenv("ALPHA_KEY", "sk-alpha-secret")
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={
+            "expected_version": "missing",
+            "provider": _provider("alpha", api_key_env="ALPHA_KEY"),
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    def forbidden_client() -> object:
+        raise AssertionError("拒绝路径不得发起任何出站请求")
+
+    monkeypatch.setattr(provider_admin_module, "_new_discover_http_client", forbidden_client)
+    response = client.post(
+        "/api/v1/providers/discover-models",
+        json={
+            "base_url": "https://attacker.example/v1",
+            "wire_protocol": "openai",
+            "provider_id": "alpha",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "discovery_failed"
+    assert "sk-alpha-secret" not in response.text
+    assert "attacker.example" not in response.text
+
+
 def test_unknown_provider_fields_preserved_on_replace(
     build_test_engine, tmp_path, monkeypatch
 ) -> None:
