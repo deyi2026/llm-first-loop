@@ -1,0 +1,36 @@
+{
+  "task": "web-model-admin-dsh-alignment: 独立合并闸审查（RULE-AI-34 merge-review-gate）",
+  "date": "2026-10-28T22:20:00+08:00",
+  "branch": "feat/web-model-admin-ship-20261028",
+  "merge_base": "8db15b3807adbeea5d87032bd6c14c4171187c2e",
+  "head_sha": "84fcee5540b030d34b5d63876b668a7527f53c8f",
+  "source": "llm-first-loop-mirror mirror, committed range main..84fcee554 only（工作区未提交改动不在审查内）",
+  "design_doc": "docs/DESIGN-20261028-web-model-admin-dsh-alignment.md",
+  "code_gate": {
+    "kind": "full_test review_admission PASS (provided, not rerun per delegation)",
+    "artifact_sha256": "642ea2cb128ad35b47034b536f252e1b218254ef5b1541b47b378fa016bbe86a",
+    "p0": 0,
+    "p1": 0,
+    "adjacent": "webui: tsc --noEmit clean, vitest 580 passed/57 files; backend: ruff clean, pyright 0 error (provided); ci_gate full suite tests=12030 failures=0 errors=0 skipped=174"
+  },
+  "merge_gate": {
+    "verdict": "MERGE_OK",
+    "p0": [],
+    "p1": [],
+    "p2": [
+      "P2-1 provider_admin.py snapshot(): §7.1 嵌套 providers[].runtime/models[].runtime 命名空间未按字面实现，保留 v1 扁平字段（api.ts 双读兼容）；功能等价（extra=forbid + 422 字段路径测试），属 API 形状与文档偏差。",
+      "P2-2 provider_routes.py 模型 PUT：停用 Provider 默认模型（非全局默认）返回 422 invalid_field（validate_provider_raw），而非设计 409 provider_default_model_cannot_disable；fail-closed 且错误可读，通道/码与 §7.7 表不一致（DELETE 侧 409 已实现）。",
+      "P2-3 provider_routes.py:396-399：设计 §7.5 之外的路由别名 POST /api/v1/providers/discover（与 /discover-models 同 handler，docs/api.md 标注短别名，继承同一鉴权/Origin 面，无安全增量）。",
+      "P2-4 .gitignore 新增 webui/.tmp-test/、.tmp-live/ 与 function_size_baseline.json 登记 list_models:148，不在设计 §12.2 文件清单；属 only-decrease 棘轮下的诚实登记（chat 176→174、chat_stream 383→381 同步下降）。"
+    ],
+    "notes": "merge-base==main==8db15b380（ff 可行，实测）；git diff --check 干净；26 文件全部落在设计 §12.2 清单及其必然伴随面（session/event_log model_override_source 持久化、i18n、守卫基线、.gitignore 脚手架忽略）；无 data/ 运行时文件、无真实凭据明文（唯一密钥样字符串为测试 fixture）；无 console.log/debugger/TODO/FIXME 新增、无调试开关。§7.2/7.3/7.4/7.5/7.6 + SSE §5.6 已在代码核对；设计 §9.2 的 16 项均有测试落点；§10 的 14 项验收 1-13 有实现与测试，14 由闸门证据覆盖。全 diff 仅 -9 行测试代码改动，来自设计点名要改的那一个旧测试（restart_required 启动快照 → live 断言），无其他断言放宽。CAS 为进程 RLock+flock 锁内二次复核；registry 重载失败回滚文件字节+运行时双回滚有测试；默认模型保护在 PATCH/PUT/整包PUT/DELETE 四路径同口径（配置默认∪运行默认）各有 409 断言；凭据仅 .env 原子写 0600、快照剥离密钥样键、api_key_env 后缀白名单、不回显；发现接口 10s/2MB/2000 候选/3 跳、仅同 host+端口+scheme 重定向、base_url 仅 http/https 且禁 userinfo、错误脱敏均有测试；可回滚：字段只增不减，旧解析忽略未知键。"
+  },
+  "risks": [
+    "首次 Web 保存会 canonical 化 providers.local.json（sort_keys/indent 重排）并删除疑似密钥的未知键（含手写明文 api_key）——有意安全行为且有测试锁定，需告知运维。",
+    "live 默认切换是单进程事实（设计 §8.2）：多 worker 部署需重启其他 worker 才全面生效。",
+    "LLM_MODEL 若由外部 env 拥有则默认切换为 runtime-only（persistence='process'），重启回落外部值。",
+    "SSE providers_updated 分支 continue 会把同周期 sessions_updated 检查推迟一个 3s 节拍（routes.py:4130-4136，时序微注记）。"
+  ],
+  "scope": "只覆盖 main..84fcee554 提交区间的 tree；不含之后的回执提交与工作区未提交改动。",
+  "verdict": "MERGE_OK"
+}
