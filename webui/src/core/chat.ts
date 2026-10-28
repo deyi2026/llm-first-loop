@@ -185,6 +185,10 @@ export interface ModelCapability {
   provider: string;
   model: string;
   display_name?: string | null;
+  /** §6.3.2 provider display_name（分组标签用；缺省回退 provider id）。 */
+  provider_name?: string | null;
+  /** §6.3.2 input_modalities（text/image）元数据展示。 */
+  input_modalities?: string[];
   context: number;
   max_input_tokens?: number | null;
   max_output_tokens?: number | null;
@@ -203,6 +207,10 @@ export interface ModelCatalog {
   current: string | null;
   /** false means current is a preserved session fact absent from the effective registry. */
   currentAvailable?: boolean | null;
+  /** §7.5 current_source：session（会话覆盖）/ default（跟随全局默认）。 */
+  currentSource?: "session" | "default" | string | null;
+  /** §7.5 default：全局配置默认模型（“默认模型”选项标签用）。 */
+  default?: string | null;
   catalog: ModelCapability[];
 }
 
@@ -220,6 +228,7 @@ export async function fetchModels(): Promise<ModelCatalog> {
     if (!resp.ok) return empty;
     const data = (await resp.json().catch(() => ({}))) as {
       models?: unknown; current?: unknown; current_available?: unknown; catalog?: unknown;
+      current_source?: unknown; default?: unknown;
     };
     const catalog = Array.isArray(data.catalog)
       ? data.catalog.filter((item): item is ModelCapability =>
@@ -230,6 +239,8 @@ export async function fetchModels(): Promise<ModelCatalog> {
       models: Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [],
       current: typeof data.current === "string" ? data.current : null,
       currentAvailable: typeof data.current_available === "boolean" ? data.current_available : null,
+      currentSource: typeof data.current_source === "string" ? data.current_source : null,
+      default: typeof data.default === "string" ? data.default : null,
       catalog,
     };
   } catch {

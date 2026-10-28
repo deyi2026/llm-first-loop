@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ModelCapability, ModelCatalog } from "../../core/chat";
+import { setSessionModel } from "../../core/api";
 import {
   sessionStore,
   useModel,
@@ -23,6 +24,37 @@ function capabilityFor(catalog: ModelCatalog, model: string | null): ModelCapabi
   return catalog.catalog.find((item) => item.id === selected);
 }
 
+/** §6.3.2/C4-lite：按 Provider 分组（optgroup label=provider display_name，缺省回退 id）；
+ *  选项显示 display_name，缺省回退短名。目录条目缺失的 id（如运行时过期事实）按
+ *  id 前缀兜底分组，保持可用。 */
+function groupedModelOptions(
+  catalog: ModelCatalog
+): Array<{ key: string; label: string; items: Array<{ id: string; label: string }> }> {
+  const map = new Map<string, { key: string; label: string; items: Array<{ id: string; label: string }> }>();
+  const ensure = (key: string, label: string) => {
+    let group = map.get(key);
+    if (!group) {
+      group = { key, label, items: [] };
+      map.set(key, group);
+    }
+    return group;
+  };
+  for (const item of catalog.catalog) {
+    const key = item.provider || "其他";
+    ensure(key, item.provider_name || key).items.push({
+      id: item.id,
+      label: item.display_name || shortModelName(item.id),
+    });
+  }
+  const listed = new Set(catalog.catalog.map((item) => item.id));
+  for (const id of catalog.models) {
+    if (listed.has(id)) continue;
+    const key = id.includes("/") ? id.slice(0, id.indexOf("/")) : "其他";
+    ensure(key, key).items.push({ id, label: shortModelName(id) });
+  }
+  return Array.from(map.values());
+}
+
 export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
   const currentModel = useModel();
   const effort = useReasoningEffort();
@@ -33,6 +65,7 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
     () => capabilityFor(catalog, currentModel),
     [catalog, currentModel]
   );
+  const groups = useMemo(() => groupedModelOptions(catalog), [catalog]);
 
   useEffect(() => {
     if (!capability) return;
@@ -79,12 +112,23 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
     if (value === "auto") sessionStore.setReasoningEffort(null);
   };
 
+  // §7.6 会话覆盖：store 立即生效（乐观），已定位会话则落盘 session model；
+  // 空值 = 清除 override（跟随全局默认）。新会话待建（newSessionPending）时跳过落盘，
+  // 由首条消息携带模型创建。
+  const selectModel = (value: string) => {
+    sessionStore.selectModel(value || null);
+    const sid = sessionStore.getState().currentSessionId;
+    if (sid && !sessionStore.getState().newSessionPending) {
+      void setSessionModel(sid, value || null);
+    }
+  };
+
   return (
     <div className="v2-model-controls" data-testid="model-controls" ref={rootRef}>
       <select
         className="v2-control-pill v2-model-pill"
         value={selected}
-        onChange={(e) => sessionStore.selectModel(e.target.value || null)}
+        onChange={(e) => selectModel(e.target.value)}
         aria-label="选择模型"
         title={selected || "默认模型"}
         data-testid="model-select"
@@ -94,13 +138,29 @@ export function ModelControls({ catalog }: { catalog: ModelCatalog }) {
             {selectedMissingLabel}
           </option>
         ) : null}
-        {catalog.models.length === 0 && !selectedMissing ? <option value="">默认模型</option> : null}
-        {catalog.models.map((model) => (
-          <option key={model} value={model}>
-            {modelDisplayName(catalog, model)}
-          </option>
+        <option value="">
+          {catalog.default ? `默认模型（${shortModelName(catalog.default)}）` : "默认模型"}
+        </option>
+        {groups.map((group) => (
+          <optgroup key={group.key} label={group.label}>
+            {group.items.map((item) => (
+              <option key={item.id} value={item.id} title={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
+      {catalog.current ? (
+        <span
+          className="v2-model-source-chip"
+          data-testid="model-source"
+          title={`当前：${catalog.current}`}
+        >
+          {catalog.currentSource === "session" ? "会话" : "默认"}
+          {catalog.currentAvailable === false ? " · 不可用" : ""}
+        </span>
+      ) : null}
       <div className="v2-reasoning-control">
         <button
           type="button"

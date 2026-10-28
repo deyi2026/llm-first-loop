@@ -1,9 +1,11 @@
 // Web V2 核心：SSE 会话事件订阅（复用后端 /api/v1/events 命名事件；
 // 对齐 v0.5.6 前端加固：失联自愈看门狗 + 标签页聚焦即刷）
 
-import { fetchSessionsResult, fetchSharedCurrent } from "./api";
+import { fetchSessionsResult, fetchSharedCurrent, notifyProvidersUpdated } from "./api";
+import type { ProvidersUpdatedFact } from "./api";
 import { refreshCurrentSessionMessages } from "./conversation";
 import { sessionStore } from "./stores";
+import { notifyModelCatalogChanged } from "./chat";
 import { readSessionIdFromLocation } from "./sessionUrl";
 
 let lastSyncEvent = Date.now();
@@ -66,6 +68,29 @@ export function initEventStream(): void {
   es.addEventListener("sessions_updated", () => {
     lastSyncEvent = Date.now();
     refreshFromSync();
+  });
+  // §5.6/§6.2.5 providers_updated（data: type/config_version/catalog_version/default_model）：
+  // 配置热变更后刷新模型目录（Composer 经 MODEL_CATALOG_CHANGED_EVENT 重拉 /api/v1/models）
+  // 与打开中的 Provider 快照（api.ts 订阅 → ProviderManager；有 draft 只提示冲突不覆盖）。
+  es.addEventListener("providers_updated", (event: Event) => {
+    lastSyncEvent = Date.now();
+    let fact: ProvidersUpdatedFact = {};
+    const data = (event as MessageEvent).data;
+    if (typeof data === "string" && data) {
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>;
+        fact = {
+          type: typeof parsed.type === "string" ? parsed.type : undefined,
+          config_version: typeof parsed.config_version === "string" ? parsed.config_version : undefined,
+          catalog_version: typeof parsed.catalog_version === "string" ? parsed.catalog_version : undefined,
+          default_model: typeof parsed.default_model === "string" ? parsed.default_model : undefined,
+        };
+      } catch {
+        fact = {};
+      }
+    }
+    notifyModelCatalogChanged();
+    notifyProvidersUpdated(fact);
   });
   // 看门狗：事件流静默失联（>25s 无事件且页面可见）→ 自愈刷新（SSE 健康时不触发）
   window.setInterval(() => {

@@ -1178,11 +1178,42 @@ export async function saveHumanFile(
   });
 }
 
-// ── Provider / model settings control plane ────────────────────────────────
+// ── Provider / model settings control plane（DESIGN-20261028 §5-§7 契约）────
+// 快照 v2：可写配置事实与只读运行事实分离（§5.2）。运行事实只存在于
+// runtime/credential_*/default.* 命名空间（含 v1 扁平兼容字段），永不回写；
+// 写入投影从类型上排除运行时字段（§6.1.1，422 根因修复）。
+
+export type ModelInputModality = "text" | "image";
+
+/** v2 只读运行事实：providers[].models[].runtime（§7.1）。 */
+export interface ProviderModelRuntimeFact {
+  effective?: boolean;
+}
+
+/** v2 只读运行事实：providers[].runtime（§7.1）。 */
+export interface ProviderRuntimeFact {
+  effective?: boolean;
+  credential_configured?: boolean;
+  credential_source?: string;
+}
+
+/** §7.1 default 命名空间：配置默认 vs 运行默认的真实事实（不伪造）。 */
+export interface ProviderDefaultFact {
+  model?: string | null;
+  runtime_model?: string | null;
+  configured_source?: string | null;
+  persistence?: string | null;
+  applied?: boolean;
+  restart_required?: boolean;
+}
+
 export interface ProviderModelAdminFact {
   id: string;
-  enabled: boolean;
-  effective?: boolean;
+  enabled?: boolean;
+  /** 显示名（§6.3.2；/api/v1/models 的 display_name 来源）。 */
+  name?: string;
+  /** 备注（§5.3 可写配置字段；DeepSeek 快照携带，不再 422）。 */
+  note?: string;
   context?: number;
   max_input_tokens?: number | null;
   max_tokens?: number | null;
@@ -1190,8 +1221,7 @@ export interface ProviderModelAdminFact {
   thinking?: boolean;
   reasoning_capable?: boolean;
   reasoning_control?: string;
-  reasoning?: boolean;
-  long_context?: boolean;
+  input_modalities?: ModelInputModality[];
   multimodal?: boolean;
   wire_protocol?: string;
   capability_tier?: string;
@@ -1206,16 +1236,18 @@ export interface ProviderModelAdminFact {
   top_p?: number | null;
   top_k?: number | null;
   min_p?: number | null;
+  /** v1 扁平运行时事实（兼容读取，只读，永不回写）。 */
+  effective?: boolean;
+  /** v2 运行时事实命名空间（只读）。 */
+  runtime?: ProviderModelRuntimeFact;
 }
 
 export interface ProviderAdminFact {
   id: string;
-  enabled: boolean;
-  effective?: boolean;
+  enabled?: boolean;
+  display_name?: string;
   base_url: string;
   api_key_env?: string;
-  credential_configured?: boolean;
-  credential_source?: string;
   default_model?: string;
   timeout_s?: number | null;
   history_budget_chars?: number | null;
@@ -1223,12 +1255,24 @@ export interface ProviderAdminFact {
   max_tokens?: number | null;
   chars_per_token?: number | null;
   models: ProviderModelAdminFact[];
+  /** v1 扁平运行时事实（兼容读取，只读，永不回写）。 */
+  effective?: boolean;
+  credential_configured?: boolean;
+  credential_source?: string;
+  /** v2 运行时事实命名空间（只读）。 */
+  runtime?: ProviderRuntimeFact;
 }
 
 export interface ProviderAdminSnapshot {
   source: "env" | "local" | "base" | "missing" | string;
   mutable: boolean;
   config_version: string;
+  /** v2 default 命名空间（§7.1）；缺省时 UI 回退 v1 扁平字段。 */
+  default?: ProviderDefaultFact;
+  catalog_version?: string;
+  loaded_at?: string | null;
+  degraded?: boolean;
+  /** v1 兼容（只读）。 */
   configured_default_model?: string;
   runtime_default_model?: string;
   default_source?: string;
@@ -1238,12 +1282,40 @@ export interface ProviderAdminSnapshot {
   providers: ProviderAdminFact[];
 }
 
-export interface ProviderModelAdminInput extends ProviderModelAdminFact {
+/** §5.3 写入投影：仅可写模型配置字段（结构上排除 effective/credential_*/runtime）。 */
+export interface ProviderModelConfigInput {
+  id: string;
+  name?: string;
   enabled: boolean;
+  context: number;
+  max_input_tokens?: number | null;
+  max_tokens?: number | null;
+  cost_tier?: string;
+  capability_tier?: string;
+  input_modalities?: ModelInputModality[];
+  multimodal?: boolean;
+  wire_protocol?: string;
+  thinking?: boolean;
+  reasoning_capable?: boolean;
+  reasoning_control?: string;
+  reasoning_efforts?: string[];
+  reasoning_effort_map?: Record<string, string>;
+  reasoning_default_effort?: string | null;
+  reasoning_replay?: string;
+  send_tool_choice?: boolean;
+  reasoning_split?: boolean;
+  runtime_identity?: string;
+  temperature?: number | null;
+  top_p?: number | null;
+  top_k?: number | null;
+  min_p?: number | null;
+  note?: string;
 }
 
-export interface ProviderAdminInput {
+/** §5.3 写入投影：仅可写 Provider 配置字段。 */
+export interface ProviderConfigInput {
   id: string;
+  display_name?: string;
   enabled: boolean;
   base_url: string;
   api_key_env?: string;
@@ -1253,14 +1325,95 @@ export interface ProviderAdminInput {
   max_input_tokens?: number | null;
   max_tokens?: number | null;
   chars_per_token?: number | null;
-  models: ProviderModelAdminInput[];
+  models: ProviderModelConfigInput[];
+}
+
+/** §6.1.1 事实→配置投影。禁止对象展开（...model 会把 effective/note 等运行时或
+ *  未声明字段原样带回严格输入 schema，触发确定性 422）。 */
+export function toModelConfig(model: ProviderModelAdminFact): ProviderModelConfigInput {
+  const modalities: ModelInputModality[] = model.input_modalities?.length
+    ? model.input_modalities.slice()
+    : model.multimodal
+      ? ["text", "image"]
+      : ["text"];
+  return {
+    id: model.id,
+    name: model.name ?? "",
+    enabled: model.enabled !== false,
+    context: model.context ?? 131072,
+    max_input_tokens: model.max_input_tokens ?? null,
+    max_tokens: model.max_tokens ?? null,
+    cost_tier: model.cost_tier ?? "mid",
+    capability_tier: model.capability_tier ?? "unknown",
+    input_modalities: modalities,
+    multimodal: modalities.includes("image"),
+    wire_protocol: model.wire_protocol ?? "openai",
+    thinking: Boolean(model.thinking),
+    reasoning_capable: Boolean(model.reasoning_capable),
+    reasoning_control: model.reasoning_control ?? "unknown",
+    reasoning_efforts: model.reasoning_efforts ?? [],
+    reasoning_effort_map: model.reasoning_effort_map ?? {},
+    reasoning_default_effort: model.reasoning_default_effort ?? null,
+    reasoning_replay: model.reasoning_replay ?? "configured",
+    send_tool_choice: model.send_tool_choice !== false,
+    reasoning_split: Boolean(model.reasoning_split),
+    runtime_identity: model.runtime_identity ?? "",
+    temperature: model.temperature ?? null,
+    top_p: model.top_p ?? null,
+    top_k: model.top_k ?? null,
+    min_p: model.min_p ?? null,
+    note: model.note ?? "",
+  };
+}
+
+export function toProviderConfig(provider: ProviderAdminFact): ProviderConfigInput {
+  return {
+    id: provider.id,
+    display_name: provider.display_name ?? "",
+    enabled: provider.enabled !== false,
+    base_url: provider.base_url ?? "",
+    api_key_env: provider.api_key_env ?? "",
+    default_model: provider.default_model ?? "",
+    timeout_s: provider.timeout_s ?? null,
+    history_budget_chars: provider.history_budget_chars ?? null,
+    max_input_tokens: provider.max_input_tokens ?? null,
+    max_tokens: provider.max_tokens ?? null,
+    chars_per_token: provider.chars_per_token ?? null,
+    models: provider.models.map(toModelConfig),
+  };
 }
 
 export interface ProviderMutationResult {
   ok: boolean;
   status: number;
   detail: string;
+  /** 稳定错误码（body.error，§7.7）。 */
+  error?: string;
+  /** 409 冲突时服务端当前 config_version（§7.2）。 */
+  currentVersion?: string;
   snapshot: ProviderAdminSnapshot | null;
+}
+
+/** §6.1.4 错误归一：扁平 detail / FastAPI 422 detail[] → “字段路径: 原因”；
+ *  绝不 String() 出 “[object Object]”。 */
+export function formatProviderError(body: unknown): string {
+  const record = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const detail = record.detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        const entry = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+        const loc = Array.isArray(entry.loc) ? entry.loc : [];
+        const path = loc.slice(1).map(String).join(".");
+        const msg =
+          typeof entry.msg === "string" ? entry.msg : String(entry.msg ?? item ?? "");
+        return path ? `${path}: ${msg}` : msg;
+      })
+      .join("；");
+  }
+  if (typeof detail === "string" && detail) return detail;
+  if (typeof record.error === "string" && record.error) return record.error;
+  return "操作失败";
 }
 
 function providerResult(status: number, data: unknown): ProviderMutationResult {
@@ -1269,7 +1422,13 @@ function providerResult(status: number, data: unknown): ProviderMutationResult {
   return {
     ok,
     status,
-    detail: String(body.detail ?? body.error ?? ""),
+    detail: ok
+      ? typeof body.detail === "string"
+        ? body.detail
+        : ""
+      : formatProviderError(body),
+    error: typeof body.error === "string" ? body.error : undefined,
+    currentVersion: typeof body.current_version === "string" ? body.current_version : undefined,
     snapshot: ok && Array.isArray(body.providers) ? body as unknown as ProviderAdminSnapshot : null,
   };
 }
@@ -1281,7 +1440,7 @@ export async function fetchProviderAdmin(): Promise<ProviderAdminSnapshot | null
 
 export async function createProvider(
   expectedVersion: string,
-  provider: ProviderAdminInput,
+  provider: ProviderConfigInput,
   apiKey?: string
 ): Promise<ProviderMutationResult> {
   const body: Record<string, unknown> = { expected_version: expectedVersion, provider };
@@ -1296,7 +1455,7 @@ export async function createProvider(
 
 export async function replaceProvider(
   expectedVersion: string,
-  provider: ProviderAdminInput
+  provider: ProviderConfigInput
 ): Promise<ProviderMutationResult> {
   const { status, data } = await api(`/api/v1/providers/${encodeURIComponent(provider.id)}`, {
     method: "PUT",
@@ -1330,6 +1489,199 @@ export async function deleteProviderConfig(
   return providerResult(status, data);
 }
 
+/** §7.2 行级 PATCH 允许字段：enabled / default_model / display_name / timeout_s /
+ *  history_budget_chars / max_input_tokens / max_tokens / chars_per_token。 */
+export interface ProviderPatchInput {
+  enabled?: boolean;
+  default_model?: string;
+  display_name?: string;
+  timeout_s?: number | null;
+  history_budget_chars?: number | null;
+  max_input_tokens?: number | null;
+  max_tokens?: number | null;
+  chars_per_token?: number | null;
+}
+
+/** §7.2 行级 PATCH：启停/改默认/改显示名等不再整表 PUT，携带 expected_version。 */
+export async function patchProvider(
+  providerId: string,
+  expectedVersion: string,
+  patch: ProviderPatchInput
+): Promise<ProviderMutationResult> {
+  const { status, data } = await api(`/api/v1/providers/${encodeURIComponent(providerId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_version: expectedVersion, ...patch }),
+  });
+  return providerResult(status, data);
+}
+
+/** §7.3 模型级新增：POST /api/v1/providers/{pid}/models。 */
+export async function addProviderModel(
+  providerId: string,
+  expectedVersion: string,
+  model: ProviderModelConfigInput
+): Promise<ProviderMutationResult> {
+  const { status, data } = await api(`/api/v1/providers/${encodeURIComponent(providerId)}/models`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_version: expectedVersion, model }),
+  });
+  return providerResult(status, data);
+}
+
+/** §7.3 模型级替换：PUT /api/v1/providers/{pid}/models/{mid}。
+ *  模型 id 可含 “/”（后端路由 {model_id:path}）——客户端必须整体 encodeURIComponent。 */
+export async function replaceProviderModel(
+  providerId: string,
+  modelId: string,
+  expectedVersion: string,
+  model: ProviderModelConfigInput
+): Promise<ProviderMutationResult> {
+  const { status, data } = await api(
+    `/api/v1/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expected_version: expectedVersion, model }),
+    }
+  );
+  return providerResult(status, data);
+}
+
+/** §7.3 模型级删除：DELETE …/models/{mid}?expected_version=…&confirm=true。 */
+export async function deleteProviderModel(
+  providerId: string,
+  modelId: string,
+  expectedVersion: string
+): Promise<ProviderMutationResult> {
+  const query = new URLSearchParams({ expected_version: expectedVersion, confirm: "true" });
+  const { status, data } = await api(
+    `/api/v1/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(modelId)}?${query.toString()}`,
+    { method: "DELETE" }
+  );
+  return providerResult(status, data);
+}
+
+/** §6.3.1 模型发现（只读探测，不写盘）。候选须勾选后经 POST provider / POST models 显式落盘。 */
+export interface DiscoveredModel {
+  id: string;
+  name?: string;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
+  input_modalities?: string[];
+}
+
+export interface DiscoverModelsResult {
+  ok: boolean;
+  status: number;
+  candidates: DiscoveredModel[];
+  /** 稳定错误码（unsupported_protocol / discovery_failed，§7.7）。 */
+  errorCode?: string;
+  /** §6.3.1 错误只透出 type/status/timeout，不反射 provider body/URL。 */
+  errorType?: string;
+  errorStatus?: number;
+  timeout?: boolean;
+}
+
+export async function discoverProviderModels(request: {
+  base_url: string;
+  wire_protocol: string;
+  api_key?: string;
+  provider_id?: string;
+}): Promise<DiscoverModelsResult> {
+  const body: Record<string, unknown> = {
+    base_url: request.base_url,
+    wire_protocol: request.wire_protocol,
+  };
+  if (request.api_key) body.api_key = request.api_key;
+  if (request.provider_id) body.provider_id = request.provider_id;
+  const { status, data } = await api<Record<string, unknown>>("/api/v1/providers/discover-models", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const record = data && typeof data === "object" ? data : {};
+  if (status >= 200 && status < 300 && Array.isArray(record.candidates)) {
+    const candidates = (record.candidates as unknown[])
+      .filter(
+        (item): item is DiscoveredModel =>
+          !!item && typeof item === "object" && typeof (item as DiscoveredModel).id === "string"
+      )
+      .map((item) => item as DiscoveredModel);
+    return { ok: true, status, candidates };
+  }
+  const diagnostics =
+    record.diagnostics && typeof record.diagnostics === "object"
+      ? (record.diagnostics as Record<string, unknown>)
+      : {};
+  return {
+    ok: false,
+    status,
+    candidates: [],
+    errorCode: typeof record.error === "string" ? record.error : undefined,
+    errorType: typeof diagnostics.type === "string" ? diagnostics.type : undefined,
+    errorStatus: typeof diagnostics.status === "number" ? diagnostics.status : undefined,
+    timeout: diagnostics.timeout === true,
+  };
+}
+
+/** §7.6 会话模型：model=null 清除 override（跟随默认）。 */
+export interface SessionModelResult {
+  ok: boolean;
+  status: number;
+  model: string | null;
+  source?: string;
+  available?: boolean;
+  detail?: string;
+}
+
+export async function setSessionModel(
+  sessionId: string,
+  model: string | null
+): Promise<SessionModelResult> {
+  const { status, data } = await api<{
+    model?: string | null;
+    source?: string;
+    available?: boolean;
+    detail?: unknown;
+    error?: string;
+  }>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/model`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+  });
+  const ok = status >= 200 && status < 300;
+  return {
+    ok,
+    status,
+    model: ok ? (data?.model ?? model) : model,
+    source: data?.source,
+    available: data?.available,
+    detail: ok ? undefined : formatProviderError(data),
+  };
+}
+
+/** §5.6/§6.2.5 SSE providers_updated 分发（events.ts → ProviderManager / 目录刷新）。 */
+export interface ProvidersUpdatedFact {
+  type?: string;
+  config_version?: string;
+  catalog_version?: string;
+  default_model?: string;
+}
+
+type ProvidersUpdatedListener = (fact: ProvidersUpdatedFact) => void;
+const providersUpdatedListeners = new Set<ProvidersUpdatedListener>();
+
+export function subscribeProvidersUpdated(listener: ProvidersUpdatedListener): () => void {
+  providersUpdatedListeners.add(listener);
+  return () => providersUpdatedListeners.delete(listener);
+}
+
+export function notifyProvidersUpdated(fact: ProvidersUpdatedFact): void {
+  providersUpdatedListeners.forEach((listener) => listener(fact));
+}
+
 export async function setConfiguredDefaultModel(model: string): Promise<ProviderMutationResult> {
   const { status, data } = await api("/api/v1/providers/default-model", {
     method: "POST",
@@ -1358,7 +1710,7 @@ export async function testProviderConnection(
   );
   return {
     ok: status === 200 && data.ok === true,
-    detail: status === 200 ? `连接成功 · ${Number(data.latency_ms ?? 0)} ms` : String(data.detail ?? data.error ?? "连接失败"),
+    detail: status === 200 ? `连接成功 · ${Number(data.latency_ms ?? 0)} ms` : formatProviderError(data),
     latencyMs: status === 200 ? Number(data.latency_ms ?? 0) : undefined,
   };
 }
