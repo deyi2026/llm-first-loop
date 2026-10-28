@@ -35,13 +35,34 @@ _SECRET_ENV_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET")
 
 
 class ProviderAdminError(RuntimeError):
-    """Expected operator/config conflict with an HTTP-safe code/detail."""
+    """Expected operator/config conflict with an HTTP-safe code/detail.
 
-    def __init__(self, code: str, detail: str, *, status_code: int = 400) -> None:
+    model-admin design §6.1.4/§7.2: 冲突类错误附带 ``extra``（如 current_version），
+    供 UI 显示字段路径、原因与当前 revision；不静默覆盖。
+    """
+
+    def __init__(
+        self,
+        code: str,
+        detail: str,
+        *,
+        status_code: int = 400,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.code = code
         self.detail = detail
         self.status_code = status_code
+        self.extra: dict[str, Any] = dict(extra or {})
+
+
+def _current_version_of(engine: Any) -> dict[str, Any]:
+    """冲突错误体的 current_version 附件（读取失败时如实缺省，不伪装）。"""
+    try:
+        _raw, version, _source, _path = _effective_config(engine)
+        return {"current_version": version}
+    except Exception:  # noqa: BLE001 — 附属事实读取失败不掩盖主错误
+        return {}
 
 
 def _engine_settings(engine: Any) -> Any:
@@ -346,7 +367,21 @@ def _runtime_registry(engine: Any) -> Any | None:
 
 
 def _runtime_default_ref(engine: Any) -> str:
-    client = getattr(getattr(engine, "llm_pool", None), "default_client", None) or getattr(engine, "llm", None)
+    """当前 live 默认模型引用（model-admin design §7.1 default.runtime_model）.
+
+    pool 暴露 get_default_ref 时优先（热切换优先，未热切换返回启动默认 canonical）；
+    旧 duck pool/测试 FakeLLM 回退启动 client 的 provider/model 拼接（零回归）。
+    """
+    pool = getattr(engine, "llm_pool", None)
+    getter = getattr(pool, "get_default_ref", None)
+    if callable(getter):
+        try:
+            ref = str(getter() or "").strip()
+            if ref:
+                return ref
+        except Exception:  # noqa: BLE001 — 展示事实读取失败回退旧口径
+            pass
+    client = getattr(pool, "default_client", None) or getattr(engine, "llm", None)
     if client is None:
         return ""
     provider = str(getattr(client, "provider", "") or "").strip()
@@ -354,6 +389,30 @@ def _runtime_default_ref(engine: Any) -> str:
     if provider and model and not model.startswith(provider + "/"):
         return f"{provider}/{model}"
     return model
+
+
+def _default_model_refs(engine: Any) -> tuple[str, str]:
+    """(配置默认, 运行默认) 引用对（model-admin design §6.2.3-4 守卫口径）.
+
+    删除/停用保护必须同时检查两者：runtime-only 默认（外部 env 场景）不能被
+    只看配置的守卫误删。
+    """
+    return _configured_default_ref(engine), _runtime_default_ref(engine)
+
+
+def _ref_hosts_default(engine: Any, provider_id: str, model_id: str | None = None) -> bool:
+    """该 provider（或具体模型）是否承载配置/运行默认引用."""
+    prefix = provider_id + "/"
+    for ref in _default_model_refs(engine):
+        ref = str(ref or "").strip()
+        if not ref:
+            continue
+        if model_id is None:
+            if ref.startswith(prefix):
+                return True
+        elif ref == f"{provider_id}/{model_id}":
+            return True
+    return False
 
 
 def _configured_default_ref(engine: Any) -> str:
@@ -408,6 +467,15 @@ def snapshot(engine: Any) -> dict[str, Any]:
         for pid, value in raw.items()
         if isinstance(pid, str)
     ]
+    # model-admin design §5.2/§7.1: 默认模型分层事实块。
+    # persistence: dotenv/external-env/missing——外部 env 拥有 LLM_MODEL 时 Web 默认
+    # 只能 runtime-only，标 "process" 不假装 durable（design §8.2）。
+    persistence = (
+        "process"
+        if default_source == "external_env"
+        else ("dotenv" if default_source == "dotenv" else "missing")
+    )
+    restart_required = bool(configured_default and configured_default != runtime_default)
     return {
         "source": source,
         "mutable": source != "env",
@@ -415,7 +483,15 @@ def snapshot(engine: Any) -> dict[str, Any]:
         "configured_default_model": configured_default,
         "runtime_default_model": runtime_default,
         "default_source": default_source,
-        "restart_required": bool(configured_default and configured_default != runtime_default),
+        "restart_required": restart_required,
+        "default": {
+            "model": configured_default,
+            "runtime_model": runtime_default,
+            "configured_source": default_source,
+            "persistence": persistence,
+            "applied": bool(not configured_default or configured_default == runtime_default),
+            "restart_required": restart_required,
+        },
         "providers": providers,
         "effective_provider_count": len(getattr(registry, "providers", {}) or {}) if registry is not None else 0,
         "effective_model_count": sum(
@@ -448,6 +524,7 @@ def _apply_local_config_locked(engine: Any, payload: dict[str, Any], *, expected
             "provider_config_conflict",
             "Provider 配置已被其它操作更新；请刷新设置页后重试。",
             status_code=409,
+            extra={"current_version": current_version},
         )
     target = local_provider_path(engine)
     old_bytes = target.read_bytes() if target.exists() else None
@@ -494,9 +571,128 @@ def mutate(engine: Any, *, expected_version: str, change: Callable[[dict[str, An
             "provider_config_conflict",
             "Provider 配置已变化；请刷新后基于最新版本重试。",
             status_code=409,
+            extra={"current_version": version},
         )
     change(payload)
     return _apply_local_config(engine, payload, expected_version=version)
+
+
+# model-admin design §5.2/§8.1（未知字段保留）：Web 输入 schema 的已知配置字段集。
+# 写回时以这些字段为界合并：客户端未展示/未发送的未知字段原样保留在文件里，
+# 但疑似密钥的未知键在合并时丢弃（防御手写配置中的明文残留）。
+def _provider_config_fields() -> frozenset[str]:
+    from llm_loop.web.schemas import ProviderAdminProviderInput
+
+    return frozenset(ProviderAdminProviderInput.model_fields) | {"models"}
+
+
+def _model_config_fields() -> frozenset[str]:
+    from llm_loop.web.schemas import ProviderModelAdminInput
+
+    return frozenset(ProviderModelAdminInput.model_fields)
+
+
+def _looks_secret_key(key: str) -> bool:
+    lowered = str(key).lower()
+    return key != "api_key_env" and ("api_key" in lowered or "secret" in lowered or "token" in lowered)
+
+
+def merge_model_unknown(existing: Any, incoming: dict[str, Any]) -> dict[str, Any]:
+    """模型级写回合并：保留旧条目中 schema 之外的未知字段（design FR-13）."""
+    prev = existing if isinstance(existing, dict) else {}
+    keep = {
+        str(k): v
+        for k, v in prev.items()
+        if k not in _model_config_fields() and not _looks_secret_key(str(k))
+    }
+    return {**keep, **incoming}
+
+
+def merge_provider_unknown(existing: Any, incoming: dict[str, Any]) -> dict[str, Any]:
+    """Provider 级写回合并：保留未知字段与旧模型条目中的未知字段（design FR-13）."""
+    prev = existing if isinstance(existing, dict) else {}
+    keep = {
+        str(k): v
+        for k, v in prev.items()
+        if k not in _provider_config_fields() and not _looks_secret_key(str(k))
+    }
+    prev_models_raw = prev.get("models")
+    prev_models: dict[str, Any] = prev_models_raw if isinstance(prev_models_raw, dict) else {}
+    incoming_models_raw = incoming.get("models")
+    incoming_models: dict[str, Any] = (
+        incoming_models_raw if isinstance(incoming_models_raw, dict) else {}
+    )
+    merged_models = {
+        str(mid): merge_model_unknown(prev_models.get(mid), mval)
+        for mid, mval in incoming_models.items()
+    }
+    return {**keep, **incoming, "models": merged_models}
+
+
+def _format_validation_error(exc: Any) -> str:
+    """Pydantic ValidationError → 可读字段路径 + 原因（design §6.1.4 错误可诊断）."""
+    parts: list[str] = []
+    for item in getattr(exc, "errors", lambda: [])():
+        loc = [str(seg) for seg in item.get("loc", ())]
+        path = ".".join(seg for seg in loc if seg != "models__root")
+        msg = str(item.get("msg", "")).removeprefix("Value error, ")
+        parts.append(f"{path}: {msg}" if path else msg)
+    return "；".join(parts) or str(exc)
+
+
+def validate_provider_raw(pid: str, raw: dict[str, Any]) -> None:
+    """按 ProviderAdminProviderInput 语义校验一个 raw provider dict（PATCH/合并路径复用）.
+
+    只校验已知配置字段（未知字段保留策略见 merge_provider_unknown）；
+    非法时抛 422 ProviderAdminError（含字段路径与原因）。
+    """
+    from pydantic import ValidationError
+
+    from llm_loop.web.schemas import ProviderAdminProviderInput
+
+    known = {k: v for k, v in raw.items() if k in _provider_config_fields() and k != "models"}
+    models_raw_value = raw.get("models")
+    models_raw: dict[str, Any] = models_raw_value if isinstance(models_raw_value, dict) else {}
+    model_items: list[dict[str, Any]] = []
+    for mid, mval in models_raw.items():
+        mval = mval if isinstance(mval, dict) else {}
+        mknown = {k: v for k, v in mval.items() if k in _model_config_fields() and k != "id"}
+        model_items.append({"id": str(mid), **mknown})
+    try:
+        ProviderAdminProviderInput.model_validate({**known, "id": pid, "models": model_items})
+    except ValidationError as exc:
+        raise ProviderAdminError(
+            "invalid_field",
+            f"Provider 配置字段非法：{_format_validation_error(exc)}",
+            status_code=422,
+        ) from exc
+
+
+def patch_provider(
+    engine: Any, provider_id: str, expected_version: str, fields: dict[str, Any]
+) -> dict[str, Any]:
+    """行级 PATCH（model-admin design §6.1.3/§7.2）：只改指定字段，复用 CAS + 回滚.
+
+    fields 只含调用方显式提供的键（None 值应已在路由层剔除）。
+    """
+    def _patch(config: dict[str, Any]) -> None:
+        raw = config.get(provider_id)
+        if not isinstance(raw, dict):
+            raise ProviderAdminError(
+                "provider_not_found", f"Provider 不存在：{provider_id}", status_code=404
+            )
+        merged = {**raw, **fields}
+        # design §7.7 default_provider_cannot_disable：配置/运行默认都不允许被停用承载。
+        if fields.get("enabled") is False and _ref_hosts_default(engine, provider_id):
+            raise ProviderAdminError(
+                "default_provider_cannot_disable",
+                "该 Provider 当前承载默认模型（配置或运行默认）；请先切换默认模型。",
+                status_code=409,
+            )
+        validate_provider_raw(provider_id, merged)
+        config[provider_id] = merged
+
+    return mutate(engine, expected_version=expected_version, change=_patch)
 
 
 def set_credential(engine: Any, provider_id: str, api_key: str) -> dict[str, Any]:
@@ -538,18 +734,66 @@ def set_default_model(engine: Any, model_ref: str) -> dict[str, Any]:
 
 
 def _set_default_model_locked(engine: Any, model_ref: str) -> dict[str, Any]:
+    """设置全局默认模型（model-admin design §6.2.3/§7.4）：先构造后提交，live 生效.
+
+    - dotenv/missing 来源：先原子写 .env LLM_MODEL，成功后 pool.set_default_model；
+      pool 提交失败（构造/解析失败）时回滚 .env 与 os.environ 到修改前。
+    - external_env 来源（design §8.2 开放问题 2 推荐项）：不写 .env，仅 runtime
+      切换；snapshot 的 default.persistence="process" 如实标注，不假装 durable。
+    """
     registry = _runtime_registry(engine)
     if registry is None:
         raise ProviderAdminError("provider_admin_unavailable", "Registry 未装配。", status_code=503)
+    pool = getattr(engine, "llm_pool", None)
+    setter = getattr(pool, "set_default_model", None)
+    if pool is None or not callable(setter):
+        raise ProviderAdminError("provider_admin_unavailable", "模型客户端池未装配。", status_code=503)
     try:
         pid, mid = registry.resolve(model_ref)
     except ValueError as exc:
         raise ProviderAdminError("model_not_found", str(exc), status_code=404) from exc
     canonical = f"{pid}/{mid}"
+
+    env_path = env_file_path(engine)
+    source = _dotenv_value_source(env_path, "LLM_MODEL")
+    if source == "external_env":
+        # runtime-only：外部 env 拥有 LLM_MODEL；只切本进程路由事实，不碰 .env。
+        try:
+            setter(canonical)
+        except ValueError as exc:
+            raise ProviderAdminError("model_not_found", str(exc), status_code=404) from exc
+        result = snapshot(engine)
+        result["default_persistence"] = "process"
+        result["default"]["persistence"] = "process"
+        return result
+
+    # dotenv/missing：先持久化，再 live 提交；live 提交失败回滚持久化。
+    old_env_bytes = env_path.read_bytes() if env_path.exists() else None
+    old_env_value = os.environ.get("LLM_MODEL")
     _set_dotenv_value(engine, "LLM_MODEL", canonical, secret=False)
-    result = snapshot(engine)
-    result["restart_required"] = canonical != _runtime_default_ref(engine)
-    return result
+    try:
+        setter(canonical)
+    except Exception as exc:
+        if old_env_bytes is None:
+            env_path.unlink(missing_ok=True)
+        else:
+            _atomic_write(env_path, old_env_bytes, mode=0o600)
+        if old_env_value is None:
+            os.environ.pop("LLM_MODEL", None)
+        else:
+            os.environ["LLM_MODEL"] = old_env_value
+        if isinstance(exc, ValueError):
+            raise ProviderAdminError(
+                "runtime_apply_failed",
+                f"默认模型运行时应用失败：{str(exc)[:200]}；已恢复修改前 .env。",
+                status_code=500,
+            ) from exc
+        raise ProviderAdminError(
+            "runtime_apply_failed",
+            f"默认模型运行时应用失败：{type(exc).__name__}；已恢复修改前 .env。",
+            status_code=500,
+        ) from exc
+    return snapshot(engine)
 
 
 def test_provider(engine: Any, provider_id: str, model_id: str = "") -> dict[str, Any]:
@@ -659,3 +903,186 @@ def _reload_registry_locked(engine: Any) -> dict[str, Any]:
             "provider_reload_failed", f"Registry 重载失败：{type(exc).__name__}", status_code=500
         ) from exc
     return snapshot(engine)
+
+
+# ── 模型发现（model-admin design §6.3.1/§7.5）─────────────────────────────
+# 只返回候选，不写任何配置；认证继承 Web 控制面；出站请求有界（超时/大小/候选数/
+# 禁跨 host 重定向）；错误只含机械事实（类型/HTTP status/timeout），不反射
+# provider 响应体、URL userinfo 或密钥。
+
+_DISCOVER_TIMEOUT_S = 10.0
+_DISCOVER_MAX_BYTES = 2 * 1024 * 1024
+_DISCOVER_MAX_CANDIDATES = 2000
+_DISCOVER_MAX_REDIRECTS = 3
+
+
+def _new_discover_http_client() -> Any:
+    """发现请求专用 httpx client（follow_redirects=False：跨 host 重定向由本模块显式裁决）."""
+    import httpx
+
+    return httpx.Client(
+        timeout=_DISCOVER_TIMEOUT_S,
+        follow_redirects=False,
+        headers={"Accept": "application/json"},
+    )
+
+
+def _discover_fetch_json(url: str, headers: dict[str, str]) -> Any:
+    """有界 GET（重定向仅同 host；响应大小封顶）→ 解析后的 JSON 对象；2xx 之外为失败."""
+    from urllib.parse import urlsplit
+
+    current = url
+    with _new_discover_http_client() as client:
+        for _hop in range(_DISCOVER_MAX_REDIRECTS + 1):
+            response = client.get(current, headers=headers)
+            if response.status_code // 100 == 3:
+                location = response.headers.get("location", "").strip()
+                response.close()
+                if not location:
+                    raise ProviderAdminError(
+                        "discovery_failed", "模型发现失败：重定向缺少 Location。", status_code=502
+                    )
+                from urllib.parse import urljoin
+
+                target = urljoin(current, location)
+                parsed_old, parsed_new = urlsplit(current), urlsplit(target)
+                if parsed_new.scheme not in {"http", "https"} or not parsed_new.hostname:
+                    raise ProviderAdminError(
+                        "discovery_failed", "模型发现失败：重定向目标不是 http/https。", status_code=502
+                    )
+                same_host = (
+                    parsed_old.hostname == parsed_new.hostname
+                    and parsed_old.port == parsed_new.port
+                    and parsed_old.scheme == parsed_new.scheme
+                )
+                if not same_host:
+                    raise ProviderAdminError(
+                        "discovery_failed", "模型发现失败：跨 host 重定向已拒绝。", status_code=502
+                    )
+                current = target
+                continue
+            if response.status_code >= 400:
+                status = int(response.status_code)
+                response.close()
+                raise ProviderAdminError(
+                    "discovery_failed", f"模型发现失败：HTTP {status}", status_code=502
+                )
+            chunks: list[bytes] = []
+            total = 0
+            try:
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > _DISCOVER_MAX_BYTES:
+                        raise ProviderAdminError(
+                            "discovery_failed",
+                            f"模型发现失败：响应超过 {_DISCOVER_MAX_BYTES // (1024 * 1024)}MB 上限。",
+                            status_code=502,
+                        )
+                    chunks.append(chunk)
+            finally:
+                response.close()
+            import json as _json
+
+            try:
+                return _json.loads(b"".join(chunks).decode("utf-8"))
+            except (UnicodeDecodeError, _json.JSONDecodeError) as exc:
+                raise ProviderAdminError(
+                    "discovery_failed",
+                    f"模型发现失败：响应不是合法 JSON（{type(exc).__name__}）。",
+                    status_code=502,
+                ) from exc
+    raise ProviderAdminError(
+        "discovery_failed", f"模型发现失败：重定向超过 {_DISCOVER_MAX_REDIRECTS} 次。", status_code=502
+    )
+
+
+def _discover_candidates(payload: Any) -> list[dict[str, Any]]:
+    """解析 openai 兼容 data[]/models{} 与 anthropic data[] 形态 → 有界候选列表."""
+    items: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list):
+            items = [x for x in data if isinstance(x, dict)]
+        elif isinstance(payload.get("models"), dict):
+            items = [
+                {"id": str(k), **(v if isinstance(v, dict) else {})}
+                for k, v in payload["models"].items()
+            ]
+    elif isinstance(payload, list):
+        items = [x for x in payload if isinstance(x, dict)]
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        mid = str(item.get("id", "") or "").strip()
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        modalities = item.get("input_modalities")
+        if not isinstance(modalities, list):
+            modalities = None
+        out.append(
+            {
+                "id": mid,
+                "name": str(item.get("display_name") or item.get("name") or mid)[:256],
+                "context_window": item.get("context_window")
+                if isinstance(item.get("context_window"), int)
+                else None,
+                "max_output_tokens": item.get("max_output_tokens")
+                if isinstance(item.get("max_output_tokens"), int)
+                else None,
+                "input_modalities": modalities,
+            }
+        )
+        if len(out) >= _DISCOVER_MAX_CANDIDATES:
+            break
+    return out
+
+
+def discover_models(
+    engine: Any,
+    *,
+    base_url: str,
+    wire_protocol: str,
+    api_key: str | None = None,
+    provider_id: str | None = None,
+) -> dict[str, Any]:
+    """保存前拉取端点候选模型（design §6.3.1）：仅候选，不写配置、不落盘密钥."""
+    if wire_protocol not in {"openai", "anthropic"}:
+        raise ProviderAdminError(
+            "unsupported_protocol",
+            f"协议 {wire_protocol} 暂不支持模型发现；请手填模型 ID。",
+            status_code=400,
+        )
+    key = str(api_key or "").strip()
+    if not key and provider_id:
+        raw, _version, _source, _path = _effective_config(engine)
+        val = raw.get(str(provider_id))
+        if not isinstance(val, dict):
+            raise ProviderAdminError(
+                "provider_not_found", f"Provider 不存在：{provider_id}", status_code=404
+            )
+        env_name = str(val.get("api_key_env", "") or "").strip()
+        if env_name:
+            key = str(os.environ.get(env_name, "") or "").strip()
+
+    if wire_protocol == "openai":
+        url = base_url.rstrip("/") + "/models"
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+    else:
+        root = base_url.rstrip("/")
+        url = (root + "/models?limit=1000") if root.endswith("/v1") else (root + "/v1/models?limit=1000")
+        headers = {"anthropic-version": "2023-06-01"}
+        if key:
+            headers["x-api-key"] = key
+
+    try:
+        payload = _discover_fetch_json(url, headers)
+    except ProviderAdminError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — 出站异常只保留机械事实
+        error_type = type(exc).__name__
+        suffix = "（timeout）" if "timeout" in error_type.lower() else ""
+        raise ProviderAdminError(
+            "discovery_failed", f"模型发现失败：{error_type}{suffix}", status_code=502
+        ) from exc
+    return {"candidates": _discover_candidates(payload), "diagnostics": None}

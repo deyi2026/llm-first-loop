@@ -115,16 +115,37 @@ app = build_app(settings=load_settings())   # FastAPI 应用（含鉴权/上传/
 端点速览：`POST /api/v1/chat`（body: `{message, session_id?, model?}`）、
 `POST /api/v1/chat/stream`、`GET /api/v1/sessions`、`POST /api/v1/upload`、`GET /health`
 （鉴权：回环豁免 + `WEB_API_KEY` 远程强制）。Web 设置页的 Provider/模型控制面使用
-`GET/POST /api/v1/providers`、`PUT/DELETE /api/v1/providers/{provider_id}`、
-`POST /api/v1/providers/{provider_id}/test` 与 `POST /api/v1/providers/reload`。Web 修改写入
+`GET/POST /api/v1/providers`、`PUT/PATCH/DELETE /api/v1/providers/{provider_id}`、
+`POST/PUT/DELETE /api/v1/providers/{provider_id}/models[/{model_id}]`、
+`PUT /api/v1/providers/{provider_id}/credential`、`POST /api/v1/providers/default-model`、
+`POST /api/v1/providers/discover-models`（短别名 `/discover`）、
+`POST /api/v1/providers/{provider_id}/test` 与 `POST /api/v1/providers/reload`；会话级模型
+覆盖走 `POST /api/v1/sessions/{session_id}/model`（body `{model: "provider/model" | null}`，
+`null` 清除覆盖回到默认）。Web 修改写入
 git-ignored `data/providers.local.json` 完整本机快照，不改 tracked `data/providers.json`；API Key
 只写本机 `.env`/进程环境且 API 永不回显明文。动态 Provider/模型可热重载并立即被会话选择；
-修改 `LLM_MODEL` 只改变“配置默认”，共享 startup default client 仍需重启 Web Runtime 才生效。
+`POST /api/v1/providers/default-model` 现在**live 生效**：先原子写 `.env` 的 `LLM_MODEL`，再热切换
+`ModelClientPool` 运行态默认（先构造后提交；失败回滚 `.env`），下一次无会话覆盖的请求即使用新默认，
+`restart_required=false`；若 `LLM_MODEL` 由外部环境拥有则 runtime-only（`default.persistence="process"`，
+不写 `.env`，重启后由外部环境决定）。`PATCH /api/v1/providers/{id}` 接受
+`expected_version` + `enabled/default_model/display_name/timeout_s/...` 标量子集，不要求整包 body；
+409 冲突错误体附 `current_version`。模型输入接受配置事实 `name/note/input_modalities`（与 `multimodal`
+同步），运行时事实（`effective/credential_*`）仍被 422 拒绝（detail 数组含字段路径）。编辑/替换保留
+schema 外的未知字段（疑似密钥的未知键除外）；删除/停用承载配置默认或运行默认的 Provider/模型返回
+409（`default_provider_cannot_*` / `default_model_cannot_*`，先切换默认后可删）。写配置后 Registry
+重载失败时文件与内存 Registry 原子回滚到修改前。模型发现只返回候选不写配置（仅 `openai`/`anthropic`
+协议；10s 超时、2MB 响应上限、2000 候选上限、拒绝跨 host 重定向；错误只含类型/HTTP 状态/timeout
+类别，不反射密钥与响应体）。
 若 `MODEL_PROVIDERS` 环境变量存在，它保持最高优先级，Web 设置页只读且拒绝被遮蔽的写入。
-`GET /api/v1/models` 返回 `models`（当前有效 Registry 的可选模型）、`current`（当前会话真实选择）、
-`current_available` 与机械 `catalog`。Provider 被热停用/删除后不会改写会话选择；若 `current` 已不在
+`GET /api/v1/models` 返回 `models`（当前有效 Registry 的可选模型）、`default`（当前 live 默认
+引用）、`current`（当前会话真实选择：会话覆盖优先，否则 live 默认）、`current_source`
+（`session`/`default`）、`current_available` 与机械 `catalog`（含 `display_name`/`provider_name`/
+`input_modalities` 等配置元数据）。Provider 被热停用/删除后不会改写会话选择；若 `current` 已不在
 有效 Registry，API 返回 `current_available=false` 且不把它伪装回 `models`，前端以“当前不可用”的
-禁用项显示。Provider 连接测试只返回连接成功/延迟，或安全的异常类型与可机械取得的 HTTP 状态/
+禁用项显示。新会话只在上一共享会话的覆盖来源为真人显式选择（`model_override_source="user"`）时
+继承其模型覆盖；否则回落 live 默认。跨标签目录刷新：`GET /api/v1/events` SSE 在 Provider 配置
+指纹（配置版本 + live 默认 + registry 代数）变化时推送 `providers_updated` 事件。Provider 连接测试
+只返回连接成功/延迟，或安全的异常类型与可机械取得的 HTTP 状态/
 timeout 类别；provider/library 原始异常正文、URL 凭证、响应体不会回显。Provider JSON 与 `.env` 管理
 写操作使用同一 compare-and-write 锁，避免并发设置请求丢失更新。
 

@@ -284,8 +284,25 @@ class UploadResponse(BaseModel):
     excerpt: str = ""
 
 
+def _validate_http_base_url(value: str) -> str:
+    """model-admin design §5.3/§5.7: base_url 仅 http/https、必须有 hostname、禁止 userinfo."""
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("base_url 仅接受带主机名的 http/https URL")
+    if parsed.username or parsed.password:
+        raise ValueError("base_url 不得内嵌用户名/密码")
+    return value.strip().rstrip("/")
+
+
 class ProviderModelAdminInput(BaseModel):
-    """Strict operator-supplied model registry entry; no semantic capability inference."""
+    """Strict operator-supplied model registry entry; no semantic capability inference.
+
+    model-admin design §5.2/§6.1.2：输入只收配置事实（含 note/name/input_modalities）；
+    运行时事实（effective/credential_*/loaded/runtime）仍 extra_forbidden，
+    快照回写形态由此得到带字段路径的 422（design §9.1 R3 契约保留）。
+    """
 
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=160)
@@ -318,12 +335,36 @@ class ProviderModelAdminInput(BaseModel):
     top_p: float | None = Field(default=None, gt=0, le=1)
     top_k: int | None = Field(default=None, ge=0)
     min_p: float | None = Field(default=None, ge=0, le=1)
+    # model-admin design §5.3/§6.1.2/§6.3.2：配置事实（展示名/备注/输入模态）。
+    name: str = Field(default="", max_length=256, description="模型显示名；空串回退模型 id")
+    note: str = Field(default="", max_length=4096, description="操作者备注；不参与路由")
+    input_modalities: list[Literal["text", "image"]] | None = Field(
+        default=None,
+        max_length=4,
+        description="输入模态声明；缺省时按 multimodal 推导（保存时与 multimodal 同步）",
+    )
 
     @field_validator("id")
     @classmethod
     def _model_id_is_wire_safe(cls, value: str) -> str:
         if value != value.strip() or any(ord(ch) < 32 or ch.isspace() for ch in value):
             raise ValueError("model id 不得包含空白/控制字符")
+        # model-admin design §5.3: env-safe 约束（id 可被写入 .env 的 LLM_MODEL 行）
+        if any(ch in "#='\"" for ch in value):
+            raise ValueError("model id 不得包含 # = ' \" 字符（避免破坏 .env LLM_MODEL 写入）")
+        return value
+
+    @field_validator("input_modalities")
+    @classmethod
+    def _modalities_present_and_unique(
+        cls, value: list[Literal["text", "image"]] | None
+    ) -> list[Literal["text", "image"]] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("input_modalities 至少需要一项（text/image）")
+        if len(value) != len(set(value)):
+            raise ValueError("input_modalities 不得重复")
         return value
 
     @field_validator("reasoning_effort_map")
@@ -352,6 +393,10 @@ class ProviderModelAdminInput(BaseModel):
     def _default_effort_must_be_supported(self) -> "ProviderModelAdminInput":
         if self.reasoning_default_effort and self.reasoning_default_effort not in self.reasoning_efforts:
             raise ValueError("reasoning_default_effort 必须属于 reasoning_efforts")
+        # model-admin design §6.3.2：input_modalities 与 multimodal 双向兼容——
+        # 声明了模态时保存态以模态为准同步 multimodal；未声明则保留调用方值。
+        if self.input_modalities is not None:
+            object.__setattr__(self, "multimodal", "image" in self.input_modalities)
         return self
 
 
@@ -364,6 +409,8 @@ class ProviderAdminProviderInput(BaseModel):
     base_url: str = Field(min_length=8, max_length=2048)
     api_key_env: str = Field(default="", max_length=128)
     default_model: str = Field(default="", max_length=160)
+    # model-admin design §5.3：Provider 展示名（配置事实；空串回退 id）
+    display_name: str = Field(default="", max_length=128)
     timeout_s: float | None = Field(default=None, gt=0, le=7200)
     history_budget_chars: int | None = Field(default=None, ge=1000, le=100_000_000)
     max_input_tokens: int | None = Field(default=None, ge=1, le=8_000_000)
@@ -374,14 +421,7 @@ class ProviderAdminProviderInput(BaseModel):
     @field_validator("base_url")
     @classmethod
     def _base_url_http_only(cls, value: str) -> str:
-        from urllib.parse import urlsplit
-
-        parsed = urlsplit(value.strip())
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("base_url 仅接受带主机名的 http/https URL")
-        if parsed.username or parsed.password:
-            raise ValueError("base_url 不得内嵌用户名/密码")
-        return value.strip().rstrip("/")
+        return _validate_http_base_url(value)
 
     @field_validator("api_key_env")
     @classmethod
@@ -449,6 +489,82 @@ class ProviderDefaultModelRequest(BaseModel):
 class ProviderTestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = Field(default="", max_length=160)
+
+
+class ProviderPatchRequest(BaseModel):
+    """行级 PATCH（model-admin design §6.1.3/§7.2）：expected_version + 允许字段子集.
+
+    只允许 Provider 级标量配置；id/models 不可经 PATCH 修改（用模型级端点）。
+    未提供的字段保持原值；None = 未提供（不是清空语义）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    expected_version: str = Field(min_length=1, max_length=128)
+    enabled: bool | None = None
+    default_model: str | None = Field(default=None, max_length=160)
+    display_name: str | None = Field(default=None, max_length=128)
+    timeout_s: float | None = Field(default=None, gt=0, le=7200)
+    history_budget_chars: int | None = Field(default=None, ge=1000, le=100_000_000)
+    max_input_tokens: int | None = Field(default=None, ge=1, le=8_000_000)
+    max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    chars_per_token: float | None = Field(default=None, gt=0, le=16)
+
+    @model_validator(mode="after")
+    def _patch_requires_one_field(self) -> "ProviderPatchRequest":
+        provided = {
+            name
+            for name in (
+                "enabled",
+                "default_model",
+                "display_name",
+                "timeout_s",
+                "history_budget_chars",
+                "max_input_tokens",
+                "max_tokens",
+                "chars_per_token",
+            )
+            if getattr(self, name) is not None
+        }
+        if not provided:
+            raise ValueError("PATCH 至少提供一个要修改的字段")
+        return self
+
+
+class SessionModelRequest(BaseModel):
+    """会话模型覆盖（model-admin design §7.6）：provider/model 全限定引用或 null（清除）."""
+
+    model_config = ConfigDict(extra="forbid")
+    model: str | None = Field(default=None, max_length=256)
+
+    @field_validator("model")
+    @classmethod
+    def _model_ref_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if "/" not in value or any(ch.isspace() for ch in value):
+            raise ValueError("会话模型必须使用 provider/model 全限定引用")
+        return value
+
+
+class ProviderDiscoverRequest(BaseModel):
+    """模型发现（model-admin design §6.3.1/§7.5）：只返回候选，不写任何配置.
+
+    api_key 只进内存请求头，不落盘；provider_id 提供时复用其已保存凭据。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    base_url: str = Field(min_length=8, max_length=2048)
+    wire_protocol: Literal["openai", "anthropic", "google", "lms-chat"] = "openai"
+    api_key: SecretStr | None = None
+    provider_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_http_only(cls, value: str) -> str:
+        return _validate_http_base_url(value)
 
 
 class EvolutionReviewRequest(BaseModel):

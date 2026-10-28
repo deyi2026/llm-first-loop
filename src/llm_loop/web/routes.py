@@ -82,6 +82,7 @@ from .schemas import (
     SessionListResponse,
     SessionMessagesResponse,
     SessionMetaItem,
+    SessionModelRequest,
     UploadRequest,
     UploadResponse,
     WorkspaceAttachmentImportRequest,
@@ -1214,8 +1215,10 @@ def chat(
                         "(frontend session-state anomaly signal; new_session wins)",
                         payload.session_id,
                     )
+                _born_model, _born_source = _new_session_model_override(engine, payload.model)
                 session_id = engine.session.create(
-                    model_override=_new_session_model_override(engine, payload.model)
+                    model_override=_born_model,
+                    model_override_source=_born_source if _born_model else None,
                 )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
@@ -1412,42 +1415,56 @@ def _apply_session_model_override(
     explicit human ``model_change`` (or the new-session path) may mutate session
     authority. A stale browser snapshot must not create an override on an old session
     that previously had none.
+
+    model-admin design §5.4/§6.2.6: 显式选择写 ``model_override_source="user"``——
+    只有 source=="user" 的覆盖可被新会话继承（继承链一跳即止，旧继承态不复制）。
     """
     if not model_ref:
         return
     if not explicit_change:
         return
-    old = getattr(session, "model_override", None)
-    if old != model_ref:
-        session.model_override = model_ref
+    session.model_override = model_ref
+    session.model_override_source = "user"
 
 
-def _inherit_shared_model_override(engine: Any) -> str | None:
-    """读旧共享当前会话的 model_override 供新建会话继承（M60，fail-open → None）.
+def _inherit_shared_model_override(engine: Any) -> tuple[str | None, str | None]:
+    """读旧共享当前会话的 (model_override, source)（M60 + model-admin design §5.4）.
 
     与飞书 SessionMap.inherit_model_override（M52-fix）/ CLI /new 同语义：新建会话
-    沿用用户所选模型而非回落装配默认；旧共享会话缺失/损坏时不阻断新建。
+    沿用用户显式所选模型而非回落装配默认；旧共享会话缺失/损坏时不阻断新建。
+
+    model-admin design §6.2.6：只继承 source=="user" 的 override（真人显式选择）；
+    inherit/旧隐式态返回 None——切换默认模型后新会话使用新 live 默认，不再被
+    旧继承遮蔽。
     """
     from contextlib import suppress
 
     old_sid = engine.session.get_shared_current()
     if old_sid is None:
-        return None
+        return None, None
     with suppress(Exception):
-        return engine.session.load(old_sid).model_override
-    return None
+        sess = engine.session.load(old_sid)
+        if sess.model_override and str(
+            getattr(sess, "model_override_source", None) or ""
+        ) == "user":
+            return sess.model_override, "inherit"
+        return None, None
+    return None, None
 
 
-def _new_session_model_override(engine: Any, requested_model: str | None) -> str | None:
-    """Resolve the model authority a new Web session is born with.
+def _new_session_model_override(
+    engine: Any, requested_model: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve the (override, source) authority a new Web session is born with.
 
     A non-empty model in this human request takes precedence over process-global
     ``shared_current``.  If that explicit value is unknown, return ``None`` rather
     than borrowing an unrelated tab/session's model.  M60 inheritance remains the
-    fallback only when this request did not explicitly choose a model.
+    fallback only when this request did not explicitly choose a model — and only
+    for user-explicit overrides (model-admin design §5.4/§6.2.6).
     """
     if requested_model:
-        return _canonical_persist_model(engine, requested_model)
+        return _canonical_persist_model(engine, requested_model), "user"
     return _inherit_shared_model_override(engine)
 
 
@@ -1727,8 +1744,10 @@ def chat_stream(
                         "(frontend session-state anomaly signal; new_session wins)",
                         payload.session_id,
                     )
+                _born_model, _born_source = _new_session_model_override(engine, payload.model)
                 session_id = engine.session.create(
-                    model_override=_new_session_model_override(engine, payload.model)
+                    model_override=_born_model,
+                    model_override_source=_born_source if _born_model else None,
                 )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
@@ -2592,16 +2611,29 @@ def list_models(request: Request) -> dict:
     import os as _os
 
     engine = _engine_from(request)
-    default_model = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-flash"
-    # M50: current 反映当前共享会话的 model_override（若有），否则回退默认装配。
-    # 修复：Web 前端 state.model 初始值跟随此值，避免 per-call model 遮蔽 switch_model 会话 override。
+    # model-admin design §6.3.2: default = 当前 live 默认（热切换优先，pool 口径）；
+    # 未热切换时回退启动装配模型名（与旧行为一致的裸名/全限定，零回归）。
+    pool = getattr(engine, "llm_pool", None)
+    default_ref_getter = getattr(pool, "get_default_ref", None)
+    default_model = ""
+    if callable(default_ref_getter):
+        try:
+            default_model = str(default_ref_getter() or "").strip()
+        except Exception:  # noqa: BLE001 — 展示事实读取失败回退旧口径
+            default_model = ""
+    if not default_model:
+        default_model = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-flash"
+    # M50: current 反映当前共享会话的 model_override（若有），否则回退 live 默认。
+    # model-admin design §6.3.2: current_source ∈ {"session","default"} 如实标注。
     current = default_model
+    current_source = "default"
     try:
         sid = engine.session.get_shared_current()
         if sid and engine.session.exists(sid):
             sess = engine.session.load(sid)
             if sess.model_override:
                 current = sess.model_override
+                current_source = "session"
     except Exception:  # noqa: BLE001 - 读取 override 失败不阻断（回退默认，如实不伪造）
         pass
 
@@ -2618,7 +2650,14 @@ def list_models(request: Request) -> dict:
         )
         if current not in names:
             names.insert(0, current)
-        return {"models": names, "current": current, "current_available": True, "catalog": []}
+        return {
+            "models": names,
+            "default": default_model,
+            "current": current,
+            "current_source": current_source,
+            "current_available": True,
+            "catalog": [],
+        }
 
     # 拉取所有当前 registry 中实际可用的全限定 'provider/model'。
     all_names: list[str] = []
@@ -2666,18 +2705,25 @@ def list_models(request: Request) -> dict:
                 control == "legacy" and bool(getattr(mspec, "thinking", False))
             )
             default_effort = getattr(mspec, "reasoning_default_effort", None)
+            # model-admin design §6.3.2: 展示名（name 优先，保留既有 web 特例，
+            # 空则 None 由前端回退模型 id）+ 输入模态（未声明按 multimodal 推导）。
+            display_name = (
+                "网页版 GPT"
+                if model_ref == "chatgpt-web/web-gpt"
+                else "DeepSeek 网页版"
+                if model_ref == "deepseek-web/web-deepseek"
+                else (str(getattr(mspec, "name", "") or "").strip() or None)
+            )
+            modalities = list(getattr(mspec, "input_modalities", ()) or ())
+            if not modalities:
+                modalities = ["text", "image"] if getattr(mspec, "multimodal", False) else ["text"]
             catalog.append(
                 {
                     "id": model_ref,
                     "provider": pid,
+                    "provider_name": str(getattr(spec, "display_name", "") or "").strip() or pid,
                     "model": mid,
-                    "display_name": (
-                        "网页版 GPT"
-                        if model_ref == "chatgpt-web/web-gpt"
-                        else "DeepSeek 网页版"
-                        if model_ref == "deepseek-web/web-deepseek"
-                        else None
-                    ),
+                    "display_name": display_name,
                     "context": int(getattr(mspec, "context", 0) or 0),
                     "max_input_tokens": getattr(mspec, "max_input_tokens", None)
                     or getattr(spec, "max_input_tokens", None),
@@ -2685,6 +2731,7 @@ def list_models(request: Request) -> dict:
                     or getattr(spec, "max_tokens", None),
                     "cost_tier": str(getattr(mspec, "cost_tier", "") or ""),
                     "multimodal": bool(getattr(mspec, "multimodal", False)),
+                    "input_modalities": modalities,
                     "reasoning_capable": bool(capable),
                     "reasoning_control": control,
                     "reasoning_control_supported": control_supported,
@@ -2695,7 +2742,9 @@ def list_models(request: Request) -> dict:
             )
     return {
         "models": names,
+        "default": default_model,
         "current": current,
+        "current_source": current_source,
         "current_available": current_available,
         "catalog": catalog,
     }
@@ -3633,6 +3682,83 @@ def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> 
 
 
 @router.post(
+    "/api/v1/sessions/{session_id}/model",
+    response_model=None,
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def set_session_model(session_id: str, body: SessionModelRequest, request: Request) -> Response:
+    """设置/清除会话模型覆盖（model-admin design §5.4/§7.6）.
+
+    body.model = "provider/model" → 写 user 覆盖（registry 可解析才接受）；
+    body.model = null → 清除覆盖，回到 live 默认。运行中会话由 management_lease
+    拒绝覆盖（in-run authority 不被踩）。
+    """
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    canonical: str | None = None
+    available = True
+    if body.model is not None:
+        registry = getattr(getattr(engine, "llm_pool", None), "registry", None)
+        if registry is None:
+            return UTF8JSONResponse(
+                status_code=503,
+                content={"error": "provider_admin_unavailable", "detail": "模型注册表未装配。"},
+            )
+        try:
+            pid, mid = registry.resolve(body.model)
+        except ValueError as exc:
+            return UTF8JSONResponse(
+                status_code=404,
+                content={"error": "model_not_found", "detail": str(exc)},
+            )
+        canonical = f"{pid}/{mid}"
+    try:
+        ok = engine.session.set_model_override(session_id, canonical, source="user")
+    except SessionMutationBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "session_busy", "detail": str(exc)},
+        )
+    except Exception as exc:
+        logger.exception("session model override failed: session_id=%s", session_id)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={
+                "error": "session_model_failed",
+                "detail": f"[程序异常] 会话模型设置失败（{type(exc).__name__}）。",
+            },
+        )
+    if not ok:
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    if canonical is None:
+        # 清除后有效模型 = live 默认；目录不可解析时如实标注不可用。
+        pool = getattr(engine, "llm_pool", None)
+        ref_getter = getattr(pool, "get_default_ref", None)
+        effective = str(ref_getter() or "") if callable(ref_getter) else ""
+        registry = getattr(pool, "registry", None)
+        if effective and registry is not None:
+            try:
+                registry.resolve(effective)
+            except ValueError:
+                available = False
+    return UTF8JSONResponse(
+        content={
+            "session_id": session_id,
+            "model": canonical,
+            "source": "user" if canonical else None,
+            "available": available,
+        }
+    )
+
+
+@router.post(
     "/api/v1/sessions/{session_id}/archive",
     response_model=None,
     responses={409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
@@ -3915,6 +4041,37 @@ def _session_events_fingerprint(engine: Any) -> str:
     return f"{root}:{_sessions_fingerprint(root)}"
 
 
+def _providers_events_fingerprint(engine: Any) -> tuple[str, dict[str, Any]]:
+    """Provider/模型目录指纹（model-admin design §5.6/§6.2.5）→ (指纹, 事件载荷).
+
+    指纹 = Provider 配置版本（文件/env 内容 sha）+ live 默认 ref + registry 代数。
+    只有指纹变化才推送 providers_updated（config_version/catalog_version/default_model）。
+    读取失败返回 "err"（与 sessions 指纹同口径：失败不推送、不伪装）。
+    """
+    try:
+        from llm_loop.web import provider_admin
+
+        _raw, version, source, _path = provider_admin._effective_config(engine)
+        pool = getattr(engine, "llm_pool", None)
+        default_ref = ""
+        generation = 0
+        ref_getter = getattr(pool, "get_default_ref", None)
+        if callable(ref_getter):
+            default_ref = str(ref_getter() or "")
+        gen_getter = getattr(pool, "registry_generation", None)
+        if callable(gen_getter):
+            generation = int(str(gen_getter() or 0))
+        fingerprint = f"{source}:{version}:{default_ref}:{generation}"
+        return fingerprint, {
+            "type": "providers_updated",
+            "config_version": version,
+            "catalog_version": f"gen-{generation}",
+            "default_model": default_ref,
+        }
+    except Exception:  # noqa: BLE001 — 指纹读取失败按 err，不推送不伪装
+        return "err", {}
+
+
 async def _session_events_fingerprint_async(engine: Any) -> str:
     """Read the session-directory fingerprint without blocking the event loop.
 
@@ -3924,6 +4081,15 @@ async def _session_events_fingerprint_async(engine: Any) -> str:
     requests such as /login and /auth/status.
     """
     return await asyncio.to_thread(_session_events_fingerprint, engine)
+
+
+async def _providers_events_fingerprint_async(engine: Any) -> tuple[str, dict[str, Any]]:
+    """model-admin design §5.6: providers 指纹同样经 to_thread（文件/env 读取不占事件循环）."""
+    return await asyncio.to_thread(_providers_events_fingerprint, engine)
+
+
+# SSE 轮询节拍（秒）。2026-09-23 CPU 诊断定为 3s；抽成常量供测试加速（不改生产值）。
+_SSE_POLL_INTERVAL_S = 3.0
 
 
 @router.get("/api/v1/events")
@@ -3942,9 +4108,10 @@ async def stream_session_events(request: Request) -> StreamingResponse:
     """
     engine = _engine_from(request)
     initial = await _session_events_fingerprint_async(engine)
+    initial_providers, _initial_providers_payload = _providers_events_fingerprint(engine)
 
     async def gen():
-        nonlocal initial
+        nonlocal initial, initial_providers
         loop = asyncio.get_event_loop()
         yield _sse_event("connected", {"type": "connected", "ts": loop.time()})
         last_beat = loop.time()
@@ -3954,8 +4121,16 @@ async def stream_session_events(request: Request) -> StreamingResponse:
                     break
             except Exception:  # noqa: BLE001 — 断开检测异常按断开处理
                 break
-            await asyncio.sleep(3.0)  # 2026-09-23: 1.5→3s，指纹扫描成本减半再减半
+            await asyncio.sleep(_SSE_POLL_INTERVAL_S)  # 2026-09-23: 1.5→3s，指纹扫描成本减半再减半
             now = loop.time()
+            # model-admin design §5.6: Provider 目录指纹（配置版本 + live 默认 + 代数）
+            # 变化时推送 providers_updated；跨标签目录收敛不靠轮询 /models。
+            providers_fp, providers_payload = await _providers_events_fingerprint_async(engine)
+            if providers_fp != initial_providers and providers_fp != "err":
+                initial_providers = providers_fp
+                last_beat = now
+                yield _sse_event("providers_updated", providers_payload)
+                continue
             # keepalive：20s 无事件也保活（注释行，浏览器忽略内容仅感知存活）
             if now - last_beat >= 20.0:
                 last_beat = now

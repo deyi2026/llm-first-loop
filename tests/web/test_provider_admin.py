@@ -128,9 +128,11 @@ def test_provider_admin_cas_conflict_and_disable_reload(
     assert "alpha/m1" not in client.get("/api/v1/models").json()["models"]
 
 
-def test_provider_admin_default_is_persisted_but_runtime_default_stays_startup_snapshot(
+def test_provider_admin_default_is_persisted_and_applies_live(
     build_test_engine, tmp_path, monkeypatch
 ) -> None:
+    """model-admin design §6.2.3/§9.2-7: 默认模型写 .env 且 live 生效（旧测试锁定
+    restart_required=true 的启动快照语义，Phase 1 起按 live 断言更新）。"""
     engine, _ = build_test_engine([])
     env_file = tmp_path / ".env"
     monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
@@ -145,15 +147,30 @@ def test_provider_admin_default_is_persisted_but_runtime_default_stays_startup_s
     assert changed.status_code == 200, changed.text
     body = changed.json()
     assert body["configured_default_model"] == "alpha/m1"
-    assert body["runtime_default_model"] != "alpha/m1"
-    assert body["restart_required"] is True
+    assert body["runtime_default_model"] == "alpha/m1"
+    assert body["restart_required"] is False
+    assert body["default"]["persistence"] == "dotenv"
+    assert body["default"]["applied"] is True
+    assert body["default"]["restart_required"] is False
     assert "LLM_MODEL=alpha/m1" in env_file.read_text(encoding="utf-8")
+    # live 默认已进 pool：展示 ref 与 get_client(None) 都指向新模型。
+    assert engine.llm_pool.get_default_ref() == "alpha/m1"
+    routed = engine.llm_pool.get_client(None)
+    assert routed is not engine.llm_pool.default_client
 
     blocked = client.delete(
         f"/api/v1/providers/alpha?expected_version={body['config_version']}&confirm=true"
     )
     assert blocked.status_code == 409
     assert blocked.json()["error"] == "default_provider_cannot_delete"
+
+    # design §7.7 default_provider_cannot_disable：承载默认（含 runtime 默认）不可停用。
+    patch_blocked = client.patch(
+        "/api/v1/providers/alpha",
+        json={"expected_version": body["config_version"], "enabled": False},
+    )
+    assert patch_blocked.status_code == 409
+    assert patch_blocked.json()["error"] == "default_provider_cannot_disable"
 
 
 def test_provider_admin_refuses_file_mutation_when_model_providers_env_owns_source(
@@ -520,3 +537,695 @@ def test_provider_admin_serializes_dotenv_read_modify_write(
     assert "ALPHA_API_KEY=fixture-secret" in text
     assert "LLM_MODEL=alpha/m1" in text
     assert write_calls == 2
+
+
+# ── model-admin design §9.2：C0-C3 后端新增测试 ────────────────────────────
+
+
+def _ui_projection_provider(pid: str = "alpha") -> dict:
+    """§6.1.1 toProviderConfig/toModelConfig 投影形状（配置事实，无运行时字段）."""
+    return {
+        "id": pid,
+        "display_name": "Alpha",
+        "enabled": True,
+        "base_url": "https://provider.example/v1",
+        "api_key_env": "",
+        "default_model": "m1",
+        "timeout_s": 30,
+        "models": [
+            {
+                "id": "m1",
+                "name": "Alpha M1",
+                "note": "operator note",
+                "enabled": True,
+                "context": 131072,
+                "max_input_tokens": None,
+                "max_tokens": None,
+                "cost_tier": "mid",
+                "capability_tier": "unknown",
+                "input_modalities": ["text"],
+                "multimodal": False,
+                "wire_protocol": "openai",
+                "thinking": False,
+                "reasoning_capable": False,
+                "reasoning_control": "unknown",
+                "reasoning_efforts": [],
+                "reasoning_effort_map": {},
+                "reasoning_default_effort": None,
+                "reasoning_replay": "configured",
+                "send_tool_choice": True,
+                "reasoning_split": False,
+                "runtime_identity": "",
+                "temperature": None,
+                "top_p": None,
+                "top_k": None,
+                "min_p": None,
+            }
+        ],
+    }
+
+
+def test_replace_provider_accepts_ui_projection_without_runtime_facts(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-1: UI 配置投影（含 note/name/input_modalities）不再 422；文件无 effective."""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _ui_projection_provider()},
+    )
+    assert created.status_code == 201, created.text
+    version = created.json()["config_version"]
+
+    body = _ui_projection_provider()
+    body["timeout_s"] = 45
+    replaced = client.put(
+        "/api/v1/providers/alpha", json={"expected_version": version, "provider": body}
+    )
+    assert replaced.status_code == 200, replaced.text
+    row = replaced.json()["providers"][0]
+    assert row["display_name"] == "Alpha"
+    assert row["models"][0]["note"] == "operator note"
+    assert row["models"][0]["name"] == "Alpha M1"
+    assert row["models"][0]["input_modalities"] == ["text"]
+
+    local = Path(engine.settings.data_dir) / "providers.local.json"
+    text = local.read_text(encoding="utf-8")
+    assert "operator note" in text
+    assert '"effective"' not in text
+    # /models 目录反映新元数据（§6.3.2）。
+    models = client.get("/api/v1/models").json()
+    catalog = {item["id"]: item for item in models["catalog"]}
+    assert catalog["alpha/m1"]["display_name"] == "Alpha M1"
+    assert catalog["alpha/m1"]["input_modalities"] == ["text"]
+    assert catalog["alpha/m1"]["provider_name"] == "Alpha"
+
+
+def test_replace_provider_rejects_runtime_facts_with_field_path(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-2/R3: 快照回写形态（含 effective）→ 422 且 detail[].loc 含字段路径."""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    body = _ui_projection_provider()
+    body["models"][0]["effective"] = True  # 运行时事实回写（旧 UI bug 形态）
+    response = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": body},
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any(
+        "effective" in [str(seg) for seg in item.get("loc", [])] for item in detail
+    ), detail
+
+
+def test_patch_provider_enabled_default_model_and_conflict_version(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§6.1.3/§7.2: 行级 PATCH（enabled/default_model/display_name）+ 冲突带 current_version."""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    version = created.json()["config_version"]
+
+    # 加第二个模型，PATCH 不得动 models。
+    added = client.post(
+        "/api/v1/providers/alpha/models",
+        json={
+            "expected_version": version,
+            "model": {"id": "m2", "context": 65536, "note": "second"},
+        },
+    )
+    assert added.status_code == 201, added.text
+    version = added.json()["config_version"]
+
+    disabled = client.patch(
+        "/api/v1/providers/alpha",
+        json={"expected_version": version, "enabled": False, "display_name": "A-off"},
+    )
+    assert disabled.status_code == 200, disabled.text
+    row = disabled.json()["providers"][0]
+    assert row["enabled"] is False
+    assert row["display_name"] == "A-off"
+    assert {m["id"] for m in row["models"]} == {"m1", "m2"}, "PATCH 不得修改 models"
+    assert "alpha/m1" not in client.get("/api/v1/models").json()["models"]
+
+    reenabled = client.patch(
+        "/api/v1/providers/alpha",
+        json={"expected_version": disabled.json()["config_version"], "enabled": True},
+    )
+    assert reenabled.status_code == 200
+    assert "alpha/m1" in client.get("/api/v1/models").json()["models"]
+
+    # 冲突错误体可读且带 current_version（§6.1.4/§7.2）。
+    conflict = client.patch(
+        "/api/v1/providers/alpha",
+        json={"expected_version": version, "enabled": False},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"] == "provider_config_conflict"
+    assert conflict.json()["current_version"] == reenabled.json()["config_version"]
+
+    # default_model PATCH 校验最终配置（指向不存在模型 → 422 字段路径）。
+    bad = client.patch(
+        "/api/v1/providers/alpha",
+        json={
+            "expected_version": reenabled.json()["config_version"],
+            "default_model": "ghost",
+        },
+    )
+    assert bad.status_code == 422
+    assert bad.json()["error"] == "invalid_field"
+    assert "default_model" in bad.json()["detail"]
+
+
+def test_patch_provider_requires_at_least_one_field(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    empty = client.patch(
+        "/api/v1/providers/alpha", json={"expected_version": created.json()["config_version"]}
+    )
+    assert empty.status_code == 422
+
+
+def test_add_model_endpoint_appears_in_catalog_without_restart(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-4: POST /models 后目录立即出现新模型（含 name/input_modalities）。"""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    version = created.json()["config_version"]
+
+    added = client.post(
+        "/api/v1/providers/alpha/models",
+        json={
+            "expected_version": version,
+            "model": {
+                "id": "m2",
+                "context": 262144,
+                "name": "Alpha M2",
+                "input_modalities": ["text", "image"],
+                "note": "vision",
+            },
+        },
+    )
+    assert added.status_code == 201, added.text
+    models = client.get("/api/v1/models").json()
+    assert "alpha/m2" in models["models"]
+    catalog = {item["id"]: item for item in models["catalog"]}
+    assert catalog["alpha/m2"]["display_name"] == "Alpha M2"
+    assert catalog["alpha/m2"]["input_modalities"] == ["text", "image"]
+    assert catalog["alpha/m2"]["multimodal"] is True  # 与 input_modalities 同步
+    # 运行 registry 已热替换（无需重启）。
+    assert engine.llm_pool.registry_snapshot().providers["alpha"].models["m2"].name == "Alpha M2"
+
+
+def test_replace_model_rename_preserves_unknown_fields(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-5/FR-13: 模型改名后 note 与 schema 外未知字段保留。"""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    local = Path(engine.settings.data_dir) / "providers.local.json"
+    raw = json.loads(local.read_text(encoding="utf-8"))
+    raw["alpha"]["models"]["m1"]["x_custom_flag"] = "keep-me"
+    local.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 手改文件改变内容 hash → 重取 CAS 版本。
+    version = client.get("/api/v1/providers").json()["config_version"]
+
+    replaced = client.put(
+        "/api/v1/providers/alpha/models/m1",
+        json={
+            "expected_version": version,
+            "model": {"id": "m1-renamed", "context": 131072, "note": "operator note"},
+        },
+    )
+    assert replaced.status_code == 200, replaced.text
+    raw_after = json.loads(local.read_text(encoding="utf-8"))
+    model = raw_after["alpha"]["models"]["m1-renamed"]
+    assert model["note"] == "operator note"
+    assert model["x_custom_flag"] == "keep-me"
+    assert "m1" not in raw_after["alpha"]["models"]
+    assert raw_after["alpha"]["default_model"] == "m1-renamed"
+
+
+def test_delete_model_default_guards(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§7.3: 配置默认/live 默认/Provider 默认三重删除保护。"""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    version = created.json()["config_version"]
+    added = client.post(
+        "/api/v1/providers/alpha/models",
+        json={"expected_version": version, "model": {"id": "m2", "context": 65536}},
+    )
+    assert added.status_code == 201, added.text
+    version = added.json()["config_version"]
+
+    # Provider 默认模型（m1）删除 → provider_default_model_cannot_delete。
+    provider_default = client.delete(
+        f"/api/v1/providers/alpha/models/m1?expected_version={version}&confirm=true"
+    )
+    assert provider_default.status_code == 409
+    assert provider_default.json()["error"] == "provider_default_model_cannot_delete"
+
+    # 设为全局默认后，目标模型删除 → default_model_cannot_delete。
+    set_default = client.post("/api/v1/providers/default-model", json={"model": "alpha/m2"})
+    assert set_default.status_code == 200, set_default.text
+    global_default = client.delete(
+        f"/api/v1/providers/alpha/models/m2?expected_version={set_default.json()['config_version']}&confirm=true"
+    )
+    assert global_default.status_code == 409
+    assert global_default.json()["error"] == "default_model_cannot_delete"
+
+    # 停用默认模型同样拒绝（default_model_cannot_disable）。
+    disable = client.put(
+        "/api/v1/providers/alpha/models/m2",
+        json={
+            "expected_version": set_default.json()["config_version"],
+            "model": {"id": "m2", "context": 65536, "enabled": False},
+        },
+    )
+    assert disable.status_code == 409
+    assert disable.json()["error"] == "default_model_cannot_disable"
+
+    # 切换默认后可删除（验收 §10-5）。
+    switched = client.post("/api/v1/providers/default-model", json={"model": "alpha/m1"})
+    assert switched.status_code == 200, switched.text
+    removed = client.delete(
+        f"/api/v1/providers/alpha/models/m2?expected_version={switched.json()['config_version']}&confirm=true"
+    )
+    assert removed.status_code == 200, removed.text
+    assert "alpha/m2" not in client.get("/api/v1/models").json()["models"]
+
+
+def test_set_default_external_env_is_runtime_only(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-8: LLM_MODEL 由外部 env 拥有 → runtime-only（persistence=process，不写 .env）。"""
+    engine, _ = build_test_engine([])
+    env_file = tmp_path / ".env"
+    monkeypatch.setenv("LFL_ENV_FILE", str(env_file))
+    monkeypatch.setenv("LLM_MODEL", "boot/frozen-model")
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+
+    changed = client.post("/api/v1/providers/default-model", json={"model": "alpha/m1"})
+    assert changed.status_code == 200, changed.text
+    body = changed.json()
+    assert body["runtime_default_model"] == "alpha/m1"
+    assert body["default"]["persistence"] == "process"
+    assert body["default_persistence"] == "process"
+    assert not env_file.exists(), "外部 env 拥有时不得写 .env"
+    assert engine.llm_pool.get_default_ref() == "alpha/m1"
+    # 配置默认仍是外部 env 值；重启后由外部环境决定（如实标注 restart_required）。
+    assert body["configured_default_model"] == "boot/frozen-model"
+    assert body["restart_required"] is True
+
+
+def test_default_change_does_not_override_existing_session(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-9: 旧会话显式 override 不被默认切换改写；/models 如实标注来源。"""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    sid = engine.session.create(model_override="alpha/m1", model_override_source="user")
+    engine.session.set_shared_current(sid)
+
+    switched = client.post("/api/v1/providers/default-model", json={"model": "alpha/m1"})
+    assert switched.status_code == 200
+    sess = engine.session.load(sid)
+    assert sess.model_override == "alpha/m1"
+    assert sess.model_override_source == "user"
+    models = client.get("/api/v1/models").json()
+    assert models["current"] == "alpha/m1"
+    assert models["current_source"] == "session"
+    assert models["default"] == "alpha/m1"
+
+
+def test_new_session_inherits_only_explicit_user_override(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-10/§5.4: 只有 source=="user" 的覆盖可被新会话继承（一跳即止）。"""
+    from llm_loop.web.routes import _new_session_model_override
+
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+
+    # 无共享会话 → None（用 live 默认）。
+    assert _new_session_model_override(engine, None) == (None, None)
+
+    # 显式选择（user）→ 继承一跳，标记 inherit。
+    s1 = engine.session.create(model_override="alpha/m1", model_override_source="user")
+    engine.session.set_shared_current(s1)
+    assert _new_session_model_override(engine, None) == ("alpha/m1", "inherit")
+
+    # inherit 态不再继续传播（切默认后新会话用默认）。
+    s2 = engine.session.create(model_override="alpha/m1", model_override_source="inherit")
+    engine.session.set_shared_current(s2)
+    assert _new_session_model_override(engine, None) == (None, None)
+
+    # 旧数据（override 存在、无 source 键）读取时追认 user（design §5.4 兼容）。
+    s3 = engine.session.create(model_override="alpha/m1")
+    engine.session.set_shared_current(s3)
+    loaded = engine.session.load(s3)
+    assert loaded.model_override_source == "user"
+    assert _new_session_model_override(engine, None) == ("alpha/m1", "inherit")
+
+    # 本请求显式选模型 → user。
+    assert _new_session_model_override(engine, "alpha/m1") == ("alpha/m1", "user")
+
+
+def test_session_model_endpoint_sets_and_clears_override(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§7.6: POST /sessions/{id}/model 设置/清除会话覆盖。"""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    sid = engine.session.create()
+    engine.session.set_shared_current(sid)
+
+    unknown = client.post(f"/api/v1/sessions/{sid}/model", json={"model": "nope/x"})
+    assert unknown.status_code == 404
+    assert unknown.json()["error"] == "model_not_found"
+
+    set_ref = client.post(f"/api/v1/sessions/{sid}/model", json={"model": "alpha/m1"})
+    assert set_ref.status_code == 200, set_ref.text
+    assert set_ref.json() == {
+        "session_id": sid,
+        "model": "alpha/m1",
+        "source": "user",
+        "available": True,
+    }
+    sess = engine.session.load(sid)
+    assert sess.model_override == "alpha/m1"
+    assert sess.model_override_source == "user"
+
+    cleared = client.post(f"/api/v1/sessions/{sid}/model", json={"model": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["model"] is None
+    assert cleared.json()["source"] is None
+    sess = engine.session.load(sid)
+    assert sess.model_override is None
+    assert sess.model_override_source is None
+
+
+def test_providers_updated_fingerprint_changes_on_catalog_and_default(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-11: providers 指纹（配置版本+live 默认+代数）随目录/默认变化。"""
+    from llm_loop.web.routes import _providers_events_fingerprint
+
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    fp0, payload0 = _providers_events_fingerprint(engine)
+
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    fp1, payload1 = _providers_events_fingerprint(engine)
+    assert fp1 != fp0
+    assert payload1["config_version"] == created.json()["config_version"]
+    assert payload1["type"] == "providers_updated"
+
+    changed = client.post("/api/v1/providers/default-model", json={"model": "alpha/m1"})
+    assert changed.status_code == 200
+    fp2, payload2 = _providers_events_fingerprint(engine)
+    assert fp2 != fp1, "默认切换必须反映在 providers 指纹（default_model 字段）"
+    assert payload2["default_model"] == "alpha/m1"
+
+
+def _install_mock_transport(monkeypatch, handler) -> dict:
+    """给 discover 注入 httpx.MockTransport；返回请求记录 dict."""
+    import httpx
+
+    seen: dict[str, object] = {}
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["headers"] = dict(request.headers)
+        return handler(request)
+
+    def factory():
+        return httpx.Client(
+            timeout=10.0, follow_redirects=False, transport=httpx.MockTransport(transport)
+        )
+
+    from llm_loop.web import provider_admin
+
+    monkeypatch.setattr(provider_admin, "_new_discover_http_client", factory)
+    return seen
+
+
+def test_discover_models_openai_and_anthropic(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-12: openai/anthropic 候选解析；不写任何配置。"""
+    import httpx
+
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+
+    def openai_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "glm-5.3"}, {"id": "glm-5.3"}, {"id": "gpt-x"}]},
+        )
+
+    seen = _install_mock_transport(monkeypatch, openai_handler)
+    found = client.post(
+        "/api/v1/providers/discover-models",
+        json={
+            "base_url": "https://api.glm.example/v1",
+            "wire_protocol": "openai",
+            "api_key": "sk-discover-secret",
+        },
+    )
+    assert found.status_code == 200, found.text
+    assert [c["id"] for c in found.json()["candidates"]] == ["glm-5.3", "gpt-x"]
+    assert str(seen["url"]).endswith("/v1/models")
+    assert "Bearer sk-discover-secret" in str(seen["headers"].get("authorization", ""))
+    # 只返回候选：不写配置文件。
+    assert not (Path(engine.settings.data_dir) / "providers.local.json").exists()
+
+    def anthropic_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "claude-x", "display_name": "Claude X"}]},
+        )
+
+    _install_mock_transport(monkeypatch, anthropic_handler)
+    found2 = client.post(
+        "/api/v1/providers/discover-models",
+        json={
+            "base_url": "https://api.anthropic.example",
+            "wire_protocol": "anthropic",
+            "api_key": "sk-ant",
+        },
+    )
+    assert found2.status_code == 200, found2.text
+    assert found2.json()["candidates"][0]["name"] == "Claude X"
+
+    # 短路径别名（委派口径）行为一致。
+    found3 = client.post(
+        "/api/v1/providers/discover",
+        json={"base_url": "https://api.glm.example/v1", "wire_protocol": "openai"},
+    )
+    assert found3.status_code == 200, found3.text
+
+    # 不支持的协议如实拒绝（google/lms-chat）。
+    unsupported = client.post(
+        "/api/v1/providers/discover-models",
+        json={"base_url": "https://g.example", "wire_protocol": "google"},
+    )
+    assert unsupported.status_code == 400
+    assert unsupported.json()["error"] == "unsupported_protocol"
+
+
+def test_discover_models_redacts_secret_and_bounds_response(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§9.2-13: 跨 host 重定向拒绝；错误不反射密钥；超大响应拒绝。"""
+    import httpx
+
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+
+    def redirect_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "https://evil.example/v1/models"})
+
+    _install_mock_transport(monkeypatch, redirect_handler)
+    redirected = client.post(
+        "/api/v1/providers/discover-models",
+        json={
+            "base_url": "https://api.glm.example/v1",
+            "wire_protocol": "openai",
+            "api_key": "sk-cross-host-secret",
+        },
+    )
+    assert redirected.status_code == 502
+    assert redirected.json()["error"] == "discovery_failed"
+    assert "跨 host" in redirected.json()["detail"]
+    assert "sk-cross-host-secret" not in redirected.text
+
+    def error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "BODY-SECRET-MATERIAL"})
+
+    _install_mock_transport(monkeypatch, error_handler)
+    denied = client.post(
+        "/api/v1/providers/discover-models",
+        json={
+            "base_url": "https://api.glm.example/v1",
+            "wire_protocol": "openai",
+            "api_key": "sk-http-secret",
+        },
+    )
+    assert denied.status_code == 502
+    assert "HTTP 401" in denied.json()["detail"]
+    assert "BODY-SECRET-MATERIAL" not in denied.text
+    assert "sk-http-secret" not in denied.text
+
+    def huge_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b'{"data": [' + b'{"id": "m"},' * 700_000 + b"{}]}")
+
+    _install_mock_transport(monkeypatch, huge_handler)
+    huge = client.post(
+        "/api/v1/providers/discover-models",
+        json={"base_url": "https://api.glm.example/v1", "wire_protocol": "openai"},
+    )
+    assert huge.status_code == 502
+    assert "上限" in huge.json()["detail"]
+
+
+def test_unknown_provider_fields_preserved_on_replace(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """FR-13/§9.2-14: 整包替换保留 provider 级 schema 外未知字段（疑似密钥除外）。"""
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    local = Path(engine.settings.data_dir) / "providers.local.json"
+    raw = json.loads(local.read_text(encoding="utf-8"))
+    raw["alpha"]["x_operator_hint"] = "keep"
+    raw["alpha"]["api_key"] = "plaintext-must-drop"
+    local.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    version = client.get("/api/v1/providers").json()["config_version"]
+
+    replaced = client.put(
+        "/api/v1/providers/alpha",
+        json={"expected_version": version, "provider": _provider("alpha")},
+    )
+    assert replaced.status_code == 200, replaced.text
+    raw_after = json.loads(local.read_text(encoding="utf-8"))
+    assert raw_after["alpha"]["x_operator_hint"] == "keep"
+    assert "api_key" not in raw_after["alpha"]
+    # 快照永不回显明文（即使手写配置里有）。
+    assert "plaintext-must-drop" not in replaced.text
+
+
+def test_registry_reload_failure_rolls_back_file_and_runtime(
+    build_test_engine, tmp_path, monkeypatch
+) -> None:
+    """§7.4/FR-15: 写文件后 reload 失败 → 文件与内存 Registry 回滚到修改前。"""
+    import llm_loop.llm.providers as providers_module
+
+    engine, _ = build_test_engine([])
+    monkeypatch.setenv("LFL_ENV_FILE", str(tmp_path / ".env"))
+    client = _client(engine)
+    created = client.post(
+        "/api/v1/providers",
+        json={"expected_version": "missing", "provider": _provider("alpha")},
+    )
+    assert created.status_code == 201
+    local = Path(engine.settings.data_dir) / "providers.local.json"
+    before_bytes = local.read_bytes()
+    before_registry = engine.llm_pool.registry_snapshot()
+    before_generation = engine.llm_pool.registry_generation()
+
+    def broken_load(_settings):
+        raise RuntimeError("injected reload failure")
+
+    original_load = providers_module.load_registry
+    monkeypatch.setattr(providers_module, "load_registry", broken_load)
+    failed = client.delete(
+        f"/api/v1/providers/alpha?expected_version={created.json()['config_version']}&confirm=true"
+    )
+    assert failed.status_code == 500
+    assert failed.json()["error"] == "provider_reload_failed"
+    assert "已恢复" in failed.json()["detail"]
+    assert local.read_bytes() == before_bytes, "配置文件必须回滚到修改前字节"
+    assert engine.llm_pool.registry_snapshot() is before_registry, "内存 Registry 未被替换"
+    assert engine.llm_pool.registry_generation() == before_generation
+    # 回滚后操作可继续（锁/状态未被破坏；只还原注入的 load_registry，不动其它 patch）。
+    monkeypatch.setattr(providers_module, "load_registry", original_load)
+    still_there = client.get("/api/v1/providers").json()
+    assert still_there["source"] == "local"
+    assert [p["id"] for p in still_there["providers"]] == ["alpha"]

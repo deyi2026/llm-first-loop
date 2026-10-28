@@ -34,6 +34,9 @@ _TOP_LEVEL_DEFAULTS: dict = {
     "branch_id": "",
     "branch_summary": "",
     "model_override": None,
+    # model-admin design §5.3: 覆盖来源（"user"=真人选择）。旧事件日志无字段 → None
+    # （与 Session.load 对旧 JSON 的追认口径不同：事件重放按事件事实，不追认）。
+    "model_override_source": None,
     "pinned": False,
     "channel": "web",
     # Session version 5: 追加式压缩摘要链。旧事件日志无字段时语义默认为空。

@@ -210,19 +210,39 @@ class RoutingService:
                     chat_model_arg = resolved_model_id
                     model_used = f"{pid}/{resolved_model_id}"
                 else:
+                    # model-admin design §6.2.2: 默认路径经 pool（热切换 live 默认生效）。
                     llm_client = self._host.llm_pool.get_client(None)
+                    live_getter = getattr(self._host.llm_pool, "live_default_ref", None)
+                    live_ref = str(live_getter() or "") if callable(live_getter) else ""
+                    if live_ref:
+                        # 热切换默认：client 与标签都指向 live ref；元数据用当前 registry。
+                        model_used = live_ref
+                        metadata_registry = current_registry
+                    else:
+                        # 未热切换：保持既有启动默认标签口径（零回归）。
+                        model_used = self._default_model_label(
+                            registry_snapshot=default_registry
+                        )
+                        metadata_registry = default_registry
+            except ValueError as exc:
+                # resolve 失败（override 在 refresh_config 后失效等）：如实反馈并回退
+                # 默认路径。model-admin design §6.2.2：回退走 live 默认（pool），不再
+                # 使用冻结的启动 client——避免默认已热切换后仍打旧端点。
+                self._host._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
+                try:
+                    llm_client = self._host.llm_pool.get_client(None)
+                except ValueError:
+                    llm_client = self._host.llm
+                live_getter = getattr(self._host.llm_pool, "live_default_ref", None)
+                live_ref = str(live_getter() or "") if callable(live_getter) else ""
+                if live_ref:
+                    model_used = live_ref
+                    metadata_registry = current_registry
+                else:
                     model_used = self._default_model_label(
                         registry_snapshot=default_registry
                     )
                     metadata_registry = default_registry
-            except ValueError as exc:
-                # resolve 失败（override 在 refresh_config 后失效等）：如实反馈，走默认 client
-                self._host._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
-                llm_client = self._host.llm
-                model_used = self._default_model_label(
-                    registry_snapshot=default_registry
-                )
-                metadata_registry = default_registry
         else:
             llm_client = self._host.llm
             model_used = self._default_model_label()

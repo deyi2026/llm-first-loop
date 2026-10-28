@@ -1058,3 +1058,101 @@ def test_local_provider_overlay_precedes_tracked_seed_and_filters_disabled(tmp_p
     assert set(reg.providers) == {"local"}
     assert set(reg.providers["local"].models) == {"on"}
     assert reg.providers["local"].models["on"].context == 262144
+
+
+# ── model-admin design §6.3.2：模型/Provider 展示元数据 ────────────────────
+
+
+def test_model_name_and_input_modalities_parsed(tmp_path) -> None:
+    """name/input_modalities 为配置事实；显式声明优先于 multimodal 推导."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "providers.local.json").write_text(
+        json.dumps(
+            {
+                "meta": {
+                    "base_url": "https://meta.example/v1",
+                    "api_key_env": "",
+                    "default_model": "m1",
+                    "display_name": "Meta Provider",
+                    "models": {
+                        "m1": {
+                            "context": 131072,
+                            "name": "GLM-5.3",
+                            "multimodal": True,
+                            "input_modalities": ["text"],
+                        },
+                        "m2": {"context": 131072, "input_modalities": ["text", "image"]},
+                        "m3": {"context": 131072, "multimodal": True},
+                        "m4": {"context": 131072},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    reg = load_registry(_settings(data_dir=str(data_dir)))
+    spec = reg.providers["meta"]
+    assert spec.display_name == "Meta Provider"
+    assert spec.models["m1"].name == "GLM-5.3"
+    # 显式声明优先：multimodal=True 但声明仅 text。
+    assert spec.models["m1"].input_modalities == ("text",)
+    assert spec.models["m2"].input_modalities == ("text", "image")
+    # 未声明 → 按 multimodal 推导（§6.3.2 解析规则）。
+    assert spec.models["m3"].input_modalities == ("text", "image")
+    assert spec.models["m4"].input_modalities == ("text",)
+
+
+def test_input_modalities_invalid_falls_back_with_warning(
+    tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法声明（非数组/无合法条目）→ 回退 multimodal 推导 + 如实告警，不拖垮加载."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "providers.local.json").write_text(
+        json.dumps(
+            {
+                "meta": {
+                    "base_url": "https://meta.example/v1",
+                    "api_key_env": "",
+                    "default_model": "m1",
+                    "models": {
+                        "m1": {"context": 131072, "input_modalities": "bogus"},
+                        "m2": {"context": 131072, "input_modalities": ["audio"]},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING):
+        reg = load_registry(_settings(data_dir=str(data_dir)))
+    spec = reg.providers["meta"]
+    assert spec.models["m1"].input_modalities == ("text",)  # 非数组 → 回退
+    assert spec.models["m2"].input_modalities == ("text",)  # 无合法条目 → 回退
+    assert "input_modalities" in caplog.text
+
+
+def test_model_name_stripped_and_bounded(tmp_path) -> None:
+    """name 去首尾空白且超长截断（防膨胀）；空值回退由前端处理（§6.3.2）."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "providers.local.json").write_text(
+        json.dumps(
+            {
+                "meta": {
+                    "base_url": "https://meta.example/v1",
+                    "api_key_env": "",
+                    "default_model": "m1",
+                    "models": {
+                        "m1": {"context": 131072, "name": "  Padded Name  "},
+                        "m2": {"context": 131072, "name": "x" * 500},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    reg = load_registry(_settings(data_dir=str(data_dir)))
+    assert reg.providers["meta"].models["m1"].name == "Padded Name"
+    assert len(reg.providers["meta"].models["m2"].name) == 256

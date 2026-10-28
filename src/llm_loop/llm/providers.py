@@ -106,6 +106,9 @@ class ModelSpec:
     - reasoning: 强推理能力 (R5: model_catalog 展示, AI 自主选模型)
     - long_context: 长上下文档 (R5: context >= 256K)
     - multimodal: 多模态（图片/音频/视频, R5)
+    - name: 展示名（model-admin design §6.3.2；空串 → 前端回退模型 id）
+    - input_modalities: 输入模态声明（("text",) / ("text","image")；未声明时按
+      multimodal 推导。仅为事实口径，不裁决可用性）
     """
 
     context: int = 131072
@@ -148,6 +151,9 @@ class ModelSpec:
     top_p: float | None = None
     top_k: int | None = None
     min_p: float | None = None
+    # model-admin design §6.3.2: 展示名 + 输入模态声明（facts, not capability claims）.
+    name: str = ""
+    input_modalities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -174,6 +180,8 @@ class ProviderSpec:
     chars_per_token: float | None = None  # EVO-20260824: provider 级字符/token 估算（None=全局 0.6）
     # deepseek 中文混合实测 1.676 tok/char → 0.6 chars/token；local qwen 中文 tokenizer 效率更高
     # （1 token≈1-1.5 中文字）→ 0.9。守卫/预算按 provider 取值，未配置回退全局（零回归）。
+    # model-admin design §5.3/§6.3.2: Provider 展示名（配置事实；空串 → 前端回退 id）
+    display_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -818,6 +826,39 @@ def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
     return "unknown"
 
 
+def _parse_input_modalities(
+    pid: str, mid: str, mval: dict[str, Any], *, multimodal: bool
+) -> tuple[str, ...]:
+    """model-admin design §6.3.2: input_modalities 声明解析.
+
+    缺失 → 按 multimodal 推导（true → text+image, 否则 text）；
+    非法（非数组/无合法项）→ 同缺失的 fallback + warning（fail-open 不拖垮加载）。
+    仅接受 "text"/"image" 白名单（去重保序），其余条目如实告警并忽略。
+    """
+    fallback = ("text", "image") if multimodal else ("text",)
+    raw = mval.get("input_modalities")
+    if raw is None:
+        return fallback
+    if not isinstance(raw, list):
+        logger.warning(
+            "模型 %s/%s input_modalities=%r 非数组，回退 multimodal 推导（%s）",
+            pid, mid, raw, "/".join(fallback),
+        )
+        return fallback
+    out: list[str] = []
+    for item in raw:
+        value = str(item).strip().lower()
+        if value in ("text", "image") and value not in out:
+            out.append(value)
+    if not out:
+        logger.warning(
+            "模型 %s/%s input_modalities=%r 无合法条目（支持 text/image），回退 multimodal 推导（%s）",
+            pid, mid, raw, "/".join(fallback),
+        )
+        return fallback
+    return tuple(out)
+
+
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
     """解析单模型条目 → ModelSpec（P1-3 审计 #14 加固）.
 
@@ -832,6 +873,7 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         else bool(reasoning or thinking)
     )
     reasoning_efforts = _parse_reasoning_efforts(pid, mid, mval)
+    multimodal = _parse_bool_field(pid, mid, "multimodal", mval)
     return ModelSpec(
         context=_parse_context(mval.get("context")),
         thinking=thinking,
@@ -840,7 +882,7 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         cost_tier=str(mval.get("cost_tier", "mid")),
         reasoning=reasoning,
         long_context=_parse_bool_field(pid, mid, "long_context", mval),
-        multimodal=_parse_bool_field(pid, mid, "multimodal", mval),
+        multimodal=multimodal,
         max_input_tokens=_parse_model_max_input_tokens(pid, mid, mval.get("max_input_tokens")),
         max_tokens=_parse_model_max_tokens(pid, mid, mval.get("max_tokens")),
         # P3-5: 协议白名单（非法值回退 openai + 如实告警，不拖垮注册表）
@@ -864,6 +906,9 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         top_p=_parse_optional_float(pid, mid, "top_p", mval.get("top_p"), maximum=1.0, exclusive_min=True),
         top_k=_parse_optional_nonnegative_int(pid, mid, "top_k", mval.get("top_k")),
         min_p=_parse_optional_float(pid, mid, "min_p", mval.get("min_p"), maximum=1.0),
+        # model-admin design §6.3.2: 展示名（截断防膨胀）+ 输入模态（multimodal 推导兜底）
+        name=str(mval.get("name", "") or "").strip()[:256],
+        input_modalities=_parse_input_modalities(pid, mid, mval, multimodal=multimodal),
     )
 
 
@@ -1020,6 +1065,8 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 max_input_tokens=max_input_tokens,
                 max_tokens=max_tokens,
                 chars_per_token=chars_per_token,
+                # model-admin design §5.3/§6.3.2: Provider 展示名（配置事实，空串回退 id）
+                display_name=str(val.get("display_name", "") or "").strip()[:128],
             )
         except (ValueError, TypeError) as exc:
             # P1-3: provider 条目级兜底（意外转换异常也不拖垮整个注册表）

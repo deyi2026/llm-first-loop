@@ -114,6 +114,7 @@ _EVENT_TOP_FIELDS = (
     "branch_id",
     "branch_summary",
     "model_override",
+    "model_override_source",
     "pinned",
     "channel",
     "fixed_summary",
@@ -165,6 +166,9 @@ class Session:
     # M48（design §5.3）：会话级模型覆盖（switch_model 工具写入；None = 用装配默认）
     # 旧会话 JSON 缺省 → None（向后兼容，向前兼容 version 1/2/3 三套字段）
     model_override: str | None = None
+    # model-admin design §5.3：覆盖来源（"user"=真人选择；None=无覆盖或旧数据）。
+    # 仅 source=="user" 的覆盖允许被新会话继承（隐式内部态不跨会话复制）。
+    model_override_source: str | None = None
     # M56（Web/飞书会话同步）：version 4 字段，缺省向后兼容
     pinned: bool = False      # 置顶（Web 端会话列表置顶优先）
     channel: str = "web"      # 来源通道: "web" / "feishu:p2p:{open_id}" / "feishu:group:{chat_id}"
@@ -203,6 +207,7 @@ class Session:
             "branch_id": self.branch_id,
             "branch_summary": self.branch_summary,
             "model_override": self.model_override,
+            "model_override_source": self.model_override_source,
             "pinned": self.pinned,
             "channel": self.channel,
             "history_anchors": self.history_anchors,
@@ -1471,16 +1476,20 @@ class SessionStore:
         parent_id: str | None = None,
         branch_summary: str = "",
         title: str = "",
+        model_override_source: str | None = None,
     ) -> str:
         """原子初始化新会话及其来源元数据（如明确授权的轻量交接）。
 
         model_override: /new·/clear 继承用户所选模型；新建交接会话的 parent_id
         和 branch_summary 在首次 session.created 事件中同时持久化，禁止后补字段
         导致 EventStore replay 丢失来源链。默认参数保持既有 create() 行为。
+        model_override_source: model-admin design §5.3 覆盖来源（"user"=真人选择）；
+        覆盖为 None 时源一并置空。
         """
         sid = str(uuid.uuid4())
         session = Session(
             session_id=sid, model_override=model_override,
+            model_override_source=(model_override_source if model_override else None),
             parent_id=parent_id, branch_summary=branch_summary, title=title,
         )
         # EVO-20260920: 新会话归属锚定当前根；此后根切换不影响该 sid 的路径/身份。
@@ -1686,6 +1695,7 @@ class SessionStore:
                 branch_id=view.get("branch_id", ""),
                 branch_summary=view.get("branch_summary", ""),
                 model_override=view.get("model_override"),
+                model_override_source=view.get("model_override_source"),
                 pinned=bool(view.get("pinned", False)),
                 channel=view.get("channel", "web"),
                 # 2026-08-21 (追加式压缩, version 5): 摘要链缺省向后兼容
@@ -1739,6 +1749,12 @@ class SessionStore:
                 branch_summary=data.get("branch_summary", ""),
                 # M48: model_override 缺省向后兼容（旧 JSON 无键 → None）
                 model_override=data.get("model_override"),
+                # model-admin design §5.3: 旧 JSON 无 source 键但有覆盖 → 按 "user" 追认
+                # （历史写入方均为真人/工具显式选择），否则 None。
+                model_override_source=(
+                    data.get("model_override_source")
+                    or ("user" if data.get("model_override") else None)
+                ),
                 # M56: pinned/channel 缺省向后兼容（旧 JSON 无键 → 默认值）
                 pinned=bool(data.get("pinned", False)),
                 channel=data.get("channel", "web"),
@@ -2139,6 +2155,46 @@ class SessionStore:
                 {
                     "field": "pinned",
                     "changes": {"pinned": {"from": old_pinned, "to": bool(pinned)}},
+                },
+            )
+        return True
+
+    def set_model_override(
+        self, session_id: str, model_ref: str | None, *, source: str | None = "user"
+    ) -> bool:
+        """model-admin design §7.6: 设置/清除会话级模型覆盖（管理写路径）。
+
+        model_ref=None → 清除覆盖（source 一并置空）；非空 → canonical
+        "provider/model"（校验由调用方完成，本方法只持久化）。
+        与 set_pinned 同语义：management_lease + session lock 下读改写；
+        运行中会话由 management_lease 拒绝覆盖（in-run authority 不被踩）。
+        """
+        if not self.exists(session_id):
+            return False
+        with self.management_lease(session_id):
+            if not self.exists(session_id):
+                return False
+            with self._session_lock(session_id):
+                session = self.load(session_id)
+                old_ref = session.model_override
+                old_source = session.model_override_source
+                session.model_override = str(model_ref).strip() if model_ref else None
+                session.model_override_source = (
+                    (source or "user") if session.model_override else None
+                )
+                self._save_locked(session)
+            self._event_append(
+                session_id,
+                "session.meta_changed",
+                {
+                    "field": "model_override",
+                    "changes": {
+                        "model_override": {"from": old_ref, "to": session.model_override},
+                        "model_override_source": {
+                            "from": old_source,
+                            "to": session.model_override_source,
+                        },
+                    },
                 },
             )
         return True

@@ -45,6 +45,9 @@ _TOP_FIELDS = (
     "branch_id",
     "branch_summary",
     "model_override",
+    # model-admin design §5.3: 会话.created 事件承载覆盖来源（旧源文件缺键 → 事件不携带，
+    # 重放按默认 None，与源缺键 reconcile 等价）。
+    "model_override_source",
     "pinned",
     "channel",
     "fixed_summary",

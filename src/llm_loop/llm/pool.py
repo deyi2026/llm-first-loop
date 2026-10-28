@@ -48,6 +48,13 @@ class ModelClientPool:
         default_factory=list, init=False, repr=False
     )
     _retired_ducks: list[Any] = field(default_factory=list, init=False, repr=False)
+    # model-admin design §6.2.2: 运行态默认模型（Web 热切换）。
+    # None = 未热切换（保持启动装配默认 client 的零回归快路径）；
+    # 非 None = canonical "provider/model"，get_client(None) 按其路由。
+    # 仅本进程路由事实，不写 env、不改 default_client（启动快照不可变契约保留）。
+    _live_default_ref: str | None = field(default=None, init=False, repr=False)
+    # 每次 replace_registry +1；供 SSE providers 指纹观测"代数变化"（design §5.6/§6.2.5）。
+    _registry_generation: int = field(default=0, init=False, repr=False)
     # Startup-global client defaults are distinct from the resolved default model
     # contract. A fully-qualified default model may override timeout/max_tokens;
     # other routed models must not inherit those model-specific values.
@@ -76,6 +83,62 @@ class ModelClientPool:
         """返回当前不可变 ProviderRegistry 快照（与replace_registry互斥读取）."""
         with self._guard:
             return self.registry
+
+    def registry_generation(self) -> int:
+        """Registry 热重载代数（每次 replace_registry +1；观测用，不参与路由）."""
+        with self._guard:
+            return self._registry_generation
+
+    def _startup_default_ref(self) -> str:
+        """启动装配默认模型的 canonical 引用（无 provider 模型名时回退裸名，fail-open）."""
+        provider = str(getattr(self.default_client, "provider", "") or "").strip()
+        model = str(getattr(self.default_client, "model", "") or "").strip()
+        if provider and model:
+            return model if model.startswith(provider + "/") else f"{provider}/{model}"
+        if not model:
+            return ""
+        try:
+            pid, mid = self._default_registry.resolve(model)
+            return f"{pid}/{mid}"
+        except ValueError:
+            return model
+
+    def get_default_ref(self) -> str:
+        """当前生效默认模型的 canonical 引用（热切换优先，否则启动装配默认）.
+
+        model-admin design §7.5: 读 RLock 下先查热切换引用；未热切换时回退启动
+        装配默认的 canonical 化（与旧行为一致，零回归）。
+        """
+        with self._guard:
+            if self._live_default_ref:
+                return self._live_default_ref
+        return self._startup_default_ref()
+
+    def live_default_ref(self) -> str | None:
+        """未回退的热切换默认引用（None = 未热切换，路由保持启动装配快路径）.
+
+        与 get_default_ref()（展示口径，含启动默认回退）区分：routing 只在
+        非 None 时改 model_used 标签，未热切换保持既有标签逻辑（零回归）。
+        """
+        with self._guard:
+            return self._live_default_ref
+
+    def set_default_model(self, model_ref: str) -> str:
+        """热切换运行态默认模型（design §6.2.2: 先 resolve+构造成功，再提交）.
+
+        只改本进程路由事实（get_client(None)/get_default_ref）；不写 env、
+        不改 default_client。构造失败在提交前抛出，运行态零变化（原子性）。
+        返回提交后的 canonical "provider/model"。
+        """
+        ref = str(model_ref or "").strip()
+        if not ref:
+            raise ValueError("empty model ref")
+        client, pid, mid = self.get_resolved_client(ref)
+        del client  # 构造即校验；client 已进 per-model 缓存，这里不需要引用
+        canonical = f"{pid}/{mid}"
+        with self._guard:
+            self._live_default_ref = canonical
+        return canonical
 
     def default_registry_snapshot(self) -> ProviderRegistry:
         """返回 default_client 对应的启动 registry 快照。"""
@@ -158,8 +221,10 @@ class ModelClientPool:
                 self.default_client, "anthropic_cache_control", None
             ),
             guard_hit_telemetry=getattr(self.default_client, "guard_hit_telemetry", None),
-            thinking_mode=self.default_client.thinking_mode,
-            reasoning_effort=self.default_client.reasoning_effort,
+            # model-admin design §6.2.1: duck-typed default client（测试 FakeLLM 等）
+            # 没有 thinking 属性时按关闭处理，与 trust_env 等既有防御口径一致。
+            thinking_mode=getattr(self.default_client, "thinking_mode", False),
+            reasoning_effort=str(getattr(self.default_client, "reasoning_effort", "") or ""),
             reasoning_effort_map=reasoning_effort_map,
             reasoning_efforts=reasoning_efforts,
             reasoning_default_effort=reasoning_default_effort,
@@ -209,8 +274,16 @@ class ModelClientPool:
         return client, provider_id, model_id
 
     def get_client(self, model_override: str | None) -> LLMClient:
-        """按会话级 model_override 路由到对应 LLMClient。"""
+        """按会话级 model_override 路由到对应 LLMClient。
+
+        None → 运行态默认（热切换优先；design §6.2.2），未热切换时零回归返回装配默认 client。
+        """
         if model_override is None:
+            with self._guard:
+                live = self._live_default_ref
+            if live:
+                client, _provider_id, _model_id = self.get_resolved_client(live)
+                return client
             with self._guard:
                 return self.default_client
         client, _provider_id, _model_id = self.get_resolved_client(model_override)
@@ -301,6 +374,19 @@ class ModelClientPool:
             old_clients = list({id(c): c for c in self._provider_cache.values()}.values())
             self.registry = new_registry
             self._provider_cache.clear()
+            self._registry_generation += 1
+            # 热切换的默认引用若在新表已不可解析（模型被删/禁用），如实回退启动
+            # 默认并告警——绝不静默指向不存在的模型，也不让 chat 因默认路由而崩。
+            stale_live = self._live_default_ref
+            if stale_live:
+                try:
+                    new_registry.resolve(stale_live)
+                except ValueError:
+                    self._live_default_ref = None
+                    logger.warning(
+                        "运行态默认模型 %s 在新 registry 中已不可解析，回退启动默认（非静默降级）",
+                        stale_live,
+                    )
         for client in old_clients:
             try:
                 self._retire_client(client)
