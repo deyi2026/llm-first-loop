@@ -80,6 +80,9 @@ def test_uncreatable_default_root_fails_fast(tmp_path, monkeypatch):
 def test_idempotent_mkdir_keeps_existing_dir_and_mode(tmp_path, monkeypatch):
     env_root = tmp_path / "existing-root"
     env_root.mkdir(mode=0o755)
+    # A restrictive CI/Host umask can mask mkdir's requested mode to 0700.
+    # Establish the actual fixture mode; the implementation must preserve it.
+    env_root.chmod(0o755)
     monkeypatch.setenv("LFL_DEFAULT_WORKSPACE_ROOT", str(env_root))
     first = _resolve_default_workspace_root()
     second = _resolve_default_workspace_root()  # 幂等：重复解析不报错不改权限

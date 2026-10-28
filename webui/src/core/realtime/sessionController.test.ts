@@ -169,6 +169,15 @@ describe("RealtimeSessionController input.commit", () => {
     expect(sink.onNotice).toHaveBeenCalledWith(expect.stringContaining("未采集到可上传的音频"));
   });
 
+  it("notifies visibly when a pressed turn uploaded zero audio (no silent no-op release)", async () => {
+    const { deps, client, sink } = makeDeps();
+    const controller = new RealtimeSessionController(deps);
+    await controller.press(); // 采集成功但零帧上行（P1：此前 port 未接线即此形态）
+    controller.release();
+    expect(client.sendEvent).not.toHaveBeenCalled(); // 不发 input.commit
+    expect(sink.onNotice).toHaveBeenCalledWith(expect.stringContaining("未采集到可上传的音频"));
+  });
+
   it("does not commit when audio was captured but connection dropped at release", async () => {
     const { deps, client, sink, setConnectionState } = makeDeps();
     const controller = new RealtimeSessionController(deps);

@@ -23,7 +23,7 @@ export function ChatQueue() {
   const streaming = Boolean(conv.streaming || conv.backgroundRunning);
   const canInterject = streaming && Boolean(conv.activeRunGeneration);
   const interjectTitle = canInterject
-    ? zh.queueInterject
+    ? zh.queueInterjectWithdrawHint
     : streaming
       ? zh.queueInterjectIdentityPending
       : zh.queueInterjectUnavailable;
@@ -97,7 +97,7 @@ export function ChatQueue() {
                 </span>
                 {locked && (
                   <span className="v2-chat-queue-status" data-testid="chat-queue-status">
-                    {statusLabel(it.status)}
+                    {statusLabel(it.status)}{zh.queueLockedSuffix}
                   </span>
                 )}
                 <span className="v2-chat-queue-actions">

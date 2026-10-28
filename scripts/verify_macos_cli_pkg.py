@@ -43,13 +43,16 @@ def verify(*, package: Path, expected_sha256: str) -> dict[str, object]:
         if not os.access(lfl, os.X_OK):
             raise ValueError("installed_entrypoint_missing")
         # Test after archive extraction, with no developer Python or uv on PATH.
+        # HOME itself is forbidden as a workspace; use an isolated child directory.
+        workspace = root / "workspace"
+        workspace.mkdir(mode=0o700)
         env = {"HOME": str(root), "PATH": "/usr/bin:/bin", "LFL_HOME": str(root / "user-state"),
                "PYTHONNOUSERSITE": "1", "LFL_LEARNING_ENABLED": "false",
                "LFL_REFLECTION_ENABLED": "false", "LLM_MODEL": "glm-5.3",
                "LLM_API_KEY": "fake-smoke-only", "LLM_BASE_URL": "https://example.invalid/v1"}
-        version = _run(lfl, "--version", cwd=root, env=env).stdout.strip()
-        install = json.loads(_run(lfl, "check-install", cwd=root, env=env).stdout)
-        start_plan = json.loads(_run(lfl, "start", "--plan", "--json", cwd=root, env=env).stdout)
+        version = _run(lfl, "--version", cwd=workspace, env=env).stdout.strip()
+        install = json.loads(_run(lfl, "check-install", cwd=workspace, env=env).stdout)
+        start_plan = json.loads(_run(lfl, "start", "--plan", "--json", cwd=workspace, env=env).stdout)
         if (not install.get("ok") or not start_plan["read_only"] or start_plan["will_start_web"]):
             raise ValueError("bundled_cli_install_or_start_plan_failed")
         port_socket = socket.socket()
@@ -60,7 +63,7 @@ def verify(*, package: Path, expected_sha256: str) -> dict[str, object]:
         # No provider access: fake credentials, disable learning/reflection;
         # request only localhost and stop only our newly spawned Web process.
         with (root / "server.log").open("w") as log:
-            proc = subprocess.Popen([lfl, "web"], cwd=root, env=env, stdout=log, stderr=log)
+            proc = subprocess.Popen([lfl, "web"], cwd=workspace, env=env, stdout=log, stderr=log)
             try:
                 ready = False
                 until = time.monotonic() + 38

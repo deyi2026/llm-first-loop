@@ -186,9 +186,11 @@ def test_b_s14_conservative_wait(build_test_engine):
 def test_c_s15_race_two_branches(build_test_engine):
     """竞速双分支：事件序判定=回执标注真值；构造上分支可控（τ=200ms 量化）."""
     samples = []
-    # 分支 B（interrupt_first）：注入 +1.25s（早于 1.4s 判定片）→ sleep 1.5 被终止
+    # 分支 B（interrupt_first）：注入 +1.25s 落在首个判定片（1.4s）之前；
+    # sleep 2.0，判定片 1.4s 命中时尚有 0.6s 余量 → 工具被终止（总余量 0.75s）
     for i in range(3):
-        samples.append(_race_sample(build_test_engine, i, "B", inject_delay=1.25))
+        samples.append(_race_sample(build_test_engine, i, "B", inject_delay=1.25,
+                                    tool_sleep=2.0))
     # 分支 A（natural_first，终局加固）：sleep 1.55 + 注入 +1.45s——完成时刻落在
     # 判定片 (1.4,1.6) 内部：到达无论何时（轻载 1.46-1.51 / 重载 >1.55），下一
     # 判定唤醒 1.6s 均晚于完成 1.55s，future.result 先返自然结果，双侧确定性

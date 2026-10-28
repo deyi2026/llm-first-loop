@@ -12,6 +12,7 @@ import { SubagentLineage } from "./SubagentLineage";
 import { useCurrentSessionId, useSessions } from "../../core/stores";
 import { fetchAllMessages } from "../../core/api";
 import { conversationStore, loadHistory, useConversation } from "../../core/conversation";
+import { errorRecoveryHint } from "../../core/errorRecovery";
 import { zh } from "../../i18n/zh";
 
 export function Conversation() {
@@ -94,6 +95,7 @@ export function Conversation() {
           {exportError || conv.lastError ? (
             <div className="v2-conv-error" role="alert">
               {exportError || conv.lastError}
+              {conv.lastError && !exportError ? <p>{errorRecoveryHint(conv.lastError)}</p> : null}
             </div>
           ) : null}
         </>

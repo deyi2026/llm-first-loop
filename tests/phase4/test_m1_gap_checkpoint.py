@@ -2,9 +2,9 @@
 
 对应 docs/phase4-effect-latency-design.md §4.2 CK-A 与 §5 M1：
 - peek 原语单元（真值/代次/非运行态）
-- S16-M1 场景：双调用序列 [sleep 0.6, sleep 2.0]，call1 在途时注入 →
-  call1 自然完成 → 间隙收割：call2 skipped_for_interjection + 轮内消费 →
-  t_effect 脱离 call2 剩余时长（≤50ms 口径）
+- S16-M1 场景：受控不可撤销的 call1 + sleep 2.0，call1 在途时注入 →
+  释放门闩让 call1 自然完成 → CK-A 间隙收割 call2 skipped_for_interjection。
+  避免 execute_command 的 M2 在途打断路径抢先消费插话。
 - 无插话回归：分段执行不破坏多调用序列自然执行（两条都跑）
 - peek 失败 fail-open（§4.4）：不收割不阻断
 - 只读并行批分段：纯只读序列仍整体执行
@@ -12,12 +12,14 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 from fastapi.testclient import TestClient
 
 from llm_loop.core.loop.runner import BackgroundRunner
-from llm_loop.core.message import ToolCall
+from llm_loop.core.message import ToolCall, ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.web import build_app
 from tests.phase4.test_m0_scenarios import (
     INTERJECT_TEXT,
@@ -27,7 +29,6 @@ from tests.phase4.test_m0_scenarios import (
     _interject,
     _pct,
     _wait_run_done,
-    _wait_tool_started,
 )
 
 
@@ -77,8 +78,42 @@ def test_a_interjections_pending_stale_generation(build_test_engine):
 
 
 # ────────────────────────────────────────────────────────────────────
-# B. S16-M1 场景：序列间隙收割（n=5，P50≤50ms）
+# B. S16-M1 场景：确定性 CK-A 间隙收割（n=5，P50≤150ms）
 # ────────────────────────────────────────────────────────────────────
+class _GapHeldTool:
+    """仅测试使用：不可撤销、显式事件闸控制的段首工具。"""
+
+    name = "phase4_gap_held"
+    description = "CK-A 间隙回归专用的不可撤销门闩"
+    parameters = {"type": "object", "properties": {}, "required": []}
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._active = False
+
+    def execute(self, **_):
+        from llm_loop.core.loop.side_effects import SideEffectRegistry
+
+        sid = current_session_id.get() or ""
+        self._active = True
+        try:
+            SideEffectRegistry.instance().register(
+                sid, self.name, "phase4-gap-held", "test_locked",
+                revocable=False,
+                detail="测试用不可撤销门闩，不触发 M2 在途打断",
+            )
+            self.entered.set()
+            assert self.release.wait(timeout=10), "CK-A 门闩未释放"
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content="gap-held call1 naturally completed",
+                tool_call_id="", tool_name=self.name,
+            )
+        finally:
+            self._active = False
+
+
 def test_b_gap_harvest_skips_remaining(build_test_engine):
     import json
 
@@ -89,8 +124,8 @@ def test_b_gap_harvest_skips_remaining(build_test_engine):
                 {
                     "content": "先跑两个长命令",
                     "tool_calls": [
-                        ToolCall(id=f"s16m1-{i}-c1", name="execute_command",
-                                 arguments={"command": "sleep 0.8"}),
+                        ToolCall(id=f"s16m1-{i}-c1", name="phase4_gap_held",
+                                 arguments={}),
                         ToolCall(id=f"s16m1-{i}-c2", name="execute_command",
                                  arguments={"command": "sleep 2.0"}),
                     ],
@@ -98,6 +133,8 @@ def test_b_gap_harvest_skips_remaining(build_test_engine):
                 {"content": "final-after-gap-harvest"},
             ]
         )
+        gate = _GapHeldTool()
+        engine.registry.register(gate)
         runner = BackgroundRunner(engine)
         engine.runner = runner
         client = TestClient(build_app(engine=engine))
@@ -105,11 +142,9 @@ def test_b_gap_harvest_skips_remaining(build_test_engine):
         t0 = time.perf_counter()
         try:
             _h, q = runner.start(sid, "请依次执行两条命令")
-            assert _wait_tool_started(engine, "execute_command", "_active_procs")
-            time.sleep(0.5)  # call1(0.8s) 完成前 ~300ms 注入（Phase6 加固：
-            #               原 0.74s 余量 ~40ms 在负载/线程开销下偶发 miss gap
-            #               边界，miss 时断言 0-skip 翻面——注入更早保留同语义，
-            #               余量 ~300ms；t_effect 预期相应 ≈300ms 量级）
+            assert gate.entered.wait(timeout=10), "段首工具未开始"
+            # 入队与插话均已受理后才允许 call1 自然完成；
+            # 不靠 wall-clock sleep 猜测 Linux Runner 的调度边界。
             gen = (runner.get_handle(sid) or {}).get("run_generation")
             r1 = client.post(
                 "/api/v1/chat/queue",
@@ -119,6 +154,7 @@ def test_b_gap_harvest_skips_remaining(build_test_engine):
             queue_id = r1.json()["queue_id"]
             r2 = _interject(client, sid, queue_id, gen)
             assert r2.status_code == 202
+            gate.release.set()
 
             final = _wait_run_done(q, timeout=20)
             elapsed = time.perf_counter() - t0
@@ -133,19 +169,35 @@ def test_b_gap_harvest_skips_remaining(build_test_engine):
                 "tag": f"S16M1-{i+1}", "t_effect_ms": t_effect,
                 "elapsed_s": round(elapsed, 2), "final": final.get("type"),
                 "item_status": item.get("status"),
+                "consumed_via": item.get("consumed_via"),
                 "skipped_receipts": len(skipped_msgs),
                 "no_cancel_synthesis": no_cancel_synthesis,
-                "model_saw_interject": any(INTERJECT_TEXT in t for t in texts),
+                "model_saw_interject": any(
+                    INTERJECT_TEXT in str(msg.get("content", ""))
+                    for call in fake.calls[1:]
+                    for msg in call["messages"]
+                    if msg.get("role") == "user"
+                ),
             })
             # 断言（每样本）：收割发生 + call2 未执行 + 终态正常 + 模型可见
             assert len(skipped_msgs) == 1, f"call2 应恰有一条 skipped 回执: {samples[-1]}"
+            assert item.get("consumed_via") == "gap_harvest", item
+            skipped_call_ids = [
+                m.tool_call_id for m in sess.messages
+                if "skipped_for_interjection" in (m.content or "")
+            ]
+            assert skipped_call_ids == [f"s16m1-{i}-c2"], skipped_call_ids
+            assert any("gap-held call1 naturally completed" in t for t in texts)
+            assert not any("interrupted_for_interjection" in t for t in texts)
             # call1 自然执行：无取消合成回执（缺失会触发 _synthesize_cancelled）
             assert no_cancel_synthesis
             assert final.get("type") == "done"
+            assert any(INTERJECT_TEXT in t for t in texts), "插话须持久化入会话"
             assert samples[-1]["model_saw_interject"]
-            # call2（sleep 2.0）未真实执行：总时长显著短于 0.6+2.0
+            # call2 保留真实 sleep 2.0 工具：严格验证段间跳过而非完成它
             assert elapsed < 1.8, f"call2 未应执行（elapsed={elapsed:.2f}s）"
         finally:
+            gate.release.set()  # HTTP 接口失败也不会遗留卡死的工具 worker
             runner.cancel(sid)
 
     effs = [s["t_effect_ms"] for s in samples if s["t_effect_ms"] is not None]
@@ -157,9 +209,8 @@ def test_b_gap_harvest_skips_remaining(build_test_engine):
     (REPORT_DIR / "S16M1.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
     )
-    # Phase6 加固后注入锚点 0.5s 命中段间检查点（CK-A 分段执行），t_effect
-    # = 注入→下一段边界 ≈60-120ms；原 ≤50ms 目标按旧 0.74s 紧锚点（end-gap
-    # 贴边命中）设定，随锚点加固调整为 ≤150ms（仍是间隙收割形态，非窗口）。
+    # 事件门闩替代旧的 wall-clock 竞速，严格测量 CK-A 段间收割延迟。
+    # 与 M2 在途打断无关，仍要求 P50 ≤150ms。
     assert p50 is not None and p50 <= 150.0, f"S16-M1 t_effect P50={p50}ms 超 150ms 目标"
 
 
@@ -278,7 +329,7 @@ def test_e_readonly_batch_runs(build_test_engine):
 
 
 # ────────────────────────────────────────────────────────────────────
-# F. 混合 [R,M,M] 间隙收割（审查 P2-6）：只读批执行后在首个变更调用前收割
+# F. 混合 [R,M,M] 间隙收割（审查 P2-6）：只读批、首个变更调用后收割第二个
 # ────────────────────────────────────────────────────────────────────
 def test_f_mixed_readonly_mutating_gap_harvest(build_test_engine):
     import tempfile
@@ -294,8 +345,8 @@ def test_f_mixed_readonly_mutating_gap_harvest(build_test_engine):
                     "tool_calls": [
                         ToolCall(id="mx-r1", name="read_file",
                                  arguments={"path": str(f1)}),
-                        ToolCall(id="mx-m1", name="execute_command",
-                                 arguments={"command": "sleep 0.5"}),
+                        ToolCall(id="mx-m1", name="phase4_gap_held",
+                                 arguments={}),
                         ToolCall(id="mx-m2", name="execute_command",
                                  arguments={"command": "sleep 2.0"}),
                     ],
@@ -303,14 +354,15 @@ def test_f_mixed_readonly_mutating_gap_harvest(build_test_engine):
                 {"content": "final-mixed"},
             ]
         )
+        gate = _GapHeldTool()
+        engine.registry.register(gate)
         runner = BackgroundRunner(engine)
         engine.runner = runner
         client = TestClient(build_app(engine=engine))
         sid = engine.session.create()
         try:
             _h, q = runner.start(sid, "执行混合序列")
-            assert _wait_tool_started(engine, "execute_command", "_active_procs")
-            time.sleep(0.40)  # mx-m1(0.5s) 完成前 ~100ms 注入 → mx-m2 收割
+            assert gate.entered.wait(timeout=10), "混合序列的首个变更调用未开始"
             gen = (runner.get_handle(sid) or {}).get("run_generation")
             r1 = client.post(
                 "/api/v1/chat/queue",
@@ -320,6 +372,7 @@ def test_f_mixed_readonly_mutating_gap_harvest(build_test_engine):
             queue_id = r1.json()["queue_id"]
             r2 = _interject(client, sid, queue_id, gen)
             assert r2.status_code == 202
+            gate.release.set()
 
             final = _wait_run_done(q, timeout=20)
             assert final.get("type") == "done"
@@ -328,11 +381,18 @@ def test_f_mixed_readonly_mutating_gap_harvest(build_test_engine):
             skip_msgs = [t for t in texts if "skipped_for_interjection" in t]
             # 只读批 r1 自然执行 + m1 自然执行 + 仅 m2 被收割
             assert any("gamma" in t for t in texts), "只读调用应已执行"
-            assert len(skip_msgs) == 1 and "mx-m2" not in skip_msgs[0] or True
-            assert not any("mx-m2" in t and "executed" in t for t in texts)
+            skip_ids = [
+                m.tool_call_id for m in sess.messages
+                if "skipped_for_interjection" in (m.content or "")
+            ]
+            assert len(skip_msgs) == 1 and skip_ids == ["mx-m2"], skip_ids
+            assert any("gap-held call1 naturally completed" in t for t in texts)
+            assert not any("interrupted_for_interjection" in t for t in texts)
             item = _hq_item(_hq_of(client, engine), sid, queue_id) or {}
             assert item.get("status") == "interject_received"
+            assert item.get("consumed_via") == "gap_harvest"
         finally:
+            gate.release.set()
             runner.cancel(sid)
 
 

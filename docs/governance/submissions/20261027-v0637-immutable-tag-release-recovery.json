@@ -1,0 +1,99 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261027-v0637-immutable-tag-release-recovery",
+  "summary": "B11 single-writer v0.6.37 immutable-tag release recovery only. Original Release gate 40418910855 succeeded, but draft job 121913979727 failed due to obsolete wheel smoke fixture root/selected-workspace outside default WorkspaceStore allowed roots. Fix exists as independently reviewed+R9-tested commit d759c1b7 on separate main hotfix PR #9. A workflow_dispatch path in the same .github/workflows/release.yml (not a second writer) rechecks out the exact original tagged source 8c8bb997 and immutable annotated tag OID 025eb7d1, executes the unchanged original tag full release gate, builds package strictly from tag, then runs ONLY the pinned, independently reviewed smoke harness from commit d759c1b7 with strict SHA-256 check. Workflow release assets include provenance. No tag rewrite, no production safety policy change, no new product code.",
+  "components": [
+    {
+      "component_id": "existing-release-single-writer-scoped-dispatch",
+      "paths": [
+        ".github/workflows/release.yml"
+      ],
+      "control_machinery": true,
+      "declaration_id": "B11-v0637-recovery",
+      "owning_subsystem": "GitHub Actions Release authoritative single-writer and immutable tag verification",
+      "disposition": "Reuse the existing release.yml jobs and sole softprops/action-gh-release writer. Add manual recovery_tag input restricted by job if to refs/heads/main + literal v0.6.37; all jobs checkout the immutable tag and fail closed on exact tag object+commit identities. Original tag push path remains supported. No second release writer, skip flags or gate bypass; recovery path must still pass complete original release gate first. Only the wheel smoke verification script is read from independently reviewed exact hotfix commit pinned by sha256; dist wheels and sdist remain built from original immutable tag, followed by unchanged Linux installer clean smoke and SHA256SUMS. Embed recovery provenance into existing installation-smoke.json asset (no new asset).",
+      "evidence": [
+        "GitHub Release 40418910855 gate job121908063207 completed success; release draft job121913979727 failed only at clean installed Web due to WorkspaceNotAllowedError; logs show build wheel/sdist succeeded.",
+        "The immutable public v0.6.37 tag SHA025eb7d1b81b5959662ec6158f1b9ebc939466c2 peels to released code commit8c8bb9971e1e409b1360f92837e7fe432d9e39ba, whose tree aa3fb424... matches independent review and complete R9.",
+        "The verifier from commit d759c1b702aa9953b3dc9d10de091f29a931153a is SHA256 fb00b6c1fa83dd4d13041b497ee1403586a7f016e1d69f2340ff9f502945a1f9 and its genuine isolated wheel smoke yielded 345 files verified, Web UI/health200, 0 provider calls. Hotfix Reviewer subagent_72583708f168 PASS/P0=P1=0 and original full R9 job-13a5b89ad4114a34b2e5 exit0; PR #9 remote CI success still to verify before dispatch.",
+        "Must obtain NEW independent GLM-5.3 review of the changed release workflow and original full R9 before any commit/PR/merge. GitHub PR CI/A.5 and recovery dispatch build must then pass; no claim the old failed release run changed history."
+      ],
+      "verification_level": "Static fixture tests validate the only release writer, manual input restrictions, immutable identities, exact tag checkout, pinned verifier SHA, and provenance. Original full R9 + new Reviewer PASS, GitHub CI/A.5, remote workflow_dispatch gate+draft clean wheel/Linux smoke and existing seven-asset hash checks; publish only after confirmed draft.",
+      "model_evidence_veto_recovery_exit": "STOP on reviewer P0/P1 findings, tag SHA/commit identity drift, dispatch on wrong branch, unexpected manual tag value, missing verifier commit, verifier SHA mismatch, wheel built from main rather than immutable tag, any full-gate/installed-wheel/Linux-smoke failure, asset hash mismatch or duplicate release writer.",
+      "rollback_route": "Revert this workflow_dispatch entry and static test on main in a separate reviewed PR after v0.6.37 recovery. The original public v0.6.37 tag and signed+notarized PKG remain unchanged. A failed workflow leaves Release unpublished and can be retried with same immutable inputs without force-push."
+    },
+    {
+      "component_id": "immutable-release-recovery-static-tests",
+      "paths": [
+        "tests/unit/test_release_workflow_recovery.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Release workflow regression tests",
+      "disposition": "Static checks for one writer, exact tag main+version guard, both source checkouts, pinned verifier SHA and embedded recovery metadata; no runtime security feature added.",
+      "evidence": [
+        "3 directed pytest cases already passed before main integration and freeze; these tests are themselves covered by subsequent original complete R9."
+      ],
+      "verification_level": "pytest -q tests/unit/test_release_workflow_recovery.py; Ruff; full R9; GitHub PR CI.",
+      "model_evidence_veto_recovery_exit": "Test must fail if release writer is duplicated, pin removed, safety guard absent, verifier source unpinned, or manual dispatch can target arbitrary tag.",
+      "rollback_route": "Revert this test together with the scoped recovery dispatch workflow update."
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261027-v0637-immutable-tag-release-recovery.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "A.5 architecture declaration gate",
+      "disposition": "Reports all 4 changed paths; workflow control machinery is declared under G1-G4; not self-authorizing.",
+      "evidence": [
+        "The original scripts/check_architecture_submission.py mechanically compares the exact staged or commit diff against path coverage; model semantic review remains mandatory."
+      ],
+      "verification_level": "A.5 --staged then --base current main --head HEAD, plus GitHub A.5 PR result.",
+      "model_evidence_veto_recovery_exit": "Any extra changed path, missing G1-G4 block, or independent review finding blocks merge/publish.",
+      "rollback_route": "Remove only this recovery declaration with the two scoped recovery changes."
+    },
+    {
+      "component_id": "phase4-gap-harvest-ci-determinism",
+      "paths": [
+        "tests/phase4/test_m1_gap_checkpoint.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Phase4 M1 CK-A interjection tool sequence regression test fixture",
+      "disposition": "Both native Linux Push and PR full-CI runs (40437907422 and 40438026817) failed exactly the same Phase4 CK-A assertion: interjection accepted and model saw text but no remaining skipped receipt. The old first execute_command was revocable and subject to M2 in-flight interruption, consuming mailbox before CK-A. Replace only test first call with test-only explicitly nonrevocable SideEffectRegistry registered tool blocked on threading event. After queue/interject HTTP 202, release call1 to naturally finish; require single call2 skipped_for_interjection receipt with exact tool_call_id, consumed_via gap_harvest, natural call1 receipt, no interrupted/cancelled synthesis, second call never executed, model-visible interjection and original P50 <=150ms. No runtime code, test skips, branch exceptions, or relaxed invariants.",
+      "evidence": [
+        "GitHub CI Push job121970949471: 11573 pass, 1 fail, 162 skip; test_b_gap_harvest_skips_remaining skip=0, item_status=interject_received, final=done; PR job121971346585 independently same skip=0/one fail.",
+        "src/llm_loop/core/loop/engine_services/tool_cycle.py _execute_segments_with_gap_check emits skipped_for_interjection only from pending mailbox at segment boundary; M2 cancels revocable inflight tools along distinct execution path.",
+        "Original directed test with event-gated nonrevocable first tool passed locally; additional Phase4/M2 regression and native Linux CI required."
+      ],
+      "verification_level": "pytest tests/phase4/test_m1_gap_checkpoint.py and test_m2_inflight_interrupt.py, repeat strict S16-M1 direct case, Ruff, independent GLM-5.3 reviewer and original complete R9 exit0, GitHub Push and PR full CI native Linux success.",
+      "model_evidence_veto_recovery_exit": "STOP if skipped receipt absent, wrong second tool_call_id, consumed_via not gap_harvest, first interrupted/cancelled, second command executed, no model-visible interjection, P50>150ms, original full R9 failure, any production source change.",
+      "rollback_route": "Revert only test fixture and this declaration on isolated branch; immutable tag, installed pkg and production interjection/tool policies unchanged."
+    }
+  ],
+  "declarations": [
+    {
+      "declaration_id": "B11-v0637-recovery",
+      "g1": {
+        "necessity": "Retagging an already public annotated v0.6.37 would violate immutable release identity. Existing Release run already passed full source gate, but its wheel smoke harness is a known defective test fixture. Same-writer guarded manual dispatch is the narrowest auditable way to make the old tag legitimately pass the unchanged full source gate and independently verify clean installation with the fixed harness."
+      },
+      "g2": {
+        "authority_owner": "Existing GitHub Release workflow .github/workflows/release.yml (B11 single writer)",
+        "relationship": "reuse",
+        "non_duplication": "One workflow with existing gate/release jobs and only one softprops/action-gh-release invocation. No second writer, new package authority, bypass flag, extra GitHub tag or branch push."
+      },
+      "g3": {
+        "model_evidence": [
+          "Independent GLM-5.3 Reviewer and Host qualification required on frozen recovery workflow candidate: NOT YET PASSED.",
+          "Earlier v0.6.37 source Review PASS plus full R9 exit0; exact smoke-only hotfix independent Reviewer PASS + full R9 exit0."
+        ],
+        "recovery_or_reason": "If workflow fails, do not publish; investigate the explicit failing job and issue a new frozen reviewed minimal correction. After successful v0.6.37 recovery, remove this literal-only manual override on a reviewed maintenance PR."
+      },
+      "g4": {
+        "rollback": "Restore original release.yml from the pre-recovery main commit through a separately reviewed fast-forward PR; keep public annotated v0.6.37 tag and all notarized packages untouched.",
+        "verification": [
+          "Demand original full R9 with exit0, GitHub required CI and A.5, immutable tag-object and tag-commit revalidation in BOTH jobs, original full release gate at tagged source, clean installed wheel and Linux installer true success, verified checksums and draft artifact provenance before publish."
+        ]
+      }
+    }
+  ]
+}

@@ -19,6 +19,7 @@ import { conversationStore } from "../conversation";
 import type { ConnectionState } from "./mediaSessionClient";
 import { MediaSessionClient, type SocketLike } from "./mediaSessionClient";
 import { MicCapture, type MediaDevicesLike } from "./micCapture";
+import { createBrowserCapturePort } from "./browserCapture";
 import { PlaybackOutput, type AudioContextLike } from "./audioPlayback";
 import { CapturePipeline } from "./capturePipeline";
 import { PlaybackQueue } from "./playbackQueue";
@@ -36,7 +37,7 @@ import {
   type DisplayMediaDevicesLike,
   type ScreenShareCapabilityEnv,
 } from "./screenShare";
-import type { MicPressErrorKind } from "./micCapture";
+import type { MediaStreamLike, MicPressErrorKind, WorkletPortLike } from "./micCapture";
 
 /** 采集失败 → 面向用户的可操作提示（分类驱动，避免裸报设备错误名）。 */
 export function micPressErrorMessage(kind: MicPressErrorKind | null): string {
@@ -47,6 +48,8 @@ export function micPressErrorMessage(kind: MicPressErrorKind | null): string {
       return "未检测到麦克风设备：请确认麦克风已连接后重试";
     case "not-readable":
       return "麦克风无法读取：可能被其他应用占用，请关闭占用后重试";
+    case "port-init":
+      return "语音采集初始化失败，请重试";
     default:
       return "麦克风启动失败：请检查设备与权限后重试";
   }
@@ -63,8 +66,11 @@ export interface RealtimeVoiceTransport {
   getDisplayMedia?: DisplayMediaDevicesLike["getDisplayMedia"];
   /** M3：抓帧器工厂（默认 `CanvasFrameGrabber`；测试注入）。 */
   createGrabber?: () => FrameGrabber;
-  /** M1 补充：worklet 端口工厂（测试注入以驱动采集帧）。 */
-  createPort?: () => { onmessage: ((event: { data: { samples: Float32Array; sampleRate: number; channels?: number } }) => void) | null; close(): void };
+  /**
+   * M1 补充：worklet 端口工厂（默认真实装配 `createBrowserCapturePort`；测试注入以驱动采集帧）。
+   * P1 装配接线：此前默认落到无参空 port，真实麦克风流从未接进 AudioWorklet（零音频帧）。
+   */
+  createPort?: (stream: MediaStreamLike) => WorkletPortLike | Promise<WorkletPortLike>;
 }
 
 export interface RealtimeVoiceVisualOptions {
@@ -303,8 +309,7 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
         onFrame: (frame) => {
           controllerRefForCapture?.handleCapturedFrame(frame);
         },
-        createPort: optionsRef.current.transport?.createPort
-          ?? (() => ({ onmessage: null, close: () => undefined })),
+        createPort: optionsRef.current.transport?.createPort ?? createBrowserCapturePort,
         // M3 后续修复：gUM 启动超时等采集降级提示经既有 notice 通道
         onNotice: (message) => optionsRef.current.onNotice?.(message),
       });
@@ -524,7 +529,13 @@ export function useRealtimeVoice(options: RealtimeVoiceOptions): RealtimeVoiceWi
       setMicEnabled(started);
       if (!started) {
         // 采集失败不得静默（此前只有 micEnabled=false，用户零反馈"按了没反应"）
-        setError((previous) => (previous ? previous : micPressErrorMessage(controller.lastPressError)));
+        const kind = controller.lastPressError;
+        const message = micPressErrorMessage(kind);
+        setError((previous) => (previous ? previous : message));
+        if (kind === "port-init") {
+          // port 创建失败（worklet 加载失败等）：经 onNotice 可见非阻塞提示（P1：不得静默）
+          optionsRef.current.onNotice?.(message);
+        }
       }
     });
   }, []);

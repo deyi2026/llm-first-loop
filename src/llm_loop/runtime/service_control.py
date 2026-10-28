@@ -49,6 +49,10 @@ from llm_loop.runtime.admission_barrier import (
     BarrierConflictError,
 )
 from llm_loop.runtime.learning_idle import learning_busy_reason
+from llm_loop.runtime.service_control_derivation import (
+    RestartTargetDerivation,
+    derive_restart_target,
+)
 from llm_loop.runtime.webui_provenance import verify_webui_source_binding
 from llm_loop.timekeeping import system_local_now
 
@@ -3981,19 +3985,6 @@ def _default_data_dir(runtime_root: Path) -> Path:
     return runtime_root / "data"
 
 
-def _derive_restart_target_from_code_root(code_root: str) -> str:
-    """svc_deploy I5: CLI update 缺省目标——按 code_root 路径名推导，否则 all.
-
-    与工具面 ``_derive_restart_target`` 同规则（单 worktree 多为 all；按服务
-    拆分 worktree 时只重启该服务）；缺省可被显式 ``--target`` 覆盖。
-    """
-    name = Path(code_root).expanduser().name.lower()
-    for service in ("web", "feishu", "learning"):
-        if service in name:
-            return service
-    return "all"
-
-
 def _missing_webui_artifacts(code_root: str | Path) -> list[str]:
     """svc_deploy I5: 列出会让 build_deployment 产物绑定失败的缺失路径."""
     dist = Path(code_root).expanduser() / "webui" / "dist"
@@ -4325,7 +4316,40 @@ def main(argv: list[str] | None = None) -> int:
             else _default_data_dir(runtime)
         )
         store = ManagedServiceDeploymentStore(data_dir)
-        restart_target = args.target or _derive_restart_target_from_code_root(args.code_root)
+        derivation: RestartTargetDerivation | None = None
+        if args.target:
+            restart_target = args.target
+        else:
+            derivation = derive_restart_target(args.code_root)
+            if derivation.target is None:
+                # T2（2026-10-27）：推导不出不得静默兜底 all——先于
+                # build_deployment/compare_and_swap 拒绝，零 publish/CAS 副作用。
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "NEEDS_TARGET",
+                            "basename": derivation.basename,
+                            "targets": list(_ACTION_TARGETS),
+                            "example": (
+                                "python -m llm_loop.runtime.service_control update "
+                                f"--code-root {args.code_root} "
+                                f"--runtime-root {args.runtime_root} --target web"
+                            ),
+                            "detail": (
+                                "code_root basename 无法按 token 精确匹配唯一推导 "
+                                "restart_target（需恰好一个服务名 token；无服务名或"
+                                "多服务歧义均不推导），请显式指定 --target；"
+                                "本次未产生任何 publish/CAS 写入"
+                            ),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 2
+            restart_target = derivation.target
         if args.expected_generation is None:
             current = store.read()
             expected_generation = current.generation if current is not None else 0
@@ -4436,20 +4460,21 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 8
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "action_id": action.action_id,
-                    "target": restart_target,
-                    "generation": deployment.generation,
-                    "git_head": deployment.git_head,
-                    "origin": "update",
-                },
-                ensure_ascii=False,
-            ),
-            flush=True,
-        )
+        accepted: dict[str, Any] = {
+            "ok": True,
+            "action_id": action.action_id,
+            "target": restart_target,
+            "generation": deployment.generation,
+            "git_head": deployment.git_head,
+            "origin": "update",
+        }
+        if derivation is not None:
+            # T2：目标由推导得来 → 显式标注推导依据；显式 --target 不标注。
+            accepted["derived_from"] = {
+                "basename": derivation.basename,
+                "matched_token": derivation.matched_token,
+            }
+        print(json.dumps(accepted, ensure_ascii=False), flush=True)
         if args.wait:
             # 调试语义同 restart：内联 worker；显式提示最坏 wall time。
             print(

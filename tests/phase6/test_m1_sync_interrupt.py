@@ -172,9 +172,22 @@ def test_s4_multiple_interjections_all_consumed(build_test_engine):
         queue_ids.append(qid)
     final = _wait_run_done(q, timeout=30)
     assert final.get("type") == "done"
-    msgs2 = fake.calls[1]["messages"]
-    joined = "\n".join(str(m.get("content", "")) for m in msgs2)
-    assert INTERJECT_TEXT in joined and "第二条插话内容-请并入" in joined, joined
+    # Two separately accepted interjections can straddle model-call boundaries:
+    # the first signal may wake the worker before the second HTTP request ends.
+    # Require that both actually reach a model decision in this run, rather than
+    # requiring both to appear in the same (second) provider request.
+    projected = [
+        "\n".join(str(m.get("content", "")) for m in call["messages"])
+        for call in fake.calls[1:]
+    ]
+    receipts = [_hq_item(_hq_of(client, engine), sid, qid) for qid in queue_ids]
+    assert all(item and item.get("status") == "interject_received" for item in receipts), (
+        receipts, projected
+    )
+    joined = "\n".join(projected)
+    assert INTERJECT_TEXT in joined and "第二条插话内容-请并入" in joined, (
+        receipts, projected
+    )
 
 
 def test_s5_worker_exception_propagates(build_test_engine):

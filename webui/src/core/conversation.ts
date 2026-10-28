@@ -146,6 +146,8 @@ function detachSubscriptionsForSession(nextSessionId: string | null): void {
   if (resumeAbort && resumeSessionId !== nextSessionId) abortResumeSubscription();
 }
 
+const deferredWithdrawals = new Map<string, ComposerPrefill>();
+
 let observedSessionId = sessionStore.getState().currentSessionId;
 sessionStore.subscribe(() => {
   const nextSessionId = sessionStore.getState().currentSessionId;
@@ -175,6 +177,7 @@ sessionStore.subscribe(() => {
   if (!foregroundFollows && !resumeFollows) {
     conversationStore.setState({
       messages: [],
+      composerPrefill: nextSessionId ? deferredWithdrawals.get(nextSessionId) ?? null : null,
       hasMoreHistory: false,
       loadedHistoryCount: 0,
       queueItems: [],
@@ -185,6 +188,23 @@ sessionStore.subscribe(() => {
       streamStartedAt: null,
       backgroundRunning: false,
     });
+    if (nextSessionId) deferredWithdrawals.delete(nextSessionId);
+  } else if (nextSessionId) {
+    // 视图保留（前台 run 跟随 / resume 接管）：store 未重建，把撤回草稿并入现有 prefill；
+    // 合并而非覆盖，避免吞掉尚未被 Composer 消费的撤回内容。
+    const deferred = deferredWithdrawals.get(nextSessionId);
+    if (deferred) {
+      const prev = conversationStore.getState().composerPrefill;
+      conversationStore.setState({
+        composerPrefill: prev
+          ? {
+              text: [prev.text, deferred.text].filter(Boolean).join("\n"),
+              attachments: [...prev.attachments, ...deferred.attachments],
+            }
+          : deferred,
+      });
+      deferredWithdrawals.delete(nextSessionId);
+    }
   }
   if (!foregroundFollows && !resumeFollows && st.activeRunGeneration !== null) {
     conversationStore.setState({ activeRunGeneration: null });
@@ -1002,12 +1022,16 @@ export async function withdrawQueueTurn(
   if (!sessionId) return { ok: false, detail: "当前没有可操作的会话" };
   const result = await cancelQueueItem(sessionId, queueId);
   if (result.ok && result.item) {
-    conversationStore.setState({
-      composerPrefill: {
-        text: result.item.message || "",
-        attachments: result.item.attachment_facts ?? [],
-      },
-    });
+    const prefill = { text: result.item.message || "", attachments: result.item.attachment_facts ?? [] };
+    if (sessionStore.getState().currentSessionId === sessionId) {
+      conversationStore.setState({ composerPrefill: prefill });
+    } else {
+      const prior = deferredWithdrawals.get(sessionId);
+      deferredWithdrawals.set(sessionId, prior ? {
+        text: [prior.text, prefill.text].filter(Boolean).join("\n"),
+        attachments: [...prior.attachments, ...prefill.attachments],
+      } : prefill);
+    }
   }
   await refreshQueue(sessionId);
   return { ok: result.ok, detail: result.detail };

@@ -1,0 +1,51 @@
+# T3(2026-10-27): Release 机械转正 workflow —— 替代“人工点 publish”。
+#
+# 触发：workflow_dispatch(tag)。判据（scripts/release_finalize.py finalize）全部满足才
+# gh release edit --draft=false；任一缺项则保持 draft、非零退出、绝不删改 Release 资产。
+# 可在同一 tag 上幂等重放（已 published 直接成功返回，零写操作）。
+#
+# macOS 签名机标准流程（本机产出 → 可重试上传 → 状态收口）：
+#   1) gh release upload <tag> LFL-<ver>-macos-arm64*.pkg --clobber   # 上传可重试
+#   2) python3 scripts/release_finalize.py manifest --tag <tag>       # 按实际资产重生成 manifest 并回传
+#   3) 派发本 workflow（或本机直接 finalize）；失败按输出的缺项清单修复后重放即可
+#
+# 单 writer：与 release.yml 共用 release-<tag> 串行组（release.yml 侧 group 表达式为
+# release-${{ recovery_tag || ref_name }}，同一 tag 下求值相同），cancel-in-progress: false
+# （发版只串行、绝不取消；两 workflow 对同一 tag 的写动作互斥）。组名刻意不含 "refs/"，
+# 与 release.yml 的 group 逐字对齐——否则 GitHub 视为两个组，互斥只是名义上的。
+name: Finalize Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要转正的 Release tag（如 v0.6.38）"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: 机械判据转正（全平台 ready + manifest sha256 逐一实测）
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: finalize（不满足判据 → 保持 draft 且非零退出）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/release_finalize.py finalize \
+            --tag "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY"

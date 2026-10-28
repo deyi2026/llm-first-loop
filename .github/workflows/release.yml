@@ -1,5 +1,7 @@
 # GitHub Release 唯一写入口（B11 发布节奏制度化）
-# tag v* 推送时: ① 先跑门禁（pytest/ruff/pyright）确认发版基线 ② 生成与该 tag 同名的 Release 草稿，人工确认后发布。
+# tag v* 推送时: ① 先跑门禁（pytest/ruff/pyright）确认发版基线 ② 生成与该 tag 同名的 Release 草稿并上传平台状态 manifest（draft-first：draft 是默认且持久的中间态）。
+# 转正（draft→published）不再由人工点 publish，改由 finalize-release.yml（scripts/release_finalize.py）按机械判据触发：
+# 全部 required 平台 ready + manifest 逐资产 sha256 与 Release 实测一致 + 无未申报资产；任一缺项保持 draft 且非零退出。
 # 重要：仓库不得再启用第二个 Draft Release writer。Release Drafter 曾在多个 draft 并存时选中 v0.6.12 后按 NEXT_PATCH_VERSION 将其改写为 v0.6.10；
 # 因此 tag-based release.yml 是 Release 对象的 single writer，发布说明由 GitHub generate_release_notes + CHANGELOG 提供。
 # remote 命名陷阱（2026-09-12 收口记录）：本镜像工作区里 `origin` = llm-first-loop-legacy（旧仓库），正式仓库是 `lfl`（github.com/deyi2026/llm-first-loop）。
@@ -10,6 +12,22 @@ on:
   push:
     tags:
       - 'v*'
+  # One-time recovery of the immutable 0.6.37 tag in this *same* single writer.
+  # The dispatch branch supplies workflow definitions; package sources are
+  # checked out from the pinned tag, never from current main.
+  workflow_dispatch:
+    inputs:
+      recovery_tag:
+        description: "Immutable release recovery (only v0.6.37)"
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -18,6 +36,7 @@ jobs:
   gate:
     name: 发版门禁复核（零回归纪律）
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     steps:
       # Full history: the gate suite includes pinned-commit contract tests
       # (peer scorecard, e.g. 832b4dfaa) that need ancestor commit objects
@@ -26,6 +45,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref }}
+      - name: 不可变 v0.6.37 恢复身份（仅手动入口）
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          test "${RELEASE_TAG}" = "v0.6.37"
+          test "$(git rev-parse HEAD)" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+          test "$(git rev-parse refs/tags/v0.6.37)" = "025eb7d1b81b5959662ec6158f1b9ebc939466c2"
+          test "$(git rev-parse 'refs/tags/v0.6.37^{commit}')" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -35,7 +63,11 @@ jobs:
       - name: tag 与包版本一致性
         run: |
           PACKAGE_VERSION="$(uv run --no-sync python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          test "v${PACKAGE_VERSION}" = "${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            test "v${PACKAGE_VERSION}" = "${RELEASE_TAG}"
+          else
+            test "v${PACKAGE_VERSION}" = "${GITHUB_REF_NAME}"
+          fi
       - name: ruff
         run: uv run --no-sync python scripts/check_static_diagnostics.py --tool ruff
       - name: pyright
@@ -49,10 +81,20 @@ jobs:
     name: 生成 Release 草稿
     needs: gate
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || (github.ref == 'refs/heads/main' && inputs.recovery_tag == 'v0.6.37') }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref }}
+      - name: 不可变 v0.6.37 恢复身份（仅手动入口）
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          test "${RELEASE_TAG}" = "v0.6.37"
+          test "$(git rev-parse HEAD)" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
+          test "$(git rev-parse refs/tags/v0.6.37)" = "025eb7d1b81b5959662ec6158f1b9ebc939466c2"
+          test "$(git rev-parse 'refs/tags/v0.6.37^{commit}')" = "8c8bb9971e1e409b1360f92837e7fe432d9e39ba"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -70,18 +112,43 @@ jobs:
       - name: 将 Linux 用户级安装/卸载脚本纳入发行工件
         run: cp scripts/install_linux.sh scripts/uninstall_linux.sh dist/
       - name: 独立安装与本地 Web 验收（禁止模型调用）
-        run: python scripts/verify_install_distribution.py --wheel dist/*.whl --report dist/installation-smoke.json
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            # Only replace the *test harness*. Wheel, sdist, installer and Web
+            # resources remain byte-for-byte built from the immutable tag.
+            # The harness is from independently reviewed/R9/CI-qualified PR #9.
+            git cat-file -e 'd759c1b702aa9953b3dc9d10de091f29a931153a^{commit}'
+            git show 'd759c1b702aa9953b3dc9d10de091f29a931153a:scripts/verify_install_distribution.py' > "${RUNNER_TEMP}/verify_install_distribution_recovery.py"
+            echo "fb00b6c1fa83dd4d13041b497ee1403586a7f016e1d69f2340ff9f502945a1f9  ${RUNNER_TEMP}/verify_install_distribution_recovery.py" | sha256sum -c -
+            python "${RUNNER_TEMP}/verify_install_distribution_recovery.py" --wheel dist/*.whl --report dist/installation-smoke.json
+            python -c 'import json,pathlib; p=pathlib.Path("dist/installation-smoke.json"); d=json.loads(p.read_text()); assert d["ok"] is True; d["release_recovery_provenance"]={"tag": "v0.6.37", "tag_object": "025eb7d1b81b5959662ec6158f1b9ebc939466c2", "tag_commit": "8c8bb9971e1e409b1360f92837e7fe432d9e39ba", "verifier_commit": "d759c1b702aa9953b3dc9d10de091f29a931153a", "verifier_sha256": "fb00b6c1fa83dd4d13041b497ee1403586a7f016e1d69f2340ff9f502945a1f9", "security_policy_modified": False}; p.write_text(json.dumps(d,sort_keys=True,ensure_ascii=False,indent=2)+"\n")'
+          else
+            python scripts/verify_install_distribution.py --wheel dist/*.whl --report dist/installation-smoke.json
+          fi
       - name: Linux 安装器真实 wheel 安装冒烟（隔离 HOME，不触碰用户数据）
         run: python scripts/verify_linux_installer.py --wheel dist/*.whl --report dist/linux-installer-smoke.json
       - name: 分发成品校验和
         run: cd dist && sha256sum * > SHA256SUMS && sha256sum --check SHA256SUMS
-      - name: 生成 Release（草稿, 人工确认发布）
+      - name: 生成平台工件 manifest 与 draft 正文状态块（draft-first）
+        # manifest 是平台状态与逐资产 sha256 的权威记录（上传前本地实测）；
+        # macOS .pkg 由签名机上传后经 `manifest --tag` 按实际资产重生成回传。
+        env:
+          RELEASE_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python scripts/release_finalize.py manifest \
+            --from-dir dist \
+            --tag "$RELEASE_TAG" \
+            --commit-sha "$RELEASE_COMMIT_SHA" \
+            --out dist/release-artifacts-manifest.json \
+            --body-out dist/release-body-status.md
+      - name: 生成 Release（draft 持久中间态；转正由 finalize-release.yml 机械判据触发）
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref_name }}
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_tag || github.ref_name }}
           files: |
             dist/llm_first_loop-*.whl
             dist/llm_first_loop-*.tar.gz
@@ -90,3 +157,14 @@ jobs:
             dist/installation-smoke.json
             dist/linux-installer-smoke.json
             dist/SHA256SUMS
+            dist/release-artifacts-manifest.json
+      - name: 机器可读平台状态块写入 Release 正文（幂等置顶）
+        # 状态块由 scripts/release_finalize.py 维护（HTML 注释包裹 fenced JSON），
+        # finalize 转正成功时原位改写为 published；非全绿正文不得含 latest 承诺。
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/release_finalize.py body \
+            --tag "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --block-file dist/release-body-status.md

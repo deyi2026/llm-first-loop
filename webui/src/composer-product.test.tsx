@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Composer } from "./components/conversation/Composer";
 import { MODEL_CATALOG_CHANGED_EVENT } from "./core/chat";
 import { conversationStore } from "./core/conversation";
@@ -521,5 +521,54 @@ describe("product composer", () => {
     fireEvent.click(screen.getByTestId("reasoning-button"));
     if (!screen.queryByTestId("reasoning-popover")) fireEvent.click(screen.getByTestId("reasoning-button"));
     expect(within(screen.getByTestId("reasoning-popover")).getByText("关闭")).toBeInTheDocument();
+  });
+});
+
+
+describe("draft ownership and safe queue keyboard", () => {
+  it("switches between saved and empty session drafts without leaking text", async () => {
+    vi.stubGlobal("fetch", baseFetch());
+    localStorage.setItem("lfl-draft-s1", "first saved");
+    render(<Composer />);
+    const input = screen.getByTestId("composer-input");
+    await waitFor(() => expect(input).toHaveValue("first saved"));
+    act(() => sessionStore.setCurrentSession("s2"));
+    await waitFor(() => expect(input).toHaveValue(""));
+    fireEvent.change(input, { target: { value: "second draft" } });
+    act(() => sessionStore.setCurrentSession("s1"));
+    await waitFor(() => expect(input).toHaveValue("first saved"));
+    expect(localStorage.getItem("lfl-draft-s2")).toBe("second draft");
+  });
+
+  it("does not insert queued messages on an empty Ctrl+Enter", async () => {
+    const fetchMock = baseFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    conversationStore.setState({ streaming: true, queueItems: [{
+      queue_id: "q1", session_id: "s1", message: "keep queued", attachments: [],
+      attachment_facts: [], model: null, reasoning_effort: null, reasoning_mode: "auto",
+      status: "queued", created_at: 1,
+    }] });
+    render(<Composer />);
+    fireEvent.keyDown(screen.getByTestId("composer-input"), { key: "Enter", ctrlKey: true });
+    await screen.findByText(/没有可排队的内容/);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/queue/interject"))).toBe(false);
+  });
+
+  it("preserves new typing when an earlier enqueue fails", async () => {
+    let finish!: (response: Response) => void;
+    vi.stubGlobal("fetch", baseFetch((url, init) => {
+      if (url.endsWith("/api/v1/chat/queue") && init?.method === "POST")
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      return undefined;
+    }));
+    conversationStore.setState({ streaming: true });
+    render(<Composer />);
+    const input = screen.getByTestId("composer-input");
+    fireEvent.change(input, { target: { value: "old draft" } });
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(finish).toBeDefined());
+    fireEvent.change(input, { target: { value: "new draft" } });
+    await act(async () => finish(new Response(JSON.stringify({ detail: "failed" }), { status: 500 })));
+    await waitFor(() => expect(input).toHaveValue("new draft\nold draft"));
   });
 });

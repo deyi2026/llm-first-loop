@@ -15,10 +15,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from llm_loop.tools.safety import CatastrophicGuard, is_readonly_command
-from tests import env_channel
 
 GUARD = CatastrophicGuard()
 
@@ -99,12 +96,14 @@ def test_python_c_harmless_allowed():
 
 # ── find 删除载荷（EVO-20260923-c58a0bb1：按 find 起点语义判定——/tmp 等安全起点放行，
 #    /、/etc 等灾难级起点仍拦，见 test_safety.py EVO 回归组）──
-@pytest.mark.skipif(
-    env_channel.nested_sandbox_exec(),
-    reason="环境受限：嵌套 sandbox-exec 通道下 find /tmp 安全起点判定依赖真实 fs 语义受限【RED-04】",
-)
 def test_find_delete_safe_startpoint_allowed():
-    assert not _blocked("find /tmp -name '*.log' -delete")
+    # cwd must be fixed: a previous test may chdir into /tmp, in which case
+    # deleting its ancestor /tmp is correctly blocked by CatastrophicGuard.
+    safe = GUARD.guard("execute_command", {"command": "find /tmp -name '*.log' -delete"}, workdir="/")
+    assert safe is None or not safe.blocked
+    # Keep the catastrophic startpoint rejection active.
+    dangerous = GUARD.guard("execute_command", {"command": "find /etc -name '*.log' -delete"}, workdir="/")
+    assert dangerous is not None and dangerous.blocked
 
 
 def test_find_exec_rm_blocked():

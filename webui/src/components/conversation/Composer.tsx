@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zh, queueZh } from "../../i18n/zh";
-import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn, steerAllQueued } from "../../core/conversation";
+import { sendMessage, stopStreaming, useConversation, conversationStore, enqueueQueueTurn } from "../../core/conversation";
 import { MODEL_CATALOG_CHANGED_EVENT, fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
 import { sessionStore, useCurrentSessionId } from "../../core/stores";
 import { useCapabilities } from "../../core/capabilities";
@@ -194,18 +194,27 @@ export function Composer() {
   );
 
   // 对齐 DSH：刷新/切换会话时输入草稿保留不丢失（按会话存 localStorage）
-  const draftKey = () =>
-    `lfl-draft-${sessionStore.getState().currentSessionId ?? "new"}`;
+  const draftKey = `lfl-draft-${currentSessionId || "new"}`;
+  const restoringDraft = useRef(false);
+  const attachmentDrafts = useRef(new Map<string, ComposerAttachment[]>());
+  const attachmentOwner = useRef(draftKey);
+  const latestAttachments = useRef(attachments);
+  latestAttachments.current = attachments;
   useEffect(() => {
-    // 会话就绪/切换 → 恢复对应草稿
-    const saved = localStorage.getItem(draftKey());
-    if (saved) setText(saved);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionStore.getState().currentSessionId]);
+    restoringDraft.current = true;
+    setText(localStorage.getItem(draftKey) ?? "");
+    attachmentDrafts.current.set(attachmentOwner.current, latestAttachments.current);
+    attachmentOwner.current = draftKey;
+    setAttachments(attachmentDrafts.current.get(draftKey) ?? []);
+    setCmdOpen(false);
+  }, [draftKey]);
   useEffect(() => {
-    // 输入变化 → 实时落草稿（空串=清草稿）
-    localStorage.setItem(draftKey(), text);
-  }, [text]);
+    if (restoringDraft.current) {
+      restoringDraft.current = false;
+      return;
+    }
+    localStorage.setItem(draftKey, text);
+  }, [draftKey, text]);
 
   useEffect(() => {
     const prefill = conv.composerPrefill;
@@ -312,22 +321,13 @@ export function Composer() {
           return;
         }
         if (!trimmed && !hasSendable) {
-          // 空草稿 + 运行中 + 有排队项 → 全部插话（对齐 DSH steerQueue）；
-          // 无排队项才是“没有可排队的内容”。
-          const queued = conversationStore
-            .getState()
-            .queueItems.some((it) => it.status === "queued");
-          if (queued) {
-            void steerAllQueued().then((r) => {
-              flashHint(r.ok ? queueZh.queueSteerAllDone(r.steered) : (r.detail ?? "插话失败，请重试"));
-            });
-          } else {
-            flashHint(queueZh.queueSteerAllEmpty);
-          }
+          flashHint("没有可排队的内容。要插入当前推理，请明确点击队列中的「立即插入」；插入后无法撤回。");
           return;
         }
         // 乐观清空（与 doSend 一致：让用户确认"已接受"）；失败再回填
-        const snapshotText = trimmed;
+        const snapshotText = text;
+        const snapshotSession = currentSessionId;
+        const snapshotDraftKey = draftKey;
         const snapshotAttachments = attachments;
         setText("");
         setAttachments([]);
@@ -335,8 +335,18 @@ export function Composer() {
         void enqueueQueueTurn(snapshotText, snapshotAttachments).then((r) => {
           if (!r.ok) {
             flashHint(r.detail ?? "排队失败，请稍后重试");
-            setText(snapshotText);
-            setAttachments(snapshotAttachments);
+            if (sessionStore.getState().currentSessionId !== snapshotSession) {
+              const saved = localStorage.getItem(snapshotDraftKey) || "";
+              localStorage.setItem(snapshotDraftKey, saved ? `${saved}
+${snapshotText}` : snapshotText);
+              attachmentDrafts.current.set(snapshotDraftKey, [
+                ...(attachmentDrafts.current.get(snapshotDraftKey) ?? []), ...snapshotAttachments,
+              ]);
+              return;
+            }
+            setText((current) => current ? `${current}
+${snapshotText}` : snapshotText);
+            setAttachments((current) => [...current, ...snapshotAttachments]);
           }
         });
       } else {
@@ -658,6 +668,28 @@ export function Composer() {
           rows={1}
           data-testid="composer-input"
         />
+        {realtime.enabled && (
+          <div className="v2-composer-voice-panel">
+            <button type="button" className="realtime-voice-close" onClick={() => realtime.disable()} aria-label="关闭语音">× 关闭语音</button>
+              <RealtimeVoiceBar
+                connectionState={realtime.connectionState}
+                micEnabled={realtime.micEnabled}
+                modality={realtime.modality}
+                chainLabel={realtime.chainLabel}
+                playbackState={realtime.playbackState}
+                error={realtime.error}
+                onRetryConnection={() => void realtime.enable()}
+                onRetryPlayback={realtime.retryPlayback}
+                onPress={realtime.press}
+                onRelease={realtime.release}
+                onFallbackText={() => { realtime.disable(); taRef.current?.focus(); }}
+                visual={realtime.visual}
+                onStartShare={() => void realtime.startShare()}
+                onStopShare={() => realtime.stopShare()}
+                onSetVisualKind={(kind) => realtime.setVisualKind(kind)}
+              />
+          </div>
+        )}
         <div className="v2-composer-tools">
           <div className="v2-composer-tools-left">
             {caps.attachments ? (
@@ -670,25 +702,7 @@ export function Composer() {
             <ModelControls catalog={modelCatalog} />
           </div>
           <div className="v2-composer-tools-right">
-            {realtime.enabled ? (
-              <RealtimeVoiceBar
-                connectionState={realtime.connectionState}
-                micEnabled={realtime.micEnabled}
-                modality={realtime.modality}
-                chainLabel={realtime.chainLabel}
-                playbackState={realtime.playbackState}
-                error={realtime.error}
-                onRetryPlayback={realtime.retryPlayback}
-                onRetryConnection={() => void realtime.enable()}
-                onPress={realtime.press}
-                onRelease={realtime.release}
-                onFallbackText={() => taRef.current?.focus()}
-                visual={realtime.visual}
-                onStartShare={() => void realtime.startShare()}
-                onStopShare={() => realtime.stopShare()}
-                onSetVisualKind={(kind) => realtime.setVisualKind(kind)}
-              />
-            ) : (
+            {!realtime.enabled && (
               <button
                 type="button"
                 className="v2-btn"

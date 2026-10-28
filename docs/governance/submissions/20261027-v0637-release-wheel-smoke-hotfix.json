@@ -1,0 +1,39 @@
+{
+  "schema": "lfl.architecture_submission.v0.1",
+  "submission_id": "20261027-v0637-release-wheel-smoke-hotfix",
+  "summary": "v0.6.37 GitHub Release workflow id40418910855: full release gate success, but draft job121913979727 failed because a clean wheel smoke passed a selected-workspace outside all default WorkspaceStore allow roots. Only move fixture under existing LFL_HOME/state allowed root; do not loosen workspace security, modify runtime, retag or publish as part of this hotfix.",
+  "components": [
+    {
+      "component_id": "wheel-distribution-smoke-allowed-root",
+      "paths": [
+        "scripts/verify_install_distribution.py"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "Wheel clean-install/Web UI distribution smoke verification",
+      "disposition": "Selected workspace remains separate from the process working directory and from the wheel, but is placed in isolated root/state/selected-workspace already covered by the runtime default LFL_HOME/root/state allowed root. Use mkdir(parents=True) for a clean install. Do not change WorkspaceStore, environment escape valves, executable product code, model settings or installer contents.",
+      "evidence": [
+        "Real GitHub Release workflow 40418910855 gate succeeded. Draft job 121913979727 raised WorkspaceNotAllowedError for /tmp/lfl-wheel-smoke-*/selected-workspace; the allowed roots included /tmp/lfl-wheel-smoke-*/state but not its sibling.",
+        "Actual clean wheel test after correction: wheel version 0.6.37, isolated fresh virtual environment, resource integrity 345 files/0 failed, Web /health 200 and /ui/v2/ 200, assets_checked=2, requested selected workspace bound=true, provider_calls=0, source_checkout_on_pythonpath=false."
+      ],
+      "verification_level": "Exact independent Reviewer and original complete R9, local clean wheel installation smoke; after approved PR, GitHub Linux CI/A.5 and distinct Release workflow correction disposition required before publishing any existing tag.",
+      "model_evidence_veto_recovery_exit": "Abort if smoke is made to pass by expanding the default allowed roots in production, relaxing workspace validation, using source checkout as installed wheel, or calling a provider. Existing public v0.6.37 Tag must remain immutable until a separately authorized release decision.",
+      "rollback_route": "Revert this one smoke fixture path change on the isolated hotfix branch. Existing v0.6.37 Tag, notarized PKG, and runtime authorization checks remain untouched."
+    },
+    {
+      "component_id": "architecture-submission-manifest",
+      "paths": [
+        "docs/governance/submissions/20261027-v0637-release-wheel-smoke-hotfix.json"
+      ],
+      "control_machinery": false,
+      "owning_subsystem": "GitHub A.5 architecture-submission coverage for one-file release smoke hotfix",
+      "disposition": "List both and only the changed paths in this PR; no new authorization machinery or runtime controls.",
+      "evidence": [
+        "A.5 checks manifest path partition against the exact PR changed-path set; previous v0.6.37 submission represents the earlier completed release PR and is preserved unchanged."
+      ],
+      "verification_level": "Run scripts/check_architecture_submission.py --staged before commit and original A.5 --base main --head hotfix after commit; require actual GitHub A.5 success.",
+      "model_evidence_veto_recovery_exit": "Any change to the changed-path set must update this manifest and trigger independent review; mechanistic coverage PASS does not replace semantic review.",
+      "rollback_route": "Remove only this new manifest along with the isolated wheel smoke fixture change."
+    }
+  ],
+  "declarations": []
+}

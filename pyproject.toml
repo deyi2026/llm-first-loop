@@ -1,6 +1,6 @@
 [project]
 name = "llm-first-loop"
-version = "0.6.36"
+version = "0.6.37"
 description = "LLM-First Core Loop: 消息进 → 理解 → 行动 → 真诚回答 → 记住"
 requires-python = ">=3.13"
 dependencies = [
@@ -18,6 +18,8 @@ dependencies = [
     "rich>=14,<15",
     "onnxruntime>=1.31.0",
     "tokenizers>=0.23.3",
+    "Pillow>=10.0",
+    "python-multipart>=0.0.20",
 ]
 
 [project.scripts]
@@ -29,7 +31,6 @@ dev = [
     "pytest-xdist>=3.6", # R9-WF-02: 全量并行压缩（--dist loadfile；门禁不降级，仅提速）
     "ruff>=0.15",
     "pyright>=1.1.390",
-    "Pillow>=10.0",
     "reportlab>=4.0",
 ]
 

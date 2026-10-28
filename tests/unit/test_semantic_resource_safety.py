@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 
 from llm_loop.memory.archive import ArchiveStore
@@ -66,6 +67,31 @@ class _FakeAPI:
             time.sleep(min(self.rank_batch_delay, timeout_s + 0.02))
             if self.rank_batch_delay >= timeout_s:
                 return [None] * len(texts)
+        return [[1.0, 0.0] for _ in texts]
+
+
+class _GatedAPI(_FakeAPI):
+    """Blocks background embed_batch on a test-owned gate.
+
+    Preserves _FakeAPI accounting (batch_calls/batch_inputs) so consumers
+    observe the same fields; the gate makes the background batch observable
+    without relying on wall-clock timing thresholds.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.returned = False
+
+    def embed_batch(self, texts: list[str]):
+        self.batch_calls += 1
+        self.batch_inputs.extend(texts)
+        self.entered.set()
+        assert self.release.wait(5.0), (
+            "background embed_batch timed out waiting for the test gate"
+        )
+        self.returned = True
         return [[1.0, 0.0] for _ in texts]
 
 
@@ -296,7 +322,7 @@ def test_startup_warm_caches_session_memory_without_granting_cross_session_visib
 
 def test_archive_write_vectors_in_background_and_first_query_is_hot(tmp_path):
     archive = ArchiveStore(tmp_path / "archive")
-    emb = _FakeAPI(prewarm_delay=0.05)
+    emb = _GatedAPI()
     retriever = SemanticRetriever(
         emb,
         timeout_s=1.0,
@@ -304,7 +330,6 @@ def test_archive_write_vectors_in_background_and_first_query_is_hot(tmp_path):
     )
     archive.add_post_save_hook(retriever.schedule_archive_entry)
 
-    started = time.monotonic()
     target = archive.archive(
         "owner-session",
         role="user",
@@ -313,8 +338,21 @@ def test_archive_write_vectors_in_background_and_first_query_is_hot(tmp_path):
         summary_override="new meaning archive target",
         key_facts_override=["new meaning"],
     )
-    save_ms = (time.monotonic() - started) * 1000
-    assert save_ms < 30
+
+    # Structural proof that archive save does not block on background
+    # vectorization: the background batch has started, has NOT finished by
+    # the time archive() returned, and the retriever still reports it as
+    # in flight. No wall-clock latency threshold is involved.
+    assert emb.entered.wait(2.0), "background vectorization task never started"
+    assert not emb.returned, (
+        "save path waited for background vectorization "
+        "(embed_batch completed before archive() returned)"
+    )
+    assert (
+        retriever._background_diag_snapshot()["background_prewarm_inflight"] is True
+    ), "background prewarm not in flight after archive save returned"
+
+    emb.release.set()
     _wait_background(retriever)
 
     owner = retriever.search(

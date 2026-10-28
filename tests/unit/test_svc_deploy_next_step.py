@@ -157,7 +157,7 @@ def _snapshot(path: Path) -> dict[str, bytes]:
 
 def test_binding_problem_kind_enum_is_closed_and_exactly_eight() -> None:
     assert len(BindingProblemKind.ALL) == 8
-    assert BindingProblemKind.ALL == frozenset(
+    assert frozenset(
         {
             "code_root_mismatch",
             "runtime_root_mismatch",
@@ -168,7 +168,7 @@ def test_binding_problem_kind_enum_is_closed_and_exactly_eight() -> None:
             "webui_artifact_unavailable",
             "webui_artifact_mismatch",
         }
-    )
+    ) == BindingProblemKind.ALL
 
 
 def test_mapping_table_covers_every_kind_and_cas_conflict() -> None:
@@ -348,7 +348,7 @@ def test_encode_decode_roundtrip_preserves_all_four_keys() -> None:
     )
     decoded = decode_next_steps(encode_next_steps(steps))
     assert len(decoded) == len(steps)
-    for item, step in zip(decoded, steps):
+    for item, step in zip(decoded, steps, strict=True):
         assert item == {
             "problem_kind": step.problem_kind,
             "exit_action": step.exit_action,
@@ -706,11 +706,25 @@ def test_structured_source_flags_dirty_tracked_worktree(tmp_path: Path) -> None:
         ("feishu-code", "feishu"),
         ("mirror-web", "web"),
         ("mirror-learning", "learning"),
-        ("shared-root", "all"),
     ],
 )
 def test_restart_target_default_derivation(name: str, expected: str) -> None:
-    assert sc._derive_restart_target_from_code_root(f"/srv/{name}") == expected
+    """T2（2026-10-27）：token 精确匹配推导——单服务名 token 命中即推导。"""
+    derivation = sc.derive_restart_target(f"/srv/{name}")
+    assert derivation.target == expected
+    assert derivation.basename == name
+    assert derivation.matched_token == expected
+
+
+@pytest.mark.parametrize("name", ["shared-root", "web-and-feishu"])
+def test_restart_target_derivation_no_silent_all_fallback(name: str) -> None:
+    """T2 行为变更（有意为之）：旧“子串匹配→否则 all”收紧为 token 精确。
+
+    shared-root（无服务名 token）与 web-and-feishu（多服务歧义）不再推导出
+    all，而是 target=None——由 update 调用面（工具面/runtime CLI）以
+    NEEDS_TARGET 显式拒绝并保证零 publish/CAS 副作用，禁止静默兜底 all。
+    """
+    assert sc.derive_restart_target(f"/srv/{name}").target is None
 
 
 # --------------------------------------------------------------------------

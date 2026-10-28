@@ -67,3 +67,21 @@ def test_verify_contract_rejects_invalid_verdict_and_missing_evidence_together(t
     assert "missing=evidence" in result.content
     assert "verdict='done'" in result.content
     assert spawned == []
+
+
+def test_update_needs_target_rejects_before_any_store_write(tmp_path) -> None:
+    """T2（2026-10-27）: basename 无服务名 token → NEEDS_TARGET 校验阶段拒绝，
+    store 零写入（无 publish/CAS、无 action 落盘、无 worker spawn）。"""
+    tool, store, spawned = _tool(tmp_path)
+    code = tmp_path / "shared-root"
+    code.mkdir()
+
+    result = tool.execute(action="update", code_root=str(code), reason="上线")
+
+    assert result.status == ToolResultStatus.FAILURE
+    assert "NEEDS_TARGET" in result.content
+    assert "web/feishu/learning/all" in result.content
+    assert "service_control(action=update" in result.content  # 一条示例命令
+    assert spawned == []
+    assert store.read() is None
+    assert list(store.actions_dir.glob("*.json")) == []

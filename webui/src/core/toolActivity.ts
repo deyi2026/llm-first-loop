@@ -147,6 +147,8 @@ export interface ProjectedMessage {
  * UI-only projection: pair an assistant's persisted tool declarations with exact
  * immediately-following tool receipts. The durable message sequence is never changed.
  */
+const projectionCache = new WeakMap<ChatMessage, { receipts: ChatMessage[]; projected: ChatMessage }>();
+
 export function projectToolActivityMessages(messages: ChatMessage[]): ProjectedMessage[] {
   const consumed = new Set<number>();
   const projected: ProjectedMessage[] = [];
@@ -159,6 +161,19 @@ export function projectToolActivityMessages(messages: ChatMessage[]): ProjectedM
       continue;
     }
 
+    const following: ChatMessage[] = [];
+    for (let j = i + 1; j < messages.length && messages[j].role === "tool"; j += 1) {
+      following.push(messages[j]);
+    }
+    const cached = projectionCache.get(msg);
+    if (cached && cached.receipts.length === following.length &&
+        following.every((receipt, index) => cached.receipts[index] === receipt)) {
+      following.forEach((receipt, index) => {
+        if (receipt.toolCallId && msg.toolCalls!.some((call) => call.id === receipt.toolCallId)) consumed.add(i + 1 + index);
+      });
+      projected.push({ msg: cached.projected, originalIndex: i });
+      continue;
+    }
     const receipts = new Map<string, { msg: ChatMessage; index: number }>();
     for (let j = i + 1; j < messages.length && messages[j].role === "tool"; j += 1) {
       const receipt = messages[j];
@@ -188,10 +203,9 @@ export function projectToolActivityMessages(messages: ChatMessage[]): ProjectedM
       };
     });
 
-    projected.push({
-      msg: { ...msg, toolActivities: activities },
-      originalIndex: i,
-    });
+    const projectedMessage = { ...msg, toolActivities: activities };
+    projectionCache.set(msg, { receipts: following, projected: projectedMessage });
+    projected.push({ msg: projectedMessage, originalIndex: i });
   }
 
   return projected;

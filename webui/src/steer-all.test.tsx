@@ -1,12 +1,12 @@
 // 全部插话（steer-all，对齐 DSH steerQueue）产品契约：
-// - 空草稿 + 流式生成中 + 有 queued 项 → Cmd/Ctrl+Enter FIFO 逐条 interject
+// - 显式 API 保留 FIFO 逐条 interject；空草稿快捷键不再触发不可撤回插话
 // - placeholder 切换为“插话发送全部排队消息”提示
 // - 任一条 409 即停，剩余项保持 queued（不重复、不丢弃），detail 如实显示
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./components/conversation/Composer";
-import { conversationStore as conv } from "./core/conversation";
+import { conversationStore as conv, steerAllQueued } from "./core/conversation";
 import { sessionStore } from "./core/stores";
 import type { QueueItem } from "./core/types";
 
@@ -85,16 +85,14 @@ describe("Cmd/Ctrl+Enter 全部插话", () => {
     render(<Composer />);
     expect(screen.getByTestId("composer-input")).toHaveAttribute(
       "placeholder",
-      "Cmd/Ctrl+Enter 插话发送全部排队消息"
+      "输入下一条消息，Cmd/Ctrl+Enter 排队（可撤回）"
     );
-    pressCtrlEnter();
+    const result = await steerAllQueued();
     await waitFor(() => expect(calls).toEqual([
       "q1:gen-steer-all-1",
       "q2:gen-steer-all-1",
     ]));
-    await waitFor(() =>
-      expect(screen.getByText("已把 2 条排队消息交给当前任务")).toBeInTheDocument()
-    );
+    expect(result).toMatchObject({ ok: true, steered: 2 });
   });
 
   it("中途 409 即停：只发已确认条数并显示后端 detail", async () => {
@@ -117,16 +115,12 @@ describe("Cmd/Ctrl+Enter 全部插话", () => {
       );
     });
     render(<Composer />);
-    pressCtrlEnter();
+    const result = await steerAllQueued();
     await waitFor(() => expect(calls).toEqual([
       "q1:gen-steer-all-1",
       "q2:gen-steer-all-1",
     ]));
-    await waitFor(() =>
-      expect(
-        screen.getByText("当前会话没有可接收插话的运行任务；消息仍保留在排队中")
-      ).toBeInTheDocument()
-    );
+    expect(result).toMatchObject({ ok: false, steered: 1, detail: "当前会话没有可接收插话的运行任务；消息仍保留在排队中" });
   });
 
   it("无排队项时空草稿 Cmd+Enter 不再走排队失败文案", async () => {
@@ -139,7 +133,7 @@ describe("Cmd/Ctrl+Enter 全部插话", () => {
     render(<Composer />);
     pressCtrlEnter();
     await waitFor(() =>
-      expect(screen.getByText("没有可插话的排队消息。")).toBeInTheDocument()
+      expect(screen.getByText(/没有可排队的内容/)).toBeInTheDocument()
     );
     expect(calls).toEqual([]);
   });
