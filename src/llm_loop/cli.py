@@ -32,7 +32,7 @@ from llm_loop.core.session import (
     SessionMutationBusyError,
     SessionStore,
 )
-from llm_loop.runtime.installation import bundle_root
+from llm_loop.runtime.installation import LITE_RULES_MIN_VERSION, bundle_root, version_at_least
 from llm_loop.runtime.resolver import apply_to_environ, legacy_env_snapshot
 from llm_loop.terminal.approval import ApprovalBridge
 from llm_loop.terminal.execution import run_turn
@@ -1182,6 +1182,12 @@ def check_install() -> dict:
             raise ValueError("Bundle schema/version does not match installed distribution")
         files = manifest["files"]
         required = {"docs/ai_rules.md", "webui/dist/index.html"}
+        lite_required = isinstance(files, dict) and (
+            "docs/ai_rules.lite.md" in files
+            or version_at_least(str(manifest.get("version") or ""), LITE_RULES_MIN_VERSION)
+        )
+        if lite_required:
+            required.add("docs/ai_rules.lite.md")
         if not isinstance(files, dict) or not required.issubset(files):
             raise ValueError("Bundle is missing required resources")
         failed = []
@@ -1189,8 +1195,12 @@ def check_install() -> dict:
             path = (root / name).resolve()
             if not path.is_relative_to(root) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
                 failed.append(name)
+        warnings = [] if lite_required else [
+            f"docs/ai_rules.lite.md 未随包（manifest 无 lite 条目且版本早于 {LITE_RULES_MIN_VERSION}）："
+            "pre-fix 存留 release 降级告警，不阻断升级/回滚硬门",
+        ]
         return {"ok": not failed, "mode": "installed", "version": manifest["version"],
-                "checked_files": len(files), "failed_files": failed}
+                "checked_files": len(files), "failed_files": failed, "warnings": warnings}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return {"ok": False, "mode": "installed", "error": str(exc)}
 
