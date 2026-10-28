@@ -8,5 +8,5 @@
 [12:18:49] C negative: target 2ED182FD7D250B4A4C4D3E089DB770F0
 127.0.0.1 - - [28/Oct/2026 12:18:49] "GET /plain.html?run=1793161129 HTTP/1.1" 200 -
 [12:18:49] C negative flow PASS
-[12:18:49] evidence -> /Users/yyj/lfl-workspace/.worktrees/lfl-dgui/work/lfl-b5-dialog-fix/out/live_result.json
+[12:18:49] evidence -> $CODE_ROOT/work/lfl-b5-dialog-fix/out/live_result.json
 exit=0

@@ -65,18 +65,66 @@ harness：`work/lfl-b5-dialog-fix/live_b5_fix_check.py`（navigate 用产品 `br
 
 plain 页 `do=dialog accept`：action_receipt `status=failed`、`retry.reason="dialog_not_open"`（公共错误码不变）→ 同 target 随后 snapshot 正常（13 objects、镜像文本 `t1:none` 未变）、裸 capture 正常、两个 session 均存活——**无 drop、无页面副作用**。
 
-## 5. R5 数据点（本轮不实施，按委派记录）
+## 5. R5：dialog 打开期间的观察/门禁快路径（本轮实施）
 
-- dialog 打开期间 `browser_perceive snapshot`：**20.0s 后抛 `RuntimeError: capture_channel_degraded[mode=timeout]; ... session kept (dialog-capable)`**（实测，flow B）。
-- 冻结页上 `do=dialog` 全链耗时 **40.2s**（= operate grounding 新鲜快照 20s + adapter 前置 capture 20s，两处超时后各自走回退；dispatch 本身毫秒级）。
-- R5 候选（snapshot 在 `_dialog_open` 时短路返回「页面被 dialog 阻塞 + 类型/默认值」）可把上述 20s/40s 压到毫秒级，属行为变更，未实施。
+**规格与实施**（commit `feat(R5)`，另含门禁重构 `refactor(M1 gate)`）：只读探针 `CdpBrowserMutationActuator.dialog_state()`（`download_state()` 同款 fail-open drain，结构 `{schema, open, dialog{type,message≤300,default_prompt,url}}`；message 只回给当前调用、不落盘）→ 三处消费：
+
+| 消费点 | 行为 |
+|---|---|
+| `browser_perceive` snapshot / vision=evidence | capture 前探测：dialog 打开 ⇒ 毫秒级返回 `observation_status=blocked_by_dialog` + `objects=[]` + 无 `version/world_version`（不伪造世界）+ `guidance` 指向 `do=dialog` |
+| `browser_semantic_operation._ground_page` | dialog 打开 ⇒ 直接取 `latest_page_resource_ref()`，不尝试 capture；无既有 world ⇒ 确定性 `dialog_open_no_prior_world`（不伪造） |
+| `BrowserActionAdapter` 前置 | verb=dialog 且探针确认 ⇒ 跳过注定失败的全量 capture，进入既有 light-mode（`probe_page_target()` 仍是机械存在门；失败照旧拒绝） |
+
+**实测收益**（同一台机器、同一冻结页），替换 §5 的旧数据点（20.0s / 40.2s）：
+
+| 场景 | 修复前 | 修复后（实测） |
+|---|---|---|
+| dialog 打开时 `browser_perceive snapshot` | 20.0s 后 `capture_channel_degraded[mode=timeout]` | **55ms** `blocked_by_dialog` |
+| 冻结页 `do=dialog accept` 全链 | 40.2s（grounding 20s + adapter 20s） | **140–150ms**（工具层）／**11.3ms**（actuator dispatch） |
+| `dialog_state()` 探针本身 | — | **51ms**（返回 `type=alert`、message、url 正确） |
+| accept 后页面恢复 | — | 同 target 后续 press_key 正常 ack（冻结解除） |
+
+**边界（实测，别再重复探测）**：
+1. 探针只报「本会话已知状态」。若 dialog 在会话 attach **之前**就已打开，`open=False`，仍回落到原 20s 路径；这是刻意的——新 attach 无法廉价得知：冻结页上 `Page.enable` **3.02s 超时**（未完成），而 `Target.getTargetInfo` / `Page.getNavigationHistory` 虽 25ms 可回，但不携带 dialog 信息。
+2. 会话在 dialog 打开前已 attach 时，`Page.javascriptDialogOpening` 一定送达（实测 params 完整：type/message/url/defaultPrompt），因此 click 触发与页面自弹两条主路径都有 tier-1 覆盖。
+3. 探针异常/未接线 → 一律回落原路径（fail-open），不改变无 dialog 时的行为。
+
 
 ## 6. 未覆盖 / 已知限制
 
 1. `iframe` 内 dialog、`beforeunload`、真实发文站点 confirm、多标签并发 dialog——未测（沿袭判定报告 §7）。
 2. R4（click 改 `Input.dispatchMouseEvent`）未做——对外语义变更，需用户单独裁决。
-3. R5（冻结页 snapshot 短路）未做（§5）。
+3. R5 已实施（§5），但**只覆盖"本会话已知 dialog"**：attach 前已打开的 dialog 仍走 20s 原路径（探针无从廉价得知，见 §5 边界 1）。
 4. 冻结页 grounding 回退用的是「最新持久 world」（B' 用例中是 about:blank 的 world）：light-mode 前置把声明版本与自身比对、actuator 恒定绑定精确 target，语义安全；但这是**跨页面状态**的 grounding，属既定 light-mode 语义的延伸，值得在 M2 文档标注。
 5. harness 的 `resume_state.page_url` 恒空（scope_facts 投影里 `url:null`）——cosmetic，URL 一致性由 `/json/list` wait_ready 保证。
 6. `_dispatch_locked` R3 盲发只试一次、无重试；`No dialog is showing` 之外的 CDP 错误原样透传（不吞）。
 7. 环境注记：live 期间曾出现一次 60s 工具超时杀进程导致 target 泄漏，已手动 `/json/close` 清理；结束时 `/json/list` 无 8799 残留、用户标签未动、Chrome 未重启。
+
+## 7. 本 delta 包含的全部变更（相对生产 main `e10d08ac3`）
+
+审查口径是 `main..HEAD` 的 5 个提交，本文档前 6 节只覆盖 B5/R5 两条主线；其余同批变更在此登记，避免"报告与代码不一致"：
+
+| commit | 内容 | 状态 |
+|---|---|---|
+| `fix(M2/M3): type 上限移出 schema + D4 绑定降级标注 title_relaxed` | `type` 文本上限从 JSON Schema 的 `maxLength` 移到工具描述 + 服务端校验（schema 层不再截断/拒绝模型输入）；桌面 D4 窗口绑定在标题匹配降级时回执显式带 `title_relaxed`（不静默放宽） | 已实现，单测覆盖 |
+| `fix(B5): dialog 生命周期三缺陷修复` | §1–§4 | 已实现 + live 验收 |
+| `feat(R5): dialog 打开时观察与门禁快路径` | §5 | 已实现 + live 验收 |
+| `refactor(M1 gate): 抽出派发前观察与 dialog 派发` | 函数长度回 ratchet（`action.execute` 475→388、`perceive.execute` 377→350、`_dispatch_locked` 148→113、`build_engine` 2154→2151）；唯一行为修正：兜底分支 `before_raw` 未绑定 → 恒 `{}` | 已实现，1196 passed |
+| `merge: 同步生产 main（e10d08ac3）到 R5 分支` | 纯同步合并，无功能变更 | — |
+
+**已知未做**：R4（click 改真实鼠标事件）按用户裁决不做——保留 `this.click()` 对 `display:none`/未布局元素的触发能力，属对外语义取舍，不是遗漏。
+
+## 8. 独立审查（REVISE）响应
+
+首轮 Host 审核结论 `REVISE P0=0 P1=1 P2=5`（`review_tail` 明确 P1 为"报告与代码不一致"）。逐条处置：
+
+| 编号 | 审查意见 | 处置 |
+|---|---|---|
+| **P1** | §5 声明 R5 未实施，但 delta 内已实现 R5；本批还夹带 D4 降级与 schema 变更未登记 | §5 改写为"已实施 + 实测数据 + 边界"；新增 §7 表列全 5 个提交（type 上限/D4、B5、R5、门禁重构、同步合并），审查口径 `main..HEAD` 与文档一一对应 |
+| P2-1 | `_ground_page` 回退 `except Exception` 会吞掉无关异常并落到旧世界 | 收窄为 `except RuntimeError` + `capture_channel_degraded` 文本门；其它异常原样透传。新增负例测试 `test_ground_page_non_capture_failure_propagates_...` |
+| P2-2 | `dialog_state()` 在 `_dispatch_lock` 外 drain，与并发派发交错 | 保持现状并说明：probe 只 drain 本会话已到达事件、不 flush、不发命令；与既有 `download_state()`（perceive 侧已在用）同一模式。争用后果是"读到的状态可能比 dispatch 早一帧"，receipt 不据此断言页面内容，可接受 |
+| P2-3 | dialog 动作未校验枚举 | `_dialog_accept_flag()` 在 actuator 边界只接受 `accept|dismiss`，其它值 `invalid_argument` 且零 CDP 命令（测试覆盖） |
+| P2-4 | 工厂接线未被测试覆盖 | 新增 `test_attach_dialog_probes_wires_both_tools`：断言单点同时挂到 perceive 与 operate，且绑定同一 actuator 方法 |
+| P2-5 | 提交物/证据含绝对路径与失效 scratch 文件名 | 报告与 live 日志的绝对路径已替换为 `$CODE_ROOT/$RUNTIME_ROOT/$SCRATCH`；`.tmp-ci` 门禁 scratch 目录已清理 |
+
+
