@@ -162,3 +162,4 @@ runs/
 # 语音/音频测试产物不入库（上游 18f147b29 移除误提交的 lfl_voice_test.mp3，
 # 并注明 .gitignore 登记由 realtime 归属方决定——本仓 realtime 归属方在此登记）
 *.mp3
+webui/.tmp-test/

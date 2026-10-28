@@ -479,6 +479,32 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       <div className="v2-provider-editor-head">
         <strong>{editor.mode === "create" ? T.addProvider : `${T.edit} · ${editor.providerId}`}</strong>
       </div>
+      {editor.mode === "create" ? (
+        <label className="v2-provider-fields">
+          {T.copyFrom}
+          <select
+            value=""
+            onChange={(event) => {
+              const source = snapshot?.providers.find((item) => item.id === event.target.value);
+              if (!source) return;
+              setEditor({
+                ...editor,
+                draft: {
+                  ...toProviderConfig(source),
+                  id: "",
+                  display_name: `${source.display_name || source.id} 副本`,
+                  default_model: "",
+                },
+              });
+            }}
+          >
+            <option value="">—</option>
+            {(snapshot?.providers ?? []).map((item) => (
+              <option key={item.id} value={item.id}>{item.display_name || item.id}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <div className="v2-provider-fields">
         <label>
           {T.providerId}
