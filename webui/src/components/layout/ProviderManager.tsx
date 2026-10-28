@@ -855,14 +855,15 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                       </div>
                       {model.note ? <p className="v2-provider-footnote">{model.note}</p> : null}
                       <div className="v2-provider-card-actions">
-                        <button type="button" onClick={() => void toggleModel(provider, model)} disabled={readOnly || busy !== ""}>
+                        <button type="button" aria-label={`${T.toggle} ${model.id}`} onClick={() => void toggleModel(provider, model)} disabled={readOnly || busy !== ""}>
                           {model.enabled === false ? T.enabled : T.disabled}
                         </button>
-                        <button type="button" onClick={() => void runTest(provider, model.id)} disabled={busy !== ""}>
+                        <button type="button" aria-label={`${T.testModel} ${model.id}`} onClick={() => void runTest(provider, model.id)} disabled={busy !== ""}>
                           {busy === `test:${key}` ? T.testing : T.testModel}
                         </button>
                         <button
                           type="button"
+                          aria-label={`${T.editModel} ${model.id}`}
                           onClick={() => {
                             setModelForm({ providerId: provider.id, mode: "edit", originalId: model.id, draft: toModelConfig(model) });
                             setDiscovery(null);
@@ -871,7 +872,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                         >
                           {T.editModel}
                         </button>
-                        <button type="button" onClick={() => void removeModel(provider, model)} disabled={readOnly || busy !== ""}>
+                        <button type="button" aria-label={`${T.remove} ${model.id}`} onClick={() => void removeModel(provider, model)} disabled={readOnly || busy !== ""}>
                           {T.remove}
                         </button>
                       </div>
