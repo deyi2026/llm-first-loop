@@ -145,8 +145,12 @@ def provider_admin_replace(
                 )
             # design §7.3：整包替换不得绕过默认模型停用/删除保护（与模型级 PUT/DELETE 同口径）。
             existing = config[provider_id] if isinstance(config[provider_id], dict) else {}
-            prev_models = existing.get("models") if isinstance(existing.get("models"), dict) else {}
-            next_models = raw.get("models") if isinstance(raw.get("models"), dict) else {}
+            # 单次取值再 isinstance 收窄：重复调用 existing.get(...)/raw.get(...) 时
+            # 类型检查器无法把两次调用关联起来，会把结果仍当 Optional 而报成员访问错误。
+            prev_models_raw = existing.get("models")
+            prev_models = prev_models_raw if isinstance(prev_models_raw, dict) else {}
+            next_models_raw = raw.get("models")
+            next_models = next_models_raw if isinstance(next_models_raw, dict) else {}
             for model_id, prev in prev_models.items():
                 prev_enabled = bool(prev.get("enabled", True)) if isinstance(prev, dict) else True
                 nxt = next_models.get(model_id)
