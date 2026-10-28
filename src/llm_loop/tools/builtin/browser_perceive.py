@@ -9,6 +9,7 @@ poll cadence stays runtime-owned. Host/runtime activation is a separate integrat
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -19,7 +20,9 @@ from llm_loop.browser.errors import (
 from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_REF
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.timekeeping import system_local_now
 from llm_loop.tools.builtin.browser_wait import (
+    ABSENT_SETTLE_DEFAULT_MS,
     BrowserWaitObjectStateTool,
     BrowserWaitObjectTextTool,
     BrowserWaitScopeReadyTool,
@@ -37,8 +40,13 @@ class BrowserPerceiveTool:
         "Browser 只读感知：snapshot 读取 host 已绑定当前页面，hydrate 精确水合既有 ref，"
         "diff 比较两张 exact snapshot，wait 只读等待页面 ready/URL 或已观察对象 state/text。"
         "页面 wait 机械绑定当前 host-bound page；对象 wait 必须使用 exact grounding_ref。"
+        "M2-B B7：wait kind=object_absent 为负条件等待——元素消失需在窗口内累计稳定"
+        " settle_ms（默认 300，可覆盖 50..10000）才成立，中途回闪重置计时；"
+        "超时回执 state=present（明确失败）。"
+        "M2-B B9：action=pages 健康态只读页面清单（id/url/title/是否绑定 + 当前"
+        " world_version）；不换绑、不建会话——需要切页仍走显式 target_id 独立动作。"
         "运行时拥有轮询节奏和默认超时；不导航、不 mutation、不 fuzzy/latest/auto-select/retry，"
-        "多标签歧义时返回只读页面清单；可用显式 target_id 换绑指定页（EVO-20261007-11ae668f）。"
+        "多标签歧义时返回只读页面清单；可用显式 target_id 换绑指定页（EVO-20261007）。"
         "不判断 task completion，也不暴露 selector/坐标/CDP node id/AX index。"
         f"method_ref={SEMANTIC_OPERATION_METHOD_REF}。"
     )
@@ -151,13 +159,58 @@ class BrowserPerceiveTool:
             "required": ["action", "kind", "grounding_ref", "field", "match", "text"],
             "additionalProperties": False,
         },
+        {
+            # M2-A B6 (DESIGN-20261027 §5.2): download completion wait. The
+            # session-fenced dir + event state come from the mutation
+            # actuator's download_state; completed returns path/size/sha256.
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "enum": ["download_state"]},
+                "expected": {"type": "string", "enum": ["completed", "failed"]},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
+            },
+            "required": ["action", "kind", "expected"],
+            "additionalProperties": False,
+        },
+        {
+            # M2-B B7 (DESIGN-20261027 §4.1/B7, §7.3.4): negative-condition
+            # wait. Absence only succeeds after settle_ms of UNBROKEN
+            # absence (default 300ms; mid-window re-appearance resets the
+            # timer); timeout reports state=present - an explicit failure,
+            # never a maybe-gone answer.
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["wait"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "enum": ["object_absent"]},
+                "grounding_ref": {"type": "string", "minLength": 1},
+                "settle_ms": {"type": "integer", "minimum": 50, "maximum": 10_000},
+                "within_ms": {"type": "integer", "minimum": 1, "maximum": 60_000},
+            },
+            "required": ["action", "kind", "grounding_ref"],
+            "additionalProperties": False,
+        },
+        {
+            # M2-B B9 (DESIGN-20261027 §4.1/B9): healthy-state read-only page
+            # listing. Same /json/list channel the multi-page miss receipt
+            # uses (EVO-20261007-11ae668f); NO target_id here - rebind is a
+            # separate explicit action, a listing must never side-effect one.
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["pages"]},
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        },
     ]
     parameters = {
         "type": "object",
         # Keep the shallow union for provider compatibility, while oneOf branches below
         # are the authority for action-specific closed fields.
         "properties": {
-            "action": {"type": "string", "enum": ["snapshot", "hydrate", "diff", "wait"]},
+            "action": {"type": "string", "enum": ["snapshot", "hydrate", "diff", "wait", "pages"]},
             "projection_kinds": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -177,8 +230,9 @@ class BrowserPerceiveTool:
                 "enum": ["evidence"],
                 "description": (
                     "仅 snapshot（EVO-20260918-f2310800）：请求视觉证据。固定参数截图（PNG）落盘并"
-                    "在回执 vision 块返回 ref+path+sha256；视觉输出永远停在证据层，不进 objects/"
-                    "grounding/version；模型用 read_image 消费并自行裁决"
+                    "在回执 vision 块返回 ref+path+sha256；M1 B10 起回执另带 page_id/world_version/"
+                    "captured_at 与 content_unchanged（同 sha 复用同一 ref 时显式标注，不伪称新内容）；"
+                    "视觉输出永远停在证据层，不进 objects/grounding/version；模型用 read_image 消费并自行裁决"
                 ),
             },
             "projection_limit": {"type": "integer", "minimum": 1, "maximum": 500},
@@ -187,7 +241,32 @@ class BrowserPerceiveTool:
             "to_version": {"type": "string", "minLength": 1},
             "kind": {
                 "type": "string",
-                "enum": ["page_ready", "page_url", "object_state", "object_text"],
+                "enum": [
+                    "page_ready",
+                    "page_url",
+                    "object_state",
+                    "object_text",
+                    "download_state",
+                    "object_absent",
+                ],
+            },
+            "expected": {
+                "type": "string",
+                "enum": ["completed", "failed"],
+                "description": (
+                    "仅 wait kind=download_state（M2-A B6）：completed 返回会话下载目录内"
+                    "该下载的 path/size/sha256/completed_by；failed 等待 canceled/失败态；"
+                    "目录 realpath 围栏拒绝 ../ 与 symlink 逃逸（path_not_allowed）"
+                ),
+            },
+            "settle_ms": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 10_000,
+                "description": (
+                    "仅 wait kind=object_absent（M2-B B7）：元素消失需在窗口内累计稳定"
+                    " settle_ms（默认 300）才成立，中途回闪即重置计时；超时回执 state=present"
+                ),
             },
             "state": {"type": "string"},
             "match": {
@@ -234,6 +313,10 @@ class BrowserPerceiveTool:
             "within_ms",
             "target_id",
         },
+        # M2-A B6: flat provider wait on the session download state machine.
+        "download_state": {"action", "kind", "expected", "within_ms", "target_id"},
+        # M2-B B7: negative-condition wait (absence + settle window).
+        "object_absent": {"action", "kind", "grounding_ref", "settle_ms", "within_ms", "target_id"},
     }
 
     def __init__(
@@ -245,6 +328,7 @@ class BrowserPerceiveTool:
         exact_ref_hydrator: Callable[[str, str], dict[str, Any]] | None = None,
         profile_annotation: dict[str, Any] | None = None,
         page_controller: Any | None = None,
+        download_state_getter: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._backend = backend
@@ -255,6 +339,9 @@ class BrowserPerceiveTool:
         self._profile_annotation = profile_annotation
         # EVO-20261007-11ae668f：显式换页协调器（可选注入；缺省 ⇒ target_id 参数不可用）。
         self._page_controller = page_controller
+        # M2-A B6：下载状态探针（mutation actuator 的 download_state；可选注入，
+        # 缺省 ⇒ wait kind=download_state 确定性失败，不静默轮询空状态）。
+        self._download_state_getter = download_state_getter
         common_wait = {
             "adapter": adapter,
             "backend": backend,
@@ -264,6 +351,11 @@ class BrowserPerceiveTool:
         self._wait_scope_url = BrowserWaitScopeUrlTool(**common_wait)
         self._wait_object_state = BrowserWaitObjectStateTool(**common_wait)
         self._wait_object_text = BrowserWaitObjectTextTool(**common_wait)
+
+    def attach_download_state_probe(self, getter: Callable[[], dict[str, Any]]) -> None:
+        """M2-A B6：装配期后挂（factory 在 mutation actuator 建好后注入其
+        download_state 观察面；perceive 仍不获得任何 mutation 能力）。"""
+        self._download_state_getter = getter
 
     def _page_list_result(self, exc: MultiPageAmbiguityError) -> ToolResult:
         """多页歧义 ⇒ 结构化只读页面清单（不绑定、不建会话、无副作用）。"""
@@ -299,6 +391,97 @@ class BrowserPerceiveTool:
             tool_name=self.name,
         )
 
+
+    def _pages_action(self, session_id: str, request: dict[str, Any]) -> ToolResult:
+        """M2-B B9 (DESIGN-20261027 §4.1/B9): healthy-state read-only page listing.
+
+        Rides the SAME /json/list channel the multi-page miss receipt uses
+        (EVO-20261007-11ae668f) - no new CDP method, no session, no capture,
+        no store write.  target_id (or any extra field) is a deterministic
+        fields mismatch: a listing must never trigger the rebind path, and
+        rebind stays its own explicit single action.  The receipt echoes the
+        current binding and world_version so the caller can verify the
+        no-change contract on the receipt itself.
+        """
+        if set(request) != {"action"}:
+            extras = sorted(set(request) - {"action"})
+            return self._fail(
+                f"[browser_perceive:pages] fields_mismatch: 只读清单不接受字段 {extras}"
+                "（换绑 target_id 是独立动作）。"
+            )
+        if self._page_controller is None:
+            return self._fail(
+                "[browser_perceive:pages] page controller 未装配；页面清单不可用。"
+            )
+        try:
+            pages = self._page_controller.list_pages()
+            binding = self._page_controller.current_binding()
+        except Exception as exc:  # noqa: BLE001 - listing failure must stay explicit
+            return self._fail(
+                "[browser_perceive:pages] 页面清单读取失败："
+                f"error_type={type(exc).__name__}; error={exc}"
+            )
+        bound_id = str((binding or {}).get("target_id") or "") or str(
+            getattr(self._backend, "bound_target_id", "") or ""
+        )
+        payload = {
+            "action": "pages",
+            "read_only": True,
+            "pages": [
+                {**page.to_dict(), "bound": page.page_id == bound_id} for page in pages
+            ],
+            "page_count": len(pages),
+            "binding_page_id": bound_id or None,
+            "world_version": self._adapter.latest_world_version(session_id),
+        }
+        return self._json_result(payload)
+
+    def _wait_download_state(
+        self, *, expected: str, timeout_ms: int, interval_ms: int
+    ) -> ToolResult:
+        """M2-A B6 (§5.2/§7.3.5): poll the session download state machine.
+
+        The getter IS the actuator's download_state (event drain + fenced-dir
+        facts); this layer only owns cadence and honest timeout receipts.
+        Runtime owns polling; no mutation capability leaks into perceive.
+        """
+        from llm_loop.browser.download_contract import download_wait_verdict
+
+        if self._download_state_getter is None:
+            return self._fail(
+                "[browser_perceive:wait] download_state 探针未装配"
+                "（本会话未启用 browser action / 下载通道）；未开始轮询。"
+            )
+        size_samples: dict[str, tuple[float, int]] = {}
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while True:
+            state = self._download_state_getter()
+            verdict = (
+                download_wait_verdict(state, expected, size_samples=size_samples)
+                if isinstance(state, dict)
+                else None
+            )
+            if verdict is not None:
+                if verdict.get("result") == "rejected":
+                    return self._fail(
+                        "[browser_perceive:wait] download_state 拒绝："
+                        f"{verdict.get('reason')}（路径未通过会话下载目录 realpath 围栏，"
+                        "未报告任何文件事实）。"
+                    )
+                payload = {
+                    "action": "wait",
+                    "kind": "download_state",
+                    **{k: v for k, v in verdict.items() if k != "status"},
+                }
+                return self._json_result(payload)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return self._fail(
+                    "[browser_perceive:wait] download_state 超时：期望 "
+                    f"{expected} 未在 {timeout_ms}ms 内出现"
+                    "（事件态未达终态且文件未满足稳定判据）。"
+                )
+            time.sleep(min(interval_ms / 1000.0, remaining))
 
     def _field_mismatch(self, action: str, kwargs: dict[str, Any]) -> ToolResult | None:
         allowed_by_action = {
@@ -368,6 +551,11 @@ class BrowserPerceiveTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # M2-B B9：pages 是只读清单动作，必须在通用 target_id 换绑拦截之前
+        # 分发——任何附带的 target_id 都在 _pages_action 内确定性拒绝，
+        # 读取路径绝不产生换绑副作用。
+        if action == "pages":
+            return self._pages_action(session_id, dict(kwargs))
         # EVO-20261007-11ae668f：显式 target_id ⇒ 先换绑（确定性，非静默），再执行观察。
         explicit_target_id = str(kwargs.get("target_id") or "").strip()
         if explicit_target_id:
@@ -510,6 +698,20 @@ class BrowserPerceiveTool:
                     "interval_ms": interval_ms,
                 }
                 result = self._wait_object_state.execute_request(session_id, request)
+            elif kind == "object_absent":
+                # M2-B B7 (§7.3.4): the negative condition compiles to the
+                # canonical exists=false predicate; settle_ms (default 300)
+                # rides the waiter's stability window - mid-window
+                # re-appearance resets, timeout reports state=present.
+                request = {
+                    "object_ref": condition.get("grounding_ref"),
+                    "property": "exists",
+                    "value": False,
+                    "settle_ms": condition.get("settle_ms", ABSENT_SETTLE_DEFAULT_MS),
+                    "timeout_ms": timeout_ms,
+                    "interval_ms": interval_ms,
+                }
+                result = self._wait_object_state.execute_request(session_id, request)
             elif kind == "object_text":
                 match_to_operator = {
                     "equals": "eq",
@@ -530,10 +732,17 @@ class BrowserPerceiveTool:
                     "interval_ms": interval_ms,
                 }
                 result = self._wait_object_text.execute_request(session_id, request)
+            elif kind == "download_state":
+                # M2-A B6: session-scoped download completion wait (§5.2).
+                return self._wait_download_state(
+                    expected=str(condition.get("expected") or ""),
+                    timeout_ms=timeout_ms,
+                    interval_ms=interval_ms,
+                )
             else:
                 return self._fail(
                     "[browser_perceive:wait] condition.kind 必须是 "
-                    "page_ready/page_url/object_state/object_text。"
+                    "page_ready/page_url/object_state/object_text/download_state/object_absent。"
                 )
             return ToolResult(
                 status=result.status,
@@ -658,34 +867,7 @@ class BrowserPerceiveTool:
                     projection_cursor=projection_cursor,
                 )
                 if vision_request == "evidence":
-                    # EVO-20260918-f2310800: evidence-layer vision only. The
-                    # DOM+AX snapshot above already succeeded; vision failure is
-                    # reported in the vision block and never masks the main result.
-                    capture_vision = getattr(self._backend, "capture_vision_evidence", None)
-                    if not callable(capture_vision):
-                        result["vision"] = {"status": "unavailable"}
-                    else:
-                        try:
-                            payload = capture_vision()
-                        except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
-                            result["vision"] = {
-                                "status": "failed",
-                                "error_type": type(vision_exc).__name__,
-                                "error": str(vision_exc),
-                            }
-                        else:
-                            if not isinstance(payload, bytes):
-                                # Mechanical payload boundary: the backend declared
-                                # the capability but did not return raw bytes.
-                                result["vision"] = {
-                                    "status": "unavailable",
-                                    "reason": "payload_not_bytes",
-                                }
-                            else:
-                                result["vision"] = {
-                                    "status": "ok",
-                                    **self._adapter.store_vision_evidence(session_id, payload),
-                                }
+                    self._attach_vision_evidence(session_id, result)
                 return self._json_result(result)
             except Exception as exc:  # noqa: BLE001 - observation failure must remain explicit.
                 return ToolResult(
@@ -701,7 +883,62 @@ class BrowserPerceiveTool:
                 )
         return ToolResult(
             status=ToolResultStatus.FAILURE,
-            content="[browser_perceive] action 必须是 snapshot、hydrate、diff 或 wait。",
+            content="[browser_perceive] action 必须是 snapshot、hydrate、diff、wait 或 pages。",
             tool_call_id="",
             tool_name=self.name,
         )
+
+    def _attach_vision_evidence(self, session_id: str, result: dict[str, Any]) -> None:
+        """EVO-20260918-f2310800: evidence-layer vision only.
+
+        The DOM+AX snapshot already succeeded; vision failure is reported in
+        the vision block and never masks the main result.
+        """
+        capture_vision = getattr(self._backend, "capture_vision_evidence", None)
+        if not callable(capture_vision):
+            result["vision"] = {"status": "unavailable"}
+            return
+        try:
+            payload = capture_vision()
+            # M1 B10 (DESIGN-20261027 §4.1): captured_at is stamped right at
+            # capture time. fix(gate2, review-M1): host-local wall-clock
+            # authority (system_local_now) — aware, offset-bearing, comparable
+            # — replaces the former UTC wall clock per the LFL timekeeping
+            # contract.
+            captured_at = system_local_now().isoformat(timespec="milliseconds")
+        except Exception as vision_exc:  # noqa: BLE001 - vision failure must stay visible, non-fatal.
+            result["vision"] = {
+                "status": "failed",
+                "error_type": type(vision_exc).__name__,
+                "error": str(vision_exc),
+            }
+            return
+        if not isinstance(payload, bytes):
+            # Mechanical payload boundary: the backend declared the capability
+            # but did not return raw bytes.
+            result["vision"] = {
+                "status": "unavailable",
+                "reason": "payload_not_bytes",
+            }
+            return
+        result["vision"] = {
+            "status": "ok",
+            **self._adapter.store_vision_evidence(
+                session_id,
+                payload,
+                **_vision_meta(self._backend, result, captured_at),
+            ),
+        }
+
+
+def _vision_meta(backend: Any, result: dict[str, Any], captured_at: str) -> dict[str, Any]:
+    """M1 B10 (DESIGN-20261027 §4.1): determinability metadata for the evidence
+    receipt. world_version is the snapshot_id of the observation this
+    screenshot belongs to; page_id is the backend's bound target (absent on
+    backends without a bound page id).
+    """
+    return {
+        "page_id": str(getattr(backend, "bound_target_id", "") or "") or None,
+        "world_version": (str((result.get("snapshot") or {}).get("snapshot_id") or "") or None),
+        "captured_at": captured_at,
+    }

@@ -30,6 +30,7 @@ from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, atte
 from llm_loop.browser.cdp_action_host import CdpBrowserMutationActuator
 from llm_loop.browser.cdp_host import CdpReadOnlyBrowserHost
 from llm_loop.browser.channel_binding import BrowserChannelBindingCoordinator
+from llm_loop.browser.download_contract import session_download_dir
 from llm_loop.browser.page_binding import BrowserPageBindingController
 from llm_loop.browser.perception import BrowserPerceptionAdapter, BrowserPerceptionStore
 from llm_loop.browser.profile_policy import ack_digest, annotation_for, evaluate_profile_class
@@ -57,6 +58,8 @@ from llm_loop.core.scheduler import (
     register_event_predicate,
 )
 from llm_loop.core.session import SessionStore, _validate_session_id
+from llm_loop.desktop.backend_macos import backend_for_platform
+from llm_loop.desktop.privacy import split_bundle_config
 from llm_loop.feedback.honesty import delete_feedback_for_session
 from llm_loop.feedback.validator import DeclarationValidator
 from llm_loop.fleet.coordinator import ProjectCoordinator  # fleet slice 4 (G1) 生产接线
@@ -133,6 +136,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.desktop_perceive import DesktopPerceiveTool, make_jsonl_audit_sink
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
@@ -554,6 +558,46 @@ def _register_service_tools(
         "video_generation",
         VideoGenerationTool(
             settings.data_dir, model_root=settings.video_model_root, sd_cli=settings.video_sd_cli
+        ),
+    )
+
+
+def _browser_download_dir_provider(settings: Settings) -> Callable[[], str]:
+    """M2-A B6：会话级下载目录 provider（build_engine 装配 helper）。
+
+    每次解析取当前 session 的 <data_dir>/browser_downloads/<sha256(session)>/
+    downloads（receipt-store 同款围栏形状，session id 不落明文）。
+    """
+    root = str(Path(settings.data_dir) / "browser_downloads")
+
+    def _current_session_download_dir() -> str:
+        return session_download_dir(root, current_session_id_ctx.get() or "anonymous")
+
+    return _current_session_download_dir
+
+
+def _register_desktop_perceive(register_basic: Any, settings: Settings) -> None:
+    """M3 desktop_perceive 注册（DESIGN-20261027 §5.3/D0 分支 A′）。
+
+    桌面只读感知，进程内 ctypes、零新依赖/零网络。全平台注册；非 darwin 后端
+    缺省 → unsupported_platform 确定性回执（import 安全：llm_loop.desktop 包
+    不在 import 期加载任何 macOS 框架）。截图落盘 workspace data 目录
+    （<data_dir>/desktop_perceive/vision），审计走 §6.4 append-only JSONL
+    （<data_dir>/audit/desktop_perceive.jsonl）。只读工具，无 M4 动作。
+    """
+    register_basic(
+        "desktop_perceive",
+        DesktopPerceiveTool(
+            backend=backend_for_platform(
+                sys.platform,
+                capture_dir=Path(settings.data_dir) / "desktop_perceive" / "vision",
+            ),
+            session_id_getter=lambda: current_session_id_ctx.get() or "",
+            audit_sink=make_jsonl_audit_sink(
+                Path(settings.data_dir) / "audit" / "desktop_perceive.jsonl"
+            ),
+            privacy_extra=split_bundle_config(settings.desktop_privacy_extra),
+            see_allowlist=split_bundle_config(settings.desktop_see_allowlist),
         ),
     )
 
@@ -1295,12 +1339,12 @@ def build_engine(
     _register_basic("task_state", TaskStateTool(session_store, event_store, data_dir=settings.data_dir))
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
+    _register_desktop_perceive(_register_basic, settings)  # M3 桌面只读感知（D0-A′）
     # EVO-20260912-10818cb5: smx 感知层 opt-in（wait 谓词轮询 + snapshot/diff + 回执查询；
     # 执行面不并入，维持经 execute_command；LFL_SMX_PERCEIVE 为空 → 不注册）
     if settings.smx_perceive_path:
         _register_basic(
-            "smx_perceive",
-            SmxPerceiveTool(
+            "smx_perceive", SmxPerceiveTool(
                 smx_path=settings.smx_perceive_path,
                 data_dir=settings.data_dir,
                 max_wait_s=max(1.0, float(settings.tool_timeout_s) - 5.0),
@@ -1409,17 +1453,15 @@ def build_engine(
             _browser_operation_receipt_store = BrowserSemanticOperationReceiptStore(
                 Path(settings.data_dir) / "browser_semantic_operation"
             )
-            _register_basic(
-                "browser_perceive",
-                BrowserPerceiveTool(
-                    adapter=_browser_adapter,
-                    backend=_browser_host,
-                    session_id_getter=lambda: current_session_id_ctx.get(),
-                    exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
-                    profile_annotation=_browser_profile_annotation,
-                    page_controller=_browser_page_controller,
-                ),
+            _browser_perceive_tool = BrowserPerceiveTool(
+                adapter=_browser_adapter,
+                backend=_browser_host,
+                session_id_getter=lambda: current_session_id_ctx.get(),
+                exact_ref_hydrator=_browser_operation_receipt_store.hydrate,
+                profile_annotation=_browser_profile_annotation,
+                page_controller=_browser_page_controller,
             )
+            _register_basic("browser_perceive", _browser_perceive_tool)
             # Mutation capability is independently opt-in.  Perception alone never grants
             # writes. 位于放行分支内：profile gate 拒绝 ⇒ browser_operate 一并不注册。
             if settings.browser_action_enabled:
@@ -1430,8 +1472,10 @@ def build_engine(
                     binding_coordinator=_browser_channel,
                     binding_policy=_browser_policy,
                     attest_fn=_browser_attest,
+                    download_dir_provider=_browser_download_dir_provider(settings),  # M2-A B6
                 )
                 _browser_page_controller.attach_mutation_host(_browser_actuator)
+                _browser_perceive_tool.attach_download_state_probe(_browser_actuator.download_state)  # M2-A B6
                 # The review freezes real page text from the same read-only
                 # capture backend; no model-supplied JSON can mint a PASS.
                 _host_review.attach_browser_capture(_browser_host.capture)

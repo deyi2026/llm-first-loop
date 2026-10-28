@@ -18,6 +18,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from llm_loop.browser.action import (
+    _TYPE_MAX_TEXT_LENGTH,
+    _TYPE_PREVIEW_LENGTH,
+    press_key_policy_error,
+    upload_paths_facts,
+    upload_paths_policy_error,
+)
 from llm_loop.browser.errors import (
     MultiPageAmbiguityError,
     PageTargetNotFoundError,
@@ -35,10 +42,28 @@ from llm_loop.tools.review_gate import ARTICLE_REVIEW_OBLIGATION
 logger = logging.getLogger(__name__)
 
 _MAX_CLAUSES = 8
-_IDENTITY_KEYS = {"kind", "role", "name", "name_normalized"}
+# M2-B B8: frame_token joins the identity vocabulary as a QUALIFIER (None =
+# main frame, "frame:<frameId>" = child frame). It never replaces a name key.
+# M2-B B15: fallback + fallback_world_version form the world-version-scoped
+# addressing pair for NAMELESS elements (icon-only buttons); the pair must
+# arrive together and never mixes with name/name_normalized.
+_IDENTITY_KEYS = {
+    "kind",
+    "role",
+    "name",
+    "name_normalized",
+    "frame_token",
+    "fallback",
+    "fallback_world_version",
+}
 _MAX_CANDIDATE_PROJECTION = 20
-_OBJECT_VERBS = {"click", "fill", "select", "scroll"}
-_MUTATION_VERBS = _OBJECT_VERBS | {"navigate"}
+# M1 (DESIGN-20261027 B1/B2): upload/type join the object-verb vocabulary as
+# additive members; the five frozen verbs keep their exact pre-M1 semantics.
+_OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload", "hover"}
+# M2-A (DESIGN-20261027 B3/B5): press_key/dialog are page-scoped (resource
+# grounding); pre-M2 verbs keep exact semantics.
+_MUTATION_VERBS = _OBJECT_VERBS | {"navigate", "press_key", "dialog"}
+_PAGE_SCOPED_VERBS = frozenset({"navigate", "press_key", "dialog"})
 
 _OPERATION_RECEIPT_PREFIX = "browser-operation-receipt://v0.1/"
 _OPERATION_RECEIPT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -159,6 +184,10 @@ _SHORT_TARGET_SCHEMA = {
                 "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
                 "name": {"type": "string", "minLength": 1},
                 "role": {"type": "string", "minLength": 1},
+                # M2-B B8: optional frame qualifier (null = main frame).
+                "frame_token": {
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+                },
             },
             "required": ["kind", "name"],
             "additionalProperties": False,
@@ -169,6 +198,9 @@ _SHORT_TARGET_SCHEMA = {
                 "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
                 "name_normalized": {"type": "string", "minLength": 1},
                 "role": {"type": "string", "minLength": 1},
+                "frame_token": {
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+                },
             },
             "required": ["kind", "name_normalized"],
             "additionalProperties": False,
@@ -181,6 +213,24 @@ _SHORT_TARGET_SCHEMA = {
             "required": ["grounding_ref"],
             "additionalProperties": False,
         },
+        {
+            # M2-B B15 (DESIGN-20261027 §7.3.3): world-version-scoped fallback
+            # addressing for NAMELESS elements (icon-only buttons). The key
+            # comes verbatim from a snapshot receipt's fallback_key; the pair
+            # is only valid inside fallback_world_version.
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(SEMANTIC_OBJECT_KINDS)},
+                "fallback": {"type": "string", "minLength": 1},
+                "fallback_world_version": {"type": "string", "minLength": 1},
+                "role": {"type": "string", "minLength": 1},
+                "frame_token": {
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+                },
+            },
+            "required": ["kind", "fallback", "fallback_world_version"],
+            "additionalProperties": False,
+        },
     ],
     "description": (
         "Exact target addressing (EVO-20261010-1e06d6b4). Pick one form: "
@@ -189,7 +239,14 @@ _SHORT_TARGET_SCHEMA = {
         "whitespace-collapsed form exposed by browser_perceive snapshot objects; "
         "{grounding_ref} reuses an object ref from a prior snapshot or miss "
         "candidate list (world-version retention applies). Mixing forms or "
-        "empty values are rejected deterministically."
+        "empty values are rejected deterministically. "
+        "M2-B B8: 可选 frame_token 限定帧（null=主帧，字符串=子帧 "
+        '"frame:<frameId>"，取自 snapshot 对象的 frame_token 字段）；'
+        "跨帧重名而未指定 frame_token 时确定性歧义拒绝。"
+        "M2-B B15：无名元素用 {kind,fallback,fallback_world_version}——"
+        "fallback 取 snapshot 回执的 fallback_key（title→可见文本→placeholder→alt→"
+        "{kind}#序号），仅在 fallback_world_version 内有效；跨版本失效会显式"
+        "标注 stale 并要求重新取快照，绝不静默命中。"
     ),
 }
 
@@ -315,16 +372,264 @@ def _build_first_call_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
+def _navigate_step_clause(step: dict[str, Any]) -> dict[str, Any]:
+    if set(step) != {"do", "url"}:
+        raise BrowserSemanticOperationContractError("navigate_step_fields_mismatch")
+    url = str(step.get("url") or "").strip()
+    if not url:
+        raise BrowserSemanticOperationContractError("navigate_url_missing")
+    return {
+        "kind": "mutate",
+        "verb": "navigate",
+        "target": {"kind": "page"},
+        "args": {"url": url},
+    }
+
+
+def _upload_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M1 B1: the path policy runs at compile time so any violation rejects
+    before snapshot/grounding/dispatch - the adapter re-validates the same
+    policy as the authoritative pre-dispatch gate (defense in depth).
+    """
+    if set(step) != {"do", "target", "paths"}:
+        raise BrowserSemanticOperationContractError("upload_step_fields_mismatch")
+    paths = step.get("paths")
+    if not isinstance(paths, list) or not all(
+        isinstance(item, str) and item.strip() for item in paths
+    ):
+        raise BrowserSemanticOperationContractError("upload_args_invalid")
+    policy_error = upload_paths_policy_error(paths)
+    if policy_error is not None:
+        raise BrowserSemanticOperationContractError(policy_error)
+    return {
+        "kind": "mutate",
+        "verb": "upload",
+        "target": cls._short_target_to_clause_target(step.get("target")),
+        "args": {"paths": [str(item) for item in paths]},
+    }
+
+
+def _type_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M1 B2: empty text is accepted (explicit no-op); only the >2000 bound
+    rejects. The adapter re-validates (defense in depth for direct
+    semantic_execute callers).
+    """
+    if set(step) != {"do", "target", "text"}:
+        raise BrowserSemanticOperationContractError("type_step_fields_mismatch")
+    text = step.get("text")
+    if not isinstance(text, str):
+        raise BrowserSemanticOperationContractError("type_args_invalid")
+    if len(text) > _TYPE_MAX_TEXT_LENGTH:
+        raise BrowserSemanticOperationContractError("type_text_too_long")
+    return {
+        "kind": "mutate",
+        "verb": "type",
+        "target": cls._short_target_to_clause_target(step.get("target")),
+        "args": {"text": text},
+    }
+
+
+def _press_key_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M2-A B3: the chord blacklist runs at compile time so any violation
+    rejects before snapshot/grounding/dispatch - the adapter re-validates and
+    the cdp actuator boundary re-checks (three-layer defense in depth, same
+    single policy function). Page-scoped: target is the bound page.
+    """
+    if set(step) != {"do", "keys"}:
+        raise BrowserSemanticOperationContractError("press_key_step_fields_mismatch")
+    keys = step.get("keys")
+    if not isinstance(keys, str):
+        raise BrowserSemanticOperationContractError("key_args_invalid")
+    policy_error = press_key_policy_error(keys)
+    if policy_error is not None:
+        raise BrowserSemanticOperationContractError(policy_error)
+    return {
+        "kind": "mutate",
+        "verb": "press_key",
+        "target": {"kind": "page"},
+        "args": {"keys": keys},
+    }
+
+
+def _hover_step_clause(
+    cls: type[BrowserSemanticOperationTool], step: dict[str, Any]
+) -> dict[str, Any]:
+    """M2-A B4: hover is a zero-arg object verb - the exact-target grounding
+    and version guard do all the validation; the positive-area gate runs in
+    the actuator on the measured rect (element_not_visible, zero pointer
+    events on rejection)."""
+    if set(step) != {"do", "target"}:
+        raise BrowserSemanticOperationContractError("hover_step_fields_mismatch")
+    return {
+        "kind": "mutate",
+        "verb": "hover",
+        "target": cls._short_target_to_clause_target(step.get("target")),
+        "args": {},
+    }
+
+
+def _dialog_step_clause(step: dict[str, Any]) -> dict[str, Any]:
+    """M2-A B5: closed action vocabulary at compile time; the open/closed
+    gate lives in the actuator's drained dialog state (dialog_not_open with
+    guidance surfaces there). Page-scoped: target is the bound page."""
+    if set(step) != {"do", "action"}:
+        raise BrowserSemanticOperationContractError("dialog_step_fields_mismatch")
+    action = str(step.get("action") or "").strip()
+    if action not in {"accept", "dismiss"}:
+        raise BrowserSemanticOperationContractError("dialog_action_invalid")
+    return {
+        "kind": "mutate",
+        "verb": "dialog",
+        "target": {"kind": "page"},
+        "args": {"action": action},
+    }
+
+
+def _wait_text_step_clause(step: dict[str, Any]) -> dict[str, Any]:
+    """MF wait_text compile (extracted from _compile_short_steps verbatim:
+    same field set, error codes, and timeout bounding - M2-A hygiene only)."""
+    required = {"do", "target", "field", "match", "text"}
+    if not required.issubset(step) or not set(step).issubset(required | {"within_ms"}):
+        raise BrowserSemanticOperationContractError("wait_text_step_fields_mismatch")
+    field = str(step.get("field") or "").strip()
+    if field not in _MODEL_FRIENDLY_WAIT_TEXT_FIELDS:
+        raise BrowserSemanticOperationContractError("wait_text_field_not_supported")
+    match = str(step.get("match") or "").strip()
+    operator = _MODEL_FRIENDLY_WAIT_TEXT_MATCH.get(match)
+    if operator is None:
+        raise BrowserSemanticOperationContractError("wait_text_match_not_supported")
+    timeout = step.get("within_ms", _MODEL_FRIENDLY_DEFAULT_WAIT_MS)
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, int)
+        or not (1 <= timeout <= 60_000)
+    ):
+        raise BrowserSemanticOperationContractError("wait_timeout_invalid")
+    return {
+        "kind": "wait",
+        "target": BrowserSemanticOperationTool._short_target_to_clause_target(step.get("target")),
+        "property": field,
+        "operator": operator,
+        "value": str(step.get("text") or ""),
+        "timeout_ms": timeout,
+        "interval_ms": min(_MODEL_FRIENDLY_WAIT_INTERVAL_MS, timeout),
+    }
+
+
+def _mutate_clause_receipt(
+    index: int,
+    kind: str,
+    verb: str,
+    identity: dict[str, str] | None,
+    exact_count: int,
+    args: dict[str, Any],
+    action_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """M1 B1/B2: verb-specific mechanical echo on the model-facing clause
+    receipt. upload files are only echoed as ok/name/size/mime when the
+    dispatch actually acknowledged; type echoes length + preview only (never
+    the full text).
+    """
+    clause_receipt: dict[str, Any] = {
+        "index": index,
+        "kind": kind,
+        "verb": verb,
+        "identity": identity,
+        "exact_match_count": exact_count,
+        "status": "dispatched" if action_receipt.get("status") == "ok" else "blocked",
+        "action_receipt": action_receipt,
+    }
+    if (
+        isinstance(identity, dict)
+        and "fallback" in identity
+        and str(action_receipt.get("status") or "") != "ok"
+    ):
+        # M2-B B15: a fallback address that resolved but failed the version
+        # guard is EXPLICITLY stale - annotate and route the model back to a
+        # fresh snapshot instead of letting a shifted retry guess.
+        clause_receipt["fallback_addressing"] = {
+            "status": "stale",
+            "key": identity.get("fallback"),
+            "stable_within": identity.get("fallback_world_version"),
+            "guidance": BrowserSemanticOperationTool._FALLBACK_STALE_GUIDANCE,
+        }
+    if verb == "upload" and action_receipt.get("status") == "ok":
+        clause_receipt["upload_files"] = upload_paths_facts(
+            [str(item) for item in dict(args).get("paths") or []]
+        )
+    elif verb == "type":
+        typed_text = str(dict(args).get("text") or "")
+        clause_receipt["type_echo"] = {
+            "length": len(typed_text),
+            "preview": typed_text[:_TYPE_PREVIEW_LENGTH],
+        }
+    return clause_receipt
+
+
+def _lift_m1_compact_echoes(compact: dict[str, Any], last: dict[str, Any], status: str) -> None:
+    """M1 B1/B2: lift the new-verb mechanical echoes into the compact receipt.
+
+    Keys exist only for upload/type clauses, so every pre-M1 compact receipt
+    stays byte-identical. When halted, surface the adapter's exact rejection
+    code (e.g. path_not_allowed) for the new verbs; existing verbs keep their
+    pre-M1 halt surface.
+    """
+    if isinstance(last.get("upload_files"), list):
+        compact["upload_files"] = last["upload_files"]
+    if isinstance(last.get("type_echo"), dict):
+        compact["type_echo"] = last["type_echo"]
+    if status == "halted" and str(last.get("verb") or "") in {"upload", "type", "press_key", "hover", "dialog"}:
+        blocked_receipt = last.get("action_receipt")
+        if isinstance(blocked_receipt, dict):
+            retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
+            if isinstance(retry_reason, str) and retry_reason:
+                compact["reject_reason"] = retry_reason
+                # M2-A B5 (§5.1 guidance): dialog_not_open is only actionable
+                # with a next step; attach it so the model does not retry blind.
+                if retry_reason == "dialog_not_open":
+                    compact["guidance"] = (
+                        "当前绑定页没有打开中的 JS 对话框；先执行会触发对话框的页面动作"
+                        "（如 click/press_key，其回执边界事件会出现 dialog_opened），"
+                        "再重试 do=dialog。"
+                    )
+
+
 class BrowserSemanticOperationTool:
     name = "browser_operate"
     description = (
         "Browser 操作能力：一次调用只表达一个已经决定的 mutation。"
-        "do=navigate|click|set_text|append_text|select|scroll；对象 target 三选一寻址"
+        "do=navigate|click|set_text|append_text|select|scroll|type|upload|press_key|hover|dialog；对象 target 三选一寻址"
         "(EVO-20261010-1e06d6b4)：{kind,name[,role]} 原始 name 逐字节 exact；"
         "{kind,name_normalized[,role]} 命中 browser_perceive snapshot 暴露的确定性归一形式"
         "(零宽剥离+空白折叠)；{grounding_ref} 复用先前 snapshot/未命中候选清单中的对象 ref"
         "(受 world-version retention 约束)。混用形式确定性拒绝；仍不做 fuzzy/"
         "best-match/auto-target/latest/rebind/retry；identity 未命中时回执有界候选清单。"
+        "M1 B2：do=type 走 Input.insertText 真实输入管线（先聚焦；不再 this.value 赋值+合成事件），"
+        "text ≤2000 字符，空文本=明确 no-op（不报错、不改内容），回执只回长度+前 20 字符摘要；"
+        "插入点=程序化 focus 后光标位置（目标已有内容时在开头）；"
+        "set_text/append_text 旧通道保持不变（兼容入口）。"
+        "M1 B1：do=upload 向 input[type=file] 注入 1..8 个本地常规文件，单文件 ≤100MB；"
+        "路径经 realpath 后必须落在允许根内（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配——"
+        "host-owned 宿主配置、非模型可写；配置为文件系统根会被拒绝并回退默认），"
+        "/etc/passwd、~/.ssh/**、目录/设备/socket、超限、symlink 逃逸全部确定性拒绝"
+        "（path_not_allowed/path_not_found/too_large/not_regular_file），且拒绝发生在任何 CDP 请求之前。"
+        "M2-A B3：do=press_key 页面级按键/组合键（keys，如 \"Enter\"、\"Meta+A\"），"
+        "走 Input.dispatchKeyEvent 成对 keyDown/keyUp；黑名单 Meta+W/Q/T/N/S/P/H/M/`、"
+        "Meta+Tab、Meta+Space、Ctrl+Meta+Q、Escape+Meta 类确定性拒绝 key_not_allowed"
+        "（编译期拒绝，零 CDP 请求，标签页不受影响）；键落在当前焦点元素。"
+        "M2-A B4：do=hover 移动指针到 exact 元素中心触发悬停（仅一次 "
+        "Input.dispatchMouseEvent mouseMoved，绝不 click）；坐标为 CSS px；"
+        "零面积元素确定性拒绝 element_not_visible 且零指针事件。"
+        "M2-A B5：do=dialog(action=accept|dismiss) 处理阻塞中的 JS 对话框"
+        "（Page.handleJavaScriptDialog）；对话框状态复用既有边界事件"
+        "（Page.javascriptDialogOpening ⇒ dialog_opened），无打开中的对话框时"
+        "确定性失败 dialog_not_open 并附 guidance，绝不盲发；accept 后页面脚本继续。"
         "wait 属于 browser_perceive，不在 actuation provider contract。"
         "程序仅机械编译到既有 exact grounding/version guard/single-dispatch/ActionReceipt，"
         "不判断 task completion。"
@@ -337,11 +642,19 @@ class BrowserSemanticOperationTool:
             "role": {"type": "string", "minLength": 1},
             "name": {"type": "string", "minLength": 1},
             "name_normalized": {"type": "string", "minLength": 1},
+            # M2-B B8: optional frame qualifier (null = main frame).
+            "frame_token": {
+                "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+            },
+            # M2-B B15: world-version-scoped fallback addressing pair.
+            "fallback": {"type": "string", "minLength": 1},
+            "fallback_world_version": {"type": "string", "minLength": 1},
         },
         "required": ["kind"],
         "anyOf": [
             {"required": ["name"]},
             {"required": ["name_normalized"]},
+            {"required": ["fallback", "fallback_world_version"]},
         ],
         "additionalProperties": False,
     }
@@ -554,6 +867,77 @@ class BrowserSemanticOperationTool:
             "additionalProperties": False,
         },
         {
+            # M1 B1 (DESIGN-20261027 §5.1): file injection into an exact
+            # input[type=file]; path policy (realpath/allow_roots/size/count)
+            # is enforced before any capture or CDP request.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["upload"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "target": _SHORT_TARGET_SCHEMA,
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "minItems": 1,
+                    "maxItems": 8,
+                },
+            },
+            "required": ["do", "target", "paths"],
+            "additionalProperties": False,
+        },
+        {
+            # M1 B2 (DESIGN-20261027 §5.1): character-level typing through the
+            # real input pipeline (Input.insertText); not a this.value write.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["type"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "target": _SHORT_TARGET_SCHEMA,
+                "text": {"type": "string", "maxLength": 2000},
+            },
+            "required": ["do", "target", "text"],
+            "additionalProperties": False,
+        },
+        {
+            # M2-A B3 (DESIGN-20261027 §5.1): page-level key chord via paired
+            # Input.dispatchKeyEvent keyDown/keyUp; blacklist rejects at
+            # compile time (zero CDP), keys land on the focused element.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["press_key"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "keys": {"type": "string", "minLength": 1, "maxLength": 32},
+            },
+            "required": ["do", "keys"],
+            "additionalProperties": False,
+        },
+        {
+            # M2-A B4 (DESIGN-20261027 §5.1): pointer-only hover on an exact
+            # element center (one mouseMoved, never a click); zero-area
+            # targets reject element_not_visible before any pointer event.
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["hover"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "target": _SHORT_TARGET_SCHEMA,
+            },
+            "required": ["do", "target"],
+            "additionalProperties": False,
+        },
+        {
+            # M2-A B5 (DESIGN-20261027 §5.1): accept/dismiss a blocking JS
+            # dialog; gated by drained dialog state - no open dialog rejects
+            # dialog_not_open BEFORE any CDP call (never a blind send).
+            "type": "object",
+            "properties": {
+                "do": {"type": "string", "enum": ["dialog"]},
+                "target_id": {"type": "string", "minLength": 1},
+                "action": {"type": "string", "enum": ["accept", "dismiss"]},
+            },
+            "required": ["do", "action"],
+            "additionalProperties": False,
+        },
+        {
             "type": "object",
             "properties": {
                 "do": {"type": "string", "enum": ["wait"]},
@@ -600,17 +984,53 @@ class BrowserSemanticOperationTool:
     # MF-5.3 provider normal form: one already-decided mutation per call.  The historical
     # steps compiler remains below as an internal/compatibility path for frozen evidence,
     # but wait and batching are no longer part of the provider-facing cognitive contract.
-    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:5]
+    # M1: upload/type variants extend the mutation prefix (5 -> 7); wait variants stay last.
+    # M2-A B3: press_key extends the mutation prefix (7 -> 8); wait stays last.
+    # M2-A B4: hover extends it further (8 -> 9); wait stays last.
+    # M2-A B5: dialog extends it further (9 -> 10); wait stays last.
+    _DIRECT_STEP_VARIANTS = _SHORT_STEP_VARIANTS[:10]
     parameters = {
         "type": "object",
         "properties": {
             "do": {
                 "type": "string",
-                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll"],
+                "enum": ["navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover", "dialog"],
             },
             "url": {"type": "string", "minLength": 1},
             "target": _SHORT_TARGET_SCHEMA,
             "text": {"type": "string"},
+            "keys": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "description": (
+                    "仅 do=press_key（M2-A B3）：单键或组合键（\"Enter\"、\"Meta+A\"）；"
+                    "黑名单 Meta+W/Q/T/N/S/P/H/M/`、Meta+Tab、Meta+Space、Ctrl+Meta+Q、"
+                    "Escape+Meta 类确定性拒绝 key_not_allowed 且零 CDP 请求；"
+                    "键通过 Input.dispatchKeyEvent 成对 keyDown/keyUp 派发到当前焦点元素"
+                ),
+            },
+            "action": {
+                "type": "string",
+                "enum": ["accept", "dismiss"],
+                "description": (
+                    "仅 do=dialog（M2-A B5）：accept/dismiss 阻塞中的 JS 对话框"
+                    "（Page.handleJavaScriptDialog）；无打开中的对话框时确定性失败"
+                    " dialog_not_open 并附 guidance，绝不盲发；accept 后页面脚本继续"
+                ),
+            },
+            "paths": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,
+                "maxItems": 8,
+                "description": (
+                    "仅 do=upload（M1 B1）：1..8 个本地文件路径；realpath 后必须落在允许根内"
+                    "（默认工作区根，LFL_BROWSER_UPLOAD_ALLOW_ROOTS 可配——host-owned 宿主配置、"
+                    "非模型可写；配置为文件系统根会被拒绝并回退默认），单文件 ≤100MB"
+                    "（LFL_BROWSER_UPLOAD_MAX_FILE_BYTES 可配）；违规确定性拒绝且零 CDP 请求"
+                ),
+            },
             "value": {"type": "string"},
             "delta_pages": {"type": "number"},
             "target_id": {
@@ -683,10 +1103,38 @@ class BrowserSemanticOperationTool:
         # fallback between the two forms.
         if "name" in identity and "name_normalized" in identity:
             raise BrowserSemanticOperationContractError("identity_name_addressing_conflict")
-        if "name" not in identity and "name_normalized" not in identity:
+        # M2-B B15: the fallback pair is its own addressing form - both keys
+        # arrive together or not at all, and never mixed with a name key.
+        fallback_present = "fallback" in identity
+        world_present = "fallback_world_version" in identity
+        if fallback_present != world_present:
+            raise BrowserSemanticOperationContractError(
+                "identity_fallback_pair_incomplete"
+            )
+        if fallback_present and ("name" in identity or "name_normalized" in identity):
+            raise BrowserSemanticOperationContractError("identity_fallback_name_conflict")
+        if not fallback_present and "name" not in identity and "name_normalized" not in identity:
             raise BrowserSemanticOperationContractError("identity_fields_mismatch")
-        normalized: dict[str, str] = {}
+        for fallback_key in ("fallback", "fallback_world_version"):
+            if fallback_key in identity and not str(identity[fallback_key] or "").strip():
+                raise BrowserSemanticOperationContractError(
+                    f"identity_{fallback_key}_missing"
+                )
+        normalized: dict[str, Any] = {}
         for key, value in identity.items():
+            if key == "frame_token":
+                # M2-B B8: JSON null addresses the MAIN frame; a non-empty
+                # string addresses one child frame's exact token.
+                if value is None:
+                    normalized[key] = None
+                    continue
+                token = str(value or "").strip()
+                if not token:
+                    raise BrowserSemanticOperationContractError(
+                        "identity_frame_token_invalid"
+                    )
+                normalized[key] = token
+                continue
             if key == "name_normalized":
                 text = normalize_semantic_name(str(value or ""))
             else:
@@ -697,10 +1145,21 @@ class BrowserSemanticOperationTool:
         return normalized
 
     @staticmethod
-    def _matches_identity(obj: dict[str, Any], identity: dict[str, str]) -> bool:
+    def _matches_identity(obj: dict[str, Any], identity: dict[str, Any]) -> bool:
         raw_attrs = obj.get("attributes")
         attrs: dict[str, Any] = raw_attrs if isinstance(raw_attrs, dict) else {}
         for key, expected in identity.items():
+            if key == "frame_token":
+                # M2-B B8: frame qualifier matches the object's own
+                # frame_token (None = main frame), mirroring perception's
+                # _identity_matches semantics byte-for-byte.
+                observed_frame = obj.get("frame_token")
+                if expected is None:
+                    if observed_frame is not None:
+                        return False
+                elif observed_frame != expected:
+                    return False
+                continue
             observed = obj.get("kind") if key == "kind" else attrs.get(key)
             if not isinstance(observed, str) or observed != expected:
                 return False
@@ -732,7 +1191,7 @@ class BrowserSemanticOperationTool:
 
     def _ground_object(
         self, session_id: str, target: Any
-    ) -> tuple[str | None, int, dict[str, str], dict[str, Any], dict[str, Any]]:
+    ) -> tuple[str | None, int, dict[str, Any], dict[str, Any], dict[str, Any]]:
         identity = self._normalize_identity(target)
         if "grounding_ref" in identity:
             # EVO-20261010-1e06d6b4 (B): hydrate reuses the perceive-side
@@ -762,6 +1221,11 @@ class BrowserSemanticOperationTool:
             if not ref:
                 raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
             return ref, 1, identity, {}, detail
+        if "fallback" in identity:
+            # M2-B B15: fallback keys resolve ONLY inside the declared
+            # world_version's own bundle - never against a fresh snapshot
+            # (a shifted ordinal must never silently match).
+            return self._ground_fallback(session_id, identity)
         snapshot_result = self._snapshot(session_id)
         objects = [obj for obj in snapshot_result.get("objects", []) if isinstance(obj, dict)]
         matches = [obj for obj in objects if self._matches_identity(obj, identity)]
@@ -788,6 +1252,89 @@ class BrowserSemanticOperationTool:
         if not ref:
             raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
         return ref, 1, identity, snapshot_result, {}
+
+    _FALLBACK_STALE_GUIDANCE = (
+        "fallback 键跨 world_version 失效（stable_within 已过）；"
+        "请重新 browser_perceive(action=snapshot) 取新快照，"
+        "并使用新回执中的 fallback_key + 新 world_version 重新寻址。"
+    )
+
+    def _ground_fallback(
+        self, session_id: str, identity: dict[str, Any]
+    ) -> tuple[str | None, int, dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """M2-B B15 (DESIGN-20261027 §7.3.3): resolve a fallback key strictly
+        inside the DECLARED world_version's immutable bundle.
+
+        Matching against the declared bundle makes cross-version drift
+        impossible to satisfy silently: an expired/unknown version, a key
+        that no longer matches, or a post-resolution world change all fail
+        deterministically with an explicit stale annotation + guidance
+        (never a silent hit on a shifted ordinal).
+        """
+        world_version = str(identity.get("fallback_world_version") or "")
+        probe = {
+            key: value
+            for key, value in identity.items()
+            if key in {"kind", "role", "fallback", "frame_token"}
+        }
+        note: dict[str, Any] = {
+            "key": identity.get("fallback"),
+            "stable_within": world_version,
+            "guidance": self._FALLBACK_STALE_GUIDANCE,
+        }
+        try:
+            bundle = self._perception.store.load_snapshot_bundle(
+                session_id, world_version
+            )
+            objects = [
+                obj
+                for obj in list(bundle.get("objects") or [])
+                if isinstance(obj, dict)
+            ]
+        except (ValueError, PermissionError) as exc:
+            note["status"] = "stale"
+            note["reason"] = f"{type(exc).__name__}: {exc}"
+            return None, 0, identity, {}, {
+                "fallback": note,
+                "halt_reason": "fallback_world_version_stale",
+            }
+        matches = [obj for obj in objects if self._matches_fallback(obj, probe)]
+        if len(matches) != 1:
+            note["status"] = "ambiguous" if matches else "stale"
+            return None, len(matches), identity, {}, {
+                "fallback": note,
+                "halt_reason": (
+                    "fallback_ambiguous"
+                    if matches
+                    else "fallback_key_not_in_world_version"
+                ),
+            }
+        ref = str(matches[0].get("grounding_ref") or "").strip()
+        if not ref:
+            raise BrowserSemanticOperationContractError("exact_match_grounding_ref_missing")
+        note["status"] = "matched"
+        return ref, 1, identity, {}, {"fallback": note}
+
+    @classmethod
+    def _matches_fallback(cls, obj: dict[str, Any], probe: dict[str, Any]) -> bool:
+        """Fallback probe = kind/role/frame_token + attributes.fallback_key."""
+        attrs = obj.get("attributes")
+        attrs = attrs if isinstance(attrs, dict) else {}
+        if attrs.get("fallback_key") != probe.get("fallback"):
+            return False
+        if str(obj.get("kind") or "") != str(probe.get("kind") or ""):
+            return False
+        if "role" in probe and attrs.get("role") != probe["role"]:
+            return False
+        if "frame_token" in probe:
+            expected_frame = probe["frame_token"]
+            observed_frame = obj.get("frame_token")
+            if expected_frame is None:
+                if observed_frame is not None:
+                    return False
+            elif observed_frame != expected_frame:
+                return False
+        return True
 
     def _ground_page(self, session_id: str, target: Any) -> tuple[str, dict[str, Any]]:
         if target != {"kind": "page"}:
@@ -821,7 +1368,7 @@ class BrowserSemanticOperationTool:
     # Phase3 M3（G4 审查 P0-1 修复）：clauses 是 dict 列表（_validate_clauses 契约），
     # 本方法必须用 .get 而非 getattr 访问——初版 getattr 对 dict 恒缺省，登记变死代码。
     # target 取 args.url（navigate）或 target 标识（click 等），D6：不含页面正文。
-    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select"})
+    _MUTATION_SE_VERBS = frozenset({"navigate", "click", "set_text", "append_text", "select", "type", "upload", "press_key", "hover", "dialog"})
 
     @classmethod
     def _register_mutation_side_effects(cls, clauses: list[dict], session_id: str) -> int:
@@ -872,16 +1419,36 @@ class BrowserSemanticOperationTool:
         # new deterministic conflict error.
         if "name" in raw and "name_normalized" in raw:
             raise BrowserSemanticOperationContractError("short_target_name_addressing_conflict")
-        if "name" not in raw and "name_normalized" not in raw:
+        # M2-B B15: the fallback pair is a third addressing form (never mixed
+        # with a name key; both members required together).
+        fallback_present = "fallback" in raw
+        world_present = "fallback_world_version" in raw
+        if fallback_present != world_present:
+            raise BrowserSemanticOperationContractError("short_target_fallback_pair_incomplete")
+        if fallback_present and ("name" in raw or "name_normalized" in raw):
+            raise BrowserSemanticOperationContractError("short_target_fallback_name_conflict")
+        if not fallback_present and "name" not in raw and "name_normalized" not in raw:
             raise BrowserSemanticOperationContractError("short_target_fields_mismatch")
-        identity: dict[str, str] = {}
-        for key in ("kind", "name", "name_normalized", "role"):
+        identity: dict[str, Any] = {}
+        for key in ("kind", "name", "name_normalized", "role", "fallback", "fallback_world_version"):
             if key not in raw:
                 continue
             value = str(raw.get(key) or "").strip()
             if not value:
                 raise BrowserSemanticOperationContractError(f"short_target_{key}_missing")
             identity[key] = value
+        if "frame_token" in raw:
+            # M2-B B8: null = main frame; non-empty string = child frame token.
+            frame_token = raw.get("frame_token")
+            if frame_token is None:
+                identity["frame_token"] = None
+            else:
+                token = str(frame_token or "").strip()
+                if not token:
+                    raise BrowserSemanticOperationContractError(
+                        "short_target_frame_token_invalid"
+                    )
+                identity["frame_token"] = token
         return {"kind": "object", "identity": identity}
 
     @classmethod
@@ -895,17 +1462,7 @@ class BrowserSemanticOperationTool:
             if "do" in step:
                 verb = str(step.get("do") or "").strip()
                 if verb == "navigate":
-                    if set(step) != {"do", "url"}:
-                        raise BrowserSemanticOperationContractError("navigate_step_fields_mismatch")
-                    url = str(step.get("url") or "").strip()
-                    if not url:
-                        raise BrowserSemanticOperationContractError("navigate_url_missing")
-                    clauses.append({
-                        "kind": "mutate",
-                        "verb": "navigate",
-                        "target": {"kind": "page"},
-                        "args": {"url": url},
-                    })
+                    clauses.append(_navigate_step_clause(step))
                     continue
                 if verb == "click":
                     if set(step) != {"do", "target"}:
@@ -953,35 +1510,29 @@ class BrowserSemanticOperationTool:
                         "args": {"delta_pages": delta},
                     })
                     continue
+                if verb == "upload":
+                    # M1 B1: policy runs at compile time; see _upload_step_clause.
+                    clauses.append(_upload_step_clause(cls, step))
+                    continue
+                if verb == "type":
+                    # M1 B2: see _type_step_clause (empty text = explicit no-op).
+                    clauses.append(_type_step_clause(cls, step))
+                    continue
+                if verb == "press_key":
+                    # M2-A B3: see _press_key_step_clause (blacklist at compile time).
+                    clauses.append(_press_key_step_clause(cls, step))
+                    continue
+                if verb == "hover":
+                    # M2-A B4: see _hover_step_clause (zero-arg object verb).
+                    clauses.append(_hover_step_clause(cls, step))
+                    continue
+                if verb == "dialog":
+                    # M2-A B5: see _dialog_step_clause (closed action set).
+                    clauses.append(_dialog_step_clause(step))
+                    continue
                 if verb == "wait_text":
-                    required = {"do", "target", "field", "match", "text"}
-                    if not required.issubset(step) or not set(step).issubset(
-                        required | {"within_ms"}
-                    ):
-                        raise BrowserSemanticOperationContractError("wait_text_step_fields_mismatch")
-                    field = str(step.get("field") or "").strip()
-                    if field not in _MODEL_FRIENDLY_WAIT_TEXT_FIELDS:
-                        raise BrowserSemanticOperationContractError("wait_text_field_not_supported")
-                    match = str(step.get("match") or "").strip()
-                    operator = _MODEL_FRIENDLY_WAIT_TEXT_MATCH.get(match)
-                    if operator is None:
-                        raise BrowserSemanticOperationContractError("wait_text_match_not_supported")
-                    timeout = step.get("within_ms", _MODEL_FRIENDLY_DEFAULT_WAIT_MS)
-                    if (
-                        isinstance(timeout, bool)
-                        or not isinstance(timeout, int)
-                        or not (1 <= timeout <= 60_000)
-                    ):
-                        raise BrowserSemanticOperationContractError("wait_timeout_invalid")
-                    clauses.append({
-                        "kind": "wait",
-                        "target": cls._short_target_to_clause_target(step.get("target")),
-                        "property": field,
-                        "operator": operator,
-                        "value": str(step.get("text") or ""),
-                        "timeout_ms": timeout,
-                        "interval_ms": min(_MODEL_FRIENDLY_WAIT_INTERVAL_MS, timeout),
-                    })
+                    # MF wait_text (helper extracted verbatim in M2-A).
+                    clauses.append(_wait_text_step_clause(step))
                     continue
                 if verb == "wait":
                     # Canonical model-facing path: ordinary state condition.  This is a
@@ -1118,8 +1669,11 @@ class BrowserSemanticOperationTool:
             entry: dict[str, Any] = {
                 "grounding_ref": obj.get("grounding_ref"),
                 "kind": obj.get("kind"),
+                # M2-B B8: frame ownership of each candidate so a cross-frame
+                # miss receipt lets the model qualify the next address.
+                "frame_token": obj.get("frame_token"),
             }
-            for key in ("name", "name_normalized"):
+            for key in ("name", "name_normalized", "fallback_key", "fallback_stable_within"):
                 value = attributes.get(key)
                 if isinstance(value, str):
                     entry[key] = value
@@ -1160,6 +1714,51 @@ class BrowserSemanticOperationTool:
             "items": items,
         }
 
+    def _blocked_grounding(
+        self,
+        *,
+        index: int,
+        kind: str,
+        verb: str,
+        identity: dict[str, Any] | None,
+        exact_count: int,
+        ground_detail: dict[str, Any],
+        snapshot_result: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        """Blocked-clause receipt + halt reason for a failed grounding.
+
+        EVO-20261010-1e06d6b4: deterministic miss receipts carry either the
+        snapshot candidate list (identity addressing) or the hydrate
+        availability detail (ref addressing) so the model can re-ground
+        explicitly instead of guessing.  M2-B B15 adds the fallback stale
+        annotation path; M2-B extraction (verbatim semantics, one builder
+        shared by the mutate and wait clause loops).
+        """
+        blocked: dict[str, Any] = {
+            "index": index,
+            "kind": kind,
+            "identity": identity,
+            "exact_match_count": exact_count,
+            "status": "blocked",
+        }
+        if verb:
+            blocked["verb"] = verb
+        probe_identity = identity if isinstance(identity, dict) else {}
+        if "grounding_ref" in probe_identity:
+            blocked["grounding_availability"] = ground_detail
+            return blocked, (
+                "grounding_ref_"
+                f"{ground_detail.get('availability', 'unavailable')}"
+            )
+        if "fallback" in probe_identity:
+            blocked["fallback_addressing"] = ground_detail.get("fallback")
+            return blocked, str(
+                ground_detail.get("halt_reason")
+                or f"exact_identity_match_count:{exact_count}"
+            )
+        blocked["candidates"] = self._candidate_projection(snapshot_result)
+        return blocked, f"exact_identity_match_count:{exact_count}"
+
     def _compact_projection(
         self, session_id: str, full_receipt: dict[str, Any], receipt_ref: str
     ) -> dict[str, Any]:
@@ -1193,6 +1792,10 @@ class BrowserSemanticOperationTool:
             compact["candidates"] = last["candidates"]
         if isinstance(last.get("grounding_availability"), dict):
             compact["grounding_availability"] = last["grounding_availability"]
+        # M2-B B15: surface the fallback stale annotation + guidance on the
+        # compact receipt too (blocked and dispatch-failure paths alike).
+        if isinstance(last.get("fallback_addressing"), dict):
+            compact["fallback_addressing"] = last["fallback_addressing"]
         action_receipt = last.get("action_receipt")
         if isinstance(action_receipt, dict):
             after_version = action_receipt.get("after_version")
@@ -1270,6 +1873,9 @@ class BrowserSemanticOperationTool:
             boundary_events = action_receipt.get("boundary_events")
             if isinstance(boundary_events, list) and boundary_events:
                 compact["boundary_events"] = boundary_events
+        # M1 B1/B2 echoes: keys exist only for upload/type clauses, so every
+        # pre-M1 compact receipt stays byte-identical.
+        _lift_m1_compact_echoes(compact, last, status)
         return compact
 
     def execute_request(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -1298,7 +1904,7 @@ class BrowserSemanticOperationTool:
                     ),
                 }
             return {"do": "rebind", "status": "ok", "rebound": rebound}
-        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll"}
+        direct_verbs = {"navigate", "click", "set_text", "append_text", "select", "scroll", "type", "upload", "press_key", "hover", "dialog"}
         direct_model_friendly = isinstance(request.get("do"), str) and "steps" not in request
         historical_steps = set(request) == {"steps"}
         model_friendly = direct_model_friendly or historical_steps
@@ -1346,7 +1952,7 @@ class BrowserSemanticOperationTool:
                 args = clause.get("args")
                 if not isinstance(args, dict):
                     raise BrowserSemanticOperationContractError("mutation_args_must_be_object")
-                if verb == "navigate":
+                if verb in _PAGE_SCOPED_VERBS:
                     target_ref, _ = self._ground_page(session_id, clause.get("target"))
                     exact_count = 1
                     identity: dict[str, str] | None = None
@@ -1355,45 +1961,26 @@ class BrowserSemanticOperationTool:
                         self._ground_object(session_id, clause.get("target"))
                     )
                     if exact_count != 1 or target_ref is None:
-                        blocked_clause: dict[str, Any] = {
-                            "index": index,
-                            "kind": kind,
-                            "verb": verb,
-                            "identity": identity,
-                            "exact_match_count": exact_count,
-                            "status": "blocked",
-                        }
-                        # EVO-20261010-1e06d6b4: deterministic miss receipts carry
-                        # either the snapshot candidate list (identity addressing)
-                        # or the hydrate availability detail (ref addressing) so
-                        # the model can re-ground explicitly instead of guessing.
-                        if "grounding_ref" in identity:
-                            blocked_clause["grounding_availability"] = ground_detail
-                            receipt["halt_reason"] = (
-                                "grounding_ref_"
-                                f"{ground_detail.get('availability', 'unavailable')}"
-                            )
-                        else:
-                            blocked_clause["candidates"] = self._candidate_projection(
-                                snapshot_result
-                            )
-                            receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
+                        blocked_clause, halt_reason = self._blocked_grounding(
+                            index=index,
+                            kind=kind,
+                            verb=verb,
+                            identity=identity,
+                            exact_count=exact_count,
+                            ground_detail=ground_detail,
+                            snapshot_result=snapshot_result,
+                        )
                         receipt["clauses"].append(blocked_clause)
+                        receipt["halt_reason"] = halt_reason
                         receipt["execution_status"] = "halted"
                         return finalize()
                 action_receipt = self._semantic_execute.execute_request(
                     session_id,
                     {"verb": verb, "target_ref": target_ref, "args": dict(args)},
                 )
-                clause_receipt = {
-                    "index": index,
-                    "kind": kind,
-                    "verb": verb,
-                    "identity": identity,
-                    "exact_match_count": exact_count,
-                    "status": "dispatched" if action_receipt.get("status") == "ok" else "blocked",
-                    "action_receipt": action_receipt,
-                }
+                clause_receipt = _mutate_clause_receipt(
+                    index, kind, verb, identity, exact_count, args, action_receipt
+                )
                 receipt["clauses"].append(clause_receipt)
                 if action_receipt.get("status") != "ok":
                     receipt["execution_status"] = "halted"
@@ -1427,26 +2014,17 @@ class BrowserSemanticOperationTool:
                     self._ground_object(session_id, clause.get("target"))
                 )
                 if exact_count != 1 or target_ref is None:
-                    blocked_clause: dict[str, Any] = {
-                        "index": index,
-                        "kind": kind,
-                        "identity": identity,
-                        "exact_match_count": exact_count,
-                        "status": "blocked",
-                    }
-                    # EVO-20261010-1e06d6b4: same miss-receipt policy as mutate.
-                    if "grounding_ref" in identity:
-                        blocked_clause["grounding_availability"] = ground_detail
-                        receipt["halt_reason"] = (
-                            "grounding_ref_"
-                            f"{ground_detail.get('availability', 'unavailable')}"
-                        )
-                    else:
-                        blocked_clause["candidates"] = self._candidate_projection(
-                            snapshot_result
-                        )
-                        receipt["halt_reason"] = f"exact_identity_match_count:{exact_count}"
+                    blocked_clause, halt_reason = self._blocked_grounding(
+                        index=index,
+                        kind=kind,
+                        verb="",
+                        identity=identity,
+                        exact_count=exact_count,
+                        ground_detail=ground_detail,
+                        snapshot_result=snapshot_result,
+                    )
                     receipt["clauses"].append(blocked_clause)
+                    receipt["halt_reason"] = halt_reason
                     receipt["execution_status"] = "halted"
                     return finalize()
                 wait_result = self._wait_object.execute_request(

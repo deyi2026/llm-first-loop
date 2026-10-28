@@ -103,6 +103,13 @@
             "null"
           ]
         },
+        "frame_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B8: frame-scope token ('frame:<frameId>'; present only on kind=frame scopes, null elsewhere). Same vocabulary the sensor nodes carry; no parallel frame_id field exists."
+        },
         "runtime_generation": {
           "type": "integer",
           "minimum": 1
@@ -381,6 +388,41 @@
             "string",
             "null"
           ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: observed title attribute (fallback addressing source)."
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: observed placeholder attribute (fallback addressing source)."
+        },
+        "alt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: observed alt attribute (fallback addressing source)."
+        },
+        "fallback_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: deterministic fallback addressing key for NAMELESS elements (title -> text -> placeholder -> alt, normalized+truncated, else {kind}#{ordinal}). Present only on objects without an accessible name."
+        },
+        "fallback_stable_within": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B15: the world_version (snapshot id) inside which fallback_key is valid. Excluded from content_sha256 (per-capture reference identity)."
         }
       },
       "additionalProperties": false
@@ -515,6 +557,13 @@
         "id": {
           "type": "string",
           "minLength": 1
+        },
+        "frame_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "M2-B B8: the object's frame-scope token (null = main frame, 'frame:<frameId>' = child frame). Surfaces for frame-scoped identity addressing; no parallel frame_id field exists."
         },
         "kind": {
           "type": "string",

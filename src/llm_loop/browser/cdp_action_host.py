@@ -9,14 +9,19 @@ from __future__ import annotations
 
 import contextlib
 import json
-import threading
 import logging
+import os
+import threading
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 from websockets.sync.client import connect as websocket_connect
 
-from llm_loop.browser.action import BrowserDispatchResult
+from llm_loop.browser.action import (
+    BrowserDispatchResult,
+    parse_key_chord,
+    press_key_policy_error,
+)
 from llm_loop.browser.attestation import AttestationVerdict, BindingPolicy, attest_debug_url
 from llm_loop.browser.cdp_host import (
     _CONNECTION_LOST_ERRORS,
@@ -30,6 +35,7 @@ from llm_loop.browser.channel_binding import (
     BrowserChannelBindingCoordinator,
     extract_browser_ws_uuid,
 )
+from llm_loop.browser.download_contract import download_path_policy_error
 from llm_loop.browser.errors import (
     MultiPageAmbiguityError,
     PageRecord,
@@ -39,7 +45,163 @@ from llm_loop.browser.errors import (
 
 _attest_logger = logging.getLogger("llm_loop.browser.cdp_action_host.attestation")
 
-_ALLOWED = frozenset({"DOM.resolveNode", "Runtime.callFunctionOn", "Page.enable", "Page.navigate"})
+# M1 (DESIGN-20261027 B1/B2): two additive methods only - file injection into an
+# exact input node and real text input. Everything else stays rejected by send().
+# M2-A additions carry one-line necessity notes; wide-surface methods
+# (Runtime.evaluate, Page.evalOnNewDocument, DOM.getDocument, ...) stay out.
+_ALLOWED = frozenset(
+    {
+        "DOM.resolveNode",
+        "Runtime.callFunctionOn",
+        "Page.enable",
+        "Page.navigate",
+        "DOM.setFileInputFiles",
+        "Input.insertText",
+        # M2-A B3: press_key actuates ONLY through this method (paired
+        # keyDown/keyUp); no script/eval channel is opened for it.
+        "Input.dispatchKeyEvent",
+        # M2-A B4: hover actuates ONLY through this method (exactly one
+        # mouseMoved event, never a click press/release pair).
+        "Input.dispatchMouseEvent",
+        # M2-A B5: accept/dismiss a blocking JS dialog; the call is gated by
+        # drained dialog state (dialog_not_open rejects before any CDP).
+        "Page.handleJavaScriptDialog",
+        # M2-A B6: pin Chrome downloads into the session-fenced dir; also the
+        # only switch that turns on downloadWillBegin/downloadProgress events.
+        "Page.setDownloadBehavior",
+    }
+)
+
+
+class _ActuatorContractError(RuntimeError):
+    """M2-A: deterministic actuator-boundary rejection with a stable receipt code.
+
+    Raised BEFORE any side-effecting CDP call (blacklist chord, invisible
+    hover target, no open dialog); the adapter surfaces ``error_code``
+    verbatim as the receipt retry reason instead of the ambiguous marker.
+    """
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.error_code = code
+
+
+# M2-A B3 (DESIGN-20261027 §5.1): CDP Input.dispatchKeyEvent parameter assembly
+# for a validated chord. Fixed tables under version control; the only variable
+# is the already-blacklist-checked chord string (no script surface opened).
+_CDP_MODIFIER_BITS = {"alt": 1, "control": 2, "meta": 4, "shift": 8}
+_MODIFIER_EVENT_PROPS = {
+    "alt": ("Alt", "AltLeft", 18),
+    "control": ("Control", "ControlLeft", 17),
+    "meta": ("Meta", "MetaLeft", 91),
+    "shift": ("Shift", "ShiftLeft", 16),
+}
+_KEY_NAMED_CODES: dict[str, tuple[str, int]] = {
+    "`": ("Backquote", 223),
+    "backquote": ("Backquote", 223),
+    "backtick": ("Backquote", 223),
+    "backspace": ("Backspace", 8),
+    "delete": ("Delete", 46),
+    "enter": ("Enter", 13),
+    "escape": ("Escape", 27),
+    "tab": ("Tab", 9),
+    "space": ("Space", 32),
+    "arrowleft": ("ArrowLeft", 37),
+    "arrowup": ("ArrowUp", 38),
+    "arrowright": ("ArrowRight", 39),
+    "arrowdown": ("ArrowDown", 40),
+    "home": ("Home", 36),
+    "end": ("End", 35),
+    "pageup": ("PageUp", 33),
+    "pagedown": ("PageDown", 34),
+}
+for _fn in range(1, 13):
+    _KEY_NAMED_CODES[f"f{_fn}"] = (f"F{_fn}", 111 + _fn)
+# Puppeteer parity: only these two keys carry text on keyDown so default
+# actions (form submit on Enter, focus traversal on Tab) actually fire.
+_KEY_TEXT_BY_KEY = {"enter": "\r", "tab": "\t"}
+
+
+def _key_code(key: str) -> tuple[str, int | None]:
+    if len(key) == 1 and key.isalpha():
+        return f"Key{key.upper()}", 65 + (ord(key) - 97)
+    if len(key) == 1 and key.isdigit():
+        return f"Digit{key}", 48 + int(key)
+    named = _KEY_NAMED_CODES.get(key)
+    if named is not None:
+        return named
+    return key, None
+
+
+def _key_event(
+    event_type: str, key: str, code: str, vk: int | None, *, modifiers: int, text: str = ""
+) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "type": event_type,
+        "key": key,
+        "code": code,
+        "modifiers": modifiers,
+    }
+    if vk is not None:
+        params["windowsVirtualKeyCode"] = vk
+        params["nativeVirtualKeyCode"] = vk
+    if text:
+        params["text"] = text
+    return params
+
+
+def key_events_for_chord(keys: str) -> list[dict[str, Any]]:
+    """Paired keyDown/keyUp params for one validated chord (B3).
+
+    Modifier keys press before the main key (sorted order) and release after
+    it in reverse; a held modifier stays in the bitmask during its own keyUp,
+    matching the real input pipeline semantics Puppeteer implements.
+    """
+    modifiers, key = parse_key_chord(keys)
+    if modifiers is None or not key:
+        raise _ActuatorContractError("key_args_invalid")
+    code, vk = _key_code(key)
+    bitmask = 0
+    events: list[dict[str, Any]] = []
+    for mod in modifiers:
+        events.append(_key_event("keyDown", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
+        bitmask |= _CDP_MODIFIER_BITS[mod]
+    text = _KEY_TEXT_BY_KEY.get(key, "")
+    events.append(_key_event("keyDown", key, code, vk, modifiers=bitmask, text=text))
+    events.append(_key_event("keyUp", key, code, vk, modifiers=bitmask))
+    for mod in reversed(modifiers):
+        events.append(_key_event("keyUp", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
+        bitmask &= ~_CDP_MODIFIER_BITS[mod]
+    return events
+
+# fix(P1-1, review-M1 R-e2e-1): the M1-era synthetic input/change dispatch
+# (_UPLOAD_EVENT_DISPATCH_JS) after DOM.setFileInputFiles is REMOVED. Chrome
+# (this runtime is pinned 155) natively dispatches exactly one input+change
+# pair on DOM.setFileInputFiles (review probe N1: 1/1); the synthetic pair
+# doubled it (probe L6: 2/2), which would fire React-like onChange handlers
+# twice (double submit). If a future Chrome stops dispatching natively, the
+# correct fix is calibrating against a real upload page, not blindly
+# re-adding the synthetic pair.
+
+# M1 B2 (DESIGN-20261027 §4.1): focus precedes Input.insertText so the real
+# input pipeline (beforeinput/input) lands on the intended element; this fixed
+# script replaces the PR2-era ``this.value`` assignment for the new verb only.
+_TYPE_FOCUS_JS = "function(){ this.focus(); }"
+
+# M2-A B4 (DESIGN-20261027 §5.1): scroll the exact element into view, then read
+# its post-scroll bounding rect in ONE fixed predicate call (scrollIntoView
+# forces synchronous layout, so the rect reflects the scrolled position).
+# getBoundingClientRect is CSS px relative to the viewport - the exact
+# coordinate space Input.dispatchMouseEvent consumes. The rect is also the
+# positive-area gate: a zero-area element raises element_not_visible BEFORE
+# any pointer event is dispatched.
+_HOVER_RECT_JS = (
+    "function(){"
+    "this.scrollIntoView({block:'center',inline:'nearest'});"
+    "const r=this.getBoundingClientRect();"
+    "return {x:r.x,y:r.y,w:r.width,h:r.height};"
+    "}"
+)
 
 # FR-2 (DESIGN-20261007-browser-semantic-guard): post-dispatch settle waits.
 # Fixed JS constants under version control; the only parameter surface is the
@@ -165,6 +327,23 @@ class _MutationCdpSession:
         self._events.clear()
         return events
 
+    def drain(self, max_events: int = 64, *, timeout_s: float = 0.05) -> None:
+        """M2-A B6: drain buffered events without sending a request.
+
+        recv() on a quiet socket raises TimeoutError; that is the normal
+        "nothing more to drain" signal (the observation caller suppresses
+        channel errors and keeps the last known state).
+        """
+        with self._lock:
+            for _ in range(max(1, max_events)):
+                try:
+                    raw = self._websocket.recv(timeout=timeout_s)
+                except TimeoutError:
+                    break
+                message = json.loads(raw)
+                if isinstance(message, dict) and isinstance(message.get("method"), str):
+                    self._events.append(message)
+
 
 class CdpBrowserMutationActuator:
     """Exact-target, single-dispatch Browser mutation actuator."""
@@ -181,6 +360,7 @@ class CdpBrowserMutationActuator:
         http_get_version_dict: Callable[[str], dict[str, Any]] | None = None,
         binding_policy: BindingPolicy | None = None,
         attest_fn: Callable[[str], AttestationVerdict] | None = None,
+        download_dir_provider: Callable[[], str] | None = None,
     ) -> None:
         if max_frame_bytes < 1:
             raise ValueError("max_frame_bytes must be >= 1")
@@ -207,6 +387,17 @@ class CdpBrowserMutationActuator:
         self._session: _MutationCdpSession | None = None
         self._dispatch_lock = threading.Lock()
         self._page_events_enabled = False
+        # M2-A B5 (F8): dialog state machine rides the existing boundary-event
+        # drain; True only between a drained javascriptDialogOpening and a
+        # successful Page.handleJavaScriptDialog.
+        self._dialog_open = False
+        self._dialog_detail: dict[str, Any] | None = None
+        # M2-A B6: download contract state. The provider resolves the CURRENT
+        # session's fenced dir (receipt-store shape); re-pinning on session
+        # change keeps downloads fenced per session, never per process.
+        self._download_dir_provider = download_dir_provider
+        self._configured_download_dir: str | None = None
+        self._downloads: dict[str, dict[str, Any]] = {}
 
     @property
     def bound_target_id(self) -> str:
@@ -305,8 +496,14 @@ class CdpBrowserMutationActuator:
             self._session = _MutationCdpSession(websocket)
         if not self._page_events_enabled:
             self._session.send("Page.enable")
-            self._session.pop_events()
+            # M2-A B5: the enable-time drain feeds the state machine instead of
+            # being discarded - a dialog that opened while the session was
+            # (re)connecting must still gate the dialog verb.
+            self._absorb_state_events(self._session.pop_events())
             self._page_events_enabled = True
+        # M2-A B6: keep the download dir pinned to the CURRENT session (no-op
+        # when unchanged); must precede any dispatch that could start one.
+        self._sync_download_behavior(self._session)
         return self._session
 
     def _page_target_ids(self) -> set[str]:
@@ -316,6 +513,83 @@ class CdpBrowserMutationActuator:
             if str(item.get("type") or "") == "page" and str(item.get("id") or "")
         }
 
+    def _absorb_state_events(self, raw_events: list[dict[str, Any]]) -> None:
+        """M2-A B5/B6: the single consumer point of drained events (F8).
+
+        Dialog state: javascriptDialogOpening means a blocking dialog is open;
+        only a handled dialog closes it. Download state: WillBegin records the
+        page-suggested filename with an immediate realpath containment check
+        ('../' and symlink escapes are marked path_not_allowed at RECORD time,
+        before any fact is ever reported); Progress updates the state.
+        """
+        for raw in raw_events:
+            method = str(raw.get("method") or "")
+            params = raw.get("params")
+            params = params if isinstance(params, dict) else {}
+            if method == "Page.javascriptDialogOpening":
+                self._dialog_open = True
+                self._dialog_detail = params
+            elif method == "Page.downloadWillBegin":
+                guid = str(params.get("guid") or params.get("downloadId") or "")
+                if guid:
+                    filename = str(params.get("suggestedFilename") or "")
+                    self._downloads[guid] = {
+                        "guid": guid,
+                        "filename": filename,
+                        "url": str(params.get("url") or ""),
+                        "state": "inprogress",
+                        "received_bytes": 0,
+                        "policy_error": download_path_policy_error(
+                            self._configured_download_dir, filename
+                        ),
+                    }
+            elif method == "Page.downloadProgress":
+                guid = str(params.get("guid") or params.get("downloadId") or "")
+                entry = self._downloads.get(guid)
+                if entry is not None:
+                    entry["state"] = str(params.get("state") or "inprogress")
+                    if params.get("receivedBytes") is not None:
+                        entry["received_bytes"] = params.get("receivedBytes")
+
+    def download_state(self) -> dict[str, Any]:
+        """M2-A B6: best-effort drain of pending events + a state copy.
+
+        Observation surface: any channel failure keeps the last known state
+        (the wait layer degrades honestly to its timeout instead of failing
+        the whole perceive call on a quiet/closed channel).
+        """
+        session = self._session
+        if session is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001 - observation is fail-open
+                session.drain()
+                self._absorb_state_events(session.pop_events())
+        return {
+            "schema": "smc.browser_download_state.v0.1",
+            "download_dir": self._configured_download_dir,
+            "dialog_open": self._dialog_open,
+            "downloads": {guid: dict(entry) for guid, entry in self._downloads.items()},
+        }
+
+    def _sync_download_behavior(self, session: _MutationCdpSession) -> None:
+        """M2-A B6: pin Chrome downloads into the CURRENT session's fenced dir.
+
+        The provider is re-evaluated on every session ensure; a session change
+        re-sends setDownloadBehavior (idempotent per dir). behavior=allow +
+        eventsEnabled is what routes downloadWillBegin/downloadProgress through
+        the same drain the dialog state rides on.
+        """
+        if self._download_dir_provider is None:
+            return
+        target_dir = os.path.realpath(str(self._download_dir_provider() or ""))
+        if not target_dir or target_dir == self._configured_download_dir:
+            return
+        os.makedirs(target_dir, exist_ok=True)
+        session.send(
+            "Page.setDownloadBehavior",
+            {"behavior": "allow", "downloadPath": target_dir, "eventsEnabled": True},
+        )
+        self._configured_download_dir = target_dir
+
     def _boundary_events(
         self,
         session: _MutationCdpSession,
@@ -324,7 +598,9 @@ class CdpBrowserMutationActuator:
     ) -> tuple[dict[str, Any], ...]:
         events: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
-        for raw in session.pop_events():
+        drained = session.pop_events()
+        self._absorb_state_events(drained)
+        for raw in drained:
             method = str(raw.get("method") or "")
             event_name = _BOUNDARY_EVENT_METHODS.get(method)
             if event_name is None:
@@ -411,6 +687,43 @@ class CdpBrowserMutationActuator:
                     "CDP mutation connection lost; dropped session for same-target reconnect"
                 ) from exc
 
+    @staticmethod
+    def _hover_center(session: _MutationCdpSession, object_id: str) -> None:
+        """M2-A B4: move the pointer to the element center (one mouseMoved).
+
+        Positive-area gate runs on the measured rect BEFORE any pointer event:
+        a zero-area element is a deterministic contract rejection
+        (element_not_visible) with zero dispatchMouseEvent side effects.
+        """
+        result = session.send(
+            "Runtime.callFunctionOn",
+            {
+                "objectId": object_id,
+                "functionDeclaration": _HOVER_RECT_JS,
+                "arguments": [],
+                "returnByValue": True,
+                "awaitPromise": False,
+            },
+        )
+        if result.get("exceptionDetails"):
+            raise RuntimeError("fixed Browser actuator function raised")
+        value = (result.get("result") or {}).get("value")
+        rect = value if isinstance(value, dict) else {}
+        width = float(rect.get("w") or 0)
+        height = float(rect.get("h") or 0)
+        if width <= 0 or height <= 0:
+            raise _ActuatorContractError("element_not_visible")
+        session.send(
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mouseMoved",
+                "x": float(rect.get("x") or 0) + width / 2,
+                "y": float(rect.get("y") or 0) + height / 2,
+                "button": "none",
+                "pointerType": "mouse",
+            },
+        )
+
     def settle(self, *, physical_target: str | None, mode: str) -> dict[str, Any]:
         """FR-2: single-round-trip post-dispatch settle wait on the bound page.
 
@@ -449,7 +762,10 @@ class CdpBrowserMutationActuator:
         value = remote.get("value")
         if not isinstance(value, dict) or "settled" not in value:
             return {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode, "verdict": "unavailable", "reason": "unexpected_predicate_shape"}
-        verdict = {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode}
+        # Mixed value types (str keys + int elapsed_ms fallback); the explicit
+        # annotation keeps pyright from inferring dict[str, str] (M1 changed-file
+        # hygiene; runtime behavior identical).
+        verdict: dict[str, Any] = {"schema": "smc.browser_wait_verdict.v0.1", "mode": mode}
         verdict.update(value)
         if not isinstance(verdict.get("elapsed_ms"), int):
             verdict["elapsed_ms"] = -1
@@ -459,9 +775,26 @@ class CdpBrowserMutationActuator:
             verdict["verdict"] = "timeout"
         return verdict
 
+    def _acknowledged(
+        self, session: _MutationCdpSession, before_page_ids: set[str]
+    ) -> BrowserDispatchResult:
+        """M2-A: shared acknowledged receipt for page-scoped verbs (drains
+        boundary events exactly like the legacy tail of _dispatch_locked)."""
+        return BrowserDispatchResult(
+            acknowledged=True,
+            boundary_events=self._boundary_events(session, before_page_ids=before_page_ids),
+            completeness_reasons=("boundary_detector_non_exhaustive",),
+        )
+
     def _dispatch_locked(
         self, *, verb: str, physical_target: str | None, args: dict[str, Any]
     ) -> BrowserDispatchResult:
+        # M2-A B5: no blocking dialog on the bound page (per drained event
+        # state, F8) - a blind Page.handleJavaScriptDialog would error or,
+        # worse, answer a dialog opened after our last drain. Rejected BEFORE
+        # any session/CDP traffic.
+        if verb == "dialog" and not self._dialog_open:
+            raise _ActuatorContractError("dialog_not_open")
         session = self._ensure_session()
         before_page_ids = self._page_target_ids()
         if verb == "navigate":
@@ -481,9 +814,36 @@ class CdpBrowserMutationActuator:
                 completeness_reasons=("boundary_detector_non_exhaustive",),
             )
 
+        if verb == "press_key":
+            # M2-A B3: page-level chord via paired keyDown/keyUp. The shared
+            # blacklist re-runs here as the last defense in depth (compile and
+            # adapter _validate already rejected violations); a hit raises
+            # before any Input.dispatchKeyEvent leaves this host.
+            keys = str(args.get("keys") or "")
+            policy_error = press_key_policy_error(keys)
+            if policy_error is not None:
+                raise _ActuatorContractError(policy_error)
+            for event in key_events_for_chord(keys):
+                session.send("Input.dispatchKeyEvent", event)
+            return self._acknowledged(session, before_page_ids)
+
+        if verb == "dialog":
+            # M2-A B5: state gate already passed above; handle the blocking
+            # dialog and clear the state (the page script then continues).
+            session.send(
+                "Page.handleJavaScriptDialog",
+                {"accept": str(args.get("action") or "") == "accept"},
+            )
+            self._dialog_open = False
+            self._dialog_detail = None
+            return self._acknowledged(session, before_page_ids)
+
         object_id = self._object_id(session, physical_target)
         if verb == "click":
             self._call(session, object_id, "function(){ this.click(); }")
+        elif verb == "hover":
+            # M2-A B4: pointer-only hover, never a click (see _hover_center).
+            self._hover_center(session, object_id)
         elif verb == "fill":
             self._call(
                 session,
@@ -505,6 +865,29 @@ class CdpBrowserMutationActuator:
                 "function(pages){ this.scrollIntoView({block:'center',inline:'nearest'}); window.scrollBy(0, Number(pages)*window.innerHeight); }",
                 [{"value": float(args["delta_pages"])}],
             )
+        elif verb == "upload":
+            # M1 B1: resolved absolute paths arrive from the contract layer
+            # (action.py validated realpath/allow_roots/size/count BEFORE any
+            # CDP call, and re-verified them right before dispatch — fix(P0-1)).
+            # backendNodeId is the product's physical identity (dom:<id>), so
+            # no DOM.getDocument/querySelector chain is needed (M0 §3.2 T2).
+            # fix(P1-1): NO synthetic input/change dispatch follows — Chrome
+            # natively dispatches one input+change pair here; the native pair
+            # alone keeps React-like onChange single-shot (review N1 vs L6).
+            backend_id = self._backend_node_id(physical_target)
+            session.send(
+                "DOM.setFileInputFiles",
+                {"files": [str(item) for item in args["paths"]], "backendNodeId": backend_id},
+            )
+        elif verb == "type":
+            # M1 B2: real input pipeline via Input.insertText after a fixed
+            # focus call - never a ``this.value`` assignment with synthesized
+            # events (PR2 root cause). Empty text is an explicit acknowledged
+            # no-op: no focus, no insert, no content change.
+            text = str(args["text"])
+            if text:
+                self._call(session, object_id, _TYPE_FOCUS_JS)
+                session.send("Input.insertText", {"text": text})
         else:
             raise ValueError(f"unsupported Browser mutation verb: {verb}")
         detected = self._boundary_events(session, before_page_ids=before_page_ids)

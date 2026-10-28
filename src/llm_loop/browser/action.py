@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
+import stat
 import threading
 from collections.abc import Callable
 from contextlib import suppress
@@ -19,6 +21,8 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from llm_loop.browser.perception import BrowserPerceptionAdapter, diff_summary_for_receipt
+from llm_loop.config import _raw_env
+from llm_loop.core.run_context import current_workspace_root
 from llm_loop.core.tool_execution_journal import current_effect_mutation_authority
 from llm_loop.net_guard import browser_allowed_hosts, check_url
 
@@ -28,8 +32,203 @@ _MUTATION_CONTRACT: dict[str, dict[str, Any]] = {
     "select": {"version_scopes": {"object"}, "args": {"value"}},
     "navigate": {"version_scopes": {"resource"}, "args": {"url"}},
     "scroll": {"version_scopes": {"object"}, "args": {"delta_pages"}},
+    # M1 (DESIGN-20261027 B1/B2): two additive object verbs. The six frozen
+    # verbs above are byte-identical to the pre-M1 contract.
+    "type": {"version_scopes": {"object"}, "args": {"text"}},
+    "upload": {"version_scopes": {"object"}, "args": {"paths"}},
+    # M2-A (DESIGN-20261027 B3): page-level key chord verb. Resource scope:
+    # the key events land on the host-bound page's focused element, so the
+    # precondition is the page grounding, exactly like navigate.
+    "press_key": {"version_scopes": {"resource"}, "args": {"keys"}},
+    # M2-A (DESIGN-20261027 B4): object verb; zero-arg pointer move whose
+    # only actuation is one Input.dispatchMouseEvent(mouseMoved).
+    "hover": {"version_scopes": {"object"}, "args": set()},
+    # M2-A (DESIGN-20261027 B5): page-scoped dialog verb; "prompt_text" is a
+    # documented v1 simplification (see the dev report deviation note).
+    "dialog": {"version_scopes": {"resource"}, "args": {"action"}},
 }
 _TERMINAL = frozenset({"ok", "failed", "rejected"})
+
+# M1 B1 (DESIGN-20261027 §4.1/§5.5, delegation order): upload path policy runs
+# entirely in Python BEFORE any CDP request. Check order per contract:
+#   realpath -> allow_roots -> existence -> regular file -> per-file size -> count.
+# Error codes are the design-book codes (path_not_allowed / path_not_found /
+# too_large / not_regular_file); the two count/text bounds get deterministic
+# codes of the same vocabulary (paths_count_invalid / type_text_too_long).
+_UPLOAD_MAX_FILES = 8
+_UPLOAD_MAX_FILE_BYTES_DEFAULT = 100 * 1024 * 1024
+_TYPE_MAX_TEXT_LENGTH = 2000
+_TYPE_PREVIEW_LENGTH = 20
+
+
+def _default_upload_root() -> str:
+    return os.path.realpath(str(current_workspace_root.get() or os.getcwd()))
+
+
+def upload_allow_roots() -> list[str]:
+    """Allowed upload roots: env override, else the current workspace root.
+
+    fix(P2-2, review-M1): a configured entry that resolves to the filesystem
+    root (os.sep) would silently allow every absolute host path, so such
+    entries are rejected here; when nothing valid remains the default
+    workspace root applies (fail-bounded, same posture as
+    upload_max_file_bytes). The env key is host-owned configuration — no
+    in-session model path can write it.
+
+    fix(gate2, review-M1): reads route through the sanctioned access layer
+    ``config._raw_env`` (same pattern as tools/mcp_auth.py: 环境访问点收口，
+    不直读 os.environ); literal keys at the call site stay auditable.
+    Semantics are unchanged: unset/empty -> "" -> default workspace root.
+    """
+    raw = _raw_env("LFL_BROWSER_UPLOAD_ALLOW_ROOTS").strip()
+    if not raw:
+        return [_default_upload_root()]
+    resolved = [os.path.realpath(item.strip()) for item in raw.split(",") if item.strip()]
+    bounded = [item for item in resolved if item != os.sep]
+    if resolved and not bounded:
+        # every configured entry was a filesystem root: fall back to the
+        # default workspace root instead of allowing the whole host.
+        return [_default_upload_root()]
+    return bounded
+
+
+def upload_max_file_bytes() -> int:
+    # fix(gate2, review-M1): sanctioned env access layer (same as
+    # upload_allow_roots above); unset/empty/invalid -> default bound.
+    raw = _raw_env("LFL_BROWSER_UPLOAD_MAX_FILE_BYTES").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _UPLOAD_MAX_FILE_BYTES_DEFAULT
+    return value if value > 0 else _UPLOAD_MAX_FILE_BYTES_DEFAULT
+
+
+def resolve_upload_paths(paths: list[str]) -> list[str]:
+    """Canonicalize upload paths (symlinks resolved) for validation + dispatch."""
+    return [os.path.realpath(str(item)) for item in paths]
+
+
+# M2-A B3 (DESIGN-20261027 §4.1/§5.1, U5): the host-destroying chord blacklist
+# is a hardcoded constant, not configuration - exactly the four verb-table
+# additions of this milestone share this single policy function at three
+# enforcement points (semantic_operation compile -> adapter _validate ->
+# cdp actuator boundary), mirroring the M1 upload_paths_policy_error pattern.
+#   key_not_allowed : the chord would close/quit/switch the host tab or app
+#                     (Meta+W/Q/T/N/S/P/H/M, Meta+`, Meta+Tab, Meta+Space,
+#                      Ctrl+Meta+Q, Meta+Shift+Q, Escape+Meta-class system keys)
+#   key_args_invalid: not a single-key-or-modifier-chord string (empty, >32
+#                     chars, two non-modifier tokens, duplicate modifier).
+_PRESS_KEY_ALIASES = {
+    "cmd": "meta",
+    "command": "meta",
+    "meta": "meta",
+    "ctrl": "control",
+    "control": "control",
+    "alt": "alt",
+    "option": "alt",
+    "shift": "shift",
+}
+_PRESS_KEY_META_BLOCKED_KEYS = frozenset(
+    {"w", "q", "t", "n", "s", "p", "h", "m", "tab", "space", "`", "backquote", "backtick"}
+)
+
+
+def parse_key_chord(raw: Any) -> tuple[tuple[str, ...], str] | tuple[None, None]:
+    """Split "Meta+A" into canonical modifiers + key; (None, None) = invalid.
+
+    Contract: exactly one non-modifier key token plus 0..4 distinct modifier
+    tokens. Modifiers normalize through _PRESS_KEY_ALIASES (Cmd->Meta,
+    Ctrl->Control); the key token lowercases. Anything else - empty input,
+    a chord longer than 32 chars, two keys, a repeated modifier - is invalid.
+    """
+    if not isinstance(raw, str) or not raw.strip() or len(raw) > 32:
+        return None, None
+    tokens = [token.strip() for token in raw.split("+") if token.strip()]
+    if not tokens:
+        return None, None
+    modifiers: list[str] = []
+    key = ""
+    for token in tokens:
+        canonical = _PRESS_KEY_ALIASES.get(token.lower())
+        if canonical is not None:
+            if canonical in modifiers:
+                return None, None
+            modifiers.append(canonical)
+            continue
+        if key:
+            return None, None
+        key = token.lower()
+    if not key:
+        return None, None
+    return tuple(sorted(modifiers)), key
+
+
+def press_key_policy_error(keys: Any) -> str | None:
+    """Validate a key chord; None means accepted, else a deterministic code.
+
+    Any failure here must surface as a deterministic rejection code before the
+    dispatcher is reached (no snapshot, no grounding, no CDP request).
+    """
+    modifiers, key = parse_key_chord(keys)
+    if modifiers is None or not key:
+        return "key_args_invalid"
+    if "meta" in modifiers and key in _PRESS_KEY_META_BLOCKED_KEYS:
+        # Meta+Q already covers Ctrl+Meta+Q and Meta+Shift+Q (same key token).
+        return "key_not_allowed"
+    if "meta" in modifiers and key == "escape":
+        # Escape+Meta-class system chords (incl. Meta+Alt+Esc) close app-level
+        # UI irreversibly from the page's point of view.
+        return "key_not_allowed"
+    return None
+
+
+def upload_paths_policy_error(paths: Any) -> str | None:
+    """Validate upload paths in the contract order; None means accepted.
+
+    Any failure here must surface as a deterministic rejection code and the
+    dispatcher must never be reached for this action (no CDP request).
+    """
+    if not isinstance(paths, list) or not all(
+        isinstance(item, str) and item.strip() for item in paths
+    ):
+        return "upload_args_invalid"
+    roots = upload_allow_roots()
+    max_bytes = upload_max_file_bytes()
+    for raw in paths:
+        resolved = os.path.realpath(raw)
+        if not any(
+            resolved == root or resolved.startswith(root + os.sep) for root in roots
+        ):
+            return "path_not_allowed"
+        if not os.path.exists(resolved):
+            return "path_not_found"
+        try:
+            mode = os.stat(resolved).st_mode
+        except OSError:
+            return "path_not_found"
+        if not stat.S_ISREG(mode):
+            # directories, devices, sockets, FIFOs all rejected here
+            return "not_regular_file"
+        if os.path.getsize(resolved) > max_bytes:
+            return "too_large"
+    if not 1 <= len(paths) <= _UPLOAD_MAX_FILES:
+        return "paths_count_invalid"
+    return None
+
+
+def upload_paths_facts(paths: list[str]) -> list[dict[str, Any]]:
+    """Per-file mechanical facts for receipts: ok/name/size/mime (no full paths)."""
+    facts: list[dict[str, Any]] = []
+    for raw in paths:
+        resolved = os.path.realpath(str(raw))
+        entry: dict[str, Any] = {"ok": os.path.isfile(resolved), "name": os.path.basename(resolved)}
+        try:
+            entry["size"] = os.path.getsize(resolved)
+        except OSError:
+            entry["size"] = None
+        entry["mime"] = mimetypes.guess_type(resolved)[0] or "application/octet-stream"
+        facts.append(entry)
+    return facts
 
 
 _ARGS_NORMALIZATION_RULES = {"verb_wrapper_unwrap"}
@@ -59,7 +258,12 @@ def _sha256_json(value: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
+def _safe_arg_facts(
+    verb: str,
+    args: dict[str, Any],
+    *,
+    upload_files: list[str] | None = None,
+) -> dict[str, Any]:
     """Return privacy-safe mechanical request facts; never persist sensitive values."""
     if verb == "fill":
         text = str(args.get("text") or "")
@@ -68,6 +272,47 @@ def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
             "text_length": len(text),
             "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         }
+    if verb == "type":
+        # M1 B2: same privacy shape as fill - length + digest only, never the
+        # text itself (the 20-char preview is model-facing compact output only).
+        text = str(args.get("text") or "")
+        return {
+            "text_length": len(text),
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        }
+    if verb == "upload":
+        # M1 B1: basename + size + content sha256 per file; full paths are
+        # never persisted (T1 mitigation alongside the allow_roots gate).
+        # fix(P0-1, review-M1): content reads happen only on the re-verified
+        # resolved absolute paths (upload_files), taken AFTER the pre-dispatch
+        # recheck in execute(); the reservation fingerprint uses
+        # _fingerprint_arg_facts instead, so a file swapped inside the
+        # validate->dispatch window can never get its digest persisted.
+        raw_paths = args.get("paths")
+        resolved_paths = (
+            list(upload_files)
+            if upload_files is not None
+            else (
+                [os.path.realpath(str(item)) for item in raw_paths]
+                if isinstance(raw_paths, list)
+                else []
+            )
+        )
+        files: list[dict[str, Any]] = []
+        for resolved in resolved_paths:
+            fact: dict[str, Any] = {"name": os.path.basename(resolved)}
+            try:
+                fact["size"] = os.path.getsize(resolved)
+                with open(resolved, "rb") as handle:
+                    digest = hashlib.sha256()
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                fact["sha256"] = digest.hexdigest()
+            except OSError:
+                fact["size"] = None
+                fact["sha256"] = None
+            files.append(fact)
+        return {"files": files}
     if verb == "select":
         value = str(args.get("value") or "")
         return {
@@ -80,9 +325,72 @@ def _safe_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
             "url_length": len(url),
             "url_sha256": hashlib.sha256(url.encode("utf-8")).hexdigest(),
         }
+    if verb == "press_key":
+        # M2-A B3: key names are not user content (bounded, no free text);
+        # echoing the chord verbatim keeps receipts replay-auditable.
+        return {"keys": str(args.get("keys") or "")}
+    if verb == "dialog":
+        # M2-A B5: the action word only; the dialog message itself is page
+        # content and never persisted here.
+        return {"action": str(args.get("action") or "")}
     if verb == "scroll":
         return {"delta_pages": args.get("delta_pages")}
     return {}
+
+
+def _fingerprint_arg_facts(verb: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Reservation-fingerprint facts: declared action shape only, zero file I/O.
+
+    fix(P0-1, review-M1): the fingerprint is computed right after _validate,
+    i.e. inside the attacker-controlled swap window (validate -> captures ->
+    dispatch). Reading file contents there would digest a swapped sensitive
+    file into the persisted reservation marker. Content digests are now taken
+    exclusively from re-verified resolved paths at dispatch-grounding time
+    (_safe_arg_facts(upload_files=...)); the fingerprint digests the DECLARED
+    path strings instead, which keeps duplicate-action detection a pure
+    function of the declared action.
+    """
+    if verb == "upload":
+        raw_paths = args.get("paths")
+        declared = [str(item) for item in raw_paths] if isinstance(raw_paths, list) else []
+        return {
+            "files": [
+                {
+                    "name": os.path.basename(item),
+                    "declared_sha256": hashlib.sha256(item.encode("utf-8")).hexdigest(),
+                }
+                for item in declared
+            ]
+        }
+    return _safe_arg_facts(verb, args)
+
+
+def _dispatch_safe_arg_facts(
+    verb: str,
+    action: dict[str, Any],
+    dispatch_args: dict[str, Any],
+) -> dict[str, Any]:
+    """fix(P0-1): upload content digests are taken from the re-verified
+    resolved paths only (after the upload recheck), never from the declared
+    path strings still sitting in the action contract.
+    """
+    return _safe_arg_facts(
+        verb,
+        dict(action["args"]),
+        upload_files=(dispatch_args.get("paths") if verb == "upload" else None),
+    )
+
+
+def _dispatch_error_reason(exc: Exception, reasons: list[str]) -> str:
+    """M2-A: actuator contract rejections (duck-typed error_code, e.g.
+    key_not_allowed / element_not_visible / dialog_not_open) produced no side
+    effect by construction, so they surface their stable code instead of the
+    ambiguous-outcome marker; every other dispatch error stays ambiguous."""
+    code = getattr(exc, "error_code", None)
+    if isinstance(code, str) and code:
+        return code
+    reasons.append("dispatch_outcome_ambiguous")
+    return f"dispatch_error:{type(exc).__name__}"
 
 
 def _landing_url_key(url: str) -> tuple[Any, ...]:
@@ -434,6 +742,26 @@ class BrowserActionAdapter:
             delta = args.get("delta_pages")
             if isinstance(delta, bool) or not isinstance(delta, (int, float)):
                 return "scroll_args_invalid"
+        if verb == "type":
+            # M1 B2: empty text is a valid explicit no-op (not an error); only
+            # the >2000 bound is a deterministic rejection.
+            text = args.get("text")
+            if not isinstance(text, str):
+                return "type_args_invalid"
+            if len(text) > _TYPE_MAX_TEXT_LENGTH:
+                return "type_text_too_long"
+        if verb == "upload":
+            # M1 B1: full path policy (realpath/allow_roots/existence/regular
+            # file/size/count) - any failure rejects before any capture or CDP.
+            return upload_paths_policy_error(args.get("paths"))
+        if verb == "press_key":
+            # M2-A B3: the chord blacklist re-runs here (defense in depth for
+            # direct semantic_execute callers); compile-time already rejected.
+            return press_key_policy_error(args.get("keys"))
+        if verb == "dialog" and str(args.get("action") or "") not in {"accept", "dismiss"}:
+            # M2-A B5: closed action vocabulary; the open/closed gate itself
+            # lives in the actuator (drained dialog state).
+            return "dialog_action_invalid"
         return None
 
     @staticmethod
@@ -525,7 +853,7 @@ class BrowserActionAdapter:
         if not self.guard_enabled or self.guard_collector is None:
             return None
         verb = str(action["verb"])
-        if verb not in {"click", "fill", "select", "scroll"}:
+        if verb not in {"click", "fill", "select", "scroll", "type", "upload", "hover"}:
             return None
         try:
             baseline = self.perception.guard_baseline(
@@ -610,6 +938,86 @@ class BrowserActionAdapter:
             )
         return str(landed_reason or "blocked")
 
+    def _recheck_upload_dispatch_args(
+        self,
+        verb: str,
+        action: dict[str, Any],
+        session_id: str,
+        before_version: str,
+        before_ref: str | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """fix(P0-1, review-M1 A2): re-verify the FINAL resolved upload paths
+        right before any dispatch facts are taken and before the actuator is
+        called.
+
+        _validate approved the paths as DECLARED; the capture windows since
+        then are attacker swap time (deterministic probe: a symlink flip
+        inside the first capture hook used to send /private/etc/passwd
+        straight to dispatch with status=ok). Re-resolved absolute paths go
+        through the same policy once more; any failure rides the existing
+        rejected path (zero dispatch, zero dispatch.json). Residual window:
+        recheck -> browser file open (sub-millisecond); fd passing
+        (openat/O_NOFOLLOW) is registered as an M2 follow-up.
+
+        Returns ``(dispatch_args, None)`` on success, or
+        ``(None, rejected_receipt)`` when the recheck rejects.
+        """
+        dispatch_args = dict(action["args"])
+        if verb != "upload":
+            return dispatch_args, None
+        raw_paths = dispatch_args.get("paths")
+        if isinstance(raw_paths, list):
+            dispatch_args["paths"] = resolve_upload_paths(raw_paths)
+        recheck_error = upload_paths_policy_error(dispatch_args.get("paths"))
+        if recheck_error is not None:
+            return None, self._append_rejected(
+                session_id,
+                action,
+                recheck_error,
+                before_version=before_version,
+                before_ref=before_ref,
+            )
+        return dispatch_args, None
+
+    def _post_dispatch_observation(
+        self, session_id: str, before_version: str, dispatch_authority_lost: bool
+    ) -> tuple[str | None, str | None, str | None, dict[str, Any] | None, list[str]]:
+        """Post-dispatch after-observation + semantic diff (evidence only).
+
+        Returns ``(after_version, after_ref, diff_ref, semantic_diff,
+        post_reasons)``; an observation failure degrades evidence via
+        post_reasons and never gates the receipt. Authority-lost dispatches
+        skip the observation entirely (same semantics as the inline block).
+        """
+        after_version: str | None = None
+        after_ref: str | None = None
+        diff_ref: str | None = None
+        semantic_diff: dict[str, Any] | None = None
+        post_reasons: list[str] = []
+        if dispatch_authority_lost:
+            return after_version, after_ref, diff_ref, semantic_diff, post_reasons
+        try:
+            after_raw = self.capture_backend.capture()
+            after_result = self.perception.snapshot(session_id, after_raw, projection_limit=1)
+            after_snapshot = dict(after_result.get("snapshot") or {})
+            after_version = str(after_snapshot.get("snapshot_id") or "") or None
+            after_ref = str(after_snapshot.get("objects_ref") or "") or None
+            if after_version is not None:
+                diff = self.perception.diff(
+                    session_id,
+                    from_version=before_version,
+                    to_version=after_version,
+                )
+                semantic_diff = diff
+                diff_ref = str(diff.get("full_list_ref") or "") or None
+                if not bool((diff.get("completeness") or {}).get("complete")):
+                    post_reasons.extend(
+                        str(x) for x in (diff.get("completeness") or {}).get("reasons", [])
+                    )
+        except Exception as exc:  # noqa: BLE001 - post-observation failure degrades evidence only.
+            post_reasons.append(f"post_dispatch_observation_failed:{type(exc).__name__}")
+        return after_version, after_ref, diff_ref, semantic_diff, post_reasons
+
     def execute(self, session_id: str, action: dict[str, Any]) -> dict[str, Any]:
         if not session_id:
             raise ValueError("session_id is required")
@@ -642,7 +1050,9 @@ class BrowserActionAdapter:
                 "action_id": action_id,
                 "verb": action["verb"],
                 "target_id": action["target_id"],
-                "args": _safe_arg_facts(str(action["verb"]), dict(action["args"])),
+                # fix(P0-1): declared-shape facts only (no file reads) — the
+                # reservation marker must not digest a swapped file.
+                "args": _fingerprint_arg_facts(str(action["verb"]), dict(action["args"])),
                 "expected_version": action["expected_version"],
                 "version_scope": action["version_scope"],
             }
@@ -676,8 +1086,11 @@ class BrowserActionAdapter:
             # the full pre-observation fails structurally we fall back to a
             # lightweight probe instead of killing the model's only escape verb.
             # Object verbs (click/fill/select/scroll) keep the full precondition.
+            # M2-A B5: dialog joins this class - a blocking JS dialog freezes
+            # the renderer (full capture impossible) while the browser-process
+            # probe channel stays alive.
             probe_page_target = getattr(self.capture_backend, "probe_page_target", None)
-            if str(action["verb"]) == "navigate" and callable(probe_page_target):
+            if str(action["verb"]) in {"navigate", "dialog"} and callable(probe_page_target):
                 try:
                     probe_page_target()
                 except Exception as probe_exc:  # noqa: BLE001 - probe failure is a mechanical fact.
@@ -765,7 +1178,7 @@ class BrowserActionAdapter:
         scope_ref = str(action["scope_ref"])
         physical_target: str | None = None
         semantic_object: dict[str, Any] | None = None
-        if verb in {"click", "fill", "select", "scroll"}:
+        if verb in {"click", "fill", "select", "scroll", "type", "upload", "hover"}:
             object_grounding = (before_bundle.get("object_grounding") or {}).get(target_id)
             semantic_object = (object_grounding or {}).get("semantic_object") if isinstance(object_grounding, dict) else None
             if not isinstance(semantic_object, dict) or str(semantic_object.get("scope_ref") or "") != scope_ref:
@@ -785,7 +1198,9 @@ class BrowserActionAdapter:
                     before_version=before_version,
                     before_ref=before_ref,
                 )
-        elif verb == "navigate":
+        # M2-A B3/B5: press_key and dialog are resource-scoped like navigate
+        # (page grounding, no object target).
+        elif verb in {"navigate", "press_key", "dialog"}:
             page_scope = next(
                 (
                     item
@@ -827,13 +1242,24 @@ class BrowserActionAdapter:
                     before_version=before_version, before_ref=before_ref,
                 )
 
+        # fix(P0-1, review-M1 A2): upload paths are re-resolved and re-checked
+        # (same policy) after the capture windows, right before dispatch facts.
+        dispatch_args, upload_rejected = self._recheck_upload_dispatch_args(
+            verb, action, session_id, before_version, before_ref
+        )
+        if upload_rejected is not None:
+            return upload_rejected
+        # Invariant of _recheck_upload_dispatch_args: exactly one of the two
+        # tuple slots is None; the guard above leaves dispatch_args non-None.
+        assert dispatch_args is not None
+
         dispatch_ref = self.receipt_store.persist_dispatch_grounding(
             session_id,
             action_id,
             action_fingerprint=fingerprint,
             verb=verb,
             physical_target=physical_target,
-            safe_args=_safe_arg_facts(verb, dict(action["args"])),
+            safe_args=_dispatch_safe_arg_facts(verb, action, dispatch_args),
             before_version=before_version,
         )
         running = self._receipt_base(action)
@@ -855,10 +1281,12 @@ class BrowserActionAdapter:
                 dispatch_authority_verdict = mutation_allowed
             else:
                 try:
+                    # M1 B1 + fix(P0-1): dispatch_args carries the canonicalized
+                    # absolute upload paths, rechecked above (see helper).
                     dispatch_result = self.actuator.dispatch(
                         verb=str(action["verb"]),
                         physical_target=physical_target,
-                        args=dict(action["args"]),
+                        args=dispatch_args,
                     )
                 except Exception as exc:  # noqa: BLE001 - ambiguity must be surfaced, never replayed.
                     dispatch_error = exc
@@ -898,32 +1326,11 @@ class BrowserActionAdapter:
                 physical_target=physical_target,
             )
 
-        after_version: str | None = None
-        after_ref: str | None = None
-        diff_ref: str | None = None
-        semantic_diff: dict[str, Any] | None = None
-        post_reasons: list[str] = []
-        if not dispatch_authority_lost:
-            try:
-                after_raw = self.capture_backend.capture()
-                after_result = self.perception.snapshot(session_id, after_raw, projection_limit=1)
-                after_snapshot = dict(after_result.get("snapshot") or {})
-                after_version = str(after_snapshot.get("snapshot_id") or "") or None
-                after_ref = str(after_snapshot.get("objects_ref") or "") or None
-                if after_version is not None:
-                    diff = self.perception.diff(
-                        session_id,
-                        from_version=before_version,
-                        to_version=after_version,
-                    )
-                    semantic_diff = diff
-                    diff_ref = str(diff.get("full_list_ref") or "") or None
-                    if not bool((diff.get("completeness") or {}).get("complete")):
-                        post_reasons.extend(
-                            str(x) for x in (diff.get("completeness") or {}).get("reasons", [])
-                        )
-            except Exception as exc:  # noqa: BLE001 - post-observation failure degrades evidence only.
-                post_reasons.append(f"post_dispatch_observation_failed:{type(exc).__name__}")
+        # FR-2 tail + post-observation live in _post_dispatch_observation
+        # (evidence-only; failure degrades, never gates).
+        after_version, after_ref, diff_ref, semantic_diff, post_reasons = (
+            self._post_dispatch_observation(session_id, before_version, dispatch_authority_lost)
+        )
 
         terminal = self._receipt_base(action)
         terminal["before_version"] = before_version
@@ -982,8 +1389,7 @@ class BrowserActionAdapter:
                     }
         elif dispatch_error is not None:
             terminal["status"] = "failed"
-            reasons.append("dispatch_outcome_ambiguous")
-            terminal["retry"]["reason"] = f"dispatch_error:{type(dispatch_error).__name__}"
+            terminal["retry"]["reason"] = _dispatch_error_reason(dispatch_error, reasons)
         elif dispatch_result is None or not dispatch_result.acknowledged:
             terminal["status"] = "failed"
             reasons.append("dispatch_not_acknowledged")

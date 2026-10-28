@@ -68,7 +68,8 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
 
     assert tool.name == "browser_perceive"
     props = tool.parameters["properties"]
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait", "pages"]
+    # M2-A B6: expected joins the flat wait vocabulary (download_state).
     assert set(props) == {
         "action",
         "projection_limit",
@@ -82,11 +83,14 @@ def test_model_surface_is_read_only_and_has_no_backend_locator_parameters(tmp_pa
         "state",
         "match",
         "expected_url",
+        "expected",
         "value",
         "field",
         "text",
         "target_id",
         "within_ms",
+        # M2-B B7: settle_ms joins the flat wait vocabulary (object_absent).
+        "settle_ms",
     }
     assert "condition" not in props
     model_surface_tokens = {str(key).lower() for key in props}

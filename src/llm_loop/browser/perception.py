@@ -220,7 +220,18 @@ _ATTRIBUTE_FIELDS = {
     "href",
     "dom_region",
     "text",
+    # M2-B B15 (DESIGN-20261027 §7.3.3): fallback addressing sources and the
+    # derived fallback key (stable only within its world_version - the
+    # per-snapshot id lives in fallback_stable_within and is deliberately
+    # excluded from content_sha256 via _content_fact_basis).
+    "title",
+    "placeholder",
+    "alt",
+    "fallback_key",
+    "fallback_stable_within",
 }
+# M2-B B8/B9: bounded ring of recent snapshot ids kept per session state.
+_SESSION_SNAPSHOT_RING = 16
 _STATE_FIELDS = {
     "exists",
     "enabled",
@@ -313,7 +324,10 @@ def _content_fact_basis(value: Any) -> Any:
         return {
             key: _content_fact_basis(child)
             for key, child in value.items()
-            if key not in {"grounding_ref", "observed_version"}
+            # fallback_stable_within is the per-snapshot world_version id:
+            # identical worlds must hash identically, so it rides the same
+            # exclusion list as grounding_ref/observed_version (M2-B B15).
+            if key not in {"grounding_ref", "observed_version", "fallback_stable_within"}
         }
     if isinstance(value, list):
         return [_content_fact_basis(child) for child in value]
@@ -395,6 +409,22 @@ _NAME_FROM_CONTENT_TAGS = frozenset({
 })
 _NAME_FROM_CONTENT_CAP = 200
 _NAME_FROM_CONTENT_MAX_NODES = 400
+# M2-B B15 (DESIGN-20261027 §7.3.3): deterministic fallback addressing for
+# elements WITHOUT an accessible name. aria-label already feeds the canonical
+# ``name`` (so named elements never reach this path); among the nameless the
+# key is the first non-empty of title -> visible text -> placeholder -> alt
+# (normalized + truncated), else the region ordinal ``{kind}#{ordinal}``.
+_FALLBACK_SOURCE_ORDER = ("title", "text", "placeholder", "alt")
+_FALLBACK_TEXT_CAP = 64
+
+
+def _fallback_addressing_key(attributes: dict[str, Any]) -> str:
+    """First deterministic fallback source for a NAMELESS element (""=none)."""
+    for source in _FALLBACK_SOURCE_ORDER:
+        value = normalize_semantic_name(str(attributes.get(source) or ""))
+        if value:
+            return value[:_FALLBACK_TEXT_CAP]
+    return ""
 
 
 def _build_children_index(node_count: int, parent_indexes: list[int]) -> dict[int, list[int]]:
@@ -983,6 +1013,12 @@ class _SessionState:
         self.identity_map: dict[tuple[int, int, int | None, str], str] = {}
         self.stable_semantic_scopes: dict[str, str] = {}
         self.next_page_generation = 1
+        # M2-B B8/B9: recent snapshot ids (bounded ring). identity_search's
+        # default branch and the read-only pages listing both read the LATEST
+        # snapshot from this key; before M2-B nothing ever wrote it, so the
+        # default branch could only see an empty list (callers that passed an
+        # explicit snapshot_id were unaffected).
+        self.snapshot_ids: list[str] = []
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -1006,6 +1042,7 @@ class _SessionState:
             ],
             "stable_semantic_scopes": dict(self.stable_semantic_scopes),
             "next_page_generation": self.next_page_generation,
+            "snapshot_ids": list(self.snapshot_ids[-_SESSION_SNAPSHOT_RING:]),
         }
 
     @classmethod
@@ -1041,6 +1078,11 @@ class _SessionState:
                 for semantic_id, scope_ref in dict(raw.get("stable_semantic_scopes") or {}).items()
             }
             state.next_page_generation = max(1, int(raw.get("next_page_generation") or 1))
+            state.snapshot_ids = [
+                str(item)
+                for item in list(raw.get("snapshot_ids") or [])[-_SESSION_SNAPSHOT_RING:]
+                if str(item)
+            ]
         except (TypeError, ValueError, IndexError) as exc:
             raise RuntimeError("browser session state invalid") from exc
         return state
@@ -1366,6 +1408,12 @@ class BrowserPerceptionAdapter:
                     generation,
                 ),
                 "kind": "frame",
+                # M2-B B8 (DESIGN-20261027 F27): the frame scope carries the
+                # SAME frame_token the sensor nodes carry (value
+                # "frame:<frameId>"; main frame stays None) so frame-scoped
+                # identity addressing and scope facts agree on one token
+                # vocabulary - no parallel frame_id field is introduced.
+                "frame_token": frame_token,
                 "parent_scope_ref": document_scope_ref,
                 "runtime_generation": self.store.runtime_generation,
                 "page_generation": page_generation,
@@ -1434,6 +1482,88 @@ class BrowserPerceptionAdapter:
             "state": _filter_fields(node.get("state"), _STATE_FIELDS),
         }
         return ref
+
+    def _spawn_ax_ambiguity_cards(
+        self,
+        *,
+        state: _SessionState,
+        session_id: str,
+        snapshot_id: str,
+        page_generation: int,
+        document_generation: int,
+        frame_generation: int | None,
+        frame_token: str | None,
+        scope: dict[str, Any],
+        candidates: list[dict[str, Any]],
+        build: _ObjectBuild,
+    ) -> dict[str, Any]:
+        """Ambiguous AX candidates -> snapshot-local cards + mapping conflict.
+
+        M2-B hygiene extraction from ``_canonicalize_objects`` (verbatim
+        semantics); one card per unmatched AX candidate sharing a DOM physical
+        node, plus the unresolved identity-mapping conflict entry.  Cards
+        carry the frame_token of their frame scope (M2-B B8).
+        """
+        identity_observations: list[dict[str, Any]] = []
+        for candidate in candidates:
+            candidate_key = str(candidate.get("ax_id") or secrets.token_hex(4))
+            candidate_id = self._semantic_id(
+                state,
+                session_id=session_id,
+                page_generation=page_generation,
+                document_generation=document_generation,
+                frame_generation=frame_generation,
+                physical_key=f"ax-ambiguous:{candidate_key}",
+                stable=False,
+                snapshot_id=snapshot_id,
+            )
+            candidate_ref = self._record_source_grounding(
+                source_grounding=build.source_grounding,
+                snapshot_id=snapshot_id,
+                source="ax",
+                semantic_id=candidate_id,
+                node=candidate,
+                scope_ref=str(scope["scope_ref"]),
+            )
+            candidate_obj = {
+                "schema": "smc.semantic_object.v0.1",
+                "domain": "browser",
+                "scope_ref": scope["scope_ref"],
+                "id": candidate_id,
+                "frame_token": frame_token,
+                "kind": _normalize_kind(candidate.get("kind")),
+                "attributes": _filter_fields(candidate.get("attributes"), _ATTRIBUTE_FIELDS),
+                "state": _filter_fields(candidate.get("state"), _STATE_FIELDS),
+                "relations": [],
+                "coverage": self._object_coverage(["ax"], [], []),
+                "grounding_ref": self._object_ref(snapshot_id, candidate_id),
+                "observed_version": snapshot_id,
+            }
+            build.semantic_objects.append(candidate_obj)
+            build.object_grounding[candidate_id] = {
+                "semantic_object": candidate_obj,
+                "sources": {"ax": candidate_ref},
+                "identity_basis": "snapshot_local_ax_identity",
+            }
+            build.private_identity[candidate_id] = {
+                "source": "ax",
+                "physical_id": candidate.get("physical_id"),
+                "ax_id": candidate.get("ax_id"),
+                "stable": False,
+            }
+            identity_observations.append(
+                {
+                    "source": "ax",
+                    "value": candidate_id,
+                    "grounding_ref": candidate_ref,
+                }
+            )
+        return {
+            "identity_mapping": "dom_to_ax",
+            "observations": identity_observations,
+            "resolution": "unresolved",
+            "derivation_basis": None,
+        }
 
     def _canonicalize_objects(
         self,
@@ -1508,66 +1638,19 @@ class BrowserPerceptionAdapter:
                 )
                 sources.append("ax")
             elif len(candidates) > 1:
-                identity_observations: list[dict[str, Any]] = []
-                for candidate in candidates:
-                    candidate_key = str(candidate.get("ax_id") or secrets.token_hex(4))
-                    candidate_id = self._semantic_id(
-                        state,
+                conflicts.append(
+                    self._spawn_ax_ambiguity_cards(
+                        state=state,
                         session_id=session_id,
+                        snapshot_id=snapshot_id,
                         page_generation=page_generation,
                         document_generation=document_generation,
                         frame_generation=frame_generation,
-                        physical_key=f"ax-ambiguous:{candidate_key}",
-                        stable=False,
-                        snapshot_id=snapshot_id,
+                        frame_token=frame_token,
+                        scope=scope,
+                        candidates=candidates,
+                        build=build,
                     )
-                    candidate_ref = self._record_source_grounding(
-                        source_grounding=build.source_grounding,
-                        snapshot_id=snapshot_id,
-                        source="ax",
-                        semantic_id=candidate_id,
-                        node=candidate,
-                        scope_ref=str(scope["scope_ref"]),
-                    )
-                    candidate_obj = {
-                        "schema": "smc.semantic_object.v0.1",
-                        "domain": "browser",
-                        "scope_ref": scope["scope_ref"],
-                        "id": candidate_id,
-                        "kind": _normalize_kind(candidate.get("kind")),
-                        "attributes": _filter_fields(candidate.get("attributes"), _ATTRIBUTE_FIELDS),
-                        "state": _filter_fields(candidate.get("state"), _STATE_FIELDS),
-                        "relations": [],
-                        "coverage": self._object_coverage(["ax"], [], []),
-                        "grounding_ref": self._object_ref(snapshot_id, candidate_id),
-                        "observed_version": snapshot_id,
-                    }
-                    build.semantic_objects.append(candidate_obj)
-                    build.object_grounding[candidate_id] = {
-                        "semantic_object": candidate_obj,
-                        "sources": {"ax": candidate_ref},
-                        "identity_basis": "snapshot_local_ax_identity",
-                    }
-                    build.private_identity[candidate_id] = {
-                        "source": "ax",
-                        "physical_id": candidate.get("physical_id"),
-                        "ax_id": candidate.get("ax_id"),
-                        "stable": False,
-                    }
-                    identity_observations.append(
-                        {
-                            "source": "ax",
-                            "value": candidate_id,
-                            "grounding_ref": candidate_ref,
-                        }
-                    )
-                conflicts.append(
-                    {
-                        "identity_mapping": "dom_to_ax",
-                        "observations": identity_observations,
-                        "resolution": "unresolved",
-                        "derivation_basis": None,
-                    }
                 )
 
             dom_attrs = _filter_fields(dom_node.get("attributes"), _ATTRIBUTE_FIELDS)
@@ -1600,6 +1683,11 @@ class BrowserPerceptionAdapter:
                 "domain": "browser",
                 "scope_ref": scope["scope_ref"],
                 "id": semantic_id,
+                # M2-B B8: objects surface their frame scope's token (main
+                # frame None, children "frame:<frameId>") so frame-scoped
+                # identity addressing matches the same vocabulary the capture
+                # and scope facts already use.
+                "frame_token": frame_token,
                 "kind": _merge_kind(dom_node.get("kind"), ax_node.get("kind")),
                 "attributes": attributes,
                 "state": object_state,
@@ -1657,6 +1745,7 @@ class BrowserPerceptionAdapter:
                 "domain": "browser",
                 "scope_ref": scope["scope_ref"],
                 "id": semantic_id,
+                "frame_token": frame_token,  # M2-B B8 (see dom-loop note)
                 "kind": _normalize_kind(ax_node.get("kind")),
                 "attributes": _filter_fields(ax_node.get("attributes"), _ATTRIBUTE_FIELDS),
                 "state": _filter_fields(ax_node.get("state"), _STATE_FIELDS),
@@ -1680,6 +1769,52 @@ class BrowserPerceptionAdapter:
                 "stable": stable,
             }
         return build
+
+    def _annotate_addressing(
+        self, objects: list[dict[str, Any]], *, snapshot_id: str
+    ) -> None:
+        """In-place addressing annotations on the traversal-ordered build list.
+
+        EVO-20261010-1e06d6b4: ``attributes.name_normalized`` is a deterministic
+        derivation of the raw observed name (zero-width runes stripped,
+        whitespace runs collapsed) added before persistence so projections,
+        hydrate, and operate-side exact matching all see the same field.  The
+        raw name is never rewritten; consumers choose the addressing form
+        explicitly.  Empty normalizations are kept verbatim: the empty string
+        is itself the honest canonical form of a name that contains only
+        invisible runes.
+
+        M2-B B15 (§7.3.3): NAMELESS objects additionally receive
+        ``attributes.fallback_key`` (title -> text -> placeholder -> alt ->
+        ``{kind}#{ordinal}``; the ordinal counts ALL same-kind objects in
+        this snapshot's deterministic traversal order - DOM order per frame,
+        then AX-only cards) plus ``fallback_stable_within`` = the snapshot
+        id.  The key is explicitly ONLY stable within that world_version;
+        the operate tool rejects cross-version use instead of silently
+        re-matching a shifted ordinal.
+        """
+        ordinal: dict[str, int] = {}
+        for semantic_object in objects:
+            semantic_attributes = semantic_object.get("attributes")
+            if not isinstance(semantic_attributes, dict):
+                continue
+            # The ordinal counts ALL same-kind objects in traversal order
+            # (named or not) so ``{kind}#{ordinal}`` is the Nth button of the
+            # snapshot in plain reading order.
+            kind = str(semantic_object.get("kind") or "")
+            ordinal[kind] = ordinal.get(kind, 0) + 1
+            raw_name = semantic_attributes.get("name")
+            if isinstance(raw_name, str):
+                semantic_attributes["name_normalized"] = normalize_semantic_name(
+                    raw_name
+                )
+            if raw_name:
+                continue  # named elements keep the {kind,name} address only
+            fallback = _fallback_addressing_key(semantic_attributes)
+            semantic_attributes["fallback_key"] = (
+                fallback or f"{kind}#{ordinal[kind]}"
+            )
+            semantic_attributes["fallback_stable_within"] = snapshot_id
 
     def _attach_structural_relations(
         self,
@@ -1909,6 +2044,10 @@ class BrowserPerceptionAdapter:
             state, page_token, document_token
         )
         snapshot_id = f"bsnap-{self.store.runtime_generation}-{secrets.token_hex(8)}"
+        # M2-B B8/B9: ring-append the snapshot id so the persisted session
+        # state carries the lineage identity_search's default branch and the
+        # read-only pages listing (latest world_version) expect.
+        state.snapshot_ids = [*state.snapshot_ids, snapshot_id][-_SESSION_SNAPSHOT_RING:]
         document_scope, frame_scopes, scope_facts = self._build_scope_facts(
             state=state,
             session_id=session_id,
@@ -1939,22 +2078,11 @@ class BrowserPerceptionAdapter:
             )
 
         objects_canonical = sorted(build.semantic_objects, key=lambda item: item["id"])
-        # EVO-20261010-1e06d6b4: attributes.name_normalized is a deterministic
-        # derivation of the raw observed name (zero-width runes stripped,
-        # whitespace runs collapsed) added before persistence so projections,
-        # hydrate, and operate-side exact matching all see the same field.
-        # The raw name is never rewritten; consumers choose the addressing
-        # form explicitly.  Empty normalizations are kept verbatim: the empty
-        # string is itself the honest canonical form of a name that contains
-        # only invisible runes.
-        for semantic_object in objects_canonical:
-            semantic_attributes = semantic_object.get("attributes")
-            if isinstance(semantic_attributes, dict) and isinstance(
-                semantic_attributes.get("name"), str
-            ):
-                semantic_attributes["name_normalized"] = normalize_semantic_name(
-                    semantic_attributes["name"]
-                )
+        # EVO-20261010-1e06d6b4 / M2-B B15: the addressing annotation pass
+        # (name_normalized + fallback keys for nameless objects) runs on the
+        # TRAVERSAL-ordered build list before persistence; see the helper for
+        # the exact derivation order and stability contract.
+        self._annotate_addressing(build.semantic_objects, snapshot_id=snapshot_id)
         objects_projected = _model_projection_order(objects_canonical, build.object_grounding)
         projection_limit = max(1, min(int(projection_limit), 500))
         # EVO-20260918-c69527a1: model-declared projection window. The runtime
@@ -2091,11 +2219,27 @@ class BrowserPerceptionAdapter:
             },
         }
 
-    def store_vision_evidence(self, session_id: str, payload: bytes) -> dict[str, Any]:
+    def store_vision_evidence(
+        self,
+        session_id: str,
+        payload: bytes,
+        *,
+        page_id: str | None = None,
+        world_version: str | None = None,
+        captured_at: str | None = None,
+    ) -> dict[str, Any]:
         """EVO-20260918-f2310800: persist a vision evidence blob (evidence layer only).
 
         The stored PNG never enters objects/grounding/version paths; the returned
         reference is consumed by the model via read_image and judged by the model.
+
+        M1 B10 (DESIGN-20261027 §4.1): the receipt now carries determinability
+        metadata (page_id / world_version / captured_at) and an explicit
+        ``content_unchanged`` marker. Storage stays content-addressed and the
+        cache key/screenshot path are untouched (M0 report §5: same sha == same
+        PNG bytes == same pixels). ``content_unchanged=True`` means identical
+        bytes were already stored under this content-addressed ref before, so
+        the reuse is declared instead of masquerading as fresh content.
         """
 
         if not isinstance(payload, (bytes, bytearray)) or not payload:
@@ -2105,20 +2249,29 @@ class BrowserPerceptionAdapter:
         vision_root = self.store.root / "vision"
         vision_root.mkdir(parents=True, exist_ok=True)
         path = vision_root / f"{digest}.png"
-        if not path.exists():
+        content_unchanged = path.exists()
+        if not content_unchanged:
             tmp = path.with_name(f".{path.name}.tmp")
             tmp.write_bytes(raw)
             os.replace(tmp, path)
-        return {
+        ref = f"vision://browser/v0.1/{digest}"
+        receipt: dict[str, Any] = {
             "schema": "smc.browser_vision_evidence.v0.1",
             "owner_session_sha256": _session_hash(session_id),
-            "ref": f"vision://browser/v0.1/{digest}",
+            "ref": ref,
             "path": str(path),
             "mime": "image/png",
             "bytes": len(raw),
             "sha256": digest,
             "invariant": "evidence_layer_only",
+            "page_id": page_id,
+            "world_version": world_version,
+            "captured_at": captured_at,
+            "content_unchanged": content_unchanged,
         }
+        if content_unchanged:
+            receipt["content_same_as_ref"] = ref
+        return receipt
 
     @staticmethod
     def _diff_scope_relation(
@@ -2670,6 +2823,20 @@ class BrowserPerceptionAdapter:
             ),
         )
 
+    def latest_world_version(self, session_id: str) -> str | None:
+        """M2-B B9: latest persisted snapshot id for the session, or None.
+
+        Read-only - never captures, never mutates state.  A missing or
+        unreadable lineage state degrades to None: the read-only pages
+        listing must stay available even when the snapshot ring is empty.
+        """
+        try:
+            state = self.store.load_session_state(session_id) or {}
+        except (RuntimeError, PermissionError):
+            return None
+        ids = state.get("snapshot_ids") or []
+        return str(ids[-1]) if ids else None
+
     def hydrate(self, session_id: str, grounding_ref: str) -> dict[str, Any]:
         return self.store.hydrate(session_id, grounding_ref)
 
@@ -2717,6 +2884,7 @@ class BrowserPerceptionAdapter:
                 "kind": obj.get("kind"),
                 "name": (obj.get("attributes") or {}).get("name"),
                 "name_normalized": (obj.get("attributes") or {}).get("name_normalized"),
+                "frame_token": obj.get("frame_token"),  # M2-B B8
                 "grounding_ref": obj.get("grounding_ref"),
             }
             for obj in bounded
@@ -2737,6 +2905,16 @@ def _identity_matches(obj: Any, identity: dict[str, Any]) -> bool:
     raw_attrs = obj.get("attributes")
     attrs: dict[str, Any] = raw_attrs if isinstance(raw_attrs, dict) else {}
     for key, expected in identity.items():
+        if key == "frame_token":
+            # M2-B B8: frame qualifier matches the object's frame-scope token;
+            # expected None addresses the MAIN frame (frame_token is None).
+            observed_frame = obj.get("frame_token")
+            if expected is None:
+                if observed_frame is not None:
+                    return False
+            elif observed_frame != expected:
+                return False
+            continue
         observed = obj.get("kind") if key == "kind" else attrs.get(key)
         if not isinstance(observed, str) or observed != expected:
             return False
@@ -2753,6 +2931,32 @@ def _rare_string_values(raw: Any, strings: list[str]) -> dict[int, str]:
         if isinstance(idx, int) and isinstance(value_idx, int) and 0 <= value_idx < len(strings):
             out[idx] = strings[value_idx]
     return out
+
+
+def _direct_text_indexes(
+    *,
+    node_names: list[Any],
+    node_values: list[Any],
+    parent_indexes: list[Any],
+    strings: list[str],
+) -> tuple[dict[int, list[str]], dict[int, list[int]]]:
+    """Per-parent direct text runs (verbatim M2-B hygiene extraction from
+    ``PlaywrightPageCaptureBackend.capture`` - same traversal, same skips)."""
+    direct_text_by_parent: dict[int, list[str]] = {}
+    direct_text_nodes_by_parent: dict[int, list[int]] = {}
+    for child_idx, node_name in enumerate(node_names):
+        if _string(strings, node_name).lower() != "#text":
+            continue
+        if child_idx >= len(parent_indexes) or child_idx >= len(node_values):
+            continue
+        parent_idx = parent_indexes[child_idx]
+        if not isinstance(parent_idx, int) or parent_idx < 0:
+            continue
+        text_value = _string(strings, node_values[child_idx])
+        if text_value.strip():
+            direct_text_by_parent.setdefault(parent_idx, []).append(text_value)
+            direct_text_nodes_by_parent.setdefault(parent_idx, []).append(child_idx)
+    return direct_text_by_parent, direct_text_nodes_by_parent
 
 
 def _string(strings: list[str], index: Any) -> str:
@@ -2979,20 +3183,14 @@ class PlaywrightPageCaptureBackend:
             parent_indexes = list(nodes.get("parentIndex") or [])
             backend_ids = list(nodes.get("backendNodeId") or [])
             attributes = list(nodes.get("attributes") or [])
-            direct_text_by_parent: dict[int, list[str]] = {}
-            direct_text_nodes_by_parent: dict[int, list[int]] = {}
-            for child_idx, node_name in enumerate(node_names):
-                if _string(strings, node_name).lower() != "#text":
-                    continue
-                if child_idx >= len(parent_indexes) or child_idx >= len(node_values):
-                    continue
-                parent_idx = parent_indexes[child_idx]
-                if not isinstance(parent_idx, int) or parent_idx < 0:
-                    continue
-                text_value = _string(strings, node_values[child_idx])
-                if text_value.strip():
-                    direct_text_by_parent.setdefault(parent_idx, []).append(text_value)
-                    direct_text_nodes_by_parent.setdefault(parent_idx, []).append(child_idx)
+            direct_text_by_parent, direct_text_nodes_by_parent = (
+                _direct_text_indexes(
+                    node_names=node_names,
+                    node_values=node_values,
+                    parent_indexes=parent_indexes,
+                    strings=strings,
+                )
+            )
             frame_id = _string_index_or_literal(strings, document.get("frameId"))
             frame_token = None if frame_id == main_frame_id else (f"frame:{frame_id}" if frame_id else None)
             shadow_types = _rare_string_values(nodes.get("shadowRootType"), strings)
@@ -3036,6 +3234,11 @@ class PlaywrightPageCaptureBackend:
                     )
                 if raw_attrs.get("href"):
                     dom_attributes["href"] = raw_attrs["href"]
+                # M2-B B15 (§7.3.3): fallback sources for nameless elements
+                # (static UI strings; value_text redaction policy untouched).
+                for attr in ("title", "placeholder", "alt"):
+                    if raw_attrs.get(attr):
+                        dom_attributes[attr] = raw_attrs[attr]
                 if idx < len(node_values):
                     text = _string(strings, node_values[idx]).strip()
                     if text:

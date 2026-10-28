@@ -17,8 +17,13 @@ from llm_loop.browser.method_card import SEMANTIC_OPERATION_METHOD_CARD
 from llm_loop.browser.perception import BrowserPerceptionAdapter
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
-_OBJECT_VERBS = {"click", "fill", "select", "scroll"}
-_SUPPORTED_VERBS = _OBJECT_VERBS | {"navigate"}
+# M1 (DESIGN-20261027 B1/B2): two additive object verbs. The five frozen verbs
+# keep their exact pre-M1 spelling and mapping.
+# M2-A B4: hover joins the object verbs (exact target, one mouseMoved).
+_OBJECT_VERBS = {"click", "fill", "select", "scroll", "type", "upload", "hover"}
+# M2-A B3/B5: press_key/dialog join as page-scoped verbs (resource grounding
+# like navigate - no object target).
+_SUPPORTED_VERBS = _OBJECT_VERBS | {"navigate", "press_key", "dialog"}
 
 
 class BrowserSemanticExecuteCompileError(ValueError):
@@ -31,13 +36,27 @@ class BrowserSemanticExecuteTool:
         SEMANTIC_OPERATION_METHOD_CARD
         + " 用法：必须先 browser_perceive(action=snapshot) 观察并取得 exact ref；没有 snapshot/ref 不要调用。"
         "模型按用户意图选择一个 exact "
-        "GroundingRef；对象操作调用 browser_semantic_execute(verb=click|fill|select|scroll, "
+        "GroundingRef；对象操作调用 browser_semantic_execute(verb=click|fill|select|scroll|type|upload|hover, "
         "target_ref=<SemanticObject.grounding_ref>, args=<verb 参数>)；navigate 使用该 snapshot "
         "返回的 resource_ref；不要把 URL、名称或 scope_ref 猜作 target_ref。ActionReceipt 已携带 post-capture/diff "
         "机械证据；仅当下一步需要更广页面语义、diff 不完整或发生边界变化时再 browser_perceive snapshot。"
         "例：点击 Commit 时，先从 snapshot 选择 Commit 对象的 GroundingRef，"
         "再调用 verb=click,target_ref=<该ref>,args={}。fill args={text,mode}，mode=replace|append；"
-        "select args={value}；navigate args={url}；scroll args={delta_pages}。工具内部只把模型已选择的"
+        "select args={value}；navigate args={url}；scroll args={delta_pages}；"
+        "type args={text}（走 Input.insertText 真实输入管线，≤2000 字符，空文本为明确 no-op；"
+        "插入点=程序化 focus 后光标位置，目标已有内容时在开头）；"
+        "upload args={paths}（1..8 个工作区内常规文件，路径策略 realpath/allow_roots/≤100MB 在 "
+        "dispatch 前强制，失败即拒、零 CDP 请求；allow_roots 默认工作区根，"
+        "LFL_BROWSER_UPLOAD_ALLOW_ROOTS 为 host-owned 宿主配置）；"
+        "press_key args={keys}（M2-A B3：页面级单键/组合键，走 Input.dispatchKeyEvent 成对 "
+        "keyDown/keyUp；黑名单 Meta+W/Q/T/N/S/P/H/M/`、Meta+Tab、Meta+Space、Ctrl+Meta+Q、"
+        "Escape+Meta 类确定性拒绝 key_not_allowed 且零 CDP 请求；target_ref 传 snapshot 的 "
+        "resource_ref，键落在当前焦点元素）；"
+        "hover args={}（M2-A B4：exact 对象指针悬停，仅一次 mouseMoved 绝不 click；"
+        "坐标 CSS px；零面积元素 element_not_visible 且零指针事件）；"
+        "dialog args={action}（M2-A B5：accept|dismiss 阻塞中的 JS 对话框，"
+        "Page.handleJavaScriptDialog；无对话框时 dialog_not_open+guidance 绝不盲发）。"
+        "工具内部只把模型已选择的"
         "exact ref 编译为 SemanticAction 的 scope/version/target/action_id 等机械字段，并交给既有"
         "single-dispatch/version guard；不自动选择目标，不自动 retry，不自动 rebind/latest，"
         "ActionReceipt ok 不等于任务完成，工具不判断任务完成。"
@@ -47,7 +66,7 @@ class BrowserSemanticExecuteTool:
         "properties": {
             "verb": {
                 "type": "string",
-                "enum": ["click", "fill", "select", "navigate", "scroll"],
+                "enum": ["click", "fill", "select", "navigate", "scroll", "type", "upload", "press_key", "hover", "dialog"],
             },
             "target_ref": {
                 "type": "string",
@@ -61,7 +80,8 @@ class BrowserSemanticExecuteTool:
                 "type": "object",
                 "description": (
                     "closed verb args: click={}；fill={text,mode} mode=replace|append；"
-                    "select={value}；navigate={url}；scroll={delta_pages}"
+                    "select={value}；navigate={url}；scroll={delta_pages}；"
+                    "type={text}；upload={paths}；press_key={keys}；hover={}；dialog={action}"
                 ),
             },
         },

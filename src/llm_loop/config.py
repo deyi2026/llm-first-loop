@@ -462,6 +462,13 @@ class Settings:
     browser_receipt_diff_summary_enabled: bool = False
     # Q5 calibration surface: cap entries per diff class; mechanism is frozen.
     browser_receipt_diff_summary_cap: int = 32
+    # ── M3 desktop_perceive（DESIGN-20261027 §5.3/D8/U14；只读感知，macOS）──
+    # 隐私追加名单（逗号分隔 bundle_id 子串；只能追加，核心名单硬编码于 privacy.py，
+    # 配置无法删除核心项）。默认空 = 仅核心名单生效。
+    desktop_privacy_extra: str = ""
+    # U14 see 层可见范围（逗号分隔 bundle_id 精确匹配）。默认空 = 全部允许（不默认拒绝）；
+    # 非空时名单外 app：apps 标 allowed=false、windows 隐标题、snapshot 拒 app_not_allowed。
+    desktop_see_allowlist: str = ""
     # ── Fleet ExecutionWorkspace/WorkerLease 生产接线（2026-09-19 slice4 G1）──
     # 缺省全空 = fleet 完全关闭（零行为零回归）；显式配置 LFL_FLEET_WORKSPACE_ROOT
     # 后 factory 才构造 ProjectCoordinator 注入 SubAgentRunner（run 边界
@@ -1055,11 +1062,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         browser_action_enabled=env_bool("LFL_BROWSER_ACTION_ENABLED", False),
         browser_semantic_guard_enabled=env_bool("LFL_BROWSER_SEMANTIC_GUARD_ENABLED", False),
         browser_dispatch_settle_enabled=env_bool("LFL_BROWSER_DISPATCH_SETTLE_ENABLED", False),
-        browser_receipt_diff_summary_enabled=env_bool(
-            "LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False
-        ),
         browser_receipt_diff_summary_cap=env_int("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_CAP", 32),
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
+        desktop_privacy_extra=env_values.get("LFL_DESKTOP_PRIVACY_EXTRA", "").strip(),
+        desktop_see_allowlist=env_values.get("LFL_DESKTOP_SEE_ALLOWLIST", "").strip(),
+        browser_receipt_diff_summary_enabled=env_bool("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=env_one(_env_run_mode, "RUN_MODE"),

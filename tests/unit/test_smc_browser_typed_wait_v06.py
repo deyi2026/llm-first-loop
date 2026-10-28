@@ -108,7 +108,7 @@ def _object_tool(
 
 def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> None:
     perceive_props = BrowserPerceiveTool.parameters["properties"]
-    assert perceive_props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert perceive_props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait", "pages"]
     assert set(perceive_props) == {
         "action",
         "projection_limit",
@@ -122,11 +122,24 @@ def test_v06_provider_surface_aggregates_wait_over_closed_typed_primitives() -> 
         "state",
         "match",
         "expected_url",
+        "expected",
         "value",
         "field",
         "text",
         "target_id",
         "within_ms",
+        # M2-B B7: settle_ms rides the flat object_absent wait branch.
+        "settle_ms",
+    }
+    # M2-A B6: download_state joins the flat wait-kind vocabulary.
+    # M2-B B7: object_absent joins (negative-condition wait + settle window).
+    assert set(perceive_props["kind"]["enum"]) == {
+        "page_ready",
+        "page_url",
+        "object_state",
+        "object_text",
+        "download_state",
+        "object_absent",
     }
     assert "condition" not in perceive_props
     for forbidden in ("predicate", "timeout_ms", "interval_ms"):

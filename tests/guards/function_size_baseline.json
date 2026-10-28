@@ -937,7 +937,8 @@
       "src/llm_loop/web/routes.py": "Web route 中的写入主要是用户上传/预览等 workspace 交付文件效果，不作为内部 durability surface。",
       "src/llm_loop/workspace/archive_stale.py": "archive-stale 核心例程落盘两类非恢复态文件：jsonl 运维报告工件（同 evidence_report 口径）与 auto_state.json 调度游标（fail-open：损坏/丢失仅导致幂等批次重跑一轮）；会话 JSON 的 durable 变更全部经 core/session.py（session_store surface 已登记）。",
       "src/llm_loop/workspace/file_service.py": "WorkspaceFileService 的写入就是受控用户文件效果；其 durable 事实由 workspace/file-effect 机制另行记录。",
-      "src/llm_loop/workspace/worktree_isolation.py": "worktree 隔离机制自身的 meta 簿记文件（.lfl-worktree.json），随隔离树创建/删除，是运行期同步载体而非 durable payload，不作为内部恢复 SoT（EVO-20261016-ac47e850）。"
+      "src/llm_loop/workspace/worktree_isolation.py": "worktree 隔离机制自身的 meta 簿记文件（.lfl-worktree.json），随隔离树创建/删除，是运行期同步载体而非 durable payload，不作为内部恢复 SoT（EVO-20261016-ac47e850）。",
+      "src/llm_loop/tools/builtin/desktop_perceive.py": "M3 桌面只读感知的落盘仅两类：append-only 审计 JSONL（§6.4 事件行）与窗口截图 PNG（content-addressed 证据，工厂默认 <data_dir>/desktop_perceive|audit）。两者均为会话证据工件，无任何读取-恢复路径依赖其完整性；损坏只影响审计追溯，不影响运行正确性，故按非 durable 豁免登记（DESIGN-20261027 §6.4）。"
     }
   },
   "exemptions": [],
@@ -1172,7 +1173,8 @@
       "tools": "Action",
       "video": "Action（本地视频生成、任务与参考图存储；Web 仅为交付适配器，独立于聊天 Provider）",
       "web": "delivery（六面外交付面）",
-      "workspace": "cross-plane"
+      "workspace": "cross-plane",
+      "desktop": "Action（M3 桌面只读感知：CG/AX/截屏 ctypes 通道 + privacy/see 名单 + §6.4 审计；无 M4 动作面，DESIGN-20261027 §5.3/D0-A′）"
     }
   }
 }

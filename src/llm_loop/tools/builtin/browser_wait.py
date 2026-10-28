@@ -48,6 +48,87 @@ _COMMON_REQUEST_FIELDS = {
     "timeout_ms",
     "interval_ms",
 }
+# M2-B B7 (DESIGN-20261027 §7.3.4): settle-window bounds for the negative
+# condition wait. 300ms is the design default; the floor keeps the window
+# meaningfully above sampling jitter and the ceiling bounds worst-case
+# polling latency.
+ABSENT_SETTLE_DEFAULT_MS = 300
+_ABSENT_SETTLE_MIN_MS = 50
+_ABSENT_SETTLE_MAX_MS = 10_000
+
+
+def absent_settle_error(raw: Any, *, timeout_ms: int) -> str | None:
+    """M2-B B7: mechanical bounds for ``settle_ms`` (None when valid/absent)."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return "settle_ms 必须是整数 50..10000"
+    if raw < _ABSENT_SETTLE_MIN_MS or raw > _ABSENT_SETTLE_MAX_MS:
+        return "settle_ms 必须在 50..10000"
+    if raw > timeout_ms:
+        return "settle_ms 不能超过 timeout_ms（稳定窗永远无法满足）"
+    return None
+
+
+class _AbsentSettleTracker:
+    """M2-B B7 (DESIGN-20261027 §7.3.4): absence only settles after a stable window.
+
+    Monotonic-clock duration arithmetic (LFL timekeeping contract: durations
+    and deadlines are timezone-neutral and never ride wall clocks). A
+    satisfied sample OPENS the window; any unsatisfied/indeterminate sample
+    (element re-appeared, coverage broke) RESETS it - a jittering page can
+    never accumulate one full settle window.
+    """
+
+    def __init__(self, settle_ms: int) -> None:
+        self.settle_ms = int(settle_ms)
+        self._since: float | None = None
+        self._confirmed_ms = 0.0
+
+    def step(self, *, satisfied: bool, now: float) -> bool:
+        """Absorb one observation; return True when absence finally settled.
+
+        Absence is only CONFIRMED between two satisfied snapshots; the first
+        satisfied sample opens the window with a zero confirmed span.
+        """
+        if not satisfied:
+            self._since = None
+            self._confirmed_ms = 0.0
+            return False
+        if self._since is None:
+            self._since = now
+            self._confirmed_ms = 0.0
+            return False
+        self._confirmed_ms = (now - self._since) * 1000.0
+        return self._confirmed_ms >= self.settle_ms
+
+    def receipt(self, *, settled: bool, now: float) -> dict[str, Any]:
+        del now  # confirmed span is snapshot-anchored, never deadline-anchored
+        return {
+            "settle_ms": self.settle_ms,
+            "state": "absent" if settled else "present",
+            "absent_stable_ms": round(self._confirmed_ms, 1),
+        }
+
+
+def _observer_error_observation(
+    predicate: dict[str, Any], error_type: str | None = None
+) -> dict[str, Any]:
+    """Tri-state observer-failure observation (shared initial/except shape)."""
+    observation: dict[str, Any] = {
+        "result": "indeterminate",
+        "snapshot_id": None,
+        "scope_ref": str(predicate["scope_ref"]),
+        "target": str(predicate["target"]),
+        "property": str(predicate["property"]),
+        "observed_value": None,
+        "coverage_complete": False,
+        "reason": "observer_error",
+        "objects_ref": "",
+    }
+    if error_type is not None:
+        observation["observer_error_type"] = error_type
+    return observation
 
 
 class BrowserCaptureBackend(Protocol):
@@ -211,6 +292,7 @@ class BrowserPredicateWaiter:
         timeout_ms: Any,
         interval_ms: Any,
         tool_name: str,
+        settle_ms: int | None = None,
     ) -> ToolResult:
         if self._backend is None:
             return self._failure(
@@ -234,6 +316,11 @@ class BrowserPredicateWaiter:
         )
         if interval_error is not None or bounded_interval is None:
             return self._failure(tool_name=tool_name, content=str(interval_error))
+        # M2-B B7 (§7.3.4): settle mode promotes a satisfied negative-condition
+        # sample into success only after the satisfaction stays UNBROKEN for
+        # settle_ms of monotonic time; any re-appearance resets the window.
+        settle = _AbsentSettleTracker(settle_ms) if settle_ms else None
+        settled = False
 
         start_mono = time.monotonic()
         deadline_mono = start_mono + bounded_timeout / 1000.0
@@ -242,17 +329,7 @@ class BrowserPredicateWaiter:
         sample_count = 0
         observer_error_count = 0
         observed_at = _iso_utc(time.time())
-        observation: dict[str, Any] = {
-            "result": "indeterminate",
-            "snapshot_id": None,
-            "scope_ref": str(predicate["scope_ref"]),
-            "target": str(predicate["target"]),
-            "property": str(predicate["property"]),
-            "observed_value": None,
-            "coverage_complete": False,
-            "reason": "observer_error",
-            "objects_ref": "",
-        }
+        observation = _observer_error_observation(predicate)
 
         while True:
             if sample_count > 0 and time.monotonic() >= deadline_mono:
@@ -268,18 +345,7 @@ class BrowserPredicateWaiter:
             except Exception as exc:  # noqa: BLE001 - observer failure is a tri-state fact.
                 observer_error_count += 1
                 observed_at = _iso_utc(time.time())
-                observation = {
-                    "result": "indeterminate",
-                    "snapshot_id": None,
-                    "scope_ref": str(predicate["scope_ref"]),
-                    "target": str(predicate["target"]),
-                    "property": str(predicate["property"]),
-                    "observed_value": None,
-                    "coverage_complete": False,
-                    "reason": "observer_error",
-                    "observer_error_type": type(exc).__name__,
-                    "objects_ref": "",
-                }
+                observation = _observer_error_observation(predicate, type(exc).__name__)
             else:
                 snapshot = dict(snapshot_result.get("snapshot") or {})
                 snapshot_id = str(snapshot.get("snapshot_id") or "")
@@ -302,7 +368,14 @@ class BrowserPredicateWaiter:
                         error_type=type(exc).__name__,
                         error_detail=str(exc),
                     )
-                if observation.get("result") == "satisfied":
+                if settle is None:
+                    if observation.get("result") == "satisfied":
+                        break
+                elif settle.step(
+                    satisfied=observation.get("result") == "satisfied",
+                    now=time.monotonic(),
+                ):
+                    settled = True
                     break
 
             now = time.monotonic()
@@ -320,6 +393,11 @@ class BrowserPredicateWaiter:
             "sample_count": sample_count,
             "observer_error_count": observer_error_count,
         }
+        if settle is not None:
+            # B7 receipt contract: only settled absence is "absent"; timeouts
+            # (still present / unstable absence / observer errors) report the
+            # explicit "present" failure - never a maybe-gone answer.
+            predicate_result.update(settle.receipt(settled=settled, now=time.monotonic()))
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=json.dumps(
@@ -538,7 +616,10 @@ class _BrowserNarrowWaitTool:
 
     def _times(self, request: dict[str, Any]) -> tuple[int, int]:
         expected = set(self.parameters.get("required") or [])
-        if set(request) != expected:
+        # M2-B B7: per-tool optional fields stay closed (no extras beyond the
+        # declared optionals) while remaining absent-by-default.
+        allowed = expected | set(getattr(type(self), "_optional_fields", frozenset()))
+        if not set(request).issubset(allowed) or not expected.issubset(set(request)):
             raise ValueError("wait_fields_mismatch")
         timeout_ms, timeout_error = _bounded_wait_int(
             request.get("timeout_ms"), name="timeout_ms", maximum=_MAX_WAIT_MS
@@ -551,6 +632,11 @@ class _BrowserNarrowWaitTool:
         if interval_error is not None or interval_ms is None:
             raise ValueError(interval_error or "interval_ms_invalid")
         return timeout_ms, interval_ms
+
+    def _extra_wait_kwargs(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Per-tool extra waiter arguments (e.g. B7 settle_ms); closed vocab."""
+        del request
+        return {}
 
     def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
@@ -565,6 +651,7 @@ class _BrowserNarrowWaitTool:
         try:
             timeout_ms, interval_ms = self._times(request)
             predicate = self._compile_predicate(session_id, request)
+            extra = self._extra_wait_kwargs(request)
         except ValueError as exc:
             return self._failure(str(exc))
         return self._waiter.wait(
@@ -573,6 +660,7 @@ class _BrowserNarrowWaitTool:
             timeout_ms=timeout_ms,
             interval_ms=interval_ms,
             tool_name=self.name,
+            **extra,
         )
 
     def execute(self, **kwargs: Any) -> ToolResult:
@@ -685,18 +773,49 @@ class BrowserWaitObjectStateTool(_BrowserNarrowWaitTool):
     description = (
         "Browser只读对象布尔状态等待：模型选择exact object_ref、状态property和boolean value；"
         "程序exact hydrate对象并固定operator=eq。"
+        "M2-B B7：settle_ms（可选，50..10000，默认 300）仅允许用于 absent 等待"
+        "（property=exists 且 value=false）——满足需在窗口内累计稳定 settle_ms，"
+        "中途回闪重置计时；超时回执 state=present（明确失败）。"
     )
+    # M2-B B7: optional settle window field; closed to this one key.
+    _optional_fields = frozenset({"settle_ms"})
     parameters = {
         "type": "object",
         "properties": {
             "object_ref": {"type": "string", "minLength": 1},
             "property": {"type": "string", "enum": list(_OBJECT_STATE_PROPERTIES)},
             "value": {"type": "boolean"},
+            "settle_ms": {
+                "type": "integer",
+                "minimum": _ABSENT_SETTLE_MIN_MS,
+                "maximum": _ABSENT_SETTLE_MAX_MS,
+                "description": (
+                    "仅 absent 等待（exists=false）：元素消失需累计稳定该毫秒数才算成立；"
+                    "窗口内回闪即重置。默认 300。"
+                ),
+            },
             **_time_fields(),
         },
         "required": ["object_ref", "property", "value", "timeout_ms", "interval_ms"],
         "additionalProperties": False,
     }
+
+    def _absent_settle(self, request: dict[str, Any], timeout_ms: int) -> int | None:
+        """M2-B B7: validate settle coupling/bounds; None keeps legacy behavior."""
+        raw = request.get("settle_ms")
+        if raw is None:
+            return None
+        if str(request.get("property") or "") != "exists" or request.get("value") is not False:
+            raise ValueError("settle_ms 仅支持 absent 等待（property=exists 且 value=false）")
+        error = absent_settle_error(raw, timeout_ms=timeout_ms)
+        if error is not None:
+            raise ValueError(error)
+        return int(raw)
+
+    def _extra_wait_kwargs(self, request: dict[str, Any]) -> dict[str, Any]:
+        timeout_ms, _ = self._times(request)
+        settle_ms = self._absent_settle(request, timeout_ms)
+        return {"settle_ms": settle_ms} if settle_ms is not None else {}
 
     def _compile_predicate(self, session_id: str, request: dict[str, Any]) -> dict[str, Any]:
         property_name = str(request.get("property") or "")
@@ -707,6 +826,10 @@ class BrowserWaitObjectStateTool(_BrowserNarrowWaitTool):
             raise ValueError(
                 f"predicate value type mismatch for {property_name}: expected boolean"
             )
+        if request.get("settle_ms") is not None and (
+            property_name != "exists" or value is not False
+        ):
+            raise ValueError("settle_ms 仅支持 absent 等待（property=exists 且 value=false）")
         return _compile_object_predicate(
             adapter=self._adapter,
             session_id=session_id,

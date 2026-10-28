@@ -276,6 +276,7 @@ def test_factory_browser_action_requires_separate_write_opt_in(tmp_path, monkeyp
         binding_coordinator=mock.ANY,  # S3a: 与感知 host 同一共享绑定协调器
         binding_policy=mock.ANY,       # S3b: 同一 attestation 授权策略
         attest_fn=mock.ANY,            # S3b: 同一 host 侧 attestation 闭包
+        download_dir_provider=mock.ANY,  # M2-A B6: 会话级下载目录 provider 闭包
     )
     tool = enabled.registry.get("browser_operate")
     assert tool._semantic_execute._action_adapter.actuator is fake_write

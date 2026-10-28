@@ -87,7 +87,7 @@ def test_model_surface_keeps_diff_and_aggregated_wait_read_only(tmp_path: Path) 
         session_id_getter=lambda: "s1",
     )
     props = tool.parameters["properties"]
-    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait"]
+    assert props["action"]["enum"] == ["snapshot", "hydrate", "diff", "wait", "pages"]
     assert set(props) == {
         "action",
         "projection_limit",
@@ -101,12 +101,17 @@ def test_model_surface_keeps_diff_and_aggregated_wait_read_only(tmp_path: Path) 
         "state",
         "match",
         "expected_url",
+        "expected",
         "value",
         "field",
         "text",
         "target_id",
         "within_ms",
+        # M2-B B7: settle_ms joins the flat wait vocabulary (object_absent).
+        "settle_ms",
     }
+    # M2-A B6: expected is the download_state wait vocabulary, still
+    # read-only (no backend locator leaks below).
     assert "condition" not in props
     surface = {str(key).lower() for key in props}
     surface.update(str(value).lower() for value in props["action"]["enum"])
