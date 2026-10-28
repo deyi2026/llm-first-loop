@@ -454,6 +454,22 @@ describe("provider admin contract（§9.3）", () => {
     expect(screen.getByText(/重启服务或新会话后生效/)).toBeInTheDocument();
   });
 
+  it("清除 Key 需确认，确认后提交空 api_key", async () => {
+    const calls = stubFetch((call) =>
+      call.url === "/api/v1/providers/alpha/credential" && call.method === "PUT" ? json(snapshot()) : undefined
+    );
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<ProviderManager />);
+    await screen.findByTestId("provider-alpha");
+    fireEvent.click(within(screen.getByTestId("provider-alpha")).getByRole("button", { name: "清除 Key" }));
+
+    await waitFor(() => expect(calls.some((call) => call.url.includes("/credential"))).toBe(true));
+    const put = calls.find((call) => call.url.includes("/credential"))!;
+    expect(put.body).toEqual({ api_key: "" });
+    confirmSpy.mockRestore();
+  });
+
   it("发现模型后勾选添加：只写被选中的模型，不自动保存其它字段", async () => {
     const calls = stubFetch((call) => {
       if (call.url === "/api/v1/providers/discover-models" && call.method === "POST") {

@@ -343,6 +343,15 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
     );
   };
 
+  const clearCredential = async (provider: ProviderAdminFact) => {
+    if (!window.confirm(T.clearKeyConfirm.replace("{provider}", provider.id))) return;
+    await runMutation(
+      `credential:${provider.id}`,
+      () => updateProviderCredential(provider.id, ""),
+      T.cleared
+    );
+  };
+
   const runTest = async (provider: ProviderAdminFact, modelId: string) => {
     const key = `${provider.id}/${modelId}`;
     setBusy(`test:${key}`);
@@ -748,6 +757,7 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
       {error ? (
         <div className="v2-provider-warning" role="alert" aria-live="assertive">
           {error.message}
+          {error.conflict ? ` ${T.conflictBanner}` : ""}
           {error.conflict ? <button type="button" onClick={() => void load()}>{T.refresh}</button> : null}
         </div>
       ) : null}
@@ -809,6 +819,11 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
                     {provider.enabled === false ? T.enabled : T.disabled}
                   </button>
                   <button type="button" onClick={() => openEdit(provider)} disabled={readOnly}>{T.edit}</button>
+                  {provider.credential_configured ? (
+                    <button type="button" onClick={() => void clearCredential(provider)} disabled={readOnly || busy !== ""}>
+                      {T.clearKey}
+                    </button>
+                  ) : null}
                   <button type="button" onClick={() => void removeProvider(provider)} disabled={readOnly || busy !== ""}>
                     {T.remove}
                   </button>
@@ -898,7 +913,11 @@ export function ProviderManager({ onCatalogChanged }: { onCatalogChanged?: () =>
         })}
       </div>
 
-      <LocalRuntimePanel />
+      <LocalRuntimePanel
+        onSynced={() => {
+          setFlash(T.runtimeSynced);
+        }}
+      />
       <VideoPanel />
     </section>
   );
