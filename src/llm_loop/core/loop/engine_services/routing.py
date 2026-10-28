@@ -211,38 +211,18 @@ class RoutingService:
                     model_used = f"{pid}/{resolved_model_id}"
                 else:
                     # model-admin design §6.2.2: 默认路径经 pool（热切换 live 默认生效）。
-                    llm_client = self._host.llm_pool.get_client(None)
-                    live_getter = getattr(self._host.llm_pool, "live_default_ref", None)
-                    live_ref = str(live_getter() or "") if callable(live_getter) else ""
-                    if live_ref:
-                        # 热切换默认：client 与标签都指向 live ref；元数据用当前 registry。
-                        model_used = live_ref
-                        metadata_registry = current_registry
-                    else:
-                        # 未热切换：保持既有启动默认标签口径（零回归）。
-                        model_used = self._default_model_label(
-                            registry_snapshot=default_registry
-                        )
-                        metadata_registry = default_registry
+                    llm_client, model_used, metadata_registry = self._pool_default_route(
+                        current_registry=current_registry,
+                        default_registry=default_registry,
+                    )
             except ValueError as exc:
                 # resolve 失败（override 在 refresh_config 后失效等）：如实反馈并回退
-                # 默认路径。model-admin design §6.2.2：回退走 live 默认（pool），不再
-                # 使用冻结的启动 client——避免默认已热切换后仍打旧端点。
+                # 默认路径（§6.2.2：优先 live 默认，不冻结启动 client）。
                 self._host._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
-                try:
-                    llm_client = self._host.llm_pool.get_client(None)
-                except ValueError:
-                    llm_client = self._host.llm
-                live_getter = getattr(self._host.llm_pool, "live_default_ref", None)
-                live_ref = str(live_getter() or "") if callable(live_getter) else ""
-                if live_ref:
-                    model_used = live_ref
-                    metadata_registry = current_registry
-                else:
-                    model_used = self._default_model_label(
-                        registry_snapshot=default_registry
-                    )
-                    metadata_registry = default_registry
+                llm_client, model_used, metadata_registry = self._pool_default_route_or_startup(
+                    current_registry=current_registry,
+                    default_registry=default_registry,
+                )
         else:
             llm_client = self._host.llm
             model_used = self._default_model_label()
@@ -286,6 +266,24 @@ class RoutingService:
                 logger.debug("模型标签 resolve 失败，回退裸名（fail-open）: %s", exc)
         return model
 
+    def _pool_default_route(
+        self,
+        *,
+        current_registry: ProviderRegistry | None,
+        default_registry: ProviderRegistry | None,
+    ) -> tuple[Any, str, ProviderRegistry | None]:
+        """默认路径经 pool 取 client；热切换后标签与元数据指向 live 默认（§6.2.2）.
+
+        live ref 非空 → 标签 = live ref、元数据用当前 registry；否则保持既有启动默认
+        标签口径（零回归）。get_client 的 ValueError 不吞：由调用方决定回退。
+        """
+        client = self._host.llm_pool.get_client(None)
+        live_getter = getattr(self._host.llm_pool, "live_default_ref", None)
+        live_ref = str(live_getter() or "") if callable(live_getter) else ""
+        if live_ref:
+            return client, live_ref, current_registry
+        return client, self._default_model_label(registry_snapshot=default_registry), default_registry
+
     def _current_context_limit(
         self,
         model_label: str,
@@ -309,6 +307,25 @@ class RoutingService:
         return context if context and context > 0 else None
 
     # ── 辅助 ──
+    def _pool_default_route_or_startup(
+        self,
+        *,
+        current_registry: ProviderRegistry | None,
+        default_registry: ProviderRegistry | None,
+    ) -> tuple[Any, str, ProviderRegistry | None]:
+        """最终回退：再试 live pool，仍失败用启动 client（不伪装成功，§6.2.2）."""
+        try:
+            return self._pool_default_route(
+                current_registry=current_registry,
+                default_registry=default_registry,
+            )
+        except ValueError:
+            return (
+                self._host.llm,
+                self._default_model_label(registry_snapshot=default_registry),
+                default_registry,
+            )
+
     def _planned_model_label(
         self,
         model: str | None,

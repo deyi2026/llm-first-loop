@@ -12,8 +12,22 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
-import llm_loop.web.provider_admin as provider_admin
-
+from .provider_admin import (
+    ProviderAdminError,
+    _ref_hosts_default,
+    discover_models,
+    generated_api_key_env,
+    merge_model_unknown,
+    merge_provider_unknown,
+    mutate,
+    patch_provider,
+    reload_registry,
+    set_credential,
+    set_default_model,
+    snapshot,
+    test_provider,
+    validate_provider_raw,
+)
 from .schemas import (
     ProviderCreateRequest,
     ProviderCredentialRequest,
@@ -34,7 +48,7 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 def _provider_admin_error(exc: Exception) -> Response:
-    if isinstance(exc, provider_admin.ProviderAdminError):
+    if isinstance(exc, ProviderAdminError):
         # model-admin design §6.1.4/§7.2: 错误体保留 error code、detail 与附件事实
         # （冲突附带 current_version），供 UI 显示字段路径/原因/当前 revision。
         content: dict[str, Any] = {"error": exc.code, "detail": exc.detail}
@@ -71,7 +85,7 @@ def _model_input_to_raw(model: Any) -> tuple[str, dict[str, Any]]:
 def provider_admin_list(request: Request) -> Response:
     """Return provider/model config facts without credential plaintext."""
     try:
-        return UTF8JSONResponse(content=provider_admin.snapshot(_engine_from(request)))
+        return UTF8JSONResponse(content=snapshot(_engine_from(request)))
     except Exception as exc:  # noqa: BLE001 - mapped to bounded admin error
         return _provider_admin_error(exc)
 
@@ -82,23 +96,23 @@ def provider_admin_create(body: ProviderCreateRequest, request: Request) -> Resp
     pid, raw = _provider_input_to_raw(body.provider)
     secret = body.api_key.get_secret_value() if body.api_key is not None else None
     if secret is not None and not raw.get("api_key_env"):
-        raw["api_key_env"] = provider_admin.generated_api_key_env(pid)
+        raw["api_key_env"] = generated_api_key_env(pid)
     try:
         def _create(config: dict[str, Any]) -> None:
             if pid in config:
-                raise provider_admin.ProviderAdminError(
+                raise ProviderAdminError(
                     "provider_exists", f"Provider 已存在：{pid}", status_code=409
                 )
             config[pid] = raw
 
-        result = provider_admin.mutate(
+        result = mutate(
             engine, expected_version=body.expected_version, change=_create
         )
         # Credential write is intentionally separate from provider JSON. If it fails,
         # the provider remains truthfully visible as credential missing and the error
         # is returned; no secret ever enters provider JSON.
         if secret is not None:
-            result = provider_admin.set_credential(engine, pid, secret)
+            result = set_credential(engine, pid, secret)
         return UTF8JSONResponse(content=result, status_code=201)
     except Exception as exc:  # noqa: BLE001
         return _provider_admin_error(exc)
@@ -116,9 +130,9 @@ def provider_admin_replace(
             content={"error": "provider_id_mismatch", "detail": "路径 provider_id 与 body.id 必须一致。"},
         )
     try:
-        if not bool(raw.get("enabled", True)) and provider_admin._ref_hosts_default(engine, provider_id):
+        if not bool(raw.get("enabled", True)) and _ref_hosts_default(engine, provider_id):
             # model-admin design §6.2.3-4/§7.7：配置默认与运行默认任一命中都拒绝停用。
-            raise provider_admin.ProviderAdminError(
+            raise ProviderAdminError(
                 "default_provider_cannot_disable",
                 "该 Provider 当前承载默认模型（配置或运行默认）；请先切换默认模型。",
                 status_code=409,
@@ -126,14 +140,14 @@ def provider_admin_replace(
 
         def _replace(config: dict[str, Any]) -> None:
             if provider_id not in config:
-                raise provider_admin.ProviderAdminError(
+                raise ProviderAdminError(
                     "provider_not_found", f"Provider 不存在：{provider_id}", status_code=404
                 )
             # design FR-13/§8.1：整包替换也保留 schema 外的未知字段（含旧模型条目内）。
-            config[provider_id] = provider_admin.merge_provider_unknown(config[provider_id], raw)
+            config[provider_id] = merge_provider_unknown(config[provider_id], raw)
 
         return UTF8JSONResponse(
-            content=provider_admin.mutate(
+            content=mutate(
                 engine, expected_version=body.expected_version, change=_replace
             )
         )
@@ -155,7 +169,7 @@ def provider_admin_patch(
     }
     try:
         return UTF8JSONResponse(
-            content=provider_admin.patch_provider(
+            content=patch_provider(
                 engine, provider_id, body.expected_version, fields
             )
         )
@@ -177,8 +191,8 @@ def provider_admin_delete(
         )
     engine = _engine_from(request)
     try:
-        if provider_admin._ref_hosts_default(engine, provider_id):
-            raise provider_admin.ProviderAdminError(
+        if _ref_hosts_default(engine, provider_id):
+            raise ProviderAdminError(
                 "default_provider_cannot_delete",
                 "该 Provider 承载当前默认模型（配置或运行默认）；请先切换默认模型。",
                 status_code=409,
@@ -186,12 +200,12 @@ def provider_admin_delete(
 
         def _delete(config: dict[str, Any]) -> None:
             if provider_id not in config:
-                raise provider_admin.ProviderAdminError(
+                raise ProviderAdminError(
                     "provider_not_found", f"Provider 不存在：{provider_id}", status_code=404
                 )
             del config[provider_id]
 
-        result = provider_admin.mutate(
+        result = mutate(
             engine, expected_version=expected_version, change=_delete
         )
         result["credential_retained"] = True
@@ -206,7 +220,7 @@ def provider_admin_credential(
 ) -> Response:
     try:
         return UTF8JSONResponse(
-            content=provider_admin.set_credential(
+            content=set_credential(
                 _engine_from(request), provider_id, body.api_key.get_secret_value()
             )
         )
@@ -224,21 +238,21 @@ def provider_admin_add_model(
         def _add(config: dict[str, Any]) -> None:
             provider = config.get(provider_id)
             if not isinstance(provider, dict):
-                raise provider_admin.ProviderAdminError(
+                raise ProviderAdminError(
                     "provider_not_found", f"Provider 不存在：{provider_id}", status_code=404
                 )
             models = provider.setdefault("models", {})
             if not isinstance(models, dict):
-                raise provider_admin.ProviderAdminError("provider_config_invalid", "models 不是 object。", status_code=409)
+                raise ProviderAdminError("provider_config_invalid", "models 不是 object。", status_code=409)
             if mid in models:
-                raise provider_admin.ProviderAdminError("model_exists", f"模型已存在：{mid}", status_code=409)
+                raise ProviderAdminError("model_exists", f"模型已存在：{mid}", status_code=409)
             models[mid] = model_raw
             if not provider.get("default_model"):
                 provider["default_model"] = mid
-            provider_admin.validate_provider_raw(provider_id, provider)
+            validate_provider_raw(provider_id, provider)
 
         return UTF8JSONResponse(
-            content=provider_admin.mutate(engine, expected_version=body.expected_version, change=_add),
+            content=mutate(engine, expected_version=body.expected_version, change=_add),
             status_code=201,
         )
     except Exception as exc:  # noqa: BLE001
@@ -252,15 +266,15 @@ def provider_admin_replace_model(
     engine = _engine_from(request)
     new_mid, model_raw = _model_input_to_raw(body.model)
     try:
-        hosts_default = provider_admin._ref_hosts_default(engine, provider_id, model_id)
+        hosts_default = _ref_hosts_default(engine, provider_id, model_id)
         if hosts_default and new_mid != model_id:
-            raise provider_admin.ProviderAdminError(
+            raise ProviderAdminError(
                 "default_model_cannot_rename",
                 "该模型是全局默认模型（配置或运行默认）；请先切换默认模型再重命名。",
                 status_code=409,
             )
         if hosts_default and model_raw.get("enabled") is False:
-            raise provider_admin.ProviderAdminError(
+            raise ProviderAdminError(
                 "default_model_cannot_disable",
                 "该模型是全局默认模型（配置或运行默认）；请先切换默认模型再停用。",
                 status_code=409,
@@ -269,22 +283,22 @@ def provider_admin_replace_model(
         def _replace(config: dict[str, Any]) -> None:
             provider = config.get(provider_id)
             if not isinstance(provider, dict):
-                raise provider_admin.ProviderAdminError("provider_not_found", f"Provider 不存在：{provider_id}", status_code=404)
+                raise ProviderAdminError("provider_not_found", f"Provider 不存在：{provider_id}", status_code=404)
             models = provider.get("models")
             if not isinstance(models, dict) or model_id not in models:
-                raise provider_admin.ProviderAdminError("model_not_found", f"模型不存在：{model_id}", status_code=404)
+                raise ProviderAdminError("model_not_found", f"模型不存在：{model_id}", status_code=404)
             if new_mid != model_id and new_mid in models:
-                raise provider_admin.ProviderAdminError("model_exists", f"模型已存在：{new_mid}", status_code=409)
+                raise ProviderAdminError("model_exists", f"模型已存在：{new_mid}", status_code=409)
             # design FR-13/§9.2-5：改名/替换保留未展示字段（note 之外的手写 extra 也保留）。
-            merged_model = provider_admin.merge_model_unknown(models.get(model_id), model_raw)
+            merged_model = merge_model_unknown(models.get(model_id), model_raw)
             if provider.get("default_model") == model_id:
                 provider["default_model"] = new_mid
             del models[model_id]
             models[new_mid] = merged_model
-            provider_admin.validate_provider_raw(provider_id, provider)
+            validate_provider_raw(provider_id, provider)
 
         return UTF8JSONResponse(
-            content=provider_admin.mutate(engine, expected_version=body.expected_version, change=_replace)
+            content=mutate(engine, expected_version=body.expected_version, change=_replace)
         )
     except Exception as exc:  # noqa: BLE001
         return _provider_admin_error(exc)
@@ -302,32 +316,32 @@ def provider_admin_delete_model(
         return UTF8JSONResponse(status_code=409, content={"error": "confirm_required", "detail": "删除模型需 confirm=true。"})
     engine = _engine_from(request)
     try:
-        if provider_admin._ref_hosts_default(engine, provider_id, model_id):
-            raise provider_admin.ProviderAdminError(
+        if _ref_hosts_default(engine, provider_id, model_id):
+            raise ProviderAdminError(
                 "default_model_cannot_delete", "该模型是全局默认模型（配置或运行默认）；请先切换默认模型。", status_code=409
             )
 
         def _delete(config: dict[str, Any]) -> None:
             provider = config.get(provider_id)
             if not isinstance(provider, dict):
-                raise provider_admin.ProviderAdminError("provider_not_found", f"Provider 不存在：{provider_id}", status_code=404)
+                raise ProviderAdminError("provider_not_found", f"Provider 不存在：{provider_id}", status_code=404)
             models = provider.get("models")
             if not isinstance(models, dict) or model_id not in models:
-                raise provider_admin.ProviderAdminError("model_not_found", f"模型不存在：{model_id}", status_code=404)
+                raise ProviderAdminError("model_not_found", f"模型不存在：{model_id}", status_code=404)
             if provider.get("default_model") == model_id:
-                raise provider_admin.ProviderAdminError(
+                raise ProviderAdminError(
                     "provider_default_model_cannot_delete", "该模型是 Provider 默认模型；请先修改 Provider 默认模型。", status_code=409
                 )
             del models[model_id]
             if bool(provider.get("enabled", True)) and not any(
                 bool(v.get("enabled", True)) for v in models.values() if isinstance(v, dict)
             ):
-                raise provider_admin.ProviderAdminError(
+                raise ProviderAdminError(
                     "provider_requires_model", "启用的 Provider 至少需要一个启用模型。", status_code=409
                 )
 
         return UTF8JSONResponse(
-            content=provider_admin.mutate(engine, expected_version=expected_version, change=_delete)
+            content=mutate(engine, expected_version=expected_version, change=_delete)
         )
     except Exception as exc:  # noqa: BLE001
         return _provider_admin_error(exc)
@@ -336,7 +350,7 @@ def provider_admin_delete_model(
 @router.post("/api/v1/providers/default-model")
 def provider_admin_set_default(body: ProviderDefaultModelRequest, request: Request) -> Response:
     try:
-        return UTF8JSONResponse(content=provider_admin.set_default_model(_engine_from(request), body.model))
+        return UTF8JSONResponse(content=set_default_model(_engine_from(request), body.model))
     except Exception as exc:  # noqa: BLE001
         return _provider_admin_error(exc)
 
@@ -346,7 +360,7 @@ def provider_admin_discover_models(body: ProviderDiscoverRequest, request: Reque
     """模型发现（model-admin design §6.3.1/§7.5）：只返回候选，不写配置."""
     try:
         return UTF8JSONResponse(
-            content=provider_admin.discover_models(
+            content=discover_models(
                 _engine_from(request),
                 base_url=body.base_url,
                 wire_protocol=body.wire_protocol,
@@ -367,7 +381,7 @@ def provider_admin_discover_alias(body: ProviderDiscoverRequest, request: Reques
 @router.post("/api/v1/providers/reload")
 def provider_admin_reload(request: Request) -> Response:
     try:
-        return UTF8JSONResponse(content=provider_admin.reload_registry(_engine_from(request)))
+        return UTF8JSONResponse(content=reload_registry(_engine_from(request)))
     except Exception as exc:  # noqa: BLE001
         return _provider_admin_error(exc)
 
@@ -378,7 +392,7 @@ def provider_admin_test(
 ) -> Response:
     try:
         return UTF8JSONResponse(
-            content=provider_admin.test_provider(_engine_from(request), provider_id, body.model)
+            content=test_provider(_engine_from(request), provider_id, body.model)
         )
     except Exception as exc:  # noqa: BLE001
         return _provider_admin_error(exc)

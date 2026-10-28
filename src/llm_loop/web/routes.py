@@ -1215,11 +1215,7 @@ def chat(
                         "(frontend session-state anomaly signal; new_session wins)",
                         payload.session_id,
                     )
-                _born_model, _born_source = _new_session_model_override(engine, payload.model)
-                session_id = engine.session.create(
-                    model_override=_born_model,
-                    model_override_source=_born_source if _born_model else None,
-                )
+                session_id = _create_web_session(engine, payload.model)
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
                 if not engine.session.exists(payload.session_id):
@@ -1466,6 +1462,17 @@ def _new_session_model_override(
     if requested_model:
         return _canonical_persist_model(engine, requested_model), "user"
     return _inherit_shared_model_override(engine)
+
+
+def _create_web_session(engine: Any, requested_model: str | None) -> str:
+    """按本请求的模型授权新建会话（model-admin design §7.5）."""
+    born_model, born_source = _new_session_model_override(engine, requested_model)
+    return str(
+        engine.session.create(
+            model_override=born_model,
+            model_override_source=born_source if born_model else None,
+        )
+    )
 
 
 def _stream_background(
@@ -1744,11 +1751,7 @@ def chat_stream(
                         "(frontend session-state anomaly signal; new_session wins)",
                         payload.session_id,
                     )
-                _born_model, _born_source = _new_session_model_override(engine, payload.model)
-                session_id = engine.session.create(
-                    model_override=_born_model,
-                    model_override_source=_born_source if _born_model else None,
-                )
+                session_id = _create_web_session(engine, payload.model)
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
                 if not engine.session.exists(payload.session_id):
@@ -4049,9 +4052,9 @@ def _providers_events_fingerprint(engine: Any) -> tuple[str, dict[str, Any]]:
     读取失败返回 "err"（与 sessions 指纹同口径：失败不推送、不伪装）。
     """
     try:
-        from llm_loop.web import provider_admin
+        from .provider_admin import _effective_config
 
-        _raw, version, source, _path = provider_admin._effective_config(engine)
+        _raw, version, source, _path = _effective_config(engine)
         pool = getattr(engine, "llm_pool", None)
         default_ref = ""
         generation = 0

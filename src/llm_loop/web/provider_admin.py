@@ -581,13 +581,13 @@ def mutate(engine: Any, *, expected_version: str, change: Callable[[dict[str, An
 # 写回时以这些字段为界合并：客户端未展示/未发送的未知字段原样保留在文件里，
 # 但疑似密钥的未知键在合并时丢弃（防御手写配置中的明文残留）。
 def _provider_config_fields() -> frozenset[str]:
-    from llm_loop.web.schemas import ProviderAdminProviderInput
+    from .schemas import ProviderAdminProviderInput
 
     return frozenset(ProviderAdminProviderInput.model_fields) | {"models"}
 
 
 def _model_config_fields() -> frozenset[str]:
-    from llm_loop.web.schemas import ProviderModelAdminInput
+    from .schemas import ProviderModelAdminInput
 
     return frozenset(ProviderModelAdminInput.model_fields)
 
@@ -648,7 +648,7 @@ def validate_provider_raw(pid: str, raw: dict[str, Any]) -> None:
     """
     from pydantic import ValidationError
 
-    from llm_loop.web.schemas import ProviderAdminProviderInput
+    from .schemas import ProviderAdminProviderInput
 
     known = {k: v for k, v in raw.items() if k in _provider_config_fields() and k != "models"}
     models_raw_value = raw.get("models")

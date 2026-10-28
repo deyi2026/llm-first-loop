@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "f202ab93f",
+    "head_commit": "182ff572b",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1069,10 +1069,11 @@
     "src/llm_loop/web/preview_routes.py::preview_file": 215,
     "src/llm_loop/web/routes.py::_stats_for_loaded_session": 138,
     "src/llm_loop/web/routes.py::_stream_background": 235,
-    "src/llm_loop/web/routes.py::chat": 176,
+    "src/llm_loop/web/routes.py::chat": 174,
     "src/llm_loop/web/routes.py::escalation_review": 121,
     "src/llm_loop/web/routes.py::event_stream": 199,
     "src/llm_loop/web/routes.py::learning_status": 130,
+    "src/llm_loop/web/routes.py::list_models": 148,
     "src/llm_loop/web/routes.py::queue_interject": 124,
     "src/llm_loop/workspace/archive_stale.py::run_archive_stale": 121,
     "src/llm_loop/workspace/file_service.py::_edit_locked": 253,
@@ -1103,7 +1104,7 @@
   ],
   "known_cycles": [],
   "legacy_super_functions": {
-    "src/llm_loop/browser/action.py::execute": 388,
+    "src/llm_loop/browser/action.py::execute": 383,
     "src/llm_loop/cli.py::application_main": 320,
     "src/llm_loop/config.py::load_settings": 388,
     "src/llm_loop/core/history.py::build_history_messages": 745,
@@ -1115,7 +1116,7 @@
     "src/llm_loop/subagent/runner.py::_execute_subagent": 570,
     "src/llm_loop/subagent/runner.py::start": 425,
     "src/llm_loop/tools/builtin/browser_perceive.py::execute": 350,
-    "src/llm_loop/web/routes.py::chat_stream": 383
+    "src/llm_loop/web/routes.py::chat_stream": 381
   },
   "local_imports": {
     "src/llm_loop/core/history.py": 30,

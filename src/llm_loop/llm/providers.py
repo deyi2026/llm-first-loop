@@ -1062,10 +1062,8 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 default_model=default_model,
                 timeout_s=timeout_s,
                 history_budget_chars=history_budget_chars,
-                max_input_tokens=max_input_tokens,
-                max_tokens=max_tokens,
+                max_input_tokens=max_input_tokens, max_tokens=max_tokens,
                 chars_per_token=chars_per_token,
-                # model-admin design §5.3/§6.3.2: Provider 展示名（配置事实，空串回退 id）
                 display_name=str(val.get("display_name", "") or "").strip()[:128],
             )
         except (ValueError, TypeError) as exc:
