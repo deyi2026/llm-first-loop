@@ -1,0 +1,73 @@
+{
+  "task": "web-model-admin-dsh-alignment: 部署生效 + 设计 §10 线上验收",
+  "date": "2026-10-28T22:38:00+08:00",
+  "design_doc": "docs/DESIGN-20261028-web-model-admin-dsh-alignment.md",
+  "code_sha": {
+    "main": "9ee93d8be",
+    "release_tree": ".releases/9ee93d8be7df7cd775bb48985118075cfc96c4f6",
+    "release_head": "9ee93d8be",
+    "served_bundle_sha256": "c477f40aaf0175c82cf3019f68d920ae6fcab400c1b4009424cabbdfebbd34fb",
+    "release_bundle_sha256": "c477f40aaf0175c82cf3019f68d920ae6fcab400c1b4009424cabbdfebbd34fb",
+    "bundle_match": true
+  },
+  "deploy": {
+    "service": "web",
+    "generation": 334,
+    "pid": 97697,
+    "restart_status": "succeeded",
+    "restart_succeeded_at": "2026-10-28T22:24:03+08:00",
+    "matches_desired_generation": true,
+    "note": "restart 在上一会话以 waiting_for_requester_exit 受理，会话退出后落地；本轮以 service_control status 实测确认为 succeeded，而非沿用受理回执"
+  },
+  "section_10_items": [
+    {"id": "10.1", "verdict": "PASS", "evidence": "POST /api/v1/providers -> 201；GET /api/v1/models 立即含 smoke/smoke-a；restart_required=false"},
+    {"id": "10.2", "verdict": "PASS", "evidence": "POST /providers/smoke/models -> 201；目录立即含 smoke/smoke-b"},
+    {"id": "10.3", "verdict": "PASS", "evidence": "PUT provider(timeout_s=45,default_model=smoke-b) -> 200；POST /providers/smoke/test -> 200 latency_ms=2，假上游实测收到新模型"},
+    {"id": "10.4", "verdict": "PASS", "evidence": "PATCH enabled=false -> effective=false 且目录隐藏两模型；复启用后回归；模型级 enabled=false/true 同样收敛"},
+    {"id": "10.5", "verdict": "PASS", "evidence": "DELETE 全局默认模型 -> 409 default_model_cannot_delete（含可操作提示）；切默认后删除 -> 200"},
+    {"id": "10.6", "verdict": "PASS", "evidence": "POST /providers/default-model -> 200；runtime_default_model=smoke/smoke-b，applied=true，persistence=dotenv，restart_required=false"},
+    {"id": "10.6b", "verdict": "PASS", "evidence": "新会话 chat 请求实际落到 smoke/smoke-b（假上游请求日志）"},
+    {"id": "10.6c", "verdict": "PASS", "evidence": "旧会话 override=base/base-b，全局默认改动后该会话仍用 base-b"},
+    {"id": "10.7", "verdict": "PASS", "evidence": "POST /sessions/{id}/model {model:null} -> 200；该会话后续请求回到全局默认 base-a"},
+    {"id": "10.8", "verdict": "PASS", "evidence": "PUT /providers/smoke/credential -> 200；下一请求带新 key（假上游 Authorization）；管理端响应与 web.log 无明文"},
+    {"id": "10.9", "verdict": "PASS", "evidence": "422 带 detail[].loc 指向 effective；409 provider_config_conflict；不可达上游 -> 502 provider_test_failed（LLMNetworkError）"},
+    {"id": "10.10", "verdict": "PASS(临界)", "evidence": "SSE providers_updated 实测 3.0s（服务端 3s 轮询，上限即 3s，无余量）"},
+    {"id": "10.11", "verdict": "PASS", "evidence": "MODEL_PROVIDERS 实例：source=env，mutable=false；写请求 -> 409 provider_config_managed_by_env，detail 说明优先级"},
+    {"id": "10.12", "verdict": "PASS", "evidence": "注入非法 providers.local.json 后写请求 -> 409 provider_config_invalid，文件字节回滚为写入前内容；reload -> 200 恢复"},
+    {"id": "10.13", "verdict": "PASS", "evidence": "note/input_modalities 未知字段 round-trip 保留；既有 Provider 字段未漂移"}
+  ],
+  "section_10_summary": {"total": 15, "pass": 15, "fail": 0, "caveat": "10.10 为 3.0s 临界值；10.1-10.9/10.12/10.13 在隔离实例上以真实 HTTP + 假 OpenAI 上游执行"},
+  "live_prod_readonly_parity": {
+    "endpoint": "http://127.0.0.1:8903",
+    "providers_equal_local_file": true,
+    "models_equal_local_file": true,
+    "model_pairs": 11,
+    "notes_preserved_verbatim": true,
+    "runtime_default_model": "glm/glm-5.3",
+    "mutable": true,
+    "catalog_entries": "含 display_name/input_modalities 新字段",
+    "mutation_performed_on_prod": false
+  },
+  "isolation": {
+    "method": "env -i + DATA_DIR=.tmp-live/smoke2/data + LFL_ENV_FILE=.tmp-live/smoke2/.env，端口 8931(web)/8932(假上游)/8933(MODEL_PROVIDERS 实例)",
+    "rationale": "本会话 shell 继承 LFL_ENV_FILE=<repo>/.env 与 LFL_DATA_DIR=<repo>/data；不清理会写生产配置（本轮即发生，见 incident）"
+  },
+  "incident": {
+    "what": "首次隔离 smoke 未清理继承环境，Web 凭据写入与默认切换持久化落到仓库根 .env（生产配置）：新增 SMOKE_API_KEY/DEAD_API_KEY，并把 LLM_MODEL 改写为 base/base-a",
+    "detected_by": "收尾比对 .env 与 live 运行默认不一致（live=glm/glm-5.3，文件=base/base-a）",
+    "impact": "运行中进程未受影响（未重启）；若此后重启，web 默认模型会指向不存在的 base/base-a",
+    "restore": "备份 .env.bak-20261028-223503-pre-smoke-restore；删除两条注入 key，LLM_MODEL 还原 glm/glm-5.3；.env sha256 还原为 69bfb6ab…，行数 288->284；restore 后全量重跑（隔离修正）验证 .env sha256 未再变化",
+    "followup": "已沉淀为经验：隔离实例必须 env -i 或显式覆盖 LFL_ENV_FILE/LFL_DATA_DIR"
+  },
+  "known_deviations": [
+    "§7.1 providers[].runtime/models[].runtime 嵌套命名空间未按字面实现，保留 v1 扁平字段（双读兼容）",
+    "模型 PUT 停用『Provider 默认模型（非全局默认）』返回 422 invalid_field 而非 409",
+    "额外提供 POST /api/v1/providers/discover 短别名（与 /discover-models 同 handler）",
+    "snapshot.readonly_reason 字段存在但始终为 null（UI 以 source/mutable 判定只读）；非阻塞观察项"
+  ],
+  "not_verified": [
+    "未 push origin/main（未获授权）",
+    "未做浏览器人工点检（UI 以 vitest 580 passed + 线上 bundle sha256 与发布产物一致佐证）",
+    "SSE 只有 3s 轮询上限，未验证更高并发下的事件合并语义"
+  ]
+}
