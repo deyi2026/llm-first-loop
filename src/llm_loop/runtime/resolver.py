@@ -176,6 +176,10 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
         ("learning", "independent_cloud_hosts"): TomlField(
             ("LEARNING_INDEPENDENT_CLOUD_HOSTS",), "str"
         ),
+        # M0-7(wecom): 非敏感治理项入闭式 schema（凭据 WECHAT_BOT_ID/SECRET 不入
+        # schema，仅 _SECRET_KEYS 拒绝写入 runtime.toml——照 feishu 先例：
+        # FEISHU_APP_ID/SECRET 不在 schema，凭据从进程 env 直读）。
+        ("wecom", "session_map_path"): TomlField(("WECHAT_SESSION_MAP_PATH",), "str"),
     }
 )
 
@@ -237,6 +241,9 @@ _SECRET_KEYS = (
     "ZHIPU_API_KEY",
     "FEISHU_APP_ID",
     "FEISHU_APP_SECRET",
+    # M0-7(wecom): 企微桥凭据绝不入 runtime.toml（照 feishu 先例）
+    "WECHAT_BOT_ID",
+    "WECHAT_BOT_SECRET",
     "CODEARTS_AK",
     "CODEARTS_SK",
     "CODEARTS_IAM_TOKEN",

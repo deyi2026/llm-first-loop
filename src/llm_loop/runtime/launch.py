@@ -23,6 +23,7 @@ _SERVICES = {
     "web": "llm_loop.web",
     "feishu": "llm_loop.feishu",
     "learning": "llm_loop.learning_runtime",
+    "wecom": "llm_loop.wecom",  # M0-7: 企微智能机器人桥（runpy 以 __main__ 执行入口）
 }
 
 
