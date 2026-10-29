@@ -65,6 +65,7 @@ BLOCK_PRIVACY_PATTERNS=(
 _PRIV_GENERIC_USERS=' runner github githubactions github-actions build builder ci jenkins circleci gitlab deploy root daemon nobody ubuntu test '
 if [[ -n "${_PRIV_USER}" && "${_PRIV_GENERIC_USERS}" != *" ${_PRIV_USER} "* ]]; then
   BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]${_PRIV_USER_ESC}@" '\b'"${_PRIV_USER_ESC}"'-[A-Za-z0-9]')  # user@host / user-XXX 主机名前缀形态
+  BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]/Users/${_PRIV_USER_ESC}/")  # 当前用户主目录绝对路径（裸用户名形态；review P2-1，规则3 对 experiences 豁免防不住此类）
 fi
 [[ -n "${_PRIV_HOST_S}" && "${_PRIV_HOST_S}" != "localhost" ]] && BLOCK_PRIVACY_PATTERNS+=('\b'"${_PRIV_HOST_ESC}"'\b')
 

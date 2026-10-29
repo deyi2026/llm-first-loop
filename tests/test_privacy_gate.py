@@ -77,6 +77,13 @@ def test_staged_generic_ci_user_still_blocks_private_ip(repo):
     assert run_scan(repo, "--staged", env_user="runner").returncode == 1
 
 
+def test_staged_blocks_current_user_home_path(repo):
+    """规则5 主目录路径动态模式：裸用户名形态 /Users/<user>/ 必须拦（review P2-1，规则3 豁免防不住）。"""
+    (repo / "h.md").write_text("tail -5 /Users/testuser/Project/x.log")
+    subprocess.run(["git", "-C", str(repo), "add", "h.md"], check=True)
+    assert run_scan(repo, "--staged", env_user="testuser").returncode == 1
+
+
 def test_staged_clean_passes(repo):
     (repo / "d.md").write_text("innocuous\\n")
     subprocess.run(["git", "-C", str(repo), "add", "d.md"], check=True)
