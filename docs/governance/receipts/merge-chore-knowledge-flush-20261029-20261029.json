@@ -1,0 +1,30 @@
+{
+  "gate": "merge",
+  "reviewer": "readonly-merge-review-subagent (RULE-AI-34 merge-review-gate, 未参与分支任何产出)",
+  "verdict": "PASS",
+  "goal_id": "none:用户驱动任务无Goal",
+  "branch": "chore/knowledge-flush-20261029",
+  "based_on_main": true,
+  "commits": [
+    "31d877220153bf9dd18465991d8ac3140d9fff19",
+    "10a732e1ebc0dc8cb70d7bd72b7568b16973ab3e",
+    "c455b6f51a2f7eb64c538fc6332005f859029f61",
+    "525928f10dd73f4ee1b582a6106d68f983f049c1",
+    "d528fbe9aff943809317d2d24930098bd68fd023"
+  ],
+  "merge_mode": "ff",
+  "conflicts_resolved": [],
+  "focused_gates": [
+    "ruff check --no-cache src/llm_loop/runtime/briefing.py src/llm_loop/tools/review_host_admission.py tests/unit/test_installation_briefing.py tests/unit/test_review_host_admission.py -> All checks passed (exit 0)",
+    "pytest -p no:cacheprovider tests/unit/test_installation_briefing.py tests/unit/test_review_host_admission.py -> 159 passed (exit 0)",
+    "git status --porcelain 全量干净（含未跟踪）",
+    "git log --oneline main..branch == 声明的 5 条提交，无夹带，无 merge commit",
+    "merge-base(main,branch)==main HEAD 且 --is-ancestor 成立 -> ff-only 可行",
+    "知识卡结构核验：9 张 METHOD.md 均 frontmatter(method_id==目录名,status,evidence_refs)+## Trigger；5 张 EXPERIENCE.md 均 frontmatter(title,scenario,solution,evidence,record_kind)，其中 record_kind: lesson(2)/experience(3) 均为库内既有合法 kind",
+    "525928f10 脱敏复核：diff 无 /Users/，工作树文件无裸 home 路径，<home> 掩码存在",
+    "演进登记核对 data/audit/evolution_*.jsonl：EVO-20261029-80820d50 status=executed；EVO-20261029-eb64b2de status=executing(未收口)"
+  ],
+  "main_sha_after": "d528fbe9aff943809317d2d24930098bd68fd023",
+  "branch_disposition": "deleted",
+  "notes": "EVO-20261029-eb64b2de 台账仍 executing/unverified：其代码改动已随 31d877220 落地且 focused gate 由本审查独立复验通过，收口为合并后登记义务，不构成阻塞。合并后建议：ff 后核对 rev-parse main==d528fbe9aff943809317d2d24930098bd68fd023、main 冒烟、删除已并入分支 ref。"
+}
