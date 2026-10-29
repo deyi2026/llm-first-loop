@@ -207,7 +207,7 @@ WeComPushFn = Callable[[str, str, str], None]  # (chat_id, chat_type, text)
 | 步骤 | 产出 | 完成判据 |
 |---|---|---|
 | M0-1 | 加依赖 `wecom-aibot-python-sdk==1.0.2` | `uv pip install` 成功，`import aibot` 可用 |
-| M0-2 | `config.py`：`WeComConfig` + `load_wecom_config()`（env: `WECOM_BOT_ID` / `WECOM_SECRET` / `WECOM_SESSION_MAP_PATH` / `WECOM_OWNER_USERID`） | 配置可从 env 加载，缺 `bot_id`/`secret` 时明确报错 |
+| M0-2 | `config.py`：`WeComConfig` + `load_wecom_config()`（env: `WECHAT_BOT_ID` / `WECHAT_BOT_SECRET` / `WECHAT_SESSION_MAP_PATH` / `WECHAT_OWNER_USERID`——键名对齐官方 SDK `wecom-aibot-python-sdk` README，实现以此为准） | 配置可从 env 加载，缺 `bot_id`/`secret` 时明确报错 |
 | M0-3 | `messages.py` + `dispatcher.py`：帧 → `WeComMessage`；含三处 SDK 缺口补齐（video / disconnected_event / compat_info） | 单元测试覆盖 text/image/video/compat_info 四类帧 |
 | M0-4 | `bridge.py`：SDK 连接 + 事件回调只入队 + 单 worker 线程 + 优雅退出 | 断开后可干净退出，无残留线程 |
 | M0-5 | `handlers.py`：接 `LoopEngine`，走通一次问答 | 企微发出消息，LFL 回复内容正确 |

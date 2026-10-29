@@ -1,0 +1,86 @@
+{
+ "gate": "independent-code-review-rebase-recheck",
+ "rule": "RULE-AI-28 (parent-delegated independent review, 非真人新授权)",
+ "reviewer": "rebase 状态独立复核子代理（只读审查：git/read_file/pytest/ruff，零修改被审文件，不 push；于 .worktrees/main-merge 执行，主区零修改）",
+ "reviewed_at": "2026-10-29T23:25:40+08:00",
+ "verdict": "PASS",
+ "counts": {"P0": 0, "P1": 0, "P2_new": 0, "P2_inherited_open": 9},
+ "reviewed_commit": "c4d75cf967edaddab68bec30c6c0f9f5248bf662 (M0 代码, 16 files +1779)",
+ "on_main_head": "bae3c4a507c9e5ead3653a3577da9df97684e1b3",
+ "baseline_chain": ["80768312b17ad4a6469bf9eb87c03144264e39f9", "1fc39d404 (隐私闸 clean re-root)", "c4d75cf96 (M0 代码)", "bae3c4a50 (文档/回执/脚本)"],
+ "prior_review": "docs/governance/receipts/review-wecom-aibot-bridge-m0-20261029.json (PASS, P0=0/P1=0/P2=9, 针对旧基线提交 59fc7fda2fb0757d2ac3dead1bbe7ae77cb9de25)",
+ "rebase_equivalence": {
+  "byte_identity": "PASS — git diff 59fc7fda2 c4d75cf96 -- 16个M0路径 输出0行；git diff 59fc7fda2 bae3c4a50 -- 同路径 0行；git diff HEAD -- 同路径(工作树) 0行。main 上的 wecom 16 文件与已审查提交 59fc7fda2 逐字节一致（16路径=pyproject.toml, src/llm_loop/runtime/launch.py, src/llm_loop/runtime/resolver.py, src/llm_loop/wecom/*9, tests/wecom/*5）",
+  "full_tree_delta": "59fc7fda2 与 c4d75cf96 全树差异仅5个隐私闸文件（M .githooks/pre-push, M .github/workflows/privacy-scan.yml, M CHANGELOG.md, M scripts/git_security_scan.sh, A tests/test_privacy_gate.py），与预期一致，wecom 文件零差异",
+  "feishu_zero_change": "PASS — git diff 80768312b..bae3c4a50 --name-only 共29文件，grep feishu 路径命中0（src/llm_loop/feishu/ 与 tests/feishu/ 均无）；tests/feishu 256 passed",
+  "privacy_gate_coexistence": "PASS — tests/test_privacy_gate.py 13 passed + tests/wecom 35 passed，同 worktree 同解释器（Python 3.13.13, 主区 .venv）串行全绿，无共存退化"
+ },
+ "m0_criteria": [
+  {"id": "M0-1", "claim": "加依赖 wecom-aibot-python-sdk==1.0.2", "status": "代码侧成立", "evidence": "pyproject.toml:14；主区 .venv site-packages 含 wecom_aibot_python_sdk-1.0.2.dist-info 且 import aibot 可用（本轮实测 WSClient.reply 源码可取）"},
+  {"id": "M0-2", "claim": "config.py WeComConfig + load_wecom_config, 缺凭据明确报错", "status": "代码侧成立（env 键名 WECHAT_* 与设计文档 WECOM_* 不一致，见 P2-8）", "evidence": "config.py:12-15 (BOT_ID_ENV/SECRET_ENV/SESSION_MAP_PATH_ENV/OWNER_USERID_ENV), config.py:48-55 (缺失抛 ValueError 含字段名，无默认值), config.py:17+56-59 (映射文件默认与飞书分离)；tests/wecom/test_config.py 5 passed"},
+  {"id": "M0-3", "claim": "messages.py + dispatcher.py 帧解包, 三处 SDK 缺口补齐", "status": "代码侧成立", "evidence": "messages.py:12-46 (WeComMessage 含 req_id:30 + WeComReplyFn req_id 首参:46)；dispatcher.py:31 (SUPPORTED 含 video), :64 (image/video/file 分支), :103-107 (compat_info 非空跳过), :36+:134-158 (disconnected_event 按帧 eventtype)；tests: test_dispatcher.py:57 (video), :87 (compat_info), text/image 亦覆盖（M0-3 判据四类帧齐）"},
+  {"id": "M0-4", "claim": "bridge.py SDK 连接 + 回调只入队 + 单 worker + 优雅退出", "status": "代码侧成立（例外路径 P2-2/P2-3/P2-5 未修，见 inherited）", "evidence": "bridge.py:43 (_MAX_MSG_QUEUE=64), :153 (queue.Queue maxsize=64), :230-240 (回调仅 put_nowait, 满则告警丢弃 fail-open), :194-197+:265-278 (单 worker wecom-ws-worker), :202-220 (stop: 哨兵+join4s+断开收尾+释放锁, 幂等), :327-343 (_shutdown_loop: 先断开再 stop+join+close)；test_bridge.py:103 (只入队), :112-115 (有界64), :145-149 (stop 后 worker/loop 线程死亡断言)"},
+  {"id": "M0-5", "claim": "handlers.py 接 LoopEngine 走通问答", "status": "代码侧成立（真实服务端问答未测，需凭据）", "evidence": "handlers.py:51-67 (handle 类型分发+防循环), :69-88 (_handle_text: session_map.get_or_create:74 → engine.run:75 → _reply:87), :91-101 (_reply 绑定 msg.req_id 且 20480 字节预算截断)；tests/wecom/test_handlers.py 全过"},
+  {"id": "M0-6", "claim": "session_map.py 会话键映射持久化", "status": "代码侧成立", "evidence": "session_map.py:38-46 (p:{userid}/g:{chatid} 键), :49-79 (get_or_create: 复用/重建/owner 跨端共享), :128-138 (_save 原子 tmp+replace)；映射文件 wecom_session_map.json 与飞书分离 (config.py:17)；tests/wecom/test_session_map.py 7 passed（同一键两次 → 同一 sid 断言）"},
+  {"id": "M0-7", "claim": "runtime.launch 接入 wecom 服务", "status": "代码侧成立", "evidence": "launch.py:26 (_SERVICES 增 wecom → llm_loop.wecom)；resolver.py:182 (TOML_SCHEMA 增 (wecom, session_map_path)), :245-246 (WECHAT_BOT_ID/SECRET 入 _SECRET_KEYS 拒绝入 runtime.toml)；__main__.py:1-11 (-m 入口)；__init__.py:70-144 (main: enforce_identity → load_env_file → 缺凭据 SystemExit(2) → SIGTERM/SIGINT/SIGHUP → bridge.stop → engine.close)"}
+ ],
+ "acceptance_section8": [
+  {"item": "企微 App 发文本收到 LFL 回复", "verdict": "代码侧链路完整（M0-5），真实服务端行为无凭据未测"},
+  {"item": "同一用户两次对话同一 session（session_map.json 可验证）", "verdict": "代码+单测成立（session_map.py:66-79 复用映射; test_session_map 7 passed）；线上 session_map.json 需真实流量后核"},
+  {"item": "SIGTERM 后 15 秒内干净退出", "verdict": "信号接线成立（__init__.py:115-127 + bridge.stop 202-220）；但最坏预算 4+10+10=24s 超验收线（P2-5 未修）；真实 SIGTERM 实测未做"},
+  {"item": "断网后恢复自动重连", "verdict": "代码侧仅状态记录（bridge.py:255-258 置 reconnecting + 告警），重连由 SDK 内部负责；真实断网未测"},
+  {"item": "compat_info 非空不触发回复", "verdict": "达成（dispatcher.py:103-107 跳过 + test_dispatcher.py:87-94 断言）"},
+  {"item": "video 被正确解析不静默丢弃", "verdict": "达成（dispatcher.py:31,64 解包 + handlers.py:59-63 显式回执不支持而非静默 + test_dispatcher.py:57-69）"},
+  {"item": "tests/wecom 单测通过", "verdict": "达成（35 passed, 0.24s）"},
+  {"item": "仓库无 wecom 相关 lint/类型错误", "verdict": "ruff check src/llm_loop/wecom tests/wecom 全过；mypy 不在 venv 未跑（部分验证）"}
+ ],
+ "sdk_gaps_recheck": {
+  "method": "不采信旧回执，直接 grep 活体 site-packages/aibot（主区 .venv, dist-info 1.0.2）",
+  "gap_video": "全包 grep video 0 命中；types.py:98-110 MessageType 枚举仅 Text/Image/Mixed/Voice/File；message_handler.py:71 unhandled 仅 debug 日志 → 仓库侧补齐必要成立",
+  "gap_disconnected_event": "全包 grep disconnected_event 0 命中；types.py:120-127 EventType 仅 enter_chat/template_card_event → 仓库侧 dispatcher.py:134-158+bridge.py:242-258 双层覆盖必要成立",
+  "gap_compat_info": "全包 grep compat_info 0 命中 → 仓库侧 dispatcher.py:101-107 自行判别必要成立",
+  "reply_req_id": "aibot/client.py WSClient.reply 取 frame[headers][req_id] 送 send_reply（inspect.getsource 实测）→ bridge.py:295 最小帧重建有效",
+  "raw_message_event": "message_handler.py:55 先 emit(message, frame) 再按类型细分 → bridge 监听原始 message 事件策略成立"
+ },
+ "thread_model": {
+  "callback_enqueue_only": "bridge.py:230-240 — put_nowait 即返，queue.Full 告警丢弃（fail-open 不阻塞 SDK loop）；test_bridge.py:103 断言只入队",
+  "bounded_queue_64": "bridge.py:43,153；test_bridge.py:112-115 断言 maxsize==64 且超界丢弃",
+  "single_worker": "bridge.py:194-197（唯一 wecom-ws-worker 线程）+ 265-278（get→parse→handle，推理在 worker 不在 loop）",
+  "graceful_exit": "bridge.py:202-220 哨兵+drain+join(4s)+_shutdown_loop+释放单实例锁，幂等；__init__.py:134-143 finally 兜底 engine.close",
+  "no_residual_threads": "正常路径 test_bridge.py:145-149 断言 worker/loop 线程均死亡；例外：队列满时哨兵丢失路径 worker 可能阻塞至进程退出（P2-2）、loop join 超时路径 close() 抛 RuntimeError（P2-3）——均为旧已知未修项，字节一致故仍存在"
+ },
+ "req_id_chain": {
+  "verdict": "完整，逐跳核验",
+  "hops": "dispatcher.py:42-47 frame_req_id(headers.req_id) → dispatcher.py:130 WeComMessage(req_id=...) → messages.py:30 字段+46 回复签名首参 → handlers.py:101 reply_fn(msg.req_id,...) → bridge.py:281,295,298 send_text 重建 {headers:{req_id}} 经 run_coroutine_threadsafe 调 client.reply → SDK client.py reply 取 headers.req_id（源码实测）",
+  "test": "test_bridge.py:118 全管线断言 reply 帧 headers.req_id 与来帧一致"
+ },
+ "inherited_p2_reanchored": [
+  {"id": "P2-1", "anchor": "handlers.py:93-97", "note": "截断 marker 未预留字节预算，恰 20480B 时总长微超协议上限；未修（字节一致）"},
+  {"id": "P2-2", "anchor": "bridge.py:207-214", "note": "stop 时队列满→哨兵丢失→worker 阻塞至进程退出；未修"},
+  {"id": "P2-3", "anchor": "bridge.py:336-341", "note": "loop join 超时路径 loop.close() 对运行中 loop 抛 RuntimeError；未修"},
+  {"id": "P2-4", "anchor": "bridge.py:181", "note": "client_factory 异常（如 aibot 导入失败）不释放单实例锁、裸 traceback；未修"},
+  {"id": "P2-5", "anchor": "bridge.py:44-48", "note": "优雅退出最坏预算 24s 超 §八 15s 验收线（典型路径远快）；未修，影响 §八 第3条判定"},
+  {"id": "P2-6", "anchor": "handlers.py:75-81", "note": "wecom 未签发 ingress 凭据且不在 ingress_token 白名单（M1 撞）；未修，M0 不阻塞"},
+  {"id": "P2-7", "anchor": "session_map.py:117-126", "note": "映射文件损坏静默重建无日志，与注释矛盾；未修"},
+  {"id": "P2-8", "anchor": "DESIGN-20261029 §五 M0-2 (设计文档:210)", "note": "设计文档 env 键名 WECOM_* vs 实现 WECHAT_*；注意：设计文档现已入库(bae3c4a50)仍未同步——旧回执建议的入库时同步未执行，该项由文档滞后升级为入库文档失配，仍 P2"},
+  {"id": "P2-9", "anchor": "tests/wecom/test_dispatcher.py", "note": "mixed/voice/file 分支零测试（本轮 grep 复核仍无）；未修"}
+ ],
+ "unverified": [
+  "真实企微服务端行为：markdown 回复是否被接受、真实 video 帧结构（dispatcher.py:53-56 自述同构推断）、msgid 字段名（dispatcher.py:114-116）、disconnected_event 实际触发时序——无真实 BotID/Secret，不可核",
+  "SIGTERM 15 秒内干净退出：真实进程级实测未做（代码预算上限 24s, P2-5）",
+  "断网自动重连实测：SDK 内部重连行为未验证",
+  "mypy：venv 未安装，类型检查未跑（ruff 已过）",
+  "全量测试套件未跑（范围限定：privacy_gate 13 + wecom 35 + feishu 256 + config/handlers/session_map/bridge/dispatcher 切片）",
+  "发布快照 .releases/8c114428f 无 wecom（grep=0）：运行时解析走快照的话 wecom 服务不可用——部署生效需快照更新，与旧回执限制项一致"
+ ],
+ "tests_and_tools": {
+  "env": "worktree .worktrees/main-merge @ bae3c4a50, 工作树干净（git status 空）",
+  "python": "主区 .venv Python 3.13.13；pytest 经 pyproject pythonpath 相对 rootdir 解析 → 实测 worktree 自身 src（pyproject.toml:76-79 注释即此坑；裸 venv import 指向 .releases 快照，不采用）",
+  "runs": "pytest tests/test_privacy_gate.py → 13 passed；pytest tests/wecom → 35 passed；pytest tests/feishu → 256 passed；ruff check src/llm_loop/wecom tests/wecom → All checks passed",
+  "git": "diff 命令与 SHA 均为实测输出，未采信委派描述"
+ },
+ "limitations": [
+  "本回执为 rebase 落位状态复核：核心问题是逐字节等价性与共存回归，非对 M0 代码的首次全量审查（首次审查见 prior_review，16 文件全量逐行+SDK 源码逐项）；因字节一致，prior_review 的全部结论按传递性适用于 c4d75cf96/bae3c4a50",
+  "回执写于 worktree 同路径（.worktrees/main-merge/docs/governance/receipts/），主区落位由父代理决定（worktree 与主区同仓，父代理可 cherry-pick/cp）"
+ ]
+}
