@@ -765,7 +765,7 @@ def _project_committed_runtime_diff(name: str, diff_text: str) -> str:
 
 def _source_snapshot(
     workdir: str, push_base: str | None = None, push_head: str | None = None,
-    first_push_ref: str = "",
+    first_push_ref: str = "", require_material: str = "",
 ) -> tuple[str, str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
@@ -783,6 +783,12 @@ def _source_snapshot(
     source the material is exactly what the upload would send.
     first_push_ref: non-empty when the destination ref is new on the remote;
     recorded verbatim in the material header together with the anchor base.
+    require_material (EVO-20261029-eb64b2de, human-approved 2026-10-29): when
+    non-empty and the frozen artifact turns out to contain NOTHING (no
+    committed delta, no worktree change, no untracked file), raise
+    ValueError(require_material) instead of freezing an empty shell — a
+    reviewer asked to approve an empty artifact produces a vacuous PASS.
+    full_test passes "full_test_no_delta"; git_push keeps the default "".
     """
     root = Path(workdir).expanduser().resolve(strict=True)
     if not root.is_dir():
@@ -877,6 +883,12 @@ def _source_snapshot(
         if len(body) > 200_000:
             raise ValueError("review_untracked_file_too_large")
         new_files.append((name, _digest(body), body.decode("utf-8", "replace")))
+    # EVO-20261029-eb64b2de: an empty frozen artifact (no committed delta, no
+    # worktree change, no untracked file) makes the review verdict vacuous —
+    # the reviewer approves an empty shell. Refuse it when the caller asked
+    # for that guarantee (full_test); git_push keeps its own semantics.
+    if require_material and not committed and not working and not new_files:
+        raise ValueError(require_material)
     # A push review must state the base it diffed against so the reviewer and
     # the admission receipt can be cross-checked against remote facts.
     base_line = f"push_remote_base={base}" if push_base is not None else f"merge_base={base}"
@@ -1097,6 +1109,52 @@ def _push_base_commit(repo: Path, remote: str, dst_ref: str) -> tuple[str, bool]
     # the entire history, which the material cap cannot honestly cover.
     # Refuse instead of freezing an unanchored delta.
     raise ValueError("push_remote_ref_absent_first_push_scope_unreviewable")
+
+
+def _full_test_review_base(workdir: str) -> tuple[str, str]:
+    """EVO-20261029-eb64b2de (human-approved 2026-10-29): push-basis anchor
+    for full_test admission.
+
+    A commit-first-review-later release flow keeps HEAD on the destination
+    branch, so the legacy merge-base(HEAD, main) anchor equals HEAD and froze
+    an EMPTY committed delta — the reviewer saw an empty shell and PASS was
+    vacuous. Anchor the frozen delta on the push destination instead, on the
+    same remote-facts basis git_push uses: origin (or the single configured
+    remote) plus refs/heads/<current branch> — the delta is then exactly the
+    commit set a push would upload, while worktree and untracked files stay
+    in the material (full_test tests the workdir, not a refspec).
+
+    Returns (base_sha, first_push_ref); first_push_ref is non-empty when the
+    current branch has no remote counterpart yet and the anchor is the remote
+    default branch (mirroring _push_base_commit's first-push behavior).
+    Returns ("", "") when no usable remote facts exist — no remote, several
+    remotes without origin (ambiguous destination), detached HEAD, unusable
+    branch name, unreachable remote, or anchor not present in this clone:
+    the caller then keeps the legacy merge-base anchor and its empty-material
+    refusal still fires, so no path can mint a vacuous empty-delta PASS.
+    """
+    root = Path(workdir).expanduser().resolve(strict=True)
+    repo = Path(_git(root, "rev-parse", "--show-toplevel").decode().strip()).resolve()
+    remotes = [r for r in _git(repo, "remote").decode().split() if r]
+    if "origin" in remotes:
+        remote = "origin"
+    elif len(remotes) == 1:
+        remote = remotes[0]
+    else:
+        return "", ""
+    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
+    if not branch or branch == "HEAD" or not re.fullmatch(r"[A-Za-z0-9_./-]{1,150}", branch):
+        return "", ""  # detached HEAD or unusable branch name: no destination
+    dst_ref = f"refs/heads/{branch}"
+    try:
+        base, first_push = _push_base_commit(repo, remote, dst_ref)
+        _git(repo, "cat-file", "-e", base + "^{commit}")
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        # Remote facts unavailable or anchor not in this clone: keep the
+        # legacy anchor; the empty-material refusal still catches the
+        # HEAD-at-destination-tip empty-shell case with a diagnosable error.
+        return "", ""
+    return base, (dst_ref if first_push else "")
 
 
 def _push_target(command: str, workdir: str) -> str:
@@ -1563,7 +1621,23 @@ class HostReviewAdmission:
                           "target_ref": dst_ref if first_push else ""}
         else:
             true_dir = workdir
-            sha, text = _source_snapshot(true_dir)
+            # EVO-20261029-eb64b2de (human-approved 2026-10-29): freeze the
+            # to-be-pushed commit set, not merge-base(HEAD, main). On the
+            # commit-first release flow the legacy anchor equals HEAD, so the
+            # committed delta was EMPTY — the reviewer saw an empty shell and
+            # PASS was vacuous. Anchor on the push destination when remote
+            # facts resolve; an actually empty artifact is refused outright.
+            ft_base, ft_ref = _full_test_review_base(true_dir)
+            push_base = ft_base
+            sha, text = _source_snapshot(
+                true_dir,
+                push_base=ft_base or None,
+                first_push_ref=ft_ref,
+                require_material=(
+                    "full_test_no_delta: committed delta, worktree and untracked"
+                    " are all empty — nothing to review (EVO-20261029-eb64b2de)"
+                ),
+            )
             dest = str(Path(true_dir).expanduser().resolve(strict=True))
         return (sha, f"{kind}:{dest}:command:{_digest(command.encode('utf-8'))}", text,
                 push_base, push_extra)

@@ -108,7 +108,7 @@ def _bind_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     briefing._CACHE.clear()
 
 
-def _append_score(tmp_path: Path, expected: float, ts: str) -> None:
+def _append_score(tmp_path: Path, expected: float, ts: str, *, ref: str = "ref-a") -> None:
     from llm_loop.knowledge_score.ledger import (
         KnowledgeScoreLedger,
         build_success_entry,
@@ -117,7 +117,7 @@ def _append_score(tmp_path: Path, expected: float, ts: str) -> None:
     entry = build_success_entry(
         scorer_model="scorer-test",
         kind="method",
-        ref=f"ref-{expected}",
+        ref=ref,
         version="v1",
         slot_id="slot-1",
         slot_key="slot-key-1",
@@ -134,51 +134,75 @@ def _append_score(tmp_path: Path, expected: float, ts: str) -> None:
     KnowledgeScoreLedger.for_root(tmp_path).append(entry)
 
 
-def test_briefing_includes_knowledge_health_with_trend(tmp_path, monkeypatch):
+def test_briefing_knowledge_settlement_same_card_trend(tmp_path, monkeypatch):
+    """EVO-20261029-80820d50：Δ 只与同一张卡（同 ref）的上一次评分比较。"""
     _bind_paths(tmp_path, monkeypatch)
     now = system_local_now()
-    _append_score(tmp_path, 0.79, now.isoformat())
-    _append_score(tmp_path, 0.82, (now - timedelta(minutes=1)).isoformat())
-    text = build_installation_briefing()
-    assert "### 知识健康度" in text
-    assert "知识健康度: 0.82 (+0.03 ↗)" in text
-
-
-def test_briefing_knowledge_health_flat_trend_within_epsilon(tmp_path, monkeypatch):
-    _bind_paths(tmp_path, monkeypatch)
-    now = system_local_now()
+    _append_score(tmp_path, 0.79, (now - timedelta(minutes=1)).isoformat())
     _append_score(tmp_path, 0.82, now.isoformat())
-    _append_score(tmp_path, 0.823, (now - timedelta(minutes=1)).isoformat())
     text = build_installation_briefing()
-    assert "知识健康度: 0.82 (+0.00 →)" in text
+    assert "### 知识结算概况" in text
+    assert "最近结算卡评分: 0.82（单卡读数，非库级健康度；同卡上次 0.79，Δ +0.03 ↗）" in text
+    assert "知识健康度:" not in text  # 误导性标签不再出现
 
 
-def test_briefing_knowledge_health_single_entry_has_no_delta(tmp_path, monkeypatch):
+def test_briefing_knowledge_settlement_no_cross_card_delta(tmp_path, monkeypatch):
+    """EVO-20261029-80820d50：末行单卡分不得与另一张卡相减出假趋势。"""
+    _bind_paths(tmp_path, monkeypatch)
+    now = system_local_now()
+    _append_score(tmp_path, 0.82, (now - timedelta(minutes=2)).isoformat(), ref="ref-a")
+    _append_score(tmp_path, 0.79, now.isoformat(), ref="ref-b")
+    text = build_installation_briefing()
+    assert "最近结算卡评分: 0.79（单卡读数，非库级健康度；同卡无更早结算）" in text
+    assert "Δ -0.03" not in text  # 跨卡相减的假趋势不得出现
+
+
+def test_briefing_knowledge_settlement_flat_trend_within_epsilon(tmp_path, monkeypatch):
+    _bind_paths(tmp_path, monkeypatch)
+    now = system_local_now()
+    _append_score(tmp_path, 0.82, (now - timedelta(minutes=1)).isoformat())
+    _append_score(tmp_path, 0.823, now.isoformat())
+    text = build_installation_briefing()
+    assert "最近结算卡评分: 0.82（单卡读数，非库级健康度；同卡上次 0.82，Δ +0.00 →）" in text
+
+
+def test_briefing_knowledge_settlement_single_entry_has_no_delta(tmp_path, monkeypatch):
     _bind_paths(tmp_path, monkeypatch)
     _append_score(tmp_path, 0.79, system_local_now().isoformat())
     text = build_installation_briefing()
-    assert "### 知识健康度" in text
-    assert "知识健康度: 0.79" in text
+    assert "### 知识结算概况" in text
+    assert "最近结算卡评分: 0.79（单卡读数，非库级健康度；同卡无更早结算）" in text
 
 
-def test_briefing_omits_knowledge_health_when_ledger_missing(tmp_path, monkeypatch):
+def test_briefing_knowledge_settlement_pool_summary(tmp_path, monkeypatch):
+    """EVO-20261029-80820d50：库级概况是聚合口径（行数+decision 分布），
+    不借用任何单卡 expected 冒充库级分。"""
+    _bind_paths(tmp_path, monkeypatch)
+    now = system_local_now()
+    _append_score(tmp_path, 0.79, (now - timedelta(minutes=2)).isoformat())
+    _append_score(tmp_path, 0.82, (now - timedelta(minutes=1)).isoformat(), ref="ref-b")
+    text = build_installation_briefing()
+    assert "库级概况: 近7天成功结算 2 次（decision: adopted 2）" in text
+
+
+def test_briefing_omits_knowledge_settlement_when_ledger_missing(tmp_path, monkeypatch):
     _bind_paths(tmp_path, monkeypatch)  # 不写任何打分行
     text = build_installation_briefing()
-    assert "### 知识健康度" not in text
-    assert "知识健康度:" not in text
+    assert "### 知识结算概况" not in text
+    assert "最近结算卡评分" not in text
 
 
-def test_briefing_omits_knowledge_health_when_ttl_expired(tmp_path, monkeypatch):
+def test_briefing_omits_knowledge_settlement_when_ttl_expired(tmp_path, monkeypatch):
     _bind_paths(tmp_path, monkeypatch)
     now = system_local_now()
     _append_score(tmp_path, 0.79, (now - timedelta(days=8)).isoformat())
     _append_score(tmp_path, 0.82, (now - timedelta(days=8, minutes=-1)).isoformat())
     text = build_installation_briefing()
-    assert "### 知识健康度" not in text
-    assert "知识健康度:" not in text
+    assert "### 知识结算概况" not in text
+    assert "最近结算卡评分" not in text
 
 
-def test_briefing_knowledge_health_matches_ledger_read(tmp_path, monkeypatch):
+def test_briefing_knowledge_settlement_matches_ledger_read(tmp_path, monkeypatch):
     """口径锁定：briefing 纯文件读取与 KnowledgeScoreLedger 落点/语义一致。
 
     kernel 平面不 import knowledge_score 模块（kernel_import_edges 冻结基线
@@ -204,4 +228,4 @@ def test_briefing_knowledge_health_matches_ledger_read(tmp_path, monkeypatch):
         fh.write('{"expected": 0.5, "ts": "torn')  # torn 尾行：无换行的半行 JSON
     lines = _knowledge_health_lines(tmp_path)
     text = "\n".join(lines)
-    assert "知识健康度: 0.9" in text  # torn 行被跳过，最新成功打分仍取 0.9
+    assert "最近结算卡评分: 0.9" in text  # torn 行被跳过，最新成功打分仍取 0.9

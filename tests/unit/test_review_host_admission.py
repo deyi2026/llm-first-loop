@@ -660,6 +660,60 @@ def test_committed_runtime_monster_diff_is_truncated_not_deadlocked(tmp_path: Pa
     assert "z" * 60_000 not in runner.task  # the omitted middle is really out
 
 
+def test_full_test_main_tip_freezes_pending_push_set_not_empty_shell(tmp_path: Path) -> None:
+    # EVO-20261029-eb64b2de (human-approved 2026-10-29): commit-first flow —
+    # HEAD sits on the destination branch with a clean tree, so the legacy
+    # merge-base(HEAD, main) anchor equals HEAD and froze an EMPTY committed
+    # delta: the reviewer saw an empty shell and PASS was vacuous. The frozen
+    # base is now the push destination (remote main), so the material shows
+    # the real to-be-pushed commit set.
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "commit", "-am", "release candidate"], check=True)
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD^"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    _seed_bare_remote(repo, tmp_path, base)  # remote main one commit behind
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"], allowed
+    assert "push_remote_base=" in runner.task  # anchored on the push destination
+    # the material carries the substance of the pending commit set (the
+    # example.py diff base..HEAD), not an empty shell
+    assert "-x = 1" in runner.task and "+x = 2" in runner.task
+
+
+def test_full_test_refuses_empty_shell_when_everything_pushed(tmp_path: Path) -> None:
+    # EVO-20261029-eb64b2de: everything already pushed + clean tree + no
+    # untracked file → the old gate froze an empty shell whose review verdict
+    # was vacuous; it must now fail closed with a diagnosable error instead.
+    repo = _repo(tmp_path)
+    head = _commit(repo, "example.py", "x = 2\n", "release candidate")
+    _seed_bare_remote(repo, tmp_path, head)  # remote main == local main
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert str(blocked["reason"]).startswith("full_test_no_delta")
+    assert runner.started == 0  # no vacuous review child is spawned
+
+
+def test_full_test_refuses_empty_shell_without_remote(tmp_path: Path) -> None:
+    # EVO-20261029-eb64b2de: the legacy no-remote anchor (merge-base(HEAD,
+    # main)==HEAD at the destination tip) is exactly the old empty-shell
+    # shape; it must refuse too — no path mints a vacuous empty-delta PASS.
+    repo = _repo(tmp_path)
+    _commit(repo, "example.py", "x = 2\n", "release candidate")
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert str(blocked["reason"]).startswith("full_test_no_delta")
+    assert runner.started == 0
+
+
 def test_committed_non_runtime_monster_still_refused(tmp_path: Path) -> None:
     # EVO-20261021-2f22aae5 guardrail: the truncated projection unlocks ONLY
     # _RUNTIME_OUTPUT_EXCLUDES paths. A committed single-line monster anywhere

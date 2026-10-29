@@ -151,18 +151,26 @@ def _knowledge_score_ledger_path(state_root: Path) -> Path:
 def _knowledge_health_lines(
     state_root: Path, *, now: datetime | None = None
 ) -> list[str]:
-    """知识健康度段（D8）：ledger 最后两条成功打分行 → 最新分/Δ/趋势.
+    """知识结算概况段（D8，EVO-20261029-80820d50）：单卡口径 + 库级概况.
 
     数据源：``<state_root>/data/knowledge_scores/ledger.jsonl``（磁盘契约落点，
-    与 ``KnowledgeScoreLedger.for_root`` 及 CLI/web 落点一致）。输出仅
-    数字与符号，不含任何会话内容/条目文本。整段省略（返回空，不输出标题行）：
+    与 ``KnowledgeScoreLedger.for_root`` 及 CLI/web 落点一致）。ledger 每一行是
+    "某一张卡在某次结算中的评分"，不同行的 ref 可以指向不同卡，因此末行的
+    单卡 expected 既不是库级健康度，与"上一行"（可能是另一张卡）相减也不构成
+    任何一张卡的趋势（EVO-20261029-80820d50：曾据此把跨卡差显示成 ±3 量级的
+    假"知识健康度退化"）。输出口径：
+    1) 首行：最近一次结算的单卡评分，带"单卡读数，非库级健康度"限定词；
+    2) Δ 只与同一张卡（同 ref）的上一次评分比较，同卡无历史则明示无更早结算；
+    3) 末行：TTL 窗口内的库级概况（成功结算次数 + decision 分布），聚合口径
+       不借用单卡 expected 冒充库级分。
+    输出仅数字与符号，不含任何会话内容/条目文本。整段省略（返回空，不输出标题行）：
     ledger 文件不存在 / 无成功行 / 最新成功行时间戳距今超过
     ``KNOWLEDGE_SCORE_TTL_SECONDS``。读取异常按省略处理（fail-open）。
     """
     path = _knowledge_score_ledger_path(state_root)
     if not path.is_file():
         return []
-    scored: list[tuple[float, str]] = []
+    scored: list[tuple[float, str, str, str]] = []  # (expected, ts, ref, decision)
     try:
         with path.open("r", encoding="utf-8") as fh:
             for raw_line in fh:
@@ -180,12 +188,17 @@ def _knowledge_health_lines(
                 raw_expected = row.get("expected")
                 if isinstance(raw_expected, bool) or not isinstance(raw_expected, (int, float)):
                     continue
-                scored.append((float(raw_expected), str(row.get("ts") or "")))
-    except Exception:  # noqa: BLE001 — 健康度段 fail-open：账本不可读不破坏简报
+                scored.append((
+                    float(raw_expected),
+                    str(row.get("ts") or ""),
+                    str(row.get("ref") or ""),
+                    str(row.get("decision_reported") or ""),
+                ))
+    except Exception:  # noqa: BLE001 — 结算段 fail-open：账本不可读不破坏简报
         return []
     if not scored:
         return []
-    latest_score, latest_ts = scored[-1]
+    latest_expected, latest_ts, latest_ref, _latest_decision = scored[-1]
     try:
         stamped = datetime.fromisoformat(latest_ts)
     except ValueError:
@@ -195,16 +208,45 @@ def _knowledge_health_lines(
     reference = now or system_local_now()
     if (reference - stamped).total_seconds() > KNOWLEDGE_SCORE_TTL_SECONDS:
         return []
-    if len(scored) >= 2:
-        delta = latest_score - scored[-2][0]
+    score_line = f"最近结算卡评分: {latest_expected:.2f}（单卡读数，非库级健康度"
+    same_card_prev: float | None = None
+    if latest_ref:
+        for expected, _ts, ref, _decision in reversed(scored[:-1]):
+            if ref == latest_ref:
+                same_card_prev = expected
+                break
+    if same_card_prev is None:
+        score_line += "；同卡无更早结算）"
+    else:
+        delta = latest_expected - same_card_prev
         if delta > _KNOWLEDGE_TREND_EPSILON:
             trend = "↗"
         elif delta < -_KNOWLEDGE_TREND_EPSILON:
             trend = "↘"
         else:
             trend = "→"
-        return [f"知识健康度: {latest_score:.2f} ({delta:+.2f} {trend})"]
-    return [f"知识健康度: {latest_score:.2f}"]
+        score_line += f"；同卡上次 {same_card_prev:.2f}，Δ {delta:+.2f} {trend}）"
+    # 库级概况：TTL 窗口内成功结算行数与 decision 分布（聚合口径，非库级评分）。
+    window_days = int(KNOWLEDGE_SCORE_TTL_SECONDS // 86400)
+    window_count = 0
+    decisions: dict[str, int] = {}
+    for _expected, row_ts, _ref, decision in scored:
+        try:
+            row_stamp = datetime.fromisoformat(row_ts)
+        except ValueError:
+            continue
+        if row_stamp.tzinfo is None:
+            row_stamp = row_stamp.astimezone()
+        if (reference - row_stamp).total_seconds() > KNOWLEDGE_SCORE_TTL_SECONDS:
+            continue
+        window_count += 1
+        key = decision or "unknown"
+        decisions[key] = decisions.get(key, 0) + 1
+    parts = [f"{key} {count}" for key, count in sorted(decisions.items(), key=lambda kv: (-kv[1], kv[0]))]
+    pool_line = f"库级概况: 近{window_days}天成功结算 {window_count} 次"
+    if parts:
+        pool_line += "（decision: " + " / ".join(parts) + "）"
+    return [score_line, pool_line]
 
 
 def inspect_installation_assets(overrides: Mapping[str, str] | None = None) -> dict[str, int]:
@@ -298,10 +340,12 @@ def build_installation_briefing() -> str:
         lines.append(f"已安装技能 {skill_count} 个：" + "、".join(skill_names[:_MAX_SKILLS]) +
                      ("…" if skill_count > _MAX_SKILLS else ""))
 
-    # D8：知识健康度段（method/skill 段之后）——ledger 缺失/为空/TTL 过期整段省略。
+    # D8：知识结算概况段（method/skill 段之后）——ledger 缺失/为空/TTL 过期整段省略。
+    # EVO-20261029-80820d50：标题从「知识健康度」改为「知识结算概况」；行内单卡
+    # 读数带限定词，库级口径单独成行，避免把单卡 expected 读作库级健康度。
     health = _knowledge_health_lines(state_root)
     if health:
-        lines += ["", "### 知识健康度"]
+        lines += ["", "### 知识结算概况"]
         lines.extend(health)
 
     text = "\n".join(lines).strip()
