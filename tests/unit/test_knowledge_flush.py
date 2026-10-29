@@ -3,8 +3,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from scripts.knowledge_flush import main
 
 CARD = "# 方法卡\n\n适用：示例。\n步骤：一、二、三。\n验证：通过。\n" * 3

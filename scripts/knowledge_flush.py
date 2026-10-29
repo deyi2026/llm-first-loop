@@ -111,10 +111,9 @@ def collect(root: Path) -> dict[str, object]:
             card_dir = (root / path).parent
             card_path = root / path
             is_new = "?" in status or status[:1] in {"A"}
-            if is_new and card_path.is_file():
-                if card_path.stat().st_size < MIN_CARD_BYTES:
-                    too_small.append(path)
-                    continue
+            if is_new and card_path.is_file() and card_path.stat().st_size < MIN_CARD_BYTES:
+                too_small.append(path)
+                continue
             if not card_path.is_file() and status[:1] != "D":
                 incomplete.append(str(card_dir.relative_to(root)))
                 continue
