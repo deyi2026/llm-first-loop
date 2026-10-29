@@ -94,6 +94,13 @@ _ALLOWLIST=(
   'tests/unit/test_builtin_tools.py'  # 同上：私网网段夹具 URL
   'tests/unit/test_playwright_gate.py'  # 同上：私网网段夹具 URL
   'tests/unit/test_web_fetch_fake_ip.py'  # 同上：私网网段夹具 URL
+  'tests/test_auth_hardening.py'  # 同上：XFF 头 10.0 网段夹具（与文档段 203.0.113/198.51.100 并列），2026-10-29 补遗
+  'tests/unit/test_task_budget_admin_once.py'  # 同上：私网网段夹具（10.x 漏扫补遗）
+  'tests/unit/test_task_budget_positive_operator.py'  # 同上：私网网段夹具（10.x 漏扫补遗）
+  'tests/unit/test_secret_mask_boundary.py'  # 同上：私网网段夹具（10.x 漏扫补遗）
+  'tests/unit/test_learning_foreground_independence.py'  # 同上：私网网段夹具（10.x 漏扫补遗）
+  'tests/unit/test_web_fetch_ssrf_redirect.py'  # 同上：SSRF 重定向私网夹具（10.x 漏扫补遗）
+  'tests/web/test_local_runtime_admin.py'  # 同上：私网网段夹具（10.x 漏扫补遗）
 )
 
 # ── 规则粒度豁免：仅跳过规则3（本地绝对路径）；规则1禁路径/规则2敏感内容/规则4大文件仍全量执行 ──
