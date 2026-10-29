@@ -1,0 +1,25 @@
+name: privacy-scan
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  privacy-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Determine scan range
+        id: range
+        run: |
+          if git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          else
+            BASE=$(git merge-base origin/main "$GITHUB_SHA" || git rev-parse "$GITHUB_SHA")
+            echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Privacy/security incremental scan
+        run: bash scripts/git_security_scan.sh --range "${{ steps.range.outputs.base }}" "$GITHUB_SHA"

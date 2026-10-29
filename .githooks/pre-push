@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# pre-push 钩子：推送前隐私/安全增量扫描（RULE-AI-28 push 闸的机械层）
+# 背景（2026-10-29 事故）：知识卡携带内网 IP+用户名推上公开仓，pre-commit 的
+# experiences/ 粒度豁免放行了内容——push 前必须再过一遍内容级隐私规则。
+# 安装: git config core.hooksPath .githooks（与 pre-commit 同机制）
+
+set -u
+ROOT="$(git rev-parse --show-toplevel)"
+SCAN="$ROOT/scripts/git_security_scan.sh"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "$local_sha" =~ ^0+$ ]] && continue
+  if [[ "$remote_sha" =~ ^0+$ ]]; then
+    RANGE_ARGS=(--tree)
+  else
+    RANGE_ARGS=(--range "$remote_sha" "$local_sha")
+  fi
+  echo "[pre-push] $local_ref -> $remote_ref  (${RANGE_ARGS[*]})"
+  bash "$SCAN" "${RANGE_ARGS[@]}" || exit 1
+done
+exit 0

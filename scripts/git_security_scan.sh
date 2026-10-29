@@ -4,15 +4,17 @@
 # 背景（2026-08-16）：本项目由 LLM-First Loop 自主迭代（AI 自动改代码/提交/推送），
 # 无人工检查环节 → 敏感文件/本地路径/大文件必须程序化硬拦截。
 #
-# 两种模式：
+# 三种模式：
 #   --staged   pre-commit 钩子用：扫描暂存区（git diff --cached）——提交前拦截
 #   --tree     CI 用：扫描整个已跟踪文件树（git ls-files）——推送后兜底
+#   --range B H  pre-push 钩子/CI 用：扫描 B..H 提交集的增量 blob——推送前拦截
 #
 # 命中任一规则 → 打印命中项 + exit 1（提交/CI 失败，如实提示修复方式）。
 # 规则保守防误报；确属测试夹具的可显式豁免（见 _allowlist）。
 
 set -u
 MODE="${1:---staged}"
+RANGE_BASE="" RANGE_HEAD=""
 
 # ── 规则 1: 禁止路径（暂存/跟踪中出现即拒；git add -f 绕过 gitignore 的兜底）──
 BLOCK_PATH_PATTERNS=(
@@ -41,6 +43,19 @@ BLOCK_ABS_PATH_PATTERNS=(
 
 # ── 规则 4: 大文件（误提交二进制/数据导出）──
 MAX_FILE_BYTES=$((1024 * 1024))  # 1MB
+
+# ── 规则 5: 内网/身份隐私模式（2026-10-29 事故新增：知识卡携带内网 IP+用户名+免密 SSH 描述公开泄露约10分钟）──
+# 与规则3（本地绝对路径）互补：规则3管用户家目录路径形态且被 experiences/ 粒度豁免；
+# 本规则管 IP / user@host / 主机名形态，**不继承任何粒度豁免**（experiences/ 等知识档案入库前必须脱敏，
+# 用户指示 2026-10-29：全量入库前做隐私处理，push 前过隐私规则）。动态注入当前用户名/主机名。
+_PRIV_USER="${USER:-$(id -un 2>/dev/null || true)}"
+_PRIV_HOST_S="$(hostname -s 2>/dev/null || true)"
+BLOCK_PRIVACY_PATTERNS=(
+  '\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'  # 私网 IPv4（内网拓扑泄露）
+)
+# user@ 与主机名规则按当前机器动态生成（空值跳过，防误配）
+[[ -n "${_PRIV_USER}" ]] && BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]${_PRIV_USER}@" '\b'"${_PRIV_USER}"'-[A-Za-z0-9]')  # user@host / user-XXX 主机名前缀形态
+[[ -n "${_PRIV_HOST_S}" && "${_PRIV_HOST_S}" != "localhost" ]] && BLOCK_PRIVACY_PATTERNS+=('\b'"${_PRIV_HOST_S}"'\b')
 
 # ── 豁免白名单（确属测试夹具/样例，无敏感值；路径子串匹配）──
 _ALLOWLIST=(
@@ -80,6 +95,21 @@ _ABS_PATH_ONLY_ALLOWLIST=(
 _PATH_ONLY_ALLOWLIST=(
   'data/methods/'  # 学习方法资产（METHOD.md 方法卡 + qualification.jsonl；embeddings-*.json 由 gitignore 排除）
 )
+
+# ── 规则粒度豁免：仅跳过规则5（内网/身份隐私）；其余规则仍全量执行 ──
+# 门槛高于其他粒度豁免：登记前须完成内容脱敏审查，且仅限"字符串是功能/样例本体"的场景
+# （如文档教用户配置 192.168.x 网段示例）。experiences/ 等知识档案**不得**登记于此——入库前脱敏。
+_PRIVACY_ONLY_ALLOWLIST=(
+  # （空——按需逐条登记，附理由与日期）
+)
+
+_privacy_only_allowed() {
+  local path="$1"
+  for a in "${_PRIVACY_ONLY_ALLOWLIST[@]:-}"; do
+    [[ -n "$a" && "$path" == *"$a"* ]] && return 0
+  done
+  return 1
+}
 
 # macOS/Linux 兼容的 stat 大小
 _file_size() {
@@ -124,10 +154,19 @@ _fail() {
 }
 
 main() {
+  # --range B H：解析增量模式参数
+  if [[ "$MODE" == "--range" ]]; then
+    RANGE_BASE="${2:?--range 需要 BASE}"
+    RANGE_HEAD="${3:?--range 需要 HEAD}"
+  fi
+
   local files=() f_line
   if [[ "$MODE" == "--staged" ]]; then
     while IFS= read -r f_line; do files+=("$f_line"); done \
       < <(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+  elif [[ "$MODE" == "--range" ]]; then
+    while IFS= read -r f_line; do files+=("$f_line"); done \
+      < <(git diff --name-only --diff-filter=ACM "$RANGE_BASE" "$RANGE_HEAD" 2>/dev/null)
   else
     while IFS= read -r f_line; do files+=("$f_line"); done < <(git ls-files 2>/dev/null)
   fi
@@ -142,14 +181,18 @@ main() {
       [[ "$f" =~ $pat ]] && _fail "禁止路径匹配 [$pat]" "$f"
     done
 
-    # 规则 4: 大文件（工作区文件）
-    [[ -f "$f" ]] || continue
-    size="$(_file_size "$f")"
-    (( size > MAX_FILE_BYTES )) && _fail "文件过大 (${size}B > 1MB)" "$f"
+    # 规则 4: 大文件（工作区文件；--range 模式扫 blob 大小无意义，跳过）
+    if [[ "$MODE" != "--range" ]]; then
+      [[ -f "$f" ]] || continue
+      size="$(_file_size "$f")"
+      (( size > MAX_FILE_BYTES )) && _fail "文件过大 (${size}B > 1MB)" "$f"
+    fi
 
-    # 规则 2/3: 内容扫描（staged 用索引 blob，tree 用工作区文件；跳过二进制）
+    # 规则 2/3: 内容扫描（staged 用索引 blob，tree 用工作区文件，range 用提交 blob；跳过二进制）
     if [[ "$MODE" == "--staged" ]]; then
       blob="$(git show ":$f" 2>/dev/null || cat "$f")"
+    elif [[ "$MODE" == "--range" ]]; then
+      blob="$(git show "${RANGE_HEAD}:$f" 2>/dev/null)" || continue
     else
       blob="$(cat "$f" 2>/dev/null)"
     fi
@@ -168,9 +211,16 @@ main() {
         _fail "本地绝对路径匹配 [$pat]" "$f"
       fi
     done
+    # 规则 5: 内网/身份隐私——不继承 _abs_path_only/_path_only 粒度豁免（知识档案入库前必须脱敏）
+    _privacy_only_allowed "$f" || for pat in "${BLOCK_PRIVACY_PATTERNS[@]}"; do
+      if LC_ALL=C grep -qE "$pat" <<<"$blob"; then
+        echo "❌ [git_security_scan] 隐私规则拦截 [$pat]" >&2
+        _fail "内网/身份隐私匹配（脱敏后重试；RULE-AI-28 push 闸）" "$f"
+      fi
+    done
   done
   echo "✅ [git_security_scan] 通过（${#files[@]} 个文件无敏感/错误内容）"
   exit 0
 }
 
-main
+main "$@"
