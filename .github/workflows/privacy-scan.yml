@@ -16,10 +16,12 @@ jobs:
         id: range
         run: |
           if git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
+            echo "mode=--range" >> "$GITHUB_OUTPUT"
             echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
           else
-            BASE=$(git merge-base origin/main "$GITHUB_SHA" || git rev-parse "$GITHUB_SHA")
-            echo "base=$BASE" >> "$GITHUB_OUTPUT"
+            # 初始 push / before 全零 / 不可解析：扫该提交可达的完整历史（防退化为空 diff 空过且防中间提交泄露）
+            echo "mode=--commit" >> "$GITHUB_OUTPUT"
+            echo "base=" >> "$GITHUB_OUTPUT"
           fi
-      - name: Privacy/security incremental scan
-        run: bash scripts/git_security_scan.sh --range "${{ steps.range.outputs.base }}" "$GITHUB_SHA"
+      - name: Privacy/security scan
+        run: bash scripts/git_security_scan.sh "${{ steps.range.outputs.mode }}" ${{ steps.range.outputs.base }} "$GITHUB_SHA"

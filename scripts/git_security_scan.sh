@@ -48,14 +48,19 @@ MAX_FILE_BYTES=$((1024 * 1024))  # 1MB
 # 与规则3（本地绝对路径）互补：规则3管用户家目录路径形态且被 experiences/ 粒度豁免；
 # 本规则管 IP / user@host / 主机名形态，**不继承任何粒度豁免**（experiences/ 等知识档案入库前必须脱敏，
 # 用户指示 2026-10-29：全量入库前做隐私处理，push 前过隐私规则）。动态注入当前用户名/主机名。
+_ere_escape() {  # POSIX ERE 转义：用户名/主机名等动态串拼入正则前必须转义，防元字符静默损坏模式
+  printf '%s' "$1" | sed -e 's/[][\.*^$(){}?+|\/]/\\&/g'
+}
 _PRIV_USER="${USER:-$(id -un 2>/dev/null || true)}"
 _PRIV_HOST_S="$(hostname -s 2>/dev/null || true)"
+_PRIV_USER_ESC="$(_ere_escape "${_PRIV_USER}")"
+_PRIV_HOST_ESC="$(_ere_escape "${_PRIV_HOST_S}")"
 BLOCK_PRIVACY_PATTERNS=(
   '\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'  # 私网 IPv4（内网拓扑泄露）
 )
-# user@ 与主机名规则按当前机器动态生成（空值跳过，防误配）
-[[ -n "${_PRIV_USER}" ]] && BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]${_PRIV_USER}@" '\b'"${_PRIV_USER}"'-[A-Za-z0-9]')  # user@host / user-XXX 主机名前缀形态
-[[ -n "${_PRIV_HOST_S}" && "${_PRIV_HOST_S}" != "localhost" ]] && BLOCK_PRIVACY_PATTERNS+=('\b'"${_PRIV_HOST_S}"'\b')
+# user@ 与主机名规则按当前机器动态生成（空值跳过，防误配；已 ERE 转义）
+[[ -n "${_PRIV_USER}" ]] && BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]${_PRIV_USER_ESC}@" '\b'"${_PRIV_USER_ESC}"'-[A-Za-z0-9]')  # user@host / user-XXX 主机名前缀形态
+[[ -n "${_PRIV_HOST_S}" && "${_PRIV_HOST_S}" != "localhost" ]] && BLOCK_PRIVACY_PATTERNS+=('\b'"${_PRIV_HOST_ESC}"'\b')
 
 # ── 豁免白名单（确属测试夹具/样例，无敏感值；路径子串匹配）──
 _ALLOWLIST=(
@@ -64,6 +69,7 @@ _ALLOWLIST=(
   'tests/unit/test_history_layering.py'  # 测试数据占位符
   'tests/codearts/test_audit.py'  # 脱敏测试：夹具用 AWS 文档示例密钥验证 AK 不落日志
   'tests/unit/test_cache_block_reclassification.py'  # D-G4/G5 脱敏测试：虚构 sk- 样例验证 privacy BLOCK 保留          # 脱敏测试：夹具用 AWS 文档示例密钥验证 AK 不落日志
+  'tests/test_privacy_gate.py'  # 隐私闸回归测试：虚构私网 IP/用户名样例验证规则5拦截（2026-10-29）
   'docs/local/'                          # 本地过程文档（不入库，此处兜底）
   'docs/WORKSPACE-CHANGE-PROTOCOL.md' 'docs/RESTART-GUIDE.md' # 工作区协议/重启指南（合法引用工作区路径，非泄露；2026-09-29 更名）
     "tests/unit/test_cache_guard.py"  # 缓存守卫测试样例（sk- 模式用例）
@@ -123,7 +129,12 @@ _file_size() {
 _is_allowed() {
   local path="$1"
   for a in "${_ALLOWLIST[@]}"; do
-    [[ "$path" == *"$a"* ]] && return 0
+    # 精确或后缀锚定匹配（堵 vendor/x.bak 类子串旁路；目录条目以 / 结尾保持前缀语义）
+    if [[ "$a" == */ ]]; then
+      [[ "$path" == "$a"* ]] && return 0
+    else
+      [[ "$path" == "$a" || "$path" == */"$a" ]] && return 0
+    fi
   done
   return 1
 }
@@ -154,47 +165,79 @@ _fail() {
 }
 
 main() {
-  # --range B H：解析增量模式参数
+  # --range B H / --commit SHA：解析模式参数
   if [[ "$MODE" == "--range" ]]; then
     RANGE_BASE="${2:?--range 需要 BASE}"
     RANGE_HEAD="${3:?--range 需要 HEAD}"
+  elif [[ "$MODE" == "--commit" ]]; then
+    RANGE_HEAD="${2:?--commit 需要 SHA}"
   fi
 
-  local files=() f_line
+  # 目标集：staged=暂存区；range=B..H 内**逐提交**的变更 blob（中间提交引入后被还原的内容
+  # 也会随历史推送——净 diff 会漏，必须逐提交扫）；commit=SHA 可达的**完整历史**逐提交
+  # （首推/CI 初始 push 推的是全历史，仅扫 tip 树会漏中间提交泄露）；tree=工作区
+  local files=() f_line c list
   if [[ "$MODE" == "--staged" ]]; then
     while IFS= read -r f_line; do files+=("$f_line"); done \
       < <(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
-  elif [[ "$MODE" == "--range" ]]; then
-    while IFS= read -r f_line; do files+=("$f_line"); done \
-      < <(git diff --name-only --diff-filter=ACM "$RANGE_BASE" "$RANGE_HEAD" 2>/dev/null)
+  elif [[ "$MODE" == "--range" || "$MODE" == "--commit" ]]; then
+    # fail-closed：ref 不可解析 → 拒绝（而非空集静默通过）
+    git rev-parse --verify --quiet "${RANGE_HEAD}^{commit}" >/dev/null 2>&1 \
+      || _fail "无法解析待扫提交 $RANGE_HEAD（fail-closed）" "(refs)"
+    if [[ "$MODE" == "--range" ]]; then
+      git rev-parse --verify --quiet "${RANGE_BASE}^{commit}" >/dev/null 2>&1 \
+        || _fail "无法解析基线 $RANGE_BASE（fail-closed）" "(refs)"
+    fi
+    local rl_args=("$RANGE_HEAD")
+    [[ "$MODE" == "--range" ]] && rl_args=("${RANGE_BASE}..${RANGE_HEAD}")
+    local seen="" key
+    while IFS= read -r c; do
+      # --root 覆盖无父提交；diff-tree 对 merge 默认无输出（冲突解决引入的内容会漏）——
+      # 输出为空时退化为该提交全树扫描（重复扫无害，安全优先）
+      list="$(git diff-tree --root --no-commit-id --name-only -r --diff-filter=ACM "$c" 2>/dev/null)"
+      if [[ -z "$list" ]]; then
+        list="$(git ls-tree -r --name-only "$c" 2>/dev/null)"
+      fi
+      while IFS= read -r f_line; do
+        [[ -z "$f_line" ]] && continue
+        key="$c"$'\t'"$f_line"
+        if [[ "$seen" != *"$key"$'\n'* ]]; then
+          seen+="$key"$'\n'
+          files+=("$key")  # 复合键：源提交<TAB>路径（含 TAB 的文件名会被跳过——罕见，接受）
+        fi
+      done <<<"$list"
+    done < <(git rev-list --reverse "${rl_args[@]}" 2>/dev/null)
   else
     while IFS= read -r f_line; do files+=("$f_line"); done < <(git ls-files 2>/dev/null)
   fi
   [[ ${#files[@]} -eq 0 ]] && exit 0
 
-  local f blob content size
+  local f blob src path size
   for f in "${files[@]}"; do
-    _is_allowed "$f" && continue
+    # 拆复合键（range/commit 模式带"源提交<TAB>路径"；staged/tree 为裸路径）
+    if [[ "$f" == *$'\t'* ]]; then src="${f%%$'\t'*}"; path="${f#*$'\t'}"; else src=""; path="$f"; fi
+
+    _is_allowed "$path" && continue
 
     # 规则 1: 路径（_PATH_ONLY_ALLOWLIST 仅豁免本规则；规则2/3/4 仍全量执行）
-    _path_only_allowed "$f" || for pat in "${BLOCK_PATH_PATTERNS[@]}"; do
-      [[ "$f" =~ $pat ]] && _fail "禁止路径匹配 [$pat]" "$f"
+    _path_only_allowed "$path" || for pat in "${BLOCK_PATH_PATTERNS[@]}"; do
+      [[ "$path" =~ $pat ]] && _fail "禁止路径匹配 [$pat]" "$path"
     done
 
-    # 规则 4: 大文件（工作区文件；--range 模式扫 blob 大小无意义，跳过）
-    if [[ "$MODE" != "--range" ]]; then
-      [[ -f "$f" ]] || continue
-      size="$(_file_size "$f")"
-      (( size > MAX_FILE_BYTES )) && _fail "文件过大 (${size}B > 1MB)" "$f"
+    # 规则 4: 大文件（工作区文件；--range/--commit 扫历史 blob，无工作区语义，跳过）
+    if [[ -z "$src" ]]; then
+      [[ -f "$path" ]] || continue
+      size="$(_file_size "$path")"
+      (( size > MAX_FILE_BYTES )) && _fail "文件过大 (${size}B > 1MB)" "$path"
     fi
 
-    # 规则 2/3: 内容扫描（staged 用索引 blob，tree 用工作区文件，range 用提交 blob；跳过二进制）
-    if [[ "$MODE" == "--staged" ]]; then
-      blob="$(git show ":$f" 2>/dev/null || cat "$f")"
-    elif [[ "$MODE" == "--range" ]]; then
-      blob="$(git show "${RANGE_HEAD}:$f" 2>/dev/null)" || continue
+    # 规则 2/3/5: 内容扫描（staged=索引 blob；range/commit=对应提交 blob；tree=工作区；跳过二进制）
+    if [[ -n "$src" ]]; then
+      blob="$(git show "${src}:${path}" 2>/dev/null)" || continue
+    elif [[ "$MODE" == "--staged" ]]; then
+      blob="$(git show ":$path" 2>/dev/null || cat "$path")"
     else
-      blob="$(cat "$f" 2>/dev/null)"
+      blob="$(cat "$path" 2>/dev/null)"
     fi
     [[ -z "$blob" ]] && continue
     if ! LC_ALL=C grep -qI . <<<"$blob"; then
@@ -202,20 +245,20 @@ main() {
     fi
     for pat in "${BLOCK_CONTENT_PATTERNS[@]}"; do
       if LC_ALL=C grep -qiE "$pat" <<<"$blob"; then
-        _fail "敏感内容匹配 [$pat]" "$f"
+        _fail "敏感内容匹配 [$pat]" "$path"
       fi
     done
     for pat in "${BLOCK_ABS_PATH_PATTERNS[@]}"; do
-      _abs_path_only_allowed "$f" && break  # 仅此规则豁免知识档案目录；secret/大文件/禁路径不豁免
+      _abs_path_only_allowed "$path" && break  # 仅此规则豁免知识档案目录；secret/大文件/禁路径不豁免
       if LC_ALL=C grep -qE "$pat" <<<"$blob"; then
-        _fail "本地绝对路径匹配 [$pat]" "$f"
+        _fail "本地绝对路径匹配 [$pat]" "$path"
       fi
     done
     # 规则 5: 内网/身份隐私——不继承 _abs_path_only/_path_only 粒度豁免（知识档案入库前必须脱敏）
-    _privacy_only_allowed "$f" || for pat in "${BLOCK_PRIVACY_PATTERNS[@]}"; do
+    _privacy_only_allowed "$path" || for pat in "${BLOCK_PRIVACY_PATTERNS[@]}"; do
       if LC_ALL=C grep -qE "$pat" <<<"$blob"; then
-        echo "❌ [git_security_scan] 隐私规则拦截 [$pat]" >&2
-        _fail "内网/身份隐私匹配（脱敏后重试；RULE-AI-28 push 闸）" "$f"
+        echo "❌ [git_security_scan] 隐私规则拦截 [$pat]（源提交 ${src:-worktree}）" >&2
+        _fail "内网/身份隐私匹配（脱敏后重试；RULE-AI-28 push 闸）" "$path"
       fi
     done
   done
