@@ -137,8 +137,13 @@ def _ensure_endpoint_direct() -> None:
     socks5h:// 并要求 python-socks，否则连接层直接失败（实测证据见
     config.ensure_proxy_bypass docstring）。端点主机取自 SDK 默认常量
     （aibot.ws.DEFAULT_WS_URL），不硬编码、随 SDK 版本自动跟随。
+    SDK 未安装（如 CI 纯 FakeClient 测试环境）时无真实端点可言，跳过；
+    真实客户端路径的 _build_real_client 会在 import aibot 处如实失败。
     """
-    from aibot.ws import DEFAULT_WS_URL
+    try:
+        from aibot.ws import DEFAULT_WS_URL
+    except ImportError:  # pragma: no cover - CI 无 SDK 时由 FakeClient 路径覆盖
+        return
 
     host = urlsplit(DEFAULT_WS_URL).hostname or ""
     if not host:
