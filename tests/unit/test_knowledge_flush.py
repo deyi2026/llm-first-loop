@@ -104,3 +104,14 @@ def test_merge_in_progress_is_refused(tmp_path: Path) -> None:
 
     assert main(["--root", str(repo)]) == 2
     assert _git(repo, "log", "-1", "--pretty=%s").strip() == "init"
+
+
+def test_flush_commits_card_deletion(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    card = _write_card(repo)
+    assert main(["--root", str(repo)]) == 0
+
+    card.unlink()
+    assert main(["--root", str(repo)]) == 0
+
+    assert "data/methods/method-x/METHOD.md" not in _git(repo, "ls-files", "data/methods")

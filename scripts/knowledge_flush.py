@@ -51,12 +51,15 @@ class FlushError(RuntimeError):
 
 
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:  # 统一折算成 FlushError，调用方按未提交处理
+        raise FlushError(f"git {' '.join(args)} 超时（120s）") from exc
     if check and proc.returncode != 0:
         raise FlushError(f"git {' '.join(args)} 失败: {proc.stderr.strip() or proc.stdout.strip()}")
     return proc
@@ -114,7 +117,8 @@ def collect(root: Path) -> dict[str, object]:
             if is_new and card_path.is_file() and card_path.stat().st_size < MIN_CARD_BYTES:
                 too_small.append(path)
                 continue
-            if not card_path.is_file() and status[:1] != "D":
+            if not card_path.is_file() and "D" not in status:
+                # 只有真的缺卡（半成品目录）才跳过；删除（工作区 " D" 或暂存 "D "）要照常入库
                 incomplete.append(str(card_dir.relative_to(root)))
                 continue
             cards.append(path)
