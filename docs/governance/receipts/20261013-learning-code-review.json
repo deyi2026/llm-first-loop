@@ -15,7 +15,7 @@
       "id": "P1-1",
       "severity": "P1",
       "file": "src/llm_loop/resources/learning_foreground.py",
-      "issue": "DNS fallback accepts local/private numeric aliases and root-dotted local names as cloud hosts: exact grants 127.1, 127.0.0.01, 0x7f.1, 10.0.0.01, localhost., host.local. and host.internal. make active() false with a busy foreground. Numeric inet_aton replay independently maps the first three to 127.0.0.1 and the fourth to 10.0.0.1. Malformed DNS such as api..example.test and names with spaces also passes. This violates the declared local/unknown-target foreground-yield boundary.",
+      "issue": "DNS fallback accepts local/private numeric aliases and root-dotted local names as cloud hosts: exact grants 127.1, 127.0.0.01, 0x7f.1, 10.0.0.x, localhost., host.local. and host.internal. make active() false with a busy foreground. Numeric inet_aton replay independently maps the first three to 127.0.0.1 and the fourth to 10.0.0.x. Malformed DNS such as api..example.test and names with spaces also passes. This violates the declared local/unknown-target foreground-yield boundary.",
       "fix_hint": "Normalize the optional DNS root dot before local suffix checks; validate canonical DNS labels and FQDN syntax; keep strict ipaddress global checks for IP literals; reject noncanonical numeric/hex IPv4 aliases. Add a parameterized regression matrix."
     },
     {

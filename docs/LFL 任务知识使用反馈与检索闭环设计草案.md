@@ -182,7 +182,7 @@
 
 # 源码定位
 
-源码根目录为 `/Users/yyj/Project/llm-first-loop-mirror`。
+源码根目录为 `/Users/<user>/Project/llm-first-loop-mirror`。
 
 - `src/llm_loop/introspection/rule_index.py`：规则发现、精确读取和内容哈希。
 

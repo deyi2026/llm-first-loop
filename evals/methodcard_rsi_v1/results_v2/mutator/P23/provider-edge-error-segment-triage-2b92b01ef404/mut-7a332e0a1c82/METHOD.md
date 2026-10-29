@@ -19,7 +19,7 @@ updated_at: 2026-10-01T17:01:02.994822+08:00
 - curl 失败 URL 并读取具体状态码；未知量：故障在哪一段链路。
 - 返回 provider 专属 530 且 origin 已知存活 → 跳过本地 hosts/DNS/端口/本地 curl 复核，直查隧道 connector；未知量：connector 是否存活并已连上边缘。
 - pgrep/launchctl 查 cloudflared 进程，并请求其 --metrics 端口的 /ready 或 ha_connections 指标；观察到进程在但 ha_connections=0、readyConnections=0。
-- 读进程参数/plist，发现写死 --edge-bind-address 192.168.3.253；未知量：该 IP 是否仍属于本机。
+- 读进程参数/plist，发现写死 --edge-bind-address 192.168.3.x；未知量：该 IP 是否仍属于本机。
 - ifconfig 查当前网卡 IP=.170，与 .253 错配 → 根因：DHCP 换 IP 后 launchd 参数过期。
 - 修 plist（去掉/更新写死 IP）→ reload launchd → 验证 ha_connections≥2 且原 URL 返回 200/303，停止。
 

@@ -20,4 +20,4 @@ updated_at: "2026-09-21T17:12:36.443185+08:00"
 验证方法：metrics(127.0.0.1:20243) 的 cloudflared_tunnel_ha_connections 必须 ≥1，login curl 必须 200；dig 与系统解析器(dscacheutil)结果可能不一致，须分别核。
 修复：bootout → PlistBuddy 补 --protocol http2 --edge-bind-address <en0-ip> --metrics 127.0.0.1:20243 → bootstrap；杀手动实例收敛为单 connector。
 防复发：scripts/tunnel-watchdog.sh + LaunchAgent(StartInterval=120)，连续 2 次 ha_connections=0 即 kickstart -k，日志 data/tunnel-watchdog.log。
-残留风险：Surge 假IP再发作时连接仍会断，但 ≤4 分钟内 watchdog 重启进程重新解析恢复；若 en0 DHCP 换 IP，plist 里硬编码的 192.168.3.253 需同步更新。
+残留风险：Surge 假IP再发作时连接仍会断，但 ≤4 分钟内 watchdog 重启进程重新解析恢复；若 en0 DHCP 换 IP，plist 里硬编码的 192.168.3.x 需同步更新。

@@ -40,7 +40,7 @@
 
 ### 2.5 Linux 现场实测（2026-10-28 22:17–22:36，ssh 只读探测）
 
-| 现场（yyj@192.168.3.164，Deepin） | 实测回执 |
+| 现场（user@192.168.3.x，Deepin） | 实测回执 |
 |---|---|
 | 活动 release | `<home>/.local/share/lfl/releases/LFL-0.6.37`，venv 为 python3.13，`lfl --version` = 0.6.37 |
 | 原始 wheel | `llm_first_loop-0.6.37-py3-none-any.whl`，5,747,264 B，sha256 `e3de7657fc5db8cbbab7406a4f527e800f93881c035e15d282157457599bce20`（10-28 14:21） |

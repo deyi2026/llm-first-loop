@@ -3,7 +3,7 @@ title: 活跃会话内触发 service_control restart 会自锁于空闲门并 fa
 scenario: 镜像工作区 web 服务重启：在活跃 agent 会话内通过 service_control(restart) 触发
 root_cause: ""
 solution: 活跃 run 期间不要在会话内等待重启完成。方案A（首选）：回合结束、锁释放后，由用户在终端直接执行 RESTART_WAIT_IDLE=1 FORCE=1 bash scripts/restart_mirror.sh web（与 worker 调用同一预检链）。方案B：会话内 dispatch service_control restart 后立即结束回合（不轮询等待），下一 5s 轮询即见空闲并继续。禁止 RESTART_FORCE_ACTIVE_RUNS=1 硬切（仅紧急人工裁决）。注意 run 锁在 data/sessions/<workspace-dir>/<session>.run.lock，不在 sessions 根下。
-evidence: "data/restart-receipt.json 2026-09-18T21:41:52+08:00 active_run_precheck_failed；service_control action svc-943630a32e8e459ab8b18a06ccb89a84 status=failed requester_session_id=8264c548-85f1-4132-ad60-06764dbeb232；active_run_locks 输出 data/sessions/--Users-yyj-Project-llm-first-loop-mirror--/8264c548-….run.lock；scripts/restart_mirror.sh _restart_precheck/_stop_web 源码"
+evidence: "data/restart-receipt.json 2026-09-18T21:41:52+08:00 active_run_precheck_failed；service_control action svc-943630a32e8e459ab8b18a06ccb89a84 status=failed requester_session_id=8264c548-85f1-4132-ad60-06764dbeb232；active_run_locks 输出 data/sessions/--Users-<user>-Project-llm-first-loop-mirror--/8264c548-….run.lock；scripts/restart_mirror.sh _restart_precheck/_stop_web 源码"
 tags: [restart, service_control, self-deadlock, run-lock, fail-closed, mirror]
 source: {}
 status: active

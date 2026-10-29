@@ -13,4 +13,4 @@ created_at: "2026-09-30T11:46:31.733465+08:00"
 updated_at: "2026-09-30T11:46:31.733465+08:00"
 ---
 
-公网 530/1033 + 本机 metrics readyConnections=0 + named 日志持续 "DialContext error: dial tcp 192.168.3.253:0->198.18.18.x:7844: i/o timeout" → 边缘地址被 Surge fake-IP DNS 污染（198.18.0.0/15），daemon 重试永不自愈。用 launchctl kickstart -k 干净重启即恢复（本次 8 秒内 4 连接，域名恢复 303→/login）。当前性验证：先 `tail -5 /Users/yyj/Project/llm-first-loop-mirror/data/cloudflared-named.log` 确认无 198.18.x timeout，再 `curl -s http://127.0.0.1:20243/ready` 应得 readyConnections≥2，最后 `curl -sI https://llmfirstloop.com/` 应得 303（非 530）。
+公网 530/1033 + 本机 metrics readyConnections=0 + named 日志持续 "DialContext error: dial tcp 192.168.3.x:0->198.18.18.x:7844: i/o timeout" → 边缘地址被 Surge fake-IP DNS 污染（198.18.0.0/15），daemon 重试永不自愈。用 launchctl kickstart -k 干净重启即恢复（本次 8 秒内 4 连接，域名恢复 303→/login）。当前性验证：先 `tail -5 /Users/<user>/Project/llm-first-loop-mirror/data/cloudflared-named.log` 确认无 198.18.x timeout，再 `curl -s http://127.0.0.1:20243/ready` 应得 readyConnections≥2，最后 `curl -sI https://llmfirstloop.com/` 应得 303（非 530）。

@@ -22,7 +22,7 @@ change.
 ## Production facts that motivated the fix
 
 The source session is durably owned by workspace partition
-`--Users-yyj-Project-sy--`. Its whole-run lease is a real live lock held by the
+`--Users-<user>-Project-sy--`. Its whole-run lease is a real live lock held by the
 production Web process, so it must never be removed as a stale-lock workaround.
 
 Generation-116 Learning naturally retried the memory job from attempt 2 to attempt 3

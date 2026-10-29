@@ -36,7 +36,7 @@
 - **问题**：`tests/unit/test_chatgpt_page_send_collapsed.py:1` — `I001 Import block is un-sorted or un-formatted`。棘轮判定 `new=1` 并 `BLOCK NEW`，这是当前 lint 面的唯一硬阻断。该文件在本地 HEAD（commit `2059e84d4`）但不存在于 `origin/main`，所以历史债基线里没有它。
 - **为什么现在做**：一行自动修复，非改不可（否则任何提交都过不了 ruff 棘轮），零行为影响。
 - **具体动作**：
-  1. `cd /Users/yyj/Project/llm-first-loop-mirror`
+  1. `cd /Users/<user>/Project/llm-first-loop-mirror`
   2. `RUFF_CACHE_DIR=/tmp/lfl-ruff .venv/bin/ruff check --fix tests/unit/test_chatgpt_page_send_collapsed.py`
   3. `RUFF_CACHE_DIR=/tmp/lfl-ruff .venv/bin/ruff check tests/unit/test_chatgpt_page_send_collapsed.py` 确认单文件 0 错
   4. `git add tests/unit/test_chatgpt_page_send_collapsed.py`
