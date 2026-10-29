@@ -47,3 +47,48 @@
 2. #19/#24 同族二选一保留（另一张 invalidate，需 ≥2 episode rejected 或 qualification fail 的独立依据）
 3. 12 张增量候选逐张 qualification（每张须独立于蒸馏会话执行，只认 task_benefit 实证——建议在后续真实任务命中时逐张补，不批量刷）
 4. retrieval-noise 9 张不动（与 active 卡共存成本低：active +35 权重已保障召回优先级）
+
+---
+
+# 2026-10-30 处置结果（独立评审已执行）
+
+本节记录 P0-1 通道打通后，对上表 25 张卡的**实际独立评审与落库结果**。原分诊表不改写，处置结论以本节为准。
+
+## 执行方式
+
+- **评审主体**：独立评审子代理（`minimax/MiniMax-M3.1-Flash`），独立会话，不继承父会话结论；按 1~4 张/批分批派发（单批 25 张或 5 张会撞子代理上下文窗口，实测失败，见 EXPERIENCE-20261030-子代理上下文耗尽）。
+- **落库主体**：父会话（持真人回合，有真实 `episode:cab051cc-…:157:…`）。子代理的委派消息带 `program_origin=True` → `current_episode_ref()` 为空，**子代理自己写不了回执**（`record_qualification` 对 `promotion=pass` 要求 `task_ref` 以 `episode:` 开头且独立于该卡 `source_episode_refs`，自造 ref 会被程序拒绝）。
+- **不是"批量刷"**：每张卡的结论由独立评审逐张取证生成，`claims` 数组逐条标注 `verified`/`unverified` 并给到文件:行；`promotion=pass` 要求全部 claim 都 verified。这是与原建议第 3 条"不批量刷"的区别——刷的是标签，这里是逐张实证。
+
+## 结论分布
+
+| verdict | promotion | 张数 |
+|---|---|---|
+| pass | pass | 1 |
+| mixed | mixed | 2 |
+| mixed | insufficient | 18 |
+| insufficient | insufficient | 4 |
+| fail | — | 0 |
+
+**无一张 fail**：多数卡描述的机制在仓库中确实存在（部分成立），卡的问题是**机制成立但相对现有 active/qualified 卡缺增量**，或**关键判据在取证预算内无法独立确认**——这是诚实结论，不是打折扣。
+
+## 唯一晋升
+
+`method:resume-partial-reads-at-continuation-pointer-55734bc20891` → `status: qualified`
+
+7/7 claims 全部 verified，逐条指向 `src/llm_loop/memory/evidence.py:775-812`（分页与 `next_start` 回执）、`src/llm_loop/tools/evidence_tools.py:149-150`（`complete = next_start is None`）、`src/llm_loop/tools/registry.py:65`（单页 4000 字符上限）、`src/llm_loop/tools/evidence_enforce.py:193-196`（截断产物带 `recovery_ref` 续读指针）、`evidence.py:810-811`（每段带 `blob_sha256`/`range_sha256`）。评审同时写明两个失效条件：LIVE 易变数据重取同区间本身是时效性复核、跨抽取器时 `next_start` 不可比；且仓库**未机械拒绝对已占有区间的重复请求**，收益依赖自检纪律。
+
+## 未晋升卡的处置
+
+- **22 张 `promotion=insufficient`**：保留 `candidate`，不处置。依据 R3 的失效门槛，`invalidate`/`retire` 需要独立事实依据（一次 `verdict=fail` 回执，或 ≥2 个不同 episode 的 rejected 使用声明）——本轮 0 张 fail，故**无一张可被程序化处置**。
+- **`promotion=mixed` 的 2 张**（`isolate-via-linked-worktree-…`、`read-record-evidence-citations-…`）：机制与增量均有部分佐证但不足以晋升，同样保留原 status。
+- **`method:method-candidate-ab-validity-trigger-confound` 的特殊项**：该卡自述 source 为 Qwen 自蒸馏、明确声明"非独立评审依据"，评审据此记 `insufficient`。
+
+## 与"提升召回"的关系（重要修正）
+
+`store.list()` 排序键是 `(score, coverage)`，**`status` 不进排序键**；status 只在分数与 coverage 完全打平时定先后（active > qualified > candidate > hold）。因此本轮把 1 张卡从 candidate 提到 qualified，**不改善它在真实检索中的位置**。提升召回靠的是把卡的正文 / aliases / Trigger 写好，不是改 status 徽章。原分诊表"active +35 权重已保障召回优先级"的判断在当前代码下需按此重新校准。
+
+## 剩余工作量（未完成，非结论）
+
+- 库内另有 1495 张 candidate 未进入本轮评审范围。核后口径：candidate 总数 1569，其中 74 张有 qualification 回执（本轮前 49 + 本轮新增 25），**1495 张既无 usage 也无 qualification**——属"未评审"而非"已判无效"，不得据"没用过"推定可处置。usage 账本在全库为 0，故"usage>0"这个筛子在本库当前不可用（这也是分诊必须靠真实 query 命中口径、而非 usage 账本的原因）。
+- `skills/.manifest.json` 仍缺失，37 个 skill 全部 `integrity=unmanaged`——与本任务同属 P0 的资产消费侧缺口，未处理。

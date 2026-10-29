@@ -2,12 +2,12 @@
 method_id: resume-partial-reads-at-continuation-pointer-55734bc20891
 name: resume-partial-reads-at-continuation-pointer
 description: 一旦已知某次抓取/captured artifact 是部分的，就把已交付的范围当作“已占有事实”：从手头的 coverage/range 元数据（已占有偏移、next_start、complete 标志、blob hash）推导出未读补集，只请求这个补集。绝不重新请求已在上下文中的范围——对同一不可变 blob 的重复 hydration 只会返回哈希相同的字节，重新解决一个已解决的未知量。可推广到一切可按范围寻址的读取：分页网页证据、按 offset 读文件/日志、cursor 分页查询。
-status: candidate
+status: qualified
 source_model: glm/glm-5.3-flash
 source_episode_refs: episode:863879fe-d8f5-48d9-bbdc-6ddc6eaf4b8b:78:263ac945697ad321e315
 evidence_refs: learning:learn:182f928c3056
 created_at: 2026-09-19T03:26:44.034650+00:00
-updated_at: 2026-09-19T03:26:44.034650+00:00
+updated_at: 2026-10-30T02:03:13.091647+08:00
 ---
 ## Trigger
 某次抓取返回部分内容（coverage 形如 text_char:0-N/source_partial、complete=false、有续读指针），且下一步需要读取同一份已捕获证据的剩余部分（目标事实已知位于“被截断的中间段”）。

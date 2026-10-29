@@ -65,6 +65,48 @@
 
 判定入口用附录 B 决策树。证据必须机械可复核（命令输出 / HTTP 状态码 / 行摘录）；不接受"我觉得不对"。瞬态异常（网络抖动、超时）先复测再判，不把抖动当证伪。
 
+## R3-bis qualification 通道（门禁轴落地，2026-10-30 打通）
+
+**背景事实**（2026-10-30 核实）：method 池 1569 张 candidate 卡中，**全部 usage 账本为空**；仅 60 张有 `qualification.jsonl` 回执，且皆为 `evaluator=model` 自评、多数 `verdict=not_evaluated`，其中 51 张 `promotion=pass` —— **这些卡至今仍停在 candidate**。即：写回执的能力一直存在，断的是「回执 → lifecycle 流转」这一执行环节。
+
+**通道三段式**（`scripts/qualification/method_candidate_qualification.py`，repo-owned）：
+
+| 段 | 执行者 | 产出 |
+|---|---|---|
+| `pack` | 脚本 | 每卡一份评审包：卡正文 + status/usage/qualification 计数 + 评审题目 |
+| 评审 | **独立子代理**（不参与卡的产出） | 逐卡结构化 verdict：`verdict`/`mechanism`/`task_benefit`/`promotion` + `claims`（逐条标 verified/unverified）+ `counter_case` |
+| `verdict` | 脚本 | 校验后的 `method_manage` 调用清单（**proposal-only，脚本永不写库**） |
+| 落库 | **持真人回合的父会话** | `method_manage(record_qualification)` + `method_manage(refine)` |
+
+**为什么必须父子分工**：子代理的委派消息带 `program_origin=True`，`is_human_user_message` 为假 ⇒ `current_episode_ref()` 为空；而 `record_qualification` 对 `promotion=pass` 要求 `task_ref` 以 `episode:` 开头且独立于该卡 `source_episode_refs` —— **模型自造 ref 会被程序拒绝**。所以：子代理出结论，父会话落回执。
+
+**独立性的真实含义**：评审子代理与父会话同模型时，独立性来自「独立会话 + 不得先读父会话结论」，不是来自模型差异。评审任务书必须显式写「主动找反例」并要求 `counter_case` 字段，否则产出的是背书而非结论。
+
+**门禁（脚本侧，违反即拒收该卡）**：
+- `method_ref` 必须在 pack 包内，否则拒；
+- `verdict`/`mechanism`/`task_benefit`/`promotion` 必须在词表内，否则**整卡拒收**（不进任何调用清单）；
+- `promotion=pass` 要求全部 `claims` 为 `verified`，否则拒（未经验证的建议不得晋升）；
+- 无 `claims` 的结论拒收；
+- `note`/`evidence_refs`/`task_type` 过 held-out 写侧防线后再产出入账清单。
+
+**promotion → 流转映射**：`pass` → `transition=qualify`；`fail` → `transition=invalidate`；其余不产生流转动作。
+
+**流转门槛现状**（`store.py` `_update_status_locked` 实证）：`candidate → qualified/active/hold` **无门槛**；`invalidated/retired` 需独立依据（一次 `verdict=fail` 回执，或 ≥2 个不同 episode 的 rejected 使用声明）；`teacher` 不可变。历史 `lifecycle_attempts.jsonl` 里唯一的 `cross_task_type_qualification` 阻断属**已废止的旧规则**，当前代码中该门槛不存在——不得据旧记录推断现行门槛。
+
+**status 的实际效力边界**（`list()` 实证）：排序键是 `(score, coverage)`，**`status` 不进排序键**；status 只在分数与 coverage 完全打平时定先后（active > qualified > candidate > hold）。所以「qualify 改善召回」是错的说法——它只在完全打平时起作用。**提升召回靠的是把卡的正文、aliases、Trigger 写好，不是改 status 徽章。**
+
+**批量处置的纪律**：未获独立结论的卡不得批量 `retire`/`invalidate`（无依据即无处置）；`hold` 作为「暂不启用」轻量标记可批量使用，但它是排序末位徽章，不是召回优化手段。分诊口径应优先选「真实 query 命中过」的卡（如 `docs/ASSESS-20260929-p5a-highfreq-triage.md` 的 25 张高频卡口径），而非按关键词全库扫描。
+
+**门禁必须自己先证伪（2026-10-30 独立审查实测）**：首版门禁有三个**已复现**的绕过路径，独立审查（REVISE）抓出后已修：
+
+1. `claims` 写成裸字符串（如 `["probably fine"]`）时，"非 verified 即未验证"的计数逻辑会把它漏过 → 门禁形同虚设。**修**：只有「dict + `status` 恰为 `verified` + claim 文本非空」才计为已验证，其余一律计未验证。
+2. `promotion=pass` 与 `verdict`/`mechanism`/`task_benefit` 之间无一致性约束 → 「三项全 `not_evaluated` + `promotion=pass`」也能换来 qualify。**修**：`promotion=pass` 时 verdict 不得为 `fail`/`not_evaluated`，且 mechanism 与 task_benefit 必须同为 `pass`，否则整卡拒收。
+3. `evidence_refs` 传裸字符串时被逐字符拆散成 list。**修**：字符串按单元素处理。
+
+**教训**：门禁代码本身也有"看起来在工作"的漏洞，且漏洞形态正是"宽松解析"。因此——**每条门禁规则都要有一条"应拦输入"的实测测试**（本轮新增 6 条：裸字符串 claims / 缺 status 的 claim / 空 claim 文本 / verdict=not_evaluated+promotion=pass / mechanism≠pass+promotion=pass / evidence_refs 裸字符串），且修复后必须**用真实评审数据回归**，确认"漏洞堵住且真实数据行为不变"（本轮实测：修复前后 25 张卡的 transition 完全一致）。
+
+**评审子代理的规模纪律**：单批 25 张或 5 张都会让子代理撞上下文窗口（实测 input 419K / 311K / 273K tokens 三档失败），**不是卡正文太大**（25 张卡正文合计仅 81KB），而是子代理自发"考古"——grep 到 `action_trace`/`process_versions`/`registry_*.py`/`store.py` 等与评审无关的模块。**修**：工具面收紧到 `execute_command` + `read_file`（不给 `search_files`，它极易诱发全库 grep），并在任务书里写死取证预算（总工具调用 ≤4~7）与禁区；分批按 1~4 张。中途 `agent_message` 纠偏来不及——纠偏只在下一个 step boundary 生效，子代理往往已冲到边界。**重试必须换任务书，不能照抄。**
+
 ## R4 风险导向周检
 
 - **触发**：每周四 20:00 通知型提醒（先于周四 20:53 的周知识资产入库，产物当夜入库）。提醒以「班次名+触发时间」指称，现值查 `data/schedule.json`。

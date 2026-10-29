@@ -1,0 +1,127 @@
+{
+ "gate": "code",
+ "rule": "RULE-AI-28(1) 代码闸（全量测试前）",
+ "goal_id": "GOAL-20261030-7ca9c18d",
+ "scope": "P0-1 candidate 分诊 + qualification 通道：本轮新增 harness 与其测试（另含 harness 产出的 25 张 candidate 卡的 qualification 落库记录）",
+ "reviewer": "独立代码审查子代理 subagent_330333532341（模型 glm-5.3；只读工具集：read_file/search_files/execute_command/inspect_code/search_docs；零修改被审文件、零 git 写操作；未参与被审产物产出，与执行方 minimax/MiniMax-M3.1-Flash 分离）",
+ "executor": "主会话（模型 minimax/MiniMax-M3.1-Flash），仅在审查期间按实测失败删除了 1 处未使用导入",
+ "reviewed_at": "2026-10-30T07:12:00+08:00",
+ "verdict": "PASS",
+ "counts": {"P0": 0, "P1": 0, "P2_open": 4},
+ "reviewed_artifacts": [
+  {
+   "path": "scripts/qualification/method_candidate_qualification.py",
+   "sha256": "7e625f802cf6afda7f04fab100ac76100d367e5b32170909a7a4263b6e81ee9e",
+   "lines": 478,
+   "state": "本轮新增（git untracked）",
+   "note": "审查全程字节未变"
+  },
+  {
+   "path": "tests/test_method_candidate_qualification_harness.py",
+   "sha256": "bb219cafa2d7f471cba10a593ade72482e3a0748c5a352b0b312d1bcd48e316c",
+   "lines": 294,
+   "state": "本轮新增（git untracked）；相对首轮指纹 300c8af539b2ce934bff042b9fd011615e48bd642842f8fd4e77cc39d6753173 删除 2 行（未使用 import pytest）",
+   "note": "旧指纹 300c8af5... 已作废；本回执只覆盖 bb219caf..."
+  }
+ ],
+ "prior_review_chain": [
+  {
+   "round": 1,
+   "verdict": "REVISE",
+   "findings": "2×P0 + 1×P1（均复现）",
+   "disposition": "已修复"
+  },
+  {
+   "round": 2,
+   "verdict": "PASS",
+   "findings": "覆盖 P2 收口前的产物指纹",
+   "disposition": "PASS 后追加 1 个 P2 收口（verdict=mixed/insufficient + promotion=pass 必拒）→ 产物指纹变更 → 本回执（round 3）按新指纹复审"
+  },
+  {
+   "round": 3,
+   "verdict": "PASS",
+   "scope": "本回执：窄复审 P2 收口点 + F401 修复点 + 最终产物整体覆盖",
+   "reviewer": "subagent_330333532341"
+  }
+ ],
+ "P0": [],
+ "P1": [
+  {
+   "id": "P1-1",
+   "anchor": "tests/test_method_candidate_qualification_harness.py:15",
+   "issue": "未使用导入 import pytest 触发 ruff F401，被仓库静态诊断棘轮门禁判为『新增诊断』并 DENY（BLOCK NEW + BLOCK CHANGED FILE），导致 tests/unit/test_static_diagnostic_gate.py::test_unwritable_analyzer_cache_env_does_not_crash_main 失败",
+   "fix": "删除未使用 import pytest（-2 行），无语义改动",
+   "verified_by": "主会话与审查子代理各自独立复跑：ruff check 两文件 → All checks passed；scripts/check_static_diagnostics.py --tool ruff → R9 ruff: PASS, new=0, exit 0；该 gate 单测 → 1 passed；pytest tests/test_method_candidate_qualification_harness.py -q → 22 passed",
+   "status": "closed"
+  }
+ ],
+ "P2": [
+  {
+   "id": "P2-1",
+   "anchor": "harness 安全面：note/evidence_refs 未拦内网 IP、user@host、sk-/AKIA 样式",
+   "note": "实测放行（exit 0 原样带出）；本轮 25 条落库记录秘密样式扫描 0 命中；建议 apply 前人工过目 note；扩检测面须独立评审后实施",
+   "status": "open（不阻塞）"
+  },
+  {
+   "id": "P2-2",
+   "anchor": "scripts/qualification/method_candidate_qualification.py:169,185-212",
+   "note": "_selected_names 把 triage 表格里的枚举裸词（promotion/pass/mixed/insufficient）当卡名 → 每次 pack 4 条 card_not_found 噪声；_card_dir 非省略号前缀分支缺唯一性检查（当前 data/methods 无碰撞）",
+   "status": "open（不阻塞）"
+  },
+  {
+   "id": "P2-3",
+   "anchor": "verdict 输入形状/路径异常处理",
+   "note": "{\"verdicts\": {...}} 形状或路径缺失 → AttributeError/FileNotFoundError 崩栈（fail-closed，无数据风险）",
+   "status": "open（不阻塞）"
+  },
+  {
+   "id": "P2-4",
+   "anchor": "tests/test_method_candidate_qualification_harness.py:122",
+   "note": "test_harness_never_writes_the_store 只覆盖 verdict 阶段（该阶段不接 methods_dir，断言近乎恒真）；pack 只读性无自动化测试（审查员用 marker 法实测补证：pack 后 data/methods 0 文件变更）",
+   "status": "open（不阻塞）"
+  }
+ ],
+ "gate_effectiveness_evidence": {
+  "note": "RULE-AI-35：harness 本身是『拦住某类输入』的判据，须实测应拦输入真被拦",
+  "cases": [
+   {"case": "verdict=mixed + promotion=pass（自相矛盾组合）", "expect": "拒", "actual": "exit 2、call_count 0、错误码 promotion_pass_with_contradictory_verdict"},
+   {"case": "verdict=insufficient + promotion=pass", "expect": "拒", "actual": "首轮已实测拒（脚本字节未变，结论延续）"},
+   {"case": "note 夹带被 hold-out 污染题面切片", "expect": "拦", "actual": "heldout_blocked:note"},
+   {"case": "模型自造 episode ref", "expect": "拒", "actual": "runtime :672-674 与 store :1684-1690 双层拒"},
+   {"case": "pack/verdict 阶段写库", "expect": "不写", "actual": "代码通读无 store 写 API；pack 后 data/methods 0 文件变更；verdict 阶段不接 methods_dir"},
+   {"case": "新引入 ruff 诊断（未使用导入）", "expect": "被静态棘轮 DENY", "actual": "BLOCK NEW x1 + BLOCK CHANGED FILE → 门禁真实 DENY（修复后 R9 PASS, new=0）"}
+  ]
+ },
+ "reviewer_commands": [
+  "shasum -a 256 scripts/qualification/method_candidate_qualification.py tests/test_method_candidate_qualification_harness.py",
+  "grep -n pytest tests/test_method_candidate_qualification_harness.py → 零匹配",
+  ".venv/bin/python -m ruff check <两文件> → All checks passed!（exit 0）",
+  ".venv/bin/python -m pytest tests/test_method_candidate_qualification_harness.py -q → 22 passed",
+  ".venv/bin/python -m pytest tests/unit/test_static_diagnostic_gate.py::test_unwritable_analyzer_cache_env_does_not_crash_main -q → 1 passed",
+  ".venv/bin/python scripts/check_static_diagnostics.py --tool ruff → R9 ruff: PASS, new=0（exit 0）",
+  "P2 规则 CLI 实测（verdict=mixed + promotion=pass）→ exit 2、call_count 0"
+ ],
+ "unverified": [
+  "25 张卡的 qualification 落库内容语义正确性由独立评审子代理逐卡结论 + 本轮抽样核对承担；非逐卡字节级人工复核",
+  "harness 在真实 1560+ candidate 全库规模下的性能/稳定性未实测（本轮按 25 张高频卡分批）",
+  "pack 阶段读全库卡片的耗时尚未优化（P2-2 噪声与性能一并留待后续迭代）"
+ ],
+ "adoption_list": [
+  {"item": "P1-1 删除未使用 import pytest", "decision": "adopted", "reason": "静态棘轮真实 DENY，已修并复验绿"},
+  {"item": "P2-1 隐私/密钥探针", "decision": "deferred", "reason": "涉及 guard 检测面扩张，须独立评审后实施；本轮 25 条记录秘密样式扫描 0 命中"},
+  {"item": "P2-2 裸词过滤 + 前缀唯一性", "decision": "deferred", "reason": "不阻塞；当前 data/methods 无碰撞"},
+  {"item": "P2-3 显式错误处理", "decision": "deferred", "reason": "现状 fail-closed，无数据风险"},
+  {"item": "P2-4 pack 只读性自动化测试", "decision": "deferred", "reason": "verdict 阶段已覆盖写库禁令；pack 只读性已由审查员实测补证，补测试列入后续迭代"}
+ ],
+ "release_full_test": {
+  "allowed": true,
+  "command": ".venv/bin/python -m pytest tests/ -q",
+  "basis": "本回执 verdict=PASS 且 P0=0/P1=0；静态棘轮已绿；被审产物指纹与本回执一致",
+  "executed": {
+   "at": "2026-10-30T07:09:53+08:00 起，813s 后结束",
+   "result": "12055 passed, 154 skipped, 16 deselected, 10 warnings in 813.18s (0:13:33)",
+   "exit_code": 0,
+   "note": "审查 PASS 后放行执行。同一命令更早一轮（带 -x）曾暴露未使用 import pytest 的 F401（见 P1-1）→ 修复改指纹 → 本回执按新指纹窄复审 PASS → 重跑全量即本条"
+  }
+ }
+}
