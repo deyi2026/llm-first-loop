@@ -1,0 +1,72 @@
+{
+  "gate": "independent-code-review",
+  "rule": "RULE-AI-28 (parent-delegated independent review, 非真人新授权)",
+  "reviewer": "independent code-review subagent (isolated clone /private/tmp/lfl-wecom-review-f19e4255, detached f19e4255e; 主区零修改)",
+  "reviewed_at": "2026-10-29T23:00:54+08:00",
+  "verdict": "PASS",
+  "counts": {"P0": 0, "P1": 0, "P2": 9},
+  "branch": "feat/wecom-aibot-bridge-m0",
+  "commit_sha": "59fc7fda2fb0757d2ac3dead1bbe7ae77cb9de25",
+  "merge_commit_on_main": "f19e4255eaffbe6a5bf7c1b98a51d64bbd465046",
+  "review_base": "80768312b17ad4a6469bf9eb87c03144264e39f9",
+  "scope_note": "委派原文写 'git diff main...HEAD'，实测该 diff 为空（main tip==分支 tip==f19e4255e，成果已经 merge 进 main）。真实被审产物 = 80768312b..59fc7fda2（16 文件 +1779，与委派清单逐文件一致）。按方法论卡 preflight-reviewer-visible-delta 修正审查范围后执行。merge commit 自身携带的 privacy-gate 第三方改动（merge 闸回执 P1-1）不在本代码审查范围。",
+  "review_scope": {
+    "files": ["pyproject.toml", "src/llm_loop/runtime/launch.py", "src/llm_loop/runtime/resolver.py", "src/llm_loop/wecom/__init__.py", "src/llm_loop/wecom/__main__.py", "src/llm_loop/wecom/bridge.py", "src/llm_loop/wecom/config.py", "src/llm_loop/wecom/dispatcher.py", "src/llm_loop/wecom/handlers.py", "src/llm_loop/wecom/messages.py", "src/llm_loop/wecom/session_map.py", "tests/wecom/test_bridge.py", "tests/wecom/test_config.py", "tests/wecom/test_dispatcher.py", "tests/wecom/test_handlers.py", "tests/wecom/test_session_map.py"],
+    "method": "16 文件全量逐行读 + 真实 SDK 源码逐项核验 + 隔离环境运行测试 + feishu 平移对照",
+    "design_doc": "docs/design/DESIGN-20261029-wecom-aibot-bridge-v1.md（主区未跟踪文件，282 行，已通读对齐 §4.2 契约）"
+  },
+  "sdk_verification": {
+    "sdk": "wecom-aibot-python-sdk 1.0.2 @ 主区 .venv site-packages/aibot（逐文件读源码核验，非凭记忆）",
+    "event_model": "client.py:22 class WSClient(AsyncIOEventEmitter) → bridge 的 client.on('message'/'event'/'disconnected'/'error') 写法成立；client.py:62-76 ws 事件转发 emit('connected'/'authenticated'/'disconnected'/'reconnecting'/'error') 逐一确认",
+    "reply_impl": "client.py async def reply: headers=frame.get('headers',{}); req_id=headers.get('req_id','') → bridge.py:295 最小 frame {headers:{req_id}} 重建有效，req_id 绑定成立",
+    "gap_a_video": "types.py MessageType 无 video（grep video 全包 0 命中）；message_handler.py unhandled 分支仅 debug 日志 → 仓库侧 dispatcher.py:31,64 补齐必要成立",
+    "gap_b_disconnected": "types.py EventType 仅 enter_chat/template_card_event（+feedback）；仓库侧 dispatcher.py:134-158 按帧 eventtype 解析 + bridge.py:242-253 事件帧告警 + bridge.py:255-258 客户端层 disconnected 双层覆盖",
+    "gap_c_compat": "grep compat_info 全包 0 命中 → dispatcher.py:101-107 自行判别必要成立",
+    "other": "disconnect() 为同步方法(client.py:100)；is_connected 属性存在(client.py:336)；SDK logger 协议含 warn()（11 处调用）→ _SdkLoggerAdapter.warn 适配正确；WsCmd.EVENT_CALLBACK=='aibot_event_callback' 与 dispatcher.py:39 一致；message_handler 先 emit('message',frame) 再按类型细分 → 监听原始 message 事件策略正确"
+  },
+  "tests_run": {
+    "environment": "隔离 clone 内 uv venv (Python 3.13.13) + uv pip install -e . pytest；发现 uv 复用同版本号(0.6.37)缓存 editable wheel 导致 .pth 指向主区 .releases/8c114428（跨树污染），已卸载 llm-first-loop 改用 pytest pythonpath=['src'](相对 rootdir=隔离 clone) 解析，并显式验证 llm_loop.wecom.__file__ 落隔离树",
+    "wecom": ".venv/bin/python -m pytest tests/wecom/ -q → 35 passed in 4.03s",
+    "shared_surface_regression": "tests/unit/test_runtime_config_p0.py + test_runtime_config_p1c_llm_policy.py + test_runtime_config_p1_import_time.py + test_lfrt_runtime_status_wiring.py → 33 passed；tests/feishu/ → 256 passed（resolver/launch/pyproject 增量改动零回归）",
+    "functional_checks": "parse_runtime_toml([wecom].session_map_path) → {'WECHAT_SESSION_MAP_PATH': ...} 投影成立；[wecom].bot_id → ValueError 'runtime.toml 未知字段: wecom.bot_id'（闭合 schema 拒凭据入 toml）"
+  },
+  "acceptance_checklist": {
+    "1_SDK三缺口": "PASS — video: dispatcher.py:31(SUPPORTED_MESSAGE_TYPES)+:64(_extract_payload image/video/file 分支)，测试 test_dispatcher.py:57-69；disconnected_event: dispatcher.py:134-158 + bridge.py:242-253(事件帧ERROR告警)+:255-258(客户端层)，测试 test_dispatcher.py:104-128 + test_bridge.py:171-195；compat_info: dispatcher.py:101-107(非真值即跳过+INFO日志)，测试 test_dispatcher.py:87-94",
+    "2_线程模型": "PASS — 回调只入队: bridge.py:230-240(put_nowait+满时告警丢弃，零解析零推理)，测试 test_bridge.py:97-106；单 worker: bridge.py:194-197,265-278；有界64: bridge.py:43,153，测试 test_bridge.py:109-115(69推入→qsize==64)；优雅退出: bridge.py:202-220(哨兵+join4s+断开收尾+释放锁+幂等)，测试 test_bridge.py:138-153(线程死亡断言)。例外路径见 findings P2-2/P2-3/P2-5",
+    "3_req_id透传": "PASS — dispatcher.py:42-47(frame_req_id) → messages.py:30,130(WeComMessage.req_id) → handlers.py:101(reply_fn首参=msg.req_id) → bridge.py:295,298({headers:{req_id}}→client.reply) → SDK client.py reply 取 headers.req_id（源码核验）。全链路测试 test_bridge.py:118-135 断言 reply 帧 headers.req_id 与来帧一致",
+    "4_单实例锁": "PASS — bridge.py:73-117 fcntl.flock(LOCK_EX|LOCK_NB)，release 幂等；连接失败路径释放锁(bridge.py:187-191，测试 test_bridge.py:198-212)；第二实例拒绝(测试 test_bridge.py:156-168)。fd 生命周期=锁生命周期，无陈旧锁。局限: 仅同机（跨机互踢需 M2 层面，设计 §6 已知）",
+    "5_配置治理": "PASS — 凭据 env 直读无默认值: config.py:48-55 缺失抛 ValueError 含字段名（测试 test_config.py 5 个场景含错误信息只点名缺失项）；非敏感项: resolver.py TOML_SCHEMA 增 ('wecom','session_map_path')（功能实测投影到 WECHAT_SESSION_MAP_PATH）；凭据键 WECHAT_BOT_ID/WECHAT_BOT_SECRET 入 _SECRET_KEYS 且闭合 schema 拒绝入 runtime.toml（实测）；launch._SERVICES 增 wecom 仅一行增量；feishu/web/learning 零改动（diff name-only 0 feishu 文件 + 256 feishu 测试 + 33 runtime config 测试全绿）",
+    "6_测试有效性": "PASS — 35 个测试均为行为断言（回调计数、qsize、线程生死、reply 帧内容、错误信息字段名、并发无串话），无恒真断言；FakeClient 表面经真实 SDK 源码逐项比对（on/connect/reply/disconnect/is_connected + emit 事件名）非自造契约；mock 未掉被测逻辑（handler/engine 为 fake 但被测的 bridge/dispatcher/session_map/handlers 本体真实）。覆盖 video/compat_info/断线(双层)/队列满/退出清理/连接失败清理全关键路径",
+    "7_feishu未修改": "PASS — git diff 80768312b..59fc7fda2 --name-only | grep feishu = 0",
+    "8_安全": "PASS — 无硬编码凭据（测试用显式 fake 值）；secret 不入日志/异常信息（ValueError 只含 env 键名；bridge 日志仅 bot_id[:6]，有 feishu app_id[:8] 先例 feishu/bridge.py:1113）；审计/会话文件不含凭据（test_map_persist_and_reload 断言 'secret' not in 文件）",
+    "9_契约一致性": "PASS（含偏差记录）— WeComMessage 字段与设计 §4.2 逐字段一致（messages.py:12-30）；WeComReplyFn 四参含 req_id 首参一致；键 p:/g: 与独立映射文件一致（测试 test_map_independent_from_feishu）；env 键名实现 WECHAT_* vs 设计 W0-2 写 WECOM_*（见 P2-8，实现自洽且注释声明对齐官方 README）"
+  },
+  "findings": [
+    {"id": "P2-1", "severity": "P2", "file": "src/llm_loop/wecom/handlers.py:93-97", "title": "超长截断可超协议 20480 字节预算（marker 未预留）", "evidence": "text=encoded[:budget].decode(ignore)+newline(超长截断)：载荷恰为 20480B 时叠加 marker(~22B) 总长 ~20502B > 协议上限；test_handlers.py:122 断言容忍 `<= 20480 + len(marker) + 3` 自述了该超限。若服务端硬执法，回复被拒（send_text 记 error，用户无回复）。", "action": "budget 预减 marker 字节数。"},
+    {"id": "P2-2", "severity": "P2", "file": "src/llm_loop/wecom/bridge.py:207-214", "title": "stop() 时队列满 → 哨兵丢失 → worker 线程泄漏至进程退出", "evidence": "put_nowait(None) 在 queue.Full 时被 suppress：worker 排空 64 条后永久阻塞于 get()（daemon 兜底仅在进程退出生效）；期间 loop 已停，send_text 走 '未连接丢弃' 路径，drain 的回复全部丢弃。M0-4 判据 '无残留线程' 仅在队列非满路径成立。该路径无测试。", "action": "worker 改用 get(timeout)+_stop 轮询，或 stop() 循环重试投递哨兵。"},
+    {"id": "P2-3", "severity": "P2", "file": "src/llm_loop/wecom/bridge.py:336-341", "title": "loop 线程 join 超时路径下 loop.close() 对运行中 loop 抛 RuntimeError", "evidence": "call_soon_threadsafe(loop.stop) 后 join 超时仍 alive 时直接 loop.close() → 'Cannot close a running event loop'，异常从 stop() 冒泡至 main() finally，可能中断后续 engine.close()。", "action": "join 超时分支跳过 close()（或 suppress(RuntimeError)）。"},
+    {"id": "P2-4", "severity": "P2", "file": "src/llm_loop/wecom/bridge.py:181 + __init__.py:88", "title": "client_factory 异常路径（如 aibot 导入失败）不释放单实例锁、清理不全", "evidence": "start() 中 self._client_factory(config) 无 try 包裹：ImportError 直接冒泡，_lock 未 release（靠 fd 进程退出释放）、loop 线程未建；main() 的 start_bridge 调用也未包异常 → 裸 traceback 而非受控错误。", "action": "factory 调用纳入 connect 同级 try/except 清理路径。"},
+    {"id": "P2-5", "severity": "P2", "file": "src/llm_loop/wecom/bridge.py:44-48,202-220", "title": "SIGTERM 优雅退出最坏预算 ~24s 超设计验收 '15 秒内干净退出'", "evidence": "worker join 4.0 + 断开 fut.result 10.0 + loop 线程 join 10.0 串行上限 24s（设计 §八验收线 15s，飞书桥 wait(10)+drain(3)≤15s）。典型路径远快于此，仅上限违例。", "action": "给 stop() 总预算计时并收紧各段。"},
+    {"id": "P2-6", "severity": "P2", "file": "src/llm_loop/wecom/handlers.py:75-81 vs src/llm_loop/feishu/handlers.py:576-584", "title": "wecom run 未签发 ingress 凭据，且 'wecom' 不在 _ALLOWED_CHANNELS 白名单", "evidence": "feishu 侧 engine.run(ingress=issue_ingress('feishu'),...)；wecom 侧不传 ingress（lifecycle.py:96 缺省 None 向后兼容，不崩）。ingress 是 schedule(wake=True) 委派授权的载体（ingress_token.py:57-60）→ wecom 起源的 run 无法授权唤醒调度；且 core/trace_leak/ingress_token.py:54 白名单={'feishu','web','cli'}，即使想传也需先扩白名单。M1 主动推送/异步任务会撞上。", "action": "M1 前扩白名单+handlers 签发 issue_ingress('wecom')（跨模块改动，超出本次 16 文件范围，故记 P2 不阻塞 M0）。"},
+    {"id": "P2-7", "severity": "P2", "file": "src/llm_loop/wecom/session_map.py:117-126", "title": "映射文件损坏时静默重建，与自身注释 '不静默丢弃' 矛盾", "evidence": "_load 捕获 JSONDecodeError/OSError 后 self._map={} 无任何日志（模块无 logger）。旧映射实际被静默丢弃。", "action": "补 warning 日志。"},
+    {"id": "P2-8", "severity": "P2", "file": "docs/design/DESIGN-20261029-wecom-aibot-bridge-v1.md §五 M0-2", "title": "设计文档 env 键名(WECOM_*)与实现(WECHAT_*)不一致（文档滞后，实现自洽）", "evidence": "与 merge 闸回执 P2-1 同源：config.py:12-13/resolver.py/测试三处一致用 WECHAT_* 并注释对齐官方 README。", "action": "设计文档入库时同步（该文档本身还未跟踪入库）。"},
+    {"id": "P2-9", "severity": "P2", "file": "tests/wecom/test_dispatcher.py", "title": "dispatcher 的 mixed/voice/file 分支已实现但零测试", "evidence": "M0-3 判据仅要求 text/image/video/compat_info 四类（已达标）；mixed(文本拼合)/voice(chat_text)/file 解析路径无断言，回归保护缺口。", "action": "M1-3（附件）落地时补测。"}
+  ],
+  "observations_no_defect": [
+    "handlers.py:54 sender_type=='app' 防循环分支在 M0 生产路径不可达（dispatcher 恒置 'user'，企微侧防循环实为 compat_info 跳过）——防御性代码，无害",
+    "chat_type 原样透传不做归一化（若服务端回传 1/2 数字形态则与文档 single/group 语汇不一致）；M0 无任何代码分支依赖该值（路由用 chat_id 存在性），仅信息字段",
+    "群聊 @提及过滤策略未实现亦未核实协议（服务端是否只推 @消息）——设计文档未覆盖，M1 群聊体验项",
+    "reply 体用 markdown msgtype（aibot_respond_msg）：设计文档仅核实 send_msg 支持 markdown，respond_msg 侧未实测（见 limitations）"
+  ],
+  "process_findings": [
+    "审查范围陷阱：git diff main...HEAD 为空（main 已含成果）；实际产物 80768312b..59fc7fda2。委派指令按原样执行将审到空 delta",
+    "测试环境陷阱：uv 对同版本号项目复用缓存 editable wheel，.pth 指向主区 .releases/8c114428（另一棵树）→ llm_loop.wecom ModuleNotFoundError。卸载后靠 pytest pythonpath 解析隔离树并显式验证 __file__。复现者须做同样前置检查"
+  ],
+  "limitations": [
+    "真实企微服务端行为未验证（无真实 BotID/Secret）：markdown 回复是否被 aibot_respond_msg 接受、video 真实帧结构、msgid 字段名、disconnected_event 触发时序、SIGTERM 15s 实测、断线重连实测均不在可核验面（设计 §七未决项，dispatcher.py:53-56/114-116 已诚实标注）",
+    "merge commit f19e4255e 携带的 privacy-gate 改动（git_security_scan.sh 等）未经本审查（属另一审查线，merge 闸回执 P1-1 已记录）",
+    "发布快照不含 wecom（merge 闸回执 P1-2）：本审查结论覆盖工作树代码，正式环境生效需发布快照更新后复验",
+    "全量测试套件未跑（本审查为范围限定：wecom 35 + runtime config 33 + feishu 256）；由对应全量闸负责",
+    "回执落盘：审查沙箱禁止写主区（touch 探测 Operation not permitted，与 merge 闸审查者同限），本文件写于隔离 clone 同路径 docs/governance/receipts/review-wecom-aibot-bridge-m0-20261029.json，需父代理一条 cp 落位主区"
+  ]
+}

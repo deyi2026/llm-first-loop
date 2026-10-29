@@ -1,0 +1,97 @@
+{
+  "gate": "merge",
+  "rule": "RULE-AI-34",
+  "reviewer": "merge-review-gate subagent (isolated worktree .worktrees/lfl-child-subagent_7c07e3e82414, detached HEAD f19e4255e)",
+  "reviewed_at": "2026-10-29T23:30+08:00 (after main ff; post-hoc gate)",
+  "verdict": "PASS",
+  "goal_id": "GOAL-20261029-a9d7705e",
+  "branch": "feat/wecom-aibot-bridge-m0",
+  "based_on_main": "80768312b17ad4a6469bf9eb87c03144264e39f9 (M0 pre-baseline; merge-base(59fc7fda2, a8fa6baf2)=80768312b)",
+  "commits": [
+    "59fc7fda2fb0757d2ac3dead1bbe7ae77cb9de25 feat(wecom): 企微智能机器人双向对话桥 M0-1..M0-7 (16 files, +1779)",
+    "f19e4255eaffbe6a5bf7c1b98a51d64bbd465046 merge: 企微智能机器人桥 M0 成果并入工作分支"
+  ],
+  "merge_mode": "merge-commit (f19e4255e, parents a8fa6baf2 + 59fc7fda2; ff impossible: both sides advanced past common base 80768312b)",
+  "conflicts_resolved": [],
+  "conflicts_note": "两侧文件集不相交（main 侧 a8fa6baf2 改 privacy-gate 5 文件；分支侧 16 个 wecom 新文件），无冲突。但 merge commit 额外携带了不属于任一父提交的第三方改动，见 findings P1-1。",
+  "focused_gates": {
+    "command": ".venv/bin/python -m pytest tests/wecom/ -q -p no:cacheprovider (cwd=isolated worktree, pytest pythonpath=src → 工作树代码)",
+    "result": "35 passed in 0.62s",
+    "reproduced_by": "merge-review-gate subagent (independent rerun in isolated worktree, matches parent-session 35 passed)",
+    "full_suite": "NOT RUN by design — 全量测试义务归 RULE-AI-28 代码闸（另一审查线），本闸只跑 focused gate"
+  },
+  "main_sha_after": "f19e4255eaffbe6a5bf7c1b98a51d64bbd465046",
+  "main_sha_verification": "git rev-parse main == branch tip == f19e4255e; git diff --stat main feat/wecom-aibot-bridge-m0 为空; main reflog@{0} 从 a8fa6baf2 → f19e4255e（fast-forward，由并行 privacy-gate 工作流在 .worktrees/main-merge 执行）",
+  "branch_disposition": "kept: (1) 主区当前 checkout 在该分支（删除需先切走）；(2) Goal 收口 evidence 链引用本分支；(3) 发布快照尚未更新（见 P1-2），分支名是该成果的可追溯锚点。建议：Goal complete + 新发布快照验证 launch wecom 后删除（tip=main tip，无独有内容）。",
+  "key_facts_pre_existing_on_main": {
+    "situation": "被审分支成果在本次合并闸执行之前，已因并行 privacy-gate 工作流对 main 的 fast-forward（reflog: a8fa6baf2→f19e4255e）进入 main。'是否并入 main'已无操作空间。",
+    "actual_role_of_this_gate": "对已在 main 上的产物做独立合并审查并补齐 RULE-AI-34 回执（事后补审），非事前放行。verdict 基于对 main=f19e4255e 内容的独立核验，不因既成事实降低审查标准。",
+    "timeline": "59fc7fda2 authored 22:42:16 +0800; merge f19e4255e committed 22:48:14 +0800; merge-review 闸在本回执落盘时补齐"
+  },
+  "done_when_verification": {
+    "M0-1_dependency": "PASS — pyproject.toml:14 wecom-aibot-python-sdk==1.0.2；.venv/lib/python3.13/site-packages/wecom_aibot_python_sdk-1.0.2.dist-info 存在；import aibot 成功（aibot.__file__ 落 site-packages）。注：aibot 包内部 __version__ 字段显示 1.0.0，与发行元数据 dist-info 1.0.2 不同步，以 dist-info 为准。",
+    "M0-2_config": "PASS — src/llm_loop/wecom/config.py:48-55 缺 WECHAT_BOT_ID/WECHAT_BOT_SECRET 抛 ValueError 含字段名，无静默默认；tests/wecom/test_config.py 3 个缺失场景专测。env 键名用 WECHAT_*（对齐官方 README），设计文档写 WECOM_*（见 P2-1 文档滞后），实现三处自洽（config.py/resolver.py/测试）。",
+    "M0-3_dispatcher": "PASS — dispatcher.py:31 SUPPORTED_MESSAGE_TYPES 含 video（缺口a）；:36+:151-158 disconnected_event 按帧内 eventtype 解析不依赖 SDK 枚举（缺口b）；:103-107 compat_info 非空跳过并记日志（缺口c）。test_dispatcher.py 8 测试覆盖 text/image/video/compat_info 四类帧 + disconnected_event + 无效帧。",
+    "M0-4_bridge": "PASS — bridge.py:43 有界队列 64（对齐飞书）；:230-240 SDK 回调仅 put_nowait 立即返回（队列满 fail-open 丢弃告警，不阻塞 loop）；:265-278 单 worker 线程执行解析+推理+回复；:202-220 优雅退出（哨兵+join 4s+loop 收尾 10s+释放锁，幂等）；:73-117 fcntl.flock 非阻塞单实例锁（防双实例互踢）。test_bridge.py 8 测试含无残留线程/单实例锁/disconnected 双层。",
+    "M0-5_handlers": "PASS — handlers.py:69-88 engine.run + 回复经 WeComReplyFn 绑定 msg.req_id；:91-101 字节预算 20480 按字符边界截断并如实标注；:54-56 防循环 skip_bot_self。test_handlers.py 7 测试含 req_id 绑定/群路由/截断标注/video 可见不静默。",
+    "M0-6_session_map": "PASS — session_map.py p:{userid}/g:{chatid} 键、独立文件 wecom_session_map.json（与 feishu 分离，test_map_independent_from_feishu 专测）、RLock 并发隔离、持久化+损坏重建。test_session_map.py 7 测试。",
+    "M0-7_launch_wiring": "PASS（工作树代码）— launch.py:26 _SERVICES 增 wecom；resolver.py TOML_SCHEMA 增 ('wecom','session_map_path')、_SECRET_KEYS 增 WECHAT_BOT_ID/WECHAT_BOT_SECRET（照 feishu 先例：凭据不入 runtime.toml 只入 env）。实测：PYTHONPATH=<worktree>/src 下 python -m llm_loop.runtime.launch wecom --dry-run → exit 0，service=wecom 被接受，effective 配置打印（identity shadow-WARN 不阻断）。注意 dry-run 路径不触达 llm_loop.wecom 模块本体（runpy 仅在非 dry-run 执行），模块导入面由 35 个测试覆盖。正式环境发布快照下该命令 exit 2（见 P1-2）。"
+  },
+  "branch_hygiene": {
+    "commit_atomicity": "PASS — 80768312b..59fc7fda2 单提交承载 M0-1..M0-7，diff --stat 与父提交纯 16 文件 +1779，与任务声明逐文件一致，无夹带。",
+    "tree_state": "被审提交内容树干净（所有产物已提交）。主区工作区 5 项未跟踪（3× data/methods/** 知识卡 + docs/design/DESIGN-20261029-wecom-aibot-bridge-v1.md + docs/research/2026-10-29-wechat-integration-survey.md）均未进入任何被审提交：前 3+1 项属并行工作流非本分支产物；设计文档+调研属本 Goal 产物但未入库（P2-2）。隔离审查 worktree 自身仅 ?? .lfl-worktree.json（子代理运行时标记，非产物）。",
+    "excluded_from_carriage_judgement": ".worktrees/main-merge 中另一并行工作流的未提交暂存改动（.githooks/.github/scripts/git_security_scan.sh/CHANGELOG.md/tests/test_privacy_gate.py）——按父代理边界声明不计入本分支夹带判断，未触碰。"
+  },
+  "baseline_freshness": {
+    "merge_base": "80768312b（M0 前基线）",
+    "main_advanced_during_branch": "a8fa6baf2 (privacy-gate per-commit scanning) — 与 wecom 文件集不相交，经 f19e4255e merge 吸收，无影响遗漏",
+    "final_relation": "git log main..branch 与 branch..main 均为空（tip 相同 f19e4255e），分支零落后"
+  },
+  "post_merge_smoke": "受影响面均为纯增量：launch._SERVICES 新增枚举值（不修改 web/feishu/learning 既有路径）、resolver 闭式 schema 新增条目+2 凭据键（纯 dict 增项）、pyproject 新增 1 依赖（.venv 已装 1.0.2）。focused gate 35 passed。未跑全量（归 RULE-AI-28 代码闸）。正式环境运行面未生效（发布快照未更新，见 P1-2）。",
+  "findings": [
+    {
+      "id": "P1-1",
+      "severity": "P1",
+      "title": "merge commit f19e4255e 携带不属于任一父提交的第三方改动（合并原子性缺口）",
+      "evidence": "git diff a8fa6baf2 f19e4255e 为 18 文件 +1800/-3，超出 59fc7fda2 的 16 文件 +1779：scripts/git_security_scan.sh（_is_allowed 从子串匹配改为精确/后缀锚定，堵 vendor/x.bak 类旁路）与 tests/test_privacy_gate.py（+test_allowlist_exact_and_suffix_passes/+test_allowlist_no_substring_bypass）。两文件既不在 59fc7fda2（相对 80768312b 纯 16 文件）也不在 a8fa6baf2——来源为 .worktrees/main-merge 并行 privacy-gate 工作流的未提交暂存改动被 merge commit 一并裹入。",
+      "impact": "main 历史不原子（merge commit 混入无关改动）；该并行工作流工作树仍持有同内容未提交态，存在二次提交/漂移风险。窄复审结论：改动方向为安全强化且带回归测试，逻辑自洽，非恶意夹带；其正式审查义务属 privacy-gate 线的 RULE-AI-28 代码闸，本闸如实记录不代审放行。",
+      "action": "转告 privacy-gate 线：该暂存改动已随 f19e4255e 进入 main，其 worktree 剩余暂存项收口时注意去重；不在本闸处置范围。"
+    },
+    {
+      "id": "P1-2",
+      "severity": "P1",
+      "title": "M0-7 上线生效未达成：发布快照不含 wecom，正式环境 launch wecom 不可用",
+      "evidence": ".venv 的 llm_loop 解析到 .releases/8c114428.../src（发布快照）：import llm_loop.wecom → ModuleNotFoundError；python -m llm_loop.runtime.launch wecom --dry-run（无 PYTHONPATH）→ argparse choices 仅 {feishu,learning,web}，exit 2。工作树代码（PYTHONPATH 注入）下同命令 exit 0（identity_ok=False，shadow 模式 WARN 不阻断——FATAL_RUNTIME_IDENTITY_MISMATCH expected_src=.releases/...，因 PYTHONPATH 覆盖与身份契约锚定的发布快照路径不一致）。",
+      "impact": "M0-7 验收点仅在工作树代码上达成；'launch wecom 上线生效'需发布新快照（或 editable 重装）后达成。属部署节奏而非代码缺陷。",
+      "action": "Goal 收口前完成发布快照更新并在正式环境复验 launch wecom --dry-run exit 0。"
+    },
+    {
+      "id": "P2-1",
+      "severity": "P2",
+      "title": "设计文档 env 键名与实现不一致（文档滞后）",
+      "evidence": "DESIGN-20261029-wecom-aibot-bridge-v1.md §五 M0-2 写 WECOM_BOT_ID/WECOM_SECRET；实现 config.py:12-13 用 WECHAT_BOT_ID/WECHAT_BOT_SECRET（注释：键名对齐官方 README）。config/resolver/测试三处自洽。",
+      "action": "设计文档入库时更新该差异（见 P2-2）。"
+    },
+    {
+      "id": "P2-2",
+      "severity": "P2",
+      "title": "本 Goal 的设计文档与上游调研未入版本库",
+      "evidence": "docs/design/DESIGN-20261029-wecom-aibot-bridge-v1.md（282 行）与 docs/research/2026-10-29-wechat-integration-survey.md 在主区仍为未跟踪文件（git status ??），docs/design/ 目录既有 5 个设计文档均为 tracked。Goal 的决策输入留在工作区未入库。",
+      "action": "随收口以 docs 提交入库（不阻塞本闸）。"
+    },
+    {
+      "id": "P2-3",
+      "severity": "P2",
+      "title": "协议细节两处以同构假设实现并已诚实标注（未实测项）",
+      "evidence": "dispatcher.py:53-56 video 帧结构按 image/file 同构解析（真实帧样例未实测）；:114-116 msgid 字段名未在 SDK 源码核实，用 req_id 兜底。设计文档 §七.3/七.4 已列为未决项。",
+      "action": "M1/真实连接阶段用真实帧验证。"
+    }
+  ],
+  "limitations": [
+    "本次为事后补审：成果已在 main（并行工作流 ff），'是否并入'无操作空间；本回执的价值是对 main=f19e4255e 内容的独立核验与记录补齐。",
+    "全量测试未跑（RULE-AI-28 代码闸职责，另一审查线），本闸结论不覆盖全量回归。",
+    "真实 WS 连接、真实企微帧、SIGTERM 15s 退出、断线重连等运行时行为未实测（需真实 BotID/Secret，设计文档 §七未决项），M0 完成定义中依赖真实环境的前两条（App 内发消息收到回复、session_map.json 实机验证）不在本次可核验面内。",
+    "运行时加载面：.venv llm_loop 指向 .releases/8c114428 发布快照（不含 wecom），本闸所有运行验证均显式以工作树代码（PYTHONPATH/pytest pythonpath=src）执行并已逐项标注加载来源。",
+    "回执落盘位置：审查者沙箱（隔离 worktree）按设计禁止写主区，本回执写于隔离 worktree 同路径 docs/governance/receipts/merge-wecom-aibot-bridge-m0-20261029.json，需父代理以一条 cp 落位主区（见交付说明）。"
+  ]
+}
