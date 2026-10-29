@@ -11,6 +11,7 @@ from llm_loop.wecom.config import (
     OWNER_USERID_ENV,
     SECRET_ENV,
     SESSION_MAP_PATH_ENV,
+    ensure_proxy_bypass,
     load_wecom_config,
 )
 
@@ -78,3 +79,46 @@ def test_config_env_override_map_path(monkeypatch, tmp_path):
     override = str(tmp_path / "custom_map.json")
     monkeypatch.setenv(SESSION_MAP_PATH_ENV, override)
     assert load_wecom_config().session_map_path == override
+
+
+# ── ensure_proxy_bypass（代理绕过：企微端点强制直连）──
+
+
+def test_ensure_proxy_bypass_adds_host(monkeypatch):
+    """目标主机被写入 no_proxy / NO_PROXY（两个变量名都要写）."""
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    value = ensure_proxy_bypass(["openws.work.weixin.qq.com"])
+    assert "openws.work.weixin.qq.com" in value
+    import os
+
+    assert "openws.work.weixin.qq.com" in os.environ["no_proxy"]
+    assert "openws.work.weixin.qq.com" in os.environ["NO_PROXY"]
+
+
+def test_ensure_proxy_bypass_preserves_existing(monkeypatch):
+    """既有绕过条目不被覆盖（用户自配的 no_proxy 必须保留）."""
+    monkeypatch.setenv("no_proxy", "example.com,foo.internal")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    value = ensure_proxy_bypass(["openws.work.weixin.qq.com"])
+    assert "example.com" in value
+    assert "foo.internal" in value
+    assert "openws.work.weixin.qq.com" in value
+
+
+def test_ensure_proxy_bypass_idempotent(monkeypatch):
+    """重复调用不重复追加（幂等）."""
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    first = ensure_proxy_bypass(["openws.work.weixin.qq.com"])
+    second = ensure_proxy_bypass(["openws.work.weixin.qq.com"])
+    assert first == second
+    assert second.count("openws.work.weixin.qq.com") == 1
+
+
+def test_ensure_proxy_bypass_skips_empty(monkeypatch):
+    """空值忽略（不产生空条目）."""
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    value = ensure_proxy_bypass(["", "  "])
+    assert value == ""

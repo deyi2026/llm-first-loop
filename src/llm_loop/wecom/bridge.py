@@ -32,8 +32,9 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-from .config import WeComConfig
+from .config import WeComConfig, ensure_proxy_bypass
 from .dispatcher import is_disconnected_event, parse_event_frame, parse_message_frame
 from .messages import WeComMessage
 
@@ -129,6 +130,23 @@ def _default_client_factory(config: WeComConfig) -> Any:
     return WSClient(options)
 
 
+def _ensure_endpoint_direct() -> None:
+    """连接前把企微 WS 端点加入 no_proxy 绕过列表（强制直连）.
+
+    websockets>=15 自动读系统/环境代理，macOS 的 socks 项会把 wss 改写成
+    socks5h:// 并要求 python-socks，否则连接层直接失败（实测证据见
+    config.ensure_proxy_bypass docstring）。端点主机取自 SDK 默认常量
+    （aibot.ws.DEFAULT_WS_URL），不硬编码、随 SDK 版本自动跟随。
+    """
+    from aibot.ws import DEFAULT_WS_URL
+
+    host = urlsplit(DEFAULT_WS_URL).hostname or ""
+    if not host:
+        return
+    ensure_proxy_bypass([host])
+    logger.info("企微端点已加入 no_proxy 绕过列表（直连，不经系统代理）: %s", host)
+
+
 class WeComBridge:
     """企微 WS 桥：SDK 连接生命周期 + 有界队列 + 单 worker 线程 + 单实例锁."""
 
@@ -178,6 +196,7 @@ class WeComBridge:
             return False
         if not self._lock.acquire():
             return False  # 单实例锁被占用：拒绝启动（防互踢，设计文档 §6 高风险项）
+        _ensure_endpoint_direct()
         self._client = self._client_factory(self._config)
         self._register_callbacks(self._client)
         self._start_loop_thread()

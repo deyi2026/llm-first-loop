@@ -1,7 +1,7 @@
 """企微 SDK 连接探针（只读探测，不发消息、不改状态）。
 
 用途：在真实凭据到位后，第一时间区分「网络/鉴权/协议问题」与「桥接代码问题」。
-用法：.venv/bin/python scripts/wecom/wecom_sdk_probe.py
+用法：.venv/bin/python data/e2e/wecom_sdk_probe.py
 需要环境变量：WECHAT_BOT_ID、WECHAT_BOT_SECRET（从主区 .env 读取）
 """
 
@@ -59,16 +59,25 @@ async def _probe() -> int:
     try:
         await asyncio.wait_for(authed.wait(), timeout=20)
     except asyncio.TimeoutError:
-        print("20s 内未收到 authenticated（鉴权未完成）", file=sys.stderr)
-        if auth_fail:
-            print("期间事件:", auth_fail, file=sys.stderr)
-        await client.disconnect()
+        # 区分两种失败：连上了但鉴权未过（服务端可达，凭据错）
+        #                vs 根本没连上（网络/代理/端点不可达）
+        verdict = (
+            "PROBE_REACHABLE_BUT_UNAUTHENTICATED：TCP/WS 已连通，20s 内未收到 authenticated"
+            "（服务端可达；通常是 BotID/Secret 不正确或机器人未启用 API 模式）"
+            if connected.is_set()
+            else "PROBE_UNREACHABLE：未收到 connected 事件（网络/代理/端点不可达）"
+        )
+        print(verdict, file=sys.stderr)
+        print("期间事件:", auth_fail, file=sys.stderr)
+        # SDK 的 disconnect() 是同步方法（aibot/client.py:100），不可 await
+        client.disconnect()
         return 1
 
     print("PROBE_OK: 已连接并完成鉴权订阅")
     if auth_fail:
         print("期间事件:", auth_fail, file=sys.stderr)
-    await client.disconnect()
+    # SDK 的 disconnect() 是同步方法（aibot/client.py:100），不可 await
+    client.disconnect()
     return 0
 
 

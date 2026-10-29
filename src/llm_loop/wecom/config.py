@@ -7,6 +7,7 @@ feishu_session_map.json 分离，避免跨通道污染（M0-6 硬约束）。
 """
 
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 BOT_ID_ENV = "WECHAT_BOT_ID"
@@ -64,3 +65,47 @@ def load_wecom_config() -> WeComConfig:
         session_map_path=session_map_path,
         owner_userid=owner_userid,
     )
+
+
+def ensure_proxy_bypass(hosts: Iterable[str]) -> str:
+    """把给定主机加入 no_proxy 绕过列表（强制直连，不经系统/环境代理）。
+
+    背景（实测证据，非推断）：websockets>=15 在 connect() 时用
+    urllib.request.getproxies() 自动取代理。macOS 系统代理通常带 socks 项
+    （优先级高于 https，见 websockets/uri.py:213-223），websockets 会把 wss
+    改写为 socks5h:// 并要求安装 python-socks，否则连接直接失败：
+    "Failed to create WebSocket connection: python-socks is required to use
+    a SOCKS proxy"。实测同一端点加 no_proxy 后握手成功、服务端返回 853000
+    凭据错误（即网络层已通），未加则连接层即失败。
+
+    企微端点是国内腾讯域名，设计前提为「本机直连、无需隧道」（设计文档 §二
+    选型结论），故把该主机加入绕过列表，而不是让桥依赖本机代理软件是否在跑。
+
+    副作用（已知且可接受）：设置 no_proxy 会使 urllib.request.getproxies()
+    切到 env 模式，不再读 macOS 系统代理。本进程内 urllib 系网络访问只有
+    websockets → 企微端点（正是要直连的目标）；LLM 客户端走 httpx 读
+    HTTP(S)_PROXY 环境变量，未设置即直连，行为不变。
+
+    Args:
+        hosts: 要绕过代理的主机名（可多个，空值忽略）。
+
+    Returns:
+        实际写入的 no_proxy 值。幂等：重复调用结果相同。
+    """
+    entries: list[str] = []
+    seen: set[str] = set()
+    existing = os.environ.get("no_proxy", "") + "," + os.environ.get("NO_PROXY", "")
+    for raw in existing.split(","):
+        item = raw.strip()
+        if item and item not in seen:
+            seen.add(item)
+            entries.append(item)
+    for raw in hosts:
+        item = raw.strip()
+        if item and item not in seen:
+            seen.add(item)
+            entries.append(item)
+    value = ",".join(entries)
+    os.environ["no_proxy"] = value
+    os.environ["NO_PROXY"] = value
+    return value

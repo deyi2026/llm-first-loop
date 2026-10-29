@@ -248,6 +248,7 @@ WeComPushFn = Callable[[str, str, str], None]  # (chat_id, chat_type, text)
 | **10 分钟流式窗口**：长任务流式未收尾会被判超时 | 低 | 流式刷新前置检查，超时自动 `finish=true` 收尾 |
 | **SDK 许可条款未逐字核** | 低 | 商用前人工确认；内部使用风险低 |
 | **依赖新增**：`aiohttp` / `pyee` / `cryptography` 进入依赖树 | 低 | 与现有 `websockets` / `pycryptodome` 无冲突；`cryptography` 与 `pycryptodome` 并存需注意二者 API 不同 |
+| | **系统代理劫持 WS 连接**：`websockets`≥15 自动读系统代理，macOS 的 `socks` 项优先级高于 `https`，会把 `wss://` 改写为 `socks5h://` 并要求装 `python-socks`，否则连接层直接失败 | 中 | **已实测复现并修复**：`bridge.start()` 连接前调 `ensure_proxy_bypass()` 把 SDK 默认端点主机（`aibot.ws.DEFAULT_WS_URL`）加入 `no_proxy`，强制直连——与本设计「本机直连、无需隧道」前提一致，不依赖本机代理软件是否在跑。实测：修复前报 `python-socks is required to use a SOCKS proxy`，修复后握手成功、服务端返回 853000 凭据错误（即网络层已通） |
 
 ---
 
