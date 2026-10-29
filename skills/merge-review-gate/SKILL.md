@@ -9,6 +9,8 @@ description: 合并 main 审查闸（RULE-AI-34）——分支 Goal/任务收口
 ## 前置义务与资格
 审查是强制前置义务。父 agent 主动 spawn 本审查子代理，取得覆盖当前分支产物的有效 PASS 回执后方可并入 main 并收口任务；缺失、未完成、未通过或失效时暂缓合并，任务转 blocked 而非 done。核实真实子会话终态、审查类型（merge）、分支产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的"继续 / 按建议执行"不构成免审；用户明确豁免（显式指示暂缓合并，含"攒批一起 push"）须在 Goal/checkpoint 留痕并注明触发条件。
 
+**实现入口（本闸无 Host 冻结入口，勿照抄 RULE-AI-28 路径）**：RULE-AI-34 的程序角色为"无新增"，`review_admission` 的 kind 仅 `full_test|git_push|article_publish`，`classify_review_gate_command` 不识别 `git merge`。故本闸审查者由父 agent 直接 `spawn_subagent`（未参与该分支任何产出的只读子代理，任务书=本 skill），资格 = 清单逐条核验 + `docs/governance/receipts/` 落盘 merge 回执，没有进程内一次性资格可依赖。`spawn_subagent` 无 `review_isolated` 参数，不得据此声称取得 RULE-AI-28 那类 Host 资格；反之 RULE-AI-28 的资格也不替代本闸回执。
+
 ## 前置事实收集（只读命令，逐条留痕）
 1. Goal/task 状态与 done_when、evidence_refs——完成证据逐条可判真（指向真实测试回执/落盘回执，不接受口头声明）。
 2. `git status --porcelain`（分支全量）——未提交/未跟踪文件先处置（提交或移出），禁止夹带。

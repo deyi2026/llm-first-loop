@@ -9,6 +9,8 @@ description: 代码审查闸（RULE-AI-28 第 1 条）——代码任务全量�
 ## 前置义务与资格
 审查是强制前置义务。父 agent 主动安排对应独立审查子代理，取得覆盖当前产物的有效 PASS 回执后方可执行目标动作；缺失、未完成、未通过或失效时暂缓该动作，继续其他可推进工作。核实真实子会话终态、审查类型、产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的“继续 / 按建议执行 / 授权发布”不构成免审；用户明确豁免须留痕。程序观测提示不等于有效回执。
 
+**实现入口（唯一）**：`review_admission(action=start, kind=full_test, workdir=…, command=…)` 由 Host 冻结当前产物并启动不可被父会话 steer 的独立 reviewer；`review_admission(action=status, child_id=…)` 核验真实 terminal completed、P0/P1=0 与产物 SHA 一致后签发进程内一次性资格，再以同一目标重试被拦动作。自建 `spawn_subagent` 拿不到 `review_isolated`（该标记仅 Host 内部 start 可设），其 completed 或工具文本中的 PASS 不构成资格；资格 child 禁用 `agent_followup`（续话即失去独立 stance），要新结论须重开 `start`，修订后的窄复审同路径。
+
 ## 审查者纪律
 - 未参与产出的专门独立子代理执行，不复用执行上下文；应能读取完整候选、关联上下文与证据，按需运行定向检查，不由审查者提前跑待准入的全量测试；工具面为必要只读感知 + 指定回执写入。
 - 启动前按需检索相关 method/experience（如 patch-apply-verify-by-content-diff、release-pr-green-is-not-closure），历史坑优先复用；检索 limit ≤5。

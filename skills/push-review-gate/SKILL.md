@@ -9,6 +9,8 @@ description: push 审查闸（RULE-AI-28 第 3 条）——git push 前的独立
 ## 前置义务与资格
 审查是强制前置义务。父 agent 主动安排对应独立审查子代理，取得覆盖当前产物的有效 PASS 回执后方可执行目标动作；缺失、未完成、未通过或失效时暂缓该动作，继续其他可推进工作。核实真实子会话终态、审查类型、产物指纹及实际覆盖；completed、工具文本中的 PASS 或父 agent 自查均不构成资格。改动后走窄复审并保留覆盖关系。泛化的“继续 / 按建议执行 / 授权发布”不构成免审；用户明确豁免须留痕。程序观测提示不等于有效回执。
 
+**实现入口（唯一）**：`review_admission(action=start, kind=git_push, workdir=…, command=…)` 冻结待推目标并启动不可 steer 的独立 reviewer；`review_admission(action=status, child_id=…)` 核验 terminal completed、P0/P1=0 与目标 remote/ref 一致后签发一次性资格，再以原命令重试 push。自建 `spawn_subagent` 拿不到 `review_isolated`，其 completed 或工具文本中的 PASS 不构成资格；资格 child 禁用 `agent_followup`，审查范围变化须重开 `start`。资格不替代用户 push 授权。
+
 ## 前置事实收集（只读命令，逐条留痕）
 1. `git status --porcelain`（全量，不只前 15 行）——区分 staged / modified / untracked。
 2. `git log --oneline @{upstream}..HEAD` 与 `git log origin/<branch>..HEAD`、`git log lfl/<branch>..HEAD`——本仓库双 remote（`lfl` 主仓 / `origin` legacy）各查一遍，确认待推集合与目标 remote。
