@@ -201,7 +201,11 @@ class WeComBridge:
         self._register_callbacks(self._client)
         self._start_loop_thread()
         try:
-            fut = asyncio.run_coroutine_threadsafe(self._client.connect(), self._loop)
+            client = self._client
+            loop = self._loop
+            if client is None or loop is None:  # 类型收窄守卫：loop 由后台线程赋值，此处不可证明非空
+                raise RuntimeError("wecom bridge client/loop 未就绪")
+            fut = asyncio.run_coroutine_threadsafe(client.connect(), loop)
             fut.result(timeout=_CONNECT_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — 连接失败如实清理退出
             logger.error("企微桥连接失败: %s", exc)
