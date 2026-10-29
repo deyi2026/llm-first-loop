@@ -4,8 +4,10 @@
 # 全部 required 平台 ready + manifest 逐资产 sha256 与 Release 实测一致 + 无未申报资产；任一缺项保持 draft 且非零退出。
 # 重要：仓库不得再启用第二个 Draft Release writer。Release Drafter 曾在多个 draft 并存时选中 v0.6.12 后按 NEXT_PATCH_VERSION 将其改写为 v0.6.10；
 # 因此 tag-based release.yml 是 Release 对象的 single writer，发布说明由 GitHub generate_release_notes + CHANGELOG 提供。
-# remote 命名陷阱（2026-09-12 收口记录）：本镜像工作区里 `origin` = llm-first-loop-legacy（旧仓库），正式仓库是 `lfl`（github.com/deyi2026/llm-first-loop）。
-# 发版推送一律显式 `git push lfl <tag>` / `git push lfl HEAD:main`，禁止依赖 origin 默认语义；tag 即 SHA 事实，打 tag 前先 `git rev-parse` 双确认目标提交。
+# remote 命名（2026-10-29 更名，取代 2026-09-12 旧口径）：`origin` = 正式仓库 github.com/deyi2026/llm-first-loop。
+# 旧仓库降级为 `legacy`（llm-first-loop-legacy）并已堵死默认路径：skipDefaultUpdate=true（fetch --all/remote update 跳过）
+# + pushurl=no-push://legacy-archived（误推 fatal）；.githooks/pre-push 另有按 URL 的拒推守卫。
+# 故 `git push origin <tag>` 即推正式仓；tag 即 SHA 事实，打 tag 前先 `git rev-parse` 双确认目标提交。
 name: Release
 
 on:

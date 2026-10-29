@@ -6,6 +6,18 @@
 # 锚定钩子自身路径定位扫描脚本（不依赖被推仓库结构/worktree 根）
 
 set -u
+
+# 远端守卫（2026-10-29）：遗留归档仓一律拒推，fail-closed。
+# 主防线是配置层 remote.legacy.pushurl=no-push://（--no-verify/GUI 也绕不过）；
+# 本守卫覆盖未配 pushurl 的新 clone，并给出人话提示。按 URL 匹配，不依赖 remote 名。
+REMOTE_NAME="${1:-}"
+REMOTE_URL="${2:-}"
+if [[ "$REMOTE_NAME" == "legacy" || "$REMOTE_URL" == *"llm-first-loop-legacy"* ]]; then
+  echo "[pre-push] 拒绝：'${REMOTE_NAME:-?}' -> ${REMOTE_URL:-?} 是遗留归档仓，不是上游。" >&2
+  echo "[pre-push] 上游是 github.com/deyi2026/llm-first-loop.git，其 remote 名为 origin；推送请: git push origin <ref>" >&2
+  exit 1
+fi
+
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCAN="$SELF_DIR/../scripts/git_security_scan.sh"
 
