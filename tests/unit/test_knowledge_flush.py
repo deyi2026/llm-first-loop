@@ -80,6 +80,8 @@ def test_incomplete_card_dir_is_skipped(tmp_path: Path) -> None:
 
     assert main(["--root", str(repo)]) == 0
     assert _git(repo, "log", "-1", "--pretty=%s").strip() == "init"
+    # 半成品既不入库，也不能留在索引里（否则下一次随手 commit 会被夹带）
+    assert _git(repo, "diff", "--cached", "--name-only").strip() == ""
 
 
 def test_flush_does_not_sweep_unrelated_staged_changes(tmp_path: Path) -> None:

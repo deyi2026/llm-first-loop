@@ -188,12 +188,9 @@ def flush(root: Path, *, dry_run: bool = False) -> dict[str, object]:
         receipt["paths"] = pending_paths
         return receipt
 
-    # pathspec 必须真实存在：两个知识目录在部分检出里可能缺一个，git add 会整体报错
-    specs = [p for p in KNOWLEDGE_PATHS if (root / p).exists()]
-    if not specs:
-        return receipt
-    _git(root, "add", "-A", "--", *specs)
-    staged = _git(root, "diff", "--cached", "--name-only", "-z", "--", *specs).stdout
+    # 只 add 本次要提交的精确文件集：跳过的半成品/过小卡不留在索引里，避免后续误提交
+    _git(root, "add", "-A", "--", *pending_paths)
+    staged = _git(root, "diff", "--cached", "--name-only", "-z", "--", *pending_paths).stdout
     if not staged.strip("\0"):
         return receipt
     message = (
