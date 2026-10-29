@@ -1,12 +1,12 @@
 {
   "_meta": {
-    "head_commit": "13c39ca57",
+    "head_commit": "c3b91d72f",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
     "生成时间": "2026-10-29",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
-    "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。2026-10-29 P2-1 豁免注记：application_main 320→323 @ b64f24c70（merge 13c39ca57 后实测对账），+3 为 cli 壳 rule_lookup 注入 ×3（start/init/doctor），kernel import 边棘轮强制、消费端已核（doctor.py:89-92）；P2-4 同轮修复删 plan_first_use 死参及两处死转发，不动 cli.py，323 保持。",
+    "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。2026-10-29 P2-1 豁免注记：application_main 320→323 @ b64f24c70（merge 13c39ca57 后实测对账），+3 为 cli 壳 rule_lookup 注入 ×3（start/init/doctor），kernel import 边棘轮强制、消费端已核（doctor.py:89-92）；P2-4 同轮修复删 plan_first_use 死参及两处死转发，不动 cli.py，323 保持。2026-10-29 M0 随记（企微桥落地期间重登记）：review_host_admission.py::_source_snapshot 165→177 实为基线既有漂移（该增长提交 31d877220 已在 lfl/main 上，非本轮引入），按 scripts/regen_function_size_baseline.py 口径重登记实测值；同时登记新顶层包 src/llm_loop/wecom/（plane=Action）与 durable surface wecom_audit / wecom_bridge_lock / wecom_session_map（observe，只登记真实写入责任面）。",
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
   },
   "durability_registry": {
@@ -891,6 +891,34 @@
         "status": "conform",
         "tier": "T2"
       },
+      "wecom_audit": {
+        "owner": "wecom",
+        "paths": [
+          "src/llm_loop/wecom/handlers.py",
+          "src/llm_loop/wecom/__init__.py"
+        ],
+        "rationale": "企微 handler 审计 JSONL 与桥退出日志均为追加式事实记录（仅追加不覆写），归 T1；此处 observe 只登记真实写入责任面，不宣称符合 tier 完整资格。",
+        "status": "observe",
+        "tier": "T1"
+      },
+      "wecom_bridge_lock": {
+        "owner": "wecom",
+        "paths": [
+          "src/llm_loop/wecom/bridge.py"
+        ],
+        "rationale": "企微单实例锁文件（fcntl.flock 非阻塞独占 + pid 写入）参与运行准入判定：同一机器人仅允许一条长连接，锁释放失败会影响桥启停。属覆盖式状态，归 T2；此处 observe 只登记真实写入责任面，不宣称符合 tier 完整资格。",
+        "status": "observe",
+        "tier": "T2"
+      },
+      "wecom_session_map": {
+        "owner": "wecom",
+        "paths": [
+          "src/llm_loop/wecom/session_map.py"
+        ],
+        "rationale": "企微会话映射是跨重启需保留的覆盖式状态（tmp write_text + replace 原子替换），与飞书映射文件分离存放以避免跨通道污染。归 T2；此处 observe 只登记真实写入责任面，不宣称符合 tier 完整资格。",
+        "status": "observe",
+        "tier": "T2"
+      },
       "workspace_artifacts": {
         "owner": "workspace",
         "paths": [
@@ -1061,7 +1089,7 @@
     "src/llm_loop/tools/registry.py::_run_with_timeout": 175,
     "src/llm_loop/tools/registry.py::execute": 92,
     "src/llm_loop/tools/registry.py::tool_result_to_message": 138,
-    "src/llm_loop/tools/review_host_admission.py::_source_snapshot": 165,
+    "src/llm_loop/tools/review_host_admission.py::_source_snapshot": 177,
     "src/llm_loop/tools/review_host_admission.py::start": 190,
     "src/llm_loop/tools/safety.py::_scan_tokens": 230,
     "src/llm_loop/web/__init__.py::build_app": 146,
@@ -1176,6 +1204,7 @@
       "tools": "Action",
       "video": "Action（本地视频生成、任务与参考图存储；Web 仅为交付适配器，独立于聊天 Provider）",
       "web": "delivery（六面外交付面）",
+      "wecom": "Action（企业微信智能机器人通道：WS 长连接入站消息驱动 Engine 执行与回复，与 feishu 同属动作面交付通道；DESIGN-20261029-wecom-aibot-bridge-v1）",
       "workspace": "cross-plane"
     }
   }
