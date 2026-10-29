@@ -1,0 +1,23 @@
+{
+  "task": "review-gate-implementation-entry: 独立合并闸审查（RULE-AI-34 merge-review-gate）",
+  "date": "2026-10-29T10:40:00+08:00",
+  "branch": "docs/review-gate-implementation-entry",
+  "merge_base": "67704b79495dc1c210d9c906310ea613d750407a",
+  "head_sha": "cc999c06b987b8bcadd97c790c89c1561f9aa5ae",
+  "source": "llm-first-loop-mirror mirror, committed range 67704b794..cc999c06b only（工作区未跟踪 data/methods 与 experiences 不在审查内）",
+  "authorization": "用户 2026-10-29 10:18 明确授权：按建议执行、新开分支落三处改动、完善没问题后并 lfl/main 和上线",
+  "review_path": "本闸无 Host 冻结入口（RULE-AI-34 程序角色为无新增；review_admission.kind 仅 full_test|git_push|article_publish；classify_review_gate_command 不识别 git merge），故由父 agent 直接 spawn_subagent 启动未参与产出的只读子代理",
+  "reviewer": {"child_id": "subagent_c6d52054a008", "child_outcome": "completed", "rounds": 6, "tools": 6, "note": "首次审查 child subagent_92e861d60782 因上下文耗尽 failed，未产出 PASS，不计为回执；任务切小后重跑"},
+  "facts_checked": [
+    {"claim": "classify_review_gate_command 不识别 git merge", "verdict": true, "evidence": "src/llm_loop/tools/review_gate.py:133-146"},
+    {"claim": "review_isolated=True 全仓仅一处赋值（Host 内部 start）", "verdict": true, "evidence": "src/llm_loop/tools/review_host_admission.py:1719"},
+    {"claim": "review_isolated 仅由可信 Host 内部调用", "verdict": true, "evidence": "src/llm_loop/subagent/runner.py:1443"},
+    {"claim": "资格 child 禁用 followup", "verdict": true, "evidence": "src/llm_loop/subagent/runner.py:2136-2145"},
+    {"claim": "spawn_subagent schema 无 review_isolated 参数", "verdict": true, "evidence": "src/llm_loop/tools/builtin/spawn_subagent.py:58-100"},
+    {"claim": "文中 review_admission 参数名与真实 schema 一致", "verdict": true, "evidence": "src/llm_loop/tools/review_host_admission.py:1944-1967"},
+    {"claim": "义务层与实现层不矛盾，属层次区分", "verdict": true}
+  ],
+  "verification_run": "pytest tests/unit/test_review_obligation_contract.py tests/test_skills_integrity.py -q => 25 passed; pytest tests/unit/test_skills_loader.py test_skills_loader_std.py test_skill_tools_p1a.py -q => 39 passed",
+  "merge_gate": {"verdict": "MERGE_OK", "p0": [], "p1": [], "p2": ["P2-1 三处新增实现入口段，未同步改 docs/ai_rules.md RULE-AI-28 原文（父 agent 主动 spawn），措辞歧义仍在；改规则需 bump rules_version 并过 test_ai_rules_sync，本次不夹带，留待独立变更。"]},
+  "changed_files": ["skills/code-review-gate/SKILL.md", "skills/push-review-gate/SKILL.md", "skills/merge-review-gate/SKILL.md"]
+}
