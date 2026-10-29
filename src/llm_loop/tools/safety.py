@@ -1789,7 +1789,10 @@ class CatastrophicGuard:
         # P1（第九轮审查）：shell 家族载荷含 $（变量/命令替换）一律拒绝——
         # 变量间接（g="git"; p="push"; $g $p）等任意间接派生形态无法用文本网
         # 穷举；良性 shell 载荷几乎不依赖变量（误拒=回退人工链路，零损失）。
-        if family == "shell" and "$" in body:
+        # P1-1（第十轮审查 REVISE 2026-10-29）：反引号命令替换（`cmd`）与 $
+        # 同属间接构造；原判定只查 $，反引号载荷穿透（实测 BYPASS-CONFIRMED），
+        # 并入本网整类拒绝。
+        if family == "shell" and ("$" in body or "`" in body):
             self._audit_conversion(command, "", body, None, "rejected_by_shell_indirection")
             return None
         tmp_path = _write_convert_tmp(body, _CONVERT_FAMILY_EXTS[family], workdir)

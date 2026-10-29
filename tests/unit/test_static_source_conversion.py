@@ -620,6 +620,38 @@ def test_revise9_node_concat_spawn_not_converted(env):
     assert _convert(guard, node_hd, tmp, rule) is None
 
 
+# ── 审查 REVISE 第十轮修复的回归（反引号命令替换穿透）──
+
+
+def test_revise10_shell_backtick_substitution_not_converted(env):
+    """P1-1（第十轮 REVISE 2026-10-29）：shell 载荷反引号命令替换 → 拒绝转换.
+
+    实测复现路径：guard 本体拦 here-doc 交解释器，但转换路径原判定
+    只查 $，反引号载荷（无 $、无明文受保护动词）穿透内容网全量放行。
+    """
+    tmp, guard, audit = env
+    body = "echo " + BT + "date -u" + BT
+    cmd = SH_HD.format(body)
+    rule, d = _guard_rule(guard, cmd, tmp)
+    assert rule == _CONVERT_HEREDOC_RULE
+    assert _convert(guard, cmd, tmp, rule) is None
+    recs = [
+        json.loads(ln)
+        for ln in (audit / "safety_conversions.jsonl").read_text().splitlines()
+        if ln.strip()
+    ]
+    assert any(r["status"] == "rejected_by_shell_indirection" for r in recs)
+
+
+def test_revise10_shell_benign_static_still_converts(env):
+    """回归：shell 载荷无 $/反引号（纯静态）仍正常转换（不过火）."""
+    tmp, guard, audit = env
+    cmd = SH_HD.format('echo "static-payload"')
+    rule, _ = _guard_rule(guard, cmd, tmp)
+    conv = _convert(guard, cmd, tmp, rule)
+    assert conv is not None
+
+
 def test_revise9_python_dollar_payload_still_converts(env):
     """python 家族 $ 字符（字符串/正则字面量）不触发 shell 间接网（回归）."""
     tmp, guard, audit = env
