@@ -315,7 +315,10 @@ def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
     rt_dir = Path(data_dir) / "runtime"
     rt_dir.mkdir(parents=True, exist_ok=True)
     out = rt_dir / "runtime_manifest.json"
-    tmp = out.with_suffix(".json.tmp")
+    # 多服务（web/feishu/learning）并发写同一 manifest 时，固定名 tmp 文件会
+    # 互踩（A 写 tmp → B rename 走 → A rename 报 ENOENT，或内容被覆盖）。
+    # 按写入方 PID 命名 tmp，rename 原子性不变，写方互不影响。
+    tmp = out.with_name(f"{out.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                    encoding="utf-8")
     tmp.replace(out)

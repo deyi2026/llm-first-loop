@@ -687,6 +687,9 @@ else
   fi
 fi
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-  printf 'Add this directory to PATH to use lfl from any terminal: %s\n' "$BIN_DIR"
+  printf 'NOTICE: %s is not in PATH for this terminal.\n' "$BIN_DIR"
+  printf '  Use lfl right now:   export PATH="%s:$PATH"\n' "$BIN_DIR"
+  printf '  Make it permanent:   add the same line to ~/.bashrc (or ~/.profile), then open a new terminal.\n'
+  printf '  The installer never edits your shell rc files itself.\n'
 fi
 printf 'Next: lfl start (first run configures and live-checks the model), or lfl doctor --online to verify credentials.\n'

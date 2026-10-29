@@ -38,7 +38,15 @@ curl -fsSL https://raw.githubusercontent.com/deyi2026/llm-first-loop/main/script
 bash lfl-uninstall.sh
 ~~~
 
-如果 `~/.local/bin` 不在 `PATH` 中，安装器会提示该目录；不会擅自编辑 `.bashrc` 或 `.profile`。
+如果 `~/.local/bin` 不在 `PATH` 中，安装器会明确提示缺失目录并给出**可复制命令**；
+安装器不会擅自编辑 `.bashrc` 或 `.profile`。补 PATH 的两种方式：
+
+~~~bash
+# 仅当前终端立即生效
+export PATH="$HOME/.local/bin:$PATH"
+# 永久生效：把同一行追加到 ~/.bashrc（或 ~/.profile）后重开终端
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+~~~
 卸载只删除由安装器管理的应用版本和启动入口，不删除 `.env`、`data/`、Methods、Experiences
 或 `uv` 引导工具。真实 Ubuntu x86-64 的完整安装和回滚验收已在 [GitHub Actions](https://github.com/deyi2026/llm-first-loop/actions) 完成；对 ARM64 不声称已有等价原生验证。详见 [GitHub 版本与发布流程](releasing.md)。
 
@@ -144,6 +152,42 @@ Web、Learning 或 Feishu，也不安装扩展。检测失败时配置仍已保�
 web 复用原有 Web 入口、认证与生命周期清理，默认绑定本机环回地址。
 运行目录与用户工作目录分别绑定，身份守卫继续生效。
 数据目录与现有业务路径显式分开；这条独立应用启动路径不替代源码工作区的受管发布/重启流程。
+
+## 自定义模型 provider（providers.local.json）
+
+`lfl init` 覆盖单 provider 的标准配置。当 `runtime.toml` 里使用带前缀的模型名
+（如 `model = "glm/glm-5.3"`）而该前缀**不在内置 provider 注册表**中时，运行时会把
+整串全限定名当作模型代码发给服务端，典型症状是服务端返回"模型不存在"
+（例如智谱 API 的错误码 1211）——这不是密钥问题，是 provider 前缀未注册。
+
+补注册三步（无需改代码，重启对应服务后生效）：
+
+1. 密钥放应用根 `.env`（不要写进任何会进仓库的文件）：
+
+   ~~~bash
+   LLM_API_KEY=<你的密钥>
+   ~~~
+
+2. 在 `data/providers.local.json` 注册该 provider。该文件已被 `.gitignore` 覆盖，
+   属本机配置、不会随仓库分发。以智谱 GLM 为例：
+
+   ~~~json
+   {
+     "glm": {
+       "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+       "api_key_env": "LLM_API_KEY",
+       "default_model": "glm-5.3",
+       "models": {
+         "glm-5.3": { "thinking": true, "cost_tier": "mid" }
+       }
+     }
+   }
+   ~~~
+
+3. 确认 `runtime.toml` 的 `model` 前缀与注册名一致（`glm/glm-5.3` 的前缀必须
+   对应上面的 `"glm"` 键），然后重启对应服务（web / 飞书桥各自启动时重读注册表）。
+
+验证：`lfl doctor --online` 复检，或直接发一条消息，不再返回"模型不存在"即注册生效。
 
 ## 安装后的会话上下文
 
@@ -350,3 +394,22 @@ commit、WebUI 来源 SHA、wheel/sdist SHA）。目标目录必须从未存在�
 本机 Node 依赖不等于独立证明软件供应链来源和版本锁闭合，构建回执也不等于
 发布者签名。Release 仍须完成受管代码审查、原版完整 R9、依赖哈希资格、
 隔离虚拟环境安装和人工批准；不能直接推送、发布或重启生产。
+
+## Linux 桌面环境排障记录（Deepin 25，与 LFL 本身无关）
+
+把 LFL 部署到 Linux 桌面机并用向日葵等远控工具访问时，两个发行版/远控环境问题
+容易被误判为 LFL 故障（2026-10 实测记录，不含任何主机标识）：
+
+1. **远控全程黑屏、但 SSH 正常**：Deepin 25 默认 Wayland（treeland）会话，
+   向日葵 Linux 客户端在 Wayland 下无法采集屏幕。在登录界面的会话菜单选择
+   X11（deepin）会话登录即可恢复采集。
+2. **登录后黑屏、桌面其实在渲染**：Deepin 25 X11 自动登录后 `dde-lock` 可能
+   残留一个全屏黑窗（进程在但窗口不退出）。SSH 进去执行
+   `kill $(pgrep -f dde-lock)` 立即恢复画面；若每次重启复现，需在系统设置里
+   关闭自动锁屏/唤醒锁屏（属发行版问题）。
+
+诊断手法（无需远控画面）：SSH 从桌面进程环境取 DISPLAY/XAUTHORITY——
+`tr '\0' '\n' < /proc/$(pgrep -f dde-session-daemon | head -1)/environ | grep -E '^(DISPLAY|XAUTHORITY)='`，
+导出后用 `xwininfo -root -children` 找全屏遮挡窗口、
+`ffmpeg -f x11grab -i "$DISPLAY" -frames:v 1 /tmp/shot.png` 截一帧看亮度，
+即可区分"桌面没渲染"与"被窗口遮挡"两种黑屏。
