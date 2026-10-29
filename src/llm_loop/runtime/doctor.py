@@ -114,6 +114,10 @@ def _check_rule_assets(
                 "asset_missing": "确认安装完整：重装包或恢复缺失资源，再运行 lfl check-install。",
                 "asset_unreadable": "检查文件权限或重装包，再运行 lfl check-install。",
                 "rule_lookup_failed": "docs/ai_rules.md 存在但解析不出规则卡：重装或修复包内容。",
+                "asset_hash_mismatch": (
+                    "bundle 内 docs/ai_rules.md 与 manifest 声明哈希不一致（疑似篡改或打包损坏）："
+                    "重装包后复跑 lfl doctor。"
+                ),
             }.get(str(error_code), "重装包并运行 lfl check-install。")
             add("rule_assets", "fail", "规则资产不可用（error_code=" + str(error_code) + "）：" + detail, action)
         checks[-1]["facts"] = facts

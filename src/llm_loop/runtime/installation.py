@@ -78,9 +78,11 @@ def rule_asset_facts() -> dict[str, object]:
     （wheel 命中 bundle 根，源码取仓库根），不凭 Agent 能否直接读文件推断。
     DOCS_DIR 覆盖只影响 briefing 文档列表、不影响规则索引，故 source_kind
     只有 wheel/source。error_code：asset_missing / asset_unreadable /
-    version_parse_error；rule_lookup_failed 由 doctor 层真实 RuleIndex 探测
-    补充（本函数保持纯事实、不 import introspection）。wheel 模式
-    rule_body_sha256 优先取 manifest 中 docs/ai_rules.md 的受信条目。
+    version_parse_error / asset_hash_mismatch；rule_lookup_failed 由 doctor
+    层真实 RuleIndex 探测补充（本函数保持纯事实、不 import introspection）。
+    wheel 模式 rule_body_sha256 恒为 bundle 实体计算哈希；manifest 声明值
+    独立披露为 rule_body_sha256_manifest（P2-2 安全审查 2026-10-29：声明值
+    覆盖计算值会掩盖内容篡改，不一致 → asset_hash_mismatch）。
     """
     facts: dict[str, object] = {
         "source_kind": "",
@@ -112,10 +114,15 @@ def rule_asset_facts() -> dict[str, object]:
     if bundled is not None:
         trusted = _manifest_rule_body_sha256(bundled / "manifest.json")
         if trusted:
-            facts["rule_body_sha256"] = trusted
+            # P2-2（安全审查 2026-10-29）：计算值恒为唯一 rule_body_sha256——
+            # 声明值不再覆盖计算值（覆盖会掩盖 bundle 内容篡改）；声明值独立
+            # 披露，不一致 → asset_hash_mismatch（doctor 判 fail、深探测跳过）。
+            facts["rule_body_sha256_manifest"] = trusted
+            if trusted != facts["rule_body_sha256"]:
+                facts["error_code"] = "asset_hash_mismatch"
     version = rules_version()
     facts["rules_version"] = version
-    if not version:
+    if not version and facts["error_code"] is None:
         facts["error_code"] = "asset_missing" if not lite.is_file() else "version_parse_error"
     return facts
 

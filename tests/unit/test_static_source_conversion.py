@@ -14,7 +14,9 @@
   （fail-closed）；真复合/反引号/伪装/不可解析骨架全部维持原判。
 """
 
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -372,15 +374,22 @@ def test_revise_p2_4_symlinked_cache_rejected(env, monkeypatch):
     assert not any(outside.iterdir())
 
 
-def test_revise_note_and_audit_carry_payload_preview(env):
-    """P2-1：回执与审计带载荷预览，临时文件形态不透明问题缓解."""
+def test_revise_note_carries_preview_audit_carries_no_content(env):
+    """P2-3（安全审查 2026-10-29）：审计不落载荷内容（payload_preview 整类移除），
+    诊断面=payload_sha256_16+payload_len；回执 note 仍带预览（审批面透明性保留）.
+    注：heredoc 的 command 字段本就含载荷（命令原文面，与阻断审计一致），
+    不属 P2-3 面；cat 源文件内容的零泄漏由下方 cat-pipe 测试覆盖。"""
     tmp, guard, audit = env
+    body = 'print("preview-me")'
     cmd = HD.format('print("preview-me")')
     rule, _ = _guard_rule(guard, cmd, tmp)
     conv = _convert(guard, cmd, tmp, rule)
     assert conv is not None and "preview-me" in conv[1]
     recs = [json.loads(ln) for ln in (audit / "safety_conversions.jsonl").read_text().splitlines() if ln.strip()]
-    assert any(r.get("payload_preview") and "preview-me" in r["payload_preview"] for r in recs)
+    assert len(recs) == 1
+    assert "payload_preview" not in recs[0]
+    assert recs[0]["payload_len"] == len(body)
+    assert recs[0]["payload_sha256_16"] == hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
 # ── 审查 REVISE 第二轮修复的回归 ──
@@ -525,7 +534,8 @@ def test_revise8_sensitive_env_read_not_converted(env):
     ]
     hits = [r for r in recs if r["status"] == "rejected_by_sensitive_read"]
     assert hits
-    assert all(r["payload_preview"] == "" for r in hits)
+    # P2-3（安全审查 2026-10-29）：payload_preview 字段整类移除，审计零载荷内容
+    assert all("payload_preview" not in r for r in hits)
 
 
 def test_revise10_cat_sensitive_path_never_read_no_preview(env):
@@ -659,3 +669,60 @@ def test_revise9_python_dollar_payload_still_converts(env):
     rule, _ = _guard_rule(guard, cmd, tmp)
     conv = _convert(guard, cmd, tmp, rule)
     assert conv is not None
+
+
+# ── 安全审查 P2 修复回归（2026-10-29：审计内容面 / .cache 忽略强制校验）──
+
+
+def test_p2_3_cat_pipe_conversion_audit_has_no_file_content(env):
+    """P2-3：cat <工作区文件> | 解释器 转换后，审计链零文件内容（原
+    payload_preview 会把工作区文件前 160 字复制进 safety_conversions.jsonl）."""
+    tmp, guard, audit = env
+    secret = "WORKSPACE-SECRET-MARKER-9f2e"
+    src = tmp / "note.py"
+    src.write_text("print(" + Q + secret + Q + ")\n", encoding="utf-8")
+    cmd = "cat " + str(src) + PY_PIPE
+    rule, _ = _guard_rule(guard, cmd, tmp)
+    conv = _convert(guard, cmd, tmp, rule)
+    assert conv is not None  # 良性载荷照常转换（tmp 非 git 工作区，无 VC 暴露面）
+    content = (audit / "safety_conversions.jsonl").read_text()
+    assert secret not in content
+    recs = [json.loads(ln) for ln in content.splitlines() if ln.strip()]
+    assert all("payload_preview" not in r for r in recs)
+    assert all(r["payload_len"] > 0 for r in recs)
+
+
+def _git_init(path):
+    subprocess.run(["git", "init", str(path)], capture_output=True, check=True)
+
+
+def test_p2_5_cache_not_ignored_in_git_repo_refuses_conversion(env):
+    """P2-5 应拦实测（RULE-AI-35）：git 工作区内 .cache 未被忽略 → 拒绝转换、
+    零落盘（门在 mkdir 之前）。"""
+    tmp, guard, audit = env
+    _git_init(tmp)
+    (tmp / ".gitignore").write_text("*.log\n", encoding="utf-8")  # 不含 .cache
+    cmd = HD.format("print(1)")
+    rule, _ = _guard_rule(guard, cmd, tmp)
+    assert _convert(guard, cmd, tmp, rule) is None
+    assert not (tmp / ".cache").exists()
+
+
+def test_p2_5_cache_ignored_in_git_repo_converts(env):
+    """P2-5 应放实测：git 工作区内 .cache 已被忽略 → 转换照常（不再依赖部署侧假设）."""
+    tmp, guard, audit = env
+    _git_init(tmp)
+    (tmp / ".gitignore").write_text(".cache/\n", encoding="utf-8")
+    cmd = HD.format("print(2)")
+    rule, _ = _guard_rule(guard, cmd, tmp)
+    assert _convert(guard, cmd, tmp, rule) is not None
+
+
+def test_p2_5_git_unverifiable_in_repo_fail_closed(env):
+    """P2-5 fail-closed：形态上是 git 工作区但 git 无法证明忽略（无效 repo，
+    check-ignore 非零）→ 拒绝转换."""
+    tmp, guard, audit = env
+    (tmp / ".git").mkdir()  # 无效 repo（.git 目录为空）
+    cmd = HD.format("print(3)")
+    rule, _ = _guard_rule(guard, cmd, tmp)
+    assert _convert(guard, cmd, tmp, rule) is None

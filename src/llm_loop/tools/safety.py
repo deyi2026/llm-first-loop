@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import shlex
+import subprocess
 import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
@@ -1190,14 +1191,49 @@ def _parse_static_source_pipe(command: str, workdir: str | None) -> tuple[str, l
     return interp, flags, body
 
 
+def _git_cache_ignored(base: Path) -> bool:
+    """git 本体判定 .cache/heredoc-convert 是否被忽略（P2-5 强制校验）.
+
+    returncode 0=已忽略；1=未忽略；git 不可用/超时/其余错误一律按
+    "无法证明已忽略"处理——转换是便利通道，拒绝仅意味着回退原阻断
+    + 人工提权链路（审批面可见完整原命令），无损失。
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(base), "check-ignore", "--quiet", "--", ".cache/heredoc-convert"],
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def _cache_vc_exposure_ok(base: Path) -> bool:
+    """P2-5（安全审查 2026-10-29）：".cache 已被 git 忽略"不再靠部署侧假设.
+
+    仅当（a）base 及全部祖先都不是 git 工作区，或（b）git 实体确认
+    .cache/heredoc-convert 被忽略时才允许写盘；否则拒绝转换（fail-closed，
+    零落盘）。
+    """
+    if not any((p / ".git").exists() for p in (base, *base.parents)):
+        return True
+    return _git_cache_ignored(base)
+
+
 def _write_convert_tmp(body: str, ext: str, workdir: str | None) -> Path | None:
     """载荷写入工作区缓存目录临时文件（git 忽略区 .cache/，O_EXCL 防符号链接）.
 
     P2-4（审查 REVISE 2026-10-29）：mkdir 后对缓存目录做 resolve 围栏校验
     ——预置符号链接把写入重定向到工作区外时拒绝转换（fail-closed）。
+    P2-5（安全审查 2026-10-29）：.cache 的 git 忽略不再由部署侧保证——
+    git 工作区内强制经 _cache_vc_exposure_ok 实测（git check-ignore），
+    未忽略/无法判定 → 拒绝转换、零落盘。
     """
     try:
         base = (Path(workdir) if workdir else Path.cwd()).resolve()
+        if not _cache_vc_exposure_ok(base):
+            return None  # 版本控制暴露面未证实安全 → 拒绝转换（fail-closed）
         cache = base / ".cache" / "heredoc-convert"
         cache.mkdir(parents=True, exist_ok=True)
         resolved_cache = cache.resolve()
@@ -1652,13 +1688,14 @@ class CatastrophicGuard:
         body: str,
         tmp_path: Path | None,
         status: str,
-        *,
-        preview_suppress: bool = False,
     ) -> None:
         """转换路径审计留痕（safety_conversions.jsonl，与阻断审计同链式哈希）.
 
-        P1（第十轮审查）：preview_suppress=True 时载荷预览置空——
-        敏感读取拒绝不得把文件内容（如 .env 首行明文密钥）复制进审计。
+        P2-3（安全审查 2026-10-29）：审计不落载荷内容——payload_preview
+        整类移除（此前 cat 源载荷会把工作区文件内容前 160 字复制进审计
+        链；敏感读拒绝场景曾靠 preview_suppress 局部置空，属补丁式收窄）。
+        诊断面收敛为 payload_sha256_16 + payload_len；内容预览只保留在
+        回执 note（审批面透明性，不落盘审计链）。
         """
         self._append_audit(
             "safety_conversions.jsonl",
@@ -1671,8 +1708,7 @@ class CatastrophicGuard:
                 "payload_sha256_16": (
                     hashlib.sha256(body.encode("utf-8")).hexdigest()[:16] if body else ""
                 ),
-                # P2-1（审查 REVISE）：审计同步带载荷预览（单行前 160 字）
-                "payload_preview": "" if preview_suppress else " ".join(body.split())[:160],
+                "payload_len": len(body),
                 "temp_path": str(tmp_path) if tmp_path else "",
             },
         )
@@ -1775,9 +1811,7 @@ class CatastrophicGuard:
         # P1（第八轮审查）：敏感文件读取网——载荷读 .env/credentials/密钥
         # 等敏感路径时拒绝转换（下游全文本网只见临时文件形态，看不见引用）。
         if _CONVERT_SENSITIVE_READ_RE.search(command) or _CONVERT_SENSITIVE_READ_RE.search(body):
-            self._audit_conversion(
-                command, "", body, None, "rejected_by_sensitive_read", preview_suppress=True
-            )
+            self._audit_conversion(command, "", body, None, "rejected_by_sensitive_read")
             return None
         # P1-1（第六轮审查）：held-out 封条前置——registry 层转换先于工具层
         # 封条执行，若不在此拦截，封条片段可藏进 here-doc 载荷经转换读出。

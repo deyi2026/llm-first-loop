@@ -317,6 +317,24 @@ def test_doctor_rule_assets_fail_on_missing_body(doctor_home, capsys, monkeypatc
     assert check["facts"]["rule_body_retrievable"] is False
 
 
+def test_doctor_rule_assets_fail_on_manifest_hash_mismatch(doctor_home, capsys, monkeypatch, tmp_path):
+    """P2-2（安全审查 2026-10-29）：bundle 正文与 manifest 声明哈希不一致 →
+    fail + error_code=asset_hash_mismatch（声明值覆盖计算值的掩盖面关闭）。"""
+    body = "## RULE-AI-24 当前任务与授权来源\n\n正文\n"
+    bundle = _rule_bundle(tmp_path, lite="version=20\n", body=body)
+    (bundle / "manifest.json").write_text(
+        json.dumps({"files": {"docs/ai_rules.md": "f" * 64}}), encoding="utf-8"
+    )
+    _patch_rule_bundle(monkeypatch, bundle)
+    rc, report = _run_json([], capsys)
+    check = _checks(report)["rule_assets"]
+    assert check["status"] == "fail"
+    assert check["facts"]["error_code"] == "asset_hash_mismatch"
+    assert check["facts"]["rule_body_sha256"] == hashlib.sha256(body.encode()).hexdigest()
+    assert check["facts"]["rule_body_sha256_manifest"] == "f" * 64
+    assert "asset_hash_mismatch" in check["message"]
+
+
 def test_doctor_rule_assets_fail_when_body_yields_no_rule_cards(doctor_home, capsys, monkeypatch, tmp_path):
     """正文存在但 RuleIndex 解析不出规则卡 → error_code=rule_lookup_failed。"""
     _patch_rule_bundle(monkeypatch, _rule_bundle(

@@ -31,9 +31,10 @@ def test_rules_version_normalizes_leading_zeros(monkeypatch, tmp_path):
     assert installation.rules_version() == installation.rules_version()
 
 
-def test_rule_asset_facts_wheel_prefers_manifest_hash(monkeypatch, tmp_path):
+def test_rule_asset_facts_wheel_manifest_match_disclosed(monkeypatch, tmp_path):
+    """P2-2（安全审查 2026-10-29）：manifest 声明值与实体计算值一致 → 独立披露、无错."""
     body = "## RULE-AI-24 当前任务与授权来源\n\n正文\n"
-    trusted = "f" * 64
+    trusted = hashlib.sha256(body.encode("utf-8")).hexdigest()
     bundle = _make_bundle(tmp_path, lite="version=20\n", body=body,
                           manifest_files={"docs/ai_rules.md": trusted})
     monkeypatch.setattr(installation, "bundle_root", lambda: bundle)
@@ -43,8 +44,23 @@ def test_rule_asset_facts_wheel_prefers_manifest_hash(monkeypatch, tmp_path):
         "rule_body_retrievable": True,
         "rules_version": "20",
         "rule_body_sha256": trusted,
+        "rule_body_sha256_manifest": trusted,
         "error_code": None,
     }
+
+
+def test_rule_asset_facts_wheel_manifest_mismatch_flags_tamper(monkeypatch, tmp_path):
+    """P2-2（安全审查 2026-10-29）：manifest 声明值不再覆盖计算值——不一致 →
+    rule_body_sha256 保持实体计算值 + error_code=asset_hash_mismatch（掩盖篡改面关闭）."""
+    body = "## RULE-AI-24 当前任务与授权来源\n\n正文\n"
+    trusted = "f" * 64  # 与实体哈希不一致（篡改/打包损坏形态）
+    bundle = _make_bundle(tmp_path, lite="version=20\n", body=body,
+                          manifest_files={"docs/ai_rules.md": trusted})
+    monkeypatch.setattr(installation, "bundle_root", lambda: bundle)
+    facts = installation.rule_asset_facts()
+    assert facts["rule_body_sha256"] == hashlib.sha256(body.encode("utf-8")).hexdigest()
+    assert facts["rule_body_sha256_manifest"] == trusted
+    assert facts["error_code"] == "asset_hash_mismatch"
 
 
 def test_rule_asset_facts_missing_lite_keeps_body_retrievable(monkeypatch, tmp_path):
