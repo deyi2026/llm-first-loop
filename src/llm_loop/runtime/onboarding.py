@@ -25,8 +25,7 @@ def run_start(
     if as_json and not preview:
         print("--json 仅能与 --plan 搭配；不能静默启动 Web。", file=sys.stderr)
         return 2
-    plan, _ = plan_first_use(args=args, root=root, bundle=bundle, environment=environment,
-                             rule_lookup=rule_lookup)
+    plan, _ = plan_first_use(args=args, root=root, bundle=bundle, environment=environment)
     if preview:
         result = {
             "schema": "lfl.start.plan/v1",

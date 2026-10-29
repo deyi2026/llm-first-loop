@@ -56,8 +56,8 @@ def _unsafe_path(target: Path, bundle: Path | None, *, allow_default_parent: Pat
     return None
 
 
-def plan_first_use(*, args: Any, root: Path, bundle: Path | None, environment: Mapping[str, str],
-                   rule_lookup: Callable[[Path, str], bool] | None = None) -> tuple[dict[str, Any], Path | None]:
+def plan_first_use(*, args: Any, root: Path, bundle: Path | None,
+                   environment: Mapping[str, str]) -> tuple[dict[str, Any], Path | None]:
     """Compute a redacted snapshot; never create paths or mutate the process env."""
     shell = dict(environment)
     source = "command_line" if args.config else "environment" if shell.get("LFL_ENV_FILE") else "default"
@@ -281,8 +281,7 @@ def run_first_use(*, args: Any, root: Path, bundle: Path | None, environment: Ma
     if as_json and not preview:
         print("--json 只能和 --plan 一起使用，不能通过 JSON 绕过交互确认。", file=sys.stderr)
         return 2
-    report, target = plan_first_use(args=args, root=root, bundle=bundle, environment=environment,
-                                    rule_lookup=rule_lookup)
+    report, target = plan_first_use(args=args, root=root, bundle=bundle, environment=environment)
     if preview:
         if as_json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
