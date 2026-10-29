@@ -58,7 +58,7 @@ async def _probe() -> int:
 
     try:
         await asyncio.wait_for(authed.wait(), timeout=20)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # 区分两种失败：连上了但鉴权未过（服务端可达，凭据错）
         #                vs 根本没连上（网络/代理/端点不可达）
         verdict = (

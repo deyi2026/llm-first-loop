@@ -3,6 +3,7 @@
 "中间提交引入后被还原"的泄露（P1），本测试固化该行为契约。"""
 import os
 import subprocess
+
 import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -163,7 +164,8 @@ def test_pre_push_hook_blocks_dirty_range(repo, tmp_path):
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "purge", "--no-verify"], check=True, capture_output=True)
     head = rev(repo)
     refs = "refs/heads/main " + head + " refs/heads/main " + base + "\n"
-    env = dict(os.environ); env["USER"] = "yo"
+    env = dict(os.environ)
+    env["USER"] = "yo"
     out = subprocess.run(["bash", HOOK], cwd=repo, input=refs, env=env,
                          capture_output=True, text=True, timeout=120)
     assert out.returncode == 1  # 钩子 fail-closed：脏 range 必须拦住推送
