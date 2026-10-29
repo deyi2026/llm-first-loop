@@ -6,11 +6,14 @@ solution: payload 去撇号 + 避免触发词字面量 + 列表参数拆二元�
 evidence: "evidence://v1/44132ae395adab06b05e5cb95269068f7d1008588cc1c28883aa82ec7361867f"
 tags: [execute_command, rule-28, host-admission, shlex, heredoc]
 source: {}
-status: active
+status: invalid
 record_kind: experience
 verification_state: verified
 created_at: "2026-10-22T19:07:19.221920+08:00"
-updated_at: "2026-10-22T19:07:19.221920+08:00"
+updated_at: "2026-10-29T20:06:32.995230+08:00"
 ---
 
 在 execute_command 中用 heredoc/python 内联脚本修改代码或文件时，载荷文本里的英文撇号（如 remote's、destination's）会让 Host 的保护命令分类器 shlex 解析失败（报 No closing quotation），被当作无法绑定的受保护动作阻断；载荷含字面量 git/推送到远端的二元组也会触发识别。规避：① 注释与新增文本去撇号（remote's → remote）；② 需要引用旧文本做锚点时，选不含撇号的行段做锚；③ 测试代码里远端操作用列表参数（subprocess.run(["git",...,"push",...])）拆开二元组。本轮验证：去撇号后同一补丁脚本立即放行。
+
+## 失效与替代（2026-10-29 R4 周检）
+本卡按 R3 事实轴 invalidate：撇号误伤机制已被 EVO-20261029-65f6fe21（status=executed）修复推翻——载荷单元先剥离为不透明占位符再对骨架 shlex，实测含撇号载荷放行到达解释器。现行拦截形态与仍适用的规避建议见替代卡：experience:EXPERIENCE-20261029-rule-ai-28-分类器现行拦截形态-载荷内撇号已不误伤-evo-20261029-65f6fe（正文互指）。

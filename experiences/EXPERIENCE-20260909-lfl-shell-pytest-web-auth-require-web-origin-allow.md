@@ -6,11 +6,11 @@ solution: 用 env -u WEB_AUTH_REQUIRE -u WEB_ORIGIN_ALLOWLIST -u WEB_HOST 剥离
 evidence: 2026-09-09 worktree webui-live-parity-20260909：不剥离时 tests/web 40+ FAIL；env -u 剥离后 44 passed exit=0
 tags: [pytest, env-leakage, llm-first-loop, fail-closed, web-auth]
 source: {}
-status: active
+status: invalid
 record_kind: experience
 verification_state: verified
 created_at: "2026-09-09T17:52:16.273365+08:00"
-updated_at: "2026-10-15T06:18:22.273959+08:00"
+updated_at: "2026-10-29T20:06:26.556355+08:00"
 ---
 
 ## Gotcha
@@ -21,3 +21,6 @@ env -u WEB_AUTH_REQUIRE -u WEB_ORIGIN_ALLOWLIST -u WEB_HOST <python> -m pytest .
 
 ## 佐证
 剥离变量后同一套 44 项定向测试 44 passed / 0 failed / exit=0；同一命令不剥离则 503 大面积失败。
+
+## 失效与替代（2026-10-29 R4 周检）
+本卡按 R3 事实轴 invalidate：直接 loopback 请求已豁免鉴权（commit 7d134bbee，2026-09-30），完整 fail-closed 条件下 tests/web/test_frontend.py 实测 7 passed，普适剥离前提不成立。现行边界见替代卡：experience:EXPERIENCE-20261029-web-鉴权-fail-closed-503-的现行边界-直接-loopback-请求已豁免-仅非（正文互指）。
