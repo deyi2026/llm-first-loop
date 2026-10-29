@@ -164,3 +164,6 @@ runs/
 *.mp3
 webui/.tmp-test/
 .tmp-live/
+
+# 运行日志不入库（规则1：\.log$ 硬禁；2026-10-29 移除误追踪实例）
+work/*/out/*.log
