@@ -199,7 +199,7 @@ main() {
   local files=() f_line c list
   if [[ "$MODE" == "--staged" ]]; then
     while IFS= read -r f_line; do files+=("$f_line"); done \
-      < <(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+      < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACM 2>/dev/null)
   elif [[ "$MODE" == "--range" || "$MODE" == "--commit" ]]; then
     # fail-closed：ref 不可解析 → 拒绝（而非空集静默通过）
     git rev-parse --verify --quiet "${RANGE_HEAD}^{commit}" >/dev/null 2>&1 \
@@ -214,9 +214,9 @@ main() {
     while IFS= read -r c; do
       # --root 覆盖无父提交；diff-tree 对 merge 默认无输出（冲突解决引入的内容会漏）——
       # 输出为空时退化为该提交全树扫描（重复扫无害，安全优先）
-      list="$(git diff-tree --root --no-commit-id --name-only -r --diff-filter=ACM "$c" 2>/dev/null)"
+      list="$(git -c core.quotePath=false diff-tree --root --no-commit-id --name-only -r --diff-filter=ACM "$c" 2>/dev/null)"
       if [[ -z "$list" ]]; then
-        list="$(git ls-tree -r --name-only "$c" 2>/dev/null)"
+        list="$(git -c core.quotePath=false ls-tree -r --name-only "$c" 2>/dev/null)"
       fi
       while IFS= read -r f_line; do
         [[ -z "$f_line" ]] && continue
@@ -228,7 +228,7 @@ main() {
       done <<<"$list"
     done < <(git rev-list --reverse "${rl_args[@]}" 2>/dev/null)
   else
-    while IFS= read -r f_line; do files+=("$f_line"); done < <(git ls-files 2>/dev/null)
+    while IFS= read -r f_line; do files+=("$f_line"); done < <(git -c core.quotePath=false ls-files 2>/dev/null)
   fi
   [[ ${#files[@]} -eq 0 ]] && exit 0
 
@@ -253,7 +253,7 @@ main() {
 
     # 规则 2/3/5: 内容扫描（staged=索引 blob；range/commit=对应提交 blob；tree=工作区；跳过二进制）
     if [[ -n "$src" ]]; then
-      blob="$(git show "${src}:${path}" 2>/dev/null)" || continue
+      blob="$(git show "${src}:${path}" 2>/dev/null)" || _fail "历史 blob 读取失败（fail-closed，防 C 引用名静默跳过内容规则）" "$path"
     elif [[ "$MODE" == "--staged" ]]; then
       blob="$(git show ":$path" 2>/dev/null || cat "$path")"
     else
