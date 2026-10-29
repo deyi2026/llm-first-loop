@@ -13,7 +13,7 @@ description: 合并 main 审查闸（RULE-AI-34）——分支 Goal/任务收口
 
 ## 前置事实收集（只读命令，逐条留痕）
 1. Goal/task 状态与 done_when、evidence_refs——完成证据逐条可判真（指向真实测试回执/落盘回执，不接受口头声明）。
-2. `git status --porcelain`（分支全量）——未提交/未跟踪文件先处置（提交或移出），禁止夹带。
+2. `git status --porcelain`（分支全量）——未提交/未跟踪文件先处置（提交或移出），禁止夹带。知识资产（`data/methods/**`、`experiences/*.md`）用 `python scripts/knowledge_flush.py` 批量入库（一次 flush 一个本地提交），不要逐卡手工 add。
 3. `git log --oneline main..<branch>`——分支提交清单，与任务声明比对，多出的提交要能说出来历。
 4. `git merge-base main <branch>` 与 `git rev-parse main`——分支是否基于当前 main；落后 → rebase/merge main 并复跑受影响 gate 后再审。
 5. worktree 分支（含 fs_isolation 隔离 worktree）先确认成果已提交到分支 ref（worktree 树干净），再谈合并。

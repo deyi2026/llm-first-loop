@@ -27,6 +27,7 @@ description: push 审查闸（RULE-AI-28 第 3 条）——git push 前的独立
 ## 推送执行纪律（父会话执行，审查者不推）
 - 提交用显式路径 add；push 前可先 `git push --dry-run`。
 - push 成功后 `git ls-remote <remote> <branch>` 核对远端 SHA == 本地 HEAD，才算收口。
+- **推送前先 flush 知识资产**：`python scripts/knowledge_flush.py` 把待入库方法卡/经验卡并成一次本地提交，随本次 push 一起上（`--check` 返回 3 = 仍有未入库卡）。不要为知识卡单独开 push，更不要绕闸自动推。
 - **失败诊断**：non-fast-forward → 先 fetch 再分析分叉，给出 rebase/merge 建议，禁止盲目重试同一命令、禁止直接 force。
 
 ## 回执（落盘 docs/governance/receipts/）

@@ -31,3 +31,12 @@ This repository may use an optional private continuity store for cross-agent or 
 - Never commit a private continuity remote, credential, token, local checkout path, private handoff body, or generated continuity data to this repository.
 
 See `docs/continuity.md` for the public protocol.
+
+# Knowledge assets (methods / experiences)
+
+`data/methods/**/METHOD.md` and `experiences/*.md` are learning assets: `data/*` is ignored, but these two paths are tracked on purpose. Cards are produced continuously by the runtime, so they must not be left as untracked worktree files.
+
+- Before any push / merge / release: run `python scripts/knowledge_flush.py`. It batches every pending card into **one local commit on the current branch** (pathspec-limited, so unrelated staged work is not swept in). No push, no history rewrite.
+- Use `python scripts/knowledge_flush.py --check` when you need a precondition: it exits `3` while cards are still uncommitted.
+- Cards reach `main` by riding along with the next release push (which goes through the independent review gate). Do **not** add an auto-push path for knowledge-only commits: that would bypass RULE-AI-28, and a reviewer-less push is exactly the kind of silent risk this repo rejects.
+- Never `git add .` for this; the script already limits paths to `data/methods` and `experiences`.
