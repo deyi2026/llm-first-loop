@@ -13,4 +13,4 @@ tool_octet_observation 线 M2 评审发现已冻结 M1 spec 的"blocked=Duplicat
 ## 证据
 - .codeartsdoer/specs/tool_octet_observation/spec.md 勘误块（2026-09-03 M2 R1，M1 保持 PASS）
 - 同目录 design.md R1 修订（BLOCKED 拆分 / canonical args / 全语义 digest / round_index 显式下传 / audit sink 单一化 / T5a+T5b+T7 混合批次）
-- 工作区纪律：本仓库一切文件操作用镜像区 /Users/yyj/Project/llm-first-loop-mirror，不写主区（用户 2026-09-03 明确指令）
+- 工作区纪律：本仓库一切文件操作用镜像区 /Users/<user>/Project/llm-first-loop-mirror，不写主区（用户 2026-09-03 明确指令）

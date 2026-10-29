@@ -142,9 +142,10 @@ def main() -> None:
         rates = [hit / tokens_in * 100 for _, tokens_in, hit in curve if tokens_in]
         print(f"   末段（后 5 请求）平均命中率: {sum(rates[-5:])/min(5,len(rates)):.1f}%")
     # ④ 遥测隔离
-    sess_file = (
-        DATA / "sessions" / "--Users-yyj-Project-llm-first-loop-mirror--" / f"{sid}.json"
-    )
+    # 会话目录名 = workspace_key(工作区绝对路径)（规则见 llm_loop.workspace.store）：
+    # 原为硬编码字面量（内含本机用户名），改为运行时推导——去身份泄漏且换机/换工作树仍可用。
+    _sess_dir = "--" + str(Path.cwd().resolve()).lstrip("/").replace("/", "-") + "--"
+    sess_file = DATA / "sessions" / _sess_dir / f"{sid}.json"
     if sess_file.exists():
         sess = json.loads(sess_file.read_text(encoding="utf-8"))
         bad = [

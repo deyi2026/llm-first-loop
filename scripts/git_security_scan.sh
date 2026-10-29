@@ -36,6 +36,10 @@ BLOCK_CONTENT_PATTERNS=(
 )
 
 # ── 规则 3: 本地绝对路径痕迹（错误文件类：暴露本地用户名/机器路径）──
+# 本规则是「通用绝对路径卫生」层：知识档案可经 _ABS_PATH_ONLY_ALLOWLIST 粒度豁免。
+# 但用户名路径形态同时构成**身份隐私**——由规则 5 的静态模式独立拦截（不继承任何粒度豁免）。
+# 净效果：知识档案可以如实记录本机路径，但不得带出**用户名**（两规则可同时命中同一文本，
+# 仅报错信息与出处不同；命中即 exit 1，结论一致）。
 BLOCK_ABS_PATH_PATTERNS=(
   '/Users/[A-Za-z0-9_]+/'
   '/home/[A-Za-z0-9_]+/'
@@ -57,6 +61,13 @@ _PRIV_USER_ESC="$(_ere_escape "${_PRIV_USER}")"
 _PRIV_HOST_ESC="$(_ere_escape "${_PRIV_HOST_S}")"
 BLOCK_PRIVACY_PATTERNS=(
   '\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'  # 私网 IPv4（内网拓扑泄露）
+  # 本地 macOS 家目录用户名路径形态（静态：任何用户名）——2026-10-30 push 闸 REVISE P1-1 修复。
+  # 独立审查指控：规则3 被 experiences/ 粒度豁免 → 知识档案里的裸用户名路径直接放行；
+  # 规则5 原先只有 IP / user@host / 主机名，管不到裸用户名路径 → 闸形同虚设。
+  # 静态而非动态的理由：动态身份模式在 CI（通用账户 runner）会被跳过 → CI 恒漏；
+  # macOS 家目录用户名不是通用服务账户；脱敏形态 /Users/<user>/ 因 '<' 不在字符类内不会误报。
+  # 首字符强制为字母数字：省略号形态（/Users/.../ ，路径省略示例）不算用户名，避免误报。
+  '/Users/[A-Za-z0-9][A-Za-z0-9_.-]*/'
 )
 # user@ 与主机名规则按当前机器动态生成（空值跳过，防误配；已 ERE 转义）
 # 通用服务/CI 账户（GitHub Actions=runner 等）不是私有身份：其 user@/user-前缀动态模式在 CI 上
@@ -65,9 +76,34 @@ BLOCK_PRIVACY_PATTERNS=(
 _PRIV_GENERIC_USERS=' runner github githubactions github-actions build builder ci jenkins circleci gitlab deploy root daemon nobody ubuntu test '
 if [[ -n "${_PRIV_USER}" && "${_PRIV_GENERIC_USERS}" != *" ${_PRIV_USER} "* ]]; then
   BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]${_PRIV_USER_ESC}@" '\b'"${_PRIV_USER_ESC}"'-[A-Za-z0-9]')  # user@host / user-XXX 主机名前缀形态
-  BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]/Users/${_PRIV_USER_ESC}/")  # 当前用户主目录绝对路径（裸用户名形态；review P2-1，规则3 对 experiences 豁免防不住此类）
+  # 本地 Linux 家目录用户名路径形态（动态：当前用户）——用户名同样是身份；但 /home/ubuntu、
+  # /home/root 等既是通用账户也是常见文档示例，静态规则会误报，故只拦当前用户。
+  # macOS 家目录（/Users/<name>/）不在此列：它已由上方**静态**模式全域拦截（含 CI）。
+  BLOCK_PRIVACY_PATTERNS+=('/home/'"${_PRIV_USER_ESC}"'/')
 fi
 [[ -n "${_PRIV_HOST_S}" && "${_PRIV_HOST_S}" != "localhost" ]] && BLOCK_PRIVACY_PATTERNS+=('\b'"${_PRIV_HOST_ESC}"'\b')
+
+# macOS 家目录下的**系统公共目录**：不是家目录用户名，属合法路径形态，不算身份暴露。
+# 独立审查 2026-10-30 P2-2：静态模式 /Users/<name>/ 会把 /Users/Shared/ 当用户名命中（未来文档提及即误报）。
+_SAFE_HOME_DIRS='Shared'
+
+# /Users/<name>/ 命中是否**全部**落在 _SAFE_HOME_DIRS（系统公共目录）→ 是则不算身份暴露。
+# 规则3（绝对路径）与规则5（身份隐私）共用同一判定，避免两条规则对同一路径给出相反结论。
+# 独立审查 2026-10-30 P2-2：/Users/Shared/ 是 macOS 系统共享目录，未来文档提及即被
+# 当成家目录用户名误报（两版静态模式都会命中它）。
+_home_hits_only_safe() {
+  local blob="$1" h name hit_names real_hit
+  hit_names="$(LC_ALL=C grep -oE '/Users/[A-Za-z0-9][A-Za-z0-9_.-]*' <<<"$blob" | sort -u || true)"
+  real_hit=0
+  while IFS= read -r h; do
+    [[ -z "$h" ]] && continue
+    name="${h#/Users/}"
+    [[ " ${_SAFE_HOME_DIRS} " == *" ${name} "* ]] && continue
+    real_hit=1
+    break
+  done <<<"$hit_names"
+  [[ "$real_hit" -eq 0 ]]
+}
 
 # ── 豁免白名单（确属测试夹具/样例，无敏感值；路径子串匹配）──
 _ALLOWLIST=(
@@ -76,18 +112,20 @@ _ALLOWLIST=(
   'tests/unit/test_history_layering.py'  # 测试数据占位符
   'tests/codearts/test_audit.py'  # 脱敏测试：夹具用 AWS 文档示例密钥验证 AK 不落日志
   'tests/unit/test_cache_block_reclassification.py'  # D-G4/G5 脱敏测试：虚构 sk- 样例验证 privacy BLOCK 保留          # 脱敏测试：夹具用 AWS 文档示例密钥验证 AK 不落日志
-  'tests/test_privacy_gate.py'  # 隐私闸回归测试：虚构私网 IP/用户名样例验证规则5拦截（2026-10-29）
+  'tests/test_privacy_gate.py'  # 隐私闸回归测试：虚构私网 IP/用户名样例验证规则5拦截（2026-10-29）。
+                                # 规则5 不继承粒度豁免 → 本文件含裸用户名形态字面量，必须由
+                                # 本**全规则**豁免覆盖，否则闸会自阻塞（独立审查 2026-10-30 P2-3）。
   'docs/local/'                          # 本地过程文档（不入库，此处兜底）
   'docs/WORKSPACE-CHANGE-PROTOCOL.md' 'docs/RESTART-GUIDE.md' # 工作区协议/重启指南（合法引用工作区路径，非泄露；2026-09-29 更名）
     "tests/unit/test_cache_guard.py"  # 缓存守卫测试样例（sk- 模式用例）
   'tests/unit/test_r824_final_gates.py'  # R9 六门哨兵：虚构 sk- 样例验证 privacy BLOCK 保留（同 cache_block_reclassification 先例，头部自文档化）
-  'skills/mirror-restart/SKILL.md'  # 镜像重启标准操作技能（命令需绝对路径，同镜像协议文档先例，非泄露）
-  'tests/fixtures/wire/'  # R9 行为基线 wire fixtures：生产报文如实固化快照（报文内含工作区路径记录，非泄露；等价对照用途内容不可改写）
+  'skills/mirror-restart/SKILL.md'  # 镜像重启标准操作技能（命令需绝对路径，同镜像协议文档先例，非泄露）【残余暴露登记 2026-10-30】本条豁免含裸用户名路径形态 /Users/<本机用户名>/：内容承重（等价对照/冻结实验定义/实测回执/sha256 背书）或为可执行命令，改写即破坏其证据或功能；残余暴露已知、具名、可审计，非疏漏
+  'tests/fixtures/wire/'  # R9 行为基线 wire fixtures：生产报文如实固化快照（报文内含工作区路径记录，非泄露；等价对照用途内容不可改写）【残余暴露登记 2026-10-30】本条豁免含裸用户名路径形态 /Users/<本机用户名>/：内容承重（等价对照/冻结实验定义/实测回执/sha256 背书）或为可执行命令，改写即破坏其证据或功能；残余暴露已知、具名、可审计，非疏漏
   'data/calib/h1c_control_bank.json'  # Gate0 项2 fixture 版本化：测试 bank 入库（PROBE 提交态自足；hash 背书于 tests/guards/fixture_manifest.json；非运行时数据，评测只读资产快照）
-  'tests/fixtures/trace_leak/isomorphic-replay-pair.jsonl'  # Gate0 项2 fixture 版本化：trace 泄漏实证报文如实固化快照（内含工作区路径记录=泄漏样本本体，非泄露；同 tests/fixtures/wire/ 先例，内容不可改写）
-  'tools/smx/lab/config-b.card'  # SMX lab treatment 评测卡：冻结样例，绝对路径是实验定义本体（同 tests/fixtures/wire/ 先例，内容不可改写）
+  'tests/fixtures/trace_leak/isomorphic-replay-pair.jsonl'  # Gate0 项2 fixture 版本化：trace 泄漏实证报文如实固化快照（内含工作区路径记录=泄漏样本本体，非泄露；同 tests/fixtures/wire/ 先例，内容不可改写）【残余暴露登记 2026-10-30】本条豁免含裸用户名路径形态 /Users/<本机用户名>/：内容承重（等价对照/冻结实验定义/实测回执/sha256 背书）或为可执行命令，改写即破坏其证据或功能；残余暴露已知、具名、可审计，非疏漏
+  'tools/smx/lab/config-b.card'  # SMX lab treatment 评测卡：冻结样例，绝对路径是实验定义本体（同 tests/fixtures/wire/ 先例，内容不可改写）【残余暴露登记 2026-10-30】本条豁免含裸用户名路径形态 /Users/<本机用户名>/：内容承重（等价对照/冻结实验定义/实测回执/sha256 背书）或为可执行命令，改写即破坏其证据或功能；残余暴露已知、具名、可审计，非疏漏
   'docs/promotion/zh13_article_verify.png'  # zh13 推广文章平台验证长截图存档（2428x11574 原分辨率保留证据价值；sips 重采样 w1400 仍 2.7MB 无法过 1MB 线，有损压缩不可接受；2026-10-14 CI 安全扫描暴露后登记）
-  'evals/browser_smc_subject_v01/results/'  # subject_v01 measured 回执：引擎 provenance 路径记录=机器产物本体（同 tests/fixtures/wire/ 先例，回执不可改写；仅 summary.json 入库）
+  'evals/browser_smc_subject_v01/results/'  # subject_v01 measured 回执：引擎 provenance 路径记录=机器产物本体（同 tests/fixtures/wire/ 先例，回执不可改写；仅 summary.json 入库）【残余暴露登记 2026-10-30】本条豁免含裸用户名路径形态 /Users/<本机用户名>/：内容承重（等价对照/冻结实验定义/实测回执/sha256 背书）或为可执行命令，改写即破坏其证据或功能；残余暴露已知、具名、可审计，非疏漏
   'tests/unit/test_jev_policy.py'  # Jev P1a policy 守卫测试：虚构私钥/AKIA/ghp_/sk- 样例验证红线模式递归扫描（同 cache_block_reclassification 先例，2026-10-15 登记）
   'tests/test_net_guard.py'  # 私网拦截回归夹具：172.16/192.168 网段样本=被测本体（改值即失测），2026-10-29 登记
   'tests/test_browser_site_policy.py'  # 同上：私网地址夹具验证 navigate 拦截
@@ -126,7 +164,7 @@ _PATH_ONLY_ALLOWLIST=(
 # 门槛高于其他粒度豁免：登记前须完成内容脱敏审查，且仅限"字符串是功能/样例本体"的场景
 # （如文档教用户配置 192.168.x 网段示例）。experiences/ 等知识档案**不得**登记于此——入库前脱敏。
 _PRIVACY_ONLY_ALLOWLIST=(
-  # （空——按需逐条登记，附理由与日期）
+  'docs/promotion/STATUS-20261010-first-batch.md'  # 知乎作者主页 slug（本机用户名派生）是去重工作流要引用的**公开**作者页 URL；平台侧本就公开，非本机身份（2026-10-30 登记；注记中不得写字面值，否则本脚本会拦自己）
 )
 
 _privacy_only_allowed() {
@@ -253,7 +291,12 @@ main() {
 
     # 规则 2/3/5: 内容扫描（staged=索引 blob；range/commit=对应提交 blob；tree=工作区；跳过二进制）
     if [[ -n "$src" ]]; then
-      blob="$(git show "${src}:${path}" 2>/dev/null)" || _fail "历史 blob 读取失败（fail-closed，防 C 引用名静默跳过内容规则）" "$path"
+      # fail-closed：历史 blob 读取失败不得静默跳过——跳过即等于该 blob 的全部内容规则失效，
+      # 空扫描会"假通过"且不留痕迹。独立审查 2026-10-30 P2-1：原实现 `|| continue`。
+      if ! blob="$(git show "${src}:${path}" 2>/dev/null)"; then
+        echo "❌ [git_security_scan] 历史 blob 读取失败（fail-closed）：${src}:${path}" >&2
+        _fail "历史 blob 不可读（fail-closed，拒绝静默跳过）" "$path"
+      fi
     elif [[ "$MODE" == "--staged" ]]; then
       blob="$(git show ":$path" 2>/dev/null || cat "$path")"
     else
@@ -271,12 +314,21 @@ main() {
     for pat in "${BLOCK_ABS_PATH_PATTERNS[@]}"; do
       _abs_path_only_allowed "$path" && break  # 仅此规则豁免知识档案目录；secret/大文件/禁路径不豁免
       if LC_ALL=C grep -qE "$pat" <<<"$blob"; then
+        # 系统公共目录例外（与规则5 同一判定）：/Users/Shared/ 等不是家目录用户名。
+        if [[ "$pat" == *'/Users/'* ]] && _home_hits_only_safe "$blob"; then
+          continue
+        fi
         _fail "本地绝对路径匹配 [$pat]" "$path"
       fi
     done
     # 规则 5: 内网/身份隐私——不继承 _abs_path_only/_path_only 粒度豁免（知识档案入库前必须脱敏）
     _privacy_only_allowed "$path" || for pat in "${BLOCK_PRIVACY_PATTERNS[@]}"; do
       if LC_ALL=C grep -qE "$pat" <<<"$blob"; then
+        # 系统公共目录例外：/Users/Shared/ 等不是家目录用户名 → 该命中不算身份暴露。
+        # （独立审查 2026-10-30 P2-2）命中用户名若全在安全名单内，则本模式不构成暴露。
+        if [[ "$pat" == '/Users/'* ]] && _home_hits_only_safe "$blob"; then
+          continue
+        fi
         echo "❌ [git_security_scan] 隐私规则拦截 [$pat]（源提交 ${src:-worktree}）" >&2
         _fail "内网/身份隐私匹配（脱敏后重试；RULE-AI-28 push 闸）" "$path"
       fi

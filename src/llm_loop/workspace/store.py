@@ -1,7 +1,7 @@
 """工作区注册表（对齐 DSH Workspace：目录绑定、会话按工作区分区隔离）.
 
 - 注册表文件: data/workspaces.json（version + workspaces[{id, path, created_at}]）
-- workspace key（会话目录名）: DSH 式路径编码 `--Users-yyj-Project-llm-first-loop--`
+- workspace key（会话目录名）: DSH 式路径编码 `--Users-<user>-Project-llm-first-loop--`
   （绝对路径 / → -，剥前导 /，首尾 --）
 - 会话存储: data/sessions/<key>/<session_id>.json（按工作区分区）
 - 迁移: 首次装配把 data/sessions 下旧会话（非目录文件）移入默认工作区目录（幂等）

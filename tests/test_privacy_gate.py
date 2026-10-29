@@ -2,8 +2,8 @@
 背景：2026-10-29 知识卡携内网 IP+用户名推上公开仓；修复审查发现 --range 净 diff 会漏掉
 "中间提交引入后被还原"的泄露（P1），本测试固化该行为契约。"""
 import os
+import re
 import subprocess
-
 import pytest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -164,8 +164,99 @@ def test_pre_push_hook_blocks_dirty_range(repo, tmp_path):
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "purge", "--no-verify"], check=True, capture_output=True)
     head = rev(repo)
     refs = "refs/heads/main " + head + " refs/heads/main " + base + "\n"
-    env = dict(os.environ)
-    env["USER"] = "yo"
+    env = dict(os.environ); env["USER"] = "yo"
     out = subprocess.run(["bash", HOOK], cwd=repo, input=refs, env=env,
                          capture_output=True, text=True, timeout=120)
     assert out.returncode == 1  # 钩子 fail-closed：脏 range 必须拦住推送
+
+
+def test_rule5_blocks_username_path_in_rule3_exempt_dir(repo):
+    """P1 回归（2026-10-30 push 闸 REVISE P1-1）：规则3 对 experiences/ 粒度豁免，
+    规则5 必须独立拦下裸用户名路径形态——且在通用 CI 账户下同样拦（静态模式）。
+
+    审查指控：旧实现只有**动态** /Users/<当前用户>/ 模式，CI 用通用账户（runner）
+    时该模式被跳过 → 知识档案里的用户名路径在 CI 上直接放行（闸形同虚设）。
+    """
+    d = repo / "experiences"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "e.md").write_text("tail -5 /Users/someoneelse/Project/x.log")
+    subprocess.run(["git", "-C", str(repo), "add", "experiences/e.md"], check=True)
+    assert run_scan(repo, "--staged", env_user="runner").returncode == 1
+
+
+def test_rule5_allows_masked_username_path(repo):
+    """脱敏形态 /Users/<user>/ 不得误报（'<' 不在用户名字符类内）。
+
+    这是本次改造的可用性底线：闸变严不能把仓库自有文档约定（docs/ 与知识卡统一用
+    /Users/<user>/）判成违规。
+    """
+    (repo / "m.md").write_text("tail -5 /Users/<user>/Project/x.log")
+    subprocess.run(["git", "-C", str(repo), "add", "m.md"], check=True)
+    assert run_scan(repo, "--staged").returncode == 0
+
+
+def test_rule5_allows_ellipsis_path_placeholder(repo):
+    """省略号路径示例（/Users/.../）不是用户名，不得误报。
+
+    复核发现：静态模式原为 /Users/[A-Za-z0-9_.-]+/，字符类含 '.' → 省略号形态
+    （src/llm_loop/llm/providers.py 的模型路径示例）被当成用户名命中。
+    修复：首字符强制字母数字。
+    """
+    (repo / "e.py").write_text('# 如 "/Users/.../.lmstudio/models/org/X"\n')
+    subprocess.run(["git", "-C", str(repo), "add", "e.py"], check=True)
+    assert run_scan(repo, "--staged").returncode == 0
+
+
+def test_rule5_allows_macos_shared_public_dir(repo):
+    """P2-2 回归：/Users/Shared/ 是 macOS 系统公共目录（非家目录用户名）→ 不得误报。
+
+    独立审查 2026-10-30 P2-2：静态模式 /Users/<name>/ 会把合法系统路径当用户名命中，
+    未来文档一旦提及即误报。修复：命中用户名若全在 _SAFE_HOME_DIRS 内则不算身份暴露。
+    """
+    (repo / "s.md").write_text("ls /Users/Shared/Public\n")
+    subprocess.run(["git", "-C", str(repo), "add", "s.md"], check=True)
+    assert run_scan(repo, "--staged").returncode == 0
+
+
+def test_rule5_still_blocks_real_user_beside_shared_dir(repo):
+    """安全目录例外不得放宽成整体放行：同文件出现真实用户名形态仍必须拦。"""
+    (repo / "s2.md").write_text("ls /Users/Shared/Public /Users/someoneelse/x\n")
+    subprocess.run(["git", "-C", str(repo), "add", "s2.md"], check=True)
+    assert run_scan(repo, "--staged").returncode == 1
+
+
+def test_gate_own_test_file_is_broadly_exempt():
+    """P2-3 回归：本文件含 /Users/<样例用户名>/ 字面量（规则5 用例样本）。
+
+    规则5 不继承 _PATH_ONLY/_ABS_PATH_ONLY/_PRIVACY_ONLY 粒度豁免 → 本文件必须由
+    **全规则**豁免（_ALLOWLIST）覆盖，否则闸会自阻塞（自己的测试样本把自己拦下）。
+    """
+    with open(SCAN, encoding="utf-8") as fh:
+        script = fh.read()
+    m = re.search(r"_ALLOWLIST=\((.*?)\n\)", script, re.S)
+    assert m, "未找到 _ALLOWLIST 定义"
+    entries = re.findall(r"'([^']+)'", m.group(1))
+    assert "tests/test_privacy_gate.py" in entries
+    # 豁免是承重的：本文件确实含规则5 会命中的裸用户名形态
+    with open(__file__, encoding="utf-8") as fh:
+        assert "/Users/someoneelse/" in fh.read()
+
+
+def test_range_fails_closed_on_unreadable_history_blob(repo):
+    """P2-1 回归：历史 blob 读取失败必须 fail-closed，不得静默跳过。
+
+    静默跳过 = 该 blob 的全部内容规则失效；空扫描会"假通过"且不留痕迹。
+    独立审查 2026-10-30 P2-1：原实现 `|| continue`（远端已修的 fail-closed 被回退）。
+    """
+    base = rev(repo)
+    commit_file(repo, "blob.md", "hello\n", "add")
+    head = rev(repo)
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD:blob.md"],
+                         check=True, capture_output=True, text=True).stdout.strip()
+    obj = repo / ".git" / "objects" / sha[:2] / sha[2:]
+    if not obj.exists():
+        pytest.skip("blob 已被打包，无法构造不可读对象")
+    obj.unlink()
+    out = run_scan(repo, "--range", base, head)
+    assert out.returncode == 1  # fail-closed：拒绝而非静默跳过
+    assert "不可读" in out.stderr or "fail-closed" in out.stderr

@@ -14,6 +14,6 @@ updated_at: "2026-09-11T19:55:09.647912+08:00"
 last_verified_at: "2026-09-11T19:55:09.647912+08:00"
 ---
 
-用户原话（裁决）："冻结不是为了保护旧设计不被修改；发现冻结契约和真实程序事实冲突时，应修改契约，而不是为了'已经冻结'强迫程序迎合错误假设。" 落地记录：M1 保持 PASS 仅补勘误；M2 R1 七项修订（BLOCKED 拆分/canonical args/全语义 digest 32hex/round_index 显式下传/audit sink 单一化/计数器与 ts 清理/T5a+T5b+T7 混合批次）当日落稿并按裁决冻结。另记工作区纪律：所有文件操作经核实仅落镜像区 /Users/yyj/Project/llm-first-loop-mirror，主区 /Users/yyj/Project/llm-first-loop 属其他 spec 目录不写入。
+用户原话（裁决）："冻结不是为了保护旧设计不被修改；发现冻结契约和真实程序事实冲突时，应修改契约，而不是为了'已经冻结'强迫程序迎合错误假设。" 落地记录：M1 保持 PASS 仅补勘误；M2 R1 七项修订（BLOCKED 拆分/canonical args/全语义 digest 32hex/round_index 显式下传/audit sink 单一化/计数器与 ts 清理/T5a+T5b+T7 混合批次）当日落稿并按裁决冻结。另记工作区纪律：所有文件操作经核实仅落镜像区 /Users/<user>/Project/llm-first-loop-mirror，主区 /Users/<user>/Project/llm-first-loop 属其他 spec 目录不写入。
 
 当前适用性说明：该记录中的 DuplicateGuard 仅是 2026-09-03 被证伪的历史假设，不代表当前 runtime 存在或应恢复该机制。

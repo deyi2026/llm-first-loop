@@ -3,7 +3,7 @@ title: EvolutionStore 落盘异区 split-brain：data_dir 相对路径随进程 
 scenario: 演进建议提交回执成功（pending_review），但用户在主区 web（8902）审阅页看不到——EvolutionStore 落盘到了镜像区 data/audit/evolution_suggestions.jsonl，主区/镜像数据 split-brain。任何依赖 data_dir 相对路径的存储（演进/审计/会话归档）都会受影响。
 root_cause: data_dir 默认相对路径随进程 cwd 漂移（主因）+ .env 显式 DATA_DIR=./data 覆盖代码默认值（次因）+ 引擎子进程 env 持久残留旧值干扰验证（复现坑）
 solution: "①config.py 默认值改包位置锚定：_DEFAULT_DATA_DIR = str(Path(__file__).resolve().parents[2] / \"data\")，字段默认与 load_settings 默认同步替换（代码所在区=数据所在区，editable 安装下主区 venv→主区 data，镜像 venv→镜像 data，天然隔离）；②两区 .env 的 DATA_DIR=./data 行改注释（env 优先级高于默认值，不清掉则代码修复被覆盖）；③重启服务进程（env 在启动时注入）。验证三重：ps eww <pid> 看进程实际 env、env -u DATA_DIR -u PYTHONPATH 后 chdir 代码级验证、web API 运行层验证。测试注意：monkeypatch.chdir 后 load_env_file 若用 cwd 相对路径找 .env 会失败，必填 env 需 setenv 预置。"
-evidence: 实例：EVO-20260829-6a78d4bb/06c96021 submit_evolution 回执成功（pending_review）但主区 evolution_suggestions.jsonl 130 条无此两条，镜像区文件 L44/L45 才有；修复后三重验证回执：新 web 52240 进程 env DATA_DIR=/Users/yyj/Project/llm-first-loop/data + PYTHONPATH=主区/src；env -u 后 cwd=/tmp 下 load_settings().data_dir 锚定主区；web API 返回 132 条含两条建议。
+evidence: 实例：EVO-20260829-6a78d4bb/06c96021 submit_evolution 回执成功（pending_review）但主区 evolution_suggestions.jsonl 130 条无此两条，镜像区文件 L44/L45 才有；修复后三重验证回执：新 web 52240 进程 env DATA_DIR=/Users/<user>/Project/llm-first-loop/data + PYTHONPATH=主区/src；env -u 后 cwd=/tmp 下 load_settings().data_dir 锚定主区；web API 返回 132 条含两条建议。
 tags: [split-brain, data_dir, cwd-drift, PYTHONPATH, editable-install, env-priority, EvolutionStore]
 source: {}
 status: active

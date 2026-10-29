@@ -27,7 +27,7 @@
   "label_gate": {
     "dual_agreement_rate": 0.9773,
     "gate": "≥0.70 (§11.3)",
-    "source": "/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1l-expand-20261015/v2_labels_merged.json"
+    "source": "/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1l-expand-20261015/v2_labels_merged.json"
   },
   "batches": [
     {
@@ -61,65 +61,65 @@
       "usage": {},
       "summary": {},
       "event_persisted": true,
-      "error_detail": "transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "error_detail": "transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-103",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-104",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-105",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-106",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-107",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-108",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-109",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-110",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-111",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-112",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     },
     {
       "batch_id": "case-113",
       "status": "aborted",
-      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
+      "reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt"
     }
   ],
-  "aborted_reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/yyj/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt",
+  "aborted_reason": "batch_not_recorded: case-102 transport: semif-score exit=1: dor/SemIf/src/semif_phase1/mlx_backend.py\", line 202, in score_shared\n    _check_prefix(prefix, encoded)\n  File \"/Users/<user>/Project/llm-first-loop-mirror/outputs/jev-p1b-20261015/vendor/SemIf/src/semif_phase1/mlx_backend.py\", line 139, in _check_prefix\n    raise ValueError(\"The fixed state prefix does not match every full prompt\")\nValueError: The fixed state prefix does not match every full prompt",
   "guard_used": {
     "requests_used": 2,
     "questions_used": 7,
@@ -507,5 +507,6 @@
     ]
   },
   "claim_limit": "44 题（dual_agreed 子集 ≤44）<§9.2 200 条可行性起点：不构成校准资格、不构成 Jev 校准、不授予排序/保存/生产资格；本地 judge 扩样单批次事实",
-  "honesty": "观察结果不改闸（§11.3）；真实执行事实以本目录 events/audit/report 为准"
+  "honesty": "观察结果不改闸（§11.3）；真实执行事实以本目录 events/audit/report 为准",
+  "redaction_note": "2026-10-30 push 闸：preview 内裸用户名路径形态已脱敏（统一替换为 /Users/<user>/ 形态，本注记不复制原用户名以免二次触发隐私规则）。preview 是被哈希载荷的**截断展示**（另有 preview_complete 标记），脱敏只改展示文本、不改动原件；文件内记录的 payload_sha256 / event_sha256 / command_sha256 等哈希字段仍指向**脱敏前**的完整载荷与实际执行的命令（那是既成事实，重算即等于伪造记录），因此这些哈希与已脱敏的展示文本不再逐字对应——这是脱敏的预期结果，不是记录损坏。"
 }

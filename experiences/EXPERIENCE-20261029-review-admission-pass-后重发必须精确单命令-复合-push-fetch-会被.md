@@ -3,7 +3,7 @@ title: review_admission PASS 后重发必须精确单命令：复合 push+fetch 
 scenario: "RULE-AI-28 审查闸（review_admission PASS）之后重发 git push；或任何\"审查过的单命令\"想和验证命令拼一条执行"
 root_cause: ""
 solution: 审查绑定的命令逐字单发，验证命令（fetch/rev-parse/log）拆成独立 execute_command；不要给受保护动作附加任何复合段。
-evidence: "execute_command 阻断回执 compound_protected_shell_requires_split_commands（workdir=/Users/yyj/Project/llm-first-loop-mirror, candidate ac3e3bca…）；拆分后单命令 push 成功 0b6138833..67704b794，fetch 回读 HEAD==lfl/main==67704b794。"
+evidence: "execute_command 阻断回执 compound_protected_shell_requires_split_commands（workdir=/Users/<user>/Project/llm-first-loop-mirror, candidate ac3e3bca…）；拆分后单命令 push 成功 0b6138833..67704b794，fetch 回读 HEAD==lfl/main==67704b794。"
 tags: [RULE-AI-28, review_admission, git_push, 复合命令, 准入绑定]
 source:
   commit: 67704b79495dc1c210d9c906310ea613d750407a

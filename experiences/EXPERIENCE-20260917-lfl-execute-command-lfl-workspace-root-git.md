@@ -3,7 +3,7 @@ title: LFL 运行时 execute_command 环境注入 LFL_WORKSPACE_ROOT 致 git 相
 scenario: 在 LFL 运行时内通过 execute_command 运行仓库 pytest 单测，凡依赖 git 相对 CWD 行为的用例（如 proc_version.workspace_dirty 系列）会出现与代码改动无关的失败，易被误判为回归。
 root_cause: ""
 solution: 回归判定前先做受控对照：env -u LFL_WORKSPACE_ROOT <venv>/bin/python -m pytest <case> 重跑；剔除后通过即可归因于运行时注入的环境变量（_git_command 的 -C $LFL_WORKSPACE_ROOT 使 git 偏离测试 tmp 仓库）。execute_command 非交互 shell PATH 无 python 时用绝对路径 .venv/bin/python。若要在运行时内获得可信全量结果，先剔除该变量再跑。
-evidence: "对照实验证据：evidence://v1/82eca721afdb76cb8a99ccb5544d300487f72eec169b93e601ff1b0737ddc838（注入环境下失败）与 env -u LFL_WORKSPACE_ROOT + /Users/yyj/Project/llm-first-loop-mirror/.venv/bin/python 重跑通过（evidence://v1/667250eb65e6f864193b39f28487eb720b1e872404415e607612b57bebbb2756 同轮）；根因代码 src/llm_loop/introspection/proc_version.py:22-31（_source_workspace/_git_command 的 -C 注入）"
+evidence: "对照实验证据：evidence://v1/82eca721afdb76cb8a99ccb5544d300487f72eec169b93e601ff1b0737ddc838（注入环境下失败）与 env -u LFL_WORKSPACE_ROOT + /Users/<user>/Project/llm-first-loop-mirror/.venv/bin/python 重跑通过（evidence://v1/667250eb65e6f864193b39f28487eb720b1e872404415e607612b57bebbb2756 同轮）；根因代码 src/llm_loop/introspection/proc_version.py:22-31（_source_workspace/_git_command 的 -C 注入）"
 tags: [pytest, LFL_WORKSPACE_ROOT, environment-interference, regression-triage, proc_version]
 source: {}
 status: active

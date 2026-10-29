@@ -651,7 +651,7 @@
       "run_ref": null,
       "event_sha256": "3c3e3a9bf3552dc009619adb9e871c30a3ed39898fb339a30e770bcbe3a505c8",
       "payload_sha256": "1d86d0aa8b394afe4b3cd8b04ef353565456feb984114f6e3a033519a614a5b1",
-      "preview": "{\"auto_reclaim\": false, \"command_sha256\": \"c918267c217b16a9900622742b648dd61a425ccf4fe46b0e671f4c2f77671ffc\", \"executor\": \"execute_command\", \"job_id\": \"job-a7d1913a465149df9ea7\", \"origin_run_generation\": \"058dc3b808c543eeb2398a817e69d1fc\", \"pgid\": 86259, \"pid\": 86259, \"workspace_root\": \"/Users/yyj/Project/llm-first-loop-mirror\"}",
+      "preview": "{\"auto_reclaim\": false, \"command_sha256\": \"c918267c217b16a9900622742b648dd61a425ccf4fe46b0e671f4c2f77671ffc\", \"executor\": \"execute_command\", \"job_id\": \"job-a7d1913a465149df9ea7\", \"origin_run_generation\": \"058dc3b808c543eeb2398a817e69d1fc\", \"pgid\": 86259, \"pid\": 86259, \"workspace_root\": \"/Users/<user>/Project/llm-first-loop-mirror\"}",
       "preview_complete": true,
       "coverage": {
         "field": "canonical_payload_json",
@@ -691,7 +691,7 @@
       "run_ref": null,
       "event_sha256": "02747acf270f15d4e70c43a1012ef74c3bf93c5489b3cf9d540643033f6e3a8c",
       "payload_sha256": "86687df9c91bcf122ea5dfaaaf967daf2d17ef2fa936e4cb4025c5a40c1065d4",
-      "preview": "{\"content\": \"[状态: success] [后台任务已启动] job_id=job-a7d1913a465149df9ea7 status=running\\n命令: cd /Users/yyj/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //' | sort -u > tmp/collect_errors.txt\\necho \\\"targets=$(wc -l < tmp/collect_errors.txt | tr -d ' ",
+      "preview": "{\"content\": \"[状态: success] [后台任务已启动] job_id=job-a7d1913a465149df9ea7 status=running\\n命令: cd /Users/<user>/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //' | sort -u > tmp/collect_errors.txt\\necho \\\"targets=$(wc -l < tmp/collect_errors.txt | tr -d ' ",
       "preview_complete": false,
       "coverage": {
         "field": "canonical_payload_json",
@@ -1051,7 +1051,7 @@
       "run_ref": null,
       "event_sha256": "8c6144a62b4b7487c3b6d2178f1b302127f1cba392262ad22b5f8c253b9f42f2",
       "payload_sha256": "099345c9573b8e4a24374df4358afeb35ee48b963549129f0126c3a27e3bd779",
-      "preview": "{\"content\": \"[状态: success] [任务 job-a7d1913a465149df9ea7] 状态=done (exit=0) local_handle=true durable=true state_durable=true cancel_requested=false auto_reclaim=false\\n命令: cd /Users/yyj/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //' | sort -u > ",
+      "preview": "{\"content\": \"[状态: success] [任务 job-a7d1913a465149df9ea7] 状态=done (exit=0) local_handle=true durable=true state_durable=true cancel_requested=false auto_reclaim=false\\n命令: cd /Users/<user>/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //' | sort -u > ",
       "preview_complete": false,
       "coverage": {
         "field": "canonical_payload_json",
@@ -1391,7 +1391,7 @@
       "run_ref": null,
       "event_sha256": "8b61552735b73bbc49caea4af9d87997d56ee4fb2e9d52ed650fec86d72837be",
       "payload_sha256": "55b6026137a39b4ea7366071697f976a486ac7a0fde634ae198b24c3e22da31b",
-      "preview": "{\"content\": \"[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop-mirror echo '=== collect_errors.txt 头尾 ==='; head [退出码 0] [输出 26 行]\\n=== collect_errors.txt 头尾 ===\\ntests/feishu _________________________\\ntests/unit/test_attachment_hydration.py ___________\\ntests/unit/test_doc_image_recognition.py ___________\\ntests/unit/test_feishu_fallback_receipt.py __________\\ntests/unit/test_feishu_image_",
+      "preview": "{\"content\": \"[状态: success] [命令] cd /Users/<user>/Project/llm-first-loop-mirror echo '=== collect_errors.txt 头尾 ==='; head [退出码 0] [输出 26 行]\\n=== collect_errors.txt 头尾 ===\\ntests/feishu _________________________\\ntests/unit/test_attachment_hydration.py ___________\\ntests/unit/test_doc_image_recognition.py ___________\\ntests/unit/test_feishu_fallback_receipt.py __________\\ntests/unit/test_feishu_image_",
       "preview_complete": false,
       "coverage": {
         "field": "canonical_payload_json",
@@ -1731,7 +1731,7 @@
       "run_ref": null,
       "event_sha256": "6d4f75cc32d9c2f5b2da58e1cdb8e20c36b93919260961cadb1e914cc0400681",
       "payload_sha256": "eb5facd787da07c0b44ee58349ddc223fb123a39a11e9b1077eb5ab9454c6fd4",
-      "preview": "{\"auto_reclaim\": false, \"command_sha256\": \"fb6e7b8790cdae3f2774a262a3bff4caa5531d2473dcd957c2a228b98a1da365\", \"executor\": \"execute_command\", \"job_id\": \"job-0bcd78b3ab1541deacf6\", \"origin_run_generation\": \"058dc3b808c543eeb2398a817e69d1fc\", \"pgid\": 86419, \"pid\": 86419, \"workspace_root\": \"/Users/yyj/Project/llm-first-loop-mirror\"}",
+      "preview": "{\"auto_reclaim\": false, \"command_sha256\": \"fb6e7b8790cdae3f2774a262a3bff4caa5531d2473dcd957c2a228b98a1da365\", \"executor\": \"execute_command\", \"job_id\": \"job-0bcd78b3ab1541deacf6\", \"origin_run_generation\": \"058dc3b808c543eeb2398a817e69d1fc\", \"pgid\": 86419, \"pid\": 86419, \"workspace_root\": \"/Users/<user>/Project/llm-first-loop-mirror\"}",
       "preview_complete": true,
       "coverage": {
         "field": "canonical_payload_json",
@@ -1771,7 +1771,7 @@
       "run_ref": null,
       "event_sha256": "a6fd6a408bff9ffdb67df310378c9247f2c385e70232033d68576f7ed7c3ed28",
       "payload_sha256": "dafce4bf34ae0536899fc87320e27cba23f876a03556f781c581653ec1fc3148",
-      "preview": "{\"content\": \"[状态: success] [后台任务已启动] job_id=job-0bcd78b3ab1541deacf6 status=running\\n命令: cd /Users/yyj/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\nsed 's/.*ERROR collecting //; s/[ _]*$//' tmp/pytest_full2.log | grep -E '^tests/' | sort -u > tmp/collect_errors.txt\\necho \\\"targets=$(wc -l < tmp/collect_errors.txt | tr",
+      "preview": "{\"content\": \"[状态: success] [后台任务已启动] job_id=job-0bcd78b3ab1541deacf6 status=running\\n命令: cd /Users/<user>/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\nsed 's/.*ERROR collecting //; s/[ _]*$//' tmp/pytest_full2.log | grep -E '^tests/' | sort -u > tmp/collect_errors.txt\\necho \\\"targets=$(wc -l < tmp/collect_errors.txt | tr",
       "preview_complete": false,
       "coverage": {
         "field": "canonical_payload_json",
@@ -2391,7 +2391,7 @@
       "run_ref": null,
       "event_sha256": "1860972679a88ac3aa04e661a633cd4ff7fe3f8632bc98157ea157086811f882",
       "payload_sha256": "62e969879b87628b1f07f74c913a37320f9e38f37ad0b7852b43f8a449a1d14c",
-      "preview": "{\"content\": \"[状态: success] [任务 job-0bcd78b3ab1541deacf6] 状态=done (exit=0) local_handle=true durable=true state_durable=true cancel_requested=false auto_reclaim=false\\n命令: cd /Users/yyj/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\nsed 's/.*ERROR collecting //; s/[ _]*$//' tmp/pytest_full2.log | grep -E '^tests/' | sort",
+      "preview": "{\"content\": \"[状态: success] [任务 job-0bcd78b3ab1541deacf6] 状态=done (exit=0) local_handle=true durable=true state_durable=true cancel_requested=false auto_reclaim=false\\n命令: cd /Users/<user>/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\nsed 's/.*ERROR collecting //; s/[ _]*$//' tmp/pytest_full2.log | grep -E '^tests/' | sort",
       "preview_complete": false,
       "coverage": {
         "field": "canonical_payload_json",
@@ -2771,7 +2771,7 @@
       "run_ref": null,
       "event_sha256": "619579bc3512e49783c1acc93d0110aabe032202124de52a88feba6ba4a94bcc",
       "payload_sha256": "c1aff339a45835301614831df03937927975f7226d2fd0e0846f901d6cb6d3cf",
-      "preview": "{\"auto_reclaim\": false, \"command_sha256\": \"2e78e0e486efd811253ce0c559c17f5e80b917601541f3bcfd6ed02925feec96\", \"executor\": \"execute_command\", \"job_id\": \"job-14973d4e1b78487facd7\", \"origin_run_generation\": \"058dc3b808c543eeb2398a817e69d1fc\", \"pgid\": 87060, \"pid\": 87060, \"workspace_root\": \"/Users/yyj/Project/llm-first-loop-mirror\"}",
+      "preview": "{\"auto_reclaim\": false, \"command_sha256\": \"2e78e0e486efd811253ce0c559c17f5e80b917601541f3bcfd6ed02925feec96\", \"executor\": \"execute_command\", \"job_id\": \"job-14973d4e1b78487facd7\", \"origin_run_generation\": \"058dc3b808c543eeb2398a817e69d1fc\", \"pgid\": 87060, \"pid\": 87060, \"workspace_root\": \"/Users/<user>/Project/llm-first-loop-mirror\"}",
       "preview_complete": true,
       "coverage": {
         "field": "canonical_payload_json",
@@ -2811,7 +2811,7 @@
       "run_ref": null,
       "event_sha256": "52880f8cd5fa5a4e208d1e80f7d829dd0d60c1a7f7fe115bdfc8112b16fcb973",
       "payload_sha256": "f634d98e4c84066c88a691577a2bafaced0df208b259a7bd751144cfe3e454df",
-      "preview": "{\"content\": \"[状态: success] [后台任务已启动] job_id=job-14973d4e1b78487facd7 status=running\\n命令: cd /Users/yyj/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //; s/[ _]*$//' | sort -u > tmp/collect_errors.txt\\nn=$(wc -l < tmp/collect_errors.txt | tr -d ' '",
+      "preview": "{\"content\": \"[状态: success] [后台任务已启动] job_id=job-14973d4e1b78487facd7 status=running\\n命令: cd /Users/<user>/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //; s/[ _]*$//' | sort -u > tmp/collect_errors.txt\\nn=$(wc -l < tmp/collect_errors.txt | tr -d ' '",
       "preview_complete": false,
       "coverage": {
         "field": "canonical_payload_json",
@@ -3431,7 +3431,7 @@
       "run_ref": null,
       "event_sha256": "26a27530e4c7c790042d86420dfa07c6bfe2d8f52c26b81e577933ac8074e35b",
       "payload_sha256": "dd16b413f159ea5772926a4c15722be19d59c6b7c293895b37a5b71b7e299be7",
-      "preview": "{\"content\": \"[状态: success] [任务 job-14973d4e1b78487facd7] 状态=done (exit=0) local_handle=true durable=true state_durable=true cancel_requested=false auto_reclaim=false\\n命令: cd /Users/yyj/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //; s/[ _]*$//' ",
+      "preview": "{\"content\": \"[状态: success] [任务 job-14973d4e1b78487facd7] 状态=done (exit=0) local_handle=true durable=true state_durable=true cancel_requested=false auto_reclaim=false\\n命令: cd /Users/<user>/Project/llm-first-loop-mirror\\nunset $(env | cut -d= -f1 | grep -E '^(LFL_|LLM_|MODEL_)' | tr '\\\\n' ' ') 2>/dev/null || true\\ngrep 'ERROR collecting' tmp/pytest_full2.log | sed 's/.*ERROR collecting //; s/[ _]*$//' ",
       "preview_complete": false,
       "coverage": {
         "field": "canonical_payload_json",
@@ -6896,5 +6896,6 @@
   "task_success": "not_evaluated",
   "task_benefit": "not_evaluated",
   "semantic_summary": "not_generated",
-  "digest_ref": "session-digest:45857e818f1924c6e1119f1460ca4a8ef9ddf57f42e99dc6ac57e6c4ede1e121"
+  "digest_ref": "session-digest:45857e818f1924c6e1119f1460ca4a8ef9ddf57f42e99dc6ac57e6c4ede1e121",
+  "redaction_note": "2026-10-30 push 闸：preview 内裸用户名路径形态已脱敏（统一替换为 /Users/<user>/ 形态，本注记不复制原用户名以免二次触发隐私规则）。preview 是被哈希载荷的**截断展示**（另有 preview_complete 标记），脱敏只改展示文本、不改动原件；文件内记录的 payload_sha256 / event_sha256 / command_sha256 等哈希字段仍指向**脱敏前**的完整载荷与实际执行的命令（那是既成事实，重算即等于伪造记录），因此这些哈希与已脱敏的展示文本不再逐字对应——这是脱敏的预期结果，不是记录损坏。"
 }

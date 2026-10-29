@@ -33,7 +33,7 @@ solution: |
   **当前性验证动作**（复现本条结论，成本一条命令）：
   
   ```
-  cd /Users/yyj/Project/llm-first-loop-mirror && PYTHONPATH=src .venv/bin/python -c "
+  cd /Users/<user>/Project/llm-first-loop-mirror && PYTHONPATH=src .venv/bin/python -c "
   import sys; sys.path.insert(0,'src')
   import llm_loop.feedback.validator as V
   old=V._COMPLETION_MARKERS

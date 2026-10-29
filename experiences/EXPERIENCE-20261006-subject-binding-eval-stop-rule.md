@@ -13,4 +13,4 @@ created_at: "2026-10-06T15:37:11.350196+08:00"
 updated_at: "2026-10-06T15:37:11.350196+08:00"
 ---
 
-当前性验证：`ls /Users/yyj/Project/llm-first-loop-mirror/.worktrees/method-binding-efficacy-v3-20261006/evals/method_binding_efficacy_v3/confirmatory_provider_v1/status | wc -l` 应得 92；`git -C <worktree> log --oneline -1` 应含 5f0b794f9；若 reopen 提案出现，先核对 PRODUCTION-VALUE-AUDIT.md 的三个前置条件是否满足。
+当前性验证：`ls /Users/<user>/Project/llm-first-loop-mirror/.worktrees/method-binding-efficacy-v3-20261006/evals/method_binding_efficacy_v3/confirmatory_provider_v1/status | wc -l` 应得 92；`git -C <worktree> log --oneline -1` 应含 5f0b794f9；若 reopen 提案出现，先核对 PRODUCTION-VALUE-AUDIT.md 的三个前置条件是否满足。

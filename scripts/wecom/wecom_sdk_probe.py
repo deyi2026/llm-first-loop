@@ -1,7 +1,7 @@
 """企微 SDK 连接探针（只读探测，不发消息、不改状态）。
 
 用途：在真实凭据到位后，第一时间区分「网络/鉴权/协议问题」与「桥接代码问题」。
-用法：.venv/bin/python data/e2e/wecom_sdk_probe.py
+用法：.venv/bin/python scripts/wecom/wecom_sdk_probe.py
 需要环境变量：WECHAT_BOT_ID、WECHAT_BOT_SECRET（从主区 .env 读取）
 """
 

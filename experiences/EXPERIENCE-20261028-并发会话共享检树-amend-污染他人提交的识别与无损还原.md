@@ -13,7 +13,7 @@ created_at: "2026-10-28T22:22:04.307447+08:00"
 updated_at: "2026-10-28T22:22:04.307447+08:00"
 ---
 
-场景：多会话共用同一检树 /Users/yyj/Project/llm-first-loop-mirror（本会话在 feat/web-model-admin-ship-20261028 上工作，另一会话同时在主编检树切到 fix/rules-version-wheel-install-20261028 并提交）。
+场景：多会话共用同一检树 /Users/<user>/Project/llm-first-loop-mirror（本会话在 feat/web-model-admin-ship-20261028 上工作，另一会话同时在主编检树切到 fix/rules-version-wheel-install-20261028 并提交）。
 事故：本会话未核对 HEAD 分支即执行 `git commit --amend`，把本会话的 provider_routes.py 改动并进了另一会话的提交 19758ec79（amend 后 81d14404e），跨任务污染。
 发现：出问题时不要把 HEAD 上的改动再 amend/reset 当作"修自己"，要先看 `git branch --show-current` + `git reflog`，确认提交归属。
 修复（可复现）：

@@ -31,8 +31,8 @@
         "verification": "verified",
         "freshness": "unknown",
         "snapshot_fp": "projection:5d959d35fc11120e76e8",
-        "source_sha256": "36fb143694a8ad2b5c8da660cdb66cc5718d95fe2318544effe91b6374da6d08"
-      }
+        "source_sha256": "8304dcb46c8aa8a8a09c78d8ae37a376c0ef07dd04571f1d47e5d9bcb7f4c213"
+      , "redaction_note": "2026-10-30 push 闸 REVISE P1-1：源经验卡内裸用户名路径形态已脱敏（/Users/<user>/），本条 source_sha256 随之重算并登记；脱敏不改变卡片语义"}
     ]
   }
 }
