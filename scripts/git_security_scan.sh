@@ -59,7 +59,13 @@ BLOCK_PRIVACY_PATTERNS=(
   '\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})\b'  # 私网 IPv4（内网拓扑泄露）
 )
 # user@ 与主机名规则按当前机器动态生成（空值跳过，防误配；已 ERE 转义）
-[[ -n "${_PRIV_USER}" ]] && BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]${_PRIV_USER_ESC}@" '\b'"${_PRIV_USER_ESC}"'-[A-Za-z0-9]')  # user@host / user-XXX 主机名前缀形态
+# 通用服务/CI 账户（GitHub Actions=runner 等）不是私有身份：其 user@/user-前缀动态模式在 CI 上
+# 必然误报（CHANGELOG 的 "runner-proof"、方法卡名 "runner-silence-…"），跳过动态身份模式；
+# 私网 IPv4 等静态规则不受影响，本机真实用户名仍全量生效（2026-10-29 CI privacy-scan 红根因修复）。
+_PRIV_GENERIC_USERS=' runner github githubactions github-actions build builder ci jenkins circleci gitlab deploy root daemon nobody ubuntu test '
+if [[ -n "${_PRIV_USER}" && "${_PRIV_GENERIC_USERS}" != *" ${_PRIV_USER} "* ]]; then
+  BLOCK_PRIVACY_PATTERNS+=("[[:space:]/\"'=(]${_PRIV_USER_ESC}@" '\b'"${_PRIV_USER_ESC}"'-[A-Za-z0-9]')  # user@host / user-XXX 主机名前缀形态
+fi
 [[ -n "${_PRIV_HOST_S}" && "${_PRIV_HOST_S}" != "localhost" ]] && BLOCK_PRIVACY_PATTERNS+=('\b'"${_PRIV_HOST_ESC}"'\b')
 
 # ── 豁免白名单（确属测试夹具/样例，无敏感值；路径子串匹配）──
@@ -82,6 +88,12 @@ _ALLOWLIST=(
   'docs/promotion/zh13_article_verify.png'  # zh13 推广文章平台验证长截图存档（2428x11574 原分辨率保留证据价值；sips 重采样 w1400 仍 2.7MB 无法过 1MB 线，有损压缩不可接受；2026-10-14 CI 安全扫描暴露后登记）
   'evals/browser_smc_subject_v01/results/'  # subject_v01 measured 回执：引擎 provenance 路径记录=机器产物本体（同 tests/fixtures/wire/ 先例，回执不可改写；仅 summary.json 入库）
   'tests/unit/test_jev_policy.py'  # Jev P1a policy 守卫测试：虚构私钥/AKIA/ghp_/sk- 样例验证红线模式递归扫描（同 cache_block_reclassification 先例，2026-10-15 登记）
+  'tests/test_net_guard.py'  # 私网拦截回归夹具：172.16/192.168 网段样本=被测本体（改值即失测），2026-10-29 登记
+  'tests/test_browser_site_policy.py'  # 同上：私网地址夹具验证 navigate 拦截
+  'tests/realtime/test_local_voice_stack_transport.py'  # 同上：私网网段夹具 URL
+  'tests/unit/test_builtin_tools.py'  # 同上：私网网段夹具 URL
+  'tests/unit/test_playwright_gate.py'  # 同上：私网网段夹具 URL
+  'tests/unit/test_web_fetch_fake_ip.py'  # 同上：私网网段夹具 URL
 )
 
 # ── 规则粒度豁免：仅跳过规则3（本地绝对路径）；规则1禁路径/规则2敏感内容/规则4大文件仍全量执行 ──

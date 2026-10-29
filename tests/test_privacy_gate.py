@@ -63,6 +63,20 @@ def test_staged_blocks_hostname_prefix(repo):
     assert run_scan(repo, "--staged", env_user="testuser").returncode == 1
 
 
+def test_staged_generic_ci_user_skips_identity_patterns(repo):
+    """通用 CI 账户（runner 等）不是私有身份：user@/user-前缀动态模式跳过，正常英文不得误拦（2026-10-29 CI 红根因）。"""
+    (repo / "ci.md").write_text("CI 门禁：runner-proof 纪律；卡名 runner-silence-is-invocation-error 引用")
+    subprocess.run(["git", "-C", str(repo), "add", "ci.md"], check=True)
+    assert run_scan(repo, "--staged", env_user="runner").returncode == 0
+
+
+def test_staged_generic_ci_user_still_blocks_private_ip(repo):
+    """通用账户跳过仅限动态身份模式：私网 IPv4 静态规则不受影响，必须继续拦。"""
+    (repo / "ci_ip.md").write_text("edge-bind 192.168.3.9")
+    subprocess.run(["git", "-C", str(repo), "add", "ci_ip.md"], check=True)
+    assert run_scan(repo, "--staged", env_user="runner").returncode == 1
+
+
 def test_staged_clean_passes(repo):
     (repo / "d.md").write_text("innocuous\\n")
     subprocess.run(["git", "-C", str(repo), "add", "d.md"], check=True)
