@@ -3,12 +3,12 @@ method_id: rejection-reason-as-contract-diff-reissue-on-named-dimension-ec5de70c
 name: rejection-reason-as-contract-diff-reissue-on-named-dimension
 description: 准入/前置校验类工具返回 accepted:false 且 reason 是命名缺失字段的自描述错误码时，该 reason 就是本次调用与合同的差分：先机械翻译成『拟补字段=取值』（取值优先来自任务上下文已知事实，如发布目标平台名），再重发一次且仅一次、只在该维度上不同的调用；禁止无差异原样重试。本集两次同参重发 publication_target_name_required、外加一次 60s 超时后才 grep 源码定位 raise 行，而字段取值（今日头条）当时早已在任务上下文中。源码定点阅读只留给 reason 不自描述、或补字段后返回全新 reason 的情况；且无 raise 位置源码证据时，不得把『缺字段拒绝』叙述成『白名单不覆盖目标』。
 aliases: 返回缺字段就补上重发一次, 别拿同样参数再发一遍, reason 指名缺哪个字段, target_name_required, 接口说缺个参数, 被拒理由就是待办
-status: candidate
+status: invalidated
 source_model: minimax/MiniMax-M3.1-Flash-Preview
 source_episode_refs: episode:7258b3db-ea07-41d6-9ce6-9d285e331be0:148:21d24a6d845f1ac3b61f
 evidence_refs: learning:learn:635fa02b926e
 created_at: 2026-10-20T08:35:28.901364+08:00
-updated_at: 2026-10-23T05:52:05.741453+08:00
+updated_at: 2026-10-30T09:23:47.785592+08:00
 ---
 ## Trigger
 结构化准入/前置校验调用（admission、gate、contract check）返回 accepted:false，且 reason 为命名缺失字段或命名违约维度的自描述机器可读码（如 <field>_required、missing <field>）

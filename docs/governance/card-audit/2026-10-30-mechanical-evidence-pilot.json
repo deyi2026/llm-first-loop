@@ -1,0 +1,1206 @@
+{
+  "generated_by": "scripts/qualification/method_mechanical_evidence.py collect",
+  "ran_at": "2026-10-30T09:10:50+08:00",
+  "governance_basis": "docs/governance/card-lifecycle.md R3-bis（2026-10-30 修订：证据分流，使用优先）",
+  "proposal_only": true,
+  "never_writes": [
+    "data/methods（含全部卡文件与 usage.jsonl）",
+    "store（本脚本不 import、不构造 MethodStore）"
+  ],
+  "writes_performed": [
+    "docs/governance/card-audit/2026-10-30-mechanical-evidence-pilot.json",
+    "docs/governance/card-audit/2026-10-30-mechanical-evidence-pilot.md",
+    "docs/governance/card-audit/2026-10-30-mechanical-evidence-pilot.url-samples.json"
+  ],
+  "selection": {
+    "mode": "usage-candidates",
+    "criteria": "usage 账本非空 且 status=candidate",
+    "cards": 54,
+    "skipped": [
+      {
+        "method_ref": "method:candidate-a80acb208b99",
+        "reason": "status=hold"
+      },
+      {
+        "method_ref": "method:locate-project-env-before-symptom-workarounds-f7dd29f1718b",
+        "reason": "status=hold"
+      },
+      {
+        "method_ref": "method:method-repo-api-discovery",
+        "reason": "no_card_dir"
+      },
+      {
+        "method_ref": "method:method-root-cause",
+        "reason": "no_card_dir"
+      },
+      {
+        "method_ref": "method:method-self-distill",
+        "reason": "no_card_dir"
+      },
+      {
+        "method_ref": "method:r9-gate-breakdown-triage-47132c4c89f8",
+        "reason": "status=hold"
+      },
+      {
+        "method_ref": "method:resume-continuation-via-named-provenance-and-git-delta-948a229d7f50",
+        "reason": "status=active"
+      },
+      {
+        "method_ref": "method:self-execute-review-contract-on-degenerate-tool-output-c1088a737f27",
+        "reason": "status=qualified"
+      }
+    ]
+  },
+  "tool_catalog": {
+    "source": "src/llm_loop/tools/registry.py :: _COMPACT_TOOL_DESCRIPTIONS（56 项） + src/llm_loop/tools/builtin/*.py 模块名（41 项）；运行时动态注册的工具（如 method_manage）不在静态清单内",
+    "names": 97,
+    "available": true
+  },
+  "url_sampling": {
+    "phase": "sample1",
+    "min_gap_s": 600,
+    "state_file": "docs/governance/card-audit/2026-10-30-mechanical-evidence-pilot.url-samples.json",
+    "pending_sample2": 0
+  },
+  "stats": {
+    "findings_total": 3,
+    "by_verdict": {
+      "manual_review": 1,
+      "pass": 2
+    },
+    "by_check_type": {
+      "local_path": {
+        "pass": 2
+      },
+      "tool_existence": {
+        "manual_review": 1
+      }
+    },
+    "landable_findings": 0,
+    "cards_ready_to_land": 0
+  },
+  "cards": [
+    {
+      "method_ref": "method:admission-gated-command-run-verbatim-standalone-9ffd75920b0a",
+      "name": "admission-gated-command-run-verbatim-standalone",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-19T07:49:24.886240+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3",
+      "name": "attribute-and-reuse-in-flight-validation-via-scheduler-record",
+      "status": "candidate",
+      "usage": {
+        "entries": 2,
+        "decision_counts": {
+          "applied": 2
+        },
+        "last_used_ts": "2026-10-10T18:26:49.763134+08:00"
+      },
+      "findings": [
+        {
+          "method_ref": "method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3",
+          "check_type": "local_path",
+          "claim": {
+            "text": "[mention] body 声明仓库路径 tests/perf 存在",
+            "location": "body",
+            "replay_command": "cd . && test -e tests/perf"
+          },
+          "verdict": "pass",
+          "evidence": {
+            "command": "test -e tests/perf",
+            "cwd": ".",
+            "exit_code": 0,
+            "output_excerpt": "exit=0",
+            "ts": "2026-10-30T09:10:50+08:00",
+            "exists": true
+          },
+          "note": "路径存在（锚点/引用完好，信息性）",
+          "rollback": {
+            "apply": [
+              "method_manage(action='record_qualification', method_ref='method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3', verdict='fail', mechanism='fail', task_benefit='not_evaluated', promotion='fail', note='<机械证据：见 manifest 内 claim>', evidence_refs=['docs/governance/card-audit/2026-10-30-mechanical-evidence-pilot.json'])  # 由持有真实 episode 的父会话执行",
+              "method_manage(action='refine', method_ref='method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3', transition='invalidate')"
+            ],
+            "undo": [
+              "method_manage(action='refine', method_ref='method:attribute-and-reuse-in-flight-validation-via-scheduler-record-2e1f5c1ceba3', transition='reopen')  # 治理文本称 restore/reopen；store 侧 reopen 永远可用（R3）"
+            ]
+          },
+          "ready_to_land": false
+        }
+      ],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:attribute-validation-run-via-structural-identity-before-reuse-e30bf0d78688",
+      "name": "attribute-validation-run-via-structural-identity-before-reuse",
+      "status": "candidate",
+      "usage": {
+        "entries": 3,
+        "decision_counts": {
+          "applied": 3
+        },
+        "last_used_ts": "2026-10-10T18:26:50.163651+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:audit-claimed-pending-work-via-result-artifacts-f180eb31a0fe",
+      "name": "audit-claimed-pending-work-via-result-artifacts",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "adapted": 1
+        },
+        "last_used_ts": "2026-10-10T21:58:48.727301+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:audit-done-by-joining-plan-phase-table-with-vcs-topology-23d6a945eec7",
+      "name": "audit-done-by-joining-plan-phase-table-with-vcs-topology",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-17T02:29:34.005499+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:authority-gate-drift-map-before-lifecycle-plan-23f0e2d2ae69",
+      "name": "authority-gate-drift-map-before-lifecycle-plan",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "adapted": 1
+        },
+        "last_used_ts": "2026-10-28T08:53:05.220752+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:candidate-d5fce462ff6b",
+      "name": "本地视频模型短片交付流水线（编剧→导演→生成→后期→独立审查）",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-26T19:41:36.059365+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:check-desired-head-binding-before-restart-choose-update-2e3637e8aef7",
+      "name": "check-desired-head-binding-before-restart-choose-update",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-13T02:00:11.035615+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:child-progress-from-settlement-receipt-not-stream-probes-3aa795a04639",
+      "name": "child-progress-from-settlement-receipt-not-stream-probes",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-23T05:18:12.088618+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:claim-diff-via-cited-primary-sources-before-generic-search-51bb939cc295",
+      "name": "claim-diff-via-cited-primary-sources-before-generic-search",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "adapted": 1
+        },
+        "last_used_ts": "2026-10-20T11:37:54.539783+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:deferred-action-failure-layer-scoped-lifecycle-trace-ae4184904e2b",
+      "name": "deferred-action-failure-layer-scoped-lifecycle-trace",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-07T21:19:37.941489+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:delegated-subagent-discipline-in-task-text-not-tool-description-77076544d5a7",
+      "name": "delegated-subagent-discipline-in-task-text-not-tool-description",
+      "status": "candidate",
+      "usage": {
+        "entries": 3,
+        "decision_counts": {
+          "applied": 3
+        },
+        "last_used_ts": "2026-10-16T09:37:05.298661+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:destructive-replay-failure-shift-work-into-stable-paste-payload-67917b175573",
+      "name": "destructive-replay-failure-shift-work-into-stable-paste-payload",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-18T22:51:51.489591+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:editor-model-authority-real-input-and-counter-invariants-7d9725013091",
+      "name": "editor-model-authority-real-input-and-counter-invariants",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "adapted": 1
+        },
+        "last_used_ts": "2026-10-18T22:51:51.573402+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:exit-poll-when-receipt-not-pending-route-missing-verdict-fields-to-child-3249731118b4",
+      "name": "exit-poll-when-receipt-not-pending-route-missing-verdict-fields-to-child-result",
+      "status": "candidate",
+      "usage": {
+        "entries": 2,
+        "decision_counts": {
+          "applied": 2
+        },
+        "last_used_ts": "2026-10-30T07:24:51.446970+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:family-containment-gate-before-batch-branch-merge-519261763620",
+      "name": "family-containment-gate-before-batch-branch-merge",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-17T02:29:33.651360+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:gate-attribution-on-shared-tree-with-active-foreign-writer-ef14c3fec208",
+      "name": "gate-attribution-on-shared-tree-with-active-foreign-writer",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-26T07:22:38.148743+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:gate-check-by-mechanical-state-not-memory-retrieval-e9f89cbf1205",
+      "name": "gate-check-by-mechanical-state-not-memory-retrieval",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-20T16:40:55.391213+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:git-first-when-vcs-identifiers-are-named-9269c9624595",
+      "name": "git-first-when-vcs-identifiers-are-named",
+      "status": "candidate",
+      "usage": {
+        "entries": 2,
+        "decision_counts": {
+          "applied": 2
+        },
+        "last_used_ts": "2026-10-17T02:29:33.812141+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:ground-git-target-coordinates-before-location-sensitive-git-ops-aa0ebfc35d75",
+      "name": "ground-git-target-coordinates-before-location-sensitive-git-ops",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-17T00:33:12.500581+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:index-miss-on-fresh-artifact-verify-disk-ground-truth-69d205734f31",
+      "name": "index-miss-on-fresh-artifact-verify-disk-ground-truth",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-17T01:13:56.393210+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:isolation-preflight-before-trusting-gate-verdicts-6f1cd4e954c7",
+      "name": "isolation-preflight-before-trusting-gate-verdicts",
+      "status": "candidate",
+      "usage": {
+        "entries": 2,
+        "decision_counts": {
+          "applied": 2
+        },
+        "last_used_ts": "2026-10-29T23:02:55.235575+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:literal-grep-and-source-scope-before-disputing-numbers-0595645fda7f",
+      "name": "literal-grep-and-source-scope-before-disputing-numbers",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "adapted": 1
+        },
+        "last_used_ts": "2026-10-21T20:31:39.392317+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:locate-via-quoted-ui-literals-before-broad-filename-search-c867a42a91f8",
+      "name": "locate-via-quoted-ui-literals-before-broad-filename-search",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-18T13:32:45.815602+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:max-blocking-wait-when-polling-background-subagents-d8b428b468c2",
+      "name": "max-blocking-wait-when-polling-background-subagents",
+      "status": "candidate",
+      "usage": {
+        "entries": 3,
+        "decision_counts": {
+          "applied": 3
+        },
+        "last_used_ts": "2026-10-16T09:37:05.227979+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:max-wait-block-poll-and-interleave-parent-prep-for-long-subagents-c0aab429fa3f",
+      "name": "max-wait-block-poll-and-interleave-parent-prep-for-long-subagents",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-16T09:37:05.153913+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:mechanical-blind-eval-isolation-00c0648997ae",
+      "name": "mechanical-blind-eval-isolation",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-05T23:28:40.990128+08:00"
+      },
+      "findings": [
+        {
+          "method_ref": "method:mechanical-blind-eval-isolation-00c0648997ae",
+          "check_type": "local_path",
+          "claim": {
+            "text": "[anchor] frontmatter.freshness_refs 声明仓库路径 evals/instrument_qualification_v1/iq_R1_notes.md 存在",
+            "location": "frontmatter.freshness_refs",
+            "replay_command": "cd . && test -e evals/instrument_qualification_v1/iq_R1_notes.md"
+          },
+          "verdict": "pass",
+          "evidence": {
+            "command": "test -e evals/instrument_qualification_v1/iq_R1_notes.md",
+            "cwd": ".",
+            "exit_code": 0,
+            "output_excerpt": "exit=0",
+            "ts": "2026-10-30T09:10:50+08:00",
+            "exists": true
+          },
+          "note": "路径存在（锚点/引用完好，信息性）",
+          "rollback": {
+            "apply": [
+              "method_manage(action='record_qualification', method_ref='method:mechanical-blind-eval-isolation-00c0648997ae', verdict='fail', mechanism='fail', task_benefit='not_evaluated', promotion='fail', note='<机械证据：见 manifest 内 claim>', evidence_refs=['docs/governance/card-audit/2026-10-30-mechanical-evidence-pilot.json'])  # 由持有真实 episode 的父会话执行",
+              "method_manage(action='refine', method_ref='method:mechanical-blind-eval-isolation-00c0648997ae', transition='invalidate')"
+            ],
+            "undo": [
+              "method_manage(action='refine', method_ref='method:mechanical-blind-eval-isolation-00c0648997ae', transition='reopen')  # 治理文本称 restore/reopen；store 侧 reopen 永远可用（R3）"
+            ]
+          },
+          "ready_to_land": false
+        },
+        {
+          "method_ref": "method:mechanical-blind-eval-isolation-00c0648997ae",
+          "check_type": "tool_existence",
+          "claim": {
+            "text": "正文以反引号提及工具/命令 `sha256sum`",
+            "location": "body",
+            "replay_command": "grep -n '`sha256sum`' data/methods/mechanical-blind-eval-isolation-00c0648997ae/METHOD.md"
+          },
+          "verdict": "manual_review",
+          "evidence": {
+            "command": "",
+            "output_excerpt": "",
+            "ts": ""
+          },
+          "note": "不在本仓工具注册表；可能是 shell 命令或外部工具（注册表只覆盖 workspace agent 工具），无法机械化定罪，留人工",
+          "rollback": {
+            "apply": [
+              "method_manage(action='record_qualification', method_ref='method:mechanical-blind-eval-isolation-00c0648997ae', verdict='fail', mechanism='fail', task_benefit='not_evaluated', promotion='fail', note='<机械证据：见 manifest 内 claim>', evidence_refs=['docs/governance/card-audit/2026-10-30-mechanical-evidence-pilot.json'])  # 由持有真实 episode 的父会话执行",
+              "method_manage(action='refine', method_ref='method:mechanical-blind-eval-isolation-00c0648997ae', transition='invalidate')"
+            ],
+            "undo": [
+              "method_manage(action='refine', method_ref='method:mechanical-blind-eval-isolation-00c0648997ae', transition='reopen')  # 治理文本称 restore/reopen；store 侧 reopen 永远可用（R3）"
+            ]
+          },
+          "ready_to_land": false
+        }
+      ],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:minimal-probe-before-full-payload-on-unverified-write-path-ba5bcd9406c0",
+      "name": "minimal-probe-before-full-payload-on-unverified-write-path",
+      "status": "candidate",
+      "usage": {
+        "entries": 4,
+        "decision_counts": {
+          "applied": 1,
+          "not_applicable": 3
+        },
+        "last_used_ts": "2026-10-30T08:40:53.162144+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:multiplatform-publish-order-by-irreversibility-d9f5c7ea6b4d",
+      "name": "multiplatform-publish-order-by-irreversibility",
+      "status": "candidate",
+      "usage": {
+        "entries": 2,
+        "decision_counts": {
+          "applied": 1,
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-20T13:43:20.566097+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:peer-claim-receipt-verification-with-variant-probe-resolution-e44e1db06594",
+      "name": "peer-claim-receipt-verification-with-variant-probe-resolution",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-27T17:58:32.976118+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:pre-run-static-ratchets-before-freezing-fingerprint-bound-review-b9090ed45943",
+      "name": "pre-run-static-ratchets-before-freezing-fingerprint-bound-review",
+      "status": "candidate",
+      "usage": {
+        "entries": 3,
+        "decision_counts": {
+          "applied": 3
+        },
+        "last_used_ts": "2026-10-30T07:24:50.930162+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:preclassify-record-kind-and-embed-currency-check-61032dc7e9bc",
+      "name": "preclassify-record-kind-and-embed-currency-check",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-10T01:06:40.362772+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:preflight-reviewer-visible-delta-before-review-submission-12dd88f1e456",
+      "name": "preflight-reviewer-visible-delta-before-review-submission",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-29T23:02:55.389918+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:prior-art-via-declared-sot-and-records-before-rule-authoring-a970cd148bfa",
+      "name": "prior-art-via-declared-sot-and-records-before-rule-authoring",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-17T01:13:52.033297+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:probe-live-end-state-before-resuming-stale-failure-bd8bc0adafd0",
+      "name": "probe-live-end-state-before-resuming-stale-failure",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-11T09:28:57.692446+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:receipt-state-first-verify-refs-not-tree-on-resume-adc543cfb7fd",
+      "name": "receipt-state-first-verify-refs-not-tree-on-resume",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-19T07:49:24.619965+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:record-use-v3-1c1b05bfa2ee",
+      "name": "record_use证据披露与评估纪律（v3·去强制降级）",
+      "status": "candidate",
+      "usage": {
+        "entries": 2,
+        "decision_counts": {
+          "adapted": 1,
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-23T08:57:40.007788+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:rederive-carried-scope-claims-before-design-d3984e4fc520",
+      "name": "rederive-carried-scope-claims-before-design",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-20T20:54:20.641542+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:rehead-search-query-on-dictionary-degradation-8da50263deb1",
+      "name": "rehead-search-query-on-dictionary-degradation",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-12T21:15:42.520497+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:rejection-reason-as-contract-diff-reissue-on-named-dimension-ec5de70cbb1c",
+      "name": "rejection-reason-as-contract-diff-reissue-on-named-dimension",
+      "status": "candidate",
+      "usage": {
+        "entries": 4,
+        "decision_counts": {
+          "adapted": 1,
+          "applied": 3
+        },
+        "last_used_ts": "2026-10-26T21:04:58.189128+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:serial-single-file-edits-chained-on-write-receipt-precondition-af1a590dca78",
+      "name": "serial-single-file-edits-chained-on-write-receipt-precondition",
+      "status": "candidate",
+      "usage": {
+        "entries": 2,
+        "decision_counts": {
+          "applied": 2
+        },
+        "last_used_ts": "2026-10-26T12:46:04.886735+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:serialize-cas-writes-by-chaining-snapshot-refs-65d014ca9b9a",
+      "name": "serialize-cas-writes-by-chaining-snapshot-refs",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-09-30T19:41:17.327323+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:shared-worktree-scoped-pathspec-commit-and-sha-pinned-isolated-verificat-83930d5efb0d",
+      "name": "shared-worktree-scoped-pathspec-commit-and-sha-pinned-isolated-verification",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-26T07:22:38.729153+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:spawn-brief-context-budget-when-child-whitelist-lacks-offload-821400c1cede",
+      "name": "spawn-brief-context-budget-when-child-whitelist-lacks-offload",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-23T05:18:12.183450+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:spot-verify-report-claims-at-pinned-primary-sources-d9f7bc5a0caa",
+      "name": "spot-verify-report-claims-at-pinned-primary-sources",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-19T07:49:24.797818+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:subjective-feedback-rework-via-delivery-report-index-and-measured-disamb-58f9396ca6d5",
+      "name": "subjective-feedback-rework-via-delivery-report-index-and-measured-disambiguation",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-26T21:14:31.967170+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:treat-derived-transcription-as-hypothesis-anchored-to-brief-3bc42539be4a",
+      "name": "treat-derived-transcription-as-hypothesis-anchored-to-brief",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-21T20:31:39.224489+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:triage-gate-qualification-against-raw-review-verdict-and-authoritative-t-03ac6b83cfd7",
+      "name": "triage-gate-qualification-against-raw-review-verdict-and-authoritative-truth",
+      "status": "candidate",
+      "usage": {
+        "entries": 3,
+        "decision_counts": {
+          "applied": 2,
+          "not_applicable": 1
+        },
+        "last_used_ts": "2026-10-30T07:24:51.281760+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:verify-async-terminal-state-via-action-record-before-attribution-ea34f423667f",
+      "name": "verify-async-terminal-state-via-action-record-before-attribution",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "adapted": 1
+        },
+        "last_used_ts": "2026-10-10T14:08:52.390468+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:verify-named-symbol-claims-via-live-tree-scoped-reads-dc2b42b80d1f",
+      "name": "verify-named-symbol-claims-via-live-tree-scoped-reads",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "adapted": 1
+        },
+        "last_used_ts": "2026-10-18T13:32:45.905104+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:verify-self-cited-evidence-list-before-discovery-bf6b94aa690e",
+      "name": "verify-self-cited-evidence-list-before-discovery",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-21T20:31:39.308921+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:verify-sink-and-background-before-heavy-env-installs-f23d33455b3e",
+      "name": "verify-sink-and-background-before-heavy-env-installs",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-23T13:27:35.084032+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:wip-ownership-by-freshness-not-history-fbad1497a281",
+      "name": "wip-ownership-by-freshness-not-history",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-10-19T07:49:24.707861+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    },
+    {
+      "method_ref": "method:write-precondition-token-before-first-edit-ad1f203fa6ef",
+      "name": "write-precondition-token-before-first-edit",
+      "status": "candidate",
+      "usage": {
+        "entries": 1,
+        "decision_counts": {
+          "applied": 1
+        },
+        "last_used_ts": "2026-09-30T19:41:17.219588+08:00"
+      },
+      "findings": [],
+      "code_conflict": {
+        "check_type": "code_conflict",
+        "verdict": "manual_review",
+        "note": "代码冲突摘录不可通用机械化：不硬做，需人工对照卡正文与现行代码"
+      },
+      "ready_to_land": false
+    }
+  ],
+  "notes": [
+    "本 manifest 是 proposal：不写入任何 store/卡文件；落地动作由持有真实 episode 的父会话按 rollback.apply 执行。",
+    "verdict=fail 的依据全部可复跑：evidence.command 即产出该判定的原始命令。",
+    "瞬态网络错误与检查失败一律 no_verdict，不算证据（R3 事实轴）。"
+  ]
+}
