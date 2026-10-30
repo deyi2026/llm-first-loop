@@ -49,3 +49,9 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 ## 7. 给 Host 的一个待办（本会话已记录，未自行改动代码）
 
 `review_host_admission` 的运行期输出投影（`_project_committed_runtime_diff`）应用在 `_path_diffs` **之后**，而 `_git` 的 400 KB 单次输出上限在 `_path_diffs` **之内**先抛 `git_state_too_large` ⇒ **400 KB–1 MB 之间的 `reports/**` 文件可提交却永远推不进**。修法方向：把投影下沉到 `_git` 之前（按路径先投影再取 diff），或对运行期输出路径改用分段取 diff。属 Host 安全边界，**须走人工审批的演进流程，本会话未自行放宽**。
+
+## 8. 推送已完成（2026-10-30 14:45）
+
+- `main` 已推到 origin：**fc1c2d0d6 → 038a0821e**（5 笔，含并发写者会话的抽减收尾与 §13 返修记录 `038a0821e`）。
+- 准入记录：`review_admission` full_test（候选 `60c8ed2f…`）PASS；git_push 首轮（候选 `077801fb…`）**REVISE**（P0=0 / **P1=1** / P2=3，P1 = 文档快照相对已提交测试过期：§12.4 仍写 109 passed、§13 未入库）→ 修复（§12.4 改实测 141 passed/1 skipped + §13 入库 + 新增 §13.7 记录本轮处置）→ git_push 第二轮（候选 `349640fc…`）**PASS** → 推送成功。
+- **§2.2 的「勿 push」约束已解除**：并发写者会话的工作已在 main（`038a0821e`），其后续提交是 `038a0821e` 的后代，快进推送即可；只有当它的提交与 `038a0821e` 并列时才需先 `git pull --rebase`。
