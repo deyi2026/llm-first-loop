@@ -703,3 +703,22 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 2. **C8 的 P0 段仍未做**：命令串绝对路径字面量校验 + `scope_unverified` 审计事件未实现；本节只关闭 P1-b。
 3. **不声称「写侧路径授权已全量生效」**：`cp` 等旁路仍在 P0 约束面之外（§14.4）。
 4. **并发写者**：本节落地时仓库内有另一活跃会话（`cbda67c5-…`，非本会话子代理）在同一工作树活动；本节只提交本轮 5 个文件，其过程物与他人改动未纳入、未删除。
+5. **防御分支是 fail-open**：工具面物化需要 `registry.names()`；该调用抛错时判定函数保守返回「未剔除」（不误伤，也不冒充已剔除）。`registry` 是 `SubAgentRunner` 的构造器不变量，正常路径不可达；**若要 fail-closed（改为拒绝启动）需在两条路径各加处置分支，本轮未做**。
+
+### 15.7 推送准入记录（git_push 第 1 轮）
+
+| 轮次 | 候选 | 结论 | 处置 |
+|---|---|---|---|
+| full_test | `8cc08855…`（child `subagent_3656c03e6e48`，命令 `.venv/bin/python -m pytest -q`） | **PASS** | — |
+| git_push 第 1 轮 | `bf642284…`（child `subagent_cf52159a815c`） | **REVISE**（P0=0 / **P1=1** / P2=5） | P1 = HANDOFF §9 那行「P1-b 仍未做…不得声称已生效」与本次推送的代码矛盾（同一推送内既有该行、又有实现）→ 就地更正该行 + 补 §5 注记；本节 §15.7 与该处置随第二轮复审 |
+
+**口径提示**：本轮 full_test 准入命令为 `.venv/bin/python -m pytest -q`，与 §14.2/§14.3 记录的 canonical 口径 `scripts/ci_gate.sh` **不完全等同**（§14.6 第 7 条），两者不可互相替代。
+
+**P2 逐条核对（本轮自查，非独立审查结论）**
+
+| P2 | 核对结果 |
+|---|---|
+| P2-4 精确相等消费方 | 全仓 grep 确认**无** `== "git_state_too_large"` 式精确匹配消费方；既有消费方均为 `startswith` 判定（`tests/unit/test_review_host_admission.py` 两处）✓ |
+| P2-5 复位对称性 | `scope_token` 的新分支（仅 `surface_restriction` 时设置）在 `finally` 的 `current_tool_discovery_scope.reset(scope_token)` 处被覆盖 → F14/T16 无泄漏保证成立 ✓ |
+| P2-2 `registry.names()` 抛错 | 防御分支 fail-open，已在 §15.6 第 5 条如实登记；本轮未改行为 |
+| P2-3 §14.5 占位符 | 已由另一会话在其 §14.5 填入（该轮交付小节）；本轮未代填 |

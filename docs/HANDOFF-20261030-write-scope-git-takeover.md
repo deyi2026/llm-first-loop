@@ -36,6 +36,8 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 
 ## 5. 下一期的入口（设计文档已定，尚未做）
 
+> **2026-10-30 15:4x 就地更正（本轮 P1-b / EVO 落地后）**：下列 P1 条目中的 **P1-b 能力面剔除已落地**——提交 `90fad9ab6`，受限 child 启动时工具面剔除 `execute_command`，异步 `start()` 与同步 `run()` 两条路径同款，测试 T17–T23（设计文档 §15 / §15.7；状态见本文件 §9 表）。**仍未做**的是 C8 的 P0 段：命令串绝对路径字面量 scope 校验 + `scope_unverified` 审计事件。本节保留原始表述作为历史记录，不删改。
+
 - **P1**：能力面剔除（受限 child 直接不给 `execute_command`，设计 §4.2 Q2 / §5.6 P1-b）与命令族判定二选一；**两条 spawn 路径都要改**——异步 `start()` 与同步 `run()` 各自算 scope（设计 §4.3 盲点 4），测试须覆盖 T15 / T16。
 - **诚实边界**：P0/P1 运行期**无法完全阻断** `cp` / 裸 shell 通道（不经 `FileService`），只能事后检出并归因（设计 §4.2 Q3 / §9）；`execute_command` 的语义盲区需靠 P1-b 消除。
 
@@ -65,5 +67,5 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 | 远端锚点 | `origin/main` 已推进到 `566e5b09f`（本文件 §8 记录的 `038a0821e` 之后）；其后接管会话新增 `bfeacf003`（修回既有守卫）与最终交付提交 | `git log --oneline -3`、`git rev-list --count origin/main..HEAD` |
 | §6「全量回归以 review_admission 回执为准」 | **已兑现**：`review_admission` kind=full_test（候选 `7ba48414…`，child `subagent_b728459b392d`）结论 **PASS（P0=0 / P1=0 / P2=3）** | 工具回执 |
 | 新发现 | 接管会话在 `566e5b09f` 上独立复跑全量回归，发现**一个既有守卫回归**：`tests/unit/test_inspect_code.py::test_factory_registered`（根因 `ab86dde5b` 抽 `_register_basic_tools` helper）。已修（字面量断言 → 行为级断言 + AST 接线判定），详见设计文档 §13.8 / §14 | 设计文档 §13.8 |
-| §5 的 P1 入口 | **仍未做**：P1-b 能力面剔除（受限 child 不给 `execute_command`）、C8 shell 通道约束——**未实现，不得声称已生效** | 设计文档 §9 / §12.5 |
+| §5 的 P1 入口 | **P1-b 已落地**（2026-10-30 15:4x，提交 `90fad9ab6`）：受限 child 启动时工具面剔除 `execute_command`，异步 `start()` 与同步 `run()` 两条路径同款，测试 T17–T23（设计文档 §15）；**C8 的 P0 段（命令串绝对路径字面量校验 + `scope_unverified` 审计）仍未做**——不得声称「写侧路径授权已全量生效」 | 设计文档 §9 / §12.5 / §15 |
 | 未跟踪 scratch | 仓库根仍有 `.tmp-*` 过程脚本与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）**未入库**；含本机绝对路径，接管会话**未删除他人过程物**，也未提交 | `git status --porcelain` |
