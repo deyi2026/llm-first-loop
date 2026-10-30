@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "b143cf394",
+    "head_commit": "beac7b791",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -982,6 +982,7 @@
     "src/llm_loop/browser/profile_policy.py::evaluate_profile_class": 121,
     "src/llm_loop/codearts/scheduler.py::dispatch": 163,
     "src/llm_loop/core/cache_health.py::record": 140,
+    "src/llm_loop/core/command_scope_guard.py::_write_targets": 121,
     "src/llm_loop/core/episode_history.py::backfill_closed_tool_attempts": 127,
     "src/llm_loop/core/episode_history.py::project_active_tool_working_set_with_stats": 236,
     "src/llm_loop/core/history.py::build_conservative_active_run_projection": 168,
