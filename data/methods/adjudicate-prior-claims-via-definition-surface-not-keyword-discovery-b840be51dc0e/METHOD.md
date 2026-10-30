@@ -2,12 +2,12 @@
 method_id: adjudicate-prior-claims-via-definition-surface-not-keyword-discovery-b840be51dc0e
 name: adjudicate-prior-claims-via-definition-surface-not-keyword-discovery
 description: 在讨论/修订类任务中，需要对上一轮关于系统自身机制或数据形态的事实断言做裁决并定稿（如演进建议提交前）时使用：把断言逐条映射到权威定义面——实现树内 scoped 符号检索、定义与处理点直读、运行时数据目录直接路径检查——而不是先做全库关键词/文件名搜索。机制关键词会命中大量把工具名当字符串字面量的评测夹具与文档（20 条截断即饱和），文件名搜索对未入索引的运行时数据目录会漏报，搜索 miss 不能作为“不存在”的证据。
-status: candidate
+status: qualified
 source_model: glm/glm-5.3
 source_episode_refs: episode:6011132d-5da7-46ed-9be9-40d1379ec22d:546:d3440872296963531b07
 evidence_refs: learning:learn:899dd345d295
 created_at: 2026-10-11T11:11:55.405461+08:00
-updated_at: 2026-10-11T11:11:55.405461+08:00
+updated_at: 2026-10-30T13:02:55.975885+08:00
 ---
 ## Trigger
 讨论或修订任务中，上一轮已给出关于本系统工具/机制行为、数据落点或字段存在性的具体断言，现需核实后定稿提交；讨论上下文已点名实现文件/符号名。

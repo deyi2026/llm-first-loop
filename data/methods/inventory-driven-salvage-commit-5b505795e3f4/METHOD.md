@@ -2,12 +2,12 @@
 method_id: inventory-driven-salvage-commit-5b505795e3f4
 name: inventory-driven-salvage-commit
 description: 把在途工作保护/收编进提交时，范围必须由 git status --porcelain 的完整清单驱动，而不是由 tracked diff 驱动：M 类（未提交 tracked 修改）会被 reset --hard 抹掉；?? 类（untracked）reset 不碰但 clean 会抹、且不出现在任何 diff、不进任何提交——只按 M 划范围的收编结构性遗漏 ?? 资产。本集初始保护性提交只收了 tracked 修改，漏掉 untracked 的 316 行规格测试文件，直到隔离 worktree 测试报 file-not-found 才事后对账，多花约 5 步（status 清扫、双文件 diff 辨析、拷贝、解释器排障）补收。规则：清点 M+?? 全集→按工作流归属划入同一保护性提交（tag/backup ref 加固）→在隔离环境用显式解释器跑该工作的测试选择器验证完整性。
-status: candidate
+status: qualified
 source_model: glm/glm-5.3
 source_episode_refs: episode:855926d8-3b7a-4a6d-9c5e-34631b59df2b:661:23facfce03654720b75e
 evidence_refs: learning:learn:03392fb94a30
 created_at: 2026-09-19T08:58:54.866355+00:00
-updated_at: 2026-09-19T08:58:54.866355+00:00
+updated_at: 2026-10-30T13:02:56.340978+08:00
 ---
 ## Trigger
 需要对脏工作树做保护性/抢救性提交，或环境中存在周期性运行的破坏性 git 操作（reset --hard / clean / 自动 release 流程），或要把 main 上未提交的在途工作迁入分支/worktree 之前

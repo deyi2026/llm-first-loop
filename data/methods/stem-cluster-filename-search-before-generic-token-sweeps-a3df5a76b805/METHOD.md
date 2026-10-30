@@ -2,12 +2,12 @@
 method_id: stem-cluster-filename-search-before-generic-token-sweeps-a3df5a76b805
 name: stem-cluster-filename-search-before-generic-token-sweeps
 description: 当修复目标已可具名（本集为 attestation 的 argv 解析）时，先用词根做文件名级检索一次拿到完整制品簇（源码/单测/S4 文档/S0 探针，5/5 全相关）；通用 token（cmdline/shlex）的全库内容检索只回答“字符串在哪”，且命中被 .venv/site-packages vendored 树占满 30 条截断窗口——回执中 vendored 占多数即“仪器选错”的机械信号，应切换仪器而非第三轮换词。簇内文件读取一律逐字复制回执路径（本集两次 path 失败均因凭记忆重造日期/前缀）；内容检索只保留给簇内影响面确认。搜索空间从 90+ 条截断命中缩到 5 条全覆盖簇。
-status: candidate
+status: qualified
 source_model: glm/glm-5.3
 source_episode_refs: episode:43696f9c-0fd9-4c30-b4d9-3f05343cba9a:147:2519360007ac35521b36
 evidence_refs: learning:learn:93231334e371
 created_at: 2026-10-06T02:26:40.025966+08:00
-updated_at: 2026-10-06T02:26:40.025966+08:00
+updated_at: 2026-10-30T13:02:56.712712+08:00
 ---
 ## Trigger
 任务要修改一个已具名的机制/模块，需定位其源码/测试/文档簇；或同一全库内容搜索 source class 连续换 token，命中被第三方/vendored 路径占据截断窗口。
