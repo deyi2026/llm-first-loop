@@ -173,6 +173,16 @@ BLOCKED_CASES = [
     ("git -c gpg.program=/outside/pwn commit -S", "implicit_write_target"),
     # g/v 全局执行器的载荷命令不在安全单命令集 ⇒ fail-closed（第十二轮 P2-5）
     ("ex -c 'g/re/w /outside/x' src/x.py", "implicit_write_target"),
+    # ── 第十二轮独立审查新增向量（同轮并发线）：重复取值选项 last-wins ─────
+    ("gcc -o a.out -o /outside/x a.c", "write_target_outside_scope"),
+    ("sort -o a.txt -o /outside/x in", "write_target_outside_scope"),
+    ("curl -o src/ok.txt -o /outside/x https://x/1 https://x/2", "write_target_outside_scope"),
+    ("env --ch /outside touch x", "unverifiable_write_target"),
+    ("sudo --chd /outside touch x", "unverifiable_write_target"),
+    ("git symbolic-ref --del HEAD", "implicit_write_target"),
+    # ``+N`` 是初始行号不是命令脚本（P2-3），但 ex 无 -c 时仍走 stdin 脚本通道
+    # ⇒ 按既有口径 fail-closed（与 ``ex src/x.py`` 同因），不是新增放行面
+    ("ex +5 src/x.py", "implicit_write_target"),
     ("time -o /outside/x rm src/x.py", "write_target_outside_scope"),
     ("sort -o /outside/x src/x.py", "write_target_outside_scope"),
     # ── 第四轮独立审查新增向量（2026-10-30）──────────────────────────────
@@ -988,6 +998,9 @@ R11_ALLOWED_CASES = [
     "ex -c 'y/ab/cd/' src/x.py",
     "ex -c 'g/re/p' src/x.py",
     "ex -c '1,2s/x/y/' src/x.py",
+    # ── 第十二轮独立审查 P2-3：``+N`` 初始行号不是命令脚本 ──────────────────
+    # （带 -c 的 ``ex -c 'p' +5 f`` 不受影响；纯 ``ex +5 f`` 走 stdin 通道见阻断表）
+    "ex -c 'p' +5 src/x.py",
 ]
 
 

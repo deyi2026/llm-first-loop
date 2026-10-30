@@ -445,6 +445,24 @@ def _strip_fd_prefixes(tokens: list[str]) -> list[str]:
     return tokens[index:]
 
 
+def _carrier_value_option_hit(token: str, value_options: frozenset[str]) -> bool:
+    """载体**取值型选项**命中判定（第十二轮 push 闸 P1-2 补充）。
+
+    ``_carrier_split`` 用它决定是否消费下一个 token 作为选项值——必须与
+    ``_is_chdir_option`` 同样支持前缀缩写/粘连形态，否则 ``env --ch /outside …``
+    的值被漏消费、沦为载荷命令名，chdir 检测随之落空。
+    """
+    for option in value_options:
+        if token == option or token.startswith(option + "="):
+            return True
+        if len(option) == 2 and token.startswith(option) and len(token) > 2:
+            return True
+        if option.startswith("--") and option.startswith(token) and len(token) >= 4:
+            # getopt_long 唯一前缀缩写（如 ``--ch`` → ``--chdir``）
+            return True
+    return False
+
+
 def _is_chdir_option(token: str, options: frozenset[str]) -> bool:
     """判定 token 是否是**改变工作目录**的载体选项。
 
@@ -459,6 +477,13 @@ def _is_chdir_option(token: str, options: frozenset[str]) -> bool:
         if token.startswith(option + "="):
             return True
         if len(option) == 2 and token.startswith(option) and len(token) > 2:
+            return True
+    # 第十二轮独立审查 P1-2：getopt_long 接受**唯一前缀缩写** ⇒ ``env --ch
+    # /outside``（→ --chdir）、``sudo --chd /outside``（→ --chdir）此前不被
+    # 识别 ⇒ cwd 变化未标记 ⇒ 后续相对写目标仍按原 cwd 判定 ⇒ 越界写放行。
+    # 多个候选前缀时仍算命中（fail-closed）。
+    for option in options:
+        if option.startswith("--") and token.startswith("--") and option.startswith(token):
             return True
     return False
 
@@ -516,8 +541,17 @@ def _carrier_split(
                 if "=" in token:
                     index += 1
                     continue
-                if token in spec.value_options:
-                    index += 2
+                # 第十二轮 push 闸 P1-2（载体值选项缩写）：``env --ch /outside touch x``
+                # 里 ``--ch`` 是 ``--chdir`` 的唯一前缀缩写——精确匹配会**漏消费**
+                # ``/outside`` ⇒ 它被当成载荷命令名 ⇒ chdir 检测落空 ⇒ 放行。
+                if _carrier_value_option_hit(token, spec.value_options):
+                    # 分离形态吃下一个 token；粘连/内联（``-C/outside``、
+                    # ``--chdir=/x``）值在 token 内，只吃本 token——多吃会把
+                    # 载荷命令吞成"选项值"（第十二轮回归修复）。
+                    if "=" in token or (len(token) > 2 and token[1] != "-"):
+                        index += 1
+                    else:
+                        index += 2
                     continue
                 index += 1
                 continue
@@ -1208,6 +1242,9 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
     snapshot = scan.value_of("-g", "--listed-incremental", "--incremental")
     if _tar_mode(args, positional, "x"):
         dest = scan.value_of("-C", "--directory")
+        # 第十二轮独立审查 P1-1：tar 的多个 ``-C`` 各自作用于其后的文件 ⇒
+        # 逐个都判（``value_of`` 已改为取最后一个，这里补齐「全部」）。
+        tar_dirs = scan.values_of("-C", "--directory")
         if dest is None:
             dest = scan.value_of("--one-top-level")
         return ([dest] if dest else [], not dest)
@@ -1248,7 +1285,6 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
             "--trace",
             "--trace-ascii",
             "--trace-config",
-            "--log",
             "-c",
             "--cookie-jar",
             "--stderr",
@@ -1257,9 +1293,9 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
             "--json",
             "--crt-file",
         ):
-            value = scan.value_of(flag)
-            if value is not None:
-                targets.append(value)
+            # 第十二轮独立审查 P1-1：curl 的多个 ``-o`` **逐个都写**（每个 URL
+            # 一个文件）⇒ 全部取值都要判，不能只看第一个。
+            targets.extend(scan.values_of(flag))
         if targets:
             return (targets, any(not target for target in targets))
         if scan.has(
@@ -1350,15 +1386,19 @@ def _compiler_token_value(raw: list[str], flag: str) -> str | None:
 
     返回 ``None`` = 选项未出现；空串 = 出现但值不可静态定位（fail-closed）。
     """
+    # 第十二轮独立审查 P1-1：旧实现遇到第一个命中就 return ⇒ ``gcc -o a -o
+    # /outside/x`` 只判了 ``a`` ⇒ 而 gcc 实际写的是**最后一个** ⇒ 越界写放行。
+    # ⇒ 改为取最后一个命中。
+    found: str | None = None
     for index, token in enumerate(raw):
         if token == flag:
-            return raw[index + 1] if index + 1 < len(raw) else ""
-        if token.startswith(flag + "=") and len(token) > len(flag) + 1:
-            return token[len(flag) + 1 :]
-        if token.startswith(flag + "/") and len(token) > len(flag) + 1:
+            found = raw[index + 1] if index + 1 < len(raw) else ""
+        elif token.startswith(flag + "=") and len(token) > len(flag) + 1:
+            found = token[len(flag) + 1 :]
+        elif token.startswith(flag + "/") and len(token) > len(flag) + 1:
             # ``-o/outside/x``：斜杠是**值的首字符**（getopt 附着值），不是分隔符
-            return token[len(flag) :]
-    return None
+            found = token[len(flag) :]
+    return found
 
 
 def _compiler_has_unmodeled_flag(raw: list[str]) -> bool:
@@ -1566,7 +1606,13 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
         # （``ex +'w /outside/x' f`` ⇒ ex 把该串当第一条 ex 命令执行）⇒ 此前
         # 完全没被扫 ⇒ 越界写放行。
         scripts.extend(
-            token[1:] for token in raw if token.startswith("+") and len(token) > 1
+            token[1:]
+            for token in raw
+            if token.startswith("+")
+            and len(token) > 1
+            # 第十二轮独立审查 P2-3：``ex +5 f`` 的 ``+5`` 是**初始行号**，不是
+            # 命令 ⇒ 不进脚本通道（否则被当成未建模命令词 ⇒ 白白被拦）。
+            and not token[1:].isdigit()
         )
         script_targets: list[str] = []
         script_executes = False
@@ -1649,6 +1695,22 @@ def _git_subcommand_args(args: Sequence[str]) -> list[str]:
         return [str(a) for a in args[args.index(sub) :]]
     except ValueError:
         return list(args)
+
+
+def _git_long_option_hit(args: Sequence[str], canonical: str) -> bool:
+    """git parse-options 的**唯一前缀缩写**命中（第十二轮独立审查 P1-3）。
+
+    ``git symbolic-ref --del HEAD`` 是写形态（改写 .git/HEAD）⇒ 此前只做
+    精确匹配 ⇒ 被当成 1 参读形态放行 ⇒ 越界写逃逸。⇒ 命中规则：完全相等 /
+    ``--opt=VAL`` / **canonical 以 token 开头**（``--del`` → ``--delete``）。
+    多个候选前缀时仍算命中（fail-closed）。
+    """
+    for token in args:
+        if token == canonical or token.startswith(canonical + "="):
+            return True
+        if token.startswith("--") and canonical.startswith(token):
+            return True
+    return False
 
 
 def _git_action_args(args: Sequence[str]) -> list[str]:
@@ -2030,7 +2092,7 @@ class _Scanner:
             # 读形态只有 1 个位置参数（``git symbolic-ref HEAD``）；写形态是
             # 「名字 + 新值」2 个位置参数，或带 ``--delete``/``-d``。
             actions = _git_action_args(args)
-            if "--delete" in args or "-d" in args or len(actions) >= 2:
+            if _git_long_option_hit(args, "--delete") or "-d" in args or len(actions) >= 2:
                 return CommandScopeDecision(
                     False,
                     "implicit_write_target",

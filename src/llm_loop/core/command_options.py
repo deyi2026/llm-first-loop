@@ -94,11 +94,25 @@ class OptionScan:
         return any(event.name in names for event in self.events)
 
     def value_of(self, *names: str) -> str | None:
-        """取指定选项的值（第一个非空值）."""
-        for event in self.events:
-            if event.name in names and event.value is not None:
-                return event.value
-        return None
+        """取指定选项的值（**最后一个**非空值）。
+
+        第十二轮独立审查 P1-1：旧实现取**第一个** ⇒ 与真实工具不符——GNU
+        getopt 对重复的取值型选项是「后者覆盖前者」（``gcc -o a -o b`` 写 b；
+        ``tar -f a -f b`` 用 b；``sort -o a -o b`` 写 b）⇒ 只判第一个 ⇒ 第二个
+        之后的写目标被漏检 ⇒ 越界写放行。⇒ 改为取最后一个。
+        ���**逐个都写**的工具（curl 的多个 ``-o`` 每个 URL 一个文件；tar 的多个
+        ``-C`` 各自作用于其后的文件）须用 ``values_of`` 逐个判定。
+        """
+        values = self.values_of(*names)
+        return values[-1] if values else None
+
+    def values_of(self, *names: str) -> list[str]:
+        """取指定选项的**全部**值（第十二轮 P1-1：逐个都写的工具要逐个判）。"""
+        return [
+            event.value
+            for event in self.events
+            if event.name in names and event.value is not None
+        ]
 
 
 def scan_options(family: FamilyOptions, args: Sequence[str]) -> OptionScan:
@@ -202,8 +216,9 @@ def _scan_short(
 # ── 族模型 ────────────────────────────────────────────────────────────────
 #
 # 只列**判定相关**的选项（危险项必须全在表内；无害项按需补齐以免粘连簇
-# 解析被未知字母截断）。表不完整 ⇒ 后果是「未识别的选项被跳过」，
-# 而不是「误判为危险」⇒ 属于放行方向的残余，须在文档中显式声明。
+# 解析被未知字母截断）。表不完整 ⇒ 后果是「未识别的选项」被消费为
+# ``unresolved`` ⇒ **fail-closed**（第八轮起统一口径，第十五轮 P2-1
+# 更正了此处仍写着「被跳过 ⇒ 放行方向」的过期描述）。
 #
 # **第八轮独立审查 P1-5（unresolved 处置口径不一致）**：sed/perl 消费
 # ``scan.unresolved``（fail-closed），而 curl/wget/tar/script 不消费 ⇒ 同一模块
