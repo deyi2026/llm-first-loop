@@ -494,8 +494,9 @@ CURL_OPTIONS = FamilyOptions(
         ("--resolve", True),
         ("--write-out", True),
         ("--trace-config", True),
-        # 第八轮 P1-5：curl 8.10+ 的 ``--log FILE`` 写日志文件 ⇒ 写目标。
-        ("--log", True),
+        # 第十二轮 push 闸 P2-1：``--log`` 不是 curl 的真实旗标（误登记——
+        # 留着会把 ``--log`` 之外的未知写面当已知），删除；写日志面已由
+        # ``--trace/--trace-ascii/--output`` 覆盖。
         ("--variable", True),
         ("--silent", False),
         ("--show-error", False),

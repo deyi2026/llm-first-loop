@@ -649,6 +649,10 @@ def _git_config_values(args: Sequence[str]) -> list[tuple[str, bool]]:
 # 第九轮 P1-4：``GIT_CONFIG_PARAMETERS`` 与 COUNT/KEY_*/VALUE_* 等价——它是一串
 # 空格分隔的 ``key=value`` 内联配置，git 按它注入配置 ⇒ ``alias.x='!cmd'``
 # 同样可执行 ⇒ 与其它三种形态一并拦。
+# 会把赋值注入环境的 shell 内建（第十二轮 push 闸 P1-3）：``export``/``declare``/
+# ``local``/``readonly``/``setenv`` 的 ``NAME=value`` 操作数与段首前缀赋值等价。
+_SHELL_EXPORT_BUILTINS = frozenset({"export", "declare", "local", "readonly", "setenv"})
+
 _GIT_CONFIG_ENV_RE = re.compile(r"^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)$")
 # 第十二轮 push 闸 P1-1：**执行型 git 环境变量**——git 会把这些值经 shell 执行，
 # 与 alias 注入同通道（``GIT_EXTERNAL_DIFF='touch /outside/pwn' git diff`` 在
@@ -1241,13 +1245,14 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
         return ([], True)
     snapshot = scan.value_of("-g", "--listed-incremental", "--incremental")
     if _tar_mode(args, positional, "x"):
-        dest = scan.value_of("-C", "--directory")
-        # 第十二轮独立审查 P1-1：tar 的多个 ``-C`` 各自作用于其后的文件 ⇒
-        # 逐个都判（``value_of`` 已改为取最后一个，这里补齐「全部」）。
-        tar_dirs = scan.values_of("-C", "--directory")
-        if dest is None:
-            dest = scan.value_of("--one-top-level")
-        return ([dest] if dest else [], not dest)
+        # 第十二轮 push 闸 P1-1：tar 的多个 ``-C`` 各自作用于其后的成员 ⇒
+        # **逐个都判**（此前只回最后一个：``tar -xf a.tar -C /outside m -C src``
+        # 会拿 src 判定而 /outside 逃逸）。
+        dirs = scan.values_of("-C", "--directory")
+        if not dirs:
+            top = scan.value_of("--one-top-level")
+            dirs = [top] if top else []
+        return (dirs, not dirs)
     if _tar_mode(args, positional, "c"):
         archive = _tar_archive(args, positional)
         if archive is not None:
@@ -1480,6 +1485,15 @@ def _compiler_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
     output = _compiler_token_value(raw, "-o")
     if output is None:
         output = _compiler_token_value(raw, "--output")
+    # 第十二轮 push 闸 P1-2：透传目标**先收集**——``gcc -o a.out -Wl,-o,/outside/x``
+    # 里 ld 的最后一个 -o 生效，不能因驱动 -o 命中静态目标就早退漏掉透传段。
+    passthrough_targets: list[str] = []
+    passthrough_implicit = False
+    for token in raw:
+        if token.startswith(_COMPILER_PASSTHROUGH_PREFIXES):
+            targets_, implicit_ = _compiler_passthrough_targets(token)
+            passthrough_targets.extend(targets_)
+            passthrough_implicit = passthrough_implicit or implicit_
     # 执行面/未归类旗标先判定——``-Xlinker -o -c src/a.c`` 里 ``-Xlinker``
     # 透传任意驱动参数，不能因 ``-o`` 命中静态目标就早退放行（第十轮修复）。
     surface_implicit = (
@@ -1490,18 +1504,16 @@ def _compiler_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
         or any(token.startswith(_COMPILER_WRITING_F_PREFIXES) for token in raw)
     )
     if output is not None:
-        return ([output], not output or surface_implicit)
-    targets: list[str] = []
+        return (
+            [output] + passthrough_targets,
+            not output or surface_implicit or passthrough_implicit,
+        )
+    targets: list[str] = passthrough_targets
     for flag in ("-MF", "-MJ", "-aux-info", "-dumpdir", "-dumpbase"):
         value = _compiler_token_value(raw, flag)
         if value:
             targets.append(value)
-    implicit = bool(targets)
-    for token in raw:
-        if token.startswith(_COMPILER_PASSTHROUGH_PREFIXES):
-            passthrough, passthrough_implicit = _compiler_passthrough_targets(token)
-            targets.extend(passthrough)
-            implicit = implicit or passthrough_implicit
+    implicit = bool(targets) or passthrough_implicit
     if (
         any(token in _COMPILER_DEP_BOOL_FLAGS for token in raw)
         or any(token.startswith(_COMPILER_WRITING_F_PREFIXES) for token in raw)
@@ -1977,6 +1989,15 @@ class _Scanner:
         """末端命令分类：写族 / git / find / 解释器。"""
         if name in SHELL_INTERPRETERS:
             return self._scan_interpreter(name, args, depth)
+        if name in _SHELL_EXPORT_BUILTINS:
+            # 第十二轮 push 闸 P1-3：``export GIT_EXTERNAL_DIFF=…; git diff`` 用
+            # shell 内建**跨段注入**执行型 git 环境变量——与段首前缀赋值同向量，
+            # 必须走同一个 `_blocked_assignment` 判定（``declare -x`` 同理）。
+            blocked = _blocked_assignment(
+                [str(a) for a in args if "=" in str(a)]
+            )
+            if blocked is not None:
+                return blocked
         if name == "find":
             return self._scan_find(args, depth)
         if name == "xargs":
