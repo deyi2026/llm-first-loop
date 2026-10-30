@@ -12,7 +12,8 @@
   * ``llm_loop.core.run_context.current_write_scope``（ContextVar，C4）
   * ``llm_loop.core.write_scope.write_scope_audit_snapshot() -> dict``，形态：
     ``{"written_paths": [str, ...], "violations": [{"path": str, "reason": str}, ...],
-    "violation_count": int}``
+    "violation_count": int, "scope_unverified": [{"path": str, "reason": str}, ...],
+    "scope_unverified_count": int}``
 - 绝不读取/回显文件内容——只回路径与计数（NFR-3 / §5.5 纪律）；
 - fail-closed 观测：运行时未部署（缺 ContextVar 或审计模块）→ 确定性
   FAILURE 并说明缺口，绝不把"看不见"伪报成"0 次越界"；
@@ -39,6 +40,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 _MAX_PATTERNS = 20
 _MAX_WRITTEN_PATHS = 50
 _MAX_VIOLATIONS = 20
+_MAX_UNVERIFIED = 20
 _PATTERN_ATTRS = ("allow", "deny", "deny_paths", "paths", "patterns")
 
 
@@ -51,7 +53,8 @@ class VerifyPathScopeTool:
     description = (
         "只读观测当前会话的写侧授权执行面（write scope）：当前生效的写入范围"
         "（模式 + pattern 集合，或全量）、本进程审计快照中的已写路径集合、"
-        "越界写入尝试次数与逐条明细（path + reason）。"
+        "越界写入尝试次数与逐条明细（path + reason）、已放行但无法证明落在"
+        "scope 内的未验证路径（scope_unverified）。"
         "何时用: 父会话或子代理想确认'我现在被允许写哪些路径'、'已经写了哪些路径'、"
         "'越界写入被拒了几次'；交付前自检写侧足迹。"
         "何时不用: 查询其他工具的行为；查别的会话/子进程的审计（审计是本进程内"
@@ -238,6 +241,31 @@ class VerifyPathScopeTool:
                     f"- 注意: 快照计数 {count_raw} 与明细条数 {len(details)} 不一致，"
                     "以快照计数为准（明细可能已被上游截断）"
                 )
+
+        lines.extend(self._unverified_lines(audit))
+        return lines
+
+    def _unverified_lines(self, audit: dict) -> list[str]:
+        """scope_unverified 段：已放行但闸无法证明落在 scope 内的路径（DESIGN §16）."""
+        raw = audit.get("scope_unverified")
+        count_raw = audit.get("scope_unverified_count")
+        if not isinstance(raw, (list, tuple)):
+            return [
+                "未验证路径(scope_unverified): 快照缺 scope_unverified 字段"
+                f"（收到 {type(raw).__name__}）"
+            ]
+        details = [v for v in raw if isinstance(v, dict)]
+        if isinstance(count_raw, bool) or not isinstance(count_raw, int):
+            count = len(details)
+            count_note = "（快照缺 scope_unverified_count，按明细长度派生）"
+        else:
+            count = count_raw
+            count_note = ""
+        lines = [f"未验证路径(scope_unverified): {count} 条{count_note}"]
+        for v in details[:_MAX_UNVERIFIED]:
+            lines.append(f"- {str(v.get('path', '?'))} — {str(v.get('reason', '?'))}")
+        if len(details) > _MAX_UNVERIFIED:
+            lines.append(f"- …（明细共 {len(details)} 条，仅显示前 {_MAX_UNVERIFIED} 条）")
         return lines
 
     def _fail(self, content: str) -> ToolResult:

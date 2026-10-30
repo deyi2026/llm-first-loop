@@ -1471,40 +1471,27 @@ class SubAgentRunner:
             )
         return effective, refusal_detail
 
-    def _restrict_tool_surface_for_write_scope(
+    def _apply_write_scope_tool_surface_policy(
         self,
         child_scope: frozenset[str] | None,
         child_write_scope: WriteScope | None,
     ) -> tuple[frozenset[str] | None, tuple[str, ...]]:
-        """P1-b: 受限 write scope 的 child 剔除 execute_command 工具面。
+        """P1-a: 受限 write scope 的 child **保留** execute_command 工具面。
 
-        DESIGN-20261030 §5.6 P1-b（产品口径已裁定：直接剔除，不走 P1-a 命令族改写）：
-        受限写域的 child 不再拿到 execute_command。剔除落在工具面本身——child 的
-        模型可见工具 schema（runner 按 current_tool_discovery_scope 过滤）、工具
-        目录与 call_tool 派发、以及越权直调拦截（E1_TOOL_WHITELIST）共用同一个
-        scope 变量，所以这是程序级拦截，不是提示层建议。
+        DESIGN-20261030 §16（口径由 P1-b 回退为 P1-a，产品决定 2026-10-30）：
+        P1-b 把写侧约束做成「工具面剔除 execute_command」——强度最高，但受限
+        child 连只读命令与测试都跑不了，实用性代价过大。P1-a 保留命令工具，
+        把写侧约束下沉到命令语义层：core/command_scope_guard 按写盘命令族
+        判定写目标是否落在 write scope 内，越界即程序级拒绝（工具层强制点）。
 
         「受限」判定：child_write_scope 非 None 且 declared=True（显式声明，含
         paths:[] 显式只读）。父声明、子未声明 → 继承父的 declared scope，同样受限；
         父子都未声明 → 不受限，工具面零变化（FR-3）。
 
-        返回 (有效工具面, 被剔除的工具名)。child_scope 为 None 表示全量面，此时
-        物化为 registry 名单去掉 execute_command（其余工具一个不动）；registry
-        不可用时保守返回 None（不误伤，也不冒充已剔除）。
+        返回 (有效工具面, 被剔除的工具名)。P1-a 下**不剔除任何工具**，第二个返回值
+        恒为空元组（回执字段保留以兼容既有消费方；写侧拦截改由命令族闸承担）。
         """
-        if child_write_scope is None or not getattr(child_write_scope, "declared", False):
-            return child_scope, ()
-        if child_scope is None:
-            try:
-                base = set(self.registry.names())
-            except Exception:  # noqa: BLE001 — registry 不可用时不冒充已剔除
-                return child_scope, ()
-        else:
-            base = set(child_scope)
-        if "execute_command" not in base:
-            return child_scope, ()
-        base.discard("execute_command")
-        return frozenset(base), ("execute_command",)
+        return child_scope, ()
 
     def _start_failure_result(
         self,
@@ -1604,10 +1591,10 @@ class SubAgentRunner:
         if write_scope_refusal:
             return self._start_failure_result(depth, write_scope_refusal)
 
-        # DESIGN-20261030 §5.6 P1-b: 受限写域的 child 剔除 execute_command 工具面。
-        # 剔除不是拒绝启动——child 仍可启动，只是拿不到命令能力（写域收窄，命令面
-        # 同步收窄）；未受限时工具面零变化。
-        child_scope, surface_restriction = self._restrict_tool_surface_for_write_scope(
+        # DESIGN-20261030 §16 P1-a: 受限写域的 child 保留 execute_command 工具面。
+        # P1-a：工具面不因写域收窄（命令面保留，写侧约束下沉到命令族闸，
+        # 见 core/command_scope_guard 与 DESIGN-20261030 §16）；未受限时工具面零变化。
+        child_scope, surface_restriction = self._apply_write_scope_tool_surface_policy(
             child_scope, child_write_scope
         )
 
@@ -1963,6 +1950,7 @@ class SubAgentRunner:
                 if surface_restriction
                 else {}
             ),
+            "write_scope_command_guard": "p1a_write_family",
             "worktree": worktree_lease.path if worktree_lease is not None else "",
             "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
         }
@@ -2517,7 +2505,7 @@ class SubAgentRunner:
                     "[状态: failure] requires.write_scope 求交拒绝"
                     f"（未启动任何 child/provider/tool 动作）: {write_scope_refusal}",
                 )
-            child_scope, surface_restriction = self._restrict_tool_surface_for_write_scope(
+            child_scope, surface_restriction = self._apply_write_scope_tool_surface_policy(
                 child_scope if required_tools is not None else current_tool_discovery_scope.get(),
                 child_write_scope,
             )

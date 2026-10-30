@@ -658,8 +658,8 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 
 ### 14.6 诚实边界（未做什么 / 不能声称）
 
-1. **C8 未全量实现**：P0 段（命令串绝对路径字面量 scope 校验 + `scope_unverified` 审计事件）仍未做——shell 通道本身仍不受写侧 scope 约束；**P1-b 段（能力面剔除）已于 §15 落地**。仍不得声称「写侧路径授权已全量生效」。
-2. **P1-b 能力面剔除**（受限 child 不给 `execute_command`）：本条原写「未实现，不在本次交付范围」——**已于 §15 落地**（受限 child 启动时剔除 `execute_command` 工具面；父子均未声明 write scope 时工具面零变化）。
+1. **C8 未全量实现**：P0 段（命令串绝对路径字面量 scope 校验 + `scope_unverified` 审计事件）仍未做——shell 通道本身仍不受写侧 scope 约束；**P1-b 段（能力面剔除）已于 §15 落地**。仍不得声称「写侧路径授权已全量生效」。**（2026-10-30 16:3x 更新：C8 的 P0 段已随 P1-a 于 §16 落地；§15 的 P1-b 口径已作废。现行口径见 §16。）**
+2. **P1-b 能力面剔除**（受限 child 不给 `execute_command`）：本条原写「未实现，不在本次交付范围」——**已于 §15 落地**（受限 child 启动时剔除 `execute_command` 工具面；父子均未声明 write scope 时工具面零变化）。**（2026-10-30 16:3x 更新：P1-b 口径已回退为 P1-a——受限 child **保留** `execute_command`，写侧约束改由命令族闸承担，见 §16。）**
 3. **未改任何既有守卫的门槛**：本轮唯一改动的既有文件是 `tests/unit/test_inspect_code.py`，且是把字面量断言**升级**为行为级断言，未放宽任何断言。
 4. **未清理他人过程物**：仓库根 `.tmp-*` 与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）仍未入库、未删除。
 5. **前序子代理自述未被采信**：本会话对 §12.4 的「12223 passed」做了独立复跑并发现其不适用于最终树（§13.8）；文档中的历史数字**就地标注更正**而非删改。
@@ -667,6 +667,10 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 7. **全量回归口径**：§14.2 的父级复跑口径为 `-m "not real_llm and not serial_signal"`（23 个 serial_signal 用例未纳入父级复跑）；RULE-AI-28 准入走 `scripts/ci_gate.sh` 的 canonical 口径（不排除 serial_signal），两者口径不同，**不可互相替代**。
 
 ## 15. P1-b 能力面剔除落地（2026-10-30 15:4x，本会话）
+
+> **口径已作废（2026-10-30 16:3x）**：产品决定把 P1-b 回退为 P1-a（受限 child **保留**命令能力，
+> 写侧约束下沉到命令族闸），现行口径见 **§16**。本节保留为决策史与残余事实来源，
+> **不得据其认为受限 child 仍无命令能力**。
 
 ### 15.1 触发与口径
 
@@ -724,3 +728,88 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 | P2-5 复位对称性 | `scope_token` 的新分支（仅 `surface_restriction` 时设置）在 `finally` 的 `current_tool_discovery_scope.reset(scope_token)` 处被覆盖 → F14/T16 无泄漏保证成立 ✓ |
 | P2-2 `registry.names()` 抛错 | 防御分支 fail-open，已在 §15.6 第 5 条如实登记；本轮未改行为 |
 | P2-3 §14.5 占位符 | 已由另一会话在其 §14.5 填入（该轮交付小节）；本轮未代填 |
+
+## 16. P1-a 命令族闸落地（2026-10-30 16:3x，本会话；P1-b 口径回退）
+
+> **口径变更（产品决定，2026-10-30）**：§15 的 P1-b「直接剔除 `execute_command`」口径**已作废**，
+> 现行口径是 **P1-a**：受限写域的 child **保留**命令能力，写侧约束下沉到**命令族判定**。
+> §15 保留作为决策史与残余事实的来源，**不得据其认为受限 child 仍无命令能力**。
+
+### 16.1 为什么回退
+
+§5.6 的三档里，P1-b 强度最高，但 §15.6 第 1 条的代价是真实的：受限 child 连 `ls` / `git log` /
+跑测试都做不到——而「跑测试」正是子代理最常见的正当需求。产品决定取 P1-a（§5.6 第 291 行原本就
+写着「若 child 需跑测试 → 选 P1-a + 只读探针白名单」）。代价是强度下降：命令语义层不如「工具不可用」
+绝对（P1-a 的残余清单见 §16.6）。
+
+**这同时把 C8 的 P0 段从「可选项」变成 P1-a 的前置配套**——P1-a 的判定层（shell 词法切分 + 字面量
+scope 校验 + `scope_unverified` 审计）正是 C8 P0 描述的那三件事。故本节一次性落地 P0 + P1-a。
+
+### 16.2 判定层：`core/command_scope_guard.py`（新增，repo-owned）
+
+入口 `check_command_scope(command, *, scope, workspace_root, workdir) -> CommandScopeDecision`。
+
+判定口径（**fail-closed**）：
+
+| 情形 | 结论 | 原因码 |
+|---|---|---|
+| scope 未声明 / 为 None | 放行（父会话零行为变化） | — |
+| 写盘命令族（`rm`/`cp`/`mv`/`sed -i`/`dd`/`tar -x`/`unzip`…）的写目标**可静态定位**且落在 scope 内 | 放行 | — |
+| 同上但写目标落在 scope 外 | 拒绝 | `write_target_outside_scope` / `write_target_not_in_allow_list` / `write_target_denied_by_deny_list` |
+| 写目标**无法静态定位**（变量展开 / 通配 / `cd` 位移 / `{}` 占位） | 拒绝 | `unverifiable_write_target` |
+| 写目标**隐式**（`git commit` 写 `.git/`、`xargs rm` 目标来自 stdin、`mktemp` 写 `TMPDIR`） | 拒绝 | `implicit_write_target` |
+| 组合载体（`find -exec` / `xargs` / `sudo`）内含写盘命令 | 按内含写盘命令判定 | 同上 |
+| 嵌套 shell（`sh -c '…'`） | 递归解析载荷（深度上限 3） | 同上 |
+| **读侧**字面量越界 | **放行 + 记 `scope_unverified` 审计**（scope 是写侧授权；读侧封成监狱会阻断解释器与测试，与 P1-a 的灵活性目标冲突） | — |
+| 命令串无法做 shell 词法切分（引号不闭合） | 拒绝（fail-closed） | `unparsable_command` |
+
+**为何读侧只审计不阻断**：scope 语义是「写侧授权」。把 `/etc/passwd` 这类读也拦掉，会让受限 child
+连解释器与测试都跑不了——那正是 P1-b 的老问题换个形式重现。故读侧越界走**审计暴露**，不静默。
+
+### 16.3 强制点：`tools/builtin/execute_command.py`
+
+- 判定挂在**工具层**（不是提示层）：`execute()` 在任何执行之前（含隔离租约准备）调用
+  `_write_scope_command_gate()`；越界 → 直接返回 `ToolResult(error_type="write_scope_violation")`，
+  命令**不执行**（测试用「目标文件仍存在」证明）。
+- 判定对象是**转换后的最终命令串**（`spec.command`），避免绕过转换器。
+- scope 未声明时整段跳过 ⇒ 父会话行为零变化。
+- `isolation=True`（worktree 隔离）在受限写域下**拒绝**（隔离要写 `.git/` 元数据，超出 scope）：
+  原因码 `isolation_not_allowed_under_write_scope`。
+
+### 16.4 审计与观测
+
+- `core/write_scope.py` 新增 `write_scope_audit_record_unverified(path, reason)` 与快照字段
+  `scope_unverified` / `scope_unverified_count`；与 `violations` 语义相反——`violations` 是**被拒**的
+  越界写尝试，`scope_unverified` 是**已放行但无法证明在 scope 内**。观测面必须能区分两者。
+- `tools/builtin/verify_path_scope.py` 增加「未验证路径(scope_unverified)」段。
+
+### 16.5 测试
+
+| 项 | 结果 |
+|---|---|
+| 新增用例 | `tests/test_command_scope_guard.py`（36 例：判定层 17 组参数化 + 强制层 4 + 审计层 1 + 残余显式化 3 等） |
+| 改写用例 | `tests/test_write_scope_spawn.py::TestP1bToolSurface` → `TestP1aToolSurface`（T17–T23 断言由「剔除」改为「不收窄」；T18 改为「受限与不受限 child 观测到同一工具面」；T23 改为「全量面保持全量」） |
+| 聚焦复跑 | `pytest tests/test_write_scope_spawn.py tests/test_command_scope_guard.py` → **65 passed** |
+| 扩大复跑 | `pytest tests -k "write_scope or execute_command or command_scope or tool_surface"` → **234 passed / 2 skipped** |
+| 静态诊断 | `ruff check`（7 个改动文件）→ 干净 |
+| 门禁自证伪 | 把闸打成空实现后重跑强制层用例 → 目标文件**确实被删**（证明用例测的是拦截，不是空转） |
+
+### 16.6 残余逃逸口（P1-a 相对 P1-b 放宽的清单，**未闭环**）
+
+1. **解释器任意代码**：`python -c '…'` / `node -e` 可写任意路径——P1-a 判定层不判解释器为写盘族。
+   测试 `test_interpreter_payload_is_documented_residual` 把它**显式钉住**（不假装已拦）。
+2. **读侧越界**：只审计不阻断（§16.2 末条）。
+3. **写目标可静态定位但语义绕道**：`cp -r src /tmp/x` 复制**读**越界（读侧不阻断）；
+   `ln -s` 造符号链接后写入链路可绕过字面量判定。
+4. **`git` 写子命令一律按隐式写目标拒绝**——即使 `git status` 之外的只读子命令不受影响，语义偏保守。
+5. **P1-b 曾覆盖的能力**（受限 child 完全无命令）**不再成立**。
+
+### 16.7 与 §15 的关系
+
+- §15 的判定函数 `_restrict_tool_surface_for_write_scope` 更名为
+  `_apply_write_scope_tool_surface_policy`，**不再剔除任何工具**（返回空剔除元组），回执新增
+  `write_scope_command_guard="p1a_write_family"`（旧字段 `write_scope_tool_restriction` 保留兼容，
+  但不再出现）。
+- §15.6 第 5 条「防御分支 fail-open（`registry.names()` 抛错）」随 P1-b 一并消失——P1-a 不再需要
+  物化 registry 名单。
+- §14.6 第 1/2 条的历史陈述保留原样（决策史），**现行口径以本节为准**。

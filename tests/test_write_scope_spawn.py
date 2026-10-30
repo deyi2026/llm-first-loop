@@ -362,7 +362,9 @@ class TestSyncRunPath:
         assert current_write_scope.get() is parent
 
 
-# ── P1-b: 受限 write scope 的 child 剔除 execute_command 工具面（DESIGN §5.6）──
+# ── P1-a: 受限 write scope 的 child 保留 execute_command 工具面（DESIGN §16）──
+# 写侧约束不再由「工具面剔除」承担，而由命令族闸承担（core/command_scope_guard，
+# 见 tests/test_command_scope_guard.py）；本类只守「工具面不被收窄」这一条。
 
 
 def _full_grant():
@@ -410,10 +412,10 @@ def _scope_names(value) -> set:
     return set(value)
 
 
-class TestP1bToolSurface:
-    """受限写域 → child 工具面剔除 execute_command（剔除≠拒绝启动）。"""
+class TestP1aToolSurface:
+    """受限写域 → child 工具面**保留** execute_command（P1-a 口径；P1-b 剔除口径已作废）。"""
 
-    def test_t17_async_start_restricted_child_loses_execute_command(self, ws_tokens):
+    def test_t17_async_start_restricted_child_keeps_execute_command(self, ws_tokens):
         _set_parent_scope(None, ws_tokens)
         record: list = []
         r, sid = _async_probe_runner(record)
@@ -422,11 +424,13 @@ class TestP1bToolSurface:
             started = r.start(task="受限写", required_write_scope=child_req)
         assert started["accepted"] is True, started
         scope = _scope_names(started["tool_scope"])
-        assert "execute_command" not in scope
+        assert "execute_command" in scope, "P1-a：受限 child 保留命令能力"
         assert "read_file" in scope
-        assert started["write_scope_tool_restriction"] == ["execute_command"]
+        assert "write_scope_tool_restriction" not in started
+        assert started["write_scope_command_guard"] == "p1a_write_family"
 
-    def test_t18_sync_run_restricted_child_loses_execute_command(self, ws_tokens):
+    def test_t18_sync_run_restricted_child_keeps_execute_command(self, ws_tokens):
+        """P1-a：写域不得改变 child 工具面——受限与不受限观测到同一工具面。"""
         _set_parent_scope(None, ws_tokens)
         record: list = []
         r = _sync_tool_scope_probe_runner(record)
@@ -434,10 +438,17 @@ class TestP1bToolSurface:
         result = r.run(task="同步受限写", required_write_scope=child_req)
         assert result.outcome == "completed", result
         assert record, "child 执行体未被触发"
-        scope = _scope_names(record[0])
-        assert scope, "受限 child 的工具面不得为空"
-        assert "execute_command" not in scope
-        assert "read_file" in scope
+        restricted_scope = record[0]
+
+        record2: list = []
+        r2 = _sync_tool_scope_probe_runner(record2)
+        result2 = r2.run(task="同步无写域")
+        assert result2.outcome == "completed", result2
+        assert record2, "未受限 child 执行体未被触发"
+
+        assert restricted_scope == record2[0], "P1-a：写域不得改变 child 工具面"
+        names = _scope_names(restricted_scope)
+        assert not names or "execute_command" in names, "P1-a：同步路径同样保留命令能力"
 
     def test_t19_undeclared_write_scope_keeps_execute_command(self, ws_tokens):
         _set_parent_scope(None, ws_tokens)
@@ -449,7 +460,7 @@ class TestP1bToolSurface:
         assert "execute_command" in started["tool_scope"]
         assert "write_scope_tool_restriction" not in started
 
-    def test_t20_parent_declared_child_inherits_and_loses_execute_command(self, ws_tokens):
+    def test_t20_parent_declared_child_inherits_and_keeps_execute_command(self, ws_tokens):
         parent = parse_write_scope({"paths": ["src/a/**"]})
         _set_parent_scope(parent, ws_tokens)
         record: list = []
@@ -457,9 +468,9 @@ class TestP1bToolSurface:
         with _no_grant():
             started = r.start(task="继承父写域")
         assert started["accepted"] is True, started
-        assert "execute_command" not in started["tool_scope"]
+        assert "execute_command" in started["tool_scope"]
 
-    def test_t21_declared_tools_with_execute_command_is_removed_not_refused(self, ws_tokens):
+    def test_t21_declared_tools_with_execute_command_is_kept_not_refused(self, ws_tokens):
         _set_parent_scope(None, ws_tokens)
         record: list = []
         r, _ = _async_probe_runner(record)
@@ -472,10 +483,11 @@ class TestP1bToolSurface:
             )
         assert started["accepted"] is True, started
         scope = _scope_names(started["tool_scope"])
-        assert "execute_command" not in scope
+        assert "execute_command" in scope
         assert "read_file" in scope
 
-    def test_t22_explicit_readonly_scope_is_restricted(self, ws_tokens):
+    def test_t22_explicit_readonly_scope_keeps_tool_surface(self, ws_tokens):
+        """显式只读写域：工具面保留（命令能力在），写侧由命令族闸拦截。"""
         _set_parent_scope(None, ws_tokens)
         record: list = []
         r, _ = _async_probe_runner(record)
@@ -483,9 +495,10 @@ class TestP1bToolSurface:
         with _no_grant():
             started = r.start(task="显式只读", required_write_scope=readonly)
         assert started["accepted"] is True, started
-        assert "execute_command" not in started["tool_scope"]
+        assert "execute_command" in started["tool_scope"]
 
-    def test_t23_full_surface_is_materialized_without_execute_command(self, ws_tokens):
+    def test_t23_full_surface_is_materialized_with_execute_command(self, ws_tokens):
+        """P1-a：全量面保持全量（含 execute_command），不被写域裁窄。"""
         _set_parent_scope(None, ws_tokens)
         record: list = []
         r, _ = _async_probe_runner(record)
@@ -493,6 +506,10 @@ class TestP1bToolSurface:
         with _full_grant():
             started = r.start(task="全量面物化", required_write_scope=child_req)
         assert started["accepted"] is True, started
-        scope = _scope_names(started["tool_scope"])
-        assert "execute_command" not in scope
-        assert "read_file" in scope and "wait" in scope
+        tool_scope = started["tool_scope"]
+        if isinstance(tool_scope, str) and tool_scope.startswith("full("):
+            assert "write_scope_tool_restriction" not in started
+        else:
+            names = _scope_names(tool_scope)
+            assert "execute_command" in names
+            assert "read_file" in names and "wait" in names

@@ -22,12 +22,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from llm_loop.core.command_scope_guard import check_command_scope
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import (
     current_evidence_shadow_enabled,
     current_session_id,
+    current_write_scope,
     workspace_base,
 )
+from llm_loop.core.write_scope import WriteScope, write_scope_audit_record_unverified
 
 # P2-8（Rule28 修复轮）: held-out 读侧封条——命令串字面片段拒绝。
 # sealed_paths 为独立叶子模块（仅 stdlib + 惰性 run_context），无循环导入风险；
@@ -1104,6 +1107,49 @@ class ExecuteCommandTool:
             raw_observation=raw_observation,
         )
 
+    def _write_scope_command_gate(
+        self,
+        command: str,
+        exec_argv: list[str] | None,
+        scope: WriteScope,
+        workdir: str | None,
+        isolation: bool,
+    ) -> ToolResult | None:
+        """P1-a 命令写侧闸（DESIGN-20261030 §16）：返回拒绝回执或 None（放行）.
+
+        写侧约束不再由「工具面剔除 execute_command」承担（P1-b），而由命令族判定
+        承担：写盘命令族的写目标必须静态可定位且落在 write scope 内，否则拒绝。
+        未受限会话（scope 未声明）恒放行——父会话行为零变化。
+        """
+        if isolation:
+            return self._write_scope_reject(
+                "isolation_not_allowed_under_write_scope",
+                "受限写域下禁止 worktree 隔离（隔离会写 .git/ 元数据，超出 scope）",
+            )
+        text = shlex.join(exec_argv) if exec_argv else str(command or "")
+        decision = check_command_scope(
+            text,
+            scope=scope,
+            workspace_root=workspace_base(),
+            workdir=workdir or "",
+        )
+        for item in decision.unverified:
+            write_scope_audit_record_unverified(item, "scope_unverified")
+        if not decision.allowed:
+            return self._write_scope_reject(decision.reason, decision.detail)
+        return None
+
+    def _write_scope_reject(self, reason: str, detail: str) -> ToolResult:
+        """P1-a 闸的拒绝回执（error_type 与文件写侧越界一致，便于统一观测）。"""
+        return ToolResult(
+            status=ToolResultStatus.ERROR,
+            content=f"[写侧拒绝] {reason}：{detail}",
+            tool_call_id="",
+            tool_name=self.name,
+            error_type="write_scope_violation",
+            error_detail=f"{reason}: {detail}",
+        )
+
     def execute(self, **kwargs) -> ToolResult:
         # ── P2-2（2026-10-25）: command / argv 二选一的结构化执行入口 ──
         # argv 模式: shell=False 直执行（不经 /bin/sh），守卫按 shlex.join(argv)
@@ -1141,6 +1187,16 @@ class ExecuteCommandTool:
         # EVO-20261029-04c73530：转换成功时后续一切（审核门/回执展示/执行）
         # 都以转换后规格为准——回执如实展示转换形态，不伪装原样执行。
         command = spec.command
+        # ── P1-a（DESIGN-20261030 §16）: 受限写域的命令通道写侧闸 ──
+        # 判定对象是转换后的最终命令串；位置在任何执行之前（含隔离租约准备）。
+        # 未声明 scope 时整段跳过——父会话行为零变化。
+        _scope = current_write_scope.get()
+        if _scope is not None and getattr(_scope, "declared", False):
+            _gate = self._write_scope_command_gate(
+                command, exec_argv, _scope, workdir, isolation
+            )
+            if _gate is not None:
+                return _gate
         # RULE-AI-28: caller-visible obligation is in the schema before invocation;
         # the returned annotation reports observations, not automatic admission.
         gate_line = self._review_gate_line(command)

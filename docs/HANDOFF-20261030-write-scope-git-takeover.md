@@ -67,5 +67,50 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 | 远端锚点 | `origin/main` 已推进到 `566e5b09f`（本文件 §8 记录的 `038a0821e` 之后）；其后接管会话新增 `bfeacf003`（修回既有守卫）与最终交付提交 | `git log --oneline -3`、`git rev-list --count origin/main..HEAD` |
 | §6「全量回归以 review_admission 回执为准」 | **已兑现**：`review_admission` kind=full_test（候选 `7ba48414…`，child `subagent_b728459b392d`）结论 **PASS（P0=0 / P1=0 / P2=3）** | 工具回执 |
 | 新发现 | 接管会话在 `566e5b09f` 上独立复跑全量回归，发现**一个既有守卫回归**：`tests/unit/test_inspect_code.py::test_factory_registered`（根因 `ab86dde5b` 抽 `_register_basic_tools` helper）。已修（字面量断言 → 行为级断言 + AST 接线判定），详见设计文档 §13.8 / §14 | 设计文档 §13.8 |
-| §5 的 P1 入口 | **P1-b 已落地**（2026-10-30 15:4x，提交 `90fad9ab6`）：受限 child 启动时工具面剔除 `execute_command`，异步 `start()` 与同步 `run()` 两条路径同款，测试 T17–T23（设计文档 §15）；**C8 的 P0 段（命令串绝对路径字面量校验 + `scope_unverified` 审计）仍未做**——不得声称「写侧路径授权已全量生效」 | 设计文档 §9 / §12.5 / §15 |
+| §5 的 P1 入口 | **P1-b 已落地**（2026-10-30 15:4x，提交 `90fad9ab6`）：受限 child 启动时工具面剔除 `execute_command`，异步 `start()` 与同步 `run()` 两条路径同款，测试 T17–T23（设计文档 §15）；**C8 的 P0 段（命令串绝对路径字面量校验 + `scope_unverified` 审计）仍未做**——不得声称「写侧路径授权已全量生效」 **（2026-10-30 16:3x 更新：P1-b 口径已回退为 P1-a，C8 的 P0 段已随之落地——现行口径见本文件 §10 与设计 §16）** | 设计文档 §9 / §12.5 / §15 / §16 |
 | 未跟踪 scratch | 仓库根仍有 `.tmp-*` 过程脚本与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）**未入库**；含本机绝对路径，接管会话**未删除他人过程物**，也未提交 | `git status --porcelain` |
+
+## 10. 本会话：P1-a 命令族闸落地（2026-10-30 16:3x，P1-b 口径回退）
+
+> **给接管会话的第一句话**：写侧约束的现行口径已从 **P1-b（剔除 `execute_command`）** 改为
+> **P1-a（保留命令能力 + 命令族闸）**。你若按 §9 表最后一行（"P1-b 已落地"）继续做，会做出
+> **与现行代码相反**的动作。**以本节与设计文档 §16 为准。**
+
+### 10.1 口径变更（产品决定）
+
+| 项 | P1-b（§15，作废） | P1-a（§16，现行） |
+|---|---|---|
+| 受限 child 的命令能力 | **无**（工具面剔除 `execute_command`） | **保留**（能 `ls`/`git log`/跑测试） |
+| 写侧约束落点 | 工具面不可用 | **命令族判定**：写盘命令的写目标必须静态可定位且落在 scope 内 |
+| 强度 | 强（无歧义） | 中（命令语义层；残余见 §16.6） |
+| 判定代码 | 无（靠工具面） | `src/llm_loop/core/command_scope_guard.py`（新增） |
+| 强制点 | runner 工具面 | `execute_command` 工具层（越界 → `error_type="write_scope_violation"`，命令不执行） |
+
+**连带结论**：C8 的 P0 段（命令串绝对路径字面量 scope 校验 + `scope_unverified` 审计）不再是
+"下一轮可选项"，而是 **P1-a 的前置配套**——P1-a 的判定层用的就是那三件事，本轮已一并落地。
+
+### 10.2 改动清单（本会话）
+
+| 文件 | 改动 |
+|---|---|
+| `src/llm_loop/core/command_scope_guard.py` | **新增**：判定层（shell 词法切分 → 写盘命令族识别 → 写目标 scope 校验；fail-closed 原因码） |
+| `src/llm_loop/core/write_scope.py` | 新增 `write_scope_audit_record_unverified()` + 快照字段 `scope_unverified` / `scope_unverified_count` |
+| `src/llm_loop/tools/builtin/execute_command.py` | 新增 `_write_scope_command_gate()` + 接线（`execute()` 内、任何执行之前）；受限写域下拒绝 worktree 隔离 |
+| `src/llm_loop/tools/builtin/verify_path_scope.py` | 观测面新增「未验证路径(scope_unverified)」段 |
+| `src/llm_loop/subagent/runner.py` | 判定函数更名 `_apply_write_scope_tool_surface_policy`，**不再剔除任何工具**；回执新增 `write_scope_command_guard="p1a_write_family"` |
+| `tests/test_command_scope_guard.py` | **新增** 36 例（判定层 + 强制层 + 审计层 + 残余显式化 + 门禁自证伪） |
+| `tests/test_write_scope_spawn.py` | `TestP1bToolSurface` → `TestP1aToolSurface`；T17–T23 断言由「剔除」改为「不收窄」 |
+| `docs/DESIGN-20261030-…md` | 新增 §16；§14.6 第 1/2 条与 §15 标题加**口径已作废**就地标注 |
+
+### 10.3 残余逃逸口（P1-a 相对 P1-b 放宽，**未闭环**）
+
+1. **解释器任意代码**（`python -c '…'` 可写任意路径）——判定层不判解释器为写盘族；测试
+   `test_interpreter_payload_is_documented_residual` 把它显式钉住。
+2. **读侧越界只审计不阻断**（scope 是写侧授权；读侧封禁会阻断解释器与测试）。
+3. `cp -r` 的**读**越界、`ln -s` 造符号链接后的写入链路，可绕开字面量判定。
+4. `git` 写子命令一律按隐式写目标拒绝——语义偏保守。
+
+### 10.4 与并发写者会话的关系
+
+本轮工作树里仍有另一活跃会话（`cbda67c5-…`）的在途 WIP（`review_host_admission.py` 与其测试、
+`docs/EVO-20261030-109d7068-…md`）。本会话**只提交自己那 8 个文件**，不纳入、不删除他人过程物。

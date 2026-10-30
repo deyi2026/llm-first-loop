@@ -450,6 +450,7 @@ def intersect_write_scope(
 _audit_lock = threading.Lock()
 _written_paths: list[str] = []
 _violations: list[dict[str, str]] = []
+_unverified_paths: list[dict[str, str]] = []
 
 
 def write_scope_audit_record_write(path: str) -> None:
@@ -464,14 +465,28 @@ def write_scope_audit_record_violation(path: str, reason: str) -> None:
         _violations.append({"path": str(path), "reason": str(reason)})
 
 
+def write_scope_audit_record_unverified(path: str, reason: str) -> None:
+    """记录一次「放行但无法证明落在 scope 内」的路径（scope_unverified 审计）.
+
+    与 violation 的区别：violation 是**被拒**的越界写尝试；unverified 是**已放行**
+    但闸无法静态证明在 scope 内（命令通道读侧越界字面量、cwd 位移后的显式相对
+    路径）。两者都进审计，但语义相反——观测面必须能区分「被拒」与「未验证」。
+    """
+    with _audit_lock:
+        _unverified_paths.append({"path": str(path), "reason": str(reason)})
+
+
 def write_scope_audit_snapshot() -> dict[str, Any]:
     """审计快照: ``{"written_paths": [...], "violations": [{"path","reason"}...],
-    "violation_count": int}``（返回拷贝，调用方可自由持有）."""
+    "violation_count": int, "scope_unverified": [{"path","reason"}...],
+    "scope_unverified_count": int}``（返回拷贝，调用方可自由持有）."""
     with _audit_lock:
         return {
             "written_paths": list(_written_paths),
             "violations": [dict(v) for v in _violations],
             "violation_count": len(_violations),
+            "scope_unverified": [dict(v) for v in _unverified_paths],
+            "scope_unverified_count": len(_unverified_paths),
         }
 
 
@@ -480,3 +495,4 @@ def write_scope_audit_reset() -> None:
     with _audit_lock:
         _written_paths.clear()
         _violations.clear()
+        _unverified_paths.clear()
