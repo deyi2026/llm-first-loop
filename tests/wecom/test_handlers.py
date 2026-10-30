@@ -26,7 +26,7 @@ class FakeEngine:
         self.answer = answer
         self.calls: list[tuple[str, str]] = []
 
-    def run(self, sid: str, text: str, ingress=None, user_metadata=None):  # noqa: ARG002
+    def run(self, sid: str, text: str, ingress=None, reasoning_mode=None, user_metadata=None):  # noqa: ARG002
         self.calls.append((sid, text))
         return FakeResult(self.answer)
 
@@ -102,7 +102,7 @@ def test_handlers_truncated_annotation(tmp_path):
     )
     # 构造 truncated 结果
     class TruncEngine(FakeEngine):
-        def run(self, sid, text, ingress=None, user_metadata=None):  # noqa: ARG002
+        def run(self, sid, text, ingress=None, reasoning_mode=None, user_metadata=None):  # noqa: ARG002
             self.calls.append((sid, text))
             return FakeResult("长答案", provider_output_truncated=True)
 

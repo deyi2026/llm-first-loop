@@ -37,10 +37,12 @@ class IngressCaptureEngine:
     def __init__(self) -> None:
         self.captured: list[object] = []
         self.calls: list[tuple[str, str]] = []
+        self.reasoning_modes: list[object] = []
 
-    def run(self, sid: str, text: str, ingress=None, user_metadata=None):  # noqa: ARG002
+    def run(self, sid: str, text: str, ingress=None, reasoning_mode=None, user_metadata=None):  # noqa: ARG002
         self.captured.append(ingress)
         self.calls.append((sid, text))
+        self.reasoning_modes.append(reasoning_mode)
         return FakeResult("ok")
 
 
@@ -99,5 +101,7 @@ def test_handler_passes_wecom_ingress_to_engine(tmp_path) -> None:
     assert tok is not None, "engine.run 必须收到 ingress 凭据（None=enforce 必拒）"
     assert getattr(tok, "channel", None) == "wecom"
     assert is_whitelisted(tok) is True
+    # 2026-10-30 用户指令「Always_on_effort 改为 on」：请求级 reasoning 模式须为 on
+    assert engine.reasoning_modes == ["on"], "企微接入的 reasoning_mode 必须是 on（用户显式指令）"
     # 回复内容是引擎产出（而非「[写入被拒]」拒绝文案）
     assert replies and replies[0][2] == "ok"

@@ -25,7 +25,7 @@ class FakeEngine:
         self.answer = answer
         self.calls: list[str] = []
 
-    def run(self, sid, text, ingress=None, user_metadata=None):  # noqa: ARG002
+    def run(self, sid, text, ingress=None, reasoning_mode=None, user_metadata=None):  # noqa: ARG002
         self.calls.append(text)
         return FakeResult(self.answer)
 

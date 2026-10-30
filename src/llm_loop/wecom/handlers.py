@@ -125,6 +125,12 @@ class WeComMessageHandler:
             sid,
             text,
             ingress=issue_ingress("wecom"),
+            # 2026-10-30 用户指令「Always_on_effort 改为 on」：请求级 reasoning 模式
+            # 由 auto 改为 on——auto 只带 reasoning_effort，on 额外显式下发
+            # thinking={"type":"enabled"}（client.py:2094-2110）。本 key 的订阅套餐
+            # 无 GLM-5.3-FlashX 权限，企微接入固定用 minimax/MiniMax-M3.1-Flash
+            # （其 reasoning_control=always_on_effort），故在此显式钉住模式。
+            reasoning_mode="on",
             user_metadata=(
                 {"human_turn_source_id": f"wecom:{msg.message_id}"} if msg.message_id else None
             ),
