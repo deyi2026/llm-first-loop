@@ -627,3 +627,48 @@ GIT_CONFIG_COUNT=1 ls git` 仍在）；新增一条已知取舍：`ex -c '1,2sav
 修：ex 的模式地址与命令词在语法上不可区分，误判的代价是**过度拦截**，与
 fail-closed 方向相反，故按「宁可漏判写目标也不误判执行」取舍 ⇒ 该形态的越界
 写仍需靠 scope 之外的其它约束兜底）。
+
+### 10.15 第十一轮独立审查（2026-10-31 01:46–01:57）：REVISE（P0=0 / P1=1 / P2=4）→ 已逐条修
+
+**审查物料**：第十轮落盘态（`353416fe7`，含第十轮 P1/P2 修）；审查子代理（只读）
+实测复现 **P1=1 / P2=4**。
+
+**P1（1 条，已修）— ed/ex 内联脚本仍漏三类形态**
+1. **多字母写命令**（`wq` / `wn` / `wa` / `wall` / `x` / `xit` / `xall`）此前完全
+   没建模 ⇒ `ex -c 'wq /outside/x' f` / `ex -c 'x /outside/x' f` 不产生任何写
+   目标 ⇒ 放行；
+2. **`+cmd` 启动通道**（`ex +'w /outside/x' f` ⇒ ex 把该串当第一条 ex 命令执行）
+   整个脚本根本没被扫；
+3. **未建模的命令词**此前静默放行 ⇒ 任何 ex 命令只要不在名单里就“无害”。
+   ⇒ **改为按命令词建模**：写命令集合 / 执行命令集合 / 确定无害集合；命令位置
+   的词若不在任何集合里 ⇒ 其写目标不可静态定位 ⇒ **fail-closed**。
+   ⇒ 附带取舍：ex 的**模式地址**（`/re/w`）与命令词在语法上不可区分 ⇒ 这类行
+   落到「未建模」⇒ fail-closed（宁可多拦，不放行）。
+
+**P2（4 条，均已处置）**
+- **P2-1 tar 的 `-I/--use-compress-program`** 是**执行载荷**（tar 会执行该程序），
+  口径必须与 `-F/--info-script` 一致 ⇒ 已改为 fail-closed。
+- **P2-2 `script` 无 FILE 时**写当前目录的 `typescript` ⇒ 该默认写目标此前
+  从未被判定 ⇒ 已补判。
+- **P2-3 `GIT_REMOTE_READ_ACTIONS` 里的 `-v/--verbose`** 是**死条目**
+  （`_git_action_args` 只取位置动作 ⇒ `git remote -v` 走的是「无动作 ⇒ 不拦」
+  分支）⇒ 已删除（留着会让人误以为该白名单在起作用）。
+- **P2-4 `routes.py:3387` 的单行 B009 修复属跨所有权改动**（来自并发写者会话
+  的提交 `20e6db475`）⇒ 合并冲突风险；**本轮不做任何进一步处理**——该修复已
+  在双方分支上各出现一次，内容一致 ⇒ 合并时 git 可直接对齐；仅登记为**合并期
+  需关注点**。
+
+**应拦输入实测**（RULE-AI-35）：本轮 9 条应拦向量在 `paths=("**",)` 下**全部
+被拦且拒因匹配**（ed/ex 的 `wq` / `wn` / `x` / `wall` / `+cmd` 五条为
+`write_target_outside_scope`；未建模命令词 / `sh` 执行 / tar `-I` /
+tar `--use-compress-program=` 四条为 `implicit_write_target`）；3 条读形态
+（`ex -c 'wq' f` / `ex -c 'p' f` / `ex -c '1,2d' f`）⇒ 按预期放行。
+判定层 **301 passed**（`test_command_scope_guard.py` 289 + `test_command_options.py`
+12）；改动文件 ruff 诊断 **0**；棘轮门通过（`_write_targets` / `_scan_git` 的实测
+值未触发「未登记/棘轮增长」规则，`tests/guards/function_size_baseline.json` 的
+`function_lines` 无变化）。
+
+**并发写者会话的进展（本会话观察，01:32–01:50）**：其第十三轮/第十四轮成果
+**已落到 main**（`ba656c85c`）⇒ **main 已成为双方共用的集成线**；其
+`fix/write-scope-p1-4-union` 分支（`efb36d2d1`）仍单独存在（发布/推送轨）。
+⇒ 本轮的所有改动直接落在 main ✔，未新开分支 ✔。

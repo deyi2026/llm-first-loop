@@ -928,3 +928,50 @@ def test_r10_review_fixes_do_not_over_block_read_forms(command: str) -> None:
     """第十轮修复不得误伤：``w`` 写相对文件 / ``wq``（写并退出）/ 普通 sed。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第十一轮独立审查（REVISE，P0=0/P1=1/P2=4）逐条修的回归锁 ────────────────
+#
+# P1-1 ed/ex 内联脚本仍漏**多字母写命令**（``wq`` / ``wn`` / ``wa`` / ``wall`` /
+#      ``x`` / ``xit`` / ``xall``）与 ``+cmd`` **启动通道**（``ex +'w …' f``）；
+#      且「未建模的命令词」此前静默放行 ⇒ 越界写逃逸。
+# P2-1 tar 的 ``-I/--use-compress-program`` 是**执行载荷**，口径必须与
+#      ``-F/--info-script`` 一致（fail-closed）。
+# P2-2 ``script`` 无 FILE 时写当前目录的 ``typescript`` ⇒ 默认写目标未判定。
+# P2-3 ``GIT_REMOTE_READ_ACTIONS`` 里的 ``-v/--verbose`` 是死条目（已删）。
+
+R11_BLOCKED_CASES = [
+    ("ex -c 'wq /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex -c 'wn /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex -c 'x /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex -c 'wall /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex +'w /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex -c 'nosuchcmd' src/x.py", "implicit_write_target"),
+    ("ex -c 'sh rm -rf /outside/x' src/x.py", "implicit_write_target"),
+    ("tar -I /outside/prog -cf a.tar f", "implicit_write_target"),
+    ("tar --use-compress-program=/outside/prog -cf a.tar f", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R11_BLOCKED_CASES)
+def test_r11_review_bypasses_are_blocked_under_full_domain_scope(
+    command: str, expected_reason: str
+) -> None:
+    """第十一轮审查复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R11_ALLOWED_CASES = [
+    "ex -c 'wq' src/x.py",
+    "ex -c 'p' src/x.py",
+    "ex -c '1,2d' src/x.py",
+]
+
+
+@pytest.mark.parametrize("command", R11_ALLOWED_CASES)
+def test_r11_review_fixes_do_not_over_block_read_forms(command: str) -> None:
+    """第十一轮修复不得误伤：``wq``（写回原文件）/ 打印 / 缓冲区删除。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)

@@ -163,7 +163,11 @@ GIT_REMOTE_WRITE_ACTIONS = frozenset(
 )
 
 # git remote 的只读动作（其余动作一律按写处理，fail-closed）
-GIT_REMOTE_READ_ACTIONS = frozenset({"-v", "--verbose", "show", "get-url"})
+# 第十一轮独立审查 P2-3：``-v/--verbose`` 两项是**死条目**——``_git_action_args``
+# 只取位置动作（选项被剥离）⇒ ``git remote -v`` 走的是「无动作 ⇒ 不拦」分支
+# ⇒ 名单里的 ``-v/--verbose`` 永远命中不到 ⇒ 删掉（留着会让人误以为
+# ``git remote -v`` 是靠这份白名单放行的）。
+GIT_REMOTE_READ_ACTIONS = frozenset({"show", "get-url"})
 
 # git worktree 的只读动作（``list`` / ``list --porcelain``）——
 # 第四轮审查实测 ``git worktree list`` 曾被整族按写处理而误伤。
@@ -861,54 +865,105 @@ _ED_WRITE_RE = re.compile(r"(?:^|\n)\s*w\s+(\S+)")
 # 第十轮 P1-1：``w! FILE``（强制写）与 ``w >> FILE``（追加写）也是真写法 ⇒ 一并识别
 # （``\s+`` 必须保留：``wq``（写并退出）是常用写法，不是「写文件 wq」）。
 _ED_WRITE_CMD_RE = re.compile(r"^[^\s]*\s*[wW]!?\s+(?:>>\s*)?(\S+)")
-# 第十轮 P1-1：``save FILE`` / ``saveas FILE``（另存为）同样是写命令。
-# 注意：多字母命令词与「地址前缀」在 ex 语法里天然歧义（``1,2save`` /
-# ``/re/save``）⇒ 只认**行首**或**数值地址前缀**后的命令词；其余形态不匹配 ⇒
-# 不会被误判成执行（上一版过宽的 ``^[^\s]*\s*e(\s+(\S.*))?$`` 会把 ``save …``
-# 当成 ``e`` 命令 ⇒ 把正常写文件误判成「执行」⇒ 过度拦截）。
-_ED_SAVE_CMD_RE = re.compile(r"^(?:[0-9,.$%*+-]+\s*)?save(?:as)?\s+(?:>>\s*)?(\S+)")
-# 第十轮 P1-1：``w !CMD`` / ``r !CMD`` / ``e !CMD`` 把内容**管道给 shell 执行**
-# ⇒ 载荷里的写目标不可静态定位 ⇒ 必须 fail-closed（旧实现把 ``!CMD`` 当成相对
-# 文件名 ⇒ 落在 scope 内 ⇒ 放行）。
+# 第十一轮独立审查 P1-1：ed/ex 内联脚本的写/执行形态再补——**多字母写命令**
+# （``wq`` / ``wn`` / ``wa`` / ``wall`` / ``x`` / ``xit`` / ``xall``）此前完全没建模
+# ⇒ ``ex -c 'wq /outside/x' f`` / ``ex -c 'x /outside/x' f`` 不产生任何写目标 ⇒
+# 放行；``ex +'w /outside/x' f``（``+cmd`` **启动通道**）整个脚本根本没被扫。
+# ⇒ 改为按**命令词**建模：写命令集合 / 执行命令集合 / 确定无害集合；
+#    命令位置的词若不在任何集合里 ⇒ 其写目标不可静态定位 ⇒ fail-closed。
 _ED_PIPE_CMD_RE = re.compile(r"^[^\s]*\s*[wre]\s*!(\S.*)$")
-# 第十轮 P1-1：ex 的 ``e CMD``（不带 ``!``）与裸 ``e``（重执行上一条）同样是执行。
-_ED_EXEC_CMD_RE = re.compile(r"^(?:[0-9,.$%*+-]+\s*)?e(\s+(\S.*))?$")
+_ED_WRITE_COMMANDS = frozenset(
+    {"w", "W", "wq", "wn", "wa", "wall", "x", "xit", "xall", "save", "saveas"}
+)
+# ``e CMD`` 在 ex 里是**执行 shell 命令**（不是 vim 的 ``:e file``）⇒ 执行类。
+_ED_EXEC_COMMANDS = frozenset({"!", "e", "sh", "shell", "normal", "norm"})
+_ED_SAFE_COMMANDS = frozenset(
+    {
+        "p", "P", "n", "N", "q", "Q", "r", "s", "g", "v", "y", "u", "U", "m",
+        "t", "z", "=", "#", "&", "~", "k", "h", "f",
+        # 缓冲区内的编辑命令（只改内存里的缓冲区，落盘要靠 ``w``/``x`` ⇒ 已被
+        # 写命令集合单独建模）
+        "d", "c", "a", "i", "I", "j",
+        "set", "put", "pu", "copy", "co", "move", "retab", "resize", "redraw",
+        "red", "new", "newer", "vnewer", "split", "sp", "vsplit", "vsp", "file",
+        "buffers", "ls", "ll", "windo", "winc", "wincmd", "help", "version",
+        "ver", "scriptnames", "syntax", "syn", "hi", "highlight", "map", "nmap",
+        "vmap", "noremap", "nnoremap", "unmap", "nunmap", "print", "quit",
+        "read", "edit", "substitute", "global", "vglobal", "undo", "redo",
+        "yank", "delete", "join",
+    }
+)
+
+
+def _ed_command_word(line: str) -> str:
+    """ex 命令行 → 命令词（去掉地址前缀与尾部的 ``!``）。
+
+    地址前缀（``1`` / ``1,2`` / ``$`` / ``%``）按「首个字母之前的那段」处理；
+    **模式地址**（``/re/w``）在语法上与命令词不可区分 ⇒ 这类行会落到
+    「未建模命令」⇒ fail-closed（宁可多拦，不放行）。
+    """
+    parts = line.split()
+    if not parts:
+        return ""
+    head = parts[0]
+    index = 0
+    while index < len(head) and not head[index].isalpha() and head[index] != "!":
+        index += 1
+    return head[index:].rstrip("!")
+
+
+def _ed_write_argument(line: str) -> str | None:
+    """写命令后的文件参数（``w FILE`` / ``wq FILE`` / ``x FILE`` …）；没有则 ``None``。"""
+    parts = line.split()
+    if len(parts) < 2:
+        return None
+    tail = parts[-1]
+    if tail.startswith(">>"):
+        tail = tail[2:].strip()
+    return tail or None
 
 
 def _ed_script_write_targets(script: str) -> tuple[list[str], bool]:
-    """ed/ex 内联脚本的写目标 + 是否含**执行**（管道 / ``e``）。
+    """ed/ex 内联脚本的写目标 + 是否含**未建模/执行**命令（⇒ fail-closed）。
 
     第八轮 P1-4：ex 支持**竖线链**（``%s/a/b/|w /outside/x|q``），旧实现只按
     ``^``/换行 锚定 ``w`` ⇒ 链中的 ``w`` 漏检 ⇒ 越界写被放行 ⇒ 改为按 ``|`` 与
     换行切分后逐条判定（两者都是 ex 的命令分隔符）。
 
-    第十轮独立审查 P1-1：旧实现只认 ``w FILE`` 一种形态 ⇒ 漏掉四种真写法：
-    - ``w! FILE``（强制写，ex/ed 合法语法）
-    - ``w >> FILE``（追加写）
-    - ``save FILE`` / ``saveas FILE``（另存为）
-    - ``w !CMD`` / ``r !CMD`` / ``e !CMD``（管道给 shell ⇒ **载荷写目标不可
-      静态定位** ⇒ 必须 fail-closed）
+    第十轮独立审查 P1-1：只认 ``w FILE`` 一种形态 ⇒ 漏掉 ``w! FILE`` /
+    ``w >> FILE`` / ``save FILE`` / ``saveas FILE``，且把 ``w !CMD``（管道给
+    shell）当成相对文件名 ⇒ 落在 scope 内 ⇒ 放行。
 
-    ⇒ 全部补齐，返回 ``(写目标, 是否执行)``。
+    第十一轮独立审查 P1-1：再漏**多字母写命令**（``wq`` / ``wn`` / ``wa`` /
+    ``wall`` / ``x`` / ``xit`` / ``xall``）⇒ 一并建模；并改为「**未建模命令一律
+    fail-closed**」——命令位置的词若不在写/执行/安全三个集合里，其写目标不可
+    静态定位 ⇒ 判隐式写目标。
     """
     targets: list[str] = []
-    executes = False
+    unsafe = False
     for chunk in re.split(r"[|\n]", str(script)):
         line = chunk.strip()
-        if not line:
+        if not line or line.startswith('"'):
             continue
-        if _ED_PIPE_CMD_RE.match(line) or _ED_EXEC_CMD_RE.match(line):
-            # 管道 / 执行 ⇒ 载荷里的写目标不可静态定位 ⇒ fail-closed
-            executes = True
+        if _ED_PIPE_CMD_RE.match(line):
+            # 管道给 shell ⇒ 载荷里的写目标不可静态定位 ⇒ fail-closed
+            unsafe = True
             continue
-        match = _ED_WRITE_CMD_RE.match(line)
-        if match:
-            targets.append(match.group(1))
+        word = _ed_command_word(line)
+        if word in _ED_EXEC_COMMANDS:
+            unsafe = True
             continue
-        save = _ED_SAVE_CMD_RE.match(line)
-        if save:
-            targets.append(save.group(1))
-    return targets, executes
+        if word in _ED_WRITE_COMMANDS:
+            argument = _ed_write_argument(line)
+            if argument is None:
+                # 写回当前缓冲区（原文件）——不是新文件，由调用方按被编辑文件判定
+                continue
+            targets.append(argument)
+            continue
+        if word in _ED_SAFE_COMMANDS:
+            continue
+        unsafe = True
+    return targets, unsafe
 
 
 def _sed_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
@@ -1079,6 +1134,11 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
         return ([], True)
     if scan.has("-F", "--info-script"):
         # 第八轮 P1-2：``-F FILE`` 让 tar **执行**该脚本 ⇒ 载荷不可静态定位
+        return ([], True)
+    if scan.has("-I", "--use-compress-program"):
+        # 第十一轮独立审查 P2-1：``-I/--use-compress-program PROG`` 让 tar
+        # **执行**该程序 ⇒ 与 ``-F/--info-script`` 同类的执行载荷 ⇒ 口径必须
+        # 一致（此前只当普通取值选项 ⇒ 程序被无检查地执行）。
         return ([], True)
     if not _tar_mode_known(args, positional):
         # 第八轮 P1-2：模式不可静态确定 ⇒ 写目标不可静态定位 ⇒ fail-closed
@@ -1440,13 +1500,23 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
                 index += 2
                 continue
             index += 1
+        # 第十一轮独立审查 P1-1：``+cmd`` **启动通道**同样是脚本
+        # （``ex +'w /outside/x' f`` ⇒ ex 把该串当第一条 ex 命令执行）⇒ 此前
+        # 完全没被扫 ⇒ 越界写放行。
+        scripts.extend(
+            token[1:] for token in raw if token.startswith("+") and len(token) > 1
+        )
         script_targets: list[str] = []
         script_executes = False
         for script in scripts:
             targets, executes = _ed_script_write_targets(script)
             script_targets.extend(targets)
             script_executes = script_executes or executes
-        edited = [a for a in _non_flag_args(args) if a not in scripts]
+        edited = [
+            a
+            for a in _non_flag_args(args)
+            if a not in scripts and not a.startswith("+")
+        ]
         # 第十轮独立审查 P1-1：脚本含**执行**（``w !CMD`` / ``r !CMD`` / ``e CMD``）
         # ⇒ 载荷里的写目标不可静态定位 ⇒ fail-closed（此前只判写文件目标 ⇒
         # ``ed -c 'w !rm -rf /outside/x' f`` 被放行）。
@@ -1670,6 +1740,15 @@ class _Scanner:
             return self._scan_command_chain(payload_tokens, depth)
         if operands:
             ok, reason, detail = self._check_target(operands[0])
+            if not ok:
+                return CommandScopeDecision(
+                    False, reason, detail, tuple(self.unverified)
+                )
+        else:
+            # 第十一轮独立审查 P2-2：无 FILE 时 script 写当前目录的
+            # ``typescript`` ⇒ 该默认写目标此前从未被判定 ⇒ 越界写可经
+            # 「无 FILE 的 script」逃逸。
+            ok, reason, detail = self._check_target("typescript")
             if not ok:
                 return CommandScopeDecision(
                     False, reason, detail, tuple(self.unverified)
