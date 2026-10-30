@@ -1,12 +1,12 @@
 {
   "_meta": {
-    "head_commit": "c3b91d72f",
+    "head_commit": "3dd7424e1",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
-    "生成时间": "2026-10-29",
+    "生成时间": "2026-10-30",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
-    "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。2026-10-29 P2-1 豁免注记：application_main 320→323 @ b64f24c70（merge 13c39ca57 后实测对账），+3 为 cli 壳 rule_lookup 注入 ×3（start/init/doctor），kernel import 边棘轮强制、消费端已核（doctor.py:89-92）；P2-4 同轮修复删 plan_first_use 死参及两处死转发，不动 cli.py，323 保持。2026-10-29 M0 随记（企微桥落地期间重登记）：review_host_admission.py::_source_snapshot 165→177 实为基线既有漂移（该增长提交 31d877220 已在 lfl/main 上，非本轮引入），按 scripts/regen_function_size_baseline.py 口径重登记实测值；同时登记新顶层包 src/llm_loop/wecom/（plane=Action）与 durable surface wecom_audit / wecom_bridge_lock / wecom_session_map（observe，只登记真实写入责任面）。",
+    "说明": "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升）；legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。head_commit = 本次实测所依据的源提交（即本提交的父提交）；所有数值 = 该提交工作树实测。",
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
   },
   "durability_registry": {
@@ -1059,10 +1059,10 @@
     "src/llm_loop/resources/lfrt_runtime.py::parse_lfrt_status": 124,
     "src/llm_loop/resources/vendor_adapters/minimax.py::map_token_plan_remains_response": 130,
     "src/llm_loop/runtime/doctor.py::inspect_first_use": 196,
-    "src/llm_loop/runtime/service_control.py::_run_physical_restart_once": 122,
+    "src/llm_loop/runtime/service_control.py::_run_physical_restart_once": 124,
     "src/llm_loop/runtime/service_control.py::compose_lifecycle_evidence_view": 127,
     "src/llm_loop/runtime/service_control.py::compose_service_identity_view": 151,
-    "src/llm_loop/runtime/service_control.py::run_action_worker": 259,
+    "src/llm_loop/runtime/service_control.py::run_action_worker": 261,
     "src/llm_loop/semantic_logic/rules.py::_evaluate_predicate_evaluate": 169,
     "src/llm_loop/semantic_logic/rules.py::_evaluate_version_assess": 190,
     "src/llm_loop/semantic_logic/serialization.py::_fact_graph_from_dict": 143,

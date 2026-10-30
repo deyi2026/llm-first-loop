@@ -87,7 +87,7 @@ def _write_receipt(
 def _green_store(tmp_path: Path) -> ManagedServiceDeploymentStore:
     store = ManagedServiceDeploymentStore(tmp_path / "data")
     _publish(store, _deployment(tmp_path, 1, HEAD_A))
-    for service in ("web", "feishu", "learning"):
+    for service in ("web", "feishu", "learning", "wecom"):
         _write_manifest(store, service, pid=os.getpid(), git_head=HEAD_A)
     return store
 
@@ -100,7 +100,7 @@ def test_identity_view_green_when_live_matches_desired(tmp_path: Path) -> None:
     )
     view = compose_service_identity_view(store)
     assert view["deployment"]["generation"] == 1
-    assert set(view["services"]) == {"web", "feishu", "learning"}
+    assert set(view["services"]) == {"web", "feishu", "learning", "wecom"}
     for entry in view["services"].values():
         assert entry["restart_required"] is False
         assert entry["reasons"] == []
@@ -249,7 +249,7 @@ def test_tool_status_exposes_identity_view(tmp_path: Path) -> None:
     result = tool.execute(action="status")
     assert result.status.name == "SUCCESS"
     body = json.loads(result.content)
-    assert set(body["services"]) == {"web", "feishu", "learning"}
+    assert set(body["services"]) == {"web", "feishu", "learning", "wecom"}
     assert body["deployment"]["git_head"] == HEAD_A
 
 
@@ -309,7 +309,7 @@ def test_services_status_route(tmp_path: Path) -> None:
     resp = client.get("/api/v1/services/status")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body["services"]) == {"web", "feishu", "learning"}
+    assert set(body["services"]) == {"web", "feishu", "learning", "wecom"}
     assert body["services"]["web"]["restart_required"] is False
 
 
@@ -586,7 +586,7 @@ def test_convergence_view_empty_when_all_covered(tmp_path: Path) -> None:
     assert view["desired_generation"] == 1
     assert view["lagging"] == []
     assert view["read_only"] is True
-    assert set(view["services"]) == {"web", "feishu", "learning"}
+    assert set(view["services"]) == {"web", "feishu", "learning", "wecom"}
     assert all(svc["converged"] for svc in view["services"].values())
 
 
@@ -605,7 +605,7 @@ def test_convergence_view_flags_only_uncovered_services(tmp_path: Path) -> None:
     )
     view = compose_convergence_view(store)
     assert view["desired_generation"] == 2
-    assert view["lagging"] == ["feishu", "learning"]
+    assert view["lagging"] == ["feishu", "learning", "wecom"]
     assert view["services"]["web"] == {
         "stable_generation": 2,
         "lag_generations": 0,
@@ -621,5 +621,5 @@ def test_convergence_view_no_receipt_marks_all_lagging(tmp_path: Path) -> None:
     store = _green_store(tmp_path)
     view = compose_convergence_view(store)
     assert view["desired_generation"] == 1
-    assert view["lagging"] == ["feishu", "learning", "web"]
+    assert view["lagging"] == ["feishu", "learning", "web", "wecom"]
     assert all(svc["stable_generation"] is None for svc in view["services"].values())

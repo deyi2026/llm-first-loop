@@ -245,7 +245,7 @@ def test_update_rejects_when_no_service_token_needs_target(tmp_path: Path) -> No
     )
     assert result.status.value == "failure"
     assert "NEEDS_TARGET" in result.content
-    assert "web/feishu/learning/all" in result.content  # 可选 target 列表
+    assert "web/feishu/wecom/learning/all" in result.content  # 可选 target 列表
     assert "restart_target=web" in result.content  # 一条示例命令
     assert store.read().generation == 1  # 未推进 desired（无 CAS 写入）
     assert spawned == []
@@ -294,7 +294,7 @@ def test_cli_update_rejects_needs_target_before_any_publish(
     assert rc == 2
     payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert payload["error"] == "NEEDS_TARGET"
-    assert payload["targets"] == ["web", "feishu", "learning", "all"]  # 可选列表
+    assert payload["targets"] == ["web", "feishu", "wecom", "learning", "all"]  # 可选列表
     assert "--target web" in payload["example"]  # 一条示例命令
     assert store.read().generation == 1  # 未推进 desired（无 CAS 写入）
     assert list(store.actions_dir.glob("*.json")) == []

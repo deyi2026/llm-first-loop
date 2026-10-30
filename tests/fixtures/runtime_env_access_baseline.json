@@ -1,13 +1,13 @@
 {
   "access_class_counts": {
     "bootstrap_os": 3,
-    "business_config": 119,
+    "business_config": 121,
     "debug_test": 12,
-    "dynamic_or_bulk": 60,
+    "dynamic_or_bulk": 61,
     "dynamic_secret": 9,
     "secret": 9
   },
-  "access_count": 195,
+  "access_count": 198,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -106,17 +106,27 @@
         "src/llm_loop/wecom/config.py|load_wecom_config|read|DATA_DIR",
         "src/llm_loop/wecom/handlers.py|WeComMessageHandler/_default_audit_dir|read|DATA_DIR"
       ]
+    },
+    "wecom_m0_20261030": {
+      "added_signatures": [
+        "src/llm_loop/wecom/__init__.py|main|bulk:setdefault|<all>",
+        "src/llm_loop/wecom/bridge.py|WeComBridge/_write_heartbeat|read|WECOM_HEARTBEAT_PATH",
+        "src/llm_loop/wecom/handlers.py|_echo_window_s|read|WECOM_ECHO_SUPPRESS_WINDOW_S"
+      ],
+      "doc": "docs/DESIGN-20261029-wecom-m0-bridge.md",
+      "reason": "企微 M0 上线新增 3 处 env 读取，均为仓库既有已登记模式的 wecom 对应物：(1) wecom/__init__.py LFL_ROUTE setdefault —— 与 web/__init__.py:521 逐字节同构（route 归因，服务入口是权威事实）；(2) wecom/bridge.py WECOM_HEARTBEAT_PATH —— 与 feishu/bridge.py FEISHU_HEARTBEAT_* 系列同构（心跳路径可覆盖）；(3) wecom/handlers.py WECOM_ECHO_SUPPRESS_WINDOW_S —— 回声抑制时间窗可覆盖，与 feishu FEISHU_HEARTBEAT_HISTORY_MAX_MB 同为运维可调旋钮。非密钥读取，不涉及凭据值。",
+      "reviewed_by": "parent-agent (2026-10-30)"
     }
   },
   "class_key_counts": {
     "bootstrap_os": 2,
-    "business_config": 64,
+    "business_config": 66,
     "debug_test": 10,
     "dynamic_or_bulk": 2,
     "dynamic_secret": 1,
     "secret": 6
   },
-  "direct_access_count": 195,
+  "direct_access_count": 198,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -127,7 +137,7 @@
     "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>",
     "src/llm_loop/wecom/config.py|load_wecom_config|read|<dynamic>"
   ],
-  "effective_access_count": 212,
+  "effective_access_count": 215,
   "effective_file_count": 66,
   "file_count": 66,
   "helper_class_key_counts": {
@@ -334,10 +344,11 @@
         "src/llm_loop/tools/builtin/execute_command.py",
         "src/llm_loop/tools/mcp_transport.py",
         "src/llm_loop/web/__init__.py",
-        "src/llm_loop/web/provider_admin.py"
+        "src/llm_loop/web/provider_admin.py",
+        "src/llm_loop/wecom/__init__.py"
       ],
       "module_import_reads": 0,
-      "reads": 31,
+      "reads": 32,
       "writes": 0
     },
     "<dynamic>": {
@@ -1370,6 +1381,30 @@
       "reads": 1,
       "writes": 0
     },
+    "WECOM_ECHO_SUPPRESS_WINDOW_S": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/wecom/handlers.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "WECOM_HEARTBEAT_PATH": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/wecom/bridge.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
     "no_proxy": {
       "class": "business_config",
       "classes": [
@@ -1562,8 +1597,10 @@
     "src/llm_loop/web/vision.py|_vision_timeout|read|WEB_VISION_TIMEOUT": 1,
     "src/llm_loop/web/vision.py|vision_enabled|read|MINIMAX_API_KEY": 2,
     "src/llm_loop/web/vision.py|vision_enabled|read|WEB_VISION_MODEL": 1,
+    "src/llm_loop/wecom/__init__.py|main|bulk:setdefault|<all>": 1,
     "src/llm_loop/wecom/__init__.py|main|read|DATA_DIR": 1,
     "src/llm_loop/wecom/bridge.py|WeComBridge/__init__|read|DATA_DIR": 1,
+    "src/llm_loop/wecom/bridge.py|WeComBridge/_write_heartbeat|read|WECOM_HEARTBEAT_PATH": 1,
     "src/llm_loop/wecom/config.py|ensure_proxy_bypass|read|NO_PROXY": 1,
     "src/llm_loop/wecom/config.py|ensure_proxy_bypass|read|no_proxy": 1,
     "src/llm_loop/wecom/config.py|ensure_proxy_bypass|write|NO_PROXY": 1,
@@ -1571,10 +1608,11 @@
     "src/llm_loop/wecom/config.py|load_wecom_config|read|<dynamic>": 4,
     "src/llm_loop/wecom/config.py|load_wecom_config|read|DATA_DIR": 1,
     "src/llm_loop/wecom/handlers.py|WeComMessageHandler/_default_audit_dir|read|DATA_DIR": 1,
+    "src/llm_loop/wecom/handlers.py|_echo_window_s|read|WECOM_ECHO_SUPPRESS_WINDOW_S": 1,
     "src/llm_loop/workspace/archive_stale.py|ArchiveStaleLoop/__init__|read|LFL_ARCHIVE_STALE_AUTO": 1,
     "src/llm_loop/workspace/archive_stale.py|ArchiveStaleLoop/__init__|read|PYTEST_CURRENT_TEST": 1,
     "src/llm_loop/workspace/archive_stale.py|_env_number|read|<dynamic>": 1,
     "src/llm_loop/workspace/store.py|_workspace_allowed_roots|read|<dynamic>": 1
   },
-  "unique_key_count": 84
+  "unique_key_count": 86
 }
