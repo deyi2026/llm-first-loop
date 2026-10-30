@@ -67,7 +67,9 @@
 
 ## R3-bis qualification 通道（门禁轴落地，2026-10-30 打通）
 
-**背景事实**（2026-10-30 核实）：method 池 1569 张 candidate 卡中，**全部 usage 账本为空**；仅 60 张有 `qualification.jsonl` 回执，且皆为 `evaluator=model` 自评、多数 `verdict=not_evaluated`，其中 51 张 `promotion=pass` —— **这些卡至今仍停在 candidate**。即：写回执的能力一直存在，断的是「回执 → lifecycle 流转」这一执行环节。
+**背景事实**（2026-10-30 核实）：method 池 1569 张 candidate 卡中，仅 60 张有 `qualification.jsonl` 回执，且皆为 `evaluator=model` 自评、多数 `verdict=not_evaluated`，其中 51 张 `promotion=pass` —— **这些卡至今仍停在 candidate**。即：写回执的能力一直存在，断的是「回执 → lifecycle 流转」这一执行环节。
+
+> 修正记录（2026-10-30 晚）：初版误写「全部 usage 账本为空」。实测 usage 账本有 88 条 / 62 卡（applied 64 / adapted 11 / not_applicable 13），其中 54 张为 candidate，最新一条 2026-10-30 07:24——初版按「每卡目录内」口径查了不存在的位置，而账本是 store 级共享文件。真正断的两处：**0 条 rejected**（代码原生认可的处置依据之一从未有过原料）；**结算回执与 usage 账本是两套互不相通的写入**——rejected/applied 信号停在结算库，到不了生命周期。修订后的批量纪律（见下）据此重排通道优先级。
 
 **通道三段式**（`scripts/qualification/method_candidate_qualification.py`，repo-owned）：
 
@@ -95,7 +97,14 @@
 
 **status 的实际效力边界**（`list()` 实证）：排序键是 `(score, coverage)`，**`status` 不进排序键**；status 只在分数与 coverage 完全打平时定先后（active > qualified > candidate > hold）。所以「qualify 改善召回」是错的说法——它只在完全打平时起作用。**提升召回靠的是把卡的正文、aliases、Trigger 写好，不是改 status 徽章。**
 
-**批量处置的纪律**：未获独立结论的卡不得批量 `retire`/`invalidate`（无依据即无处置）；`hold` 作为「暂不启用」轻量标记可批量使用，但它是排序末位徽章，不是召回优化手段。分诊口径应优先选「真实 query 命中过」的卡（如 `docs/ASSESS-20260929-p5a-highfreq-triage.md` 的 25 张高频卡口径），而非按关键词全库扫描。
+**批量处置的纪律（2026-10-30 修订：证据分流，使用优先）**：批量 `retire`/`invalidate` 按依据类型分流，单卡门槛与 store 门禁一致，不新增放宽：
+
+- **机械证据通道（事实轴）**：脚本批采机械证据（URL 404×2 / 路径、字段、工具不存在 / 代码冲突摘录）⇒ 逐卡 `verdict=fail` 回执（claims=可复跑命令，evidence_refs=输出）⇒ 可批量 `invalidate`。机械证据即独立结论——可事后复跑，不需子代理逐卡评审。
+- **使用负反馈通道（有用轴）**：≥2 个不同 episode 的 rejected ⇒ `retire`/`invalidate`（代码已支持）。使用即记账，负反馈到量自动获得处置资格。
+- **独立评审通道降级为高频兜底**：只审「真实命中过」的卡——口径：usage 账本非空的 candidate（2026-10-30 实测 54 张，含 `docs/ASSESS-20260929-p5a-highfreq-triage.md` 的 25 张高频口径，为其超集），单批 1~4 张纪律照旧；**不承担清空 backlog 的义务**。
+- **无机械证据且无使用记录 ⇒ 不处置，且不视为待清债务**：未被检索命中的卡无召回伤害、无处置价值。目标从「清空 candidate 队列」改为「真实命中的卡必有反馈闭环」。
+
+每类机械判定必须配「应拦输入」实测测试；批量动作落 manifest（卡清单+依据+回滚路径），误伤走 `restore`/`reopen`（门槛见 R3）。`hold` 仍为「暂不启用」轻量标记、可批量使用，但它是排序末位徽章，不是召回优化手段。
 
 **门禁必须自己先证伪（2026-10-30 独立审查实测）**：首版门禁有三个**已复现**的绕过路径，独立审查（REVISE）抓出后已修：
 
@@ -197,5 +206,5 @@
 
 - 卡片永不物理删除：两池 `invalidate` 均可 `restore`（门槛见 R3）；experience/lesson 的 `archive` 可恢复；method 池无 archive，等义动作为 `retire`，可 `reopen`（门槛同 restore）。
 - 不回填存量卡模板（experience 三段式 / method 六段式），仅机会性补齐。
-- 不改运行时代码与工具 Schema；纯流程 / 文档 / 提醒层。
+- 不改运行时代码与工具 Schema；纯流程 / 文档 / 提醒层。**例外（2026-10-30 用户授权，见 GOAL-20261030-fc31abda）**：settlement→usage 桥接（结算 method 项自动补 usage 记录）经用户当轮明确授权 + 独立审查 + 测试后落地；其余运行时代码边界维持不变。
 - 不引入 wake 自动续跑；提醒一律通知型，产物留痕 + 班次承接。
