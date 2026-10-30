@@ -97,16 +97,17 @@
 
 **status 的实际效力边界**（`list()` 实证）：排序键是 `(score, coverage)`，**`status` 不进排序键**；status 只在分数与 coverage 完全打平时定先后（active > qualified > candidate > hold）。所以「qualify 改善召回」是错的说法——它只在完全打平时起作用。**提升召回靠的是把卡的正文、aliases、Trigger 写好，不是改 status 徽章。**
 
-**批量处置的纪律（2026-10-30 修订：证据分流，使用优先）**：批量 `retire`/`invalidate` 按依据类型分流，单卡门槛与 store 门禁一致，不新增放宽：
+**批量处置的纪律（2026-10-30 修订：证据分流，使用优先；同日二次修订：批量是结论维度，不是动作维度）**：批量 `retire`/`invalidate` 不是一种特殊动作，而是同一单卡门槛的 N 次集合满足——**批量处置 = 每卡一份独立结论（可共享簇级取证）+ 逐卡 `evidence_refs`；无独立结论的卡不得进入处置态**。真正约束批量的是 `_disposition_basis` 代码门槛（`_update_status_locked`：处置态需一份 `verdict=fail` 回执或 ≥2 个不同 episode 的 rejected 声明；质量态无门槛），不是纪律文字；纪律与门槛保持一致，不新增放宽、不需改代码：
 
-- **机械证据通道（事实轴）**：脚本批采机械证据（URL 404×2 / 路径、字段、工具不存在 / 代码冲突摘录）⇒ 逐卡 `verdict=fail` 回执（claims=可复跑命令，evidence_refs=输出）⇒ 可批量 `invalidate`。机械证据即独立结论——可事后复跑，不需子代理逐卡评审。
-- **使用负反馈通道（有用轴）**：≥2 个不同 episode 的 rejected ⇒ `retire`/`invalidate`（代码已支持）。使用即记账，负反馈到量自动获得处置资格。
+- **机械证据通道（事实轴）**：脚本批采机械证据（URL 404×2 / 路径、字段、工具不存在 / 代码冲突摘录）⇒ 逐卡 `verdict=fail` 回执（claims=可复跑命令，evidence_refs=输出）⇒ 可批量 `invalidate`。机械证据即独立结论——可事后复跑，不需子代理逐卡评审。**（前提限定，2026-10-30 Round 4 实测补录）：仅当该路径是卡的可复跑「执行前提」；`freshness_refs` / 「详见」类「锚点型引用」缺失 ⇒ 走修锚（`annotate_freshness` 重指现存等价文档，或恢复被删文档），不动卡——全库唯一机械 `fail` 正属此类，独立评审判 mixed 而非 fail。】**
+- **簇级前提证伪通道（事实轴：取证可共享，回执不可省）**：同质簇的共同前提被一次独立结论证伪（机械复跑或一次独立评审均可）⇒ 逐卡签发 `verdict=fail` 回执，每份的 `evidence_refs` 指向同一份簇级取证 ⇒ 逐卡处置。成本从 O(N) 次独立取证降为 O(簇数)；`_disposition_basis` 认的就是逐卡回执，代码零改动。机械证据通道是本通道的特例（取证本身可复跑）。
+- **使用负反馈通道（有用轴）**：≥2 个不同 episode 的 rejected ⇒ `retire`/`invalidate`（代码已支持）。使用即记账，负反馈到量自动获得处置资格。**边界（2026-10-30 二次修订补）：簇级结论只用于「前提被证伪」——前提错误天然全簇失效；「不好用」是逐卡判断，不得簇化，有用轴没有全簇等价物。**
 - **独立评审通道降级为高频兜底**：只审「真实命中过」的卡——口径：usage 账本非空的 candidate（2026-10-30 实测 54 张，含 `docs/ASSESS-20260929-p5a-highfreq-triage.md` 的 25 张高频口径，为其超集），单批 1~4 张纪律照旧；**不承担清空 backlog 的义务**。
 - **无机械证据且无使用记录 ⇒ 不处置，且不视为待清债务**：未被检索命中的卡无召回伤害、无处置价值。目标从「清空 candidate 队列」改为「真实命中的卡必有反馈闭环」。
 
 **rejected 的语义边界与结算纪律（2026-10-30 补）**：`rejected` = 卡内容有误或实际误导了本任务（前提错 / 步骤错 / 边界声明失实）；`not_applicable` = 卡没错但不适配本任务。两者不得互换——把该报 rejected 的压成 not_applicable，会饿死有用轴唯一的低成本处置证据源（结算桥接已通：`settlement_submit` 直写 usage 账本）。每轮结算前自问一句「本轮哪张卡误导过我」：有则如实报 `rejected`（附 evidence_refs），无则不报、不硬凑。
 
-每类机械判定必须配「应拦输入」实测测试；批量动作落 manifest（卡清单+依据+回滚路径），误伤走 `restore`/`reopen`（门槛见 R3）。`hold` 仍为「暂不启用」轻量标记、可批量使用，但它是排序末位徽章，不是召回优化手段。
+每类机械判定必须配「应拦输入」实测测试；批量动作落 manifest（卡清单+依据+回滚路径），误伤走 `restore`/`reopen`（门槛见 R3）。`hold` 仍为「暂不启用」轻量标记、可批量使用，但它是排序末位徽章，不是召回优化手段，**也不得为省噪声给它加「不进检索」语义**——`list()` 只排除 retired/invalidated；好卡被藏起来无人察觉的风险高于检索噪声收益，留在 candidate 不处置不是错误状态。
 
 **URL 双采样通道休眠注记（2026-10-30 复扫）**：全库 1633 卡仅 5 张含 `http(s)://`，全部为 `127.0.0.1:8xxx/9xxx` 本地端点或字面 `host` 占位符——**外部 web URL = 0，通道当前无适用对象**；usage 非空 54 张 pilot 亦 0 URL（`docs/governance/2026-10-30-mechanical-evidence-pilot.md`）。本地服务掉线属环境状态、非卡的前提错误，不喂本通道（防误伤）。唤醒条件：出现前提依赖外部 web URL 的卡；届时补「404 定罪 / 5xx·DNS·超时不定罪」两条行为测试。既有 16 条应拦测试保留为回归底线。
 
@@ -123,6 +124,25 @@
 **评审任务书必须落库（2026-10-30 Round 3 补）**：上述"重试必须换任务书"有个前提——**换出来的任务书得能找回**。2026-10-30 上午的 Round 2 实测：任务书从未持久化 ⇒ 每轮只能重建 ⇒ 重建稿未经验证 ⇒ 首波 8 个代理 **6/8 格式违约**（`mechanism`/`task_benefit` 写成自造短语，词表外 ⇒ 整卡拒收）。**修**：任务书落库为 `docs/governance/qualification-reviewer-taskbook.md`，含字面 JSON 示例 + 枚举值域 + 一致性红线；每轮开跑先读它，重试从它改，不再从零重建。**放行纪律**：先放 2 个试点代理，机械校验其回执（枚举合法 + 红线无违反）通过后再一次性放行剩余批次——试点不通过就换任务书，不带病放行。
 
 **补派前必须查代理结算状态（2026-10-30 Round 3 实测，门禁第四例自证伪）**：本轮卡 10 在 12:05:17 的「回执文件覆盖检查」显示 MISS，此时**第一个评审代理仍在运行**（12:05:59 才落盘 05.json）——覆盖检查给的是「此刻文件状态」，不是「没有代理在写」。据此补派第二个代理 ⇒ 同一张卡两份回执（05.json / 10.json），harness 以 `duplicate_verdict_for_ref` 拒收合并（**门禁当场抓住**，rc=2）。**处置**：只落一条回执（10.json，promotion=mixed），删除冗余评审文件，harness 恢复 18 calls / 0 problems（rc=0）；两份回执结论略有差异（insufficient vs mixed）但都无流转动作，无安全影响，冗余件留档 `/tmp/r3_duplicate_05.json.bak`。**纪律**：补派前先取该代理的终态回执（`subagent_result`），确认它不会再写同一张卡；「覆盖检查 MISS」不足以作为补派依据。
+
+**Round 4 实测补录（2026-10-30 下午，全库级）**：分诊口径从「usage 命中过的 54 张」扩到**全库 1641 张**做机械扫描（`method_mechanical_evidence.py collect --select methods --url-phase skip`，发现子集入库为 `reports/qualification-r4/mech-findings.json`；全量清单含 1641 张逐卡条目、>1MB 触发仓库 git 安全扫描不入库，由同命令复现），再对产出做独立评审（3 个独立评审子代理，MiniMax-M3.1-Flash，工具面只给 `execute_command`+`read_file`）：
+
+| 机械发现类别 | 条数 | 独立评审实测结论 |
+|---|---|---|
+| `fail`（anchor 路径缺失） | 1 | **降级 mixed ⇒ 不失效**：被删文档是卡的「详见」指针与新鲜度基准，卡的可复跑步骤自包含在卡正文 ⇒ 走**修锚**（恢复文档或重指等价文档），不走 invalidate（误伤） |
+| `manual_review`（body 路径提及型） | 56 | 抽样 4 张：**0 张**构成前提错误——3 张判为举例／截断文件名／自我否定式提及，1 张判为环境性描述且证据不足 |
+| `manual_review`（反引号标识符型） | 23 | 抽样 4 张：**0 张**构成前提错误——分别是 action 名（`record_qualification`）、代码标识符族（`stable_prefix`）、方法卡交叉引用（`method-semantic-operation`）、标准库模块（`importlib`） |
+| `pass` / `no_verdict` | 94 / 1 | — |
+
+**由此收窄事实轴机械通道**：见上方「机械证据通道」的**前提限定**。库级机械通道的可用产出率实测为 **1/1641，且该唯一一条经独立评审不成立** ⇒ 机械批量处置在库级几乎无适用面；机械通道的价值在于**定向核验**，不是清库。
+
+**manual_review 不入评审队列是纪律要求，不是可选**：body 提及型路径与反引号标识符的抽样成立率为 **0/8**；按现口径把它们批量送评审，等于把评审预算耗在非主张上。入队口径应先按「anchor 型声明 / 卡的可复跑核验点」收窄。
+
+**评审子代理 run 状态 ≠ 产物有效性（Round 4 实测）**：C 批 4 张卡的子代理在**已落盘回执文件之后**触发上下文预检并以 `failed` 收尾（拒绝静默截断）；其 4 条回执经 harness `verdict` 校验 **problems=0**、逐字比对与落库内容一致 ⇒ **产物有效，直接采信**。纪律：回执文件已存在且过门禁时**不得重试评审**（重试会产出同卡第二份回执，门禁以 `duplicate_verdict_for_ref` 拒收合并）；run 状态是过程信号，不是产物真值。
+
+**Round 4 通道实测吞吐**：9 张卡 / 3 批（1+4+4，其中 2 个试点先校验再放行）/ 3 个独立评审子代理 / 9 份回执 / harness `call_count=9, problems=0` / 4 张 `transition=qualify` / 0 张失效。父会话落库后逐字回验 9 份回执（note、evidence_refs、四字段全等，无重复行）。
+
+**待办（Round 4 遗留，非本轮可闭）**：`method:subagent-three-layer-diagnose-and-spawn-playbook-87273b2b3118` 的 `freshness_refs` 指向已删除的 `docs/SUBAGENT-PLAYBOOK-20261025.md`。现存 `docs/PLAYBOOK-20261014-subagent-capability.md` 主题不同（其「三层」= spawn 能力配置三层，非本卡的三层诊断），**不可直接重指**；需恢复原文档或由卡作者指定等价文档后再 `annotate_freshness`。该卡维持 candidate（verdict=mixed ⇒ 无流转动作）。
 
 ## R4 风险导向周检
 

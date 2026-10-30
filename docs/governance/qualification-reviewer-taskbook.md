@@ -117,3 +117,5 @@ pass | fail | mixed | insufficient | not_evaluated
 - 单批 1~4 张。5 张以上实测撞上下文窗口（input 311K / 419K tokens 失败），原因是子代理自发「考古」而非卡正文过大。
 - 首批 2 个试点代理，机械校验其回执（枚举合法 + 红线无违反）通过后，再一次性放行剩余批次。
 - 中途 `agent_message` 纠偏只在下一个 step boundary 生效，通常来不及；**重试必须换任务书，不能照抄**。
+- **run 状态 ≠ 产物有效性（Round 4 实测）**：回执文件已落盘且过 harness 门禁（`problems=0`）时**直接采信产物**——即使子代理 run 以 `failed` 收尾（Round 4 C 批：上下文预检在回执落盘之后触发，子代理拒绝静默截断；其 4 条回执逐字比对一致、门禁 0 问题）。**不得因此重试评审**：重试会产出同卡第二份回执，harness 以 `duplicate_verdict_for_ref` 拒收合并，且两版结论可能不一致。run 状态是过程信号，不是产物真值。
+- **父会话落库后必须逐字回验（Round 4 纪律）**：把落库后的 `data/methods/<卡>/qualification.jsonl` 行与 harness 调用清单**逐字段**比对（note / evidence_refs / verdict / mechanism / task_benefit / promotion），防长文本转写漂移；同时确认同一张卡在本回合只有一条回执（`duplicate_verdict_for_ref` 是门禁侧最后一道，父会话侧也要自查——Round 3 曾因此产出过同卡双写）。
