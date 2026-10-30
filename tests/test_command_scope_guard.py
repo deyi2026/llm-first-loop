@@ -139,6 +139,26 @@ BLOCKED_CASES = [
     ("sudo -i", "implicit_write_target"),
     ("sudo", "implicit_write_target"),
     ("find . -ok rm {} ;", "unverifiable_write_target"),
+    # ── 第四轮独立审查新向量（载体/载荷重解析 + 写族漏列 + 配置注入）──
+    ("find . -exec sh -c 'rm /outside/x' ;", "write_target_outside_scope"),
+    ("find . -execdir sh -c 'rm /outside/x' ;", "write_target_outside_scope"),
+    ("sudo env -S 'rm /outside/x'", "write_target_outside_scope"),
+    ("env -S 'rm' /outside/x", "write_target_outside_scope"),
+    ("exec -a foo rm /outside/x", "write_target_outside_scope"),
+    ("timeout 10 -k 5 rm /outside/x", "write_target_outside_scope"),
+    ("timeout -k 5 10 rm /outside/x", "write_target_outside_scope"),
+    ("builtin rm /outside/x", "write_target_outside_scope"),
+    ("unlink /outside/x", "write_target_outside_scope"),
+    ("git -c alias.pwn='!rm /outside/x' pwn", "write_target_outside_scope"),
+    ("git -c core.pager='rm /outside/x' status", "write_target_outside_scope"),
+    ("git --config-env=alias.pwn=EVIL pwn", "implicit_write_target"),
+    (
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.pwn "
+        "GIT_CONFIG_VALUE_0='!rm /outside/x' git pwn",
+        "implicit_write_target",
+    ),
+    ("time -o /outside/x rm src/x.py", "write_target_outside_scope"),
+    ("sort -o /outside/x src/x.py", "write_target_outside_scope"),
 ]
 
 
@@ -180,6 +200,12 @@ ALLOWED_CASES = [
     "cd src && ls",
     "grep -rn TODO src/",
     "python -c \"print(1)\"",
+    # 载体链与写族分类的放行侧（第四轮审查补入）
+    "sort src/x.py",
+    "env FOO=1 rm src/x.py",
+    "timeout 10 rm src/x.py",
+    "sudo rm src/x.py",
+    "git -c user.name=someone log --oneline",
 ]
 
 
@@ -187,6 +213,45 @@ ALLOWED_CASES = [
 def test_read_only_and_in_scope_writes_are_allowed(command: str) -> None:
     decision = _check(command)
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+def test_write_tool_prefix_rule_blocks_same_family_variants() -> None:
+    """写工具按**动词前缀**归类（第四轮审查：逐个罗列名字必然漏项）。
+
+    名单外默认按只读处理是**放行**方向——写工具漏进名单＝漏检。除名单外还有
+    前缀规则（rm*/mk*/unlink*），覆盖同类工具及其变体。
+    """
+    for command in (
+        "unlink /outside/x",
+        "rmdir /outside/x",
+        "mkfifo /outside/x",
+        "mknod /outside/x",
+        "mkswap /outside/x",
+    ):
+        decision = _check(command)
+        assert decision.allowed is False, command
+
+
+def test_carrier_option_semantics_do_not_swallow_inner_payload() -> None:
+    """内层命令的选项必须由**内层命令自己的语义**解析（第四轮审查 P0-1）。
+
+    ``sudo env -S 'rm x'`` 里的 ``-S`` 是 env 的载荷型选项，不是 sudo 的布尔
+    开关——按外层语义吞掉它就会丢掉载荷语义（写命令被漏检）。
+    """
+    decision = _check("sudo env -S 'rm /outside/x'")
+    assert decision.allowed is False, decision
+    assert decision.reason == "write_target_outside_scope", decision.reason
+
+
+def test_git_config_injection_is_treated_as_payload() -> None:
+    """git 的配置注入是**可执行载荷**：alias 的 shell 形态与 pager 都要重解析。"""
+    for command in (
+        "git -c alias.pwn='!rm /outside/x' pwn",
+        "git -c core.pager='rm /outside/x' status",
+    ):
+        decision = _check(command)
+        assert decision.allowed is False, command
+        assert decision.reason == "write_target_outside_scope", (command, decision.reason)
 
 
 def test_undeclared_scope_allows_everything() -> None:

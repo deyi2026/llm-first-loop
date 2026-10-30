@@ -19,10 +19,37 @@ P1-a 保留命令工具，把约束改到命令语义层——识别**写盘命�
    ``.git/``、``xargs`` 目标来自 stdin、``mktemp`` 写 ``TMPDIR``、构建产物、
    ``find -delete``）直接拒。
 3. **解释器与测试运行器**（python/node/pytest…）⇒ 不判为写盘族。这是 P1-a 相对
-   P1-b 的已知放宽，残余清单见 DESIGN §16.6。
+   P1-b 的已知放宽，残余清单见下方「已知残余」。
 4. **读侧字面量** ⇒ 不阻断；越界记 ``scope_unverified`` 审计。scope 是写侧授权：
    把读侧封成监狱会阻断解释器与测试执行，与 P1-a 的灵活性目标冲突。
 5. 只有 ``scope.declared`` 为真才生效；未受限会话行为零变化。
+
+结构规则（第四轮独立审查 P0-1 的教训：列表式防御必然漏项）
+--------------------------------------------------------
+- **命令身份必须字面**：命令身份含展开/通配/花括号 ⇒ 不可静态判定 ⇒ 拒；
+  载体链的**每一跳**都按这条判定。
+- **载荷必须重解析**：载体（``env -S`` / ``sh -c`` / ``su -c`` / ``eval``）与
+  ``find -exec`` 的**嵌套命令**都要重新走一遍完整判定，不得只查命令名
+  （``find . -exec sh -c 'rm x'`` / ``sudo env -S 'rm x'`` 曾因此被漏检）。
+- **选项语义按命令分别建模**：每个载体/命令各有一套选项表——``env -S`` 是载荷型、
+  ``exec -a`` 是取值型、``timeout`` 的 duration 是命令前的位置参数、
+  ``sudo -u`` 的值不是命令的一部分——不得共用一套通用规则。
+- **写工具按动词前缀归类**：写族名单之外还有前缀规则（``rm*``/``mk*``/``unlink*``），
+  逐个罗列名字必然漏项（``unlink`` 曾因此漏检）。
+- **配置注入按载荷处理**：``git -c/--config-env`` 与 ``GIT_CONFIG_*`` 环境变量都能
+  注入可执行配置（alias 的 shell 形态、core.pager…）⇒ 配置值必须重解析。
+
+已知残余（显式声明，不假装已拦）
+--------------------------------
+- **解释器任意代码**：``python -c 'open("/outside/x","w")'``、``node -e``、
+  ``perl -e 'unlink …'``、``awk '…'``、``ruby -e`` 等——受限 child 若能跑解释器，
+  就能写到任意路径。这是 P1-a 相对 P1-b 的**已知放宽**（P1-b 直接剔除命令工具），
+  由 ``test_interpreter_payload_is_documented_residual`` 钉住。
+- **仓库内既有的 git alias**：``.git/config`` 里已定义的 alias 会在 ``git <alias>``
+  时执行 shell 命令；闸能看到命令行里的 ``git -c/--config-env`` 注入向量（已拒），
+  看不到**命令执行前**就已存在的仓库配置。
+- **find 的 ``-exec`` 目标占位符**（``{}``）：find 会把占位符展开成真实路径，
+  闸只能判到「不可静态定位」⇒ 拒。
 
 本模块只做判定，不做强制点（接线在 ``tools/builtin/execute_command.py``）。
 """
@@ -55,8 +82,19 @@ WRITE_FAMILY = frozenset(
         "unpigz", "hg", "svn", "bzr", "fossil", "darcs",
         "fallocate", "chflags", "setfattr", "chattr", "rename", "sqlite3",
         "gunzip", "bunzip2", "unxz",
+        "unlink", "split", "csplit", "sponge", "mkfifo", "mknod", "mkswap",
     }
 )
+
+# 写工具按**动词前缀**归类：逐个罗列名字必然漏项（第四轮独立审查抓到
+# ``unlink`` 漏检——它不在名单里就走了「按只读放行」的默认路径）。前缀规则覆盖
+# 同类工具及其变体：rm/rmdir、mkdir/mkfifo/mknod/mkswap 等创建类工具、unlink。
+_WRITE_NAME_PREFIXES = ("rm", "mk", "unlink")
+
+# 输出文件型选项：这些命令**默认只读**，但带 -o/--output 时会写文件
+# （``sort -o /outside/x in.txt``）——按命令各自建模，不进写族名单（否则把
+# ``sort in.txt`` 这种纯读用法误判成写）。
+WRITE_FLAG_OUTPUT = {"sort": ("-o", "--output"), "shuf": ("-o", "--output")}
 
 # 隐式写目标的命令族（写到哪里不可静态定位 ⇒ 直接拒）
 IMPLICIT_WRITE = frozenset(
@@ -91,40 +129,69 @@ GIT_VALUE_OPTIONS = frozenset(
 # git 读子命令里 ``-o/--output`` 表示**输出文件**的子命令（其余子命令的 -o 是别的语义）
 GIT_OUTPUT_SUBCOMMANDS = frozenset({"archive", "diff", "show"})
 
-# 组合载体：自身不写盘，但会把写盘命令作为参数执行
-CARRIERS = frozenset(
-    {
-        "find", "xargs", "env", "sudo", "nohup", "time", "timeout",
-        "command", "stdbuf", "nice", "exec", "setsid", "ionice", "eval",
-        "watch", "busybox",
-    }
-)
+# 载体（自身不写盘，但会把命令作为参数执行）——**每个载体按自己的选项语义建模**。
+@dataclass(frozen=True)
+class _CarrierSpec:
+    """载体的选项语义——逐个建模，不共用一套通用规则。
 
-# 载体自身选项（取值型：其后一个 token 是选项值而非命令）
-CARRIER_VALUE_OPTIONS = {
-    "env": frozenset({"-u", "--unset", "-C", "--chdir"}),
-    "sudo": frozenset(
-        {
-            "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
-            "-D", "--chdir", "-h", "--host", "-r", "--role", "-t", "--type",
-            "-U", "--other-user",
-        }
+    - ``value_options``: 取值型选项（其值是该选项的参数，**不是**命令的一部分）。
+      例：``sudo -u root rm x`` 的 ``root``、``exec -a foo rm x`` 的 ``foo``、
+      ``timeout -k 5 rm x`` 的 ``5``。
+    - ``payload_options``: 载荷型选项（其值是**命令串**，必须按命令串重解析）。
+      例：``env -S 'rm x'``（env 会拆词执行，并追加尾操作数）。
+    - ``positional_prefix``: 命令之前的位置参数个数（``timeout`` 的 duration）。
+    - ``sudo_like``: sudo/doas 类（shell 模式与「无命令」⇒ 进入交互 shell ⇒ 拒）。
+    """
+
+    value_options: frozenset[str] = frozenset()
+    payload_options: frozenset[str] = frozenset()
+    positional_prefix: int = 0
+    sudo_like: bool = False
+
+
+CARRIER_SPECS: dict[str, _CarrierSpec] = {
+    # env：``-S/--split-string`` 的值是**命令串**，其余是普通取值选项
+    "env": _CarrierSpec(
+        value_options=frozenset({"-u", "--unset", "-C", "--chdir"}),
+        payload_options=frozenset({"-S", "--split-string"}),
     ),
-    "timeout": frozenset({"-k", "--kill-after", "-s", "--signal"}),
-    "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
-    # watch 的 -x/--exec 是**布尔**开关（命令直接跟在后面），不是取值型选项
-    # watch 的 -x/--exec 是**布尔**开关（命令直接跟在后面），不是取值型选项；
-    # -b/--beep 同样是布尔（失败时响铃）——第三轮审查 P0-4：把 -b 当取值型会把
-    # 紧随其后的命令名吃掉（watch -b rm /outside/x ⇒ 命令被吃掉 ⇒ 放行）。
-    "watch": frozenset({"-n", "--interval"}),
-    "nice": frozenset({"-n", "--adjustment"}),
-    "ionice": frozenset(
-        {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-t", "--ignore"}
+    # sudo/doas：可提权。shell 模式（-s/-i/--login）与「无命令」⇒ 进入交互 shell ⇒ 拒
+    "sudo": _CarrierSpec(
+        value_options=frozenset(
+            {
+                "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
+                "-D", "--chdir", "-h", "--host", "-r", "--role", "-t", "--type",
+                "-U", "--other-user",
+            }
+        ),
+        sudo_like=True,
     ),
+    "doas": _CarrierSpec(sudo_like=True),
+    # exec：``-a NAME`` 覆盖 argv[0]（取值型）；``-c``/``-l`` 是布尔开关
+    "exec": _CarrierSpec(value_options=frozenset({"-a"})),
+    # timeout：选项可出现在 duration 前后（GNU getopt 置换）；duration 是命令前的位置参数
+    "timeout": _CarrierSpec(
+        value_options=frozenset({"-k", "--kill-after", "-s", "--signal"}),
+        positional_prefix=1,
+    ),
+    "stdbuf": _CarrierSpec(
+        value_options=frozenset({"-i", "--input", "-o", "--output", "-e", "--error"})
+    ),
+    "nice": _CarrierSpec(value_options=frozenset({"-n", "--adjustment"})),
+    "ionice": _CarrierSpec(
+        value_options=frozenset(
+            {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-t", "--ignore"}
+        )
+    ),
+    "watch": _CarrierSpec(value_options=frozenset({"-n", "--interval"})),
+    # time：``-o FILE`` 的值是**写目标**（不是命令的一部分）——由调用方单独判定
+    "time": _CarrierSpec(value_options=frozenset({"-o", "--output"})),
+    "nohup": _CarrierSpec(),
+    "command": _CarrierSpec(),
+    "builtin": _CarrierSpec(),
+    "setsid": _CarrierSpec(),
+    "busybox": _CarrierSpec(),
 }
-
-# 载体的**位置参数**（选项之后的普通参数不是命令）：timeout 的时长
-CARRIER_SKIP_POSITIONALS = {"timeout": 1}
 
 # shell 解释器（-c 载荷按命令串重解析；脚本文件写目标不可静态定位 ⇒ 拒）
 SHELL_INTERPRETERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
@@ -243,33 +310,74 @@ def _strip_fd_prefixes(tokens: list[str]) -> list[str]:
     return tokens[index:]
 
 
-def _strip_carrier_prefix(name: str, args: list[str]) -> list[str]:
-    """跳过载体自身的选项（及取值型选项的参数），返回载体之后的参数。"""
-    value_options = CARRIER_VALUE_OPTIONS.get(name, frozenset())
+def _carrier_split(
+    name: str, args: Sequence[str], spec: _CarrierSpec
+) -> tuple[str | None, list[str], list[str]]:
+    """把载体参数拆成 (载荷命令串 or None, 载荷后的尾操作数, 命令及其原始参数)。
+
+    - 载荷型选项（``env -S 'cmd'``）的值是**命令串**：必须按命令串重解析；env 会把
+      尾操作数**追加**到该命令尾部（shebang 语义），故尾操作数必须与载荷一起
+      重解析（``env -S 'rm' /outside/x`` 会执行 ``rm /outside/x``）。
+    - 取值型选项与其值整体跳过（值不是命令的一部分：``sudo -u root rm x`` 的
+      ``root``、``exec -a foo rm x`` 的 ``foo``、``timeout -k 5 rm x`` 的 ``5``）。
+    - 布尔选项单独跳过。
+    - **只解析载体自己的选项**：命令及其参数**原样**交给下一层——内层命令的选项
+      必须由内层命令自己的语义解析（``sudo env -S 'rm x'`` 里的 ``-S`` 是 env 的
+      载荷型选项，不是 sudo 的布尔开关；按外层语义吞掉它会丢掉载荷语义）。
+    - 命令之前的位置参数（``timeout`` 的 duration）被跳过。
+    """
+    payload: str | None = None
+    trailing: list[str] = []
+    args = [str(a) for a in args]
     index = 0
+    positionals_seen = 0
+    options_done = False
     while index < len(args):
         token = args[index]
-        if token == "--":
-            return args[index + 1:]
-        if "=" in token and token.startswith("-"):
+        if not options_done:
+            hit = False
+            for flag in spec.payload_options:
+                if token == flag:
+                    payload = args[index + 1] if index + 1 < len(args) else ""
+                    trailing = args[index + 2:]
+                    hit = True
+                    break
+                if token.startswith(flag + "="):
+                    payload = token.split("=", 1)[1]
+                    trailing = args[index + 1:]
+                    hit = True
+                    break
+                if len(flag) == 2 and token.startswith(flag) and len(token) > 2:
+                    # 粘连形态：``-S'cmd'`` ⇒ ``-Scmd``
+                    payload = token[2:]
+                    trailing = args[index + 1:]
+                    hit = True
+                    break
+            if hit:
+                return payload, trailing, []
+            if token == "--":
+                options_done = True
+                index += 1
+                continue
+            if token.startswith("-") and token != "-":
+                if "=" in token:
+                    index += 1
+                    continue
+                if token in spec.value_options:
+                    index += 2
+                    continue
+                index += 1
+                continue
+            if name == "env" and _is_assignment(token):
+                index += 1
+                continue
+        # 位置参数：命令之前的那几个是前导位置参数（timeout 的 duration）
+        if positionals_seen < spec.positional_prefix:
+            positionals_seen += 1
             index += 1
             continue
-        if token in value_options:
-            index += 2
-            continue
-        if token.startswith("-"):
-            index += 1
-            continue
-        if name == "env" and _is_assignment(token):
-            index += 1
-            continue
-        break
-    rest = args[index:]
-    # 载体的位置参数不是命令（``timeout 10 rm x`` 的 '10' 是时长）
-    for _ in range(CARRIER_SKIP_POSITIONALS.get(name, 0)):
-        if rest and not str(rest[0]).startswith("-"):
-            rest = rest[1:]
-    return rest
+        return None, [], args[index:]
+    return None, [], []
 
 
 def _non_flag_args(args: Sequence[str]) -> list[str]:
@@ -289,24 +397,73 @@ def _flag_value(args: Sequence[str], *flags: str) -> str | None:
     return None
 
 
-def _env_split_payload(args: Sequence[str]) -> tuple[str | None, list[str]]:
-    """env 的 ``-S/--split-string`` 载荷与其后**被追加的操作数**。
+def _is_write_name(name: str) -> bool:
+    """命令名是否是写盘工具：写族名单命中，或命中写动词前缀规则。
 
-    三种形态都要认：``-S 'cmd'``、``-S'cmd'``（粘连）、``--split-string=cmd``。
-    env 会把后续操作数**追加到** split 出来的命令尾部（shebang 语义），所以载荷
-    必须与尾操作数拼在一起重解析——只重解析 ``-S`` 后那一个 token 会丢掉尾操作数
-    （``env -S rm /outside/x`` 会执行 rm；第三轮审查 P0-2/P0-3）。
+    名单外默认按只读处理是**放行**方向——写工具漏进名单＝漏检（第四轮独立审查
+    抓到 ``unlink`` 漏检）。故除名单外还有**前缀规则**（rm*/mk*/unlink*），
+    覆盖同类工具及其变体。
     """
-    for index, token in enumerate(args):
-        text = str(token)
-        if text in ("-S", "--split-string"):
-            payload = str(args[index + 1]) if index + 1 < len(args) else ""
-            return payload, [str(a) for a in args[index + 2:]]
-        if text.startswith("--split-string="):
-            return text.split("=", 1)[1], [str(a) for a in args[index + 1:]]
-        if text.startswith("-S") and len(text) > 2:
-            return text[2:], [str(a) for a in args[index + 1:]]
-    return None, []
+    base = _basename(name)
+    return base in WRITE_FAMILY or base.startswith(_WRITE_NAME_PREFIXES)
+
+
+def _config_value(raw: str) -> str:
+    """``key=value`` ⇒ ``value``（无 ``=`` 时为空——git 会拒绝这种配置）。"""
+    if "=" not in raw:
+        return ""
+    return raw.split("=", 1)[1]
+
+
+def _git_config_values(args: Sequence[str]) -> list[tuple[str, bool]]:
+    """git ``-c KEY=VALUE`` / ``--config-env`` 注入的配置。
+
+    配置值可能是**可执行载荷**：``alias.pwn='!rm /outside/x'`` 会让 ``git pwn``
+    执行 shell 命令；``core.pager='rm …'`` 同理。返回
+    ``[(配置值, 是否是环境变量引用)]``；``--config-env`` 的值是环境变量名，
+    其内容静态不可知 ⇒ 调用方直接拒。
+    """
+    values: list[tuple[str, bool]] = []
+    args = [str(a) for a in args]
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in ("-c", "--config-env"):
+            if index + 1 < len(args):
+                if token == "--config-env":
+                    values.append((args[index + 1], True))
+                else:
+                    values.append((_config_value(args[index + 1]), False))
+            index += 2
+            continue
+        if token.startswith("--config-env="):
+            values.append((token.split("=", 1)[1], True))
+            index += 1
+            continue
+        if token.startswith("-c") and len(token) > 2:
+            values.append((_config_value(token[2:]), False))
+            index += 1
+            continue
+        index += 1
+    return values
+
+
+# 环境变量注入：GIT_CONFIG_COUNT/KEY_*/VALUE_* 能在**不改 .git/config** 的前提下
+# 注入 git alias（alias 的值以 ! 开头即 shell 命令）⇒ 写目标不可静态定位 ⇒ 拒。
+_GIT_CONFIG_ENV_RE = re.compile(r"^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$")
+
+
+def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | None:
+    """前置环境变量赋值里有「可执行配置注入」⇒ 拒（其余赋值无害，忽略）。"""
+    for assignment in assignments:
+        name = str(assignment).split("=", 1)[0]
+        if _GIT_CONFIG_ENV_RE.match(name):
+            return CommandScopeDecision(
+                False,
+                "implicit_write_target",
+                f"{name}：git 配置注入可定义 alias，写目标不可静态定位",
+            )
+    return None
 
 
 # sed 脚本里的 ``w FILE`` 命令（写文件）。只在命令位置（行首或 ; { } 之后）匹配，
@@ -322,6 +479,12 @@ def _sed_script_write_targets(script: str) -> list[str]:
 def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     """返回 (静态写目标列表, 是否存在无法静态定位的隐式写目标)."""
     positional = _non_flag_args(args)
+    if name in WRITE_FLAG_OUTPUT:
+        # ``sort -o FILE in`` / ``shuf -o FILE in``：输出文件就是写目标
+        out = _flag_value(args, *WRITE_FLAG_OUTPUT[name])
+        if out is not None:
+            return ([out], not out)
+        return ([], False)
     if name in ("cp", "mv", "install", "ln", "rsync"):
         # rsync 的 -t 是 --times（布尔开关），只有 cp/mv/install 的 -t 才是
         # --target-directory（审查 P1-1）
@@ -332,7 +495,11 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
         if name == "ln" and "-T" in args:
             return ([positional[-1]] if positional else [], not positional)
         return (positional[-1:], len(positional) < 2)
-    if name in ("rm", "rmdir", "mkdir", "touch", "tee", "truncate", "shred"):
+    if name in (
+        "rm", "rmdir", "mkdir", "touch", "tee", "truncate", "shred",
+        # 第四轮审查补入：这些工具的写目标就是命名参数（可静态定位）
+        "unlink", "mkfifo", "mknod", "mkswap",
+    ):
         return (positional, False)
     if name == "patch":
         # patch 的 -o/--output 是**输出文件**（第三轮审查 P0-8）
@@ -488,13 +655,45 @@ class _Scanner:
     ) -> CommandScopeDecision | None:
         write_redirects, read_redirects, cmd_tokens = self._split_redirects(argv)
         cmd_tokens = _strip_fd_prefixes(cmd_tokens)
+        assignments: list[str] = []
         while cmd_tokens and _is_assignment(cmd_tokens[0]):
-            cmd_tokens.pop(0)
+            assignments.append(cmd_tokens.pop(0))
+        if not cmd_tokens:
+            return None
+        blocked = _blocked_assignment(assignments)
+        if blocked is not None:
+            return blocked
+        decision = self._scan_command_chain(cmd_tokens, depth)
+        if decision is not None:
+            return decision
+        for target in write_redirects:
+            ok, reason, detail = self._check_target(target)
+            if not ok:
+                return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
+        self._audit_literals(cmd_tokens + read_redirects)
+        return None
+
+    # ── 命令链判定（载体逐层剥离 ⇒ 末端命令分类）─────────────────────────
+
+    def _scan_command_chain(
+        self, cmd_tokens: Sequence[str], depth: int
+    ) -> CommandScopeDecision | None:
+        """载体链判定：逐层剥离载体（**每个载体按自己的选项语义**），末端命令分类。
+
+        载荷型载体（``env -S`` / ``sh -c`` / ``su -c`` / ``eval``）的载荷**按命令串
+        重解析**；``find -exec`` 的嵌套命令**按命令 token 重解析**。两者都不得只查
+        命令名——第四轮独立审查 P0-1：只查命令名会漏掉载荷里的写命令
+        （``find . -exec sh -c 'rm x'`` / ``sudo env -S 'rm x'``）。
+        """
         if not cmd_tokens:
             return None
         name = _basename(cmd_tokens[0])
-        if name == "cd" or name == "pushd":
-            self.cwd_unstable = True
+        if any(marker in name for marker in _IDENTITY_MARKERS):
+            return CommandScopeDecision(
+                False,
+                "command_identity_not_literal",
+                f"{cmd_tokens[0]}：命令身份含展开/通配，不可静态判定",
+            )
         if name in SHELL_KEYWORDS:
             return CommandScopeDecision(
                 False, "shell_keyword_construct", f"{name}：控制流不可静态判定"
@@ -505,84 +704,100 @@ class _Scanner:
                 "implicit_write_target",
                 f"{name}：脚本载入的写目标不可静态定位",
             )
+        if name == "cd" or name == "pushd":
+            self.cwd_unstable = True
         if name == "eval":
             return self._scan_eval(cmd_tokens[1:], depth)
         if name == "su":
             return self._scan_su(cmd_tokens[1:], depth)
-        if name == "env":
-            payload, trailing = _env_split_payload(cmd_tokens[1:])
-            if payload is not None:
-                joined = " ".join([payload, *trailing])
-                return self._scan_payload(joined, depth)
-        if name == "sudo":
-            decision = self._scan_sudo(cmd_tokens[1:], depth)
+        spec = CARRIER_SPECS.get(name)
+        if spec is None:
+            return self._scan_leaf_command(name, cmd_tokens[1:], depth)
+        payload, trailing, rest = _carrier_split(name, cmd_tokens[1:], spec)
+        if payload is not None:
+            joined = " ".join([payload, *trailing])
+            return self._scan_payload(joined, depth)
+        if spec.sudo_like:
+            decision = self._scan_sudo_like(name, cmd_tokens[1:], depth)
             if decision is not None:
                 return decision
-        effective, args = self._resolve_command(cmd_tokens)
-        if effective is None:
+        if name == "time":
+            # ``time -o FILE cmd``：FILE 是**写目标**（不是命令的一部分）
+            out = _flag_value(cmd_tokens[1:], "-o", "--output")
+            if out:
+                ok, reason, detail = self._check_target(out)
+                if not ok:
+                    return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
+        if not rest:
+            # 载体自身没有可执行的命令 ⇒ 不写盘（timeout 只给 duration 是用法错误）
             return None
-        effective_name = _basename(effective[0])
-        if any(marker in effective_name for marker in _IDENTITY_MARKERS):
-            return CommandScopeDecision(
-                False,
-                "command_identity_not_literal",
-                f"{effective[0]}：命令身份含展开/通配，不可静态判定",
-            )
-        if effective_name in SHELL_INTERPRETERS:
-            decision = self._scan_interpreter(effective_name, args, depth)
-            if decision is not None:
-                return decision
-        elif effective_name == "su":
-            decision = self._scan_su(args, depth)
-            if decision is not None:
-                return decision
-        elif effective_name == "find":
-            decision = self._scan_find(args, depth)
-            if decision is not None:
-                return decision
-        elif effective_name == "xargs":
+        return self._scan_command_chain(rest, depth)
+
+    def _scan_leaf_command(
+        self, name: str, args: Sequence[str], depth: int
+    ) -> CommandScopeDecision | None:
+        """末端命令分类：写族 / git / find / 解释器。"""
+        if name in SHELL_INTERPRETERS:
+            return self._scan_interpreter(name, args, depth)
+        if name == "find":
+            return self._scan_find(args, depth)
+        if name == "xargs":
             return CommandScopeDecision(
                 False, "implicit_write_target", "xargs：写目标来自 stdin，不可静态定位"
             )
-        elif effective_name == "git":
-            sub = _git_subcommand(args)
-            if sub in GIT_WRITE_SUBCOMMANDS:
-                return CommandScopeDecision(
-                    False, "implicit_write_target", f"git {sub}：写目标不可静态定位"
-                )
-            if sub in GIT_OUTPUT_SUBCOMMANDS:
-                out = _flag_value(args, "--output", "-o")
-                if out:
-                    ok, reason, detail = self._check_target(out)
-                    if not ok:
-                        return CommandScopeDecision(
-                            False, reason, detail, tuple(self.unverified)
-                        )
-        elif effective_name in IMPLICIT_WRITE:
+        if name == "git":
+            return self._scan_git(args, depth)
+        if name in IMPLICIT_WRITE:
             return CommandScopeDecision(
                 False,
                 "implicit_write_target",
-                f"{effective_name}：写目标不可静态定位（构建/安装族）",
+                f"{name}：写目标不可静态定位（构建/安装族）",
             )
-        elif effective_name in WRITE_FAMILY:
-            targets, implicit = _write_targets(effective_name, args)
+        if _is_write_name(name) or name in WRITE_FLAG_OUTPUT:
+            targets, implicit = _write_targets(name, args)
             if implicit:
                 return CommandScopeDecision(
-                    False,
-                    "implicit_write_target",
-                    f"{effective_name}：写目标无法静态定位",
+                    False, "implicit_write_target", f"{name}：写目标无法静态定位"
                 )
             for target in targets:
                 ok, reason, detail = self._check_target(target)
                 if not ok:
-                    return CommandScopeDecision(
-                        False, reason, detail, tuple(self.unverified)
-                    )
-        for target in write_redirects:
-            ok, reason, detail = self._check_target(target)
-            if not ok:
-                return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
-        self._audit_literals(cmd_tokens + read_redirects)
+                    return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
+        return None
+
+    def _scan_git(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
+        """git：写子命令 ⇒ 拒；``-c/--config-env`` 注入的配置值可能是可执行载荷 ⇒ 重解析。
+
+        ``git -c alias.pwn='!rm /outside/x' pwn`` 的 alias 值是 shell 命令，
+        ``-c core.pager='rm …'`` 同理——配置值必须按命令串重解析（第四轮审查 P1-4）。
+        """
+        for value, is_env_ref in _git_config_values(args):
+            if is_env_ref:
+                return CommandScopeDecision(
+                    False,
+                    "implicit_write_target",
+                    "git --config-env：配置值来自环境变量，写目标不可静态定位",
+                )
+            body = value
+            if body.startswith("!"):
+                # alias 的 shell 形态（``alias.pwn='!rm /outside/x'``）
+                body = body[1:]
+            if not body:
+                continue
+            decision = self._scan_payload(body, depth)
+            if decision is not None and not decision.allowed:
+                return decision
+        sub = _git_subcommand(args)
+        if sub in GIT_WRITE_SUBCOMMANDS:
+            return CommandScopeDecision(
+                False, "implicit_write_target", f"git {sub}：写目标不可静态定位"
+            )
+        if sub in GIT_OUTPUT_SUBCOMMANDS:
+            out = _flag_value(args, "--output", "-o")
+            if out:
+                ok, reason, detail = self._check_target(out)
+                if not ok:
+                    return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
         return None
 
     def _split_redirects(
@@ -616,18 +831,6 @@ class _Scanner:
             index += 1
         return writes, reads, cmd
 
-    def _resolve_command(self, tokens: Sequence[str]) -> tuple[list[str] | None, list[str]]:
-        """解析载体前缀，返回 (有效命令 tokens, 其参数)。"""
-        tokens = list(tokens)
-        if not tokens:
-            return None, []
-        name = _basename(tokens[0])
-        if name in CARRIERS and name not in ("find", "xargs", "eval"):
-            rest = _strip_carrier_prefix(name, tokens[1:])
-            if not rest:
-                return tokens, tokens[1:]
-            return self._resolve_command(rest)
-        return tokens, tokens[1:]
 
     def _scan_eval(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
         """``eval`` 的载荷按命令串重解析。"""
@@ -645,8 +848,10 @@ class _Scanner:
             return CommandScopeDecision(False, "unparsable_command", "载荷为空")
         return self.scan(payload, depth + 1)
 
-    def _scan_sudo(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
-        """sudo 的 shell 模式（-s/-i/--login）或无命令 ⇒ 交互 shell，写目标不可知 ⇒ 拒。
+    def _scan_sudo_like(
+        self, name: str, args: Sequence[str], depth: int
+    ) -> CommandScopeDecision | None:
+        """sudo/doas：shell 模式（-s/-i/--login）或无命令 ⇒ 进入交互 shell ⇒ 拒。
 
         与 ``su`` 无 -c 的口径一致（第三轮审查 P1-1）：sudo-capable 主机上，
         受限 child 若能起交互 shell，写侧 scope 就整个失效。
@@ -657,14 +862,15 @@ class _Scanner:
                 return CommandScopeDecision(
                     False,
                     "implicit_write_target",
-                    f"sudo {token}：进入交互 shell，写目标不可静态定位",
+                    f"{name} {token}：进入交互 shell，写目标不可静态定位",
                 )
-        rest = _strip_carrier_prefix("sudo", [str(a) for a in args])
+        spec = CARRIER_SPECS[name]
+        _payload, _trailing, rest = _carrier_split(name, args, spec)
         if not rest:
             return CommandScopeDecision(
                 False,
                 "implicit_write_target",
-                "sudo：无命令 ⇒ 进入 shell，写目标不可静态定位",
+                f"{name}：无命令 ⇒ 进入 shell，写目标不可静态定位",
             )
         return None
 
@@ -712,7 +918,11 @@ class _Scanner:
         )
 
     def _scan_find(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
-        """``find`` 自身的删除与落盘动作（-delete / -fprint / -exec）。"""
+        """``find`` 自身的删除与落盘动作（-delete / -fprint / -exec）。
+
+        ``-exec`` 的**嵌套命令整条重解析**（含载荷：``-exec sh -c 'rm x'``）——
+        只按嵌套命令的**名字**匹配写族会漏掉载荷里的写命令（第四轮独立审查 P0-1）。
+        """
         index = 0
         while index < len(args):
             token = args[index]
@@ -737,42 +947,17 @@ class _Scanner:
                     if args[offset] == _ESC_SEM:
                         end = offset
                         break
-                nested = args[index + 1:end]
-                effective, nested_args = self._resolve_command(nested)
-                if effective is None:
-                    index = end + 1
-                    continue
-                nested_name = _basename(effective[0])
-                if nested_name == "find" or nested_name == "xargs":
+                nested = [str(a) for a in args[index + 1:end]]
+                nested_name = _basename(nested[0]) if nested else ""
+                if nested_name in ("find", "xargs"):
                     return CommandScopeDecision(
                         False, "implicit_write_target", "find -exec：写目标不可静态定位"
                     )
-                if nested_name in IMPLICIT_WRITE:
-                    return CommandScopeDecision(
-                        False,
-                        "implicit_write_target",
-                        f"find -exec {nested_name}：写目标无法静态定位",
-                    )
-                if nested_name in WRITE_FAMILY:
-                    targets, implicit = _write_targets(nested_name, nested_args)
-                    if implicit:
-                        return CommandScopeDecision(
-                            False,
-                            "implicit_write_target",
-                            f"find -exec {nested_name}：写目标无法静态定位",
-                        )
-                    for target in targets:
-                        if any(marker in target for marker in ("{", "}", "$")):
-                            return CommandScopeDecision(
-                                False,
-                                "unverifiable_write_target",
-                                f"{target}（占位符/展开，目标不可静态定位）",
-                            )
-                        ok, reason, detail = self._check_target(target)
-                        if not ok:
-                            return CommandScopeDecision(
-                                False, reason, detail, tuple(self.unverified)
-                            )
+                # 嵌套命令**整条重解析**（载荷也重解析）——第四轮审查 P0-1：
+                # 旧实现只按命令名匹配 WRITE_FAMILY，``-exec sh -c 'rm x'`` 被漏检
+                decision = self._scan_command_chain(nested, depth + 1)
+                if decision is not None:
+                    return decision
                 index = end + 1
                 continue
             index += 1
