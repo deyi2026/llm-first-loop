@@ -75,7 +75,10 @@
       "status": "已由 353416fe7(编译器透传/执行面/白名单) + 本提交（sed 邻接命令与 l FILE、-Xlinker 早退序）处置；本回执即第五轮全量记录"
     }
   ],
-  "push_result": "未推送——五轮均 REVISE（P0 1→0，P1 1→4→4→2→1→处置），按 RULE-AI-28 暂缓，处置后重开闸",
-  "push_sha_local": "待第六轮冻结",
-  "push_sha_remote": null
+  "push_result": "已推送——第十轮（child subagent_a197d6842546，candidate sha256 a8b9af9a65e11d68b87e8319d3963437e7be74fe8f0dc62cf0ebcf941dd38407，冻结 head 413e3e50c）qualification=PASS 后执行：2f31d85cf..413e3e50c  main -> main（18 笔）；pre-push 安全扫描通过（61 文件）",
+  "push_sha_local": "413e3e50c164799514f1fed55be8efa6085d71fd",
+  "push_sha_remote": "413e3e50c164799514f1fed55be8efa6085d71fd",
+  "remote_verified_by": "git ls-remote origin refs/heads/main → 413e3e50c164799514f1fed55be8efa6085d71fd（与本地一致，2026-10-31 03:0x 核对）",
+  "interim_rounds_note": "第六至九轮见各轮 child（db0cf1b71ab4/beea84fe718f/84e8dca918c8/c0fad2e96595/ac1dfe2ece34）——P1 序列 2→1(FP: 死正则)→2→3→3→0；第六轮 P1 经实测为死代码假阳性（w/outside/x 在命令词模型下已 fail-closed），死正则已删",
+  "gitee_sync": "本机无 gitee 凭据（dry-run: could not read Username for gitee.com），镜像同步未做——gitee/main 仍在 594db8ddb，待有凭据的环境执行"
 }
