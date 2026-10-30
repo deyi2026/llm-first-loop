@@ -62,6 +62,16 @@ import shlex
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from llm_loop.core.command_options import (
+    CURL_OPTIONS,
+    GIT_EXPORT_OPTIONS,
+    PERL_OPTIONS,
+    SCRIPT_OPTIONS,
+    SED_OPTIONS,
+    TAR_OPTIONS,
+    WGET_OPTIONS,
+    scan_options,
+)
 from llm_loop.core.write_scope import WriteScope, scope_allows
 
 MAX_TOKENS = 512
@@ -383,6 +393,24 @@ def _strip_fd_prefixes(tokens: list[str]) -> list[str]:
     return tokens[index:]
 
 
+def _is_chdir_option(token: str, options: frozenset[str]) -> bool:
+    """判定 token 是否是**改变工作目录**的载体选项。
+
+    第七轮独立审查后补（自审发现）：旧实现只做**精确匹配** ⇒
+    ``env --chdir=/outside touch x`` 的 cwd 变化未被识别 ⇒ 相对写目标 ``x``
+    仍按原 cwd 判定为工作区内 ⇒ **越界写放行**。⇒ 补齐 ``--opt=DIR``
+    与短选项粘连形态（``-C/outside``），按 fail-closed 处理。
+    """
+    for option in options:
+        if token == option:
+            return True
+        if token.startswith(option + "="):
+            return True
+        if len(option) == 2 and token.startswith(option) and len(token) > 2:
+            return True
+    return False
+
+
 def _carrier_split(
     name: str, args: Sequence[str], spec: _CarrierSpec
 ) -> tuple[str | None, list[str], list[str]]:
@@ -557,7 +585,12 @@ def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | No
 
 # sed 脚本里的 ``w FILE`` 命令（写文件）。只在命令位置（行首或 ; { } 之后）匹配，
 # 避免把 ``s/w/x/`` 这类替换里的字母误判成命令。
-_SED_WRITE_RE = re.compile(r"(?:^|[;{}])\s*w\s+(\S+)")
+# 第八轮 P1-4：``w FILE`` 出现在**换行分隔**的下一条命令位置也是写命令（旧实现
+# 只认行首/``;``/``{``/``}`` ⇒ 换行后的 ``w /outside/x`` 漏检 ⇒ 越界写放行）。
+_SED_WRITE_RE = re.compile(r"(?:^|[;{}\n])\s*w\s+(\S+)")
+# 第八轮 P1-4：GNU sed 的独立 ``e [COMMAND]`` 命令（执行 shell 命令）——与
+# ``s///e`` 标志同属 shell 执行，旧实现只认标志形态。
+_SED_EXEC_RE = re.compile(r"(?:^|[;{}\n])\s*e(?:\s|$)")
 
 
 def _sed_subst_commands(script: str) -> list[tuple[str, str]]:
@@ -616,15 +649,27 @@ def _sed_subst_commands(script: str) -> list[tuple[str, str]]:
             cursor += 1
         if replacement_end < 0:
             break
-        # 标志段：到空白或分隔符为止
+        # 标志段：只吃 sed 替换命令的真实标志字符（``g`` / ``p`` / 次数数字 /
+        # ``w FILE`` / ``e`` / ``i`` / ``I`` / ``M`` / ``m``）——``;`` 之类字符是
+        # **下一条命令**的分隔符，不属于本命令的标志（第七轮审查 P2-2：旧实现扫到
+        # 空白/分隔符为止 ⇒ ``s/a/b/g; x`` 的标志被读成 ``g;``，``;w`` / ``;e``
+        # 会被误算进同一条 s 命令）。
         cursor = replacement_end + 1
         flag_start = cursor
-        while cursor < length and not text[cursor].isspace() and text[cursor] != delimiter:
-            cursor += 1
-        flags = text[flag_start:cursor]
         target = ""
-        if "w" in flags:
-            target = text[cursor:].strip().split()[0] if text[cursor:].strip() else ""
+        while cursor < length:
+            char = text[cursor]
+            if char.isdigit() or char in "gpwneimIM":
+                if char == "w":
+                    # ``w FILE``：文件名紧随其后（空白分隔，或 ``;`` 之前）
+                    rest = text[cursor + 1 :].lstrip()
+                    if rest.startswith(";"):
+                        rest = rest[1:].lstrip()
+                    target = rest.split()[0] if rest.split() else ""
+                cursor += 1
+                continue
+            break
+        flags = text[flag_start:cursor]
         results.append((flags, target))
         index = cursor
     return results
@@ -641,106 +686,118 @@ def _sed_script_write_targets(script: str) -> list[str]:
 
 
 def _sed_script_executes(script: str) -> bool:
-    """sed 脚本是否含 ``s///e``（把替换文本当 shell 命令执行）。"""
-    return any("e" in flags for flags, _target in _sed_subst_commands(str(script)))
+    """sed 脚本是否含 shell 执行（``s///e`` 标志 或 独立 ``e COMMAND`` 命令）。"""
+    text = str(script)
+    if any("e" in flags for flags, _target in _sed_subst_commands(text)):
+        return True
+    return bool(_SED_EXEC_RE.search(text))
 
 
 # ed/ex 脚本里的 ``w FILE`` 命令（写文件）——ed 的一行一条命令。
 _ED_WRITE_RE = re.compile(r"(?:^|\n)\s*w\s+(\S+)")
+# 第八轮 P1-4：ex 的 ``w`` 命令可带地址前缀（``1w FILE`` / ``1,2w FILE``）。
+_ED_WRITE_CMD_RE = re.compile(r"^[^\s]*\s*w\s+(\S+)")
 
 
 def _ed_script_write_targets(script: str) -> list[str]:
-    """ed/ex 内联脚本里 ``w FILE`` 命令写出的文件列表（没有则空表）。"""
-    return list(_ED_WRITE_RE.findall(str(script)))
+    """ed/ex 内联脚本里 ``w FILE`` 命令写出的文件列表（没有则空表）。
 
-
-def _sed_script_sources(args: Sequence[str]) -> tuple[list[str], bool]:
-    """收集 sed 的脚本正文，返回 (脚本列表, 是否有脚本来自文件因而不可静态定位)。
-
-    脚本可能来自：位置参数首位（``sed 'w /outside/x' in``）、``-e SCRIPT`` /
-    ``--expression=SCRIPT``（第四轮审查实测 ``--expression=`` 曾放行）、
-    ``-f FILE`` / ``--file=FILE``（脚本在文件里 ⇒ 写目标不可静态定位 ⇒ fail-closed）。
+    第八轮 P1-4：ex 支持**竖线链**（``%s/a/b/|w /outside/x|q``），旧实现只按
+    ``^``/换行 锚定 ``w`` ⇒ 链中的 ``w`` 漏检 ⇒ 越界写被放行 ⇒ 改为按 ``|`` 与
+    换行切分后逐条判定（两者都是 ex 的命令分隔符）。
     """
-    scripts: list[str] = []
-    from_file = False
-    positional = _non_flag_args(args)
-    index = 0
-    raw = [str(a) for a in args]
-    while index < len(raw):
-        token = raw[index]
-        if token in ("-e", "--expression") and index + 1 < len(raw):
-            scripts.append(raw[index + 1])
-            index += 2
-            continue
-        if token.startswith("--expression="):
-            scripts.append(token.split("=", 1)[1])
-            index += 1
-            continue
-        if token in ("-f", "--file"):
-            from_file = True
-            index += 2
-            continue
-        if token.startswith("--file="):
-            from_file = True
-            index += 1
-            continue
-        index += 1
-    if not scripts and positional:
-        scripts.append(positional[0])
-    return scripts, from_file
+    targets: list[str] = []
+    for chunk in re.split(r"[|\n]", str(script)):
+        match = _ED_WRITE_CMD_RE.match(chunk.strip())
+        if match:
+            targets.append(match.group(1))
+    return targets
 
 
-_PERL_CLUSTER_RE = re.compile(r"^-([A-Za-z]{1,3})(\..*)?$")
+def _sed_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
+    """sed 的写目标（第七轮独立审查 P1-1 修订：选项按 getopt 两种形态解析）。
 
+    旧实现只做 **token 精确匹配**（``-e`` / ``--expression=`` / ``-f`` / ``--file=``），
+    漏掉 getopt 的两种形态：
+    - **粘连簇**：``sed -nf helper.sed in``（``-n`` 开关 + ``-f`` 取值）——
+      整段 token 被跳过 ⇒ 脚本文件不被扫 ⇒ 越界写被放行；
+    - **长选项唯一前缀缩写**：``--fi``（= ``--file``）/ ``--expressio=``——同理漏检。
 
-def _perl_inplace(args: Sequence[str]) -> bool:
-    """perl 是否带就地编辑开关（``-i``）。
+    ⇒ 改用 **族模型**（``llm_loop.core.command_options``）按 getopt 语义解析。
 
-    perl 的短开关可**聚集**成单个 argv（``-pi`` / ``-pie`` / ``-pi.bak``），
-    ``-i`` 也在其中。只认 ``startswith("-i")`` 会漏掉聚集形态
-    （第五轮独立审查 P0-3：``perl -pi -e 's/a/b/' /outside/x`` 曾放行）。
-
-    判定规则：
-    - ``-i`` 精确形态；
-    - ``-i.<后缀>``（``-i.bak``：就地编辑 + 备份后缀）；
-    - 聚集形态 ``-<开关…>i<开关…>``，可带后缀（``-pi`` / ``-pie`` / ``-pi.bak``）。
-
-    第六轮独立审查 P2-3 的两处修正：
-    - **簇长上限 3**：perl 对 ``-version`` / ``-Mstrict`` 这类多字母 token 按
-      **长选项名**处理（``perl -version`` 打印版本号），不是开关簇 ⇒ 旧口径
-      （"整串都是单字母就当簇"）会把 ``-version``（含 i）误判成就地编辑。
-    - **带后缀的簇**（``-pi.bak``）：旧的 ``isalpha()`` 门槛会把含 ``.`` 的簇
-      整段跳过 ⇒ ``-pi.bak`` 曾被漏掉。
+    判定：
+    - 就地编辑（``-i`` / ``--in-place``）⇒ 写目标是**输入文件**（脚本不是被编辑文件）；
+    - 脚本来�� ``-e`` / ``--expression`` ⇒ 扫脚本里的 ``w FILE``；
+    - 脚本来��文件（``-f`` / ``--file``）⇒ 写目标不可静态定位 ⇒ fail-closed；
+    - 未识别的选项 ⇒ 脚本来源不可静态定位 ⇒ fail-closed。
     """
-    for token in args:
-        text = str(token)
-        if not text.startswith("-") or text.startswith("--"):
-            continue
-        match = _PERL_CLUSTER_RE.match(text)
-        if match is None:
-            continue
-        if "i" in match.group(1):
-            return True
-    return False
+    scan = scan_options(SED_OPTIONS, args)
+    if scan.unresolved:
+        # 未识别的选项 ⇒ 脚本来源与写目标不可静态定位 ⇒ fail-closed
+        return ([], True)
+    option_scripts = [
+        event.value
+        for event in scan.events
+        if event.name in ("--expression", "-e") and event.value
+    ]
+    from_file = scan.has("--file", "-f")
+    operands = list(scan.operands)
+    scripts = list(option_scripts)
+    if not scripts and operands:
+        scripts = [operands[0]]
+    if from_file:
+        # ``-f FILE``：脚本正文在文件里 ⇒ 无法静态定位写目标 ⇒ fail-closed
+        # （第八轮 P1-1：旧实现让 ``-i`` 分支先返回 ⇒ ``sed -i -f FILE in`` 绕过了
+        #  这条 fail-closed ⇒ 脚本里的 ``w /outside/x`` 被放行 ⇒ 越界写）
+        return ([], True)
+    targets: list[str] = []
+    for script in scripts:
+        targets.extend(_sed_script_write_targets(script))
+        if _sed_script_executes(script):
+            # ``s///e`` / 独立 ``e CMD`` 把内容当 shell 命令执行 ⇒ 写目标不可静态定位
+            return ([], True)
+    if scan.has("--in-place", "-i"):
+        # 就地编辑改写的是**输入文件**：脚本（位置参数首位）不算被编辑文件
+        edited = operands if option_scripts else operands[1:]
+        return (edited + targets, len(edited) < 1)
+    return (targets, False)
+
+
+def _perl_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
+    """perl 的写目标（第七轮独立审查 P1-3 修订：簇长上限漏检聚集形态）。
+
+    旧实现用 ``^-([A-Za-z]{1,3})(\\..*)?$``（**簇长上限 3**）识别就地编辑开关，
+    而 perl 的短开关可**任意聚集**（``-lpie`` / ``-pain``）⇒ 上限外的聚集形态被
+    整段跳过 ⇒ 越界就地编辑被放行。
+    ⇒ 改用族模型按 getopt 语义拆簇（取值型开关吃掉簇内其余字母，如 ``-Mstrict``）。
+    """
+    scan = scan_options(PERL_OPTIONS, args)
+    if scan.has("-i"):
+        # 被编辑的是**输入文件**：程序（位置参数首位，或 ``-e`` 的值）不算被编辑文件
+        operands = list(scan.operands)
+        edited = operands if scan.has("-e", "-E") else operands[1:]
+        return (edited, len(edited) < 1)
+    if scan.unresolved:
+        # 未知短字母可能自己就取值 ⇒ 不能排除簇里藏着 ``-i`` ⇒ fail-closed
+        return ([], True)
+    return ([], False)
 
 
 def _tar_mode(args: Sequence[str], positional: Sequence[str], letter: str) -> bool:
     """tar 是否处于给定模式（``x``=解包 / ``c``=创建）。
 
-    认三种形态：
+    认四种形态：
     - 完整形态：``-x`` / ``--extract`` / ``-c`` / ``--create``；
     - 粘连形态：``-xf`` / ``-czf``（字母出现在短选项串里）；
+    - **长选项唯一前缀缩写**：``--extrac``（= ``--extract``）——第七轮独立审查 P1-1：
+      旧实现只做 token 精确匹配 ⇒ ``--extrac`` 曾放行真实解包写；
     - **老式无横线写法**：``tar xf a.tar`` / ``tar cf ARCHIVE …``（首词含该字母）。
     """
     long = {"x": "--extract", "c": "--create"}[letter]
-    if any(str(a) == long for a in args):
+    scan = scan_options(TAR_OPTIONS, args)
+    if scan.has(long):
         return True
-    if any(
-        str(a).startswith("-")
-        and not str(a).startswith("--")
-        and letter in str(a)[1:]
-        for a in args
-    ):
+    if scan.has(f"-{letter}"):
         return True
     if positional:
         first = str(positional[0])
@@ -755,32 +812,44 @@ def _tar_mode(args: Sequence[str], positional: Sequence[str], letter: str) -> bo
     return False
 
 
+def _tar_mode_known(args: Sequence[str], positional: Sequence[str]) -> bool:
+    """tar 的模式是否可静态确定（显式模式选项，或旧式首词写法）。
+
+    第八轮 P1-2：旧实现回退到「第一个位置参数」⇒ **模式未知**时（典型：某个
+    取值型选项把模式字母吞进自己的值里，如 ``-Z`` 取值吞掉后面的 ``xf``）会按
+    「建档」处理 ⇒ 真实解包写被放行 ⇒ 改为模式未知即 fail-closed。
+
+    可用性代价：``tar a.tar b``（默认建档，未写显式模式）会被拦 —— 已登记为残余。
+    """
+    if any(_tar_mode(args, positional, letter) for letter in ("x", "c")):
+        return True
+    scan = scan_options(TAR_OPTIONS, args)
+    return scan.has(
+        "--list",
+        "--append",
+        "--update",
+        "--delete",
+        "--get",
+        "-t",
+        "-r",
+        "-u",
+    )
+
+
 def _tar_archive(args: Sequence[str], positional: Sequence[str]) -> str | None:
     """tar 创建模式的归档文件路径（``None``=不可静态定位）。
 
     认三种形态：
-    - ``-f ARCHIVE`` / ``--file ARCHIVE`` / ``--file=ARCHIVE``（`_flag_value`）；
-    - **粘连短选项簇**里的 ``f``（``-cvf ARCHIVE`` / ``-czf ARCHIVE``）——第六轮独立
-      审查 P1-1：`_flag_value` 是 token 精确匹配，认不出粘连簇 ⇒ 回退逻辑取错操作数
+    - ``-f ARCHIVE`` / ``--file ARCHIVE`` / ``--file=ARCHIVE``；
+    - **粘连短选项簇**里的 ``f``（``-cvf ARCHIVE`` / ``-czf ARCHIVE`` / ``-cvfARCHIVE``）
+      ——第六轮独立审查 P1-1：token 精确匹配认不出粘连簇 ⇒ 回退逻辑取错操作数
       （粘连形态里 ``positional[0]`` **就是**归档），真实越界归档写被放行；
     - 老式无横线写法 ``tar cf ARCHIVE …``（首词是开关串，归档是第 2 个位置参数）。
     """
-    archive = _flag_value(args, "-f", "--file")
+    scan = scan_options(TAR_OPTIONS, args)
+    archive = scan.value_of("-f", "--file")
     if archive is not None:
         return archive
-    for index, token in enumerate(args):
-        text = str(token)
-        if not text.startswith("-") or text.startswith("--"):
-            continue
-        cluster = text[1:]
-        if "f" not in cluster:
-            continue
-        # 粘连簇：``-cvf`` 末位是 f ⇒ 值取下一个 token；``-cvfARCHIVE`` 则是内嵌值
-        if cluster.endswith("f"):
-            if index + 1 < len(args):
-                return str(args[index + 1])
-            return ""
-        return cluster[cluster.index("f") + 1 :]
     if len(positional) >= 2:
         first = str(positional[0])
         if (
@@ -798,48 +867,116 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
     """tar 的写目标。
 
     - **解包模式**（``x``）：写目标来自**归档内部路径**（不可静态定位），除非给了
-      ``-C`` 目录（第三轮审查 P0-5）；
+      ``-C`` 目录（第三轮审查 P0-5）或 ``--one-top-level`` 目录（第七轮 P1-1 补充：
+      它同样决定落盘根目录）；
     - **创建模式**（``c``）：写目标是**归档文件**（见 `_tar_archive`）——第五轮独立
       审查 P0-4：``tar -c --file=/outside/x.tar a`` 把归档写到 ``--file`` 指定的路径，
       此前只把位置参数当写目标 ⇒ 越界写放行；
     - 其余模式：第 1 个位置参数。
     """
+    scan = scan_options(TAR_OPTIONS, args)
+    if scan.unresolved:
+        # 第八轮 P1-2/P1-5：未识别的选项 ⇒ 模式与写目标不可静态定位 ⇒ fail-closed。
+        # （旧实现回退到「第一个位置参数」⇒ ``tar -Zxf a.tar`` 这类**簇截断**
+        #  （``Z`` 不在表里 ⇒ 后续 ``x``/``f`` 被丢弃）会让归档路径逃逸判定被绕过）
+        return ([], True)
+    if scan.has("-F", "--info-script"):
+        # 第八轮 P1-2：``-F FILE`` 让 tar **执行**该脚本 ⇒ 载荷不可静态定位
+        return ([], True)
+    if not _tar_mode_known(args, positional):
+        # 第八轮 P1-2：模式不可静态确定 ⇒ 写目标不可静态定位 ⇒ fail-closed
+        return ([], True)
+    snapshot = scan.value_of("-g", "--listed-incremental", "--incremental")
     if _tar_mode(args, positional, "x"):
-        dest = _flag_value(args, "-C", "--directory")
+        dest = scan.value_of("-C", "--directory")
+        if dest is None:
+            dest = scan.value_of("--one-top-level")
         return ([dest] if dest else [], not dest)
     if _tar_mode(args, positional, "c"):
         archive = _tar_archive(args, positional)
         if archive is not None:
-            return ([archive], not archive)
+            # 第八轮 P1-2：``-g FILE``（快照文件）在建档时被写入 ⇒ 也是写目标
+            targets = [archive] + ([snapshot] if snapshot else [])
+            return (targets, not archive)
         # 创建模式但归档名不可静态定位 ⇒ 拒
         return ([], True)
     return (positional[:1], not positional)
 
 
 def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
-    """curl / wget 的写目标。
+    """curl / wget 的写目标（第七轮独立审查 P1-1：选项按 getopt 两种形态解析）。
 
     - 指定输出文件/目录 ⇒ 那是写目标；
     - ``curl -O/--remote-name/--remote-name-all`` ⇒ 按**远端名**落盘到当前目录，
-      文件名不可静态定位（第五轮独立审查 P1-3：``--remote-name-all`` 曾被漏掉）；
+      文件名不可静态定位（第五轮独立审查 P1-3：``--remote-name-all`` 曾被漏掉；
+      第七轮 P1-1：``--remote-name-a`` 这类唯一前缀缩写也曾被漏掉）；
+    - 其余**会落盘文件**的选项（头文件 / 追踪 / cookie jar / 会话日志等）同样计入；
     - wget 无输出选项 ⇒ 按 URL 派生文件名写到当前目录 ⇒ 同样不可静态定位。
     """
     if name == "curl":
-        out = _flag_value(args, "-o", "--output")
-        if out is not None:
-            return ([out], not out)
-        out_dir = _flag_value(args, "--output-dir")
-        if out_dir is not None:
-            return ([out_dir], not out_dir)
-        if "-O" in args or "--remote-name" in args or "--remote-name-all" in args:
+        scan = scan_options(CURL_OPTIONS, args)
+        if scan.unresolved:
+            # 第八轮 P1-5：未识别的选项 ⇒ 写目标不可静态定位 ⇒ fail-closed
+            # （此前 curl/wget 族不消费 ``scan.unresolved`` ⇒ 与 sed/perl 两套口径）
+            return ([], True)
+        targets: list[str] = []
+        for flag in (
+            "-o",
+            "--output",
+            "--output-dir",
+            "-D",
+            "--dump-header",
+            "--trace",
+            "--trace-ascii",
+            "--trace-config",
+            "--log",
+            "-c",
+            "--cookie-jar",
+            "--stderr",
+            "--libcurl",
+            "--etag-save",
+            "--json",
+            "--crt-file",
+        ):
+            value = scan.value_of(flag)
+            if value is not None:
+                targets.append(value)
+        if targets:
+            return (targets, any(not target for target in targets))
+        if scan.has(
+            "-O",
+            "--remote-name",
+            "--remote-name-all",
+            "-J",
+            "--remote-header-name",
+            "--create-dirs",
+        ):
             return ([], True)
         return ([], False)
-    out = _flag_value(args, "-O", "--output-document")
-    if out is not None:
-        return ([out], not out)
-    out_dir = _flag_value(args, "-P", "--directory-prefix")
-    if out_dir is not None:
-        return ([out_dir], not out_dir)
+    scan = scan_options(WGET_OPTIONS, args)
+    if scan.unresolved:
+        # 第八轮 P1-5：未识别的选项 ⇒ 写目标不可静态定位 ⇒ fail-closed
+        return ([], True)
+    targets = []
+    for flag in (
+        "-O",
+        "--output-document",
+        "--output-file",
+        # 第八轮 P1-5：``-a/--append-output FILE`` 是**追加日志文件**（写目标）——
+        # 旧实现把 ``-a`` 当开关 ⇒ ``wget -a /outside/log URL`` 的写盘被放行。
+        "-a",
+        "--append-output",
+        "-P",
+        "--directory-prefix",
+    ):
+        value = scan.value_of(flag)
+        if value is not None:
+            targets.append(value)
+    if targets:
+        return (targets, any(not target for target in targets))
+    if scan.has("--backups"):
+        # ``--backups`` 会为下载文件生成 ``.1`` 备份 ⇒ 写目标不可静态定位
+        return ([], True)
     return ([], True)
 
 
@@ -879,39 +1016,13 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     if name in ("chmod", "chown", "chgrp"):
         return (positional[1:], len(positional) < 2)
     if name == "sed":
-        # ``-i`` / ``-i.bak`` / ``--in-place`` / ``--in-place=.bak`` 都是就地编辑
-        # （第三轮审查 P0-6：只认精确 "-i" 会漏掉带后缀形态）
-        if any(
-            str(a) == "-i"
-            or str(a).startswith("-i.")
-            or str(a) == "--in-place"
-            or str(a).startswith("--in-place=")
-            for a in args
-        ):
-            return (positional[1:], len(positional) < 2)
-        # sed 脚本里的 ``w FILE`` 命令会把模式空间写进 FILE（第三轮审查 P0-7）
-        # 第四轮审查：脚本来源扩到 ``-e`` / ``--expression=`` / ``-f`` 三种形态，
-        # 并新增 ``s///w FILE`` 与 ``s///e`` 两个变体。
-        scripts, from_file = _sed_script_sources(args)
-        script_targets: list[str] = []
-        for script in scripts:
-            script_targets.extend(_sed_script_write_targets(script))
-            if _sed_script_executes(script):
-                # ``s///e`` 把替换文本当 shell 命令执行 ⇒ 写目标不可静态定位
-                return ([], True)
-        if from_file:
-            # ``-f FILE``：脚本正文在文件里 ⇒ 无法静态定位写目标 ⇒ fail-closed
-            return ([], True)
-        if script_targets:
-            return (script_targets, False)
-        return ([], False)
+        # 第七轮独立审查 P1-1：选项改按 **getopt 两种形态**（粘连簇 / 唯一前缀缩写）
+        # 解析 ⇒ 统一走族模型（``llm_loop.core.command_options``）。
+        return _sed_write_targets(args)
     if name == "perl":
         # perl -i（就地编辑）改写**输入文件**；无 -i 时是解释器残余（见残余清单）。
-        # 第五轮独立审查 P0-3：``-i`` 可与其它开关**聚集**（``-pi`` / ``-pie`` /
-        # ``-i.bak``）——只认 ``startswith("-i")`` 会漏掉 ``perl -pi -e …``。
-        if _perl_inplace(args):
-            return (positional[1:], len(positional) < 2)
-        return ([], False)
+        # 第七轮独立审查 P1-3：簇长上限 3 会漏掉 ``-lpie`` / ``-pain`` 这类聚集形态。
+        return _perl_write_targets(args)
     if name in ("ex", "ed"):
         # ed/ex 的命令脚本来自 ``-c SCRIPT``（内联）或 **stdin**。
         # 内联脚本：解析其中的 ``w FILE`` 写目标；
@@ -961,6 +1072,17 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     if name in ("curl", "wget"):
         return _download_write_targets(name, args)
     return ([], True)
+
+
+def _git_fast_export_marks(args: Sequence[str]) -> str | None:
+    """``git fast-export --export-marks=FILE`` 的 marks 文件名。
+
+    返回 ``None`` = 没有该选项；返回空串 = 有该选项但文件名不可静态定位。
+    """
+    scan = scan_options(GIT_EXPORT_OPTIONS, args)
+    if not scan.has("--export-marks"):
+        return None
+    return scan.value_of("--export-marks") or ""
 
 
 def _git_subcommand(args: Sequence[str]) -> str:
@@ -1045,6 +1167,78 @@ class _Scanner:
         self._audit_literals(cmd_tokens + read_redirects)
         return None
 
+    def _scan_script_command(
+        self, cmd_tokens: Sequence[str], depth: int
+    ) -> CommandScopeDecision | None:
+        """script 载体的写面判定（第五轮 P2-1 / 第七轮 P1-2 / 第八轮 P1-3、P1-5）。
+
+        第五轮独立审查 P2-1：``script FILE cmd…``（BSD/GNU script）把会话
+        录制**写入 FILE**，同时执行 cmd ⇒ 两处都是写面：
+          - FILE 是可定位的写目标（须过 scope 判定）；
+          - cmd 是被执行的命令（须按命令链重解析）。
+        第六轮独立审查 P1-2：载荷有两种形态 ——
+          (a) ``script -c CMD [FILE]``：CMD 由**选项**携带；
+          (b) ``script FILE cmd…``：cmd 是 FILE 之后的位置参数。
+        此前只按 (b) 取 cmd_tokens[2:] ⇒ (a) 形态下 CMD 被整体漏扫。
+        """
+        scan = scan_options(SCRIPT_OPTIONS, cmd_tokens[1:])
+        if scan.unresolved:
+            # 第八轮 P1-5：未识别的选项 ⇒ 写目标不可静态定位 ⇒ fail-closed
+            # （此前 script 族不消费 ``scan.unresolved`` ⇒ 与 sed/perl 两套口径）
+            return CommandScopeDecision(
+                False,
+                "implicit_write_target",
+                "script：未识别的选项 ⇒ 写目标不可静态定位",
+                tuple(self.unverified),
+            )
+        payload_cmd = scan.value_of("-c", "--command")
+        operands = list(scan.operands)
+        # 第八轮 P1-3：script 自己写的**日志/计时**文件同样是写目标
+        # （``-t/--log-timing``、``-T/--log-timing``、``-B/--log-io``、
+        #  ``-I/--log-in``、``--log-in``、``--log-io``、``--log-out``）。
+        log_targets = [
+            event.value
+            for event in scan.events
+            if event.name
+            in (
+                "--log-timing",
+                "--log-in",
+                "--log-io",
+                "--log-out",
+                "-t",
+                "-T",
+                "-B",
+                "-I",
+                "-L",
+            )
+            and event.value
+        ]
+        if payload_cmd is not None:
+            # 第七轮独立审查 P1-2：``script -c CMD FILE`` 的 **FILE 是 typescript
+            # 写目标**——此前在 ``-c`` 分支提前 return ⇒ FILE 从未被判定。
+            # 无 FILE 时 GNU script 写当前目录的 ``typescript`` ⇒ 同为写目标。
+            typescript = operands[0] if operands else "typescript"
+            for target in [typescript, *log_targets]:
+                ok, reason, detail = self._check_target(target)
+                if not ok:
+                    return CommandScopeDecision(
+                        False, reason, detail, tuple(self.unverified)
+                    )
+            return self._scan_command_chain(shlex.split(payload_cmd), depth)
+        if operands:
+            ok, reason, detail = self._check_target(operands[0])
+            if not ok:
+                return CommandScopeDecision(
+                    False, reason, detail, tuple(self.unverified)
+                )
+        for target in log_targets:
+            ok, reason, detail = self._check_target(target)
+            if not ok:
+                return CommandScopeDecision(
+                    False, reason, detail, tuple(self.unverified)
+                )
+        return self._scan_command_chain(operands[1:], depth)
+
     # ── 命令链判定（载体逐层剥离 ⇒ 末端命令分类）─────────────────────────
 
     def _scan_command_chain(
@@ -1095,7 +1289,7 @@ class _Scanner:
             # 是 grep 的上下文行数，不是 env 的 chdir）。
             carrier_args = [str(a) for a in cmd_tokens[1:]]
             option_zone = carrier_args[: len(carrier_args) - len(rest)] if rest else carrier_args
-            if any(a in spec.chdir_options for a in option_zone):
+            if any(_is_chdir_option(a, spec.chdir_options) for a in option_zone):
                 self.cwd_unstable = True
         if name == "env":
             # 第五轮独立审查 P0-1：``env NAME=VALUE cmd`` 会把赋值注入子进程环境，
@@ -1125,25 +1319,7 @@ class _Scanner:
                 if not ok:
                     return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
         if name == "script":
-            # 第五轮独立审查 P2-1：``script FILE cmd…``（BSD/GNU script）把会话
-            # 录制**写入 FILE**，同时执行 cmd ⇒ 两处都是写面：
-            #   - FILE 是可定位的写目标（须过 scope 判定）；
-            #   - cmd 是被执行的命令（须按命令链重解析）。
-            # 第六轮独立审查 P1-2：载荷有两种形态 ——
-            #   (a) ``script -c CMD [FILE]``：CMD 由**选项**携带；
-            #   (b) ``script FILE cmd…``：cmd 是 FILE 之后的位置参数。
-            # 此前只按 (b) 取 cmd_tokens[2:] ⇒ (a) 形态下 CMD 被整体漏扫。
-            payload_cmd = _flag_value(cmd_tokens[1:], "-c", "--command")
-            if payload_cmd is not None:
-                return self._scan_command_chain(shlex.split(payload_cmd), depth)
-            positionals = [str(a) for a in _non_flag_args(cmd_tokens[1:])]
-            if positionals:
-                ok, reason, detail = self._check_target(positionals[0])
-                if not ok:
-                    return CommandScopeDecision(
-                        False, reason, detail, tuple(self.unverified)
-                    )
-            return self._scan_command_chain(cmd_tokens[2:], depth)
+            return self._scan_script_command(cmd_tokens, depth)
         if not rest:
             # 载体自身没有可执行的命令 ⇒ 不写盘（timeout 只给 duration 是用法错误）
             return None
@@ -1182,6 +1358,28 @@ class _Scanner:
                 return CommandScopeDecision(
                     False, "implicit_write_target", f"{name}：写目标无法静态定位"
                 )
+        return None
+
+    def _check_fast_export_marks(self, args: Sequence[str]) -> CommandScopeDecision | None:
+        """``git fast-export --export-marks=FILE`` 的写目标判定。
+
+        第七轮独立审查 P1-4：``git fast-export`` 是只读子命令，但 ``--export-marks``
+        会写 marks 文件 ⇒ 该文件必须过 scope 判定（此前完全未判定 ⇒ 越界写放行）。
+
+        返回 ``None`` = 没有写目标（放行）。
+        """
+        marks = _git_fast_export_marks(args)
+        if marks is None:
+            return None
+        if not marks:
+            return CommandScopeDecision(
+                False,
+                "implicit_write_target",
+                "git fast-export --export-marks：marks 文件名不可静态定位",
+            )
+        ok, reason, detail = self._check_target(marks)
+        if not ok:
+            return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
         return None
 
     def _scan_git(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
@@ -1230,6 +1428,12 @@ class _Scanner:
                 "implicit_write_target",
                 f"git {sub}：子命令不在只读白名单内，写目标不可静态定位",
             )
+        if sub in ("fast-export", "fast-export-v2"):
+            # 第七轮独立审查 P1-4：``git fast-export`` 是只读子命令，但
+            # ``--export-marks=FILE`` 会**写 marks 文件** ⇒ 写目标须过 scope 判定。
+            marks_decision = self._check_fast_export_marks(args)
+            if marks_decision is not None:
+                return marks_decision
         if sub == "symbolic-ref":
             # 第五轮独立审查 P1-4：``symbolic-ref`` 在读白名单里，但
             # ``git symbolic-ref HEAD refs/heads/x`` 是**写形态**（改写 .git/HEAD）。

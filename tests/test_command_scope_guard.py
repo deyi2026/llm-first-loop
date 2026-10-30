@@ -504,7 +504,7 @@ def test_audit_is_capped_and_dropped_entries_are_counted() -> None:
     write_scope_audit_reset()
 
 
-# ── 第五轮独立审查（REVISE：P0=4 / P1=4 / P2=1）回归锁 ────────────────────
+# ── 第五轮独立审查（REVISE：P0=4 / P1=4 / P2=3）回归锁 ────────────────────
 #
 # 判定基准：**全域 scope**（paths=("**",)）。此前用受限 scope 时，
 # 这些向量虽被拒，但拒的是错误的原因（拒了操作数而非真实写目标），
@@ -636,3 +636,182 @@ def test_r6_git_reflog_write_forms_are_blocked(command: str) -> None:
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is False, (command, decision.reason, decision.detail)
     assert decision.reason == "implicit_write_target", (command, decision.reason)
+
+
+# ── 第七轮独立审查（REVISE：P0=0 / P1=4 / P2=3）回归锁 ──────────────────────
+#
+# P1-1：选项识别只做 **token 精确匹配** ⇒ 漏掉 getopt 的两种形态：
+#   - **粘连簇**：``sed -nf`` / ``-ne`` / ``-nfe``（``-n`` 开关 + ``-f``/``-e`` 取值）、
+#     ``curl -sSo``（``-s``/``-S`` 开关 + ``-o`` 取值）；
+#   - **长选项唯一前缀缩写**：``--fi``（= ``--file``）/ ``--expressio=``、
+#     ``--extrac``（= ``--extract``）/ ``--remote-name-a``（= ``--remote-name-all``）。
+#   ⇒ 改走族模型（``llm_loop.core.command_options``）按 getopt 语义解析。
+# P1-2：``script -c CMD FILE`` 的 **FILE 是 typescript 写目标** —— 此前在 ``-c``
+#   分支提前 return ⇒ FILE 从未被判定（无 FILE 时 GNU script 写 ``./typescript``）。
+# P1-3：``_perl_inplace`` 的**簇长上限 3** ⇒ 漏掉 ``perl -lpie`` / ``-pain`` 聚集形态
+#   （perl 的短开关可任意聚集）。
+# P1-4：``git fast-export --export-marks=FILE`` 写 marks 文件 ⇒ 写目标须过 scope 判定。
+
+R7_BLOCKED_CASES = [
+    ("sed -nf /tmp/evil.sed in", "implicit_write_target"),
+    ("sed -e 's/a/b/' -ne 'w /outside/x' in", "write_target_outside_scope"),
+    ("sed --fi /tmp/evil.sed in", "implicit_write_target"),
+    ("sed --expressio='w /outside/x' in", "write_target_outside_scope"),
+    ("tar --extrac -f /tmp/a.tar", "implicit_write_target"),
+    ("curl --remote-name-a https://example.com/x", "implicit_write_target"),
+    ("script -c 'true' /outside/leak.log", "write_target_outside_scope"),
+    ("perl -lpie 's/a/b/' /outside/x", "write_target_outside_scope"),
+    ("perl -pain -e 's/a/b/' /outside/x", "write_target_outside_scope"),
+    ("perl -f -i /outside/x", "implicit_write_target"),
+    ("git fast-export --export-marks=/outside/marks --all", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R7_BLOCKED_CASES)
+def test_r7_review_bypasses_are_blocked_under_full_domain_scope(
+    command: str, expected_reason: str
+) -> None:
+    """第七轮审查复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R7_ALLOWED_CASES = [
+    "sed -n 's/a/b/' in",
+    "sed --quiet 's/a/b/' in",
+    "sed 's/a/b/' in",
+    "perl -version",
+    "perl -e 'print 1'",
+    "perl -Mstrict -e 'print 1'",
+    "curl https://example.com/x",
+    "git fast-export --all",
+]
+
+
+@pytest.mark.parametrize("command", R7_ALLOWED_CASES)
+def test_r7_review_fixes_do_not_over_block_read_forms(command: str) -> None:
+    """第七轮修复不得误伤读形态（族模型不能把读命令判成写）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第七轮 P2-2（推闸审查）：载体选项区启发式此前**无测试** ⇒ 补回归锁 ──────
+#
+# 载体（env / sudo / nice …）的"选项区" = 载体自身选项 + 赋值前缀；判定据此决定
+# ① cwd 是否不可静态定位（env -C / sudo -D）② 是否含被禁的赋值注入
+# （``GIT_CONFIG_COUNT=1`` 之类）。此前这两条启发式**没有任何测试** ⇒ 行为漂移不可见。
+# 第七轮自审另发现：cwd 变更判定只做**精确匹配** ⇒ ``env --chdir=/outside touch x``
+# 的 cwd 变化未被识别 ⇒ 相对写目标 ``x`` 仍按原 cwd 判定为工作区内 ⇒ **越界写放行**
+# ⇒ 补齐 ``--opt=DIR`` 与短选项粘连形态（``-C/outside``）。
+
+R7_CARRIER_OPTION_ZONE_CASES = [
+    # 内层的 ``-C`` 属于内层命令（grep），不属于 env ⇒ 不得误判
+    ("env grep -C 2 pat file", True, ""),
+    ("env FOO=1 ls /tmp", True, ""),
+    # cwd 不可静态定位 ⇒ 相对写目标不可判定 ⇒ 拦
+    ("env -C /outside touch x", False, "unverifiable_write_target"),
+    ("env --chdir /outside touch x", False, "unverifiable_write_target"),
+    ("env --chdir=/outside touch x", False, "unverifiable_write_target"),
+    ("env -C/outside touch x", False, "unverifiable_write_target"),
+    # 被禁的赋值注入（GIT_* 会被内层 git 读取）⇒ 拦（fail-closed 可用性代价）
+    ("env GIT_CONFIG_COUNT=1 ls git", False, "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_allowed,expected_reason", R7_CARRIER_OPTION_ZONE_CASES)
+def test_r7_carrier_option_zone_heuristics(
+    command: str, expected_allowed: bool, expected_reason: str
+) -> None:
+    """载体选项区启发式（cwd 变更 / 赋值注入）必须有测试钉住。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is expected_allowed, (command, decision.reason, decision.detail)
+    if expected_reason:
+        assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+# ── 第八轮独立审查（REVISE，P0=0/P1=5/P2=5）逐条修的回归锁 ─────────────────
+#
+# P1-1 ``sed -i -f FILE`` 回归：``-i`` 分支早退 ⇒ 绕过了 ``-f`` 的 fail-closed。
+# P1-2 tar：``-g`` 快照文件是写目标；模式未知（簇截断/取值吞字母）必须 fail-closed；
+#        ``-F/--info-script`` 会执行脚本 ⇒ fail-closed。
+# P1-3 script：``-t/--log-timing``、``--log-in/--log-io/--log-out`` 等日志文件是写目标。
+# P1-4 sed/ed 脚本语法：换行分隔的 ``w FILE``、独立 ``e CMD``、ex 竖线链。
+# P1-5 wget/curl：``-a/--append-output`` 是写目标；**未识别选项一律 fail-closed**
+#        （curl/wget/tar/script 与 sed/perl 统一口径）。
+
+R8_BLOCKED_CASES = [
+    # P1-1：``-i`` 早退曾让 ``-f`` 的 fail-closed 失效
+    ("sed -i -f /tmp/evil.sed in", "implicit_write_target"),
+    # P1-2：tar 家族
+    ("tar -g /outside/snap -cf a.tar d", "write_target_outside_scope"),
+    ("tar -Zxf a.tar", "implicit_write_target"),
+    ("tar -Qxf a.tar", "implicit_write_target"),
+    ("tar -F /tmp/evil.sh -cf a.tar d", "implicit_write_target"),
+    # P1-3：script 的日志/计时文件
+    ("script --log-in /outside/x", "write_target_outside_scope"),
+    ("script -t /outside/timing.log cmd", "write_target_outside_scope"),
+    # P1-4：sed/ed 脚本语法
+    ("sed -e 's/a/b/\nw /outside/x' in", "write_target_outside_scope"),
+    ("sed -e 'e rm -rf /tmp/x' in", "implicit_write_target"),
+    ("ed -c '%s/a/b/|w /outside/x|q' in", "write_target_outside_scope"),
+    # P1-5：wget/curl 残差 + 未识别选项统一 fail-closed
+    ("wget -a /outside/log https://example.com/x", "write_target_outside_scope"),
+    ("curl --totally-unknown https://example.com/x", "implicit_write_target"),
+    ("tar --totally-unknown -cf a.tar d", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R8_BLOCKED_CASES)
+def test_r8_review_bypasses_are_blocked_under_full_domain_scope(
+    command: str, expected_reason: str
+) -> None:
+    """第八轮审查复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R8_ALLOWED_CASES = [
+    "sed -n 's/a/b/' in",
+    "sed -e 's/a/b/g' in",
+    "sed 's/a/b/' in",
+    "curl -sSL https://example.com/x",
+    "curl --compressed -o out.txt https://example.com/x",
+    "wget -O out.txt https://example.com/x",
+    "tar -tf a.tar",
+    "tar -cf a.tar b",
+    "script -q cmd",
+    "perl -e 'print 1'",
+    "perl -Mstrict -e 'print 1'",
+]
+
+
+@pytest.mark.parametrize("command", R8_ALLOWED_CASES)
+def test_r8_review_fixes_do_not_over_block_read_forms(command: str) -> None:
+    """第八轮修复不得误伤读形态（族模型不能把读命令判成写）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第八轮 P2-3：长选项**前缀歧义**时的取值候选优先规则边界 ──────────────────
+#
+# 规则：长选项前缀匹配到多个候选时，只要**任一候选取值**且写法不是 ``--name=value``，
+# 下一个 token 就被当作该选项的值消费（getopt 保守取法）⇒ 副作用是「操作数被吞成
+# 值」。方向是**过拦**（fail-closed），但必须钉住，否则规则漂移不可见。
+
+R8_PREFIX_AMBIGUITY_CASES = [
+    # ``--outp`` 同时前缀匹配 --output/--output-dir（都取值）⇒ 下一个 token 被消费成值
+    ("curl --outp out.txt https://example.com/x", True),
+    # 同上，但被吞掉的 token 落在 scope 外 ⇒ 写目标越界 ⇒ 拦
+    ("curl --outp /outside/out.txt https://example.com/x", False),
+]
+
+
+@pytest.mark.parametrize("command,expected_allowed", R8_PREFIX_AMBIGUITY_CASES)
+def test_r8_prefix_ambiguity_value_candidate_priority(
+    command: str, expected_allowed: bool
+) -> None:
+    """前缀歧义长选项的取值候选优先规则（过拦方向）必须被钉住。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is expected_allowed, (command, decision.reason, decision.detail)

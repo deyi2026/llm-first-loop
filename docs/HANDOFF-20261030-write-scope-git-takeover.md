@@ -252,7 +252,7 @@ pyright PASS、空实现下 57/57 应拦用例仍放行（用例在测拦截）�
 命令家族层面的封闭名单性质未变（新写工具仍需显式加名单）；
 `git` 读白名单需随 git 版本维护。
 
-### 10.9 第五轮独立审查（2026-10-30 21:0x–22:3x）：REVISE（P0=4 / P1=4 / P2=1）→ 已逐条修
+### 10.9 第五轮独立审查（2026-10-30 21:0x–22:3x）：REVISE（P0=4 / P1=4 / P2=3）→ 已逐条修
 
 独立评审子代理对第四轮产物给出 **REVISE**（P0=4 / P1=4 / P2=3），判定"尚不能上线"。
 本节记录逐条修复与**实测口径**。
@@ -303,7 +303,9 @@ pyright PASS、空实现下 57/57 应拦用例仍放行（用例在测拦截）�
 `unverifiable_write_target`（逐条匹配预期）；`git symbolic-ref HEAD`、
 `tar -xf a.tar -C src`、`gcc --version`、`env -C src ls` ⇒ 仍放行（读形态未被误伤）。
 
-**状态行**：判定层 8 项 P0/P1 + P2-1 已修并实测（175 passed）；
+**状态行**：判定层 8 项 P0/P1 + P2-1 已修并实测（175 passed）；P2-2 / P2-3 为
+文档口径与可用性方向残余（登记，不改行为）⇒ **第五轮 P2 计数为 3**（与本节正文、
+首段及 DESIGN §16.12 一致；第七轮审查 P2-1 指出的标题口径漂移已修）。
 **全量门禁 `bash scripts/ci_gate.sh` 的独立审查结论以子代理回执为准**——
 本节定稿时该审查仍在进行，不预先宣称结果。
 
@@ -356,4 +358,152 @@ reflog 写形态）；写侧 + 棘轮门 **381 passed / 1 skipped**（含
   ⇒ 遵守棘轮纪律：**靠减重而非重登记掩盖**。
 
 **状态行**：第六轮 P1=3 / P2=5 已逐条修并实测（191 passed / 棘轮 40 passed）；
+**全量门禁的独立审查结论以子代理回执为准**，本节不预先宣称上线结果。
+
+### 10.11 第七轮独立审查（2026-10-30 22:5x–23:0x）：REVISE（P0=0 / P1=4 / P2=3）→ 已逐条修
+
+独立评审子代理对第六轮产物（HEAD `a07bb1c33`）给出 **REVISE**：**P0=0 / P1=4 / P2=3**
+（P0 清零 = 第六轮修复获确认；但判定层仍有 4 条**真实绕过**的写通道）。逐条修复如下。
+
+**统一根因（4 条 P1 共享）**：选项识别只做 **token 精确匹配**，漏掉 getopt 的两种形态——
+**粘连短选项簇**（`-nf` / `-ne` / `-nfe` / `-sSo`）与**长选项唯一前缀缩写**
+（`--fi` / `--expressio=` / `--extrac` / `--remote-name-a`）。
+⇒ 新增**族级选项语义模型** `src/llm_loop/core/command_options.py`：按 getopt 语义把
+token 还原成**选项事件**（规范名 + 取值），判定层不再逐条硬编码精确匹配（设计 §16.14）。
+
+**P1（4 条，全部修）**：
+- **P1-1 选项两种形态漏检**（6 条向量此前**真实放行**）：`sed -nf helper.sed in`、
+  `sed -ne 'w /outside/x' in`、`sed --fi helper.sed in`、
+  `sed --expressio='w /outside/x' in`、`tar --extrac -f a.tar`、
+  `curl --remote-name-a URL`。修法：族模型（`FamilyOptions` 长/短选项表）+
+  `scan_options()`（粘连簇拆分 / 唯一前缀缩写 / **歧义取并集** / 未知短字母截断并记
+  `unresolved`）+ `OptionScan`（事件 / 未识别 token / 非选项 token）；判定层按族建表
+  （`SED_OPTIONS` / `TAR_OPTIONS` / `CURL_OPTIONS` / `PERL_OPTIONS` /
+  `SCRIPT_OPTIONS` / `WGET_OPTIONS`）。**歧义按并集**（`--f` 同时命中 `--file` /
+  `--follow-symlinks` ⇒ 两个候选都算命中）；**取值候选优先**（候选里有取值型选项就
+  消费下一个 token——宁可误判不可漏判）。
+- **P1-2 `script -c CMD FILE` 的 FILE 从未判定**：`-c` 分支提前 return ⇒ typescript
+  写目标绕过 scope（旧实现只判 `script FILE cmd…` 形态）。修法：`-c` 分支同样判 FILE；
+  无 FILE 时 GNU script 写 `./typescript` ⇒ 同为写目标。
+- **P1-3 perl 簇长上限 3**：`_perl_inplace` 的 `^-([A-Za-z]{1,3})(\..*)?$` 漏掉
+  `perl -lpie` / `perl -pain`（perl 短开关可任意聚集）⇒ 越界就地编辑放行（第五轮
+  P0-3 的回归）。修法：族模型按 getopt 语义拆簇（取值型开关吃掉簇内其余字母，
+  如 `-Mstrict`），并把上限 3 的正则整段删除。
+- **P1-4 `git fast-export --export-marks=FILE`**：`fast-export` 在读白名单里，但
+  `--export-marks` 会**写 marks 文件** ⇒ 此前完全未判定。修法：
+  `_check_fast_export_marks()` 单独判该文件（无值 ⇒ 文件名不可静态定位 ⇒ 拒）。
+
+**P2（3 条）**：
+- **P2-1 计数口径漂移**：§10.9 标题与测试文件小节注释写 `P2=1`，同节正文/首段与
+  DESIGN §16.12 写 `P2=3` ⇒ 已统一为 **P2=3**（标题/注释已改）。
+- **P2-2 `_sed_subst_commands` 标志段边界不准**：旧实现扫到空白/分隔符为止 ⇒
+  `s/a/b/g; x` 的标志被读成 `g;`（`;w` / `;e` 会被误算进同一条 s 命令）。
+  修法：标志段只吃 sed 替换命令的真实标志字符（`g` / `p` / 次数数字 / `w FILE` /
+  `e` / `i` / `I` / `M` / `m`），`;` 归下一条命令。
+- **P2-3 载体选项区误拦**：`env GIT_CONFIG_COUNT=1 ls git` 被拦（env 透传变量，
+  ls 并不使用它）——fail-closed **可用性代价**，登记为已知残余，不改行为。
+
+**第七轮自审新发现并已修（同根因，P1 级）**：载体（env/sudo）的 **cwd 变更判定只做
+精确匹配** ⇒ `env --chdir=/outside touch x` 的 cwd 变化未被识别 ⇒ 相对写目标 `x`
+仍按原 cwd 判定为工作区内 ⇒ **越界写放行**（实测放行）。修法：新增
+`_is_chdir_option()`，补齐 `--opt=DIR` 与短选项粘连形态（`-C/outside`），按
+fail-closed 处理 ⇒ 实测改为 `unverifiable_write_target` 拦截。
+
+**推闸审查（git_push 轨）同轮 P1 对齐**：`docs/governance/receipts/
+push-review-20261030-origin-main-two-rounds.json`（23:07）的 P1-1（script `-c` 的
+FILE）/ P1-3（sed 附着式短选项 `-e`/`-f` 粘连）/ P1-4（fast-export marks）与本节
+P1-2 / P1-1 / P1-4 **同指**，已一并覆盖；其 P1-2（script 位置参数不再按"第二位"
+硬编码，改为族模型解析出的操作数）亦由本轮族模型覆盖。推闸审查的 **P2-2（env/sudo
+选项区启发式无测试）** ⇒ 本轮补 **7 条**回归锁（cwd 变更 4 种形态 + 赋值注入 1 条 +
+内层 `-C` 不误伤 2 条）。
+
+**证据**：判定层 **228 passed**（`test_command_scope_guard.py` 217 +
+`test_command_options.py` 11；较上一轮新增 **37 条** = 第七轮 19 条回归锁 +
+载体选项区 7 条 + 族模型单测 11 条）；本轮 4 个改动文件
+**ruff 诊断为 0**（`ruff check` → All checks passed）；棘轮门 `_scan_command_chain`
+118 行 / `_scan_git` 110 行 / `_write_targets` 92 行 / `_sed_subst_commands` 80 行
+（均 <120 未登记门槛）。
+**应拦输入实测**（RULE-AI-35）：第七轮 11 条向量 + 载体选项区 5 条在 `paths=("**",)`
+下**全部被拦且拒因匹配**；`sed -n 's/a/b/' in` / `perl -version` /
+`perl -Mstrict -e 'print 1'` / `curl https://example.com/x` / `git fast-export --all` /
+`env grep -C 2 pat file` ⇒ **放行**（读形态未被误伤）。
+
+**跨会话协作处置（第七轮末已在本会话修）**：`scripts/check_static_diagnostics.py
+--tool ruff` 的 R9 棘轮在 **`src/llm_loop/web/routes.py:3387`（B009）** 上
+**BLOCK NEW**——该行来自 commit `20e6db475`（另一会话 2026-10-30 的 web 提交），
+**不是判定层改动**（本轮判定层改动文件 ruff 诊断数为 0）。为解除全量门禁 ruff 段的
+阻断，**本会话已把该行改为属性访问**（`Path(settings.sessions_dir)` 取代
+`Path(getattr(settings, "sessions_dir"))`；语义等价——`settings` 为 None 时两版都在
+同一 `try` 内抛错并被下方 `except Exception` 捕获 ⇒ 同样 fail-open）。
+**这是跨会话协作改动**，与该文件属主的后续提交可能冲突，合并时以属主提交为准；
+本会话只改这一行，未动该文件其余逻辑。
+
+**状态行**：第七轮 P1=4 / P2=3 已逐条修，另**自审新发现 1 条同根因 P1 级**（载体 cwd
+判定只做精确匹配 ⇒ `env --chdir=` 越界写放行）已修并实测（228 passed）；
+**全量门禁的独立审查结论以子代理回执为准**，本节不预先宣称上线结果。
+
+### 10.12 第八轮独立审查（2026-10-30 23:0x–00:3x）：REVISE（P0=0 / P1=5 / P2=5）→ 已逐条修
+
+**本轮两次独立审查（两次结论都要如实记）**：
+
+1. **第一次**（child `subagent_b4936b02f63e`，候选 SHA256 `3adaa172a5…`）判
+   **REVISE：P0=0 / P1=2 / P2=5**，但两条 P1 都是**评审材料缺陷**而非代码缺陷：
+   冻结材料里 `committed_delta` 为空（HEAD == main ⇒ `git diff base..HEAD` 为空）且
+   未提交增量当时也为空 ⇒ 评审只看到一个「无断言的 probe」⇒ P1-1「源码缺失」、
+   P1-2「候选只是 probe」。⇒ **流程教训（已固化）**：全量门禁的评审材料必须以
+   **未提交工作区变更**呈现，否则评审看不到源码 ⇒ 白跑一轮。
+2. **第二次**（child `subagent_3e80f4e3f7fc`，候选 SHA256 `413bbad48d…`）判
+   **REVISE：P0=0 / P1=5 / P2=5**——这次源码可见，5 条 P1 均为**可复现的放行向量**。
+
+**P1（5 条，全部修）**：
+
+- **P1-1 `sed -i -f FILE` 回归**（第七轮重构引入）：`_sed_write_targets` 的 `-i` 分支
+  在检查脚本来源**之前**就 return ⇒ `sed -i -f /tmp/evil.sed in` 绕过了 `-f` 的
+  fail-closed ⇒ 脚本里的 `w /outside/x` 被放行。⇒ 把 `from_file` 的 fail-closed 提到
+  `-i` 分支之前（脚本正文在文件里 ⇒ 写目标不可静态定位 ⇒ 拒）。
+- **P1-2 tar 家族三处**：① `-g/--listed-incremental/--incremental` **取值**（建档快照
+  文件）此前被当开关 ⇒ `tar -g /outside/snap -cf a.tar d` 的写盘漏检；
+  ② 模式**不可静态确定**时旧实现回退「第一个位置参数」⇒ 按建档处理 ⇒ 解包写可能被
+  放行 ⇒ 新增 `_tar_mode_known()`，模式未知即 fail-closed；
+  ③ `-F/--info-script` 会**执行脚本** ⇒ 补 fail-closed。
+- **P1-3 script 的日志/计时文件**（`-t/--log-timing`、`-T/--log-timing`、`-B/--log-io`、
+  `-I/--log-in`、`--log-in`、`--log-io`、`--log-out`）此前**从未过 scope 判定**。
+- **P1-4 sed/ed 脚本语法三处**：① `_SED_WRITE_RE` 缺 `\n` 锚点 ⇒ 换行分隔的
+  `w FILE` 漏检；② GNU sed 的**独立 `e CMD`**（shell 执行）未建模；
+  ③ ed/ex 的**竖线链**（`%s/a/b/|w /outside/x|q`）里 `w` 漏检 ⇒ 改为按 `|` 与换行
+  切分后逐条判定。
+- **P1-5 wget/curl 残差与**口径不一致**：`-a/--append-output` 是**取值**（追加日志
+  文件）却被当开关 ⇒ `wget -a /outside/log URL` 的写盘漏检；且 curl/wget/tar/script 族
+  **从不消费 `scan.unresolved`**（只有 sed/perl 消费）⇒ 同一模块两套口径 ⇒ 与
+  「fail-closed 方向」的声明矛盾。⇒ **统一为 fail-closed**：各族表补齐常见选项，
+  未识别的选项一律按「写目标不可静态定位」处理。
+
+**P2（5 条，全部处理）**：P2-1 文档与增量事实冲突（§10.11 / DESIGN §16.14 声称 B009
+留给属主、未提交增量却改了那一行）⇒ 已改写为**跨会话协作改动**的准确表述；
+P2-2 `GIT_EXPORT_OPTIONS` 重复登记 `--reencode` ⇒ 去重；
+P2-3 长选项**前缀歧义**时的「取值候选优先」规则边界未测 ⇒ 补 2 条边界回归锁
+（方向是过拦）；P2-4 tar 提取类拒绝（模式未知 / 无 `-C`）只登记了一半 ⇒ 补齐并加
+回归锁；P2-5 `reports/` 是否随推归档的政策仍未确认 ⇒ **结转项**（不在本轮范围）。
+
+**证据**：判定层 **254 passed**（`test_command_scope_guard.py` 243 +
+`test_command_options.py` 11；较上一轮新增 **26 条** = 第八轮 13 条应拦向量 +
+11 条放行形态 + 2 条前缀歧义边界）；本轮 3 个改动文件 ruff 诊断 **0**；
+棘轮门 `_scan_git` 110 行 / `_write_targets` 92 行 / `_scan_command_chain` 83 行 /
+`_sed_subst_commands` 80 行 / `_download_write_targets` 75 行 / `_scan_script_command`
+71 行（均 <120 未登记门槛）。**第八轮新增的 script 判定逻辑被抽为
+`_scan_script_command()`**——否则 `_scan_command_chain` 会涨到 147 行 ⇒ 棘轮门失败
+（实测已复现该失败并按「减重而非重登记」处置）。
+
+**应拦输入实测**（RULE-AI-35）：第八轮 13 条向量在 `paths=("**",)` 下**全部被拦且
+拒因匹配**；11 条读形态（`sed -n` / `sed -e` / `curl -sSL` / `curl --compressed -o` /
+`wget -O` / `tar -tf` / `tar -cf` / `script -q` / `perl -e` / `perl -Mstrict`）与
+2 条前缀歧义边界 ⇒ 按预期放行/拦截。
+
+**残余（fail-closed 方向的已知代价，如实登记）**：
+1. 族表未收录的**冷门选项会被拦**（统一 fail-closed 的直接代价）。
+2. `tar a.tar b`（未写显式模式的默认建档）会被拦 ⇒ 模式未知即 fail-closed。
+3. `env GIT_CONFIG_COUNT=1 ls git`（第七轮登记的载体选项区启发式代价）仍在。
+4. `reports/` 归档政策未确认（P2-5 结转）。
+
+**状态行**：第八轮 P1=5 / P2=5 已逐条修并实测（254 passed / 棘轮门通过）；
 **全量门禁的独立审查结论以子代理回执为准**，本节不预先宣称上线结果。

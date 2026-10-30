@@ -1,0 +1,55 @@
+{
+  "gate": "push",
+  "date": "2026-10-30",
+  "push_target": {"verb": "push", "remote": "origin", "remote_url": "https://github.com/deyi2026/llm-first-loop.git", "branch": "main"},
+  "verdict_fulltext_evidence": "evidence://v1/49e6855f30ae409d24ef93f94e6cb2644172b606445b9e5baa3dd4eb69a73987",
+  "rounds": [
+    {
+      "reviewer_child": "subagent_9e8280835033",
+      "frozen_candidate_sha256": "7367f017c251f95c288d5076e8d5e975e178bb68236eac62778d91827460c8ca",
+      "range": "dc3ead1f0..bfca2f7c8",
+      "verdict": "REVISE", "P0": 1, "P1": 0, "P2": 3,
+      "p0_summary": "已提交的 command_scope_guard.py 存在绕过向量（重定向-only 段、sed 三形态与 w/e 变体、ed/ex 标准输入、git 写子命令闭集），当时修复仅在工作区未提交；处置=提交修复后再闸",
+      "status": "已由并发会话 a07bb1c33(22:54) 落提交处置"
+    },
+    {
+      "reviewer_child": "subagent_1fb1c570c644",
+      "frozen_candidate_sha256": "50885cae6d6d6ad13470f4582880c25f3b0331f291ede1d142fa2a792f1aaa77",
+      "range": "2f31d85cf..a07bb1c33",
+      "verdict": "REVISE", "P0": 0, "P1": 4, "P2": 4,
+      "p1_open_prose": [
+        "P1-1 script 载体带 -c 时：可选 FILE 操作数（typescript 落点）未做 scope 检查",
+        "P1-2 script 位置参数假设 FILE 固定在第二位；载体 flag 前置时载荷重扫错位、内层写命令漏判",
+        "P1-3 _sed_script_sources 漏附着式短选项形态（-e 与脚本粘连、-f 与路径粘连）——与并发会话新沉淀经验卡『取值型选项必须覆盖短选项粘连形态』同类",
+        "P1-4 git fast-export 入只读白名单但取值型 marks 选项无判定，越界写放行（round-6 P2-4 引入）"
+      ],
+      "p2_open_prose": [
+        "P2-1 HANDOFF §10.9 头部 P2 计数与正文/DESIGN §16.12 不一致",
+        "P2-2 env/sudo option_zone 启发式无测试，内层含 -C 的写命令可能误拒（fail-closed 向）",
+        "P2-3 GIT_REMOTE_READ_ACTIONS 的 -v/--verbose 永不命中；script 取值型选项耦合；tar 非常用形态落到首位置参数",
+        "P2-4 DELIVERY §8.6 快照在 push 时已过时；reports/ 目录与 runtime_output_excludes 的推送策略需确认"
+      ],
+      "status": "已由并发会话 7d18a0445(23:54) 第七轮『族级选项语义模型』处置"
+    },
+    {
+      "reviewer_child": "subagent_6c7980351e91",
+      "frozen_candidate_sha256": "fc7fce85f1c2d4b7d53c69e1f587d55f432aab854fe9a24710fcd311be4ab0e3",
+      "range": "2f31d85cf..7d18a0445",
+      "verdict": "REVISE", "P0": 0, "P1": 2, "P2": 4,
+      "p1_open_prose": [
+        "P1-1 sed 脚本分析漏换行符分隔的命令（w 目标锚集不含换行）与独立 e 命令（执行类，未建模）",
+        "P1-2 script 的 -T/--log-timing、-t/--time、-B、-I 取值未查；--log-in/--log-io 未声明且 unresolved 不触发 fail-closed"
+      ],
+      "p2_open_prose": [
+        "P2-1 reports/ 入库与 runtime_output_excludes 的推送策略仍未确认（结转）",
+        "P2-2 web/routes.py:3387 ruff B009 新违规（20e6db475 引入）将使推送树 CI ruff 门变红，须在推送前由属主解决",
+        "P2-3 族模型边缘：--reencode 重复登记；歧义前缀+值吞噬可能把操作数当选项值（fail-closed 向，应测试）",
+        "P2-4 tar -tf 只读形态在受限 scope 下被过度拦截（易用性残留，未登记该具体形态）"
+      ],
+      "status": "待处置（并发 write-scope 会话第 8 轮）"
+    }
+  ],
+  "push_result": "未推送——两轮均 REVISE，按 RULE-AI-28 暂缓，待 P1 清零后重开闸",
+  "push_sha_local": "a07bb1c33d5098cef703c27230bcb6797396574e",
+  "push_sha_remote": null
+}

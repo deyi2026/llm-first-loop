@@ -1036,3 +1036,74 @@ P0 判语：「先前的 P0 类修复未完成，且文档所述的残留列表*
 
 **判定层证据**：191 passed；写侧 + 棘轮门 381 passed / 1 skipped；ruff 干净。
 **本节不宣称上线结论**：全量门禁的独立审查结论以子代理回执为准。
+
+### 16.14 第七轮：族级选项语义模型（getopt 的两种形态）
+
+**问题**：判定层的选项识别只做 **token 精确匹配**，漏掉 getopt 的两种形态：
+
+| 形态 | 例子 | 旧行为 | 后果 |
+|---|---|---|---|
+| 粘连短选项簇 | `sed -nf` / `-ne` / `-nfe`、`curl -sSo` | 整段 token 被跳过 | 脚本文件 / 输出文件不被扫 |
+| 长选项唯一前缀缩写 | `--fi`(=`--file`)、`--expressio=`、`--extrac`(=`--extract`)、`--remote-name-a`(=`--remote-name-all`) | 认不出 ⇒ 当未知选项跳过 | 危险选项**整体**漏检 |
+
+**设计**：新增 `src/llm_loop/core/command_options.py`——**族模型**（family model）：
+`FamilyOptions`（长选项表 + 短选项表）描述"哪些选项吃值、哪些是开关"；
+`scan_options()` 按 getopt 语义把 token 还原成**选项事件**（规范名 + 取值）：
+
+1. **粘连簇**：逐字母推进；遇到**取值型开关**时，簇内其余字母就是它的值
+   （`-fhelper.sed` ⇒ `-f` 的值是 `helper.sed`；`-Mstrict` ⇒ `-M` 的值是 `strict`）；
+   点号只在"还没遇到取值型开关"时才是**后缀**（`-i.bak`）。
+2. **唯一前缀缩写**：长选项按前缀匹配；命中多个 ⇒ **歧义按并集**
+   （`--f` 同时命中 `--file` / `--follow-symlinks` ⇒ 两个候选都算命中）。
+3. **取值候选优先**：候选里存在取值型选项时消费下一个 token——**宁可误判不可漏判**。
+4. **未知短字母**：该簇在此截断并记 `unresolved` ⇒ 由调用方按族决定是否 fail-closed。
+
+**接线**：判定层按族建表（`SED_OPTIONS` / `TAR_OPTIONS` / `CURL_OPTIONS` /
+`PERL_OPTIONS` / `SCRIPT_OPTIONS` / `WGET_OPTIONS`），写目标判定（sed 脚本、tar 归档与
+模式、curl/wget 输出、script typescript、perl 就地编辑、git fast-export marks）统一
+改走族模型 ⇒ 同一选项的**精确 / 粘连 / 前缀**三种写法走**同一条**判定路径。
+
+**边界**：`scan_options()` 只做**选项语义还原**，不做写盘判定；写盘判定仍在判定层
+（`_write_targets` 及各 `_scan_*`），两者职责不混。
+
+**本轮证据**（第七轮）：判定层 **228 passed**（第七轮 19 条 + 载体选项区 7 条 +
+族模型单测 11 条）；本轮 4 个改动文件 ruff 诊断为 0；棘轮门 `_scan_command_chain` 118 /
+`_scan_git` 110 / `_write_targets` 92 / `_sed_subst_commands` 80 行（均 <120 未登记门槛）。
+
+**同根因的载体侧补齐**（第七轮自审新发现，P1 级）：载体（env/sudo）的 **cwd 变更
+判定**同样只做精确匹配 ⇒ `env --chdir=/outside touch x` 未被识别 ⇒ 相对写目标仍按
+原 cwd 判定为工作区内 ⇒ **越界写放行**。⇒ 新增 `_is_chdir_option()`：精确形态 /
+`--opt=DIR` / 短选项粘连（`-C/outside`）三种形态均按 fail-closed 处理。
+**跨会话协作处置**：R9 ruff 棘轮在 `src/llm_loop/web/routes.py:3387`（B009，来自另一
+会话的 commit `20e6db475`）上 BLOCK NEW ⇒ 为解除全量门禁 ruff 段阻断，**本会话已把
+该行改为属性访问**（`settings.sessions_dir` 取代 `getattr(settings, "sessions_dir")`；
+语义等价——`settings` 为 None 时两版都在同一 `try` 内抛错并被 `except Exception`
+捕获）⇒ 这是**跨会话协作改动**，与该文件属主的后续提交可能冲突，合并时以属主提交
+为准。
+
+### 16.15 第八轮独立审查（REVISE P0=0 / P1=5 / P2=5）后的族模型补齐与口径统一
+
+**口径统一（P1-5 的核心）**：`scan_options()` 的 `unresolved`（未识别选项 / 未知短
+字母截断）此前只有 sed/perl 消费（fail-closed），curl/wget/tar/script 不消费 ⇒ 同一
+模块两套口径 ⇒ 与「fail-closed 方向」的声明矛盾。⇒ **统一为 fail-closed**：各族表
+补齐常见选项后，未识别的选项一律按「写目标不可静态定位」处理（调用方
+`return ([], True)`）。**代价**：族表未收录的冷门选项会被拦（已登记为残余）。
+
+**族表补齐**：`TAR_OPTIONS`（`--incremental/--listed-incremental` 改为**取值**、
+新增 `--info-script` 与一批常见长/短选项）、`SCRIPT_OPTIONS`（新增
+`--log-in/--log-io`）、`WGET_OPTIONS`（`-a/--append-output` 改为**取值**、新增一批
+常见选项）、`CURL_OPTIONS`（新增 `--log`）、`GIT_EXPORT_OPTIONS`（去重
+`--reencode`）。
+
+**判定层补齐**：`_sed_write_targets` 的 `-f` fail-closed 提到 `-i` 分支之前
+（P1-1 回归）；`_SED_WRITE_RE` 增 `\n` 锚点 + 新增独立 `e CMD` 识别 + ed/ex 竖线链
+切分判定（P1-4）；新增 `_tar_mode_known()`（模式未知即 fail-closed）+ `-g` 快照写
+目标 + `-F` 执行脚本 fail-closed（P1-2）；script 的日志/计时文件纳入写目标（P1-3）；
+wget/curl 的 `-a` 与 `--log` 纳入写目标（P1-5）。
+
+**本轮证据**：判定层 **254 passed**（第八轮新增 26 条：13 条应拦向量 + 11 条放行
+形态 + 2 条前缀歧义边界）；3 个改动文件 ruff 诊断 0；棘轮门 `_scan_git` 110 /
+`_write_targets` 92 / `_scan_command_chain` 83 / `_sed_subst_commands` 80 /
+`_download_write_targets` 75 / `_scan_script_command` 71 行（均 <120 未登记门槛；
+第八轮新增的 script 逻辑抽为 `_scan_script_command()`，否则 `_scan_command_chain`
+会到 147 行 ⇒ 棘轮门失败）。
