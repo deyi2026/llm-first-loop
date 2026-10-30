@@ -2,7 +2,7 @@
   "scenario": "S09",
   "title": "wake 重启恢复（存量测试证据）",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-25T14:14:44",
+  "started_at": "2026-10-30T13:45:01",
   "steps": [],
   "wall": {},
   "dur_ms": {},
@@ -15,9 +15,9 @@
     "returncode": 0,
     "tail": [
       "....................................................                     [100%]",
-      "52 passed in 3.48s"
+      "52 passed in 3.20s"
     ]
   },
-  "finished_at": "2026-10-25T14:14:48",
+  "finished_at": "2026-10-30T13:45:05",
   "status": "ok"
 }

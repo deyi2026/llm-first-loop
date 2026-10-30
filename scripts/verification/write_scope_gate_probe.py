@@ -34,7 +34,7 @@ except ImportError as exc:  # 特性未落地时诚实退出，不假装跑过
         + "）。该特性是并发会话的未提交 WIP；在特性落地的 checkout 上再跑本探针。"
         + "（退出码 2 = 特性缺失，与探针失败（退出码 1）区分）"
     )
-    raise SystemExit(2)
+    raise SystemExit(2) from exc
 
 BASE_DIR_NAME = ".tmp-write-scope-probe"
 RESULTS = []

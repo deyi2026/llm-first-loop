@@ -2,27 +2,27 @@
   "scenario": "S04",
   "title": "停止后台 execute_command job",
   "ran_under": "M1-in-progress",
-  "started_at": "2026-10-25T14:14:31",
+  "started_at": "2026-10-30T13:44:48",
   "steps": [],
   "wall": {
-    "job_terminal_observed": 1792908871.841
+    "job_terminal_observed": 1793339088.848
   },
   "dur_ms": {
-    "cancel_session_call_ms": 0.3,
+    "cancel_session_call_ms": 0.2,
     "stop_to_terminal_observed_ms": 0.3
   },
   "obs": {
     "assembly": "production_fair: session_cancel_hook registered (factory.py:731)",
-    "bg_start_result_head": "[后台任务已启动] job_id=job-4255f2266cb94623843d status=running\n命令: sleep 30\nshell_mode=default\nexec_mode=shell\n等进程终态用 wait(seconds=120, job_id=job-4255f2266cb94623843d)；用 job_output(job_id=job-4255f2266cb94623843d) 查询退出码与输出。",
+    "bg_start_result_head": "[后台任务已启动] job_id=job-3c00b8e4c25340a1b8b3 status=running\n命令: sleep 30\nshell_mode=default\nexec_mode=shell\n等进程终态用 wait(seconds=120, job_id=job-3c00b8e4c25340a1b8b3)；用 job_output(job_id=job-3c00b8e4c25340a1b8b3) 查询退出码与输出。",
     "job_state_before_stop": {
       "state": "running"
     },
     "cancel_session_count": 1,
     "job_state_after_stop": {
-      "job_id": "job-4255f2266cb94623843d",
-      "session_id": "ac83f2ee-723e-4bcf-9e70-94f5e53415e6",
+      "job_id": "job-3c00b8e4c25340a1b8b3",
+      "session_id": "c8076d48-cd0d-40c3-8087-2cceba3eff1d",
       "origin_run_generation": "",
-      "workspace_root": "/private/tmp/pytest-of-yyj/pytest-250/popen-gw1/test_s04_stop_background_job0",
+      "workspace_root": "/private/tmp/pytest-of-yyj/pytest-1803/test_s04_stop_background_job0",
       "executor": "execute_command",
       "state": "killed",
       "exit_code": null,
@@ -34,11 +34,11 @@
       "auto_reclaim": false,
       "output": [],
       "command": "sleep 30",
-      "started_at": 1792908871.8393338,
+      "started_at": 1793339088.846346,
       "finished_at": null
     }
   },
   "endpoints": {},
-  "finished_at": "2026-10-25T14:14:31",
+  "finished_at": "2026-10-30T13:44:48",
   "status": "ok"
 }

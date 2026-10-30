@@ -100,6 +100,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_goal": "读取当前 durable Goal 与最近 checkpoints；只返回已记录事实，不替模型决定下一步。",
     "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
     "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
+    "verify_path_scope": "只读观测当前会话写侧授权执行面：当前生效 write scope（模式+pattern 集合，scope=None 即全量）、已写路径集合、越界写入尝试次数与明细（path+reason）。何时用：确认'本子代理被允许写哪些路径/已写了哪些/越界被拒几次'；纯只读零副作用。何时不用：读文件内容（只回路径与计数）；跨进程/跨会话审计（本进程内视图）；活跃写者视图用 task_frontier。依赖未部署时确定性失败，不伪造 0 计数。",
     "search_records": "按 kind/query 检索记录。实质多步/工具任务开局从method/experience/lesson选≤2类、每类≤5，任务词做一次 discovery，同一任务窗口不重复；简单问答豁免。kind=method：失败重试、编辑冲突、超时、浏览器定位、验证纪律等关键词发现候选；候选卡（candidate）与 active 同等可用，status 只是质量标注、不限制使用，读到即可照做；仅以返回的method:<id> stable ref 精确水合，不猜 ref。episode=已解决/退休片段，非当前任务；experience/lesson 分开 discovery，共用 stable experience:<id> 精确水合；kind=synopsis 返回模型自写摘要轻量卡和 stable ref，完整摘要/原文用 source_synopsis；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文。历史适用性由模型判断。停滞/事实不足/需规则依据时按需水合，非每轮强制、不强制顺序。",
     "event_stream": "按时间顺序读取运行事件；默认仅当前 session 且保留 session_id，跨会话审计必须显式 scope=workspace。",
     "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",

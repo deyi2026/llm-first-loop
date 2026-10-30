@@ -125,6 +125,35 @@ class SpawnSubAgentTool:
                         "type": "boolean",
                         "description": "是否需要 terminal 后可续话（本执行面支持，声明用于 fail-fast）",
                     },
+                    "write_scope": {
+                        "type": "object",
+                        "properties": {
+                            "paths": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "可写路径 pattern（glob，相对当前工作区根；"
+                                    "显式空数组 = 只读 child）"
+                                ),
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": ["allow", "deny"],
+                                "description": (
+                                    "allow=按 paths 放行（默认）；deny=在父 scope "
+                                    "内按 paths 排除"
+                                ),
+                            },
+                        },
+                        "additionalProperties": False,
+                        "description": (
+                            "写侧路径归属声明（DESIGN-20261030 §5.2）：与父 write "
+                            "scope 程序级求交（只降不升），声明超出父 scope 时 spawn "
+                            "直接拒绝（fail-fast，不静默截断）；不声明则继承父 "
+                            "scope（父为全量时子为全量）。它是写侧护栏而非安全沙箱："
+                            "execute_command 等通道的越界仍由各工具自身安全面约束。"
+                        ),
+                    },
                 },
                 "description": (
                     "能力需求显式声明（可选，EVO-20260914-1eb26afa + EVO-20261012-bb3022f4）："
@@ -134,7 +163,9 @@ class SpawnSubAgentTool:
                     "不放宽任何授权边界）。fs_isolation=true 额外将 child 施工面切到独立 git "
                     "worktree（EVO-20261016-ac47e850；best-effort 施工面隔离，非安全沙箱："
                     "child 的 execute_command 经绝对路径/跨目录操作仍可越界，不可用于约束"
-                    "不可信代码）。不声明则 child 继承父执行域"
+                    "不可信代码）。write_scope=写侧路径归属声明（DESIGN-20261030 "
+                    "§5.2：与父 write scope 求交，只降不升，越界拒绝，不静默截断；"
+                    "不声明则继承父 scope）。不声明则 child 继承父执行域"
                     "（spawn_subagent 除外，默认防递归）。"
                 ),
             },
@@ -187,7 +218,26 @@ class SpawnSubAgentTool:
                 status=ToolResultStatus.FAILURE,
                 content=(
                     "[参数错误] requires 需为对象 {tools?: [工具名], network?: bool, "
-                    "fs?: bool, fs_isolation?: bool, session_continuity?: bool}"
+                    "fs?: bool, fs_isolation?: bool, session_continuity?: bool, "
+                    "write_scope?: {paths: [pattern], mode?: 'allow'|'deny'}}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        # DESIGN-20261030 §5.3 C2/§5.10 NFR-4: write_scope 声明必须被解析面真实
+        # 承载——SurfaceRequirements.from_kwargs 不识别该键（依赖未就绪/跨版本
+        # 旧端）时确定性拒绝，绝不静默忽略写侧授权声明（fail-closed）。
+        write_scope_declared = (
+            reqs is not None
+            and isinstance(requires_raw, dict)
+            and "write_scope" in requires_raw
+        )
+        if write_scope_declared and not hasattr(reqs, "write_scope"):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[参数错误] requires.write_scope 声明未被当前解析面识别"
+                    "（执行面不支持该字段）；为不静默忽略写侧授权声明，child 未启动。"
                 ),
                 tool_call_id="",
                 tool_name=self.name,
@@ -271,6 +321,13 @@ class SpawnSubAgentTool:
                     else None
                 ),
                 fs_isolation=bool(reqs.fs_isolation) if reqs is not None else False,
+                # DESIGN-20261030 §5.3 C2: 仅在声明 write_scope 时携带该参数——
+                # 既有调用的 kwargs 面与 runner 行为零变化。
+                **(
+                    {"required_write_scope": reqs.write_scope}
+                    if write_scope_declared
+                    else {}
+                ),
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(

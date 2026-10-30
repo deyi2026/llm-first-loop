@@ -164,6 +164,7 @@ from llm_loop.tools.builtin.subagent_lease import SubAgentLeaseTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.subagent_topology import SubagentTopologyTool
 from llm_loop.tools.builtin.task_state import TaskStateTool
+from llm_loop.tools.builtin.verify_path_scope import VerifyPathScopeTool
 from llm_loop.tools.builtin.video_generation import VideoGenerationTool
 from llm_loop.tools.builtin.wait import WaitTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
@@ -600,6 +601,23 @@ def _register_desktop_perceive(register_basic: Any, settings: Settings) -> None:
             see_allowlist=split_bundle_config(settings.desktop_see_allowlist),
         ),
     )
+
+
+def _register_basic_tools(register_basic: Any) -> None:
+    """基础只读/结构工具注册。
+
+    - EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
+    - present_files: 产物面板可点击打开/预览
+    - DESIGN-20261030 §5.3 C9/FR-11: write scope 只读观测（有效 scope / 已写路径 /
+      越界计数；纯只读零副作用）
+
+    放在模块级 helper 而非 build_engine 内联：build_engine 是 2151 行历史巨函数，
+    其函数体行数受 R9 棘轮"只降不升"约束（tests/guards/function_size_baseline.json），
+    新增工具注册不得抬高该红线。
+    """
+    register_basic("inspect_code", InspectCodeTool())
+    register_basic("present_files", PresentFilesTool())
+    register_basic("verify_path_scope", VerifyPathScopeTool())
 
 
 def _attach_dialog_probes(perceive_tool: Any, operation_tool: Any, actuator: Any) -> None:
@@ -1526,9 +1544,7 @@ def build_engine(
                 )
                 _attach_dialog_probes(_browser_perceive_tool, _browser_semantic_operation_tool, _browser_actuator)
                 _register_basic("browser_operate", _browser_semantic_operation_tool)
-    # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
-    _register_basic("inspect_code", InspectCodeTool())
-    _register_basic("present_files", PresentFilesTool())
+    _register_basic_tools(_register_basic)
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
     _register_basic(
         "edit_file",

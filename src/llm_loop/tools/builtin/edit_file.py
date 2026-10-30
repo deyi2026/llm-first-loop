@@ -247,6 +247,12 @@ class EditFileTool:
             )
 
         try:
+            # C7（DESIGN-20261030 §5.3）: 从 run_context 读当前执行域的 write scope
+            # （C4 在子代理 runner 内注入；默认 None = 全量 = 现状行为，FR-3）。
+            # 函数内 import 沿用本仓 run_context ContextVar 消费的既有风格
+            # （spawn_subagent.py 的 current_tool_discovery_scope 同模式）。
+            from llm_loop.core.run_context import current_write_scope
+
             result = self._file_service.edit(
                 path=path,
                 old_string=old,
@@ -256,6 +262,7 @@ class EditFileTool:
                 effect_sink=sink,
                 workspace_scope=workspace_base(),
                 expected_snapshot_ref=expected_snapshot_ref,
+                write_scope=current_write_scope.get(),
             )
         except FileServiceError as exc:
             return self._map_service_error(exc, path_str)
@@ -307,6 +314,22 @@ class EditFileTool:
             return self._fail(
                 "版本冲突: 当前完整文件字节已不同于 expected_snapshot_ref；本次未写入。",
                 "VersionConflict",
+            )
+        if exc.error_type == "write_scope_violation":
+            # C7/FR-4: 子代理执行域的确定性授权拒绝——FAILURE（业务级拒绝）而非
+            # ERROR/UNAUTHORIZED。exc.detail 由 FileService 构造，只含实际路径/
+            # 允许 pattern（截断）/拒绝类别/修正建议，绝不含文件内容或堆栈（NFR-3）。
+            # 本次未写入，目标文件字节不变（FR-5）。
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "该路径不在本子代理被允许写入的范围内，已确定性拒绝（本次未写入，"
+                    f"文件保持原状）。{exc.detail}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="write_scope_violation",
+                error_detail=exc.detail or "write scope violation",
             )
         if exc.error_type == "WorkspaceScopeMismatch":
             # EVO-20261014-459a8a1e: E5 写保护层（workspace 范围校验）带确定性分层码。

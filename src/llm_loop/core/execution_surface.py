@@ -23,6 +23,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from llm_loop.core.write_scope import WriteScope, parse_write_scope
+
 # 工具面能力分类（随工具注册表演进需同步维护的唯一定义点）:
 # - 出站网络能力工具
 EGRESS_TOOLS: frozenset[str] = frozenset(
@@ -86,6 +88,10 @@ class SurfaceRequirements:
     fs: bool = False
     fs_isolation: bool = False
     session_continuity: bool = False
+    # 写侧授权声明（DESIGN-20261030 §5.2）：None = 未声明 = 继承父（FR-3）；
+    # 非法结构在 from_kwargs 整体返回 None（参数错误，与 tools 同链路）。
+    # validate_requirements / SurfaceCapability 本轮不加该维度（能力矩阵留后续）。
+    write_scope: WriteScope | None = None
 
     @classmethod
     def from_kwargs(cls, raw: Any) -> SurfaceRequirements | None:
@@ -105,12 +111,18 @@ class SurfaceRequirements:
             return None
         if len(tools) > 64:  # 防滥用上限（声明超长即视为非法）
             return None
+        write_scope: WriteScope | None = None
+        if "write_scope" in raw:
+            write_scope = parse_write_scope(raw["write_scope"])
+            if write_scope is None:
+                return None
         return cls(
             tools=tools,
             network=bool(raw.get("network", False)),
             fs=bool(raw.get("fs", False)),
             fs_isolation=bool(raw.get("fs_isolation", False)),
             session_continuity=bool(raw.get("session_continuity", False)),
+            write_scope=write_scope,
         )
 
     def declared(self) -> bool:
@@ -120,6 +132,7 @@ class SurfaceRequirements:
             or self.fs
             or self.fs_isolation
             or self.session_continuity
+            or (self.write_scope is not None and self.write_scope.declared)
         )
 
 

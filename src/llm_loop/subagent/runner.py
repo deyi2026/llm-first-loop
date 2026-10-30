@@ -67,6 +67,7 @@ from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
 if TYPE_CHECKING:
+    from llm_loop.core.write_scope import WriteScope
     from llm_loop.memory.archive import ArchiveStore
 
 # 子代理不维护第二套静态工具能力表。父执行域由 current_tool_discovery_scope
@@ -1425,6 +1426,112 @@ class SubAgentRunner:
                 return None, ""
         return frozenset(base - {"spawn_subagent"}), ""
 
+    def _compute_child_write_scope(
+        self, requested: WriteScope | None
+    ) -> tuple[WriteScope | None, str]:
+        """C3: requires.write_scope 声明与父 write scope 求交（只降不升）。
+
+        DESIGN-20261030 §5.1/§5.3：与 _compute_child_tool_scope 同构的写侧
+        授权传递链落点（L1 父子求交；P2 外部锚未接入，该层暂不收紧）：
+        - 声明了 requested → intersect_write_scope(parent, requested)；越界
+          （refusal_detail 非空）= 拒绝启动（fail-fast 而非静默截断）；
+        - 未声明 → 继承父 scope（父 None = 全量）；
+        - 子显式声明但 write_scope 核心（core/write_scope 或
+          run_context.current_write_scope）不可用 → fail-closed 拒绝，不静默
+          忽略声明（§5.10 NFR-4 跨版本口径）。current_write_scope 延迟 import：
+          核心未就绪时既有 import 面零破坏（未声明分支返回 None 即准确的继承
+          值——父会话同样无法设置任何 write scope）。
+        返回 (child_scope, refusal_detail)；refusal_detail 非空 = 拒绝启动。
+        """
+        if requested is None:
+            try:
+                from llm_loop.core.run_context import current_write_scope
+
+                return current_write_scope.get(), ""
+            except ImportError:
+                return None, ""
+        try:
+            from llm_loop.core.run_context import current_write_scope
+            from llm_loop.core.write_scope import intersect_write_scope
+        except ImportError as exc:
+            return None, (
+                "requires.write_scope 声明无法生效（write_scope 核心不可用: "
+                f"{type(exc).__name__}: {exc}）；为不静默忽略写侧授权声明，"
+                "拒绝启动（fail-closed）"
+            )
+        try:
+            parent_scope = current_write_scope.get()
+            effective, refusal_detail = intersect_write_scope(
+                parent_scope, requested
+            )
+        except Exception as exc:  # noqa: BLE001 — 求交面异常时 fail-closed，不让 child 带未定义 scope 启动
+            return None, (
+                f"write_scope 求交异常（fail-closed 拒绝启动）: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        return effective, refusal_detail
+
+    def _start_failure_result(
+        self,
+        depth: int,
+        detail: str,
+        child_id: str = "",
+        state: str = "refused",
+    ) -> dict:
+        """start() 拒绝/失败回执（accepted=False 家族）的统一构造。
+
+        DESIGN-20261030 §5.3 C3/C5: write_scope 求交拒绝与既有 depth/tool
+        scope/canary/reserve 等拒绝及 startup 失败回执同构——仅 child_id
+        （预留前 "" / 预留后 sid）与 state（refused/failed）取值不同。
+        统一构造保证字段集合与顺序稳定，start() 主体只做裁决不做拼装。
+        """
+        return {
+            "accepted": False,
+            "child_id": child_id,
+            "state": state,
+            "depth": depth,
+            "detail": detail,
+        }
+
+    def _worker_terminal_from_exception(
+        self,
+        sid: str,
+        depth: int,
+        startup_event: threading.Event,
+        startup_state: dict[str, object],
+        exc: BaseException,
+    ) -> SubAgentResult:
+        """_worker 后台异常路径统一收口：startup 握手补齐 + 真实 terminal。
+
+        EVO-20261012-bb3022f4/65475c5a (E5) — background thread 必须形成真实
+        terminal：未握手先补 startup_state/startup_event（start() 侧超时/失败
+        分支据此拒绝）；已持久化 delivery result 优先回放（幂等收口），否则
+        构造 failed 结果如实携带异常。contextvar token 恢复仍由 _worker 外层
+        finally 统一保证，本方法不触碰 contextvar。
+        """
+        if not startup_event.is_set():
+            startup_state.update(
+                {"ok": False, "detail": f"startup_exception:{type(exc).__name__}"}
+            )
+            startup_event.set()
+        with self._children_guard:
+            generation = self._local_generation_by_child.get(sid, "")
+        durable_result = (
+            self._delivery_journal.result(sid, generation) if generation else None
+        )
+        return (
+            self._result_from_payload(durable_result.payload)
+            if durable_result is not None
+            else SubAgentResult(
+                final_answer=(
+                    f"[状态: failure] 子代理后台执行异常: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                outcome="failed",
+                depth=depth,
+            )
+        )
+
     def start(
         self,
         task: str,
@@ -1439,29 +1546,28 @@ class SubAgentRunner:
         # fs_isolation 放在既有参数之后（keyword 传参为主流；避免任何位置参数
         # 调用方把 review_isolated 静默错绑到 fs_isolation）。
         fs_isolation: bool = False,
+        # DESIGN-20261030 §5.3 C2/C3: 子代理写侧路径归属声明（spawn 侧
+        # SurfaceRequirements 解析出的 WriteScope）；None=未声明（继承父，
+        # 零行为变化）。置于签名末尾，同样只以 keyword 传入。
+        required_write_scope: WriteScope | None = None,
     ) -> dict:
         """启动 background child；review_isolated 仅由可信 Host 内部调用。"""
         if depth >= self.max_depth:
-            return {
-                "accepted": False,
-                "child_id": "",
-                "state": "refused",
-                "depth": depth,
-                "detail": f"递归深度超限（已达上限 {self.max_depth}）",
-            }
+            return self._start_failure_result(depth, f"递归深度超限（已达上限 {self.max_depth}）")
 
         # EVO-20261012-bb3022f4 (E4): requires.tools 声明即程序级强制白名单，
         # 在预留任何 child 资源前计算并拒绝（fail-fast，不静默截断）。
         child_scope, scope_refusal = self._compute_child_tool_scope(required_tools)
         if scope_refusal:
-            return {
-                "accepted": False,
-                "child_id": "",
-                "state": "refused",
-                "depth": depth,
-                "detail": scope_refusal,
-            }
+            return self._start_failure_result(depth, scope_refusal)
 
+        # DESIGN-20261030 §5.3 C3/C5: requires.write_scope 与父 write scope 求交，
+        # 同样在预留任何 child 资源之前计算并拒绝（fail-fast，不静默截断）。
+        child_write_scope, write_scope_refusal = self._compute_child_write_scope(
+            required_write_scope
+        )
+        if write_scope_refusal:
+            return self._start_failure_result(depth, write_scope_refusal)
 
         requested_model = str(model or "").strip()
         inherited_model = (
@@ -1503,10 +1609,7 @@ class SubAgentRunner:
             or parent_budget.member.member_id != parent_budget.budget_id
             or parent_budget.member.session_id != parent_sid
         ):
-            return {
-                "accepted": False, "child_id": "", "state": "refused",
-                "depth": depth, "detail": "subagent_canary_child_scope_denied",
-            }
+            return self._start_failure_result(depth, "subagent_canary_child_scope_denied")
         if is_canary:
             # The child is a no-tool one-fact diagnostic, not a general
             # recursive worker. Bound real model decision rounds regardless
@@ -1519,13 +1622,7 @@ class SubAgentRunner:
             context = self._inherit_parent_context(context)
         reserved = self._reserve_background_child(parent_sid, depth)
         if reserved is None:
-            return {
-                "accepted": False,
-                "child_id": "",
-                "state": "refused",
-                "depth": depth,
-                "detail": f"后台子代理资源已达硬上限（{self._max_handles}）",
-            }
+            return self._start_failure_result(depth, f"后台子代理资源已达硬上限（{self._max_handles}）")
         sid, cancel_event, sess, handle = reserved
         child_budget = None
         if is_canary:
@@ -1548,10 +1645,7 @@ class SubAgentRunner:
                 with self._children_guard:
                     if sid in self._handles:
                         self._handles[sid].collected = True
-                return {
-                    "accepted": False, "child_id": sid, "state": "refused",
-                    "depth": depth, "detail": refused.final_answer,
-                }
+                return self._start_failure_result(depth, refused.final_answer, child_id=sid)
         # Set this before the worker starts and BEFORE child_id is exposed to
         # the caller. Reviewer's parent cannot alter its input via agent_message.
         if review_isolated:
@@ -1585,13 +1679,7 @@ class SubAgentRunner:
                     if sid in self._handles:
                         self._handles[sid].collected = True
                 assert finalized is not None
-                return {
-                    "accepted": False,
-                    "child_id": sid,
-                    "state": "refused",
-                    "depth": depth,
-                    "detail": refused.final_answer,
-                }
+                return self._start_failure_result(depth, refused.final_answer, child_id=sid)
 
         if self._project_coordinator is not None:
             try:
@@ -1634,13 +1722,7 @@ class SubAgentRunner:
                     if sid in self._handles:
                         self._handles[sid].collected = True
                 assert finalized is not None
-                return {
-                    "accepted": False,
-                    "child_id": sid,
-                    "state": "refused",
-                    "depth": depth,
-                    "detail": refused.final_answer,
-                }
+                return self._start_failure_result(depth, refused.final_answer, child_id=sid)
 
         caller_ctx = contextvars.copy_context()
         startup_event = threading.Event()
@@ -1657,6 +1739,16 @@ class SubAgentRunner:
                     if child_scope is not None
                     else None
                 )
+                # DESIGN-20261030 §5.3 C5: 写侧 scope 注入（仅当有效 scope 非
+                # None 时 set，与 _scope_tok 条件 set 模式一致）。延迟 import：
+                # write_scope 核心未就绪时本分支不可达（计算面已拒绝或返回
+                # None），不拖垮既有 import 面。
+                if child_write_scope is not None:
+                    from llm_loop.core.run_context import current_write_scope
+
+                    _wscope_tok = current_write_scope.set(child_write_scope)
+                else:
+                    _wscope_tok = None
                 _cancel_tok = child_cancel_event.set(cancel_event)
                 # EVO-20261016-ac47e850: 声明式隔离时 child 施工面切到 worktree；
                 # journal/session 落盘位置不受影响（session_store 决定）。
@@ -1685,27 +1777,8 @@ class SubAgentRunner:
                             model_label=child_model_label,
                         )
                     except BaseException as exc:  # noqa: BLE001 — background thread 必须形成真实 terminal
-                        if not startup_event.is_set():
-                            startup_state.update(
-                                {"ok": False, "detail": f"startup_exception:{type(exc).__name__}"}
-                            )
-                            startup_event.set()
-                        with self._children_guard:
-                            generation = self._local_generation_by_child.get(sid, "")
-                        durable_result = (
-                            self._delivery_journal.result(sid, generation) if generation else None
-                        )
-                        result = (
-                            self._result_from_payload(durable_result.payload)
-                            if durable_result is not None
-                            else SubAgentResult(
-                                final_answer=(
-                                    f"[状态: failure] 子代理后台执行异常: "
-                                    f"{type(exc).__name__}: {exc}"
-                                ),
-                                outcome="failed",
-                                depth=depth,
-                            )
+                        result = self._worker_terminal_from_exception(
+                            sid, depth, startup_event, startup_state, exc
                         )
                     # EVO-20261016-ac47e850: 终态释放隔离树（干净删/脏保留），
                     # 报告附加到 result——父会话据此决定是否显式合并（不自动合并）。
@@ -1734,6 +1807,12 @@ class SubAgentRunner:
                         )
                     self._finalize_child(sid, parent_sid, result)
                 finally:
+                    if _wscope_tok is not None:
+                        # DESIGN-20261030 §5.3 C5/T16: worker 退出统一恢复，
+                        # 杜绝 child write scope 泄漏（与 _scope_tok 同模式）。
+                        from llm_loop.core.run_context import current_write_scope
+
+                        current_write_scope.reset(_wscope_tok)
                     if _scope_tok is not None:
                         current_tool_discovery_scope.reset(_scope_tok)
                     if _ws_tok is not None:
@@ -1806,36 +1885,26 @@ class SubAgentRunner:
             with self._children_guard:
                 if sid in self._handles:
                     self._handles[sid].collected = True
-            return {
-                "accepted": False,
-                "child_id": sid,
-                "state": "failed",
-                "depth": depth,
-                "detail": failed.final_answer,
-            }
+            return self._start_failure_result(
+                depth, failed.final_answer, child_id=sid, state="failed"
+            )
         if not startup_event.wait(timeout=2.0):
             cancel_event.set()
             with self._children_guard:
                 if sid in self._handles:
                     self._handles[sid].collected = True
-            return {
-                "accepted": False,
-                "child_id": sid,
-                "state": "failed",
-                "depth": depth,
-                "detail": "child durable startup 超时，已请求取消；未确认任何子任务执行。",
-            }
+            return self._start_failure_result(
+                depth, "child durable startup 超时，已请求取消；未确认任何子任务执行。",
+                child_id=sid, state="failed",
+            )
         if not bool(startup_state.get("ok")):
             with self._children_guard:
                 if sid in self._handles:
                     self._handles[sid].collected = True
-            return {
-                "accepted": False,
-                "child_id": sid,
-                "state": "failed",
-                "depth": depth,
-                "detail": f"child durable startup 失败: {startup_state.get('detail', 'unknown')}",
-            }
+            return self._start_failure_result(
+                depth, f"child durable startup 失败: {startup_state.get('detail', 'unknown')}",
+                child_id=sid, state="failed",
+            )
         return {
             "accepted": True,
             "child_id": sid,
@@ -2274,6 +2343,37 @@ class SubAgentRunner:
             outcome,
         )
 
+    def _refused_result(self, depth: int, final_answer: str) -> SubAgentResult:
+        """run() 拒绝终态统一构造（outcome=refused 家族；未预留 child 资源路径）.
+
+        DESIGN-20261030 §5.3 C5b: run() 的 depth/model 等预留前拒绝回执同构
+        ——仅 final_answer 文案不同，outcome/refused/depth 构造恒定；统一构造
+        保证拒绝终态字段集合与取值稳定，run() 主体只做裁决不做拼装。
+        """
+        return SubAgentResult(
+            final_answer=final_answer,
+            outcome="refused",
+            refused=True,
+            depth=depth,
+        )
+
+    def _run_refused_finalized(
+        self, sid: str, parent_sid: str, depth: int, final_answer: str
+    ) -> SubAgentResult:
+        """run() 预留后拒绝路径统一收口：refused 终态 + 幂等 finalize + 返回.
+
+        DESIGN-20261030 §5.3 C3/C5/C5b + EVO-20261016-ac47e850: requires.tools /
+        requires.write_scope 求交拒绝、fs_isolation 准备失败、fleet run 边界
+        拒绝五处回执同构（refused 结果 → _finalize_child → assert 非空返回）；
+        拒绝时均未启动任何 child/provider/tool 动作，提前返回路径统一经外层
+        finally 恢复 contextvar/释放 worktree/幂等 finalize（R28 审查
+        P1-1/P2-3 口径不变）。
+        """
+        refused = self._refused_result(depth, final_answer)
+        finalized = self._finalize_child(sid, parent_sid, refused)
+        assert finalized is not None
+        return finalized
+
     # ── 公开入口 ──
     def run(
         self,
@@ -2286,6 +2386,9 @@ class SubAgentRunner:
         model: str = "",
         required_tools: list[str] | None = None,
         fs_isolation: bool = False,
+        # DESIGN-20261030 §5.3 C2/C3: 与 start() 同一声明语义的写侧路径归属；
+        # None=未声明（继承父，零行为变化）。
+        required_write_scope: WriteScope | None = None,
     ) -> SubAgentResult:
         """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）.
 
@@ -2297,16 +2400,14 @@ class SubAgentRunner:
         model: 显式 provider/model；省略时 production runner 机械继承父 run 当前模型。
         required_tools/fs_isolation: 与 start() 同一声明语义（E4 白名单 +
         EVO-20261016-ac47e850 worktree 隔离）——workflow local executor 的同步入口。
+        required_write_scope: 与 start() 同一声明语义的写侧路径归属
+        （DESIGN-20261030 §5.3 C5b：两条启动路径必须一致注入/拒绝，防单路径绕过）。
         """
         if depth >= self.max_depth:
-            return SubAgentResult(
-                final_answer=(
-                    f"[状态: failure] 递归深度超限（已达上限 {self.max_depth}），"
-                    f"请在父级整合结果，勿继续拆分。"
-                ),
-                outcome="refused",
-                refused=True,
-                depth=depth,
+            return self._refused_result(
+                depth,
+                f"[状态: failure] 递归深度超限（已达上限 {self.max_depth}），"
+                f"请在父级整合结果，勿继续拆分。",
             )
 
 
@@ -2320,14 +2421,10 @@ class SubAgentRunner:
         try:
             child_llm, child_model_label = self._resolve_child_llm(child_model_ref)
         except Exception as exc:  # noqa: BLE001 - reject before child/provider/tool execution
-            return SubAgentResult(
-                final_answer=(
-                    "[状态: failure] 子代理模型不可用，未启动任何 child/provider/tool 动作: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
-                outcome="refused",
-                refused=True,
-                depth=depth,
+            return self._refused_result(
+                depth,
+                "[状态: failure] 子代理模型不可用，未启动任何 child/provider/tool 动作: "
+                f"{type(exc).__name__}: {exc}",
             )
 
         # Resolve retrieval-only inheritance before current_session_id switches to child.
@@ -2345,6 +2442,7 @@ class SubAgentRunner:
         # 全部提前返回路径统一经 finally 恢复 contextvar/释放 worktree/幂等
         # finalize，杜绝拒绝路径的 scope 泄漏与拓扑残留（R28 审查 P1-1/P2-3）。
         scope_token = None
+        write_scope_token = None
         ws_token = None
         worktree_lease = None
         wt_parent_root = ""
@@ -2353,19 +2451,30 @@ class SubAgentRunner:
             if required_tools is not None:
                 child_scope, scope_refusal = self._compute_child_tool_scope(required_tools)
                 if scope_refusal:
-                    refused = SubAgentResult(
-                        final_answer=(
-                            "[状态: failure] requires.tools 声明超出父执行域，"
-                            f"未启动任何 child/provider/tool 动作: {scope_refusal}"
-                        ),
-                        outcome="refused",
-                        refused=True,
-                        depth=depth,
+                    return self._run_refused_finalized(
+                        sid, parent_sid, depth,
+                        "[状态: failure] requires.tools 声明超出父执行域，"
+                        f"未启动任何 child/provider/tool 动作: {scope_refusal}",
                     )
-                    finalized = self._finalize_child(sid, parent_sid, refused)
-                    assert finalized is not None
-                    return finalized
                 scope_token = current_tool_discovery_scope.set(child_scope)
+            # DESIGN-20261030 §5.3 C3/C5/C5b: 同步路径（workflow local executor
+            # 同款入口）同样在启动前求交 write scope——只改 start() 一条路径时
+            # 同步入口可完全绕过 scope（F14）；拒绝走 refused 终态，未启动任何
+            # child/provider/tool 动作。注入仅当有效 scope 非 None（与既有
+            # scope_token 条件挂载模式一致）。
+            child_write_scope, write_scope_refusal = self._compute_child_write_scope(
+                required_write_scope
+            )
+            if write_scope_refusal:
+                return self._run_refused_finalized(
+                    sid, parent_sid, depth,
+                    "[状态: failure] requires.write_scope 求交拒绝"
+                    f"（未启动任何 child/provider/tool 动作）: {write_scope_refusal}",
+                )
+            if child_write_scope is not None:
+                from llm_loop.core.run_context import current_write_scope
+
+                write_scope_token = current_write_scope.set(child_write_scope)
             if fs_isolation:
                 from llm_loop.workspace.worktree_isolation import (
                     WorktreeIsolationError,
@@ -2376,31 +2485,17 @@ class SubAgentRunner:
                 try:
                     worktree_lease = prepare_worktree(sid, parent_root=wt_parent_root)
                 except WorktreeIsolationError as exc:
-                    refused = SubAgentResult(
-                        final_answer=(
-                            f"[状态: failure] fs_isolation 准备失败（child 未启动，"
-                            f"不降级共享工作区）: reason_code={exc.reason_code} {exc}"
-                        ),
-                        outcome="refused",
-                        refused=True,
-                        depth=depth,
+                    return self._run_refused_finalized(
+                        sid, parent_sid, depth,
+                        f"[状态: failure] fs_isolation 准备失败（child 未启动，"
+                        f"不降级共享工作区）: reason_code={exc.reason_code} {exc}",
                     )
-                    finalized = self._finalize_child(sid, parent_sid, refused)
-                    assert finalized is not None
-                    return finalized
                 except Exception as exc:  # noqa: BLE001 - 机械准备段未知异常同样转 refused，不逃逸不泄漏拓扑
-                    refused = SubAgentResult(
-                        final_answer=(
-                            f"[状态: failure] fs_isolation 准备失败（child 未启动，"
-                            f"不降级共享工作区）: {type(exc).__name__}: {exc}"
-                        ),
-                        outcome="refused",
-                        refused=True,
-                        depth=depth,
+                    return self._run_refused_finalized(
+                        sid, parent_sid, depth,
+                        f"[状态: failure] fs_isolation 准备失败（child 未启动，"
+                        f"不降级共享工作区）: {type(exc).__name__}: {exc}",
                     )
-                    finalized = self._finalize_child(sid, parent_sid, refused)
-                    assert finalized is not None
-                    return finalized
             if self._project_coordinator is not None:
                 try:
                     self._begin_fleet_run(sid, depth, parent_sid=parent_sid or "")
@@ -2413,18 +2508,11 @@ class SubAgentRunner:
                             worktree_path=worktree_lease.path,
                         )
                         released = True
-                    refused = SubAgentResult(
-                        final_answer=(
-                            f"[状态: failure] fleet run 边界拒绝（lease acquire 失败），"
-                            f"未启动任何 child/provider/tool 动作: {type(exc).__name__}: {exc}"
-                        ),
-                        outcome="refused",
-                        refused=True,
-                        depth=depth,
+                    return self._run_refused_finalized(
+                        sid, parent_sid, depth,
+                        f"[状态: failure] fleet run 边界拒绝（lease acquire 失败），"
+                        f"未启动任何 child/provider/tool 动作: {type(exc).__name__}: {exc}",
                     )
-                    finalized = self._finalize_child(sid, parent_sid, refused)
-                    assert finalized is not None
-                    return finalized
             # 同步路径在当前线程挂载工作区根（discovery scope 已在声明分支挂载）；
             # run() 返回前统一恢复。
             if worktree_lease is not None:
@@ -2461,6 +2549,12 @@ class SubAgentRunner:
         finally:
             if ws_token is not None:
                 current_workspace_root.reset(ws_token)
+            if write_scope_token is not None:
+                # DESIGN-20261030 §5.3 C5b/T16: 拒绝/异常/正常路径统一恢复父
+                # write scope，杜绝 child scope 泄漏回父会话。
+                from llm_loop.core.run_context import current_write_scope
+
+                current_write_scope.reset(write_scope_token)
             if scope_token is not None:
                 current_tool_discovery_scope.reset(scope_token)
             if worktree_lease is not None and not released:

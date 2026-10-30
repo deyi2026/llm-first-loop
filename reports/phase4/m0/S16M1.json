@@ -4,55 +4,60 @@
   "samples": [
     {
       "tag": "S16M1-1",
-      "t_effect_ms": 68.6,
-      "elapsed_s": 0.78,
+      "t_effect_ms": 3.5,
+      "elapsed_s": 0.07,
       "final": "done",
       "item_status": "interject_received",
+      "consumed_via": "gap_harvest",
       "skipped_receipts": 1,
       "no_cancel_synthesis": true,
       "model_saw_interject": true
     },
     {
       "tag": "S16M1-2",
-      "t_effect_ms": 83.8,
-      "elapsed_s": 0.78,
+      "t_effect_ms": 3.4,
+      "elapsed_s": 0.07,
       "final": "done",
       "item_status": "interject_received",
+      "consumed_via": "gap_harvest",
       "skipped_receipts": 1,
       "no_cancel_synthesis": true,
       "model_saw_interject": true
     },
     {
       "tag": "S16M1-3",
-      "t_effect_ms": 74.8,
-      "elapsed_s": 0.78,
+      "t_effect_ms": 3.4,
+      "elapsed_s": 0.06,
       "final": "done",
       "item_status": "interject_received",
+      "consumed_via": "gap_harvest",
       "skipped_receipts": 1,
       "no_cancel_synthesis": true,
       "model_saw_interject": true
     },
     {
       "tag": "S16M1-4",
-      "t_effect_ms": 73.3,
-      "elapsed_s": 0.78,
+      "t_effect_ms": 3.3,
+      "elapsed_s": 0.07,
       "final": "done",
       "item_status": "interject_received",
+      "consumed_via": "gap_harvest",
       "skipped_receipts": 1,
       "no_cancel_synthesis": true,
       "model_saw_interject": true
     },
     {
       "tag": "S16M1-5",
-      "t_effect_ms": 84.9,
-      "elapsed_s": 0.77,
+      "t_effect_ms": 3.4,
+      "elapsed_s": 0.07,
       "final": "done",
       "item_status": "interject_received",
+      "consumed_via": "gap_harvest",
       "skipped_receipts": 1,
       "no_cancel_synthesis": true,
       "model_saw_interject": true
     }
   ],
-  "t_effect_p50_ms": 74.8,
+  "t_effect_p50_ms": 3.4,
   "ran_under": "M1-gap-harvest"
 }

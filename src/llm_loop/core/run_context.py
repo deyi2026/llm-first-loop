@@ -17,6 +17,8 @@ import contextvars
 import threading
 from collections.abc import Callable
 
+from llm_loop.core.write_scope import WriteScope
+
 # 当前执行上下文所属的会话 id（run_stream 入口 set；只读工具池经 copy_context 传播）
 current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_session_id", default=""
@@ -64,6 +66,14 @@ current_reasoning_mode: contextvars.ContextVar[str] = contextvars.ContextVar(
 # frozenset(tool_names)，确保 provider 投影与 get_tool_schema 发现面一致。
 current_tool_discovery_scope: contextvars.ContextVar[frozenset[str] | None] = (
     contextvars.ContextVar("llm_loop_current_tool_discovery_scope", default=None)
+)
+
+# 当前写侧授权 scope（DESIGN-20261030-write-scope §5.1/C4）。None 表示"全量"
+# （父会话默认；未受限的既有执行域零行为变化）；子代理等受限执行域由 runner
+# 注入求交后的有效 scope（WriteScope），写侧工具据此判定越界。
+# write_scope.py 只依赖标准库、不反向 import 本模块——无循环依赖。
+current_write_scope: contextvars.ContextVar[WriteScope | None] = contextvars.ContextVar(
+    "llm_loop_current_write_scope", default=None
 )
 
 # EVO-20261012-65475c5a (E5): child 会话内的取消事件与等待预算。
