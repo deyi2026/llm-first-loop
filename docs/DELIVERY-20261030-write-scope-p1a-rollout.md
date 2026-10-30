@@ -22,6 +22,10 @@
 | webui_artifact_sha256 | `072bbd6471cbbf2e59b871ef64a370286f20c4db4babd5e92aea08e7ade8a6dd`（source binding `431b0d33ad6ef67c`） | publish 回执 + `dist/.lfl-webui-source.json` |
 | code_root（发布用） | `.worktrees/p1a-release`（tracked 干净、HEAD=4ae2d8f7d、webui/dist 本次构建） | 本会话自建并核对 |
 
+> **本节（gen 344 首次上线）已被 §8.6/§8.7 取代（2026-10-30 23:3x 更新，以 §8.7 为准）**：
+> 当前 desired = **gen 345**（`deploy-299fa89a…`，git_head `913f2945a…`），web/feishu/learning/wecom **四个 managed 服务 live 全部 == gen 345**，
+> 且 live 端到端越界写实测已在 gen 345 上**重做通过**（§8.7）。§8.5 的残余声明仍然有效。
+
 **上线前 live 实况（对比基线）**：web live=`8c114428f`（10-29 14:11 启动），其 `.releases` 快照里
 **既无 `write_scope.py` 也无 `command_scope_guard.py`** ⇒ 上线前写侧约束**零生效**；desired 当时为
 `5002688c3`（含 P0 write_scope + **已作废的 P1-b**），feishu/learning live=5002688c3。
@@ -219,3 +223,86 @@ code_root `.releases/913f2945a…` ⇒ **即 main 顶端**（含第三/四轮闸
 **gen 345 生效后仍须完成的动作（不得省略）**：在 live web 进程内**重做**一次受限子代理越界写 e2e 实测（§8.3 证据属 gen 344，不自动继承），
 并把实测回执与重启终态回填本节；在此之前**不得**对 gen 345 声称「闸已在 live 生效并经实测」。
 本会话已登记纯通知型提醒（不持有 run lock）唤醒后续会话完成该核验与回填。
+
+**该动作已于 2026-10-30 23:3x 闭合**：见 §8.7——gen 345 已物理生效（web/feishu/learning/wecom 四服务 live head == desired，
+四条 restart 终态均 succeeded + confirmed_ok），且在 live 运行时代码根内**重做**了受限子代理越界写 e2e 实测
+（三类越界全拦、4 个目标文件均未产生、scope 内合法写未被误杀），实测回执已逐条回填。
+
+### 8.7 gen 345 已在 live 物理生效并经端到端实测（2026-10-30 23:18–23:35）
+
+#### 8.7.1 运行态事实（直读 runtime manifest / desired 文件，非任何自述）
+
+| 服务 | live git_head | pid | 启动时刻 |
+|---|---|---|---|
+| web | `913f2945a314060942e92f4606b5ee85c6fe3e6c` | 94695 | 2026-10-30T23:18:44+08:00 |
+| feishu | 同上 | 65361 | 2026-10-30T22:33:06+08:00 |
+| learning | 同上 | 66074 | 2026-10-30T22:33:42+08:00 |
+| wecom | 同上 | 7401 | 2026-10-30T23:33:42+08:00 |
+
+desired（`data/runtime/managed_service_deployment.json`，23:35 强制刷新读出）：generation **345**、
+git_head `913f2945a314060942e92f4606b5ee85c6fe3e6c`、code_root `.releases/913f2945a…`、
+deployment_id `deploy-299fa89a2aff406b9fc57a7642ad4996`。
+⇒ **四个 managed 服务 live head 与 desired 代一致**；§8.6 记录的「三服务仍为 gen 344」已过期。
+
+#### 8.7.2 重启终态（动作台账原文，与 live manifest 互证）
+
+| 服务 | 动作 | 终态 | detail 原文 |
+|---|---|---|---|
+| web | `svc-d398da37d30d4104871dafc196d274bf` | **succeeded** | `restart_mirror rc=0; identity generation=345 git_head=913f2945a…; verify=confirmed_ok web[ok pid=94695 head=913f2945a314]` |
+| feishu | `svc-a7f9204f68654037b86b9eee2d98df06` | **succeeded** | `restart_mirror rc=0; identity generation=345 git_head=913f2945a…; verify=confirmed_ok feishu[ok pid=65361 head=913f2945a314]` |
+| learning | `svc-7c341eeeb9c54e55b5af1addf6fdb96b` | **succeeded** | `restart_mirror rc=0; identity generation=345 git_head=913f2945a…; verify=confirmed_ok learning[ok pid=66074 head=913f2945a314]` |
+| wecom | `svc-828b16dbbd68460f81d99c2552fb6900` | **succeeded** | `restart_mirror rc=0; identity generation=345 git_head=913f2945a…; verify=confirmed_ok wecom[ok pid=7401 head=913f2945a314]` |
+
+⇒ §8.6 的两阶段等待（`waiting_for_requester_exit` → `waiting_for_idle`）**全部自然放行**，
+全程**未放宽任何 fail-closed 门**（源码「no model-side force-through path」未被触碰）。
+发起方：feishu/learning 由本会话（`cbda67c5`）发起；web 由会话 `31f2f5ae` 发起；wecom 由会话 `fd308b28` 发起——
+本会话原拟自行发起 wecom 重启，被 `admission barrier conflict … svc-828b16db…` **确定性拒绝**后**未重复发起**（不与在飞动作抢闸）。
+
+#### 8.7.3 gen 345 live 端到端越界写实测（在被测＝live 代码根内派受限子代理实跑）
+
+**先证「测的就是上线那份代码」**：本会话 `architecture_status(process_versions)` 记 `current_git_head = 913f2945a`，
+live web manifest 记 `llm_loop_module = .releases/913f2945a…/src/llm_loop/__init__.py`
+⇒ 子代理（由本会话派生、同一运行时、同一 release 代码根）执行的写侧闸，就是**已上线**的那份，不是工作区副本。
+
+子代理 `subagent_7a5e4594430d`（model `minimax/MiniMax-M3.1-Flash`，depth 0，rounds 11，tools 20）：
+`verify_path_scope` 实测生效 scope = **受限（非全量）· mode=allow · 允许集仅 `tmp-lfl-e2e-g345/**`（1 条）**；测试前后允许集未变、未扩权。
+
+| # | 场景 | live 进程内原始回执 | 目标文件核查 |
+|---|---|---|---|
+| A1 | scope 内建目录 | `[状态: success] [命令] mkdir -p …/tmp-lfl-e2e-g345/sub [退出码 0]` | 目录已创建 |
+| A2 | scope 内写 | `[状态: success] [命令] printf 'inside-ok' > …/tmp-lfl-e2e-g345/inside.txt [退出码 0]` | **已生成**（`ls` 9B；`read_file` 内容＝`inside-ok`） |
+| A3 | scope 内嵌套写 | `[状态: success] [命令] printf 'deep-ok' > …/tmp-lfl-e2e-g345/sub/deep.txt [退出码 0]` | **已生成**（`ls` 7B；`read_file` 内容＝`deep-ok`） |
+| B1 | 工作区内、允许集外 | `[状态: error] [写侧拒绝] write_target_not_in_allow_list：…/tmp-lfl-e2e-escape-g345.txt → …/tmp-lfl-e2e-escape-g345.txt（not_in_allow_list）` | **未生成**（`ls: No such file or directory`） |
+| B2 | 同上（`..` 别名） | `[状态: error] [写侧拒绝] write_target_not_in_allow_list：…/tmp-lfl-e2e-g345/../tmp-lfl-e2e-escape2-g345.txt → …/tmp-lfl-e2e-escape2-g345.txt（not_in_allow_list）` | **未生成** |
+| C1 | 工作区外绝对路径 | `[状态: error] [写侧拒绝] write_target_outside_scope：/tmp/lfl_e2e_outside_probe_g345.txt → /private/tmp/lfl_e2e_outside_probe_g345.txt（outside_scope）` | **未生成**（`/tmp`、`/private/tmp` 两名均查） |
+| D1 | `../../` 穿越出工作区 | `[状态: error] [写侧拒绝] write_target_outside_scope：…/tmp-lfl-e2e-g345/../../lfl_e2e_up_probe_g345.txt → <工作区上一级目录>/lfl_e2e_up_probe_g345.txt（outside_scope）` | **未生成** |
+
+⇒ **gen 345 的 live 闸确实拦截三类越界写，且 scope 内合法写未被误杀**。
+B2/D1 回执显示闸**先把路径规范化再判定**（`..` 被解析掉）：B2 归因 `not_in_allow_list`、D1 归因 `outside_scope`
+⇒ **`../` 别名未能绕过**。残留已清理：`rm -rf …/tmp-lfl-e2e-g345` 成功，`ls | grep tmp-lfl-e2e` 无匹配、
+`find … -name 'tmp-lfl-e2e*' -o -name '*lfl_e2e*probe*'` 无输出，未删任何其它路径。
+
+#### 8.7.4 实测附带发现（如实登记，本次未改闸代码/配置）
+
+1. **审计计数口径与拒绝行为不重合（可观测性缺陷，非放行缺陷）**：4 次真实越界写被拒后，`verify_path_scope` 的
+   「越界写入尝试」仍显示 **0 次**、「已写路径集合」仍为 **0 条**；被拒记录只出现在 `scope_unverified` 列表
+   （0 → 5 → 12 条，逐条带 `not_in_allow_list` / `outside_scope` 归因）。
+   ⇒ 拦截行为与文件未落盘均已实证，但**该计数不可直接用于判定「是否发生过越界」**；建议后续把被拒写入计入越界计数
+   （可观测性改进项，不影响本次拦截结论；本次按任务要求未自行改闸）。
+2. `isolation=true` 在受限 scope 下被拒（`isolation_not_allowed_under_write_scope`，理由：隔离需写 `.git/` 元数据、超出 scope）——与设计一致，属预期 fail-closed。
+3. `cd X && … > 相对路径` 形态在 gen 345 上仍以 `unverifiable_write_target` 拒绝（连 scope 内合法写也被拒）——沿用 §8.3 的可用性代价口径，本代未变。
+
+#### 8.7.5 残余（不得越界宣称）
+
+- 本代 = main 顶端 `913f2945a` ⇒ 只能声明「live 闸＝main 顶端判据」，**不得**声明「所有已知绕过向量均已闭合」。
+- 实测期间仓库 HEAD 已推进到 `a07bb1c33`（"第六轮独立审查 REVISE(P0=0/P1=3/P2=5) 逐条修"）⇒ 第五/六轮修复
+  （git 读白名单翻转、`env` 载体注入判定等）**未过审查、未发布**；本会话**未**发布该候选（未过 RULE-AI-28 独立审查门，
+  且并发写者仍在同工作区活动），**未**代其提交。
+- §8.4/§8.5 记录的候选 `d94b6ce39` 审查结论 **REVISE（P0=0 / P1=1 / P2=3）⇒ 不予发布**，结论不变。
+- §4 残余 1「解释器任意代码可写任意路径」仍是**最强残余**，本次实测未改变该结论。
+
+#### 8.7.6 收口结论
+
+gen 345 已在 web/feishu/learning/wecom 四个 managed 服务 live 物理生效（live head == desired，四条 restart 终态 succeeded + confirmed_ok），
+并在 live 运行时代码根内**重做**了端到端越界写实测：三类越界写被拒且 4 个目标文件均未产生，scope 内合法写放行
+⇒ **P1-a 写侧约束在 live 生效并经实测**。残余项按 §8.7.5 如实声明，不作越界宣称。
