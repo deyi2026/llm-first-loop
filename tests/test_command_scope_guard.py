@@ -1019,3 +1019,137 @@ def test_r11_review_fixes_do_not_over_block_read_forms(command: str) -> None:
     """第十一轮修复不得误伤：``wq``（写回原文件）/ 打印 / 缓冲区删除。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第十三轮：两线并集后的残余缺口（组合短选项簇 + git 写形态）──────────────
+#
+# P0-1 getopt **组合短选项簇**未建模：``env -iC`` = ``-i`` + ``-C``、
+#      ``env -iS`` = ``-i`` + ``-S``、``sudo -nD`` = ``-n`` + ``-D``。
+#      旧实现只认「token 以该短选项开头」⇒ 簇内取值型选项**不被识别** ⇒ 其值
+#      （下一个 argv）**未被消费** ⇒ 被当成载荷命令名 ⇒ 真正的载荷命令
+#      **从未进入分析** ⇒ 越界写（``env -iC /outside rm /etc/x``）被放行。
+# P0-2 ``git symbolic-ref --stdin`` 是**批量写形态**（stdin 可含
+#      create/delete/update ref）⇒ 此前被当成读形态放行。
+
+R13_BLOCKED_CASES = [
+    ("env -iC /outside rm /etc/x", "write_target_outside_scope"),
+    ("env -iC /outside touch x", "unverifiable_write_target"),
+    ("env -iC/outside touch x", "unverifiable_write_target"),
+    ("env -iS 'rm /etc/x'", "write_target_outside_scope"),
+    ("sudo -nD /outside rm /etc/x", "write_target_outside_scope"),
+    ("sudo -nD /outside touch x", "unverifiable_write_target"),
+    ("git symbolic-ref --stdin", "implicit_write_target"),
+    ("git symbolic-ref --st", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R13_BLOCKED_CASES)
+def test_r13_cluster_and_git_stdin_write_forms_are_blocked(
+    command: str, expected_reason: str
+) -> None:
+    """第十三轮复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R13_ALLOWED_CASES = [
+    # 组合短选项簇里的取值型/载荷型选项被正确消费 ⇒ 读命令不受影响。
+    "env -iC src ls",
+    "env -iS ls",
+    "sudo -nD src ls",
+    # ``-u`` 先吃掉 ``C``（``-C`` 从未生效）⇒ 不得误判 chdir，也不得误拦读命令。
+    "env -uC ls",
+    # ``git symbolic-ref`` 的读形态（含 ``--short``）不受影响。
+    "git symbolic-ref HEAD",
+    "git symbolic-ref --short HEAD",
+]
+
+
+@pytest.mark.parametrize("command", R13_ALLOWED_CASES)
+def test_r13_cluster_fixes_do_not_over_block_read_forms(command: str) -> None:
+    """第十三轮修复不得误伤：组合短选项簇的读命令 / symbolic-ref 读形态。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第十四轮：两线并集后的残余缺口（逐条核验语义后补齐）──────────────────
+#
+# 背景：origin/main（本地线，2467 行族模型实现）与并发会话线（gen348，1984 行
+# 启发式实现）**互非超集**。以 origin/main 为主干补另一条线的向量时，**逐条
+# 核验语义**后再补，分四类处置：
+#   1. **真漏放**（越界写可逃逸）⇒ 补防护 + 锚点（本块）；
+#   2. **仅拒因不同**（两边都拦）⇒ 不动（安全等价）；
+#   3. **过度拦截**（本地线更严，如 ``tar -tf`` 读越界、``script --log-in``）
+#      ⇒ 保留本地线的更严口径；
+#   4. **对方模型与上游语义相反**⇒ 不移植（移植反而引入新洞）。
+#
+# P0-1 curl：``-o`` 与 ``-O`` **并存**时，``-O``（按**远端名**落盘到 cwd，
+#      文件名不可静态定位）的隐式写仍会发生 ⇒ 此前被 ``if targets:`` 的
+#      提前返回盖掉 ⇒ ``curl -o ok -O https://x/evil`` 放行。
+# P0-2 gcc：组合短选项 ``-wo/outside/x`` = ``-w``（布尔）+ ``-o``（取值，
+#      值为余串，getopt 语义）⇒ 此前整族不命中 ⇒ 产物落点从未被判定。
+#      前置字母只收**确定不带值**的短选项（-w/-v/-c）⇒ ``-lo``（-l 的值 o）、
+#      ``-Werror``（o 在词中）不会被误读成 ``-o``。
+# P0-3 git：``symbolic-ref`` 的 ``-d`` 可**粘连**（``-dHEAD``/``-dq HEAD``）。
+# P0-4 rsync：``--backup-dir=DIR`` 让被覆盖的旧文件备份到 DIR ⇒ DIR 是写目标。
+# P0-5 script：``-T``（--log-timing，**必填值**）会把 ``-c`` 吃成自己的值
+#      ⇒ 载荷通道消失、真正的命令串退化成位置参数 ⇒ 解析有歧义 ⇒ fail-closed。
+# P0-6 tar：``--checkpoint-action=exec=CMD``（**执行**载荷）与
+#      ``--index-file=FILE``（写索引文件）。
+# 精度：curl ``--hsts FILE``/``--alt-svc FILE``、wget ``--save-cookies FILE``
+#      都会落盘文件 ⇒ 此前未登记成取值型（靠 unresolved 兜住，拒因不准）。
+
+R14_BLOCKED_CASES = [
+    ("curl -o ok -O https://x/evil", "implicit_write_target"),
+    ("gcc -wo/outside/x a.c", "write_target_outside_scope"),
+    ("git symbolic-ref -dHEAD", "implicit_write_target"),
+    ("git symbolic-ref -dq HEAD", "implicit_write_target"),
+    ("rsync -b --backup-dir=/outside/b src dst", "write_target_outside_scope"),
+    ("script -T -c 'rm /outside/x'", "implicit_write_target"),
+    ("tar --checkpoint-action=exec=/outside/x -cf ok.tar .", "implicit_write_target"),
+    ("tar --index-file=/outside/idx -cf ok.tar .", "write_target_outside_scope"),
+    ("curl --hsts /outside/x URL", "write_target_outside_scope"),
+    ("curl --hsts=/outside/x URL", "write_target_outside_scope"),
+    ("curl --alt-svc /outside/x URL", "write_target_outside_scope"),
+    ("wget --save-cookies /outside/x URL", "write_target_outside_scope"),
+    ("wget -O out --save-cookies /outside/c URL", "write_target_outside_scope"),
+    # GNU findutils 手册（find(1)）：``-fprintf file format`` ⇒ **文件在前**。
+    # ⇒ 真正的越界写形态是 ``-fprintf /outside/x '%p'``（文件越界）。
+    ("find . -fprintf /outside/x '%p'", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R14_BLOCKED_CASES)
+def test_r14_union_gaps_are_blocked(command: str, expected_reason: str) -> None:
+    """第十四轮复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R14_ALLOWED_CASES = [
+    # 组合短选项：取值型字母只在**已知布尔短选项**之后才生效 ⇒ ``-Werror``
+    # （o 在词中）与 ``-lo``（-l 的值 o）都不得被读成 ``-o``。
+    "gcc -Werror a.c",
+    "gcc -Wall -O2 -o out a.c",
+    "gcc -lo obj a.c",
+    # 下载/打包/同步的域内写目标不受影响。
+    "curl https://x/",
+    "tar -cf ok.tar src",
+    "rsync -b src dst",
+    "rsync -b --backup-dir=bk src dst",
+    # GNU findutils：``-fprintf file format`` ⇒ ``-fprintf '%p' /outside/x``
+    # 的**文件**是 ``'%p'``（域内），``/outside/x`` 是**格式串**（不落盘）
+    # ⇒ 放行；而 ``-fprintf /outside/x '%p'``（文件越界）必须拦。
+    "find . -fprintf '%p' /outside/x",
+    "find . -name '*.py'",
+    "git symbolic-ref HEAD",
+]
+
+
+@pytest.mark.parametrize("command", R14_ALLOWED_CASES)
+def test_r14_union_gap_fixes_do_not_over_block(command: str) -> None:
+    """第十四轮修复不得误伤：读命令与域内写目标。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)

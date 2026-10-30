@@ -463,14 +463,51 @@ def _carrier_value_option_hit(token: str, value_options: frozenset[str]) -> bool
     return False
 
 
-def _is_chdir_option(token: str, options: frozenset[str]) -> bool:
-    """判定 token 是否是**改变工作目录**的载体选项。
+def _short_cluster_value_option(
+    token: str, value_options: frozenset[str], payload_options: frozenset[str]
+) -> tuple[int, str, bool]:
+    """短选项**簇**里第一个取值型选项的位置、选项名与取值位置。
+
+    GNU getopt 语义：短选项可组合（``-iC`` = ``-i`` + ``-C``），按字符从左到右
+    解析；遇到**第一个**取值型选项即停（其后的字符不再当作选项解析）——其值为
+    该选项之后的余串（余串非空 ⇒ 值内联在 token 内）或**下一个 argv**。
+
+    返回 ``(字符索引, 选项名, 值内联)``；未命中返回 ``(-1, "", False)``。
+
+    第十三轮（两线并集后实测缺口）：此前只认「token 以该短选项开头」⇒ 组合形态
+    ``env -iC /outside rm /etc/x`` 的 ``-iC`` 不命中 ⇒ ``/outside`` 未被消费 ⇒
+    被当成载荷命令名 ⇒ 真正的载荷 ``rm /etc/x`` **从未进入分析** ⇒ 越界写放行。
+    同类形态：``env -iS 'rm /etc/x'``、``sudo -nD /outside rm /etc/x``。
+    """
+    if not token.startswith("-") or token.startswith("--") or len(token) < 3:
+        return (-1, "", False)
+    candidates = value_options | payload_options
+    body = token[1:]
+    for index, char in enumerate(body):
+        flag = "-" + char
+        if flag in candidates:
+            return (index, flag, bool(body[index + 1:]))
+    return (-1, "", False)
+
+
+def _is_chdir_option(token: str, spec: _CarrierSpec) -> bool:
+    """判定 token 是否是**改变工作目录**的载体选项（含组合短选项形态）。
 
     第七轮独立审查后补（自审发现）：旧实现只做**精确匹配** ⇒
     ``env --chdir=/outside touch x`` 的 cwd 变化未被识别 ⇒ 相对写目标 ``x``
     仍按原 cwd 判定为工作区内 ⇒ **越界写放行**。⇒ 补齐 ``--opt=DIR``
     与短选项粘连形态（``-C/outside``），按 fail-closed 处理。
+
+    第十二轮独立审查 P1-2：getopt_long 接受**唯一前缀缩写** ⇒ ``env --ch
+    /outside``（→ --chdir）、``sudo --chd /outside``（→ --chdir）此前不被
+    识别 ⇒ cwd 变化未标记 ⇒ 后续相对写目标仍按原 cwd 判定 ⇒ 越界写放行。
+    多个候选前缀时仍算命中（fail-closed）。
+
+    第十三轮：组合短选项形态 ``env -iC /outside ...``（= ``-i`` + ``-C``）此前
+    同样不被识别 ⇒ 同样的越界写放行。⇒ 只认「簇内**第一个**取值型选项」——
+    ``env -uC ...`` 里 ``-u`` 先吃掉 ``C``（``-C`` 从未生效）⇒ 不得误判 chdir。
     """
+    options = spec.chdir_options
     for option in options:
         if token == option:
             return True
@@ -478,13 +515,14 @@ def _is_chdir_option(token: str, options: frozenset[str]) -> bool:
             return True
         if len(option) == 2 and token.startswith(option) and len(token) > 2:
             return True
-    # 第十二轮独立审查 P1-2：getopt_long 接受**唯一前缀缩写** ⇒ ``env --ch
-    # /outside``（→ --chdir）、``sudo --chd /outside``（→ --chdir）此前不被
-    # 识别 ⇒ cwd 变化未标记 ⇒ 后续相对写目标仍按原 cwd 判定 ⇒ 越界写放行。
-    # 多个候选前缀时仍算命中（fail-closed）。
     for option in options:
         if option.startswith("--") and token.startswith("--") and option.startswith(token):
             return True
+    cluster_pos, cluster_flag, _cluster_inline = _short_cluster_value_option(
+        token, spec.value_options, spec.payload_options
+    )
+    if cluster_pos > 0 and cluster_flag in options:
+        return True
     return False
 
 
@@ -533,6 +571,31 @@ def _carrier_split(
                     break
             if hit:
                 return payload, trailing, []
+            # 第十三轮：组合短选项簇（getopt 语义）——``-iC`` = ``-i`` + ``-C``、
+            # ``-iS`` = ``-i`` + ``-S``。取值型选项在簇内**非首位**时，其值取
+            # **下一个 argv**（余串为空）；余串非空（``-iC/outside``）⇒ 值内联。
+            # 此前这类 token 不命中任何取值判定 ⇒ 其值未被消费 ⇒ 被当成载荷命令名
+            # ⇒ 真正的载荷命令**从未进入分析** ⇒ 越界写放行（第十三轮实测）。
+            cluster_pos, cluster_flag, cluster_inline = _short_cluster_value_option(
+                token, spec.value_options, spec.payload_options
+            )
+            if cluster_pos > 0:
+                if cluster_flag in spec.payload_options:
+                    # 载荷型：``env -iS 'rm /etc/x'`` ⇒ 值取下一个 argv；
+                    # ``env -iSrm /etc/x`` ⇒ 余串内联（``rm`` 是命令串）。
+                    if cluster_inline:
+                        payload = token[2 + cluster_pos:]
+                        trailing = args[index + 1:]
+                    else:
+                        payload = args[index + 1] if index + 1 < len(args) else ""
+                        trailing = args[index + 2:]
+                    return payload, trailing, []
+                # 取值型（非载荷）：消费下一个 token 作为选项值。
+                if cluster_inline:
+                    index += 1
+                else:
+                    index += 2
+                continue
             if token == "--":
                 options_done = True
                 index += 1
@@ -1244,6 +1307,14 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
         # 第八轮 P1-2：模式不可静态确定 ⇒ 写目标不可静态定位 ⇒ fail-closed
         return ([], True)
     snapshot = scan.value_of("-g", "--listed-incremental", "--incremental")
+    # 第十四轮 P0：``--checkpoint-action=exec=CMD`` 让 tar 在每个检查点
+    # **执行** CMD ⇒ 载荷不可静态定位 ⇒ fail-closed（与 ``-F/--info-script``、
+    # ``-I/--use-compress-program`` 同一口径）。
+    checkpoint = scan.value_of("--checkpoint-action")
+    if checkpoint is not None and checkpoint.startswith("exec="):
+        return ([], True)
+    # 第十四轮 P0：``--index-file=FILE`` 让 tar 写**索引文件** ⇒ FILE 是写目标。
+    index_file = scan.value_of("--index-file")
     if _tar_mode(args, positional, "x"):
         # 第十二轮 push 闸 P1-1：tar 的多个 ``-C`` 各自作用于其后的成员 ⇒
         # **逐个都判**（此前只回最后一个：``tar -xf a.tar -C /outside m -C src``
@@ -1252,12 +1323,14 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
         if not dirs:
             top = scan.value_of("--one-top-level")
             dirs = [top] if top else []
-        return (dirs, not dirs)
+        return (list(dirs) + ([index_file] if index_file else []), not dirs)
     if _tar_mode(args, positional, "c"):
         archive = _tar_archive(args, positional)
         if archive is not None:
             # 第八轮 P1-2：``-g FILE``（快照文件）在建档时被写入 ⇒ 也是写目标
             targets = [archive] + ([snapshot] if snapshot else [])
+            if index_file:
+                targets.append(index_file)
             return (targets, not archive)
         # 创建模式但归档名不可静态定位 ⇒ 拒
         return ([], True)
@@ -1297,20 +1370,31 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
             "--etag-save",
             "--json",
             "--crt-file",
+            # 第十四轮：``--alt-svc FILE`` / ``--hsts FILE`` **会落盘文件**
+            # （Alt-Svc 缓存 / HSTS 缓存）⇒ 此前登记成开关 ⇒ 其 FILE 变成位置
+            # 参数 ⇒ 写目标从未被定位（实测靠 fail-closed 兜住，拒因不准）。
+            "--alt-svc",
+            "--hsts",
+            "--hsts-file",
         ):
             # 第十二轮独立审查 P1-1：curl 的多个 ``-o`` **逐个都写**（每个 URL
             # 一个文件）⇒ 全部取值都要判，不能只看第一个。
             targets.extend(scan.values_of(flag))
-        if targets:
-            return (targets, any(not target for target in targets))
-        if scan.has(
+        # 第十四轮 P0：``-O/--remote-name`` 与显式输出选项**并存**时，``-O`` 的
+        # 隐式写仍会发生（按**远端名**落盘到当前目录，文件名不可静态定位）⇒
+        # 不能被 ``if targets:`` 的提前返回盖掉——此前 ``curl -o ok -O
+        # https://x/evil`` 里 ``-O`` 完全没被检查 ⇒ 越界写放行。
+        implicit = scan.has(
             "-O",
             "--remote-name",
             "--remote-name-all",
             "-J",
             "--remote-header-name",
             "--create-dirs",
-        ):
+        )
+        if targets:
+            return (targets, any(not target for target in targets) or implicit)
+        if implicit:
             return ([], True)
         return ([], False)
     scan = scan_options(WGET_OPTIONS, args)
@@ -1328,6 +1412,8 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
         "--append-output",
         "-P",
         "--directory-prefix",
+        # 第十四轮：``--save-cookies FILE`` 写 cookie jar ⇒ 写目标。
+        "--save-cookies",
     ):
         value = scan.value_of(flag)
         if value is not None:
@@ -1386,6 +1472,13 @@ _COMPILER_BENIGN_PREFIXES = (
 )
 
 
+# 第十四轮：组合短选项里，取值型选项**之前**允许出现的布尔短选项字母。
+# 只收**确定不带值**的字母（``-w``/``-v``/``-c``）；``-g``/``-O``/``-f``/``-m``/
+# ``-W``/``-l``/``-L``/``-I``/``-D`` 都是**附着值**族（``-Wall``、``-g3``、
+# ``-ofoo``）⇒ 不得当作布尔前缀，否则 ``-lo``（``-l`` 的值 o）会被误读成 ``-o``。
+_COMPILER_CLUSTER_BOOL_LETTERS = frozenset({"w", "v", "c"})
+
+
 def _compiler_token_value(raw: list[str], flag: str) -> str | None:
     """取值型编译选项的值：``-o x`` / ``-ox`` / ``-o=x`` / ``--output=x`` 形态.
 
@@ -1403,6 +1496,23 @@ def _compiler_token_value(raw: list[str], flag: str) -> str | None:
         elif token.startswith(flag + "/") and len(token) > len(flag) + 1:
             # ``-o/outside/x``：斜杠是**值的首字符**（getopt 附着值），不是分隔符
             found = token[len(flag) :]
+        elif (
+            len(flag) == 2
+            and not flag.startswith("--")
+            and len(token) > 2
+            and token[0] == "-"
+            and token[1] in _COMPILER_CLUSTER_BOOL_LETTERS
+            and token[2] == flag[1]
+            and (len(token) == 3 or token[3] in "/=")
+        ):
+            # 第十四轮 P0：组合短选项（getopt 语义）——``-wo/outside/x`` =
+            # ``-w``（布尔）+ ``-o``（取值，值为余串）。此前只认「token 以
+            # ``-o`` 开头」⇒ ``-wo...`` 整族不命中 ⇒ 产物落点从未被判定 ⇒
+            # 越界写放行。余串为空（``-wo``）⇒ 值取下一个 argv。
+            if len(token) > 3:
+                found = token[3:]
+            else:
+                found = raw[index + 1] if index + 1 < len(raw) else ""
     return found
 
 
@@ -1565,6 +1675,12 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
         # 内联形态改走族模型。
         if name == "rsync":
             target_dir = _flag_value(args, "--target-directory")
+            # 第十四轮 P0：``--backup-dir=DIR`` 让 rsync 把**被覆盖的旧文件**
+            # 备份到 DIR ⇒ DIR 也是写目标（此前完全没被建模 ⇒
+            # ``rsync -b --backup-dir=/outside/b src dst`` 越界写放行）。
+            backup_dir = _flag_value(args, "--backup-dir")
+            if backup_dir is not None:
+                return ([backup_dir], not backup_dir)
         else:
             scan = scan_options(TARGET_DIRECTORY_OPTIONS, args)
             if scan.unresolved:
@@ -1829,6 +1945,19 @@ class _Scanner:
                 "script：未识别的选项 ⇒ 写目标不可静态定位",
                 tuple(self.unverified),
             )
+        # 第十四轮 P0：``script -T -c 'CMD'`` 里 ``-T``（--log-timing，**必填
+        # 值**）会把 ``-c`` 吃成自己的值（getopt：取值型选项的下一个 argv 即其
+        # 值，即使它长得像选项）⇒ 载荷通道 ``-c`` 消失 ⇒ 真正的命令串退化成
+        # 位置参数（只当 script 的 typescript 写目标）⇒ 越界写可逃逸。
+        # 该处解析存在歧义 ⇒ 按 fail-closed 拦，不给「载荷被吞」的形态任何机会。
+        for event in scan.events:
+            if event.name and event.value in ("-c", "--command"):
+                return CommandScopeDecision(
+                    False,
+                    "implicit_write_target",
+                    "script：取值型选项吞掉了载荷选项（-c/--command）⇒ 载荷命令不可静态定位",
+                    tuple(self.unverified),
+                )
         payload_cmd = scan.value_of("-c", "--command")
         operands = list(scan.operands)
         # 第八轮 P1-3：script 自己写的**日志/计时**文件同样是写目标
@@ -1947,7 +2076,7 @@ class _Scanner:
             # 是 grep 的上下文行数，不是 env 的 chdir）。
             carrier_args = [str(a) for a in cmd_tokens[1:]]
             option_zone = carrier_args[: len(carrier_args) - len(rest)] if rest else carrier_args
-            if any(_is_chdir_option(a, spec.chdir_options) for a in option_zone):
+            if any(_is_chdir_option(a, spec) for a in option_zone):
                 self.cwd_unstable = True
         if name == "env":
             # 第五轮独立审查 P0-1：``env NAME=VALUE cmd`` 会把赋值注入子进程环境，
@@ -2113,7 +2242,17 @@ class _Scanner:
             # 读形态只有 1 个位置参数（``git symbolic-ref HEAD``）；写形态是
             # 「名字 + 新值」2 个位置参数，或带 ``--delete``/``-d``。
             actions = _git_action_args(args)
-            if _git_long_option_hit(args, "--delete") or "-d" in args or len(actions) >= 2:
+            # 第十三轮：``git symbolic-ref --stdin`` 是**批量写形态**（stdin 里
+            # 可含 create/delete/update ref 命令）⇒ 与 --delete 同列拒。此前只
+            # 认 --delete/-d 与 2 个位置参数 ⇒ ``--stdin`` 被当成读形态放行。
+            # 第十四轮 P0：``-d`` 可**粘连**（``-dHEAD``/``-dq HEAD``）⇒ 此前
+            # 精确匹配 ``"-d" in args`` 漏掉粘连形态 ⇒ 删 ref 的写形态放行。
+            if (
+                _git_long_option_hit(args, "--delete")
+                or _git_long_option_hit(args, "--stdin")
+                or any(token.startswith("-d") for token in args)
+                or len(actions) >= 2
+            ):
                 return CommandScopeDecision(
                     False,
                     "implicit_write_target",

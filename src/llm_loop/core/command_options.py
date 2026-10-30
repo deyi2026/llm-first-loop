@@ -436,6 +436,12 @@ CURL_OPTIONS = FamilyOptions(
         ("--etag-save", True),
         ("--json", True),
         ("--crt-file", True),
+        # 第十四轮：``--hsts FILE``（HSTS 缓存）与 ``--alt-svc FILE``
+        # （Alt-Svc 缓存）**都会落盘文件** ⇒ 取值型。此前**未登记** ⇒
+        # 只能靠 unresolved 的 fail-closed 兜住（拒因不准，且真实写目标
+        # 从未被定位）⇒ 落到 curl 族（本条曾被误改进 wget 族，已复原）。
+        ("--hsts", True),
+        ("--alt-svc", True),
         ("--create-dirs", False),
         ("--user-agent", True),
         ("--header", True),
@@ -616,6 +622,8 @@ WGET_OPTIONS = FamilyOptions(
         ("--output-document", True),
         ("--directory-prefix", True),
         ("--output-file", True),
+        # 第十四轮：``--save-cookies FILE`` **会落盘 cookie jar** ⇒ 取值型写目标。
+        ("--save-cookies", True),
         ("--backups", False),
         ("--content-on-error", False),
         ("--continue", False),
