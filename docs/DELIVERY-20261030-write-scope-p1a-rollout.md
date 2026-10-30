@@ -65,12 +65,17 @@
 - **未执行全量测试**。原因：host 准入要求候选相对当前分支存在 delta，而本次发布候选就是分支 tip
   （`full_test_no_delta`），本会话无法再发起独立审查资格；权威全量门禁属并发会话的第三轮
   `review_admission(kind=full_test)`，本会话**未核验**其结论。
-- **三服务重启终态已核对（2026-10-30 19:4x 补记）**：feishu / learning 两条 restart **已 succeeded 且 confirmed_ok**（live head＝`4ae2d8f7d91b…`）⇒ 这两个服务**已物理生效**；
-  web 两条 restart 均 **failed**（busy / requester active），现役仍是旧代 `8c114428f` ⇒ **web 侧闸零生效**。逐条回执见 §5。
+- **三服务重启终态（2026-10-30 22:1x 更新，以 §8 为准）**：feishu / learning 两条 restart **已 succeeded 且 confirmed_ok**（live head＝`4ae2d8f7d91b…`）；
+  web 第三条 restart `svc-2d7f3064…`（21:17:39 发起）**也已 succeeded / confirmed_ok**，web 现役 head＝`4ae2d8f7d91b…`（pid 7472，21:18:40 启动）⇒ **三服务均已物理生效**。
+  19:4x 时点 web 两条 restart failed（busy / requester active）的留痕见 §5、§6。
 
-## 5. 上线后验收清单（2026-10-30 19:4x 本会话逐条回执核对）
+## 5. 上线后验收清单（2026-10-30 19:4x 首次核对；**已被 §8 取代**）
 
-**结论先行：feishu / learning 已物理生效；web 未生效，仍是旧代 ⇒ 三服务未全部上线，本清单未整体通过。**
+> **本节已被 §8 取代（2026-10-30 22:1x）**：web 已于 21:18:40 切换到 gen 344（`4ae2d8f7d91b…`，pid 7472），
+> 且 live 端到端越界写实测已在 live web 进程内跑通（§8）。本节表格保留 19:4x 时点的原始核对记录作为过程留痕，
+> 其中第 1/2/3 项的结论**以 §8 为准**。
+
+**结论先行（19:4x 时点，已被 §8 更新）：feishu / learning 已物理生效；web 未生效，仍是旧代 ⇒ 三服务未全部上线，本清单未整体通过。**
 
 | # | 验收项 | 本会话实测结果 | 证据 |
 |---|---|---|---|
@@ -116,4 +121,52 @@
 - 本轮（19:4x–19:5x）追加证据：PROD 快照自带用例 `121 passed`、判定层直调 6 断言、闸文件计数（OLD=0 / PROD=齐全）、`active_run_locks` 实测、三条 restart 动作 detail 原文、`_target_idle_state` / `_requester_run_active` 源码。
 - 续跑安排：纯通知型提醒 `sched-6d9f468d`（**无 run lock**，不参与 idle 门判定）；一次性 wake 续跑在本 delegated run 内**无法签发**（`delegate_ingress` 要求未委派真实 human ingress，运行时按设计拒绝），故不构成自动执行入口。
 - 本轮新增知识：`experience:EXPERIENCE-20261030-上线后验收遇到-restart-全-failed-且回执形状一致-时的判别顺序-先查-run-loc`（lesson, verified）。
-- 任务状态：T5 标 **blocked**（附当前事实依据，解除条件见 §6 步骤 1-4）；T6 保持 waiting（依赖 T5）；Goal 未标 complete。
+- 任务状态（2026-10-30 22:1x 更新）：T5 **done**（三服务 live == gen 344 + live 端到端越界写实测通过，证据见 §8）；T6 **done**（本节回填完成）；新增 **T7 进行中**（把含第三/四轮修复的候选 `d94b6ce39` 走完 独立审查→publish→重启→live 复测）；Goal **未标 complete**（待 T7 收口）。
+
+## 8. 2026-10-30 21:17–22:1x 追加：web 已切换到 gen 344，live 端到端越界写实测通过
+
+### 8.1 运行态事实（直读 runtime manifest，非自述）
+
+| 服务 | live git_head | pid | 启动时刻 |
+|---|---|---|---|
+| web | `4ae2d8f7d91b2489abede4fdc340908e4b5d614a` | 7472 | 2026-10-30T21:18:40 |
+| feishu | `4ae2d8f7d91b2489abede4fdc340908e4b5d614a` | 31975 | 2026-10-30T17:13:04 |
+| learning | `4ae2d8f7d91b2489abede4fdc340908e4b5d614a` | 32366 | 2026-10-30T17:13:04 |
+
+desired generation = **344**（deployment_id `deploy-968d4c69…`）⇒ **三服务 live head 与 desired 代一致**。
+
+### 8.2 web 切换的终态
+
+动作 `svc-2d7f3064333746dd964b7338827581c8`（21:17:39 发起）终态 **succeeded**，21:18:43 `confirmed_ok`。
+⇒ §6 记录的 run-lock 阻塞**已自然解除**（请求方会话 `e827e946` 先退出 run，Phase 1 过；随即 Phase 2 见零前台 run lock），
+**非本会话强行绕过**（源码 fail-closed 门未做任何放宽）。§6 步骤 1–4 的执行结果：步骤 1–3 由真实运行自然达成，步骤 4 的判据已满足。
+
+### 8.3 live 端到端实测（在本会话所处的 **live web 进程**内派受限子代理实跑，非快照推断）
+
+子代理 `subagent_c95c8a057a2c` 的生效 write scope：`verify_path_scope` 实测为 **allow 模式、允许集仅 `tmp-lfl-e2e-a/**`**（非全量）。逐条实测：
+
+| # | 场景 | 实测回执（live 进程内） | 文件存在性核查 |
+|---|---|---|---|
+| 1 | scope 内写入（正对照） | `[状态: success] mkdir -p …/tmp-lfl-e2e-a/sub` + `printf 'inside-ok' > …/tmp-lfl-e2e-a/inside.txt` + `> …/tmp-lfl-e2e-a/sub/deep.txt` **全部放行** | `ls` 证实 `inside.txt`、`sub/deep.txt` **真实存在** |
+| 2 | 工作区内但越界（allow 集外） | `[状态: error] [写侧拒绝] write_target_not_in_allow_list：…/tmp-lfl-e2e-a/../tmp-lfl-e2e-escape.txt → …/tmp-lfl-e2e-escape.txt（not_in_allow_list）` | `ls` ⇒ 目标文件**不存在** |
+| 3 | 工作区外绝对路径 | `[状态: error] [写侧拒绝] write_target_outside_scope：/tmp/lfl_e2e_outside_probe.txt → /private/tmp/lfl_e2e_outside_probe.txt（outside_scope）` | `ls` ⇒ 目标文件**不存在** |
+| 4 | `../` 穿越出工作区 | `[状态: error] [写侧拒绝] write_target_outside_scope：…/tmp-lfl-e2e-a/../../lfl_e2e_up_probe.txt → <工作区上一级目录>/lfl_e2e_up_probe.txt（outside_scope）` | `ls` ⇒ 目标文件**不存在** |
+
+⇒ **结论：live 进程内的 write_scope 闸确实拦截越界写**——三类越界全拦且目标文件均未产生，scope 内合法写未被误杀。
+§5 第 3 项「live 端到端待 web 切代后补做」**在本节闭合**。实测残留物（`tmp-lfl-e2e-a/`）已由子代理清理干净（`grep` 无匹配）。
+
+**同时实测到的一个 fail-closed 代价（非放行缺陷）**：`cd <dir> && … > <相对路径>` 形态因 cwd 位移后写目标不可静态定位，
+一律以 `unverifiable_write_target` 拒绝（连 scope 内合法写也被拒）。与设计 §16.6 残余第 7 条同源（设计既定口径），
+本次实测确认其在 live 生效；作为**可用性**改进项另立，不影响「闸拦截越界写」结论。
+
+### 8.4 仍未闭环（不得据此宣称「闸已有效」）
+
+gen 344（`4ae2d8f7d`）**仍是第三轮独立审查判 REVISE 的候选**（P0=1 / P1=2 / P2=4，见设计 §16.10），
+第三/四轮修复（`f979b9564` / `d94b6ce39`）**尚未上线**。本会话已就候选 `d94b6ce39` 发起 RULE-AI-28 独立审查：
+
+- `review_admission(action=start, kind=full_test)`：workdir=`.worktrees/p1a-gen345`（干净分支 worktree，分支 `ops/p1a-gen345-d94b6ce39`，HEAD=`d94b6ce39`，tree 干净）、command=`bash scripts/ci_gate.sh`（canonical 全量门禁）、child=`subagent_6752febab8cc`、candidate_sha256=`ae1aee7ee98eaa1dae47340807144c6e2d652a47bd1b8acc39ce39662348cb4a`；
+- 结论待回；**PASS 后**才按 T7 执行 publish → 重启 → live 复测（重启仍须避开 run-lock 竞态，见 §6 步骤 2–3）。
+
+**并发写者会话 `cab051cc` 在本工作区仍有未提交改动**（`src/llm_loop/core/command_scope_guard.py`、`tests/test_command_scope_guard.py`、
+`docs/HANDOFF-20261030-write-scope-git-takeover.md`，含 git 读白名单翻转与 `env` 载体注入修复等后续轮次）。
+本会话**未**纳入本次候选、**未**代其提交、**未**触碰其文件；该部分属并发写者工作流，由其自行审查与提交后再单独 publish。
