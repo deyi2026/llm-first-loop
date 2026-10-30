@@ -450,7 +450,7 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 
 | 项 | 结果 |
 |---|---|
-| 新增 4 个测试文件 | 父级独立复跑：**109 passed, 1 skipped** |
+| 新增 4 个测试文件 | 父级独立复跑：**141 passed, 1 skipped（2026-10-30 14:36 于返修 + 抽减收尾后的工作树复测；P0 初版实现为 109 passed / 1 skipped）** |
 | Ruff（14 个改动文件） | 全绿 |
 | 静态诊断棘轮门 | `new=0`，`changed_file_diagnostics=0` |
 | RULE-AI-35 实测 | 越界写入被真实拒绝（`write_scope_violation`），目标文件字节未变；scope 内写入正常 |
@@ -460,3 +460,91 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 
 §9 的 8 条残余逃逸口**在 P0 全部成立**，尤其：模型自声明 ≠ 授权（P0 是护栏 + 取证）；`execute_command` 与 cp / 裸 shell 通道**不经 `FileService`，P0 完全不覆盖**；父会话自身不受约束；未来新增第三条子代理启动路径仍可能漏注入（建议把 scope 注入收敛到单一封装函数）。
 
+---
+
+## 13. RULE-AI-28 独立审查与返修记录
+
+### 13.1 审查结论
+
+首轮独立审查（`review_admission` kind=full_test，冻结产物 SHA `71921c8f…`）判定 **REVISE**：P0=0 / P1=1 / P2=7。P0 无问题；P1 为 `intersect_write_scope` 的 deny ∩ deny 判定错误。
+
+### 13.2 逐条处置
+
+| 审查项 | 判定 | 处置 |
+|---|---|---|
+| P1-1 `deny ∩ deny` 求交判定错误 | **成立** | 已修：deny 模式的 `paths` 统一解释为**排除集**；deny ∩ deny 结果为 `mode=deny`（排除集 = P ∪ C），排除集之外放行。拒绝原因从误导性的 `not_in_allow_list` 改为 `denied_by_deny_list` |
+| P2-1 `{"paths":[],"mode":"deny"}` 全量放行 | **成立** | 已修：`parse_write_scope` 拒绝该组合（返回 None → 走既有参数错误链路） |
+| P2-2 审计无 per-child 归属 | 成立（已知边界） | 不在本轮扩范围；P1 候选 |
+| P2-3 审计无容量上限 | 成立（已知边界） | 不在本轮扩范围；P1 候选 |
+| P2-4 glob 正则回溯 | **过度告警** | 父级实测：`(?:/[^/]+)*` 组内无歧义字符，8/10/12 层 `**` 与多种嵌套 pattern 均在 0.001s 内完成，未触发指数回溯；不修 |
+| P2-5 delta 混入无关文件 | **不成立** | 那些 `.tmp-*` / `data/methods/` 是仓库既有的未跟踪文件，与本任务无关；本任务用精确路径 `git add` 隔离，提交范围为 15 个文件，**不含**它们 |
+| P2-6 pattern 未归一导致误拒 | 成立 | 已修：pattern 归一（去前导 `./`、尾 `/`、统一分隔符） |
+| P2-7 `verify_path_scope` 未区分 allow/deny 语义 | 成立 | 已修：按 mode 标注"允许写入路径"/"排除路径（命中即拒）"，并单列叠加的父链 deny 集 |
+| **父级自查新增**：`{"paths":["./"],"mode":"deny"}` 空转排除集 → 全量放行 | **成立** | 已修：deny 模式下归一后为空的 pattern（`./`、`/`、`.`、`""`、`//`）一律**拒绝解析**；allow 模式下归一为空即空允许集 → 拒绝一切写（只读语义） |
+
+### 13.3 架构棘轮门（R9）处理
+
+本次新增功能使 5 个函数体增长，触发 `tests/unit/test_arch_guards.py` 的"棘轮只降不升"断言。**处置原则：先减重，不抬高登记**（`scripts/regen_function_size_baseline.py` 虽可重登记，但 `test_baseline_ratchet_not_raised` 明确禁止；`exemptions` 通道只适用于 `optional|plugin` 类模块，不适用 core 模块的函数行数）。
+
+减重结果：
+
+| 函数 | 登记 | 峰值 | 终值 | 手法 |
+|---|---|---|---|---|
+| `runner.py::start` | 425 | 458 | **387** | 11 处同构 5 键回执收敛到 `_start_failure_result` |
+| `runner.py::run` | 214 | 251 | **208** | write_scope 求交/拒绝/注入逻辑与 `start` 收敛到共用 helper |
+| `runner.py::_worker` | — (≥120 需登记) | 132 | **113** | token 注入/恢复抽为共用结构 |
+| `factory.py::build_engine` | 2151 | 2153 | **2149** | 新建模块级 `_register_basic_tools(register_basic)`，把 3 条注册（inspect_code / present_files / verify_path_scope）收进 helper |
+| `edit_file.py::run` | 68 | 75 | 见 §13.5 | 说明文本外提到模块级 |
+| `spawn_subagent.py::execute` | 170 | 196 | 见 §13.5 | `write_scope` 子 schema 与 `requires` description 外提到模块级常量 |
+
+**终值全部 ≤ 登记值，红线未抬高**（`build_engine` 与 `runner.py::run` 反而下降）。
+
+### 13.4 父级独立复验（不采信子代理自述）
+
+| 项 | 方法 | 结果 |
+|---|---|---|
+| P1-1 修复 | 父级写探针实测 deny∩deny | public 放行 / secret·private 拒绝，原因 `denied_by_deny_list` ✓ |
+| P2-1 修复 | 父级写探针 | `empty+deny` → None；`empty+allow` → 只读 ✓ |
+| P2-6 归一 | 父级写探针 | `"./src/**"` 与 `"src/**"` 等价 ✓ |
+| 空转排除集 | 父级写探针枚举 5 种 pattern | deny 模式全部拒绝解析；allow 模式全部 fail-closed ✓ |
+| FR-6 glob 边界 | 父级写探针 | `src/**` 命中 `src/a/b.py`；`src*` 不命中 `srcevil/x.py` ✓ |
+| ContextVar 无泄漏 | 父级写探针 | reset 后回到 None ✓ |
+| 只读 scope | 父级写探针 | 写入被拒、字节未变 ✓ |
+| scope 内外混合 | 父级写探针 | 内放行、外拒绝、字节未变 ✓ |
+
+### 13.5 抽减收尾（已完成，父级独立复验）
+
+抽减 agent 的两文件重构已完成，父级在**暂存后**独立复验（棘轮守卫有双口径：未暂存时按 HEAD 读，暂存后按工作树读）：
+
+| 函数 | 登记 | 重构前 | 终值 | 手法 |
+|---|---|---|---|---|
+| `edit_file.py::run` | 68 | 75 | **68** | 新增模块级 `_current_scope_kwargs()`，4 行 C7 注释原文搬入其 docstring；`workspace_scope` 与 `write_scope` 两行合并为 1 行 `**_current_scope_kwargs()` |
+| `spawn_subagent.py::execute` | 170 | 196 | **164** | 新增模块级常量 `_REQUIRES_SHAPE_ERROR` 与 helper `_parse_requirements()` / `_required_write_scope_kwargs()`；两条 DESIGN 注释原文搬入 docstring |
+
+**schema 等价性（父级独立证明，非采信子代理哈希）**：父级用 `git show HEAD:` 取重构前版本单独 import，对比 `parameters` 的 `json.dumps(sort_keys=True)` 哈希：
+
+| 对象 | 结果 |
+|---|---|
+| `spawn.parameters` | OLD `4e081f14dbde7c5debfb` == NEW `4e081f14dbde7c5debfb`，`EQUAL: True` |
+| `edit.parameters` | OLD `45dc87b69d29241b122e` == NEW `45dc87b69d29241b122e`，`EQUAL: True` |
+| `requires.description` 全文 | `EQUAL: True` |
+| `requires.write_scope` 子对象 | `EQUAL: True` |
+| `requires` 键集合 | `EQUAL: True` |
+
+`parameters` 是**类属性**（不计入函数体行数），故 schema 本身零改动——等价性比"搬移后重新拼装"更硬。
+
+**棘轮门终态**：`tests/unit/test_arch_guards.py` **40 passed 全绿**；6 个受影响函数终值全部 ≤ 登记值，`build_engine`（2149 < 2151）与 `runner.py::run`（208 < 214）反而下降，红线未抬高。
+
+### 13.6 已知工具链事实（本次踩到，值得记录）
+
+`tests/unit/test_arch_guards.py` 的棘轮守卫按 **`git show HEAD:`** 读取被测文件：文件已暂存（`M `）时读工作树，**仅工作树改动（` M`）时读 HEAD**。因此任何"减重"修复在 `git add` 之前，守卫仍会按旧 HEAD 判定为失败——这是**双口径**，不是回归。已由抽减 agent 定位并记录为 experience。
+
+
+
+### 13.7 第三轮准入（git_push 门禁）P1 与处置
+
+`review_admission` kind=git_push（候选 SHA `077801fb…`）判定 **REVISE**：P0=0 / **P1=1** / P2=3。
+
+- **P1（文档快照相对已提交测试过期）**：被审文档快照止于 §12.5——§12.4 仍写「父级独立复跑：109 passed, 1 skipped」，且整节 §13（本次独立审查与返修记录）不在快照内；而同一快照内已提交的测试文件已含返修补测。
+- **处置**：① §12.4 的复跑数字更新为 **141 passed, 1 skipped**（2026-10-30 14:36 于返修 + 抽减收尾后的工作树复测；4 个测试文件 = `tests/test_write_scope_contract.py` + `tests/test_write_scope_enforcement.py` + `tests/test_write_scope_spawn.py` + `tests/test_verify_path_scope_tool.py`）；② §13 整节随本次提交入库，使「文档记录的返修」与「已提交的返修代码 / 测试」落在同一快照。
+- **P2（非阻断，本轮未修）**：已核实原文的 P2-3 为 glob 引擎把字符类编译成 `[^x]` 形式，可跨 `/` 命中（如 pattern `a[!x]c` 匹配路径 `a/c`），与模块 docstring「字符类不支持跨段」有出入；影响限于已在 realpath 检查过的 workspace root 内的过宽匹配，安全相关边界仍 fail-closed。其余 P2 条目未逐条转录，不在此臆述。

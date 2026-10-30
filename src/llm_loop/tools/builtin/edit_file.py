@@ -96,6 +96,25 @@ class _ToolJournalFileEffectSink:
         )
 
 
+def _current_scope_kwargs() -> dict:
+    """C7（DESIGN-20261030 §5.3）: 从 run_context 读当前执行域的 write scope
+    （C4 在子代理 runner 内注入；默认 None = 全量 = 现状行为，FR-3）。
+    函数内 import 沿用本仓 run_context ContextVar 消费的既有风格
+    （spawn_subagent.py 的 current_tool_discovery_scope 同模式）。
+    workspace_scope（工作区解析基准）与 write_scope 一并由本 helper 提供。
+
+    放在模块级 helper 而非 run 内联：run 的函数体行数受 R9 棘轮"只降不升"
+    约束（tests/guards/function_size_baseline.json，登记 68），write_scope
+    接线说明不得抬高该红线。
+    """
+    from llm_loop.core.run_context import current_write_scope
+
+    return {
+        "workspace_scope": workspace_base(),
+        "write_scope": current_write_scope.get(),
+    }
+
+
 class EditFileTool:
     name = "edit_file"
     description = (
@@ -247,12 +266,6 @@ class EditFileTool:
             )
 
         try:
-            # C7（DESIGN-20261030 §5.3）: 从 run_context 读当前执行域的 write scope
-            # （C4 在子代理 runner 内注入；默认 None = 全量 = 现状行为，FR-3）。
-            # 函数内 import 沿用本仓 run_context ContextVar 消费的既有风格
-            # （spawn_subagent.py 的 current_tool_discovery_scope 同模式）。
-            from llm_loop.core.run_context import current_write_scope
-
             result = self._file_service.edit(
                 path=path,
                 old_string=old,
@@ -260,9 +273,8 @@ class EditFileTool:
                 replace_all=replace_all,
                 dry_run=dry_run,
                 effect_sink=sink,
-                workspace_scope=workspace_base(),
                 expected_snapshot_ref=expected_snapshot_ref,
-                write_scope=current_write_scope.get(),
+                **_current_scope_kwargs(),
             )
         except FileServiceError as exc:
             return self._map_service_error(exc, path_str)

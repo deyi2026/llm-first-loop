@@ -7,6 +7,8 @@ LLM 自主拆解复杂任务 → 启动非阻塞子代理（独立会话隔离 +
 
 from __future__ import annotations
 
+from typing import Any
+
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.subagent.runner import child_spawn_grant_allowed
 
@@ -30,6 +32,65 @@ def _canary_zero_tool_parent() -> bool:
         )
     except Exception:  # noqa: BLE001 — 预算面不可用时按普通调用处理（走拒绝路径）
         return False
+
+
+# requires 形状错误文案（_parse_requirements 拒绝路径用；文本保持逐字节不变）。
+_REQUIRES_SHAPE_ERROR = (
+    "[参数错误] requires 需为对象 {tools?: [工具名], network?: bool, "
+    "fs?: bool, fs_isolation?: bool, session_continuity?: bool, "
+    "write_scope?: {paths: [pattern], mode?: 'allow'|'deny'}}"
+)
+
+
+def _parse_requirements(
+    requires_raw: Any, tool_name: str
+) -> tuple[Any, bool, ToolResult | None]:
+    """解析 requires 声明并执行 write_scope fail-closed 守卫（execute 原内联逻辑原样搬迁）.
+
+    DESIGN-20261030 §5.3 C2/§5.10 NFR-4: write_scope 声明必须被解析面真实
+    承载——SurfaceRequirements.from_kwargs 不识别该键（依赖未就绪/跨版本
+    旧端）时确定性拒绝，绝不静默忽略写侧授权声明（fail-closed）。
+    形状错误（非 None 输入解析为 None）同样在此确定性拒绝，回执与历史逐字节一致。
+
+    放在模块级 helper 而非 execute 内联：execute 的函数体行数受 R9 棘轮
+    "只降不升"约束（tests/guards/function_size_baseline.json，登记 170），
+    write_scope 解析/守卫的说明文本不得抬高该红线。
+    """
+    from llm_loop.core.execution_surface import SurfaceRequirements
+
+    reqs = SurfaceRequirements.from_kwargs(requires_raw)
+    if requires_raw is not None and reqs is None:
+        return reqs, False, ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=_REQUIRES_SHAPE_ERROR,
+            tool_call_id="",
+            tool_name=tool_name,
+        )
+    declared = (
+        reqs is not None
+        and isinstance(requires_raw, dict)
+        and "write_scope" in requires_raw
+    )
+    if declared and not hasattr(reqs, "write_scope"):
+        return reqs, declared, ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                "[参数错误] requires.write_scope 声明未被当前解析面识别"
+                "（执行面不支持该字段）；为不静默忽略写侧授权声明，child 未启动。"
+            ),
+            tool_call_id="",
+            tool_name=tool_name,
+        )
+    return reqs, declared, None
+
+
+def _required_write_scope_kwargs(reqs: Any, declared: bool) -> dict:
+    """DESIGN-20261030 §5.3 C2: 仅在声明 write_scope 时携带该参数——
+    既有调用的 kwargs 面与 runner 行为零变化。
+
+    放在模块级 helper 而非 execute 内联：同 _parse_requirements 的 R9 棘轮约束。
+    """
+    return {"required_write_scope": reqs.write_scope} if declared else {}
 
 
 class SpawnSubAgentTool:
@@ -204,7 +265,6 @@ class SpawnSubAgentTool:
         # EVO-20260914-1eb26afa: 显式能力需求声明 → child 启动前矩阵比对早失败。
         # 不声明则不比对（零回归）；拒绝只针对"必然失败"的显式缺口。
         from llm_loop.core.execution_surface import (
-            SurfaceRequirements,
             alternatives_hint,
             codearts_capability,
             local_subagent_capability,
@@ -212,36 +272,11 @@ class SpawnSubAgentTool:
         )
 
         requires_raw = kwargs.get("requires")
-        reqs = SurfaceRequirements.from_kwargs(requires_raw)
-        if requires_raw is not None and reqs is None:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=(
-                    "[参数错误] requires 需为对象 {tools?: [工具名], network?: bool, "
-                    "fs?: bool, fs_isolation?: bool, session_continuity?: bool, "
-                    "write_scope?: {paths: [pattern], mode?: 'allow'|'deny'}}"
-                ),
-                tool_call_id="",
-                tool_name=self.name,
-            )
-        # DESIGN-20261030 §5.3 C2/§5.10 NFR-4: write_scope 声明必须被解析面真实
-        # 承载——SurfaceRequirements.from_kwargs 不识别该键（依赖未就绪/跨版本
-        # 旧端）时确定性拒绝，绝不静默忽略写侧授权声明（fail-closed）。
-        write_scope_declared = (
-            reqs is not None
-            and isinstance(requires_raw, dict)
-            and "write_scope" in requires_raw
+        reqs, write_scope_declared, requires_reject = _parse_requirements(
+            requires_raw, self.name
         )
-        if write_scope_declared and not hasattr(reqs, "write_scope"):
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=(
-                    "[参数错误] requires.write_scope 声明未被当前解析面识别"
-                    "（执行面不支持该字段）；为不静默忽略写侧授权声明，child 未启动。"
-                ),
-                tool_call_id="",
-                tool_name=self.name,
-            )
+        if requires_reject is not None:
+            return requires_reject
         # EVO-20261025-9ba80656: requires.tools=[]（或全空白项）历史上被静默当作
         # "零工具强制白名单"传给 runner——child 启动后才发现任何工具都调不了，
         # 浪费整轮子会话 token 才暴露。现改为 spawn 时确定性拒绝并给出正确写法；
@@ -321,13 +356,7 @@ class SpawnSubAgentTool:
                     else None
                 ),
                 fs_isolation=bool(reqs.fs_isolation) if reqs is not None else False,
-                # DESIGN-20261030 §5.3 C2: 仅在声明 write_scope 时携带该参数——
-                # 既有调用的 kwargs 面与 runner 行为零变化。
-                **(
-                    {"required_write_scope": reqs.write_scope}
-                    if write_scope_declared
-                    else {}
-                ),
+                **_required_write_scope_kwargs(reqs, write_scope_declared),
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(
