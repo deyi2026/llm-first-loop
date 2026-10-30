@@ -30,7 +30,7 @@ from llm_loop.core.run_context import (
     current_write_scope,
     workspace_base,
 )
-from llm_loop.core.write_scope import WriteScope, write_scope_audit_record_unverified
+from llm_loop.core.write_scope import write_scope_audit_record_unverified
 
 # P2-8（Rule28 修复轮）: held-out 读侧封条——命令串字面片段拒绝。
 # sealed_paths 为独立叶子模块（仅 stdlib + 惰性 run_context），无循环导入风险；
@@ -1111,7 +1111,6 @@ class ExecuteCommandTool:
         self,
         command: str,
         exec_argv: list[str] | None,
-        scope: WriteScope,
         workdir: str | None,
         isolation: bool,
     ) -> ToolResult | None:
@@ -1121,6 +1120,9 @@ class ExecuteCommandTool:
         承担：写盘命令族的写目标必须静态可定位且落在 write scope 内，否则拒绝。
         未受限会话（scope 未声明）恒放行——父会话行为零变化。
         """
+        scope = current_write_scope.get()
+        if scope is None or not getattr(scope, "declared", False):
+            return None
         if isolation:
             return self._write_scope_reject(
                 "isolation_not_allowed_under_write_scope",
@@ -1189,14 +1191,9 @@ class ExecuteCommandTool:
         command = spec.command
         # ── P1-a（DESIGN-20261030 §16）: 受限写域的命令通道写侧闸 ──
         # 判定对象是转换后的最终命令串；位置在任何执行之前（含隔离租约准备）。
-        # 未声明 scope 时整段跳过——父会话行为零变化。
-        _scope = current_write_scope.get()
-        if _scope is not None and getattr(_scope, "declared", False):
-            _gate = self._write_scope_command_gate(
-                command, exec_argv, _scope, workdir, isolation
-            )
-            if _gate is not None:
-                return _gate
+        _gate = self._write_scope_command_gate(command, exec_argv, workdir, isolation)
+        if _gate is not None:
+            return _gate
         # RULE-AI-28: caller-visible obligation is in the schema before invocation;
         # the returned annotation reports observations, not automatic admission.
         gate_line = self._review_gate_line(command)
