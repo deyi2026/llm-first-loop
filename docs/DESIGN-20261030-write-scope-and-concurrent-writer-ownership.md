@@ -642,15 +642,17 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 |---|---|---|---|---|
 | 1 | `review_admission` kind=full_test（`bash scripts/ci_gate.sh`） | `7ba48414…`（child `subagent_b728459b392d`） | **PASS**（P0=0 / P1=0 / P2=3） | P2-1（§14 悬空引用）→ 本节补齐；P2-2（`.tmp-*` 含本机路径）→ 不提交、不删除、如实登记；P2-3（接线检查为源码子串）→ 已改为 AST 调用判定 |
 | 2 | `review_admission` kind=full_test（同一命令；冻结时树含并发写者会话的在途 WIP） | `d70c3e7c…`（child `subagent_0803f1f32f84`） | **REVISE**（P0=0 / **P1=1** / P2=4） | P1-1 = 文档与树状态矛盾（本节 §14.6 原写「P1-b 未实现」，而树中已有并发写者会话的 P1-b 实现）→ **已由并发写者会话在 `90fad9ab6` 更正为 §14.6 / §15 口径**，本节同步补齐；P2-1（`registry.names()` 异常时 fail-open）与 P2-2/P2-3 属该 P1-b 实现，**本会话不作代码处置**，转交该会话 |
-| 3 | `review_admission` kind=full_test（**隔离 worktree**，排除并发写者会话在途 WIP） | 见下 | 见下 | canonical 全量门禁在干净树上执行 |
-| 4 | `review_admission` kind=git_push（推送前最终树） | 见下 | 见下 | 推送内容与被审内容一致 |
+| 3 | `review_admission` kind=full_test（**隔离 worktree** `data/.wt-final` @ `0bad4004e`，排除并发写者会话在途 WIP） | `74a32513…`（child `subagent_2774b6c043a2`） | **PASS**（P0=0 / P1=0 / P2=5） | canonical 全量门禁在**干净树**上执行，结论 PASS。5 条 P2 全为 advisory，且**均属并发写者会话的 P1-b / EVO 采集上限变更**（同步 `run()` 后工具面复位断言缺失、`registry.names()` 异常时 fail-open、门禁变更与特性同批入库、同步路径工具面继承语义收紧、若干细节）——**本会话不作代码处置**，如实转交 |
+| 4 | `review_admission` kind=git_push（推送前最终树） | 见下方说明 | 见下方说明 | 被审 delta = 远端 tip..推送目标提交，**与实际推送内容一致** |
+
+**第 4 轮说明**：git_push 门禁与推送动作发生在本节最后一次编辑**之后**，其候选、回执与推送结果记录在**推送所在提交的提交信息**与本 Goal 交付回复中；本文档不追改自身推送后的状态（否则需要再次入库与再次门禁）。
 
 **父级独立实测（全量回归）**
 
 | 树 | 时间 | 结果 |
 |---|---|---|
 | `566e5b09f`（修既有守卫之前） | 2026-10-30 15:18–15:33 | **1 failed, 12254 passed, 155 skipped, 23 deselected（834.89s）**（口径 `-m "not real_llm and not serial_signal"`）→ 定位为 §13.8 的既有守卫回归 |
-| 修后最终树 | 见第 3 轮门禁结论 | canonical 门禁由第 3 轮准入执行；父级**未直接读取门禁输出原文**，故**不引用未亲自读到的用例计数**，只引用准入回执结论 |
+| 修后最终树（隔离 worktree @ `0bad4004e`） | 见第 3 轮 | canonical 门禁（`bash scripts/ci_gate.sh`）在**干净树**上执行，准入结论 **PASS（P0=0 / P1=0）**；父级**未直接读取门禁输出原文**，故**不引用未亲自读到的用例计数**，只引用准入回执结论 |
 
 **结论**：本 Goal 的 P0 目标（写侧 scope 判定 + 子代理传递链 + 只读观测工具 + T1–T8 / T12 / T15 / T16 测试 + RULE-AI-35 实测 + 独立审查）达成；残余逃逸口与未做项见 §14.4 / §14.6。
 
