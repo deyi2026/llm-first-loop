@@ -516,3 +516,76 @@ class TestP1aToolSurface:
             names = _scope_names(tool_scope)
             assert "execute_command" in names
             assert "read_file" in names and "wait" in names
+
+
+# ── P2-3（第二轮独立审查）: runner → 闸 的接线集成测试 ─────────────────────
+
+
+class TestRunnerToGateIntegration:
+    """受限 child **实际执行命令**时，写侧闸必须生效（不只是闸单测会拦）.
+
+    此前只有「手工设置 ContextVar」的强制层用例——它证明了闸会拦，但没证明
+    runner 给 child 设的 scope 与闸读的是同一个 ContextVar。这条用例把两段
+    接起来：runner.run(required_write_scope=…) → child 调 execute_command →
+    越权删命令被程序级拒绝且**没有真的执行**。
+    """
+
+    def test_child_command_outside_scope_is_rejected_and_not_executed(self, tmp_path, ws_tokens):
+        from llm_loop.core.run_context import current_session_id, current_workspace_root
+        from llm_loop.core.session import SessionStore
+        from llm_loop.event_log.store import EventStore
+        from llm_loop.llm.client import LLMResponse
+        from llm_loop.subagent.runner import SubAgentRunner
+        from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+        from llm_loop.tools.registry import ToolRegistry
+
+        victim = tmp_path / "victim.txt"
+        victim.write_text("x", encoding="utf-8")
+        seen: list[str] = []
+
+        class _CmdLLM:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def chat(self, messages, tools, **kwargs):  # noqa: ANN001, ANN201, ARG002
+                self.calls += 1
+                seen.append(str(messages))
+                if self.calls == 1:
+                    from llm_loop.llm.client import ToolCall
+
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                id="child-rm-outside",
+                                name="execute_command",
+                                arguments={"command": f"rm {victim}"},
+                            )
+                        ],
+                        provider="fake",
+                    )
+                return LLMResponse(content="DONE", tool_calls=[], provider="fake")
+
+        events = EventStore(tmp_path / "child-events", enabled=True)
+        sessions = SessionStore(tmp_path / "child-sessions", event_store=events)
+        registry = ToolRegistry()
+        registry.register(ExecuteCommandTool())
+        runner = SubAgentRunner(llm=_CmdLLM(), registry=registry, session_store=sessions)  # type: ignore[arg-type]
+        sid_token = current_session_id.set("parent-scope-owner")
+        ws_token = current_workspace_root.set(str(tmp_path.resolve()))
+        try:
+            result = runner.run(
+                task="删掉 victim",
+                depth=0,
+                required_write_scope=WriteScope(
+                    paths=("src/**",), mode="allow", declared=True
+                ),
+            )
+        finally:
+            current_workspace_root.reset(ws_token)
+            current_session_id.reset(sid_token)
+        assert result.outcome == "completed", result.final_answer
+        assert victim.exists(), "受限 child 的越权删命令不得真的执行"
+        assert any(
+            "[写侧拒绝]" in blob or "write_scope_violation" in blob for blob in seen
+        ), "runner 设的 write scope 没有传到命令闸（接线断了）"

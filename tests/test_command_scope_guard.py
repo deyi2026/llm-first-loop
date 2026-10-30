@@ -93,6 +93,24 @@ BLOCKED_CASES = [
     ("pip install x", "implicit_write_target"),
     ("curl -o /outside/x http://h/x", "write_target_outside_scope"),
     ("wget -O /outside/x http://h/x", "write_target_outside_scope"),
+    # ── 第二轮独立审查（child subagent_59014ca6ae4f）新指出的绕过向量 ──────
+    ("$X", "command_identity_not_literal"),
+    ("r{m,} /outside/x", "command_identity_not_literal"),
+    ("timeout 10 rm /outside/x", "write_target_outside_scope"),
+    ("su -c 'rm /outside/x'", "write_target_outside_scope"),
+    ("env -S 'rm /outside/x'", "write_target_outside_scope"),
+    ("watch -x rm /outside/x", "write_target_outside_scope"),
+    ("find . -exec true {} \\; -delete", "implicit_write_target"),
+    (". x.sh", "implicit_write_target"),
+    ("source x.sh", "implicit_write_target"),
+    ("bash < x.sh", "implicit_write_target"),
+    ("rsync --target-directory=/outside src/a.py", "write_target_outside_scope"),
+    ("gzip -d /outside/f.gz", "write_target_outside_scope"),
+    ("wget http://h/x", "implicit_write_target"),
+    ("patch", "implicit_write_target"),
+    ("git -c user.name=x commit -m y", "implicit_write_target"),
+    ("git archive --output=/outside/x.tar HEAD", "write_target_outside_scope"),
+    ("git config --file=/outside/c user.name x", "implicit_write_target"),
 ]
 
 
@@ -325,4 +343,21 @@ def test_rejected_command_does_not_record_unverified_audit() -> None:
     assert result.error_type == "write_scope_violation"
     snapshot = write_scope_audit_snapshot()
     assert snapshot["scope_unverified_count"] == 0, snapshot
+    write_scope_audit_reset()
+
+
+def test_audit_is_capped_and_dropped_entries_are_counted() -> None:
+    """P2-4：进程内审计有上限，超限条目**计数丢弃**（不静默、不无界增长）。"""
+    from llm_loop.core.write_scope import (
+        _AUDIT_MAX_ENTRIES,
+        write_scope_audit_record_unverified,
+    )
+
+    write_scope_audit_reset()
+    overflow = 10
+    for index in range(_AUDIT_MAX_ENTRIES + overflow):
+        write_scope_audit_record_unverified(f"/outside/{index}", "scope_unverified")
+    snapshot = write_scope_audit_snapshot()
+    assert snapshot["scope_unverified_count"] == _AUDIT_MAX_ENTRIES, snapshot
+    assert snapshot["audit_dropped_count"] == overflow, snapshot
     write_scope_audit_reset()

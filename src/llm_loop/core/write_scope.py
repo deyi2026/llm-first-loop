@@ -451,18 +451,32 @@ _audit_lock = threading.Lock()
 _written_paths: list[str] = []
 _violations: list[dict[str, str]] = []
 _unverified_paths: list[dict[str, str]] = []
+_audit_dropped = 0
+
+# 进程内审计的条目上限：审计是**观测**用途，不是日志；无上限会让长会话的审计
+# 列表无限增长（独立审查 P2-4）。超限条目计数丢弃，不静默。
+_AUDIT_MAX_ENTRIES = 500
+
+
+def _append_capped(bucket: list, item) -> None:
+    """按上限追加审计条目；超限则计数丢弃（调用方须持锁）。"""
+    global _audit_dropped
+    if len(bucket) >= _AUDIT_MAX_ENTRIES:
+        _audit_dropped += 1
+        return
+    bucket.append(item)
 
 
 def write_scope_audit_record_write(path: str) -> None:
     """记录一次「scope 内合法写」的路径（供父会话观测实际写集合，FR-11）."""
     with _audit_lock:
-        _written_paths.append(str(path))
+        _append_capped(_written_paths, str(path))
 
 
 def write_scope_audit_record_violation(path: str, reason: str) -> None:
     """记录一次越界写尝试（path + scope_allows 的 reason）."""
     with _audit_lock:
-        _violations.append({"path": str(path), "reason": str(reason)})
+        _append_capped(_violations, {"path": str(path), "reason": str(reason)})
 
 
 def write_scope_audit_record_unverified(path: str, reason: str) -> None:
@@ -473,7 +487,7 @@ def write_scope_audit_record_unverified(path: str, reason: str) -> None:
     路径）。两者都进审计，但语义相反——观测面必须能区分「被拒」与「未验证」。
     """
     with _audit_lock:
-        _unverified_paths.append({"path": str(path), "reason": str(reason)})
+        _append_capped(_unverified_paths, {"path": str(path), "reason": str(reason)})
 
 
 def write_scope_audit_snapshot() -> dict[str, Any]:
@@ -487,12 +501,15 @@ def write_scope_audit_snapshot() -> dict[str, Any]:
             "violation_count": len(_violations),
             "scope_unverified": [dict(v) for v in _unverified_paths],
             "scope_unverified_count": len(_unverified_paths),
+            "audit_dropped_count": _audit_dropped,
         }
 
 
 def write_scope_audit_reset() -> None:
     """清空进程内审计（测试隔离 / runner 每_child 重置用；签名清单外的辅助 API）."""
+    global _audit_dropped
     with _audit_lock:
         _written_paths.clear()
         _violations.clear()
         _unverified_paths.clear()
+        _audit_dropped = 0

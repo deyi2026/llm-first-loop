@@ -791,9 +791,9 @@ scope 校验 + `scope_unverified` 审计）正是 C8 P0 描述的那三件事。
 
 | 项 | 结果 |
 |---|---|
-| 新增用例 | `tests/test_command_scope_guard.py`（36 例：判定层 17 组参数化 + 强制层 4 + 审计层 1 + 残余显式化 3 等） |
+| 新增用例 | `tests/test_command_scope_guard.py`（**91 例**：判定层 57 组参数化「应拦输入」+ 12 组放行 + 强制层 + 审计层 + 残余显式化 + 门禁自证伪） |
 | 改写用例 | `tests/test_write_scope_spawn.py::TestP1bToolSurface` → `TestP1aToolSurface`（T17–T23 断言由「剔除」改为「不收窄」；T18 改为「受限与不受限 child 观测到同一工具面」；T23 改为「全量面保持全量」） |
-| 聚焦复跑 | `pytest tests/test_write_scope_spawn.py tests/test_command_scope_guard.py` → **65 passed** |
+| 聚焦复跑 | `pytest tests/test_write_scope_spawn.py tests/test_command_scope_guard.py` → **121 passed** |
 | 扩大复跑 | `pytest tests -k "write_scope or execute_command or command_scope or tool_surface"` → **234 passed / 2 skipped** |
 | 静态诊断 | `ruff check`（7 个改动文件）→ 干净 |
 | 门禁自证伪 | 把闸打成空实现后重跑强制层用例 → 目标文件**确实被删**（证明用例测的是拦截，不是空转） |
@@ -820,8 +820,9 @@ scope 校验 + `scope_unverified` 审计）正是 C8 P0 描述的那三件事。
 
 - §15 的判定函数 `_restrict_tool_surface_for_write_scope` 更名为
   `_apply_write_scope_tool_surface_policy`，**不再剔除任何工具**（返回空剔除元组），回执新增
-  `write_scope_command_guard="p1a_write_family"`（旧字段 `write_scope_tool_restriction` 保留兼容，
-  但不再出现）。
+  `write_scope_command_guard="p1a_write_family"`（**仅受限 child 才有**——未受限 child 不再声称
+  闸生效）。旧字段 `write_scope_tool_restriction` **已永久移除**（不是"保留兼容"）：P1-a 下
+  从不产出，消费者不得依赖它（独立审查 P2-2：声称兼容却从不出现＝消费方静默失效）。
 - §15.6 第 5 条「防御分支 fail-open（`registry.names()` 抛错）」随 P1-b 一并消失——P1-a 不再需要
   物化 registry 名单。
 - §14.6 第 1/2 条的历史陈述保留原样（决策史），**现行口径以本节为准**。
@@ -861,3 +862,50 @@ P2-3（审计卫生）改为：`scope_unverified` 条目自带**原因字段**�
 
 **教训（与 §15.6 同源）**：首版闸与首版门禁的漏洞形态一致——**「看起来在工作」的宽松解析**。
 判定层同样需要「应拦输入」实测；本轮的 40 组参数化应拦用例即是这张网。
+
+### 16.9 第二轮独立审查（2026-10-30 17:0x）：重写后的闸仍有 7 类绕过 → 已再修
+
+§16.8 的重写版（提交 `dac54b30b`）经 RULE-AI-28 独立审查（`review_admission(kind=full_test)`，
+child `subagent_59014ca6ae4f`，候选 SHA256 `59c335c7…`）判 **REVISE：P0=1 / P1=3 / P2=4**。
+P0 判语：「先前的 P0 类修复未完成，且文档所述的残留列表**低估**了剩余的绕过方式」。
+
+**P0（7 个新绕过向量，本会话逐条自行复现）**：
+
+| # | 向量 | 修法 |
+|---|---|---|
+| 1 | `$X` / `${X}` 在命令位 | **命令身份必须字面**：命令名含 `$`/`` ` ``/`*`/`?`/`{`/`}`/`[`/`]` ⇒ 拒（`command_identity_not_literal`） |
+| 2 | `timeout 10 rm /outside/x`（时长被当成命令） | 载体位置参数：`timeout` 跳过头一个位置参数（时长） |
+| 3 | `su -c 'rm /outside/x'` | `su` 从通用载体移出，改走专属分支：`-c` 载荷**重解析**；无 `-c`（登录 shell）⇒ 拒 |
+| 4 | `env -S 'rm /outside/x'` | `env` 的 `-S/--split-string` 值按**命令串**重解析 |
+| 5 | `watch -x rm /outside/x` | `watch` 的 `-x/--exec` 是**布尔**开关（不是取值型选项）——原先被当成取值型，把命令名吃掉了 |
+| 6 | `find . -exec true {} \; -delete` | 转义分号 `\;` 是 find 的**参数终止符**，不是命令分隔符：词法层先把 `\;` 换成哨兵，`-exec` 子命令到哨兵为止，**哨兵之后的谓词继续检查** |
+| 7 | `. x.sh` / `source x.sh` / `bash < x.sh` | 脚本载入（`.`/`source`）与从 stdin 读脚本的解释器 ⇒ 写目标不可知 ⇒ 拒 |
+
+外加 `{a,b}` 花括号展开在命令位 → 由第 1 条的命令身份字面量规则一并拦下。
+
+**P1**：
+- **P1-1** `rsync -t` 是 `--times`（布尔），不是 `--target-directory` → 只有 `cp`/`mv`/`install`
+  的 `-t` 才是目标目录；`rsync` 只认 `--target-directory`。
+- **P1-2** 失效打开模型补全：`gzip -d`（就地解压**改写输入文件**，原先当成不写）、`wget` 无输出选项
+  （按 URL 派生文件名写当前目录 ⇒ 隐式写目标）、`patch` 无目标文件（从 stdin 读补丁改写文件 ⇒ 隐式）。
+- **P1-3** git 缺口：`-c`（`git -c k=v commit`）补进取值型全局选项；`config`/`bisect` 补进写子命令；
+  `archive`/`diff`/`show` 的 `-o/--output` 按写目标校验。
+
+**P2**：
+- **P2-1** 文档漂移（§16.5 用例数与 §16.8 对不上；HANDOFF 说"8 个文件"实为 9 个）→ 已就地更正。
+- **P2-2** 回执模式漂移：`write_scope_tool_restriction` 文档写"保留兼容"但**从不出现** → 改为
+  **已永久移除**，消费者不得依赖（§16.7）。
+- **P2-3** 缺集成测试：此前只有"手工设 ContextVar"的强制层用例 → 新增
+  `TestRunnerToGateIntegration`：`runner.run(required_write_scope=…)` → child 真调
+  `execute_command` → 越权删命令被程序级拒绝且**文件没被删**（接线级证明）。
+- **P2-4** 进程内审计无上限 → 审计三条列表统一封顶 500 条，超限**计数丢弃**
+  （快照新增 `audit_dropped_count`），不静默。
+
+**全量复跑暴露的另一条**：函数行数 ratchet（`arch_guards`）——`execute` 因新增闸调用涨到
+120 行（阈值 120 且未登记）⇒ 全量 1 failed。修法是**抽薄 `execute`**（scope 取值折进闸函数），
+**不是重登记基线**（重登记＝削弱护栏）。
+
+**教训（第三层，同源）**：§16.8 已经把口径翻成"不可静态判定就拒"，但**列举式**的"构造清单"本身
+仍然是有限枚举——`timeout` 的时长、`watch -x` 的布尔性、find 的转义分号，都不在清单里。
+**清单式防御必然漏项**；可复用的原则是：**命令身份必须是字面量**，**载荷必须重解析**，
+**选项语义必须按命令分别建模**（不能用跨命令通用的"取值型选项"表）。

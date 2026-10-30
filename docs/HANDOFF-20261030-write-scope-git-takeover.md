@@ -93,13 +93,13 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 
 | 文件 | 改动 |
 |---|---|
-| `src/llm_loop/core/command_scope_guard.py` | **新增**：判定层（shell 词法切分 → 写盘命令族识别 → 写目标 scope 校验；fail-closed 原因码）。**首版经独立审查 REVISE 后重写**：不可静态判定的 shell 构造一律 fail-closed 拒绝（见 §10.5） |
-| `src/llm_loop/core/write_scope.py` | 新增 `write_scope_audit_record_unverified()` + 快照字段 `scope_unverified` / `scope_unverified_count` |
+| `src/llm_loop/core/command_scope_guard.py` | **新增**：判定层（shell 词法切分 → 写盘命令族识别 → 写目标 scope 校验；fail-closed 原因码）。**首版经独立审查 REVISE 后重写**（见 §10.5）；**第二轮审查后再修 7 类新绕过**（见 §10.6） |
+| `src/llm_loop/core/write_scope.py` | 新增 `write_scope_audit_record_unverified()` + 快照字段 `scope_unverified` / `scope_unverified_count` / `audit_dropped_count`（审计三条列表统一封顶 500 条，超限**计数丢弃**） |
 | `src/llm_loop/tools/builtin/execute_command.py` | 新增 `_write_scope_command_gate()` + 接线（`execute()` 内、任何执行之前）；受限写域下拒绝 worktree 隔离 |
 | `src/llm_loop/tools/builtin/verify_path_scope.py` | 观测面新增「未验证路径(scope_unverified)」段 |
 | `src/llm_loop/subagent/runner.py` | 判定函数更名 `_apply_write_scope_tool_surface_policy`，**不再剔除任何工具**；回执新增 `write_scope_command_guard="p1a_write_family"`（**仅受限 child 才有**——未受限 child 不再声称闸生效） |
-| `tests/test_command_scope_guard.py` | **新增** 74 例（判定层 40 组参数化「应拦输入」+ 12 组放行 + 强制层 + 审计层 + 残余显式化 + 门禁自证伪） |
-| `tests/test_write_scope_spawn.py` | `TestP1bToolSurface` → `TestP1aToolSurface`；T17–T23 断言由「剔除」改为「不收窄」 |
+| `tests/test_command_scope_guard.py` | **新增** 91 例（判定层 57 组参数化「应拦输入」+ 12 组放行 + 强制层 + 审计层 + 残余显式化 + 门禁自证伪 + 审计封顶） |
+| `tests/test_write_scope_spawn.py` | `TestP1bToolSurface` → `TestP1aToolSurface`；T17–T23 断言由「剔除」改为「不收窄」；新增 `TestRunnerToGateIntegration`（**接线级**：child 真调 `execute_command` → 越权命令被程序级拒绝且文件没被删） |
 | `docs/DESIGN-20261030-…md` | 新增 §16；§14.6 第 1/2 条与 §15 标题加**口径已作废**就地标注 |
 
 ### 10.3 残余逃逸口（P1-a 相对 P1-b 放宽，**未闭环**）
@@ -117,7 +117,9 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 ### 10.4 与并发写者会话的关系
 
 本轮工作树里仍有另一活跃会话（`cbda67c5-…`）的在途 WIP（`review_host_admission.py` 与其测试、
-`docs/EVO-20261030-109d7068-…md`）。本会话**只提交自己那 8 个文件**，不纳入、不删除他人过程物。
+`docs/EVO-20261030-109d7068-…md`）。本会话**只提交自己那 9 个文件**（判定层 5 个源文件
++ 2 个测试 + 2 份文档；不含 `review_host_admission.py` 及其测试——那是并发会话的 WIP），
+不纳入、不删除他人过程物。
 
 ### 10.5 独立审查 REVISE 轮（2026-10-30 16:4x）：首版闸被 shell 语法整体绕过 → 已重写
 
@@ -136,3 +138,32 @@ P2-3 审计卫生（`scope_unverified` 条目自带原因字段；被拒命令�
 
 **证据**：40 组参数化「应拦输入」用例（逐条钉住审查指出的绕过类）；门禁自证伪——
 把闸打成空实现后 40/40 应拦用例仍放行 ⇒ 用例确实在测拦截而非空转。
+
+### 10.6 第二轮独立审查（2026-10-30 17:0x）：重写后仍有 7 类绕过 → 已再修
+
+§10.5 的重写版（提交 `dac54b30b`）经 RULE-AI-28 独立审查（child `subagent_59014ca6ae4f`，
+候选 SHA256 `59c335c7…`）判 **REVISE：P0=1 / P1=3 / P2=4**：判语是「先前的 P0 类修复未完成，
+且文档所述的残留列表**低估**了剩余的绕过方式」。本会话逐条自行复现，**不是审查误报**。
+
+**新拦下的 7 类（P0）**：命令位变量/花括号展开（`$X`、`r{m,}`）· `timeout 10 rm …`（时长被当命令）·
+`su -c '…'` · `env -S '…'` · `watch -x rm …`（`-x` 是布尔开关不是取值型选项）·
+`find . -exec true {} \; -delete`（转义分号被误当命令分隔符）· `. x.sh` / `source x.sh` /
+`bash < x.sh`（脚本载入与 stdin 脚本）。
+
+**P1**：`rsync -t` 是 `--times` 不是目标目录 · `gzip -d`（就地解压改写输入文件）·
+`wget` 无输出选项 / `patch` 无目标文件 · git 的 `-c` 选项与 `config`/`bisect` 子命令、
+`archive`/`diff` 的 `--output`。
+
+**P2**：文档漂移（已更正）· `write_scope_tool_restriction` 字段「声称兼容却从不出现」⇒ 改为
+**已永久移除** · 缺集成测试 ⇒ 新增 `TestRunnerToGateIntegration`（接线级）· 进程内审计无上限
+⇒ 三条列表封顶 500 条 + `audit_dropped_count` 计数丢弃。
+
+**全量复跑暴露**：函数行数 ratchet（`arch_guards`）——`execute` 涨到 120 行触发未登记阈值，
+全量 1 failed。修法是**抽薄 `execute`**（scope 取值折进闸函数），**不重登记基线**。
+
+**证据**：判定层 57 组参数化「应拦输入」（旧 40 + 新 17）全过、聚焦 121 passed、ruff 干净、
+pyright PASS、空实现下 57/57 应拦用例仍放行（用例在测拦截）。
+
+**教训（第三层）**：§10.5 已把口径翻成「不可静态判定就拒」，但**列举式清单仍是有限枚举**——
+`timeout` 的时长、`watch -x` 的布尔性、find 的转义分号都不在清单里。**清单式防御必然漏项**；
+可复用的原则：**命令身份必须字面**、**载荷必须重解析**、**选项语义按命令分别建模**。

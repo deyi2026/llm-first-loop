@@ -69,6 +69,7 @@ GIT_WRITE_SUBCOMMANDS = frozenset(
         "stash", "submodule", "switch", "tag", "worktree", "write-tree",
         "commit-tree", "mktree", "hash-object", "update-ref", "update-index",
         "notes", "replace", "sparse-checkout", "format-patch", "bundle",
+        "config", "bisect",
     }
 )
 
@@ -76,14 +77,17 @@ GIT_WRITE_SUBCOMMANDS = frozenset(
 GIT_VALUE_OPTIONS = frozenset(
     {
         "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path",
-        "--super-prefix", "--config-env",
+        "--super-prefix", "--config-env", "-c",
     }
 )
+
+# git 读子命令里 ``-o/--output`` 表示**输出文件**的子命令（其余子命令的 -o 是别的语义）
+GIT_OUTPUT_SUBCOMMANDS = frozenset({"archive", "diff", "show"})
 
 # 组合载体：自身不写盘，但会把写盘命令作为参数执行
 CARRIERS = frozenset(
     {
-        "find", "xargs", "env", "sudo", "su", "nohup", "time", "timeout",
+        "find", "xargs", "env", "sudo", "nohup", "time", "timeout",
         "command", "stdbuf", "nice", "exec", "setsid", "ionice", "eval",
         "watch",
     }
@@ -91,7 +95,7 @@ CARRIERS = frozenset(
 
 # 载体自身选项（取值型：其后一个 token 是选项值而非命令）
 CARRIER_VALUE_OPTIONS = {
-    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "env": frozenset({"-u", "--unset", "-C", "--chdir"}),
     "sudo": frozenset(
         {
             "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from",
@@ -101,11 +105,22 @@ CARRIER_VALUE_OPTIONS = {
     ),
     "timeout": frozenset({"-k", "--kill-after", "-s", "--signal"}),
     "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
-    "watch": frozenset({"-n", "--interval", "-b", "--beep", "-x", "--exec"}),
+    # watch 的 -x/--exec 是**布尔**开关（命令直接跟在后面），不是取值型选项
+    "watch": frozenset({"-n", "--interval", "-b", "--beep"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "ionice": frozenset(
+        {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-t", "--ignore"}
+    ),
 }
+
+# 载体的**位置参数**（选项之后的普通参数不是命令）：timeout 的时长
+CARRIER_SKIP_POSITIONALS = {"timeout": 1}
 
 # shell 解释器（-c 载荷按命令串重解析；脚本文件写目标不可静态定位 ⇒ 拒）
 SHELL_INTERPRETERS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
+
+# 脚本载入命令（. / source）：脚本内写目标不可静态定位 ⇒ 拒
+SCRIPT_LOADERS = frozenset({".", "source"})
 
 # 控制流关键字（段首出现 ⇒ 不可静态判定 ⇒ 拒）
 SHELL_KEYWORDS = frozenset(
@@ -124,6 +139,14 @@ _READ_REDIRECTS = frozenset({"<", "<<<"})
 
 # 写目标无法静态定位的标记（变量展开/命令替换/通配/家目录/花括号占位）
 _UNSTATIC_MARKERS = ("$", "`", "*", "?", "~", "{", "}")
+
+# 命令身份（argv[0]）必须是**字面量**：含展开/通配/花括号的命令身份不可静态判定
+# （``$X``、``r{m,}``、``$(which rm)``…）。命令身份不字面 ⇒ 拒。
+_IDENTITY_MARKERS = ("$", "`", "*", "?", "~", "{", "}", "[", "]")
+
+# 转义分号哨兵：``\;`` 是 find -exec 的**参数终止符**，不是命令分隔符。
+# shlex 的 posix 模式会吃掉反斜杠，故先替换成哨兵再切词。
+_ESC_SEM = "\x01esc-semi\x01"
 
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -156,8 +179,13 @@ def _is_assignment(token: str) -> bool:
 
 
 def _tokenize(command: str) -> list[str]:
-    """shell 词法切分（运算符独立成词）。无法切分 → 抛 _UnparsableError。"""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    """shell 词法切分（运算符独立成词）。无法切分 → 抛 _UnparsableError。
+
+    先把转义分号 ``\\;`` 换成哨兵——它是 ``find -exec`` 的参数终止符，不是命令
+    分隔符；若被切成独立 ';'，``find . -exec true {} \\; -delete`` 会被误拆成两段，
+    后一段的 ``-delete`` 就漏检了。
+    """
+    lexer = shlex.shlex(command.replace("\\;", _ESC_SEM), posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     try:
         return list(lexer)
@@ -222,7 +250,12 @@ def _strip_carrier_prefix(name: str, args: list[str]) -> list[str]:
             index += 1
             continue
         break
-    return args[index:]
+    rest = args[index:]
+    # 载体的位置参数不是命令（``timeout 10 rm x`` 的 '10' 是时长）
+    for _ in range(CARRIER_SKIP_POSITIONALS.get(name, 0)):
+        if rest and not str(rest[0]).startswith("-"):
+            rest = rest[1:]
+    return rest
 
 
 def _non_flag_args(args: Sequence[str]) -> list[str]:
@@ -246,14 +279,20 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     """返回 (静态写目标列表, 是否存在无法静态定位的隐式写目标)."""
     positional = _non_flag_args(args)
     if name in ("cp", "mv", "install", "ln", "rsync"):
-        target_dir = _flag_value(args, "-t", "--target-directory")
+        # rsync 的 -t 是 --times（布尔开关），只有 cp/mv/install 的 -t 才是
+        # --target-directory（审查 P1-1）
+        flags = ("-t", "--target-directory") if name in ("cp", "mv", "install") else ("--target-directory",)
+        target_dir = _flag_value(args, *flags)
         if target_dir is not None:
             return ([target_dir], not target_dir)
         if name == "ln" and "-T" in args:
             return ([positional[-1]] if positional else [], not positional)
         return (positional[-1:], len(positional) < 2)
-    if name in ("rm", "rmdir", "mkdir", "touch", "tee", "truncate", "shred", "patch"):
+    if name in ("rm", "rmdir", "mkdir", "touch", "tee", "truncate", "shred"):
         return (positional, False)
+    if name == "patch":
+        # patch 无目标文件 ⇒ 从 stdin 读补丁并改写文件（目标不可静态定位）
+        return (positional, not positional)
     if name in ("chmod", "chown", "chgrp"):
         return (positional[1:], len(positional) < 2)
     if name == "sed":
@@ -273,8 +312,9 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     if name == "zip":
         return (positional[:1], not positional)
     if name in ("gzip", "xz", "bzip2", "zstd"):
-        if any(a in ("-d", "--decompress", "-c", "--stdout") for a in args):
+        if any(a in ("-c", "--stdout", "--to-stdout") for a in args):
             return ([], False)
+        # 就地解压（-d）改写**输入文件**；压缩写的是新文件（保守按输入文件判）
         return (positional[:1], not positional)
     if name == "curl":
         out = _flag_value(args, "-o", "--output")
@@ -293,7 +333,8 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
         out_dir = _flag_value(args, "-P", "--directory-prefix")
         if out_dir is not None:
             return ([out_dir], not out_dir)
-        return ([], False)
+        # 无输出选项 ⇒ wget 按 URL 派生文件名写到当前目录（文件名不可静态定位）
+        return ([], True)
     return ([], True)
 
 
@@ -363,14 +404,36 @@ class _Scanner:
             return CommandScopeDecision(
                 False, "shell_keyword_construct", f"{name}：控制流不可静态判定"
             )
+        if name in SCRIPT_LOADERS:
+            return CommandScopeDecision(
+                False,
+                "implicit_write_target",
+                f"{name}：脚本载入的写目标不可静态定位",
+            )
         if name == "eval":
             return self._scan_eval(cmd_tokens[1:], depth)
+        if name == "su":
+            return self._scan_su(cmd_tokens[1:], depth)
+        if name == "env":
+            payload = _flag_value(cmd_tokens[1:], "-S", "--split-string")
+            if payload:
+                return self._scan_payload(payload, depth)
         effective, args = self._resolve_command(cmd_tokens)
         if effective is None:
             return None
         effective_name = _basename(effective[0])
+        if any(marker in effective_name for marker in _IDENTITY_MARKERS):
+            return CommandScopeDecision(
+                False,
+                "command_identity_not_literal",
+                f"{effective[0]}：命令身份含展开/通配，不可静态判定",
+            )
         if effective_name in SHELL_INTERPRETERS:
             decision = self._scan_interpreter(effective_name, args, depth)
+            if decision is not None:
+                return decision
+        elif effective_name == "su":
+            decision = self._scan_su(args, depth)
             if decision is not None:
                 return decision
         elif effective_name == "find":
@@ -387,6 +450,14 @@ class _Scanner:
                 return CommandScopeDecision(
                     False, "implicit_write_target", f"git {sub}：写目标不可静态定位"
                 )
+            if sub in GIT_OUTPUT_SUBCOMMANDS:
+                out = _flag_value(args, "--output", "-o")
+                if out:
+                    ok, reason, detail = self._check_target(out)
+                    if not ok:
+                        return CommandScopeDecision(
+                            False, reason, detail, tuple(self.unverified)
+                        )
         elif effective_name in IMPLICIT_WRITE:
             return CommandScopeDecision(
                 False,
@@ -466,6 +537,26 @@ class _Scanner:
             return None
         return self.scan(" ".join(args), depth + 1)
 
+    def _scan_payload(self, payload: str, depth: int) -> CommandScopeDecision | None:
+        """载荷（``sh -c`` / ``su -c`` / ``env -S``）按命令串重解析。"""
+        if depth + 1 > MAX_DEPTH:
+            return CommandScopeDecision(False, "nesting_too_deep", "载荷嵌套过深")
+        if not payload:
+            return CommandScopeDecision(False, "unparsable_command", "载荷为空")
+        return self.scan(payload, depth + 1)
+
+    def _scan_su(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
+        """``su [user] -c 'cmd'``：载荷按命令串重解析；无 -c ⇒ 进入登录 shell ⇒ 拒。"""
+        if "-c" not in args:
+            return CommandScopeDecision(
+                False,
+                "implicit_write_target",
+                "su：进入登录 shell，写目标不可静态定位",
+            )
+        index = args.index("-c")
+        payload = args[index + 1] if index + 1 < len(args) else ""
+        return self._scan_payload(payload, depth)
+
     def _scan_interpreter(
         self, name: str, args: Sequence[str], depth: int
     ) -> CommandScopeDecision | None:
@@ -489,7 +580,13 @@ class _Scanner:
                 "implicit_write_target",
                 f"{name} {script[0]}：脚本写目标不可静态定位",
             )
-        return None
+        # 既无 -c 也无脚本文件 ⇒ 解释器从 stdin 读脚本（``bash < x.sh``），
+        # 写目标不可知 ⇒ 拒
+        return CommandScopeDecision(
+            False,
+            "implicit_write_target",
+            f"{name}：从 stdin 读脚本，写目标不可静态定位",
+        )
 
     def _scan_find(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
         """``find`` 自身的删除与落盘动作（-delete / -fprint / -exec）。"""
@@ -508,35 +605,50 @@ class _Scanner:
                 index += 2
                 continue
             if token in ("-exec", "-execdir"):
-                nested = args[index + 1:]
+                # -exec 的命令在转义分号（哨兵）处结束；哨兵之后的谓词
+                # （如 -delete）仍属同一条 find，必须继续检查
+                end = len(args)
+                for offset in range(index + 1, len(args)):
+                    if args[offset] == _ESC_SEM:
+                        end = offset
+                        break
+                nested = args[index + 1:end]
                 effective, nested_args = self._resolve_command(nested)
                 if effective is None:
-                    return None
+                    index = end + 1
+                    continue
                 nested_name = _basename(effective[0])
                 if nested_name == "find" or nested_name == "xargs":
                     return CommandScopeDecision(
                         False, "implicit_write_target", "find -exec：写目标不可静态定位"
                     )
-                targets, implicit = _write_targets(nested_name, nested_args)
-                if implicit:
+                if nested_name in IMPLICIT_WRITE:
                     return CommandScopeDecision(
                         False,
                         "implicit_write_target",
                         f"find -exec {nested_name}：写目标无法静态定位",
                     )
-                for target in targets:
-                    if any(marker in target for marker in ("{", "}", "$")):
+                if nested_name in WRITE_FAMILY:
+                    targets, implicit = _write_targets(nested_name, nested_args)
+                    if implicit:
                         return CommandScopeDecision(
                             False,
-                            "unverifiable_write_target",
-                            f"{target}（占位符/展开，目标不可静态定位）",
+                            "implicit_write_target",
+                            f"find -exec {nested_name}：写目标无法静态定位",
                         )
-                    ok, reason, detail = self._check_target(target)
-                    if not ok:
-                        return CommandScopeDecision(
-                            False, reason, detail, tuple(self.unverified)
-                        )
-                index = len(args)
+                    for target in targets:
+                        if any(marker in target for marker in ("{", "}", "$")):
+                            return CommandScopeDecision(
+                                False,
+                                "unverifiable_write_target",
+                                f"{target}（占位符/展开，目标不可静态定位）",
+                            )
+                        ok, reason, detail = self._check_target(target)
+                        if not ok:
+                            return CommandScopeDecision(
+                                False, reason, detail, tuple(self.unverified)
+                            )
+                index = end + 1
                 continue
             index += 1
         return None
