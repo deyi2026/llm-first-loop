@@ -188,9 +188,10 @@ BLOCKED_CASES = [
     # ── 第十二轮 push 闸审查（round-9）新增向量 ────────────────────────────
     # tar 多个 -C 逐个都判（此前只回最后一个 ⇒ 前面的 -C 逃逸）
     ("tar -xf a.tar -C /outside m -C src", "write_target_outside_scope"),
-    # 编译器透传段先于 -o 早退收集（ld 的最后一个 -o 生效）
-    ("gcc -o a.out -Wl,-o,/outside/x a.c", "write_target_outside_scope"),
-    ("gcc -o a.out -Wl,-Map,/outside/map a.c", "implicit_write_target"),
+    # 编译器透传段先于 -o 早退收集（ld 的最后一个 -o 生效；驱动 -o 放进
+    # 允许清单内，让透传段的精确理由浮出来）
+    ("gcc -o src/a.out -Wl,-o,/outside/x a.c", "write_target_outside_scope"),
+    ("gcc -o src/a.out -Wl,-Map,/outside/map a.c", "implicit_write_target"),
     # shell 内建跨段注入执行型 git 环境变量（与段首前缀赋值同向量）
     ("export GIT_EXTERNAL_DIFF=touch; git diff", "implicit_write_target"),
     ("declare -x GIT_PAGER=x; git log", "implicit_write_target"),
