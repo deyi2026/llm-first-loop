@@ -1103,7 +1103,6 @@ def test_r13_cluster_fixes_do_not_over_block_read_forms(command: str) -> None:
 R14_BLOCKED_CASES = [
     ("curl -o ok -O https://x/evil", "implicit_write_target"),
     ("gcc -wo/outside/x a.c", "write_target_outside_scope"),
-    ("git symbolic-ref -dHEAD", "implicit_write_target"),
     ("git symbolic-ref -dq HEAD", "implicit_write_target"),
     ("rsync -b --backup-dir=/outside/b src dst", "write_target_outside_scope"),
     ("script -T -c 'rm /outside/x'", "implicit_write_target"),
@@ -1117,6 +1116,9 @@ R14_BLOCKED_CASES = [
     # GNU findutils 手册（find(1)）：``-fprintf file format`` ⇒ **文件在前**。
     # ⇒ 真正的越界写形态是 ``-fprintf /outside/x '%p'``（文件越界）。
     ("find . -fprintf /outside/x '%p'", "write_target_outside_scope"),
+    # 独立审查 P2-2：备份目录**不替代**目标操作数 ⇒ 域内备份目录 + 越界 dst
+    # 仍须拦（早退只回备份目录会让 dst 漏判）。
+    ("rsync -b --backup-dir=bk src /outside/dst", "write_target_outside_scope"),
 ]
 
 
@@ -1145,6 +1147,15 @@ R14_ALLOWED_CASES = [
     "find . -fprintf '%p' /outside/x",
     "find . -name '*.py'",
     "git symbolic-ref HEAD",
+    # 独立审查 P1-1：``--create-dirs`` 只是给**已判定**的显式目标建父目录、
+    # ``-J`` 只在配合 -O 时才决定文件名 ⇒ 二者都不该把本可判定的命令变成
+    # 隐式写（此前误拒 ⇒ 可用性回归）。
+    "curl --create-dirs -o dl/f.bin URL",
+    "curl -o ok -J URL",
+    # 独立审查 P2-3：``-dHEAD`` 在 git 里是**未知选项**（parse-options 因
+    # ``-H`` 未知而报错、命令不产生任何副作用）⇒ 不按删除形态拒；但已知
+    # 短选项簇（``-dq``）仍必须拦（见 R14_BLOCKED_CASES）。
+    "git symbolic-ref -dHEAD",
 ]
 
 

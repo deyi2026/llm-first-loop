@@ -634,6 +634,55 @@ def _non_flag_args(args: Sequence[str]) -> list[str]:
     return [a for a in args if not str(a).startswith("-")]
 
 
+def _copy_move_targets(
+    name: str, args: Sequence[str], positional: Sequence[str]
+) -> tuple[list[str], bool]:
+    """cp/mv/install/ln/rsync 的写目标：目标目录 → 备份目录 → 末位操作数。
+
+    rsync 的 ``-t`` 是 ``--times``（布尔开关），只有 cp/mv/install/ln 的 ``-t``
+    才是 ``--target-directory``（审查 P1-1；第五轮审查 P1-2 补入 ln：
+    ``ln -t DIR`` 把链接建到 DIR 下，原口径漏掉 -t ⇒ 取了错误的写目标）。
+    第九轮 P1-2：``-t/outside`` 附着与 ``--target-directory=/outside`` 内联形态
+    改走族模型；``ln -T`` 的目标目录取末位操作数。
+    """
+    if name == "rsync":
+        target_dir = _flag_value(args, "--target-directory")
+        backup_dir = _flag_value(args, "--backup-dir")
+        if backup_dir is not None:
+            # 备份目录与目标操作数（dst）**都要判定**（口径见
+            # ``_rsync_backup_targets``）。
+            return _rsync_backup_targets(backup_dir, target_dir, positional)
+    else:
+        scan = scan_options(TARGET_DIRECTORY_OPTIONS, args)
+        if scan.unresolved:
+            return ([], True)
+        target_dir = scan.value_of("-t", "--target-directory")
+    if target_dir is not None:
+        return ([target_dir], not target_dir)
+    if name == "ln" and "-T" in args:
+        return ([positional[-1]] if positional else [], not positional)
+    return (positional[-1:], len(positional) < 2)
+
+
+def _rsync_backup_targets(
+    backup_dir: str, target_dir: str | None, positional: Sequence[str]
+) -> tuple[list[str], bool]:
+    """rsync ``--backup-dir=DIR`` 的写目标：备份目录 **+** 目标操作数（dst）。
+
+    第十四轮 P0：``--backup-dir=DIR`` 让 rsync 把**被覆盖的旧文件**备份到 DIR
+    ⇒ DIR 也是写目标（此前完全没被建模 ⇒ ``rsync -b --backup-dir=/outside/b src
+    dst`` 越界写放行）。
+    独立审查 P2-2：备份目录**不替代**目标操作数（dst）⇒ 两者都要判定（早退只回
+    备份目录会让 ``rsync -b --backup-dir=bk src /outside/dst`` 的越界目标漏判）；
+    dst 缺失时仍是隐式写 ⇒ fail-closed。
+    """
+    targets = [backup_dir]
+    if target_dir is not None:
+        targets.append(target_dir)
+    dst = positional[-1:] if positional else []
+    return (targets + dst, not dst)
+
+
 def _flag_value(args: Sequence[str], *flags: str) -> str | None:
     """取 ``-t DIR`` / ``--target-directory=DIR`` 形态的选项值。"""
     for index, token in enumerate(args):
@@ -1375,23 +1424,18 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
             # 参数 ⇒ 写目标从未被定位（实测靠 fail-closed 兜住，拒因不准）。
             "--alt-svc",
             "--hsts",
-            "--hsts-file",
         ):
             # 第十二轮独立审查 P1-1：curl 的多个 ``-o`` **逐个都写**（每个 URL
             # 一个文件）⇒ 全部取值都要判，不能只看第一个。
             targets.extend(scan.values_of(flag))
-        # 第十四轮 P0：``-O/--remote-name`` 与显式输出选项**并存**时，``-O`` 的
-        # 隐式写仍会发生（按**远端名**落盘到当前目录，文件名不可静态定位）⇒
-        # 不能被 ``if targets:`` 的提前返回盖掉——此前 ``curl -o ok -O
-        # https://x/evil`` 里 ``-O`` 完全没被检查 ⇒ 越界写放行。
-        implicit = scan.has(
-            "-O",
-            "--remote-name",
-            "--remote-name-all",
-            "-J",
-            "--remote-header-name",
-            "--create-dirs",
-        )
+        # 第十四轮 P0 + 独立审查 P1-1：隐式写只认 ``-O/--remote-name/
+        # --remote-name-all``（按**远端名**落盘到 cwd ⇒ 文件名不可静态定位）。
+        # ``-J/--remote-header-name`` **只在配合 -O 时**才决定文件名（curl
+        # 文档：--remote-header-name 仅在 --remote-name 生效）；``--create-dirs``
+        # 只是给**已判定**的显式目标建父目录 ⇒ 二者本身都不引入不可定位的写。
+        # 此前把三者一并算作隐式写 ⇒ ``curl --create-dirs -o dl/f.bin URL`` 这类
+        # 本应放行的形态被误拒（可用性回归）。
+        implicit = scan.has("-O", "--remote-name", "--remote-name-all")
         if targets:
             return (targets, any(not target for target in targets) or implicit)
         if implicit:
@@ -1668,29 +1712,11 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
             return ([out], not out)
         return ([], False)
     if name in ("cp", "mv", "install", "ln", "rsync"):
-        # rsync 的 -t 是 --times（布尔开关），只有 cp/mv/install/ln 的 -t 才是
-        # --target-directory（审查 P1-1；第五轮审查 P1-2 补入 ln：
-        # ``ln -t DIR`` 把链接建到 DIR 下，原口径漏掉 -t ⇒ 取了错误的写目标）。
-        # 第九轮 P1-2：``-t/outside`` 附着与 ``--target-directory=/outside``
-        # 内联形态改走族模型。
-        if name == "rsync":
-            target_dir = _flag_value(args, "--target-directory")
-            # 第十四轮 P0：``--backup-dir=DIR`` 让 rsync 把**被覆盖的旧文件**
-            # 备份到 DIR ⇒ DIR 也是写目标（此前完全没被建模 ⇒
-            # ``rsync -b --backup-dir=/outside/b src dst`` 越界写放行）。
-            backup_dir = _flag_value(args, "--backup-dir")
-            if backup_dir is not None:
-                return ([backup_dir], not backup_dir)
-        else:
-            scan = scan_options(TARGET_DIRECTORY_OPTIONS, args)
-            if scan.unresolved:
-                return ([], True)
-            target_dir = scan.value_of("-t", "--target-directory")
-        if target_dir is not None:
-            return ([target_dir], not target_dir)
-        if name == "ln" and "-T" in args:
-            return ([positional[-1]] if positional else [], not positional)
-        return (positional[-1:], len(positional) < 2)
+        # 目标目录 / 备份目录 / 末位操作数的判定口径见
+        # ``_copy_move_targets``（rsync 的 -t 是 --times 布尔开关，只有
+        # cp/mv/install/ln 的 -t 才是 --target-directory——审查 P1-1、第五轮
+        # 审查 P1-2 补入 ln：``ln -t DIR`` 把链接建到 DIR 下）。
+        return _copy_move_targets(name, args, positional)
     if name in (
         "rm", "rmdir", "mkdir", "touch", "tee", "truncate", "shred",
         # 第四轮审查补入：这些工具的写目标就是命名参数（可静态定位）
@@ -1839,6 +1865,44 @@ def _git_long_option_hit(args: Sequence[str], canonical: str) -> bool:
         if token.startswith("--") and canonical.startswith(token):
             return True
     return False
+
+
+def _symbolic_ref_is_write_form(args: Sequence[str], actions: Sequence[str]) -> bool:
+    """``git symbolic-ref`` 的**写形态**判定（改名 / 删除 / 批量）。
+
+    第五轮独立审查 P1-4：读形态只有 1 个位置参数（``git symbolic-ref HEAD``）；
+    写形态是「名字 + 新值」2 个位置参数，或带 ``--delete``/``-d``。
+    第十三轮：``--stdin`` 是**批量写形态**（stdin 里可含 create/delete/update
+    ref 命令）⇒ 与 --delete 同列拒（此前只认 --delete/-d 与 2 个位置参数 ⇒
+    ``--stdin`` 被当成读形态放行）。
+    第十四轮 P0 + 独立审查 P2-3：``-d`` 可**粘连**（``-dq HEAD``）⇒ 精确匹配
+    ``"-d" in args`` 漏掉粘连形态；但前缀匹配 ``token.startswith("-d")`` 会
+    **误拒**未来新增的 ``-d*`` 读选项 ⇒ 只认精确 ``-d`` 与 ``-d`` + 已知短
+    选项簇（见 ``_git_delete_flag_hit``）；其余 ``-d*``（如 ``-dHEAD``）在 git
+    里是**未知选项**（parse-options 因 ``-H`` 未知而报错、不产生任何副作用）。
+    """
+    return (
+        _git_long_option_hit(args, "--delete")
+        or _git_long_option_hit(args, "--stdin")
+        or any(_git_delete_flag_hit(token) for token in args)
+        or len(actions) >= 2
+    )
+
+
+def _git_delete_flag_hit(token: str) -> bool:
+    """``git symbolic-ref`` 的**删除形态**：精确 ``-d`` 或 ``-d`` + 已知短选项簇。
+
+    第十四轮独立审查 P2-3：此前用 ``token.startswith("-d")`` ⇒ 未来若新增
+    ``-d*`` **读**选项会被误拒（可用性回归）⇒ 收窄为：``-d`` 本身、以及 ``-d``
+    后紧跟 symbolic-ref 已知短选项（``-q``/``-m``/``-s``）的组合形态。
+    其余 ``-d*``（如 ``-dHEAD``）在 git 里是**未知选项**（parse-options 因
+    ``-H`` 未知而报错、命令不产生任何副作用）⇒ 不按删除形态拒。
+    """
+    if token == "-d":
+        return True
+    if not token.startswith("-d") or len(token) == 2:
+        return False
+    return all(char in "qms" for char in token[2:])
 
 
 def _git_action_args(args: Sequence[str]) -> list[str]:
@@ -2237,22 +2301,11 @@ class _Scanner:
             if marks_decision is not None:
                 return marks_decision
         if sub == "symbolic-ref":
-            # 第五轮独立审查 P1-4：``symbolic-ref`` 在读白名单里，但
-            # ``git symbolic-ref HEAD refs/heads/x`` 是**写形态**（改写 .git/HEAD）。
-            # 读形态只有 1 个位置参数（``git symbolic-ref HEAD``）；写形态是
-            # 「名字 + 新值」2 个位置参数，或带 ``--delete``/``-d``。
+            # 第五轮独立审查 P1-4：``symbolic-ref`` 在读白名单里，但写形态
+            # （改名 / 删除 / 批量）会改写 .git/HEAD ⇒ 判定口径见
+            # ``_symbolic_ref_is_write_form``（含 ``-d`` 粘连簇的精确建模）。
             actions = _git_action_args(args)
-            # 第十三轮：``git symbolic-ref --stdin`` 是**批量写形态**（stdin 里
-            # 可含 create/delete/update ref 命令）⇒ 与 --delete 同列拒。此前只
-            # 认 --delete/-d 与 2 个位置参数 ⇒ ``--stdin`` 被当成读形态放行。
-            # 第十四轮 P0：``-d`` 可**粘连**（``-dHEAD``/``-dq HEAD``）⇒ 此前
-            # 精确匹配 ``"-d" in args`` 漏掉粘连形态 ⇒ 删 ref 的写形态放行。
-            if (
-                _git_long_option_hit(args, "--delete")
-                or _git_long_option_hit(args, "--stdin")
-                or any(token.startswith("-d") for token in args)
-                or len(actions) >= 2
-            ):
+            if _symbolic_ref_is_write_form(args, actions):
                 return CommandScopeDecision(
                     False,
                     "implicit_write_target",
