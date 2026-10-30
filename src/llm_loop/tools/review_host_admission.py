@@ -813,6 +813,147 @@ def _project_committed_runtime_diff(name: str, diff_text: str) -> str:
     )
 
 
+# EVO-20261030-109d7068 (human-approved 2026-10-30): the frozen-artifact header
+# concatenated fields with NO separator at all
+# (`push_remote_base=<sha>frozen_head=<sha>`), so every field after the first was
+# glued to its predecessor. A human could still cut two 40-hex SHAs apart by
+# hand; a machine parser could not, and the admission receipt records the very
+# artifact the reviewer saw, so the ambiguity propagated downstream. The header
+# is now exactly one `key=value` per line, and the generator refuses to issue
+# an artifact whose header does not round-trip through the parser this module
+# ships — a glued header is refused, not shipped as "looks fine to a human".
+_FROZEN_HEADER_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*\Z")
+# A value that itself starts with "<key>=" is a field glued to its predecessor
+# (the pre-EVO shape). The first char may be a digit — a SHA often starts with
+# one — so this charset starts at [a-z0-9], not [a-z].
+_FROZEN_HEADER_GLUE_RE = re.compile(r"^[a-z0-9][a-z0-9_]*=")
+_FROZEN_MATERIAL_BODY_MARKER = "committed_delta:\n"
+
+
+def _frozen_header(fields: Sequence[tuple[str, str]]) -> str:
+    """Serialize frozen-artifact header fields: one `key=value` per line.
+
+    Only values this module's parser can read back unchanged are accepted:
+    no None, no whitespace, and no value that itself starts with `<key>=`
+    (that shape IS a glued field). A `=` further right in a value is fine
+    (git refnames may contain `=`, e.g. `refs/heads/a=b`): the parser splits
+    at the FIRST `=` only.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for key, value in fields:
+        if not _FROZEN_HEADER_KEY_RE.match(key):
+            raise ValueError(f"review_frozen_header_malformed:bad_key:{key}")
+        if key in seen:
+            raise ValueError(f"review_frozen_header_malformed:duplicate_key:{key}")
+        seen.add(key)
+        if value is None:
+            raise ValueError(f"review_frozen_header_malformed:bad_value:{key}")
+        text = str(value)
+        if any(ch.isspace() for ch in text):
+            raise ValueError(f"review_frozen_header_malformed:bad_value:{key}")
+        if _FROZEN_HEADER_GLUE_RE.match(text):
+            raise ValueError(f"review_frozen_header_malformed:glued_value:{key}")
+        lines.append(f"{key}={text}")
+    return "".join(line + "\n" for line in lines)
+
+
+def _parse_frozen_header(text: str) -> dict[str, str]:
+    """Parse a frozen-artifact header: one `key=value` per line, strictly.
+
+    Rules — every violation raises, none of them is guessed (fail closed):
+    - blank lines are ignored;
+    - a line is split at the FIRST `=`; the key must match `[a-z][a-z0-9_]*`;
+    - the value may not contain whitespace;
+    - the value may not itself start with `<key>=` — that is a field glued to
+      its predecessor (the defect this parser exists to catch);
+    - a key may appear at most once.
+    """
+    fields: dict[str, str] = {}
+    for raw in text.split("\n"):
+        if not raw:
+            continue
+        key, sep, value = raw.partition("=")
+        if not sep or not _FROZEN_HEADER_KEY_RE.match(key):
+            raise ValueError(f"review_frozen_header_malformed:unparseable_line:{key}")
+        if any(ch.isspace() for ch in value):
+            raise ValueError(f"review_frozen_header_malformed:bad_value:{key}")
+        if _FROZEN_HEADER_GLUE_RE.match(value):
+            raise ValueError(f"review_frozen_header_malformed:glued_value:{key}")
+        if key in fields:
+            raise ValueError(f"review_frozen_header_malformed:duplicate_key:{key}")
+        fields[key] = value
+    return fields
+
+
+def _frozen_header_block(material: str) -> str:
+    """Return the header block of a frozen material (everything before the body).
+
+    The body marker is matched at a LINE start (newline + the marker), so a
+    header value that merely ends with the marker text cannot truncate the
+    block early.
+    """
+    head, sep, _ = material.partition("\n" + _FROZEN_MATERIAL_BODY_MARKER)
+    if not sep:
+        raise ValueError("review_frozen_header_malformed:missing_body_marker")
+    return head
+
+
+def _assert_frozen_header_roundtrip(header: str, expected: dict[str, str]) -> None:
+    """Self-check: the emitted header must parse back to exactly `expected`."""
+    parsed = _parse_frozen_header(header)
+    if parsed != expected:
+        raise ValueError("review_frozen_header_malformed:round_trip_mismatch")
+
+
+def _frozen_header_fields(
+    head: str,
+    base: str,
+    push_base: str | None,
+    push_head: str | None,
+    frozen_head: str,
+    first_push_ref: str,
+) -> list[tuple[str, str]]:
+    """Frozen-artifact header fields: one entry per line, in emission order."""
+    fields: list[tuple[str, str]] = [("repo_head", head)]
+    fields.append(
+        ("push_remote_base", base) if push_base is not None else ("merge_base", base)
+    )
+    if push_head is not None:
+        fields.append(("frozen_head", frozen_head))
+    if first_push_ref:
+        fields.append(("push_first_push_anchor", base))
+        fields.append(("push_target_ref", first_push_ref))
+    if _RUNTIME_OUTPUT_EXCLUDES:
+        fields.append(
+            ("runtime_output_excludes", ",".join(_RUNTIME_OUTPUT_EXCLUDES))
+        )
+    return fields
+
+
+def _frozen_material(
+    header_fields: list[tuple[str, str]],
+    committed: list[tuple[str, str]],
+    working: list[tuple[str, str]],
+    new_files: list[tuple[str, str, str]],
+) -> str:
+    """Assemble the frozen material and assert its header round-trips.
+
+    EVO-20261030-109d7068: the self-check runs on the ASSEMBLED material (not
+    just the header string) — the header block a consumer would parse must
+    parse back to exactly the intended fields. A glued header is refused HERE,
+    before the artifact is issued, not shipped as "looks fine to a human".
+    """
+    material = (
+        _frozen_header(header_fields)
+        + "committed_delta:\n" + "".join(text for _, text in committed)
+        + "uncommitted_delta:\n" + "".join(text for _, text in working)
+        + "\n".join(f"untracked {name} sha={sha}\n{text}" for name, sha, text in new_files)
+    )
+    _assert_frozen_header_roundtrip(_frozen_header_block(material), dict(header_fields))
+    return material
+
+
 def _source_snapshot(
     workdir: str, push_base: str | None = None, push_head: str | None = None,
     first_push_ref: str = "", require_material: str = "",
@@ -942,21 +1083,16 @@ def _source_snapshot(
         raise ValueError(require_material)
     # A push review must state the base it diffed against so the reviewer and
     # the admission receipt can be cross-checked against remote facts.
-    base_line = f"push_remote_base={base}" if push_base is not None else f"merge_base={base}"
-    head_line = f"frozen_head={frozen_head}\n" if push_head is not None else ""
-    first_push_line = (
-        f"push_first_push_anchor={base} push_target_ref={first_push_ref}\n"
-        if first_push_ref else ""
-    )
-    excludes_line = (
-        "runtime_output_excludes=" + ",".join(_RUNTIME_OUTPUT_EXCLUDES) + "\n"
-        if _RUNTIME_OUTPUT_EXCLUDES else ""
-    )
-    material = (
-        f"repo_head={head}\n{base_line}{head_line}{first_push_line}{excludes_line}"
-        "committed_delta:\n" + "".join(text for _, text in committed)
-        + "uncommitted_delta:\n" + "".join(text for _, text in working)
-        + "\n".join(f"untracked {name} sha={sha}\n{text}" for name, sha, text in new_files)
+    # EVO-20261030-109d7068: the header is one `key=value` per line (the old
+    # form concatenated fields with no separator, so `push_remote_base` and
+    # `frozen_head` ended up glued into one line), and the assembled material
+    # must round-trip through the module's own header parser before the
+    # artifact is issued (see _frozen_material).
+    material = _frozen_material(
+        _frozen_header_fields(
+            head, base, push_base, push_head, frozen_head, first_push_ref
+        ),
+        committed, working, new_files,
     )
     # Bounded complete snapshot, not a summary masquerading as full review.
     # This static check is the conservative floor on the SNAPSHOT BYTES; the

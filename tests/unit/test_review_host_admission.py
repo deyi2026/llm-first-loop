@@ -420,7 +420,7 @@ def test_first_push_anchors_on_remote_default_branch(tmp_path: Path) -> None:
     assert issued["first_push_anchor"] == base
     assert issued["first_push_target_ref"] == "refs/heads/feature"
     assert issued["push_src_commit"] == head
-    assert f"push_first_push_anchor={base} push_target_ref=refs/heads/feature" in runner.task
+    assert f"push_first_push_anchor={base}\npush_target_ref=refs/heads/feature" in runner.task
     assert "value = 7" in runner.task
     runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
     runner.state = "completed"
@@ -1856,3 +1856,139 @@ def test_normal_template_names_keep_existing_branches(tmp_path: Path) -> None:
     assert rha._template_body_has_secret(repo, ".env.example", None) is True
     # ref 下不存在（从未登记的路径）-> False 维持
     assert rha._template_body_has_secret(repo, "never.env.example", "HEAD") is False
+
+
+def test_frozen_header_puts_one_field_per_line(tmp_path: Path) -> None:
+    """EVO-20261030-109d7068：冻结头部每字段一行，`push_remote_base` 与 `frozen_head` 不再粘连."""
+    repo = _repo(tmp_path)
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    target = _commit(repo, "hdr.py", "x = 2\n", "hdr")
+    _seed_bare_remote(repo, tmp_path, base)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo),
+                        command=f"git push origin {target}:main")
+    assert issued["accepted"], issued
+    # 头部块 = material 中 "committed_delta:" 之前、`repo_head=` 起的连续行
+    lines = runner.task.split("\n")
+    marker = lines.index("committed_delta:")
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("repo_head="))
+    header = "\n".join(lines[start:marker])
+    # 旧形状（字段间无分隔符）消失
+    assert f"push_remote_base={base}frozen_head=" not in header
+    # 一行一个字段：每行只有一个 "="
+    for line in [ln for ln in header.split("\n") if ln]:
+        assert line.count("=") == 1, line
+    assert f"push_remote_base={base}\n" in header
+    assert f"frozen_head={target}\n" in header
+    # 机器可解析：自身解析器能还原出两个 SHA
+    parsed = rha._parse_frozen_header(header)
+    assert parsed["push_remote_base"] == base
+    assert parsed["frozen_head"] == target
+
+
+def test_frozen_header_parser_refuses_legacy_glued_format() -> None:
+    """旧格式（字段间无分隔符）必须被解析器拒绝，而不是猜."""
+    legacy = (
+        "repo_head=" + "a" * 40 + "\n"
+        "push_remote_base=" + "b" * 40 + "frozen_head=" + "c" * 40 + "\n"
+    )
+    with pytest.raises(ValueError) as exc:
+        rha._parse_frozen_header(legacy)
+    assert "review_frozen_header_malformed" in str(exc.value)
+    # 往返自检：解析不出预期字段即拒绝
+    with pytest.raises(ValueError) as exc2:
+        rha._assert_frozen_header_roundtrip(legacy, {"push_remote_base": "b" * 40})
+    assert "review_frozen_header_malformed" in str(exc2.value)
+    # 同一行两个字段（空格分隔）同样拒绝
+    with pytest.raises(ValueError):
+        rha._parse_frozen_header("push_first_push_anchor=" + "b" * 40
+                                 + " push_target_ref=refs/heads/feature\n")
+    # SHA 以数字开头时（144e…）粘连同样被识别
+    with pytest.raises(ValueError) as exc3:
+        rha._parse_frozen_header("push_remote_base=" + "1" * 40
+                                 + "frozen_head=" + "c" * 40 + "\n")
+    assert "review_frozen_header_malformed" in str(exc3.value)
+    # 重复键拒绝
+    with pytest.raises(ValueError) as exc4:
+        rha._parse_frozen_header("repo_head=" + "a" * 40 + "\nrepo_head=" + "a" * 40 + "\n")
+    assert "duplicate_key" in str(exc4.value)
+    # 序列化器拒绝 None 值（不得静默写成空串）
+    with pytest.raises(ValueError) as exc5:
+        rha._frozen_header([("repo_head", None)])  # type: ignore[list-item]
+    assert "review_frozen_header_malformed" in str(exc5.value)
+    # 值中间的 "=" 合法（git refname 可含 "="），且能原样往返
+    header = rha._frozen_header([("push_target_ref", "refs/heads/a=b")])
+    assert rha._parse_frozen_header(header)["push_target_ref"] == "refs/heads/a=b"
+
+
+def test_admission_refuses_to_issue_glued_header(tmp_path: Path, monkeypatch) -> None:
+    """RULE-AI-35：护栏必须真的拦下它声称要拦的输入——出票前拒绝，审查子进程不启动."""
+    repo = _repo(tmp_path)
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    target = _commit(repo, "glued.py", "y = 3\n", "glued")
+    _seed_bare_remote(repo, tmp_path, base)
+
+    def legacy_header(fields):
+        # 复现 EVO 之前的粘连形状：字段之间没有任何分隔符（行尾保留换行，
+        # 以便拒绝原因落在"粘连检测"而不是"正文标记缺失"上）
+        return "".join(f"{key}={value}" for key, value in fields) + "\n"
+
+    monkeypatch.setattr(rha, "_frozen_header", legacy_header)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "git_push", workdir=str(repo),
+                         command=f"git push origin {target}:main")
+    assert not refused["accepted"]
+    assert "review_frozen_header_malformed" in str(refused["reason"])
+    # 拒绝原因必须来自粘连检测本身（而不是正文标记缺失）
+    assert "glued_value" in str(refused["reason"])
+    # 拒绝发生在出票前：审查子进程从未被启动
+    assert runner.started == 0
+
+
+def test_full_test_header_uses_merge_base_line(tmp_path: Path) -> None:
+    """full_test 路径（无可用 remote 事实）头部用 merge_base 行，同样一行一字段."""
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    lines = runner.task.split("\n")
+    marker = lines.index("committed_delta:")
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("repo_head="))
+    header = "\n".join(lines[start:marker])
+    assert "merge_base=" in header
+    assert "push_remote_base" not in header
+    for line in [ln for ln in header.split("\n") if ln]:
+        assert line.count("=") == 1, line
+    parsed = rha._parse_frozen_header(header)
+    assert "merge_base" in parsed
+    assert len(parsed["merge_base"]) == 40
+
+
+def test_full_test_refuses_to_issue_glued_header(tmp_path: Path, monkeypatch) -> None:
+    """full_test 路径同样在出票前拒绝粘连头部（与 git_push 路径对称）."""
+    repo = _repo(tmp_path)
+
+    def legacy_header(fields):
+        # 复现 EVO 之前的粘连形状：字段之间没有任何分隔符（行尾保留换行，
+        # 以便拒绝原因落在"粘连检测"而不是"正文标记缺失"上）
+        return "".join(f"{key}={value}" for key, value in fields) + "\n"
+
+    monkeypatch.setattr(rha, "_frozen_header", legacy_header)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert not refused["accepted"]
+    assert "review_frozen_header_malformed" in str(refused["reason"])
+    # 拒绝原因必须来自粘连检测本身（而不是正文标记缺失）
+    assert "glued_value" in str(refused["reason"])
+    # 拒绝发生在出票前：审查子进程从未被启动
+    assert runner.started == 0
