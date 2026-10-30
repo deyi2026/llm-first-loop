@@ -20,7 +20,7 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 
 1. **`4abd81bd7` 是悬空提交**：不在 `origin/main`，`git branch -a --contains 4abd81bd7` 为空；其 `card-lifecycle.md` 修订内容已在 main（main 另多 2 行）。⇒ **不需要 rebase**，直接基于 `main` 继续。
 2. **push 由本会话在走**：本会话正按 RULE-AI-28 执行 `review_admission`（full_test → git_push）。**在回执给出前请勿 `git push`**，避免双推/非快进冲突。
-3. **工作树状态**：tracked 改动 = 0；残留 untracked 14 项 = 13 个 `.tmp-*.py` / `.tmp-r4-*.json` 临时脚本 + `reports/qualification-r4/mech-all-sample.json`（1.28MB）。**本会话未替任何一方删除文件**——这些是原会话的过程物，由其自行处置。
+3. **工作树状态**：tracked 改动 = 0；残留 untracked 14 项 = 13 个 `.tmp-*.py` / `.tmp-r4-*.json` 临时脚本 + `reports/qualification-r4/mech-all-sample.json`（1.28MB）。**本会话未替任何一方删除文件**——这些是原会话的过程物，由其自行处置。**（2026-10-30 21:5x 更新：后续会话已按用户指示删除根层 17 个 `.tmp-*.py`；根层非脚本残留与 scratch 目录仍在。当前口径见设计文档 §14.6 第 4 条。）**
 4. **原会话在本文件生成时仍处于活跃写入**（`src/llm_loop/tools/builtin/spawn_subagent.py` 于 14:20 被修改）。若其在本会话 push 之前提交并推送，两边会推同一 `main`；本会话的 push 以 `origin/main` 为 base 重新计算，推送将是非快进而被拒——**遇到这种情况以本会话的交接回执为准，不要重复推**。
 
 ## 3. 本会话对这批 WIP 做的四处改动（均为提交前的必要修正，非语义改动）
@@ -68,7 +68,7 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 | §6「全量回归以 review_admission 回执为准」 | **已兑现**：`review_admission` kind=full_test（候选 `7ba48414…`，child `subagent_b728459b392d`）结论 **PASS（P0=0 / P1=0 / P2=3）** | 工具回执 |
 | 新发现 | 接管会话在 `566e5b09f` 上独立复跑全量回归，发现**一个既有守卫回归**：`tests/unit/test_inspect_code.py::test_factory_registered`（根因 `ab86dde5b` 抽 `_register_basic_tools` helper）。已修（字面量断言 → 行为级断言 + AST 接线判定），详见设计文档 §13.8 / §14 | 设计文档 §13.8 |
 | §5 的 P1 入口 | **P1-b 已落地**（2026-10-30 15:4x，提交 `90fad9ab6`）：受限 child 启动时工具面剔除 `execute_command`，异步 `start()` 与同步 `run()` 两条路径同款，测试 T17–T23（设计文档 §15）；**C8 的 P0 段（命令串绝对路径字面量校验 + `scope_unverified` 审计）仍未做**——不得声称「写侧路径授权已全量生效」 **（2026-10-30 16:3x 更新：P1-b 口径已回退为 P1-a，C8 的 P0 段已随之落地——现行口径见本文件 §10 与设计 §16）** | 设计文档 §9 / §12.5 / §15 / §16 |
-| 未跟踪 scratch | 仓库根仍有 `.tmp-*` 过程脚本与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）**未入库**；含本机绝对路径，接管会话**未删除他人过程物**，也未提交 | `git status --porcelain` |
+| 未跟踪 scratch | 仓库根仍有 `.tmp-*` 过程脚本与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）**未入库**；含本机绝对路径，接管会话**未删除他人过程物**，也未提交 **（2026-10-30 21:5x 更新：根层 17 个 `.tmp-*.py` 已由后续会话按用户指示删除；根层非脚本残留、scratch 目录与 1.28MB json 仍未入库未删除，详见设计文档 §14.6 第 4 条）** | `git status --porcelain` |
 
 ## 10. 本会话：P1-a 命令族闸落地（2026-10-30 16:3x，P1-b 口径回退）
 
