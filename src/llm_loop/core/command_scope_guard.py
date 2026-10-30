@@ -445,8 +445,9 @@ class _Scanner:
             index += 1
         return writes, reads, cmd
 
-    def _resolve_command(self, tokens: list[str]) -> tuple[list[str] | None, list[str]]:
+    def _resolve_command(self, tokens: Sequence[str]) -> tuple[list[str] | None, list[str]]:
         """解析载体前缀，返回 (有效命令 tokens, 其参数)。"""
+        tokens = list(tokens)
         if not tokens:
             return None, []
         name = _basename(tokens[0])
