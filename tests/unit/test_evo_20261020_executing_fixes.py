@@ -321,3 +321,31 @@ def test_publish_button_still_rejects_ambiguous_labels() -> None:
         {"kind": "generic", "attributes": {"role": "button", "name": "保存"}}
     ) is False
     assert is_publication_button(None) is False
+
+
+def test_candidate_projection_carries_frame_token_on_prepended_matches() -> None:
+    # 2026-10-29 B8 残项收口：identity_search 命中（perception 侧已带 frame_token）
+    # 被前置进候选窗口时必须与 in-window 条目同形，否则子帧候选拿到 grounding_ref
+    # 也无法用于跨帧消歧。
+    window = [
+        {"kind": "generic", "attributes": {"name": f"w{i}"}, "grounding_ref": f"w{i}"}
+        for i in range(20)
+    ]
+    snapshot_result = {
+        "objects": window,
+        "identity_search": {
+            "total": 1,
+            "objects": [
+                {
+                    "kind": "button",
+                    "name": "发布",
+                    "grounding_ref": "bref-publish",
+                    "frame_token": "frame:77",
+                }
+            ],
+        },
+    }
+    projection = BrowserSemanticOperationTool._candidate_projection(snapshot_result)
+    items = projection["items"]
+    assert items[0]["grounding_ref"] == "bref-publish"
+    assert items[0]["frame_token"] == "frame:77"

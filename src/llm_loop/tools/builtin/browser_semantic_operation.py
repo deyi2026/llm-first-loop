@@ -579,25 +579,36 @@ def _lift_m1_compact_echoes(compact: dict[str, Any], last: dict[str, Any], statu
     stays byte-identical. When halted, surface the adapter's exact rejection
     code (e.g. path_not_allowed) for the new verbs; existing verbs keep their
     pre-M1 halt surface.
+
+    2026-10-30（2026-10-29 live 回执复核 P2 收口）：被拒动作按整类提升——任何
+    action_receipt.status=="rejected" 的 retry.reason 都进 compact，不再按动词白名单
+    提升个别动词。策略拒绝（navigate_url_scheme_rejected / navigate_host_blocked:* 等）
+    是一类行为而不是动词清单，往集合里逐个加动词必然漏一个。
     """
     if isinstance(last.get("upload_files"), list):
         compact["upload_files"] = last["upload_files"]
     if isinstance(last.get("type_echo"), dict):
         compact["type_echo"] = last["type_echo"]
-    if status == "halted" and str(last.get("verb") or "") in {"upload", "type", "press_key", "hover", "dialog"}:
-        blocked_receipt = last.get("action_receipt")
-        if isinstance(blocked_receipt, dict):
-            retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
-            if isinstance(retry_reason, str) and retry_reason:
-                compact["reject_reason"] = retry_reason
-                # M2-A B5 (§5.1 guidance): dialog_not_open is only actionable
-                # with a next step; attach it so the model does not retry blind.
-                if retry_reason == "dialog_not_open":
-                    compact["guidance"] = (
-                        "当前绑定页没有打开中的 JS 对话框；先执行会触发对话框的页面动作"
-                        "（如 click/press_key，其回执边界事件会出现 dialog_opened），"
-                        "再重试 do=dialog。"
-                    )
+    blocked_receipt = last.get("action_receipt")
+    if (
+        status == "halted"
+        and isinstance(blocked_receipt, dict)
+        and (
+            blocked_receipt.get("status") == "rejected"
+            or str(last.get("verb") or "") in {"upload", "type", "press_key", "hover", "dialog"}
+        )
+    ):
+        retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
+        if isinstance(retry_reason, str) and retry_reason:
+            compact["reject_reason"] = retry_reason
+            # M2-A B5 (§5.1 guidance): dialog_not_open is only actionable
+            # with a next step; attach it so the model does not retry blind.
+            if retry_reason == "dialog_not_open":
+                compact["guidance"] = (
+                    "当前绑定页没有打开中的 JS 对话框；先执行会触发对话框的页面动作"
+                    "（如 click/press_key，其回执边界事件会出现 dialog_opened），"
+                    "再重试 do=dialog。"
+                )
 
 
 class BrowserSemanticOperationTool:
@@ -1769,6 +1780,10 @@ class BrowserSemanticOperationTool:
                         {
                             "grounding_ref": ref,
                             "kind": raw.get("kind"),
+                            # 2026-10-29 B8 残项收口：identity_search 结果（perception 侧
+                            # 已带 frame_token）前置进候选窗口时必须与 in-window 条目
+                            # 同形，否则子帧候选拿到 grounding_ref 也无法用于跨帧消歧。
+                            "frame_token": raw.get("frame_token"),
                             **{
                                 key: raw[key]
                                 for key in ("name", "name_normalized")

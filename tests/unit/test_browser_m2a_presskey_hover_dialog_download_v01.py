@@ -885,3 +885,39 @@ def test_b6_end_to_end_actuator_state_feeds_wait_receipt(tmp_path: Path) -> None
     assert receipt["facts"]["sha256"] == hashlib.sha256(payload).hexdigest()
     assert receipt["facts"]["size"] == 1024 * 1024
 
+
+# ---------------------------------------------------------------------------
+# G. 2026-10-30 P2 收口：被拒动作按整类提升（2026-10-29 live 回执复核）
+#    navigate_url_scheme_rejected / navigate_host_blocked:* 等策略拒绝此前不在
+#    compact 提升的动词白名单里，回执只剩 action_receipt_status:rejected、丢了
+#    retry.reason。修法：action_receipt.status=="rejected" 整类提升 reject_reason，
+#    动词白名单只保留为既有 halt 面的兼容路径（加动词必漏动词）。
+# ---------------------------------------------------------------------------
+
+
+def test_lift_compact_echoes_promotes_any_rejected_receipt_reason() -> None:
+    from llm_loop.tools.builtin.browser_semantic_operation import _lift_m1_compact_echoes
+
+    compact: dict[str, Any] = {}
+    last: dict[str, Any] = {
+        "verb": "navigate",
+        "action_receipt": {
+            "status": "rejected",
+            "retry": {"reason": "navigate_url_scheme_rejected"},
+        },
+    }
+    _lift_m1_compact_echoes(compact, last, "halted")
+    assert compact["reject_reason"] == "navigate_url_scheme_rejected"
+
+
+def test_lift_compact_echoes_ignores_non_rejected_receipt() -> None:
+    from llm_loop.tools.builtin.browser_semantic_operation import _lift_m1_compact_echoes
+
+    compact: dict[str, Any] = {}
+    last: dict[str, Any] = {
+        "verb": "navigate",
+        "action_receipt": {"status": "ok"},
+    }
+    _lift_m1_compact_echoes(compact, last, "halted")
+    assert "reject_reason" not in compact
+
