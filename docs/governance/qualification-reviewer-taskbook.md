@@ -57,6 +57,8 @@ pass | fail | mixed | insufficient | not_evaluated
 
 ## 5. 一致性红线（违反即整卡拒收）
 
+**适用面**：本节红线是**评审回执文件**（`.tmp-ci/.../verdicts/NN.json`）与 harness 门禁 `cmd_verdict` 的验收标准。**持久化的 `data/methods/<card>/qualification.jsonl` 不承载 `claims` / `counter_case` 字段**——store 的 `record_qualification` 没有这两个入参（只接受 verdict / mechanism / task_benefit / promotion / task_ref / note / evaluator / task_type / evidence_refs）。因此父会话落库时会把逐条 claim 的状态与 counter_case **折进 `note` 散文**；ledger 里看不到结构化 `claims` 是 schema 决定的，不是评审员漏填。
+
 1. **`promotion=pass` ⇒ `verdict=pass` 且 `mechanism=pass` 且 `task_benefit=pass`**。三者有任一为 `fail` / `mixed` / `insufficient` / `not_evaluated`，`promotion` 就**不得**为 `pass`。
 2. **`promotion=pass` ⇒ 全部 `claims` 都是 `status="verified"`**。只要有任一 claim 为 `unverified` 或 `contradicted`，`promotion` 就**不得**为 `pass`（改用 `mixed` / `insufficient`）。
 3. `promotion=fail` ⇒ `verdict` 必须同时为 `fail`（store 的 `invalidate` 门禁只认 `verdict=fail` 的回执；`verdict=mixed` 的 `promotion=fail` 会被 store 拒绝）。
