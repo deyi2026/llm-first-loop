@@ -5,7 +5,7 @@
 正控制（范围内必须放行）+ 各类应拦输入（越界必须拒绝且**字节不变**）+ 旧行为不变。
 
 复跑：`.venv/bin/python scripts/verification/write_scope_gate_probe.py`
-（工作目录 = 仓库根；脚本自建临时目录并在结束时清理）
+（工作目录 = 仓库根；脚本在仓库内建**唯一**临时目录并在结束时清理）
 
 退出码：0 = 全部闸成立；1 = 有闸未成立；2 = 当前 checkout 没有 write_scope 特性
 （该特性是并发会话的未提交 WIP，在特性落地的 checkout 上再跑）。
@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, "src")
@@ -35,7 +36,7 @@ except ImportError as exc:  # 特性未落地时诚实退出，不假装跑过
     )
     raise SystemExit(2)
 
-ROOT = Path(".tmp-write-scope-probe").resolve()
+BASE_DIR_NAME = ".tmp-write-scope-probe"
 RESULTS = []
 
 
@@ -58,21 +59,29 @@ def expect_reject(name, path, scope, old, new, ws, svc):
 
 
 def main():
-    if ROOT.exists():
-        shutil.rmtree(ROOT)
-    ws = ROOT / "ws"
+    # 唯一临时目录：不用固定名——固定名会与并发探针互删，且 resolve() 会跟随既有符号链接
+    # 把删除重定向到别处（独立审查 P2-3）。mkdtemp 在仓库内建目录，不越沙箱写入边界。
+    root = Path(tempfile.mkdtemp(prefix=BASE_DIR_NAME + "-", dir="."))
+    try:
+        return run(root)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def run(root):
+    ws = root / "ws"
     (ws / "src").mkdir(parents=True)
     (ws / "other").mkdir(parents=True)
     src_file = ws / "src" / "a.py"
     src_file.write_bytes(b"x = 1\n")
     other_file = ws / "other" / "x.py"
     other_file.write_bytes(b"secret = 1\n")
-    outside = ROOT / "outside.py"
+    outside = root / "outside.py"
     outside.write_bytes(b"secret = 1\n")
     link = ws / "src" / "link.py"
     os.symlink(outside, link)
 
-    svc = FileService(artifact_store=WorkspaceArtifactStore(ROOT / "data"))
+    svc = FileService(artifact_store=WorkspaceArtifactStore(root / "data"))
     allow_src = parse_write_scope({"paths": ["src/**"], "mode": "allow"})
 
     # A 正控制：范围内写必须成功（防"一律拒绝"式假闸）
@@ -115,7 +124,6 @@ def main():
 
     failed = [n for n, ok, _ in RESULTS if not ok]
     print("\nTOTAL=" + str(len(RESULTS)) + " FAILED=" + str(len(failed)) + " " + str(failed))
-    shutil.rmtree(ROOT, ignore_errors=True)
     return 1 if failed else 0
 
 

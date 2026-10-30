@@ -180,3 +180,6 @@ work/*/out/*.log
 
 # write_scope 闸探针的临时目录（崩溃/中断可能残留）
 .tmp-write-scope-probe/
+
+# write_scope 闸探针的临时目录（mkdtemp 唯一名，崩溃/中断可能残留）
+.tmp-write-scope-probe*/
