@@ -149,8 +149,8 @@ BLOCKED_CASES = [
     ("timeout -k 5 10 rm /outside/x", "write_target_outside_scope"),
     ("builtin rm /outside/x", "write_target_outside_scope"),
     ("unlink /outside/x", "write_target_outside_scope"),
-    ("git -c alias.pwn='!rm /outside/x' pwn", "write_target_outside_scope"),
-    ("git -c core.pager='rm /outside/x' status", "write_target_outside_scope"),
+    ("git -c alias.pwn='!rm /outside/x' pwn", "implicit_write_target"),
+    ("git -c core.pager='rm /outside/x' status", "implicit_write_target"),
     ("git --config-env=alias.pwn=EVIL pwn", "implicit_write_target"),
     (
         "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.pwn "
@@ -159,6 +159,22 @@ BLOCKED_CASES = [
     ),
     ("time -o /outside/x rm src/x.py", "write_target_outside_scope"),
     ("sort -o /outside/x src/x.py", "write_target_outside_scope"),
+    # ── 第四轮独立审查新增向量（2026-10-30）──────────────────────────────
+    # 纯写重定向段（无命令）：``> FILE`` / ``2> FILE`` / ``3> FILE``
+    ("> /outside/f", "write_target_outside_scope"),
+    ("2> /outside/f", "write_target_outside_scope"),
+    ("3> /outside/f", "write_target_outside_scope"),
+    # sed 脚本来源三形态 + ``s///w`` / ``s///e`` 变体
+    ("sed --expression='w /outside/x' in", "write_target_outside_scope"),
+    ("sed -f /tmp/evil.sed in", "implicit_write_target"),
+    ("sed 's/a/b/w /outside/x' in", "write_target_outside_scope"),
+    ("sed 's/a/b/e' in", "implicit_write_target"),
+    # ed/ex 的 stdin 脚本（写目标不可静态定位）
+    ("ed src/x.py", "implicit_write_target"),
+    ("ex -c 'w /outside/x' src/x.py", "write_target_outside_scope"),
+    # git 写子命令：封闭名单漏项（remote add / fast-import 曾放行）
+    ("git remote add origin /outside/x", "implicit_write_target"),
+    ("git fast-import", "implicit_write_target"),
 ]
 
 
@@ -206,6 +222,13 @@ ALLOWED_CASES = [
     "timeout 10 rm src/x.py",
     "sudo rm src/x.py",
     "git -c user.name=someone log --oneline",
+    # 第四轮审查：git 改为「读白名单放行、其余按写处理」后，
+    # 家族内有只读形态的子命令必须仍放行（remote -v / worktree list …）
+    "git remote -v",
+    "git remote show origin",
+    "git worktree list",
+    "git diff --stat",
+    "git rev-parse HEAD",
 ]
 
 
@@ -244,14 +267,21 @@ def test_carrier_option_semantics_do_not_swallow_inner_payload() -> None:
 
 
 def test_git_config_injection_is_treated_as_payload() -> None:
-    """git 的配置注入是**可执行载荷**：alias 的 shell 形态与 pager 都要重解析。"""
+    """git 的配置注入是**可执行载荷**：alias 的 shell 形态与 pager 都要重解析。
+
+    第六轮独立审查 P1-3 起：``alias.*`` / ``core.pager`` 是**可执行载荷**，
+    其执行时机与工作目录不可静态确定 ⇒ 一律按 ``implicit_write_target`` 拒
+    （不再依赖"载荷的写目标恰好越界"才拦 —— 否则相对路径载荷会漏）。
+    """
     for command in (
         "git -c alias.pwn='!rm /outside/x' pwn",
         "git -c core.pager='rm /outside/x' status",
+        # 载荷写目标恰在 scope 内（相对路径）也必须拦
+        "git -c alias.pwn='!rm -rf ./x' pwn",
     ):
         decision = _check(command)
         assert decision.allowed is False, command
-        assert decision.reason == "write_target_outside_scope", (command, decision.reason)
+        assert decision.reason == "implicit_write_target", (command, decision.reason)
 
 
 def test_undeclared_scope_allows_everything() -> None:
@@ -472,3 +502,137 @@ def test_audit_is_capped_and_dropped_entries_are_counted() -> None:
     assert snapshot["scope_unverified_count"] == _AUDIT_MAX_ENTRIES, snapshot
     assert snapshot["audit_dropped_count"] == overflow, snapshot
     write_scope_audit_reset()
+
+
+# ── 第五轮独立审查（REVISE：P0=4 / P1=4 / P2=1）回归锁 ────────────────────
+#
+# 判定基准：**全域 scope**（paths=("**",)）。此前用受限 scope 时，
+# 这些向量虽被拒，但拒的是错误的原因（拒了操作数而非真实写目标），
+# 换到真实越界路径就放行 ⇒ 必须以全域 scope 断言"必须被拒"。
+
+R5_BLOCKED_CASES = [
+    # P0-1：载体携带的赋值（env GIT_CONFIG_* 注入可执行 alias）
+    (
+        "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.pwn "
+        "GIT_CONFIG_VALUE_0='!rm -rf /outside' git log",
+        "implicit_write_target",
+    ),
+    # P0-2：find -fprint0 与 -fprint 同族（落盘）
+    ("find . -fprint0 /outside/x", "write_target_outside_scope"),
+    # P0-3：perl 聚集形态就地编辑（-pi / -pie / -i.bak）
+    ("perl -pi -e 's/a/b/' /outside/x", "write_target_outside_scope"),
+    ("perl -pie -e 's/a/b/' /outside/x", "write_target_outside_scope"),
+    # P0-4：tar 创建模式的归档文件才是写目标
+    ("tar -c --file=/outside/x.tar a", "write_target_outside_scope"),
+    ("tar cf /outside/x.tar a", "write_target_outside_scope"),
+    # P1-1：env -C / sudo -D 换目录后相对写目标不可再按原 cwd 解析
+    ("env -C /outside touch x", "unverifiable_write_target"),
+    ("sudo -D /outside touch x", "unverifiable_write_target"),
+    # P1-2：ln -t 是 --target-directory（链接建到 DIR 下）
+    ("ln -t /outside a", "write_target_outside_scope"),
+    # P1-3：curl --remote-name-all 与 -O/--remote-name 同族
+    ("curl --remote-name-all https://example.com/x", "implicit_write_target"),
+    # P1-4：git symbolic-ref 写形态（改写 .git/HEAD）
+    ("git symbolic-ref HEAD refs/heads/x", "implicit_write_target"),
+    # P2-1：同形载体/工具仍漏建模
+    ("script /outside/log rm /outside/x", "write_target_outside_scope"),
+    ("fish -c 'rm /outside/x'", "write_target_outside_scope"),
+    ("gcc -o /outside/x a.c", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R5_BLOCKED_CASES)
+def test_r5_review_bypasses_are_blocked_under_full_domain_scope(
+    command: str, expected_reason: str
+) -> None:
+    """第五轮审查复现向量：全域 scope 下必须被拒（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # P1-4 的**读形态**仍须放行：只有 1 个位置参数 = 读当前 symbolic ref
+        "git symbolic-ref HEAD",
+        # P0-4 的解包形态（不是创建）仍按解包判定：解包到 cwd 时写目标
+        # 不可静态定位 ⇒ 拒（既有口径，本轮未改）；指定 -C 后目标可定位 ⇒ 放行
+        "tar -xf a.tar -C src",
+        # P2-1：gcc 无 -o 时不产出指定输出文件（仍按编译器默认处理）
+        "gcc --version",
+        # P1-1：env -C 不带写命令时不误伤读命令
+        "env -C src ls",
+    ],
+)
+def test_r5_review_fixes_do_not_over_block_read_forms(command: str) -> None:
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第六轮独立审查（REVISE：P0=0 / P1=3 / P2=5）回归锁 ──────────────────────
+#
+# P1-1：tar 的**粘连短选项簇**（``-cvf`` / ``-czf``）里的 f 也是归档路径 ——
+#   `_flag_value` 是 token 精确匹配，认不出粘连簇 ⇒ 曾取错操作数而放行越界归档写。
+# P1-2：``script -c CMD`` 的载荷由**选项**携带（此前只按 ``script FILE cmd…`` 取
+#   cmd_tokens[2:] ⇒ ``-c`` 形态的 CMD 被整体漏扫）。
+# P1-3：``git -c alias.*=…`` 是**可执行 alias**：载荷写目标恰在 scope 内
+#   （相对路径）时也不得放行 —— 执行时机与工作目录不可静态确定。
+# P2-1/P2-2：载体选项区（命令名之前）与内层命令的操作数必须分开看 ——
+#   ``env grep -C 2 pat`` 的 ``-C`` 是 grep 的上下文行数，不是 env 的 chdir；
+#   ``env ls GIT_CONFIG_COUNT=1`` 里那是 ls 的参数，不是 env 的环境变量赋值。
+
+R6_BLOCKED_CASES = [
+    ("tar -cvf /outside/x.tar a", "write_target_outside_scope"),
+    ("tar -czf /outside/x.tar.gz a", "write_target_outside_scope"),
+    ("script -c 'rm /outside/x' log", "write_target_outside_scope"),
+    ("script -c 'rm /outside/x'", "write_target_outside_scope"),
+    ("git -c alias.log='!rm -rf ./x' log", "implicit_write_target"),
+    ("git -c 'alias.log=!rm -rf ./x' log", "implicit_write_target"),
+    ("git -c core.pager='sh -c \"rm -rf ./x\"' log", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R6_BLOCKED_CASES)
+def test_r6_review_bypasses_are_blocked_under_full_domain_scope(
+    command: str, expected_reason: str
+) -> None:
+    """第六轮审查复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # P2-1：env 的 -C 只能取**载体自身选项区**；内层 grep 的 -C 不是 env 的
+        "env grep -C 2 pat",
+        # P2-2：内层命令的操作数不是 env 的环境变量赋值
+        "env ls GIT_CONFIG_COUNT=1",
+        # P2-3：perl 把 -version 当长选项名（不是开关簇）⇒ 不是就地编辑
+        "perl -version",
+        "perl -Mstrict -e 'print 1'",
+        # P2-4：git reflog / fast-export 是真只读（写形态由动作分族拦）
+        "git reflog",
+        "git reflog show",
+        "git fast-export --all",
+    ],
+)
+def test_r6_review_fixes_do_not_over_block_read_forms(command: str) -> None:
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # P2-4：reflog 的写形态仍须拦（expire / delete 改写 reflog 文件）
+        "git reflog expire --all",
+        "git reflog delete HEAD@{1}",
+    ],
+)
+def test_r6_git_reflog_write_forms_are_blocked(command: str) -> None:
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == "implicit_write_target", (command, decision.reason)

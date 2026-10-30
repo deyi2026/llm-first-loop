@@ -109,9 +109,15 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 2. **读侧越界只审计不阻断**（scope 是写侧授权；读侧封禁会阻断解释器与测试）。
 3. `cp -r` 的**读**越界、`ln -s` 造符号链接后的写入链路，可绕开字面量判定。
 4. `git` 写子命令一律按隐式写目标拒绝——语义偏保守。
+   **2026-10-30 第四轮更新**：改为**只读白名单**放行、名单外一律按写处理（见 §10.8）。
+   已知读形态保留放行（`status`/`log`/`diff`/`remote -v`/`worktree list` 等），
+   代价是新增 git 子命令需显式加白名单，否则默认被拒（fail-closed 方向）。
 5. **shell 脚本文件执行被拒**（`sh s.sh` / `bash s.sh` ⇒ `implicit_write_target`）——fail-closed 的
    代价：受限 child 不能跑仓库脚本（如 `scripts/ci_gate.sh`），只能跑只读命令与 in-scope 写命令。
 6. **写族名单是封闭清单**：名单外的命令（如 `sponge`）默认按只读放行，只审计读侧字面量。
+   **2026-10-30 第四轮更新**：sed 脚本来源已扩到三形态（`-e` / `--expression=` / `-f`），
+   `s///w` 与 `s///e` 变体已覆盖；但**命令家族层面的封闭清单性质未变**——
+   新出现的写工具仍需显式加名单。
 7. `cd` 位移后的相对写目标一律拒（cwd 位移不可静态定位）。
 
 ### 10.4 与并发写者会话的关系
@@ -195,3 +201,159 @@ pyright PASS、空实现下 57/57 应拦用例仍放行（用例在测拦截）�
 **教训（第四层）**：三轮修复都停在**单个命令家族的选项语义**上（`timeout` 时长、`watch -x`、
 `watch -b`）⇒「选项语义按命令分别建模」还没落到**取值型选项表**这个数据结构上（桶内仍可能混入布尔项）。
 下一轮查法：**逐条核对每个命令的取值型选项是否与真实 CLI 语义一致**，而不是继续往"构造清单"里加条目。
+
+### 10.8 第四轮（2026-10-30 19:3x–20:0x）：判定层四类绕过 → 已逐条修 + 口径翻转
+
+**本节的事实来源**：本会话在 HEAD `907ba3cb7` 上**第一手实测**（不是引用上一轮的探针结果——
+上一轮探针跑在 `d94b6ce39`，HEAD 已前移，结论须重测）。
+
+**四类绕过向量与修法**：
+
+| # | 向量 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 纯写重定向段 `> /outside/f`（无命令） | `_split_redirects` 只识别独立的重定向 token；`>` 作首 token 时整段被判"无命令"直接放行 | 段级判定：cmd_tokens 为空但有写重定向 ⇒ 仍按写重定向目标校验 |
+| 2 | `sed --expression='w /outside/x'` / `sed -f FILE` / `sed 's///w FILE'` / `sed 's///e'` | sed 脚本来源只认位置参数首位；`--expression=`/`-f` 不在其中；`s///w`、`s///e` 两个标志变体未建模 | 脚本来源扩到三形态（`-e`/`--expression=`/`-f`）；新增 `s///w`（写目标）与 `s///e`（执行载荷⇒隐式） |
+| 3 | `ed src/x.py` / `ex -c 'w /outside/x' src/x.py` | ed/ex 命令脚本可来自 **stdin**，写目标不可静态定位 | 内联 `-c` 脚本解析 `w FILE`；stdin 脚本 ⇒ `implicit_write_target` |
+| 4 | `git remote add` / `git fast-import` | git 写子命令是**封闭写名单**，名单外默认放行 ⇒ 必然漏项 | 口径翻转：**只读白名单**放行、名单外一律按写处理（fail-closed） |
+
+**口径翻转是本轮最重要的结构性变更**：`git` 从"封闭写名单"改为"开放读白名单"。
+封闭名单的失效模式是**漏项默认放行**（fail-open），而 git 子命令集合随版本增长、无法穷举。
+改读白名单后，新增子命令默认被拒（fail-closed）。代价已在 §10.3 第 4 条登记。
+
+**家族内读/写分族**（避免误伤）：`git remote` 与 `git worktree` 都有只读形态，
+整族按写处理会误伤 `git remote -v` / `git worktree list` ⇒ 按**动作**分族：
+`remote`（`-v`/`show`/`get-url` 只读；`add`/`set-url`/`remove` 等写）·
+`worktree`（`list` 只读；其余写）。
+
+**判定顺序修正（精确理由优先）**：调用方原本**先判 implicit 再查已知目标**，
+导致 `ed /outside/x.py` 这类**已知越界路径**被报成笼统的 `implicit_write_target`。
+改为**先查已知写目标**（能给精确理由：越界/不在允许清单），全合规后才用 implicit 兜底。
+
+**sed `s` 命令的解析实现教训**：先用正则实现 `s///w`，实测**误判**——
+`s` 命令分隔符是动态的（`s|a|b|` / `s,a,b,`），正则里的 `[^\\]` 会跨越分隔符，
+导致 `s///w` 被误当成 `s///e`（报隐式而非精确越界），且 `s///w` 的捕获组取错位。
+改为**逐字符解析**（扫 pattern → 扫 replacement → 扫标志段），不再依赖正则反查分隔符。
+
+**证据**：判定层 **157 passed**（新增 13 条应拦输入 + 5 条放行形态）、
+`ruff check` 对改动文件干净。**应拦输入实测**（RULE-AI-35：护栏变更须实测拦得住）：
+`> /outside/f`、`2> /outside/f`、`3> /outside/f`、`sed --expression='w /outside/x'`、
+`sed -f /tmp/evil.sed`、`sed 's/a/b/w /outside/x'`、`sed 's/a/b/e'`、`ed src/x.py`、
+`ex -c 'w /outside/x' src/x.py`、`git remote add origin /outside/x`、`git fast-import`
+⇒ 全部被拦（精确越界或隐式不可定位）；`git remote -v` / `git worktree list` / `git diff --stat`
+⇒ 仍放行（读形态未被误伤）。新增用例同时纳入 `test_blocked_cases_depend_on_the_gate`
+自证伪集合（把闸打成恒放行后必须全部放行 ⇒ 确认用例测的是拦截而非空转）。
+
+**状态行**：判定层四类绕过已修并实测（157 passed / ruff 干净）；
+**全量门禁 `bash scripts/ci_gate.sh` 的独立审查在本节定稿时仍为 `review_host_capacity`
+（审查容量被并发会话占用）⇒ 本轮只称"判定层改动已实测"，不称"全量门禁已通过"**。
+
+**残余（未闭环，如实登记）**：解释器任意代码（`python -c`）不判为写盘族；
+读侧越界只审计不阻断；`cp -r` 读越界与 `ln -s` 造链后的写入链路；
+命令家族层面的封闭名单性质未变（新写工具仍需显式加名单）；
+`git` 读白名单需随 git 版本维护。
+
+### 10.9 第五轮独立审查（2026-10-30 21:0x–22:3x）：REVISE（P0=4 / P1=4 / P2=1）→ 已逐条修
+
+独立评审子代理对第四轮产物给出 **REVISE**（P0=4 / P1=4 / P2=3），判定"尚不能上线"。
+本节记录逐条修复与**实测口径**。
+
+**关键取证方法（本次的关键教训）**：评审给出的复现向量用**受限 scope**
+（如 `paths=("src/**",)`）复测时**看起来全被拦**——但那是**错因拒绝**：拦下的是
+无关的操作数（如 `tar` 的成员名 `a`），而非真实写目标（`/outside/x.tar`）。
+换到**全域 scope**（`paths=("**",)`）复测，**15/15 全部 ALLOW**（真实绕过）。
+⇒ 回归锁必须以**全域 scope** 为判定基准，否则用例测的是"恰好被别的因素挡住"，
+不是"闸拦住了写目标"。
+
+**逐条修复（P0）**：
+- **P0-1 载体携带的赋值**：`env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=… GIT_CONFIG_VALUE_0='!rm -rf /outside' git log`
+  此前放行——`_carrier_split` 跳过 env 的赋值操作数，段首赋值检查够不到它们。
+  修法：在载体分派处**跳过前**取回 env 的赋值操作数，走既有 `_blocked_assignment`。
+- **P0-2 `find -fprint0`**：与 `-fprint/-fprintf/-fls` 同族（落盘），此前只认后三者。
+- **P0-3 perl 聚集形态就地编辑**：`-i` 可与其它开关聚集（`-pi`/`-pie`/`-i.bak`）；
+  只认 `startswith("-i")` 会漏掉聚集形态。新增 `_perl_inplace()`：精确 `-i`、
+  `-i.<后缀>`、以及"全为已知单字母开关的聚集串里含 i"。
+- **P0-4 tar 创建模式的归档文件**：`-c/--create`（含老式 `tar cf ARCHIVE …`）时，
+  写目标是**归档文件**（`--file=`/`-f`/老式第 2 个位置参数），不是位置参数第 1 个。
+
+**逐条修复（P1）**：
+- **P1-1 `env -C` / `sudo -D` 换目录**：换目录后其后命令的相对写目标不能按原 cwd 解析
+  （原口径把 `env -C /outside touch x` 的 `/outside/x` 误判为工作区内相对路径）。
+  修法：载体规格新增 `chdir_options`，命中即置 `cwd_unstable`（与 `cd`/`pushd` 同口径）。
+- **P1-2 `ln -t`**：ln 的 `-t` 就是 `--target-directory`（GNU coreutils），此前只给
+  cp/mv/install 加了 `-t`。注意 rsync 的 `-t` 是 `--times`（布尔开关）⇒ rsync 仍不加。
+- **P1-3 `curl --remote-name-all`**：与 `-O/--remote-name` 同族（按远端名落盘，文件名不可静态定位）。
+- **P1-4 `git symbolic-ref` 写形态**：`symbolic-ref` 在 git 读白名单里，但
+  `git symbolic-ref HEAD refs/heads/x` 是**写形态**（改写 `.git/HEAD`）。
+  修法：读形态（1 个位置参数）放行；写形态（≥2 个位置参数，或 `--delete`/`-d`）拒。
+
+**逐条修复（P2）**：
+- **P2-1 同形漏建模**：`fish` 补进 shell 解释器集合（`fish -c` 载荷重解析）；
+  编译器/链接器的 `-o`（gcc/g++/cc/c++/clang/clang++/ld/rustc）按输出文件建模
+  （`go` 已在隐式写名单，不重复列入）；`script FILE cmd…` 按**载体 + 写目标双判定**
+  建模（FILE 是 typescript 写目标，cmd 是被执行的命令，均须过判定）。
+- **P2-2 文档口径不一致**：本节与 §10.8 的残余清单同步更新，不再出现"文档说未实施、
+  代码已实施"的错位。
+- **P2-3 argv 模式保守误报**（可用性方向，fail-closed 侧）：登记为已知残余，
+  本轮不改（改动会放大"闸误杀正常命令"的运维成本，需独立评估）。
+
+**证据**：判定层 **175 passed**（新增 14 条应拦输入 + 4 条放行形态）；
+新增用例以**全域 scope** 为基准，并明确断言**拒绝理由正确**（防"错因拒绝"再次蒙混）。
+**应拦输入实测**（RULE-AI-35）：上列 15 条向量在 `paths=("**",)` 下**全部被拦**
+且理由分别为 `write_target_outside_scope` / `implicit_write_target` /
+`unverifiable_write_target`（逐条匹配预期）；`git symbolic-ref HEAD`、
+`tar -xf a.tar -C src`、`gcc --version`、`env -C src ls` ⇒ 仍放行（读形态未被误伤）。
+
+**状态行**：判定层 8 项 P0/P1 + P2-1 已修并实测（175 passed）；
+**全量门禁 `bash scripts/ci_gate.sh` 的独立审查结论以子代理回执为准**——
+本节定稿时该审查仍在进行，不预先宣称结果。
+
+### 10.10 第六轮独立审查（2026-10-30 22:3x–22:5x）：REVISE（P0=0 / P1=3 / P2=5）→ 已逐条修
+
+对第五轮产物（`scripts/ci_gate.sh` 候选）的独立审查结论 **REVISE**：
+**P0=0 / P1=3 / P2=5**（P0 清零是第五轮修复的确认）。逐条修复如下。
+
+**P1（3 条，均为真实绕过，已用探针实证确认）**：
+- **P1-1 tar 粘连短选项簇**：`_flag_value` 是 **token 精确匹配**，认不出粘连簇
+  （``-cvf`` / ``-czf ARCHIVE``）⇒ 回退逻辑取错操作数（粘连形态里 ``positional[0]``
+  **就是**归档）⇒ 越界归档写被放行。修法：新增 `_tar_archive()`，认
+  ``-f/--file``、粘连簇里的 ``f``（末位取下一 token，内嵌则取簇内剩余）、老式写法。
+- **P1-2 `script -c CMD`**：载荷由**选项**携带，此前只按 ``script FILE cmd…`` 取
+  ``cmd_tokens[2:]`` ⇒ ``-c`` 形态的 CMD 被整体漏扫。修法：先取 ``-c/--command``
+  的值并 `shlex.split` 后重扫；无该选项时才走位置参数形态。
+- **P1-3 `git -c alias.*=…` 是可执行 alias**：其载荷的执行时机与工作目录
+  **不可静态确定** ⇒ 不能只靠"载荷写目标恰好越界"才拦（``alias.log='!rm -rf ./x'``
+  的相对路径恰在 scope 内 ⇒ 曾放行）。修法：`_git_config_values()` 改为保留 **key**，
+  ``alias.*`` 与 ``core.pager`` 一律按 ``implicit_write_target`` 拒。
+
+**P2（5 条，全部修）**：
+- **P2-1 chdir 检测位置不敏感**：`env grep -C 2 pat` 的 ``-C`` 是 grep 的上下文行数，
+  不是 env 的 chdir。修法：只看**载体自身选项区**（命令名之前）。
+- **P2-2 env 赋值扫描读整段尾巴**：`env ls GIT_CONFIG_COUNT=1` 里那是 ls 的参数。
+  修法：同 P2-1，只取载体选项区的赋值。
+- **P2-3 `_perl_inplace` 字母簇过宽**：``perl -version``（perl 按**长选项名**处理，
+  含 i）被误判成就地编辑。修法：簇长上限 3 且允许带后缀（``-pi.bak`` 此前被
+  ``isalpha()`` 门槛整段跳过 ⇒ 也是漏检）。
+- **P2-4 `git reflog` / `git fast-export` 过度拦截**：两者是**真只读**（原按整族写处理
+  ⇒ 误伤正常运维命令）。修法：从写名单移出并补进读白名单；``reflog`` 的写形态
+  （``expire`` / ``delete``）由**动作分族**（`GIT_REFLOG_READ_ACTIONS`）拦。
+- **P2-5 覆盖/文档缺口**：本节 + 设计文档 §16.13 同步补齐（口径漂移已修）。
+
+**证据**：判定层 **191 passed**（新增第六轮 18 条：7 条应拦 + 9 条放行形态 + 2 条
+reflog 写形态）；写侧 + 棘轮门 **381 passed / 1 skipped**（含
+`tests/unit/test_arch_guards.py` 40 passed）；ruff 干净。
+**应拦输入实测**（RULE-AI-35）：第六轮 7 条向量在 `paths=("**",)` 下全部被拦且理由匹配；
+`git reflog` / `git reflog show` / `git fast-export --all` / `perl -version` /
+`env grep -C 2 pat` / `env ls GIT_CONFIG_COUNT=1` ⇒ 放行（读形态未被误伤）；
+`git reflog expire --all` / `git reflog delete HEAD@{1}` ⇒ 仍被拦。
+
+**顺带修掉两项前轮遗留的棘轮违规**（守卫实测 HEAD 上已越线，非本轮引入）：
+- `command_scope_guard.py::_write_targets` 122 行（未登记）⇒ 抽出
+  `_tar_write_targets` / `_tar_mode` / `_tar_archive` / `_download_write_targets`
+  后降到 **118**。
+- `subagent/runner.py::run` 214→221（第三轮 P2-1 修复引入）⇒ 把闸口径标签计算抽为
+  `_command_guard_label()`（同步 `run()` 与异步 `start()` 两条路径**共用同一来源**，
+  顺带消除双份口径漂移风险）后回到 **214**。
+  ⇒ 遵守棘轮纪律：**靠减重而非重登记掩盖**。
+
+**状态行**：第六轮 P1=3 / P2=5 已逐条修并实测（191 passed / 棘轮 40 passed）；
+**全量门禁的独立审查结论以子代理回执为准**，本节不预先宣称上线结果。

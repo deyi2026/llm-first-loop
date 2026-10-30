@@ -1430,6 +1430,18 @@ class SubAgentRunner:
                 return None, ""
         return frozenset(base - {"spawn_subagent"}), ""
 
+    @staticmethod
+    def _command_guard_label(child_write_scope: WriteScope | None) -> str:
+        """写侧闸口径标签（同步 run() 与异步 start() 两条路径的**单一来源**）。
+
+        仅当 child 携带**已声明**的有效 write scope 时才有闸；否则无闸。
+        两条路径必须同字段、同取值规则（第三轮审查 P2-1：只在一侧出现＝消费方
+        按另一侧口径理解，会静默失效）。
+        """
+        if child_write_scope is not None and child_write_scope.declared:
+            return "p1a_write_family"
+        return ""
+
     def _compute_child_write_scope(
         self, requested: WriteScope | None
     ) -> tuple[WriteScope | None, str]:
@@ -1950,8 +1962,8 @@ class SubAgentRunner:
                 else ",".join(sorted(child_scope))
             ),
             **(
-                {"write_scope_command_guard": "p1a_write_family"}
-                if (child_write_scope is not None and child_write_scope.declared)
+                {"write_scope_command_guard": self._command_guard_label(child_write_scope)}
+                if self._command_guard_label(child_write_scope)
                 else {}
             ),
             "worktree": worktree_lease.path if worktree_lease is not None else "",
@@ -2494,20 +2506,13 @@ class SubAgentRunner:
                         "[状态: failure] requires.tools 声明超出父执行域，"
                         f"未启动任何 child/provider/tool 动作: {scope_refusal}",
                     )
-            # DESIGN-20261030 §5.3 C3/C5/C5b: 同步路径（workflow local executor
-            # 同款入口）同样在启动前求交 write scope——只改 start() 一条路径时
-            # 同步入口可完全绕过 scope（F14）；拒绝走 refused 终态，未启动任何
-            # child/provider/tool 动作。注入仅当有效 scope 非 None（与既有
-            # scope_token 条件挂载模式一致）。
+            # DESIGN-20261030 §5.3 C3/C5/C5b: 同步路径（workflow local executor 同款
+            # 入口）同样在启动前求交 write scope（只改 start() 一条路径时同步入口可
+            # 完全绕过 scope / F14）；拒绝走 refused 终态，未启动任何 child/provider/tool 动作。
             child_write_scope, write_scope_refusal = self._compute_child_write_scope(
                 required_write_scope
             )
-            # 同步路径的闸口径（与异步 start() 回执同字段、同取值规则）
-            command_guard_label = (
-                "p1a_write_family"
-                if (child_write_scope is not None and child_write_scope.declared)
-                else ""
-            )
+            command_guard_label = self._command_guard_label(child_write_scope)
             if write_scope_refusal:
                 return self._run_refused_finalized(
                     sid, parent_sid, depth,
