@@ -9,7 +9,7 @@
 
 | 层 | 事实 | 依据 |
 |---|---|---|
-| HEAD（`48f9dc003`） | `src/llm_loop/workspace/file_service.py` 全文**无** `write_scope` / `scope_allows` ⇒ HEAD 上整个 write_scope 特性不存在 | `git show HEAD:src/llm_loop/workspace/file_service.py \| grep -n "write_scope\|scope_allows` ⇒ 无命中（exit 1） |
+| HEAD（`48f9dc003`） | `src/llm_loop/workspace/file_service.py` 全文**无** `write_scope` / `scope_allows` ⇒ HEAD 上整个 write_scope 特性不存在 | `git show HEAD:src/llm_loop/workspace/file_service.py \| grep -n "write_scope\|scope_allows"` ⇒ 无命中（exit 1） |
 | 工作树（WIP） | `edit()` 与 `observe()` **都**接了闸：`_enforce_write_scope(...)` 在**取文件锁与读字节之前**执行，越界抛 `FileServiceError(error_type="write_scope_violation")` | `src/llm_loop/workspace/file_service.py`：`edit()` 内、`observe()` 内各一处调用（行号随并发会话改动漂移，按函数名定位） |
 | 工具层 | `edit_file` 工具把当前会话 scope 透传给服务层：`write_scope=current_write_scope.get()` | `src/llm_loop/tools/builtin/edit_file.py` |
 | 子代理层 | 子会话 scope = 父 scope ∩ 声明 scope；解析不出则 fail-closed 拒绝，不静默忽略声明 | `src/llm_loop/subagent/runner.py`（scope 解析与 `current_write_scope.set(...)`） |
