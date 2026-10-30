@@ -464,3 +464,55 @@ port = 8991
     assert "local-eval" not in captured.out
     assert "local-eval" not in captured.err
     assert (_code_toml.read_bytes() if _code_toml.exists() else None) == _pre
+
+
+def test_service_scoped_llm_model_overrides_global_only_for_wecom(tmp_path: Path) -> None:
+    """2026-10-30：企业微信接入单独钉模型，其余服务不受影响。
+
+    背景：本 key 的订阅套餐无 GLM-5.3-FlashX 权限（provider 报 429/1311
+    「当前订阅套餐暂未开放GLM-5.3-FlashX权限」），企微接入改用
+    minimax/MiniMax-M3.1-Flash；web/feishu/learning 的模型归属未被授权变更。
+    """
+    _runtime_toml(
+        tmp_path,
+        """
+[llm]
+model = "glm/glm-5.3"
+
+[llm.wecom]
+model = "minimax/MiniMax-M3.1-Flash"
+""",
+    )
+    (tmp_path / ".env").write_text(
+        "LLM_MODEL=glm/glm-5.3\n",
+        encoding="utf-8",
+    )
+
+    wecom = resolve_effective("wecom", env={}, workspace_root=tmp_path)
+    web = resolve_effective("web", env={}, workspace_root=tmp_path)
+    feishu = resolve_effective("feishu", env={}, workspace_root=tmp_path)
+    learning = resolve_effective("learning", env={}, workspace_root=tmp_path)
+
+    assert wecom.values["LLM_MODEL"] == "minimax/MiniMax-M3.1-Flash"
+    assert wecom.sources["LLM_MODEL"] == "runtime_toml_service:wecom"
+
+    for other in (web, feishu, learning):
+        assert other.values["LLM_MODEL"] == "glm/glm-5.3"
+        assert other.sources["LLM_MODEL"] == "runtime_toml"
+
+
+def test_llm_service_scope_rejects_services_without_authorization(tmp_path: Path) -> None:
+    """llm 段只授权 wecom：写其它服务的 [llm.*] 一律 fail-closed（防误改他人模型）。"""
+    for service in ("web", "feishu", "learning"):
+        _runtime_toml(
+            tmp_path,
+            f"""
+[llm]
+model = "glm/glm-5.3"
+
+[llm.{service}]
+model = "minimax/MiniMax-M3.1-Flash"
+""",
+        )
+        with pytest.raises(ValueError):
+            resolve_effective(service, env={}, workspace_root=tmp_path)

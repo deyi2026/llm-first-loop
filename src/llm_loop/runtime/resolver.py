@@ -187,6 +187,12 @@ _SERVICE_SCOPED_SECTIONS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "semantic": frozenset({"web", "feishu", "wecom", "learning"}),
         "knowledge_advisor": frozenset({"web"}),
+        # 2026-10-30：LLM_MODEL 服务级覆盖（仅 wecom）。企业微信接入的模型可以
+        # 与全局默认不同——本 key 的订阅套餐无 GLM-5.3-FlashX 权限（provider 报
+        # 429/1311「当前订阅套餐暂未开放GLM-5.3-FlashX权限」），企微接入单独钉
+        # minimax/MiniMax-M3.1-Flash，其余服务仍用全局默认。
+        # 只放 wecom：其余服务的模型归属未被授权变更。
+        "llm": frozenset({"wecom"}),
         # web-carveout M3：chatgpt_web/deepseek_web 两个 service-scoped section
         # 随通道明细配置迁出删除（浏览器通道现为 Web-only 由独立项目侧配置）。
     }
