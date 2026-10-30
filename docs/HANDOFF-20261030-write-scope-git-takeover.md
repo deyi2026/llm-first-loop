@@ -55,3 +55,15 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 - `main` 已推到 origin：**fc1c2d0d6 → 038a0821e**（5 笔，含并发写者会话的抽减收尾与 §13 返修记录 `038a0821e`）。
 - 准入记录：`review_admission` full_test（候选 `60c8ed2f…`）PASS；git_push 首轮（候选 `077801fb…`）**REVISE**（P0=0 / **P1=1** / P2=3，P1 = 文档快照相对已提交测试过期：§12.4 仍写 109 passed、§13 未入库）→ 修复（§12.4 改实测 141 passed/1 skipped + §13 入库 + 新增 §13.7 记录本轮处置）→ git_push 第二轮（候选 `349640fc…`）**PASS** → 推送成功。
 - **§2.2 的「勿 push」约束已解除**：并发写者会话的工作已在 main（`038a0821e`），其后续提交是 `038a0821e` 的后代，快进推送即可；只有当它的提交与 `038a0821e` 并列时才需先 `git pull --rebase`。
+
+## 9. 后续状态（2026-10-30 15:40 起，接管会话补记）
+
+本文件 §1/§2/§6 的部分数字已被后续提交取代；以下为补记，**不改写上文任何历史陈述**。
+
+| 项 | 后续事实 | 依据 |
+|---|---|---|
+| 远端锚点 | `origin/main` 已推进到 `566e5b09f`（本文件 §8 记录的 `038a0821e` 之后）；其后接管会话新增 `bfeacf003`（修回既有守卫）与最终交付提交 | `git log --oneline -3`、`git rev-list --count origin/main..HEAD` |
+| §6「全量回归以 review_admission 回执为准」 | **已兑现**：`review_admission` kind=full_test（候选 `7ba48414…`，child `subagent_b728459b392d`）结论 **PASS（P0=0 / P1=0 / P2=3）** | 工具回执 |
+| 新发现 | 接管会话在 `566e5b09f` 上独立复跑全量回归，发现**一个既有守卫回归**：`tests/unit/test_inspect_code.py::test_factory_registered`（根因 `ab86dde5b` 抽 `_register_basic_tools` helper）。已修（字面量断言 → 行为级断言 + AST 接线判定），详见设计文档 §13.8 / §14 | 设计文档 §13.8 |
+| §5 的 P1 入口 | **仍未做**：P1-b 能力面剔除（受限 child 不给 `execute_command`）、C8 shell 通道约束——**未实现，不得声称已生效** | 设计文档 §9 / §12.5 |
+| 未跟踪 scratch | 仓库根仍有 `.tmp-*` 过程脚本与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）**未入库**；含本机绝对路径，接管会话**未删除他人过程物**，也未提交 | `git status --porcelain` |

@@ -120,7 +120,11 @@ def test_factory_registered():
     改为行为级断言：helper 真实注册出 inspect_code 工具，且 build_engine 仍把基础
     注册回调交给该 helper（接线未丢）。守卫语义不变——inspect_code 必须走 factory
     基础工具注册路径。
+
+    2026-10-30 P2 补强（独立审查 P2-3）：接线检查由源码子串改为 **AST 调用判定**，
+    避免「调用被注释掉/变成字符串」时子串仍命中而假绿。
     """
+    import ast
     import inspect
 
     import llm_loop.factory as factory
@@ -135,4 +139,10 @@ def test_factory_registered():
     assert isinstance(registered["inspect_code"], InspectCodeTool)
 
     # build_engine 仍把基础注册回调交给该 helper（接线未丢；RUN_MODE hidden 过滤仍在该路径生效）
-    assert "_register_basic_tools(" in inspect.getsource(factory.build_engine)
+    build_engine_tree = ast.parse(inspect.getsource(factory.build_engine))
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_register_basic_tools"
+        for node in ast.walk(build_engine_tree)
+    ), "build_engine 必须调用 _register_basic_tools 注册基础工具"

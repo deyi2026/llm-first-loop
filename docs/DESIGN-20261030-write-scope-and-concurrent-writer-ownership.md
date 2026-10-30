@@ -577,3 +577,66 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 | 待办 | 修后全量回归数字与最终准入结果见 §14（第二轮 RULE-AI-28 准入） |
 
 **诚实边界**：本节只能证明「该既有用例的失败被定位并修回」；§12.4 中「12223 passed」这一历史数字**仍然不适用于最终树**，已在该行就地标注更正，不删改历史记录。
+
+## 14. 最终验收与交付说明（2026-10-30 15:40，接管会话）
+
+本节是本 Goal 的**交付说明**：变更清单、测试证据、准入回执、残余逃逸口、诚实边界（未做什么）。所有数字均为本会话实测或工具回执，不采信前序子代理自述。
+
+### 14.1 变更清单
+
+| 提交 | 内容 | 归属 |
+|---|---|---|
+| `ab86dde5b` | write_scope P0 实现收口（core/tools/workspace/runner + 4 个测试文件 + 设计文档 + phase3-6 验收产物） | 前序会话 |
+| `038a0821e` | 并发写者收尾：§13 返修记录入库 + R9 棘轮减重（`build_engine` 抽 `_register_basic_tools` helper） | 前序会话 |
+| `566e5b09f` | 归档后续状态与残余逃逸口说明（已推 `origin/main`） | 前序会话 |
+| `bfeacf003` | **修回既有守卫** `test_factory_registered`（§13.8）+ §12.2/§12.4 陈述更正 + VERIF 补记 | 接管会话 |
+| `（本提交）` | §14 交付说明 + 接线检查升级为 **AST 调用判定**（独立审查 P2-3）+ 交接文档 §9 补记 | 接管会话 |
+
+### 14.2 测试证据（分层，各自标注口径）
+
+| 层 | 命令 / 来源 | 结果 |
+|---|---|---|
+| 特性测试 | `pytest tests/test_write_scope_{contract,enforcement,spawn}.py tests/test_verify_path_scope_tool.py` | **141 passed / 1 skipped**（2026-10-30 14:36，返修 + 抽减后工作树） |
+| 聚焦复验 | 同上 4 文件 + `tests/unit/test_arch_guards.py` | **181 passed / 1 skipped**（15:34） |
+| 既有守卫复验 | `pytest tests/unit/test_inspect_code.py` | **9 passed**（15:34，含本轮修回用例） |
+| 静态诊断 | `scripts/check_static_diagnostics.py --tool ruff` | **PASS**（new=0，changed_file_diagnostics=0；15:33 / 15:38） |
+| RULE-AI-35 实测 | `scripts/verification/write_scope_gate_probe.py` | **9/9 PASS, exit 0**（15:20，最终树）：越界写入被拒、目标字节不变、无半成品、symlink/`..`/deny/observe 各分支均覆盖 |
+| 全量回归（**修前**） | `pytest tests/ -q -m "not real_llm and not serial_signal"`（HEAD `566e5b09f`） | **1 failed, 12254 passed, 155 skipped, 23 deselected（834.89s）**——失败即 §13.8 的既有守卫回归 |
+| 全量回归（**修后**） | 同口径，最终树 | 见 §14.5 |
+
+### 14.3 独立审查与准入回执（RULE-AI-28）
+
+| 准入 | 目标 | 候选 | 结论 |
+|---|---|---|---|
+| `review_admission` kind=full_test | `bash scripts/ci_gate.sh`（本仓 canonical 全量门禁） | `7ba48414…`（child `subagent_b728459b392d`） | **PASS（P0=0 / P1=0 / P2=3）** |
+| `review_admission` kind=full_test | 同上，最终树（含本提交） | 见 §14.5 | 见 §14.5 |
+| `review_admission` kind=git_push | 推送前最终树 | 见 §14.5 | 见 §14.5 |
+
+**P2 处置（本轮）**
+
+| P2 | 内容 | 处置 |
+|---|---|---|
+| P2-1 | §13.8 出现 §14 悬空前向引用 | 本节补齐 §14，引用闭合 |
+| P2-2 | 未跟踪 `.tmp-*` 过程脚本含本机绝对路径（`/Users/…`） | **未提交、未删除**（属他人过程物）；如实登记于本节与交接文档 §9 |
+| P2-3 | `build_engine` 接线检查是源码子串断言，可被注释满足 | **已修**：改为 `ast.parse` 后判定确有 `_register_basic_tools(...)` 调用 |
+
+### 14.4 残余逃逸口（**未闭环**，明确列出）
+
+- **`execute_command` / 裸 shell 通道（C8 未实现）**：写侧 scope 只约束走 `FileService` 的写入；不经该路径的 shell 写入**运行期无法完全阻断**，只能事后检出归因（§9 / §12.5）。
+- **`cp` / 外部复制等旁路**：同理，不在 P0 约束面内。
+- **其他未改造的写入口**：本轮只覆盖 `FileService` + `edit_file` + 子代理传递链；未做全仓写入口普查（下一期入口见交接文档 §5）。
+- **glob 字符类跨段语义（P2-3，历史遗留）**：pattern `a[!x]c` 可命中 `a/c`，与模块 docstring「字符类不支持跨段」有出入；影响限于已过 realpath 检查的 workspace root 内过宽匹配，安全边界仍 fail-closed。**本轮未修**。
+
+### 14.5 最终验收结论
+
+（由接管会话在本节最后一次编辑时填入：修后全量回归数字、最终 full_test 准入与 git_push 准入回执、推送结果。）
+
+### 14.6 诚实边界（未做什么 / 不能声称）
+
+1. **未实现 C8**：shell 通道不受写侧 scope 约束；不得声称「写侧路径授权已全量生效」。
+2. **未做 P1-b 能力面剔除**（受限 child 不给 `execute_command`）：未实现，不在本次交付范围。
+3. **未改任何既有守卫的门槛**：本轮唯一改动的既有文件是 `tests/unit/test_inspect_code.py`，且是把字面量断言**升级**为行为级断言，未放宽任何断言。
+4. **未清理他人过程物**：仓库根 `.tmp-*` 与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）仍未入库、未删除。
+5. **前序子代理自述未被采信**：本会话对 §12.4 的「12223 passed」做了独立复跑并发现其不适用于最终树（§13.8）；文档中的历史数字**就地标注更正**而非删改。
+6. **本会话派出的只读审计子代理失败**（上下文预检拒绝截断，结论未产出），其结论未被采纳；相关核查改由父级定向执行（grep + 实测），证据见 §14.2。
+7. **全量回归口径**：§14.2 的父级复跑口径为 `-m "not real_llm and not serial_signal"`（23 个 serial_signal 用例未纳入父级复跑）；RULE-AI-28 准入走 `scripts/ci_gate.sh` 的 canonical 口径（不排除 serial_signal），两者口径不同，**不可互相替代**。
