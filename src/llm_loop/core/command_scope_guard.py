@@ -52,7 +52,7 @@ WRITE_FAMILY = frozenset(
         # 那是**放行**方向——写工具漏进名单＝漏检。故写工具宁可多列。
         "scp", "sftp", "ftp", "lftp", "rcp", "perl", "ex", "ed", "openssl",
         "gpg", "gpg2", "7z", "7za", "7zr", "lzma", "lz4", "brotli", "pigz",
-        "unpigz", "busybox", "hg", "svn", "bzr", "fossil", "darcs",
+        "unpigz", "hg", "svn", "bzr", "fossil", "darcs",
         "fallocate", "chflags", "setfattr", "chattr", "rename", "sqlite3",
         "gunzip", "bunzip2", "unxz",
     }
@@ -96,7 +96,7 @@ CARRIERS = frozenset(
     {
         "find", "xargs", "env", "sudo", "nohup", "time", "timeout",
         "command", "stdbuf", "nice", "exec", "setsid", "ionice", "eval",
-        "watch",
+        "watch", "busybox",
     }
 )
 
@@ -306,6 +306,14 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
         if "-i" in args or "--in-place" in args:
             return (positional[1:], len(positional) < 2)
         return ([], False)
+    if name == "perl":
+        # perl -i（就地编辑）改写**输入文件**；无 -i 时是解释器残余（见残余清单）
+        if any(a.startswith("-i") for a in args):
+            return (positional[1:], len(positional) < 2)
+        return ([], False)
+    if name in ("ex", "ed"):
+        # ed/ex 原地编辑目标文件（命令脚本内容在 -c 里，写目标以文件为准）
+        return (positional, not positional)
     if name == "dd":
         outputs = [a.split("=", 1)[1] for a in args if a.startswith("of=")]
         return (outputs, not outputs)
