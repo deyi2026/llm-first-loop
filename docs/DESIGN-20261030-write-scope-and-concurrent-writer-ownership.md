@@ -758,8 +758,12 @@ scope 校验 + `scope_unverified` 审计）正是 C8 P0 描述的那三件事。
 | 同上但写目标落在 scope 外 | 拒绝 | `write_target_outside_scope` / `write_target_not_in_allow_list` / `write_target_denied_by_deny_list` |
 | 写目标**无法静态定位**（变量展开 / 通配 / `cd` 位移 / `{}` 占位） | 拒绝 | `unverifiable_write_target` |
 | 写目标**隐式**（`git commit` 写 `.git/`、`xargs rm` 目标来自 stdin、`mktemp` 写 `TMPDIR`） | 拒绝 | `implicit_write_target` |
-| 组合载体（`find -exec` / `xargs` / `sudo`）内含写盘命令 | 按内含写盘命令判定 | 同上 |
-| 嵌套 shell（`sh -c '…'`） | 递归解析载荷（深度上限 3） | 同上 |
+| 组合载体（`find -exec` / `xargs` / `sudo` / `env`）内含写盘命令 | 按内含写盘命令判定 | 同上 |
+| 嵌套 shell（`sh -c '…'` / `bash -c '…'`） | 递归解析载荷（深度上限 3） | 同上 |
+| shell 解释器执行**脚本文件**（`sh s.sh`） | 拒绝（脚本内写目标不可静态定位） | `implicit_write_target` |
+| **不可静态判定的 shell 构造**：命令替换（`$(…)`/反引号）、字面量分组（`(...)`/`{…}`）、控制流关键字（`if`/`for`/`case`…）、heredoc | 拒绝（fail-closed：不猜） | `unmodeled_shell_construct` / `shell_keyword_construct` |
+| `git` 全局选项后的子命令（`git -C /dir commit`） | 按子命令判定（写子命令 ⇒ 隐式写目标） | `implicit_write_target` |
+| `cp/mv/install/rsync -t DIR` / `--target-directory=DIR` | 写目标取**目标目录**，不是末位参数 | `write_target_*` |
 | **读侧**字面量越界 | **放行 + 记 `scope_unverified` 审计**（scope 是写侧授权；读侧封成监狱会阻断解释器与测试，与 P1-a 的灵活性目标冲突） | — |
 | 命令串无法做 shell 词法切分（引号不闭合） | 拒绝（fail-closed） | `unparsable_command` |
 
@@ -801,8 +805,16 @@ scope 校验 + `scope_unverified` 审计）正是 C8 P0 描述的那三件事。
 2. **读侧越界**：只审计不阻断（§16.2 末条）。
 3. **写目标可静态定位但语义绕道**：`cp -r src /tmp/x` 复制**读**越界（读侧不阻断）；
    `ln -s` 造符号链接后写入链路可绕过字面量判定。
-4. **`git` 写子命令一律按隐式写目标拒绝**——即使 `git status` 之外的只读子命令不受影响，语义偏保守。
+4. **`git` 写子命令一律按隐式写目标拒绝**——语义偏保守（`git add` 这种只写索引的也拒）。
+   全局选项后的子命令判定已修（§16.8 第 2 条），但保守性本身未放宽。
 5. **P1-b 曾覆盖的能力**（受限 child 完全无命令）**不再成立**。
+6. **shell 脚本文件执行被拒**（`sh s.sh` / `bash s.sh` ⇒ `implicit_write_target`）——fail-closed 的
+   代价：受限 child 不能跑仓库脚本（如 `scripts/ci_gate.sh`），只能跑只读命令与 in-scope 写命令；
+   需要跑脚本时由父会话以更大 scope 承担。
+7. **未知命令按只读处理**：写族名单是**封闭清单**（不是开放世界）。名单外的命令（如 `sponge`）
+   默认放行，只审计读侧字面量——这是一个**已知缺口**，不是"已拦"。
+8. **`cd` 位移后的相对写目标**：一律 `unverifiable_write_target`（cwd 位移不可静态定位）——
+   宁可拒，不猜。
 
 ### 16.7 与 §15 的关系
 
@@ -813,3 +825,39 @@ scope 校验 + `scope_unverified` 审计）正是 C8 P0 描述的那三件事。
 - §15.6 第 5 条「防御分支 fail-open（`registry.names()` 抛错）」随 P1-b 一并消失——P1-a 不再需要
   物化 registry 名单。
 - §14.6 第 1/2 条的历史陈述保留原样（决策史），**现行口径以本节为准**。
+
+### 16.8 独立审查 REVISE 轮（2026-10-30 16:4x）：首版闸被 shell 语法整体绕过
+
+首版 P1-a 闸（提交 `28aea305d`）经 RULE-AI-28 独立审查（`review_admission(kind=full_test)`，
+child `subagent_5c30c04b42ba`）判 **REVISE：P0=1 / P1=3 / P2=3**，候选 SHA256 `545c6858…`。
+
+**P0（闸可被普通 shell 语法整体绕过）**：首版只按 `argv[0]` 找写命令，于是
+`FOO=1 rm /outside/x`、`if true; then rm /outside/x; fi`、`for …; do rm …; done`、
+`case …;; esac`、`(rm …)`、`{ rm …; }`、`echo $(rm …)`、`eval rm …`、
+`echo x &> /outside/x`、`echo x >& /outside/x`、`echo x >| /outside/x` 全部放行。
+本会话**逐条自行复现**（16/16 复现），确认不是审查误报。
+
+**修法（口径从「识别写命令」翻成「不可静态判定就拒」）**：
+
+1. **不可建模构造 fail-closed**：命令替换、字面量分组、控制流关键字、heredoc → 拒绝
+   （`unmodeled_shell_construct` / `shell_keyword_construct`）。
+2. **载体链完整解析**：`env`/`sudo`/`timeout`/`stdbuf`/`watch` 等跳过自身选项后取有效命令；
+   `eval` 与 `sh -c`/`bash -c` 载荷**重解析**；解释器执行**脚本文件**一律拒（脚本内写目标不可知）。
+3. **`git` 子命令判定穿过全局选项**：`-C`/`--git-dir`/`--work-tree` 等取值型选项跳过其后参数；
+   `git -C /outside commit` 不再被当成读命令放行。
+4. **`-t`/`--target-directory`**：`cp/mv/install/rsync` 的写目标取**目标目录**，不是末位参数。
+5. **`find` 自身动作**：`find -delete` ⇒ 隐式写目标拒；`find -fprint FILE` ⇒ `FILE` 按写目标校验；
+   `find -exec CMD` ⇒ `CMD` 按写命令判定（`{}` 占位 ⇒ 不可静态定位 ⇒ 拒）。
+6. **写族名单分层**：显式写目标族 / 隐式写目标族（构建与安装族 `make`/`pip`/`npm`/`cargo`…）
+   / 其余按只读处理（**封闭清单**，残余见 §16.6 第 7 条）。
+7. **重定向形式补齐**：`>`/`>>`/`>|`/`&>`/`&>>` 全覆盖；`>&` 仅在目标是路径时算写目标
+   （`2>&1` 是 fd 复制，不是写）。
+
+**P1/P2 修复**：P1-1（`-t` 目标目录）、P1-2（`git` 全局选项）、P1-3（重定向形式）见上；
+P2-1（覆盖面缺口）改为「显式名单 + 残余显式化」；P2-2（回执超额声明）改为
+**只有受限 child 的回执才带 `write_scope_command_guard`**，未受限 child 不再声称闸生效；
+P2-3（审计卫生）改为：`scope_unverified` 条目自带**原因字段**（不再把原因塞进 path），
+且**被拒的命令不落审计**（避免留下「已放行」语义的痕迹）。
+
+**教训（与 §15.6 同源）**：首版闸与首版门禁的漏洞形态一致——**「看起来在工作」的宽松解析**。
+判定层同样需要「应拦输入」实测；本轮的 40 组参数化应拦用例即是这张网。

@@ -1133,10 +1133,10 @@ class ExecuteCommandTool:
             workspace_root=workspace_base(),
             workdir=workdir or "",
         )
-        for item in decision.unverified:
-            write_scope_audit_record_unverified(item, "scope_unverified")
         if not decision.allowed:
             return self._write_scope_reject(decision.reason, decision.detail)
+        for path, reason in decision.unverified:
+            write_scope_audit_record_unverified(path, reason)
         return None
 
     def _write_scope_reject(self, reason: str, detail: str) -> ToolResult:

@@ -459,6 +459,9 @@ class TestP1aToolSurface:
         assert started["accepted"] is True, started
         assert "execute_command" in started["tool_scope"]
         assert "write_scope_tool_restriction" not in started
+        assert "write_scope_command_guard" not in started, (
+            "未受限 child 的回执不得声称写侧闸生效（P2-2：回执不得超额声明）"
+        )
 
     def test_t20_parent_declared_child_inherits_and_keeps_execute_command(self, ws_tokens):
         parent = parse_write_scope({"paths": ["src/a/**"]})

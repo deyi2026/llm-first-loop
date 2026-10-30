@@ -93,12 +93,12 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 
 | 文件 | 改动 |
 |---|---|
-| `src/llm_loop/core/command_scope_guard.py` | **新增**：判定层（shell 词法切分 → 写盘命令族识别 → 写目标 scope 校验；fail-closed 原因码） |
+| `src/llm_loop/core/command_scope_guard.py` | **新增**：判定层（shell 词法切分 → 写盘命令族识别 → 写目标 scope 校验；fail-closed 原因码）。**首版经独立审查 REVISE 后重写**：不可静态判定的 shell 构造一律 fail-closed 拒绝（见 §10.5） |
 | `src/llm_loop/core/write_scope.py` | 新增 `write_scope_audit_record_unverified()` + 快照字段 `scope_unverified` / `scope_unverified_count` |
 | `src/llm_loop/tools/builtin/execute_command.py` | 新增 `_write_scope_command_gate()` + 接线（`execute()` 内、任何执行之前）；受限写域下拒绝 worktree 隔离 |
 | `src/llm_loop/tools/builtin/verify_path_scope.py` | 观测面新增「未验证路径(scope_unverified)」段 |
-| `src/llm_loop/subagent/runner.py` | 判定函数更名 `_apply_write_scope_tool_surface_policy`，**不再剔除任何工具**；回执新增 `write_scope_command_guard="p1a_write_family"` |
-| `tests/test_command_scope_guard.py` | **新增** 36 例（判定层 + 强制层 + 审计层 + 残余显式化 + 门禁自证伪） |
+| `src/llm_loop/subagent/runner.py` | 判定函数更名 `_apply_write_scope_tool_surface_policy`，**不再剔除任何工具**；回执新增 `write_scope_command_guard="p1a_write_family"`（**仅受限 child 才有**——未受限 child 不再声称闸生效） |
+| `tests/test_command_scope_guard.py` | **新增** 74 例（判定层 40 组参数化「应拦输入」+ 12 组放行 + 强制层 + 审计层 + 残余显式化 + 门禁自证伪） |
 | `tests/test_write_scope_spawn.py` | `TestP1bToolSurface` → `TestP1aToolSurface`；T17–T23 断言由「剔除」改为「不收窄」 |
 | `docs/DESIGN-20261030-…md` | 新增 §16；§14.6 第 1/2 条与 §15 标题加**口径已作废**就地标注 |
 
@@ -109,8 +109,30 @@ write_scope P0 实现已在 `main` 落三笔提交（锚点闭合 / P0 实现收
 2. **读侧越界只审计不阻断**（scope 是写侧授权；读侧封禁会阻断解释器与测试）。
 3. `cp -r` 的**读**越界、`ln -s` 造符号链接后的写入链路，可绕开字面量判定。
 4. `git` 写子命令一律按隐式写目标拒绝——语义偏保守。
+5. **shell 脚本文件执行被拒**（`sh s.sh` / `bash s.sh` ⇒ `implicit_write_target`）——fail-closed 的
+   代价：受限 child 不能跑仓库脚本（如 `scripts/ci_gate.sh`），只能跑只读命令与 in-scope 写命令。
+6. **写族名单是封闭清单**：名单外的命令（如 `sponge`）默认按只读放行，只审计读侧字面量。
+7. `cd` 位移后的相对写目标一律拒（cwd 位移不可静态定位）。
 
 ### 10.4 与并发写者会话的关系
 
 本轮工作树里仍有另一活跃会话（`cbda67c5-…`）的在途 WIP（`review_host_admission.py` 与其测试、
 `docs/EVO-20261030-109d7068-…md`）。本会话**只提交自己那 8 个文件**，不纳入、不删除他人过程物。
+
+### 10.5 独立审查 REVISE 轮（2026-10-30 16:4x）：首版闸被 shell 语法整体绕过 → 已重写
+
+首版 P1-a 闸（提交 `28aea305d`）经 RULE-AI-28 独立审查（child `subagent_5c30c04b42ba`）
+判 **REVISE：P0=1 / P1=3 / P2=3**（候选 SHA256 `545c6858…`）。P0 是**闸可被普通 shell 语法
+整体绕过**：`FOO=1 rm /x`、`if…then rm…`、`(rm …)`、`{ rm …; }`、`echo $(rm …)`、
+`eval rm …`、`&>`/`>&`/`>|` 重定向等 16 类全部放行。本会话逐条自行复现（16/16），确认非误报。
+
+**修法（口径翻转）**：判定从「识别写命令」翻成「**不可静态判定就拒**」——命令替换/分组/
+控制流/heredoc 一律 fail-closed；载体链（`env`/`sudo`/`eval`/`sh -c`）完整解析；
+`git` 子命令判定穿过全局选项；`cp -t DIR` 取目标目录；`find -delete`/`-fprint`/`-exec`
+按写目标校验；重定向形式补齐（`>&` 仅在目标是路径时算写）。详见设计文档 §16.8。
+
+**连带修复**：P2-2 回执不再超额声明（未受限 child 不带 `write_scope_command_guard`）；
+P2-3 审计卫生（`scope_unverified` 条目自带原因字段；被拒命令不落审计）。
+
+**证据**：40 组参数化「应拦输入」用例（逐条钉住审查指出的绕过类）；门禁自证伪——
+把闸打成空实现后 40/40 应拦用例仍放行 ⇒ 用例确实在测拦截而非空转。

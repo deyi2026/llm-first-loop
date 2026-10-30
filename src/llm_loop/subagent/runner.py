@@ -1950,7 +1950,11 @@ class SubAgentRunner:
                 if surface_restriction
                 else {}
             ),
-            "write_scope_command_guard": "p1a_write_family",
+            **(
+                {"write_scope_command_guard": "p1a_write_family"}
+                if (child_write_scope is not None and child_write_scope.declared)
+                else {}
+            ),
             "worktree": worktree_lease.path if worktree_lease is not None else "",
             "detail": "child 已启动，父代理可继续决策并通过 agent_message 中途 steer",
         }
