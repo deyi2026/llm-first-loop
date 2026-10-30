@@ -46,10 +46,36 @@
         "P2-3 族模型边缘：--reencode 重复登记；歧义前缀+值吞噬可能把操作数当选项值（fail-closed 向，应测试）",
         "P2-4 tar -tf 只读形态在受限 scope 下被过度拦截（易用性残留，未登记该具体形态）"
       ],
-      "status": "待处置（并发 write-scope 会话第 8 轮）"
+      "status": "已由 917817c64(00:49)/9799add80(01:30) 第八轮处置（sed 换行+e、script log 选项、fast-export marks）"
+    },
+    {
+      "reviewer_child": "subagent_db0cf1b71ab4",
+      "frozen_candidate_sha256": "45c06f54acf611f6cc230385e3ebb16a836eb071eb0bcd8da5c55a50ee2eeed8",
+      "range": "2f31d85cf..917817c64",
+      "verdict": "REVISE", "P0": 0, "P1": 2, "P2": 6,
+      "p1_open_prose": [
+        "P1-1 sed 分析漏地址前缀命令与 s///w/独立 w 的地址/换行形态（第九轮）",
+        "P1-2 输出/目标目录型选项走 token 精确匹配，附着与内联形态漏检（第九轮）"
+      ],
+      "status": "已由 9799add80/353416fe7 处置（族级选项语义模型 command_options + sed 命令位置扫描）"
+    },
+    {
+      "reviewer_child": "subagent_338841193572",
+      "frozen_candidate_sha256": "bb5c3d0b4a8beaf9f33547f1d81ce66b117a8352ccacd54550f5f963d7bace12",
+      "range": "2f31d85cf..ef6fb1e66",
+      "verdict": "REVISE", "P0": 0, "P1": 1, "P2": 6,
+      "p1_open_prose": [
+        "P1-1 编译器良性前缀白名单放过 -Wl,-o,FILE/-Wa,-o 透传、-B 执行前缀重指、-wrapper=、未列名 -f* 写盘旗标（第十轮）"
+      ],
+      "p2_open_prose": [
+        "P2-4 sed 邻接无参命令（pw/nw）与 GNU l FILE 形态",
+        "P2-5 tar -tf 只读形态误拦（已由 353416fe7 --list 处置）",
+        "P2-2/3/6 基线绑定与回执/文档收尾"
+      ],
+      "status": "已由 353416fe7(编译器透传/执行面/白名单) + 本提交（sed 邻接命令与 l FILE、-Xlinker 早退序）处置；本回执即第五轮全量记录"
     }
   ],
-  "push_result": "未推送——两轮均 REVISE，按 RULE-AI-28 暂缓，待 P1 清零后重开闸",
-  "push_sha_local": "a07bb1c33d5098cef703c27230bcb6797396574e",
+  "push_result": "未推送——五轮均 REVISE（P0 1→0，P1 1→4→4→2→1→处置），按 RULE-AI-28 暂缓，处置后重开闸",
+  "push_sha_local": "待第六轮冻结",
   "push_sha_remote": null
 }

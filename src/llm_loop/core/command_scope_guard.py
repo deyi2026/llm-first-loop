@@ -615,6 +615,11 @@ def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | No
 # ``;{}``/行首紧跟命令字符 ⇒ ``2s/a/b/w /outside/x``、``sed '/re/w /outside/x'``
 # 这类带地址写命令整体漏检 ⇒ 越界写放行。改为逐字符扫命令位置 + 消费地址前缀。
 _SED_COMMAND_SEPARATORS = ";{}\n"
+# 无参数单字母命令（第十轮 push 闸 P2-4：GNU sed 允许其后**紧邻**下一条命令
+# ——``sed 'pw /outside/x' in`` 里 ``p`` 之后直接是 ``w``，无任何分隔符；BSD
+# sed 拒绝该形态〔本机实测〕，守卫按 GNU 宽语义保守覆盖）。``l`` 在 GNU 可带
+# 可选文件参数（``l /outside/x`` 把清单写入文件），不入此列——按写目标提取。
+_SED_NO_ARG_COMMANDS = frozenset("pndDgGhHPqx=")
 
 
 def _sed_skip_one_address(text: str, start: int) -> int:
@@ -696,8 +701,10 @@ def _sed_command_start_positions(text: str) -> list[int]:
             while cursor < length and text[cursor] in " \t":
                 cursor += 1
             positions.append(cursor)
-            boundary = False
-            index = cursor
+            # GNU sed：无参数单字母命令之后可以**紧邻**下一条命令（无分隔符）
+            # ——``pw FILE`` / ``nw FILE`` / ``pd``。命令位置后保持 boundary。
+            boundary = cursor < length and text[cursor] in _SED_NO_ARG_COMMANDS
+            index = cursor + 1 if boundary else cursor
             continue
         index += 1
     return positions
@@ -805,6 +812,20 @@ def _sed_script_write_targets(script: str) -> list[str]:
             continue
         rest = text[position + 1 :].lstrip()
         if not rest or rest.startswith(";"):
+            continue
+        token = rest.split()[0]
+        if token and token not in targets:
+            targets.append(token)
+    # GNU sed 的 ``l FILE``（第十轮 push 闸 P2-4）：清单命令带可选文件参数时
+    # 把模式空间写入该文件——仅当**空白分隔**（``l /outside/x``）；紧邻字母
+    # （``lq``）是下一条命令而非文件名。
+    for position in _sed_command_start_positions(text):
+        if position >= length or text[position] != "l":
+            continue
+        if position + 1 >= length or text[position + 1] not in " \t":
+            continue
+        rest = text[position + 1 :].lstrip()
+        if not rest or rest.startswith(";") or rest.startswith("\n"):
             continue
         token = rest.split()[0]
         if token and token not in targets:
@@ -1297,8 +1318,17 @@ def _compiler_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
     output = _compiler_token_value(raw, "-o")
     if output is None:
         output = _compiler_token_value(raw, "--output")
+    # 执行面/未归类旗标先判定——``-Xlinker -o -c src/a.c`` 里 ``-Xlinker``
+    # 透传任意驱动参数，不能因 ``-o`` 命中静态目标就早退放行（第十轮修复）。
+    surface_implicit = (
+        _compiler_exec_surface(raw)
+        or _compiler_has_unmodeled_flag(raw)
+        or _compiler_token_value(raw, "--emit") is not None
+        or any(token in _COMPILER_DEP_BOOL_FLAGS for token in raw)
+        or any(token.startswith(_COMPILER_WRITING_F_PREFIXES) for token in raw)
+    )
     if output is not None:
-        return ([output], not output)
+        return ([output], not output or surface_implicit)
     targets: list[str] = []
     for flag in ("-MF", "-MJ", "-aux-info", "-dumpdir", "-dumpbase"):
         value = _compiler_token_value(raw, flag)
