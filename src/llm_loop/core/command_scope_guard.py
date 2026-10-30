@@ -63,12 +63,20 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from llm_loop.core.command_options import (
+    COMPRESS_OUTPUT_OPTIONS,
     CURL_OPTIONS,
     GIT_EXPORT_OPTIONS,
+    GIT_OUTPUT_OPTIONS,
+    PATCH_OPTIONS,
     PERL_OPTIONS,
     SCRIPT_OPTIONS,
     SED_OPTIONS,
+    SHUF_OUTPUT_OPTIONS,
+    SORT_OUTPUT_OPTIONS,
     TAR_OPTIONS,
+    TARGET_DIRECTORY_OPTIONS,
+    TIME_OPTIONS,
+    UNZIP_OPTIONS,
     WGET_OPTIONS,
     scan_options,
 )
@@ -101,22 +109,16 @@ WRITE_FAMILY = frozenset(
 # 同类工具及其变体：rm/rmdir、mkdir/mkfifo/mknod/mkswap 等创建类工具、unlink。
 _WRITE_NAME_PREFIXES = ("rm", "mk", "unlink")
 
-# 输出文件型选项：这些命令**默认只读**，但带 -o/--output 时会写文件
-# （``sort -o /outside/x in.txt``）——按命令各自建模，不进写族名单（否则把
-# ``sort in.txt`` 这种纯读用法误判成写）。
-WRITE_FLAG_OUTPUT = {
-    "sort": ("-o", "--output"),
-    "shuf": ("-o", "--output"),
-    # 第五轮独立审查 P2-1：编译器/链接器的 ``-o`` 指定输出文件（写目标）。
-    "gcc": ("-o",),
-    "g++": ("-o",),
-    "cc": ("-o",),
-    "c++": ("-o",),
-    "clang": ("-o",),
-    "clang++": ("-o",),
-    "ld": ("-o",),
-    "rustc": ("-o",),
-}
+# 输出文件型选项：这些命令**默认只读**，但带 -o/--output（或编译器默认产物）时写文件
+# （``sort -o /outside/x in.txt`` / ``gcc a.c``）——不进写族名单（否则把纯读用法
+# 误判成写）。第九轮（push 闸）P1-2：取值改走族模型（附着形态 ``-o/x``、
+# ``--target-directory=/x`` 不再漏），编译器另有专用的产物判定。
+OUTPUT_FLAG_COMMANDS = frozenset(
+    {
+        "sort", "shuf",
+        "gcc", "g++", "cc", "c++", "clang", "clang++", "ld", "rustc",
+    }
+)
 
 # 隐式写目标的命令族（写到哪里不可静态定位 ⇒ 直接拒）
 IMPLICIT_WRITE = frozenset(
@@ -170,6 +172,23 @@ GIT_WORKTREE_READ_ACTIONS = frozenset({"list"})
 # git reflog 的动作分族（第六轮审查 P2-4）：``git reflog``（无动作）= 读当前 reflog；
 # ``show`` = 读历史；``expire`` / ``delete`` = **写**（改写 reflog 文件）。
 GIT_REFLOG_READ_ACTIONS = frozenset({"show"})
+
+# git 配置里**值会被当命令/脚本执行或重指执行路径**的键（第九轮 push 闸 P2-1
+# 扩集；精确匹配防前缀撞名）。``alias.*`` 前缀另行单独判定。
+_GIT_EXEC_CONFIG_KEYS = frozenset(
+    {
+        "core.pager",
+        "core.editor",
+        "core.hookspath",
+        "core.attributesfile",
+        "core.excludesfile",
+        "core.pager.command",
+        "sequence.editor",
+        "diff.external",
+        "difftool.path",
+        "mergetool.path",
+    }
+)
 
 # git **只读**子命令（白名单）——名单外的子命令一律按写处理（fail-closed）。
 # 封闭写名单会漏项（``git remote add`` / ``git fast-import`` 实测曾放行），
@@ -560,7 +579,10 @@ def _git_config_values(args: Sequence[str]) -> list[tuple[str, bool]]:
 
 # 环境变量注入：GIT_CONFIG_COUNT/KEY_*/VALUE_* 能在**不改 .git/config** 的前提下
 # 注入 git alias（alias 的值以 ! 开头即 shell 命令）⇒ 写目标不可静态定位 ⇒ 拒。
-_GIT_CONFIG_ENV_RE = re.compile(r"^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$")
+# 第九轮 P1-4：``GIT_CONFIG_PARAMETERS`` 与 COUNT/KEY_*/VALUE_* 等价——它是一串
+# 空格分隔的 ``key=value`` 内联配置，git 按它注入配置 ⇒ ``alias.x='!cmd'``
+# 同样可执行 ⇒ 与其它三种形态一并拦。
+_GIT_CONFIG_ENV_RE = re.compile(r"^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)$")
 
 
 def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | None:
@@ -583,14 +605,98 @@ def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | No
     return None
 
 
-# sed 脚本里的 ``w FILE`` 命令（写文件）。只在命令位置（行首或 ; { } 之后）匹配，
-# 避免把 ``s/w/x/`` 这类替换里的字母误判成命令。
-# 第八轮 P1-4：``w FILE`` 出现在**换行分隔**的下一条命令位置也是写命令（旧实现
-# 只认行首/``;``/``{``/``}`` ⇒ 换行后的 ``w /outside/x`` 漏检 ⇒ 越界写放行）。
-_SED_WRITE_RE = re.compile(r"(?:^|[;{}\n])\s*w\s+(\S+)")
-# 第八轮 P1-4：GNU sed 的独立 ``e [COMMAND]`` 命令（执行 shell 命令）——与
-# ``s///e`` 标志同属 shell 执行，旧实现只认标志形态。
-_SED_EXEC_RE = re.compile(r"(?:^|[;{}\n])\s*e(?:\s|$)")
+# sed 命令位置扫描（第九轮 push 闸 P1-1）：``s``/``w``/``e`` 前面可以带
+# **地址前缀**（``/re/``、``\d+``、``$``、``\c``、``\re\``，可组成 ``a,b`` 范围、
+# ``first~step``、``addr!`` 取反），也能跟在换行分隔的命令之后——旧实现只认
+# ``;{}``/行首紧跟命令字符 ⇒ ``2s/a/b/w /outside/x``、``sed '/re/w /outside/x'``
+# 这类带地址写命令整体漏检 ⇒ 越界写放行。改为逐字符扫命令位置 + 消费地址前缀。
+_SED_COMMAND_SEPARATORS = ";{}\n"
+
+
+def _sed_skip_one_address(text: str, start: int) -> int:
+    """从 ``start`` 起消费一个 sed 地址，返回消费后的下标（无地址则原样返回）."""
+    length = len(text)
+    if start >= length:
+        return start
+    char = text[start]
+    if char == "$":
+        return start + 1
+    if char.isdigit():
+        cursor = start
+        while cursor < length and text[cursor].isdigit():
+            cursor += 1
+        return cursor
+    if char == "\\":
+        # ``\c``（GNU 单字符地址）或 ``\regex\``（定界正则）
+        if start + 1 < length and text[start + 1].isalpha():
+            return start + 2
+        if start + 1 >= length:
+            return start
+        delimiter = text[start + 1]
+        cursor = start + 2
+        while cursor < length:
+            if text[cursor] == "\\":
+                cursor += 2
+                continue
+            if text[cursor] == delimiter:
+                return cursor + 1
+            cursor += 1
+        return start  # 未闭合 ⇒ 不当地址
+    if char == "/":
+        cursor = start + 1
+        while cursor < length:
+            if text[cursor] == "\\":
+                cursor += 2
+                continue
+            if text[cursor] == "/":
+                return cursor + 1
+            cursor += 1
+        return start
+    return start
+
+
+def _sed_command_start_positions(text: str) -> list[int]:
+    """返回 sed 脚本中**命令字符**的候选起始下标（地址前缀已被消费）."""
+    positions: list[int] = []
+    index = 0
+    length = len(text)
+    boundary = True  # 脚本开头即命令位置
+    while index < length:
+        char = text[index]
+        if char in _SED_COMMAND_SEPARATORS:
+            boundary = True
+            index += 1
+            continue
+        if char in " \t":
+            index += 1
+            continue
+        if boundary:
+            cursor = _sed_skip_one_address(text, index)
+            if cursor == index and not char.isalpha():
+                boundary = False
+                index += 1
+                continue
+            # 范围地址 ``a,b`` 与 GNU ``first~step``
+            if cursor > index and cursor < length and text[cursor] == ",":
+                second = _sed_skip_one_address(text, cursor + 1)
+                if second > cursor + 1:
+                    cursor = second
+            if cursor < length and text[cursor] == "~":
+                step = cursor + 1
+                while step < length and text[step].isdigit():
+                    step += 1
+                if step > cursor + 1:
+                    cursor = step
+            if cursor < length and text[cursor] == "!":
+                cursor += 1
+            while cursor < length and text[cursor] in " \t":
+                cursor += 1
+            positions.append(cursor)
+            boundary = False
+            index = cursor
+            continue
+        index += 1
+    return positions
 
 
 def _sed_subst_commands(script: str) -> list[tuple[str, str]]:
@@ -600,19 +706,19 @@ def _sed_subst_commands(script: str) -> list[tuple[str, str]]:
     含 ``e`` ⇒ 替换命令把替换文本当 shell 命令执行。
 
     逐字符解析而非正则：``s`` 命令的分隔符是动态的（``s|a|b|`` / ``s,a,b,``），
-    正则的 ``[^\\]`` 会跨越分隔符造成误判（第四轮审查实测）。
+    正则的 ``[^\\]`` 会跨越分隔符造成误判（第四轮审查实测）。命令位置（含地址
+    前缀消费）由 `_sed_command_start_positions` 统一给出（第九轮 P1-1）。
     """
     text = str(script)
     results: list[tuple[str, str]] = []
-    index = 0
     length = len(text)
+    # 命令位置来自统一扫描器（地址前缀/换行分隔都被消费）——第九轮 P1-1：
+    # ``2s/a/b/w F``、``sed '/re/s/a/b/w F'`` 不再因"前一个字符不是 ;{}"漏检。
+    starts = {position for position in _sed_command_start_positions(text) if position < length}
+    index = 0
     while index < length:
-        # 只在命令位置识别 s（前一个非空字符须为 ; { } 或行首）
-        if text[index] != "s":
-            index += 1
-            continue
-        previous = text[:index].rstrip()
-        if previous and previous[-1] not in ";{}" and not previous.endswith("\\n"):
+        # 只在命令位置识别 s
+        if text[index] != "s" or index not in starts:
             index += 1
             continue
         if index + 1 >= length:
@@ -634,7 +740,11 @@ def _sed_subst_commands(script: str) -> list[tuple[str, str]]:
                 break
             cursor += 1
         if pattern_end < 0:
-            break
+            # 第九轮 P1-2：未闭合的 ``s``（分隔符没配对）此前 ``break`` ⇒ 脚本
+            # **后半段整体不再扫描** ⇒ 其后的 ``w FILE`` / ``e CMD`` 漏检 ⇒
+            # 改为继续扫（fail-closed 方向）。
+            index += 1
+            continue
         # 跳过 replacement（到下一个未转义分隔符）
         cursor = pattern_end + 1
         replacement_end = -1
@@ -648,7 +758,9 @@ def _sed_subst_commands(script: str) -> list[tuple[str, str]]:
                 break
             cursor += 1
         if replacement_end < 0:
-            break
+            # 第九轮 P1-2：同上——未闭合的 ``s`` 不再中断整段扫描。
+            index += 1
+            continue
         # 标志段：只吃 sed 替换命令的真实标志字符（``g`` / ``p`` / 次数数字 /
         # ``w FILE`` / ``e`` / ``i`` / ``I`` / ``M`` / ``m``）——``;`` 之类字符是
         # **下一条命令**的分隔符，不属于本命令的标志（第七轮审查 P2-2：旧实现扫到
@@ -678,7 +790,21 @@ def _sed_subst_commands(script: str) -> list[tuple[str, str]]:
 def _sed_script_write_targets(script: str) -> list[str]:
     """sed 脚本里写出的文件列表（``w FILE`` 命令 + ``s///w FILE`` 标志）。"""
     text = str(script)
-    targets = list(_SED_WRITE_RE.findall(text))
+    targets: list[str] = []
+    length = len(text)
+    # 独立 ``w FILE`` 命令：在命令位置（地址前缀后）识别——第九轮 P1-1，
+    # ``2w /outside/x`` / ``/re/w /outside/x`` 与换行后的 ``w`` 一并覆盖。
+    for position in _sed_command_start_positions(text):
+        # 第九轮 P1-3：GNU sed 的 ``W FILE``（把模式空间的**第一行**写入文件）
+        # 同样是写命令 ⇒ 与 ``w`` 一并识别。
+        if position >= length or text[position] not in ("w", "W"):
+            continue
+        rest = text[position + 1 :].lstrip()
+        if not rest or rest.startswith(";"):
+            continue
+        token = rest.split()[0]
+        if token and token not in targets:
+            targets.append(token)
     for flags, target in _sed_subst_commands(text):
         if "w" in flags and target:
             targets.append(target)
@@ -690,13 +816,21 @@ def _sed_script_executes(script: str) -> bool:
     text = str(script)
     if any("e" in flags for flags, _target in _sed_subst_commands(text)):
         return True
-    return bool(_SED_EXEC_RE.search(text))
+    length = len(text)
+    for position in _sed_command_start_positions(text):
+        if position >= length or text[position] != "e":
+            continue
+        rest = text[position + 1 :]
+        if not rest or rest[0] in " \t":
+            return True
+    return False
 
 
 # ed/ex 脚本里的 ``w FILE`` 命令（写文件）——ed 的一行一条命令。
 _ED_WRITE_RE = re.compile(r"(?:^|\n)\s*w\s+(\S+)")
 # 第八轮 P1-4：ex 的 ``w`` 命令可带地址前缀（``1w FILE`` / ``1,2w FILE``）。
-_ED_WRITE_CMD_RE = re.compile(r"^[^\s]*\s*w\s+(\S+)")
+# 第九轮 P1-3：ex/ed 的 ``W FILE``（**追加**写）同样是写命令 ⇒ 与 ``w`` 一并识别。
+_ED_WRITE_CMD_RE = re.compile(r"^[^\s]*\s*[wW]\s+(\S+)")
 
 
 def _ed_script_write_targets(script: str) -> list[str]:
@@ -980,21 +1114,149 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
     return ([], True)
 
 
+# ── 编译器/链接器产物判定（第九轮 push 闸 P1-2）─────────────────────────────
+# 旧口径对 ``-o`` 做 token 精确匹配 ⇒ 附着形态（``-o/outside/x``）、内联形态
+# （``--output=/outside/x``）与**默认产物**（``gcc a.c`` → ``a.out``）都漏检。
+# 编译选项族过于庞大，无法用 FamilyOptions 单表穷举（``-MF`` 等双字母取值选项
+# 也不是单字母簇），改按**前缀逐 token 归类**：取值型输出/依赖选项给静态目标，
+# 依赖开关与未识别选项 fail-closed（写目标不可静态定位）。
+
+_COMPILER_VALUE_FLAGS = (
+    "-o", "--output",            # 输出文件
+    "-MF", "-MJ", "-aux-info",   # 依赖/清单产物（取值）
+    "-dumpdir", "-dumpbase", "-dumpbase-ext",
+    "-x", "-std",                # 语言/方言（取值，非写）
+)
+_COMPILER_DEP_BOOL_FLAGS = ("-MD", "-MMD", "-MP", "-MV", "-save-temps", "-save-temps=cwd", "-save-temps=obj")
+_COMPILER_STAGE_FLAGS = ("-c", "-E", "-S", "-fsyntax-only")
+_COMPILER_WRITING_F_PREFIXES = (
+    "-fprofile", "-ftest-coverage", "-fopt-info", "-flto", "-frepo", "-fplugin",
+)
+_COMPILER_BENIGN_PREFIXES = (
+    "-I", "-L", "-l", "-D", "-U", "-W", "-f", "-m", "-O", "-g", "-s", "-v", "-w",
+    "-std", "-pedantic", "-pipe", "-pthread", "-A", "-B", "-shared", "-static",
+    "-x", "-Xlinker", "-Xclang", "-idirafter", "-imacros", "-include", "-isystem",
+    "-iquote", "-undef", "-ansi", "-traditional",
+    # 第九轮 P1-1：长形态的只读/无害选项——``--version``/``--help`` 只打印信息，
+    # ``--target``/``--sysroot``/``--gcc-toolchain``/``--param`` 只改查找路径。
+    # 缺了它们 ⇒ ``gcc --version`` 被判成「无法归类的选项」⇒ 误拦（第九轮审查
+    # 的 4 条测试失败之一）。
+    "--version", "--help", "--verbose", "--target", "--sysroot",
+    "--gcc-toolchain", "--param",
+)
+
+
+def _compiler_token_value(raw: list[str], flag: str) -> str | None:
+    """取值型编译选项的值：``-o x`` / ``-ox`` / ``-o=x`` / ``--output=x`` 形态.
+
+    返回 ``None`` = 选项未出现；空串 = 出现但值不可静态定位（fail-closed）。
+    """
+    for index, token in enumerate(raw):
+        if token == flag:
+            return raw[index + 1] if index + 1 < len(raw) else ""
+        if token.startswith(flag + "=") and len(token) > len(flag) + 1:
+            return token[len(flag) + 1 :]
+        if token.startswith(flag + "/") and len(token) > len(flag) + 1:
+            # ``-o/outside/x``：斜杠是**值的首字符**（getopt 附着值），不是分隔符
+            return token[len(flag) :]
+    return None
+
+
+def _compiler_has_unmodeled_flag(raw: list[str]) -> bool:
+    """是否存在无法归类的选项 token（可能自带写面）⇒ fail-closed."""
+    known_values = _COMPILER_VALUE_FLAGS + ("-emit", "--crate-type", "--edition")
+    for token in raw:
+        if not token.startswith("-") or token == "-":
+            continue
+        if token in _COMPILER_STAGE_FLAGS or token in _COMPILER_DEP_BOOL_FLAGS:
+            continue
+        if token.startswith(_COMPILER_WRITING_F_PREFIXES):
+            continue  # 写面标志，另行按 implicit 处理
+        if any(
+            token == flag
+            or token.startswith(flag + "=")
+            or (token.startswith(flag + "/") and len(flag) <= 3)
+            for flag in known_values
+        ):
+            continue
+        if token.startswith(_COMPILER_BENIGN_PREFIXES):
+            continue
+        return True
+    return False
+
+
+def _compiler_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
+    """编译器/链接器（gcc/clang/ld/rustc 族）的 (静态写目标, 隐式写目标)."""
+    raw = [str(a) for a in args]
+    if any(token in ("--version", "--help") for token in raw):
+        # 信息型旗标让编译器**先于任何输出**退出（第九轮回归修复）
+        return ([], False)
+    output = _compiler_token_value(raw, "-o")
+    if output is None:
+        output = _compiler_token_value(raw, "--output")
+    if output is not None:
+        return ([output], not output)
+    targets: list[str] = []
+    for flag in ("-MF", "-MJ", "-aux-info", "-dumpdir", "-dumpbase"):
+        value = _compiler_token_value(raw, flag)
+        if value:
+            targets.append(value)
+    implicit = bool(targets)
+    if (
+        any(token in _COMPILER_DEP_BOOL_FLAGS for token in raw)
+        or any(token.startswith(_COMPILER_WRITING_F_PREFIXES) for token in raw)
+        or _compiler_token_value(raw, "--emit") is not None
+        or _compiler_has_unmodeled_flag(raw)
+    ):
+        implicit = True
+    if any(token in _COMPILER_STAGE_FLAGS for token in raw):
+        if "-E" in raw or "-fsyntax-only" in raw:
+            return (targets, implicit)
+        sources = [token for token in raw if not token.startswith("-")]
+        suffix = ".o" if "-c" in raw else ".s"
+        if sources:
+            targets.append(str(os.path.splitext(sources[0])[0]) + suffix)
+        else:
+            implicit = True
+        return (targets, implicit)
+    if name == "rustc":
+        # 产物名随 --crate-type/--emit 变（a / liba.rlib / a.s …）⇒ 不可静态定位
+        return (targets, True)
+    # gcc/clang/ld 的链接默认产物：cwd 下的 a.out（静态可判）
+    targets.append("a.out")
+    return (targets, implicit)
+
+
 def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     """返回 (静态写目标列表, 是否存在无法静态定位的隐式写目标)."""
     positional = _non_flag_args(args)
-    if name in WRITE_FLAG_OUTPUT:
-        # ``sort -o FILE in`` / ``shuf -o FILE in``：输出文件就是写目标
-        out = _flag_value(args, *WRITE_FLAG_OUTPUT[name])
+    if name in ("gcc", "g++", "cc", "c++", "clang", "clang++", "ld", "rustc"):
+        # 第九轮 P1-2：编译器族改专用产物判定（附着 -o / 默认产物 / 依赖文件）
+        return _compiler_write_targets(name, args)
+    if name in ("sort", "shuf"):
+        # 第九轮 P1-2：``-o/x`` 附着形态与 ``--output=`` 内联形态改走族模型；
+        # 未识别选项按 fail-closed（第八轮 P1-5 统一口径）。
+        family = SORT_OUTPUT_OPTIONS if name == "sort" else SHUF_OUTPUT_OPTIONS
+        scan = scan_options(family, args)
+        if scan.unresolved:
+            return ([], True)
+        out = scan.value_of("-o", "--output")
         if out is not None:
             return ([out], not out)
         return ([], False)
     if name in ("cp", "mv", "install", "ln", "rsync"):
         # rsync 的 -t 是 --times（布尔开关），只有 cp/mv/install/ln 的 -t 才是
         # --target-directory（审查 P1-1；第五轮审查 P1-2 补入 ln：
-        # ``ln -t DIR`` 把链接建到 DIR 下，原口径漏掉 -t ⇒ 取了错误的写目标）
-        flags = ("-t", "--target-directory") if name in ("cp", "mv", "install", "ln") else ("--target-directory",)
-        target_dir = _flag_value(args, *flags)
+        # ``ln -t DIR`` 把链接建到 DIR 下，原口径漏掉 -t ⇒ 取了错误的写目标）。
+        # 第九轮 P1-2：``-t/outside`` 附着与 ``--target-directory=/outside``
+        # 内联形态改走族模型。
+        if name == "rsync":
+            target_dir = _flag_value(args, "--target-directory")
+        else:
+            scan = scan_options(TARGET_DIRECTORY_OPTIONS, args)
+            if scan.unresolved:
+                return ([], True)
+            target_dir = scan.value_of("-t", "--target-directory")
         if target_dir is not None:
             return ([target_dir], not target_dir)
         if name == "ln" and "-T" in args:
@@ -1007,8 +1269,9 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     ):
         return (positional, False)
     if name == "patch":
-        # patch 的 -o/--output 是**输出文件**（第三轮审查 P0-8）
-        out = _flag_value(args, "-o", "--output")
+        # patch 的 -o/--output 是**输出文件**（第三轮审查 P0-8；第九轮 P1-1 改走
+        # 族模型 ⇒ getopt 附着形态 ``-oFILE`` 也能识别）
+        out = scan_options(PATCH_OPTIONS, args).value_of("-o", "--output")
         if out is not None:
             return ([out], not out)
         # patch 无目标文件 ⇒ 从 stdin 读补丁并改写文件（目标不可静态定位）
@@ -1056,13 +1319,16 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     if name == "tar":
         return _tar_write_targets(args, positional)
     if name == "unzip":
-        dest = _flag_value(args, "-d", "--directory")
+        # 第九轮 P1-1：``-d DIR`` 是解包目录（写目标）——改走族模型 ⇒ 附着形态
+        # ``-dDIR`` 也能识别
+        dest = scan_options(UNZIP_OPTIONS, args).value_of("-d", "--directory")
         return ([dest] if dest else [], not dest)
     if name == "zip":
         return (positional[:1], not positional)
     if name in ("gzip", "xz", "bzip2", "zstd"):
-        # zstd 的 -o/--output 是**输出文件**（第三轮审查 P0-9）
-        out = _flag_value(args, "-o", "--output")
+        # zstd 的 -o/--output 是**输出文件**（第三轮审查 P0-9；第九轮 P1-1 改走
+        # 族模型 ⇒ 附着形态 ``-oFILE`` 也能识别）
+        out = scan_options(COMPRESS_OUTPUT_OPTIONS, args).value_of("-o", "--output")
         if out is not None:
             return ([out], not out)
         if any(a in ("-c", "--stdout", "--to-stdout") for a in args):
@@ -1098,6 +1364,33 @@ def _git_subcommand(args: Sequence[str]) -> str:
             continue
         return token
     return ""
+
+
+def _git_subcommand_args(args: Sequence[str]) -> list[str]:
+    """子命令**及其之后**的 token（第九轮 push 闸 P2-2：全局选项前置时 ``args[1:]``
+    会错位——``git -c k=v symbolic-ref HEAD`` 是**读**形态，旧口径把 ``k=v``
+    计进动作清单 ⇒ 误判为 2 参数写形态）。调用方 ``_git_action_args`` 自行
+    剥掉首 token（子命令）——保持包含式语义与其前提一致。"""
+    sub = _git_subcommand(args)
+    if not sub:
+        return list(args)
+    try:
+        return [str(a) for a in args[args.index(sub) :]]
+    except ValueError:
+        return list(args)
+
+
+def _git_action_args(args: Sequence[str]) -> list[str]:
+    """子命令**之后**的非选项参数（动作清单）。
+
+    第九轮 P1-1（自审新发现）：``_git_subcommand_args`` 返回的是「子命令及其之后」
+    的 token ⇒ 直接把它当动作清单会把**子命令自己**算成动作 ⇒
+    ``git reflog``（动作被判成 ``reflog``）、``git symbolic-ref HEAD``（动作被判成
+    2 个 ⇒ 误判写形态）、``git remote -v``（``-v`` 是标志形，被非选项过滤掉 ⇒
+    动作清单为空却仍按未知动作拒）三条**读形态**被误拦。
+    """
+    tokens = _git_subcommand_args(args)
+    return [str(a) for a in _non_flag_args(tokens[1:])]
 
 
 class _Scanner:
@@ -1224,7 +1517,18 @@ class _Scanner:
                     return CommandScopeDecision(
                         False, reason, detail, tuple(self.unverified)
                     )
-            return self._scan_command_chain(shlex.split(payload_cmd), depth)
+            try:
+                payload_tokens = shlex.split(payload_cmd)
+            except ValueError:
+                # 第九轮 P2-3：载荷串引号不闭合 ⇒ 无法重解析 ⇒ 写目标不可静态定位
+                # ⇒ fail-closed（此前 ValueError 会冒泡成未捕获异常 ⇒ 判定崩掉）。
+                return CommandScopeDecision(
+                    False,
+                    "implicit_write_target",
+                    "script：载荷命令串无法解析 ⇒ 写目标不可静态定位",
+                    tuple(self.unverified),
+                )
+            return self._scan_command_chain(payload_tokens, depth)
         if operands:
             ok, reason, detail = self._check_target(operands[0])
             if not ok:
@@ -1313,7 +1617,7 @@ class _Scanner:
                 return decision
         if name == "time":
             # ``time -o FILE cmd``：FILE 是**写目标**（不是命令的一部分）
-            out = _flag_value(cmd_tokens[1:], "-o", "--output")
+            out = scan_options(TIME_OPTIONS, cmd_tokens[1:]).value_of("-o", "--output")
             if out:
                 ok, reason, detail = self._check_target(out)
                 if not ok:
@@ -1345,7 +1649,7 @@ class _Scanner:
                 "implicit_write_target",
                 f"{name}：写目标不可静态定位（构建/安装族）",
             )
-        if _is_write_name(name) or name in WRITE_FLAG_OUTPUT:
+        if _is_write_name(name) or name in OUTPUT_FLAG_COMMANDS:
             targets, implicit = _write_targets(name, args)
             # 判定顺序：**先查已知写目标**（能给精确理由：越界/不在允许清单），
             # 全部合规后才用 implicit 兜底（写目标确实不可静态定位）。
@@ -1400,7 +1704,13 @@ class _Scanner:
             # 其执行时机与工作目录不可静态确定 ⇒ 一律拒（不论载荷写目标是否在 scope 内）。
             # ``core.pager`` 同属可执行载荷（``core.pager='sh -c "rm -rf ./x"'``
             # 会在每次分页时执行）⇒ 同样拒（第六轮审查 P1-3 补充实测）。
-            if key.lower().startswith("alias.") or key.lower() == "core.pager":
+            # 第九轮 push 闸 P2-1：可执行配置键集合扩为闭集（精确匹配，避免
+            # 误伤 ``core.bigFileThreshold`` 这类前缀撞名）——``core.editor``/
+            # ``sequence.editor`` 在 commit/tag 等场景被当命令执行；
+            # ``core.hooksPath`` 把钩子目录重指到任意可执行脚本；
+            # ``core.attributesFile``/``core.excludesFile`` 影响外部过滤器路径。
+            lowered = key.lower()
+            if lowered.startswith("alias.") or lowered in _GIT_EXEC_CONFIG_KEYS:
                 return CommandScopeDecision(
                     False,
                     "implicit_write_target",
@@ -1439,7 +1749,7 @@ class _Scanner:
             # ``git symbolic-ref HEAD refs/heads/x`` 是**写形态**（改写 .git/HEAD）。
             # 读形态只有 1 个位置参数（``git symbolic-ref HEAD``）；写形态是
             # 「名字 + 新值」2 个位置参数，或带 ``--delete``/``-d``。
-            actions = [str(a) for a in _non_flag_args(args[1:])]
+            actions = _git_action_args(args)
             if "--delete" in args or "-d" in args or len(actions) >= 2:
                 return CommandScopeDecision(
                     False,
@@ -1449,7 +1759,7 @@ class _Scanner:
         if sub == "reflog":
             # 第六轮独立审查 P2-4：``git reflog``（无动作）/ ``git reflog show`` 是读；
             # ``expire`` / ``delete`` 改写 reflog 文件 ⇒ 写形态按写目标不可定位拒。
-            actions = [str(a) for a in _non_flag_args(args[1:])]
+            actions = _git_action_args(args)
             if actions and not any(a in GIT_REFLOG_READ_ACTIONS for a in actions):
                 return CommandScopeDecision(
                     False,
@@ -1459,7 +1769,7 @@ class _Scanner:
         if sub == "remote":
             # ``git remote`` 有读形态（-v / show / get-url）与写形态
             # （add / set-url / remove …）——按动作分族，名单外按写处理。
-            actions = [str(a) for a in _non_flag_args(args[1:])]
+            actions = _git_action_args(args)
             read_forms = [a for a in actions if a in GIT_REMOTE_READ_ACTIONS]
             write_forms = [a for a in actions if a in GIT_REMOTE_WRITE_ACTIONS]
             if write_forms:
@@ -1477,7 +1787,7 @@ class _Scanner:
         if sub == "worktree":
             # ``git worktree list`` 是只读形态；``add`` / ``remove`` / ``prune``
             # 会写工作树 ⇒ 名单外动作按写处理。
-            actions = [str(a) for a in _non_flag_args(args[1:])]
+            actions = _git_action_args(args)
             read_forms = [a for a in actions if a in GIT_WORKTREE_READ_ACTIONS]
             if not read_forms:
                 return CommandScopeDecision(
@@ -1486,7 +1796,7 @@ class _Scanner:
                     f"git worktree {actions[0] if actions else ''}：写目标不可静态定位",
                 )
         if sub in GIT_OUTPUT_SUBCOMMANDS:
-            out = _flag_value(args, "--output", "-o")
+            out = scan_options(GIT_OUTPUT_OPTIONS, args).value_of("--output", "-o")
             if out:
                 ok, reason, detail = self._check_target(out)
                 if not ok:

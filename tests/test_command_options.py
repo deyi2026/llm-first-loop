@@ -11,6 +11,7 @@ from llm_loop.core.command_options import (
     PERL_OPTIONS,
     SED_OPTIONS,
     TAR_OPTIONS,
+    FamilyOptions,
     scan_options,
 )
 
@@ -92,3 +93,25 @@ def test_negative_number_argument_is_not_an_option() -> None:
     scan = scan_options(SED_OPTIONS, ["-5"])
     assert scan.unresolved == ()
     assert scan.operands == ("-5",)
+
+
+def test_short_option_lookup_accepts_both_spellings() -> None:
+    """短选项查表必须同时接受裸字母与 ``-`` 前缀两种登记写法。
+
+    第九轮自审新发现（根因）：``FamilyOptions.short_spec`` 用**裸字母**查表，
+    而族表把短选项登记成 ``"-o"`` ⇒ 比较恒不成立 ⇒ 所有短选项都被当成未知
+    字母 ⇒ 取值型选项取不到值（getopt 附着形态判不出来），且每个短选项都触发
+    ``unresolved`` ⇒ 依赖 ``unresolved`` 的 fail-closed 族把一切带短选项的命令
+    都拦了。本测试钉住这一行为。
+    """
+    family = FamilyOptions(
+        long_options=(("--output", True),),
+        short_options=(("-o", True),),
+    )
+    assert family.short_spec("o") == ("-o", True)
+    assert family.short_spec("-o") == ("-o", True)
+    assert family.short_spec("z") is None
+    scan = scan_options(family, ["-oFILE", "in"])
+    assert scan.unresolved == ()
+    assert scan.value_of("-o") == "FILE"
+    assert scan.operands == ("in",)

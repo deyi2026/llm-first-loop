@@ -815,3 +815,70 @@ def test_r8_prefix_ambiguity_value_candidate_priority(
     """前缀歧义长选项的取值候选优先规则（过拦方向）必须被钉住。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is expected_allowed, (command, decision.reason, decision.detail)
+
+
+# ── 第九轮独立审查（REVISE，P0=0/P1=4/P2=6）逐条修的回归锁 ─────────────────
+#
+# P1-1 getopt **附着形态**（``-tDIR`` / ``-oFILE`` / ``-dDIR``）此前走
+#      ``_flag_value``（token 精确匹配）⇒ 越界写被放行。
+# P1-2 sed 未闭合的 ``s`` 命令此前 ``break`` ⇒ 脚本后半段整体不再扫描。
+# P1-3 大写 ``W``（sed 写模式空间首行 / ex 追加写）此前未建模。
+# P1-4 ``GIT_CONFIG_PARAMETERS`` 此前未纳入注入拦截。
+# P2-3 载荷命令串引号不闭合此前会抛 ValueError（判定崩掉）⇒ 改为 fail-closed。
+# 自审新发现（第九轮）：``FamilyOptions.short_spec`` 查表用裸字母、表里登记成
+#      ``"-o"`` ⇒ 比较恒不成立 ⇒ **所有短选项都被当成未知字母** ⇒ 取值型选项
+#      取不到值（附着形态判不出来）+ 每个短选项都触发 ``unresolved``。
+
+R9_BLOCKED_CASES = [
+    # P1-1：附着形态
+    ("cp -t/outside src", "write_target_outside_scope"),
+    ("gcc -o/outside/x a.c", "write_target_outside_scope"),
+    ("sort -o/outside/x in", "write_target_outside_scope"),
+    ("patch -o/outside/x a.patch", "write_target_outside_scope"),
+    ("unzip -d/outside a.zip", "write_target_outside_scope"),
+    ("gzip -o/outside/x in", "write_target_outside_scope"),
+    ("time -o/outside/x ls", "write_target_outside_scope"),
+    ("git archive -o/outside/x HEAD", "write_target_outside_scope"),
+    # P1-2：未闭合的 s 不再中断整段扫描
+    ("sed -e 's/a/b\nw /outside/x' in", "write_target_outside_scope"),
+    # P1-3：大写 W
+    ("sed 'W /outside/x' in", "write_target_outside_scope"),
+    ("ed -c 'W /outside/x' in", "write_target_outside_scope"),
+    # P1-4：GIT_CONFIG_PARAMETERS
+    (
+        "GIT_CONFIG_PARAMETERS='alias.pwn=!rm -rf /outside' git log",
+        "implicit_write_target",
+    ),
+    # P2-3：载荷串引号不闭合 ⇒ fail-closed（不再抛 ValueError）
+    ("script -c 'echo \"unclosed' out.txt", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R9_BLOCKED_CASES)
+def test_r9_review_bypasses_are_blocked_under_full_domain_scope(
+    command: str, expected_reason: str
+) -> None:
+    """第九轮审查复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R9_ALLOWED_CASES = [
+    "sort -o out.txt in",
+    "gzip in",
+    "unzip -d outdir a.zip",
+    "sed -n 's/a/b/' in",
+    "patch -o out.txt a.patch",
+    "git reflog",
+    "git symbolic-ref HEAD",
+    "git remote -v",
+    "gcc --version",
+]
+
+
+@pytest.mark.parametrize("command", R9_ALLOWED_CASES)
+def test_r9_review_fixes_do_not_over_block_read_forms(command: str) -> None:
+    """第九轮修复不得误伤读形态（含 short_spec 修复带回的 4 条既有读形态）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)

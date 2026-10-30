@@ -63,10 +63,18 @@ class FamilyOptions:
         return [entry for entry in self.long_options if entry[0].startswith(name)]
 
     def short_spec(self, letter: str) -> tuple[str, bool] | None:
-        """短字母 → (规范名, 是否取值)；未知字母返回 ``None``."""
+        """短字母 → (规范名, 是否取值)；未知字母返回 ``None``.
+
+        第九轮 P1-1（自审新发现）：表里的短选项登记成 ``"-o"``（带短横），
+        而查表用的是**裸字母** ``"o"`` ⇒ 比较恒不成立 ⇒ **所有短选项都被当成
+        未知字母** ⇒ 粘连簇解析整体失效（取值型选项取不到值 ⇒ 附着形态
+        ``-oFILE`` 判不出来；同时每个短选项都触发 ``unresolved`` ⇒ 依赖
+        ``unresolved`` 的 fail-closed 族把**一切带短选项的命令**都拦了）。
+        ⇒ 查表同时接受两种写法（``"o"`` 与 ``"-o"``）。
+        """
         for entry in self.short_options:
-            if entry[0] == letter:
-                return f"-{letter}", entry[1]
+            if entry[0] == letter or entry[0] == f"-{letter}":
+                return f"-{letter.lstrip('-')}", entry[1]
         return None
 
 
@@ -126,6 +134,11 @@ def _scan_long(
     """长选项：精确匹配 / 唯一前缀缩写；``--name=value`` 内联取值."""
     token = raw[index]
     name, sep, inline = token.partition("=")
+    if name == "--":
+        # ``--=value``（空长名）不是合法选项——显式拒收，避免空名成为
+        # 全表前缀而把内联值灌进每个取值型选项（第九轮 push 闸 P2-3）。
+        unresolved.append(token)
+        return index + 1
     candidates = family.long_candidates(name)
     if not candidates:
         unresolved.append(token)
@@ -227,14 +240,10 @@ SED_OPTIONS = FamilyOptions(
         ("z", False),
         ("u", False),
         ("I", False),
-        ("p", False),
-        ("l", False),
-        ("M", False),
-        ("t", False),
-        ("w", False),
-        ("b", False),
-        ("T", False),
-        ("D", False),
+        # 第九轮 P2-5：本表只列 **GNU sed** 的短选项。BSD 专有的
+        # ``-p/-l/-M/-t/-w/-b/-T/-D`` 不在表内 ⇒ 命中时按「未识别选项」处理
+        # （fail-closed），避免表与实现漂移（表里多写一个字母 ⇒ 该字母起止的
+        # 判定整体偏移）。
     ),
 )
 
@@ -363,13 +372,16 @@ TAR_OPTIONS = FamilyOptions(
         ("O", False),
         ("v", False),
         ("p", False),
-        ("b", False),
+        # 第九轮 P2-5：``-b``（块因子，``-b 20``）是**取值型**——旧表当开关 ⇒
+        # 粘连簇解析把它后面的字母/位置参数当成独立项 ⇒ 判定偏移。
+        ("b", True),
         ("S", False),
         # 第八轮 P1-2：``-g`` 取值（快照文件，写目标），不是开关。
         ("g", True),
         ("L", False),
         ("M", False),
-        ("N", False),
+        # 第九轮 P2-5：``-N``（``--newer-mtime`` 的时间戳）是**取值型**。
+        ("N", True),
         ("P", False),
         # 第八轮 P1-5：补齐常见短字母（统一 fail-closed 后未收录会被拦）。
         ("B", False),
@@ -662,7 +674,9 @@ WGET_OPTIONS = FamilyOptions(
         ("P", True),
         ("o", True),
         ("i", True),
-        ("r", True),
+        # 第九轮 P2-5：``-r`` 是**递归开关**（不带值）——旧表标成取值型 ⇒
+        # ``wget -r URL`` 会把 URL 当成 ``-r`` 的值吞掉 ⇒ 递归下载恒被误判。
+        ("r", False),
         ("l", True),
         ("t", True),
         ("T", True),
@@ -806,4 +820,203 @@ GIT_EXPORT_OPTIONS = FamilyOptions(
         ("--anonymize", False),
         ("--reflog", False),
     ),
+)
+
+# ── 第九轮（push 闸审查 subagent_db0cf1b71ab4）P1-2：输出/目标目录型选项
+# 从 token 精确匹配改走族模型——附着形态（``-o/outside/x``、``-t/outside``）
+# 与 ``--target-directory=/outside`` 在旧口径下整 token 被跳过 ⇒ 越界写放行。
+# 表按第八轮 P1-5 的统一口径补齐常见选项；未识别选项由调用方 fail-closed。
+
+
+def _flag(value: bool, letters: str) -> tuple[tuple[str, bool], ...]:
+    """``"rn"`` + value=False → ``(("r", False), ("n", False))``——短键是**裸字母**.
+
+    与族表其余短键约定一致（``(("e", True), …)``）；带连字符的键 ``short_spec``
+    永不命中（第九轮修复：初版 ``f"-{ch}"`` 使全部新族表的取值判定失效）。
+    """
+    return tuple((ch, value) for ch in letters)
+
+
+SORT_OUTPUT_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--output", True),
+        ("--field-separator", True),
+        ("--key", True),
+        ("--random-source", True),
+        ("--parallel", True),
+        ("--compress-program", True),
+        ("--temporary-directory", True),
+        ("--buffer-size", True),
+        ("--numeric-sort", False),
+        ("--general-numeric-sort", False),
+        ("--human-numeric-sort", False),
+        ("--month-sort", False),
+        ("--version-sort", False),
+        ("--reverse", False),
+        ("--ignore-case", False),
+        ("--ignore-leading-blanks", False),
+        ("--ignore-nonprinting", False),
+        ("--stable", False),
+        ("--check", True),
+        ("--merge", False),
+        ("--zero-terminated", False),
+        ("--debug", False),
+    ),
+    short_options=_flag(True, "oktTS") + _flag(False, "rnbfghMVsuimcdlspe"),
+)
+
+SHUF_OUTPUT_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--output", True),
+        ("--random-source", True),
+        ("--head-count", True),
+        ("--repeat", False),
+        ("--zero-terminated", False),
+    ),
+    short_options=_flag(True, "on") + _flag(False, "rze"),
+)
+
+# cp/mv/install/ln 的 ``-t/--target-directory DIR`` 把写目标改到 DIR 下
+# （第五轮 P1-2 补 ln；第九轮改族模型取附着/内联形态）。
+TARGET_DIRECTORY_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--target-directory", True),
+        ("--no-target-directory", False),
+        ("--recursive", False),
+        ("--archive", False),
+        ("--force", False),
+        ("--interactive", False),
+        ("--no-clobber", False),
+        ("--link", False),
+        ("--symbolic-link", False),
+        ("--preserve", True),
+        ("--parents", False),
+        ("--verbose", False),
+        ("--update", False),
+        ("--one-file-system", False),
+        ("--sparse", True),
+        ("--strip-trailing-slashes", False),
+        ("--copy-contents", False),
+        ("--attributes-only", False),
+        ("--reflink", True),
+        ("--backup", True),
+        ("--suffix", True),
+        ("--context", True),
+        ("--mode", True),
+        ("--owner", True),
+        ("--group", True),
+        ("--directory", False),
+        ("--dereference", False),
+        ("--no-dereference", False),
+        ("--relative", False),
+    ),
+    short_options=_flag(True, "tTSmog") + _flag(False, "rRaifnvplsdubxzLPZc"),
+)
+
+# 第九轮 P1-1：``patch`` 的 ``-o/--output``、``unzip`` 的 ``-d/--directory``、
+# ``gzip`` 族的 ``-o/--output``、``time`` 的 ``-o/--output`` 此前走
+# ``_flag_value``（token 精确匹配）⇒ **getopt 附着形态** ``-oFILE`` / ``-dDIR``
+# 未被识别 ⇒ ``patch -o/outside/x a.patch`` / ``unzip -d/outside a.zip`` 之类
+# 越界写被放行 ⇒ 全部改走族模型（与 sed/tar/curl/wget/perl/script 同一语义）。
+
+PATCH_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--output", True),
+        ("--strip", True),
+        ("--reject", True),
+        ("--reject-file", True),
+        ("--input", True),
+        ("--edit", True),
+        ("--suffix", True),
+        ("--fuzz", True),
+        ("--dry-run", False),
+        ("--verbose", False),
+        ("--quiet", False),
+        ("--silent", False),
+        ("--forward", False),
+        ("--reverse", False),
+        ("--backup", False),
+        ("--backup-if-mismatch", False),
+        ("--no-backup-if-mismatch", False),
+        ("--posix", False),
+        ("--merge", False),
+        ("--ignore-whitespace", False),
+        ("--force", False),
+        ("--test", False),
+        ("--unified", False),
+        ("--no-remove-empty-files", False),
+    ),
+    short_options=_flag(True, "opreRi") + _flag(False, "bcEfgFlnNstuv"),
+)
+
+UNZIP_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--directory", True),
+        ("--exclude", True),
+        ("--include", True),
+        ("--comment", True),
+        ("--zip-comments", False),
+        ("--unzip-comments", False),
+        ("--list", False),
+        ("--test", False),
+        ("--extract", False),
+        ("--stdout", False),
+        ("--quiet", False),
+        ("--help", False),
+        ("--version", False),
+    ),
+    short_options=_flag(True, "dxCpPO") + _flag(False, "aacEFhjJlLnoqtTuvWzZ"),
+)
+
+# gzip/xz/bzip2/zstd 共用一张表（取并集）：``-o/--output`` 是输出文件（写目标）。
+COMPRESS_OUTPUT_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--output", True),
+        ("--stdout", False),
+        ("--decompress", False),
+        ("--force", False),
+        ("--keep", False),
+        ("--test", False),
+        ("--list", False),
+        ("--quiet", False),
+        ("--verbose", False),
+        ("--no-name", False),
+        ("--name", False),
+        ("--fast", False),
+        ("--best", False),
+        ("--check", False),
+        ("--no-check", False),
+        ("--rm", False),
+        ("--threads", True),
+        ("--block-size", True),
+        ("--format", True),
+        ("--priority", True),
+        ("--compression-level", True),
+        ("--help", False),
+        ("--version", False),
+    ),
+    short_options=_flag(True, "oT")
+    + _flag(False, "cdfklnNqtvhVzV")
+    + tuple((str(level), False) for level in range(1, 10)),
+)
+
+TIME_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--output", True),
+        ("--format", True),
+        ("--portability", False),
+        ("--quiet", False),
+        ("--verbose", False),
+        ("--summarize", False),
+    ),
+    short_options=_flag(True, "of") + _flag(False, "pqva"),
+)
+
+# git 的全局选项空间极大 ⇒ 本表**只用于取输出文件的值**，不用于
+# 「未识别选项 ⇒ fail-closed」判定（否则 git 的合法选项会被大面积误拦）。
+GIT_OUTPUT_OPTIONS = FamilyOptions(
+    long_options=(
+        ("--output", True),
+    ),
+    short_options=_flag(True, "o"),
 )

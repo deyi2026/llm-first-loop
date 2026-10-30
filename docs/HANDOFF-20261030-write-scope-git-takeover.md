@@ -507,3 +507,71 @@ P2-3 长选项**前缀歧义**时的「取值候选优先」规则边界未测 �
 
 **状态行**：第八轮 P1=5 / P2=5 已逐条修并实测（254 passed / 棘轮门通过）；
 **全量门禁的独立审查结论以子代理回执为准**，本节不预先宣称上线结果。
+
+### 10.13 第九轮独立审查（2026-10-31 00:3x–01:2x）：REVISE（P0=0 / P1=4 / P2=6）→ 已逐条修
+
+**审查物料**：第八轮已落盘状态（HEAD `917817c64`）+ 第八轮未提交增量；审查子代理
+（只读）实测复现 **P1=4 / P2=6**，逐条复测确认成立。
+
+**P1（4 条，均已修）**
+1. **P1-1 getopt 附着形态漏判**（`cp -tDIR` / `gcc -oFILE` / `sort -oFILE` /
+   `unzip -dDIR` / `patch -oFILE` / `gzip -oFILE` / `time -oFILE` /
+   `git archive -oFILE`）：这些族此前走 `_flag_value()`（token **精确匹配**）
+   ⇒ ``-o/outside/x`` 形态取不到值 ⇒ 越界写放行。⇒ 新建
+   `src/llm_loop/core/command_options.py` 的**族模型**（`FamilyOptions` +
+   `scan_options` + `OptionScan`），判定层按族建表；本轮把 `patch`/`unzip`/
+   `gzip` 族/`time`/`git archive` 全部改走族模型（`cp`/`mv`/`ln`/`install`/
+   `sort`/`shuf`/`gcc` 已在第八轮改完）。
+2. **P1-2 `script -c CMD FILE` 不判 FILE**：`script` 的 `-c` 分支提前 return ⇒
+   typescript 落盘文件从未判定 ⇒ `script -c 'echo hi' /outside/x` 放行却写了
+   范围外文件。⇒ `-c` 分支改为**同时**判定 FILE；无 FILE 时按 ``./typescript``
+   判定（fail-closed）。
+3. **P1-3 `perl` 簇长上限 3**：`_perl_inplace` 的 `^-([A-Za-z]{1,3})(\..*)?$`
+   ⇒ ``perl -lpie 's/a/b/' /outside/x`` / ``perl -pain -e ... /outside/x`` 漏检
+   ⇒ 按 getopt 语义拆簇（`-lpie` ⇒ l/p/i/e），并把 `-f` 纠正为**开关**（误标
+   取值型会吞掉后面的 `-i` ⇒ 越界就地编辑放行）。
+4. **P1-4 `git fast-export --export-marks=FILE`**：marks 文件是写目标，此前
+   从未判定 ⇒ 补齐（并把 `GIT_CONFIG_PARAMETERS` 纳入配置注入拦截）。
+
+**P2（6 条）**：P2-1 第五轮 P2 计数口径统一为 P2=3；P2-2 `_sed_subst_commands`
+标志段边界按 sed 真实标志字符收敛；P2-3 载体选项区误拦 `env GIT_CONFIG_COUNT=1
+ls git`（fail-closed 代价，登记）；P2-4 `git remote -v` 的动作清单口径；P2-5
+族表与实现的漂移（见下）；P2-6 `reports/` 归档政策（结转）。
+
+**本轮自审新发现（比审查更靠底层，已修）**
+`FamilyOptions.short_spec()` 用**裸字母**查表，而族表把短选项登记成 `"-o"`
+⇒ 比较恒不成立 ⇒ **所有短选项都被当成未知字母** ⇒ (a) 取值型选项取不到值
+（getopt 附着形态整体判不出来）；(b) 每个短选项都触发 `unresolved` ⇒ 依赖
+`unresolved` 的 fail-closed 族把**一切带短选项的命令**都拦了
+（`sort -o out.txt in` 被误拦 ⇒ 实测复现）。⇒ 查表同时接受两种写法；并补
+`short_spec` 单测钉住。
+
+**同轮修掉的连带回归**（自审复测发现，4 条）：`git reflog` /
+`git symbolic-ref HEAD` / `git remote -v` / `gcc --version` 被误拦 ⇒ 根因是
+动作清单把**子命令自己**算成动作（`_git_subcommand_args` 返回「子命令及其
+之后」）⇒ 新增 `_git_action_args()` 只取子命令**之后**的非选项参数；`gcc
+--version` 则是长形态无害选项未登记（补 `--version/--help/--verbose/--target/
+--sysroot/--gcc-toolchain/--param`）。
+
+**应拦输入实测**（RULE-AI-35）：本轮 13 条应拦向量在 `paths=("**",)` 下**全部被拦
+且拒因匹配**（8 条附着形态 + sed 未闭合 `s` + sed/ed 大写 `W` +
+`GIT_CONFIG_PARAMETERS` + script 载荷串引号不闭合）；9 条读形态
+（`sort -o out.txt` / `gzip` / `unzip -d` / `sed -n` / `patch -o` / `git reflog` /
+`git symbolic-ref HEAD` / `git remote -v` / `gcc --version`）⇒ 按预期放行。
+判定层 **277 passed**（`test_command_scope_guard.py` 265 + `test_command_options.py` 12
+12 + 棘轮门）；ruff 诊断 **0**；棘轮门 `_scan_git` 116 行 / `_write_targets` 111 行
+（均 <120 未登记门槛）。
+
+**残余（fail-closed 方向的已知代价，如实登记）**：族表未收录的冷门选项会被拦；
+`tar a.tar b`（未写显式模式）会被拦；`env GIT_CONFIG_COUNT=1 ls git` 仍在；
+`reports/` 归档政策未确认（P2-6 结转）。
+
+**并发写者会话的并行线（重要，交接必读）**：并发写者会话另有分支
+`fix/write-scope-p1-4-union`（自 `66950cd09` 分叉，已含第九～十二轮：sed 大写
+`W`/真实换行分隔、短选项粘连取值、族模型未解析项 fail-closed、symbolic-ref
+前缀/粘连、ex 的 `w!`、sed `-i` 脚本写面、curl/wget 次级写面、ed 的 `W` 追加写、
+粘连文件名、长选项唯一前缀、tar 值选项/exec 载荷、find 元数）。该分支与本会话
+的 `main` **互不包含**（同一祖先分叉）⇒ 合并由该会话负责（分支名即其意图）；
+本会话只在 `main` 上继续加固，**不重复实现其已覆盖的项**（已在合并时按语义取
+并集）。本轮 P1-1 的「附着形态」族模型化即两线的**交集**（两方各自实现）⇒
+合并时以语义并集为准，不做文本级取舍。
