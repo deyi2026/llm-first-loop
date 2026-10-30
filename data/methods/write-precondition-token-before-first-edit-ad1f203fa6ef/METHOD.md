@@ -3,12 +3,12 @@ method_id: write-precondition-token-before-first-edit-ad1f203fa6ef
 name: write-precondition-token-before-first-edit
 description: 在编辑工具带版本化写前置条件（file_contract / expected_snapshot_ref 类乐观锁）的环境里，对已存在文件的首次编辑前，先通过一次 snapshot 读取取得写前令牌：把「内容理解」与「令牌获取」合并为同一次 read(snapshot=true)，再携带令牌编辑。普通内容读取不产生令牌；契约失败回执虽会给出 required_call/retry_field 补救配方，但事后补救要多付一次失败编辑加一次重复读取。每次成功写入后记录新的 artifact/snapshot 引用供同文件后续编辑复用；期间若发生写入则令牌作废，需重取后再试。
 aliases: 改文件前先拿写令牌, 一次读取同时取快照引用, 写被拒后别原样重试, file_contract 乐观锁回执, 手里没有版本号
-status: candidate
+status: qualified
 source_model: glm/glm-5.3
 source_episode_refs: episode:8d524014-5137-4d7f-bb82-9755dd05c8b4:329:cbbdfff9ac89d3f9d02a
 evidence_refs: learning:learn:e7867fdfc122
 created_at: 2026-09-21T02:50:32.140021+00:00
-updated_at: 2026-10-23T05:53:06.998874+08:00
+updated_at: 2026-10-30T10:48:34.835412+08:00
 ---
 ## Trigger
 会话内即将首次编辑某个已存在的文件，且所在环境的 edit 工具实施版本化写前置条件（如 expected_snapshot_ref / etag / If-Match 类契约）

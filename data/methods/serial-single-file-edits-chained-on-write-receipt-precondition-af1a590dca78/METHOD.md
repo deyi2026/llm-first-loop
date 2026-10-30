@@ -3,12 +3,12 @@ method_id: serial-single-file-edits-chained-on-write-receipt-precondition-af1a59
 name: serial-single-file-edits-chained-on-write-receipt-precondition
 description: 对同一受版本前提保护（expected_snapshot_ref/sha256 校验）的可变文件做多处独立编辑时，不要基于同一快照并行发多个写请求：任一成功写入都会改变文件字节，使同批其它请求的前提失效（版本冲突）；凭记忆重构的 old_string 也易因缩进/属性差异 0 匹配。改为串行链式执行——old_string 只从最近一次权威读取/回执中逐字复制，每次成功写入后直接用回执返回的新 artifact ref 作为下一次编辑的 expected_snapshot_ref；编辑区域不重叠时无需整文件重读，冲突后只需窄范围重读目标区域。本集 5 次工具失败（2 次 old_string 不匹配、3 次版本冲突）全部由并行批写+记忆重构产生，串行链式可全部消除。
 aliases: old_string 差个缩进就匹配不上, 同一文件多处改动排队改, 失败后只重读那段区域, sha256 校验的前提写串行, 第二处就写不进去
-status: candidate
+status: qualified
 source_model: minimax/MiniMax-M3
 source_episode_refs: episode:ae5b131c-d837-4549-8a3b-9f8d7168745d:65:6f871509d1ac5831ae2b
 evidence_refs: learning:learn:bfa81f13b7ab
 created_at: 2026-10-17T17:16:56.277049+08:00
-updated_at: 2026-10-23T05:53:14.667019+08:00
+updated_at: 2026-10-30T10:48:34.670864+08:00
 ---
 ## Trigger
 准备对同一个带乐观并发前提的文件（file_contract / snapshot_ref / sha256 校验）执行 2 处以上独立编辑，且手上已有该文件某版本的读取快照
