@@ -1,13 +1,13 @@
 ---
 method_id: subagent-three-layer-diagnose-and-spawn-playbook-87273b2b3118
 name: subagent-three-layer-diagnose-and-spawn-playbook
-description: 子代理工具调不动/绕弯/token浪费时的诊断与预防：三层定位+spawn铁律+byte-exact任务书+止损规则+等待纪律。详见 docs/SUBAGENT-PLAYBOOK-20261025.md
+description: 子代理工具调不动/绕弯/token浪费时的诊断与预防：三层定位+spawn铁律+byte-exact任务书+止损规则+等待纪律。机制锚见 docs/PLAYBOOK-20261014-subagent-capability.md（其"三层机制速查"=①工具面②能力声明③执行权，与本卡三层诊断同构；该文覆盖三层机制与 spawn 配置纪律，不覆盖本卡的分诊映射/止损规则/byte-exact 任务书/等待纪律）
 status: candidate
 source_model: glm/glm-5.3
 source_episode_refs: episode:10512259-8254-4f0b-afcd-84e2484e4bfc:0:1d64e4e4a9fbaeb8f01d
-freshness_refs: evidence://v1/5e7b4d8fca6cf18798a05ab796bf4c342d6c95c9bbcc41bfbdfd1d12c0becb24,docs/SUBAGENT-PLAYBOOK-20261025.md
+freshness_refs: evidence://v1/5e7b4d8fca6cf18798a05ab796bf4c342d6c95c9bbcc41bfbdfd1d12c0becb24,docs/PLAYBOOK-20261014-subagent-capability.md
 created_at: 2026-10-25T23:01:13.307425+08:00
-updated_at: 2026-10-25T23:01:13.307425+08:00
+updated_at: 2026-10-30T14:14:50.671046+08:00
 ---
 诊断决策树（工具调不动时按层定位）：
 1) 拒绝文案含"白名单/声明外" → 工具面：requires.tools 没列全，父重派列全（child 内无法自救）
