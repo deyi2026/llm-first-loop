@@ -183,3 +183,7 @@ work/*/out/*.log
 
 # write_scope 闸探针的临时目录（mkdtemp 唯一名，崩溃/中断可能残留）
 .tmp-write-scope-probe*/
+
+# 会话过程临时脚本（根目录 .tmp-*.py/.json，2026-10-30 发现 16 个未跟踪；
+# 属各会话分析/修表用即弃产物，仅 ignore 不删除——文件本体由产出会话自行处置）
+/.tmp-*
