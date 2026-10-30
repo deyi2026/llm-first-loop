@@ -142,6 +142,8 @@
 
 **Round 4 通道实测吞吐**：9 张卡 / 3 批（1+4+4，其中 2 个试点先校验再放行）/ 3 个独立评审子代理 / 9 份回执 / harness `call_count=9, problems=0` / 4 张 `transition=qualify` / 0 张失效。父会话落库后逐字回验 9 份回执（note、evidence_refs、四字段全等，无重复行）。
 
+**回执证据指针的可审计性口径（2026-10-30 独立审查 P2-2）**：回执 `evidence_refs` 指向 `.tmp-ci/method-qual-r4/cards/*.md` 的评审包路径，属**过程物**（含卡片正文、已 gitignore）；因此审计不依赖过程物——回执 `note` **内联**了被审 claim 原文、判定依据与对应文件行号，结论自足。评审包只用于当轮复核，不作为长期审计依赖。
+
 **待办（Round 4 遗留，非本轮可闭）**：`method:subagent-three-layer-diagnose-and-spawn-playbook-87273b2b3118` 的 `freshness_refs` 指向已删除的 `docs/SUBAGENT-PLAYBOOK-20261025.md`。现存 `docs/PLAYBOOK-20261014-subagent-capability.md` 主题不同（其「三层」= spawn 能力配置三层，非本卡的三层诊断），**不可直接重指**；需恢复原文档或由卡作者指定等价文档后再 `annotate_freshness`。该卡维持 candidate（verdict=mixed ⇒ 无流转动作）。
 
 ## R4 风险导向周检

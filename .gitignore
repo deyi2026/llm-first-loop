@@ -177,3 +177,6 @@ work/*/out/*.log
 # 属过程物；落库结论在 data/methods/*/qualification.jsonl，抽样口径在
 # docs/governance/method-review-queue-r4-20261030.md
 .tmp-ci/
+
+# write_scope 闸探针的临时目录（崩溃/中断可能残留）
+.tmp-write-scope-probe/

@@ -7,6 +7,9 @@
 复跑：`.venv/bin/python scripts/verification/write_scope_gate_probe.py`
 （工作目录 = 仓库根；脚本自建临时目录并在结束时清理）
 
+退出码：0 = 全部闸成立；1 = 有闸未成立；2 = 当前 checkout 没有 write_scope 特性
+（该特性是并发会话的未提交 WIP，在特性落地的 checkout 上再跑）。
+
 对照测试套件：tests/test_write_scope_enforcement.py、tests/test_write_scope_spawn.py
 本探针不替代它们——它们覆盖面更广；本探针是**独立第二来源**，用于交叉验证。
 """
@@ -18,21 +21,30 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, "src")
-from llm_loop.core.write_scope import parse_write_scope, write_scope_audit_reset  # noqa: E402
-from llm_loop.workspace.artifacts import WorkspaceArtifactStore  # noqa: E402
-from llm_loop.workspace.file_effects import FileArtifactProvenance  # noqa: E402
-from llm_loop.workspace.file_service import FileService, FileServiceError  # noqa: E402
+try:
+    from llm_loop.core.write_scope import parse_write_scope, write_scope_audit_reset  # noqa: E402
+    from llm_loop.workspace.artifacts import WorkspaceArtifactStore  # noqa: E402
+    from llm_loop.workspace.file_effects import FileArtifactProvenance  # noqa: E402
+    from llm_loop.workspace.file_service import FileService, FileServiceError  # noqa: E402
+except ImportError as exc:  # 特性未落地时诚实退出，不假装跑过
+    print(
+        "SKIP: 当前 checkout 没有 write_scope 特性（"
+        + str(exc)
+        + "）。该特性是并发会话的未提交 WIP；在特性落地的 checkout 上再跑本探针。"
+        + "（退出码 2 = 特性缺失，与探针失败（退出码 1）区分）"
+    )
+    raise SystemExit(2)
 
 ROOT = Path(".tmp-write-scope-probe").resolve()
-RESULTS: list[tuple[str, bool, str]] = []
+RESULTS = []
 
 
-def case(name: str, ok: bool, detail: str = "") -> None:
+def case(name, ok, detail=""):
     RESULTS.append((name, ok, detail))
-    print(("PASS " if ok else "FAIL ") + name + (f" | {detail}" if detail else ""))
+    print(("PASS " if ok else "FAIL ") + name + ((" | " + detail) if detail else ""))
 
 
-def expect_reject(name: str, path: Path, scope, old: str, new: str, ws: Path, svc) -> None:
+def expect_reject(name, path, scope, old, new, ws, svc):
     write_scope_audit_reset()
     before = path.read_bytes() if path.exists() else None
     try:
@@ -40,12 +52,12 @@ def expect_reject(name: str, path: Path, scope, old: str, new: str, ws: Path, sv
     except FileServiceError as exc:
         after = path.read_bytes() if path.exists() else None
         case(name, exc.error_type == "write_scope_violation" and after == before,
-             f"error_type={exc.error_type} bytes_unchanged={after == before}")
+             "error_type=" + exc.error_type + " bytes_unchanged=" + str(after == before))
         return
     case(name, False, "NO EXCEPTION (闸未拦)")
 
 
-def main() -> int:
+def main():
     if ROOT.exists():
         shutil.rmtree(ROOT)
     ws = ROOT / "ws"
@@ -68,7 +80,7 @@ def main() -> int:
                  workspace_scope=str(ws), write_scope=allow_src)
     case("A 正控制 allow src/** → src/a.py 写入成功",
          r.applied is True and src_file.read_bytes() == b"x = 2\n",
-         f"applied={r.applied}")
+         "applied=" + str(r.applied))
 
     expect_reject("B 应拦 allow src/** → other/x.py", other_file, allow_src,
                   "secret = 1", "pwned", ws, svc)
@@ -82,7 +94,7 @@ def main() -> int:
     r = svc.edit(path=other_file, old_string="secret = 1", new_string="secret = 2",
                  workspace_scope=str(ws), write_scope=None)
     case("F 旧行为不变 write_scope=None → 允许写",
-         r.applied is True and other_file.read_bytes() == b"secret = 2\n", f"applied={r.applied}")
+         r.applied is True and other_file.read_bytes() == b"secret = 2\n", "applied=" + str(r.applied))
 
     expect_reject("G 应拦 mode=deny paths=[other/**]", other_file,
                   parse_write_scope({"paths": ["other/**"], "mode": "deny"}),
@@ -96,13 +108,13 @@ def main() -> int:
         case("H 应拦 observe 越界读", False, "NO EXCEPTION")
     except FileServiceError as exc:
         case("H 应拦 observe 越界读", exc.error_type == "write_scope_violation",
-             f"error_type={exc.error_type}")
+             "error_type=" + exc.error_type)
 
     leftovers = [str(p) for p in ws.rglob("*.tmp")]
-    case("I 拒绝后无半成品文件", not leftovers, f"leftovers={leftovers}")
+    case("I 拒绝后无半成品文件", not leftovers, "leftovers=" + str(leftovers))
 
     failed = [n for n, ok, _ in RESULTS if not ok]
-    print(f"\nTOTAL={len(RESULTS)} FAILED={len(failed)} {failed}")
+    print("\nTOTAL=" + str(len(RESULTS)) + " FAILED=" + str(len(failed)) + " " + str(failed))
     shutil.rmtree(ROOT, ignore_errors=True)
     return 1 if failed else 0
 
