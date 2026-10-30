@@ -360,3 +360,139 @@ class TestSyncRunPath:
         assert result.outcome == "completed"
         assert record and record[0] is parent
         assert current_write_scope.get() is parent
+
+
+# ── P1-b: 受限 write scope 的 child 剔除 execute_command 工具面（DESIGN §5.6）──
+
+
+def _full_grant():
+    """CHILD_SPAWN_GRANT 全量授予（child 面保留 spawn_subagent）。"""
+    return mock.patch(
+        "llm_loop.config.load_settings",
+        **{"return_value.child_spawn_grant": "*"},
+    )
+
+
+def _sync_tool_scope_probe_runner(record: list):
+    """run() 同步路径探针：记录 child 执行体内看到的工具面（工具面≠写域）。"""
+    from llm_loop.core import run_context as run_ctx
+
+    r = SubAgentRunner.__new__(SubAgentRunner)
+    r.registry = _FakeRegistry()
+    r.max_depth = 3
+    r.llm = object()
+    r._llm_resolver = None
+    r._project_coordinator = None
+    r._children_guard = threading.Lock()
+    r._cancel_events = {}
+
+    def _fake_run_reserved_child(**kwargs):
+        record.append(run_ctx.current_tool_discovery_scope.get())
+        return SubAgentResult(final_answer="sync probe done", outcome="completed")
+
+    r._run_reserved_child = _fake_run_reserved_child
+    r._finalize_child = mock.Mock(side_effect=lambda sid, parent, result: result)
+    sid = "child-p1b-sync-0001"
+    r._reserve_child = mock.Mock(
+        return_value=(sid, threading.Event(), SimpleNamespace(parent_id=""))
+    )
+    return r
+
+
+def _scope_names(value) -> set:
+    """把回执/探针里的工具面读成名字集合（回执是逗号拼接字符串）。"""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        if not value or value.startswith("full("):
+            return set()
+        return {part for part in value.split(",") if part}
+    return set(value)
+
+
+class TestP1bToolSurface:
+    """受限写域 → child 工具面剔除 execute_command（剔除≠拒绝启动）。"""
+
+    def test_t17_async_start_restricted_child_loses_execute_command(self, ws_tokens):
+        _set_parent_scope(None, ws_tokens)
+        record: list = []
+        r, sid = _async_probe_runner(record)
+        child_req = parse_write_scope({"paths": ["src/x/**"]})
+        with _no_grant():
+            started = r.start(task="受限写", required_write_scope=child_req)
+        assert started["accepted"] is True, started
+        scope = _scope_names(started["tool_scope"])
+        assert "execute_command" not in scope
+        assert "read_file" in scope
+        assert started["write_scope_tool_restriction"] == ["execute_command"]
+
+    def test_t18_sync_run_restricted_child_loses_execute_command(self, ws_tokens):
+        _set_parent_scope(None, ws_tokens)
+        record: list = []
+        r = _sync_tool_scope_probe_runner(record)
+        child_req = parse_write_scope({"paths": ["src/x/**"]})
+        result = r.run(task="同步受限写", required_write_scope=child_req)
+        assert result.outcome == "completed", result
+        assert record, "child 执行体未被触发"
+        scope = _scope_names(record[0])
+        assert scope, "受限 child 的工具面不得为空"
+        assert "execute_command" not in scope
+        assert "read_file" in scope
+
+    def test_t19_undeclared_write_scope_keeps_execute_command(self, ws_tokens):
+        _set_parent_scope(None, ws_tokens)
+        record: list = []
+        r, _ = _async_probe_runner(record)
+        with _no_grant():
+            started = r.start(task="未声明写域")
+        assert started["accepted"] is True, started
+        assert "execute_command" in started["tool_scope"]
+        assert "write_scope_tool_restriction" not in started
+
+    def test_t20_parent_declared_child_inherits_and_loses_execute_command(self, ws_tokens):
+        parent = parse_write_scope({"paths": ["src/a/**"]})
+        _set_parent_scope(parent, ws_tokens)
+        record: list = []
+        r, _ = _async_probe_runner(record)
+        with _no_grant():
+            started = r.start(task="继承父写域")
+        assert started["accepted"] is True, started
+        assert "execute_command" not in started["tool_scope"]
+
+    def test_t21_declared_tools_with_execute_command_is_removed_not_refused(self, ws_tokens):
+        _set_parent_scope(None, ws_tokens)
+        record: list = []
+        r, _ = _async_probe_runner(record)
+        child_req = parse_write_scope({"paths": ["src/x/**"]})
+        with _no_grant():
+            started = r.start(
+                task="显式要命令",
+                required_tools=["read_file", "execute_command"],
+                required_write_scope=child_req,
+            )
+        assert started["accepted"] is True, started
+        scope = _scope_names(started["tool_scope"])
+        assert "execute_command" not in scope
+        assert "read_file" in scope
+
+    def test_t22_explicit_readonly_scope_is_restricted(self, ws_tokens):
+        _set_parent_scope(None, ws_tokens)
+        record: list = []
+        r, _ = _async_probe_runner(record)
+        readonly = parse_write_scope({"paths": [], "mode": "allow"})
+        with _no_grant():
+            started = r.start(task="显式只读", required_write_scope=readonly)
+        assert started["accepted"] is True, started
+        assert "execute_command" not in started["tool_scope"]
+
+    def test_t23_full_surface_is_materialized_without_execute_command(self, ws_tokens):
+        _set_parent_scope(None, ws_tokens)
+        record: list = []
+        r, _ = _async_probe_runner(record)
+        child_req = parse_write_scope({"paths": ["src/x/**"]})
+        with _full_grant():
+            started = r.start(task="全量面物化", required_write_scope=child_req)
+        assert started["accepted"] is True, started
+        scope = _scope_names(started["tool_scope"])
+        assert "execute_command" not in scope
+        assert "read_file" in scope and "wait" in scope

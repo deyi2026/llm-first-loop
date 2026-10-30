@@ -363,6 +363,13 @@ def scope_allows(scope, abs_path) -> (bool, reason):
 | T14 | 观测面 | `verify_path_scope` 报告 scope / 已写集合 / 越界计数；`task_frontier` writer 视图正确 |
 | T15 | **同步 `run()` 路径**（workflow local executor 同款入口）注入 write_scope | 该路径的 child 同样受 scope 约束；越界请求 → refused 且未启动任何 child |
 | T16 | 两条路径的 scope 拒绝后 ContextVar 无泄漏 | 父会话后续写入不被 child 的 scope 影响（既有 token 恢复模式，F14） |
+| T17 | **异步 `start()`**：child 声明受限 write scope | child 工具面剔除 `execute_command`（模型可见 schema / 工具目录 / `call_tool` 派发 / 越权直调拦截共用同一 scope 变量）；child 仍正常启动（剔除≠拒绝启动） |
+| T18 | **同步 `run()`**：child 声明受限 write scope | 同 T17（两条路径同款判定，不做单路径补丁） |
+| T19 | 父子均未声明 write scope | 工具面零变化：child 仍拿到 `execute_command`；回执无 `write_scope_tool_restriction` 字段 |
+| T20 | 父声明受限 scope、子未声明（继承） | 子继承受限 → 同样剔除 `execute_command` |
+| T21 | `requires.tools` 显式含 `execute_command` 且 child 声明受限 scope | **剔除而非拒绝启动**：child 照常启动，工具面去掉 `execute_command`，其余声明工具保留 |
+| T22 | child 显式声明只读（`paths:[]`） | 视为受限 → 剔除 `execute_command` |
+| T23 | child 工具面原本为全量（None） | 物化为 registry 名单去掉 `execute_command`；其余工具一个不动 |
 
 ---
 
@@ -633,10 +640,50 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 
 ### 14.6 诚实边界（未做什么 / 不能声称）
 
-1. **未实现 C8**：shell 通道不受写侧 scope 约束；不得声称「写侧路径授权已全量生效」。
-2. **未做 P1-b 能力面剔除**（受限 child 不给 `execute_command`）：未实现，不在本次交付范围。
+1. **C8 未全量实现**：P0 段（命令串绝对路径字面量 scope 校验 + `scope_unverified` 审计事件）仍未做——shell 通道本身仍不受写侧 scope 约束；**P1-b 段（能力面剔除）已于 §15 落地**。仍不得声称「写侧路径授权已全量生效」。
+2. **P1-b 能力面剔除**（受限 child 不给 `execute_command`）：本条原写「未实现，不在本次交付范围」——**已于 §15 落地**（受限 child 启动时剔除 `execute_command` 工具面；父子均未声明 write scope 时工具面零变化）。
 3. **未改任何既有守卫的门槛**：本轮唯一改动的既有文件是 `tests/unit/test_inspect_code.py`，且是把字面量断言**升级**为行为级断言，未放宽任何断言。
 4. **未清理他人过程物**：仓库根 `.tmp-*` 与 `reports/qualification-r4/mech-all-sample.json`（1.28MB）仍未入库、未删除。
 5. **前序子代理自述未被采信**：本会话对 §12.4 的「12223 passed」做了独立复跑并发现其不适用于最终树（§13.8）；文档中的历史数字**就地标注更正**而非删改。
 6. **本会话派出的只读审计子代理失败**（上下文预检拒绝截断，结论未产出），其结论未被采纳；相关核查改由父级定向执行（grep + 实测），证据见 §14.2。
 7. **全量回归口径**：§14.2 的父级复跑口径为 `-m "not real_llm and not serial_signal"`（23 个 serial_signal 用例未纳入父级复跑）；RULE-AI-28 准入走 `scripts/ci_gate.sh` 的 canonical 口径（不排除 serial_signal），两者口径不同，**不可互相替代**。
+
+## 15. P1-b 能力面剔除落地（2026-10-30 15:4x，本会话）
+
+### 15.1 触发与口径
+
+§9 的 P1-b 需要产品口径决定「受限写域的 child 是否自动失去 `execute_command`」。本轮口径：**直接剔除**（不走 P1-a 命令族改写）——受限写域的 child 启动时工具面里就没有 `execute_command`，其余工具一个不动。
+
+### 15.2 落点：为什么这是程序级拦截，不是提示层建议
+
+工具面由同一个 ContextVar `current_tool_discovery_scope` 驱动四处：child 的**模型可见工具 schema**（`runner.py` 按 scope 过滤）、工具目录列举、`call_tool` 按名派发、以及**越权直调拦截**（`E1_TOOL_WHITELIST`）。剔除落在 scope 变量上 → 四处同时生效，模型即使凭空点名 `execute_command` 也会被程序拒绝。
+
+判定函数 `SubAgentRunner._restrict_tool_surface_for_write_scope`：**受限** = `child_write_scope` 非 None 且 `declared=True`（显式声明，含 `paths:[]` 显式只读）；父声明、子未声明 → 继承父 scope，同样受限；父子都未声明 → 工具面零变化。
+
+### 15.3 两条路径同款（不做单路径补丁）
+
+| 路径 | 落点 |
+|---|---|
+| 异步 `start()` | 写域裁决之后、预留 child 资源之前剔除；回执新增可选字段 `write_scope_tool_restriction`（仅在发生剔除时出现） |
+| 同步 `run()` | 同一判定函数；未声明 `requires.tools` 时按继承语义取当前 scope 再剔除，必要时把 registry 名单物化为 child 工具面（去掉 `execute_command`） |
+
+### 15.4 这条比 P0 的字面量校验更硬
+
+实测 `execute_command.py` 不读 `write_scope`（全仓 grep：仅 `edit_file.py` 与观测面 `verify_path_scope.py` 消费 `current_write_scope`）→ 命令通道的写侧约束此前**只存在于文档层**。P1-b 落地后，受限 child 根本没有命令工具，剩余写入口 `edit_file` 受 scope 强制 → 绕过面从「命令族语义盲区」降为「不可用该工具」。
+
+### 15.5 测试与准入
+
+| 项 | 结果 |
+|---|---|
+| 新增用例 | T17–T23（见 §12.2 表），落 `tests/test_write_scope_spawn.py::TestP1bToolSurface` |
+| 聚焦复跑 | `pytest tests/unit/test_review_host_admission.py tests/test_write_scope_spawn.py tests/unit/test_arch_guards.py` → **220 passed** |
+| 门禁自证伪 | 把判定函数打成空实现后重跑：**6/7 用例红**（T19 零回归用例仍绿）——证明新用例在测拦截，不是空转 |
+| 静态诊断 | `ruff check`（4 个改动文件）→ 干净 |
+| RULE-AI-28 准入 | `review_admission(kind=full_test)` → **PASS**（child `subagent_3656c03e6e48`，候选 SHA `8cc08855…`） |
+
+### 15.6 诚实边界
+
+1. **P1-b 有真实代价**：受限 child 连只读命令（`ls`/`git log`/跑测试）也不能执行——这是本口径的已知代价（§9 已记），不是 bug。
+2. **C8 的 P0 段仍未做**：命令串绝对路径字面量校验 + `scope_unverified` 审计事件未实现；本节只关闭 P1-b。
+3. **不声称「写侧路径授权已全量生效」**：`cp` 等旁路仍在 P0 约束面之外（§14.4）。
+4. **并发写者**：本节落地时仓库内有另一活跃会话（`cbda67c5-…`，非本会话子代理）在同一工作树活动；本节只提交本轮 5 个文件，其过程物与他人改动未纳入、未删除。

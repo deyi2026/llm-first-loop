@@ -789,6 +789,91 @@ def test_small_committed_runtime_diff_stays_verbatim(tmp_path: Path) -> None:
     assert '{"baseline":true}' in runner.task
 
 
+def test_committed_runtime_monster_between_400kb_and_1mb_is_projected(tmp_path: Path) -> None:
+    # EVO-20261030-62773eae: the runtime-output projection must be able to RUN
+    # on a monster diff. Before the fix the 400_000B acquisition ceiling fired
+    # first, so a committed runtime path of 400KB-1MB raised
+    # git_state_too_large and could never be reviewed or pushed — the
+    # "committable but never pushable" dead zone (measured on a 676,921B
+    # manifest). Now the diff is acquired under the runtime ceiling and
+    # projected, and the admission proceeds.
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    d = repo / "reports" / "m0"
+    d.mkdir(parents=True)
+    (d / "S.json").write_text("z" * 700_000)
+    subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big report"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+    # the projection ran EXACTLY once: one marker, not a double-truncated text
+    assert runner.task.count("TRUNCATED committed runtime output diff") == 1
+    assert "z" * 1000 in runner.task  # head/tail evidence is really in the material
+
+
+def test_committed_non_runtime_monster_over_400kb_still_refused(tmp_path: Path) -> None:
+    # EVO-20261030-62773eae guardrail: the larger acquisition ceiling applies
+    # to runtime-output paths ONLY. A non-runtime monster keeps the strict
+    # 400_000B ceiling — no free pass outside the runtime-output prefixes.
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "big.py").write_text("z" * 700_000)
+    subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "big committed source"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert str(blocked["reason"]).startswith("git_state_too_large")
+    assert runner.started == 0
+
+
+def test_committed_runtime_monster_over_acquire_cap_still_refused(tmp_path: Path) -> None:
+    # EVO-20261030-62773eae guardrail: the acquisition ceiling stays FINITE.
+    # A runtime diff beyond it is still refused with git_state_too_large.
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    d = repo / "reports" / "m0"
+    d.mkdir(parents=True)
+    (d / "S.json").write_text("z" * 4_500_000)
+    subprocess.run(["git", "-C", str(repo), "add", "reports"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "huge report"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert str(blocked["reason"]).startswith("git_state_too_large")
+    assert runner.started == 0
+
+
+def test_diff_acquire_cap_is_path_typed() -> None:
+    # EVO-20261030-62773eae: the ceiling is path-typed — runtime-output paths
+    # get the larger acquisition ceiling, every other path keeps 400_000B.
+    assert rha._diff_acquire_cap("reports/m0/S.json") == 4_000_000
+    assert rha._diff_acquire_cap("data/methods/x/METHOD.md") == 4_000_000
+    assert rha._diff_acquire_cap("experiences/EXP-1.md") == 4_000_000
+    assert rha._diff_acquire_cap("src/llm_loop/app.py") == 400_000
+
+
+def test_material_overflow_code_is_distinct_from_git_state_overflow() -> None:
+    # EVO-20261030-62773eae: 「单路径材料超限」与「git 状态超限」此前共用
+    # git_state_too_large 一个码，修复指引无法区分。这里锁住两件事：前缀不变
+    # （既有消费方的 startswith 判定不受影响）、后缀区分材料超限的两类路径。
+    runtime_code = rha._diff_material_code("reports/m0/S.json")
+    plain_code = rha._diff_material_code("src/llm_loop/app.py")
+    assert runtime_code == "git_state_too_large:material_acquire>4000000"
+    assert plain_code == "git_state_too_large:material_diff>400000"
+    assert runtime_code.startswith("git_state_too_large")
+    assert plain_code.startswith("git_state_too_large")
+
+
 def test_untracked_runtime_output_under_reports_is_not_material(tmp_path: Path) -> None:
     # Full runs also CREATE new report files; those must not trip the 200KB
     # per-untracked-file bound or enter the reviewer material either.

@@ -664,7 +664,21 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     return None
 
 
-def _git(root: Path, *argv: str) -> bytes:
+# EVO-20261030-62773eae (human-approved 2026-10-30): the 400_000B git-output
+# ceiling stays the DEFAULT for every existing caller; the runtime-output diff
+# path uses a larger, explicitly bounded acquisition ceiling (see
+# _RUNTIME_DIFF_ACQUIRE_MAX_BYTES) because its projection has to be able to RUN
+# on the acquired text. Splitting the cap out of _git keeps the default ceiling
+# byte-for-byte identical for everything that already used it.
+_GIT_OUTPUT_MAX_BYTES = 400_000
+
+
+def _git_capped(
+    root: Path,
+    cap: int,
+    *argv: str,
+    too_large_code: str = "git_state_too_large",
+) -> bytes:
     run = subprocess.run(
         # Git's own documented flag avoids replacement refs without a raw
         # os.environ copy (the project has a one-way environment-access gate).
@@ -673,9 +687,23 @@ def _git(root: Path, *argv: str) -> bytes:
     )
     if run.returncode:
         raise ValueError("git_state_unavailable")
-    if len(run.stdout) > 400_000:
-        raise ValueError("git_state_too_large")
+    if len(run.stdout) > cap:
+        raise ValueError(too_large_code)
     return run.stdout
+
+
+def _git(root: Path, *argv: str) -> bytes:
+    return _git_capped(root, _GIT_OUTPUT_MAX_BYTES, *argv)
+
+
+# EVO-20261030-62773eae: 单路径材料超限与 git 状态超限此前共用
+# git_state_too_large 一个码，修复指引无法区分「拆该文件」与「git 状态本身
+# 过大」。这里只加后缀区分，不改前缀——既有消费方
+# （startswith("git_state_too_large")）与门禁语义保持不变。
+def _diff_material_code(name: str) -> str:
+    if _diff_acquire_cap(name) > _GIT_OUTPUT_MAX_BYTES:
+        return f"git_state_too_large:material_acquire>{_RUNTIME_DIFF_ACQUIRE_MAX_BYTES}"
+    return f"git_state_too_large:material_diff>{_GIT_OUTPUT_MAX_BYTES}"
 
 
 # EVO-20261021-ea18d5ce (human-approved 2026-10-21): runtime-output exclusion
@@ -736,6 +764,28 @@ def _is_runtime_output(name: str) -> bool:
 # projection to other prefixes or raise the bound ad hoc; changes require an
 # approved evolution.
 _COMMITTED_RUNTIME_PROJECTION_BYTES = 48_000
+
+
+# EVO-20261030-62773eae (human-approved 2026-10-30): the runtime-output
+# projection must be able to RUN on a monster diff, but the diff has to be
+# acquired first, and the acquisition ceiling (400_000B) fired before the
+# projection could ever see the text. Committed runtime-output paths whose diff
+# text was 400KB-1MB therefore raised git_state_too_large and could never be
+# reviewed or pushed — a "committable but never pushable" dead zone (measured
+# on a 676,921B manifest that blocked an entire push; the worktree still
+# carries a 1,281,120B sibling of the same shape). Those paths are acquired
+# under a larger, explicitly bounded ceiling and projected immediately; every
+# OTHER path keeps the strict 400_000B ceiling, so the full-review rule outside
+# the runtime-output prefixes is byte-for-byte unchanged. The ceiling stays
+# finite: a runtime diff beyond it is still refused with git_state_too_large.
+_RUNTIME_DIFF_ACQUIRE_MAX_BYTES = 4_000_000
+
+
+def _diff_acquire_cap(name: str) -> int:
+    """Per-path git-output ceiling for reviewer diffs (EVO-20261030-62773eae)."""
+    if _is_runtime_output(name):
+        return _RUNTIME_DIFF_ACQUIRE_MAX_BYTES
+    return _GIT_OUTPUT_MAX_BYTES
 
 
 def _project_committed_runtime_diff(name: str, diff_text: str) -> str:
@@ -818,11 +868,16 @@ def _source_snapshot(
         # to the whole diff (no rename detection is enabled), keeps each
         # section independently attributable, and never lets glob
         # metacharacters in a filename widen the pathspec.
+        # EVO-20261030-62773eae: the runtime-output projection is applied to
+        # the acquired diff TEXT here, at acquisition time (see _diff_acquire_cap).
         out: list[tuple[str, str]] = []
         for name in names:
-            blob = _git(repo, "diff", "--binary", "--no-ext-diff", "--no-textconv",
-                        *ref_args, "--", f":(literal){name}")
-            out.append((name, blob.decode("utf-8", "replace")))
+            blob = _git_capped(repo, _diff_acquire_cap(name), "diff", "--binary",
+                               "--no-ext-diff", "--no-textconv", *ref_args,
+                               "--", f":(literal){name}",
+                               too_large_code=_diff_material_code(name))
+            text = blob.decode("utf-8", "replace")
+            out.append((name, _project_committed_runtime_diff(name, text)))
         return out
 
     frozen_head = push_head if push_head is not None else head
@@ -845,14 +900,10 @@ def _source_snapshot(
             if is_template_name(name) and _template_body_has_secret(repo, name, None):
                 raise ValueError("review_sensitive_tracked_path_refused")
     committed = _path_diffs(committed_names, base, frozen_head)
-    # EVO-20261021-2f22aae5 (proposal A): committed runtime-output monster
-    # diffs are projection-truncated with an explicit marker (see
-    # _project_committed_runtime_diff); every other committed path keeps the
-    # full-review rule byte for byte.
-    committed = [
-        (name, _project_committed_runtime_diff(name, text))
-        for name, text in committed
-    ]
+    # EVO-20261021-2f22aae5 (proposal A): the committed runtime-output monster
+    # projection now runs inside _path_diffs, at acquisition time —
+    # EVO-20261030-62773eae moved it there so the projection is applied
+    # BEFORE the diff-size ceiling can refuse the path.
     kept_working_names = [n for n in working_names if not _is_runtime_output(n)]
     working = _path_diffs(kept_working_names, "HEAD") if include_worktree else []
     new_files: list[tuple[str, str, str]] = []
