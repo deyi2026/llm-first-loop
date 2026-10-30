@@ -157,6 +157,22 @@ BLOCKED_CASES = [
         "GIT_CONFIG_VALUE_0='!rm /outside/x' git pwn",
         "implicit_write_target",
     ),
+    # ── 第十二轮 push 闸新增向量（2026-10-31）──────────────────────────────
+    # 执行型 git 环境变量（P1-1）：值经 shell 执行，不走 -c 配置通道
+    ("GIT_EXTERNAL_DIFF='touch /outside/pwn' git diff", "implicit_write_target"),
+    ("env GIT_PAGER='sh -c x' git log", "implicit_write_target"),
+    ("env GIT_EDITOR='ed /outside/x' git commit", "implicit_write_target"),
+    ("GIT_SSH_COMMAND='touch /outside/x' git fetch", "implicit_write_target"),
+    ("GIT_ASKPASS=/outside/leak.sh git clone https://x", "implicit_write_target"),
+    # 前缀族可执行配置键（P1-2）
+    ("git -c pager.log='touch /outside/x' --pager log", "implicit_write_target"),
+    ("git -c filter.lfs.clean='touch /outside/x' log", "implicit_write_target"),
+    ("git -c filter.lfs.process='cat /outside/x' log", "implicit_write_target"),
+    ("git -c diff.lfs.textconv='cat /outside/x' log", "implicit_write_target"),
+    ("git -c merge.custom.driver='touch /outside/x' merge", "implicit_write_target"),
+    ("git -c gpg.program=/outside/pwn commit -S", "implicit_write_target"),
+    # g/v 全局执行器的载荷命令不在安全单命令集 ⇒ fail-closed（第十二轮 P2-5）
+    ("ex -c 'g/re/w /outside/x' src/x.py", "implicit_write_target"),
     ("time -o /outside/x rm src/x.py", "write_target_outside_scope"),
     ("sort -o /outside/x src/x.py", "write_target_outside_scope"),
     # ── 第四轮独立审查新增向量（2026-10-30）──────────────────────────────
@@ -967,6 +983,11 @@ R11_ALLOWED_CASES = [
     "ex -c 'wq' src/x.py",
     "ex -c 'p' src/x.py",
     "ex -c '1,2d' src/x.py",
+    # ── 第十二轮 push 闸 P2-5：定界符形态不落 fail-closed ──────────────────
+    "ex -c '%s/a/b/' src/x.py",
+    "ex -c 'y/ab/cd/' src/x.py",
+    "ex -c 'g/re/p' src/x.py",
+    "ex -c '1,2s/x/y/' src/x.py",
 ]
 
 

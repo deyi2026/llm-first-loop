@@ -910,7 +910,9 @@ TARGET_DIRECTORY_OPTIONS = FamilyOptions(
         ("--no-dereference", False),
         ("--relative", False),
     ),
-    short_options=_flag(True, "tTSmog") + _flag(False, "rRaifnvplsdubxzLPZc"),
+    # 第十二轮 push 闸 P2-4：``-T``（--no-target-directory）是**布尔**开关，
+    # 不是取值选项——原表把它混进取值簇 ⇒ ``cp -T a b`` 里 ``a`` 被当成 -T 的值。
+    short_options=_flag(True, "tSmog") + _flag(False, "rRaifnvplsdubxzTLPZc"),
 )
 
 # 第九轮 P1-1：``patch`` 的 ``-o/--output``、``unzip`` 的 ``-d/--directory``、

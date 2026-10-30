@@ -193,6 +193,31 @@ _GIT_EXEC_CONFIG_KEYS = frozenset(
         "mergetool.path",
     }
 )
+# 第十二轮 push 闸 P1-2：**前缀族**可执行配置键——``pager.<sub>``（每子命令
+# 分页器，``git -c pager.log='touch /outside/pwn' --pager log`` 单步越界写）、
+# ``filter.<drv>.clean/smudge/process``（过滤驱动经 shell 执行）、
+# ``diff.<drv>.textconv``（转换命令）、``merge.<drv>.driver``（合并驱动）。
+# 与 ``alias.*`` 同理：值被执行 ⇒ 按前缀拦。
+_GIT_EXEC_CONFIG_PREFIXES = ("pager.", "gpg.program", "core.sshcommand")
+_GIT_EXEC_CONFIG_SUFFIX_RULES = (
+    ("diff.", ".textconv"),
+    ("merge.", ".driver"),
+)
+_GIT_FILTER_EXEC_SUFFIXES = frozenset({"clean", "smudge", "process", "command"})
+
+
+def _git_exec_config_key(lowered: str) -> bool:
+    """配置键是否可执行（精确闭集 + 前缀族）。"""
+    if lowered in _GIT_EXEC_CONFIG_KEYS:
+        return True
+    if lowered.startswith("alias.") or lowered.startswith(_GIT_EXEC_CONFIG_PREFIXES):
+        return True
+    if lowered.startswith("filter."):
+        return lowered.rsplit(".", 1)[-1] in _GIT_FILTER_EXEC_SUFFIXES
+    for prefix, suffix in _GIT_EXEC_CONFIG_SUFFIX_RULES:
+        if lowered.startswith(prefix) and lowered.endswith(suffix):
+            return True
+    return False
 
 # git **只读**子命令（白名单）——名单外的子命令一律按写处理（fail-closed）。
 # 封闭写名单会漏项（``git remote add`` / ``git fast-import`` 实测曾放行），
@@ -591,6 +616,13 @@ def _git_config_values(args: Sequence[str]) -> list[tuple[str, bool]]:
 # 空格分隔的 ``key=value`` 内联配置，git 按它注入配置 ⇒ ``alias.x='!cmd'``
 # 同样可执行 ⇒ 与其它三种形态一并拦。
 _GIT_CONFIG_ENV_RE = re.compile(r"^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)$")
+# 第十二轮 push 闸 P1-1：**执行型 git 环境变量**——git 会把这些值经 shell 执行，
+# 与 alias 注入同通道（``GIT_EXTERNAL_DIFF='touch /outside/pwn' git diff`` 在
+# 只读白名单子命令上即可越界写）。值不含元字符 ⇒ 元字符兜底扫不出 ⇒ 必须按
+# **变量名**拦。
+_GIT_EXEC_ENV_RE = re.compile(
+    r"^GIT_(EXTERNAL_DIFF|PAGER|EDITOR|SSH_COMMAND|ASKPASS)$"
+)
 
 
 def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | None:
@@ -601,6 +633,9 @@ def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | No
     - **载体携带的赋值**：``env GIT_CONFIG_COUNT=1 … git log``——``env`` 会把
       ``NAME=VALUE`` 操作数注入子进程环境，与前缀赋值等价。此前 ``env`` 形态
       被当作「跳过赋值」处理，等于漏检同一个注入向量。
+    - 第十二轮 P1-1：执行型环境变量（``GIT_EXTERNAL_DIFF``/``GIT_PAGER``/
+      ``GIT_EDITOR``/``GIT_SSH_COMMAND``/``GIT_ASKPASS``）单独成类——它们不
+      走 ``-c`` 配置通道，但效果等同可执行配置。
     """
     for assignment in assignments:
         name = str(assignment).split("=", 1)[0]
@@ -609,6 +644,12 @@ def _blocked_assignment(assignments: Sequence[str]) -> CommandScopeDecision | No
                 False,
                 "implicit_write_target",
                 f"{name}：git 配置注入可定义 alias，写目标不可静态定位",
+            )
+        if _GIT_EXEC_ENV_RE.match(name):
+            return CommandScopeDecision(
+                False,
+                "implicit_write_target",
+                f"{name}：git 执行型环境变量（值经 shell 执行），写目标不可静态定位",
             )
     return None
 
@@ -858,23 +899,22 @@ def _sed_script_executes(script: str) -> bool:
     return False
 
 
-# ed/ex 脚本里的 ``w FILE`` 命令（写文件）——ed 的一行一条命令。
-_ED_WRITE_RE = re.compile(r"(?:^|\n)\s*w\s+(\S+)")
-# 第八轮 P1-4：ex 的 ``w`` 命令可带地址前缀（``1w FILE`` / ``1,2w FILE``）。
-# 第九轮 P1-3：ex/ed 的 ``W FILE``（**追加**写）同样是写命令 ⇒ 与 ``w`` 一并识别。
-# 第十轮 P1-1：``w! FILE``（强制写）与 ``w >> FILE``（追加写）也是真写法 ⇒ 一并识别
-# （``\s+`` 必须保留：``wq``（写并退出）是常用写法，不是「写文件 wq」）。
-_ED_WRITE_CMD_RE = re.compile(r"^[^\s]*\s*[wW]!?\s+(?:>>\s*)?(\S+)")
 # 第十一轮独立审查 P1-1：ed/ex 内联脚本的写/执行形态再补——**多字母写命令**
 # （``wq`` / ``wn`` / ``wa`` / ``wall`` / ``x`` / ``xit`` / ``xall``）此前完全没建模
 # ⇒ ``ex -c 'wq /outside/x' f`` / ``ex -c 'x /outside/x' f`` 不产生任何写目标 ⇒
 # 放行；``ex +'w /outside/x' f``（``+cmd`` **启动通道**）整个脚本根本没被扫。
 # ⇒ 改为按**命令词**建模：写命令集合 / 执行命令集合 / 确定无害集合；
 #    命令位置的词若不在任何集合里 ⇒ 其写目标不可静态定位 ⇒ fail-closed。
+# 第十二轮 push 闸 P2-1：删除已被命令词模型取代的死正则（``_ED_WRITE_RE`` /
+# ``_ED_WRITE_CMD_RE``）——留着会让后续审查/复用误判实际生效的判定路径。
 _ED_PIPE_CMD_RE = re.compile(r"^[^\s]*\s*[wre]\s*!(\S.*)$")
 _ED_WRITE_COMMANDS = frozenset(
     {"w", "W", "wq", "wn", "wa", "wall", "x", "xit", "xall", "save", "saveas"}
 )
+# 第十二轮 push 闸 P2-5：``s/a/b/`` / ``y/ab/cd/`` 这类**定界符参数形态**是
+# 缓冲区内替换/转写（不落盘），且是 ex 最常用形态——按首尾定界符识别放行，
+# 不再落到「未建模 ⇒ fail-closed」分支（数值地址形态本就能命中）。
+_ED_DELIMITED_FORMS = frozenset({"s", "y", "m", "g", "v"})
 # ``e CMD`` 在 ex 里是**执行 shell 命令**（不是 vim 的 ``:e file``）⇒ 执行类。
 _ED_EXEC_COMMANDS = frozenset({"!", "e", "sh", "shell", "normal", "norm"})
 _ED_SAFE_COMMANDS = frozenset(
@@ -923,6 +963,26 @@ def _ed_write_argument(line: str) -> str | None:
     return tail or None
 
 
+def _ed_delimited_form_safe(word: str) -> bool:
+    """ex 定界符参数形态的静态安全判定（第十二轮 push 闸 P2-5）。
+
+    - ``s/a/b/`` / ``y/ab/cd/``：缓冲区内替换/转写——ex 的 s/y **没有** w 旗标
+      （那是 sed 的语法），落盘必须另走 ``w``（已被写命令集合建模）⇒ 安全；
+    - ``g/re/CMD`` / ``v/re/CMD``：全局执行器——``CMD`` 可以是 ``w`` 等任意命令
+      ⇒ 只放行确定的读/缓冲区单命令（``p``/``d``/``q``/``#``），其余 fail-closed。
+    """
+    if not word or len(word) < 3:
+        return False
+    head = word[0]
+    delimiter = word[1]
+    if head in ("s", "y"):
+        return word[-1] == delimiter
+    if head in ("g", "v"):
+        parts = word[1:].split(delimiter, 2)
+        return len(parts) == 3 and parts[2] in ("p", "d", "q", "#", "")
+    return False
+
+
 def _ed_script_write_targets(script: str) -> tuple[list[str], bool]:
     """ed/ex 内联脚本的写目标 + 是否含**未建模/执行**命令（⇒ fail-closed）。
 
@@ -961,6 +1021,8 @@ def _ed_script_write_targets(script: str) -> tuple[list[str], bool]:
             targets.append(argument)
             continue
         if word in _ED_SAFE_COMMANDS:
+            continue
+        if _ed_delimited_form_safe(word):
             continue
         unsafe = True
     return targets, unsafe
@@ -1928,7 +1990,7 @@ class _Scanner:
             # ``core.hooksPath`` 把钩子目录重指到任意可执行脚本；
             # ``core.attributesFile``/``core.excludesFile`` 影响外部过滤器路径。
             lowered = key.lower()
-            if lowered.startswith("alias.") or lowered in _GIT_EXEC_CONFIG_KEYS:
+            if _git_exec_config_key(lowered):
                 return CommandScopeDecision(
                     False,
                     "implicit_write_target",
