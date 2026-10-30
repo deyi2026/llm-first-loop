@@ -48,6 +48,13 @@ WRITE_FAMILY = frozenset(
         "ln", "rsync", "shred", "chmod", "chown", "chgrp", "sed", "tar",
         "unzip", "zip", "gzip", "xz", "bzip2", "zstd", "cp", "mv", "mktemp",
         "curl", "wget", "patch",
+        # 第二轮审查后补入的写工具：名单外的命令会走「按只读处理」的默认路径，
+        # 那是**放行**方向——写工具漏进名单＝漏检。故写工具宁可多列。
+        "scp", "sftp", "ftp", "lftp", "rcp", "perl", "ex", "ed", "openssl",
+        "gpg", "gpg2", "7z", "7za", "7zr", "lzma", "lz4", "brotli", "pigz",
+        "unpigz", "busybox", "hg", "svn", "bzr", "fossil", "darcs",
+        "fallocate", "chflags", "setfattr", "chattr", "rename", "sqlite3",
+        "gunzip", "bunzip2", "unxz",
     }
 )
 

@@ -111,6 +111,13 @@ BLOCKED_CASES = [
     ("git -c user.name=x commit -m y", "implicit_write_target"),
     ("git archive --output=/outside/x.tar HEAD", "write_target_outside_scope"),
     ("git config --file=/outside/c user.name x", "implicit_write_target"),
+    # ── 写工具名单补齐（漏进名单＝漏检：名单外默认按只读放行）────────────────
+    ("scp /outside/x src/y", "implicit_write_target"),
+    ("perl -i -pe 's/a/b/' src/x.py", "implicit_write_target"),
+    ("7z x archive.7z", "implicit_write_target"),
+    ("hg update", "implicit_write_target"),
+    ("openssl enc -in a -out /outside/x", "implicit_write_target"),
+    ("sqlite3 db.sqlite 'VACUUM'", "implicit_write_target"),
 ]
 
 
