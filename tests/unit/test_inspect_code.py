@@ -112,11 +112,27 @@ def test_no_py_files_in_dir(tmp_path):
 
 
 def test_factory_registered():
-    """inspect_code 已在 factory 基础工具注册（RUN_MODE hidden 过滤生效）."""
+    """inspect_code 已在 factory 基础工具注册（RUN_MODE hidden 过滤生效）.
+
+    2026-10-30 P1 返修（write_scope 收口）：注册调用已从 build_engine 内联体抽到
+    模块级 ``_register_basic_tools(register_basic)`` helper（R9 棘轮：build_engine
+    函数行数只降不升；根因提交 ab86dde5b），旧字面量断言随调用形态变化而失效。
+    改为行为级断言：helper 真实注册出 inspect_code 工具，且 build_engine 仍把基础
+    注册回调交给该 helper（接线未丢）。守卫语义不变——inspect_code 必须走 factory
+    基础工具注册路径。
+    """
     import inspect
 
     import llm_loop.factory as factory
+    from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 
     src = inspect.getsource(factory)
     assert "InspectCodeTool" in src
-    assert '_register_basic("inspect_code"' in src
+
+    registered: dict[str, object] = {}
+    factory._register_basic_tools(lambda name, tool: registered.__setitem__(name, tool))
+    assert "inspect_code" in registered
+    assert isinstance(registered["inspect_code"], InspectCodeTool)
+
+    # build_engine 仍把基础注册回调交给该 helper（接线未丢；RUN_MODE hidden 过滤仍在该路径生效）
+    assert "_register_basic_tools(" in inspect.getsource(factory.build_engine)

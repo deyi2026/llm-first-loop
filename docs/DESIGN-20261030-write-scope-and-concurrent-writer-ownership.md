@@ -438,7 +438,9 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 | `src/llm_loop/factory.py` | 改 | 注册 `verify_path_scope` |
 | `src/llm_loop/tools/registry.py` | 改 | `verify_path_scope` 工具描述 |
 
-新增测试：`tests/test_write_scope_contract.py` / `tests/test_write_scope_enforcement.py` / `tests/test_write_scope_spawn.py` / `tests/test_verify_path_scope_tool.py`（既有测试零修改）。
+新增测试：`tests/test_write_scope_contract.py` / `tests/test_write_scope_enforcement.py` / `tests/test_write_scope_spawn.py` / `tests/test_verify_path_scope_tool.py`。
+
+> **更正（2026-10-30，详见 §13.8）**：原文写「既有测试零修改」**不成立**——§13.3 为满足 R9 棘轮把 `build_engine` 的基础工具注册抽成模块级 `_register_basic_tools(register_basic)` helper（根因提交 `ab86dde5b`），既有用例 `tests/unit/test_inspect_code.py::test_factory_registered` 断言的是字面量 `_register_basic("inspect_code"`，调用形态变化后该用例变红（2026-10-30 15:33 全量回归实测：1 failed）。本轮按「行为级断言替代字面量断言」修回（§13.8）；除该文件外未改任何既有测试。
 
 ### 12.3 实现期偏离设计之处（三处，均为实现期发现）
 
@@ -454,7 +456,7 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 | Ruff（14 个改动文件） | 全绿 |
 | 静态诊断棘轮门 | `new=0`，`changed_file_diagnostics=0` |
 | RULE-AI-35 实测 | 越界写入被真实拒绝（`write_scope_violation`），目标文件字节未变；scope 内写入正常 |
-| 既有测试 | 全量回归 12223 passed（子代理回执）；传递链 agent 报告的 `test_idle_timeout_fails_closed` 失败经父级独立复跑 3 次全绿，判为负载相关 flake |
+| 既有测试 | **更正（2026-10-30，详见 §13.8）**：原文「全量回归 12223 passed（子代理回执）」**不成立于最终树**——该数字测于 §13.3 抽 helper 之前。父级在 `566e5b09f` 上独立复跑 `pytest tests/ -q -m "not real_llm and not serial_signal"`：**1 failed, 12254 passed, 155 skipped, 23 deselected（834.89s）**，唯一失败为既有用例 `tests/unit/test_inspect_code.py::test_factory_registered`（根因 `ab86dde5b` 抽 helper），已修；修后数字见 §14。传递链 agent 报告的 `test_idle_timeout_fails_closed` 失败经父级独立复跑 3 次全绿，判为负载相关 flake |
 
 ### 12.5 未覆盖与残余（对应 §9）
 
@@ -548,3 +550,30 @@ P0 交付 C1–C7、C5b、C9 与测试 T1–T8、T12、T15、T16。**未做**：
 - **P1（文档快照相对已提交测试过期）**：被审文档快照止于 §12.5——§12.4 仍写「父级独立复跑：109 passed, 1 skipped」，且整节 §13（本次独立审查与返修记录）不在快照内；而同一快照内已提交的测试文件已含返修补测。
 - **处置**：① §12.4 的复跑数字更新为 **141 passed, 1 skipped**（2026-10-30 14:36 于返修 + 抽减收尾后的工作树复测；4 个测试文件 = `tests/test_write_scope_contract.py` + `tests/test_write_scope_enforcement.py` + `tests/test_write_scope_spawn.py` + `tests/test_verify_path_scope_tool.py`）；② §13 整节随本次提交入库，使「文档记录的返修」与「已提交的返修代码 / 测试」落在同一快照。
 - **P2（非阻断，本轮未修）**：已核实原文的 P2-3 为 glob 引擎把字符类编译成 `[^x]` 形式，可跨 `/` 命中（如 pattern `a[!x]c` 匹配路径 `a/c`），与模块 docstring「字符类不支持跨段」有出入；影响限于已在 realpath 检查过的 workspace root 内的过宽匹配，安全相关边界仍 fail-closed。其余 P2 条目未逐条转录，不在此臆述。
+
+### 13.8 第四轮（接管会话）独立复验：发现并修复既有测试回归
+
+接管会话在 `566e5b09f`（本 Goal 已推 `origin/main`）上做**父级独立复验**（不采信前序子代理自述），发现 §12.4「既有测试全量回归通过」与 §12.2「既有测试零修改」两处陈述与最终树不符。
+
+**复验事实**
+
+| 项 | 实测结果 |
+|---|---|
+| 复跑命令 | `PYTHONPATH=src .venv/bin/python -m pytest tests/ -q -m "not real_llm and not serial_signal"`（2026-10-30 15:18 起，15:33 结束） |
+| 结果 | **1 failed, 12254 passed, 155 skipped, 23 deselected（834.89s）** |
+| 唯一失败 | `tests/unit/test_inspect_code.py::test_factory_registered` — 断言字面量 `_register_basic("inspect_code"` 在 `src/llm_loop/factory.py` 中不存在 |
+| 根因 | §13.3 的减重手段：提交 `ab86dde5b` 把 `build_engine` 内联的三条基础工具注册抽成模块级 `_register_basic_tools(register_basic)` helper，调用形态由 `_register_basic(...)` 变为 `register_basic(...)`；**该用例是既有守卫**，其字面量断言未随重构更新 → 回归 |
+| 责任归属 | 本特性改动一侧（重构改了既有守卫依赖的调用形态），不是环境或 flake |
+
+**处置（先查职责问题，不抬 baseline、不加豁免、不改 `src/`）**：守卫变红属「实现改形态、守卫未同步」，因此改的是**既有用例的断言方式**而非放宽守卫：
+
+| 处置项 | 内容 |
+|---|---|
+| 断言升级 | 字面量断言 `_register_basic("inspect_code"` → **行为级断言**：直接调用 `factory._register_basic_tools(register_basic)` 收集注册表，断言 `inspect_code` 在册且实例为 `InspectCodeTool`；并断言 `build_engine` 源码仍把基础注册回调交给该 helper（接线未丢） |
+| 守卫语义 | 不变——`inspect_code` 必须走 factory 基础工具注册路径；新断言**强于**原字面量断言（原断言不校验注册内容与接线） |
+| 改动面 | 仅 `tests/unit/test_inspect_code.py` 一个文件；`src/` **零改动** |
+| 未做 | 未抬高任何棘轮登记、未加豁免、未改实现、未改其他既有测试 |
+| 复验 | 该文件 **9 passed**；write_scope 4 文件 + `tests/unit/test_arch_guards.py` **181 passed / 1 skipped**；`scripts/check_static_diagnostics.py --tool ruff` **PASS（new=0，changed_file_diagnostics=0）** |
+| 待办 | 修后全量回归数字与最终准入结果见 §14（第二轮 RULE-AI-28 准入） |
+
+**诚实边界**：本节只能证明「该既有用例的失败被定位并修回」；§12.4 中「12223 passed」这一历史数字**仍然不适用于最终树**，已在该行就地标注更正，不删改历史记录。
