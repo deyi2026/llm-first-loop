@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # 可推导的服务名集合（不含 all：all 只能显式指定，不可由路径推导）。
-DERIVABLE_SERVICE_TARGETS: tuple[str, ...] = ("web", "feishu", "learning")
+DERIVABLE_SERVICE_TARGETS: tuple[str, ...] = ("web", "feishu", "wecom", "learning")
 
 _NON_ALNUM = re.compile(r"[^0-9a-z]+")
 

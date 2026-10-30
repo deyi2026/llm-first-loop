@@ -70,8 +70,8 @@ _ACTION_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "verify_acknowledge": ("action_id", "verdict", "evidence", "reason"),
 }
 
-_SERVICE_TARGETS = ("web", "feishu", "learning", "all")
-_MANAGED_SERVICES = ("web", "feishu", "learning")
+_SERVICE_TARGETS = ("web", "feishu", "wecom", "learning", "all")
+_MANAGED_SERVICES = ("web", "feishu", "wecom", "learning")
 _VERIFY_VERDICTS = ("accept", "reobserve", "override")
 _EVIDENCE_LEVELS = ("E1", "E2", "E3")
 
@@ -169,12 +169,12 @@ class ServiceControlTool:
             },
             "target": {
                 "type": "string",
-                "enum": ["web", "feishu", "learning", "all"],
+                "enum": ["web", "feishu", "wecom", "learning", "all"],
                 "description": "restart 目标；status/publish 时可省略",
             },
             "restart_target": {
                 "type": "string",
-                "enum": ["web", "feishu", "learning", "all"],
+                "enum": ["web", "feishu", "wecom", "learning", "all"],
                 "description": (
                     "update 可选：物理生效目标；缺省按 code_root basename 的 token 精确推导"
                     "（如 feishu-code→feishu），推导不出则 NEEDS_TARGET 拒绝，需显式指定"
@@ -205,7 +205,7 @@ class ServiceControlTool:
             },
             "service": {
                 "type": "string",
-                "enum": ["web", "feishu", "learning"],
+                "enum": ["web", "feishu", "wecom", "learning"],
                 "description": "release/adopt 必填：屏障所属服务",
             },
             "gate": {
@@ -373,8 +373,8 @@ class ServiceControlTool:
                 "release/adopt/override/verify_acknowledge"
             )
         target = str(kwargs.get("target", "") or "").strip().lower()
-        if target not in {"web", "feishu", "learning", "all"}:
-            return self._failure("[参数错误] restart target 必须是 web/feishu/learning/all")
+        if target not in {"web", "feishu", "wecom", "learning", "all"}:
+            return self._failure("[参数错误] restart target 必须是 web/feishu/wecom/learning/all")
         raw_expected_generation = kwargs.get("expected_generation")
         if raw_expected_generation is None:
             current = self.store.read()
@@ -521,14 +521,14 @@ class ServiceControlTool:
                     "[service_control update rejected] NEEDS_TARGET: code_root basename "
                     f"{derivation.basename!r} 无法唯一推导 restart_target（token 精确匹配"
                     "要求恰好一个服务名 token；无服务名或多服务歧义均不推导）；可选 "
-                    "target=web/feishu/learning/all；示例: service_control(action=update, "
-                    f"code_root={code_root}, restart_target=web, reason=<意图>)；"
+                    "target=web/feishu/wecom/learning/all；示例: service_control(action=update, "
+                    "code_root={code_root}, restart_target=web, reason=<意图>)；"
                     "本次未产生任何 publish/CAS 写入，请显式指定后重试"
                 )
             restart_target = derivation.target
-        if restart_target not in {"web", "feishu", "learning", "all"}:
+        if restart_target not in {"web", "feishu", "wecom", "learning", "all"}:
             return self._failure(
-                "[参数错误] update restart_target 必须是 web/feishu/learning/all"
+                "[参数错误] update restart_target 必须是 web/feishu/wecom/learning/all"
             )
 
         deployment, error = self._publish(code_root, kwargs.get("expected_generation"))

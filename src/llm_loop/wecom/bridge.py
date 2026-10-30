@@ -23,11 +23,13 @@ _SingleInstanceLock 本地文件锁（fcntl.flock 非阻塞独占）拒绝第二
 """
 
 import asyncio
+import contextlib
 import fcntl
 import logging
 import os
 import queue
 import threading
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -49,6 +51,38 @@ _DISCONNECT_TIMEOUT_S = 10.0
 _CONNECT_TIMEOUT_S = 30.0
 # 单实例锁文件名（锁文件目录默认 {DATA_DIR}，可经 lock_path 注入）
 _LOCK_FILENAME = "wecom_bridge.lock"
+# ── 心跳文件（对齐 feishu _HEARTBEAT_PATH 角色；restart_system.sh 健康检查用 mtime 新鲜度）──
+# 路径可用 WECOM_HEARTBEAT_PATH 覆盖（命名对齐 FEISHU_HEARTBEAT_PATH）。
+# 写入频率 30s < 健康阈值 90s（脚本侧 WECOM_HEARTBEAT_FRESH_S），留 2 个周期的
+# 抖动余量；字段全部来自进程内可确证状态（回调计数/时间戳/队列深度），无推测数据。
+_HEARTBEAT_PATH_DEFAULT = "data/wecom_heartbeat.json"
+_HEARTBEAT_INTERVAL_S = 30.0
+
+
+def _ensure_sdk_log_visibility() -> None:
+    """让 "aibot" SDK logger 的 INFO 级日志可见（重连退避/鉴权等关键追溯信息）.
+
+    背景（父代理 2026-10 实测）：本仓库服务进程不配置任何 logging handler，
+    WARNING+ 经 logging.lastResort 裸输出到 stderr（进 nohup 日志），INFO 全部
+    被丢弃——data/wecom_bridge.log grep "AiBotSDK" 计 0，SDK 的
+    "Reconnecting in {delay}ms (attempt N)"（aibot/ws.py，INFO 级）不可追溯。
+
+    修复约束：不动 root logger（level/handler 均不改，避免影响其它组件）——
+    只给 "aibot" logger 自身 setLevel(INFO) 并挂 stderr StreamHandler（nohup
+    的 2>&1 会带进 wecom_bridge.log）。propagate 保持 True：本 logger 已有
+    handler，不会触发 lastResort 重复输出；宿主进程若配置 root handler，
+    SDK 日志仍可进入其采集拓扑。幂等：重复调用不叠加 handler。
+    """
+    aibot_logger = logging.getLogger("aibot")
+    if aibot_logger.level in (logging.NOTSET, logging.WARNING, logging.ERROR, logging.CRITICAL):
+        aibot_logger.setLevel(logging.INFO)
+    if not aibot_logger.handlers:
+        handler = logging.StreamHandler()  # stderr（nohup 重定向进桥日志）
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s [aibot] %(levelname)s %(message)s")
+        )
+        aibot_logger.addHandler(handler)
+        logger.info("aibot SDK 日志已启用 INFO 级输出（含重连退避/鉴权追溯）")
 
 
 class _SdkLoggerAdapter:
@@ -122,6 +156,7 @@ def _default_client_factory(config: WeComConfig) -> Any:
     """真实 aibot.WSClient 构造（测试注入 FakeClient 替换，零真实连接）."""
     from aibot import WSClient, WSClientOptions
 
+    _ensure_sdk_log_visibility()  # 真实 SDK 路径才需要（FakeClient 测试路径零影响）
     options = WSClientOptions(
         bot_id=config.bot_id,
         secret=config.secret,
@@ -177,6 +212,25 @@ class WeComBridge:
         self._stop = False
         self._running = False
         self._ws_state = "disconnected"
+        # ── 心跳/观测字段（全部由 SDK 回调驱动，可确证；跨重启清零，进程内计数）──
+        self._reconnect_count = 0  # SDK "reconnecting" 事件次数（aibot/client.py:73-75）
+        self._error_count = 0
+        self._last_error: str | None = None
+        self._last_authenticated_ts: float | None = None
+        self._last_disconnect_ts: float | None = None
+        self._last_disconnect_reason: str | None = None
+        # 踢线中间态（父代理实测：disconnected_event 推送后服务端关旧连接有
+        # 延迟，本次 ~25s）——事件帧已到但连接层 disconnected 未到的时间窗
+        self._kick_pending = False
+        self._last_kick_ts: float | None = None
+        # worker 当前正在处理的消息标识（req_id；空串=空闲）——service_control
+        # _target_idle_state 的空闲判定依据（与 feishu 心跳同名字段）
+        self._processing_msg_id = ""
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+        # P1 心跳写入锁：心跳有多个写者（心跳线程周期写 + 事件回调路径即时写），
+        # 并发时 Path.write_text 会产生交错损坏的 JSON。加锁 + 原子替换（见 _write_heartbeat）。
+        self._heartbeat_write_lock = threading.Lock()
 
     # ── 生命周期 ──
     @property
@@ -224,6 +278,7 @@ class WeComBridge:
         )
         self._worker_thread.start()
         self._running = True
+        self._start_heartbeat_thread()
         logger.info("企微桥已启动（bot_id=%s…）", self._config.bot_id[:6])
         return True
 
@@ -245,15 +300,51 @@ class WeComBridge:
         self._lock.release()
         self._running = False
         self._ws_state = "disconnected"
+        # 3) 心跳线程停止 + 终态落盘（disconnected；此后文件随时间陈旧 → 健康检查判死）
+        if self._heartbeat_thread is not None:
+            self._heartbeat_stop.set()
+            self._heartbeat_thread.join(timeout=_WORKER_JOIN_TIMEOUT_S)
+            if self._heartbeat_thread.is_alive():
+                logger.warning("企微桥优雅退出: heartbeat join 超时（daemon 兜底）")
+            self._heartbeat_thread = None
+        self._write_heartbeat()
         logger.info("企微桥已停止")
 
     # ── SDK 回调（运行在 SDK loop 线程：只 marshal + 入队，立即返回）──
     def _register_callbacks(self, client: Any) -> None:
-        """注册 SDK 原始事件（message/event）与连接层事件回调."""
+        """注册 SDK 原始事件（message/event）与连接层事件回调.
+
+        回调参数签名以 aibot/client.py _setup_ws_events 为准（不猜）：
+        connected()/authenticated() 无参；disconnected(reason: str)；
+        reconnecting(attempt: int)；error(error)。
+        """
         client.on("message", self._on_sdk_message)
         client.on("event", self._on_sdk_event)
+        client.on("connected", self._on_sdk_connected)
+        client.on("authenticated", self._on_sdk_authenticated)
+        client.on("reconnecting", self._on_sdk_reconnecting)
         client.on("disconnected", self._on_sdk_disconnected)
         client.on("error", self._on_sdk_error)
+
+    def _on_sdk_connected(self) -> None:
+        """SDK "connected" 客户端事件：WS 已建立（含自动重连成功后；鉴权尚未完成）."""
+        if not self._stop:
+            self._ws_state = "connected"
+            logger.info("企微 WS 已连接（WS 握手完成，等待鉴权）")
+
+    def _on_sdk_authenticated(self) -> None:
+        """SDK "authenticated" 客户端事件：鉴权通过、订阅生效（emit 无参）."""
+        self._ws_state = "authenticated"
+        self._last_authenticated_ts = time.time()
+        self._kick_pending = False  # 重连鉴权成功 = 此前踢线/断线周期已闭环
+        logger.info("企微 WS 鉴权通过（回调订阅生效）")
+
+    def _on_sdk_reconnecting(self, attempt: int) -> None:
+        """SDK "reconnecting" 客户端事件（每次重连尝试一次；attempt 为 SDK 计数）."""
+        self._reconnect_count += 1
+        if not self._stop:
+            self._ws_state = "reconnecting"
+        logger.warning("企微 WS 重连尝试 #%d（SDK attempt=%d）", self._reconnect_count, attempt)
 
     def _on_sdk_message(self, frame: dict) -> None:
         """SDK "message" 回调（loop 线程内同步执行）：仅入队，零解析零推理."""
@@ -272,8 +363,14 @@ class WeComBridge:
         try:
             if is_disconnected_event(frame):
                 # 官方协议：被踢下线时推送（SDK EventType 枚举无此项——仓库侧补齐）
+                # 父代理实测：推送后服务端真正关闭旧连接有延迟（~25s）——记
+                # kick_pending 中间态供心跳/运维判断，连接层 disconnected 到达
+                # 或重连鉴权成功后闭环。
+                self._kick_pending = True
+                self._last_kick_ts = time.time()
                 logger.error(
-                    "企微桥收到 disconnected_event（连接被服务端踢掉/另一实例已订阅）"
+                    "企微桥收到 disconnected_event（连接被服务端踢掉/另一实例已订阅；"
+                    "旧连接实际关闭可能延迟数十秒，kick_pending=True 直到断开/重连成功）"
                 )
             else:
                 logger.debug("企微事件回调: eventtype=%s", parse_event_frame(frame))
@@ -282,12 +379,88 @@ class WeComBridge:
 
     def _on_sdk_disconnected(self, reason: Any) -> None:
         """SDK "disconnected" 客户端事件（连接层断开；非人为退出时 SDK 自动重连）."""
+        self._last_disconnect_ts = time.time()
+        self._last_disconnect_reason = str(reason)[:500]
+        self._kick_pending = False  # 连接层已断：踢线窗口闭环
         self._ws_state = "reconnecting" if not self._stop else "disconnected"
         logger.warning("企微 WS 连接断开: %s（人为退出=%s）", reason, self._stop)
 
     def _on_sdk_error(self, error: Any) -> None:
         """SDK "error" 客户端事件（鉴权失败等）如实记错误."""
+        self._error_count += 1
+        self._last_error = repr(error)[:500]
         logger.error("企微桥 SDK 错误: %s", error)
+
+    # ── 心跳文件（对齐 feishu/bridge.py _write_heartbeat 的角色：restart_system.sh
+    #     健康检查用 mtime 新鲜度判活；字段全部来自进程内可确证状态，无编造数据）──
+    def _write_heartbeat(self) -> None:
+        """心跳落盘（fail-open：写失败不阻断主流程，只告警）.
+
+        与 feishu 的差异（如实说明）：feishu 在看门狗轮询内顺带写心跳（其 SDK
+        锁泄漏需要看门狗职责）；wecom 的 SDK 心跳在 SDK loop 内自管理，本侧
+        无看门狗职责，故用独立心跳线程（_heartbeat_loop）周期写。
+        """
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+
+            payload = {
+                "ts": time.time(),
+                "pid": os.getpid(),
+                # 状态机：disconnected → connected（WS 握手）→ authenticated（鉴权过）
+                # → reconnecting（断开后 SDK 自动重连中）→ …；人为停止 → disconnected
+                "state": self._ws_state,
+                "reconnect_count": self._reconnect_count,
+                "error_count": self._error_count,
+                "last_error": self._last_error,
+                "last_authenticated_ts": self._last_authenticated_ts,
+                "last_disconnect_ts": self._last_disconnect_ts,
+                "last_disconnect_reason": self._last_disconnect_reason,
+                # 踢线中间态（父代理实测：disconnected_event 到达后服务端关旧连接
+                # 有 ~25s 延迟；True = 已知被踢但连接层尚未断开）
+                "kick_pending": self._kick_pending,
+                "last_kick_ts": self._last_kick_ts,
+                # 空闲判定字段（与 feishu 心跳同名同义；service_control
+                # _target_idle_state 据此判 busy：processing 非空或队列非空）
+                "processing_msg_id": self._processing_msg_id,
+                "queue_depth": self._msg_queue.qsize(),
+            }
+            path = _Path(os.environ.get("WECOM_HEARTBEAT_PATH") or _HEARTBEAT_PATH_DEFAULT)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # P1 原子写（2026-10-30 父代理实测复现）：本心跳有多个写者——独立心跳线程
+            # （_heartbeat_loop 周期写）+ 事件回调路径（如 _on_sdk_disconnected /
+            # _on_sdk_event 内的即时写）。Path.write_text 是「打开-截断-写」，两写者
+            # 并发时内容交错，产出损坏 JSON（实测复现：文件尾出现重复残片，解析失败）。
+            # 后果：service_control._target_idle_state 读心跳解析失败 → 空闲判定退化为
+            # unconfirmable，重启编排失去"企微桥忙闲"依据。
+            # 修法：写同目录临时文件后 os.replace 原子替换（POSIX 同文件系统 rename 原子）。
+            # 加锁避免两个写者同时生成 tmp 文件名冲突；锁只保护写动作，不阻塞 loop。
+            data = _json.dumps(payload)
+            with self._heartbeat_write_lock:
+                tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+                try:
+                    tmp_path.write_text(data, encoding="utf-8")
+                    os.replace(tmp_path, path)
+                finally:
+                    # 替换失败时清理残留 tmp（fail-open，不阻断主流程）
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001 — 心跳失败不阻断主流程
+            logger.warning("企微心跳写失败（fail-open）", exc_info=True)
+
+    def _heartbeat_loop(self) -> None:
+        """心跳线程主体：启动即写一次（restart 后健康检查立即可用），此后周期写."""
+        self._write_heartbeat()
+        while not self._heartbeat_stop.wait(_HEARTBEAT_INTERVAL_S):
+            self._write_heartbeat()
+
+    def _start_heartbeat_thread(self) -> None:
+        """启动心跳线程（daemon：进程异常退出时不拖尸；正常退出走 stop 的 join）."""
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, name="wecom-heartbeat", daemon=True
+        )
+        self._heartbeat_thread.start()
 
     # ── worker 线程（推理与回复都在此线程，不碰 SDK loop）──
     def _worker_loop(self) -> None:
@@ -296,14 +469,19 @@ class WeComBridge:
             item = self._msg_queue.get()
             if item is None:
                 break  # 哨兵：优雅退出
+            # 处理中标识（真实值：帧 headers.req_id）——心跳/service_control 空闲判定用
+            self._processing_msg_id = str((item.get("headers") or {}).get("req_id", "") or "")
             try:
-                msg = parse_message_frame(item)
-                if msg is None:
-                    continue  # compat_info 非空/结构无效：dispatcher 已记日志跳过
-                if self._handler is not None:
-                    self._handler.handle(msg)
-            except Exception:  # noqa: BLE001 — 单条消息异常不终止 worker
-                logger.exception("企微 worker 处理消息异常（req_id=%s）", (item.get("headers") or {}).get("req_id", ""))
+                try:
+                    msg = parse_message_frame(item)
+                    if msg is None:
+                        continue  # compat_info 非空/结构无效：dispatcher 已记日志跳过
+                    if self._handler is not None:
+                        self._handler.handle(msg)
+                except Exception:  # noqa: BLE001 — 单条消息异常不终止 worker
+                    logger.exception("企微 worker 处理消息异常（req_id=%s）", self._processing_msg_id)
+            finally:
+                self._processing_msg_id = ""
 
     # ── 回复（WeComReplyFn 签名；worker 线程调用，投递回 SDK loop 执行）──
     def send_text(self, req_id: str, receive_id: str, text: str, receive_id_type: str) -> None:

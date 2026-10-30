@@ -107,8 +107,8 @@ _ACTION_OPTIONAL_FIELDS = frozenset(
         "worker_pid",
     }
 )
-_MANAGED_SERVICES = ("web", "feishu", "learning")
-_ACTION_TARGETS = ("web", "feishu", "learning", "all")
+_MANAGED_SERVICES = ("web", "feishu", "wecom", "learning")
+_ACTION_TARGETS = ("web", "feishu", "wecom", "learning", "all")
 _ACTION_STATUSES = frozenset(
     {
         "accepted",
@@ -153,8 +153,8 @@ _VERIFY_POLL_S = 2.0
 _VERIFY_TIMEOUT_S = 180.0
 _VERIFY_MANIFEST_WAIT_S = 2.0
 
-# §8.2: 准入屏障覆盖目标服务的全部入口——target=all 覆盖三个受管服务。
-_MANAGED_SERVICE_NAMES = ("web", "feishu", "learning")
+# §8.2: 准入屏障覆盖目标服务的全部入口——target=all 覆盖全部受管服务。
+_MANAGED_SERVICE_NAMES = ("web", "feishu", "wecom", "learning")
 
 # lifecycle_agency L4（已删除）: 旧 `_RESTART_PRECHECK_FAILED_MARKERS` 白名单用
 # detail 文本猜测"本次失败是否零物理副作用"——程序在做语义判断（违反 Q5）。
@@ -467,7 +467,7 @@ class ServiceControlAction:
     schema: str
     action_id: str
     action: Literal["restart"]
-    target: Literal["web", "feishu", "learning", "all"]
+    target: Literal["web", "feishu", "wecom", "learning", "all"]
     deployment_id: str
     deployment_generation: int
     requester_session_id: str
@@ -1617,7 +1617,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
 
     runtime_root = str(store.data_dir.parent)
     idle_state: dict[str, dict[str, str]] = {}
-    for target in ("web", "feishu", "learning", "all"):
+    for target in ("web", "feishu", "wecom", "learning", "all"):
         state, detail = _target_idle_state(target=target, runtime_root=runtime_root)
         idle_state[target] = {"state": state, "detail": detail}
 
@@ -2390,8 +2390,10 @@ class ManagedServiceMutationGuard:
     _PID_SOURCE_MARKERS = (
         "runtime_manifest.web.json",
         "runtime_manifest.feishu.json",
+        "runtime_manifest.wecom.json",
         "runtime_manifest.learning.json",
         "feishu_heartbeat.json",
+        "wecom_heartbeat.json",
     )
 
     def __init__(
@@ -2507,7 +2509,7 @@ class ManagedServiceMutationGuard:
         if action_idx >= len(core):
             # restart_mirror default is a real Web restart, so an omitted action mutates.
             return script == "restart_mirror.sh"
-        return core[action_idx] in {"web", "feishu", "learning", "all", "restart", "start", "stop"}
+        return core[action_idx] in {"web", "feishu", "wecom", "learning", "all", "restart", "start", "stop"}
 
     def _guard_text(
         self,
@@ -2569,6 +2571,8 @@ class ManagedServiceMutationGuard:
                             hit.add("web")
                         elif ".feishu." in marker or "feishu_" in marker:
                             hit.add("feishu")
+                        elif ".wecom." in marker or "wecom_" in marker:
+                            hit.add("wecom")
                         elif ".learning." in marker:
                             hit.add("learning")
                 if "lsof" in low and "8903" in low:
@@ -2756,8 +2760,9 @@ def _interpret_idle_probe(probe: str | bool) -> tuple[str, str]:
 def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
     """L22: 目标空闲三态 ``confirmed_busy`` / ``confirmed_idle`` / ``unconfirmable``.
 
-    feishu/all 要求飞书桥 heartbeat 空闲；web/all 要求无机械持有的前台 run
-    lock；learning/all 要求消费端无在飞 journal job（缺口②：持锁 + admitted/
+    feishu/wecom/all 要求桥 heartbeat 空闲（processing_msg_id 空 且 queue_depth
+    为 0——两桥心跳字段同名同义）；web/all 要求无机械持有的前台 run lock；
+    learning/all 要求消费端无在飞 journal job（缺口②：持锁 + admitted/
     started 在飞才 busy，进程死亡的 started 残留不阻塞，由 post-crash
     reconcile 重跑）。
 
@@ -2782,6 +2787,26 @@ def _target_idle_state(*, target: str, runtime_root: str) -> tuple[str, str]:
             if processing or queue_depth > 0:
                 reasons.append(
                     f"feishu busy: processing={processing!r} queue_depth={queue_depth}"
+                )
+    if target in {"wecom", "all"}:
+        # 判定口径与 feishu 分支对齐：wecom 心跳由桥的独立心跳线程写
+        # （data/wecom_heartbeat.json），字段 processing_msg_id/queue_depth
+        # 与飞书心跳同名同义（真实值：worker 处理中标识 / 待处理队列深度）。
+        heartbeat_path = Path(runtime_root) / "data" / "wecom_heartbeat.json"
+        try:
+            heartbeat = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            heartbeat = None
+            unconfirmable.append("wecom heartbeat 缺失，无法确认企微桥空闲")
+        except (OSError, ValueError) as exc:
+            heartbeat = None
+            unconfirmable.append(f"wecom heartbeat 不可解析: {type(exc).__name__}")
+        if isinstance(heartbeat, dict):
+            processing = str(heartbeat.get("processing_msg_id") or "")
+            queue_depth = int(heartbeat.get("queue_depth") or 0)
+            if processing or queue_depth > 0:
+                reasons.append(
+                    f"wecom busy: processing={processing!r} queue_depth={queue_depth}"
                 )
     if target in {"web", "all"}:
         sessions_dir = Path(runtime_root) / "data" / "sessions"
@@ -3466,12 +3491,14 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             # and WebUI artifact hash at execution time. Drift => fail closed
             # without executing the (possibly pre-P0-A) restart script.
             # Feishu-only restarts do not consume WebUI artifacts, so the dist
-            # tree hash is not a hard gate for them.
+            # tree hash is not a hard gate for them. wecom 桥同理（WS 长连接服务，
+            # 不跑 WebUI、不消费 webui/dist 产物）——与 feishu 同待遇跳过 WebUI
+            # 字节级核验，否则 wecom 重启会因不存在的 dist 消费事实被误拦。
             binding_facts = _binding_problems_structured(
                 desired_now,
                 code_root=desired_now.code_root,
                 runtime_root=desired_now.runtime_root,
-                verify_webui=(latest.target != "feishu"),
+                verify_webui=(latest.target not in {"feishu", "wecom"}),
             )
             if binding_facts:
                 binding_problems = [problem.text for problem in binding_facts]

@@ -16,8 +16,8 @@ SDK（wecom-aibot-python-sdk 1.0.2）只用作连接层（鉴权/心跳/重连/�
   非空即跳过（避免智能助理/频道消息误触发机器人）。
 
 帧结构（SDK types.py WsFrame + 官方协议 path/101463）：
-{cmd, headers: {req_id, ...}, body: {msgtype, from: {userid}, chatid,
- chat_type, text/image/video/..., compat_info}, errcode, errmsg}
+{cmd, headers: {req_id, ...}, body: {msgid, aibotid, msgtype, from: {userid},
+ chatid, chattype, text/image/video/..., compat_info}, errcode, errmsg}
 """
 
 import logging
@@ -61,6 +61,14 @@ def _extract_payload(body: dict[str, Any]) -> tuple[str, str | None, str | None,
     file_name = ""
     if msg_type == "text":
         text = str((body.get("text") or {}).get("content", "") or "")
+    elif msg_type == "markdown":
+        # P1-2（2026-10-30 父代理+独立审查）：markdown 形态是**机器人自己发出的形态**
+        # （bridge.py:502 回复即 {"msgtype":"markdown",...}）。若服务端把机器人发言原样
+        # 回推，此前 markdown 走不到任何提取分支 → text 恒空 → handler 落到 unsupported
+        # 分支回执"暂不支持该消息类型" → 该回执又是 markdown → 再被回推 → 无限刷屏循环
+        # （独立审查实测：3 帧回声 → 3 条新回复，无自愈）。
+        # 提取 markdown.content 后，回声抑制才有文本可比对（见 handlers.handle）。
+        text = str((body.get("markdown") or {}).get("content", "") or "")
     elif msg_type in ("image", "video", "file"):
         payload = body.get(msg_type) or {}
         file_url = str(payload.get("url", "") or "") or None
@@ -109,10 +117,14 @@ def parse_message_frame(frame: dict[str, Any]) -> WeComMessage | None:
     sender = body.get("from") or {}
     sender_id = str(sender.get("userid", "") or "")
     chat_id = str(body.get("chatid", "") or "")
-    chat_type = str(body.get("chat_type", "") or "")
+    # 会话类型键名以官方协议原文为准：chattype（无下划线，path/101463）。
+    # P1 修复（2026-10）：此前误读 chat_type（下划线）恒得空串——真实帧的
+    # 群/单聊分类只能靠 WeComMessage.__post_init__ 的 chatid 兜底推断。
+    # 保留 chat_type 作为回退读键（防御性兼容，两个键都缺省时仍走兜底推断）。
+    chat_type = str(body.get("chattype", "") or body.get("chat_type", "") or "")
     text, file_url, file_aeskey, file_name = _extract_payload(body)
-    # 消息标识：协议回调的 msgid 字段名未在 SDK 源码中出现（未核实），
-    # 用 req_id 兜底（每次回调唯一，可满足去重/审计需要）
+    # 消息标识：body.msgid（官方协议 path/101463 已确认字段名）；
+    # 缺省时用 req_id 兜底（每次回调唯一，可满足去重/审计需要）
     message_id = str(body.get("msgid", "") or "") or frame_req_id(frame)
     return WeComMessage(
         message_id=message_id,
@@ -122,6 +134,12 @@ def parse_message_frame(frame: dict[str, Any]) -> WeComMessage | None:
         msg_type=msg_type,
         text=text,
         is_group=bool(chat_id),
+        # 如实声明（P1 防循环审计结论）：企微协议 from 结构仅含 userid，没有
+        # 飞书式 sender.sender_type 来源标记（官方文档 path/101463 原文确认），
+        # 故帧层无法判定"是否机器人自身消息"，恒填 "user" 是诚实值而非判定
+        # 结果。真正的防回灌由 handler 侧回声抑制兜底（handlers._is_echo）；
+        # 此处保留 "user" 使 handlers 的 sender_type=="app" 分支仅在显式注入
+        # app 标记（如未来协议升级/测试构造）时生效，不虚构判定。
         sender_type="user",
         file_url=file_url,
         file_aeskey=file_aeskey,

@@ -9,7 +9,7 @@
             含 "mirror" 段推导（复用 runtime/identity.py 事实，不耦合
             RUNTIME_IDENTITY_MODE）；取值域 {旧主区, 镜像, unknown}
 - route:    LFL_ROUTE 显式优先，缺省 unknown；取值域
-            {feishu, web, cli, scheduler, unknown}
+            {feishu, web, cli, wecom, scheduler, unknown}
 
 显式值越界一律回退 unknown；首次解析含 unknown 字段时经注入的审计回调记
 route.missing 恰一次（缺失字段列表入 detail，不逐条刷屏，spec 6.5.4）；
@@ -28,7 +28,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _VALID_ZONES = {"旧主区", "镜像", "unknown"}
-_VALID_ROUTES = {"feishu", "web", "cli", "scheduler", "unknown"}
+_VALID_ROUTES = {"feishu", "web", "cli", "wecom", "scheduler", "unknown"}
 
 _route_context: RouteContext | None = None
 _route_missing_recorded = False

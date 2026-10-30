@@ -8,7 +8,7 @@
 - rationale  授权理由（完整句），必填
 - approval_ref 审批留痕（编号/日期），必填
 
-固有成员（spec 6.2-4）：feishu/web/cli 三类人类输入通道不可移除，
+固有成员（spec 6.2-4）：feishu/web/cli/wecom 四类人类输入通道不可移除，
 不适用 rationale/approval_ref（授权来自 §0 user truth 定义本身）。
 空缺即拒绝：其余一律默认拒绝/降级。
 """
@@ -18,7 +18,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # 人类输入通道固有成员（不可移除；白名单外默认拒绝，spec 5.3.1-1）
-INTRINSIC_CHANNELS: frozenset[str] = frozenset({"feishu", "web", "cli"})
+# wecom：企微智能机器人用户消息同样是 §0 user truth（用户真人在企微 App 打字）；
+# 2026-10-30 加入（此前 enforce 模式把企微问答整体拒绝，用户实测收到
+# 「[写入被拒]」回执而非 LFL 回答——wecom 通道缺固有成员资格即根因）。
+INTRINSIC_CHANNELS: frozenset[str] = frozenset({"feishu", "web", "cli", "wecom"})
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,7 @@ _WHITELIST_KEYS: frozenset[str] = frozenset(
         "feishu",  # 固有成员通道级键（token.entry 缺省=channel）
         "web",
         "cli",
+        "wecom",
         "test_harness",
     }
 )
@@ -96,5 +100,5 @@ def whitelist_allows(token: object) -> bool:
 
 def assert_intrinsic_immutable() -> None:
     """固有成员不可移除断言（spec 6.2-4 / T2 验收）。"""
-    assert {"feishu", "web", "cli"} <= INTRINSIC_CHANNELS, "固有成员不可移除"
+    assert {"feishu", "web", "cli", "wecom"} <= INTRINSIC_CHANNELS, "固有成员不可移除"
     assert all(e.valid() for e in CHANNEL_WHITELIST), "白名单条目三字段须齐备且有效"

@@ -185,7 +185,7 @@ TOML_SCHEMA: Mapping[tuple[str, str], TomlField] = MappingProxyType(
 
 _SERVICE_SCOPED_SECTIONS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
-        "semantic": frozenset({"web", "feishu", "learning"}),
+        "semantic": frozenset({"web", "feishu", "wecom", "learning"}),
         "knowledge_advisor": frozenset({"web"}),
         # web-carveout M3：chatgpt_web/deepseek_web 两个 service-scoped section
         # 随通道明细配置迁出删除（浏览器通道现为 Web-only 由独立项目侧配置）。
@@ -800,9 +800,9 @@ def _cli_check_toml(argv: list[str]) -> int:
         print("usage: resolver WEB_PORT|WEB_HOST or --check-toml <runtime.toml> [service ...]", file=sys.stderr)
         return 2
     path = args[1]
-    services = args[2:] or ["web", "feishu", "learning"]
-    if any(service not in {"web", "feishu", "learning"} for service in services):
-        print("service must be web, feishu or learning", file=sys.stderr)
+    services = args[2:] or ["web", "feishu", "wecom", "learning"]
+    if any(service not in {"web", "feishu", "wecom", "learning"} for service in services):
+        print("service must be web, feishu, wecom or learning", file=sys.stderr)
         return 2
     ok, message = check_runtime_toml(path, services)
     print(message)

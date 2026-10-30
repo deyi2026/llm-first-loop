@@ -69,11 +69,19 @@ def start_bridge(bridge) -> bool:
 
 def main() -> None:
     """企微桥启动入口（-m 执行 llm_loop.wecom / runtime.launch wecom）."""
+    import os
+
     from llm_loop.runtime.identity import enforce_identity
 
     enforce_identity(Path.cwd())
     # 补齐手动启动缺口：shell 未注入 .env 时也能可靠读配置（锚定 CWD，与飞书一致）
     load_env_file(Path.cwd() / ".env")
+    # P1 route attribution（对齐 web 入口 web/__init__.py:509-521 的顺序）：
+    # 服务入口本身是 route 的权威事实；显式 LFL_ROUTE 仍优先（operator 覆盖走同一 env SoT，
+    # route_context 只读）。不注入则企微流量在审计行里被记 route=unknown（事故归因盲区）。
+    # 顺序契约：必须在 load_env_file 之后 —— load_env_file 不覆盖已设变量（config.py:207-208），
+    # 若 setdefault 在前，.env 里的 LFL_ROUTE 会被静默吞掉。
+    os.environ.setdefault("LFL_ROUTE", "wecom")
     try:
         config = load_wecom_config()
     except ValueError as exc:

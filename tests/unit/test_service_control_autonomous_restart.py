@@ -190,7 +190,8 @@ def test_new_restart_adopts_barriers_of_terminal_failed_owner(tmp_path: Path) ->
     audit = tmp_path / "data" / "audit" / "service_barrier_adoptions.jsonl"
     assert audit.is_file()
     lines = [json.loads(x) for x in audit.read_text(encoding="utf-8").splitlines() if x]
-    assert len(lines) == 3
+    # 4 条 = web/feishu/wecom/learning 四个受管服务的屏障接管（wecom 纳管后随 all 目标接管）
+    assert len(lines) == 4
     assert {line["previous_owner"] for line in lines} == {first.action_id}
     assert {line["operation_id"] for line in lines} == {second.action_id}
 
@@ -262,7 +263,7 @@ def test_tool_publish_advances_desired_generation(tmp_path: Path) -> None:
     # 三服务尚无覆盖该代的 succeeded 回执，lagging 应列出全部。
     convergence = body["convergence"]
     assert convergence["desired_generation"] == 1
-    assert sorted(convergence["lagging"]) == ["feishu", "learning", "web"]
+    assert sorted(convergence["lagging"]) == ["feishu", "learning", "web", "wecom"]
     assert convergence["services"]["web"]["stable_generation"] is None
     assert convergence["read_only"] is True
     head = subprocess.run(

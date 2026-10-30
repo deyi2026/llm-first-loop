@@ -88,7 +88,8 @@ class TestIngressToken:
         assert a is b  # 幂等：同 channel 等价凭据（零重复事件）
 
     def test_whitelisted_channels(self) -> None:
-        for ch in ("feishu", "web", "cli"):
+        # 全部固有通道（含 wecom，2026-10-30 起）签发即白名单内
+        for ch in ("feishu", "web", "cli", "wecom"):
             assert is_whitelisted(issue_ingress(ch)) is True
 
     def test_forged_object_not_whitelisted(self) -> None:
@@ -114,7 +115,7 @@ class TestWhitelistTraceability:
 
     def test_intrinsic_immutable(self) -> None:
         assert_intrinsic_immutable()  # 固有成员不可移除 + 条目有效性
-        assert {"feishu", "web", "cli"} <= INTRINSIC_CHANNELS
+        assert {"feishu", "web", "cli", "wecom"} <= INTRINSIC_CHANNELS
 
     def test_no_default_implied_entries(self) -> None:
         """无『默认隐含』条目：test_harness 也须显式登记。"""

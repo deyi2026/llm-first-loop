@@ -20,6 +20,7 @@ def test_existing_lazy_schema_keeps_restart_target_enum_without_extra_override()
     assert lazy["properties"]["target"]["enum"] == [
         "web",
         "feishu",
+        "wecom",
         "learning",
         "all",
     ]
@@ -80,7 +81,7 @@ def test_update_needs_target_rejects_before_any_store_write(tmp_path) -> None:
 
     assert result.status == ToolResultStatus.FAILURE
     assert "NEEDS_TARGET" in result.content
-    assert "web/feishu/learning/all" in result.content
+    assert "web/feishu/wecom/learning/all" in result.content
     assert "service_control(action=update" in result.content  # 一条示例命令
     assert spawned == []
     assert store.read() is None

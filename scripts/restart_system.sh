@@ -4,17 +4,20 @@
 # 管理常驻服务（cli 交互式，纳入 status/stop + 可启动校验，不参与常驻 start_all）:
 #   web    FastAPI 服务（python -m llm_loop.web，健康端点 GET /health）
 #   feishu 飞书桥（python -m llm_loop.runtime.launch feishu，WS 长连接）
+#   wecom  企微桥（python -m llm_loop.runtime.launch wecom，WS 长连接；单服务管理，
+#          不加入全局 start/stop 序列——由 service_control/wecom 单独编排）
 #   cli    终端 CLI（python -m llm_loop.cli，交互式需 tty，不能后台守护）
 #          cli start = 可启动性校验（import+版本）+ 提示手动终端启动（不伪装常驻）
 #
 # 用法:
 #   scripts/restart_system.sh                  # 全部重启（web+feishu）
 #   scripts/restart_system.sh start|stop|restart|status
-#   scripts/restart_system.sh web|feishu|cli start|stop|restart|status   # 单服务
+#   scripts/restart_system.sh web|feishu|wecom|cli start|stop|restart|status   # 单服务
 #
 # 设计要点:
 #   1. 优雅停机: SIGTERM → GRACE_S 内自然退出 → 超时 SIGKILL（每服务独立）。
-#   2. 健康检查: web 用 HTTP GET /health；feishu 用看门狗心跳文件新鲜度（M47，替代易误报的 TCP 检查）；
+#   2. 健康检查: web 用 HTTP GET /health；feishu/wecom 用心跳文件新鲜度（M47 口径，
+#      替代易误报的 TCP 检查；wecom 阈值可用 WECOM_HEARTBEAT_FRESH_S 覆盖）；
 #      cli 用进程存活（无健康端点，交互式）。
 #   3. 凭证不硬编码: 环境变量优先 → 回退 本地既有实现/.env（脱敏提示不落盘）。
 #   4. 端口冲突检测: web 端口权威取 .env WEB_PORT（默认 8903 镜像），启动前探测；
@@ -265,6 +268,20 @@ _health_check() {
       now_s="$(date +%s)"
       (( now_s - hb_mtime <= 90 ))
       ;;
+    wecom)
+      # 对齐 feishu（M47 口径）：健康 = 进程存活 + 心跳文件新鲜。
+      # 心跳由企微桥独立心跳线程每 30s 写（data/wecom_heartbeat.json）；
+      # 阈值默认 90s（=2 个心跳周期 + 1 周期抖动余量），env WECOM_HEARTBEAT_FRESH_S 可覆盖。
+      # 文件缺失（桥未升级/未启动完成）→ 如实判不健康，不误报。
+      if ! kill -0 "$pid" 2>/dev/null; then return 1; fi
+      local hb="$DATA_DIR/wecom_heartbeat.json"
+      [[ -f "$hb" ]] || return 1
+      local hb_mtime now_s fresh_s
+      hb_mtime="$(stat -f %m "$hb" 2>/dev/null || stat -c %Y "$hb" 2>/dev/null || echo 0)"
+      now_s="$(date +%s)"
+      fresh_s="${WECOM_HEARTBEAT_FRESH_S:-90}"
+      (( now_s - hb_mtime <= fresh_s ))
+      ;;
     cli)
       # cli 无健康端点（交互式终端程序）：进程存活即健康
       kill -0 "$pid" 2>/dev/null
@@ -284,8 +301,15 @@ _start_service() {
     echo "$running_pid" > "$DATA_DIR/${svc}.pid"
     return 0
   fi
-  _load_credentials
-  _load_llm
+  if [[ "$svc" == "wecom" ]]; then
+    # 企微桥凭据（WECHAT_BOT_ID/SECRET）不在此注入：桥自身启动时 load_env_file
+    # 读 .env（wecom/__init__.py main），且不写死任何密钥到脚本/日志。
+    # LLM 凭据仍需注入（engine.run 依赖），走通用 _load_llm。
+    _load_llm
+  else
+    _load_credentials
+    _load_llm
+  fi
   # MIRROR 协议 §3（2026-08-22）：共享 venv 的 editable 安装指向旧主区 src，
   # 不带 PYTHONPATH 会加载旧主区代码 → 镜像 src 优先（隔离要求，旧主区零接触）
   export PYTHONPATH="${PROJECT_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -351,6 +375,20 @@ _start_service() {
       nohup "$VENV_PY" -m llm_loop.runtime.launch feishu >> "$DATA_DIR/feishu_bridge.log" 2>&1 &
       echo "$!" > "$DATA_DIR/feishu.pid"   # 2026-08-17: 启动即落盘 pid（同 web 修复，防复发）
       ;;
+    wecom)
+      _rotate_log "$DATA_DIR/wecom_bridge.log"
+      # P1-3(2026-10-25): 同 web/feishu 分支——默认工作区根注入；过渡锚回 $PROJECT_DIR（见上）。
+      export LFL_DEFAULT_WORKSPACE_ROOT="${LFL_DEFAULT_WORKSPACE_ROOT:-$PROJECT_DIR}"
+      if ! mkdir -p -m 700 "$LFL_DEFAULT_WORKSPACE_ROOT" 2>/dev/null; then
+        _log "[wecom] FATAL: 无法创建默认工作区根 $LFL_DEFAULT_WORKSPACE_ROOT；请手工 mkdir -m 700 或修正 LFL_DEFAULT_WORKSPACE_ROOT"
+        exit 78
+      fi
+      _log "[wecom] 启动企微桥（日志: ${DATA_DIR}/wecom_bridge.log）..."
+      # 统一走 runtime.launch（同 feishu）：启动进程同步刷新 runtime_manifest.wecom.json，
+      # service identity 面与实际进程一致。凭据由桥自身从 .env 读取（不在此注入）。
+      nohup "$VENV_PY" -m llm_loop.runtime.launch wecom >> "$DATA_DIR/wecom_bridge.log" 2>&1 &
+      echo "$!" > "$DATA_DIR/wecom.pid"   # 启动即落盘 pid（同 web/feishu 修复，防复发）
+      ;;
     cli)
       # cli 是交互式终端程序（需 tty），不能 nohup 后台常驻——只做可启动性校验并提示手动启动。
       # 校验: import 引擎 + 打印当前 git HEAD（保证 cli 与脚本同代码基线）。
@@ -405,7 +443,10 @@ _status_service() {
 }
 
 # ── 服务集定义 ──
-SERVICES="web feishu cli"
+# wecom 纳入 status/单实例校验（SERVICES），但不加入全局启动/停止序
+# （WEB_BEFORE_FEISHU/FEISHU_BEFORE_WEB）：企微桥由 service_control(target=wecom)
+# 单独编排，全局 web+feishu 重启不应连带踢掉在服企微长连接（单连接独占语义）。
+SERVICES="web feishu wecom cli"
 WEB_BEFORE_FEISHU="web feishu"   # 启动序：web 先（依赖 LLM/端口）；cli 交互式不参与常驻启动
 FEISHU_BEFORE_WEB="feishu web"   # 停止序：feishu 先（桥先断，web 后）
 
@@ -556,7 +597,7 @@ _acquire_restart_lock() {
 # ── 主入口：支持 [service] action 与全局 action ──
 ACTION="${2:-}"
 case "${1:-}" in
-  web|feishu|cli)
+  web|feishu|wecom|cli)
     [[ -n "$ACTION" ]] || ACTION="restart"
     case "$ACTION" in
       start)   _start_service "$1" ;;
@@ -578,5 +619,5 @@ case "${1:-}" in
            _BASELINE_HEAD_BEFORE="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
            _stop_all; _start_all ;;  # precheck: 长任务等待/确认（批1+批2；_print_code_baseline 在 _start_all 末尾）
   status)  _status_all ;;
-  *)       _die "用法: $0 [web|feishu] [start|stop|restart|status] 或 $0 [start|stop|restart|status]" ;;
+  *)       _die "用法: $0 [web|feishu|wecom|cli] [start|stop|restart|status] 或 $0 [start|stop|restart|status]" ;;
 esac

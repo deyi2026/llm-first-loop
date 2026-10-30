@@ -11,6 +11,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV = ROOT / ".env"
@@ -29,14 +30,49 @@ def _load_env() -> None:
         os.environ.setdefault(key, value)
 
 
+def _ensure_proxy_bypass(hosts: list[str]) -> None:
+    """把给定主机加入 no_proxy 绕过列表（强制直连，不经系统/环境代理）.
+
+    与 src/llm_loop/wecom/config.py 的 ensure_proxy_bypass 语义等价的最小
+    实现（探针刻意不 import llm_loop 包，保持零依赖、可独立排障）：
+    no_proxy 与 NO_PROXY 两个环境变量都要写——urllib 的
+    getproxies_environment() 只有在 no_proxy 非空时才返回非空 dict，单写
+    NO_PROXY 不生效。写入后 urllib.request.getproxies() 走 env 分支，
+    websockets>=15 不再读 macOS 系统代理（其 socks 项会把 wss:// 改写成
+    socks5h://，企微域名不在 ExceptionsList 内 → 隧道不通 → 连接超时）。
+    幂等：重复调用结果相同（与 config.ensure_proxy_bypass 一致）。
+    """
+    entries: list[str] = []
+    seen: set[str] = set()
+    existing = os.environ.get("no_proxy", "") + "," + os.environ.get("NO_PROXY", "")
+    for raw in existing.split(","):
+        item = raw.strip()
+        if item and item not in seen:
+            seen.add(item)
+            entries.append(item)
+    for raw in hosts:
+        item = raw.strip()
+        if item and item not in seen:
+            seen.add(item)
+            entries.append(item)
+    value = ",".join(entries)
+    os.environ["no_proxy"] = value
+    os.environ["NO_PROXY"] = value
+
+
 async def _probe() -> int:
     from aibot import WSClient, WSClientOptions
+    from aibot.ws import DEFAULT_WS_URL
 
     bot_id = os.environ.get("WECHAT_BOT_ID", "").strip()
     secret = os.environ.get("WECHAT_BOT_SECRET", "").strip()
     if not bot_id or not secret:
         print("缺少 WECHAT_BOT_ID / WECHAT_BOT_SECRET（请写入主区 .env）", file=sys.stderr)
         return 2
+
+    # 连接前把企微 WS 端点主机加入 no_proxy/NO_PROXY（与桥的
+    # _ensure_endpoint_direct 同源：主机取 SDK 默认常量，不硬编码）。
+    _ensure_proxy_bypass([urlsplit(DEFAULT_WS_URL).hostname or "openws.work.weixin.qq.com"])
 
     connected = asyncio.Event()
     authed = asyncio.Event()

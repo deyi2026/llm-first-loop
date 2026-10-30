@@ -3,7 +3,7 @@
 token 为模块私有哨兵类型实例（非字符串——防字符串拼接伪造）：
 进程外不可伪造、进程内仅 ``issue_ingress`` 可构造。
 
-- ``issue_ingress(channel) -> IngressToken``：channel 限 feishu/web/cli
+- ``issue_ingress(channel) -> IngressToken``：channel 限 feishu/web/cli/wecom
   （白名单固有成员），未知 channel 抛 ValueError——默认拒绝的构造性体现。
 - 同 channel 多次签发幂等（返回等价凭据，不产生重复事件）。
 - ``issue_test_ingress()``：测试后门显式凭据（spec 5.3.3-4a 测试专用入口
@@ -50,8 +50,8 @@ class _IssuePin:
 
 _ISSUE_PIN = _IssuePin()
 
-# 通道值域（白名单固有成员，spec 6.2-4）
-_ALLOWED_CHANNELS = frozenset({"feishu", "web", "cli"})
+# 通道值域（白名单固有成员，spec 6.2-4；与 channel_whitelist.INTRINSIC_CHANNELS 同源维护）
+_ALLOWED_CHANNELS = frozenset({"feishu", "web", "cli", "wecom"})
 
 _ISSUED: dict[str, IngressToken] = {}
 

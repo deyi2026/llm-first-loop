@@ -202,7 +202,7 @@ _root_source_abort() {  # $1=triggering_var
   # 屏障；不写回执则按"无回执 fail-closed"keep，零副作用中止被卡成死窗
   # （2026-09-22 13:20 事故实证）。只读目标（preflight/status）保持零写入。
   case "$RESTART_ARG1" in
-    web|feishu|learning|all) _write_receipt "$RESTART_ARG1" 2 "root_source_aborted" ;;
+    web|feishu|learning|wecom|all) _write_receipt "$RESTART_ARG1" 2 "root_source_aborted" ;;
   esac
   exit 2
 }
@@ -425,6 +425,26 @@ if parts:
     print(' '.join(parts))
 " 2>/dev/null
 }
+# 企微桥忙闲（口径同飞书：processing_msg_id 非空 或 queue_depth > 0 即为忙）
+_wecom_heartbeat_busy() {
+  "$VENV_PY" - "$MIRROR_DIR/data/wecom_heartbeat.json" <<'PY' 2>/dev/null
+import json
+import sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+parts = []
+mid = (d.get('processing_msg_id') or '').strip()
+q = int(d.get('queue_depth') or 0)
+if mid:
+    parts.append('processing:' + mid[:12])
+if q > 0:
+    parts.append('queue:%d' % q)
+if parts:
+    print(' '.join(parts))
+PY
+}
 _web_run_busy() {
   PYTHONPATH="$CODE_ROOT/src" "$VENV_PY" - "$RUNTIME_ROOT/data/sessions" <<'PY' 2>/dev/null
 import sys
@@ -476,14 +496,22 @@ if facts:
 PY
 }
 _restart_busy() {
-  local target="${1:-all}" hb="" runs="" parts=""
+  local target="${1:-all}" hb="" runs="" parts="" whb=""
   if [[ "$target" == "feishu" || "$target" == "all" ]]; then
     hb="$(_heartbeat_busy)"
+  fi
+  if [[ "$target" == "wecom" ]]; then
+    # 企微桥的忙闲看自己的心跳（processing_msg_id / queue_depth），口径同飞书。
+    whb="$(_wecom_heartbeat_busy)"
   fi
   if [[ "$target" == "web" || "$target" == "all" ]]; then
     runs="$(_web_run_busy)"
   fi
   [[ -n "$hb" ]] && parts="$hb"
+  if [[ -n "$whb" ]]; then
+    [[ -n "$parts" ]] && parts="$parts "
+    parts="${parts}${whb}"
+  fi
   if [[ -n "$runs" ]]; then
     [[ -n "$parts" ]] && parts="$parts "
     parts="${parts}${runs}"
@@ -761,6 +789,71 @@ _feishu_stop() {
   _log "飞书桥已停止"
 }
 
+# ── 企微智能机器人桥（WeCom AIBot Bridge）──
+# 身份来源同飞书：心跳文件 pid（权威）+ argv 双面探针（心跳缺失/陈旧时的兜底）。
+# 注意：单机器人同一时刻只允许一个长连接（企微协议：新连接完成 aibot_subscribe
+# 会踢掉旧连接）。因此 stop 必须真正停干净再 start，否则新实例会把旧实例踢下线，
+# 表现为"启动成功但收不到消息"。
+_wecom_pids() {
+  local hb="$MIRROR_DIR/data/wecom_heartbeat.json"
+  local hb_pid="" hb_mtime now
+  if [[ -f "$hb" ]]; then
+    hb_mtime="$(stat -f %m "$hb" 2>/dev/null || stat -c %Y "$hb" 2>/dev/null || echo 0)"
+    now="$(date +%s)"
+    if (( now - hb_mtime <= 180 )); then
+      hb_pid="$("$VENV_PY" -c "
+import json
+try: print(json.load(open('$hb')).get('pid') or '')
+except Exception: pass" 2>/dev/null || true)"
+    fi
+  fi
+  {
+    [[ -n "$hb_pid" ]] && echo "$hb_pid"
+    # 双面 argv 探针：runtime.launch 形态（当前）+ llm_loop.wecom 形态（回滚兼容）
+    pgrep -f "^$VENV_PY -m llm_loop\.runtime\.launch wecom( |$)" 2>/dev/null || true
+    pgrep -f "^$VENV_PY -m llm_loop\.wecom( |$)" 2>/dev/null || true
+  } | awk 'NF && !seen[$1]++ {print $1}'
+}
+_wecom_stop() {
+  local pids pid survivors
+  pids="$(_wecom_pids || true)"
+  if [[ -z "$pids" ]]; then
+    _log "无企微桥进程（心跳 pid + argv 均未命中）"
+    return 0
+  fi
+  _log "停止企微桥 pid(s): $(echo "$pids" | tr '\n' ' ')..."
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null || true
+  done <<< "$pids"
+  for _ in $(seq 1 20); do
+    survivors=""
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] && _pid_alive "$pid" && survivors+="${pid} "
+    done <<< "$pids"
+    [[ -z "$survivors" ]] && break
+    sleep 0.5
+  done
+  if [[ -n "${survivors:-}" ]]; then
+    _log "10s 后仍存活，强制 kill: $survivors"
+    for pid in $survivors; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+    for _ in $(seq 1 30); do
+      survivors=""
+      for pid in $pids; do
+        _pid_alive "$pid" && survivors+="${pid} " || true
+      done
+      [[ -z "$survivors" ]] && break
+      sleep 0.1
+    done
+  fi
+  if [[ -n "${survivors:-}" ]]; then
+    _log "✗ 企微桥 PID 仍未退出: $survivors"
+    return 1
+  fi
+  _log "企微桥已停止"
+}
+
 # ── 专门 Learning Plane worker ──
 # 无网络监听；runtime manifest 的 pid + argv 是机械身份。Web/Feishu 只入队，
 # Reflection consumer 只能由这个独立进程持有。
@@ -960,6 +1053,47 @@ sys.exit(0 if d.get('pid') == $pid and d.get('state') == 'connected' else 1)
   fi
 }
 
+# 企微桥启动（对齐 _start_feishu）：
+# 走 runtime.launch（刷新 runtime_manifest.wecom.json + 心跳），PYTHONPATH 显式
+# 注入镜像 src（同 _start_web/_start_feishu 的协议 §3）。
+# 凭据不入脚本：企微桥自身从 .env 读 WECHAT_BOT_ID/WECHAT_BOT_SECRET。
+_start_wecom() {
+  _log "启动企微桥..."
+  _prep_dsh_env
+  unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
+  LFL_WORKSPACE_ROOT="$CODE_ROOT" LFL_DEFAULT_WORKSPACE_ROOT="$LFL_DEFAULT_WORKSPACE_ROOT" LFL_RUNTIME_ROOT="$RUNTIME_ROOT" PYTHONPATH="$CODE_ROOT/src" _spawn_detached data/wecom_bridge.log "$VENV_PY" -m llm_loop.runtime.launch wecom
+  local pid=$!
+  # 就绪判定：心跳文件（权威）—— pid 匹配 且 state ∈ {connected, authenticated}。
+  # 企微桥鉴权完成后状态由 connected 推进为 authenticated，两者都算就绪。
+  # WS 握手实测 15s~55s 波动，故轮询至多 90s、就绪即刻提前返回（同 _start_feishu 口径）。
+  local _dead=0
+  for _ in $(seq 1 90); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      _dead=1
+      break
+    fi
+    if [[ -f "$MIRROR_DIR/data/wecom_heartbeat.json" ]] && "$VENV_PY" -c "
+import json, sys
+try:
+    d = json.load(open('$MIRROR_DIR/data/wecom_heartbeat.json'))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if d.get('pid') == $pid and d.get('state') in ('connected','authenticated') else 1)
+" 2>/dev/null; then
+      _log "✅ 企微桥心跳就绪 (pid $pid)"
+      return 0
+    fi
+    sleep 1
+  done
+  if [[ "$_dead" == "1" ]]; then
+    _log "✗ 企微桥退出，日志:"
+    tail -8 data/wecom_bridge.log || true
+    return 1
+  fi
+  _log "⚠️ 企微桥进程存活(pid $pid)但心跳未见就绪状态，确认 WS 状态"
+  return 1
+}
+
 _start_learning() {
   _log "启动专门 Learning Plane worker..."
   _prep_dsh_env
@@ -1107,7 +1241,7 @@ _code_root_source_check || _root_source_abort LFL_RESTART_CODE_ROOT
 _runtime_root_source_check || _root_source_abort LFL_RESTART_RUNTIME_ROOT
 _validate_restart_roots || {
   case "$RESTART_ARG1" in
-    web|feishu|learning|all)
+    web|feishu|learning|wecom|all)
       mkdir -p "$MIRROR_DIR/data" 2>/dev/null || true
       _write_receipt "$RESTART_ARG1" 2 "dual_root_rejected"
       ;;
@@ -1117,7 +1251,7 @@ _validate_restart_roots || {
 
 if [[ "$RESTART_AUTHORITY" != "service_control" ]]; then
   case "$RESTART_ARG1" in
-    web|feishu|learning|all)
+    web|feishu|learning|wecom|all)
       _log "⚠️ [NON-AUTHORITATIVE] 直连重启为非权威应急通道；模型/自动化请走 service_control(action=restart|update)"
       ;;
   esac
@@ -1177,6 +1311,30 @@ case "${1:-web}" in
              fi
            fi
            _write_receipt feishu "$_rc" ""
+           exit "$_rc" ;;
+  # 企微桥：与 feishu 同构，但不做 knowledge_binding / knowledge_preflight
+  # （企微侧不消费知识库绑定），保留 service_control 绑定预检（受管管控要求）
+  # 与 runtime_toml schema 预检（目标代码自校验）。
+  # 注意：all 分支**不含** wecom —— 单机器人同一时刻只允许一个长连接，
+  # 批量重启 web/feishu 不应连带踢掉在服的企微长连接（会打断真实会话）。
+  wecom)   _service_control_preflight wecom || { _write_receipt wecom "1" "service_control_binding_failed"; exit 1; }
+           _acquire_restart_lock wecom
+           _restart_precheck wecom || { _write_receipt wecom "1" "active_run_precheck_failed"; exit 1; }
+           _runtime_toml_schema_preflight || { _write_receipt wecom "1" "runtime_toml_preflight_failed"; exit 1; }
+           _rc=0
+           if ! _wecom_stop; then
+             _rc=1
+             export LFL_RESTART_STAGE_FACT=stop_failed
+             _log "wecom 停止失败，跳过启动"
+           else
+             export LFL_RESTART_STAGE_FACT=wecom_stopped
+             if _start_wecom; then
+               export LFL_RESTART_STAGE_FACT=started
+             else
+               _rc=1
+             fi
+           fi
+           _write_receipt wecom "$_rc" ""
            exit "$_rc" ;;
   learning) _service_control_preflight learning || { _write_receipt learning "1" "service_control_binding_failed"; exit 1; }
            _knowledge_binding_preflight || { _write_receipt learning "1" "knowledge_preflight_failed"; exit 1; }
@@ -1243,5 +1401,5 @@ case "${1:-web}" in
             _write_receipt all "$_rc" "web_stopped=$_web_stopped feishu_stopped=$_feishu_stopped learning_stopped=$_learning_stopped"
            exit "$_rc" ;;
   status)  _status ;;
-  *)       echo "用法: $0 {web|feishu|learning|all|status}"; exit 1 ;;
+  *)       echo "用法: $0 {web|feishu|learning|wecom|all|status}"; exit 1 ;;
 esac

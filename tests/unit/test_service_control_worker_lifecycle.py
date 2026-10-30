@@ -219,7 +219,7 @@ class TestCliDispatch:
         payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
         assert payload["error"] == "NEEDS_TARGET"
         assert payload["basename"] == "repo"
-        assert payload["targets"] == ["web", "feishu", "learning", "all"]
+        assert payload["targets"] == ["web", "feishu", "wecom", "learning", "all"]
         assert "--target" in payload["example"]
         assert "未产生任何 publish/CAS 写入" in payload["detail"]
         # 零副作用：拒绝发生在 build_deployment/CAS 之前，worker 未 spawn 也未内联。
