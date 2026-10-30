@@ -69,7 +69,7 @@
 
 **背景事实**（2026-10-30 核实）：method 池 1569 张 candidate 卡中，仅 60 张有 `qualification.jsonl` 回执，且皆为 `evaluator=model` 自评、多数 `verdict=not_evaluated`，其中 51 张 `promotion=pass` —— **这些卡至今仍停在 candidate**。即：写回执的能力一直存在，断的是「回执 → lifecycle 流转」这一执行环节。
 
-> 修正记录（2026-10-30 晚）：初版误写「全部 usage 账本为空」。实测 usage 账本有 88 条 / 62 卡（applied 64 / adapted 11 / not_applicable 13），其中 54 张为 candidate，最新一条 2026-10-30 07:24——初版按「每卡目录内」口径查了不存在的位置，而账本是 store 级共享文件。真正断的两处：**0 条 rejected**（代码原生认可的处置依据之一从未有过原料）；**结算回执与 usage 账本是两套互不相通的写入**——rejected/applied 信号停在结算库，到不了生命周期。修订后的批量纪律（见下）据此重排通道优先级。
+> 修正记录（2026-10-30 晚，两次修正）：初版误写「全部 usage 账本为空」——实测 usage 账本为 store 级共享文件，当日实测 88 条/62 卡（54 张 candidate），初版按「每卡目录内」口径查了不存在的位置。二次修正：当日早版曾断言「结算回执与 usage 账本是两套互不相通的写入」——**亦误**：`settlement_submit` 的 kind=method 路径直调 `MethodStore.record_use`（`src/llm_loop/introspection/settlement.py:775`，自 `c72a615c`≈2026-10-16 起存在），结算回执**就是** usage 账本行；生产佐证：89 行中 53 行带 `run_id`/`attribution`（仅结算通道写入的字段）。真正缺的是：**0 条 rejected 提交**（applied 64 / adapted 11 / not_applicable 14 / rejected 0）——通道畅通，是流程层从未如实提交过 rejected。修订后的批量纪律（见下）据此重排通道优先级；rejected 缺料的抓手在收尾结算纪律，不在代码。
 
 **通道三段式**（`scripts/qualification/method_candidate_qualification.py`，repo-owned）：
 
@@ -206,5 +206,5 @@
 
 - 卡片永不物理删除：两池 `invalidate` 均可 `restore`（门槛见 R3）；experience/lesson 的 `archive` 可恢复；method 池无 archive，等义动作为 `retire`，可 `reopen`（门槛同 restore）。
 - 不回填存量卡模板（experience 三段式 / method 六段式），仅机会性补齐。
-- 不改运行时代码与工具 Schema；纯流程 / 文档 / 提醒层。**例外（2026-10-30 用户授权，见 GOAL-20261030-fc31abda）**：settlement→usage 桥接（结算 method 项自动补 usage 记录）经用户当轮明确授权 + 独立审查 + 测试后落地；其余运行时代码边界维持不变。
+- 不改运行时代码与工具 Schema；纯流程 / 文档 / 提醒层。**注记（2026-10-30，GOAL-20261030-fc31abda）**：曾授权动运行时代码实现 settlement→usage 桥接；调研证实桥接已存在（`settlement.py:775` 直调 `MethodStore.record_use`，`c72a615c`），本 Goal 实际落地物为账本级测试（`tests/unit/test_settlement_usage_bridge.py`）与文档修正，**无运行时代码变更**，本边界不变。
 - 不引入 wake 自动续跑；提醒一律通知型，产物留痕 + 班次承接。
