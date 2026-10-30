@@ -30,7 +30,10 @@ jobs:
           SHA: ${{ github.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          # 全部经 env 间接引用，不把 ${{ }} 直接插值进 run:（独立审查 2026-10-30 P2-4）
+          # 全部经 env 间接引用，不在 run: 脚本里写表达式插值记号——GitHub 的 workflow
+          # 解析器会校验文件内所有表达式记号出现处（含 run 块注释），空记号即
+          # Invalid workflow file（2026-10-30 05:19Z 起每次 push 0s 失败的实测根因）。
+          # （独立审查 2026-10-30 P2-4）
           ZERO=0000000000000000000000000000000000000000
           BASE_REF="refs/remotes/origin/${DEFAULT_BRANCH:-main}"
           if [ -n "${BEFORE:-}" ] && [ "${BEFORE}" != "${ZERO}" ] \
