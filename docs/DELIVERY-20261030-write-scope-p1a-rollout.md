@@ -165,8 +165,57 @@ gen 344（`4ae2d8f7d`）**仍是第三轮独立审查判 REVISE 的候选**（P0
 第三/四轮修复（`f979b9564` / `d94b6ce39`）**尚未上线**。本会话已就候选 `d94b6ce39` 发起 RULE-AI-28 独立审查：
 
 - `review_admission(action=start, kind=full_test)`：workdir=`.worktrees/p1a-gen345`（干净分支 worktree，分支 `ops/p1a-gen345-d94b6ce39`，HEAD=`d94b6ce39`，tree 干净）、command=`bash scripts/ci_gate.sh`（canonical 全量门禁）、child=`subagent_6752febab8cc`、candidate_sha256=`ae1aee7ee98eaa1dae47340807144c6e2d652a47bd1b8acc39ce39662348cb4a`；
-- 结论待回；**PASS 后**才按 T7 执行 publish → 重启 → live 复测（重启仍须避开 run-lock 竞态，见 §6 步骤 2–3）。
+- 结论（2026-10-30 22:1x 回执）：**REVISE（P0=0 / P1=1 / P2=3）** ⇒ 该候选**不予发布**；改以 main 顶端为基线，理由与残余见 §8.5。
 
 **并发写者会话 `cab051cc` 在本工作区仍有未提交改动**（`src/llm_loop/core/command_scope_guard.py`、`tests/test_command_scope_guard.py`、
 `docs/HANDOFF-20261030-write-scope-git-takeover.md`，含 git 读白名单翻转与 `env` 载体注入修复等后续轮次）。
 本会话**未**纳入本次候选、**未**代其提交、**未**触碰其文件；该部分属并发写者工作流，由其自行审查与提交后再单独 publish。
+
+### 8.5 gen 345 发布范围与依据（供 RULE-AI-28 审查与后续代对齐）
+
+**候选选择过程（事实链）**：
+
+1. **首选候选 `d94b6ce39`**（第三/四轮闸修复的末端）。独立审查回执：**REVISE，P0=0 / P1=1 / P2=3**（child `subagent_6752febab8cc`，候选 SHA256 `ae1aee7e…`，命令 `bash scripts/ci_gate.sh`，回执原文含 `VERDICT: REVISE`）。
+   - **P1-1**：该候选的 `.github/workflows/privacy-scan.yml` 注释重新引入字面量 `${{ }}`（仓库既有方法卡已实证该形态会致 workflow 0s 注册失败）⇒ 隐私/泄漏扫描闸在该分支失效；
+   - **P2-1**：相对远端基线 `2f31d85cf`，该候选是**旧血缘**——main 已在其后合入整类 `reject_reason` 提升、`frame_token` 候选投影、演进来源会话特性，以及本交付文档与知识记录；直接发布会把这些已合入成果一并回退；
+   - **P2-2**：该候选的 `.gitignore` 去掉 `/.tmp-*` 忽略规则 ⇒ 根层 `.tmp-*`（含本机绝对路径）的泄漏面重新打开，且因 P1-1 令扫描闸失效而叠加；
+   - **P2-3**：该候选把 base 已记录的「17 个 `.tmp-*.py` 已按用户指示删除」回退为「未删除」，与事实不符。
+   ⇒ **处置：不发布该候选**（审查未过；且其相对 main 的回退面大于收益）。
+2. **改以 main 顶端为基线**：`913f2945a` **已包含**第三/四轮闸修复（`f979b9564`、`d94b6ce39` 均为其祖先，`git merge-base --is-ancestor` 为真），并保留 base 侧已修项（token-free 的 privacy-scan 注释、`/.tmp-*` 忽略规则、更新的文档事实）。
+   发布范围＝**main 顶端全部内容 ＋ 本节交付回填**；**不含**并发写者会话在途未提交的第四/五轮 WIP（须由其自行提交后随下一代发布）。
+
+**本代发布的残余（如实声明，不得省略）**：
+
+- 本代包含第三/四轮闸修复（即针对 `4ae2d8f7d` 第三轮审查 P0=1 / P1=2 / P2=4 的修复），**不含**第四/五轮后续修复（git 读白名单翻转、`env` 载体注入判定等）——后者仍在并发写者会话的在途 WIP 中，未提交、未审查；
+- 因此本代**只能**声明「live 闸＝main 顶端判据」，**不得**声明「所有已知绕过向量均已闭合」；
+- §8.3 的 live 端到端实测属 **gen 344** 证据，对本代**不自动继承**；本代生效后须在 live 进程内重做一次越界写实测（重启须避开 run-lock 竞态，见 §6 步骤 2–3）。
+
+### 8.6 gen 345 的实际发布与生效协调（2026-10-30 22:19–22:3x）
+
+**实际发布主体**：并发写者会话 `cab051cc` 于 22:19 发布 desired **gen 345**：
+deployment_id `deploy-299fa89a2aff406b9fc57a7642ad4996`、git_head `913f2945a314060942e92f4606b5ee85c6fe3e6c`、
+code_root `.releases/913f2945a…` ⇒ **即 main 顶端**（含第三/四轮闸修复），与 §8.5 第 2 条的发布范围一致（不含并发写者在途 WIP）。
+
+**本会话对同基线候选的独立审查**：候选 `79ddb8522`（= `913f2945a` ＋ §8.5 交付回填，分支 `ops/p1a-gen345`，worktree `.worktrees/p1a-release`）经
+`review_admission(kind=full_test)`，命令 `bash scripts/ci_gate.sh`，child `subagent_521643b2ea40`，candidate SHA256 `2c23f79c2f75f4972c8f969414f055e62efd8c93fa66d5a4bfa75fec0c1dd213` ⇒ **VERDICT: PASS，P0=0 / P1=0 / P2=1**。
+该审查覆盖的差异集为文档类变更（含 §8.5 发布范围决策），代码部分与 gen 345 一致；P2-1 为新合入设计文档的状态行滞后（文档卫生项，不涉闸与安全）。
+
+**本会话的 publish 未执行（主动放弃，非失败）**：`service_control(action=publish, code_root=.worktrees/p1a-release, expected_generation=344)`
+被 CAS 拒绝，回执 `generation_conflict(current=345)` ⇒ gen 345 已由并发写者会话占用。
+本会话据此**不再另行发布**（再发布会生成 gen 346 并使其挂起的 web 重启动作因 generation 复核而失效，属净损失），故 gen 345 的**代码内容**＝本会话已审 PASS 的同基线内容。
+
+**三服务切到 gen 345 的重启请求现状**：
+
+| 服务 | 动作 | 发起方 | 状态 |
+|---|---|---|---|
+| web | `svc-c3b59780cbc04dfca33e968ac7b5a14c` | 并发写者会话 | `waiting_for_idle`（22:19:08 起） |
+| feishu | `svc-a7f9204f68654037b86b9eee2d98df06` | 本会话 | 已受理，两阶段等待 |
+| learning | `svc-7c341eeeb9c54e55b5af1addf6fdb96b` | 本会话 | 已受理，两阶段等待 |
+
+两阶段语义：先等 requester 会话结束（web/all），再等目标空闲；同机当时尚有 3 个活跃会话（`cab051cc`、`831d550a`、`25e48ad9`），
+故物理重启**尚未发生**，三服务 live 仍为 gen 344（`4ae2d8f7d`，web pid 7472 / feishu pid 31975 / learning pid 32366）。
+**受理 ≠ 完成**：终态须以 `service_control(action=status, action_id=…)` 的 `succeeded/failed` 为准。
+
+**gen 345 生效后仍须完成的动作（不得省略）**：在 live web 进程内**重做**一次受限子代理越界写 e2e 实测（§8.3 证据属 gen 344，不自动继承），
+并把实测回执与重启终态回填本节；在此之前**不得**对 gen 345 声称「闸已在 live 生效并经实测」。
+本会话已登记纯通知型提醒（不持有 run lock）唤醒后续会话完成该核验与回填。
