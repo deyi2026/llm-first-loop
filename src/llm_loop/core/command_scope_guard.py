@@ -291,7 +291,11 @@ CARRIER_SPECS: dict[str, _CarrierSpec] = {
     "busybox": _CarrierSpec(),
     # script：``script FILE cmd…`` —— FILE 是 typescript 写目标，cmd 是被执行的命令
     "script": _CarrierSpec(
-        value_options=frozenset({"-t", "--time", "-c", "--command", "-f", "--flush"}),
+        # 第十轮独立审查 P2-4：``-f/--flush`` 是**开关**（不是取值型）——旧表把它
+        # 列进 value_options ⇒ ``script -f out.txt cmd`` 会把 ``out.txt`` 当成
+        # ``-f`` 的值跳过 ⇒ typescript 写目标漏判 ⇒ 与 SCRIPT_OPTIONS 的
+        # ``("--flush", False)`` 自相矛盾。⇒ 对齐 SCRIPT_OPTIONS。
+        value_options=frozenset({"-t", "--time", "-c", "--command"}),
     ),
 }
 
@@ -821,7 +825,10 @@ def _sed_script_executes(script: str) -> bool:
         if position >= length or text[position] != "e":
             continue
         rest = text[position + 1 :]
-        if not rest or rest[0] in " \t":
+        # 第十轮独立审查 P1-2：独立 ``e`` 命令的**分隔符**形态（``e;`` / ``e}`` /
+        # ``e``+换行）此前只认 ``rest[0] in " \t"`` ⇒ ``e;`` 这类写法被漏掉 ⇒
+        # ``sed 'e;w /outside/x' in`` 被放行。⇒ 分隔符/结尾一律判为「执行」。
+        if not rest or rest[0] in " \t;}\n":
             return True
     return False
 
@@ -830,22 +837,57 @@ def _sed_script_executes(script: str) -> bool:
 _ED_WRITE_RE = re.compile(r"(?:^|\n)\s*w\s+(\S+)")
 # 第八轮 P1-4：ex 的 ``w`` 命令可带地址前缀（``1w FILE`` / ``1,2w FILE``）。
 # 第九轮 P1-3：ex/ed 的 ``W FILE``（**追加**写）同样是写命令 ⇒ 与 ``w`` 一并识别。
-_ED_WRITE_CMD_RE = re.compile(r"^[^\s]*\s*[wW]\s+(\S+)")
+# 第十轮 P1-1：``w! FILE``（强制写）与 ``w >> FILE``（追加写）也是真写法 ⇒ 一并识别
+# （``\s+`` 必须保留：``wq``（写并退出）是常用写法，不是「写文件 wq」）。
+_ED_WRITE_CMD_RE = re.compile(r"^[^\s]*\s*[wW]!?\s+(?:>>\s*)?(\S+)")
+# 第十轮 P1-1：``save FILE`` / ``saveas FILE``（另存为）同样是写命令。
+# 注意：多字母命令词与「地址前缀」在 ex 语法里天然歧义（``1,2save`` /
+# ``/re/save``）⇒ 只认**行首**或**数值地址前缀**后的命令词；其余形态不匹配 ⇒
+# 不会被误判成执行（上一版过宽的 ``^[^\s]*\s*e(\s+(\S.*))?$`` 会把 ``save …``
+# 当成 ``e`` 命令 ⇒ 把正常写文件误判成「执行」⇒ 过度拦截）。
+_ED_SAVE_CMD_RE = re.compile(r"^(?:[0-9,.$%*+-]+\s*)?save(?:as)?\s+(?:>>\s*)?(\S+)")
+# 第十轮 P1-1：``w !CMD`` / ``r !CMD`` / ``e !CMD`` 把内容**管道给 shell 执行**
+# ⇒ 载荷里的写目标不可静态定位 ⇒ 必须 fail-closed（旧实现把 ``!CMD`` 当成相对
+# 文件名 ⇒ 落在 scope 内 ⇒ 放行）。
+_ED_PIPE_CMD_RE = re.compile(r"^[^\s]*\s*[wre]\s*!(\S.*)$")
+# 第十轮 P1-1：ex 的 ``e CMD``（不带 ``!``）与裸 ``e``（重执行上一条）同样是执行。
+_ED_EXEC_CMD_RE = re.compile(r"^(?:[0-9,.$%*+-]+\s*)?e(\s+(\S.*))?$")
 
 
-def _ed_script_write_targets(script: str) -> list[str]:
-    """ed/ex 内联脚本里 ``w FILE`` 命令写出的文件列表（没有则空表）。
+def _ed_script_write_targets(script: str) -> tuple[list[str], bool]:
+    """ed/ex 内联脚本的写目标 + 是否含**执行**（管道 / ``e``）。
 
     第八轮 P1-4：ex 支持**竖线链**（``%s/a/b/|w /outside/x|q``），旧实现只按
     ``^``/换行 锚定 ``w`` ⇒ 链中的 ``w`` 漏检 ⇒ 越界写被放行 ⇒ 改为按 ``|`` 与
     换行切分后逐条判定（两者都是 ex 的命令分隔符）。
+
+    第十轮独立审查 P1-1：旧实现只认 ``w FILE`` 一种形态 ⇒ 漏掉四种真写法：
+    - ``w! FILE``（强制写，ex/ed 合法语法）
+    - ``w >> FILE``（追加写）
+    - ``save FILE`` / ``saveas FILE``（另存为）
+    - ``w !CMD`` / ``r !CMD`` / ``e !CMD``（管道给 shell ⇒ **载荷写目标不可
+      静态定位** ⇒ 必须 fail-closed）
+
+    ⇒ 全部补齐，返回 ``(写目标, 是否执行)``。
     """
     targets: list[str] = []
+    executes = False
     for chunk in re.split(r"[|\n]", str(script)):
-        match = _ED_WRITE_CMD_RE.match(chunk.strip())
+        line = chunk.strip()
+        if not line:
+            continue
+        if _ED_PIPE_CMD_RE.match(line) or _ED_EXEC_CMD_RE.match(line):
+            # 管道 / 执行 ⇒ 载荷里的写目标不可静态定位 ⇒ fail-closed
+            executes = True
+            continue
+        match = _ED_WRITE_CMD_RE.match(line)
         if match:
             targets.append(match.group(1))
-    return targets
+            continue
+        save = _ED_SAVE_CMD_RE.match(line)
+        if save:
+            targets.append(save.group(1))
+    return targets, executes
 
 
 def _sed_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
@@ -861,8 +903,8 @@ def _sed_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
 
     判定：
     - 就地编辑（``-i`` / ``--in-place``）⇒ 写目标是**输入文件**（脚本不是被编辑文件）；
-    - 脚本来�� ``-e`` / ``--expression`` ⇒ 扫脚本里的 ``w FILE``；
-    - 脚本来��文件（``-f`` / ``--file``）⇒ 写目标不可静态定位 ⇒ fail-closed；
+    - 脚本来自 ``-e`` / ``--expression`` ⇒ 扫脚本里的 ``w FILE``；
+    - 脚本来自文件（``-f`` / ``--file``）⇒ 写目标不可静态定位 ⇒ fail-closed；
     - 未识别的选项 ⇒ 脚本来源不可静态定位 ⇒ fail-closed。
     """
     scan = scan_options(SED_OPTIONS, args)
@@ -1132,17 +1174,31 @@ _COMPILER_STAGE_FLAGS = ("-c", "-E", "-S", "-fsyntax-only")
 _COMPILER_WRITING_F_PREFIXES = (
     "-fprofile", "-ftest-coverage", "-fopt-info", "-flto", "-frepo", "-fplugin",
 )
+# 良性 ``-f*`` 前缀白名单（第十轮 P1-1：``-f`` 整族放行会漏 ``-fdump-tree-all``
+# / ``-fcallgraph-info`` 等写盘旗标——改为白名单制，名单外 ``-f*`` 一律 fail-closed）。
+_COMPILER_BENIGN_F_PREFIXES = (
+    "fsyntax-only", "ffast-math", "fno-", "fPIC", "fpic", "fPIE", "fpie",
+    "fcommon", "fstack-protector", "fvisibility", "fcolor-diagnostics",
+    "fdiagnostics-", "fmessage-length", "fwrapv", "freestanding", "fhosted",
+    "fsigned-char", "funsigned-char", "fshort-enums", "fstrict-aliasing",
+    "funroll-loops", "finline", "fmerge-constants", "fbuiltin", "fprintf",
+    "fexceptions", "frtti", "fpermissive", "finput-charset", "fexec-charset",
+)
+# 驱动器透传前缀（第十轮 P1-1）：``-Wl,-o,FILE`` / ``-Wa,-o,FILE`` /
+# ``-Wp,FILE=…`` 把目标传给链接器/汇编器/预处理器——必须按段解析。
+_COMPILER_PASSTHROUGH_PREFIXES = ("-Wl,", "-Wa,", "-Wp,", "-Wl=", "-Wa=", "-Wp=")
+# 命中即 implicit 的执行/改写面旗标（第十轮 P1-1：``-B``/``-Xlinker``/``-Xclang``
+# / ``-wrapper`` 改执行路径或透传任意参数——曾整族躺在良性前缀里放行）。
+_COMPILER_EXEC_SURFACE_FLAGS = ("-B", "-Xlinker", "-Xclang", "-wrapper", "-wrapper=")
 _COMPILER_BENIGN_PREFIXES = (
-    "-I", "-L", "-l", "-D", "-U", "-W", "-f", "-m", "-O", "-g", "-s", "-v", "-w",
-    "-std", "-pedantic", "-pipe", "-pthread", "-A", "-B", "-shared", "-static",
-    "-x", "-Xlinker", "-Xclang", "-idirafter", "-imacros", "-include", "-isystem",
-    "-iquote", "-undef", "-ansi", "-traditional",
+    "-I", "-L", "-l", "-D", "-U", "-m", "-O", "-g", "-s", "-v",
+    "-pedantic", "-pipe", "-pthread", "-A", "-shared", "-static",
+    "-idirafter", "-imacros", "-include", "-isystem", "-iquote", "-undef",
+    "-ansi", "-traditional", "-std",
     # 第九轮 P1-1：长形态的只读/无害选项——``--version``/``--help`` 只打印信息，
     # ``--target``/``--sysroot``/``--gcc-toolchain``/``--param`` 只改查找路径。
-    # 缺了它们 ⇒ ``gcc --version`` 被判成「无法归类的选项」⇒ 误拦（第九轮审查
-    # 的 4 条测试失败之一）。
     "--version", "--help", "--verbose", "--target", "--sysroot",
-    "--gcc-toolchain", "--param",
+    "--gcc-toolchain", "--param", "-x",
 )
 
 
@@ -1163,8 +1219,14 @@ def _compiler_token_value(raw: list[str], flag: str) -> str | None:
 
 
 def _compiler_has_unmodeled_flag(raw: list[str]) -> bool:
-    """是否存在无法归类的选项 token（可能自带写面）⇒ fail-closed."""
+    """是否存在无法归类的选项 token（可能自带写面）⇒ fail-closed.
+
+    第十轮 P1-1：``-W``/``-w``/``-f``/``-B``/``-Xlinker``/``-Xclang``/``-wrapper``
+    不再整族放行——透传形态（``-Wl,`` 族）交 `_compiler_passthrough_targets`，
+    ``-f*`` 走白名单，执行面旗标交 `_compiler_exec_surface`。
+    """
     known_values = _COMPILER_VALUE_FLAGS + ("-emit", "--crate-type", "--edition")
+    benign_f = tuple("-f" + prefix for prefix in _COMPILER_BENIGN_F_PREFIXES)
     for token in raw:
         if not token.startswith("-") or token == "-":
             continue
@@ -1172,6 +1234,8 @@ def _compiler_has_unmodeled_flag(raw: list[str]) -> bool:
             continue
         if token.startswith(_COMPILER_WRITING_F_PREFIXES):
             continue  # 写面标志，另行按 implicit 处理
+        if token.startswith(_COMPILER_PASSTHROUGH_PREFIXES):
+            continue  # 由 _compiler_passthrough_targets 按段解析
         if any(
             token == flag
             or token.startswith(flag + "=")
@@ -1179,10 +1243,49 @@ def _compiler_has_unmodeled_flag(raw: list[str]) -> bool:
             for flag in known_values
         ):
             continue
+        if token.startswith(("-W", "-w")) and not token.startswith(_COMPILER_EXEC_SURFACE_FLAGS):
+            continue  # 诊断/静默族——无写面（透传形态已先行分流）
+        if token.startswith(benign_f):
+            continue
         if token.startswith(_COMPILER_BENIGN_PREFIXES):
             continue
         return True
     return False
+
+
+def _compiler_exec_surface(raw: list[str]) -> bool:
+    """执行/改写面旗标出现（``-B``/``-Xlinker``/``-Xclang``/``-wrapper``）。"""
+    for token in raw:
+        for flag in ("-B", "-Xlinker", "-Xclang"):
+            if token == flag or (flag == "-B" and token.startswith("-B")):
+                return True
+        if token == "-wrapper" or token.startswith("-wrapper="):
+            return True
+    return False
+
+
+def _compiler_passthrough_targets(token: str) -> tuple[list[str], bool]:
+    """``-Wl,-o,FILE`` / ``-Wa,-o,FILE`` / ``-Wp,FILE=…`` 透传段解析.
+
+    返回 (静态写目标, 是否含不可静态定位段)。段内 ``-o``/``--output`` 的**下一段**
+    是输出文件；其余任何段（``--as-needed``/``-rpath`` 等）都是驱动器未知语义
+    ⇒ fail-closed（本轮从宽到收紧紧：宁可误拒合法链接旗标，不放行透传写面）。
+    """
+    body = token.split(",", 1)[1] if "," in token else token.split("=", 1)[1]
+    segments = [seg for seg in body.replace("=", ",").split(",") if seg]
+    targets: list[str] = []
+    implicit = False
+    for index, segment in enumerate(segments):
+        if segment in ("-o", "--output"):
+            if index + 1 < len(segments):
+                targets.append(segments[index + 1])
+            else:
+                implicit = True
+        elif index > 0 and segments[index - 1] in ("-o", "--output"):
+            continue  # 已作为输出值消费
+        else:
+            implicit = True
+    return (targets, implicit)
 
 
 def _compiler_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
@@ -1202,11 +1305,17 @@ def _compiler_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
         if value:
             targets.append(value)
     implicit = bool(targets)
+    for token in raw:
+        if token.startswith(_COMPILER_PASSTHROUGH_PREFIXES):
+            passthrough, passthrough_implicit = _compiler_passthrough_targets(token)
+            targets.extend(passthrough)
+            implicit = implicit or passthrough_implicit
     if (
         any(token in _COMPILER_DEP_BOOL_FLAGS for token in raw)
         or any(token.startswith(_COMPILER_WRITING_F_PREFIXES) for token in raw)
         or _compiler_token_value(raw, "--emit") is not None
         or _compiler_has_unmodeled_flag(raw)
+        or _compiler_exec_surface(raw)
     ):
         implicit = True
     if any(token in _COMPILER_STAGE_FLAGS for token in raw):
@@ -1302,17 +1411,17 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
                 continue
             index += 1
         script_targets: list[str] = []
+        script_executes = False
         for script in scripts:
-            script_targets.extend(_ed_script_write_targets(script))
+            targets, executes = _ed_script_write_targets(script)
+            script_targets.extend(targets)
+            script_executes = script_executes or executes
         edited = [a for a in _non_flag_args(args) if a not in scripts]
-        if script_targets:
-            return (script_targets + edited, False)
-        if not scripts:
-            # 脚本来自 stdin ⇒ 写目标不可静态定位（fail-closed）。
-            # 被编辑文件是**已知路径**，调用方先按已知目标判定（给精确理由），
-            # 目标合规后再由 implicit 兜底拒绝。
-            return (edited, True)
-        return (edited, False)
+        # 第十轮独立审查 P1-1：脚本含**执行**（``w !CMD`` / ``r !CMD`` / ``e CMD``）
+        # ⇒ 载荷里的写目标不可静态定位 ⇒ fail-closed（此前只判写文件目标 ⇒
+        # ``ed -c 'w !rm -rf /outside/x' f`` 被放行）。
+        implicit = script_executes or not scripts
+        return (script_targets + edited, implicit)
     if name == "dd":
         outputs = [a.split("=", 1)[1] for a in args if a.startswith("of=")]
         return (outputs, not outputs)

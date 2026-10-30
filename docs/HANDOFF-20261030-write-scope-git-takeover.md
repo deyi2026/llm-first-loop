@@ -558,8 +558,7 @@ ls git`（fail-closed 代价，登记）；P2-4 `git remote -v` 的动作清单�
 `GIT_CONFIG_PARAMETERS` + script 载荷串引号不闭合）；9 条读形态
 （`sort -o out.txt` / `gzip` / `unzip -d` / `sed -n` / `patch -o` / `git reflog` /
 `git symbolic-ref HEAD` / `git remote -v` / `gcc --version`）⇒ 按预期放行。
-判定层 **277 passed**（`test_command_scope_guard.py` 265 + `test_command_options.py` 12
-12 + 棘轮门）；ruff 诊断 **0**；棘轮门 `_scan_git` 116 行 / `_write_targets` 111 行
+判定层 **277 passed**（`test_command_scope_guard.py` 265 + `test_command_options.py` 12 + 棘轮门）；ruff 诊断 **0**；棘轮门 `_scan_git` 116 行 / `_write_targets` 111 行
 （均 <120 未登记门槛）。
 
 **残余（fail-closed 方向的已知代价，如实登记）**：族表未收录的冷门选项会被拦；
@@ -575,3 +574,56 @@ ls git`（fail-closed 代价，登记）；P2-4 `git remote -v` 的动作清单�
 本会话只在 `main` 上继续加固，**不重复实现其已覆盖的项**（已在合并时按语义取
 并集）。本轮 P1-1 的「附着形态」族模型化即两线的**交集**（两方各自实现）⇒
 合并时以语义并集为准，不做文本级取舍。
+
+### 10.14 第十轮独立审查（2026-10-31 01:28–01:41）：REVISE（P0=0 / P1=2 / P2=4）→ 已逐条修
+
+**审查物料**：本会话 round9 落盘态（`b143cf394`，含 9799add80 的第九轮修 + 基线重
+生成）；审查子代理（只读，GLM-5.3）实测复现 **P1=2 / P2=4**，逐条复测确认成立。
+
+**P1（2 条，均已修）**
+1. **P1-1 ed/ex 内联脚本的写/执行形态不全**：旧实现只认 `w FILE` 一种形态 ⇒
+   - `w! FILE`（强制写，ex/ed 合法语法）漏检；
+   - `w >> FILE`（追加写）漏检；
+   - `save FILE` / `saveas FILE`（另存为）漏检；
+   - `w !CMD` / `r !CMD` / `e !CMD`（**管道给 shell 执行**）此前把 `!CMD` 当成
+     相对文件名 ⇒ 落在 scope 内 ⇒ **放行**（`ed -c 'w !rm -rf /outside/x' f`）。
+   ⇒ 新增 `_ED_SAVE_CMD_RE` / `_ED_PIPE_CMD_RE` / `_ED_EXEC_CMD_RE` 三张表；
+   `_ed_script_write_targets()` 改为返回 `(写目标, 是否执行)`；**执行 ⇒
+   fail-closed**（载荷里的写目标不可静态定位）。**多字母命令词与 ex 地址前缀的
+   歧义**（`1,2save` / `/re/save`）按「只认行首或数值地址前缀」处理 ⇒ 避免把
+   `save …` 误判成 `e` 命令（上一版过宽的正则会造成**过度拦截**，已在同轮修掉）。
+2. **P1-2 sed 独立 `e` 命令的分隔符形态**：只认 `rest[0] in " \t"` ⇒ `e;` /
+   `e}` / `e`+换行 漏检 ⇒ `sed 'e;w /outside/x' in` 被放行。⇒ 分隔符/结尾一律
+   判为「执行」。
+
+**P2（4 条，均已处置）**
+- **P2-1 reports/ 归档政策**：核对结论——仓库内**不存在** `runtime_output_excludes`
+  这一配置项（`grep -rn` 覆盖 `src/` `docs/` `reports/` 与根级文档，均无命中）
+  ⇒ 它属宿主侧口径，仓库侧不据此改版本控制策略 ⇒ **决策：reports/ 维持纳入
+  版本控制**（审查回执是可审计证据），该项由「未确认」结转为「已确认」。
+- **P2-2 文档漂移三处**（均已修）：① `docs/design/DESIGN-20261030-evolution-
+  origin-session-link-v1.md` 状态行仍写「待评审（未实施）」⇒ 已改为「已实施并
+  经独立审查 PASS（P0=0/P1=0/P2=7；回执 `reports/review-20261030-evolution-
+  origin-session-link.md`，被审提交 20e6db475）」；② 本文件 §10.13 的计数行把
+  `12` 写了两遍；③ DESIGN §16.16 把 short_spec 单测数了两遍。
+- **P2-3 源码注释编码损坏**：`command_scope_guard.py` 两条 docstring 的「来自」
+  被写成替换字符 ⇒ 已修复（全文替换字符计数 4 → 0）。
+- **P2-4 `CARRIER_SPECS["script"]` 把 `-f/--flush` 列成取值型** ⇒ 与
+  `SCRIPT_OPTIONS` 的 `("--flush", False)` 自相矛盾 ⇒ `script -f out.txt cmd`
+  会把 `out.txt` 当成 `-f` 的值跳过 ⇒ typescript 写目标漏判 ⇒ 已对齐
+  `SCRIPT_OPTIONS`（`-f/--flush` 是开关）。
+
+**应拦输入实测**（RULE-AI-35）：本轮 9 条应拦向量在 `paths=("**",)` 下**全部被拦
+且拒因匹配**（ed/ex 的 `w!` / `w >>` / `save` / `saveas` 四条为
+`write_target_outside_scope`；`w !CMD` / `r !CMD` / `e CMD` 与 sed `e;` / `e;w` 四条
+为 `implicit_write_target`）；3 条读形态（`ed -c 'w out.txt' f` / `ex -c 'wq' f` /
+`sed 'p' in`）⇒ 按预期放行。判定层 **289 passed**（`test_command_scope_guard.py`
+277 + `test_command_options.py` 12；含棘轮门合计 329 passed）；ruff 诊断 **0**；
+棘轮门 `_scan_git` 116 行 / `_write_targets` 111 行（均 <120 未登记门槛）。
+
+**残余**：同 §10.13（族表未收录的冷门选项被拦 / `tar a.tar b` 被拦 / `env
+GIT_CONFIG_COUNT=1 ls git` 仍在）；新增一条已知取舍：`ex -c '1,2save FILE'` 这类
+**带非数值地址前缀**的多字母命令词不识别 ⇒ 不产生写目标（记为已知缺口，未
+修：ex 的模式地址与命令词在语法上不可区分，误判的代价是**过度拦截**，与
+fail-closed 方向相反，故按「宁可漏判写目标也不误判执行」取舍 ⇒ 该形态的越界
+写仍需靠 scope 之外的其它约束兜底）。

@@ -882,3 +882,49 @@ def test_r9_review_fixes_do_not_over_block_read_forms(command: str) -> None:
     """第九轮修复不得误伤读形态（含 short_spec 修复带回的 4 条既有读形态）。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第十轮独立审查（REVISE，P0=0/P1=2/P2=4）逐条修的回归锁 ─────────────────
+#
+# P1-1 ed/ex 内联脚本的写/执行形态不全：只认 ``w FILE`` ⇒ 漏 ``w! FILE`` /
+#      ``w >> FILE`` / ``save FILE`` / ``saveas FILE``；且把 ``w !CMD``（管道给
+#      shell）当成相对文件名 ⇒ 落在 scope 内 ⇒ 放行。
+# P1-2 sed 独立 ``e`` 命令的**分隔符**形态（``e;`` / ``e}`` / ``e``+换行）漏检。
+# P2-4 CARRIER_SPECS["script"] 把 ``-f/--flush`` 列成取值型 ⇒ 与 SCRIPT_OPTIONS
+#      自相矛盾 ⇒ ``script -f out.txt cmd`` 的 typescript 目标被吞。
+
+R10_BLOCKED_CASES = [
+    ("ex -c 'w! /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex -c 'w >> /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex -c 'save /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ex -c 'saveas /outside/x' src/x.py", "write_target_outside_scope"),
+    ("ed -c 'w !rm -rf /outside/x' f", "implicit_write_target"),
+    ("ex -c 'r !rm -rf /outside/x' f", "implicit_write_target"),
+    ("ex -c 'e rm -rf /outside/x' f", "implicit_write_target"),
+    ("sed 'e;' in", "implicit_write_target"),
+    ("sed 'e;w /outside/x' in", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R10_BLOCKED_CASES)
+def test_r10_review_bypasses_are_blocked_under_full_domain_scope(
+    command: str, expected_reason: str
+) -> None:
+    """第十轮审查复现向量：全域 scope 下必须被拦（拒因须正确）。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R10_ALLOWED_CASES = [
+    "ed -c 'w out.txt' f",
+    "ex -c 'wq' f",
+    "sed 'p' in",
+]
+
+
+@pytest.mark.parametrize("command", R10_ALLOWED_CASES)
+def test_r10_review_fixes_do_not_over_block_read_forms(command: str) -> None:
+    """第十轮修复不得误伤：``w`` 写相对文件 / ``wq``（写并退出）/ 普通 sed。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)

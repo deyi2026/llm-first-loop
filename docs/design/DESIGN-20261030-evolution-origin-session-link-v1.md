@@ -2,7 +2,7 @@
 
 - 文档类型：design（含需求审查）
 - 日期：2026-10-30
-- 状态：待评审（未实施）
+- 状态：已实施并经独立审查 **PASS**（P0=0 / P1=0 / P2=7；回执 `reports/review-20261030-evolution-origin-session-link.md`，被审提交 20e6db475）
 - 关联规则：RULE-AI-01（事实与完成诚实）、RULE-AI-23（授权边界）、RULE-AI-24（防退化）
 
 ## 0. 结论摘要
