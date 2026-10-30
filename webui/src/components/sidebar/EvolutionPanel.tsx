@@ -4,7 +4,10 @@
 // 交互：分类 Tab / 详情懒加载 / 二次确认 / 拒绝理由必填 / 批量 / 409 冲突提示 / 涉边界禁用批量
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { switchWorkspace } from "../../core/api";
 import { writeClipboardText } from "../../core/clipboard";
+import { prefillComposer } from "../../core/conversation";
+import { sessionStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
 
 interface EvoItem {
@@ -19,6 +22,27 @@ interface EvoItem {
   reviewed_at?: string | null;
   executed_at?: string | null;
   verified_at?: string | null;
+  session_id?: string;
+}
+
+interface SessionOrigin {
+  sessionId: string;
+  evoIds: string[];
+}
+
+interface ReviewReceipt {
+  text: string;
+  hint: string;
+  origins: SessionOrigin[];
+}
+
+interface OriginLocation {
+  loading: boolean;
+  available?: boolean;
+  current?: boolean;
+  workspaceId?: string;
+  workspacePath?: string;
+  reason?: string;
 }
 
 interface EvoDetail extends EvoItem {
@@ -162,7 +186,122 @@ export function EvolutionPanel() {
   };
 
   // 人工审批回执（EVO-20260918-d1182270）: AI 会话无推送 → 生成可复制回执，避免"批了但没人知道"
-  const [reviewReceipt, setReviewReceipt] = useState<{ text: string; hint: string } | null>(null);
+  // 来源会话（DESIGN-20261030-v1）: 回执区可一键打开提交该建议的原会话并预填回执
+  const [reviewReceipt, setReviewReceipt] = useState<ReviewReceipt | null>(null);
+  const [originLocations, setOriginLocations] = useState<Record<string, OriginLocation>>({});
+  const [originNote, setOriginNote] = useState("");
+  const prefetchedOrigins = useRef<Set<string>>(new Set());
+
+  const fetchLocator = async (sid: string): Promise<OriginLocation> => {
+    setOriginLocations((prev) => ({ ...prev, [sid]: { ...prev[sid], loading: true } }));
+    try {
+      const r = await fetch(`/api/v1/evolution/session-locator?session_id=${encodeURIComponent(sid)}`);
+      const d = await r.json().catch(() => ({}));
+      let res: OriginLocation;
+      if (r.status === 400) {
+        res = { loading: false, available: false, reason: "invalid_id" };
+      } else if (r.ok && d.available) {
+        res = {
+          loading: false,
+          available: true,
+          current: Boolean(d.current),
+          workspaceId: String(d.workspace_id || ""),
+          workspacePath: String(d.workspace_path || ""),
+        };
+      } else if (r.ok) {
+        res = { loading: false, available: false, reason: String(d.reason || "not_found") };
+      } else {
+        res = { loading: false, available: false, reason: "locator_failed" };
+      }
+      setOriginLocations((prev) => ({ ...prev, [sid]: res }));
+      return res;
+    } catch {
+      const res: OriginLocation = { loading: false, available: false, reason: "locator_failed" };
+      setOriginLocations((prev) => ({ ...prev, [sid]: res }));
+      return res;
+    }
+  };
+
+  const showReceipt = (receipt: ReviewReceipt) => {
+    prefetchedOrigins.current = new Set();
+    setOriginLocations({});
+    setOriginNote("");
+    setReviewReceipt(receipt);
+  };
+
+  useEffect(() => {
+    if (!reviewReceipt) return;
+    reviewReceipt.origins.slice(0, 3).forEach((o) => {
+      if (prefetchedOrigins.current.has(o.sessionId)) return;
+      prefetchedOrigins.current.add(o.sessionId);
+      void fetchLocator(o.sessionId);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewReceipt]);
+
+  const originReasonText = (reason?: string): string => {
+    switch (reason) {
+      case "identity_only":
+        return "属于身份会话，web 不可打开";
+      case "locator_failed":
+        return "定位失败，请稍后重试";
+      case "invalid_id":
+        return "来源会话标识无效（旧记录）";
+      default:
+        return "来源会话已被删除";
+    }
+  };
+
+  const originDisabled = (loc?: OriginLocation): boolean =>
+    Boolean(loc?.loading || (loc?.available === false && loc.reason !== "locator_failed"));
+
+  const originLabel = (sid: string): string => {
+    const loc = originLocations[sid];
+    if (loc?.loading) return "定位中…";
+    if (loc?.available && loc.current === false && loc.workspacePath) {
+      return `打开来源会话（将切换到 ${loc.workspacePath}）`;
+    }
+    return "打开来源会话并粘贴";
+  };
+
+  const openOriginSession = async (sid: string, text: string) => {
+    setOriginNote("");
+    let loc = originLocations[sid];
+    if (!loc || loc.loading || loc.available === undefined || loc.reason === "locator_failed") {
+      loc = await fetchLocator(sid);
+    }
+    if (!loc.available) {
+      setOriginNote(originReasonText(loc.reason));
+      return;
+    }
+    try {
+      if (!loc.current) {
+        setOriginNote("正在切换工作区…");
+        const sw = await switchWorkspace(loc.workspaceId || "");
+        if (!sw.ok) {
+          setOriginNote(
+            sw.status === 409
+              ? "当前会话运行中，暂不能切换工作区"
+              : sw.status === 403
+                ? "目标工作区不在允许根内，无法切换"
+                : "工作区切换失败"
+          );
+          return;
+        }
+      }
+      let hadDraft = false;
+      try {
+        hadDraft = Boolean(localStorage.getItem(`lfl-draft-${sid}`));
+      } catch {
+        hadDraft = false;
+      }
+      sessionStore.setCurrentSession(sid);
+      prefillComposer(text);
+      setOriginNote(hadDraft ? "该会话已有草稿，回执已追加在末尾" : "回执已填入输入框");
+    } catch {
+      setOriginNote("切换工作区或打开会话失败，请稍后重试");
+    }
+  };
 
   // A successful review inserts a potentially long status and copyable receipt.
   // Keep the result in the list scrollport and expose it immediately even if
@@ -172,6 +311,16 @@ export function EvolutionPanel() {
       bodyRef.current.scrollTop = 0;
     }
   }, [reviewReceipt]);
+
+  const buildOrigins = (pairs: { evoId: string; sessionId?: string }[]): SessionOrigin[] => {
+    const map = new Map<string, string[]>();
+    for (const p of pairs) {
+      const sid = String(p.sessionId || "").trim();
+      if (!sid) continue;
+      map.set(sid, [...(map.get(sid) ?? []), p.evoId]);
+    }
+    return Array.from(map.entries()).map(([sessionId, evoIds]) => ({ sessionId, evoIds }));
+  };
 
   const buildReceipt = (ids: string[], decision: string, reason: string, newStatus?: string) => {
     const time = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -214,9 +363,10 @@ export function EvolutionPanel() {
         setActionMsg(message);
         setConfirmMsg(message);
         if (r.ok) {
-          setReviewReceipt({
+          showReceipt({
             text: buildReceipt([id], decision, reason, d.new_status ? String(d.new_status) : undefined),
             hint: "审批已生效。AI 会话不会自动收到推送，请复制回执发给当前 AI 会话：",
+            origins: buildOrigins([{ evoId: id, sessionId: d.session_id ? String(d.session_id) : "" }]),
           });
         }
         if (r.status === 409 || r.ok) load();
@@ -251,9 +401,18 @@ export function EvolutionPanel() {
         const fail = d.fail_count ?? 0;
         setActionMsg(`批量完成：成功 ${ok} / 失败 ${fail}`);
         if (ok > 0) {
-          setReviewReceipt({
+          const rows = Array.isArray(d.results) ? d.results : [];
+          showReceipt({
             text: buildReceipt(Array.from(selected), "accepted", ""),
             hint: `批量批准已生效（成功 ${ok} 条）。AI 会话不会自动收到推送，请复制回执发给当前 AI 会话：`,
+            origins: buildOrigins(
+              rows
+                .filter((row: { ok?: boolean }) => row.ok)
+                .map((row: { id?: string; session_id?: string }) => ({
+                  evoId: String(row.id || ""),
+                  sessionId: String(row.session_id || ""),
+                }))
+            ),
           });
         }
         setSelected(new Set());
@@ -363,6 +522,55 @@ export function EvolutionPanel() {
             >
               复制回执
             </button>
+            <div style={{ marginTop: 8, fontSize: 12 }} data-testid="evo-origin-block">
+              {reviewReceipt.origins.length === 0 ? (
+                <span data-testid="evo-origin-none" style={{ color: "#888" }}>
+                  来源会话未记录（旧记录）
+                </span>
+              ) : (
+                <>
+                  {reviewReceipt.origins.slice(0, 3).map((o) => {
+                    const loc = originLocations[o.sessionId];
+                    return (
+                      <div key={o.sessionId} style={{ marginTop: 4 }}>
+                        <span
+                          data-testid="evo-origin-sid"
+                          style={{ userSelect: "text", wordBreak: "break-all", fontFamily: "ui-monospace, monospace" }}
+                        >
+                          来源会话：{o.sessionId}
+                        </span>
+                        {o.evoIds.length > 1 && <span style={{ marginLeft: 6, color: "#888" }}>（{o.evoIds.length} 条建议）</span>}
+                        <div style={{ marginTop: 4 }}>
+                          <button
+                            type="button"
+                            className="v2-evo-btn ghost"
+                            data-testid="evo-open-origin-session"
+                            disabled={originDisabled(loc)}
+                            title={loc?.available === false ? originReasonText(loc.reason) : "打开来源会话并粘贴回执"}
+                            onClick={() => void openOriginSession(o.sessionId, reviewReceipt.text)}
+                          >
+                            {originLabel(o.sessionId)}
+                          </button>
+                          {loc?.available === false && (
+                            <span data-testid="evo-origin-reason" style={{ marginLeft: 6, color: "#888" }}>
+                              {originReasonText(loc.reason)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {reviewReceipt.origins.length > 3 && (
+                    <div style={{ marginTop: 4, color: "#888" }}>等 {reviewReceipt.origins.length - 3} 个</div>
+                  )}
+                  {originNote && (
+                    <div data-testid="evo-origin-note" role="status" style={{ marginTop: 4 }}>
+                      {originNote}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
 

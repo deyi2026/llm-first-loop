@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -3025,6 +3026,7 @@ def evolution_list(request: Request, limit: int = 30, status: str = "") -> Respo
                     "status": d.get("status", ""),
                     "priority": d.get("priority", ""),
                     "requires_human": bool(d.get("requires_human")),
+                    "session_id": d.get("session_id", ""),  # 窄上下文版：建议来源会话投影
                     "content": content[:120],  # 摘要；全文走 detail 端点
                     "impact_hint": impact_hint,
                     "rejected_reason": d.get("rejected_reason", ""),
@@ -3065,6 +3067,7 @@ def evolution_detail(request: Request, id: str = "") -> Response:
                     "status": d.get("status", ""),
                     "priority": d.get("priority", ""),
                     "requires_human": bool(d.get("requires_human")),
+                    "session_id": d.get("session_id", ""),  # 窄上下文版：建议来源会话投影
                     "scope": d.get("scope", "global"),
                     "content": d.get("content", ""),
                     "evidence": d.get("evidence", ""),
@@ -3089,6 +3092,7 @@ def _log_web_review(
     data_dir: str | Path,
     note: str = "",
     reason: str = "",
+    suggestion_session_id: str = "",
 ) -> None:
     """web 面板审批动作审计行（EVO-20260918-d1182270: 人工决策写可检索事实）.
 
@@ -3110,11 +3114,24 @@ def _log_web_review(
             "ok": bool(ok),
             "reason": reason,
             "note": note,
+            "suggestion_session_id": suggestion_session_id,
         }
         with (audit_dir / "evolution_review_log.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError:
         pass  # fail-open（DFX-REL-06）
+
+
+def _suggestion_session_id(store: Any, evo_id: str) -> str:
+    """建议的来源会话 id（只读投影；缺失/异常一律空串，不影响审批主流程）。"""
+
+    try:
+        cur = _find_suggestion(store, evo_id)
+    except Exception:  # noqa: BLE001 — 投影字段失败不得拖垮审批
+        return ""
+    if not cur:
+        return ""
+    return str(cur.get("session_id") or "")
 
 
 @router.post("/api/v1/evolution/review")
@@ -3205,6 +3222,7 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
             data_dir=_web_data_dir(engine),
             note=f"异常: {type(exc).__name__}: {exc}",
             reason=reason,
+            suggestion_session_id=_suggestion_session_id(store, evo_id),
         )
         return UTF8JSONResponse(
             status_code=500,
@@ -3212,9 +3230,11 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
         )
     # 人工审批落可检索审计行 + 回执带新状态（EVO-20260918-d1182270: 面板反馈闭环）
     new_status = ""
+    session_id = ""
     cur_after = _find_suggestion(store, evo_id)
     if cur_after is not None:
         new_status = str(cur_after.get("status") or "")
+        session_id = str(cur_after.get("session_id") or "")
     _log_web_review(
         evo_id,
         decision,
@@ -3222,9 +3242,10 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
         data_dir=_web_data_dir(engine),
         note=resp,
         reason=reason,
+        suggestion_session_id=session_id,
     )
     return UTF8JSONResponse(
-        content={"ok": ok, "message": resp, "id": evo_id, "new_status": new_status},
+        content={"ok": ok, "message": resp, "id": evo_id, "new_status": new_status, "session_id": session_id},
         status_code=200 if ok else 400,
     )
 
@@ -3274,23 +3295,24 @@ async def evolution_review_batch(request: Request) -> Response:
         expected = str(it.get("expected_status") or "").strip()
         raw_item_override = it.get("exec_override", default_override)
         if not isinstance(raw_item_override, bool):
-            results.append({"id": evo_id, "ok": False, "message": "exec_override 必须为布尔"})
+            results.append({"id": evo_id, "ok": False, "message": "exec_override 必须为布尔", "session_id": ""})
             fail_count += 1
             continue
         exec_override = raw_item_override
         if not evo_id or decision not in {"accepted", "rejected"}:
-            results.append({"id": evo_id, "ok": False, "message": "参数非法"})
+            results.append({"id": evo_id, "ok": False, "message": "参数非法", "session_id": ""})
             fail_count += 1
             continue
         # 服务端硬校验：涉边界跳过（禁止批量）
         cur = _find_suggestion(store, evo_id)
+        sid = str((cur or {}).get("session_id") or "")
         if cur is not None and bool(cur.get("requires_human")):
-            results.append({"id": evo_id, "ok": False, "message": "涉边界（requires_human），须单条审批", "skipped": True})
+            results.append({"id": evo_id, "ok": False, "message": "涉边界（requires_human），须单条审批", "skipped": True, "session_id": sid})
             fail_count += 1
             continue
         # CAS 乐观锁
         if expected and cur is not None and cur.get("status") != expected:
-            results.append({"id": evo_id, "ok": False, "message": f"状态冲突（期望 {expected}，当前 {cur.get('status')}）"})
+            results.append({"id": evo_id, "ok": False, "message": f"状态冲突（期望 {expected}，当前 {cur.get('status')}）", "session_id": sid})
             fail_count += 1
             continue
         try:
@@ -3309,11 +3331,11 @@ async def evolution_review_batch(request: Request) -> Response:
                             resp += f"\n⚠️ 自动执行触发异常：{type(exc).__name__}"
             else:
                 if not reason:
-                    results.append({"id": evo_id, "ok": False, "message": "拒绝须提供理由"})
+                    results.append({"id": evo_id, "ok": False, "message": "拒绝须提供理由", "session_id": sid})
                     fail_count += 1
                     continue
                 ok, resp = reject(store, evo_id, reason)
-            results.append({"id": evo_id, "ok": bool(ok), "message": resp})
+            results.append({"id": evo_id, "ok": bool(ok), "message": resp, "session_id": sid})
             _log_web_review(
                 evo_id,
                 decision,
@@ -3321,6 +3343,7 @@ async def evolution_review_batch(request: Request) -> Response:
                 data_dir=_web_data_dir(engine),
                 note=resp,
                 reason=reason,
+                suggestion_session_id=sid,
             )  # EVO-20260918-d1182270
             ok_count += bool(ok)
             fail_count += not ok
@@ -3332,13 +3355,74 @@ async def evolution_review_batch(request: Request) -> Response:
                 data_dir=_web_data_dir(engine),
                 note=f"异常: {type(exc).__name__}: {exc}",
                 reason=reason,
+                suggestion_session_id=sid,
             )
-            results.append({"id": evo_id, "ok": False, "message": f"异常: {type(exc).__name__}: {exc}"})
+            results.append({"id": evo_id, "ok": False, "message": f"异常: {type(exc).__name__}: {exc}", "session_id": sid})
             fail_count += 1
     return UTF8JSONResponse(
         content={"ok_count": ok_count, "fail_count": fail_count, "results": results},
         status_code=200,
     )
+
+
+_SESSION_ID_SHAPE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+@router.get("/api/v1/evolution/session-locator")
+def evolution_session_locator(request: Request, session_id: str = "") -> Response:
+    """定位建议来源会话所在工作区（只读、fail-open）.
+
+    只做 isfile 探测：<sessions_dir>/<workspace_id>/<sid>.json；不枚举目录、不解析会话，
+    避免大目录 list_sessions_in 的开销与副作用。形状校验先挡住路径穿越。
+    """
+    sid = (session_id or "").strip()
+    if not _SESSION_ID_SHAPE.fullmatch(sid):
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_params", "detail": "session_id 形状非法。"},
+        )
+    try:
+        engine = _engine_from(request)
+        settings = getattr(engine, "settings", None)
+        sessions_dir = Path(getattr(settings, "sessions_dir")).expanduser()
+        store = getattr(engine, "workspace_store", None)
+        if store is None:
+            return UTF8JSONResponse(content={"ok": True, "available": False, "reason": "locator_failed", "session_id": sid})
+        current = store.get_current()
+        current_id = str(getattr(current, "id", "") or "")
+        candidates = []
+        if current is not None:
+            candidates.append(current)
+        for ws in store.list() or []:
+            if current_id and str(getattr(ws, "id", "") or "") == current_id:
+                continue
+            candidates.append(ws)
+        for ws in candidates:
+            ws_id = str(getattr(ws, "id", "") or "")
+            if not ws_id:
+                continue
+            if (sessions_dir / ws_id / f"{sid}.json").is_file():
+                return UTF8JSONResponse(
+                    content={
+                        "ok": True,
+                        "available": True,
+                        "session_id": sid,
+                        "workspace_id": ws_id,
+                        "workspace_path": str(getattr(ws, "path", "") or ""),
+                        "current": bool(current_id) and ws_id == current_id,
+                    }
+                )
+        if (sessions_dir / ".identity" / f"{sid}.json").is_file():
+            return UTF8JSONResponse(
+                content={"ok": True, "available": False, "reason": "identity_only", "session_id": sid}
+            )
+        return UTF8JSONResponse(
+            content={"ok": True, "available": False, "reason": "not_found", "session_id": sid}
+        )
+    except Exception:  # noqa: BLE001 — 定位失败不得影响审批主流程
+        return UTF8JSONResponse(
+            content={"ok": True, "available": False, "reason": "locator_failed", "session_id": sid}
+        )
 
 
 @router.get("/api/v1/evolution/diff")

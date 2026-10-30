@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EvolutionPanel } from "./components/sidebar/EvolutionPanel";
+import { conversationStore } from "./core/conversation";
+import { sessionStore } from "./core/stores";
 
 const baseItem = {
   id: "EVO-test-approval",
@@ -18,14 +20,21 @@ function installFetch(options?: {
   reviewBody?: Record<string, unknown>;
   diffStatus?: number;
   diffBody?: Record<string, unknown>;
+  sessionId?: string;
+  items?: Array<Record<string, unknown>>;
+  batchBody?: Record<string, unknown>;
+  locatorStatus?: number;
+  locatorBody?: Record<string, unknown>;
+  switchStatus?: number;
 }) {
   const item = { ...baseItem, requires_human: Boolean(options?.requiresHuman) };
+  const listed = options?.items ?? [{ ...item }];
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, init });
     if (url.startsWith("/api/v1/evolution/list")) {
-      return new Response(JSON.stringify({ suggestions: [item], count: 1 }), {
+      return new Response(JSON.stringify({ suggestions: listed, count: listed.length }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -55,11 +64,46 @@ function installFetch(options?: {
         headers: { "Content-Type": "application/json" },
       });
     }
-    if (url === "/api/v1/evolution/review") {
-      return new Response(JSON.stringify(options?.reviewBody ?? { ok: true, message: "已批准" }), {
-        status: options?.reviewStatus ?? 200,
+    if (url.startsWith("/api/v1/evolution/session-locator")) {
+      return new Response(
+        JSON.stringify(
+          options?.locatorBody ?? {
+            ok: true,
+            available: true,
+            current: true,
+            workspace_id: "ws-1",
+            workspace_path: "/tmp/ws-1",
+          }
+        ),
+        { status: options?.locatorStatus ?? 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (url === "/api/v1/workspaces/switch") {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: options?.switchStatus ?? 200,
         headers: { "Content-Type": "application/json" },
       });
+    }
+    if (url === "/api/v1/evolution/review-batch") {
+      return new Response(
+        JSON.stringify(options?.batchBody ?? { ok_count: 0, fail_count: 0, results: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (url === "/api/v1/evolution/review") {
+      return new Response(
+        JSON.stringify(
+          options?.reviewBody ?? {
+            ok: true,
+            message: "已批准",
+            ...(options?.sessionId ? { session_id: options.sessionId } : {}),
+          }
+        ),
+        {
+          status: options?.reviewStatus ?? 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
     }
     throw new Error(`unexpected fetch ${url}`);
   });
@@ -71,6 +115,9 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  sessionStore.setCurrentSession("");
+  conversationStore.setState({ composerPrefill: null });
+  localStorage.clear();
 });
 
 describe("EvolutionPanel approval feedback", () => {
@@ -264,5 +311,148 @@ describe("EvolutionPanel approval feedback", () => {
     const body = JSON.parse(String(post?.init?.body ?? "{}"));
     expect(body.exec_override).toBe(true);
     expect(body.extra_confirm).toBe(false);
+  });
+});
+
+describe("EvolutionPanel origin session link", () => {
+  const SID = "11111111-2222-3333-4444-555555555555";
+
+  async function approveOnce() {
+    await screen.findByText(baseItem.id);
+    fireEvent.click(screen.getByText(baseItem.id));
+    fireEvent.click(await screen.findByTestId("evo-approve"));
+    fireEvent.click(screen.getByTestId("evo-prompt-surface-check"));
+    fireEvent.click(screen.getByTestId("evo-confirm-ok"));
+    return screen.findByTestId("evo-review-receipt");
+  }
+
+  it("renders the source session line and the open button below copy", async () => {
+    installFetch({ sessionId: SID });
+    render(<EvolutionPanel />);
+    await approveOnce();
+
+    const copy = screen.getByTestId("evo-review-receipt-copy");
+    const btn = await screen.findByTestId("evo-open-origin-session");
+
+    expect(screen.getByTestId("evo-origin-sid")).toHaveTextContent(SID);
+    expect(btn).toHaveTextContent("打开来源会话并粘贴");
+    expect(copy.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows the legacy hint and no button when the suggestion has no session id", async () => {
+    installFetch();
+    render(<EvolutionPanel />);
+    await approveOnce();
+
+    expect(screen.getByTestId("evo-origin-none")).toHaveTextContent("来源会话未记录");
+    expect(screen.queryByTestId("evo-open-origin-session")).toBeNull();
+  });
+
+  it("opens the current-workspace session and prefills the receipt without sending", async () => {
+    const { calls } = installFetch({ sessionId: SID });
+    render(<EvolutionPanel />);
+    await approveOnce();
+
+    fireEvent.click(await screen.findByTestId("evo-open-origin-session"));
+
+    await waitFor(() => expect(sessionStore.getState().currentSessionId).toBe(SID));
+    expect(conversationStore.getState().composerPrefill?.text).toContain("【人工审批回执】");
+    expect(calls.some((call) => call.url.startsWith("/api/v1/chat"))).toBe(false);
+    expect(await screen.findByTestId("evo-origin-note")).toHaveTextContent("回执已填入输入框");
+  });
+
+  it("disables the button with a truthful reason for identity sessions", async () => {
+    installFetch({ sessionId: SID, locatorBody: { ok: true, available: false, reason: "identity_only" } });
+    render(<EvolutionPanel />);
+    await approveOnce();
+
+    const button = await screen.findByTestId("evo-open-origin-session");
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(screen.getByTestId("evo-origin-reason")).toHaveTextContent("属于身份会话");
+    fireEvent.click(button);
+    expect(sessionStore.getState().currentSessionId || null).toBeNull();
+  });
+
+  it("switches workspace before selecting the session and prefilling", async () => {
+    const { calls } = installFetch({
+      sessionId: SID,
+      locatorBody: {
+        ok: true,
+        available: true,
+        current: false,
+        workspace_id: "ws-lfl",
+        workspace_path: "/srv/lfl-workspace",
+      },
+    });
+    render(<EvolutionPanel />);
+    await approveOnce();
+
+    const button = await screen.findByTestId("evo-open-origin-session");
+    await waitFor(() => expect(button).toHaveTextContent("将切换到 /srv/lfl-workspace"));
+    fireEvent.click(button);
+
+    await waitFor(() => expect(sessionStore.getState().currentSessionId).toBe(SID));
+    const switchCall = calls.find((call) => call.url === "/api/v1/workspaces/switch");
+    expect(switchCall).toBeDefined();
+    expect(JSON.parse(String(switchCall?.init?.body ?? "{}"))).toEqual({ id: "ws-lfl" });
+    expect(conversationStore.getState().composerPrefill?.text).toContain("【人工审批回执】");
+  });
+
+  it("reports workspace_busy on 409 and does not navigate", async () => {
+    installFetch({
+      sessionId: SID,
+      switchStatus: 409,
+      locatorBody: { ok: true, available: true, current: false, workspace_id: "ws-lfl", workspace_path: "/tmp/lfl" },
+    });
+    render(<EvolutionPanel />);
+    await approveOnce();
+
+    fireEvent.click(await screen.findByTestId("evo-open-origin-session"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("evo-origin-note")).toHaveTextContent("当前会话运行中，暂不能切换工作区")
+    );
+    expect(sessionStore.getState().currentSessionId || null).toBeNull();
+  });
+
+  it("tells the user when the receipt is appended to an existing draft", async () => {
+    localStorage.setItem(`lfl-draft-${SID}`, "已有草稿");
+    installFetch({ sessionId: SID });
+    render(<EvolutionPanel />);
+    await approveOnce();
+
+    fireEvent.click(await screen.findByTestId("evo-open-origin-session"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("evo-origin-note")).toHaveTextContent("该会话已有草稿，回执已追加在末尾")
+    );
+  });
+
+  it("dedupes batch origins, caps buttons at 3 and reports the remainder", async () => {
+    const items = Array.from({ length: 5 }, (_, i) => ({ ...baseItem, id: `EVO-batch-${i}` }));
+    installFetch({
+      items,
+      batchBody: {
+        ok_count: 5,
+        fail_count: 0,
+        results: [
+          { id: "EVO-batch-0", ok: true, session_id: "sid-a" },
+          { id: "EVO-batch-1", ok: true, session_id: "sid-a" },
+          { id: "EVO-batch-2", ok: true, session_id: "sid-b" },
+          { id: "EVO-batch-3", ok: true, session_id: "sid-c" },
+          { id: "EVO-batch-4", ok: true, session_id: "sid-d" },
+        ],
+      },
+    });
+    render(<EvolutionPanel />);
+    await screen.findByText("EVO-batch-0");
+
+    screen.getAllByTitle("勾选批量").forEach((el) => fireEvent.click(el));
+    fireEvent.click(screen.getByRole("button", { name: "批量批准" }));
+
+    await screen.findByTestId("evo-review-receipt");
+    expect(screen.getAllByTestId("evo-open-origin-session")).toHaveLength(3);
+    expect(screen.getByTestId("evo-origin-block")).toHaveTextContent("等 1 个");
+    expect(screen.getByTestId("evo-origin-block")).toHaveTextContent("（2 条建议）");
   });
 });
