@@ -447,8 +447,15 @@ class TestP1aToolSurface:
         assert record2, "未受限 child 执行体未被触发"
 
         assert restricted_scope == record2[0], "P1-a：写域不得改变 child 工具面"
-        names = _scope_names(restricted_scope)
-        assert not names or "execute_command" in names, "P1-a：同步路径同样保留命令能力"
+        # 同步路径也必须带闸口径（第三轮审查 P2-1）：只在一侧出现＝消费方按另一侧
+        # 口径理解 ⇒ 静默失效。原断言 `not names or ...` 在 names 为空时恒真，
+        # 属永假失败型断言（本轮审查 P2-4），换成两条可失败的断言。
+        assert result.write_scope_command_guard == "p1a_write_family", (
+            "受限 child 的同步结果必须带 write_scope_command_guard"
+        )
+        assert result2.write_scope_command_guard == "", (
+            "未受限 child 的同步结果不得声称写侧闸生效"
+        )
 
     def test_t19_undeclared_write_scope_keeps_execute_command(self, ws_tokens):
         _set_parent_scope(None, ws_tokens)

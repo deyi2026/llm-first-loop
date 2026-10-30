@@ -13,7 +13,7 @@
   * ``llm_loop.core.write_scope.write_scope_audit_snapshot() -> dict``，形态：
     ``{"written_paths": [str, ...], "violations": [{"path": str, "reason": str}, ...],
     "violation_count": int, "scope_unverified": [{"path": str, "reason": str}, ...],
-    "scope_unverified_count": int}``
+    "scope_unverified_count": int, "audit_dropped_count": int}``
 - 绝不读取/回显文件内容——只回路径与计数（NFR-3 / §5.5 纪律）；
 - fail-closed 观测：运行时未部署（缺 ContextVar 或审计模块）→ 确定性
   FAILURE 并说明缺口，绝不把"看不见"伪报成"0 次越界"；
@@ -266,6 +266,12 @@ class VerifyPathScopeTool:
             lines.append(f"- {str(v.get('path', '?'))} — {str(v.get('reason', '?'))}")
         if len(details) > _MAX_UNVERIFIED:
             lines.append(f"- …（明细共 {len(details)} 条，仅显示前 {_MAX_UNVERIFIED} 条）")
+        # 审计封顶丢弃计数（第三轮审查 P2-2）：丢弃发生时明细不完整，必须显性
+        dropped = audit.get("audit_dropped_count")
+        if isinstance(dropped, int) and not isinstance(dropped, bool) and dropped > 0:
+            lines.append(
+                f"- …（另有 {dropped} 条审计条目因超出上限被丢弃，明细不完整）"
+            )
         return lines
 
     def _fail(self, content: str) -> ToolResult:

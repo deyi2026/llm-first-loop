@@ -113,7 +113,10 @@ CARRIER_VALUE_OPTIONS = {
     "timeout": frozenset({"-k", "--kill-after", "-s", "--signal"}),
     "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
     # watch 的 -x/--exec 是**布尔**开关（命令直接跟在后面），不是取值型选项
-    "watch": frozenset({"-n", "--interval", "-b", "--beep"}),
+    # watch 的 -x/--exec 是**布尔**开关（命令直接跟在后面），不是取值型选项；
+    # -b/--beep 同样是布尔（失败时响铃）——第三轮审查 P0-4：把 -b 当取值型会把
+    # 紧随其后的命令名吃掉（watch -b rm /outside/x ⇒ 命令被吃掉 ⇒ 放行）。
+    "watch": frozenset({"-n", "--interval"}),
     "nice": frozenset({"-n", "--adjustment"}),
     "ionice": frozenset(
         {"-c", "--class", "-n", "--classdata", "-p", "--pid", "-t", "--ignore"}
@@ -137,11 +140,11 @@ SHELL_KEYWORDS = frozenset(
     }
 )
 
-# 段分隔运算符
-_OPERATORS = frozenset({"&&", "||", ";", "|", "&", "|&", "\n"})
+# 段分隔运算符（shlex 不产生 "\n"，留着是死条目——第三轮审查 P2-4）
+_OPERATORS = frozenset({"&&", "||", ";", "|", "&", "|&"})
 
-# 写重定向（含 fd 合并形式）
-_WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>"})
+# 写重定向（含 fd 合并形式 + "<>" 读写打开——第三轮审查 P2-4）
+_WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>", "<>"})
 _READ_REDIRECTS = frozenset({"<", "<<<"})
 
 # 写目标无法静态定位的标记（变量展开/命令替换/通配/家目录/花括号占位）
@@ -217,7 +220,7 @@ def _split_segments(tokens: Sequence[str]) -> list[list[str]]:
 
 
 def _unmodeled_construct(tokens: Sequence[str]) -> str:
-    """扫描不可静态判定的构造（命令替换 / 分组 / heredoc）。命中即返回说明。"""
+    """扫描不可静态判定的构造（命令替换 / 分组 / heredoc / 进程替换）。命中即返回说明。"""
     for token in tokens:
         if token == "$" or "$(" in token or "`" in token:
             return f"command_substitution: {token}"
@@ -225,6 +228,10 @@ def _unmodeled_construct(tokens: Sequence[str]) -> str:
             return f"grouping_construct: {token}"
         if token in ("<<", "<<-"):
             return f"heredoc_construct: {token}"
+        # 进程替换 ``<(cmd)`` / ``>(cmd)``：shlex(punctuation_chars) 会把它粘成单个
+        # token，裸 "(" 匹配不到 ⇒ 里面的命令会被当普通词放过（第三轮审查 P0-1）
+        if "<(" in token or ">(" in token:
+            return f"process_substitution: {token}"
     return ""
 
 
@@ -282,6 +289,36 @@ def _flag_value(args: Sequence[str], *flags: str) -> str | None:
     return None
 
 
+def _env_split_payload(args: Sequence[str]) -> tuple[str | None, list[str]]:
+    """env 的 ``-S/--split-string`` 载荷与其后**被追加的操作数**。
+
+    三种形态都要认：``-S 'cmd'``、``-S'cmd'``（粘连）、``--split-string=cmd``。
+    env 会把后续操作数**追加到** split 出来的命令尾部（shebang 语义），所以载荷
+    必须与尾操作数拼在一起重解析——只重解析 ``-S`` 后那一个 token 会丢掉尾操作数
+    （``env -S rm /outside/x`` 会执行 rm；第三轮审查 P0-2/P0-3）。
+    """
+    for index, token in enumerate(args):
+        text = str(token)
+        if text in ("-S", "--split-string"):
+            payload = str(args[index + 1]) if index + 1 < len(args) else ""
+            return payload, [str(a) for a in args[index + 2:]]
+        if text.startswith("--split-string="):
+            return text.split("=", 1)[1], [str(a) for a in args[index + 1:]]
+        if text.startswith("-S") and len(text) > 2:
+            return text[2:], [str(a) for a in args[index + 1:]]
+    return None, []
+
+
+# sed 脚本里的 ``w FILE`` 命令（写文件）。只在命令位置（行首或 ; { } 之后）匹配，
+# 避免把 ``s/w/x/`` 这类替换里的字母误判成命令。
+_SED_WRITE_RE = re.compile(r"(?:^|[;{}])\s*w\s+(\S+)")
+
+
+def _sed_script_write_targets(script: str) -> list[str]:
+    """sed 脚本里 ``w FILE`` 命令写出的文件列表（没有则空表）。"""
+    return [match for match in _SED_WRITE_RE.findall(str(script))]
+
+
 def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     """返回 (静态写目标列表, 是否存在无法静态定位的隐式写目标)."""
     positional = _non_flag_args(args)
@@ -298,13 +335,29 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     if name in ("rm", "rmdir", "mkdir", "touch", "tee", "truncate", "shred"):
         return (positional, False)
     if name == "patch":
+        # patch 的 -o/--output 是**输出文件**（第三轮审查 P0-8）
+        out = _flag_value(args, "-o", "--output")
+        if out is not None:
+            return ([out], not out)
         # patch 无目标文件 ⇒ 从 stdin 读补丁并改写文件（目标不可静态定位）
         return (positional, not positional)
     if name in ("chmod", "chown", "chgrp"):
         return (positional[1:], len(positional) < 2)
     if name == "sed":
-        if "-i" in args or "--in-place" in args:
+        # ``-i`` / ``-i.bak`` / ``--in-place`` / ``--in-place=.bak`` 都是就地编辑
+        # （第三轮审查 P0-6：只认精确 "-i" 会漏掉带后缀形态）
+        if any(
+            str(a) == "-i"
+            or str(a).startswith("-i.")
+            or str(a) == "--in-place"
+            or str(a).startswith("--in-place=")
+            for a in args
+        ):
             return (positional[1:], len(positional) < 2)
+        # sed 脚本里的 ``w FILE`` 命令会把模式空间写进 FILE（第三轮审查 P0-7）
+        script_targets = _sed_script_write_targets(positional[0] if positional else "")
+        if script_targets:
+            return (script_targets, False)
         return ([], False)
     if name == "perl":
         # perl -i（就地编辑）改写**输入文件**；无 -i 时是解释器残余（见残余清单）
@@ -318,8 +371,31 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
         outputs = [a.split("=", 1)[1] for a in args if a.startswith("of=")]
         return (outputs, not outputs)
     if name == "tar":
-        if any(a in ("-x", "--extract") for a in args):
-            return ([], True)
+        # 解包的写目标来自**归档内部路径**（不可静态定位），除非给了 -C 目录；
+        # ``-x`` / ``--extract`` / ``-xf`` 等粘连形态与 tar 的**老式无横线**写法
+        # （``tar xf a.tar``）都要认（第三轮审查 P0-5）
+        extract = any(
+            str(a) == "-x"
+            or str(a) == "--extract"
+            or (
+                str(a).startswith("-")
+                and not str(a).startswith("--")
+                and "x" in str(a)[1:]
+            )
+            for a in args
+        )
+        if not extract and positional:
+            first = str(positional[0])
+            if (
+                not first.startswith("-")
+                and len(first) <= 4
+                and first.isalpha()
+                and "x" in first
+            ):
+                extract = True
+        if extract:
+            dest = _flag_value(args, "-C", "--directory")
+            return ([dest] if dest else [], not dest)
         return (positional[:1], not positional)
     if name == "unzip":
         dest = _flag_value(args, "-d", "--directory")
@@ -327,6 +403,10 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     if name == "zip":
         return (positional[:1], not positional)
     if name in ("gzip", "xz", "bzip2", "zstd"):
+        # zstd 的 -o/--output 是**输出文件**（第三轮审查 P0-9）
+        out = _flag_value(args, "-o", "--output")
+        if out is not None:
+            return ([out], not out)
         if any(a in ("-c", "--stdout", "--to-stdout") for a in args):
             return ([], False)
         # 就地解压（-d）改写**输入文件**；压缩写的是新文件（保守按输入文件判）
@@ -430,9 +510,14 @@ class _Scanner:
         if name == "su":
             return self._scan_su(cmd_tokens[1:], depth)
         if name == "env":
-            payload = _flag_value(cmd_tokens[1:], "-S", "--split-string")
-            if payload:
-                return self._scan_payload(payload, depth)
+            payload, trailing = _env_split_payload(cmd_tokens[1:])
+            if payload is not None:
+                joined = " ".join([payload, *trailing])
+                return self._scan_payload(joined, depth)
+        if name == "sudo":
+            decision = self._scan_sudo(cmd_tokens[1:], depth)
+            if decision is not None:
+                return decision
         effective, args = self._resolve_command(cmd_tokens)
         if effective is None:
             return None
@@ -560,6 +645,29 @@ class _Scanner:
             return CommandScopeDecision(False, "unparsable_command", "载荷为空")
         return self.scan(payload, depth + 1)
 
+    def _scan_sudo(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
+        """sudo 的 shell 模式（-s/-i/--login）或无命令 ⇒ 交互 shell，写目标不可知 ⇒ 拒。
+
+        与 ``su`` 无 -c 的口径一致（第三轮审查 P1-1）：sudo-capable 主机上，
+        受限 child 若能起交互 shell，写侧 scope 就整个失效。
+        """
+        shell_modes = {"-s", "-i", "--login", "-is", "-si", "-ii", "-ss"}
+        for token in args:
+            if str(token) in shell_modes:
+                return CommandScopeDecision(
+                    False,
+                    "implicit_write_target",
+                    f"sudo {token}：进入交互 shell，写目标不可静态定位",
+                )
+        rest = _strip_carrier_prefix("sudo", [str(a) for a in args])
+        if not rest:
+            return CommandScopeDecision(
+                False,
+                "implicit_write_target",
+                "sudo：无命令 ⇒ 进入 shell，写目标不可静态定位",
+            )
+        return None
+
     def _scan_su(self, args: Sequence[str], depth: int) -> CommandScopeDecision | None:
         """``su [user] -c 'cmd'``：载荷按命令串重解析；无 -c ⇒ 进入登录 shell ⇒ 拒。"""
         if "-c" not in args:
@@ -619,7 +727,9 @@ class _Scanner:
                     return CommandScopeDecision(False, reason, detail, tuple(self.unverified))
                 index += 2
                 continue
-            if token in ("-exec", "-execdir"):
+            if token in ("-exec", "-execdir", "-ok", "-okdir"):
+                # -exec/-execdir/-ok/-okdir 都会执行一条命令；-ok/-okdir 只是多问
+                # 一次确认（第三轮审查 P1-2）
                 # -exec 的命令在转义分号（哨兵）处结束；哨兵之后的谓词
                 # （如 -delete）仍属同一条 find，必须继续检查
                 end = len(args)

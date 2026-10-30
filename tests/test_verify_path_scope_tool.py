@@ -412,3 +412,36 @@ def test_allow_mode_empty_paths_noted_as_readonly() -> None:
     assert "受限" in result.content
     assert "只读" in result.content
     assert "拒绝一切写" in result.content
+
+
+@requires_runtime
+def test_audit_dropped_count_surfaced() -> None:
+    """第三轮审查 P2-2：审计条目超上限被丢弃时，观测面必须显性报出丢弃数。
+
+    丢弃发生时明细不完整——不报出来，读者会把「少了几条」误读成「没有那么多」。
+    """
+    saved = _WRITE_SCOPE.write_scope_audit_snapshot()
+    try:
+        _WRITE_SCOPE.write_scope_audit_reset()
+        overflow = 3
+        for index in range(_WRITE_SCOPE._AUDIT_MAX_ENTRIES + overflow):
+            _WRITE_SCOPE.write_scope_audit_record_unverified(
+                f"/unverified/{index}", "scope_unverified"
+            )
+        token = _SCOPE_VAR.set(None)
+        try:
+            result = _run_tool()
+        finally:
+            _SCOPE_VAR.reset(token)
+        assert result.status == "success", result.content
+        assert "丢弃" in result.content, result.content
+        assert str(overflow) in result.content, result.content
+    finally:
+        _WRITE_SCOPE.write_scope_audit_reset()
+        for path in saved.get("written_paths", []) or []:
+            _WRITE_SCOPE.write_scope_audit_record_write(str(path))
+        for item in saved.get("violations", []) or []:
+            if isinstance(item, dict):
+                _WRITE_SCOPE.write_scope_audit_record_violation(
+                    str(item.get("path", "")), str(item.get("reason", ""))
+                )

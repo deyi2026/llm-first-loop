@@ -167,3 +167,31 @@ pyright PASS、空实现下 57/57 应拦用例仍放行（用例在测拦截）�
 **教训（第三层）**：§10.5 已把口径翻成「不可静态判定就拒」，但**列举式清单仍是有限枚举**——
 `timeout` 的时长、`watch -x` 的布尔性、find 的转义分号都不在清单里。**清单式防御必然漏项**；
 可复用的原则：**命令身份必须字面**、**载荷必须重解析**、**选项语义按命令分别建模**。
+
+### 10.7 第三轮独立审查（2026-10-30 17:2x）：9 个新绕过向量 → 已逐条修
+
+候选 `46b88717…`（提交 `4ae2d8f7d`）经 `review_admission(kind=full_test)`，child
+`subagent_778d47130c3f`，判 **REVISE：P0=1 / P1=2 / P2=4**。本会话逐条自行复现，**不是审查误报**。
+
+**新拦下的 9 个（P0）**：进程替换 `cat <(rm /outside/x)`（shlex 把 `<(` 粘成单 token，裸 `(` 匹配不到）·
+`env -S rm /outside/x`（env 会把**尾操作数追加**进 split 出来的命令）· `env -S'…'` 与
+`env --split-string=…`（粘连/等号形态）· `watch -b rm /outside/x`（`-b` 是布尔，把命令名吃掉了）·
+`tar -xf a.tar -C /outside` 与 `tar xf a.tar -C /outside`（粘连与老式无横线形态）·
+`sed -i.bak …`（带后缀的 `-i`）· `sed 'w /outside/x' f`（脚本里的 `w` 命令）·
+`patch -o /outside/x diff` · `zstd -o /outside/x in.zst`。
+
+**P1**：`sudo -s` / `sudo -i` / 裸 `sudo`（交互 shell）· `find . -ok rm {} \;`（与 `-exec` 同处理）。
+
+**P2**：`write_scope_command_guard` 只在异步回执 ⇒ 同步 `run()` 的 `SubAgentResult` 补同名字段 ·
+`verify_path_scope` 补 `audit_dropped_count` · 清掉已死的 `write_scope_tool_restriction` 分支 ·
+`_WRITE_REDIRECTS` 补 `<>`、删死条目 `"\n"`。
+
+**门禁自证伪补强**：新增 `test_blocked_cases_depend_on_the_gate`——把判定层打成恒放行后，
+**每一条** `BLOCKED_CASES`（74 条）必须都放行。此前只有集成层一条自检，"用例测的是空转"
+这一形态仍可能藏在新向量里。
+
+**证据**：判定层 116 例 + 接线层 31 例 + 观测面与既有写侧 **268 passed**（1 skipped）、ruff 干净。
+
+**教训（第四层）**：三轮修复都停在**单个命令家族的选项语义**上（`timeout` 时长、`watch -x`、
+`watch -b`）⇒「选项语义按命令分别建模」还没落到**取值型选项表**这个数据结构上（桶内仍可能混入布尔项）。
+下一轮查法：**逐条核对每个命令的取值型选项是否与真实 CLI 语义一致**，而不是继续往"构造清单"里加条目。

@@ -120,7 +120,44 @@ BLOCKED_CASES = [
     ("sqlite3 db.sqlite 'VACUUM'", "implicit_write_target"),
     ("busybox rm /outside/x", "write_target_outside_scope"),
     ("ed /outside/x.py", "write_target_outside_scope"),
+    # ── 第三轮独立审查（child subagent_778d47130c3f，候选 46b88717）新向量 ──
+    ("cat <(rm /outside/x)", "unmodeled_shell_construct"),
+    ("cat >(rm /outside/x)", "unmodeled_shell_construct"),
+    ("env -S rm /outside/x", "write_target_outside_scope"),
+    ("env --split-string=rm /outside/x", "write_target_outside_scope"),
+    ("watch -b rm /outside/x", "write_target_outside_scope"),
+    ("watch --beep rm /outside/x", "write_target_outside_scope"),
+    ("tar -xf a.tar -C /outside", "write_target_outside_scope"),
+    ("tar xf a.tar -C /outside", "write_target_outside_scope"),
+    ("tar -xf a.tar", "implicit_write_target"),
+    ("sed -i.bak s/a/b/ /outside/f", "write_target_outside_scope"),
+    ("sed --in-place=.bak s/a/b/ /outside/f", "write_target_outside_scope"),
+    ("sed 'w /outside/x' f", "write_target_outside_scope"),
+    ("patch -o /outside/x diff", "write_target_outside_scope"),
+    ("zstd -o /outside/x in.zst", "write_target_outside_scope"),
+    ("sudo -s", "implicit_write_target"),
+    ("sudo -i", "implicit_write_target"),
+    ("sudo", "implicit_write_target"),
+    ("find . -ok rm {} ;", "unverifiable_write_target"),
 ]
+
+
+def test_blocked_cases_depend_on_the_gate(monkeypatch) -> None:
+    """门禁自证伪（DESIGN §15.6）：把判定层打成空实现后，每个应拦输入都必须放行。
+
+    否则这批用例测的是空转（被别的因素挡住），不是拦截——第三轮审查新增 19 条
+    向量后，这条自检才真正覆盖到它们。
+    """
+    import llm_loop.core.command_scope_guard as guard_mod
+
+    monkeypatch.setattr(
+        guard_mod._Scanner, "scan", lambda self, command: CommandScopeDecision(True)
+    )
+    for command, _expected_reason in BLOCKED_CASES:
+        decision = guard_mod.check_command_scope(
+            command, scope=_scope(), workspace_root=WS
+        )
+        assert decision.allowed, f"闸被关掉后仍被拦 ⇒ 该用例不是测拦截：{command}"
 
 
 @pytest.mark.parametrize("command,expected_reason", BLOCKED_CASES)

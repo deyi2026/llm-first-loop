@@ -917,3 +917,45 @@ P0 判语：「先前的 P0 类修复未完成，且文档所述的残留列表*
 仍然是有限枚举——`timeout` 的时长、`watch -x` 的布尔性、find 的转义分号，都不在清单里。
 **清单式防御必然漏项**；可复用的原则是：**命令身份必须是字面量**，**载荷必须重解析**，
 **选项语义必须按命令分别建模**（不能用跨命令通用的"取值型选项"表）。
+
+### 16.10 第三轮独立审查（2026-10-30 17:2x）：9 个新绕过向量 → 已逐条修
+
+候选 `46b88717…`（提交 `4ae2d8f7d`）经 `review_admission(kind=full_test)`，child
+`subagent_778d47130c3f`，判 **REVISE：P0=1 / P1=2 / P2=4**。P0 判语：
+「`env -S` 后的载荷只重解析了一个 token，而 env 会把尾操作数追加进被 split 的命令；
+`watch -b` 被当成取值型选项，把命令名吃掉了」。
+
+**P0（本会话逐条自行复现，全部成立）**：
+
+| # | 向量 | 修法 |
+|---|---|---|
+| 1 | `cat <(rm /outside/x)` / `cat >(rm /outside/x)` | shlex `punctuation_chars` 会把 `<(`/`>(` 粘成单 token ⇒ 裸 `"("` 匹配不到 ⇒ 进程替换未被建模；`_unmodeled_construct` 增判 `<(`/`>(` |
+| 2 | `env -S rm /outside/x` | env 把**尾操作数追加**到 split 出来的命令尾部 ⇒ 只重解析 `-S` 后一个 token 会丢尾操作数；改 `_env_split_payload()` 拼载荷 + 尾操作数后整体重解析 |
+| 3 | `env -S'rm /outside/x'` / `env --split-string=rm /outside/x` | 粘连形态与 `=` 形态都要认（`_env_split_payload` 三形态） |
+| 4 | `watch -b rm /outside/x` | `watch` 的 `-b/--beep` 是**布尔**（响铃），不是取值型 ⇒ 原本把命令名当选项值吃掉；`CARRIER_VALUE_OPTIONS["watch"]` 只留 `-n/--interval` |
+| 5 | `tar -xf a.tar -C /outside` / `tar xf a.tar -C /outside` | 解包写目标在归档内部（不可静态定位）；`tar` 认 `-x/--extract`、粘连 `-xf`、**老式无横线** `xf`；给了 `-C/--directory` 则以该目录为目标，否则隐式拒 |
+| 6 | `sed -i.bak 's/a/b/' /outside/f` | `-i` 的带后缀形态与 `--in-place=` 形态都要认（原先只认精确 `-i`） |
+| 7 | `sed 'w /outside/x' f` | sed 脚本的 `w FILE` 命令会写文件 ⇒ 按脚本正则抽取写目标（只在命令位匹配，避免把 `s/w/x/` 误判） |
+| 8 | `patch -o /outside/x diff` | `patch` 的 `-o/--output` 是输出文件 ⇒ 按写目标校验 |
+| 9 | `zstd -o /outside/x in.zst` | `zstd` 的 `-o/--output` 同上 |
+
+**P1**：`sudo -s` / `sudo -i` / 裸 `sudo` ⇒ 进交互 shell，写目标不可知 ⇒ 拒（与 `su` 无 `-c` 同口径）；
+`find . -ok rm {} \;` / `-okdir` ⇒ 与 `-exec/-execdir` 同处理。
+
+**P2**：`write_scope_command_guard` 只出现在异步 `start()` 回执 ⇒ 同步 `run()` 路径的
+`SubAgentResult` 补同名字段（第三轮审查 P2-1：只在一侧出现＝消费方按另一侧口径理解 ⇒ 静默失效）；
+`verify_path_scope` 观测面补 `audit_dropped_count`（丢弃发生时明细不完整，不报出来会被读成"没有那么多"）；
+清掉 `start()` 里已死的 `write_scope_tool_restriction` 分支；`_WRITE_REDIRECTS` 补 `<>`（读写打开）、
+删死条目 `"\n"`（shlex 不产生）。
+
+**门禁自证伪补强**：新增 `test_blocked_cases_depend_on_the_gate`——把 `_Scanner.scan` 打成
+恒放行后，**每一条** `BLOCKED_CASES` 必须都放行（74 条全覆盖）。此前只有集成层一条自检，
+"用例测的是空转"这一形态仍可能藏在新向量里（§15.6 教训的第四层应用）。
+
+**测试**：判定层 116 例 + 接线层 31 例 + 观测面与既有写侧 268 passed（1 skipped）、ruff 干净。
+
+**教训（第四层）**：前两轮的修复都停在**单个命令家族**的选项语义上（`timeout` 的时长、
+`watch -x` 的布尔性、这一轮的 `watch -b`），说明「选项语义要按命令分别建模」这条原则
+还没落到**取值型选项表**这一具体数据结构上——表虽是按命令分桶的，但桶内仍可能混入布尔项。
+下一轮的查法应是：**逐条核对每个命令的取值型选项是否与该命令的真实 CLI 语义一致**，
+而不是再往"构造清单"里加条目。

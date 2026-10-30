@@ -219,6 +219,10 @@ class SubAgentResult:
     depth: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    # 写侧闸口径（DESIGN-20261030 §16.7）：仅受限 child 有值；同步 run() 与
+    # 异步 start() 两条路径都必须带上（第三轮审查 P2-1：只在一侧出现＝消费方
+    # 按另一侧口径理解，会静默失效）。
+    write_scope_command_guard: str = ""
 
     def __post_init__(self) -> None:
         """保持 legacy flags 与结构化 outcome 一致，禁止构造“截断但 completed”。"""
@@ -1946,11 +1950,6 @@ class SubAgentRunner:
                 else ",".join(sorted(child_scope))
             ),
             **(
-                {"write_scope_tool_restriction": list(surface_restriction)}
-                if surface_restriction
-                else {}
-            ),
-            **(
                 {"write_scope_command_guard": "p1a_write_family"}
                 if (child_write_scope is not None and child_write_scope.declared)
                 else {}
@@ -2503,6 +2502,12 @@ class SubAgentRunner:
             child_write_scope, write_scope_refusal = self._compute_child_write_scope(
                 required_write_scope
             )
+            # 同步路径的闸口径（与异步 start() 回执同字段、同取值规则）
+            command_guard_label = (
+                "p1a_write_family"
+                if (child_write_scope is not None and child_write_scope.declared)
+                else ""
+            )
             if write_scope_refusal:
                 return self._run_refused_finalized(
                     sid, parent_sid, depth,
@@ -2589,6 +2594,8 @@ class SubAgentRunner:
                     result.final_answer = f"{result.final_answer}\n{note}"
             finalized = self._finalize_child(sid, parent_sid, result)
             assert finalized is not None
+            # 同步路径也要带闸口径（第三轮审查 P2-1：只在一侧出现＝消费方静默失效）
+            finalized.write_scope_command_guard = command_guard_label
             return finalized
         finally:
             if ws_token is not None:
