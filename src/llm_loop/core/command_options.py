@@ -943,6 +943,158 @@ TARGET_DIRECTORY_OPTIONS = FamilyOptions(
     short_options=_flag(True, "tSmog") + _flag(False, "rRaifnvplsdubxzTLPZc"),
 )
 
+# 第五轮独立审查 P1-1：rsync 此前**没有族模型** ⇒ 未建模的选项被**静默忽略**
+# ⇒ 落盘型选项（``--temp-dir``/``--partial-dir``/``--log-file``/``--write-batch``/
+# ``--only-write-batch``/``--copy-dest``）的路径从未被判定 ⇒ 越界写放行
+# （实测 7 条全部放行）；且**选项的取值**会被误当 dst（``rsync src /outside/dst
+# --exclude-from x`` 的 dst 被取成 "x" ⇒ 越界 dst 漏判，实测放行）。
+# ⇒ 接入族模型：**未建模的选项 ⇒ unresolved ⇒ fail-closed**（第八轮 P1-5 的
+# 统一口径）。
+#
+# 登记依据：上游 rsync 手册（man7 rsync(1)，rsync 3.4.4）+ openrsync usage。
+# **刻意不登记冷门/存疑选项**（-E/-F/-M、--iconv/--usermap/--groupmap/--chown/
+# --seccomp/--config 等）⇒ 这些走 fail-closed（安全方向）。**不得凭印象登记
+# 取值型**：把布尔选项误登记成取值型 ⇒ 选项的取值漏成操作数 ⇒ dst 误判 ⇒
+# 反成洞（第五轮 P1-1 的 dst 误判复现）。
+RSYNC_OPTIONS = FamilyOptions(
+    long_options=(
+        # ── 落盘型（值是**写目标**）────────────────────────────────────
+        ("--backup-dir", True),
+        ("--temp-dir", True),
+        ("--partial-dir", True),
+        ("--log-file", True),
+        ("--write-batch", True),
+        ("--only-write-batch", True),
+        ("--copy-dest", True),
+        # ── 读取型（路径只读，**不是**写目标）──────────────────────────
+        ("--compare-dest", True),
+        ("--link-dest", True),
+        ("--exclude-from", True),
+        ("--include-from", True),
+        ("--files-from", True),
+        ("--read-batch", True),
+        ("--password-file", True),
+        # ── 其它取值型 ───────────────────────────────────────────────
+        ("--address", True),
+        ("--block-size", True),
+        ("--bwlimit", True),
+        ("--chmod", True),
+        ("--checksum-seed", True),
+        ("--chown", True),
+        ("--compress-level", True),
+        ("--contimeout", True),
+        ("--exclude", True),
+        ("--filter", True),
+        ("--groupmap", True),
+        ("--iconv", True),
+        ("--include", True),
+        ("--log-file-format", True),
+        ("--max-delete", True),
+        ("--max-size", True),
+        ("--min-size", True),
+        ("--modify-window", True),
+        ("--out-format", True),
+        ("--port", True),
+        ("--protocol", True),
+        ("--rsync-path", True),
+        ("--rsh", True),
+        ("--sockopts", True),
+        ("--suffix", True),
+        ("--timeout", True),
+        ("--usermap", True),
+        # ── 布尔开关（上游明确无取值）─────────────────────────────────
+        ("--8-bit-output", False),
+        ("--acls", False),
+        ("--append", False),
+        ("--append-verify", False),
+        ("--archive", False),
+        ("--backup", False),
+        ("--checksum", False),
+        ("--compress", False),
+        ("--copy-links", False),
+        ("--copy-unsafe-links", False),
+        ("--cvs-exclude", False),
+        ("--daemon", False),
+        ("--delete", False),
+        ("--delete-after", False),
+        ("--delete-before", False),
+        ("--delete-delay", False),
+        ("--delete-during", False),
+        ("--delete-excluded", False),
+        ("--delay-updates", False),
+        ("--devices", False),
+        ("--dirs", False),
+        ("--dry-run", False),
+        ("--executability", False),
+        ("--existing", False),
+        ("--extended-attributes", False),
+        ("--force", False),
+        ("--fsync", False),
+        ("--group", False),
+        ("--hard-links", False),
+        ("--help", False),
+        ("--human-readable", False),
+        ("--ignore-errors", False),
+        ("--ignore-existing", False),
+        ("--ignore-non-existing", False),
+        ("--ignore-times", False),
+        ("--inplace", False),
+        ("--itemize-changes", False),
+        ("--keep-dirlinks", False),
+        ("--links", False),
+        ("--list-only", False),
+        ("--msgs2stderr", False),
+        ("--no-implied-dirs", False),
+        ("--no-motd", False),
+        ("--no-relative", False),
+        ("--numeric-ids", False),
+        ("--omit-dir-times", False),
+        ("--one-file-system", False),
+        ("--owner", False),
+        ("--partial", False),
+        ("--perms", False),
+        ("--progress", False),
+        ("--prune-empty-dirs", False),
+        ("--relative", False),
+        ("--remove-source-files", False),
+        ("--safe-links", False),
+        ("--size-only", False),
+        ("--sparse", False),
+        ("--specials", False),
+        ("--stats", False),
+        ("--super", False),
+        ("--times", False),
+        ("--update", False),
+        ("--verbose", False),
+        ("--version", False),
+        ("--whole-file", False),
+        ("--xattrs", False),
+    ),
+    # 短选项**只登记上游语义明确**的：取值型 -B/--block-size、-e/--rsh、
+    # -f/--filter、-T/--temp-dir（上游手册："--temp-dir=DIR, -T create temporary
+    # files in directory DIR"）；布尔型取 openrsync usage 的字母集，并按上游
+    # 手册补上 rsync 3.x 新增的短形式（--prune-empty-dirs 的 -m、--acls 的
+    # -A、--xattrs 的 -X）。
+    # 刻意不登记 -E/-F/-M（rsync 3.x 是否保留存疑 ⇒ fail-closed）。
+    short_options=_flag(True, "BefT")
+    + _flag(False, "0468ACDHIKLMOXPRSVabcdghiklmnopqrtuvxyz"),
+)
+
+# rsync 的**落盘型**取值型选项（其值是写目标，必须逐个判定）。
+# ``-T`` 是 ``--temp-dir`` 的短选项形式（上游手册："--temp-dir=DIR, -T"）⇒
+# 族扫描里短选项事件的规范名是 ``"-T"``（``short_spec`` 归一后的形态）⇒ 两种
+# 写法都要列，否则 ``rsync -T /outside/t src dst`` 的落盘路径会漏判。
+RSYNC_WRITE_TARGET_OPTIONS = (
+    "--backup-dir",
+    "--temp-dir",
+    "-T",
+    "--partial-dir",
+    "--log-file",
+    "--write-batch",
+    "--only-write-batch",
+    "--copy-dest",
+)
+
 # 第九轮 P1-1：``patch`` 的 ``-o/--output``、``unzip`` 的 ``-d/--directory``、
 # ``gzip`` 族的 ``-o/--output``、``time`` 的 ``-o/--output`` 此前走
 # ``_flag_value``（token 精确匹配）⇒ **getopt 附着形态** ``-oFILE`` / ``-dDIR``

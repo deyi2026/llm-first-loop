@@ -104,7 +104,9 @@ BLOCKED_CASES = [
     (". x.sh", "implicit_write_target"),
     ("source x.sh", "implicit_write_target"),
     ("bash < x.sh", "implicit_write_target"),
-    ("rsync --target-directory=/outside src/a.py", "write_target_outside_scope"),
+    # rsync **没有** ``--target-directory``（那是 cp/mv/install/ln 的选项）⇒
+    # 它对 rsync 是**未建模选项** ⇒ fail-closed（第五轮独立审查 P1-1）。
+    ("rsync --target-directory=/outside src/a.py", "implicit_write_target"),
     ("gzip -d /outside/f.gz", "write_target_outside_scope"),
     ("wget http://h/x", "implicit_write_target"),
     ("patch", "implicit_write_target"),
@@ -1227,7 +1229,8 @@ def test_r16_review_fixes_do_not_over_block(command: str) -> None:
 R17_BLOCKED_CASES = [
     ("tar --checkpoint-action=exec=evil --checkpoint-action=dot -cf ok.tar .", "implicit_write_target"),
     ("rsync -b --backup-dir=bk --backup-dir=/outside/b src dst", "write_target_outside_scope"),
-    ("rsync --target-directory=dl --target-directory=/outside src", "write_target_outside_scope"),
+    # rsync 无 ``--target-directory`` ⇒ 未建模选项 ⇒ fail-closed。
+    ("rsync --target-directory=dl --target-directory=/outside src", "implicit_write_target"),
     ("gcc -wvo /outside/x a.c", "write_target_outside_scope"),
     ("gcc -Eo /outside/x a.c", "write_target_outside_scope"),
 ]
@@ -1281,9 +1284,6 @@ R19_BLOCKED_CASES = [
     ("curl -w %output{/outside/x} URL", "write_target_outside_scope"),
     ("curl --write-out %output{/outside/x} URL", "write_target_outside_scope"),
     ("curl -w %output{/outside/x URL", "implicit_write_target"),
-    # ``--`` 之后只有**一个**操作数 ⇒ rsync 缺 dst ⇒ 隐式写 fail-closed
-    # （不是字面量解析问题：dst 确实无法静态定位）。
-    ("rsync -b -- --backup-dir=/outside/b", "implicit_write_target"),
 ]
 
 
@@ -1298,17 +1298,87 @@ def test_r19_review_findings_are_blocked(command: str, expected_reason: str) -> 
 R19_ALLOWED_CASES = [
     # 无 -o/-O 时 --output-dir 不落盘任何文件（输出到 stdout）⇒ 放行。
     "curl --output-dir=/outside URL",
-    # --target-directory 在场时位置操作数是源（不是写目标）⇒ 放行。
-    "rsync -b --backup-dir=bk --target-directory=dl src",
     # --write-out 里没有 %output{} ⇒ 不引入任何写目标。
     "curl -w %{http_code} URL",
     # ``--`` 之后的操作数是字面量（源）⇒ 不按选项取值判定；另有 dst ⇒ 放行。
     "rsync -b -- --backup-dir=/outside/b src dst",
+    # rsync **只有一个操作数**时按上游语义是**列举**而非复制（上游手册：
+    # "Usages with just one SRC arg and no DEST arg will list the source files
+    # instead of copying"）⇒ 没有写目标 ⇒ 放行；``--`` 之后的字面量也不被
+    # 当成选项取值。
+    "rsync -b -- --backup-dir=/outside/b",
 ]
 
 
 @pytest.mark.parametrize("command", R19_ALLOWED_CASES)
 def test_r19_review_fixes_do_not_over_block(command: str) -> None:
     """第十九轮修复不得误伤：stdout 输出、源操作数、无 %output 的 write-out。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第二十轮：第五轮独立审查（REVISE：P1=1/P2=4）的响应锚点 ────────────────
+#
+# P1-1（rsync 没有族模型 ⇒ 未建模选项被静默忽略 ⇒ 落盘型选项路径从不判定）：
+#      新增 RSYNC_OPTIONS 族模型 ⇒ 未建模选项 ⇒ fail-closed；落盘型取值型
+#      选项（--backup-dir/--temp-dir(-T)/--partial-dir/--log-file/
+#      --write-batch/--only-write-batch/--copy-dest）逐个判定；操作数改用
+#      ``scan.operands`` ⇒ 选项的**取值**不再被误当 dst。
+# P2-1（curl/wget 短选项簇形态靠"未解析⇒fail-closed"兜住）：固化为显式锚点。
+# P2-2（git symbolic-ref 的短选项集含臆测的 's'）：上游只列 -d/-q/-m，
+#      ``--short`` 无短选项形式 ⇒ 去掉 's'。
+# P2-3（``--`` 之后的字面量被当选项取值/被丢弃）：``--`` 后停止解析选项，
+#      且 ``--`` 之后的 token 全部算操作数。
+
+R20_BLOCKED_CASES = [
+    # ── P1-1：rsync 落盘型选项（上游 rsync 手册 + openrsync usage 逐项核对）──
+    ("rsync --backup-dir=/outside/b src dst", "write_target_outside_scope"),
+    ("rsync --temp-dir=/outside/t src dst", "write_target_outside_scope"),
+    ("rsync -T /outside/t src dst", "write_target_outside_scope"),
+    ("rsync --partial-dir=/outside/p src dst", "write_target_outside_scope"),
+    ("rsync --log-file=/outside/l src dst", "write_target_outside_scope"),
+    ("rsync --write-batch=/outside/b src dst", "write_target_outside_scope"),
+    ("rsync --only-write-batch=/outside/b src dst", "write_target_outside_scope"),
+    ("rsync --copy-dest=/outside/c src dst", "write_target_outside_scope"),
+    # 选项的**取值**被误当 dst ⇒ 越界 dst 漏判（结构性）。
+    ("rsync src /outside/dst --exclude-from x", "write_target_outside_scope"),
+    # rsync 没有 --target-directory ⇒ 未建模选项 ⇒ fail-closed。
+    ("rsync -b --backup-dir=bk --target-directory=dl src", "implicit_write_target"),
+    # ── P2-1：curl 的写输出格式可藏在**短选项簇**里（-sw/-wFMT）⇒ %output{}
+    #    的路径必须照样判定；``-sO``（簇里的 -O = 远程名）⇒ 隐式写。
+    ("curl -sw %output{/outside/x} URL", "write_target_outside_scope"),
+    ("curl -w%output{/outside/x} URL", "write_target_outside_scope"),
+    ("curl --write-out=%output{/outside/x} URL", "write_target_outside_scope"),
+    ("curl -sO URL", "implicit_write_target"),
+    # ── P2-3：``--`` 之后的字面量操作数必须**参与**判定（此前被丢弃 ⇒ 落进
+    #    「dst 缺失 ⇒ 隐式写」，拒因不准且字面量 dst 从未被判定）。
+    ("cp -- /outside/dst", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R20_BLOCKED_CASES)
+def test_r20_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+    """第二十轮复现向量：第五轮独立审查点名的绕过必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R20_ALLOWED_CASES = [
+    # 常规 rsync 用法不受影响（族表覆盖 -a/-v/-z 与常见长选项）。
+    "rsync -avz src dst",
+    "rsync --exclude=*.pyc src dst",
+    # 簇里的 -w 格式串里没有 %output{} ⇒ 不引入写目标。
+    "curl -sw %{http_code} URL",
+    # git symbolic-ref 的短选项只有 -d/-q/-m（上游手册）⇒ ``-s`` 是**未知
+    # 选项**（git 会报错、命令无副作用）⇒ 放行（第五轮独立审查 P2-2）。
+    "git symbolic-ref -sd HEAD",
+    # rsync 没有 --target-directory ⇒ 未建模选项 ⇒ fail-closed。
+]
+
+
+@pytest.mark.parametrize("command", R20_ALLOWED_CASES)
+def test_r20_review_fixes_do_not_over_block(command: str) -> None:
+    """第二十轮修复不得误伤：常规 rsync 组合与常用取值型选项。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)

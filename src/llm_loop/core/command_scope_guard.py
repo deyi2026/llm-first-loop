@@ -69,6 +69,8 @@ from llm_loop.core.command_options import (
     GIT_OUTPUT_OPTIONS,
     PATCH_OPTIONS,
     PERL_OPTIONS,
+    RSYNC_OPTIONS,
+    RSYNC_WRITE_TARGET_OPTIONS,
     SCRIPT_OPTIONS,
     SED_OPTIONS,
     SHUF_OUTPUT_OPTIONS,
@@ -629,61 +631,78 @@ def _carrier_split(
 
 
 def _non_flag_args(args: Sequence[str]) -> list[str]:
-    return [a for a in args if not str(a).startswith("-")]
+    """操作数（位置参数）：``--`` 之后的 token 是**字面量**（不再是选项）。
+
+    第五轮独立审查 P2-3：此前一律过滤掉以 ``-`` 开头的 token ⇒ ``--`` 之后的
+    **字面量 dst** 被丢掉 ⇒ 落进「dst 缺失 ⇒ 隐式写 fail-closed」（安全但拒因
+    不准，且字面量 dst 本身从未被判定）⇒ 改为：``--`` 之后的 token **全部**算
+    操作数。
+    """
+    operands: list[str] = []
+    after_separator = False
+    for argument in args:
+        text = str(argument)
+        if not after_separator:
+            if text == "--":
+                after_separator = True
+                continue
+            if text.startswith("-"):
+                continue
+        operands.append(text)
+    return operands
+
+
+def _rsync_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
+    """rsync 的写目标：落盘型选项的取值 **+** 末位操作数（dst）。
+
+    第五轮独立审查 P1-1：rsync 此前**没有族模型** ⇒ 未建模的选项被静默忽略
+    ⇒ 落盘型选项（``--temp-dir``/``--partial-dir``/``--log-file``/``--write-batch``/
+    ``--only-write-batch``/``--copy-dest``）的路径从未被判定 ⇒ 越界写放行
+    （实测 7 条全部放行）；且**选项的取值**会被误当 dst（``rsync src
+    /outside/dst --exclude-from x`` 的 dst 被取成 "x" ⇒ 越界 dst 漏判，实测
+    放行）。⇒ 接入族模型（``scan_options``）：**未建模的选项 ⇒ unresolved ⇒
+    fail-closed**（第八轮 P1-5 统一口径），并用 ``scan.operands`` 取操作数 ⇒
+    选项的**取值**不再进入操作数。
+
+    rsync 的目标是**末位操作数**（上游手册："rsync [OPTION...] SRC... [DEST]"）；
+    只有一个操作数时是**列举**而非复制（上游："Usages with just one SRC arg and
+    no DEST arg will list the source files instead of copying"）⇒ 不算写。
+    """
+    scan = scan_options(RSYNC_OPTIONS, args)
+    if scan.unresolved:
+        return ([], True)
+    targets: list[str] = []
+    for flag in RSYNC_WRITE_TARGET_OPTIONS:
+        targets.extend(scan.values_of(flag))
+    operands = list(scan.operands)
+    dst = operands[-1:] if len(operands) >= 2 else []
+    return (targets + dst, False)
 
 
 def _copy_move_targets(
     name: str, args: Sequence[str], positional: Sequence[str]
 ) -> tuple[list[str], bool]:
-    """cp/mv/install/ln/rsync 的写目标：目标目录 → 备份目录 → 末位操作数。
+    """cp/mv/install/ln 的写目标：目标目录 → 末位操作数。
 
-    rsync 的 ``-t`` 是 ``--times``（布尔开关），只有 cp/mv/install/ln 的 ``-t``
-    才是 ``--target-directory``（审查 P1-1；第五轮审查 P1-2 补入 ln：
-    ``ln -t DIR`` 把链接建到 DIR 下，原口径漏掉 -t ⇒ 取了错误的写目标）。
+    rsync **不走这里**（第五轮独立审查 P1-1：rsync 改走自己的族模型分支
+    ``_rsync_write_targets``——它需要 ``--temp-dir``/``--partial-dir``/
+    ``--log-file``/``--write-batch``/``--only-write-batch``/``--copy-dest`` 这批
+    落盘型选项，且 rsync **没有** ``--target-directory``（那是 cp/mv/install/ln
+    的选项）⇒ 此前 rsync 分支里对 ``--target-directory`` 的处理是**抄错的**）。
+    cp/mv/install/ln 的 ``-t`` 才是 ``--target-directory``（审查 P1-1；第五轮
+    审查 P1-2 补入 ln：``ln -t DIR`` 把链接建到 DIR 下）。
     第九轮 P1-2：``-t/outside`` 附着与 ``--target-directory=/outside`` 内联形态
     改走族模型；``ln -T`` 的目标目录取末位操作数。
     """
-    if name == "rsync":
-        target_dir = _flag_value(args, "--target-directory")
-        backup_dir = _flag_value(args, "--backup-dir")
-        if backup_dir is not None:
-            # 备份目录与目标操作数（dst）**都要判定**（口径见
-            # ``_rsync_backup_targets``）。
-            return _rsync_backup_targets(backup_dir, target_dir, positional)
-    else:
-        scan = scan_options(TARGET_DIRECTORY_OPTIONS, args)
-        if scan.unresolved:
-            return ([], True)
-        target_dir = scan.value_of("-t", "--target-directory")
+    scan = scan_options(TARGET_DIRECTORY_OPTIONS, args)
+    if scan.unresolved:
+        return ([], True)
+    target_dir = scan.value_of("-t", "--target-directory")
     if target_dir is not None:
         return ([target_dir], not target_dir)
     if name == "ln" and "-T" in args:
         return ([positional[-1]] if positional else [], not positional)
     return (positional[-1:], len(positional) < 2)
-
-
-def _rsync_backup_targets(
-    backup_dir: str, target_dir: str | None, positional: Sequence[str]
-) -> tuple[list[str], bool]:
-    """rsync ``--backup-dir=DIR`` 的写目标：备份目录 **+** 目标操作数（dst）。
-
-    第十四轮 P0：``--backup-dir=DIR`` 让 rsync 把**被覆盖的旧文件**备份到 DIR
-    ⇒ DIR 也是写目标（此前完全没被建模 ⇒ ``rsync -b --backup-dir=/outside/b src
-    dst`` 越界写放行）。
-    独立审查 P2-2：备份目录**不替代**目标操作数（dst）⇒ 两者都要判定（早退只回
-    备份目录会让 ``rsync -b --backup-dir=bk src /outside/dst`` 的越界目标漏判）；
-    dst 缺失时仍是隐式写 ⇒ fail-closed。
-    """
-    targets = [backup_dir]
-    if target_dir is not None:
-        # 第十九轮独立审查 P2-1：``--target-directory=DIR`` 在场时，位置操作数
-        # 全是**源**（rsync 的目标就是 DIR）⇒ 把位置参数当写目标是**过拒**
-        # （且会把域外的**只读源**判成越界写）。⇒ 目标目录已定位 ⇒ 不取位置
-        # 参数、也不再有隐式写。
-        targets.append(target_dir)
-        return (targets, False)
-    dst = positional[-1:] if positional else []
-    return (targets + dst, not dst)
 
 
 def _flag_value(args: Sequence[str], *flags: str) -> str | None:
@@ -1426,13 +1445,27 @@ def _curl_write_out_output_targets(args: Sequence[str]) -> list[str] | None:
     """
     found: list[str] = []
     for index, token in enumerate(args):
+        if token == "--":
+            # 第五轮独立审查 P2-3：``--`` 之后的操作数是**字面量**（不再是选项）
+            # ⇒ 到此停止解析（否则 ``-- -w %output{...}`` 这类字面量会被当成
+            # 选项取值 ⇒ 过拒）。
+            break
         value: str | None = None
         if token in ("-w", "--write-out"):
             value = args[index + 1] if index + 1 < len(args) else ""
         elif token.startswith("--write-out="):
             value = token.split("=", 1)[1]
-        elif token.startswith("-w") and len(token) > 2 and not token.startswith("--"):
-            value = token[2:]
+        elif token.startswith("-") and not token.startswith("--"):
+            # 短选项**簇**里的 'w'：``-w FORMAT`` / ``-wFORMAT`` / ``-sw FORMAT``
+            # （族扫描 ``_scan_short`` 的同一语义：'w' 是取值型 ⇒ 值取内联余部，
+            # 簇尾则取下一个 token）。第五轮独立审查 P2-1：此前只认独立的
+            # ``-w``/``--write-out`` ⇒ ``curl -sw %output{/outside/x} URL`` 的
+            # 写目标路径漏判（实测放行）。
+            body = token[1:]
+            at = body.find("w")
+            if at >= 0:
+                inline = body[at + 1 :]
+                value = inline or (args[index + 1] if index + 1 < len(args) else "")
         if value is None:
             continue
         rest = value
@@ -1822,11 +1855,14 @@ def _write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
         if out is not None:
             return ([out], not out)
         return ([], False)
-    if name in ("cp", "mv", "install", "ln", "rsync"):
-        # 目标目录 / 备份目录 / 末位操作数的判定口径见
-        # ``_copy_move_targets``（rsync 的 -t 是 --times 布尔开关，只有
-        # cp/mv/install/ln 的 -t 才是 --target-directory——审查 P1-1、第五轮
-        # 审查 P1-2 补入 ln：``ln -t DIR`` 把链接建到 DIR 下）。
+    if name == "rsync":
+        # 第五轮独立审查 P1-1：rsync 走自己的族模型分支（落盘型选项 + 末位
+        # 操作数；未建模选项 ⇒ fail-closed）。
+        return _rsync_write_targets(args)
+    if name in ("cp", "mv", "install", "ln"):
+        # 目标目录 / 末位操作数的判定口径见 ``_copy_move_targets``
+        # （cp/mv/install/ln 的 -t 才是 --target-directory——审查 P1-1、
+        # 第五轮审查 P1-2 补入 ln：``ln -t DIR`` 把链接建到 DIR 下）。
         return _copy_move_targets(name, args, positional)
     if name in (
         "rm", "rmdir", "mkdir", "touch", "tee", "truncate", "shred",
@@ -2005,18 +2041,22 @@ def _git_delete_flag_hit(token: str) -> bool:
 
     第十四轮独立审查 P2-3：此前用 ``token.startswith("-d")`` ⇒ 未来若新增
     ``-d*`` **读**选项会被误拒（可用性回归）⇒ 收窄为「簇内字符都属于
-    symbolic-ref 已知短选项（d/q/m/s）」。
+    symbolic-ref 已知短选项（d/q/m）」。
     第十五轮独立审查 P1-1：但 ``d`` **不必在首位**——``git symbolic-ref -qd
     HEAD``（= ``-q`` + ``-d``）是合法的删除 HEAD 形态 ⇒ 只看开头会漏 ⇒
     改为扫描整簇字符（仍要求全部字符都是已知短选项 ⇒ ``-dHEAD`` 这类
     **未知选项**形态不被误判为删除）。
+    第五轮独立审查 P2-2：``s`` 是**臆测**的短选项——上游 git symbolic-ref 手册
+    只列 ``-d/--delete``、``-q/--quiet``、``-m/--message``，而 ``--short``
+    **没有短选项形式** ⇒ 去掉 ``s`` ⇒ ``git symbolic-ref -sd HEAD``（``-s``
+    是未知选项 ⇒ git 报错、命令无副作用）不再被过拒。
     """
     if token == "-d":
         return True
     if not token.startswith("-") or len(token) == 1:
         return False
     body = token[1:]
-    if not all(char in "dqms" for char in body):
+    if not all(char in "dqm" for char in body):
         # 未知短选项（如 ``-dHEAD`` 的 H）⇒ git parse-options 报未知选项、
         # 命令不产生任何副作用 ⇒ 不按删除形态拒。
         return False
