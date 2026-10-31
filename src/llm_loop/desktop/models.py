@@ -60,6 +60,8 @@ class DesktopErrorCode(StrEnum):
     INVALID_ARGS = "invalid_args"  # S6：入口参数形状非法，统一 JSON 信封回执
     REVIEW_REQUIRED = "review_required"  # M2：发布/提交/支付类目标须宿主发表闸，本工具 fail-closed 拒绝
     EXEC_MODE_BLOCKED = "exec_mode_blocked"  # M3：宿主 EXEC_MODE=blocked/readonly 拒绝真实投递（dry_run 不受限）
+    # ── R2 修复轮（P2-3）──
+    CONFIRM_TOKEN_EXPIRED = "confirm_token_expired"  # T6/P2-3：一次性令牌超 TTL 未兑换，按过期拒绝
 
 
 # AX 错误码 → (确定性错误码, 人类可读 reason)。-25211 是权限类（给修复指引）；

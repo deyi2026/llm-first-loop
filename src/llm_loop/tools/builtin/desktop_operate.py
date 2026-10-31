@@ -19,11 +19,18 @@ review_required fail-closed (M2: host review_admission gate or refusal, never
 this tool's own token) → key/text policy (B3 blacklist, IME-polluted letter
 typing is NOT offered) → risk class (§6.2 heuristic; browser point/press_key/
 scroll never land in plain "act", M1) → [dry_run: issue one-shot confirm token]
-→ [apply: writes_enabled switch (default OFF) → EXEC_MODE blocked/readonly
-refusal (M3) → D7 HID idle user-present refusal → §6.2 token/session gate
-(point channel NEVER session-exempt, M1) → D4 world re-bind → U18 AX self-probe
-→ real delivery (force credential consumed only here, S2) → post fingerprint +
-session approval (point channel excluded)].
+→ [apply: D7 HID idle user-present refusal FIRST (user present by default;
+force needs the one-time credential — validated here, consumed only at
+delivery, S2) → writes_enabled switch (default OFF, T8) → EXEC_MODE
+blocked/readonly refusal (M3) → §6.2 token/session gate (point channel NEVER
+session-exempt, M1; tokens carry a 10-min TTL and expired redemption is
+refused, P2-3) → D4 world re-bind (focus drift breaks the world fingerprint,
+P2-1) → U18 AX self-probe → real delivery (force credential consumed only
+here, S2) → post fingerprint + session approval (point channel excluded)].
+Order note (P2-4/R2): D7 precedes the writes switch / EXEC_MODE — the human
+presence gate is the outermost human-safety refusal; when the writes switch is
+off the user_present guidance says so explicitly (a force credential alone
+cannot reach delivery while writes are disabled).
 
 Receipts (§5.4): risk_class / pre_sha256 / post_sha256 / target_identity /
 applied / needs_confirmation / privacy_blocked (+ dry_run, confirm_token,
@@ -37,7 +44,6 @@ Non-darwin → unsupported_platform (same as desktop_perceive).
 
 from __future__ import annotations
 
-import contextlib
 import json
 import platform as _platform
 import secrets as _secrets
@@ -56,6 +62,7 @@ from llm_loop.desktop.models import (
     jsonable,
 )
 from llm_loop.desktop.operate import (
+    CONFIRM_TOKEN_TTL_S,
     MAX_TYPE_CHARS,
     RISK_HEURISTIC_DISCLAIMER,
     ActAllowlist,
@@ -131,7 +138,8 @@ class DesktopOperateTool:
         "（来自 desktop_perceive windows 回执）；target={ax_ref}（snapshot 回执的索引路径）或"
         " {point:{x,y}}（单位=点；press_key 可省略 target=作用于绑定窗口焦点）。"
         "dry_run 默认 true（只回执不投递，并签发一次性 confirm_token）；apply 需 dry_run 后的"
-        " confirm_token。同 app 同动作类型在 session 内放行——注意该免令牌放行路径"
+        " confirm_token（令牌 10 分钟内有效，过期按 confirm_token_expired 拒绝）。"
+        "同 app 同动作类型在 session 内放行——注意该免令牌放行路径"
         "**不重做 world 比对**（§6.2 字面允许）：窗口内结构漂移可能换靶，故坐标 point 目标"
         "不享受该放行（每次都要令牌+world 比对）。不可逆启发式命中（关闭按钮/删除/发布/"
         "支付/浏览器 Enter 等）永远单步每次都要新 token。发布/提交/支付类目标一律"
@@ -248,6 +256,9 @@ class DesktopOperateTool:
         # S3：force 凭据失败节流（进程内；宿主无桌面动作审批通道时的暴力面收窄）
         self._force_fail_count = 0
         self._force_lock_until = 0.0
+        # P2-7（R2）：审计写入失败计数（best-effort 语义不变，但不再完全静默——
+        # 计数附进回执 audit_write_failed；无持久性信号仍登记 residual）
+        self._audit_failures = 0
 
     # ── 基础回执 ─────────────────────────────────────────────────────────
     def _fail(
@@ -290,6 +301,10 @@ class DesktopOperateTool:
             "guidance": guidance or None,
             "elapsed_ms": int((time.monotonic() - started) * 1000),
         }
+        if self._audit_failures:
+            # P2-7（R2）：审计 best-effort——失败不改工具语义，但把进程内累计
+            # 计数附进回执（不再完全静默；无持久性信号仍登记 residual）。
+            receipt["audit_write_failed"] = self._audit_failures
         if base:
             receipt.update(base)
         if payload:
@@ -297,7 +312,13 @@ class DesktopOperateTool:
         return self._result(ok, receipt)
 
     def _audit_event(self, row: dict[str, Any]) -> None:
-        """§6.4 append-only 审计行（拒绝/干跑/投递全记；写失败不改回执语义）。"""
+        """§6.4 append-only 审计行（拒绝/干跑/投递全记；写失败不改回执语义）。
+
+        P2-7（R2）：审计写入仍是 best-effort（异常不影响工具结果），但失败
+        计数进 ``self._audit_failures`` 并经 ``_envelope`` 附进回执
+        （``audit_write_failed``）——不再完全静默。无持久性失败信号
+        （进程内计数随重启丢失）登记为 residual。
+        """
         if self._audit is None:
             return
         full = {
@@ -320,8 +341,10 @@ class DesktopOperateTool:
             "error_code": None,
         }
         full.update({k: v for k, v in row.items() if v is not None or k in ("dry_run", "applied")})
-        with contextlib.suppress(Exception):
+        try:
             self._audit(full)
+        except Exception:  # noqa: BLE001 - 审计 best-effort：失败计数，不影响工具语义
+            self._audit_failures += 1
 
     # ── 参数校验（闭合键集 + per-do 规则）─────────────────────────────────
     def _validate(
@@ -686,10 +709,11 @@ class DesktopOperateTool:
         # ── per-do 参数策略（B3 黑名单 / IME 缺口 / scroll 规格）──────────
         keys = str(options.get("keys") or "")
         if do == "press_key":
-            status, detail, flags = parse_keycombo(keys)
+            # P2-5（R2）：只做校验拒绝，不再把 flags 存进 options——该键从未被
+            # 消费（_deliver 侧重解析），属死状态，已删除。
+            status, detail, _ = parse_keycombo(keys)
             if status != "ok":
                 return refuse(DesktopErrorCode.KEY_NOT_ALLOWED, detail)
-            options["key_flags"] = flags
         if do == "scroll":
             status, detail, signed = parse_scroll(keys)
             if status != "ok":
@@ -778,13 +802,24 @@ class DesktopOperateTool:
             if not bool(options.get("force")):
                 audit["error_code"] = DesktopErrorCode.USER_PRESENT.value
                 self._audit_event(audit)
+                # P2-4（R2）：apply 门控实际顺序为 D7 → writes_enabled → EXEC_MODE
+                # （人在场是最外层人类安全闸）。写开关未开时 force 凭据也放行不到
+                # 投递——提示语如实说明，不再单指 force 凭据。
+                guidance = (
+                    f"用户在场（HID idle={idle_ms if idle_ms is not None else '探针不可用，按在场处理'}ms"
+                    f" < {USER_PRESENT_WINDOW_MS}ms，D7）：默认拒绝 mutate；"
+                    "可稍后重试或携带一次性 force 凭据。"
+                )
+                if not self._writes_enabled:
+                    guidance += (
+                        "注意：当前写能力总开关未开启（LFL_DESKTOP_OPERATE_ENABLED 默认关，"
+                        "T8），即使携带 force 凭据，apply 仍会被 writes_disabled 拒绝——"
+                        "需用户显式开启写开关后才可真实投递。"
+                    )
+                guidance += GUIDANCE_FORCE
                 return self._envelope(
                     do=do, ok=False, error_code=DesktopErrorCode.USER_PRESENT,
-                    guidance=(
-                        f"用户在场（HID idle={idle_ms if idle_ms is not None else '探针不可用，按在场处理'}ms"
-                        f" < {USER_PRESENT_WINDOW_MS}ms，D7）：默认拒绝 mutate；"
-                        f"可稍后重试或携带一次性 force 凭据。{GUIDANCE_FORCE}"
-                    ),
+                    guidance=guidance,
                     started=started, base=base,
                     payload={"applied": False, "needs_confirmation": False,
                              "hid_idle_ms": idle_ms},
@@ -907,6 +942,7 @@ class DesktopOperateTool:
                 "invalid": DesktopErrorCode.CONFIRM_TOKEN_INVALID,
                 "replayed": DesktopErrorCode.CONFIRM_TOKEN_REPLAYED,
                 "mismatch": DesktopErrorCode.CONFIRM_TOKEN_MISMATCH,
+                "expired": DesktopErrorCode.CONFIRM_TOKEN_EXPIRED,  # P2-3（R2）
             }.get(status)
             if token_error is not None:
                 audit["error_code"] = token_error.value
@@ -915,6 +951,10 @@ class DesktopOperateTool:
                     DesktopErrorCode.CONFIRM_TOKEN_INVALID: "confirm_token 未知或不可解析（T6）。",
                     DesktopErrorCode.CONFIRM_TOKEN_REPLAYED: "confirm_token 已使用过（U17/T6：一次性，重放拒绝且已记审计）。",
                     DesktopErrorCode.CONFIRM_TOKEN_MISMATCH: "confirm_token 绑定不符（window_id/do/目标与签发时不一致，U16）；令牌已作废，需重新 dry_run。",
+                    DesktopErrorCode.CONFIRM_TOKEN_EXPIRED: (
+                        f"confirm_token 已过期（TTL {CONFIRM_TOKEN_TTL_S:.0f}s，P2-3）；"
+                        "令牌已作废，需重新 dry_run 获取新令牌。"
+                    ),
                 }
                 return self._envelope(
                     do=do, ok=False, error_code=token_error,

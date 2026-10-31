@@ -18,6 +18,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from llm_loop.core.message import ToolCall
 from llm_loop.desktop import macos_actuate
 from llm_loop.desktop.backend_macos import MacOSDesktopBackend, backend_for_platform
@@ -29,6 +31,7 @@ from llm_loop.desktop.models import (
     AxNode,
     AxView,
     BoundsPt,
+    DesktopErrorCode,
     PermissionSnapshot,
     PlatformInfo,
     Pt,
@@ -37,7 +40,12 @@ from llm_loop.desktop.models import (
     WindowInfo,
 )
 from llm_loop.desktop.operate import (
+    CONFIRM_TOKEN_MAX_RECORDS,
+    CONFIRM_TOKEN_TTL_S,
     CORE_ACT_ALLOWLIST,
+    KEY_KEYCODES,
+    SESSION_APPROVAL_MAX_SESSIONS,
+    SESSION_APPROVAL_TTL_S,
     ActAllowlist,
     ConfirmTokenStore,
     SessionActGate,
@@ -1109,7 +1117,10 @@ def test_s4_cg_post_click_null_event_not_posted(monkeypatch):
     lib.CGEventPost = lambda tap, event: posts.append(event)
 
     monkeypatch.setattr(macos_actuate, "_cg", lambda: lib)
-    macos_actuate.cg_post_click(10.0, 20.0)
+    # P2-6（R2）：事件未成对创建 → 明确 OSError（投递层映射确定性错误码），
+    # 不再静默返回；同时绝不 post（S4 语义保持）。
+    with pytest.raises(OSError):
+        macos_actuate.cg_post_click(10.0, 20.0)
     assert posts == []  # 空事件绝不 post（S4）
 
 
@@ -1282,3 +1293,290 @@ def test_r1_descriptions_declare_semantics():
     assert "review_required" in compact
     assert "exec_mode_blocked" in compact
     assert "point" in compact  # point 通道语义入 compact 描述
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R2 修复轮（P1 F 键键码 + P2-1/P2-3/P2-4/P2-5/P2-6/P2-7）：负例同样断言零投递
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── P1：F1-F12 字面量真值表（macOS 虚拟键码非连续）──────────────────────────
+def test_r2_fkey_keycodes_literal_truth_table():
+    fkeys = {k: v for k, v in KEY_KEYCODES.items() if k.startswith("f")}
+    assert fkeys == {
+        "f1": 122, "f2": 120, "f3": 99, "f4": 118,
+        "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+        "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+    }
+
+
+def test_r2_fkey_keycodes_disjoint_from_arrow_keys():
+    arrows = {KEY_KEYCODES[name] for name in ("left", "right", "down", "up")}
+    fkeys = {v for k, v in KEY_KEYCODES.items() if k.startswith("f")}
+    assert fkeys.isdisjoint(arrows)  # 旧 `122+i` 推导 f2=123 与 left 冲突（P1 根因）
+    assert len(fkeys) == 12  # F 键键码自身无重复
+
+
+def test_r2_press_key_f2_delivers_true_keycode_not_arrow():
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="press_key", window_id=101, keys="F2", dry_run=True)
+    ok = _dispatch(reg, do="press_key", window_id=101, keys="F2", dry_run=False,
+                   confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    # 真值 120；旧实现会送 123（＝left，左箭头）
+    assert backend.act_calls == [{"do": "press_key", "keycode": 120, "flags": 0}]
+
+
+# ── P2-4：门控顺序文档/提示语与实现一致（D7 → writes_enabled → EXEC_MODE）──
+def test_r2_docstring_gate_order_matches_implementation():
+    from llm_loop.tools.builtin import desktop_operate as desktop_operate_module
+
+    apply_seg = (desktop_operate_module.__doc__ or "").split("[apply:", 1)[1]
+    assert apply_seg.index("D7 HID idle") < apply_seg.index("writes_enabled")
+    assert apply_seg.index("writes_enabled") < apply_seg.index("EXEC_MODE")
+
+
+def test_r2_user_present_guidance_honest_when_writes_disabled():
+    backend = _backend(hid_idle=5_000)  # 用户在场
+    tool = _tool(backend, writes_enabled=False)  # 写开关默认关
+    dry = _direct(tool, **CLICK_101, dry_run=True)
+    blocked = _direct(tool, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert blocked["error_code"] == "user_present"  # D7 先于写开关（实现顺序未变）
+    assert "writes_disabled" in blocked["guidance"]  # P2-4：提示语如实说明 force 不够
+    assert "LFL_DESKTOP_OPERATE_ENABLED" in blocked["guidance"]
+    assert backend.act_calls == []
+
+
+# ── P2-6：cg_post_click 部分失败（半点击）消除 + 明确错误码 + 审计标记 ────────
+def test_r2_cg_post_click_no_half_click_on_up_creation_failure(monkeypatch):
+    posts: list[object] = []
+    released: list[object] = []
+
+    class _FakeLib:
+        pass
+
+    lib = _FakeLib()
+    lib.CGEventCreateMouseEvent = (
+        lambda source, kind, where, button: "down-event"
+        if kind == macos_actuate.K_CGEVENT_LEFT_MOUSE_DOWN else None  # up 创建失败
+    )
+    lib.CGEventPost = lambda tap, event: posts.append(event)
+    monkeypatch.setattr(macos_actuate, "_cg", lambda: lib)
+    monkeypatch.setattr(macos_actuate, "cf_release", lambda ref: released.append(ref))
+    with pytest.raises(OSError):
+        macos_actuate.cg_post_click(10.0, 20.0)
+    assert posts == []  # down 创建成功但未成对 → 不投递（按钮不卡按下态）
+    assert released == ["down-event"]  # 已建句柄释放（不泄漏）
+
+
+def test_r2_cg_post_click_posts_paired_down_then_up(monkeypatch):
+    posts: list[object] = []
+
+    class _FakeLib:
+        pass
+
+    lib = _FakeLib()
+    lib.CGEventCreateMouseEvent = lambda source, kind, where, button: f"ev{kind}"
+    lib.CGEventPost = lambda tap, event: posts.append(event)
+    monkeypatch.setattr(macos_actuate, "_cg", lambda: lib)
+    monkeypatch.setattr(macos_actuate, "cf_release", lambda ref: None)
+    macos_actuate.cg_post_click(10.0, 20.0)
+    assert posts == [
+        f"ev{macos_actuate.K_CGEVENT_LEFT_MOUSE_DOWN}",
+        f"ev{macos_actuate.K_CGEVENT_LEFT_MOUSE_UP}",
+    ]
+
+
+def test_r2_cg_post_click_compensating_repost_when_up_post_raises(monkeypatch):
+    posts: list[object] = []
+    up_attempts = 0
+
+    class _FakeLib:
+        pass
+
+    lib = _FakeLib()
+    lib.CGEventCreateMouseEvent = (
+        lambda source, kind, where, button: "down"
+        if kind == macos_actuate.K_CGEVENT_LEFT_MOUSE_DOWN else "up"
+    )
+
+    def _post(tap, event):
+        nonlocal up_attempts
+        if event == "up":
+            up_attempts += 1
+            if up_attempts == 1:
+                raise OSError("transient post failure")  # down 已投递、up 首投失败
+        posts.append(event)
+
+    lib.CGEventPost = _post
+    monkeypatch.setattr(macos_actuate, "_cg", lambda: lib)
+    monkeypatch.setattr(macos_actuate, "cf_release", lambda ref: None)
+    macos_actuate.cg_post_click(5.0, 5.0)  # 补偿重投成功 → 不抛
+    assert posts == ["down", "up"]
+    assert up_attempts == 2
+
+
+def test_r2_cg_post_key_no_half_keydown_on_creation_failure(monkeypatch):
+    posts: list[object] = []
+
+    class _FakeLib:
+        pass
+
+    lib = _FakeLib()
+    lib.CGEventCreateKeyboardEvent = lambda source, keycode, down: "kd" if down else None
+    lib.CGEventSetFlags = lambda event, flags: None
+    lib.CGEventPost = lambda tap, event: posts.append(event)
+    monkeypatch.setattr(macos_actuate, "_cg", lambda: lib)
+    monkeypatch.setattr(macos_actuate, "cf_release", lambda ref: None)
+    with pytest.raises(OSError):
+        macos_actuate.cg_post_key(120, 0)
+    assert posts == []  # keydown 未成对创建 → 不投递（无卡键自动重复）
+
+
+def test_r2_backend_maps_click_creation_failure_to_backend_error(monkeypatch):
+    def _boom(x_pt, y_pt):
+        raise OSError("CGEventCreateMouseEvent 未成对创建 down/up（点击未投递，无半点击）")
+
+    monkeypatch.setattr(macos_actuate, "cg_post_click", _boom)
+    outcome = MacOSDesktopBackend().act_click_point(700.0, 400.0)
+    assert outcome.ok is False
+    assert outcome.error == DesktopErrorCode.BACKEND_ERROR
+    assert "点击未投递" in str(outcome.detail)  # 明确错误码 + 确定性原因文本
+
+
+def test_r2_failed_click_delivery_marked_in_audit():
+    rows: list[dict] = []
+    backend = _backend()
+    backend.act_click_point = lambda x_pt, y_pt: ActOutcome(
+        ok=False, error=DesktopErrorCode.BACKEND_ERROR,
+        detail="CGEvent 点击投递失败: OSError: CGEventCreateMouseEvent 未成对创建 down/up"
+               "（点击未投递，无半点击）",
+    )
+    reg = _registry(_tool(backend, audit_sink=rows.append))
+    point = {"point": {"x": 700.0, "y": 850.0}}
+    dry = _dispatch(reg, do="click", window_id=101, target=point, dry_run=True)
+    payload = _dispatch(reg, do="click", window_id=101, target=point, dry_run=False,
+                        confirm_token=dry["confirm_token"])
+    assert payload["error_code"] == "backend_error"
+    assert payload["applied"] is False
+    # P2-6：部分失败在审计行有明确错误码标记（applied=false + backend_error）
+    assert any(
+        r.get("error_code") == "backend_error" and r.get("applied") is False for r in rows
+    )
+
+
+# ── P2-5：死状态 key_flags 已删除 ───────────────────────────────────────────
+def test_r2_dead_key_flags_state_removed():
+    from llm_loop.tools.builtin import desktop_operate as desktop_operate_module
+
+    source = Path(desktop_operate_module.__file__).read_text(encoding="utf-8")
+    assert 'options["key_flags"]' not in source  # 死状态已删除（_deliver 侧重解析）
+
+
+# ── P2-3：令牌 TTL + 上限淘汰；会话 TTL + 上限；过期按过期拒绝 ────────────────
+def test_r2_token_ttl_expired_rejected_at_store_level():
+    store = ConfirmTokenStore()
+    fp = action_fingerprint("click", 101, {"kind": "ax_ref", "ax_ref": "0.0"}, None, None)
+    fresh = store.issue(window_id=101, do="click", action_fp=fp,
+                        world_version="w", risk_class="act", now=1_000.0)
+    stale = store.issue(window_id=101, do="click", action_fp=fp,
+                        world_version="w", risk_class="act", now=1_000.0)
+    assert store.redeem(fresh, window_id=101, do="click", action_fp=fp,
+                        now=1_000.0 + CONFIRM_TOKEN_TTL_S - 1.0)[0] == "ok"
+    assert store.redeem(stale, window_id=101, do="click", action_fp=fp,
+                        now=1_000.0 + CONFIRM_TOKEN_TTL_S + 1.0)[0] == "expired"
+
+
+def test_r2_token_store_bounded_by_cap_with_fifo_eviction():
+    store = ConfirmTokenStore()
+    fp = "fp"
+    tokens = [
+        store.issue(window_id=1, do="click", action_fp=fp, world_version="w",
+                    risk_class="act", now=1_000.0 + i)
+        for i in range(CONFIRM_TOKEN_MAX_RECORDS + 5)
+    ]
+    assert store.size() == CONFIRM_TOKEN_MAX_RECORDS  # 无界增长被上限拦截
+    redeem_at = 1_000.0 + CONFIRM_TOKEN_TTL_S - 1.0
+    assert store.redeem(tokens[0], window_id=1, do="click", action_fp=fp,
+                        now=redeem_at)[0] == "invalid"  # 最旧令牌被上限淘汰
+    assert store.redeem(tokens[-1], window_id=1, do="click", action_fp=fp,
+                        now=redeem_at)[0] == "ok"
+
+
+def test_r2_expired_token_rejected_tool_level():
+    backend = _backend()
+    tool = _tool(backend)
+    reg = _registry(tool)
+    fp = action_fingerprint("click", 101, {"kind": "ax_ref", "ax_ref": "0.0"}, None, None)
+    token = tool._tokens.issue(window_id=101, do="click", action_fp=fp,
+                               world_version="stale", risk_class="act",
+                               now=1_000.0)  # 真实时钟下必然已超 TTL
+    payload = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=token)
+    assert payload["error_code"] == "confirm_token_expired"
+    assert payload["applied"] is False
+    assert backend.act_calls == []
+
+
+def test_r2_session_gate_approval_ttl_and_force_persistence():
+    gate = SessionActGate()
+    gate.mark_approved("s1", "com.google.Chrome", "click", now=100.0)
+    assert gate.is_approved("s1", "com.google.Chrome", "click",
+                            now=100.0 + SESSION_APPROVAL_TTL_S - 1.0) is True
+    assert gate.is_approved("s1", "com.google.Chrome", "click",
+                            now=100.0 + SESSION_APPROVAL_TTL_S + 1.0) is False  # TTL 过期
+    # force 一次性消耗不随 TTL 复活（淘汰不得重置安全事实）；reset 是唯一回收口
+    gate.mark_force_consumed("sf", now=100.0)
+    assert gate.force_consumed("sf") is True
+    gate.reset("sf")
+    assert gate.force_consumed("sf") is False
+
+
+def test_r2_session_gate_bounded_by_cap():
+    gate = SessionActGate()
+    for i in range(SESSION_APPROVAL_MAX_SESSIONS + 10):
+        gate.mark_approved(f"s{i}", "com.apple.finder", "click", now=1_000.0 + i)
+    at = 1_100.0  # 全部会话仍在 TTL 内 → 只可能因上限被淘汰
+    assert gate.is_approved("s0", "com.apple.finder", "click", now=at) is False  # 最旧被淘汰
+    assert gate.is_approved(
+        f"s{SESSION_APPROVAL_MAX_SESSIONS + 9}", "com.apple.finder", "click", now=at
+    ) is True
+
+
+# ── P2-1：focused 入 world 指纹（焦点漂移打破令牌）─────────────────────────
+def test_r2_world_fingerprint_includes_focus_flag():
+    a = world_fingerprint(_window(), DEFAULT_VIEW.nodes, "com.google.Chrome")
+    refocused = (
+        _node("0", "AXWindow", "某文档"),
+        _node("0.0", "AXButton", "新建"),
+        _node("0.1", "AXTextArea", "正文", value="", focused=True),
+    )
+    assert world_fingerprint(_window(), refocused, "com.google.Chrome") != a  # 焦点漂移
+
+
+def test_r2_focus_drift_invalidates_confirm_token():
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    backend._ax_views[101] = _view(  # dry_run 与 apply 之间焦点移入正文
+        _node("0", "AXWindow", "某文档"),
+        _node("0.0", "AXButton", "新建"),
+        _node("0.1", "AXTextArea", "正文", value="", focused=True),
+    )
+    payload = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert payload["error_code"] == "foreground_changed"
+    assert backend.act_calls == []
+
+
+# ── P2-7：审计写失败 best-effort 但不再完全静默（回执带 audit_write_failed）──
+def test_r2_audit_write_failure_signaled_in_receipt():
+    def _broken_sink(row):
+        raise OSError("disk full")
+
+    backend = _backend()
+    reg = _registry(_tool(backend, audit_sink=_broken_sink))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    assert dry["ok"] is True  # best-effort：审计失败不改工具语义
+    assert dry.get("audit_write_failed", 0) >= 1  # P2-7：失败信号进回执
+    ok = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    assert ok.get("audit_write_failed", 0) >= 2  # 计数累计

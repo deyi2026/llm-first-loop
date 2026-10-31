@@ -245,18 +245,30 @@ def cg_post_click(x_pt: float, y_pt: float) -> None:
 
     S4（R1）：CGEventCreateMouseEvent 返回空事件时不投递（与 cg_post_key 对齐），
     只释放已创建的事件句柄。
+    P2-6（R2）：down/up **先成对创建成功，再开始投递**（all-or-nothing）——
+    消除「down 已投递、up 创建失败 ⇒ 按钮卡在按下态」的部分失败窗口：
+    任一事件创建失败 → 不投递任何事件（半点击比无点击危险，无需补偿），
+    释放已建句柄并抛 OSError（投递层映射确定性错误码 + 审计行）。
+    down 已投递而 up 投递异常时做一次补偿性重投（补偿释放）；仍失败则
+    异常上抛。CGEventPost 无返回值、投递失败不可观测——该残余登记为
+    未验证边界（见 dev report）。
     """
     lib = _cg()
     where = CGPoint(float(x_pt), float(y_pt))
     down = lib.CGEventCreateMouseEvent(None, K_CGEVENT_LEFT_MOUSE_DOWN, where, 0)
-    if down:
-        lib.CGEventPost(K_CGEVENT_TAP_HID, down)
     up = lib.CGEventCreateMouseEvent(None, K_CGEVENT_LEFT_MOUSE_UP, where, 0)
-    if up:
-        lib.CGEventPost(K_CGEVENT_TAP_HID, up)
-    for event in (down, up):
-        if event:
-            cf_release(event)
+    try:
+        if not down or not up:
+            raise OSError("CGEventCreateMouseEvent 未成对创建 down/up（点击未投递，无半点击）")
+        lib.CGEventPost(K_CGEVENT_TAP_HID, down)
+        try:
+            lib.CGEventPost(K_CGEVENT_TAP_HID, up)
+        except Exception:  # noqa: BLE001 - down 已投递：补偿性重投 up（释放按钮），仍失败则上抛
+            lib.CGEventPost(K_CGEVENT_TAP_HID, up)
+    finally:
+        for event in (down, up):
+            if event:
+                cf_release(event)
 
 
 def cg_post_scroll_to_pid(pid: int, lines: int) -> None:
@@ -274,19 +286,30 @@ def cg_post_scroll_to_pid(pid: int, lines: int) -> None:
 
 
 def cg_post_key(keycode: int, flags: int) -> None:
-    """命名键（闭合键集、非字母）keydown+keyup；flags 为 CGEventFlagMask 组合。"""
+    """命名键（闭合键集、非字母）keydown+keyup；flags 为 CGEventFlagMask 组合。
+
+    P2-6（R2，与 cg_post_click 同缺陷类）：down/up 先成对创建成功再投递
+    （all-or-nothing）——keydown 已投递而 keyup 创建失败会造成按键卡住
+    （自动重复），该部分失败窗口必须消除；任一创建失败 → 不投递 + 抛
+    OSError；up 投递异常做一次补偿性重投，仍失败则上抛。
+    """
     lib = _cg()
     down = lib.CGEventCreateKeyboardEvent(None, ctypes.c_uint32(keycode), True)
-    if down:
-        lib.CGEventSetFlags(down, ctypes.c_uint64(flags))
-        lib.CGEventPost(K_CGEVENT_TAP_HID, down)
     up = lib.CGEventCreateKeyboardEvent(None, ctypes.c_uint32(keycode), False)
-    if up:
+    try:
+        if not down or not up:
+            raise OSError("CGEventCreateKeyboardEvent 未成对创建 down/up（按键未投递，无半按键）")
+        lib.CGEventSetFlags(down, ctypes.c_uint64(flags))
         lib.CGEventSetFlags(up, ctypes.c_uint64(flags))
-        lib.CGEventPost(K_CGEVENT_TAP_HID, up)
-    for event in (down, up):
-        if event:
-            cf_release(event)
+        lib.CGEventPost(K_CGEVENT_TAP_HID, down)
+        try:
+            lib.CGEventPost(K_CGEVENT_TAP_HID, up)
+        except Exception:  # noqa: BLE001 - down 已投递：补偿性重投 up（释放按键），仍失败则上抛
+            lib.CGEventPost(K_CGEVENT_TAP_HID, up)
+    finally:
+        for event in (down, up):
+            if event:
+                cf_release(event)
 
 
 def act_outcome_from_ax_err(err: int, what: str) -> ActOutcome:

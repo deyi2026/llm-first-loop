@@ -284,14 +284,18 @@ class MacOSDesktopBackend:
             el.release()
 
     def act_click_point(self, x_pt: float, y_pt: float) -> ActOutcome:
-        """click(point)：CGEvent 左键点击（全局坐标，单位=点，与 AX 同单位）。"""
+        """click(point)：CGEvent 左键点击（全局坐标，单位=点，与 AX 同单位）。
+
+        P2-6（R2）：cg_post_click 在事件未成对创建/补偿失败时抛 OSError——
+        此处映射为确定性 backend_error 回执（detail 带固定原因文本，可审计）。
+        """
         try:
             macos_actuate.cg_post_click(float(x_pt), float(y_pt))
         except Exception as exc:  # noqa: BLE001 - 投递失败确定性回执，不带栈
             return ActOutcome(
                 ok=False,
                 error=DesktopErrorCode.BACKEND_ERROR,
-                detail=f"CGEvent 点击投递失败: {type(exc).__name__}",
+                detail=f"CGEvent 点击投递失败: {type(exc).__name__}: {exc}",
             )
         return ActOutcome(ok=True)
 
@@ -303,7 +307,7 @@ class MacOSDesktopBackend:
             return ActOutcome(
                 ok=False,
                 error=DesktopErrorCode.BACKEND_ERROR,
-                detail=f"CGEvent 按键投递失败: {type(exc).__name__}",
+                detail=f"CGEvent 按键投递失败: {type(exc).__name__}: {exc}",
             )
         return ActOutcome(ok=True)
 
