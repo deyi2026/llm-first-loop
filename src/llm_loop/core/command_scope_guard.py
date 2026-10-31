@@ -80,6 +80,7 @@ from llm_loop.core.command_options import (
     TIME_OPTIONS,
     UNZIP_OPTIONS,
     WGET_OPTIONS,
+    OptionScan,
     scan_options,
 )
 from llm_loop.core.write_scope import WriteScope, scope_allows
@@ -657,7 +658,7 @@ def _rsync_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
 
     第五轮独立审查 P1-1：rsync 此前**没有族模型** ⇒ 未建模的选项被静默忽略
     ⇒ 落盘型选项（``--temp-dir``/``--partial-dir``/``--log-file``/``--write-batch``/
-    ``--only-write-batch``/``--copy-dest``）的路径从未被判定 ⇒ 越界写放行
+    ``--only-write-batch``）的路径从未被判定 ⇒ 越界写放行
     （实测 7 条全部放行）；且**选项的取值**会被误当 dst（``rsync src
     /outside/dst --exclude-from x`` 的 dst 被取成 "x" ⇒ 越界 dst 漏判，实测
     放行）。⇒ 接入族模型（``scan_options``）：**未建模的选项 ⇒ unresolved ⇒
@@ -669,6 +670,10 @@ def _rsync_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
     no DEST arg will list the source files instead of copying"）⇒ 不算写；
     **没有**操作数 ⇒ 连列举都不是 ⇒ 不可静态定位 ⇒ fail-closed（第七轮独立审查
     P1-2 指出的行为回归：此前此处返回 ``([], False)`` 放行）。
+    注：裸 ``rsync`` 实际只打印用法（无副作用），此处仍 fail-closed 属**保守
+    取舍**——判定的目标是"写目标是否可静态定位"，而不是"命令是否危险"（与
+    "未建模选项 ⇒ fail-closed"同一口径）；第八轮独立审查 P2-3 认为此取舍可
+    接受，仅需注明。
 
     第七轮独立审查 **P0-1**：``--rsh/-e``（传输命令）与 ``--rsync-path``（远端
     命令）是**执行通道**——rsync 把它们的取值**当作命令执行**（分词后 exec）
@@ -687,10 +692,18 @@ def _rsync_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
     if scan.has("--daemon"):
         # P1-2：守护模式 ⇒ pid/log/模块路径等写入目标不可静态定位。
         return ([], True)
+    operands = list(scan.operands)
+    if scan.has("--remove-source-files"):
+        # 第八轮独立审查 P1-1：``--remove-source-files`` 在传输成功后**删除源
+        # 文件**（上游手册："--remove-source-files remove the source files after
+        # a successful transfer"）⇒ 源操作数是**删除目标**（等同 ``rm`` ⇒ 属
+        # 写名工具）⇒ 全部操作数（源 + 目标）都要判作用域：此前只判 dst ⇒
+        # ``rsync -a --remove-source-files /outside/proj dst`` 放行 ⇒ 域外源树
+        # 被删掉（实测放行）。
+        return (operands, False)
     targets: list[str] = []
     for flag in RSYNC_WRITE_TARGET_OPTIONS:
         targets.extend(scan.values_of(flag))
-    operands = list(scan.operands)
     if not operands:
         # P1-2：无操作数 ⇒ 既非列举也非复制 ⇒ 写目标不可静态定位。
         return ([], True)
@@ -1436,60 +1449,26 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
     return (targets, not positional)
 
 
-# curl 的**布尔**短选项字母：从 CURL_OPTIONS 族表**机械推导**（不手维护 ⇒
-# 不会与族表漂移）。用途：短选项簇里判定 'w' 是否真是 --write-out——取值型
-# 字母会把簇内余串吞掉（getopt 语义），只有 'w' 之前的字母**全是布尔字母**
-# 时它才是 --write-out（第六轮独立审查 P2-2）。
-_CURL_CLUSTER_BOOL_LETTERS = frozenset(
-    letter for letter, takes in CURL_OPTIONS.short_options if not takes
-)
-
-
-def _curl_write_out_output_targets(args: Sequence[str]) -> list[str] | None:
+def _curl_write_out_output_targets(scan: OptionScan) -> list[str] | None:
     """curl 的 ``-w/--write-out`` 取值里 ``%output{PATH}`` 的 PATH 列表。
 
     上游依据（双源）：man7 curl(1) 与 curl.se 手册都记载 --write-out 的输出
     目标「can be changed with %{stderr} and %output{}」⇒ ``%output{PATH}``
     里的 PATH 是 curl 的**写目标**。
 
-    返回 ``None`` 表示**结构不可解析**（出现 ``%output{`` 但没有闭合的 ``}``）
-    ⇒ 写目标不可静态定位 ⇒ 调用方 fail-closed。空列表表示没有该指令。
+    **取值来自族扫描**（``scan.values_of``）而不是重扫 argv（第八轮独立审查
+    P2-2）：族扫描已按 getopt 语义**消费**选项——``-d -w FMT`` 里的 ``-w`` 是
+    ``-d`` 的**取值**（族扫描给出 ``-d=['-w']``、``-w=[]`` ⇒ 不判成 write-out
+    ⇒ 不再过拒），而 ``-sw FMT`` 簇内的 'w' 仍能命中 ⇒ **单一真值源**是族表，
+    且不再出现"某个取值型选项的取值被当成 write-out"的过拒。
+
+    返回 ``None`` 表示**结构不可解析**（出现 ``%output{`` 但没有闭合的 ``}``，
+    或 ``-w @FILE``——格式串来自文件）⇒ 写目标不可静态定位 ⇒ 调用方
+    fail-closed。空列表表示没有该指令。
     """
     found: list[str] = []
-    for index, token in enumerate(args):
-        if token == "--":
-            # 第五轮独立审查 P2-3：``--`` 之后的操作数是**字面量**（不再是选项）
-            # ⇒ 到此停止解析（否则 ``-- -w %output{...}`` 这类字面量会被当成
-            # 选项取值 ⇒ 过拒）。
-            break
-        value: str | None = None
-        if token in ("-w", "--write-out"):
-            value = args[index + 1] if index + 1 < len(args) else ""
-        elif token.startswith("--write-out="):
-            value = token.split("=", 1)[1]
-        elif token.startswith("-") and not token.startswith("--"):
-            # 短选项**簇**里的 'w'：``-w FORMAT`` / ``-wFORMAT`` / ``-sw FORMAT``
-            # （族扫描 ``_scan_short`` 的同一语义：'w' 是取值型 ⇒ 值取内联余部，
-            # 簇尾则取下一个 token）。第五轮独立审查 P2-1：此前只认独立的
-            # ``-w``/``--write-out`` ⇒ ``curl -sw %output{/outside/x} URL`` 的
-            # 写目标路径漏判（实测放行）。
-            # 第六轮独立审查 P2-2：但**取值型字母会把簇内余串吞掉**（getopt
-            # 语义）——``-dw FMT`` 是 ``-d`` 取值 "w"，后面的 argv **不是**
-            # ``-w`` 的格式串 ⇒ 判定 'w' 之前的字母必须**全是已知布尔短
-            # 选项**（与编译器簇偏移 ``_compiler_cluster_value_offset`` 同一
-            # 口径；布尔字母集从族表机械推导 ⇒ 不与族表漂移）。
-            body = token[1:]
-            at = body.find("w")
-            if at == 0:
-                # ``-wFORMAT``：'w' 在首位 ⇒ 内联余串就是它的取值。
-                value = body[1:] or (args[index + 1] if index + 1 < len(args) else "")
-            elif at > 0 and all(
-                char in _CURL_CLUSTER_BOOL_LETTERS for char in body[:at]
-            ):
-                inline = body[at + 1 :]
-                value = inline or (args[index + 1] if index + 1 < len(args) else "")
-        if value is None:
-            continue
+    values = list(scan.values_of("--write-out")) + list(scan.values_of("-w"))
+    for value in values:
         # 第七轮独立审查 P1-3：curl ≥7.75 的 ``-w @FILE`` 表示**从文件读取**
         # write-out 格式串（curl 手册："If the parameter starts with '@', the
         # rest of the parameter should be a file name to read the format from"）
@@ -1510,7 +1489,6 @@ def _curl_write_out_output_targets(args: Sequence[str]) -> list[str] | None:
             rest = rest[end + 1 :]
     return found
 
-
 def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
     """curl / wget 的写目标（第七轮独立审查 P1-1：选项按 getopt 两种形态解析）。
 
@@ -1526,6 +1504,14 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
         if scan.unresolved:
             # 第八轮 P1-5：未识别的选项 ⇒ 写目标不可静态定位 ⇒ fail-closed
             # （此前 curl/wget 族不消费 ``scan.unresolved`` ⇒ 与 sed/perl 两套口径）
+            return ([], True)
+        if scan.has("-K"):
+            # 第八轮独立审查 P2-1：``-K/--config FILE`` 是**配置文件**——curl 的
+            # 配置文件里可写 ``output = "/outside/x"``、``write-out = ...`` 等
+            # 指令 ⇒ 写目标不可静态定位 ⇒ fail-closed。长选项 ``--config`` 因未在
+            # curl 族表（未建模 ⇒ 未解析）早已 fail-closed；**短选项 ``-K`` 在族表
+            # 里（取值型）⇒ 此前被当普通选项消费 ⇒ 绕过成立**（实测
+            # ``curl -K /outside/curlrc URL`` 放行）⇒ 本条补齐短选项形态。
             return ([], True)
         targets: list[str] = []
         for flag in (
@@ -1563,7 +1549,7 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
         # "…can be changed with %{stderr} and %output{}"）⇒ PATH 是 curl 的
         # **写目标**。此前完全未建模 ⇒ ``curl -w %output{/outside/x} URL``
         # 越界写放行。⇒ 从 write-out 取值里抽出 ``%output{...}`` 的路径逐个判。
-        write_out_targets = _curl_write_out_output_targets(args)
+        write_out_targets = _curl_write_out_output_targets(scan)
         if write_out_targets is None:
             # ``%output{`` 没有闭合的 ``}`` ⇒ 写目标不可静态定位 ⇒ fail-closed。
             return ([], True)

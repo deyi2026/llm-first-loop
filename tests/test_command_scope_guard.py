@@ -1411,7 +1411,7 @@ def test_r20_review_fixes_do_not_over_block(command: str) -> None:
 # P2-3（"未知簇字母被当布尔字母"的假设显式化：编译器无族表 ⇒ 已知字母唯一
 #      来源是显式常量；未知字母 ⇒ 簇不被识别 ⇒ fail-closed（安全方向））。
 
-R22_BLOCKED_CASES = [
+R23_BLOCKED_CASES = [
     # ── P0-1：执行通道 ────────────────────────────────────────────────
     ("rsync --list-only --rsh=touch /outside/pwned host:", "implicit_write_target"),
     ("rsync -a -e ssh src dst", "implicit_write_target"),
@@ -1430,15 +1430,15 @@ R22_BLOCKED_CASES = [
 ]
 
 
-@pytest.mark.parametrize("command,expected_reason", R22_BLOCKED_CASES)
-def test_r22_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+@pytest.mark.parametrize("command,expected_reason", R23_BLOCKED_CASES)
+def test_r23_review_findings_are_blocked(command: str, expected_reason: str) -> None:
     """第二十三轮复现向量：第七轮独立审查点名的绕过必须被拦。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is False, (command, decision.reason, decision.detail)
     assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
 
 
-R22_ALLOWED_CASES = [
+R23_ALLOWED_CASES = [
     # 常规 rsync 同步（不传 --rsh/-e/--rsync-path ⇒ 走默认传输）不受影响。
     "rsync -avz src dst",
     # --link-dest 在域内 ⇒ 放行。
@@ -1451,8 +1451,52 @@ R22_ALLOWED_CASES = [
 ]
 
 
-@pytest.mark.parametrize("command", R22_ALLOWED_CASES)
-def test_r22_review_fixes_do_not_over_block(command: str) -> None:
+@pytest.mark.parametrize("command", R23_ALLOWED_CASES)
+def test_r23_review_fixes_do_not_over_block(command: str) -> None:
     """第二十三轮修复不得误伤：默认传输的 rsync、域内 --link-dest、只读基准。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第二十四轮：第八轮独立审查响应的复现锚 ────────────────────────────
+# P1-1（--remove-source-files 源操作数=删除目标）、P2-1（curl -K/--config 配置
+# 通道）、P2-2（write-out 取值单一真值源=族扫描）、P2-3（裸 rsync 保守取舍）。
+
+R24_BLOCKED_CASES = [
+    # P1-1：传输成功后删除源文件 ⇒ 源操作数是删除目标（等同 rm）⇒ 域外源树必须拦。
+    ("rsync -a --remove-source-files /outside/proj dst", "write_target_outside_scope"),
+    # P1-1 变体：域外目标同样拦（目标操作数本就判写作用域）。
+    (
+        "rsync -a --remove-source-files src /outside/dst",
+        "write_target_outside_scope",
+    ),
+    # P2-1：-K 是 curl 族表内的取值型短选项（配置文件可含 output=/write-out=）
+    # ⇒ 不可静态定位 ⇒ fail-closed。此前被当普通选项消费 ⇒ 绕过成立（实测放行）。
+    ("curl -K /outside/curlrc URL", "implicit_write_target"),
+    # P2-1 长形态：--config 未建模 ⇒ 走"未识别选项 fail-closed"（第八轮 P1-5）。
+    ("curl --config /outside/curlrc URL", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R24_BLOCKED_CASES)
+def test_r24_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+    """第二十四轮复现向量：第八轮独立审查点名的绕过必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R24_ALLOWED_CASES = [
+    # P1-1 不得误伤：域内源+域内目标的增量迁移（--remove-source-files 合法场景）。
+    "rsync -a --remove-source-files src dst",
+    # P2-2 不得过拒：``-d -w FMT`` 里 ``-w`` 是 ``-d`` 的取值（getopt 消费）⇒
+    # 不是 write-out ⇒ 即便取值串里出现 %output{} 形态也不判写目标。
+    "curl -d -w %output{/outside/x} URL",
+]
+
+
+@pytest.mark.parametrize("command", R24_ALLOWED_CASES)
+def test_r24_review_fixes_do_not_over_block(command: str) -> None:
+    """第二十四轮修复不得误伤：域内 remove-source-files、取值位形态。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
