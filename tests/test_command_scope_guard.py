@@ -1173,7 +1173,8 @@ def test_r14_union_gap_fixes_do_not_over_block(command: str) -> None:
 # P1-1（删 ref 写形态漏放）：``git symbolic-ref -qd HEAD``（= ``-q`` + ``-d``）
 #      是合法的删除 HEAD 形态；第十四轮的「只看 token 开头」⇒ ``d`` 不在首位
 #      就漏 ⇒ 删 .git/HEAD 的写形态放行。⇒ 改为扫描**整簇**字符（仍要求全部
-#      字符都是 symbolic-ref 已知短选项 d/q/m/s ⇒ ``-dHEAD`` 这类未知选项
+#      字符都是 symbolic-ref 已知短选项 d/q/m（上游手册；``--short`` **没有**
+#      短选项形式 ⇒ 臆测的 's' 已在第五轮审查 P2-2 移除）⇒ ``-dHEAD`` 这类未知选项
 #      形态不被误判）。
 # P1-2（**相对**越界写放行）：``gcc -wo../escape a.c`` 是合法的
 #      「-w + -o 值=../escape」；第十四轮只认余串以 ``/`` 或 ``=`` 开头 ⇒
@@ -1339,7 +1340,10 @@ R20_BLOCKED_CASES = [
     ("rsync --log-file=/outside/l src dst", "write_target_outside_scope"),
     ("rsync --write-batch=/outside/b src dst", "write_target_outside_scope"),
     ("rsync --only-write-batch=/outside/b src dst", "write_target_outside_scope"),
-    ("rsync --copy-dest=/outside/c src dst", "write_target_outside_scope"),
+    # ── 第六轮独立审查 P1-1：``-M/--remote-option=OPT`` 是**取值型**（上游手册）
+    #    ⇒ 此前被登记成布尔 ⇒ 取值落进操作数 ⇒ dst 被取成取值（域内）⇒ 越界
+    #    dst 漏判（实测 ``rsync src /outside/dst -M opt`` 放行）。
+    ("rsync src /outside/dst -M opt", "write_target_outside_scope"),
     # 选项的**取值**被误当 dst ⇒ 越界 dst 漏判（结构性）。
     ("rsync src /outside/dst --exclude-from x", "write_target_outside_scope"),
     # rsync 没有 --target-directory ⇒ 未建模选项 ⇒ fail-closed。
@@ -1373,6 +1377,14 @@ R20_ALLOWED_CASES = [
     # git symbolic-ref 的短选项只有 -d/-q/-m（上游手册）⇒ ``-s`` 是**未知
     # 选项**（git 会报错、命令无副作用）⇒ 放行（第五轮独立审查 P2-2）。
     "git symbolic-ref -sd HEAD",
+    # 第六轮独立审查 P2-1：``--copy-dest=DIR`` 是**比较基准**（上游手册
+    # "--copy-dest=DIR  ... and include copies of unchanged files"，"..." 承接
+    # --compare-dest 的"比较基准"语义）⇒ rsync 不往 DIR 里写 ⇒ 不算写目标。
+    "rsync --copy-dest=/outside/c src dst",
+    # 第六轮独立审查 P2-2：``-dw FMT`` 是 ``-d`` 取值 "w"（getopt 语义）⇒
+    # 后面的 argv **不是** ``-w`` 的格式串 ⇒ %output{} 不构成写目标 ⇒ 放行
+    # （过拒方向）。
+    "curl -dw %output{/outside/x} URL",
     # rsync 没有 --target-directory ⇒ 未建模选项 ⇒ fail-closed。
 ]
 

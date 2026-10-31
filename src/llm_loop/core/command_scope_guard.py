@@ -1433,6 +1433,15 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
     return (targets, not positional)
 
 
+# curl 的**布尔**短选项字母：从 CURL_OPTIONS 族表**机械推导**（不手维护 ⇒
+# 不会与族表漂移）。用途：短选项簇里判定 'w' 是否真是 --write-out——取值型
+# 字母会把簇内余串吞掉（getopt 语义），只有 'w' 之前的字母**全是布尔字母**
+# 时它才是 --write-out（第六轮独立审查 P2-2）。
+_CURL_CLUSTER_BOOL_LETTERS = frozenset(
+    letter for letter, takes in CURL_OPTIONS.short_options if not takes
+)
+
+
 def _curl_write_out_output_targets(args: Sequence[str]) -> list[str] | None:
     """curl 的 ``-w/--write-out`` 取值里 ``%output{PATH}`` 的 PATH 列表。
 
@@ -1461,9 +1470,19 @@ def _curl_write_out_output_targets(args: Sequence[str]) -> list[str] | None:
             # 簇尾则取下一个 token）。第五轮独立审查 P2-1：此前只认独立的
             # ``-w``/``--write-out`` ⇒ ``curl -sw %output{/outside/x} URL`` 的
             # 写目标路径漏判（实测放行）。
+            # 第六轮独立审查 P2-2：但**取值型字母会把簇内余串吞掉**（getopt
+            # 语义）——``-dw FMT`` 是 ``-d`` 取值 "w"，后面的 argv **不是**
+            # ``-w`` 的格式串 ⇒ 判定 'w' 之前的字母必须**全是已知布尔短
+            # 选项**（与编译器簇偏移 ``_compiler_cluster_value_offset`` 同一
+            # 口径；布尔字母集从族表机械推导 ⇒ 不与族表漂移）。
             body = token[1:]
             at = body.find("w")
-            if at >= 0:
+            if at == 0:
+                # ``-wFORMAT``：'w' 在首位 ⇒ 内联余串就是它的取值。
+                value = body[1:] or (args[index + 1] if index + 1 < len(args) else "")
+            elif at > 0 and all(
+                char in _CURL_CLUSTER_BOOL_LETTERS for char in body[:at]
+            ):
                 inline = body[at + 1 :]
                 value = inline or (args[index + 1] if index + 1 < len(args) else "")
         if value is None:
@@ -1628,9 +1647,11 @@ _COMPILER_BENIGN_PREFIXES = (
 
 
 # 第十四轮：组合短选项里，取值型选项**之前**允许出现的布尔短选项字母。
-# 只收**确定不带值**的字母（``-w``/``-v``/``-c``）；``-g``/``-O``/``-f``/``-m``/
-# ``-W``/``-l``/``-L``/``-I``/``-D`` 都是**附着值**族（``-Wall``、``-g3``、
-# ``-ofoo``）⇒ 不得当作布尔前缀，否则 ``-lo``（``-l`` 的值 o）会被误读成 ``-o``。
+# 只收**确定不带值**的字母（``-w``/``-v``/``-c``/``-E``/``-S``）；``-g``/``-O``/
+# ``-f``/``-m``/``-W``/``-l``/``-L``/``-I``/``-D`` 都是**附着值**族（``-Wall``、
+# ``-g3``、``-ofoo``）⇒ 不得当作布尔前缀，否则 ``-lo``（``-l`` 的值 o）会被误读成 ``-o``。
+# （第六轮独立审查 P2-3：原注释只列 "-w/-v/-c"，与实际集合 {w,v,c,E,S} 不符 ⇒
+# 已同步修正。）
 _COMPILER_CLUSTER_BOOL_LETTERS = frozenset({"w", "v", "c", "E", "S"})
 
 
