@@ -666,15 +666,34 @@ def _rsync_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
 
     rsync 的目标是**末位操作数**（上游手册："rsync [OPTION...] SRC... [DEST]"）；
     只有一个操作数时是**列举**而非复制（上游："Usages with just one SRC arg and
-    no DEST arg will list the source files instead of copying"）⇒ 不算写。
+    no DEST arg will list the source files instead of copying"）⇒ 不算写；
+    **没有**操作数 ⇒ 连列举都不是 ⇒ 不可静态定位 ⇒ fail-closed（第七轮独立审查
+    P1-2 指出的行为回归：此前此处返回 ``([], False)`` 放行）。
+
+    第七轮独立审查 **P0-1**：``--rsh/-e``（传输命令）与 ``--rsync-path``（远端
+    命令）是**执行通道**——rsync 把它们的取值**当作命令执行**（分词后 exec）
+    ⇒ 载荷不可静态定位 ⇒ fail-closed（与 tar ``--checkpoint-action=exec=CMD``
+    同一口径）。不传这些选项时走默认传输 ⇒ 常用形态不受影响。
+    第七轮独立审查 **P1-2**：``--daemon`` 是**守护模式**（``--config=`` 指向的
+    rsyncd.conf 里可写 pid file/log file/模块路径）⇒ 写入目标不可静态定位 ⇒
+    fail-closed。
     """
     scan = scan_options(RSYNC_OPTIONS, args)
     if scan.unresolved:
+        return ([], True)
+    if scan.has("--rsh", "-e", "--rsync-path"):
+        # P0-1：执行通道（传输命令/远端命令）⇒ 载荷不可静态定位。
+        return ([], True)
+    if scan.has("--daemon"):
+        # P1-2：守护模式 ⇒ pid/log/模块路径等写入目标不可静态定位。
         return ([], True)
     targets: list[str] = []
     for flag in RSYNC_WRITE_TARGET_OPTIONS:
         targets.extend(scan.values_of(flag))
     operands = list(scan.operands)
+    if not operands:
+        # P1-2：无操作数 ⇒ 既非列举也非复制 ⇒ 写目标不可静态定位。
+        return ([], True)
     dst = operands[-1:] if len(operands) >= 2 else []
     return (targets + dst, False)
 
@@ -685,10 +704,11 @@ def _copy_move_targets(
     """cp/mv/install/ln 的写目标：目标目录 → 末位操作数。
 
     rsync **不走这里**（第五轮独立审查 P1-1：rsync 改走自己的族模型分支
-    ``_rsync_write_targets``——它需要 ``--temp-dir``/``--partial-dir``/
-    ``--log-file``/``--write-batch``/``--only-write-batch``/``--copy-dest`` 这批
-    落盘型选项，且 rsync **没有** ``--target-directory``（那是 cp/mv/install/ln
-    的选项）⇒ 此前 rsync 分支里对 ``--target-directory`` 的处理是**抄错的**）。
+    ``_rsync_write_targets``——它需要 ``--backup-dir``/``--temp-dir(-T)``/
+    ``--partial-dir``/``--log-file``/``--write-batch``/``--only-write-batch``/
+    ``--link-dest`` 这批落盘型选项，且 rsync **没有** ``--target-directory``
+    （那是 cp/mv/install/ln 的选项）⇒ 此前 rsync 分支里对
+    ``--target-directory`` 的处理是**抄错的**）。
     cp/mv/install/ln 的 ``-t`` 才是 ``--target-directory``（审查 P1-1；第五轮
     审查 P1-2 补入 ln：``ln -t DIR`` 把链接建到 DIR 下）。
     第九轮 P1-2：``-t/outside`` 附着与 ``--target-directory=/outside`` 内联形态
@@ -703,31 +723,6 @@ def _copy_move_targets(
     if name == "ln" and "-T" in args:
         return ([positional[-1]] if positional else [], not positional)
     return (positional[-1:], len(positional) < 2)
-
-
-def _flag_value(args: Sequence[str], *flags: str) -> str | None:
-    """取 ``-t DIR`` / ``--target-directory=DIR`` 形态的选项值（**最后一个**）。
-
-    第十七轮独立审查 P1-2：GNU getopt 对重复的取值型选项是「**后者覆盖
-    前者**」（rsync 的 --backup-dir、cp 的 -t 都取最后一个）⇒ 此前取**第一个**
-    ⇒ ``rsync -b --backup-dir=bk --backup-dir=/outside/b src dst`` 分析的是域内
-    的第一个、工具实际落盘的是越界的最后一个 ⇒ 越界写放行。
-    ⇒ 改为遍历全部出现、取**最后一个**（与 ``scan.value_of`` 的 last-wins
-    语义一致）。
-    """
-    found: str | None = None
-    for index, token in enumerate(args):
-        if token == "--":
-            # 第十九轮独立审查 P2-3：``--`` 之后的操作数是**字面量**（不再是
-            # 选项）⇒ 到此停止解析，避免把 ``-- --target-directory=x`` 这类
-            # 字面量误当选项取值（此前是**过拒**方向）。
-            break
-        for flag in flags:
-            if token == flag:
-                found = args[index + 1] if index + 1 < len(args) else ""
-            elif token.startswith(flag + "="):
-                found = token.split("=", 1)[1]
-    return found
 
 
 def _is_write_name(name: str) -> bool:
@@ -1399,7 +1394,15 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
     # （上游原文未能在本机核验：只有 bsdtar；无论上游是「累加」还是
     # 「后者覆盖」，逐个判都是安全的一侧）。
     checkpoints = scan.values_of("--checkpoint-action")
-    if any(value.startswith("exec=") or value == "exec" for value in checkpoints):
+    # 第七轮独立审查 P1-1：GNU tar 的 checkpoint 动作是**逗号分隔的列表**
+    # （``checkpoint_compile_action`` 按 ',' 拆分）⇒ 只判 ``startswith("exec=")``
+    # 会漏 ``--checkpoint-action=dot,exec=evil``（无害动作在前、载荷在后）
+    # ⇒ **逐段**判（每段去空白后：等于 "exec" 或以 "exec=" 开头）。
+    if any(
+        segment.strip() == "exec" or segment.strip().startswith("exec=")
+        for value in checkpoints
+        for segment in value.split(",")
+    ):
         return ([], True)
     # 第十四轮 P0：``--index-file=FILE`` 让 tar 写**索引文件** ⇒ FILE 是写目标。
     # 第十九轮独立审查 P1-1：此前只在 **x/c 分支**判 ⇒ 其它模式漏判：
@@ -1487,6 +1490,13 @@ def _curl_write_out_output_targets(args: Sequence[str]) -> list[str] | None:
                 value = inline or (args[index + 1] if index + 1 < len(args) else "")
         if value is None:
             continue
+        # 第七轮独立审查 P1-3：curl ≥7.75 的 ``-w @FILE`` 表示**从文件读取**
+        # write-out 格式串（curl 手册："If the parameter starts with '@', the
+        # rest of the parameter should be a file name to read the format from"）
+        # ⇒ 文件内容可含 ``%output{/outside/x}`` ⇒ 写目标不可静态定位 ⇒
+        # fail-closed（与「%output{ 未闭合」同一处置：返回 None）。
+        if value.startswith("@"):
+            return None
         rest = value
         while True:
             start = rest.find("%output{")
@@ -1665,6 +1675,15 @@ def _compiler_cluster_value_offset(token: str, value_letter: str) -> int | None:
     ⇒ 改为：取值字母可出现在簇内**任意位置**，但其**之前**的字母必须**全是**
     已知布尔短选项（``-Werror`` 的 ``W``、``-lo`` 的 ``l`` 不是布尔字母 ⇒ 仍
     不会被误读成 ``-o``）。
+
+    第七轮独立审查 P2-3（显式化）：编译器**没有族表**（其选项语义由本模块的
+    ``_COMPILER_*`` 常量逐个建模）⇒ **已知字母的唯一来源**是
+    ``_COMPILER_CLUSTER_BOOL_LETTERS``（显式常量，保守只收确定不带值的字母）。
+    未知字母 ⇒ 本函数返回 None ⇒ 调用方 ``_compiler_has_unknown_option`` 判定
+    该 token **未建模** ⇒ **fail-closed**（已实测确认，不是漏判方向）⇒ 因此
+    "未知字母被当作布尔字母"在本路径上是**安全方向**，但依赖上面的显式常量：
+    若编译器新增取值型短选项而未同步该常量 ⇒ 该簇不再被识别 ⇒ 仍走
+    fail-closed（安全方向，不会漏判）。
     """
     body = token[1:]
     position = body.find(value_letter)

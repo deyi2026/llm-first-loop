@@ -1394,3 +1394,65 @@ def test_r20_review_fixes_do_not_over_block(command: str) -> None:
     """第二十轮修复不得误伤：常规 rsync 组合与常用取值型选项。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第二十三轮：第七轮独立审查（REVISE：P0=1/P1=3/P2=3）的响应锚点 ─────────
+#
+# P0-1（rsync 的 --rsh/-e/--rsync-path 是**执行通道**：rsync 把取值当命令执行
+#      ⇒ 载荷不可静态定位 ⇒ fail-closed，与 tar --checkpoint-action=exec 同口径）。
+# P1-1（tar 的 checkpoint 动作是**逗号分隔列表** ⇒ 逐段判，堵住
+#      "--checkpoint-action=dot,exec=evil"）。
+# P1-2（rsync --daemon 是守护模式（pid/log/模块路径）⇒ fail-closed；无操作数
+#      ⇒ 写目标不可静态定位 ⇒ fail-closed——此前放行是行为回归）。
+# P1-3（curl "-w @FILE" 从文件读格式串 ⇒ 写目标不可静态定位 ⇒ fail-closed）。
+# P2-1（rsync --link-dest=DIR 会把域外 inode 硬链接进域内 ⇒ DIR 判为写目标：
+#      域外即拒；域内仍可用）。
+# P2-2（_flag_value 已无调用者 ⇒ 死代码删除）。
+# P2-3（"未知簇字母被当布尔字母"的假设显式化：编译器无族表 ⇒ 已知字母唯一
+#      来源是显式常量；未知字母 ⇒ 簇不被识别 ⇒ fail-closed（安全方向））。
+
+R22_BLOCKED_CASES = [
+    # ── P0-1：执行通道 ────────────────────────────────────────────────
+    ("rsync --list-only --rsh=touch /outside/pwned host:", "implicit_write_target"),
+    ("rsync -a -e ssh src dst", "implicit_write_target"),
+    ("rsync -a --rsync-path=/outside/x src dst", "implicit_write_target"),
+    # ── P1-1：tar checkpoint 动作的逗号列表 ───────────────────────────
+    ("tar --checkpoint-action=dot,exec=evil /outside/x.tar f", "implicit_write_target"),
+    ("tar --checkpoint-action=exec=/outside/x /outside/x.tar f", "implicit_write_target"),
+    # ── P1-2：守护模式 / 无操作数 ─────────────────────────────────────
+    ("rsync --daemon --config=/outside/rsyncd.conf", "implicit_write_target"),
+    ("rsync", "implicit_write_target"),
+    # ── P1-3：curl -w @FILE ───────────────────────────────────────────
+    ("curl -w @/outside/fmt URL", "implicit_write_target"),
+    ("curl -w @fmt URL", "implicit_write_target"),
+    # ── P2-1：--link-dest 使域外 inode 在域内可读 ⇒ 判作用域 ───────────
+    ("rsync -a --link-dest=/outside/prev src dst", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R22_BLOCKED_CASES)
+def test_r22_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+    """第二十三轮复现向量：第七轮独立审查点名的绕过必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R22_ALLOWED_CASES = [
+    # 常规 rsync 同步（不传 --rsh/-e/--rsync-path ⇒ 走默认传输）不受影响。
+    "rsync -avz src dst",
+    # --link-dest 在域内 ⇒ 放行。
+    "rsync -a --link-dest=prev src dst",
+    # --copy-dest 是**比较基准**（只读）⇒ 不算写目标 ⇒ 放行。
+    "rsync -a --copy-dest=prev src dst",
+    # 普通 tar/curl 不受影响。
+    "tar -cf out.tar f",
+    "curl -sS URL",
+]
+
+
+@pytest.mark.parametrize("command", R22_ALLOWED_CASES)
+def test_r22_review_fixes_do_not_over_block(command: str) -> None:
+    """第二十三轮修复不得误伤：默认传输的 rsync、域内 --link-dest、只读基准。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)

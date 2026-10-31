@@ -1137,6 +1137,10 @@ RSYNC_WRITE_TARGET_OPTIONS = (
     "--log-file",
     "--write-batch",
     "--only-write-batch",
+    # 第七轮独立审查 P2-1：``--link-dest=DIR`` 会把 DIR 里的文件**硬链接**进
+    # 目标目录 ⇒ 域外 inode 在域内变得**可读** ⇒ DIR 属于写目标（须判作用域）。
+    # ⇒ 判成写目标（域外即拒），而不是 fail-closed（域内的增量同步仍可用）。
+    "--link-dest",
 )
 
 # 第九轮 P1-1：``patch`` 的 ``-o/--output``、``unzip`` 的 ``-d/--directory``、
