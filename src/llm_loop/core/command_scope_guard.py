@@ -12,8 +12,9 @@ P1-a 保留命令工具，把约束改到命令语义层——识别**写盘命�
 判定口径（fail-closed）
 -----------------------
 1. **不可静态判定的 shell 构造 ⇒ 直接拒绝**：命令替换（``$(...)``、反引号）、
-   字面量分组（``(...)``、``{...}``）、控制流关键字（``if``/``for``/``case``…）、
-   heredoc。这些构造让「写目标在哪」无法静态判定——与其猜，不如拒。
+   进程替换（``<(…)`` / ``>(…)``）、控制流关键字（``if``/``for``/``case``…）、
+   花括号分组（``{...}``）。这些构造让「写目标在哪」无法静态判定——与其猜，不如拒。
+   heredoc 与**子 shell 分组**（``(...)``）自 2026-10-31（D2）起改为解析，口径见下节。
 2. **写盘命令族**（rm/cp/mv/… + git 写子命令 + find 的删除与落盘动作 + 压缩/归档/
    构建/包管理族）⇒ 写目标必须静态可定位且落在 scope 内。**隐式写目标**（git 写
    ``.git/``、``xargs`` 目标来自 stdin、``mktemp`` 写 ``TMPDIR``、构建产物、
@@ -34,6 +35,12 @@ P1-a 保留命令工具，把约束改到命令语义层——识别**写盘命�
 - **选项语义按命令分别建模**：每个载体/命令各有一套选项表——``env -S`` 是载荷型、
   ``exec -a`` 是取值型、``timeout`` 的 duration 是命令前的位置参数、
   ``sudo -u`` 的值不是命令的一部分——不得共用一套通用规则。
+- **heredoc 正文是数据，不是命令**：正文按 stdin 载荷剥离后再判写目标
+  （``cat > f <<EOF`` 的写目标是 ``f``）。但剥离前必须先在**原始串**级别拒掉执行向量，
+  且分隔符按 bash 精确规则匹配（``<<X`` 终结行必须是 X，找不到即拒）——口径一旦松于
+  bash，「剥离」就会变成「吞掉真实命令」。
+- **子 shell 分组逐条递归判定**：``( … )`` 不增加写能力，内部命令各判一次；分组内的
+  ``cd`` 位移不回流父 shell（否则后续段会按错误目录判定）。
 - **写工具按动词前缀归类**：写族名单之外还有前缀规则（``rm*``/``mk*``/``unlink*``），
   逐个罗列名字必然漏项（``unlink`` 曾因此漏检）。
 - **配置注入按载荷处理**：``git -c/--config-env`` 与 ``GIT_CONFIG_*`` 环境变量都能
@@ -425,7 +432,15 @@ def _split_segments(tokens: Sequence[str]) -> list[list[str]]:
 
 
 def _unmodeled_construct(tokens: Sequence[str]) -> str:
-    """扫描不可静态判定的构造（命令替换 / 分组 / heredoc / 进程替换）。命中即返回说明。"""
+    """扫描**剥离后仍残留**的不可判定构造（兜底，不是第一道防线）。
+
+    2026-10-31 D2 起，heredoc 正文与未加引号的子 shell 分组在进 tokenizer 之前
+    已被剥离/切分（见 ``_strip_heredocs`` / ``_split_top_level_groups``），所以这里
+    命中的只剩三种：命令替换、引号内的**字面量**括号、以及剥离失败时的残留 heredoc。
+
+    引号内的括号（``echo "("``）是数据，不是分组；保留拒绝是保守口径——放开它需要
+    区分「引号内的 (」与「真分组」，而后者已在上游按原始串处理完毕，收益不足。
+    """
     for token in tokens:
         if token == "$" or "$(" in token or "`" in token:
             return f"command_substitution: {token}"
@@ -438,6 +453,367 @@ def _unmodeled_construct(tokens: Sequence[str]) -> str:
         if "<(" in token or ">(" in token:
             return f"process_substitution: {token}"
     return ""
+
+
+# ── heredoc 正文剥离 / 子 shell 分组切分（D2，2026-10-31）─────────────────────
+#
+# 判定对象是**写目标**，不是命令文本的形态：
+#   * heredoc 的正文是 stdin 数据，不是命令。``cat > f <<EOF … EOF`` 的写目标是 ``f``，
+#     完全可以静态判定；把它整体拒掉只是把「不会写盘」的命令当成威胁。
+#   * ``( … )`` 是子 shell 分组，不增加任何写能力；内部命令可递归走完整判定。
+#
+# 安全前提（缺一不可）：
+#   1. 调用方先在**原始串**级别拒掉命令替换 / 进程替换（``_raw_execution_construct``）。
+#      未加引号的 heredoc 分隔符 word 在 bash 里会做 tilde / 参数 / 命令 / 算术展开
+#      ——其中命令替换可执行命令，所以执行类向量必须先拒；其余展开形态
+#      （``$`` / ``~`` / 反引号）在 delimiter 解析里一律拒绝，不做近似。
+#   2. 分隔符按 bash 的**词级引号移除**读取：``<<\EOF`` / ``<<"E"OF`` / ``<<'EOF'x``
+#      都是同一个 word，终结行与去引号后的文本逐字相等；``<<-X`` 只剥前导 tab。
+#      口径一旦比 bash 松，真实命令会被误吞进正文 ⇒ 漏判；读不出即拒（fail-closed）。
+#      （D2 两轮独立审查 P0：近似解析两次都被证伪。）
+#   3. 顶层未加引号的 ``#`` 之后是注释（bash 不执行）⇒ 行内扫描到此为止，避免把
+#      注释里的 ``<<`` 当成真 heredoc 而吞掉后面的真实命令。
+
+_HEREDOC_SPEC_SEP = " \t;|&()<>"
+
+
+def _raw_execution_construct(command: str) -> str:
+    """原始串级执行向量检查（必须在分组切分/heredoc 剥离**之前**做）。
+
+    ``$(…)``、反引号、进程替换 ``<(…)`` / ``>(…)`` 无论在不在引号里、在不在
+    heredoc 正文里，都由 shell 执行；先把它们拒掉，后面才敢谈「剥离后仍安全」。
+    比原 token 级判定更早，也更强：``$(``/反引号在 token 化之前就能看到。
+
+    ``$[expr]`` 是 bash 的旧式算术展开（macOS /bin/bash 仍支持）：其中的 ``<<``
+    是左移而非 heredoc，且它会单独成词，行内扫描无上下文可辨（五轮审查 P0-1）。
+    语法 legacy、静态建模收益低，直接整串拒绝（fail-closed）。
+    """
+    if "`" in command:
+        return "command_substitution: `"
+    if "$(" in command:
+        return "command_substitution: $("
+    if "$[" in command:
+        return "arith_expansion: $["
+    for marker in ("<(", ">("):
+        if marker in command:
+            return f"process_substitution: {marker}"
+    return ""
+
+
+def _find_closing_quote(text: str, index: int) -> int:
+    """返回 ``text[index]`` 处引号的闭合位置；未闭合返回 -1（双引号内 ``\\`` 转义）。"""
+    quote = text[index]
+    cursor = index + 1
+    while cursor < len(text):
+        if quote == '"' and text[cursor] == "\\":
+            cursor += 2
+            continue
+        if text[cursor] == quote:
+            return cursor
+        cursor += 1
+    return -1
+
+
+# 分隔符按 bash 的「词级引号移除」读取（D2 审查 P0-1）：``<<\EOF`` / ``<<"E"OF`` /
+# ``<<'EOF'x`` 在 bash 里都是一个 word，去除引号/转义后等价于 ``EOF``/``EOFx``。
+# 终结行必须与该「去引号后」的文本逐字相等；近似解析（只处理整对引号或单个转义字符）
+# 会让真实命令被吞进正文，所以这里照 bash 规则逐字符重建 word。
+#
+# 但 quote removal 之外，bash 还对未加引号的 delimiter word 做 tilde / parameter /
+# command / arithmetic expansion（D2 二轮审查 P0-1）：``<<$'EOF'`` → ``EOF``、
+# ``<<~`` → ``$HOME``、``<<$VAR`` → 变量值。这些展开没有静态模型，**只能拒绝**：
+# 把 ``$`` / ``~`` / 反引号当字面字符会读错终结行，正文吞掉真实命令（fail-open）。
+# 单引号段内的 ``$`` 不展开、``\$`` 转义后是字面 ``$``，两者仍可精确建模。
+_HEREDOC_UNEXPANDED_LITERAL = "$~`"
+
+
+def _read_heredoc_word(line: str, index: int) -> tuple[str, int] | None:
+    """读取 ``<<`` 后的 delimiter word（quote removal 后），返回 ``(文本, 终点)``。
+
+    未闭合引号、悬空反斜杠、空 word、以及会触发展开的字符（``$`` / ``~`` /
+    反引号）返回 ``None``（不可静态建模 ⇒ fail-closed）。
+    """
+    out: list[str] = []
+    cursor = index
+    while cursor < len(line):
+        char = line[cursor]
+        if char in _HEREDOC_SPEC_SEP:
+            break
+        if char == "'":
+            close = line.find("'", cursor + 1)
+            if close < 0:
+                return None
+            out.append(line[cursor + 1 : close])  # 单引号内无展开、无转义
+            cursor = close + 1
+            continue
+        if char == '"':
+            cursor += 1
+            closed = False
+            while cursor < len(line):
+                ch = line[cursor]
+                if ch == '"':
+                    cursor += 1
+                    closed = True
+                    break
+                if ch == "\\" and cursor + 1 < len(line) and line[cursor + 1] in '$`"\\\n':
+                    out.append(line[cursor + 1])  # 双引号内仅这几种字符被转义
+                    cursor += 2
+                    continue
+                if ch in "$`":
+                    return None  # 双引号内仍做 parameter / command 展开
+                out.append(ch)
+                cursor += 1
+            if not closed:
+                return None
+            continue
+        if char == "\\":
+            if cursor + 1 >= len(line):
+                return None
+            out.append(line[cursor + 1])
+            cursor += 2
+            continue
+        if char in _HEREDOC_UNEXPANDED_LITERAL:
+            return None
+        out.append(char)
+        cursor += 1
+    if not out:
+        return None
+    return "".join(out), cursor
+
+
+def _parse_heredoc_spec(line: str, start: int) -> tuple[int, int, str, bool] | None:
+    """解析 ``<<[-]DELIM``；返回 ``(起点, 终点, 去引号后的分隔符, 剥 tab)``。"""
+    index = start + 2
+    strip_tabs = False
+    if index < len(line) and line[index] == "-":
+        strip_tabs = True
+        index += 1
+    while index < len(line) and line[index] in " \t":
+        index += 1
+    parsed = _read_heredoc_word(line, index)
+    if parsed is None:
+        return None
+    delimiter, end = parsed
+    return start, end, delimiter, strip_tabs
+
+
+def _has_line_continuation(line: str, quote: str | None) -> bool:
+    """``\\`` + 换行 是否构成续行（单引号内不是；双引号内是）。
+
+    只在**命令行文本**上调用。heredoc 正文与终结符必须按**原始物理行**比较：
+    bash 的 here-document 读取器逐物理行比对 delimiter，正文里的 ``\\``+换行
+    只在后续展开阶段才被删除，不参与终结符匹配（五轮审查 P0-1：
+    ``cat <<EOF`` / ``x\\`` / ``EOF`` 的正文只有 ``x\\``，第三行是真终结行）。
+    """
+    if quote == "'":
+        return False
+    count = 0
+    while count < len(line) and line[-1 - count] == "\\":
+        count += 1
+    return count % 2 == 1
+
+
+def _scan_line_heredocs(
+    line: str,
+    in_quote: str | None = None,
+    in_arith: int = 0,
+) -> tuple[list[tuple[int, int, str, bool]], str | None, str | None, int]:
+    """收集行内**未加引号、不在注释里**的 heredoc 声明（按出现顺序）。
+
+    返回 ``(声明列表, 失败原因, 行末引号状态, 行末算术深度)``。``in_quote`` /
+    ``in_arith`` 是上一行遗留状态：bash 的引号与 ``(( … ))`` 都可跨行，只有跨行
+    维护状态才能区分「真 heredoc 声明」与「多行字符串/算术里的 ``<<``」——后者若被
+    当成声明，后续真实命令会被吞进正文（三轮/四轮审查 P0）。
+    """
+    specs: list[tuple[int, int, str, bool]] = []
+    index = 0
+    quote = in_quote
+    arith_depth = in_arith
+    at_word_start = quote is None
+    while index < len(line):
+        char = line[index]
+        if quote is not None:
+            # 跨行引号内部：只找闭合符（双引号内 ``\`` 仍转义），不解析 heredoc。
+            if char == "\\" and quote == '"':
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+                at_word_start = False
+            index += 1
+            continue
+        if char == "\\":
+            index += 2
+            at_word_start = False
+            continue
+        if char in ("'", '"'):
+            close = _find_closing_quote(line, index)
+            if close < 0:
+                quote = char  # 本行剩余部分都在引号内，留待下一行继续
+                index = len(line)
+                break
+            index = close + 1
+            at_word_start = False
+            continue
+        if char == "#" and at_word_start:
+            break  # bash 注释：本行剩余部分不参与解析
+        # ``(( … ))`` 是算术上下文，其中的 ``<<`` 是左移而非 heredoc（三轮审查 P0）：
+        # ``((0<<0))`` 会把下一行当成 stdin 数据剥掉。深度跨行维护（四轮审查 P1-1）。
+        if line.startswith("((", index):
+            arith_depth += 1
+            index += 2
+            at_word_start = False
+            continue
+        if line.startswith("))", index) and arith_depth:
+            arith_depth -= 1
+            index += 2
+            at_word_start = False
+            continue
+        # here-string ``<<<`` 没有正文可剥，但它后两个字符会被 ``<<`` 误匹配成
+        # heredoc 起点（``cat<<<EOF``），进而吞掉下一行真实命令。暂不支持 ⇒ 整条拒。
+        if line.startswith("<<<", index):
+            return specs, "here-string（<<<）暂不支持静态建模", None, arith_depth
+        if line.startswith("<<", index):
+            if arith_depth:
+                return specs, "算术表达式内的 << 是左移，不是 heredoc", None, arith_depth
+            spec = _parse_heredoc_spec(line, index)
+            if spec is None:
+                return specs, "heredoc 分隔符不可静态建模（引号未闭合或悬空转义）", None, arith_depth
+            specs.append(spec)
+            index = spec[1]
+            at_word_start = True
+            continue
+        at_word_start = char in " \t;|&()<>"
+        index += 1
+    if quote is not None and specs:
+        # 声明行尾部引号未闭合：正文起点取决于后续行何时闭合该引号，
+        # 行内扫描无法静态判定（六轮审查 P2-2：不能只靠"最后引号未闭合"的偶然兜底）。
+        return specs, "heredoc 声明行的引号未闭合，正文起点不可静态判定", None, arith_depth
+    return specs, None, quote, arith_depth
+
+
+def _strip_heredocs(command: str) -> tuple[str, str | None]:
+    """剥离 heredoc 正文（stdin 数据）；返回 ``(剥离后的命令串, 失败原因)``。
+
+    剥离的是「``<<[-]DELIM`` 声明 + 与其对应的正文行」，命令本体的其余部分逐字保留
+    ——重定向目标（``cat > f``）因此照旧进入 ``_check_target``。任何无法按 bash 精确
+    口径判定的形态都返回失败原因（fail-closed）。
+    """
+    lines = command.split("\n")
+    kept: list[str] = []
+    index = 0
+    quote: str | None = None
+    arith_depth = 0
+    while index < len(lines):
+        # 续行只在命令行文本内合并（正文与终结符按原始物理行比较，见
+        # ``_has_line_continuation``）；正文行由 spec 消费，不会走到这里。
+        while index + 1 < len(lines) and _has_line_continuation(lines[index], quote):
+            lines[index] = lines[index][:-1] + lines[index + 1]
+            del lines[index + 1]
+        line = lines[index]
+        specs, scan_error, quote, arith_depth = _scan_line_heredocs(line, quote, arith_depth)
+        if scan_error is not None:
+            return "", scan_error
+        if not specs:
+            kept.append(line)
+            index += 1
+            continue
+        rebuilt = line
+        for start, end, _delimiter, _strip_tabs in reversed(specs):
+            rebuilt = rebuilt[:start] + " " + rebuilt[end:]
+        kept.append(rebuilt)
+        index += 1
+        for _start, _end, delimiter, strip_tabs in specs:
+            while True:
+                if index >= len(lines):
+                    return "", f"heredoc 未终结：分隔符 {delimiter!r}"
+                candidate = lines[index]
+                index += 1
+                probe = candidate.lstrip("\t") if strip_tabs else candidate
+                if probe == delimiter:
+                    break
+    if quote is not None:
+        return "", "引号未闭合（跨行引号延续到命令末尾）"
+    return "\n".join(kept), None
+
+
+def _split_top_level_groups(command: str) -> list[str] | None:
+    """按未加引号的顶层 ``(`` / ``)`` 切分子命令；无分组返回 ``None``。
+
+    引号内的括号是字面量（``echo "("``），原样留在串里交给后续 token 判定——这样
+    既放开了真正的子 shell 分组，又不会把字面量 ``"("`` 当成分组丢掉内容。
+    括号不配对时返回 ``None``，由原有判定按裸括号拒绝（fail-closed）。
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    found = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if char == "\\":
+            current.append(command[index : index + 2])
+            index += 2
+            continue
+        if char in ("'", '"'):
+            close = _find_closing_quote(command, index)
+            if close < 0:
+                current.append(command[index:])
+                break
+            current.append(command[index : close + 1])
+            index = close + 1
+            continue
+        if char == "#" and (not current or current[-1][-1:] in " \t;|&\n"):
+            stop = command.find("\n", index)
+            if stop < 0:
+                current.append(command[index:])
+                break
+            current.append(command[index:stop])
+            index = stop
+            continue
+        if char == "(":
+            parts.append("".join(current))
+            current = []
+            depth += 1
+            found = True
+            index += 1
+            continue
+        if char == ")" and depth > 0:
+            parts.append("".join(current))
+            current = []
+            depth -= 1
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    parts.append("".join(current))
+    if not found or depth != 0:
+        return None
+    return parts
+
+
+def _has_empty_group(command: str) -> bool:
+    """是否存在空分组 ``()``（含空白）；bash 对它是语法错误（四轮审查 P2-3）。"""
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char in ("'", '"'):
+            close = _find_closing_quote(command, index)
+            if close < 0:
+                return False
+            index = close + 1
+            continue
+        if char == "(":
+            probe = index + 1
+            while probe < len(command) and command[probe] in " \t\n":
+                probe += 1
+            if probe < len(command) and command[probe] == ")":
+                return True
+        index += 1
+    return False
 
 
 def _strip_fd_prefixes(tokens: list[str]) -> list[str]:
@@ -2149,8 +2525,23 @@ class _Scanner:
         self.cwd_unstable = False
 
     def scan(self, command: str, depth: int = 0) -> CommandScopeDecision:
+        # 1) 原始串级执行向量先拒：这是后续「剥离后仍安全」的前提
+        #    （见 _raw_execution_construct：$(…)/反引号/进程替换与文本形态无关）
+        unmodeled = _raw_execution_construct(command)
+        if unmodeled:
+            return CommandScopeDecision(False, "unmodeled_shell_construct", unmodeled)
+        # 2) heredoc 正文是 stdin 数据，剥离后重定向目标照旧进入写目标判定
+        stripped, heredoc_error = _strip_heredocs(command)
+        if heredoc_error is not None:
+            return CommandScopeDecision(False, "unparsable_command", heredoc_error)
+        # 3) 子 shell 分组：内部命令逐条递归判定（不增加写能力），cwd 位移不外泄
+        groups = _split_top_level_groups(stripped)
+        if groups is not None:
+            if _has_empty_group(stripped):
+                return CommandScopeDecision(False, "unparsable_command", "空分组 ()")
+            return self._scan_groups(groups, depth)
         try:
-            tokens = _tokenize(command)
+            tokens = _tokenize(stripped)
         except _UnparsableError as exc:
             return CommandScopeDecision(False, "unparsable_command", str(exc))
         if len(tokens) > MAX_TOKENS:
@@ -2168,6 +2559,30 @@ class _Scanner:
         for argv in segments:
             decision = self._scan_segment(argv, depth)
             if decision is not None:
+                return decision
+        return CommandScopeDecision(True, unverified=tuple(self.unverified))
+
+    def _scan_groups(self, groups: Sequence[str], depth: int) -> CommandScopeDecision:
+        """子 shell 分组：逐条递归判定，且 subshell 的 cwd 位移不回流到父 shell。
+
+        ``(cd src && rm a.py) ; rm b.py`` 里的 ``cd`` 只作用于子 shell —— 不恢复
+        cwd 会把后一条命令按错误目录判定（可能过宽也可能过严）。恢复点必须在
+        **每个 group part 之后**，而不是整轮循环之后：否则同一调用内后续 part
+        会看到前一个 part 的 cwd 位移（五轮审查 P2-1）。
+        """
+        if depth + 1 > MAX_DEPTH:
+            return CommandScopeDecision(
+                False, "nesting_too_deep", f"group_depth={depth + 1} > {MAX_DEPTH}"
+            )
+        for part in groups:
+            if not part.strip():
+                continue
+            saved_cwd, saved_unstable = self.cwd, self.cwd_unstable
+            try:
+                decision = self.scan(part, depth + 1)
+            finally:
+                self.cwd, self.cwd_unstable = saved_cwd, saved_unstable
+            if not decision.allowed:
                 return decision
         return CommandScopeDecision(True, unverified=tuple(self.unverified))
 

@@ -73,8 +73,10 @@ BLOCKED_CASES = [
     ("FOO=1 rm /outside/x", "write_target_outside_scope"),
     ("if true; then rm /outside/x; fi", "shell_keyword_construct"),
     ("for i in 1; do rm /outside/x; done", "shell_keyword_construct"),
+    # case 的模式括号在**顶层**（depth 0）不是分组 ⇒ 仍按裸括号 fail-closed
     ("case x in a) rm /outside/x;; esac", "unmodeled_shell_construct"),
-    ("(rm /outside/x)", "unmodeled_shell_construct"),
+    # D2 起子 shell 分组可解析：分组不增加写能力，判的是内部命令的写目标
+    ("(rm /outside/x)", "write_target_outside_scope"),
     ("{ rm /outside/x; }", "unmodeled_shell_construct"),
     ("echo $(rm /outside/x)", "unmodeled_shell_construct"),
     ("eval rm /outside/x", "write_target_outside_scope"),
@@ -88,7 +90,9 @@ BLOCKED_CASES = [
     ("find . -fprint /outside/log", "write_target_outside_scope"),
     ("bash -c 'rm /outside/x'", "write_target_outside_scope"),
     ("sh /outside/s.sh", "implicit_write_target"),
-    ("cat <<EOF\nrm /outside/x\nEOF", "unmodeled_shell_construct"),
+    # D2（2026-10-31）：heredoc 正文按 stdin 数据剥离 ⇒ 「正文里写着 rm」不再算写命令。
+    # 执行向量不因此放开：正文里的 ``$(``/反引号由 _raw_execution_construct 先拒，
+    # 重定向目标越界照判 —— 逐条见 test_d2_heredoc_*。
     ("make build", "implicit_write_target"),
     ("pip install x", "implicit_write_target"),
     ("curl -o /outside/x http://h/x", "write_target_outside_scope"),
@@ -274,6 +278,109 @@ ALLOWED_CASES = [
 def test_read_only_and_in_scope_writes_are_allowed(command: str) -> None:
     decision = _check(command)
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── D2（2026-10-31）：heredoc 正文 / 子 shell 分组的可判定化 ──────────────────
+
+
+def test_d2_heredoc_body_is_stdin_data_not_command() -> None:
+    """heredoc 正文是 stdin 数据，bash 不执行它 ⇒ 不该因为「正文里写着 rm」被拒。
+
+    D2 之前整条 heredoc 一律拒（``unmodeled_shell_construct``）：shlex 不认 heredoc
+    语义，正文里的词会混进当前 argv，写目标判定随之失真。正文明文剥离后，
+    ``cat > f <<EOF`` 的写目标 ``f`` 恢复静态可判。
+    """
+    for command in (
+        "cat <<EOF\nrm /outside/x\nEOF",  # 无重定向 ⇒ 根本不写盘
+        "cat <<'EOF'\nrm /outside/x\nEOF",  # 引号分隔符：正文完全无展开
+        "cat > src/x.txt <<EOF\nrm /outside/x\nEOF",  # 写目标在域内
+        "cat <<-EOF\n\thi\n\tEOF",  # <<- 允许 tab 缩进
+        "cat <<A > src/f <<B\nx\nA\ny\nB",  # 同行多 heredoc 按声明顺序消费
+        "(cat > src/f <<EOF\nx\nEOF\n)",  # 子 shell 内的 heredoc
+    ):
+        decision = _check(command)
+        assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+@pytest.mark.parametrize(
+    "command,expected_reason",
+    [
+        # 正文里的命令替换**真的会执行** ⇒ 原始串级先拒（安全前提 1）
+        ("cat <<EOF\n$(rm /outside/x)\nEOF", "unmodeled_shell_construct"),
+        ("cat <<EOF\n`rm /outside/x`\nEOF", "unmodeled_shell_construct"),
+        # 剥离正文不影响重定向目标的判定
+        ("cat > /outside/x <<EOF\nhi\nEOF", "write_target_outside_scope"),
+        # 终结符缺失 ⇒ 正文边界不可静态判定（安全前提 2，fail-closed）
+        ("cat > src/x.txt <<EOF\nhi\n", "unparsable_command"),
+        # 缩进终结符不是终结：bash 要求 ``<<X`` 的终结行恰为 X
+        ("cat > src/x.txt <<EOF\nhi\n  EOF", "unparsable_command"),
+    ],
+)
+def test_d2_heredoc_still_blocks_what_bash_would_execute(
+    command: str, expected_reason: str
+) -> None:
+    decision = _check(command)
+    assert decision.allowed is False, command
+    assert decision.reason == expected_reason, (
+        command,
+        decision.reason,
+        decision.detail,
+    )
+
+
+def test_d2_subshell_grouping_judges_inner_commands() -> None:
+    """``( … )`` 不增加写能力 ⇒ 放开后判的是内部命令，而不是「有括号就拒」。"""
+    assert _check("(touch src/ok.txt)").allowed is True
+    assert _check("((touch src/ok.txt))").allowed is True
+    assert _check("(touch src/ok.txt) ; touch src/ok2.txt").allowed is True
+    for command in (
+        "(rm /outside/x)",
+        "(cd src && touch /outside/x)",
+        "(touch src/ok.txt ; rm /outside/x)",
+    ):
+        decision = _check(command)
+        assert decision.allowed is False, command
+        assert decision.reason == "write_target_outside_scope", (
+            command,
+            decision.reason,
+            decision.detail,
+        )
+    # 花括号分组 / 引号内字面量括号仍按不可判定拒（本轮未放开的残余）
+    for command in ("{ rm /outside/x; }", 'echo "("'):
+        decision = _check(command)
+        assert decision.reason == "unmodeled_shell_construct", (command, decision.reason)
+
+
+def test_d2_grouping_keeps_case_patterns_fail_closed() -> None:
+    """``case`` 的模式括号在顶层，不是分组 ⇒ 放开分组不能顺手放过控制流。"""
+    decision = _check("case x in a) rm /outside/x;; esac")
+    assert decision.allowed is False
+    assert decision.reason == "unmodeled_shell_construct"
+
+
+def test_d2_subshell_cd_does_not_leak_state() -> None:
+    """子 shell 的 cwd 位移不回流父 shell；``cd`` 本身仍恒拒（多段位移不可静态判定）。
+
+    这里钉住的是**保守边界**：分组内 cd 之后，后续段不许按「被 cd 改过的目录」判定
+    ——那方向是漏判。cd 目前直接产出 unverifiable ⇒ 整体恒拒。
+    """
+    decision = _check(f"(cd {WS}/src && touch a.txt) ; touch src/b.txt")
+    assert decision.allowed is False
+    assert decision.reason == "unverifiable_write_target"
+
+
+def test_d2_raw_scan_rejects_execution_vectors_before_stripping() -> None:
+    """安全前提 1 的独立断言：原始串级先拒，比 token 级更早，覆盖 heredoc 正文。"""
+    for command in (
+        "cat <<EOF\n" + "$" + "(id)\nEOF",
+        "echo " + "$" + "(id)",
+        "echo " + "`id`",
+        "cat <(id)",
+        "cat >(id)",
+    ):
+        decision = _check(command)
+        assert decision.allowed is False, command
+        assert decision.reason == "unmodeled_shell_construct", (command, decision.reason)
 
 
 def test_write_tool_prefix_rule_blocks_same_family_variants() -> None:
@@ -1573,3 +1680,252 @@ def test_r25_ln_dash_t_cluster_form_recognized() -> None:
     bad_cmd = "ln -vT a /outside/b"
     d2 = _check(bad_cmd, scope=_scope(paths=("**",)))
     assert d2.allowed is False, (bad_cmd, d2.reason, d2.detail)
+
+
+# ── D2 独立审查（REVISE，P0=2）回归：delimiter 词级引号移除 + 跨行引号 ──────
+
+
+D2_REVIEW_BLOCKED_CASES = [
+    # P0-1：``<<\EOF`` 的 delimiter 在 bash 里是 ``EOF``（反斜杠只转义下一个字符）。
+    # 首版解析把它读成 ``E``（``OF`` 留在行内），正文吞掉真实命令直到 ``E`` 行 ⇒ 漏判。
+    ("cat <<\\EOF\ndata\nEOF\ncat > /outside/x\nE", "write_target_outside_scope"),
+    # P0-1：``<<"E"OF`` / ``<<E"F"`` 走词级引号移除，delimiter 仍是 ``EOF`` / ``EF``。
+    ('cat <<"E"OF\ndata\nEOF\ncat > /outside/x\nE', "write_target_outside_scope"),
+    ('cat <<E"F"\ndata\nEF\ncat > /outside/x\nE', "write_target_outside_scope"),
+    # P0-1：``<<'EOF'x`` → ``EOFx``（引号段与裸段拼接）。
+    ("cat <<'EOF'x\ndata\nEOFx\ncat > /outside/x\nE", "write_target_outside_scope"),
+    # P0-2：``<<EOF`` 位于跨行双引号字符串内，不是 heredoc 声明。行内局部扫描会
+    # 把它当声明，把 ``cat > /outside/x`` 吞进正文；跨行引号状态修复后整条不可解析。
+    ('echo "\n<<EOF"\ncat > /outside/x\nEOF"\necho hi', "unparsable_command"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", D2_REVIEW_BLOCKED_CASES)
+def test_d2_review_bypasses_are_blocked(command: str, expected_reason: str) -> None:
+    """D2 审查 P0-1/P0-2：近似解析 delimiter 或忽略跨行引号都必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+D2_REVIEW_ALLOWED_CASES = [
+    # 收紧 delimiter 解析不得误伤既有合法形态：引号/转义 delimiter 按去引号文本匹配。
+    "cat > src/a.txt <<'EOF'\nhello\nEOF",
+    'cat > src/a.txt <<"EOF"\nhello\nEOF',
+    "cat > src/a.txt <<\\EOF\nhello\nEOF",
+    # ``<<-`` 只剥前导 tab，正文里带 tab 的终结行仍算终结。
+    "cat > src/b.txt <<-EOF\n\thi\n\tEOF",
+]
+
+
+@pytest.mark.parametrize("command", D2_REVIEW_ALLOWED_CASES)
+def test_d2_review_fixes_do_not_over_block(command: str) -> None:
+    """D2 审查修复不得误伤：词级引号移除后的 delimiter 与 ``<<-`` 语义保持一致。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+def test_d2_heredoc_strip_is_exact_not_approximate() -> None:
+    """自证伪：剥离必须只吃正文，正文之后的写命令必须留在串里。
+
+    首版把 ``<<\\EOF`` 读成 delimiter ``E``，正文一路吞到 ``E`` 行——这里的
+    ``cat > /outside/x`` 会消失，判定层因此看不到越界重定向（审查 P0-1）。
+    """
+    from llm_loop.core.command_scope_guard import _strip_heredocs
+
+    command = "cat <<\\EOF\ndata\nEOF\ncat > /outside/x\nE"
+    stripped, error = _strip_heredocs(command)
+    assert error is None
+    assert "data" not in stripped
+    assert "cat > /outside/x" in stripped
+
+
+# ── D2 二轮审查（REVISE，P0=1）回归：delimiter 的展开形态必须拒绝 ──────────
+#
+# bash 对**未加引号**的 delimiter word 做 tilde / parameter / command / arithmetic
+# expansion。把这些字符当字面量会读错终结行，正文吞掉真实命令（fail-open）；
+# 展开没有静态模型 ⇒ 只能整条拒绝。
+
+
+D2_R2_UNMODELABLE_DELIMITERS = [
+    # ``$'EOF'`` 是 ANSI-C quoting：bash 的 delimiter 是 ``EOF``，字面读法得到 ``$EOF``，
+    # 正文会一路吞到末行 ``$EOF``，中间的越界重定向被当成 stdin 数据。
+    ("cat <<$'EOF'\nEOF\ncat > /outside/x\n$EOF", "unparsable_command"),
+    # ``$"EOF"`` 是 locale quoting，同样展开成 ``EOF``。
+    ('cat <<$"EOF"\nEOF\ncat > /outside/x\n$EOF', "unparsable_command"),
+    # ``~`` 走 tilde expansion：bash 的 delimiter 是 ``$HOME``。
+    ("cat <<~\ncat > /outside/x\n~", "unparsable_command"),
+    # ``$VAR`` / ``${VAR}`` 走 parameter expansion：terminator 是变量值，不可静态建模。
+    ("cat <<$VAR\ndata\n$VAR\ncat > /outside/x", "unparsable_command"),
+    ("cat <<${VAR}\ndata\n${VAR}\ncat > /outside/x", "unparsable_command"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", D2_R2_UNMODELABLE_DELIMITERS)
+def test_d2_r2_expanding_delimiters_are_rejected(command: str, expected_reason: str) -> None:
+    """二轮审查 P0-1：会展开的 delimiter 必须 fail-closed，不能当字面字符。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+D2_R2_INERT_DELIMITERS = [
+    # 单引号段内的 ``$`` 不展开：delimiter 就是 ``$EOF``，可精确匹配。
+    "cat > src/a.txt <<'$EOF'\nhi\n$EOF",
+    # ``\$`` 转义后是字面 ``$``：delimiter 是 ``$EOF``。
+    "cat > src/a.txt <<\\$EOF\nhi\n$EOF",
+]
+
+
+@pytest.mark.parametrize("command", D2_R2_INERT_DELIMITERS)
+def test_d2_r2_literal_dollar_delimiters_still_supported(command: str) -> None:
+    """展开形态收紧不得误伤：引号内/转义后的字面 ``$`` 仍按精确文本匹配。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── D2 三轮审查（REVISE，P0=1）回归：``<<`` 不能上下文无关地当 heredoc ──────
+
+
+D2_R3_CONTEXT_FREE_LT_REGRESSIONS = [
+    # 算术左移：``((0<<0))`` 里的 ``<<`` 是左移。上下文无关扫描把它当 heredoc 起点，
+    # 分隔符读成 ``0``，于是下一行 ``rm -rf src/protected`` 被当成 stdin 数据剥掉。
+    ("((0<<0))\nrm -rf src/protected\n0", "unparsable_command"),
+    # here-string：``cat<<<EOF`` 没有 ``<<`` 声明，但跳过第一个 ``<`` 后，重叠的
+    # ``<<`` 会被当成声明，吞掉下一行；bash 则把 ``<<<`` 当完整命令并执行第二行。
+    ("cat<<<EOF\ncat > /outside/x\nEOF", "unparsable_command"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", D2_R3_CONTEXT_FREE_LT_REGRESSIONS)
+def test_d2_r3_non_heredoc_double_lt_is_not_stripped(command: str, expected_reason: str) -> None:
+    """三轮审查 P0-1：算术左移与 here-string 内的 ``<<`` 都不是 heredoc。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+D2_R3_ARITH_LOOPS_STILL_OK = [
+    # 不含 ``<<`` 的算术上下文不得被收紧误伤（控制流本身由 shell_keyword 拦截，
+    # 不在本用例范围；这里只验证算术括号不引入新的拒绝）。
+    "(( i++ ))",
+    "(( i += 1 ))",
+]
+
+
+@pytest.mark.parametrize("command", D2_R3_ARITH_LOOPS_STILL_OK)
+def test_d2_r3_plain_arith_context_still_allowed(command: str) -> None:
+    """算术深度跟踪不得误伤不含 ``<<`` 的算术语句。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── D2 四轮审查回归：续行 / 跨行算术 / 空分组 / ``<< -DELIM`` ──────────────
+
+
+D2_R4_REGRESSIONS = [
+    # 续行（四轮审查 P0-1）：bash 先把 ``\`` + 换行连成一个逻辑行，``> /outside/x``
+    # 是同一行的重定向；按物理行剥离会把它当 heredoc 正文吞掉。
+    ("cat <<EOF \\\n> /outside/x\nEOF", "write_target_outside_scope"),
+    # 跨行算术（四轮审查 P1-1）：``(( … ))`` 可跨行，深度必须跨行维护，
+    # 否则第二行的 ``<<`` 会被当 heredoc 起点。
+    ("(( 0 +\n1 << 0 ))\nrm -rf src/protected\n0", "unparsable_command"),
+    # 空分组（四轮审查 P2-3）：bash 对 ``()`` 报语法错误，守卫不应放行。
+    ("()", "unparsable_command"),
+    # ``<< -EOF``（四轮审查 P0-2 的反例固定）：``-`` 不紧邻 ``<<`` 时 delimiter 是
+    # ``-EOF``、不剥 tab。本用例锁定该行为；若实现按审查所述误读成 ``EOF``，
+    # 正文会吞到末行、``cat > /outside/x`` 消失 ⇒ 测试变红。
+    ("cat << -EOF\nx\n-EOF\ncat > /outside/x\nEOF", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", D2_R4_REGRESSIONS)
+def test_d2_r4_line_continuation_and_state_tracking(command: str, expected_reason: str) -> None:
+    """四轮审查：续行连接、算术深度跨行、空分组、``<< -DELIM`` 语义。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+D2_R4_CONTINUATION_ALLOWED = [
+    # 续行连接后仍是工作区内写：不得因连接本身被拒。
+    "cat > src/a.txt \\\n--help",
+]
+
+
+@pytest.mark.parametrize("command", D2_R4_CONTINUATION_ALLOWED)
+def test_d2_r4_continuation_does_not_over_block(command: str) -> None:
+    """续行连接不得误伤工作区内写。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── D2 五轮审查回归：``$[ … ]`` 旧式算术展开 ──────────────────────────────
+#
+# ``$[expr]`` 是 bash 的 legacy 算术展开（macOS /bin/bash 仍支持），按括号匹配
+# 单独成词；其中的 ``<<`` 是左移而非 heredoc。行内扫描没有这个上下文，会把
+# ``<<`` 当声明并吞掉后续真实命令（五轮审查 P0-1）。原始串级直接拒。
+
+
+D2_R5_ARITH_EXPANSION_REGRESSIONS = [
+    # 审查给出的原始复现：守卫 allowed，bash 执行 ``rm -rf /outside/x``。
+    ("echo $[1<<2]\nrm -rf /outside/x\n2]", "unmodeled_shell_construct"),
+    # 同一形态的赋值外壳：残留是裸赋值，同样会放行后续命令。
+    ("v=$[1<<2]\nrm -rf /outside/x\n2]", "unmodeled_shell_construct"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", D2_R5_ARITH_EXPANSION_REGRESSIONS)
+def test_d2_r5_legacy_arith_expansion_is_rejected(command: str, expected_reason: str) -> None:
+    """五轮审查 P0-1：``$[ … ]`` 必须 fail-closed，不能当普通字符剥正文。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+D2_R5_GROUP_SANITY = [
+    # 普通分组仍按逐条递归判定（cwd 恢复点改为每 part 后，不得影响允许路径）。
+    "(echo a); echo b",
+    "(echo a; echo b)",
+]
+
+
+@pytest.mark.parametrize("command", D2_R5_GROUP_SANITY)
+def test_d2_r5_plain_groups_still_allowed(command: str) -> None:
+    """cwd 恢复点前移不得误伤普通分组。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── D2 六轮审查回归：正文里的续行不得参与终结符匹配 ──────────────────────
+#
+# bash 的 here-document 读取器按**原始物理行**比对 delimiter；正文行尾的
+# ``\`` + 换行只在后续展开阶段删除。把续行连接应用到正文，会让真终结行
+# （第三行 ``EOF``）被 `x\` 吞掉，直到末尾的 ``EOF`` 才终结，从而吞掉
+# ``cat > /outside/x``（六轮审查 P0-1）。
+
+D2_R6_BODY_CONTINUATION = [
+    # 正文 ``x\`` 行尾续行：真终结行是第 3 行，其后写命令必须被看到。
+    ("cat <<EOF\nx\\\nEOF\ncat > /outside/x\nEOF", "write_target_outside_scope"),
+    # 声明行尾部引号未闭合：正文起点不可静态判定 ⇒ 显式拒绝（六轮审查 P2-2）。
+    ('cat <<EOF "x\nbody\nEOF', "unparsable_command"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", D2_R6_BODY_CONTINUATION)
+def test_d2_r6_body_continuation_and_open_quote(command: str, expected_reason: str) -> None:
+    """六轮审查：正文续行不参与终结符匹配；声明行引号未闭合显式拒。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+def test_d2_r6_body_continuation_keeps_target() -> None:
+    """自证伪：正文里的续行不得让剥离吞掉其后的写命令。"""
+    from llm_loop.core.command_scope_guard import _strip_heredocs
+
+    command = "cat <<EOF\nx\\\nEOF\ncat > /outside/x\nEOF"
+    stripped, error = _strip_heredocs(command)
+    assert error is None
+    assert "cat > /outside/x" in stripped
+
