@@ -94,11 +94,18 @@ def _window(window_id=101, pid=96579, app="Google Chrome", bundle_id="com.google
     )
 
 
+_FRONTMOST_UNSET = object()  # R5：未显式指定 → 按窗口表 fg 标志推导（兼容既有用例）
+
+
 class FakeOperateBackend:
     supported = True
 
     def __init__(self, *, windows, ax_views=None, hid_idle=120_000, ax_probe=0,
-                 session=None, perms=None) -> None:
+                 session=None, perms=None, frontmost=_FRONTMOST_UNSET) -> None:
+        # R5：frontmost 显式模拟「lsappinfo front+list」前台 app 探测——str=命中
+        # bundle；None=探测失败（fail-closed 负例）；UNSET=按窗口表 fg 推导。
+        self.frontmost_override = frontmost
+        self.frontmost_calls = 0
         self.windows = list(windows)
         self._ax_views = dict(ax_views or {})
         self.hid_idle = hid_idle
@@ -138,6 +145,19 @@ class FakeOperateBackend:
 
     def hid_idle_ms(self):
         return self.hid_idle
+
+    def frontmost_app_bundle(self):
+        """R5 台面：真后台为 lsappinfo front+list（backend_macos）；离线替身。
+
+        UNSET 时按窗口表 fg 标志推导（等价旧行为，兼容既有用例）；显式 str/None
+        用于构造「CG 序窗口序 ≠ lsappinfo 前台 app」的解耦场景。
+        """
+        self.frontmost_calls += 1
+        if self.frontmost_override is not _FRONTMOST_UNSET:
+            return self.frontmost_override
+        return next(
+            (w.bundle_id for w in self.windows if w.is_foreground and w.on_screen), None
+        )
 
     def ax_probe(self, pid: int):
         return self.ax_probe_result
@@ -1804,3 +1824,105 @@ def test_r3_offline_act_time_chain_snapshot_pick_resolve_same_node(monkeypatch):
     assert el.attr("AXSubrole") == target.subrole
     el.release()
     assert counts == dict(_BASELINE)
+
+
+# ══ R5：前台判据 = 前台 app（lsappinfo 口径）；CG 窗口序不作投递门控 ════════
+# 真机证据（父会话 2026-10-31 live 实测）：CG 序首个 layer-0 窗口是 Chrome
+# （window 121487），而 lsappinfo front 指向 com.apple.Preview——旧判据
+# （fresh_window.is_foreground）把对 Preview 窗口的合法投递误拒为
+# foreground_changed。以下用例构造「CG 序前台窗口属 X / lsappinfo 前台 = Y」
+# 的解耦场景，验证新判据：窗口所属 app == 前台 app 才放行；探测失败 fail-closed。
+_PREVIEW_WIN = dict(window_id=303, pid=777, app="Preview", bundle_id="com.apple.Preview",
+                    title="lfl-m4-live.png", bounds=(0.0, 38.0, 800.0, 600.0))
+
+
+def test_r5_non_cg_frontmost_window_allowed_when_app_is_frontmost():
+    """CG 序第一窗口属 Chrome（fg=True），lsappinfo 前台 = Preview：目标窗口属
+    Preview → 允许进入投递路径并成功（旧 CG 序判据会误拒——is_foreground=False）。"""
+    backend = _backend(windows=[
+        _window(is_foreground=True),  # CG 序第一：Chrome（仅展示口径）
+        _window(**_PREVIEW_WIN, is_foreground=False),
+    ], frontmost="com.apple.Preview")
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="click", window_id=303, target={"ax_ref": "0.0"}, dry_run=True)
+    assert dry["ok"] is True
+    # R5 口径：foreground_before = 前台 app 的 bundle_id（lsappinfo），非 CG 序窗口
+    assert dry["foreground_before"] == "com.apple.Preview"
+    payload = _dispatch(reg, do="click", window_id=303, target={"ax_ref": "0.0"},
+                        dry_run=False, confirm_token=dry["confirm_token"])
+    assert payload["applied"] is True
+    assert payload["foreground_after"] == "com.apple.Preview"
+    assert backend.act_calls == [{"do": "click", "window_id": 303, "ax_ref": "0.0"}]
+
+
+def test_r5_window_app_not_frontmost_refused_zero_delivery():
+    """前台 app = Preview、目标窗口属 Chrome（CG 序第一）→ foreground_changed + 零投递。"""
+    backend = _backend(frontmost="com.apple.Preview")  # 默认 windows=[Chrome 101]
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    assert dry["ok"] is True  # dry_run 不做前台门控（不投递）
+    payload = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert payload["error_code"] == "foreground_changed"
+    assert payload["applied"] is False
+    # U20 语义保持：回执仍报告绑定窗口事实
+    assert payload["window"]["window_id"] == 101
+    assert payload["foreground_before"] == "com.apple.Preview"  # R5 口径（apply 次扫描）
+    assert backend.act_calls == []
+
+
+def test_r5_frontmost_probe_failure_fails_closed():
+    """前台 app 探测失败（lsappinfo 超时/无 ASN/无匹配 → None）→ fail-closed：
+    apply 拒绝 foreground_changed + 零投递（不得当成"通过"）。"""
+    backend = _backend(frontmost=None)
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    assert dry["ok"] is True
+    assert dry["foreground_before"] is None  # 探测失败如实为 None
+    payload = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert payload["error_code"] == "foreground_changed"
+    assert payload["applied"] is False
+    assert backend.act_calls == []
+
+
+def test_r5_frontmost_probe_consulted_on_dispatch():
+    """前台探测确实被消费（dry 扫描 + apply 门控/post 观测），非死代码。"""
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    _dispatch(reg, **CLICK_101, dry_run=True)
+    _dispatch(reg, **CLICK_101, dry_run=False,
+              confirm_token=_dispatch(reg, **CLICK_101, dry_run=True)["confirm_token"])
+    assert backend.frontmost_calls >= 3  # dry 扫描 1 + 第二次 dry 1 + apply ≥1
+
+
+def test_r5_backend_frontmost_app_bundle_asn_match(monkeypatch):
+    """真后台 frontmost_app_bundle：front ASN → list 记录按 ASN 归一匹配 bundle。"""
+    from llm_loop.desktop import backend_macos
+
+    backend = backend_macos.MacOSDesktopBackend()
+    listing = (
+        '1) "Chrome" ASN:0x0-0xa9a3999:\n'
+        '   bundleID="com.google.Chrome"\n'
+        '2) "Preview" ASN:0x0-0xbbb0001:\n'
+        '   bundleID="com.apple.Preview"\n'
+    )
+
+    def _fake_run(args):
+        return listing if args == ["list"] else "ASN:0x0-0xbbb0001"
+
+    monkeypatch.setattr(backend, "_run_lsappinfo", _fake_run)
+    assert backend.frontmost_app_bundle() == "com.apple.Preview"
+
+
+def test_r5_backend_frontmost_app_bundle_failures_return_none(monkeypatch):
+    """真后台 frontmost_app_bundle：front 无 ASN / 子进程异常 → None（不外抛）。"""
+    from llm_loop.desktop import backend_macos
+
+    backend = backend_macos.MacOSDesktopBackend()
+    monkeypatch.setattr(backend, "_run_lsappinfo", lambda args: "")
+    assert backend.frontmost_app_bundle() is None
+
+    def _boom(args):
+        raise backend_macos.DesktopBackendError("lsappinfo front 超时")
+
+    monkeypatch.setattr(backend, "_run_lsappinfo", _boom)
+    assert backend.frontmost_app_bundle() is None

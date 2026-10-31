@@ -155,6 +155,14 @@ class AppInfo:
 
 @dataclass(frozen=True)
 class WindowInfo:
+    """CGWindowList 窗口行（L0）。
+
+    ``is_foreground`` 是 CG 序位置推断（front→back 首个 layer==0 且在屏窗口），
+    **非 app 焦点**：仅作窗口清单展示属性（R5 口径声明）。投递前台门控判据是
+    后台 ``frontmost_app_bundle()``（lsappinfo front+list 按 ASN 匹配），勿用
+    本字段——真机实测 CG 序可与 app 焦点不一致（见 M4 dev report R5）。
+    """
+
     window_id: int
     pid: int
     app: str

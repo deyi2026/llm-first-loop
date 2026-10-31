@@ -28,10 +28,14 @@ writes_disabled 拒绝）。注意 D7 门：apply 需要 HID idle ≥ 60s（用�
   PYTHONPATH=src python scripts/desktop_operate_live_smoke.py            # 全流程
   PYTHONPATH=src python scripts/desktop_operate_live_smoke.py --dry-run-only
 
-退出码：0=全流程通过且窗口确认消失；2=确定性门控拒绝（预期行为，看指引）；
-1=环境/链路失败（窗口未找到、AX 不可用、投递失败等）。
+退出码（R5 起区分「门控拒绝」与「环境不可用」）：0=全流程通过且窗口确认消失；
+2=确定性门控拒绝（预期行为，看指引；如 foreground_changed/user_present）；
+3=环境不可用（屏幕锁定、无 GUI 会话、AX 不可读、前台 app 探测不可用——
+   先 desktop_perceive(status) 自检）；1=其它链路失败（窗口未找到、投递失败等）。
+   注：锁屏下 AX 读取与投递均被拒（ax_window_unbound/ax_unavailable 的真实
+   归因常是锁屏而非辅助功能授权——R5 修正：不再只提示授权）。
 
-前置：macOS + 辅助功能授权（AX）+ 屏幕录制授权（CG 窗口标题）。
+前置：macOS + 辅助功能授权（AX）+ 屏幕录制授权（CG 窗口标题）+ 未锁屏。
 live 正向投递证据以父会话在真机复跑为准（本脚本只是可复用探针）。
 """
 from __future__ import annotations
@@ -169,6 +173,19 @@ def main() -> int:
         print("[abort] macOS 后端不可用", flush=True)
         return 1
 
+    # ── 0. 环境自检（R5：先排除锁屏/无 GUI，再开窗口——锁屏下 AX 读取与
+    #        投递均被拒，归因不再是"辅助功能授权"一条路）───────────────────
+    session = backend.session_snapshot()
+    if session.screen_locked:
+        print("[env-unavailable] 屏幕已锁定（screen_locked=true）：锁屏下 AX 读取与"
+              "投递均被拒；解锁后重跑（R5 自检，desktop_perceive(status) 同口径）。",
+              flush=True)
+        return 3
+    if not session.gui_available:
+        print("[env-unavailable] 无图形控制台会话（gui_available=false）；需在已登录"
+              "桌面会话内运行。", flush=True)
+        return 3
+
     # ── 1. 自建临时 PNG 并打开 ─────────────────────────────────────────
     make_tiny_png(TMP_PNG)
     print(f"[setup] 已生成 {TMP_PNG}（{TMP_PNG.stat().st_size}B）", flush=True)
@@ -185,9 +202,13 @@ def main() -> int:
     # ── 2. 只读 snapshot：找 AXCloseButton ─────────────────────────────
     view = backend.ax_snapshot(window, 4, 1500)
     if not view.available:
-        print(f"[abort] AX 快照不可用（{view.failure}；需辅助功能授权）", flush=True)
+        # R5 归因修正：ax_window_unbound/ax_unavailable 在真机的常见真实原因是
+        # 屏幕自动锁定（锁屏下 AX 读取与投递均被拒），并非只有辅助功能授权。
+        print(f"[env-unavailable] AX 快照不可用（{view.failure}；锁屏或 AX 不可读——"
+              "先用 desktop_perceive(status) 自检；锁屏下 AX 读取与投递均被拒；"
+              "辅助功能授权绑定启动进程，重启宿主后需复核）", flush=True)
         _cleanup_close_own_window(window, "0")  # 尽力关闭（可能同样失败，如实报告）
-        return 1
+        return 3
     close_nodes = [n for n in view.nodes if (n.subrole or "") == "AXCloseButton"]
     if not close_nodes:
         print("[abort] AX 树中未找到 AXCloseButton（可用节点见下）", flush=True)
@@ -197,6 +218,21 @@ def main() -> int:
     target = close_nodes[0]
     print(f"[snapshot] 节点数={len(view.nodes)} 选中关闭钮 ax_ref={target.ax_ref} "
           f"role={target.role} subrole={target.subrole}", flush=True)
+
+    # ── 2b. 前台 app 探测（R5 门控判据；lsappinfo 口径）─────────────────
+    front = backend.frontmost_app_bundle()
+    print(f"[setup] 前台 app（lsappinfo 口径，R5 判据）= {front}", flush=True)
+    if front is None:
+        print("[env-unavailable] 前台 app 探测不可用（lsappinfo front/list 无匹配或"
+              "不可执行）——apply 会 fail-closed（foreground_changed）", flush=True)
+        if not args.dry_run_only:
+            _cleanup_close_own_window(window, target.ax_ref)
+            return 3
+        print("[note] --dry-run-only：dry_run 不做前台门控，继续只读探测", flush=True)
+    elif front != window.bundle_id:
+        print(f"[note] 前台 app（{front}）≠ 目标窗口所属 app（{window.bundle_id}）："
+              "apply 将按 foreground_changed 拒绝（用户切走即拒，属设计内门控）",
+              flush=True)
 
     # ── 3. 真实工具链路：dry_run → apply ───────────────────────────────
     tool = DesktopOperateTool(

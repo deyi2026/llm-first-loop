@@ -23,6 +23,7 @@ from llm_loop.desktop import (
 )
 from llm_loop.desktop.apps_probe import (
     build_apps,
+    normalize_asn,
     parse_hidden_info,
     parse_lsappinfo_front,
     parse_lsappinfo_list,
@@ -192,6 +193,26 @@ class MacOSDesktopBackend:
             for record in records
             if record.pid is not None and record.bundle_id
         }
+
+    def frontmost_app_bundle(self) -> str | None:
+        """R5：前台 app 的 bundle_id（``lsappinfo front`` ASN → ``list`` 记录匹配）。
+
+        复用 apps_probe 既有解析（parse_lsappinfo_front / parse_lsappinfo_list /
+        normalize_asn），不另写解析器。任何取不到（lsappinfo 超时/不可执行/
+        rc!=0、front 无 ASN、ASN 无匹配记录、匹配记录 bundleID=[NULL]）都返回
+        None——工具层据此 fail-closed 拒绝（foreground_changed），不当成"通过"。
+        子进程异常不外抛：探测本身失败 = 取不到（R5 纪律：更保守，不更宽）。
+        """
+        try:
+            records, front_asn = self._app_records()
+        except Exception:  # noqa: BLE001 - 探测失败按取不到处理（上层 fail-closed）
+            return None
+        if not front_asn:
+            return None
+        for record in records:
+            if record.asn and normalize_asn(record.asn) == front_asn:
+                return record.bundle_id
+        return None
 
     def list_windows(self, include_offscreen: bool = False) -> list[WindowInfo]:
         rows = macos_windows.list_raw_windows(include_offscreen=include_offscreen)

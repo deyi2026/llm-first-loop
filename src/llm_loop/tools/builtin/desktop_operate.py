@@ -24,9 +24,12 @@ force needs the one-time credential — validated here, consumed only at
 delivery, S2) → writes_enabled switch (default OFF, T8) → EXEC_MODE
 blocked/readonly refusal (M3) → §6.2 token/session gate (point channel NEVER
 session-exempt, M1; tokens carry a 10-min TTL and expired redemption is
-refused, P2-3) → D4 world re-bind (focus drift breaks the world fingerprint,
-P2-1) → U18 AX self-probe → real delivery (force credential consumed only
-here, S2) → post fingerprint + session approval (point channel excluded)].
+refused, P2-3) → D4 world re-bind (R5: the target window's app must BE the
+frontmost app — lsappinfo caliber; frontmost probe failure fails closed;
+CGWindowList order is NOT app focus) + focus drift breaks the world
+fingerprint, P2-1) → U18 AX self-probe → real delivery (force credential
+consumed only here, S2) → post fingerprint + session approval (point channel
+excluded)].
 Order note (P2-4/R2): D7 precedes the writes switch / EXEC_MODE — the human
 presence gate is the outermost human-safety refusal; when the writes switch is
 off the user_present guidance says so explicitly (a force credential alone
@@ -35,6 +38,8 @@ cannot reach delivery while writes are disabled).
 Receipts (§5.4): risk_class / pre_sha256 / post_sha256 / target_identity /
 applied / needs_confirmation / privacy_blocked (+ dry_run, confirm_token,
 world_version, hid_idle_ms, foreground_before/after, verified).
+foreground_before/after = frontmost APP bundle id (lsappinfo caliber, R5) —
+not the CG-order foreground window.
 
 Audit (§6.4, append-only JSONL via make_jsonl_audit_sink): one row per
 terminal outcome, refusals included. No delete/rewrite surface exists.
@@ -49,6 +54,7 @@ import platform as _platform
 import secrets as _secrets
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -131,6 +137,38 @@ GUIDANCE_EXEC_MODE_BLOCKED = (
 )
 
 
+@dataclass
+class _ActFlow:
+    """_dispatch 流水状态（R4 纯重构引入）：只承载原 _dispatch 的局部变量流转，
+    无任何逻辑/副作用；各关卡函数经它读写同一批值，语句与顺序保持拆分前原样。
+    """
+
+    do: str
+    options: dict[str, Any]
+    backend: Any
+    base: dict[str, Any]
+    started: float
+    window: Any = None
+    audit: dict[str, Any] = field(default_factory=dict)
+    frontmost_before: Any = None
+    ax_view: Any = None
+    nodes: Any = ()
+    browser: bool = False
+    target_identity: dict[str, Any] = field(default_factory=dict)
+    keys: str = ""
+    risk_class: str = ""
+    world: str = ""
+    channel_token_required: bool = False
+    action_fp: str = ""
+    risk_note: str | None = None
+    idle_ms: Any = None
+    force_used: bool = False
+    session_id: str = ""
+    token_record: Any = None
+    fresh_window: Any = None
+    fresh_world: str = ""
+
+
 class DesktopOperateTool:
     name = "desktop_operate"
     description = (
@@ -146,7 +184,11 @@ class DesktopOperateTool:
         " review_required 拒绝（§6.3：须走宿主发表闸，本工具 token 不放行）。"
         "浏览器窗口内：网页内容区域（AXWebArea）的 point 点击、滚轮与网页焦点按键一律拒绝"
         " web_target_not_allowed → browser_operate（路线 A）；无法证明在网页区外的浏览器"
-        " point/press_key/scroll 按不可逆处理（每次都要新令牌）。act 白名单硬编码"
+        " point/press_key/scroll 按不可逆处理（每次都要新令牌）。apply 前台判据=前台 app"
+        "（lsappinfo 口径，R5）：目标窗口所属 bundle_id 必须等于当前前台 app 的"
+        " bundle_id，取不到前台信息一律 foreground_changed 拒绝（fail-closed）；"
+        "回执/审计的 foreground_before/after 即前台 app 的 bundle_id"
+        "（非 CG 窗口序口径）。act 白名单硬编码"
         " Finder/Safari/Chrome/Preview，终端与 IDE 只读拒绝；敏感 app（1Password/Keychain/"
         "loginwindow 等核心名单）拒绝操作；desktop.see_allowlist 非空时名单外 app 同样不可"
         " act（与 perceive 可见范围对齐）。press_key 只接受闭合命名键集"
@@ -346,6 +388,23 @@ class DesktopOperateTool:
         except Exception:  # noqa: BLE001 - 审计 best-effort：失败计数，不影响工具语义
             self._audit_failures += 1
 
+    def _refuse(
+        self, flow: _ActFlow, error: DesktopErrorCode, guidance: str, **extra: Any
+    ) -> ToolResult:
+        """门控拒绝统一出口（原 _dispatch 内 refuse 闭包，R4 拆出；语义逐字不变：
+        先落审计行再回拒绝回执；PRIVACY_BLOCKED 附 privacy_blocked=true）。"""
+        flow.audit.update(
+            {"error_code": error.value, **{k: v for k, v in extra.items()}}
+        )
+        self._audit_event(flow.audit)
+        payload: dict[str, Any] = {"applied": False, "needs_confirmation": False}
+        if error == DesktopErrorCode.PRIVACY_BLOCKED:
+            payload["privacy_blocked"] = True
+        return self._envelope(
+            do=flow.do, ok=False, error_code=error, guidance=guidance,
+            started=flow.started, base=flow.base, payload=payload,
+        )
+
     # ── 参数校验（闭合键集 + per-do 规则）─────────────────────────────────
     def _validate(
         self, kwargs: dict[str, Any]
@@ -513,7 +572,7 @@ class DesktopOperateTool:
                 started=started, base=base,
             )
 
-    # ── 门控与投递 ───────────────────────────────────────────────────────
+    # ── 门控与投递（R4：_dispatch 为短调度器，关卡拆至独立函数，顺序不变）──
     def _dispatch(
         self,
         do: str,
@@ -522,6 +581,39 @@ class DesktopOperateTool:
         base: dict[str, Any],
         started: float,
     ) -> ToolResult:
+        """短调度器：解析入参 → 逐关分派 → 组装回执。
+
+        R4 纯重构：原 576 行单体按关注点拆为下列关卡函数，语句、门控顺序、
+        错误码/文案与审计时机逐字保持；共享状态经 _ActFlow 流转（无逻辑）。
+        """
+        flow = _ActFlow(
+            do=do, options=options, backend=backend, base=base, started=started
+        )
+        refused = self._bind_window(flow)
+        if refused is not None:
+            return refused
+        refused = self._gate_app_allowance(flow)
+        if refused is not None:
+            return refused
+        self._scan_window_world(flow)
+        refused = self._resolve_target(flow)
+        if refused is not None:
+            return refused
+        refused = self._gate_review_web(flow)
+        if refused is not None:
+            return refused
+        refused = self._gate_key_policy(flow)
+        if refused is not None:
+            return refused
+        self._plan_risk_and_binding(flow)
+        if bool(options.get("dry_run")):
+            return self._dry_run_receipt(flow)
+        return self._apply(flow)
+
+    def _bind_window(self, flow: _ActFlow) -> ToolResult | None:
+        """type 长度上限与窗口绑定（S5：早期拒绝也写审计行；成功则建 audit 行底）。"""
+        do, options, backend = flow.do, flow.options, flow.backend
+        base, started = flow.base, flow.started
         if do == "type" and len(str(options.get("text") or "")) > MAX_TYPE_CHARS:
             self._audit_event({"do": do, "window_id": options["window_id"],
                                "dry_run": bool(options.get("dry_run")),
@@ -552,21 +644,17 @@ class DesktopOperateTool:
             "window_id": window.window_id,
             "dry_run": bool(options.get("dry_run")),
         }
+        flow.window = window
+        flow.audit = audit
+        return None
 
-        def refuse(error: DesktopErrorCode, guidance: str, **extra: Any) -> ToolResult:
-            audit.update({"error_code": error.value, **{k: v for k, v in extra.items()}})
-            self._audit_event(audit)
-            payload: dict[str, Any] = {"applied": False, "needs_confirmation": False}
-            if error == DesktopErrorCode.PRIVACY_BLOCKED:
-                payload["privacy_blocked"] = True
-            return self._envelope(
-                do=do, ok=False, error_code=error, guidance=guidance,
-                started=started, base=base, payload=payload,
-            )
-
+    def _gate_app_allowance(self, flow: _ActFlow) -> ToolResult | None:
+        """app 级三闸：D8 隐私核心名单 → D6/T3 act 白名单 → S10 see_allowlist 对齐。"""
+        bundle = flow.window.bundle_id
         # D8：核心隐私名单（优先级最高；不投递、不读树）
         if self._privacy.is_sensitive(bundle):
-            return refuse(
+            return self._refuse(
+                flow,
                 DesktopErrorCode.PRIVACY_BLOCKED,
                 f"目标应用属于隐私核心名单（bundle_id={bundle}）；按 D8 拒绝操作，无降级路径。",
             )
@@ -574,11 +662,13 @@ class DesktopOperateTool:
         actable, deny_kind = self._act_allowlist.is_actable(bundle)
         if not actable:
             if deny_kind == "terminal_readonly":
-                return refuse(
+                return self._refuse(
+                    flow,
                     DesktopErrorCode.APP_NOT_ALLOWED,
                     f"终端/IDE 应用为只读面（bundle_id={bundle}）。{GUIDANCE_TERMINAL_READONLY}",
                 )
-            return refuse(
+            return self._refuse(
+                flow,
                 DesktopErrorCode.APP_NOT_ALLOWED,
                 f"目标应用不在 act 白名单（bundle_id={bundle}；核心名单硬编码"
                 " Finder/Safari/Chrome/Preview，配置只能追加，终端/IDE 永不放开）。",
@@ -586,97 +676,139 @@ class DesktopOperateTool:
         # S10：see_allowlist（perceive 可见范围）对 act 对齐——perceive 隐藏的 app 不可 act。
         # 默认空 = 全部允许（零回归）；与 M3/U14 同为 app_not_allowed（可见性是配置层语义）。
         if not self._see_allowlist.is_allowed(bundle):
-            return refuse(
+            return self._refuse(
+                flow,
                 DesktopErrorCode.APP_NOT_ALLOWED,
                 f"目标应用不在 desktop.see_allowlist 可见范围（bundle_id={bundle}，U14 对齐）："
                 "perceive 隐藏的 app 不可 act；如需操作请先把该 app 加入"
                 " LFL_DESKTOP_SEE_ALLOWLIST。",
             )
+        return None
 
-        # ── 目标解析（只读；act-time exact addressing 的第一半）───────────
-        windows = backend.list_windows()
-        frontmost_before = next((w.bundle_id for w in windows if w.is_foreground), None)
+    def _scan_window_world(self, flow: _ActFlow) -> None:
+        """只读世界扫描：前台 app（R5：lsappinfo 口径）、AX 快照、浏览器判定。
+
+        R5 口径变化：frontmost_before 不再取 CG 窗口序的 is_foreground 窗口
+        （CG 序 ≠ app 焦点，真机实测 Chrome 可排在 Preview 前），改取后台
+        frontmost_app_bundle()（lsappinfo front+list 按 ASN 归一匹配）。探测
+        失败 → None（dry_run 不门控前台；apply 侧 fail-closed，见
+        _gate_world_rebind）。本函数因此不再扫全窗口清单（旧实现仅为取前台）。
+        """
+        backend, window = flow.backend, flow.window
+        frontmost_before = backend.frontmost_app_bundle()
         # S9：快照节点上限与 desktop_perceive 对齐（AX_NODE_LIMIT_DEFAULT=1500），
         # 否则 perceive 回执里的深位 ax_ref 在本工具侧解析不到 → ax_ref_not_found
         # （R3：与窗口解绑 window_unbound 分口径，便于定位「节点不在」vs「窗口不在」）。
         ax_view = backend.ax_snapshot(window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
         nodes = ax_view.nodes if ax_view.available else ()
-        browser = is_browser_bundle(bundle)
-        target = options.get("target")
-        target_identity: dict[str, Any]
+        browser = is_browser_bundle(window.bundle_id)
+        flow.frontmost_before = frontmost_before
+        flow.ax_view = ax_view
+        flow.nodes = nodes
+        flow.browser = browser
+    def _resolve_target(self, flow: _ActFlow) -> ToolResult | None:
+        """目标解析与路由边界（act-time exact addressing 的第一半；只读）。"""
+        target = flow.options.get("target")
         if isinstance(target, dict) and "ax_ref" in target:
-            ax_ref = str(target["ax_ref"]).strip()
-            if not ax_view.available:
-                return refuse(
-                    DesktopErrorCode.AX_UNAVAILABLE,
-                    f"AX 树不可用（{ax_view.failure}），无法解析 ax_ref。{GUIDANCE_AX}",
-                )
-            node_map = {n.ax_ref: n for n in nodes}
-            node = node_map.get(ax_ref)
-            if node is None:
-                return refuse(
-                    DesktopErrorCode.AX_REF_NOT_FOUND,
-                    f"ax_ref={ax_ref} 不在当前窗口 AX 树中（目标已变化）；重新 snapshot 后再试。",
-                )
-            audit["target_identity"] = target_identity = {
-                "kind": "ax_ref",
-                "ax_ref": ax_ref,
-                "role": node.role,
-                "subrole": node.subrole,
-                "title": node.title,
-            }
-            # 路线 A 边界：目标自身或任何祖先命中 AXWebArea → 网页内容层
-            if is_web_subtree(ax_ref, nodes):
-                return refuse(
-                    DesktopErrorCode.WEB_TARGET_NOT_ALLOWED, GUIDANCE_WEB_TARGET,
-                )
-            if (node.role or "").lower() == "axsecuretextfield" or (
-                node.subrole or ""
-            ).lower() == "axsecuretextfield":
-                return refuse(
-                    DesktopErrorCode.PRIVACY_BLOCKED,
-                    "目标是密码型输入框（AXSecureTextField）；按 N4 红线拒绝键入，无降级路径。",
-                )
-        elif isinstance(target, dict) and "point" in target:
-            point = target["point"]
-            px, py = float(point["x"]), float(point["y"])
-            bounds = window.bounds_pt
-            within = (
-                bounds.x <= px < bounds.x + bounds.w and bounds.y <= py < bounds.y + bounds.h
-            )
-            if not within:
-                return refuse(
-                    DesktopErrorCode.COORDINATE_OUT_OF_BOUNDS,
-                    f"point({px:.1f},{py:.1f}) 不在窗口 bounds 内"
-                    f"（{bounds.x:.1f},{bounds.y:.1f},{bounds.w:.1f}x{bounds.h:.1f}，单位=点；§7.3.2）。",
-                )
-            audit["target_identity"] = target_identity = {
-                "kind": "point", "x": px, "y": py, "within_window_id": window.window_id
-            }
-            # M1：point 必须对当前窗口 AX 快照的 AXWebArea 做命中判定（不许绕过路线 A）。
-            # 快照不可用、或存在 AXWebArea 但 bounds 不可读，都无法排除网页内容 →
-            # 一律 fail-closed 拒绝（坐标点击是精确命中通道，不能证明不在网页区就不投）。
-            point_hits_web = browser and (
-                not ax_view.available
-                or has_web_area(nodes)
-                and (not web_area_rects(nodes) or point_in_web_area(px, py, nodes))
-            )
-            if point_hits_web:
-                why = (
-                    "AX 快照不可用，无法排除网页内容"
-                    if not ax_view.available
-                    else "AXWebArea bounds 命中，或存在 AXWebArea 但 bounds 不可读、无法排除"
-                )
-                return refuse(
-                    DesktopErrorCode.WEB_TARGET_NOT_ALLOWED,
-                    f"point({px:.1f},{py:.1f}) 落在浏览器窗口网页内容区域（{why}）。"
-                    f"{GUIDANCE_WEB_TARGET}",
-                )
-        else:
-            audit["target_identity"] = target_identity = {
-                "kind": "focused", "window_id": window.window_id
-            }
+            return self._resolve_ax_ref_target(flow, target)
+        if isinstance(target, dict) and "point" in target:
+            return self._resolve_point_target(flow, target)
+        flow.audit["target_identity"] = flow.target_identity = {
+            "kind": "focused", "window_id": flow.window.window_id
+        }
+        return None
 
+    def _resolve_ax_ref_target(
+        self, flow: _ActFlow, target: dict[str, Any]
+    ) -> ToolResult | None:
+        """ax_ref 通道：exact 重解析 → 路线 A web 边界 → N4 密码框红线。"""
+        audit, ax_view, nodes = flow.audit, flow.ax_view, flow.nodes
+        ax_ref = str(target["ax_ref"]).strip()
+        if not ax_view.available:
+            return self._refuse(
+                flow,
+                DesktopErrorCode.AX_UNAVAILABLE,
+                f"AX 树不可用（{ax_view.failure}），无法解析 ax_ref。{GUIDANCE_AX}",
+            )
+        node_map = {n.ax_ref: n for n in nodes}
+        node = node_map.get(ax_ref)
+        if node is None:
+            return self._refuse(
+                flow,
+                DesktopErrorCode.AX_REF_NOT_FOUND,
+                f"ax_ref={ax_ref} 不在当前窗口 AX 树中（目标已变化）；重新 snapshot 后再试。",
+            )
+        audit["target_identity"] = target_identity = {
+            "kind": "ax_ref",
+            "ax_ref": ax_ref,
+            "role": node.role,
+            "subrole": node.subrole,
+            "title": node.title,
+        }
+        # 路线 A 边界：目标自身或任何祖先命中 AXWebArea → 网页内容层
+        if is_web_subtree(ax_ref, nodes):
+            return self._refuse(
+                flow, DesktopErrorCode.WEB_TARGET_NOT_ALLOWED, GUIDANCE_WEB_TARGET,
+            )
+        if (node.role or "").lower() == "axsecuretextfield" or (
+            node.subrole or ""
+        ).lower() == "axsecuretextfield":
+            return self._refuse(
+                flow,
+                DesktopErrorCode.PRIVACY_BLOCKED,
+                "目标是密码型输入框（AXSecureTextField）；按 N4 红线拒绝键入，无降级路径。",
+            )
+        flow.target_identity = target_identity
+        return None
+
+    def _resolve_point_target(
+        self, flow: _ActFlow, target: dict[str, Any]
+    ) -> ToolResult | None:
+        """point 通道：窗口 bounds 内判定 → M1 AXWebArea 命中（fail-closed）。"""
+        window, audit = flow.window, flow.audit
+        ax_view, nodes, browser = flow.ax_view, flow.nodes, flow.browser
+        point = target["point"]
+        px, py = float(point["x"]), float(point["y"])
+        bounds = window.bounds_pt
+        within = (
+            bounds.x <= px < bounds.x + bounds.w and bounds.y <= py < bounds.y + bounds.h
+        )
+        if not within:
+            return self._refuse(
+                flow,
+                DesktopErrorCode.COORDINATE_OUT_OF_BOUNDS,
+                f"point({px:.1f},{py:.1f}) 不在窗口 bounds 内"
+                f"（{bounds.x:.1f},{bounds.y:.1f},{bounds.w:.1f}x{bounds.h:.1f}，单位=点；§7.3.2）。",
+            )
+        audit["target_identity"] = target_identity = {
+            "kind": "point", "x": px, "y": py, "within_window_id": window.window_id
+        }
+        # M1：point 必须对当前窗口 AX 快照的 AXWebArea 做命中判定（不许绕过路线 A）。
+        # 快照不可用、或存在 AXWebArea 但 bounds 不可读，都无法排除网页内容 →
+        # 一律 fail-closed 拒绝（坐标点击是精确命中通道，不能证明不在网页区就不投）。
+        point_hits_web = browser and (
+            not ax_view.available
+            or has_web_area(nodes)
+            and (not web_area_rects(nodes) or point_in_web_area(px, py, nodes))
+        )
+        if point_hits_web:
+            why = (
+                "AX 快照不可用，无法排除网页内容"
+                if not ax_view.available
+                else "AXWebArea bounds 命中，或存在 AXWebArea 但 bounds 不可读、无法排除"
+            )
+            return self._refuse(
+                flow,
+                DesktopErrorCode.WEB_TARGET_NOT_ALLOWED,
+                f"point({px:.1f},{py:.1f}) 落在浏览器窗口网页内容区域（{why}）。"
+                f"{GUIDANCE_WEB_TARGET}",
+            )
+        flow.target_identity = target_identity
+        return None
+    def _gate_review_web(self, flow: _ActFlow) -> ToolResult | None:
+        """M2 发布/提交/支付 fail-closed + M1 浏览器 scroll/press_key web 边界。"""
+        do, window, nodes, browser = flow.do, flow.window, flow.nodes, flow.browser
+        target_identity = flow.target_identity
         # M2：发布/提交/支付类目标 fail-closed 拒绝（宿主发表闸缺失 ⇒ 不自行放行）。
         # ax_ref 通道用目标自身标题；point/focused/scroll 无法证明目标身份，退而用
         # 窗口标题（宁可误拒：该类目标是 §6.2/§6.3 的显式 MUST）。
@@ -686,15 +818,15 @@ class DesktopOperateTool:
         else:
             _review_texts = (window.title,)
         if hits_review_markers(*_review_texts):
-            return refuse(
-                DesktopErrorCode.REVIEW_REQUIRED, GUIDANCE_REVIEW_REQUIRED,
+            return self._refuse(
+                flow, DesktopErrorCode.REVIEW_REQUIRED, GUIDANCE_REVIEW_REQUIRED,
                 risk_class="irreversible",
             )
-
         # M1：浏览器窗口内 scroll（滚轮投递到 app 进程，默认作用于网页视口）与
         # press_key（作用于窗口焦点，网页焦点通常 AX 不可见）同样要过 web 边界。
         if browser and do == "scroll" and has_web_area(nodes):
-            return refuse(
+            return self._refuse(
+                flow,
                 DesktopErrorCode.WEB_TARGET_NOT_ALLOWED,
                 "浏览器窗口存在 AXWebArea：滚轮事件投递到 app 进程将作用于网页视口。"
                 f"{GUIDANCE_WEB_TARGET}",
@@ -702,25 +834,36 @@ class DesktopOperateTool:
         if browser and do == "press_key":
             focused_ref = focused_ax_ref(nodes)
             if focused_ref is not None and is_web_subtree(focused_ref, nodes):
-                return refuse(
+                return self._refuse(
+                    flow,
                     DesktopErrorCode.WEB_TARGET_NOT_ALLOWED,
                     f"窗口焦点（ax_ref={focused_ref}）位于浏览器网页内容层。{GUIDANCE_WEB_TARGET}",
                 )
+        return None
 
-        # ── per-do 参数策略（B3 黑名单 / IME 缺口 / scroll 规格）──────────
+    def _gate_key_policy(self, flow: _ActFlow) -> ToolResult | None:
+        """per-do 参数策略（B3 黑名单 / IME 缺口 / scroll 规格）。"""
+        do, options = flow.do, flow.options
         keys = str(options.get("keys") or "")
         if do == "press_key":
             # P2-5（R2）：只做校验拒绝，不再把 flags 存进 options——该键从未被
             # 消费（_deliver 侧重解析），属死状态，已删除。
             status, detail, _ = parse_keycombo(keys)
             if status != "ok":
-                return refuse(DesktopErrorCode.KEY_NOT_ALLOWED, detail)
+                return self._refuse(flow, DesktopErrorCode.KEY_NOT_ALLOWED, detail)
         if do == "scroll":
             status, detail, signed = parse_scroll(keys)
             if status != "ok":
-                return refuse(DesktopErrorCode.KEY_NOT_ALLOWED, detail)
+                return self._refuse(flow, DesktopErrorCode.KEY_NOT_ALLOWED, detail)
             options["scroll_signed_lines"] = signed
-
+        flow.keys = keys
+        return None
+    def _plan_risk_and_binding(self, flow: _ActFlow) -> None:
+        """风险分级（§6.2 启发式 + M1 通道覆写）与世界/令牌绑定计算。"""
+        do, options, window = flow.do, flow.options, flow.window
+        bundle = window.bundle_id
+        nodes, frontmost_before = flow.nodes, flow.frontmost_before
+        target_identity, keys, audit = flow.target_identity, flow.keys, flow.audit
         risk_class = classify_risk(
             do,
             bundle_id=bundle,
@@ -731,7 +874,7 @@ class DesktopOperateTool:
         )
         # M1：浏览器窗口内 point/press_key/scroll 通道不得落在普通 act（按不可逆处理）
         risk_class = channel_risk_override(
-            risk_class, browser=browser, do=do, target_kind=target_identity["kind"]
+            risk_class, browser=flow.browser, do=do, target_kind=target_identity["kind"]
         )
         audit["target_identity"] = target_identity
         audit["risk_class"] = risk_class
@@ -759,42 +902,82 @@ class DesktopOperateTool:
             do, window.window_id, binding_address, options.get("text"), keys
         )
         risk_note = RISK_HEURISTIC_DISCLAIMER if risk_class == "irreversible" else None
+        flow.risk_class = risk_class
+        flow.world = world
+        flow.channel_token_required = channel_token_required
+        flow.action_fp = action_fp
+        flow.risk_note = risk_note
+    def _dry_run_receipt(self, flow: _ActFlow) -> ToolResult:
+        """dry_run：不投递，签发一次性令牌（§5.4/§6.3；前台探测失败不拦 dry_run）。"""
+        do, window = flow.do, flow.window
+        base, started, audit = flow.base, flow.started, flow.audit
+        target_identity = flow.target_identity
+        risk_class, world, action_fp = flow.risk_class, flow.world, flow.action_fp
+        frontmost_before, risk_note = flow.frontmost_before, flow.risk_note
+        token = self._tokens.issue(
+            window_id=window.window_id,
+            do=do,
+            action_fp=action_fp,
+            world_version=world,
+            risk_class=risk_class,
+            now=time.time(),
+        )
+        audit.update(
+            {"applied": False, "confirm_token_id": self._tokens.token_id(token)}
+        )
+        self._audit_event(audit)
+        dry_payload: dict[str, Any] = {
+            "applied": False,
+            "dry_run": True,
+            "needs_confirmation": True,
+            "confirm_token": token,
+            "risk_class": risk_class,
+            "target_identity": target_identity,
+            "pre_sha256": world,
+            "post_sha256": None,
+            "world_version": world,
+            # R5：前台口径 = 前台 app bundle（lsappinfo）；探测失败为 None
+            "foreground_before": frontmost_before,
+        }
+        if risk_note:
+            dry_payload["risk_note"] = risk_note
+        return self._envelope(
+            do=do, ok=True, error_code=None, guidance=None, started=started,
+            base=base, payload=dry_payload,
+        )
+    def _apply(self, flow: _ActFlow) -> ToolResult:
+        """apply 真实投递链调度（每一关失败都拒绝且不投递；关卡顺序不可变：
+        D7 人在场/force 凭据 → 写开关 → EXEC_MODE → 会话/令牌 → D4 世界重绑
+        （R5 前台 app 口径）→ U18 AX 探针 → 投递与回执）。"""
+        flow.audit["dry_run"] = False
+        refused = self._gate_hid_user_present(flow)
+        if refused is not None:
+            return refused
+        if flow.force_used:
+            refused = self._gate_force_credential(flow)
+            if refused is not None:
+                return refused
+        refused = self._gate_writes_switch(flow)
+        if refused is not None:
+            return refused
+        refused = self._gate_exec_mode(flow)
+        if refused is not None:
+            return refused
+        refused = self._gate_session_token(flow)
+        if refused is not None:
+            return refused
+        refused = self._gate_world_rebind(flow)
+        if refused is not None:
+            return refused
+        refused = self._gate_ax_probe(flow)
+        if refused is not None:
+            return refused
+        return self._deliver_and_receipt(flow)
 
-        # ── dry_run：不投递，签发一次性令牌（§5.4/§6.3）──────────────────
-        if bool(options.get("dry_run")):
-            token = self._tokens.issue(
-                window_id=window.window_id,
-                do=do,
-                action_fp=action_fp,
-                world_version=world,
-                risk_class=risk_class,
-                now=time.time(),
-            )
-            audit.update(
-                {"applied": False, "confirm_token_id": self._tokens.token_id(token)}
-            )
-            self._audit_event(audit)
-            dry_payload: dict[str, Any] = {
-                "applied": False,
-                "dry_run": True,
-                "needs_confirmation": True,
-                "confirm_token": token,
-                "risk_class": risk_class,
-                "target_identity": target_identity,
-                "pre_sha256": world,
-                "post_sha256": None,
-                "world_version": world,
-                "foreground_before": frontmost_before,
-            }
-            if risk_note:
-                dry_payload["risk_note"] = risk_note
-            return self._envelope(
-                do=do, ok=True, error_code=None, guidance=None, started=started,
-                base=base, payload=dry_payload,
-            )
-
-        # ── apply：真实投递路径（以下每一关失败都拒绝且不投递）────────────
-        audit["dry_run"] = False
+    def _gate_hid_user_present(self, flow: _ActFlow) -> ToolResult | None:
+        """D7 用户在场闸（最外层人类安全闸；P2-4/R2：先于写开关/EXEC_MODE）。"""
+        do, options, backend = flow.do, flow.options, flow.backend
+        base, started, audit = flow.base, flow.started, flow.audit
         idle_ms = backend.hid_idle_ms()
         audit["hid_idle_ms"] = idle_ms
         user_present = idle_ms is None or int(idle_ms) < USER_PRESENT_WINDOW_MS
@@ -826,65 +1009,77 @@ class DesktopOperateTool:
                              "hid_idle_ms": idle_ms},
                 )
             force_used = True
-            credential = str(options.get("force_credential") or "")
-            if not self._force_secret:
-                audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_MISSING.value
-                self._audit_event(audit)
-                return self._envelope(
-                    do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_MISSING,
-                    guidance=f"force=true 但宿主未配置一次性凭据来源（LFL_DESKTOP_FORCE_CREDENTIAL 为空）。{GUIDANCE_FORCE}",
-                    started=started, base=base,
-                    payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
-                )
-            if self._gate.force_consumed(self._session_id_getter()):
-                audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
-                self._audit_event(audit)
-                return self._envelope(
-                    do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
-                    guidance="本会话的一次性 force 凭据已被消耗；需用户重新预置新凭据。",
-                    started=started, base=base,
-                    payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
-                )
-            # S3：失败节流——锁定窗内直接拒绝（不比较、不消耗），防进程内暴力试凭据
-            now_mono = time.monotonic()
-            if self._force_fail_count >= _FORCE_FAIL_LIMIT and now_mono < self._force_lock_until:
-                audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
-                self._audit_event(audit)
-                return self._envelope(
-                    do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
-                    guidance=(
-                        f"force 凭据连续失败 {self._force_fail_count} 次，已临时锁定"
-                        f"（{_FORCE_LOCK_S:.0f}s 内拒绝所有 force 尝试，S3 节流）；稍后重试。"
-                    ),
-                    started=started, base=base,
-                    payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
-                )
-            # S3：恒时比较（secrets.compare_digest），不泄露比较进度
-            if not (
-                isinstance(credential, str)
-                and isinstance(self._force_secret, str)
-                and _secrets.compare_digest(credential, self._force_secret)
-            ):
-                self._force_fail_count += 1
-                if self._force_fail_count >= _FORCE_FAIL_LIMIT:
-                    self._force_lock_until = now_mono + _FORCE_LOCK_S
-                audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
-                self._audit_event(audit)
-                return self._envelope(
-                    do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
-                    guidance=(
-                        "force_credential 与宿主预置凭据不匹配（D7）。"
-                        + (f"连续失败 {self._force_fail_count} 次，已进入 {_FORCE_LOCK_S:.0f}s 锁定。"
-                           if self._force_fail_count >= _FORCE_FAIL_LIMIT else "")
-                    ),
-                    started=started, base=base,
-                    payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
-                )
-            # S2：凭据**校验通过 ≠ 消耗**——消耗推迟到即将投递（所有可拒绝关卡之后），
-            # 写开关关闭/令牌不符/世界漂移等拒绝路径不得烧掉用户预置的一次性凭据。
-            self._force_fail_count = 0
+        flow.idle_ms = idle_ms
+        flow.force_used = force_used
+        return None
 
-        # 写能力总开关（T8：默认关；先于令牌校验，避免烧毁令牌）
+    def _gate_force_credential(self, flow: _ActFlow) -> ToolResult | None:
+        """D7/S3 force 一次性凭据校验（仅 user_present+force 路径；S2 校验≠消耗）。"""
+        do, options, audit = flow.do, flow.options, flow.audit
+        base, started, idle_ms = flow.base, flow.started, flow.idle_ms
+        credential = str(options.get("force_credential") or "")
+        if not self._force_secret:
+            audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_MISSING.value
+            self._audit_event(audit)
+            return self._envelope(
+                do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_MISSING,
+                guidance=f"force=true 但宿主未配置一次性凭据来源（LFL_DESKTOP_FORCE_CREDENTIAL 为空）。{GUIDANCE_FORCE}",
+                started=started, base=base,
+                payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
+            )
+        if self._gate.force_consumed(self._session_id_getter()):
+            audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
+            self._audit_event(audit)
+            return self._envelope(
+                do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
+                guidance="本会话的一次性 force 凭据已被消耗；需用户重新预置新凭据。",
+                started=started, base=base,
+                payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
+            )
+        # S3：失败节流——锁定窗内直接拒绝（不比较、不消耗），防进程内暴力试凭据
+        now_mono = time.monotonic()
+        if self._force_fail_count >= _FORCE_FAIL_LIMIT and now_mono < self._force_lock_until:
+            audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
+            self._audit_event(audit)
+            return self._envelope(
+                do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
+                guidance=(
+                    f"force 凭据连续失败 {self._force_fail_count} 次，已临时锁定"
+                    f"（{_FORCE_LOCK_S:.0f}s 内拒绝所有 force 尝试，S3 节流）；稍后重试。"
+                ),
+                started=started, base=base,
+                payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
+            )
+        # S3：恒时比较（secrets.compare_digest），不泄露比较进度
+        if not (
+            isinstance(credential, str)
+            and isinstance(self._force_secret, str)
+            and _secrets.compare_digest(credential, self._force_secret)
+        ):
+            self._force_fail_count += 1
+            if self._force_fail_count >= _FORCE_FAIL_LIMIT:
+                self._force_lock_until = now_mono + _FORCE_LOCK_S
+            audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
+            self._audit_event(audit)
+            return self._envelope(
+                do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
+                guidance=(
+                    "force_credential 与宿主预置凭据不匹配（D7）。"
+                    + (f"连续失败 {self._force_fail_count} 次，已进入 {_FORCE_LOCK_S:.0f}s 锁定。"
+                       if self._force_fail_count >= _FORCE_FAIL_LIMIT else "")
+                ),
+                started=started, base=base,
+                payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
+            )
+        # S2：凭据**校验通过 ≠ 消耗**——消耗推迟到即将投递（所有可拒绝关卡之后），
+        # 写开关关闭/令牌不符/世界漂移等拒绝路径不得烧掉用户预置的一次性凭据。
+        self._force_fail_count = 0
+        return None
+    def _gate_writes_switch(self, flow: _ActFlow) -> ToolResult | None:
+        """写能力总开关（T8：默认关；先于令牌校验，避免烧毁令牌）。"""
+        do, audit, base, started, idle_ms = (
+            flow.do, flow.audit, flow.base, flow.started, flow.idle_ms,
+        )
         if not self._writes_enabled:
             audit["error_code"] = DesktopErrorCode.WRITES_DISABLED.value
             self._audit_event(audit)
@@ -893,7 +1088,13 @@ class DesktopOperateTool:
                 guidance=GUIDANCE_WRITES_DISABLED, started=started, base=base,
                 payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
             )
+        return None
 
+    def _gate_exec_mode(self, flow: _ActFlow) -> ToolResult | None:
+        """M3：宿主 EXEC_MODE 分级（blocked/readonly 拒绝；allowlist 需显式列出）。"""
+        do, audit, base, started, idle_ms = (
+            flow.do, flow.audit, flow.base, flow.started, flow.idle_ms,
+        )
         # M3：宿主 EXEC_MODE 分级（blocked/readonly 拒绝真实投递；allowlist 需显式列出
         # 本工具；空 = 不启用，默认零回归）。dry_run 不走 apply 路径，天然不受限。
         exec_mode_blocks = bool(self._exec_mode) and (
@@ -909,8 +1110,14 @@ class DesktopOperateTool:
                 started=started, base=base,
                 payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
             )
-
-        # §6.2 会话门 + T6 令牌（M1：point 通道永不享受会话免令牌放行）
+        return None
+    def _gate_session_token(self, flow: _ActFlow) -> ToolResult | None:
+        """§6.2 会话门 + T6 令牌校验（M1：point 通道永不享受会话免令牌放行）。"""
+        do, options, window = flow.do, flow.options, flow.window
+        bundle = window.bundle_id
+        audit, base, started = flow.audit, flow.base, flow.started
+        risk_class, idle_ms, action_fp = flow.risk_class, flow.idle_ms, flow.action_fp
+        channel_token_required = flow.channel_token_required
         session_id = self._session_id_getter()
         approved = self._gate.is_approved(session_id, bundle, do)
         token_str = str(options.get("confirm_token") or "")
@@ -963,10 +1170,25 @@ class DesktopOperateTool:
                     payload={"applied": False, "needs_confirmation": True,
                              "risk_class": risk_class, "hid_idle_ms": idle_ms},
                 )
-
-        # D4：apply 时世界重绑（窗口仍存在且仍前台；token 路径还要求 world 未漂移）
+        flow.session_id = session_id
+        flow.token_record = token_record
+        return None
+    def _gate_world_rebind(self, flow: _ActFlow) -> ToolResult | None:
+        """D4：apply 时世界重绑（R5：窗口所属 app 必须是前台 app；token 路径还
+        要求 world 未漂移）。前台口径 = lsappinfo（front ASN → list 记录的
+        bundle_id）；探测失败/无匹配 → None → fail-closed 拒绝，不当成通过。"""
+        do, options, backend, audit = flow.do, flow.options, flow.backend, flow.audit
+        base, started = flow.base, flow.started
+        risk_class, idle_ms = flow.risk_class, flow.idle_ms
+        frontmost_before, token_record = flow.frontmost_before, flow.token_record
+        target_identity = flow.target_identity
         fresh_window = backend.get_window(int(options["window_id"]))
-        if fresh_window is None or not fresh_window.is_foreground:
+        frontmost_bundle = backend.frontmost_app_bundle()
+        if (
+            fresh_window is None
+            or frontmost_bundle is None
+            or fresh_window.bundle_id != frontmost_bundle
+        ):
             audit["error_code"] = DesktopErrorCode.FOREGROUND_CHANGED.value
             self._audit_event(audit)
             return self._envelope(
@@ -983,9 +1205,8 @@ class DesktopOperateTool:
             )
         fresh_view = backend.ax_snapshot(fresh_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
         fresh_nodes = fresh_view.nodes if fresh_view.available else ()
-        fresh_frontmost = next(
-            (w.bundle_id for w in backend.list_windows() if w.is_foreground), None
-        )
+        # R5：apply 时刻前台归属 = 上面前台门控的同一探测结果（app 口径）
+        fresh_frontmost = frontmost_bundle
         fresh_target_node = next(
             (n for n in fresh_nodes if n.ax_ref == target_identity.get("ax_ref")), None
         ) if target_identity["kind"] == "ax_ref" else None
@@ -1008,9 +1229,15 @@ class DesktopOperateTool:
                          "world_version_actual": fresh_world,
                          "window": jsonable(fresh_window)},
             )
-
-        # U18 同构自检：投递前 AX 探针（授权位有假阴性，探针才作数）
-        probe = backend.ax_probe(fresh_window.pid)
+        flow.fresh_window = fresh_window
+        flow.fresh_world = fresh_world
+        return None
+    def _gate_ax_probe(self, flow: _ActFlow) -> ToolResult | None:
+        """U18 同构自检：投递前 AX 探针（授权位有假阴性，探针才作数）。"""
+        do, backend, audit = flow.do, flow.backend, flow.audit
+        base, started = flow.base, flow.started
+        risk_class, idle_ms = flow.risk_class, flow.idle_ms
+        probe = backend.ax_probe(flow.fresh_window.pid)
         if probe is None or int(probe) != 0:
             audit["error_code"] = DesktopErrorCode.AX_UNAVAILABLE.value
             self._audit_event(audit)
@@ -1021,7 +1248,20 @@ class DesktopOperateTool:
                 payload={"applied": False, "needs_confirmation": False,
                          "risk_class": risk_class, "hid_idle_ms": idle_ms},
             )
+        return None
 
+    def _deliver_and_receipt(self, flow: _ActFlow) -> ToolResult:
+        """真实投递 + post 指纹 + 会话批准 + 成功回执（S2：force 凭据此刻才消耗）。"""
+        do, options, backend = flow.do, flow.options, flow.backend
+        window, audit = flow.window, flow.audit
+        base, started = flow.base, flow.started
+        session_id, bundle = flow.session_id, flow.window.bundle_id
+        target_identity = flow.target_identity
+        risk_class, world, risk_note = flow.risk_class, flow.world, flow.risk_note
+        fresh_window, fresh_world = flow.fresh_window, flow.fresh_world
+        idle_ms, frontmost_before = flow.idle_ms, flow.frontmost_before
+        force_used = flow.force_used
+        channel_token_required = flow.channel_token_required
         # ── 真实投递 ──────────────────────────────────────────────────────
         # S2：一次性 force 凭据在此刻才消耗——此前所有关卡（写开关/EXEC_MODE/令牌/
         # 世界重绑/AX 探针）都可能拒绝，拒绝路径不得烧掉用户预置的凭据。
@@ -1057,9 +1297,9 @@ class DesktopOperateTool:
                 post_window, post_nodes, frontmost_before, include_value=True,
                 target_node=post_target_node,
             )
-        foreground_after = next(
-            (w.bundle_id for w in backend.list_windows() if w.is_foreground), None
-        )
+        # R5：前台口径 = 前台 app bundle（lsappinfo）。post 观测失败 → None（如实
+        # 报告），不把已投递的动作误报成 backend_error——前台门控在投递前已完成。
+        foreground_after = backend.frontmost_app_bundle()
         # M1：point 通道与 irreversible 永不进会话放行（免令牌路径不得弱化）
         if risk_class == "act" and not channel_token_required:
             self._gate.mark_approved(session_id, bundle, do)
