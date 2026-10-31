@@ -970,7 +970,7 @@ class ExperienceStore:
             if not file_slug:
                 continue
             shared = 0
-            for left, right in zip(slug, file_slug):
+            for left, right in zip(slug, file_slug, strict=False):
                 if left != right:
                     break
                 shared += 1
