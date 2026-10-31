@@ -18,15 +18,26 @@ indexes), so a target id from a ``desktop_perceive(action=snapshot)`` receipt
 resolves to the same element here.  Resolution is act-time exact addressing
 (§6.1 T5): re-resolved from a live tree, never trusted from the request text.
 
-Ownership: ``resolve_element_by_axref`` retains every intermediate element
-and releases it once the next level is retained, and the caller owns (and
-must ``release()``) the returned element — no dangling refs, no leaks.
+Ownership (R3): ``resolve_window_element`` returns an INDEPENDENT wrapper
+``MacAxElement(cf_retain(bound.ref))`` — the +1 retain travels with the
+return value, while the internal candidate list (including the matched
+element's old wrapper) is fully released before the caller sees it, so the
+returned element stays alive until the caller releases it (the historical
+bug returned the old wrapper whose ``release()`` zeroes ``_ref`` — dead on
+arrival, 100% ``ax_ref_not_found`` on real machines).
+``resolve_element_by_axref`` descends through ``attr("AXChildren")`` lists
+(which retain the WHOLE sibling layer): it keeps exactly the path element,
+releases the remaining siblings immediately, and releases each parent once
+the next level is retained; the caller owns (and must ``release()``) the
+returned element. Refcounts stay balanced on every path — no dangling refs,
+no leaks, no double release.
 """
 
 from __future__ import annotations
 
 import contextlib
 import ctypes
+from typing import Any
 
 from llm_loop.desktop.macos_ax import (
     MacAxElement,
@@ -142,11 +153,34 @@ def _ax_window_candidates(app_ref: int) -> tuple[list[MacAxElement], int]:
         cf_release(value)
 
 
+def _release_ax_children(children: list[Any]) -> None:
+    """释放 attr("AXChildren") 返回的兄弟元素层（R3 审计）。
+
+    MacAxElement.attr() 的数组契约是**整层兄弟都被 retain**（所有权移交调用方）。
+    调用方只要其中路径上的一个时，其余兄弟必须就地释放——否则每解析一层就
+    泄漏一整层 retain。fake 元素无 release() 则跳过（与 traverse 的 _release 同口径）。
+    """
+    for item in children:
+        release = getattr(item, "release", None)
+        if callable(release):
+            with contextlib.suppress(Exception):
+                release()
+
+
 def resolve_window_element(window: WindowInfo) -> tuple[MacAxElement | None, str | None]:
     """D4 匹配（复用 M3 match_ax_windows_ex）→ 唯一命中的窗口元素（调用方释放）。
 
     返回 (element, failure)；failure ∈ {"ax_unavailable","ax_window_unbound",
     "window_ambiguous"}，与 M3 AxView.failure 同口径。
+
+    所有权约定（R3 修复）：返回**独立的新包装** ``MacAxElement(cf_retain(bound.ref))``，
+    其 +1 retain 计数随返回值移交调用方；finally 释放 ``elements`` 全员（含 bound 的
+    旧包装）。旧包装 release() 把自身 _ref 置 0 只影响旧包装对象——新包装持有同一
+    条 CF 引用的独立 retain，依旧有效。调用方对新包装 release() 即完成计数守恒：
+    不泄漏（旧包装各自 -1 抵各自的 +1）、不悬垂（返回值自带 +1）、不二次释放
+    （新旧是两个对象，各 release 各自的计数）。历史缺陷：这里曾直接 ``return bound``
+    ——bound 在 elements 里，finally 对它 release() 后调用方拿到 _ref=0 的死元素
+    （真机 100% "ax_ref_not_found" → 误报 window_unbound），回归测试已钉死该行为。
     """
     app = app_element(window.pid)
     if app is None:
@@ -175,32 +209,46 @@ def resolve_window_element(window: WindowInfo) -> tuple[MacAxElement | None, str
         if len(hits) > 1:
             return None, "window_ambiguous"
         bound = elements[hits[0]]
-        cf_retain(bound.ref)  # 调用方接管；下方循环对全部元素（含 bound）release
-        return bound, None
+        # 独立新包装接管 +1（见 docstring）；finally 对 elements（含 bound 旧包装）
+        # 的 release 不再影响返回给调用方的元素。
+        return MacAxElement(cf_retain(bound.ref)), None
     finally:
         for el in elements:
             el.release()
 
 
 def resolve_element_by_axref(window: WindowInfo, ax_ref: str) -> tuple[MacAxElement | None, str | None]:
-    """act-time exact addressing：按 ax_ref 索引路径解析到活元素（调用方释放）。"""
+    """act-time exact addressing：按 ax_ref 索引路径解析到活元素（调用方释放）。
+
+    所有权（R3 审计修复）：每层 ``attr("AXChildren")`` retain 整层兄弟——只保留
+    路径上的一个，其余兄弟选定下一级后立即释放；早退/异常分支释放当前整层。
+    path[0] 的窗口元素包装由 ``resolve_window_element`` 交付，末级元素交调用方，
+    全程 retain/release 计数守恒（修复前未选中兄弟层每次解析泄漏一组）。
+    """
     path = _parse_ax_ref(ax_ref)
     if not path:
         return None, "ax_ref_invalid"
     el, failure = resolve_window_element(window)
     if el is None:
         return None, failure
+    children: list[Any] = []
     try:
         for index in path[1:]:
-            children = el.attr("AXChildren")
-            if not isinstance(children, list) or index >= len(children):
+            value = el.attr("AXChildren")
+            children = value if isinstance(value, list) else []
+            if not isinstance(value, list) or index >= len(value):
+                _release_ax_children(children)
                 el.release()  # S7（R1）：早退分支同样释放当前持有元素，不泄漏
                 return None, "ax_ref_not_found"
-            child = children[index]  # attr() 返回的子元素已被 retain（所有权移交）
+            child = value.pop(index)  # 选定者移出：剩余兄弟下方统一释放（R3：不再泄漏兄弟层）
+            _release_ax_children(value)
+            children = []
             el.release()  # 上一级用完即放
             el = child
         return el, None
     except Exception:  # noqa: BLE001 - 解析失败按未命中，不猜
+        with contextlib.suppress(Exception):
+            _release_ax_children(children)
         with contextlib.suppress(Exception):
             el.release()
         return None, "ax_ref_not_found"

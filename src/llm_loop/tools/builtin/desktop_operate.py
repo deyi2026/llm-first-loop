@@ -597,7 +597,8 @@ class DesktopOperateTool:
         windows = backend.list_windows()
         frontmost_before = next((w.bundle_id for w in windows if w.is_foreground), None)
         # S9：快照节点上限与 desktop_perceive 对齐（AX_NODE_LIMIT_DEFAULT=1500），
-        # 否则 perceive 回执里的深位 ax_ref 在本工具侧解析不到 → window_unbound。
+        # 否则 perceive 回执里的深位 ax_ref 在本工具侧解析不到 → ax_ref_not_found
+        # （R3：与窗口解绑 window_unbound 分口径，便于定位「节点不在」vs「窗口不在」）。
         ax_view = backend.ax_snapshot(window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
         nodes = ax_view.nodes if ax_view.available else ()
         browser = is_browser_bundle(bundle)
@@ -614,7 +615,7 @@ class DesktopOperateTool:
             node = node_map.get(ax_ref)
             if node is None:
                 return refuse(
-                    DesktopErrorCode.WINDOW_UNBOUND,
+                    DesktopErrorCode.AX_REF_NOT_FOUND,
                     f"ax_ref={ax_ref} 不在当前窗口 AX 树中（目标已变化）；重新 snapshot 后再试。",
                 )
             audit["target_identity"] = target_identity = {

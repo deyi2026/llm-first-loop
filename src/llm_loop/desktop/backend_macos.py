@@ -334,11 +334,16 @@ class MacOSDesktopBackend:
         }.get(failure or "", f"元素解析失败: {failure}")
         return ActOutcome(
             ok=False,
+            # R3：ax_ref_not_found（树在、节点不在/已变化）与 ax_window_unbound
+            # （窗口解绑）分口径上报——原实现把前者并入 window_unbound，真机上
+            # 掩盖了「寻址链路元素死引用」的真因（详见 dev report R3 章）。
             error=(
                 DesktopErrorCode.WINDOW_AMBIGUOUS
                 if failure == "window_ambiguous"
+                else DesktopErrorCode.AX_REF_NOT_FOUND
+                if failure == "ax_ref_not_found"
                 else DesktopErrorCode.WINDOW_UNBOUND
-                if failure in ("ax_ref_not_found", "ax_window_unbound")
+                if failure == "ax_window_unbound"
                 else DesktopErrorCode.AX_UNAVAILABLE
             ),
             detail=detail,

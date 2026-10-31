@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from llm_loop.core.message import ToolCall
-from llm_loop.desktop import macos_actuate
+from llm_loop.desktop import macos_actuate, macos_ax
 from llm_loop.desktop.backend_macos import MacOSDesktopBackend, backend_for_platform
 from llm_loop.desktop.macos_capture import check_capture_size
 from llm_loop.desktop.models import (
@@ -1153,21 +1153,30 @@ def test_s5_early_refusals_audited():
 # ── S7：CF 释放异常安全 ────────────────────────────────────────────────────
 def test_s7_resolve_element_early_exit_releases(monkeypatch):
     class _FakeEl:
+        """R3：镜像真包装类 release 语义——release 后 _ref=0、attr() 一律 None。"""
+
         def __init__(self) -> None:
+            self._ref = 1
             self.released = 0
 
         def attr(self, name):  # noqa: ANN001
+            if not self._ref:  # 死元素不可再读（真类对 _ref=0 读属性 → AX err → None）
+                return None
             assert name == "AXChildren"
             return ["child-0"]  # 只有一个子节点：索引 5 越界 → 早退分支
 
         def release(self) -> None:
-            self.released += 1
+            if self._ref:
+                self.released += 1
+                self._ref = 0
 
     fake = _FakeEl()
     monkeypatch.setattr(macos_actuate, "resolve_window_element", lambda window: (fake, None))
     el, failure = macos_actuate.resolve_element_by_axref(_window(), "0.5")
     assert el is None and failure == "ax_ref_not_found"
     assert fake.released == 1  # 早退分支也释放（S7）
+    assert fake._ref == 0
+    assert fake.attr("AXChildren") is None  # 释放后不可读（镜像真语义，防假绿）
 
 
 def test_s7_window_candidates_release_on_midway_exception(monkeypatch):
@@ -1179,8 +1188,10 @@ def test_s7_window_candidates_release_on_midway_exception(monkeypatch):
             self._ref = ref
             created.append(ref)
 
-        def release(self) -> None:
-            released.append(self._ref)
+        def release(self) -> None:  # R3：置 0 镜像（重复 release 是 no-op，同真类）
+            if self._ref:
+                released.append(self._ref)
+                self._ref = 0
 
     def _fake_item(value, i):  # noqa: ANN001
         if i >= 1:
@@ -1580,3 +1591,216 @@ def test_r2_audit_write_failure_signaled_in_receipt():
     ok = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
     assert ok["applied"] is True
     assert ok.get("audit_write_failed", 0) >= 2  # 计数累计
+
+
+# ══ R3：P0 所有权回归——resolve_window_element 返回的元素必须活到调用方 release ══
+# 真机证据（父会话 2026-10-31 live 投递实测）：旧实现返回的 bound 包装在 finally
+# 里被 release()（_ref 置 0）→ resolve_element_by_axref 必然 "ax_ref_not_found" →
+# 误报 window_unbound，act-time ax_ref 寻址在真机 100% 失败。以下 fake 镜像真包装
+# 语义（release 置 0 / 死元素 attr→None / AXChildren 整层 retain）+ 引用计数守恒
+# 断言。自证（回退修复→红）：回退所有权修复 3 failed（本节前 3 条链路测试）；
+# 回退 ax_ref_not_found 分口径映射再 2 failed——修复后全绿。
+
+_APP_REF = 0x900
+_ARRAY_REF = 0xABC
+_WIN_REF = 0x1000
+_CLOSE_REF = 0x1001
+_TEXT_REF = 0x1002
+_BASELINE = {_APP_REF: 0, _ARRAY_REF: 0, _WIN_REF: 1, _CLOSE_REF: 1, _TEXT_REF: 1}
+
+
+def _make_fake_ax_state():
+    """每测试独立的 (FakeEl 类, 元素注册表, 引用计数表)。
+
+    FakeEl 镜像 MacAxElement 的全部所有权语义（R3 假绿修复的核心）：
+    - release()：计数 -1 且 _ref 置 0；对已释放包装重复 release 是 no-op；
+    - _ref=0 后 attr() 一律 None（真类对死 ref 读属性 → AX err → None）；
+    - attr("AXChildren") 返回**整层已 retain** 的子元素（与真类数组契约一致）。
+    计数表由 FakeEl 与 monkeypatch 后的 cf_retain/cf_release 共用，可断言守恒。
+    """
+    counts: dict[int, int] = {}
+    registry: dict[int, dict] = {}
+
+    class FakeEl:
+        def __init__(self, ref: int) -> None:
+            self._ref = int(ref)
+
+        @property
+        def ref(self) -> int:
+            return self._ref
+
+        def release(self) -> None:
+            if self._ref:
+                counts[self._ref] = counts.get(self._ref, 0) - 1
+                self._ref = 0
+
+        def attr(self, name: str):
+            if not self._ref:
+                return None
+            data = registry.get(self._ref, {})
+            if name == "AXChildren":
+                out = []
+                for child_ref in data.get("children", ()):
+                    counts[child_ref] = counts.get(child_ref, 0) + 1  # retain 整层
+                    out.append(FakeEl(child_ref))
+                return out
+            return data.get("attrs", {}).get(name)
+
+    return FakeEl, registry, counts
+
+
+def _build_fake_tree(registry, counts):  # noqa: ANN001
+    """窗口(AXWindow,"live-smoke") → [关闭钮(AXButton/AXCloseButton), 文本区(AXTextArea)]。"""
+    registry[_WIN_REF] = {
+        "attrs": {
+            "AXRole": "AXWindow",
+            "AXTitle": "live-smoke",
+            "AXPosition": Pt(100.0, 100.0),
+            "AXSize": Size(400.0, 300.0),
+        },
+        "children": [_CLOSE_REF, _TEXT_REF],
+    }
+    registry[_CLOSE_REF] = {
+        "attrs": {
+            "AXRole": "AXButton",
+            "AXSubrole": "AXCloseButton",
+            "AXPosition": Pt(1060.0, 110.0),
+            "AXSize": Size(14.0, 16.0),
+        },
+        "children": [],
+    }
+    registry[_TEXT_REF] = {
+        "attrs": {
+            "AXRole": "AXTextArea",
+            "AXTitle": "正文",
+            "AXPosition": Pt(120.0, 150.0),
+            "AXSize": Size(360.0, 200.0),
+        },
+        "children": [],
+    }
+    counts.update({_WIN_REF: 1, _CLOSE_REF: 1, _TEXT_REF: 1})  # 树自身的外部基线持有
+
+
+def _wire_macos_actuate(monkeypatch, fake_el, counts):  # noqa: ANN001
+    """把 resolve_window_element 的模块级依赖全部换成 fake（app → AXWindows → 窗口元素）。"""
+
+    def fake_app_element(pid):  # noqa: ANN001, ARG001
+        counts[_APP_REF] = counts.get(_APP_REF, 0) + 1  # Create 语义：调用方拥有
+        return fake_el(_APP_REF)
+
+    def fake_ax_read_attr(ref, name):  # noqa: ANN001
+        assert (int(ref), name) == (_APP_REF, "AXWindows")
+        counts[_ARRAY_REF] = counts.get(_ARRAY_REF, 0) + 1  # Copy 语义：调用方拥有返回值
+        return 0, _ARRAY_REF
+
+    def fake_cf_retain(ref):  # noqa: ANN001
+        ref = int(ref or 0)
+        if ref:
+            counts[ref] = counts.get(ref, 0) + 1
+        return ref
+
+    def fake_cf_release(ref):  # noqa: ANN001
+        if ref:
+            ref = int(ref)
+            counts[ref] = counts.get(ref, 0) - 1
+
+    monkeypatch.setattr(macos_actuate, "app_element", fake_app_element)
+    monkeypatch.setattr(macos_actuate, "ax_read_attr", fake_ax_read_attr)
+    monkeypatch.setattr(macos_actuate, "cf_array_count", lambda value: 1)
+    monkeypatch.setattr(macos_actuate, "cf_array_item", lambda value, i: _WIN_REF)
+    monkeypatch.setattr(macos_actuate, "cf_retain", fake_cf_retain)
+    monkeypatch.setattr(macos_actuate, "cf_release", fake_cf_release)
+    monkeypatch.setattr(macos_actuate, "MacAxElement", fake_el)
+
+
+def _smoke_window() -> WindowInfo:
+    return _window(title="live-smoke", bounds=(100.0, 100.0, 400.0, 300.0))
+
+
+def test_r3_resolve_window_element_returns_live_wrapper_and_refcounts_conserve(monkeypatch):
+    fake_el_cls, registry, counts = _make_fake_ax_state()
+    _build_fake_tree(registry, counts)
+    _wire_macos_actuate(monkeypatch, fake_el_cls, counts)
+    el, failure = macos_actuate.resolve_window_element(_smoke_window())
+    assert failure is None and el is not None
+    # ── P0 回归核心：返回的元素必须活着（旧实现 finally release → _ref=0 → 红）
+    assert el.ref != 0
+    children = el.attr("AXChildren")
+    assert isinstance(children, list) and len(children) == 2  # 旧实现这里 None → 红
+    assert el.attr("AXRole") == "AXWindow"
+    for child in children:
+        child.release()  # attr 契约：整层兄弟归调用方
+    el.release()
+    el.release()  # 重复 release 是 no-op（不二次计数）
+    assert el.attr("AXRole") is None  # release 后不可再读（镜像真语义）
+    # 计数守恒：全部回到基线（旧实现窗口 ref 泄漏 +1 → 红）
+    assert counts == dict(_BASELINE)
+
+
+def test_r3_resolve_element_by_axref_resolves_live_element_and_reports_ax_ref_not_found(
+    monkeypatch,
+):
+    fake_el_cls, registry, counts = _make_fake_ax_state()
+    _build_fake_tree(registry, counts)
+    _wire_macos_actuate(monkeypatch, fake_el_cls, counts)
+    win = _smoke_window()
+    # 深一层路径 0.0：窗口 → 第 0 个子（关闭钮）——旧实现必 ax_ref_not_found → 红
+    el, failure = macos_actuate.resolve_element_by_axref(win, "0.0")
+    assert failure is None and el is not None
+    assert el.attr("AXRole") == "AXButton"
+    assert el.attr("AXSubrole") == "AXCloseButton"
+    el.release()
+    assert counts == dict(_BASELINE)
+    # 越界路径 → ax_ref_not_found，且兄弟层同样释放（R3 泄漏修复；计数仍守恒）
+    miss, failure2 = macos_actuate.resolve_element_by_axref(win, "0.9")
+    assert miss is None and failure2 == "ax_ref_not_found"
+    assert counts == dict(_BASELINE)
+    # 解析失败回执分口径：ax_ref_not_found 而非 window_unbound（R3 前是 window_unbound → 红）
+    outcome = MacOSDesktopBackend._resolution_failure("ax_ref_not_found")
+    assert outcome.ok is False
+    assert outcome.error is DesktopErrorCode.AX_REF_NOT_FOUND
+    assert outcome.error.value == "ax_ref_not_found"
+    # 窗口解绑口径不变（ax_window_unbound 仍是 window_unbound）
+    outcome2 = MacOSDesktopBackend._resolution_failure("ax_window_unbound")
+    assert outcome2.error is DesktopErrorCode.WINDOW_UNBOUND
+
+
+def test_r3_backend_resolution_failure_maps_ax_ref_not_found(monkeypatch):
+    monkeypatch.setattr(
+        macos_actuate, "resolve_element_by_axref", lambda window, ax_ref: (None, "ax_ref_not_found")
+    )
+    outcome = MacOSDesktopBackend().act_press(_window(), "0.5")
+    assert outcome.ok is False
+    assert outcome.error is DesktopErrorCode.AX_REF_NOT_FOUND  # R3 前 = window_unbound → 红
+    assert "ax_ref" in str(outcome.detail)
+
+
+def test_r3_tool_receipt_reports_ax_ref_not_found_not_window_unbound():
+    payload = _direct(_tool(_backend()), do="click", window_id=101,
+                      target={"ax_ref": "9.9"}, dry_run=True)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "ax_ref_not_found"  # R3 前 = window_unbound → 红
+    assert "重新 snapshot" in payload["guidance"]
+
+
+def test_r3_offline_act_time_chain_snapshot_pick_resolve_same_node(monkeypatch):
+    """act-time 链路离线端到端：snapshot → 选节点 → resolve → 断言同一节点。"""
+    # 1) snapshot：真 traverse 走假树（镜像 perceive 只读快照；traverse 接管并释放元素）
+    fake_el_cls, registry, counts = _make_fake_ax_state()
+    _build_fake_tree(registry, counts)
+    counts[_WIN_REF] += 1  # 快照根交 traverse 接管（真路径来自 AXWindows 数组的 retain）
+    nodes, truncated = macos_ax.traverse(fake_el_cls(_WIN_REF), depth=4, node_limit=100, root_ref="0")
+    assert truncated is False
+    target = next(n for n in nodes if n.subrole == "AXCloseButton")
+    assert target.ax_ref == "0.0"
+    assert (target.role, target.subrole) == ("AXButton", "AXCloseButton")
+    assert counts == {_WIN_REF: 1, _CLOSE_REF: 1, _TEXT_REF: 1}  # traverse 释放整棵树
+    # 2) act-time：全新解析（真机即重新读 AX）→ resolve_window_element → resolve_element_by_axref
+    _wire_macos_actuate(monkeypatch, fake_el_cls, counts)
+    el, failure = macos_actuate.resolve_element_by_axref(_smoke_window(), target.ax_ref)
+    assert failure is None and el is not None
+    # 同一节点：snapshot 选中的 role/subrole 与 act-time 解析出的活元素一致（P0 核心）
+    assert el.attr("AXRole") == target.role
+    assert el.attr("AXSubrole") == target.subrole
+    el.release()
+    assert counts == dict(_BASELINE)

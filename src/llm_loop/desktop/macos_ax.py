@@ -311,14 +311,20 @@ def ax_readable_probe(pid: int) -> int | None:
 
     与 ``ax_windows_view`` 走同一条底层路径（建 app 元素 → 读属性 → 释放），因此它
     测到的就是工具真正要做的事；``AXIsProcessTrusted()`` 与 systemwide 探针都会假阴性。
+
+    R3 审计修复：``ax_read_attr`` 契约是 value 由调用方释放——原实现读完只放 app
+    元素、漏放 value（AXWindows 数组每次探测泄漏一个引用计数）。
     """
     app = app_element(pid)
     if app is None:
         return None
+    err: int | None = None
+    value = 0
     try:
         err, value = ax_read_attr(app.ref, "AXWindows")
     finally:
         app.release()
+        cf_release(value)
     return err
 
 

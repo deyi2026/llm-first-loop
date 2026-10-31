@@ -62,6 +62,8 @@ class DesktopErrorCode(StrEnum):
     EXEC_MODE_BLOCKED = "exec_mode_blocked"  # M3：宿主 EXEC_MODE=blocked/readonly 拒绝真实投递（dry_run 不受限）
     # ── R2 修复轮（P2-3）──
     CONFIRM_TOKEN_EXPIRED = "confirm_token_expired"  # T6/P2-3：一次性令牌超 TTL 未兑换，按过期拒绝
+    # ── R3 修复轮（P0 寻址链路）──
+    AX_REF_NOT_FOUND = "ax_ref_not_found"  # R3：act-time ax_ref 解析失败与窗口解绑分口径（原并入 window_unbound，掩盖真因）
 
 
 # AX 错误码 → (确定性错误码, 人类可读 reason)。-25211 是权限类（给修复指引）；
