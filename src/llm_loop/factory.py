@@ -136,6 +136,7 @@ from llm_loop.tools.builtin.browser_semantic_operation import (
     BrowserSemanticOperationReceiptStore,
     BrowserSemanticOperationTool,
 )
+from llm_loop.tools.builtin.desktop_operate import DesktopOperateTool
 from llm_loop.tools.builtin.desktop_perceive import DesktopPerceiveTool, make_jsonl_audit_sink
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
@@ -578,13 +579,15 @@ def _browser_download_dir_provider(settings: Settings) -> Callable[[], str]:
 
 
 def _register_desktop_perceive(register_basic: Any, settings: Settings) -> None:
-    """M3 desktop_perceive 注册（DESIGN-20261027 §5.3/D0 分支 A′）。
+    """M3 desktop_perceive + M4 desktop_operate 注册（DESIGN-20261027 §5.3/§5.4，D0-A′）。
 
-    桌面只读感知，进程内 ctypes、零新依赖/零网络。全平台注册；非 darwin 后端
-    缺省 → unsupported_platform 确定性回执（import 安全：llm_loop.desktop 包
-    不在 import 期加载任何 macOS 框架）。截图落盘 workspace data 目录
-    （<data_dir>/desktop_perceive/vision），审计走 §6.4 append-only JSONL
-    （<data_dir>/audit/desktop_perceive.jsonl）。只读工具，无 M4 动作。
+    桌面感知（只读）与窄操作（写）都在进程内 ctypes、零新依赖/零网络。全平台注册；
+    非 darwin 后端缺省 → unsupported_platform 确定性回执（import 安全：llm_loop.desktop
+    包不在 import 期加载任何 macOS 框架）。截图落盘 <data_dir>/desktop_perceive/vision；
+    审计各自走 §6.4 append-only JSONL（<data_dir>/audit/desktop_{perceive,operate}.jsonl）。
+
+    M4 写能力总开关默认关（settings.desktop_operate_enabled=False）：
+    注册面可见但真实投递一律 writes_disabled，dry_run/只读不受限（T8）。
     """
     register_basic(
         "desktop_perceive",
@@ -599,6 +602,25 @@ def _register_desktop_perceive(register_basic: Any, settings: Settings) -> None:
             ),
             privacy_extra=split_bundle_config(settings.desktop_privacy_extra),
             see_allowlist=split_bundle_config(settings.desktop_see_allowlist),
+        ),
+    )
+    register_basic(
+        "desktop_operate",
+        DesktopOperateTool(
+            backend=backend_for_platform(sys.platform),
+            session_id_getter=lambda: current_session_id_ctx.get() or "",
+            audit_sink=make_jsonl_audit_sink(
+                Path(settings.data_dir) / "audit" / "desktop_operate.jsonl"
+            ),
+            privacy_extra=split_bundle_config(settings.desktop_privacy_extra),
+            act_allowlist_extra=split_bundle_config(settings.desktop_act_allowlist_extra),
+            # S10（R1）：perceive 可见范围对 act 对齐（默认空 = 不限制，零回归）
+            see_allowlist=split_bundle_config(settings.desktop_see_allowlist),
+            writes_enabled=bool(settings.desktop_operate_enabled),
+            force_credential=str(settings.desktop_force_credential or ""),
+            # M3（R1）：尊重宿主 EXEC_MODE 分级（默认空 = 不启用，零回归）
+            exec_mode=str(settings.exec_mode or ""),
+            exec_allowlist=split_bundle_config(settings.exec_allowlist),
         ),
     )
 
@@ -1368,7 +1390,7 @@ def build_engine(
     _register_basic("task_state", TaskStateTool(session_store, event_store, data_dir=settings.data_dir))
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
-    _register_desktop_perceive(_register_basic, settings)  # M3 桌面只读感知（D0-A′）
+    _register_desktop_perceive(_register_basic, settings)  # M3 桌面感知 + M4 桌面窄操作（D0-A′；写默认关）
     # EVO-20260912-10818cb5: smx 感知层 opt-in（wait 谓词轮询 + snapshot/diff + 回执查询；
     # 执行面不并入，维持经 execute_command；LFL_SMX_PERCEIVE 为空 → 不注册）
     if settings.smx_perceive_path:

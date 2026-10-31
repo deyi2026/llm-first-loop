@@ -469,6 +469,18 @@ class Settings:
     # U14 see 层可见范围（逗号分隔 bundle_id 精确匹配）。默认空 = 全部允许（不默认拒绝）；
     # 非空时名单外 app：apps 标 allowed=false、windows 隐标题、snapshot 拒 app_not_allowed。
     desktop_see_allowlist: str = ""
+    # ── M4 desktop_operate（DESIGN-20261027 §5.4/§6.2/§6.4/D5-D9；桌面窄操作）──
+    # 写能力总开关（T8：能力不随代码自动上线）。默认 False = act/irreversible 真实投递
+    # 一律 writes_disabled；dry_run 与只读自检不受限。上线后每个会话不自动获得写能力，
+    # 需用户显式 LFL_DESKTOP_OPERATE_ENABLED=1 并重启宿主。
+    desktop_operate_enabled: bool = False
+    # act 白名单追加项（逗号分隔 bundle_id，小写精确）。核心四项（Finder/Safari/
+    # Chrome/Preview）硬编码于 operate.py；终端/IDE 硬编码只读，追加也无效（T3）。
+    desktop_act_allowlist_extra: str = ""
+    # D7 force 一次性授权凭据（env 预置；空 = force 永久拒绝）。每会话仅可消耗一次；
+    # 宿主当前没有面向 desktop_operate 的人工审批/凭据铸造通道（凭据来源缺口，
+    # 见 M4 dev report）：唯一来源是用户在进程启动前亲手设置该 env。
+    desktop_force_credential: str = ""
     # ── Fleet ExecutionWorkspace/WorkerLease 生产接线（2026-09-19 slice4 G1）──
     # 缺省全空 = fleet 完全关闭（零行为零回归）；显式配置 LFL_FLEET_WORKSPACE_ROOT
     # 后 factory 才构造 ProjectCoordinator 注入 SubAgentRunner（run 边界
@@ -815,6 +827,60 @@ def _local_runtime_paths(env: Mapping[str, str]) -> _LocalRuntimePaths:
     }
 
 
+class _DesktopSettings(TypedDict):
+    """M3/M4 desktop 设置项 kwargs（R4 从 load_settings 抽出；键名/默认值/类型不变）。"""
+
+    desktop_privacy_extra: str
+    desktop_see_allowlist: str
+    desktop_operate_enabled: bool
+    desktop_act_allowlist_extra: str
+    desktop_force_credential: str
+
+
+def _desktop_settings(env: Mapping[str, str]) -> _DesktopSettings:
+    """M3 感知 + M4 操作设置项解析（原 load_settings 内联 kwargs，逐字等价迁移）。
+
+    M3：desktop_privacy_extra / desktop_see_allowlist；M4（T8/D7）：
+    desktop_operate_enabled（写开关，默认 False）/ desktop_act_allowlist_extra /
+    desktop_force_credential（一次性凭据，默认空）。
+    """
+    return {
+        "desktop_privacy_extra": env.get("LFL_DESKTOP_PRIVACY_EXTRA", "").strip(),
+        "desktop_see_allowlist": env.get("LFL_DESKTOP_SEE_ALLOWLIST", "").strip(),
+        "desktop_operate_enabled": _env_bool("LFL_DESKTOP_OPERATE_ENABLED", False, env),
+        "desktop_act_allowlist_extra": env.get("LFL_DESKTOP_ACT_ALLOWLIST_EXTRA", "").strip(),
+        "desktop_force_credential": env.get("LFL_DESKTOP_FORCE_CREDENTIAL", "").strip(),
+    }
+
+
+def _codearts_settings(env: Mapping[str, str]) -> CodeArtsSettings:
+    """CodeArts 子代理调度配置装配（原 load_settings 内联 kwargs，逐字等价迁移）。
+
+    抽出目的（R4）：load_settings 需回到 legacy 棘轮基线（388）以内；本块是
+    load_settings 内最自包含的嵌套构造调用（20 行 → 1 个 kwarg）。
+    """
+    return CodeArtsSettings(
+        enabled=_env_bool("CODEARTS_ENABLED", False, env),
+        endpoint=env.get("CODEARTS_ENDPOINT", "").strip(),
+        region=env.get("CODEARTS_REGION", "cn-north-4").strip() or "cn-north-4",
+        project_id=env.get("CODEARTS_PROJECT_ID", "").strip(),
+        ak=env.get("CODEARTS_AK", "").strip(),
+        sk=env.get("CODEARTS_SK", "").strip(),
+        iam_token=env.get("CODEARTS_IAM_TOKEN", "").strip(),
+        api_version=env.get("CODEARTS_API_VERSION", "v1").strip() or "v1",
+        connect_timeout_s=_env_int("CODEARTS_CONNECT_TIMEOUT_S", 10, env),
+        call_timeout_s=_env_int("CODEARTS_CALL_TIMEOUT_S", 30, env),
+        exec_timeout_s=_env_int("CODEARTS_EXEC_TIMEOUT_S", 1800, env),
+        poll_interval_s=_env_int("CODEARTS_POLL_INTERVAL_S", 5, env),
+        max_concurrent=_env_int("CODEARTS_MAX_CONCURRENT", 10, env),
+        max_retries=_env_int("CODEARTS_MAX_RETRIES", 3, env),
+        result_max_bytes=_env_int("CODEARTS_RESULT_MAX_BYTES", 1048576, env),
+        webhook_enabled=_env_bool("CODEARTS_WEBHOOK_ENABLED", False, env),
+        webhook_secret=env.get("CODEARTS_WEBHOOK_SECRET", "").strip(),
+        approval_required=_env_bool("CODEARTS_APPROVAL_REQUIRED", True, env),
+    )
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """从显式 mapping（默认进程环境）装配不可变 Settings。"""
     _fallback_notes.clear()
@@ -1064,8 +1130,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         browser_dispatch_settle_enabled=env_bool("LFL_BROWSER_DISPATCH_SETTLE_ENABLED", False),
         browser_receipt_diff_summary_cap=env_int("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_CAP", 32),
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
-        desktop_privacy_extra=env_values.get("LFL_DESKTOP_PRIVACY_EXTRA", "").strip(),
-        desktop_see_allowlist=env_values.get("LFL_DESKTOP_SEE_ALLOWLIST", "").strip(),
+        # M3/M4 desktop 设置项（R4 抽出至 _desktop_settings；键名/默认值不变）
+        **_desktop_settings(env_values),
         browser_receipt_diff_summary_enabled=env_bool("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
@@ -1173,26 +1239,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         # 旧字段解析删除点（deepseek/chatgpt_web_* 18 项，2026-10-14 M3）
         # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
         # 凭证类字段仅从注入的 secret/env mapping 读取，不落盘不日志（DFX-SEC-02）
-        codearts=CodeArtsSettings(
-            enabled=env_bool("CODEARTS_ENABLED", False),
-            endpoint=env_values.get("CODEARTS_ENDPOINT", "").strip(),
-            region=env_values.get("CODEARTS_REGION", "cn-north-4").strip() or "cn-north-4",
-            project_id=env_values.get("CODEARTS_PROJECT_ID", "").strip(),
-            ak=env_values.get("CODEARTS_AK", "").strip(),
-            sk=env_values.get("CODEARTS_SK", "").strip(),
-            iam_token=env_values.get("CODEARTS_IAM_TOKEN", "").strip(),
-            api_version=env_values.get("CODEARTS_API_VERSION", "v1").strip() or "v1",
-            connect_timeout_s=env_int("CODEARTS_CONNECT_TIMEOUT_S", 10),
-            call_timeout_s=env_int("CODEARTS_CALL_TIMEOUT_S", 30),
-            exec_timeout_s=env_int("CODEARTS_EXEC_TIMEOUT_S", 1800),
-            poll_interval_s=env_int("CODEARTS_POLL_INTERVAL_S", 5),
-            max_concurrent=env_int("CODEARTS_MAX_CONCURRENT", 10),
-            max_retries=env_int("CODEARTS_MAX_RETRIES", 3),
-            result_max_bytes=env_int("CODEARTS_RESULT_MAX_BYTES", 1048576),
-            webhook_enabled=env_bool("CODEARTS_WEBHOOK_ENABLED", False),
-            webhook_secret=env_values.get("CODEARTS_WEBHOOK_SECRET", "").strip(),
-            approval_required=env_bool("CODEARTS_APPROVAL_REQUIRED", True),
-        ),
+        # （R4 抽出至 _codearts_settings；键名/默认值不变）
+        codearts=_codearts_settings(env_values),
         invalid_fallbacks=tuple(_fallback_notes),
         auto_adaptive_keys=frozenset(_auto_adaptive_keys),
     )
