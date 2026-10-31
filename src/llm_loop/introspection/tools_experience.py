@@ -133,6 +133,32 @@ def run_save_experience(
         return f"[程序异常] 经验写入失败（{type(exc).__name__}: {exc}）"
 
 
+def experience_not_found_hint(store: ExperienceStore, identifier: str) -> str:
+    """未找到指定经验时的可诊断回执（RULE-AI-30 fail-closed：说明缺什么事实）。
+
+    EVO-20261031-a72df001：旧回执只有一句"未找到指定经验"，模型无法自诊断，
+    反复用同一个错 ref 重试（2026-10-30/31 两次会话共 4 次）。此处回显
+    经验库目录、请求的标识与近邻候选，使模型可直接改用 canonical ref。
+    """
+    try:
+        candidates = store.near_miss_candidates(identifier)
+    except Exception:  # noqa: BLE001 — 诊断信息 fail-open，不得替代主结论
+        candidates = []
+    parts = [
+        f"[未找到] 未找到指定经验：{identifier}",
+        f"经验库目录：{store.experiences_dir}",
+    ]
+    if candidates:
+        listed = "；".join(
+            f"{item.get('ref', '')}（{item.get('title', '')}）" for item in candidates
+        )
+        parts.append(f"近邻候选：{listed}")
+    else:
+        parts.append("近邻候选：无（按文件名与标题 slug 前缀匹配）")
+    parts.append("请改用 search_records 回执中的 canonical experience_ref 重试")
+    return " ".join(parts)
+
+
 def run_refine_experience(
     store: ExperienceStore,
     *,
@@ -164,7 +190,8 @@ def run_refine_experience(
     except OSError as exc:
         return f"[程序异常] 经验状态更新失败（{type(exc).__name__}: {exc}）"
     if not ok:
-        return f"[未找到] experience:{normalized_id}"
+        # EVO-20261031-a72df001：未找到时回显目录与近邻候选（可自诊断）
+        return experience_not_found_hint(store, normalized_id)
     return (
         f"[refine_experience] experience:{normalized_id} "
         f"状态已更新为 {target_status}"

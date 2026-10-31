@@ -257,6 +257,16 @@ class ExperienceStore:
         s = re.sub(r"([^\w]|_)+", "-", slug).strip("-").lower()
         return s[:50].rstrip("-")
 
+    @staticmethod
+    def title_slug(title: str) -> str:
+        """标题 → 未截断 slug（sanitize_slug 截断前的全量形态）。
+
+        EVO-20261031-a72df001：文件名用 sanitize_slug 的 50 字符截断形，而卡片
+        title 保留全文；模型按 title 反推 ref 时得到的是本函数的输出形态，
+        它与文件名不同源，必须能互相解析（见 resolve_id）。
+        """
+        return re.sub(r"([^\w]|_)+", "-", str(title or "")).strip("-").lower()
+
     @contextmanager
     def _file_lock(self) -> Iterator[None]:
         """跨进程单写者锁（flock LOCK_EX；POSIX 锁失败 fail-closed，DRC T2）.
@@ -857,6 +867,126 @@ class ExperienceStore:
             _skip_trace(path.name, exc)
             return None
 
+    # ------------------------------------------------------------------
+    # 引用形态解析（EVO-20261031-a72df001）
+    # ------------------------------------------------------------------
+
+    @property
+    def experiences_dir(self) -> Path:
+        """经验库目录（诊断回显用，只读）。"""
+        return self._dir
+
+    @staticmethod
+    def _split_stem(stem: str) -> tuple[str, str]:
+        """拆 EXPERIENCE-<YYYYMMDD>-<slug> → (date, slug)；不匹配返回 ("", stem)。"""
+        match = re.match(r"^EXPERIENCE-(\d{8})-(.+)$", stem)
+        if match is None:
+            return "", stem
+        return match.group(1), match.group(2)
+
+    def _iter_experience_files(self) -> list[Path]:
+        """列出经验卡文件（只读；目录不可读时返回空列表，不抛）。"""
+        try:
+            return sorted(self._dir.glob("EXPERIENCE-*.md"))
+        except OSError:
+            return []
+
+    def _parse_document_file(self, path: Path) -> ExperienceDocument | None:
+        """读取并解析单个卡片；解析故障返回 None（读取面 fail-open，与 get() 同构）。"""
+        try:
+            return ExperienceDocument.from_md(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001 — 读取面 fail-open（与 get() 一致）
+            _skip_trace(path.name, exc)
+            return None
+
+    def resolve_id(self, candidate: str) -> tuple[str, ExperienceDocument] | None:
+        """把等价引用形态解析为 (canonical_stem, doc)；无唯一命中返回 None。
+
+        只对 stable ref 形态（``EXPERIENCE-<YYYYMMDD>-<slug>``）宽容；自由文本查询
+        一律不解析（否则广搜会被压成单卡命中，见 RULE-AI-24 第 5 问：程序不越界
+        做语义裁决）。
+
+        命中顺序（强 → 弱）：
+          1. 精确文件名 stem（既有语义不变，与 get() 同源）；
+          2. 同日期 + 卡片标题全 slug 精确相等（title_slug(title)，未截断形态）；
+          3. 同日期 + 标题 slug 以候选 slug 为前缀（模型截断 ref 的形态）；
+          4. 跨日期的上述两种（更弱，同档多张即歧义）。
+
+        背景 EVO-20261031-a72df001：sanitize_slug 把 slug 截到 50 字符，文件名用
+        截断形、卡片 title 保留全文；模型按 title 反推 ref 时得到磁盘上不存在的
+        stem，record_use 与 search 精确水合同时落空（"未找到指定经验"）。
+
+        多个同档候选 → None（fail-closed；调用方回显候选，不静默任选一张卡）。
+        """
+        stem = str(candidate or "").strip().removesuffix(".md").strip()
+        if not stem:
+            return None
+        doc = self.get(stem)
+        if doc is not None:
+            return stem, doc
+        date, slug = self._split_stem(stem)
+        if not date or len(slug) < 8:
+            return None
+        ranked: list[tuple[int, str, ExperienceDocument]] = []
+        for path in self._iter_experience_files():
+            file_stem = path.stem
+            file_date, file_slug = self._split_stem(file_stem)
+            if not file_slug:
+                continue
+            same_date = file_date == date
+            parsed = self._parse_document_file(path)
+            if parsed is None:
+                continue
+            full_slug = self.title_slug(parsed.title)
+            if full_slug == slug:
+                tier = 0 if same_date else 1
+            elif same_date and len(slug) >= 12 and full_slug.startswith(slug):
+                # 模型把 ref 截短时的形态；只认同日期 + 足够长的公共前缀，
+                # 避免宽松解析把广搜压成单卡命中。
+                tier = 2
+            else:
+                continue
+            ranked.append((tier, file_stem, parsed))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda item: (item[0], item[1]))
+        best_tier = ranked[0][0]
+        winners = [item for item in ranked if item[0] == best_tier]
+        if len(winners) > 1:
+            return None  # 歧义 → fail-closed（调用方回显候选清单）
+        _, canonical, doc = winners[0]
+        return canonical, doc
+
+    def near_miss_candidates(self, candidate: str, limit: int = 5) -> list[dict]:
+        """未找到时的近邻候选（诊断用）：文件名 slug 与候选共享长前缀的卡片。"""
+        stem = str(candidate or "").strip().removesuffix(".md").strip()
+        _, slug = self._split_stem(stem)
+        if len(slug) < 8:
+            return []
+        hits: list[dict] = []
+        for path in self._iter_experience_files():
+            file_stem = path.stem
+            _, file_slug = self._split_stem(file_stem)
+            if not file_slug:
+                continue
+            shared = 0
+            for left, right in zip(slug, file_slug):
+                if left != right:
+                    break
+                shared += 1
+            if shared < 12:
+                continue
+            parsed = self._parse_document_file(path)
+            hits.append(
+                {
+                    "ref": f"experience:{file_stem}",
+                    "title": parsed.title if parsed is not None else "",
+                    "shared_prefix": shared,
+                }
+            )
+        hits.sort(key=lambda item: (-item["shared_prefix"], item["ref"]))
+        return hits[:limit]
+
     def update_status(self, experience_id: str, status: str) -> bool:
         """更新 status 字段 + 刷新 updated_at，不删除文档；不存在/读取故障返回 False.
 
@@ -866,10 +996,16 @@ class ExperienceStore:
         ExperiencePersistError（原文件原样保留，同一 payload 重试安全）；replace 后
         目录 fsync 耗尽=ExperienceCommitUncertainError（禁止盲重放，先 get() 核对）。
         降级形态 source 经 to_md round-trip 保留原形态（design §2.1.3-3）。
+
+        EVO-20261031-a72df001：定位改走 resolve_id（等价引用形态同源解析）；
+        锁内仍重新读盘做 read-modify-write（RMW 语义不变）。
         """
         self._require_write_safe()
         self._reset_diagnostics()
-        path = self._safe_path(experience_id)
+        resolved = self.resolve_id(experience_id)
+        if resolved is None:
+            return False
+        path = self._safe_path(resolved[0])
         if path is None or not path.exists():
             return False
         with self._file_lock():
@@ -937,9 +1073,10 @@ class ExperienceStore:
         （父记录校验：存在/同slot/在链上，失败抛 ValueError），不改写历史行；
         每行附完整性凭据，坏尾先隔离再追加。
         """
-        doc = self.get(experience_id)
-        if doc is None:
+        resolved = self.resolve_id(experience_id)
+        if resolved is None:
             raise FileNotFoundError(experience_id)
+        canonical_stem, doc = resolved
         clean_decision = str(use_decision).strip()
         if clean_decision not in {"applied", "adapted", "not_applicable", "rejected"}:
             raise ValueError(
@@ -951,7 +1088,7 @@ class ExperienceStore:
         clean_level = str(evidence_level or "").strip().lower() or "model_declared"
         if clean_level not in USE_EVIDENCE_LEVELS:
             raise ValueError(f"evidence_level must be one of {sorted(USE_EVIDENCE_LEVELS)}")
-        stem = experience_id.removesuffix(".md")
+        stem = canonical_stem
         experience_ref = f"experience:{stem}"
         clean_episode = str(episode_ref or "").strip()[:256]
         clean_wu = str(work_unit_id or "").strip()[:128]

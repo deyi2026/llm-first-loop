@@ -408,13 +408,19 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
         or any(not isinstance(e, str) or len(e) > 256 for e in evidence)
     ):
         return _method_failure("refine_experience", "[参数错误] record_use 需要 stable experience ref、use_decision 和有界 note/evidence_refs")
-    doc = store.get(ref[11:])
-    if doc is None:
-        return _method_failure("refine_experience", "[refine_experience] 未找到指定经验；未记录使用声明")
+    resolved = store.resolve_id(ref[11:])
+    if resolved is None:
+        from llm_loop.introspection.tools_experience import experience_not_found_hint
+
+        return _method_failure(
+            "refine_experience",
+            experience_not_found_hint(store, ref[11:]),
+        )
+    canonical_stem, doc = resolved
 
     try:
         entry = store.record_use(
-            ref[11:],
+            canonical_stem,
             use_decision=decision,
             note=note,
             evidence_refs=evidence,
@@ -438,7 +444,10 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
             f"[refine_experience] 使用声明账本写入失败: {type(exc).__name__}: {exc}",
         )
     payload = {
-        "schema": "experience-use/v1", "ref": ref, "decision": decision,
+        "schema": "experience-use/v1",
+        # EVO-20261031-a72df001：回执给 canonical ref（模型据此去结算），
+        # requested_ref 保留调用方原样，便于审计"等价形态 → canonical"的解析。
+        "ref": f"experience:{canonical_stem}", "requested_ref": ref, "decision": decision,
         "record_kind": doc.record_kind, "verification_state": doc.verification_state,
         "status": doc.status, "note": note, "evidence_refs": evidence,
         "document_projection_sha256": hashlib.sha256(doc.to_md().encode()).hexdigest(),
@@ -453,7 +462,8 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
     # EVO-20261014-7299aec2: 回执附使用净分告警（提醒即止，不裁决）；派生视图 fail-open
     alert = ""
     try:
-        alert = alert_section("experience", ref, store.usage_net(ref))
+        canonical_ref = f"experience:{canonical_stem}"
+        alert = alert_section("experience", canonical_ref, store.usage_net(canonical_ref))
     except Exception:
         alert = ""
     content = "[refine_experience] use declaration\n" + json.dumps(payload, ensure_ascii=False)
