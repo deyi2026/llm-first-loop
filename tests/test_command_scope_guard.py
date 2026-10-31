@@ -1209,3 +1209,54 @@ def test_r16_review_fixes_do_not_over_block(command: str) -> None:
     """第十六轮修复不得误伤：域内目标目录与非删除短选项簇。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第十七轮：第三轮独立审查（REVISE：P1=3/P2=3）的响应锚点 ────────────────
+#
+# P1-1（tar --checkpoint-action 只查一个取值）：``--checkpoint-action`` 可多次
+#      给出；``exec=`` 在前、无害动作在后时单取值判定漏掉载荷
+#      ⇒ 改为**逐个取值都判**（上游原文本机不可核验——只有 bsdtar；逐个判在
+#      两种语义下都是安全的一侧）。
+# P1-2（取值型选项 first-vs-last）：GNU getopt 对重复的取值型选项是「后者
+#      覆盖前者」⇒ 此前取第一个 ⇒ 越界的那个不被判 ⇒ 改为 last-wins。
+# P1-3（gcc 簇只认「恰好一个」布尔字母）：``-wvo``（-w -v -o）不命中 ⇒ 改为
+#      取值字母可在簇内任意位置、其前字母必须全是已知布尔短选项。
+# P2-1（git -md 过拒）：git parse-options 里 ``-m`` 是**取值型**短选项 ⇒
+#      ``-md`` = ``-m`` 的值 "d" ⇒ 不是删除形态。
+
+R17_BLOCKED_CASES = [
+    ("tar --checkpoint-action=exec=evil --checkpoint-action=dot -cf ok.tar .", "implicit_write_target"),
+    ("rsync -b --backup-dir=bk --backup-dir=/outside/b src dst", "write_target_outside_scope"),
+    ("rsync --target-directory=dl --target-directory=/outside src", "write_target_outside_scope"),
+    ("gcc -wvo /outside/x a.c", "write_target_outside_scope"),
+    ("gcc -Eo /outside/x a.c", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R17_BLOCKED_CASES)
+def test_r17_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+    """第十七轮复现向量：第三轮独立审查点名的绕过必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R17_ALLOWED_CASES = [
+    # ``-m`` 取值 ⇒ ``-md`` 不是删除形态（git parse-options 语义）。
+    "git symbolic-ref -md HEAD",
+    # 未知短选项 ⇒ git 报未知选项、命令无副作用 ⇒ 不按删除形态拒。
+    "git symbolic-ref -dHEAD",
+    # 域内的最后一个取值才是生效值 ⇒ 放行。
+    "rsync -b --backup-dir=bk src dst",
+    # 多个 --checkpoint-action 但**都没有** exec= ⇒ 放行。
+    "tar --checkpoint-action=dot --checkpoint-action=dot2 -cf ok.tar .",
+    # -E/-S 是已知布尔短选项 ⇒ 簇内取值字母可定位 ⇒ 域内目标放行。
+    "gcc -Eo out.o a.c",
+]
+
+
+@pytest.mark.parametrize("command", R17_ALLOWED_CASES)
+def test_r17_review_fixes_do_not_over_block(command: str) -> None:
+    """第十七轮修复不得误伤：域内取值、非删除簇、多个无害 checkpoint 动作。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)

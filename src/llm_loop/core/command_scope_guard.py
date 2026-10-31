@@ -682,16 +682,23 @@ def _rsync_backup_targets(
 
 
 def _flag_value(args: Sequence[str], *flags: str) -> str | None:
-    """取 ``-t DIR`` / ``--target-directory=DIR`` 形态的选项值。"""
+    """取 ``-t DIR`` / ``--target-directory=DIR`` 形态的选项值（**最后一个**）。
+
+    第十七轮独立审查 P1-2：GNU getopt 对重复的取值型选项是「**后者覆盖
+    前者**」（rsync 的 --backup-dir、cp 的 -t 都取最后一个）⇒ 此前取**第一个**
+    ⇒ ``rsync -b --backup-dir=bk --backup-dir=/outside/b src dst`` 分析的是域内
+    的第一个、工具实际落盘的是越界的最后一个 ⇒ 越界写放行。
+    ⇒ 改为遍历全部出现、取**最后一个**（与 ``scan.value_of`` 的 last-wins
+    语义一致）。
+    """
+    found: str | None = None
     for index, token in enumerate(args):
         for flag in flags:
             if token == flag:
-                if index + 1 < len(args):
-                    return args[index + 1]
-                return ""
-            if token.startswith(flag + "="):
-                return token.split("=", 1)[1]
-    return None
+                found = args[index + 1] if index + 1 < len(args) else ""
+            elif token.startswith(flag + "="):
+                found = token.split("=", 1)[1]
+    return found
 
 
 def _is_write_name(name: str) -> bool:
@@ -1357,8 +1364,13 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
     # 第十四轮 P0：``--checkpoint-action=exec=CMD`` 让 tar 在每个检查点
     # **执行** CMD ⇒ 载荷不可静态定位 ⇒ fail-closed（与 ``-F/--info-script``、
     # ``-I/--use-compress-program`` 同一口径）。
-    checkpoint = scan.value_of("--checkpoint-action")
-    if checkpoint is not None and checkpoint.startswith("exec="):
+    # 第十七轮独立审查 P1-1：只查**一个**取值不够——``--checkpoint-action`` 可
+    # 多次给出，``exec=`` 在前、无害动作在后时（``--checkpoint-action=exec=evil
+    # --checkpoint-action=dot``）单取值判定会漏掉载荷 ⇒ 改为**逐个取值都判**
+    # （上游原文未能在本机核验：只有 bsdtar；无论上游是「累加」还是
+    # 「后者覆盖」，逐个判都是安全的一侧）。
+    checkpoints = scan.values_of("--checkpoint-action")
+    if any(value.startswith("exec=") or value == "exec" for value in checkpoints):
         return ([], True)
     # 第十四轮 P0：``--index-file=FILE`` 让 tar 写**索引文件** ⇒ FILE 是写目标。
     index_file = scan.value_of("--index-file")
@@ -1521,7 +1533,27 @@ _COMPILER_BENIGN_PREFIXES = (
 # 只收**确定不带值**的字母（``-w``/``-v``/``-c``）；``-g``/``-O``/``-f``/``-m``/
 # ``-W``/``-l``/``-L``/``-I``/``-D`` 都是**附着值**族（``-Wall``、``-g3``、
 # ``-ofoo``）⇒ 不得当作布尔前缀，否则 ``-lo``（``-l`` 的值 o）会被误读成 ``-o``。
-_COMPILER_CLUSTER_BOOL_LETTERS = frozenset({"w", "v", "c"})
+_COMPILER_CLUSTER_BOOL_LETTERS = frozenset({"w", "v", "c", "E", "S"})
+
+
+def _compiler_cluster_value_offset(token: str, value_letter: str) -> int | None:
+    """组合短选项里**取值字母**在 token 中的下标（找不到则 None）。
+
+    第十七轮独立审查 P1-3：此前只认「**恰好一个**布尔字母 + 取值字母」
+    （``token[1]`` 是布尔字母且 ``token[2]`` 是取值字母）⇒ ``gcc -wvo
+    /outside/x a.c``（``-w`` + ``-v`` + ``-o``）这类**两个以上**布尔字母的簇
+    不命中 ⇒ 产物落点从未被判定 ⇒ 越界写放行。
+    ⇒ 改为：取值字母可出现在簇内**任意位置**，但其**之前**的字母必须**全是**
+    已知布尔短选项（``-Werror`` 的 ``W``、``-lo`` 的 ``l`` 不是布尔字母 ⇒ 仍
+    不会被误读成 ``-o``）。
+    """
+    body = token[1:]
+    position = body.find(value_letter)
+    if position <= 0:
+        return None
+    if not all(char in _COMPILER_CLUSTER_BOOL_LETTERS for char in body[:position]):
+        return None
+    return position + 1
 
 
 def _compiler_token_value(raw: list[str], flag: str) -> str | None:
@@ -1546,18 +1578,21 @@ def _compiler_token_value(raw: list[str], flag: str) -> str | None:
             and not flag.startswith("--")
             and len(token) > 2
             and token[0] == "-"
-            and token[1] in _COMPILER_CLUSTER_BOOL_LETTERS
-            and token[2] == flag[1]
+            and _compiler_cluster_value_offset(token, flag[1]) is not None
         ):
-            # 第十四轮 P0 + 第十五轮独立审查 P1-1：组合短选项（getopt 语义）
-            # ——``-wo/outside/x`` = ``-w``（布尔）+ ``-o``（取值，值为余串）。
-            # 此前只认「token 以 ``-o`` 开头」⇒ ``-wo...`` 整族不命中 ⇒ 产物
-            # 落点从未被判定 ⇒ 越界写放行。余串为空（``-wo``）⇒ 值取下一个
-            # argv。第十五轮 P1-1：余串**不必以 / 或 = 开头**——``-wo../escape``
-            # 是合法的「-o 值 = ../escape」（**相对**越界写）⇒ 只认 / 与 = 会
-            # 漏掉相对路径形态 ⇒ 改为「余串非空即值」（bool 字母的门控已保证
-            # ``-Werror``/``-lo`` 不会被误读成 ``-o``）。
-            found = token[3:] if len(token) > 3 else ""
+            # 第十四轮 P0 + 第十五轮独立审查 P1-1 + 第十七轮独立审查 P1-3：
+            # 组合短选项（getopt 语义）——``-wo/outside/x`` = ``-w``（布尔）+
+            # ``-o``（取值，值为余串）；``-wvo/outside/x`` = ``-w`` + ``-v`` +
+            # ``-o``（取值字母在簇内**任意位置**，其前字母必须全是已知布尔
+            # 短选项，见 ``_compiler_cluster_value_offset``）。此前只认「恰好
+            # 一个布尔字母」⇒ ``-wvo...`` 整族不命中 ⇒ 产物落点从未被判定 ⇒
+            # 越界写放行。余串为空（``-wo``）⇒ 值取下一个 argv。第十五轮 P1-1：
+            # 余串**不必以 / 或 = 开头**——``-wo../escape`` 是合法的「-o 值 =
+            # ../escape」（**相对**越界写）⇒ 只认 / 与 = 会漏掉相对路径形态 ⇒
+            # 改为「余串非空即值」（bool 字母的门控已保证 ``-Werror``/``-lo``
+            # 不会被误读成 ``-o``）。
+            offset = _compiler_cluster_value_offset(token, flag[1]) or 0
+            found = token[offset + 1 :] if len(token) > offset + 1 else ""
             if not found:
                 found = raw[index + 1] if index + 1 < len(raw) else ""
     return found
@@ -1593,6 +1628,14 @@ def _compiler_has_unmodeled_flag(raw: list[str]) -> bool:
         if token.startswith(benign_f):
             continue
         if token.startswith(_COMPILER_BENIGN_PREFIXES):
+            continue
+        if _compiler_cluster_value_offset(token, "o") is not None:
+            # 组合短选项（``-Eo``/``-wvo``/``-So``）：取值字母 ``o`` 在簇内的
+            # 位置可定位（其前字母全是已知布尔短选项，见
+            # ``_compiler_cluster_value_offset``）⇒ 该 token **已建模**（写面
+            # 由 ``_compiler_token_value`` 按值判定）⇒ 不算未知选项。
+            # 第十七轮独立审查 P2-2：此前 ``-Eo``/``-So`` 落进「未知选项」
+            # ⇒ 一律 fail-closed（连域内目标也拒）。
             continue
         return True
     return False
@@ -1908,9 +1951,16 @@ def _git_delete_flag_hit(token: str) -> bool:
     if not token.startswith("-") or len(token) == 1:
         return False
     body = token[1:]
-    if "d" not in body:
+    if not all(char in "dqms" for char in body):
+        # 未知短选项（如 ``-dHEAD`` 的 H）⇒ git parse-options 报未知选项、
+        # 命令不产生任何副作用 ⇒ 不按删除形态拒。
         return False
-    return all(char in "dqms" for char in body)
+    if "m" in body:
+        # git parse-options：簇内**首个**取值型短选项（-m/--message）之后的
+        # 字符都算它的值 ⇒ ``-md`` = ``-m`` 的值 "d" ⇒ 不是删除形态
+        # （第十七轮独立审查 P2-1：此前按「簇内含 d 即删除」⇒ 过拒）。
+        return "d" in body[: body.index("m")]
+    return "d" in body
 
 
 def _git_action_args(args: Sequence[str]) -> list[str]:
