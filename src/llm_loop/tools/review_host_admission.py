@@ -49,9 +49,39 @@ class _Frozen:
     child_id: str = ""
     granted: bool = False
     consumed: bool = False
+    # EVO-20261030-05c4379d: every record carries its own age so a stale
+    # record can be reclaimed instead of pinning admission capacity forever.
+    created_at: float = 0.0
+    # "running" = the review child is still in flight and occupies admission
+    # capacity; "settled" = the reviewer reached a terminal verdict (PASS /
+    # REVISE / failure). A settled-but-unconsumed record keeps its grant
+    # available for the one command it authorizes, but it no longer blocks
+    # new admissions.
+    state: str = "running"
 
 
 _ALLOWED = AdmissionDecision(True, "")
+
+
+def _same_admission(left: _Frozen, right: _Frozen) -> bool:
+    """Compare the admission identity of two records.
+
+    EVO-20261030-05c4379d: lifecycle bookkeeping (``state`` / ``created_at``)
+    is NOT part of the admission identity. A record that merely settled while a
+    poll was in flight is still the same admission, so it must not be reported
+    as "review_changed_while_polling". Everything that actually carries
+    authority -- kind, parent, target, frozen SHA, child id and whether a
+    grant was already issued or spent -- must still match exactly.
+    """
+    return (
+        left.kind == right.kind
+        and left.parent == right.parent
+        and left.target == right.target
+        and left.sha == right.sha
+        and left.child_id == right.child_id
+        and left.granted == right.granted
+        and left.consumed == right.consumed
+    )
 _PUBLISH_LABEL_RE = re.compile(
     r"^(?:publish(?:\s+(?:now|post|article))?|post(?:\s+(?:now|article))?|"
     r"confirm\s+publish|发表(?:文章)?|发布(?:文章)?|立即发布|确认(?:发布|发表))$",
@@ -106,6 +136,23 @@ _SENSITIVE_FILENAME = re.compile(
 # 400_000（超限抛 git_state_too_large）；两个分支共用同一条边界，才不会出现
 # "committed 大模板静默跳过内容复核"的 fail-open（独立审查实测反例：448KB 模板）。
 _TEMPLATE_SCAN_MAX_BYTES = 400_000
+
+# EVO-20261030-05c4379d（人工批准）: admission capacity must be a RECLAIMABLE
+# resource, not a one-way counter. A record that the reviewer already answered
+# (PASS / REVISE / failure) but whose command was never executed used to pin
+# one of the 64 slots forever, so a single long-lived Host process could reach
+# "review_host_capacity" permanently and block every later session.
+#
+# Two independent mechanisms now bound the table:
+#   1. TTL eviction: a record older than _RECORD_TTL_SECONDS that was never
+#      consumed is dropped (LRU order) and audited. A PASS grant that the
+#      operator never used expires with it -- the grant was already bound to
+#      one frozen candidate SHA, so an expired grant cannot authorize anything
+#      newer.
+#   2. Active-only counting: only records whose review is still running count
+#      against capacity. A settled record keeps its grant consumable but no
+#      longer blocks new admissions.
+_RECORD_TTL_SECONDS = 24 * 3600
 
 
 def _name_is_sensitive(name: str) -> bool:
@@ -1829,6 +1876,59 @@ class HostReviewAdmission:
         """Attach the factory's audit writer: no event receipt means no new grant."""
         self._event_store = store
 
+    def _reclaim_records(self, parent: str, kind: str) -> None:
+        """EVO-20261030-05c4379d: make admission capacity reclaimable.
+
+        Drops two classes of record that used to pin a slot forever:
+          * consumed records (the grant was already spent);
+          * records older than _RECORD_TTL_SECONDS that were never consumed
+            (reviewer answered, operator never ran the command).
+
+        Eviction is LRU (oldest first) and every eviction is audited so a
+        capacity refusal can always be explained after the fact. Called with
+        the guard held.
+        """
+        now = time.time()
+        for key, row in tuple(self._records.items()):
+            if row.consumed:
+                del self._records[key]
+                continue
+            if row.created_at and (now - row.created_at) > _RECORD_TTL_SECONDS:
+                del self._records[key]
+                self._audit(
+                    row.parent,
+                    "review_admission_record_evicted",
+                    {
+                        "kind": row.kind,
+                        "child_id": row.child_id,
+                        "target": row.target,
+                        "candidate_sha256": row.sha,
+                        "record_state": row.state,
+                        "granted": row.granted,
+                        "age_seconds": round(now - row.created_at, 3),
+                        "reason": "ttl_expired_unconsumed",
+                    },
+                )
+
+    def _active_records(self) -> int:
+        """Records whose review is still in flight (they hold a slot)."""
+        return sum(1 for row in self._records.values() if row.state == "running")
+
+    def _settle_record(self, child_id: str) -> None:
+        """Mark a record terminal: the reviewer reached a verdict for it.
+
+        A settled record stays in the table so its one-shot grant can still be
+        consumed, but it no longer occupies admission capacity.
+        """
+        row = self._records.get(child_id)
+        if row is None or row.state == "settled":
+            return
+        self._records[child_id] = _Frozen(
+            row.kind, row.parent, row.target, row.sha,
+            row.child_id, granted=row.granted, consumed=row.consumed,
+            created_at=row.created_at, state="settled",
+        )
+
     def _audit(self, parent: str, event_type: str, payload: dict[str, Any]) -> bool:
         if self._event_store is None:
             return True  # standalone offline unit harness; factory always attaches it
@@ -2094,11 +2194,11 @@ class HostReviewAdmission:
                 "reviewer_failure": "reviewer_input_too_large",
             }
         with self._guard:
-            if len(self._records) >= self._max_records:
-                for key, row in tuple(self._records.items()):
-                    if row.consumed:
-                        del self._records[key]
-            if len(self._records) >= self._max_records:
+            # EVO-20261030-05c4379d: reclaim before counting. Capacity is a
+            # reusable resource: stale and already-spent records are evicted
+            # first, and only reviews still in flight occupy a slot.
+            self._reclaim_records(parent, kind)
+            if self._active_records() >= self._max_records:
                 return {"accepted": False, "reason": "review_host_capacity"}
             # Hold the narrow review-issue mutex until the child id is recorded:
             # simultaneous starts cannot admit more than the bounded capacity.
@@ -2141,7 +2241,9 @@ class HostReviewAdmission:
                 current_session_id.reset(tok)
             if child in self._records:
                 return {"accepted": False, "reason": "review_child_id_reused"}
-            self._records[child] = _Frozen(kind, parent, target, sha, child_id=child)
+            self._records[child] = _Frozen(
+                kind, parent, target, sha, child_id=child, created_at=time.time(),
+            )
         receipt = {"accepted": True, "child_id": child, "candidate_sha256": sha, "kind": kind, "target": target}
         if kind == "git_push":
             # Mechanical cross-check anchor: the exact remote commit the
@@ -2190,6 +2292,9 @@ class HostReviewAdmission:
             if child_id not in self._reviewer_fail_audited:
                 self._reviewer_fail_audited.add(child_id)
                 self._audit_reviewer_unavailable(parent, frozen.kind, label, failure_text, child_id=child_id)
+            # EVO-20261030-05c4379d: the reviewer is done with this child, so
+            # the record stops occupying admission capacity.
+            self._settle_record(child_id)
             return {
                 "qualification": "REVISE",
                 "reason": f"reviewer_failed:{label}",
@@ -2217,6 +2322,10 @@ class HostReviewAdmission:
             or result is None
             or getattr(result, "outcome", "") != "completed"
         ):
+            # EVO-20261030-05c4379d: the review child finished without a usable
+            # verdict -- a terminal outcome for this record, so it stops
+            # occupying admission capacity.
+            self._settle_record(child_id)
             return {"qualification": "REVISE", "reason": "review_not_successfully_completed"}
         answer = str(getattr(result, "final_answer", "") or "")
         verdicts = re.findall(r"(?m)^VERDICT:\s*(PASS|REVISE|BLOCK)\s*$", answer)
@@ -2242,6 +2351,9 @@ class HostReviewAdmission:
         if not qualifying:
             # Fail closed, but surface the reviewer's own words so a malformed
             # verdict (e.g. a localized "结论：PASS" line) is diagnosable.
+            # EVO-20261030-05c4379d: this is a terminal reviewer outcome, so
+            # the record stops occupying admission capacity.
+            self._settle_record(child_id)
             return {
                 "qualification": "REVISE",
                 "reason": "review_verdict_incomplete_or_not_pass",
@@ -2249,7 +2361,7 @@ class HostReviewAdmission:
             }
         with self._guard:
             previous = self._records.get(child_id)
-            if previous != frozen:
+            if previous is None or not _same_admission(previous, frozen):
                 return {"qualification": "DENIED", "reason": "review_changed_while_polling"}
             audit_payload = {
                 "child_id": child_id, "parent_id": parent,
@@ -2264,7 +2376,8 @@ class HostReviewAdmission:
                 return {"qualification": "DENIED", "reason": "review_receipt_not_durable"}
             self._records[child_id] = _Frozen(
                 frozen.kind, frozen.parent, frozen.target, frozen.sha,
-                frozen.child_id, granted=True,
+                frozen.child_id, granted=True, created_at=frozen.created_at,
+                state="settled",
             )
         return {"qualification": "PASS", "candidate_sha256": frozen.sha}
 
@@ -2287,6 +2400,7 @@ class HostReviewAdmission:
                     self._records[key] = _Frozen(
                         row.kind, row.parent, row.target, row.sha,
                         row.child_id, granted=True, consumed=True,
+                        created_at=row.created_at, state=row.state,
                     )
                     return _ALLOWED
         return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")

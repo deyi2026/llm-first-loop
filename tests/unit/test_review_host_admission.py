@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2148,3 +2149,164 @@ def test_frozen_header_records_the_vendored_class_and_projection_count() -> None
     keys = dict(fields)
     assert "vendored_asset_prefixes" in keys
     assert "skills/ui-ux-pro-max/" in keys["vendored_asset_prefixes"]
+
+
+# --- EVO-20261030-05c4379d: admission capacity must be reclaimable ---------
+# Regression: the records table only reclaimed CONSUMED entries, so every
+# review whose command was never executed pinned one of the 64 slots forever.
+# A single long-lived Host process could therefore answer "review_host_capacity"
+# permanently and block every later session.
+
+
+def test_expired_unconsumed_record_is_evicted_and_audited(tmp_path: Path) -> None:
+    """A stale, never-consumed record is evicted instead of pinning capacity."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    events: list[tuple[str, dict]] = []
+
+    class _Store:
+        enabled = True
+
+        def append(self, parent, event_type, payload):
+            events.append((event_type, payload))
+            return {"ok": True}
+
+    host.attach_event_store(_Store())
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert first["accepted"] is True
+    assert len(host._records) == 1
+
+    # Age the record past the TTL without touching its grant state.
+    key = next(iter(host._records))
+    row = host._records[key]
+    host._records[key] = rha._Frozen(
+        row.kind, row.parent, row.target, row.sha, row.child_id,
+        granted=row.granted, consumed=row.consumed,
+        created_at=row.created_at - rha._RECORD_TTL_SECONDS - 1,
+        state=row.state,
+    )
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is True, "expired record must not block a new admission"
+    assert any(t == "review_admission_record_evicted" for t, _ in events)
+    evicted = [p for t, p in events if t == "review_admission_record_evicted"]
+    assert evicted and evicted[0]["reason"] == "ttl_expired_unconsumed"
+
+
+def _distinct_child_runner() -> FakeChildRunner:
+    """FakeChildRunner that mints a NEW child id per start().
+
+    The shared stub always returns "child-review-1", so a second start() on the
+    same Host hits the (correct) child-id-reuse guard instead of the admission
+    capacity check. These EVO tests need a second, independent review.
+    """
+    runner = FakeChildRunner()
+    counter = {"n": 0}
+
+    def _start(task, **kwargs):
+        counter["n"] += 1
+        out = FakeChildRunner.start(runner, task, **kwargs)
+        if out.get("accepted"):
+            out = dict(out)
+            out["child_id"] = f"child-review-{counter['n']}"
+        return out
+
+    runner.start = _start  # type: ignore[method-assign]
+    def _result_current(child_id: str, wait_seconds=0):
+        # The shared stub asserts a constant child id; answer for any minted id.
+        assert child_id.startswith("child-review-")
+        result = SimpleNamespace(final_answer=runner.answer, outcome=runner.state)
+        return True, "ok", {
+            "child_id": child_id,
+            "parent_id": runner.parent,
+            "state": runner.state,
+            "result_id": "result-verified" if runner.state == "completed" else "",
+            "generation": "gen-1",
+            "result": result,
+            "local_active": runner.state == "running",
+        }
+
+    runner.result_current = _result_current  # type: ignore[method-assign]
+    return runner
+
+
+def test_settled_review_does_not_occupy_admission_capacity(tmp_path: Path) -> None:
+    """A terminal verdict that was never executed no longer blocks admissions."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert first["accepted"] is True
+    child_id = first["child_id"]
+
+    # The reviewer answered REVISE and nobody ran the command afterwards.
+    runner.state = "completed"
+    runner.answer = "VERDICT: REVISE\nP0=1 P1=1 P2=0\nSHA256: " + "0" * 64
+    polled = host.poll("author-1", child_id)
+    assert polled["qualification"] == "REVISE"
+
+    second = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert second["accepted"] is True, "settled record must not consume a slot"
+    assert host._active_records() == 1
+
+
+def test_running_review_still_occupies_capacity(tmp_path: Path) -> None:
+    """Only an in-flight review holds a slot; the bound is not weakened."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert first["accepted"] is True
+    second = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert second["accepted"] is False
+    assert second["reason"] == "review_host_capacity"
+
+
+def test_consumed_record_is_reclaimed(tmp_path: Path) -> None:
+    """A spent grant is dropped instead of being kept forever."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    child_id = first["child_id"]
+    runner.state = "completed"
+    runner.answer = (
+        "VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: "
+        + first["candidate_sha256"]
+    )
+    assert host.poll("author-1", child_id)["qualification"] == "PASS"
+    key = next(iter(host._records))
+    row = host._records[key]
+    host._records[key] = rha._Frozen(
+        row.kind, row.parent, row.target, row.sha, row.child_id,
+        granted=True, consumed=True, created_at=row.created_at, state=row.state,
+    )
+    second = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert second["accepted"] is True
+    assert all(not r.consumed for r in host._records.values())
+
+
+def test_sixty_four_stale_records_do_not_deadlock_admission(tmp_path: Path) -> None:
+    """The exact failure this EVO describes: 64 stale records used to be fatal."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    for i in range(host._max_records):
+        row = rha._Frozen(
+            "full_test", "author-1", f"target-{i}", "0" * 64,
+            child_id=f"child-{i}", created_at=time.time() - rha._RECORD_TTL_SECONDS - 1,
+        )
+        host._records[f"child-{i}"] = row
+    assert len(host._records) == host._max_records
+    admitted = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert admitted["accepted"] is True
+    assert admitted["child_id"]
