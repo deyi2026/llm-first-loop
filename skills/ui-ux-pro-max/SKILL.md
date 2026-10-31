@@ -7,7 +7,7 @@ metadata:
   adapted-for: llm-first-loop（2026-10-31）
 ---
 
-> **LFL 本地化说明（2026-10-31）**：源自 nextlevelbuilder/ui-ux-pro-max-skill@9a3f14f7423037ccb8feeb4fee7482291b9c820e 的 .claude/skills/ui-ux-pro-max（MIT，LICENSE 随附）。适配：① 上游命令中的 `${CLAUDE_PLUGIN_ROOT}/.claude/skills/...` 全部改写为仓库相对路径 `skills/ui-ux-pro-max/scripts/search.py`，**请在仓库根目录执行**或改用绝对路径，不要 cd 进 skill 目录；② `python` 改为 `python3`（本机无 `python`）；③ 上游的 `npm i -g ui-ux-pro-max-cli` 加 `uipro init --ai claude` 安装步骤不适用——文件已 vendored 到位，无需 npm，直接用 python3 调脚本；④ LFL 的 skill_load 只加载本 SKILL.md，`references/`、`data/` 不自动进上下文，需要时用 read_file 读 `skills/ui-ux-pro-max/references/quick-reference.md`；⑤ scripts/ 为纯 stdlib（csv/json/re/pathlib），本机无额外依赖，data/ 已随附（data-provenance.json 记录来源与核验日期）；⑥ 裁剪上游 scripts/tests/（绑定上游仓库布局）与 CLI 源码，运行时不需要。
+> **LFL 本地化说明（2026-10-31）**：源自 nextlevelbuilder/ui-ux-pro-max-skill@9a3f14f7423037ccb8feeb4fee7482291b9c820e 的 .claude/skills/ui-ux-pro-max（MIT，LICENSE 随附）。适配：① 上游命令中的 `${CLAUDE_PLUGIN_ROOT}/.claude/skills/...` 全部改写为仓库相对路径 `skills/ui-ux-pro-max/scripts/search.py`；执行时**不要假设当前工作目录**（运行时 cwd 可能是 release 目录而非仓库根），请用 skill_load 回执 [执行环境事实] 里的 `runtime_root` 拼出绝对路径 `<runtime_root>/skills/ui-ux-pro-max/scripts/search.py` 再调用；② `python` 改为 `python3`（本机无 `python`）；③ 上游的 `npm i -g ui-ux-pro-max-cli` 加 `uipro init --ai claude` 安装步骤不适用——文件已 vendored 到位，无需 npm，直接用 python3 调脚本；④ LFL 的 skill_load 只加载本 SKILL.md，`references/`、`data/` 不自动进上下文，需要时用 read_file 读 `skills/ui-ux-pro-max/references/quick-reference.md`；⑤ scripts/ 为纯 stdlib（csv/json/re/pathlib），本机无额外依赖，data/ 已随附（data-provenance.json 记录来源与核验日期）；⑥ 裁剪上游 scripts/tests/（绑定上游仓库布局）与 CLI 源码，运行时不需要。
 
 # UI/UX Pro Max - Design Intelligence
 
@@ -42,7 +42,7 @@ For the full rule list per category (all 119 UX guidelines with rationale), read
 
 ## Running the search tool
 
-The search script lives inside this skill's own directory, not the project directory. In this repository it sits at `skills/ui-ux-pro-max/scripts/search.py` (repository-root relative): run the command from the repository root, or pass the absolute path — do not assume your working directory is the skill directory:
+The search script lives inside this skill's own directory, not the project directory. In this repository it sits at `skills/ui-ux-pro-max/scripts/search.py` (repository-root relative): call it by absolute path — `<runtime_root>/skills/ui-ux-pro-max/scripts/search.py`, where `runtime_root` comes from the LFL skill_load receipt — or run it from the repository root. Do not assume your working directory is the skill directory:
 
 ```bash
 python3 skills/ui-ux-pro-max/scripts/search.py "<query>" --domain <domain>

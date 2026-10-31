@@ -13,7 +13,7 @@
 2. 新增 `license: MIT` 与 `metadata.vendored-from` 字段。
 3. 正文开头插入一段 “LFL 本地化说明” 引用块。
 4. 全文 11 处命令由 `python "${CLAUDE_PLUGIN_ROOT}/.claude/skills/ui-ux-pro-max/scripts/search.py"` 改写为 `python3 skills/ui-ux-pro-max/scripts/search.py`（本机无 `python` 可执行文件，也没有 `CLAUDE_PLUGIN_ROOT` 变量）。
-5. “Running the search tool” 段落补充了仓库内实际路径与执行目录要求。
+5. “Running the search tool” 段落与本地化说明补充了实际路径与执行方式：命令使用仓库相对路径 `skills/ui-ux-pro-max/scripts/search.py`，并要求按 skill_load 回执中的 `runtime_root` 拼出绝对路径调用（运行时 cwd 可能是 release 目录，不是仓库根）。
 6. `data/stacks/javafx.csv` 中 “Code Bad” 示例里的本地路径占位（形如 `/Users/<用户名>/Desktop/logo.png`）改为 `/Users/<user>/Desktop/logo.png`：本仓 pre-commit 安全扫描（`scripts/git_security_scan.sh` 规则 3 与规则 5）会拦截任何 `/Users/<用户名>/` 形态。示例语义不变，仅去掉机器名形态。该文件不在上游 `data/catalog-summary.json` 的哈希快照内（该快照只覆盖 `google-fonts.csv`、`google-font-licenses.json`、`icons.csv`、`phosphor-icons-upstream.json`），因此不影响 `scripts/validate_data.py` 的一致性校验。
 
 除上述改动外，`scripts/`、`data/`、`references/` 下的文件均逐字复制自上游，未作修改。
