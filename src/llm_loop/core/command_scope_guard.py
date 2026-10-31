@@ -521,9 +521,7 @@ def _is_chdir_option(token: str, spec: _CarrierSpec) -> bool:
     cluster_pos, cluster_flag, _cluster_inline = _short_cluster_value_option(
         token, spec.value_options, spec.payload_options
     )
-    if cluster_pos > 0 and cluster_flag in options:
-        return True
-    return False
+    return bool(cluster_pos > 0 and cluster_flag in options)
 
 
 def _carrier_split(
@@ -1559,9 +1557,8 @@ def _compiler_token_value(raw: list[str], flag: str) -> str | None:
             # 是合法的「-o 值 = ../escape」（**相对**越界写）⇒ 只认 / 与 = 会
             # 漏掉相对路径形态 ⇒ 改为「余串非空即值」（bool 字母的门控已保证
             # ``-Werror``/``-lo`` 不会被误读成 ``-o``）。
-            if len(token) > 3:
-                found = token[3:]
-            else:
+            found = token[3:] if len(token) > 3 else ""
+            if not found:
                 found = raw[index + 1] if index + 1 < len(raw) else ""
     return found
 
