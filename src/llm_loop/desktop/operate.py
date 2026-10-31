@@ -155,13 +155,21 @@ def classify_risk(
     """§6.2 启发式：返回 "act" | "irreversible"。
 
     依据（保守优先）：
-    1. AXCloseButton —— 无法验证窗口有无未保存内容，一律 irreversible；
+    1. 关闭按钮 —— 无法验证窗口有无未保存内容，一律 irreversible。
+       R6/P1：真机编码是 role=AXButton + subrole=AXCloseButton（父会话
+       live 实测 Preview 关闭钮；本仓 R3 fake 树同编码），旧实现只按
+       role=="axclosebutton" 判定导致真机永不命中（关闭点击被判普通 act，
+       且一次确认后落入 session 免令牌通道）。现 role 与 subrole 两通道
+       均匹配（各自大小写不敏感），旧编码 role=AXCloseButton 兼容保留；
     2. 目标标题命中 irreversible 关键词（大小写不敏感）；
     3. 浏览器（Chrome/Safari）上 Enter —— 网页表单提交的经典触发键，
        网页层不在 AX 可见面内，无法进一步判定，宁可多确认；
     4. 密码型输入框由工具层另行 privacy_blocked，不进本函数。
     """
-    if str(role or "").strip().lower() == "axclosebutton":
+    if (
+        str(role or "").strip().lower() == "axclosebutton"
+        or str(subrole or "").strip().lower() == "axclosebutton"
+    ):
         return "irreversible"
     text = " ".join(str(part or "") for part in (title, subrole)).strip().lower()
     if text and any(marker in text for marker in IRREVERSIBLE_TITLE_MARKERS):
@@ -341,6 +349,32 @@ def action_fingerprint(
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
+def session_target_key(window_id: int, binding_address: dict) -> str:
+    """P2-1（R6）：会话免令牌放行的**目标身份键**（同 app 同 do 还须同目标）。
+
+    与令牌绑定的稳定寻址同源（window_id + kind + ax_ref / point 坐标 /
+    focused），刻意**不含 text/keys**：type 换文本、press_key 换键仍是
+    「同目标」（既定的免令牌能力保持）；换目标——不同 ax_ref、不同 point
+    坐标、或换窗口（window_id 入键）——即换键，须重新 dry_run 取新令牌。
+    point 通道本就永不进会话放行（M1），其键仅供记账口径统一。
+    """
+    kind = str(binding_address.get("kind") or "")
+    if kind == "ax_ref":
+        detail = str(binding_address.get("ax_ref") or "")
+    elif kind == "point":
+        # 入口已校验 point{x,y} 为数字；None 分支仅为类型完备（不可达）。
+        raw_x = binding_address.get("x")
+        raw_y = binding_address.get("y")
+        detail = (
+            f"{float(raw_x if raw_x is not None else 0.0):.3f},"
+            f"{float(raw_y if raw_y is not None else 0.0):.3f}"
+        )
+    else:
+        detail = ""
+    material = f"{int(window_id)}|{kind}|{detail}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
 class ConfirmTokenStore:
     """一次性令牌（进程内、按需签发；replay 一律拒绝并留痕给调用方审计）。
 
@@ -452,12 +486,23 @@ SESSION_APPROVAL_MAX_SESSIONS = 128
 
 @dataclass
 class _SessionState:
-    approved: set[tuple[str, str]] = field(default_factory=set)
+    # P2-1（R6）：记账维度 (app, do) → (app, do, 目标身份键)——同 app 内
+    # 换目标（不同 ax_ref/坐标/窗口）不再免令牌，见 SessionActGate docstring。
+    approved: set[tuple[str, str, str]] = field(default_factory=set)
     last_touched: float = 0.0
 
 
 class SessionActGate:
-    """同 app 同动作类型 session 内放行；irreversible 永不进 approved。
+    """同 app 同 do **同目标** session 内放行；irreversible 永不进 approved。
+
+    P2-1（R6）：记账维度从 (app, do) 收紧到 (app, do, 目标身份键)
+    （``session_target_key``：window_id + 稳定寻址）——此前同 app 内换一个
+    目标元素也能免令牌，审核判定与 P1（真机关闭钮误判 act）叠加会放大
+    免令牌面；收紧后换目标即须重新 dry_run 取新令牌，「同 app 同 do 同
+    目标免令牌」的既定能力保持。免令牌路径仍校验窗口存在 + 前台 app
+    口径（工具层 _gate_world_rebind，R5 frontmost_app_bundle），但按
+    §6.2 字面**不重做 world 指纹比对**（该跳过已在工具描述显式披露为
+    残余：结构漂移可能使同一 ax_ref 指向不同元素而不被该路径发现）。
 
     P2-3（R2）：approved 放行记录带 TTL 与数量上限（按最近**批准写入**时间
     淘汰；只读查询不续命）——免令牌放行在静默 ``SESSION_APPROVAL_TTL_S``
@@ -505,20 +550,37 @@ class SessionActGate:
         return state
 
     def is_approved(
-        self, session_id: str, bundle_id: str | None, do: str, *, now: float | None = None
+        self,
+        session_id: str,
+        bundle_id: str | None,
+        do: str,
+        *,
+        target_key: str,
+        now: float | None = None,
     ) -> bool:
+        """P2-1（R6）：target_key 必填（session_target_key 产物）——强制调用方
+        显式给出目标身份，防止退回 (app, do) 二元组口径。"""
         with self._lock:
             state = self._lookup(session_id, _now(now))
             return state is not None and (
                 _norm_bundle(bundle_id),
                 str(do),
+                str(target_key),
             ) in state.approved
 
     def mark_approved(
-        self, session_id: str, bundle_id: str | None, do: str, *, now: float | None = None
+        self,
+        session_id: str,
+        bundle_id: str | None,
+        do: str,
+        *,
+        target_key: str,
+        now: float | None = None,
     ) -> None:
         with self._lock:
-            self._touch(session_id, _now(now)).approved.add((_norm_bundle(bundle_id), str(do)))
+            self._touch(session_id, _now(now)).approved.add(
+                (_norm_bundle(bundle_id), str(do), str(target_key))
+            )
 
     def force_consumed(self, session_id: str) -> bool:
         # 不做 TTL：一次性语义不得因淘汰而复活（见类 docstring）。

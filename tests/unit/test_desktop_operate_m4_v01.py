@@ -53,6 +53,7 @@ from llm_loop.desktop.operate import (
     classify_risk,
     parse_keycombo,
     parse_scroll,
+    session_target_key,
     world_fingerprint,
 )
 from llm_loop.desktop.privacy import PrivacyPolicy
@@ -226,8 +227,19 @@ def test_classify_risk_heuristics_conservative():
     assert classify_risk("click", bundle_id="com.apple.finder", role="AXButton",
                          subrole=None, title="新建文件夹", keys=None) == "act"
     # 关闭按钮：无法验证未保存状态 → irreversible
+    # R6/P1：真机编码 role=AXButton + subrole=AXCloseButton（父会话 live 实测 +
+    # 本仓 R3 fake 树一致）必须命中；旧编码 role=AXCloseButton 兼容保留。
+    assert classify_risk("click", bundle_id="com.apple.finder", role="AXButton",
+                         subrole="AXCloseButton", title=None, keys=None) == "irreversible"
+    assert classify_risk("click", bundle_id="com.apple.finder", role="AXButton",
+                         subrole="axclosebutton", title=None, keys=None) == "irreversible"
     assert classify_risk("click", bundle_id="com.apple.finder", role="AXCloseButton",
                          subrole=None, title=None, keys=None) == "irreversible"
+    # 核对清单：最小化/全屏按钮（真机同为 AXButton+subrole）是可逆动作，保持 act
+    assert classify_risk("click", bundle_id="com.apple.preview", role="AXButton",
+                         subrole="AXMinimizeButton", title=None, keys=None) == "act"
+    assert classify_risk("click", bundle_id="com.apple.preview", role="AXButton",
+                         subrole="AXZoomButton", title=None, keys=None) == "act"
     # 关键词命中（中/英、大小写）
     assert classify_risk("click", bundle_id="com.apple.finder", role="AXButton",
                          subrole=None, title="删除该项", keys=None) == "irreversible"
@@ -324,12 +336,28 @@ def test_token_store_one_shot_and_bindings():
 
 def test_session_gate_approval_and_force_consumption():
     gate = SessionActGate()
-    assert gate.is_approved("s1", "com.google.Chrome", "click") is False
-    gate.mark_approved("s1", "com.google.Chrome", "click")
-    assert gate.is_approved("s1", "com.google.Chrome", "click") is True
-    assert gate.is_approved("s1", "com.google.Chrome", "type") is False  # 同 do 才放行
-    assert gate.is_approved("s2", "com.google.Chrome", "click") is False  # 会话隔离
-    assert gate.is_approved("s1", "com.apple.finder", "click") is False  # 同 app 才放行
+    # R6/P2-1：放行记账带目标身份键（session_target_key：window+稳定寻址）
+    k0 = session_target_key(101, {"kind": "ax_ref", "ax_ref": "0.0"})
+    assert gate.is_approved("s1", "com.google.Chrome", "click", target_key=k0) is False
+    gate.mark_approved("s1", "com.google.Chrome", "click", target_key=k0)
+    assert gate.is_approved("s1", "com.google.Chrome", "click", target_key=k0) is True
+    assert gate.is_approved("s1", "com.google.Chrome", "type", target_key=k0) is False  # 同 do 才放行
+    assert gate.is_approved("s2", "com.google.Chrome", "click", target_key=k0) is False  # 会话隔离
+    assert gate.is_approved("s1", "com.apple.finder", "click", target_key=k0) is False  # 同 app 才放行
+    # R6/P2-1：同 app 同 do 换目标（不同 ax_ref / 换窗口）→ 不放行
+    assert gate.is_approved(
+        "s1", "com.google.Chrome", "click",
+        target_key=session_target_key(101, {"kind": "ax_ref", "ax_ref": "0.3"}),
+    ) is False
+    assert gate.is_approved(
+        "s1", "com.google.Chrome", "click",
+        target_key=session_target_key(107, {"kind": "ax_ref", "ax_ref": "0.0"}),
+    ) is False
+    # 目标键口径：text/keys 不入键（type 换文本/press_key 换键=同目标）；point 坐标数值归一
+    assert k0 == session_target_key(101, {"kind": "ax_ref", "ax_ref": "0.0", "title": "x"})
+    assert session_target_key(101, {"kind": "point", "x": 700.0, "y": 850.0}) == session_target_key(
+        101, {"kind": "point", "x": 700, "y": 850}
+    )
     assert gate.force_consumed("s1") is False
     gate.mark_force_consumed("s1")
     assert gate.force_consumed("s1") is True
@@ -596,11 +624,12 @@ def test_session_approval_scoped_by_app_and_do_via_registry():
                 title="页面", bounds=(0.0, 38.0, 1200.0, 800.0), is_foreground=False),
     ])
     reg = _registry(_tool(backend))
-    # Chrome click：dry_run → token → apply（记会话放行）
+    # Chrome click：dry_run → token → apply（记会话放行；R6 起记账带目标身份）
     dry = _dispatch(reg, **CLICK_101, dry_run=True)
     ok = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
     assert ok["applied"] is True
-    # 同 app 同 do：免 token 直接 apply（§6.2 session 内放行；连续多次调用验证）
+    # 同 app 同 do 同目标（ax_ref=0.0）：免 token 直接 apply（§6.2 session 内
+    # 放行；连续多次调用验证——目标维度负例见 test_r6_session_exemption_*）
     for _ in range(3):
         again = _dispatch(reg, **CLICK_101, dry_run=False)
         assert again["applied"] is True
@@ -619,9 +648,11 @@ def test_session_approval_scoped_by_app_and_do_via_registry():
 
 
 def test_irreversible_never_session_approved_every_apply_needs_token():
+    # R6/P1：关闭钮模型改用真机编码 role=AXButton + subrole=AXCloseButton
+    # （与 R3 fake 树 / live 冒烟脚本一致；旧编码兼容另见 R6 测试）。
     close_view = _view(
         _node("0", "AXWindow", "某文档"),
-        _node("0.2", "AXCloseButton", None),
+        _node("0.2", "AXButton", None, subrole="AXCloseButton"),
     )
     backend = _backend(ax_views={101: close_view})
     reg = _registry(_tool(backend))
@@ -661,7 +692,7 @@ def test_web_target_refused_points_to_browser_operate():
     # 窗口 chrome 级目标（非 web 子树）不受影响
     chrome_chrome_view = _view(
         _node("0", "AXWindow", "某文档 - Google Chrome"),
-        _node("0.1", "AXCloseButton", None),
+        _node("0.1", "AXButton", None, subrole="AXCloseButton"),  # 真机编码（R6/P1）
     )
     backend._ax_views[101] = chrome_chrome_view
     p3 = _direct(tool, do="click", window_id=101, target={"ax_ref": "0.1"}, dry_run=True)
@@ -1550,10 +1581,11 @@ def test_r2_expired_token_rejected_tool_level():
 
 def test_r2_session_gate_approval_ttl_and_force_persistence():
     gate = SessionActGate()
-    gate.mark_approved("s1", "com.google.Chrome", "click", now=100.0)
-    assert gate.is_approved("s1", "com.google.Chrome", "click",
+    k0 = session_target_key(101, {"kind": "ax_ref", "ax_ref": "0.0"})
+    gate.mark_approved("s1", "com.google.Chrome", "click", target_key=k0, now=100.0)
+    assert gate.is_approved("s1", "com.google.Chrome", "click", target_key=k0,
                             now=100.0 + SESSION_APPROVAL_TTL_S - 1.0) is True
-    assert gate.is_approved("s1", "com.google.Chrome", "click",
+    assert gate.is_approved("s1", "com.google.Chrome", "click", target_key=k0,
                             now=100.0 + SESSION_APPROVAL_TTL_S + 1.0) is False  # TTL 过期
     # force 一次性消耗不随 TTL 复活（淘汰不得重置安全事实）；reset 是唯一回收口
     gate.mark_force_consumed("sf", now=100.0)
@@ -1564,12 +1596,14 @@ def test_r2_session_gate_approval_ttl_and_force_persistence():
 
 def test_r2_session_gate_bounded_by_cap():
     gate = SessionActGate()
+    k0 = session_target_key(101, {"kind": "ax_ref", "ax_ref": "0.0"})
     for i in range(SESSION_APPROVAL_MAX_SESSIONS + 10):
-        gate.mark_approved(f"s{i}", "com.apple.finder", "click", now=1_000.0 + i)
+        gate.mark_approved(f"s{i}", "com.apple.finder", "click", target_key=k0, now=1_000.0 + i)
     at = 1_100.0  # 全部会话仍在 TTL 内 → 只可能因上限被淘汰
-    assert gate.is_approved("s0", "com.apple.finder", "click", now=at) is False  # 最旧被淘汰
+    assert gate.is_approved("s0", "com.apple.finder", "click", target_key=k0, now=at) is False  # 最旧被淘汰
     assert gate.is_approved(
-        f"s{SESSION_APPROVAL_MAX_SESSIONS + 9}", "com.apple.finder", "click", now=at
+        f"s{SESSION_APPROVAL_MAX_SESSIONS + 9}", "com.apple.finder", "click",
+        target_key=k0, now=at,
     ) is True
 
 
@@ -1926,3 +1960,156 @@ def test_r5_backend_frontmost_app_bundle_failures_return_none(monkeypatch):
 
     monkeypatch.setattr(backend, "_run_lsappinfo", _boom)
     assert backend.frontmost_app_bundle() is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R6 修复轮（收口轮）：P1 关闭钮真机编码误判 + P2-1 会话免令牌按目标记账
+# 负例同样断言零投递（refusals must actually refuse）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_r6_close_button_real_machine_encoding_irreversible_and_never_session_exempt():
+    """P1：真机编码（role=AXButton + subrole=AXCloseButton）的关闭点击必须判
+    irreversible（risk_note 免责声明浮现），且一次令牌确认后的后续关闭点击
+    不得命中 session 免令牌通道——每次 apply 都要新令牌（审核 P1(a)(b)）。"""
+    close_view = _view(
+        _node("0", "AXWindow", "某文档"),
+        _node("0.2", "AXButton", None, subrole="AXCloseButton"),
+    )
+    backend = _backend(ax_views={101: close_view})
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.2"}, dry_run=True)
+    assert dry["ok"] is True
+    assert dry["risk_class"] == "irreversible"  # R6 前真机编码被判 act（P1 根因）
+    assert dry["risk_note"]  # 免责声明必须在场（P1(a)：不构成安全保证）
+    assert dry["target_identity"]["role"] == "AXButton"
+    assert dry["target_identity"]["subrole"] == "AXCloseButton"
+    ok = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.2"},
+                   dry_run=False, confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    assert len(backend.act_calls) == 1
+    # P1(b)：第二次关闭点击（无 token）→ dry_run_required，绝不免令牌投递
+    second = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.2"}, dry_run=False)
+    assert second["error_code"] == "dry_run_required"
+    assert second["risk_class"] == "irreversible"
+    assert "irreversible" in second["guidance"]
+    assert len(backend.act_calls) == 1  # 负例零投递
+    # 补一次 dry_run+token 后可再投递（单步语义保持）
+    dry2 = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.2"}, dry_run=True)
+    ok2 = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.2"},
+                    dry_run=False, confirm_token=dry2["confirm_token"])
+    assert ok2["applied"] is True
+    assert len(backend.act_calls) == 2
+
+
+def test_r6_close_button_legacy_role_encoding_still_irreversible():
+    """P1 兼容断言：旧编码（role=AXCloseButton，无 subrole）仍判 irreversible。"""
+    close_view = _view(
+        _node("0", "AXWindow", "某文档"),
+        _node("0.2", "AXCloseButton", None),
+    )
+    backend = _backend(ax_views={101: close_view})
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.2"}, dry_run=True)
+    assert dry["risk_class"] == "irreversible"
+    assert dry["risk_note"]
+
+
+def test_r6_session_exemption_scoped_to_target_identity_via_registry():
+    """P2-1：同 app 同 do 换目标 → 必须重新要令牌（负例零投递）；
+    同 app 同 do 同目标 → 免令牌路径仍可用（既定能力不收回）。"""
+    two_targets = _view(
+        _node("0", "AXWindow", "某文档"),
+        _node("0.0", "AXButton", "新建"),
+        _node("0.3", "AXButton", "打开"),
+    )
+    backend = _backend(ax_views={101: two_targets})
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.0"}, dry_run=True)
+    ok = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.0"},
+                   dry_run=False, confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    # 同 app 同 do 同目标（ax_ref=0.0）：免令牌路径仍可用
+    for _ in range(2):
+        again = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.0"}, dry_run=False)
+        assert again["applied"] is True
+    # 同 app 同 do 换目标（ax_ref=0.3）：不放行 → dry_run_required + 零投递
+    delivered = len(backend.act_calls)
+    other = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.3"}, dry_run=False)
+    assert other["error_code"] == "dry_run_required"
+    assert "目标" in other["guidance"]  # 提示语按目标口径说明
+    assert len(backend.act_calls) == delivered  # 负例零投递
+    # 换目标后按规矩补 dry_run+token 即可投递；随后同目标免令牌可用
+    dry2 = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.3"}, dry_run=True)
+    ok2 = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.3"},
+                    dry_run=False, confirm_token=dry2["confirm_token"])
+    assert ok2["applied"] is True
+    third = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.3"}, dry_run=False)
+    assert third["applied"] is True
+    # 旧目标（0.0）的放行不受新目标确认影响（各自独立记账）
+    still = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.0"}, dry_run=False)
+    assert still["applied"] is True
+
+
+def test_r6_session_exemption_same_axref_other_window_requires_token():
+    """P2-1：目标身份含 window——同 app 同 ax_ref 但换窗口也须新令牌。"""
+    win2 = _window(window_id=107, pid=808, app="Google Chrome", bundle_id="com.google.Chrome",
+                   title="另一文档 - Google Chrome", bounds=(0.0, 38.0, 1512.0, 877.0))
+    backend = _backend(windows=[_window(), win2])
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.0"}, dry_run=True)
+    ok = _dispatch(reg, do="click", window_id=101, target={"ax_ref": "0.0"},
+                   dry_run=False, confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    other_window = _dispatch(reg, do="click", window_id=107, target={"ax_ref": "0.0"}, dry_run=False)
+    assert other_window["error_code"] == "dry_run_required"
+    assert len(backend.act_calls) == 1  # 负例零投递
+
+
+def test_r6_session_exemption_keeps_text_freedom_for_type():
+    """P2-1：目标身份不含 text——同窗口同文本框 type 换文本仍属同目标
+    （既定「同 app 同 do 同目标免令牌」能力保持；text 漂移不再烧免令牌）。"""
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="type", window_id=101, target={"ax_ref": "0.1"},
+                    text="第一段", dry_run=True)
+    ok = _dispatch(reg, do="type", window_id=101, target={"ax_ref": "0.1"},
+                   text="第一段", dry_run=False, confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    again = _dispatch(reg, do="type", window_id=101, target={"ax_ref": "0.1"},
+                      text="第二段", dry_run=False)  # 同目标换文本 → 免令牌
+    assert again["applied"] is True
+    assert backend.act_calls[-1]["text"] == "第二段"
+
+
+def test_r6_descriptions_declare_session_scope_and_residuals():
+    """P2-1/P2-2/P2-4 披露契约：会话免令牌目标记账与「跳过 world 比对」、
+    全局 HID 浮层残余、type 整体替换破坏性、scroll 方向未验证、CGEventPost
+    不可观测——均必须在工具描述（与 compact 描述）可见。"""
+    desc = DesktopOperateTool.description
+    # P2-1：会话免令牌按目标记账 + 跳过 world 比对（显式残余）
+    assert "同目标" in desc
+    assert "不重做 world 比对" in desc
+    assert "同一 ax_ref 指向不同元素" in desc
+    # P2-2：全局 HID 投递残余（world 指纹无 Z 序/键盘焦点 → 浮层可收到事件）
+    assert "全局 HID tap" in desc
+    assert "Z 序" in desc
+    assert "浮层" in desc
+    # P2-4：type 整体替换破坏性 / scroll 方向符号未验证 / CGEvent 投递不可观测
+    assert "整体替换" in desc
+    assert "覆盖字段原内容" in desc
+    assert "未经 live 验证" in desc
+    assert "不可观测" in desc
+    # 参数描述同步披露
+    params = DesktopOperateTool.parameters["properties"]
+    assert "覆盖字段原内容" in params["text"]["description"]
+    assert "未经 live 验证" in params["keys"]["description"]
+    assert "浮层" in params["target"]["description"]
+    from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
+
+    compact = _COMPACT_TOOL_DESCRIPTIONS["desktop_operate"]
+    assert "同目标" in compact
+    assert "不重做world比对" in compact
+    assert "浮层" in compact
+    assert "整体替换" in compact
+    assert "未经live验证" in compact
+    assert "不可观测" in compact

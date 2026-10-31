@@ -17,23 +17,38 @@ R1 also hit-tests {point} against AXWebArea bounds, and scrolls/press_key in
 browser windows pass the same web boundary) → publish/submit/pay targets →
 review_required fail-closed (M2: host review_admission gate or refusal, never
 this tool's own token) → key/text policy (B3 blacklist, IME-polluted letter
-typing is NOT offered) → risk class (§6.2 heuristic; browser point/press_key/
-scroll never land in plain "act", M1) → [dry_run: issue one-shot confirm token]
+typing is NOT offered) → risk class (§6.2 heuristic — R6/P1: close buttons
+match role OR subrole AXCloseButton case-insensitively, real machines encode
+role=AXButton+subrole=AXCloseButton; browser point/press_key/scroll never
+land in plain "act", M1) → [dry_run: issue one-shot confirm token]
 → [apply: D7 HID idle user-present refusal FIRST (user present by default;
 force needs the one-time credential — validated here, consumed only at
 delivery, S2) → writes_enabled switch (default OFF, T8) → EXEC_MODE
 blocked/readonly refusal (M3) → §6.2 token/session gate (point channel NEVER
-session-exempt, M1; tokens carry a 10-min TTL and expired redemption is
-refused, P2-3) → D4 world re-bind (R5: the target window's app must BE the
-frontmost app — lsappinfo caliber; frontmost probe failure fails closed;
-CGWindowList order is NOT app focus) + focus drift breaks the world
-fingerprint, P2-1) → U18 AX self-probe → real delivery (force credential
-consumed only here, S2) → post fingerprint + session approval (point channel
-excluded)].
+session-exempt, M1; the session exemption is keyed to (app, do, TARGET
+IDENTITY) since R6/P2-1 — changing the target requires a fresh token; the
+exempt path still checks window existence + frontmost app but DELIBERATELY
+skips the world fingerprint re-compare, which is a DECLARED residual; tokens
+carry a 10-min TTL and expired redemption is refused, P2-3) → D4 world
+re-bind (R5: the target window's app must BE the frontmost app — lsappinfo
+caliber; frontmost probe failure fails closed; CGWindowList order is NOT app
+focus) + focus drift breaks the world fingerprint, P2-1) → U18 AX self-probe
+→ real delivery (force credential consumed only here, S2) → post fingerprint
++ session approval (point channel excluded)].
 Order note (P2-4/R2): D7 precedes the writes switch / EXEC_MODE — the human
 presence gate is the outermost human-safety refusal; when the writes switch is
 off the user_present guidance says so explicitly (a force credential alone
 cannot reach delivery while writes are disabled).
+
+Declared residuals (R6 disclosures — also surfaced in the tool description):
+(a) point clicks and press_key go through the GLOBAL HID tap; the world
+fingerprint carries no Z-order/keyboard-focus information, so an overlay or
+non-active panel covering the target window may still receive the event even
+when the target app is frontmost (no pre-delivery occlusion proof exists);
+(b) type is whole-replacement semantics and silently overwrites the field's
+previous content; (c) the scroll direction sign (CGEventPostToPid) has never
+been live-verified; (d) CGEventPost delivery is unobservable (no delivery
+confirmation — only post-hoc world/window comparison is possible).
 
 Receipts (§5.4): risk_class / pre_sha256 / post_sha256 / target_identity /
 applied / needs_confirmation / privacy_blocked (+ dry_run, confirm_token,
@@ -85,6 +100,7 @@ from llm_loop.desktop.operate import (
     parse_keycombo,
     parse_scroll,
     point_in_web_area,
+    session_target_key,
     web_area_rects,
     window_gone_fingerprint,
     world_fingerprint,
@@ -167,6 +183,9 @@ class _ActFlow:
     token_record: Any = None
     fresh_window: Any = None
     fresh_world: str = ""
+    # P2-1（R6）：会话免令牌的目标身份键（session_target_key 产物）——
+    # 免令牌放行从 (app, do) 收紧到 (app, do, 目标)，换目标即须新令牌。
+    target_key: str = ""
 
 
 class DesktopOperateTool:
@@ -177,9 +196,12 @@ class DesktopOperateTool:
         " {point:{x,y}}（单位=点；press_key 可省略 target=作用于绑定窗口焦点）。"
         "dry_run 默认 true（只回执不投递，并签发一次性 confirm_token）；apply 需 dry_run 后的"
         " confirm_token（令牌 10 分钟内有效，过期按 confirm_token_expired 拒绝）。"
-        "同 app 同动作类型在 session 内放行——注意该免令牌放行路径"
-        "**不重做 world 比对**（§6.2 字面允许）：窗口内结构漂移可能换靶，故坐标 point 目标"
-        "不享受该放行（每次都要令牌+world 比对）。不可逆启发式命中（关闭按钮/删除/发布/"
+        "同 app 同动作类型**同目标**（按 window+ax_ref/焦点元素记账）在 session 内放行——"
+        "注意该免令牌放行路径**不重做 world 比对**（§6.2 字面允许，属显式登记残余："
+        "结构漂移可能使同一 ax_ref 指向不同元素而不被该路径发现），且换目标"
+        "（不同 ax_ref/坐标/窗口）即须重新 dry_run 取新令牌；坐标 point 目标"
+        "不享受该放行（每次都要令牌+world 比对）。不可逆启发式命中（关闭按钮——真机编码"
+        " role=AXButton+subrole=AXCloseButton，role/subrole 两通道均识别——以及删除/发布/"
         "支付/浏览器 Enter 等）永远单步每次都要新 token。发布/提交/支付类目标一律"
         " review_required 拒绝（§6.3：须走宿主发表闸，本工具 token 不放行）。"
         "浏览器窗口内：网页内容区域（AXWebArea）的 point 点击、滚轮与网页焦点按键一律拒绝"
@@ -200,6 +222,11 @@ class DesktopOperateTool:
         "真实投递一律 writes_disabled；宿主 EXEC_MODE=blocked/readonly 时真实投递同样被拒"
         "（exec_mode_blocked）。dry_run 不受上述两开关限制。"
         "risk_class 由启发式判定，不构成安全保证。"
+        "残余披露（R6 登记）：point 点击与 press_key 经全局 HID tap 投递，world 指纹不含"
+        " Z 序/键盘焦点信息——即使目标 app 在前台，覆盖其上的浮层/非激活面板仍可能收到"
+        "事件（投递前无法证明目标点未被遮挡）；type 为整体替换语义（会静默覆盖字段原内容，"
+        "破坏性——不是追加）；scroll 方向符号（CGEventPostToPid 正负映射）未经 live 验证；"
+        "CGEvent 投递无确认回执（不可观测），只能事后核对世界/窗口状态。"
         "非 macOS 返回 unsupported_platform。审计 append-only JSONL，不提供删除/改写"
         "（审计只记令牌的 sha256 短摘要，不落明文片段）。"
     )
@@ -231,15 +258,15 @@ class DesktopOperateTool:
                     },
                 },
                 "additionalProperties": False,
-                "description": "寻址：ax_ref（exact，act-time 重解析）或 point（点单位；必须落在窗口 bounds 内；浏览器窗口内须落在 AXWebArea 网页区之外，且每次 apply 都要新令牌）。press_key 可省略（作用于绑定窗口当前焦点）；type 只接受 ax_ref",
+                "description": "寻址：ax_ref（exact，act-time 重解析）或 point（点单位；必须落在窗口 bounds 内；浏览器窗口内须落在 AXWebArea 网页区之外，且每次 apply 都要新令牌；point 经全局 HID tap 投递——浮层/覆盖窗口仍可能收到事件，见工具描述残余披露）。press_key 可省略（作用于绑定窗口当前焦点）；type 只接受 ax_ref",
             },
             "text": {
                 "type": "string",
-                "description": "type 专用：写入文本（整体替换语义，≤2000 字符；逐字符回读校验）",
+                "description": "type 专用：写入文本（整体替换语义——会静默覆盖字段原内容，破坏性；≤2000 字符；逐字符回读校验）",
             },
             "keys": {
                 "type": "string",
-                "description": "press_key：闭合命名键（enter/escape/tab/delete/backspace/space/arrows/home/end/pageup/pagedown/f1..f12），可带 ctrl/alt/shift 前缀；scroll：down|up 可带 :n（行数 1..20）",
+                "description": "press_key：闭合命名键（enter/escape/tab/delete/backspace/space/arrows/home/end/pageup/pagedown/f1..f12），可带 ctrl/alt/shift 前缀；scroll：down|up 可带 :n（行数 1..20；方向符号未经 live 验证）",
             },
             "dry_run": {
                 "type": "boolean",
@@ -901,12 +928,17 @@ class DesktopOperateTool:
         action_fp = action_fingerprint(
             do, window.window_id, binding_address, options.get("text"), keys
         )
+        # P2-1（R6）：会话免令牌的目标身份键——与令牌稳定寻址同源但不含
+        # text/keys（type 换文本/press_key 换键仍算同目标，既定能力保持）；
+        # 免令牌面从 (app, do) 收紧到 (app, do, 目标)，换目标即须新令牌。
+        target_key = session_target_key(window.window_id, binding_address)
         risk_note = RISK_HEURISTIC_DISCLAIMER if risk_class == "irreversible" else None
         flow.risk_class = risk_class
         flow.world = world
         flow.channel_token_required = channel_token_required
         flow.action_fp = action_fp
         flow.risk_note = risk_note
+        flow.target_key = target_key
     def _dry_run_receipt(self, flow: _ActFlow) -> ToolResult:
         """dry_run：不投递，签发一次性令牌（§5.4/§6.3；前台探测失败不拦 dry_run）。"""
         do, window = flow.do, flow.window
@@ -1112,14 +1144,17 @@ class DesktopOperateTool:
             )
         return None
     def _gate_session_token(self, flow: _ActFlow) -> ToolResult | None:
-        """§6.2 会话门 + T6 令牌校验（M1：point 通道永不享受会话免令牌放行）。"""
+        """§6.2 会话门 + T6 令牌校验（M1：point 通道永不享受会话免令牌放行；
+        P2-1/R6：会话放行按 (app, do, 目标身份键) 记账——换目标即须新令牌）。"""
         do, options, window = flow.do, flow.options, flow.window
         bundle = window.bundle_id
         audit, base, started = flow.audit, flow.base, flow.started
         risk_class, idle_ms, action_fp = flow.risk_class, flow.idle_ms, flow.action_fp
         channel_token_required = flow.channel_token_required
         session_id = self._session_id_getter()
-        approved = self._gate.is_approved(session_id, bundle, do)
+        approved = self._gate.is_approved(
+            session_id, bundle, do, target_key=flow.target_key
+        )
         token_str = str(options.get("confirm_token") or "")
         if (channel_token_required or risk_class == "irreversible" or not approved) and not token_str:
             audit["error_code"] = DesktopErrorCode.DRY_RUN_REQUIRED.value
@@ -1127,7 +1162,8 @@ class DesktopOperateTool:
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.DRY_RUN_REQUIRED,
                 guidance=(
-                    "该 (app, do) 组合在本会话尚未确认"
+                    "该 (app, do, 目标) 组合在本会话尚未确认"
+                    "（会话放行按目标身份记账：换目标即须重新 dry_run，R6/P2-1）"
                     + ("，且 irreversible 类永远需要逐步 confirm_token" if risk_class == "irreversible" else "")
                     + ("；坐标 point 目标不享受会话内放行，每次 apply 都需要新的"
                        " confirm_token + world 比对（M1）" if channel_token_required else "")
@@ -1300,9 +1336,10 @@ class DesktopOperateTool:
         # R5：前台口径 = 前台 app bundle（lsappinfo）。post 观测失败 → None（如实
         # 报告），不把已投递的动作误报成 backend_error——前台门控在投递前已完成。
         foreground_after = backend.frontmost_app_bundle()
-        # M1：point 通道与 irreversible 永不进会话放行（免令牌路径不得弱化）
+        # M1：point 通道与 irreversible 永不进会话放行（免令牌路径不得弱化）；
+        # P2-1（R6）：记账维度 (app, do) → (app, do, 目标身份键)。
         if risk_class == "act" and not channel_token_required:
-            self._gate.mark_approved(session_id, bundle, do)
+            self._gate.mark_approved(session_id, bundle, do, target_key=flow.target_key)
         audit.update(
             {"applied": True, "post_sha256": post_sha, "foreground_after": foreground_after,
              "error_code": None}
