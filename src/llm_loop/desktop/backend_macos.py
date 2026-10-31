@@ -14,18 +14,27 @@ import subprocess
 import sys
 from pathlib import Path
 
-from llm_loop.desktop import macos_ax, macos_capture, macos_permissions, macos_windows
+from llm_loop.desktop import (
+    macos_actuate,
+    macos_ax,
+    macos_capture,
+    macos_permissions,
+    macos_windows,
+)
 from llm_loop.desktop.apps_probe import (
     build_apps,
     parse_hidden_info,
     parse_lsappinfo_front,
     parse_lsappinfo_list,
 )
+from llm_loop.desktop.hid_idle import hid_idle_ms as _hid_idle_ms
 from llm_loop.desktop.models import (
     AX_NODE_LIMIT_DEFAULT,
+    ActOutcome,
     AppInfo,
     AxView,
     CaptureOutcome,
+    DesktopErrorCode,
     DisplayInfo,
     PermissionSnapshot,
     PlatformInfo,
@@ -215,5 +224,108 @@ class MacOSDesktopBackend:
             window,
             self._capture_dir,
             scale_hint=scale,
+        )
+
+    # ── M4：D7 探测 + D5 投递（写路径；工具层门控后才可到达）───────────────
+    def hid_idle_ms(self) -> int | None:
+        return _hid_idle_ms()
+
+    def ax_probe(self, pid: int) -> int | None:
+        """U18 同构自检：对目标 pid 读 AXWindows 的真实错误码（0=可用）。"""
+        return macos_ax.ax_readable_probe(int(pid))
+
+    def act_press(self, window: WindowInfo, ax_ref: str) -> ActOutcome:
+        """click(ax_ref)：act-time 重解析 + AXPress（主通道，已实测可投递）。"""
+        el, failure = macos_actuate.resolve_element_by_axref(window, ax_ref)
+        if el is None:
+            return self._resolution_failure(failure)
+        try:
+            return macos_actuate.act_outcome_from_ax_err(
+                macos_actuate.ax_press(el), "AXPress"
+            )
+        finally:
+            el.release()
+
+    def act_set_value(self, window: WindowInfo, ax_ref: str, text: str) -> ActOutcome:
+        """type：AX set-value（已实测通道）+ 写后回读校验（逐字节相等才算成）。"""
+        el, failure = macos_actuate.resolve_element_by_axref(window, ax_ref)
+        if el is None:
+            return self._resolution_failure(failure)
+        try:
+            err = macos_actuate.ax_set_value(el, text)
+            if err != 0:
+                return macos_actuate.act_outcome_from_ax_err(err, "AXSetAttributeValue")
+            readback = macos_actuate.ax_read_value_string(el)
+            verified = readback == text
+            if not verified:
+                return ActOutcome(
+                    ok=False,
+                    error=DesktopErrorCode.BACKEND_ERROR,
+                    detail=(
+                        "AX 写入后回读不一致（写入已发生但结果未确认）："
+                        f"expect={text!r:.60} got={(readback or '')!r:.60}"
+                    ),
+                    ax_error=None,
+                    verified=False,
+                )
+            return ActOutcome(ok=True, verified=True)
+        finally:
+            el.release()
+
+    def act_click_point(self, x_pt: float, y_pt: float) -> ActOutcome:
+        """click(point)：CGEvent 左键点击（全局坐标，单位=点，与 AX 同单位）。"""
+        try:
+            macos_actuate.cg_post_click(float(x_pt), float(y_pt))
+        except Exception as exc:  # noqa: BLE001 - 投递失败确定性回执，不带栈
+            return ActOutcome(
+                ok=False,
+                error=DesktopErrorCode.BACKEND_ERROR,
+                detail=f"CGEvent 点击投递失败: {type(exc).__name__}",
+            )
+        return ActOutcome(ok=True)
+
+    def act_key(self, keycode: int, flags: int) -> ActOutcome:
+        """press_key：CGEvent 命名键 down+up（闭合键集；字母通道被 IME 污染，不提供）。"""
+        try:
+            macos_actuate.cg_post_key(int(keycode), int(flags))
+        except Exception as exc:  # noqa: BLE001
+            return ActOutcome(
+                ok=False,
+                error=DesktopErrorCode.BACKEND_ERROR,
+                detail=f"CGEvent 按键投递失败: {type(exc).__name__}",
+            )
+        return ActOutcome(ok=True)
+
+    def act_scroll(self, window: WindowInfo, signed_lines: int) -> ActOutcome:
+        """scroll：滚轮事件定向投递到窗口所属 pid（不挪动用户光标）。"""
+        try:
+            macos_actuate.cg_post_scroll_to_pid(window.pid, int(signed_lines))
+        except Exception as exc:  # noqa: BLE001
+            return ActOutcome(
+                ok=False,
+                error=DesktopErrorCode.BACKEND_ERROR,
+                detail=f"CGEvent 滚轮投递失败: {type(exc).__name__}",
+            )
+        return ActOutcome(ok=True)
+
+    @staticmethod
+    def _resolution_failure(failure: str | None) -> ActOutcome:
+        detail = {
+            "ax_ref_invalid": "ax_ref 不是合法索引路径（形如 0.2.1）",
+            "ax_ref_not_found": "ax_ref 在当前 AX 树中不存在（目标已变化）",
+            "ax_unavailable": "AX 通道不可用（未授权/应用不支持）",
+            "ax_window_unbound": "窗口绑定未命中（窗口已移动/关闭或标题变化）",
+            "window_ambiguous": "AX 侧匹配到多个候选窗口，绑定歧义",
+        }.get(failure or "", f"元素解析失败: {failure}")
+        return ActOutcome(
+            ok=False,
+            error=(
+                DesktopErrorCode.WINDOW_AMBIGUOUS
+                if failure == "window_ambiguous"
+                else DesktopErrorCode.WINDOW_UNBOUND
+                if failure in ("ax_ref_not_found", "ax_window_unbound")
+                else DesktopErrorCode.AX_UNAVAILABLE
+            ),
+            detail=detail,
         )
 

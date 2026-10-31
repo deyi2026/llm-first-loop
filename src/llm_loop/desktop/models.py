@@ -40,6 +40,22 @@ class DesktopErrorCode(StrEnum):
     PRIVACY_BLOCKED = "privacy_blocked"
     APP_NOT_ALLOWED = "app_not_allowed"
     BACKEND_ERROR = "backend_error"
+    # ── M4 desktop_operate（DESIGN-20261027 §5.4/§5.5/§6.2/§6.4/D5-D9）──
+    WINDOW_UNBOUND = "window_unbound"  # D4：绑定期内目标/窗口身份不再命中
+    FOREGROUND_CHANGED = "foreground_changed"  # U16/U20：world 漂移，令牌作废
+    USER_PRESENT = "user_present"  # D7/U15：HID idle < 60s，默认拒 mutate
+    KEY_NOT_ALLOWED = "key_not_allowed"  # U5/B3：按键黑名单/闭合键集外
+    COORDINATE_OUT_OF_BOUNDS = "coordinate_out_of_bounds"  # §7.3.2：点越界
+    DRY_RUN_REQUIRED = "dry_run_required"  # §6.2：act 首次必须 dry_run
+    CONFIRM_TOKEN_INVALID = "confirm_token_invalid"  # T6：未知/不可解析令牌
+    CONFIRM_TOKEN_REPLAYED = "confirm_token_replayed"  # U17/T6：一次性令牌重放
+    CONFIRM_TOKEN_MISMATCH = "confirm_token_mismatch"  # U16：令牌绑定不符
+    WRITES_DISABLED = "writes_disabled"  # T8：写能力开关默认关
+    FORCE_CREDENTIAL_MISSING = "force_credential_missing"  # D7：force 缺一次性凭据
+    FORCE_CREDENTIAL_INVALID = "force_credential_invalid"  # D7：凭据不匹配/已消耗
+    WEB_TARGET_NOT_ALLOWED = "web_target_not_allowed"  # 路线 A：网页层走 browser_operate
+    TYPE_TEXT_TOO_LONG = "type_text_too_long"  # §5.5：>2000 字符
+    TYPE_ARGS_INVALID = "type_args_invalid"  # §5.5：type 参数非法
 
 
 # AX 错误码 → (确定性错误码, 人类可读 reason)。-25211 是权限类（给修复指引）；
@@ -195,6 +211,21 @@ class CaptureOutcome:
     error: DesktopErrorCode | None
     detail: str | None = None
     degraded: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class ActOutcome:
+    """M4 写动作投递结果（确定性，不带栈）。
+
+    ok=True 表示动作已真实投递（AX err==0 或 CGEvent 已 post）；
+    ok=False 时 error 给出确定性错误码，detail 给不含栈的原因。
+    """
+
+    ok: bool
+    error: DesktopErrorCode | None = None
+    detail: str | None = None
+    ax_error: int | None = None
+    verified: bool | None = None  # type 动作写入后回读校验结果（None=不适用）
 
 
 @dataclass(frozen=True)

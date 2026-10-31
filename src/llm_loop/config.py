@@ -469,6 +469,18 @@ class Settings:
     # U14 see 层可见范围（逗号分隔 bundle_id 精确匹配）。默认空 = 全部允许（不默认拒绝）；
     # 非空时名单外 app：apps 标 allowed=false、windows 隐标题、snapshot 拒 app_not_allowed。
     desktop_see_allowlist: str = ""
+    # ── M4 desktop_operate（DESIGN-20261027 §5.4/§6.2/§6.4/D5-D9；桌面窄操作）──
+    # 写能力总开关（T8：能力不随代码自动上线）。默认 False = act/irreversible 真实投递
+    # 一律 writes_disabled；dry_run 与只读自检不受限。上线后每个会话不自动获得写能力，
+    # 需用户显式 LFL_DESKTOP_OPERATE_ENABLED=1 并重启宿主。
+    desktop_operate_enabled: bool = False
+    # act 白名单追加项（逗号分隔 bundle_id，小写精确）。核心四项（Finder/Safari/
+    # Chrome/Preview）硬编码于 operate.py；终端/IDE 硬编码只读，追加也无效（T3）。
+    desktop_act_allowlist_extra: str = ""
+    # D7 force 一次性授权凭据（env 预置；空 = force 永久拒绝）。每会话仅可消耗一次；
+    # 宿主当前没有面向 desktop_operate 的人工审批/凭据铸造通道（凭据来源缺口，
+    # 见 M4 dev report）：唯一来源是用户在进程启动前亲手设置该 env。
+    desktop_force_credential: str = ""
     # ── Fleet ExecutionWorkspace/WorkerLease 生产接线（2026-09-19 slice4 G1）──
     # 缺省全空 = fleet 完全关闭（零行为零回归）；显式配置 LFL_FLEET_WORKSPACE_ROOT
     # 后 factory 才构造 ProjectCoordinator 注入 SubAgentRunner（run 边界
@@ -1066,6 +1078,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         browser_cdp_max_frame_bytes=env_int("LFL_BROWSER_CDP_MAX_FRAME_BYTES", 134_217_728),
         desktop_privacy_extra=env_values.get("LFL_DESKTOP_PRIVACY_EXTRA", "").strip(),
         desktop_see_allowlist=env_values.get("LFL_DESKTOP_SEE_ALLOWLIST", "").strip(),
+        desktop_operate_enabled=env_bool("LFL_DESKTOP_OPERATE_ENABLED", False),
+        desktop_act_allowlist_extra=env_values.get("LFL_DESKTOP_ACT_ALLOWLIST_EXTRA", "").strip(),
+        desktop_force_credential=env_values.get("LFL_DESKTOP_FORCE_CREDENTIAL", "").strip(),
         browser_receipt_diff_summary_enabled=env_bool("LFL_BROWSER_RECEIPT_DIFF_SUMMARY_ENABLED", False),
         exec_mode=env_one(_env_exec_mode, "EXEC_MODE"),
         exec_allowlist=env_values.get("EXEC_ALLOWLIST", "").strip(),
