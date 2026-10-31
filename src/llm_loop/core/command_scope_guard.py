@@ -676,7 +676,12 @@ def _rsync_backup_targets(
     """
     targets = [backup_dir]
     if target_dir is not None:
+        # 第十九轮独立审查 P2-1：``--target-directory=DIR`` 在场时，位置操作数
+        # 全是**源**（rsync 的目标就是 DIR）⇒ 把位置参数当写目标是**过拒**
+        # （且会把域外的**只读源**判成越界写）。⇒ 目标目录已定位 ⇒ 不取位置
+        # 参数、也不再有隐式写。
         targets.append(target_dir)
+        return (targets, False)
     dst = positional[-1:] if positional else []
     return (targets + dst, not dst)
 
@@ -693,6 +698,11 @@ def _flag_value(args: Sequence[str], *flags: str) -> str | None:
     """
     found: str | None = None
     for index, token in enumerate(args):
+        if token == "--":
+            # 第十九轮独立审查 P2-3：``--`` 之后的操作数是**字面量**（不再是
+            # 选项）⇒ 到此停止解析，避免把 ``-- --target-directory=x`` 这类
+            # 字面量误当选项取值（此前是**过拒**方向）。
+            break
         for flag in flags:
             if token == flag:
                 found = args[index + 1] if index + 1 < len(args) else ""
@@ -1373,6 +1383,10 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
     if any(value.startswith("exec=") or value == "exec" for value in checkpoints):
         return ([], True)
     # 第十四轮 P0：``--index-file=FILE`` 让 tar 写**索引文件** ⇒ FILE 是写目标。
+    # 第十九轮独立审查 P1-1：此前只在 **x/c 分支**判 ⇒ 其它模式漏判：
+    # ``tar -tvf a.tar --index-file=/outside/x``（list 模式把成员清单重定向到
+    # FILE）、``tar -rf``/``-uf``（追加/更新也要写成员清单）实测**放行** ⇒
+    # 越界写逃逸。⇒ 提到模式分派**之前**统一判（任何产出成员清单的模式都会写它）。
     index_file = scan.value_of("--index-file")
     if _tar_mode(args, positional, "x"):
         # 第十二轮 push 闸 P1-1：tar 的多个 ``-C`` 各自作用于其后的成员 ⇒
@@ -1393,7 +1407,46 @@ def _tar_write_targets(args: Sequence[str], positional: Sequence[str]) -> tuple[
             return (targets, not archive)
         # 创建模式但归档名不可静态定位 ⇒ 拒
         return ([], True)
-    return (positional[:1], not positional)
+    # 其余模式（list/追加/更新等）：``--index-file`` 仍是写目标。
+    targets = list(positional[:1])
+    if index_file:
+        targets.insert(0, index_file)
+    return (targets, not positional)
+
+
+def _curl_write_out_output_targets(args: Sequence[str]) -> list[str] | None:
+    """curl 的 ``-w/--write-out`` 取值里 ``%output{PATH}`` 的 PATH 列表。
+
+    上游依据（双源）：man7 curl(1) 与 curl.se 手册都记载 --write-out 的输出
+    目标「can be changed with %{stderr} and %output{}」⇒ ``%output{PATH}``
+    里的 PATH 是 curl 的**写目标**。
+
+    返回 ``None`` 表示**结构不可解析**（出现 ``%output{`` 但没有闭合的 ``}``）
+    ⇒ 写目标不可静态定位 ⇒ 调用方 fail-closed。空列表表示没有该指令。
+    """
+    found: list[str] = []
+    for index, token in enumerate(args):
+        value: str | None = None
+        if token in ("-w", "--write-out"):
+            value = args[index + 1] if index + 1 < len(args) else ""
+        elif token.startswith("--write-out="):
+            value = token.split("=", 1)[1]
+        elif token.startswith("-w") and len(token) > 2 and not token.startswith("--"):
+            value = token[2:]
+        if value is None:
+            continue
+        rest = value
+        while True:
+            start = rest.find("%output{")
+            if start < 0:
+                break
+            rest = rest[start + len("%output{") :]
+            end = rest.find("}")
+            if end < 0:
+                return None
+            found.append(rest[:end])
+            rest = rest[end + 1 :]
+    return found
 
 
 def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], bool]:
@@ -1416,7 +1469,6 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
         for flag in (
             "-o",
             "--output",
-            "--output-dir",
             "-D",
             "--dump-header",
             "--trace",
@@ -1434,13 +1486,26 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
             # 参数 ⇒ 写目标从未被定位（实测靠 fail-closed 兜住，拒因不准）。
             "--alt-svc",
             "--hsts",
-            # 第十五轮独立审查 P2-2：``--output-dir DIR`` 决定 ``-o``/``-O``
-            # 文件落盘目录 ⇒ DIR 是写目标（此前未进目标清单）。
-            "--output-dir",
         ):
             # 第十二轮独立审查 P1-1：curl 的多个 ``-o`` **逐个都写**（每个 URL
             # 一个文件）⇒ 全部取值都要判，不能只看第一个。
             targets.extend(scan.values_of(flag))
+        # 第十五轮独立审查 P2-2 / 第十九轮独立审查 P2-2：``--output-dir DIR``
+        # 只在**配合 -o/-O** 时才决定 ``-o``/``-O`` 的文件落盘目录；单独给
+        # --output-dir（无 -o/-O）时 curl 输出到 stdout、**不落盘文件** ⇒ 不该
+        # 把 DIR 当写目标（此前过拒：``curl --output-dir=/outside URL`` 被拒）。
+        if scan.has("-o", "--output", "-O", "--remote-name", "--remote-name-all"):
+            targets.extend(scan.values_of("--output-dir"))
+        # 第十九轮独立审查 P2-4：curl 的 ``-w/--write-out`` 支持
+        # ``%output{PATH}``（上游双源：man7 curl(1) 与 curl.se 手册均记载
+        # "…can be changed with %{stderr} and %output{}"）⇒ PATH 是 curl 的
+        # **写目标**。此前完全未建模 ⇒ ``curl -w %output{/outside/x} URL``
+        # 越界写放行。⇒ 从 write-out 取值里抽出 ``%output{...}`` 的路径逐个判。
+        write_out_targets = _curl_write_out_output_targets(args)
+        if write_out_targets is None:
+            # ``%output{`` 没有闭合的 ``}`` ⇒ 写目标不可静态定位 ⇒ fail-closed。
+            return ([], True)
+        targets.extend(write_out_targets)
         # 第十四轮 P0 + 独立审查 P1-1：隐式写只认 ``-O/--remote-name/
         # --remote-name-all``（按**远端名**落盘到 cwd ⇒ 文件名不可静态定位）。
         # ``-J/--remote-header-name`` **只在配合 -O 时**才决定文件名（curl

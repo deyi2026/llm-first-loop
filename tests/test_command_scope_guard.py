@@ -1260,3 +1260,55 @@ def test_r17_review_fixes_do_not_over_block(command: str) -> None:
     """第十七轮修复不得误伤：域内取值、非删除簇、多个无害 checkpoint 动作。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第十九轮：第四轮独立审查（REVISE：P1=1/P2=4）的响应锚点 ────────────────
+#
+# P1-1（tar --index-file 只在 x/c 分支判）：``--index-file=FILE`` 在**任何**产出
+#      成员清单的模式下都会写 FILE（list 模式把清单重定向到 FILE、``-rf``/
+#      ``-uf`` 追加/更新也写）⇒ 提到模式分派之前统一判。
+# P2-1（rsync 目标目录在场仍把位置参数当写目标）：``--target-directory=DIR``
+#      在场时位置操作数全是**源** ⇒ 过拒 ⇒ 目标目录已定位就不再取位置参数。
+# P2-2（curl --output-dir 无 -o 也当写目标）：只有配合 ``-o/-O`` 时
+#      --output-dir 才决定落盘目录 ⇒ 单独给时输出到 stdout、不落盘 ⇒ 放行。
+# P2-3（``--`` 之后的字面量被当选项取值）：``--`` 后停止解析选项。
+# P2-4（curl --write-out 的 ``%output{PATH}`` 未建模）：上游双源（man7 curl(1)
+#      与 curl.se 手册）记载 --write-out 支持 ``%output{}`` ⇒ PATH 是写目标。
+
+R19_BLOCKED_CASES = [
+    ("tar -tvf a.tar --index-file=/outside/x", "write_target_outside_scope"),
+    ("tar -rf a.tar --index-file=/outside/x f", "write_target_outside_scope"),
+    ("curl -w %output{/outside/x} URL", "write_target_outside_scope"),
+    ("curl --write-out %output{/outside/x} URL", "write_target_outside_scope"),
+    ("curl -w %output{/outside/x URL", "implicit_write_target"),
+    # ``--`` 之后只有**一个**操作数 ⇒ rsync 缺 dst ⇒ 隐式写 fail-closed
+    # （不是字面量解析问题：dst 确实无法静态定位）。
+    ("rsync -b -- --backup-dir=/outside/b", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R19_BLOCKED_CASES)
+def test_r19_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+    """第十九轮复现向量：第四轮独立审查点名的绕过必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R19_ALLOWED_CASES = [
+    # 无 -o/-O 时 --output-dir 不落盘任何文件（输出到 stdout）⇒ 放行。
+    "curl --output-dir=/outside URL",
+    # --target-directory 在场时位置操作数是源（不是写目标）⇒ 放行。
+    "rsync -b --backup-dir=bk --target-directory=dl src",
+    # --write-out 里没有 %output{} ⇒ 不引入任何写目标。
+    "curl -w %{http_code} URL",
+    # ``--`` 之后的操作数是字面量（源）⇒ 不按选项取值判定；另有 dst ⇒ 放行。
+    "rsync -b -- --backup-dir=/outside/b src dst",
+]
+
+
+@pytest.mark.parametrize("command", R19_ALLOWED_CASES)
+def test_r19_review_fixes_do_not_over_block(command: str) -> None:
+    """第十九轮修复不得误伤：stdout 输出、源操作数、无 %output 的 write-out。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
