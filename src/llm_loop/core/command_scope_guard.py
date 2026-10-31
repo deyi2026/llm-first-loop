@@ -689,9 +689,23 @@ def _rsync_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
     if scan.has("--rsh", "-e", "--rsync-path"):
         # P0-1：执行通道（传输命令/远端命令）⇒ 载荷不可静态定位。
         return ([], True)
+    if scan.has("-M", "--remote-option"):
+        # 第九轮独立审查 P2-1（纵深防御）：取值被**原样转发**给远端 rsync 作为
+        # 其选项（如 ``-M--log-file=/outside/l``）——同主机"远端"（默认传输即
+        # 本机）下等同本机选项注入，作用域不可静态定位 ⇒ fail-closed（与
+        # ``--rsh`` 同口径）。
+        return ([], True)
     if scan.has("--daemon"):
         # P1-2：守护模式 ⇒ pid/log/模块路径等写入目标不可静态定位。
         return ([], True)
+    # 落盘型选项取值先收集——第九轮独立审查 P1-1：remove-source-files 分支
+    # 此前提前 return，跳过了这段收集 ⇒ ``--log-file=``/``--backup-dir=``/
+    # ``-T`` 等与 ``--remove-source-files`` 组合时**越界写放行**
+    # （实测 ``rsync -a --remove-source-files --log-file=/outside/l src dst``
+    # 放行 ⇒ ``/outside/l`` 从未被判定）。⇒ 两个分支共用同一份收集。
+    targets: list[str] = []
+    for flag in RSYNC_WRITE_TARGET_OPTIONS:
+        targets.extend(scan.values_of(flag))
     operands = list(scan.operands)
     if scan.has("--remove-source-files"):
         # 第八轮独立审查 P1-1：``--remove-source-files`` 在传输成功后**删除源
@@ -700,14 +714,27 @@ def _rsync_write_targets(args: Sequence[str]) -> tuple[list[str], bool]:
         # 写名工具）⇒ 全部操作数（源 + 目标）都要判作用域：此前只判 dst ⇒
         # ``rsync -a --remove-source-files /outside/proj dst`` 放行 ⇒ 域外源树
         # 被删掉（实测放行）。
-        return (operands, False)
-    targets: list[str] = []
-    for flag in RSYNC_WRITE_TARGET_OPTIONS:
-        targets.extend(scan.values_of(flag))
+        # 第九轮独立审查 P1-1（续）：本分支还须带上落盘型选项取值；且零操作数
+        # 形态此前也随 ``([], False)`` 放行 ⇒ 与下方"无操作数 ⇒ 不可定位"同口径
+        # fail-closed。
+        if not operands:
+            return ([], True)
+        return (operands + targets, False)
     if not operands:
         # P1-2：无操作数 ⇒ 既非列举也非复制 ⇒ 写目标不可静态定位。
         return ([], True)
-    dst = operands[-1:] if len(operands) >= 2 else []
+    if len(operands) >= 2:
+        dst: list[str] = operands[-1:]
+    elif operands and scan.has("--read-batch", "--files-from"):
+        # 第九轮独立审查 P1-2：``--read-batch=FILE`` 的单操作数形态是"把批文件
+        # 应用到该 DIR"（上游：``rsync [options] --read-batch=BATCH [dest]``）⇒
+        # 该操作数是**写目标**而非列举对象；``--files-from=FILE`` 的单 DIR 形态
+        # 同理（上游：``rsync [options] --files-from=FILE [DEST]`` ⇒ DEST 是复
+        # 制目的地）。此前单操作数一律按"仅列举"处理 ⇒
+        # ``rsync --read-batch=b /outside/dst`` 越界写放行（实测放行）。
+        dst = list(operands)
+    else:
+        dst = []
     return (targets + dst, False)
 
 
@@ -733,7 +760,11 @@ def _copy_move_targets(
     target_dir = scan.value_of("-t", "--target-directory")
     if target_dir is not None:
         return ([target_dir], not target_dir)
-    if name == "ln" and "-T" in args:
+    if name == "ln" and scan.has("-T"):
+        # 第九轮独立审查 P2-2：``"-T" in args`` 只做**精确匹配** ⇒ ``-vT``/
+        # ``-Tf`` 簇形态漏判（单操作数边界退化为隐式路径=过拒，安全方向但不精
+        # 确）。``-T`` 已在 TARGET_DIRECTORY_OPTIONS 注册为布尔（第十二轮 push
+        # 闸 P2-4）⇒ 族扫描形态按 getopt 语义消费簇。
         return ([positional[-1]] if positional else [], not positional)
     return (positional[-1:], len(positional) < 2)
 

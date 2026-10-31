@@ -1343,7 +1343,10 @@ R20_BLOCKED_CASES = [
     # ── 第六轮独立审查 P1-1：``-M/--remote-option=OPT`` 是**取值型**（上游手册）
     #    ⇒ 此前被登记成布尔 ⇒ 取值落进操作数 ⇒ dst 被取成取值（域内）⇒ 越界
     #    dst 漏判（实测 ``rsync src /outside/dst -M opt`` 放行）。
-    ("rsync src /outside/dst -M opt", "write_target_outside_scope"),
+    #    第二十五轮（第九轮独立审查 P2-1）注：``-M`` 的存在现在**先于** dst 判定
+    #    fail-closed（远端选项注入）⇒ 该向量的拒绝理由变为 implicit_write_target
+    #    （取值型登记本身仍必要——否则取值落进操作数破坏 dst 判定，见下一条）。
+    ("rsync src /outside/dst -M opt", "implicit_write_target"),
     # 选项的**取值**被误当 dst ⇒ 越界 dst 漏判（结构性）。
     ("rsync src /outside/dst --exclude-from x", "write_target_outside_scope"),
     # rsync 没有 --target-directory ⇒ 未建模选项 ⇒ fail-closed。
@@ -1500,3 +1503,73 @@ def test_r24_review_fixes_do_not_over_block(command: str) -> None:
     """第二十四轮修复不得误伤：域内 remove-source-files、取值位形态。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第二十五轮：第九轮独立审查响应的复现锚 ────────────────────────────
+# P1-1（remove-source-files 分支跳过落盘型选项收集）、P1-2（--read-batch/
+# --files-from 单操作数=写目标）、P2-1（-M/--remote-option 远端选项注入）、
+# P2-2（ln -T 簇形态）。
+
+R25_BLOCKED_CASES = [
+    # P1-1：remove-source-files 分支此前提前 return，跳过 RSYNC_WRITE_TARGET_OPTIONS
+    # 收集 ⇒ 落盘型选项与它组合时越界写放行（实测放行）。
+    (
+        "rsync -a --remove-source-files --log-file=/outside/l src dst",
+        "write_target_outside_scope",
+    ),
+    (
+        "rsync -a --remove-source-files --backup-dir=/outside/b src dst",
+        "write_target_outside_scope",
+    ),
+    (
+        "rsync -a --remove-source-files -T /outside/t src dst",
+        "write_target_outside_scope",
+    ),
+    # P1-2：--read-batch=FILE / --files-from=FILE 的单操作数形态——该操作数是
+    # **写目标**（批文件应用到该 DIR），此前按"仅列举"放行（实测放行）。
+    ("rsync --read-batch=b /outside/dst", "write_target_outside_scope"),
+    ("rsync --files-from=f /outside/dst", "write_target_outside_scope"),
+    # P2-1：-M/--remote-option 取值被原样转发给远端 rsync ⇒ 选项注入 ⇒
+    # fail-closed（与 --rsh 同口径的纵深防御）。
+    ("rsync -M --log-file=/outside/l src dst", "implicit_write_target"),
+    ("rsync --remote-option=--log-file=/x src dst", "implicit_write_target"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R25_BLOCKED_CASES)
+def test_r25_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+    """第二十五轮复现向量：第九轮独立审查点名的绕过必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R25_ALLOWED_CASES = [
+    # P1-1 不得误伤：域内 remove-source-files + 域内落盘选项组合（增量迁移+日志）。
+    "rsync -a --remove-source-files --log-file=in-scope.log src dst",
+    # P1-2 不得误伤：--read-batch/--files-from 单操作数形态落在域内。
+    "rsync --read-batch=b dst",
+    "rsync --files-from=f dst",
+]
+
+
+@pytest.mark.parametrize("command", R25_ALLOWED_CASES)
+def test_r25_review_fixes_do_not_over_block(command: str) -> None:
+    """第二十五轮修复不得误伤：域内组合与单操作数写目标。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+def test_r25_ln_dash_t_cluster_form_recognized() -> None:
+    """P2-2：``ln -vT a b``（簇形态）按 -T 语义取末位操作数为精确目标。
+
+    精确匹配 ``"-T" in args`` 漏掉簇形态 ⇒ 退化到隐式路径（过拒方向）。
+    修复后族扫描按 getopt 消费簇 ⇒ 显式 -T 分支 ⇒ 两个域内操作数放行；
+    域外目标仍拦。
+    """
+    ok_cmd = "ln -vT a b"
+    d = _check(ok_cmd, scope=_scope(paths=("**",)))
+    assert d.allowed is True, (ok_cmd, d.reason, d.detail)
+    bad_cmd = "ln -vT a /outside/b"
+    d2 = _check(bad_cmd, scope=_scope(paths=("**",)))
+    assert d2.allowed is False, (bad_cmd, d2.reason, d2.detail)
