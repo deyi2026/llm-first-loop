@@ -1019,13 +1019,15 @@ class RecordSearcher:
         raw = str(query or "").strip()
         exact = raw[len("experience:") :] if raw.lower().startswith("experience:") else raw
         if exact:
-            doc = self._experience_store.get(exact)
-            if doc is not None:
+            # EVO-20261031-a72df001：精确水合与 refine_experience 同源解析
+            # （canonical stem 由 ExperienceStore.resolve_id 唯一确定）。
+            resolved = self._experience_store.resolve_id(exact)
+            if resolved is not None:
+                stem, doc = resolved
                 # R3(P0-3): hydrate 路径不走扫描，诊断置健康零值（区分"不存在/不可解析"
                 # 依赖 get 留痕日志归因，design §1.2.3 口径注明）
                 self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
                 self._last_semantic_diagnostics = None
-                stem = exact.removesuffix(".md")
                 # P1-B 读侧修复：过滤必须在 _annotate_usage（usage_feedback 的
                 # recent_issue 合并）**之后**；knowledge_read 打点仍在过滤之后
                 # （丢弃行未返回调用方）。
