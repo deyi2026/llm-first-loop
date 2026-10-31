@@ -745,8 +745,13 @@ def _submit_one(
         return failed(f"{kind} store not assembled")
 
     if item.self_reported:
+        # 自报通道的 ref 口径必须与写入侧一致：experience 的写入侧会剥掉
+        # "experience:" 前缀（record_use(ref.removeprefix("experience:"))），
+        # 校验侧不剥就会把合法的 stable ref 判成 not found —— 上一轮三种
+        # ref 形式提交全失败的根因即此（EVO-20261031-3f8c7d12）。
+        probe_ref = ref.removeprefix("experience:") if kind == "experience" else ref
         try:
-            exists = store.get(ref) is not None
+            exists = store.get(probe_ref) is not None
         except Exception:  # noqa: BLE001
             exists = False
         if not exists:

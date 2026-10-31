@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1992,3 +1993,320 @@ def test_full_test_refuses_to_issue_glued_header(tmp_path: Path, monkeypatch) ->
     assert "glued_value" in str(refused["reason"])
     # 拒绝发生在出票前：审查子进程从未被启动
     assert runner.started == 0
+
+
+# --- EVO-20261031-8f3c1d92: vendored third-party asset class -----------------
+#
+# A skill vendored from an upstream project brings its whole data/ tree with
+# it (measured: skills/ui-ux-pro-max = 49 files / 3.33MB, three of them
+# 824KB / 747KB / 433KB).  Each of those three exceeded the 400_000B
+# per-path ceiling, so the asset was commit-able but never push-able — it
+# could never be reviewed.  These tests lock BOTH directions: the vendored
+# class is projected instead of refused, and every guardrail that used to
+# refuse it (byte ceiling, file count, projection budget, sensitive paths)
+# still refuses it where it should.
+
+
+def test_vendored_asset_class_is_code_not_ai_writable_data() -> None:
+    # The vendored class must NOT be an AI-writable manifest entry: if it
+    # were, the gate could authorise its own relaxation.
+    assert rha._VENDORED_ASSET_PREFIXES
+    for prefix in rha._VENDORED_ASSET_PREFIXES:
+        assert prefix.startswith("skills/")
+        assert prefix.endswith("/")
+    assert rha._is_vendored_asset("skills/ui-ux-pro-max/SKILL.md") is True
+    # A sibling directory that merely shares a prefix is NOT in the class.
+    assert rha._is_vendored_asset("skills/ui-ux-pro-max-extra/SKILL.md") is False
+    assert rha._is_vendored_asset("src/llm_loop/app.py") is False
+
+
+def test_diff_acquire_cap_is_typed_for_the_vendored_class() -> None:
+    assert rha._diff_acquire_cap("skills/ui-ux-pro-max/SKILL.md") == 8_000_000
+    # Every path outside the class keeps the strict ceiling.
+    assert rha._diff_acquire_cap("src/llm_loop/app.py") == 400_000
+    assert rha._diff_material_code("skills/ui-ux-pro-max/SKILL.md") == (
+        "git_state_too_large:material_acquire>8000000"
+    )
+    assert rha._diff_material_code("src/llm_loop/app.py") == (
+        "git_state_too_large:material_diff>400000"
+    )
+
+
+def test_vendored_projection_states_the_omission_explicitly() -> None:
+    text = "A" * 200_000
+    projected = rha._project_vendored_asset("skills/ui-ux-pro-max/data/x.json", text)
+    assert "TRUNCATED vendored asset" in projected
+    assert "omitted" in projected
+    assert len(projected.encode("utf-8")) < len(text.encode("utf-8"))
+    # Outside the class the text is returned verbatim — full review, no
+    # projection, no omission.
+    assert rha._project_vendored_asset("src/x.json", text) == text
+    # A small vendored file is carried whole.
+    assert rha._project_vendored_asset("skills/ui-ux-pro-max/small.md", "ok") == "ok"
+
+
+def test_vendored_committed_monster_is_projected_not_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    d = repo / "skills" / "ui-ux-pro-max"
+    d.mkdir(parents=True)
+    (d / "big.json").write_text("z" * 700_000)
+    subprocess.run(["git", "-C", str(repo), "add", "skills"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "vendored asset"], check=True)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+    assert "TRUNCATED vendored asset" in runner.task
+
+
+def test_vendored_untracked_large_file_is_projected_not_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    d = repo / "skills" / "frontend-design"
+    d.mkdir(parents=True)
+    (d / "assets.json").write_text("y" * 500_000)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+    assert "TRUNCATED vendored asset" in runner.task
+
+
+def test_vendored_untracked_file_count_may_exceed_the_plain_limit(tmp_path: Path) -> None:
+    # 49 vendored files: above the ordinary 40-file bound, inside the
+    # vendored bound. The two counters are kept apart on purpose.
+    repo = _repo(tmp_path)
+    d = repo / "skills" / "ui-ux-pro-max"
+    d.mkdir(parents=True)
+    for i in range(49):
+        (d / f"f{i}.md").write_text("x" * 100)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert allowed["accepted"] is True
+    assert runner.started == 1
+
+
+def test_vendored_untracked_file_over_hard_cap_is_still_refused(tmp_path: Path) -> None:
+    # The vendored ceiling is re-bounded, not removed: past it the refusal
+    # still stands.
+    repo = _repo(tmp_path)
+    d = repo / "skills" / "ui-ux-pro-max"
+    d.mkdir(parents=True)
+    (d / "huge.json").write_text("z" * 1_200_000)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert "review_untracked_file_too_large" in str(blocked["reason"])
+    assert runner.started == 0
+
+
+def test_vendored_projection_entry_budget_is_enforced(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    # The number of projected entries is bounded, so a pathological tree
+    # cannot inflate the review material without limit.
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(rha, "_VENDORED_ASSET_PROJECTION_MAX_ENTRIES", 1)
+    d = repo / "skills" / "ui-ux-pro-max"
+    d.mkdir(parents=True)
+    for i in range(2):
+        (d / f"big{i}.json").write_text("z" * 200_000)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert "review_artifact_exceeds_cap" in str(blocked["reason"])
+    assert runner.started == 0
+
+
+def test_vendored_class_does_not_exempt_sensitive_paths(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    d = repo / "skills" / "ui-ux-pro-max"
+    d.mkdir(parents=True)
+    (d / ".env").write_text("SECRET=1\n")
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is False
+    assert "sensitive" in str(blocked["reason"]).lower()
+    assert runner.started == 0
+
+
+def test_frozen_header_records_the_vendored_class_and_projection_count() -> None:
+    fields = rha._frozen_header_fields(
+        "HEAD", "a" * 40, "b" * 40, "c" * 40, "d" * 40, "e" * 40,
+    )
+    keys = dict(fields)
+    assert "vendored_asset_prefixes" in keys
+    assert "skills/ui-ux-pro-max/" in keys["vendored_asset_prefixes"]
+
+
+# --- EVO-20261030-05c4379d: admission capacity must be reclaimable ---------
+# Regression: the records table only reclaimed CONSUMED entries, so every
+# review whose command was never executed pinned one of the 64 slots forever.
+# A single long-lived Host process could therefore answer "review_host_capacity"
+# permanently and block every later session.
+
+
+def test_expired_unconsumed_record_is_evicted_and_audited(tmp_path: Path) -> None:
+    """A stale, never-consumed record is evicted instead of pinning capacity."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    events: list[tuple[str, dict]] = []
+
+    class _Store:
+        enabled = True
+
+        def append(self, parent, event_type, payload):
+            events.append((event_type, payload))
+            return {"ok": True}
+
+    host.attach_event_store(_Store())
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert first["accepted"] is True
+    assert len(host._records) == 1
+
+    # Age the record past the TTL without touching its grant state.
+    key = next(iter(host._records))
+    row = host._records[key]
+    host._records[key] = rha._Frozen(
+        row.kind, row.parent, row.target, row.sha, row.child_id,
+        granted=row.granted, consumed=row.consumed,
+        created_at=row.created_at - rha._RECORD_TTL_SECONDS - 1,
+        state=row.state,
+    )
+    blocked = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert blocked["accepted"] is True, "expired record must not block a new admission"
+    assert any(t == "review_admission_record_evicted" for t, _ in events)
+    evicted = [p for t, p in events if t == "review_admission_record_evicted"]
+    assert evicted and evicted[0]["reason"] == "ttl_expired_unconsumed"
+
+
+def _distinct_child_runner() -> FakeChildRunner:
+    """FakeChildRunner that mints a NEW child id per start().
+
+    The shared stub always returns "child-review-1", so a second start() on the
+    same Host hits the (correct) child-id-reuse guard instead of the admission
+    capacity check. These EVO tests need a second, independent review.
+    """
+    runner = FakeChildRunner()
+    counter = {"n": 0}
+
+    def _start(task, **kwargs):
+        counter["n"] += 1
+        out = FakeChildRunner.start(runner, task, **kwargs)
+        if out.get("accepted"):
+            out = dict(out)
+            out["child_id"] = f"child-review-{counter['n']}"
+        return out
+
+    runner.start = _start  # type: ignore[method-assign]
+    def _result_current(child_id: str, wait_seconds=0):
+        # The shared stub asserts a constant child id; answer for any minted id.
+        assert child_id.startswith("child-review-")
+        result = SimpleNamespace(final_answer=runner.answer, outcome=runner.state)
+        return True, "ok", {
+            "child_id": child_id,
+            "parent_id": runner.parent,
+            "state": runner.state,
+            "result_id": "result-verified" if runner.state == "completed" else "",
+            "generation": "gen-1",
+            "result": result,
+            "local_active": runner.state == "running",
+        }
+
+    runner.result_current = _result_current  # type: ignore[method-assign]
+    return runner
+
+
+def test_settled_review_does_not_occupy_admission_capacity(tmp_path: Path) -> None:
+    """A terminal verdict that was never executed no longer blocks admissions."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert first["accepted"] is True
+    child_id = first["child_id"]
+
+    # The reviewer answered REVISE and nobody ran the command afterwards.
+    runner.state = "completed"
+    runner.answer = "VERDICT: REVISE\nP0=1 P1=1 P2=0\nSHA256: " + "0" * 64
+    polled = host.poll("author-1", child_id)
+    assert polled["qualification"] == "REVISE"
+
+    second = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert second["accepted"] is True, "settled record must not consume a slot"
+    assert host._active_records() == 1
+
+
+def test_running_review_still_occupies_capacity(tmp_path: Path) -> None:
+    """Only an in-flight review holds a slot; the bound is not weakened."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = FakeChildRunner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert first["accepted"] is True
+    second = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert second["accepted"] is False
+    assert second["reason"] == "review_host_capacity"
+
+
+def test_consumed_record_is_reclaimed(tmp_path: Path) -> None:
+    """A spent grant is dropped instead of being kept forever."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    host._max_records = 1
+    first = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    child_id = first["child_id"]
+    runner.state = "completed"
+    runner.answer = (
+        "VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: "
+        + first["candidate_sha256"]
+    )
+    assert host.poll("author-1", child_id)["qualification"] == "PASS"
+    key = next(iter(host._records))
+    row = host._records[key]
+    host._records[key] = rha._Frozen(
+        row.kind, row.parent, row.target, row.sha, row.child_id,
+        granted=True, consumed=True, created_at=row.created_at, state=row.state,
+    )
+    second = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert second["accepted"] is True
+    assert all(not r.consumed for r in host._records.values())
+
+
+def test_sixty_four_stale_records_do_not_deadlock_admission(tmp_path: Path) -> None:
+    """The exact failure this EVO describes: 64 stale records used to be fatal."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    runner = _distinct_child_runner()
+    host.attach_runner(runner)
+    for i in range(host._max_records):
+        row = rha._Frozen(
+            "full_test", "author-1", f"target-{i}", "0" * 64,
+            child_id=f"child-{i}", created_at=time.time() - rha._RECORD_TTL_SECONDS - 1,
+        )
+        host._records[f"child-{i}"] = row
+    assert len(host._records) == host._max_records
+    admitted = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert admitted["accepted"] is True
+    assert admitted["child_id"]

@@ -101,3 +101,60 @@ class TestRuntimePathsExtensionsDir:
         assert (store.root / "packages").is_dir()
         assert (store.root / "instances").is_dir()
         assert (store.root / "locks").is_dir()
+
+
+class TestManifestGateCoversDiscovery:
+    """EVO-20261031-6b21e0f4: 门禁必须覆盖发现侧，不只是加载侧.
+
+    门禁此前只在 skill_load 生效，skill_list 仍把注定被拒的技能列出来，
+    模型据此去 load 再吃一次拒绝——「开门禁」只做一半等于没开。
+    """
+
+    @staticmethod
+    def _skills(tmp_path):
+        d = tmp_path / "skills" / "alpha"
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: A\n---\n正文\n", encoding="utf-8"
+        )
+        return tmp_path / "skills"
+
+    @staticmethod
+    def _host(skills):
+        return SimpleNamespace(skills_dir=str(skills), extensions_catalog=None)
+
+    def test_gated_list_hides_unverified_skill(self, tmp_path, monkeypatch):
+        from llm_loop.skills.loader import build_manifest, write_manifest
+
+        skills = self._skills(tmp_path)
+        write_manifest(skills, build_manifest(skills))
+        # 改动 SKILL.md 之外的辅助文件 → 目录树基线失配 → modified
+        (skills / "alpha" / "extra.md").write_text("x\n", encoding="utf-8")
+        monkeypatch.setenv("LFL_SKILLS_REQUIRE_MANIFEST", "1")
+        listing = run_skill_list(self._host(skills), {})
+        assert listing.status == ToolResultStatus.SUCCESS
+        # 被隐藏技能的**名字**本就应出现在披露段里，所以断言的是
+        # 「可用条目」形态（"- alpha:"）不出现，而不是名字完全不出现。
+        assert "- alpha:" not in listing.content
+        assert "已隐藏 1 个" in listing.content
+        assert "alpha(modified)" in listing.content
+
+    def test_ungated_list_keeps_skill_visible(self, tmp_path, monkeypatch):
+        from llm_loop.skills.loader import build_manifest, write_manifest
+
+        skills = self._skills(tmp_path)
+        write_manifest(skills, build_manifest(skills))
+        (skills / "alpha" / "extra.md").write_text("x\n", encoding="utf-8")
+        monkeypatch.delenv("LFL_SKILLS_REQUIRE_MANIFEST", raising=False)
+        listing = run_skill_list(self._host(skills), {})
+        assert "- alpha:" in listing.content
+
+    def test_gated_list_shows_verified_skill(self, tmp_path, monkeypatch):
+        from llm_loop.skills.loader import build_manifest, write_manifest
+
+        skills = self._skills(tmp_path)
+        write_manifest(skills, build_manifest(skills))
+        monkeypatch.setenv("LFL_SKILLS_REQUIRE_MANIFEST", "1")
+        listing = run_skill_list(self._host(skills), {})
+        assert "alpha" in listing.content
+        assert "已隐藏" not in listing.content

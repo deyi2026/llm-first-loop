@@ -1,6 +1,6 @@
 """写侧授权核心契约层（P0，DESIGN-20261030 §5.1/§5.2/§5.4/§5.8）.
 
-本模块只做**声明解析 + 路径判定 + 父子求交 + 进程内审计**四件纯算法/契约事，
+本模块只做**声明解析 + 路径判定 + 父子求交 + 进程内审计 + glob→内核可写根编译（compile_scope_roots，T05 纯判定不接线）**五件纯算法/契约事，
 不做强制点（edit_file/execute_command 的接线在 C6-C8）、不做传递链注入
 （runner 的 C5）、不做受保护路径默认清单（§5.8 P2）。
 
@@ -33,6 +33,12 @@
   中间空段（及 ``.``/``..`` 段）永不匹配：allow 模式下=空转 allow 条目
   （fail-closed 拒写）；deny 模式下=空转排除项（fail-open 全量放行陷阱），
   解析层确定性拒绝（第二轮返修 A，``_deny_entry_viable``）。
+- deny 条目必须带目录语义（D1 返修，``_expand_deny_pattern``）：非 ``/**``
+  结尾的排除项在解析层存储为 ``p + "/**"``。修前 ``deny ["src"]`` 编译成锚定
+  正则 ``src``，只匹配 rel 恰为 ``src`` 的路径；而写目标永远是文件，于是该
+  条目永不命中其内容——声明禁止却全量放行（实测 ``src/x/y.py`` → True），
+  且解析层静默接受。扩展只收紧（``X/**`` 命中 ``X`` 与任意层子路径），对
+  精确文件条目命中集不变；allow 模式不受影响。
 - 判定异常（极端路径/权限）一律 fail-closed 拒绝（写侧不能 fail-open），
   返回 ``outside_scope``。
 """
@@ -234,6 +240,38 @@ def _deny_entry_viable(pattern: str) -> bool:
     return all(seg and seg not in (".", "..") for seg in pattern.split("/"))
 
 
+def _expand_deny_pattern(pattern: str) -> str:
+    """deny 排除项「目录语义」扩展：非 ``/**`` 结尾 → 追加 ``/**``（只收紧）.
+
+    根因（D1，修前实测）：``_pattern_regex("src")`` 编译为 ``^src\\Z``，只匹配
+    rel 恰为 ``src`` 的路径。而 ``scope_allows`` 的 rel 永远是**文件**相对路径
+    （写目标不可能是目录），故无通配的裸目录名条目在 deny 模式下**永不命中其
+    内容**——``{"paths": ["src"], "mode": "deny"}`` 对
+    ``src/llm_loop/core/sandbox.py`` 实测返回 ``(True, "")``：声明了禁止目录，
+    实际一个字节都没禁（fail-open），且解析层静默接受。这比 P2-1 空排除集更
+    隐蔽：外观完全正常，只有读源码或实测才能发现。
+
+    修正口径：``X/**`` 的 glob 命中集 = ``{X} ∪ {X 下任意层}``，且本身命中
+    ``X``（见 ``_pattern_regex``）。故把非 ``/**`` 结尾条目扩展为
+    ``p + "/**"`` 后：
+
+    - **对文件目标**：``p`` 与 ``p/**`` 命中集相同（文件不可能有子路径），
+      精确文件排除语义不变——``deny ["a.txt"]`` 仍排除 ``a.txt``；
+    - **对目录目标**：从「只排除目录自身（永不发生在写目标上）」收紧为
+      「排除整棵子树」，即声明者的直觉语义（同 ``.gitignore`` 目录条目）。
+
+    方向恒为**更严格**（多排除、不多放行），不改变 allow 模式任何语义。
+    扩展不引入新的非法段（只在尾部追加合法段），故 ``_deny_entry_viable``
+    只需对原串检查一次。
+
+    例外：``**`` 自身已是全匹配形态，扩展成 ``**/**`` 会退化为可匹配空 rel，
+    故原样保留；已以 ``/**`` 结尾者原样保留（幂等）。
+    """
+    if pattern == "**" or pattern.endswith("/**"):
+        return pattern
+    return pattern + "/**"
+
+
 # ── 解析 ──
 
 
@@ -267,6 +305,12 @@ def parse_write_scope(raw: object) -> WriteScope | None:
     - pattern 元素经 ``_normalize_pattern`` 归一后存储（``./src/**`` ≡ ``src/**``，
       尾部 ``/`` 剥离，根指称 ``"."``/``"./"``/``"/"`` → ``''``），消除同一
       pattern 的形态差异（P2-6 返修；根指称 → ``''`` 为第二轮返修 A）
+    - mode=deny 的条目追加「目录语义」：非 ``/**`` 结尾者存储为 ``p + "/**"``
+      （D1 返修）。修前 ``{"paths": ["src"], "mode": "deny"}`` 对
+      ``src/x/y.py`` 实测 ``(True, "")``——``^src\\Z`` 只匹配 rel 恰为 ``src``，
+      而写目标永远是文件，故裸目录名排除项永不命中其内容 = 声明禁止却全量
+      放行。扩展只收紧（``X/**`` 命中 ``X`` 及其任意层子路径），对精确文件
+      条目命中集不变；allow 模式不扩展。
     - 未知键忽略（向前兼容，不做 schema 全量校验）
     """
     if not isinstance(raw, dict):
@@ -305,6 +349,12 @@ def parse_write_scope(raw: object) -> WriteScope | None:
         # allow 模式不做此检查：永不匹配的 allow 条目=贡献为空=fail-closed。
         if any(not _deny_entry_viable(p) for p in normalized):
             return None
+        # D1 返修：deny 排除项必须带「目录语义」。裸目录名（如 "src"）归一后
+        # 只匹配 rel 恰为 "src" 的路径，而写目标永远是文件 → 永不命中其内容，
+        # 声明禁止却全量放行（实测 src/llm_loop/core/sandbox.py → (True, "")）。
+        # 扩展为 "src/**" 后命中整棵子树；对文件条目命中集不变。方向恒为收紧，
+        # allow 模式不经过此处，语义零影响。
+        normalized = tuple(_expand_deny_pattern(p) for p in normalized)
     return WriteScope(paths=normalized, mode=mode, declared=True)
 
 
@@ -337,11 +387,13 @@ def scope_allows(scope: WriteScope | None, abs_path: str, workspace_root: str) -
         logger.warning("[write_scope] 判定异常，已拒绝（fail-closed）: %r", exc)
         return (False, "outside_scope")
     for pat in scope.deny_paths:
-        if _matches(pat, rel):
+        # deny 条目在消费侧统一按 D1 目录语义展开（六轮审查 P2-1）：直接构造的
+        # ``WriteScope(deny_paths=("secrets",))`` 绕过解析层时也必须排除整棵子树。
+        if _matches(_expand_deny_pattern(pat), rel):
             return (False, "denied_by_deny_list")
     if scope.mode == MODE_DENY:
         for pat in scope.paths:
-            if _matches(pat, rel):
+            if _matches(_expand_deny_pattern(pat), rel):
                 return (False, "denied_by_deny_list")
         return (True, "")
     for pat in scope.paths:
@@ -443,6 +495,225 @@ def intersect_write_scope(
         ),
         "",
     )
+
+
+# ── glob → 内核可写根编译（T05：sandbox writable_roots 的纯编译判定层，不接线）──
+
+# 单条 allow pattern 的三分类（判定表见 compile_scope_roots 文档字符串）：
+SCOPE_ROOT_EQUIVALENT = "equivalent"  # X/**：glob 命中集 = subpath=X 子树，可安全内核化
+SCOPE_ROOT_AMPLIFYING = "amplifying"  # X / X/**/Y：编译为 subpath 后内核允许范围 ⊋ glob 命中集
+SCOPE_ROOT_UNVERIFIABLE = "unverifiable"  # **/Y、*abc、字面前缀为空：无法锚定 subpath
+
+# 整体状态：ok = 逐条三分类；not_supported = 内核 allow-subpath 表达不了，整体不编译
+SCOPE_ROOTS_OK = "ok"
+SCOPE_ROOTS_NOT_SUPPORTED = "not_supported"
+
+_WILDCARD_CHARS = ("*", "?", "[")
+
+
+def _segment_has_wildcard(seg: str) -> bool:
+    """段内是否含 glob 元字符（``*`` / ``?`` / ``[``；``**`` 是 ``*`` 的特例）."""
+    return any(c in seg for c in _WILDCARD_CHARS)
+
+
+@dataclass(frozen=True)
+class ScopeRoot:
+    """单条 allow pattern 的「glob → 内核 subpath」编译结果（T05）.
+
+    - ``pattern``: 归一后 allow pattern（相对 workspace_root；``_normalize_pattern``
+      产物，幂等）；
+    - ``classification``: 三分类之一（模块级 ``SCOPE_ROOT_*`` 常量）。**消费方只允许
+      把 ``equivalent`` 条目交给内核**；``amplifying`` 必须单列并显式决策，绝不静默
+      当 equivalent 使用；``unverifiable`` 一律不编译（fail-closed）；
+    - ``subpath``: 相对 workspace_root 的子路径（equivalent=去尾 ``/**``；
+      amplifying=截到首个含通配段前的字面前缀；unverifiable → None）；
+    - ``root``: ``normpath(join(realpath(workspace_root), subpath))`` 绝对形态
+      （与 ``scope_allows`` 的 root 归一同口径；unverifiable → None）；
+    - ``detail``: 分类依据；amplifying 必须写明放大原因。
+    """
+
+    pattern: str
+    classification: str
+    subpath: str | None
+    root: str | None
+    detail: str
+
+
+@dataclass(frozen=True)
+class ScopeRoots:
+    """``compile_scope_roots`` 的整体结果.
+
+    - ``status``: ``ok``（逐条三分类）| ``not_supported``（deny 形态 / deny_paths
+      非空 / 未声明 scope——内核 allow-subpath 表达不了，fail-closed 整体不编译）；
+    - ``roots``: 与 ``scope.paths`` 同序的逐条编译结果（not_supported → 恒空元组）；
+    - ``detail``: not_supported 的原因 / ok 的三分类计数汇总。
+    """
+
+    status: str
+    roots: tuple[ScopeRoot, ...] = ()
+    detail: str = ""
+
+
+def _compile_scope_root(pattern: str, base: str) -> ScopeRoot:
+    """单条（已归一）pattern 的三分类判定（纯函数；判定表见 compile_scope_roots）.
+
+    双保险 fail-closed（安全缺陷修复：修前 `../docs/**` 被标 equivalent 且 root
+    经 normpath **逃逸 workspace_root**，若消费即把工作区外子树交给内核）:
+    1. 段级拒绝：归一后仍含 `.`/`..`/空段的 pattern 一律 unverifiable（与
+       ``_deny_entry_viable`` 的段检查同口径）——scope_allows 的 rel 判定产物
+       永不含这三类段，此类 glob 命中集恒为空，而按字面段锚定又会挪动 root
+       （`..` 段可直接逃逸 base），等价性不可证明；
+    2. root 围栏：无论走哪条分支，产出的 root 必须落在归一后 base（workspace_root）
+       之内，越界即 unverifiable 且不产出 root——防未来新形态绕过第一道的兜底。
+    """
+    segs = pattern.split("/") if pattern else []
+    # 双保险第一道（段级拒绝）：``_deny_entry_viable`` 即 parse 层 deny 用途的同一
+    # 段检查谓词（非空、无空段、无 `.`/`..` 段），此处复用保证口径永久一致。空串
+    # （根指称归一形态）不归本道，仍由下方判定表 4 按原口径拒绝。
+    if pattern and not _deny_entry_viable(pattern):
+        return ScopeRoot(
+            pattern,
+            SCOPE_ROOT_UNVERIFIABLE,
+            None,
+            None,
+            f"pattern 含 `.`/`..`/空段（{pattern!r}，归一后残余）：LFL glob 对归一"
+            "后 rel 永不命中（命中集恒为空），按字面段锚定 root 又会偏离字面前缀"
+            "（`..` 段更可逃逸 workspace_root）——等价性不可证明，fail-closed 不编译",
+        )
+    first_wild = next(
+        (i for i, seg in enumerate(segs) if _segment_has_wildcard(seg)), len(segs)
+    )
+    # 判定表 4：字面前缀为空——空 pattern（根指称归一为 ''）或首段即含通配
+    # （**/Y、*abc、**、a[b]/**）——没有可锚定的字面子路径，fail-closed 不编译
+    if not pattern or first_wild == 0:
+        return ScopeRoot(
+            pattern,
+            SCOPE_ROOT_UNVERIFIABLE,
+            None,
+            None,
+            f"字面前缀为空（通配开头或根指称形态 {pattern!r}）：无法锚定内核 subpath"
+            "——fail-closed 不编译",
+        )
+    literal_prefix = "/".join(segs[:first_wild])
+    if first_wild == len(segs):
+        # 判定表 2：X（无任何通配，裸目录名或字面路径）。LFL glob 只命中该路径本身
+        # （实测 paths=["docs"] 对 docs/a.md fail-closed 拒绝、子路径零命中），内核
+        # subpath=X 却放行整棵 X 子树——编译即放大，必须单列并显式决策。
+        classification = SCOPE_ROOT_AMPLIFYING
+        detail = (
+            f"字面路径 {pattern!r} 无通配：glob 仅命中该路径本身（子路径零命中、"
+            f"fail-closed），内核 subpath={literal_prefix!r} 却放行整个子树"
+            "——编译会放大"
+        )
+    elif segs[-1] == "**" and first_wild == len(segs) - 1:
+        # 判定表 1：X/**、X/Y/**（唯一通配是尾部 ** 段，其余段全字面）——glob 命中集
+        # = X 子树（含 X 本身），与内核 subpath=X 语义等价，可安全内核化。
+        classification = SCOPE_ROOT_EQUIVALENT
+        detail = (
+            f"通配仅在尾部：glob {pattern!r} 命中集 = {literal_prefix!r} 子树，"
+            "与内核 subpath 语义等价"
+        )
+    else:
+        # 判定表 3：X/**/Y（及 X/*、X/Y*/Z 等——有通配但非「仅尾部 **」形态）。截到
+        # 字面前缀编译 subpath=X：内核放行整个 X 子树 ⊋ glob 命中集（Y 以外的 X
+        # 子树也被允许）——编译会放大，必须单列并显式决策。
+        classification = SCOPE_ROOT_AMPLIFYING
+        detail = (
+            f"通配不在尾部（{pattern!r} 属 X/**/Y、X/* 等形态）：内核 subpath="
+            f"{literal_prefix!r} 放行整个子树，大于 glob 命中集——编译会放大"
+        )
+    # 双保险第二道（root 围栏）：第一道已拒绝 `.`/`..`/空段，当前合法形态经
+    # normpath 理论上不会越界；本道是兜底——防未来归一/分支调整后新形态绕过
+    # 第一道。一旦越界立即降级 unverifiable 且不产出 root，绝不外泄围栏外子树。
+    root = os.path.normpath(os.path.join(base, literal_prefix))
+    if root != base and not root.startswith(base.rstrip("/") + "/"):
+        return ScopeRoot(
+            pattern,
+            SCOPE_ROOT_UNVERIFIABLE,
+            None,
+            None,
+            f"编译 root {root!r} 越出 workspace_root（base={base!r}）：root 围栏"
+            "兜底拦截，fail-closed 不产出内核根",
+        )
+    return ScopeRoot(pattern, classification, literal_prefix, root, detail)
+
+
+def compile_scope_roots(scope: WriteScope | None, workspace_root: str) -> ScopeRoots:
+    """把 WriteScope 的 allow glob pattern 编译为内核可写根（纯函数，T05）.
+
+    背景：sandbox-exec 的 ``writable_roots`` 只接受**子路径**（subpath）形态，本函数
+    对每条 pattern 做「glob 命中集 vs 内核 subpath 子树」的可证明性判定并三分类；
+    **本函数不做任何强制点接线**（execute_command 的消费在后续任务），也不改任何
+    既有判定行为。
+
+    判定表（形态 → classification → 编译产物）:
+    1. ``X/**`` / ``X/Y/**``（唯一通配是尾部 ``**``，其余段全字面）
+       → ``equivalent``，subpath=X（或 X/Y）——glob 命中集=该子树，可安全内核化；
+    2. ``X``（无任何通配：裸目录名或字面路径）→ ``amplifying``，subpath=X 会放大
+       （内核放行 X 整棵子树，LFL glob 实际只命中 X 本身、子路径零命中）；
+    3. ``X/**/Y``（中段通配）→ ``amplifying``，subpath=X 会放大（Y 以外的 X 子树
+       也被内核放行）；同形态归并：``X/*``、``X/Y*/Z`` 等「有通配但非仅尾部 **」；
+    4. 通配开头（``**/Y``、``*abc``、``**``）或字面前缀为空（含根指称归一为 ``''``
+       的 ``"."``/``"/"`` 形态）→ ``unverifiable``，无字面前缀可锚定 subpath，
+       fail-closed 不编译；
+    5. ``mode == "deny"`` → 整体 ``not_supported``（排除集无法用内核 allow-subpath
+       表达，deny 形态不纳入内核化，**绝不编译成内核 allow**）。
+
+    额外 fail-closed 边界（判定表之外的确定性拒绝，不放大不静默）:
+    - 归一后仍含 ``.``/``..``/空段的 pattern（``../docs/**``、``docs/../src/**``、
+      ``docs//x/**``、``docs/./x/**``）→ 该条 ``unverifiable``：glob 命中集恒为空
+      （scope_allows 的 rel 判定产物不含这三类段），按字面段锚定又会挪动 root
+      （``..`` 段可逃逸 workspace_root——安全缺陷修复）；段级拒绝与
+      ``_deny_entry_viable`` 的段检查同口径，作用于归一后形态（前导 ``./`` 已剥除，
+      ``./X/**`` ≡ ``X/**`` 不受影响）；
+    - 任何分支产出的 root 越出归一后 workspace_root → 该条 ``unverifiable`` 且
+      root=None（root 围栏兜底，防未来新形态绕过段级拒绝）；
+    - ``scope is None`` 或 ``declared=False``（未声明=继承父/全量口径）→
+      ``not_supported``；
+    - ``deny_paths`` 非空（求交叠加的排除集）→ ``not_supported``：等价性不可证明
+      （内核 subpath 无法表达排除）；
+    - allow 模式 ``paths == ()``（显式只读，FR-4）→ ``ok`` 且 ``roots == ()``。
+    """
+    if scope is None or not scope.declared:
+        return ScopeRoots(
+            SCOPE_ROOTS_NOT_SUPPORTED,
+            (),
+            "scope 未声明（None / declared=False = 继承父、判定口径全量）：不纳入内核化",
+        )
+    if scope.mode == MODE_DENY:
+        return ScopeRoots(
+            SCOPE_ROOTS_NOT_SUPPORTED,
+            (),
+            "deny 模式（paths 为排除集）：内核 allow-subpath 无法表达排除语义，"
+            "deny 形态不纳入内核化（fail-closed，绝不编译成内核 allow）",
+        )
+    if scope.deny_paths:
+        return ScopeRoots(
+            SCOPE_ROOTS_NOT_SUPPORTED,
+            (),
+            f"deny_paths 非空（{len(scope.deny_paths)} 条排除）：glob↔subpath 等价性"
+            "不可证明，fail-closed 整体不编译",
+        )
+    if not scope.paths:
+        return ScopeRoots(
+            SCOPE_ROOTS_OK, (), "allow 模式空 paths（显式只读，FR-4）：无可编译可写根"
+        )
+    base = os.path.realpath(os.path.expanduser(str(workspace_root)))
+    roots = tuple(_compile_scope_root(_normalize_pattern(p), base) for p in scope.paths)
+    counts = {
+        cls: sum(1 for r in roots if r.classification == cls)
+        for cls in (
+            SCOPE_ROOT_EQUIVALENT,
+            SCOPE_ROOT_AMPLIFYING,
+            SCOPE_ROOT_UNVERIFIABLE,
+        )
+    }
+    detail = (
+        f"allow 模式 {len(roots)} 条 pattern：equivalent {counts[SCOPE_ROOT_EQUIVALENT]}、"
+        f"amplifying {counts[SCOPE_ROOT_AMPLIFYING]}、"
+        f"unverifiable {counts[SCOPE_ROOT_UNVERIFIABLE]}"
+    )
+    return ScopeRoots(SCOPE_ROOTS_OK, roots, detail)
 
 
 # ── 进程内审计（模块级 + Lock：同进程跨线程可见；跨进程/重启即丢失，P0 已知边界）──
