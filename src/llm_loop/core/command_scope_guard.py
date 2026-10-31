@@ -1424,6 +1424,9 @@ def _download_write_targets(name: str, args: Sequence[str]) -> tuple[list[str], 
             # 参数 ⇒ 写目标从未被定位（实测靠 fail-closed 兜住，拒因不准）。
             "--alt-svc",
             "--hsts",
+            # 第十五轮独立审查 P2-2：``--output-dir DIR`` 决定 ``-o``/``-O``
+            # 文件落盘目录 ⇒ DIR 是写目标（此前未进目标清单）。
+            "--output-dir",
         ):
             # 第十二轮独立审查 P1-1：curl 的多个 ``-o`` **逐个都写**（每个 URL
             # 一个文件）⇒ 全部取值都要判，不能只看第一个。
@@ -1547,12 +1550,15 @@ def _compiler_token_value(raw: list[str], flag: str) -> str | None:
             and token[0] == "-"
             and token[1] in _COMPILER_CLUSTER_BOOL_LETTERS
             and token[2] == flag[1]
-            and (len(token) == 3 or token[3] in "/=")
         ):
-            # 第十四轮 P0：组合短选项（getopt 语义）——``-wo/outside/x`` =
-            # ``-w``（布尔）+ ``-o``（取值，值为余串）。此前只认「token 以
-            # ``-o`` 开头」⇒ ``-wo...`` 整族不命中 ⇒ 产物落点从未被判定 ⇒
-            # 越界写放行。余串为空（``-wo``）⇒ 值取下一个 argv。
+            # 第十四轮 P0 + 第十五轮独立审查 P1-1：组合短选项（getopt 语义）
+            # ——``-wo/outside/x`` = ``-w``（布尔）+ ``-o``（取值，值为余串）。
+            # 此前只认「token 以 ``-o`` 开头」⇒ ``-wo...`` 整族不命中 ⇒ 产物
+            # 落点从未被判定 ⇒ 越界写放行。余串为空（``-wo``）⇒ 值取下一个
+            # argv。第十五轮 P1-1：余串**不必以 / 或 = 开头**——``-wo../escape``
+            # 是合法的「-o 值 = ../escape」（**相对**越界写）⇒ 只认 / 与 = 会
+            # 漏掉相对路径形态 ⇒ 改为「余串非空即值」（bool 字母的门控已保证
+            # ``-Werror``/``-lo`` 不会被误读成 ``-o``）。
             if len(token) > 3:
                 found = token[3:]
             else:
@@ -1890,19 +1896,24 @@ def _symbolic_ref_is_write_form(args: Sequence[str], actions: Sequence[str]) -> 
 
 
 def _git_delete_flag_hit(token: str) -> bool:
-    """``git symbolic-ref`` 的**删除形态**：精确 ``-d`` 或 ``-d`` + 已知短选项簇。
+    """``git symbolic-ref`` 的**删除形态**：短选项簇里含 ``-d``（位置不限）。
 
     第十四轮独立审查 P2-3：此前用 ``token.startswith("-d")`` ⇒ 未来若新增
-    ``-d*`` **读**选项会被误拒（可用性回归）⇒ 收窄为：``-d`` 本身、以及 ``-d``
-    后紧跟 symbolic-ref 已知短选项（``-q``/``-m``/``-s``）的组合形态。
-    其余 ``-d*``（如 ``-dHEAD``）在 git 里是**未知选项**（parse-options 因
-    ``-H`` 未知而报错、命令不产生任何副作用）⇒ 不按删除形态拒。
+    ``-d*`` **读**选项会被误拒（可用性回归）⇒ 收窄为「簇内字符都属于
+    symbolic-ref 已知短选项（d/q/m/s）」。
+    第十五轮独立审查 P1-1：但 ``d`` **不必在首位**——``git symbolic-ref -qd
+    HEAD``（= ``-q`` + ``-d``）是合法的删除 HEAD 形态 ⇒ 只看开头会漏 ⇒
+    改为扫描整簇字符（仍要求全部字符都是已知短选项 ⇒ ``-dHEAD`` 这类
+    **未知选项**形态不被误判为删除）。
     """
     if token == "-d":
         return True
-    if not token.startswith("-d") or len(token) == 2:
+    if not token.startswith("-") or len(token) == 1:
         return False
-    return all(char in "qms" for char in token[2:])
+    body = token[1:]
+    if "d" not in body:
+        return False
+    return all(char in "dqms" for char in body)
 
 
 def _git_action_args(args: Sequence[str]) -> list[str]:

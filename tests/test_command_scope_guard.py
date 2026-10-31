@@ -1164,3 +1164,48 @@ def test_r14_union_gap_fixes_do_not_over_block(command: str) -> None:
     """第十四轮修复不得误伤：读命令与域内写目标。"""
     decision = _check(command, scope=_scope(paths=("**",)))
     assert decision.allowed is True, (command, decision.reason, decision.detail)
+
+
+# ── 第十六轮：第二轮独立审查（REVISE：P1=2/P2=2）的响应锚点 ────────────────
+#
+# P1-1（删 ref 写形态漏放）：``git symbolic-ref -qd HEAD``（= ``-q`` + ``-d``）
+#      是合法的删除 HEAD 形态；第十四轮的「只看 token 开头」⇒ ``d`` 不在首位
+#      就漏 ⇒ 删 .git/HEAD 的写形态放行。⇒ 改为扫描**整簇**字符（仍要求全部
+#      字符都是 symbolic-ref 已知短选项 d/q/m/s ⇒ ``-dHEAD`` 这类未知选项
+#      形态不被误判）。
+# P1-2（**相对**越界写放行）：``gcc -wo../escape a.c`` 是合法的
+#      「-w + -o 值=../escape」；第十四轮只认余串以 ``/`` 或 ``=`` 开头 ⇒
+#      相对路径形态不命中 ⇒ 产物落点从未被判定 ⇒ 越界写放行。⇒ 改为「余串
+#      非空即值」（bool 字母门控已保证 ``-Werror``/``-lo`` 不被误读成 -o）。
+# P2-2（curl --output-dir 未登记）：``--output-dir DIR``（curl ≥ 7.73）决定
+#      ``-o``/``-O`` 文件落盘目录 ⇒ DIR 是写目标；此前未登记 ⇒ 靠 unresolved
+#      兜底（拒因不准）。
+
+R16_BLOCKED_CASES = [
+    ("git symbolic-ref -qd HEAD", "implicit_write_target"),
+    ("gcc -wo../escape a.c", "write_target_outside_scope"),
+    ("curl --output-dir=/outside -o f URL", "write_target_outside_scope"),
+]
+
+
+@pytest.mark.parametrize("command,expected_reason", R16_BLOCKED_CASES)
+def test_r16_review_findings_are_blocked(command: str, expected_reason: str) -> None:
+    """第十六轮复现向量：第二轮独立审查点名的两个绕过必须被拦。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is False, (command, decision.reason, decision.detail)
+    assert decision.reason == expected_reason, (command, decision.reason, decision.detail)
+
+
+R16_ALLOWED_CASES = [
+    # --output-dir 指向域内目录 ⇒ 放行（域内写目标）。
+    "curl --output-dir=dl -o f URL",
+    # 已知短选项簇里**没有** d ⇒ 不按删除形态拒（-s/--short 是读形态）。
+    "git symbolic-ref -s HEAD",
+]
+
+
+@pytest.mark.parametrize("command", R16_ALLOWED_CASES)
+def test_r16_review_fixes_do_not_over_block(command: str) -> None:
+    """第十六轮修复不得误伤：域内目标目录与非删除短选项簇。"""
+    decision = _check(command, scope=_scope(paths=("**",)))
+    assert decision.allowed is True, (command, decision.reason, decision.detail)

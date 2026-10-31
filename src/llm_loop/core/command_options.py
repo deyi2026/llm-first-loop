@@ -442,6 +442,10 @@ CURL_OPTIONS = FamilyOptions(
         # 从未被定位）⇒ 落到 curl 族（本条曾被误改进 wget 族，已复原）。
         ("--hsts", True),
         ("--alt-svc", True),
+        # 第十五轮独立审查 P2-2：``--output-dir DIR``（curl ≥ 7.73）决定
+        # ``-o``/``-O`` 的文件**落在哪个目录** ⇒ 取值型。此前未登记 ⇒ 只能靠
+        # unresolved 的 fail-closed 兜住（拒因不准：与 --hsts/--alt-svc 同款）。
+        ("--output-dir", True),
         ("--create-dirs", False),
         ("--user-agent", True),
         ("--header", True),
