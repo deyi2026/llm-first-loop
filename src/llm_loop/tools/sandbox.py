@@ -43,7 +43,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -291,12 +291,28 @@ def sandbox_exec_argv(
     return [_SANDBOX_EXEC, "-p", profile, "/bin/bash", "-lc", command]
 
 
+_DROPPED_ROOTS_NOTE = (
+    "（注意：writable_roots 仅 sandbox-exec 后端消费，当前后端未强制追加可写根）"
+)
+
+
+def _note_with_dropped_roots(note: str, writable_roots: Sequence[str] | None) -> str:
+    """bwrap/docker 不消费 writable_roots：非空时在 note 里明示被忽略。
+
+    T05 审查 P2-2：静默丢弃追加根会让调用方误以为它们已生效。
+    """
+    if not writable_roots:
+        return note
+    return note + _DROPPED_ROOTS_NOTE
+
+
 def sandbox_argv(
     command: str,
     workdir: str,
     *,
     mode: str = "none",
     image: str = _DEFAULT_IMAGE,
+    writable_roots: Sequence[str] = (),
 ) -> tuple[list[str] | None, str]:
     """按 EXEC_SANDBOX 返回 (argv, note)。
 
@@ -305,6 +321,10 @@ def sandbox_argv(
       warning），EXEC_SANDBOX_STRICT=1 → RuntimeError（fail-closed，回执如实失败）
     - bwrap/docker/sandbox-exec 且可用 → (argv, note)（note 文案与实际后端一一对应，S2-6）
     - 显式开启但后端不可用 → 抛 RuntimeError（fail-closed，调用方如实失败回执）
+    - writable_roots（T05）：追加可写根，仅 sandbox-exec 后端消费——原样透传
+      ``sandbox_exec_argv``（叠加进 profile 的 allow subpath）；bwrap/docker 的可写域
+      结构性固定为工作区（无追加根机制），该参数对它们无效果。默认 ``()`` 与不传
+      完全等价（既有行为字节级不变）。
     """
     mode = sandbox_mode(mode)
     workdir = os.path.abspath(workdir)
@@ -327,7 +347,7 @@ def sandbox_argv(
                 "fail-closed：命令未执行。请安装 bubblewrap（Linux: apt install bubblewrap）"
                 "或改用 EXEC_SANDBOX=docker（macOS 可用）或 EXEC_SANDBOX=none。"
             )
-        return (bwrap_argv(command, workdir), _BWRAP_NOTE)
+        return (bwrap_argv(command, workdir), _note_with_dropped_roots(_BWRAP_NOTE, writable_roots))
     if mode == "docker":
         if shutil.which("docker") is None:
             raise RuntimeError(
@@ -336,7 +356,7 @@ def sandbox_argv(
                 f"（镜像可用 EXEC_SANDBOX_IMAGE 指定，默认 {_DEFAULT_IMAGE}）"
                 "或设 EXEC_SANDBOX=none。"
             )
-        return (docker_argv(command, workdir, image=image), _DOCKER_NOTE)
+        return (docker_argv(command, workdir, image=image), _note_with_dropped_roots(_DOCKER_NOTE, writable_roots))
     if mode == "sandbox-exec":
         if not _probe_sandbox_exec():
             raise RuntimeError(
@@ -344,7 +364,10 @@ def sandbox_argv(
                 f"（{_sandbox_exec_detail}）——fail-closed：命令未执行。"
                 "可改用 EXEC_SANDBOX=auto 自动解析或 EXEC_SANDBOX=none。"
             )
-        return (sandbox_exec_argv(command, workdir), _SANDBOX_EXEC_NOTE)
+        return (
+            sandbox_exec_argv(command, workdir, writable_roots=writable_roots),
+            _SANDBOX_EXEC_NOTE,
+        )
     return (None, "")
 
 
