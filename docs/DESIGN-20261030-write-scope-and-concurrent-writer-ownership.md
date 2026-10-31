@@ -761,7 +761,9 @@ scope 校验 + `scope_unverified` 审计）正是 C8 P0 描述的那三件事。
 | 组合载体（`find -exec` / `xargs` / `sudo` / `env`）内含写盘命令 | 按内含写盘命令判定 | 同上 |
 | 嵌套 shell（`sh -c '…'` / `bash -c '…'`） | 递归解析载荷（深度上限 3） | 同上 |
 | shell 解释器执行**脚本文件**（`sh s.sh`） | 拒绝（脚本内写目标不可静态定位） | `implicit_write_target` |
-| **不可静态判定的 shell 构造**：命令替换（`$(…)`/反引号）、字面量分组（`(...)`/`{…}`）、控制流关键字（`if`/`for`/`case`…）、heredoc | 拒绝（fail-closed：不猜） | `unmodeled_shell_construct` / `shell_keyword_construct` |
+| **不可静态判定的 shell 构造**：命令替换（`$(…)`/反引号）、进程替换（`<(…)`/`>(…)`）、花括号分组（`{…}`）、控制流关键字（`if`/`for`/`case`…） | 拒绝（fail-closed：不猜） | `unmodeled_shell_construct` / `shell_keyword_construct` |
+| **heredoc**（`cmd > f <<EOF … EOF`）——D2 修订 | 正文按 stdin 数据剥离后判写目标；正文含 `$(`/反引号先拒；分隔符按 bash 精确匹配，找不到终结符即拒 | `unparsable_command` / `unmodeled_shell_construct` |
+| **子 shell 分组**（`( … )`）——D2 修订 | 分组不增写能力 ⇒ 内部命令逐条递归判定；组内 `cd` 位移不回流父 shell | 同内部命令 |
 | `git` 全局选项后的子命令（`git -C /dir commit`） | 按子命令判定（写子命令 ⇒ 隐式写目标） | `implicit_write_target` |
 | `cp/mv/install/rsync -t DIR` / `--target-directory=DIR` | 写目标取**目标目录**，不是末位参数 | `write_target_*` |
 | **读侧**字面量越界 | **放行 + 记 `scope_unverified` 审计**（scope 是写侧授权；读侧封成监狱会阻断解释器与测试，与 P1-a 的灵活性目标冲突） | — |
@@ -848,8 +850,13 @@ child `subagent_5c30c04b42ba`）判 **REVISE：P0=1 / P1=3 / P2=3**，候选 SHA
 
 **修法（口径从「识别写命令」翻成「不可静态判定就拒」）**：
 
-1. **不可建模构造 fail-closed**：命令替换、字面量分组、控制流关键字、heredoc → 拒绝
+1. **不可建模构造 fail-closed**：命令替换、进程替换、花括号分组、控制流关键字 → 拒绝
    （`unmodeled_shell_construct` / `shell_keyword_construct`）。
+   *D2（2026-10-31）修订*：heredoc 与 `( … )` 不再整体拒——正文按 stdin 数据剥离、
+   分组内部逐条递归判定；前提是原始串级执行向量检查 + **先删续行（`\`+换行）再切逻辑行**
+   + 分隔符按 bash **词级引号移除**读取 + 跨行引号/算术深度状态维护 + 空分组拒；
+   `$`/`~`/反引号等会触发展开的形态直接拒；`(( … ))` 内的 `<<`（算术左移）与 `<<<`
+   （here-string）整体拒（读不出即拒，四轮 REVISE 返修见 REPORT §10.5）。
 2. **载体链完整解析**：`env`/`sudo`/`timeout`/`stdbuf`/`watch` 等跳过自身选项后取有效命令；
    `eval` 与 `sh -c`/`bash -c` 载荷**重解析**；解释器执行**脚本文件**一律拒（脚本内写目标不可知）。
 3. **`git` 子命令判定穿过全局选项**：`-C`/`--git-dir`/`--work-tree` 等取值型选项跳过其后参数；
