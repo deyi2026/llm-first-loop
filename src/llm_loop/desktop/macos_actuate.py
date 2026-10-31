@@ -25,6 +25,7 @@ must ``release()``) the returned element — no dangling refs, no leaks.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 
 from llm_loop.desktop.macos_ax import (
@@ -119,15 +120,24 @@ def _parse_ax_ref(ax_ref: str) -> list[int] | None:
 
 
 def _ax_window_candidates(app_ref: int) -> tuple[list[MacAxElement], int]:
-    """读 app 的 AXWindows；返回 (retain 后的窗口元素列表, AX err)。"""
+    """读 app 的 AXWindows；返回 (retain 后的窗口元素列表, AX err)。
+
+    S7（R1）：构造中途抛异常时，已 retain 的元素先释放再传播——不静默泄漏。
+    """
     err, value = ax_read_attr(app_ref, "AXWindows")
     if err != 0 or not value:
         return [], err
     elements: list[MacAxElement] = []
     try:
         count = cf_array_count(value)
-        elements = [MacAxElement(cf_retain(cf_array_item(value, i))) for i in range(count)]
+        for i in range(count):
+            elements.append(MacAxElement(cf_retain(cf_array_item(value, i))))
         return elements, 0
+    except BaseException:
+        for el in elements:
+            with contextlib.suppress(Exception):
+                el.release()
+        raise
     finally:
         cf_release(value)
 
@@ -184,13 +194,15 @@ def resolve_element_by_axref(window: WindowInfo, ax_ref: str) -> tuple[MacAxElem
         for index in path[1:]:
             children = el.attr("AXChildren")
             if not isinstance(children, list) or index >= len(children):
+                el.release()  # S7（R1）：早退分支同样释放当前持有元素，不泄漏
                 return None, "ax_ref_not_found"
             child = children[index]  # attr() 返回的子元素已被 retain（所有权移交）
             el.release()  # 上一级用完即放
             el = child
         return el, None
     except Exception:  # noqa: BLE001 - 解析失败按未命中，不猜
-        el.release()
+        with contextlib.suppress(Exception):
+            el.release()
         return None, "ax_ref_not_found"
 
 
@@ -229,13 +241,19 @@ def ax_read_value_string(el: MacAxElement) -> str | None:
 
 
 def cg_post_click(x_pt: float, y_pt: float) -> None:
-    """全局点（单位=点）左键点击：HID tap 层 down+up。"""
+    """全局点（单位=点）左键点击：HID tap 层 down+up。
+
+    S4（R1）：CGEventCreateMouseEvent 返回空事件时不投递（与 cg_post_key 对齐），
+    只释放已创建的事件句柄。
+    """
     lib = _cg()
     where = CGPoint(float(x_pt), float(y_pt))
     down = lib.CGEventCreateMouseEvent(None, K_CGEVENT_LEFT_MOUSE_DOWN, where, 0)
-    lib.CGEventPost(K_CGEVENT_TAP_HID, down)
+    if down:
+        lib.CGEventPost(K_CGEVENT_TAP_HID, down)
     up = lib.CGEventCreateMouseEvent(None, K_CGEVENT_LEFT_MOUSE_UP, where, 0)
-    lib.CGEventPost(K_CGEVENT_TAP_HID, up)
+    if up:
+        lib.CGEventPost(K_CGEVENT_TAP_HID, up)
     for event in (down, up):
         if event:
             cf_release(event)

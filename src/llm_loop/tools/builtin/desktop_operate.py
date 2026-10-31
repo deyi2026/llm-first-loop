@@ -11,13 +11,19 @@ Contract (§5.4 args, closed key set):
 
 Gates, in order: platform/session → window binding → privacy (D8) → act
 allowlist (D6: Finder/Safari/Chrome/Preview; terminal/IDE read-only) →
-target resolution (act-time exact addressing, T5; Chrome web content →
-web_target_not_allowed → browser_operate) → key/text policy (B3 blacklist,
-IME-polluted letter typing is NOT offered) → risk class (§6.2 heuristic with
-the explicit "not a safety guarantee" disclaimer) → [dry_run: issue one-shot
-confirm token] → [apply: writes_enabled switch (default OFF) → D7 HID idle
-user-present refusal → §6.2 token/session gate → D4 world re-bind → U18 AX
-self-probe → real delivery → post fingerprint + session approval].
+see_allowlist alignment (S10) → target resolution (act-time exact addressing,
+T5; Chrome/Safari web content → web_target_not_allowed → browser_operate —
+R1 also hit-tests {point} against AXWebArea bounds, and scrolls/press_key in
+browser windows pass the same web boundary) → publish/submit/pay targets →
+review_required fail-closed (M2: host review_admission gate or refusal, never
+this tool's own token) → key/text policy (B3 blacklist, IME-polluted letter
+typing is NOT offered) → risk class (§6.2 heuristic; browser point/press_key/
+scroll never land in plain "act", M1) → [dry_run: issue one-shot confirm token]
+→ [apply: writes_enabled switch (default OFF) → EXEC_MODE blocked/readonly
+refusal (M3) → D7 HID idle user-present refusal → §6.2 token/session gate
+(point channel NEVER session-exempt, M1) → D4 world re-bind → U18 AX self-probe
+→ real delivery (force credential consumed only here, S2) → post fingerprint +
+session approval (point channel excluded)].
 
 Receipts (§5.4): risk_class / pre_sha256 / post_sha256 / target_identity /
 applied / needs_confirmation / privacy_blocked (+ dry_run, confirm_token,
@@ -34,6 +40,7 @@ from __future__ import annotations
 import contextlib
 import json
 import platform as _platform
+import secrets as _secrets
 import time
 from collections.abc import Callable
 from typing import Any
@@ -41,6 +48,7 @@ from typing import Any
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.desktop.hid_idle import USER_PRESENT_WINDOW_MS
 from llm_loop.desktop.models import (
+    AX_NODE_LIMIT_DEFAULT,
     MAX_AX_DEPTH,
     DesktopErrorCode,
     PermissionSnapshot,
@@ -54,17 +62,29 @@ from llm_loop.desktop.operate import (
     ConfirmTokenStore,
     SessionActGate,
     action_fingerprint,
+    channel_risk_override,
     classify_risk,
+    focused_ax_ref,
+    has_web_area,
+    hits_review_markers,
+    is_browser_bundle,
+    is_web_subtree,
     parse_keycombo,
     parse_scroll,
+    point_in_web_area,
+    web_area_rects,
     window_gone_fingerprint,
     world_fingerprint,
 )
-from llm_loop.desktop.privacy import PrivacyPolicy
+from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
 from llm_loop.timekeeping import system_local_now
 
 _DOS = ("click", "type", "press_key", "scroll")
 _BASE_FIELDS = {"do", "window_id", "target", "text", "keys", "dry_run", "confirm_token", "force", "force_credential"}
+
+# S3：force 凭据失败节流（进程内）——连续 3 次不匹配锁定 60s
+_FORCE_FAIL_LIMIT = 3
+_FORCE_LOCK_S = 60.0
 
 GUIDANCE_UNSUPPORTED = "desktop_operate 仅支持 macOS（darwin）；当前平台不可操作桌面。"
 GUIDANCE_NO_GUI = "当前进程无图形控制台会话；需在已登录桌面会话内运行。"
@@ -92,6 +112,16 @@ GUIDANCE_TERMINAL_READONLY = (
     "终端/IDE 应用为只读感知面（T3/Q-05：放开 act 等于不受沙箱约束的任意命令执行）；"
     "需要执行命令请用 execute_command。"
 )
+GUIDANCE_REVIEW_REQUIRED = (
+    "发布/提交/支付类目标（§6.2/§6.3 MUST）必须走宿主发表闸（review_admission），"
+    "desktop_operate 不自行放行：宿主当前没有面向桌面动作的发表审批通道，"
+    "故 fail-closed 拒绝——本工具的一次性 confirm_token 对该类目标一律无效。"
+    "如需发布/提交/支付，请由宿主侧行政通道（人工或既有发表闸）执行。"
+)
+GUIDANCE_EXEC_MODE_BLOCKED = (
+    "宿主 EXEC_MODE={mode}：桌面真实投递被拒绝（M3：desktop_operate 尊重宿主命令分级；"
+    "与 execute_command/写文件工具同语义，需人工执行）；dry_run 与只读门控不受限。"
+)
 
 
 class DesktopOperateTool:
@@ -101,17 +131,27 @@ class DesktopOperateTool:
         "（来自 desktop_perceive windows 回执）；target={ax_ref}（snapshot 回执的索引路径）或"
         " {point:{x,y}}（单位=点；press_key 可省略 target=作用于绑定窗口焦点）。"
         "dry_run 默认 true（只回执不投递，并签发一次性 confirm_token）；apply 需 dry_run 后的"
-        " confirm_token，同 app 同动作类型在 session 内放行；不可逆启发式命中（关闭按钮/删除/"
-        "发布/支付/浏览器 Enter 等）永远单步每次都要新 token。act 白名单硬编码"
+        " confirm_token。同 app 同动作类型在 session 内放行——注意该免令牌放行路径"
+        "**不重做 world 比对**（§6.2 字面允许）：窗口内结构漂移可能换靶，故坐标 point 目标"
+        "不享受该放行（每次都要令牌+world 比对）。不可逆启发式命中（关闭按钮/删除/发布/"
+        "支付/浏览器 Enter 等）永远单步每次都要新 token。发布/提交/支付类目标一律"
+        " review_required 拒绝（§6.3：须走宿主发表闸，本工具 token 不放行）。"
+        "浏览器窗口内：网页内容区域（AXWebArea）的 point 点击、滚轮与网页焦点按键一律拒绝"
+        " web_target_not_allowed → browser_operate（路线 A）；无法证明在网页区外的浏览器"
+        " point/press_key/scroll 按不可逆处理（每次都要新令牌）。act 白名单硬编码"
         " Finder/Safari/Chrome/Preview，终端与 IDE 只读拒绝；敏感 app（1Password/Keychain/"
-        "loginwindow 等核心名单）拒绝操作；Chrome 网页内容目标拒绝并指向 browser_operate。"
-        "press_key 只接受闭合命名键集（Enter/Escape/Tab/方向/F1-F12 等，可带 Ctrl/Alt/Shift），"
+        "loginwindow 等核心名单）拒绝操作；desktop.see_allowlist 非空时名单外 app 同样不可"
+        " act（与 perceive 可见范围对齐）。press_key 只接受闭合命名键集"
+        "（Enter/Escape/Tab/方向/F1-F12 等，可带 Ctrl/Alt/Shift），"
         "Meta 系与字母键一律拒绝（B3 黑名单族；字母 CGEvent 通道被输入法污染，文本输入走 do=type"
         " 的 AX set-value 并回读校验）。用户在场（HID idle<60s 或探针失败）默认拒绝 mutate"
-        "（user_present）；force 必须携带一次性授权凭据（宿主 env 预置），缺失即拒。"
-        "写能力总开关默认关（LFL_DESKTOP_OPERATE_ENABLED），关闭时真实投递一律 writes_disabled，"
-        "dry_run 不受限。risk_class 由启发式判定，不构成安全保证。"
-        "非 macOS 返回 unsupported_platform。审计 append-only JSONL，不提供删除/改写。"
+        "（user_present）；force 必须携带一次性授权凭据（宿主 env 预置），缺失即拒，"
+        "凭据失败有进程内节流。写能力总开关默认关（LFL_DESKTOP_OPERATE_ENABLED），关闭时"
+        "真实投递一律 writes_disabled；宿主 EXEC_MODE=blocked/readonly 时真实投递同样被拒"
+        "（exec_mode_blocked）。dry_run 不受上述两开关限制。"
+        "risk_class 由启发式判定，不构成安全保证。"
+        "非 macOS 返回 unsupported_platform。审计 append-only JSONL，不提供删除/改写"
+        "（审计只记令牌的 sha256 短摘要，不落明文片段）。"
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -141,7 +181,7 @@ class DesktopOperateTool:
                     },
                 },
                 "additionalProperties": False,
-                "description": "寻址：ax_ref（exact，act-time 重解析）或 point（点单位；必须落在窗口 bounds 内）。press_key 可省略（作用于绑定窗口当前焦点）",
+                "description": "寻址：ax_ref（exact，act-time 重解析）或 point（点单位；必须落在窗口 bounds 内；浏览器窗口内须落在 AXWebArea 网页区之外，且每次 apply 都要新令牌）。press_key 可省略（作用于绑定窗口当前焦点）；type 只接受 ax_ref",
             },
             "text": {
                 "type": "string",
@@ -181,26 +221,47 @@ class DesktopOperateTool:
         audit_sink: Callable[[dict[str, Any]], None] | None = None,
         privacy_extra: tuple[str, ...] = (),
         act_allowlist_extra: tuple[str, ...] = (),
+        see_allowlist: tuple[str, ...] = (),
         writes_enabled: bool = False,
         force_credential: str = "",
+        exec_mode: str = "",
+        exec_allowlist: tuple[str, ...] = (),
     ) -> None:
         self._backend = backend
         self._session_id_getter = session_id_getter or (lambda: "")
         self._audit = audit_sink
         self._privacy = PrivacyPolicy(privacy_extra)
         self._act_allowlist = ActAllowlist(act_allowlist_extra)
+        # S10：perceive 可见范围（desktop.see_allowlist）对 act 生效——perceive 隐藏
+        # 的 app 不可 act（默认空 = 不限制，零回归）。
+        self._see_allowlist = SeeAllowlist(see_allowlist)
         self._writes_enabled = bool(writes_enabled)
         self._force_secret = str(force_credential or "")
         self._tokens = ConfirmTokenStore()
         self._gate = SessionActGate()
+        # M3：尊重宿主 EXEC_MODE（blocked/readonly 拒绝真实投递；空 = 不启用，零回归；
+        # allowlist 模式须显式列出 "desktop_operate" 才放行投递）。
+        self._exec_mode = str(exec_mode or "").strip().lower()
+        self._exec_allowlist = frozenset(
+            str(item).strip().lower() for item in exec_allowlist if str(item).strip()
+        )
+        # S3：force 凭据失败节流（进程内；宿主无桌面动作审批通道时的暴力面收窄）
+        self._force_fail_count = 0
+        self._force_lock_until = 0.0
 
     # ── 基础回执 ─────────────────────────────────────────────────────────
-    def _fail(self, message: str) -> ToolResult:
-        return ToolResult(
-            status=ToolResultStatus.FAILURE,
-            content=message,
-            tool_call_id="",
-            tool_name=self.name,
+    def _fail(
+        self,
+        message: str,
+        *,
+        do: str | None = None,
+        error_code: DesktopErrorCode | None = None,
+    ) -> ToolResult:
+        """S6：参数校验失败也走统一 JSON 信封（不再是纯文本）。"""
+        started = time.monotonic()
+        return self._envelope(
+            do=do or "", ok=False, error_code=error_code, guidance=message,
+            started=started,
         )
 
     def _result(self, ok: bool, payload: dict[str, Any]) -> ToolResult:
@@ -263,37 +324,43 @@ class DesktopOperateTool:
             self._audit(full)
 
     # ── 参数校验（闭合键集 + per-do 规则）─────────────────────────────────
-    def _validate(self, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any], ToolResult | None]:
+    def _validate(
+        self, kwargs: dict[str, Any]
+    ) -> tuple[str, dict[str, Any], ToolResult | None, DesktopErrorCode | None]:
         do = str(kwargs.get("do") or "").strip()
+
+        def bad(
+            message: str, code: DesktopErrorCode = DesktopErrorCode.INVALID_ARGS
+        ) -> tuple[str, dict[str, Any], ToolResult, DesktopErrorCode]:
+            return do, {}, self._fail(message, do=do, error_code=code), code
+
         if do not in _DOS:
-            return do, {}, self._fail(
+            return bad(
                 f"[desktop_operate] do 不受支持: {do or '<missing>'}（可选: {', '.join(_DOS)}）。"
             )
         extras = sorted(set(kwargs) - _BASE_FIELDS)
         if extras:
-            return do, {}, self._fail(
-                f"[desktop_operate:{do}] fields_mismatch: 不接受字段 {extras}。"
-            )
+            return bad(f"[desktop_operate:{do}] fields_mismatch: 不接受字段 {extras}。")
         window_id_raw = kwargs.get("window_id")
         if (
             isinstance(window_id_raw, bool)
             or not isinstance(window_id_raw, int)
             or window_id_raw < 0
         ):
-            return do, {}, self._fail(
+            return bad(
                 "[desktop_operate] window_id 必填且必须是非负整数（来自 desktop_perceive windows 回执）。"
             )
         window_id = int(window_id_raw)
         options: dict[str, Any] = {"window_id": window_id}
         for key in ("confirm_token", "force_credential", "text", "keys"):
             if kwargs.get(key) is not None and not isinstance(kwargs.get(key), str):
-                return do, {}, self._fail(f"[desktop_operate] {key} 必须是字符串。")
+                return bad(f"[desktop_operate] {key} 必须是字符串。")
         dry_run = kwargs.get("dry_run", True)
         if not isinstance(dry_run, bool):
-            return do, {}, self._fail("[desktop_operate] dry_run 必须是布尔值（默认 true）。")
+            return bad("[desktop_operate] dry_run 必须是布尔值（默认 true）。")
         force = kwargs.get("force", False)
         if not isinstance(force, bool):
-            return do, {}, self._fail("[desktop_operate] force 必须是布尔值。")
+            return bad("[desktop_operate] force 必须是布尔值。")
         options["dry_run"] = dry_run
         options["force"] = force
         options["confirm_token"] = str(kwargs.get("confirm_token") or "")
@@ -302,57 +369,80 @@ class DesktopOperateTool:
         text = kwargs.get("text")
         keys = kwargs.get("keys")
         if do == "click" and (text is not None or keys is not None):
-            return do, {}, self._fail("[desktop_operate:click] fields_mismatch: click 不接受 text/keys。")
+            return bad("[desktop_operate:click] fields_mismatch: click 不接受 text/keys。")
         if do == "type":
             if text is None or not str(text):
-                return do, {}, self._fail("[desktop_operate:type] text 必填。")
+                return bad("[desktop_operate:type] text 必填。", DesktopErrorCode.TYPE_ARGS_INVALID)
             if keys is not None:
-                return do, {}, self._fail("[desktop_operate:type] fields_mismatch: type 不接受 keys。")
+                return bad(
+                    "[desktop_operate:type] fields_mismatch: type 不接受 keys。",
+                    DesktopErrorCode.TYPE_ARGS_INVALID,
+                )
             options["text"] = str(text)
         if do == "press_key":
             if keys is None or not str(keys).strip():
-                return do, {}, self._fail("[desktop_operate:press_key] keys 必填。")
+                return bad("[desktop_operate:press_key] keys 必填。")
             if text is not None:
-                return do, {}, self._fail("[desktop_operate:press_key] fields_mismatch: 不接受 text。")
+                return bad("[desktop_operate:press_key] fields_mismatch: 不接受 text。")
         if do == "scroll":
             if keys is None or not str(keys).strip():
-                return do, {}, self._fail("[desktop_operate:scroll] keys 必填（down|up[:n]）。")
+                return bad("[desktop_operate:scroll] keys 必填（down|up[:n]）。")
             if text is not None:
-                return do, {}, self._fail("[desktop_operate:scroll] fields_mismatch: 不接受 text。")
+                return bad("[desktop_operate:scroll] fields_mismatch: 不接受 text。")
         if keys is not None:
             options["keys"] = str(keys)
         target = kwargs.get("target")
         if target is not None:
             if not isinstance(target, dict):
-                return do, {}, self._fail("[desktop_operate] target 必须是对象。")
+                return bad("[desktop_operate] target 必须是对象。")
             target_fields = set(target)
             if target_fields == {"ax_ref"}:
                 if not isinstance(target["ax_ref"], str) or not target["ax_ref"].strip():
-                    return do, {}, self._fail("[desktop_operate] target.ax_ref 必须是非空字符串。")
+                    return bad("[desktop_operate] target.ax_ref 必须是非空字符串。")
             elif target_fields == {"point"}:
                 point = target["point"]
                 if not isinstance(point, dict) or set(point) != {"x", "y"}:
-                    return do, {}, self._fail("[desktop_operate] target.point 形如 {x,y}。")
+                    return bad("[desktop_operate] target.point 形如 {x,y}。")
                 for axis in ("x", "y"):
                     if isinstance(point[axis], bool) or not isinstance(point[axis], (int, float)):
-                        return do, {}, self._fail(f"[desktop_operate] target.point.{axis} 必须是数字（单位=点）。")
+                        return bad(f"[desktop_operate] target.point.{axis} 必须是数字（单位=点）。")
+                # S1（R1）：type 的 AX set-value 通道只接受 ax_ref 寻址；point 会在投递层
+                # KeyError→backend_error，提前在校验层用 §5.5 预留码拒绝。
+                if do == "type":
+                    return bad(
+                        "[desktop_operate:type] fields_mismatch: type 只接受 target={ax_ref}"
+                        "（AX set-value 通道；point 坐标不可用于键入）。",
+                        DesktopErrorCode.TYPE_ARGS_INVALID,
+                    )
             else:
-                return do, {}, self._fail(
+                return bad(
                     "[desktop_operate] target 必须是 {ax_ref} 或 {point:{x,y}} 之一（键互斥）。"
                 )
             options["target"] = target
         elif do in ("click", "type", "scroll"):
-            return do, {}, self._fail(f"[desktop_operate:{do}] target 必填。")
-        return do, options, None
+            return bad(f"[desktop_operate:{do}] target 必填。")
+        return do, options, None, None
 
     # ── 主分发 ───────────────────────────────────────────────────────────
     def execute(self, **kwargs: Any) -> ToolResult:
         started = time.monotonic()
-        do, options, invalid = self._validate(dict(kwargs))
+        do, options, invalid, invalid_code = self._validate(dict(kwargs))
         if invalid is not None:
+            # S5：参数校验失败也是终态拒绝，补审计行（window_id 尽力取整）
+            raw_wid = kwargs.get("window_id")
+            wid = int(raw_wid) if isinstance(raw_wid, int) and not isinstance(raw_wid, bool) else None
+            self._audit_event({
+                "do": do or None,
+                "window_id": wid,
+                "dry_run": bool(kwargs.get("dry_run", True)),
+                "error_code": (invalid_code or DesktopErrorCode.INVALID_ARGS).value,
+            })
             return invalid
         backend = self._backend
+        wid_early = {"do": do, "window_id": int(options["window_id"]),
+                     "dry_run": bool(options.get("dry_run"))}
         if backend is None or not bool(getattr(backend, "supported", False)):
+            self._audit_event({**wid_early, "error_code": DesktopErrorCode.UNSUPPORTED_PLATFORM.value})
             return self._envelope(
                 do=do, ok=False,
                 error_code=DesktopErrorCode.UNSUPPORTED_PLATFORM,
@@ -363,6 +453,7 @@ class DesktopOperateTool:
             session = backend.session_snapshot()
             perms: PermissionSnapshot = backend.permission_snapshot()
         except Exception:  # noqa: BLE001 - 后端异常确定性回执，不带栈
+            self._audit_event({**wid_early, "error_code": DesktopErrorCode.BACKEND_ERROR.value})
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.BACKEND_ERROR,
                 guidance="桌面后端初始化失败（确定性回执，不含栈）。", started=started,
@@ -378,11 +469,13 @@ class DesktopOperateTool:
             "privacy_blocked": False,
         }
         if not session.gui_available:
+            self._audit_event({**wid_early, "error_code": DesktopErrorCode.NO_GUI_SESSION.value})
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.NO_GUI_SESSION,
                 guidance=GUIDANCE_NO_GUI, started=started, base=base,
             )
         if session.screen_locked:
+            self._audit_event({**wid_early, "error_code": DesktopErrorCode.SCREEN_LOCKED.value})
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.SCREEN_LOCKED,
                 guidance=GUIDANCE_LOCKED, started=started, base=base,
@@ -390,6 +483,7 @@ class DesktopOperateTool:
         try:
             return self._dispatch(do, options, backend, base, started)
         except Exception:  # noqa: BLE001 - 分发兜底：确定性回执，无栈
+            self._audit_event({**wid_early, "error_code": DesktopErrorCode.BACKEND_ERROR.value})
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.BACKEND_ERROR,
                 guidance="desktop_operate 执行失败（确定性回执，不含栈）；可先用 desktop_perceive status 自检。",
@@ -417,6 +511,12 @@ class DesktopOperateTool:
             )
         window = backend.get_window(int(options["window_id"]))
         if window is None:
+            # S5：早期拒绝也写审计行（one row per terminal outcome, refusals included）
+            self._audit_event({
+                "do": do, "window_id": int(options["window_id"]),
+                "dry_run": bool(options.get("dry_run")),
+                "error_code": DesktopErrorCode.WINDOW_NOT_FOUND.value,
+            })
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.WINDOW_NOT_FOUND,
                 guidance="window_id 不在当前窗口清单中；先 desktop_perceive action=windows 重新绑定。",
@@ -460,12 +560,24 @@ class DesktopOperateTool:
                 f"目标应用不在 act 白名单（bundle_id={bundle}；核心名单硬编码"
                 " Finder/Safari/Chrome/Preview，配置只能追加，终端/IDE 永不放开）。",
             )
+        # S10：see_allowlist（perceive 可见范围）对 act 对齐——perceive 隐藏的 app 不可 act。
+        # 默认空 = 全部允许（零回归）；与 M3/U14 同为 app_not_allowed（可见性是配置层语义）。
+        if not self._see_allowlist.is_allowed(bundle):
+            return refuse(
+                DesktopErrorCode.APP_NOT_ALLOWED,
+                f"目标应用不在 desktop.see_allowlist 可见范围（bundle_id={bundle}，U14 对齐）："
+                "perceive 隐藏的 app 不可 act；如需操作请先把该 app 加入"
+                " LFL_DESKTOP_SEE_ALLOWLIST。",
+            )
 
         # ── 目标解析（只读；act-time exact addressing 的第一半）───────────
         windows = backend.list_windows()
         frontmost_before = next((w.bundle_id for w in windows if w.is_foreground), None)
-        ax_view = backend.ax_snapshot(window, MAX_AX_DEPTH, 200)
+        # S9：快照节点上限与 desktop_perceive 对齐（AX_NODE_LIMIT_DEFAULT=1500），
+        # 否则 perceive 回执里的深位 ax_ref 在本工具侧解析不到 → window_unbound。
+        ax_view = backend.ax_snapshot(window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
         nodes = ax_view.nodes if ax_view.available else ()
+        browser = is_browser_bundle(bundle)
         target = options.get("target")
         target_identity: dict[str, Any]
         if isinstance(target, dict) and "ax_ref" in target:
@@ -482,17 +594,15 @@ class DesktopOperateTool:
                     DesktopErrorCode.WINDOW_UNBOUND,
                     f"ax_ref={ax_ref} 不在当前窗口 AX 树中（目标已变化）；重新 snapshot 后再试。",
                 )
+            audit["target_identity"] = target_identity = {
+                "kind": "ax_ref",
+                "ax_ref": ax_ref,
+                "role": node.role,
+                "subrole": node.subrole,
+                "title": node.title,
+            }
             # 路线 A 边界：目标自身或任何祖先命中 AXWebArea → 网页内容层
-            ancestry_refs: list[str] = []
-            prefix = ""
-            for part in ax_ref.split("."):
-                prefix = f"{prefix}.{part}" if prefix else part
-                ancestry_refs.append(prefix)
-            if any(
-                (node_map[ref].role or "").lower() == "axwebarea"
-                for ref in ancestry_refs
-                if ref in node_map
-            ) or (node.role or "").lower() == "axwebarea":
+            if is_web_subtree(ax_ref, nodes):
                 return refuse(
                     DesktopErrorCode.WEB_TARGET_NOT_ALLOWED, GUIDANCE_WEB_TARGET,
                 )
@@ -503,13 +613,6 @@ class DesktopOperateTool:
                     DesktopErrorCode.PRIVACY_BLOCKED,
                     "目标是密码型输入框（AXSecureTextField）；按 N4 红线拒绝键入，无降级路径。",
                 )
-            target_identity = {
-                "kind": "ax_ref",
-                "ax_ref": ax_ref,
-                "role": node.role,
-                "subrole": node.subrole,
-                "title": node.title,
-            }
         elif isinstance(target, dict) and "point" in target:
             point = target["point"]
             px, py = float(point["x"]), float(point["y"])
@@ -523,9 +626,62 @@ class DesktopOperateTool:
                     f"point({px:.1f},{py:.1f}) 不在窗口 bounds 内"
                     f"（{bounds.x:.1f},{bounds.y:.1f},{bounds.w:.1f}x{bounds.h:.1f}，单位=点；§7.3.2）。",
                 )
-            target_identity = {"kind": "point", "x": px, "y": py, "within_window_id": window.window_id}
+            audit["target_identity"] = target_identity = {
+                "kind": "point", "x": px, "y": py, "within_window_id": window.window_id
+            }
+            # M1：point 必须对当前窗口 AX 快照的 AXWebArea 做命中判定（不许绕过路线 A）。
+            # 快照不可用、或存在 AXWebArea 但 bounds 不可读，都无法排除网页内容 →
+            # 一律 fail-closed 拒绝（坐标点击是精确命中通道，不能证明不在网页区就不投）。
+            point_hits_web = browser and (
+                not ax_view.available
+                or has_web_area(nodes)
+                and (not web_area_rects(nodes) or point_in_web_area(px, py, nodes))
+            )
+            if point_hits_web:
+                why = (
+                    "AX 快照不可用，无法排除网页内容"
+                    if not ax_view.available
+                    else "AXWebArea bounds 命中，或存在 AXWebArea 但 bounds 不可读、无法排除"
+                )
+                return refuse(
+                    DesktopErrorCode.WEB_TARGET_NOT_ALLOWED,
+                    f"point({px:.1f},{py:.1f}) 落在浏览器窗口网页内容区域（{why}）。"
+                    f"{GUIDANCE_WEB_TARGET}",
+                )
         else:
-            target_identity = {"kind": "focused", "window_id": window.window_id}
+            audit["target_identity"] = target_identity = {
+                "kind": "focused", "window_id": window.window_id
+            }
+
+        # M2：发布/提交/支付类目标 fail-closed 拒绝（宿主发表闸缺失 ⇒ 不自行放行）。
+        # ax_ref 通道用目标自身标题；point/focused/scroll 无法证明目标身份，退而用
+        # 窗口标题（宁可误拒：该类目标是 §6.2/§6.3 的显式 MUST）。
+        _review_texts: tuple[str | None, ...]
+        if target_identity["kind"] == "ax_ref":
+            _review_texts = (target_identity.get("title"), target_identity.get("subrole"))
+        else:
+            _review_texts = (window.title,)
+        if hits_review_markers(*_review_texts):
+            return refuse(
+                DesktopErrorCode.REVIEW_REQUIRED, GUIDANCE_REVIEW_REQUIRED,
+                risk_class="irreversible",
+            )
+
+        # M1：浏览器窗口内 scroll（滚轮投递到 app 进程，默认作用于网页视口）与
+        # press_key（作用于窗口焦点，网页焦点通常 AX 不可见）同样要过 web 边界。
+        if browser and do == "scroll" and has_web_area(nodes):
+            return refuse(
+                DesktopErrorCode.WEB_TARGET_NOT_ALLOWED,
+                "浏览器窗口存在 AXWebArea：滚轮事件投递到 app 进程将作用于网页视口。"
+                f"{GUIDANCE_WEB_TARGET}",
+            )
+        if browser and do == "press_key":
+            focused_ref = focused_ax_ref(nodes)
+            if focused_ref is not None and is_web_subtree(focused_ref, nodes):
+                return refuse(
+                    DesktopErrorCode.WEB_TARGET_NOT_ALLOWED,
+                    f"窗口焦点（ax_ref={focused_ref}）位于浏览器网页内容层。{GUIDANCE_WEB_TARGET}",
+                )
 
         # ── per-do 参数策略（B3 黑名单 / IME 缺口 / scroll 规格）──────────
         keys = str(options.get("keys") or "")
@@ -548,12 +704,22 @@ class DesktopOperateTool:
             title=target_identity.get("title"),
             keys=keys,
         )
+        # M1：浏览器窗口内 point/press_key/scroll 通道不得落在普通 act（按不可逆处理）
+        risk_class = channel_risk_override(
+            risk_class, browser=browser, do=do, target_kind=target_identity["kind"]
+        )
         audit["target_identity"] = target_identity
         audit["risk_class"] = risk_class
 
-        world = world_fingerprint(window, nodes, frontmost_before)
+        # S9：ax_ref 通道的目标节点无条件进 world 指纹（深位目标漂移必须打破令牌）
+        dry_target_node = next(
+            (n for n in nodes if n.ax_ref == target_identity.get("ax_ref")), None
+        ) if target_identity["kind"] == "ax_ref" else None
+        world = world_fingerprint(window, nodes, frontmost_before, target_node=dry_target_node)
         audit["pre_sha256"] = world
         audit["foreground_before"] = frontmost_before
+        # M1：point 通道永不进会话放行（坐标点击每次都要令牌 + world 比对）
+        channel_token_required = target_identity["kind"] == "point"
         # 令牌绑定的 action_id 用**稳定寻址**（do/window/ax_ref|point/text|keys）：
         # role/title 属展示属性（会合法变化，如文档标题自更新），其漂移由
         # world_version 相等性捕捉（foreground_changed 语义），不该把令牌烧成 mismatch。
@@ -643,16 +809,44 @@ class DesktopOperateTool:
                     started=started, base=base,
                     payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
                 )
-            if credential != self._force_secret:
+            # S3：失败节流——锁定窗内直接拒绝（不比较、不消耗），防进程内暴力试凭据
+            now_mono = time.monotonic()
+            if self._force_fail_count >= _FORCE_FAIL_LIMIT and now_mono < self._force_lock_until:
                 audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
                 self._audit_event(audit)
                 return self._envelope(
                     do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
-                    guidance="force_credential 与宿主预置凭据不匹配（D7）。",
+                    guidance=(
+                        f"force 凭据连续失败 {self._force_fail_count} 次，已临时锁定"
+                        f"（{_FORCE_LOCK_S:.0f}s 内拒绝所有 force 尝试，S3 节流）；稍后重试。"
+                    ),
                     started=started, base=base,
                     payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
                 )
-            self._gate.mark_force_consumed(self._session_id_getter())
+            # S3：恒时比较（secrets.compare_digest），不泄露比较进度
+            if not (
+                isinstance(credential, str)
+                and isinstance(self._force_secret, str)
+                and _secrets.compare_digest(credential, self._force_secret)
+            ):
+                self._force_fail_count += 1
+                if self._force_fail_count >= _FORCE_FAIL_LIMIT:
+                    self._force_lock_until = now_mono + _FORCE_LOCK_S
+                audit["error_code"] = DesktopErrorCode.FORCE_CREDENTIAL_INVALID.value
+                self._audit_event(audit)
+                return self._envelope(
+                    do=do, ok=False, error_code=DesktopErrorCode.FORCE_CREDENTIAL_INVALID,
+                    guidance=(
+                        "force_credential 与宿主预置凭据不匹配（D7）。"
+                        + (f"连续失败 {self._force_fail_count} 次，已进入 {_FORCE_LOCK_S:.0f}s 锁定。"
+                           if self._force_fail_count >= _FORCE_FAIL_LIMIT else "")
+                    ),
+                    started=started, base=base,
+                    payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
+                )
+            # S2：凭据**校验通过 ≠ 消耗**——消耗推迟到即将投递（所有可拒绝关卡之后），
+            # 写开关关闭/令牌不符/世界漂移等拒绝路径不得烧掉用户预置的一次性凭据。
+            self._force_fail_count = 0
 
         # 写能力总开关（T8：默认关；先于令牌校验，避免烧毁令牌）
         if not self._writes_enabled:
@@ -664,11 +858,27 @@ class DesktopOperateTool:
                 payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
             )
 
-        # §6.2 会话门 + T6 令牌
+        # M3：宿主 EXEC_MODE 分级（blocked/readonly 拒绝真实投递；allowlist 需显式列出
+        # 本工具；空 = 不启用，默认零回归）。dry_run 不走 apply 路径，天然不受限。
+        exec_mode_blocks = bool(self._exec_mode) and (
+            self._exec_mode in ("blocked", "readonly")
+            or (self._exec_mode == "allowlist" and self.name not in self._exec_allowlist)
+        )
+        if exec_mode_blocks:
+            audit["error_code"] = DesktopErrorCode.EXEC_MODE_BLOCKED.value
+            self._audit_event(audit)
+            return self._envelope(
+                do=do, ok=False, error_code=DesktopErrorCode.EXEC_MODE_BLOCKED,
+                guidance=GUIDANCE_EXEC_MODE_BLOCKED.format(mode=self._exec_mode),
+                started=started, base=base,
+                payload={"applied": False, "needs_confirmation": False, "hid_idle_ms": idle_ms},
+            )
+
+        # §6.2 会话门 + T6 令牌（M1：point 通道永不享受会话免令牌放行）
         session_id = self._session_id_getter()
         approved = self._gate.is_approved(session_id, bundle, do)
         token_str = str(options.get("confirm_token") or "")
-        if (risk_class == "irreversible" or not approved) and not token_str:
+        if (channel_token_required or risk_class == "irreversible" or not approved) and not token_str:
             audit["error_code"] = DesktopErrorCode.DRY_RUN_REQUIRED.value
             self._audit_event(audit)
             return self._envelope(
@@ -676,6 +886,8 @@ class DesktopOperateTool:
                 guidance=(
                     "该 (app, do) 组合在本会话尚未确认"
                     + ("，且 irreversible 类永远需要逐步 confirm_token" if risk_class == "irreversible" else "")
+                    + ("；坐标 point 目标不享受会话内放行，每次 apply 都需要新的"
+                       " confirm_token + world 比对（M1）" if channel_token_required else "")
                     + "；先以 dry_run=true 获取一次性 confirm_token 再 apply。"
                 ),
                 started=started, base=base,
@@ -728,12 +940,17 @@ class DesktopOperateTool:
                          "window": jsonable(fresh_window) if fresh_window else None,
                          "foreground_before": frontmost_before},
             )
-        fresh_view = backend.ax_snapshot(fresh_window, MAX_AX_DEPTH, 200)
+        fresh_view = backend.ax_snapshot(fresh_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
         fresh_nodes = fresh_view.nodes if fresh_view.available else ()
         fresh_frontmost = next(
             (w.bundle_id for w in backend.list_windows() if w.is_foreground), None
         )
-        fresh_world = world_fingerprint(fresh_window, fresh_nodes, fresh_frontmost)
+        fresh_target_node = next(
+            (n for n in fresh_nodes if n.ax_ref == target_identity.get("ax_ref")), None
+        ) if target_identity["kind"] == "ax_ref" else None
+        fresh_world = world_fingerprint(
+            fresh_window, fresh_nodes, fresh_frontmost, target_node=fresh_target_node
+        )
         if token_record is not None and fresh_world != token_record.world_version:
             audit["error_code"] = DesktopErrorCode.FOREGROUND_CHANGED.value
             self._audit_event(audit)
@@ -765,6 +982,10 @@ class DesktopOperateTool:
             )
 
         # ── 真实投递 ──────────────────────────────────────────────────────
+        # S2：一次性 force 凭据在此刻才消耗——此前所有关卡（写开关/EXEC_MODE/令牌/
+        # 世界重绑/AX 探针）都可能拒绝，拒绝路径不得烧掉用户预置的凭据。
+        if force_used:
+            self._gate.mark_force_consumed(session_id)
         outcome = self._deliver(do, options, backend, fresh_window)
         if not outcome.ok:
             audit.update(
@@ -784,16 +1005,22 @@ class DesktopOperateTool:
         if post_window is None:
             post_sha = window_gone_fingerprint(window.window_id)
             post_nodes: tuple = ()
+            post_target_node = None
         else:
-            post_view = backend.ax_snapshot(post_window, MAX_AX_DEPTH, 200)
+            post_view = backend.ax_snapshot(post_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
             post_nodes = post_view.nodes if post_view.available else ()
+            post_target_node = next(
+                (n for n in post_nodes if n.ax_ref == target_identity.get("ax_ref")), None
+            ) if target_identity["kind"] == "ax_ref" else None
             post_sha = world_fingerprint(
-                post_window, post_nodes, frontmost_before, include_value=True
+                post_window, post_nodes, frontmost_before, include_value=True,
+                target_node=post_target_node,
             )
         foreground_after = next(
             (w.bundle_id for w in backend.list_windows() if w.is_foreground), None
         )
-        if risk_class == "act":
+        # M1：point 通道与 irreversible 永不进会话放行（免令牌路径不得弱化）
+        if risk_class == "act" and not channel_token_required:
             self._gate.mark_approved(session_id, bundle, do)
         audit.update(
             {"applied": True, "post_sha256": post_sha, "foreground_after": foreground_after,

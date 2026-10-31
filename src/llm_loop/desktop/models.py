@@ -56,6 +56,10 @@ class DesktopErrorCode(StrEnum):
     WEB_TARGET_NOT_ALLOWED = "web_target_not_allowed"  # 路线 A：网页层走 browser_operate
     TYPE_TEXT_TOO_LONG = "type_text_too_long"  # §5.5：>2000 字符
     TYPE_ARGS_INVALID = "type_args_invalid"  # §5.5：type 参数非法
+    # ── R1 修复轮（M2/M3/S1/S6）──
+    INVALID_ARGS = "invalid_args"  # S6：入口参数形状非法，统一 JSON 信封回执
+    REVIEW_REQUIRED = "review_required"  # M2：发布/提交/支付类目标须宿主发表闸，本工具 fail-closed 拒绝
+    EXEC_MODE_BLOCKED = "exec_mode_blocked"  # M3：宿主 EXEC_MODE=blocked/readonly 拒绝真实投递（dry_run 不受限）
 
 
 # AX 错误码 → (确定性错误码, 人类可读 reason)。-25211 是权限类（给修复指引）；

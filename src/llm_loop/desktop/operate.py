@@ -46,7 +46,17 @@ TERMINAL_IDE_SUBSTRINGS: tuple[str, ...] = (
     "neovide",
     "xcode",
     "com.apple.dt.xcode",
+    # R1 子串表补全（原缺口见 dev report）：宁可误拒（fail-closed 方向），
+    # 已知第三方终端家族逐个登记；子串匹配仍非穷尽（残余风险已登记）。
+    "kitty",
+    "ghostty",
+    "warp",
+    "alacritty",
+    "hyper",
 )
+
+# M1（R1）：浏览器 bundle —— 网页内容层属路线 A 裁决域（browser_operate/CDP）
+BROWSER_BUNDLES: tuple[str, ...] = ("com.google.chrome", "com.apple.safari")
 
 RISK_HEURISTIC_DISCLAIMER = (
     "risk_class 由默认规则+关键词启发式判定，无法可靠识别全部不可逆动作；"
@@ -60,6 +70,14 @@ IRREVERSIBLE_TITLE_MARKERS: tuple[str, ...] = (
     "发布", "publish", "提交", "submit",
     "支付", "购买", "pay", "payment", "purchase",
     "覆盖", "替换", "overwrite", "replace",
+)
+
+# M2（R1，设计 §6.2/§6.3 MUST）：发布/提交/支付类目标不得由本工具令牌自行放行。
+# 命中即 fail-closed 拒绝（review_required），与 irreversible 启发式分离：后者仍可
+# 凭一次性 token 投递，前者必须走宿主发表闸（宿主闸当前无桌面动作入口 ⇒ 拒绝）。
+REVIEW_REQUIRED_MARKERS: tuple[str, ...] = (
+    "发布", "publish", "提交", "submit",
+    "支付", "购买", "pay", "payment", "purchase",
 )
 
 # press_key 闭合键集（非 IME 污染通道可投递的命名键；字母/数字一律走 do=type）
@@ -145,10 +163,90 @@ def classify_risk(
     if (
         do == "press_key"
         and str(keys or "").strip().lower() in ("enter", "return")
-        and _norm_bundle(bundle_id) in ("com.google.chrome", "com.apple.safari")
+        and _norm_bundle(bundle_id) in BROWSER_BUNDLES
     ):
         return "irreversible"
     return "act"
+
+
+# ── M1（R1）：路线 A 边界的纯判定（浏览器 web 内容命中）────────────────────
+
+def is_browser_bundle(bundle_id: str | None) -> bool:
+    return _norm_bundle(bundle_id) in BROWSER_BUNDLES
+
+
+def _ancestry_refs(ax_ref: str) -> list[str]:
+    refs: list[str] = []
+    prefix = ""
+    for part in str(ax_ref or "").split("."):
+        prefix = f"{prefix}.{part}" if prefix else part
+        refs.append(prefix)
+    return refs
+
+
+def is_web_subtree(ax_ref: str, nodes: tuple[AxNode, ...]) -> bool:
+    """ax_ref 自身或任何祖先命中 AXWebArea → 属网页内容层（路线 A 域）。"""
+    node_map = {n.ax_ref: n for n in nodes}
+    return any(
+        (node_map[ref].role or "").lower() == "axwebarea"
+        for ref in _ancestry_refs(ax_ref)
+        if ref in node_map
+    )
+
+
+def has_web_area(nodes: tuple[AxNode, ...]) -> bool:
+    return any((n.role or "").lower() == "axwebarea" for n in nodes)
+
+
+def web_area_rects(nodes: tuple[AxNode, ...]) -> tuple[tuple[float, float, float, float], ...]:
+    """AXWebArea 节点的全局包围盒（x0,y0,x1,y1，单位=点）；无 bounds 的节点跳过。"""
+    rects: list[tuple[float, float, float, float]] = []
+    for node in nodes:
+        if (node.role or "").lower() != "axwebarea" or node.pos_pt is None or node.size_pt is None:
+            continue
+        rects.append(
+            (
+                float(node.pos_pt.x),
+                float(node.pos_pt.y),
+                float(node.pos_pt.x) + float(node.size_pt.w),
+                float(node.pos_pt.y) + float(node.size_pt.h),
+            )
+        )
+    return tuple(rects)
+
+
+def point_in_web_area(px: float, py: float, nodes: tuple[AxNode, ...]) -> bool:
+    return any(
+        x0 <= px < x1 and y0 <= py < y1 for (x0, y0, x1, y1) in web_area_rects(nodes)
+    )
+
+
+def focused_ax_ref(nodes: tuple[AxNode, ...]) -> str | None:
+    for node in nodes:
+        if node.focused:
+            return node.ax_ref
+    return None
+
+
+def channel_risk_override(
+    risk_class: str, *, browser: bool, do: str, target_kind: str
+) -> str:
+    """M1（R1）：浏览器窗口内 point/press_key/scroll 通道不得落在普通 act。
+
+    point 无法做 web 边界证明时的兜底、press_key 作用于（通常不可见的）网页
+    焦点、scroll 投递到 app 进程（默认作用于网页视口）——三者一律按
+    irreversible 处理（每次都要新令牌 + world 比对），取「不可逆」而非「放行」。
+    """
+    if browser and (target_kind == "point" or do in ("press_key", "scroll")):
+        return "irreversible"
+    return risk_class
+
+
+# ── M2（R1）：发布/提交/支付类目标命中判定 ──────────────────────────────────
+
+def hits_review_markers(*texts: str | None) -> bool:
+    joined = " ".join(str(part or "") for part in texts).strip().lower()
+    return bool(joined) and any(marker in joined for marker in REVIEW_REQUIRED_MARKERS)
 
 
 # ── world_version / pre-post 指纹（D4 绑定期世界）──────────────────────────
@@ -159,6 +257,7 @@ def world_fingerprint(
     frontmost_bundle: str | None,
     *,
     include_value: bool = False,
+    target_node: AxNode | None = None,
 ) -> str:
     """绑定期世界指纹：窗口身份 + 前台归属 + AX 树（ax_ref|role|title[|value]）。
 
@@ -167,6 +266,9 @@ def world_fingerprint(
     - include_value 仅供 post_sha256：type 动作后的世界应反映新 value，
       而 pre 指纹必须排除 value（否则 dry_run 后任何输入都判 world 漂移）。
     - 节点截 200 个：目标子树的稳定性信号，不是全树 diff。
+    - target_node（R1/S9）：ax_ref 通道把解析到的目标节点行**无条件**追加进
+      指纹（即使它排在 200 截断之外）——深位目标自身的 role/title 漂移必须
+      打破 world_version（令牌作废），不能只靠前 200 行碰巧覆盖。
     """
     bounds = window.bounds_pt
     head = (
@@ -181,6 +283,11 @@ def world_fingerprint(
         if include_value:
             row += f"|{node.value or ''}"
         parts.append(row)
+    if target_node is not None:
+        target_row = f"T:{target_node.ax_ref}|{target_node.role or ''}|{target_node.title or ''}"
+        if include_value:
+            target_row += f"|{target_node.value or ''}"
+        parts.append(target_row)
     return hashlib.sha256(("|ax;".join([head, *parts])).encode("utf-8")).hexdigest()
 
 
@@ -243,8 +350,15 @@ class ConfirmTokenStore:
         return token
 
     def token_id(self, token: str) -> str:
+        """令牌的**不可逆**短 id（审计/回执展示用）：sha256 前 16 位十六进制。
+
+        M4（R1）：不得返回明文前缀（旧实现 raw[:12] 会把令牌明文片段写进
+        append-only 审计 JSONL——拿到审计文件即可缩小令牌爆破空间）。
+        """
         raw = str(token or "")
-        return raw[:12] if raw else ""
+        if not raw:
+            return ""
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
     def redeem(
         self,

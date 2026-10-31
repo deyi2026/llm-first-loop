@@ -258,12 +258,23 @@ class MacOSDesktopBackend:
             readback = macos_actuate.ax_read_value_string(el)
             verified = readback == text
             if not verified:
+                # S8（R1）：失败 detail 不回显键入内容（可能含敏感文本），
+                # 只报长度事实与差分位置。
+                first_diff = next(
+                    (
+                        i
+                        for i, (a, b) in enumerate(zip(text, readback or "", strict=False))
+                        if a != b
+                    ),
+                    min(len(text), len(readback or "")),
+                )
                 return ActOutcome(
                     ok=False,
                     error=DesktopErrorCode.BACKEND_ERROR,
                     detail=(
                         "AX 写入后回读不一致（写入已发生但结果未确认）："
-                        f"expect={text!r:.60} got={(readback or '')!r:.60}"
+                        f"expect_len={len(text)} got_len={len(readback or '')}"
+                        f" first_diff_at={first_diff}（不回显键入内容）"
                     ),
                     ax_error=None,
                     verified=False,

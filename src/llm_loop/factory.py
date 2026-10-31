@@ -614,8 +614,13 @@ def _register_desktop_perceive(register_basic: Any, settings: Settings) -> None:
             ),
             privacy_extra=split_bundle_config(settings.desktop_privacy_extra),
             act_allowlist_extra=split_bundle_config(settings.desktop_act_allowlist_extra),
+            # S10（R1）：perceive 可见范围对 act 对齐（默认空 = 不限制，零回归）
+            see_allowlist=split_bundle_config(settings.desktop_see_allowlist),
             writes_enabled=bool(settings.desktop_operate_enabled),
             force_credential=str(settings.desktop_force_credential or ""),
+            # M3（R1）：尊重宿主 EXEC_MODE 分级（默认空 = 不启用，零回归）
+            exec_mode=str(settings.exec_mode or ""),
+            exec_allowlist=split_bundle_config(settings.exec_allowlist),
         ),
     )
 

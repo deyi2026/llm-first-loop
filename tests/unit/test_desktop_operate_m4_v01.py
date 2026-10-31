@@ -15,20 +15,25 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 from pathlib import Path
 
 from llm_loop.core.message import ToolCall
-from llm_loop.desktop.backend_macos import backend_for_platform
+from llm_loop.desktop import macos_actuate
+from llm_loop.desktop.backend_macos import MacOSDesktopBackend, backend_for_platform
 from llm_loop.desktop.macos_capture import check_capture_size
 from llm_loop.desktop.models import (
     AX_ERROR_API_DISABLED,
+    AX_NODE_LIMIT_DEFAULT,
     ActOutcome,
     AxNode,
     AxView,
     BoundsPt,
     PermissionSnapshot,
     PlatformInfo,
+    Pt,
     SessionSnapshot,
+    Size,
     WindowInfo,
 )
 from llm_loop.desktop.operate import (
@@ -50,9 +55,13 @@ from llm_loop.tools.registry import ToolRegistry
 
 # ── 离线替身 ────────────────────────────────────────────────────────────────
 def _node(ax_ref: str, role: str = "AXButton", title: str | None = None,
-          subrole: str | None = None, value: str | None = None) -> AxNode:
+          subrole: str | None = None, value: str | None = None, *,
+          focused: bool = False, pos: tuple[float, float] | None = None,
+          size: tuple[float, float] | None = None) -> AxNode:
     return AxNode(ax_ref=ax_ref, role=role, subrole=subrole, title=title,
-                  value=value, focused=False, pos_pt=None, size_pt=None)
+                  value=value, focused=focused,
+                  pos_pt=Pt(*pos) if pos else None,
+                  size_pt=Size(*size) if size else None)
 
 
 def _view(*nodes: AxNode) -> AxView:
@@ -94,6 +103,7 @@ class FakeOperateBackend:
         )
         self.act_calls: list[dict] = []
         self.windows_calls = 0
+        self.ax_node_limits: list[int] = []
 
     def platform_info(self) -> PlatformInfo:
         return PlatformInfo(os="darwin", version="15.0")
@@ -115,6 +125,7 @@ class FakeOperateBackend:
         return None
 
     def ax_snapshot(self, window, depth, node_limit):
+        self.ax_node_limits.append(int(node_limit))  # S9：记录 cap 断言用
         return self._ax_views.get(window.window_id, DEFAULT_VIEW)
 
     def hid_idle_ms(self):
@@ -710,20 +721,31 @@ def test_writes_disabled_default_blocks_apply_not_dry_run():
 # ══ 15. 参数形状（闭合键集）═══════════════════════════════════════════════
 def test_arg_shape_failures():
     tool = _tool(_backend())
-    assert "do 不受支持" in tool.execute(**(CLICK_101 | {"do": "drag"})).content
-    assert "fields_mismatch" in tool.execute(**(CLICK_101 | {"speed": 1})).content
-    assert "click 不接受 text/keys" in tool.execute(**(CLICK_101 | {"text": "x"})).content
-    assert "text 必填" in tool.execute(do="type", window_id=101,
-                                       target={"ax_ref": "0.1"}, dry_run=True).content
-    assert "target 必填" in tool.execute(do="click", window_id=101, dry_run=True).content
-    assert "keys 必填" in tool.execute(do="press_key", window_id=101, dry_run=True).content
-    assert "window_id 必填" in tool.execute(do="click", target={"ax_ref": "0"}).content
+
+    def _msg(result):  # S6：校验失败也是 JSON 信封，可解析出 guidance/error_code
+        payload = json.loads(result.content)
+        assert payload["ok"] is False
+        return payload
+
+    assert "do 不受支持" in _msg(tool.execute(**(CLICK_101 | {"do": "drag"})))["guidance"]
+    p_extra = _msg(tool.execute(**(CLICK_101 | {"speed": 1})))
+    assert "fields_mismatch" in p_extra["guidance"] and p_extra["error_code"] == "invalid_args"
+    assert "click 不接受 text/keys" in _msg(
+        tool.execute(**(CLICK_101 | {"text": "x"})))["guidance"]
+    assert "text 必填" in _msg(tool.execute(do="type", window_id=101,
+                                            target={"ax_ref": "0.1"}, dry_run=True))["guidance"]
+    assert "target 必填" in _msg(tool.execute(
+        do="click", window_id=101, dry_run=True))["guidance"]
+    assert "keys 必填" in _msg(tool.execute(
+        do="press_key", window_id=101, dry_run=True))["guidance"]
+    assert "window_id 必填" in _msg(tool.execute(
+        do="click", target={"ax_ref": "0"}))["guidance"]
     bad_target = tool.execute(do="click", window_id=101,
                               target={"ax_ref": "0", "point": {"x": 1, "y": 1}}, dry_run=True)
-    assert "键互斥" in bad_target.content
+    assert "键互斥" in json.loads(bad_target.content)["guidance"]
     bad_point = tool.execute(do="click", window_id=101,
                              target={"point": {"x": 1}}, dry_run=True)
-    assert "target.point 形如" in bad_point.content
+    assert "target.point 形如" in json.loads(bad_point.content)["guidance"]
 
 
 # ══ 16. 审计（§6.4 字段齐全；append-only）════════════════════════════════
@@ -745,9 +767,14 @@ def test_audit_jsonl_fields_complete_append_only(tmp_path: Path):
         assert required <= set(row), sorted(required - set(row))
     assert rows[0]["dry_run"] is True and rows[0]["applied"] is False
     assert rows[1]["applied"] is True and rows[1]["post_sha256"]
-    assert rows[1]["confirm_token_id"].startswith("dtkm-")
+    # M4（R1）：审计只记令牌的 sha256 前 16 位十六进制摘要——不落明文/前缀
+    assert re.fullmatch(r"[0-9a-f]{16}", rows[1]["confirm_token_id"] or "")
     assert rows[2]["error_code"] == "confirm_token_replayed"
     assert all(row["tool"] == "desktop_operate" for row in rows)
+    # 审计文件全文不含令牌明文及其前缀（M4）
+    audit_raw = audit_path.read_text()
+    assert dry["confirm_token"] not in audit_raw
+    assert dry["confirm_token"][:12] not in audit_raw
     # 无删除/改写接口：sink 只有 append（make_jsonl_audit_sink 以 "a" 模式打开）
 
 
@@ -792,3 +819,466 @@ def test_factory_registration_defaults(tmp_path: Path):
 def test_backend_for_platform_non_darwin_none():
     assert backend_for_platform("linux") is None
     assert backend_for_platform("win32") is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# R1 修复轮（M1-M4 / S1-S10）：每条负例均断言零投递（backend.act_calls == []）
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Chrome 窗口带 AXWebArea（bounds 与 _window 默认 bounds 对齐：web 区 (0,78)-(1512,778)）
+CHROME_WEB_BOUNDED = _view(
+    _node("0", "AXWindow", "某文档 - Google Chrome"),
+    _node("0.0", "AXWebArea", "某文档", pos=(0.0, 78.0), size=(1512.0, 700.0)),
+    _node("0.0.1", "AXButton", "登录"),
+    _node("0.0.2", "AXTextField", "网页输入框", focused=True),
+)
+
+
+# ── M1：路线 A 边界不得被 point/scroll/press_key 绕过 ──────────────────────
+def test_m1_point_in_browser_web_area_refused():
+    backend = _backend(ax_views={101: CHROME_WEB_BOUNDED})
+    tool = _tool(backend)
+    p = _direct(tool, do="click", window_id=101,
+                target={"point": {"x": 700.0, "y": 400.0}}, dry_run=True)
+    assert p["error_code"] == "web_target_not_allowed"
+    assert "browser_operate" in p["guidance"]
+    assert backend.act_calls == []
+
+
+def test_m1_point_web_area_without_bounds_refused_fail_closed():
+    unbounded = _view(
+        _node("0", "AXWindow", "某文档 - Google Chrome"),
+        _node("0.0", "AXWebArea", "某文档"),  # 无 pos/size：无法排除 → 拒绝
+    )
+    backend = _backend(ax_views={101: unbounded})
+    p = _direct(_tool(backend), do="click", window_id=101,
+                target={"point": {"x": 700.0, "y": 400.0}}, dry_run=True)
+    assert p["error_code"] == "web_target_not_allowed"
+    assert backend.act_calls == []
+
+
+def test_m1_point_browser_snapshot_unavailable_refused_fail_closed():
+    unavailable = AxView(available=False, failure="ax_unavailable")
+    backend = _backend(ax_views={101: unavailable})
+    p = _direct(_tool(backend), do="click", window_id=101,
+                target={"point": {"x": 700.0, "y": 400.0}}, dry_run=True)
+    assert p["error_code"] == "web_target_not_allowed"
+    assert "快照不可用" in p["guidance"]
+    assert backend.act_calls == []
+
+
+def test_m1_browser_point_outside_web_area_irreversible_and_token_every_time():
+    backend = _backend(ax_views={101: CHROME_WEB_BOUNDED})
+    reg = _registry(_tool(backend))
+    point = {"point": {"x": 700.0, "y": 850.0}}  # 窗口内、web 区外（底部状态栏带）
+    dry = _dispatch(reg, do="click", window_id=101, target=point, dry_run=True)
+    assert dry["ok"] is True
+    assert dry["risk_class"] == "irreversible"  # 浏览器 point 不落普通 act（M1）
+    ok = _dispatch(reg, do="click", window_id=101, target=point, dry_run=False,
+                   confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    assert backend.act_calls == [{"do": "click_point", "x": 700.0, "y": 850.0}]
+    # 同 (app, do) 已确认过也不放行：point 通道永不进会话免令牌路径
+    again = _dispatch(reg, do="click", window_id=101, target=point, dry_run=False)
+    assert again["error_code"] == "dry_run_required"
+    assert "不享受会话内放行" in again["guidance"]
+    assert len(backend.act_calls) == 1
+
+
+def test_m1_native_point_click_no_session_freepass():
+    finder = _window(window_id=108, pid=318, app="Finder", bundle_id="com.apple.finder",
+                     title="下载", bounds=(100.0, 100.0, 800.0, 600.0), is_foreground=True)
+    backend = _backend(windows=[finder])
+    reg = _registry(_tool(backend))
+    point = {"point": {"x": 300.0, "y": 300.0}}
+    dry = _dispatch(reg, do="click", window_id=108, target=point, dry_run=True)
+    assert dry["risk_class"] == "act"  # 原生 app 的 point 仍是 act 级
+    ok = _dispatch(reg, do="click", window_id=108, target=point, dry_run=False,
+                   confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    # M1：坐标点击每次都要令牌 + world 比对（免令牌会话放行只属于 ax_ref 通道）
+    second = _dispatch(reg, do="click", window_id=108, target=point, dry_run=False)
+    assert second["error_code"] == "dry_run_required"
+    assert len(backend.act_calls) == 1
+
+
+def test_m1_scroll_in_browser_with_web_area_refused():
+    backend = _backend(ax_views={101: CHROME_WEB_BOUNDED})
+    p = _direct(_tool(backend), do="scroll", window_id=101,
+                target={"ax_ref": "0"}, keys="down", dry_run=True)
+    assert p["error_code"] == "web_target_not_allowed"
+    assert "browser_operate" in p["guidance"]
+    assert backend.act_calls == []
+
+
+def test_m1_scroll_in_browser_without_web_area_downgraded_irreversible():
+    # 本机实测形态：Chrome AX 树 AXWebArea=0（网页层不可达）→ 无法证明 → 不可逆+令牌
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="scroll", window_id=101, target={"ax_ref": "0"},
+                    keys="down", dry_run=True)
+    assert dry["risk_class"] == "irreversible"
+    no_token = _dispatch(reg, do="scroll", window_id=101, target={"ax_ref": "0"},
+                         keys="down", dry_run=False)
+    assert no_token["error_code"] == "dry_run_required"
+    assert backend.act_calls == []
+
+
+def test_m1_press_key_focused_in_web_area_refused():
+    backend = _backend(ax_views={101: CHROME_WEB_BOUNDED})  # 0.0.2 focused 在 web 子树
+    p = _direct(_tool(backend), do="press_key", window_id=101, keys="Escape", dry_run=True)
+    assert p["error_code"] == "web_target_not_allowed"
+    assert backend.act_calls == []
+
+
+def test_m1_press_key_in_browser_upgraded_irreversible():
+    backend = _backend()  # DEFAULT_VIEW：无 AXWebArea、无 focused 节点（焦点不可见）
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, do="press_key", window_id=101, keys="tab", dry_run=True)
+    assert dry["risk_class"] == "irreversible"  # 网页焦点不可证 → 降级不可逆+令牌
+    ok = _dispatch(reg, do="press_key", window_id=101, keys="tab", dry_run=False,
+                   confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+    again = _dispatch(reg, do="press_key", window_id=101, keys="tab", dry_run=False)
+    assert again["error_code"] == "dry_run_required"
+    assert len(backend.act_calls) == 1
+
+
+# ── M2：发布/提交/支付类目标 fail-closed（宿主发表闸缺失 ⇒ 不自行放行）────
+def test_m2_publish_axref_target_review_required():
+    preview = _window(window_id=107, pid=221, app="Preview", bundle_id="com.apple.Preview",
+                      title="文章.pdf", bounds=(0.0, 38.0, 900.0, 700.0), is_foreground=True)
+    publish_view = _view(
+        _node("0", "AXWindow", "文章.pdf"),
+        _node("0.0", "AXButton", "发布"),
+    )
+    backend = _backend(windows=[preview], ax_views={107: publish_view})
+    tool = _tool(backend)
+    p = _direct(tool, do="click", window_id=107, target={"ax_ref": "0.0"}, dry_run=True)
+    assert p["error_code"] == "review_required"
+    assert "宿主" in p["guidance"] and "不自行放行" in p["guidance"]
+    assert "confirm_token" not in p  # dry_run 也不签发令牌
+    assert backend.act_calls == []
+    # 带任意 token 的 apply 同样拒绝（在令牌校验之前）
+    p2 = _direct(tool, do="click", window_id=107, target={"ax_ref": "0.0"},
+                 dry_run=False, confirm_token="dtkm-forged")
+    assert p2["error_code"] == "review_required"
+    assert backend.act_calls == []
+
+
+def test_m2_payment_point_target_window_title_review_required():
+    finder = _window(window_id=109, pid=319, app="Finder", bundle_id="com.apple.finder",
+                     title="订单支付确认", bounds=(0.0, 38.0, 800.0, 600.0),
+                     is_foreground=True)
+    backend = _backend(windows=[finder])
+    # point 无法证明点的是什么 → 窗口标题命中支付类标记即 fail-closed
+    p = _direct(_tool(backend), do="click", window_id=109,
+                target={"point": {"x": 400.0, "y": 300.0}}, dry_run=True)
+    assert p["error_code"] == "review_required"
+    assert backend.act_calls == []
+
+
+# ── M3：EXEC_MODE 分级（默认空 = 零回归）───────────────────────────────────
+def test_m3_exec_mode_blocked_and_readonly_refuse_delivery():
+    for mode in ("blocked", "readonly"):
+        backend = _backend()
+        reg = _registry(_tool(backend, exec_mode=mode))
+        dry = _dispatch(reg, **CLICK_101, dry_run=True)
+        assert dry["ok"] is True and dry["confirm_token"]  # dry_run 不受限
+        blocked = _dispatch(reg, **CLICK_101, dry_run=False,
+                            confirm_token=dry["confirm_token"])
+        assert blocked["error_code"] == "exec_mode_blocked"
+        assert mode in blocked["guidance"] and "EXEC_MODE" in blocked["guidance"]
+        assert backend.act_calls == []
+
+
+def test_m3_exec_mode_allowlist_requires_explicit_entry():
+    backend = _backend()
+    reg = _registry(_tool(backend, exec_mode="allowlist"))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    blocked = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert blocked["error_code"] == "exec_mode_blocked"
+    assert backend.act_calls == []
+    backend2 = _backend()
+    reg2 = _registry(_tool(backend2, exec_mode="allowlist",
+                           exec_allowlist=("desktop_operate",)))
+    dry2 = _dispatch(reg2, **CLICK_101, dry_run=True)
+    ok = _dispatch(reg2, **CLICK_101, dry_run=False, confirm_token=dry2["confirm_token"])
+    assert ok["applied"] is True and backend2.act_calls
+
+
+def test_m3_exec_mode_empty_zero_regression():
+    # 默认（空 = 不启用分级）：行为与既有用例一致（真实投递不受 exec_mode 影响）
+    backend = _backend()
+    reg = _registry(_tool(backend))  # exec_mode 缺省 ""
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    ok = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert ok["applied"] is True
+
+
+# ── M4：审计/回执不得出现令牌明文片段；force 凭据不入审计/回执 ─────────────
+def test_m4_force_credential_and_token_absent_from_audit_and_receipts(tmp_path: Path):
+    audit_path = tmp_path / "audit" / "desktop_operate.jsonl"
+    backend = _backend(hid_idle=5_000)
+    reg = _registry(_tool(backend, force_credential="FORCE-SENTINEL-9f31",
+                          audit_sink=make_jsonl_audit_sink(audit_path)))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    ok = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"],
+                   force=True, force_credential="FORCE-SENTINEL-9f31")
+    assert ok["applied"] is True and ok["force_used"] is True
+    audit_raw = audit_path.read_text()
+    assert "FORCE-SENTINEL-9f31" not in audit_raw  # 凭据不入审计
+    assert dry["confirm_token"] not in audit_raw  # 令牌明文不入审计
+    assert "FORCE-SENTINEL-9f31" not in json.dumps(ok, ensure_ascii=False)
+    assert dry["confirm_token"] not in json.dumps(ok, ensure_ascii=False)  # apply 回执不回显
+
+
+def test_m4_token_id_is_irreversible_digest():
+    store = ConfirmTokenStore()
+    token = store.issue(window_id=1, do="click", action_fp="x", world_version="w",
+                        risk_class="act")
+    digest = store.token_id(token)
+    assert re.fullmatch(r"[0-9a-f]{16}", digest)
+    assert digest != token[:12] and token[:12] not in digest
+    assert store.token_id("") == ""
+
+
+# ── S1：type+point 在校验层拒绝（TYPE_ARGS_INVALID，非投递层 KeyError）──────
+def test_s1_type_point_rejected_type_args_invalid():
+    backend = _backend()
+    p = _direct(_tool(backend), do="type", window_id=101,
+                target={"point": {"x": 100.0, "y": 200.0}}, text="hi", dry_run=True)
+    assert p["error_code"] == "type_args_invalid"
+    assert "ax_ref" in p["guidance"]
+    assert backend.act_calls == []
+
+
+# ── S2：force 凭据消耗移到「即将投递」之后 ─────────────────────────────────
+def test_s2_force_credential_not_burned_by_refusals():
+    backend = _backend(hid_idle=5_000)  # 在场 → force 路径
+    tool = _tool(backend, writes_enabled=False, force_credential="s3cret")
+    reg = _registry(tool)
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    refused = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"],
+                        force=True, force_credential="s3cret")
+    assert refused["error_code"] == "writes_disabled"  # 写开关关闭：拒绝且不投递
+    assert backend.act_calls == []
+    # 开关打开后同一凭据仍可用（未被上面的拒绝烧掉）——S2 核心断言
+    tool._writes_enabled = True
+    dry2 = _dispatch(reg, **CLICK_101, dry_run=True)
+    ok = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry2["confirm_token"],
+                   force=True, force_credential="s3cret")
+    assert ok["applied"] is True and ok["force_used"] is True
+
+
+# ── S3：compare_digest（恒时）+ 失败节流 ────────────────────────────────────
+def test_s3_force_failures_throttled():
+    backend = _backend(hid_idle=5_000)
+    tool = _tool(backend, force_credential="s3cret")
+    reg = _registry(tool)
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    token = dry["confirm_token"]
+    for _ in range(3):  # 三次错误凭据（拒绝发生在令牌赎回之前，token 不被烧）
+        wrong = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=token,
+                          force=True, force_credential="nope")
+        assert wrong["error_code"] == "force_credential_invalid"
+    assert backend.act_calls == []
+    # 阈值后：正确凭据也被节流拒绝
+    locked = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=token,
+                       force=True, force_credential="s3cret")
+    assert locked["error_code"] == "force_credential_invalid"
+    assert "锁定" in locked["guidance"]
+    assert backend.act_calls == []
+    # 锁定窗过期后正确凭据放行（测试直接把锁过期，避免真实等待 60s）
+    tool._force_lock_until = 0.0
+    ok = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=token,
+                   force=True, force_credential="s3cret")
+    assert ok["applied"] is True
+    assert tool._force_fail_count == 0  # 成功后计数复位
+
+
+# ── S4：cg_post_click 空事件不投递（与 cg_post_key 对齐）────────────────────
+def test_s4_cg_post_click_null_event_not_posted(monkeypatch):
+    posts: list[object] = []
+
+    class _FakeLib:
+        pass
+
+    lib = _FakeLib()
+    lib.CGEventCreateMouseEvent = lambda source, kind, where, button: None  # 空事件
+    lib.CGEventPost = lambda tap, event: posts.append(event)
+
+    monkeypatch.setattr(macos_actuate, "_cg", lambda: lib)
+    macos_actuate.cg_post_click(10.0, 20.0)
+    assert posts == []  # 空事件绝不 post（S4）
+
+
+# ── S5：早期拒绝也写审计行 ─────────────────────────────────────────────────
+def test_s5_early_refusals_audited():
+    rows: list[dict] = []
+    sink = rows.append
+    # 参数校验失败
+    DesktopOperateTool(backend=_backend(), session_id_getter=lambda: "s5",
+                       audit_sink=sink).execute(**(CLICK_101 | {"do": "drag"}))
+    # unsupported_platform（无后端）
+    DesktopOperateTool(backend=None, session_id_getter=lambda: "s5",
+                       audit_sink=sink).execute(**CLICK_101, dry_run=True)
+    # no_gui_session / screen_locked
+    _tool(_backend(session=SessionSnapshot(gui_available=False, console_user=None,
+                                           screen_locked=None)),
+          audit_sink=sink).execute(**CLICK_101, dry_run=True)
+    _tool(_backend(session=SessionSnapshot(gui_available=True, console_user="u",
+                                           screen_locked=True)),
+          audit_sink=sink).execute(**CLICK_101, dry_run=True)
+    # window_not_found
+    _tool(_backend(), audit_sink=sink).execute(
+        **(CLICK_101 | {"window_id": 999}), dry_run=True)
+    codes = {row.get("error_code") for row in rows}
+    assert {"invalid_args", "unsupported_platform", "no_gui_session",
+            "screen_locked", "window_not_found"} <= codes
+    assert all(row["tool"] == "desktop_operate" and row["session_id"] for row in rows)
+
+
+# ── S7：CF 释放异常安全 ────────────────────────────────────────────────────
+def test_s7_resolve_element_early_exit_releases(monkeypatch):
+    class _FakeEl:
+        def __init__(self) -> None:
+            self.released = 0
+
+        def attr(self, name):  # noqa: ANN001
+            assert name == "AXChildren"
+            return ["child-0"]  # 只有一个子节点：索引 5 越界 → 早退分支
+
+        def release(self) -> None:
+            self.released += 1
+
+    fake = _FakeEl()
+    monkeypatch.setattr(macos_actuate, "resolve_window_element", lambda window: (fake, None))
+    el, failure = macos_actuate.resolve_element_by_axref(_window(), "0.5")
+    assert el is None and failure == "ax_ref_not_found"
+    assert fake.released == 1  # 早退分支也释放（S7）
+
+
+def test_s7_window_candidates_release_on_midway_exception(monkeypatch):
+    created: list[int] = []
+    released: list[int] = []
+
+    class _FakeEl:
+        def __init__(self, ref: int) -> None:
+            self._ref = ref
+            created.append(ref)
+
+        def release(self) -> None:
+            released.append(self._ref)
+
+    def _fake_item(value, i):  # noqa: ANN001
+        if i >= 1:
+            raise RuntimeError("boom at index 1")
+        return 0x100 + i
+
+    monkeypatch.setattr(macos_actuate, "ax_read_attr", lambda ref, name: (0, 0xABC))
+    monkeypatch.setattr(macos_actuate, "cf_array_count", lambda value: 3)
+    monkeypatch.setattr(macos_actuate, "cf_array_item", _fake_item)
+    monkeypatch.setattr(macos_actuate, "cf_retain", lambda ref: ref)
+    monkeypatch.setattr(macos_actuate, "cf_release", lambda ref: None)
+    monkeypatch.setattr(macos_actuate, "MacAxElement", _FakeEl)
+    try:
+        macos_actuate._ax_window_candidates(1)
+        raise AssertionError("应当在中途异常传播")
+    except RuntimeError as exc:
+        assert "boom" in str(exc)
+    assert created == [0x100]  # 只构造了第 0 个
+    assert released == [0x100]  # 异常路径把它释放（S7：不泄漏）
+
+
+# ── S8：act_set_value 失败 detail 不回显键入内容 ───────────────────────────
+def test_s8_set_value_mismatch_detail_no_echo(monkeypatch):
+    class _FakeEl:
+        def release(self) -> None:
+            return None
+
+    monkeypatch.setattr(macos_actuate, "resolve_element_by_axref",
+                        lambda window, ax_ref: (_FakeEl(), None))
+    monkeypatch.setattr(macos_actuate, "ax_set_value", lambda el, text: 0)
+    monkeypatch.setattr(macos_actuate, "ax_read_value_string",
+                        lambda el: "DIFFERENT-READBACK")
+    outcome = MacOSDesktopBackend().act_set_value(_window(), "0.1", "SECRET-TYPED-TEXT")
+    assert outcome.ok is False and outcome.verified is False
+    assert "SECRET-TYPED-TEXT" not in str(outcome.detail)
+    assert "expect_len=" in str(outcome.detail) and "不回显键入内容" in str(outcome.detail)
+
+
+# ── S9：AX 节点 cap 与 perceive 对齐；目标行无条件进 world 指纹 ─────────────
+def test_s9_operate_ax_node_cap_matches_perceive():
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert backend.ax_node_limits  # dry/deliver/post 三次快照都记录了 cap
+    assert set(backend.ax_node_limits) == {AX_NODE_LIMIT_DEFAULT}
+
+
+def test_s9_world_fingerprint_target_row_breaks_on_deep_target_drift():
+    w = _window()
+    many = tuple(_node(str(i), "AXButton", f"t{i}") for i in range(300))
+    deep = many[299]
+    fp_a = world_fingerprint(w, many, "fg", target_node=deep)
+    renamed = many[:299] + (_node("299", "AXButton", "CHANGED"),)
+    fp_b = world_fingerprint(w, renamed, "fg", target_node=renamed[299])
+    assert fp_a != fp_b  # 深位（>200）目标改名 → 令牌 world 作废（S9）
+    # 演示旧行为盲区（不传 target_node 时前 200 行覆盖不到 299 号节点）：
+    assert world_fingerprint(w, many, "fg") == world_fingerprint(w, renamed, "fg")
+
+
+# ── S10：desktop_see_allowlist 对 act 对齐 ─────────────────────────────────
+def test_s10_see_allowlist_blocks_act():
+    backend = _backend()  # 默认 Chrome 窗口
+    tool = _tool(backend, see_allowlist=("com.apple.finder",))
+    p = _direct(tool, **CLICK_101, dry_run=True)
+    assert p["error_code"] == "app_not_allowed"
+    assert "see_allowlist" in p["guidance"]
+    assert backend.act_calls == []
+    # 空名单（默认）= 不限制：既有全部用例即回归证明
+
+
+def test_s10_factory_passes_see_allowlist_and_exec_mode(tmp_path: Path):
+    import llm_loop.factory as factory_module
+    from llm_loop.config import load_settings
+
+    settings = load_settings({
+        "LLM_API_KEY": "k", "LLM_BASE_URL": "http://127.0.0.1", "LLM_MODEL": "m",
+        "LFL_DATA_DIR": str(tmp_path),
+        "LFL_DESKTOP_SEE_ALLOWLIST": "com.apple.finder",
+        "EXEC_MODE": "blocked",
+    })
+    registered: dict[str, object] = {}
+    factory_module._register_desktop_perceive(
+        lambda name, tool: registered.__setitem__(name, tool), settings
+    )
+    tool = registered["desktop_operate"]
+    assert isinstance(tool, DesktopOperateTool)
+    assert tool._see_allowlist.is_allowed("com.apple.finder") is True
+    assert tool._see_allowlist.is_allowed("com.google.chrome") is False
+    assert tool._exec_mode == "blocked"  # M3 装配生效
+
+
+# ── R1 杂项：终端子串表补全 + 描述声明语义 ─────────────────────────────────
+def test_r1_terminal_substrings_extended():
+    allow = ActAllowlist()
+    for bundle in ("net.kovidgoyal.kitty", "com.mitchellh.ghostty",
+                   "dev.warp.Warp-Stable", "org.alacritty", "com.electron.hyper.hyper"):
+        assert allow.is_terminal_or_ide(bundle) is True, bundle
+        assert allow.is_actable(bundle) == (False, "terminal_readonly"), bundle
+
+
+def test_r1_descriptions_declare_semantics():
+    # 会话免令牌放行「不重做 world 比对」的语义必须显式声明（延期项要求）
+    assert "不重做 world 比对" in DesktopOperateTool.description
+    assert "review_required" in DesktopOperateTool.description
+    assert "exec_mode_blocked" in DesktopOperateTool.description
+    from llm_loop.tools.registry import _COMPACT_TOOL_DESCRIPTIONS
+
+    compact = _COMPACT_TOOL_DESCRIPTIONS["desktop_operate"]
+    assert "review_required" in compact
+    assert "exec_mode_blocked" in compact
+    assert "point" in compact  # point 通道语义入 compact 描述
