@@ -144,24 +144,72 @@ class TestIntegrityStates:
 
     def test_explicit_manifest_param(self, tmp_path):
         skills = tmp_path / "skills"
-        f = _mk_skill(skills, "alpha")
-        digest = hashlib.sha256(f.read_bytes()).hexdigest()
-        metas = scan_skills_dir(
-            skills, manifest={"version": 1, "skills": {"alpha": {"sha256": digest}}}
-        )
+        _mk_skill(skills, "alpha")
+        manifest = build_manifest(skills)
+        metas = scan_skills_dir(skills, manifest=manifest)
         assert metas[0].integrity == INTEGRITY_OK
 
     def test_manifest_structure_and_roundtrip(self, tmp_path):
         skills = tmp_path / "skills"
         f = _mk_skill(skills, "alpha")
         manifest = build_manifest(skills)
-        assert manifest["version"] == 1
+        assert manifest["version"] == 2
         entry = manifest["skills"]["alpha"]
         assert entry["sha256"] == hashlib.sha256(f.read_bytes()).hexdigest()
         assert entry["approved_at"]  # ISO 时间戳存在
+        assert entry["approved_by"]  # 批准者标识存在（诚实语义见 approve_skills.py）
+        assert entry["source"] == "local"
+        assert entry["tree_sha256"]  # 目录树基线存在
+        assert entry["files"]["SKILL.md"] == entry["sha256"]
         write_manifest(skills, manifest)
         assert load_manifest(skills) == manifest
         assert load_manifest(tmp_path / "nowhere") is None
+
+    # --- EVO-20261031-6b21e0f4: v2 覆盖整个技能目录树 -------------------------
+
+    def test_auxiliary_file_change_is_modified(self, tmp_path):
+        # v2 的核心价值：改了 SKILL.md 之外的执行输入，门禁必须发现。
+        # v1 只哈希 SKILL.md，这种改动会完全隐身。
+        skills = tmp_path / "skills"
+        _mk_skill(skills, "alpha")
+        write_manifest(skills)
+        script = skills / "alpha" / "scripts" / "run.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("print('x')\n", encoding="utf-8")
+        meta = scan_skills_dir(skills)[0]
+        assert meta.integrity == INTEGRITY_MODIFIED
+        assert "run.py" in meta.integrity_detail
+
+    def test_added_file_inside_skill_dir_is_modified(self, tmp_path):
+        skills = tmp_path / "skills"
+        _mk_skill(skills, "alpha")
+        write_manifest(skills)
+        (skills / "alpha" / "extra.md").write_text("附加内容\n", encoding="utf-8")
+        assert scan_skills_dir(skills)[0].integrity == INTEGRITY_MODIFIED
+
+    def test_vendored_skill_records_upstream_source(self, tmp_path):
+        skills = tmp_path / "skills"
+        d = skills / "vendored-one"
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            "---\nname: vendored-one\ndescription: 第三方技能\n"
+            "metadata:\n  vendored-from: acme/skills@deadbeef\n---\n正文\n",
+            encoding="utf-8",
+        )
+        entry = build_manifest(skills)["skills"]["vendored-one"]
+        assert entry["source"] == "vendored"
+        assert entry["upstream"] == "acme/skills@deadbeef"
+
+    def test_entry_without_tree_baseline_is_unlisted(self, tmp_path):
+        # fail-closed：登记条目缺目录树基线 → 无法核验 → 不放行
+        skills = tmp_path / "skills"
+        f = _mk_skill(skills, "alpha")
+        digest = hashlib.sha256(f.read_bytes()).hexdigest()
+        metas = scan_skills_dir(
+            skills,
+            manifest={"version": 2, "skills": {"alpha": {"sha256": digest}}},
+        )
+        assert metas[0].integrity == INTEGRITY_UNLISTED
 
 
 # ── 加载门禁与注入标注（run_skill_load）────────────────────────────────────
@@ -241,7 +289,10 @@ class TestApproveScript:
             timeout=60,
         )
         assert proc.returncode == 0, proc.stderr
-        assert "审批完成" in proc.stdout
+        # EVO-20261031-6b21e0f4: 清单语义由「审批」改为「完整性基线」，故
+        # 输出措辞随之改为「基线已写入」——它证明内容与登记时一致，不证明
+        # 内容被谁逐字读过。
+        assert "基线已写入" in proc.stdout
         assert load_manifest(skills) is not None
         assert scan_skills_dir(skills)[0].integrity == INTEGRITY_OK  # 重审批转 ok
 

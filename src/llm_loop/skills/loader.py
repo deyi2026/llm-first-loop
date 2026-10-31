@@ -40,9 +40,19 @@ _FRONTMATTER_MAX = 64 * 1024  # §10.2 输入大小限制
 # 诚实边界: 清单与技能同在 AI 可写目录内，AI 可同时改两者——本机制不是
 # 防篡改强隔离（强隔离需移出工作区/只读挂载，见建议书 P1-5/P2）。
 MANIFEST_FILENAME = ".manifest.json"
-MANIFEST_VERSION = 1
-INTEGRITY_OK = "ok"  # 清单已登记且 sha256 一致
-INTEGRITY_MODIFIED = "modified"  # 清单已登记但 sha256 不一致（内容被改）
+# EVO-20261031-6b21e0f4 (human-approved 2026-10-31): manifest v2 covers the
+# WHOLE skill directory, not just SKILL.md.  A gate that hashes only SKILL.md
+# is decorative for exactly the assets that matter: SKILL.md merely POINTS at
+# scripts/, data/ and sections/, and those are the execution input (measured:
+# skills/ui-ux-pro-max = 49 files / 3.33MB, of which SKILL.md is one).  A
+# change that edits scripts/ and leaves SKILL.md alone would have passed the
+# v1 gate.  v2 entries therefore carry a directory-tree digest plus the
+# per-file digests (for naming WHAT changed, not just THAT it changed).
+MANIFEST_VERSION = 2
+# 目录树哈希的排除项：解释器缓存与清单自身（随清单变化，不是技能内容）
+MANIFEST_TREE_EXCLUDED_NAMES = frozenset({"__pycache__", ".DS_Store", ".pyc"})
+INTEGRITY_OK = "ok"  # 清单已登记且目录树一致
+INTEGRITY_MODIFIED = "modified"  # 清单已登记但内容不一致（内容被改）
 INTEGRITY_UNLISTED = "unlisted"  # 有清单但该技能未登记（新增未经审批）
 INTEGRITY_UNMANAGED = "unmanaged"  # 无可用清单（缺文件/损坏/版本不符）
 APPROVAL_HINT = "运行 scripts/approve_skills.py 重新审批（人工确认后写入清单）"
@@ -170,19 +180,90 @@ def _sha256_file(path: Path) -> str | None:
         return None
 
 
-def build_manifest(skills_dir: str | Path) -> dict:
-    """扫描并构建完整性清单（P1-5）: 对磁盘现状逐技能取 sha256.
+def _vendored_upstream(meta: SkillMeta) -> str | None:
+    """从 frontmatter metadata.vendored-from 取上游坐标；无则 None（本地技能）."""
+    metadata = meta.frontmatter.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("vendored-from")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
-    结构: {"version": 1, "skills": {name: {"sha256": hex64, "approved_at": ISO8601}}}.
-    approved_at=生成时刻（人工审批入口 scripts/approve_skills.py 调用后落盘）。
+
+def _skill_tree_digest(skill_dir: Path) -> tuple[str, dict[str, str]] | None:
+    """计算技能目录树的摘要与逐文件摘要（EVO-20261031-6b21e0f4）。
+
+    返回 (tree_sha256, {相对路径: sha256})。任一文件读不到、或目录里没有
+    SKILL.md 时返回 None —— 调用方按「不可登记」处理，不谎称一致。
+    """
+    files: dict[str, str] = {}
+    try:
+        for path in sorted(skill_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(skill_dir).as_posix()
+            if rel == MANIFEST_FILENAME:
+                continue
+            if any(part in MANIFEST_TREE_EXCLUDED_NAMES for part in rel.split("/")):
+                continue
+            digest = _sha256_file(path)
+            if digest is None:
+                return None
+            files[rel] = digest
+    except OSError:
+        return None
+    if "SKILL.md" not in files:
+        return None
+    joined = "\n".join(
+        f"{rel}\t{digest}" for rel, digest in sorted(files.items())
+    )
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest(), files
+
+
+def build_manifest(
+    skills_dir: str | Path, *, approved_by: str = "baseline",
+) -> dict:
+    """扫描并构建完整性清单（v2，EVO-20261031-6b21e0f4）.
+
+    结构: {"version": 2, "skills": {name: {
+        "sha256": hex64,              # SKILL.md 单独摘要（快速比对）
+        "tree_sha256": hex64,         # 整个技能目录树摘要（完整性判定依据）
+        "files": {相对路径: hex64},   # 逐文件摘要（定位改了什么）
+        "approved_at": ISO8601,
+        "approved_by": str,           # 谁批准了这版基线
+        "source": "local"|"vendored",
+        "upstream": "repo@commit",    # 仅 vendored 技能
+    }}}.
+
+    approved_by 的诚实语义: "baseline" 表示这版基线由脚本按磁盘现状生成，
+    不代表内容已被人工逐字审阅；人工复核后可写入具体标识。
     """
     now = datetime.now().astimezone().isoformat(timespec="seconds")  # 主机本地时区（项目时间契约）
-    skills: dict[str, dict[str, str]] = {}
+    skills: dict[str, dict] = {}
     for m in scan_skills_dir(skills_dir):
+        skill_dir = Path(m.path).parent
+        tree = _skill_tree_digest(skill_dir)
+        if tree is None:
+            continue  # 竞态读不到 → 如实缺项（下次审批补）
+        tree_sha256, files = tree
         digest = _sha256_file(Path(m.path))
         if digest is None:
-            continue  # 竞态读不到 → 如实缺项（下次审批补）
-        skills[m.name] = {"sha256": digest, "approved_at": now}
+            continue
+        entry: dict = {
+            "sha256": digest,
+            "tree_sha256": tree_sha256,
+            "files": files,
+            "approved_at": now,
+            "approved_by": approved_by,
+        }
+        upstream = _vendored_upstream(m)
+        if upstream:
+            entry["source"] = "vendored"
+            entry["upstream"] = upstream
+        else:
+            entry["source"] = "local"
+        skills[m.name] = entry
     return {"version": MANIFEST_VERSION, "skills": skills}
 
 
@@ -220,7 +301,12 @@ def load_manifest(skills_dir: str | Path) -> dict | None:
 def _integrity_of(
     name: str, skill_file: Path, manifest: dict | None
 ) -> tuple[str, str]:
-    """四态判定（P1-5）: ok/modified/unlisted=有清单; unmanaged=无可用清单."""
+    """四态判定（v2，EVO-20261031-6b21e0f4）: ok/modified/unlisted=有清单; unmanaged=无可用清单.
+
+    v2 的判定依据是整个技能目录树的摘要（tree_sha256），不是单个 SKILL.md：
+    只比 SKILL.md 的门禁对「改了脚本、没改 SKILL.md」完全失明，而脚本才是
+    执行输入。不一致时给出改动的文件名，让拒绝理由可执行。
+    """
     if manifest is None:
         return INTEGRITY_UNMANAGED, (
             f"未找到可用的 {MANIFEST_FILENAME}（目录未纳管）；{APPROVAL_HINT}"
@@ -228,15 +314,32 @@ def _integrity_of(
     entry = manifest.get("skills", {}).get(name)
     if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str):
         return INTEGRITY_UNLISTED, f"清单未登记该技能（或登记条目不完整）；{APPROVAL_HINT}"
-    digest = _sha256_file(skill_file)
-    if digest is None:
-        return INTEGRITY_MODIFIED, "无法读取文件计算 sha256（按已变更处理）"
-    if digest == entry["sha256"]:
-        return INTEGRITY_OK, f"sha256 与清单一致（{digest[:12]}…）"
-    return INTEGRITY_MODIFIED, (
-        f"sha256 与清单不一致（manifest={entry['sha256'][:12]}… "
-        f"file={digest[:12]}…）；{APPROVAL_HINT}"
+    expected_tree = entry.get("tree_sha256")
+    if not isinstance(expected_tree, str):
+        return INTEGRITY_UNLISTED, (
+            "清单条目缺少目录树基线（tree_sha256），无法核验完整性；"
+            + APPROVAL_HINT
+        )
+    tree = _skill_tree_digest(skill_file.parent)
+    if tree is None:
+        return INTEGRITY_MODIFIED, "无法读取技能目录计算 sha256（按已变更处理）"
+    actual_tree, actual_files = tree
+    if actual_tree == expected_tree:
+        return INTEGRITY_OK, f"目录树 sha256 与清单一致（{actual_tree[:12]}…）"
+    expected_files = entry.get("files")
+    changed: list[str] = []
+    if isinstance(expected_files, dict):
+        for rel in sorted(set(expected_files) | set(actual_files)):
+            if expected_files.get(rel) != actual_files.get(rel):
+                changed.append(rel)
+    detail = (
+        f"目录树 sha256 与清单不一致（manifest={expected_tree[:12]}… "
+        f"file={actual_tree[:12]}…）"
     )
+    if changed:
+        shown = ", ".join(changed[:10])
+        detail += f"；变更文件: {shown}" + ("…" if len(changed) > 10 else "")
+    return INTEGRITY_MODIFIED, detail + "；" + APPROVAL_HINT
 
 
 def scan_skills_dir(

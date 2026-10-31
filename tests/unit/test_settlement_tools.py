@@ -554,3 +554,47 @@ def test_submit_tool_receipt_survives_krate_spawn_failure(tmp_path, monkeypatch)
         ("failed", {"error": "spawn exploded"}),
         ("triggered", {"result": "spawn_failed"}),
     ]
+
+
+def test_submit_tool_self_reported_experience_accepts_prefixed_stable_ref(tmp_path):
+    # EVO-20261031-3f8c7d12: 自报通道的 ref 口径必须与写入侧一致。
+    # experience 的写入侧会剥掉 "experience:" 前缀（record_use 走
+    # ref.removeprefix），校验侧此前不剥，于是合法的 stable ref 被判成
+    # "self_reported ref not found"——上一轮三种 ref 形式提交全失败的根因。
+    host = _host(tmp_path)
+    card = tmp_path / "experiences" / "EXPERIENCE-20260101-test-card.md"
+    card.write_text(
+        "---\n"
+        "title: 测试卡\n"
+        "scenario: 场景\n"
+        "root_cause: 原因\n"
+        "solution: 解法\n"
+        "evidence: 证据\n"
+        "tags: [test]\n"
+        "source: {}\n"
+        "status: active\n"
+        "record_kind: lesson\n"
+        "verification_state: verified\n"
+        "---\n\n正文\n",
+        encoding="utf-8",
+    )
+    result = host.execute(
+        "settlement_submit",
+        {
+            "work_unit_id": "TASK-A",
+            "items": [
+                {
+                    "kind": "experience",
+                    "ref": "experience:EXPERIENCE-20260101-test-card",
+                    "decision": "applied",
+                    "benefit": "helped",
+                    "evidence_level": "model_declared",
+                    "self_reported": True,
+                }
+            ],
+        },
+    )
+    assert result.status == ToolResultStatus.SUCCESS
+    receipt = _payload(result)
+    assert receipt["counts"]["committed"] == 1
+    assert receipt["receipts"][0]["status"] == "committed"

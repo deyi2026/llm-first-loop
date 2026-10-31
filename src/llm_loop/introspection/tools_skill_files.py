@@ -88,6 +88,24 @@ def _require_manifest_gate() -> bool:
 def run_skill_list(host: Any, args: dict) -> ToolResult:
     """skill_list: 扫描并列出技能（本地 + 标准包，name + description，来源可追溯）."""
     metas = scan_skills_dir(_skills_dir(host))
+    # EVO-20261031-6b21e0f4: 门禁开启时，skill_list 只列真正可加载的技能。
+    # 门禁此前只在 skill_load 侧生效，于是清单会把注定被拒的技能也列出来，
+    # 模型据此去 load 再吃一次拒绝——「开门禁」必须覆盖发现侧，否则只是
+    # 把拒绝推迟了一步。被挡下的技能在此如实披露数量与原因，不静默隐藏。
+    gated = _require_manifest_gate()
+    blocked: list = []
+    if gated:
+        blocked = [m for m in metas if m.integrity != INTEGRITY_OK]
+        metas = [m for m in metas if m.integrity == INTEGRITY_OK]
+    blocked_note = ""
+    if blocked:
+        shown = ", ".join(f"{m.name}({m.integrity})" for m in blocked[:10])
+        blocked_note = (
+            f"[完整性门禁] 已隐藏 {len(blocked)} 个未过基线的本地技能"
+            f"（{_REQUIRE_MANIFEST_ENV}=1）：{shown}"
+            + ("…" if len(blocked) > 10 else "")
+            + f"。修复: {APPROVAL_HINT}"
+        )
     ext_lines = _catalog_section(host)
     dsh_section = ""
     try:  # SDD-20260829 T3: dsh 索引段失败不影响本地技能清单（零回归）
@@ -97,6 +115,20 @@ def run_skill_list(host: Any, args: dict) -> ToolResult:
     except Exception:  # noqa: BLE001 — 适配器任何异常不侵入 skill_list 主路径
         dsh_section = ""
     if not metas and not ext_lines:
+        if blocked:
+            # 全部技能都被门禁挡下时，如实说明原因，而不是谎报「目录为空」。
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=(
+                    "[技能清单] 无可用外部技能："
+                    f"{len(blocked)} 个本地技能未通过完整性门禁"
+                    f"（{_REQUIRE_MANIFEST_ENV}=1）。"
+                    f"{blocked_note}。"
+                    + dsh_section
+                ),
+                tool_call_id="",
+                tool_name="skill_list",
+            )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content="[技能清单] 无外部技能（未配置 skills/ 目录或目录为空）。配置方式: 在 skills/<name>/SKILL.md 放置技能文件。" + dsh_section,
@@ -106,6 +138,8 @@ def run_skill_list(host: Any, args: dict) -> ToolResult:
     lines = ["[技能清单] 可用外部技能:"]
     for m in metas:
         lines.append(f"- {m.name}: {m.description}（{m.path}）")
+    if blocked_note:
+        lines.append(blocked_note)
     if ext_lines:
         lines.append("[已安装标准包技能]（package-qualified ref，来源标注）:")
         lines.extend(ext_lines)

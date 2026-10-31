@@ -701,8 +701,9 @@ def _git(root: Path, *argv: str) -> bytes:
 # 过大」。这里只加后缀区分，不改前缀——既有消费方
 # （startswith("git_state_too_large")）与门禁语义保持不变。
 def _diff_material_code(name: str) -> str:
-    if _diff_acquire_cap(name) > _GIT_OUTPUT_MAX_BYTES:
-        return f"git_state_too_large:material_acquire>{_RUNTIME_DIFF_ACQUIRE_MAX_BYTES}"
+    cap = _diff_acquire_cap(name)
+    if cap > _GIT_OUTPUT_MAX_BYTES:
+        return f"git_state_too_large:material_acquire>{cap}"
     return f"git_state_too_large:material_diff>{_GIT_OUTPUT_MAX_BYTES}"
 
 
@@ -781,10 +782,57 @@ _COMMITTED_RUNTIME_PROJECTION_BYTES = 48_000
 _RUNTIME_DIFF_ACQUIRE_MAX_BYTES = 4_000_000
 
 
+# EVO-20261031-8f3c1d92 (human-approved 2026-10-31): vendored third-party
+# asset class.  A skill vendored from an upstream project brings its whole
+# data/ tree with it (measured 2026-10-31: skills/ui-ux-pro-max = 49 files /
+# 3,330,378B, of which three are 823,933B / 747,241B / 433,127B).  Every one
+# of those three exceeded the 400_000B per-path ceiling, so the asset could be
+# committed but never pushed: it could never be reviewed, and the
+# independent-review gate made that deadlock structural rather than
+# incidental.
+#
+# The ceiling is RE-BOUNDED, not removed.  400_000B stays the ceiling for
+# every path outside _VENDORED_ASSET_PREFIXES; inside them the path is
+# acquired under a larger but finite ceiling and then PROJECTED — the
+# reviewer receives path, byte count, content edges and an explicit omission
+# marker, never a refusal and never a silent summary.  The projected volume
+# is itself capped (_VENDORED_ASSET_PROJECTION_TOTAL_BYTES) and the
+# acquisition ceiling stays finite, so a vendored tree beyond it is still
+# refused.
+#
+# This list is CODE, not data: widening it requires a reviewed code change.
+# It must not become an AI-writable manifest entry, or the gate could
+# authorise its own relaxation.  The sensitive-path refusal is NOT exempted
+# for vendored paths.
+_VENDORED_ASSET_PREFIXES: tuple[str, ...] = (
+    "skills/frontend-design/",
+    "skills/ui-ux-pro-max/",
+    "skills/gstack-design-review/",
+    "skills/gstack-plan-design-review/",
+    "skills/gstack-design-consultation/",
+)
+_VENDORED_ASSET_DIFF_ACQUIRE_MAX_BYTES = 8_000_000
+_VENDORED_ASSET_UNTRACKED_FILE_LIMIT = 400
+_VENDORED_ASSET_UNTRACKED_MAX_BYTES = 1_000_000
+_VENDORED_ASSET_PROJECTION_BYTES = 48_000
+# A vendored tree may project many files, so the NUMBER of projected entries is
+# bounded too — a pathological tree must not inflate the review material
+# without limit.  The overall material volume stays bounded by the existing
+# _REVIEWER_STATIC_MATERIAL_CAP_BYTES ceiling.
+_VENDORED_ASSET_PROJECTION_MAX_ENTRIES = 200
+
+
+def _is_vendored_asset(name: str) -> bool:
+    """True for a path inside an explicitly approved vendored third-party tree."""
+    return any(name.startswith(prefix) for prefix in _VENDORED_ASSET_PREFIXES)
+
+
 def _diff_acquire_cap(name: str) -> int:
     """Per-path git-output ceiling for reviewer diffs (EVO-20261030-62773eae)."""
     if _is_runtime_output(name):
         return _RUNTIME_DIFF_ACQUIRE_MAX_BYTES
+    if _is_vendored_asset(name):
+        return _VENDORED_ASSET_DIFF_ACQUIRE_MAX_BYTES
     return _GIT_OUTPUT_MAX_BYTES
 
 
@@ -805,6 +853,37 @@ def _project_committed_runtime_diff(name: str, diff_text: str) -> str:
         "\n<<<EVO-20261021-2f22aae5 TRUNCATED committed runtime output diff: "
         f"omitted {omitted}B of {len(raw)}B for {name}; "
         f"spot-check the full content of {name} between review base and HEAD>>>\n"
+    )
+    return (
+        raw[:keep].decode("utf-8", "replace")
+        + marker
+        + raw[-keep:].decode("utf-8", "replace")
+    )
+
+
+# EVO-20261031-8f3c1d92 (human-approved 2026-10-31): projection for vendored
+# third-party assets.  Applied to both diff text and untracked file bodies
+# under _VENDORED_ASSET_PREFIXES; every other path is returned verbatim, so
+# the full-review rule outside the vendored class is byte-for-byte unchanged.
+# The marker states the omitted byte count and the path explicitly — the
+# reviewer is told what it did NOT see instead of being handed a quiet
+# summary.
+def _project_vendored_asset(
+    name: str, text: str, projected: list[str] | None = None,
+) -> str:
+    if not _is_vendored_asset(name):
+        return text
+    raw = text.encode("utf-8")
+    if len(raw) <= _VENDORED_ASSET_PROJECTION_BYTES:
+        return text
+    if projected is not None:
+        projected.append(name)
+    keep = _VENDORED_ASSET_PROJECTION_BYTES // 2
+    omitted = len(raw) - 2 * keep
+    marker = (
+        "\n<<<EVO-20261031-8f3c1d92 TRUNCATED vendored asset: "
+        f"omitted {omitted}B of {len(raw)}B for {name}; "
+        "path, byte count and content edges are shown, the omitted span is not>>>\n"
     )
     return (
         raw[:keep].decode("utf-8", "replace")
@@ -928,6 +1007,12 @@ def _frozen_header_fields(
         fields.append(
             ("runtime_output_excludes", ",".join(_RUNTIME_OUTPUT_EXCLUDES))
         )
+    # EVO-20261031-8f3c1d92: the reviewer and the admission receipt can both
+    # see WHICH paths were allowed past the strict per-path ceiling.
+    if _VENDORED_ASSET_PREFIXES:
+        fields.append(
+            ("vendored_asset_prefixes", ",".join(_VENDORED_ASSET_PREFIXES))
+        )
     return fields
 
 
@@ -999,6 +1084,11 @@ def _source_snapshot(
     # Git diff must remain a read-only operation: disable both external diff
     # programs and text conversion before generating reviewer source material.
 
+    # EVO-20261031-8f3c1d92: every vendored path whose text is projected is
+    # recorded here, so the number of projected entries stays bounded and the
+    # frozen header can state how many entries were projected.
+    vendored_projected: list[str] = []
+
     def _diff_names(*ref_args: str) -> list[str]:
         raw = _git(repo, "diff", "--no-ext-diff", "--no-textconv",
                    "--name-only", "-z", *ref_args)
@@ -1018,7 +1108,9 @@ def _source_snapshot(
                                "--", f":(literal){name}",
                                too_large_code=_diff_material_code(name))
             text = blob.decode("utf-8", "replace")
-            out.append((name, _project_committed_runtime_diff(name, text)))
+            text = _project_committed_runtime_diff(name, text)
+            text = _project_vendored_asset(name, text, vendored_projected)
+            out.append((name, text))
         return out
 
     frozen_head = push_head if push_head is not None else head
@@ -1049,6 +1141,8 @@ def _source_snapshot(
     working = _path_diffs(kept_working_names, "HEAD") if include_worktree else []
     new_files: list[tuple[str, str, str]] = []
     excluded_untracked = 0
+    vendored_untracked = 0
+    plain_untracked = 0
     untracked: list[bytes] = []
     if include_worktree:
         untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
@@ -1066,15 +1160,48 @@ def _source_snapshot(
         if _is_runtime_output(name):
             excluded_untracked += 1
             continue
-        if len(new_files) >= 40:
-            raise ValueError("review_untracked_file_limit")
+        # EVO-20261031-8f3c1d92: the vendored class carries its own bounded
+        # file count and byte ceiling; every other path keeps the strict
+        # 40-file / 200_000B limits, and the two counts are kept apart so a
+        # large vendored tree can never consume the ordinary path budget.
+        vendored = _is_vendored_asset(name)
+        if vendored:
+            if vendored_untracked >= _VENDORED_ASSET_UNTRACKED_FILE_LIMIT:
+                raise ValueError(
+                    "review_untracked_file_limit"
+                    f":vendored>{_VENDORED_ASSET_UNTRACKED_FILE_LIMIT}"
+                )
+        else:
+            if plain_untracked >= 40:
+                raise ValueError("review_untracked_file_limit")
+            plain_untracked += 1
         path = (repo / name)
         if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(repo):
             raise ValueError("review_untracked_path_unsafe")
         body = path.read_bytes()
-        if len(body) > 200_000:
-            raise ValueError("review_untracked_file_too_large")
-        new_files.append((name, _digest(body), body.decode("utf-8", "replace")))
+        if vendored:
+            if len(body) > _VENDORED_ASSET_UNTRACKED_MAX_BYTES:
+                raise ValueError(
+                    "review_untracked_file_too_large"
+                    f":vendored>{_VENDORED_ASSET_UNTRACKED_MAX_BYTES}B"
+                )
+            text = _project_vendored_asset(
+                name, body.decode("utf-8", "replace"), vendored_projected
+            )
+            vendored_untracked += 1
+        else:
+            if len(body) > 200_000:
+                raise ValueError("review_untracked_file_too_large")
+            text = body.decode("utf-8", "replace")
+        new_files.append((name, _digest(body), text))
+    # EVO-20261031-8f3c1d92: bound the number of projected vendored entries so
+    # a pathological tree cannot inflate the material without limit.
+    if len(vendored_projected) > _VENDORED_ASSET_PROJECTION_MAX_ENTRIES:
+        raise ValueError(
+            "review_artifact_exceeds_cap"
+            f":vendored_projection_entries={len(vendored_projected)}"
+            f" cap={_VENDORED_ASSET_PROJECTION_MAX_ENTRIES}"
+        )
     # EVO-20261029-eb64b2de: an empty frozen artifact (no committed delta, no
     # worktree change, no untracked file) makes the review verdict vacuous —
     # the reviewer approves an empty shell. Refuse it when the caller asked
@@ -1088,11 +1215,18 @@ def _source_snapshot(
     # `frozen_head` ended up glued into one line), and the assembled material
     # must round-trip through the module's own header parser before the
     # artifact is issued (see _frozen_material).
+    header_fields = _frozen_header_fields(
+        head, base, push_base, push_head, frozen_head, first_push_ref
+    )
+    # EVO-20261031-8f3c1d92: the frozen header states how many entries were
+    # projected, so a reviewer reading the artifact can see that some vendored
+    # content was shown as head/tail evidence instead of in full.
+    if vendored_projected:
+        header_fields.append(
+            ("vendored_projected_entries", str(len(vendored_projected)))
+        )
     material = _frozen_material(
-        _frozen_header_fields(
-            head, base, push_base, push_head, frozen_head, first_push_ref
-        ),
-        committed, working, new_files,
+        header_fields, committed, working, new_files,
     )
     # Bounded complete snapshot, not a summary masquerading as full review.
     # This static check is the conservative floor on the SNAPSHOT BYTES; the
