@@ -33,6 +33,12 @@
   中间空段（及 ``.``/``..`` 段）永不匹配：allow 模式下=空转 allow 条目
   （fail-closed 拒写）；deny 模式下=空转排除项（fail-open 全量放行陷阱），
   解析层确定性拒绝（第二轮返修 A，``_deny_entry_viable``）。
+- deny 条目必须带目录语义（D1 返修，``_expand_deny_pattern``）：非 ``/**``
+  结尾的排除项在解析层存储为 ``p + "/**"``。修前 ``deny ["src"]`` 编译成锚定
+  正则 ``src``，只匹配 rel 恰为 ``src`` 的路径；而写目标永远是文件，于是该
+  条目永不命中其内容——声明禁止却全量放行（实测 ``src/x/y.py`` → True），
+  且解析层静默接受。扩展只收紧（``X/**`` 命中 ``X`` 与任意层子路径），对
+  精确文件条目命中集不变；allow 模式不受影响。
 - 判定异常（极端路径/权限）一律 fail-closed 拒绝（写侧不能 fail-open），
   返回 ``outside_scope``。
 """
@@ -234,6 +240,38 @@ def _deny_entry_viable(pattern: str) -> bool:
     return all(seg and seg not in (".", "..") for seg in pattern.split("/"))
 
 
+def _expand_deny_pattern(pattern: str) -> str:
+    """deny 排除项「目录语义」扩展：非 ``/**`` 结尾 → 追加 ``/**``（只收紧）.
+
+    根因（D1，修前实测）：``_pattern_regex("src")`` 编译为 ``^src\\Z``，只匹配
+    rel 恰为 ``src`` 的路径。而 ``scope_allows`` 的 rel 永远是**文件**相对路径
+    （写目标不可能是目录），故无通配的裸目录名条目在 deny 模式下**永不命中其
+    内容**——``{"paths": ["src"], "mode": "deny"}`` 对
+    ``src/llm_loop/core/sandbox.py`` 实测返回 ``(True, "")``：声明了禁止目录，
+    实际一个字节都没禁（fail-open），且解析层静默接受。这比 P2-1 空排除集更
+    隐蔽：外观完全正常，只有读源码或实测才能发现。
+
+    修正口径：``X/**`` 的 glob 命中集 = ``{X} ∪ {X 下任意层}``，且本身命中
+    ``X``（见 ``_pattern_regex``）。故把非 ``/**`` 结尾条目扩展为
+    ``p + "/**"`` 后：
+
+    - **对文件目标**：``p`` 与 ``p/**`` 命中集相同（文件不可能有子路径），
+      精确文件排除语义不变——``deny ["a.txt"]`` 仍排除 ``a.txt``；
+    - **对目录目标**：从「只排除目录自身（永不发生在写目标上）」收紧为
+      「排除整棵子树」，即声明者的直觉语义（同 ``.gitignore`` 目录条目）。
+
+    方向恒为**更严格**（多排除、不多放行），不改变 allow 模式任何语义。
+    扩展不引入新的非法段（只在尾部追加合法段），故 ``_deny_entry_viable``
+    只需对原串检查一次。
+
+    例外：``**`` 自身已是全匹配形态，扩展成 ``**/**`` 会退化为可匹配空 rel，
+    故原样保留；已以 ``/**`` 结尾者原样保留（幂等）。
+    """
+    if pattern == "**" or pattern.endswith("/**"):
+        return pattern
+    return pattern + "/**"
+
+
 # ── 解析 ──
 
 
@@ -267,6 +305,12 @@ def parse_write_scope(raw: object) -> WriteScope | None:
     - pattern 元素经 ``_normalize_pattern`` 归一后存储（``./src/**`` ≡ ``src/**``，
       尾部 ``/`` 剥离，根指称 ``"."``/``"./"``/``"/"`` → ``''``），消除同一
       pattern 的形态差异（P2-6 返修；根指称 → ``''`` 为第二轮返修 A）
+    - mode=deny 的条目追加「目录语义」：非 ``/**`` 结尾者存储为 ``p + "/**"``
+      （D1 返修）。修前 ``{"paths": ["src"], "mode": "deny"}`` 对
+      ``src/x/y.py`` 实测 ``(True, "")``——``^src\\Z`` 只匹配 rel 恰为 ``src``，
+      而写目标永远是文件，故裸目录名排除项永不命中其内容 = 声明禁止却全量
+      放行。扩展只收紧（``X/**`` 命中 ``X`` 及其任意层子路径），对精确文件
+      条目命中集不变；allow 模式不扩展。
     - 未知键忽略（向前兼容，不做 schema 全量校验）
     """
     if not isinstance(raw, dict):
@@ -305,6 +349,12 @@ def parse_write_scope(raw: object) -> WriteScope | None:
         # allow 模式不做此检查：永不匹配的 allow 条目=贡献为空=fail-closed。
         if any(not _deny_entry_viable(p) for p in normalized):
             return None
+        # D1 返修：deny 排除项必须带「目录语义」。裸目录名（如 "src"）归一后
+        # 只匹配 rel 恰为 "src" 的路径，而写目标永远是文件 → 永不命中其内容，
+        # 声明禁止却全量放行（实测 src/llm_loop/core/sandbox.py → (True, "")）。
+        # 扩展为 "src/**" 后命中整棵子树；对文件条目命中集不变。方向恒为收紧，
+        # allow 模式不经过此处，语义零影响。
+        normalized = tuple(_expand_deny_pattern(p) for p in normalized)
     return WriteScope(paths=normalized, mode=mode, declared=True)
 
 
@@ -337,11 +387,13 @@ def scope_allows(scope: WriteScope | None, abs_path: str, workspace_root: str) -
         logger.warning("[write_scope] 判定异常，已拒绝（fail-closed）: %r", exc)
         return (False, "outside_scope")
     for pat in scope.deny_paths:
-        if _matches(pat, rel):
+        # deny 条目在消费侧统一按 D1 目录语义展开（六轮审查 P2-1）：直接构造的
+        # ``WriteScope(deny_paths=("secrets",))`` 绕过解析层时也必须排除整棵子树。
+        if _matches(_expand_deny_pattern(pat), rel):
             return (False, "denied_by_deny_list")
     if scope.mode == MODE_DENY:
         for pat in scope.paths:
-            if _matches(pat, rel):
+            if _matches(_expand_deny_pattern(pat), rel):
                 return (False, "denied_by_deny_list")
         return (True, "")
     for pat in scope.paths:

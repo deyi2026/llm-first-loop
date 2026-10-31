@@ -597,7 +597,10 @@ def test_parse_rejects_mixed_deny_decl_containing_idle_entry():
     assert parse_write_scope({"paths": ["./", "secrets/**"], "mode": "deny"}) is None
     # 对照：全部条目可用时仍合法（不被本修复误伤）
     ok = parse_write_scope({"paths": ["secrets/**", "private/*"], "mode": "deny"})
-    assert ok is not None and ok.mode == "deny" and ok.paths == ("secrets/**", "private/*")
+    # D1 返修后契约：非 ``/**`` 结尾的 deny 条目在解析层补目录语义
+    # （``private/*`` → ``private/*/**``，只收紧），已带 ``/**`` 者原样保留。
+    assert ok is not None and ok.mode == "deny"
+    assert ok.paths == ("secrets/**", "private/*/**")
 
 
 @pytest.mark.parametrize("form", ["./", "/", "//", "."])
@@ -678,3 +681,93 @@ def test_spawn_rejects_root_denying_deny_write_scope_as_param_error():
     assert res.status.value == "failure"
     assert "[参数错误]" in res.content
     assert calls == []  # 参数错误发生在进入 runner 之前，未启动任何 child
+
+
+# ── D1 返修：deny 裸目录名 fail-open（声明禁止目录 = 什么都没禁）─────────────
+#
+# 根因：``_pattern_regex("src")`` 锚定为正则 ``src``，只匹配 rel 恰为 ``src``
+# 的路径。``scope_allows`` 的 rel 永远是**文件**相对路径，故该条目永不命中
+# 其内容——修前实测 ``{"paths": ["src"], "mode": "deny"}`` 对
+# ``src/llm_loop/core/sandbox.py`` 返回 ``(True, "")``：全量放行，且解析层
+# 静默接受（比 P2-1 空排除集更隐蔽：外观完全正常）。
+# 修法：解析层补目录语义（``_expand_deny_pattern``，只收紧不放宽）。
+
+
+@pytest.mark.parametrize("decl", ["src", "./src", "src/", "/src"])
+def test_deny_bare_directory_name_excludes_whole_subtree(ws_root, decl):
+    """D1 核心回归：裸目录名（及各归一形态）排除整棵子树，而非只排除自身."""
+    ws = parse_write_scope({"paths": [decl], "mode": "deny"})
+    assert ws is not None
+    assert ws.paths == ("src/**",)
+    target = str(ws_root / "src" / "llm_loop" / "core" / "sandbox.py")
+    assert scope_allows(ws, target, str(ws_root)) == (False, "denied_by_deny_list")
+    # 对照组：子树外仍放行（不得把 deny 扩大成「全拒」）
+    assert scope_allows(ws, str(ws_root / "docs" / "x.md"), str(ws_root)) == (True, "")
+    # 边界：前缀同名不算命中（``srcfoo`` 不在 ``src`` 子树内）
+    assert scope_allows(ws, str(ws_root / "srcfoo" / "x.py"), str(ws_root)) == (True, "")
+
+
+def test_deny_exact_file_entry_semantics_unchanged(ws_root):
+    """D1 不得误伤精确文件条目：``a.txt`` → ``a.txt/**`` 仍排除 ``a.txt`` 本身."""
+    ws = parse_write_scope({"paths": ["a.txt"], "mode": "deny"})
+    assert ws is not None and ws.paths == ("a.txt/**",)
+    assert scope_allows(ws, str(ws_root / "a.txt"), str(ws_root)) == (
+        False,
+        "denied_by_deny_list",
+    )
+    # 子目录下的同名文件不被误伤（原语义同样不命中）
+    assert scope_allows(ws, str(ws_root / "sub" / "a.txt"), str(ws_root)) == (True, "")
+
+
+def test_deny_glob_pattern_expansion_idempotent():
+    """幂等 + 例外：已带 ``/**`` 者原样，``**`` 全匹配形态不扩展."""
+    for decl in ("secrets/**", "**", "src/**"):
+        ws = parse_write_scope({"paths": [decl], "mode": "deny"})
+        assert ws is not None and ws.paths == (decl,)
+
+
+def test_deny_mid_path_directory_name_excludes_subtree(ws_root):
+    """同根因另一形态：``**/secrets``（任意层目录名）必须排除其内容."""
+    ws = parse_write_scope({"paths": ["**/secrets"], "mode": "deny"})
+    assert ws is not None and ws.paths == ("**/secrets/**",)
+    assert scope_allows(ws, str(ws_root / "x" / "secrets" / "k"), str(ws_root)) == (
+        False,
+        "denied_by_deny_list",
+    )
+    assert scope_allows(ws, str(ws_root / "x" / "public" / "k"), str(ws_root)) == (True, "")
+
+
+def test_spawn_declared_deny_bare_directory_enforced_after_parse(ws_root):
+    """D1 端到端可判定事实：经 spawn 同一解析面后，裸目录名 deny 确实拒写子树."""
+    ws = parse_write_scope({"paths": ["src"], "mode": "deny"})
+    assert ws is not None
+    assert scope_allows(ws, str(ws_root / "src" / "a.py"), str(ws_root)) == (
+        False,
+        "denied_by_deny_list",
+    )
+
+
+def test_direct_write_scope_construction_expands_deny_paths(ws_root):
+    """六轮审查 P2-1：绕过解析层直接构造 ``WriteScope`` 时，deny 条目也必须带目录语义.
+
+    修前：``WriteScope(paths=("**",), deny_paths=("secrets",))`` 的裸目录名经
+    ``_pattern_regex`` 只匹配 rel 恰为 ``secrets``，而写目标是文件 ⇒ 永不命中。
+    修法在消费侧（``scope_allows``）展开，存储值保持调用方原样。
+    """
+    ws = WriteScope(paths=("**",), mode="allow", deny_paths=("secrets",))
+    assert ws.deny_paths == ("secrets",)
+    assert scope_allows(ws, str(ws_root / "secrets" / "k"), str(ws_root)) == (
+        False,
+        "denied_by_deny_list",
+    )
+    assert scope_allows(ws, str(ws_root / "public" / "k"), str(ws_root)) == (True, "")
+
+
+def test_allow_mode_unaffected_by_deny_expansion(ws_root):
+    """D1 零回归：allow 模式不补 ``/**``，``src`` 仍只匹配精确路径（不得放宽）."""
+    ws = parse_write_scope({"paths": ["src"], "mode": "allow"})
+    assert ws is not None and ws.paths == ("src",)
+    assert scope_allows(ws, str(ws_root / "src" / "a.py"), str(ws_root)) == (
+        False,
+        "not_in_allow_list",
+    )
