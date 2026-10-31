@@ -3386,7 +3386,11 @@ def evolution_session_locator(request: Request, session_id: str = "") -> Respons
         settings = getattr(engine, "settings", None)
         # 语义与原 `getattr(settings, "sessions_dir")` 等价：settings 为 None 时
         # 两版都会在本 try 内抛错 ⇒ 被下方 `except Exception` 捕获 ⇒ 同样 fail-open。
-        # 改成属性访问是为了解除 R9 棘轮的 B009（常量属性名的 getattr）。
+        # 改成属性访问是为了解除 R9 棘轮的 B009（常量属性名的 getattr）；
+        # 显式 None 检查供 pyright narrowing（Optional 成员访问），抛错仍被
+        # 下方 except Exception 捕获 ⇒ fail-open 路径不变。
+        if settings is None:
+            raise RuntimeError("engine.settings is None")
         sessions_dir = Path(settings.sessions_dir).expanduser()
         store = getattr(engine, "workspace_store", None)
         if store is None:

@@ -766,7 +766,7 @@ def _copy_move_targets(
         # 确）。``-T`` 已在 TARGET_DIRECTORY_OPTIONS 注册为布尔（第十二轮 push
         # 闸 P2-4）⇒ 族扫描形态按 getopt 语义消费簇。
         return ([positional[-1]] if positional else [], not positional)
-    return (positional[-1:], len(positional) < 2)
+    return (list(positional[-1:]), len(positional) < 2)
 
 
 def _is_write_name(name: str) -> bool:
@@ -787,12 +787,12 @@ def _config_value(raw: str) -> str:
     return raw.split("=", 1)[1]
 
 
-def _git_config_values(args: Sequence[str]) -> list[tuple[str, bool]]:
+def _git_config_values(args: Sequence[str]) -> list[tuple[str, str, bool]]:
     """git ``-c KEY=VALUE`` / ``--config-env`` 注入的配置。
 
     配置值可能是**可执行载荷**：``alias.pwn='!rm /outside/x'`` 会让 ``git pwn``
     执行 shell 命令；``core.pager='rm …'`` 同理。返回
-    ``[(配置值, 是否是环境变量引用)]``；``--config-env`` 的值是环境变量名，
+    ``[(key, value, 是否是环境变量引用)]``；``--config-env`` 的值是环境变量名，
     其内容静态不可知 ⇒ 调用方直接拒。
 
     第六轮独立审查 P1-3：``-c`` 的 **key** 决定配置语义 —— ``alias.*`` 是
