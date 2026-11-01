@@ -266,7 +266,7 @@ class DesktopOperateTool:
             },
             "keys": {
                 "type": "string",
-                "description": "press_key：闭合命名键（enter/escape/tab/delete/backspace/space/arrows/home/end/pageup/pagedown/f1..f12），可带 ctrl/alt/shift 前缀；scroll：down|up 可带 :n（行数 1..20；方向符号未经 live 验证）",
+                "description": "press_key：闭合命名键（enter/escape/tab/delete/backspace/space/arrows、home、end、pageup、pagedown/f1..f12），可带 ctrl/alt/shift 前缀；scroll：down|up 可带 :n（行数 1..20；方向符号未经 live 验证）",
             },
             "dry_run": {
                 "type": "boolean",
