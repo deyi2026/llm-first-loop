@@ -1719,13 +1719,16 @@ class CatastrophicGuard:
     # ── EVO-20261029-04c73530 / -3af37051：静态源转换编排 ──
 
     def _catastrophic_labels(self, command: str) -> set[str]:
-        """命令文本命中的灾难性模式标签集合（与 guard 正则层同一展开与匹配口径）.
+        """命令文本命中的灾难性模式标签集合.
 
-        2026-11-01：与 ``_scan_command`` 共用 ``_without_inert_heredoc_bodies``
-        前处理——两处口径必须同源，否则「判定放行、标签仍含该规则」会让静态源转换
-        在本不该拒绝的场合返回 None（保守但无谓，且掩盖真实口径）。
+        **刻意不做数据区剥离**（与 ``_scan_command`` 的正则层不同口径，是有意的）：
+        这里的标签只用于**静态源转换通道**的放行判断——转换一旦成立，等价代码会被
+        自动执行（无需人工提权）。因此必须按"最保守"的原串复算：
+        ``ruby <<'EOF'`` 这类解释器 heredoc 若正文里还转述了下载管道，剥离后只剩
+        「here-doc」单标签，转换就会把本该人工提权的 payload 自动跑掉
+        （2026-11-01 独立复核实测）。保留原串口径 ⇒ 多标签 ⇒ 转换拒绝 ⇒ 回退人工链路。
         """
-        expanded = _expand(_without_inert_heredoc_bodies(_normalize_ansi_c_quotes(command)))
+        expanded = _expand(_normalize_ansi_c_quotes(command))
         return {label for label, pattern in _CATASTROPHIC_PATTERNS if pattern.search(expanded)}
 
     def _scan_interpreter_body(
