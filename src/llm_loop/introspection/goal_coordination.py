@@ -175,8 +175,9 @@ def read_side_banner(goal: dict | None, *, session_id: str | None = None) -> str
     if fields["owned_by"] == "other":
         return (
             f"⚠ 归属: 其他会话（owner_session_id={mask_session(owner)}）——跨会话写将被拒绝"
-            "（reason_code=cross_session_write_denied）；确需写入走 cross_session=true "
-            "+ reason + evidence_refs 显式授权"
+            "（reason_code=cross_session_write_denied）；仅 goal 记录写入（checkpoint_goal/"
+            "update_goal）可走 cross_session=true + reason + evidence_refs 显式授权；"
+            "推进该 goal 的任务图（task_create/task_update）无跨会话出口，须由 owner 会话执行"
         )
     if fields["owned_by"] == "unclaimed":
         return "归属: 未认领（无 owner，legacy/新建未绑定；写入按 owner_unknown 标注）"

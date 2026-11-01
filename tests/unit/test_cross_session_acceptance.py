@@ -168,10 +168,12 @@ def test_a13_task_gate_ignores_cross_session_args(tmp_path):
     assert ts.list_for_goal(g.id)[0].status == "pending"
 
 
-# A14: 结构守卫——_require_active_goal 不得有 args 透传口（防回退成"文案否认、代码支持"）
-def test_a14_task_gate_has_no_args_passthrough():
-    import inspect
+# A14: 声明面守卫——task_* 的模型可见参数表不得声明跨会话出口
+# （钉公开契约而非私有签名：A13 守行为，A14 守声明，两者一起才能挡住"文案否认、代码支持"）
+def test_a14_task_tool_schema_declares_no_cross_session_exit():
+    from llm_loop.introspection.tools_task import TASK_CREATE_TOOL_DEF, TASK_UPDATE_TOOL_DEF
 
-    from llm_loop.introspection.tools_task import _require_active_goal
-
-    assert "args" not in inspect.signature(_require_active_goal).parameters
+    for tool_def in (TASK_CREATE_TOOL_DEF, TASK_UPDATE_TOOL_DEF):
+        props = tool_def["parameters"]["properties"]
+        assert "cross_session" not in props, tool_def["name"]
+        assert "reason" not in props, tool_def["name"]
