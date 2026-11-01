@@ -171,6 +171,7 @@ from llm_loop.tools.builtin.wait import WaitTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
+from llm_loop.tools.builtin.workspace_recovery_status import WorkspaceRecoveryStatusTool
 from llm_loop.tools.escalation import EscalationStore
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.tools.review_gate import make_review_gate_probe
@@ -640,6 +641,7 @@ def _register_basic_tools(register_basic: Any) -> None:
     register_basic("inspect_code", InspectCodeTool())
     register_basic("present_files", PresentFilesTool())
     register_basic("verify_path_scope", VerifyPathScopeTool())
+    register_basic("workspace_recovery_status", WorkspaceRecoveryStatusTool())
 
 
 def _attach_dialog_probes(perceive_tool: Any, operation_tool: Any, actuator: Any) -> None:

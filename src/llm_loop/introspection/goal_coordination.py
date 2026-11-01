@@ -20,7 +20,6 @@
 
 from __future__ import annotations
 
-
 DENY_REASON = "cross_session_write_denied"
 REASON_OWNER_UNKNOWN = "owner_unknown"
 REASON_CROSS_AUTHORIZED = "cross_session_authorized"

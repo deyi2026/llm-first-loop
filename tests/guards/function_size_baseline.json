@@ -1030,6 +1030,7 @@
     "src/llm_loop/introspection/status.py::snapshot": 190,
     "src/llm_loop/introspection/tools_exec_complete.py::run_evolution_complete": 149,
     "src/llm_loop/introspection/tools_feishu_outbound.py::run_send_feishu_attachment": 125,
+    "src/llm_loop/introspection/task_store.py::compute_frontier": 124,
     "src/llm_loop/introspection/tools_goal.py::run_update_goal": 188,
     "src/llm_loop/introspection/tools_model.py::run_model_catalog": 142,
     "src/llm_loop/introspection/tools_model.py::run_switch_model": 230,

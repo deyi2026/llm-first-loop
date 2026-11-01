@@ -37,6 +37,14 @@ _FALLBACK_LOCK = threading.Lock()
 # 并发创建会双双通过），故环检测临界区必须同时持有进程内锁与跨进程 flock。
 _COORD_PROCESS_LOCK = threading.Lock()
 
+
+def _parse_deadline(raw: str) -> datetime:
+    """解析 ISO 期限；naive 时间补本地时区，避免与 tz-aware now 比较抛 TypeError（审查 P1-1）."""
+    due = datetime.fromisoformat(raw)
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=system_local_now().tzinfo)
+    return due
+
 TASK_STATUSES = ("pending", "in_progress", "blocked", "done", "failed", "cancelled")
 TERMINAL_STATUSES = ("done", "failed", "cancelled")
 TASK_LIMIT_PER_GOAL = 40  # §4 防粒度失控
@@ -178,15 +186,11 @@ class TaskStore:
         deadline = str(deadline_at or "").strip()
         if deadline:
             try:
-                parsed_deadline = datetime.fromisoformat(deadline)
+                deadline = _parse_deadline(deadline).isoformat()
             except ValueError as exc:
                 raise ValueError(
                     f"deadline_at 必须是 ISO 时间（如 2026-11-02T12:00:00+08:00）: {deadline}"
                 ) from exc
-            if parsed_deadline.tzinfo is None:
-                # naive 与带时区的 now 比较会 TypeError（P1-1）；入库前统一补本地时区
-                parsed_deadline = parsed_deadline.replace(tzinfo=system_local_now().tzinfo)
-                deadline = parsed_deadline.isoformat()
         with self._write_ctx(goal_id, xdeps=xdeps):
             if xdeps:
                 # 环检测必须在锁内（P1-4）：两条反向边并发创建时，后写者必须看见先写者
@@ -500,7 +504,7 @@ class TaskStore:
             if now_used.tzinfo is None:
                 now_used = now_used.replace(tzinfo=system_local_now().tzinfo)
             try:
-                if now_used >= datetime.fromisoformat(task.deadline_at):
+                if now_used >= _parse_deadline(task.deadline_at):
                     return {
                         "state": "deadline",
                         "reason_code": "upstream_deadline_exceeded",
