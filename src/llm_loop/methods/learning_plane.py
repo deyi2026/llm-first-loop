@@ -52,6 +52,49 @@ from llm_loop.resources.provider_settlement import (
 
 logger = logging.getLogger(__name__)
 
+# 重复失败降噪（2026-11-01 实测：data/learning.log 87MB / 56961 个 Traceback，
+# 其中 47008 条是同一句 `模型 'chatgpt-web' 不在注册表中`——配置漂移后每个 job
+# 每次重试都抄一份完整栈）。首条留完整证据，其余按批合并计数。
+_REPEATED_FAILURE_EVERY_N = 100
+_REPEATED_FAILURE_INTERVAL_S = 900.0
+_REPEATED_FAILURE_MAX_KEYS = 256
+_repeated_failure_state: dict[str, tuple[float, int, int]] = {}
+_repeated_failure_lock = threading.Lock()
+
+
+def _log_repeated_failure(log: logging.Logger, exc: BaseException, job_ref: str) -> None:
+    """同一失败连发时降噪：首条完整 traceback，其余按 N 次/时间窗合并计数.
+
+    key = 异常类型 + 消息摘要（不含 job id）：不同 job 的**同一根因**归并——
+    这正是要治的漂移形态；根因一变（消息不同）立即重新完整记录，故障不会被吞。
+    周期汇总行恒带 ``suppressed`` 与 ``error``，可核验省略了多少、省的是哪一句。
+    """
+    signature = f"{type(exc).__name__}:{str(exc)[:120]}"
+    now = time.monotonic()
+    with _repeated_failure_lock:
+        last_at, total, logged = _repeated_failure_state.get(signature, (now, 0, 0))
+        total += 1
+        due = (
+            total == 1
+            or (total - logged) >= _REPEATED_FAILURE_EVERY_N
+            or (now - last_at) >= _REPEATED_FAILURE_INTERVAL_S
+        )
+        if due:
+            logged, last_at = total, now
+        if len(_repeated_failure_state) >= _REPEATED_FAILURE_MAX_KEYS:
+            _repeated_failure_state.clear()
+        _repeated_failure_state[signature] = (last_at, total, logged)
+        suppressed = total - logged
+    if due:
+        log.warning(
+            "learning job %s crashed fail-open x%d suppressed=%d error=%s",
+            job_ref,
+            total,
+            suppressed,
+            signature,
+            exc_info=exc if total == 1 else None,
+        )
+
 
 class LearningPlane:
     """Background consumer of the durable learning queue.
@@ -288,8 +331,8 @@ class LearningPlane:
                     return
                 try:
                     progressed = self._try_execute(job) or progressed
-                except Exception:  # noqa: BLE001 - learning is fail-open
-                    logger.warning("learning job %s crashed fail-open", job.job_id, exc_info=True)
+                except Exception as exc:  # noqa: BLE001 - learning is fail-open
+                    _log_repeated_failure(logger, exc, job.job_id)
                     try:
                         self._journal.mark_failed(job.job_id, "worker_exception")
                     except Exception:  # noqa: BLE001

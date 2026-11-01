@@ -597,6 +597,24 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 ---
 
+## 规则三十六：命令闸推荐姿势——一次性脚本先落盘再执行（RULE-AI-36，用户指示 2026-11-01）
+
+**背景**：2026-11-01 实测——一次性诊断脚本用 here-doc（`python3 <<'EOF'`）或"数据管道进解释器"（`… | python3 -`、`… | sh`）会被灾难命令硬阻断 `[安全硬阻断][E6_CATASTROPHIC_HARD]` 拒绝，每轮试探白花一次交互；而 `printf '%s\n' '…' > /tmp/x.py && python3 /tmp/x.py` 一次通过。
+
+**规则**：
+
+1. **默认姿势**：一次性脚本 / 多行 shell 一律「先落盘、再执行」（`printf '%s\n' 'line' … > /tmp/<name>.py && python3 /tmp/<name>.py`）；改工作区文件优先 `edit_file`（带快照校验）或 `printf … > file`。
+2. **不用被拦形态**：不写 here-doc 喂解释器、不写管道直连解释器；也不以引号拼装 / `bash -c` 套壳等方式绕过——那是规避闸门，不是授权。
+3. **数据 ≠ 命令**：引号内字面量与 quoted-delimiter here-doc 正文属数据，不参与"谁在执行"的结构判定（EVO-20261101-366cf6cd）；引号不配对无法静态判定时 fail-closed 拒绝并给 `reason_code=unverifiable_quoted_data`，不得把该拒绝叙述成"真命中"。
+4. **确需被拦形态**：走既有提权通道（`escalation_request` → web 面板人工审批 → 一次性 token 重发同一命令），审批回执是唯一放行依据；不得自行放宽护栏。
+5. **护栏变更按 RULE-AI-35 验收**：判据修改属"存在目的就是拦住某类输入"的变更，宣称生效前必须实测"应拦输入仍被拦 + 目标场景已放"；运行中服务仍是旧代代码时，完成声明只能停在"代码已提交"。
+
+**细则与实测回执**：`docs/PLAYBOOK-20261101-command-gate-postures.md`。
+
+**反例**：`python3 <<'EOF'`；`echo 'print(1)' | python3 -`；被拦后把同一条命令拆成多段引号拼接而不走提权。
+
+---
+
 ## 配置扩展（2026-09-03 agency-first 修订）
 
 Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。

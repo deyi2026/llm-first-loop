@@ -92,6 +92,13 @@ def _service_control_contract_error(action: str, kwargs: dict) -> str:
         target = str(kwargs.get("target", "") or "").strip().lower()
         if target and target not in _SERVICE_TARGETS:
             invalid.append(f"target={target!r} (allowed={list(_SERVICE_TARGETS)})")
+    elif action == "status":
+        view = str(kwargs.get("view", "") or "").strip().lower()
+        if view and view not in _STATUS_VIEWS:
+            invalid.append(f"view={view!r} (allowed={list(_STATUS_VIEWS)})")
+        target = str(kwargs.get("target", "") or "").strip().lower()
+        if target and target not in _SERVICE_TARGETS:
+            invalid.append(f"target={target!r} (allowed={list(_SERVICE_TARGETS)})")
     elif action == "update":
         target = str(
             kwargs.get("restart_target", "") or kwargs.get("target", "") or ""
@@ -127,6 +134,128 @@ def _service_control_contract_error(action: str, kwargs: dict) -> str:
         + "；请按本回执一次性修正全部字段；若需字段类型/enum，先读取 "
         "get_tool_schema(service_control)"
     )
+
+
+_STATUS_VIEWS = ("targets", "full")
+
+
+def _drift_status(value: object) -> object:
+    """guard_code_drift 可能是 dict（含 status）或标量，取可读状态不猜结构."""
+    if isinstance(value, dict):
+        return value.get("status")
+    return value
+
+
+def _compose_status_body(
+    store: ManagedServiceDeploymentStore, target: str = "", view: str = ""
+) -> dict[str, object]:
+    """status 载荷组装：默认 targets（每服务一行），view=full 取完整证据面.
+
+    2026-11-01 实测：完整视图 45570 字符，工具回执被截断时正好丢掉各服务实况
+    （generation_lag 521 条占 32710）。默认改成"每服务现在什么样"，完整证据面
+    显式 view=full（该信号已在 runtime 层按 target 去重封顶，不再无限膨胀）。
+    """
+    resolved = (view or "targets").strip().lower() or "targets"
+    if resolved not in _STATUS_VIEWS:
+        raise ValueError(f"view={resolved!r} (allowed={list(_STATUS_VIEWS)})")
+    identity = compose_service_identity_with_guard_freshness(store)
+    body = _full_status_body(identity) if resolved == "full" else _targets_status_body(identity)
+    scope = (target or "").strip().lower()
+    return _narrow_status_body(body, scope) if scope and scope != "all" else body
+
+
+def _full_status_body(identity: dict) -> dict[str, object]:
+    """完整证据面：与历史 status 载荷同键（只多一个 view 标记）."""
+    return {
+        "view": "full",
+        "deployment": identity["deployment"],
+        "services": identity["services"],
+        "admission_barriers": identity.get("admission_barriers", []),
+        "available_exits": identity.get("available_exits", []),
+        "gate_classification": identity.get("gate_classification", []),
+        "compat_retirement": identity.get("compat_retirement", []),
+        "idle_state": identity.get("idle_state", {}),
+        "stage_facts": identity.get("stage_facts", {}),
+        "evidence_refs": identity.get("evidence_refs", {}),
+        "audit_signals": identity.get("audit_signals", {}),
+    }
+
+
+def _targets_status_body(identity: dict) -> dict[str, object]:
+    """紧凑视图：每服务一行关键事实 + 障碍/待裁决 + 滞后摘要."""
+    services: dict[str, object] = {}
+    for name, entry in (identity.get("services") or {}).items():
+        live = entry.get("live") or {}
+        services[name] = {
+            "pid": live.get("pid"),
+            "alive": live.get("pid_alive"),
+            "started_at": live.get("started_at"),
+            "git_head": str(live.get("git_head") or "")[:12],
+            "manifest_present": live.get("manifest_present"),
+            "matches_desired_generation": live.get("matches_desired_generation"),
+            "restart_required": entry.get("restart_required"),
+            "admission_barrier": entry.get("admission_barrier"),
+            "terminal_action_barrier": entry.get("terminal_action_barrier"),
+            "reasons": entry.get("reasons"),
+            "guard_code_drift": _drift_status(live.get("guard_code_drift")),
+        }
+    audit = identity.get("audit_signals") or {}
+    return {
+        "view": "targets",
+        "hint": "view=full 取完整证据面（gate_classification/compat_retirement/evidence_refs）",
+        "deployment": identity["deployment"],
+        "services": services,
+        "admission_barriers": identity.get("admission_barriers", []),
+        "stage_facts": identity.get("stage_facts", {}),
+        "audit_summary": {
+            "generation_lag": audit.get("generation_lag", []),
+            "orphan_barrier": audit.get("orphan_barrier"),
+            "waiting_timeout": audit.get("waiting_timeout"),
+        },
+    }
+
+
+def _narrow_status_body(body: dict[str, object], scope: str) -> dict[str, object]:
+    """按服务收窄：只留该服务的条目（对 targets/full 两种视图都生效）."""
+    services = body.get("services")
+    if isinstance(services, dict) and scope not in services:
+        raise ValueError(
+            f"target={scope!r} 不在 services ({sorted(services)}); allowed=all"
+        )
+    narrowed = dict(body)
+    if isinstance(services, dict):
+        narrowed["services"] = {scope: services[scope]}
+    for key in ("stage_facts", "evidence_refs", "idle_state"):
+        section = body.get(key)
+        if isinstance(section, dict) and scope in section:
+            narrowed[key] = {scope: section[scope]}
+    barriers = body.get("admission_barriers")
+    if isinstance(barriers, list):
+        narrowed["admission_barriers"] = [
+            item
+            for item in barriers
+            if isinstance(item, dict) and scope in {item.get("service"), item.get("target")}
+        ]
+    exits = body.get("available_exits")
+    if isinstance(exits, list):
+        narrowed["available_exits"] = [
+            item
+            for item in exits
+            if isinstance(item, dict) and scope in {item.get("service"), item.get("target")}
+        ]
+    audit = narrowed.get("audit_summary") or narrowed.get("audit_signals")
+    if isinstance(audit, dict):
+        lag = audit.get("generation_lag")
+        if isinstance(lag, list):
+            audit = dict(audit)
+            audit["generation_lag"] = [
+                item
+                for item in lag
+                if isinstance(item, dict) and item.get("target") == scope
+            ]
+            narrowed["audit_summary" if "audit_summary" in narrowed else "audit_signals"] = audit
+    narrowed["target"] = scope
+    return narrowed
 
 
 class ServiceControlTool:
@@ -171,7 +300,16 @@ class ServiceControlTool:
             "target": {
                 "type": "string",
                 "enum": ["web", "feishu", "wecom", "learning", "all"],
-                "description": "restart 目标；status/publish 时可省略",
+                "description": "restart 目标；status 时用于按服务收窄回执；publish 时可省略",
+            },
+            "view": {
+                "type": "string",
+                "enum": ["targets", "full"],
+                "description": (
+                    "status 可选：targets（默认，每服务一行关键事实+障碍+滞后摘要，"
+                    "约 2KB）；full=完整证据面（含 gate_classification/compat_retirement/"
+                    "evidence_refs/audit_signals，约 13KB）"
+                ),
             },
             "restart_target": {
                 "type": "string",
@@ -305,21 +443,13 @@ class ServiceControlTool:
                 body = {"action": receipt.to_dict()}
             else:
                 try:
-                    view = compose_service_identity_with_guard_freshness(self.store)
+                    body = _compose_status_body(
+                        self.store,
+                        str(kwargs.get("target", "") or ""),
+                        str(kwargs.get("view", "") or ""),
+                    )
                 except (OSError, ValueError, json.JSONDecodeError) as exc:
                     return self._failure(f"[service_control status failed] {type(exc).__name__}: {exc}")
-                body = {
-                    "deployment": view["deployment"],
-                    "services": view["services"],
-                    "admission_barriers": view.get("admission_barriers", []),
-                    "available_exits": view.get("available_exits", []),
-                    "gate_classification": view.get("gate_classification", []),
-                    "compat_retirement": view.get("compat_retirement", []),
-                    "idle_state": view.get("idle_state", {}),
-                    "stage_facts": view.get("stage_facts", {}),
-                    "evidence_refs": view.get("evidence_refs", {}),
-                    "audit_signals": view.get("audit_signals", {}),
-                }
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=json.dumps(body, ensure_ascii=False, sort_keys=True),

@@ -1521,6 +1521,120 @@ def read_all_actions(store: ManagedServiceDeploymentStore) -> list[ServiceContro
     return actions
 
 
+# 2026-11-01 实测：status 载荷 45570 字符中 32710 全是 generation_lag（逐条展开
+# 历史 succeeded 动作，521 条），工具回执被截断后恰好丢掉 per-service 实况。
+# 信号应表达"哪个 target 的最近成功重启仍落后"，不是"历史上有过多少条落后"。
+_GENERATION_LAG_LIMIT = 8
+
+
+def _generation_lag_signal(
+    actions: list[ServiceControlAction], deployment: Any
+) -> list[dict[str, Any]]:
+    """落代滞后信号：每 target 只留**最新**一次成功重启，逐条附折叠了多少条.
+
+    只保留仍低于 desired 代的 target（最新成功重启已在目标代 = 不滞后）。
+    折叠计数进 succeeded_actions，使"瘦身省略了历史"仍可核验；target 取值域
+    就是 web/feishu/wecom/learning/all 五个，故去重后天然不会丢 target。
+    """
+    if deployment is None:
+        return []
+    newest: dict[str, ServiceControlAction] = {}
+    collapsed: dict[str, int] = {}
+    for action in actions:
+        if action.status != "succeeded":
+            continue
+        if action.deployment_generation >= deployment.generation:
+            continue
+        collapsed[action.target] = collapsed.get(action.target, 0) + 1
+        current = newest.get(action.target)
+        if current is None or action.deployment_generation > current.deployment_generation:
+            newest[action.target] = action
+    entries = [
+        {
+            "target": action.target,
+            "generation": action.deployment_generation,
+            "lag_generations": deployment.generation - action.deployment_generation,
+            "succeeded_actions": collapsed.get(action.target, 1),
+        }
+        for action in newest.values()
+    ]
+    entries.sort(key=lambda item: (-item["lag_generations"], str(item["target"])))
+    return entries[:_GENERATION_LAG_LIMIT]
+
+
+def _covering_success_action(
+    actions: list[ServiceControlAction],
+    *,
+    failed_id: str,
+    target: str,
+    created_at: str,
+    generation: int | None,
+) -> ServiceControlAction | None:
+    """找一个"已在事实层面覆盖该失败"的并发/后续成功动作（只标注，不抹痕）.
+
+    覆盖判据（须同时满足）：非自身、status=succeeded、target 同服务或 all、
+    **成功落定时间不早于失败动作创建时间**（即在本失败开始之后才落定）、
+    代不低于失败动作（旧代成功不能覆盖新代失败）。
+
+    为什么用 created_at 而不是 updated_at 作界：restart all 与单目标 restart
+    并发时，单目标往往**先成功**、all 整单后来才判 failed（2026-11-01 实证
+    svc-5964 14:32:47 成功 vs svc-798d1 14:35 收口）。用 updated_at 会把
+    这种"已经被成功重启接管"的失败误标成"无人覆盖"。
+    返回最早落定的那一个（确定性）。
+    """
+    failed_ts = _parse_iso(created_at)
+    if failed_ts is None:
+        return None
+    candidates: list[ServiceControlAction] = []
+    for action in actions:
+        if action.action_id == failed_id or action.status != "succeeded":
+            continue
+        if action.target not in {target, "all"}:
+            continue
+        ts = _parse_iso(action.updated_at)
+        if ts is None or ts < failed_ts:
+            continue
+        if (
+            isinstance(generation, int)
+            and isinstance(action.deployment_generation, int)
+            and action.deployment_generation < generation
+        ):
+            continue
+        candidates.append(action)
+    if not candidates:
+        return None
+    return min(candidates, key=lambda action: (action.updated_at, action.action_id))
+
+
+def _stage_facts_view(
+    latest_by_service: dict[str, ServiceControlAction],
+    actions: list[ServiceControlAction],
+) -> dict[str, dict[str, Any]]:
+    """每服务最近动作事实；failed 动作附"已被后续成功覆盖"标注.
+
+    标注不改变 status=failed 这个事实（痕迹保留），只回答"这一条还要不要人管"。
+    """
+    view: dict[str, dict[str, Any]] = {}
+    for service, action in latest_by_service.items():
+        entry: dict[str, Any] = {
+            "action_id": action.action_id,
+            "status": action.status,
+            "stage_fact": action.stage_fact,
+        }
+        if action.status == "failed":
+            cover = _covering_success_action(
+                actions,
+                failed_id=action.action_id,
+                target=service,
+                created_at=action.created_at,
+                generation=action.deployment_generation,
+            )
+            entry["covered"] = cover is not None
+            entry["covered_by"] = cover.action_id if cover is not None else None
+        view[service] = entry
+    return view
+
+
 def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """只读证据面（design 2.2.2.6 / tasks 9.1）：只**增**字段，不新增门禁.
 
@@ -1580,21 +1694,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
             )
 
     deployment = store.read()
-    generation_lag: list[dict[str, Any]] = []
-    if deployment is not None:
-        for action in actions:
-            if (
-                action.status == "succeeded"
-                and action.deployment_generation < deployment.generation
-            ):
-                generation_lag.append(
-                    {
-                        "target": action.target,
-                        "generation": action.deployment_generation,
-                        "lag_generations": deployment.generation
-                        - action.deployment_generation,
-                    }
-                )
+    generation_lag = _generation_lag_signal(actions, deployment)
 
     waiting_timeout: list[dict[str, Any]] = []
     now = system_local_now()
@@ -1621,14 +1721,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
         state, detail = _target_idle_state(target=target, runtime_root=runtime_root)
         idle_state[target] = {"state": state, "detail": detail}
 
-    stage_facts = {
-        service: {
-            "action_id": action.action_id,
-            "status": action.status,
-            "stage_fact": action.stage_fact,
-        }
-        for service, action in latest_by_service.items()
-    }
+    stage_facts = _stage_facts_view(latest_by_service, actions)
     evidence_refs = {
         service: {"action_id": action.action_id, "reason_ref": action.reason_ref}
         for service, action in latest_by_service.items()
@@ -2365,7 +2458,7 @@ def acknowledge_verify(
         targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
         # 纯证据三态（L6/L7）：reobserve 只重新采集，不替模型判终态。
         observed, summary, healthy = _verify_restart_targets(
-            store, deployment, targets, action.updated_at
+            store, deployment, targets, action.updated_at, action.action_id
         )
         updated = _mark_action(
             store,
@@ -3283,11 +3376,55 @@ def _read_runtime_manifest(
         return None
 
 
+# 并发重启接管窗口：restart all 与单目标 restart 抢同一台服务时，后者先赢，
+# 前者核验只能看到"进程早于我这轮重启发起"→ 判 started_before_restart 而整单
+# failed（2026-11-01 实证 svc-798d10eb08c6 vs svc-5964）。只认窗口内、同代的
+# succeeded restart 作为接管证据；窗口外的旧成功不计入。
+_CONCURRENT_RESTART_WINDOW_S = 900.0
+
+
+def _concurrent_restart_covers(
+    store: ManagedServiceDeploymentStore,
+    services: list[str],
+    began: datetime | None,
+    deployment: Any,
+    exclude_action_id: str = "",
+) -> dict[str, str]:
+    """并发重启接管证据：窗口内、同代的 succeeded restart 动作（按服务映射）.
+
+    只用于消解"我的重启没生效、但该服务已被另一路重启到目标代"这一种假失败；
+    进程已死/head 不符/判据缺失都不受此影响。证据面 fail-open：读不到就不接管。
+    """
+    if began is None or not services:
+        return {}
+    floor = began.timestamp() - _CONCURRENT_RESTART_WINDOW_S
+    covers: dict[str, str] = {}
+    try:
+        actions = read_all_actions(store)
+    except Exception:  # noqa: BLE001 — 读失败不改判失败证据
+        return {}
+    for action in actions:
+        if action.action != "restart" or action.status != "succeeded":
+            continue
+        if exclude_action_id and action.action_id == exclude_action_id:
+            continue
+        if deployment is not None and action.deployment_generation != deployment.generation:
+            continue
+        ts = _parse_iso(action.updated_at)
+        if ts is None or ts.timestamp() < floor:
+            continue
+        for service in services:
+            if action.target in {service, "all"}:
+                covers.setdefault(service, action.action_id)
+    return covers
+
+
 def _verify_restart_targets(
     store: ManagedServiceDeploymentStore,
     deployment: Any,
     services: list[str],
     restarted_at: str,
+    exclude_action_id: str = "",
 ) -> tuple[str, str, tuple[str, ...]]:
     """L6/L7: restart 后的**纯证据采集**（三态），不判终态、不自动重跑.
 
@@ -3310,6 +3447,10 @@ def _verify_restart_targets(
     manifest_wait_deadline = time.monotonic() + _VERIFY_MANIFEST_WAIT_S
     seen: set[str] = set()
     skipped: set[str] = set()
+    covers = _concurrent_restart_covers(
+        store, services, began, deployment, exclude_action_id
+    )
+    adopted: dict[str, str] = {}
     while True:
         parts: list[str] = []
         failed = False
@@ -3347,11 +3488,16 @@ def _verify_restart_targets(
                 and started < began - timedelta(seconds=_STARTED_AT_GRACE_S)
             ):
                 problems.append("started_before_restart")
+            if problems == ["started_before_restart"] and service in covers:
+                # 假失败消解：进程由窗口内同代的并发 restart 拉起 → 记明接管来源
+                problems = []
+                adopted[service] = covers[service]
             if problems:
                 failed = True
                 parts.append(f"{service}[" + ",".join(problems) + "]")
             else:
-                parts.append(f"{service}[ok pid={pid} head={head[:12]}]")
+                note = f" adopted_by={adopted[service]}" if service in adopted else ""
+                parts.append(f"{service}[ok pid={pid} head={head[:12]}{note}]")
                 healthy.add(service)
         if skipped:
             parts.extend(f"{service}[no_manifest_skip]" for service in sorted(skipped))
@@ -3693,7 +3839,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
     # 发布）。L6/L7：程序只产证据，不据核验自动判终态、不自动重跑；终态由模型
     # 经 verify_acknowledge 裁决（design 2.1.3.4）。
     verdict, summary, healthy = _verify_restart_targets(
-        store, desired_now, verify_targets, restarted_at
+        store, desired_now, verify_targets, restarted_at, action_id
     )
 
     identity = (
@@ -4687,6 +4833,7 @@ def scan_unacknowledged_failed_actions(data_dir: str | Path) -> list[dict[str, A
         except Exception:  # noqa: BLE001 — 过滤信息缺失时按未 supersede 处理
             desired_generation = None
         cutoff = system_local_now().timestamp() - 24 * 3600
+        actions_all = read_all_actions(store)
         for path in sorted(
             (p for p in store.actions_dir.glob("*.json") if p.is_file()),
             key=lambda p: p.name,
@@ -4712,6 +4859,13 @@ def scan_unacknowledged_failed_actions(data_dir: str | Path) -> list[dict[str, A
                 updated_ts = 0.0
             if updated_ts < cutoff:
                 continue
+            cover = _covering_success_action(
+                actions_all,
+                failed_id=str(raw.get("action_id") or ""),
+                target=str(raw.get("target") or ""),
+                created_at=str(raw.get("created_at") or ""),
+                generation=raw_generation if isinstance(raw_generation, int) else None,
+            )
             results.append(
                 {
                     "action_id": raw.get("action_id"),
@@ -4720,6 +4874,8 @@ def scan_unacknowledged_failed_actions(data_dir: str | Path) -> list[dict[str, A
                     "updated_at": raw.get("updated_at"),
                     "detail": str(raw.get("detail") or "")[:160],
                     "superseded": superseded,
+                    "covered": cover is not None,
+                    "covered_by": cover.action_id if cover is not None else None,
                 }
             )
             if len(results) >= 10:

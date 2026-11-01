@@ -167,9 +167,14 @@ _CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "here-doc 交给解释器执行",
         re.compile(
-            # 2026-11-02 独立审查 P1（第二轮）：见下三条补丁
-            rf"(?:^|(?<=[;&|(\s'\"\\]))(?:[^\s;&|]*/)?"
-            rf"(?:\$\{{?[A-Za-z_][A-Za-z0-9_]*\}}?|(?:{_INTERPRETER_PIPE_ALTS}))['\"]?(?=[\s<)])"
+            # 2026-11-02 独立审查 P1-1（第二轮）：解释器词是「静态裸词」这条前提
+            # 太窄——`$SH <<'EOF'`（变量解释器）在旧式 `\b…\b[^|;]*<<` 窗口下
+            # 被拦，收窄后整条漏拦。补 `$VAR` / `${VAR}` 形态（fail-closed：
+            # 变量解析不出解释器名，宁可拦）。
+            rf"(?:^|(?<=[;&|(\s\\]))(?:[^\s;&|]*/)?"
+            rf"(?:\$\{{?[A-Za-z_][A-Za-z0-9_]*\}}?|(?:{_INTERPRETER_PIPE_ALTS}))(?=[\s<)])"
+            # 窗口内允许「非续行反斜杠」（`sh -c 'a\b' <<EOF`）：原 `[^|;\n\\]*`
+            # 在 `\` 处截断，规则永不触发。仍禁止跨语句（换行），仍允许续行。
             r"[^|;\n\\]*(?:(?:\\\n|\\[^\n])[^|;\n\\]*)*<<",
             re.IGNORECASE,
         ),
@@ -344,13 +349,72 @@ def _newline_split_normalize(command: str) -> str:
     return "".join(out)
 
 
+_QUOTE_AWARE_RULES = frozenset(
+    {"任意管道直连解释器执行", "here-doc 交给解释器执行"}
+)
+
+# 引号内出现这些字符就说明是"文本载荷"而不是命令位上的裸词：空白（含换行）与
+# shell 元字符（| ; & < > $ `）。命中则维持折叠成空串的旧口径（数据）。
+_WORD_QUOTE_UNSAFE = re.compile(r"[\s|;&<>$`\\]")
+
+
+def _without_quoted_data(command: str) -> str:
+    """把引号内字面量折叠成空引号串，供**结构类**灾难规则判定（EVO-20261101-366cf6cd）.
+
+    引号里的文本是数据，不是命令。把它当命令扫描，会把"文档/夹具里转述的危险
+    命令"判成真执行——2026-11-01 实证：``printf '%s' 'echo x | python3 -' > f``
+    只是往文件里写一行示例文本，却被「任意管道直连解释器执行」硬阻断。
+
+    只用于 ``_QUOTE_AWARE_RULES``（判"谁在执行"的结构规则）：这些规则的载荷
+    风险由分词层对解释器 ``-c``/``-e`` 载荷的递归重扫兜住，故不构成放宽。
+    其余规则（dd 块设备、格式化等）继续看原文——``of="/dev/sda"`` 这类带引号
+    的真实目标必须仍然可见。
+
+    引号不配对（无法静态建模）→ 原文返回（fail-closed，判定面维持既有口径）。
+
+    2026-11-02 独立审查 P1-1：**只包住一个裸词**的引号（``"bash" <<'EOF'`` /
+    ``'sh' <<'EOF'``）是命令位的解释器名，不是数据。折成空串会让「here-doc 交给
+    解释器执行」整条漏拦（quoted-interpreter 绕过）。故：引号内既无空白也无
+    shell 元字符（``|;&<>$```）时，保留其**未加引号的内容**；否则仍折叠成空串
+    （``'echo x | python3 -'``、``'python3 <<EOF'`` 这类含空白的字面量仍是数据）。
+    ``sh<<EOF`` 这类含元字符的裸词也保持折叠——它只可能是被写出去的文本。
+    """
+    out: list[str] = []
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if ch not in {"'", '"'}:
+            out.append(ch)
+            i += 1
+            continue
+        j = i + 1
+        while j < n:
+            if ch == '"' and command[j] == "\\":
+                j += 2
+                continue
+            if command[j] == ch:
+                break
+            j += 1
+        if j >= n:
+            return command
+        inner = command[i + 1 : j]
+        if inner and not _WORD_QUOTE_UNSAFE.search(inner):
+            out.append(inner)
+        else:
+            out.append(ch + ch)
+        i = j + 1
+    return "".join(out)
+
+
 def _heredoc_command_words_static(command: str) -> bool:
     """每个 heredoc 开所在语句的**命令词**是否静态可见（裸词）。
 
-    2026-11-02 独立审查 P1（第二轮）：`_strip_heredocs(only_inert=True)` 把
+    2026-11-02 独立审查 P1-1（第二轮）：`_strip_heredocs(only_inert=True)` 把
     「引用定界符 heredoc 的正文」当数据剥掉，前提是命令词已知。命令词写成变量
-    （`$SH <<'EOF'`）时，正文交给谁执行无法静态判定；继续剥就把载荷整段移出
-    扫描面（覆盖窄变成盲区）。全部语句命令词都是静态裸词才允许剥。
+    （`$SH <<'EOF'`）或含展开/转义时，正文交给谁执行无法静态判定；继续剥就把
+    载荷整段移出扫描面。此函数只回答"能不能剥"：全部语句的命令词都是静态裸词
+    才返回 True，否则 False（调用方据此不剥，fail-closed）。
     """
     for segment in re.split(r"\n|&&|\|\||[;|]", command):
         if "<<" not in segment:
@@ -387,6 +451,10 @@ def _without_inert_heredoc_bodies(command: str) -> str:
         from llm_loop.core.command_scope_guard import _strip_heredocs
     except Exception:  # pragma: no cover - 导入失败按「不剥」处理（fail-closed）
         return command
+    # 2026-11-02 独立审查 P1-1（第二轮）：「正文是数据」的前提是**命令词静态可见**。
+    # `$SH <<'EOF'` 这类命令词是变量/未知词时，正文到底交给谁执行不可静态判定；
+    # 此时若仍按 inert 剥掉正文，正文里的载荷连 layer-A 都扫不到——从"覆盖窄"变成
+    # "整段盲区"。故命令词不可静态判定 → 不剥（fail-closed，正文参与扫描）。
     if not _heredoc_command_words_static(command):
         return command
     stripped, error = _strip_heredocs(command, only_inert=True)
@@ -1407,10 +1475,17 @@ class CatastrophicGuard:
         # 数据区（引用定界符的 heredoc 正文）已在 scan_source 里剥掉；其余口径
         # 与改前一致（不在此处做全局语句切分，避免改变 dd/curl 等既有窗口语义）。
         # 跨语句误拼接由「here-doc 交给解释器执行」规则自身按行锚定解决，见该规则。
+        # EVO-20261101-366cf6cd：结构类规则只看"谁在执行"，引号内字面量是数据。
+        structural = _without_quoted_data(expanded)
         for label, pattern in _CATASTROPHIC_PATTERNS:
-            m = pattern.search(expanded)
+            m = pattern.search(structural if label in _QUOTE_AWARE_RULES else expanded)
             if m:
-                return self._block(label, command, m.group(0))
+                note = ""
+                if label in _QUOTE_AWARE_RULES and structural is expanded:
+                    # 引号不配对：结构规则无法把数据区折掉 → fail-closed，
+                    # 但必须给机器可读原因码，避免被当成"真命中"（FR-SAFE-02）
+                    note = "；reason_code=unverifiable_quoted_data"
+                return self._block(label, command, m.group(0) + note)
         # B) 逐子命令分词分析（P0-1 复核补洞：`cd / && rm -rf *` 的 cwd 必须跟着走，
         #    否则通配目标的危险度永远按进程 cwd 判定，删根命令被放行）
         effective_cwd: str | None = cwd

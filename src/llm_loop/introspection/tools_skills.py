@@ -345,6 +345,18 @@ def run_grill_me(ctx: Any, audit: Any, args: dict) -> ToolResult:
     # 再据锚点发问。此前实现只打印 design 前 500 字符就发固定模板问题，
     # 输出与输入内容无关（2026-11-01 实证），评审退化成假动作。
     anchors = _extract_design_anchors(design)
+    # EVO-20261101-66eac12e：模式必须显式——「内容相关」与「只发模板」是两件事，
+    # 不能让调用方把模板当成本次设计的评审结论。
+    if anchors:
+        lines.append(
+            f"**mode**: design_anchored（anchors={len(anchors)}，问题锚定自正文）"
+        )
+    else:
+        lines.append(
+            "**mode**: template_only（正文里没抽到可锚定的标题/标识符/数值/断言句——"
+            "下列问题与本次 design 的具体内容无关；请补上具体小节名、数值或断言后再 grill）"
+        )
+    lines.append("")
     if anchors:
         lines.append("## 🔍 定点追问（锚定自本次 design 正文）")
         lines.append("")

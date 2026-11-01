@@ -721,6 +721,19 @@ _stop_web() {
 # 启动通道纪律：自重启优先 execute_command 后台 job（run_in_background，无 30s 超时）。
 _spawn_detached() {
   local logfile="$1"; shift
+  # 日志轮转（2026-11-01）：此前无轮转，单文件无限增长（实测 data/web.log 395MB、
+  # data/learning.log 87MB）。spawn 前若超过阈值就滚动一代（<log> → <log>.1，
+  # 只保留 1 代），阈值可用 LFL_LOG_ROTATE_BYTES 覆盖；只动本次被 spawn 的那一个
+  # 日志，其他服务的写入者不受影响。轮转失败不阻断启动（fail-open）。
+  local limit="${LFL_LOG_ROTATE_BYTES:-16777216}"
+  if [ -f "$logfile" ]; then
+    local size
+    size=$(wc -c <"$logfile" 2>/dev/null | tr -d ' ')
+    if [ "${size:-0}" -ge "$limit" ] 2>/dev/null; then
+      mv -f "$logfile" "$logfile.1" 2>/dev/null || true
+      echo "[log-rotate] $logfile → $logfile.1 (was ${size} bytes, limit ${limit})" >&2
+    fi
+  fi
   "$VENV_PY" -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" >>"$logfile" 2>&1 &
 }
 
