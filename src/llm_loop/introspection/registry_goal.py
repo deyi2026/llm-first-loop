@@ -1,6 +1,6 @@
 """任务级 Goal 工具注册（EVO-20260824-3cd4d74b）.
 
-承载: create_goal / checkpoint_goal / get_goal / update_goal
+承载: create_goal / checkpoint_goal / get_goal / update_goal / coordination_status
 """
 
 from __future__ import annotations
@@ -31,4 +31,8 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_goal import run_update_goal
 
         return run_update_goal(host.ctx, host, args)
+    if name == "coordination_status":
+        from llm_loop.introspection.tools_goal import run_coordination_status
+
+        return run_coordination_status(host.ctx, host, args)
     return None

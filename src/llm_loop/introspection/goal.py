@@ -35,6 +35,30 @@ class GoalStoreCorruptionError(RuntimeError):
     """Goal JSONL 存在损坏记录，当前查询无法安全判定。"""
 
 
+class GoalVersionConflictError(RuntimeError):
+    """expected_version CAS 冲突（DESIGN-20261101 §4.6）：在 flock 内检出，写入未发生。"""
+
+    def __init__(
+        self,
+        *,
+        goal_id: str,
+        expected: int,
+        current: int,
+        owner_session_id: str = "",
+        last_checkpoint: dict | None = None,
+    ) -> None:
+        self.goal_id = goal_id
+        self.expected = expected
+        self.current = current
+        self.owner_session_id = owner_session_id
+        self.last_checkpoint = last_checkpoint or {}
+        super().__init__(f"version_conflict goal={goal_id} expected={expected} current={current}")
+
+
+# 兼容旧名：本轮新增异常，保留别名以免既有 import 与测试断链
+GoalVersionConflict = GoalVersionConflictError
+
+
 @dataclass
 class Goal:
     """任务级目标记录（有界推进 + checkpoint 四要素）."""
@@ -53,6 +77,9 @@ class Goal:
     # 声明后 complete 须过 spec_archive 归档门（归档清单或显式不适用）；
     # 未声明的旧 Goal 零行为变化（仅 complete 时一次性提示补充）。
     spec_change_ref: str = ""
+    # DESIGN-20261101 §2.4 (L4): 乐观并发版本号。每次 checkpoint/update 成功后 +1，
+    # 供跨会话写侧 CAS（expected_version）。旧记录缺字段按 1 起算，不重写历史。
+    version: int = 1
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -84,12 +111,22 @@ class GoalStore:
             updated_at=now,
             session_id=session_id,
             spec_change_ref=spec_change_ref,
+            version=1,
         )
         with self._file_lock():
             lines = self._read_lines()
             lines.append(json.dumps(goal.to_dict(), ensure_ascii=False))
             self._atomic_rewrite(lines)
         return goal
+
+    @staticmethod
+    def version_of(goal: dict) -> int:
+        """Record version（缺字段的旧记录按 1 起算，兼容读取不重写）."""
+        raw = (goal or {}).get("version", 1)
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 1
 
     @staticmethod
     def generation_of(goal: dict) -> str:
@@ -118,6 +155,7 @@ class GoalStore:
         evidence: str = "",
         path: str = "",
         next_step: str = "",
+        expected_version: int | None = None,
     ) -> dict | None:
         """里程碑 checkpoint（四要素: What/Evidence/Path/Next）.
 
@@ -147,6 +185,15 @@ class GoalStore:
                     if entry.get("status") != "active":
                         out.append(json.dumps(entry, ensure_ascii=False))
                         continue  # 非active明确拒绝：返回None，工具层不得误报已记录
+                    if expected_version is not None and self.version_of(entry) != int(expected_version):
+                        # CAS 在读-比-写同一 flock 内完成；抛出不重写文件
+                        raise GoalVersionConflictError(
+                            goal_id=goal_id,
+                            expected=int(expected_version),
+                            current=self.version_of(entry),
+                            owner_session_id=str(entry.get("session_id") or ""),
+                            last_checkpoint=(entry.get("checkpoints") or [{}])[-1],
+                        )
                     cp = {
                         "ts": system_local_now().isoformat(),
                         "what": what,
@@ -156,6 +203,7 @@ class GoalStore:
                     }
                     entry.setdefault("checkpoints", []).append(cp)
                     entry["updated_at"] = system_local_now().isoformat()
+                    entry["version"] = self.version_of(entry) + 1
                     target = entry
                 out.append(json.dumps(entry, ensure_ascii=False))
             if not matched and malformed_lines:
@@ -165,7 +213,13 @@ class GoalStore:
             return target
 
     def update(
-        self, goal_id: str, status: str, reason: str = "", *, spec_archive: dict | None = None
+        self,
+        goal_id: str,
+        status: str,
+        reason: str = "",
+        *,
+        spec_archive: dict | None = None,
+        expected_version: int | None = None,
     ) -> dict | None:
         """状态流转仅允许 active→complete/blocked；terminal 同状态幂等、跨终态拒绝。"""
         if status not in {"complete", "blocked"}:
@@ -199,9 +253,18 @@ class GoalStore:
                             out.append(json.dumps(entry, ensure_ascii=False))
                             continue
                         raise ValueError(f"Goal 终态不可逆: {current} → {status}")
+                    if expected_version is not None and self.version_of(entry) != int(expected_version):
+                        raise GoalVersionConflictError(
+                            goal_id=goal_id,
+                            expected=int(expected_version),
+                            current=self.version_of(entry),
+                            owner_session_id=str(entry.get("session_id") or ""),
+                            last_checkpoint=(entry.get("checkpoints") or [{}])[-1],
+                        )
                     now = system_local_now().isoformat()
                     entry["status"] = status
                     entry["updated_at"] = now
+                    entry["version"] = self.version_of(entry) + 1
                     if status == "complete":
                         entry["completed_at"] = now
                         if spec_archive is not None:

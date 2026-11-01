@@ -33,6 +33,9 @@ from llm_loop.timekeeping import system_local_now
 logger = logging.getLogger(__name__)
 
 _FALLBACK_LOCK = threading.Lock()
+# 进程内跨 goal 协调锁：macOS 上 flock 对同进程多 fd 的自冲突不作保证（实测两条反向边
+# 并发创建会双双通过），故环检测临界区必须同时持有进程内锁与跨进程 flock。
+_COORD_PROCESS_LOCK = threading.Lock()
 
 TASK_STATUSES = ("pending", "in_progress", "blocked", "done", "failed", "cancelled")
 TERMINAL_STATUSES = ("done", "failed", "cancelled")
@@ -71,6 +74,9 @@ class Task:
     acceptance: list[str] = field(default_factory=list)
     done_when: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
+    # DESIGN-20261101 §4.5 (L3): 跨 goal 依赖——所列 goal 全部 complete 后本任务才可能 ready
+    blocked_by_goals: list[str] = field(default_factory=list)
+    deadline_at: str = ""  # §4.5 等待期限；到期未满足 → blocked(upstream_deadline_exceeded)
     parent_id: str = ""
     evidence_required: bool = False
     evidence_refs: list[str] = field(default_factory=list)
@@ -95,9 +101,16 @@ class Task:
             title=str(d.get("title", "")),
         )
         t.status = str(d.get("status", "pending"))
-        for k in ("acceptance", "done_when", "dependencies", "evidence_refs"):
+        for k in (
+            "acceptance",
+            "done_when",
+            "dependencies",
+            "evidence_refs",
+            "blocked_by_goals",
+        ):
             v = d.get(k)
             setattr(t, k, [str(x) for x in v] if isinstance(v, list) else [])
+        t.deadline_at = str(d.get("deadline_at", "") or "")
         t.parent_id = str(d.get("parent_id", ""))
         t.evidence_required = bool(d.get("evidence_required", False))
         t.owner = str(d.get("owner", "main"))
@@ -140,6 +153,8 @@ class TaskStore:
         acceptance: list[str] | None = None,
         done_when: list[str] | None = None,
         dependencies: list[str] | None = None,
+        blocked_by_goals: list[str] | None = None,
+        deadline_at: str = "",
         parent_id: str = "",
         evidence_required: bool = False,
         owner: str = "main",
@@ -150,7 +165,36 @@ class TaskStore:
         if not acceptance:
             raise ValueError("task_create 必填 'acceptance'（至少一条验收条件）")
         deps = [d.strip() for d in (dependencies or []) if d.strip()]
-        with self._file_lock(goal_id):
+        # DESIGN-20261101 §4.5: 跨 goal 依赖归一化（去空/去重保序/禁自指）
+        xdeps: list[str] = []
+        for raw in blocked_by_goals or []:
+            gid_ref = str(raw or "").strip()
+            if not gid_ref:
+                continue
+            if gid_ref == goal_id:
+                raise ValueError("dependency_cycle: 跨 goal 依赖不得指向自身 goal")
+            if gid_ref not in xdeps:
+                xdeps.append(gid_ref)
+        deadline = str(deadline_at or "").strip()
+        if deadline:
+            try:
+                parsed_deadline = datetime.fromisoformat(deadline)
+            except ValueError as exc:
+                raise ValueError(
+                    f"deadline_at 必须是 ISO 时间（如 2026-11-02T12:00:00+08:00）: {deadline}"
+                ) from exc
+            if parsed_deadline.tzinfo is None:
+                # naive 与带时区的 now 比较会 TypeError（P1-1）；入库前统一补本地时区
+                parsed_deadline = parsed_deadline.replace(tzinfo=system_local_now().tzinfo)
+                deadline = parsed_deadline.isoformat()
+        with self._write_ctx(goal_id, xdeps=xdeps):
+            if xdeps:
+                # 环检测必须在锁内（P1-4）：两条反向边并发创建时，后写者必须看见先写者
+                cycle = self._detect_cross_goal_cycle(goal_id, xdeps)
+                if cycle:
+                    raise ValueError(
+                        "dependency_cycle: 跨 goal 依赖成环 → " + " -> ".join(cycle)
+                    )
             tasks = self._replay(goal_id)
             if len(tasks) >= TASK_LIMIT_PER_GOAL:
                 raise ValueError(
@@ -173,6 +217,8 @@ class TaskStore:
                 acceptance=[str(a).strip() for a in acceptance if str(a).strip()],
                 done_when=[str(w).strip() for w in (done_when or []) if str(w).strip()],
                 dependencies=deps,
+                blocked_by_goals=xdeps,
+                deadline_at=deadline,
                 parent_id=(parent_id or "").strip(),
                 evidence_required=bool(evidence_required),
                 owner=(owner or "main").strip(),
@@ -353,6 +399,123 @@ class TaskStore:
     def count_for_goal(self, goal_id: str) -> int:
         return len(self._replay(goal_id))
 
+    # ---------- 跨 goal 依赖（DESIGN-20261101 §4.5） ----------
+
+    def _goal_status_index(self) -> tuple[dict[str, str], list[str]]:
+        """audit 目录内全部 goal 的 {goal_id: status}；读失败 → ({}, degraded 说明)（fail-open）."""
+        try:
+            from llm_loop.introspection.goal import GoalStore
+
+            goals = GoalStore(str(self._dir)).list(limit=500)
+        except Exception as exc:  # noqa: BLE001 — 跨 goal 依赖求值属附加门，读不到不得阻断 frontier
+            return {}, [f"goal 账本不可读（跨 goal 依赖按未满足处理）: {exc}"]
+        index = {}
+        for g in goals:
+            gid = str(g.get("id") or "")
+            if gid:
+                index[gid] = str(g.get("status") or "")
+        return index, []
+
+    def _cross_goal_edges(self) -> dict[str, set[str]]:
+        """goal 级依赖边: A→B 表示「A 的某任务等 B complete」."""
+        edges: dict[str, set[str]] = {}
+        try:
+            from llm_loop.introspection.goal import GoalStore
+
+            goals = GoalStore(str(self._dir)).list(limit=500)
+        except Exception:  # noqa: BLE001 — 读不到其他 goal 账本时按「已知边」判环，不阻断创建
+            goals = [{"id": gid} for gid in self._known_goal_dirs()]
+        for g in goals:
+            gid = str(g.get("id") or "")
+            if not gid:
+                continue
+            try:
+                tasks = self._replay(gid)
+            except Exception:  # noqa: BLE001 — 单 goal 账本损坏 → 跳过该 goal 的边
+                continue
+            for t in tasks.values():
+                for dep in t.blocked_by_goals:
+                    edges.setdefault(gid, set()).add(str(dep))
+        return edges
+
+    def _known_goal_dirs(self) -> list[str]:
+        """降级路径：从 tasks 目录反推已知 goal 后缀（只用于尽力判环）."""
+        out: list[str] = []
+        try:
+            for path in self._tasks_dir.glob("*.jsonl"):
+                suffix = path.stem.rsplit("-", 1)[-1]
+                if suffix:
+                    out.append(f"GOAL-{suffix}")
+        except OSError:
+            return []
+        return out
+
+    def _detect_cross_goal_cycle(self, goal_id: str, new_deps: list[str]) -> list[str] | None:
+        """加入 goal_id→new_deps 这些边后是否成环；成环返回环路径（含首尾同点）."""
+        edges = self._cross_goal_edges()
+        for dep in new_deps:
+            edges.setdefault(goal_id, set()).add(str(dep))
+        stack: list[tuple[str, list[str]]] = [(goal_id, [goal_id])]
+        seen_paths: set[tuple[str, ...]] = set()
+        while stack:
+            node, path = stack.pop()
+            for nxt in sorted(edges.get(node, ())):
+                if nxt == goal_id:
+                    return path + [goal_id]
+                if nxt in path:
+                    continue
+                key = tuple(path + [nxt])
+                if key in seen_paths:
+                    continue
+                seen_paths.add(key)
+                stack.append((nxt, path + [nxt]))
+        return None
+
+    def _evaluate_cross_goal_deps(
+        self, task: Task, status_index: dict[str, str], now_dt: datetime | None
+    ) -> dict:
+        """单个任务的跨 goal 依赖判决: satisfied | waiting | aborted | deadline（只读）."""
+        names = [str(g) for g in task.blocked_by_goals]
+        if not names:
+            return {"state": "satisfied"}
+        aborted = [g for g in names if status_index.get(g) in ("blocked", "cancelled")]
+        if aborted:
+            return {
+                "state": "aborted",
+                "reason_code": "upstream_goal_aborted",
+                "blocked_by": names,
+                "detail": ",".join(aborted),
+            }
+        missing = [g for g in names if g not in status_index]
+        satisfied = not missing and all(status_index.get(g) == "complete" for g in names)
+        if satisfied:
+            return {"state": "satisfied"}
+        if task.deadline_at:
+            # 期限判定用「传入 now_ts 或真实当前时间」；stalled 语义不动（仍只认显式 now_ts）
+            now_used = now_dt if now_dt is not None else system_local_now()
+            # 审查 P2-2（2026-11-02）：now_ts 可带可不带时区。naive now 与
+            # tz-aware deadline 直接比较抛 TypeError（不是 ValueError），会一路
+            # 冒到 frontier/tool 层。这里把它归一到本地时区（与 _parse_deadline
+            # 同一口径），并额外兜 TypeError 保持 fail-open。
+            if now_used.tzinfo is None:
+                now_used = now_used.replace(tzinfo=system_local_now().tzinfo)
+            try:
+                if now_used >= datetime.fromisoformat(task.deadline_at):
+                    return {
+                        "state": "deadline",
+                        "reason_code": "upstream_deadline_exceeded",
+                        "blocked_by": names,
+                        "detail": task.deadline_at,
+                    }
+            except (ValueError, TypeError):
+                pass  # fail-open: deadline 格式非法 → 按未到期处理（创建时已校验）
+        return {
+            "state": "waiting",
+            "reason_code": "upstream_goal_not_complete",
+            "blocked_by": names,
+            "detail": ",".join(missing),
+        }
+
     # ---------- frontier 计算（纯函数区） ----------
 
     def compute_frontier(self, goal_id: str, *, now_ts: str = "") -> dict:
@@ -367,6 +530,12 @@ class TaskStore:
             except ValueError:
                 now_dt = None
         ready, in_progress, blocked, completed, unreachable = [], [], [], [], []
+        waiting_cross: list[dict] = []
+        blocked_upstream: list[dict] = []
+        xstatus: dict[str, str] = {}
+        xdegraded: list[str] = []
+        if any(t.blocked_by_goals for t in tasks.values()):
+            xstatus, xdegraded = self._goal_status_index()
         # hope 收紧: 依赖含 failed/cancelled → 无希望（迭代至稳定）
         hopeless: set[str] = set()
         changed = True
@@ -429,8 +598,33 @@ class TaskStore:
             elif t.status == "pending":
                 if tid in hopeless or (tid in pending_ids and tid not in topo_seen):
                     unreachable.append(t)
-                elif all(d in done_ids for d in t.dependencies):
-                    ready.append(t)
+                else:
+                    verdict = (
+                        self._evaluate_cross_goal_deps(t, xstatus, now_dt)
+                        if t.blocked_by_goals
+                        else {"state": "satisfied"}
+                    )
+                    if verdict["state"] in ("aborted", "deadline"):
+                        # §4.5: 上游 goal 已中止/等待超期 → 计入 blocked 桶（不自动 failed）
+                        blocked.append(t)
+                        blocked_upstream.append(
+                            {
+                                "task": t,
+                                "reason_code": verdict["reason_code"],
+                                "blocked_by": verdict["blocked_by"],
+                                "detail": verdict.get("detail", ""),
+                            }
+                        )
+                    elif verdict["state"] == "waiting":
+                        waiting_cross.append(
+                            {
+                                "task": t,
+                                "blocked_by": verdict["blocked_by"],
+                                "detail": verdict.get("detail", ""),
+                            }
+                        )
+                    elif all(d in done_ids for d in t.dependencies):
+                        ready.append(t)
         return {
             "ready": ready,
             "in_progress": in_progress,  # [{task, stalled}]
@@ -438,6 +632,9 @@ class TaskStore:
             "completed": completed,
             "unreachable": unreachable,
             "premise_stale": [t for t in tasks.values() if t.premise_stale and t.status == "done"],
+            "waiting_cross_goal": waiting_cross,
+            "blocked_upstream": blocked_upstream,
+            "cross_goal_degraded": xdegraded,
             "open_count": sum(
                 1
                 for t in tasks.values()
@@ -483,10 +680,25 @@ class TaskStore:
             else:
                 lines.append(f"  ◉ doing(+更多省略) {t.task_id}{tag}")
                 break
+        xmap = {e["task"].task_id: e for e in fr.get("blocked_upstream", [])}
         for t in fr["blocked"]:
             if hot_used < HOT_TASK_LIMIT:
-                lines.append(f"  ⛔ blocked {t.task_id} {t.title[:40]} | {t.blocked_reason[:50]}")
+                if t.task_id in xmap:
+                    e = xmap[t.task_id]
+                    lines.append(
+                        f"  ⛔ blocked {t.task_id} {t.title[:40]} | "
+                        f"reason_code={e['reason_code']} xgoal={','.join(e['blocked_by'])}"
+                    )
+                else:
+                    lines.append(f"  ⛔ blocked {t.task_id} {t.title[:40]} | {t.blocked_reason[:50]}")
                 hot_used += 1
+        for e in fr.get("waiting_cross_goal", []):
+            t = e["task"]
+            lines.append(
+                f"  … waiting_xgoal {t.task_id} {t.title[:40]} | 等 {','.join(e['blocked_by'])}"
+            )
+        for note in fr.get("cross_goal_degraded", []):
+            lines.append(f"  ⚠ cross_goal_degraded {note[:80]}")
         if fr["unreachable"]:
             ids = ", ".join(t.task_id for t in fr["unreachable"][:5])
             lines.append(f"  ⚠ unreachable-pending {ids} | reason=dependency_cycle_or_failed_dependency")
@@ -509,6 +721,10 @@ class TaskStore:
             parts.append(f"blocked={len(fr['blocked'])}")
         if fr["unreachable"]:
             parts.append(f"⚠unreachable={len(fr['unreachable'])}")
+        if fr.get("waiting_cross_goal"):
+            parts.append(f"xwait={len(fr['waiting_cross_goal'])}")
+        if fr.get("blocked_upstream"):
+            parts.append(f"⛔xgoal={len(fr['blocked_upstream'])}")
         return " | ".join(parts)
 
     # ---------- 内部 ----------
@@ -523,7 +739,31 @@ class TaskStore:
     @contextmanager
     def _file_lock(self, goal_id: str) -> Iterator[None]:
         path = self._path(goal_id)
-        lock_path = path.with_suffix(path.suffix + ".lock")
+        with self._lock(path.with_suffix(path.suffix + ".lock")):
+            yield
+
+    @contextmanager
+    def _write_ctx(self, goal_id: str, *, xdeps: list[str]) -> Iterator[None]:
+        """写事务：涉及跨 goal 依赖时先取全局协调锁再取本 goal 锁（固定顺序防死锁）."""
+        if xdeps:
+            with self._coord_lock(), self._file_lock(goal_id):
+                yield
+            return
+        with self._file_lock(goal_id):
+            yield
+
+    @contextmanager
+    def _coord_lock(self) -> Iterator[None]:
+        """跨 goal 依赖图互斥：环检测与写入必须同一临界区，否则反向边并发可双双通过.
+
+        两把锁缺一不可：flock 挡跨进程，进程内 threading 锁挡同进程多线程
+        （macOS 实测 flock 对同进程多 fd 的自冲突不保证）。
+        """
+        with _COORD_PROCESS_LOCK, self._lock(self._tasks_dir / ".cross_goal.lock"):
+            yield
+
+    @contextmanager
+    def _lock(self, lock_path: Path) -> Iterator[None]:
         try:
             import fcntl
         except ImportError:

@@ -43,6 +43,24 @@ TASK_CREATE_TOOL_DEF: dict = {
                 "type": "array", "items": {"type": "string"},
                 "description": "依赖的 task_id 列表（须同 goal 内已存在，可空）",
             },
+            "blocked_by_goals": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "跨 goal 依赖的 goal_id 列表（DESIGN-20261101 §4.5，可空）。语义: 所列 goal"
+                    " 全部 complete 后本任务才可能 ready；上游 goal blocked/cancelled 时本任务"
+                    "计入 blocked（reason_code=upstream_goal_aborted），不自动 failed。"
+                    "何时不用: 同 goal 内部顺序用 dependencies；跨 goal 依赖成环会被程序拒绝"
+                    "（dependency_cycle）。"
+                ),
+            },
+            "deadline_at": {
+                "type": "string",
+                "description": (
+                    "跨 goal 等待期限（ISO 时间，可空）。到期上游仍未 complete → 本任务转"
+                    " blocked(reason_code=upstream_deadline_exceeded)，避免无限期悬挂。"
+                ),
+            },
             "parent_id": {"type": "string", "description": "父任务 id（可选，层次结构）"},
             "evidence_required": {
                 "type": "boolean",
@@ -123,20 +141,32 @@ def _audit_dir(host: Any) -> str | None:
     return str(d) if d else None
 
 
-def _require_active_goal(ctx: Any, host: Any, goal_id: str) -> tuple[str | None, str]:
+def _require_active_goal(
+    ctx: Any, host: Any, goal_id: str, args: dict | None = None
+) -> tuple[str | None, str, str]:
+    """返回 (audit_dir, err, note)；note 为归属判定产生的放行标注（可空）。"""
     """goal 存在且 active 才允许改任务图（done goal 修改走人工/新 goal）."""
     audit = _audit_dir(host)
     if not audit:
-        return None, "[存储不可用] audit_dir 未装配"
+        return None, "[存储不可用] audit_dir 未装配", ""
     try:
         g = GoalStore(audit).get(goal_id)
     except GoalStoreCorruptionError as exc:
-        return None, f"[goal 存储损坏] {exc}"
+        return None, f"[goal 存储损坏] {exc}", ""
     if g is None:
-        return None, f"[goal 不存在] {goal_id}（先 create_goal）"
+        return None, f"[goal 不存在] {goal_id}（先 create_goal）", ""
     if str(g.get("status", "")) != "active":
-        return None, f"[goal 非 active] {goal_id} status={g.get('status')}（重开 goal 任务请人工/新建 goal）"
-    return audit, ""
+        return None, f"[goal 非 active] {goal_id} status={g.get('status')}（重开 goal 任务请人工/新建 goal）", ""
+    # DESIGN-20261101 §4.3: 任务图写侧同源归属校验——goal 归属其他会话时拒绝改其任务图
+    from llm_loop.introspection.goal_coordination import (
+        resolve_write_permission,
+        write_refusal_text,
+    )
+
+    _perm = resolve_write_permission(g, args=args)
+    if _perm["decision"] == "deny":
+        return None, write_refusal_text(goal_id, _perm, supports_cross_session=False), ""
+    return audit, "", str(_perm.get("note") or "")
 
 
 def run_task_create(ctx: Any, host: Any, args: dict) -> ToolResult:
@@ -144,7 +174,7 @@ def run_task_create(ctx: Any, host: Any, args: dict) -> ToolResult:
     goal_id = str(args.get("goal_id", "") or "").strip()
     if not goal_id:
         return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 缺少必填 'goal_id'", "", name)
-    audit, err = _require_active_goal(ctx, host, goal_id)
+    audit, err, _perm_note = _require_active_goal(ctx, host, goal_id, args)
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
     assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
@@ -157,13 +187,19 @@ def run_task_create(ctx: Any, host: Any, args: dict) -> ToolResult:
             acceptance=[str(a) for a in acc],
             done_when=[str(w) for w in (args.get("done_when") or [])],
             dependencies=[str(d) for d in (args.get("dependencies") or [])],
+            blocked_by_goals=[str(g) for g in (args.get("blocked_by_goals") or [])],
+            deadline_at=str(args.get("deadline_at", "") or ""),
             parent_id=str(args.get("parent_id", "") or ""),
             evidence_required=bool(args.get("evidence_required", False)),
         )
     except ValueError as exc:
         return ToolResult(ToolResultStatus.FAILURE, f"[拒绝] {exc}", "", name)
     dep_note = f" | deps: {','.join(task.dependencies)}" if task.dependencies else ""
+    if task.blocked_by_goals:
+        dep_note += f" | xdeps: {','.join(task.blocked_by_goals)}"
     ev_note = " | evidence_required" if task.evidence_required else ""
+    if _perm_note:
+        ev_note += f"\n注意: {_perm_note}"
     return ToolResult(
         ToolResultStatus.SUCCESS,
         "[任务已建] {} {}\nacceptance: {}{}{}\n上限提示: 每 goal ≤{} 任务（防粒度失控）".format(
@@ -179,7 +215,7 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     task_id = str(args.get("task_id", "") or "").strip()
     if not goal_id or not task_id:
         return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 必填 'goal_id' 和 'task_id'", "", name)
-    audit, err = _require_active_goal(ctx, host, goal_id)
+    audit, err, _perm_note = _require_active_goal(ctx, host, goal_id, args)
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
     assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None

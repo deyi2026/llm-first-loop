@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.goal import GoalStore, GoalStoreCorruptionError
+from llm_loop.introspection.goal import (
+    GoalStore,
+    GoalStoreCorruptionError,
+    GoalVersionConflictError,
+)
 from llm_loop.timekeeping import system_local_now
 
 CREATE_GOAL_TOOL_DEF: dict = {
@@ -59,10 +63,33 @@ CHECKPOINT_GOAL_TOOL_DEF: dict = {
         "type": "object",
         "properties": {
             "goal_id": {"type": "string", "description": "目标 id（get_goal 返回）"},
+            "expected_version": {
+                "type": "integer",
+                "description": (
+                    "乐观并发版本号（DESIGN-20261101 L4，可选）。传 get_goal 回执的"
+                    " 版本 值；与当前不一致时写入被拒绝（stale_version），防止跨会话覆盖。"
+                    "何时不用: 单会话串行写入可省略。"
+                ),
+            },
             "what": {"type": "string", "description": "本里程碑变化（What）"},
             "evidence": {"type": "string", "description": "权威证据（Evidence，工具回执/文件路径/状态）"},
             "path": {"type": "string", "description": "影响路径或外部状态（Path）"},
             "next": {"type": "string", "description": "确切下一步（Next）"},
+            "reason": {"type": "string", "description": "跨会话授权理由（cross_session=true 时必填）"},
+            "cross_session": {
+                "type": "boolean",
+                "description": (
+                    "显式跨会话授权（DESIGN-20261101 §4.3，可选，默认 false）。goal 归属其他会话时"
+                    "唯一写入口：必须同时给非空 reason 与 evidence_refs，否则仍拒绝"
+                    "（reason_code=cross_session_write_denied）。"
+                    "何时不用: 常规单会话推进（可省略）。"
+                ),
+            },
+            "evidence_refs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "跨会话授权依据（cross_session=true 时必填，evidence:// 引用）",
+            },
         },
         "required": ["goal_id", "what"],
     },
@@ -100,8 +127,24 @@ UPDATE_GOAL_TOOL_DEF: dict = {
         "type": "object",
         "properties": {
             "goal_id": {"type": "string", "description": "目标 id"},
+            "expected_version": {
+                "type": "integer",
+                "description": (
+                    "乐观并发版本号（DESIGN-20261101 L4，可选）：与 get_goal 回执的 版本 不一致时"
+                    "拒绝写入并返回 stale_version。跨会话/恢复后接管场景建议总是携带。"
+                ),
+            },
             "status": {"type": "string", "enum": ["complete", "blocked"], "description": "新状态"},
             "reason": {"type": "string", "description": "blocked 理由 / complete 验证摘要（可选）"},
+            "cross_session": {
+                "type": "boolean",
+                "description": (
+                    "显式跨会话授权（DESIGN-20261101 §4.3，可选）。goal 归属其他会话时，"
+                    "必须 cross_session=true + 非空 reason + 非空 evidence_refs 才放行"
+                    "（reason_code=cross_session_authorized），否则拒绝"
+                    "（reason_code=cross_session_write_denied）。"
+                ),
+            },
             "evidence_refs": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -129,7 +172,39 @@ UPDATE_GOAL_TOOL_DEF: dict = {
     },
 }
 
-GOAL_TOOL_DEFS = [CREATE_GOAL_TOOL_DEF, CHECKPOINT_GOAL_TOOL_DEF, GET_GOAL_TOOL_DEF, UPDATE_GOAL_TOOL_DEF]
+COORDINATION_STATUS_TOOL_DEF: dict = {
+    "name": "coordination_status",
+    "description": (
+        "跨会话只读协调视图（DESIGN-20261101 §4.4）。何时用: 恢复会话/接管前先看清"
+        "「谁在推进哪个 goal、各 goal 的 open 任务与最近 checkpoint、running 子代理/后台任务」，"
+        "避免重复推进或跨会话覆盖。回执含 goals/sessions/running/recent_events 与 degraded"
+        "（未接线或读不到的数据源如实列出，不伪造空值）。何时不用: 只看单个 goal 用 get_goal；"
+        "推进任务用 task_frontier。本工具零写、不改任何状态。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "window_hours": {
+                "type": "integer",
+                "description": "回看窗口（小时，默认 24；0=不限窗口）",
+            },
+            "only_in_flight": {
+                "type": "boolean",
+                "description": "只看仍在进行（status=active）的 goal（默认 true）",
+            },
+        },
+        "required": [],
+    },
+}
+
+
+GOAL_TOOL_DEFS = [
+    CREATE_GOAL_TOOL_DEF,
+    CHECKPOINT_GOAL_TOOL_DEF,
+    GET_GOAL_TOOL_DEF,
+    UPDATE_GOAL_TOOL_DEF,
+    COORDINATION_STATUS_TOOL_DEF,
+]
 
 
 def _store(ctx: Any, audit_dir: str | None) -> GoalStore | None:
@@ -218,6 +293,85 @@ def _verify_spec_archive_references(record: dict, host: Any) -> tuple[bool, str,
     return (not missing), ("; ".join(missing) if missing else ""), pending
 
 
+def _expected_version(args: dict) -> tuple[int | None, str | None]:
+    """解析 expected_version（DESIGN-20261101 §4.6）；缺省=None 表示「尽力写」。"""
+    raw = args.get("expected_version")
+    if raw is None or raw == "":
+        return None, None
+    try:
+        return int(raw), None
+    except (TypeError, ValueError):
+        return None, "[参数错误] expected_version 必须是整数（取自 get_goal 的 版本: 行）"
+
+
+def _version_conflict_text(exc: Any) -> str:
+    """CAS 冲突回执：version_conflict + current_version + 对方 session + 最近 checkpoint 摘要."""
+    last = getattr(exc, "last_checkpoint", {}) or {}
+    return (
+        f"[版本冲突] reason_code=version_conflict expected={getattr(exc, 'expected', '?')} "
+        f"current_version={getattr(exc, 'current', '?')}；"
+        f"owner={getattr(exc, 'owner_session_id', '') or '未认领'}；"
+        f"对方最近 checkpoint: {str(last.get('ts') or '')} {str(last.get('what') or '')[:80]}\n"
+        "该写入未被接受（goal 记录未改）；请 get_goal 取最新版本与事实后重试。"
+    )
+
+
+def _write_permission_gate(
+    goal: dict | None, gid: str, args: dict | None = None
+) -> tuple[str | None, str]:
+    """DESIGN-20261101 §4.3: 跨会话写侧归属判定（存在性/state 由调用方既有分支负责）.
+
+    返回 (拒绝文案|None, 放行标注|"")。allow_annotated 时第二项非空，须写进回执。
+    """
+    if goal is None:
+        return None, ""
+    from llm_loop.introspection.goal_coordination import (
+        resolve_write_permission,
+        write_refusal_text,
+    )
+
+    perm = resolve_write_permission(goal, args=args)
+    if perm["decision"] == "deny":
+        return write_refusal_text(gid, perm), ""
+    return None, str(perm.get("note") or "")
+
+
+def run_coordination_status(ctx: Any, host: Any, args: dict) -> ToolResult:
+    """只读协调快照；零状态变更（DESIGN-20261101 §4.4）。"""
+    audit = getattr(host, "audit_dir", None)
+    if not audit:
+        return ToolResult(
+            ToolResultStatus.FAILURE, "[存储不可用] audit_dir 未装配", "", "coordination_status"
+        )
+    try:
+        window = int(args.get("window_hours", 24) or 0)
+    except (TypeError, ValueError):
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            "[参数错误] window_hours 必须是整数",
+            "",
+            "coordination_status",
+        )
+    from llm_loop.introspection.goal_coordination import (
+        coordination_snapshot,
+        render_coordination,
+    )
+
+    try:
+        snapshot = coordination_snapshot(
+            str(audit),
+            window_hours=max(0, window),
+            only_in_flight=bool(args.get("only_in_flight", True)),
+        )
+    except Exception as exc:  # noqa: BLE001 — 采集失败如实失败，不拿空视图冒充「无活动」
+        return ToolResult(
+            ToolResultStatus.FAILURE, f"[协调视图不可用] {exc}", "", "coordination_status"
+        )
+    return ToolResult(
+        ToolResultStatus.SUCCESS, render_coordination(snapshot), "", "coordination_status"
+    )
+
+
 def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     objective = str(args.get("objective", "")).strip()
     if not objective:
@@ -244,9 +398,28 @@ def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
         session_id=sid,
         spec_change_ref=str(args.get("spec_change_ref", "") or "").strip(),
     )
+    # DESIGN-20261101 §5 A7: 新 goal 创建时列出其他 active goal，避免同工作重复开线
+    _others: list[str] = []
+    try:
+        from llm_loop.introspection.goal_coordination import ownership_fields
+
+        for item in store.list(limit=20):
+            oid = str(item.get("id") or "")
+            if not oid or oid == g.id or str(item.get("status")) != "active":
+                continue
+            _of = ownership_fields(item)
+            _who = {"self": "本会话", "other": "其他会话"}.get(_of["owned_by"], _of["owned_by"])
+            _others.append(f"{oid} [{_who}] {str(item.get('objective') or '')[:40]}")
+    except Exception:  # noqa: BLE001 — 摘要属附加信息，失败不得阻断 create_goal
+        _others = []
+    _others_note = (
+        "\n并行 goal（避免重复推进，用 coordination_status 看全图）:\n  " + "\n  ".join(_others[:5])
+        if _others
+        else ""
+    )
     return ToolResult(
         ToolResultStatus.SUCCESS,
-        f"[目标已创建] id={g.id} status=active\n目标: {g.objective[:200]}\n有界推进: 里程碑 checkpoint 收敛，禁止无界循环；遇边界暂停等人工确认。",
+        f"[目标已创建] id={g.id} status=active\n目标: {g.objective[:200]}\n有界推进: 里程碑 checkpoint 收敛，禁止无界循环；遇边界暂停等人工确认。{_others_note}",
         "", "create_goal",
     )
 
@@ -259,6 +432,22 @@ def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     what = str(args.get("what", "")).strip()
     if not gid or not what:
         return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 缺少必填参数 goal_id / what", "", "checkpoint_goal")
+    # DESIGN-20261101 §2.1: 跨会话写侧 pre-check（owner/session 段）
+    try:
+        _owned = store.get(gid)
+    except GoalStoreCorruptionError as exc:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[goal 存储损坏] {exc}",
+            "",
+            "checkpoint_goal",
+        )
+    _deny, _owner_note = _write_permission_gate(_owned, gid, args)
+    if _deny:
+        return ToolResult(ToolResultStatus.FAILURE, _deny, "", "checkpoint_goal")
+    _expected, _verr = _expected_version(args)
+    if _verr:
+        return ToolResult(ToolResultStatus.FAILURE, _verr, "", "checkpoint_goal")
     try:
         updated = store.checkpoint(
             gid,
@@ -266,7 +455,10 @@ def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             evidence=str(args.get("evidence", "")).strip(),
             path=str(args.get("path", "")).strip(),
             next_step=str(args.get("next", "")).strip(),
+            expected_version=_expected,
         )
+    except GoalVersionConflictError as exc:
+        return ToolResult(ToolResultStatus.FAILURE, _version_conflict_text(exc), "", "checkpoint_goal")
     except GoalStoreCorruptionError as exc:
         return ToolResult(
             ToolResultStatus.FAILURE,
@@ -281,7 +473,8 @@ def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     n = len(updated.get("checkpoints", []))
     return ToolResult(
         ToolResultStatus.SUCCESS,
-        f"[checkpoint 已记录] goal={gid} 累计 {n} 次 | 最新: {what[:100]}",
+        f"[checkpoint 已记录] goal={gid} 累计 {n} 次 | 最新: {what[:100]}"
+        + (f"\n注意: {_owner_note}" if _owner_note else ""),
         "", "checkpoint_goal",
     )
 
@@ -313,6 +506,17 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     cps = g.get("checkpoints", [])
     recent = cps[-3:][::-1]
     lines = [f"目标: {g.get('objective','')[:200]}", f"状态: {g.get('status')} | id={g.get('id')}"]
+    # DESIGN-20261101 §2.2: 读侧归属标注（只追加新行，不改既有字段与顺序）
+    try:
+        from llm_loop.introspection.goal_coordination import read_side_banner
+
+        _owner_banner = read_side_banner(g)
+        if _owner_banner:
+            lines.append(_owner_banner)
+    except Exception:  # noqa: BLE001 — 归属标注属附加信息，派生失败不得让 get_goal 失败
+        pass
+    # DESIGN-20261101 §2.4: 版本号（追加行，既有行不变）
+    lines.append(f"版本: {GoalStore.version_of(g)}")
     if cps:
         lines.append(f"checkpoints: {len(cps)} 次")
         for cp in recent:
@@ -366,6 +570,13 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
         )
     if _probe is None:
         return ToolResult(ToolResultStatus.FAILURE, f"[更新失败] 目标 {gid} 不存在", "", "update_goal")
+    # DESIGN-20261101 §2.1: 跨会话写侧 pre-check（存在性已过 → owner/session → 版本 → 状态）
+    _deny, _owner_note = _write_permission_gate(_probe, gid, args)
+    if _deny:
+        return ToolResult(ToolResultStatus.FAILURE, _deny, "", "update_goal")
+    _expected, _verr = _expected_version(args)
+    if _verr:
+        return ToolResult(ToolResultStatus.FAILURE, _verr, "", "update_goal")
     # DESIGN-20260828 Task Frontier §2.1: complete 前置校验——任务图存在 open 任务时
     # 拒绝收口（pending/in_progress 需推进终态；blocked/failed 需取消或人工 waive）。
     # EVO-20260923-6bcc4880 §步骤2: 终局证据硬门——complete 是终局裁决书写，
@@ -516,7 +727,10 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             status,
             reason=str(args.get("reason", "")).strip(),
             spec_archive=_spec_archive_record,
+            expected_version=_expected,
         )
+    except GoalVersionConflictError as exc:
+        return ToolResult(ToolResultStatus.FAILURE, _version_conflict_text(exc), "", "update_goal")
     except GoalStoreCorruptionError as exc:
         return ToolResult(
             ToolResultStatus.FAILURE,
@@ -530,6 +744,7 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
         return ToolResult(ToolResultStatus.FAILURE, f"[更新失败] 目标 {gid} 不存在", "", "update_goal")
     return ToolResult(
         ToolResultStatus.SUCCESS,
-        f"[目标已更新] {gid} → {status}" + (f"\n理由: {str(args.get('reason',''))[:150]}" if args.get("reason") else "") + _spec_note,
+        f"[目标已更新] {gid} → {status}" + (f"\n理由: {str(args.get('reason',''))[:150]}" if args.get("reason") else "") + _spec_note
+        + (f"\n注意: {_owner_note}" if _owner_note else ""),
         "", "update_goal",
     )
