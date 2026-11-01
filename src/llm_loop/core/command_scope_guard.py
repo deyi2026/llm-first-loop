@@ -581,8 +581,14 @@ def _read_heredoc_word(line: str, index: int) -> tuple[str, int] | None:
     return "".join(out), cursor
 
 
-def _parse_heredoc_spec(line: str, start: int) -> tuple[int, int, str, bool] | None:
-    """解析 ``<<[-]DELIM``；返回 ``(起点, 终点, 去引号后的分隔符, 剥 tab)``。"""
+def _parse_heredoc_spec(line: str, start: int) -> tuple[int, int, str, bool, bool] | None:
+    """解析 ``<<[-]DELIM``；返回 ``(起点, 终点, 去引号后的分隔符, 剥 tab, 正文不可展开)``.
+
+    第五项 ``inert`` 为真 ⇔ 分隔符 word 里出现过引号或反斜杠。bash 手册 Here
+    Documents 段：word 的**任一部分**被引用，正文就完全不做 parameter /
+    command / arithmetic expansion——此时正文是纯数据，可以按数据剥离；反之
+    （``<<EOF`` 未引用）正文会展开，``$(…)`` 仍会执行，不能当数据丢掉。
+    """
     index = start + 2
     strip_tabs = False
     if index < len(line) and line[index] == "-":
@@ -594,7 +600,8 @@ def _parse_heredoc_spec(line: str, start: int) -> tuple[int, int, str, bool] | N
     if parsed is None:
         return None
     delimiter, end = parsed
-    return start, end, delimiter, strip_tabs
+    inert = any(ch in line[index:end] for ch in "'\"\\")
+    return start, end, delimiter, strip_tabs, inert
 
 
 def _has_line_continuation(line: str, quote: str | None) -> bool:
@@ -617,7 +624,7 @@ def _scan_line_heredocs(
     line: str,
     in_quote: str | None = None,
     in_arith: int = 0,
-) -> tuple[list[tuple[int, int, str, bool]], str | None, str | None, int]:
+) -> tuple[list[tuple[int, int, str, bool, bool]], str | None, str | None, int]:
     """收集行内**未加引号、不在注释里**的 heredoc 声明（按出现顺序）。
 
     返回 ``(声明列表, 失败原因, 行末引号状态, 行末算术深度)``。``in_quote`` /
@@ -625,7 +632,7 @@ def _scan_line_heredocs(
     维护状态才能区分「真 heredoc 声明」与「多行字符串/算术里的 ``<<``」——后者若被
     当成声明，后续真实命令会被吞进正文（三轮/四轮审查 P0）。
     """
-    specs: list[tuple[int, int, str, bool]] = []
+    specs: list[tuple[int, int, str, bool, bool]] = []
     index = 0
     quote = in_quote
     arith_depth = in_arith
@@ -692,12 +699,19 @@ def _scan_line_heredocs(
     return specs, None, quote, arith_depth
 
 
-def _strip_heredocs(command: str) -> tuple[str, str | None]:
+def _strip_heredocs(
+    command: str, *, only_inert: bool = False
+) -> tuple[str, str | None]:
     """剥离 heredoc 正文（stdin 数据）；返回 ``(剥离后的命令串, 失败原因)``。
 
     剥离的是「``<<[-]DELIM`` 声明 + 与其对应的正文行」，命令本体的其余部分逐字保留
     ——重定向目标（``cat > f``）因此照旧进入 ``_check_target``。任何无法按 bash 精确
     口径判定的形态都返回失败原因（fail-closed）。
+
+    ``only_inert=True``（灾难模式闸用）只剥离**引用定界符**的正文：正文完全不展开，
+    是纯数据；且只要发现任一条未引用定界符的 heredoc 就整体不剥离并返回原因——
+    这类正文会做 parameter/command/arithmetic 展开（``$(…)`` 真实执行），不能当数据
+    丢掉。默认 ``False`` 保持写侧闸的既有口径不变。
     """
     lines = command.split("\n")
     kept: list[str] = []
@@ -718,12 +732,19 @@ def _strip_heredocs(command: str) -> tuple[str, str | None]:
             kept.append(line)
             index += 1
             continue
+        if only_inert and any(not spec[4] for spec in specs):
+            return command, "存在未引用定界符的 heredoc：正文参与展开，不可按数据剥离"
         rebuilt = line
-        for start, end, _delimiter, _strip_tabs in reversed(specs):
-            rebuilt = rebuilt[:start] + " " + rebuilt[end:]
+        if not only_inert:
+            # 写侧闸口径：声明文字一并抹掉（只保留重定向目标等命令本体）。
+            for start, end, _delimiter, _strip_tabs, _inert in reversed(specs):
+                rebuilt = rebuilt[:start] + " " + rebuilt[end:]
+        # only_inert（灾难模式闸）**保留声明行原文**：``python3 <<'EOF'`` 这类
+        # 「here-doc 交给解释器执行」信号必须在文本里可见，否则剥掉正文后只剩
+        # ``python3``，硬阻断失效。正文行仍按下面循环消费掉。
         kept.append(rebuilt)
         index += 1
-        for _start, _end, delimiter, strip_tabs in specs:
+        for _start, _end, delimiter, strip_tabs, _inert in specs:
             while True:
                 if index >= len(lines):
                     return "", f"heredoc 未终结：分隔符 {delimiter!r}"

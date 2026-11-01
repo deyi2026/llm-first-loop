@@ -154,10 +154,21 @@ _CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # here-doc 交给解释器：脚本体不进 argv，围栏看不到真实动作
     # 2026-10-25 红队补洞：原正则只认 sh 族，`python3 <<'EOF'` 可绕。
     # N6（第四轮）：deno/bun 与管道正则同步（原先 here-doc 名单漏了它们）。
+    # 2026-11-01 三处收窄/补齐，都来自实测（命令闸数据区口径，见 docs/analysis）：
+    #   ① 解释器词必须落在**命令位**（行首或操作符/空白之后，允许 /usr/bin 前缀）。
+    #      否则 `cat > /tmp/gen.sh <<'EOF'` 里文件名尾巴 `.sh` 会被当成解释器调用。
+    #   ② 窗口不跨**语句**（换行在 shell 里是命令分隔符）。否则脚本源里
+    #      「上一行 python 段落 + 下一行 <<」会被拼成「解释器读 heredoc」。
+    #   ③ 但「反斜杠续行」仍是同一条语句，必须允许跨过它——否则未引用定界符
+    #      走 fail-closed 返回未合并原文时，`sh \<换行><<EOF` 会漏拦（P0 回归，
+    #      独立审查实测发现）。用 `[^|;\n\\]*(?:\\\n[^|;\n\\]*)*` 而不是
+    #      `[^|;\n]*`，后者会把续行切断；也不写 `(?:[^|;\n]|\\\n)*`，那有
+    #      重叠交替的二次回溯风险。
     (
         "here-doc 交给解释器执行",
         re.compile(
-            rf"\b(?:{_INTERPRETER_PIPE_ALTS})\b[^|;]*<<",
+            rf"(?:^|(?<=[;&|(\s]))(?:[^\s;&|]*/)?(?:{_INTERPRETER_PIPE_ALTS})(?=[\s<])"
+            r"[^|;\n\\]*(?:\\\n[^|;\n\\]*)*<<",
             re.IGNORECASE,
         ),
     ),
@@ -329,6 +340,35 @@ def _newline_split_normalize(command: str) -> str:
             out.append(ch)
         i += 1
     return "".join(out)
+
+
+def _without_inert_heredoc_bodies(command: str) -> str:
+    """剥离「引用定界符」heredoc 的正文（stdin 数据），供灾难模式闸判定。
+
+    bash 只在定界符 word **完全未引用**时才展开正文；``<<'EOF'`` / ``<<"EOF"`` /
+    ``<<\\EOF`` 的正文是纯数据。把正文当命令扫描，会让「文档、测试夹具里转述的
+    危险命令原文」被判成真执行（2026-11-01 实证：把含 ``curl … | sh`` 示例的夹具
+    写入磁盘即被硬阻断）。
+
+    只剥引用定界符的正文；一旦出现未引用定界符（正文会做 parameter/command/
+    arithmetic 展开）或任何不可静态建模形态，原样返回（fail-closed，判定面维持
+    既有口径）。解析复用 ``command_scope_guard._strip_heredocs``（单一事实源，
+    口径与写侧闸一致）。
+
+    **能力边界（别误读成"已兜住 ``$(…)``"）**：本闸不解析命令替换。``$()`` /
+    反引号里的内容在 argv 参数（``echo $(rm -rf /)``）与未引用 heredoc 正文里
+    都**不会被判定**——这是改前既有的缺口，本轮只做「不主动丢弃正文文本」，
+    不构成对 ``$()`` 的兜底。在 tests/test_catastrophic_data_payload.py 里用
+    xfail 显式钉住该缺口，避免被当成已修。
+    """
+    try:
+        from llm_loop.core.command_scope_guard import _strip_heredocs
+    except Exception:  # pragma: no cover - 导入失败按「不剥」处理（fail-closed）
+        return command
+    stripped, error = _strip_heredocs(command, only_inert=True)
+    if error is not None:
+        return command
+    return stripped
 
 
 def _split_tokenized(command: str) -> list[list[str]]:
@@ -1337,8 +1377,12 @@ class CatastrophicGuard:
     ) -> BlockDecision | None:
         """双层扫描：A) 正则模式在整条展开命令上（管道/fork 等跨段模式不被切分破坏）；
         B) 分词分析逐子命令（引号语义保留，rm/find/sh/python 载荷递归）."""
-        expanded = _expand(_normalize_ansi_c_quotes(command))
+        scan_source = _without_inert_heredoc_bodies(_normalize_ansi_c_quotes(command))
+        expanded = _expand(scan_source)
         # A) 正则灾难模式（整条展开串——$HOME/~ 展开后判定，拼接目标无处遁形）
+        # 数据区（引用定界符的 heredoc 正文）已在 scan_source 里剥掉；其余口径
+        # 与改前一致（不在此处做全局语句切分，避免改变 dd/curl 等既有窗口语义）。
+        # 跨语句误拼接由「here-doc 交给解释器执行」规则自身按行锚定解决，见该规则。
         for label, pattern in _CATASTROPHIC_PATTERNS:
             m = pattern.search(expanded)
             if m:
@@ -1651,8 +1695,13 @@ class CatastrophicGuard:
     # ── EVO-20261029-04c73530 / -3af37051：静态源转换编排 ──
 
     def _catastrophic_labels(self, command: str) -> set[str]:
-        """命令文本命中的灾难性模式标签集合（与 guard 正则层同一展开与匹配口径）."""
-        expanded = _expand(_normalize_ansi_c_quotes(command))
+        """命令文本命中的灾难性模式标签集合（与 guard 正则层同一展开与匹配口径）.
+
+        2026-11-01：与 ``_scan_command`` 共用 ``_without_inert_heredoc_bodies``
+        前处理——两处口径必须同源，否则「判定放行、标签仍含该规则」会让静态源转换
+        在本不该拒绝的场合返回 None（保守但无谓，且掩盖真实口径）。
+        """
+        expanded = _expand(_without_inert_heredoc_bodies(_normalize_ansi_c_quotes(command)))
         return {label for label, pattern in _CATASTROPHIC_PATTERNS if pattern.search(expanded)}
 
     def _scan_interpreter_body(

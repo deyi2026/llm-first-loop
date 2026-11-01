@@ -98,6 +98,45 @@ def test_grill_me_focus_areas():
     print("✅ test_grill_me_focus_areas")
 
 
+def test_grill_me_anchors_design_content():
+    """定点追问必须锚定 design 正文里的具体对象，而不是只发通用模板。
+
+    旧实现只把 design 前 500 字符塞进输出，问题全部来自固定题库（2026-11-01
+    实证：约 1 万字符的架构设计正文，返回的每一条问题都不指向正文任何小节）。
+    """
+    design = (
+        "## 备份恢复管线\n"
+        "- 前提：备份在 5 分钟内完成\n"
+        "回滚耗时 120ms，入口是 `restore_prebackup.sh`\n"
+    )
+    r = run_grill_me(_ctx(), _audit(), {"design": design})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "定点追问" in r.content
+    for anchor in ("备份恢复管线", "restore_prebackup.sh", "120ms", "备份在 5 分钟内完成"):
+        assert anchor in r.content, f"锚点未出现在追问里: {anchor}"
+    print("✅ test_grill_me_anchors_design_content")
+
+
+def test_grill_me_anchor_free_design_keeps_generic_output():
+    """抽不到锚点（一句话设计）时回退通用问题，不伪造定点追问。"""
+    r = run_grill_me(_ctx(), _audit(), {"design": "做缓存"})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "定点追问" not in r.content
+    print("✅ test_grill_me_anchor_free_design_keeps_generic_output")
+
+
+def test_grill_me_anchor_areas_respect_focus_areas():
+    """锚点分到的领域名必须落在本次 focus_areas 内（不得出现被排除的领域）。"""
+    design = "## 恢复管线\n前提：备份已完成\n耗时 120ms，入口 `restore.sh`\n"
+    r = run_grill_me(_ctx(), _audit(), {"design": design, "focus_areas": ["security", "scale"]})
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "定点追问" in r.content
+    assert "edge_cases" not in r.content
+    assert "failure_modes" not in r.content
+    print("✅ test_grill_me_anchor_areas_respect_focus_areas")
+
+
+
 # ── grill_me fail-closed（EVO-20260929-5283ab1b P0）──
 # 回归场景: 合法 JSON 但 focus_areas 全部为未知值时，旧实现静默跳过
 # （tools_skills.py 旧 252-257 行: `if area in _GRILL_QUESTIONS` 才生成问题），

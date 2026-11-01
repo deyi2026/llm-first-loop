@@ -221,6 +221,80 @@ _GRILL_QUESTIONS = {
 }
 
 
+_ANCHOR_QUESTIONS = {
+    "heading": "「{a}」这一节：入口条件与出口条件各是什么？不满足时返回什么？",
+    "code": "`{a}` 的不变量由谁保证？并发/异常路径下它是否仍成立？",
+    "number": "{a} 这个数值来自实测还是估算？超过多少时设计失效？",
+    "claim": "「{a}」这条断言若为假，设计哪一部分先崩？靠什么先一步发现？",
+}
+
+# 锚点类型 → 首选追问领域（不在本次 focus_areas 时按选定领域轮转兜底）
+_ANCHOR_KIND_AREA = {
+    "heading": "edge_cases",
+    "code": "failure_modes",
+    "number": "scale",
+    "claim": "failure_modes",
+}
+
+
+def _extract_design_anchors(design: str, limit: int = 8) -> list[tuple[str, str]]:
+    """从设计正文抽取可锚定的具体对象：标题 / 反引号标识符 / 带单位数值 / 前提断言。
+
+    纯确定性抽取（不调模型），因此 grill_me 仍是同步工具；抽不到时返回空列表，
+    调用方回退到通用问题（行为与旧实现一致）。返回 ``[(kind, text)]``，
+    kind ∈ {heading, code, number, claim}。
+
+    跳过 ``` / ~~~ 围栏代码块：代码块里的 ``# 注释``、成对反引号不是设计的
+    结构小节，抽出来会生成与设计无关的追问（独立审查指出的误抽面）。
+    """
+    anchors: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(kind: str, text: str) -> None:
+        key = text.strip()
+        if not key or len(key) > 80 or key in seen:
+            return
+        seen.add(key)
+        anchors.append((kind, key))
+
+    in_fence = False
+    for raw in design.splitlines():
+        line = raw.strip()
+        if line.startswith("```") or line.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not line:
+            continue
+        if line.startswith("#"):
+            _add("heading", line.lstrip("#").strip())
+            continue
+        for code in re.findall(r"`([^`\n]{1,60})`", line):
+            _add("code", code)
+        for num in re.findall(r"\d+(?:\.\d+)?\s*(?:%|ms|s|条|行|次|倍|个|字符)", line):
+            _add("number", num.strip())
+        claim = re.match(r"^[-*]?\s*(?:前提|假设|约束|不变式)[:：]\s*(.{4,60})$", line)
+        if claim:
+            _add("claim", claim.group(1).strip())
+    return anchors[:limit]
+
+
+def _anchor_questions(
+    anchors: list[tuple[str, str]], focus_areas: list[str]
+) -> list[tuple[str, str, str]]:
+    """把锚点分配到**本次选定**的追问领域；返回 ``[(kind, text, area)]``。
+
+    只使用 focus_areas 里的领域名，保证被排除的领域不会出现在输出中。
+    """
+    if not focus_areas:
+        return []
+    out: list[tuple[str, str, str]] = []
+    for index, (kind, text) in enumerate(anchors):
+        preferred = _ANCHOR_KIND_AREA.get(kind, focus_areas[0])
+        area = preferred if preferred in focus_areas else focus_areas[index % len(focus_areas)]
+        out.append((kind, text, area))
+    return out
+
+
 def run_grill_me(ctx: Any, audit: Any, args: dict) -> ToolResult:
     """grill_me: 追问式设计评审.
 
@@ -266,6 +340,23 @@ def run_grill_me(ctx: Any, audit: Any, args: dict) -> ToolResult:
     if ignored:
         lines.append(f"**注意**: 已忽略未识别领域 {ignored}（合法: {', '.join(valid_keys)}）")
     lines.append("")
+
+    # 定点追问：先锚定 design 正文里的具体对象（标题/标识符/数值/断言句），
+    # 再据锚点发问。此前实现只打印 design 前 500 字符就发固定模板问题，
+    # 输出与输入内容无关（2026-11-01 实证），评审退化成假动作。
+    anchors = _extract_design_anchors(design)
+    if anchors:
+        lines.append("## 🔍 定点追问（锚定自本次 design 正文）")
+        lines.append("")
+        lines.append("以下问题直接指向你正文里的具体小节/标识符/数值/断言，不是通用模板：")
+        lines.append("")
+        for kind, text, area in _anchor_questions(anchors, focus_areas):
+            # 锚点原文来自 design，可能自带反引号/加粗符；剔除反引号避免扰动
+            # 模板里那对行内码标记（输出格式注入面，与 design[:500] 原样内嵌同级）。
+            lines.append(f"- 〔{area}〕{_ANCHOR_QUESTIONS[kind].format(a=text.replace('`', ' ').strip())}")
+        lines.append("")
+        lines.append("若上述锚点里有一个你答不上来，说明设计在该处尚未闭合。")
+        lines.append("")
 
     # 第一层：必问问题
     lines.append("## 🎯 第一层（必问，覆盖全领域）")
