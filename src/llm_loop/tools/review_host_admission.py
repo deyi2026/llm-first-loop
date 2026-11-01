@@ -28,6 +28,7 @@ from llm_loop.core.run_context import current_session_id
 from llm_loop.security_guard import has_strong_secret, is_template_name, sensitive_path_reason
 from llm_loop.subagent.runner import _wire_chars_per_token
 from llm_loop.tools.review_gate import classify_review_gate_command
+from llm_loop.tools.review_report import rejected_receipt
 
 
 @dataclass(frozen=True)
@@ -2256,7 +2257,7 @@ class HostReviewAdmission:
                 receipt["first_push_target_ref"] = push_extra.get("target_ref", "")
         return receipt
 
-    def poll(self, parent: str, child_id: str) -> dict[str, str]:
+    def poll(self, parent: str, child_id: str) -> dict[str, Any]:
         with self._guard:
             frozen = self._records.get(child_id)
             if frozen is None or frozen.parent != parent:
@@ -2294,12 +2295,13 @@ class HostReviewAdmission:
                 self._audit_reviewer_unavailable(parent, frozen.kind, label, failure_text, child_id=child_id)
             # EVO-20261030-05c4379d: the reviewer is done with this child, so
             # the record stops occupying admission capacity.
+            # EVO-20261101-86e754fc: persist why (429/auth/timeout), not just a tail.
             self._settle_record(child_id)
-            return {
-                "qualification": "REVISE",
-                "reason": f"reviewer_failed:{label}",
-                "reviewer_failure": label,
-            }
+            return rejected_receipt(
+                child_id, kind=frozen.kind, reason=f"reviewer_failed:{label}",
+                answer=failure_text, candidate_sha256=frozen.sha,
+                extra={"reviewer_failure": label},
+            )
         # A successful durable row alone is not authority: model-controlled
         # shell commands can touch same-user journal files. Demand the genuine
         # live child handle from the Host-runner's private in-process state.
@@ -2349,16 +2351,15 @@ class HostReviewAdmission:
             and sha_lines[0] == frozen.sha
         )
         if not qualifying:
-            # Fail closed, but surface the reviewer's own words so a malformed
-            # verdict (e.g. a localized "结论：PASS" line) is diagnosable.
-            # EVO-20261030-05c4379d: this is a terminal reviewer outcome, so
-            # the record stops occupying admission capacity.
+            # Fail closed. EVO-20261030-05c4379d: terminal outcome, so the record
+            # stops occupying capacity. EVO-20261101-86e754fc: the full reviewer text
+            # is persisted with a findings summary -- a 160-char tail made a REVISE
+            # unactionable (the blocking finding was unrecoverable).
             self._settle_record(child_id)
-            return {
-                "qualification": "REVISE",
-                "reason": "review_verdict_incomplete_or_not_pass",
-                "review_tail": " ".join(answer.split())[-160:],
-            }
+            return rejected_receipt(
+                child_id, kind=frozen.kind, reason="review_verdict_incomplete_or_not_pass",
+                answer=answer, candidate_sha256=frozen.sha,
+            )
         with self._guard:
             previous = self._records.get(child_id)
             if previous is None or not _same_admission(previous, frozen):

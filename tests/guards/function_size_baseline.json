@@ -12,6 +12,15 @@
   "durability_registry": {
     "_doc": "Durable Run Contract 写入面登记：AST 扫描 src/llm_loop 中明确 filesystem 写入原语；每个候选文件必须归入一个 surface（tier=T1/T2/T3，status=conform|migrate|partial|observe）或 write_exemptions。登记只证明已分类，不自动证明符合 tier；新增登记必须走 guard(r9) 可见提交。",
     "surfaces": {
+      "review_admission_report": {
+        "owner": "tools",
+        "paths": [
+          "src/llm_loop/tools/review_report.py"
+        ],
+        "rationale": "EVO-20261101-86e754fc：review_admission 非 PASS 时把 reviewer 全文落盘为诊断工件（<data>/review_admission/*.md，运行态数据，非 tracked）。写入为 staging + os.replace 原子替换，但不做 file/dir fsync；它不是跨重启恢复 SoT，也不参与任何准入门判定，丢失只降低『为什么被拒』的可诊断性，故 tier=T2 status=observe 而非 conform。tests/unit/test_review_report_persistence.py 覆盖写入失败降级为 review_report_error、child_id 路径逃逸、巨量正文 head+tail 截断。",
+        "status": "observe",
+        "tier": "T2"
+      },
       "a2a_task_admission": {
         "owner": "web",
         "paths": [
