@@ -8,9 +8,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import platform
+import re
 import sys
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +36,13 @@ if not _CALIB_DATA_DIR.exists():
     ]
     if (_unit_dir / "test_screening_s_runner.py").exists():
         collect_ignore.append("unit/test_screening_s_runner.py")
+
+# ── P0-E4 S4-c: reportlab 仅 dev extra——缺失时跳过依赖它的用例文件，杜绝 collection ──
+#    error（文件级 importorskip 等价形态；test_doc_image_recognition.py 不在本任务
+#    写入范围，沿用上方 calib 数据同款 collect_ignore 单点跳过惯例，只影响该文件）。
+_REPORTLAB_MISSING = importlib.util.find_spec("reportlab") is None  # 探测不真实 import
+if _REPORTLAB_MISSING:
+    collect_ignore.append("unit/test_doc_image_recognition.py")
 
 # ── R9-WF-01 tier0 冒烟集（T9-A 四类准入；标注口径：conftest 路径清单单点打标，──
 #    不侵入测试文件——外部混合层避让约束下的必然选择；Phase 2 守卫就绪后
@@ -507,9 +518,172 @@ def build_test_engine(fake_settings):
     return _build
 
 
+# ── P0-E4 S4-a: 测试环境自证（收集前预检，pytest_configure 阶段 fail-fast）──
+# 背景: 绕过入口（如直接用系统 /opt/homebrew/bin/python3 3.14）跑全量 pytest 时，
+# pyproject 必装依赖缺 6 个（lark-oapi/pycryptodome/prompt-toolkit 等）→ 107 条
+# collection ImportError 淹没真因。此处改为单条可执行诊断直接终止收集；
+# 返回码 10 独立于 ExitCode 0-5（1=测试失败），不与"测试失败"混淆。
+_ENV_PREFLIGHT_SKIP_ENV = "LFL_SKIP_ENV_PREFLIGHT"
+_ENV_PREFLIGHT_EXIT_CODE = 10
+_PREFLIGHT_STATUS_KEY = pytest.StashKey[str]()  # ok / skipped（header 与 junit 属性消费）
+
+# dist 名 → 顶层 import 名真实例外表（未登记项按连字符→下划线归一推断）
+_DIST_IMPORT_OVERRIDES = {
+    "pycryptodome": "Crypto",
+    "lark-oapi": "lark_oapi",
+    "prompt-toolkit": "prompt_toolkit",
+    "pyyaml": "yaml",
+    "Pillow": "PIL",
+    "python-multipart": "multipart",
+    "wecom-aibot-python-sdk": "aibot",  # pyproject 注释: 官方 SDK 导入名 aibot
+}
+
+
+def _dist_import_name(dist: str) -> str:
+    """dist 名 → 顶层 import 名（例外表优先，其余下划线归一）."""
+    return _DIST_IMPORT_OVERRIDES.get(dist, dist.replace("-", "_"))
+
+
+def _required_dist_names(pyproject_path: Path) -> list[str]:
+    """读 [project].dependencies 的纯 dist 名（tomllib 只读解析，无副作用）."""
+    try:
+        import tomllib
+
+        with pyproject_path.open("rb") as fh:
+            specs = tomllib.load(fh).get("project", {}).get("dependencies", [])
+    except Exception:  # noqa: BLE001 — 解析失败视作无约束（fail-open，预检不制造新故障）
+        return []
+    names: list[str] = []
+    for spec in specs:
+        m = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(spec))
+        if m:
+            names.append(m.group(0))
+    return names
+
+
+def _find_missing_imports(dist_names: list[str]) -> list[str]:
+    """find_spec 探测缺失项（不真实 import、无副作用）；返回 "dist (import 名)" 描述."""
+    import importlib.util
+
+    missing: list[str] = []
+    for dist in dist_names:
+        name = _dist_import_name(dist)
+        try:
+            found = importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(f"{dist} (import {name})")
+    return missing
+
+
+def _measure_venv_version(venv_python: Path) -> str:
+    """实测期望解释器版本（只读子进程探测；失败 fail-open 返回占位）."""
+    try:
+        import subprocess
+
+        r = subprocess.run(
+            [str(venv_python), "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return (r.stdout or "").strip() or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _env_preflight_diagnostic(missing: list[str]) -> str:
+    """单条诊断: 一次列全缺失模块 + 当前/期望解释器（含实测版本）+ 可粘贴修复命令."""
+    venv_python = _PROJECT_ROOT / ".venv" / "bin" / "python"
+    venv_ver = _measure_venv_version(venv_python) if venv_python.exists() else "(.venv 不存在)"
+    fix_cmd = f"cd {_PROJECT_ROOT} && .venv/bin/python -m pytest <测试参数>"
+    return "\n".join([
+        "LFL 测试环境预检失败: 当前解释器缺少 pyproject [project].dependencies 必装依赖，"
+        "继续将产生大量 collection ImportError；请改用仓库 .venv 解释器。",
+        "reason_code=env_missing_dependency",
+        f"缺失模块({len(missing)}): " + ", ".join(sorted(missing)),
+        f"当前解释器: {sys.executable} ({platform.python_version()})",
+        f"期望解释器: {venv_python} (实测版本 {venv_ver})",
+        f"修复命令: {fix_cmd}",
+        f"逃生阀: {_ENV_PREFLIGHT_SKIP_ENV}=1 跳过预检（自担风险）",
+    ])
+
+
+def _run_env_preflight() -> str:
+    """S4-a 主流程: 缺依赖→单条诊断终止；齐全但非 .venv→仅告警；返回 ok/skipped.
+
+    - 预检自身无副作用: find_spec 不真实 import，tomllib 只读，venv 版本探测为
+      只读子进程；不写任何文件。
+    - .venv 目录不存在（如 CI）时不发 prefix 告警——不存在"期望解释器"，
+      避免干净环境噪音；依赖缺失检查不受此影响。
+    """
+    if os.environ.get(_ENV_PREFLIGHT_SKIP_ENV) == "1":
+        return "skipped"
+    missing = _find_missing_imports(_required_dist_names(_PROJECT_ROOT / "pyproject.toml"))
+    if missing:
+        pytest.exit(_env_preflight_diagnostic(missing), returncode=_ENV_PREFLIGHT_EXIT_CODE)
+        return "exited"  # pragma: no cover — pytest.exit 必抛 Exit，不可达
+    venv_dir = (_PROJECT_ROOT / ".venv").resolve()
+    if venv_dir.exists() and Path(sys.prefix).resolve() != venv_dir:
+        warnings.warn(
+            "LFL 环境预检: 必装依赖齐全但解释器非仓库 .venv（当前 prefix "
+            f"{sys.prefix}，期望 {venv_dir}）；单文件调试可继续，全量跑建议 "
+            ".venv/bin/python -m pytest",
+            pytest.PytestWarning,
+            stacklevel=2,
+        )
+    return "ok"
+
+
+def _llm_loop_source() -> str:
+    """llm_loop 实际解析来源目录（find_spec 取 spec，不执行模块代码、无副作用）.
+
+    宿主 shell 可能 PYTHONPATH 钉住旧 release 快照（.releases/<hash>/src）——裸
+    `python -c` 读到 stale code；pytest 靠 pyproject pythonpath=["src"]（相对
+    rootdir 前插）才测工作树。指纹必须记录实测来源，供事后判定"这次测的是哪棵树"。
+    """
+    try:
+        spec = importlib.util.find_spec("llm_loop")
+        locations = list(getattr(spec, "submodule_search_locations", None) or [])
+        if locations:
+            return str(Path(locations[0]).resolve())
+        if spec is not None and spec.origin:
+            return str(Path(spec.origin).resolve())
+    except (ImportError, ValueError):
+        pass
+    return "unknown"
+
+
+def _check_llm_loop_source(config) -> None:
+    """llm_loop 导入来源不在 rootdir 之下 → warning（不阻塞），文案带双路径.
+
+    树错配比缺依赖更隐蔽（测试全绿但测的是旧快照）；只告警不阻断——
+    镜像仓库间互测等合法场景仍可继续跑。
+    """
+    source = _llm_loop_source()
+    if source == "unknown":
+        return
+    try:
+        inside = Path(source).is_relative_to(_PROJECT_ROOT)
+    except (OSError, ValueError):
+        inside = False
+    if inside:
+        return
+    msg = (
+        f"LFL 环境自证: llm_loop 实际导入来源 {source} 不在当前仓库 rootdir "
+        f"{_PROJECT_ROOT} 之下——本次测试可能测的是另一棵树（如 .releases 快照）；"
+        "建议在仓库根目录用 .venv/bin/python -m pytest 运行"
+    )
+    try:  # 优先 pytest 官方 config 期告警通道（进 warnings summary）
+        config.issue_config_time_warning(pytest.PytestWarning(msg), stacklevel=2)
+    except AttributeError:  # 旧版 pytest 无该 API → 原生 warning 兜底
+        warnings.warn(pytest.PytestWarning(msg), stacklevel=3)
+
+
 # ── EVO-20260811-f1e43351: 测试副作用审计（pytest 启动时 fail-open 告警，不阻断）──
 def pytest_configure(config):
-    """扫描 tests/ 未 Mock 的真实副作用高风险特征，仅告警不阻断."""
+    """P0-E4 S4-a 环境预检 + 树来源自证（warning 级）+ 副作用审计（fail-open 告警）."""
+    config.stash[_PREFLIGHT_STATUS_KEY] = _run_env_preflight()
+    _check_llm_loop_source(config)
     try:
         import subprocess
         import sys
@@ -527,3 +701,69 @@ def pytest_configure(config):
                 print(out, file=sys.stderr)
     except Exception:  # noqa: BLE001 — fail-open，审计异常绝不阻断 pytest
         pass
+
+
+# ── P0-E4 S4-b: 环境指纹（报告头 + junit testsuite 属性）──
+def _dependency_version_summary() -> list[str]:
+    """依赖版本摘要（importlib.metadata 读 dist 元数据，不 import 被测依赖）."""
+    import importlib.metadata as importlib_metadata
+
+    parts: list[str] = []
+    for dist in _required_dist_names(_PROJECT_ROOT / "pyproject.toml"):
+        try:
+            parts.append(f"{dist}=={importlib_metadata.version(dist)}")
+        except Exception:  # noqa: BLE001 — 单项读不到不拖垮指纹
+            parts.append(f"{dist}==missing")
+    return parts
+
+
+def pytest_report_header(config):
+    """S4-b 环境指纹: 解释器路径/版本 + preflight 状态标注 + 依赖版本摘要 + llm_loop 来源."""
+    status = config.stash.get(_PREFLIGHT_STATUS_KEY, "unknown")
+    lines = [
+        f"LFL env preflight: preflight={status} interpreter={sys.executable} "
+        f"python={platform.python_version()}"
+    ]
+    if status == "skipped":
+        lines.append(f"LFL env preflight: {_ENV_PREFLIGHT_SKIP_ENV}=1 逃生阀生效，依赖未校验")
+    else:
+        lines.append("LFL env deps: " + ", ".join(_dependency_version_summary()))
+    if _REPORTLAB_MISSING:
+        lines.append(
+            "LFL env note: reportlab 缺失（dev extra）→ 已跳过 unit/test_doc_image_recognition.py（S4-c）"
+        )
+    lines.append(f"LFL env source: llm_loop source={_llm_loop_source()}")
+    return lines
+
+
+def _env_fingerprint_properties(status: str) -> list[tuple[str, str]]:
+    """S4-b junit testsuite 属性集（名, 值）；内容面纯函数，便于单测锁定."""
+    props: list[tuple[str, str]] = [
+        ("lfl_env_preflight", status),
+        ("lfl_env_interpreter", sys.executable),
+        ("lfl_env_python", platform.python_version()),
+        ("lfl_env_llm_loop_source", _llm_loop_source()),
+    ]
+    for item in _dependency_version_summary():
+        dist, _, version = item.partition("==")
+        props.append((f"lfl_env_dep.{dist}", version))
+    return props
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _env_fingerprint_junit(request):
+    """S4-b: 环境指纹写入 junit testsuite 属性.
+
+    选型: record_testsuite_property 是 pytest 官方 session 级 fixture（junitxml
+    插件提供；未启用 --junitxml 时自动 no-op），不触碰 junitxml 内部 API /
+    config 私有 stash。已知限制（官方文档声明）: 与 pytest-xdist 不兼容时
+    属性可能缺失——junit 属性为尽力而为通道，终端 header 指纹不受影响。
+    """
+    try:
+        record = request.getfixturevalue("record_testsuite_property")
+    except pytest.FixtureLookupError:
+        return
+    for name, value in _env_fingerprint_properties(
+        request.config.stash.get(_PREFLIGHT_STATUS_KEY, "unknown")
+    ):
+        record(name, value)
