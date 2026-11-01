@@ -133,3 +133,45 @@ def test_a12_coordination_status_is_read_only(tmp_path):
     assert res.status == ToolResultStatus.SUCCESS
     for p, before in snap.items():
         assert (_sha(p), p.stat().st_mtime_ns, os.stat(p).st_size) == before
+
+
+# A13: task_* 无跨会话出口——即便手工塞进 cross_session/reason/evidence_refs 参数组合，
+# 代码也不得放行（拒绝文案否认的通道不能存在，否则同一目标两套真值）
+def test_a13_task_gate_ignores_cross_session_args(tmp_path):
+    from llm_loop.introspection.tools_task import run_task_update
+
+    g = GoalStore(str(tmp_path)).create("A13 目标", session_id=OTHER)
+    ts = TaskStore(str(tmp_path))
+    ts.create(g.id, "已有任务", acceptance=["ok"])
+    task_id = ts.list_for_goal(g.id)[0].task_id
+    tasks_file = tmp_path / "tasks" / f"{g.id}.jsonl"
+    before = _sha(tasks_file)
+    override = {
+        "cross_session": True,
+        "reason": "试图用参数级放行越权",
+        "evidence_refs": ["evidence://v1/" + "0" * 64],
+    }
+
+    created = run_task_create(
+        None, _host(tmp_path), {"goal_id": g.id, "title": "越权建任务", **override}
+    )
+    updated = run_task_update(
+        None,
+        _host(tmp_path),
+        {"goal_id": g.id, "task_id": task_id, "status": "in_progress", **override},
+    )
+    for res in (created, updated):
+        assert res.status == ToolResultStatus.FAILURE
+        assert "reason_code=cross_session_write_denied" in res.content
+        assert "cross_session=true" not in res.content  # 文案不指幻影出口
+    assert _sha(tasks_file) == before
+    assert ts.list_for_goal(g.id)[0].status == "pending"
+
+
+# A14: 结构守卫——_require_active_goal 不得有 args 透传口（防回退成"文案否认、代码支持"）
+def test_a14_task_gate_has_no_args_passthrough():
+    import inspect
+
+    from llm_loop.introspection.tools_task import _require_active_goal
+
+    assert "args" not in inspect.signature(_require_active_goal).parameters

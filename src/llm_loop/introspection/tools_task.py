@@ -141,11 +141,13 @@ def _audit_dir(host: Any) -> str | None:
     return str(d) if d else None
 
 
-def _require_active_goal(
-    ctx: Any, host: Any, goal_id: str, args: dict | None = None
-) -> tuple[str | None, str, str]:
-    """返回 (audit_dir, err, note)；note 为归属判定产生的放行标注（可空）。"""
-    """goal 存在且 active 才允许改任务图（done goal 修改走人工/新 goal）."""
+def _require_active_goal(ctx: Any, host: Any, goal_id: str) -> tuple[str | None, str, str]:
+    """返回 (audit_dir, err, note)；note 为归属判定产生的放行标注（可空）。
+
+    goal 存在且 active 才允许改任务图（done goal 修改走人工/新 goal）。
+    本函数**不**向 resolve_write_permission 传 args（P1-6）：task_* 不接 cross_session，
+    拒绝文案已明确写"本工具没有跨会话出口"，代码不得支持文案否认的通道（同一目标两套真值）。
+    """
     audit = _audit_dir(host)
     if not audit:
         return None, "[存储不可用] audit_dir 未装配", ""
@@ -163,7 +165,7 @@ def _require_active_goal(
         write_refusal_text,
     )
 
-    _perm = resolve_write_permission(g, args=args)
+    _perm = resolve_write_permission(g)
     if _perm["decision"] == "deny":
         return None, write_refusal_text(goal_id, _perm, supports_cross_session=False), ""
     return audit, "", str(_perm.get("note") or "")
@@ -174,7 +176,7 @@ def run_task_create(ctx: Any, host: Any, args: dict) -> ToolResult:
     goal_id = str(args.get("goal_id", "") or "").strip()
     if not goal_id:
         return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 缺少必填 'goal_id'", "", name)
-    audit, err, _perm_note = _require_active_goal(ctx, host, goal_id, args)
+    audit, err, _perm_note = _require_active_goal(ctx, host, goal_id)
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
     assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
@@ -215,7 +217,7 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     task_id = str(args.get("task_id", "") or "").strip()
     if not goal_id or not task_id:
         return ToolResult(ToolResultStatus.FAILURE, "[参数错误] 必填 'goal_id' 和 'task_id'", "", name)
-    audit, err, _perm_note = _require_active_goal(ctx, host, goal_id, args)
+    audit, err, _perm_note = _require_active_goal(ctx, host, goal_id)
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
     assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
