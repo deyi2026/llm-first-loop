@@ -189,8 +189,12 @@ def test_poll_dead_reviewer_persists_why(tmp_path: Path, monkeypatch) -> None:
     assert issued["accepted"], issued
     runner.state = "failed"
     runner.answer = "RateLimitError: 429 rate limit exceeded\n" + "上下文 " * 80 + "\n尾部：额度恢复时间未知"
+    # EVO-20261101-9a6be8b1 E4: a retryable death is re-spawned once, so the
+    # persisted report lands on the poll that exhausts the retry budget.
+    host.poll("author-1", "child-review-1")
     outcome = host.poll("author-1", "child-review-1")
-    assert outcome["qualification"] == "REVISE"
+    assert outcome["qualification"] == "UNAVAILABLE"
+    assert outcome["artifact_reviewed"] is False
     assert outcome["reviewer_failure"] == "reviewer_rate_limited"
     text = Path(outcome["review_report_path"]).read_text(encoding="utf-8")
     assert "尾部：额度恢复时间未知" in text

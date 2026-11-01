@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import subprocess
@@ -1294,15 +1295,23 @@ def test_poll_classifies_failed_child_as_reviewer_unavailable(tmp_path: Path) ->
     runner.state = "failed"
     runner.answer = "RateLimitError: 429 rate limit exceeded"
     outcome = host.poll("author-1", "child-review-1")
-    # A dead reviewer is not a verdict on the artifact, and not a fake
-    # attestation denial either: the caller must see "retry later".
-    assert outcome["qualification"] == "REVISE"
-    assert outcome["reviewer_failure"] == "reviewer_rate_limited"
-    assert outcome["reason"] == "reviewer_failed:reviewer_rate_limited"
-    assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
+    # EVO-20261101-9a6be8b1 E4: a rate-limited reviewer is retried ONCE
+    # automatically under the same handle, so the first poll schedules it.
+    assert outcome["qualification"] == "pending"
+    assert outcome["reason"] == "reviewer_retry_scheduled"
+    assert outcome["auto_retry"]["failed_label"] == "reviewer_rate_limited"
     assert store.events[-1][1] == "review_admission_reviewer_unavailable"
+    # EVO-20261101-9a6be8b1 E2: once the retry budget is exhausted the caller
+    # gets UNAVAILABLE -- "nobody judged this", not "the judge said revise".
+    exhausted = host.poll("author-1", "child-review-1")
+    assert exhausted["qualification"] == "UNAVAILABLE"
+    assert exhausted["artifact_reviewed"] is False
+    assert exhausted["reviewer_failure"] == "reviewer_rate_limited"
+    assert exhausted["reason"] == "reviewer_failed:reviewer_rate_limited"
+    assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
     # Repeated polls on the same dead child re-classify but never spam audit.
     again = host.poll("author-1", "child-review-1")
+    assert again["qualification"] == "UNAVAILABLE"
     assert again["reviewer_failure"] == "reviewer_rate_limited"
     assert sum(1 for e in store.events if e[1] == "review_admission_reviewer_unavailable") == 1
 
@@ -1329,9 +1338,13 @@ def test_poll_failed_child_without_text_is_generic_unavailable(tmp_path: Path) -
     runner.state = "failed"
     runner.answer = ""  # no diagnostics at all: still closed, just unlabeled
     outcome = host.poll("author-1", "child-review-1")
-    assert outcome["qualification"] == "REVISE"
+    # EVO-20261101-9a6be8b1 E2: an unlabeled reviewer death is UNAVAILABLE, and
+    # E4 does not re-spawn a failure it cannot classify as retryable.
+    assert outcome["qualification"] == "UNAVAILABLE"
+    assert outcome["artifact_reviewed"] is False
     assert outcome["reviewer_failure"] == "reviewer_unavailable"
     assert outcome["reason"] == "reviewer_failed:reviewer_unavailable"
+    assert runner.started == 1
 
 
 def test_poll_malformed_verdict_returns_review_tail(tmp_path: Path) -> None:
@@ -2310,3 +2323,251 @@ def test_sixty_four_stale_records_do_not_deadlock_admission(tmp_path: Path) -> N
     admitted = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert admitted["accepted"] is True
     assert admitted["child_id"]
+
+
+# ---------------------------------------------------------------------------
+# EVO-20261101-9a6be8b1 (human-approved 2026-11-01, exec_override)
+# E1 scope, E2 UNAVAILABLE, E3 narrow re-review, E4 budget, E5 PASS reuse,
+# E6 pre-flight estimate.
+# ---------------------------------------------------------------------------
+
+
+def _dirty_repo(tmp_path: Path) -> Path:
+    repo = _repo(tmp_path)
+    (repo / "other.py").write_text("y = 1\n")
+    subprocess.run(["git", "-C", str(repo), "add", "other.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "other"], check=True)
+    (repo / "other.py").write_text("y = 2\n")   # second dirty file, unrelated
+    return repo
+
+
+def test_scope_patch_freezes_only_declared_paths(tmp_path: Path) -> None:
+    repo = _dirty_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        scope="patch", paths=["example.py"],
+    )
+    assert issued["accepted"], issued
+    assert issued["scope"] == {
+        "requested": "patch", "effective": "patch",
+        "paths": ["example.py"], "reason": "",
+    }
+    assert "review_scope=patch" in runner.task
+    assert "x = 2" in runner.task          # declared path is reviewed
+    assert "y = 2" not in runner.task      # unrelated in-flight work is not
+    tree_runner = FakeChildRunner()
+    tree_host = HostReviewAdmission()
+    tree_host.attach_runner(tree_runner)
+    tree = tree_host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        scope="tree",
+    )
+    assert tree["scope"]["effective"] == "tree"
+    assert "y = 2" in tree_runner.task     # tree mode still freezes everything
+    assert tree["candidate_sha256"] != issued["candidate_sha256"]
+
+
+def test_scope_patch_without_paths_degrades_to_tree_and_says_so(tmp_path: Path) -> None:
+    repo = _dirty_repo(tmp_path)
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    assert issued["scope"]["requested"] == "patch"
+    assert issued["scope"]["effective"] == "tree"
+    assert issued["scope"]["reason"] == "no_declared_paths"
+
+
+@pytest.mark.parametrize("bad", ["/etc/passwd", "../outside.py", "~/x.py", ""])
+def test_scope_patch_rejects_escaping_paths(tmp_path: Path, bad: str) -> None:
+    repo = _dirty_repo(tmp_path)
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    issued = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        scope="patch", paths=[bad],
+    )
+    assert issued["accepted"] is False
+    assert issued["reason"].startswith("review_scope_path_invalid")
+
+
+def test_scope_invalid_is_refused(tmp_path: Path) -> None:
+    repo = _dirty_repo(tmp_path)
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    issued = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        scope="everything",
+    )
+    assert issued["accepted"] is False
+    assert issued["reason"].startswith("review_scope_invalid")
+
+
+def test_declared_sensitive_path_is_still_refused(tmp_path: Path) -> None:
+    repo = _dirty_repo(tmp_path)
+    (repo / ".env").write_text("API_KEY=abc\n")
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    issued = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        scope="patch", paths=[".env"],
+    )
+    assert issued["accepted"] is False
+    assert "sensitive" in issued["reason"]
+
+
+def _pass_first_review(host: HostReviewAdmission, runner: FakeChildRunner, sha: str) -> None:
+    runner.state = "completed"
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {sha}"
+
+
+def test_pass_cache_replays_an_identical_review(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    _pass_first_review(host, runner, issued["candidate_sha256"])
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+    before = runner.started
+    again = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert again["accepted"] and again["cached_pass"] is True
+    assert again["candidate_sha256"] == issued["candidate_sha256"]
+    assert runner.started == before          # no second reviewer was paid for
+    assert host.poll("author-1", again["child_id"])["qualification"] == "PASS"
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+
+def test_pass_cache_does_not_reuse_a_changed_artifact(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    _pass_first_review(host, runner, issued["candidate_sha256"])
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+    (repo / "example.py").write_text("x = 3\n")
+    fresh = HostReviewAdmission()
+    fresh.attach_runner(FakeChildRunner())
+    again = fresh.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert again["accepted"]
+    assert not again.get("cached_pass")
+    assert again["candidate_sha256"] != issued["candidate_sha256"]
+
+
+class MultiChildRunner(FakeChildRunner):
+    """Yields a distinct child id per start, so a re-review can be started."""
+
+    def start(self, task: str, **kwargs):
+        started = super().start(task, **kwargs)
+        if started.get("accepted"):
+            started["child_id"] = f"child-review-{self.started}"
+        return started
+
+    def result_current(self, child_id: str, wait_seconds=0):
+        assert child_id.startswith("child-review-")
+        result = SimpleNamespace(final_answer=self.answer, outcome=self.state)
+        return True, "ok", {
+            "child_id": child_id, "parent_id": self.parent, "state": self.state,
+            "result_id": "result-verified" if self.state == "completed" else "",
+            "generation": "gen-1", "result": result,
+            "local_active": self.state == "running",
+        }
+
+
+def test_narrow_rereview_carries_delta_and_previous_findings(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = MultiChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    runner.state = "completed"
+    runner.answer = "P0: example.py 改了值但没加测试\nVERDICT: REVISE\nP0=1 P1=0 P2=0"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "REVISE"
+    (repo / "example.py").write_text("x = 5\n")
+    again = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        previous_child_id="child-review-1",
+    )
+    assert again["accepted"], again
+    chain = again["coverage_chain"]
+    assert chain["previous_child_id"] == "child-review-1"
+    assert chain["previous_findings_retained"] is True
+    assert chain["incremental_delta"] is True
+    assert "NARROW RE-REVIEW" in runner.task
+    assert "没加测试" in runner.task
+    assert "FINDING <n>: ACCEPTED|REJECTED" in runner.task
+
+
+def test_narrow_rereview_rejects_a_foreign_previous_review(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"]
+    other = host.start(
+        "author-2", "full_test", workdir=str(repo), command="pytest -q",
+        previous_child_id="child-review-1",
+    )
+    assert other["accepted"] is False
+    assert other["reason"] == "previous_review_not_owned"
+
+
+def test_review_deadline_scales_with_material_and_caps() -> None:
+    assert rha._review_deadline_seconds(1_000) == rha._REVIEW_TOTAL_DEADLINE_S
+    assert rha._review_deadline_seconds(60_000) == 1_200.0
+    assert rha._review_deadline_seconds(100_000) == rha._REVIEW_DEADLINE_CEILING_S
+    assert rha._review_deadline_seconds(10_000_000) == rha._REVIEW_DEADLINE_CEILING_S
+
+
+def test_duration_precheck_refuses_before_spending_the_budget(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setattr(rha, "_REVIEWER_MAX_ESTIMATED_S", 5.0)
+    repo = _repo(tmp_path)
+    (repo / "many_tests.py").write_text("x = " + repr("a" * 155_000) + "\n")
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    refused = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert refused["accepted"] is False
+    assert refused["reason"].startswith("reviewer_duration_precheck")
+    assert refused["reviewer_failure"] == "reviewer_duration_precheck"
+    assert "scope=patch" in refused["reason"]
+    assert runner.started == 0
+
+
+def test_start_reports_budget_and_scope_for_every_review(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    host.attach_runner(FakeChildRunner())
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"]
+    budget = issued["review_budget"]
+    assert budget["deadline_seconds"] >= rha._REVIEW_TOTAL_DEADLINE_S
+    assert budget["estimated_seconds"] >= 0
+    assert budget["models"][0] == rha._REVIEWER_MODEL
+    assert budget["async_retry_max"] == rha._REVIEWER_ASYNC_RETRY_MAX
+    assert issued["material_chars"] > 0
+
+
+def test_deadline_exceeded_reports_unavailable_and_frees_capacity(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"]
+    with host._guard:
+        row = host._records["child-review-1"]
+        host._records["child-review-1"] = dataclasses.replace(
+            row, deadline_at=time.time() - 1.0
+        )
+    outcome = host.poll("author-1", "child-review-1")
+    assert outcome["qualification"] == "UNAVAILABLE"
+    assert outcome["artifact_reviewed"] is False
+    assert outcome["reviewer_failure"] == "reviewer_deadline_exceeded"
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed is False

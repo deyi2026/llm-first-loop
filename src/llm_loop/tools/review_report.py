@@ -290,18 +290,28 @@ def rejected_receipt(
     answer: str,
     candidate_sha256: str = "",
     extra: dict[str, Any] | None = None,
+    qualification: str = "REVISE",
+    artifact_reviewed: bool = True,
 ) -> dict[str, Any]:
-    """The non-PASS poll receipt: fail closed, keep the tail, add the report."""
+    """The non-PASS poll receipt: fail closed, keep the tail, add the report.
+
+    EVO-20261101-9a6be8b1 E2: ``qualification`` is now a parameter so a
+    reviewer that never produced a verdict reports UNAVAILABLE instead of
+    REVISE. The two are different facts -- "the artifact was judged and needs
+    work" vs "nobody judged it" -- and only the caller can act correctly if it
+    can tell them apart. ``artifact_reviewed`` says which one this is.
+    """
     receipt: dict[str, Any] = {
-        "qualification": "REVISE",
+        "qualification": qualification,
         "reason": reason,
+        "artifact_reviewed": bool(artifact_reviewed),
         "review_tail": " ".join((answer or "").split())[-160:],
     }
     if extra:
         receipt.update(extra)
     receipt.update(
         persist_report(
-            child_id, kind=kind, qualification="REVISE", reason=reason,
+            child_id, kind=kind, qualification=qualification, reason=reason,
             answer=answer, candidate_sha256=candidate_sha256,
         )
     )
