@@ -34,11 +34,11 @@ import contextlib
 import os
 import re
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llm_loop.core.run_context import workspace_base
+from llm_loop.timekeeping import system_local_now_iso
 
 REPORT_SUBDIR = "review_admission"
 _MAX_BODY_CHARS = 200_000
@@ -181,7 +181,10 @@ def _render(
         "qualification: " + qualification,
         "reason: " + reason,
         "candidate_sha256: " + candidate_sha256,
-        "captured_at: " + datetime.now(UTC).isoformat(timespec="seconds"),
+        # Host-local authoritative clock (test_timekeeping_local forbids new UTC
+        # serialization): a report read by a human or the model must show the same
+        # offset as every other LFL-owned record.
+        "captured_at: " + system_local_now_iso(),
         "answer_chars: " + str(len(answer)),
         "body_truncated: " + str(truncated).lower(),
         "counts_from_answer: P0=" + str(counts["P0"])
