@@ -206,6 +206,21 @@ def _knowledge_runtime_paths(ec: EffectiveConfig, report: IdentityReport):
     )
 
 
+def _guard_code_block() -> dict[str, str]:
+    """守卫模块指纹（进程启动时真实加载的那份）；不可得返回 {} 而非编造.
+
+    manifest 由每个服务进程自己在启动时写 → 这里的指纹就是"该服务在跑的
+    守卫代码"。service_control status 拿它与源码树比对，回答"改了守卫代码
+    要不要重启"。fail-open：helper 不可用/异常返回空 dict，status 侧记为未知。
+    """
+    try:
+        from ..introspection.proc_version import guard_code_fingerprint
+
+        return guard_code_fingerprint()
+    except Exception:  # noqa: BLE001 — 身份事实缺失时留空，不伪造
+        return {}
+
+
 def build_manifest(service: str, ec: EffectiveConfig,
                    report: IdentityReport) -> dict:
     """合并身份事实 + 配置指纹 + providers 各来源/effective hashes。"""
@@ -247,6 +262,8 @@ def build_manifest(service: str, ec: EffectiveConfig,
         "identity_mode": report.mode,
         # —— release / development build 身份（机械事实，不参与策略）——
         "build_identity": build_identity,
+        # —— 守卫层身份（改了守卫代码要重启才生效的对照基准）——
+        "guard_code": _guard_code_block(),
         # —— effective 配置（R2，已脱敏）——
         "model_ref": model_ref,
         "provider_id": pinfo["provider_id"],

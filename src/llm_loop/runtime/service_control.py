@@ -1688,6 +1688,48 @@ def _web_port_listener_pid() -> int | None:
     return None
 
 
+def _guard_code_drift_view(recorded: Any) -> dict[str, Any]:
+    """服务启动时的守卫代码指纹 vs 源码树当前指纹（只读事实，不触发任何动作）.
+
+    - 记录缺失（旧 manifest）/源码树不可读/helper 不可用 → ``status=unknown``，
+      不伪造"一致"（未知与一致是两件事）。
+    - ``status=stale``：该服务在跑的守卫代码（命令闸/安全层）与源码树不同 →
+      publish + restart 之后才是新判定。
+
+    刻意**不**并入 ``restart_required``：那是动作项（会驱动重启流程），这是信息项。
+    两处口径后果不同，强行统一等于把决策放松到最宽松那层（2026-11-01 教训）。
+    """
+    if not isinstance(recorded, dict) or not recorded:
+        return {"status": "unknown", "reason": "manifest_missing_guard_code"}
+    try:
+        from llm_loop.introspection.proc_version import (
+            GUARD_MODULES,
+            guard_code_fingerprint,
+            guard_source_root,
+        )
+    except Exception:  # noqa: BLE001 — 不可得即未知，不编造
+        return {"status": "unknown", "reason": "helper_unavailable"}
+    # 基准 = 可编辑源码树（由加载路径 .releases/<sha>/ 反推）。不能拿 manifest 的
+    # workspace_root：它在 release 部署下就是 release 目录本身，比对恒等 → 永远
+    # 报"一致"，正是要防的那种静默误判。
+    pkg = guard_source_root()
+    if pkg is None:
+        # 源码树里没有本包 → 不可判定，不把"全部 missing"误报成 stale
+        return {"status": "unknown", "reason": "source_root_has_no_llm_loop_package"}
+    current = guard_code_fingerprint(pkg)
+    changed = [m for m in GUARD_MODULES if recorded.get(m) != current.get(m)]
+    if not changed:
+        return {"status": "current"}
+    return {
+        "status": "stale",
+        "changed": changed,
+        "note": (
+            "该服务启动时加载的守卫代码与源码树不一致——命令闸/安全层仍是旧逻辑，"
+            "publish + restart 后才生效；未自动计入 restart_required（信息项，非动作项）"
+        ),
+    }
+
+
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """Desired/live/stable identity view per managed service (read-only).
 
@@ -1720,6 +1762,10 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                         "config_hash": raw.get("config_hash"),
                         "semantic_scopes": raw.get("semantic_scopes") or {},
                         "semantic_scope_sources": raw.get("semantic_scope_sources") or {},
+                        # 守卫代码时效：本服务启动时加载的守卫 vs 源码树（只读信息项）
+                        "guard_code_drift": _guard_code_drift_view(
+                            raw.get("guard_code")
+                        ),
                     }
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError):

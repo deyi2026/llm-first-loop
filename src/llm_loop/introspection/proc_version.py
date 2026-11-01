@@ -3,13 +3,18 @@
 ① record_process_start: 进程启动时记录启动时间 + git HEAD（web/cli/feishu 入口调用）。
 ② get_process_versions: 读取记录 + 当前 git HEAD 对照，旧代码进程标注"建议重启"。
 ③ record_change_log: 修改类工具调用通告（多会话协调，可经 search_records 检索）。
+④ guard_code_drift: 守卫模块（命令闸/工具安全层）加载版本 vs 源码树——回答
+   "我刚改的守卫判定，本进程真的在跑吗"。HEAD 对照看不见未提交改动，
+   守卫层恰恰是改了就必须重启才可信的一层（2026-11-01 事故缺口）。
 全部 fail-open（记录失败不阻断业务）。
 """
 
+import hashlib
 import json
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from llm_loop.timekeeping import system_local_now
@@ -21,6 +26,144 @@ def _source_workspace() -> Path | None:
     """Explicit source workspace for dual-root runtime identity, else legacy CWD."""
     raw = (os.environ.get("LFL_WORKSPACE_ROOT") or "").strip()
     return Path(raw).expanduser().resolve() if raw else None
+
+
+# ── 守卫代码时效（守卫层专用，见模块 docstring ④）─────────────────────────
+# 声明的相对路径以 llm_loop 包根为基准；新增守卫模块必须同步追加，
+# tests/unit/test_guard_code_freshness.py 断言每条都存在，防止改名后静默失配。
+GUARD_MODULES: tuple[str, ...] = (
+    "core/command_scope_guard.py",
+    "tools/safety.py",
+    "security_guard.py",
+    "sealed_paths.py",
+    "net_guard.py",
+)
+
+
+def _package_root() -> Path:
+    """本进程实际加载的 llm_loop 包根（走 release 目录时指向 release 副本）。"""
+    return Path(__file__).resolve().parents[1]
+
+
+def _module_name(rel: str) -> str:
+    stem = rel[:-3] if rel.endswith(".py") else rel
+    return "llm_loop." + stem.replace("/", ".")
+
+
+def guard_code_fingerprint(root: str | Path | None = None) -> dict[str, str]:
+    """守卫模块磁盘指纹 {相对路径: sha256 前 16 位}；文件缺失记 missing，不抛异常."""
+    base = Path(root) if root is not None else _package_root()
+    out: dict[str, str] = {}
+    for rel in GUARD_MODULES:
+        try:
+            out[rel] = hashlib.sha256((base / rel).read_bytes()).hexdigest()[:16]
+        except OSError:
+            out[rel] = "missing"
+    return out
+
+
+# import 时刻的快照 = 本进程随后会执行的那份守卫代码（内存里的，不随磁盘变动）。
+# 边界：生产入口在启动时即 import 本模块，故快照≈启动时刻；若同进程内先改守卫
+# 文件、之后才首次 import 本模块，该窗口会假阴性——守卫改动一律以重启后为可信。
+_GUARD_SNAPSHOT: dict[str, str] = guard_code_fingerprint()
+
+
+def _repo_root_from(loaded_pkg: Path) -> Path | None:
+    """从 ``<repo>/.releases/<sha>/src/llm_loop`` 反推 ``<repo>``；非该形态返回 None."""
+    parts = loaded_pkg.parts
+    if ".releases" not in parts:
+        return None
+    idx = parts.index(".releases")
+    if idx == 0:
+        return None
+    return Path(*parts[:idx])
+
+
+def _source_root() -> Path:
+    """对照基准：可编辑源码树的 llm_loop 包根.
+
+    顺序：① 由加载路径 ``.releases/<sha>/src/llm_loop`` 反推源码仓根——release 副本
+    自带 .git，git 探测会停在副本里，故用路径结构判定而非 cwd 探测；② 显式
+    LFL_WORKSPACE_ROOT；③ 本进程加载的包根。取第一个真的含守卫模块的候选，
+    都不含则返回包根（由调用方判为不可判定）。
+    """
+    pkg = _package_root()
+    candidates: list[Path] = []
+    repo = _repo_root_from(pkg)
+    if repo is not None:
+        candidates.append(repo / "src" / "llm_loop")
+    ws = _source_workspace()
+    if ws is not None:
+        candidates.append(ws / "src" / "llm_loop")
+        candidates.append(ws)
+    candidates.append(pkg)
+    for cand in candidates:
+        if (cand / "core" / "command_scope_guard.py").is_file():
+            return cand
+    return pkg
+
+
+def guard_source_root() -> Path | None:
+    """对照用的源码包根；不可判定（如运行在无关工作区里）→ None.
+
+    宁可"不可判定"也不误报：把无关工作区当源码树会让全部守卫模块记 missing，
+    于是恒判 stale——那会把提示本身变成噪音（比没有提示更糟）。
+    """
+    root = _source_root()
+    return root if (root / "core" / "command_scope_guard.py").is_file() else None
+
+
+def guard_code_drift() -> dict:
+    """本进程加载的守卫代码 vs 源码树当前守卫代码.
+
+    ``stale=True``: 源码树守卫代码已变、本进程仍执行启动时版本 → 新判定/新放行
+    逻辑要重启才生效。``changed_unloaded``: 磁盘已变但该模块本进程尚未 import
+    （首次 import 会读到新代码），只作信息项、不计入 stale——不把"将读到新代码"
+    误报成"在跑旧代码"。检测异常 / 源码树不可判定 fail-open，字段如实标注。
+    """
+    try:
+        root = guard_source_root()
+        if root is None:
+            return {
+                "stale": False,
+                "changed": [],
+                "changed_loaded": [],
+                "changed_unloaded": [],
+                "undetermined": "source_root_has_no_llm_loop_package",
+            }
+        current = guard_code_fingerprint(root)
+        baseline = dict(_GUARD_SNAPSHOT)
+        changed = [r for r in GUARD_MODULES if baseline.get(r) != current.get(r)]
+        loaded = [r for r in changed if _module_name(r) in sys.modules]
+        return {
+            "stale": bool(loaded),
+            "changed": changed,
+            "changed_loaded": loaded,
+            "changed_unloaded": [r for r in changed if r not in loaded],
+            "source_root": str(root),
+        }
+    except Exception as exc:  # noqa: BLE001 — fail-open，不阻断业务
+        return {
+            "stale": False,
+            "changed": [],
+            "changed_loaded": [],
+            "changed_unloaded": [],
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def guard_code_note() -> str:
+    """守卫代码时效一句话提示；一致或不可判定返回 ""."""
+    drift = guard_code_drift()
+    if not drift.get("stale"):
+        return ""
+    mods = "、".join(drift.get("changed_loaded") or [])
+    return (
+        f"[守卫代码时效提示] 源码树的守卫模块已变更（{mods}），本进程仍执行启动时"
+        "加载的版本——新判定/新放行逻辑重启后才生效，在此之前据其声明"
+        "\"修复已生效\"会误判。建议 commit 后 service_control publish/restart "
+        "对应服务。是否处理由你决定（只读提示，不阻断）。"
+    )
 
 
 def _git_command(*args: str) -> list[str]:
@@ -91,6 +234,8 @@ def record_process_start(service: str) -> None:
             "service": service,
             "git_head": git_head(),
             "workspace_dirty": workspace_dirty(),
+            # 守卫模块指纹：进程启动时加载的那份（后续对照源码树即可知是否需要重启）
+            "guard_code": dict(_GUARD_SNAPSHOT),
         }
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -127,11 +272,29 @@ def get_process_versions(limit: int = 30) -> dict:
         latest_by_service[r.get("service", "?")] = r
     services = []
     current_dirty = workspace_dirty()
+    guard_root = guard_source_root()
+    guard_now = guard_code_fingerprint(guard_root) if guard_root is not None else None
     for svc, r in latest_by_service.items():
         head = r.get("git_head", "")
         start_dirty = bool(r.get("workspace_dirty", False))
         same_head = head == current
-        if not same_head:
+        # 守卫代码对照（旧记录无 guard_code、或源码树不可判定 → None，未知不伪造"一致"）
+        rec_guard = r.get("guard_code")
+        if guard_now is not None and isinstance(rec_guard, dict) and rec_guard:
+            guard_changed = [
+                m for m in GUARD_MODULES if rec_guard.get(m) != guard_now.get(m)
+            ]
+            guard_current: bool | None = not guard_changed
+        else:
+            guard_changed = []
+            guard_current = None
+        if guard_current is False:
+            # 比 HEAD 不等更具体：守卫层改了没重启 → 判定/放行仍是旧逻辑
+            note = (
+                "守卫模块与源码树不一致（命令闸/安全层仍是启动时版本，"
+                "重启后才生效）"
+            )
+        elif not same_head:
             note = "启动时代码与当前 HEAD 不一致（旧代码，建议重启）"
         elif start_dirty or current_dirty:
             note = "工作区含未提交改动（进程加载代码可能与 HEAD 不一致），建议及时 commit 并重启"
@@ -145,15 +308,25 @@ def get_process_versions(limit: int = 30) -> dict:
                 "git_head": head,
                 "workspace_dirty": start_dirty,
                 "code_current": same_head,
+                "guard_code_current": guard_current,
+                "guard_code_changed": guard_changed,
                 "note": note,
             }
         )
     services.sort(key=lambda s: s["started_at"], reverse=True)
+    drift = guard_code_drift()
     return {
         "current_git_head": current,
         "current_workspace_dirty": current_dirty,
+        "guard_code_now": guard_now,
+        "guard_code_self": {
+            "stale": drift.get("stale"),
+            "changed_loaded": drift.get("changed_loaded", []),
+            "changed_unloaded": drift.get("changed_unloaded", []),
+            **({"error": drift["error"]} if drift.get("error") else {}),
+        },
         "services": services,
-        "note": "进程启动时记录 git HEAD；启动早于代码变更的进程标注建议重启（EVO-20260811-f94e5306）；EVO-20260811-a30732d9 增加工作区 dirty 检测",
+        "note": "进程启动时记录 git HEAD；启动早于代码变更的进程标注建议重启（EVO-20260811-f94e5306）；EVO-20260811-a30732d9 增加工作区 dirty 检测；守卫模块指纹对照见 guard_code_* （旧记录无该字段 → guard_code_current=null 表示未知）",
     }
 
 
@@ -166,11 +339,19 @@ def check_self_stale() -> str:
     当前 HEAD"的进程（已 commit 未重启）同样提示（本次 feishu 事故缺口：
     修复提交后 web 重启但 feishu 未重启，dirty 检测不触发、对照仅被动可查）。
 
+    ``check_stale_services`` 之外增加守卫层专用对照：工作区 dirty 与 HEAD 不一致
+    都只说明"代码可能变了"，唯独守卫模块（命令闸/安全层）变了的后果是**安全判定
+    被放松而不自知**，因此单列一条提示（2026-11-01：命令闸修复已提交但本进程仍跑
+    旧字节码，差点据旧行为声明"修复已生效"）。
+
     Returns:
         "" = 一致（head 一致且工作区干净且无旧代码服务）；否则一句话提示（含 commit+重启建议）。
         提示为只读信息，AI 自主决定是否处理；检查 fail-open，异常返回 "" 不阻断。
     """
     try:
+        guard_note = guard_code_note()
+        if guard_note:
+            return guard_note
         head = git_head()
         if head == "no-git":
             return ""

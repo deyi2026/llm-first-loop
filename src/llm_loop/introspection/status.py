@@ -416,9 +416,17 @@ class ArchitectureStatusProvider:
     def _process_versions(self) -> dict:
         """进程代码版本一致性（EVO-20260811-f94e5306）；读取失败如实标注."""
         try:
-            from llm_loop.introspection.proc_version import get_process_versions
+            from llm_loop.introspection.proc_version import (
+                check_self_stale,
+                get_process_versions,
+            )
 
-            return get_process_versions()
+            data = get_process_versions()
+            # 主动提示（EVO-20260815/20260817 建的 check_self_stale）此前全仓无调用方
+            # ＝死代码，故"埋进深层字段即可自我提醒"从未真正成立；挂到既有维度上
+            # 使其可达。只读一句话，不改任何判据/闸门。
+            data["self_stale_notice"] = check_self_stale()
+            return data
         except Exception as exc:  # noqa: BLE001 — 读取失败如实标注（fail-open）
             return {"note": f"读取失败: {type(exc).__name__}: {exc}"}
 
