@@ -215,3 +215,16 @@ def test_poll_revise_persists_unactionable_verdict(tmp_path: Path, monkeypatch) 
     assert "findings 不可达" in text
     # Fail-closed authority is unchanged by the report: no permit was minted.
     assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+
+def test_severity_label_must_be_exactly_p0_p1_or_p2() -> None:
+    # "P10: ..." used to parse as a P1 finding whose text started with "0: ".
+    parsed = rr.extract_findings("P10: 不是 P1 等级\nP2: 是真的 P2\n")
+    assert parsed["findings"] == {"P0": [], "P1": [], "P2": ["是真的 P2"]}
+
+
+def test_report_dir_is_not_listable_by_other_users(tmp_path: Path, monkeypatch) -> None:
+    _data_dir(tmp_path, monkeypatch)
+    receipt = rr.rejected_receipt("child-1", kind="full_test", reason="r", answer="P1: x")
+    mode = Path(receipt["review_report_path"]).parent.stat().st_mode & 0o777
+    assert mode & 0o077 == 0, oct(mode)

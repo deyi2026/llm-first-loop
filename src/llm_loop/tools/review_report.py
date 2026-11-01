@@ -50,7 +50,7 @@ _MAX_FINDING_CHARS = 280
 # are matched on their severity label in every shape reviewers actually emit:
 # "P1: x", "- **P1** x", "[P1] x", "P1 - x", "* P1) x".
 _FINDING_RE = re.compile(
-    r"(?m)^[ \t>]*[-*+]?[ \t]*\**[ \t]*\[?P([012])\]?[ \t]*\**[ \t]*[:：\-–—.)\]]*[ \t]*(.+?)[ \t]*$"
+    r"(?m)^[ \t>]*[-*+]?[ \t]*\**[ \t]*\[?P([012])\b(?!\d)\]?[ \t]*\**[ \t]*[:：\-–—.)\]]*[ \t]*(.+?)[ \t]*$"
 )
 _COUNT_RE = re.compile(r"(?m)^[ \t>]*P0=(\d+) P1=(\d+) P2=(\d+)[ \t]*$")
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -86,9 +86,8 @@ def _write_atomic(target: Path, text: str) -> None:
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
         0o600,
     )
-    handle = os.fdopen(fd, "w", encoding="utf-8")
     try:
-        with handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
         staging.replace(target)
     except BaseException:
@@ -242,7 +241,10 @@ def persist_report(
         dropped = parsed["finding_lines_dropped"]
         _, truncated = _bounded_body(text)
         target_dir = report_dir()
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # 0700: the file names carry child ids, which are enough to reopen a gate
+        # record; the report bodies are 0600 and the directory should not be
+        # listable by other users on the same machine.
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         target = target_dir / (_safe_name(child_id) + "-" + _safe_name(kind) + ".md")
         _write_atomic(
             target,
