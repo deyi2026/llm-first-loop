@@ -5,7 +5,7 @@
 - 项目：garrytan/gstack（https://github.com/garrytan/gstack）
 - 固定版本：`088bfc5914f8001a3d49b3a0c35d6f7cb800268c`（2026-10-31）
 - 源目录：`design-consultation/`（`SKILL.md`、`sections/proposal-and-preview.md`、`sections/preamble.md`）
-- 许可：MIT，Copyright (c) 2026 Garry Tan（上游 LICENSE 随附）
+- 许可：MIT，Copyright (c) 2026 Garry Tan（随附于本目录 `LICENSE`，逐字取自上游 LICENSE）
 
 ## 本地改动（逐条）
 
