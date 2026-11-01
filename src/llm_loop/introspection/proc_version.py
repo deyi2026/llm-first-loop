@@ -16,8 +16,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..core import guard_code as _guard_code
 from llm_loop.timekeeping import system_local_now
+
+from ..core import guard_code as _guard_code
 
 logger = logging.getLogger(__name__)
 

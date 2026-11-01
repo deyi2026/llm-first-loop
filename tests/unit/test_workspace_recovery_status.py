@@ -87,7 +87,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 def run_tool(**kwargs) -> tuple[str, dict]:
     result = WorkspaceRecoveryStatusTool().execute(**kwargs)
     assert result.status == ToolResultStatus.SUCCESS, result.content
-    lines = [l for l in result.content.splitlines() if l.strip()]
+    lines = [line for line in result.content.splitlines() if line.strip()]
     payload = None
     for line in reversed(lines):
         if line.startswith("{"):

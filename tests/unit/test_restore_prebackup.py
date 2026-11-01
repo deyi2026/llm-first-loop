@@ -106,7 +106,7 @@ def run_script(repo: Path, backup_root: Path, *args: str, use_default_fence: boo
 
 
 def last_json(stdout: str) -> dict:
-    lines = [l for l in stdout.splitlines() if l.strip()]
+    lines = [line for line in stdout.splitlines() if line.strip()]
     assert lines, "脚本 stdout 无输出"
     return json.loads(lines[-1])
 

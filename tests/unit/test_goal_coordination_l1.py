@@ -13,8 +13,9 @@ session 身份真值源: llm_loop.core.run_context.current_session_id（bound_se
 
 from __future__ import annotations
 
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.core.run_context import current_session_id as _sid
@@ -25,7 +26,6 @@ from llm_loop.introspection.tools_goal import (
     run_update_goal,
 )
 from llm_loop.introspection.tools_task import run_task_create
-
 
 OWNER = "sess-owner-0001"
 OTHER = "sess-other-0002"

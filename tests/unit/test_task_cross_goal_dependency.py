@@ -17,10 +17,10 @@ import pytest
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.core.run_context import current_session_id as _sid
-from llm_loop.timekeeping import system_local_now
 from llm_loop.introspection.goal import GoalStore
 from llm_loop.introspection.task_store import Task, TaskStore
 from llm_loop.introspection.tools_task import run_task_create
+from llm_loop.timekeeping import system_local_now
 
 SID = "sess-l3"
 

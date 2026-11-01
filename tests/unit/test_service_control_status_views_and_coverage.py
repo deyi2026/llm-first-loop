@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -193,7 +193,7 @@ def _manifest_started_before(began):
 
 
 def test_verify_restart_targets_adopts_concurrent_restart(monkeypatch):
-    began = datetime.now(timezone.utc) - timedelta(seconds=30)
+    began = datetime.now(UTC) - timedelta(seconds=30)
     monkeypatch.setattr(
         sc, "_read_runtime_manifest", lambda store, service: _manifest_started_before(began)
     )
@@ -202,7 +202,7 @@ def test_verify_restart_targets_adopts_concurrent_restart(monkeypatch):
         action_id="svc-other",
         target="wecom",
         deployment_generation=9,
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=datetime.now(UTC).isoformat(),
     )
     monkeypatch.setattr(sc, "read_all_actions", lambda store: [other])
     deployment = SimpleNamespace(generation=9, git_head="head-current")
@@ -215,7 +215,7 @@ def test_verify_restart_targets_adopts_concurrent_restart(monkeypatch):
 
 
 def test_verify_restart_targets_keeps_failure_without_cover(monkeypatch):
-    began = datetime.now(timezone.utc) - timedelta(seconds=30)
+    began = datetime.now(UTC) - timedelta(seconds=30)
     monkeypatch.setattr(
         sc, "_read_runtime_manifest", lambda store, service: _manifest_started_before(began)
     )
@@ -231,7 +231,7 @@ def test_verify_restart_targets_keeps_failure_without_cover(monkeypatch):
         action_id="svc-other",
         target="wecom",
         deployment_generation=9,
-        updated_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=datetime.now(UTC).isoformat(),
     )
     monkeypatch.setattr(sc, "read_all_actions", lambda store: [other])
     verdict2, summary2, _ = sc._verify_restart_targets(
