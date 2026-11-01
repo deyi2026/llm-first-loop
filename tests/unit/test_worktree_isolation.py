@@ -22,7 +22,11 @@ from llm_loop.core.execution_surface import (
 from llm_loop.core.run_context import current_workspace_root
 from llm_loop.workspace.worktree_isolation import (
     META_FILENAME,
+    OrphanEntry,
+    SweepResult,
     WorktreeIsolationError,
+    _sweep_orphans,
+    _worktree_limit_message,
     format_release_note,
     prepare_worktree,
     release_worktree,
@@ -85,8 +89,10 @@ class TestPrepare:
         assert ei.value.reason_code == "WORKTREE_LIMIT"
 
     def test_dirty_orphans_over_limit_refuse_new(self, git_repo: Path) -> None:
+        orphan_paths = []
         for i in range(3):
             lease = prepare_worktree(f"lfl-subagent-dirty{i:08d}", parent_root=str(git_repo))
+            orphan_paths.append(lease.path)
             (Path(lease.path) / f"untracked{i}.txt").write_text("x", encoding="utf-8")
             # 脏孤儿：meta 老化 + 全树 mtime 老化（活性代理视其为死树）。
             meta_p = Path(lease.path) / META_FILENAME
@@ -103,6 +109,14 @@ class TestPrepare:
                 max_kept_dirty=3,
             )
         assert ei.value.reason_code == "WORKTREE_LIMIT"
+        # 回执必须能直接拿去清理：计数口径 + 每棵候选路径 + 清理命令。
+        detail = ei.value.detail
+        assert "非活跃孤儿树 3 >= 上限 3" in detail
+        assert "脏保留 3 + 无 meta 过期 0" in detail
+        for path in orphan_paths:
+            assert path in detail
+        assert "dirty_nonactive" in detail
+        assert "git worktree remove --force" in detail
 
     def test_clean_orphan_swept_and_spawn_ok(self, git_repo: Path) -> None:
         lease_old = prepare_worktree("lfl-subagent-old111111", parent_root=str(git_repo))
@@ -688,3 +702,52 @@ class TestRunSyncFsIsolation:
         assert "fleet run 边界拒绝" in result.final_answer
         # 拒绝路径已释放隔离树
         assert not list((git_repo / ".worktrees").glob("lfl-child-*"))
+
+
+class TestOrphanSweepReporting:
+    """上限回执要能直接拿去清理：计数口径 + 候选路径 + 清理命令。"""
+
+    def test_sweep_result_keeps_two_value_unpacking(self, git_repo: Path) -> None:
+        # 旧调用点按 `kept, pruned = _sweep_orphans(...)` 解包，语义必须不变。
+        result = _sweep_orphans(git_repo.resolve(), ttl_s=24 * 3600)
+        kept, pruned = result
+        assert (kept, pruned) == (result.counted, result.pruned)
+        assert isinstance(result, SweepResult)
+
+    def test_limit_message_lists_each_candidate_and_cleanup_command(self) -> None:
+        entries = tuple(
+            OrphanEntry(
+                path=f"/repo/.worktrees/lfl-child-{i:08d}",
+                kind="dirty_nonactive",
+                quiet_s=90_000 + i,
+                child_id=f"lfl-subagent-{i:08d}",
+            )
+            for i in range(3)
+        )
+        message = _worktree_limit_message(
+            SweepResult(dirty=3, nometa_stale=1, pruned=0, entries=entries), 4
+        )
+        assert "非活跃孤儿树 4 >= 上限 4" in message
+        assert "脏保留 3 + 无 meta 过期 1" in message
+        for i in range(3):
+            assert f"/repo/.worktrees/lfl-child-{i:08d}" in message
+        assert "git worktree remove --force" in message
+
+    def test_limit_message_caps_listing_and_says_how_many_hidden(self) -> None:
+        entries = tuple(
+            OrphanEntry(path=f"/repo/.worktrees/lfl-child-{i:08d}", kind="dirty_nonactive")
+            for i in range(10)
+        )
+        message = _worktree_limit_message(
+            SweepResult(dirty=10, pruned=0, entries=entries), 8
+        )
+        assert "/repo/.worktrees/lfl-child-00000000" in message
+        assert "/repo/.worktrees/lfl-child-00000007" in message
+        assert "/repo/.worktrees/lfl-child-00000008" not in message
+        assert "另有 2 棵未列出" in message
+
+    def test_limit_message_without_entries_keeps_legacy_hint(self) -> None:
+        message = _worktree_limit_message(SweepResult(dirty=9), 8)
+        assert "非活跃孤儿树 9 >= 上限 8" in message
+        assert ".worktrees/" in message
+        assert "不要删除" in message

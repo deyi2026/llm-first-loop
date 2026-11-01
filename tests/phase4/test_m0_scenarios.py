@@ -40,7 +40,7 @@ from llm_loop.web.human_turn_queue import HumanTurnQueue
 REPO = Path(__file__).resolve().parents[2]
 # 基线输出目录参数化（默认 reports/phase4/m0；重跑指定 PHASE4_REPORT_DIR 防覆盖
 # 原始记录——沿 Phase3 m0 覆盖事故教训）
-REPORT_DIR = REPO / os.environ.get("PHASE4_REPORT_DIR", "reports/phase4/m0").lstrip("/")
+REPORT_DIR = REPO / os.environ.get("PHASE4_REPORT_DIR", "data/phase4/m0").lstrip("/")
 REPORT_DIR = Path(os.path.abspath(REPORT_DIR))
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 

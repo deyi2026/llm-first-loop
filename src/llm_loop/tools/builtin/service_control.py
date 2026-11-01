@@ -554,9 +554,41 @@ class ServiceControlTool:
                 "service_control(action=status, action_id=...)（或 status 含 action 摘要），"
                 "event_stream(query=service_action_terminal) 亦可检索（EVO-20260924-8266b693 A）；"
                 "failed 终态会保留待确认（verify_acknowledge）直到显式闭合"
+                + self._deferred_restart_note(target)
             ),
             tool_call_id="",
             tool_name=self.name,
+        )
+
+    @staticmethod
+    def _deferred_restart_note(target: str) -> str:
+        """web 类重启必然等待 requester run 结束：把「尚未生效」写成机器可读待办。
+
+        第一阶段闸门挂在**动作**上（`action.target in {"web","all"}`，见
+        runtime 两阶段等待），所以 target=all 时整条动作（四个服务）都在等待，
+        不只是 web——回执若只写 web，读回执的人会以为其余三个已重启完成。
+
+        payload 必须是可 json.loads 的严格 JSON：回执里写了"机器可读"就得真能解析。
+        """
+        if target not in {"web", "all"}:
+            return ""
+        deferred = ["web"] if target == "web" else ["web", "feishu", "wecom", "learning"]
+        payload = json.dumps(
+            {
+                "pending": True,
+                "condition": "requester_run_end",
+                "services": deferred,
+                "effective_after_session_end": True,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        names = "/".join(deferred)
+        return (
+            f"; deferred_effect={payload} —— 对 {names} **尚未生效**："
+            "进程要等本轮 run 结束后才重启，在此之前 status/state 仍读旧 generation。"
+            "会话结束后必须用 service_control(action=status, target=...) 复核 effective "
+            "generation 才能声称已运行新代码"
         )
 
     def _publish(

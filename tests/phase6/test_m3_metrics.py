@@ -7,7 +7,7 @@
 - T3：零语义降级——不在此重复跑全量（M4 全量回归门）；此处引用 M1 S 组
   单测锁定证据（S1 打断轮不进投影/S2 四态/S7 单次结算/S8 工具轮不执行/
   S9 命中优先），报告内登记。
-产出 reports/phase6/m3/M3_ACCEPTANCE.json + m3-acceptance.md。
+产出 data/phase6/m3/（gitignore 覆盖；tracked 版本见同名 reports/ 历史快照）M3_ACCEPTANCE.json + m3-acceptance.md。
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from tests.phase4.test_m0_scenarios import (  # noqa: E402
 N = 10
 WINDOW_S = 1.2
 INJECT_AT_S = 0.3
-REPORT = Path(__file__).resolve().parents[2] / "reports" / "phase6" / "m3"
+REPORT = Path(__file__).resolve().parents[2] / "data" / "phase6" / "m3"
 BASELINE = {"b1_p50_ms": 859.3, "b2_p50_ms": 915.3}
 
 

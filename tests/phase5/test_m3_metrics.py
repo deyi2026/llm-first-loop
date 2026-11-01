@@ -2,7 +2,7 @@
 
 - G1：llm_stream_interrupt 桶 n≥10，P50≤500ms、P95≤900ms（S17-M1 场景形态）。
 - G2：保守路径（开关关闭）llm_stream 桶 n≥10，P50≤1550ms（S17-M4 场景形态）。
-产出 reports/phase5/m3/M3_ACCEPTANCE.json + m3-acceptance.md。
+产出 data/phase5/m3/（gitignore 覆盖；tracked 版本见同名 reports/ 历史快照）M3_ACCEPTANCE.json + m3-acceptance.md。
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from tests.phase4.test_m0_scenarios import (  # noqa: E402
 from tests.phase5.test_m2_stream_interrupt import _deltas, _Injector  # noqa: E402
 
 N = 10
-REPORT = Path(__file__).resolve().parents[2] / "reports" / "phase5" / "m3"
+REPORT = Path(__file__).resolve().parents[2] / "data" / "phase5" / "m3"
 
 
 def _pct(samples: list[float], q: float) -> float:

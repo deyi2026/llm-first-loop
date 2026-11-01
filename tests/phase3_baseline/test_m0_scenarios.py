@@ -2,8 +2,10 @@
 
 基线原则：
 - 只记录真实行为与时延；§6「预期」列是待验证假设，不做预期断言。
-- 每场景独立 JSON 落盘 reports/phase3/m0/S##.json（请求/响应、时间戳链、
-  queue 状态迁移、engine 动作事件），供聚合为 docs/phase3-m0-baseline.md。
+- 每场景独立 JSON 落盘（默认 data/phase3/m0/S##.json，gitignore 覆盖；请求/响应、
+  时间戳链、queue 状态迁移、engine 动作事件），供聚合为 docs/phase3-m0-baseline.md。
+  已入库的 reports/phase3/m0/ 是**冻结的原始基线记录**，常规全量测试一律不得改写；
+  要主动刷新该记录时显式 `PHASE3_REPORT_DIR=reports/phase3/m0` 并单独提交。
 - assert 仅做机械健全性检查（脚手架本身没坏：HTTP 可达、文件可写），
   预期与实测的差异正是本次基线要产出的东西，记录而非掩盖。
 - S07/S08/S09（预算 CAS 注入 / wake 一次性 / wake 重启恢复）按方案 §6 说明：
@@ -23,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from llm_loop.core.loop.runner import BackgroundRunner
@@ -32,15 +35,25 @@ from llm_loop.web import build_app
 from llm_loop.web.human_turn_queue import HumanTurnQueue
 
 REPO = Path(__file__).resolve().parents[2]
-# 基线输出目录参数化（默认 m0；重跑指定 PHASE3_REPORT_DIR 防覆盖原始记录——
-# 见 reports/phase3/m0/README.md 的 01:41 覆盖事故）
-REPORT_DIR = REPO / os.environ.get(
-    "PHASE3_REPORT_DIR", "reports/phase3/m0"
-).lstrip("/")
+# 基线输出目录参数化。默认写 gitignore 覆盖的 data/phase3/m0：全量测试每跑一次都会
+# 重写这些 JSON，若默认落到 tracked 的 reports/phase3/m0，就等于每轮都用新时延覆盖
+# 冻结的原始基线记录，还逼着每次发布前补一个 chore(reports) 提交（历史上发生过，
+# c0c95287a）。要主动刷新入库记录时显式 PHASE3_REPORT_DIR=reports/phase3/m0。
+DEFAULT_REPORT_DIR = "data/phase3/m0"
+REPORT_DIR = REPO / os.environ.get("PHASE3_REPORT_DIR", DEFAULT_REPORT_DIR).lstrip("/")
 REPORT_DIR = Path(os.path.abspath(REPORT_DIR))
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 INTERJECT_TEXT = "改用方案B，不要等了"
+
+
+def test_default_report_dir_does_not_dirty_tracked_baseline() -> None:
+    """[默认输出目录落在 tracked reports/] → [FAIL]：冻结基线不得被常规跑动改写。"""
+    if os.environ.get("PHASE3_REPORT_DIR"):
+        pytest.skip("已显式指定 PHASE3_REPORT_DIR，默认值不适用")
+    assert Path(DEFAULT_REPORT_DIR).as_posix() == "data/phase3/m0"
+    assert not REPORT_DIR.as_posix().startswith((REPO / "reports").as_posix())
+    assert REPORT_DIR != REPO / "reports" / "phase3" / "m0"
 
 
 class Rec:

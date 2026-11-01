@@ -12,7 +12,7 @@
 | `base_prompt_hash` | `5aeea16c7677`（`sha256(_BASE_PROMPT)[:12]`，M1 实测 2026-10-12） |
 | `lite_version` | 20 |
 | `sot` | `docs/ai_rules.md` |
-| `records` | 39（2026-10-21 按当前 `scripts/rule_presence_audit.py` **全文去重 ref** 口径只读实测：36 个 `RULE-AI-xx` 文本编号，**包含仅在空缺说明中提到、并非正式规则的 RULE-AI-21**，再加附则/子规则/方法层 3 条；真正以 SoT `##` 标题定义的正式 Rule 是 **35 条**（2026-10-21 新增 RULE-AI-35），对应本台账 35 个正式规则行，另有 3 个 scope 登记项，共 **38 条真实登记项**。脚本观测 39 不得误称“正式规则 39”或“真实登记项 39”。Rule31 在原 main 台账漏登、Rule32/33 原条目完整保留、Rule34 于 2026-10-17 机械补登、Rule35 于 2026-10-21 CI 红灯修复机械补登；gaps=3、uncovered=0） |
+| `records` | 40（2026-11-01 补 RULE-AI-36 后按当前 `scripts/rule_presence_audit.py` **全文去重 ref** 口径只读实测：37 个 `RULE-AI-xx` 文本编号，**包含仅在空缺说明中提到、并非正式规则的 RULE-AI-21**，再加附则/子规则/方法层 3 条；真正以 SoT `##` 标题定义的正式 Rule 是 **36 条**（2026-10-21 新增 RULE-AI-35，2026-11-01 新增 RULE-AI-36），对应本台账 36 个正式规则行，另有 3 个 scope 登记项，共 **39 条真实登记项**。脚本观测 40 不得误称“正式规则 40”或“真实登记项 40”。Rule31 在原 main 台账漏登、Rule32/33 原条目完整保留、Rule34 于 2026-10-17 机械补登、Rule35 于 2026-10-21 CI 红灯修复机械补登、Rule36 于 2026-11-01 机械补登；gaps=3、uncovered=0） |
 | `gaps` | 3（G1/G2/G3） |
 | `uncovered` | 0（无静默跳过） |
 | 观测方法 | M1 provider-view 口令扫描 / M2 hydration kind 计数 / M3 条款对齐矩阵 / M4 A-G 静态快照 |
@@ -114,6 +114,8 @@
 | RULE-AI-33 | service_control generation 冲突即事实——冲突回执直接重试、显式带代（SoT 2026-10-14） | 在库未注入 | 2026-10-14 终审组合实施同步登记（非漏登，SoT 规则三十三）：模型侧调用纪律条款——generation 冲突回执即当前事实，直接以回执 current 重试（存活 owner ≤一 poll；死 worker 由 reaper 按 30s/120s/2100s 分档回收），不等待/不询问；首选显式 expected_generation=最新 status 观察值；等待中旧 action 不构成重试前置；A 方案（publish 时全量 supersede 非终态 action）rejected 留档于条款第 4 条。程序角色=程序侧已实现（等待循环 stale 检测 + reaper accepted 覆盖，同一变更集），规则只管模型侧。 |
 | RULE-AI-34 | 分支收口合并闸——分支 Goal 完成必经专门合并审查并入 main（SoT 2026-10-17） | 在库未注入 | 用户指示 2026-10-17 新增（SoT docs/ai_rules.md L560）：分支 Goal 完成必经 merge-review-gate 专门子代理审查后并入 main，防分支工作白做；程序承载=skills/merge-review-gate 任务书与回执通道（main b184edf9c）。〔2026-10-17 F 批集成分支机械补登：RULE-AI-34 加入会话未同步台账，登记缺口非本任务引入；存在性按 scripts/rule_presence_audit.py 实测，与既有规则行同档〕 |
 | RULE-AI-35 | 门槛/护栏类变更的验收硬性要求——宣称“生效”前必须实测“应拦输入”（SoT 2026-10-21） | 在库未注入 | EVO-20261021-031db968（2026-10-21 人工批准）新增：拦截判据/阻断清单/正则/阈值等门槛护栏类变更，宣称“已生效”前必须构造应拦输入实测拦截，未实测只可称“代码已提交”；程序承载=execute_command/review_host_admission 工具契约提示（68d117dac/f68fcb0d2）。〔2026-10-21 CI 红灯修复机械补登：RULE-AI-35 入库会话未同步台账，登记缺口非本任务引入；存在性按 scripts/rule_presence_audit.py 实测（records=39），与既有规则行同档〕 |
+
+| RULE-AI-36 | 命令闸推荐姿势——一次性脚本先落盘再执行（SoT 2026-11-01） | 在库未注入 | 2026-11-01 用户指示新增（SoT docs/ai_rules.md L600）：一次性脚本/多行 shell 一律「先落盘、再执行」，不用 here-doc 喂解释器、不用管道直连解释器、不以引号拼装或 bash -c 套壳绕过；引号字面量属数据不参与结构判定（EVO-20261101-366cf6cd），不可判定时 fail-closed 给 reason_code=unverifiable_quoted_data；确需被拦形态走 escalation_request 人工审批；判据变更按 RULE-AI-35 实测应拦输入。程序承载=execute_command 灾难命令硬阻断判据 + 细则 docs/PLAYBOOK-20261101-command-gate-postures.md。〔2026-11-01 机械补登：新增规则会话未同步台账，登记缺口非本条引入；存在性按 SoT 正式标题实测〕 |
 
 > RULE-AI-22 同时出现在 §2.2（B3 子缺口：discover→hydrate 触发时机）与本节（主条款设计性零注入），二者不冲突：本特性只补"触发时机"子语义，不改主条款。
 

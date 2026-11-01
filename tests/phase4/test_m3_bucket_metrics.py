@@ -31,7 +31,7 @@ from tests.phase4.test_m0_scenarios import (
     _wait_tool_started,
 )
 
-M3_DIR = Path(os.path.abspath(os.environ.get("PHASE4_M3_REPORT_DIR", "reports/phase4/m3")))
+M3_DIR = Path(os.path.abspath(os.environ.get("PHASE4_M3_REPORT_DIR", "data/phase4/m3")))
 M3_DIR.mkdir(parents=True, exist_ok=True)
 
 

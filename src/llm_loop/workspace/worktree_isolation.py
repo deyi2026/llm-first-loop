@@ -55,6 +55,63 @@ class WorktreeLease:
     created_at: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True)
+class OrphanEntry:
+    """一棵被计入上限的非活跃孤儿树（只描述观测，不含删除决定）。"""
+
+    path: str
+    kind: str  # "dirty_nonactive" | "nometa_stale" | "remove_failed"
+    quiet_s: float = 0.0  # 距最近写入（无 meta 时用目录 mtime）的静默秒数
+    child_id: str = ""
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    """孤儿清扫结果。counted 与旧 `(kept_dirty, pruned)` 双值语义完全一致，
+    另带明细供上限回执直接列出可清理候选。"""
+
+    dirty: int = 0
+    nometa_stale: int = 0
+    pruned: int = 0
+    entries: tuple[OrphanEntry, ...] = ()
+
+    @property
+    def counted(self) -> int:
+        return self.dirty + self.nometa_stale
+
+    def __iter__(self):  # 兼容既有 `kept, pruned = _sweep_orphans(...)` 解包
+        yield self.counted
+        yield self.pruned
+
+
+_MAX_LISTED_ORPHANS = 8
+
+
+def _worktree_limit_message(sweep: SweepResult, max_kept_dirty: int) -> str:
+    """上限回执：说清计数口径 + 直接列出可清理候选，避免只报一个数字。"""
+    head = (
+        f"非活跃孤儿树 {sweep.counted} >= 上限 {max_kept_dirty}"
+        f"（脏保留 {sweep.dirty} + 无 meta 过期 {sweep.nometa_stale}）"
+    )
+    if not sweep.entries:
+        return (
+            f"{head}；请人工核对 .worktrees/ 下 {WORKTREE_PREFIX}*"
+            "（最近仍在写入的树可能是运行中的 child，不要删除）后重试"
+        )
+    lines = [
+        head,
+        "可清理候选（均静默超过 TTL，本机制不会自动删；先确认无对应 child 在运行）：",
+    ]
+    for entry in sweep.entries[:_MAX_LISTED_ORPHANS]:
+        who = entry.child_id or "meta 缺失"
+        lines.append(f"  - [{entry.kind}] {entry.path}（{who}，静默 {int(entry.quiet_s)}s）")
+    hidden = len(sweep.entries) - _MAX_LISTED_ORPHANS
+    if hidden > 0:
+        lines.append(f"  …另有 {hidden} 棵未列出（同目录同判据）")
+    lines.append("清理：git worktree remove --force <path>（残留目录用 git worktree prune）")
+    return "\n".join(lines)
+
+
 @dataclass
 class ReleaseReport:
     state: str  # "removed" | "kept_dirty" | "remove_failed" | "missing"
@@ -163,8 +220,8 @@ def _tree_has_changes(worktree_dir: Path) -> bool:
     return bool(out)
 
 
-def _sweep_orphans(parent_root: Path, *, ttl_s: float) -> tuple[int, int]:
-    """回收孤儿树。返回 (kept_dirty, pruned)。
+def _sweep_orphans(parent_root: Path, *, ttl_s: float) -> SweepResult:
+    """回收孤儿树。返回 SweepResult（counted/pruned 与旧双值解包一致 + 明细）。
 
     - 仅"过期且干净"的树可删；
     - 脏树保守保留。上限只统计"非活跃"树（最近写入早于 TTL 或 meta 缺失且目录
@@ -174,12 +231,13 @@ def _sweep_orphans(parent_root: Path, *, ttl_s: float) -> tuple[int, int]:
       前崩溃）计入 orphaned_nometa 报警值，不删不计数上限外的动作；
     - 无 meta 且不匹配本机制命名前缀的目录是既有 drill 树等非托管目录，不碰。
     """
-    kept_dirty = 0
+    dirty = 0
     pruned = 0
     nometa_stale = 0
+    entries: list[OrphanEntry] = []
     base = parent_root / ".worktrees"
     if not base.is_dir():
-        return 0, 0
+        return SweepResult()
     now = time.time()
     for entry in sorted(base.iterdir()):
         if not entry.is_dir() or not entry.name.startswith(WORKTREE_PREFIX):
@@ -194,11 +252,24 @@ def _sweep_orphans(parent_root: Path, *, ttl_s: float) -> tuple[int, int]:
                 mtime = 0
             if now - mtime >= ttl_s:
                 nometa_stale += 1
+                entries.append(
+                    OrphanEntry(path=str(entry), kind="nometa_stale", quiet_s=now - mtime)
+                )
             continue
-        active = now - _latest_touch(entry) < ttl_s
+        quiet = now - _latest_touch(entry)
+        active = quiet < ttl_s
+        child_id = str(meta.get("child_id") or "")
         if _tree_has_changes(entry):
             if not active:
-                kept_dirty += 1
+                dirty += 1
+                entries.append(
+                    OrphanEntry(
+                        path=str(entry),
+                        kind="dirty_nonactive",
+                        quiet_s=quiet,
+                        child_id=child_id,
+                    )
+                )
             continue
         created_at = float(meta.get("created_at", 0) or 0)
         if now - created_at < ttl_s:
@@ -208,8 +279,18 @@ def _sweep_orphans(parent_root: Path, *, ttl_s: float) -> tuple[int, int]:
             pruned += 1
         else:
             # remove 失败（如锁）按脏保留，交给下次或人工。
-            kept_dirty += 1
-    return kept_dirty + nometa_stale, pruned
+            dirty += 1
+            entries.append(
+                OrphanEntry(
+                    path=str(entry),
+                    kind="remove_failed",
+                    quiet_s=quiet,
+                    child_id=child_id,
+                )
+            )
+    return SweepResult(
+        dirty=dirty, nometa_stale=nometa_stale, pruned=pruned, entries=tuple(entries)
+    )
 
 
 def prepare_worktree(
@@ -243,13 +324,10 @@ def prepare_worktree(
             "DISK_LOW", f"可用 {free // (1024 * 1024)}MB < 阈值 {min_free_bytes // (1024 * 1024)}MB"
         )
 
-    kept_dirty, _pruned = _sweep_orphans(parent, ttl_s=orphan_ttl_s)
-    if kept_dirty >= max_kept_dirty:
+    sweep = _sweep_orphans(parent, ttl_s=orphan_ttl_s)
+    if sweep.counted >= max_kept_dirty:
         raise WorktreeIsolationError(
-            "WORKTREE_LIMIT",
-            f"非活跃孤儿树 {kept_dirty} >= 上限 {max_kept_dirty}；请人工核对 "
-            f".worktrees/ 下 lfl-child-*（注意：最近仍在写入的树可能是运行中的 "
-            f"child，不要删除）后重试",
+            "WORKTREE_LIMIT", _worktree_limit_message(sweep, max_kept_dirty)
         )
 
     # 保障 .worktrees/ 不进父提交（gitlink 污染）：若未被既有 ignore 覆盖，

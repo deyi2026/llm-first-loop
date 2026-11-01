@@ -54,6 +54,36 @@ def _sot_rule_refs(sot: str) -> list[str]:
     return sorted(set(_RULE_HEADING_RE.findall(sot)), key=lambda r: int(r.split("-")[-1]))
 
 
+def _sot_heading_line(rule_id: str, sot: str) -> str | None:
+    m = re.search(rf"^#+\s*(.+?{re.escape(rule_id)}[^\n]*)$", sot, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def _ledger_row_hint(rule_id: str, sot: str) -> str:
+    """从 SoT 标题推导可粘贴的台账行（只读；不改台账，只为红态给出下一步）。"""
+    heading = _sot_heading_line(rule_id, sot)
+    if heading is None:
+        return f"| {rule_id} | （SoT 未找到 {rule_id} 的正式标题，请人工确认） | 在库未注入 | <登记说明> |"
+    date = re.search(r"(\d{4}-\d{2}-\d{2})", heading)
+    title = re.sub(rf"[（(]\s*{re.escape(rule_id)}\s*[^）)]*[）)]", "", heading)
+    title = re.sub(r"^规则[一二三四五六七八九十百零]+[:：]\s*", "", title).strip(" —-　")
+    if not title:
+        title = heading
+    suffix = f"（SoT {date.group(1)}）" if date else "（SoT 日期待补）"
+    return f"| {rule_id} | {title}{suffix} | 在库未注入 | <登记说明：为何进 SoT、程序承载在哪> |"
+
+
+def _missing_ledger_rows_message(missing: list[str], sot: str) -> str:
+    lines = [
+        f"规则台账漏登 {len(missing)} 条 SoT 正式规则：{'、'.join(missing)}",
+        f"台账文件：{_LEDGER_MD}",
+        "可直接粘贴的行（标题由 SoT 标题推导，登记说明按事实补齐后重跑本测试）：",
+    ]
+    lines.extend(_ledger_row_hint(rule_id, sot) for rule_id in missing)
+    lines.append("另：台账 §0 的 `records` 行数值需与 scripts/rule_presence_audit.py 实测同步。")
+    return "\n".join(lines)
+
+
 def _tool_names(call: dict) -> list[str]:
     out: list[str] = []
     for item in call.get("tools") or []:
@@ -363,9 +393,13 @@ def test_ledger_covers_all_sot_rules() -> None:
     ledger = _LEDGER_MD.read_text(encoding="utf-8")
     # Inventory header and narrative references are not formal Rule rows.
     rows = re.findall(r"^\| (RULE-AI-\d{2}) \|", ledger, re.MULTILINE)
-    assert len(rows) == len(set(rows))
+    duplicated = sorted({ref for ref in rows if rows.count(ref) > 1})
+    assert duplicated == [], (
+        f"台账同一 RULE-AI 编号出现多行：{'、'.join(duplicated)}\n"
+        f"台账文件：{_LEDGER_MD}\n请删除多余行（编号只能有一行正式登记）后重跑。"
+    )
     missing = [ref for ref in refs if ref not in rows]
-    assert missing == []
+    assert missing == [], _missing_ledger_rows_message(missing, sot)
     report = _load_audit().inventory(generated_at="2026-10-15")
     inventory_header = re.search(r"^\| `records` \| (\d+)", ledger, re.MULTILINE)
     assert inventory_header is not None
@@ -384,3 +418,37 @@ def test_sot_rule_refs_ignore_body_mentions_and_gap_notes() -> None:
         )
     )
     assert refs == ["RULE-AI-20", "RULE-AI-22"]
+
+
+def test_ledger_row_hint_derives_pasteable_row_from_sot_heading() -> None:
+    sot = "## 规则三十六：账本漏行要给行文本（RULE-AI-36，用户指示 2026-11-01）\n正文。\n"
+    row = _ledger_row_hint("RULE-AI-36", sot)
+    assert row.startswith("| RULE-AI-36 | ")
+    assert "账本漏行要给行文本" in row
+    assert "（SoT 2026-11-01）" in row
+    assert row.endswith("|")
+    # 生成的文本必须是台账解析器真能认到的正式行（而不是只能给人看的散文）。
+    assert re.match(r"^\| RULE-AI-\d{2} \|", row)
+
+
+def test_ledger_row_hint_flags_rule_without_sot_heading() -> None:
+    row = _ledger_row_hint("RULE-AI-99", "## 规则一：无关（RULE-AI-01）\n")
+    assert "RULE-AI-99" in row
+    assert "人工确认" in row
+
+
+def test_missing_ledger_rows_message_names_rule_and_row_text() -> None:
+    sot = "\n".join(
+        [
+            "## 规则三十五：门槛变更要实测应拦输入（RULE-AI-35，2026-10-21）",
+            "## 规则三十六：账本漏行要给行文本（RULE-AI-36，用户指示 2026-11-01）",
+        ]
+    )
+    message = _missing_ledger_rows_message(["RULE-AI-36"], sot)
+    assert "漏登 1 条" in message
+    assert "RULE-AI-36" in message
+    assert str(_LEDGER_MD) in message
+    assert "| RULE-AI-36 | 账本漏行要给行文本（SoT 2026-11-01） | 在库未注入 |" in message
+    # 已登记规则不应被当成漏行提示重新给出。
+    assert "| RULE-AI-35 |" not in message
+    assert "`records`" in message

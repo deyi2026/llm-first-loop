@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import re
+
 from llm_loop.core.message import ToolResultStatus
+from llm_loop.runtime import service_control as sc
 from llm_loop.runtime.service_control import ManagedServiceDeploymentStore
 from llm_loop.tools.builtin.service_control import ServiceControlTool
 from llm_loop.tools.registry import ToolRegistry
@@ -86,3 +90,79 @@ def test_update_needs_target_rejects_before_any_store_write(tmp_path) -> None:
     assert spawned == []
     assert store.read() is None
     assert list(store.actions_dir.glob("*.json")) == []
+
+
+def _publish_deployment(tmp_path) -> None:
+    store = sc.ManagedServiceDeploymentStore(tmp_path / "data")
+    store.compare_and_swap(
+        sc.ManagedServiceDeployment(
+            schema=sc._DEPLOYMENT_SCHEMA,
+            deployment_id="dep-1",
+            generation=1,
+            git_head="a" * 40,
+            code_root=str(tmp_path),
+            runtime_root=str(tmp_path),
+            webui_artifact_sha256="b" * 64,
+        ),
+        expected_generation=0,
+    )
+
+
+def _deferred_payload(content: str) -> dict:
+    m = re.search(r"deferred_effect=(\{.*?\}) ——", content)
+    assert m, f"回执缺少 deferred_effect JSON：{content}"
+    return json.loads(m.group(1))
+
+
+def test_restart_web_receipt_marks_effect_deferred_until_requester_exit(tmp_path) -> None:
+    """[web restart 受理即当作已生效] → [FAIL]：回执必须写成"会话结束后生效"的待办。
+
+    web 进程只能在 requester run 收尾后重启，长期会话里这最后一跳最容易被误读成
+    "本轮已完成"，所以把未生效事实写进回执而不靠人记。
+    """
+    _publish_deployment(tmp_path)
+    tool, store, spawned = _tool(tmp_path)
+
+    result = tool.execute(action="restart", target="web", expected_generation=1)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    assert len(spawned) == 1
+    # 回执自称"机器可读"，就必须真能 json.loads（P2 审查意见）。
+    assert _deferred_payload(result.content) == {
+        "condition": "requester_run_end",
+        "effective_after_session_end": True,
+        "pending": True,
+        "services": ["web"],
+    }
+    assert "尚未生效" in result.content
+
+
+def test_restart_all_receipt_defers_every_target_not_just_web(tmp_path) -> None:
+    """[target=all 回执只写 web 未生效] → [FAIL]：闸门挂在动作上，四个服务都在等。"""
+    _publish_deployment(tmp_path)
+    tool, _store, spawned = _tool(tmp_path)
+
+    result = tool.execute(action="restart", target="all", expected_generation=1)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    assert len(spawned) == 1
+    assert _deferred_payload(result.content)["services"] == [
+        "web",
+        "feishu",
+        "wecom",
+        "learning",
+    ]
+    assert "web/feishu/wecom/learning" in result.content
+
+
+def test_restart_non_web_receipt_has_no_deferred_marker(tmp_path) -> None:
+    """[非 web 目标回执也挂"待会话结束"标记] → [FAIL]：learning/feishu/wecom 不该被误读。"""
+    _publish_deployment(tmp_path)
+    tool, _store, spawned = _tool(tmp_path)
+
+    result = tool.execute(action="restart", target="learning", expected_generation=1)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    assert len(spawned) == 1
+    assert "deferred_effect" not in result.content
+    assert "effective_after_session_end" not in result.content

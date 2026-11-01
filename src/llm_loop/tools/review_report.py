@@ -26,6 +26,14 @@ Scope and boundaries (deliberate)
 * Parsed counts/findings are a projection for humans and models only. They are
   never fed back into the qualification decision, so a sloppy parse cannot
   widen a gate.
+* Why NOT "just allow one bounded followup to the reviewer" (proposed
+  2026-11-01, declined): followup content is parent-authored text, and the
+  gate parses the child's *final answer* at poll time -- so a steerable
+  reviewer makes the verdict a function of the parent's argument, not of the
+  artifact. runner.py already encodes that invariant ("review_isolated 禁止
+  父会话 steer" / "审查资格子代理禁用 followup"). Read-back of findings was
+  the real need, and it is met by persisting the report (this module); a
+  narrow re-review with a new frozen artifact is the supported way to re-ask.
 """
 
 from __future__ import annotations

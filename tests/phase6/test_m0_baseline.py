@@ -5,7 +5,7 @@
   final_gate 收割，t_effect ≈ 剩余窗口（窗口形态，非检查点形态）。
 - B2：阻塞窗口内 Stop → 取消仅在 chat 返回后被观察（stop_effect ≈ 剩余窗口）。
 
-产出 reports/phase6/m0/BASELINE.json + baseline.md。
+产出 data/phase6/m0/（gitignore 覆盖；tracked 版本见同名 reports/ 历史快照）BASELINE.json + baseline.md。
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from tests.phase4.test_m0_scenarios import (  # noqa: E402
 N = 5
 WINDOW_S = 1.2      # 模拟 web 同步 chat 阻塞窗口（deepseek transport turn_timeout 上界 120s 的缩小形态）
 INJECT_AT_S = 0.3   # 窗口内注入时刻
-REPORT = Path(__file__).resolve().parents[2] / "reports" / "phase6" / "m0"
+REPORT = Path(__file__).resolve().parents[2] / "data" / "phase6" / "m0"
 
 
 def _pct(xs: list[float], q: float) -> float:

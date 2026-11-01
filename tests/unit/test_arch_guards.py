@@ -30,6 +30,8 @@ import json
 import re
 import subprocess
 import sys
+import warnings
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -1000,6 +1002,59 @@ def test_cycle_detector_synthetic(tmp_path):
     assert _find_runtime_cycles(_build_import_graph(tmp_path / "tc" / "src")) == set(), "TC 边应被排除"
 
 
+def _net_zero_transfers(
+    head_sec: dict[str, int], cur_sec: dict[str, int]
+) -> tuple[dict[str, int], dict[str, int]]:
+    """按源文件汇总 function_lines 的「释放量」/「增长量」（同文件净零置换口径）。
+
+    释放 = **同键下调**；增长 = 同键上调。两条边界是刻意的：
+
+    - 键被删除**不算**释放：删除键的合法性由规则 a（死键）/ d（未登记）单独裁，
+      若允许「删键换算预算」，同一文件里删掉一个 150 行键就能凭空抬高别的函数
+      150 行，置换就退化成增长通道。
+    - **只按文件归集、绝不跨文件合并**：净零置换的语义是「同一文件内等价重构
+      把行从一个函数搬到另一个函数」，跨文件共享预算池等于凭空造预算。
+
+    两端都仍受规则 a 与规则 f（登记 == 实测）约束，因此预算池不能靠改基线
+    凭空产生，只能靠同文件别的函数实测收缩来支付。
+    """
+    released: dict[str, int] = defaultdict(int)
+    growth: dict[str, int] = defaultdict(int)
+
+    def _file(key: str) -> str:
+        return key.split("::", 1)[0]
+
+    for key, head_v in head_sec.items():
+        cur_v = cur_sec.get(key)
+        if cur_v is not None and cur_v < head_v:
+            released[_file(key)] += head_v - cur_v
+    for key, cur_v in cur_sec.items():
+        head_v = head_sec.get(key)
+        if head_v is not None and cur_v > head_v:
+            growth[_file(key)] += cur_v - head_v
+    return released, growth
+
+
+def _net_zero_transfer_notes(
+    head_base: dict[str, Any], cur_base: dict[str, Any]
+) -> list[str]:
+    """净零置换的留痕（不红，但必须在 CI 日志里可见，便于提交评审看见搬运行数）。"""
+    head_sec = (
+        head_base.get("functions", {})
+        if head_base.get("_meta", {}).get("schema", 1) < 2
+        else head_base.get("function_lines", {})
+    )
+    cur_sec = dict(cur_base.get("function_lines", {}))
+    cur_sec.update(cur_base.get("legacy_super_functions", {}))
+    released, growth = _net_zero_transfers(head_sec, cur_sec)
+    return [
+        f"  [净零置换] {f}: 释放 {released.get(f, 0)} 行 / 增长 {growth[f]} 行"
+        f"（净 {growth[f] - released.get(f, 0):+d}）"
+        for f in sorted(set(growth) | set(released))
+        if growth.get(f, 0) and growth[f] <= released.get(f, 0)
+    ]
+
+
 def _numeric_raises(head_base: dict[str, Any], cur_base: dict[str, Any]) -> list[str]:
     """纯函数：基线数值节同键上调检测（v1/v2 兼容）——棘轮测试与篡改负例单测直调。
 
@@ -1007,21 +1062,36 @@ def _numeric_raises(head_base: dict[str, Any], cur_base: dict[str, Any]) -> list
     - v1（迁移视图）：functions ∩（function_lines ∪ legacy）同键上调；
       known_cycles 在 v1 无登记，初登记属 bootstrap 非增长
     - 下降与新键放行（收紧/登记 = 一次可见的 guard(r9) 提交）
+    - **function_lines 同文件净零置换放行**（2026-11-01，§「同值置换」）：
+      同一文件内 增长量 ≤ 释放量 时，个别函数上调不视为棘轮增长——等价重构
+      把行从本文件一个函数搬到另一个函数，净预算未增。跨文件、净增 >0、
+      legacy_super_functions 与 local_imports 一律不放宽（逐键仍须只降不升）。
     """
     problems: list[str] = []
     head_schema = head_base.get("_meta", {}).get("schema", 1)
     if head_schema < 2:
         merged = dict(cur_base.get("function_lines", {}))
         merged.update(cur_base.get("legacy_super_functions", {}))
+        released, growth = _net_zero_transfers(head_base.get("functions", {}), merged)
         for k, head_v in head_base.get("functions", {}).items():
             if k in merged and merged[k] > head_v:
+                f = k.split("::", 1)[0]
+                if growth.get(f, 0) <= released.get(f, 0):
+                    continue
                 problems.append(f"  {k}: {head_v} → {merged[k]}（+{merged[k] - head_v}）")
         return problems
     for sec in NUMERIC_SECTIONS:
         head_sec = head_base.get(sec, {})
         cur_sec = cur_base.get(sec, {})
+        released: dict[str, int] = {}
+        growth: dict[str, int] = {}
+        if sec == "function_lines":
+            released, growth = _net_zero_transfers(head_sec, cur_sec)
         for k, head_v in head_sec.items():
             if k in cur_sec and cur_sec[k] > head_v:
+                f = k.split("::", 1)[0]
+                if sec == "function_lines" and growth.get(f, 0) <= released.get(f, 0):
+                    continue
                 problems.append(f"  {sec}[{k}]: {head_v} → {cur_sec[k]}（+{cur_sec[k] - head_v}）")
     head_cycles = len(head_base.get("known_cycles", []))
     cur_cycles = len(cur_base.get("known_cycles", []))
@@ -1073,6 +1143,92 @@ def test_baseline_tamper_negative_cases():
     assert any("105" in r for r in _numeric_raises(v1_head, v1_check))
 
 
+def test_net_zero_substitution_within_same_file_is_allowed():
+    """[同一文件内等价重构：一个函数上调 N 行 + 另一个下调 ≥N 行] → [PASS]。
+
+    修的是硬化副作用：`poll` 撞上登记值 124 后无法再加行，只能靠新增模块绕，
+    结果比原函数更难读。放行条件被压到最窄——只 function_lines、只同文件、
+    只净额 ≤ 0。
+    """
+    head = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/a.py::poll": 124, "src/a.py::helper": 200},
+    }
+    cur = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/a.py::poll": 128, "src/a.py::helper": 196},
+    }
+    assert _numeric_raises(head, cur) == []
+    notes = _net_zero_transfer_notes(head, cur)
+    assert any("src/a.py" in n and "释放 4" in n and "增长 4" in n for n in notes), notes
+
+
+def test_net_zero_substitution_refuses_cross_file_pooling():
+    """[A.py 上调 + B.py 下调] → [FAIL]：预算池不跨文件，否则等于凭空造预算。"""
+    head = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/a.py::poll": 124, "src/b.py::other": 200},
+    }
+    cur = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/a.py::poll": 128, "src/b.py::other": 196},
+    }
+    joined = "\n".join(_numeric_raises(head, cur))
+    assert "function_lines[src/a.py::poll]" in joined and "128" in joined
+    assert _net_zero_transfer_notes(head, cur) == []
+
+
+def test_net_zero_substitution_does_not_treat_deleted_key_as_budget():
+    """[同文件删掉一个登记键 + 抬高另一个函数] → [FAIL]：删键不换算预算。
+
+    否则「删掉 150 行键 + 抬高别的函数 150 行」会被当成净零置换。
+    """
+    head = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/a.py::poll": 124, "src/a.py::gone": 150},
+    }
+    cur = {"_meta": {"schema": 2}, "function_lines": {"src/a.py::poll": 128}}
+    joined = "\n".join(_numeric_raises(head, cur))
+    assert "function_lines[src/a.py::poll]" in joined and "128" in joined
+
+
+def test_net_zero_substitution_refuses_net_growth():
+    """[同文件上调 5 行、只下调 3 行（净 +2）] → [FAIL]，逐键仍须列出。"""
+    head = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/a.py::poll": 124, "src/a.py::helper": 200},
+    }
+    cur = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/a.py::poll": 129, "src/a.py::helper": 197},
+    }
+    joined = "\n".join(_numeric_raises(head, cur))
+    assert "function_lines[src/a.py::poll]" in joined and "129" in joined
+
+
+def test_net_zero_substitution_does_not_relax_legacy_super_functions():
+    """[legacy 段（>300 行）同文件一升一降] → [FAIL]：超长函数必须逐个变小。"""
+    head = {
+        "_meta": {"schema": 2},
+        "legacy_super_functions": {"src/y.py::g": 700, "src/y.py::h": 500},
+    }
+    cur = {
+        "_meta": {"schema": 2},
+        "legacy_super_functions": {"src/y.py::g": 710, "src/y.py::h": 490},
+    }
+    joined = "\n".join(_numeric_raises(head, cur))
+    assert "legacy_super_functions[src/y.py::g]" in joined and "710" in joined
+
+
+def test_net_zero_substitution_migration_view_is_file_scoped():
+    """v1 迁移视图同样按文件归集；跨文件换取仍红。"""
+    v1_head = {"functions": {"src/a.py::f": 100, "src/a.py::g": 150}}
+    same_file = {"function_lines": {"src/a.py::f": 104, "src/a.py::g": 146}}
+    assert _numeric_raises(v1_head, same_file) == []
+    cross_file = {"function_lines": {"src/a.py::f": 104, "src/b.py::g": 146}}
+    assert any("104" in r for r in _numeric_raises(v1_head, cross_file))
+
+
 def _load_head_baseline() -> dict[str, Any] | None:
     """读基线 JSON 的 git HEAD 版本；未提交/不可解析 → None（调用方 skip）。
 
@@ -1101,7 +1257,17 @@ def test_baseline_ratchet_not_raised():
         rel = BASELINE_PATH.relative_to(ROOT).as_posix()
         pytest.skip(f"基线文件尚未提交到 git（{rel}），提交后棘轮生效")
 
-    problems = _numeric_raises(head_base, _load_baseline())
+    cur_base = _load_baseline()
+    problems = _numeric_raises(head_base, cur_base)
+    # 净零置换是「放行但留痕」：pytest 默认 capture 掉 print（-q 下看不见），
+    # 走 warning 才会出现在 warnings summary 里，评审才真能看到搬运行数。
+    transfers = _net_zero_transfer_notes(head_base, cur_base)
+    if transfers:
+        warnings.warn(
+            "同文件净零置换（放行但留痕，请评审这部分搬运行数）：\n" + "\n".join(transfers),
+            pytest.PytestWarning,
+            stacklevel=1,
+        )
     assert not problems, (
         "基线被上调（棘轮只允许下降）。如为有意放宽，请走 exemptions（reason + deadline），"
         "不要直接改基线值：\n" + "\n".join(problems)

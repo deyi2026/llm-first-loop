@@ -35,7 +35,7 @@ from tests.phase4.test_m0_scenarios import (
 REPO_DIR = None
 
 M2_REPORT_DIR = Path(
-    os.environ.get("PHASE4_M2_REPORT_DIR", "reports/phase4/m2")
+    os.environ.get("PHASE4_M2_REPORT_DIR", "data/phase4/m2")
 )
 M2_REPORT_DIR = Path(os.path.abspath(M2_REPORT_DIR))
 M2_REPORT_DIR.mkdir(parents=True, exist_ok=True)
