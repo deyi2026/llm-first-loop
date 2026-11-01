@@ -547,3 +547,29 @@ items:
 `PYTHONPATH` 在本机被钉在 `<repo>/.releases/<sha>/src`，因此**裸解释器 `import llm_loop` 读到的是 release 快照**；而 pytest 因 `pyproject.toml` 的 `pythonpath=["src"]`（相对 rootdir）测的是当前树。
 
 → 影响 E4：环境指纹只记"解释器路径 + 版本"**不足以**判定"这次测的是哪棵树"，必须追加 `source=<module origin>`。这也是 D3 brief 里的 W5。
+
+### 13.4 本轮落地清单（2026-11-01）
+
+| 提交 | 内容 | 验证 |
+|---|---|---|
+| `2f538f58b` | L1–L4 恢复 + 审查 5 条 P1 修复 | 定向 159 passed |
+| `7723a5aa8` | 本设计 v1 + D3 立项说明 + E2 调查 | 文档 |
+| `5ed8bf875` | P0-E4 环境预检 + 指纹 + reportlab 跳过 | 系统 3.14 → 单条诊断 EXIT=10；`.venv` → 30 passed + header |
+| `0c3ba0e96` | P0-E1 消费端 + 收口门抽函数 + 棘轮登记 | 17 新测 + 定向 188 passed |
+
+**E1 的真实数据验收**（不是夹具）：
+
+```
+bash scripts/restore_prebackup.sh --check --dir /tmp/lfl-prebackup4-20261101-113144
+→ exit=4, derived=true, tracked_state=already_applied, 列出待恢复 untracked，自动跳过 AppleDouble `._*`
+bash scripts/restore_prebackup.sh --check --dir /etc
+→ exit=2, reason_code=path_outside_fence（围栏真实生效）
+```
+
+**本轮最有力的证据是它自己发生的**：11:31:44 推送管线第 4 次执行"清场"，把正在进行的 E1/E4 产物（含已改好的 `tests/conftest.py`）整体 stash 掉，工作树瞬时回到干净态。我从 `stash@{0}` 恢复后才继续。这就是 §1 说的问题，不是假想。
+
+**未闭合项（如实记录）**：
+
+- `tests/unit/test_arch_guards.py` 仍红，5 条全在本次未触碰的文件：`experiences/store.py::record_use`（148→149）、`introspection/settlement.py::_submit_one`（147→152）、`tools/review_host_admission.py` 的 `_source_snapshot`（173→222）、`poll`（124 未登记）、`start`（190→192）。属另外在飞工作线的既有漂移；**没有**为了变绿而放宽基线。
+- E1 的 `--check` 对"已应用"判定依赖 `git apply --reverse --check`，在部分 hunk 已提交的仓库里可能判成 `partial`（本次真实运行是 `already_applied`，未覆盖该分支）。
+- §11 P1 里"消费端拿到 LATEST.json"的前提仍不成立（管线不在本仓库，D1 裁决只约束授权主体）。
