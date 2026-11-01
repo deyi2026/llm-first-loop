@@ -6,11 +6,11 @@ solution: 推送前先 `git remote -v` 确认目标 remote 名；本仓库真仓
 evidence: "git remote -v 回执：origin=https://github.com/deyi2026/llm-first-loop-legacy.git，lfl=https://github.com/deyi2026/llm-first-loop.git；ls-remote origin refs/heads/fleet-reclaim-fence-20260919 返回空（exit 0）；git push lfl 回执 5e4b2a74d..2a6817613 快进 exit 0"
 tags: [git, remote, push, mirror, worktree]
 source: {}
-status: active
+status: invalid
 record_kind: experience
 verification_state: verified
 created_at: "2026-09-19T15:56:44.137036+08:00"
-updated_at: "2026-09-19T15:56:44.137036+08:00"
+updated_at: "2026-11-01T12:16:14.309445+08:00"
 supersedes: [EXPERIENCE-20260917-llm-first-loop-mirror-origin-legacy-lfl, EXPERIENCE-20260911-llm-first-loop-mirror-2026-09-11]
 ---
 
