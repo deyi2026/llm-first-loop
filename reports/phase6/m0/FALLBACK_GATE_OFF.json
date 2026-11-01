@@ -9,13 +9,13 @@
   "b1_sync_interject_final_gate": {
     "n": 5,
     "t_effect_samples": [
-      859.2,
-      861.6,
-      863.8,
-      867.6,
-      852.7
+      864.0,
+      854.5,
+      856.8,
+      858.2,
+      864.0
     ],
-    "p50": 861.6,
+    "p50": 858.2,
     "consumed_via": [
       "final_gate",
       "final_gate",
@@ -27,13 +27,13 @@
   "b2_sync_stop_window": {
     "n": 5,
     "stop_effect_samples": [
-      925.0,
       904.1,
-      905.6,
-      911.2,
-      918.6
+      909.4,
+      923.1,
+      927.6,
+      916.5
     ],
-    "p50": 911.2,
+    "p50": 916.5,
     "final_event_types": [
       "done",
       "done",
@@ -42,5 +42,5 @@
       "done"
     ]
   },
-  "generated_at": "2026-10-30T13:47:24+0800"
+  "generated_at": "2026-11-01T20:11:26+0800"
 }
