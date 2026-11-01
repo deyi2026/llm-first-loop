@@ -9,7 +9,6 @@
 全部 fail-open（记录失败不阻断业务）。
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -17,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ..core import guard_code as _guard_code
 from llm_loop.timekeeping import system_local_now
 
 logger = logging.getLogger(__name__)
@@ -29,38 +29,14 @@ def _source_workspace() -> Path | None:
 
 
 # ── 守卫代码时效（守卫层专用，见模块 docstring ④）─────────────────────────
-# 声明的相对路径以 llm_loop 包根为基准；新增守卫模块必须同步追加，
-# tests/unit/test_guard_code_freshness.py 断言每条都存在，防止改名后静默失配。
-GUARD_MODULES: tuple[str, ...] = (
-    "core/command_scope_guard.py",
-    "tools/safety.py",
-    "security_guard.py",
-    "sealed_paths.py",
-    "net_guard.py",
-)
-
-
-def _package_root() -> Path:
-    """本进程实际加载的 llm_loop 包根（走 release 目录时指向 release 副本）。"""
-    return Path(__file__).resolve().parents[1]
-
-
-def _module_name(rel: str) -> str:
-    stem = rel[:-3] if rel.endswith(".py") else rel
-    return "llm_loop." + stem.replace("/", ".")
-
-
-def guard_code_fingerprint(root: str | Path | None = None) -> dict[str, str]:
-    """守卫模块磁盘指纹 {相对路径: sha256 前 16 位}；文件缺失记 missing，不抛异常."""
-    base = Path(root) if root is not None else _package_root()
-    out: dict[str, str] = {}
-    for rel in GUARD_MODULES:
-        try:
-            out[rel] = hashlib.sha256((base / rel).read_bytes()).hexdigest()[:16]
-        except OSError:
-            out[rel] = "missing"
-    return out
-
+# 原语放 core（runtime 的 manifest/service_control 也要用同一份判据，若放这里会
+# 让 runtime 新增跨 plane 反向依赖，Kernel v1 import ratchet 实测拦截）；本模块
+# 负责"快照 + 判定 + 提示"这层，命名沿用历史 API（测试按此契约）。
+GUARD_MODULES = _guard_code.GUARD_MODULES
+guard_code_fingerprint = _guard_code.guard_code_fingerprint
+_package_root = _guard_code.package_root
+_module_name = _guard_code.module_name
+_repo_root_from = _guard_code.repo_root_from
 
 # import 时刻的快照 = 本进程随后会执行的那份守卫代码（内存里的，不随磁盘变动）。
 # 边界：生产入口在启动时即 import 本模块，故快照≈启动时刻；若同进程内先改守卫
@@ -68,39 +44,23 @@ def guard_code_fingerprint(root: str | Path | None = None) -> dict[str, str]:
 _GUARD_SNAPSHOT: dict[str, str] = guard_code_fingerprint()
 
 
-def _repo_root_from(loaded_pkg: Path) -> Path | None:
-    """从 ``<repo>/.releases/<sha>/src/llm_loop`` 反推 ``<repo>``；非该形态返回 None."""
-    parts = loaded_pkg.parts
-    if ".releases" not in parts:
-        return None
-    idx = parts.index(".releases")
-    if idx == 0:
-        return None
-    return Path(*parts[:idx])
-
-
 def _source_root() -> Path:
     """对照基准：可编辑源码树的 llm_loop 包根.
 
-    顺序：① 由加载路径 ``.releases/<sha>/src/llm_loop`` 反推源码仓根——release 副本
-    自带 .git，git 探测会停在副本里，故用路径结构判定而非 cwd 探测；② 显式
-    LFL_WORKSPACE_ROOT；③ 本进程加载的包根。取第一个真的含守卫模块的候选，
-    都不含则返回包根（由调用方判为不可判定）。
+    顺序：① core 原语按加载路径反推（``<repo>/.releases/<sha>/src/llm_loop`` →
+    ``<repo>/src/llm_loop``，release 副本自带的 .git 会骗过 git 探测，故用路径
+    结构）；② 显式 LFL_WORKSPACE_ROOT；③ 本进程加载的包根。取第一个真的含守卫
+    模块的候选，都不含则返回包根（由调用方判为不可判定）。
     """
-    pkg = _package_root()
-    candidates: list[Path] = []
-    repo = _repo_root_from(pkg)
-    if repo is not None:
-        candidates.append(repo / "src" / "llm_loop")
+    root = _guard_code.repo_source_root()
+    if root is not None:
+        return root
     ws = _source_workspace()
     if ws is not None:
-        candidates.append(ws / "src" / "llm_loop")
-        candidates.append(ws)
-    candidates.append(pkg)
-    for cand in candidates:
-        if (cand / "core" / "command_scope_guard.py").is_file():
-            return cand
-    return pkg
+        for cand in (ws / "src" / "llm_loop", ws):
+            if _guard_code.is_llm_loop_package(cand):
+                return cand
+    return _package_root()
 
 
 def guard_source_root() -> Path | None:
@@ -110,8 +70,7 @@ def guard_source_root() -> Path | None:
     于是恒判 stale——那会把提示本身变成噪音（比没有提示更糟）。
     """
     root = _source_root()
-    return root if (root / "core" / "command_scope_guard.py").is_file() else None
-
+    return root if _guard_code.is_llm_loop_package(root) else None
 
 def guard_code_drift() -> dict:
     """本进程加载的守卫代码 vs 源码树当前守卫代码.

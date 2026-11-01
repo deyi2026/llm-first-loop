@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from llm_loop.core import guard_code as gcd
 from llm_loop.introspection import proc_version
 from llm_loop.introspection.proc_version import (
     GUARD_MODULES,
@@ -202,7 +203,7 @@ def test_manifest_block_carries_all_declared_modules():
 def test_service_control_view_stale_and_layered(tmp_path, monkeypatch):
     """status 视图：stale/current/unknown 三态；stale 只作信息项（不并入动作项）."""
     pkg = _fake_source_tree(tmp_path)
-    monkeypatch.setattr(proc_version, "_source_root", lambda: pkg)
+    monkeypatch.setattr(gcd, "repo_source_root", lambda: pkg)
     recorded = guard_code_fingerprint(pkg)
 
     assert _guard_code_drift_view(recorded)["status"] == "current"
@@ -251,7 +252,7 @@ def test_process_versions_guard_state_null_when_source_unavailable(tmp_path, mon
 
 
 def test_service_control_view_unknown_when_source_root_undeterminable(tmp_path, monkeypatch):
-    monkeypatch.setattr(proc_version, "_source_root", lambda: tmp_path)
+    monkeypatch.setattr(gcd, "repo_source_root", lambda: None)
     view = _guard_code_drift_view({rel: "0" * 16 for rel in GUARD_MODULES})
     assert view["status"] == "unknown"
     assert view["reason"] == "source_root_has_no_llm_loop_package"
@@ -267,3 +268,37 @@ def test_repo_root_from_release_layout():
     loaded = repo / ".releases" / "ce205a4" / "src" / "llm_loop"
     assert proc_version._repo_root_from(loaded) == repo
     assert proc_version._repo_root_from(repo / "src" / "llm_loop") is None
+
+
+def test_compose_guard_code_freshness_per_service(tmp_path, monkeypatch):
+    """status 小节：按服务读 manifest 指纹，三分态 + 不可读如实标注."""
+    from llm_loop.runtime.service_control import (
+        _MANAGED_SERVICES,
+        compose_guard_code_freshness,
+    )
+
+    class _StubStore:
+        def __init__(self, runtime_dir):
+            self.runtime_dir = runtime_dir
+
+    pkg = _fake_source_tree(tmp_path / "ws")
+    monkeypatch.setattr(gcd, "repo_source_root", lambda: pkg)
+    recorded = guard_code_fingerprint(pkg)
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+
+    services = list(_MANAGED_SERVICES)
+    # 第 1 个：指纹一致 → current；第 2 个：旧指纹 → stale；其余：manifest 缺失
+    for idx, svc in enumerate(services[:2]):
+        payload = recorded if idx == 0 else {rel: "0" * 16 for rel in GUARD_MODULES}
+        (runtime_dir / f"runtime_manifest.{svc}.json").write_text(
+            json.dumps({"pid": 1, "guard_code": payload}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    freshness = compose_guard_code_freshness(_StubStore(runtime_dir))
+    assert freshness[services[0]]["status"] == "current"
+    assert freshness[services[1]]["status"] == "stale"
+    for svc in services[2:]:
+        assert freshness[svc]["status"] == "unknown"
+        assert freshness[svc]["reason"] == "manifest_unreadable"

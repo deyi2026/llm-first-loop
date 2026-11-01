@@ -214,7 +214,7 @@ def _guard_code_block() -> dict[str, str]:
     要不要重启"。fail-open：helper 不可用/异常返回空 dict，status 侧记为未知。
     """
     try:
-        from ..introspection.proc_version import guard_code_fingerprint
+        from ..core.guard_code import guard_code_fingerprint
 
         return guard_code_fingerprint()
     except Exception:  # noqa: BLE001 — 身份事实缺失时留空，不伪造

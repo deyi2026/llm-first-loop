@@ -24,6 +24,7 @@ from llm_loop.runtime.service_control import (
     build_deployment,
     compose_convergence_view,
     compose_service_identity_view,
+    compose_service_identity_with_guard_freshness,
     record_model_override,
     release_admission_barrier,
     spawn_service_control_worker,
@@ -304,7 +305,7 @@ class ServiceControlTool:
                 body = {"action": receipt.to_dict()}
             else:
                 try:
-                    view = compose_service_identity_view(self.store)
+                    view = compose_service_identity_with_guard_freshness(self.store)
                 except (OSError, ValueError, json.JSONDecodeError) as exc:
                     return self._failure(f"[service_control status failed] {type(exc).__name__}: {exc}")
                 body = {

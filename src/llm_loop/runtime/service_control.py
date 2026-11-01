@@ -1702,17 +1702,17 @@ def _guard_code_drift_view(recorded: Any) -> dict[str, Any]:
     if not isinstance(recorded, dict) or not recorded:
         return {"status": "unknown", "reason": "manifest_missing_guard_code"}
     try:
-        from llm_loop.introspection.proc_version import (
+        from llm_loop.core.guard_code import (
             GUARD_MODULES,
             guard_code_fingerprint,
-            guard_source_root,
+            repo_source_root,
         )
     except Exception:  # noqa: BLE001 — 不可得即未知，不编造
         return {"status": "unknown", "reason": "helper_unavailable"}
     # 基准 = 可编辑源码树（由加载路径 .releases/<sha>/ 反推）。不能拿 manifest 的
     # workspace_root：它在 release 部署下就是 release 目录本身，比对恒等 → 永远
     # 报"一致"，正是要防的那种静默误判。
-    pkg = guard_source_root()
+    pkg = repo_source_root()
     if pkg is None:
         # 源码树里没有本包 → 不可判定，不把"全部 missing"误报成 stale
         return {"status": "unknown", "reason": "source_root_has_no_llm_loop_package"}
@@ -1728,6 +1728,45 @@ def _guard_code_drift_view(recorded: Any) -> dict[str, Any]:
             "publish + restart 后才生效；未自动计入 restart_required（信息项，非动作项）"
         ),
     }
+
+
+def compose_guard_code_freshness(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
+    """各服务守卫代码时效（stale / current / unknown）——只读小节.
+
+    独立成节而不是塞进 ``compose_service_identity_view`` 的 ``live``：那个函数
+    已在 function-lines 棘轮上限（零增长），新增字段走独立函数；同时刻意不并入
+    ``restart_required``——那是动作项，本小节是信息项（口径分层）。
+    """
+    out: dict[str, Any] = {}
+    for service in _MANAGED_SERVICES:
+        manifest_path = store.runtime_dir / f"runtime_manifest.{service}.json"
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            out[service] = {"status": "unknown", "reason": "manifest_unreadable"}
+            continue
+        out[service] = _guard_code_drift_view(raw.get("guard_code"))
+    return out
+
+
+def compose_service_identity_with_guard_freshness(
+    store: ManagedServiceDeploymentStore,
+) -> dict[str, Any]:
+    """identity view + 每服务 live 里挂 ``guard_code_drift``（不新增顶层键）.
+
+    为什么要包一层：``compose_service_identity_view`` 与工具的 ``execute`` 都已在
+    function-lines 棘轮上限（零增长）。挂在既有的 ``live`` 上，调用方只换被调函数
+    名、换行数不变，就不必为一行信息去动两个封顶函数的行数。
+    """
+    view = compose_service_identity_view(store)
+    freshness = compose_guard_code_freshness(store)
+    for service, entry in (view.get("services") or {}).items():
+        if isinstance(entry, dict) and isinstance(entry.get("live"), dict):
+            entry["live"]["guard_code_drift"] = freshness.get(service) or {
+                "status": "unknown",
+                "reason": "manifest_unreadable",
+            }
+    return view
 
 
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
@@ -1762,10 +1801,6 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                         "config_hash": raw.get("config_hash"),
                         "semantic_scopes": raw.get("semantic_scopes") or {},
                         "semantic_scope_sources": raw.get("semantic_scope_sources") or {},
-                        # 守卫代码时效：本服务启动时加载的守卫 vs 源码树（只读信息项）
-                        "guard_code_drift": _guard_code_drift_view(
-                            raw.get("guard_code")
-                        ),
                     }
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
