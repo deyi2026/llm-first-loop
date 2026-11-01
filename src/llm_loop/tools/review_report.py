@@ -30,8 +30,10 @@ Scope and boundaries (deliberate)
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -50,7 +52,7 @@ _MAX_FINDING_CHARS = 280
 _FINDING_RE = re.compile(
     r"(?m)^[ \t>]*[-*+]?[ \t]*\**[ \t]*\[?P([012])\]?[ \t]*\**[ \t]*[:：\-–—.)\]]*[ \t]*(.+?)[ \t]*$"
 )
-_COUNT_RE = re.compile(r"(?m)^P0=(\d+) P1=(\d+) P2=(\d+)[ \t]*$")
+_COUNT_RE = re.compile(r"(?m)^[ \t>]*P0=(\d+) P1=(\d+) P2=(\d+)[ \t]*$")
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -59,8 +61,40 @@ def data_root() -> Path:
     for var in ("LFL_DATA_DIR", "DATA_DIR"):
         value = (os.environ.get(var) or "").strip()
         if value:
-            return Path(value)
-    return Path(workspace_base()) / "data"
+            return Path(value).expanduser().absolute()
+    return Path(workspace_base()).absolute() / "data"
+
+
+def _write_atomic(target: Path, text: str) -> None:
+    """Create the report without ever following a pre-planted symlink.
+
+    Canon in this repo is escalation.py / safety.py: O_CREAT|O_EXCL|O_NOFOLLOW,
+    0o600. Both halves matter here -- the reviewer's text is untrusted (it can
+    quote the audited artifact) and the staging name would otherwise be
+    predictable, so a planted symlink could redirect a whole verdict into an
+    arbitrary same-user file. Exclusivity also keeps two concurrent polls on the
+    same child from interleaving into one torn report.
+    """
+    staging = target.with_name(
+        target.name + "." + str(os.getpid()) + "." + uuid.uuid4().hex[:8] + ".tmp"
+    )
+    # Flags inline (not via a variable) on purpose: the durability-surface scanner
+    # recognises the os.open write primitive by reading args[1], so this is also
+    # the shape that keeps review_report.py a *registered* write candidate.
+    fd = os.open(
+        staging,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    handle = os.fdopen(fd, "w", encoding="utf-8")
+    try:
+        with handle:
+            handle.write(text)
+        staging.replace(target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            staging.unlink()
+        raise
 
 
 def report_dir() -> Path:
@@ -193,34 +227,39 @@ def persist_report(
 ) -> dict[str, Any]:
     """Write the verdict report and return the receipt fragment. Never raises."""
     text = answer or ""
-    counts = parse_counts(text)
-    parsed = extract_findings(text)
-    findings = parsed["findings"]
-    _, truncated = _bounded_body(text)
+    counts: dict[str, int | None] = {"P0": None, "P1": None, "P2": None}
+    findings: dict[str, list[str]] = {"P0": [], "P1": [], "P2": []}
+    dropped = 0
+    truncated = False
     path = ""
     error = ""
     try:
+        # Everything that can fail sits inside the guard: this helper's promise is
+        # "never raises into poll", not "only disk errors are tolerated".
+        counts = parse_counts(text)
+        parsed = extract_findings(text)
+        findings = parsed["findings"]
+        dropped = parsed["finding_lines_dropped"]
+        _, truncated = _bounded_body(text)
         target_dir = report_dir()
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / (_safe_name(child_id) + "-" + _safe_name(kind) + ".md")
-        rendered = _render(
-            child_id=child_id, kind=kind, qualification=qualification,
-            reason=reason, candidate_sha256=candidate_sha256, answer=text,
-            counts=counts, findings=findings,
-            dropped=parsed["finding_lines_dropped"], truncated=truncated,
+        _write_atomic(
+            target,
+            _render(
+                child_id=child_id, kind=kind, qualification=qualification,
+                reason=reason, candidate_sha256=candidate_sha256, answer=text,
+                counts=counts, findings=findings,
+                dropped=dropped, truncated=truncated,
+            ),
         )
-        # Replace, don't truncate-in-place: a reader (the model, right after the
-        # receipt) must never observe a half-written report.
-        staging = target.with_name(target.name + ".tmp")
-        staging.write_text(rendered, encoding="utf-8")
-        staging.replace(target)
         path = str(target)
-    except (OSError, ValueError) as exc:  # a report is an aid, never a gate
+    except Exception as exc:  # noqa: BLE001 - a report is an aid, never a gate
         error = type(exc).__name__ + ": " + str(exc)
     fragment: dict[str, Any] = {
         "review_report_path": path,
         "review_findings": findings,
-        "review_finding_lines_dropped": parsed["finding_lines_dropped"],
+        "review_finding_lines_dropped": dropped,
         "review_counts": counts,
         "review_answer_chars": len(text),
         "review_answer_truncated": truncated,

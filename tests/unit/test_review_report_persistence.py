@@ -101,10 +101,47 @@ def test_counts_absent_when_reviewer_emits_none() -> None:
 
 
 def test_report_body_is_bounded_head_and_tail() -> None:
-    body, truncated = rr._bounded_body("a" * 250_000)
+    # Distinguishable ends: a uniform filler cannot tell head from tail.
+    body, truncated = rr._bounded_body("HEAD" + "a" * 250_000 + "TAIL")
     assert truncated is True
     assert len(body) < 250_000
+    assert body.startswith("HEAD")
+    assert body.endswith("TAIL")
     assert "chars elided by the host report writer" in body
+
+
+def test_markdown_quoted_count_line_is_not_a_finding() -> None:
+    parsed = rr.extract_findings("> P0=0 P1=1 P2=1\n")
+    assert parsed["findings"] == {"P0": [], "P1": [], "P2": []}
+    assert rr.parse_counts("> P0=0 P1=1 P2=1\n") == {"P0": 0, "P1": 1, "P2": 1}
+
+
+def test_planted_staging_symlink_cannot_redirect_the_report(tmp_path: Path, monkeypatch) -> None:
+    data = _data_dir(tmp_path, monkeypatch)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("original", encoding="utf-8")
+    monkeypatch.setattr(rr.uuid, "uuid4", lambda: SimpleNamespace(hex="deadbeefcafe"))
+
+    report_dir = data / "review_admission"
+    report_dir.mkdir(parents=True)
+    target = report_dir / "child-1-full_test.md"
+    staging = target.with_name(
+        target.name + "." + str(rr.os.getpid()) + ".deadbeef.tmp"
+    )
+    staging.symlink_to(victim)
+
+    receipt = rr.rejected_receipt("child-1", kind="full_test", reason="r", answer=LONG_ANSWER)
+    assert receipt["review_report_path"] == ""
+    assert "FileExistsError" in receipt["review_report_error"]
+    assert victim.read_text(encoding="utf-8") == "original"
+    assert not target.exists()
+
+
+def test_report_is_owner_only(tmp_path: Path, monkeypatch) -> None:
+    _data_dir(tmp_path, monkeypatch)
+    receipt = rr.rejected_receipt("child-1", kind="full_test", reason="r", answer=LONG_ANSWER)
+    mode = Path(receipt["review_report_path"]).stat().st_mode & 0o777
+    assert mode == 0o600
 
 
 def test_child_id_cannot_escape_report_dir(tmp_path: Path, monkeypatch) -> None:
