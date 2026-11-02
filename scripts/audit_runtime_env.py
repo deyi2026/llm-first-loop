@@ -577,7 +577,12 @@ def apply_registration(
     at: str,
 ) -> dict[str, Any]:
     """生成新基线：实测值 + 保留 baseline_context + 追加一条 registration_log。"""
-    updated: dict[str, Any] = dict(current)
+    # 2026-11-02 独立审查 P1-1：原实现 dict(current) 重建基线，baseline 里
+    # 其它顶层键（人写的备注、schema 版本、外部工具附加的元数据…）会在第一次
+    # --update-baseline 时被静默丢弃——棘轮基线的可读性与审计线索随更新蒸发。
+    # 改为「以历史基线为底，实测数据覆盖同名键」，未知键原样保留。
+    updated: dict[str, Any] = dict(baseline)
+    updated.update(current)
     if "baseline_context" in baseline:
         updated["baseline_context"] = baseline["baseline_context"]
     log = list(baseline.get("registration_log", []))

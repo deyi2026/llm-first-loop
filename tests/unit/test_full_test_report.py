@@ -108,3 +108,15 @@ def test_run_pytest_executes_even_when_caller_supplies_junitxml(tmp_path):
     assert code == 0
     assert report == given
     assert holder is None
+
+
+def test_misconfigured_junitxml_exits_2(tmp_path: Path, capsys) -> None:
+    """审查 P2-2（2026-11-02）：配置错误不能与「新增红」共用退出码 1。"""
+    import pytest as _pytest  # noqa: PLC0415
+
+    from scripts.full_test_report import main
+
+    with _pytest.raises(SystemExit) as excinfo:
+        main(["--", "true", "--junitxml", "report.xml"])
+    assert excinfo.value.code == 2
+    assert "--junitxml=PATH" in capsys.readouterr().err

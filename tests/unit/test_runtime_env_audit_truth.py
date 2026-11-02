@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.audit_runtime_env import build_inventory, scan_tree
+from scripts.audit_runtime_env import apply_registration, build_inventory, scan_tree
 
 
 def _scan(tmp_path: Path, source: str):
@@ -119,3 +119,40 @@ ENABLED = _env_flag("FEISHU_WS_ENABLED", True)
     assert inventory["module_import_helper_access_count"] == 1
     assert inventory["module_import_access_count"] == 1
     assert inventory["module_import_signature_counts"]
+
+
+def test_apply_registration_preserves_unknown_baseline_keys() -> None:
+    """审查 P1-1（2026-11-02）：--update-baseline 不得吞掉 baseline 里的其它顶层键。
+
+    原实现用 dict(current) 重建基线，人写的备注/schema 版本/外部工具元数据会在
+    第一次更新时静默消失。这里锁住「历史键保留、实测键覆盖、日志追加」三条。
+    """
+    baseline = {
+        "keys": [{"name": "OLD"}],
+        "baseline_context": {"owner": "ops"},
+        "registration_log": [],
+        "human_note": "基线由 ops 维护，勿删",
+        "schema_version": 7,
+    }
+    current = {"keys": [{"name": "WEB_X"}]}
+    report = {
+        "relaxations": [],
+        "cap_changes": [],
+        "added_signatures": [],
+        "added_helper_signatures": [],
+        "added_module_import_signatures": [],
+        "added_keys": [],
+    }
+    updated = apply_registration(
+        current,
+        baseline,
+        report=report,
+        reason="t",
+        parent_commit="abc123",
+        at="2026-11-02T00:00:00+08:00",
+    )
+    assert updated["keys"] == current["keys"]
+    assert updated["human_note"] == baseline["human_note"]
+    assert updated["schema_version"] == 7
+    assert updated["baseline_context"] == {"owner": "ops"}
+    assert len(updated["registration_log"]) == 1

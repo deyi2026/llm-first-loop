@@ -97,7 +97,13 @@ def run_pytest(argv: list[str]) -> tuple[int, Path, tempfile.TemporaryDirectory 
                 report = Path(arg.split("=", 1)[1])
                 completed = subprocess.run(argv, check=False)
                 return completed.returncode, report, None
-        raise SystemExit("[known-reds] --junitxml 需要写成 --junitxml=PATH 形式才能对账")
+        # 2026-11-02 独立审查 P2-2：配置错误与「发现新增红」不能共用退出码 1，
+        # 否则 CI 包装器无法区分"对账脚本被配错"与"真的有新增红"。这里统一用 2。
+        print(
+            "[known-reds] --junitxml 需要写成 --junitxml=PATH 形式才能对账",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     holder = tempfile.TemporaryDirectory(prefix="lfl-full-test-")
     report = Path(holder.name) / "report.xml"
     completed = subprocess.run([*argv, f"--junitxml={report}"], check=False)
