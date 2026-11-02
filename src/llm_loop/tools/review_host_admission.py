@@ -1129,7 +1129,7 @@ def _frozen_material(
     return material
 
 
-# EVO-20261102-c7f1a4e2: full_test material projection.
+# full_test material projection — 依据 docs/EVO-20261102-full-test-material-projection.md
 #
 # The full_test artifact answers ONE question — "did the whole suite really run
 # against this tree, and is the reported result honest?" — so its material is

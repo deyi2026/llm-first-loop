@@ -660,7 +660,7 @@ def test_committed_runtime_monster_diff_is_truncated_not_deadlocked(tmp_path: Pa
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert allowed["accepted"] is True
     assert runner.started == 1
-    # EVO-20261102-c7f1a4e2: full_test no longer inlines a committed runtime
+    # full_test no longer inlines a committed runtime
     # report — the whole non-test-surface backlog is disclosed as a manifest
     # entry plus one digest. The deadlock property (never refuse a 302KB
     # committed monster) must still hold, and the file must still be NAMED so a
@@ -3188,7 +3188,7 @@ def test_out_of_scope_binding_tracks_head_moves(tmp_path: Path) -> None:
 
 
 def test_test_surface_predicate_covers_the_proof_surface() -> None:
-    """EVO-20261102-c7f1a4e2: 决定「一次测试跑得算不算数」的文件必须给正文。"""
+    """决定「一次测试跑得算不算数」的文件必须给正文（见 docs/EVO-20261102-*.md）。"""
     import llm_loop.tools.review_host_admission as rha
 
     for name in (
