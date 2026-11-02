@@ -741,3 +741,59 @@ def test_worker_reverifies_dirty_target_before_old_script_execution(tmp_path: Pa
     assert terminal is not None and terminal.status == "failed"
     assert "dirty" in terminal.detail
     assert not marker.exists(), "worker must fail before executing a drifted pre-P0-A script"
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-02：publish 回执必须自证"上一代有没有生效过"
+#
+# 实测教训：先把未定稿代码 publish 成 N（desired 推进了，但没有任何服务重启
+# 到它），继续改代码，再 publish 成 N+1 —— N 一天都没生效过，那次 publish 是
+# 纯空转。回执当时只说"restart_required 列出的服务逐个重启"，读起来像"已经
+# 部署好了"。这里锁住披露口径：ever_live 必须由**服务实际 stable_generation**
+# 派生，而不是由"publish 成功"推断。
+# ---------------------------------------------------------------------------
+
+
+def _convergence(*stable_generations: int | None) -> dict[str, object]:
+    services = {
+        name: {"stable_generation": gen, "lag_generations": None, "converged": False}
+        for name, gen in zip(
+            ("web", "feishu", "wecom", "learning"), stable_generations, strict=True
+        )
+    }
+    return {
+        "desired_generation": 99,
+        "services": services,
+        "lagging": list(services),
+        "read_only": True,
+    }
+
+
+def test_publish_receipt_flags_superseded_generation_that_never_went_live(
+    tmp_path: Path,
+) -> None:
+    previous = _deployment(tmp_path, generation=370)
+
+    body = ServiceControlTool._supersedes_block(previous, _convergence(369, 369, 368, 369))
+
+    assert body["generation"] == 370
+    assert body["ever_live"] is False, "没有任何服务跑到 370，就必须如实说它没生效过"
+    assert "空转" in str(body["note"])
+
+
+def test_publish_receipt_marks_superseded_generation_that_did_go_live(
+    tmp_path: Path,
+) -> None:
+    previous = _deployment(tmp_path, generation=370)
+    body = ServiceControlTool._supersedes_block(previous, _convergence(370, 369, 369, 370))
+    assert body["ever_live"] is True
+
+
+def test_publish_receipt_reads_stable_generation_not_publish_success(
+    tmp_path: Path,
+) -> None:
+    """收敛快照读不到任何证据（stable 全 None）时不得据"publish 成功"自证生效。"""
+    previous = _deployment(tmp_path, generation=370)
+    body = ServiceControlTool._supersedes_block(previous, _convergence(None, None, None, None))
+    assert body["ever_live"] is False
+

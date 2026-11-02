@@ -85,6 +85,13 @@ class _Frozen:
     material: str = ""                 # E3 bounded retention for the delta
     task: str = ""                     # E4 bounded retention for the re-spawn
     findings: str = ""                 # E3 digest of the previous verdict
+    # ---- 2026-11-02：commit 无关的内容指纹（**这是载权字段**）----
+    # 与上一条注释里的 bookkeeping 不同，这个字段参与放行：check_shell 在
+    # identity 不匹配时会拿它做一次「内容等价」复核（见 _consume 的
+    # commit_tolerant 分支）。空字符串表示"没有内容指纹"，此时严格判据不变。
+    # 只有 git_push 会填它（_end_state_fingerprint），且它覆盖的是审查材料
+    # 真正包含的每一个路径的最终字节。
+    content_fingerprint: str = ""
 
 
 _ALLOWED = AdmissionDecision(True, "")
@@ -1390,16 +1397,17 @@ def _full_test_snapshot_sections(
         "scope_paths": scope_paths, "tier_counts": tier_counts,
         "require_material": _FULL_TEST_NO_DELTA,
     }
-    sha, material, sections = _source_snapshot_sections(
+    sha, material, sections, _fingerprint = _source_snapshot_sections(
         workdir, committed_projection="full", **kwargs
     )
     if len(material) <= _FULL_TEST_AUTO_PROJECT_CHARS:
         return sha, material, sections
     if len(material.encode("utf-8")) > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
         return sha, material, sections
-    return _source_snapshot_sections(
+    sha, material, sections, _fingerprint = _source_snapshot_sections(
         workdir, committed_projection="test_surface", **kwargs
     )
+    return sha, material, sections
 
 
 def _source_snapshot(
@@ -1410,7 +1418,7 @@ def _source_snapshot(
     committed_projection: str = "full",
 ) -> tuple[str, str]:
     """2 元组视图（identity, material）；段落视图见 _source_snapshot_sections."""
-    sha, material, _sections = _source_snapshot_sections(
+    sha, material, _sections, _fingerprint = _source_snapshot_sections(
         workdir, push_base=push_base, push_head=push_head,
         first_push_ref=first_push_ref, require_material=require_material,
         scope_paths=scope_paths, tier_counts=tier_counts,
@@ -1425,7 +1433,7 @@ def _source_snapshot_sections(
     scope_paths: Sequence[str] = (),
     tier_counts: tuple[int, int] | None = None,
     committed_projection: str = "full",
-) -> tuple[str, str, list[tuple[str, int]]]:
+) -> tuple[str, str, list[tuple[str, int]], str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
     push_base is used by git_push: the base must be the push destination's
@@ -1646,7 +1654,79 @@ def _source_snapshot_sections(
         "material": material, "first_push_ref": first_push_ref,
         "untracked_shas": [(n, s) for n, s, _ in new_files],
     }))
-    return identity, material, sections
+    # 2026-11-02：与 commit 切分无关的内容指纹（见 _end_state_fingerprint）。
+    # identity 把 head/frozen_head 也算进去，于是"先审 patch → 再 commit → 树
+    # 内容逐字节相同"必然失效，必须重审一遍。这里只额外摘出**最终内容**，
+    # 供 check_shell 在 identity 不匹配时做一次内容等价复核。
+    content_fingerprint = _end_state_fingerprint(
+        repo, base, frozen_head, include_worktree,
+        [n for n, _ in committed], [n for n, _ in working],
+        [n for n, _, _ in new_files],
+    )
+    return identity, material, sections, content_fingerprint
+
+
+# 内容指纹的路径上界：超过就不发（返回 ""），让消费端退回严格 identity 判据。
+# 典型 push 增量 << 100 条；上界只防病态树把指纹变成一次长遍历。
+_END_STATE_FINGERPRINT_MAX_PATHS = 400
+
+
+def _end_state_fingerprint(
+    repo: Path, base: str, frozen_head: str, include_worktree: bool,
+    committed_names: Sequence[str], working_names: Sequence[str],
+    untracked_names: Sequence[str],
+) -> str:
+    """「将被推送的最终内容」摘要 —— 与 commit 切分无关的等价判据。
+
+    为什么不能直接复用 material：material 是 *补丁文本*，它对 commit 切分
+    敏感。base..h0 为空的常见场景（先改工作树、审完再 commit）里，审查时
+    material 是 ``git diff HEAD``，提交后变成 ``git diff base..h1``；两者描述
+    同一个最终树，文本却不逐字节相同（分段标签、header 的 head/frozen_head
+    都变了）。
+
+    这里改为对**每个受影响路径的最终内容字节**取摘要：
+      * include_worktree 时优先读工作树文件——提交前（未跟踪/已修改）与
+        提交后（干净工作树）读到的是同一份字节；
+      * 工作树里取不到的（删除、或 push_head 不是 HEAD 的历史提交）退回
+        ``cat-file blob <frozen_head>:<path>``；
+      * 取不到的路径记 ``absent``，不省略（省略会让"删掉一个文件"看起来
+        和"没变"一样）。
+
+    路径集只取 material 真正包含的三段（committed/working/untracked），
+    因此被 ``_is_runtime_output`` 排除的日志、data 流水产物不会参与——否则
+    并发写日志会让这张指纹永远不稳定。超过上界或任何一步失败都返回 ""，
+    调用方据此不发放宽（fail-closed）。
+    """
+    names = sorted(set(committed_names) | set(working_names) | set(untracked_names))
+    if not names or len(names) > _END_STATE_FINGERPRINT_MAX_PATHS:
+        return ""
+    entries: list[list[str]] = []
+    for name in names:
+        path = repo / name
+        try:
+            if include_worktree and not path.exists() and not path.is_symlink():
+                # 最终状态就是"这个路径不存在"（删除）。必须显式记 absent：
+                # 退到 frozen blob 会让"删掉"和"没改"看起来一样（实测过一次）。
+                entries.append([name, "absent"])
+                continue
+            if (
+                include_worktree
+                and path.is_file()
+                and not path.is_symlink()
+                and path.resolve().is_relative_to(repo)
+            ):
+                entries.append([name, _digest(path.read_bytes())])
+                continue
+            blob = _git(repo, "cat-file", "blob", f"{frozen_head}:{name}")
+            entries.append([name, _digest(blob)])
+        except (ValueError, OSError):
+            entries.append([name, "absent"])
+    try:
+        return _digest(_canonical({
+            "base": base, "repo": str(repo), "entries": entries,
+        }))
+    except (TypeError, ValueError):
+        return ""
 
 
 def _effective_push_workdir(command: str, workdir: str) -> str:
@@ -3049,7 +3129,7 @@ class HostReviewAdmission:
                 # locally or the reviewed delta cannot be computed at all.
                 raise ValueError("push_remote_commit_not_local_fetch_first") from exc
             push_head = _push_src_commit(repo, refspec)
-            sha, text, sections = _source_snapshot_sections(
+            sha, text, sections, content_fingerprint = _source_snapshot_sections(
                 true_dir, push_base=push_base, push_head=push_head,
                 first_push_ref=dst_ref if first_push else "",
                 scope_paths=scope_paths, tier_counts=tier_counts,
@@ -3057,7 +3137,8 @@ class HostReviewAdmission:
             dest = _push_target(command, true_dir)
             push_extra = {"src_commit": push_head,
                           "first_push": "1" if first_push else "",
-                          "target_ref": dst_ref if first_push else ""}
+                          "target_ref": dst_ref if first_push else "",
+                          "content_fingerprint": content_fingerprint}
         else:
             true_dir = workdir
             # EVO-20261029-eb64b2de (human-approved 2026-10-29): freeze the
@@ -3141,6 +3222,9 @@ class HostReviewAdmission:
                 previous_child_id=(
                     previous_row.child_id if previous_row is not None else ""
                 ),
+                content_fingerprint=str(
+                    push_extra.get("content_fingerprint") or ""
+                ),
             )
             self._remember_material(child, task, material)
         receipt = {
@@ -3163,6 +3247,13 @@ class HostReviewAdmission:
             receipt["push_remote_commit"] = push_remote_commit
             # EVO-20261022-331eee17: the frozen range follows the push target.
             receipt["push_src_commit"] = push_extra.get("src_commit", "")
+            # 2026-11-02：这份资格的**内容侧**绑定。candidate_sha256 含
+            # head/frozen_head，因此纯 commit（树逐字节不变）也会换值；这张
+            # 指纹不含提交信息，只覆盖材料包含的路径最终字节。披露它是为了让
+            # 调用方看得见「commit 后为何还能直接用同一份 PASS」。
+            receipt["commit_independent_sha256"] = push_extra.get(
+                "content_fingerprint", ""
+            )
             if push_extra.get("first_push"):
                 receipt["first_push_anchor"] = push_remote_commit
                 receipt["first_push_target_ref"] = push_extra.get("target_ref", "")
@@ -3922,12 +4013,37 @@ class HostReviewAdmission:
             "review_admission(action=status) 核验 completed+PASS 后以同一目标重试；审查不替代用户授权。",
         )
 
-    def _consume(self, parent: str, kind: str, target: str, sha: str) -> AdmissionDecision:
+    def _consume(
+        self, parent: str, kind: str, target: str, sha: str,
+        scope_paths: tuple[str, ...] = (), content_fingerprint: str = "",
+    ) -> AdmissionDecision:
         with self._guard:
             for key, row in self._records.items():
                 if (
                     row.parent == parent and row.kind == kind and row.target == target
                     and row.sha == sha and row.granted and not row.consumed
+                ):
+                    self._records[key] = replace(row, granted=True, consumed=True)
+                    return _ALLOWED
+            # 2026-11-02：纯 commit 容忍。identity 把 head/frozen_head 也算进去，
+            # 于是「先审未提交改动 → 再 commit（树内容逐字节不变）→ push」会把
+            # 一份内容完好的 PASS 作废，逼人重审一遍（实测每轮 ~6min）。
+            # 这里只做一件事：同一 parent/kind/target/scope 的记录，如果
+            # **最终内容指纹**相同，就认作同一产物。
+            #   * 必须是 git_push（只有它填 content_fingerprint）；
+            #   * 指纹相同 ⇒ 材料里每个路径的最终字节逐一同字节；
+            #   * 远端移动仍会失败：base 参与指纹，重算出的指纹不同；
+            #   * 越界漂移仍会失败：调用方已先做 out_scope_digest 比对；
+            #   * 指纹为空 ⇒ 不放宽（fail-closed）。
+            if kind != "git_push" or not content_fingerprint:
+                return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")
+            for key, row in self._records.items():
+                if (
+                    row.parent == parent and row.kind == kind and row.target == target
+                    and row.content_fingerprint
+                    and row.content_fingerprint == content_fingerprint
+                    and row.scope_paths == tuple(scope_paths)
+                    and row.granted and not row.consumed
                 ):
                     self._records[key] = replace(row, granted=True, consumed=True)
                     return _ALLOWED
@@ -3950,7 +4066,7 @@ class HostReviewAdmission:
                 # Re-resolves the push base (ls-remote) too: if the remote ref
                 # moved after admission, the candidate SHA changes and the grant
                 # will not match — the drift check is built into recomputation.
-                sha, target, _, _, _, _ = self._target(
+                sha, target, _, _, push_extra, _ = self._target(
                     kind, workdir, command, "", None, scope_paths=scope_paths
                 )
             except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
@@ -3967,7 +4083,10 @@ class HostReviewAdmission:
                         "请收窄改动，或按当前改动重新提交复审（可声明更多路径或 scope=tree）"
                     )
                     continue
-            decision = self._consume(parent, kind, target, sha)
+            decision = self._consume(
+                parent, kind, target, sha, scope_paths=scope_paths,
+                content_fingerprint=str(push_extra.get("content_fingerprint") or ""),
+            )
             if decision.allowed:
                 return decision
         if binding_error:

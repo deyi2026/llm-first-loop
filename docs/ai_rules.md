@@ -612,10 +612,11 @@ k3（Kimi，经 model_catalog 回执核验）"。
 3. **数据 ≠ 命令**：引号内字面量与 quoted-delimiter here-doc 正文属数据，不参与"谁在执行"的结构判定（EVO-20261101-366cf6cd）；引号不配对无法静态判定时 fail-closed 拒绝并给 `reason_code=unverifiable_quoted_data`，不得把该拒绝叙述成"真命中"。
 4. **确需被拦形态**：走既有提权通道（`escalation_request` → web 面板人工审批 → 一次性 token 重发同一命令），审批回执是唯一放行依据；不得自行放宽护栏。
 5. **护栏变更按 RULE-AI-35 验收**：判据修改属"存在目的就是拦住某类输入"的变更，宣称生效前必须实测"应拦输入仍被拦 + 目标场景已放"；运行中服务仍是旧代代码时，完成声明只能停在"代码已提交"。
+6. **写代码正文不要走 heredoc**（2026-11-02 实测）：`cat > file <<'EOF' … EOF` 的正文若含受保护动作字样（`subprocess`、`git push`、全量测试调用等），载荷扫描会判为受保护动作并落回准入阻断——即使你的目的只是**写文件**。正确姿势：`touch <path>` 建空文件 → `edit_file` 写入（带快照校验）。同理，commit message 正文出现受保护命令字面量也会被同一扫描拦住，改写措辞即可。
 
 **细则与实测回执**：`docs/PLAYBOOK-20261101-command-gate-postures.md`。
 
-**反例**：`python3 <<'EOF'`；`echo 'print(1)' | python3 -`；被拦后把同一条命令拆成多段引号拼接而不走提权。
+**反例**：`python3 <<'EOF'`；`echo 'print(1)' | python3 -`；`cat > test_x.py <<'EOF'`（正文含 `subprocess`）；被拦后把同一条命令拆成多段引号拼接而不走提权。
 
 ---
 

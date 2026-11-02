@@ -625,21 +625,31 @@ class ServiceControlTool:
         回执均携带 review 闸提示。
         """
         gate_note = self._review_gate_line()
-        deployment, error = self._publish(
+        deployment, error, previous = self._publish(
             str(kwargs.get("code_root", "") or "").strip(),
             kwargs.get("expected_generation"),
         )
         if error is not None:
             return self._failure(f"{gate_note}\n{error}")
         assert deployment is not None
-        return self._publish_result(deployment, gate_note)
+        return self._publish_result(deployment, gate_note, previous)
 
-    def _publish_result(self, deployment: ManagedServiceDeployment, gate_note: str) -> ToolResult:
+    def _publish_result(
+        self,
+        deployment: ManagedServiceDeployment,
+        gate_note: str,
+        previous: ManagedServiceDeployment | None = None,
+    ) -> ToolResult:
         """publish 成功回执：desired 快照 + 收敛快照 + 可直接执行的 restart 清单。
 
         ``restart_required`` 复用 ``compose_convergence_view`` 的 ``lagging``
         （同一判据：stable_generation != desired_generation），不另立第二套判定；
         收敛快照读取失败时缺省该键，可见性增强不反噬成功回执。
+
+        ``supersedes``（EVO-20261102）：被本代取代的上一 desired，以及它到底
+        有没有在任何一个服务上生效过。没有这一块，中途 publish 会读起来像
+        "已经部署"——实测因此空转了一代（先把未定稿代码 publish 成 N，继续改，
+        再 publish 成 N+1，N 一天都没生效过）。这里只读派生，不新增门禁。
         """
         convergence, restart_required = self._convergence_blocks()
         body: dict[str, object] = {
@@ -657,12 +667,38 @@ class ServiceControlTool:
             body["restart_required"] = restart_required
         if convergence is not None:
             body["convergence"] = convergence
+            if previous is not None:
+                body["supersedes"] = self._supersedes_block(previous, convergence)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=json.dumps(body, ensure_ascii=False, sort_keys=True),
             tool_call_id="",
             tool_name=self.name,
         )
+
+    @staticmethod
+    def _supersedes_block(
+        previous: ManagedServiceDeployment, convergence: dict[str, object]
+    ) -> dict[str, object]:
+        """上一 desired 的去处：它生效过没有？没生效就是这次 publish 前的空转。"""
+        services = convergence.get("services") or {}
+        live_generations = [
+            int(svc["stable_generation"])
+            for svc in services.values()  # type: ignore[union-attr]
+            if isinstance(svc, dict) and isinstance(svc.get("stable_generation"), int)
+        ]
+        ever_live = any(gen >= previous.generation for gen in live_generations)
+        return {
+            "generation": previous.generation,
+            "code_root": previous.code_root,
+            "ever_live": ever_live,
+            "note": (
+                "上一代已在某些服务上生效过，本代取代它的剩余部分"
+                if ever_live
+                else "上一代从未在任何服务上生效就被本代取代 —— 那次 publish "
+                "是空转；若本轮还要继续改代码，建议改完再 publish 一次"
+            ),
+        }
 
     @staticmethod
     def _deferred_gates(receipt: ServiceControlAction) -> tuple[str, ...]:
@@ -722,22 +758,24 @@ class ServiceControlTool:
 
     def _publish(
         self, code_root: str, raw_expected_generation: object
-    ) -> tuple[ManagedServiceDeployment | None, str | None]:
-        """发布新 desired deployment；返回 ``(deployment, error_content)``。
+    ) -> tuple[ManagedServiceDeployment | None, str | None, ManagedServiceDeployment | None]:
+        """发布新 desired deployment；返回 ``(deployment, error_content, previous)``。
 
         这是 publish 与 update 共用的同一套机械边界（干净 git 树 + webui dist
         产物 hash + generation CAS），避免单语义 update 另起一套判据。
+        ``previous`` 是 CAS 之前的 desired（无则 None），只用于回执披露
+        "被取代的上一代有没有生效过"（EVO-20261102），不参与任何判定。
         """
         if not code_root:
-            return None, "[参数错误] 必须提供 code_root（待发布的 git 代码根）"
+            return None, "[参数错误] 必须提供 code_root（待发布的 git 代码根）", None
+        current = self.store.read()
         if raw_expected_generation is None:
-            current = self.store.read()
             expected_generation = current.generation if current is not None else 0
         else:
             try:
                 expected_generation = int(str(raw_expected_generation))
             except ValueError:
-                return None, "[参数错误] expected_generation 必须是整数"
+                return None, "[参数错误] expected_generation 必须是整数", current
         runtime_root = Path(self.store.data_dir).parent
         try:
             deployment = build_deployment(
@@ -754,7 +792,7 @@ class ServiceControlTool:
                     + ", ".join(missing)
                     + f"): {exc}; "
                     + _next_step_text([BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE])
-                )
+                ), current
             # svc_deploy I7：同源追加可执行下一步（复用 I2 映射，禁止另写文案）。
             # 三层决策（CT-2/3，消除文本猜测与裸串）：结构化 kind 直读 →
             # ValueError 类型兜底 → 环境类映射（git 二进制缺失/子进程失败 →
@@ -769,22 +807,24 @@ class ServiceControlTool:
             return None, (
                 f"[service_control publish rejected] binding: {type(exc).__name__}: {exc}; "
                 + _next_step_text([binding_kind])
-            )
+            ), current
         try:
             self.store.compare_and_swap(
                 deployment, expected_generation=expected_generation
             )
         except DeploymentGenerationConflictError as exc:
-            current = self.store.read()
-            current_generation = current.generation if current is not None else 0
+            latest = self.store.read()
+            current_generation = latest.generation if latest is not None else 0
             return None, (
                 f"[service_control publish rejected] generation_conflict(current={current_generation}): "
                 f"{exc}; 可直接以 current 值重试; "
                 + _next_step_text([NEXT_STEP_KIND_GENERATION_CONFLICT])
-            )
+            ), latest
         except ValueError as exc:
-            return None, f"[service_control publish rejected] generation/desired-state: {exc}"
-        return deployment, None
+            return None, (
+                f"[service_control publish rejected] generation/desired-state: {exc}"
+            ), current
+        return deployment, None, current
 
     def _update(self, kwargs: dict) -> ToolResult:
         """L12/L13/L15: 单语义更新——内部编排 publish 的绑定+CAS 与 restart 两阶段.
@@ -823,7 +863,9 @@ class ServiceControlTool:
                 "[参数错误] update restart_target 必须是 web/feishu/wecom/learning/all"
             )
 
-        deployment, error = self._publish(code_root, kwargs.get("expected_generation"))
+        deployment, error, _previous = self._publish(
+            code_root, kwargs.get("expected_generation")
+        )
         if error is not None:
             return self._failure(error)
         if deployment is None:

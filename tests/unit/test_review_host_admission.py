@@ -3295,3 +3295,126 @@ def test_pass_cache_key_includes_out_of_scope_digest() -> None:
     host._remember_pass(*args, "child-2", "digest-B")
     assert host._cached_pass(*args, "digest-B") == "child-2"
     assert host._cached_pass(*args, "digest-A") == "child-1"
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-02：git push 资格的内容寻址 —— 纯 commit 不再作废 PASS
+#
+# candidate_sha256 把 head/frozen_head 也摘进 identity，于是「审未提交改动 →
+# commit（树内容逐字节不变）→ push」会把一份内容完好的 PASS 判为失效，必须先
+# 重审一遍新 HEAD（实测每轮 ~6min）。放宽面由 _end_state_fingerprint 承担。
+#
+# 下面五条锁住它不被滥用的边界，缺一条这个放宽就不成立：
+#   1. 纯 commit（内容不变）后，同一份 PASS 仍可直接用；
+#   2. commit 之后再改内容，必须仍然拒绝；
+#   3. 指纹对 diff base 敏感（远端移动不得被放过）；
+#   4. 指纹算不出来（路径超界）必须 fail-closed；
+#   5. 只有 git_push 有这个面，其它 kind 不得多出放行面。
+# ---------------------------------------------------------------------------
+
+
+def _bare_remote(repo: Path, tmp_path: Path, sha: str) -> Path:
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "-b", "main", "--bare", str(bare)], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(bare)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "push", "-q", "origin", sha + ":refs/heads/main"],
+        check=True,
+    )
+    return bare
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _push_pass(host: HostReviewAdmission, runner: FakeChildRunner, issued: dict) -> None:
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+
+
+def _dirty_push_repo(tmp_path: Path) -> Path:
+    repo = _repo(tmp_path)
+    _bare_remote(repo, tmp_path, _git_out(repo, "rev-parse", "HEAD"))
+    return repo
+
+
+def test_pure_commit_keeps_git_push_grant_alive(tmp_path: Path) -> None:
+    repo = _dirty_push_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert issued["accepted"], issued
+    # 新字段必须是可核验的内容侧绑定，不是空串。
+    assert issued["commit_independent_sha256"]
+    _push_pass(host, runner, issued)
+
+    # 纯 commit：树内容逐字节不变，只是从工作树挪进了提交。
+    _git_out(repo, "add", "example.py")
+    _git_out(repo, "commit", "-qm", "same content")
+    assert _git_out(repo, "status", "--porcelain") == ""
+
+    decision = host.check_shell("author-1", "git push origin main", str(repo))
+    assert decision.allowed, decision.detail
+
+
+def test_content_change_after_commit_is_still_denied(tmp_path: Path) -> None:
+    repo = _dirty_push_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert issued["accepted"], issued
+    _push_pass(host, runner, issued)
+
+    (repo / "example.py").write_text("x = 3\n")   # 提交前又改了：不再是同一内容
+    _git_out(repo, "add", "example.py")
+    _git_out(repo, "commit", "-qm", "different content")
+
+    assert not host.check_shell("author-1", "git push origin main", str(repo)).allowed
+
+
+def test_content_fingerprint_is_base_sensitive(tmp_path: Path) -> None:
+    """远端移动会改 diff base —— 指纹必须跟着变，否则会放过"远端已前进"。"""
+    repo = _repo(tmp_path)
+    base = _git_out(repo, "rev-parse", "HEAD")
+    same_base = rha._end_state_fingerprint(repo, base, base, True, [], ["example.py"], [])
+    moved_base = rha._end_state_fingerprint(repo, "0" * 40, base, True, [], ["example.py"], [])
+    assert same_base and moved_base
+    assert same_base != moved_base
+
+
+def test_content_fingerprint_records_deleted_paths_explicitly(tmp_path: Path) -> None:
+    """删文件不能看起来像"没变"：取不到工作树字节时退到 frozen blob，不省略路径。"""
+    repo = _repo(tmp_path)
+    base = _git_out(repo, "rev-parse", "HEAD")
+    (repo / "example.py").unlink()
+    deleted = rha._end_state_fingerprint(repo, base, base, True, [], ["example.py"], [])
+    present = rha._end_state_fingerprint(repo, base, base, False, [], ["example.py"], [])
+    assert deleted and present
+    assert deleted != present
+
+
+def test_oversized_delta_disables_the_relaxation(tmp_path: Path, monkeypatch) -> None:
+    """指纹算不出来（路径超界）必须 fail-closed：返回空串，消费端退回严格判据。"""
+    repo = _repo(tmp_path)
+    base = _git_out(repo, "rev-parse", "HEAD")
+    monkeypatch.setattr(rha, "_END_STATE_FINGERPRINT_MAX_PATHS", 1)
+    assert rha._end_state_fingerprint(
+        repo, base, base, True, [], ["example.py", "other.py"], []
+    ) == ""
+
+
+def test_full_test_review_carries_no_content_fingerprint(tmp_path: Path) -> None:
+    """放宽只针对 git_push：其它 kind 不得因为本改动多出任何放行面。"""
+    repo = _repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
+    assert issued["accepted"], issued
+    assert "commit_independent_sha256" not in issued
