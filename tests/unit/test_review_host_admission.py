@@ -3468,3 +3468,45 @@ def test_full_test_review_carries_no_content_fingerprint(tmp_path: Path) -> None
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"], issued
     assert "commit_independent_sha256" not in issued
+
+
+def test_relaxation_cannot_combine_with_scoped_grant(tmp_path: Path) -> None:
+    """提交容忍与"受审切片"不可组合 —— 这是它能保持安全的结构原因。
+
+    独立审查 P2 要求锁住「scoped 资格 + 切片外漂移 + 纯 commit」这个组合。
+    实测该组合**不可达**：git_push 不接受 scope=patch（切片 PASS 授权的是整树
+    执行面，而推送无法按切片执行），签发阶段就被拒。于是容忍分支只会作用在
+    整树资格上，切片外漂移比对（check_shell 里排在容忍之前）对它无从绕过。
+    这条测试把这个前提钉住：哪天有人给 git_push 打开切片，这里会先红。
+    """
+    repo = _dirty_push_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start(
+        "author-1", "git_push", workdir=str(repo), command="git push origin main",
+        scope="patch", paths=["example.py"],
+    )
+    assert issued["accepted"] is False
+    assert issued["reason"] == "review_scope_not_applicable_for_git_push"
+
+
+def test_target_tuple_shape_is_pinned(tmp_path: Path) -> None:
+    """``_target`` 的 6 元组形状必须可断言，免得"元数不匹配"只能靠读代码判。
+
+    独立审查两轮报了同一条 P1（check_shell 的 ``_target`` 解包元数），实测该处
+    解包为 6 名、``_target`` 返回 6 项。为避免再靠人眼数下划线，这里直接断言
+    形状：6 项、(4) 位置是 push_extra 字典。若将来有人改元数，先红的是这条。
+    """
+    repo = _dirty_push_repo(tmp_path)
+    result = HostReviewAdmission._target(  # noqa: SLF001 - 形状断言必须打到真函数
+        "git_push", str(repo), "git push origin main", "", None
+    )
+    assert isinstance(result, tuple)
+    assert len(result) == 6, f"_target 返回 {len(result)} 项，调用方按 6 项解包"
+    sha, target, text, push_base, push_extra, sections = result
+    assert sha and target and isinstance(text, str)
+    assert isinstance(push_base, str)
+    assert isinstance(push_extra, dict)
+    assert isinstance(sections, list)
+    assert set(push_extra) >= {"src_commit", "push_content_fingerprint"}

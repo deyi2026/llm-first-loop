@@ -1434,7 +1434,7 @@ def _source_snapshot_sections(
     scope_paths: Sequence[str] = (),
     tier_counts: tuple[int, int] | None = None,
     committed_projection: str = "full",
-) -> tuple[str, str, list[tuple[str, int]], str]:
+) -> tuple[str, str, list[tuple[str, int]], str, str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
     push_base is used by git_push: the base must be the push destination's
@@ -4102,7 +4102,7 @@ class HostReviewAdmission:
                 # Re-resolves the push base (ls-remote) too: if the remote ref
                 # moved after admission, the candidate SHA changes and the grant
                 # will not match — the drift check is built into recomputation.
-                sha, target, _, _, push_extra, _ = self._target(
+                sha, target, _text, _push_base, push_extra, _sections = self._target(
                     kind, workdir, command, "", None, scope_paths=scope_paths
                 )
             except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
