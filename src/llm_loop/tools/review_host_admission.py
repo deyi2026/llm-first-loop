@@ -2734,7 +2734,9 @@ class HostReviewAdmission:
         self._reviewer_fail_audited: set[str] = set()
         # EVO-20261101-9a6be8b1 E5: identical (parent, kind, sha, target) that
         # already passed inside the window replays instead of re-reviewing.
-        self._pass_cache: dict[tuple[str, str, str, str], list[Any]] = {}
+        # key 是五元组（parent, kind, sha, target, digest）：digest 是切片外改动
+        # 摘要，patch scope 下"同 sha 但切片外已变"必须算不同 artifact。
+        self._pass_cache: dict[tuple[str, str, str, str, str], list[Any]] = {}
         # E3/E4: bounded in-process retention for delta / re-spawn.
         self._retained_chars = 0
         # 纯信息性「同一 artifact 尝试台账」：跨 start 共享上一轮终态结果。
@@ -3285,9 +3287,12 @@ class HostReviewAdmission:
             reserved = row.attempts + 1
             self._records[child_id] = replace(row, attempts=reserved)
         model = _REVIEWER_MODELS[min(reserved, len(_REVIEWER_MODELS) - 1)]
+        runner = self._runner
+        if runner is None:  # 未挂 runner：与 start() 同口径，不 spawn、不记账
+            return None
         tok = current_session_id.set(parent)
         try:
-            started = self._runner.start(
+            started = runner.start(
                 row.task, inherit=False, depth=0, max_rounds=1,
                 required_tools=[], model=model, review_isolated=True,
                 acceptance=[
@@ -3496,6 +3501,13 @@ class HostReviewAdmission:
 
     def _spawn_reviewer(self, parent: str, task: str, kind: str) -> dict[str, Any]:
         """Spawn with the historical bounded retry, using the model preference list."""
+        runner = self._runner
+        if runner is None:  # 未挂 runner：与 start() 的 self._runner is None 同口径
+            return {
+                "accepted": False,
+                "reason": "reviewer_runner_unattached",
+                "reviewer_failure": "reviewer_runner_unattached",
+            }
         tok = current_session_id.set(parent)
         try:
             child = ""
@@ -3503,7 +3515,7 @@ class HostReviewAdmission:
             for attempt in range(_REVIEWER_RETRY_MAX + 1):
                 last_failure = ""
                 try:
-                    started = self._runner.start(
+                    started = runner.start(
                         task, inherit=False, depth=0, max_rounds=1,
                         required_tools=[], model=_REVIEWER_MODELS[0], review_isolated=True,
                         acceptance=["explicit P0/P1/P2, target scope, actual SHA and independent verdict"],
