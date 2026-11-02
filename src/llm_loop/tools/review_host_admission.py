@@ -133,6 +133,14 @@ def _normalize_volatile_time_labels(text: str) -> str:
 
 _SHELL_FULL = re.compile(r"(?:^|[/\s])(?:bash\s+)?(?:\./)?scripts/ci_gate\.sh(?:\s|$)")
 _GIT_PUSH = re.compile(r"(?:^|\W)git\b.*?\bpush\b", re.I | re.S)
+# 建议1的落地脚本 ``python scripts/full_test_report.py -- <被测命令>``:
+# 它只做"跑测试 + 与登记基线对账"，不改变受保护效果，所以内层命令照原样分类
+# （内层若含推送动作就仍按推送分类——包装不能成为绕过手段）。
+_REVIEW_REPORT_WRAPPER = re.compile(
+    r"^\s*(?:\S*/)?python[0-9.]*\s+(?:\S*/)?scripts/full_test_report\.py\s+--\s+"
+    r"(?P<inner>.+)$",
+    re.S,
+)
 # EVO-20261029-65f6fe21（P1-1 补强）：python 载荷内 shell 调用的字符串实参
 # 就是运行时会执行的 shell 命令（与安全侧 N9 同构），按命令位分类。
 _PY_SHELL_CALL_LITERAL_RE = re.compile(
@@ -697,6 +705,12 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
             _shell_segment_kind(tokens, depth=_depth)
             for tokens in _shell_segments(skeleton)
         ]
+        if _depth < 3:
+            wrapper = _REVIEW_REPORT_WRAPPER.match(value)
+            if wrapper is not None:
+                inner_kind = classify_host_shell(wrapper.group("inner"), _depth=_depth + 1)
+                if inner_kind is not None:
+                    results.append(inner_kind)
         # Backticks execute even inside double quotes. They are opaque to shlex
         # argv0 matching, so inspect their literal bodies separately.
         if _depth < 3:

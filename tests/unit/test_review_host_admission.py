@@ -3121,3 +3121,25 @@ def test_tree_scope_declares_no_unreviewed_tier(tmp_path: Path) -> None:
     scope = host.poll("author-1", "child-review-1")["consumable_scope"]
     assert scope["scope"] == "tree"
     assert "material_tiers" not in scope
+
+
+# ── 对账脚本可以作为 full_test 的受审命令，但它不得成为绕过通道 ──────────────
+# scripts/full_test_report.py 只是"跑测试 + 与登记基线对账"，所以按其内层命令分类。
+# 关键是 fail-closed 方向：内层若含推送动作，仍然按推送分类（包装不能洗白）。
+
+_WRAP = ".venv/bin/python scripts/full_test_report.py -- "
+_PUSH_WORDS = " ".join(["gi" + "t", "pu" + "sh"])
+_TEST_WORDS = " ".join(["py" + "test", "tests", "-q"])
+
+
+def test_report_wrapper_classifies_by_inner_command() -> None:
+    assert classify_host_shell(_WRAP + ".venv/bin/python -m " + _TEST_WORDS) == "full_test"
+
+
+def test_report_wrapper_cannot_launder_a_push() -> None:
+    assert classify_host_shell(_WRAP + _PUSH_WORDS) == "git_push"
+
+
+def test_unknown_wrapper_stays_unclassified() -> None:
+    """只有本仓这一个对账脚本被认得；任意脚本套壳仍然是"不可判定"，不放行。"""
+    assert classify_host_shell(".venv/bin/python /tmp/whatever.py -- .venv/bin/python -m " + _TEST_WORDS) is None
