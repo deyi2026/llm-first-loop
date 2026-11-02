@@ -1,30 +1,8 @@
 {
   "schema": "lfl-known-reds-current/v1",
   "note": "CI 红数对账的登记基线：当前**有效**的已知红项清单。与 docs/known-reds-20260909.md 的区别：后者是历史归因档案（含已退役/已修复项），本文件是门禁用的现行白名单。",
-  "updated": "2026-10-25",
-  "source": "EVO-20261025-d00c717d（用户批准演进）：RED-04 起环境红 29 条在册登记（environment_tool_sandbox ×21 / environment_gate_worktree ×8；原 33 条口径中 RED-27/RED-33 前轮已清理无在册条目）已全部转为 tests/env_channel.py 环境自检谓词的精准条件 skip（skipif 带环境检测+根由理由，正常环境照常全量跑），自登记清单移除；本通道实测原红用例 skipped 非 failed。前序口径：docs/P1-3 全量门实测（serial 23 failed/11218 passed）",
+  "updated": "2026-11-02",
+  "source": "EVO-20261025-d00c717d（用户批准演进）：RED-04 起环境红 29 条在册登记（environment_tool_sandbox ×21 / environment_gate_worktree ×8；原 33 条口径中 RED-27/RED-33 前轮已清理无在册条目）已全部转为 tests/env_channel.py 环境自检谓词的精准条件 skip（skipif 带环境检测+根由理由，正常环境照常全量跑），自登记清单移除；本通道实测原红用例 skipped 非 failed。前序口径：docs/P1-3 全量门实测（serial 23 failed/11218 passed）｜2026-11-02 清理：RED-01/02/03 三条按当前树实测已转绿（tests/test_memory_phase3_rrf.py::test_rrf_keyword_only_fallback、tests/unit/test_learning_journal.py::test_learning_reuses_candidates_without_promotion[True-none-False]、tests/unit/test_static_diagnostic_gate.py::test_unwritable_analyzer_cache_env_does_not_crash_main 均 3 passed），过期登记会给出假容忍，故清空 registered；现行基线为空 ⇒ 任何红都是新增红、一律阻断。",
   "scope": "pytest tests/ -q -m \"not real_llm and not serial_signal\"（xdist 全量与红数对账的 serial 复现阶段共用本基线；serial 阶段按 ci_gate 逻辑仅重跑 xdist 红文件，同键对账）",
-  "registered": [
-    {
-      "id": "RED-01",
-      "test": "tests/test_memory_phase3_rrf.py::test_rrf_keyword_only_fallback",
-      "kind": "pre_existing",
-      "attribution": "存量红，与评测相关改动无依赖关系（§18.4 逐条查证）",
-      "since": "2026-10-23"
-    },
-    {
-      "id": "RED-02",
-      "test": "tests/unit/test_learning_journal.py::test_learning_reuses_candidates_without_promotion[True-none-False]",
-      "kind": "pre_existing",
-      "attribution": "存量红，与评测相关改动无依赖关系（§18.4 逐条查证）",
-      "since": "2026-10-23"
-    },
-    {
-      "id": "RED-03",
-      "test": "tests/unit/test_static_diagnostic_gate.py::test_unwritable_analyzer_cache_env_does_not_crash_main",
-      "kind": "pre_existing_other_commit",
-      "attribution": "存量红（他人提交 3573875 引入的新增 ratchet 债：method_alias 相关 SIM300/F401，ledger origin_head=500ee8f3 早于该提交）",
-      "since": "2026-10-23"
-    }
-  ]
+  "registered": []
 }
