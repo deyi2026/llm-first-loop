@@ -2173,20 +2173,25 @@ def _out_of_scope_binding(
     * 运行期输出目录（``_DRIFT_IGNORES``/``_is_runtime_output``，见
       ``_drift_ignored``）不参与：审查系统自己往 ``data/review_admission/``
       落报告，绑进来就是自锁（签发后写一份报告就让资格失效）。
+    * 2026-11-02 收紧实现口径（同强度、去掉规模依赖）：已提交且干净的文件内容已由
+      HEAD 唯一确定，所以绑 ``HEAD`` + 外侧"改动集"内容，等价于逐文件绑内容，但不依赖
+      ``git ls-files`` 全量输出。原实现对 8012 个 tracked 文件的仓库直接 ``git_state_too_large``
+      → 切片外不可校验 → patch scope 不可用（本次实测触发）。
     """
     if not scope_paths:
         return ("", 0, 0, 0)
     root = Path(workdir)
     try:
-        tracked = _git(root, "ls-files", "-z")
+        head = _git(root, "rev-parse", "HEAD").decode("utf-8", "replace").strip()
+        dirty = _git(root, "diff", "--name-only", "-z", "HEAD")
         untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
     except (OSError, ValueError, subprocess.TimeoutExpired, UnicodeError):
         return None
-    parts: list[str] = []
+    parts: list[str] = [f"H\t{head}"]
     bound = 0
     tracked_bound = 0
     untracked_bound = 0
-    for marker, raw in (("T", tracked), ("U", untracked)):
+    for marker, raw in (("T", dirty), ("U", untracked)):
         names = sorted({p.decode("utf-8", "replace") for p in raw.split(b"\0") if p})
         limit = _DRIFT_TRACKED_MAX_FILES if marker == "T" else _DRIFT_UNTRACKED_MAX_FILES
         if len(names) > limit:
@@ -2197,7 +2202,10 @@ def _out_of_scope_binding(
                 continue
             token = _content_token(root / name)
             if token is None:
-                return None
+                # 切片外被删掉的文件：内容不存在本身就是一种状态，记标记而不是放弃校验。
+                if (root / name).exists():
+                    return None
+                token = "deleted"
             parts.append(f"{marker}\t{name}\t{token}")
             bound += 1
             if marker == "T":

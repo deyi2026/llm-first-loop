@@ -3143,3 +3143,35 @@ def test_report_wrapper_cannot_launder_a_push() -> None:
 def test_unknown_wrapper_stays_unclassified() -> None:
     """只有本仓这一个对账脚本被认得；任意脚本套壳仍然是"不可判定"，不放行。"""
     assert classify_host_shell(".venv/bin/python /tmp/whatever.py -- .venv/bin/python -m " + _TEST_WORDS) is None
+
+
+# ── 切片外绑定的规模独立性与 HEAD 绑定 ─────────────────────────────────────
+# 原实现把 git ls-files 全量输出绑内容：8012 个 tracked 文件时直接
+# git_state_too_large → 切片外不可校验 → patch scope 整个不可用（2026-11-02 实测）。
+# 现在绑 HEAD + 外侧改动集内容，等价（干净文件内容由 HEAD 唯一确定），且不依赖仓库规模。
+
+
+def test_out_of_scope_binding_survives_small_git_output_cap(tmp_path: Path, monkeypatch) -> None:
+    import llm_loop.tools.review_host_admission as rha
+
+    repo = _sliced_repo(tmp_path)
+    (repo / "helper.py").write_text("z = 1\n")
+    monkeypatch.setattr(rha, "_GIT_OUTPUT_MAX_BYTES", 2000)
+
+    binding = rha._out_of_scope_binding(str(repo), ["example.py"])
+
+    assert binding is not None, "又把整棵树列出来了：仓库一大就退化成不可校验"
+    assert binding[3] == 0 and binding[2] == 1
+
+
+def test_out_of_scope_binding_tracks_head_moves(tmp_path: Path) -> None:
+    """干净的外侧文件内容由 HEAD 决定，所以 HEAD 动了摘要就必须动。"""
+    import llm_loop.tools.review_host_admission as rha
+
+    repo = _sliced_repo(tmp_path)
+    before = rha._out_of_scope_binding(str(repo), ["example.py"])
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "empty"], check=True
+    )
+    after = rha._out_of_scope_binding(str(repo), ["example.py"])
+    assert before[0] != after[0]
