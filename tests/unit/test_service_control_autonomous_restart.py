@@ -273,6 +273,26 @@ def test_tool_publish_advances_desired_generation(tmp_path: Path) -> None:
     assert deployment.git_head == head
 
 
+def test_tool_publish_receipt_lists_restart_required(tmp_path: Path) -> None:
+    """[回执只说"对 lagging 逐个 restart"] → [FAIL]：直接把清单给出来。
+
+    ``restart_required`` 与 ``convergence.lagging`` 同源（判据都是
+    stable_generation != desired_generation），不另立第二套判定；调用方不必
+    自己拿 status 逐服务比 matches_desired_generation。
+    """
+    _git_fixture(tmp_path)
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    tool = _tool(store)
+
+    result = tool.execute(action="publish", code_root=str(tmp_path), expected_generation=0)
+    assert result.status == "success", result.content
+    body = json.loads(result.content)
+
+    assert set(body["restart_required"]) == set(body["convergence"]["lagging"])
+    assert sorted(body["restart_required"]) == ["feishu", "learning", "web", "wecom"]
+    assert "restart_required" in body["next"]
+
+
 def test_tool_publish_rejects_stale_expected_generation(tmp_path: Path) -> None:
     _git_fixture(tmp_path)
     store = ManagedServiceDeploymentStore(tmp_path / "data")

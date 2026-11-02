@@ -166,3 +166,73 @@ def test_restart_non_web_receipt_has_no_deferred_marker(tmp_path) -> None:
     assert len(spawned) == 1
     assert "deferred_effect" not in result.content
     assert "effective_after_session_end" not in result.content
+
+
+def _next_check_payload(content: str) -> dict[str, object]:
+    match = re.search(r"next_check=(\{[^\n]*\})\s*$", content)
+    assert match is not None, f"回执缺少 next_check JSON：{content}"
+    return json.loads(match.group(1))
+
+
+def test_restart_receipt_carries_next_check_contract(tmp_path) -> None:
+    """[回执只说"会话结束后复核"] → [FAIL]：查哪个 action、断言什么、门有哪些出口，要机器可读。"""
+    _publish_deployment(tmp_path)
+    tool, _store, spawned = _tool(tmp_path)
+
+    result = tool.execute(action="restart", target="web", expected_generation=1)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    assert len(spawned) == 1
+    payload = _next_check_payload(result.content)
+    assert payload["action"] == "status"
+    assert payload["target"] == "web"
+    assert payload["expected_generation"] == 1
+    assert str(payload["action_id"]).startswith("svc-")
+    assert "succeeded" in str(payload["assert"])
+    assert "waiting_for_requester_exit" in payload["gates"]
+    assert {exit_["kind"] for exit_ in payload["exits"]} == {"natural", "override"}
+    assert "结束时" in str(payload["when"])
+
+
+def test_status_action_id_exposes_next_check_for_non_terminal_action(tmp_path) -> None:
+    """[status 只回原始字段] → [FAIL]：非终态动作的复核契约要一并回。"""
+    _publish_deployment(tmp_path)
+    tool, _store, _spawned = _tool(tmp_path)
+    accepted = tool.execute(action="restart", target="web", expected_generation=1)
+    action_id = _next_check_payload(accepted.content)["action_id"]
+
+    body = json.loads(tool.execute(action="status", action_id=action_id).content)
+
+    assert body["action"]["action_id"] == action_id
+    assert body["next_check"]["action_id"] == action_id
+    assert body["next_check"]["action"] == "status"
+
+
+def test_status_action_id_omits_next_check_for_terminal_action(tmp_path) -> None:
+    """[终态动作也挂 next_check] → [FAIL]：已终态就没有"下一轮该查什么"。"""
+    _publish_deployment(tmp_path)
+    tool, store, _spawned = _tool(tmp_path)
+    accepted = tool.execute(action="restart", target="web", expected_generation=1)
+    action_id = str(_next_check_payload(accepted.content)["action_id"])
+    store.update_action(action_id, status="failed", detail="boom")
+
+    body = json.loads(tool.execute(action="status", action_id=action_id).content)
+
+    assert body["action"]["status"] == "failed"
+    assert "next_check" not in body
+
+
+def test_restart_all_next_check_declares_whole_action_deferred(tmp_path) -> None:
+    """[target=all 只写 web 在等] → [FAIL]：整条动作都在等，四个服务都要写进去。"""
+    _publish_deployment(tmp_path)
+    tool, _store, _spawned = _tool(tmp_path)
+
+    result = tool.execute(action="restart", target="all", expected_generation=1)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    payload = _next_check_payload(result.content)
+    assert payload["target"] == "all"
+    assert "waiting_for_requester_exit" in payload["gates"]
+    assert "deferred_effect" in result.content
+    # 两个机器可读块必须能各自独立解析（re 只截到第一个 JSON 的边界）
+    assert '"pending": true' in result.content

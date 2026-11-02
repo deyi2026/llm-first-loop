@@ -114,11 +114,97 @@ def _diff_summary(
     return lines
 
 
+_SECTIONS: tuple[str, ...] = ("function_lines", "legacy_super_functions")
+_META_FIELDS_NOTE = "_meta（head_commit/生成时间/说明）"
+
+
+def _selected_sections(only: str) -> tuple[str, ...]:
+    """``--only`` → 本次重登记要写的节；``all`` = 两个函数规模节全写。"""
+    return _SECTIONS if only == "all" else (only,)
+
+
+def _untouched_note(sections: tuple[str, ...], *, refresh_meta: bool) -> str:
+    """把"本次没动哪些段"写成回执——保住"只收紧、不顺带改别段"的可验证性。"""
+    untouched = [s for s in _SECTIONS if s not in sections]
+    if not refresh_meta:
+        untouched.append(_META_FIELDS_NOTE)
+    if not untouched:
+        return "本次覆盖两个函数规模节 + _meta"
+    return "未触碰（字节级保留）：" + "、".join(untouched)
+
+
+def _check_problems(
+    current: dict,
+    new_fl: dict[str, int],
+    new_legacy: dict[str, int],
+    sections: tuple[str, ...],
+    *,
+    check_meta: bool,
+) -> list[str]:
+    problems: list[str] = []
+    if "function_lines" in sections and current.get("function_lines") != new_fl:
+        problems.append("function_lines 与实测合并不一致（src 漂移未重登记，或登记被手改）")
+    if "legacy_super_functions" in sections and current.get("legacy_super_functions") != new_legacy:
+        problems.append("legacy_super_functions 与实测合并不一致（src 漂移未重登记，或登记被手改）")
+    if check_meta:
+        head = str(current.get("_meta", {}).get("head_commit", ""))
+        if not re.fullmatch(r"[0-9a-f]{7,40}", head):
+            problems.append(f"_meta.head_commit 非法短 sha: {head!r}")
+    return problems
+
+
+def _ordered_merge(old: dict[str, int], new: dict[str, int]) -> dict[str, int]:
+    """保留磁盘上的键序：既有键原位替换，新键按字典序追加。
+
+    否则整文件 ``sort_keys`` 重写会把**未选中段**的键序也挪一遍——那正是
+    "只收紧会顺带改别段"的另一半问题（值没变、diff 一片红）。
+    """
+    ordered = {key: new[key] for key in old if key in new}
+    ordered.update({key: value for key, value in sorted(new.items()) if key not in ordered})
+    return ordered
+
+
+def _apply_sections(
+    current: dict,
+    new_fl: dict[str, int],
+    new_legacy: dict[str, int],
+    sections: tuple[str, ...],
+    *,
+    refresh_meta: bool,
+) -> dict:
+    """整文件写回的唯一构造点：未选中的节原样带到新 dict（值 + 键序）。"""
+    updated = dict(current)
+    if "function_lines" in sections:
+        updated["function_lines"] = _ordered_merge(
+            dict(current.get("function_lines", {})), new_fl
+        )
+    if "legacy_super_functions" in sections:
+        updated["legacy_super_functions"] = _ordered_merge(
+            dict(current.get("legacy_super_functions", {})), new_legacy
+        )
+    if refresh_meta:
+        meta = dict(current.get("_meta", {}))
+        meta["head_commit"] = _git("rev-parse", "--short", "HEAD")
+        meta["生成时间"] = _git("show", "-s", "--format=%cs", "HEAD")
+        meta["说明"] = META_DESC
+        updated["_meta"] = meta
+    return updated
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="R9 函数规模基线重登记（守卫单口径）")
     ap.add_argument("--check", action="store_true", help="只校验不写盘：不一致 exit 1")
+    ap.add_argument(
+        "--only",
+        choices=(*_SECTIONS, "all"),
+        default="all",
+        help="只重登记指定节；非 all 时 _meta 原样保留（只收紧、不顺带改别段）",
+    )
+    ap.add_argument("--dry-run", action="store_true", help="只打印差异摘要，不写盘")
     args = ap.parse_args()
 
+    sections = _selected_sections(args.only)
+    refresh_meta = args.only == "all"
     guards = _guard_module()
     measured = guards._measure_functions()  # noqa: SLF001 — 刻意复用守卫口径（见模块 docstring）
     current = json.loads(BASELINE.read_text(encoding="utf-8"))
@@ -129,38 +215,35 @@ def main() -> int:
     )
 
     if args.check:
-        problems: list[str] = []
-        if current.get("function_lines") != new_fl:
-            problems.append("function_lines 与实测合并不一致（src 漂移未重登记，或登记被手改）")
-        if current.get("legacy_super_functions") != new_legacy:
-            problems.append("legacy_super_functions 与实测合并不一致（src 漂移未重登记，或登记被手改）")
-        head = str(current.get("_meta", {}).get("head_commit", ""))
-        if not re.fullmatch(r"[0-9a-f]{7,40}", head):
-            problems.append(f"_meta.head_commit 非法短 sha: {head!r}")
+        problems = _check_problems(
+            current, new_fl, new_legacy, sections, check_meta=refresh_meta
+        )
         if problems:
             print("基线未处于重登记幂等态：")
             for p in problems:
                 print(f"  - {p}")
-            print("修复：python scripts/regen_function_size_baseline.py（guard(r9): 前缀提交）")
+            print(
+                "修复：python scripts/regen_function_size_baseline.py"
+                f" --only {args.only}（guard(r9): 前缀提交）"
+            )
             return 1
-        print(
-            f"OK: function_lines={len(new_fl)} 条、legacy={len(new_legacy)} 条与守卫实测一致（幂等）"
-        )
+        scope = "全部函数规模节" if args.only == "all" else args.only
+        suffix = "" if refresh_meta else "；_meta 不在本次校验范围"
+        print(f"OK: {scope}与守卫实测一致（幂等）{suffix}")
         return 0
 
-    updated = dict(current)
-    updated["function_lines"] = new_fl
-    updated["legacy_super_functions"] = new_legacy
-    meta = dict(current.get("_meta", {}))
-    meta["head_commit"] = _git("rev-parse", "--short", "HEAD")
-    meta["生成时间"] = _git("show", "-s", "--format=%cs", "HEAD")
-    meta["说明"] = META_DESC
-    updated["_meta"] = meta
-    BASELINE.write_text(
-        json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    updated = _apply_sections(
+        current, new_fl, new_legacy, sections, refresh_meta=refresh_meta
     )
-    print(f"已重登记 {BASELINE.relative_to(ROOT)}")
+    print(_untouched_note(sections, refresh_meta=refresh_meta))
+    if args.dry_run:
+        print("--dry-run：未写盘，以下为将要写入的差异")
+    else:
+        BASELINE.write_text(
+            json.dumps(updated, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"已重登记 {BASELINE.relative_to(ROOT)}")
     for line in _diff_summary(old_fl, old_legacy, new_fl, new_legacy):
         print(line)
     return 0

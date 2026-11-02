@@ -18,6 +18,7 @@ from llm_loop.runtime.service_control import (
     DeploymentGenerationConflictError,
     ManagedServiceDeployment,
     ManagedServiceDeploymentStore,
+    ServiceControlAction,
     acknowledge_verify,
     adopt_admission_barrier,
     binding_next_steps,
@@ -25,6 +26,7 @@ from llm_loop.runtime.service_control import (
     compose_convergence_view,
     compose_service_identity_view,
     compose_service_identity_with_guard_freshness,
+    next_check_for_action,
     record_model_override,
     release_admission_barrier,
     spawn_service_control_worker,
@@ -432,65 +434,10 @@ class ServiceControlTool:
         if contract_error:
             return self._failure(contract_error)
         if action == "status":
-            action_id = str(kwargs.get("action_id", "") or "").strip()
-            if action_id:
-                try:
-                    receipt = self.store.read_action(action_id)
-                except (OSError, ValueError, json.JSONDecodeError) as exc:
-                    return self._failure(f"[service_control status failed] {type(exc).__name__}: {exc}")
-                if receipt is None:
-                    return self._failure(f"[service_control] action_id not found: {action_id}")
-                body = {"action": receipt.to_dict()}
-            else:
-                try:
-                    body = _compose_status_body(
-                        self.store,
-                        str(kwargs.get("target", "") or ""),
-                        str(kwargs.get("view", "") or ""),
-                    )
-                except (OSError, ValueError, json.JSONDecodeError) as exc:
-                    return self._failure(f"[service_control status failed] {type(exc).__name__}: {exc}")
-            return ToolResult(
-                status=ToolResultStatus.SUCCESS,
-                content=json.dumps(body, ensure_ascii=False, sort_keys=True),
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            return self._status(kwargs)
 
         if action == "publish":
-            # S4c：模型侧 publish——与 CLI publish 同一套机械边界（干净 git 树
-            # + webui dist 产物 hash + generation CAS）；shell 围栏不动（CLI
-            # 仍 operator-only），模型走本工具。runtime_root 按 data_dir
-            # 契约推导（runtime_root/data = data_dir），不接受调用点自选。
-            # EVO-20261014-7ba73d88: publish 闸提示（动作前探测，成功/失败回执均携带）。
-            gate_note = self._review_gate_line()
-            deployment, error = self._publish(
-                str(kwargs.get("code_root", "") or "").strip(),
-                kwargs.get("expected_generation"),
-            )
-            if error is not None:
-                return self._failure(f"{gate_note}\n{error}")
-            assert deployment is not None
-            # EVO-20260924-dc3c7c78：成功回执附只读收敛快照（同眼可见
-            # lagging）；读取失败缺省该键，可见性增强不反噬成功回执。
-            publish_body: dict[str, object] = {
-                "published": deployment.to_dict(),
-                "review_gate": gate_note,
-                "next": (
-                    "desired 已推进；对 convergence.lagging 中仍落后的服务逐个 "
-                    "service_control(action=restart, target=..., "
-                    f"expected_generation={deployment.generation}) 完成重启"
-                ),
-            }
-            convergence = self._convergence_block()
-            if convergence is not None:
-                publish_body["convergence"] = convergence
-            return ToolResult(
-                status=ToolResultStatus.SUCCESS,
-                content=json.dumps(publish_body, ensure_ascii=False, sort_keys=True),
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            return self._publish_action(kwargs)
 
         if action == "update":
             return self._update(kwargs)
@@ -555,10 +502,124 @@ class ServiceControlTool:
                 "event_stream(query=service_action_terminal) 亦可检索（EVO-20260924-8266b693 A）；"
                 "failed 终态会保留待确认（verify_acknowledge）直到显式闭合"
                 + self._deferred_restart_note(target)
+                + self._next_check_note(receipt)
             ),
             tool_call_id="",
             tool_name=self.name,
         )
+
+    def _status(self, kwargs: dict[str, object]) -> ToolResult:
+        """status 两形态：单动作回执（附 next_check 契约）或聚合视图。"""
+        action_id = str(kwargs.get("action_id", "") or "").strip()
+        if action_id:
+            return self._status_by_action_id(action_id)
+        try:
+            body = _compose_status_body(
+                self.store,
+                str(kwargs.get("target", "") or ""),
+                str(kwargs.get("view", "") or ""),
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return self._failure(f"[service_control status failed] {type(exc).__name__}: {exc}")
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=json.dumps(body, ensure_ascii=False, sort_keys=True),
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+    def _status_by_action_id(self, action_id: str) -> ToolResult:
+        """单动作回执：原字段 + 非终态动作的 ``next_check``（只读派生，不新增门禁）。"""
+        try:
+            receipt = self.store.read_action(action_id)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return self._failure(f"[service_control status failed] {type(exc).__name__}: {exc}")
+        if receipt is None:
+            return self._failure(f"[service_control] action_id not found: {action_id}")
+        body: dict[str, object] = {"action": receipt.to_dict()}
+        next_check = next_check_for_action(
+            receipt, extra_gates=self._deferred_gates(receipt)
+        )
+        if next_check is not None:
+            body["next_check"] = next_check
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=json.dumps(body, ensure_ascii=False, sort_keys=True),
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+    def _publish_action(self, kwargs: dict[str, object]) -> ToolResult:
+        """模型侧 publish：与 CLI publish 同一套机械边界（干净树 + dist hash + CAS）。
+
+        shell 围栏不动（CLI 仍 operator-only），模型走本工具；runtime_root 按
+        data_dir 契约推导，不接受调用点自选。EVO-20261014-7ba73d88: 成功/失败
+        回执均携带 review 闸提示。
+        """
+        gate_note = self._review_gate_line()
+        deployment, error = self._publish(
+            str(kwargs.get("code_root", "") or "").strip(),
+            kwargs.get("expected_generation"),
+        )
+        if error is not None:
+            return self._failure(f"{gate_note}\n{error}")
+        assert deployment is not None
+        return self._publish_result(deployment, gate_note)
+
+    def _publish_result(self, deployment: ManagedServiceDeployment, gate_note: str) -> ToolResult:
+        """publish 成功回执：desired 快照 + 收敛快照 + 可直接执行的 restart 清单。
+
+        ``restart_required`` 复用 ``compose_convergence_view`` 的 ``lagging``
+        （同一判据：stable_generation != desired_generation），不另立第二套判定；
+        收敛快照读取失败时缺省该键，可见性增强不反噬成功回执。
+        """
+        convergence, restart_required = self._convergence_blocks()
+        body: dict[str, object] = {
+            "published": deployment.to_dict(),
+            "review_gate": gate_note,
+            "next": (
+                "desired 已推进；restart_required 列出的服务（= convergence.lagging，"
+                "判据 stable_generation != desired_generation）逐个 "
+                "service_control(action=restart, target=..., "
+                f"expected_generation={deployment.generation}) 完成重启；"
+                "restart_required 缺失表示收敛快照读取失败，改用 status 复核"
+            ),
+        }
+        if restart_required is not None:
+            body["restart_required"] = restart_required
+        if convergence is not None:
+            body["convergence"] = convergence
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=json.dumps(body, ensure_ascii=False, sort_keys=True),
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+    @staticmethod
+    def _deferred_gates(receipt: ServiceControlAction) -> tuple[str, ...]:
+        """web 类两阶段门（``action.target in {web, all}``）：accepted 态还没落到
+        status 上，但回执得自证"还差哪道门"——否则 target=all 会被读成已重启。"""
+        if receipt.target in {"web", "all"} and receipt.status in {
+            "accepted",
+            "waiting_for_requester_exit",
+        }:
+            return ("waiting_for_requester_exit",)
+        return ()
+
+    @staticmethod
+    def _next_check_note(receipt: ServiceControlAction) -> str:
+        """非终态重启回执的「下一轮怎么验」契约（严格 JSON，可 json.loads）。
+
+        两阶段门只有两个真实出口：本轮 run 自然结束、或 override + 证据。把
+        "为什么还没生效"和"下一轮查什么"写成键，才不用靠人读段落自己记。
+        """
+        payload = next_check_for_action(
+            receipt, extra_gates=ServiceControlTool._deferred_gates(receipt)
+        )
+        if payload is None:
+            return ""
+        return "; next_check=" + json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     @staticmethod
     def _deferred_restart_note(target: str) -> str:
@@ -765,7 +826,9 @@ class ServiceControlTool:
             body["live_identity_hint"] = live_hint
         # EVO-20260924-dc3c7c78：成功回执附只读收敛快照——受理≠完成，剩余
         # lagging 服务在回执里直接可见；读取失败缺省该键。
-        convergence = self._convergence_block()
+        convergence, restart_required = self._convergence_blocks()
+        if restart_required is not None:
+            body["restart_required"] = restart_required
         if convergence is not None:
             body["convergence"] = convergence
         return ToolResult(
@@ -785,6 +848,22 @@ class ServiceControlTool:
             return compose_convergence_view(self.store)
         except (OSError, ValueError, json.JSONDecodeError):
             return None
+
+    def _convergence_blocks(
+        self,
+    ) -> tuple[dict[str, object] | None, list[str] | None]:
+        """收敛快照 + 由其次级键 ``lagging`` 派生的 restart 清单。
+
+        publish 回执里的 ``restart_required`` 直接就是 ``lagging``——同一判据
+        （stable_generation != desired_generation），不在这里做第二套判断。
+        """
+        convergence = self._convergence_block()
+        if convergence is None:
+            return None, None
+        lagging = convergence.get("lagging")
+        if not isinstance(lagging, list):
+            return convergence, None
+        return convergence, [str(service) for service in lagging]
 
     def _live_identity_hint(
         self, deployment: ManagedServiceDeployment, restart_target: str

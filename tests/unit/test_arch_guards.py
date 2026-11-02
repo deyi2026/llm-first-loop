@@ -1865,3 +1865,145 @@ def test_broad_exception_match_uses_exact_type_names(exception_type, broad):
     source = f"try:\n    f()\nexcept {exception_type}:\n    pass\n"
     handler = ast.parse(source).body[0].handlers[0]
     assert _catches_all(handler) is broad
+
+
+# ---------------------------------------------------------------------------
+# R9 基线重登记脚本：「只收紧、不动别段」（--only / --dry-run）
+# ---------------------------------------------------------------------------
+
+def _regen_module() -> Any:
+    """按路径加载 scripts/regen_function_size_baseline.py（scripts 不是包）。"""
+    import importlib.util
+
+    path = ROOT / "scripts" / "regen_function_size_baseline.py"
+    spec = importlib.util.spec_from_file_location("regen_function_size_baseline", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_REGEN_SAMPLE: dict[str, Any] = {
+    "_meta": {"head_commit": "deadbeef", "生成时间": "2026-01-01", "说明": "样本"},
+    "function_lines": {"alpha": 130, "beta": 140},
+    "legacy_super_functions": {"gamma": 900},
+    "durability_registry": {"review_admission_report": {"k": 1}},
+}
+
+
+def test_regen_only_function_lines_keeps_other_sections_byte_identical() -> None:
+    """[一次收紧顺带改 _meta/其它登记段] → [FAIL]：未选中的段原样保留。
+
+    regen 是整文件重写：``--only`` 若不落到"只写选中段"，收紧一次就会改掉
+    head_commit 与 durability_registry，于是没人敢跑它，基线只能腐化。
+    """
+    regen = _regen_module()
+
+    updated = regen._apply_sections(
+        _REGEN_SAMPLE,
+        {"alpha": 120, "beta": 140},
+        {"gamma": 901},
+        ("function_lines",),
+        refresh_meta=False,
+    )
+
+    assert updated["function_lines"] == {"alpha": 120, "beta": 140}
+    assert updated["_meta"] is _REGEN_SAMPLE["_meta"]
+    assert updated["legacy_super_functions"] is _REGEN_SAMPLE["legacy_super_functions"]
+    assert updated["durability_registry"] is _REGEN_SAMPLE["durability_registry"]
+
+
+def test_regen_only_all_writes_both_sections_and_refreshes_meta(monkeypatch) -> None:
+    regen = _regen_module()
+    seen: list[tuple[str, ...]] = []
+
+    def fake_git(*args: str) -> str:
+        seen.append(args)
+        return "abc1234" if args[0] == "rev-parse" else "2026-11-02"
+
+    monkeypatch.setattr(regen, "_git", fake_git)
+
+    updated = regen._apply_sections(
+        _REGEN_SAMPLE,
+        {"alpha": 120},
+        {"gamma": 901},
+        regen._SECTIONS,
+        refresh_meta=True,
+    )
+
+    assert updated["function_lines"] == {"alpha": 120}
+    assert updated["legacy_super_functions"] == {"gamma": 901}
+    assert updated["_meta"]["head_commit"] == "abc1234"
+    assert updated["_meta"]["生成时间"] == "2026-11-02"
+    assert seen and seen[0][0] == "rev-parse"
+    # 其它登记段仍然不许被顺带改写
+    assert updated["durability_registry"] is _REGEN_SAMPLE["durability_registry"]
+
+
+def test_regen_check_scoped_to_selected_section_only() -> None:
+    regen = _regen_module()
+    drifted_legacy = {**_REGEN_SAMPLE, "legacy_super_functions": {"gamma": 1}}
+
+    # legacy 已漂移，但 --only function_lines 不校验它
+    assert regen._check_problems(
+        drifted_legacy,
+        {"alpha": 130, "beta": 140},
+        {"gamma": 900},
+        ("function_lines",),
+        check_meta=False,
+    ) == []
+    # function_lines 自身漂移必须报
+    drift = regen._check_problems(
+        drifted_legacy, {"alpha": 1}, {"gamma": 1}, ("function_lines",), check_meta=False
+    )
+    assert len(drift) == 1 and "function_lines" in drift[0]
+    # _meta 只在 all 模式校验
+    bad_meta = {**_REGEN_SAMPLE, "_meta": {"head_commit": "not-a-sha"}}
+    assert regen._check_problems(
+        bad_meta, {"alpha": 130, "beta": 140}, {"gamma": 900}, ("function_lines",),
+        check_meta=False,
+    ) == []
+    assert regen._check_problems(
+        bad_meta, {"alpha": 130, "beta": 140}, {"gamma": 900}, regen._SECTIONS,
+        check_meta=True,
+    )
+
+
+def test_regen_ordered_merge_keeps_disk_key_order() -> None:
+    """[整文件 sort_keys 重写挪动未选中段的键序] → [FAIL]：既有键原位、新键排序追加。
+
+    这是"只收紧会顺带改别段"的另一半：值没变、diff 却一片红，于是没人敢跑。
+    """
+    regen = _regen_module()
+
+    merged = regen._ordered_merge(
+        {"zeta": 1, "alpha": 2, "mid": 3},
+        {"mid": 30, "alpha": 20, "new_b": 5, "new_a": 4},
+    )
+
+    assert list(merged) == ["alpha", "mid", "new_a", "new_b"]
+    assert merged["mid"] == 30
+    assert "zeta" not in merged
+
+
+def test_regen_dry_run_reports_untouched_sections_and_writes_nothing() -> None:
+    before = BASELINE_PATH.read_bytes()
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "regen_function_size_baseline.py"),
+            "--only",
+            "function_lines",
+            "--dry-run",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "未触碰（字节级保留）：legacy_super_functions、_meta" in proc.stdout
+    assert "--dry-run" in proc.stdout
+    assert BASELINE_PATH.read_bytes() == before

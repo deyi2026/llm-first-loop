@@ -2163,6 +2163,62 @@ def pending_gates_for_action(action: ServiceControlAction) -> tuple[str, ...]:
     return _PRECOMMIT_GATES
 
 
+_WHEN_TEXT: dict[str, str] = {
+    "accepted": "worker 启动后自动接手（无固定延迟）",
+    "running": "物理重启进行中",
+    "restarted": "物理重启已完成，等待证据核验",
+    "verify_evidence_ready": "证据已采集，等待模型裁决",
+    "waiting_for_requester_exit": "本轮 requester run 结束时 worker 自动接手（无固定延迟）",
+    "waiting_for_idle": "目标空闲后 worker 自动接手（无固定延迟）",
+}
+
+
+def next_check_for_action(
+    action: ServiceControlAction, *, extra_gates: Sequence[str] = ()
+) -> dict[str, Any] | None:
+    """非终态动作的「下一轮怎么验」契约（只读派生，不新增门禁）。
+
+    两阶段等待真正的缺口不是没有出口（自然出口＝本轮 run 结束，异常出口＝
+    override＋证据），而是回执没说清"什么时候生效、下一轮查什么、按什么判
+    定"。把这三样写成键，受理态就冒充不了完成态。终态返回 None。
+
+    ``extra_gates``：调用方知道、但 ``pending_gates_for_action`` 未列出的门
+    （例如 web 两阶段门在 accepted 态尚未落到 status 上），原样并入。
+    """
+    if action.status in {"succeeded", "failed"}:
+        return None
+    gates = tuple(dict.fromkeys((*pending_gates_for_action(action), *extra_gates)))
+    when = _WHEN_TEXT.get(action.status, "动作推进中：worker 按状态机推进，无固定延迟")
+    if "waiting_for_requester_exit" in gates:
+        when = _WHEN_TEXT["waiting_for_requester_exit"]
+    payload: dict[str, Any] = {
+        "action": "status",
+        "action_id": action.action_id,
+        "target": action.target,
+        "expected_generation": action.deployment_generation,
+        "when": when,
+        "verify": [f"service_control(action=status, action_id={action.action_id})"],
+        "assert": (
+            "action.status=succeeded 且 live.git_head=desired.git_head"
+            "（status 的 convergence.lagging 不再含该服务）"
+        ),
+    }
+    if gates:
+        payload["gates"] = list(gates)
+    if "waiting_for_requester_exit" in gates:
+        payload["exits"] = [
+            {"kind": "natural", "how": "结束本轮 requester run，worker 自动接手"},
+            {
+                "kind": "override",
+                "how": (
+                    "service_control(action=override, gate=waiting_for_requester_exit, "
+                    "evidence=...)——须能证明 requester run 实际已不在活动"
+                ),
+            },
+        ]
+    return payload
+
+
 def release_admission_barrier(
     store: ManagedServiceDeploymentStore,
     *,
