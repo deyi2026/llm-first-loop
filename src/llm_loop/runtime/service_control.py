@@ -1635,6 +1635,54 @@ def _stage_facts_view(
     return view
 
 
+# 2026-11-02 实测：targets 视图此前对**非终态**动作完全不可见——publish+restart
+# 之后下一轮只看到 restart_required=true，分不清"在等我这轮结束"与"卡死了"，
+# 只能再取 view=full 或翻 data/ 才知道原因。而同一 restart all 会写 4 条
+# per-service barrier/stage_facts（实测 targets 载荷 3610 字符里 stage_facts
+# 562=16% 是同一个 action_id 重复四遍），所以这里按 action_id 折叠**一行一个动作**，
+# services 字段列出覆盖面，不做每服务展开。
+_IN_FLIGHT_LIMIT = 5
+
+
+def _services_for_target(target: str) -> list[str]:
+    return list(_MANAGED_SERVICES) if target == "all" else [target]
+
+
+def _in_flight_signal(
+    actions: list[ServiceControlAction], *, now: datetime
+) -> list[dict[str, Any]]:
+    """非终态动作摘要（只读派生）：回答"为什么还没生效、还差什么、什么时候轮到".
+
+    终态动作不在此列（历史由 generation_lag / stage_facts 表达），故该信号为空
+    是常态，不是"没读到"。
+    """
+    rows: list[dict[str, Any]] = []
+    for action in actions:
+        if action.status in _TERMINAL_ACTION_STATUSES:
+            continue
+        gates = list(pending_gates_for_action(action))
+        ts = _parse_iso(action.updated_at)
+        when = _WHEN_TEXT.get(action.status, "动作推进中：worker 按状态机推进，无固定延迟")
+        if "waiting_for_requester_exit" in gates:
+            when = _WHEN_TEXT["waiting_for_requester_exit"]
+        row: dict[str, Any] = {
+            "action_id": action.action_id,
+            "action": action.action,
+            "status": action.status,
+            "target": action.target,
+            "services": _services_for_target(action.target),
+            "generation": action.deployment_generation,
+            "age_s": round((now - ts).total_seconds()) if ts is not None else None,
+            "when": when,
+        }
+        if gates:
+            row["gates"] = gates
+        rows.append(row)
+    # 最新（age 最小）优先；缺时间戳的排最后，不被排序静默丢成第一条
+    rows.sort(key=lambda row: (row["age_s"] is None, row["age_s"] or 0))
+    return rows[:_IN_FLIGHT_LIMIT]
+
+
 def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """只读证据面（design 2.2.2.6 / tasks 9.1）：只**增**字段，不新增门禁.
 
@@ -1739,6 +1787,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
             "orphan_barrier": orphan_barrier,
             "barrier_dir_changed": barrier_dir_changed,
             "waiting_timeout": waiting_timeout,
+            "in_flight": _in_flight_signal(actions, now=now),
         },
     }
 

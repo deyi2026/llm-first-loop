@@ -213,6 +213,10 @@ def _targets_status_body(identity: dict) -> dict[str, object]:
             "generation_lag": audit.get("generation_lag", []),
             "orphan_barrier": audit.get("orphan_barrier"),
             "waiting_timeout": audit.get("waiting_timeout"),
+            # 非终态动作（一行一动作）：这是"改了为什么还没生效"的直接答案。
+            # 此前的 targets 视图只表达"该不该重启"（restart_required），不表达
+            # "正在等什么"，读的人分不清"等我这轮结束"和"卡死"。
+            "in_flight": audit.get("in_flight", []),
         },
     }
 
@@ -255,6 +259,22 @@ def _narrow_status_body(body: dict[str, object], scope: str) -> dict[str, object
                 for item in lag
                 if isinstance(item, dict) and item.get("target") == scope
             ]
+            narrowed["audit_summary" if "audit_summary" in narrowed else "audit_signals"] = audit
+        # in_flight 按覆盖面收窄：target=all 的动作仍留下（它对每个服务都在等），
+        # 只把 services 收窄到 scope——否则 target=web 会连带全量四服务。
+        flight = audit.get("in_flight")
+        if isinstance(flight, list):
+            audit = dict(audit)
+            kept: list[dict[str, object]] = []
+            for item in flight:
+                if not isinstance(item, dict):
+                    continue
+                covered = item.get("services")
+                services = covered if isinstance(covered, list) else []
+                if scope not in services and item.get("target") != scope:
+                    continue
+                kept.append({**item, "services": [scope]})
+            audit["in_flight"] = kept
             narrowed["audit_summary" if "audit_summary" in narrowed else "audit_signals"] = audit
     narrowed["target"] = scope
     return narrowed

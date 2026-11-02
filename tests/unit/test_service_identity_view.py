@@ -433,12 +433,13 @@ def test_status_evidence_fields_present_and_well_formed(tmp_path: Path) -> None:
     # 空闲三态（L22）
     for entry in view["idle_state"].values():
         assert entry["state"] in {"confirmed_busy", "confirmed_idle", "unconfirmable"}
-    # 四条审计信号（L24）
+    # 五条审计信号（L24；in_flight 于 2026-11-02 增补：非终态动作可见性）
     assert set(view["audit_signals"]) == {
         "generation_lag",
         "orphan_barrier",
         "barrier_dir_changed",
         "waiting_timeout",
+        "in_flight",
     }
 
 
