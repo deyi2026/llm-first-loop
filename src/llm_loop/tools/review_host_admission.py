@@ -1370,6 +1370,14 @@ def _projection_stage(
 _FULL_TEST_NO_DELTA = (
     "full_test_no_delta: committed delta, worktree and untracked"
     " are all empty — nothing to review (EVO-20261029-eb64b2de)"
+    # 2026-11-02：原来只说"没有材料"，不说"怎么才有材料"，实测在干净树上被拒后
+    # 第一反应是去试 scope/paths 变体（必然无效），或干脆改一段无关文档造假 delta。
+    # 这道门按设计就是不放行的情形要写明，别让人拿结构参数来撞。
+    "; 这道门不签空壳（空材料上签出的 PASS 没有意义）。材料 = 相对审查基点的差异，"
+    "基点优先取推送目标（origin/main）：只有真的还有未推送/未提交的改动时才有材料——"
+    "把改动 commit 到本地（基点落后于 HEAD 即可），或留在工作树/未跟踪文件里。"
+    "scope/paths 只能收窄已有材料，改路径不会让它放行；全部已推送且树干净时这道门"
+    "按设计就拒绝，此时该验的是既有结论，不该再借全量门禁签一张新 PASS"
 )
 
 

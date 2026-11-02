@@ -797,3 +797,37 @@ def test_publish_receipt_reads_stable_generation_not_publish_success(
     body = ServiceControlTool._supersedes_block(previous, _convergence(None, None, None, None))
     assert body["ever_live"] is False
 
+
+def test_publish_receipt_discloses_self_bootstrapping_provenance(tmp_path: Path) -> None:
+    """回执由**本次部署之前**的进程生成：缺字段不等于特性没实现（2026-11-02 建议 3）。
+
+    publish/restart 回执由当前在跑的旧代码组装，本次部署新增的字段要等 live 收敛
+    到新代后才可能出现。没有这块披露，缺字段会被读成"特性没实现"——本轮就把它
+    误读成 publish 回执丢了 supersedes。
+    """
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    tool = ServiceControlTool(store=store)
+
+    body = json.loads(tool._publish_result(_deployment(tmp_path), "gate-note", None).content)
+
+    provenance = body["receipt_provenance"]
+    assert provenance["fields_added_by_this_deployment_may_be_absent"] is True
+    assert "缺字段不等于特性没实现" in str(provenance["note"])
+    # live 代码身份是派生事实：读不到就给空表，不得伪造 hash 或影响成功回执。
+    assert isinstance(provenance["live_code_heads"], dict)
+    assert "lagging" in str(provenance["verify_after"])
+
+
+def test_restart_receipt_text_also_discloses_provenance(tmp_path: Path) -> None:
+    """restart 回执是纯文本，同一披露必须也出现在这一侧，否则只有 publish 有。"""
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    store.compare_and_swap(_deployment(tmp_path), expected_generation=0)
+    spawned: list[str] = []
+    tool = ServiceControlTool(store=store, worker_spawner=spawned.append)
+
+    result = tool.execute(action="restart", target="feishu", expected_generation=1)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    assert spawned, "受理后必须真的派发 worker"
+    assert "本回执由本次部署之前的进程生成" in result.content
+

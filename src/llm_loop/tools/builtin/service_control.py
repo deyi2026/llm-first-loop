@@ -571,6 +571,7 @@ class ServiceControlTool:
                 "failed 终态会保留待确认（verify_acknowledge）直到显式闭合"
                 + self._deferred_restart_note(target)
                 + self._next_check_note(receipt)
+                + self._provenance_note()
             ),
             tool_call_id="",
             tool_name=self.name,
@@ -669,6 +670,7 @@ class ServiceControlTool:
             body["convergence"] = convergence
             if previous is not None:
                 body["supersedes"] = self._supersedes_block(previous, convergence)
+        body["receipt_provenance"] = self._receipt_provenance()
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=json.dumps(body, ensure_ascii=False, sort_keys=True),
@@ -704,6 +706,58 @@ class ServiceControlTool:
                 "是空转；若本轮还要继续改代码，建议改完再 publish 一次"
             ),
         }
+
+    def _receipt_provenance(self) -> dict[str, object]:
+        """本回执由哪一版代码生成：自举悖论的机器可读披露（上轮建议 3）。
+
+        publish/restart 回执由**当前在跑的进程**组装，而该进程跑的是本次部署之前的
+        代码：凡本次部署才引入的回执字段，在 live 收敛到新代之前都不可能出现在回执里。
+        没有这一块，缺字段会被读成"这个特性没实现"——实测就把它误读成 publish 回执
+        丢了新字段（EVO-20261102 supersedes 那一轮）。
+
+        不写进程自身的 commit：进程加载的字节与磁盘 HEAD 可以不同，落一个具体 hash
+        是假精确。只给可核对的事实（live 各服务 git_head，identity view 派生）、
+        缺字段的可能性、以及复核方式。identity 读失败就给空表，不反噬成功回执。
+        """
+        heads: dict[str, str] = {}
+        try:
+            view = compose_service_identity_view(self.store)
+        except Exception:  # noqa: BLE001 - 见下
+            # 这里故意接宽：本字段只是披露性附件，identity view 在半损坏 store 上
+            # 抛什么（JSONDecodeError/AttributeError/RuntimeError…）都不该让一条
+            # 已经成功的 publish 回执整体失败。收敛到空表，损失的是可选信息而不是
+            # 事实本身；枚举异常类型则在守一个无法穷举的集合（独立审查 P2-1/P2-2）。
+            view = {}
+        # 只接异常不够：identity view 若返回非映射（或 services 是非 dict 的真值），
+        # .get/.items 抛的是 AttributeError，照样把一条已经成功的 publish 回执带崩。
+        # 本字段是披露性附件，读取形状不符就退化成空表。
+        services = view.get("services") if isinstance(view, dict) else None
+        entries = services.items() if isinstance(services, dict) else ()
+        for name, entry in entries:
+            live = entry.get("live") if isinstance(entry, dict) else None
+            head = (live or {}).get("git_head") if isinstance(live, dict) else None
+            if isinstance(head, str) and head:
+                heads[str(name)] = head
+        return {
+            "note": (
+                "本回执由本次部署之前就在跑的进程生成；本次部署之后才引入的回执字段"
+                "要等 live 收敛到新代后才会出现，缺字段不等于特性没实现"
+            ),
+            "fields_added_by_this_deployment_may_be_absent": True,
+            "live_code_heads": heads,
+            "verify_after": (
+                "restart 收敛（convergence.lagging 为空）后重新调用本工具，"
+                "对比字段集是否补齐"
+            ),
+        }
+
+    @staticmethod
+    def _provenance_note() -> str:
+        """同一披露的文本版：restart 回执是纯文本，没有结构化 body 可挂。"""
+        return (
+            "；本回执由本次部署之前的进程生成：本次新增的回执字段要等 live 收敛到"
+            "新代后才会出现，缺字段不等于特性没实现"
+        )
 
     @staticmethod
     def _deferred_gates(receipt: ServiceControlAction) -> tuple[str, ...]:
