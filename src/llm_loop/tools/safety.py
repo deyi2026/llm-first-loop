@@ -167,8 +167,10 @@ _CATASTROPHIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "here-doc 交给解释器执行",
         re.compile(
-            rf"(?:^|(?<=[;&|(\s]))(?:[^\s;&|]*/)?(?:{_INTERPRETER_PIPE_ALTS})(?=[\s<])"
-            r"[^|;\n\\]*(?:\\\n[^|;\n\\]*)*<<",
+            # 2026-11-02 独立审查 P1（第二轮）：见下三条补丁
+            rf"(?:^|(?<=[;&|(\s'\"\\]))(?:[^\s;&|]*/)?"
+            rf"(?:\$\{{?[A-Za-z_][A-Za-z0-9_]*\}}?|(?:{_INTERPRETER_PIPE_ALTS}))['\"]?(?=[\s<)])"
+            r"[^|;\n\\]*(?:(?:\\\n|\\[^\n])[^|;\n\\]*)*<<",
             re.IGNORECASE,
         ),
     ),
@@ -342,6 +344,26 @@ def _newline_split_normalize(command: str) -> str:
     return "".join(out)
 
 
+def _heredoc_command_words_static(command: str) -> bool:
+    """每个 heredoc 开所在语句的**命令词**是否静态可见（裸词）。
+
+    2026-11-02 独立审查 P1（第二轮）：`_strip_heredocs(only_inert=True)` 把
+    「引用定界符 heredoc 的正文」当数据剥掉，前提是命令词已知。命令词写成变量
+    （`$SH <<'EOF'`）时，正文交给谁执行无法静态判定；继续剥就把载荷整段移出
+    扫描面（覆盖窄变成盲区）。全部语句命令词都是静态裸词才允许剥。
+    """
+    for segment in re.split(r"\n|&&|\|\||[;|]", command):
+        if "<<" not in segment:
+            continue
+        head = segment.split("<<", 1)[0].strip()
+        if not head:
+            return False
+        word = head.split()[0]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_./-]*", word):
+            return False
+    return True
+
+
 def _without_inert_heredoc_bodies(command: str) -> str:
     """剥离「引用定界符」heredoc 的正文（stdin 数据），供灾难模式闸判定。
 
@@ -364,6 +386,8 @@ def _without_inert_heredoc_bodies(command: str) -> str:
     try:
         from llm_loop.core.command_scope_guard import _strip_heredocs
     except Exception:  # pragma: no cover - 导入失败按「不剥」处理（fail-closed）
+        return command
+    if not _heredoc_command_words_static(command):
         return command
     stripped, error = _strip_heredocs(command, only_inert=True)
     if error is not None:

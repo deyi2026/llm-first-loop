@@ -40,6 +40,16 @@ BLOCK_CASES = [
     ("rm -rf 指向根", "rm -rf /"),
     # 反斜杠续行仍是同一条命令，窗口不得因换行而断
     ("dd 写入块设备", "dd if=/dev/zero \\\nof=/dev/rdisk0"),
+    # 独立审查 P1（第二轮）：命令位上的解释器不得因引号/续行/变量形态漏拦
+    ("here-doc 交给解释器执行", "\"bash\" <<'EOF'\necho hi\nEOF"),
+    ("here-doc 交给解释器执行", "'sh' <<'EOF'\necho hi\nEOF"),
+    ("here-doc 交给解释器执行", "(bash) <<'EOF'\necho hi\nEOF"),
+    ("here-doc 交给解释器执行", "\\bash <<'EOF'\necho hi\nEOF"),
+    # 变量解释器：静态解析不出解释器名 → 按灾难面兜住（fail-closed）
+    ("here-doc 交给解释器执行", "$SH <<'EOF'\necho hi\nEOF"),
+    ("here-doc 交给解释器执行", "${SH} <<'EOF'\necho hi\nEOF"),
+    # 非续行反斜杠不得截断 解释器→<< 窗口
+    ("here-doc 交给解释器执行", "sh -c 'a\\b' <<'EOF'\necho hi\nEOF"),
 ]
 
 
