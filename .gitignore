@@ -192,3 +192,11 @@ work/*/out/*.log
 # 会话过程临时脚本（根目录 .tmp-*.py/.json，2026-10-30 发现 16 个未跟踪；
 # 属各会话分析/修表用即弃产物，仅 ignore 不删除——文件本体由产出会话自行处置）
 /.tmp-*
+
+# 超单文件 1MB 安全扫描上限的产物不入库（git_security_scan.sh MAX_FILE_BYTES=1MB；
+# 2026-11-03 入库批次登记；仅 ignore 不删除——文件本体保留在工作区）：
+# - PDF（1.39MB）：同目录同内容轻量形态 .html/.txt 已随本批入库
+# - mech-all-sample.json（1.28MB）：按 docs/governance/method-review-queue-r4-20261030.md
+#   既有口径不入库（超 1MB 上限且含本机绝对路径）；可由该文档所载命令原样重生成
+reports/LFL-vs-Anthropic-Subagent-20261031.pdf
+reports/qualification-r4/mech-all-sample.json
