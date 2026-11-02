@@ -418,8 +418,58 @@ _PAYLOAD_INTERPRETER_RE = (
 # 先按开引号类型绑定，撇号在双引号载荷内不会再被误当闭合引号。
 _PAYLOAD_HEAD_RE = re.compile(_PAYLOAD_INTERPRETER_RE + r"""(?P<q>['"])""")
 
+# ── EVO-20261102-99717443（人工批准 2026-11-03）：here-doc 数据接收者豁免 ──
+# 解释器（python/sh/node/…）从 stdin 读脚本的 here-doc，正文是待执行代码，
+# 内容级保护网必须继续兜住（fail-closed 不变）；但 ``cat > file <<'EOF'`` 这类
+# 纯数据接收者的正文只是写入文件的数据，永远不会被执行——按数据区口径豁免
+# 内容级网（对齐灾难守卫 2026-11-01 _strip_heredocs 的同类改进）。
+# 白名单只收无求值能力的经典文本过滤器/写入器；sed（GNU e 命令可执行
+# shell）、awk/bc（解释器）、未知接收者一律不豁免：维持内容级网（原行为）。
+_HEREDOC_DATA_SINKS = frozenset({
+    "cat", "tee", "wc", "head", "tail", "nl", "sort", "uniq", "grep", "egrep",
+    "fgrep", "tr", "cut", "fold", "column", "jq", "paste", "comm", "join",
+    "tac", "rev", "md5sum", "sha1sum", "sha256sum", "shasum", "base64",
+    "pbcopy",
+})
+# opener 所在行含这些元字符即不豁免：``|``（下游可能是解释器，如
+# ``cat <<EOF | bash``）、``;&``（compound）、``()``（子 shell/函数）、
+# 反引号与 ``$(``（命令替换）。``>``/``>>`` 重定向允许（数据写入文件）。
+_HEREDOC_UNSAFE_LINE_RE = re.compile(r"[|;&()`]|\$\(")
 
-def _strip_heredoc_units(text: str, payloads: list[str]) -> str:
+
+def _heredoc_head_exempts_head(head: str) -> bool:
+    """head（opener 前文本）的接收者是否为白名单数据 sink.
+
+    只认 ``sink …`` / ``env [flags] sink …`` 两种形式；``VAR=x sink`` 这类
+    直接环境前缀不豁免（PATH 注入可劫持同名命令，fail-closed）；head 解析
+    失败同样不豁免。argv0 之后的文件实参/重定向不影响判定。
+    """
+    try:
+        toks = shlex.split(head)
+    except ValueError:
+        return False
+    i = 0
+    if toks and toks[0] == "env":
+        i = 1
+        while i < len(toks):
+            tok = toks[i]
+            if tok in {"-u", "--unset"} and i + 1 < len(toks):
+                i += 2
+                continue
+            if tok in {"-i", "--ignore-environment"} or re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*=.*", tok
+            ):
+                i += 1
+                continue
+            break
+    if i >= len(toks):
+        return False
+    return toks[i].rsplit("/", 1)[-1] in _HEREDOC_DATA_SINKS
+
+
+def _strip_heredoc_units(
+    text: str, payloads: list[str], exempt: list[bool] | None = None
+) -> str:
     """here-doc 体 → 占位 token（体逐行原样搬运；关闭行 `<<` 精确 / `<<-` 前导 tab）.
 
     P2-3（审查 REVISE 第二轮）：`<<` 前文本若含未闭合引号（说明 `<<WORD`
@@ -444,6 +494,12 @@ def _strip_heredoc_units(text: str, payloads: list[str]) -> str:
         delim = m.group(2)
         strip_tabs = m.group(0).startswith("<<-")
         head = line[: m.start()].rstrip()
+        # EVO-20261102-99717443：数据接收者豁免判定——opener 行无危险元字符
+        # （管道下游/compound/命令替换）且接收者 argv0 在白名单；否则不豁免。
+        is_exempt = (
+            _HEREDOC_UNSAFE_LINE_RE.search(line) is None
+            and _heredoc_head_exempts_head(head)
+        )
         ph = f"__XPL_{len(payloads)}__"
         body: list[str] = []
         j = i + 1
@@ -460,19 +516,26 @@ def _strip_heredoc_units(text: str, payloads: list[str]) -> str:
             # 未闭合：体吞到结尾（shell 语义）；残余不进骨架（fail-closed）
             body.extend(lines[i + 1 :])
             payloads.append("\n".join(body))
+            if exempt is not None:
+                exempt.append(is_exempt)
             out.append((head + " " + ph).strip() if head else ph)
             return "\n".join(out)
         payloads.append("\n".join(body))
+        if exempt is not None:
+            exempt.append(is_exempt)
         out.append((head + " " + ph).strip() if head else ph)
         i = j + 1
     return "\n".join(out)
 
 
-def _strip_interpreter_payloads(skeleton: str, payloads: list[str]) -> str:
+def _strip_interpreter_payloads(
+    skeleton: str, payloads: list[str], exempt: list[bool] | None = None
+) -> str:
     """引号包裹的解释器 -c/-e 载荷 → 占位 token（单引号原样；双引号认可转义）.
 
     只剥离"解释器 + flags + -c/-e + 闭合引号串"完整闭环；形态破碎（引号
     未闭合）原样保留该段并继续找后续候选，最终交由骨架 shlex fail-closed。
+    解释器 -c/-e 载荷是待执行代码：exempt 恒记 False（内容级网不豁免）。
     """
 
     def _close(text: str, start: int, q: str) -> int | None:
@@ -505,21 +568,27 @@ def _strip_interpreter_payloads(skeleton: str, payloads: list[str]) -> str:
             pos = m.end()
             continue
         payloads.append(skeleton[m.end() : close])
+        if exempt is not None:
+            exempt.append(False)
         ph = f"__XPL_{len(payloads) - 1}__"
         out.append(f"{m.group('interp')}{m.group('flags')}{m.group('marker')}{ph}")
         pos = close + 1
 
 
-def _strip_payload_units(command: str) -> tuple[str, list[str]]:
+def _strip_payload_units(
+    command: str, exempt: list[bool] | None = None
+) -> tuple[str, list[str]]:
     """剥离自足语法单元（先 here-doc 体，后解释器 -c/-e 载荷）→ (骨架, payloads).
 
     载荷内容只作数据；内容级规则在调用方不变：classify_host_shell 的
     全文关键词网、_active_backtick_substitutions 反引号网、_target 的
     kind 匹配仍看原始全文。骨架只承载 argv 结构与命令位分界。
+    exempt（可选）与 payloads 等长对齐：True=here-doc 数据接收者体
+    （纯数据，内容级网豁免）；False=解释器载荷/不豁免体（EVO-20261102-99717443）。
     """
     payloads: list[str] = []
-    skeleton = _strip_heredoc_units(str(command or ""), payloads)
-    skeleton = _strip_interpreter_payloads(skeleton, payloads)
+    skeleton = _strip_heredoc_units(str(command or ""), payloads, exempt)
+    skeleton = _strip_interpreter_payloads(skeleton, payloads, exempt)
     return skeleton, payloads
 
 
@@ -712,11 +781,17 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     protected-keyword net — a python payload that invokes a protected action
     classifies as that kind (fail-closed: denied at _target as an
     uncertifiable wrapper, never silently allowed, never a crash).
+    EVO-20261102-99717443 (human-approved): a here-doc body whose RECEIVER
+    is a whitelisted pure data sink (``cat > file <<'EOF' …``) is plain
+    file data that is never executed — its content skips the protected-
+    keyword net. Every other receiver (interpreter, unknown argv0, piped/
+    compound opener line, ``VAR=``-prefixed head) keeps the net (fail-closed).
     """
     value = str(command or "").strip()
     if not value:
         return None
-    skeleton, payloads = _strip_payload_units(value)
+    payload_exempt: list[bool] = []
+    skeleton, payloads = _strip_payload_units(value, payload_exempt)
     try:
         results = [
             _shell_segment_kind(tokens, depth=_depth)
@@ -736,7 +811,11 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
             # EVO-20261029-65f6fe21：剥离载荷的内容级网——载荷文本含受保护
             # 动词时仍按保护效果分类（旧 ValueError 全文网的行为保持），
             # 只是不再误报 compound 形态、不再以崩溃收场。
-            for payload in payloads:
+            for p_idx, payload in enumerate(payloads):
+                if p_idx < len(payload_exempt) and payload_exempt[p_idx]:
+                    # EVO-20261102-99717443：数据接收者 here-doc 体是纯数据
+                    # （写入文件，永不执行）——豁免内容级保护网。
+                    continue
                 if _GIT_PUSH.search(payload):
                     results.append("git_push")
                 elif _SHELL_FULL.search(payload) or classify_review_gate_command(payload) == "full_test":
@@ -767,6 +846,22 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     if "full_test" in results:
         return "full_test"
     return None
+
+
+def _data_payload_hint(command: str) -> str:
+    """EVO-20261102-99717443 建议 2：deny 回执附数据载荷姿势引导.
+
+    命中条件：命令含 here-doc 引导或解释器 -c/-e 引号载荷（即正文被当
+    待执行脚本审过的形态）；纯命令形态（如裸 git push）不附加。
+    """
+    value = str(command or "")
+    if not (_HEREDOC_OPENER_RE.search(value) or _PAYLOAD_HEAD_RE.search(value)):
+        return ""
+    return (
+        "提示：解释器（python/sh/node…）读取的 here-doc/引号载荷会被视为待执行脚本，"
+        "正文含受保护动词即触发本闸；若这只是把含敏感字样的文档写入文件，"
+        "请改用数据接收者姿势（如 cat > 文件 <<'EOF' … EOF）或 write_file/edit_file。"
+    )
 
 
 # EVO-20261030-62773eae (human-approved 2026-10-30): the 400_000B git-output
@@ -4073,13 +4168,15 @@ class HostReviewAdmission:
         return self._mint_pass(parent, child_id, frozen, attested, answer, p2)
 
     @staticmethod
-    def _deny(reason: str) -> AdmissionDecision:
-        return AdmissionDecision(
-            False,
+    def _deny(reason: str, hint: str = "") -> AdmissionDecision:
+        text = (
             "[RULE-AI-28 Host准入阻断] " + reason
             + "；动作未执行。使用 review_admission(action=start) 发起独立审查，"
-            "review_admission(action=status) 核验 completed+PASS 后以同一目标重试；审查不替代用户授权。",
+            "review_admission(action=status) 核验 completed+PASS 后以同一目标重试；审查不替代用户授权。"
         )
+        if hint:
+            text += "\n" + hint
+        return AdmissionDecision(False, text)
 
     def _consume(
         self, parent: str, kind: str, target: str, sha: str,
@@ -4247,6 +4344,9 @@ class HostReviewAdmission:
         kind = classify_host_shell(command)
         if kind is None:
             return _ALLOWED
+        # EVO-20261102-99717443 建议 2：deny 回执附数据载荷姿势引导（命中
+        # here-doc/解释器载荷形态时）。
+        hint = _data_payload_hint(command)
         # EVO-20261102-scope-consume: 候选 SHA 必须按**该记录自己的 scope** 重算。
         # 窄 scope 冻结出的 SHA 与全树 SHA 不同；只用全树重算会让 scope=patch 的
         # PASS 永远消费不到（独立审查 P1，实测反例见 test_..._consumable）。
@@ -4258,7 +4358,9 @@ class HostReviewAdmission:
                 derived_decision = self._derived_full_test_decision(parent, workdir, command)
                 if derived_decision is not None:
                     return derived_decision
-            return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")
+            return self._deny(
+                "不存在覆盖当前产物、目标及父会话的有效独立审查资格", hint=hint
+            )
         binding_error = ""
         drift_error = ""
         for scope_paths, recorded_digest in scopes:
@@ -4297,10 +4399,12 @@ class HostReviewAdmission:
             if decision.allowed:
                 return decision
         if binding_error:
-            return self._deny(binding_error)
+            return self._deny(binding_error, hint=hint)
         if drift_error:
-            return self._deny(drift_error)
-        return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")
+            return self._deny(drift_error, hint=hint)
+        return self._deny(
+            "不存在覆盖当前产物、目标及父会话的有效独立审查资格", hint=hint
+        )
 
     def _pending_scopes(self, parent: str, kind: str) -> list[tuple[tuple[str, ...], str]]:
         """未消费且已发放的资格各自声明的 scope，(scope_paths, 越界摘要)，保序。"""

@@ -156,6 +156,22 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("echo 'xargs git push origin main'", None),
     ("echo '`git push origin main`'", None),
     ("printf 'eval git push origin main'", None),
+    # ── EVO-20261102-99717443（人工批准 2026-11-03）：数据接收者 here-doc 豁免 ──
+    # 正文只是写入文件的数据，永不执行：内容级网放行。
+    ("cat > /tmp/doc.md <<'EOF'\n示例：git push origin main\nEOF", None),
+    ("tee /tmp/doc.md <<'EOF'\ngit push origin main\nEOF", None),
+    ("cat <<'EOF'\ngit push origin main\nEOF", None),
+    ("cat > /tmp/x.sh <<'EOF'\npytest -q tests/unit\nEOF", None),
+    ("cat >tmp/hd <<'EOF'\ncd /tmp/x && git push --force-with-lease origin main\nEOF", None),
+    # fail-closed 面全保留：管道下游/解释器/未知接收者/环境注入/非白名单
+    # sink/compound 行——维持内容级网（原行为）。
+    ("cat <<'EOF' | bash\ngit push origin main\nEOF", "git_push"),
+    ("bash <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("python3 - <<'PY'\nimport subprocess\nsubprocess.run(['git','push'])\nPY", "git_push"),
+    ("mytool <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("PATH=/tmp/x cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("sed 's/a/b/' <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("cat > a.md; cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,
@@ -183,6 +199,19 @@ def test_direct_full_test_denied_before_real_review(tmp_path: Path) -> None:
     assert denial.blocked is True
     assert "未执行" in denial.reason
     assert "review_admission" in denial.reason
+
+
+def test_data_payload_hint_in_deny(tmp_path: Path) -> None:
+    """EVO-20261102-99717443 建议 2：deny 回执附数据载荷姿势引导."""
+    repo = _repo(tmp_path)
+    host = HostReviewAdmission()
+    hd = "bash <<'EOF'\ngit push origin main\nEOF"
+    decision = host.check_shell("author-1", hd, str(repo))
+    assert decision.blocked is True
+    assert "write_file" in decision.reason  # 数据载荷姿势引导已附加
+    bare = host.check_shell("author-1", "git push origin main", str(repo))
+    assert bare.blocked is True
+    assert "write_file" not in bare.reason  # 纯命令形态不附加 hint
 
 
 def test_real_child_terminal_current_artifact_exact_one_use(tmp_path: Path) -> None:
