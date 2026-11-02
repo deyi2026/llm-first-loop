@@ -223,9 +223,22 @@ _DEPLOYED_WORKSPACE_IDENTITY_VARS = (
 )
 
 
+# 部署泄漏隔离（批次6，2026-11-02 全量回归归因）：本机 .env/宿主 shell 导出
+# LFL_SKILLS_REQUIRE_MANIFEST=1，tools_skill_files 的完整性门禁因此默认生效，
+# 把测试自建的本地技能（无 manifest）判为 modified/unlisted 并隐藏，
+# test_skills_loader 5 例 + test_skill_tools_p1a 2 例假红；CI 无此变量故全绿——
+# 即"本机红、CI 绿"的不可移植结论。门禁本身的用例（test_skills_integrity、
+# test_skill_tools_p1a 内的 setenv/delenv）在 fixture 之后执行，不受影响。
+_DEPLOYED_SKILL_INTEGRITY_VARS = (
+    "LFL_SKILLS_REQUIRE_MANIFEST",
+)
+
+
 @pytest.fixture(autouse=True)
 def isolate_deployed_web_auth_env(monkeypatch, tmp_path):
     """剥离部署环境泄漏的运行时配置变量（按批次清单逐组登记）。"""
+    for var in _DEPLOYED_SKILL_INTEGRITY_VARS:
+        monkeypatch.delenv(var, raising=False)
     for var in _DEPLOYED_WEB_AUTH_VARS:
         monkeypatch.delenv(var, raising=False)
     for var in _DEPLOYED_COMPACT_VARS:

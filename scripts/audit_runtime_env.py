@@ -18,8 +18,10 @@ import argparse
 import ast
 import json
 import re
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -476,17 +478,181 @@ def build_inventory(items: list[EnvAccess]) -> dict[str, Any]:
     }
 
 
-def main() -> int:
+DEFAULT_BASELINE_PATH = Path("tests/fixtures/runtime_env_access_baseline.json")
+
+# 单向棘轮里"只许降"的计数字段：登记时任何一项变大都等于放宽红线，必须显式给理由。
+_CAP_FIELDS = (
+    "access_count",
+    "direct_access_count",
+    "literal_helper_access_count",
+    "dynamic_helper_access_count",
+    "effective_access_count",
+    "module_import_access_count",
+    "module_import_direct_access_count",
+    "module_import_helper_access_count",
+    "file_count",
+    "effective_file_count",
+    "unique_key_count",
+    "helper_unique_key_count",
+)
+
+
+def _signature_delta(current: dict[str, int], baseline: dict[str, int]) -> tuple[dict[str, int], dict[str, int]]:
+    """签名计数器的增减（added 是"新债"，removed 是"还债"）。"""
+    added = {k: int(v) - int(baseline.get(k, 0)) for k, v in current.items() if int(v) > int(baseline.get(k, 0))}
+    removed = {k: int(v) - int(current.get(k, 0)) for k, v in baseline.items() if int(v) > int(current.get(k, 0))}
+    return dict(sorted(added.items())), dict(sorted(removed.items()))
+
+
+def describe_registration(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    """把实测 current 登记进 baseline 会带来哪些变化（纯函数，不落盘、不改入参）。"""
+    cap_changes: dict[str, dict[str, int]] = {}
+    for field in _CAP_FIELDS:
+        old = int(baseline.get(field, 0))
+        new = int(current.get(field, 0))
+        if new != old:
+            cap_changes[field] = {"from": old, "to": new, "delta": new - old}
+    added_sig, removed_sig = _signature_delta(current.get("signature_counts", {}), baseline.get("signature_counts", {}))
+    added_helper, removed_helper = _signature_delta(
+        current.get("helper_signature_counts", {}), baseline.get("helper_signature_counts", {})
+    )
+    added_module, removed_module = _signature_delta(
+        current.get("module_import_signature_counts", {}), baseline.get("module_import_signature_counts", {})
+    )
+    added_keys = sorted(set(current.get("keys", {})) - set(baseline.get("keys", {})))
+    removed_keys = sorted(set(baseline.get("keys", {})) - set(current.get("keys", {})))
+    relaxations = bool(
+        [c for c in cap_changes.values() if c["delta"] > 0]
+        or added_sig
+        or added_helper
+        or added_module
+        or added_keys
+    )
+    return {
+        "cap_changes": cap_changes,
+        "added_signatures": added_sig,
+        "removed_signatures": removed_sig,
+        "added_helper_signatures": added_helper,
+        "removed_helper_signatures": removed_helper,
+        "added_module_import_signatures": added_module,
+        "removed_module_import_signatures": removed_module,
+        "added_keys": added_keys,
+        "removed_keys": removed_keys,
+        "relaxations": relaxations,
+    }
+
+
+def render_registration(report: dict[str, Any]) -> list[str]:
+    """把登记差异渲染成人能复核的行（放宽在前、还债在后）。"""
+    lines: list[str] = []
+    for field, change in report["cap_changes"].items():
+        sign = "放宽" if change["delta"] > 0 else "收紧"
+        lines.append(f"{field}: {change['from']} -> {change['to']} ({sign} {change['delta']:+d})")
+    for label, section in (
+        ("新增签名", "added_signatures"),
+        ("消失签名", "removed_signatures"),
+        ("新增 helper 签名", "added_helper_signatures"),
+        ("消失 helper 签名", "removed_helper_signatures"),
+        ("新增 module-import 签名", "added_module_import_signatures"),
+        ("消失 module-import 签名", "removed_module_import_signatures"),
+    ):
+        for sig, delta in report[section].items():
+            lines.append(f"{label}: {sig} ({delta:+d})")
+    for key in report["added_keys"]:
+        lines.append(f"新增环境变量: {key}")
+    for key in report["removed_keys"]:
+        lines.append(f"消失环境变量: {key}")
+    if not lines:
+        lines.append("无差异：基线已与实测一致。")
+    return lines
+
+
+def apply_registration(
+    current: dict[str, Any],
+    baseline: dict[str, Any],
+    *,
+    report: dict[str, Any],
+    reason: str,
+    parent_commit: str,
+    at: str,
+) -> dict[str, Any]:
+    """生成新基线：实测值 + 保留 baseline_context + 追加一条 registration_log。"""
+    updated: dict[str, Any] = dict(current)
+    if "baseline_context" in baseline:
+        updated["baseline_context"] = baseline["baseline_context"]
+    log = list(baseline.get("registration_log", []))
+    entry: dict[str, Any] = {
+        "at": at,
+        "parent_commit": parent_commit,
+        "reason": reason.strip() if reason else "",
+        "relaxations": bool(report["relaxations"]),
+        "cap_changes": report["cap_changes"],
+        "added_signatures": report["added_signatures"],
+        "added_helper_signatures": report["added_helper_signatures"],
+        "added_module_import_signatures": report["added_module_import_signatures"],
+        "added_keys": report["added_keys"],
+    }
+    log.append(entry)
+    updated["registration_log"] = log
+    return updated
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--src", default="src")
     parser.add_argument("--json", dest="json_path")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--baseline",
+        default=str(DEFAULT_BASELINE_PATH),
+        help="棘轮基线文件（默认 tests/fixtures/runtime_env_access_baseline.json）",
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="把当前实测登记进基线；放宽红线时必须配 --reason，否则拒绝登记",
+    )
+    parser.add_argument("--reason", default="", help="为什么这次登记合理（放宽时必填，写入 registration_log）")
+    parser.add_argument("--parent-commit", default="", help="登记时的提交号，写入 registration_log 便于追溯")
+    parser.add_argument("--dry-run", action="store_true", help="只打印差异，不落盘")
+    args = parser.parse_args(argv)
+
     inventory = build_inventory(scan_tree(Path(args.src)))
-    text = json.dumps(inventory, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    if args.json_path:
-        Path(args.json_path).write_text(text, encoding="utf-8")
-    else:
-        print(text, end="")
+    if not args.update_baseline:
+        text = json.dumps(inventory, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        if args.json_path:
+            Path(args.json_path).write_text(text, encoding="utf-8")
+        else:
+            print(text, end="")
+        return 0
+
+    baseline_path = Path(args.baseline)
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    report = describe_registration(inventory, baseline)
+    for line in render_registration(report):
+        print(line)
+    if report["relaxations"]:
+        if not args.reason.strip():
+            print(
+                "[refused] 本次登记会放宽单向棘轮（计数上调 / 新增签名 / 新增 key），必须用 --reason 说明理由。",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"[reason] {args.reason.strip()}")
+    if args.dry_run:
+        print("[dry-run] 未落盘。")
+        return 0
+    updated = apply_registration(
+        inventory,
+        baseline,
+        report=report,
+        reason=args.reason,
+        parent_commit=args.parent_commit,
+        at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+    baseline_path.write_text(
+        json.dumps(updated, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(f"[written] {baseline_path}")
     return 0
 
 

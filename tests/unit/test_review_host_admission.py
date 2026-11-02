@@ -3069,3 +3069,55 @@ def test_deadline_budget_always_covers_its_own_estimate(chars: int) -> None:
     """预算低于自身估计 = 开跑即注定 UNAVAILABLE（P2-8）。"""
     estimate = rha._review_estimate_seconds(chars)
     assert rha._review_deadline_seconds(chars) >= estimate * 1.25
+
+
+# ── 两级口径：切片=被审内容、切片外=绑定未审（各自声明，互不冒充） ──────────
+# 问题: 材料只下发切片内容，切片外只绑摘要。审查方看到"没出现"既可能意味着
+# "不存在"，也可能意味着"存在但没下发"——不写清楚就会两头骗：把没下发的当
+# 审过，或把绑过的不当缺陷。
+
+
+def test_material_header_and_receipt_declare_two_tiers(tmp_path: Path) -> None:
+    repo, host, issued = _pass_patch(
+        tmp_path,
+        ["example.py"],
+        before=lambda r: (
+            (r / "helper.py").write_text("z = 1\n"),      # 切片外 tracked（dirty）
+            (r / "notes.txt").write_text("hi\n"),          # 切片外 untracked
+        ),
+    )
+    row = host._records[issued["child_id"]]
+    assert "review_material_tiers=reviewed_slice|bound_unreviewed" in row.material
+    assert "review_bound_unreviewed_tracked=1" in row.material
+    assert "review_bound_unreviewed_untracked=1" in row.material
+    assert (
+        "review_tier_rule=reviewed_slice:judge_content;bound_unreviewed:existence_check_only"
+        in row.material
+    )
+    # 契约必须说出两级，否则审查方的 PASS 会被读成"整棵树都审过"
+    assert "MATERIAL TIERS" in row.task
+
+    scope = host.poll("author-1", "child-review-1")["consumable_scope"]
+    tiers = scope["material_tiers"]
+    assert "1 条声明路径" in tiers["reviewed_slice"]
+    assert "tracked=1" in tiers["bound_unreviewed"]
+    assert "untracked=1" in tiers["bound_unreviewed"]
+
+
+def test_tree_scope_declares_no_unreviewed_tier(tmp_path: Path) -> None:
+    """tree scope 覆盖整树，就不该再声称有"未审上下文"（否则口径自相矛盾）。"""
+    repo = _sliced_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q", scope="tree",
+    )
+    assert issued["accepted"], issued
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    row = host._records[issued["child_id"]]
+    assert "review_material_tiers" not in row.material
+    scope = host.poll("author-1", "child-review-1")["consumable_scope"]
+    assert scope["scope"] == "tree"
+    assert "material_tiers" not in scope

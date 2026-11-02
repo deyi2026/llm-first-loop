@@ -1,13 +1,13 @@
 {
   "access_class_counts": {
     "bootstrap_os": 3,
-    "business_config": 121,
+    "business_config": 125,
     "debug_test": 12,
-    "dynamic_or_bulk": 61,
+    "dynamic_or_bulk": 63,
     "dynamic_secret": 9,
     "secret": 9
   },
-  "access_count": 198,
+  "access_count": 202,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -120,13 +120,13 @@
   },
   "class_key_counts": {
     "bootstrap_os": 2,
-    "business_config": 66,
+    "business_config": 67,
     "debug_test": 10,
     "dynamic_or_bulk": 2,
     "dynamic_secret": 1,
     "secret": 6
   },
-  "direct_access_count": 198,
+  "direct_access_count": 202,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -137,11 +137,11 @@
     "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>",
     "src/llm_loop/wecom/config.py|load_wecom_config|read|<dynamic>"
   ],
-  "effective_access_count": 215,
-  "effective_file_count": 66,
-  "file_count": 66,
+  "effective_access_count": 221,
+  "effective_file_count": 68,
+  "file_count": 68,
   "helper_class_key_counts": {
-    "business_config": 12,
+    "business_config": 14,
     "dynamic_secret": 1
   },
   "helper_keys": {
@@ -253,6 +253,30 @@
       "reads": 1,
       "writes": 0
     },
+    "LFL_PREBACKUP_LATEST_JSON": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
+    "LFL_PREBACKUP_LATEST_TXT": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 1,
+      "writes": 0
+    },
     "LFL_ROUTE": {
       "class": "business_config",
       "classes": [
@@ -311,6 +335,8 @@
     "src/llm_loop/runtime/route_context.py|_resolve|read|LFL_INSTANCE": 1,
     "src/llm_loop/runtime/route_context.py|_resolve|read|LFL_ROUTE": 1,
     "src/llm_loop/runtime/route_context.py|_resolve|read|LFL_ZONE": 1,
+    "src/llm_loop/tools/builtin/workspace_recovery_status.py|_find_backup|read|LFL_PREBACKUP_LATEST_JSON": 1,
+    "src/llm_loop/tools/builtin/workspace_recovery_status.py|_find_backup|read|LFL_PREBACKUP_LATEST_TXT": 1,
     "src/llm_loop/web/provider_admin.py|_credential_fact|read|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|_sanitize_provider|read|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|_set_credential_locked|write|<dynamic>": 1,
@@ -321,7 +347,7 @@
     "src/llm_loop/workspace/archive_stale.py|ArchiveStaleLoop/__init__|read|LFL_ARCHIVE_STALE_PERIOD_S": 1,
     "src/llm_loop/workspace/archive_stale.py|ArchiveStaleLoop/__init__|read|LFL_ARCHIVE_STALE_TICK_S": 1
   },
-  "helper_unique_key_count": 13,
+  "helper_unique_key_count": 15,
   "keys": {
     "<all>": {
       "class": "dynamic_or_bulk",
@@ -377,6 +403,8 @@
         "src/llm_loop/runtime/resolver.py",
         "src/llm_loop/runtime/route_context.py",
         "src/llm_loop/sealed_paths.py",
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py",
+        "src/llm_loop/tools/review_report.py",
         "src/llm_loop/web/provider_admin.py",
         "src/llm_loop/web/vision.py",
         "src/llm_loop/wecom/config.py",
@@ -384,7 +412,7 @@
         "src/llm_loop/workspace/store.py"
       ],
       "module_import_reads": 0,
-      "reads": 32,
+      "reads": 34,
       "writes": 3
     },
     "COG_RUNTIME_MODE": {
@@ -883,6 +911,18 @@
       ],
       "module_import_reads": 0,
       "reads": 1,
+      "writes": 0
+    },
+    "LFL_PREBACKUP_ROOTS": {
+      "class": "business_config",
+      "classes": [
+        "business_config"
+      ],
+      "files": [
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py"
+      ],
+      "module_import_reads": 0,
+      "reads": 2,
       "writes": 0
     },
     "LFL_RESTART_CONFIRM_TTL_S": {
@@ -1418,11 +1458,75 @@
       "writes": 1
     }
   },
-  "literal_helper_access_count": 14,
+  "literal_helper_access_count": 16,
   "module_import_access_count": 0,
   "module_import_direct_access_count": 0,
   "module_import_helper_access_count": 0,
   "module_import_signature_counts": {},
+  "registration_log": [
+    {
+      "added_helper_signatures": {
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py|_find_backup|read|LFL_PREBACKUP_LATEST_JSON": 1,
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py|_find_backup|read|LFL_PREBACKUP_LATEST_TXT": 1
+      },
+      "added_keys": [
+        "LFL_PREBACKUP_ROOTS"
+      ],
+      "added_module_import_signatures": {},
+      "added_signatures": {
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py|_candidate_roots|read|LFL_PREBACKUP_ROOTS": 1,
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py|_env_path|read|<dynamic>": 1,
+        "src/llm_loop/tools/builtin/workspace_recovery_status.py|_roots_desc|read|LFL_PREBACKUP_ROOTS": 1,
+        "src/llm_loop/tools/review_report.py|data_root|read|<dynamic>": 1
+      },
+      "at": "2026-11-02T02:13:21+00:00",
+      "cap_changes": {
+        "access_count": {
+          "delta": 4,
+          "from": 198,
+          "to": 202
+        },
+        "direct_access_count": {
+          "delta": 4,
+          "from": 198,
+          "to": 202
+        },
+        "effective_access_count": {
+          "delta": 6,
+          "from": 215,
+          "to": 221
+        },
+        "effective_file_count": {
+          "delta": 2,
+          "from": 66,
+          "to": 68
+        },
+        "file_count": {
+          "delta": 2,
+          "from": 66,
+          "to": 68
+        },
+        "helper_unique_key_count": {
+          "delta": 2,
+          "from": 13,
+          "to": 15
+        },
+        "literal_helper_access_count": {
+          "delta": 2,
+          "from": 14,
+          "to": 16
+        },
+        "unique_key_count": {
+          "delta": 1,
+          "from": 86,
+          "to": 87
+        }
+      },
+      "parent_commit": "cbfce4a93",
+      "reason": "workspace_recovery_status 需按 LFL_PREBACKUP_ROOTS / LFL_PREBACKUP_LATEST_{JSON,TXT} 支持自定义备份根与指针文件（测试隔离与真实搬迁都要用）；review_report.data_root 需按 LFL_DATA_DIR/DATA_DIR 与其他 writer 对齐解析数据根。两处都是只读路径解析，不读密钥。",
+      "relaxations": true
+    }
+  ],
   "schema_version": 2,
   "signature_counts": {
     "src/llm_loop/cache_guard/guard.py|_check_privacy|read|<dynamic>": 1,
@@ -1530,7 +1634,11 @@
     "src/llm_loop/tools/builtin/execute_command.py|_scrubbed_env|bulk:items|<all>": 1,
     "src/llm_loop/tools/builtin/web_fetch.py|_block_private_enabled|read|WEB_FETCH_BLOCK_PRIVATE": 1,
     "src/llm_loop/tools/builtin/web_fetch.py|_strict_fake_ip|read|WEB_FETCH_BLOCK_FAKE_IP": 1,
+    "src/llm_loop/tools/builtin/workspace_recovery_status.py|_candidate_roots|read|LFL_PREBACKUP_ROOTS": 1,
+    "src/llm_loop/tools/builtin/workspace_recovery_status.py|_env_path|read|<dynamic>": 1,
+    "src/llm_loop/tools/builtin/workspace_recovery_status.py|_roots_desc|read|LFL_PREBACKUP_ROOTS": 1,
     "src/llm_loop/tools/mcp_transport.py|StdioTransport/start|bulk:raw|<all>": 1,
+    "src/llm_loop/tools/review_report.py|data_root|read|<dynamic>": 1,
     "src/llm_loop/tools/sandbox.py|_strict_enabled|read|EXEC_SANDBOX_STRICT": 1,
     "src/llm_loop/tools/sandbox.py|macos_writable_roots|read|EXEC_SANDBOX_MACOS_WRITABLE": 1,
     "src/llm_loop/web/__init__.py|_CanonicalOriginMiddleware/__init__|read|WEB_HOST": 1,
@@ -1614,5 +1722,5 @@
     "src/llm_loop/workspace/archive_stale.py|_env_number|read|<dynamic>": 1,
     "src/llm_loop/workspace/store.py|_workspace_allowed_roots|read|<dynamic>": 1
   },
-  "unique_key_count": 86
+  "unique_key_count": 87
 }
