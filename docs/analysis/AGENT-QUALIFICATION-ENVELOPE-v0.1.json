@@ -47,8 +47,8 @@
       "source_refs": [
         {
           "anchor": "except Exception as exc:  # noqa: BLE001 — EVO-20260923: 账本不可读 → 不写终局（fail-closed）",
-          "line_hint": "328-338",
-          "path": "src/llm_loop/introspection/tools_goal.py"
+          "line_hint": "82-89",
+          "path": "src/llm_loop/introspection/goal_gates.py"
         }
       ],
       "source_status_default": "unknown"
