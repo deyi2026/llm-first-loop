@@ -141,6 +141,25 @@ def test_generation_lag_dedupes_per_target():
     assert sc._generation_lag_signal(actions, None) == []
 
 
+def test_generation_lag_ignores_history_when_newest_succeeded_at_desired():
+    """2026-11-02 实测回归：最新一次成功已在目标代 = 不滞后（历史不得冒充最新）.
+
+    wecom 已在 gen368 重启成功，旧实现把">= desired"的成功先滤掉，次新的
+    gen364 就顶上冒充最新，net status 仍报 lag 4——信号必须说"哪个 target
+    的最近一次成功重启仍落后"，而不是"历史上落后过几次"。
+    """
+    deployment = SimpleNamespace(generation=368)
+    actions = [
+        _action(action_id="w1", target="wecom", deployment_generation=340),
+        _action(action_id="w2", target="wecom", deployment_generation=364),
+        _action(action_id="w3", target="wecom", deployment_generation=368),
+        _action(action_id="f1", target="feishu", deployment_generation=361),
+    ]
+    entries = sc._generation_lag_signal(actions, deployment)
+    assert {entry["target"] for entry in entries} == {"feishu"}
+    assert entries[0]["lag_generations"] == 7
+
+
 def test_stage_facts_marks_failed_action_as_covered():
     failed = _action(
         action_id="svc-fail",

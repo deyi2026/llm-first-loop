@@ -1532,9 +1532,15 @@ def _generation_lag_signal(
 ) -> list[dict[str, Any]]:
     """落代滞后信号：每 target 只留**最新**一次成功重启，逐条附折叠了多少条.
 
-    只保留仍低于 desired 代的 target（最新成功重启已在目标代 = 不滞后）。
-    折叠计数进 succeeded_actions，使"瘦身省略了历史"仍可核验；target 取值域
-    就是 web/feishu/wecom/learning/all 五个，故去重后天然不会丢 target。
+    先取最新、再判滞后：只保留最新成功重启仍低于 desired 代的 target（最新已在
+    目标代 = 该 target 不滞后，此前多少条落后历史都不再报）。折叠计数进
+    succeeded_actions，使"瘦身省略了历史"仍可核验；target 取值域就是
+    web/feishu/wecom/learning/all 五个，故去重后天然不会丢 target。
+
+    2026-11-02 修（实测：wecom 已在 gen368 重启成功，status 仍报 lag 4/gen364）：
+    旧实现先按 `deployment_generation < desired` 过滤再取最新，最新那条成功因
+    "已在目标代"被滤掉，次新历史就冒充最新，报出并不存在的滞后。顺序必须
+    是"先取最新、再判是否落后"。
     """
     if deployment is None:
         return []
@@ -1542,8 +1548,6 @@ def _generation_lag_signal(
     collapsed: dict[str, int] = {}
     for action in actions:
         if action.status != "succeeded":
-            continue
-        if action.deployment_generation >= deployment.generation:
             continue
         collapsed[action.target] = collapsed.get(action.target, 0) + 1
         current = newest.get(action.target)
@@ -1557,6 +1561,7 @@ def _generation_lag_signal(
             "succeeded_actions": collapsed.get(action.target, 1),
         }
         for action in newest.values()
+        if action.deployment_generation < deployment.generation
     ]
     entries.sort(key=lambda item: (-item["lag_generations"], str(item["target"])))
     return entries[:_GENERATION_LAG_LIMIT]
