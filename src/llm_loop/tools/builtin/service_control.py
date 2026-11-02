@@ -569,9 +569,8 @@ class ServiceControlTool:
                 "service_control(action=status, action_id=...)（或 status 含 action 摘要），"
                 "event_stream(query=service_action_terminal) 亦可检索（EVO-20260924-8266b693 A）；"
                 "failed 终态会保留待确认（verify_acknowledge）直到显式闭合"
-                + self._deferred_restart_note(target)
+                + self._deferred_restart_note(target) + self._provenance_note()
                 + self._next_check_note(receipt)
-                + self._provenance_note()
             ),
             tool_call_id="",
             tool_name=self.name,
@@ -753,7 +752,14 @@ class ServiceControlTool:
 
     @staticmethod
     def _provenance_note() -> str:
-        """同一披露的文本版：restart 回执是纯文本，没有结构化 body 可挂。"""
+        """同一披露的文本版：restart 回执是纯文本，没有结构化 body 可挂。
+
+        调用位置有硬约束：必须排在 ``_next_check_note`` **之前**。next_check= 是
+        机器解析段（tests/unit/test_service_control_argument_contract.py 用
+        ``r"next_check=(\\{[^\\n]*\\})\\s*$"`` 断言它收尾），排在后面会让 6 个用例
+        判"回执缺少 next_check JSON"。同理不要把这段说明写回 ``execute`` 里——那里
+        受函数体量棘轮盯防（登记 79 行，加一行就红）。
+        """
         return (
             "；本回执由本次部署之前的进程生成：本次新增的回执字段要等 live 收敛到"
             "新代后才会出现，缺字段不等于特性没实现"
