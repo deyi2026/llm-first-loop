@@ -198,6 +198,22 @@ def _note_head_caliber(rel: str) -> None:
     )
 
 
+def _head_caliber_failure_hint() -> str:
+    """把「按 HEAD 口径读了哪些文件」并入失败断言正文（2026-11-02 复盘）。
+
+    note 只走 stderr，失败报告里最先看到的断言消息不带口径，于是
+    「改了没生效」被误判成「守卫坏了」。口径必须与失败结论同屏才可自证。
+    clean 工作树返回空串，断言消息零噪音。
+    """
+    if not _head_caliber_noted:
+        return ""
+    files = "、".join(sorted(_head_caliber_noted))
+    return (
+        f"\n【口径】本次测量按 HEAD（staged 现实）读取了 {len(_head_caliber_noted)} 个"
+        f"存在未暂存改动的文件：{files}；若修复仅在工作树，先 `git add` 再复验。"
+    )
+
+
 def _read_source(rel: str) -> str:
     """守卫读源：外部漂移未 staged 文件回退 `git show HEAD:<rel>`，其余 working。"""
     if rel in _external_unstaged_src(_git_porcelain()):
@@ -272,6 +288,25 @@ def test_read_source_head_caliber_note(monkeypatch, capsys):
         monkeypatch.setattr(mod, "_git_porcelain", lambda: [])
         _read_source(rel)
         assert capsys.readouterr().err == ""
+    finally:
+        mod._head_caliber_noted.clear()
+
+
+def test_head_caliber_hint_lands_in_failure_message(monkeypatch):
+    """口径提示必须与失败结论同屏（2026-11-02）：clean 树空串，漂移后带文件名与 git add。"""
+    mod = sys.modules[__name__]
+    rel = "src/llm_loop/core/cache_health.py"
+    mod._head_caliber_noted.clear()
+    monkeypatch.setattr(mod, "_git_porcelain", lambda: [])
+    try:
+        assert _head_caliber_failure_hint() == "", "clean 工作树的失败消息不应带口径噪音"
+        monkeypatch.setattr(mod, "_git_porcelain", lambda: [f" M {rel}"])
+        _read_source(rel)
+        hint = _head_caliber_failure_hint()
+        assert rel in hint and "git add" in hint and "HEAD" in hint
+        # 同文件重复读取仍只列一次（set 语义），不因读取次数膨胀
+        _read_source(rel)
+        assert _head_caliber_failure_hint().count(rel) == 1
     finally:
         mod._head_caliber_noted.clear()
 
@@ -440,6 +475,7 @@ def test_function_lines_ratchet_within_baseline():
         "基线登记与 AST 实测不一致（EVO-20261025-e0bff8ee 五规则对账）：\n"
         + "\n".join(problems)
         + "\n重登记：python scripts/regen_function_size_baseline.py（guard(r9): 前缀提交）"
+        + _head_caliber_failure_hint()
     )
 
 
@@ -469,6 +505,7 @@ def test_global_redline_300():
         f"实测 >{GLOBAL_FAIL} 的函数存在未登记/低登记（全量重登记："
         "python scripts/regen_function_size_baseline.py，guard(r9): 前缀提交）：\n"
         + "\n".join(problems)
+        + _head_caliber_failure_hint()
     )
 
 

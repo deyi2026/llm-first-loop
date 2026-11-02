@@ -9,12 +9,15 @@ import json
 import pytest
 
 from scripts.check_evo_refs import (
+    Baseline,
     LedgerFormatError,
+    baseline_violations,
     collect_text_files,
     extract_refs,
     history_refs_from_text,
     known_ids_from_jsonl,
     load_baseline,
+    load_baseline_table,
     main,
     normalize_known_id,
     unknown_refs,
@@ -24,6 +27,7 @@ FAKE_KNOWN = "EVO-20991231-aaaaaaaa"
 FAKE_UNKNOWN = "EVO-20991231-bbbbbbbb"
 # 过去日期的"历史欠账"形状：可被豁免表登记（对照未来日期哨兵永远不被豁免）。
 LEGACY_ID = "EVO-20200101-abcdef01"
+LEGACY_ID_2 = "EVO-20200102-abcdef02"
 
 
 def _ledger(tmp_path, rows):
@@ -167,17 +171,19 @@ def test_cli_baseline_exempts_legacy_but_still_blocks_new_fabrication(tmp_path, 
     assert legacy not in out
 
 
-def test_cli_regen_baseline_records_only_unattested_ids(tmp_path, capsys):
+def test_cli_regen_baseline_denies_unattested_ids(tmp_path, capsys):
+    """重登记不再"一次性洗白"：无出处的编号不写入，豁免表原样不动（2026-11-02 复盘）."""
     ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
     target = _text(tmp_path, "note.md", f"引用 {FAKE_KNOWN} 欠账 {LEGACY_ID}")
     baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps({"quota": 0, "frozen": [], "exempt": []}), encoding="utf-8"
+    )
+    before = baseline.read_text(encoding="utf-8")
     argv = ["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", "--regen-baseline"]
-    assert main([*argv, str(target)]) == 0
-    assert "已登记豁免 1 个编号" in capsys.readouterr().out
-    payload = json.loads(baseline.read_text(encoding="utf-8"))
-    assert payload["exempt"] == [LEGACY_ID]
-    # 登记后再扫：不再 DENIED（豁免=历史欠账一次性确认）
-    assert main(["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", str(target)]) == 0
+    assert main([*argv, str(target)]) == 1
+    assert "BLOCK UNATTESTED" in capsys.readouterr().out
+    assert baseline.read_text(encoding="utf-8") == before, "被拒时不得留下半张豁免表"
 
 
 def test_cli_regen_baseline_refuses_future_dated_ids(tmp_path, capsys):
@@ -199,3 +205,121 @@ def test_cli_no_history_skips_git_probe(tmp_path, monkeypatch):
     ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
     target = _text(tmp_path, "note.md", f"引用 {FAKE_KNOWN}")
     assert main(["--ledger", str(ledger), "--no-history", str(target)]) == 0
+
+
+# ---- 2026-11-02：豁免表只许减不许增（quota / frozen / 出处三判据）----
+
+
+def test_load_baseline_table_reads_quota_and_frozen(tmp_path):
+    path = tmp_path / "b.json"
+    path.write_text(
+        json.dumps({"quota": 2, "frozen": [LEGACY_ID], "exempt": [LEGACY_ID, LEGACY_ID_2]}),
+        encoding="utf-8",
+    )
+    table = load_baseline_table(path)
+    assert table.quota == 2
+    assert table.frozen == {LEGACY_ID}
+    assert table.exempt == {LEGACY_ID, LEGACY_ID_2}
+
+
+def test_load_baseline_table_v1_has_no_frozen_or_quota(tmp_path):
+    """v1 缺 frozen/quota 时必须如实为 None/空，不得假装满足判据."""
+    path = tmp_path / "b.json"
+    path.write_text(json.dumps({"exempt": [LEGACY_ID]}), encoding="utf-8")
+    table = load_baseline_table(path)
+    assert table.quota is None and table.frozen == frozenset()
+    assert table.exempt == {LEGACY_ID}
+
+
+def test_baseline_violations_flags_future_dated_entry():
+    table = Baseline(exempt=frozenset({FAKE_UNKNOWN}), frozen=frozenset({FAKE_UNKNOWN}), quota=1)
+    assert any("未来日期" in p for p in baseline_violations(table, set()))
+
+
+def test_baseline_violations_flags_quota_growth():
+    table = Baseline(
+        exempt=frozenset({LEGACY_ID, LEGACY_ID_2}), frozen=frozenset({LEGACY_ID}), quota=1
+    )
+    assert any("超配额" in p for p in baseline_violations(table, set()))
+
+
+def test_baseline_violations_flags_addition_without_provenance():
+    table = Baseline(exempt=frozenset({LEGACY_ID}), frozen=frozenset(), quota=1)
+    assert any("无出处" in p for p in baseline_violations(table, set()))
+    # 能回溯到提交信息就不算违规（出处=git 历史里的编号）
+    assert baseline_violations(table, {LEGACY_ID}) == []
+    # 读不到历史时不做该判定（无从判断≠合规，CLI 另行降级告警）
+    assert baseline_violations(table, None) == []
+
+
+def test_cli_denies_future_dated_baseline_entry(tmp_path, capsys):
+    """历史欠账不可能是未来日期：手改豁免表把它塞进来也必须被拦."""
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"引用 {FAKE_UNKNOWN}")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps({"quota": 1, "frozen": [FAKE_UNKNOWN], "exempt": [FAKE_UNKNOWN]}),
+        encoding="utf-8",
+    )
+    argv = ["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", str(target)]
+    assert main(argv) == 1
+    assert "未来日期豁免" in capsys.readouterr().err
+
+
+def test_cli_denies_baseline_quota_growth(tmp_path, capsys):
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"引用 {LEGACY_ID} {LEGACY_ID_2}")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {"quota": 1, "frozen": [LEGACY_ID], "exempt": [LEGACY_ID, LEGACY_ID_2]}
+        ),
+        encoding="utf-8",
+    )
+    argv = ["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", str(target)]
+    assert main(argv) == 1
+    assert "超配额" in capsys.readouterr().err
+
+
+def test_cli_denies_baseline_entry_without_provenance(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("scripts.check_evo_refs.git_history_refs", lambda _root: set())
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"引用 {LEGACY_ID}")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps({"quota": 1, "frozen": [], "exempt": [LEGACY_ID]}), encoding="utf-8"
+    )
+    # 不传 --no-history：history=set() 参与判定，豁免条目必须能在提交信息里找到
+    argv = ["--ledger", str(ledger), "--baseline", str(baseline), str(target)]
+    assert main(argv) == 1
+    assert "无出处豁免" in capsys.readouterr().err
+
+
+def test_cli_adopt_legacy_baseline_upgrades_to_v2(tmp_path, capsys):
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps({"exempt": [LEGACY_ID_2, LEGACY_ID]}), encoding="utf-8")
+    assert main(["--baseline", str(baseline), "--adopt-legacy-baseline"]) == 0
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    assert payload["quota"] == 2
+    assert payload["frozen"] == payload["exempt"] == [LEGACY_ID, LEGACY_ID_2]
+    # 已是 v2：重复迁移必须确定性拒绝，不静默重冻结（否则冻结基线可被无限后移）
+    assert main(["--baseline", str(baseline), "--adopt-legacy-baseline"]) == 2
+    assert "拒绝重复迁移" in capsys.readouterr().err
+
+
+def test_cli_regen_keeps_frozen_and_ratchets_quota_down(tmp_path, capsys):
+    """只许减不许增：树上已消失的旧豁免退场，quota 随实际条数下调."""
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"引用 {LEGACY_ID}")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps(
+            {"quota": 5, "frozen": [LEGACY_ID, LEGACY_ID_2], "exempt": [LEGACY_ID, LEGACY_ID_2]}
+        ),
+        encoding="utf-8",
+    )
+    argv = ["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", "--regen-baseline"]
+    assert main([*argv, str(target)]) == 0
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    assert payload["exempt"] == [LEGACY_ID]
+    assert payload["quota"] == 1, "quota 必须随条目收紧，不得保留旧上限"

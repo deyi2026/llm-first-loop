@@ -16,10 +16,14 @@ EVO 引用，与演进建议记录（JSONL 真值源）中的已知编号比对�
   → scanned=4174 files, distinct_refs=225, known=237（滚动窗口）,
     history=167（提交信息里出现过的编号）, 窗口外真编号=95, 未知=154。
   两道补充真值都补不全：演进记录是**滚动窗口**，提交信息只覆盖部分历史。
-  因此引入 **baseline 豁免表**（scripts/evo_refs_baseline.json，append-only）：
+  因此引入 **baseline 豁免表**（scripts/evo_refs_baseline.json）：
   现存无法回溯的历史编号一次性登记，之后只拦**新增**的编造引用。
-    --regen-baseline  重新登记当前未知编号（一次性、需人工审阅 diff）
-  有了 baseline 才可作 CI 硬门禁：新旧编号都过不了 baseline 才 DENIED。
+  2026-11-02 二轮加固（豁免表只许减不许增）：
+    - `quota`：条目数上限，写一次即不可增长；`--regen-baseline` 只会下调；
+    - `frozen`：首次登记时已核过的历史欠账；不在其中的条目必须能回溯到
+      提交信息，否则整表判 DENIED（防"手改豁免表洗白"）；
+    - 未来日期编号**永不豁免**（历史欠账不可能是明天）；
+    - `--adopt-legacy-baseline`：把 v1（只有 exempt）一次性升级成 v2，须进 diff 审阅。
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -155,22 +160,118 @@ def is_future_dated(ref: str, today: date | None = None) -> bool:
     return stamp > (today or date.today())
 
 
-def load_baseline(path: Path) -> set[str]:
-    """读豁免表。缺失=空表（干净检出常态）；损坏=告警+空表，绝不静默全豁免."""
+BASELINE_COMMENT = (
+    "EVO 编号豁免表：frozen=首次登记时已核的历史欠账，exempt=当前生效条目，"
+    "quota=条目数上限（只许减不许增）。新增条目必须能回溯到提交信息，否则脚本拒绝写入。"
+)
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """豁免表的三部分事实：条目、冻结基线、配额（缺一项就少一道判据）。
+
+    ``frozen`` = 首次登记时已核过的历史欠账；``quota`` = 条目数上限（只许减
+    不许增）。不在 frozen 里的条目必须能回溯到提交信息，否则就是"新增洗白"。
+    """
+
+    exempt: frozenset[str]
+    frozen: frozenset[str]
+    quota: int | None
+
+
+def empty_baseline() -> Baseline:
+    """缺失/损坏时的空表——空表只是"没有豁免"，绝不等于"全豁免"。"""
+    return Baseline(frozenset(), frozenset(), None)
+
+
+def load_baseline_table(path: Path) -> Baseline:
+    """读豁免表；v1（只有 exempt）与 v2（quota/frozen/exempt）都接受。"""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return set()
+        return empty_baseline()
     except (OSError, json.JSONDecodeError) as exc:
         print(f"evo-refs WARNING: 豁免表不可读，按空表处理: {exc}", file=sys.stderr)
-        return set()
-    exempt = data.get("exempt") if isinstance(data, dict) else None
-    if not isinstance(exempt, list):
+        return empty_baseline()
+    if not isinstance(data, dict) or not isinstance(data.get("exempt"), list):
         print("evo-refs WARNING: 豁免表格式异常，按空表处理", file=sys.stderr)
-        return set()
+        return empty_baseline()
     # 注意：不动大小写。extract_refs 产出的十六进制后缀是小写，曾经 upper() 过
     # 一次，导致豁免表 100% 不命中（"登记了仍报未知"），此处保持原样比对。
-    return {str(item).strip() for item in exempt if str(item).strip()}
+    exempt = frozenset(str(item).strip() for item in data["exempt"] if str(item).strip())
+    raw_frozen = data.get("frozen")
+    frozen = (
+        frozenset(str(item).strip() for item in raw_frozen if str(item).strip())
+        if isinstance(raw_frozen, list)
+        else frozenset()
+    )
+    raw_quota = data.get("quota")
+    quota = raw_quota if isinstance(raw_quota, int) and raw_quota >= 0 else None
+    return Baseline(exempt, frozen, quota)
+
+
+def load_baseline(path: Path) -> set[str]:
+    """豁免编号集合（v1 兼容入口；配额/冻结事实走 load_baseline_table）。"""
+    return set(load_baseline_table(path).exempt)
+
+
+def adopt_legacy_baseline(path: Path) -> int:
+    """把 v1 豁免表（只有 exempt）一次性升级为 v2：条目即冻结基线，配额=当前条数。
+
+    必须显式调用并进 diff 审阅：否则"v1 缺 frozen"要么被当成全表失效（本脚本
+    实测会把 53 条全判无出处），要么被静默 grandfather（等于没有判据）。
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print(f"evo-refs ERROR: 豁免表不存在，无可迁移: {path}", file=sys.stderr)
+        return 2
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"evo-refs ERROR: 豁免表不可读: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(data, dict) or not isinstance(data.get("exempt"), list):
+        print("evo-refs ERROR: 豁免表格式异常，拒绝迁移", file=sys.stderr)
+        return 2
+    if "frozen" in data or "quota" in data:
+        print("evo-refs ERROR: 已是 v2 格式（含 frozen/quota），拒绝重复迁移", file=sys.stderr)
+        return 2
+    refs = sorted({str(item).strip() for item in data["exempt"] if str(item).strip()})
+    payload = {
+        "_comment": BASELINE_COMMENT,
+        "quota": len(refs),
+        "frozen": refs,
+        "exempt": refs,
+    }
+    try:
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"evo-refs ERROR: 豁免表写入失败: {exc}", file=sys.stderr)
+        return 2
+    print(f"evo-refs: 已迁移 v1→v2，冻结 {len(refs)} 条（quota={len(refs)}）→ {path}")
+    return 0
+
+
+def baseline_violations(table: Baseline, history: set[str] | None) -> list[str]:
+    """豁免表自身的滥用信号（纯函数）：未来日期、超配额、无出处新增。
+
+    history=None（读不到 git 历史）时跳过"无出处"判定——无法判定不等于合规，
+    CLI 已在别处就"历史不可读"给出降级告警。
+    """
+    problems: list[str] = []
+    for ref in sorted(table.exempt):
+        if is_future_dated(ref):
+            problems.append(f"  [未来日期豁免] {ref}: 编号日期晚于今天，不可能是历史欠账")
+    if table.quota is not None and len(table.exempt) > table.quota:
+        problems.append(
+            f"  [超配额] 豁免 {len(table.exempt)} 条 > quota {table.quota}："
+            "豁免表只许减不许增（调高配额须人工审阅并有出处）"
+        )
+    if history is not None:
+        for ref in sorted(table.exempt - table.frozen - history):
+            problems.append(f"  [无出处豁免] {ref}: 不在冻结基线，也回溯不到任何提交信息")
+    return problems
 
 
 def collect_text_files(paths: Iterable[Path]) -> list[Path]:
@@ -194,9 +295,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "paths",
-        nargs="+",
+        nargs="*",
         type=Path,
-        help="待扫描的文件或目录（目录按文本后缀白名单递归）",
+        help="待扫描的文件或目录（目录按文本后缀白名单递归；--adopt-legacy-baseline 时可省）",
     )
     parser.add_argument(
         "--ledger",
@@ -217,16 +318,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--baseline",
         default=ROOT / "scripts" / "evo_refs_baseline.json",
-        help="豁免表（append-only）：现存无法回溯的历史编号，登记后只拦新增编造引用",
+        help="豁免表（只许减不许增）：现存无法回溯的历史编号，登记后只拦新增编造引用",
     )
     parser.add_argument(
         "--regen-baseline",
         action="store_true",
-        help="把当前无法回溯的编号写入豁免表（一次性；请审阅 diff 后再提交）",
+        help="重登记豁免表（保留冻结条目、quota 只许减；无出处的编号直接拒绝写入）",
+    )
+    parser.add_argument(
+        "--adopt-legacy-baseline",
+        action="store_true",
+        help="一次性把 v1 豁免表（只有 exempt）升级为 v2（frozen/quota），须审阅 diff 后提交",
     )
     args = parser.parse_args(argv)
     # 命令行传 string、默认值是 Path：统一成 Path，否则写入时 AttributeError（实测过）。
     baseline_path = Path(args.baseline)
+    if args.adopt_legacy_baseline:
+        return adopt_legacy_baseline(baseline_path)
+    if not args.paths:
+        print(
+            "evo-refs ERROR: 至少需要一个待扫描路径（仅 --adopt-legacy-baseline 可省）",
+            file=sys.stderr,
+        )
+        return 2
 
     # 输入路径不存在 → 无法判定（2）：绝不把「扫不到」当作「通过」
     absent = [p for p in args.paths if not p.exists()]
@@ -274,17 +388,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     attested = known if history is None else known | history
 
+    # 豁免表先自检：一条登记不住的表等于一张空白通行证（2026-11-02 复盘）。
+    baseline_table = load_baseline_table(baseline_path)
+    violations = baseline_violations(baseline_table, history)
+    if violations:
+        for line in violations:
+            print(f"BLOCK BASELINE: {line.strip()}", file=sys.stderr)
+        print(
+            "evo-refs DENIED: 豁免表自身不可信"
+            "（未来日期不可豁免 / 只许减不许增 / 新增须有提交信息出处）",
+            file=sys.stderr,
+        )
+        return 1
+    baseline = set(baseline_table.exempt)
+    attested |= baseline
+
     all_refs = extract_refs(texts.values())
     if args.regen_baseline:
         candidates = sorted(all_refs - attested)
-        unresolved = [ref for ref in candidates if not is_future_dated(ref)]
-        skipped = len(candidates) - len(unresolved)
+        blocked = [ref for ref in candidates if not is_future_dated(ref)]
+        skipped = len(candidates) - len(blocked)
+        if blocked:
+            for ref in blocked:
+                print(f"BLOCK UNATTESTED: {ref}")
+            print(
+                "evo-refs DENIED: 这些编号回溯不到演进记录/提交信息，也不在现有豁免表；"
+                "豁免表只接历史欠账——先在提交信息里留下出处再登记",
+                file=sys.stderr,
+            )
+            return 1
+        # 保留仍在引用的历史豁免；配额只许减不许增（调高须人工改文件+出处）
+        keep = sorted(ref for ref in baseline if ref in all_refs)
+        quota = len(keep) if baseline_table.quota is None else min(baseline_table.quota, len(keep))
         payload = {
-            "_comment": (
-                "EVO 编号豁免表（append-only）：登记时无法回溯的历史编号。"
-                "只允许新增条目用于历史欠账；新增代码里的编号必须能回溯到演进记录或提交信息。"
-            ),
-            "exempt": unresolved,
+            "_comment": BASELINE_COMMENT,
+            "quota": quota,
+            "frozen": keep,
+            "exempt": keep,
         }
         try:
             baseline_path.write_text(
@@ -293,15 +433,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         except OSError as exc:
             print(f"evo-refs ERROR: 豁免表写入失败: {exc}", file=sys.stderr)
             return 2
-        print(f"evo-refs: 已登记豁免 {len(unresolved)} 个编号 → {baseline_path}")
+        print(
+            f"evo-refs: 已登记豁免 {len(keep)} 个编号"
+            f"（quota={quota}，只许减不许增）→ {baseline_path}"
+        )
         if skipped:
             print(
                 f"evo-refs: 跳过 {skipped} 个未来日期编号（不可能是历史欠账，仍会被拦）",
                 file=sys.stderr,
             )
         return 0
-    baseline = load_baseline(baseline_path)
-    attested |= baseline
 
     unknown = unknown_refs(texts, attested)
     outside_window = len(all_refs - known)

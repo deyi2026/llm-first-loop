@@ -78,6 +78,15 @@ _MANAGED_SERVICES = ("web", "feishu", "wecom", "learning")
 _VERIFY_VERDICTS = ("accept", "reobserve", "override")
 _EVIDENCE_LEVELS = ("E1", "E2", "E3")
 
+# 2026-11-02 复盘：publish 与 restart 是同一流程的相邻两步，却各自只在被调用
+# 时才报缺参——实测白跑两个往返（先缺 code_root，补完又缺 target）。缺参回执
+# 必须一次给全：本动作必填 + 紧邻那一步的必填与可选值。
+_CONTRACT_FIELD_HINTS: dict[str, str] = {
+    "publish": "next=restart 需要 target（allowed=" + "/".join(_SERVICE_TARGETS) + "）",
+    "restart": "target allowed=" + "/".join(_SERVICE_TARGETS),
+    "update": "update 需 code_root+reason；随后 restart 需要 target",
+}
+
 
 def _service_control_contract_error(action: str, kwargs: dict) -> str:
     """Return one aggregated mechanical argument error before any side effect."""
@@ -128,8 +137,13 @@ def _service_control_contract_error(action: str, kwargs: dict) -> str:
     details: list[str] = []
     if missing:
         details.append("missing=" + ",".join(missing))
+        required = ",".join(_ACTION_REQUIRED_FIELDS[action])
+        details.append("required=" + (required or "(none)"))
     if invalid:
         details.append("invalid=" + "; ".join(invalid))
+    hint = _CONTRACT_FIELD_HINTS.get(action)
+    if hint:
+        details.append(hint)
     return (
         f"[参数错误] service_control action={action} 参数契约不满足: "
         + "; ".join(details)

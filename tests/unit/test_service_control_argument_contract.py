@@ -46,6 +46,32 @@ def test_verify_acknowledge_reports_all_missing_fields_in_one_preflight(tmp_path
     assert store.read_action("svc-x") is None
 
 
+def test_restart_missing_target_hint_lists_allowed_values_in_one_shot(tmp_path) -> None:
+    """缺参回执一次给全：restart 的可选值不该靠"再撞一次"才看到（2026-11-02 复盘）."""
+    tool, store, spawned = _tool(tmp_path)
+
+    result = tool.execute(action="restart")
+
+    assert result.status == ToolResultStatus.FAILURE
+    assert "missing=target" in result.content
+    assert "required=target" in result.content
+    assert "target allowed=web/feishu/wecom/learning/all" in result.content
+    assert spawned == []
+
+
+def test_publish_missing_code_root_names_next_restart_field(tmp_path) -> None:
+    """publish→restart 是相邻两步：publish 缺参时就把下一步必填一起给出."""
+    tool, store, spawned = _tool(tmp_path)
+
+    result = tool.execute(action="publish")
+
+    assert result.status == ToolResultStatus.FAILURE
+    assert "missing=code_root" in result.content
+    assert "required=code_root" in result.content
+    assert "next=restart 需要 target（allowed=web/feishu/wecom/learning/all）" in result.content
+    assert spawned == []
+
+
 def test_restart_invalid_target_fails_before_accept_or_spawn(tmp_path) -> None:
     tool, store, spawned = _tool(tmp_path)
 

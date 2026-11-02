@@ -51,6 +51,9 @@
 `tests/unit/test_arch_guards.py` 的函数规模/结构守卫读的是 **git 索引（staged）口径**，不是工作树。
 实证：改完 `service_control.py` 后守卫仍报「登记 106 → 实测 107」，`git add` 同一文件后守卫即转绿。
 - 操作纪律：改完源码先 `git add` 再跑守卫，否则会拿旧内容得出"改了没生效"的错误结论。
+- 已加自动提示（2026-11-02 二轮）：`_head_caliber_failure_hint()` 把「本次按 HEAD 口径读了
+  哪些未暂存文件」直接拼进**失败断言正文**——note 只走 stderr，实测会被 pytest 输出埋掉，
+  口径提示必须与失败结论同屏才可自证。clean 树时该提示为空串，零噪音。
 - 反向纪律：不要为了让守卫过而去 `scripts/regen_function_size_baseline.py` 抬高登记值——
   `test_baseline_ratchet_not_raised` 明令禁止基线增长；正确做法是**把函数压回登记值以内**（本次用 7 行折叠成 3 行达成 107→103）。
 
