@@ -3276,3 +3276,22 @@ def test_full_test_auto_projection_only_kicks_in_over_the_char_budget(tmp_path: 
     assert header["committed_projection"] == "test_surface"
     assert len(big_mat) <= rha._FULL_TEST_AUTO_PROJECT_CHARS
     assert "notes.md" in big_mat                          # 仍然点名
+
+
+def test_pass_cache_key_includes_out_of_scope_digest() -> None:
+    """PASS 复用必须把「切片外改动摘要」算进 key（审查 P1-1 的反证）。
+
+    同 parent/kind/sha/target，但切片外工作树已经变了 → 不是同一个 artifact，
+    不得复用上一张 PASS。这条锁住 _pass_cache 的五元组契约（annotation 与
+    _cached_pass/_remember_pass 的读写位置一致）。
+    """
+    host = HostReviewAdmission()
+    args = ("parent-1", "git_push", "abc123", "target-1")
+    assert host._cached_pass(*args, "digest-A") == ""
+    host._remember_pass(*args, "child-1", "digest-A")
+    assert host._cached_pass(*args, "digest-A") == "child-1"
+    # 切片外改动变了：同一个 sha/target 但 digest 不同 → 不能复用
+    assert host._cached_pass(*args, "digest-B") == ""
+    host._remember_pass(*args, "child-2", "digest-B")
+    assert host._cached_pass(*args, "digest-B") == "child-2"
+    assert host._cached_pass(*args, "digest-A") == "child-1"
