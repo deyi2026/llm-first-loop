@@ -3382,21 +3382,31 @@ def test_content_fingerprint_is_base_sensitive(tmp_path: Path) -> None:
     """远端移动会改 diff base —— 指纹必须跟着变，否则会放过"远端已前进"。"""
     repo = _repo(tmp_path)
     base = _git_out(repo, "rev-parse", "HEAD")
-    same_base = rha._end_state_fingerprint(repo, base, base, True, [], ["example.py"], [])
-    moved_base = rha._end_state_fingerprint(repo, "0" * 40, base, True, [], ["example.py"], [])
+    same_base = rha._end_state_fingerprint(
+        repo, base, base, [], ["example.py"], [], push_side=False
+    )
+    moved_base = rha._end_state_fingerprint(
+        repo, "0" * 40, base, [], ["example.py"], [], push_side=False
+    )
     assert same_base and moved_base
     assert same_base != moved_base
 
 
 def test_content_fingerprint_records_deleted_paths_explicitly(tmp_path: Path) -> None:
-    """删文件不能看起来像"没变"：取不到工作树字节时退到 frozen blob，不省略路径。"""
+    """删文件不能看起来像"没变"：两种口径都必须显式记 absent。"""
     repo = _repo(tmp_path)
     base = _git_out(repo, "rev-parse", "HEAD")
     (repo / "example.py").unlink()
-    deleted = rha._end_state_fingerprint(repo, base, base, True, [], ["example.py"], [])
-    present = rha._end_state_fingerprint(repo, base, base, False, [], ["example.py"], [])
-    assert deleted and present
-    assert deleted != present
+    reviewed = rha._end_state_fingerprint(
+        repo, base, base, [], ["example.py"], [], push_side=False
+    )
+    pushed = rha._end_state_fingerprint(
+        repo, base, base, [], ["example.py"], [], push_side=True
+    )
+    assert reviewed and pushed
+    # 签发侧看到"删除"，推送侧仍能看到 base 树里的 blob —— 两者必须不同，
+    # 否则删除会被当成"没改"。
+    assert reviewed != pushed
 
 
 def test_oversized_delta_disables_the_relaxation(tmp_path: Path, monkeypatch) -> None:
@@ -3405,8 +3415,48 @@ def test_oversized_delta_disables_the_relaxation(tmp_path: Path, monkeypatch) ->
     base = _git_out(repo, "rev-parse", "HEAD")
     monkeypatch.setattr(rha, "_END_STATE_FINGERPRINT_MAX_PATHS", 1)
     assert rha._end_state_fingerprint(
-        repo, base, base, True, [], ["example.py", "other.py"], []
+        repo, base, base, [], ["example.py", "other.py"], [], push_side=True
     ) == ""
+
+
+def test_chmod_after_review_is_not_tolerated(tmp_path: Path) -> None:
+    """内容字节相同但可执行位变了，也必须不算同一产物（独立审查 P2）。"""
+    repo = _dirty_push_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert issued["accepted"], issued
+    _push_pass(host, runner, issued)
+
+    _git_out(repo, "add", "example.py")
+    _git_out(repo, "update-index", "--chmod=+x", "example.py")
+    _git_out(repo, "commit", "-qm", "same bytes, exec bit flipped")
+
+    assert not host.check_shell("author-1", "git push origin main", str(repo)).allowed
+
+
+def test_push_of_unreviewed_commit_with_restored_worktree_is_denied(
+    tmp_path: Path,
+) -> None:
+    """独立审查 P0 的反例：PASS 之后再提交**不同内容**，并把工作树还原成受审
+    内容。工作树字节等于受审字节，但 push 搬走的是 h1 里那份没审过的内容 ——
+    指纹必须取提交树侧，因此这里必须拒绝。"""
+    repo = _dirty_push_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start("author-1", "git_push", workdir=str(repo), command="git push origin main")
+    assert issued["accepted"], issued
+    _push_pass(host, runner, issued)
+
+    (repo / "example.py").write_text("x = 666\n")   # 未受审的内容进了提交
+    _git_out(repo, "add", "example.py")
+    _git_out(repo, "commit", "-qm", "unreviewed payload")
+    (repo / "example.py").write_text("x = 2\n")     # 工作树还原成受审内容
+    assert _git_out(repo, "status", "--porcelain") != ""
+
+    assert not host.check_shell("author-1", "git push origin main", str(repo)).allowed
 
 
 def test_full_test_review_carries_no_content_fingerprint(tmp_path: Path) -> None:

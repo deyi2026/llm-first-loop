@@ -680,14 +680,19 @@ class ServiceControlTool:
     def _supersedes_block(
         previous: ManagedServiceDeployment, convergence: dict[str, object]
     ) -> dict[str, object]:
-        """上一 desired 的去处：它生效过没有？没生效就是这次 publish 前的空转。"""
+        """上一 desired 的去处：它生效过没有？没生效就是这次 publish 前的空转。
+
+        ``ever_live`` 用**精确相等**而不是 ``>=``：服务从 369 直接跳到 371
+        （restart 跳过中间代）时，370 从未真正跑过，用 ``>=`` 会把 370 误报成
+        "已生效"，正好掩盖掉要披露的空转（独立审查 P2，2026-11-02）。
+        """
         services = convergence.get("services") or {}
         live_generations = [
             int(svc["stable_generation"])
             for svc in services.values()  # type: ignore[union-attr]
             if isinstance(svc, dict) and isinstance(svc.get("stable_generation"), int)
         ]
-        ever_live = any(gen >= previous.generation for gen in live_generations)
+        ever_live = previous.generation in live_generations
         return {
             "generation": previous.generation,
             "code_root": previous.code_root,
@@ -863,9 +868,7 @@ class ServiceControlTool:
                 "[参数错误] update restart_target 必须是 web/feishu/wecom/learning/all"
             )
 
-        deployment, error, _previous = self._publish(
-            code_root, kwargs.get("expected_generation")
-        )
+        deployment, error, _previous = self._publish(code_root, kwargs.get("expected_generation"))
         if error is not None:
             return self._failure(error)
         if deployment is None:

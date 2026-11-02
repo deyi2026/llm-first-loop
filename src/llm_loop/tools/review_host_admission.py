@@ -14,6 +14,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -1397,14 +1398,14 @@ def _full_test_snapshot_sections(
         "scope_paths": scope_paths, "tier_counts": tier_counts,
         "require_material": _FULL_TEST_NO_DELTA,
     }
-    sha, material, sections, _fingerprint = _source_snapshot_sections(
+    sha, material, sections, _reviewed, _pushed = _source_snapshot_sections(
         workdir, committed_projection="full", **kwargs
     )
     if len(material) <= _FULL_TEST_AUTO_PROJECT_CHARS:
         return sha, material, sections
     if len(material.encode("utf-8")) > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
         return sha, material, sections
-    sha, material, sections, _fingerprint = _source_snapshot_sections(
+    sha, material, sections, _reviewed, _pushed = _source_snapshot_sections(
         workdir, committed_projection="test_surface", **kwargs
     )
     return sha, material, sections
@@ -1418,7 +1419,7 @@ def _source_snapshot(
     committed_projection: str = "full",
 ) -> tuple[str, str]:
     """2 元组视图（identity, material）；段落视图见 _source_snapshot_sections."""
-    sha, material, _sections, _fingerprint = _source_snapshot_sections(
+    sha, material, _sections, _reviewed, _pushed = _source_snapshot_sections(
         workdir, push_base=push_base, push_head=push_head,
         first_push_ref=first_push_ref, require_material=require_material,
         scope_paths=scope_paths, tier_counts=tier_counts,
@@ -1656,14 +1657,20 @@ def _source_snapshot_sections(
     }))
     # 2026-11-02：与 commit 切分无关的内容指纹（见 _end_state_fingerprint）。
     # identity 把 head/frozen_head 也算进去，于是"先审 patch → 再 commit → 树
-    # 内容逐字节相同"必然失效，必须重审一遍。这里只额外摘出**最终内容**，
-    # 供 check_shell 在 identity 不匹配时做一次内容等价复核。
-    content_fingerprint = _end_state_fingerprint(
-        repo, base, frozen_head, include_worktree,
+    # 内容逐字节相同"必然失效，必须重审一遍。这里额外摘出两份**同构**的内容
+    # 指纹：reviewed = 材料真正展示的那份内容，pushed = 这次 push 会真的搬走的
+    # 那份内容。签发时存前者，消费时用后者比对——两者都不含 head/frozen_head。
+    reviewed_fp = _end_state_fingerprint(
+        repo, base, frozen_head,
         [n for n, _ in committed], [n for n, _ in working],
-        [n for n, _, _ in new_files],
+        [n for n, _, _ in new_files], push_side=False,
     )
-    return identity, material, sections, content_fingerprint
+    pushed_fp = _end_state_fingerprint(
+        repo, base, frozen_head,
+        [n for n, _ in committed], [n for n, _ in working],
+        [n for n, _, _ in new_files], push_side=True,
+    )
+    return identity, material, sections, reviewed_fp, pushed_fp
 
 
 # 内容指纹的路径上界：超过就不发（返回 ""），让消费端退回严格 identity 判据。
@@ -1672,61 +1679,79 @@ _END_STATE_FINGERPRINT_MAX_PATHS = 400
 
 
 def _end_state_fingerprint(
-    repo: Path, base: str, frozen_head: str, include_worktree: bool,
+    repo: Path, base: str, frozen_head: str,
     committed_names: Sequence[str], working_names: Sequence[str],
-    untracked_names: Sequence[str],
+    untracked_names: Sequence[str], *, push_side: bool,
 ) -> str:
-    """「将被推送的最终内容」摘要 —— 与 commit 切分无关的等价判据。
+    """与 commit 切分无关的内容指纹 —— 两种口径，**同构**才可比。
 
-    为什么不能直接复用 material：material 是 *补丁文本*，它对 commit 切分
-    敏感。base..h0 为空的常见场景（先改工作树、审完再 commit）里，审查时
-    material 是 ``git diff HEAD``，提交后变成 ``git diff base..h1``；两者描述
-    同一个最终树，文本却不逐字节相同（分段标签、header 的 head/frozen_head
-    都变了）。
+    为什么不能复用 material：material 是 *补丁文本*，对 commit 切分敏感。
+    base..h0 为空的常见场景（先改工作树、审完再 commit）里，审查时 material
+    是 ``git diff HEAD``，提交后变成 ``git diff base..h1``；两者描述同一个
+    最终树，文本却不逐字节相同（分段标签、header 都变了）。
 
-    这里改为对**每个受影响路径的最终内容字节**取摘要：
-      * include_worktree 时优先读工作树文件——提交前（未跟踪/已修改）与
-        提交后（干净工作树）读到的是同一份字节；
-      * 工作树里取不到的（删除、或 push_head 不是 HEAD 的历史提交）退回
-        ``cat-file blob <frozen_head>:<path>``；
-      * 取不到的路径记 ``absent``，不省略（省略会让"删掉一个文件"看起来
-        和"没变"一样）。
+    但"内容相同"不能靠读工作树自证 —— 独立审查 P0（2026-11-02）给了反例：
+    先拿到 PASS，再把**不同内容**提交成 h1，然后把工作树还原成受审内容。
+    此时工作树字节等于受审字节，``git push`` 搬走的却是 h1 里那份没审过的
+    内容。所以两种口径必须分开取源：
 
-    路径集只取 material 真正包含的三段（committed/working/untracked），
-    因此被 ``_is_runtime_output`` 排除的日志、data 流水产物不会参与——否则
-    并发写日志会让这张指纹永远不稳定。超过上界或任何一步失败都返回 ""，
-    调用方据此不发放宽（fail-closed）。
+      * ``push_side=False``（签发侧，= 材料真正展示的内容）：
+        working/untracked 段读**工作树字节**（材料展示的就是它们），
+        committed 段读 ``frozen_head`` 的 blob（材料展示的是 base..h0 补丁）。
+      * ``push_side=True``（消费侧，= 这次 push 真会搬走的内容）：
+        一律读 ``frozen_head`` 的 blob —— 也就是 push_src_commit 的树，
+        与工作树当前长什么样无关。
+
+    两条口径都带 git 模式位与 ``absent`` 标记：删除 vs 未改、可执行位变化
+    都不得看起来"没变"（独立审查 P2）。路径集只取 material 真正包含的三段，
+    被 ``_is_runtime_output`` 排除的日志/流水产物不参与（否则并发写日志会让
+    指纹永远不稳定）。超过上界或任一步失败返回 ""，调用方据此不发放宽。
     """
     names = sorted(set(committed_names) | set(working_names) | set(untracked_names))
     if not names or len(names) > _END_STATE_FINGERPRINT_MAX_PATHS:
         return ""
-    entries: list[list[str]] = []
-    for name in names:
-        path = repo / name
-        try:
-            if include_worktree and not path.exists() and not path.is_symlink():
-                # 最终状态就是"这个路径不存在"（删除）。必须显式记 absent：
-                # 退到 frozen blob 会让"删掉"和"没改"看起来一样（实测过一次）。
-                entries.append([name, "absent"])
-                continue
-            if (
-                include_worktree
-                and path.is_file()
-                and not path.is_symlink()
-                and path.resolve().is_relative_to(repo)
-            ):
-                entries.append([name, _digest(path.read_bytes())])
-                continue
-            blob = _git(repo, "cat-file", "blob", f"{frozen_head}:{name}")
-            entries.append([name, _digest(blob)])
-        except (ValueError, OSError):
-            entries.append([name, "absent"])
+    worktree_names = set(working_names) | set(untracked_names)
     try:
-        return _digest(_canonical({
-            "base": base, "repo": str(repo), "entries": entries,
-        }))
-    except (TypeError, ValueError):
+        modes = _git_blob_modes(repo, frozen_head, names)
+        entries = [
+            _fingerprint_entry(repo, frozen_head, name, modes, push_side, worktree_names)
+            for name in names
+        ]
+        return _digest(_canonical({"base": base, "repo": str(repo), "entries": entries}))
+    except (TypeError, ValueError, OSError):
         return ""
+
+
+def _git_blob_modes(repo: Path, commit: str, names: Sequence[str]) -> dict[str, str]:
+    """一次性取 ``commit`` 树里这些路径的 git 模式（一次 ls-tree，不逐文件起进程）。"""
+    out = _git(repo, "ls-tree", "-r", "-z", "--format=%(objectmode) %(path)", commit, "--",
+               *names)
+    modes: dict[str, str] = {}
+    for record in out.split(b"\0"):
+        if not record.strip():
+            continue
+        head, _, path = record.partition(b" ")
+        modes[path.decode("utf-8", "surrogateescape")] = head.decode("ascii", "replace")
+    return modes
+
+
+def _fingerprint_entry(
+    repo: Path, frozen_head: str, name: str, modes: dict[str, str],
+    push_side: bool, worktree_names: set[str],
+) -> list[str]:
+    """单路径条目 ``[path, git_mode, content_digest]``；不存在一律记 absent。"""
+    path = repo / name
+    if not push_side and name in worktree_names:
+        if not path.exists() and not path.is_symlink():
+            return [name, "absent", "absent"]
+        if path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(repo):
+            mode = "100755" if os.access(path, os.X_OK) else "100644"
+            return [name, mode, _digest(path.read_bytes())]
+    try:
+        blob = _git(repo, "cat-file", "blob", f"{frozen_head}:{name}")
+    except (ValueError, OSError):
+        return [name, "absent", "absent"]
+    return [name, modes.get(name, "absent"), _digest(blob)]
 
 
 def _effective_push_workdir(command: str, workdir: str) -> str:
@@ -3129,7 +3154,7 @@ class HostReviewAdmission:
                 # locally or the reviewed delta cannot be computed at all.
                 raise ValueError("push_remote_commit_not_local_fetch_first") from exc
             push_head = _push_src_commit(repo, refspec)
-            sha, text, sections, content_fingerprint = _source_snapshot_sections(
+            sha, text, sections, reviewed_fp, pushed_fp = _source_snapshot_sections(
                 true_dir, push_base=push_base, push_head=push_head,
                 first_push_ref=dst_ref if first_push else "",
                 scope_paths=scope_paths, tier_counts=tier_counts,
@@ -3138,7 +3163,7 @@ class HostReviewAdmission:
             push_extra = {"src_commit": push_head,
                           "first_push": "1" if first_push else "",
                           "target_ref": dst_ref if first_push else "",
-                          "content_fingerprint": content_fingerprint}
+                          "content_fingerprint": reviewed_fp, "push_content_fingerprint": pushed_fp}
         else:
             true_dir = workdir
             # EVO-20261029-eb64b2de (human-approved 2026-10-29): freeze the
@@ -3222,12 +3247,28 @@ class HostReviewAdmission:
                 previous_child_id=(
                     previous_row.child_id if previous_row is not None else ""
                 ),
-                content_fingerprint=str(
-                    push_extra.get("content_fingerprint") or ""
-                ),
+                content_fingerprint=push_extra.get("content_fingerprint", ""),
             )
             self._remember_material(child, task, material)
-        receipt = {
+        return self._attach_prior_attempts(
+            self._start_receipt(
+                child=child, sha=sha, kind=kind, target=target,
+                scope_receipt=scope_receipt, task_chars=task_chars,
+                review_deadline=review_deadline, estimated=estimated,
+                coverage=coverage, push_remote_commit=push_remote_commit,
+                push_extra=push_extra,
+            ),
+            parent, kind, sha, target,
+        )
+
+    def _start_receipt(
+        self, *, child: str, sha: str, kind: str, target: str,
+        scope_receipt: dict[str, Any], task_chars: int, review_deadline: float,
+        estimated: float, coverage: dict[str, Any] | None,
+        push_remote_commit: str, push_extra: dict[str, str],
+    ) -> dict[str, Any]:
+        """签发回执组装（2026-11-02 自 ``start`` 抽出，行为不变，只为棘轮归零）。"""
+        receipt: dict[str, Any] = {
             "accepted": True, "child_id": child, "candidate_sha256": sha,
             "kind": kind, "target": target, "scope": scope_receipt,
             "material_chars": task_chars,
@@ -3247,17 +3288,12 @@ class HostReviewAdmission:
             receipt["push_remote_commit"] = push_remote_commit
             # EVO-20261022-331eee17: the frozen range follows the push target.
             receipt["push_src_commit"] = push_extra.get("src_commit", "")
-            # 2026-11-02：这份资格的**内容侧**绑定。candidate_sha256 含
-            # head/frozen_head，因此纯 commit（树逐字节不变）也会换值；这张
-            # 指纹不含提交信息，只覆盖材料包含的路径最终字节。披露它是为了让
-            # 调用方看得见「commit 后为何还能直接用同一份 PASS」。
-            receipt["commit_independent_sha256"] = push_extra.get(
-                "content_fingerprint", ""
-            )
+            # 2026-11-02：内容侧绑定（见 _end_state_fingerprint 的 docstring）。
+            receipt["commit_independent_sha256"] = push_extra.get("content_fingerprint", "")
             if push_extra.get("first_push"):
                 receipt["first_push_anchor"] = push_remote_commit
                 receipt["first_push_target_ref"] = push_extra.get("target_ref", "")
-        return self._attach_prior_attempts(receipt, parent, kind, sha, target)
+        return receipt
 
     def _prepare_attempt(
         self, parent: str, kind: str, sha: str, target: str, workdir: str,
@@ -4085,7 +4121,7 @@ class HostReviewAdmission:
                     continue
             decision = self._consume(
                 parent, kind, target, sha, scope_paths=scope_paths,
-                content_fingerprint=str(push_extra.get("content_fingerprint") or ""),
+                content_fingerprint=str(push_extra.get("push_content_fingerprint") or ""),
             )
             if decision.allowed:
                 return decision
