@@ -715,6 +715,9 @@ class ExecuteCommandTool:
     ) -> tuple[str, ToolResult | None]:
         """守卫已阻断时的 (escalation_id, escalation_token) 三重绑定一次性覆盖（P2-3）."""
         if not (esc_id and esc_token):
+            hint = self._guard().static_rewrite_hint(
+                spec.command, blocked_rule=getattr(decision, "rule", "")
+            )
             return "", ToolResult(
                 status=ToolResultStatus.BLOCKED,
                 content=(
@@ -722,6 +725,7 @@ class ExecuteCommandTool:
                     f"（exec_mode={spec.exec_mode}）。{decision.reason}"
                     " 如确属必要: escalation_request 提交提权申请（web 弹窗人工审批），"
                     "批准后凭一次性令牌重发。"
+                    f"{hint}"
                 ),
                 tool_call_id="",
                 tool_name=self.name,

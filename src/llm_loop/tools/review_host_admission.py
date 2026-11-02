@@ -1164,6 +1164,96 @@ _TEST_SURFACE_BODY_MAX_BYTES = 150_000
 # prompt template and a mild untracked surface without flipping the gate off.
 _FULL_TEST_AUTO_PROJECT_CHARS = 330_000
 
+# 超预算拒绝时的分批计划（2026-11-02 实测需求）：34 提交积压的 git_push material
+# 达 813k 字符 → reviewer_duration_precheck 在 est=7974s 直接拒绝，回执只有
+# "narrow it with scope=patch paths=[...]"，操作者只能手工拆 5 批（约 1.5 小时）。
+# 计划按冻结段落的实际字符数做有序装箱，只让回执可执行：仍然拒绝，不新增放行面。
+_SPLIT_PLAN_TARGET_CHARS = 320_000  # 3600s 硬上限 @100 chars/s 之下的安全水位
+_SPLIT_PLAN_MAX_BATCHES = 12
+_SPLIT_PLAN_PATHS_PER_BATCH = 8
+
+
+def _split_plan(
+    sections: Sequence[tuple[str, int]],
+    ceiling_chars: int = _SPLIT_PLAN_TARGET_CHARS,
+    max_batches: int = _SPLIT_PLAN_MAX_BATCHES,
+) -> list[dict[str, Any]]:
+    """把冻结段落有序装箱成分批计划（纯函数；不丢段、不截断、不改判定）.
+
+    段来自 `_source_snapshot`：("committed:<path>" 等, 字节数)。装箱保持原顺序，
+    每批累计字符数 ≤ ceiling_chars；单段自身超限时单独成批并标 oversized——
+    这种情况计划帮不上忙（必须拆文件或降 scope），如实标注而不是静默合并。
+    超过 max_batches 的部分不再生成：宁愿少给几批，也不把多段压进超限批。
+    """
+    batches: list[dict[str, Any]] = []
+    current: list[tuple[str, int]] = []
+    current_chars = 0
+
+    def _flush() -> None:
+        nonlocal current, current_chars
+        if not current:
+            return
+        batches.append({
+            "batch": len(batches) + 1,
+            "paths": [name for name, _ in current],
+            "est_chars": current_chars,
+            "oversized": any(size > ceiling_chars for _, size in current),
+        })
+        current, current_chars = [], 0
+
+    for label, size in sections:
+        name = str(label).split(":", 1)[-1]
+        if size > ceiling_chars:
+            _flush()
+            current = [(name, size)]
+            current_chars = size
+            _flush()
+            continue
+        if current_chars + size > ceiling_chars:
+            _flush()
+        current.append((name, size))
+        current_chars += size
+    _flush()
+    return batches[:max_batches]
+
+
+def _split_plan_text(plan: Sequence[dict[str, Any]], dropped: bool = False) -> str:
+    """渲染可复制的分批建议（paths 列表可直接填 scope=patch paths=[...]）."""
+    parts: list[str] = []
+    for item in plan:
+        paths = list(item["paths"])
+        shown = paths[:_SPLIT_PLAN_PATHS_PER_BATCH]
+        extra = f"…(+{len(paths) - len(shown)})" if len(paths) > len(shown) else ""
+        line = (
+            f"batch{item['batch']} paths={shown}"
+            + (f" 其中另含{extra}" if extra else "")
+            + f" est={item['est_chars']}chars"
+        )
+        if item.get("oversized"):
+            line += " [oversized:单段已超上限，需拆文件或降 scope]"
+        parts.append(line)
+    text = "; ".join(parts)
+    if dropped:
+        text += f"; 批数达上限 {_SPLIT_PLAN_MAX_BATCHES}，其余段未列出"
+    return text
+
+
+def _split_plan_tail(
+    sections: Sequence[tuple[str, int]] | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """拒绝回执的「可复制分批计划」尾巴（2026-11-02；只让回执可执行，不放行）."""
+    plan = _split_plan(sections or [])
+    if not plan:
+        return "", []
+    packed = sum(len(item["paths"]) for item in plan)
+    dropped = len(plan) >= _SPLIT_PLAN_MAX_BATCHES and len(sections or []) > packed
+    tail = (
+        "; split_plan（按冻结段落字符数有序装箱；est=段落字符数，实际以再次"
+        "冻结为准；每批仍是全量正文审查，全部 PASS 才构成该项资格）: "
+        + _split_plan_text(plan, dropped)
+    )
+    return tail, plan
+
 
 def _is_test_surface(name: str) -> bool:
     """True for paths whose TEXT decides whether a test run is honest.
@@ -1279,6 +1369,17 @@ def _full_test_snapshot(
     workdir: str, ft_base: str, ft_ref: str,
     scope_paths: Sequence[str], tier_counts: tuple[int, int] | None,
 ) -> tuple[str, str]:
+    """2 元组视图（旧调用方/测试只关心 material）。段落视图见 _sections 版."""
+    sha, material, _sections = _full_test_snapshot_sections(
+        workdir, ft_base, ft_ref, scope_paths, tier_counts
+    )
+    return sha, material
+
+
+def _full_test_snapshot_sections(
+    workdir: str, ft_base: str, ft_ref: str,
+    scope_paths: Sequence[str], tier_counts: tuple[int, int] | None,
+) -> tuple[str, str, list[tuple[str, int]]]:
     """full_test material: whole delta when it fits, disclosed projection when not.
 
     Never rescues an artifact already over the complete-review ceiling — that
@@ -1289,12 +1390,16 @@ def _full_test_snapshot(
         "scope_paths": scope_paths, "tier_counts": tier_counts,
         "require_material": _FULL_TEST_NO_DELTA,
     }
-    sha, material = _source_snapshot(workdir, committed_projection="full", **kwargs)
+    sha, material, sections = _source_snapshot_sections(
+        workdir, committed_projection="full", **kwargs
+    )
     if len(material) <= _FULL_TEST_AUTO_PROJECT_CHARS:
-        return sha, material
+        return sha, material, sections
     if len(material.encode("utf-8")) > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
-        return sha, material
-    return _source_snapshot(workdir, committed_projection="test_surface", **kwargs)
+        return sha, material, sections
+    return _source_snapshot_sections(
+        workdir, committed_projection="test_surface", **kwargs
+    )
 
 
 def _source_snapshot(
@@ -1304,6 +1409,23 @@ def _source_snapshot(
     tier_counts: tuple[int, int] | None = None,
     committed_projection: str = "full",
 ) -> tuple[str, str]:
+    """2 元组视图（identity, material）；段落视图见 _source_snapshot_sections."""
+    sha, material, _sections = _source_snapshot_sections(
+        workdir, push_base=push_base, push_head=push_head,
+        first_push_ref=first_push_ref, require_material=require_material,
+        scope_paths=scope_paths, tier_counts=tier_counts,
+        committed_projection=committed_projection,
+    )
+    return sha, material
+
+
+def _source_snapshot_sections(
+    workdir: str, push_base: str | None = None, push_head: str | None = None,
+    first_push_ref: str = "", require_material: str = "",
+    scope_paths: Sequence[str] = (),
+    tier_counts: tuple[int, int] | None = None,
+    committed_projection: str = "full",
+) -> tuple[str, str, list[tuple[str, int]]]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
     push_base is used by git_push: the base must be the push destination's
@@ -1504,12 +1626,14 @@ def _source_snapshot(
     # dynamic pre-check) to 2,500,000 chars. Both stay finite: a larger scope
     # must still be split or reviewed in parts, never "unlimited".
     total = len(material.encode("utf-8"))
+    # 段落字节数在这里一次算清：既供超限归因，也供 start() 的拒绝回执生成
+    # 分批计划（2026-11-02）。只遍历一次三段列表，成本可忽略。
+    sections = [(f"committed:{n}", len(t.encode("utf-8"))) for n, t in committed]
+    sections += [(f"working:{n}", len(t.encode("utf-8"))) for n, t in working]
+    sections += [(f"untracked:{n}", len(t.encode("utf-8"))) for n, _, t in new_files]
     if total > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
         # EVO-20261021-ea18d5ce: refuse WITH attribution so the caller can
         # act (split/stash/commit) without a manual numstat/ls -la hunt.
-        sections = [(f"committed:{n}", len(t.encode("utf-8"))) for n, t in committed]
-        sections += [(f"working:{n}", len(t.encode("utf-8"))) for n, t in working]
-        sections += [(f"untracked:{n}", len(t.encode("utf-8"))) for n, _, t in new_files]
         top = sorted(sections, key=lambda kv: kv[1], reverse=True)[:3]
         raise ValueError(
             "review_artifact_exceeds_cap"
@@ -1522,7 +1646,7 @@ def _source_snapshot(
         "material": material, "first_push_ref": first_push_ref,
         "untracked_shas": [(n, s) for n, s, _ in new_files],
     }))
-    return identity, material
+    return identity, material, sections
 
 
 def _effective_push_workdir(command: str, workdir: str) -> str:
@@ -2852,7 +2976,7 @@ class HostReviewAdmission:
         manuscript_path: str = "", artifact_paths: Sequence[str] = (),
         scope_paths: Sequence[str] = (),
         tier_counts: tuple[int, int] | None = None,
-    ) -> tuple[str, str, str, str, dict[str, str]]:
+    ) -> tuple[str, str, str, str, dict[str, str], list[tuple[str, int]]]:
         if kind == "article_publish":
             if not target_name or _PUBLISH_LABEL_RE.fullmatch(target_name) is None:
                 raise ValueError("publication_target_name_required")
@@ -2864,9 +2988,9 @@ class HostReviewAdmission:
             if not _has_document_editor(page) and "article" not in target_name.lower() and "文章" not in target_name:
                 raise ValueError("publication_article_editor_not_observed")
             sha, text = _browser_binding(page, manuscript_path=manuscript_path, artifact_paths=artifact_paths)
-            # article_publish carries no push metadata; keep the 5-tuple shape
-            # stable for callers (EVO-20261022-331eee17 arity change).
-            return sha, f"article_publish:{target_name}", text, "", {}
+            # article_publish carries no push metadata and no段落视图：返回空段落，
+            # 拒绝回执据此如实不给分批计划（不伪造）。
+            return sha, f"article_publish:{target_name}", text, "", {}, []
         push_extra: dict[str, str] = {}
         if kind not in {"full_test", "git_push"} or classify_host_shell(command) != kind:
             raise ValueError("review_kind_command_mismatch")
@@ -2876,7 +3000,15 @@ class HostReviewAdmission:
         # protected operation; require explicit simple command and workdir.
         segments = _shell_segments(command)
         if len(segments) != 1:
-            raise ValueError("compound_protected_shell_requires_split_commands")
+            split = " ; ".join(
+                shlex.join(seg) for seg in segments[:5]
+            )
+            more = f" …(共 {len(segments)} 段，仅列前 5)" if len(segments) > 5 else ""
+            raise ValueError(
+                "compound_protected_shell_requires_split_commands:"
+                f" 该命令含 {len(segments)} 段，受保护动作必须单独一步提交；"
+                f"请逐条单独调用（review_admission 支持逐段）：{split}{more}"
+            )
         if kind == "full_test":
             argv = _unwrap_transparent_argv(segments[0])
             original_argv = segments[0]
@@ -2917,7 +3049,7 @@ class HostReviewAdmission:
                 # locally or the reviewed delta cannot be computed at all.
                 raise ValueError("push_remote_commit_not_local_fetch_first") from exc
             push_head = _push_src_commit(repo, refspec)
-            sha, text = _source_snapshot(
+            sha, text, sections = _source_snapshot_sections(
                 true_dir, push_base=push_base, push_head=push_head,
                 first_push_ref=dst_ref if first_push else "",
                 scope_paths=scope_paths, tier_counts=tier_counts,
@@ -2936,12 +3068,12 @@ class HostReviewAdmission:
             # facts resolve; an actually empty artifact is refused outright.
             ft_base, ft_ref = _full_test_review_base(true_dir)
             push_base = ft_base
-            sha, text = _full_test_snapshot(
+            sha, text, sections = _full_test_snapshot_sections(
                 true_dir, ft_base, ft_ref, scope_paths, tier_counts
             )
             dest = str(Path(true_dir).expanduser().resolve(strict=True))
         return (sha, f"{kind}:{dest}:command:{_digest(command.encode('utf-8'))}", text,
-                push_base, push_extra)
+                push_base, push_extra, sections)
 
     def start(
         self, parent: str, kind: str, *, workdir: str = "", command: str = "", target_name: str = "",
@@ -2958,7 +3090,7 @@ class HostReviewAdmission:
         binding = _out_of_scope_binding(workdir, scope_paths) if scope_paths else ("", 0, 0, 0)
         tier_counts = None if binding is None else (binding[2], binding[3])
         try:
-            sha, target, material, push_remote_commit, push_extra = self._target(
+            sha, target, material, push_remote_commit, push_extra, sections = self._target(
                 kind, workdir, command, target_name, self._browser_capture,
                 manuscript_path=manuscript_path, artifact_paths=artifact_paths,
                 scope_paths=scope_paths, tier_counts=tier_counts,
@@ -2974,8 +3106,12 @@ class HostReviewAdmission:
         task, previous_row, coverage, out_scope, tier_counts = prepared
         task_chars, model_budget, effective_cap = self._input_budget(task)
         if task_chars > effective_cap:
-            return self._refuse_too_large(parent, kind, task_chars, effective_cap, model_budget)
-        estimated, review_deadline, refusal = self._duration_gate(parent, kind, task_chars)
+            return self._refuse_too_large(
+                parent, kind, task_chars, effective_cap, model_budget, sections
+            )
+        estimated, review_deadline, refusal = self._duration_gate(
+            parent, kind, task_chars, sections
+        )
         if refusal is not None:
             return refusal
         with self._guard:
@@ -3451,9 +3587,17 @@ class HostReviewAdmission:
             )
         return task_chars, model_budget, effective_cap
 
+    @staticmethod
+    def _plan_tail(
+        sections: Sequence[tuple[str, int]] | None,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """拒绝回执的「可复制分批计划」尾巴（2026-11-02；只让回执可执行，不放行）."""
+        return _split_plan_tail(sections)
+
     def _refuse_too_large(
         self, parent: str, kind: str, task_chars: int, effective_cap: int,
         model_budget: int | None,
+        sections: Sequence[tuple[str, int]] | None = None,
     ) -> dict[str, Any]:
         split_hint = max(2, -(-task_chars // max(1, effective_cap)))
         self._audit_reviewer_unavailable(
@@ -3461,7 +3605,8 @@ class HostReviewAdmission:
             f"pre-check task={task_chars}chars>cap={effective_cap}chars "
             f"budget={model_budget!r} static={_REVIEWER_STATIC_MATERIAL_CAP_BYTES}chars",
         )
-        return {
+        plan_tail, plan = self._plan_tail(sections)
+        receipt: dict[str, Any] = {
             "accepted": False,
             "reason": (
                 "reviewer_input_too_large:"
@@ -3469,12 +3614,17 @@ class HostReviewAdmission:
                 f"(model_budget={model_budget if model_budget is not None else 'unresolved'}chars, "
                 f"headroom={_REVIEWER_WIRE_HEADROOM}); split the frozen "
                 f"scope into ~{split_hint} smaller reviews and resubmit"
+                f"{plan_tail}"
             ),
             "reviewer_failure": "reviewer_input_too_large",
         }
+        if plan:
+            receipt["split_plan"] = plan
+        return receipt
 
     def _duration_gate(
-        self, parent: str, kind: str, task_chars: int
+        self, parent: str, kind: str, task_chars: int,
+        sections: Sequence[tuple[str, int]] | None = None,
     ) -> tuple[float, float, dict[str, Any] | None]:
         """E6: price the review up front; refuse only what no budget can cover."""
         estimated = task_chars / _REVIEWER_EST_CHARS_PER_SECOND
@@ -3486,18 +3636,22 @@ class HostReviewAdmission:
             f"task={task_chars}chars est={estimated:.0f}s "
             f"hard_max={_REVIEWER_MAX_ESTIMATED_S:.0f}s",
         )
-        return estimated, deadline, {
+        plan_tail, plan = self._plan_tail(sections)
+        receipt: dict[str, Any] = {
             "accepted": False,
             "reason": (
                 f"reviewer_duration_precheck:est={estimated:.0f}s>"
                 f"hard_max={_REVIEWER_MAX_ESTIMATED_S:.0f}s "
                 f"(task={task_chars}chars); no wall-clock budget can cover this "
                 "review — narrow it with scope=patch paths=[...] or split it "
-                "into smaller reviews"
+                f"into smaller reviews{plan_tail}"
             ),
             "estimated_seconds": round(estimated, 1),
             "reviewer_failure": "reviewer_duration_precheck",
         }
+        if plan:
+            receipt["split_plan"] = plan
+        return estimated, deadline, receipt
 
     def _spawn_reviewer(self, parent: str, task: str, kind: str) -> dict[str, Any]:
         """Spawn with the historical bounded retry, using the model preference list."""
@@ -3796,7 +3950,7 @@ class HostReviewAdmission:
                 # Re-resolves the push base (ls-remote) too: if the remote ref
                 # moved after admission, the candidate SHA changes and the grant
                 # will not match — the drift check is built into recomputation.
-                sha, target, _, _, _ = self._target(
+                sha, target, _, _, _, _ = self._target(
                     kind, workdir, command, "", None, scope_paths=scope_paths
                 )
             except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:

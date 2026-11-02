@@ -340,3 +340,44 @@ def test_consume_for_execution_requires_approved(tmp_path):
     assert out is None
     assert "不完整" in reason
     assert s.get(rec["id"])["status"] == "pending"
+
+
+# ── E. 阻断回执的「可复制等价姿势」（RULE-AI-36 回执侧，2026-11-02） ──
+
+_LL = chr(60) * 2  # here-doc 引导符（源码纪律：不落字面）
+
+
+def _heredoc_with_spawn() -> str:
+    """载荷含进程派生 → 静态转换被拒，回执必须给出改写姿势而非只谈提权."""
+    return (
+        "python3 " + _LL + "'PY'\n"
+        "import subprocess\n"
+        "print(subprocess.run(['echo', 'x']))\n"
+        "PY"
+    )
+
+
+def test_blocked_receipt_carries_rewrite_hint(tmp_path):
+    """工具层 E6 阻断回执：含两步改写姿势（先落盘、再执行）."""
+    tool, _ = _make(tmp_path)
+    r = tool.execute(command=_heredoc_with_spawn())
+    assert r.status == ToolResultStatus.BLOCKED
+    assert "E6_CATASTROPHIC_HARD" in r.content
+    assert "可复制的等价姿势" in r.content
+    assert "cat > /tmp/lfl_rewrite.py" in r.content
+
+
+def test_blocked_receipt_via_registry_also_carries_hint(tmp_path):
+    """registry 路径同一阻断：回执同样带改写姿势（两条入口不得漂移）."""
+    tool, _ = _make(tmp_path)
+    reg = ToolRegistry()
+    reg.register(tool)
+    r = reg.execute(
+        ToolCall(
+            id="t-rewrite-hint",
+            name="execute_command",
+            arguments={"command": _heredoc_with_spawn()},
+        )
+    )
+    assert r.status == ToolResultStatus.BLOCKED
+    assert "可复制的等价姿势" in r.content

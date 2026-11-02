@@ -1229,11 +1229,17 @@ class ToolRegistry:
                     if self._escalation_store is not None
                     else ""
                 )
+                # 阻断回执补「可复制等价姿势」：here-doc/管道直连解释器被转换拒
+                # 时，调用方原本只能靠猜（RULE-AI-36）；此处只加文本，不改判定。
+                rewrite_hint = self.safety.static_rewrite_hint(
+                    _command_text_for_guard(call.name, call.arguments),
+                    blocked_rule=getattr(blocked, "rule", ""),
+                )
                 return self._preblock(
                     call,
                     ToolResult(
                         status=ToolResultStatus.BLOCKED,
-                        content=f"[安全硬阻断][E6_CATASTROPHIC_HARD] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}",
+                        content=f"[安全硬阻断][E6_CATASTROPHIC_HARD] 已阻止可能造成不可逆破坏的行动。{blocked.reason}{escalate_hint}{rewrite_hint}",
                         tool_call_id=call.id,
                         tool_name=call.name,
                         error_type="E6_CATASTROPHIC_HARD",

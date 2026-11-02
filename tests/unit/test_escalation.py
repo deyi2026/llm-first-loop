@@ -213,6 +213,13 @@ class _StubGuard:
             return self._Blocked()
         return None
 
+    def static_rewrite_hint(self, command: str, **kwargs) -> str:
+        """契约：真实守卫会为可改写形态补「先落盘再执行」（RULE-AI-36 回执侧）.
+
+        stub 返回空串即可——本用例只关心阻断/提权闭环，不关心改写建议。
+        """
+        return ""
+
 
 _STUB_CMD = "echo esc-bypass-ran > /tmp/esc-bypass-ran.txt"
 

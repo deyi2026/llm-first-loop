@@ -262,3 +262,86 @@ def test_range_fails_closed_on_unreadable_history_blob(repo):
     out = run_scan(repo, "--range", base, head)
     assert out.returncode == 1  # fail-closed：拒绝而非静默跳过
     assert "不可读" in out.stderr or "fail-closed" in out.stderr
+
+
+# ── 规则3「URL 内嵌家目录」前缀收窄（2026-11-02 误报修复）──────────────────────
+# 收窄：前缀 [^[:space:]]* → [^/[:space:]]+，即 /home/ 只能落在 URL 的 path 起始处。
+# 动机：公开文档站的多段路径（主机/help/home/<段>/<段>，home 只是文档路径里的一节）
+# 原被当作家目录泄漏——实测假阳性，且仓库 tracked 内容里没有 help/home/ 形态的文件，
+# 只能靠直接喂样本复现，故此处用样本锁住双向。
+#
+# 下列 URL 均为虚构主机/用户名，仅作被扫样本；本文件已在 _ALLOWLIST（全规则豁免），
+# 故这些字面量不会让闸自阻塞（契约见上方 test_gate_own_test_file_is_broadly_exempt）。
+# 样本刻意不含裸家目录形态（/home/ 紧贴非字母数字边界），确保命中/未命中只可能由
+# 本 URL 规则决定，不会被规则3 的前导边界模式或规则5 的当前用户模式抢答。
+_URL_HOME_MUST_HIT = [
+    "https://host/home/alice/panel",   # 基线形态：主机 + 家目录段 + 子段
+    "https://host:8443/home/bob/x",    # 带端口：host 段含 ':' 仍须算 path 起始
+    "http://u:p@host/home/carol/p",    # userinfo 前缀：仍须命中
+]
+_URL_HOME_MUST_MISS = "https://docs.example.com/help/home/index/2"  # 公开文档站多段路径
+_URL_PAT_PREFIX = "https?://"  # 规则3 块内仅 URL 模式以此开头（其余为路径模式）
+
+
+def _url_home_pattern() -> str:
+    """从脚本规则3 块中抽取 URL 家目录模式的字面值（收窄后应只有一条）。"""
+    with open(SCAN, encoding="utf-8") as fh:
+        script = fh.read()
+    m = re.search(r"BLOCK_ABS_PATH_PATTERNS=\((.*?)\n\)", script, re.S)
+    assert m, "未找到 BLOCK_ABS_PATH_PATTERNS 定义"
+    hits = [p for p in re.findall(r"'([^']+)'", m.group(1))
+            if p.startswith(_URL_PAT_PREFIX)]
+    assert len(hits) == 1, f"URL 家目录模式应恰有一条，实际 {hits}"
+    return hits[0]
+
+
+def test_url_home_pattern_is_path_anchored():
+    """结构性锁定：模式必须把 host 段限制为不含 '/'（/home/ 只在 path 起始）。
+
+    收窄前的 [^[:space:]]* 前缀会跨过 '/'，让任意深度的 /home/ 都算家目录泄漏。
+    """
+    pat = _url_home_pattern()
+    assert pat == "https?://[^/[:space:]]+/home/[A-Za-z0-9_]+/[A-Za-z0-9_.-]+"
+    assert "[^[:space:]]*/home/" not in pat  # 旧前缀不得回归
+
+
+def test_url_home_pattern_two_way_grep():
+    """用脚本里的**实际模式**喂样本（grep -E 与脚本同引擎）：双向锁定。
+
+    必须命中：真家目录形态（含端口/userinfo）——收窄不得放宽防护面。
+    必须不命中：公开文档站多段路径——本次修复的目标误报。
+    """
+    pat = _url_home_pattern()
+
+    def hits(u: str) -> bool:
+        return subprocess.run(["grep", "-Eq", pat], input=u + "\n",
+                              capture_output=True, text=True, timeout=30).returncode == 0
+
+    for url in _URL_HOME_MUST_HIT:
+        assert hits(url), f"收窄过度：真家目录形态漏拦 {url}"
+    assert not hits(_URL_HOME_MUST_MISS), "误报未消除：公开文档站多段路径仍被拦"
+
+
+@pytest.mark.parametrize("url", _URL_HOME_MUST_HIT)
+def test_scan_blocks_url_embedded_home_leak(repo, url):
+    """整脚本行为：URL 内嵌家目录形态必须仍被规则3 拦下（exit 1）。
+
+    env_user 固定为通用 CI 账户，隔离规则5 的动态身份模式，让命中只可能来自规则3。
+    """
+    (repo / "leak.md").write_text(f"open {url}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "leak.md"], check=True, capture_output=True)
+    out = run_scan(repo, "--staged", env_user="runner")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "本地绝对路径匹配" in out.stdout  # 出自规则3，不是别的规则抢答
+
+
+def test_scan_passes_public_docs_multisegment_path(repo):
+    """整脚本行为：公开文档站多段路径（home 只是文档路径一节）不得阻塞（exit 0）。
+
+    这是本次收窄的可用性目标：闸变准不能把公开文档链接判成家目录泄漏。
+    """
+    (repo / "docs_link.md").write_text(f"see {_URL_HOME_MUST_MISS}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "docs_link.md"], check=True, capture_output=True)
+    out = run_scan(repo, "--staged", env_user="runner")
+    assert out.returncode == 0, out.stdout + out.stderr
+

@@ -1893,6 +1893,68 @@ class CatastrophicGuard:
         interp_token, pflags, candidate = parsed
         return interp_token, _CONVERT_FAMILIES[interp_token.lower()], pflags, candidate
 
+    def static_rewrite_hint(
+        self, command: str, *, blocked_rule: str = "", body_limit: int = 2000
+    ) -> str:
+        """阻断回执里的「可复制等价姿势」（纯文本建议，不放行、不改判定）.
+
+        背景（2026-11-02 实测）：良性载荷的 `python3 <<'PY' … PY` 已被静态源转换
+        改写为临时文件形态并实际执行；但载荷含进程派生/受保护动作/敏感读时转换
+        被拒（_reject_conversion），回执只剩"走 escalation_request"，调用方拿不到
+        合法姿势，每轮试错白花一次交互（RULE-AI-36 的由来）。此处只补文本：
+        命中 here-doc 或管道直连解释器两类形态时给出「先落盘、再执行」两步命令，
+        严格解析成功则内嵌真实载荷，否则给模板。判定权仍在调用方的 decision 上——
+        本方法不返回任何放行信号。
+        """
+        labels = self._catastrophic_labels(command)
+        if _CONVERT_HEREDOC_RULE in labels:
+            shape, rule = "heredoc", _CONVERT_HEREDOC_RULE
+        elif _CONVERT_PIPE_RULE in labels:
+            shape, rule = "pipe", _CONVERT_PIPE_RULE
+        else:
+            return ""
+        # 调用方已判定是别的规则时不给建议（fail-closed：建议只覆盖能机械改写的
+        # 两类形态，避免把不相关阻断引到改写思路上）。
+        if blocked_rule and blocked_rule != rule:
+            return ""
+        parsed = None
+        try:
+            parsed = self._parse_static_source(command, rule, None)
+        except Exception:  # 解析只是建议通道，任何异常都退回模板
+            parsed = None
+        if parsed is None:
+            if shape == "heredoc":
+                steps = (
+                    "cat > /tmp/lfl_rewrite.py <<'LFL_EOF'\n"
+                    "<把你的载荷粘贴到这里>\n"
+                    "LFL_EOF\n"
+                    "python3 -I /tmp/lfl_rewrite.py"
+                )
+            else:
+                steps = (
+                    "<producer> > /tmp/lfl_rewrite.txt   # 例如 cat payload.txt > …\n"
+                    "python3 -I /tmp/lfl_rewrite.txt   # 换成你原本的解释器"
+                )
+        else:
+            interp_token, family, flags, body = parsed
+            ext = _CONVERT_FAMILY_EXTS.get(family, ".txt")
+            path = f"/tmp/lfl_rewrite{ext}"
+            run_flags = list(flags)
+            if family == "python" and "-I" not in run_flags:
+                run_flags.append("-I")
+            rendered = " ".join([os.path.basename(interp_token), *run_flags, path])
+            payload = body
+            if len(payload) > body_limit:
+                payload = f"{payload[:body_limit]}\n…（载荷共 {len(body)} 字符，此处截断）"
+            steps = f"cat > {path} <<'LFL_EOF'\n{payload}\nLFL_EOF\n{rendered}"
+        return (
+            "\n可复制的等价姿势（先落盘再执行，不触发本规则；RULE-AI-36）:\n"
+            f"{steps}\n"
+            "注：载荷若含受保护动作（git push / 全量测试）、敏感路径读取或进程派生"
+            "（subprocess 等），第二步仍会被守卫拦——把受保护动作单独走 "
+            "review_admission，其余部分留在脚本里。\n"
+        )
+
     def try_static_source_conversion(
         self, command: str, workdir: str | None = None, *, blocked_rule: str = ""
     ) -> tuple[str, str] | None:
