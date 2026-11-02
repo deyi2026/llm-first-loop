@@ -15,6 +15,7 @@ from llm_loop.runtime.service_control import (
     ManagedServiceDeployment,
     ManagedServiceDeploymentStore,
     ServiceControlAction,
+    _receipt_stable_view,
     compose_convergence_view,
     compose_service_identity_view,
     run_action_worker,
@@ -624,3 +625,63 @@ def test_convergence_view_no_receipt_marks_all_lagging(tmp_path: Path) -> None:
     assert view["desired_generation"] == 1
     assert view["lagging"] == ["feishu", "learning", "web", "wecom"]
     assert all(svc["stable_generation"] is None for svc in view["services"].values())
+
+
+def _receipt(generation: int, *, verdict: str = "", evidence: str = "") -> ServiceControlAction:
+    ts = "2026-11-02T03:00:00+00:00"
+    return ServiceControlAction(
+        schema="service-control-action/v1",
+        action_id=f"svc-g{generation}",
+        action="restart",
+        target="all",
+        deployment_id=f"deploy-{generation}",
+        deployment_generation=generation,
+        requester_session_id="sess-x",
+        status="succeeded",
+        created_at=ts,
+        updated_at=ts,
+        verify_verdict=verdict,
+        verify_evidence=evidence,
+    )
+
+
+def test_receipt_stable_view_carries_worker_verify_fact() -> None:
+    """回执自证核验事实：下一轮 status 不必再观测一次才敢说"已生效".（2026-11-02）"""
+    evidence = "web=ok pid=1234 " + "x" * 400
+    stable = _receipt_stable_view(
+        {"all": _receipt(7, verdict="confirmed_ok", evidence=evidence)},
+        "web",
+        SimpleNamespace(generation=7, git_head=HEAD_A),
+        {"matches_desired_generation": True},
+    )
+    assert stable is not None
+    assert stable["verify_verdict"] == "confirmed_ok"
+    assert len(stable["verify_evidence"]) == 240
+    assert stable["matches_desired_generation"] is True
+    assert stable["lag_generations"] == 0
+    assert stable["created_at"] == "2026-11-02T03:00:00+00:00"
+
+
+def test_receipt_stable_view_absent_without_succeeded_receipt() -> None:
+    """从未 succeeded（或只覆盖别的服务）→ None，不伪造空回执."""
+    live = {"matches_desired_generation": True}
+    assert _receipt_stable_view({}, "web", SimpleNamespace(generation=7), live) is None
+    other = {"feishu": _receipt(7)}
+    assert _receipt_stable_view(other, "web", SimpleNamespace(generation=7), live) is None
+
+
+def test_receipt_stable_view_lag_marks_stale_when_live_ahead() -> None:
+    """回执落后而 live 已达 desired → 只披露 lag/stale，不进 restart_required."""
+    stable = _receipt_stable_view(
+        {"all": _receipt(5, verdict="confirmed_ok")},
+        "web",
+        SimpleNamespace(generation=7, git_head=HEAD_A),
+        {"matches_desired_generation": True},
+    )
+    assert stable is not None
+    assert stable["lag_generations"] == 2
+    assert stable["stale"] is True
+    assert "以 live 为准" in stable["note"]
+    # 落后回执不带 git_head：不得把当前 desired 的 head 冒充成回执证据。
+    assert stable["git_head"] is None
+    assert stable["matches_desired_generation"] is False

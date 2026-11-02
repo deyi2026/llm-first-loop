@@ -11,21 +11,25 @@ EVO 引用，与演进建议记录（JSONL 真值源）中的已知编号比对�
   1 —— 有结论地失败：存在未知 EVO 引用（stdout 逐条列出 文件:编号）
   2 —— 无法判定：真值源缺失/不可读/格式损坏，或输入路径不存在
 
-当前定位（2026-11-02 实测，勿当 CI 硬门禁用）：
+当前定位（2026-11-02 复测）：
   `.venv/bin/python scripts/check_evo_refs.py src docs scripts tests`
-  → scanned=4428 files, distinct_refs=226, known=237, 未知引用 302 处, exit=1。
-  即：演进记录（237 条）是**滚动窗口**，不是全量真值源；仓库历史里有大量
-  早于窗口的引用。因此本工具今天的正确用法是**只扫本次改动的文件**（工具
-  是诊断，不是门禁）。要升级为 CI 硬门禁，必须先补一份 baseline：把现存
-  历史编号登记为"已豁免"，之后只拦新增的编造引用。
+  → scanned=4174 files, distinct_refs=225, known=237（滚动窗口）,
+    history=167（提交信息里出现过的编号）, 窗口外真编号=95, 未知=154。
+  两道补充真值都补不全：演进记录是**滚动窗口**，提交信息只覆盖部分历史。
+  因此引入 **baseline 豁免表**（scripts/evo_refs_baseline.json，append-only）：
+  现存无法回溯的历史编号一次性登记，之后只拦**新增**的编造引用。
+    --regen-baseline  重新登记当前未知编号（一次性、需人工审阅 diff）
+  有了 baseline 才可作 CI 硬门禁：新旧编号都过不了 baseline 才 DENIED。
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import subprocess
 import sys
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -105,6 +109,70 @@ def unknown_refs(texts_by_source: Mapping[str, str], known: set[str]) -> dict[st
     return result
 
 
+def history_refs_from_text(blob: str) -> set[str]:
+    """从 git log 正文提取历史上真实出现过的编号（纯函数，便于注入测试）."""
+    return extract_refs([blob])
+
+
+def git_history_refs(root: Path) -> set[str] | None:
+    """读仓库全部提交信息里的 EVO 编号。
+
+    演进记录是滚动窗口，历史编号会掉出窗口但仍真实存在过——提交信息是
+    那些编号的原始出处，故并入可回溯集合，避免把"窗口外的真编号"报成编造。
+    git 不可用/不是仓库/超时一律返回 None：**不冒充空集**，由 CLI 如实降级。
+    """
+    try:
+        proc = subprocess.run(
+            ("git", "log", "--all", "--no-color", "--format=%B"),
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return history_refs_from_text(proc.stdout)
+
+
+def is_future_dated(ref: str, today: date | None = None) -> bool:
+    """编号日期晚于今天 → 不可能是历史欠账，属编造/占位形状，不纳入豁免.
+
+    2026-11-02 实证：一次 `--regen-baseline` 全仓登记时，把测试哨兵
+    （形如 EVO-<未来日期>-<8位十六进制>）也当成"历史欠账"豁免掉，
+    于是原本用来证明"未知必须被拦"的用例直接失效。未来日期是硬信号。
+    """
+    match = REF_PATTERN.search(ref)
+    if match is None:
+        return False
+    digits = match.group(0).split("-")[1]
+    try:
+        stamp = date(int(digits[:4]), int(digits[4:6]), int(digits[6:]))
+    except ValueError:
+        return False
+    return stamp > (today or date.today())
+
+
+def load_baseline(path: Path) -> set[str]:
+    """读豁免表。缺失=空表（干净检出常态）；损坏=告警+空表，绝不静默全豁免."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return set()
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"evo-refs WARNING: 豁免表不可读，按空表处理: {exc}", file=sys.stderr)
+        return set()
+    exempt = data.get("exempt") if isinstance(data, dict) else None
+    if not isinstance(exempt, list):
+        print("evo-refs WARNING: 豁免表格式异常，按空表处理", file=sys.stderr)
+        return set()
+    # 注意：不动大小写。extract_refs 产出的十六进制后缀是小写，曾经 upper() 过
+    # 一次，导致豁免表 100% 不命中（"登记了仍报未知"），此处保持原样比对。
+    return {str(item).strip() for item in exempt if str(item).strip()}
+
+
 def collect_text_files(paths: Iterable[Path]) -> list[Path]:
     """展开输入路径：文件直接收录；目录按后缀白名单递归并跳过隐藏目录。"""
     files: list[Path] = []
@@ -141,7 +209,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="真值源缺失时降级放行（退出码 0）：仅供干净检出/CI 等无运行期数据的场景",
     )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="只按演进记录判定，不并入 git 历史提交信息（默认并入：窗口外真编号不算未知）",
+    )
+    parser.add_argument(
+        "--baseline",
+        default=ROOT / "scripts" / "evo_refs_baseline.json",
+        help="豁免表（append-only）：现存无法回溯的历史编号，登记后只拦新增编造引用",
+    )
+    parser.add_argument(
+        "--regen-baseline",
+        action="store_true",
+        help="把当前无法回溯的编号写入豁免表（一次性；请审阅 diff 后再提交）",
+    )
     args = parser.parse_args(argv)
+    # 命令行传 string、默认值是 Path：统一成 Path，否则写入时 AttributeError（实测过）。
+    baseline_path = Path(args.baseline)
 
     # 输入路径不存在 → 无法判定（2）：绝不把「扫不到」当作「通过」
     absent = [p for p in args.paths if not p.exists()]
@@ -177,18 +262,63 @@ def main(argv: Sequence[str] | None = None) -> int:
     if unreadable:
         return 2
 
-    unknown = unknown_refs(texts, known)
+    # 演进记录是滚动窗口：窗口外的真编号由 git 提交信息回溯（原始出处）。
+    history: set[str] | None = None
+    if not args.no_history:
+        history = git_history_refs(ROOT)
+        if history is None:
+            print(
+                "evo-refs WARNING: 读不到 git 历史，本轮只按演进记录判定"
+                "（窗口外真编号可能被误报为未知）",
+                file=sys.stderr,
+            )
+    attested = known if history is None else known | history
+
+    all_refs = extract_refs(texts.values())
+    if args.regen_baseline:
+        candidates = sorted(all_refs - attested)
+        unresolved = [ref for ref in candidates if not is_future_dated(ref)]
+        skipped = len(candidates) - len(unresolved)
+        payload = {
+            "_comment": (
+                "EVO 编号豁免表（append-only）：登记时无法回溯的历史编号。"
+                "只允许新增条目用于历史欠账；新增代码里的编号必须能回溯到演进记录或提交信息。"
+            ),
+            "exempt": unresolved,
+        }
+        try:
+            baseline_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            print(f"evo-refs ERROR: 豁免表写入失败: {exc}", file=sys.stderr)
+            return 2
+        print(f"evo-refs: 已登记豁免 {len(unresolved)} 个编号 → {baseline_path}")
+        if skipped:
+            print(
+                f"evo-refs: 跳过 {skipped} 个未来日期编号（不可能是历史欠账，仍会被拦）",
+                file=sys.stderr,
+            )
+        return 0
+    baseline = load_baseline(baseline_path)
+    attested |= baseline
+
+    unknown = unknown_refs(texts, attested)
+    outside_window = len(all_refs - known)
     print(
         f"evo-refs: scanned={len(texts)} files, "
-        f"distinct_refs={len(extract_refs(texts.values()))}, known={len(known)}"
+        f"distinct_refs={len(all_refs)}, known={len(known)}, "
+        f"history={len(history) if history is not None else 'unavailable'}, "
+        f"窗口外真编号={outside_window if history is not None else 'n/a'}, "
+        f"exempt={len(baseline & all_refs)}"
     )
     if unknown:
         for source in sorted(unknown):
             for ref in sorted(unknown[source]):
                 print(f"BLOCK UNKNOWN: {source}:{ref}")
-        print("evo-refs DENIED: 存在未在演进记录中登记的 EVO 引用", file=sys.stderr)
+        print("evo-refs DENIED: 存在既不在演进记录、也不在任何提交信息中的 EVO 引用", file=sys.stderr)
         return 1
-    print("evo-refs: PASS（全部 EVO 引用均可回溯到演进记录）")
+    print("evo-refs: PASS（全部 EVO 引用均可回溯到演进记录或提交信息）")
     return 0
 
 

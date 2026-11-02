@@ -1756,11 +1756,7 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
         age = (now - ts).total_seconds()
         if age > timeout_s:
             waiting_timeout.append(
-                {
-                    "action_id": action.action_id,
-                    "status": action.status,
-                    "age_s": round(age),
-                }
+                {"action_id": action.action_id, "status": action.status, "age_s": round(age)}
             )
 
     runtime_root = str(store.data_dir.parent)
@@ -1911,6 +1907,54 @@ def compose_service_identity_with_guard_freshness(
     return view
 
 
+def _receipt_stable_view(
+    succeeded: dict[str, ServiceControlAction],
+    service: str,
+    deployment: Any,
+    live: dict[str, Any],
+) -> dict[str, Any] | None:
+    """succeeded 重启回执的服务级视图（自包含，含 worker 侧核验裁决）.
+
+    2026-11-02：回执原先只表达"哪一代成功重启过"，不含核验裁决，于是下一轮
+    status 看到"有回执"仍须自行再观测一次才敢说"已生效"。现把 verify_verdict /
+    verify_evidence / created_at 一并带出，使回执自证"物理重启完成且已按该代
+    核验过"；核验证据截断到 240 字符，完整源经 action 文件可回读。
+    """
+    candidates = [
+        action
+        for target, action in succeeded.items()
+        if target == service or target == "all"
+    ]
+    receipt = max(candidates, key=lambda a: a.updated_at) if candidates else None
+    if receipt is None:
+        return None
+    matches = deployment is not None and receipt.deployment_generation == deployment.generation
+    stable: dict[str, Any] = {
+        "action_id": receipt.action_id,
+        "target": receipt.target,
+        "generation": receipt.deployment_generation,
+        "succeeded_at": receipt.updated_at,
+        "created_at": receipt.created_at,
+        "git_head": deployment.git_head if matches and deployment else None,
+        "matches_desired_generation": matches,
+        # 核验事实（worker 采集的三态证据）：confirmed_ok / confirmed_fail /
+        # criterion_absent。空串 = 旧回执未采集，不冒充"核验通过"。
+        "verify_verdict": receipt.verify_verdict,
+        "verify_evidence": receipt.verify_evidence[:240],
+    }
+    if deployment is not None and receipt.deployment_generation < deployment.generation:
+        # R3①降级/R6: live 健康而回执落后只作完整性事实展示（直连
+        # 重启是合法无回执路径），不进 restart_required。
+        stable["lag_generations"] = deployment.generation - receipt.deployment_generation
+        stable["stale"] = bool(live.get("matches_desired_generation"))
+        if stable["stale"]:
+            stable["note"] = "live 进程已新于回执（直连重启未写 durable 回执）；以 live 为准"
+    else:
+        # design 2.2.2.6: lag_generations 恒定存在（0=无代差，只读证据）。
+        stable["lag_generations"] = 0
+    return stable
+
+
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """Desired/live/stable identity view per managed service (read-only).
 
@@ -1986,40 +2030,7 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                 "manifest_present": bool(live.get("manifest_present")),
                 "desired_git_head": deployment.git_head,
             }
-        candidates = [
-            action
-            for target, action in succeeded.items()
-            if target == service or target == "all"
-        ]
-        receipt = max(candidates, key=lambda a: a.updated_at) if candidates else None
-        stable: dict[str, Any] | None = None
-        if receipt is not None:
-            matches = (
-                deployment is not None
-                and receipt.deployment_generation == deployment.generation
-            )
-            stable = {
-                "action_id": receipt.action_id,
-                "target": receipt.target,
-                "generation": receipt.deployment_generation,
-                "succeeded_at": receipt.updated_at,
-                "git_head": deployment.git_head if matches and deployment else None,
-                "matches_desired_generation": matches,
-            }
-            if deployment is not None and receipt.deployment_generation < deployment.generation:
-                # R3①降级/R6: live 健康而回执落后只作完整性事实展示（直连
-                # 重启是合法无回执路径），不进 restart_required。
-                stable["lag_generations"] = (
-                    deployment.generation - receipt.deployment_generation
-                )
-                stable["stale"] = bool(live.get("matches_desired_generation"))
-                if stable["stale"]:
-                    stable["note"] = (
-                        "live 进程已新于回执（直连重启未写 durable 回执）；以 live 为准"
-                    )
-            else:
-                # design 2.2.2.6: lag_generations 恒定存在（0=无代差，只读证据）。
-                stable["lag_generations"] = 0
+        stable = _receipt_stable_view(succeeded, service, deployment, live)
         reasons: list[str] = []
         if deployment is None:
             reasons.append("desired_deployment_missing")

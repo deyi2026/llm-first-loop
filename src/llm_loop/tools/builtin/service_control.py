@@ -161,6 +161,7 @@ def _compose_status_body(
     if resolved not in _STATUS_VIEWS:
         raise ValueError(f"view={resolved!r} (allowed={list(_STATUS_VIEWS)})")
     identity = compose_service_identity_with_guard_freshness(store)
+    _annotate_in_flight_liveness(identity)
     body = _full_status_body(identity) if resolved == "full" else _targets_status_body(identity)
     scope = (target or "").strip().lower()
     return _narrow_status_body(body, scope) if scope and scope != "all" else body
@@ -181,6 +182,39 @@ def _full_status_body(identity: dict) -> dict[str, object]:
         "evidence_refs": identity.get("evidence_refs", {}),
         "audit_signals": identity.get("audit_signals", {}),
     }
+
+
+def _live_generation_match(entry: object) -> bool | None:
+    """该服务 live 是否已达 desired 代：True/False，判据缺失返回 None."""
+    live = (entry if isinstance(entry, dict) else {}).get("live") or {}
+    value = live.get("matches_desired_generation")
+    return value if isinstance(value, bool) else None
+
+
+def _annotate_in_flight_liveness(identity: dict) -> None:
+    """给非终态动作就地补 live_converged：区分"在等什么"与"其实已等价".
+
+    2026-11-01 起 in_flight 回答了"在等什么"，但答不了"等的东西是否已就位"：
+    restart 动作仍持 barrier、四个服务却都已在 desired 代时，读的人只能再逐服务
+    比对 git_head。此处补两键（就地改 audit_signals.in_flight 行，views 共享）：
+    live_converged=True/False/None（None=判据缺失，不冒充"已等价"），lagging
+    仅在非空时出现，命名落后的服务。
+    """
+    services = identity.get("services") or {}
+    rows = (identity.get("audit_signals") or {}).get("in_flight") or []
+    for row in rows:
+        covered = [name for name in row.get("services") or [] if name in services]
+        if not covered:
+            continue
+        states = [_live_generation_match(services[name]) for name in covered]
+        lagging = [name for name, state in zip(covered, states, strict=True) if state is False]
+        if lagging:
+            row["live_converged"] = False
+            row["lagging_services"] = lagging
+        elif all(state is True for state in states):
+            row["live_converged"] = True
+        else:
+            row["live_converged"] = None
 
 
 def _targets_status_body(identity: dict) -> dict[str, object]:

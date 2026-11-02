@@ -7,7 +7,11 @@
 from datetime import UTC, datetime, timedelta
 
 from llm_loop.runtime.service_control import ServiceControlAction, _in_flight_signal
-from llm_loop.tools.builtin.service_control import _narrow_status_body, _targets_status_body
+from llm_loop.tools.builtin.service_control import (
+    _annotate_in_flight_liveness,
+    _narrow_status_body,
+    _targets_status_body,
+)
 
 NOW = datetime(2026, 11, 2, 3, 0, 0, tzinfo=UTC)
 ALL_SERVICES = ["web", "feishu", "wecom", "learning"]
@@ -87,3 +91,58 @@ def test_narrow_drops_action_that_does_not_cover_scope():
     rows = _in_flight_signal([_action(target="feishu")], now=NOW)
     narrowed = _narrow_status_body(_targets_status_body(_identity(rows)), "web")
     assert narrowed["audit_summary"]["in_flight"] == []
+
+
+def _identity_with_live(matches: dict[str, object]) -> dict:
+    """构造 services，live.matches_desired_generation 按 matches 给定（缺失=无判据）."""
+    services = {name: {"live": {"matches_desired_generation": state}} for name, state in matches.items()}
+    return {
+        "deployment": {"generation": 7},
+        "services": services,
+        "audit_signals": {"in_flight": _in_flight_signal([_action()], now=NOW)},
+    }
+
+
+def test_live_converged_true_when_every_service_already_on_desired():
+    """动作仍在飞（等 requester 退出）但四个服务已全在 desired 代 → True."""
+    identity = _identity_with_live({name: True for name in ALL_SERVICES})
+    _annotate_in_flight_liveness(identity)
+    row = identity["audit_signals"]["in_flight"][0]
+    assert row["live_converged"] is True
+    assert "lagging_services" not in row
+
+
+def test_live_converged_false_names_the_lagging_service():
+    identity = _identity_with_live(
+        {"web": True, "feishu": True, "wecom": False, "learning": True}
+    )
+    _annotate_in_flight_liveness(identity)
+    row = identity["audit_signals"]["in_flight"][0]
+    assert row["live_converged"] is False
+    assert row["lagging_services"] == ["wecom"]
+
+
+def test_live_converged_none_when_criterion_absent():
+    """判据缺失（无 matches 键）不得冒充"已等价"：None 而非 True."""
+    identity = _identity_with_live({"web": True, "feishu": None})
+    identity["services"]["feishu"] = {"live": {}}
+    identity["services"]["wecom"] = {"live": {"matches_desired_generation": True}}
+    identity["services"]["learning"] = {"live": {"matches_desired_generation": True}}
+    _annotate_in_flight_liveness(identity)
+    assert identity["audit_signals"]["in_flight"][0]["live_converged"] is None
+
+
+def test_live_converged_ignores_services_missing_from_live_facts():
+    """动作 statement 覆盖四服务，但 live 事实只读到两个 → 只按读到的判，不臆测."""
+    identity = _identity_with_live({"web": True, "feishu": True})
+    _annotate_in_flight_liveness(identity)
+    row = identity["audit_signals"]["in_flight"][0]
+    assert row["services"] == ALL_SERVICES
+    assert row["live_converged"] is True
+
+
+def test_annotation_reaches_targets_and_full_views():
+    identity = _identity_with_live({"web": True})
+    _annotate_in_flight_liveness(identity)
+    targets = _targets_status_body(identity)
+    assert targets["audit_summary"]["in_flight"][0]["live_converged"] is True

@@ -12,7 +12,9 @@ from scripts.check_evo_refs import (
     LedgerFormatError,
     collect_text_files,
     extract_refs,
+    history_refs_from_text,
     known_ids_from_jsonl,
+    load_baseline,
     main,
     normalize_known_id,
     unknown_refs,
@@ -20,6 +22,8 @@ from scripts.check_evo_refs import (
 
 FAKE_KNOWN = "EVO-20991231-aaaaaaaa"
 FAKE_UNKNOWN = "EVO-20991231-bbbbbbbb"
+# 过去日期的"历史欠账"形状：可被豁免表登记（对照未来日期哨兵永远不被豁免）。
+LEGACY_ID = "EVO-20200101-abcdef01"
 
 
 def _ledger(tmp_path, rows):
@@ -122,3 +126,76 @@ def test_cli_malformed_ledger_is_undecidable_exit_2(tmp_path, capsys):
     target = _text(tmp_path, "note.md", f"引用 {FAKE_KNOWN}")
     assert main(["--ledger", str(ledger), str(target)]) == 2
     assert "无法判定" in capsys.readouterr().err
+
+
+# ---- 2026-11-02：窗口外真编号回溯 + 豁免表（append-only baseline）----
+
+
+def test_history_refs_from_text_extracts_ids_from_commit_body():
+    blob = f"feat: x\n\nEVO-20260814-39a10097 与 {FAKE_KNOWN}\n"
+    assert history_refs_from_text(blob) == {"EVO-20260814-39a10097", FAKE_KNOWN}
+
+
+def test_load_baseline_missing_file_is_empty_not_blanket_exempt(tmp_path):
+    assert load_baseline(tmp_path / "absent.json") == set()
+
+
+def test_load_baseline_malformed_warns_and_stays_empty(tmp_path, capsys):
+    broken = tmp_path / "baseline.json"
+    broken.write_text("{ 不是 JSON", encoding="utf-8")
+    assert load_baseline(broken) == set()
+    assert "按空表处理" in capsys.readouterr().err
+
+
+def test_load_baseline_keeps_case_so_entries_actually_match(tmp_path):
+    """曾经把条目 upper() 过：extract_refs 产出小写后缀 → 豁免表 100% 不命中."""
+    path = tmp_path / "baseline.json"
+    path.write_text(json.dumps({"exempt": ["EVO-20260814-39a10097"]}), encoding="utf-8")
+    assert "EVO-20260814-39a10097" in load_baseline(path)
+
+
+def test_cli_baseline_exempts_legacy_but_still_blocks_new_fabrication(tmp_path, capsys):
+    legacy = LEGACY_ID
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"旧引用 {legacy} 新编造 {FAKE_UNKNOWN}")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps({"exempt": [legacy]}), encoding="utf-8")
+    argv = ["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", str(target)]
+    assert main(argv) == 1
+    out = capsys.readouterr().out
+    assert FAKE_UNKNOWN in out
+    assert legacy not in out
+
+
+def test_cli_regen_baseline_records_only_unattested_ids(tmp_path, capsys):
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"引用 {FAKE_KNOWN} 欠账 {LEGACY_ID}")
+    baseline = tmp_path / "baseline.json"
+    argv = ["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", "--regen-baseline"]
+    assert main([*argv, str(target)]) == 0
+    assert "已登记豁免 1 个编号" in capsys.readouterr().out
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    assert payload["exempt"] == [LEGACY_ID]
+    # 登记后再扫：不再 DENIED（豁免=历史欠账一次性确认）
+    assert main(["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", str(target)]) == 0
+
+
+def test_cli_regen_baseline_refuses_future_dated_ids(tmp_path, capsys):
+    """未来日期不可能是历史欠账：登记时跳过，之后仍被拦（防"一次 regen 洗白编造"）."""
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"引用 {FAKE_UNKNOWN}")
+    baseline = tmp_path / "baseline.json"
+    argv = ["--ledger", str(ledger), "--baseline", str(baseline), "--no-history", "--regen-baseline"]
+    assert main([*argv, str(target)]) == 0
+    assert "跳过 1 个未来日期编号" in capsys.readouterr().err
+    assert json.loads(baseline.read_text(encoding="utf-8"))["exempt"] == []
+
+
+def test_cli_no_history_skips_git_probe(tmp_path, monkeypatch):
+    def _boom(_root):
+        raise AssertionError("--no-history 时不得探测 git 历史")
+
+    monkeypatch.setattr("scripts.check_evo_refs.git_history_refs", _boom)
+    ledger = _ledger(tmp_path, [{"id": FAKE_KNOWN}])
+    target = _text(tmp_path, "note.md", f"引用 {FAKE_KNOWN}")
+    assert main(["--ledger", str(ledger), "--no-history", str(target)]) == 0
