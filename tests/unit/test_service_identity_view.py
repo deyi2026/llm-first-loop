@@ -608,11 +608,15 @@ def test_convergence_view_flags_only_uncovered_services(tmp_path: Path) -> None:
     view = compose_convergence_view(store)
     assert view["desired_generation"] == 2
     assert view["lagging"] == ["feishu", "learning", "wecom"]
-    assert view["services"]["web"] == {
-        "stable_generation": 2,
-        "lag_generations": 0,
-        "converged": True,
-    }
+    web = view["services"]["web"]
+    assert web["stable_generation"] == 2
+    assert web["lag_generations"] == 0
+    assert web["converged"] is True
+    # 核验口径字段（2026-11-02 新增）：本例只有 durable 回执、没有 branch 证据，
+    # 故 verified_generation 缺席，effective_converged 等于 converged。
+    assert web["verified_generation"] is None
+    assert web["verified_converged"] is False
+    assert web["effective_converged"] is True
     assert view["services"]["feishu"]["converged"] is False
     assert view["services"]["feishu"]["lag_generations"] == 1
     assert view["services"]["learning"]["converged"] is False

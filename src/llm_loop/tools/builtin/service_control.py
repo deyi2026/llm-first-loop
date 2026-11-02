@@ -162,6 +162,21 @@ def _drift_status(value: object) -> object:
     return value
 
 
+def _compact_verify(verify: object) -> dict[str, object] | None:
+    """把"最近一次核验"压成三键（代/结论/来源）；无核验证据时返回 None.
+
+    provenance=``composite_branch_evidence`` 表示这条 ok 来自某个整单判 failed 的
+    复合动作里的分支证据——结论可信，但**没有**对应的 durable 成功回执。
+    """
+    if not isinstance(verify, dict):
+        return None
+    return {
+        "generation": verify.get("generation"),
+        "outcome": verify.get("outcome"),
+        "provenance": verify.get("provenance"),
+    }
+
+
 def _compose_status_body(
     store: ManagedServiceDeploymentStore, target: str = "", view: str = ""
 ) -> dict[str, object]:
@@ -248,6 +263,13 @@ def _targets_status_body(identity: dict) -> dict[str, object]:
             "terminal_action_barrier": entry.get("terminal_action_barrier"),
             "reasons": entry.get("reasons"),
             "guard_code_drift": _drift_status(live.get("guard_code_drift")),
+            # 2026-11-02：restart_required 只回答"该不该重启"，答不了"到底核到哪
+            # 一代"。verify 是动作证据口径（含整单 failed 里的分支 ok），
+            # receipt_lag 是 durable 回执口径——两个数一起看才不会把"回执落后"
+            # 误读成"没核验过"（实测 web/feishu/learning 回执停 gen361、证据已到 373）。
+            "verify": _compact_verify(entry.get("verify")),
+            "receipt_lag_generations": (entry.get("stable") or {}).get("lag_generations"),
+            "effective_lag_generations": (entry.get("stable") or {}).get("effective_lag_generations"),
         }
     audit = identity.get("audit_signals") or {}
     return {

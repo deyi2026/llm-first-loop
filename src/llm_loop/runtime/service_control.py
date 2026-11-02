@@ -108,6 +108,18 @@ _ACTION_OPTIONAL_FIELDS = frozenset(
     }
 )
 _MANAGED_SERVICES = ("web", "feishu", "wecom", "learning")
+# restart all 的**物理执行面**：只含 web/feishu/learning。
+# 契约来源（不是本处发明）：scripts/restart_mirror.sh 的 all 分支只停/启这三个，
+# 且 tests/wecom/test_restart_mirror_wecom.py::test_wecom_branch_is_not_in_all_batch
+# 明确锁定"all 不得包含 wecom"——单机器人同一时刻只允许一个长连接，批量重启
+# web/feishu 不应连带踢掉在服的企微长连接。
+# 2026-11-02 实测代价：核验/屏障面误用 _MANAGED_SERVICES(含 wecom) 后，派单范围
+# 比执行范围大，wecom 每轮都判 git_head_mismatch/started_before_restart →
+# restart all 连续 11 次 gen363→373 全判 failed，且 wecom 屏障被 failed 单卡住。
+# 需要更新 wecom 时必须单独 restart wecom（它有自己的忙闲门禁）。
+# 注意区分三个面：执行面/核验面=本常量（3 个）；屏障面仍含四服务（换代码期间
+# 不放 wecom 新进程跑在新代码上）；status 覆盖面仍列四服务。
+_RESTART_ALL_BATCH = ("web", "feishu", "learning")
 _ACTION_TARGETS = ("web", "feishu", "wecom", "learning", "all")
 _ACTION_STATUSES = frozenset(
     {
@@ -403,7 +415,14 @@ def compat_retirement_view() -> list[dict[str, str]]:
 
 
 def _barrier_services_for_target(target: str) -> tuple[str, ...]:
-    """Services whose NEW-run admission a restart target must gate (§8.2)."""
+    """Services whose NEW-run admission a restart target must gate (§8.2).
+
+    **屏障面 ≠ 执行面**，这里刻意保留四服务：all 会换掉共享代码/运行时根，
+    期间若放 wecom 新进程起来，它会跑在新代码上而老 wecom 还连着旧代码——
+    半新半旧比停一下更糟。所以 all 期间 wecom 的新运行准入照样要卡。
+    与之相对，核验面只用 ``_RESTART_ALL_BATCH``：all 没重启 wecom 的进程，
+    就不能拿"wecom 未重启"去判这张单失败（2026-11-02 连续 11 次误判的来源）。
+    """
     if target == "all":
         return _MANAGED_SERVICE_NAMES
     return (target,)
@@ -1521,6 +1540,104 @@ def read_all_actions(store: ManagedServiceDeploymentStore) -> list[ServiceContro
     return actions
 
 
+# 2026-11-02 实测（restart all 连续 11 次 gen363→373 判 failed）：动作状态只有一个，
+# 覆盖面却有多个服务。整单判 failed 时，per-service 结论只活在 verify_evidence 文本里，
+# 于是 status 出现两处自相矛盾——stage_facts 说 web/feishu/learning failed（其实是
+# wecom 那一支失败），generation_lag 说 web 停在 gen361 差 12 代（其实同一份证据里
+# 已记 web[ok]。）。这里把证据文本还原成按服务事实：**只读派生，不改动作状态**，
+# 且对已存在的历史回执立即生效（无需重写数据）。
+_VERIFY_TOKEN_RE = re.compile(r"([a-z][a-z0-9_]*)\[([^\]]*)\]")
+# 判据缺失 ≠ 失败：manifest 没写/被跳过时机器没看过，不能据此定罪。
+_VERIFY_UNCONFIRMED_REASONS = frozenset({"manifest_missing", "no_manifest_skip"})
+
+
+def parse_verify_evidence(summary: str) -> dict[str, dict[str, Any]]:
+    """把 verify_evidence 文本还原成按服务的结构化事实（纯函数）.
+
+    文本由 ``_verify_restart_targets`` 产出::
+
+        verify=confirmed_ok web[ok pid=68825 head=6bcee73fd68e] wecom[pid_dead:0,...]
+
+    outcome 取值：``ok``（该服务判据通过）/ ``fail``（有明确失败理由）/
+    ``unconfirmed``（判据缺失，机器没判定）。证据里没出现的服务不返回条目——
+    "没判定过"和"判过通过"必须分得开。
+    """
+    facts: dict[str, dict[str, Any]] = {}
+    for name, inner in _VERIFY_TOKEN_RE.findall(summary or ""):
+        fact: dict[str, Any] = {"raw": f"{name}[{inner}]"}
+        if inner == "ok" or inner.startswith("ok "):
+            fact["outcome"] = "ok"
+            for token in inner.split()[1:]:
+                key, _, value = token.partition("=")
+                if key in {"pid", "head", "adopted_by"} and value:
+                    fact[key] = value
+        else:
+            reasons = [item for item in inner.split(",") if item]
+            fact["outcome"] = (
+                "unconfirmed"
+                if reasons and all(item in _VERIFY_UNCONFIRMED_REASONS for item in reasons)
+                else "fail"
+            )
+            if reasons:
+                fact["reasons"] = reasons
+        facts[name] = fact
+    return facts
+
+
+def _latest_service_verification(
+    actions: list[ServiceControlAction], service: str
+) -> tuple[ServiceControlAction, dict[str, Any]] | None:
+    """该服务**最近一次被核验过**的动作及其按服务事实（只读派生）.
+
+    与 ``latest_succeeded_actions`` 的差别是"看证据还是看终态"：``restart all``
+    整单判 failed，但其中某服务分支被判 ``[ok]``——那条 ok 同样是"该服务已被核验
+    到该代"的事实，只是没落成 durable succeeded 回执。取 (代, updated_at,
+    action_id) 最大者，确定性；不按 outcome 过滤，失败结论同样要能覆盖更旧的 ok。
+    """
+    best: tuple[tuple[int, str, str], ServiceControlAction, dict[str, Any]] | None = None
+    for action in actions:
+        if action.target not in {service, "all"}:
+            continue
+        fact = parse_verify_evidence(action.verify_evidence).get(service)
+        if fact is None:
+            continue
+        key = (action.deployment_generation, action.updated_at, action.action_id)
+        if best is None or key > best[0]:
+            best = (key, action, fact)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _verification_summary(
+    verification: tuple[ServiceControlAction, dict[str, Any]] | None
+) -> dict[str, Any] | None:
+    """把"最近一次核验"投影成 status 可读字段（durable 与否如实标注）."""
+    if verification is None:
+        return None
+    action, fact = verification
+    view: dict[str, Any] = {
+        "action_id": action.action_id,
+        "target": action.target,
+        "generation": action.deployment_generation,
+        "outcome": fact.get("outcome"),
+        "evidence": str(fact.get("raw") or "")[:200],
+        "action_status": action.status,
+        # 整单判 failed 而该服务分支判 ok 时，结论来源是"复合动作的分支证据"，
+        # 不是一条独立的 durable 成功回执——使用者按此知道该不该再重启。
+        "provenance": (
+            "composite_branch_evidence"
+            if action.status != "succeeded" and fact.get("outcome") == "ok"
+            else "action_verify_evidence"
+        ),
+        "durable_succeeded_receipt": action.status == "succeeded",
+    }
+    for key in ("pid", "head", "adopted_by", "reasons"):
+        if key in fact:
+            view[key] = fact[key]
+    return view
+
+
 # 2026-11-01 实测：status 载荷 45570 字符中 32710 全是 generation_lag（逐条展开
 # 历史 succeeded 动作，521 条），工具回执被截断后恰好丢掉 per-service 实况。
 # 信号应表达"哪个 target 的最近成功重启仍落后"，不是"历史上有过多少条落后"。
@@ -1553,17 +1670,50 @@ def _generation_lag_signal(
         current = newest.get(action.target)
         if current is None or action.deployment_generation > current.deployment_generation:
             newest[action.target] = action
-    entries = [
-        {
-            "target": action.target,
+    entries: list[dict[str, Any]] = []
+    for target, action in newest.items():
+        if action.deployment_generation >= deployment.generation:
+            continue
+        entry: dict[str, Any] = {
+            "target": target,
             "generation": action.deployment_generation,
             "lag_generations": deployment.generation - action.deployment_generation,
-            "succeeded_actions": collapsed.get(action.target, 1),
+            "succeeded_actions": collapsed.get(target, 1),
         }
-        for action in newest.values()
-        if action.deployment_generation < deployment.generation
-    ]
-    entries.sort(key=lambda item: (-item["lag_generations"], str(item["target"])))
+        # 回执口径 ≠ 事实口径：durable 成功回执落后，但更晚的动作可能已在
+        # verify_evidence 里核到本服务（composite 分支判 ok）。两条分列不合并，
+        # 避免用"派生"顶替"durable"，也让"差 12 代"不再冒充未核验。
+        if target == "all":
+            verified: dict[str, Any] = {}
+            for service in _MANAGED_SERVICES:
+                verification = _latest_service_verification(actions, service)
+                if verification is None:
+                    continue
+                v_action, v_fact = verification
+                verified[service] = {
+                    "generation": v_action.deployment_generation,
+                    "outcome": v_fact.get("outcome"),
+                }
+            if verified:
+                entry["services_verified"] = verified
+        else:
+            verification = _latest_service_verification(actions, target)
+            if verification is not None:
+                v_action, v_fact = verification
+                if v_action.deployment_generation > action.deployment_generation:
+                    entry["verified_generation"] = v_action.deployment_generation
+                    entry["verified_action_id"] = v_action.action_id
+                    entry["verified_outcome"] = v_fact.get("outcome")
+                    entry["effective_lag_generations"] = max(
+                        0, deployment.generation - v_action.deployment_generation
+                    )
+        entries.append(entry)
+    entries.sort(
+        key=lambda item: (
+            -item.get("effective_lag_generations", item["lag_generations"]),
+            str(item["target"]),
+        )
+    )
     return entries[:_GENERATION_LAG_LIMIT]
 
 
@@ -1636,6 +1786,28 @@ def _stage_facts_view(
             )
             entry["covered"] = cover is not None
             entry["covered_by"] = cover.action_id if cover is not None else None
+        # 动作状态是"整单"的，服务结论是"本服务分支"的：restart all 里 3 个服务
+        # 已起来、1 个没起来时，整单只能判 failed，但把整单状态直接当成"本服务
+        # 失败"就是归因错误（2026-11-02 实证：web/feishu/learning 进程其实已是
+        # desired 身份，status 却说它们 failed）。两者都写，各自标明口径。
+        fact = parse_verify_evidence(action.verify_evidence).get(service)
+        if fact is not None:
+            outcome = fact.get("outcome")
+            entry["verify_outcome"] = outcome
+            entry["verify_evidence"] = str(fact.get("raw") or "")[:200]
+            if outcome == "ok":
+                entry["service_conclusion"] = "ok"
+            elif outcome == "fail":
+                entry["service_conclusion"] = "failed"
+                if fact.get("reasons"):
+                    entry["reasons"] = fact["reasons"]
+            else:
+                entry["service_conclusion"] = "unconfirmed"
+            if outcome == "ok" and action.status != "succeeded":
+                entry["conclusion_scope"] = "composite_branch"
+                entry["conclusion_note"] = (
+                    f"整单判 {action.status}（其余服务分支未通过），本服务分支证据为 ok"
+                )
         view[service] = entry
     return view
 
@@ -1649,7 +1821,26 @@ def _stage_facts_view(
 _IN_FLIGHT_LIMIT = 5
 
 
+def _verify_services_for_target(target: str) -> list[str]:
+    """**核验面** = 物理执行面：all 只重启 web/feishu/learning，就只核这三个.
+
+    2026-11-02 实测：这里曾用受管服务全集，wecom 每轮必判
+    git_head_mismatch/started_before_restart，restart all 连续 11 次
+    （gen363→373）全判 failed，连带 wecom 屏障被 failed 单压住。派单范围与
+    执行范围不一致时，只能改判据范围——不能反过来改执行范围去重启 wecom
+    （契约见 ``_RESTART_ALL_BATCH``）。
+    """
+    return list(_RESTART_ALL_BATCH) if target == "all" else [target]
+
+
 def _services_for_target(target: str) -> list[str]:
+    """动作的**展示覆盖面**（in_flight 折叠用）= 受管服务全集.
+
+    刻意与 ``_RESTART_ALL_BATCH``（核验面）不同：in_flight 折叠要回答"这次操作
+    影响哪些服务的运行准入"，all 期间 wecom 的新运行准入仍被屏障卡住，所以它
+    仍在这 4 行里（tests/unit/test_service_status_in_flight.py 锁这一点）。
+    "all 是否重启过 wecom"由核验面回答，别用本函数的返回值下结论。
+    """
     return list(_MANAGED_SERVICES) if target == "all" else [target]
 
 
@@ -1972,6 +2163,8 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
     """
     deployment = store.read()
     succeeded = latest_succeeded_actions(store)
+    # 全量动作只用于"最近一次核验"派生（复合动作的分支证据在 failed 整单里）。
+    actions = read_all_actions(store)
     services: dict[str, Any] = {}
     for service in _MANAGED_SERVICES:
         manifest_path = store.runtime_dir / f"runtime_manifest.{service}.json"
@@ -2036,6 +2229,30 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
                 "desired_git_head": deployment.git_head,
             }
         stable = _receipt_stable_view(succeeded, service, deployment, live)
+        # 最近一次**核验**（可能来自整单判 failed 的复合动作分支证据）。与 stable
+        # 并列而不是替换：stable 是 durable 回执事实，verify 是动作证据事实。
+        verification = _verification_summary(_latest_service_verification(actions, service))
+        if (
+            stable is not None
+            and verification is not None
+            and verification.get("outcome") == "ok"
+            and int(verification.get("generation") or 0) > int(stable.get("generation") or 0)
+        ):
+            stable = dict(stable)
+            stable["verified_generation"] = verification.get("generation")
+            stable["verified_action_id"] = verification.get("action_id")
+            stable["verified_provenance"] = verification.get("provenance")
+            stable["effective_lag_generations"] = max(
+                0,
+                int((deployment.generation if deployment else 0) or 0)
+                - int(verification.get("generation") or 0),
+            )
+            stable["note"] = (
+                f"durable 成功回执停在 gen{stable.get('generation')}，但本服务已在 "
+                f"gen{verification.get('generation')} 由 {verification.get('action_id')} "
+                f"核验通过（{verification.get('provenance')}）——回执口径落后，"
+                "实际未落后，不必仅为追平回执而重启"
+            )
         reasons: list[str] = []
         if deployment is None:
             reasons.append("desired_deployment_missing")
@@ -2056,6 +2273,8 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
         services[service] = {
             "live": live,
             "stable": stable,
+            # 最近一次机械核验（含复合动作分支证据）；与 stable 并列，不互相顶替。
+            "verify": verification,
             "restart_required": bool(reasons),
             "reasons": reasons,
             # §8.3: 准入屏障按服务可见——屏障仍活跃 = "受影响未恢复"，
@@ -2093,6 +2312,7 @@ def compose_convergence_view(store: ManagedServiceDeploymentStore) -> dict[str, 
     desired_generation = deployment.get("generation")
     services: dict[str, Any] = {}
     lagging: list[str] = []
+    effective_lagging: list[str] = []
     for service, svc in sorted((view.get("services") or {}).items()):
         stable = (svc or {}).get("stable") or {}
         stable_generation = stable.get("generation")
@@ -2101,22 +2321,40 @@ def compose_convergence_view(store: ManagedServiceDeploymentStore) -> dict[str, 
             and stable_generation is not None
             and stable_generation == desired_generation
         )
+        verify = (svc or {}).get("verify") or {}
+        verified_generation = (
+            verify.get("generation") if verify.get("outcome") == "ok" else None
+        )
+        verified_converged = (
+            desired_generation is not None
+            and verified_generation is not None
+            and verified_generation == desired_generation
+        )
         services[service] = {
             "stable_generation": stable_generation,
             "lag_generations": stable.get("lag_generations"),
             "converged": converged,
+            # 核验口径：动作证据里判过 ok 的代（含整单 failed 的复合动作分支）。
+            # 与 converged 并列，"回执落后 ≠ 没核过"必须能同时表达。
+            "verified_generation": verified_generation,
+            "verified_converged": verified_converged,
+            "effective_converged": converged or verified_converged,
         }
         if not converged:
             lagging.append(service)
+        if not (converged or verified_converged):
+            effective_lagging.append(service)
     return {
         "desired_generation": desired_generation,
         "services": services,
         "lagging": lagging,
+        "effective_lagging": effective_lagging,
         "read_only": True,
         "note": (
             "lagging=尚无覆盖当前 desired generation 的 succeeded restart "
-            "receipt（含从未有 succeeded 回执的服务）；收敛是异步事实，"
-            "本块只读、不派发 restart"
+            "receipt（含从未有 succeeded 回执的服务）；effective_lagging 再扣除"
+            "已被动作证据核验到目标代的服务（verified_converged）——两者分列，"
+            "不改 durable 回执口径。收敛是异步事实，本块只读、不派发 restart"
         ),
     }
 
@@ -2576,7 +2814,7 @@ def acknowledge_verify(
 
     if verdict == "reobserve":
         deployment = store.read()
-        targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
+        targets = _verify_services_for_target(action.target)
         # 纯证据三态（L6/L7）：reobserve 只重新采集，不替模型判终态。
         observed, summary, healthy = _verify_restart_targets(
             store, deployment, targets, action.updated_at, action.action_id
@@ -3947,7 +4185,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
     # 自核验目标（EVO-20260920-213965a1 案1）：目标全集传入，"是否受
     # manifest 管辖"由 _verify_restart_targets 的首现窗口判定（不受管辖
     # 的目标记 no_manifest_skip，见其 docstring）。
-    verify_targets: list[str] = list(_MANAGED_SERVICES) if action.target == "all" else [action.target]
+    verify_targets = _verify_services_for_target(action.target)
 
     rc, desired_now, restarted_at, failure_released = _run_physical_restart_once()
     if rc != 0 or desired_now is None:
@@ -3973,6 +4211,14 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
     identity = (
         f"identity generation={desired_now.generation} git_head={desired_now.git_head}"
     )
+    # 契约披露：all 批量不含 wecom（不踢在服企微长连接），故 all 成功**不等于**
+    # wecom 已更新。写在回执里，省得下一个人从 "wecom restart_required=true" 反推。
+    batch_note = (
+        "；all 批量=web/feishu/learning，wecom 不在其中（契约），"
+        "需更新 wecom 请单独 restart wecom"
+        if action.target == "all"
+        else ""
+    )
     final = store.read_action(action_id)
     if final is None:
         return 2
@@ -3982,7 +4228,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             store,
             final,
             status="succeeded",
-            detail=f"restart_mirror rc=0; {identity}; {summary}",
+            detail=f"restart_mirror rc=0; {identity}; {summary}{batch_note}",
             verify_evidence=summary,
             verify_verdict=verdict,
         )
