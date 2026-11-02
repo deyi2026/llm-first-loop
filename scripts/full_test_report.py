@@ -83,12 +83,20 @@ def report_from_junit(path: Path) -> tuple[int, list[str]]:
 
 
 def run_pytest(argv: list[str]) -> tuple[int, Path, tempfile.TemporaryDirectory | None]:
-    """跑 pytest 并把 junit 写到临时文件；调用方已给 --junitxml 时沿用它。"""
+    """跑 pytest 并把 junit 写到临时文件；调用方已给 --junitxml 时沿用它.
+
+    2026-11-02 修（独立审查 P1-1 fail-open）：旧实现在调用方已带
+    `--junitxml=PATH` 时**直接 return，命令根本没执行**，main() 随后去读那个
+    PATH——只要那里躺着上一次的报告，就以"零用例执行"的 verdict=PASS 退出。
+    只对账的场景有专门的 `--report`，所以这里必须照跑命令。
+    """
     has_junit = any(arg.startswith("--junitxml") for arg in argv)
     if has_junit:
         for arg in argv:
             if arg.startswith("--junitxml="):
-                return -1, Path(arg.split("=", 1)[1]), None
+                report = Path(arg.split("=", 1)[1])
+                completed = subprocess.run(argv, check=False)
+                return completed.returncode, report, None
         raise SystemExit("[known-reds] --junitxml 需要写成 --junitxml=PATH 形式才能对账")
     holder = tempfile.TemporaryDirectory(prefix="lfl-full-test-")
     report = Path(holder.name) / "report.xml"

@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from scripts.full_test_report import classify, render, report_from_junit
+import pytest
+
+from scripts.full_test_report import classify, render, report_from_junit, run_pytest
 
 _JUNIT = """<?xml version="1.0" encoding="utf-8"?>
 <testsuites><testsuite name="pytest" tests="{tests}" failures="{failures}" errors="0" skipped="0">
@@ -51,9 +54,17 @@ def test_render_pass_when_only_known_reds():
 
 
 def test_registered_red_does_not_block(tmp_path):
-    registry_test = json.loads(
+    # 2026-11-02 独立审查 P2-3：原实现取 registered[0] 并剥掉 "[...]"，一旦排头
+    # 那条是 parametrize 用例，重组建出的 nodeid 就不再匹配，测试会假红。改成
+    # 按"非 parametrize"谓词挑第一条，取不到就跳过（登记基线里没有非参数化条目
+    # 时这条用例本就无从验证）。
+    registered = json.loads(
         (Path(__file__).resolve().parents[2] / "eval/rules/known_reds_current.json").read_text(encoding="utf-8")
-    )["registered"][0]["test"]
+    )["registered"]
+    plain = [entry["test"] for entry in registered if "[" not in entry["test"]]
+    if not plain:
+        pytest.skip("登记基线里没有非 parametrize 条目")
+    registry_test = plain[0]
     path, _, name = registry_test.partition("::")
     cls = path[: -len(".py")].replace("/", ".") if path.endswith(".py") else path.replace("/", ".")
     report = _write_junit(tmp_path, [_CASE_FAIL.format(cls=cls, name=name.split("[")[0])])
@@ -74,3 +85,26 @@ def test_missing_report_fails_closed(tmp_path):
     code, lines = report_from_junit(tmp_path / "nope.xml")
     assert code == 2
     assert any("无法解析" in line for line in lines)
+
+
+def test_run_pytest_executes_even_when_caller_supplies_junitxml(tmp_path):
+    """P1-1 回归（2026-11-02 独立审查）：带 --junitxml 也必须真跑。
+
+    旧实现见到 `--junitxml=PATH` 就 `return -1, PATH, None`，命令一行都没执行；
+    main() 随后去读那个 PATH——只要里面躺着上一次的报告，就打出 verdict=PASS
+    并以 0 退出。这个用例把"零执行却 PASS"这条 fail-open 路钉死。
+    """
+    marker = tmp_path / "ran.txt"
+    given = tmp_path / "given.xml"
+    code, report, holder = run_pytest(
+        [
+            sys.executable,
+            "-c",
+            f"open({str(marker)!r}, 'w', encoding='utf-8').write('ran')",
+            f"--junitxml={given}",
+        ]
+    )
+    assert marker.exists(), "带 --junitxml 时命令必须被执行（旧实现直接 return，零执行）"
+    assert code == 0
+    assert report == given
+    assert holder is None

@@ -626,7 +626,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     baseline_path = Path(args.baseline)
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    try:
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print(f"[refused] 基线文件不存在: {baseline_path}（不做无依据登记）", file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as exc:
+        print(f"[refused] 基线不是合法 JSON: {baseline_path}: {exc}（不做无依据登记）", file=sys.stderr)
+        return 2
     report = describe_registration(inventory, baseline)
     for line in render_registration(report):
         print(line)
