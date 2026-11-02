@@ -93,6 +93,15 @@ class _Frozen:
     # 只有 git_push 会填它（_end_state_fingerprint），且它覆盖的是审查材料
     # 真正包含的每一个路径的最终字节。
     content_fingerprint: str = ""
+    # ---- EVO-20261102-677f6c44（人工批准 2026-11-02，exec_override）----
+    # approved_head：git_push 记录在 mint 时落下的审查锚定源提交（push_extra 的
+    # src_commit）。no-delta 复跑派生（见 _derive_full_test_from_push）拿它与当前
+    # HEAD 做树对象逐字节比对；空字符串 = 未记录（旧记录/非 push 记录），派生侧
+    # fail-closed，绝不猜。
+    approved_head: str = ""
+    # derived_from：派生资格的来源 push 记录 child_id；非派生记录为空。只用于
+    # 审计与回执披露，不参与 _same_admission / _consume 的权威判据。
+    derived_from: str = ""
 
 
 _ALLOWED = AdmissionDecision(True, "")
@@ -1378,7 +1387,13 @@ _FULL_TEST_NO_DELTA = (
     "把改动 commit 到本地（基点落后于 HEAD 即可），或留在工作树/未跟踪文件里。"
     "scope/paths 只能收窄已有材料，改路径不会让它放行；全部已推送且树干净时这道门"
     "按设计就拒绝，此时该验的是既有结论，不该再借全量门禁签一张新 PASS"
+    # EVO-20261102-677f6c44：同 parent 的 git_push PASS 已覆盖当前 HEAD 树时，
+    # Host 会按派生基签发一次性复跑资格（不新拉 reviewer）；无覆盖记录时维持本拒绝。
+    "（例外：覆盖当前 HEAD 树的 git_push PASS 在档时可派生一次性复跑资格）"
 )
+
+# 供派生路径做 startswith 判别（错误信息含中文指导文本，不能整串比对）。
+_FULL_TEST_NO_DELTA_PREFIX = _FULL_TEST_NO_DELTA.split(":", 1)[0]
 
 
 def _full_test_snapshot(
@@ -3210,6 +3225,14 @@ class HostReviewAdmission:
                 scope_paths=scope_paths, tier_counts=tier_counts,
             )
         except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+            # EVO-20261102-677f6c44（人工批准 2026-11-02，exec_override）：no-delta
+            # 复跑资格派生。全部已推送+树干净+无 backlog 时 full_test 无增量可审；
+            # 若同 parent 存在覆盖当前 HEAD 树的 git_push PASS，由 Host 派生一次性
+            # 资格（不新拉 reviewer）。无覆盖记录时维持原拒绝，行为不变。
+            if kind == "full_test" and str(exc).startswith(_FULL_TEST_NO_DELTA_PREFIX):
+                derived = self._derive_full_test_from_push(parent, workdir, command)
+                if derived is not None:
+                    return derived
             return {"accepted": False, "reason": str(exc)}
         prepared = self._prepare_attempt(
             parent, kind, sha, target, workdir, scope_paths, material,
@@ -3256,6 +3279,7 @@ class HostReviewAdmission:
                     previous_row.child_id if previous_row is not None else ""
                 ),
                 content_fingerprint=push_extra.get("content_fingerprint", ""),
+                approved_head=str(push_extra.get("src_commit") or ""),
             )
             self._remember_material(child, task, material)
         return self._attach_prior_attempts(
@@ -4093,6 +4117,132 @@ class HostReviewAdmission:
                     return _ALLOWED
         return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")
 
+    def _derive_full_test_from_push(
+        self, parent: str, workdir: str, command: str,
+    ) -> dict[str, Any] | None:
+        """EVO-20261102-677f6c44（人工批准 2026-11-02，exec_override）：no-delta
+        复跑资格派生。
+
+        只在调用方已证明处于精确 no-delta 状态（full_test 绑定抛
+        ``full_test_no_delta``：committed delta / worktree / untracked / backlog
+        四类材料全空）时调用。此时若同 parent 存在已发放的 git_push PASS，且其
+        ``approved_head``（审查锚定源提交）的**树对象**与当前 HEAD 的树对象逐字节
+        相等，则由 Host 签发一次性 full_test 资格：
+
+        * 树对象相等同时蕴含「按记录自身 scope 重算指纹匹配」与「越界漂移为零」
+          （比批准文本的下限更严：任何切片内/外的内容差异都会改变树对象）；
+        * 不新拉 reviewer；basis =（src_child, src_head, workdir, command, HEAD树）
+          全部进 sha，消费走既有 ``_consume``；
+        * 无覆盖记录、push 记录缺 ``approved_head``、树漂移、git 不可用一律返回
+          None（调用方保持原拒绝，fail-closed）。
+        """
+        if not parent:
+            return None
+        try:
+            dest = Path(workdir).expanduser().resolve(strict=True)
+        except OSError:
+            return None
+
+        def _tree_of(commitish: str) -> str:
+            out = _git(dest, "rev-parse", f"{commitish}^{{tree}}").decode("ascii", "replace").strip()
+            if not re.fullmatch(r"[0-9a-f]{40,64}", out):
+                raise ValueError("tree_sha_unresolvable")
+            return out
+
+        try:
+            head_tree = _tree_of("HEAD")
+        except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired):
+            return None
+        with self._guard:
+            # 新记录优先；push 本身会消费 push 资格，但行仍留档，因此已消费的
+            # git_push PASS 同样可作派生源（这正是本演进要打通的路径）。
+            candidates = [
+                row for row in self._records.values()
+                if row.parent == parent and row.kind == "git_push"
+                and row.granted and row.approved_head
+            ]
+            src = candidates[-1] if candidates else None
+        if src is None:
+            return None
+        try:
+            src_tree = _tree_of(src.approved_head)
+        except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired):
+            return None
+        if src_tree != head_tree:
+            return None
+        target = f"full_test:{dest}:command:{_digest(command.encode('utf-8'))}"
+        sha = _digest(_canonical({
+            "derived": "full_test", "src_child": src.child_id,
+            "src_head": src.approved_head, "workdir": str(dest),
+            "command": command, "head_tree": head_tree,
+        }))
+        with self._guard:
+            minted: _Frozen | None = None
+            for row in self._records.values():
+                if (
+                    row.parent == parent and row.kind == "full_test"
+                    and row.target == target and row.sha == sha
+                    and row.granted and not row.consumed
+                ):
+                    minted = row
+                    break
+            if minted is None:
+                child = f"derived:{src.child_id}"
+                suffix = 1
+                while child in self._records:
+                    suffix += 1
+                    child = f"derived:{src.child_id}:{suffix}"
+                minted = _Frozen(
+                    "full_test", parent, target, sha, child_id=child,
+                    created_at=time.time(), state="settled", granted=True,
+                    scope="tree", derived_from=src.child_id,
+                )
+                self._records[child] = minted
+                self._audit(parent, "review_admission_derived_full_test", {
+                    "child_id": child, "derived_from": src.child_id,
+                    "src_head": src.approved_head, "head_tree": head_tree,
+                    "target": target, "sha": sha,
+                })
+        return {
+            "accepted": True, "child_id": minted.child_id,
+            "derived": True, "derived_from": src.child_id,
+            "kind": "full_test", "target": target, "candidate_sha256": sha,
+            "qualification": "GRANTED", "one_shot": True,
+            "state": "settled", "granted": True, "consumed": minted.consumed,
+            "basis": {
+                "src_head": src.approved_head, "head_tree": head_tree,
+                "covering": "push_pass_tree_identical",
+            },
+            "note": (
+                "no-delta 复跑资格派生（EVO-20261102-677f6c44，人工批准 2026-11-02）："
+                "全部已推送+树干净+无 backlog，且同 parent 的 git_push PASS 覆盖当前"
+                " HEAD 树（树对象逐字节相等，含越界漂移为零）；一次性，消费走既有闸。"
+            ),
+        }
+
+    def _derived_full_test_decision(
+        self, parent: str, workdir: str, command: str,
+    ) -> AdmissionDecision | None:
+        """check_shell 的 no-delta 消费路径（EVO-20261102-677f6c44）。
+
+        调用方已拿到 full_test 的 full_test_no_delta 绑定错误；本方法再用空 scope
+        独立复核一次该状态（防止 scope 差异造成的误判），成立则派生并按既有
+        ``_consume`` 消费。返回 None = 不适用（保持原拒绝路径，行为不变）。"""
+        try:
+            self._target("full_test", workdir, command, "", None, scope_paths=())
+        except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as probe:
+            if not str(probe).startswith(_FULL_TEST_NO_DELTA_PREFIX):
+                return None
+        else:
+            return None
+        derived = self._derive_full_test_from_push(parent, workdir, command)
+        if derived is None:
+            return None
+        return self._consume(
+            parent, "full_test", str(derived["target"]),
+            str(derived["candidate_sha256"]), scope_paths=(), content_fingerprint="",
+        )
+
     def check_shell(self, parent: str, command: str, workdir: str) -> AdmissionDecision:
         kind = classify_host_shell(command)
         if kind is None:
@@ -4102,6 +4252,12 @@ class HostReviewAdmission:
         # PASS 永远消费不到（独立审查 P1，实测反例见 test_..._consumable）。
         scopes = self._pending_scopes(parent, kind)
         if not scopes:
+            # EVO-20261102-677f6c44：无待消费 full_test 资格但处于 no-delta 状态
+            # （全部已推送+树干净）时，尝试由 git_push PASS 派生一次性资格并消费。
+            if kind == "full_test":
+                derived_decision = self._derived_full_test_decision(parent, workdir, command)
+                if derived_decision is not None:
+                    return derived_decision
             return self._deny("不存在覆盖当前产物、目标及父会话的有效独立审查资格")
         binding_error = ""
         drift_error = ""
@@ -4114,6 +4270,13 @@ class HostReviewAdmission:
                     kind, workdir, command, "", None, scope_paths=scope_paths
                 )
             except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+                # EVO-20261102-677f6c44：no-delta 状态下 _target 必然抛
+                # full_test_no_delta；此时待消费的 full_test 资格（含派生行）永远
+                # 无法按 identity 匹配。先尝试派生+消费，不适用则回落原拒绝。
+                if kind == "full_test" and str(exc).startswith(_FULL_TEST_NO_DELTA_PREFIX):
+                    derived_decision = self._derived_full_test_decision(parent, workdir, command)
+                    if derived_decision is not None:
+                        return derived_decision
                 binding_error = binding_error or f"当前命令/产物无法绑定:{exc}"
                 continue
             # 独立审查 P1-1：切片 PASS 授权的是整树执行面。切片 sha 不变 ≠
