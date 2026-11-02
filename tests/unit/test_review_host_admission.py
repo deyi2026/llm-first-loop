@@ -2888,6 +2888,94 @@ def test_patch_pass_is_consumable_when_slice_covers_the_whole_delta(tmp_path: Pa
     assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
 
 
+def _pass_patch(tmp_path: Path, paths: list[str], before=None):
+    """走完 start→PASS 的切片流程；``before`` 可在签发前改工作树。"""
+    repo = _sliced_repo(tmp_path)
+    if before is not None:
+        before(repo)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q", paths=paths,
+    )
+    assert issued["accepted"], issued
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    assert host.poll("author-1", "child-review-1")["qualification"] == "PASS"
+    return repo, host, issued
+
+
+def test_dirty_out_of_scope_content_edit_is_drift(tmp_path: Path) -> None:
+    """[切片外已 dirty → 同名改内容] → [FAIL]（独立审查 P1-2：绑名字不够）。"""
+    repo, host, _ = _pass_patch(
+        tmp_path, ["example.py"], before=lambda r: (r / "helper.py").write_text("z = 1\n")
+    )
+    (repo / "helper.py").write_text("z = 2\n")  # 名字集合不变，内容变了
+    denial = host.check_shell("author-1", "pytest -q", str(repo))
+    assert not denial.allowed, "同名改内容骗过了越界摘要"
+    assert "漂移" in denial.reason
+
+
+def test_committed_out_of_scope_change_after_pass_is_drift(tmp_path: Path) -> None:
+    """[签发后提交切片外改动（签发时该文件干净）] → [FAIL]（独立审查 P1-1）。"""
+    repo, host, _ = _pass_patch(tmp_path, ["example.py"])
+    (repo / "helper.py").write_text("y = 7\n")
+    subprocess.run(["git", "-C", str(repo), "add", "helper.py"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "sneak"], check=True)
+    denial = host.check_shell("author-1", "pytest -q", str(repo))
+    assert not denial.allowed, "提交进来的未审代码可以借切片 PASS 执行"
+
+
+def test_large_untracked_same_size_rewrite_is_drift(tmp_path: Path) -> None:
+    """[>512KB 未跟踪文件同尺寸改写] → [FAIL]（独立审查 P2-1：头尾摘要）。"""
+    payload = 600 * 1024
+    repo, host, _ = _pass_patch(
+        tmp_path,
+        ["example.py"],
+        before=lambda r: (r / "blob.bin").write_bytes(b"a" * payload),
+    )
+    (repo / "blob.bin").write_bytes(b"b" * payload)  # 同尺寸，同一秒内
+    denial = host.check_shell("author-1", "pytest -q", str(repo))
+    assert not denial.allowed, "同尺寸同秒改写没有被头尾摘要抓住"
+
+
+def test_pass_receipt_declares_consumable_scope(tmp_path: Path) -> None:
+    """独立建议 S1：PASS 回执要写明授权的是整树、切片之外只是绑定未审。"""
+    repo = _sliced_repo(tmp_path)
+    runner = FakeChildRunner()
+    host = HostReviewAdmission()
+    host.attach_runner(runner)
+    issued = host.start(
+        "author-1", "full_test", workdir=str(repo), command="pytest -q",
+        paths=["example.py"],
+    )
+    runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
+    runner.state = "completed"
+    receipt = host.poll("author-1", "child-review-1")
+    scope = receipt["consumable_scope"]
+    assert scope["kind"] == "full_test"
+    assert scope["scope"] == "patch"
+    assert scope["paths"] == ["example.py"]
+    assert "整树" in scope["authorizes"]
+    assert "未审" in scope["not_covered"]
+
+
+def test_finding_digest_prefers_severity_over_step_lines() -> None:
+    """独立建议 S4：markdown 严重度行要留下，步骤行不许把 P1 挤掉。"""
+    answer = "\n".join([
+        "1. run the full test suite",
+        "2. read the report",
+        "**P1-1**：切片外内容未绑定",
+        "### P2 命名口径不一致",
+        "VERDICT: REVISE P0=0 P1=1 P2=1",
+    ])
+    digest = rha._finding_digest(answer)
+    assert "P1-1" in digest
+    assert "P2" in digest
+    assert "run the full test suite" not in digest
+
+
 @pytest.mark.parametrize("bad", ["a=b.py", "a,b.py", "a\nb.py", "a\x00b.py", "a\x7fb.py"])
 def test_scope_paths_reject_header_injection(tmp_path: Path, bad: str) -> None:
     """声明路径会进冻结 header；控制字符/逗号/等号可以伪造 header 行（P2-2）。"""

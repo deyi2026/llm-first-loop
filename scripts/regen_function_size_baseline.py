@@ -41,7 +41,9 @@ BASELINE = ROOT / "tests" / "guards" / "function_size_baseline.json"
 
 META_DESC = (
     "R9 架构守卫基线 v2（EVO-20261025-e0bff8ee 全量重登记）。"
-    "function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升）；"
+    "function_lines：实测 ≥120 行全量登记 + 既有存活历史小键保留（棘轮：登记值只降不升；"
+    "实测更高时按实测重定＝抬高，属 EVO-20261025-e0bff8ee 批准的红线放宽，"
+    "须随 guard(r9) 提交逐条可见，不是静默放宽）；"
     "legacy_super_functions：实测 >300 行的超大函数（原四函数棘轮扩展为全量登记）；"
     "local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；"
     "known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。"
@@ -191,6 +193,48 @@ def _apply_sections(
     return updated
 
 
+def _explain(
+    key: str,
+    measured: dict[str, int],
+    old_fl: dict[str, int],
+    old_legacy: dict[str, int],
+    threshold: int,
+) -> int:
+    """独立建议 S5：把一个登记值的来源自证出来（口径 / 差值 / 驱动变更）.
+
+    审查争议常来自"这个数字怎么来的"不可自证（抬高与收紧看起来一样）。
+    这里只做只读解释：登记值、实测值、差值方向，以及该文件最近一次提交。
+    """
+    registered = old_fl.get(key, old_legacy.get(key))
+    if registered is None:
+        print(f"未登记键: {key}")
+        near = [k for k in sorted({**old_fl, **old_legacy}) if key in k][:10]
+        for item in near:
+            print(f"  相近: {item}")
+        return 1
+    got = measured.get(key)
+    print(f"key: {key}")
+    print(f"登记值: {registered} 行")
+    print(f"实测值: {'（实测不存在）' if got is None else f'{got} 行'}")
+    if got is None:
+        print("结论: 死键 —— 重登记会删除该键（防死键掩盖真实违规）")
+    elif got > registered:
+        print(
+            f"差值: {got - registered:+d} 行 ⇒ 抬高。抬高是已批准的红线放宽"
+            "（EVO-20261025-e0bff8ee），条件是随 guard(r9) 提交逐条可见，"
+            "不是静默放宽。"
+        )
+    elif got < registered:
+        print(f"差值: {got - registered:+d} 行 ⇒ 收紧（棘轮的常规方向）")
+    else:
+        print("差值: 0 行 ⇒ 不变")
+    path = key.split("::", 1)[0]
+    print(f"口径: AST end_lineno-lineno+1（含 docstring）；登记门槛 ≥{threshold} 行")
+    driver = _git("log", "-1", "--format=%h %cs %s", "--", path)
+    print(f"驱动变更: {driver or '（该路径无提交记录）'}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="R9 函数规模基线重登记（守卫单口径）")
     ap.add_argument("--check", action="store_true", help="只校验不写盘：不一致 exit 1")
@@ -201,6 +245,12 @@ def main() -> int:
         help="只重登记指定节；非 all 时 _meta 原样保留（只收紧、不顺带改别段）",
     )
     ap.add_argument("--dry-run", action="store_true", help="只打印差异摘要，不写盘")
+    ap.add_argument(
+        "--explain",
+        metavar="PATH::FUNC",
+        default="",
+        help="只读解释某个登记值：登记/实测/差值方向 + 驱动提交（不写盘）",
+    )
     args = ap.parse_args()
 
     sections = _selected_sections(args.only)
@@ -210,6 +260,10 @@ def main() -> int:
     current = json.loads(BASELINE.read_text(encoding="utf-8"))
     old_fl = dict(current.get("function_lines", {}))
     old_legacy = dict(current.get("legacy_super_functions", {}))
+    if args.explain:
+        return _explain(
+            args.explain, measured, old_fl, old_legacy, guards.INCLUDE_THRESHOLD
+        )
     new_fl, new_legacy = _merge_registration(
         measured, old_fl, old_legacy, guards.INCLUDE_THRESHOLD, guards.GLOBAL_FAIL
     )

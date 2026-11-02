@@ -1886,21 +1886,67 @@ def _normalize_scope_paths(paths: Sequence[str] | None) -> tuple[tuple[str, ...]
     return tuple(out), ""
 
 
+def _consumable_scope(frozen: _Frozen) -> dict[str, Any]:
+    """这条 PASS 到底能授权什么（纯披露，不参与门禁）.
+
+    独立建议 S1：口径不写进回执，调用方只能撞墙才知道"切片 PASS、整树执行"。
+    这里如实说明三点：执行面是整树；切片之外只被**绑定**未审；签发后切片外
+    任何改动（含新提交）都会让资格失效。
+    """
+    if frozen.scope_paths:
+        return {
+            "kind": frozen.kind,
+            "scope": "patch",
+            "paths": list(frozen.scope_paths),
+            "authorizes": "整树执行面（pytest / git push 的物理对象是整棵树）",
+            "revalidated_on_use": "切片外 tracked（含新提交）与未跟踪文件的内容摘要",
+            "not_covered": "切片之外只绑定未审；签发后改动即失效",
+        }
+    return {
+        "kind": frozen.kind,
+        "scope": "tree",
+        "paths": [],
+        "authorizes": "整树执行面（pytest / git push）",
+        "revalidated_on_use": "整树内容摘要",
+        "not_covered": "无（tree scope 覆盖整树）",
+    }
+
+
+def _granted_receipt(frozen: _Frozen) -> dict[str, Any]:
+    """PASS 回执（签发与轮询共用）: 资格 + 它授权的是什么."""
+    return {
+        "qualification": "PASS",
+        "candidate_sha256": frozen.sha,
+        "artifact_reviewed": True,
+        "consumable_scope": _consumable_scope(frozen),
+    }
+
+
+_MD_PREFIX_RE = re.compile(r"^(?:#{1,6}\s+|>+\s*|[-*+]\s+|\d+[.)、]\s*|\*\*|__)+")
+_SEVERITY_LINE_RE = re.compile(r"(?:^|[^0-9A-Za-z])(P0|P1|P2|BLOCKER|CRITICAL|MAJOR)\b", re.I)
+_FINDING_LINE_RE = re.compile(r"^(?:FINDING\b|P[0-2]\b)", re.I)
+
+
 def _finding_digest(answer: str) -> str:
     """E3: keep the actionable part of a non-PASS reply, bounded.
 
-    The whole reviewer text is already persisted to the report directory; the
-    record only needs enough to ask "what happened to finding N" later.
+    独立建议 S4：reviewer 惯用 markdown 写严重度（``**P1-1**：...``、
+    ``### P1 ...``），旧实现只认行首的 ``- `` / ``1. `` / ``P0..P2``，于是
+    "1. run the tests" 这类步骤行把真正的 P1 挤掉，回执里只剩噪音。现在先剥
+    行首装饰，再按"带严重度标签"优先收集，最后才补 ``FINDING``/``P*`` 行。
     """
-    picked: list[str] = []
+    severity: list[str] = []
+    labelled: list[str] = []
     for line in (answer or "").splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        if re.match(r"^(?:[-*+] |\d+[.)] |FINDING\b|P[0-2]\b)", stripped, re.I):
-            picked.append(stripped[:400])
-        if len(picked) >= 40:
-            break
+        core = _MD_PREFIX_RE.sub("", stripped).strip() or stripped
+        if len(severity) < 40 and _SEVERITY_LINE_RE.search(core[:160]):
+            severity.append(core[:400])
+        elif len(labelled) < 40 and _FINDING_LINE_RE.match(core):
+            labelled.append(core[:400])
+    picked = (severity + [line for line in labelled if line not in severity])[:40]
     blob = "\n".join(picked) or " ".join((answer or "").split())[:1000]
     return blob[:4000]
 
@@ -2048,69 +2094,89 @@ _DRIFT_IGNORES: tuple[str, ...] = (
     ".worktrees/", ".backup/", ".tmp-ci/", ".git/",
 )
 _DRIFT_UNTRACKED_MAX_FILES = 5000
+_DRIFT_TRACKED_MAX_FILES = 20000
 _DRIFT_UNTRACKED_FULL_HASH_BYTES = 512 * 1024
+_DRIFT_EDGE_HASH_BYTES = 4096
 
 
-def _worktree_out_of_scope_digest(workdir: str, scope_paths: Sequence[str]) -> str | None:
-    """「切片之外」的工作树内容摘要（patch scope 的越界漂移守门）。
+def _drift_ignored(name: str) -> bool:
+    """运行期输出/旁路目录不参与越界摘要（否则审查自己写报告就自锁）."""
+    if _is_runtime_output(name):
+        return True
+    return any(name == p.rstrip("/") or name.startswith(p) for p in _DRIFT_IGNORES)
 
-    独立审查 P1-1：``scope=patch`` 的 PASS 只审了声明切片，而凭它执行的
-    ``pytest`` / ``git push`` 作用在整棵树上。签发时把切片之外的内容摘要记进
-    记录，消费时重算：不一致 ⇒ 有未审内容进了执行面 ⇒ 资格不可用。
 
-    「切片之外」的三种来源都必须绑住，否则下面每一种都是绕过路径：
-    * tracked 改动：只记**文件名**，内容包括在切片 sha 里（or 越界名集合里
-      出现即说明有人动了切片外的代码文件）；
-    * 未跟踪的代码面文件：记 name+size+内容摘要。只记名字不够——把
-      ``scratch.py`` 改名成 ``conftest.py``、或原地改内容，名字集合可以不变
-      （独立审查 P1-1 的反例）；
-    * 运行期输出目录（``_DRIFT_IGNORES``/``_is_runtime_output``）不参与：
-      审查系统自己会往 ``data/review_admission/`` 落报告、learning 会写池子，
-      绑进来就是自锁（签发后写一份报告就让资格失效）。
+def _content_token(path: Path) -> str | None:
+    """文件内容 token：小文件全摘要，大文件头尾各 4KB（独立审查 P2-1）.
 
-    ``None`` 表示**不可判定**。调用方必须 fail-closed：签发时拒发、消费时拒
-    放行。不能用固定哨兵字符串——那样签发/消费两次都取不到摘要时哨兵相等，
-    检查就被静默跳过（独立审查 P2-3）。
+    只绑 size+mtime 会在"同尺寸、同一秒内改写"上失效；头尾摘要把这类改写逼到
+    必须同时伪造首尾 8KB 才不被发现。``None`` = 不可判定（fail-closed）；
+    ``"MISSING"`` = 索引里有、工作树已删（同样是漂移）。
+    """
+    try:
+        size = path.stat().st_size
+        if not path.is_file():
+            return None
+        if size <= _DRIFT_UNTRACKED_FULL_HASH_BYTES:
+            return f"{size}:{_digest(path.read_bytes())}"
+        with path.open("rb") as handle:
+            head = handle.read(_DRIFT_EDGE_HASH_BYTES)
+            handle.seek(max(size - _DRIFT_EDGE_HASH_BYTES, 0))
+            tail = handle.read()
+        return f"{size}:{_digest(head)}:{_digest(tail)}"
+    except FileNotFoundError:
+        return "MISSING"
+    except OSError:
+        return None
+
+
+def _out_of_scope_binding(
+    workdir: str, scope_paths: Sequence[str]
+) -> tuple[str, int] | None:
+    """切片之外的内容绑定 → ``(摘要, 绑定文件数)``；``None`` = 不可判定.
+
+    独立审查 P1-1/P1-2 的收口：切片外的**内容**必须绑，绑名字不够。
+    * P1-1：已提交但落在切片外的改动（``git ls-files`` 全集按内容摘要绑）——
+      签发后新提交或改内容都会让摘要变，否则"审 example.py、再提交
+      conftest.py"就能把未审代码夹带进 pytest 的收集面；
+    * P1-2：签发时就已 dirty 的切片外 tracked 文件，只绑名字会被"同名改内容"
+      绕过（名字集合不变），所以同样绑内容；
+    * P2-1：大文件用头尾摘要，不用 size+mtime（同秒同尺寸改写会漏）；
+    * 运行期输出目录（``_DRIFT_IGNORES``/``_is_runtime_output``，见
+      ``_drift_ignored``）不参与：审查系统自己往 ``data/review_admission/``
+      落报告，绑进来就是自锁（签发后写一份报告就让资格失效）。
     """
     if not scope_paths:
-        return ""
+        return ("", 0)
     root = Path(workdir)
     try:
-        tracked = _git(root, "diff", "--no-ext-diff", "--no-textconv",
-                       "--name-only", "-z", "HEAD")
+        tracked = _git(root, "ls-files", "-z")
         untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
     except (OSError, ValueError, subprocess.TimeoutExpired, UnicodeError):
         return None
-    outside = sorted({
-        p.decode("utf-8", "replace")
-        for p in tracked.split(b"\0")
-        if p and not _path_in_scope(p.decode("utf-8", "replace"), scope_paths)
-    })
-    parts = [f"T\t{name}" for name in outside]
-    candidates = sorted({
-        p.decode("utf-8", "replace")
-        for p in untracked.split(b"\0")
-        if p
-    })
-    if len(candidates) > _DRIFT_UNTRACKED_MAX_FILES:
-        # 未跟踪文件多到这个量级，绑内容既慢也无意义（多半是没清的工作树）。
-        return None
-    for name in candidates:
-        if _path_in_scope(name, scope_paths) or _is_runtime_output(name):
-            continue
-        if any(name == p.rstrip("/") or name.startswith(p) for p in _DRIFT_IGNORES):
-            continue
-        path = root / name
-        try:
-            size = path.stat().st_size
-            if path.is_file() and size <= _DRIFT_UNTRACKED_FULL_HASH_BYTES:
-                parts.append(f"U\t{name}\t{size}\t{_digest(path.read_bytes())}")
-            else:
-                # 大文件/非常规文件：绑 size+mtime（改名或改写都会变）。
-                parts.append(f"U\t{name}\t{size}\t{int(path.stat().st_mtime)}")
-        except OSError:
+    parts: list[str] = []
+    bound = 0
+    for marker, raw in (("T", tracked), ("U", untracked)):
+        names = sorted({p.decode("utf-8", "replace") for p in raw.split(b"\0") if p})
+        limit = _DRIFT_TRACKED_MAX_FILES if marker == "T" else _DRIFT_UNTRACKED_MAX_FILES
+        if len(names) > limit:
+            # 文件多到这个量级，绑内容既慢也无意义（多半是没清的工作树）。
             return None
-    return _digest("\n".join(parts).encode("utf-8"))
+        for name in names:
+            if _path_in_scope(name, scope_paths) or _drift_ignored(name):
+                continue
+            token = _content_token(root / name)
+            if token is None:
+                return None
+            parts.append(f"{marker}\t{name}\t{token}")
+            bound += 1
+    return (_digest("\n".join(parts).encode("utf-8")), bound)
+
+
+def _worktree_out_of_scope_digest(workdir: str, scope_paths: Sequence[str]) -> str | None:
+    """兼容取用：只要摘要（签发/消费两侧的权威实现是 ``_out_of_scope_binding``）."""
+    binding = _out_of_scope_binding(workdir, scope_paths)
+    return None if binding is None else binding[0]
 
 
 def _refuse_sensitive_paths(
@@ -3367,10 +3433,7 @@ class HostReviewAdmission:
             # 纯信息性台账：PASS 也是一次终态尝试（visibility-only）。
             self._note_attempt(parent, frozen.kind, frozen.sha, frozen.target,
                                "PASS", child_id, f"p2={p2}")
-        return {
-            "qualification": "PASS", "candidate_sha256": frozen.sha,
-            "artifact_reviewed": True,
-        }
+        return _granted_receipt(frozen)
 
     def poll(self, parent: str, child_id: str) -> dict[str, Any]:
         with self._guard:
@@ -3378,11 +3441,7 @@ class HostReviewAdmission:
             if frozen is None or frozen.parent != parent:
                 return {"qualification": "DENIED", "reason": "review_child_not_owned"}
             if frozen.granted:
-                granted: dict[str, Any] = {
-                    "qualification": "PASS",
-                    "candidate_sha256": frozen.sha,
-                    "artifact_reviewed": True,
-                }
+                granted: dict[str, Any] = _granted_receipt(frozen)
                 if frozen.cached_pass:
                     granted["cached_pass"] = True
                     granted["reused_from_child_id"] = frozen.reused_from

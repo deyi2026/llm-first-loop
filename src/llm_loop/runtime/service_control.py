@@ -3454,11 +3454,11 @@ def _concurrent_restart_covers(
     if began is None or not services:
         return {}
     floor = began.timestamp() - _CONCURRENT_RESTART_WINDOW_S
-    covers: dict[str, str] = {}
     try:
         actions = read_all_actions(store)
     except Exception:  # noqa: BLE001 — 读失败不改判失败证据
         return {}
+    best: dict[str, tuple[str, str]] = {}
     for action in actions:
         if action.action != "restart" or action.status != "succeeded":
             continue
@@ -3469,10 +3469,17 @@ def _concurrent_restart_covers(
         ts = _parse_iso(action.updated_at)
         if ts is None or ts.timestamp() < floor:
             continue
+        # 独立审查 P2-2：与 `_covering_success_action` 同一口径取**最早落定**
+        # 的那一个（按 (updated_at, action_id) 最小），不用遍历顺序的
+        # setdefault —— 否则 adopted_by 指向的动作会随读到动作的顺序漂移。
+        key = (action.updated_at, action.action_id)
         for service in services:
-            if action.target in {service, "all"}:
-                covers.setdefault(service, action.action_id)
-    return covers
+            if action.target not in {service, "all"}:
+                continue
+            current = best.get(service)
+            if current is None or key < current:
+                best[service] = key
+    return {service: key[1] for service, key in best.items()}
 
 
 def _verify_restart_targets(

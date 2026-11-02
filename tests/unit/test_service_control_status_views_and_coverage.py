@@ -239,3 +239,25 @@ def test_verify_restart_targets_keeps_failure_without_cover(monkeypatch):
     )
     assert verdict2 == "confirmed_fail"
     assert "started_before_restart" in summary2
+
+
+def test_concurrent_cover_picks_earliest_settled_regardless_of_read_order(
+    monkeypatch,
+) -> None:
+    """独立审查 P2-2：接管动作取最早落定的那个，不随读到顺序漂移。"""
+    began = datetime.fromisoformat("2026-11-01T10:00:00+08:00")
+    late = _action(
+        action_id="svc-late", target="wecom", deployment_generation=9,
+        updated_at="2026-11-01T10:04:00+08:00",
+    )
+    early = _action(
+        action_id="svc-early", target="wecom", deployment_generation=9,
+        updated_at="2026-11-01T10:02:00+08:00",
+    )
+    deployment = SimpleNamespace(generation=9, git_head="head-current")
+    for order in ([late, early], [early, late]):
+        monkeypatch.setattr(sc, "read_all_actions", lambda store, rows=order: list(rows))
+        covers = sc._concurrent_restart_covers(
+            object(), ["wecom"], began, deployment, "svc-self"
+        )
+        assert covers["wecom"] == "svc-early", "读到顺序不该改变接管归属"
