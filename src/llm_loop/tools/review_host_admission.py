@@ -1109,6 +1109,7 @@ def _frozen_material(
     committed: list[tuple[str, str]],
     working: list[tuple[str, str]],
     new_files: list[tuple[str, str, str]],
+    backlog: str = "",
 ) -> str:
     """Assemble the frozen material and assert its header round-trips.
 
@@ -1120,6 +1121,7 @@ def _frozen_material(
     material = (
         _frozen_header(header_fields)
         + "committed_delta:\n" + "".join(text for _, text in committed)
+        + (("committed_backlog_manifest:\n" + backlog) if backlog else "")
         + "uncommitted_delta:\n" + "".join(text for _, text in working)
         + "\n".join(f"untracked {name} sha={sha}\n{text}" for name, sha, text in new_files)
     )
@@ -1127,11 +1129,180 @@ def _frozen_material(
     return material
 
 
+# EVO-20261102-c7f1a4e2: full_test material projection.
+#
+# The full_test artifact answers ONE question — "did the whole suite really run
+# against this tree, and is the reported result honest?" — so its material is
+# the TEST SURFACE plus an inventory of everything else, not the byte-for-byte
+# patch of a whole branch backlog. Line-level review of the production delta is
+# the git_push gate's job; forcing it into full_test made the gate structurally
+# unsatisfiable (a 100-file / 11.7k-insertion backlog froze 790KB of material →
+# reviewer_duration_precheck refused at est=7974s > 3600s, i.e. no full test
+# could ever be admitted). The projection is DISCLOSED, not silent: the header
+# states committed_projection=test_surface / committed_projected_files=N /
+# committed_backlog_digest=<sha>, and the manifest lists every projected path
+# with its +/- counts, so a reviewer can still refuse on a suspicious manifest
+# entry. The digest binds the projected-away content into the artifact identity.
+_TEST_SURFACE_BASENAMES = {
+    "conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml",
+    "noxfile.py", "Makefile", "makefile",
+}
+_TEST_SURFACE_PREFIXES = ("tests/", "test/", "scripts/", ".github/workflows/")
+_TEST_SURFACE_EXPLICIT = ("eval/rules/known_reds_current.json",)
+_TEST_SURFACE_SUFFIXES = (".py", ".sh", ".toml", ".cfg", ".ini", ".yml", ".yaml")
+_COMMITTED_BACKLOG_MAX_ENTRIES = 400
+# The test surface is kept verbatim only up to this byte budget (smallest-first,
+# so one huge regenerated fixture cannot crowd out the rest). The remainder is
+# projected into the manifest with the same disclosed digest. Rationale: the
+# reviewer pre-flight refuses anything over ~360K chars at 100 chars/s, so a
+# measured 150K budget leaves room for the untracked surface without turning
+# full_test back into a gate that can never be satisfied.
+_TEST_SURFACE_BODY_MAX_BYTES = 150_000
+# Char budget above which a full_test material is projected. The spawn gate's
+# pre-flight estimates the reviewer at 100 chars/s against a 3600s hard max, so
+# anything past ~360K chars can never start a review; 330K leaves room for the
+# prompt template and a mild untracked surface without flipping the gate off.
+_FULL_TEST_AUTO_PROJECT_CHARS = 330_000
+
+
+def _is_test_surface(name: str) -> bool:
+    """True for paths whose TEXT decides whether a test run is honest.
+
+    Test bodies, fixtures, pytest configuration, the CI/gate scripts and the
+    known-reds registry: a change here can silently turn a failing suite green
+    or shrink what "full" means, so the full_test reviewer must read it
+    verbatim rather than see it as a numstat line.
+    """
+    base = name.rsplit("/", 1)[-1]
+    if base in _TEST_SURFACE_BASENAMES:
+        return True
+    if name in _TEST_SURFACE_EXPLICIT:
+        return True
+    if not name.startswith(_TEST_SURFACE_PREFIXES):
+        return False
+    return base.endswith(_TEST_SURFACE_SUFFIXES)
+
+
+def _committed_backlog(
+    repo: Path, names: Sequence[str], base: str, head: str
+) -> tuple[str, str]:
+    """Return (digest, bounded manifest) for committed paths projected away.
+
+    The digest is sha256 over (path, sha256(acquired diff blob)) pairs in sorted
+    order, using the SAME per-path acquisition (and therefore the same size
+    projection) the material would have used — so the artifact identity still
+    changes if any projected-away byte changes.
+    """
+    if not names:
+        return "", ""
+    numstat: dict[str, tuple[str, str]] = {}
+    raw = _git_capped(repo, 400_000, "diff", "--numstat", "-z", "--no-ext-diff",
+                      "--no-textconv", base, head,
+                      too_large_code="review_numstat_too_large")
+    for chunk in raw.split(b"\0"):
+        if not chunk:
+            continue
+        parts = chunk.split(b"\t")
+        if len(parts) < 3:
+            continue
+        numstat[parts[-1].decode("utf-8", "replace")] = (
+            parts[0].decode("utf-8", "replace"),
+            parts[1].decode("utf-8", "replace"),
+        )
+    digest = hashlib.sha256()
+    lines: list[str] = []
+    for name in sorted(names):
+        blob = _git_capped(repo, _diff_acquire_cap(name), "diff", "--binary",
+                           "--no-ext-diff", "--no-textconv", base, head,
+                           "--", f":(literal){name}",
+                           too_large_code=_diff_material_code(name))
+        digest.update(name.encode("utf-8", "replace"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(blob).digest())
+        if len(lines) < _COMMITTED_BACKLOG_MAX_ENTRIES:
+            added, deleted = numstat.get(name, ("?", "?"))
+            lines.append(f"{added}\t{deleted}\t{name}\n")
+    return digest.hexdigest(), "".join(lines)
+
+
+def _split_surface(
+    diffs: Sequence[tuple[str, str]], names: Sequence[str]
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Budget the test surface smallest-first; everything else is projected."""
+    committed: list[tuple[str, str]] = []
+    projected: list[str] = []
+    used = 0
+    for name, text in sorted(diffs, key=lambda kv: (len(kv[1]), kv[0])):
+        cost = len(text.encode("utf-8"))
+        if used + cost <= _TEST_SURFACE_BODY_MAX_BYTES:
+            committed.append((name, text))
+            used += cost
+        else:
+            projected.append(name)
+    kept = {n for n, _ in committed}
+    projected.extend(n for n in names if n not in kept and not _is_test_surface(n))
+    return committed, projected
+
+
+def _projection_stage(
+    diff_fn: Any, repo: Path, base: str, head: str,
+    names: Sequence[str], mode: str,
+) -> tuple[list[tuple[str, str]], str, list[tuple[str, str]]]:
+    """(committed diffs, backlog manifest, extra header fields) for one mode.
+
+    ``diff_fn`` is the caller's per-path acquisition so this stays a pure
+    policy step (it must not re-implement size projection or secret refusal).
+    """
+    if mode == "full":
+        return diff_fn(names, base, head), "", []
+    if mode != "test_surface":
+        raise ValueError("review_committed_projection_unknown")
+    committed, projected = _split_surface(
+        diff_fn([n for n in names if _is_test_surface(n)], base, head), names
+    )
+    digest, manifest = _committed_backlog(repo, projected, base, head)
+    return committed, manifest, [
+        ("committed_projection", "test_surface"),
+        ("committed_projected_files", str(len(projected))),
+        ("committed_surface_files", str(len(committed))),
+        ("committed_backlog_digest", digest or "-"),
+    ]
+
+
+_FULL_TEST_NO_DELTA = (
+    "full_test_no_delta: committed delta, worktree and untracked"
+    " are all empty — nothing to review (EVO-20261029-eb64b2de)"
+)
+
+
+def _full_test_snapshot(
+    workdir: str, ft_base: str, ft_ref: str,
+    scope_paths: Sequence[str], tier_counts: tuple[int, int] | None,
+) -> tuple[str, str]:
+    """full_test material: whole delta when it fits, disclosed projection when not.
+
+    Never rescues an artifact already over the complete-review ceiling — that
+    path must keep refusing, or projection would turn a refusal into a pass.
+    """
+    kwargs: dict[str, Any] = {
+        "push_base": ft_base or None, "first_push_ref": ft_ref,
+        "scope_paths": scope_paths, "tier_counts": tier_counts,
+        "require_material": _FULL_TEST_NO_DELTA,
+    }
+    sha, material = _source_snapshot(workdir, committed_projection="full", **kwargs)
+    if len(material) <= _FULL_TEST_AUTO_PROJECT_CHARS:
+        return sha, material
+    if len(material.encode("utf-8")) > _REVIEWER_STATIC_MATERIAL_CAP_BYTES:
+        return sha, material
+    return _source_snapshot(workdir, committed_projection="test_surface", **kwargs)
+
+
 def _source_snapshot(
     workdir: str, push_base: str | None = None, push_head: str | None = None,
     first_push_ref: str = "", require_material: str = "",
     scope_paths: Sequence[str] = (),
     tier_counts: tuple[int, int] | None = None,
+    committed_projection: str = "full",
 ) -> tuple[str, str]:
     """Freeze committed delta vs the review base, tracked changes and untracked source.
 
@@ -1211,7 +1382,9 @@ def _source_snapshot(
     # 先拒后窄：声明范围不得成为夹带通道（独立审查 P1；详见 _refuse_sensitive_paths）。
     _refuse_sensitive_paths(repo, committed_names, working_names, frozen_head, include_worktree)
     committed_names, working_names = _scope_filter_names(committed_names, working_names, scope_paths)
-    committed = _path_diffs(committed_names, base, frozen_head)
+    committed, backlog_manifest, extra_header = _projection_stage(
+        _path_diffs, repo, base, frozen_head, committed_names, committed_projection
+    )
     # EVO-20261021-2f22aae5 (proposal A): the committed runtime-output monster
     # projection now runs inside _path_diffs, at acquisition time —
     # EVO-20261030-62773eae moved it there so the projection is applied
@@ -1291,7 +1464,7 @@ def _source_snapshot(
     # worktree change, no untracked file) makes the review verdict vacuous —
     # the reviewer approves an empty shell. Refuse it when the caller asked
     # for that guarantee (full_test); git_push keeps its own semantics.
-    if require_material and not committed and not working and not new_files:
+    if require_material and not committed and not working and not new_files and not backlog_manifest:
         raise ValueError(require_material)
     # A push review must state the base it diffed against so the reviewer and
     # the admission receipt can be cross-checked against remote facts.
@@ -1313,8 +1486,9 @@ def _source_snapshot(
     header_fields.extend(
         _scope_header_fields(scope_paths, out_of_scope_untracked, tier_counts)
     )
+    header_fields.extend(extra_header)
     material = _frozen_material(
-        header_fields, committed, working, new_files,
+        header_fields, committed, working, new_files, backlog=backlog_manifest,
     )
     # Bounded complete snapshot, not a summary masquerading as full review.
     # This static check is the conservative floor on the SNAPSHOT BYTES; the
@@ -2760,15 +2934,8 @@ class HostReviewAdmission:
             # facts resolve; an actually empty artifact is refused outright.
             ft_base, ft_ref = _full_test_review_base(true_dir)
             push_base = ft_base
-            sha, text = _source_snapshot(
-                true_dir,
-                push_base=ft_base or None,
-                first_push_ref=ft_ref,
-                scope_paths=scope_paths, tier_counts=tier_counts,
-                require_material=(
-                    "full_test_no_delta: committed delta, worktree and untracked"
-                    " are all empty — nothing to review (EVO-20261029-eb64b2de)"
-                ),
+            sha, text = _full_test_snapshot(
+                true_dir, ft_base, ft_ref, scope_paths, tier_counts
             )
             dest = str(Path(true_dir).expanduser().resolve(strict=True))
         return (sha, f"{kind}:{dest}:command:{_digest(command.encode('utf-8'))}", text,

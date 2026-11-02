@@ -19,6 +19,8 @@ from llm_loop.tools.review_host_admission import (
     _classify_reviewer_failure,
     _page_controls,
     _page_visible_text,
+    _full_test_snapshot,
+    _source_snapshot,
     classify_host_shell,
     is_publication_button,
 )
@@ -65,6 +67,11 @@ class FakeChildRunner:
             "result": result,
             "local_active": self.state == "running",
         }
+
+
+def _ensure_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -653,8 +660,11 @@ def test_committed_runtime_monster_diff_is_truncated_not_deadlocked(tmp_path: Pa
     allowed = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert allowed["accepted"] is True
     assert runner.started == 1
-    # The reviewer material names the file, keeps the diff header edges and
-    # states the truncation fact with byte counts.
+    # EVO-20261102-c7f1a4e2: full_test no longer inlines a committed runtime
+    # report — the whole non-test-surface backlog is disclosed as a manifest
+    # entry plus one digest. The deadlock property (never refuse a 302KB
+    # committed monster) must still hold, and the file must still be NAMED so a
+    # reviewer can challenge it.
     assert "S10.json" in runner.task
     assert "EVO-20261021-2f22aae5 TRUNCATED committed runtime output diff" in runner.task
     assert "omitted " in runner.task and "B of " in runner.task
@@ -3175,3 +3185,94 @@ def test_out_of_scope_binding_tracks_head_moves(tmp_path: Path) -> None:
     )
     after = rha._out_of_scope_binding(str(repo), ["example.py"])
     assert before[0] != after[0]
+
+
+def test_test_surface_predicate_covers_the_proof_surface() -> None:
+    """EVO-20261102-c7f1a4e2: 决定「一次测试跑得算不算数」的文件必须给正文。"""
+    import llm_loop.tools.review_host_admission as rha
+
+    for name in (
+        "tests/unit/test_a.py",
+        "conftest.py",
+        "pytest.ini",
+        "pyproject.toml",
+        "scripts/ci_gate.sh",
+        "scripts/full_test_report.py",
+        ".github/workflows/ci.yml",
+        "eval/rules/known_reds_current.json",
+    ):
+        assert rha._is_test_surface(name) is True, name
+    for name in ("src/llm_loop/core/x.py", "docs/PLAYBOOK.md", "reports/a.json",
+                 "scripts/data.bin", "data/methods/x/method.md"):
+        assert rha._is_test_surface(name) is False, name
+
+
+def test_full_test_projection_keeps_surface_text_and_discloses_backlog(tmp_path: Path) -> None:
+    """full_test 材料＝测试面正文＋其余提交的清单与摘要（不是整条积压的补丁）。"""
+    import llm_loop.tools.review_host_admission as rha
+
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feature"], check=True)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_x.py").write_text("def test_ok():\n    assert True\n")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "big.md").write_text("d" * 40_000)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "add tests and docs"], check=True)
+
+    sha_one, mat_one = _source_snapshot(
+        str(repo), committed_projection="test_surface",
+        require_material="full_test_no_delta",
+    )
+    header = rha._parse_frozen_header(rha._frozen_header_block(mat_one))
+    assert header["committed_projection"] == "test_surface"
+    # example.py（基线后改过的生产文件，随 -A 一起提交）+ docs/big.md
+    assert header["committed_projected_files"] == "2"
+    assert header["committed_surface_files"] == "1"
+    assert len(header["committed_backlog_digest"]) == 64
+    assert "def test_ok" in mat_one          # 测试面逐字下发
+    assert "d" * 40_000 not in mat_one       # 生产/文档补丁不再整段下发
+    assert "docs/big.md" in mat_one          # 但必须点名，供审查者质疑
+    assert "committed_backlog_manifest:" in mat_one
+
+    # 摘要把被投影掉的内容绑进工件身份：改一个字节，SHA 必变。
+    (repo / "docs" / "big.md").write_text("d" * 40_000 + "e")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "grow docs"], check=True)
+    sha_two, _mat_two = _source_snapshot(str(repo), committed_projection="test_surface")
+    assert sha_one != sha_two
+
+    # 只动非测试面也不能被判成「没有 delta」。
+    (repo / "docs" / "another.md").write_text("y\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "docs only"], check=True)
+    _sha3, mat_three = _source_snapshot(
+        str(repo), committed_projection="test_surface",
+        require_material="full_test_no_delta",
+    )
+    assert "docs/another.md" in mat_three
+
+
+def test_full_test_auto_projection_only_kicks_in_over_the_char_budget(tmp_path: Path) -> None:
+    """auto＝能整段读就整段读（强形式），只有超预算才投影（弱形式且披露）。"""
+    import llm_loop.tools.review_host_admission as rha
+
+    small = _repo(_ensure_dir(tmp_path / "small"))
+    subprocess.run(["git", "-C", str(small), "checkout", "-q", "-b", "feature"], check=True)
+    (small / "notes.md").write_text("n" * 1_000)
+    subprocess.run(["git", "-C", str(small), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(small), "commit", "-qm", "small"], check=True)
+    _sha, small_mat = _full_test_snapshot(str(small), "", "", (), None)
+    assert "n" * 1_000 in small_mat                      # 小 delta 逐字下发
+    assert "committed_projection" not in rha._frozen_header_block(small_mat)
+
+    big = _repo(_ensure_dir(tmp_path / "big"))
+    subprocess.run(["git", "-C", str(big), "checkout", "-q", "-b", "feature"], check=True)
+    (big / "notes.md").write_text("n" * (rha._FULL_TEST_AUTO_PROJECT_CHARS + 50_000))
+    subprocess.run(["git", "-C", str(big), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(big), "commit", "-qm", "big"], check=True)
+    _sha2, big_mat = _full_test_snapshot(str(big), "", "", (), None)
+    header = rha._parse_frozen_header(rha._frozen_header_block(big_mat))
+    assert header["committed_projection"] == "test_surface"
+    assert len(big_mat) <= rha._FULL_TEST_AUTO_PROJECT_CHARS
+    assert "notes.md" in big_mat                          # 仍然点名

@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "65fc79eb7",
+    "head_commit": "924dbbea3",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1100,9 +1100,9 @@
     "src/llm_loop/tools/registry.py::_run_with_timeout": 175,
     "src/llm_loop/tools/registry.py::execute": 92,
     "src/llm_loop/tools/registry.py::tool_result_to_message": 138,
-    "src/llm_loop/tools/review_host_admission.py::_source_snapshot": 219,
+    "src/llm_loop/tools/review_host_admission.py::_source_snapshot": 226,
     "src/llm_loop/tools/review_host_admission.py::poll": 73,
-    "src/llm_loop/tools/review_host_admission.py::start": 83,
+    "src/llm_loop/tools/review_host_admission.py::start": 88,
     "src/llm_loop/tools/safety.py::_scan_tokens": 230,
     "src/llm_loop/web/__init__.py::build_app": 146,
     "src/llm_loop/web/__init__.py::main": 147,
