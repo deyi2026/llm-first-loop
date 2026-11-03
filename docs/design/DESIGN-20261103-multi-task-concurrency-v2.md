@@ -1009,7 +1009,7 @@ def _scan_stream_tail(path, *, cutoff, max_bytes):
 | ✅ T-0.4a | `running.jobs` 接线：新增 `JobRegistry.active_all()` + 视图内二次判在飞 | `tools/builtin/job_registry.py`（`active_all`）、`goal_coordination.py` | **已实现 2026-11-03**。自己的出 job_id/command/executor/started_at；他人只计数；`done/killed` 即使被事实源多返也丢弃。**残余**：重启后未收口执行不在本段（E11） |
 | ✅ T-0.4b | `recent_events` 接线：审计流**尾部倒扫**（时间窗口 + 字节兜底），双因截断自证 | `goal_coordination.py`（`_collect_recent_events` / `_scan_stream_tail` / `_entry_ts` / `_RECENT_EVENT_STREAMS`、`render_coordination` events 行）、`tools_goal.py`（工具描述改口径）。**不参数化 `event_stream`**（实测 3029ms 且无截断语义，§6.4.2） | **已实现 2026-11-03**。`window_s=1800` + `top_n=10` + `2MB` 兜底；`truncated` 由 top-N 与字节触顶两因判定并各自出 degraded 文案；`coverage_s` 给真实跨度（可 < 窗口）；无 ts 行只计数、缺 sid 行 `attributed=false`；空即空（N1-A2，不编造 degraded）。实测：真实数据窗口内 **2382 条** → 出 10 条 + `truncated`；`coordination_snapshot(24h)` **p50 17.4ms / p95 18.0ms**（预算 80ms）。测试 `test_coordination_events_wiring.py` **12 条**（流表防漂移 / 窗口过滤与脱敏 / top-N / 字节触顶 + 半行丢弃 / 倒扫调用数 ≤4 / 无时间戳 / audit_dir 缺失 / 空即空 / 账本崩不连坐 / 渲染）；全相关面 **1068 passed / 2 skipped** |
 | ✅ T-0.5 | N6：workflow 回执标注 `execution=sequential` | `tools/builtin/workflow.py:243`（parallel/pipeline）、`:331`（dag）、`:57`（描述） | **已实现 2026-11-03**。首行 `mode=…, steps=…, execution=sequential（…）`；三种 mode 各一条断言 + 既有断言零改动（N6-A1/A2）。G7 不受影响：纯字符串拼装，不写账本 |
-| ✅ T-0.6 | 埋点骨架：`claims/events.py` + `claims/events.jsonl` + `claim_decision`/`fanout_decision`（此阶段只写 `passthrough`/`allow`）+ 失败计数器 | `introspection/claims/events.py`（新）；`task_store.py:277/371-373`；`runner.py:1369/1398-1419`；`goal_coordination.py:708` | **已实现 2026-11-03**。三条不变量（不阻断/不伪造/可丢但标注）由 `write_event` 单点执行；`claim_decision` 在锁内落笔后写（N7-A1 行数==写入次数），`fanout_decision` 锁内采集 + 锁外 append（N7-A4 running_before=决策前）；超 1KB 拒写并计数（N7-A3）；append 失败 → 调用照常成功 + `claim_event_write_failures` 进 `degraded`（N7-A2）。测试 13 + 2 条；相关面 **1158 passed**（`-k "goal or task or coord or subagent or job or workflow or claim"`）。**未做**：`scripts/claim_metrics.py`（比率分母在 PR-0 无意义，见 §6.6） |
+| ✅ T-0.6 | 埋点骨架：`claims/events.py` + `claims/events.jsonl` + `claim_decision`/`fanout_decision`（此阶段只写 `passthrough`/`allow`）+ 失败计数器 | `introspection/claims/events.py`（新）；`task_store.py:277/371-373`；`runner.py:1369/1398-1419`；`goal_coordination.py:708` | **已实现 2026-11-03**。三条不变量（不阻断/不伪造/可丢但标注）由 `write_event` 单点执行；`claim_decision` 在锁内落笔后写（N7-A1 行数==写入次数），`fanout_decision` 锁内采集 + 锁外 append（N7-A4 running_before=决策前）；超 1KB 拒写并计数（N7-A3）；append 失败 → 调用照常成功 + `claim_event_write_failures` 进 `degraded`（N7-A2）。测试 13 + 5 条（§11.1.1 已按实测更新）；相关面 **1158 passed**（`-k "goal or task or coord or subagent or job or workflow or claim"`）。**未做**：`scripts/claim_metrics.py`（比率分母在 PR-0 无意义，见 §6.6） |
 
 **为什么 T-0.6 排在 P0**：观察期要看的是 PR-1 上线后的真实比率；埋点若等 PR-1 再写，PR-1 第一周的数据就永久缺失。空跑一周还可提前验证「观测不阻断」这条不变量。
 
@@ -1029,7 +1029,7 @@ def _scan_stream_tail(path, *, cutoff, max_bytes):
 | T-1.10 | 真实 `claim_decision`（grant/renew/reclaim/revoke/deny/passthrough）+ `fanout_decision`（allow/deny + `reason_code`）；`task_store` 在 claim 路径下不再补 passthrough（`emit_event=False`） | `tests/test_task_claim.py` 全量断言事件行；`::test_quota_is_warning_not_refusal` 查 `reason_code` | ✅ |
 | T-1.11 | `scripts/claim_metrics.py`：五指标 + 账本侧交叉计数 + `--since` | `tests/test_claim_metrics.py`（3 条：空分母=null / 冲突率分母 / 坏行 degraded） | ✅ |
 
-**验证面**：`tests/test_task_claim.py` 31 条、`tests/test_task_claim_tools.py` 3 条、`tests/test_claim_metrics.py` 3 条、`tests/unit/test_claims_events*.py` 15 条；既有相关面 `test_task_*`/`test_goal*`/`test_subagent`/`test_config` 分批通过；`ruff check` 在改动文件上 0 新错（仓库基线 16 条均在其他文件）。
+**验证面**（2026-11-04 实测，按 `--collect-only` 计数，不沿用估算）：`tests/test_task_claim.py` 31 条、`tests/test_task_claim_tools.py` 3 条、`tests/test_task_claim_hardening.py` 18 条（四轮审查逐条对应）、`tests/test_claim_metrics.py` 3 条、`tests/unit/test_claims_events.py` 13 条 + `test_claims_events_fanout.py` 5 条 = **73 条**；`ruff check` 在改动文件上 0 新错；`pyright` `new=0`、`changed_file_diagnostics=0`。
 
 ### 11.2 PR-1（P1，3–4 人日；claim 全量 + 隐式签发 + 新闸）
 
@@ -1304,4 +1304,30 @@ def _scan_stream_tail(path, *, cutoff, max_bytes):
 1. `test_claim_and_task_use_same_safe_id` 原是**空断言**（`safe_goal_id(goal) and "/tmp"` 恒为 `"/tmp"`），改为真比较两条账本文件名。
 2. `scripts/claim_metrics.py` 缺省 audit 目录从 `Path.cwd()/audit` 改为 `LFL_AUDIT_DIR` → `<repo>/data/audit`（与 `config._DEFAULT_DATA_DIR` 同源），避免在别处运行时静默读到空目录。
 
-复验：claim 相关 **132 passed**（含 14 条 hardening）、`tier0` **341 passed / 2 skipped**、`ruff` All checks passed、`pyright` `new=0`。
+复验（第四轮时点）：claim 相关 6 个测试文件全绿（hardening 14 条）、`tier0` **341 passed / 2 skipped**、`ruff` All checks passed、`pyright` `new=0`。**条数以 §14.9 的实测计数为准**（第四轮后再补 4 条，合计 73）。
+
+### 14.9 第五轮审查（git_push）处置与吞吐债务登记（2026-11-04）
+
+push 前审查发现 P1×1 / P2×6（P0=0）。逐条：
+
+| Finding | 处置 | 证据 |
+|---|---|---|
+| P1-1 文档把 `test_coordination_view_capacity.py` 列为已交付，但该文件**未跟踪**（只在工作树里，没进 commit） | 承认：文档先于提交声称交付。已 `git add` 并在修复提交里带上该文件；本条属于"文档与仓库不自洽"，不是测试不存在 | 该文件现有 4 条断言，随本提交入库 |
+| P2-1 warn 透传事件冒用他人 generation | 冲突透传时 `emit_generation=0`（本次未持 claim）；别人的代次不写进本 holder 的记录 | `test_conflict_passthrough_event_reports_generation_zero` |
+| P2-2 重开撤销只落账本、不发事件 | `_revoke_on_reopen` 补 `claim_decision=revoke`（`reason_code=reopen_revoke`），`claim_metrics.revoke_count` 不再漏一半 | `test_reopen_revoke_emits_matching_event` |
+| P2-3 文档测试条数与实测不符（15 vs 18；`13+2` vs `13+5`） | 全部改为 `--collect-only` 实测值；§11.1.1 一次列清 73 条构成 | §11.1.1、§6.6.1、`docs/changes/…claim-layer.md` |
+| P2-4 进程锁跨 goal 串行化 `task_update` | **登记不修**：`_CLAIM_PROCESS_LOCK` 是防 ABBA 的进程级总锁，缩范围要先重排锁序（claim→task→event 三段），改动面等同于重写临界区。登记为 **R23**，触发条件见下 | 本表下方 R23 |
+| P2-5 程序化 `ClaimPolicy(ttl_s=1)` 绕过下界 | `_clamp_ttl(None)` 也过 `MIN_TTL_S` | `test_policy_ttl_below_minimum_is_clamped_on_grant` |
+| P2-6 畸形 token 后缀跳过 generation 比较 | `#` 后的段必须 `isdigit()`，否则 `claim_token_malformed` 拒绝 | `test_malformed_token_suffix_is_rejected_not_skipped` |
+
+**顺带修掉一个审查没点、但写测试时暴露的真问题**：warn 模式下，`pending→in_progress` 的隐式签发会**抢占他人活跃 claim**（`generation+1` 直接 reclaim）。这与 D1「硬拒只剩他人已持 claim」直接矛盾——warn 不是"允许抢锁"，是"允许在冲突下继续写但不夺权"。已改为：他人持活跃 claim 时不签发（保持警告 + 透传），并由此得到 `generation=0` 的正确事件语义。
+
+**R23（新增已知边界）：`task_update` 的进程级串行化**
+
+- 事实：`ClaimStore.update_task_under_claim` 持 `_CLAIM_PROCESS_LOCK` 覆盖整段（含 `store.update` 的 replay + append + fsync 与事件 append）。多 goal 并发写 task 时，进程内完全串行。
+- 量级：单次写入 ≈ replay(该 goal 账本) + 一次 append + fsync + 一次 event append。goal 账本 239 行时 replay 约 3–5ms；估算串行吞吐上限 **≈100–200 次 task 写入/秒**，远高于当前实际（日级几十次）。
+- 触发条件（何时必须先做）：出现「同一进程内多 goal 并发 task 写入导致 `task_update` 排队 > 50ms」或写入速率稳定 > 50/s。
+- 届时的做法：把进程锁拆成「账本段」与「事件段」两把，或改为每 goal 文件锁 + 全局仅保护锁序不变量；**不要**简单去掉进程锁（会重新引入 ABBA）。
+- 为什么现在不做：观察期第一天就可能被它影响读数，但改锁序的回归风险高于收益，且当前速率离上限两个数量级。
+
+复验：claim 相关 **73 条**（31+3+18+3+18）全绿；`tier0` **341 passed / 2 skipped**；`ruff` All checks passed；`pyright` `new=0`。

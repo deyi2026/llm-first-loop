@@ -437,44 +437,12 @@ class TaskStore:
             return task
 
     # ---------- claim 组合入口（T-1.3，DESIGN-20261103 §6.1） ----------
-
-    def update_with_claim(
-        self,
-        goal_id: str,
-        task_id: str,
-        *,
-        claim_token: str | None = None,
-        status: str | None = None,
-        blocked_reason: str | None = None,
-        evidence_refs: list[str] | None = None,
-        acceptance: list[str] | None = None,
-        done_when: list[str] | None = None,
-        title: str | None = None,
-        confirm: bool = False,
-        authorized: bool = False,
-    ) -> tuple[Task, dict[str, Any]]:
-        """带 claim 校验的 update：**锁序 claims → tasks**，由 ``task_claim`` 持有外层锁。
-
-        放在这里而不是 tools 层，是为了让"校验 claim + 写 task"成为一个不可分割的
-        动作；而 ``task_claim`` 又要 import ``TaskStore``，故用函数内延迟 import
-        避免模块级循环依赖。
-        """
-        from .task_claim import ClaimStore
-
-        return ClaimStore(self._dir).update_task_under_claim(
-            self,
-            goal_id,
-            task_id,
-            token=claim_token,
-            status=status,
-            blocked_reason=blocked_reason,
-            evidence_refs=evidence_refs,
-            acceptance=acceptance,
-            done_when=done_when,
-            title=title,
-            confirm=confirm,
-            authorized=authorized,
-        )
+    #
+    # 这里**故意没有** update_with_claim：组合入口在 `task_claim` 侧
+    # （`ClaimStore.update_task_under_claim` / 模块级同名函数）。曾经放在 TaskStore
+    # 上并用函数内延迟 import 兜住，但运行期环 task_claim<->task_store 会被
+    # arch guard R9-P2-06a 判为新增环——延迟 import 只绕过了 import-time 报错，
+    # 没有消除依赖方向。tools 层直接调 ClaimStore 即可（tools_task.run_task_update）。
 
     def _cascade_premise_stale(self, goal_id: str, tasks: dict[str, Task], reopened_id: str) -> None:
         """done 重开 → 传递闭包内已 done 下游标 premise_stale（提示性，§2.1）."""
@@ -768,13 +736,9 @@ class TaskStore:
                 if t.status in ("pending", "in_progress", "blocked")
             ),
             "total": len(tasks),
-            # 纯增量字段: 最近一次任务写入时间，供协调视图算 activity_at（N1-A8）。
-            # 为空表示该 goal 无任务或任务均无 updated_at，调用方必须回落到 goal.updated_at。
-            # 必须按解析后的时刻比较：账本是跨机器共享的，历史行可能带 +08:00 或 +00:00，
-            # 字符串 max() 在混合偏移下选出的不一定是"最晚"（P2-5）。
-            "last_activity": _latest_iso(
-                t.updated_at for t in tasks.values() if t.updated_at
-            ),
+            # 纯增量字段；空 = 无任务或无 updated_at，调用方回落 goal.updated_at。
+            # 按解析后时刻比较：账本跨机器，混 +08:00/+00:00 时字符串 max 会选错（P2-5）。
+            "last_activity": _latest_iso(t.updated_at for t in tasks.values() if t.updated_at),
         }
 
     def goal_completion_ready(self, goal_id: str) -> tuple[bool, str]:

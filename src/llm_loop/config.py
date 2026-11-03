@@ -67,6 +67,22 @@ class ToolRuntimeSettings:
     max_claims_per_holder: int = 8
     max_running_children: int = 16
 
+    def claim_fields(self, env_int, env_bool, mode) -> dict[str, Any]:
+        """claim/fanout 六个字段的环境解析（从 load_settings 抽出以守住函数行数棘轮）.
+
+        抽出来不是为了复用，是因为 load_settings 已经贴着 370 行基线；再往里塞
+        6 行会让整个仓库的门禁变红。默认值与 task_claim.policy_from_env 由
+        tests/test_task_claim.py::test_policy_matches_config_defaults 锁定一致。
+        """
+        return {
+            "claim_enforcement": mode("LFL_CLAIM_ENFORCEMENT", "warn", {"off", "warn", "enforce"}),
+            "claim_ttl_s": max(60, env_int("LFL_CLAIM_TTL_S", 1800)),
+            "claim_max_ttl_s": max(60, env_int("LFL_CLAIM_MAX_TTL_S", 28800)),
+            "claim_allow_unbounded": env_bool("LFL_CLAIM_ALLOW_UNBOUNDED", False),
+            "max_claims_per_holder": max(1, env_int("LFL_CLAIM_MAX_PER_HOLDER", 8)),
+            "max_running_children": max(1, min(32, env_int("LFL_MAX_RUNNING_CHILDREN", 16))),
+        }
+
     # Phase5 M2（设计 §2.3）：LLM 流内插话检查点开关——False 时回退保守
     # final_gate 路径（流内不检查插话，等流自然结束），配置级回滚。
     llm_stream_interject_checkpoint: bool = True
@@ -1041,18 +1057,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raw = str(env_values.get(name, default) or default).strip().lower()
         return raw if raw in allowed else default
 
-    _nonconvergence_jaccard = _env_float(
-        "LFL_NONCONV_FUSE_JACCARD", 0.6, env_values
-    )
+    _nonconvergence_jaccard = _env_float("LFL_NONCONV_FUSE_JACCARD", 0.6, env_values)
     if not 0.0 < _nonconvergence_jaccard <= 1.0:
         _nonconvergence_jaccard = 0.6
     _tool_runtime = ToolRuntimeSettings(
-        claim_enforcement=_mode("LFL_CLAIM_ENFORCEMENT", "warn", {"off", "warn", "enforce"}),
-        claim_ttl_s=max(60, env_int("LFL_CLAIM_TTL_S", 1800)),
-        claim_max_ttl_s=max(60, env_int("LFL_CLAIM_MAX_TTL_S", 28800)),
-        claim_allow_unbounded=env_bool("LFL_CLAIM_ALLOW_UNBOUNDED", False),
-        max_claims_per_holder=max(1, env_int("LFL_CLAIM_MAX_PER_HOLDER", 8)),
-        max_running_children=max(1, min(32, env_int("LFL_MAX_RUNNING_CHILDREN", 16))),
+        **ToolRuntimeSettings().claim_fields(env_int, env_bool, _mode),
         breaker_pressure_narrow=env_bool("LFL_BREAKER_PRESSURE_NARROW", True),
         e18_hard_stop=env_bool("LFL_E18_HARD_STOP", True),
         tool_octet=env_bool("LFL_TOOL_OCTET", False),

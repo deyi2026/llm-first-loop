@@ -241,10 +241,16 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     try:
         verifier = getattr(getattr(host, "ctx", None), "task_evidence_verifier", None)
         store = TaskStore(audit, evidence_verifier=verifier)
-        task, claim_notes = store.update_with_claim(
+        # 归属门已由上面的 _require_active_goal（resolve_write_permission）通过，
+        # 这里显式传 authorized=True，避免组合入口依赖"调用方隐式已校验"的顺序事实。
+        # 直接调 ClaimStore 而不是 TaskStore.update_with_claim：后者会让 task_store
+        # 依赖 task_claim，形成 task_claim<->task_store 运行期环（arch guard R9-P2-06a）。
+        task, claim_notes = ClaimStore(audit).update_task_under_claim(
+            store,
             goal_id,
             task_id,
-            claim_token=(str(args["claim_token"]) if args.get("claim_token") else None),
+            token=(str(args["claim_token"]) if args.get("claim_token") else None),
+            authorized=True,
             status=(target if target else None),
             blocked_reason=(str(args["blocked_reason"]) if args.get("blocked_reason") else None),
             evidence_refs=([str(r) for r in args["evidence_refs"]] if args.get("evidence_refs") is not None else None),
@@ -252,9 +258,6 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
             done_when=([str(w) for w in args["done_when"]] if args.get("done_when") is not None else None),
             title=(str(args["title"]) if args.get("title") else None),
             confirm=bool(args.get("confirm", False)),
-            # 归属门已由上面的 _require_active_goal（resolve_write_permission）通过，
-            # 这里显式传给 claim 组合入口，避免它依赖"调用方隐式已校验"的顺序事实。
-            authorized=True,
         )
     except TaskEvidenceVerificationError as exc:
         return ToolResult(

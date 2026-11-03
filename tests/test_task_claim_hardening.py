@@ -193,6 +193,76 @@ def test_fanout_event_uses_deny_own_scope():
     assert _fanout_observation(None, 5, 32) == (5, 32)
 
 
+# ------------------------------------------- 第四轮 push 审查（P2×4）对应
+
+
+def _event_rows(audit):
+    from llm_loop.introspection.claims.events import events_path
+
+    path = events_path(audit)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_malformed_token_suffix_is_rejected_not_skipped(audit, store, task):
+    """`CLM-x#junk` 以前会跳过 generation 比较被部分放行（P2-6），现在必须拒。"""
+    cs = ClaimStore(audit)
+    claim = cs.grant("GOAL-1", task.task_id, holder="run-a", store=store)
+    bad = f"{claim.claim_id}#junk"
+
+    with pytest.raises(ClaimRefusedError) as exc:
+        cs.update_task_under_claim(
+            store, "GOAL-1", task.task_id, token=bad, holder="run-a", authorized=True, status="in_progress"
+        )
+    assert exc.value.code == "claim_token_malformed"
+    assert store.get("GOAL-1", task.task_id).status == "pending"
+
+
+def test_reopen_revoke_emits_matching_event(audit, store, task):
+    """重开撤销必须留下 claim_decision=revoke，否则指标里 revoke_count 少一半（P2-2）。"""
+    cs = ClaimStore(audit)
+    cs.grant("GOAL-1", task.task_id, holder="run-a", store=store)
+    token = current_session_id.set("run-a")
+    try:
+        cs.update_task_under_claim(store, "GOAL-1", task.task_id, authorized=True, status="in_progress")
+        cs.update_task_under_claim(store, "GOAL-1", task.task_id, authorized=True, status="done")
+        cs.update_task_under_claim(
+            store, "GOAL-1", task.task_id, authorized=True, status="in_progress", confirm=True
+        )
+    finally:
+        current_session_id.reset(token)
+
+    revokes = [r for r in _event_rows(audit) if r.get("decision") == "revoke"]
+    assert len(revokes) == 1
+    assert revokes[0]["reason_code"] == "reopen_revoke"
+
+
+def test_conflict_passthrough_event_reports_generation_zero(audit, store, task):
+    """他人持有 + warn 透传：事件里的 generation 必须是 0，不能借用他人代次（P2-1）。"""
+    long_sid = "session-0123456789abcdef"
+    ClaimStore(audit).grant("GOAL-1", task.task_id, holder=long_sid, store=store)
+
+    token = current_session_id.set("session-writer-bbbb")
+    try:
+        ClaimStore(audit).update_task_under_claim(
+            store, "GOAL-1", task.task_id, authorized=True, status="in_progress"
+        )
+    finally:
+        current_session_id.reset(token)
+
+    conflict = [r for r in _event_rows(audit) if r.get("reason_code") == "claim_held_by_other"]
+    assert conflict and conflict[-1]["claim_generation"] == 0
+
+
+def test_policy_ttl_below_minimum_is_clamped_on_grant(audit, store, task):
+    """程序化构造 policy(ttl_s=1) 也必须签出 ≥MIN_TTL_S 的租约（P2-5）。"""
+    cs = ClaimStore(audit, policy=tc.ClaimPolicy(ttl_s=1))
+    claim = cs.grant("GOAL-1", task.task_id, holder="run-a", store=store)
+    assert claim.expires_ms is not None
+    assert claim.expires_ms - claim.granted_ms >= tc.MIN_TTL_S * 1000
+
+
 # ------------------------------------------------ 第二轮审查（P2×6）对应
 
 

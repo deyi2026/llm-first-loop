@@ -20,7 +20,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import (
@@ -337,8 +337,59 @@ def _fanout_observation(
     return running_before, max_handles
 
 
+def _canary_child_scope(
+    parent_budget: Any,
+    canary_profile: Any,
+    depth: int,
+    inherit: bool,
+    fs_isolation: bool,
+    required_tools: list[str] | None,
+    child_model_label: str,
+    parent_sid: str | None,
+) -> tuple[bool, bool]:
+    """返回 ``(is_canary, 越界)``：canary 预算下的子代理范围闸.
+
+    抽成模块函数是因为 ``start`` 已贴着 399 行基线（门禁只允许下降），
+    而这条判定需要十余行条件；留在原地会让整个仓库门禁变红。
+    两个返回值必须一起给：``is_canary`` 后面还要用于收紧 max_rounds，
+    只回布尔"是否越界"会让那段限制静默失效（这也是本函数第一版犯的错）。
+    """
+    if parent_budget is None:
+        return False, False
+    if parent_budget._get_validated()["grant"]["profile"] != canary_profile.PROFILE:
+        return False, False
+    denied = (
+        depth != 0
+        or inherit
+        or fs_isolation
+        or required_tools != []
+        or child_model_label != canary_profile.MODEL_REF
+        or parent_budget.member.member_id != parent_budget.budget_id
+        or parent_budget.member.session_id != parent_sid
+    )
+    return True, denied
+
+
 class SubAgentRunner:
     """子代理执行器：独立会话 + 迷你循环 + 受限工具 + 预算/深度边界."""
+
+    def _parent_slot_denied(self, parent_sid: str | None) -> _ReserveDenied | None:
+        """per-parent 闸（T-1.8）：同一 parent 的 running 子代理达上限即拒.
+
+        在飞判据只能是 ``handle.state == "running"``（Q39(a)/E7）：
+        ``_children_by_parent`` 是「已登记」，child 进终态到集合清理之间仍有窗口，
+        用集合长度会把刚结束的 child 算成还在跑，闸门偏严且读数不可解释。
+        """
+        if not parent_sid:
+            return None
+        running = sum(
+            1
+            for h in self._handles.values()
+            if h.state == "running" and h.parent_id == parent_sid
+        )
+        if running >= self._max_running_children:
+            return _ReserveDenied("parent_concurrency", running, self._max_running_children)
+        return None
 
     def __init__(
         self,
@@ -1462,21 +1513,8 @@ class SubAgentRunner:
             if running_before >= self._max_handles:
                 deny = _ReserveDenied("handle_capacity", running_before, self._max_handles)
             else:
-                # 在飞判据只能是 handle.state=="running"（Q39(a)/E7）：
-                # _children_by_parent 是「已登记」，child 进终态到集合清理之间仍有窗口，
-                # 用集合长度会把刚结束的 child 算成还在跑，闸门偏严且读数不可解释。
-                parent_running = (
-                    sum(
-                        1
-                        for h in self._handles.values()
-                        if h.state == "running" and h.parent_id == parent_sid
-                    )
-                    if parent_sid
-                    else 0
-                )
-                if parent_sid and parent_running >= self._max_running_children:
-                    deny = _ReserveDenied("parent_concurrency", parent_running, self._max_running_children)
-                else:
+                deny = self._parent_slot_denied(parent_sid)
+                if deny is None:
                     if parent_sid:
                         self._children_by_parent.setdefault(parent_sid, set()).add(sid)
                         self._parent_by_child[sid] = parent_sid
@@ -1759,23 +1797,11 @@ class SubAgentRunner:
         from llm_loop.resources.task_budget_dispatch import active_task_budget
 
         parent_budget = active_task_budget()
-        is_canary = (
-            parent_budget is not None
-            and parent_budget._get_validated()["grant"]["profile"] == canary_profile.PROFILE
+        is_canary, canary_denied = _canary_child_scope(
+            parent_budget, canary_profile, depth, inherit, fs_isolation,
+            required_tools, child_model_label, parent_sid,
         )
-        if (
-            is_canary
-            and parent_budget is not None
-            and (
-                depth != 0
-                or inherit
-                or fs_isolation
-                or required_tools != []
-                or child_model_label != canary_profile.MODEL_REF
-                or parent_budget.member.member_id != parent_budget.budget_id
-                or parent_budget.member.session_id != parent_sid
-            )
-        ):
+        if canary_denied:
             return self._start_failure_result(depth, "subagent_canary_child_scope_denied")
         if is_canary:
             # The child is a no-tool one-fact diagnostic, not a general

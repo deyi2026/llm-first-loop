@@ -449,7 +449,9 @@ class ClaimStore:
 
     def _clamp_ttl(self, ttl_s: Any) -> int:
         if ttl_s is None:
-            return self._policy.ttl_s
+            # 无显式 ttl 时 policy 值也要过下界：程序化构造的 ClaimPolicy(ttl_s=1)
+            # 绕过了 env 侧 clamp，会签出 1 秒租约（第四轮审查 P2-5）。
+            return max(MIN_TTL_S, self._policy.ttl_s)
         if isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float)):
             raise ClaimRefusedError("ttl_invalid", f"ttl_s 必须是整数秒: {ttl_s!r}")
         value = int(ttl_s)
@@ -678,8 +680,13 @@ class ClaimStore:
         wanted_id, _, wanted_gen = str(token).partition("#")
         if claim.claim_id != wanted_id:
             return CheckResult(False, "claim_generation_stale", claim)
-        if wanted_gen.isdigit() and claim.generation != int(wanted_gen):
-            return CheckResult(False, "claim_generation_stale", claim)
+        if wanted_gen:
+            # 带 generation 段就必须是数字：`CLM-x#junk` 这类畸形 token 以前会被
+            # "跳过比较"部分放行（第四轮审查 P2-6），现在直接拒绝而不是半校验。
+            if not wanted_gen.isdigit():
+                return CheckResult(False, "claim_token_malformed", claim)
+            if claim.generation != int(wanted_gen):
+                return CheckResult(False, "claim_generation_stale", claim)
         if claim.state == STATE_RELEASED:
             return CheckResult(False, "claim_released", claim)
         if claim.state == STATE_REVOKED:
@@ -801,6 +808,7 @@ class ClaimStore:
         target_status: str | None,
         now: int,
         notes: dict[str, Any],
+        holder: str | None = None,
     ) -> Claim | None:
         """done→非done 重开：先用撤销抹掉旧 claim；落账失败即冒泡，重开必须被拒（Q38）。"""
         reopening = (
@@ -812,6 +820,10 @@ class ClaimStore:
             return claim
         revoked = replace(claim, state=STATE_REVOKED, action="revoke")
         self._append(revoked)  # 失败 → ClaimLedgerUnavailableError，重开被拒
+        # 账本 revoke 行必须有一条 claim_decision 对应（T-1.10 的 1:1）。
+        # 以前只在账本写行、事件留到最后一条 passthrough，`claim_metrics.revoke_count`
+        # 因此看不到重开撤销（第四轮审查 P2-2）。
+        self._emit(revoked, "revoke", reason_code="reopen_revoke", actor=holder or revoked.holder)
         notes["revoked_claim_id"] = revoked.claim_id
         return revoked
 
@@ -900,20 +912,28 @@ class ClaimStore:
                 target_status=target_status,
                 now=now,
                 notes=notes,
+                holder=holder,
             )
             # 3) T-1.4 隐式签发：pending→in_progress 且无 token
-            claim, granted_reason = self._auto_claim_on_start(
-                claims,
-                claim,
-                token=token,
-                goal_id=goal_id,
-                task_id=task_id,
-                holder=holder,
-                task_before=task_before,
-                target_status=target_status,
-                now=now,
-                notes=notes,
-            )
+            #    但**他人已持活跃 claim 时不签发**：隐式签发的目的是让"无 token"不再是
+            #    错误，不是让后来者抢走别人的 claim。以前这里会直接 reclaim 掉他人
+            #    claim（generation+1），warn 档下等于静默抢锁——与 D1"硬拒只剩他人
+            #    已持 claim"直接冲突。冲突场景保持现状（只警告、不签发）。
+            if reason_code == "claim_held_by_other":
+                granted_reason = None
+            else:
+                claim, granted_reason = self._auto_claim_on_start(
+                    claims,
+                    claim,
+                    token=token,
+                    goal_id=goal_id,
+                    task_id=task_id,
+                    holder=holder,
+                    task_before=task_before,
+                    target_status=target_status,
+                    now=now,
+                    notes=notes,
+                )
             if granted_reason is not None:
                 decided, reason_code = "grant", granted_reason
 
@@ -936,11 +956,19 @@ class ClaimStore:
                     # 只意味着「可被接管」，不意味着「旧写入变合法」。
                     notes["claim_renew_unavailable"] = "ledger_unavailable"
             latency = round((time.perf_counter() - t0) * 1000.0, 3)
+            # 冲突透传时 `claim` 指向**别人**的 claim 行：把它的 generation 写进
+            # 本 holder 的事件，会让"这次写没有 fencing"读起来像"这次写拿到了第 N 代"
+            # （第四轮审查 P2-1）。本次未持有 → 记 0，与他人代次彻底分开。
+            emit_generation = (
+                0
+                if decided == "passthrough" and reason_code == "claim_held_by_other"
+                else (claim.generation if claim is not None else 0)
+            )
             self._emit_raw(
                 goal_id,
                 task_id,
                 holder or "",
-                claim.generation if claim is not None else 0,
+                emit_generation,
                 decided,
                 reason_code=reason_code,
                 actor=holder,

@@ -19,7 +19,7 @@
 - `tests/test_task_claim.py` 31 passed
 - `tests/test_task_claim_tools.py` 3 passed
 - `tests/test_claim_metrics.py` 3 passed
-- `tests/unit/test_claims_events*.py` 15 passed
+- `tests/unit/test_claims_events.py` 13 passed + `test_claims_events_fanout.py` 5 passed（合计 18）
 - 分批定向回归（task/goal/subagent/config/registry 相关文件）通过
 - `ruff check` 改动文件 0 新错（仓库基线 16 条在 feishu/browser 等既有文件）
 

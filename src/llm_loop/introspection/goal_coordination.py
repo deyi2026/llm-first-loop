@@ -735,7 +735,7 @@ def _collect_claim_metrics(audit_dir: str) -> tuple[dict, list[str]]:
 def coordination_snapshot(
     audit_dir: str,
     *,
-    window_hours: int = 0,
+    window_hours: int = 24,
     only_in_flight: bool = True,
     session_id: str | None = None,
     ctx: Any | None = None,
