@@ -3438,6 +3438,16 @@ class HostReviewAdmission:
         }
         if coverage is not None:
             receipt["coverage_chain"] = coverage
+        # EVO-20261103-e5a63eb7（用户批准）：把"怎么等"写进回执，而不是靠模型从
+        # wait 的语义里推。实测教训：审查是异步 child、没有 execute_command 的
+        # job_id，wait 的 wake_reason=elapsed 只表示计时到点；把"到期"误读成"未完成"
+        # 会白等整轮。status 才是唯一完成信号。
+        receipt["waiting_protocol"] = (
+            "审查是异步 child，没有 execute_command 的 job_id："
+            "用 wait(seconds<=120) 配速，每次到期后调 "
+            f"review_admission(action=status, child_id={child}) 取终态；"
+            "status 是唯一完成信号，wait 的 wake_reason=elapsed 只表示计时到点。"
+        )
         if kind == "git_push":
             # Mechanical cross-check anchor: the exact remote commit the
             # frozen delta is diffed against (EVO-20261021-89256d43 fix #3).
@@ -4495,6 +4505,9 @@ class ReviewAdmissionTool:
         "护栏/门槛类变更（拦截判据/阻断清单/正则/阈值）宣称'已生效'前按 RULE-AI-35 "
         "构造应拦输入实测拦截，未实测只可称'代码已提交'。"
         "完整工具描述和参数用 get_tool_schema 精确读取。审查不取代用户对外发布/push授权。"
+        "等待方式：start 回执带 waiting_protocol——审查是异步 child，没有 execute_command"
+        " 的 job_id；wait(seconds<=120) 只做配速，每次到期后调 action=status 取终态，"
+        "status 才是唯一完成信号（wait 的 wake_reason=elapsed 只表示计时到点）。"
     )
     parameters = {
         "type": "object",

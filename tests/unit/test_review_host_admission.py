@@ -236,6 +236,10 @@ def test_real_child_terminal_current_artifact_exact_one_use(tmp_path: Path) -> N
     host.attach_runner(runner)
     issued = host.start("author-1", "full_test", workdir=str(repo), command="pytest -q")
     assert issued["accepted"] and issued["child_id"] == "child-review-1"
+    # EVO-20261103-e5a63eb7：回执必须自带等待协议，且指到真正的完成信号 status。
+    assert "review_admission(action=status" in issued["waiting_protocol"]
+    assert "child-review-1" in issued["waiting_protocol"]
+    assert "wake_reason=elapsed" in issued["waiting_protocol"]
     assert not host.check_shell("author-1", "pytest -q", str(repo)).allowed
     assert host.poll("author-1", "child-review-1")["qualification"] == "pending"
     runner.answer = f"VERDICT: PASS\nP0=0 P1=0 P2=0\nSHA256: {issued['candidate_sha256']}"
