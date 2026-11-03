@@ -172,6 +172,21 @@ def test_shell_trigger_scoping(command: str, expected: str | None) -> None:
     ("PATH=/tmp/x cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
     ("sed 's/a/b/' <<'EOF'\ngit push origin main\nEOF", "git_push"),
     ("cat > a.md; cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    # ── 第三轮审查（subagent_0a6ccca9a192, REVISE→修复）P1-1/P1-2/P2-1 ──
+    # P1-1：无引号 <<EOF 的体先做参数/命令替换（非纯数据）——不豁免。
+    ("cat > /tmp/doc.md <<EOF\ngit push origin main\nEOF", "git_push"),
+    ("cat > /tmp/x <<EOF\necho $(git push origin main)\nEOF", "git_push"),
+    ("cat > /tmp/x <<EOF\necho `git push origin main`\nEOF", "git_push"),
+    # <<"EOF" 也是 quoted delimiter：仍豁免。
+    ("cat > /tmp/y <<\"EOF\"\ngit push origin main\nEOF", None),
+    # P1-2：env NAME=value 与直接 VAR=x 前缀同险（PATH 注入）——不豁免。
+    ("env PATH=/tmp/x cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    ("env LC_ALL=C cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
+    # env 合法 flags（-i / -u NAME）后接白名单 sink：仍豁免。
+    ("env -i cat <<'EOF'\ngit push origin main\nEOF", None),
+    ("env -u FOO cat <<'EOF'\ngit push origin main\nEOF", None),
+    # P2-1：路径形态 argv0（basename 白名单命中）不算裸名白名单——不豁免。
+    ("/tmp/cat <<'EOF'\ngit push origin main\nEOF", "git_push"),
 ])
 def test_no_cross_segment_exemption_or_comment_bypass(
     command: str, expected: str | None,

@@ -1,7 +1,7 @@
 ---
 title: restart all 不含 wecom 是有意设计：企微长连接保护，新代收敛需单独 restart wecom
 scenario: mirror 工作区 publish 新代后的服务收敛：restart all 的物理执行面只含 web/feishu/learning，wecom 需每代单独补重启
-root_cause: ""
+root_cause: "restart_mirror.sh 的 restart all 物理执行面硬编码只含 web/feishu/learning（企微单机器人单长连接，批量重启不应踢掉在服企微会话），wecom 不在批量面内，故每代 publish 后 wecom 会停在旧代"
 solution: "1) status 核对：restart all succeeded 后查 service_control(action=status)，看 wecom 的 matches_desired_generation/restart_required 与 audit_signals.generation_lag（无 verified_generation 抵扣=未收敛）。2) 补重启：service_control(action=restart, target=wecom, restart_target=wecom, expected_generation=<desired>, reason=...)，核对受理回执 generation。3) 终态：等发起会话结束后 worker 自动执行，下轮 status 复核 wecom git_head==desired.git_head 且 lagging 不含 wecom。"
 evidence: "1) service_control status @2026-11-03T08:01:47 (evidence://v1/1d18f641cd0075aa55897e99afe70c76c044bc6c1bcbd6504a76fc5e03909fbb)：gen376 restart all (svc-e19cc11e70c54a5d929f9cc696f4a4d8) succeeded，verify_evidence 仅 web/feishu/learning；wecom live head=30e9d2b6c（gen375），restart_required=true。2) 源码：scripts/restart_mirror.sh:1331-1332 注释（本轮 read_file 核实）。3) 本轮补重启受理回执：action_id=svc-0538dfbf716f4080ad5684fe985b18c6, generation=376。"
 tags: []

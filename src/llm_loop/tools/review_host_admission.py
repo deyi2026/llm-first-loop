@@ -440,9 +440,12 @@ _HEREDOC_UNSAFE_LINE_RE = re.compile(r"[|;&()`]|\$\(")
 def _heredoc_head_exempts_head(head: str) -> bool:
     """head（opener 前文本）的接收者是否为白名单数据 sink.
 
-    只认 ``sink …`` / ``env [flags] sink …`` 两种形式；``VAR=x sink`` 这类
-    直接环境前缀不豁免（PATH 注入可劫持同名命令，fail-closed）；head 解析
-    失败同样不豁免。argv0 之后的文件实参/重定向不影响判定。
+    只认 ``sink …`` / ``env [-i] [-u NAME] sink …`` 两种形式；``VAR=x sink``
+    与 ``env VAR=x sink`` 这类环境前缀一律不豁免（PATH 注入可劫持同名命令，
+    fail-closed——第三轮审查 P1-2：env 的 NAME=value 与直接前缀同险）；
+    head 解析失败同样不豁免。argv0 只认不含 ``/`` 的裸名（P2-1：路径形态
+    如 ``/tmp/cat`` 的 basename 命中不算，防伪装）；argv0 之后的文件实参/
+    重定向不影响判定。
     """
     try:
         toks = shlex.split(head)
@@ -456,15 +459,14 @@ def _heredoc_head_exempts_head(head: str) -> bool:
             if tok in {"-u", "--unset"} and i + 1 < len(toks):
                 i += 2
                 continue
-            if tok in {"-i", "--ignore-environment"} or re.fullmatch(
-                r"[A-Za-z_][A-Za-z0-9_]*=.*", tok
-            ):
+            if tok in {"-i", "--ignore-environment"}:
                 i += 1
                 continue
-            break
+            break  # 含 NAME=value 在内的一切其他 token：停止扫描，交白名单判定（fail-closed）
     if i >= len(toks):
         return False
-    return toks[i].rsplit("/", 1)[-1] in _HEREDOC_DATA_SINKS
+    argv0 = toks[i]
+    return "/" not in argv0 and argv0 in _HEREDOC_DATA_SINKS
 
 
 def _strip_heredoc_units(
@@ -494,10 +496,14 @@ def _strip_heredoc_units(
         delim = m.group(2)
         strip_tabs = m.group(0).startswith("<<-")
         head = line[: m.start()].rstrip()
-        # EVO-20261102-99717443：数据接收者豁免判定——opener 行无危险元字符
-        # （管道下游/compound/命令替换）且接收者 argv0 在白名单；否则不豁免。
+        # EVO-20261102-99717443：数据接收者豁免判定——delimiter 必须带引号
+        # （`<<'EOF'`/`<<"EOF"`：体逐字搬运，纯数据）；无引号 `<<EOF` 的体在
+        # shell 中先做参数/命令替换（`$(...)` 会执行），不是纯数据——第三轮
+        # 审查 P1-1 修复，不豁免、保持内容级网。另要求 opener 行无危险元
+        # 字符（管道下游/compound/命令替换）且接收者 argv0 是白名单裸名。
         is_exempt = (
-            _HEREDOC_UNSAFE_LINE_RE.search(line) is None
+            m.group(1) != ""
+            and _HEREDOC_UNSAFE_LINE_RE.search(line) is None
             and _heredoc_head_exempts_head(head)
         )
         ph = f"__XPL_{len(payloads)}__"
@@ -580,11 +586,14 @@ def _strip_payload_units(
 ) -> tuple[str, list[str]]:
     """剥离自足语法单元（先 here-doc 体，后解释器 -c/-e 载荷）→ (骨架, payloads).
 
-    载荷内容只作数据；内容级规则在调用方不变：classify_host_shell 的
-    全文关键词网、_active_backtick_substitutions 反引号网、_target 的
-    kind 匹配仍看原始全文。骨架只承载 argv 结构与命令位分界。
-    exempt（可选）与 payloads 等长对齐：True=here-doc 数据接收者体
-    （纯数据，内容级网豁免）；False=解释器载荷/不豁免体（EVO-20261102-99717443）。
+    骨架只承载 argv 结构与命令位分界（classify 的 segment 网只看骨架）。
+    载荷内容级网（EVO-20261102-99717443 后的准确契约）：未豁免载荷仍进
+    classify_host_shell 的载荷网（受保护动词 / python shell 调用递归）；
+    豁免载荷（quoted here-doc + 数据接收者体）跳过该网。反引号网
+    （_active_backtick_substitutions）不受豁免影响——始终扫描原始全文。
+    exempt（可选）与 payloads 等长对齐：True=quoted here-doc 数据接收者体
+    （纯数据，内容级网豁免）；False=解释器载荷/不豁免体（第三轮审查 P2-2：
+    此 docstring 曾无条件断言"仍看原始全文"，已改为如上准确表述）。
     """
     payloads: list[str] = []
     skeleton = _strip_heredoc_units(str(command or ""), payloads, exempt)
@@ -781,11 +790,14 @@ def classify_host_shell(command: str, *, _depth: int = 0) -> str | None:
     protected-keyword net — a python payload that invokes a protected action
     classifies as that kind (fail-closed: denied at _target as an
     uncertifiable wrapper, never silently allowed, never a crash).
-    EVO-20261102-99717443 (human-approved): a here-doc body whose RECEIVER
-    is a whitelisted pure data sink (``cat > file <<'EOF' …``) is plain
-    file data that is never executed — its content skips the protected-
-    keyword net. Every other receiver (interpreter, unknown argv0, piped/
-    compound opener line, ``VAR=``-prefixed head) keeps the net (fail-closed).
+    EVO-20261102-99717443 (human-approved): a here-doc body with a QUOTED
+    delimiter (``<<'EOF'``/``<<"EOF"``) whose receiver is a whitelisted
+    bare-name pure data sink (``cat > file <<'EOF' …``) is plain file data
+    that is never executed — its content skips the protected-keyword net.
+    Unquoted ``<<EOF`` bodies undergo parameter/command substitution before
+    the sink reads them (not plain data) and every other receiver
+    (interpreter, unknown argv0, path-form argv0, piped/compound opener
+    line, ``VAR=``/``env VAR=`` prefixed head) keeps the net (fail-closed).
     """
     value = str(command or "").strip()
     if not value:
