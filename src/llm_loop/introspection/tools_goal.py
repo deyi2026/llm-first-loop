@@ -177,17 +177,23 @@ COORDINATION_STATUS_TOOL_DEF: dict = {
     "name": "coordination_status",
     "description": (
         "跨会话只读协调视图（DESIGN-20261101 §4.4）。何时用: 恢复会话/接管前先看清"
-        "「谁在推进哪个 goal、各 goal 的 open 任务与最近 checkpoint、running 子代理/后台任务」，"
-        "避免重复推进或跨会话覆盖。回执含 goals/sessions/running/recent_events 与 degraded"
-        "（未接线或读不到的数据源如实列出，不伪造空值）。何时不用: 只看单个 goal 用 get_goal；"
-        "推进任务用 task_frontier。本工具零写、不改任何状态。"
+        "「谁在推进哪个 goal、各 goal 的 open 任务与最近 checkpoint、running 子代理/后台任务、"
+        "最近落账的事件」，避免重复推进或跨会话覆盖。回执含 goals/sessions/running/"
+        "recent_events 与 degraded（未接线或读不到的数据源如实列出，不伪造空值）。"
+        "两段口径不同，别混用: running 只含本进程内存态（跨进程/重启后不可见，回执带"
+        " observed_at），children 只按 owner session 归属（children_scope=owner_session）；"
+        "recent_events 读审计流，workspace-wide、默认近 30 分钟窗口 + 字节上限兜底"
+        "（触顶标 truncated，coverage_s=真实覆盖跨度，session_id 缺失行 attributed=false）。"
+        "recent_events=0 只代表窗口内无事件，不等于系统没动过。"
+        "他人会话只出脱敏行与计数。何时不用: 只看单个 goal"
+        "用 get_goal；推进任务用 task_frontier。本工具零写、不改任何状态。"
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "window_hours": {
                 "type": "integer",
-                "description": "回看窗口（小时，默认 24；0=不限窗口）",
+                "description": "回看窗口（小时，默认 0=不限窗口；传 24 等值可只看近期）",
             },
             "only_in_flight": {
                 "type": "boolean",
@@ -345,7 +351,9 @@ def run_coordination_status(ctx: Any, host: Any, args: dict) -> ToolResult:
             ToolResultStatus.FAILURE, "[存储不可用] audit_dir 未装配", "", "coordination_status"
         )
     try:
-        window = int(args.get("window_hours", 24) or 0)
+        # 默认 0（不限窗口）：24h 默认会把"在飞但今天没动"的 goal 全隐掉——协调视图
+        # 的存在理由是判断"谁在推进什么"，返回空会让调用方以为没人推进（2026-11-03 D6）。
+        window = int(args.get("window_hours", 0) or 0)
     except (TypeError, ValueError):
         return ToolResult(
             ToolResultStatus.FAILURE,
@@ -363,6 +371,9 @@ def run_coordination_status(ctx: Any, host: Any, args: dict) -> ToolResult:
             str(audit),
             window_hours=max(0, window),
             only_in_flight=bool(args.get("only_in_flight", True)),
+            # N1: running 段事实源由装配点注入 CorrectionContext；本层只透传。
+            # 派发口传 host.ctx，直调口传 ctx；两路都给，缺装配时该段显式 degraded。
+            ctx=ctx if ctx is not None else getattr(host, "ctx", None),
         )
     except Exception as exc:  # noqa: BLE001 — 采集失败如实失败，不拿空视图冒充「无活动」
         return ToolResult(

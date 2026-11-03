@@ -54,7 +54,7 @@ class WorkflowRunTool:
         "注意: 子代理可用工具受限（read_file/execute_command/web_fetch/web_search/get_tool_schema/edit_file），"
         "可按任务需要用 edit_file 修改工作区文件，但仍受安全/并发写保护；递归深度由程序控制。"
         "parallel/dag 当前为顺序执行+聚合（registry 有状态，"
-        "真并发有竞态风险——结果等价，如实标注）。"
+        "真并发有竞态风险——结果等价；回执首行标注 execution=sequential，勿据 mode 推断真并行）。"
         "失败对策: 某步失败不阻断后续步骤，每步状态如实标注，请在父级整合。"
     )
     parameters = {
@@ -239,7 +239,10 @@ class WorkflowRunTool:
     # ── pipeline / parallel ──
     def _execute_linear(self, mode: str, steps: list) -> ToolResult:
         prev_answer = ""  # pipeline: 上一步结果
-        parts = [f"[workflow_run] mode={mode}, steps={len(steps)}（顺序执行+聚合，registry 有状态故不真并发）"]
+        parts = [
+            f"[workflow_run] mode={mode}, steps={len(steps)}, execution=sequential"
+            "（顺序执行+聚合，registry 有状态故不真并发）"
+        ]
         all_ok = True
         for i, step in enumerate(steps, start=1):
             extra = ""
@@ -324,7 +327,10 @@ class WorkflowRunTool:
             )
 
         order_str = " → ".join(ids[i] for i in order)
-        parts = [f"[workflow_run] mode=dag, steps={n}（拓扑序: {order_str}；顺序执行+聚合，registry 有状态故不真并发）"]
+        parts = [
+            f"[workflow_run] mode=dag, steps={n}, execution=sequential（拓扑序: {order_str}；"
+            "顺序执行+聚合，registry 有状态故不真并发）"
+        ]
         answers: list[str] = [""] * n
         all_ok = True
         for i in order:

@@ -219,6 +219,21 @@ class JobRegistry:
                 if j.session_id == session_id and not j.done and not j.killed
             )
 
+    def active_all(self) -> tuple[JobEntry, ...]:
+        """本进程内全部在跑的后台执行（跨 session，按 started_at 稳定排序）.
+
+        在飞判据与 ``active_for_session`` 同源（``not done and not killed``），
+        避免两个视图对「在跑」给出不同答案。只读；跨进程/重启后的执行不在本
+        视图内（durable 事实见 journal，本方法不推断存活）。
+        """
+        with self._lock:
+            return tuple(
+                sorted(
+                    (j for j in self._jobs.values() if not j.done and not j.killed),
+                    key=lambda j: (j.started_at, j.id),
+                )
+            )
+
     def snapshots_for_session(self, session_id: str) -> tuple[dict[str, object], ...]:
         """Return owner-scoped local jobs plus durable nonterminal orphan facts.
 

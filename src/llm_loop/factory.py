@@ -2731,6 +2731,12 @@ def build_engine(
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
     # Web 谱系面（/api/v1/agents/tree）经 engine.subagent_runner 读机械拓扑事实。
     engine.subagent_runner = subagent_runner
+    # DESIGN-20261103 §6.4 N1: coordination_status 的 running 段事实源。
+    # 设计稿里的 ``from llm_loop.subagent import get_runner`` 不存在（E11），
+    # 本层也没有 runner/job 全局访问器 → 统一由装配点注入，未装配时该段显式
+    # degraded 而不是伪造空列表。
+    correction_ctx.subagent_runner = subagent_runner
+    correction_ctx.job_registry = _job_registry
     registry.add_session_cancel_hook(subagent_runner.cancel_parent)
     registry.add_async_obligation_hook(subagent_runner.pending_obligations)
     registry.register(SpawnSubAgentTool(subagent_runner))

@@ -322,3 +322,25 @@ def test_dag_budget_rounds_passthrough():
     assert res.status == ToolResultStatus.SUCCESS
     assert runner.max_rounds_calls == [5, None]
     assert "budget_rounds=5" in res.content
+
+
+def test_receipt_first_line_marks_execution_sequential():
+    """T-0.5（DESIGN-20261103 §6.4.4/N6）：回执首行显式标注 execution=sequential.
+
+    mode=parallel 只是"步骤间无依赖"，不是"真并行"——registry 有状态，实现是顺序
+    执行+聚合。标注必须落在回执第一行，否则读者只能从 mode 名反推并推错。
+    """
+    runner = FakeRunner()
+    tool = WorkflowRunTool(runner)
+    for mode, steps in (
+        ("parallel", [{"task": "A"}, {"task": "B"}]),
+        ("pipeline", [{"task": "A"}, {"task": "B"}]),
+        ("dag", [{"id": "a", "task": "A"}, {"id": "b", "task": "B", "depends_on": ["a"]}]),
+    ):
+        res = tool.execute(mode=mode, steps=steps)
+        assert res.status == ToolResultStatus.SUCCESS, mode
+        first = res.content.splitlines()[0]
+        assert "execution=sequential" in first, (mode, first)
+        assert f"mode={mode}" in first, (mode, first)
+    # 顺序执行的事实不变：A 必须早于 B 完成（README 语义，非并发）
+    assert [t for t, _ in runner.calls][:1] == ["A"]

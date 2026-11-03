@@ -5,7 +5,7 @@
 - 跨会话归属可见（owner=other 的 goal 不会被当成自己的）
 - 任务计数来自 frontier（ready/doing/blocked/xwait）
 - window_hours / only_in_flight 过滤
-- 未接线数据源（children/jobs/events）进 degraded，不伪造空值结论
+- 未接线/读不到的数据源进 degraded，不伪造空值结论（events 已接线，读不到才降级）
 - 零写：调用前后 goal 账本字节不变
 """
 
@@ -52,7 +52,9 @@ def test_view_contains_all_sections_and_owners(tmp_path):
     assert "owner=other" in text
     assert "xwait=1" in text
     assert "degraded: running.children" in text
-    assert "degraded: recent_events" in text
+    # T-0.4b 后 events 段已接线：空审计目录 → 0/0 且不进 degraded（N1-A2）
+    assert "events 0/0 window=1800s" in text
+    assert "degraded: recent_events" not in text
 
 
 def test_window_filter(tmp_path):
@@ -65,13 +67,27 @@ def test_window_filter(tmp_path):
     assert "goals=1" in older.content
 
 
+def test_default_window_is_unbounded(tmp_path):
+    """D6：不传 window_hours 时默认 0（不限），并在首行显式写 window=all.
+
+    24h 默认曾把 78 个在飞 goal 全部隐掉（2026-11-03 实测），协调视图返回空会让
+    调用方以为"没人推进"，从而在别人正在推进的 goal 上再开一条线。
+    """
+    gs = GoalStore(str(tmp_path))
+    gs.create("在飞目标", session_id=SELF)
+    res = run_coordination_status(None, _host(tmp_path), {})
+    assert res.status == ToolResultStatus.SUCCESS
+    assert "window=all" in res.content
+    assert "goals=1" in res.content
+
+
 def test_only_in_flight(tmp_path):
     gs = GoalStore(str(tmp_path))
     g = gs.create("将完成的目标", session_id=SELF)
     gs.update(g.id, "complete", "已完成")
     res = run_coordination_status(None, _host(tmp_path), {"window_hours": 0, "only_in_flight": True})
     assert "goals=0" in res.content
-    # 设计 §170: 默认窗口 = 最近 24h 且 only_in_flight=true；展开已完成须显式 false
+    # D6（2026-11-03）：默认窗口改为 0=不限；展开已完成仍须显式 only_in_flight=false
     res_default = run_coordination_status(None, _host(tmp_path), {"window_hours": 0})
     assert "goals=0" in res_default.content
     res_all = run_coordination_status(

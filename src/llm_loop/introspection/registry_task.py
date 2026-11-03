@@ -27,4 +27,16 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_task import run_task_frontier
 
         return run_task_frontier(host.ctx, host, args)
+    if name == "claim_task":
+        from llm_loop.introspection.tools_task import run_claim_task
+
+        return run_claim_task(host.ctx, host, args)
+    if name == "renew_task":
+        from llm_loop.introspection.tools_task import run_renew_task
+
+        return run_renew_task(host.ctx, host, args)
+    if name == "release_task":
+        from llm_loop.introspection.tools_task import run_release_task
+
+        return run_release_task(host.ctx, host, args)
     return None

@@ -12,6 +12,24 @@
   "durability_registry": {
     "_doc": "Durable Run Contract 写入面登记：AST 扫描 src/llm_loop 中明确 filesystem 写入原语；每个候选文件必须归入一个 surface（tier=T1/T2/T3，status=conform|migrate|partial|observe）或 write_exemptions。登记只证明已分类，不自动证明符合 tier；新增登记必须走 guard(r9) 可见提交。",
     "surfaces": {
+      "claim_ledger": {
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/task_claim.py"
+        ],
+        "rationale": "DESIGN-20261103 PR-1：task claim 账本 `<audit_dir>/claims/claim-<safe>.jsonl` 是 fencing 权威（generation 由 replay 决定，跨重启仍正确），按 T1 append_log 分类：每行一次 `open(ab)+write+flush+os.fsync`，读侧 `_iter_rows` 跳坏行并计 `bad_lines`（半行崩溃不阻断后续 claim），超 2000 行折叠保留最新状态。status=observe 而非 conform 的理由是它尚未做多进程并发压测（§14.3 U 清单），也不声称锁失败路径的跨进程语义已验收；已覆盖 `tests/test_task_claim.py`（坏尾行容错、折叠、并发唯一赢家）与 `tests/test_task_claim_hardening.py`（失败不污染账本）。",
+        "status": "observe",
+        "tier": "T1"
+      },
+      "claim_events": {
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/claims/events.py"
+        ],
+        "rationale": "DESIGN-20261103 §6.6：claim/fanout 决策事件流 `<audit_dir>/claims/events.jsonl`，观察期五指标的唯一数据源。按 T1 append_log 分类且**刻意弱化**：单行 O_APPEND 写、不做 fsync、写失败只在进程内计数（`write_failures`）而永不抛给调用方——观测不阻断优先于测点完整性。读侧是尾部倒扫 + 坏行仅计数（半行是预期），比率在 `write_failures>0` 或 `bad_lines>0` 时必须标『分母不完整』，因此它不承担任何准入/恢复判定，丢尾行只影响比率解读。status=observe，无轮转（R19）已登记为残余。",
+        "status": "observe",
+        "tier": "T1"
+      },
       "review_admission_report": {
         "owner": "tools",
         "paths": [

@@ -97,6 +97,11 @@ class CorrectionContext:
     # SettlementChannel；None=未装配 → settlement_pending/settlement_submit
     # 回执"通道不可用"，零行为不伪造清单）
     settlement: Any | None = None
+    # DESIGN-20261103 §6.4 N1: coordination_status 的 running 段事实源。
+    # 只读观测用；None=未装配 → 该段显式 degraded（「未接线」≠「无运行」）。
+    # 两源都是进程内内存态：跨进程/重启后的执行不可见（§10-R4）。
+    subagent_runner: Any | None = None
+    job_registry: Any | None = None
 
 
 class CorrectionToolRegistry:

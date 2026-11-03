@@ -378,6 +378,26 @@ class GoalStore:
                 out.append(entry)
         return out[-limit:][::-1]
 
+    def count(self) -> int:
+        """可解析行数（与 list 同口径：空行/坏行不计），用于视图截断自证.
+
+        存在的理由: list(limit=N) 只回最新 N 条，调用方无法得知账本是否更长；
+        没有 count 就分不清「只有 200 条」和「有 600 条但只给了 500」。
+        """
+        if not self._path.exists():
+            return 0
+        n = 0
+        with self._path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                n += 1
+        return n
+
     def _read_lines(self) -> list[str]:
         if not self._path.exists():
             return []

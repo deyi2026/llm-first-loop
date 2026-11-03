@@ -17,13 +17,16 @@ import logging
 import os
 import re
 import threading
+import time
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+from llm_loop.introspection.claims.events import write_event
 from llm_loop.introspection.task_evidence import (
     TaskEvidenceVerificationError,
     TaskEvidenceVerifier,
@@ -44,6 +47,7 @@ def _parse_deadline(raw: str) -> datetime:
     if due.tzinfo is None:
         due = due.replace(tzinfo=system_local_now().tzinfo)
     return due
+
 
 TASK_STATUSES = ("pending", "in_progress", "blocked", "done", "failed", "cancelled")
 TERMINAL_STATUSES = ("done", "failed", "cancelled")
@@ -135,6 +139,61 @@ class Task:
 
 def _now() -> str:
     return system_local_now().isoformat()
+
+
+def _iso_key(raw: str) -> datetime | None:
+    """ISO 时间 → 可比较的 aware datetime；naive 按本机时区解释，解析失败返回 None.
+
+    账本由 ``system_local_now()`` 写入（带本机偏移），但目录是跨机器/跨容器共享的，
+    历史行可能带 ``+00:00``。直接对字符串取 max 或相减，在混合偏移下会算错。
+    """
+    try:
+        dt = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return dt
+
+
+def _latest_iso(values: Iterator[str] | Any) -> str:
+    """按**时刻**取最晚的原始字符串（保持原样输出，不改写账本格式）."""
+    best_raw = ""
+    best_dt: datetime | None = None
+    for raw in values:
+        if not raw:
+            continue
+        dt = _iso_key(str(raw))
+        if dt is None:
+            continue
+        if best_dt is None or dt > best_dt:
+            best_raw, best_dt = str(raw), dt
+    return best_raw
+
+
+def safe_goal_id(goal_id: str) -> str:
+    """goal_id → 文件名安全形态。
+
+    **claims 账本必须复用本函数**（T-1.7）：两处各自实现一次归一，任何一处改动都会
+    让 claim 落到与 task 不同的文件名上，claim 静默失效且看不出错。
+    """
+    return re.sub(r"[^A-Za-z0-9_-]", "_", goal_id)
+
+
+def write_holder() -> str | None:
+    """事件字段 ``holder`` 的取值：当前 run 的 session id，取不到就是 ``None``。
+
+    PR-0 没有 claim 层，holder 不是"谁持有 task"的权威，只是"这次写入来自哪个
+    run"的机械事实；用于将来算「deny 后 30s 内同 holder 写成功」的疑似误拒率。
+    后台线程/无 run context 的场景没有身份可言 —— 返回 None，不编造。
+    """
+    try:
+        from llm_loop.core.run_context import current_session_id
+
+        sid = str(current_session_id.get() or "")
+        return sid or None
+    except Exception:  # noqa: BLE001 - 观测字段缺失不能影响写路径
+        return None
 
 
 class TaskStore:
@@ -249,13 +308,22 @@ class TaskStore:
         done_when: list[str] | None = None,
         title: str | None = None,
         confirm: bool = False,
+        emit_event: bool = True,
     ) -> Task:
         """更新任务。转移合法性/evidence 校验/blocked reason/重开级联在此层强制.
+
+        ``emit_event=False`` 供 claim 层组合入口使用：此时由 ``task_claim`` 在
+        同一临界区写**真实**的 claim_decision（grant/renew/revoke/…），本层不再
+        补一条 passthrough，避免同一写产生两条互相矛盾的决策事件。
 
         done→非done 重开保留一个机械显式位 ``confirm``。程序不解析用户措辞，
         也不维护第二套授权 token；是否得到当前用户授权由模型依据 RULE-AI-23 判断。
         """
         with self._file_lock(goal_id):
+            # E-1 观测点（DESIGN-20261103 §6.6）：从取得写锁到落笔完成算一次
+            # 「校验+落笔临界区」耗时。PR-0 阶段没有 claim 层，这里的 latency 是
+            # replay + append 的实测值，不是 claim 校验耗时——不得混同。
+            _t0 = time.perf_counter()
             tasks = self._replay(goal_id)
             task = tasks.get(task_id)
             if task is None:
@@ -346,7 +414,67 @@ class TaskStore:
                     task.evidence_refs_digest = ""
             task.updated_at = _now()
             self._append(goal_id, task)
+            # 事件必须在账本落笔成功之后、锁释放之前写（不变量 2：不伪造）。
+            # claim 层组合入口传 emit_event=False：决策事件由 task_claim 写，
+            # 这里若再补 passthrough，同一写会有两条互相矛盾的决策。
+            if emit_event:
+                write_event(
+                    self._dir,
+                    "claim_decision",
+                    goal_id=goal_id,
+                    task_id=task_id,
+                    holder=write_holder(),
+                    decision="passthrough",
+                    reason_code=None,
+                    claim_generation=0,
+                    auto=False,
+                    ttl_s=0,
+                    expired=False,
+                    revoked=False,
+                    actor=None,
+                    latency_ms=round((time.perf_counter() - _t0) * 1000.0, 3),
+                )
             return task
+
+    # ---------- claim 组合入口（T-1.3，DESIGN-20261103 §6.1） ----------
+
+    def update_with_claim(
+        self,
+        goal_id: str,
+        task_id: str,
+        *,
+        claim_token: str | None = None,
+        status: str | None = None,
+        blocked_reason: str | None = None,
+        evidence_refs: list[str] | None = None,
+        acceptance: list[str] | None = None,
+        done_when: list[str] | None = None,
+        title: str | None = None,
+        confirm: bool = False,
+        authorized: bool = False,
+    ) -> tuple[Task, dict[str, Any]]:
+        """带 claim 校验的 update：**锁序 claims → tasks**，由 ``task_claim`` 持有外层锁。
+
+        放在这里而不是 tools 层，是为了让"校验 claim + 写 task"成为一个不可分割的
+        动作；而 ``task_claim`` 又要 import ``TaskStore``，故用函数内延迟 import
+        避免模块级循环依赖。
+        """
+        from .task_claim import ClaimStore
+
+        return ClaimStore(self._dir).update_task_under_claim(
+            self,
+            goal_id,
+            task_id,
+            token=claim_token,
+            status=status,
+            blocked_reason=blocked_reason,
+            evidence_refs=evidence_refs,
+            acceptance=acceptance,
+            done_when=done_when,
+            title=title,
+            confirm=confirm,
+            authorized=authorized,
+        )
 
     def _cascade_premise_stale(self, goal_id: str, tasks: dict[str, Task], reopened_id: str) -> None:
         """done 重开 → 传递闭包内已 done 下游标 premise_stale（提示性，§2.1）."""
@@ -371,8 +499,7 @@ class TaskStore:
     # ---------- 读路径 ----------
 
     def _path(self, goal_id: str) -> Path:
-        safe = re.sub(r"[^A-Za-z0-9_-]", "_", goal_id)
-        return self._tasks_dir / f"{safe}.jsonl"
+        return self._tasks_dir / f"{safe_goal_id(goal_id)}.jsonl"
 
     def _replay(self, goal_id: str) -> dict[str, Task]:
         """last-wins 重放；坏行跳过+告警（§6 crash 容错，诚实降级不阻断）."""
@@ -527,12 +654,10 @@ class TaskStore:
         tasks = self._replay(goal_id)
         by_id = tasks
         done_ids = {t.task_id for t in tasks.values() if t.status == "done"}
-        now_dt = None
-        if now_ts:
-            try:
-                now_dt = datetime.fromisoformat(now_ts)
-            except ValueError:
-                now_dt = None
+        # now_ts 可能不带偏移（调用方传朴素本地时间）：统一走 _iso_key 补本地时区，
+        # 否则与账本里带 +08:00 的 updated_at 相减会抛 TypeError（不是 ValueError，
+        # 原来的 except 抓不到，会把整个 frontier 构建打断）。
+        now_dt = _iso_key(now_ts) if now_ts else None
         ready, in_progress, blocked, completed, unreachable = [], [], [], [], []
         waiting_cross: list[dict] = []
         blocked_upstream: list[dict] = []
@@ -589,13 +714,11 @@ class TaskStore:
             elif t.status == "in_progress":
                 entry = {"task": t, "stalled": False}
                 if now_dt and t.updated_at:
-                    try:
-                        age = (now_dt - datetime.fromisoformat(t.updated_at)).total_seconds()
-                        entry["stalled"] = age > STALLED_AFTER_SECONDS
-                    except ValueError:
-                        # fail-open: updated_at 非法格式时不标 stalled（视为未知，
+                    task_dt = _iso_key(t.updated_at)
+                    if task_dt is not None:
+                        # fail-open: updated_at 非法/无法解析时不标 stalled（视为未知，
                         # 交由模型经 frontier 自行判断），不阻断 frontier 构建
-                        pass
+                        entry["stalled"] = (now_dt - task_dt).total_seconds() > STALLED_AFTER_SECONDS
                 in_progress.append(entry)
             elif t.status == "blocked":
                 blocked.append(t)
@@ -645,6 +768,13 @@ class TaskStore:
                 if t.status in ("pending", "in_progress", "blocked")
             ),
             "total": len(tasks),
+            # 纯增量字段: 最近一次任务写入时间，供协调视图算 activity_at（N1-A8）。
+            # 为空表示该 goal 无任务或任务均无 updated_at，调用方必须回落到 goal.updated_at。
+            # 必须按解析后的时刻比较：账本是跨机器共享的，历史行可能带 +08:00 或 +00:00，
+            # 字符串 max() 在混合偏移下选出的不一定是"最晚"（P2-5）。
+            "last_activity": _latest_iso(
+                t.updated_at for t in tasks.values() if t.updated_at
+            ),
         }
 
     def goal_completion_ready(self, goal_id: str) -> tuple[bool, str]:

@@ -14,6 +14,13 @@ from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.goal import GoalStore, GoalStoreCorruptionError
+from llm_loop.introspection.task_claim import (
+    ClaimError,
+    ClaimRefusedError,
+    ClaimStore,
+    now_ms,
+    overlapping_paths,
+)
 from llm_loop.introspection.task_evidence import TaskEvidenceVerificationError
 from llm_loop.introspection.task_store import TASK_LIMIT_PER_GOAL, TaskStore
 
@@ -89,6 +96,15 @@ TASK_UPDATE_TOOL_DEF: dict = {
         "properties": {
             "goal_id": {"type": "string", "description": "所属目标 id（必填）"},
             "task_id": {"type": "string", "description": "任务 id（必填）"},
+            "claim_token": {
+                "type": "string",
+                "description": (
+                    "claim 令牌（claim_task/renew_task 回执的 token，形如 CLM-xxxx#3）。"
+                    "传了就必须完全对得上（含 generation），否则拒绝——这是过期 holder 的"
+                    "迟到写入被挡住的地方。不传=兼容旧调用（warn 模式照常写入，冲突时回执"
+                    "给 claim_conflict_warning；pending→in_progress 会自动签发 claim）。"
+                ),
+            },
             "status": {
                 "type": "string",
                 "enum": ["pending", "in_progress", "blocked", "done", "failed", "cancelled"],
@@ -225,9 +241,10 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     try:
         verifier = getattr(getattr(host, "ctx", None), "task_evidence_verifier", None)
         store = TaskStore(audit, evidence_verifier=verifier)
-        task = store.update(
+        task, claim_notes = store.update_with_claim(
             goal_id,
             task_id,
+            claim_token=(str(args["claim_token"]) if args.get("claim_token") else None),
             status=(target if target else None),
             blocked_reason=(str(args["blocked_reason"]) if args.get("blocked_reason") else None),
             evidence_refs=([str(r) for r in args["evidence_refs"]] if args.get("evidence_refs") is not None else None),
@@ -235,6 +252,9 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
             done_when=([str(w) for w in args["done_when"]] if args.get("done_when") is not None else None),
             title=(str(args["title"]) if args.get("title") else None),
             confirm=bool(args.get("confirm", False)),
+            # 归属门已由上面的 _require_active_goal（resolve_write_permission）通过，
+            # 这里显式传给 claim 组合入口，避免它依赖"调用方隐式已校验"的顺序事实。
+            authorized=True,
         )
     except TaskEvidenceVerificationError as exc:
         return ToolResult(
@@ -243,9 +263,34 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
             "",
             name,
         )
+    except ClaimError as exc:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[claim 拒绝] reason_code={exc.code} | {exc.message}",
+            "",
+            name,
+        )
     except ValueError as exc:
         return ToolResult(ToolResultStatus.FAILURE, f"[拒绝] {exc}", "", name)
     extra = []
+    if claim_notes.get("auto_claimed"):
+        extra.append(
+            f"claim: 自动签发 → {claim_notes['auto_claimed']}"
+            "（pending→in_progress 由程序隐式 claim，后续写入请带该 token）"
+        )
+    if claim_notes.get("claim_renewed"):
+        extra.append("claim: 已随本次写入续租")
+    if claim_notes.get("claim_expired_renewed"):
+        extra.append("claim: 已过期但无人接管 → 本次写入放行并顺带续期（软过期）")
+    if claim_notes.get("revoked_claim_id"):
+        extra.append(f"claim: 重开前已撤销旧 claim {claim_notes['revoked_claim_id']}")
+    if claim_notes.get("claim_unavailable"):
+        extra.append("claim: 当前无 run 身份，未签发/校验 fencing（本次写入未受保护）")
+    if claim_notes.get("claim_conflict_warning"):
+        extra.append(
+            f"⚠ claim_conflict_warning: 任务由 {claim_notes['claim_conflict_warning']} 持有，"
+            "本次写入未被 fencing 保护（warn 模式；PR-2 才硬拒）"
+        )
     if task.status == "done" and task.acceptance:
         extra.append(f"acceptance: {'; '.join(task.acceptance)[:150]}")
     if task.acceptance_revised:
@@ -328,4 +373,178 @@ def _current_sid(ctx: Any) -> str:
         return ""
 
 
-TASK_TOOL_DEFS: list[dict] = [TASK_CREATE_TOOL_DEF, TASK_UPDATE_TOOL_DEF, TASK_FRONTIER_TOOL_DEF]
+CLAIM_TOOL_DEF: dict = {
+    "name": "claim_task",
+    "description": (
+        "领取任务执行权（claim 层，DESIGN-20261103 §6.1）。何时用: 准备长时间推进某任务、"
+        "或与其它 run 可能同时改同一任务时——先 claim 拿到 fencing token，再用该 token 写"
+        "task_update，过期 holder 的迟到写入才会被挡住。何时不用: 单会话短任务（task_update "
+        "会自动隐式 claim）；只读查询不需要。失败对策: task_claimed_by_other→等过期或用"
+        "release_task 协调；claim_quota_exceeded→先释放不用的 claim；"
+        "task_not_claimable→done/failed 任务先重开。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "goal_id": {"type": "string", "description": "目标 id（必填）"},
+            "task_id": {"type": "string", "description": "任务 id（必填）"},
+            "ttl_s": {
+                "type": "integer",
+                "description": "租约秒数（缺省 1800，clamp 到 [60, 28800]）。租约到期不是失败，是允许别人接管。",
+            },
+            "unbounded": {
+                "type": "boolean",
+                "description": "无期限 claim。需要 LFL_CLAIM_ALLOW_UNBOUNDED 授权，否则拒绝（默认 False）。",
+            },
+            "expected_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "预计改动的路径（用于与其它活跃 claim 交叉提示；只警告不拒绝）。",
+            },
+        },
+        "required": ["goal_id", "task_id"],
+    },
+}
+
+CLAIM_RENEW_TOOL_DEF: dict = {
+    "name": "renew_task",
+    "description": (
+        "续租 claim（fencing 令牌不变，generation 不换）。何时用: 长任务执行中，租约将到期"
+        "但还需要继续写。带 token 的 task_update 也会顺手续租。失败对策: claim_expired→"
+        "重新 claim_task（generation 会 +1，旧 token 作废）。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "goal_id": {"type": "string"},
+            "task_id": {"type": "string"},
+            "claim_token": {"type": "string", "description": "当前 token（形如 CLM-xxxx#3）"},
+            "ttl_s": {"type": "integer", "description": "新的租约秒数（缺省沿用策略默认值）"},
+        },
+        "required": ["goal_id", "task_id", "claim_token"],
+    },
+}
+
+CLAIM_RELEASE_TOOL_DEF: dict = {
+    "name": "release_task",
+    "description": (
+        "释放 claim（显式让出执行权）。何时用: 任务做完/放弃，让别人能立刻接管而不必等过期。"
+        "何时不用: 只是暂停、稍后继续 → 用 renew_task 续租即可。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "goal_id": {"type": "string"},
+            "task_id": {"type": "string"},
+            "claim_token": {"type": "string", "description": "可选；给了就校验归属与 generation"},
+        },
+        "required": ["goal_id", "task_id"],
+    },
+}
+
+
+def _render_claim(claim: Any, *, header: str, extra: list[str]) -> str:
+    r = claim.receipt(now_ms())
+    lines = [header]
+    lines.append(f"  token={r['token']}  holder={r['holder']}  generation={r['generation']}")
+    lines.append(
+        f"  expires_at={r['expires_at']}" + ("  unbounded=true" if r["unbounded"] else f"  ttl_remaining={r['ttl_remaining_s']}s")
+    )
+    if r.get("renewed_after_expiry"):
+        lines.append("  renewed_after_expiry=true（过期但未被接管的续期）")
+    if r["expected_paths"]:
+        lines.append(f"  expected_paths={r['expected_paths']}")
+    lines.append("  后续 task_update 请带 claim_token=<token>，否则写入不受 fencing 保护（warn 模式）")
+    lines.extend(extra)
+    return "\n".join(lines)
+
+
+def run_claim_task(ctx: Any, host: Any, args: dict) -> ToolResult:
+    name = "claim_task"
+    goal_id = str(args.get("goal_id", "") or "").strip()
+    task_id = str(args.get("task_id", "") or "").strip()
+    if not goal_id or not task_id:
+        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] goal_id 与 task_id 均必填", "", name)
+    audit, err, _note = _require_active_goal(ctx, host, goal_id)
+    if err:
+        return ToolResult(ToolResultStatus.FAILURE, err, "", name)
+    assert audit is not None
+    store = TaskStore(audit)
+    claims = ClaimStore(audit)
+    try:
+        claim = claims.grant(
+            goal_id,
+            task_id,
+            ttl_s=args.get("ttl_s"),
+            expected_paths=[str(p) for p in (args.get("expected_paths") or [])],
+            unbounded=bool(args.get("unbounded", False)),
+            store=store,
+        )
+    except ClaimRefusedError as exc:
+        return ToolResult(ToolResultStatus.FAILURE, f"[claim 拒绝] reason_code={exc.code} | {exc.message}", "", name)
+    except ClaimError as exc:
+        return ToolResult(ToolResultStatus.FAILURE, f"[claim 不可用] reason_code={exc.code} | {exc.message}", "", name)
+    extra = []
+    other = [c for c in claims.active_claims(goal_id) if c.task_id != task_id]
+    hits = []
+    for c in other:
+        for left, right in overlapping_paths(claim.expected_paths, c.expected_paths):
+            hits.append(f"{left} ~ {right} ({c.task_id})")
+    if hits:
+        extra.append(f"  ⚠ 路径可能交叉: {hits[:3]}（只提示，不拒绝）")
+    return ToolResult(ToolResultStatus.SUCCESS, _render_claim(claim, header=f"[claim 成功] {goal_id}/{task_id}", extra=extra), "", name)
+
+
+def run_renew_task(ctx: Any, host: Any, args: dict) -> ToolResult:
+    name = "renew_task"
+    goal_id = str(args.get("goal_id", "") or "").strip()
+    task_id = str(args.get("task_id", "") or "").strip()
+    token = str(args.get("claim_token", "") or "").strip()
+    if not goal_id or not task_id or not token:
+        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] goal_id/task_id/claim_token 均必填", "", name)
+    audit, err, _note = _require_active_goal(ctx, host, goal_id)
+    if err:
+        return ToolResult(ToolResultStatus.FAILURE, err, "", name)
+    assert audit is not None
+    try:
+        claim = ClaimStore(audit).renew(goal_id, task_id, token=token, ttl_s=args.get("ttl_s"))
+    except ClaimError as exc:
+        return ToolResult(ToolResultStatus.FAILURE, f"[claim 拒绝] reason_code={exc.code} | {exc.message}", "", name)
+    return ToolResult(
+        ToolResultStatus.SUCCESS, _render_claim(claim, header=f"[claim 续租] {goal_id}/{task_id}", extra=[]), "", name
+    )
+
+
+def run_release_task(ctx: Any, host: Any, args: dict) -> ToolResult:
+    name = "release_task"
+    goal_id = str(args.get("goal_id", "") or "").strip()
+    task_id = str(args.get("task_id", "") or "").strip()
+    if not goal_id or not task_id:
+        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] goal_id 与 task_id 均必填", "", name)
+    audit, err, _note = _require_active_goal(ctx, host, goal_id)
+    if err:
+        return ToolResult(ToolResultStatus.FAILURE, err, "", name)
+    assert audit is not None
+    token = str(args.get("claim_token", "") or "").strip() or None
+    try:
+        released = ClaimStore(audit).release(goal_id, task_id, token=token)
+    except ClaimError as exc:
+        return ToolResult(ToolResultStatus.FAILURE, f"[claim 拒绝] reason_code={exc.code} | {exc.message}", "", name)
+    if not released:
+        return ToolResult(
+            ToolResultStatus.SUCCESS,
+            f"[无活跃 claim] {goal_id}/{task_id}（已过期或从未 claim，无需释放）",
+            "",
+            name,
+        )
+    return ToolResult(ToolResultStatus.SUCCESS, f"[claim 已释放] {goal_id}/{task_id}", "", name)
+
+
+TASK_TOOL_DEFS: list[dict] = [
+    TASK_CREATE_TOOL_DEF,
+    TASK_UPDATE_TOOL_DEF,
+    TASK_FRONTIER_TOOL_DEF,
+    CLAIM_TOOL_DEF,
+    CLAIM_RENEW_TOOL_DEF,
+    CLAIM_RELEASE_TOOL_DEF,
+]

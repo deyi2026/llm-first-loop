@@ -1,0 +1,37 @@
+{
+  "audit_dir": "data/audit",
+  "events": {
+    "total": 0,
+    "claim_decision": 0,
+    "fanout_decision": 0,
+    "bad_lines": 0
+  },
+  "claim": {
+    "by_decision": {},
+    "by_reason_code": {},
+    "grant_rate": null,
+    "renew_rate": null,
+    "revoke_count": 0,
+    "auto_claim_share": null,
+    "unprotected_write_share": null,
+    "conflict_count": 0,
+    "conflict_rate_of_unprotected": null,
+    "latency_ms_median": null
+  },
+  "fanout": {
+    "by_decision": {},
+    "by_reason_code": {},
+    "deny_rate": null,
+    "parent_concurrency_deny_rate": null
+  },
+  "claim_ledger": {
+    "files": 0,
+    "rows": 0,
+    "bad_rows": 0
+  },
+  "since": "2026-10-27T21:08:02+08:00",
+  "degraded": false,
+  "notes": [
+    "没有决策事件：分母为空，所有比率为 null（不代表 0）"
+  ]
+}

@@ -11,6 +11,7 @@ import contextvars
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import uuid
@@ -48,6 +49,7 @@ from llm_loop.core.subagent_topology import SubAgentTopologyJournal, SubAgentTop
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.fleet.coordinator import ProjectCoordinator
 from llm_loop.fleet.store import WorkerLease
+from llm_loop.introspection.claims.events import write_event
 from llm_loop.llm.client import LLMClient
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
@@ -281,6 +283,60 @@ def child_spawn_grant_allowed() -> bool:
     return bool(parent_sid) and parent_sid in entries
 
 
+def _resolve_max_running_children() -> int:
+    """读 per-parent 上限：显式环境变量优先，clamp 到 1..32，非法值回落 16."""
+    raw = os.environ.get("LFL_MAX_RUNNING_CHILDREN", "").strip()
+    default = 16
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(1, min(value, 32))
+
+
+@dataclass(frozen=True, slots=True)
+class _ReserveDenied:
+    """spawn 被容量闸拒绝的机械事实（原因码 + 当前计数 + 上限 + 出口）.
+
+    Q30 要求回执带「当前计数 + 出口」，所以拒绝不能只是 ``return None``——
+    那会让模型无从判断该等、该 kill，还是该调配置。
+    """
+
+    reason_code: str
+    count: int
+    limit: int
+
+    def message(self) -> str:
+        if self.reason_code == "parent_concurrency":
+            return (
+                f"subagent_parent_concurrency: 同一 parent 的 running 子代理 {self.count} "
+                f"已达上限 {self.limit}（出口: 等现有子代理结束 / kill 不需要的 / "
+                f"调大 LFL_MAX_RUNNING_CHILDREN 1..32）"
+            )
+        return (
+            f"subagent_handle_capacity: 后台子代理资源已达硬上限（{self.count}/{self.limit}，"
+            "reason_code=handle_capacity；出口: 等现有子代理结束 / kill 不需要的）"
+        )
+
+
+def _fanout_observation(
+    deny: _ReserveDenied | None, running_before: int, max_handles: int
+) -> tuple[int, int]:
+    """``fanout_decision`` 事件里的 ``(running_before, limit)`` 必须**同口径**（Q30）.
+
+    deny 时一律用 ``deny`` 自己的读数与上限：``parent_concurrency`` 的 count 是
+    该 parent 的 running 子代理数、limit 是 ``LFL_MAX_RUNNING_CHILDREN``；
+    ``handle_capacity`` 的 count/limit 是全局 handle 数。此前 parent_concurrency 分支
+    把全局 handle 数当 running_before、却配 per-parent 上限，读数无法解释，
+    且 ``deny.count`` 从未落到事件里。
+    """
+    if deny is not None:
+        return deny.count, deny.limit
+    return running_before, max_handles
+
+
 class SubAgentRunner:
     """子代理执行器：独立会话 + 迷你循环 + 受限工具 + 预算/深度边界."""
 
@@ -351,6 +407,9 @@ class SubAgentRunner:
         # P3: parent session alone is insufficient across sequential runs of the same session.
         self._parent_run_generation_by_child: dict[str, str] = {}
         self._max_handles = 128
+        # per-parent 成本闸（DESIGN-20261103 §6.5/N4）：全局 128 保护进程，这一道保护
+        # 单会话的 fanout 成本。默认 16，clamp 1..32；锁内判定（见 _reserve_background_child）。
+        self._max_running_children = _resolve_max_running_children()
         self._durable_topology: OrderedDict[str, SubAgentTopologyState] = OrderedDict()
         self._local_generation_by_child: dict[str, str] = {}
         self._cancel_events: dict[str, threading.Event] = {}
@@ -637,6 +696,21 @@ class SubAgentRunner:
         """返回某父会话当前仍在运行的直接 child（稳定排序，仅事实查询）."""
         with self._children_guard:
             return sorted(self._children_by_parent.get(parent_session_id, set()))
+
+    def all_active_children(self) -> list[_SubAgentHandle]:
+        """返回本进程内所有仍在运行的 child handle（只读快照，按 child_id 稳定排序）.
+
+        在飞判据只能是 ``handle.state == "running"``（DESIGN-20261103 Q39(a)）：
+        ``_children_by_parent`` 是「已登记」而非「在飞」——child 进入终态与集合
+        清理之间仍有窗口，集合成员资格不能当在飞判据。
+
+        边界（§10-R4）: 只含本进程内存态的 child；跨进程/跨 tab 的 child 不在本
+        视图内，调用方不得把本返回值当成全量「谁在跑」的证据。
+        """
+        with self._children_guard:
+            return [
+                handle for _, handle in sorted(self._handles.items()) if handle.state == "running"
+            ]
 
     def pending_obligations(
         self, parent_session_id: str, *, run_generation: str = ""
@@ -1313,8 +1387,7 @@ class SubAgentRunner:
                     except BaseException as exc:  # noqa: BLE001 - persist exact failure then preserve API
                         failed = SubAgentResult(
                             final_answer=(
-                                f"[状态: failure] 子代理后台执行异常: "
-                                f"{type(exc).__name__}: {exc}"
+                                f"[状态: failure] 子代理后台执行异常: {type(exc).__name__}: {exc}"
                             ),
                             outcome="failed",
                             depth=depth,
@@ -1351,9 +1424,17 @@ class SubAgentRunner:
             _CURRENT_SUBAGENT_DEPTH.reset(_depth_tok)
             current_session_id.set(old_ctx_sid)
 
+    def _audit_dir(self) -> Path:
+        """审计根 ``<data>/audit``：与 ``ToolExecutionJournal`` 的 journal 根同父。
+
+        即 session 根（``<data>/sessions``）的父目录 + ``audit``。不缓存：一次
+        pathlib 拼接的成本远低于把它做成状态后失配的风险。
+        """
+        return Path(str(self.session_store.root)).parent / "audit"
+
     def _reserve_background_child(
         self, parent_sid: str, depth: int
-    ) -> tuple[str, threading.Event, Session, _SubAgentHandle] | None:
+    ) -> tuple[str, threading.Event, Session, _SubAgentHandle] | _ReserveDenied:
         """原子保留一个 background handle 槽位；容量只约束并发资源，不判断任务。"""
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
         generation = uuid.uuid4().hex
@@ -1367,20 +1448,58 @@ class SubAgentRunner:
             depth=depth,
             generation=generation,
         )
+        # E-2 观测点（DESIGN-20261103 §6.6）：字段在 _children_guard 内采集——那就是
+        # 决策临界区；append 放到锁外同一函数帧内，避免在热锁上做文件 I/O（锁被
+        # active_children/topology 等查询共用）。观测不参与决策，顺序仅需"不伪造"。
+        #
+        # 三道闸都在同一临界区内判定（Q30）：global → per-parent。per-parent 计数
+        # 若放在锁外读，就是"读-改-写"竞态，并发 spawn 会突破上限（N4 要修的正是这个）。
+        deny: _ReserveDenied | None = None
+        running_before = 0
         with self._children_guard:
             self._prune_handles_locked(reserve_slot=True)
-            if len(self._handles) >= self._max_handles:
-                return None
-            if parent_sid:
-                self._children_by_parent.setdefault(parent_sid, set()).add(sid)
-                self._parent_by_child[sid] = parent_sid
-                self._parent_run_generation_by_child[sid] = parent_run_generation
-            self._local_generation_by_child[sid] = generation
-            self._cancel_events[sid] = cancel_event
-            self._agent_inbox[sid] = []
-            self._messages_to_parent[sid] = []
-            self._handles[sid] = handle
-            self._handle_order.append(sid)
+            running_before = len(self._handles)
+            if running_before >= self._max_handles:
+                deny = _ReserveDenied("handle_capacity", running_before, self._max_handles)
+            else:
+                # 在飞判据只能是 handle.state=="running"（Q39(a)/E7）：
+                # _children_by_parent 是「已登记」，child 进终态到集合清理之间仍有窗口，
+                # 用集合长度会把刚结束的 child 算成还在跑，闸门偏严且读数不可解释。
+                parent_running = (
+                    sum(
+                        1
+                        for h in self._handles.values()
+                        if h.state == "running" and h.parent_id == parent_sid
+                    )
+                    if parent_sid
+                    else 0
+                )
+                if parent_sid and parent_running >= self._max_running_children:
+                    deny = _ReserveDenied("parent_concurrency", parent_running, self._max_running_children)
+                else:
+                    if parent_sid:
+                        self._children_by_parent.setdefault(parent_sid, set()).add(sid)
+                        self._parent_by_child[sid] = parent_sid
+                        self._parent_run_generation_by_child[sid] = parent_run_generation
+                    self._local_generation_by_child[sid] = generation
+                    self._cancel_events[sid] = cancel_event
+                    self._agent_inbox[sid] = []
+                    self._messages_to_parent[sid] = []
+                    self._handles[sid] = handle
+                    self._handle_order.append(sid)
+        observed, observed_limit = _fanout_observation(deny, running_before, self._max_handles)
+        write_event(
+            self._audit_dir(),
+            "fanout_decision",
+            parent=parent_sid or None,
+            decision="deny" if deny is not None else "allow",
+            reason_code=deny.reason_code if deny is not None else None,
+            running_before=observed,
+            limit=observed_limit,
+            depth=depth,
+        )
+        if deny is not None:
+            return deny
         sess = self.session_store.load(sid)
         if parent_sid and parent_sid != sid:
             sess.parent_id = parent_sid
@@ -1482,8 +1601,7 @@ class SubAgentRunner:
             )
         except Exception as exc:  # noqa: BLE001 — 求交面异常时 fail-closed，不让 child 带未定义 scope 启动
             return None, (
-                f"write_scope 求交异常（fail-closed 拒绝启动）: "
-                f"{type(exc).__name__}: {exc}"
+                f"write_scope 求交异常（fail-closed 拒绝启动）: {type(exc).__name__}: {exc}"
             )
         return effective, refusal_detail
 
@@ -1561,10 +1679,7 @@ class SubAgentRunner:
             self._result_from_payload(durable_result.payload)
             if durable_result is not None
             else SubAgentResult(
-                final_answer=(
-                    f"[状态: failure] 子代理后台执行异常: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
+                final_answer=(f"[状态: failure] 子代理后台执行异常: {type(exc).__name__}: {exc}"),
                 outcome="failed",
                 depth=depth,
             )
@@ -1648,11 +1763,18 @@ class SubAgentRunner:
             parent_budget is not None
             and parent_budget._get_validated()["grant"]["profile"] == canary_profile.PROFILE
         )
-        if is_canary and parent_budget is not None and (
-            depth != 0 or inherit or fs_isolation or required_tools != []
-            or child_model_label != canary_profile.MODEL_REF
-            or parent_budget.member.member_id != parent_budget.budget_id
-            or parent_budget.member.session_id != parent_sid
+        if (
+            is_canary
+            and parent_budget is not None
+            and (
+                depth != 0
+                or inherit
+                or fs_isolation
+                or required_tools != []
+                or child_model_label != canary_profile.MODEL_REF
+                or parent_budget.member.member_id != parent_budget.budget_id
+                or parent_budget.member.session_id != parent_sid
+            )
         ):
             return self._start_failure_result(depth, "subagent_canary_child_scope_denied")
         if is_canary:
@@ -1666,8 +1788,8 @@ class SubAgentRunner:
         if inherit:
             context = self._inherit_parent_context(context)
         reserved = self._reserve_background_child(parent_sid, depth)
-        if reserved is None:
-            return self._start_failure_result(depth, f"后台子代理资源已达硬上限（{self._max_handles}）")
+        if isinstance(reserved, _ReserveDenied):
+            return self._start_failure_result(depth, reserved.message())
         sid, cancel_event, sess, handle = reserved
         child_budget = None
         if is_canary:
@@ -2459,7 +2581,6 @@ class SubAgentRunner:
                 f"[状态: failure] 递归深度超限（已达上限 {self.max_depth}），"
                 f"请在父级整合结果，勿继续拆分。",
             )
-
 
         requested_model = str(model or "").strip()
         inherited_model = (
@@ -3438,7 +3559,6 @@ class SubAgentRunner:
                             # CAS；其 effect 权威由 R1 fleet lease fence 承担。
                             generation_token = current_run_generation.set("")
                             try:
-
                                 with self._tool_journal.effect_context(
                                     session_id=sess.session_id,
                                     execution_id=execution_id,
@@ -3454,8 +3574,7 @@ class SubAgentRunner:
                             result = ToolResult(
                                 status=ToolResultStatus.ERROR,
                                 content=(
-                                    "[状态: error] 子代理工具执行异常: "
-                                    f"{type(exc).__name__}: {exc}"
+                                    f"[状态: error] 子代理工具执行异常: {type(exc).__name__}: {exc}"
                                 ),
                                 tool_call_id=call.id,
                                 tool_name=call.name,
@@ -3510,9 +3629,8 @@ class SubAgentRunner:
 
         # 所有轮次均在 provider/LLM 层失败时属于 failed，不冒充“执行过但截断”。
         if llm_error_count == rounds and not tool_trace:
-            answer = (
-                "[状态: failure] 子代理 LLM 连续调用失败，未获得可执行动作或最终回答。"
-                + (f" last_error={last_llm_error}" if last_llm_error else "")
+            answer = "[状态: failure] 子代理 LLM 连续调用失败，未获得可执行动作或最终回答。" + (
+                f" last_error={last_llm_error}" if last_llm_error else ""
             )
             with suppress(Exception):
                 self.session_store.save(sess)
