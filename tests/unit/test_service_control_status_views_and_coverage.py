@@ -74,6 +74,10 @@ def _identity_stub():
             }
         },
         "evidence_refs": {"web": {"action_id": "svc-x", "reason_ref": "ref"}},
+        "restart_all_coverage": {
+            "physical_batch": ["web", "feishu", "learning"],
+            "uncovered_services": ["wecom"],
+        },
         "audit_signals": {
             "generation_lag": lag,
             "orphan_barrier": [],
@@ -201,6 +205,48 @@ def test_stage_facts_leaves_uncovered_failure_visible():
     view = sc._stage_facts_view({"wecom": failed}, [failed, older, older_generation])
     assert view["wecom"]["covered"] is False
     assert view["wecom"]["covered_by"] is None
+
+
+def test_stage_facts_marks_uncovered_by_all_as_skipped_by_design():
+    """EVO-20261103-4fbe523a：all 记账行对不在物理执行面的服务标 skipped_by_design.
+
+    gen375/376 实证：restart all succeeded 后 stage_facts.wecom.status=succeeded
+    被读成"wecom 已物理重启"，实际 wecom 静默停在旧代。status 是整单记账口径，
+    物理执行面只有 _RESTART_ALL_BATCH（web/feishu/learning，企微单长连接保护）。
+    """
+    all_receipt = _action(
+        action_id="svc-all-1",
+        target="all",
+        status="succeeded",
+        updated_at="2026-11-03T00:15:03+08:00",
+    )
+    view = sc._stage_facts_view(
+        {"web": all_receipt, "wecom": all_receipt}, [all_receipt]
+    )
+    assert view["wecom"]["skipped_by_design"] is True
+    assert "skipped_by_design" not in view["web"]
+    # 直接 restart wecom 的条目不受影响（waiting 阶段也不该误标）
+    wecom_only = _action(
+        action_id="svc-wecom-1",
+        target="wecom",
+        status="waiting_for_requester_exit",
+        updated_at="2026-11-03T00:20:00+08:00",
+    )
+    view2 = sc._stage_facts_view({"wecom": wecom_only}, [all_receipt, wecom_only])
+    assert "skipped_by_design" not in view2["wecom"]
+
+
+def test_status_views_expose_restart_all_coverage(stub_identity):
+    """EVO-20261103-4fbe523a：targets/full 视图透传 all 物理覆盖缺口，收窄不丢."""
+    store = object()
+    default = svc_tool._compose_status_body(store)
+    cov = default["restart_all_coverage"]
+    assert cov["physical_batch"] == ["web", "feishu", "learning"]
+    assert cov["uncovered_services"] == ["wecom"]
+    full = svc_tool._compose_status_body(store, "", "full")
+    assert full["restart_all_coverage"] == cov
+    narrowed = svc_tool._compose_status_body(store, "wecom")
+    assert narrowed["restart_all_coverage"]["uncovered_services"] == ["wecom"]
 
 
 def _manifest_started_before(began):

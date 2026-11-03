@@ -209,6 +209,8 @@ def _full_status_body(identity: dict) -> dict[str, object]:
         "idle_state": identity.get("idle_state", {}),
         "stage_facts": identity.get("stage_facts", {}),
         "evidence_refs": identity.get("evidence_refs", {}),
+        # EVO-20261103-4fbe523a：all 物理覆盖缺口显式化（uncovered 服务需单独 restart）
+        "restart_all_coverage": identity.get("restart_all_coverage", {}),
         "audit_signals": identity.get("audit_signals", {}),
     }
 
@@ -279,6 +281,7 @@ def _targets_status_body(identity: dict) -> dict[str, object]:
         "services": services,
         "admission_barriers": identity.get("admission_barriers", []),
         "stage_facts": identity.get("stage_facts", {}),
+        "restart_all_coverage": identity.get("restart_all_coverage", {}),
         "audit_summary": {
             "generation_lag": audit.get("generation_lag", []),
             "orphan_barrier": audit.get("orphan_barrier"),

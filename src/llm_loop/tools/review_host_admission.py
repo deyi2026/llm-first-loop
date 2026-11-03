@@ -3371,22 +3371,11 @@ class HostReviewAdmission:
             child = str(spawned["child_id"])
             if child in self._records:
                 return {"accepted": False, "reason": "review_child_id_reused"}
-            now = time.time()
-            self._records[child] = _Frozen(
-                kind, parent, target, sha, child_id=child, created_at=now,
-                scope=scope_receipt["effective"], scope_paths=scope_paths,
-                out_scope_digest=out_scope,
-                bound_unreviewed_tracked=(tier_counts or (0, 0))[0],
-                bound_unreviewed_untracked=(tier_counts or (0, 0))[1],
-                deadline_at=now + review_deadline,
-                estimated_s=_review_estimate_seconds(len(task)),
-                reviewer_model=_REVIEWER_MODELS[0],
-                previous_sha=(previous_row.sha if previous_row is not None else ""),
-                previous_child_id=(
-                    previous_row.child_id if previous_row is not None else ""
-                ),
-                content_fingerprint=push_extra.get("content_fingerprint", ""),
-                approved_head=str(push_extra.get("src_commit") or ""),
+            self._records[child] = self._freeze_record(
+                kind, parent, target, sha, child, scope_receipt=scope_receipt,
+                scope_paths=scope_paths, out_scope=out_scope, tier_counts=tier_counts,
+                review_deadline=review_deadline, previous_row=previous_row,
+                push_extra=push_extra, task_chars=task_chars,
             )
             self._remember_material(child, task, material)
         return self._attach_prior_attempts(
@@ -3398,6 +3387,34 @@ class HostReviewAdmission:
                 push_extra=push_extra,
             ),
             parent, kind, sha, target,
+        )
+
+    def _freeze_record(
+        self, kind: str, parent: str, target: str, sha: str, child: str, *,
+        scope_receipt: dict[str, Any], scope_paths: tuple[str, ...], out_scope: str,
+        tier_counts: tuple[int, int] | None, review_deadline: float,
+        previous_row: _Frozen | None, push_extra: dict[str, str], task_chars: int,
+    ) -> _Frozen:
+        """构造 admission 冻结记录（2026-11-03 自 ``start`` 抽出，行为不变）。
+
+        ``now`` 在方法内取一次，同时决定 ``created_at`` 与 ``deadline_at``，
+        保持"登记时刻"单一口径。
+        """
+        now = time.time()
+        tracked, untracked = tier_counts or (0, 0)
+        return _Frozen(
+            kind, parent, target, sha, child_id=child, created_at=now,
+            scope=scope_receipt["effective"], scope_paths=scope_paths,
+            out_scope_digest=out_scope,
+            bound_unreviewed_tracked=tracked,
+            bound_unreviewed_untracked=untracked,
+            deadline_at=now + review_deadline,
+            estimated_s=_review_estimate_seconds(task_chars),
+            reviewer_model=_REVIEWER_MODELS[0],
+            previous_sha=previous_row.sha if previous_row is not None else "",
+            previous_child_id=previous_row.child_id if previous_row is not None else "",
+            content_fingerprint=push_extra.get("content_fingerprint", ""),
+            approved_head=str(push_extra.get("src_commit") or ""),
         )
 
     def _start_receipt(

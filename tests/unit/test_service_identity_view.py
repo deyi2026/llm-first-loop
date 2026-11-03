@@ -631,6 +631,20 @@ def test_convergence_view_no_receipt_marks_all_lagging(tmp_path: Path) -> None:
     assert all(svc["stable_generation"] is None for svc in view["services"].values())
 
 
+def test_identity_view_exposes_restart_all_coverage(tmp_path: Path) -> None:
+    """EVO-20261103-4fbe523a：identity（经 lifecycle 展开合入）暴露 all 物理覆盖缺口.
+
+    gen375/376 实证：restart all succeeded 回执不提 wecom，读者以为四服务全收敛，
+    实际 wecom 静默落后一代。覆盖缺口是静态设计事实（企微单长连接保护），
+    与是否有动作在飞无关，任何时刻读 identity 都应能看到。
+    """
+    store = _green_store(tmp_path)
+    view = compose_service_identity_view(store)
+    cov = view["restart_all_coverage"]
+    assert cov["physical_batch"] == ["web", "feishu", "learning"]
+    assert cov["uncovered_services"] == ["wecom"]
+
+
 def _receipt(generation: int, *, verdict: str = "", evidence: str = "") -> ServiceControlAction:
     ts = "2026-11-02T03:00:00+00:00"
     return ServiceControlAction(

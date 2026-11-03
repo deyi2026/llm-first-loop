@@ -1776,6 +1776,11 @@ def _stage_facts_view(
             "status": action.status,
             "stage_fact": action.stage_fact,
         }
+        # EVO-20261103-4fbe523a：all 记账行的 status 是整单口径，不代表该服务物理
+        # 重启事实——gen375/376 连续两代 restart all succeeded 后 wecom 静默停旧代，
+        # 裸 succeeded 让读者误判收敛。all 的物理执行面 = _RESTART_ALL_BATCH。
+        if action.target == "all" and service not in _RESTART_ALL_BATCH:
+            entry["skipped_by_design"] = True
         if action.status == "failed":
             cover = _covering_success_action(
                 actions,
@@ -1879,6 +1884,28 @@ def _in_flight_signal(
     return rows[:_IN_FLIGHT_LIMIT]
 
 
+def _restart_all_coverage_view() -> dict[str, Any]:
+    """all 物理覆盖缺口（静态设计事实，EVO-20261103-4fbe523a）。
+
+    企微单机器人单长连接保护（见 scripts/restart_mirror.sh all 分支注释），
+    与是否有动作在飞无关——任何时刻读 identity 都应能看到 uncovered 名单，
+    而非等收敛缺口发生后从 lagging 里反推（gen375/376 连续两代静默落后）。
+    """
+    return {
+        "physical_batch": list(_RESTART_ALL_BATCH),
+        "uncovered_services": [
+            s for s in _MANAGED_SERVICES if s not in _RESTART_ALL_BATCH
+        ],
+        "note": (
+            "restart target=all 的物理执行面仅 physical_batch；uncovered_services"
+            " 的 stage_facts 行是整单记账（skipped_by_design=True），物理收敛需"
+            " 单独 restart 该服务。该标志只反映最新回执行：若该服务此前单独"
+            " restart 成功、随后 newer 的 all 记账又成为最新行，标志会重新为"
+            " True——重建物理重启史需结合行内 verify/时间戳/generation，勿单看此标志"
+        ),
+    }
+
+
 def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """只读证据面（design 2.2.2.6 / tasks 9.1）：只**增**字段，不新增门禁.
 
@@ -1974,6 +2001,8 @@ def compose_lifecycle_evidence_view(store: ManagedServiceDeploymentStore) -> dic
         "idle_state": idle_state,
         "stage_facts": stage_facts,
         "evidence_refs": evidence_refs,
+        # EVO-20261103-4fbe523a：静态覆盖缺口投影（实现见 _restart_all_coverage_view）。
+        "restart_all_coverage": _restart_all_coverage_view(),
         "audit_signals": {
             "generation_lag": generation_lag,
             "orphan_barrier": orphan_barrier,
@@ -4124,11 +4153,8 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             # restart_mirror，读端先死时 bash 在写输出瞬间被 SIGPIPE 杀死
             # （rc=-13），回执未写、web 停后未起。输出改为落 per-action
             # durable 日志，rc 恒为脚本自身退出状态。
-            restart_log = (
-                Path(plan.env["LFL_RESTART_RUNTIME_ROOT"])
-                / "data"
-                / "service-control-restart-logs"
-                / f"{action_id}.log"
+            restart_log = _restart_log_path(
+                plan.env["LFL_RESTART_RUNTIME_ROOT"], action_id
             )
             restart_log.parent.mkdir(parents=True, exist_ok=True)
             with restart_log.open("a", encoding="utf-8") as restart_out:
@@ -4149,9 +4175,7 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             if rc != 0:
                 # 脚本输出尾部（真因透传：脚本早崩不写回执时，stderr 尾行
                 # 是唯一线索——2026-09-24 unbound DATA_DIR 被陈旧回执掩埋实证）
-                script_tail = ""
-                with contextlib.suppress(OSError):
-                    script_tail = restart_log.read_text(encoding="utf-8", errors="replace")[-400:]
+                script_tail = _read_log_tail(restart_log, 400)
                 # R1 (SPEC-20260922-service-control-restart-fixpack-v1): 先消费
                 # durable 回执再定屏障命运——预检链标记证明零物理副作用（脚本严格
                 # 串行，_stop_* 均在其后），释放本目标全部屏障；其余（无回执/解析
@@ -4208,17 +4232,8 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         store, desired_now, verify_targets, restarted_at, action_id
     )
 
-    identity = (
-        f"identity generation={desired_now.generation} git_head={desired_now.git_head}"
-    )
-    # 契约披露：all 批量不含 wecom（不踢在服企微长连接），故 all 成功**不等于**
-    # wecom 已更新。写在回执里，省得下一个人从 "wecom restart_required=true" 反推。
-    batch_note = (
-        "；all 批量=web/feishu/learning，wecom 不在其中（契约），"
-        "需更新 wecom 请单独 restart wecom"
-        if action.target == "all"
-        else ""
-    )
+    identity = _restart_identity(desired_now)
+    batch_note = _batch_restart_note(action.target)
     final = store.read_action(action_id)
     if final is None:
         return 2
@@ -4265,6 +4280,42 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         release_barriers="keep",
     )
     return 6
+
+
+def _restart_log_path(runtime_root: str, action_id: str) -> Path:
+    """per-action durable 重启日志路径（S4a：物理重启不继承调用方 stdio）。"""
+    return (
+        Path(runtime_root)
+        / "data"
+        / "service-control-restart-logs"
+        / f"{action_id}.log"
+    )
+
+
+def _read_log_tail(path: Path, limit: int) -> str:
+    """尽力读日志尾部；缺失/不可读时返回空串（真因透传的兜底）。"""
+    with contextlib.suppress(OSError):
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:]
+    return ""
+
+
+def _restart_identity(desired: ManagedServiceDeployment) -> str:
+    """回执身份串：desired 快照的 generation 与 git_head 两个坐标。"""
+    return f"identity generation={desired.generation} git_head={desired.git_head}"
+
+
+def _batch_restart_note(target: str) -> str:
+    """all 批量契约披露：批量不含 wecom（不踢在服企微长连接）。
+
+    all 成功**不等于** wecom 已更新，写在回执里，省得下一个人从
+    ``wecom restart_required=true`` 反推。
+    """
+    if target != "all":
+        return ""
+    return (
+        "；all 批量=web/feishu/learning，wecom 不在其中（契约），"
+        "需更新 wecom 请单独 restart wecom"
+    )
 
 
 def _tree_sha256(root: Path) -> str:
