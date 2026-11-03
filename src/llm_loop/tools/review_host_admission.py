@@ -4392,13 +4392,18 @@ class HostReviewAdmission:
             )
         binding_error = ""
         drift_error = ""
-        for scope_paths, recorded_digest in scopes:
+        for scope_paths, recorded_digest, tier in scopes:
             try:
                 # Re-resolves the push base (ls-remote) too: if the remote ref
                 # moved after admission, the candidate SHA changes and the grant
                 # will not match — the drift check is built into recomputation.
+                # EVO-20261103-0de3bd57：冻结输入不止 scope_paths。切片外绑定的
+                # 两级计数也进 header → material → identity，必须按记录重放；
+                # 否则切片外一有绑定内容（哪怕一个未跟踪文件），重算 SHA 就
+                # 必然对不上，资格被通用拒绝吞掉。
                 sha, target, _text, _push_base, push_extra, _sections = self._target(
-                    kind, workdir, command, "", None, scope_paths=scope_paths
+                    kind, workdir, command, "", None,
+                    scope_paths=scope_paths, tier_counts=tier,
                 )
             except (ValueError, OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
                 # EVO-20261102-677f6c44：no-delta 状态下 _target 必然抛
@@ -4435,9 +4440,17 @@ class HostReviewAdmission:
             "不存在覆盖当前产物、目标及父会话的有效独立审查资格", hint=hint
         )
 
-    def _pending_scopes(self, parent: str, kind: str) -> list[tuple[tuple[str, ...], str]]:
-        """未消费且已发放的资格各自声明的 scope，(scope_paths, 越界摘要)，保序。"""
-        seen: list[tuple[tuple[str, ...], str]] = []
+    def _pending_scopes(
+        self, parent: str, kind: str,
+    ) -> list[tuple[tuple[str, ...], str, tuple[int, int]]]:
+        """未消费且已发放的资格各自声明的 scope，(scope_paths, 越界摘要, 绑定计数)，保序。
+
+        EVO-20261103-0de3bd57：第三项是签发时冻结的切片外两级计数
+        ``(tracked, untracked)``，它进 header → material → identity。消费口只
+        重放 ``scope_paths`` 而丢掉它时，切片外一有绑定内容就永远算不出同一个
+        SHA，资格被通用拒绝吞掉。
+        """
+        seen: list[tuple[tuple[str, ...], str, tuple[int, int]]] = []
         with self._guard:
             for row in self._records.values():
                 if not (
@@ -4445,7 +4458,11 @@ class HostReviewAdmission:
                     and row.granted and not row.consumed
                 ):
                     continue
-                item = (row.scope_paths, row.out_scope_digest)
+                item = (
+                    row.scope_paths,
+                    row.out_scope_digest,
+                    (row.bound_unreviewed_tracked, row.bound_unreviewed_untracked),
+                )
                 if item not in seen:
                     seen.append(item)
         return seen

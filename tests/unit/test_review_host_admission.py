@@ -2942,6 +2942,39 @@ def test_patch_pass_is_consumable_when_slice_covers_the_whole_delta(tmp_path: Pa
     assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
 
 
+def test_patch_pass_is_consumable_when_out_of_scope_untracked_is_bound(tmp_path: Path) -> None:
+    """[切片外有未跟踪文件时切片 PASS 永远消费不到] → [FAIL]（P1 实测反例）。
+
+    签发时切片外 ``extra.txt`` 未跟踪 ⇒ ``bound_unreviewed_untracked=1``；
+    该计数进 header → material → identity。消费口只重放 ``scope_paths`` 而
+    丢掉计数时，重算 SHA 必然不同，资格被通用拒绝吞掉（fail-closed 但死锁）。
+    """
+    repo, host, issued = _pass_patch(
+        tmp_path, ["example.py"], before=lambda r: (r / "extra.txt").write_text("e = 1\n")
+    )
+    assert issued["scope"]["effective"] == "patch"
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+
+def test_patch_pass_is_consumable_when_out_of_scope_tracked_is_dirty(tmp_path: Path) -> None:
+    """切片外已跟踪文件脏（``bound_unreviewed_tracked=1``）同样必须可消费。"""
+    repo, host, _ = _pass_patch(
+        tmp_path, ["example.py"], before=lambda r: (r / "helper.py").write_text("y = 2\n")
+    )
+    assert host.check_shell("author-1", "pytest -q", str(repo)).allowed
+
+
+def test_bound_out_of_scope_untracked_drift_is_still_denied(tmp_path: Path) -> None:
+    """补上绑定计数不得放宽：切片外未跟踪内容变化仍按漂移拒。"""
+    repo, host, _ = _pass_patch(
+        tmp_path, ["example.py"], before=lambda r: (r / "extra.txt").write_text("e = 1\n")
+    )
+    (repo / "extra.txt").write_text("e = 2\n")
+    denial = host.check_shell("author-1", "pytest -q", str(repo))
+    assert not denial.allowed
+    assert "漂移" in denial.reason
+
+
 def _pass_patch(tmp_path: Path, paths: list[str], before=None):
     """走完 start→PASS 的切片流程；``before`` 可在签发前改工作树。"""
     repo = _sliced_repo(tmp_path)
