@@ -402,8 +402,16 @@ def test_f_mixed_readonly_mutating_gap_harvest(build_test_engine):
 def test_g_sequence_head_harvest_all(build_test_engine):
     from llm_loop.llm.client import LLMResponse
 
-    def _slow_plan(calls):
-        time.sleep(0.8)  # 构造计划生成窗口（期间插话到达）
+    plan_entered = threading.Event()
+    plan_release = threading.Event()
+
+    def _gated_plan(calls):
+        # 事件门闩替代 wall-clock 计划窗口（同 test_b 段首工具思路）：「插话
+        # 到达于 LLM 调用期间」由门闩确定，不与 CI 调度竞速——负载下插话晚于
+        # 序列头到达会让序列头 peek 落空，退化成 call1 在途 + call2 间隙收割
+        # （1 条 skipped）的假红，正是 2026-11-03 两次 main/nightly 红的形态。
+        plan_entered.set()
+        assert plan_release.wait(timeout=15), "计划生成窗口未放行"
         return LLMResponse(
             content="按旧计划执行两条长命令",
             tool_calls=[
@@ -415,7 +423,7 @@ def test_g_sequence_head_harvest_all(build_test_engine):
             provider="fake",
         )
 
-    engine, fake = build_test_engine([_slow_plan, {"content": "final-head-harvest"}])
+    engine, _fake = build_test_engine([_gated_plan, {"content": "final-head-harvest"}])
     runner = BackgroundRunner(engine)
     engine.runner = runner
     client = TestClient(build_app(engine=engine))
@@ -427,11 +435,8 @@ def test_g_sequence_head_harvest_all(build_test_engine):
     object.__setattr__(_tr, "sync_chat_interject_checkpoint", False)
     try:
         _h, q = runner.start(sid, "请规划并执行")
-        # 等首次 LLM 调用开始（计划窗口开启）后注入
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and len(fake.calls) < 1:
-            time.sleep(0.005)
-        time.sleep(0.3)  # 窗口内注入（此时无任何工具在途）
+        # 等首次 LLM 调用进入计划窗口后注入（此时无任何工具在途）
+        assert plan_entered.wait(timeout=10), "首次 LLM 调用未开始"
         gen = (runner.get_handle(sid) or {}).get("run_generation")
         r1 = client.post(
             "/api/v1/chat/queue",
@@ -441,6 +446,8 @@ def test_g_sequence_head_harvest_all(build_test_engine):
         queue_id = r1.json()["queue_id"]
         r2 = _interject(client, sid, queue_id, gen)
         assert r2.status_code == 202
+        # 插话已进信箱才放行计划返回：序列头（派发前）peek 必然命中
+        plan_release.set()
 
         final = _wait_run_done(q, timeout=20)
         assert final.get("type") == "done"
@@ -451,11 +458,12 @@ def test_g_sequence_head_harvest_all(build_test_engine):
         assert len(skip_msgs) == 2, f"应两条全 skipped: {len(skip_msgs)}"
         item = _hq_item(_hq_of(client, engine), sid, queue_id) or {}
         c, r = item.get("created_at"), item.get("received_at")
-        # 序列头收割生效时刻=LLM 计划返回后的序列头（~0.5s 后），脱离 2.0s 工具
+        # 序列头收割生效时刻=插话受理后放行计划返回的序列头（受理往返内），脱离 2.0s 工具
         assert item.get("status") == "interject_received"
         t_effect = (r - c) * 1000 if c and r else None
         assert t_effect is not None and t_effect < 900.0, (
             f"序列头收割 t_effect={t_effect}ms 应显著小于 2.0s 工具路径"
         )
     finally:
+        plan_release.set()  # HTTP 断言失败也不遗留卡死的计划线程
         runner.cancel(sid)
