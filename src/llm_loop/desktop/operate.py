@@ -386,6 +386,10 @@ def world_drift_breaks(expected: WorldDigest, actual: WorldDigest) -> dict[str, 
     - 无关节点一栏排除目标节点自身那一行——它归 target_subtree；不排除会让
       一次目标改动被记两次。
 
+    前提：``ax_ref`` 在单棵树内唯一。若出现重复 ref，``dict(rows)`` 会 last-wins
+    折叠，added/removed/changed 计数会偏小；这只影响计量口径，不影响指纹
+    （``material()`` 用原始 tuple，逐行保留）。
+
     返回 ``{"breaks": 全部命中项, "primary": 最高优先级一项或 None,
     "unrelated": 计数 + sample}``。一次事件可同时命中多类，故同时给全集与
     primary，使"任一命中"与"主因"两种统计口径都可算。

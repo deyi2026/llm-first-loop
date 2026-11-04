@@ -616,28 +616,47 @@ def test_world_drift_breaks_clean_and_head_path():
     assert moved["primary"] == "foreground"
 
 
-def test_world_fingerprint_equivalence_locked():
-    """world_fingerprint 的哈希原料拆分后必须逐字不变（防两套逻辑漂移）。"""
-    import hashlib
+def test_u16_drift_report_unavailable_without_digest():
+    """旧令牌（无 world_digest）→ 归因报 unavailable，绝不猜测分类。"""
+    tool = _tool(_backend())
+    assert tool._world_drift_report(
+        None, _window(), _view(), "com.google.Chrome", None
+    ) == {"unavailable": "token_has_no_world_digest"}
 
+
+# 拆分前实现在下列固定输入上的**字面输出**（硬编码，不是重算）。只有硬编码
+# 才是真正的跨重构等值锁定：重算 world_digest().material() 属自证（审查 P2-2）。
+_GOLDEN_MATERIAL = (
+    "win=101|pid=96579|bundle=com.google.chrome|bounds=0.0,38.0,1512.0,877.0"
+    "|title=某文档 - Google Chrome|fg=True|frontmost=com.google.chrome"
+    "|ax;0|AXWindow|某文档|fo=0|"
+    "|ax;0.0|AXButton|新建|fo=1|"
+    "|ax;0.1|AXTextArea|正文|fo=0|abc"
+    "|ax;T:0.0|AXButton|新建|fo=1|"
+)
+_GOLDEN_SHA = "b5e07b589022ba4355b520d2dea0540929c9846f32e3c7ad9ea65be83441f857"
+
+
+def test_world_fingerprint_golden_bytes_unchanged():
+    """锁定拆分前的字面哈希原料与 sha：任何格式漂移都会在这里红。"""
     from llm_loop.desktop.operate import world_digest, world_fingerprint
 
     w = _window()
     nodes = (
         _node("0", "AXWindow", "某文档"),
-        _node("0.0", "AXButton", "新建"),
+        _node("0.0", "AXButton", "新建", focused=True),
         _node("0.1", "AXTextArea", "正文", value="abc"),
     )
-    for iv in (False, True):
-        for tn in (None, nodes[1]):
-            expect = hashlib.sha256(
-                world_digest(
-                    w, nodes, w.bundle_id, include_value=iv, target_node=tn
-                ).material().encode("utf-8")
-            ).hexdigest()
-            assert world_fingerprint(
-                w, nodes, w.bundle_id, include_value=iv, target_node=tn
-            ) == expect
+    digest = world_digest(
+        w, nodes, "com.google.Chrome", include_value=True, target_node=nodes[1]
+    )
+    assert digest.material() == _GOLDEN_MATERIAL
+    assert (
+        world_fingerprint(
+            w, nodes, "com.google.Chrome", include_value=True, target_node=nodes[1]
+        )
+        == _GOLDEN_SHA
+    )
 
 
 def test_u16_token_window_id_mismatch_rejected():
