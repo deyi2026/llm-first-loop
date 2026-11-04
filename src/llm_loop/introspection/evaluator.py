@@ -47,6 +47,10 @@ METRIC_NAMES = CORE_METRIC_NAMES + AUX_METRIC_NAMES
 # validator_version == 当前期代的 declaration 行（写侧打版本 + 读侧隔离缺一不可）。
 EVALUATOR_VERSION = "2026.09.30.1"
 
+# EVO-20261104-305716fa E5：停滞率参数级重复口径阈值——窗口内同一指纹达到该
+# 次数后，超出部分每次计一次停滞（与 tool_cycle 的 _REPEAT_GUARD_AT 对齐）。
+_REPEAT_FP_THRESHOLD = 3
+
 
 def _now() -> str:
     return system_local_now().isoformat()
@@ -424,12 +428,13 @@ class SelfEvaluator:
         )
 
     def _metric_stagnation_rate(self, action_trace: list[dict]) -> EvalMetric:
-        """停滞率 ← action_trace 近 span 条『连续重复动作』占比（EVO-20260827-03416178）.
+        """停滞率 ← action_trace 近 span 条『连续重复 + 参数级重复』占比.
 
-        判定口径: 连续两条指纹相同才计一次重复——真实退化循环必然背靠背重试
-        同一动作；正常交替工作流中的同类调用（decile→tool 对、跨任务的同工具）
-        不再误判为停滞。understand.* 程序记账动作（每轮必发，如 model_aware_budget）
-        不参与判定，避免结构性虚高。
+        判定口径: ① 连续两条指纹相同计一次重复（EVO-20260827-03416178）——真实
+        退化循环必然背靠背重试同一动作；② 参数级重复（EVO-20261104-305716fa E5）
+        ——窗口内同一指纹出现 ≥ _REPEAT_FP_THRESHOLD 次时，超出部分每次计一次
+        停滞，捕捉 interleaved 重复（A→B→A→B）对连续口径的绕过。understand.*
+        程序记账动作（每轮必发，如 model_aware_budget）不参与判定，避免结构性虚高。
         """
         recent = action_trace[-self._span :]
         eligible = [
@@ -447,18 +452,25 @@ class SelfEvaluator:
         def _fp(a: dict) -> str:
             return f"{a.get('phase', '')}|{a.get('action_type', '')}|{a.get('detail', '')}"
 
-        repeats = sum(
-            1
-            for i in range(1, len(eligible))
-            if _fp(eligible[i]) == _fp(eligible[i - 1])
-        )
+        # EVO-20261104-305716fa E5：全重复口径——窗口内同一指纹出现 n 次计
+        # (n-1) 次重复（连续重复是其子集，不再单列避免双重计数）。interleaved
+        # 重复（A→B→A→B）在旧连续口径下为 0，6c13edc8 会话 517 次
+        # read_evidence / 148 个证据反复读而旧口径仅 0.02，本口径直接捕捉。
+        from collections import Counter as _Counter
+
+        fp_counts = _Counter(_fp(a) for a in eligible)
+        repeats = sum(n - 1 for n in fp_counts.values())
+        hot = sum(1 for n in fp_counts.values() if n >= _REPEAT_FP_THRESHOLD)
         exempt = len(recent) - len(eligible)
+        note_parts = [f"全重复口径（含交错重复；{hot} 个指纹≥{_REPEAT_FP_THRESHOLD} 次）"]
+        if exempt:
+            note_parts.append(f"剔除程序记账 {exempt} 条")
         return EvalMetric(
             name="stagnation_rate",
             value=round(repeats / len(eligible), 4),
             sample_size=len(eligible),
             source="action_trace",
-            note=(f"连续重复口径（剔除程序记账 {exempt} 条）" if exempt else "连续重复口径"),
+            note="；".join(note_parts),
         )
 
     def _metric_exception_rate(

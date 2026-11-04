@@ -7,8 +7,13 @@ This module owns only mechanical capacity projection:
 """
 from __future__ import annotations
 
+import contextlib
+import json
 import math
+import os
+import tempfile
 import threading
+import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 
@@ -46,6 +51,8 @@ class ProjectionDensityTracker:
         upper_deadband: float = 0.05,
         max_up_step: float = 0.25,
         max_surfaces: int = 64,
+        store_path: str | None = None,
+        save_every: int = 8,
     ) -> None:
         self.window = max(8, int(window))
         self.min_samples = max(2, int(min_samples))
@@ -56,6 +63,90 @@ class ProjectionDensityTracker:
         self.max_surfaces = max(8, int(max_surfaces))
         self._states: OrderedDict[tuple[str, str, str], _DensityState] = OrderedDict()
         self._lock = threading.Lock()
+        # EVO-20261104-305716fa E4：密度观测跨会话持久化，避免每次进程冷启动
+        # 都退回 0.6 chars/token 的保守 fallback（会话头 15 轮内 effective_budget
+        # 被 schema 预留吃光 → 高频压缩 → 重复探索）。持久化仅作初值；观测仍持续
+        # 校正，且下收紧即时生效的既有语义不变。
+        self._store_path = str(store_path).strip() if store_path else None
+        self._save_every = max(1, int(save_every))
+        self._load_store()
+
+    # ---------------------------------------------------------------- store
+
+    def _load_store(self) -> None:
+        if not self._store_path:
+            return
+        try:
+            with open(self._store_path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except FileNotFoundError:
+            return
+        except Exception:
+            # fail-open：损坏/不可读的存储不阻塞启动（保持纯内存行为）
+            return
+        try:
+            surfaces = raw.get("surfaces") if isinstance(raw, dict) else None
+            if not isinstance(surfaces, list):
+                return
+            for item in surfaces[-self.max_surfaces :]:
+                if not isinstance(item, dict):
+                    continue
+                key = item.get("key")
+                if not isinstance(key, list) or len(key) != 3:
+                    continue
+                ratios_raw = item.get("ratios")
+                ratios = [float(r) for r in ratios_raw if isinstance(r, (int, float))] \
+                    if isinstance(ratios_raw, list) else []
+                ratios = [r for r in ratios if math.isfinite(r) and r > 0]
+                if not ratios:
+                    continue
+                state = _DensityState(
+                    ratios=deque(ratios[-self.window :], maxlen=self.window),
+                    ewma=float(item["ewma"]) if isinstance(item.get("ewma"), (int, float)) else None,
+                    applied=float(item["applied"]) if isinstance(item.get("applied"), (int, float)) else None,
+                    total_samples=int(item.get("total_samples") or len(ratios)),
+                )
+                self._states[(str(key[0]), str(key[1]), str(key[2]))] = state
+        except Exception:
+            return
+
+    def _snapshot_states(self) -> list[dict]:
+        return [
+            {
+                "key": [p, m, w],
+                "ratios": [round(float(r), 6) for r in state.ratios],
+                "ewma": round(float(state.ewma), 6) if state.ewma is not None else None,
+                "applied": round(float(state.applied), 6) if state.applied is not None else None,
+                "total_samples": int(state.total_samples),
+            }
+            for (p, m, w), state in self._states.items()
+        ]
+
+    def _save_store(self) -> None:
+        if not self._store_path:
+            return
+        try:
+            with self._lock:
+                payload = json.dumps(
+                    {"schema": 1, "saved_at": time.time(), "surfaces": self._snapshot_states()},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            directory = os.path.dirname(self._store_path) or "."
+            os.makedirs(directory, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".projection_density.", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(payload)
+                os.replace(tmp_path, self._store_path)
+            finally:
+                if os.path.exists(tmp_path):
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp_path)
+        except Exception:
+            # fail-open：持久化失败不影响运行时决策
+            return
 
     @staticmethod
     def _key(provider: str, model: str, wire_protocol: str) -> tuple[str, str, str]:
@@ -104,6 +195,11 @@ class ProjectionDensityTracker:
                 if state.ewma is None
                 else (self.ewma_alpha * ratio) + ((1.0 - self.ewma_alpha) * state.ewma)
             )
+            should_save = (
+                self._store_path is not None and state.total_samples % self._save_every == 0
+            )
+        if should_save:
+            self._save_store()
 
     def decision(
         self,

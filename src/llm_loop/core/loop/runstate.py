@@ -56,6 +56,9 @@ class _RunState:
     # from an adjacent overflow handoff.  This is execution state, never prompt authority.
     longrun_read_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     longrun_continuity_manifest: dict[str, Any] | None = None
+    # EVO-20261104-305716fa E5：参数级重复探索计数（每 run 重置；键=tool|args 或
+    # evidence:<ref>；值={"count": int, "hinted": bool}）。仅驱动一次性提示。
+    repeat_guard: dict[str, dict[str, Any]] = field(default_factory=dict)
     context_warning_injected: bool = False
     round_warning_injected: bool = False
     # P0-B: ephemeral provider-surface boundary. Prompt-neutral and reset each run.

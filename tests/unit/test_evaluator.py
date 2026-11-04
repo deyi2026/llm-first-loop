@@ -615,7 +615,8 @@ def test_metric_notes_carry_caliber_on_normal_path(tmp_path):
     )
     assert metrics["claim_bearing_rate"].note == "分子=10 条有声明记录/分母=10 条检查记录(近span)"
     assert metrics["exception_rate"].note == "分子=2 条(近span)/分母=8 轮(window_action_trace)"
-    assert "连续重复口径" in metrics["stagnation_rate"].note
+    # EVO-20261104-305716fa E5：停滞口径升级为全重复（连续是子集，交错重复计入）
+    assert "全重复口径" in metrics["stagnation_rate"].note
     # 正常组合（exception=0.25, success=1.0）→ 无哨兵、无 diagnostics 键
     assert "矛盾哨兵" not in report.note
     assert "consistency_alerts" not in report.diagnostics

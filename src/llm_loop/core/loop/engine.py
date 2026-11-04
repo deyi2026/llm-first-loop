@@ -734,6 +734,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         _bucket.ingress_history_budget_cap = None
         _bucket.longrun_read_cache = {}
         _bucket.longrun_continuity_manifest = None
+        # EVO-20261104-305716fa E5：参数级重复计数每 run 归零（与 longrun_read_cache 同款纪律）
+        _bucket.repeat_guard = {}
         # P1-A/P1-B: runtime does not parse current-user semantics into task or
         # tool-selection authority. Delegated wakes remain explicitly attributable.
         if bool(getattr(ingress, "delegated", False)):

@@ -62,6 +62,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# EVO-20261104-305716fa E5：重复探索熔断阈值（仅一次性提示，不阻断、不改工具真值）
+_REPEAT_GUARD_AT = 3  # 同 (tool, 精确参数) 本 run 内成功执行达到该次数
+_REPEAT_GUARD_EVIDENCE_AT = 5  # read_evidence 同一 evidence_ref 成功读取达到该次数
+
 class ToolCycleService:
     # legacy 字段名 stagnation_state 仅承载事实观测；P2-A 后无 breaker authority。
 
@@ -158,6 +162,23 @@ class ToolCycleService:
                 call.arguments, version
             ):
                 return None
+            # EVO-20261104-305716fa E1：reuse 必须感知压缩。contentless 桩的前提是
+            # 原读结果仍在模型上下文里；一旦发生压缩（compact_event_seq 前进），
+            # 该前提失效——继续回桩只会诱发「要内容→得桩→换路再探索」的循环。
+            # 此时回退物理重读（fail-open 到真值；evidence 不可变，重读廉价）。
+            cached_epoch = cached.get("compact_event_seq")
+            try:
+                current_epoch = int(
+                    getattr(self._host._run_state(), "compact_event_seq", 0) or 0
+                )
+            except Exception:
+                current_epoch = None
+            if (
+                current_epoch is not None
+                and cached_epoch is not None
+                and int(cached_epoch) != current_epoch
+            ):
+                return None
             evidence_ref = str(cached.get("evidence_ref") or "")
             artifact_ref = str(cached.get("artifact_ref") or "")
             facts = [
@@ -171,6 +192,8 @@ class ToolCycleService:
                 facts.append(f"evidence_ref={evidence_ref}")
             if artifact_ref:
                 facts.append(f"snapshot_ref={artifact_ref}")
+            if current_epoch is not None:
+                facts.append(f"compact_event_seq={current_epoch}")
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content="[longrun_continuity_reuse] " + "; ".join(facts),
@@ -215,15 +238,79 @@ class ToolCycleService:
                     artifact_ref = str(fact.get("ref"))
                     break
             key = canonical_read_key(call.name, call.arguments)
+            try:
+                remembered_epoch = int(
+                    getattr(self._host._run_state(), "compact_event_seq", 0) or 0
+                )
+            except Exception:
+                remembered_epoch = None
             self._host._run_state().longrun_read_cache[key] = {
                 "tool": call.name,
                 "arguments": dict(call.arguments),
                 "evidence_ref": str(result.evidence_ref or ""),
                 "source_version_token": version,
                 "artifact_ref": artifact_ref,
+                "compact_event_seq": remembered_epoch,
             }
         except Exception:  # noqa: BLE001 — observability/cache must not alter tool truth
             logger.debug("longrun continuity read remember failed", exc_info=True)
+
+    def _maybe_repeat_guard_hint(self, tc, result: ToolResult) -> None:
+        """EVO-20261104-305716fa E5：参数级重复探索的一次性提示（fail-open）.
+
+        连续指纹停滞检测只看相邻重复；interleaved 重复（A→B→A→B…）完全绕过，
+        6c13edc8 会话里 517 次 read_evidence / 148 个证据被反复读而 stagnation_rate
+        仅 0.02。本钩子在「同 (tool, 精确参数) 本 run 第 3 次成功」或「同一
+        evidence_ref 第 5 次成功读取」时向回执追加一行提示，每键至多一次；
+        不阻断、不改状态码、不改工具真值。
+        """
+        try:
+            if result.status is not ToolResultStatus.SUCCESS:
+                return
+            guard = getattr(self._host._run_state(), "repeat_guard", None)
+            if not isinstance(guard, dict):
+                return  # 旧 runstate 无该字段（duck-typed host）→ 静默跳过
+            hints: list[str] = []
+            key = f"{tc.name}|{_json_dumps_args(tc.arguments)}"
+            state = guard.get(key)
+            if not isinstance(state, dict):
+                state = {"count": 0, "hinted": False}
+                guard[key] = state
+            state["count"] = int(state.get("count", 0)) + 1
+            if not state.get("hinted") and state["count"] >= _REPEAT_GUARD_AT:
+                state["hinted"] = True
+                hints.append(
+                    f"[repeat_guard] 该精确调用本 run 已第 {state['count']} 次成功执行；"
+                    "若该事实已核，请先记入 task_state 账本（已核事实+引用/未决/下一步），"
+                    "不要继续重复探索。"
+                )
+            if tc.name == "read_evidence" and isinstance(tc.arguments, dict):
+                ref = str(tc.arguments.get("evidence_ref") or "")
+                if ref:
+                    rkey = f"evidence:{ref}"
+                    rstate = guard.get(rkey)
+                    if not isinstance(rstate, dict):
+                        rstate = {"count": 0, "hinted": False}
+                        guard[rkey] = rstate
+                    rstate["count"] = int(rstate.get("count", 0)) + 1
+                    if not rstate.get("hinted") and rstate["count"] >= _REPEAT_GUARD_EVIDENCE_AT:
+                        rstate["hinted"] = True
+                        hints.append(
+                            f"[repeat_guard] 本 run 已第 {rstate['count']} 次读取同一 "
+                            f"evidence_ref={ref[:64]}；分页除外，若内容已核请勿反复重读。"
+                        )
+            if hints:
+                result.content = f"{result.content}\n" + "\n".join(hints)
+                self._host._record_action(
+                    "tool.repeat_guard",
+                    "hint",
+                    (
+                        f"tool={tc.name};args_key={fingerprint_summary(self._stagnation_fingerprint(tc))};"
+                        f"count={state['count']}"
+                    ),
+                )
+        except Exception:  # noqa: BLE001 — 提示注入绝不影响工具真值/回执落盘
+            logger.debug("repeat guard hint failed (fail-open)", exc_info=True)
 
     def _execute_allowed_with_wal(
         self,
@@ -285,6 +372,7 @@ class ToolCycleService:
             # （两路互斥：execution_id 存在 ⇔ prebuilt 存在）。
             self._attach_convergence_receipt_facts(sess, call, result)
             self._remember_continuity_read(call, result)
+            self._maybe_repeat_guard_hint(call, result)
             tool_msg = tool_result_to_message(
                 result,
                 failure_guidance_enabled=self._host.registry.failure_guidance_enabled,

@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -58,7 +59,16 @@ class _RouteDecision:
 class RoutingService:
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
-        self._projection_density_tracker = ProjectionDensityTracker()
+        # EVO-20261104-305716fa E4：密度校准跨会话持久化（fail-open，无 data_dir
+        # 时保持纯内存行为）。
+        density_store: str | None = None
+        try:
+            data_dir = str(getattr(getattr(host, "settings", None), "data_dir", "") or "")
+            if data_dir:
+                density_store = os.path.join(data_dir, "runtime", "projection_density.json")
+        except Exception:
+            density_store = None
+        self._projection_density_tracker = ProjectionDensityTracker(store_path=density_store)
 
     @staticmethod
     def _registry_fingerprint(registry: Any) -> str:
