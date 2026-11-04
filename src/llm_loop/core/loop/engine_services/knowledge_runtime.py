@@ -17,6 +17,8 @@ from typing import Any
 from llm_loop.core.run_context import current_run_generation
 
 _FAILURES = frozenset({"failure", "error", "timeout"})
+# 决策词表放模块级：observe_receipts 处若内联展开会触发函数长度棘轮（135 行基线）。
+_USE_DECISIONS = frozenset({"applied", "adapted", "not_applicable", "rejected", "not_adopted"})
 _HIGH_RISK = re.compile(
     r"(deploy|publish|release|production|rm\s+-|delete|chmod|sudo|"
     r"生产|发布|部署|删除|清理目录|权限|密钥|转账|付款|发邮件|推送远程)",
@@ -154,8 +156,7 @@ class KnowledgeRun:
                     or declaration.get("schema") != "experience-use/v1"
                     or declaration.get("ref") != args.get("experience_id")
                     or declaration.get("decision") != args.get("use_decision")
-                    or declaration.get("decision")
-                    not in {"applied", "adapted", "not_applicable", "rejected", "not_adopted"}
+                    or declaration.get("decision") not in _USE_DECISIONS
                 ):
                     continue
                 ref = str(declaration["ref"])
