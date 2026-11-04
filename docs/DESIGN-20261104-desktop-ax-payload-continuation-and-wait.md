@@ -333,6 +333,70 @@ do=steps[], steps[1..8]
 - **明确不回滚**，并在回执中说明已生效步数；
 - 任一步为破坏性类别 → 整批 `review_required` 拒绝。
 
+### 6.9 FR-08 破坏性排除表（Q11 的开工输入，**待确认稿**）
+
+本节是 §11 B-5 的闸门输入：批量只对"可判定为非破坏性"的子集开放，其余一律整批拒绝。
+判定口径**全部落在已实现的代码事实上**（`src/llm_loop/tools/builtin/desktop_operate.py:114` 的
+`_DOS` 五类、`src/llm_loop/desktop/operate.py:68-82` 的危险词表、`classify_risk` 的四条规则），
+不引入新概念。
+
+#### A. `do` 级（硬排除，不因参数组合放宽）
+
+| `do` | 入批 | 依据（现状代码/设计） |
+|---|---|---|
+| `scroll_into_view` | **允许** | 只接受 `ax_ref`（`desktop_operate.py:507-520` 硬拒 point）；`AXScrollToVisible` 可逆 |
+| `scroll` | **条件允许** | 位移可逆；但浏览器窗口内存在 `AXWebArea` 时现有门已判 `web_target_not_allowed`（`:874-880`），批内沿用 |
+| `click` | **条件允许** | 须同时满足 B 组全部条件；风险判定取 `classify_risk` 现有结果 |
+| `type` | **禁止** | 整体替换语义（静默覆盖字段原内容）；一次 `dry_run` 无法让用户看到"覆盖前的值"，批内无回滚手段（§10.7） |
+| `press_key` | **禁止** | ① 浏览器内 `Enter` 已被判 `irreversible`；② 可省略 `target` 走焦点寻址（`:551`），批内焦点漂移无逐门控手段；③ Meta 黑名单外的键仍可触发惰性保存/弹窗 |
+
+> 说明：排除 `type`/`press_key` 不是保守过头，而是这两类**恰好是"破坏性动作"的全部来源**。
+> 剩下的 `click`/`scroll*` 才是"移动与选择"，这正是批量的价值面。
+
+#### B. 目标级（对 `click` / `scroll` 生效）
+
+| 目标形态 / 属性 | 结论 |
+|---|---|
+| `target={point:{x,y}}` | **禁止入批**。无 identity；且 point 通道现状要求"每次 apply 新令牌 + world 比对"，批量只做一次 world 比对，等于把该残余放大到 N 步 |
+| `target={ax_ref}` | 允许，但须过下列全部检查 |
+| `role` 或 `subrole` = `AXCloseButton` | 整批 `review_required`（`classify_risk` 规则 1，双通道匹配） |
+| `title`/`subrole` 命中 `IRREVERSIBLE_TITLE_MARKERS` | 整批 `review_required`（规则 2：删除/清空/卸载/格式化/覆盖/替换…） |
+| 命中 `REVIEW_REQUIRED_MARKERS`（发布/提交/支付/购买） | 整批 `review_required`（`:867-871` 的宿主发表闸，**不新增旁路**） |
+| 目标落在浏览器 `AXWebArea` 子树 | `web_target_not_allowed`（路线 A 边界，原门） |
+| 敏感 app / 非 act 白名单 / 终端·IDE | `privacy_blocked` / `app_not_allowed` / `terminal_readonly`（原门，逐步仍须过） |
+
+#### C. 环境级与形状
+
+| 条件 | 结论 |
+|---|---|
+| `steps` 长度 | `1..8`（§6.8） |
+| 跨 `window_id` | **拒绝**。`world_fingerprint` 是窗口级的，跨窗口的 world 不可比，"一次比对管全批"不成立 |
+| `force=true`（用户不在场） | **拒绝**（提案）。`force_credential` 是一次性凭据，批量会把它的效力面从 1 步扩到 8 步，超出该凭据的设计意图 |
+| `writes_disabled` / `exec_mode=blocked` | 原总闸不变，批内逐步不过即停 |
+| 任一步 `classify_risk=irreversible` | 整批 `review_required`，**不签发**令牌（在 `dry_run` 阶段即拒，不留到 apply） |
+
+#### D. 令牌与门控契约（比表格本身更需先确认）
+
+表格只回答"哪些步允许"。批量真正的风险面在契约，提案如下：
+
+1. **令牌绑定**：现状是"单目标（`session_target_key`）+ `world_version`"，TTL 600s。批量改为
+   `sha256(规范化 steps 含 window_id)` + `world_version`。改任一步参数 ⇒ hash 变 ⇒ 旧令牌失效，
+   不存在"改一步沿用令牌"的缝。
+2. **`dry_run` 必须逐 step 出裁**：回 `[{index, do, resolved:{role,title}, risk_class, verdict}]`
+   全表，`verdict ≠ allow` 则整批拒绝签发。这是对 Q11"削弱逐门控价值"的直接补偿——用户看不到
+   中间**效果**，但必须看到中间**目标解析结果与风险判级**，而不是盲签 8 步。
+3. **apply 时逐步比对树指纹**：每步投递前重读树并比对 `ax_ref` 指向的节点身份；树变了就停在
+   第 k 步，回 `completed_steps=k-1` + `failed_index` + 现场快照 + 漂移归因（复用
+   `world_drift_breaks`）。理由：`ax_ref` 是索引路径，树变后可能指向**另一个元素**——这与
+   session 免令牌通道的残余同一性质，批量会把它乘 8 倍。代价是 apply 期最多 8 次树读取。
+4. **半完成语义**：不回滚，如实回 `completed_steps` 与已生效步的 `do/target` 摘要（§10.7）。
+
+#### E. 若确认，最小实施顺序建议
+
+先做 FR-08（排除表已闭环、价值面是"移动+选择"），再做 FR-07 增量读（`since` 与
+`node_cursor` 互斥的拒绝语义需要新增一条边界用例，与批量无关，可独立评估）。
+两者都不依赖 B-4 的指纹实验数据。
+
 ---
 
 ## 7. 复用表
@@ -419,6 +483,7 @@ do=steps[], steps[1..8]
 | **D-8** | B-4 / B-5 | **未实施** | 闸门未满足：`ax_trusted=false`，无法完成 ≥20 次真实多步任务统计；FR-06 的"无关打破比例"无数据 |
 | **D-9** | 工具 schema 未提及 | `desktop_perceive` 的 `action` 枚举增 `wait`、参数增 `node_kinds/node_limit/node_cursor/render/geometry/ax_ref/kind/value/expected/within_ms/settle_ms`；`desktop_operate` 的 `do` 增 `scroll_into_view`。同步更新了 `test_tool_schema_contract_fields` 与 `tools/registry.py` 的 compact 描述 | schema 是模型唯一的能力面；不更新 compact 描述等于能力存在但模型不知道 |
 | **D-10** | — | `AxNode` 新增 `editable`/`enabled` 两个读取通道，**均不进入** `ax_fingerprint_nodes` 世界指纹，**也不进入** 节点行渲染白名单 `_NODE_ROW_FIELDS` | 指纹纳入会让"改值/改可用态"被误判为世界漂移而打破 act 门；节点行纳入会给每个节点凭空 +1 键，与降体积目标相反 |
+| **D-11** | §11 B-5 的闸门输入"Q11 破坏性排除表"未成文 | 已起草为 §6.9（**待确认稿**），判定口径取现有 `_DOS`／危险词表／`classify_risk` | 表格本身不涉及 AX 实机，可先于授权成文；但**未确认即不开工**，B-5 状态仍为"未实施" |
 
 ### 12.3 全量门禁的既有红灯（与本批无关，如实记录）
 
