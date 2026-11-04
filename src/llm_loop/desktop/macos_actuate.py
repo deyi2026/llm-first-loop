@@ -264,6 +264,21 @@ def ax_press(el: MacAxElement) -> int:
         cf_release(action)
 
 
+def ax_scroll_to_visible(el: MacAxElement) -> int:
+    """AXUIElementPerformAction(el, "AXScrollToVisible") → AX err。
+
+    scroll_into_view 专用：请求滚动容器把目标元素滚入可视区（滚动可逆，
+    风险等级 act，不进 irreversible）。与 ax_press 同构——同走
+    AXUIElementPerformAction，错误映射复用 act_outcome_from_ax_err。
+    """
+    lib = _asf()
+    action = make_cfstr("AXScrollToVisible")
+    try:
+        return int(lib.AXUIElementPerformAction(ctypes.c_void_p(el.ref), action))
+    finally:
+        cf_release(action)
+
+
 def ax_set_value(el: MacAxElement, text: str) -> int:
     """AXUIElementSetAttributeValue(el, "AXValue", CFString) → AX err（已实测通道）。"""
     lib = _asf()

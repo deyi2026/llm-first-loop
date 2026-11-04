@@ -180,6 +180,8 @@ def classify_risk(
         and _norm_bundle(bundle_id) in BROWSER_BUNDLES
     ):
         return "irreversible"
+    # scroll_into_view（AXScrollToVisible）落到下方默认 "act"：滚动可逆，
+    # 不进 irreversible；其浏览器网页层目标由 ax_ref 通道的路线 A 边界另行拒绝。
     return "act"
 
 

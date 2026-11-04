@@ -1120,12 +1120,25 @@ def test_audit_append_only_no_rewrite(tmp_path):
 # ══ 10. schema 与 factory 装配一致性 ══════════════════════════════════════
 def test_tool_schema_contract_fields():
     params = DesktopPerceiveTool.parameters
-    assert params["properties"]["action"]["enum"] == ["status", "apps", "windows", "snapshot"]
+    # B-1/B-3 契约变更：action 增 snapshot 续读与 wait
+    assert params["properties"]["action"]["enum"] == [
+        "status", "apps", "windows", "snapshot", "wait",
+    ]
     assert params["required"] == ["action"]
     assert params["additionalProperties"] is False
     assert params["properties"]["vision"]["enum"] == ["none", "evidence"]
     assert params["properties"]["depth"]["minimum"] == 0
     assert params["properties"]["depth"]["maximum"] == 6
+    # FR-01/FR-02 续读与渲染档位必须在 schema 上可见（否则模型不知道能翻页）
+    assert params["properties"]["render"]["enum"] == ["full", "sparse"]
+    assert params["properties"]["geometry"]["enum"] == ["full", "none"]
+    assert params["properties"]["node_limit"]["maximum"] == 500
+    assert params["properties"]["node_cursor"]["type"] == "string"
+    # FR-05 谓词集合：checked/selected 未支持，schema 不得声称支持
+    assert params["properties"]["kind"]["enum"] == [
+        "exists", "absent", "focused", "enabled", "value_equals", "value_contains",
+    ]
+    assert params["properties"]["within_ms"]["maximum"] == 60000
     assert DesktopPerceiveTool.lazy_parameters == DesktopPerceiveTool.parameters
 
 

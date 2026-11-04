@@ -29,21 +29,112 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.desktop.models import (
     AX_NODE_LIMIT_DEFAULT,
     DEFAULT_AX_DEPTH,
+    AxNode,
     DesktopErrorCode,
     PermissionSnapshot,
     ax_error_reason,
     clamp_depth,
     jsonable,
 )
+from llm_loop.desktop.paging import decode_cursor, paginate
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
+from llm_loop.desktop.waiting import MAX_WAIT_POLLS, WaitPredicate, wait_for
 from llm_loop.timekeeping import system_local_now
 
-_ACTIONS = ("status", "apps", "windows", "snapshot")
+_ACTIONS = ("status", "apps", "windows", "snapshot", "wait")
+
+# ── FR-01/FR-02 常量（DESIGN-20261104 §6.1/§6.2）─────────────────────────
+# 每页节点宽度：默认 200。1500 节点按最省渲染仍约 3 万 token，单页 200 是把
+# "一次回执摧毁上下文" 换成 "按需翻页"。
+DEFAULT_PAGE_LIMIT = 200
+MAX_PAGE_LIMIT = 500
+# 单棵树累计可续读节点上限。无状态实现：由游标里的 offset 判定，不依赖进程内
+# 计数器（工具实例生命周期跨调用不可假定），所以重启/多会话下口径一致。
+MAX_PAGED_NODES = 2000
+# focused 摘要里 value 的预览长度：够判断"光标在哪个框"，不足以泄漏整段内容。
+FOCUS_VALUE_PREVIEW = 120
+
+# ── FR-05 恒定值（§6.5）─────────────────────────────────────────────────
+DEFAULT_WAIT_WITHIN_MS = 10000
+MAX_WAIT_WITHIN_MS = 60000
+DEFAULT_SETTLE_MS = 300
+MIN_SETTLE_MS = 50
+MAX_SETTLE_MS = 10000
+WAIT_KINDS = ("exists", "absent", "focused", "enabled", "value_equals", "value_contains")
+#: 只有这些 kind 接受 expected 取反；`value_*` 的取反语义歧义（"等它不等于"？），
+#: 直接拒绝而不是猜。
+BOOL_WAIT_KINDS = ("exists", "absent", "focused", "enabled")
+
+
+def _wait_interval_ms(within_ms: int) -> int:
+    """轮询间隔：窗口越短探得越密，但绝不低于 50ms（别把 AX 打爆）。"""
+    return max(50, min(150, within_ms // 20))
+
+# 节点行渲染的字段白名单。**显式列举而不 asdict 全字段**：AxNode.editable 是
+# FR-03 专用（focused 块消费），若随行出现会给每个节点凭空加一个 null 键，
+# 与"降低单次回执体积"的目标正相反。
+_NODE_ROW_FIELDS = ("ax_ref", "role", "subrole", "title", "value", "focused", "pos_pt", "size_pt")
+
+
+def _node_row(node: AxNode, *, render: str, geometry: str) -> dict[str, Any]:
+    """单个节点 → 回执行。render=full 与既有负载逐字一致（防退化）。"""
+    raw = jsonable(node)
+    row: dict[str, Any] = {key: raw.get(key) for key in _NODE_ROW_FIELDS}
+    if geometry == "none":
+        # 丢几何 ⇒ point 寻址目标不可从本页取得；调用方在 page 块标注
+        # geometry_dropped=true，不靠模型自己记。
+        row.pop("pos_pt", None)
+        row.pop("size_pt", None)
+    if render == "sparse":
+        # 缺字段 ⇔ null/false（回执口径已写在工具 description 里）。
+        row = {k: v for k, v in row.items() if v is not None and v is not False}
+        # ax_ref 是唯一寻址锚，任何档位都不许省。
+        row["ax_ref"] = node.ax_ref
+    return row
+
+
+def _focused_block(node: AxNode, *, page_refs: set[str]) -> dict[str, Any]:
+    """FR-03：焦点摘要。回答"光标在哪、是不是可编辑框、里面有多少字"，
+    而不必把树翻到焦点所在页——焦点常在树尾，正是最贵的那一页。"""
+    value = node.value
+    preview: str | None = None
+    if value is not None:
+        preview = value[:FOCUS_VALUE_PREVIEW]
+    return {
+        "present": True,
+        "ax_ref": node.ax_ref,
+        "role": node.role,
+        "subrole": node.subrole,
+        "title": node.title,
+        # None = 该元素没读到 AXEditable（角色不支持或 AX 报错），**不是**不可编辑。
+        # 由 role 反推 editable 属冒充已读，本实现不做。
+        "editable": node.editable,
+        "value_len": len(value) if value is not None else None,
+        "value_preview": preview,
+        "value_truncated": bool(value is not None and len(value) > FOCUS_VALUE_PREVIEW),
+        # 焦点节点是否落在本页：false 时可以直接按 ax_ref 翻页取上下文。
+        "in_page": node.ax_ref in page_refs,
+    }
+
+
 _ALLOWED_FIELDS: dict[str, set[str]] = {
     "status": {"action"},
     "apps": {"action"},
     "windows": {"action", "include_offscreen"},
-    "snapshot": {"action", "window_id", "depth", "vision"},
+    "snapshot": {
+        "action", "window_id", "depth", "vision",
+        # FR-01 续读：过滤在分页之前做（先按 role 收敛再切片，否则分页只是把
+        # 同一批噪声切成多页）。
+        "node_cursor", "node_limit", "node_kinds",
+        # FR-02 渲染档位：sparse 丢 None/false；geometry=none 丢 pos_pt/size_pt
+        # （point 寻址随之失效，回执显式标注）。
+        "render", "geometry",
+    },
+    # FR-05 等待：服务端轮询，替代模型自己 sleep-轮询
+    "wait": {
+        "action", "window_id", "depth", "ax_ref",
+        "kind", "value", "expected", "within_ms", "settle_ms",
+    },
 }
 
 GUIDANCE_AX = (
@@ -97,6 +188,11 @@ class DesktopPerceiveTool:
         "windows=CGWindowList 窗口清单（bounds_pt 单位为点；无屏幕录制授权时窗口标题为空 → "
         "title_available=false，不用应用名冒充标题）；snapshot=按 CGWindowID 取窗口元数据+AX 树"
         "（depth 默认 3 上限 6、节点上限 1500、ax_ref 为 app 根索引路径；AX 缺失记 degraded 不整单失败）"
+        "；节点过多时可续读：node_kinds 先按 role 收敛，node_limit 控每页宽度（默认 200），"
+        "回执 page.next_cursor 非空则用 node_cursor 取下一页（游标绑定树指纹，树变了回 cursor_stale）；"
+        "渲染可降档 render=sparse / geometry=none，sparse 下字段缺失等价于 null/false。"
+        "回执另含 focused 摘要（焦点节点的 ax_ref/role/value 长度与预览/editable），"
+        "可判断光标在哪而无需翻到那一页"
         "+可选 vision=evidence 窗口截图（默认 none 零落盘，逐次显式；截图前先 CGPreflight，"
         "无授权确定性 capture_unavailable 且不调用 screencapture；像素/点双单位并校验 "
         "|px-pt*scale|≤2，超差记 capture_size_mismatch）。敏感应用（1Password/Bitwarden/Keychain/"
@@ -109,8 +205,12 @@ class DesktopPerceiveTool:
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["status", "apps", "windows", "snapshot"],
-                "description": "status=权限/能力自检；apps=应用清单；windows=窗口清单；snapshot=单窗口 L0+AX+可选截图",
+                "enum": ["status", "apps", "windows", "snapshot", "wait"],
+                "description": (
+                    "status=权限/能力自检；apps=应用清单；windows=窗口清单；"
+                    "snapshot=单窗口 L0+AX+可选截图（可续读分页）；"
+                    "wait=轮询 AX 对象状态直到谓词成立或超时（超时≠对象不存在）"
+                ),
             },
             "window_id": {
                 "type": "integer",
@@ -134,6 +234,94 @@ class DesktopPerceiveTool:
             "include_offscreen": {
                 "type": "boolean",
                 "description": "windows：默认 false 只列在屏窗口；true 时包含离屏窗口",
+            },
+            # ── FR-01 续读（DESIGN-20261104 §6.1）──────────────────────────
+            "node_kinds": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": (
+                    "snapshot：按 role 过滤（大小写不敏感，如 [\"axbutton\",\"axtextfield\"]）。"
+                    "过滤发生在分页之前——先用它把树收敛，比翻页更省。空数组=不过滤。"
+                ),
+            },
+            "node_limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 500,
+                "description": (
+                    "snapshot：每页节点上限，默认 200（1..500 超出被机械限幅）。"
+                    "节点总数超过它时回执 page.next_cursor 非空。"
+                ),
+            },
+            "node_cursor": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "snapshot：续读游标，取上一次回执的 page.next_cursor。"
+                    "游标绑定（window_id, depth, 过滤后树的 fingerprint）；树变了返回 "
+                    "cursor_stale、游标不可解析返回 cursor_invalid——两者都不静默重来。"
+                    "单棵树可续读节点总量有上限，超过返回 page_budget_exhausted。"
+                ),
+            },
+            # ── FR-02 渲染档位（§6.2）─────────────────────────────────────
+            "render": {
+                "type": "string",
+                "enum": ["full", "sparse"],
+                "description": (
+                    "snapshot：full=默认（字段齐全，含 null/false）；sparse=丢 null 与 focused=false "
+                    "并压缩分隔符。sparse 下**字段缺失即等价于 null/false**，不是没读到。"
+                ),
+            },
+            "geometry": {
+                "type": "string",
+                "enum": ["full", "none"],
+                "description": (
+                    "snapshot：full=默认保留 pos_pt/size_pt（point 寻址依赖它）；"
+                    "none=丢几何（更省，但回执标注 geometry_dropped=true，"
+                    "此后 point 寻址目标不可从本页取得）。"
+                ),
+            },
+            # ── FR-05 等待（§6.5）────────────────────────────────────────
+            "ax_ref": {
+                "type": "string",
+                "minLength": 1,
+                "description": "wait：要等待的目标，来自 snapshot 回执的 ax_ref。",
+            },
+            "kind": {
+                "type": "string",
+                "enum": ["exists", "absent", "focused", "enabled", "value_equals", "value_contains"],
+                "description": (
+                    "wait：谓词类型。exists/absent=存在/消失；focused/enabled=焦点/可用态；"
+                    "value_equals/value_contains=值匹配。checked/selected 暂不支持"
+                    "（AxNode 无该字段，未验证通道不编）。"
+                ),
+            },
+            "expected": {
+                "type": "boolean",
+                "description": (
+                    "wait：期望谓词为真(true)还是为假(false)，默认 true。"
+                    "仅 exists/absent/focused/enabled 接受；value_* 给 expected 会被拒。"
+                    "expected=false 属「否定型」，需持续成立满 settle_ms 才返回。"
+                ),
+            },
+            "value": {
+                "type": "string",
+                "description": "wait：value_equals/value_contains 的比对值；其它 kind 给 value 会被拒。",
+            },
+            "within_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60000,
+                "description": "wait：最长等待毫秒，默认 10000、上限 60000。",
+            },
+            "settle_ms": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 10000,
+                "description": (
+                    "wait：否定型谓词的稳定窗口，默认 300。谓词须持续成立满该时长，"
+                    "中途回闪即重置——防「重绘空窗被判成已消失」。"
+                ),
             },
         },
         "required": ["action"],
@@ -165,10 +353,21 @@ class DesktopPerceiveTool:
             tool_name=self.name,
         )
 
-    def _result(self, ok: bool, payload: dict[str, Any]) -> ToolResult:
+    def _result(
+        self, ok: bool, payload: dict[str, Any], *, compact: bool = False
+    ) -> ToolResult:
+        # compact 只由 render=sparse 触发。缩进与分隔符是大头（约 −20% 字符），
+        # 但 full 档必须与既有回执逐字一致——既有测试与模型侧阅读习惯都建立在
+        # indent=1 格式上，默认路径不得漂移。
+        if compact:
+            content = json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+        else:
+            content = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1)
         return ToolResult(
             status=(ToolResultStatus.SUCCESS if ok else ToolResultStatus.FAILURE),
-            content=json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1),
+            content=content,
             tool_call_id="",
             tool_name=self.name,
         )
@@ -185,6 +384,7 @@ class DesktopPerceiveTool:
         platform_info: dict[str, Any] | None = None,
         session: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
+        compact: bool = False,
     ) -> ToolResult:
         receipt: dict[str, Any] = {
             "ok": bool(ok),
@@ -199,7 +399,7 @@ class DesktopPerceiveTool:
         }
         if payload:
             receipt.update(payload)
-        return self._result(ok, receipt)
+        return self._result(ok, receipt, compact=compact)
 
     def _audit_event(
         self,
@@ -257,6 +457,110 @@ class DesktopPerceiveTool:
                     "[desktop_perceive:snapshot] vision 只接受 none | evidence（默认 none）。"
                 )
             options["vision"] = vision
+            # FR-02：渲染档位（默认 full —— 与既有负载逐字兼容）
+            render = str(kwargs.get("render") or "full").strip()
+            if render not in ("full", "sparse"):
+                return action, {}, self._fail(
+                    "[desktop_perceive:snapshot] render 只接受 full | sparse（默认 full）。"
+                )
+            options["render"] = render
+            geometry = str(kwargs.get("geometry") or "full").strip()
+            if geometry not in ("full", "none"):
+                return action, {}, self._fail(
+                    "[desktop_perceive:snapshot] geometry 只接受 full | none（默认 full）。"
+                )
+            options["geometry"] = geometry
+            # FR-01：过滤 → 分页（顺序不可换：先收敛再切片）
+            kinds_raw = kwargs.get("node_kinds")
+            if kinds_raw is None:
+                kinds_raw = []
+            if not isinstance(kinds_raw, (list, tuple)):
+                return action, {}, self._fail(
+                    "[desktop_perceive:snapshot] node_kinds 必须是字符串数组。"
+                )
+            kinds: list[str] = []
+            for item in kinds_raw:
+                if not isinstance(item, str) or not item.strip():
+                    return action, {}, self._fail(
+                        "[desktop_perceive:snapshot] node_kinds 每项必须是非空字符串。"
+                    )
+                kinds.append(item.strip().lower())
+            options["node_kinds"] = tuple(sorted(set(kinds)))
+            node_limit = kwargs.get("node_limit", DEFAULT_PAGE_LIMIT)
+            if isinstance(node_limit, bool) or not isinstance(node_limit, int):
+                return action, {}, self._fail(
+                    "[desktop_perceive:snapshot] node_limit 必须是整数（1..500）。"
+                )
+            options["node_limit"] = max(1, min(MAX_PAGE_LIMIT, int(node_limit)))
+            cursor = kwargs.get("node_cursor")
+            if cursor is not None:
+                if not isinstance(cursor, str) or not cursor.strip():
+                    return action, {}, self._fail(
+                        "[desktop_perceive:snapshot] node_cursor 必须是非空字符串"
+                        "（取上次回执的 page.next_cursor）。"
+                    )
+                options["node_cursor"] = cursor.strip()
+        if action == "wait":
+            window_id = kwargs.get("window_id")
+            if isinstance(window_id, bool) or not isinstance(window_id, int):
+                return action, {}, self._fail(
+                    "[desktop_perceive:wait] window_id 必填且必须是整数。"
+                )
+            options["window_id"] = window_id
+            options["depth_raw"] = kwargs.get("depth", DEFAULT_AX_DEPTH)
+            ax_ref = kwargs.get("ax_ref")
+            if not isinstance(ax_ref, str) or not ax_ref.strip():
+                return action, {}, self._fail(
+                    "[desktop_perceive:wait] ax_ref 必填（取 snapshot 回执里的 ax_ref）。"
+                )
+            options["ax_ref"] = ax_ref.strip()
+            kind = kwargs.get("kind")
+            if kind not in WAIT_KINDS:
+                return action, {}, self._fail(
+                    f"[desktop_perceive:wait] kind 只接受 {' | '.join(WAIT_KINDS)}；"
+                    "checked/selected 暂不支持（AxNode 无该字段，未验证通道不编）。"
+                )
+            options["kind"] = kind
+            expected = kwargs.get("expected", True)
+            if not isinstance(expected, bool):
+                return action, {}, self._fail(
+                    "[desktop_perceive:wait] expected 必须是布尔值。"
+                )
+            if kind == "absent" and expected is False:
+                # absent 本身就是否定谓词；再取反等于 exists，语义重复且易错。
+                return action, {}, self._fail(
+                    "[desktop_perceive:wait] kind=absent 不接受 expected=false；"
+                    "要等它出现请用 kind=exists。"
+                )
+            value = kwargs.get("value")
+            if kind in ("value_equals", "value_contains"):
+                if not isinstance(value, str):
+                    return action, {}, self._fail(
+                        f"[desktop_perceive:wait] kind={kind} 必须给 value（字符串）。"
+                    )
+                if expected is False:
+                    return action, {}, self._fail(
+                        "[desktop_perceive:wait] fields_mismatch: value_* 不接受 "
+                        "expected=false（「等它不等于」语义歧义，拒绝而不猜）。"
+                    )
+            elif value is not None:
+                return action, {}, self._fail(
+                    f"[desktop_perceive:wait] fields_mismatch: kind={kind} 不接受 value。"
+                )
+            options["value"] = value
+            options["expected"] = expected
+            within = kwargs.get("within_ms", DEFAULT_WAIT_WITHIN_MS)
+            if isinstance(within, bool) or not isinstance(within, int) or within < 1:
+                return action, {}, self._fail(
+                    "[desktop_perceive:wait] within_ms 必须是正整数（1..60000）。"
+                )
+            options["within_ms"] = min(MAX_WAIT_WITHIN_MS, within)
+            settle = kwargs.get("settle_ms", DEFAULT_SETTLE_MS)
+            if isinstance(settle, bool) or not isinstance(settle, int) or settle < MIN_SETTLE_MS:
+                return action, {}, self._fail(
+                    f"[desktop_perceive:wait] settle_ms 必须是 >= {MIN_SETTLE_MS} 的整数。"
+                )
+            options["settle_ms"] = min(MAX_SETTLE_MS, settle)
         if action == "windows":
             include_offscreen = kwargs.get("include_offscreen", False)
             if not isinstance(include_offscreen, bool):
@@ -329,6 +633,8 @@ class DesktopPerceiveTool:
                 return self._status_action(started, **context)
             if action == "apps":
                 return self._apps_action(started, **context)
+            if action == "wait":
+                return self._wait_action(started, options=options, **context)
             if action == "windows":
                 return self._windows_action(started, include_offscreen=options["include_offscreen"], **context)
             return self._snapshot_action(started, options=options, **context)
@@ -437,6 +743,119 @@ class DesktopPerceiveTool:
             payload={"windows": windows},
         )
 
+    # ── wait（FR-05）────────────────────────────────────────────────────
+    def _wait_action(self, started: float, *, options: dict[str, Any], backend: Any,
+                     perms: PermissionSnapshot, platform: dict, session: dict) -> ToolResult:
+        """服务端轮询 AX 谓词。只读：不动光标、不投递事件、不截图。
+
+        与 snapshot 共用同一套隐私/白名单门——不能因为"只是等等"就绕过：
+        wait 每轮都要读 AX，绕过等于开了条不经过 D8 的感知侧信道。
+        """
+        window = backend.get_window(int(options["window_id"]))
+        if window is None:
+            return self._envelope(
+                action="wait", ok=False,
+                error_code=DesktopErrorCode.WINDOW_NOT_FOUND, guidance=GUIDANCE_NOT_FOUND,
+                started=started, permissions=self._perms_dict(perms),
+                platform_info=platform, session=session,
+            )
+        bundle = window.bundle_id
+        if self._privacy.is_sensitive(bundle):
+            self._audit_event(
+                window_id=window.window_id, app_bundle=bundle,
+                error_code=DesktopErrorCode.PRIVACY_BLOCKED.value, sha256=None,
+            )
+            return self._envelope(
+                action="wait", ok=False,
+                error_code=DesktopErrorCode.PRIVACY_BLOCKED,
+                guidance=(
+                    f"目标窗口属于隐私核心名单（bundle_id={bundle}）；wait 每轮都要读 AX，"
+                    "按 D8 同样拒绝，不轮询、不读、无降级路径。"
+                ),
+                started=started, permissions=self._perms_dict(perms),
+                platform_info=platform, session=session,
+            )
+        if not self._allowlist.is_allowed(bundle):
+            return self._envelope(
+                action="wait", ok=False,
+                error_code=DesktopErrorCode.APP_NOT_ALLOWED,
+                guidance=(
+                    f"目标应用不在 desktop.see_allowlist（bundle_id={bundle}，U14）；"
+                    "需要等待时由用户在配置中追加该 bundle_id。"
+                ),
+                started=started, permissions=self._perms_dict(perms),
+                platform_info=platform, session=session,
+                payload={"window": self._redact_window(window)},
+            )
+
+        depth, clipped = clamp_depth(options.get("depth_raw", DEFAULT_AX_DEPTH))
+        degraded: list[str] = []
+        if not perms.ax_trusted:
+            degraded.append("ax_not_trusted")
+        within_ms = int(options["within_ms"])
+        predicate = WaitPredicate(
+            kind=str(options["kind"]),
+            expected=bool(options["expected"]),
+            value=options.get("value"),
+            settle_ms=int(options["settle_ms"]),
+        )
+        ax_ref = str(options["ax_ref"])
+        observed_failures: list[str] = []
+
+        def snapshot() -> Any:
+            view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT)
+            if not view.available and "ax_unavailable" not in observed_failures:
+                observed_failures.append("ax_unavailable")
+            if view.truncated and "ax_traversal_truncated" not in observed_failures:
+                observed_failures.append("ax_traversal_truncated")
+            return view.nodes
+
+        outcome = wait_for(
+            snapshot,
+            ax_ref,
+            predicate,
+            within_ms=within_ms,
+            interval_ms=_wait_interval_ms(within_ms),
+            max_polls=MAX_WAIT_POLLS,
+        )
+        degraded.extend(observed_failures)
+        guidance: str | None = None
+        if not outcome.satisfied:
+            guidance = (
+                f"[desktop_perceive:wait] 超时：{outcome.elapsed_ms}ms 内未观察到谓词成立"
+                f"（kind={predicate.kind}）。超时≠对象不存在——只代表这个窗口内没等到，"
+                "不要据此判定操作失败；可加长 within_ms，或直接用 snapshot 看当前状态。"
+            )
+        if "ax_unavailable" in degraded:
+            degraded.append("wait_without_ax: 谓词永不成立，本次等待的结果不可解释")
+        return self._envelope(
+            action="wait",
+            ok=True,
+            error_code=None,
+            guidance=guidance,
+            started=started,
+            permissions=self._perms_dict(perms),
+            platform_info=platform,
+            session=session,
+            payload={
+                "wait": {
+                    "kind": predicate.kind,
+                    "ax_ref": ax_ref,
+                    "expected": predicate.expected,
+                    "value": predicate.value,
+                    "settle_ms": predicate.settle_ms,
+                    "within_ms": within_ms,
+                    "elapsed_ms": outcome.elapsed_ms,
+                    "polls": outcome.polls,
+                    "state": outcome.state,
+                    "satisfied": outcome.satisfied,
+                    "observed": outcome.observed,
+                    "clipped_depth": bool(clipped),
+                },
+                "degraded": degraded,
+            },
+        )
+
     # ── snapshot ────────────────────────────────────────────────────────
     def _snapshot_action(self, started: float, *, options: dict[str, Any], backend: Any,
                          perms: PermissionSnapshot, platform: dict, session: dict) -> ToolResult:
@@ -481,15 +900,119 @@ class DesktopPerceiveTool:
             )
         depth, clipped = clamp_depth(options.get("depth_raw", DEFAULT_AX_DEPTH))
         vision = str(options.get("vision") or "none")
+        render = str(options.get("render") or "full")
+        geometry = str(options.get("geometry") or "full")
+        kinds = tuple(options.get("node_kinds") or ())
+        page_limit = int(options.get("node_limit") or DEFAULT_PAGE_LIMIT)
         ax_view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT)
         degraded: list[str] = []
+        all_nodes = tuple(ax_view.nodes)
+        # FR-01：过滤**先于**分页。翻页只解决"单页太大"；把树收敛得靠过滤。
+        # 顺序反了就是把同一批噪声切成多页——看着省了，其实一页页翻更贵。
+        filtered = (
+            tuple(node for node in all_nodes if str(node.role or "").strip().lower() in kinds)
+            if kinds
+            else all_nodes
+        )
+        cursor_raw = options.get("node_cursor")
+        if cursor_raw is not None:
+            decoded = decode_cursor(str(cursor_raw))
+            if decoded is None:
+                return self._envelope(
+                    action="snapshot",
+                    ok=False,
+                    error_code=DesktopErrorCode.CURSOR_INVALID,
+                    guidance=(
+                        "[desktop_perceive:snapshot] cursor_invalid: node_cursor 不可解析"
+                        "（前缀/版本/字段类型不符）。游标是上次回执 page.next_cursor 的"
+                        "原样字符串，不要手工构造；要从头取页就省略 node_cursor。"
+                    ),
+                    started=started,
+                    permissions=self._perms_dict(perms),
+                    platform_info=platform,
+                    session=session,
+                    payload={"window": jsonable(window)},
+                )
+            if decoded.offset >= MAX_PAGED_NODES:
+                return self._envelope(
+                    action="snapshot",
+                    ok=False,
+                    error_code=DesktopErrorCode.PAGE_BUDGET_EXHAUSTED,
+                    guidance=(
+                        f"[desktop_perceive:snapshot] page_budget_exhausted: 单棵树已续读到 "
+                        f"{decoded.offset} 节点，上限 {MAX_PAGED_NODES}。"
+                        "全树枚举不是本工具的用途：请用 node_kinds 收敛 role，"
+                        "或降低 depth 重新取第一页。"
+                    ),
+                    started=started,
+                    permissions=self._perms_dict(perms),
+                    platform_info=platform,
+                    session=session,
+                    payload={"window": jsonable(window)},
+                )
+        try:
+            page = paginate(
+                filtered,
+                window_id=int(window.window_id),
+                depth=depth,
+                cursor=(str(cursor_raw) if cursor_raw is not None else None),
+                page_limit=page_limit,
+            )
+        except ValueError as exc:
+            # decode 已通过，能走到这里只剩两种可能：树变了，或游标越过了当前树尾。
+            # 两者处置相同（重新取第一页），故合并为 cursor_stale，不硬拆成假区分。
+            return self._envelope(
+                action="snapshot",
+                ok=False,
+                error_code=DesktopErrorCode.CURSOR_STALE,
+                guidance=(
+                    f"[desktop_perceive:snapshot] cursor_stale: 游标绑定的树已变（{exc}）。"
+                    "游标绑定 (window_id, depth, 过滤后树的结构指纹)；窗口内容变化、"
+                    "depth 或 node_kinds 改变都会使其失效。请省略 node_cursor 从第一页"
+                    "重新取——不要复用旧游标。"
+                ),
+                started=started,
+                permissions=self._perms_dict(perms),
+                platform_info=platform,
+                session=session,
+                payload={"window": jsonable(window)},
+            )
+        page_rows = [_node_row(node, render=render, geometry=geometry) for node in page.nodes]
+        page_refs = {str(row["ax_ref"]) for row in page_rows}
+        # FR-03：焦点摘要取全树（不是本页）——焦点常在树尾，正是最贵的那一页，
+        # "要读焦点就得翻到最后一页"是本设计要消掉的成本。
+        focus_node = next((node for node in all_nodes if node.focused), None)
+        if ax_view.truncated:
+            # 遍历本身被 AX_NODE_LIMIT_DEFAULT 截断 ⇒ total 只是"已遍历部分"的总量，
+            # 余下节点翻页也拿不到，只能降 depth / 加过滤。必须显式，否则调用方会把
+            # remaining=0 误读成"整棵树都看完了"。
+            degraded.append("ax_traversal_truncated")
         ax_payload: dict[str, Any] = {
             "available": bool(ax_view.available),
             "root_role": ax_view.root_role,
-            "node_count": len(ax_view.nodes),
+            "node_count": len(all_nodes),
             "truncated": bool(ax_view.truncated),
             "clipped_depth": bool(clipped),
-            "nodes": [jsonable(node) for node in ax_view.nodes],
+            "nodes": page_rows,
+            "filtered_count": len(filtered),
+            "node_kinds": list(kinds),
+            "page": {
+                "index": page.index,
+                "returned": len(page.nodes),
+                "total": page.total,
+                "remaining": page.remaining,
+                "next_cursor": page.next_cursor,
+                "page_limit": page_limit,
+                "render": render,
+                "geometry": geometry,
+                "geometry_dropped": geometry == "none",
+                "traversal_truncated": bool(ax_view.truncated),
+            },
+            "focused": (
+                _focused_block(focus_node, page_refs=page_refs)
+                if focus_node is not None
+                else {"present": False}
+            ),
         }
         error_code: DesktopErrorCode | None = None
         guidance: str | None = None
@@ -558,6 +1081,8 @@ class DesktopPerceiveTool:
                 "image": image_payload,
                 "degraded": degraded,
             },
+            # FR-02：sparse 档连信封一起压（缩进是纯格式开销）；full 档保持原样。
+            compact=(render == "sparse"),
         )
 
     @staticmethod

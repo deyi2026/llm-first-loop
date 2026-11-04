@@ -267,6 +267,18 @@ class MacOSDesktopBackend:
         finally:
             el.release()
 
+    def act_scroll_into_view(self, window: WindowInfo, ax_ref: str) -> ActOutcome:
+        """scroll_into_view：act-time 重解析 + AXScrollToVisible（滚动容器把目标滚入可视区）。"""
+        el, failure = macos_actuate.resolve_element_by_axref(window, ax_ref)
+        if el is None:
+            return self._resolution_failure(failure)
+        try:
+            return macos_actuate.act_outcome_from_ax_err(
+                macos_actuate.ax_scroll_to_visible(el), "AXScrollToVisible"
+            )
+        finally:
+            el.release()
+
     def act_set_value(self, window: WindowInfo, ax_ref: str, text: str) -> ActOutcome:
         """type：AX set-value（已实测通道）+ 写后回读校验（逐字节相等才算成）。"""
         el, failure = macos_actuate.resolve_element_by_axref(window, ax_ref)

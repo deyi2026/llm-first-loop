@@ -108,7 +108,7 @@ from llm_loop.desktop.operate import (
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
 from llm_loop.timekeeping import system_local_now
 
-_DOS = ("click", "type", "press_key", "scroll")
+_DOS = ("click", "type", "press_key", "scroll", "scroll_into_view")
 _BASE_FIELDS = {"do", "window_id", "target", "text", "keys", "dry_run", "confirm_token", "force", "force_credential"}
 
 # S3：force 凭据失败节流（进程内）——连续 3 次不匹配锁定 60s
@@ -236,7 +236,7 @@ class DesktopOperateTool:
             "do": {
                 "type": "string",
                 "enum": list(_DOS),
-                "description": "click=点击（ax_ref 走 AXPress / point 走 CGEvent）；type=AX set-value 写入并回读校验；press_key=闭合命名键；scroll=滚轮（down/up 可带 :n 行数，默认 3）",
+                "description": "click=点击（ax_ref 走 AXPress / point 走 CGEvent）；type=AX set-value 写入并回读校验；press_key=闭合命名键；scroll=滚轮（down/up 可带 :n 行数，默认 3）；scroll_into_view=滚动容器把目标滚入可视区（只接受 target={ax_ref}）",
             },
             "window_id": {
                 "type": "integer",
@@ -498,6 +498,20 @@ class DesktopOperateTool:
                 return bad("[desktop_operate:scroll] keys 必填（down|up[:n]）。")
             if text is not None:
                 return bad("[desktop_operate:scroll] fields_mismatch: 不接受 text。")
+        if do == "scroll_into_view":
+            # scroll_into_view 只接受 target={ax_ref}：滚动目标须可 exact 重解析
+            # （AXScrollToVisible 按元素身份寻址），point 坐标通道不提供身份。
+            if text is not None or keys is not None:
+                return bad(
+                    "[desktop_operate:scroll_into_view] fields_mismatch: scroll_into_view 不接受 text/keys。"
+                )
+            pre_target = kwargs.get("target")
+            if isinstance(pre_target, dict) and "point" in pre_target:
+                return bad(
+                    "[desktop_operate:scroll_into_view] fields_mismatch: scroll_into_view 只接受 target={ax_ref}"
+                    "（滚动目标须可 exact 重解析，坐标通道不提供身份）",
+                    DesktopErrorCode.INVALID_ARGS,
+                )
         if keys is not None:
             options["keys"] = str(keys)
         target = kwargs.get("target")
@@ -528,7 +542,7 @@ class DesktopOperateTool:
                     "[desktop_operate] target 必须是 {ax_ref} 或 {point:{x,y}} 之一（键互斥）。"
                 )
             options["target"] = target
-        elif do in ("click", "type", "scroll"):
+        elif do in ("click", "type", "scroll", "scroll_into_view"):
             return bad(f"[desktop_operate:{do}] target 必填。")
         return do, options, None, None
 
@@ -1398,6 +1412,8 @@ class DesktopOperateTool:
             return backend.act_key(KEY_KEYCODES[canonical.rsplit("+", 1)[-1]], flags)
         if do == "scroll":
             return backend.act_scroll(window, int(options["scroll_signed_lines"]))
+        if do == "scroll_into_view":
+            return backend.act_scroll_into_view(window, str(target["ax_ref"]))
         from llm_loop.desktop.models import ActOutcome
 
         return ActOutcome(ok=False, error=DesktopErrorCode.BACKEND_ERROR, detail=f"未知动作: {do}")

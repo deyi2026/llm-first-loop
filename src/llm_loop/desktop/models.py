@@ -58,6 +58,12 @@ class DesktopErrorCode(StrEnum):
     TYPE_ARGS_INVALID = "type_args_invalid"  # §5.5：type 参数非法
     # ── R1 修复轮（M2/M3/S1/S6）──
     INVALID_ARGS = "invalid_args"  # S6：入口参数形状非法，统一 JSON 信封回执
+    # ── B-1 续读分页（DESIGN-20261104 §6.1）──
+    # 三码分开是刻意的：游标坏（调用方拼错）、树变了（世界漂移）、额度耗尽
+    # 对调用方是三种完全不同的处置，合并成一个码会逼它去猜。
+    CURSOR_INVALID = "cursor_invalid"
+    CURSOR_STALE = "cursor_stale"
+    PAGE_BUDGET_EXHAUSTED = "page_budget_exhausted"
     REVIEW_REQUIRED = "review_required"  # M2：发布/提交/支付类目标须宿主发表闸，本工具 fail-closed 拒绝
     EXEC_MODE_BLOCKED = "exec_mode_blocked"  # M3：宿主 EXEC_MODE=blocked/readonly 拒绝真实投递（dry_run 不受限）
     # ── R2 修复轮（P2-3）──
@@ -186,6 +192,15 @@ class AxNode:
     focused: bool
     pos_pt: Pt | None
     size_pt: Size | None
+    # FR-03（DESIGN-20261104 §6.3）：AXEditable 读取通道。None = 未知/该角色无此属性，
+    # 绝不用 role 反推冒充已读。不进入 world 指纹（ax_fingerprint_nodes 只取
+    # ax_ref|role|title），也不进入节点行渲染（_NODE_FIELDS 显式白名单），
+    # 因此对既有负载零增量。
+    editable: bool | None = None
+    # FR-05（§6.5）：AXEnabled 读取通道。None = 未知/该角色无此属性。
+    # 谓词求值把 None 当"不成立"（见 waiting.evaluate）——把读不到当 True
+    # 会让调用方在真不可用时继续点。同样不进指纹、不进节点行渲染。
+    enabled: bool | None = None
 
 
 @dataclass(frozen=True)

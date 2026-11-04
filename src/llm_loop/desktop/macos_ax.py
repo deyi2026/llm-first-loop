@@ -155,6 +155,8 @@ def node_from_element(el: AxElementLike, ax_ref: str) -> AxNode:
     pos = el.attr("AXPosition")
     size = el.attr("AXSize")
     focused = el.attr("AXFocused")
+    editable = el.attr("AXEditable")
+    enabled = el.attr("AXEnabled")
     return AxNode(
         ax_ref=ax_ref,
         role=_opt_str(el.attr("AXRole")),
@@ -164,6 +166,10 @@ def node_from_element(el: AxElementLike, ax_ref: str) -> AxNode:
         focused=(focused is True),
         pos_pt=pos if isinstance(pos, Pt) else None,
         size_pt=size if isinstance(size, Size) else None,
+        # FR-03：只有真读到 CFBoolean 才给 True/False；读不到（不支持该属性、
+        # 只读角色、AX 错误）一律 None——用 role 反推 editable 是冒充已读。
+        editable=editable if isinstance(editable, bool) else None,
+        enabled=enabled if isinstance(enabled, bool) else None,
     )
 
 
