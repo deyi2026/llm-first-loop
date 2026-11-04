@@ -287,9 +287,11 @@ dsh-vc 为 PolyForm Noncommercial 1.0.0。→ **影响**：只借鉴**契约形�
 3. 若做，采用**收紧而非放宽**的形态：以"目标 ax_ref 的祖先路径 + 自身 role/subrole/title"为绑定单元，**不引入位置容差**；无关节点移出指纹的同时，要求前台归属与窗口身份仍参与（保留遮挡的部分间接信号）；
 4. 必须给出"哪些漏检被引入"的显式清单（诚实义务）。
 
-**计量面已就绪（2026-11-04）**：`desktop_operate` 的回执 payload 与审计行新增
+**计量面已就绪（2026-11-04）**：`desktop_operate` 的回执 payload 新增
 `stale_breaks` = `{breaks, primary, unrelated}`，四类打破项可直接计数——第 1 步的
-"归因"不再依赖事后回忆。口径边界写在 `world_drift_breaks` 的 docstring 里：
+"归因"不再依赖事后回忆。审计字典同步携带同一字段（是否落盘取决于 audit sink，
+本仓默认 sink 为空，勿假定有审计文件可查）。口径边界写在 `world_drift_breaks`
+的 docstring 里：
 
 - 窗口身份破时**不统计**无关节点：身份变（pid/bounds/title）会让 ax_ref 整体重排，
   计入会把真实身份变化虚报成闸的分子，直接污染"无关打破占比"；
