@@ -287,6 +287,20 @@ dsh-vc 为 PolyForm Noncommercial 1.0.0。→ **影响**：只借鉴**契约形�
 3. 若做，采用**收紧而非放宽**的形态：以"目标 ax_ref 的祖先路径 + 自身 role/subrole/title"为绑定单元，**不引入位置容差**；无关节点移出指纹的同时，要求前台归属与窗口身份仍参与（保留遮挡的部分间接信号）；
 4. 必须给出"哪些漏检被引入"的显式清单（诚实义务）。
 
+**计量面已就绪（2026-11-04）**：`desktop_operate` 的回执 payload 与审计行新增
+`stale_breaks` = `{breaks, primary, unrelated}`，四类打破项可直接计数——第 1 步的
+"归因"不再依赖事后回忆。口径边界写在 `world_drift_breaks` 的 docstring 里：
+
+- 窗口身份破时**不统计**无关节点：身份变（pid/bounds/title）会让 ax_ref 整体重排，
+  计入会把真实身份变化虚报成闸的分子，直接污染"无关打破占比"；
+- 目标节点自身那一行不计入无关（它归 `target_subtree`），否则一次改动记两次；
+- 前台门早退路径（窗口消失/前台不符）只比身份与前台两段，并标
+  `unrelated: {"skipped": ...}`——树未加载时不伪装成"树没变"。
+
+**闸仍未开**：分类能力就绪 ≠ 数据已采集。第 1 步的 ≥20 次真实任务尚未执行（当前
+`ax_trusted` 与 `screen_capture_granted` 均为 false、屏幕锁定），故"无关打破占比"仍是
+未知量，FR-06 继续挂闸，§2.2 的 token 数字仍为未验证估算。
+
 ### 6.6 FR-05 `wait`（P1）
 
 `desktop_perceive` 新增 `action=wait`，谓词形态对齐 `browser_perceive`：

@@ -497,6 +497,149 @@ def test_u16_world_drift_invalidates_token_then_replay_rejected():
     assert replay["error_code"] == "confirm_token_replayed"
 
 
+# ══ 6b. §6.5 计量面：world 漂移归因（stale_breaks） ═════════════════════════
+# 闸要的是"每次漂移的具体打破项分类"，归因必须能从回执读到才可统计。这些
+# 用例锁的是归因口径；门控行为不变（仍只看 world_version）。
+def test_u16_drift_breaks_target_subtree_not_double_counted():
+    """目标自身改名 → target_subtree；同一改动不得同时记进无关节点。"""
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    backend._ax_views[101] = _view(
+        _node("0", "AXWindow", "某文档"),
+        _node("0.0", "AXButton", "改名后的按钮"),
+        _node("0.1", "AXTextArea", "正文", value=""),
+    )
+    drift = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert drift["error_code"] == "foreground_changed"
+    breaks = drift["stale_breaks"]
+    assert breaks["breaks"] == ["target_subtree"]
+    assert breaks["primary"] == "target_subtree"
+    assert breaks["unrelated"] == {"added": 0, "removed": 0, "changed": 0, "sample": []}
+
+
+def test_u16_drift_breaks_unrelated_nodes():
+    """目标以外的节点变化 → unrelated_nodes（闸要数的就是这一类）。"""
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    backend._ax_views[101] = _view(
+        _node("0", "AXWindow", "某文档"),
+        _node("0.0", "AXButton", "新建"),
+        _node("0.1", "AXTextArea", "正文", value=""),
+        _node("0.2", "AXButton", "侧栏新出现"),
+    )
+    drift = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    breaks = drift["stale_breaks"]
+    assert breaks["breaks"] == ["unrelated_nodes"]
+    assert breaks["unrelated"]["added"] == 1
+    assert breaks["unrelated"]["sample"] == ["0.2"]
+
+
+def test_u16_drift_breaks_foreground_on_early_gate_exit():
+    """前台 app 切换走早退路径，仍必须带归因（否则最常见一类在闸里无分子）。"""
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    backend.frontmost_override = "com.apple.finder"
+    drift = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    assert drift["error_code"] == "foreground_changed"
+    breaks = drift["stale_breaks"]
+    assert breaks["primary"] == "foreground"
+    assert breaks["unrelated"] == {"skipped": "no_tree_loaded"}
+
+
+def test_u16_drift_gate_breaks_window_missing_is_defensive():
+    """窗口消失实际先被 `_gate_window_bound` 以 WINDOW_NOT_FOUND 拦下，world 门里
+    的 `fresh_window is None` 只覆盖"674 之后、1245 之前"的窄竞态。故这里直接锁
+    该方法的口径，不伪装成可从回执端到端触发。"""
+    from types import SimpleNamespace
+
+    from llm_loop.desktop.operate import world_digest
+
+    tool = _tool(_backend())
+    # 旧令牌（拆分前签发）无 digest：如实 unavailable，不猜
+    assert tool._world_gate_breaks(None, None, "com.google.Chrome") == {
+        "unavailable": "token_has_no_world_digest"
+    }
+
+    rec = SimpleNamespace(world_digest=world_digest(_window(), (), "com.google.Chrome"))
+    assert tool._world_gate_breaks(rec, None, "com.google.Chrome") == {
+        "breaks": ["window_identity"],
+        "primary": "window_identity",
+        "unrelated": {"skipped": "window_missing"},
+    }
+
+
+def test_u16_drift_window_identity_suppresses_unrelated_count():
+    """身份变时不得统计无关节点：ax_ref 会整体重排，否则虚增闸分子。"""
+    backend = _backend()
+    reg = _registry(_tool(backend))
+    dry = _dispatch(reg, **CLICK_101, dry_run=True)
+    backend.windows = [_window(title="换了标题")]
+    backend._ax_views[101] = _view(
+        _node("0", "AXWindow", "某文档"),
+        _node("0.0", "AXButton", "新建"),
+        _node("0.1", "AXTextArea", "正文", value=""),
+        _node("0.2", "AXButton", "侧栏新出现"),
+    )
+    drift = _dispatch(reg, **CLICK_101, dry_run=False, confirm_token=dry["confirm_token"])
+    breaks = drift["stale_breaks"]
+    assert breaks["primary"] == "window_identity"
+    assert breaks["unrelated"] == {"suppressed_by": "window_identity"}
+
+
+# ── 纯函数层：归因口径本身 ──────────────────────────────────────────────────
+def test_world_drift_breaks_clean_and_head_path():
+    from llm_loop.desktop.operate import (
+        world_digest,
+        world_drift_breaks,
+        world_head_breaks,
+    )
+
+    w = _window()
+    nodes = (_node("0", "AXWindow", "某文档"), _node("0.0", "AXButton", "新建"))
+    base = world_digest(w, nodes, w.bundle_id)
+    assert world_drift_breaks(base, base) == {
+        "breaks": [],
+        "primary": None,
+        "unrelated": {"added": 0, "removed": 0, "changed": 0, "sample": []},
+    }
+    # head 路径（树未加载）：unrelated 如实报 skipped，不伪装成"树没变"
+    assert world_head_breaks(base, world_digest(w, (), w.bundle_id)) == {
+        "breaks": [],
+        "primary": None,
+        "unrelated": {"skipped": "no_tree_loaded"},
+    }
+    # 前台段变：head 路径能抓到 foreground
+    moved = world_head_breaks(base, world_digest(w, (), "com.apple.finder"))
+    assert moved["primary"] == "foreground"
+
+
+def test_world_fingerprint_equivalence_locked():
+    """world_fingerprint 的哈希原料拆分后必须逐字不变（防两套逻辑漂移）。"""
+    import hashlib
+
+    from llm_loop.desktop.operate import world_digest, world_fingerprint
+
+    w = _window()
+    nodes = (
+        _node("0", "AXWindow", "某文档"),
+        _node("0.0", "AXButton", "新建"),
+        _node("0.1", "AXTextArea", "正文", value="abc"),
+    )
+    for iv in (False, True):
+        for tn in (None, nodes[1]):
+            expect = hashlib.sha256(
+                world_digest(
+                    w, nodes, w.bundle_id, include_value=iv, target_node=tn
+                ).material().encode("utf-8")
+            ).hexdigest()
+            assert world_fingerprint(
+                w, nodes, w.bundle_id, include_value=iv, target_node=tn
+            ) == expect
+
+
 def test_u16_token_window_id_mismatch_rejected():
     backend = _backend(windows=[
         _window(),  # 101 Chrome（前台）

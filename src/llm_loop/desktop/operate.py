@@ -287,29 +287,162 @@ def world_fingerprint(
     - target_node（R1/S9）：ax_ref 通道把解析到的目标节点行**无条件**追加进
       指纹（即使它排在 200 截断之外）——深位目标自身的 role/title 漂移必须
       打破 world_version（令牌作废），不能只靠前 200 行碰巧覆盖。
+    实现上不再是手写拼串：原料由 ``world_digest`` 产出（按打破项分组），本函数
+    只取它的 sha256。等值性由测试锁定（``material()`` 逐字复现拆分前的串）。
     """
+    return hashlib.sha256(
+        world_digest(
+            window,
+            nodes,
+            frontmost_bundle,
+            include_value=include_value,
+            target_node=target_node,
+        )
+        .material()
+        .encode("utf-8")
+    ).hexdigest()
+
+
+# 指纹只取前 N 节点：目标子树的稳定性信号，不是全树 diff（既有口径，勿改）。
+WORLD_NODE_LIMIT = 200
+
+# §6.5 开工闸的四类打破项；元组顺序即 primary 归因的优先级。
+WORLD_BREAK_WINDOW_IDENTITY = "window_identity"
+WORLD_BREAK_FOREGROUND = "foreground"
+WORLD_BREAK_TARGET_SUBTREE = "target_subtree"
+WORLD_BREAK_UNRELATED_NODES = "unrelated_nodes"
+
+
+@dataclass(frozen=True)
+class WorldDigest:
+    """world 指纹的**分解形态**：同一份原料按打破项分组，供 §6.5 归因。
+
+    存在理由：闸要的是"每次漂移的具体打破项分类"（窗口身份 / 前台归属 /
+    目标子树 / 无关前 200 节点）。只留 sha256 时只能判"变了"，判不出"哪类
+    变了"——事件可数，归因不可核，闸的分子（无关节点占比）因此算不出来。
+
+    不改变任何判定：``world_fingerprint`` 现在就是 ``material()`` 的 sha256，
+    而 ``material()`` 逐字复现拆分前的哈希原料（等值由测试锁定）。
+    """
+
+    identity: str  # win|pid|bundle|bounds|title
+    foreground: str  # fg|frontmost
+    rows: tuple[tuple[str, str], ...]  # (ax_ref, 行)
+    target: tuple[str, str] | None  # (ax_ref, "T:..." 行)
+
+    def material(self) -> str:
+        """哈希原料：与拆分前 ``world_fingerprint`` 拼出的串逐字一致。"""
+        parts = [row for _ref, row in self.rows]
+        if self.target is not None:
+            parts.append(self.target[1])
+        return "|ax;".join([f"{self.identity}|{self.foreground}", *parts])
+
+
+def _world_row(node: AxNode, include_value: bool) -> str:
+    row = f"{node.ax_ref}|{node.role or ''}|{node.title or ''}|fo={int(bool(node.focused))}"
+    if include_value:
+        row += f"|{node.value or ''}"
+    return row
+
+
+def world_digest(
+    window: WindowInfo,
+    nodes: tuple[AxNode, ...],
+    frontmost_bundle: str | None,
+    *,
+    include_value: bool = False,
+    target_node: AxNode | None = None,
+) -> WorldDigest:
+    """``world_fingerprint`` 的原料，按打破项分组（判定语义完全同源）。"""
     bounds = window.bounds_pt
-    head = (
+    identity = (
         f"win={window.window_id}|pid={window.pid}|bundle={_norm_bundle(window.bundle_id)}"
         f"|bounds={bounds.x:.1f},{bounds.y:.1f},{bounds.w:.1f},{bounds.h:.1f}"
-        f"|title={window.title or ''}|fg={window.is_foreground}"
-        f"|frontmost={_norm_bundle(frontmost_bundle)}"
+        f"|title={window.title or ''}"
     )
-    parts: list[str] = []
-    for node in list(nodes)[:200]:
-        row = f"{node.ax_ref}|{node.role or ''}|{node.title or ''}|fo={int(bool(node.focused))}"
-        if include_value:
-            row += f"|{node.value or ''}"
-        parts.append(row)
+    rows = tuple(
+        (node.ax_ref, _world_row(node, include_value))
+        for node in list(nodes)[:WORLD_NODE_LIMIT]
+    )
+    target = None
     if target_node is not None:
-        target_row = (
-            f"T:{target_node.ax_ref}|{target_node.role or ''}|{target_node.title or ''}"
-            f"|fo={int(bool(target_node.focused))}"
-        )
-        if include_value:
-            target_row += f"|{target_node.value or ''}"
-        parts.append(target_row)
-    return hashlib.sha256(("|ax;".join([head, *parts])).encode("utf-8")).hexdigest()
+        target = (target_node.ax_ref, "T:" + _world_row(target_node, include_value))
+    return WorldDigest(
+        identity=identity,
+        foreground=f"fg={window.is_foreground}|frontmost={_norm_bundle(frontmost_bundle)}",
+        rows=rows,
+        target=target,
+    )
+
+
+def world_drift_breaks(expected: WorldDigest, actual: WorldDigest) -> dict[str, object]:
+    """比对两次 digest，给出 §6.5 要求的打破项归因（只做计量，不参与门控）。
+
+    归因口径是闸数据可信与否的关键，两条都是刻意的：
+
+    - **窗口身份破时不统计无关节点差异**。身份变（pid/bounds/title）会让 ax_ref
+      整体重排，此时把行差异记成"无关节点 churn"会把真实身份变化虚报成闸的
+      分子，直接污染"无关打破占比"。改以 ``unrelated.suppressed_by`` 如实标注。
+    - 无关节点一栏排除目标节点自身那一行——它归 target_subtree；不排除会让
+      一次目标改动被记两次。
+
+    返回 ``{"breaks": 全部命中项, "primary": 最高优先级一项或 None,
+    "unrelated": 计数 + sample}``。一次事件可同时命中多类，故同时给全集与
+    primary，使"任一命中"与"主因"两种统计口径都可算。
+    """
+    breaks: list[str] = []
+    if expected.identity != actual.identity:
+        breaks.append(WORLD_BREAK_WINDOW_IDENTITY)
+    if expected.foreground != actual.foreground:
+        breaks.append(WORLD_BREAK_FOREGROUND)
+    if expected.target != actual.target:
+        breaks.append(WORLD_BREAK_TARGET_SUBTREE)
+
+    unrelated: dict[str, object]
+    if expected.identity != actual.identity:
+        unrelated = {"suppressed_by": WORLD_BREAK_WINDOW_IDENTITY}
+    else:
+        target_refs = {item[0] for item in (expected.target, actual.target) if item}
+        before, after = dict(expected.rows), dict(actual.rows)
+        added = [ref for ref in after if ref not in target_refs and ref not in before]
+        removed = [ref for ref in before if ref not in target_refs and ref not in after]
+        changed = [
+            ref
+            for ref in before
+            if ref not in target_refs and ref in after and before[ref] != after[ref]
+        ]
+        if added or removed or changed:
+            breaks.append(WORLD_BREAK_UNRELATED_NODES)
+        unrelated = {
+            "added": len(added),
+            "removed": len(removed),
+            "changed": len(changed),
+            "sample": (added + removed + changed)[:5],
+        }
+    return {
+        "breaks": breaks,
+        "primary": breaks[0] if breaks else None,
+        "unrelated": unrelated,
+    }
+
+
+def world_head_breaks(expected: WorldDigest, actual: WorldDigest) -> dict[str, object]:
+    """只比身份/前台两段——树尚未加载时的归因（前台门早退路径）。
+
+    那条路径 `_gate_world_rebind` 还没取 AX 树就拒绝了（窗口消失/前台不符），
+    没有 rows 可比。此处如实报 ``unrelated: {"skipped": "no_tree_loaded"}``，
+    不把"没取树"伪装成"树没变"或"树全变"——伪装任何一种都会污染闸的分母。
+    """
+    breaks: list[str] = []
+    if expected.identity != actual.identity:
+        breaks.append(WORLD_BREAK_WINDOW_IDENTITY)
+    if expected.foreground != actual.foreground:
+        breaks.append(WORLD_BREAK_FOREGROUND)
+    return {
+        "breaks": breaks,
+        "primary": breaks[0] if breaks else None,
+        "unrelated": {"skipped": "no_tree_loaded"},
+    }
 
 
 def window_gone_fingerprint(window_id: int) -> str:
@@ -337,6 +470,10 @@ class _TokenRecord:
     action_fingerprint: str
     world_version: str
     risk_class: str
+    # §6.5 计量面：签发时 world 指纹的**分解形态**，只用于事后归因，不参与任何
+    # 门控比对（门控仍只比 world_version）。None = 拆分前签发/未提供，此时归因
+    # 如实报 unavailable，绝不猜。
+    world_digest: WorldDigest | None = None
     consumed: bool = False
     issued_at: float = 0.0
 
@@ -407,6 +544,7 @@ class ConfirmTokenStore:
         action_fp: str,
         world_version: str,
         risk_class: str,
+        world_digest: WorldDigest | None = None,
         now: float | None = None,
     ) -> str:
         token = f"dtkm-{_secrets.token_hex(16)}"
@@ -420,6 +558,7 @@ class ConfirmTokenStore:
                 action_fingerprint=str(action_fp),
                 world_version=str(world_version),
                 risk_class=str(risk_class),
+                world_digest=world_digest,
                 issued_at=at,
             )
         return token

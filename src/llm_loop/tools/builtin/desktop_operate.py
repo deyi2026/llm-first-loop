@@ -103,7 +103,10 @@ from llm_loop.desktop.operate import (
     session_target_key,
     web_area_rects,
     window_gone_fingerprint,
+    world_digest,
+    world_drift_breaks,
     world_fingerprint,
+    world_head_breaks,
 )
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
 from llm_loop.timekeeping import system_local_now
@@ -174,6 +177,9 @@ class _ActFlow:
     keys: str = ""
     risk_class: str = ""
     world: str = ""
+    # §6.5 计量面：dry_run 时的 world 分解形态，随令牌一起存进 token record。
+    # apply 是新 flow，不从这里读——归因一律取 token_record.world_digest。
+    world_digest: Any = None
     channel_token_required: bool = False
     action_fp: str = ""
     risk_note: str | None = None
@@ -925,6 +931,10 @@ class DesktopOperateTool:
             (n for n in nodes if n.ax_ref == target_identity.get("ax_ref")), None
         ) if target_identity["kind"] == "ax_ref" else None
         world = world_fingerprint(window, nodes, frontmost_before, target_node=dry_target_node)
+        # §6.5 计量面：同一份原料的分解形态。不参与门控，只在 apply 漂移时归因。
+        flow.world_digest = world_digest(
+            window, nodes, frontmost_before, target_node=dry_target_node
+        )
         audit["pre_sha256"] = world
         audit["foreground_before"] = frontmost_before
         # M1：point 通道永不进会话放行（坐标点击每次都要令牌 + world 比对）
@@ -966,6 +976,7 @@ class DesktopOperateTool:
             action_fp=action_fp,
             world_version=world,
             risk_class=risk_class,
+            world_digest=flow.world_digest,
             now=time.time(),
         )
         audit.update(
@@ -1240,6 +1251,10 @@ class DesktopOperateTool:
             or fresh_window.bundle_id != frontmost_bundle
         ):
             audit["error_code"] = DesktopErrorCode.FOREGROUND_CHANGED.value
+            # §6.5 计量面：这条早退也是 FOREGROUND_CHANGED 事件，同样要能归因，
+            # 否则最常见的一类（前台 app 切换）在闸里没有分子。
+            drift = self._world_gate_breaks(token_record, fresh_window, frontmost_bundle)
+            audit["stale_breaks"] = drift
             self._audit_event(audit)
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.FOREGROUND_CHANGED,
@@ -1250,6 +1265,7 @@ class DesktopOperateTool:
                 started=started, base=base,
                 payload={"applied": False, "needs_confirmation": True,
                          "risk_class": risk_class, "hid_idle_ms": idle_ms,
+                         "stale_breaks": drift,
                          "window": jsonable(fresh_window) if fresh_window else None,
                          "foreground_before": frontmost_before},
             )
@@ -1265,6 +1281,12 @@ class DesktopOperateTool:
         )
         if token_record is not None and fresh_world != token_record.world_version:
             audit["error_code"] = DesktopErrorCode.FOREGROUND_CHANGED.value
+            # §6.5 计量面：把"哪一类打破了"记进回执与审计。归因不参与门控——
+            # 上面的 sha 不等已经决定了拒绝，这里只是让作废事件事后可分类统计。
+            drift = self._world_drift_report(
+                token_record, fresh_window, fresh_nodes, fresh_frontmost, fresh_target_node
+            )
+            audit["stale_breaks"] = drift
             self._audit_event(audit)
             return self._envelope(
                 do=do, ok=False, error_code=DesktopErrorCode.FOREGROUND_CHANGED,
@@ -1277,11 +1299,53 @@ class DesktopOperateTool:
                          "risk_class": risk_class, "hid_idle_ms": idle_ms,
                          "world_version_expected": token_record.world_version,
                          "world_version_actual": fresh_world,
+                         "stale_breaks": drift,
                          "window": jsonable(fresh_window)},
             )
         flow.fresh_window = fresh_window
         flow.fresh_world = fresh_world
         return None
+    def _world_drift_report(
+        self,
+        token_record: Any,
+        fresh_window: Any,
+        fresh_nodes: Any,
+        fresh_frontmost: Any,
+        fresh_target_node: Any,
+    ) -> dict[str, Any]:
+        """§6.5 计量：把一次 world 漂移归因到四类打破项（只读，不参与门控）。
+
+        令牌签发时未存 digest（拆分前签发的旧令牌）→ 如实报 unavailable，不猜。
+        """
+        expected = getattr(token_record, "world_digest", None)
+        if expected is None:
+            return {"unavailable": "token_has_no_world_digest"}
+        actual = world_digest(
+            fresh_window, fresh_nodes, fresh_frontmost, target_node=fresh_target_node
+        )
+        return world_drift_breaks(expected, actual)
+    def _world_gate_breaks(
+        self,
+        token_record: Any,
+        fresh_window: Any,
+        frontmost_bundle: str | None,
+    ) -> dict[str, Any]:
+        """前台门早退路径的归因：树未加载，只比身份/前台两段。
+
+        窗口消失时无法构造 digest，如实报 window_missing + unrelated skipped。
+        """
+        expected = getattr(token_record, "world_digest", None)
+        if expected is None:
+            return {"unavailable": "token_has_no_world_digest"}
+        if fresh_window is None:
+            return {
+                "breaks": ["window_identity"],
+                "primary": "window_identity",
+                "unrelated": {"skipped": "window_missing"},
+            }
+        return world_head_breaks(
+            expected, world_digest(fresh_window, (), frontmost_bundle)
+        )
     def _gate_ax_probe(self, flow: _ActFlow) -> ToolResult | None:
         """U18 同构自检：投递前 AX 探针（授权位有假阴性，探针才作数）。"""
         do, backend, audit = flow.do, flow.backend, flow.audit
