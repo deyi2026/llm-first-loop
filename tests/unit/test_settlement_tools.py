@@ -590,6 +590,7 @@ def test_submit_tool_self_reported_experience_accepts_prefixed_stable_ref(tmp_pa
                     "benefit": "helped",
                     "evidence_level": "model_declared",
                     "self_reported": True,
+                    "evidence_refs": ["episode:sess-tool:1:aa"],
                 }
             ],
         },

@@ -85,8 +85,14 @@ def test_experience_catalog_usage_stats(build_test_engine, tmp_path) -> None:
     ref_a = _seed_experience(store, "used one")
     _ref_b = _seed_experience(store, "never used")  # noqa: F841 — 对照组（use_count=0 分支）
 
-    store.record_use(ref_a, use_decision="applied", note="first")
-    store.record_use(ref_a, use_decision="adapted", note="second")
+    store.record_use(
+        ref_a, use_decision="applied", note="first",
+        evidence_refs=["episode:web:1:aa"],
+    )
+    store.record_use(
+        ref_a, use_decision="adapted", note="second",
+        evidence_refs=["episode:web:1:aa"],
+    )
 
     resp = client.get("/api/v1/knowledge/experiences")
     assert resp.status_code == 200

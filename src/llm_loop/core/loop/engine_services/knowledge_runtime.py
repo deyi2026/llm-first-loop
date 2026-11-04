@@ -154,7 +154,8 @@ class KnowledgeRun:
                     or declaration.get("schema") != "experience-use/v1"
                     or declaration.get("ref") != args.get("experience_id")
                     or declaration.get("decision") != args.get("use_decision")
-                    or declaration.get("decision") not in {"applied", "adapted", "not_applicable", "rejected"}
+                    or declaration.get("decision")
+                    not in {"applied", "adapted", "not_applicable", "rejected", "not_adopted"}
                 ):
                     continue
                 ref = str(declaration["ref"])

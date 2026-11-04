@@ -72,9 +72,7 @@ def test_applied_without_evidence_refs_is_rejected(tmp_path: Path) -> None:
 
 def test_applied_with_evidence_refs_marks_application_proven(tmp_path: Path) -> None:
     store, stem = _experience_store(tmp_path)
-    entry = store.record_use(
-        stem, use_decision="applied", evidence_refs=["episode:s1:1:aa"]
-    )
+    entry = store.record_use(stem, use_decision="applied", evidence_refs=["episode:s1:1:aa"])
     assert entry["application_proven"] is True
     assert entry["evidence_refs"] == ["episode:s1:1:aa"]
 
@@ -82,9 +80,7 @@ def test_applied_with_evidence_refs_marks_application_proven(tmp_path: Path) -> 
 def test_not_adopted_needs_no_evidence_refs(tmp_path: Path) -> None:
     """第三态本质是"没执行"，不该被采纳证据强制反向逼出假引用。"""
     store, stem = _experience_store(tmp_path)
-    entry = store.record_use(
-        stem, use_decision="not_adopted", note="卡正确，本轮未走到该路径"
-    )
+    entry = store.record_use(stem, use_decision="not_adopted", note="卡正确，本轮未走到该路径")
     assert entry["use_decision"] == "not_adopted"
     assert entry["application_proven"] is False
     assert entry["evidence_refs"] == []
@@ -116,9 +112,7 @@ def test_not_adopted_counts_zero_and_is_not_unrecognized() -> None:
 
 
 def test_detail_renders_not_adopted_only_when_present() -> None:
-    with_neutral = _summarize(
-        [{"use_decision": "applied"}, {"use_decision": "not_adopted"}]
-    )
+    with_neutral = _summarize([{"use_decision": "applied"}, {"use_decision": "not_adopted"}])
     without_neutral = _summarize([{"use_decision": "applied"}])
     assert detail(with_neutral) == "a1/n0/r0/d1"
     assert detail(without_neutral) == "a1/n0/r0"
@@ -180,11 +174,7 @@ def test_settlement_rejects_not_adopted_for_method(tmp_path: Path) -> None:
 def test_settlement_accepts_not_adopted_for_experience(tmp_path: Path) -> None:
     store, stem = _experience_store(tmp_path)
     receipt = submit_settlement_batch(
-        items=[
-            SettlementItem(
-                kind="experience", ref=f"experience:{stem}", decision="not_adopted"
-            )
-        ],
+        items=[SettlementItem(kind="experience", ref=f"experience:{stem}", decision="not_adopted")],
         method_store=None,
         experience_store=store,
         event_store=EventStore(tmp_path / "events"),
@@ -197,11 +187,7 @@ def test_settlement_accepts_not_adopted_for_experience(tmp_path: Path) -> None:
 def test_settlement_applied_without_refs_fails_with_guidance(tmp_path: Path) -> None:
     store, stem = _experience_store(tmp_path)
     receipt = submit_settlement_batch(
-        items=[
-            SettlementItem(
-                kind="experience", ref=f"experience:{stem}", decision="applied"
-            )
-        ],
+        items=[SettlementItem(kind="experience", ref=f"experience:{stem}", decision="applied")],
         method_store=None,
         experience_store=store,
         event_store=EventStore(tmp_path / "events"),
