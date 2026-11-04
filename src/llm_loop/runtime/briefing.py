@@ -22,7 +22,10 @@ from pathlib import Path
 from llm_loop.core.prompt import INSTALLATION_INDEX_HEADING
 from llm_loop.timekeeping import system_local_now
 
-_MAX_RULES = 12
+# 索引防爆上限。触发时必须留下可见的省略标记（规则见 _rule_index，方法见
+# _method_index_line，技能见构建处的技能行）——允许看得见的截断，禁止看不见
+# 的丢弃。方法数通常超过上限，因此"省略提示"是常态路径而非边缘分支。
+_MAX_RULES = 40
 _MAX_METHODS = 8
 _MAX_SKILLS = 12
 # D8：知识健康度段 TTL——ledger 最新成功行时间戳距今超过该值即整段省略。
@@ -34,10 +37,15 @@ _KNOWLEDGE_TREND_EPSILON = 0.005
 # 不 import capability 模块（kernel_import_edges 冻结基线只减不增）；
 # 口径一致性由 test_briefing_knowledge_health_matches_ledger_read 锁定。
 _KNOWLEDGE_LEDGER_REL = ("data", "knowledge_scores", "ledger.jsonl")
-_CORE_RULE_IDS = (
-    "RULE-AI-00", "RULE-AI-01", "RULE-AI-02", "RULE-AI-07",
-    "RULE-AI-08", "RULE-AI-18", "RULE-AI-23", "RULE-AI-24",
-)
+# 规则索引排除表：RULE-AI-id → "模型不必知道这条规则**存在**"的理由。
+# 注意区分：这不是"这条规则不适用"——适用性是正文的判断，不构成索引豁免。
+#
+# 裁决 1b（2026-11-04）：全量信任 docs/ai_rules.md——谁写进 SoT，谁就进索引。
+# 因此本表默认为空。历史 _CORE_RULE_IDS 白名单已删除：它正是"新增规则漏挂
+# 索引"这一缺陷的成因——白名单不会有人记得同步更新，且失败时无声。
+# 硬上限 _MAX_EXCLUDED_RULES：超过即说明该改规则本身，而不是继续加排除项。
+_MAX_EXCLUDED_RULES = 3
+_EXCLUDED_RULE_IDS: dict[str, str] = {}
 _RULE_RE = re.compile(r"^##\s+[^：\n]*：(.*?)（(RULE-AI-\d+)", re.MULTILINE)
 
 _CACHE: dict[str, str] = {}
@@ -68,7 +76,18 @@ def _paths() -> dict[str, Path]:
     }
 
 
+def _rule_number(rule_id: str) -> int:
+    return int(rule_id.rsplit("-", 1)[-1])
+
+
 def _rule_index(docs_dir: Path) -> list[str]:
+    """Index every rule heading in the SoT, ordered by rule number.
+
+    裁决 1b（2026-11-04）：全量信任 ai_rules.md，唯一过滤器是
+    ``_EXCLUDED_RULE_IDS``（且它必须证明"存在性"本身不该暴露）。
+    超过 ``_MAX_RULES`` 的截断一律留下可见的省略标记——静默丢弃尾部正是
+    本函数此前的缺陷类型（人工维护的白名单，新写进 SoT 的规则永远进不来）。
+    """
     path = docs_dir / "ai_rules.md"
     try:
         text = path.read_text(encoding="utf-8")
@@ -79,10 +98,21 @@ def _rule_index(docs_dir: Path) -> list[str]:
         label = " ".join(title.split())
         if rule_id not in found and label:
             found[rule_id] = label
-    ordered = [rid for rid in _CORE_RULE_IDS if rid in found]
-    if not ordered:
-        ordered = sorted(found)[:6]
-    return [f"- {rid} {found[rid]}" for rid in ordered[:_MAX_RULES]]
+    if not found:
+        # 文件存在却一条都没匹配上 = 标题格式漂移。必须可见：静默返回空列表
+        # 会把格式问题伪装成"安装缺失规则"，正是门禁想抓的那类静默失败。
+        return ["- （规则索引为空：docs/ai_rules.md 存在但未匹配到任何 RULE-AI 规则标题）"]
+    # 排除表超限时不做部分应用：宁可全量显示，也不让"看不见的过滤"重现。
+    # 上限本身由 test_excluded_rule_ids_cap_enforced 硬约束。
+    excluded = (
+        set(_EXCLUDED_RULE_IDS) if len(_EXCLUDED_RULE_IDS) <= _MAX_EXCLUDED_RULES else set()
+    )
+    ordered = [rid for rid in sorted(found, key=_rule_number) if rid not in excluded]
+    lines = [f"- {rid} {found[rid]}" for rid in ordered[:_MAX_RULES]]
+    omitted = len(ordered) - len(lines)
+    if omitted:
+        lines.append(f"- （另有 {omitted} 条未列入，完整清单见 docs/ai_rules.md）")
+    return lines
 
 
 def _method_index(methods_dir: Path) -> tuple[int, list[str]]:
@@ -103,6 +133,22 @@ def _method_index(methods_dir: Path) -> tuple[int, list[str]]:
             title = match.group(1).strip()
         names.append(title or entry.name)
     return (len(entries), names)
+
+
+def _method_index_line(names: list[str]) -> str:
+    """方法索引行：超出 ``_MAX_METHODS`` 必须留下可见的省略提示。
+
+    静默切片与旧规则白名单是同族缺陷：被丢掉的方法不产生任何提示，读者会把
+    "只列了 N 条"读成"安装只有 N 条方法"，于是不去检索真正相关的那条。规则
+    索引用独立省略 bullet，这里用行内提示——两者满足同一硬约束：截断必须可见，
+    且必须给出继续检索的方向。
+    """
+    shown = names[:_MAX_METHODS]
+    line = "方法索引：" + "、".join(shown)
+    omitted = len(names) - len(shown)
+    if omitted > 0:
+        line += f"…（另有 {omitted} 条未列出，按任务词检索全量）"
+    return line
 
 
 def _count_files(directory: Path, pattern: str) -> int:
@@ -263,7 +309,8 @@ def inspect_installation_assets(overrides: Mapping[str, str] | None = None) -> d
             paths[key] = Path(raw).expanduser()
     methods, _names = _method_index(paths["methods"])
     return {
-        "rules": len(_rule_index(paths["docs"])),
+        # 只数真正的规则 bullet：截断/空索引提示行不是规则，不能污染 doctor 计数。
+        "rules": sum(1 for line in _rule_index(paths["docs"]) if line.startswith("- RULE-AI-")),
         "methods": methods,
         "experiences": _count_files(paths["experiences"], ".md"),
         "skills": _skill_index(paths["skills"])[0],
@@ -311,7 +358,7 @@ def build_installation_briefing() -> str:
     lines = [INSTALLATION_INDEX_HEADING, ""]
     lines.append("### 规则")
     if rules:
-        lines.append("长期约束（完整真值源：docs/ai_rules.md，需要时读取）：")
+        lines.append("长期约束（规则标题索引；完整真值源 docs/ai_rules.md，正文按需水合）：")
         lines.extend(rules)
     else:
         lines.append("规则真值源：docs/ai_rules.md（当前安装未找到，按 SOUL 与通用核心认知执行）。")
@@ -327,7 +374,7 @@ def build_installation_briefing() -> str:
                      "search_records(kind=method|experience|lesson, query=任务词) 检索；"
                      "命中后按返回的 stable ref 精确水合，不凭标题猜内容。")
         if method_names:
-            lines.append("方法索引：" + "、".join(method_names[:_MAX_METHODS]))
+            lines.append(_method_index_line(method_names))
     else:
         lines.append("经验库当前为空。用 search_records 检索；没有命中就按通用推理执行，"
                      "完成后可用 save_experience 沉淀可复用结论。")

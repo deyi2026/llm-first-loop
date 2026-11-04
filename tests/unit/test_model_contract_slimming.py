@@ -94,6 +94,86 @@ def test_g1_prompt_has_no_operational_topics(monkeypatch):
             assert w not in prompt, f"A-G2(prompt) 失败: 主题 {topic!r} 残留 {w!r}"
 
 
+# ---------- A-G2 × 裁决 1b：真实运行态 prompt（含 installation index）----------
+
+
+_RULE_INDEX_LINE_RE = re.compile(r"^- RULE-AI-\d+ \S")
+
+
+def _strip_rule_index_lines(text: str) -> str:
+    """剥离安装索引的规则 bullet 行——只认严格的 "^- RULE-AI-nn " 形态。
+
+    裁决 1b（2026-11-04）让规则索引覆盖 docs/ai_rules.md 全集，于是 3 条 SoT
+    标题会把运维主题词带进 prompt：RULE-AI-15 含 "CodeArts"、RULE-AI-19 含
+    "中断恢复"、RULE-AI-20 含 "有界推进"。它们是标题的一行导航索引，不是运维
+    手册正文——A-G2 的意图是"手册不得下沉到常驻 prompt"，不是"标题里不许出现
+    某个名词"。因此豁免只覆盖严格 bullet 形态；其余文本一律照查，并由
+    test_g2_strip_helper_is_not_a_blanket_whitelist 反例锁定边界。
+    """
+    return "\n".join(line for line in text.splitlines() if not _RULE_INDEX_LINE_RE.match(line))
+
+
+def _runtime_prompt_and_index(monkeypatch) -> tuple[str, str]:
+    """构造真实运行态 prompt：运行时就是 _BASE_PROMPT + installation_index。"""
+    import sys
+
+    sys.path.insert(0, str(_ROOT / "src"))
+    from llm_loop.core.prompt import build_system_prompt
+    from llm_loop.runtime import briefing
+
+    monkeypatch.delenv("SYSTEM_PROMPT_EXTRA", raising=False)
+    monkeypatch.delenv("LFL_SYSTEM_EXTRA_BUNDLE", raising=False)
+    for key in ("LFL_RUNTIME_ROOT", "DATA_DIR", "DOCS_DIR", "METHOD_SEED_DIR",
+                "EXPERIENCES_DIR", "SKILLS_DIR"):
+        monkeypatch.delenv(key, raising=False)
+    briefing._CACHE.clear()
+    index = briefing.build_installation_briefing()
+    # 前提守卫：索引确实带规则条目，否则本测试退化为空断言。
+    assert "- RULE-AI-" in index, "安装索引未生成规则条目，A-G2 运行态测试失去覆盖面"
+    return build_system_prompt(installation_index=index), index
+
+
+def test_g2_runtime_prompt_bans_operational_prose(monkeypatch):
+    """A-G2(prompt) 的真实运行态分量：剥离规则索引行后，11 类主题 chars=0。
+
+    旧断言只验 build_system_prompt() 返回的 _BASE_PROMPT，看不见 briefing 拼进
+    prompt 的内容——真实运行态因此从未被这条门禁覆盖。
+    """
+    prompt, _index = _runtime_prompt_and_index(monkeypatch)
+    stripped = _strip_rule_index_lines(prompt)
+    for topic, words in _G2_BANNED_TOPICS.items():
+        for w in words:
+            assert w not in stripped, (
+                f"A-G2(prompt, runtime) 失败: 主题 {topic!r} 在非规则索引文本中残留 {w!r}"
+            )
+
+
+def test_g2_strip_helper_is_not_a_blanket_whitelist():
+    """反例（RULE-AI-35）：剥离器只放行严格 bullet，夹带运维主题的正文仍被拦。
+
+    若有人把运维手册塞进 prompt 的其他位置（正文、普通 bullet、缩进续行），
+    本测试证明剥离后仍会被上方断言捕获——豁免范围不会被顺手放大。
+    """
+    poisoned = "\n".join([
+        "## 运行上下文（安装时自动加载）",
+        "- RULE-AI-19 中断恢复——程序保状态，模型续推理",  # 唯一应被剥离的行
+        "中断恢复手册：先 checkpoint 再有界推进。",  # 正文：必须留下
+        "- 注：CodeArts 远端执行前先落盘。",  # 普通 bullet：必须留下
+        "   checkpoint 缩进续行也必须留下。",
+    ])
+    stripped = _strip_rule_index_lines(poisoned)
+    assert "中断恢复——程序保状态" not in stripped, "真索引行未被剥离"
+    assert "中断恢复手册" in stripped, "正文被误豁免"
+    assert "CodeArts" in stripped, "普通 bullet 被误豁免"
+    assert "checkpoint" in stripped, "缩进续行被误豁免"
+
+
+def test_g2_runtime_index_does_not_hit_briefing_cap(monkeypatch):
+    """全量规则索引不得顶到 briefing 自身的 4000 字符截断（否则说明该收口径）。"""
+    _prompt, index = _runtime_prompt_and_index(monkeypatch)
+    assert "索引已截断" not in index, "briefing 已触发 4000 字符截断，规则索引超预算"
+
+
 # ---------- A-G2: lite 规则资产运维主题 chars=0（full SoT 豁免）----------
 
 
