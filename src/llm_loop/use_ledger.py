@@ -41,6 +41,14 @@ SCHEMA_METHOD_V2 = "method-use/v2"
 SCHEMA_EXPERIENCE_V2 = "experience-use/v2"
 
 DECISIONS = frozenset({"applied", "adapted", "not_applicable", "rejected"})
+# EVO-20261104-e5f79db8: experience 侧第三态「卡适用且正确，但本轮未执行」。
+# 与 not_applicable（卡不适用）、rejected（卡错误引导）语义分离，计 0 分。
+# 仅 experience 侧开放；method/rule 侧仍用 DECISIONS，避免把"未执行"混进方法统计。
+NOT_ADOPTED = "not_adopted"
+EXPERIENCE_DECISIONS = DECISIONS | frozenset({NOT_ADOPTED})
+# 采纳型声明（计 +1 的两态）必须附非空 evidence_refs，见
+# experiences/store.py record_use 的"采纳证据强制"。
+ADOPTING_DECISIONS = frozenset({"applied", "adapted"})
 BENEFITS = frozenset({"helped", "neutral", "hindered", "unknown", "mixed"})
 EVIDENCE_LEVELS = frozenset(
     {"model_declared", "observation_linked", "independently_evaluated"}

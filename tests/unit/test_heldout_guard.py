@@ -818,11 +818,15 @@ def test_experience_record_use_note_task_id_rejected_no_ledger(tmp_path, monkeyp
             use_decision="applied",
             note=f"本任务({_TASK_ID})套用了该经验",
             episode_ref="episode:test-1",
+            evidence_refs=["episode:test-1"],  # EVO-20261104-e5f79db8 采纳证据强制
         )
     assert _TASK_ID in str(ei.value)
     assert not (root / "usage.jsonl").exists()
     # 负例：干净 note 正常入账
-    entry = store.record_use(filename, use_decision="applied", note="套用成功")
+    entry = store.record_use(
+        filename, use_decision="applied", note="套用成功",
+        evidence_refs=["episode:test-1"],
+    )
     assert entry["note"] == "套用成功"
 
 

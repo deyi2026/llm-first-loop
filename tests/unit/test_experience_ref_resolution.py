@@ -93,6 +93,7 @@ def test_record_use_accepts_title_derived_ref(tmp_path: Path) -> None:
         _title_derived_ref(stem),
         use_decision="applied",
         note="EVO-20261031-a72df001 回归",
+        evidence_refs=["episode:ref-resolution"],  # EVO-20261104-e5f79db8 采纳证据强制
     )
     assert entry["experience_ref"] == f"experience:{stem}"
 

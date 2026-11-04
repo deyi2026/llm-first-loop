@@ -53,6 +53,9 @@ COVERAGE_BOUNDARY = (
 
 _KNOWN_KINDS = {"method", "experience", "lesson", "rule"}
 _DECISIONS = {"applied", "adapted", "not_applicable", "rejected"}
+# EVO-20261104-e5f79db8: 第三态「卡适用且正确、本轮未执行」只对 experience 开放；
+# method/rule 侧仍用 _DECISIONS，避免"未执行"混进方法/规则统计。
+_EXPERIENCE_ONLY_DECISIONS = {"not_adopted"}
 _BENEFITS = {"helped", "neutral", "hindered", "unknown", "mixed"}
 _LEVELS = {"model_declared", "observation_linked", "independently_evaluated"}
 _RULE_REF_RE = re.compile(r"^RULE-AI-\d+(?:\.\d+)?$", re.IGNORECASE)
@@ -702,7 +705,14 @@ def _submit_one(
         return failed(f"unknown kind: {kind}")
     if not ref:
         return failed("missing ref")
-    if decision not in _DECISIONS:
+    if decision not in _DECISIONS and not (
+        kind == "experience" and decision in _EXPERIENCE_ONLY_DECISIONS
+    ):
+        if decision in _EXPERIENCE_ONLY_DECISIONS:
+            return failed(
+                f"decision=not_adopted 仅对 kind=experience 有效，kind={kind} 不接受"
+                "（not_adopted 与 not_applicable/rejected 三义分离，见 EVO-20261104-e5f79db8）"
+            )
         return failed(f"decision must be one of {sorted(_DECISIONS)}")
     if benefit not in _BENEFITS:
         return failed(f"benefit must be one of {sorted(_BENEFITS)}")

@@ -206,8 +206,20 @@
 
 - `src/llm_loop/introspection/registry_experience.py`：模型实际使用的管理工具契约。
 
-- `src/llm_loop/usage_net.py`：声明净分的机械派生语义。
+- `src/llm_loop/usage_net.py`：声明净分的机械派生语义；EVO-20261104-e5f79db8 起并列给出独立核验净分（`net_verified`）。
 
 - `docs/ai_rules.md`：Rule18、29、31；反馈设计需与规则事实源同步。
 
 - `docs/DESIGN-20261014-jev-experience-method-loop-governance.md`：已有闭环设计中的观测、评估和独立证据边界。
+
+## 增量：EVO-20261104-e5f79db8（人工审批 2026-11-04，executing）
+
+背景：一张内容正确的 experience 卡（`markdown 表格单元格以解释器名开头…`）在结算时因"卡适用但本轮未走到该路径"被记成 `rejected`，把"执行者违约"错记成"卡被否决"。根因是 `use_decision` 四态无法表达第三义。
+
+1. **第三态 `not_adopted`（仅 experience 侧）**：`use_ledger.EXPERIENCE_DECISIONS` 在四态外增加 `not_adopted`＝"卡适用且正确、本轮未执行"，计 0 分、不参与 `breached()` 阈值。`method`/`rule` 侧仍四态；`introspection/settlement.py` 的 `_EXPERIENCE_ONLY_DECISIONS` 按 kind 门控，误用于 method 会确定性 failed。
+2. **采纳证据强制**：`applied`/`adapted` 计 +1，必须有非空 `evidence_refs`，否则 `record_use` 抛 ValueError（结算路径折算该条 failed 并提示改用 `not_adopted`）；`application_proven` 改为"采纳态且 refs 非空"。
+3. **声明净分与独立核验净分分离**：`usage_net.summarize_since_last_transition` 除 `net`（别名 `net_declared`）外给出 `net_verified`/`verified_entries`，只统计 `evidence_level=independently_evaluated` 的声明；`row_annotation` 与 `tools_status` 在确有独立核验记录时并列展示——缺失表示"无独立核验记录"，不是"核验为 0"。
+
+已知边界：
+- 账本 `schema` 仍为 `experience-use/v2`（新增枚举值属加法扩展，未升 v3 以免打断按 v2 读取的消费者）。
+- `not_adopted` 只消除惩罚性误记，不能机械证明"确实没执行"；它把负分从卡身上移回执行者，不产生正分。

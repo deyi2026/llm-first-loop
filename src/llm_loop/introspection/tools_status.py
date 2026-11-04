@@ -592,6 +592,14 @@ def _usage_net_part(record: dict) -> str:
         f" | usage_net={int(record['usage_net']):+d} "
         f"[{record.get('usage_net_detail', '')}]{_DECLARED_NET_NOTE}"
     )
+    # EVO-20261104-e5f79db8：独立核验净分单独成段，不与声明净分混算。
+    if isinstance(record.get("usage_net_verified"), int):
+        part += (
+            f" | usage_net_verified={int(record['usage_net_verified']):+d}"
+            f"[n={int(record.get('usage_net_verified_n', 0))} 独立核验]"
+        )
+    if isinstance(record.get("usage_not_adopted"), int):
+        part += f" | not_adopted={int(record['usage_not_adopted'])}（卡适用但本轮未执行，计 0）"
     if record.get("pending_disposition"):
         part += " | pending_disposition=true"
     return part

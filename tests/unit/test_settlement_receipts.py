@@ -712,6 +712,7 @@ def test_experience_settlement_uses_episode_attribution_when_provided(tmp_path):
             SettlementItem(
                 kind="experience", ref=f"experience:{stem}",
                 decision="applied", benefit="helped",
+                evidence_refs=["episode:sess-1:2:bb"],
             )
         ],
         method_store=None, experience_store=experience_store, event_store=events,
@@ -848,12 +849,14 @@ def test_experience_receipt_window_survives_default_200_cap(tmp_path):
     # 最旧一条：本会话/本工作单元的目标回执（默认 200 行窗口会把它挤出）
     experience_store.record_use(
         stem, use_decision="applied", note="target receipt",
+        evidence_refs=["episode:receipt-window"],
         session_id="sess-1", work_unit_id="TASK-A", read_version=version,
     )
     # 250 条更新的其他会话/其他工作单元回执（默认读取面只见最新 200 行）
     for i in range(250):
         experience_store.record_use(
             stem, use_decision="applied", note=f"noise-{i}",
+            evidence_refs=["episode:receipt-window"],
             session_id=f"sess-noise-{i}", work_unit_id=f"NOISE-{i}",
         )
     assert len(experience_store.usage_entries()) == 200  # 默认读取面口径不变

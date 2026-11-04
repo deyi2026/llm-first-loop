@@ -329,7 +329,10 @@ def test_experience_store_usage_net_alert_and_reanchor(tmp_path: Path) -> None:
 def test_experience_store_usage_net_disproven_current_doc_triggers(tmp_path: Path) -> None:
     store = ExperienceStore(tmp_path / "exp")
     filename = store.save(_make_doc(verification_state="disproven"))
-    store.record_use(filename, use_decision="applied", note="n1", episode_ref="episode:e1")
+    store.record_use(
+        filename, use_decision="applied", note="n1", episode_ref="episode:e1",
+        evidence_refs=["episode:e1"],
+    )
     summary = store.usage_net(f"experience:{filename}")
     assert summary is not None
     assert summary["net"] == 1  # 未验证/被证伪的 applied 仍机械 +1（D1）

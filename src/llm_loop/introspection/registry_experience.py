@@ -121,7 +121,7 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
 
 _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
     "name": "refine_experience",
-    "description": "经验生命周期和使用声明入口。archive/invalidate/restore 显式流转；record_use 声明 applied/adapted/not_applicable/rejected 并落账到经验使用账本 experiences/usage.jsonl（EVO-20261011-945fc53c，锁+fsync+水位，真值源；落账失败如实 FAILURE），事件流仅观察通道。不修改原卡、不自动验证或晋级。experience_id 推荐 stable experience:<id>；声明不是任务收益证明。",
+    "description": "经验生命周期和使用声明入口。archive/invalidate/restore 显式流转；record_use 声明 applied/adapted/not_applicable/rejected/not_adopted 并落账到经验使用账本 experiences/usage.jsonl（EVO-20261011-945fc53c，锁+fsync+水位，真值源；落账失败如实 FAILURE），事件流仅观察通道。applied/adapted 必须附非空 evidence_refs（EVO-20261104-e5f79db8 采纳证据强制）。不修改原卡、不自动验证或晋级。experience_id 推荐 stable experience:<id>；声明不是任务收益证明。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -133,9 +133,9 @@ _REFINE_EXPERIENCE_TOOL_DEF: dict[str, Any] = {
                 "type": "string",
                 "enum": ["archive", "invalidate", "restore", "record_use"],
             },
-            "use_decision": {"type": "string", "enum": ["applied", "adapted", "not_applicable", "rejected"], "description": "record_use 必填；由模型比较任务与经验目的作出判断"},
+            "use_decision": {"type": "string", "enum": ["applied", "adapted", "not_applicable", "rejected", "not_adopted"], "description": "record_use 必填；由模型比较任务与经验目的作出判断。not_adopted=卡适用且正确、但本轮未执行（计 0，不罚卡，区别于 not_applicable=卡不适用 与 rejected=卡错误引导）"},
             "note": {"type": "string", "maxLength": 512, "description": "简短适用依据或跳过理由；不保存隐藏思维链"},
-            "evidence_refs": {"type": "array", "maxItems": 16, "items": {"type": "string"}, "description": "声明的证据引用；程序不自动判断正确性"},
+            "evidence_refs": {"type": "array", "maxItems": 16, "items": {"type": "string"}, "description": "声明的证据引用；程序不自动判断正确性，但 applied/adapted 必须非空（采纳证据强制），否则落账失败"},
             "benefit": {
                 "type": "string",
                 "enum": ["helped", "neutral", "hindered", "unknown", "mixed"],
@@ -230,7 +230,8 @@ _SETTLEMENT_SUBMIT_TOOL_DEF: dict[str, Any] = {
                         },
                         "decision": {
                             "type": "string",
-                            "enum": ["applied", "adapted", "not_applicable", "rejected"],
+                            "enum": ["applied", "adapted", "not_applicable", "rejected", "not_adopted"],
+                            "description": "not_adopted 仅对 kind=experience 有效（卡适用且正确、本轮未执行，计 0）；method/rule 侧提交 not_adopted 会被确定性拒绝",
                         },
                         "benefit": {
                             "type": "string",
@@ -402,7 +403,7 @@ def _experience_use_declaration(args: dict, store: Any, host: RegistryHost) -> T
     evidence = args.get("evidence_refs") or []
     if (
         not ref.startswith("experience:") or not ref[11:]
-        or decision not in {"applied", "adapted", "not_applicable", "rejected"}
+        or decision not in {"applied", "adapted", "not_applicable", "rejected", "not_adopted"}
         or not isinstance(note, str) or len(note) > 512
         or not isinstance(evidence, list) or len(evidence) > 16
         or any(not isinstance(e, str) or len(e) > 256 for e in evidence)

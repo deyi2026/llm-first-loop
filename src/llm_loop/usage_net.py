@@ -38,6 +38,12 @@ ALERT_NET_THRESHOLD = -2
 _POSITIVE = {"applied", "adapted"}
 _NOT_APPLICABLE = {"not_applicable"}  # 计 -1 但只记账，不构成弃用依据（RULE-AI-31）
 _REJECTED = {"rejected"}
+# EVO-20261104-e5f79db8：第三态「卡适用且正确、但本轮未执行」。计 0 分：
+# 既不是 not_applicable（卡不适用），也不是 rejected（卡错误引导）。
+_NEUTRAL = {"not_adopted"}
+# EVO-20261104-e5f79db8：只有该 grade 的声明才进「独立核验净分」。模型自述
+# （model_declared / observation_linked）一律只进「声明净分」。
+_INDEPENDENT_LEVEL = "independently_evaluated"
 
 # EVO-20261015-251ac06d：晋升阶梯（背书型转移）。阶梯内上升不清零，其余差异
 # 一律视为纠错型并按 D3 截断。experience 侧无此阶梯（status 为 active/archived/
@@ -92,8 +98,10 @@ def summarize_since_last_transition(
     else:
         kept = [e for e in entries_newest_first if isinstance(e, dict)]
 
-    counts = {"applied": 0, "not_applicable": 0, "rejected": 0}
+    counts = {"applied": 0, "not_applicable": 0, "rejected": 0, "not_adopted": 0}
     unrecognized = 0
+    verified = {"applied": 0, "not_applicable": 0, "rejected": 0}
+    verified_entries = 0
     for entry in kept:
         decision = str(entry.get(decision_key) or "").strip().lower()
         if decision in _POSITIVE:
@@ -102,14 +110,33 @@ def summarize_since_last_transition(
             counts["not_applicable"] += 1
         elif decision in _REJECTED:
             counts["rejected"] += 1
+        elif decision in _NEUTRAL:
+            counts["not_adopted"] += 1
         else:
             unrecognized += 1
+        if str(entry.get("evidence_level") or "").strip() == _INDEPENDENT_LEVEL:
+            verified_entries += 1
+            if decision in _POSITIVE:
+                verified["applied"] += 1
+            elif decision in _NOT_APPLICABLE:
+                verified["not_applicable"] += 1
+            elif decision in _REJECTED:
+                verified["rejected"] += 1
     net = counts["applied"] - counts["not_applicable"] - counts["rejected"]
+    net_verified = (
+        verified["applied"] - verified["not_applicable"] - verified["rejected"]
+    )
     return {
+        # net 保持原义（全部声明的机械净分），net_declared 为新别名：
+        # 两者相等，命名只为让面板显式写清"这是声明净分"。
         "net": net,
+        "net_declared": net,
+        "net_verified": net_verified,
+        "verified_entries": verified_entries,
         "applied": counts["applied"],
         "not_applicable": counts["not_applicable"],
         "rejected": counts["rejected"],
+        "not_adopted": counts["not_adopted"],
         "unrecognized": unrecognized,
         "anchor": anchor,
         "disproven": bool(disproven),
@@ -124,8 +151,16 @@ def breached(summary: dict[str, Any] | None) -> bool:
 
 
 def detail(summary: dict[str, Any]) -> str:
-    """D2：分项计数并列展示，not_applicable 与 rejected 分开可见。"""
-    return f"a{summary.get('applied', 0)}/n{summary.get('not_applicable', 0)}/r{summary.get('rejected', 0)}"
+    """D2：分项计数并列展示，not_applicable 与 rejected 分开可见。
+
+    EVO-20261104-e5f79db8：not_adopted 仅在 >0 时追加 "/d{n}"，保持既有行串不变。
+    """
+    base = (
+        f"a{summary.get('applied', 0)}/n{summary.get('not_applicable', 0)}"
+        f"/r{summary.get('rejected', 0)}"
+    )
+    not_adopted = int(summary.get("not_adopted", 0) or 0)
+    return f"{base}/d{not_adopted}" if not_adopted else base
 
 
 def signed_net(summary: dict[str, Any]) -> str:
@@ -133,13 +168,23 @@ def signed_net(summary: dict[str, Any]) -> str:
 
 
 def row_annotation(summary: dict[str, Any] | None) -> dict[str, Any]:
-    """search_records 命中行附加字段；无汇总（无使用声明）时不附加任何键。"""
+    """search_records 命中行附加字段；无汇总（无使用声明）时不附加任何键。
+
+    EVO-20261104-e5f79db8：区分「声明净分」与「独立核验净分」。后者只在确有
+    independently_evaluated 级声明时附加；缺失即表示该卡尚无独立核验记录，
+    不是"核验为 0"。
+    """
     if not summary:
         return {}
     annotation: dict[str, Any] = {
         "usage_net": int(summary.get("net", 0)),
         "usage_net_detail": detail(summary),
     }
+    if int(summary.get("not_adopted", 0) or 0) > 0:
+        annotation["usage_not_adopted"] = int(summary.get("not_adopted", 0))
+    if int(summary.get("verified_entries", 0) or 0) > 0:
+        annotation["usage_net_verified"] = int(summary.get("net_verified", 0))
+        annotation["usage_net_verified_n"] = int(summary.get("verified_entries", 0))
     if breached(summary):
         annotation["pending_disposition"] = True
     return annotation

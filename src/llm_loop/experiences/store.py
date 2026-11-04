@@ -36,6 +36,12 @@ from llm_loop.use_ledger import (
     EVIDENCE_LEVELS as USE_EVIDENCE_LEVELS,
 )
 from llm_loop.use_ledger import (
+    ADOPTING_DECISIONS as USE_ADOPTING_DECISIONS,
+)
+from llm_loop.use_ledger import (
+    EXPERIENCE_DECISIONS as USE_EXPERIENCE_DECISIONS,
+)
+from llm_loop.use_ledger import (
     SCHEMA_EXPERIENCE_V2 as SCHEMA_EXPERIENCE_USE_V2,
 )
 from llm_loop.use_ledger import (
@@ -1078,9 +1084,11 @@ class ExperienceStore:
             raise FileNotFoundError(experience_id)
         canonical_stem, doc = resolved
         clean_decision = str(use_decision).strip()
-        if clean_decision not in {"applied", "adapted", "not_applicable", "rejected"}:
+        if clean_decision not in USE_EXPERIENCE_DECISIONS:
             raise ValueError(
-                "use_decision must be one of applied|adapted|not_applicable|rejected"
+                "use_decision must be one of "
+                "applied|adapted|not_applicable|rejected|not_adopted"
+                "（not_adopted = 卡适用且正确、但本轮未执行；不计正负分）"
             )
         clean_benefit = str(benefit or "").strip().lower() or "unknown"
         if clean_benefit not in USE_BENEFITS:
@@ -1110,6 +1118,14 @@ class ExperienceStore:
         clean_refs = [
             str(v).strip()[:256] for v in (evidence_refs or []) if str(v).strip()
         ]
+        # EVO-20261104-e5f79db8: 采纳证据强制——applied/adapted 计 +1，必须有
+        # 可回溯引用；否则"自述 helped"与真实执行脱钩（"applied" 变成零成本表态）。
+        # 卡适用但本轮未执行 → 引导改用 not_adopted（计 0，不罚卡）。
+        if clean_decision in USE_ADOPTING_DECISIONS and not clean_refs:
+            raise ValueError(
+                "applied/adapted 声明必须附非空 evidence_refs（采纳证据强制）；"
+                "若卡适用且正确但本轮未执行，请用 use_decision=not_adopted"
+            )
         clean_note = str(note).strip()[:2000]
         clean_suggestion = str(suggestion or "").strip()[:2000]
         submission_hash = derive_submission_hash(
@@ -1131,7 +1147,9 @@ class ExperienceStore:
             "episode_ref": clean_episode,
             "session_id": str(session_id).strip()[:128],
             "model": str(model).strip()[:256],
-            "application_proven": clean_decision in {"applied", "adapted"},
+            "application_proven": (
+                clean_decision in USE_ADOPTING_DECISIONS and bool(clean_refs)
+            ),
             "authority": "model_declared",
             "task_benefit": "not_evaluated",
             # ── v2 记录契约（TASK-ac085ab1-001）──

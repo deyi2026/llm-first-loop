@@ -172,6 +172,7 @@ def test_end_to_end_experience_feedback_reflow_to_next_task_query(tmp_path):
             SettlementItem(
                 kind="experience", ref=ref, decision="adapted", benefit="neutral",
                 read_version=version, note="原场景与本次场景差异较大",
+                evidence_refs=["episode:sess-A:1:aa"],
             )
         ],
         method_store=None, experience_store=store, event_store=events,

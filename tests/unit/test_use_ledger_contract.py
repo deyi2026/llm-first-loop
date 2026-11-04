@@ -145,6 +145,7 @@ def test_experience_same_content_retry_returns_same_receipt_without_duplicate(tm
         use_decision="adapted",
         note="same content",
         episode_ref="episode:s1:1:bb",
+        evidence_refs=["episode:s1:1:bb"],  # EVO-20261104-e5f79db8 采纳证据强制
         work_unit_id="TASK-A",
         benefit="neutral",
     )
@@ -203,16 +204,19 @@ def test_experience_correction_via_explicit_supersedes_parent_validation(tmp_pat
     store, stem = _experience_store(tmp_path)
     first = store.record_use(
         stem, use_decision="applied", note="v1", episode_ref="episode:s1:1:cc",
+        evidence_refs=["episode:s1:1:cc"],
         work_unit_id="TASK-A", benefit="helped",
     )
     # 显式指向错误父（不存在）→ 回执 failed（ValueError），不产生断链
     with pytest.raises(ValueError, match="supersedes"):
         store.record_use(
             stem, use_decision="applied", note="v2", episode_ref="episode:s1:1:cc",
+            evidence_refs=["episode:s1:1:cc"],
             work_unit_id="TASK-A", benefit="mixed", supersedes="deadbeef",
         )
     second = store.record_use(
         stem, use_decision="applied", note="v2", episode_ref="episode:s1:1:cc",
+        evidence_refs=["episode:s1:1:cc"],
         work_unit_id="TASK-A", benefit="mixed", supersedes=first["submission_hash"],
     )
     assert second["revision"] == 2
@@ -312,7 +316,10 @@ def test_record_use_after_torn_tail_quarantines_then_appends(tmp_path):
 
 def test_experience_ledger_torn_tail_recovery(tmp_path):
     store, stem = _experience_store(tmp_path)
-    store.record_use(stem, use_decision="applied", note="one", episode_ref="episode:s1:1:dd")
+    store.record_use(
+        stem, use_decision="applied", note="one", episode_ref="episode:s1:1:dd",
+        evidence_refs=["episode:s1:1:dd"],
+    )
     ledger = tmp_path / "experiences" / "usage.jsonl"
     with ledger.open("ab") as fh:
         fh.write(b'{"schema": "experience-use/v1", "exp')
@@ -431,6 +438,7 @@ def test_experience_v2_binding_defaults_to_episode_fallback(tmp_path):
     store, stem = _experience_store(tmp_path)
     entry = store.record_use(
         stem, use_decision="applied", note="n", episode_ref="episode:s1:7:ee",
+        evidence_refs=["episode:s1:7:ee"],
     )
     assert entry["schema"] == "experience-use/v2"
     assert entry["work_unit_binding"] == "episode_fallback"
@@ -562,8 +570,12 @@ def test_unresolved_default_submission_for_experience_object_lands(tmp_path):
     store = ExperienceStore(tmp_path / "experiences")
     stem_a = store.save(_make_doc()).removesuffix(".md")
     stem_b = store.save(_make_doc(title="契约夹具经验乙")).removesuffix(".md")
-    first = store.record_use(stem_a, use_decision="applied")
-    second = store.record_use(stem_b, use_decision="applied")
+    first = store.record_use(
+        stem_a, use_decision="applied", evidence_refs=["episode:s1:9:ff"]
+    )
+    second = store.record_use(
+        stem_b, use_decision="applied", evidence_refs=["episode:s1:9:ff"]
+    )
 
     assert second.get("idempotent") is not True
     assert first["submission_hash"] == second["submission_hash"]
