@@ -687,6 +687,42 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         final = self._recovery._e1210_llm_error_finalize(session_id, exc, n_messages, flavor)
         return final, None
 
+    def _reset_run_buckets(self, bucket: Any) -> None:
+        """run 入口重置 run 级事实桶（每 run 独立判断，不继承上一 run 决策）。
+
+        从 `_run_stream_inner` 抽出：该函数已 2221 行、超出 R9 登记的 2219，
+        这是内聚的"入口重置"段，逻辑与抽出前逐行一致。
+        """
+        # P2-A Rule-first: run 级只重置工具重复/空结果事实观测；不恢复任何
+        # cross-run blocked/prewarm/no-progress 决策状态。
+        bucket = self._run_state()
+        bucket.fallback_receipt = None
+        # Phase3 G1 审查 P1-1：run 入口清空插话回执桶（per-session 桶字段跨 run
+        # 保留——上一 run 残留回调若不清，会在下一 run 的首个工具派发点被误触发，
+        # 把未被本 run 决策采用的插话误标 applied）。与 fallback_receipt 同款纪律。
+        bucket.interject_applied_callbacks = []
+        bucket.interject_cbf_pending = []
+        self._routing._begin_run_routing_epoch()
+        bucket.stagnation_state = {
+            "fp": None,
+            "count": 0,
+            "reminded": False,
+            "empty_count": 0,
+            "empty_reminded": False,
+        }
+        bucket.convergence_boundary_pending = False
+        bucket.convergence_boundary_evidence = {}
+        bucket.interruption_resume = (
+            None  # rebuilt from durable interruption/checkpoint facts after ingress append
+        )
+        bucket.ingress_pressure_compact_count = 0
+        bucket.ingress_pressure_facts = {}
+        bucket.ingress_history_budget_cap = None
+        bucket.longrun_read_cache = {}
+        bucket.longrun_continuity_manifest = None
+        # EVO-20261104-305716fa E5：参数级重复计数每 run 归零（与 longrun_read_cache 同款纪律）
+        bucket.repeat_guard = {}
+
     def _run_stream_inner(
         self,
         session_id: str,
@@ -707,35 +743,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # P0-5: 记录最近活跃会话（out-of-run 桶解析的回退锚点，保持测试复查语义）
         self._run_state_mgr.last_active_sid = session_id
         tool_trace: list[dict] = []
-        # P2-A Rule-first: run 级只重置工具重复/空结果事实观测；不恢复任何
-        # cross-run blocked/prewarm/no-progress 决策状态。
         _bucket = self._run_state()
-        _bucket.fallback_receipt = None
-        # Phase3 G1 审查 P1-1：run 入口清空插话回执桶（per-session 桶字段跨 run
-        # 保留——上一 run 残留回调若不清，会在下一 run 的首个工具派发点被误触发，
-        # 把未被本 run 决策采用的插话误标 applied）。与 fallback_receipt 同款纪律。
-        _bucket.interject_applied_callbacks = []
-        _bucket.interject_cbf_pending = []
-        self._routing._begin_run_routing_epoch()
-        _bucket.stagnation_state = {
-            "fp": None,
-            "count": 0,
-            "reminded": False,
-            "empty_count": 0,
-            "empty_reminded": False,
-        }
-        _bucket.convergence_boundary_pending = False
-        _bucket.convergence_boundary_evidence = {}
-        _bucket.interruption_resume = (
-            None  # rebuilt from durable interruption/checkpoint facts after ingress append
-        )
-        _bucket.ingress_pressure_compact_count = 0
-        _bucket.ingress_pressure_facts = {}
-        _bucket.ingress_history_budget_cap = None
-        _bucket.longrun_read_cache = {}
-        _bucket.longrun_continuity_manifest = None
-        # EVO-20261104-305716fa E5：参数级重复计数每 run 归零（与 longrun_read_cache 同款纪律）
-        _bucket.repeat_guard = {}
+        self._reset_run_buckets(_bucket)
         # P1-A/P1-B: runtime does not parse current-user semantics into task or
         # tool-selection authority. Delegated wakes remain explicitly attributable.
         if bool(getattr(ingress, "delegated", False)):

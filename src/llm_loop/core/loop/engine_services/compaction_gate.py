@@ -178,6 +178,60 @@ def take_archive_batch(engine: Any, session_id: str) -> list[dict]:
     return batch
 
 
+def _partition_entries(
+    entries: list[dict],
+) -> tuple[list[dict], dict[str, int], list[dict], list[int]]:
+    """按 role 分流 entries：assistant 全文内嵌，其余仅索引；顺带收集 msg_seq。
+
+    抽成独立函数是为了让 `write_compaction_manifest` 回到 R9 登记的 121 行基线内：
+    E2 的 embedded_source/chars 修正就地加在循环里，把该函数顶到了 130 行。
+    """
+    assistant_entries = []
+    other_counts: dict[str, int] = {}
+    other_index = []
+    for e in entries:
+        if e.get("role") == "assistant":
+            # E2：chars 与 embedded_source 对齐真实内嵌载荷（旧批次 entry.chars
+            # 只数 content，推理型消息为 0 → coverage 虚报 0 字符内嵌）。
+            embedded = str(e.get("original") or "")
+            assistant_entries.append(
+                {
+                    "msg_seq": e.get("msg_seq"),
+                    "ts": e.get("ts"),
+                    "chars": len(embedded),
+                    "sha256": e.get("sha256"),
+                    "archive_entry_id": e.get("archive_entry_id"),
+                    "archive_file": e.get("archive_file"),
+                    "evidence_ref": e.get("evidence_ref"),
+                    "original": embedded,
+                    "embedded_source": e.get("embedded_source") or "content",
+                    "protocol_state_ref": e.get("protocol_state_ref"),
+                    "content_only": True,
+                }
+            )
+        else:
+            role = str(e.get("role") or "?")
+            other_counts[role] = other_counts.get(role, 0) + 1
+            other_index.append(
+                {
+                    "msg_seq": e.get("msg_seq"),
+                    "role": role,
+                    "chars": e.get("chars"),
+                    "sha256": e.get("sha256"),
+                    "archive_entry_id": e.get("archive_entry_id"),
+                    "archive_file": e.get("archive_file"),
+                    "evidence_ref": e.get("evidence_ref"),
+                }
+            )
+    seqs: list[int] = []
+    for e in entries:
+        seq = e.get("msg_seq")
+        if isinstance(seq, int):
+            seqs.append(seq)
+    return assistant_entries, other_counts, other_index, seqs
+
+
+
 def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict]) -> dict | None:
     """Write one immutable manifest for a compaction batch; return ref info.
 
@@ -189,48 +243,7 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
     try:
         manifest_id = str(uuid.uuid4())
         created_at = _dt.datetime.now(_dt.UTC).isoformat()
-        assistant_entries = []
-        other_counts: dict[str, int] = {}
-        other_index = []
-        for e in entries:
-            if e.get("role") == "assistant":
-                # E2：chars 与 embedded_source 对齐真实内嵌载荷（旧批次 entry.chars
-                # 只数 content，推理型消息为 0 → coverage 虚报 0 字符内嵌）。
-                embedded = str(e.get("original") or "")
-                assistant_entries.append(
-                    {
-                        "msg_seq": e.get("msg_seq"),
-                        "ts": e.get("ts"),
-                        "chars": len(embedded),
-                        "sha256": e.get("sha256"),
-                        "archive_entry_id": e.get("archive_entry_id"),
-                        "archive_file": e.get("archive_file"),
-                        "evidence_ref": e.get("evidence_ref"),
-                        "original": embedded,
-                        "embedded_source": e.get("embedded_source") or "content",
-                        "protocol_state_ref": e.get("protocol_state_ref"),
-                        "content_only": True,
-                    }
-                )
-            else:
-                role = str(e.get("role") or "?")
-                other_counts[role] = other_counts.get(role, 0) + 1
-                other_index.append(
-                    {
-                        "msg_seq": e.get("msg_seq"),
-                        "role": role,
-                        "chars": e.get("chars"),
-                        "sha256": e.get("sha256"),
-                        "archive_entry_id": e.get("archive_entry_id"),
-                        "archive_file": e.get("archive_file"),
-                        "evidence_ref": e.get("evidence_ref"),
-                    }
-                )
-        seqs: list[int] = []
-        for e in entries:
-            seq = e.get("msg_seq")
-            if isinstance(seq, int):
-                seqs.append(seq)
+        assistant_entries, other_counts, other_index, seqs = _partition_entries(entries)
         # B2 完整性元数据：明确"快照存在≠内容完整"——archived/embedded 双向
         # 计数（消息数与字符数）+ 缺口声明，禁止把索引存在当原文在手。
         total_chars = sum(int(e.get("chars") or 0) for e in entries)

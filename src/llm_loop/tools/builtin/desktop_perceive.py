@@ -37,7 +37,7 @@ from llm_loop.desktop.models import (
     clamp_depth,
     jsonable,
 )
-from llm_loop.desktop.paging import PagedNodes, decode_cursor, paginate
+from llm_loop.desktop.paging import PagedNodes, decode_cursor, paginate, tree_fingerprint
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
 from llm_loop.desktop.waiting import MAX_WAIT_POLLS, WaitPredicate, wait_for
 from llm_loop.timekeeping import system_local_now
@@ -65,9 +65,6 @@ DEFAULT_SETTLE_MS = 300
 MIN_SETTLE_MS = 50
 MAX_SETTLE_MS = 10000
 WAIT_KINDS = ("exists", "absent", "focused", "enabled", "value_equals", "value_contains")
-#: 只有这些 kind 接受 expected 取反；`value_*` 的取反语义歧义（"等它不等于"？），
-#: 直接拒绝而不是猜。
-BOOL_WAIT_KINDS = ("exists", "absent", "focused", "enabled")
 
 
 def _wait_interval_ms(within_ms: int) -> int:
@@ -256,7 +253,7 @@ class DesktopPerceiveTool:
                 "minimum": 1,
                 "maximum": 500,
                 "description": (
-                    "snapshot：每页节点上限，默认 200（1..500 超出被机械限幅）。"
+                    "snapshot：每页节点上限，默认 200（1..500，越界确定性拒绝 invalid_args，不做静默限幅）。"
                     "节点总数超过它时回执 page.next_cursor 非空。"
                 ),
             },
@@ -790,6 +787,9 @@ class DesktopPerceiveTool:
         )
         if blocked is not None:
             return blocked
+        # blocked 为 None 时 _bind_window 必然给了 window（二者同源），
+        # 这里落成显式断言是为了让类型检查也看得到这条不变量。
+        assert window is not None
         depth, clipped = clamp_depth(options.get("depth_raw", DEFAULT_AX_DEPTH))
         degraded: list[str] = []
         if not perms.ax_trusted:
@@ -977,6 +977,26 @@ class DesktopPerceiveTool:
                     ),
                     started=started, perms=perms, platform=platform, session=session,
                 )
+            # P2-5（审查）：先判漂移、再判额度。额度是"树没变但你翻得太多"，
+            # 漂移是"树变了"；两者处置不同（前者靠 node_kinds/depth 收敛，
+            # 后者只能从第一页重取）。若先判额度，offset≥上限且树同时漂移的边界
+            # 会被误报成额度耗尽——诊断错，处置也跟着错。
+            cur_fp = tree_fingerprint(int(window.window_id), depth, filtered)
+            if (
+                decoded.window_id != int(window.window_id)
+                or decoded.depth != depth
+                or decoded.tree_fp != cur_fp
+            ):
+                return self._cursor_error(
+                    window=window,
+                    code=DesktopErrorCode.CURSOR_STALE,
+                    guidance=(
+                        "[desktop_perceive:snapshot] cursor_stale: 游标绑定的树已变"
+                        "（window_id / depth / 结构指纹之一不匹配）。请省略 node_cursor "
+                        "从第一页重新取——不要复用旧游标。"
+                    ),
+                    started=started, perms=perms, platform=platform, session=session,
+                )
             if decoded.offset >= MAX_PAGED_NODES:
                 return self._cursor_error(
                     window=window,
@@ -1075,6 +1095,9 @@ class DesktopPerceiveTool:
         )
         if blocked is not None:
             return blocked
+        # blocked 为 None 时 _bind_window 必然给了 window（二者同源），
+        # 这里落成显式断言是为了让类型检查也看得到这条不变量。
+        assert window is not None
         depth, clipped = clamp_depth(options.get("depth_raw", DEFAULT_AX_DEPTH))
         vision = str(options.get("vision") or "none")
         render = str(options.get("render") or "full")
