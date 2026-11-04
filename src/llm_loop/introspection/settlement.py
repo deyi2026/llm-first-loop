@@ -61,6 +61,24 @@ _LEVELS = {"model_declared", "observation_linked", "independently_evaluated"}
 _RULE_REF_RE = re.compile(r"^RULE-AI-\d+(?:\.\d+)?$", re.IGNORECASE)
 
 
+def _decision_gate_error(kind: str, decision: str) -> str:
+    """decision 闸：空串=放行，非空=失败原因（EVO-20261104-e5f79db8）.
+
+    not_adopted 是 experience 侧第三态（卡适用且正确、本轮未执行），对
+    method/rule 不开放；越界时显式说明三义分离，而非泛化成"decision 非法"。
+    """
+    if decision in _DECISIONS or (
+        kind == "experience" and decision in _EXPERIENCE_ONLY_DECISIONS
+    ):
+        return ""
+    if decision in _EXPERIENCE_ONLY_DECISIONS:
+        return (
+            f"decision=not_adopted 仅对 kind=experience 有效，kind={kind} 不接受"
+            "（not_adopted 与 not_applicable/rejected 三义分离，见 EVO-20261104-e5f79db8）"
+        )
+    return f"decision must be one of {sorted(_DECISIONS)}"
+
+
 def _normalize_rule_ref(ref: str) -> str:
     """规则 ref 归一：RULE-AI-N 模式统一大写（P-SET-5）.
 
@@ -705,15 +723,8 @@ def _submit_one(
         return failed(f"unknown kind: {kind}")
     if not ref:
         return failed("missing ref")
-    if decision not in _DECISIONS and not (
-        kind == "experience" and decision in _EXPERIENCE_ONLY_DECISIONS
-    ):
-        if decision in _EXPERIENCE_ONLY_DECISIONS:
-            return failed(
-                f"decision=not_adopted 仅对 kind=experience 有效，kind={kind} 不接受"
-                "（not_adopted 与 not_applicable/rejected 三义分离，见 EVO-20261104-e5f79db8）"
-            )
-        return failed(f"decision must be one of {sorted(_DECISIONS)}")
+    if (gate_error := _decision_gate_error(kind, decision)):
+        return failed(gate_error)
     if benefit not in _BENEFITS:
         return failed(f"benefit must be one of {sorted(_BENEFITS)}")
     if evidence_level not in _LEVELS:

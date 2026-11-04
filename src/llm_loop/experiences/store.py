@@ -30,13 +30,13 @@ from llm_loop.timekeeping import system_local_now
 from llm_loop.usage_net import row_annotation as _usage_net_row_annotation
 from llm_loop.usage_net import summarize_since_last_transition
 from llm_loop.use_ledger import (
+    ADOPTING_DECISIONS as USE_ADOPTING_DECISIONS,
+)
+from llm_loop.use_ledger import (
     BENEFITS as USE_BENEFITS,
 )
 from llm_loop.use_ledger import (
     EVIDENCE_LEVELS as USE_EVIDENCE_LEVELS,
-)
-from llm_loop.use_ledger import (
-    ADOPTING_DECISIONS as USE_ADOPTING_DECISIONS,
 )
 from llm_loop.use_ledger import (
     EXPERIENCE_DECISIONS as USE_EXPERIENCE_DECISIONS,
@@ -58,6 +58,28 @@ from llm_loop.use_ledger import (
 )
 
 logger = logging.getLogger(__name__)
+
+_USE_DECISION_HINT = (
+    "use_decision must be one of applied|adapted|not_applicable|rejected|not_adopted"
+    "（not_adopted = 卡适用且正确、但本轮未执行；不计正负分）"
+)
+
+
+def _require_adoption_evidence(decision: str, evidence_refs: list[str]) -> None:
+    """采纳证据强制（EVO-20261104-e5f79db8）.
+
+    applied/adapted 计 +1，必须有可回溯引用；否则"自述 helped"与真实执行脱钩
+    （"applied" 变成零成本表态）。卡适用但本轮未执行 → 引导改用 not_adopted。
+    """
+    if decision in USE_ADOPTING_DECISIONS and not evidence_refs:
+        raise ValueError(
+            "applied/adapted 声明必须附非空 evidence_refs（采纳证据强制）；"
+            "若卡适用且正确但本轮未执行，请用 use_decision=not_adopted"
+        )
+
+
+def _adoption_proven(decision: str, evidence_refs: list[str]) -> bool:
+    return decision in USE_ADOPTING_DECISIONS and bool(evidence_refs)
 
 
 @dataclass
@@ -1085,11 +1107,7 @@ class ExperienceStore:
         canonical_stem, doc = resolved
         clean_decision = str(use_decision).strip()
         if clean_decision not in USE_EXPERIENCE_DECISIONS:
-            raise ValueError(
-                "use_decision must be one of "
-                "applied|adapted|not_applicable|rejected|not_adopted"
-                "（not_adopted = 卡适用且正确、但本轮未执行；不计正负分）"
-            )
+            raise ValueError(_USE_DECISION_HINT)
         clean_benefit = str(benefit or "").strip().lower() or "unknown"
         if clean_benefit not in USE_BENEFITS:
             raise ValueError(f"benefit must be one of {sorted(USE_BENEFITS)}")
@@ -1118,14 +1136,7 @@ class ExperienceStore:
         clean_refs = [
             str(v).strip()[:256] for v in (evidence_refs or []) if str(v).strip()
         ]
-        # EVO-20261104-e5f79db8: 采纳证据强制——applied/adapted 计 +1，必须有
-        # 可回溯引用；否则"自述 helped"与真实执行脱钩（"applied" 变成零成本表态）。
-        # 卡适用但本轮未执行 → 引导改用 not_adopted（计 0，不罚卡）。
-        if clean_decision in USE_ADOPTING_DECISIONS and not clean_refs:
-            raise ValueError(
-                "applied/adapted 声明必须附非空 evidence_refs（采纳证据强制）；"
-                "若卡适用且正确但本轮未执行，请用 use_decision=not_adopted"
-            )
+        _require_adoption_evidence(clean_decision, clean_refs)
         clean_note = str(note).strip()[:2000]
         clean_suggestion = str(suggestion or "").strip()[:2000]
         submission_hash = derive_submission_hash(
@@ -1147,9 +1158,7 @@ class ExperienceStore:
             "episode_ref": clean_episode,
             "session_id": str(session_id).strip()[:128],
             "model": str(model).strip()[:256],
-            "application_proven": (
-                clean_decision in USE_ADOPTING_DECISIONS and bool(clean_refs)
-            ),
+            "application_proven": _adoption_proven(clean_decision, clean_refs),
             "authority": "model_declared",
             "task_benefit": "not_evaluated",
             # ── v2 记录契约（TASK-ac085ab1-001）──
