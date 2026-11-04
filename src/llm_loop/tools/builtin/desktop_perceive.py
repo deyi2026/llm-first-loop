@@ -32,11 +32,12 @@ from llm_loop.desktop.models import (
     AxNode,
     DesktopErrorCode,
     PermissionSnapshot,
+    WindowInfo,
     ax_error_reason,
     clamp_depth,
     jsonable,
 )
-from llm_loop.desktop.paging import decode_cursor, paginate
+from llm_loop.desktop.paging import PagedNodes, decode_cursor, paginate
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
 from llm_loop.desktop.waiting import MAX_WAIT_POLLS, WaitPredicate, wait_for
 from llm_loop.timekeeping import system_local_now
@@ -50,7 +51,10 @@ DEFAULT_PAGE_LIMIT = 200
 MAX_PAGE_LIMIT = 500
 # 单棵树累计可续读节点上限。无状态实现：由游标里的 offset 判定，不依赖进程内
 # 计数器（工具实例生命周期跨调用不可假定），所以重启/多会话下口径一致。
-MAX_PAGED_NODES = 2000
+# 取值必须**可达**：遍历受 AX_NODE_LIMIT_DEFAULT(1500) 限制，故上限必须 < 1500，
+# 否则该闸门在生产里永不触发（曾经写成 2000 就是死逻辑）。600 ≈ 默认页宽 200 的
+# 三页，足够定位到任何可见控件，又不会把上下文烧掉。
+MAX_PAGED_NODES = 600
 # focused 摘要里 value 的预览长度：够判断"光标在哪个框"，不足以泄漏整段内容。
 FOCUS_VALUE_PREVIEW = 120
 
@@ -88,8 +92,11 @@ def _node_row(node: AxNode, *, render: str, geometry: str) -> dict[str, Any]:
     if render == "sparse":
         # 缺字段 ⇔ null/false（回执口径已写在工具 description 里）。
         row = {k: v for k, v in row.items() if v is not None and v is not False}
-        # ax_ref 是唯一寻址锚，任何档位都不许省。
+        # ax_ref 与 role 是寻址/判型的最小身份，任何档位都不许省。
+        # role 为 None 时才需要强制回填——否则 sparse 会把"未知角色"变成
+        # "字段不存在"，两者对调用方的含义完全不同。
         row["ax_ref"] = node.ax_ref
+        row.setdefault("role", None)
     return row
 
 
@@ -425,6 +432,67 @@ class DesktopPerceiveTool:
             self._audit(row)
 
     # ── 参数校验 ─────────────────────────────────────────────────────────
+    def _parse_snapshot_render_and_paging(
+        self, kwargs: dict[str, Any], options: dict[str, Any]
+    ) -> ToolResult | None:
+        """FR-01/FR-02 参数解析与校验：渲染档位、role 过滤、每页宽度、续读游标。
+
+        独立成函数而非塞进 `_validate`：R9 棘轮对 `_validate` 有 119 行上限，
+        而分页新增的校验分支本身就占 40 余行。语义上这也是一件事——
+        "把 snapshot 的可选参数归一成 options"，与 action 分派无关。
+        """
+        # FR-02：渲染档位（默认 full —— 与既有负载逐字兼容）
+        render = str(kwargs.get("render") or "full").strip()
+        if render not in ("full", "sparse"):
+            return self._fail(
+                "[desktop_perceive:snapshot] render 只接受 full | sparse（默认 full）。"
+            )
+        options["render"] = render
+        geometry = str(kwargs.get("geometry") or "full").strip()
+        if geometry not in ("full", "none"):
+            return self._fail(
+                "[desktop_perceive:snapshot] geometry 只接受 full | none（默认 full）。"
+            )
+        options["geometry"] = geometry
+        # FR-01：过滤 → 分页（顺序不可换：先收敛再切片）
+        kinds_raw = kwargs.get("node_kinds")
+        if kinds_raw is None:
+            kinds_raw = []
+        if not isinstance(kinds_raw, (list, tuple)):
+            return self._fail(
+                "[desktop_perceive:snapshot] node_kinds 必须是字符串数组。"
+            )
+        kinds: list[str] = []
+        for item in kinds_raw:
+            if not isinstance(item, str) or not item.strip():
+                return self._fail(
+                    "[desktop_perceive:snapshot] node_kinds 每项必须是非空字符串。"
+                )
+            kinds.append(item.strip().lower())
+        options["node_kinds"] = tuple(sorted(set(kinds)))
+        node_limit = kwargs.get("node_limit", DEFAULT_PAGE_LIMIT)
+        if isinstance(node_limit, bool) or not isinstance(node_limit, int):
+            return self._fail(
+                "[desktop_perceive:snapshot] node_limit 必须是整数（1..500）。"
+            )
+        if node_limit < 1 or node_limit > MAX_PAGE_LIMIT:
+            # 确定性拒绝，不做静默限幅：静默改参数会让"我以为只取 10 个"
+            # 变成悄悄取 500 个，恰恰是这次要治的问题。
+            return self._fail(
+                f"[desktop_perceive:snapshot] invalid_args: node_limit 必须在 "
+                f"1..{MAX_PAGE_LIMIT} 之间（收到 {node_limit}），不做静默限幅——"
+                "要更省请配合 node_kinds 收敛。"
+            )
+        options["node_limit"] = node_limit
+        cursor = kwargs.get("node_cursor")
+        if cursor is not None:
+            if not isinstance(cursor, str) or not cursor.strip():
+                return self._fail(
+                    "[desktop_perceive:snapshot] node_cursor 必须是非空字符串"
+                    "（取上次回执的 page.next_cursor）。"
+                )
+            options["node_cursor"] = cursor.strip()
+
     def _validate(self, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any], ToolResult | None]:
         action = str(kwargs.get("action") or "").strip()
         if action not in _ACTIONS:
@@ -457,49 +525,9 @@ class DesktopPerceiveTool:
                     "[desktop_perceive:snapshot] vision 只接受 none | evidence（默认 none）。"
                 )
             options["vision"] = vision
-            # FR-02：渲染档位（默认 full —— 与既有负载逐字兼容）
-            render = str(kwargs.get("render") or "full").strip()
-            if render not in ("full", "sparse"):
-                return action, {}, self._fail(
-                    "[desktop_perceive:snapshot] render 只接受 full | sparse（默认 full）。"
-                )
-            options["render"] = render
-            geometry = str(kwargs.get("geometry") or "full").strip()
-            if geometry not in ("full", "none"):
-                return action, {}, self._fail(
-                    "[desktop_perceive:snapshot] geometry 只接受 full | none（默认 full）。"
-                )
-            options["geometry"] = geometry
-            # FR-01：过滤 → 分页（顺序不可换：先收敛再切片）
-            kinds_raw = kwargs.get("node_kinds")
-            if kinds_raw is None:
-                kinds_raw = []
-            if not isinstance(kinds_raw, (list, tuple)):
-                return action, {}, self._fail(
-                    "[desktop_perceive:snapshot] node_kinds 必须是字符串数组。"
-                )
-            kinds: list[str] = []
-            for item in kinds_raw:
-                if not isinstance(item, str) or not item.strip():
-                    return action, {}, self._fail(
-                        "[desktop_perceive:snapshot] node_kinds 每项必须是非空字符串。"
-                    )
-                kinds.append(item.strip().lower())
-            options["node_kinds"] = tuple(sorted(set(kinds)))
-            node_limit = kwargs.get("node_limit", DEFAULT_PAGE_LIMIT)
-            if isinstance(node_limit, bool) or not isinstance(node_limit, int):
-                return action, {}, self._fail(
-                    "[desktop_perceive:snapshot] node_limit 必须是整数（1..500）。"
-                )
-            options["node_limit"] = max(1, min(MAX_PAGE_LIMIT, int(node_limit)))
-            cursor = kwargs.get("node_cursor")
-            if cursor is not None:
-                if not isinstance(cursor, str) or not cursor.strip():
-                    return action, {}, self._fail(
-                        "[desktop_perceive:snapshot] node_cursor 必须是非空字符串"
-                        "（取上次回执的 page.next_cursor）。"
-                    )
-                options["node_cursor"] = cursor.strip()
+            error = self._parse_snapshot_render_and_paging(kwargs, options)
+            if error is not None:
+                return action, {}, error
         if action == "wait":
             window_id = kwargs.get("window_id")
             if isinstance(window_id, bool) or not isinstance(window_id, int):
@@ -751,43 +779,17 @@ class DesktopPerceiveTool:
         与 snapshot 共用同一套隐私/白名单门——不能因为"只是等等"就绕过：
         wait 每轮都要读 AX，绕过等于开了条不经过 D8 的感知侧信道。
         """
-        window = backend.get_window(int(options["window_id"]))
-        if window is None:
-            return self._envelope(
-                action="wait", ok=False,
-                error_code=DesktopErrorCode.WINDOW_NOT_FOUND, guidance=GUIDANCE_NOT_FOUND,
-                started=started, permissions=self._perms_dict(perms),
-                platform_info=platform, session=session,
-            )
-        bundle = window.bundle_id
-        if self._privacy.is_sensitive(bundle):
-            self._audit_event(
-                window_id=window.window_id, app_bundle=bundle,
-                error_code=DesktopErrorCode.PRIVACY_BLOCKED.value, sha256=None,
-            )
-            return self._envelope(
-                action="wait", ok=False,
-                error_code=DesktopErrorCode.PRIVACY_BLOCKED,
-                guidance=(
-                    f"目标窗口属于隐私核心名单（bundle_id={bundle}）；wait 每轮都要读 AX，"
-                    "按 D8 同样拒绝，不轮询、不读、无降级路径。"
-                ),
-                started=started, permissions=self._perms_dict(perms),
-                platform_info=platform, session=session,
-            )
-        if not self._allowlist.is_allowed(bundle):
-            return self._envelope(
-                action="wait", ok=False,
-                error_code=DesktopErrorCode.APP_NOT_ALLOWED,
-                guidance=(
-                    f"目标应用不在 desktop.see_allowlist（bundle_id={bundle}，U14）；"
-                    "需要等待时由用户在配置中追加该 bundle_id。"
-                ),
-                started=started, permissions=self._perms_dict(perms),
-                platform_info=platform, session=session,
-                payload={"window": self._redact_window(window)},
-            )
-
+        window, bundle, blocked = self._bind_window(
+            options=options,
+            backend=backend,
+            action="wait",
+            started=started,
+            perms=perms,
+            platform=platform,
+            session=session,
+        )
+        if blocked is not None:
+            return blocked
         depth, clipped = clamp_depth(options.get("depth_raw", DEFAULT_AX_DEPTH))
         degraded: list[str] = []
         if not perms.ax_trusted:
@@ -856,127 +858,51 @@ class DesktopPerceiveTool:
             },
         )
 
-    # ── snapshot ────────────────────────────────────────────────────────
-    def _snapshot_action(self, started: float, *, options: dict[str, Any], backend: Any,
-                         perms: PermissionSnapshot, platform: dict, session: dict) -> ToolResult:
-        window = backend.get_window(int(options["window_id"]))
-        if window is None:
-            return self._envelope(
-                action="snapshot", ok=False,
-                error_code=DesktopErrorCode.WINDOW_NOT_FOUND, guidance=GUIDANCE_NOT_FOUND,
-                started=started, permissions=self._perms_dict(perms),
-                platform_info=platform, session=session,
+    def _capture_evidence(self, *, backend: Any, window: WindowInfo, bundle: str,
+                          degraded: list[str], error_code: DesktopErrorCode | None,
+                          guidance: str | None,
+                          ) -> tuple[DesktopErrorCode | None, str | None, dict[str, Any] | None]:
+        """vision=evidence 的截图采集 + 审计。失败不抛，转成 error_code/guidance。"""
+        image_payload: dict[str, Any] | None = None
+        outcome = backend.capture_window(window)
+        if outcome.error is not None:
+            error_code = outcome.error
+            guidance = " ".join(
+                part
+                for part in (
+                    outcome.detail,
+                    GUIDANCE_CAPTURE
+                    if outcome.error == DesktopErrorCode.CAPTURE_UNAVAILABLE
+                    else "",
+                )
+                if part
             )
-        bundle = window.bundle_id
-        # 优先级：privacy_blocked（核心敏感名单）> app_not_allowed（配置名单）
-        if self._privacy.is_sensitive(bundle):
             self._audit_event(
-                window_id=window.window_id, app_bundle=bundle,
-                error_code=DesktopErrorCode.PRIVACY_BLOCKED.value, sha256=None,
+                window_id=window.window_id,
+                app_bundle=bundle,
+                error_code=outcome.error.value,
+                sha256=None,
             )
-            return self._envelope(
-                action="snapshot", ok=False,
-                error_code=DesktopErrorCode.PRIVACY_BLOCKED,
-                guidance=(
-                    f"目标窗口属于隐私核心名单（bundle_id={bundle}）；按 D8 拒绝感知，"
-                    "不提供窗口元数据、不读 AX、不截图，无降级路径。"
-                ),
-                started=started, permissions=self._perms_dict(perms),
-                platform_info=platform, session=session,
+        else:
+            degraded.extend(outcome.degraded)
+            image_payload = jsonable(outcome.image)
+            self._audit_event(
+                window_id=window.window_id,
+                app_bundle=bundle,
+                error_code=None,
+                sha256=outcome.image.sha256 if outcome.image else None,
             )
-        if not self._allowlist.is_allowed(bundle):
-            # U14：零截图、零 AX；保留 L0 元数据（标题隐去）供可观测性
-            redacted = self._redact_window(window)
-            return self._envelope(
-                action="snapshot", ok=False,
-                error_code=DesktopErrorCode.APP_NOT_ALLOWED,
-                guidance=(
-                    f"目标应用不在 desktop.see_allowlist（bundle_id={bundle}，U14）；"
-                    "需要感知时由用户在配置中追加该 bundle_id。"
-                ),
-                started=started, permissions=self._perms_dict(perms),
-                platform_info=platform, session=session,
-                payload={"window": redacted},
-            )
-        depth, clipped = clamp_depth(options.get("depth_raw", DEFAULT_AX_DEPTH))
-        vision = str(options.get("vision") or "none")
-        render = str(options.get("render") or "full")
-        geometry = str(options.get("geometry") or "full")
-        kinds = tuple(options.get("node_kinds") or ())
-        page_limit = int(options.get("node_limit") or DEFAULT_PAGE_LIMIT)
-        ax_view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT)
-        degraded: list[str] = []
-        all_nodes = tuple(ax_view.nodes)
-        # FR-01：过滤**先于**分页。翻页只解决"单页太大"；把树收敛得靠过滤。
-        # 顺序反了就是把同一批噪声切成多页——看着省了，其实一页页翻更贵。
-        filtered = (
-            tuple(node for node in all_nodes if str(node.role or "").strip().lower() in kinds)
-            if kinds
-            else all_nodes
-        )
-        cursor_raw = options.get("node_cursor")
-        if cursor_raw is not None:
-            decoded = decode_cursor(str(cursor_raw))
-            if decoded is None:
-                return self._envelope(
-                    action="snapshot",
-                    ok=False,
-                    error_code=DesktopErrorCode.CURSOR_INVALID,
-                    guidance=(
-                        "[desktop_perceive:snapshot] cursor_invalid: node_cursor 不可解析"
-                        "（前缀/版本/字段类型不符）。游标是上次回执 page.next_cursor 的"
-                        "原样字符串，不要手工构造；要从头取页就省略 node_cursor。"
-                    ),
-                    started=started,
-                    permissions=self._perms_dict(perms),
-                    platform_info=platform,
-                    session=session,
-                    payload={"window": jsonable(window)},
-                )
-            if decoded.offset >= MAX_PAGED_NODES:
-                return self._envelope(
-                    action="snapshot",
-                    ok=False,
-                    error_code=DesktopErrorCode.PAGE_BUDGET_EXHAUSTED,
-                    guidance=(
-                        f"[desktop_perceive:snapshot] page_budget_exhausted: 单棵树已续读到 "
-                        f"{decoded.offset} 节点，上限 {MAX_PAGED_NODES}。"
-                        "全树枚举不是本工具的用途：请用 node_kinds 收敛 role，"
-                        "或降低 depth 重新取第一页。"
-                    ),
-                    started=started,
-                    permissions=self._perms_dict(perms),
-                    platform_info=platform,
-                    session=session,
-                    payload={"window": jsonable(window)},
-                )
-        try:
-            page = paginate(
-                filtered,
-                window_id=int(window.window_id),
-                depth=depth,
-                cursor=(str(cursor_raw) if cursor_raw is not None else None),
-                page_limit=page_limit,
-            )
-        except ValueError as exc:
-            # decode 已通过，能走到这里只剩两种可能：树变了，或游标越过了当前树尾。
-            # 两者处置相同（重新取第一页），故合并为 cursor_stale，不硬拆成假区分。
-            return self._envelope(
-                action="snapshot",
-                ok=False,
-                error_code=DesktopErrorCode.CURSOR_STALE,
-                guidance=(
-                    f"[desktop_perceive:snapshot] cursor_stale: 游标绑定的树已变（{exc}）。"
-                    "游标绑定 (window_id, depth, 过滤后树的结构指纹)；窗口内容变化、"
-                    "depth 或 node_kinds 改变都会使其失效。请省略 node_cursor 从第一页"
-                    "重新取——不要复用旧游标。"
-                ),
-                started=started,
-                permissions=self._perms_dict(perms),
-                platform_info=platform,
-                session=session,
-                payload={"window": jsonable(window)},
-            )
+        return error_code, guidance, image_payload
+
+    def _build_ax_payload(self, *, ax_view: Any, all_nodes: tuple[AxNode, ...],
+                          filtered: tuple[AxNode, ...], page: PagedNodes, render: str,
+                          geometry: str, page_limit: int, kinds: tuple[str, ...],
+                          clipped: bool, degraded: list[str]) -> dict[str, Any]:
+        """本页节点行 + 分页元信息 + 焦点摘要 → ax payload。
+
+        纯数据整形，不碰门控也不回执；抽出来是为了让 `_snapshot_action` 回到
+        R9 棘轮登记的 121 行以内（加大分页/渲染/焦点三块后它一度 178 行）。
+        """
         page_rows = [_node_row(node, render=render, geometry=geometry) for node in page.nodes]
         page_refs = {str(row["ax_ref"]) for row in page_rows}
         # FR-03：焦点摘要取全树（不是本页）——焦点常在树尾，正是最贵的那一页，
@@ -1014,6 +940,183 @@ class DesktopPerceiveTool:
                 else {"present": False}
             ),
         }
+        return ax_payload
+
+    def _cursor_error(self, *, window: WindowInfo, code: DesktopErrorCode, guidance: str,
+                      started: float, perms: PermissionSnapshot, platform: dict,
+                      session: dict) -> ToolResult:
+        """游标类失败的统一回执。三种坏法（坏串/额度/树变）共用同一信封形状，
+        调用方按 error_code 分支即可，不必解析文案。"""
+        return self._envelope(
+            action="snapshot",
+            ok=False,
+            error_code=code,
+            guidance=guidance,
+            started=started,
+            permissions=self._perms_dict(perms),
+            platform_info=platform,
+            session=session,
+            payload={"window": jsonable(window)},
+        )
+
+    def _resolve_page(self, *, filtered: tuple[AxNode, ...], window: WindowInfo, depth: int,
+                      cursor_raw: str | None, page_limit: int, started: float,
+                      perms: PermissionSnapshot, platform: dict, session: dict,
+                      ) -> PagedNodes | ToolResult:
+        """过滤后节点 → 本页。失败时返回回执而非抛异常，调用方 isinstance 分流。"""
+        if cursor_raw is not None:
+            decoded = decode_cursor(str(cursor_raw))
+            if decoded is None:
+                return self._cursor_error(
+                    window=window,
+                    code=DesktopErrorCode.CURSOR_INVALID,
+                    guidance=(
+                        "[desktop_perceive:snapshot] cursor_invalid: node_cursor 不可解析"
+                        "（前缀/版本/字段类型不符）。游标是上次回执 page.next_cursor 的"
+                        "原样字符串，不要手工构造；要从头取页就省略 node_cursor。"
+                    ),
+                    started=started, perms=perms, platform=platform, session=session,
+                )
+            if decoded.offset >= MAX_PAGED_NODES:
+                return self._cursor_error(
+                    window=window,
+                    code=DesktopErrorCode.PAGE_BUDGET_EXHAUSTED,
+                    guidance=(
+                        f"[desktop_perceive:snapshot] page_budget_exhausted: 单棵树已续读到 "
+                        f"{decoded.offset} 节点，上限 {MAX_PAGED_NODES}。"
+                        "全树枚举不是本工具的用途：请用 node_kinds 收敛 role，"
+                        "或降低 depth 重新取第一页。"
+                    ),
+                    started=started, perms=perms, platform=platform, session=session,
+                )
+        try:
+            return paginate(
+                filtered,
+                window_id=int(window.window_id),
+                depth=depth,
+                cursor=(str(cursor_raw) if cursor_raw is not None else None),
+                page_limit=page_limit,
+            )
+        except ValueError as exc:
+            # decode 已通过，能走到这里只剩两种可能：树变了，或游标越过了当前树尾。
+            # 两者处置相同（重新取第一页），故合并为 cursor_stale，不硬拆成假区分。
+            return self._cursor_error(
+                window=window,
+                code=DesktopErrorCode.CURSOR_STALE,
+                guidance=(
+                    f"[desktop_perceive:snapshot] cursor_stale: 游标绑定的树已变（{exc}）。"
+                    "游标绑定 (window_id, depth, 过滤后树的结构指纹)；窗口内容变化、"
+                    "depth 或 node_kinds 改变都会使其失效。请省略 node_cursor 从第一页"
+                    "重新取——不要复用旧游标。"
+                ),
+                started=started, perms=perms, platform=platform, session=session,
+            )
+
+    # ── snapshot ────────────────────────────────────────────────────────
+    def _bind_window(self, *, options: dict[str, Any], backend: Any, action: str,
+                     started: float, perms: PermissionSnapshot,
+                     platform: dict, session: dict,
+                     ) -> tuple[WindowInfo | None, str, ToolResult | None]:
+        """窗口绑定 + 三道拒绝闸（privacy_blocked > app_not_allowed > 放行）。
+
+        返回 (window, bundle, 阻塞回执)。snapshot 与 wait 必须走**同一套**闸，
+        否则 wait 就成了绕过隐私/白名单的旁路；action 只影响回执里的 action 字段，
+        不改变闸的判定顺序与结论。
+        """
+        window = backend.get_window(int(options["window_id"]))
+        if window is None:
+            return None, "", self._envelope(
+                action=action, ok=False,
+                error_code=DesktopErrorCode.WINDOW_NOT_FOUND, guidance=GUIDANCE_NOT_FOUND,
+                started=started, permissions=self._perms_dict(perms),
+                platform_info=platform, session=session,
+            )
+        bundle = window.bundle_id
+        if self._privacy.is_sensitive(bundle):
+            self._audit_event(
+                window_id=window.window_id, app_bundle=bundle,
+                error_code=DesktopErrorCode.PRIVACY_BLOCKED.value, sha256=None,
+            )
+            return None, bundle, self._envelope(
+                action=action, ok=False,
+                error_code=DesktopErrorCode.PRIVACY_BLOCKED,
+                guidance=(
+                    f"目标窗口属于隐私核心名单（bundle_id={bundle}）；按 D8 拒绝读取，"
+                    "不提供窗口元数据、不读 AX、不截图、不轮询，无降级路径。"
+                ),
+                started=started, permissions=self._perms_dict(perms),
+                platform_info=platform, session=session,
+            )
+        if not self._allowlist.is_allowed(bundle):
+            return None, bundle, self._envelope(
+                action=action, ok=False,
+                error_code=DesktopErrorCode.APP_NOT_ALLOWED,
+                guidance=(
+                    f"目标应用不在 desktop.see_allowlist（bundle_id={bundle}，U14）；"
+                    "需要读取时由用户在配置中追加该 bundle_id。"
+                ),
+                started=started, permissions=self._perms_dict(perms),
+                platform_info=platform, session=session,
+                payload={"window": self._redact_window(window)},
+            )
+
+        return window, bundle, None
+
+    def _snapshot_action(self, started: float, *, options: dict[str, Any], backend: Any,
+                         perms: PermissionSnapshot, platform: dict, session: dict) -> ToolResult:
+        window, bundle, blocked = self._bind_window(
+            options=options,
+            backend=backend,
+            action="snapshot",
+            started=started,
+            perms=perms,
+            platform=platform,
+            session=session,
+        )
+        if blocked is not None:
+            return blocked
+        depth, clipped = clamp_depth(options.get("depth_raw", DEFAULT_AX_DEPTH))
+        vision = str(options.get("vision") or "none")
+        render = str(options.get("render") or "full")
+        geometry = str(options.get("geometry") or "full")
+        kinds = tuple(options.get("node_kinds") or ())
+        page_limit = int(options.get("node_limit") or DEFAULT_PAGE_LIMIT)
+        ax_view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT)
+        degraded: list[str] = []
+        all_nodes = tuple(ax_view.nodes)
+        # FR-01：过滤**先于**分页。翻页只解决"单页太大"；把树收敛得靠过滤。
+        # 顺序反了就是把同一批噪声切成多页——看着省了，其实一页页翻更贵。
+        filtered = (
+            tuple(node for node in all_nodes if str(node.role or "").strip().lower() in kinds)
+            if kinds
+            else all_nodes
+        )
+        cursor_raw = options.get("node_cursor")
+        page = self._resolve_page(
+            filtered=filtered,
+            window=window,
+            depth=depth,
+            cursor_raw=cursor_raw,
+            page_limit=page_limit,
+            started=started,
+            perms=perms,
+            platform=platform,
+            session=session,
+        )
+        if isinstance(page, ToolResult):
+            return page
+        ax_payload = self._build_ax_payload(
+            ax_view=ax_view,
+            all_nodes=all_nodes,
+            filtered=filtered,
+            page=page,
+            render=render,
+            geometry=geometry,
+            page_limit=page_limit,
+            kinds=kinds,
+            clipped=clipped,
+            degraded=degraded,
+        )
         error_code: DesktopErrorCode | None = None
         guidance: str | None = None
         if ax_view.available and ax_view.binding == "title_relaxed":
@@ -1037,34 +1140,14 @@ class DesktopPerceiveTool:
                 guidance = self._ax_failure_guidance(ax_view)
         image_payload: dict[str, Any] | None = None
         if vision == "evidence":
-            outcome = backend.capture_window(window)
-            if outcome.error is not None:
-                error_code = outcome.error
-                guidance = " ".join(
-                    part
-                    for part in (
-                        outcome.detail,
-                        GUIDANCE_CAPTURE
-                        if outcome.error == DesktopErrorCode.CAPTURE_UNAVAILABLE
-                        else "",
-                    )
-                    if part
-                )
-                self._audit_event(
-                    window_id=window.window_id,
-                    app_bundle=bundle,
-                    error_code=outcome.error.value,
-                    sha256=None,
-                )
-            else:
-                degraded.extend(outcome.degraded)
-                image_payload = jsonable(outcome.image)
-                self._audit_event(
-                    window_id=window.window_id,
-                    app_bundle=bundle,
-                    error_code=None,
-                    sha256=outcome.image.sha256 if outcome.image else None,
-                )
+            error_code, guidance, image_payload = self._capture_evidence(
+                backend=backend,
+                window=window,
+                bundle=bundle,
+                degraded=degraded,
+                error_code=error_code,
+                guidance=guidance,
+            )
         ok = error_code is None
         return self._envelope(
             action="snapshot",

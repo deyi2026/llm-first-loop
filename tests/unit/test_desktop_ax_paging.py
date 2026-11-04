@@ -1,7 +1,7 @@
 # AX 续读分页纯逻辑单元测试（src/llm_loop/desktop/paging.py 委派契约）
 """paging.py 纯逻辑分页：指纹稳定性/敏感性、游标编解码往返与拒绝、
 分页边界（整除/零头/大 limit/offset==total/空树）、跨树复用失效、
-PageBudget 计账。
+不再含额度计账（额度判定在工具层，见 desktop_perceive.MAX_PAGED_NODES）。
 
 全部为离线纯函数测试（无 I/O、无 macOS 框架、无子进程），符合
 hermetic 测试纪律。
@@ -18,7 +18,6 @@ from llm_loop.desktop.models import AxNode, Pt, Size
 from llm_loop.desktop.paging import (
     CURSOR_PREFIX,
     CURSOR_VERSION,
-    PageBudget,
     PageCursor,
     PagedNodes,
     decode_cursor,
@@ -305,33 +304,3 @@ def test_cursor_offset_out_of_range_raises():
         paginate(nodes, window_id=101, depth=3, cursor=token, page_limit=3)
 
 
-# ══ 5. PageBudget ══════════════════════════════════════════════════════════
-def test_budget_charge_within_limit():
-    """防回归：剩余足额必须记账并返回 True，used 反映累计消耗。"""
-    budget = PageBudget(10)
-    assert budget.charge("ax_nodes", 4) is True
-    assert budget.used("ax_nodes") == 4
-    assert budget.charge("ax_nodes", 6) is True
-    assert budget.used("ax_nodes") == 10
-
-
-def test_budget_per_key_accounting():
-    """防回归：各 key 独立额度、互不挤占——一个 key 用满不得影响其他
-    key 的判定；未出现过的 key used 为 0。"""
-    budget = PageBudget(10)
-    assert budget.charge("nodes", 10) is True
-    assert budget.charge("audit_lines", 10) is True  # 不受 nodes 占满影响
-    assert budget.used("nodes") == 10
-    assert budget.used("audit_lines") == 10
-    assert budget.used("never_charged") == 0
-
-
-def test_budget_over_limit_rejected_without_deduction():
-    """防回归：额度不足必须拒绝且绝不部分/幻影扣减——失败的申请不改变
-    账面，之后按真实剩余再申请仍可成功。"""
-    budget = PageBudget(5)
-    assert budget.charge("k", 6) is False
-    assert budget.used("k") == 0  # 未扣减
-    assert budget.charge("k", 5) is True
-    assert budget.charge("k", 1) is False
-    assert budget.used("k") == 5  # 失败申请未污染账面

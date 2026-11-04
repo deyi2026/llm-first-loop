@@ -422,13 +422,13 @@ do=steps[], steps[1..8]
 
 | 文件 | 用例数 | 覆盖 |
 |---|---|---|
-| `tests/unit/test_desktop_ax_paging.py` | 16 | 指纹稳定性/敏感性、游标编解码全拒绝分支、切片边界、预算 |
-| `tests/unit/test_desktop_perceive_paging_v01.py` | 16 | 续读不重不漏、cursor_stale/invalid/budget、渲染档位语义、focused 摘要 |
+| `tests/unit/test_desktop_ax_paging.py` | 13 | 指纹稳定性/敏感性、游标编解码全拒绝分支、切片边界（PageBudget 已按审查意见删除） |
+| `tests/unit/test_desktop_perceive_paging_v01.py` | 18 | 续读不重不漏、cursor_stale/invalid/budget、渲染档位语义、focused 摘要、node_limit 越界拒绝、sparse 恒留 role |
 | `tests/unit/test_desktop_operate_scroll_into_view.py` | 7 | dry_run→token→act、point 拒绝、risk=act |
 | `tests/unit/test_desktop_waiting.py` | 11 | 状态机：立即命中/超时/absent settle/回闪重置/深冻钟撞轮询上限 |
 | `tests/unit/test_desktop_perceive_wait_v01.py` | 13 | 工具层接线：超时仍 ok、同一套 privacy/allowlist 门、形状校验 |
 
-桌面相关合计 **276 passed**（含既有 `test_desktop_perceive_m3_v01.py` 与 `test_desktop_operate_m4_v01.py`）。
+桌面相关合计 **275 passed**（含既有 `test_desktop_perceive_m3_v01.py` 与 `test_desktop_operate_m4_v01.py`）。
 
 ### 12.5 本批未能满足的开工条件（如实记录）
 
@@ -439,3 +439,23 @@ do=steps[], steps[1..8]
 ### 12.6 与 dsh-vc 的隔离声明
 
 参考项目 dsh-vc 仍为**只读源码、未运行**；其 UIA 后端、25 种语义动作、ddagrab 采集无一行可移植。本批借鉴的仅是其"游标续读 + 渲染档位 + 等待原语"的**契约形态**，不含其代码（PolyForm Noncommercial，不可引入）。
+
+### 12.7 独立审查回合与修复（RULE-AI-28，如实记录）
+
+第一轮 `git_push` 审查结论 **REVISE（P0=0 / P1=1 / P2=4）**，逐条处置：
+
+| 编号 | 审查意见 | 处置 | 证据 |
+|---|---|---|---|
+| **P1** | 推送一个 `ci_gate` 红的树，只在文档里"免责声明" | 不接受"免责"式交付。查明 `ci_gate` 的两条红**在我改前即存在**，且**我无权为它放宽基线**——`test_baseline_ratchet_not_raised` 明确禁止任何登记值上调（含我自己函数）。最终做法：**基线文件零改动**，把本批新增逻辑全部落到新函数，使 `_snapshot_action` 105 行（登记 121）、`_validate` 104 行（<120 门槛），本批在棘轮上**零增长**。剩余 2 条红保持原状并如实上报 | `test_arch_guards.py`：50 passed / 2 failed，两条失败项均为 `engine.py` 与 `compaction_gate.py`；`git diff tests/guards/function_size_baseline.json` 为空 |
+| **P2-1** | `PageBudget` 无生产调用点，且 `MAX_PAGED_NODES=2000` 因遍历上限 1500 而永不可达 | **删除 `PageBudget` 及其 3 个测试**；`MAX_PAGED_NODES` 改为 **600**（≈ 默认页宽 3 页，低于遍历上限故**可达**），并在代码注释里写明"上限必须 < 1500 否则是死逻辑" | `test_..._page_budget_exhausted_after_offset_cap` 用 1200 节点真实触发 |
+| **P2-2** | `node_limit` 静默限幅，与 §8"确定性拒绝"矛盾 | 改为**越界即拒绝**（`invalid_args`，不做 max/min），且拒绝发生在任何 AX 调用之前 | `test_node_limit_out_of_range_is_rejected_not_silently_clamped` 断言 `backend.ax_calls == []` |
+| **P2-3** | sparse 下 `role=None` 的节点会整条丢键，违反"`ax_ref`、`role` 恒在" | `_node_row` 在 sparse 分支 `row.setdefault("role", None)`，并注明"字段消失"与"读到未知"语义不同 | `test_sparse_keeps_role_even_when_unreadable` |
+| **P2-4** | 工作区有遗留的 CDP 脚本 `_d56_closetabs.py` / `_d56_pages.py` | 非本批产物、未被提交（untracked）。**不动他人文件**；已在上报中列为待清理项 | `git status` 中仍为 untracked |
+
+**修复过程中由护栏抓出的真实退化**（不是靠人工 review，是工具抓的）：
+
+1. 抽取 `_bind_window` 时，内部三处 `return self._envelope(...)` 仍直接返回 `ToolResult`，与三元组约定不符 → 运行期 `AttributeError: 'ToolResult' object has no attribute 'get'`，19 例红。
+2. 抽取 `_build_ax_payload` 时丢失末尾 `return`，`payload["ax"]` 变 `None`。
+3. 脚本化去缩进把两个方法的函数体缩到类级（语法合法、导入期 `NameError`），`py_compile` 不报、`ruff` 不报，是**测试收集期**才暴露。
+
+三条都说明：这类机械重构必须靠"跑测试"收口，不能靠"看起来对"。最终 `_validate` 从 152 → 104 行、`_snapshot_action` 178 → 105 行。

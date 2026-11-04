@@ -1,4 +1,4 @@
-"""桌面 AX 续读分页的纯逻辑（结构指纹 / 续读游标 / 切页 / 预算）。
+"""桌面 AX 续读分页的纯逻辑（结构指纹 / 续读游标 / 切页）。
 
 动机：desktop_perceive 的 AX 快照可能超过单次回执预算，需要"本页 +
 续读游标"的机械分页。游标绑定树结构指纹：树漂移即失效（调用方转
@@ -180,25 +180,3 @@ def paginate(
     )
 
 
-class PageBudget:
-    """按 key 独立计账的额度：剩余足额才扣减，不足则原样保留。
-
-    用途：单次回执内各部分（节点 / 截图 / 审计行……）各占一个 key，
-    防"每一项单独看都合法、合计却失控"；超额返回 False 且绝不部分扣减。
-    """
-
-    def __init__(self, limit: int) -> None:
-        self._limit = limit
-        self._used: dict[str, int] = {}
-
-    def charge(self, key: str, amount: int) -> bool:
-        """剩余额度 >= amount 则记账并返回 True；否则不扣减并返回 False。"""
-        current = self._used.get(key, 0)
-        if current + amount <= self._limit:
-            self._used[key] = current + amount
-            return True
-        return False
-
-    def used(self, key: str) -> int:
-        """该 key 已消耗的额度（未见过的 key 为 0）。"""
-        return self._used.get(key, 0)

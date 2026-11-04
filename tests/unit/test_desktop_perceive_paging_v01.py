@@ -246,11 +246,11 @@ def test_node_kinds_filters_before_paging():
 
 def test_page_budget_exhausted_after_offset_cap():
     """全树枚举不是本工具用途：额度耗尽要明确拒绝，而不是无声继续烧上下文。"""
-    backend = FakeBackend(windows=[_window()], ax_view=_view(_nodes(2100)))
+    backend = FakeBackend(windows=[_window()], ax_view=_view(_nodes(1200)))
     tool = _tool(backend)
 
     cursor: str | None = None
-    for _ in range(4):  # offset 0 / 500 / 1000 / 1500
+    for _ in range(2):  # offset 0 / 500，第三次 offset=1000 触达 600 上限
         kwargs: dict[str, Any] = {"action": "snapshot", "window_id": 101, "node_limit": 500}
         if cursor is not None:
             kwargs["node_cursor"] = cursor
@@ -369,3 +369,40 @@ def test_ax_unavailable_degrades_not_fails():
     assert "ax_unavailable" in payload["degraded"]
     assert payload["ax"]["nodes"] == []
     assert payload["ax"]["page"]["total"] == 0
+
+
+def test_node_limit_out_of_range_is_rejected_not_silently_clamped():
+    """静默限幅会让"我只取 10 个"悄悄变成 500 个——正是本次要治的问题。
+    越界必须确定性拒绝，且拒绝发生在遍历之前（零 AX 调用）。"""
+    backend = FakeBackend(windows=[_window()], ax_view=_view(_nodes(10)))
+    tool = _tool(backend)
+
+    for bad in (0, -1, 501, 10_000):
+        content = tool.execute(action="snapshot", window_id=101, node_limit=bad).content
+        assert "invalid_args" in content
+        assert "不做静默限幅" in content
+    assert backend.ax_calls == []
+
+
+def test_sparse_keeps_role_even_when_unreadable():
+    """sparse 的缺字段语义是 null/false，但 role=未知 与 role 字段消失
+    含义不同：前者是"读不到角色"，后者会让调用方以为该节点没有类型概念。"""
+    nodes = (
+        AxNode(
+            ax_ref="0.0",
+            role=None,
+            subrole=None,
+            title=None,
+            value=None,
+            focused=False,
+            pos_pt=None,
+            size_pt=None,
+        ),
+    )
+    backend = FakeBackend(windows=[_window()], ax_view=_view(nodes))
+    row = _payload(_tool(backend).execute(action="snapshot", window_id=101, render="sparse"))[
+        "ax"
+    ]["nodes"][0]
+    assert row["ax_ref"] == "0.0"
+    assert "role" in row
+    assert row["role"] is None
