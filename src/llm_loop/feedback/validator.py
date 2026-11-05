@@ -237,7 +237,12 @@ _MODAL_GOVERN_RE = re.compile(
 )
 _MODAL_LEFT_OK_CHARS = set("我你您他她它咱其 ")
 # 未然时间算子（族A）: "签署前删除"——"X 前 + 动词"= 事后才能发生的指示。
-_PRETEMPORAL_GOVERN_RE = re.compile(r"[^，。；、！？\s]{1,6}前$")
+# 未然算子（族A）: "签署前删除附件"=签署完成前的未然动作。审查修正（窄复审
+# P2-3）: 前邻时量成分（"三天前""N 小时前"——数字/两几/天日周月年时点分秒）
+# 是已逝时间状语而非未然指令，不豁免——"三天前删除文件"仍校验。
+_PRETEMPORAL_GOVERN_RE = re.compile(
+    r"[^，。；、！？\s]{1,6}(?<![0-9０-９两几Nn])(?<![天日周月年时点分秒钟])前$"
+)
 # 受托算子（族A 边界）: "执行靠别的工具"——动词 + 靠/由/交给 + 第三方 = 非自身执行。
 _DELEGATION_GOVERN_RE = re.compile(
     r"^\s*\*{0,2}\s*(?:靠|由|交给|交由)(?:别的|其他|第三方|外部|单独)?"
@@ -366,18 +371,32 @@ def _clause_of(text: str, vs: int) -> tuple[int, int]:
     return 0, len(text)
 
 
+def _is_write_family(verb: str) -> bool:
+    """写族动词（窄复审 P2-2 修正口径）：剥掉体前缀"已"后以"写"开头.
+
+    动词表含体标记形（"已写"），裸 startswith("写") 会漏判——
+    "实质漂移已写死为必过门"（族⑤意念被动）与"这一条已写在设计文档 §14"
+    （族⑤文档归属）据此豁免；"已删除""配置已更新"不属写族仍校验。
+    """
+    return verb.lstrip("已").startswith("写")
+
+
 def _occurrence_attributed(text: str, verb: str, vs: int, ve: int) -> bool:
     """族C 非标记形式: 文档主体归属（转述外部内容）或意念被动（受事主语句）。
 
     - 文档名词主语 + 完成体（"协议第2.3/7.1条已写入"、"前置已写"）;
-    - 意念被动: 分句内无会话自身主语，动词前紧邻名词主语串（"文件已删除"、
-      "实质漂移已写死为必过门"）——受事主语 + 完成体 = 外部/既往状态陈述。
+    - 意念被动: 分句内无会话自身主语，动词前紧邻名词主语串且动词属写族
+      （"实质漂移已写死为必过门"）——受事主语 + 完成体 = 外部/既往状态
+      陈述。审查修正（窄复审 P2-2）: 意念被动通道收窄到写族动词——
+      "文件已删除""配置已更新"等常见自身汇报句式不再借道豁免。
     自身主语（我/本轮/本会话…）在分句内出现时一律不归属（防自身声明漏网）。
     """
     if not _aspect_attached(text, verb, vs, ve):
         return False
     if _occurrence_in_spans(vs, ve, [m.span() for m in _DOC_SUBJECT_RE.finditer(text)]):
         return True
+    if not _is_write_family(verb):
+        return False
     seg_s, seg_e = _clause_of(text, vs)
     seg = text[seg_s:seg_e]
     if any(a in seg.lower() for a in _SELF_AGENTS):
@@ -767,7 +786,11 @@ class DeclarationValidator:
         """族C 非标记形式（EVO-20261105-e2b226d6）: 转述外部内容/文档归属.
 
         - 句含文档/法条锚（协议/条款/§/第N条…）且无会话自身主语 → 整句为转述
-          （审计族⑤: "**代扣代缴义务**…协议第2.3/7.1条已写入…请务必执行"）;
+          （审计族⑤: "**代扣代缴义务**…协议第2.3/7.1条已写入…请务必执行"）。
+          审查修正（窄复审 P2-1）: 锚在场且句内存在完成体非写族声明动词时
+          不豁免——"已删除附件中的临时文件并更新了台账"（动词删除/更新带
+          完成体、附件仅是宾语成分）仍校验；锚豁免保留给真正的文档归属
+          （"协议第2.3条已写入"，写族动词 + 文档名词主语位）。
         - 全部 occurrence 均归属外部文档主体或意念被动（"前置已写"、
           "实质漂移已写死为必过门"）。
         自身主语在场一律不豁免（防自身声明漏网）。
@@ -776,6 +799,10 @@ class DeclarationValidator:
         if any(agent in lower for agent in _SELF_AGENTS):
             return False
         if _DOC_ANCHOR_RE.search(text):
+            # P2-1 收紧: 完成体非写族动词在场 → 非纯转述，整句仍校验
+            for verb, vs, ve in _declare_verb_occurrences(text):
+                if not _is_write_family(verb) and _aspect_attached(text, verb, vs, ve):
+                    return False
             return True
         occs = _declare_verb_occurrences(text)
         if not occs:

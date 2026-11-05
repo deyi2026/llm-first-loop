@@ -295,7 +295,13 @@ def test_reaper_leaves_fresh_terminal_files(tmp_path):
         {"session_id": "sess-new-e", "pending": False, "escalated": True},
     )
     stats = _expire_stale_compaction_gates(str(tmp_path))
-    assert stats == {"superseded_expired": 0, "terminal_removed": 0, "kept": 1, "errors": 0}
+    assert stats == {
+        "superseded_expired": 0,
+        "terminal_removed": 0,
+        "stale_unparseable_removed": 0,  # 窄复审 P2-4：新增键，fresh 文件恒为 0
+        "kept": 1,
+        "errors": 0,
+    }
     assert p.exists()
 
 

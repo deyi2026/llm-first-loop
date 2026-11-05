@@ -100,12 +100,13 @@ def scan_gate_files(snapshots_root: Path) -> list[dict]:
         rec: dict = {
             "path": state_file,
             "rel_path": state_file.relative_to(snapshots_root.parent).as_posix(),
-            "age_hours": round((now - state_file.stat().st_mtime) / 3600, 1),
+            "age_hours": None,  # 窄复审 P2-5：stat 失败不中断扫描
             "cls": "unknown",
             "payload": None,
         }
         try:
             raw = state_file.read_bytes()
+            rec["age_hours"] = round((now - state_file.stat().st_mtime) / 3600, 1)
             rec["sha256"] = hashlib.sha256(raw).hexdigest()
             payload = json.loads(raw.decode("utf-8"))
             rec["cls"] = classify_gate_state(payload)
@@ -123,16 +124,19 @@ def archive_path(snapshots_root: Path) -> Path:
 
 
 def archived_shas(archive: Path) -> set[str]:
+    """幂等键全集（窄复审 P2-5）：扫全部 _migrated-*.jsonl，跨日重跑/跨午夜
+    不重复归档已记录 sha。"""
     shas: set[str] = set()
-    if not archive.is_file():
-        return shas
-    for line in archive.read_text(encoding="utf-8").splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
+    for archive_file in sorted(archive.parent.glob("_migrated-*.jsonl")):
+        if not archive_file.is_file():
             continue
-        if isinstance(row, dict) and row.get("sha256"):
-            shas.add(row["sha256"])
+        for line in archive_file.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and row.get("sha256"):
+                shas.add(row["sha256"])
     return shas
 
 

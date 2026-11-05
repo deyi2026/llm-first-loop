@@ -338,6 +338,27 @@ def _scan_pending_compaction_gates(data_dir: str | Path) -> list[dict[str, Any]]
     return results
 
 
+def _archive_gate_removal(
+    snapshots_root: Path, rel_path: str, raw: bytes, reason: str
+) -> None:
+    """收割/迁移共用的归档审计（窄复审 P2-4）：删除前逐文件落 sha256 记录.
+
+    与 scripts/migrate_compaction_gate_states.py 的行格式一致（同
+    _migrated-<date>.jsonl 流），迁移脚本的幂等去重按 sha 扫全量归档文件，
+    因此收割路径写入同一归档流即被去重覆盖。
+    """
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    row = {
+        "migrated_at": datetime.now(UTC).isoformat(),
+        "reason_class": reason,
+        "original_path": rel_path,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "evo": "EVO-20261105-7eb1e99f",
+    }
+    with (snapshots_root / f"_migrated-{stamp}.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
     """EVO-20261105-7eb1e99f(b)：TTL 到期的确认门复用 superseded 机制收终态并清理.
 
@@ -346,27 +367,55 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
     superseded 终态（superseded_reason=ttl_expired，复用 rev4 语义）再删除
     ——先落终态后删除是为崩溃窗口自愈：中断残留的终态文件下次扫描直接删除；
     已是终态（superseded/confirmed）的过期文件直接删除（自愈路径）。
-    manifest（恢复材料，write-once）保留不动；degraded 与不可解析文件不动
-    （degraded 是完整性观察非确认门；存量收敛走迁移脚本+人工审阅）。
+    删除前一律先归档（窄复审 P2-4：收割路径与迁移脚本审计对称）。
+    manifest（恢复材料，write-once）保留不动；degraded 不动（完整性观察
+    非确认门）。不可解析文件：新鲜的计 errors 待观察，过期的归档
+    （reason=stale_unparseable）后删除——不再永久重复计数（P2-4）。
     fail-open：单文件失败只跳过自身；返回分类计数供启动日志观测。
     """
-    stats = {"superseded_expired": 0, "terminal_removed": 0, "kept": 0, "errors": 0}
+    stats = {
+        "superseded_expired": 0,
+        "terminal_removed": 0,
+        "stale_unparseable_removed": 0,
+        "kept": 0,
+        "errors": 0,
+    }
     try:
         root = Path(data_dir) / "compaction_snapshots"
         now = time.time()
         for state_file in root.glob("*/gate_state.json"):
+            raw: bytes | None = None
+            payload: dict | None = None
             try:
-                mtime = state_file.stat().st_mtime
-                payload = json.loads(state_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):  # 读不出/坏 JSON：文件不动，计入 errors
-                stats["errors"] += 1
+                raw = state_file.read_bytes()
+                payload = json.loads(raw.decode("utf-8"))
+            except (OSError, ValueError):
+                # 读不出/坏 JSON：新鲜的计 errors；过期的归档后清理
+                try:
+                    stale = now - state_file.stat().st_mtime > _GATE_SCAN_TTL_SECONDS
+                except OSError:
+                    stats["errors"] += 1
+                    continue
+                if stale and raw is not None:
+                    _archive_gate_removal(
+                        root,
+                        state_file.relative_to(root.parent).as_posix(),
+                        raw,
+                        "stale_unparseable",
+                    )
+                    state_file.unlink(missing_ok=True)
+                    stats["stale_unparseable_removed"] += 1
+                else:
+                    stats["errors"] += 1
                 continue
             if not isinstance(payload, dict):
                 stats["errors"] += 1
                 continue
-            if now - mtime <= _GATE_SCAN_TTL_SECONDS or payload.get("status") == "degraded":
+            mtime_stale = now - state_file.stat().st_mtime > _GATE_SCAN_TTL_SECONDS
+            if not mtime_stale or payload.get("status") == "degraded":
                 stats["kept"] += 1
                 continue
+            rel = state_file.relative_to(root.parent).as_posix()
             if payload.get("pending") or payload.get("escalated"):
                 payload["pending"] = False
                 payload["superseded"] = True
@@ -383,6 +432,9 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
             else:
                 stats["kept"] += 1
                 continue
+            if raw is not None:
+                with suppress(OSError):
+                    _archive_gate_removal(root, rel, raw, "ttl_harvest")
             state_file.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001 — 生命周期收割 fail-open
         return stats
