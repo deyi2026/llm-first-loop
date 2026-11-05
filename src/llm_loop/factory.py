@@ -338,6 +338,57 @@ def _scan_pending_compaction_gates(data_dir: str | Path) -> list[dict[str, Any]]
     return results
 
 
+def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
+    """EVO-20261105-7eb1e99f(b)：TTL 到期的确认门复用 superseded 机制收终态并清理.
+
+    遍历 <data_dir>/compaction_snapshots/*/gate_state.json，对 mtime 超过
+    _GATE_SCAN_TTL_SECONDS 的文件：pending/escalated（活确认门）先就地改写为
+    superseded 终态（superseded_reason=ttl_expired，复用 rev4 语义）再删除
+    ——先落终态后删除是为崩溃窗口自愈：中断残留的终态文件下次扫描直接删除；
+    已是终态（superseded/confirmed）的过期文件直接删除（自愈路径）。
+    manifest（恢复材料，write-once）保留不动；degraded 与不可解析文件不动
+    （degraded 是完整性观察非确认门；存量收敛走迁移脚本+人工审阅）。
+    fail-open：单文件失败只跳过自身；返回分类计数供启动日志观测。
+    """
+    stats = {"superseded_expired": 0, "terminal_removed": 0, "kept": 0, "errors": 0}
+    try:
+        root = Path(data_dir) / "compaction_snapshots"
+        now = time.time()
+        for state_file in root.glob("*/gate_state.json"):
+            try:
+                mtime = state_file.stat().st_mtime
+                payload = json.loads(state_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):  # 读不出/坏 JSON：文件不动，计入 errors
+                stats["errors"] += 1
+                continue
+            if not isinstance(payload, dict):
+                stats["errors"] += 1
+                continue
+            if now - mtime <= _GATE_SCAN_TTL_SECONDS or payload.get("status") == "degraded":
+                stats["kept"] += 1
+                continue
+            if payload.get("pending") or payload.get("escalated"):
+                payload["pending"] = False
+                payload["superseded"] = True
+                payload["superseded_at"] = datetime.now(UTC).isoformat()
+                payload["superseded_reason"] = "ttl_expired"
+                tmp = state_file.with_name("gate_state.json.tmp")
+                tmp.write_text(
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+                )
+                os.replace(tmp, state_file)
+                stats["superseded_expired"] += 1
+            elif payload.get("superseded") or payload.get("consumed_at"):
+                stats["terminal_removed"] += 1
+            else:
+                stats["kept"] += 1
+                continue
+            state_file.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 — 生命周期收割 fail-open
+        return stats
+    return stats
+
+
 def _scan_failed_service_actions(data_dir: str | Path) -> list[dict[str, Any]]:
     """EVO-20260920-213965a1 案1 + EVO-20260924-8266b693 B: 扫最近 24h failed 待确认的 restart 动作.
 
@@ -3200,6 +3251,14 @@ def _build_pending_actions_fn(settings) -> Any:
         pending_compaction_gates = (
             _scan_pending_compaction_gates(scan_data_dir) if scan_data_dir else []
         )
+        # EVO-20261105-7eb1e99f(b)：TTL 到期的确认门在 pending_actions 状态
+        # 装配时收终态并清理状态文件（复用 superseded 语义；manifest 保留；
+        # 幂等，无过期文件时零写入）。投影扫描本就过滤 TTL 外文件，收割置后
+        # 不影响投影结果；收割自身 fail-open，不侵蚀上方计数。
+        if scan_data_dir:
+            _expire_stats = _expire_stale_compaction_gates(scan_data_dir)
+            if any(_expire_stats.values()):
+                logger.info("compaction gate lifecycle expire: %s", _expire_stats)
 
         if degraded_wake_notify:
             hint_parts.append(
