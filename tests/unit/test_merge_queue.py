@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -244,8 +245,7 @@ def test_advice_card_orders_disjoint_first(store: MergeQueueStore, repo: Path) -
         assert lane["revert_blocker"] == "predicted_from_no_ff_policy"
 
 
-def test_auto_merge_switch_gates_but_never_executes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("LFL_LANE_AUTO_MERGE", raising=False)
+def test_auto_merge_switch_gates_but_never_executes() -> None:
     assert auto_merge_enabled() is False
     status = automation_status()
     assert status["level"] == "S0"
@@ -254,11 +254,12 @@ def test_auto_merge_switch_gates_but_never_executes(monkeypatch: pytest.MonkeyPa
     with pytest.raises(MergeNotSupportedError, match="P2b"):
         attempt_auto_merge()
 
-    monkeypatch.setenv("LFL_LANE_AUTO_MERGE", "true")
-    assert auto_merge_enabled() is True
-    # 即使开关为 true，S0 阶段也绝不执行 merge/push（显式未实现）
+    # 开关只能由配置层注入（本模块不读环境）；S0 阶段即使为 true 也绝不执行 merge/push
+    on = SimpleNamespace(auto_merge=True)
+    assert auto_merge_enabled(on) is True
+    assert automation_status(on)["lane_auto_merge"] is True
     with pytest.raises(MergeNotSupportedError, match="S0 阶段不执行"):
-        attempt_auto_merge()
+        attempt_auto_merge(on)
 
 
 def test_version_cas_conflict(store: MergeQueueStore, repo: Path) -> None:

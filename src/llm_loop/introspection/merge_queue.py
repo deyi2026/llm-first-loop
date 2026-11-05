@@ -1041,30 +1041,33 @@ def build_merge_advice(store: MergeQueueStore, *, main_head: str = "") -> dict:
 # ---------------- 自动化开关（S0 显式不执行） ----------------
 
 
-def auto_merge_enabled() -> bool:
-    """读取 lane_auto_merge 开关（环境变量 LFL_LANE_AUTO_MERGE；默认 false）。
+def auto_merge_enabled(config: object = None) -> bool:
+    """lane_auto_merge 开关（默认 false）；由调用方显式注入，本模块不直接读环境。
 
-    设计 §11.1: 配置默认关; "实现了自动" ≠ "默认自动"。本开关在 S0 阶段只影响回执文案，
+    设计 §11.1: 配置默认关; "实现了自动" ≠ "默认自动"。本开关现阶段只影响回执文案，
     不解锁任何 merge 执行（见 attempt_auto_merge）。
+    不直接用 os.environ 是本仓库 runtime_env_access_gate 的单向棘轮要求（新增直接环境
+    访问须显式审查 baseline），也避免"队列认为开了、机检认为关"的两处口径。
     """
-    raw = os.environ.get("LFL_LANE_AUTO_MERGE", "")
-    return str(raw).strip().lower() in _TRUTHY
+    if config is None:
+        return False
+    return bool(getattr(config, "auto_merge", False))
 
 
-def automation_status() -> dict:
+def automation_status(config: object = None) -> dict:
     """当前自动化档位（供 Board/工具回执展示）。"""
     return {
         "level": "S0",
-        "lane_auto_merge": auto_merge_enabled(),
+        "lane_auto_merge": auto_merge_enabled(config),
         "executor": "not_implemented",
         "note": "S0 仅产出合并建议卡（build_merge_advice）; S1/S2 执行器属 P2b。",
     }
 
 
-def attempt_auto_merge(*_args: object, **_kwargs: object) -> None:
+def attempt_auto_merge(config: object = None, *_args: object, **_kwargs: object) -> None:
     """显式未实现闸: S0 阶段任何自动合并请求都抛错，绝不执行 git merge/push。"""
     raise MergeNotSupportedError(
         "S0 阶段不执行 git merge/push（lane_auto_merge="
-        f"{auto_merge_enabled()}）; 自动执行属 P2b 未交付。合并建议见 build_merge_advice。"
+        f"{auto_merge_enabled(config)}）; 自动执行属 P2b 未交付。合并建议见 build_merge_advice。"
     )
 

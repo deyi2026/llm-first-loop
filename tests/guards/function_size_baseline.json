@@ -972,6 +972,24 @@
         "rationale": "worktree registry 为可覆盖状态并带 guard audit。",
         "status": "observe",
         "tier": "T2"
+      },
+      "lane_ledger": {
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/lane.py"
+        ],
+        "rationale": "lane 双账本（lanes.jsonl 当前态 + lane_events.jsonl 只追加事件）; flock + version CAS; 终态不可逆",
+        "tier": "T1",
+        "status": "observe"
+      },
+      "merge_queue_ledger": {
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/merge_queue.py"
+        ],
+        "rationale": "合并队列账本（merge_queue.jsonl 当前态 + merge_queue_events.jsonl 事件）; 全局串行 slot; 只排队不执行 merge",
+        "tier": "T1",
+        "status": "observe"
       }
     },
     "write_exemptions": {
