@@ -165,3 +165,74 @@ def test_board_audit_missing_degrades_without_mkdir(tmp_path: Path) -> None:
     assert "audit_missing" in body["degraded"]
     assert not (data_dir / "audit").exists()
     assert before == after
+
+
+def _loopback_request() -> "Request":
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": BOARD_PATH,
+        "headers": [],
+        "client": ("127.0.0.1", 5555),
+        "server": ("127.0.0.1", 8903),
+        "scheme": "http",
+        "query_string": b"",
+    }
+    return Request(scope)
+
+
+def test_loopback_exemption_is_the_compensating_control(monkeypatch) -> None:
+    """替代控制实证（RULE-AI-35）：删除 handler 内二次鉴权后留下的那道闸
+
+    装配层 `app.include_router(router, dependencies=[Depends(require_api_key)])`
+    的口径由 `request_auth_required(request)` 决定——它对 loopback 直连返回
+    False（放行），与 env 级 `auth_required()` 语义不同。这里直接实测该口径，
+    证明 401 的移除不是"少一道闸"，而是"两个判定收敛成一个"。
+    """
+    from llm_loop.web.auth import (
+        require_api_key,
+        request_auth_required,
+        request_is_trusted_local,
+    )
+
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")  # 公网策略开启
+    # 前置：env 级判定此刻为 True（说明下面拿到 False 不是"策略本来就关"
+    # 造成的假阳性，而是 loopback 豁免真的发生）。
+    from llm_loop.web.auth import auth_required
+
+    assert auth_required() is True
+
+    req = _loopback_request()
+    assert request_is_trusted_local(req) is True
+    assert request_auth_required(req) is False
+    require_api_key(credentials=None, request=req)  # 不抛 = 放行
+
+
+def test_public_origin_is_not_exempt(monkeypatch) -> None:
+    """反向实证：非 loopback 来源必须仍被要求鉴权（豁免不得外溢）。"""
+    from llm_loop.web.auth import request_auth_required
+
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": BOARD_PATH,
+        "headers": [(b"x-forwarded-for", b"203.0.113.9")],
+        "client": ("203.0.113.9", 443),
+        "server": ("203.0.113.9", 443),
+        "scheme": "https",
+        "query_string": b"",
+    }
+    assert request_auth_required(Request(scope)) is True
+
+
+def test_no_dangling_auth_import() -> None:
+    """P2-2 实证：删掉 import 后模块里不得残留 auth_required/request_authenticated。"""
+    from llm_loop.web import coordination_routes as mod
+
+    assert not hasattr(mod, "auth_required")
+    assert not hasattr(mod, "request_authenticated")
