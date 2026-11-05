@@ -10,7 +10,8 @@
 误拦 = 人工判 pass 而机检 verdict=fail（安全但降低效率）
 """
 import json
-from llm_loop.introspection.lane_gate import S1Evidence, GateConfig, evaluate_s1_gate
+
+from llm_loop.introspection.lane_gate import GateConfig, S1Evidence, evaluate_s1_gate
 
 MAIN = "939be9a04fcfac737916722cf2e35f4c88d1984d"
 OLD = "c72be2c4840c731dd18a3694d3a39afb178063db"
@@ -64,7 +65,7 @@ S = [
     ("C09", "审查绑定 sha 不匹配", ev(review={"bound_sha": OLD}), CFG, "fail", False, "第4条"),
     ("C10", "改动路径不在 allowlist", ev(), GateConfig(lane_auto_merge=True, auto_merge_allowlist=("src/other",)), "fail", False, "第5条"),
     ("C11", "改动路径命中 sealed(rules)", ev(changed_files=["rules/x.md"], lane={"paths": ["rules"]}), CFG_RULES, "fail", False, "第6条"),
-    ("C12", "批次超 K=3", ev(batch={"members": [{"lane_id": "l%d" % i, "kind": "normal"} for i in range(4)]}), CFG, "fail", False, "第7条"),
+    ("C12", "批次超 K=3", ev(batch={"members": [{"lane_id": f"l{i}", "kind": "normal"} for i in range(4)]}), CFG, "fail", False, "第7条"),
     ("C13", "有 need=block 协助请求", ev(help_requests=[{"id": "h1", "need": "block"}]), CFG, "fail", False, "第8条"),
     ("C14", "其他 lane 持重叠 claim", ev(claim_overlaps=[{"lane_id": "lane-b", "paths": ["src/llm_loop/x.py"]}]), CFG, "fail", False, "第9条"),
     ("C15", "merge_plan.no_ff=false", ev(merge_plan={"no_ff": False}), CFG, "fail", False, "第10条"),
@@ -98,11 +99,12 @@ both = sum(1 for r in rows if r["verdict_match"] and r["allowed_match"])
 leak = sum(1 for r in rows if r["false_allow"])
 over = sum(1 for r in rows if r["false_deny"])
 
-print("%-4s %-30s %-6s %-6s %-6s %-6s %s" % ("id", "scenario", "人判", "机判", "人auto", "机auto", "denied"))
+print(f"{'id':<4} {'scenario':<30} {'人判':<6} {'机判':<6} {'人auto':<6} {'机auto':<6} {'denied'}")
 for r in rows:
-    print("%-4s %-30s %-6s %-6s %-6s %-6s %s" % (
-        r["id"], r["desc"][:30], r["human_verdict"], r["machine_verdict"],
-        r["human_allowed"], r["machine_allowed"], ",".join(r["auto_denied"] or [])))
+    print(
+        f"{r['id']:<4} {r['desc'][:30]:<30} {r['human_verdict']:<6} {r['machine_verdict']:<6} "
+        f"{r['human_allowed']:<6} {r['machine_allowed']:<6} {','.join(r['auto_denied'] or [])}"
+    )
 print()
 print(json.dumps({
     "total": total, "verdict_match": v_ok, "allowed_match": a_ok,
