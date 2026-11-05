@@ -586,3 +586,14 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 - 前端 `tsc --noEmit` 通过；`SidebarView` 联合已并入 `"lanes"`（删除 `as` 断言）
 
 > 以上计数为本次会话实测，非历史引用。运行时生效仍需重新部署（`sys.path` 首位为 `.releases/` 快照）。
+
+## 14 已知未实现项（v1.2 如实标注，勿当作已完成）
+
+| 项 | 状态 | 影响与兜底 |
+|---|---|---|
+| A1 `lane_open` 回执带 `overlap_warning`（列 counterpart lane_ids） | **未实现**：当前只在回执追加通用在途 lane 提示，未计算路径重叠 | Board 仍能看到 overlaps；但 open 当场拿不到对端 id，需回看 Board |
+| A5 `lane_open` 对 `main_broken` 默认拒绝 | **未实现**：`main_broken` 尚无数据源（RedMainMonitor 未建） | S1 第 1 条对 `main_broken` 只能 skip；skip ≠ pass，故不会误放行 |
+| L3 协助收件箱（`data/interop/session/`） | **未实现**（P1） | S1 第 8/9 条在数据源缺失时返回 skip + `dependency_unavailable` |
+| ahead/behind 显示 | **无数据源**：Lane 记录不存 upstream 信息 | Board 该列显示未知（-1），不伪装成 0 |
+| S1/S2 自动执行 | **未启用**：`lane_auto_merge`/`lane_auto_rollback` 默认 false；S1 执行器只判定不执行 | 合并仍需人工 `lane_queue_confirm`；S0 建议卡是唯一入口 |
+| 合并队列与真实 `git merge` 的衔接 | **未实现**：`mark_merged` 由人工登记，队列不执行 git | 合并动作仍在主会话/人工侧完成 |

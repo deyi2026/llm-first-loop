@@ -682,6 +682,11 @@ class MergeQueueStore:
             entry["slot_acquired_at"] = ""
             entry["close_reason"] = "merged"
             entry["merge_commit"] = str(merge_commit or "").strip()
+            # 空 commit 不报错（S0 人工登记可能还没拿 SHA），但必须标记来源，
+            # 避免终态看起来「有归因」而实际没有。
+            entry["merge_commit_source"] = (
+                "reported" if entry["merge_commit"] else "unrecorded"
+            )
             entry["version"] = self.version_of(entry) + 1
             entry["updated_at"] = now
             rows[idx] = entry
@@ -788,6 +793,7 @@ class MergeQueueStore:
         if not self._state_path.exists():
             return None
         malformed: list[int] = []
+        hit: dict | None = None
         with self._state_path.open("r", encoding="utf-8") as fh:
             for line_no, line in enumerate(fh, start=1):
                 raw = line.strip()
@@ -799,10 +805,13 @@ class MergeQueueStore:
                     malformed.append(line_no)
                     continue
                 if entry.get("lane_id") == lane_id:
-                    return entry
+                    # 取最后一条：enqueue 允许终态后重新入队（abort→re-enqueue），
+                    # 首个匹配是已死条目，会让 get() 与 _find_index 语义分叉。
+                    hit = entry
+        # 与 list() 同口径：存在损坏行即 fail-closed，不因「已命中」而放过。
         if malformed:
-            raise self._corruption_error(malformed, "显式 lane_id 未命中")
-        return None
+            raise self._corruption_error(malformed, f"读取 lane {lane_id}")
+        return hit
 
     def list(
         self,

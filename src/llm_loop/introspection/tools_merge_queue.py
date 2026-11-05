@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.lane import LaneStore, LaneVersionConflictError
+from llm_loop.introspection.lane import LaneStore
 from llm_loop.introspection.lane_gate import (
     GateConfig,
     S1Evidence,
@@ -22,6 +22,7 @@ from llm_loop.introspection.lane_gate import (
 from llm_loop.introspection.merge_queue import (
     MergeQueueConstraintError,
     MergeQueueStore,
+    MergeQueueVersionConflictError,
     build_merge_advice,
 )
 
@@ -226,7 +227,7 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     }
     try:
         entry = store.enqueue(**payload)
-    except LaneVersionConflictError as exc:
+    except MergeQueueVersionConflictError as exc:
         # CAS 冲突（并发入队/并发改状态）：渲染成可自愈的 FAILURE，而不是冒泡成异常。
         return _fail(
             f"版本冲突（队列项已被并发修改）: {exc}；请先 lane_queue_status 重新读取",
@@ -358,7 +359,7 @@ def run_lane_queue_confirm(ctx: Any, host: Any, args: dict) -> ToolResult:
             reason=str(args.get("reason") or "").strip(),
         )
         return _ok(entry, tool, f"[已中止] lane={lane_id}")
-    except LaneVersionConflictError as exc:
+    except MergeQueueVersionConflictError as exc:
         return _fail(
             f"版本冲突（队列项已被并发修改）: {exc}；请先 lane_queue_status 重新读取",
             tool,
@@ -377,6 +378,14 @@ def run_lane_gate_check(ctx: Any, host: Any, args: dict) -> ToolResult:
         return _fail(
             "evidence 必须是对象（见 S1Evidence 字段约定）", tool, "missing_param"
         )
+    # S1Evidence 是 dataclass，不做字段级类型检查：传入 "lane": "x" 会在 check
+    # 内部炸出 AttributeError，而不是确定性的 FAILURE 回执。入口先挡一层。
+    for key in ("lane", "main", "deployment"):
+        val = raw.get(key)
+        if val is not None and not isinstance(val, dict):
+            return _fail(
+                f"evidence.{key} 必须是对象（当前 {type(val).__name__}）", tool, "bad_param"
+            )
     try:
         evidence = S1Evidence(**raw)
     except TypeError as exc:
@@ -386,7 +395,11 @@ def run_lane_gate_check(ctx: Any, host: Any, args: dict) -> ToolResult:
         config = GateConfig(**cfg_raw) if isinstance(cfg_raw, dict) else None
     except TypeError as exc:
         return _fail(f"config 字段不匹配: {exc}", tool, "bad_param")
-    verdict = evaluate_s1_gate(evidence, config)
+    try:
+        verdict = evaluate_s1_gate(evidence, config)
+    except (AttributeError, TypeError, ValueError, KeyError) as exc:
+        # 兜底：畸形字段（如 conflicts 传成非数字）不崩溃，按确定性拒绝处理（fail-closed）。
+        return _fail(f"evidence 结构无法判定: {exc}", tool, "bad_param")
     payload: dict[str, Any] = {"gate": verdict}
     if args.get("rollback"):
         main = evidence.main or {}

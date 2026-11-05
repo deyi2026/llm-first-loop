@@ -369,9 +369,10 @@ def run_lane_merge_request(ctx: Any, host: Any, args: dict) -> ToolResult:
 
     return ToolResult(
         ToolResultStatus.SUCCESS,
-        f"[已入队] lane_id={entry['lane_id']} status={entry['status']} version={entry['version']} "
+        f"[已申请合并] lane_id={entry['lane_id']} status={entry['status']} version={entry['version']} "
         f"verify_ref={entry.get('verify_ref')}\n"
-        "说明: 仅排队，未执行 merge；执行权在合并队列（S0 需人确认）。",
+        "说明: lane 已转入 merging 态；尚未进入合并队列"
+        "（需另行 lane_queue_submit 才会入队），也未执行任何 merge。",
         "",
         "lane_merge_request",
     )

@@ -53,8 +53,9 @@ _MUTABLE_FIELDS = (
     "verify_ref",
     "priority",
     "base_main_sha",
-    "close_reason",
 )
+# close_reason 刻意不在 _MUTABLE_FIELDS：它只能由 close(reason=...) 在进入终态时写，
+# 否则 lane_update 可给非终态 lane 留一个永远解释不了的终止理由。
 
 
 class LaneStoreCorruptionError(RuntimeError):
