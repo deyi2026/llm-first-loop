@@ -160,3 +160,48 @@ def test_channel_tolerates_non_utf8_corruption(tmp_path: Path) -> None:
     assert board["channel"]["pending_help"] == 1
     assert board["channel"]["blocking_help"] == 1
     assert board["channel"]["help_available"] is True
+
+
+def test_channel_splits_needs_decision_into_three_counts(tmp_path: Path) -> None:
+    # 三类「需决策」性质不同，必须分开计数：
+    # 合并中＝卡在队列等 slot（该看队列）；基线落后＝自己该 rebase（该自己动）；
+    # 等答复＝别人被挡（该回复）。只给合计会让读者误判先处理哪个。
+    from llm_loop.introspection.lane import LaneStore
+
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    pending = tmp_path / "interop" / "session" / "pending"
+    pending.mkdir(parents=True)
+    (pending / "h1.json").write_text(
+        json.dumps({"id": "h1", "need": "block", "state": "pending"}), "utf-8"
+    )
+
+    store = LaneStore(audit)
+    merging = store.create(
+        branch="fix/merging",
+        worktree=str(tmp_path / "wt-m"),
+        base_main_sha="head1",
+        goal_id="G1",
+        owner_session_id="s1",
+    )
+    # 状态机不允许 open→merging 跳跃（这正是护栏），必须逐级迁移
+    expected = 1
+    for st in ("active", "verifying", "merging"):
+        store.update(merging.lane_id, expected_version=expected, status=st)
+        expected += 1
+    store.create(
+        branch="fix/stale",
+        worktree=str(tmp_path / "wt-s"),
+        base_main_sha="oldsha",
+        goal_id="G2",
+        owner_session_id="s2",
+    )
+
+    ch = build_board(audit, main_head="head1")["channel"]
+    assert ch["merging_pending"] == 1
+    assert ch["baseline_stale"] == 1
+    assert ch["blocking_help"] == 1
+    # 合计仍保留给旧消费方，且必须等于三项之和
+    assert ch["needs_decision"] == 3 == (
+        ch["merging_pending"] + ch["baseline_stale"] + ch["blocking_help"]
+    )

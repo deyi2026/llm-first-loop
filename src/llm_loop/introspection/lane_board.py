@@ -213,13 +213,19 @@ def _build_channel(
         and str(row.get("base_main_sha") or "") != head
     )
 
+    merging_pending = by_status.get("merging", 0)
+    blocking_help = help_counts.get("blocking_help", 0)
+
     return {
         "active_lanes": len(lanes),
         "pending_help": help_counts.get("pending_help", 0),
-        "blocking_help": help_counts.get("blocking_help", 0),
-        "needs_decision": by_status.get("merging", 0)
-        + stale_count
-        + help_counts.get("blocking_help", 0),
+        "blocking_help": blocking_help,
+        # 三类性质不同，必须分开给：合并中＝卡在队列等 slot（该看队列），
+        # 基线落后＝自己该 rebase（该自己动），等答复＝别人被挡（该回复）。
+        # 只给一个合计会让人误判"先处理哪个"。needs_decision 保留为三者之和。
+        "merging_pending": merging_pending,
+        "baseline_stale": stale_count,
+        "needs_decision": merging_pending + stale_count + blocking_help,
         # 数据源可用性：缺失时上游必须显示「不可用」，不得把 0 当真实计数。
         "help_available": bool(help_counts),
         "lanes_available": not any(

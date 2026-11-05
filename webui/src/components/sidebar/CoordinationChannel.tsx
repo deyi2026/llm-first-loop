@@ -25,6 +25,10 @@ interface ChannelBlock {
   pending_help: number;
   blocking_help: number;
   needs_decision: number;
+  /** 卡在合并队列等串行位的 lane 数（该看队列，不是自己的活） */
+  merging_pending?: number;
+  /** 基线已落后 main、合并前必须重验的在途 lane 数（该自己 rebase） */
+  baseline_stale?: number;
   sessions: ChannelSession[];
   /** 未决协助条目（后端 channel.help_items）：只给计数等于有数无门 */
   help_items?: Array<{
@@ -124,8 +128,13 @@ export function CoordinationChannel({ collapsed }: { collapsed: boolean }) {
             : undefined;
       title =
         "协调 " + channel.active_lanes + " 活跃 · " + channel.pending_help + " 待协助" +
-        (channel.blocking_help > 0 ? " · ⛔ " + channel.blocking_help : "") +
-        (channel.needs_decision > 0 ? " · ⚠ 需决策 " + channel.needs_decision : "");
+        (channel.blocking_help > 0 ? " · ⛔ " + channel.blocking_help + " 等答复" : "") +
+        ((channel.merging_pending ?? 0) > 0
+          ? " · 🔀 " + channel.merging_pending + " 合并中"
+          : "") +
+        ((channel.baseline_stale ?? 0) > 0
+          ? " · 📉 " + channel.baseline_stale + " 待重验"
+          : "");
     }
     return (
       <div
@@ -213,10 +222,21 @@ export function CoordinationChannel({ collapsed }: { collapsed: boolean }) {
             {" · "}
             <span style={channel.blocking_help > 0 ? { color: "#e53e3e", fontWeight: 600 } : undefined}>
               {channel.pending_help} 待协助
-              {channel.blocking_help > 0 ? " ⛔ " + channel.blocking_help : ""}
             </span>
-            {channel.needs_decision > 0 ? (
-              <span style={{ color: "#d69e2e" }}> ⚠ 需决策 {channel.needs_decision}</span>
+            {channel.blocking_help > 0 ? (
+              <span style={{ color: "#e53e3e", fontWeight: 600 }}>
+                {" · ⛔ "}{channel.blocking_help} 等答复
+              </span>
+            ) : null}
+            {(channel.merging_pending ?? 0) > 0 ? (
+              <span style={{ color: "#d69e2e" }}>
+                {" · 🔀 "}{channel.merging_pending} 合并中
+              </span>
+            ) : null}
+            {(channel.baseline_stale ?? 0) > 0 ? (
+              <span style={{ color: "#d69e2e" }}>
+                {" · 📉 "}{channel.baseline_stale} 待重验
+              </span>
             ) : null}
             <span aria-hidden style={{ opacity: 0.6, float: "right" }}>
               {expanded ? "▾" : "▸"}
