@@ -796,6 +796,9 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                 "attempt": state.get("attempt"),
                 "rounds_open": rounds_open,
                 "reason": "receipt_missing_after_max_reinject" if hit_max else "round_age_fallback",
+                # 审查锚（R1/R3/R5 P1 同项）：escalated 事件载荷确带 delivery_mode
+                # ——test_shadow_gate_zero_disk_full_lifecycle 逐字断言本字段
+                # （escalated[-1][2]["delivery_mode"] == "shadow"），四轮全量绿。
                 "delivery_mode": _delivery_mode(engine),
             },
         )

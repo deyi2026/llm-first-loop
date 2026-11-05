@@ -58,6 +58,11 @@ def main() -> int:
             for tid in pending:
                 nr = dict(last[tid])
                 nr["evidence_refs"] = [EVREF]
+                # R5 P2-a：refs 已换则旧验证三字段即失效——不携带旧值冒充已验证，
+                # 置 not_checked 并剥 digest/时间（如需 verified 由 v2 脚本真实重验）
+                nr["evidence_verification_status"] = "not_checked"
+                nr.pop("evidence_refs_digest", None)
+                nr.pop("evidence_verified_at", None)
                 nr["updated_at"] = now
                 fh.write(json.dumps(nr, ensure_ascii=False) + "\n")
     print(f"{'amended' if apply else 'dry-run'} {len(pending)}")

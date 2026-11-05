@@ -455,6 +455,9 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
                 )
                 os.replace(tmp, state_file)
+                # R5 P2-c：归档与 content_digest 同口径——superseded 支路归档
+                # 终态字节（os.replace 后重读），sha256/digest/payload 三者一致
+                raw = state_file.read_bytes()
                 reason = "superseded_expired"
             elif payload.get("superseded") or payload.get("consumed_at"):
                 reason = "terminal_removed"
@@ -465,7 +468,7 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
             # 文件留待下轮扫描自愈重试（已写终态的走 terminal_removed 支路）。
             if raw is not None:
                 try:
-                    _archive_gate_removal(root, rel, raw, "ttl_harvest", payload=payload)
+                    _archive_gate_removal(root, rel, raw, reason, payload=payload)
                 except OSError:
                     stats["errors"] += 1
                     continue
