@@ -130,3 +130,20 @@
 - 未触碰：`c390e67b…`（web/feishu/learning code_root，generation 391）、`0cb12757…`（wecom 现役头）。4 个服务 alive，pid 删除前后一致：web 76872 / feishu 76956 / learning 77206 / wecom 31632；wecom 仍 `restart_required=true`（删除前既有状态）。
 - 主树另有并发 WIP（非本轮产生，mtime 15:44–15:54）：`docs/design/DESIGN-20261105-main-lane-parallel-delivery-v1.md`、`src/llm_loop/introspection/{merge_queue,tools_merge_queue}.py`、`src/llm_loop/tools/builtin/execute_command.py`——本轮未触碰、未提交。
 - 仍未做：160 棵 `.releases`（第 3 步，前置 wecom restart 收敛）、2 处非注册残留目录、5 个未注册 `.worktrees` 目录。
+
+## 已执行：`.releases` 清理（2026-11-05 17:1x，第 3 步；用户裁决「先动 wecom 的 restart 把第 3 步前置解开」）
+
+- 前置动作：wecom 单独 restart（action `svc-1ff6383330754181a0398210c64ba6d9`，expected_generation=391）→ 终态 succeeded：pid 31632 → 44098，live head `0cb12757…` → `c390e67b…`，`restart_required=false`。四服务同代 391、`matches_desired_generation=true`。
+- 删除前逐棵复核（159 棵已注册 `.releases` worktree，清单 `.backup/triage-step3/preflight.tsv`）：
+  - `status --porcelain` 全部 0 条（无脏文件）；
+  - 159/159 的 HEAD 均被 ref 包含（`git for-each-ref --contains` 计数 ≥1）；
+  - 目录名与 HEAD 逐一相符；`git worktree list` 中 0 个 locked；无进程 cmdline/cwd 指向 `.releases/`（四服务 cwd 均为 runtime root）。
+- **实际保留 3 棵（偏离本节原计划，因发现回滚依赖）**：现役 `c390e67b…`（code_root）+ 最近两条 known-good `356cbf87b…`（15:02 action=all）、`ab2e3ddf3139…`（14:00 action=all）。
+  - 依据：`service_control._find_known_good_release()` 倒扫 `data/restart-receipt.log`，取第一条 `rc==0 && authority==service_control` 且**要求 `.releases/<sha>` 目录仍在（含 `scripts/restart_mirror.sh`）**，否则返回 None = 不回滚、不猜测。若 159 棵全删只剩现役，则该代 restart 失败时无回滚目标。
+  - 复检：清理后 `known_good.py` 仍命中 `356cbf87b`，回滚面未失效。
+- 删除：逐棵 `git worktree remove --force` → `REMOVED=156 FAIL=0 SKIP=3` → `git worktree prune`。
+- 可恢复性（实测，非推断）：`.releases/<sha>` 是纯衍生工件（`_materialize_release_checkout` 幂等重建，见 `service_control.py`）。删除前 2 次、删除后 1 次 `git worktree add --detach` 实测：`04ff8664d`、`943232933`、`356cbf87b` 全部重建成功，tracked 文件 8228 个、含 `scripts/restart_mirror.sh`，重建后 `status` 0 条；探针树均 `remove --force` + `prune` 清掉。
+- 计数变化：`.releases` 14G → **648M**（161 项 → 5 项 = 3 棵保留 + 2 处非注册残留）；注册 worktree 160 → **4**（main + 3 棵 release）；`refs/heads` 仍 90、`refs/archive` 104（其中 `refs/archive/triage-20261105` 62），分支一个未删。
+- 删除前后四服务 alive 且 head 均为 `c390e67b12d8`：web 76872 / feishu 76956 / learning 77206 / wecom 44098。
+- 脚本与日志：`.backup/triage-step3/{preflight.sh,preflight.tsv,remove_releases.sh,remove.log,known_good.py,show_manifests.py}`。
+- 仍未做：2 处非注册残留目录（`0cd9c524….orig`、`cb9c96daa9…`）、5 个未注册 `.worktrees` 目录（含名字带字面反斜杠的 `main-response-latency-20261023\.cache\dsh-capability-index`，去留待用户裁定）。
