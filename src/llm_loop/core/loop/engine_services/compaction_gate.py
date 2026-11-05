@@ -64,6 +64,18 @@ C1 — compaction recovery gate（通道重做）
       对快照 ref/路径的失败调用亦计入证据（防鹦鹉学舌的行锚定+sha 前缀
       双因子不变）；②病态"每轮压缩"下 supersede 会重置 attempt/rounds_open
       计数（每轮新事件独立计数为设计语义，极端场景由门上限+投影可观测）。
+    rev5（EVO-20261105-7eb1e99f：shadow 门生命周期）：
+    - shadow 模式开启的确认门不落盘 gate_state.json——通知本就不注入模型
+      （build.py 仅 enforce 渲染 compaction_recovery 槽），确认结构上不可
+      发生，落盘只会按 attempt/rounds 机械升级并 escalated 永久残留
+      （2026-11-05 实测 70 文件堆积，几乎全部 escalated=True）。落盘与否由
+      开门时冻结的 delivery_mode 决定（防模式翻转产生半状态文件）；degraded
+      是完整性观察而非确认门，跨模式恒落盘（rev4 P2-2 语义不变）。
+    - superseded 收口抽为单一机制（原两处内联块合一），TTL 到期的存量门由
+      factory 状态装配（pending_actions）复用该机制落终态并清理状态文件
+      （manifest 保留）。存量 67 文件的一次性收敛走
+      scripts/migrate_compaction_gate_states.py
+      （默认 dry-run 只读，真实删除需人工批准 --execute）。
 """
 
 from __future__ import annotations
@@ -392,6 +404,53 @@ def read_gate_state(data_dir: str, session_id: str) -> dict | None:
         return None
 
 
+def _write_gate_state_gated(data_dir: str, session_id: str, state: dict) -> None:
+    """EVO-20261105-7eb1e99f(a)：shadow 开启的确认门不落盘（仅观测事件流）。
+
+    落盘与否由开门时冻结的 ``delivery_mode`` 决定，防模式翻转（shadow→
+    enforce）产生半状态文件；degraded 完整性观察不带该字段，恒落盘
+    （rev4 P2-2 语义不变）。旧格式状态无该字段 → 按落盘处理（向后兼容）。
+    """
+    if str(state.get("delivery_mode") or "") == "shadow":
+        return
+    write_gate_state(data_dir, session_id, state)
+
+
+def _supersede_pending_gate(
+    engine: Any,
+    data_dir: str,
+    session_id: str,
+    prev: dict,
+    *,
+    by_event: str | None = None,
+    by_reason: str | None = None,
+) -> int:
+    """EVO-20261105-7eb1e99f(b)：pending 旧门收口为 superseded 终态（单一机制）.
+
+    复用既有 per-session gate_state.json 文件落终态（不留孤儿/重复状态）；
+    事件审计与 stale_events 承接语义与 rev4 内联实现一致。返回承接计数
+    （旧门未确认事件数 +1，含本次事件）。
+    """
+    stale_events = int(prev.get("stale_events", 0) or 0) + 1
+    prev["pending"] = False
+    prev["superseded"] = True
+    prev["superseded_at"] = _dt.datetime.now(_dt.UTC).isoformat()
+    prev.pop("notice_text", None)
+    _write_gate_state_gated(data_dir, session_id, prev)
+    payload: dict[str, Any] = {
+        "compaction_event_id": prev.get("compaction_event_id"),
+        "attempt": prev.get("attempt"),
+        "rounds_open": prev.get("rounds_open", 1),
+        "stale_events_total": stale_events,
+    }
+    if by_event is not None:
+        payload["by_event"] = by_event
+    if by_reason is not None:
+        payload["by_reason"] = by_reason
+    engine._event_append(session_id, "compaction.gate.superseded", payload)  # noqa: SLF001
+    return stale_events
+
+
 def render_gate_notice_text(manifest: dict | None, *, attempt: int, stale_events: int = 0) -> str:
     """Render the recovery notice body (CR-R1 packet slot content).
 
@@ -567,23 +626,12 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                 prev = slots.get(session_id)
                 stale_events = 0
                 if prev is not None and prev.get("pending"):
-                    stale_events = int(prev.get("stale_events", 0) or 0) + 1
-                    prev["pending"] = False
-                    prev["superseded"] = True
-                    prev["superseded_at"] = _dt.datetime.now(_dt.UTC).isoformat()
-                    prev.pop("notice_text", None)
-                    slots[session_id] = prev
-                    write_gate_state(data_dir, session_id, prev)
-                    engine._event_append(  # noqa: SLF001
+                    stale_events = _supersede_pending_gate(
+                        engine,
+                        data_dir,
                         session_id,
-                        "compaction.gate.superseded",
-                        {
-                            "compaction_event_id": prev.get("compaction_event_id"),
-                            "attempt": prev.get("attempt"),
-                            "rounds_open": prev.get("rounds_open", 1),
-                            "by_event": manifest["manifest_id"],
-                            "stale_events_total": stale_events,
-                        },
+                        prev,
+                        by_event=manifest["manifest_id"],
                     )
                 state = {
                     "compaction_event_id": manifest["manifest_id"],
@@ -600,6 +648,9 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                     "attempt": 1,
                     "rounds_open": 1,
                     "visible_from": len(messages),
+                    # EVO-20261105-7eb1e99f(a)：开门时冻结投递模式——shadow 门
+                    # 终其生命周期不落盘（见 _write_gate_state_gated）。
+                    "delivery_mode": _delivery_mode(engine),
                     "notice_text": render_gate_notice_text(
                         manifest, attempt=1, stale_events=stale_events
                     ),
@@ -607,7 +658,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                     "created_at": _dt.datetime.now(_dt.UTC).isoformat(),
                 }
                 slots[session_id] = state
-                write_gate_state(data_dir, session_id, state)
+                _write_gate_state_gated(data_dir, session_id, state)
                 engine._event_append(  # noqa: SLF001
                     session_id,
                     "compaction.gate.opened",
@@ -616,6 +667,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                         "manifest_ref": manifest["sha256"],
                         "visible_from": state["visible_from"],
                         "stale_events": stale_events,
+                        "delivery_mode": state["delivery_mode"],
                     },
                 )
                 return
@@ -634,22 +686,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
             # 先按 superseded 审计旧门（与开门路径同一承诺），再落 degraded。
             prev = slots.get(session_id)
             if prev is not None and prev.get("pending"):
-                prev["pending"] = False
-                prev["superseded"] = True
-                prev["superseded_at"] = _dt.datetime.now(_dt.UTC).isoformat()
-                prev.pop("notice_text", None)
-                write_gate_state(data_dir, session_id, prev)
-                engine._event_append(  # noqa: SLF001
-                    session_id,
-                    "compaction.gate.superseded",
-                    {
-                        "compaction_event_id": prev.get("compaction_event_id"),
-                        "attempt": prev.get("attempt"),
-                        "rounds_open": prev.get("rounds_open", 1),
-                        "by_reason": "degraded",
-                        "stale_events_total": int(prev.get("stale_events", 0) or 0) + 1,
-                    },
-                )
+                _supersede_pending_gate(engine, data_dir, session_id, prev, by_reason="degraded")
             # P2-2：degraded 状态落盘（与内存 hint 同信息），重启后投影仍可见。
             degraded_state = {
                 "status": "degraded",
@@ -663,7 +700,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
             if prev is not None and prev.get("superseded"):
                 degraded_state["stale_events"] = int(prev.get("stale_events", 0) or 0) + 1
             slots[session_id] = degraded_state
-            write_gate_state(data_dir, session_id, degraded_state)
+            _write_gate_state_gated(data_dir, session_id, degraded_state)
             _hints(engine)[session_id] = {
                 "reason": "manifest_write_failed",
                 "batch_size": len(batch),
@@ -703,7 +740,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         state["consumed_at"] = _dt.datetime.now(_dt.UTC).isoformat()
         state.pop("notice_text", None)
         slots[session_id] = state
-        write_gate_state(data_dir, session_id, state)
+        _write_gate_state_gated(data_dir, session_id, state)
         _hints(engine).pop(session_id, None)
         engine._event_append(  # noqa: SLF001
             session_id,
@@ -723,7 +760,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         return
     rounds_open = int(state.get("rounds_open", 0) or 0)
     if not ev["assistant_after"] and rounds_open < ROUND_AGE_ESCALATE:
-        write_gate_state(data_dir, session_id, state)
+        _write_gate_state_gated(data_dir, session_id, state)
         return  # 通知尚未被任何 assistant 响应消化，不计数不重注入（P1-4）
     hit_max = int(state.get("attempt", 1)) >= MAX_REINJECTIONS
     if hit_max or rounds_open >= ROUND_AGE_ESCALATE:
@@ -735,7 +772,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         state["escalated_at"] = _dt.datetime.now(_dt.UTC).isoformat()
         state.pop("notice_text", None)
         slots[session_id] = state
-        write_gate_state(data_dir, session_id, state)
+        _write_gate_state_gated(data_dir, session_id, state)
         _hints(engine)[session_id] = {
             "compaction_event_id": state.get("compaction_event_id"),
             "attempt": state.get("attempt"),
@@ -777,7 +814,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         attempt=state["attempt"],
     )
     slots[session_id] = state
-    write_gate_state(data_dir, session_id, state)
+    _write_gate_state_gated(data_dir, session_id, state)
     engine._event_append(  # noqa: SLF001
         session_id,
         "compaction.gate.reinjected",
