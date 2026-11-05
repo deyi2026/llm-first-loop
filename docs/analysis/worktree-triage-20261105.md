@@ -115,3 +115,18 @@
 - 未触碰：`.releases/c390e67b…`（web/feishu/learning 现役 code_root）与 `.releases/0cb12757…`（wecom 现役头）；4 个服务 alive 与 pid 删除前后一致。
 - 回归：`tests/unit/test_krate_seed_resolution.py` 3 passed。
 - 仍未做：161 棵 `.releases`（第 3 步，前置 wecom restart 收敛）、15 棵「可归档后删」脏树、2 处非注册残留目录、名称待核的未注册 `.worktrees` 目录。
+
+## 已执行：15 棵脏树归档后删除（2026-11-05 17:0x，用户裁决「接着做 15 棵脏树的归档删除」）
+
+- 对象：§「可归档后删」15 棵。删除前逐棵复核：15/15 存在、15/15 已注册、`git rev-list --count main..HEAD` 全为 0（文档「无独立提交」成立）、脏条目数 27/22/18/18/18/18/9/7/6/6/5/5/2/1/1 与文档一致。
+- 无损凭据（删除前建立，已实测可恢复）：
+  - 15 个 HEAD 各建 ref：`refs/archive/triage-20261105/dirty15/01-26530f9f` … `15-8c8bb997`（11、12 同指 `f5fec37c`，内容分别归档）。
+  - 工作区状态存于 `.backup/worktree-archive-20261105/dirty15/<NN>-<名>/`（14M）：`status.txt`、`meta.json`、`diff.patch`（`git diff HEAD --binary`，合计 1.55MB）、`untracked/` + `untracked-manifest.json`（611 个文件 / 6.9MB，含 `dist/` 5.7MB、`webui/.tmpvitest/` 1.5MB）、`ignored-list.txt`（忽略项仅记名单：`.venv`、`node_modules`、`__pycache__` 等未归档）。
+  - 归档完整性自检：15/15 通过——未跟踪文件逐个 sha256 与源一致、`diff.patch` 与源 `git diff HEAD --binary` 逐字节相同。
+  - 恢复演练（删除前 4 棵：01 大 diff、13 小 diff、14 纯未跟踪 597 文件、15 纯未跟踪 `dist/`）：`git apply --binary` 全部成功，恢复后 `git status` 条目数 = 归档条目数（27/2/1/1）。删除后再演练 #13：`APPLY_OK`、2 条目。
+  - 恢复示例：`git worktree add --detach <临时目录> refs/archive/triage-20261105/dirty15/13-8c114428` → `git apply --binary .backup/worktree-archive-20261105/dirty15/13-*/diff.patch`。
+- 删除：逐棵 `git worktree remove --force` → `REMOVED=15 FAIL=0` → `prune`。含 repo 外同行目录 仓库同级目录 `lfl-service-gen-experience-20261025`。
+- 计数变化：注册 worktree 175 → 160；`du -sh`：`.worktrees` 2.3G → 498M，`.releases` 14G（两次删除量小、未跨整 G 阈值）；`refs/heads` 90 个、涉及 9 个分支全部仍在（只删检出）。
+- 未触碰：`c390e67b…`（web/feishu/learning code_root，generation 391）、`0cb12757…`（wecom 现役头）。4 个服务 alive，pid 删除前后一致：web 76872 / feishu 76956 / learning 77206 / wecom 31632；wecom 仍 `restart_required=true`（删除前既有状态）。
+- 主树另有并发 WIP（非本轮产生，mtime 15:44–15:54）：`docs/design/DESIGN-20261105-main-lane-parallel-delivery-v1.md`、`src/llm_loop/introspection/{merge_queue,tools_merge_queue}.py`、`src/llm_loop/tools/builtin/execute_command.py`——本轮未触碰、未提交。
+- 仍未做：160 棵 `.releases`（第 3 步，前置 wecom restart 收敛）、2 处非注册残留目录、5 个未注册 `.worktrees` 目录。
