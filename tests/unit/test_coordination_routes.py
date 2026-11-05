@@ -339,3 +339,24 @@ def test_board_401_through_real_assembly_mount_from_public_origin(
     resp = _asgi_get(app, BOARD_PATH, client_host="203.0.113.9")
 
     assert resp.status_code == 401
+
+
+def test_main_router_mount_is_pinned_with_api_key() -> None:
+    """结构钉（P1）：web/__init__.py 的主 router 挂载必须带 require_api_key。
+
+    coordination_routes 删掉 handler 内二次鉴权后，「装配层这一道闸」是唯一
+    安全依据。若有人把它改成裸 `app.include_router(router)`，全部 loopback
+    访问都会静默失去鉴权，而现有行为测试仍会绿（loopback 本来就放行）。
+    所以对装配源码做结构断言，把这道闸钉死——改挂载写法会立刻变红。
+    """
+    import pathlib as _pathlib
+
+    import llm_loop.web as web_pkg
+
+    src = _pathlib.Path(web_pkg.__file__).read_text(encoding="utf-8")
+    assert "app.include_router(router, dependencies=[Depends(require_api_key)])" in src, (
+        "主 router 挂载必须带 require_api_key；若有意改挂载写法，"
+        "请同步更新 coordination_routes 的单闸约定说明与相关测试"
+    )
+    # 反向保险：不得出现裸挂载主 router（带了依赖就不会命中这条）
+    assert "app.include_router(router)" not in src
