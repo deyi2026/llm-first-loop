@@ -103,3 +103,15 @@
 
 - `.releases/0cd9c5248b00bea07e8bbdaf839da5a5d7b79d84.orig`（非 worktree，整份拷贝）
 - `.releases/cb9c96daa9...`（worktree 注册已丢失，目录仍在）
+
+## 已执行：47 棵删除（2026-11-05 17:0x，用户裁决「按建议执行」）
+
+- 方式：逐棵 `git worktree remove --force`（47/47 成功）→ `git worktree prune`。分支未删（仅删检出）。
+- 无损凭据（删除前建立，已实测可恢复）：
+  - 47 个 HEAD 各建 ref：`refs/archive/triage-20261105/01-<sha>` … `47-<sha>`。
+  - 10 棵脏树（`lfl-integration`、`evo-e0bff8ee-p2-int-20261025`、3×`lfl-child-subagent_*`、`kstore`、`main-response-latency-20261023`、`web-interaction-r4-20261026` 等）的 `git diff HEAD --binary` + `??` 文件 + status 存于 `.backup/worktree-archive-20261105/triage47/<名>/`（872K；`.tmp-rebase-work/` 171M 整份拷贝只登记名单、未存内容）。
+  - 恢复示例（已实测）：`git worktree add --detach /tmp/restore refs/archive/triage-20261105/01-5747b28e`。
+- 计数变化：注册 worktree 222 → 175（`.releases` 189 → 161，`.worktrees` 31 → 12）；`du -sh`：`.releases` 17G → 14G，`.worktrees` 4.9G → 2.3G。
+- 未触碰：`.releases/c390e67b…`（web/feishu/learning 现役 code_root）与 `.releases/0cb12757…`（wecom 现役头）；4 个服务 alive 与 pid 删除前后一致。
+- 回归：`tests/unit/test_krate_seed_resolution.py` 3 passed。
+- 仍未做：161 棵 `.releases`（第 3 步，前置 wecom restart 收敛）、15 棵「可归档后删」脏树、2 处非注册残留目录、名称待核的未注册 `.worktrees` 目录。
