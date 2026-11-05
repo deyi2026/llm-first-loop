@@ -20,6 +20,7 @@ from llm_loop.introspection.lane_gate import (
     should_auto_rollback,
 )
 from llm_loop.introspection.merge_queue import (
+    VERIFY_LAYER_DISABLED,
     MergeQueueConstraintError,
     MergeQueueStore,
     MergeQueueVersionConflictError,
@@ -99,6 +100,9 @@ TOOL_LANE_QUEUE_SUBMIT_DEF: dict[str, Any] = {
         "机检, 不执行任何 git 合并/推送; 机检全过 → ready_for_confirm（交还全局串行槽,"
         "等人工确认）。失败对策: merge_slot_busy 表示他人正占用, 看 holder 后重试;"
         "机检不过返回 failed 与 reason_codes, 修复后重新 submit。"
+        "注意 reason_code=verify_layer_not_enabled 时不要重试: verify 凭证层当前无签发者"
+        "（生产代码只读不写）, 补 verify_ref 或 requeue 都不会变绿, 只会再消耗一条"
+        "不可逆的 failed 队列项。"
     ),
     "parameters": {
         "type": "object",
@@ -257,10 +261,25 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
             f"[已排队, 机检未开始] {staged.get('reason_code')}",
         )
     result = store.run_preflight(lane_id, expected_version=staged["entry"]["version"])
+    layer = result.get("verify_layer") or {}
+    codes = list(result.get("reason_codes") or [])
+    note = ""
+    if VERIFY_LAYER_DISABLED in codes:
+        # EVO-20261105-501db776: 把「层没启用」和「你的凭证有问题」分开说清楚。
+        # 否则调用方会以为补 verify_ref 就能过，实际重试/重验都不会改变结果。
+        note = (
+            "\n说明: 机检 d 失败原因是 verify 凭证层未启用——"
+            f"{layer.get('receipts_path') or 'data/audit/verify_receipts.jsonl'} "
+            f"不存在或无任何凭证（file_exists={layer.get('file_exists')}, "
+            f"receipt_count={layer.get('receipt_count')}），"
+            "生产代码只读不写、无签发者。补 verify_ref 或反复 requeue 都不会变绿；"
+            "该 lane 已落 failed 终态，先解决签发链路再重新登记。"
+        )
     return _ok(
         {"enqueued": entry, "preflight": result},
         tool,
-        f"[机检 {result.get('verdict')}] lane={lane_id} status={result.get('status')}",
+        f"[机检 {result.get('verdict')}] lane={lane_id} status={result.get('status')}"
+        f" reason={','.join(codes) or 'none'}{note}",
     )
 
 

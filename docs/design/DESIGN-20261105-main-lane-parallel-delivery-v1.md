@@ -165,6 +165,15 @@ class Lane:
 
 `lane_open` 创建 worktree 用 **`git worktree add -b <branch> <path> <base_sha>`**，与 `worktree_isolation.py:351` 的 `--detach` **并存**（不同函数，不触碰既有路径）。
 
+> **实施状态（2026-11-05 实测，EVO-20261105-501db776）**
+>
+> `verify_receipts.jsonl` 这一层**只有读者、没有签发者**：`src/` 与 `scripts/` 全量 grep 确认无任何写入路径，唯一写该文件的是 `tests/unit/test_merge_queue.py` 的 `_write_receipt` 测试 helper。
+> 后果是 preflight 机检 d（A10 凭证覆盖 base）在真实环境对**任何** lane 恒 fail：`lane_queue_submit` 只能返回 `reason_code=verify_layer_not_enabled`，队列项落 `failed` 终态（终态不可逆）。
+>
+> 因此当前可用性口径是：**`lane_open` / `lane_update` / `lane_close` 可正常用；`lane_queue_submit` 与 `lane_merge_request` 的凭证闸门不可用。**
+> 机检 d 已区分 `verify_layer_not_enabled`（层没启用，补凭证或 requeue 都不会变绿）与 `verify_required`（层启用但这条凭证缺失/stale），差值见 `verify_layer_status()`。
+> 在签发链路补齐前，请勿把 lane 提交到合并队列——每次都会消耗一次 lane 登记 + 一条不可逆的 failed 队列项。
+
 ### 4.4 合并队列与批次（L0 核心）
 
 **为什么不采用 FIFO「先完成先合并」**：它把 base 漂移的成本全部压给后完成者，理性策略是"等别人先合"，于是 main 长期不动、部署滞后；一旦被迫合并，冲突面已经很大。这是排序激励问题，不是工程细节。

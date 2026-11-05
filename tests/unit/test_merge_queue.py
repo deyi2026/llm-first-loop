@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from llm_loop.introspection.merge_queue import (
+    VERIFY_LAYER_DISABLED,
     MergeNotSupportedError,
     MergeQueueConstraintError,
     MergeQueueCorruptionError,
@@ -22,6 +23,8 @@ from llm_loop.introspection.merge_queue import (
     auto_merge_enabled,
     automation_status,
     build_merge_advice,
+    check_verify_covers_base,
+    verify_layer_status,
 )
 from llm_loop.timekeeping import system_local_now
 
@@ -385,3 +388,49 @@ def test_request_merge_rejected_when_not_ready(
     assert res["ok"] is False
     assert res["reason_code"] == "not_ready_for_confirm"
 
+
+
+# ── EVO-20261105-501db776: verify 凭证层「未启用」与「凭证缺失」必须可区分 ──
+# 事实：生产代码只读 verify_receipts.jsonl，无任何签发者（唯一写入是测试 helper）。
+# 若把「层没启用」报成 verify_required，调用方会以为补一张凭证就能过，
+# 实际重试/重验/重新登记都不会改变结果。
+
+
+def test_verify_layer_status_reports_disabled_when_file_absent(tmp_path: Path) -> None:
+    layer = verify_layer_status(tmp_path / "verify_receipts.jsonl")
+    assert layer["enabled"] is False
+    assert layer["file_exists"] is False
+    assert layer["receipt_count"] == 0
+    assert "未启用" in layer["detail"]
+
+
+def test_verify_layer_status_enabled_when_receipt_present(tmp_path: Path) -> None:
+    p = tmp_path / "verify_receipts.jsonl"
+    p.write_text(json.dumps({"receipt_id": "vr-1", "result": "pass"}) + "\n", encoding="utf-8")
+    layer = verify_layer_status(p)
+    assert layer["enabled"] is True
+    assert layer["receipt_count"] == 1
+    assert "detail" not in layer
+
+
+def test_verify_disabled_layer_reports_layer_code_not_verify_required() -> None:
+    entry = {"lane_id": "lane-x", "base_main_sha": "a" * 40}
+    layer = {"enabled": False, "detail": "verify 层当前未启用"}
+    # 有 verify_ref 但层是空的
+    res = check_verify_covers_base({**entry, "verify_ref": "vr-x"}, {}, layer=layer)
+    assert res["verdict"] == "fail"
+    assert res["reason_code"] == VERIFY_LAYER_DISABLED
+    # 连 verify_ref 都没有：同样指向层未启用，而不是催人补凭证
+    res2 = check_verify_covers_base(entry, {}, layer=layer)
+    assert res2["reason_code"] == VERIFY_LAYER_DISABLED
+
+
+def test_verify_enabled_layer_keeps_original_semantics(tmp_path: Path) -> None:
+    """层启用了（有别的凭证）但这条 ref 不存在 → 仍是 verify_required（旧语义不退化）."""
+    p = tmp_path / "verify_receipts.jsonl"
+    p.write_text(json.dumps({"receipt_id": "vr-other", "result": "pass"}) + "\n", encoding="utf-8")
+    layer = verify_layer_status(p)
+    assert layer["enabled"] is True
+    entry = {"lane_id": "lane-x", "base_main_sha": "a" * 40, "verify_ref": "vr-missing"}
+    res = check_verify_covers_base(entry, {"vr-other": {"receipt_id": "vr-other"}}, layer=layer)
+    assert res["reason_code"] == "verify_required"

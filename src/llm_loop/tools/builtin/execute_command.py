@@ -563,6 +563,14 @@ class ExecuteCommandTool:
         workdir = str(kwargs.get("workdir", "") or "").strip() or None
         if workdir is not None:
             wd = Path(workdir).expanduser()
+            # EVO-20261105-64a037d9: 相对 workdir 必须相对**当前工作区根**解析，
+            # 而不是进程 cwd。子代理 fs_isolation 下工作区根=隔离树根，但进程 cwd
+            # 仍是父仓库——按进程 cwd 解析会让 ".", "./src" 静默落到父仓库，
+            # 隔离形同虚设（实测：子代理写 workdir="." 后父仓库变脏）。
+            # 与 workdir=None 的「工作区跟随」语义（workspace_base）保持一致。
+            if not wd.is_absolute():
+                wd = Path(workspace_base()) / wd
+            wd = Path(os.path.normpath(str(wd)))
             if not wd.is_dir():
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
@@ -890,6 +898,7 @@ class ExecuteCommandTool:
         gate_line: str,
         guard_override_note: str,
         wt_note_in: Callable[[str], str],
+        cwd_line: str = "",
     ) -> ToolResult:
         """后台分支: effect fence 下 Popen 不阻塞 + JobRegistry 登记 + 启动回执组装."""
         # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
@@ -941,6 +950,8 @@ class ExecuteCommandTool:
         if isinstance(job_id, ToolResult):
             return job_id
         bg_content = f"[后台任务已启动] job_id={job_id} status=running\n命令: {spec.command}\n"
+        if cwd_line:
+            bg_content += f"{cwd_line}\n"
         if bg_sandbox_note:
             # S2-6: 后台回执同样如实标注沙箱（文案与实际后端一一对应）
             bg_content += f"{bg_sandbox_note}\n"
@@ -1051,6 +1062,7 @@ class ExecuteCommandTool:
         gate_line: str,
         guard_override_note: str,
         wt_note_in: Callable[[str], str],
+        cwd_line: str = "",
     ) -> ToolResult:
         """前台终态回执组装: 摘要前置 + stdout/stderr + python 事实 + 隔离附注."""
         parts: list[str] = []
@@ -1095,7 +1107,13 @@ class ExecuteCommandTool:
         )
         content = "\n".join(
             line
-            for line in (_summary_line, gate_line or None, guard_override_note or None, content)
+            for line in (
+                _summary_line,
+                cwd_line or None,
+                gate_line or None,
+                guard_override_note or None,
+                content,
+            )
             if line is not None
         )
         # EVO-20261016-96abc163: 隔离树终态附注（干净=已删除；脏=保留路径+HEAD）
@@ -1172,6 +1190,8 @@ class ExecuteCommandTool:
         if isinstance(flags, ToolResult):
             return flags
         workdir, run_bg, fail_fast, isolation, launch_command = flags
+        # EVO-20261105-64a037d9: 只对**显式** workdir 回显绝对 cwd（默认路径零噪音）。
+        explicit_workdir = workdir is not None
         spec = _CommandSpec(
             command=command,
             exec_argv=exec_argv,
@@ -1235,6 +1255,12 @@ class ExecuteCommandTool:
                 return lease
             wt_lease = lease
             workdir = wt_lease.path
+        # EVO-20261105-64a037d9: 显式 workdir 时回显解析后的**绝对** cwd。
+        # 子代理越界写（隔离树失效、命令落到父仓库）不再只能靠事后 git status 发现。
+        # 取 realpath 是回执侧真值：macOS /var→/private/var、符号链接根都如实投影。
+        cwd_line = (
+            f"[cwd {os.path.realpath(workdir)}]" if explicit_workdir and workdir else ""
+        )
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()
@@ -1243,7 +1269,8 @@ class ExecuteCommandTool:
             # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
             if run_bg:
                 return self._run_background(
-                    spec, workdir, env, gate_line, guard_override_note, _wt_note_in
+                    spec, workdir, env, gate_line, guard_override_note, _wt_note_in,
+                    cwd_line,
                 )
             fg = self._run_foreground(spec, workdir, env, gate_line, _wt_note_in)
             if isinstance(fg, ToolResult):
@@ -1269,5 +1296,5 @@ class ExecuteCommandTool:
                     wt_lease = None
 
         return self._compose_foreground_result(
-            fg, spec, env, gate_line, guard_override_note, _wt_note_in
+            fg, spec, env, gate_line, guard_override_note, _wt_note_in, cwd_line
         )

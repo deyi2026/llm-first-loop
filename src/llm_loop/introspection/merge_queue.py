@@ -252,13 +252,70 @@ def _parse_iso(raw: object) -> datetime | None:
         return None
 
 
-def check_verify_covers_base(entry: dict, receipts: dict[str, dict]) -> dict:
-    """机检 d: 验证凭证 verify_ref 是否覆盖当前 base_main_sha（不覆盖则要求重验，fail-closed）。"""
+VERIFY_LAYER_DISABLED = "verify_layer_not_enabled"
+
+
+def verify_layer_status(receipts_path: str | Path) -> dict:
+    """verify 凭证层的**自述**状态（EVO-20261105-501db776）。
+
+    实测事实：生产代码只有 ``load_receipts`` 这一个读者，``src/`` 与 ``scripts/``
+    里没有任何写入者；唯一写 ``verify_receipts.jsonl`` 的是
+    ``tests/unit/test_merge_queue.py`` 的 ``_write_receipt`` 测试 helper。
+    所以真实环境下该层恒为空，preflight 机检 d 对任何 lane 都必然 fail。
+
+    区分「层未启用」与「凭证缺失/过期/stale」是必要的：前者无论重试、重验还是
+    重新登记 lane 都不会变绿，调用方不该为此反复消耗 lane 登记与提交成本。
+    """
+    count = 0
+    file_exists = False
+    if receipts_path:
+        receipts_file = Path(receipts_path)
+        file_exists = receipts_file.exists()
+        if file_exists:
+            count = len(load_receipts(receipts_file))
+    enabled = count > 0
+    out = {
+        "enabled": enabled,
+        "receipts_path": str(receipts_path or ""),
+        "file_exists": file_exists,
+        "receipt_count": count,
+    }
+    if not enabled:
+        out["detail"] = (
+            "生产代码只读不写该文件，无任何签发者；verify 层当前未启用"
+            "（不代表本次改动验证失败）"
+        )
+    return out
+
+
+def check_verify_covers_base(
+    entry: dict, receipts: dict[str, dict], *, layer: dict | None = None
+) -> dict:
+    """机检 d: 验证凭证 verify_ref 是否覆盖当前 base_main_sha（不覆盖则要求重验，fail-closed）。
+
+    ``layer`` 为 ``verify_layer_status`` 的投影；层未启用时直接给出
+    ``verify_layer_not_enabled``，避免把「谁都没法发凭证」误报成「你少发了一张凭证」。
+    """
+    layer_disabled = layer is not None and not layer.get("enabled")
     ref = str(entry.get("verify_ref") or "").strip()
     if not ref:
+        if layer_disabled:
+            return _check(
+                CHECK_VERIFY,
+                False,
+                VERIFY_LAYER_DISABLED,
+                {"detail": "verify 层未启用（无签发者）；补 verify_ref 也不会通过"},
+            )
         return _check(CHECK_VERIFY, False, "verify_required", {"detail": "lane 未携带验证凭证"})
     receipt = receipts.get(ref)
     if receipt is None:
+        if layer_disabled:
+            return _check(
+                CHECK_VERIFY,
+                False,
+                VERIFY_LAYER_DISABLED,
+                {"verify_ref": ref, "detail": (layer or {}).get("detail", "")},
+            )
         return _check(
             CHECK_VERIFY, False, "verify_required", {"verify_ref": ref, "detail": "凭证未找到"}
         )
@@ -484,11 +541,12 @@ class MergeQueueStore:
         # ——锁外执行机检（含 git 子进程，不阻塞账本读写）——
         head = str(main_head or "").strip() or self.probe_main_head()
         receipts = load_receipts(self.receipts_path)
+        verify_layer = verify_layer_status(self.receipts_path)
         checks = [
             check_base_main_current(snapshot_entry, head),
             check_merge_tree_clean(self.repo_root, snapshot_entry, head),
             check_paths_disjoint(snapshot_entry, others),
-            check_verify_covers_base(snapshot_entry, receipts),
+            check_verify_covers_base(snapshot_entry, receipts, layer=verify_layer),
         ]
         verdict = "pass" if all(c["verdict"] == "pass" for c in checks) else "fail"
         codes = [c["reason_code"] for c in checks if c["verdict"] == "fail"]
@@ -530,6 +588,7 @@ class MergeQueueStore:
                 "status": entry["status"],
                 "reason_codes": codes,
                 "checks": checks,
+                "verify_layer": verify_layer,
                 "version": entry["version"],
             }
 
