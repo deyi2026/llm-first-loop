@@ -28,7 +28,7 @@ def _write(root: Path, rel: str, name: str, extra: str = "") -> None:
     d = root / rel
     d.mkdir(parents=True, exist_ok=True)
     (d / "METHOD.md").write_text(
-        "---\nname: %s\ndescription: d-%s\n%s---\n## Trigger\nhit %s\n" % (name, name, extra, name),
+        f"---\nname: {name}\ndescription: d-{name}\n{extra}---\n## Trigger\nhit {name}\n",
         encoding="utf-8",
     )
 
