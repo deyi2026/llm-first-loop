@@ -262,7 +262,9 @@ def _check_s1_03(ev: S1Evidence, cfg: GateConfig) -> dict:
     lane = ev.lane or {}
     ref = str(lane.get("verify_ref") or "").strip()
     receipt_id = str(verify.get("receipt_id") or "").strip()
-    if not ref or (receipt_id and receipt_id != ref):
+    # receipt_id 必须存在且与 verify_ref 一致：缺 receipt_id 时若放行，
+    # lane↔receipt 的审计绑定就只靠 digest，凭证可被跨 lane 复用（D3 要求绑定）。
+    if not ref or not receipt_id or receipt_id != ref:
         return _result(
             "s1_03", "fail", "verify_stale",
             {"detail": "lane.verify_ref 与凭证 receipt_id 不一致（无有效凭证不合, A10）",

@@ -135,10 +135,27 @@ class QueueEntry:
 # ---------------- 机检（纯函数，供 run_preflight 与建议卡复用） ----------------
 
 
+_GIT_READ_ONLY = ("rev-parse", "merge-tree", "log", "show")
+
+# 与 lane_gate._run_git_readonly 同一口径：head_sha / base_main_sha 等是模型可控
+# 输入（lane_queue_submit 可传），以 "-" 开头的一律拒绝，避免被 git 解析成选项。
+_GIT_ALLOWED_FLAGS = frozenset({"--write-tree", "--name-only", "--no-commit-id", "-n", "-z"})
+_GIT_ALLOWED_FLAG_PREFIXES = ("--format=", "--pretty=")
+
+
 def _git(repo_root: str, *args: str, timeout: int = 15) -> tuple[int, str, str]:
     """只读 git 调用（rev-parse / merge-tree / log / show 白名单内）。失败不抛，回执交调用方判定。"""
     if not repo_root:
         return -1, "", "repo_root 未配置"
+    if not args or args[0] not in _GIT_READ_ONLY:
+        return -1, "", f"git 子命令超出只读白名单: {list(args)[:1]}"
+    for raw in args[1:]:
+        arg = str(raw)
+        if arg.startswith("-") and not (
+            arg in _GIT_ALLOWED_FLAGS
+            or any(arg.startswith(prefix) for prefix in _GIT_ALLOWED_FLAG_PREFIXES)
+        ):
+            return -1, "", f"git 参数含不允许的选项: {arg!r}"
     try:
         proc = subprocess.run(
             ["git", "-C", repo_root, *args],
@@ -264,12 +281,23 @@ def check_verify_covers_base(entry: dict, receipts: dict[str, dict]) -> dict:
         return _check(
             CHECK_VERIFY, False, "verify_invalid", {"verify_ref": ref, "detail": "created_at 不可解析"}
         )
+    ttl = receipt.get("ttl_s")
+    if not ttl:
+        # 无 ttl_s 不等于「永不过期」：有效期不可判定时按无效处理（fail-closed，
+        # 与 lane_gate._within_ttl 的 D3/F8 口径一致）。
+        return _check(
+            CHECK_VERIFY,
+            False,
+            "verify_invalid",
+            {"verify_ref": ref, "detail": "ttl_s 缺失（有效期不可判定，按无效处理）"},
+        )
     try:
-        ttl = receipt.get("ttl_s")
-        if ttl and system_local_now() > created + timedelta(seconds=int(ttl)):
+        if system_local_now() > created + timedelta(seconds=int(ttl)):
             return _check(CHECK_VERIFY, False, "verify_expired", {"verify_ref": ref})
     except (TypeError, ValueError, OverflowError):
-        return _check(CHECK_VERIFY, False, "verify_invalid", {"verify_ref": ref, "detail": "ttl 不可解析"})
+        return _check(
+            CHECK_VERIFY, False, "verify_invalid", {"verify_ref": ref, "detail": "ttl 不可解析"}
+        )
     rbase = str(receipt.get("base_sha") or "").strip()
     base = str(entry.get("base_main_sha") or "").strip()
     if rbase != base:
@@ -860,8 +888,10 @@ class MergeQueueStore:
 
     @staticmethod
     def _find_index(rows: list[dict], lane_id: str) -> int:
-        for idx, row in enumerate(rows):
-            if row.get("lane_id") == lane_id:
+        # 取最后一条匹配：enqueue 允许在上一项终态后重新入队（abort→re-enqueue），
+        # 若返回首个匹配，旧终态行会遮蔽新行，get()/confirm 会作用在已死条目上。
+        for idx in range(len(rows) - 1, -1, -1):
+            if rows[idx].get("lane_id") == lane_id:
                 return idx
         raise MergeQueueConstraintError(f"队列项不存在: {lane_id}")
 

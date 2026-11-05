@@ -87,6 +87,9 @@ def _write_receipt(
         "base_sha": base_sha,
         "result": result,
         "created_at": system_local_now().isoformat(),
+        # 有效期必须显式给出：check_verify_covers_base 对缺失 ttl_s 按 fail-closed
+        # 处理（不可判定 ≠ 永不过期），所以测试凭证必须携带真实 ttl。
+        "ttl_s": 3600,
     }
     path = Path(store.receipts_path)
     with path.open("a", encoding="utf-8") as fh:

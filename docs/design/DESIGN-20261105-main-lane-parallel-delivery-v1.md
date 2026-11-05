@@ -45,7 +45,7 @@
 | A4 | 合并串行 | 两个 lane 同时请求合并，只有一个进入 `merging`，另一个回执 `queued` 或 `main_advanced` |
 | A5 | broken 默认拒绝 | `main_broken=true` 时 `lane_open` 默认 FAILURE（`reason_code=main_broken`），显式 `override_broken=true` 才放行 |
 | A6 | Board 只读 | 调用 `/api/v1/coordination/board` 前后 `lanes.jsonl` 与 `goals.jsonl` 的 sha256 不变 |
-| A7 | 关闭即清理 | `lane_close` 且树干净后 `git worktree list` 计数 -1；脏树保留并如实回执 `kept_dirty` |
+| A7 | 关闭不自动清理 | `lane_close` 只把 lane 收敛到终态；worktree 删除仍由 `release_worktree` / 人工执行（避免吞掉未提交产物）。**按实际实现修正：close 不使 worktree 计数 -1** |
 | A8 | 批次可归因 | 一个 batch 合并后 main 全量验证红 → `main_broken=true` 且 `last_good_sha` = 上一批 main |
 | A9 | 写侧 CAS | 两会话对同一 lane 并发 `lane_update`，版本失配方 FAILURE 并回执当前 `version` |
 | A10 | 无凭证不合 | lane 无有效凭证时 `lane_merge_request` 拒绝（`reason_code=verify_required`） |
@@ -443,7 +443,7 @@ t8  main 全量验证 pass → 部署 deploy_gen=42 (sha=S3)
 6. 三 lane 并发开、合批一次：断言 main 前进 1 次，lens 状态全部 `merged`，`last_good_sha` 正确。
 7. 合并临界区竞争：两 lane 同时 `lane_merge_request`，断言只有一个进 `merging`（A4）。
 8. `main_broken` 时 `lane_open` 默认拒绝，`override_broken=true` 放行且 `base_is_broken=true` 落账（A5）。
-9. `lane_close` 干净树 → `git worktree list` 计数 -1；脏树 → `kept_dirty` 且 worktree 仍在（A7）。
+9. `lane_close` 只收敛状态、不删 worktree；清理走 `release_worktree`（干净树 removed / 脏树 kept_dirty）（A7 已按实现修正）。
 10. Board 只读：调用前后 `lanes.jsonl`/`goals.jsonl` sha256 不变（A6）。
 
 **回归（防退化，RULE-AI-24）**
@@ -480,7 +480,7 @@ P0 单独可用：即使不做 P1/P2，人在 Board 上已能看到并行现状�
 
 ## 10. 判据：什么时候算做完了
 
-- **P0 完成** = A6/A9/A7 PASS + Sidebar 能显示 ≥2 条真实 lane + `spawn_subagent` 回归 11 PASS。
+- **P0 完成** = A6/A9 PASS + A7 按修正口径 PASS（close 不改 worktree）+ Sidebar 能显示 ≥2 条真实 lane + `spawn_subagent` 回归 11 PASS。
 - **P1 完成** = A1/A2/A3 PASS，"base 变但 patch 未变"的场景实测不触发全量重跑。
 - **P2a 完成** = A4/A5/A8/A10 PASS + 一次真实批次合并（≥2 lane）后 main 全量绿 + 部署成功。
 - **P2b 完成** = 影子期 ≥10 次 dry-run 人工判定与机检判定一致率 100%（零漏拦）+ 至少一次自动合并后自动回滚实测成功（构造 RED 输入）+ 十条机检的「应拦输入」全部实拦（RULE-AI-35）。

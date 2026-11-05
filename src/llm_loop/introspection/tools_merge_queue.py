@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.lane import LaneStore
+from llm_loop.introspection.lane import LaneStore, LaneVersionConflictError
 from llm_loop.introspection.lane_gate import (
     GateConfig,
     S1Evidence,
@@ -226,6 +226,13 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
     }
     try:
         entry = store.enqueue(**payload)
+    except LaneVersionConflictError as exc:
+        # CAS 冲突（并发入队/并发改状态）：渲染成可自愈的 FAILURE，而不是冒泡成异常。
+        return _fail(
+            f"版本冲突（队列项已被并发修改）: {exc}；请先 lane_queue_status 重新读取",
+            tool,
+            "version_conflict",
+        )
     except MergeQueueConstraintError as exc:
         try:
             existing = store.get(lane_id)
@@ -351,6 +358,12 @@ def run_lane_queue_confirm(ctx: Any, host: Any, args: dict) -> ToolResult:
             reason=str(args.get("reason") or "").strip(),
         )
         return _ok(entry, tool, f"[已中止] lane={lane_id}")
+    except LaneVersionConflictError as exc:
+        return _fail(
+            f"版本冲突（队列项已被并发修改）: {exc}；请先 lane_queue_status 重新读取",
+            tool,
+            "version_conflict",
+        )
     except MergeQueueConstraintError as exc:
         return _fail(str(exc), tool, "constraint_violation")
     except OSError as exc:
@@ -377,15 +390,19 @@ def run_lane_gate_check(ctx: Any, host: Any, args: dict) -> ToolResult:
     payload: dict[str, Any] = {"gate": verdict}
     if args.get("rollback"):
         main = evidence.main or {}
-        # main.broken 是「基线损坏」标记，不等价于「合并后验证 RED」。
-        # 混用会让回滚判定在基线损坏时误判 RED（并吞掉真正的 RED 判定）。
-        # 这里保守传 False：只有确实拿到合并后验证结果时才应由调用方置 True。
+        # main.broken 是「基线损坏」标记，不等价于「合并后验证 RED」，不得互相冒充。
+        # 合并后 RED 必须由调用方显式提供 main_red；未提供时按 false（保守不自动回滚），
+        # 并在回执里标明来源，避免把"参数缺失"伪装成"已判定无 RED"。
+        main_red_raw = args.get("main_red")
         payload["rollback"] = should_auto_rollback(
             config=config,
             deployment=evidence.deployment,
             main_head=str(main.get("head_sha") or ""),
-            main_red=False,
+            main_red=bool(main_red_raw) if main_red_raw is not None else False,
             attribution_precise=bool(args.get("attribution_precise")),
+        )
+        payload["rollback"]["main_red_source"] = (
+            "explicit" if main_red_raw is not None else "absent_default_false"
         )
     return _ok(
         payload,
