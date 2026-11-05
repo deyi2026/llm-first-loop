@@ -210,17 +210,22 @@ def test_loopback_exemption_is_the_compensating_control(monkeypatch) -> None:
 
 
 def test_public_origin_is_not_exempt(monkeypatch) -> None:
-    """反向实证：非 loopback 来源必须仍被要求鉴权（豁免不得外溢）。"""
+    """反向实证：非 loopback 来源必须仍被要求鉴权（豁免不得外溢）。
+
+    本用例**不带任何转发 header**：只把来源换成公网 IP，保证与
+    `test_loopback_exemption_*` 相比只有一个变量不同（来源），
+    避免把 header 语义和来源语义混在一起判。
+    """
+    from starlette.requests import Request
+
     from llm_loop.web.auth import request_auth_required
 
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
-    from starlette.requests import Request
-
     scope = {
         "type": "http",
         "method": "GET",
         "path": BOARD_PATH,
-        "headers": [(b"x-forwarded-for", b"203.0.113.9")],
+        "headers": [],
         "client": ("203.0.113.9", 443),
         "server": ("203.0.113.9", 443),
         "scheme": "https",
@@ -263,3 +268,74 @@ def test_spoofed_forwarded_for_revokes_loopback_trust(monkeypatch) -> None:
     req = Request(scope)
     assert request_is_trusted_local(req) is False
     assert request_auth_required(req) is True
+
+def _make_mounted_app(tmp_path: Path) -> FastAPI:
+    """按 web/__init__.py 的真实装配方式挂载 main router（含 require_api_key）。
+
+    与 `_make_client` 的区别：那个不带依赖，只测 handler；这个带装配层依赖，
+    用来证明「删掉 handler 内二次鉴权后，闸仍在装配层」。
+    """
+    from fastapi import Depends
+
+    from llm_loop.web.auth import require_api_key
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    app = FastAPI()
+    app.include_router(web_router, dependencies=[Depends(require_api_key)])
+    app.state.engine = SimpleNamespace(
+        settings=SimpleNamespace(data_dir=str(data_dir)),
+        workspace_root=str(tmp_path / "no-such-workspace"),
+    )
+    return app
+
+
+def _asgi_get(app: FastAPI, path: str, *, client_host: str):
+    """用 ASGITransport 设置真实 scope["client"]，模拟 loopback/公网来源。"""
+    import asyncio
+
+    import httpx
+
+    transport = httpx.ASGITransport(app=app, client=(client_host, 1234))
+
+    async def _go():
+        async with httpx.AsyncClient(
+            transport=transport, base_url=f"http://{client_host}:8903"
+        ) as client:
+            return await client.get(path)
+
+    return asyncio.run(_go())
+
+
+def test_board_200_through_real_assembly_mount(tmp_path: Path, monkeypatch) -> None:
+    """P1 正证：装配层 require_api_key + loopback 直连无凭据 → Board 200。
+
+    这是「删掉 handler 内 401 后仍然安全」的端到端证据：闸没有消失，
+    只是从 handler 移到装配层，且对本机 WebUI 放行。
+    """
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    app = _make_mounted_app(tmp_path)
+
+    resp = _asgi_get(app, BOARD_PATH, client_host="127.0.0.1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {"deployment", "lanes", "overlaps", "degraded"} <= set(body)
+
+
+def test_board_401_through_real_assembly_mount_from_public_origin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """P1 反证：同一装配下，公网来源无凭据 → 401（豁免不外溢）。
+
+    必须先配置凭据：`require_api_key` 在 request_auth_required=True 且
+    auth_configured()=False 时走 fail-closed 503（auth.py:658），
+    那样测到的是"未配置"而非"未认证"，语义完全不同。
+    """
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    monkeypatch.setenv("WEB_API_KEY", "test-key-0123456789abcdef")
+    app = _make_mounted_app(tmp_path)
+
+    resp = _asgi_get(app, BOARD_PATH, client_host="203.0.113.9")
+
+    assert resp.status_code == 401

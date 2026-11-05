@@ -15,6 +15,12 @@
   因此禁止直接 `app.include_router(coordination_routes.router)` 而不带依赖。
   本文件不做 handler 内二次判定，是因为 `auth_required()` 只看 env、不含
   loopback 豁免，会让本机 WebUI 自己的 fetch 被打成 401（已实测回归）。
+
+  **净效果声明（不回避）**：对 loopback 直连，本路由由「401」变为「200」
+  ——这是修复 WebUI 取数，不是放宽鉴权；对非 loopback 来源行为不变
+  （仍由 `require_api_key` 拦截：未配置凭据 → 503 fail-closed，
+  已配置但未认证 → 401）。判定位置由「handler + 装配层两处」收敛为
+  「装配层一处」，避免两套语义打架。
 """
 
 from __future__ import annotations
