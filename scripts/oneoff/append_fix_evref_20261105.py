@@ -5,6 +5,13 @@ check). Append-only: last record per task_id wins.
 
 Convention (align with sibling one-offs, review P2-5): bare invocation is a
 DRY-RUN; pass --apply to mutate the append-only task ledger.
+
+LIMITATION (review subagent_393a7a9cdbe9 P2-2): all amended tasks receive the
+single cluster-verdict evidence ref. That ref substantiates the supersede
+decision for the whole cluster (docs/analysis/learning-queue-cluster-verdict
+-20261105.md), not per-task work products. Acceptable for this one-off
+because the tasks were cancelled-as-superseded, not done; do not reuse this
+pattern for done-evidence amendments.
 """
 import json
 import sys

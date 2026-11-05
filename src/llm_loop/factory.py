@@ -339,19 +339,26 @@ def _scan_pending_compaction_gates(data_dir: str | Path) -> list[dict[str, Any]]
 
 
 def _archive_gate_removal(
-    snapshots_root: Path, rel_path: str, raw: bytes, reason: str
+    snapshots_root: Path, rel_path: str, raw: bytes, reason: str, payload: dict | None = None
 ) -> None:
     """收割/迁移共用的归档审计（窄复审 P2-4）：删除前逐文件落 sha256 记录.
 
     与 scripts/migrate_compaction_gate_states.py 的行格式一致（同
-    _migrated-<date>.jsonl 流），迁移脚本的幂等去重按 sha 扫全量归档文件，
-    因此收割路径写入同一归档流即被去重覆盖。
+    _migrated-<date>.jsonl 流，含 content_digest 字段；payload 不可解析时
+    置 None），迁移脚本的幂等去重按 sha 扫全量归档文件，因此收割路径
+    写入同一归档流即被去重覆盖。
     """
     stamp = datetime.now(UTC).strftime("%Y%m%d")
+    digest: str | None = None
+    if isinstance(payload, dict):
+        digest = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
     row = {
         "migrated_at": datetime.now(UTC).isoformat(),
         "reason_class": reason,
         "original_path": rel_path,
+        "content_digest": digest,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "evo": "EVO-20261105-7eb1e99f",
     }
@@ -409,7 +416,28 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
                     stats["errors"] += 1
                 continue
             if not isinstance(payload, dict):
-                stats["errors"] += 1
+                # JSON 合法但非 dict（窄复审 P2-4）：新鲜计 errors 观察，
+                # 过期归档后清理——不再永久重复计数
+                try:
+                    non_dict_stale = now - state_file.stat().st_mtime > _GATE_SCAN_TTL_SECONDS
+                except OSError:
+                    stats["errors"] += 1
+                    continue
+                if non_dict_stale and raw is not None:
+                    try:
+                        _archive_gate_removal(
+                            root,
+                            state_file.relative_to(root.parent).as_posix(),
+                            raw,
+                            "stale_non_dict",
+                        )
+                    except OSError:
+                        stats["errors"] += 1
+                        continue
+                    state_file.unlink(missing_ok=True)
+                    stats["stale_unparseable_removed"] += 1
+                else:
+                    stats["errors"] += 1
                 continue
             mtime_stale = now - state_file.stat().st_mtime > _GATE_SCAN_TTL_SECONDS
             if not mtime_stale or payload.get("status") == "degraded":
@@ -437,7 +465,7 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
             # 文件留待下轮扫描自愈重试（已写终态的走 terminal_removed 支路）。
             if raw is not None:
                 try:
-                    _archive_gate_removal(root, rel, raw, "ttl_harvest")
+                    _archive_gate_removal(root, rel, raw, "ttl_harvest", payload=payload)
                 except OSError:
                     stats["errors"] += 1
                     continue

@@ -268,16 +268,22 @@ def test_ttl_reaper_closes_and_cleans(tmp_path):
     _stale_ts = time.time() - stale_age
     os.utime(stale_broken, (_stale_ts, _stale_ts))
 
+    # JSON 合法但非 dict 的过期文件（review-3 P2-4：同样归档清理，不永久计数）
+    stale_nondict = tmp_path / "compaction_snapshots" / "sess-stale-nd" / "gate_state.json"
+    stale_nondict.parent.mkdir(parents=True, exist_ok=True)
+    stale_nondict.write_text('["not", "a", "dict"]', encoding="utf-8")
+    os.utime(stale_nondict, (_stale_ts, _stale_ts))
+
     stats = _expire_stale_compaction_gates(str(tmp_path))
 
     assert stats["superseded_expired"] == 2  # stale pending + stale escalated
     assert stats["terminal_removed"] == 1  # stale confirmed（自愈）
-    assert stats["stale_unparseable_removed"] == 1  # 坏 JSON 过期 → 归档清理
+    assert stats["stale_unparseable_removed"] == 2  # 坏 JSON+非 dict 过期 → 归档清理
     assert stats["errors"] == 0
     # 活门与保留类不动
     assert fresh_pending.exists()
     assert stale_degraded.exists()
-    assert not stale_broken.exists()  # 过期坏 JSON 归档后删除
+    assert not stale_broken.exists() and not stale_nondict.exists()
     # 坏 JSON 清理留有归档审计行（reason_class=stale_unparseable）
     archive_files = sorted((tmp_path / "compaction_snapshots").glob("_migrated-*.jsonl"))
     assert archive_files, "收割归档文件应存在"
