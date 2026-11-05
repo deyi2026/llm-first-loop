@@ -34,7 +34,7 @@ def main() -> int:
     for a in sys.argv[1:]:
         if a.startswith("--goal="):
             only = a.split("=", 1)[1]
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now = datetime.datetime.now(datetime.UTC).isoformat()
     base = Path("data/audit/tasks")
     total = 0
     for tail in GOAL_TAILS:
@@ -44,7 +44,7 @@ def main() -> int:
         if not f.exists():
             print(f"MISSING {f}")
             continue
-        records = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+        records = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         last = {}
         for rec in records:
             last[rec["task_id"]] = rec

@@ -11,8 +11,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from llm_loop.memory.evidence import BlobStore, EvidenceLedgerStore, EvidenceRef, OwnerScope  # noqa: E402
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier  # noqa: E402
+from llm_loop.memory.evidence import (  # noqa: E402
+    BlobStore,
+    EvidenceLedgerStore,
+    EvidenceRef,
+    OwnerScope,
+)
 
 TARGET_REF = "evidence://v1/36a1b94d94a9a05bd3776dab3034b7777335d3175e7ab190f6086d9c5581a1b3"
 GOAL_TAILS = ["d7306611", "5a3c6190", "591274ad", "0f483854", "0f5da3b6",
@@ -47,13 +52,13 @@ def main() -> int:
     if report.status != "verified":
         print("FATAL: real verification failed — refusing to write")
         return 3
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now = datetime.datetime.now(datetime.UTC).isoformat()
     total = 0
     for tail in GOAL_TAILS:
         if only and tail != only:
             continue
         f = root / "data/audit/tasks" / f"GOAL-20260927-{tail}.jsonl"
-        records = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+        records = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         last = {}
         for rec in records:
             last[rec["task_id"]] = rec

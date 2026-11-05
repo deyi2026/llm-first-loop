@@ -322,10 +322,11 @@ def _occurrence_absorbed(text: str, verb: str, vs: int, ve: int) -> bool:
         return True
     before = text[max(0, vs - 2) : vs]
     after = text[ve : ve + 2]
-    if any(c in before or c in after for c in _ENUM_SEP_CHARS):
-        # 完成标志紧邻不吸收（"完成删除/修复"仍是断言——防漏网）
-        if not any(m in text[max(0, vs - 3) : vs] for m in ("完成", "已", "成功")):
-            return True
+    # 完成标志紧邻不吸收（"完成删除/修复"仍是断言——防漏网）
+    if any(c in before or c in after for c in _ENUM_SEP_CHARS) and not any(
+        m in text[max(0, vs - 3) : vs] for m in ("完成", "已", "成功")
+    ):
+        return True
     return _occurrence_in_spans(vs, ve, [m.span() for m in _EN_METRIC_VERB_RE.finditer(text)])
 
 
@@ -365,7 +366,7 @@ def _clause_of(text: str, vs: int) -> tuple[int, int]:
     marks = list(_CLAUSE_SPLIT_RE.finditer(text))
     bounds = [0] + [m.end() for m in marks] + [len(text)]
     starts, ends = bounds[:-1], bounds[1:]
-    for s, e in zip(starts, ends):
+    for s, e in zip(starts, ends, strict=True):
         if s <= vs < e:
             return s, e
     return 0, len(text)
