@@ -597,3 +597,25 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 | ahead/behind 显示 | **无数据源**：Lane 记录不存 upstream 信息 | Board 该列显示未知（-1），不伪装成 0 |
 | S1/S2 自动执行 | **未启用**：`lane_auto_merge`/`lane_auto_rollback` 默认 false；S1 执行器只判定不执行 | 合并仍需人工 `lane_queue_confirm`；S0 建议卡是唯一入口 |
 | 合并队列与真实 `git merge` 的衔接 | **未实现**：`mark_merged` 由人工登记，队列不执行 git | 合并动作仍在主会话/人工侧完成 |
+
+## 15 影子期校准结果与判定口径澄清（2026-11-05）
+
+### 15.1 校准结果
+
+19 个场景，verdict 一致 19/19、auto_allowed 一致 19/19、漏拦 0、误拦 0，一致率 100%，
+满足 §4.4.1「开启 S1 前 ≥10 次 dry-run、一致率 100%、零漏拦」的前置条件。
+报告：`docs/analysis/SHADOW-CALIBRATION-20261105-lane-s1.md`；脚本：`scripts/lane_gate_shadow_calibration.py`。
+
+**边界（勿高估）**：场景由同一模型构造，证明的是「实现与文档规则一致」，不证明「规则覆盖了真实失败分布」。
+开启后前 10 次自动判定建议记 `shadow_compare` 与人工事后判定对账，发现分歧即回落 S0。
+
+### 15.2 第 3 条：impacted 级复验是双条件
+
+`base_sha != main_head` 时，必须 `scope == "impacted"` **且** `impacted_result == "pass"`；
+仅给 `impacted_result` 不够。首轮校准曾因此误判「机检有缺陷」，核对 `_check_s1_03` 后确认是人工判定错误。
+
+### 15.3 第 5 条：空 allowlist 判 `path_not_allowed`
+
+「默认空 = 全不自动」落成为 `s1_05 fail(path_not_allowed)`，而非 `verdict=pass` + `allowed=false`。
+两者都不放行，但语义不同：前者是「策略不允许该路径」，后者是「开关关闭」。
+需要区分这两种情形时按此读；`verdict=pass` + `allowed=false` 的场景见校准 C19。

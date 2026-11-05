@@ -1,0 +1,320 @@
+[
+  {
+    "id": "C01",
+    "desc": "全绿+开关开+allowlist 覆盖",
+    "human_verdict": "pass",
+    "machine_verdict": "pass",
+    "human_allowed": true,
+    "machine_allowed": true,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [],
+    "decision_reason": "",
+    "rule": "十条全满足→自动"
+  },
+  {
+    "id": "C02",
+    "desc": "main.broken=true",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_01"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第1条"
+  },
+  {
+    "id": "C03",
+    "desc": "部署窗口内",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_01"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第1条"
+  },
+  {
+    "id": "C04",
+    "desc": "merge-tree 冲突=2",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_02"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第2条"
+  },
+  {
+    "id": "C05",
+    "desc": "patch_digest 不匹配",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_03"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第3条"
+  },
+  {
+    "id": "C06",
+    "desc": "base 旧+impacted 级复验 pass",
+    "human_verdict": "pass",
+    "machine_verdict": "pass",
+    "human_allowed": true,
+    "machine_allowed": true,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [],
+    "decision_reason": "",
+    "rule": "第3条：需 scope=impacted 且复验 pass"
+  },
+  {
+    "id": "C07",
+    "desc": "base 旧且无 impacted 复验",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_03"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第3条"
+  },
+  {
+    "id": "C08",
+    "desc": "审查 verdict=fail",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_04"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第4条"
+  },
+  {
+    "id": "C09",
+    "desc": "审查绑定 sha 不匹配",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_04"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第4条"
+  },
+  {
+    "id": "C10",
+    "desc": "改动路径不在 allowlist",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_05"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第5条"
+  },
+  {
+    "id": "C11",
+    "desc": "改动路径命中 sealed(rules)",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_06"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第6条"
+  },
+  {
+    "id": "C12",
+    "desc": "批次超 K=3",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_07"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第7条"
+  },
+  {
+    "id": "C13",
+    "desc": "有 need=block 协助请求",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_08"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第8条"
+  },
+  {
+    "id": "C14",
+    "desc": "其他 lane 持重叠 claim",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_09"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第9条"
+  },
+  {
+    "id": "C15",
+    "desc": "merge_plan.no_ff=false",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_10"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第10条"
+  },
+  {
+    "id": "C16",
+    "desc": "merge_plan.parent 非 main head",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_10"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第10条"
+  },
+  {
+    "id": "C17",
+    "desc": "协助/claim 数据源未接入(None)",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_08",
+      "s1_09"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "skip≠pass，依赖不可用不放行"
+  },
+  {
+    "id": "C18",
+    "desc": "空 allowlist（默认）",
+    "human_verdict": "fail",
+    "machine_verdict": "fail",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [
+      "s1_05"
+    ],
+    "decision_reason": "checks_failed",
+    "rule": "第5条：默认空=全不自动→path_not_allowed"
+  },
+  {
+    "id": "C19",
+    "desc": "开关关但 allowlist 已配",
+    "human_verdict": "pass",
+    "machine_verdict": "pass",
+    "human_allowed": false,
+    "machine_allowed": false,
+    "verdict_match": true,
+    "allowed_match": true,
+    "false_allow": false,
+    "false_deny": false,
+    "auto_denied": [],
+    "decision_reason": "lane_auto_merge_off",
+    "rule": "全过但不自动，回落 S0"
+  }
+]
