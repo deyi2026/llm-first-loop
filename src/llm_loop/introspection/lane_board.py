@@ -137,7 +137,10 @@ def _read_help_pending(help_dir: Path) -> tuple[dict[str, int], list[dict], str]
         for path in help_dir.glob("*.json"):
             try:
                 row = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            # UnicodeDecodeError 是 ValueError 子类，既不是 OSError 也不是
+            # JSONDecodeError：跨会话写入方留下半个 UTF-8 字符时必须跳过，
+            # 否则一条坏文件会拖垮整个 board（与 help_inbox._load_message 同口径）。
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 continue
             if not isinstance(row, dict):
                 continue
@@ -162,6 +165,72 @@ def _read_help_pending(help_dir: Path) -> tuple[dict[str, int], list[dict], str]
     except OSError:
         return {}, [], "help_inbox_unreadable"
     return {"pending_help": pending, "blocking_help": blocking}, items, ""
+
+
+def _build_channel(
+    lanes: list[dict],
+    by_status: dict[str, int],
+    head: str,
+    audit: Path,
+    help_session_dir: str | Path | None,
+    degraded: list[str],
+) -> dict[str, Any]:
+    """总协调通道（§4.5 L3）：多少会话在跑 / 多少待协助 / 多少需决策.
+
+    独立成函数而非内联：build_board 已接近函数行数棘轮上限（120），
+    新增聚合不应靠放宽基线通过。
+    """
+    # ---- 总协调通道（§4.5 L3）：一眼看到「多少会话在跑 / 多少待协助 / 多少需决策」。
+    # 默认目录 = <data_dir>/interop/session/pending；audit == <data_dir>/audit。
+    help_dir = (
+        Path(help_session_dir)
+        if help_session_dir
+        else audit.parent / "interop" / "session" / "pending"
+    )
+    help_counts, help_items, help_reason = _read_help_pending(help_dir)
+    if help_reason:
+        degraded.append(help_reason)
+
+    sessions: list[dict] = [
+        {
+            "session_id": str(row.get("owner_session_id") or ""),
+            "lane_id": str(row.get("lane_id") or ""),
+            "goal_id": str(row.get("goal_id") or ""),
+            "branch": str(row.get("branch") or ""),
+            "role": str(row.get("lane_role") or ""),
+            "status": str(row.get("status") or ""),
+            "last_activity": str(row.get("last_activity") or ""),
+        }
+        for row in lanes
+    ]
+    # 需决策 = 正在合并（卡住要人盯）+ 基线已落后的在途 lane（合并前必须重验）
+    #        + need=block 的未决协助请求（有人在等答复）。
+    stale_count = sum(
+        1
+        for row in lanes
+        if head
+        and str(row.get("base_main_sha") or "")
+        and str(row.get("base_main_sha") or "") != head
+    )
+
+    return {
+        "active_lanes": len(lanes),
+        "pending_help": help_counts.get("pending_help", 0),
+        "blocking_help": help_counts.get("blocking_help", 0),
+        "needs_decision": by_status.get("merging", 0)
+        + stale_count
+        + help_counts.get("blocking_help", 0),
+        # 数据源可用性：缺失时上游必须显示「不可用」，不得把 0 当真实计数。
+        "help_available": bool(help_counts),
+        "lanes_available": not any(
+            d.startswith("audit_missing") or d.startswith("lanes_unreadable")
+            for d in degraded
+        ),
+        "sessions": sessions,
+        # 展开态需要知道「哪条会话在等什么」：只给计数等于有数无门。
+        "help_items": help_items,
+        "generated_at": system_local_now().isoformat(),
+    }
 
 
 def build_board(
@@ -206,38 +275,7 @@ def build_board(
         status = str(row.get("status") or "unknown")
         by_status[status] = by_status.get(status, 0) + 1
 
-    # ---- 总协调通道（§4.5 L3）：一眼看到「多少会话在跑 / 多少待协助 / 多少需决策」。
-    # 默认目录 = <data_dir>/interop/session/pending；audit == <data_dir>/audit。
-    help_dir = (
-        Path(help_session_dir)
-        if help_session_dir
-        else audit.parent / "interop" / "session" / "pending"
-    )
-    help_counts, help_items, help_reason = _read_help_pending(help_dir)
-    if help_reason:
-        degraded.append(help_reason)
-
-    sessions: list[dict] = [
-        {
-            "session_id": str(row.get("owner_session_id") or ""),
-            "lane_id": str(row.get("lane_id") or ""),
-            "goal_id": str(row.get("goal_id") or ""),
-            "branch": str(row.get("branch") or ""),
-            "role": str(row.get("lane_role") or ""),
-            "status": str(row.get("status") or ""),
-            "last_activity": str(row.get("last_activity") or ""),
-        }
-        for row in lanes
-    ]
-    # 需决策 = 正在合并（卡住要人盯）+ 基线已落后的在途 lane（合并前必须重验）
-    #        + need=block 的未决协助请求（有人在等答复）。
-    stale_count = sum(
-        1
-        for row in lanes
-        if head
-        and str(row.get("base_main_sha") or "")
-        and str(row.get("base_main_sha") or "") != head
-    )
+    channel = _build_channel(lanes, by_status, head, audit, help_session_dir, degraded)
 
     # in_sync 必须精确：部署记录可能是短 sha 或残缺 sha，startswith 会把
     # "head 只是以它开头"误判成"已部署的就是当前 head"（假绿）。三态显式化，
@@ -263,24 +301,7 @@ def build_board(
             "sync_state": sync_state,
             "source": str(dep_row.get("source") or "audit/deployments"),
         },
-        "channel": {
-            "active_lanes": len(lanes),
-            "pending_help": help_counts.get("pending_help", 0),
-            "blocking_help": help_counts.get("blocking_help", 0),
-            "needs_decision": by_status.get("merging", 0)
-            + stale_count
-            + help_counts.get("blocking_help", 0),
-            # 数据源可用性：缺失时上游必须显示「不可用」，不得把 0 当真实计数。
-            "help_available": bool(help_counts),
-            "lanes_available": not any(
-                d.startswith("audit_missing") or d.startswith("lanes_unreadable")
-                for d in degraded
-            ),
-            "sessions": sessions,
-            # 展开态需要知道「哪条会话在等什么」：只给计数等于有数无门。
-            "help_items": help_items,
-            "generated_at": system_local_now().isoformat(),
-        },
+        "channel": channel,
         "lanes": lanes,
         "summary": {
             "inflight": len(lanes),

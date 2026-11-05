@@ -224,3 +224,12 @@ def test_tool_inbox_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
         result = runner(None, host, args)
         assert result.status is ToolResultStatus.FAILURE
         assert "inbox_unavailable" in result.content
+
+
+def test_resolve_rejects_path_traversal(tmp_path: Path) -> None:
+    """P2-1 回归：外部 id 不得把 resolve 的读/写/删引到收件箱之外。"""
+    inbox = HelpInbox(tmp_path / "data")
+    with pytest.raises(HelpInboxError):
+        inbox.resolve("../../etc/passwd", "x")
+    with pytest.raises(HelpInboxError):
+        inbox.resolve("a/b", "x")

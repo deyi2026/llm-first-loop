@@ -140,3 +140,23 @@ def test_board_receipt_without_full_sha_falls_back(tmp_path: Path) -> None:
     board = build_board(audit, main_head="o" * 40)
     assert board["deployment"]["source"] == "audit/deployments"
     assert "restart_receipt_no_sha" in board["degraded"]
+
+
+def test_channel_tolerates_non_utf8_corruption(tmp_path: Path) -> None:
+    """P1 回归：半个 UTF-8 字符的协助消息不得拖垮整个 board。
+
+    UnicodeDecodeError 不是 JSONDecodeError/OSError 的子类，漏捕会让
+    一条坏文件把 lanes + channel 一起打掉（跨会话通道里这是现实输入）。
+    """
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    pending = tmp_path / "interop" / "session" / "pending"
+    pending.mkdir(parents=True)
+    (pending / "bad.json").write_bytes(b"\xff\xfe\x00bad")
+    (pending / "ok.json").write_text(
+        json.dumps({"id": "ok", "need": "block", "state": "pending"}), "utf-8"
+    )
+    board = build_board(audit, main_head="abc")
+    assert board["channel"]["pending_help"] == 1
+    assert board["channel"]["blocking_help"] == 1
+    assert board["channel"]["help_available"] is True

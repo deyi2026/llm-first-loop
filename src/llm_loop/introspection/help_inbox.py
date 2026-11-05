@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -33,7 +34,23 @@ from llm_loop.timekeeping import system_local_now
 logger = logging.getLogger(__name__)
 
 HELP_NEEDS = ("info", "block", "review")
-HELP_DECISIONS = ("resolved", "declined")  # state 终态（应答结果）
+HELP_DECISIONS = ("resolved", "declined")
+
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _safe_id(msg_id: str) -> str:
+    """消息 id 只允许 [A-Za-z0-9_-]{1,64}。
+
+    id 会直接拼进文件路径：未校验时 "../../x" 可把 resolve 的写入/删除
+    引到收件箱目录之外（跨会话通道尤其不能信外部 id）。
+    """
+    mid = str(msg_id or "").strip()
+    if not _ID_RE.match(mid):
+        raise HelpInboxError(
+            f"非法消息 id（只允许 [A-Za-z0-9_-]，长度 1..64）: {msg_id!r}"
+        )
+    return mid  # state 终态（应答结果）
 
 _INBOX_REL = ("interop", "session")  # <data_dir>/interop/session/{pending,done}
 
@@ -63,10 +80,10 @@ class HelpInbox:
     # ---------------- 路径 ----------------
 
     def pending_path(self, msg_id: str) -> Path:
-        return self._pending_dir / f"{msg_id}.json"
+        return self._pending_dir / f"{_safe_id(msg_id)}.json"
 
     def done_path(self, msg_id: str) -> Path:
-        return self._done_dir / f"{msg_id}.json"
+        return self._done_dir / f"{_safe_id(msg_id)}.json"
 
     # ---------------- 写入 ----------------
 
@@ -130,14 +147,16 @@ class HelpInbox:
         if decision not in HELP_DECISIONS:
             raise HelpInboxError(f"decision 仅允许 {HELP_DECISIONS}: {decision!r}")
 
+        # done/ 优先：先落 done 再删 pending 的写序下，删 pending 失败会留下两份并存，
+        # 此时若先读 pending 就会重写 done、覆盖既有应答（幂等失效）。done 存在即为终态。
+        done = self.done_path(msg_id)
+        if done.exists():
+            entry = self._load_message(done)
+            if entry is not None:
+                return entry  # 幂等: 已终态，原样返回
+            raise HelpInboxCorruptionError(f"done 消息文件损坏: {done}")
         src = self.pending_path(msg_id)
         if not src.exists():
-            done = self.done_path(msg_id)
-            if done.exists():
-                entry = self._load_message(done)
-                if entry is not None:
-                    return entry  # 幂等: 已终态，原样返回
-                raise HelpInboxCorruptionError(f"done 消息文件损坏: {done}")
             raise HelpInboxNotFoundError(f"协助请求不存在: {msg_id}")
 
         entry = self._load_message(src)
