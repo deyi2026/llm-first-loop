@@ -244,6 +244,46 @@ def _release_cmd_worktree_note(lease: WorktreeLease) -> str:
     return format_release_note(report, lease.path) + _WORKTREE_NON_SYSTEM_CLAUSE
 
 
+class _WorktreeRelease:
+    """隔离树终态释放协调（EVO-20261016-96abc163，自 execute 内闭包提取）.
+
+    原先由 execute 内 ``_wt_note_in`` 闭包 + nonlocal 三标志承担：两路（内联
+    终态回执 / try-finally）共享同一组标志，保证 ``release_worktree`` 恰好一次、
+    附注恰好一条。提取为对象后 execute 只保留编排，状态与不变量集中在此。
+    """
+
+    def __init__(self) -> None:
+        self.lease: WorktreeLease | None = None
+        self.released = False
+        self.note = ""
+
+    def adopt(self, lease: WorktreeLease) -> None:
+        self.lease = lease
+
+    def note_in(self, content: str) -> str:
+        """终态一次性释放隔离树并把 ReleaseReport 附注并入回执内容."""
+        if self.lease is None and not self.note:
+            return content
+        if self.lease is not None and not self.released:
+            self.released = True
+            self.note = _release_cmd_worktree_note(self.lease)
+            self.lease = None
+        if not self.note:
+            return content
+        note, self.note = self.note, ""
+        return f"{content}\n{note}" if note else content
+
+    def release_in_finally(self) -> None:
+        """正常完成/非预期异常路径的确定性释放（释放异常不遮蔽原异常）."""
+        if self.lease is None or self.released:
+            return
+        self.released = True
+        try:
+            self.note = _release_cmd_worktree_note(self.lease)
+        finally:
+            self.lease = None
+
+
 @dataclass(frozen=True)
 class _CommandSpec:
     """execute() 参数裁决后的执行规格（纯提取重构：阶段间状态显式化，不经全局/闭包共享）."""
@@ -1227,34 +1267,14 @@ class ExecuteCommandTool:
             workdir = workspace_base()
         # EVO-20261016-96abc163: 命令级 worktree 隔离租约（opt-in）。prepare fail-fast
         # 即整条拒绝——绝不降级共享工作区执行（无声丢隔离比失败更糟）。
-        # 释放协调：try 内联终态回执（超时/拒绝/OSError）经 _wt_note_in 现场释放并入
-        # 附注；正常完成路径的释放由 try/finally 确定性先行执行（内容拼装在 finally
-        # 之后），附注暂存 wt_note，由 _wt_note_in 从暂存并入——两路共享同一组
-        # 标志，保证 release_worktree 恰好一次、附注恰好一条。
-        wt_lease: WorktreeLease | None = None
-        wt_released = False
-        wt_note = ""
-
-        def _wt_note_in(content: str) -> str:
-            """终态一次性释放隔离树并把 ReleaseReport 附注并入回执内容."""
-            nonlocal wt_lease, wt_released, wt_note
-            if wt_lease is None and not wt_note:
-                return content
-            if wt_lease is not None and not wt_released:
-                wt_released = True
-                wt_note = _release_cmd_worktree_note(wt_lease)
-                wt_lease = None
-            if not wt_note:
-                return content
-            note, wt_note = wt_note, ""
-            return f"{content}\n{note}" if note else content
-
+        # 释放协调（try 内联终态回执 / finally 兜底，恰好一次）见 _WorktreeRelease。
+        wtrelease = _WorktreeRelease()
         if isolation:
             lease = self._prepare_isolation_lease()
             if isinstance(lease, ToolResult):
                 return lease
-            wt_lease = lease
-            workdir = wt_lease.path
+            wtrelease.adopt(lease)
+            workdir = lease.path
         # EVO-20261105-64a037d9: 显式 workdir 时回显解析后的**绝对** cwd。
         # 子代理越界写（隔离树失效、命令落到父仓库）不再只能靠事后 git status 发现。
         # 取 realpath 是回执侧真值：macOS /var→/private/var、符号链接根都如实投影。
@@ -1269,32 +1289,24 @@ class ExecuteCommandTool:
             # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
             if run_bg:
                 return self._run_background(
-                    spec, workdir, env, gate_line, guard_override_note, _wt_note_in,
-                    cwd_line,
+                    spec, workdir, env, gate_line, guard_override_note,
+                    wtrelease.note_in, cwd_line,
                 )
-            fg = self._run_foreground(spec, workdir, env, gate_line, _wt_note_in)
+            fg = self._run_foreground(spec, workdir, env, gate_line, wtrelease.note_in)
             if isinstance(fg, ToolResult):
                 return fg
         except OSError as exc:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
-                content=_wt_note_in(f"[执行失败] {type(exc).__name__}: {exc}"),
+                content=wtrelease.note_in(f"[执行失败] {type(exc).__name__}: {exc}"),
                 tool_call_id="",
                 tool_name=self.name,
                 error_type=type(exc).__name__,
                 error_detail=str(exc),
             )
         finally:
-            if wt_lease is not None and not wt_released:
-                # EVO-20261016-96abc163: 正常完成/非预期异常路径的确定性释放
-                # （内容拼装在 finally 之后，附注暂存 wt_note 由 _wt_note_in 并入
-                # 回执；异常向上传播时至少保证树不泄漏，释放异常不遮蔽原异常）。
-                wt_released = True
-                try:
-                    wt_note = _release_cmd_worktree_note(wt_lease)
-                finally:
-                    wt_lease = None
+            wtrelease.release_in_finally()
 
         return self._compose_foreground_result(
-            fg, spec, env, gate_line, guard_override_note, _wt_note_in, cwd_line
+            fg, spec, env, gate_line, guard_override_note, wtrelease.note_in, cwd_line
         )
