@@ -84,3 +84,59 @@ def test_board_never_creates_audit_dir(tmp_path: Path) -> None:
     board = build_board(missing)
     assert not missing.exists(), "A6：目录不存在时不得创建"
     assert "audit_missing" in board["degraded"]
+
+
+def _seed_deployments(audit: Path) -> None:
+    dep = audit / "deployments"
+    dep.mkdir(parents=True, exist_ok=True)
+    (dep / "hist.jsonl").write_text(
+        json.dumps({"ts": "2026-09-16T06:00:00+00:00", "target_sha": "o" * 40}) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_receipt(root: Path, **over) -> None:
+    row = {
+        "ts": "2026-11-05T12:44:02+08:00",
+        "action": "web",
+        "git_head_full": "c" * 40,
+        "authoritative": True,
+        "authority": "service_control",
+    }
+    row.update(over)
+    (root / "restart-receipt.json").write_text(json.dumps(row), encoding="utf-8")
+
+
+def test_board_prefers_authoritative_restart_receipt(tmp_path: Path) -> None:
+    """部署事实以 restart-receipt 为准：历史 deployments 停旧 sha 时不得冒充。"""
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    _seed_deployments(audit)
+    _write_receipt(tmp_path)
+    board = build_board(audit, main_head="c" * 40)
+    assert board["deployment"]["deployed_sha"] == "c" * 40
+    assert board["deployment"]["source"] == "restart-receipt"
+    assert board["deployment"]["in_sync"] is True
+    assert board["deployment"]["sync_state"] == "exact"
+
+
+def test_board_ignores_non_authoritative_receipt(tmp_path: Path) -> None:
+    """非 authoritative 回执（手工脚本留下的）不能冒充部署事实。"""
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    _seed_deployments(audit)
+    _write_receipt(tmp_path, authoritative=False)
+    board = build_board(audit, main_head="o" * 40)
+    assert board["deployment"]["source"] == "audit/deployments"
+    assert "restart_receipt_not_authoritative" in board["degraded"]
+
+
+def test_board_receipt_without_full_sha_falls_back(tmp_path: Path) -> None:
+    """只有短 sha 或空 sha 的回执不足以判定部署事实。"""
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    _seed_deployments(audit)
+    _write_receipt(tmp_path, git_head_full="")
+    board = build_board(audit, main_head="o" * 40)
+    assert board["deployment"]["source"] == "audit/deployments"
+    assert "restart_receipt_no_sha" in board["degraded"]

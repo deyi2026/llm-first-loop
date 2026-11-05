@@ -63,6 +63,37 @@ def _read_latest_deployment(dep_dir: Path) -> tuple[dict, str]:
     return best, ""
 
 
+def _read_authoritative_receipt(data_root: Path) -> tuple[dict, str]:
+    """读 service_control 的 restart-receipt.json —— 当前实际在跑的 sha 的权威事实。
+
+    历史 ``deployments/*.jsonl`` 是人工部署记录，可能长期停在旧 sha；Board 只读它
+    会让 ``in_sync`` 变成永久假 mismatch（部署早就切了，条带还指两年前的 commit）。
+    restart-receipt 由 service_control 在重启成功后写入，带
+    ``authoritative=true`` 与完整 ``git_head_full``，才是"现在跑的是哪个 sha"。
+    """
+    path = data_root / "restart-receipt.json"
+    if not path.is_file():
+        return {}, "restart_receipt_missing"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {}, f"restart_receipt_unreadable:{type(exc).__name__}"
+    if not isinstance(raw, dict):
+        return {}, "restart_receipt_bad_shape"
+    # 非 authoritative 的回执（例如子代理手工跑脚本留下）不能冒充部署事实。
+    if raw.get("authoritative") is not True:
+        return {}, "restart_receipt_not_authoritative"
+    sha = str(raw.get("git_head_full") or "").strip()
+    if not sha:
+        return {}, "restart_receipt_no_sha"
+    return {
+        "target_sha": sha,
+        "ts": str(raw.get("ts") or ""),
+        "phase": f"service_control:{raw.get('action') or 'restart'}",
+        "source": "restart-receipt",
+    }, ""
+
+
 def _path_overlaps(lanes: list[dict]) -> list[dict]:
     """两两路径交叉检测（U5 防重复开发）：同路径或一方是另一方的前缀即视为重叠。"""
     out: list[dict] = []
@@ -117,9 +148,14 @@ def build_board(
     if not head:
         degraded.append("main_head_unknown")
 
-    dep_row, dep_reason = _read_latest_deployment(audit / "deployments")
+    # 权威源优先：restart-receipt 记录"当前实际在跑的 sha"；deployments/*.jsonl
+    # 是人工历史记录，可能长期停在旧 sha。权威源缺失才回退，且回退原因如实进 degraded。
+    dep_row, dep_reason = _read_authoritative_receipt(audit.parent)
     if dep_reason:
         degraded.append(dep_reason)
+        dep_row, hist_reason = _read_latest_deployment(audit / "deployments")
+        if hist_reason:
+            degraded.append(hist_reason)
     deployed_sha = str(dep_row.get("target_sha") or "")
 
     by_status: dict[str, int] = {}
@@ -149,7 +185,7 @@ def build_board(
             "deployed_phase": str(dep_row.get("phase") or ""),
             "in_sync": sync_state == "exact",
             "sync_state": sync_state,
-            "source": "audit/deployments",
+            "source": str(dep_row.get("source") or "audit/deployments"),
         },
         "lanes": lanes,
         "summary": {
