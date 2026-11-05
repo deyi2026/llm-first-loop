@@ -53,12 +53,16 @@ def _repo_root(host: Any, override: object = "") -> str:
     return ""
 
 
-def _store(host: Any, repo_override: object = "") -> MergeQueueStore | None:
+def _store(
+    host: Any, repo_override: object = "", *, create: bool = True
+) -> MergeQueueStore | None:
     audit_dir = _audit_dir(host)
     if not audit_dir:
         return None
     try:
-        return MergeQueueStore(audit_dir, repo_root=_repo_root(host, repo_override))
+        return MergeQueueStore(
+            audit_dir, repo_root=_repo_root(host, repo_override), create=create
+        )
     except OSError:
         return None
 
@@ -204,6 +208,12 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
         lane = lanes.get(lane_id)
     except Exception as exc:  # noqa: BLE001 — 账本损坏按不可用处理
         return _fail(f"读取 lane 失败: {exc}", tool, "store_corruption")
+    if lane is None:
+        # LaneStore.get 对未知 lane 返回 None（不抛）；这里必须显式拒绝，
+        # 否则下面的 lane.get(...) 会 AttributeError，把"未登记"变成进程异常。
+        return _fail(
+            f"lane 不存在: {lane_id}（未登记不得进入合并队列）", tool, "lane_not_found"
+        )
     payload = {
         "lane_id": lane_id,
         "branch": str(args.get("branch") or lane.get("branch") or ""),
@@ -248,7 +258,8 @@ def run_lane_queue_submit(ctx: Any, host: Any, args: dict) -> ToolResult:
 
 def run_lane_queue_status(ctx: Any, host: Any, args: dict) -> ToolResult:
     tool = "lane_queue_status"
-    store = _store(host, args.get("repo_root"))
+    # 只读：不建目录、不写账本（create=False 保证零写副作用）
+    store = _store(host, args.get("repo_root"), create=False)
     if store is None:
         return _fail("audit_dir 未装配或账本不可用", tool, "store_unavailable")
     try:
@@ -287,7 +298,8 @@ def run_lane_queue_status(ctx: Any, host: Any, args: dict) -> ToolResult:
 
 def run_lane_merge_advice(ctx: Any, host: Any, args: dict) -> ToolResult:
     tool = "lane_merge_advice"
-    store = _store(host, args.get("repo_root"))
+    # 只读：不建目录、不写账本（create=False 保证零写副作用）
+    store = _store(host, args.get("repo_root"), create=False)
     if store is None:
         return _fail("audit_dir 未装配或账本不可用", tool, "store_unavailable")
     try:
@@ -365,11 +377,14 @@ def run_lane_gate_check(ctx: Any, host: Any, args: dict) -> ToolResult:
     payload: dict[str, Any] = {"gate": verdict}
     if args.get("rollback"):
         main = evidence.main or {}
+        # main.broken 是「基线损坏」标记，不等价于「合并后验证 RED」。
+        # 混用会让回滚判定在基线损坏时误判 RED（并吞掉真正的 RED 判定）。
+        # 这里保守传 False：只有确实拿到合并后验证结果时才应由调用方置 True。
         payload["rollback"] = should_auto_rollback(
             config=config,
             deployment=evidence.deployment,
             main_head=str(main.get("head_sha") or ""),
-            main_red=bool(main.get("broken")),
+            main_red=False,
             attribution_precise=bool(args.get("attribution_precise")),
         )
     return _ok(

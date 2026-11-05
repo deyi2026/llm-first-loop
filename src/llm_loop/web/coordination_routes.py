@@ -22,6 +22,8 @@ from fastapi.responses import JSONResponse
 
 from llm_loop.introspection.lane_board import build_board
 
+from .auth import auth_required, request_authenticated
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 UTF8JSONResponse = JSONResponse
@@ -51,6 +53,10 @@ def coordination_board(request: Request) -> JSONResponse:
     装配级意外（fail-closed：转有界错误 JSON，不向客户端裸抛堆栈）。
     """
     engine = _engine_from(request)
+    if auth_required() and not request_authenticated(request):
+        # 只读，但泄露分支名 / 绝对路径 / 会话 id；启用鉴权的部署下不得裸奔，
+        # 与 provider_admin 等 sibling router 同口径（web/routes.py 的 auth_required 用法）。
+        return UTF8JSONResponse(status_code=401, content={"error": "unauthorized"})
     try:
         board = build_board(
             _audit_dir(engine),

@@ -35,6 +35,15 @@ TERMINAL_STATUSES = ("merged", "closed", "abandoned")
 LANE_ROLES = ("main", "sub")
 PRIORITIES = ("normal", "hotfix")
 
+# 非终态之间的合法迁移（终态一律走 close，见 update）。收窄的是"倒退"
+# （如 merging→open），不禁止前向跳跃：短任务可从 open 直接进 verifying。
+ALLOWED_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    "open": ("active", "verifying"),
+    "active": ("verifying", "open"),
+    "verifying": ("merging", "active"),
+    "merging": ("verifying",),
+}
+
 # lane_open 允许声明的字段（系统管理字段不可由调用方覆盖）
 _MUTABLE_FIELDS = (
     "status",
@@ -218,10 +227,18 @@ class LaneStore:
                     )
                 raise LaneConstraintError(f"lane 已是终态 {current_status}，不再接受更新")
             if new_status is not None:
-                if str(new_status) not in LANE_STATUSES:
+                target = str(new_status)
+                if target not in LANE_STATUSES:
                     raise LaneConstraintError(f"非法 status: {new_status!r}")
-                if str(new_status) in TERMINAL_STATUSES:
+                if target in TERMINAL_STATUSES:
                     raise LaneConstraintError("终态迁移必须走 close（需显式 reason）")
+                if target != current_status:
+                    allowed = ALLOWED_STATUS_TRANSITIONS.get(current_status, ())
+                    if target not in allowed:
+                        raise LaneConstraintError(
+                            f"非法状态迁移: {current_status} → {target}"
+                            f"（允许: {list(allowed)}）"
+                        )
 
             now = system_local_now().isoformat()
             for key, value in fields.items():

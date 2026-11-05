@@ -142,3 +142,24 @@ def test_events_are_appended_for_audit(store: LaneStore, tmp_path: Path) -> None
 def test_paths_normalized_and_deduplicated(store: LaneStore) -> None:
     lane = _create(store, paths=["src/b.py", " src/a.py ", "src/b.py", ""])
     assert lane.paths == ["src/a.py", "src/b.py"]
+
+
+def test_status_regression_rejected(store: LaneStore) -> None:
+    """门槛实证（RULE-AI-35）：merging → open 这类倒退必须被拒，而不是仅由文档声称。
+
+    前向跳跃是合法的（open 可直接进 verifying，短任务不显式 active），
+    因此这里构造的是"倒退"而非"跳跃"。
+    """
+    lane = _create(store)
+    version = 1
+    for target in ("active", "verifying", "merging"):
+        store.update(lane.lane_id, expected_version=version, status=target)
+        version += 1
+    with pytest.raises(LaneConstraintError, match="非法状态迁移"):
+        store.update(lane.lane_id, expected_version=version, status="open")
+
+
+def test_forward_jump_open_to_verifying_allowed(store: LaneStore) -> None:
+    lane = _create(store)
+    updated = store.update(lane.lane_id, expected_version=1, status="verifying")
+    assert updated["status"] == "verifying"

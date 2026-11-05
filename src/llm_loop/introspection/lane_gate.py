@@ -609,13 +609,32 @@ def should_auto_rollback(
 
 _GIT_READ_ONLY = ("rev-parse", "log", "show", "merge-tree")
 
+# 调用点固定使用的选项；其余以 "-" 开头的参数一律拒绝，避免调用方传入的
+# base/head 被 git 当成选项（--help / --output= / --upload-pack= 等）。
+_GIT_ALLOWED_FLAGS = frozenset({"--write-tree", "--name-only", "--no-commit-id", "-n", "-z"})
+_GIT_ALLOWED_FLAG_PREFIXES = ("--format=", "--pretty=")
+
+
+def _flag_allowed(arg: str) -> bool:
+    return arg in _GIT_ALLOWED_FLAGS or any(
+        arg.startswith(prefix) for prefix in _GIT_ALLOWED_FLAG_PREFIXES
+    )
+
 
 def _run_git_readonly(repo: str, args: list[str]) -> subprocess.CompletedProcess:
-    """只允许 rev-parse/log/show/merge-tree 四个只读子命令, 越白名单直接拒绝。"""
+    """只允许 rev-parse/log/show/merge-tree 四个只读子命令, 越白名单直接拒绝。
+
+    参数层再一道闸：以 "-" 开头且不在选项白名单内的参数直接拒绝，防止
+    base/head 等外部字符串被解析成 git 选项。
+    """
     if not args or args[0] not in _GIT_READ_ONLY:
         raise LaneGateProbeError(
             "git 子命令超出只读白名单 " + str(list(_GIT_READ_ONLY)) + ": " + str(list(args)[:1])
         )
+    for raw in args[1:]:
+        arg = str(raw)
+        if arg.startswith("-") and not _flag_allowed(arg):
+            raise LaneGateProbeError(f"git 参数含不允许的选项: {arg!r}")
     try:
         return subprocess.run(
             ["git", "-C", repo, *args],

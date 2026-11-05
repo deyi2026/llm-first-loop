@@ -547,18 +547,18 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 
 ---
 
-## 12. 实施回写（2026-11-05 落地期发现并修正）
+## 13. 实施回写（2026-11-05 落地期发现并修正）
 
 本节只记录**实施证据推翻或修正设计假设**的地方，不重复正文。
 
-### 12.1 已修正的设计缺陷
+### 13.1 已修正的设计缺陷
 
 | # | 原设计 | 实际问题 | 处置 |
 |---|---|---|---|
 | 1 | S0 下机检全过后继续持有全局串行槽，等人工确认 | S0 没有执行器推进，人不在场时一条全过项会永久占槽，整个队列被一条"等人确认"的项卡死 | 新增 `ready_for_confirm` 状态：机检全过即**交还** slot，确认入口 `request_merge` 时重新抢槽。`SLOT_STATUSES` 仅含 `preflight|merging` |
 | 2 | 队列账本命名 `merge_queue_state.jsonl`（当前态）+ `merge_queue.jsonl`（事件） | 与 lanes 账本惯例相反（`lanes.jsonl` 当前态 + `lane_events.jsonl` 事件），同一目录两套规则易误读 | 统一为 `merge_queue.jsonl`（当前态）+ `merge_queue_events.jsonl`（事件） |
 
-### 12.2 设计未覆盖、按最小改动补齐
+### 13.2 设计未覆盖、按最小改动补齐
 
 | # | 缺口 | 处置 | 状态 |
 |---|---|---|---|
@@ -566,7 +566,7 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 | 4 | 工具面（模型可调用）未随模块交付 | 新增 `tools_merge_queue.py`（5 工具）+ `registry_merge_queue.py` 并接入 `_REGISTRIES`（13→14） | 已实现 + 7 条测试 |
 | 5 | Board 要显示 ahead/behind，但 `lanes.jsonl` 不存该字段 | Board 如实显示 `head@base`，并用 `base_main_sha != main_head` 判 stale；不伪造计数 | 已在 LaneBoard 落地 |
 
-### 12.3 仍未闭合（不得宣称已生效）
+### 13.3 仍未闭合（不得宣称已生效）
 
 | # | 事项 | 影响 | 现状 |
 |---|---|---|---|
@@ -575,7 +575,7 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 | 8 | 开关载体不统一：`merge_queue` 读 `LFL_LANE_AUTO_MERGE` 环境变量，`lane_gate` 用 `GateConfig` 参数 | 同一开关两处口径，可能出现"队列认为开了、机检认为关" | 待统一（建议单一来源：配置层注入两者） |
 | 9 | `patch_digest` 分级凭证（设计 D3/F4）未实现，当前以 `base_sha` 全等判定 | rebase 后即使自身 diff 未变也会判凭证过期，重跑成本高于设计预期 | 已标注为最小可用；F4 待后续 |
 
-### 12.4 验证回执（本次落地期实测）
+### 13.4 验证回执（本次落地期实测）
 
 - `tests/unit/test_lane_{store,tools,board}.py` → 23 passed
 - `tests/unit/test_merge_queue.py` → 13 passed（含新增 slot 释放 / confirm 闭环 / 非 ready 拒绝）

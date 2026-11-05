@@ -320,9 +320,13 @@ class MergeQueueStore:
         repo_root: str = "",
         main_ref: str = "main",
         receipts_path: str | Path | None = None,
+        create: bool = True,
     ) -> None:
         self._dir = Path(audit_dir)
-        self._dir.mkdir(parents=True, exist_ok=True)
+        # 只读消费者（lane_queue_status / lane_merge_advice / lane_gate_check）
+        # 传 create=False：目录不存在也不建，保持「只读工具零写副作用」。
+        if create:
+            self._dir.mkdir(parents=True, exist_ok=True)
         # 命名与 lanes 账本一致：无后缀 = 当前态（读的唯一权威源），_events = 只追加事件。
         self._state_path = self._dir / "merge_queue.jsonl"
         self._event_path = self._dir / "merge_queue_events.jsonl"

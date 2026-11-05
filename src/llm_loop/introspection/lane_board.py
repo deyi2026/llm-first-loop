@@ -127,6 +127,19 @@ def build_board(
         status = str(row.get("status") or "unknown")
         by_status[status] = by_status.get(status, 0) + 1
 
+    # in_sync 必须精确：部署记录可能是短 sha 或残缺 sha，startswith 会把
+    # "head 只是以它开头"误判成"已部署的就是当前 head"（假绿）。三态显式化，
+    # 只有 exact 才算同步，prefix_only 单独暴露给 Board 显示。
+    if head and deployed_sha:
+        if head == deployed_sha:
+            sync_state = "exact"
+        elif len(deployed_sha) >= 12 and head.startswith(deployed_sha):
+            sync_state = "prefix_only"
+        else:
+            sync_state = "mismatch"
+    else:
+        sync_state = "unknown"
+
     return {
         "generated_at": system_local_now().isoformat(),
         "main_head": head,
@@ -134,7 +147,8 @@ def build_board(
             "deployed_sha": deployed_sha,
             "deployed_at": str(dep_row.get("ts") or ""),
             "deployed_phase": str(dep_row.get("phase") or ""),
-            "in_sync": bool(head and deployed_sha and head.startswith(deployed_sha[:12])),
+            "in_sync": sync_state == "exact",
+            "sync_state": sync_state,
             "source": "audit/deployments",
         },
         "lanes": lanes,
