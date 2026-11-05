@@ -416,6 +416,7 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
                 stats["kept"] += 1
                 continue
             rel = state_file.relative_to(root.parent).as_posix()
+            reason: str | None = None
             if payload.get("pending") or payload.get("escalated"):
                 payload["pending"] = False
                 payload["superseded"] = True
@@ -426,16 +427,23 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
                     json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
                 )
                 os.replace(tmp, state_file)
-                stats["superseded_expired"] += 1
+                reason = "superseded_expired"
             elif payload.get("superseded") or payload.get("consumed_at"):
-                stats["terminal_removed"] += 1
+                reason = "terminal_removed"
             else:
                 stats["kept"] += 1
                 continue
+            # 归档先行（P1）：归档失败绝不删除——审计优先于空间回收，
+            # 文件留待下轮扫描自愈重试（已写终态的走 terminal_removed 支路）。
             if raw is not None:
-                with suppress(OSError):
+                try:
                     _archive_gate_removal(root, rel, raw, "ttl_harvest")
+                except OSError:
+                    stats["errors"] += 1
+                    continue
             state_file.unlink(missing_ok=True)
+            assert reason is not None
+            stats[reason] += 1
     except Exception:  # noqa: BLE001 — 生命周期收割 fail-open
         return stats
     return stats
@@ -3309,7 +3317,12 @@ def _build_pending_actions_fn(settings) -> Any:
         # 不影响投影结果；收割自身 fail-open，不侵蚀上方计数。
         if scan_data_dir:
             _expire_stats = _expire_stale_compaction_gates(scan_data_dir)
-            if any(_expire_stats.values()):
+            # P2-1：只在确有清理时记日志——kept>0（存在任一状态文件）不触发
+            if (
+                _expire_stats.get("superseded_expired")
+                or _expire_stats.get("terminal_removed")
+                or _expire_stats.get("stale_unparseable_removed")
+            ):
                 logger.info("compaction gate lifecycle expire: %s", _expire_stats)
 
         if degraded_wake_notify:

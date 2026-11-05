@@ -214,7 +214,10 @@ _ENUM_SEP_CHARS = ("/", "、")
 # 英文数字-动词指标语境（族B）: "98 executed"（165 条建议 98 executed）。
 _EN_METRIC_VERB_RE = re.compile(
     r"(?<![A-Za-z0-9_])\d[\d,]*\s*(?:"
-    + "|".join(sorted(_ASCII_VERB_RES, key=len, reverse=True))
+    + "|".join(
+        re.escape(verb)
+        for verb in sorted(_ASCII_VERB_RES, key=len, reverse=True)
+    )
     + r")(?![A-Za-z0-9_])"
 )
 # 否定算子（族A）: 否定词（可插入轻动词/范围词）直接管辖动词。

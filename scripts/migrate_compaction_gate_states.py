@@ -149,18 +149,27 @@ def execute_migration(records: list[dict], snapshots_root: Path) -> dict[str, in
         if rec["cls"] in KEEP_CLASSES or "sha256" not in rec:
             continue
         try:
-            if rec["sha256"] not in known:
+            # TOCTOU 防护（窄复审 P2-4）：执行 pass 即时重读重哈希——
+            # 扫描与删除之间文件可能被并发改写，归档必须对应被删字节
+            raw = rec["path"].read_bytes()
+            sha = hashlib.sha256(raw).hexdigest()
+            try:
+                fresh_payload = json.loads(raw.decode("utf-8"))
+            except ValueError:
+                fresh_payload = rec["payload"]
+            rec["sha256"] = sha
+            if sha not in known:
                 row = {
                     "migrated_at": datetime.now(UTC).isoformat(),
                     "reason_class": rec["cls"],
                     "original_path": rec["rel_path"],
-                    "content_digest": content_digest(rec["payload"] or {}),
-                    "sha256": rec["sha256"],
+                    "content_digest": content_digest(fresh_payload or {}),
+                    "sha256": sha,
                     "evo": "EVO-20261105-7eb1e99f",
                 }
                 with archive.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-                known.add(rec["sha256"])
+                known.add(sha)
                 stats["archived"] += 1
             else:
                 stats["delete_skipped_archived"] += 1

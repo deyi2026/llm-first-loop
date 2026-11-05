@@ -260,22 +260,29 @@ def test_ttl_reaper_closes_and_cleans(tmp_path):
         {"session_id": "sess-stale-d", "status": "degraded", "pending": False},
         age_seconds=stale_age,
     )
-    stale_broken = _make_state_file(
-        tmp_path,
-        "sess-stale-b",
-        {"session_id": "sess-stale-b", "pending": True},
-        age_seconds=stale_age,
-    )
+    # 坏 JSON 的过期文件（P2-2 修正：先写内容再置旧 mtime——写后置时的顺序
+    # 会把 mtime 重置为新鲜，清理分支从未被真正覆盖）
+    stale_broken = tmp_path / "compaction_snapshots" / "sess-stale-b" / "gate_state.json"
+    stale_broken.parent.mkdir(parents=True, exist_ok=True)
     stale_broken.write_text("{not json", encoding="utf-8")
+    _stale_ts = time.time() - stale_age
+    os.utime(stale_broken, (_stale_ts, _stale_ts))
 
     stats = _expire_stale_compaction_gates(str(tmp_path))
 
     assert stats["superseded_expired"] == 2  # stale pending + stale escalated
     assert stats["terminal_removed"] == 1  # stale confirmed（自愈）
+    assert stats["stale_unparseable_removed"] == 1  # 坏 JSON 过期 → 归档清理
+    assert stats["errors"] == 0
     # 活门与保留类不动
     assert fresh_pending.exists()
     assert stale_degraded.exists()
-    assert stale_broken.exists()
+    assert not stale_broken.exists()  # 过期坏 JSON 归档后删除
+    # 坏 JSON 清理留有归档审计行（reason_class=stale_unparseable）
+    archive_files = sorted((tmp_path / "compaction_snapshots").glob("_migrated-*.jsonl"))
+    assert archive_files, "收割归档文件应存在"
+    archive_text = archive_files[-1].read_text(encoding="utf-8")
+    assert "stale_unparseable" in archive_text
     # 清理的确认门：状态文件删除，manifest 保留
     for p in (stale_pending, stale_escalated, stale_confirmed):
         assert not p.exists()
