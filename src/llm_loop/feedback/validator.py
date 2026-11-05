@@ -100,7 +100,19 @@ _MARKDOWN_STRUCT_PREFIXES = ("|", ">")
 # → 抽取语义变更，bump 代次。
 # 2026.10.13.2: rev2——豁免改为动词 occurrence 名词化吸收判定，修复省略主语的
 # 完成声明漏检与整句豁免粒度（EVO-20261013-8d9410ec rev2）→ 抽取语义变更，bump。
-VALIDATOR_VERSION = "2026.10.13.2"
+# 2026.11.06.1: EVO-20261105-e2b226d6——语法级豁免三族（occurrence 级非谓语断言
+# 分类）+ 35 条金标准回归集 → 抽取语义变更，bump。审计（2026-11-05 会话
+# a6989bff，两轮查询去重全量 False 归因）: 误报 ~97% 稳定六族——①否定式边界
+# 声明 ②疑问句/选项枚举 ③祈使建议 ④指标评述句 ⑤转述外部内容/复述检查器输出
+# ⑥记录性动词文本；仅 1 条真实违规（2026-08-20 "配套更新 test_validator_semantic"
+# 无对应回执）。本代次按建议落地三族句法豁免（判定而非关键词黑名单）:
+#   A 否定式谓语+会话自身主语: 否定/未然/道义/惯常/受托算子直接管辖声明动词；
+#   B 指标名词主语(非谓语位)吸收: occurrence 落在指标/名词化复合/枚举/标识符语境；
+#   C 引号/引用块内文本: 动词全部位于引用 span，或句法归属外部文档主体（转述）。
+# 防漏网约束（与既有豁免一致，宁误报不漏报）: 携带完成体（已/已经/了/完/掉/
+# 过/到）且非引用、非文档归属的 occurrence 一律保留校验；金标准中真实违规样本
+# 必须仍可判 False（tests/unit/test_validator_gold_standard_e2b226d6.py 强制）。
+VALIDATOR_VERSION = "2026.11.06.1"
 
 # inline code span（`...`）为引用/provenance 内容（EVO-20260930）。
 # 实证 DC-20260930T080447006508: 回答引用历史审计文本（"- `✅ RULE-AI-19 已落地…`"
@@ -145,10 +157,16 @@ _JUDGMENT_CONCLUSION_RE = re.compile(
 _METRIC_NOUN_RE = re.compile(
     r"(下载|安装|更新|执行|写入)\s*量?\s*[:：]?\s*[\d,，]+|[\d:：]\s*(更新|下载|安装)"
 )
-# 动词名词化复合（实证: "execute_command 的执行环境残留"、"更新频率"——无主谓动作结构）
+# 动词名词化复合（实证: "execute_command 的执行环境残留"、"更新频率"——无主谓动作结构）。
+# EVO-20261105-e2b226d6 扩容后缀（金标准实证）: 率/量/数（执行成功率、月下载量）、
+# 失败/结果（工具执行失败、action_trace 的执行结果——均非完成断言）、包（安装包）、
+# 经验（save_experience description 的"保存经验"标签语）、门槛（创建门槛）、回放
+# （修改回放）。完成体邻接（已/已经/了/完/掉/过/到）仍由吸收判定阻断（见
+# _all_declared_verbs_nominalized），"已保存经验"类真声明不受影响。
 _VERB_NOUN_COMPOUND_RE = re.compile(
-    r"(执行|写入|更新|删除|保存|安装|下载)"
-    r"(层|器|环境|序|面|动作|日志|记录|队列|钩子|历史|状态|时间|路径|权限|顺序|策略|频率|流程|上下文)"
+    r"(执行|写入|更新|删除|保存|安装|下载|创建|修改)"
+    r"(层|器|环境|序|面|动作|日志|记录|队列|钩子|历史|状态|时间|路径|权限|顺序|策略|频率|流程|上下文"
+    r"|率|量|数|失败|结果|包|经验|门槛|回放|通道|成功率)"
 )
 # 认知性宾语（实证: "对方案执行实质拷问"——分析/评审行为无工具回执语义）
 _COGNITIVE_OBJECT_RE = re.compile(
@@ -162,6 +180,213 @@ _PASSIVE_VERBS_RE = re.compile(
     r"被[^。！？\n]{0,16}?(" + "|".join(_DECLARE_VERBS) + r"|下线|下架|带回|合并|标记|记录|登记|实施)"
 )
 _SELF_AGENTS = ("我", "我们", "子代理", "本轮", "本会话", "child", "subagent", " i ", "i'", "we ")
+
+# ── EVO-20261105-e2b226d6: 语法级豁免三族——occurrence 级非谓语断言分类 ──
+# 审计六族误报（①否定式边界 ②疑问/枚举 ③祈使建议 ④指标评述 ⑤转述外部
+# ⑥记录性动词）按建议收敛为三族句法机制。判定单元是"单个声明动词 occurrence
+# 是否构成会话自身的完成动作断言"，算子/结构全部为封闭语法类（否定/语气/体貌/
+# 引用/名词化/枚举/归属），非内容关键词黑名单。防漏网闸门: 携带完成体
+# （已/已经/了/完/掉/过/到，含动词自带的"已写/写入了"形态）且非引用、非文档
+# 归属的 occurrence 一律保留校验；真实违规金标准（"配套更新
+# test_validator_semantic"）必须仍可判 False（金标准回归测试强制）。
+
+# 引用 span（族C 标记形式）: 反引号（EVO-20260930 既有）+ 引号对（直角/弯引号/
+# ASCII 双引号）。实证: "声称"已执行 architecture_status 查询""（复述检查器
+# 输出）、"我的规则是"…立即更新""（规则引文）。
+_QUOTE_SPAN_RES = (
+    re.compile(r"“[^”]{1,400}”"),
+    re.compile(r'"[^"\n]{1,400}"'),
+    re.compile(r"「[^」]{1,400}」"),
+    re.compile(r"『[^』]{1,400}』"),
+)
+# 英文动词词边界: created_at/recreated 等标识符成分不构成 occurrence（实证:
+# "- created_at" 字段名被抽为完成声明）。
+_ASCII_VERB_RES = {
+    verb: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(verb)}(?![A-Za-z0-9_])")
+    for verb in _DECLARE_VERBS
+    if not re.search(r"[\u4e00-\u9fff]", verb)
+}
+# 枚举位（族B 非谓语位）: "打开/预览/下载"、"created、dispatch"——枚举成员
+# 无独立完成断言语义。完成标志紧邻（"完成删除/修复"）不吸收（防漏网）。
+# 注意: 分隔符不含 "→"——台账状态行 "EVO-…→ executed" 是早轮事实陈述，
+# 必须保留抽取走跨轮补证（_is_third_party_state 防漏网约束，回归测试强制）。
+_ENUM_SEP_CHARS = ("/", "、")
+# 英文数字-动词指标语境（族B）: "98 executed"（165 条建议 98 executed）。
+_EN_METRIC_VERB_RE = re.compile(
+    r"(?<![A-Za-z0-9_])\d[\d,]*\s*(?:"
+    + "|".join(sorted(_ASCII_VERB_RES, key=len, reverse=True))
+    + r")(?![A-Za-z0-9_])"
+)
+# 否定算子（族A）: 否定词（可插入轻动词/范围词）直接管辖动词。
+# 金标准实证（e2b226d6）: "无 commit/task 写入"——否定词与动词间的 ASCII
+# 标识符段（标识符/斜杠/空格，≤24 字且受 window 10 字上限约束）不断开管辖；
+# 纯中文插入语（"由下一轮执行"的"由下一轮"）仍不匹配——真声明不误豁免。
+_NEG_GOVERN_RE = re.compile(
+    r"(?:并未|从未|未曾|不曾|没有|没|未|无需|暂未|不|别|无|零)"
+    r"(?:做|进行|曾|再|先|进一步)?(?:任何|其他|一切)?(?:做|进行)?"
+    r"[A-Za-z0-9_/.\- ]{0,24}$"
+)
+# 有界算子（族A）: "仅/只"完成体仅当句内另有否定式谓语才豁免——
+# "仅执行了这一次命令，未做其他操作"（边界声明）vs "仅执行了这一次命令"（仍查）。
+_BOUNDED_GOVERN_RE = re.compile(r"(?<!不)(?:仅|只)[^，。；！？]{0,8}$")
+# 道义/情态/惯常/依循算子（族A）: 祈使/建议/能力/未然语气直接管辖动词（可隔
+# ≤4 字副词）。单字情态须干净左边界（防"对应/响应/申请"内字误配）。
+_MODAL_GOVERN_RE = re.compile(
+    r"(?:请|务必|应该|应当|必须|需要|建议|可以|可|能够|会|将|即将|待|定期|按|按照|遵循|自行|优先|先|再)"
+    r"[^，。；、！？]{0,4}$"
+)
+_MODAL_LEFT_OK_CHARS = set("我你您他她它咱其 ")
+# 未然时间算子（族A）: "签署前删除"——"X 前 + 动词"= 事后才能发生的指示。
+_PRETEMPORAL_GOVERN_RE = re.compile(r"[^，。；、！？\s]{1,6}前$")
+# 受托算子（族A 边界）: "执行靠别的工具"——动词 + 靠/由/交给 + 第三方 = 非自身执行。
+_DELEGATION_GOVERN_RE = re.compile(
+    r"^\s*\*{0,2}\s*(?:靠|由|交给|交由)(?:别的|其他|第三方|外部|单独)?"
+    r"(?:工具|系统|组件|模块|进程|人)"
+)
+# 条件未然（族A 句级）: "若…"条件标记 + 全部 occurrence 无完成体 + 句内无会话
+# 自身主语 → 条件句/建议（"删除 4.2 自动顺延；若与股权转让配套…"）。
+_CONDITIONAL_MARKERS = ("若", "如果", "一旦", "届时", "否则")
+# 文档主体归属（族C 非标记形式: 转述外部内容）: 协议/条款/前置等文档名词主语 +
+# 完成体动词（"协议第2.3/7.1条已写入…"、"reopen 前置已写"）。
+_DOC_SUBJECT_RE = re.compile(
+    r"(?:协议|条款|合同|附件|说明书|报告|文章|文档|前置)"
+    r"[^，。；]{0,14}已(?:写入|写|删除|下线|登记|保存|更新|创建|安装|执行|下载)"
+)
+# 文档/法条锚（整句转述判定用; 裸 N.N 版本号不作锚——太泛）
+_DOC_ANCHOR_RE = re.compile(r"协议|条款|合同|§|第[\d.．/]+条|附件|说明书")
+# 分句切分（意念被动的分句级主语检查）
+_CLAUSE_SPLIT_RE = re.compile(r"[，；、：:——]")
+
+
+def _declare_verb_occurrences(text: str) -> list[tuple[str, int, int]]:
+    """边界感知的声明动词 occurrence 枚举（EVO-20261105-e2b226d6）.
+
+    中文动词维持子串匹配（既有口径）；英文动词要求词边界——
+    "created_at"/"recreated" 等标识符成分不再伪报为动词 occurrence。
+    """
+    out: list[tuple[str, int, int]] = []
+    for verb in _DECLARE_VERBS:
+        ascii_re = _ASCII_VERB_RES.get(verb)
+        if ascii_re is not None:
+            for m in ascii_re.finditer(text):
+                out.append((verb, m.start(), m.end()))
+        else:
+            start = 0
+            while (idx := text.find(verb, start)) != -1:
+                out.append((verb, idx, idx + len(verb)))
+                start = idx + 1
+    return sorted(out, key=lambda x: (x[1], x[2]))
+
+
+def _aspect_attached(text: str, verb: str, vs: int, ve: int) -> bool:
+    """完成体形态判定（防漏网闸门）: 前邻 已/已经、后邻 了/完/掉/过/到，
+    或动词本身自带体标记（"已写""写入了"）。"""
+    if verb.startswith("已") or verb.endswith("了"):
+        return True
+    if vs > 0 and text[vs - 1] == "已":
+        return True
+    if vs >= 2 and text[vs - 2 : vs] == "已经":
+        return True
+    return ve < len(text) and text[ve] in "了完掉过到"
+
+
+def _quoted_spans(text: str) -> list[tuple[int, int]]:
+    """反引号 + 引号对 span（族C 标记形式）。"""
+    spans = [(m.start(1), m.end(1)) for m in _INLINE_CODE_RE.finditer(text)]
+    for rex in _QUOTE_SPAN_RES:
+        spans.extend(m.span() for m in rex.finditer(text))
+    return spans
+
+
+def _nominalization_spans(text: str) -> list[tuple[int, int]]:
+    """指标/名词化复合 span（族B）。"""
+    return [m.span() for m in _METRIC_NOUN_RE.finditer(text)] + [
+        m.span() for m in _VERB_NOUN_COMPOUND_RE.finditer(text)
+    ]
+
+
+def _occurrence_in_spans(vs: int, ve: int, spans: list[tuple[int, int]]) -> bool:
+    return any(s <= vs and ve <= e for s, e in spans)
+
+
+def _occurrence_absorbed(text: str, verb: str, vs: int, ve: int) -> bool:
+    """族B: occurrence 落在指标/名词化复合、枚举位或英文数字指标语境。"""
+    if _aspect_attached(text, verb, vs, ve):
+        return False
+    if _occurrence_in_spans(vs, ve, _nominalization_spans(text)):
+        return True
+    before = text[max(0, vs - 2) : vs]
+    after = text[ve : ve + 2]
+    if any(c in before or c in after for c in _ENUM_SEP_CHARS):
+        # 完成标志紧邻不吸收（"完成删除/修复"仍是断言——防漏网）
+        if not any(m in text[max(0, vs - 3) : vs] for m in ("完成", "已", "成功")):
+            return True
+    return _occurrence_in_spans(vs, ve, [m.span() for m in _EN_METRIC_VERB_RE.finditer(text)])
+
+
+def _occurrence_governed(
+    text: str, verb: str, vs: int, ve: int, *, sentence_has_negation: bool
+) -> bool:
+    """族A: 否定/有界/道义/未然/受托算子直接管辖动词 occurrence。"""
+    window_before = text[max(0, vs - 10) : vs]
+    # 否定算子用加宽窗口（30 字）: 否定词可隔 ASCII 标识符段管辖动词
+    # （金标准实证 "无 commit/task 写入"——否定词距动词 14 字符）。
+    # 加宽仅服务 NEG（其正则自带 ASCII 段约束与句读边界），其余算子维持紧窗。
+    neg_window_before = text[max(0, vs - 30) : vs]
+    aspect = _aspect_attached(text, verb, vs, ve)
+    # 否定算子管辖（"未执行""未做任何修改""无执行中演进"）——完成体不因否定豁免
+    if not aspect and _NEG_GOVERN_RE.search(neg_window_before):
+        return True
+    # 有界算子（"仅执行了这一次命令，未做其他操作"）——允许完成体，须句内另有否定
+    if _BOUNDED_GOVERN_RE.search(window_before) and sentence_has_negation:
+        return True
+    if aspect:
+        return False  # 完成体 occurrence 不因语气算子豁免（防漏网闸门）
+    if m := _MODAL_GOVERN_RE.search(window_before):
+        op_start = vs - len(m.group(0))
+        left_ok = op_start <= 0 or (
+            text[op_start - 1] in _MODAL_LEFT_OK_CHARS
+            or not re.match(r"[\u4e00-\u9fff]", text[op_start - 1])
+        )
+        if left_ok:
+            return True
+    if _PRETEMPORAL_GOVERN_RE.search(window_before):
+        return True
+    return bool(_DELEGATION_GOVERN_RE.match(text[ve : ve + 14]))
+
+
+def _clause_of(text: str, vs: int) -> tuple[int, int]:
+    """包含 vs 的分句区间（按 ，；、：—— 切分）。"""
+    marks = list(_CLAUSE_SPLIT_RE.finditer(text))
+    bounds = [0] + [m.end() for m in marks] + [len(text)]
+    starts, ends = bounds[:-1], bounds[1:]
+    for s, e in zip(starts, ends):
+        if s <= vs < e:
+            return s, e
+    return 0, len(text)
+
+
+def _occurrence_attributed(text: str, verb: str, vs: int, ve: int) -> bool:
+    """族C 非标记形式: 文档主体归属（转述外部内容）或意念被动（受事主语句）。
+
+    - 文档名词主语 + 完成体（"协议第2.3/7.1条已写入"、"前置已写"）;
+    - 意念被动: 分句内无会话自身主语，动词前紧邻名词主语串（"文件已删除"、
+      "实质漂移已写死为必过门"）——受事主语 + 完成体 = 外部/既往状态陈述。
+    自身主语（我/本轮/本会话…）在分句内出现时一律不归属（防自身声明漏网）。
+    """
+    if not _aspect_attached(text, verb, vs, ve):
+        return False
+    if _occurrence_in_spans(vs, ve, [m.span() for m in _DOC_SUBJECT_RE.finditer(text)]):
+        return True
+    seg_s, seg_e = _clause_of(text, vs)
+    seg = text[seg_s:seg_e]
+    if any(a in seg.lower() for a in _SELF_AGENTS):
+        return False
+    head = re.sub(r"[*#`\s]+", "", text[seg_s:vs])
+    head = re.sub(r"(?:已经|已)$", "", head)
+    if not head:
+        return False
+    return bool(re.match(r"[\u4e00-\u9fff]", head[-1]))
 
 
 @dataclass
@@ -332,6 +557,10 @@ class DeclarationValidator:
                 continue
             if not any(v in text for v in _DECLARE_VERBS):
                 continue
+            # EVO-20261105-e2b226d6: 词边界过滤后无有效 occurrence（如标识符
+            # "created_at"）→ 非动词句，跳过
+            if not _declare_verb_occurrences(text):
+                continue
             # EVO-20260930: 声明动词全部位于 inline code span 内 → 引用/provenance
             # 内容（引用历史审计/证据文本），非自身完成声明，跳过。
             # 防漏网约束: 动词在 span 外（"已写入 `src/a.py`"）不豁免。
@@ -342,6 +571,10 @@ class DeclarationValidator:
             # demands a success receipt. Mixed clauses with a separate positive action
             # remain checkable (see _is_negated_action_statement).
             if self._is_negated_action_statement(text):
+                continue
+            # EVO-20261105-e2b226d6 族A: 否定式谓语+会话自身主语 / 算子管辖未然句
+            # （否定/有界/道义/惯常/未然/受托/条件——审计族①③）
+            if self._is_unrealized_statement(text):
                 continue
             # EVO-20260810-50816b30: 能力陈述（"可以调用工具执行命令"）非完成声明，跳过
             if self._is_ability_statement(text):
@@ -358,27 +591,35 @@ class DeclarationValidator:
             # 句内含自我主体词（我/子代理/本轮）时不豁免（防自身声明漏网）
             if self._is_third_party_state(text):
                 continue
+            # EVO-20261105-e2b226d6 族C 非标记形式: 转述外部内容/文档归属
+            # （"协议第2.3/7.1条已写入…""前置已写""漂移已写死为必过门"——审计族⑤）
+            if self._is_restated_external(text):
+                continue
+            # EVO-20261105-e2b226d6: 冒号结尾标签引入行（无完成标志）——清单标题
+            # 非完成断言（"一句关键不变量应直接写入设计："）
+            if self._is_label_introducer(text):
+                continue
             decls.append(text)
         return decls
 
     @staticmethod
     def _is_quoted_inline_code(text: str) -> bool:
-        """声明动词是否全部位于 inline code span 内（EVO-20260930 引用豁免）.
+        """声明动词是否全部位于引用 span 内（EVO-20260930 反引号 + e2b226d6 引号对）.
 
         豁免方向约束（与叙事/计划/能力豁免一致，宁误报不漏报）: 只要任一动词出现
         在 span 外即返回 False（视为自身声明）；仅当所有动词 occurrence 都落在
         span 内才豁免——"已写入 `src/a.py`"（动词在反引号外）永不因该规则逃脱校验，
         路径 token 也完整保留在声明文本中供 keyword 匹配。
+        EVO-20261105-e2b226d6: 引用 span 从反引号扩至引号对（“”/""/「」/『』），
+        实证: 复述检查器输出的 "声称"已执行 architecture_status 查询""、规则引文
+        ""…有新证据立即更新"" 被误抽为完成声明。
         """
-        spans = [(m.start(1), m.end(1)) for m in _INLINE_CODE_RE.finditer(text)]
+        spans = _quoted_spans(text)
         if not spans:
             return False
-        for verb in _DECLARE_VERBS:
-            start = 0
-            while (idx := text.find(verb, start)) != -1:
-                if not any(s <= idx < e for s, e in spans):
-                    return False
-                start = idx + 1
+        for _verb, vs, ve in _declare_verb_occurrences(text):
+            if not any(s <= vs and ve <= e for s, e in spans):
+                return False
         return True
 
     @staticmethod
@@ -447,23 +688,13 @@ class DeclarationValidator:
         → 不豁免，fall through 到完成标志门（"已写入历史记录"仍校验）。
         _DECLARE_VERBS 中自带体标记的组合形式（"已写""写入了"）天然
         不落在吸收 span（"写入了历史"破坏复合词边界）→ 不豁免，方向一致。
+        EVO-20261105-e2b226d6: 吸收面由 _occurrence_absorbed 提供（复合后缀扩容
+        + 枚举位 + 英文数字指标语境），判定口径不变（吸收 span 内且无完成体）。
         """
-        spans = [m.span() for m in _METRIC_NOUN_RE.finditer(text)]
-        spans += [m.span() for m in _VERB_NOUN_COMPOUND_RE.finditer(text)]
-        for verb in _DECLARE_VERBS:
-            start = 0
-            while (idx := text.find(verb, start)) != -1:
-                vs, ve = idx, idx + len(verb)
-                absorbed = any(s <= vs and ve <= e for s, e in spans)
-                aspect_attached = (
-                    (vs > 0 and text[vs - 1] == "已")
-                    or (vs >= 2 and text[vs - 2:vs] == "已经")
-                    or (ve < len(text) and text[ve] in "了完掉过到")
-                )
-                if not absorbed or aspect_attached:
-                    return False
-                start = ve
-        return True
+        occs = _declare_verb_occurrences(text)
+        if not occs:
+            return True  # 无有效 occurrence（如纯标识符 "created_at"）→ 无谓语可断言
+        return all(_occurrence_absorbed(text, verb, vs, ve) for verb, vs, ve in occs)
 
     @staticmethod
     def _is_third_party_state(text: str) -> bool:
@@ -481,6 +712,88 @@ class DeclarationValidator:
         if any(agent in lower for agent in _SELF_AGENTS):
             return False
         return bool(_PASSIVE_VERBS_RE.search(text))
+
+    @staticmethod
+    def _is_unrealized_statement(text: str) -> bool:
+        """族A（EVO-20261105-e2b226d6）: 否定式谓语+会话自身主语 / 算子管辖未然句.
+
+        全部声明动词 occurrence 均为非断言（引用 span 内 / 名词化-枚举-指标吸收 /
+        否定-有界-道义-惯常-未然-受托算子管辖 / 文档归属 / 条件未然），且句级
+        佐证成立之一:
+        - 会话自身主语 + 否定式谓语（"本轮评估是纯指标快照，没有覆盖…""本会话
+          只读，未做任何修改"——审计族①否定式边界声明）;
+        - 条件未然（句内条件标记 + 无会话自身主语）;
+        - 纯算子管辖（祈使/建议/能力/依循语气直接管辖每个 occurrence——审计族③）。
+        防漏网: 携带完成体且未被引用/归属的 occurrence 立即返回 False
+        （"本轮已执行校验""已写入 src/a.py"永不因本规则豁免）。
+        """
+        occs = _declare_verb_occurrences(text)
+        if not occs:
+            return False
+        lower = text.lower()
+        has_self = any(agent in lower for agent in _SELF_AGENTS)
+        sentence_has_negation = any(
+            p in text for p in ("未", "没有", "没", "无", "零", "不")
+        )
+        conditional = (not has_self) and any(m in text for m in _CONDITIONAL_MARKERS)
+        for verb, vs, ve in occs:
+            if _occurrence_in_spans(vs, ve, _quoted_spans(text)):
+                continue
+            if _occurrence_absorbed(text, verb, vs, ve):
+                continue
+            if _occurrence_attributed(text, verb, vs, ve):
+                continue
+            if _occurrence_governed(
+                text, verb, vs, ve, sentence_has_negation=sentence_has_negation
+            ):
+                continue
+            if conditional and not _aspect_attached(text, verb, vs, ve):
+                continue
+            return False
+        if has_self and sentence_has_negation:
+            return True
+        if conditional:
+            return True
+        return all(
+            _occurrence_governed(
+                text, verb, vs, ve, sentence_has_negation=sentence_has_negation
+            )
+            or _occurrence_in_spans(vs, ve, _quoted_spans(text))
+            for verb, vs, ve in occs
+        )
+
+    @staticmethod
+    def _is_restated_external(text: str) -> bool:
+        """族C 非标记形式（EVO-20261105-e2b226d6）: 转述外部内容/文档归属.
+
+        - 句含文档/法条锚（协议/条款/§/第N条…）且无会话自身主语 → 整句为转述
+          （审计族⑤: "**代扣代缴义务**…协议第2.3/7.1条已写入…请务必执行"）;
+        - 全部 occurrence 均归属外部文档主体或意念被动（"前置已写"、
+          "实质漂移已写死为必过门"）。
+        自身主语在场一律不豁免（防自身声明漏网）。
+        """
+        lower = text.lower()
+        if any(agent in lower for agent in _SELF_AGENTS):
+            return False
+        if _DOC_ANCHOR_RE.search(text):
+            return True
+        occs = _declare_verb_occurrences(text)
+        if not occs:
+            return False
+        return all(_occurrence_attributed(text, verb, vs, ve) for verb, vs, ve in occs)
+
+    @staticmethod
+    def _is_label_introducer(text: str) -> bool:
+        """标签引入行（EVO-20261105-e2b226d6）: 冒号结尾 + 无完成标志.
+
+        "一句关键不变量应直接写入设计："（金标准实证）——冒号引入行是清单标题/
+        标签行，其内容在后续行，本身不构成完成断言。防漏网: 句内出现完成标志
+        （已/了/成功/完成/did/has/done）时不豁免——"我已完成以下工作："仍校验。
+        """
+        if not text.rstrip().endswith(("：", ":")):
+            return False
+        lower = text.lower()
+        return not any(m in lower for m in _COMPLETION_MARKERS)
 
     @staticmethod
     def _strip_markdown_structures(answer: str) -> str:
@@ -511,7 +824,15 @@ class DeclarationValidator:
         # later verb (e.g. it captures "修改" in "未执行任何修改"). Determine negation
         # from the whole extracted clause rather than trusting that one regex group.
         zh_negated = any(
-            re.search(re.escape(prefix) + r"\s*(?:任何)?\s*(?:" + action_alt_zh + r")", text)
+            re.search(
+                # e2b226d6: 允许插入轻动词（做/进行）与范围词（任何/其他）——
+                # "未做任何修改"（金标准实证）此前因"做"隔断而漏豁免
+                re.escape(prefix)
+                + r"\s*(?:做|进行)?\s*(?:任何|其他)?\s*(?:"
+                + action_alt_zh
+                + r")",
+                text,
+            )
             for prefix in _NEGATION_PREFIXES
         )
         action_verbs_en = [
