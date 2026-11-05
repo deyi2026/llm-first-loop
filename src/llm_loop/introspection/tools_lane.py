@@ -244,8 +244,11 @@ def run_lane_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     lane_id = str(args.get("lane_id", "") or "").strip()
     if not lane_id:
         return _fail("缺少必填参数 ['lane_id']", "lane_update", "missing_param")
+    raw_expected = args.get("expected_version")
+    if raw_expected is None:
+        return _fail("expected_version 必须是整数（CAS）", "lane_update", "missing_param")
     try:
-        expected = int(args.get("expected_version"))
+        expected = int(raw_expected)
     except (TypeError, ValueError):
         return _fail("expected_version 必须是整数（CAS）", "lane_update", "missing_param")
 
@@ -292,8 +295,11 @@ def run_lane_close(ctx: Any, host: Any, args: dict) -> ToolResult:
         return _fail("缺少必填参数 ['lane_id']", "lane_close", "missing_param")
     if not reason:
         return _fail("reason 必填（终态可归因）", "lane_close", "missing_param")
+    raw_expected = args.get("expected_version")
+    if raw_expected is None:
+        return _fail("expected_version 必须是整数（CAS）", "lane_close", "missing_param")
     try:
-        expected = int(args.get("expected_version"))
+        expected = int(raw_expected)
     except (TypeError, ValueError):
         return _fail("expected_version 必须是整数（CAS）", "lane_close", "missing_param")
 
@@ -335,8 +341,11 @@ def run_lane_merge_request(ctx: Any, host: Any, args: dict) -> ToolResult:
     lane_id = str(args.get("lane_id", "") or "").strip()
     if not lane_id:
         return _fail("缺少必填参数 ['lane_id']", "lane_merge_request", "missing_param")
+    raw_expected = args.get("expected_version")
+    if raw_expected is None:
+        return _fail("expected_version 必须是整数（CAS）", "lane_merge_request", "missing_param")
     try:
-        expected = int(args.get("expected_version"))
+        expected = int(raw_expected)
     except (TypeError, ValueError):
         return _fail("expected_version 必须是整数（CAS）", "lane_merge_request", "missing_param")
 

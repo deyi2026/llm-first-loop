@@ -332,8 +332,11 @@ def run_lane_queue_confirm(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(host, args.get("repo_root"))
     if store is None:
         return _fail("audit_dir 未装配或账本不可用", tool, "store_unavailable")
+    raw_version = args.get("expected_version")
+    if raw_version is None:
+        return _fail("expected_version 必填（防覆盖他人更新）", tool, "missing_param")
     try:
-        version = int(args.get("expected_version"))
+        version = int(raw_version)
     except (TypeError, ValueError):
         return _fail("expected_version 必填（防覆盖他人更新）", tool, "missing_param")
     try:

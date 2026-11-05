@@ -160,7 +160,9 @@ def _norm_path(raw: object) -> str:
 
 def _under_any(path: str, prefixes: object) -> bool:
     """path 是否落在任一前缀下（等值或目录前缀；与 lane_board 重叠判定同口径）。"""
-    for raw in prefixes or ():
+    # prefixes 传非集合（如 str）时逐字符迭代是隐性 bug；这里只接受集合语义。
+    items = prefixes if isinstance(prefixes, (list, tuple, set, frozenset)) else ()
+    for raw in items:
         p = _norm_path(raw).rstrip("/")
         if not p:
             continue
@@ -424,6 +426,11 @@ def _check_s1_07(ev: S1Evidence, cfg: GateConfig) -> dict:
         weights.get(str(m.get("kind") or ""), cfg.weight_normal) for m in members
     )
     raw_total = batch.get("changed_files_total")
+    if raw_total is None:
+        return _result(
+            "s1_07", "fail", "budget_exceeded",
+            {"detail": "changed_files_total 缺失或非整数, F 不可判定", "batch": batch},
+        )
     try:
         files_total = int(raw_total)
     except (TypeError, ValueError):
