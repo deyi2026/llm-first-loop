@@ -35,11 +35,9 @@ STATE_TMPL = (
 
 def load_method(method_ref: str):
     """method:xxx-<hash> -> (name, description, trigger, counterexamples) from METHOD.md.
-    data/methods/ first; seed methods (no hash suffix) live under .releases/*/methods/."""
+    data/methods/ first; seed methods (no hash suffix) live under methods/ (tracked seed dir)."""
     slug = method_ref.split(":", 1)[1] if ":" in method_ref else method_ref
-    candidates = [REPO / "data/methods" / slug]
-    candidates += sorted(REPO.glob(".releases/*/methods/" + slug),
-                         key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates = [REPO / "data/methods" / slug, REPO / "methods" / slug]
     p = next((c / "METHOD.md" for c in candidates if (c / "METHOD.md").exists()), None)
     if p is None:
         return None

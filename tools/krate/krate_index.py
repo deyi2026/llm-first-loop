@@ -137,14 +137,18 @@ def last_top_of(scores):
 
 
 def method_md_paths():
-    """data/methods/ first; seed methods under .releases/*/methods/ (no hash suffix)."""
+    """data/methods/ first; tracked seed methods in methods/ (no hash suffix) as fallback.
+
+    The seed dir used to be discovered through release checkouts
+    (``.releases/*/methods/``); it is the tracked ``methods/`` at repo root, so
+    reading it directly keeps krate independent of the release trees.
+    """
     seen, paths = set(), []
     for p in sorted((REPO / "data/methods").glob("*/METHOD.md")):
         seen.add(p.parent.name); paths.append(p)
-    for rel in sorted(REPO.glob(".releases/*/methods"), reverse=True):
-        for p in sorted(rel.glob("*/METHOD.md")):
-            if p.parent.name not in seen:
-                seen.add(p.parent.name); paths.append(p)
+    for p in sorted((REPO / "methods").glob("*/METHOD.md")):
+        if p.parent.name not in seen:
+            seen.add(p.parent.name); paths.append(p)
     return paths
 
 
