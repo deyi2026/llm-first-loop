@@ -593,7 +593,7 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 |---|---|---|
 | A1 `lane_open` 回执带 `overlap_warning`（列 counterpart lane_ids） | **未实现**：当前只在回执追加通用在途 lane 提示，未计算路径重叠 | Board 仍能看到 overlaps；但 open 当场拿不到对端 id，需回看 Board |
 | A5 `lane_open` 对 `main_broken` 默认拒绝 | **未实现**：`main_broken` 尚无数据源（RedMainMonitor 未建） | S1 第 1 条对 `main_broken` 只能 skip；skip ≠ pass，故不会误放行 |
-| L3 协助收件箱（`data/interop/session/`） | **未实现**（P1） | S1 第 8/9 条在数据源缺失时返回 skip + `dependency_unavailable` |
+| L3 协助收件箱（`data/interop/session/`） | **已实现**（2026-11-05） | `help_inbox.py` + `help_request`/`help_inbox`/`help_resolve` 三工具；S1-08 已接真实数据源 |
 | ahead/behind 显示 | **无数据源**：Lane 记录不存 upstream 信息 | Board 该列显示未知（-1），不伪装成 0 |
 | S1/S2 自动执行 | **未启用**：`lane_auto_merge`/`lane_auto_rollback` 默认 false；S1 执行器只判定不执行 | 合并仍需人工 `lane_queue_confirm`；S0 建议卡是唯一入口 |
 | 合并队列与真实 `git merge` 的衔接 | **未实现**：`mark_merged` 由人工登记，队列不执行 git | 合并动作仍在主会话/人工侧完成 |
@@ -619,3 +619,41 @@ A：会多一个 `lanes.jsonl`，但它只有 4 个写入工具、1 个只读 AP
 「默认空 = 全不自动」落成为 `s1_05 fail(path_not_allowed)`，而非 `verdict=pass` + `allowed=false`。
 两者都不放行，但语义不同：前者是「策略不允许该路径」，后者是「开关关闭」。
 需要区分这两种情形时按此读；`verdict=pass` + `allowed=false` 的场景见校准 C19。
+
+## 15 总协调通道（§4.5 L3 落地，2026-11-05）
+
+### 15.1 协助收件箱
+
+- 目录：`<data_dir>/interop/session/pending/`、`done/`，每条消息一个 JSON 文件。
+- 字段：`id / ts / from_session / to_session / lane_id / goal_id / topic / body / need / deadline / state`。
+- `need ∈ {info, block, review}`；`state` 初始 `pending`，应答后写 `done/` 并置 `resolved|declined`。
+- 写：tmp + `os.replace` 原子；单条损坏跳过并计入 `corrupted`，不整体失败（消息是协作通道，不应因一条坏文件全断）。
+- 工具：`help_request`（发）、`help_inbox`（查）、`help_resolve`（应答）。
+
+### 15.2 S1 第 8 条已可判定
+
+`lane_gate_check` 在调用方未显式提供 `help_requests` 时，自动从收件箱读取未决请求；
+数据源不可用则保持 `None` → `s1_08` 返回 `skip + dependency_unavailable`（skip ≠ pass，不会误放行）。
+实测（RULE-AI-35）：无 block 请求 → `s1_08=pass`；存在 `need=block` → `s1_08=fail / help_blocking`。
+测试见 `tests/unit/test_help_s1_integration.py`。
+
+### 15.3 Board 的 channel 段
+
+`build_board` 返回新增 `channel`：
+
+| 字段 | 含义 | 缺失语义 |
+|---|---|---|
+| `active_lanes` | 在途 lane 数 | `lanes_available=false` |
+| `pending_help` / `blocking_help` | 未决协助 / 其中阻塞型 | `help_available=false` |
+| `needs_decision` | merging 中 + 基线落后 + block 请求 | — |
+| `sessions[]` | session_id / lane_id / goal_id / branch / role / status / last_activity | 空数组 |
+| `help_items[]` | id / need / topic / from_session / to_session / lane_id / since | 空数组 |
+| `generated_at` | 聚合时刻 | — |
+
+`help_available=false` 时前端必须显示「不可用」，**不得把 0 当真实计数**。
+
+### 15.4 左侧栏总协调通道条
+
+`webui/src/components/sidebar/CoordinationChannel.tsx` 挂在侧栏 tab 之上（常驻，不是 tab）：
+折叠态一行 `🛤 协调 N 活跃 · M 待协助`，`blocking_help>0` 红显 `⛔`，`needs_decision>0` 加 `⚠ 需决策 K`；
+展开态列 sessions 与 help_items（谁在等什么）；三态（正常/不可用/取数失败）齐备；10s 轮询。

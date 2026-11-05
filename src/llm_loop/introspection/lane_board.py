@@ -122,12 +122,55 @@ def _path_overlaps(lanes: list[dict]) -> list[dict]:
     return out
 
 
+def _read_help_pending(help_dir: Path) -> tuple[dict[str, int], list[dict], str]:
+    """读协助收件箱 pending 统计。返回 (counts, degraded_reason).
+
+    刻意不 import introspection.help_inbox：Board 是纯只读投影，直接读目录即可，
+    既不与写入侧耦合，也不会因写入侧未就绪而拖垮 Board。单条损坏跳过，不拖垮统计。
+    """
+    if not help_dir.is_dir():
+        return {}, [], "help_inbox_missing"
+    pending = 0
+    blocking = 0
+    items: list[dict] = []
+    try:
+        for path in help_dir.glob("*.json"):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("state") or "pending") != "pending":
+                continue
+            pending += 1
+            need = str(row.get("need") or "")
+            if need == "block":
+                blocking += 1
+            # 保留条目供前端在展开态标注「哪条会话在等什么」，只给总数会有数无门。
+            items.append(
+                {
+                    "id": str(row.get("id") or ""),
+                    "need": need,
+                    "topic": str(row.get("topic") or ""),
+                    "from_session": str(row.get("from_session") or ""),
+                    "to_session": str(row.get("to_session") or ""),
+                    "lane_id": str(row.get("lane_id") or ""),
+                    "since": str(row.get("ts") or ""),
+                }
+            )
+    except OSError:
+        return {}, [], "help_inbox_unreadable"
+    return {"pending_help": pending, "blocking_help": blocking}, items, ""
+
+
 def build_board(
     audit_dir: str | Path,
     *,
     main_head: str = "",
     workspace_root: str = "",
     include_terminal: bool = False,
+    help_session_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """聚合在途 lane + 部署条带。纯只读；任何数据源缺失都进 degraded。"""
     audit = Path(audit_dir)
@@ -163,6 +206,39 @@ def build_board(
         status = str(row.get("status") or "unknown")
         by_status[status] = by_status.get(status, 0) + 1
 
+    # ---- 总协调通道（§4.5 L3）：一眼看到「多少会话在跑 / 多少待协助 / 多少需决策」。
+    # 默认目录 = <data_dir>/interop/session/pending；audit == <data_dir>/audit。
+    help_dir = (
+        Path(help_session_dir)
+        if help_session_dir
+        else audit.parent / "interop" / "session" / "pending"
+    )
+    help_counts, help_items, help_reason = _read_help_pending(help_dir)
+    if help_reason:
+        degraded.append(help_reason)
+
+    sessions: list[dict] = [
+        {
+            "session_id": str(row.get("owner_session_id") or ""),
+            "lane_id": str(row.get("lane_id") or ""),
+            "goal_id": str(row.get("goal_id") or ""),
+            "branch": str(row.get("branch") or ""),
+            "role": str(row.get("lane_role") or ""),
+            "status": str(row.get("status") or ""),
+            "last_activity": str(row.get("last_activity") or ""),
+        }
+        for row in lanes
+    ]
+    # 需决策 = 正在合并（卡住要人盯）+ 基线已落后的在途 lane（合并前必须重验）
+    #        + need=block 的未决协助请求（有人在等答复）。
+    stale_count = sum(
+        1
+        for row in lanes
+        if head
+        and str(row.get("base_main_sha") or "")
+        and str(row.get("base_main_sha") or "") != head
+    )
+
     # in_sync 必须精确：部署记录可能是短 sha 或残缺 sha，startswith 会把
     # "head 只是以它开头"误判成"已部署的就是当前 head"（假绿）。三态显式化，
     # 只有 exact 才算同步，prefix_only 单独暴露给 Board 显示。
@@ -186,6 +262,24 @@ def build_board(
             "in_sync": sync_state == "exact",
             "sync_state": sync_state,
             "source": str(dep_row.get("source") or "audit/deployments"),
+        },
+        "channel": {
+            "active_lanes": len(lanes),
+            "pending_help": help_counts.get("pending_help", 0),
+            "blocking_help": help_counts.get("blocking_help", 0),
+            "needs_decision": by_status.get("merging", 0)
+            + stale_count
+            + help_counts.get("blocking_help", 0),
+            # 数据源可用性：缺失时上游必须显示「不可用」，不得把 0 当真实计数。
+            "help_available": bool(help_counts),
+            "lanes_available": not any(
+                d.startswith("audit_missing") or d.startswith("lanes_unreadable")
+                for d in degraded
+            ),
+            "sessions": sessions,
+            # 展开态需要知道「哪条会话在等什么」：只给计数等于有数无门。
+            "help_items": help_items,
+            "generated_at": system_local_now().isoformat(),
         },
         "lanes": lanes,
         "summary": {

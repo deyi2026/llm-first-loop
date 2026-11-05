@@ -990,6 +990,15 @@
         "rationale": "合并队列账本（merge_queue.jsonl 当前态 + merge_queue_events.jsonl 事件）; 全局串行 slot; 只排队不执行 merge",
         "tier": "T1",
         "status": "observe"
+      },
+      "help_inbox": {
+        "owner": "introspection",
+        "paths": [
+          "src/llm_loop/introspection/help_inbox.py"
+        ],
+        "rationale": "跨会话协助收件箱：pending/done 每条消息独立文件，tmp+os.replace 原子写；单条损坏跳过不整体失败",
+        "tier": "T2",
+        "status": "observe"
       }
     },
     "write_exemptions": {

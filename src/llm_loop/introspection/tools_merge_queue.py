@@ -378,6 +378,25 @@ def run_lane_gate_check(ctx: Any, host: Any, args: dict) -> ToolResult:
         return _fail(
             "evidence 必须是对象（见 S1Evidence 字段约定）", tool, "missing_param"
         )
+    # S1-08 的数据源：调用方未显式给 help_requests 时，从 L3 收件箱读未决请求。
+    # 读不到就保持 None（s1_08 返回 skip + dependency_unavailable，skip ≠ pass）。
+    if "help_requests" not in raw:
+        try:
+            from pathlib import Path as _Path
+
+            from llm_loop.introspection.help_inbox import HelpInbox
+
+            _audit = _audit_dir(host)
+            if _audit:
+                _data = _Path(_audit)
+                raw = {
+                    **raw,
+                    "help_requests": HelpInbox(
+                        _data.parent if _data.name == "audit" else _data
+                    ).list_pending(),
+                }
+        except Exception:  # noqa: BLE001 — 数据源不可用降级为 skip，不拖垮机检
+            pass
     # S1Evidence 是 dataclass，不做字段级类型检查：传入 "lane": "x" 会在 check
     # 内部炸出 AttributeError，而不是确定性的 FAILURE 回执。入口先挡一层。
     for key in ("lane", "main", "deployment"):
