@@ -9,6 +9,12 @@
 - degraded 如实：读不到的数据源逐条透出，不伪造空值（与 coordination_status 同口径）。
 - 纯投影：build_board 原生返回里 overlaps 位于 summary.overlaps，本层把它提升为
   顶层 overlaps 以稳定对外契约；数据层（lane_board.py）不改、不重算。
+- **单闸约定（重要）**：本 router 不自带鉴权，只依赖装配层统一挂载
+  `app.include_router(router, dependencies=[Depends(require_api_key)])`
+  （见 web/__init__.py）。任何绕过该装配的挂载都会**静默失去鉴权**，
+  因此禁止直接 `app.include_router(coordination_routes.router)` 而不带依赖。
+  本文件不做 handler 内二次判定，是因为 `auth_required()` 只看 env、不含
+  loopback 豁免，会让本机 WebUI 自己的 fetch 被打成 401（已实测回归）。
 """
 
 from __future__ import annotations

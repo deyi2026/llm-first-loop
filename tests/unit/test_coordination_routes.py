@@ -167,7 +167,7 @@ def test_board_audit_missing_degrades_without_mkdir(tmp_path: Path) -> None:
     assert before == after
 
 
-def _loopback_request() -> "Request":
+def _loopback_request():
     from starlette.requests import Request
 
     scope = {
@@ -192,16 +192,15 @@ def test_loopback_exemption_is_the_compensating_control(monkeypatch) -> None:
     证明 401 的移除不是"少一道闸"，而是"两个判定收敛成一个"。
     """
     from llm_loop.web.auth import (
-        require_api_key,
+        auth_required,
         request_auth_required,
         request_is_trusted_local,
+        require_api_key,
     )
 
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")  # 公网策略开启
     # 前置：env 级判定此刻为 True（说明下面拿到 False 不是"策略本来就关"
     # 造成的假阳性，而是 loopback 豁免真的发生）。
-    from llm_loop.web.auth import auth_required
-
     assert auth_required() is True
 
     req = _loopback_request()
@@ -236,3 +235,31 @@ def test_no_dangling_auth_import() -> None:
 
     assert not hasattr(mod, "auth_required")
     assert not hasattr(mod, "request_authenticated")
+
+
+def test_spoofed_forwarded_for_revokes_loopback_trust(monkeypatch) -> None:
+    """P2-1 实证：伪造 `X-Forwarded-For: 127.0.0.1` 不得复活 loopback 豁免。
+
+    `request_is_trusted_local` 的规则是「任何转发标记都撤销豁免」。本用例
+    把 host/peer 都设成 loopback、只加一个伪造 header：若实现改成「看 XFF
+    是否等于 loopback 就放行」，这里会立刻变红——这正是 r8 审查指出的
+    「XFF 未被区分」的风险点。
+    """
+    from starlette.requests import Request
+
+    from llm_loop.web.auth import request_auth_required, request_is_trusted_local
+
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": BOARD_PATH,
+        "headers": [(b"x-forwarded-for", b"127.0.0.1")],
+        "client": ("127.0.0.1", 5555),
+        "server": ("127.0.0.1", 8903),
+        "scheme": "http",
+        "query_string": b"",
+    }
+    req = Request(scope)
+    assert request_is_trusted_local(req) is False
+    assert request_auth_required(req) is True
