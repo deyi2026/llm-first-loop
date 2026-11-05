@@ -146,4 +146,20 @@
 - 计数变化：`.releases` 14G → **648M**（161 项 → 5 项 = 3 棵保留 + 2 处非注册残留）；注册 worktree 160 → **4**（main + 3 棵 release）；`refs/heads` 仍 90、`refs/archive` 104（其中 `refs/archive/triage-20261105` 62），分支一个未删。
 - 删除前后四服务 alive 且 head 均为 `c390e67b12d8`：web 76872 / feishu 76956 / learning 77206 / wecom 44098。
 - 脚本与日志：`.backup/triage-step3/{preflight.sh,preflight.tsv,remove_releases.sh,remove.log,known_good.py,show_manifests.py}`。
-- 仍未做：2 处非注册残留目录（`0cd9c524….orig`、`cb9c96daa9…`）、5 个未注册 `.worktrees` 目录（含名字带字面反斜杠的 `main-response-latency-20261023\.cache\dsh-capability-index`，去留待用户裁定）。
+- 残留与未注册目录：第 3 步时仍未处理，已在下一节按用户裁决清理完毕。
+
+## 已执行：残留与未注册目录清理（2026-11-05 17:16，用户裁决「删」）
+
+- 范围（7 项，`REMOVED=7 FAIL=0`）：`.releases/0cd9c524….orig`、`.releases/cb9c96daa9…`（94M/96M）、`.worktrees/review-origin-a72df001.git`（479M bare）、`.worktrees/statebraid-{merged,shadow-a,shadow-b}`（各 6.2M）、`.worktrees/main-response-latency-20261023\.cache\dsh-capability-index`（4K，名字含字面反斜杠）。
+- 删除前事实核查（未沿用前文结论，逐项重取）：
+  - 两个 `.releases` 残留：HEAD 分别位于 101 / 83 个 ref 的祖先链上，`status --porcelain` 均 0 条，`.git/worktrees` 无对应 admin 目录 → 纯衍生工件，可重建。
+  - `review-origin-a72df001.git`：`is-bare=true`，123 个 ref 全部在主仓库可达（missing=0）；但 3351 个 dangling 对象（含 `WIP on main` commit `510108132`，2026-09-22）仅存于该 bare 库 → 先落盘清单后删。
+  - `statebraid-*` 三个：`.git` 是目录 = 独立克隆（remote 指向 `research/StateBraid`），**不是本仓库 linked worktree**；且含与上游不同的未提交改动（`cache/policy.py` 69 行、`tests/test_cache_policy.py` 133 行，新增 `cache/canary.py`、`tests/test_cache_canary.py`）→ 先归档后删。
+- 无损凭据（删除前建立）：`.backup/triage-step3/stray-20261105-171610/`
+  - `statebraid-{merged,shadow-a,shadow-b}.{tracked.diff,untracked.tgz,HEAD,status}`：diff 302 / 261 / 41 行；tgz 含 `canary.py` + `test_cache_canary.py`（shadow-a 无未跟踪文件，空包含义为无内容，符合核查结论）。
+  - `review-origin.refs`（123 行）、`review-origin.orphans`（3351 行 sha 清单）、`decisions.jsonl`（3 条运行期决策记录）。
+  - 恢复方式：先 `git worktree add --detach <tmp> <该树 HEAD>`，再 `git apply` 对应 `tracked.diff` + `tar -xzf` 未跟踪包。review-origin 的 dangling 对象无法由清单还原二进制，清单仅作审计痕迹（该目录为 bare 镜像，123 个 ref 已确认主仓库全覆盖）。
+- 结果：`.releases` 648M → **457M**（剩 3 棵保留 + `.bak-dd9dae4db`）；`.worktrees` 498M → **0B**（空目录保留，程序按需重建）；注册 worktree 仍 **4**（main + 3 棵 release）。
+- 未触碰：`.releases/.bak-dd9dae4db`（96M，备份命名、不在本次「2 处 + 5 个」授权清单内，待裁定）；主树 18 个并发 WIP（他人会话）。
+- 四服务删除前后 alive，head 均 `c390e67b12d8`、generation 391、`restart_required=false`：web 76872 / feishu 76956 / learning 77206 / wecom 44098。
+- 脚本：`.backup/triage-step3/clean-stray.sh`（默认 dry-run，`DRY_RUN=0` 实删）。
