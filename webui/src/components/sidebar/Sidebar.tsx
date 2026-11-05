@@ -15,6 +15,7 @@ import {
   useMainView,
   useSessions,
   useSidebarView,
+  type SidebarView,
 } from "../../core/stores";
 import { conversationStore, prefillHandoffComposer } from "../../core/conversation";
 import { loadHistory } from "../../core/conversation";
@@ -23,7 +24,11 @@ import { FileTree } from "./FileTree";
 import { EvolutionPanel } from "./EvolutionPanel";
 import { InterjectMetricsPanel } from "./InterjectMetricsPanel";
 import { EscalationPanel, EscalationWatcher } from "./EscalationCenter";
+import { LaneBoard } from "./LaneBoard";
 import { zh } from "../../i18n/zh";
+
+// 第 7 tab「协同」view 值，已并入 stores.SidebarView 联合（stores.ts:8）。
+const LANES_VIEW: SidebarView = "lanes";
 
 export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const caps = useCapabilities();
@@ -322,6 +327,14 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
         >
           📊 时延
         </button>
+        <button
+          type="button"
+          className={`v2-tab ${view === LANES_VIEW ? "active" : ""}`}
+          onClick={() => sidebarViewStore.setView(LANES_VIEW)}
+          data-testid="tab-lanes"
+        >
+          🛤 协同
+        </button>
       </div>
       {actionError ? (
         <div className="v2-sidebar-error" role="status" data-testid="sidebar-action-error">
@@ -336,6 +349,8 @@ export function Sidebar({ collapsed, onNavigate }: { collapsed: boolean; onNavig
         <EscalationPanel />
       ) : view === "metrics" ? (
         <InterjectMetricsPanel sessionId={currentId ?? ""} />
+      ) : view === LANES_VIEW ? (
+        <LaneBoard />
       ) : view === "archived" ? (
         <div className="v2-archived-list" data-testid="archived-list">
           {archivedError ? (

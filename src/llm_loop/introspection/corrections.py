@@ -1,6 +1,6 @@
 """架构自省工具与 AI 自主修正工具薄壳聚合（T2，design §2.1.4.4）.
 
-工具 schema 与执行逻辑拆分至 10 个 registry_*.py 模块; 本壳保留
+工具 schema 与执行逻辑拆分至 14 个 registry_*.py 模块; 本壳保留
 CorrectionContext + 注入通道 + 审计落盘 + 聚合分派。工具总数不削减，零回归。
 """
 
@@ -14,7 +14,7 @@ from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
-# T2: 工具注册拆分聚合（10 个 registry 模块，顺序即 tool_defs/execute 遍历序）
+# T2: 工具注册拆分聚合（14 个 registry 模块，顺序即 tool_defs/execute 遍历序）
 from llm_loop.introspection import (
     registry_correction,
     registry_eval,
@@ -23,6 +23,8 @@ from llm_loop.introspection import (
     registry_feishu,
     registry_goal,
     registry_introspection,
+    registry_lane,
+    registry_merge_queue,
     registry_model,
     registry_playwright,
     registry_recovery,
@@ -38,6 +40,8 @@ _REGISTRIES = (
     registry_experience,
     registry_evolution,
     registry_goal,
+    registry_lane,
+    registry_merge_queue,
     registry_eval,
     registry_feishu,
     registry_skills,

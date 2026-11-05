@@ -64,6 +64,7 @@ from .auth import (
     request_is_trusted_local,
     session_cookie_value,
 )
+from .coordination_routes import router as coordination_board_router
 from .human_turn_queue import HumanTurnQueue, QueuePersistError
 from .local_runtime_admin import router as local_runtime_router
 from .provider_routes import router as provider_admin_router
@@ -107,6 +108,7 @@ router = APIRouter()
 router.include_router(provider_admin_router)
 router.include_router(local_runtime_router)
 router.include_router(video_router)
+router.include_router(coordination_board_router)
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:
