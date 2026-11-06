@@ -847,6 +847,15 @@ def coordination_snapshot(
         elif outside_active == 0:
             degraded.append(f"window_empty: 无 active goal（最近 {int(window_hours)}h 内亦无活动）")
 
+    # EVO-20261106-b0806c32: 跨会话 EVO 完成待登记聚合可见（不静默失败）。
+    evolution_handoffs: list[dict] = []
+    try:
+        from llm_loop.introspection.evolution_handoff import list_pending_handoffs
+
+        evolution_handoffs = list_pending_handoffs(audit_dir)
+    except Exception:  # noqa: BLE001 — handoff 视图失败不连坐主视图
+        evolution_handoffs = []
+
     return {
         "ok": True,
         "generated_at": now.isoformat(),
@@ -859,6 +868,7 @@ def coordination_snapshot(
         "running": running,
         **events_block,
         **claims_block,
+        "evolution_completion_handoffs": evolution_handoffs,
         "degraded": degraded,
     }
 
@@ -902,6 +912,15 @@ def render_coordination(snapshot: dict) -> str:
             f"self={s.get('is_self')} goals={len(s.get('goals') or [])} "
             f"open={s.get('open_tasks')} blocked={s.get('blocked_tasks')}"
             f" last={s.get('last_activity_at') or '-'}"
+        )
+    handoffs = snapshot.get("evolution_completion_handoffs") or []
+    if handoffs:
+        # EVO-20261106-b0806c32: 待登记条目聚合可见——owner 会话看到即可一键落账
+        ids = ", ".join(str(h.get("suggestion_id")) for h in handoffs[:5])
+        lines.append(
+            f"  ⏳ evolution 完成待登记 ×{len(handoffs)}（owner 会话重调 evolution_complete"
+            f" 自动取用暂存参数）: {ids}"
+            + (" 等" if len(handoffs) > 5 else "")
         )
     running = snapshot.get("running") or {}
     if running:

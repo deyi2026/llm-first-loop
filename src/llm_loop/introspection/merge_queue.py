@@ -1179,12 +1179,21 @@ def build_merge_advice(store: MergeQueueStore, *, main_head: str = "") -> dict:
             reason_codes.add(f"{card['lane_id']}:paths_overlap")
         del card["_disjoint"]
 
-    return {
+    result = {
         "generated_at": system_local_now().isoformat(),
         "main_head": head,
         "lanes": cards,
         "reason_codes": sorted(reason_codes),
     }
+    # EVO-20261106-fead950b: 多 lane 并行时固化「合并后统一一次 push 审查」路线
+    # 提示——各 lane 独立整树审查会互相 stale（资格绑定产物指纹），且成本翻倍。
+    if len(cards) > 1:
+        result["push_review_route_hint"] = (
+            "多 lane 收敛建议: 各 lane 依次 merge --no-ff 入本地 main 后，"
+            "对合流结果做一次整树 push 审查、一次 push；"
+            "不要按 lane 逐个审查推送（先过审的资格会被后合并内容作废）。"
+        )
+    return result
 
 
 # ---------------- 自动化开关（S0 显式不执行） ----------------

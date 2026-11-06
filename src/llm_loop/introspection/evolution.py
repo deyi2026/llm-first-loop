@@ -122,6 +122,11 @@ class EvolutionStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / "evolution_suggestions.jsonl"
 
+    @property
+    def dir(self) -> Path:
+        """审计目录（EVO-20261106-b0806c32 handoff 暂存处挂载点）."""
+        return self._dir
+
     @staticmethod
     def _touches_boundary(impact_scope: str, content: str) -> bool:
         """范围边界判定（EVOLVE-03）: 涉安全/协议/数据完整性 → 需人工决策."""

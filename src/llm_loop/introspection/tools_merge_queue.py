@@ -316,11 +316,19 @@ def run_lane_queue_status(ctx: Any, host: Any, args: dict) -> ToolResult:
             }
         )
     holder_lane = (holder or {}).get("lane_id") if holder else ""
+    # EVO-20261106-fead950b: 有 stale 项（main 前进作废 base）时提示统一收敛建议，
+    # 避免逐 lane 独立审查推送（资格互相作废）。
+    stale_count = sum(1 for r in rows if r.get("stale"))
+    route_hint = (
+        " ⏭ stale×" + str(stale_count) + ": 建议各 lane 依次 merge --no-ff 入本地 main 后统一一次整树 push 审查"
+        if stale_count
+        else ""
+    )
     return _ok(
         {"main_head": main_head, "slot_holder": holder, "entries": rows},
         tool,
         f"[队列 {len(rows)} 项] main={main_head[:12] or '-'} "
-        f"slot={holder_lane or '空闲'}",
+        f"slot={holder_lane or '空闲'}" + route_hint,
     )
 
 
@@ -334,11 +342,12 @@ def run_lane_merge_advice(ctx: Any, host: Any, args: dict) -> ToolResult:
         card = build_merge_advice(store, main_head=str(args.get("main_head") or ""))
     except Exception as exc:  # noqa: BLE001
         return _fail(f"生成建议卡失败: {exc}", tool, "advice_failed")
-    return _ok(
-        card,
-        tool,
-        f"[S0 建议卡] 项数={len(card.get('lanes') or [])}（仅建议, 未执行合并）",
-    )
+    # EVO-20261106-fead950b: 多 lane 时建议卡回执带统一收敛路线提示
+    hint = str(card.get("push_review_route_hint") or "")
+    summary = f"[S0 建议卡] 项数={len(card.get('lanes') or [])}（仅建议, 未执行合并）"
+    if hint:
+        summary += f"\n[收敛路线] {hint}"
+    return _ok(card, tool, summary)
 
 
 def run_lane_queue_confirm(ctx: Any, host: Any, args: dict) -> ToolResult:
