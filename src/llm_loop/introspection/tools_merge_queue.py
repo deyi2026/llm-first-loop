@@ -100,9 +100,10 @@ TOOL_LANE_QUEUE_SUBMIT_DEF: dict[str, Any] = {
         "机检, 不执行任何 git 合并/推送; 机检全过 → ready_for_confirm（交还全局串行槽,"
         "等人工确认）。失败对策: merge_slot_busy 表示他人正占用, 看 holder 后重试;"
         "机检不过返回 failed 与 reason_codes, 修复后重新 submit。"
-        "注意 reason_code=verify_layer_not_enabled 时不要重试: verify 凭证层当前无签发者"
-        "（生产代码只读不写）, 补 verify_ref 或 requeue 都不会变绿, 只会再消耗一条"
-        "不可逆的 failed 队列项。"
+        "注意 reason_code=verify_layer_not_enabled 时不要盲目重试: 该码表示层内"
+        "尚无任何凭证——先经 merge-review-gate 审查 PASS 并用 scripts/"
+        "issue_verify_receipt.py --apply 签发（verify_ref={lane_id}:{base_sha 前8}），"
+        "再带凭证 submit；无凭证重试只会再消耗一条不可逆的 failed 队列项。"
     ),
     "parameters": {
         "type": "object",

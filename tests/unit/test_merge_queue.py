@@ -24,6 +24,7 @@ from llm_loop.introspection.merge_queue import (
     automation_status,
     build_merge_advice,
     check_verify_covers_base,
+    load_receipts,
     verify_layer_status,
 )
 from llm_loop.timekeeping import system_local_now
@@ -434,3 +435,92 @@ def test_verify_enabled_layer_keeps_original_semantics(tmp_path: Path) -> None:
     entry = {"lane_id": "lane-x", "base_main_sha": "a" * 40, "verify_ref": "vr-missing"}
     res = check_verify_covers_base(entry, {"vr-other": {"receipt_id": "vr-other"}}, layer=layer)
     assert res["reason_code"] == "verify_required"
+
+
+# ---------- EVO-20261106-7782d438：verify 凭证签发者 ----------
+
+
+def test_issue_verify_receipt_roundtrip(tmp_path: Path) -> None:
+    """签发 → 层启用 → 机检 d 通过（历史上无签发者导致 d 恒 fail 的闭环）。"""
+    from llm_loop.introspection.merge_queue import issue_verify_receipt
+
+    p = tmp_path / "verify_receipts.jsonl"
+    base = "b" * 40
+    row = issue_verify_receipt(
+        p, lane_id="lane-iso", base_sha=base, scope="merge-review PASS", ttl_s=3600
+    )
+    assert row["receipt_id"] == "lane-iso:" + base[:8]
+    assert row["result"] == "pass" and row["ttl_s"] == 3600
+    layer = verify_layer_status(p)
+    assert layer["enabled"] is True and layer["receipt_count"] == 1
+    receipts = load_receipts(p)
+    entry = {
+        "lane_id": "lane-iso",
+        "base_main_sha": base,
+        "verify_ref": row["receipt_id"],
+    }
+    res = check_verify_covers_base(entry, receipts, layer=layer)
+    assert res["verdict"] == "pass", res
+
+
+def test_issue_verify_receipt_gates_still_block(tmp_path: Path) -> None:
+    """RULE-AI-35 应拦保持：签发者存在≠门放松——无凭证/错 lane/base 前进/过期仍拦。"""
+    from llm_loop.introspection.merge_queue import issue_verify_receipt
+
+    p = tmp_path / "verify_receipts.jsonl"
+    base = "c" * 40
+    row = issue_verify_receipt(p, lane_id="lane-g", base_sha=base, ttl_s=3600)
+    receipts = load_receipts(p)
+    layer = verify_layer_status(p)
+    # 1) 无凭证的其它 lane → verify_required（不是 layer_not_enabled：层已启用）
+    res = check_verify_covers_base(
+        {"lane_id": "lane-h", "base_main_sha": base}, receipts, layer=layer
+    )
+    assert res["reason_code"] == "verify_required"
+    # 2) 凭证 lane 不符 → verify_invalid
+    res2 = check_verify_covers_base(
+        {"lane_id": "lane-h", "base_main_sha": base, "verify_ref": row["receipt_id"]},
+        receipts,
+        layer=layer,
+    )
+    assert res2["verdict"] == "fail" and res2["reason_code"] in ("verify_invalid", "verify_stale")
+    # 3) base 前进 → verify_stale（旧凭证不覆盖新 base）
+    res3 = check_verify_covers_base(
+        {
+            "lane_id": "lane-g",
+            "base_main_sha": "d" * 40,
+            "verify_ref": row["receipt_id"],
+        },
+        receipts,
+        layer=layer,
+    )
+    assert res3["verdict"] == "fail" and res3["reason_code"] == "verify_stale"
+    # 4) 过期 → verify_invalid（ttl 极短，sleep 跨过窗口）
+    import time
+
+    p2 = tmp_path / "verify_receipts2.jsonl"
+    issue_verify_receipt(p2, lane_id="lane-ttl", base_sha=base, ttl_s=0)
+    receipts2 = load_receipts(p2)
+    layer2 = verify_layer_status(p2)
+    time.sleep(0.05)
+    res4 = check_verify_covers_base(
+        {"lane_id": "lane-ttl", "base_main_sha": base, "verify_ref": "lane-ttl:" + base[:8]},
+        receipts2,
+        layer=layer2,
+    )
+    assert res4["verdict"] == "fail" and res4["reason_code"] in ("verify_invalid", "verify_stale")
+
+
+def test_issue_verify_receipt_idempotent_reissue(tmp_path: Path) -> None:
+    """同 lane+base 重签：末行胜出、计数不膨胀（append-only 幂等键语义）。"""
+    from llm_loop.introspection.merge_queue import issue_verify_receipt
+
+    p = tmp_path / "verify_receipts.jsonl"
+    base = "e" * 40
+    r1 = issue_verify_receipt(p, lane_id="lane-i", base_sha=base, scope="first")
+    r2 = issue_verify_receipt(p, lane_id="lane-i", base_sha=base, scope="re-verified")
+    assert r1["receipt_id"] == r2["receipt_id"]
+    receipts = load_receipts(p)
+    assert len(receipts) == 1
+    assert receipts[r2["receipt_id"]]["scope"] == "re-verified"
+    assert len(p.read_text(encoding="utf-8").splitlines()) == 2  # append-only 未删历史

@@ -30,9 +30,14 @@ description: 合并 main 审查闸（RULE-AI-34）——分支 Goal/任务收口
 - fast-forward：`git checkout main && git merge --ff-only <branch>`，核对合并后 `git rev-parse main` == 合并前分支 HEAD。
 - 需 merge commit/冲突解决：解决点留痕，合并后跑受影响 focused gate。
 - 合并后 `git log --oneline -3` 与回执 SHA 一致才算收口；Goal complete 的 evidence_refs 引用本闸回执。
+- **PASS 后签发 verify 凭证（EVO-20261106-7782d438，lane_queue_submit 机检 d 前置）**：
+  `python3 scripts/issue_verify_receipt.py --apply --lane-id <lane_id> --base-sha <base_main_sha> --scope "<审查覆盖摘要>" --evidence "<PASS 回执路径>"`
+  verify_ref 由 receipt_id 决定（`{lane_id}:{base_sha 前8}`），lane 登记/入队时原样引用；
+  base 前进后旧凭证判 verify_stale，须重审重签。凭证只对应真实 PASS——禁止预签/补签。
 
 ## 回执（落盘 docs/governance/receipts/）
 {"gate": "merge", "reviewer": "<subagent_id>", "verdict": "PASS|REVISE|BLOCK",
  "goal_id": "...", "branch": "...", "based_on_main": true, "commits": ["..."],
  "merge_mode": "ff|merge-commit", "conflicts_resolved": [], "focused_gates": ["..."],
- "main_sha_after": "...", "branch_disposition": "deleted|kept:<reason>"}
+ "main_sha_after": "...", "branch_disposition": "deleted|kept:<reason>",
+ "verify_receipt_id": "<lane_id>:<base_sha 前8>（PASS 后签发，见合并执行纪律）"}

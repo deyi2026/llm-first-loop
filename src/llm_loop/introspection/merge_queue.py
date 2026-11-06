@@ -61,7 +61,7 @@ from typing import Any
 
 from llm_loop.introspection.lane import _normalize_paths
 from llm_loop.introspection.task_claim import overlapping_paths
-from llm_loop.timekeeping import system_local_now
+from llm_loop.timekeeping import system_local_now, system_local_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -256,15 +256,15 @@ VERIFY_LAYER_DISABLED = "verify_layer_not_enabled"
 
 
 def verify_layer_status(receipts_path: str | Path) -> dict:
-    """verify 凭证层的**自述**状态（EVO-20261105-501db776）。
+    """verify 凭证层的**自述**状态（EVO-20261105-501db776 立项；7782d438 补签发者）。
 
-    实测事实：生产代码只有 ``load_receipts`` 这一个读者，``src/`` 与 ``scripts/``
-    里没有任何写入者；唯一写 ``verify_receipts.jsonl`` 的是
-    ``tests/unit/test_merge_queue.py`` 的 ``_write_receipt`` 测试 helper。
-    所以真实环境下该层恒为空，preflight 机检 d 对任何 lane 都必然 fail。
+    EVO-20261106-7782d438 起，签发者 = ``issue_verify_receipt``（merge-review-gate
+    审查 PASS 后调用 / ``scripts/issue_verify_receipt.py --apply``）。此前生产代码
+    只有 ``load_receipts`` 一个读者、零写入者，机检 d 对任何 lane 恒 fail。
 
-    区分「层未启用」与「凭证缺失/过期/stale」是必要的：前者无论重试、重验还是
-    重新登记 lane 都不会变绿，调用方不该为此反复消耗 lane 登记与提交成本。
+    区分「层未启用」与「凭证缺失/过期/stale」仍必要：前者无论重试、重验还是
+    重新登记 lane 都不会变绿（尚未签发过任何凭证），调用方不该为此反复消耗
+    lane 登记与提交成本。
     """
     count = 0
     file_exists = False
@@ -282,8 +282,8 @@ def verify_layer_status(receipts_path: str | Path) -> dict:
     }
     if not enabled:
         out["detail"] = (
-            "生产代码只读不写该文件，无任何签发者；verify 层当前未启用"
-            "（不代表本次改动验证失败）"
+            "verify 层未启用（尚无任何已签发凭证）；签发者=issue_verify_receipt"
+            "（merge-review-gate PASS 后签发），不代表本次改动验证失败"
         )
     return out
 
@@ -390,6 +390,53 @@ def load_receipts(path: Path) -> dict[str, dict]:
     except OSError:
         logger.warning("verify_receipts 读取失败（按凭证缺失处理）: %s", path, exc_info=True)
     return out
+
+
+def issue_verify_receipt(
+    receipts_path: str | Path,
+    *,
+    lane_id: str,
+    base_sha: str,
+    scope: str = "",
+    ttl_s: int = 86400,
+    result: str = "pass",
+    head_sha: str = "",
+    reviewer: str = "",
+    evidence: str = "",
+) -> dict:
+    """EVO-20261106-7782d438：verify 凭证签发者。
+
+    历史缺陷：verify 层只有读者（``load_receipts``/``check_verify_covers_base``）
+    没有写入者，``lane_queue_submit`` 机检 d 对任何 lane 恒
+    ``verify_layer_not_enabled``——每次提交浪费一次 lane 登记 + 一条不可逆
+    队列项（2026-11-06 实测 mq-34e40005 / mq-3cf58f44）。
+
+    幂等键：``receipt_id = f"{lane_id}:{base_sha[:8]}"``——同 lane+base 重验
+    追加即"末行胜出"（``load_receipts`` 语义）；base 前进后键自然变化，
+    旧凭证经机检 d 判 ``verify_stale`` 强制重验。append-only JSONL。
+    签发面约定：merge-review-gate 审查 PASS 后调用（或 CLI
+    ``scripts/issue_verify_receipt.py --apply``），凭证内容须对应真实审查。
+    """
+    if not lane_id or not base_sha:
+        raise ValueError("issue_verify_receipt 需要 lane_id 与 base_sha（fail-closed）")
+    row = {
+        "receipt_id": f"{lane_id}:{str(base_sha)[:8]}",
+        "lane_id": str(lane_id),
+        "base_sha": str(base_sha),
+        "head_sha": str(head_sha or ""),
+        "result": str(result or "pass").strip().lower(),
+        "scope": str(scope or ""),
+        "reviewer": str(reviewer or ""),
+        "evidence": str(evidence or ""),
+        "created_at": system_local_now_iso(),
+        "ttl_s": int(ttl_s),
+        "evo": "EVO-20261106-7782d438",
+    }
+    path = Path(receipts_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    return row
 
 
 # ---------------- 存储 ----------------
