@@ -34,6 +34,9 @@ interface ListResp {
    * 保证待审项不被更新的终态记录挤出可见范围。 */
   pendingRequests: EscalationRequest[];
   pending_count: number;
+  /** ESC-08（FR-08）: 存储故障如实呈现——503/网络失败时设置，
+   * 面板渲染错误横幅而非歧义空列表（"待审批 (0)"）。 */
+  error?: string;
 }
 
 interface DetailResp {
@@ -46,7 +49,7 @@ interface DetailResp {
 
 const POLL_MS = 5000;
 
-async function fetchEscalations(): Promise<ListResp | null> {
+async function fetchEscalations(): Promise<ListResp> {
   try {
     // ESC-07（FR-07）: 待审队列用 pending 专用查询穿透历史窗口；
     // 历史视图保持"最新 50 条"。两请求并行，任一失败按整次加载失败处理。
@@ -54,7 +57,17 @@ async function fetchEscalations(): Promise<ListResp | null> {
       fetch("/api/v1/escalation/list?limit=50"),
       fetch("/api/v1/escalation/list?status=pending&limit=50"),
     ]);
-    if (!allR.ok || !pendingR.ok) return null;
+    if (!allR.ok || !pendingR.ok) {
+      // ESC-08: 503 等失败态不得折叠成"空列表"——否则审批者会误读为
+      // "没有待审"，恰是后端 503 改造要消除的歧义。读出 error 字段如实上抛。
+      const body = (await pendingR.json().catch(() => ({}))) as { error?: string };
+      return {
+        requests: [],
+        pendingRequests: [],
+        pending_count: 0,
+        error: body.error || `审批面板读取失败（${allR.status}/${pendingR.status}），请检查服务端`,
+      };
+    }
     const all = (await allR.json()) as { requests?: EscalationRequest[]; pending_count?: number };
     const pend = (await pendingR.json()) as { requests?: EscalationRequest[]; pending_count?: number };
     return {
@@ -62,8 +75,8 @@ async function fetchEscalations(): Promise<ListResp | null> {
       pendingRequests: pend.requests || [],
       pending_count: pend.pending_count ?? all.pending_count ?? 0,
     };
-  } catch {
-    return null;
+  } catch (err) {
+    return { requests: [], pendingRequests: [], pending_count: 0, error: `网络错误: ${String(err)}` };
   }
 }
 
@@ -119,11 +132,11 @@ function useEscalations(enabled = true) {
   const [data, setData] = useState<ListResp | null>(null);
   const [loadErr, setLoadErr] = useState(false);
   const load = useCallback(() => {
+    // ESC-08: fetchEscalations 永不返回 null（失败态内联 error 字段），
+    // 503/网络错误以横幅呈现而非静默空列表。
     void fetchEscalations().then((d) => {
-      if (d) {
-        setData(d);
-        setLoadErr(false);
-      } else setLoadErr(true);
+      setData(d);
+      setLoadErr(false);
     });
   }, []);
   useEffect(() => {
@@ -327,6 +340,11 @@ export function EscalationWatcher() {
           </button>
         </div>
         {resultMsg && <div className="v2-evo-action-msg">{resultMsg}</div>}
+        {data?.error && (
+          <div className="v2-esc-hash warn" data-testid="esc-store-error">
+            ⚠️ {data.error}——待审列表当前不可用，请勿据此判断"无待审"
+          </div>
+        )}
         {pending
           .filter((r) => !mutedIds.has(r.id))
           .map((r) => (
@@ -367,6 +385,11 @@ export function EscalationPanel() {
         </button>
       </div>
       {loadErr && <div className="v2-sidebar-error">提权列表加载失败</div>}
+      {data?.error && (
+        <div className="v2-esc-hash warn" data-testid="esc-store-error">
+          ⚠️ {data.error}——待审列表当前不可用，请勿据此判断"无待审"
+        </div>
+      )}
       {actionMsg && (
         <div className="v2-evo-action-msg" data-testid="esc-panel-msg">
           {actionMsg}

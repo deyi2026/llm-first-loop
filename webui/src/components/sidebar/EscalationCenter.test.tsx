@@ -193,3 +193,19 @@ describe("EscalationPanel/Watcher 待审独立查询（ESC-07）", () => {
     expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
   });
 });
+
+describe("ESC-08 存储故障前端如实呈现", () => {
+  it("list 503 → 错误横幅（esc-store-error）而非歧义空列表", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("status=pending")) {
+        return new Response(JSON.stringify({ error: "审批存储读取失败（详情见服务端日志）", requests: null, pending_count: null }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ error: "审批存储读取失败（详情见服务端日志）", requests: null, pending_count: null }), { status: 503 });
+    }));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-store-error")).toBeInTheDocument());
+    expect(screen.getByTestId("esc-store-error")).toHaveTextContent("审批存储读取失败");
+    expect(screen.getByTestId("esc-store-error")).toHaveTextContent("勿据此判断");
+  });
+});

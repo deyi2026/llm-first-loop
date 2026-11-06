@@ -19,7 +19,7 @@
 
 1. **独立审查（RULE-AI-28 full_test）4 轮**：
    - R1 REVISE（P1×1 detail 判别冲突 + P2×5）→ 全部修复
-   - R2 PASS（candidate e09fde130）
+   - R2 PASS（candidate a4c534d7）
    - lint 提交后产物变化 → R3 PASS（candidate ad1fa92f）
    - 两新红归因处置（baseline 登记 + worktree .venv 锚）→ R4 PASS（candidate 24fec997，覆盖 8 路径含 baseline json）
 2. **scripts/ci_gate.sh 全链路（exit 0）**：
