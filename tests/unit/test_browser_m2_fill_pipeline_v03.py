@@ -31,7 +31,7 @@ class _FillWs:
             fn = req["params"]["functionDeclaration"]
             if "return String(this.value" in fn:  # _FILL_BEFORE_JS
                 result = {"result": {"type": "string", "value": self._before_reply}}
-            elif fn.startswith("function(expected)"):  # _FILL_READBACK_JS
+            elif fn.startswith("async function(expected)"):  # _FILL_READBACK_JS
                 result = {"result": {"type": "string", "value": self._readback_reply}}
             else:
                 result = {"result": {"type": "undefined"}}
@@ -103,6 +103,13 @@ def test_fill_replace_focuses_selects_inserttext_then_readback(monkeypatch) -> N
         assert "hello-secret" not in body
         # legacy assignment signature must not appear in the new pipeline
         assert "this.value=next" not in body
+    # readback waits for framework re-render (async script + awaitPromise)
+    readback_req = next(
+        req for req in ws.requests
+        if req["method"] == "Runtime.callFunctionOn"
+        and req["params"]["functionDeclaration"].startswith("async function(expected)")
+    )
+    assert readback_req["params"]["awaitPromise"] is True
 
 
 def test_fill_append_reads_base_cursor_to_end_expected_concat(monkeypatch) -> None:

@@ -244,7 +244,18 @@ _FILL_APPEND_JS = (
     " this.setSelectionRange(n,n); }"
 )
 _FILL_READBACK_JS = (
-    "function(expected){ const actual=String(this.value==null?'':this.value);"
+    # async: wait one animation frame + a macrotask so framework re-renders
+    # (controlled components reverting the DOM value on state reconciliation)
+    # land BEFORE the value is read back - an immediate read would only
+    # verify the pre-reconciliation DOM state (maxlength catches sync, but
+    # controlled reversion is async).
+    "async function(expected){"
+    " await new Promise((resolve)=>{"
+    "  if (typeof requestAnimationFrame === 'function'){"
+    "   requestAnimationFrame(()=>setTimeout(resolve,0));"
+    "  } else { setTimeout(resolve,50); }"
+    " });"
+    " const actual=String(this.value==null?'':this.value);"
     " return actual===String(expected) ? null : actual; }"
 )
 # T-16 (audit §402/§405): LFL_BROWSER_INPUT_PIPELINE=off keeps the legacy
@@ -997,11 +1008,14 @@ class CdpBrowserMutationActuator:
         object_id: str,
         function: str,
         arguments: list[dict[str, Any]] | None = None,
+        await_promise: bool = False,
     ) -> Any:
         """M2 B-01: fixed actuator script whose return value is consumed.
 
         Same allowlist/exception discipline as _call; the callFunctionOn
         result value (readback verification) is returned to the caller.
+        await_promise=True lets the fixed script wait for framework
+        re-renders before reporting the landed value.
         """
         result = session.send(
             "Runtime.callFunctionOn",
@@ -1010,7 +1024,7 @@ class CdpBrowserMutationActuator:
                 "functionDeclaration": function,
                 "arguments": arguments or [],
                 "returnByValue": True,
-                "awaitPromise": False,
+                "awaitPromise": bool(await_promise),
             },
         )
         if result.get("exceptionDetails"):
@@ -1343,7 +1357,8 @@ class CdpBrowserMutationActuator:
                 session.send("Input.insertText", {"text": text})
                 expected = text if mode == "replace" else base + text
                 actual = self._call_value(
-                    session, object_id, _FILL_READBACK_JS, [{"value": expected}]
+                    session, object_id, _FILL_READBACK_JS, [{"value": expected}],
+                    await_promise=True,
                 )
                 input_pipeline = "insert_text"
                 if actual is not None:
