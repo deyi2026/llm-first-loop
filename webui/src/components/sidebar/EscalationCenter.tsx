@@ -1,7 +1,8 @@
 // 提权闭环 Web 端（EVO-20260923-c58a0bb1 accepted + 用户批准 2026-09-23）:
 // EscalationWatcher = 全局挂载的弹窗（pending 出现即弹，人工批准/拒绝）
 // EscalationPanel   = 侧栏"提权"页（历史 + 待决列表，与弹窗共用数据层）
-// 后端契约: GET /api/v1/escalation/list, POST /api/v1/escalation/review
+// 后端契约: GET /api/v1/escalation/list, GET /api/v1/escalation/detail,
+//           POST /api/v1/escalation/review
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 
@@ -26,18 +27,51 @@ export interface EscalationRequest {
 
 interface ListResp {
   requests: EscalationRequest[];
+  /** ESC-07（FR-07）: 待审专用列表——独立于"最新 50 条"历史窗口，
+   * 保证待审项不被更新的终态记录挤出可见范围。 */
+  pendingRequests: EscalationRequest[];
   pending_count: number;
+}
+
+interface DetailResp {
+  id: string;
+  command: string; // 完整原文，不截断（ESC-05 / FR-05）
+  command_sha256?: string;
+  command_len?: number;
+  error?: string;
 }
 
 const POLL_MS = 5000;
 
 async function fetchEscalations(): Promise<ListResp | null> {
   try {
-    const r = await fetch("/api/v1/escalation/list?limit=50");
-    if (!r.ok) return null;
-    return (await r.json()) as ListResp;
+    // ESC-07（FR-07）: 待审队列用 pending 专用查询穿透历史窗口；
+    // 历史视图保持"最新 50 条"。两请求并行，任一失败按整次加载失败处理。
+    const [allR, pendingR] = await Promise.all([
+      fetch("/api/v1/escalation/list?limit=50"),
+      fetch("/api/v1/escalation/list?status=pending&limit=50"),
+    ]);
+    if (!allR.ok || !pendingR.ok) return null;
+    const all = (await allR.json()) as { requests?: EscalationRequest[]; pending_count?: number };
+    const pend = (await pendingR.json()) as { requests?: EscalationRequest[]; pending_count?: number };
+    return {
+      requests: all.requests || [],
+      pendingRequests: pend.requests || [],
+      pending_count: pend.pending_count ?? all.pending_count ?? 0,
+    };
   } catch {
     return null;
+  }
+}
+
+async function fetchEscalationDetail(id: string): Promise<DetailResp | { error: string; status: number }> {
+  try {
+    const r = await fetch(`/api/v1/escalation/detail?id=${encodeURIComponent(id)}`);
+    const d = (await r.json().catch(() => ({}))) as DetailResp;
+    if (!r.ok) return { error: d?.error || `失败(${r.status})`, status: r.status };
+    return d;
+  } catch (err) {
+    return { error: `请求失败: ${String(err)}`, status: 0 };
   }
 }
 
@@ -121,7 +155,23 @@ function PendingCard({
   onDecide: (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => void;
 }) {
   const [note, setNote] = useState("");
+  // ESC-05（FR-05）: 截断命令必须先看完整原文才能批准——
+  // "看到多少"决定"能否负责任地点批准"。
+  const [fullCmd, setFullCmd] = useState<string | null>(null);
+  const [viewErr, setViewErr] = useState("");
+  const mustReadFull = !!req.command_truncated;
+  const viewedFull = !mustReadFull || fullCmd !== null;
   const badge = statusBadge(req.status);
+  const loadFull = () => {
+    setViewErr("");
+    void fetchEscalationDetail(req.id).then((d) => {
+      if ("status" in d) {
+        setViewErr(`完整命令加载失败: ${d.error}`);
+        return;
+      }
+      setFullCmd(d.command);
+    });
+  };
   return (
     <div className="v2-evo-item pending" data-testid={`esc-item-${req.id}`}>
       <div className="v2-evo-row">
@@ -136,11 +186,27 @@ function PendingCard({
           🔗 命令指纹 sha256:{req.command_sha256 ? req.command_sha256.slice(0, 16) : "—"} · 长度 {req.command_len ?? "？"}
         </div>
       )}
-      {req.command_truncated && (
+      {mustReadFull && (
         <div className="v2-esc-hash warn" data-testid={`esc-truncated-${req.id}`}>
-          ⚠️ 命令过长，已按哈希绑定，请核对完整命令
+          ⚠️ 命令过长，列表中已截断显示——批准前必须先查看完整命令
         </div>
       )}
+      {mustReadFull && fullCmd === null && (
+        <button
+          type="button"
+          className="v2-evo-btn"
+          data-testid={`esc-view-full-${req.id}`}
+          onClick={loadFull}
+        >
+          查看完整命令（批准前必读）
+        </button>
+      )}
+      {fullCmd !== null && (
+        <div className="v2-esc-cmd" data-testid={`esc-fullcmd-${req.id}`} style={{ maxHeight: 260, overflow: "auto" }}>
+          <code>{fullCmd}</code>
+        </div>
+      )}
+      {viewErr && <div className="v2-esc-hash warn">{viewErr}</div>}
       <div className="v2-esc-just">{req.justification}</div>
       <textarea
         className="v2-esc-note"
@@ -153,7 +219,9 @@ function PendingCard({
         <button
           type="button"
           className="v2-evo-btn approve"
-          disabled={busy}
+          disabled={busy || !viewedFull}
+          title={mustReadFull && !viewedFull ? "请先查看完整命令再批准（列表展示为截断内容）" : undefined}
+          data-testid={`esc-approve-${req.id}`}
           onClick={() => onDecide(req.id, "approved", note, req.command_sha256 || "")}
         >
           批准
@@ -180,7 +248,8 @@ export function EscalationWatcher() {
   const prevPendingRef = useRef<Set<string>>(new Set());
   const [newArrival, setNewArrival] = useState(false);
 
-  const pending = useMemo(() => (data?.requests || []).filter((r) => r.status === "pending"), [data]);
+  // ESC-07（FR-07）: 待审列表来自专用 pending 查询，不受历史窗口挤出影响。
+  const pending = useMemo(() => data?.pendingRequests || [], [data]);
 
   // 新 pending 到达 → 重新弹窗（被"稍后处理"静音过的除外）
   useEffect(() => {
@@ -268,7 +337,8 @@ export function EscalationPanel() {
       setBusy(false);
     });
   };
-  const pending = (data?.requests || []).filter((r) => r.status === "pending");
+  // ESC-07（FR-07）: 待审走专用 pending 查询；历史保持"最新 50 条"窗口。
+  const pending = data?.pendingRequests || [];
   const history = (data?.requests || []).filter((r) => r.status !== "pending");
   return (
     <div className="v2-evo" data-testid="escalation-panel">

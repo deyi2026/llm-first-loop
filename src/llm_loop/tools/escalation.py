@@ -76,10 +76,31 @@ def _parse_ts(value: str) -> datetime | None:
     return dt
 
 
+def _effective_status(rec: dict) -> str:
+    """统一状态投影（FR-09 / ESC-09）：approved 且令牌到期 → expired.
+
+    list/get/wait_for_decision/consume 所有读取路径共用本函数，杜绝
+    "面板 approved、AI 消费报过期"的边界翻转投影。到期时间缺失/不可
+    解析时投影保持 approved——消费路径在 consume/consume_for_execution
+    内单独 fail-closed（FR-04），投影层不做隐式改判。
+    """
+    if rec.get("status") != "approved":
+        return str(rec.get("status") or "")
+    exp = str(rec.get("token_expires_at") or "")
+    if not exp:
+        return "approved"
+    exp_dt = _parse_ts(exp)
+    if exp_dt is not None and exp_dt < system_local_now():
+        return "expired"
+    return "approved"
+
+
 def _public(rec: dict) -> dict:
     """对外视图（剥除令牌——令牌只回给请求方 wait 结果，永不经 web 面板）."""
     out = dict(rec)
     out.pop("token", None)
+    # FR-09: 所有对外投影走统一状态计算（approved+到期 → expired）。
+    out["status"] = _effective_status(rec)
     # P0-5 展示-审批绑定字段兜底：旧记录缺 command_sha256/command_len 时按
     # command 原文派生（sha256 确定性，读时派生与写时一致），web 端无需特判。
     command = out.get("command")
@@ -263,6 +284,9 @@ class EscalationStore:
             for r in records:
                 if (
                     r.get("status") == "pending"
+                    # ESC-03（FR-03）: 跨进程签名失效的 pending 不得幂等复用——
+                    # 复用旧 ID 会让 AI 永远等一个面板无法审批的记录。
+                    and not r.get("_sig_unverified")
                     and r.get("command_sha256") == sha
                     and r.get("session_id") == session_id
                 ):
@@ -300,14 +324,18 @@ class EscalationStore:
     def get(self, rid: str) -> dict | None:
         for r in self._load():
             if r.get("id") == rid:
-                return r
+                # FR-09: get 同样走统一状态投影（面板/详情读到 approved+到期
+                # 记录时呈 expired，与 list/wait/consume 一致）。
+                out = dict(r)
+                out["status"] = _effective_status(r)
+                return out
         return None
 
     def list(self, status: str = "", limit: int = 50) -> list[dict]:
         out = []
         for r in reversed(self._load()):  # 新→旧
-            if status and r.get("status") != status:
-                continue
+            if status and _effective_status(r) != status:
+                continue  # FR-09: 过滤按统一投影状态，过期记录不再匹配 approved
             out.append(_public(r))
             if len(out) >= limit:
                 break
@@ -401,7 +429,11 @@ class EscalationStore:
         interval = max(0.5, min(poll_s, 2.0))
         while True:
             rec = self.get(rid)
-            if rec is None or rec.get("status") != "pending":
+            # ESC-03（FR-03）: 签名失效记录立即返回（调用方快速失败提示重新
+            # 申请），不再静默等满超时让 AI 困在永不可审批的记录上。
+            if rec is None or rec.get("_sig_unverified"):
+                return rec
+            if rec.get("status") != "pending":
                 return rec
             if time.monotonic() >= deadline:
                 return rec
@@ -434,16 +466,21 @@ class EscalationStore:
                 reason = f"请求状态为 {hit.get('status')}，非 approved"
                 return records
             exp = str(hit.get("token_expires_at") or "")
-            if exp:
-                exp_dt = _parse_ts(exp)
-                if exp_dt is None:
-                    # 过期时间戳格式损坏不阻断消费：跳过过期判定，由下方工具名/命令哈希强绑定校验兜底（fail-closed 不依赖该字段）
-                    pass
-                elif exp_dt < system_local_now():
-                    hit["status"] = "expired"
-                    self._log("token_expired", hit)
-                    reason = f"令牌已过期（{exp}）"
-                    return records
+            exp_dt = _parse_ts(exp) if exp else None
+            if exp_dt is None:
+                # ESC-04（FR-04）: 到期时间缺失/格式非法一律 fail-closed——
+                # 拒绝消费并作废令牌（置 expired+清 token），杜绝
+                # "无到期时间 = 永久有效"。下方工具名/命令哈希强绑定不再兜底放行。
+                hit["status"] = "expired"
+                hit["token"] = ""
+                self._log("token_invalid_expiry", hit)
+                reason = "令牌到期时间缺失或不可解析（fail-closed，令牌已作废）"
+                return records
+            if exp_dt < system_local_now():
+                hit["status"] = "expired"
+                self._log("token_expired", hit)
+                reason = f"令牌已过期（{exp}）"
+                return records
             if hit.get("tool_name") != tool_name:
                 reason = f"令牌绑定的工具是 {hit.get('tool_name')}，不是 {tool_name}"
                 return records
@@ -507,17 +544,20 @@ class EscalationStore:
                 reason = f"请求决定状态为 {hit.get('status')}，非 approved"
                 return records
             exp = str(hit.get("token_expires_at") or "")
-            if exp:
-                exp_dt = _parse_ts(exp)
-                if exp_dt is None:
-                    # 与 consume() 同语义：过期字段损坏不单独放行/阻断，
-                    # 由上方状态判定与下方命令哈希强绑定兜底（fail-closed）。
-                    pass
-                elif exp_dt < system_local_now():
-                    hit["status"] = "expired"
-                    self._log("token_expired", hit)
-                    reason = f"令牌已过期（{exp}）"
-                    return records
+            exp_dt = _parse_ts(exp) if exp else None
+            if exp_dt is None:
+                # ESC-04（FR-04）: 与 consume() 同语义——到期时间缺失/不可解析
+                # 一律 fail-closed 作废令牌，不再跳过过期判定。
+                hit["status"] = "expired"
+                hit["token"] = ""
+                self._log("token_invalid_expiry", hit)
+                reason = "令牌到期时间缺失或不可解析（fail-closed，令牌已作废）"
+                return records
+            if exp_dt < system_local_now():
+                hit["status"] = "expired"
+                self._log("token_expired", hit)
+                reason = f"令牌已过期（{exp}）"
+                return records
             if str(hit.get("command_sha256") or "").lower() != want_sha:
                 reason = "命令与审批时不一致（令牌绑定批准时的精确命令文本，不可移植）"
                 return records

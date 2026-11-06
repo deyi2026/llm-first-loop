@@ -1,17 +1,20 @@
-// P0-5 展示-审批绑定（防 TOCTOU）: 审批提交体必须带 expected_sha256（=列表返回的
-// command_sha256）；详情区展示命令指纹前 16 位 + 长度；409 stale_review 提示重新打开并
-// 刷新列表；400 missing_expected_sha256 作为兜底提示。
+// P0-5 展示-审批绑定（防 TOCTOU）+ M1 审批可信（2026-11-06 设计书）:
+// - 提交体必须带 expected_sha256（=列表返回的 command_sha256）
+// - ESC-05（FR-05）: 截断命令未查看完整原文前批准禁用；查看后启用并展示原文
+// - ESC-07（FR-07）: 待审走 status=pending 专用查询，不被最新 50 条历史挤出
+// - 409 stale_review 提示重新打开并刷新列表；400 missing_expected_sha256 兜底提示
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EscalationPanel, EscalationWatcher, type EscalationRequest } from "./EscalationCenter";
 
 const SHA = "1f2e3d4c5b6a79880f1e2d3c4b5a69781f2e3d4c5b6a79880f1e2d3c4b5a6978";
+const FULL_CMD = "bash -c 'for i in $(seq 1 100000); do shred -u /tmp/build-$i; done' # 完整原文尾部标记-end";
 
 function makeReq(over: Partial<EscalationRequest> = {}): EscalationRequest {
   return {
     id: "esc-1",
     tool_name: "shell",
-    command: "bash -c 'for i in $(seq 1 100000); do …'（超长展示截断）",
+    command: FULL_CMD.slice(0, 40) + "…（超长展示截断）",
     justification: "批量清理临时构建产物",
     session_id: "s1",
     status: "pending",
@@ -20,7 +23,7 @@ function makeReq(over: Partial<EscalationRequest> = {}): EscalationRequest {
     decided_by: "",
     decision_note: "",
     command_sha256: SHA,
-    command_len: 4096,
+    command_len: FULL_CMD.length,
     command_truncated: true,
     ...over,
   };
@@ -30,23 +33,38 @@ function ok(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
+/** M1 后 list 端点被调用两次：历史窗口 + pending 专用查询（ESC-07）。 */
+function listMock(pending: EscalationRequest[], history: EscalationRequest[] = []) {
+  return async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("status=pending")) return ok({ requests: pending, pending_count: pending.length });
+    if (url.includes("/api/v1/escalation/list")) return ok({ requests: history, pending_count: pending.length });
+    if (url.includes("/api/v1/escalation/detail")) {
+      const id = decodeURIComponent(url.split("id=")[1] || "");
+      const req = pending.find((r) => r.id === id);
+      if (!req) return ok({ error: "请求不存在" }, 404);
+      return ok({ id, command: FULL_CMD, command_sha256: req.command_sha256, command_len: FULL_CMD.length });
+    }
+    return ok({}, 404);
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-describe("EscalationPanel 审批（P0-5 展示-审批绑定）", () => {
-  it("详情区展示 sha256 前 16 位 + command_len + 截断提示；提交体带 expected_sha256", async () => {
+describe("EscalationPanel 审批（P0-5 + ESC-05 完整命令门控）", () => {
+  it("详情区展示 sha256 前 16 位 + command_len + 截断提示；未查看完整命令前批准禁用", async () => {
     const req = makeReq();
     const posts: Array<Record<string, unknown>> = [];
-    let reviewed = false;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/api/v1/escalation/list")) {
-        return ok({ requests: reviewed ? [] : [req], pending_count: reviewed ? 0 : 1 });
+      if (url.includes("/api/v1/escalation/")) {
+        const base = await listMock([req])(input);
+        if (base.status !== 404) return base;
       }
       if (url.includes("/api/v1/escalation/review")) {
-        reviewed = true;
         posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
         return ok({ ok: true, request: { ...req, status: "approved" } });
       }
@@ -55,18 +73,44 @@ describe("EscalationPanel 审批（P0-5 展示-审批绑定）", () => {
 
     render(<EscalationPanel />);
     await waitFor(() => expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument());
-    // 命令指纹：只展示前 16 位，完整哈希不落 DOM
     const hash = screen.getByTestId("esc-hash-esc-1");
     expect(hash).toHaveTextContent(SHA.slice(0, 16));
     expect(hash.textContent ?? "").not.toContain(SHA);
-    expect(hash).toHaveTextContent("4096");
-    // 截断命令提示：按哈希绑定
-    expect(screen.getByTestId("esc-truncated-esc-1")).toHaveTextContent("命令过长，已按哈希绑定，请核对完整命令");
+    expect(hash).toHaveTextContent(String(FULL_CMD.length));
+    expect(screen.getByTestId("esc-truncated-esc-1")).toHaveTextContent("批准前必须先查看完整命令");
 
-    fireEvent.click(screen.getByRole("button", { name: "批准" }));
+    // ESC-05: 截断命令未查看完整原文 → 批准按钮禁用
+    expect(screen.getByTestId("esc-approve-esc-1")).toBeDisabled();
+
+    // 查看完整命令 → 原文展示 → 批准启用 → 提交体带 expected_sha256
+    fireEvent.click(screen.getByTestId("esc-view-full-esc-1"));
+    await waitFor(() => expect(screen.getByTestId("esc-fullcmd-esc-1")).toHaveTextContent("完整原文尾部标记-end"));
+    expect(screen.getByTestId("esc-approve-esc-1")).toBeEnabled();
+    fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0]).toMatchObject({ id: "esc-1", decision: "approved", expected_sha256: SHA });
-    await waitFor(() => expect(screen.getByTestId("esc-panel-msg")).toHaveTextContent("已批准"));
+  });
+
+  it("未截断命令不受完整命令门控影响，可直接批准", async () => {
+    const req = makeReq({ command: "bash -lc 'echo hi'", command_truncated: false });
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const base = await listMock([req])(input);
+      if (base.status !== 404) return base;
+      if (url.includes("/api/v1/escalation/review")) {
+        posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return ok({ ok: true, request: { ...req, status: "approved" } });
+      }
+      return ok({}, 404);
+    }));
+
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-approve-esc-1")).toBeEnabled());
+    expect(screen.queryByTestId("esc-view-full-esc-1")).toBeNull();
+    fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ expected_sha256: SHA });
   });
 
   it("409 stale_review → 提示待审内容已变化并刷新列表", async () => {
@@ -76,9 +120,8 @@ describe("EscalationPanel 审批（P0-5 展示-审批绑定）", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push(url);
-      if (url.includes("/api/v1/escalation/list")) {
-        return ok({ requests: [req], pending_count: 1 });
-      }
+      const base = await listMock([req])(input);
+      if (base.status !== 404) return base;
       if (url.includes("/api/v1/escalation/review")) {
         posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
         return new Response(
@@ -91,25 +134,23 @@ describe("EscalationPanel 审批（P0-5 展示-审批绑定）", () => {
 
     render(<EscalationPanel />);
     await waitFor(() => expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument());
-    const listCallsBefore = calls.filter((u) => u.includes("/api/v1/escalation/list")).length;
-    const reviewIdx = calls.length; // 点击前快照
-
-    fireEvent.click(screen.getByRole("button", { name: "批准" }));
+    // 先查看完整命令解除门控，再批准触发 409
+    fireEvent.click(screen.getByTestId("esc-view-full-esc-1"));
+    await waitFor(() => expect(screen.getByTestId("esc-fullcmd-esc-1")).toBeInTheDocument());
+    const reviewIdx = calls.length;
+    fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
     await waitFor(() => expect(screen.getByTestId("esc-panel-msg")).toHaveTextContent("待审内容已变化，请重新打开"));
-    // 提交体仍带 expected_sha256；提示后自动刷新列表（review 之后再次拉取 list）
     expect(posts[0]).toMatchObject({ id: "esc-1", expected_sha256: SHA });
     const listCallsAfter = calls.filter((u, i) => u.includes("/api/v1/escalation/list") && i > reviewIdx).length;
     expect(listCallsAfter).toBeGreaterThan(0);
-    expect(listCallsBefore).toBeGreaterThanOrEqual(1);
   });
 
   it("400 missing_expected_sha256（不应发生）→ 兜底提示重新打开详情", async () => {
     const req = makeReq({ command_sha256: "", command_truncated: false });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/api/v1/escalation/list")) {
-        return ok({ requests: [req], pending_count: 1 });
-      }
+      const base = await listMock([req])(input);
+      if (base.status !== 404) return base;
       if (url.includes("/api/v1/escalation/review")) {
         return new Response(
           JSON.stringify({ error: "missing_expected_sha256", detail: "审批请求必须携带 expected_sha256" }),
@@ -120,33 +161,35 @@ describe("EscalationPanel 审批（P0-5 展示-审批绑定）", () => {
     }));
 
     render(<EscalationPanel />);
-    await waitFor(() => expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "批准" }));
-    await waitFor(() => expect(screen.getByTestId("esc-panel-msg")).toHaveTextContent("重新打开详情"));
+    await waitFor(() => expect(screen.getByTestId("esc-approve-esc-1")).toBeEnabled());
+    fireEvent.click(screen.getByTestId("esc-approve-esc-1"));
+    await waitFor(() => expect(screen.getByTestId("esc-panel-msg")).toHaveTextContent("审批缺少命令哈希绑定"));
   });
 });
 
-describe("EscalationWatcher 弹窗（与面板共用绑定逻辑）", () => {
-  it("弹窗内批准同样提交 expected_sha256", async () => {
-    const req = makeReq();
-    const posts: Array<Record<string, unknown>> = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("/api/v1/escalation/list")) {
-        return ok({ requests: [req], pending_count: 1 });
-      }
-      if (url.includes("/api/v1/escalation/review")) {
-        posts.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-        return ok({ ok: true, request: { ...req, status: "approved" } });
-      }
-      return ok({}, 404);
-    }));
+describe("EscalationPanel/Watcher 待审独立查询（ESC-07）", () => {
+  it("历史窗口不含 pending 时，待审区仍渲染专用查询返回的 pending 项", async () => {
+    const squeezed = makeReq({ id: "esc-old-pending", created_at: "2026-10-25T09:00:00Z" });
+    const history = Array.from({ length: 50 }, (_, i) =>
+      makeReq({ id: `esc-hist-${i}`, status: "denied", decided_at: "2026-10-26T11:00:00Z", command: `denied-case-${i}`, command_truncated: false })
+    );
+    vi.stubGlobal("fetch", vi.fn(listMock([squeezed], history)));
 
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-item-esc-old-pending")).toBeInTheDocument());
+    // 专用查询 URL 必须带 status=pending（穿透历史窗口）
+    const urls = (vi.mocked(fetch) as unknown as { mock: { calls: Array<[RequestInfo | URL]> } }).mock.calls.map(String);
+    expect(urls.some((u) => u.includes("status=pending"))).toBe(true);
+    // 历史区渲染最近记录，待审徽标计数 ≥ 1
+    expect(screen.getByText(/待审批 \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText("denied-case-0")).toBeInTheDocument();
+  });
+
+  it("Watcher 弹窗同样使用 pending 专用查询", async () => {
+    const req = makeReq();
+    vi.stubGlobal("fetch", vi.fn(listMock([req])));
     render(<EscalationWatcher />);
     await waitFor(() => expect(screen.getByTestId("esc-modal")).toBeInTheDocument());
-    expect(screen.getByTestId("esc-hash-esc-1")).toHaveTextContent(SHA.slice(0, 16));
-    fireEvent.click(screen.getByRole("button", { name: "批准" }));
-    await waitFor(() => expect(posts).toHaveLength(1));
-    expect(posts[0]).toMatchObject({ id: "esc-1", decision: "approved", expected_sha256: SHA });
+    expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
   });
 });

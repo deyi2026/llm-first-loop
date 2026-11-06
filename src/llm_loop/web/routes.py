@@ -2857,8 +2857,14 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
     try:
         items = store.list(status=status or "", limit=limit)
         pending = store.pending_count()
-    except OSError:
-        items, pending = [], 0
+    except (OSError, ValueError) as exc:
+        # ESC-08（FR-08）: 存储损坏/权限/IO 错误必须如实 503——伪装成 200 空列表
+        # 会让审批者误以为"没有待审"，静默漏批/漏拒。
+        logger.warning("提权审批存储读取失败", exc_info=True)
+        return JSONResponse(
+            content={"error": f"审批存储读取失败: {exc}", "requests": None, "pending_count": None},
+            status_code=503,
+        )
     for item in items:
         command = item.get("command")
         if isinstance(command, str) and len(command) > _ESC_MAX_DISPLAY_COMMAND:
@@ -2867,6 +2873,47 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
         else:
             item["command_truncated"] = False
     return JSONResponse(content={"requests": items, "pending_count": pending})
+
+
+@router.get("/api/v1/escalation/detail")
+def escalation_detail(request: Request, id: str = "") -> Response:
+    """提权申请完整材料详情（ESC-05 / FR-05）.
+
+    列表端点为面板体积截断长命令；审批者"看到多少"直接决定"能否负责任地
+    批准"。本端点返回**未截断**完整命令原文 + 命令哈希 + 长度，供前端
+    "查看完整命令"入口拉取；审批绑定仍以 command_sha256 为准（review 端点
+    expected_sha256 校验不变）。只读、永不返回令牌。
+    """
+    from pathlib import Path
+
+    from llm_loop.tools.escalation import EscalationStore
+
+    rid = (id or "").strip()
+    if not rid:
+        return JSONResponse(content={"error": "缺少 id 参数"}, status_code=400)
+    base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
+    store = EscalationStore(base / "audit" / "escalation_requests.json")
+    try:
+        rec = store.get(rid)
+    except (OSError, ValueError) as exc:
+        # ESC-08 同语义：存储故障如实 503，不伪装"不存在"。
+        logger.warning("提权审批存储读取失败（detail）", exc_info=True)
+        return JSONResponse(content={"error": f"审批存储读取失败: {exc}"}, status_code=503)
+    if rec is None:
+        return JSONResponse(content={"error": f"请求不存在: {rid}"}, status_code=404)
+    return JSONResponse(
+        content={
+            "id": rec.get("id", ""),
+            "tool_name": rec.get("tool_name", ""),
+            "command": rec.get("command", ""),  # 完整原文，不截断
+            "command_sha256": rec.get("command_sha256", ""),
+            "command_len": rec.get("command_len", len(rec.get("command", "") or "")),
+            "justification": rec.get("justification", ""),
+            "status": rec.get("status", ""),
+            "created_at": rec.get("created_at", ""),
+            "session_id": rec.get("session_id", ""),
+        }
+    )
 
 
 @router.post("/api/v1/escalation/review")

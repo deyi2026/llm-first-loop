@@ -143,6 +143,15 @@ class EscalationWaitTool:
         if rec is None:
             return _fail(self.name, f"[未找到] 提权申请不存在: {rid}")
 
+        if rec.get("_sig_unverified"):
+            # ESC-03（FR-03）: 签名失效（跨进程/重启）的申请面板永远无法审批，
+            # 立即失败并提示重新申请，不再静默等满超时。
+            return _fail(
+                self.name,
+                f"[已失效] request_id={rid} 由其他进程签名，本会话无法等待其审批结果。"
+                "请重新提交提权申请（escalation_request）获取新 request_id。",
+            )
+
         status = rec.get("status", "")
         if status == "pending":
             return ToolResult(
