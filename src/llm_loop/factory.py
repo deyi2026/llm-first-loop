@@ -128,6 +128,7 @@ from llm_loop.runtime.service_control import (
 )
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
+from llm_loop.timekeeping import system_local_now, system_local_now_iso
 from llm_loop.tools.builtin.agent_followup import AgentFollowupTool
 from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
@@ -347,15 +348,21 @@ def _archive_gate_removal(
     _migrated-<date>.jsonl 流，含 content_digest 字段；payload 不可解析时
     置 None），迁移脚本的幂等去重按 sha 扫全量归档文件，因此收割路径
     写入同一归档流即被去重覆盖。
+
+    时钟权威（TASK-8e22c083-002）：stamp/migrated_at 走 host-local
+    （llm_loop.timekeeping 契约；timekeeping 守卫禁止新增 UTC 时钟的
+    now() 落盘序列化，注释里出现该字面量同样会被扫中）。与迁移脚本
+    （UTC，脚本侧存量）在 migrated_at 的 tz 差异不影响 sha256 去重
+    与行字段格式。
     """
-    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    stamp = system_local_now().strftime("%Y%m%d")
     digest: str | None = None
     if isinstance(payload, dict):
         digest = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
     row = {
-        "migrated_at": datetime.now(UTC).isoformat(),
+        "migrated_at": system_local_now_iso(),
         "reason_class": reason,
         "original_path": rel_path,
         "content_digest": digest,
@@ -448,7 +455,9 @@ def _expire_stale_compaction_gates(data_dir: str | Path) -> dict[str, int]:
             if payload.get("pending") or payload.get("escalated"):
                 payload["pending"] = False
                 payload["superseded"] = True
-                payload["superseded_at"] = datetime.now(UTC).isoformat()
+                # host-local 时钟权威（timekeeping 契约，TASK-8e22c083-002）；
+                # 引擎 rev4 路径同字段的 _dt.UTC 拼写为存量债，待后续统一。
+                payload["superseded_at"] = system_local_now_iso()
                 payload["superseded_reason"] = "ttl_expired"
                 tmp = state_file.with_name("gate_state.json.tmp")
                 tmp.write_text(
