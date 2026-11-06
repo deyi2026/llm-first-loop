@@ -18,7 +18,6 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -1485,14 +1484,14 @@ class SchedulerThread:
         wake_degraded_reason（EVO-20260920-213965a1 案2）：wake 降级为通知时
         携带结构化原因，供下一会话 pending 投影列出（sid/时间/原因）。
         """
-        from datetime import datetime as _dt
+        from llm_loop.timekeeping import system_local_now as _local_now
 
         # P1-B1: notification storage follows the resolved runtime data owner.
         # The fallback is the same immutable startup snapshot that owns schedule.json.
         data_root = Path(data_dir).expanduser().resolve() if data_dir is not None else _SCHEDULE_PATH.parent
         inbox = data_root / "interop" / "lfl_to_dsh" / "pending"
         inbox.mkdir(parents=True, exist_ok=True)
-        now = _dt.now(UTC)
+        now = _local_now()
         # Effect identity is sid + occurrence.  Ack persistence failure may cause the same
         # occurrence to be delivered again; reusing one filename/id makes that retry
         # mechanically idempotent instead of emitting another user-visible notification.

@@ -6,7 +6,6 @@ ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 只�
 """
 from __future__ import annotations
 
-import datetime as _dt
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -14,6 +13,7 @@ from typing import Any
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT
 from llm_loop.core.history import projection_check, projection_ver, stable_digest
 from llm_loop.core.prompt_build.context import BuildDecision
+from llm_loop.timekeeping import system_local_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def run_projection_gate(
             "ver": _ver,
             "seq": _seq,
             "built_hash": _built_hash,
-            "ts": _dt.datetime.now(_dt.UTC).isoformat(),
+            "ts": system_local_now_iso(),
         }
         sess.projection_guard = _guards
         return _state

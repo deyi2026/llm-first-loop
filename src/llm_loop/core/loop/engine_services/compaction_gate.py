@@ -80,7 +80,6 @@ C1 — compaction recovery gate（通道重做）
 
 from __future__ import annotations
 
-import datetime as _dt
 import hashlib
 import json
 import logging
@@ -88,6 +87,8 @@ import os
 import re
 import uuid
 from typing import Any
+
+from llm_loop.timekeeping import system_local_now, system_local_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +255,7 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
         return None
     try:
         manifest_id = str(uuid.uuid4())
-        created_at = _dt.datetime.now(_dt.UTC).isoformat()
+        created_at = system_local_now_iso()
         assistant_entries, other_counts, other_index, seqs = _partition_entries(entries)
         # B2 完整性元数据：明确"快照存在≠内容完整"——archived/embedded 双向
         # 计数（消息数与字符数）+ 缺口声明，禁止把索引存在当原文在手。
@@ -312,7 +313,7 @@ def write_compaction_manifest(data_dir: str, session_id: str, entries: list[dict
         out_dir = os.path.join(str(data_dir), rel_dir)
         os.makedirs(out_dir, exist_ok=True)
         lo, hi = (manifest["seq_range"] or ["x", "x"])
-        fname = f"{int(_dt.datetime.now(_dt.UTC).timestamp() * 1000)}-{lo}-{hi}-{manifest_id[:8]}.json"
+        fname = f"{int(system_local_now().timestamp() * 1000)}-{lo}-{hi}-{manifest_id[:8]}.json"
         path = os.path.join(out_dir, fname)
         # P2-5（B6）：temp+rename 原子落盘——快照与 hash 同文件，半截文件不可见
         tmp_path = path + ".tmp"
@@ -434,7 +435,7 @@ def _supersede_pending_gate(
     stale_events = int(prev.get("stale_events", 0) or 0) + 1
     prev["pending"] = False
     prev["superseded"] = True
-    prev["superseded_at"] = _dt.datetime.now(_dt.UTC).isoformat()
+    prev["superseded_at"] = system_local_now_iso()
     prev.pop("notice_text", None)
     _write_gate_state_gated(data_dir, session_id, prev)
     payload: dict[str, Any] = {
@@ -655,7 +656,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                         manifest, attempt=1, stale_events=stale_events
                     ),
                     "pending": True,
-                    "created_at": _dt.datetime.now(_dt.UTC).isoformat(),
+                    "created_at": system_local_now_iso(),
                 }
                 slots[session_id] = state
                 _write_gate_state_gated(data_dir, session_id, state)
@@ -695,7 +696,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
                 # P2-3（五轮复审）：投影用真实 session_id，不回退消毒目录名
                 "session_id": session_id,
                 "pending": False,
-                "degraded_at": _dt.datetime.now(_dt.UTC).isoformat(),
+                "degraded_at": system_local_now_iso(),
             }
             if prev is not None and prev.get("superseded"):
                 degraded_state["stale_events"] = int(prev.get("stale_events", 0) or 0) + 1
@@ -737,7 +738,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
     )
     if ev["confirmed"]:
         state["pending"] = False
-        state["consumed_at"] = _dt.datetime.now(_dt.UTC).isoformat()
+        state["consumed_at"] = system_local_now_iso()
         state.pop("notice_text", None)
         slots[session_id] = state
         _write_gate_state_gated(data_dir, session_id, state)
@@ -769,7 +770,7 @@ def _run_gate_step(engine: Any, sess: Any, *, new_compaction: bool) -> None:
         # 防止确认门永久挂起并无限注入。
         state["pending"] = False
         state["escalated"] = True
-        state["escalated_at"] = _dt.datetime.now(_dt.UTC).isoformat()
+        state["escalated_at"] = system_local_now_iso()
         state.pop("notice_text", None)
         slots[session_id] = state
         _write_gate_state_gated(data_dir, session_id, state)
