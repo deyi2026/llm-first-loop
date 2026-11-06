@@ -262,31 +262,12 @@ class SpawnSubAgentTool:
         from llm_loop.tools.arg_coerce import coerce_str_list
         acceptance = coerce_str_list(kwargs.get("acceptance"))
         model = str(kwargs.get("model", "") or "").strip()
-        # 2026-11-06 并行处理完善建议④：子代理轮次预算（防上下文/token 烧尽）。
-        # None=不限（零回归）；1..200 整数，超界确定性拒绝。
-        max_rounds_raw = kwargs.get("max_rounds")
-        max_rounds: int | None = None
-        if max_rounds_raw is not None:
-            try:
-                max_rounds_val = int(max_rounds_raw)
-            except (TypeError, ValueError):
-                max_rounds_val = -1
-            if not (1 <= max_rounds_val <= 200):
-                return ToolResult(
-                    status=ToolResultStatus.FAILURE,
-                    content="[参数错误] max_rounds 须为 1..200 的整数（轮次预算），省略=不限",
-                    tool_call_id="",
-                    tool_name=self.name,
-                )
-            max_rounds = max_rounds_val
+        max_rounds, mr_err = _parse_max_rounds(kwargs.get("max_rounds"))
+        if mr_err:
+            return _fail(self.name, mr_err)
 
         if not task:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content="[参数错误] 缺少必填参数 'task'（子任务描述）",
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            return _fail(self.name, "[参数错误] 缺少必填参数 'task'（子任务描述）")
 
         # EVO-20260914-1eb26afa: 显式能力需求声明 → child 启动前矩阵比对早失败。
         # 不声明则不比对（零回归）；拒绝只针对"必然失败"的显式缺口。
@@ -432,3 +413,23 @@ class SpawnSubAgentTool:
             tool_call_id="",
             tool_name=self.name,
         )
+
+def _parse_max_rounds(raw) -> tuple[int | None, str | None]:
+    """2026-11-06 建议④：子代理轮次预算解析（None=不限；1..200；超界给错误文案）。"""
+    if raw is None:
+        return None, None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = -1
+    if not (1 <= value <= 200):
+        return None, "[参数错误] max_rounds 须为 1..200 的整数（轮次预算），省略=不限"
+    return value, None
+
+def _fail(tool_name: str, content: str) -> ToolResult:
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=content,
+        tool_call_id="",
+        tool_name=tool_name,
+    )
