@@ -1349,11 +1349,22 @@ class CdpBrowserMutationActuator:
                 # fake success).
                 before = self._call_value(session, object_id, _FILL_BEFORE_JS)
                 base = before if isinstance(before, str) else ""
-                self._call(
-                    session,
-                    object_id,
-                    _FILL_REPLACE_JS if mode == "replace" else _FILL_APPEND_JS,
-                )
+                # review P2-2: surface an actionable message when the element
+                # does not support selection APIs (contenteditable / some
+                # input types) instead of a bare actuator error string.
+                try:
+                    self._call(
+                        session,
+                        object_id,
+                        _FILL_REPLACE_JS if mode == "replace" else _FILL_APPEND_JS,
+                    )
+                except RuntimeError as exc:
+                    raise RuntimeError(
+                        "fill selection establishment failed on this element "
+                        "(select()/setSelectionRange unsupported: contenteditable "
+                        "or non-text input); contenteditable is deferred to M3 - "
+                        "see LFL_BROWSER_INPUT_PIPELINE=off for the legacy path"
+                    ) from exc
                 session.send("Input.insertText", {"text": text})
                 expected = text if mode == "replace" else base + text
                 actual = self._call_value(

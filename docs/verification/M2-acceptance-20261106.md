@@ -40,3 +40,10 @@ T-16 关闭方向（legacy_degraded 不可达验证）：离线已按 RULE-AI-35
 
 - contenteditable 与真实 React 站点未做现场样本（受控组件语义以原生模拟页等价覆盖 reconciliation 时序）；M3 集成验收补充。
 - iframe 内容器滚动未单独现场验证（脚本按 DOM 树向上找祖先，同源 iframe 需 M3 复核）。
+
+## 独立审查 P2 跟进（subagent_14cd2790e45a，P0=0/P1=0/P2=4）
+
+1. scroll 移除旧 `scrollIntoView({block:'center'})`：审计 FR-08 语义优先（容器作用域），回执事实已缓解；依赖「滚动后目标可见」的下游流程若回退，M3 以 `scroll_into_view` 动词补显式入口。**跟进备注，本批不改。**
+2. fill 在不支持选区的元素（contenteditable 等）上错误信息晦涩 → **已修**：选区建立失败时抛带指引的可行动消息（contenteditable 属 M3，legacy 开关路径明示）。
+3. desktop subtree 释放语义仅有 fake 组合层验证，无真实 CF 子项现场 → 如实记为**验证缺口**：现场需新 runtime 部署 + TCC 授权进程，随 M3 集成验收补（与既有「现场回读」边界一致）。
+4. `deepest_covered_ref` 派生自过滤后节点，尾随节点被 node_kinds 过滤时恢复提示可能指向偏宽父级 → 次要，**M3 跟进**（候选：分页时记录未过滤边界索引）。
