@@ -125,6 +125,23 @@ def _check_rule_assets(
         add("rule_assets", "fail", "规则资产检查本身失败。", "请反馈给维护者。")
 
 
+def _model_check_settings(merged: Mapping[str, str], data_dir: Path) -> dict[str, str]:
+    """Settings the online model check needs, without touching the environment.
+
+    The check resolves a provider-qualified model name against the registry;
+    the registry inputs (data dir, MODEL_PROVIDERS JSON) are handed over here
+    so that the check itself performs no process-environment access.
+    """
+    return {
+        "llm_api_key": str(merged.get("LLM_API_KEY", "")),
+        "llm_base_url": str(merged.get("LLM_BASE_URL", "")),
+        "llm_model": str(merged.get("LLM_MODEL", "") or "deepseek-flash"),
+        "llm_wire_protocol": str(merged.get("LLM_WIRE_PROTOCOL", "") or "openai"),
+        "data_dir": str(data_dir),
+        "model_providers_raw": str(merged.get("MODEL_PROVIDERS", "") or ""),
+    }
+
+
 def inspect_first_use(
     *,
     args: Any,
@@ -287,14 +304,7 @@ def inspect_first_use(
             }
             add("model_live", "fail", online_report["message"], online_report["action"])
         else:
-            online_report = check_model_config(
-                {
-                    "llm_api_key": str(merged.get("LLM_API_KEY", "")),
-                    "llm_base_url": str(merged.get("LLM_BASE_URL", "")),
-                    "llm_model": str(merged.get("LLM_MODEL", "") or "deepseek-flash"),
-                    "llm_wire_protocol": str(merged.get("LLM_WIRE_PROTOCOL", "") or "openai"),
-                }
-            )
+            online_report = check_model_config(_model_check_settings(merged, data))
             add(
                 "model_live",
                 "pass" if online_report.get("ok") else "fail",

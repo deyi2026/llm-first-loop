@@ -223,6 +223,85 @@ def _http_status(
     )
 
 
+def _known_provider_ids(
+    base_url: str = "",
+    data_dir: str = "",
+    providers_raw: str = "",
+) -> frozenset[str]:
+    """Provider ids the runtime registry knows — id set only, no model specs.
+
+    Mirrors the registry load precedence of ``llm_loop/llm/providers.py``
+    (MODEL_PROVIDERS JSON → {data_dir}/providers.local.json →
+    {data_dir}/providers.json) and adds the L0 synthesized id derived from
+    the endpoint.  Inputs come from the caller's settings mapping, so this
+    helper performs no process-environment access of its own; an unreadable
+    source only narrows the set, it never widens it.
+    """
+    import os
+
+    ids: set[str] = set()
+    raw = providers_raw.strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            ids.update(str(key) for key in parsed)
+    base_dir = data_dir.strip()
+    if base_dir:
+        for name in ("providers.local.json", "providers.json"):
+            path = os.path.join(base_dir, name)
+            try:
+                if not os.path.isfile(path):
+                    continue
+                with open(path, encoding="utf-8") as handle:
+                    parsed = json.load(handle)
+            except (OSError, TypeError, ValueError):
+                continue
+            if isinstance(parsed, dict):
+                ids.update(str(key) for key in parsed)
+    if base_url:
+        try:
+            from llm_loop.llm.providers import _provider_id_from_base_url
+
+            ids.add(_provider_id_from_base_url(base_url))
+        except Exception:  # noqa: BLE001 - provider id discovery is best effort
+            pass
+    return frozenset(ids)
+
+
+def _wire_model(model: str, provider_ids: frozenset[str]) -> str:
+    """Map a registry reference to the model name that goes on the wire.
+
+    The runtime client sends the bare model id: "provider/model" is a
+    registry reference, and OpenAI-compatible endpoints reject the qualified
+    form with model_not_found.  Only a prefix that is a known provider id is
+    stripped, so model names that legitimately contain "/" (for example
+    "qwen/qwen3-32b") stay untouched.
+    """
+    if "/" not in model:
+        return model
+    prefix, _, remainder = model.partition("/")
+    if not prefix or not remainder:
+        return model
+    if prefix in provider_ids:
+        return remainder
+    return model
+
+
+def _resolve_wire_model(
+    model: str,
+    base_url: str = "",
+    data_dir: str = "",
+    providers_raw: str = "",
+) -> str:
+    """Wire model name for ``model`` (unchanged when it cannot be mapped)."""
+    if "/" not in model:
+        return model
+    return _wire_model(model, _known_provider_ids(base_url, data_dir, providers_raw))
+
+
 def check_model_config(
     settings: Mapping[str, Any] | Any,
     *,
@@ -245,6 +324,15 @@ def check_model_config(
     base_url = get("llm_base_url")
     model = get("llm_model")
     protocol = get("llm_wire_protocol", "openai")
+    # The runtime client sends the bare model id; a registry reference
+    # ("provider/model") has to be mapped the same way here, otherwise a
+    # working setup is reported as model_not_found.
+    wire_model = get("llm_wire_model") or _resolve_wire_model(
+        model,
+        base_url,
+        get("data_dir"),
+        get("model_providers_raw"),
+    )
     secrets = [api_key]
     try:
         password = urllib.parse.urlsplit(base_url).password
@@ -285,7 +373,7 @@ def check_model_config(
             "设置 LLM_MODEL（DeepSeek 可用 deepseek-flash），或移除该键以使用内置默认值。",
         )
 
-    url, headers, payload = _endpoint(base_url, protocol, model)
+    url, headers, payload = _endpoint(base_url, protocol, wire_model)
     headers.update(_auth_headers(protocol, api_key))
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")

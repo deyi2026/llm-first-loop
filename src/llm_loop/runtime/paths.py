@@ -36,6 +36,9 @@ class RuntimePaths:
     legacy_experiences_dir: Path
     legacy_methods_dir: Path
     auto_rebind_applied: bool
+    method_seed_source: str = ""
+    skills_source: str = ""
+    docs_source: str = ""
 
     def binding_summary(self) -> dict[str, object]:
         return {
@@ -52,8 +55,11 @@ class RuntimePaths:
             "methods_dir": str(self.methods_dir),
             "methods_source": self.methods_source,
             "method_seed_dir": str(self.method_seed_dir),
+            "method_seed_source": self.method_seed_source,
             "skills_dir": str(self.skills_dir),
+            "skills_source": self.skills_source,
             "docs_dir": str(self.docs_dir),
+            "docs_source": self.docs_source,
             "legacy_experiences_dir": str(self.legacy_experiences_dir),
             "legacy_methods_dir": str(self.legacy_methods_dir),
             "auto_rebind_applied": self.auto_rebind_applied,
@@ -120,6 +126,45 @@ def infer_state_root(data_dir: str | Path) -> tuple[Path, str]:
     return data, "data_dir_bundle"
 
 
+def _bundle_asset_dir(name: str) -> Path | None:
+    """Asset directory shipped inside the installed package (wheel install).
+
+    A wheel install keeps the tracked assets (docs / skills / method seeds)
+    under ``llm_loop/_bundled`` inside site-packages, while the code root
+    resolves to the interpreter library directory and holds no such
+    directories.  Without this fallback a wheel install runs with zero rules,
+    zero method seeds and zero skills.  Returns None for a source checkout
+    (no bundle), so that path stays unchanged.
+    """
+    try:
+        from llm_loop.runtime.installation import bundle_root
+    except Exception:  # noqa: BLE001 - bundle lookup is best effort
+        return None
+    root = bundle_root()
+    if root is None:
+        return None
+    candidate = root / name
+    return candidate if candidate.is_dir() else None
+
+
+def _asset_dir(raw: str, code_root: Path, name: str) -> tuple[Path, str]:
+    """Resolve one asset directory and report where it came from.
+
+    Priority: explicit env value → code-root path → package bundle.  The
+    bundle only kicks in when the code-root path is missing, which is the
+    wheel-install case; a source checkout resolves exactly as before.
+    """
+    if raw:
+        return _resolved(raw), "explicit_env"
+    resolved = _resolved(code_root / name)
+    if resolved.is_dir():
+        return resolved, "code_root"
+    bundled = _bundle_asset_dir(name)
+    if bundled is not None:
+        return bundled, "package_bundle"
+    return resolved, "code_root"
+
+
 def resolve_runtime_paths(
     *,
     data_dir: str | Path | None,
@@ -172,9 +217,9 @@ def resolve_runtime_paths(
         methods = _resolved(data / "methods")
         methods_source = "data_dir_inferred"
 
-    method_seed = _resolved(seed_raw) if seed_raw else _resolved(code / "methods")
+    method_seed, seed_source = _asset_dir(seed_raw, code, "methods")
     if skills_raw:
-        skills = _resolved(skills_raw)
+        skills, skills_source = _asset_dir(skills_raw, code, "skills")
     elif linked_worktree:
         # 2026-10-12 owner directive (RULE-AI-28 配套): skills are living assets.
         # When running from a linked sidecar worktree (release snapshot), read
@@ -183,9 +228,10 @@ def resolve_runtime_paths(
         # SKILLS_DIR still wins over both.
         assert common_root is not None
         skills = _resolved(common_root / "skills")
+        skills_source = "git_common_root"
     else:
-        skills = _resolved(code / "skills")
-    docs = _resolved(docs_raw) if docs_raw else _resolved(code / "docs")
+        skills, skills_source = _asset_dir("", code, "skills")
+    docs, docs_source = _asset_dir(docs_raw, code, "docs")
 
     legacy_experiences = _resolved(code / "experiences")
     legacy_methods = _resolved(code / "data" / "methods")
@@ -213,4 +259,7 @@ def resolve_runtime_paths(
         legacy_experiences_dir=legacy_experiences,
         legacy_methods_dir=legacy_methods,
         auto_rebind_applied=data_auto_rebind or mutable_auto_rebind,
+        method_seed_source=seed_source,
+        skills_source=skills_source,
+        docs_source=docs_source,
     )
