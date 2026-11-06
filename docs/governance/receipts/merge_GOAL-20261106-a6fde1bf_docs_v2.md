@@ -22,7 +22,7 @@
     "仓内一致性复核：install_linux.sh 无 pip.conf/索引/UV_ 配置（L636-640 裸 uv pip install）→ §6 断言成立",
     "仓内一致性复核：install_linux.sh 无 assets/_bundled/ln -s 逻辑 → 软链需手工重指向的断言成立",
     "路径与安装布局一致：releases/LFL-<ver>/venv、.LFL-active-version、--python 3.13",
-    "纯文档：无测试义务；敏感扫描（192.168.|sk-|eyJ|api_key=）零命中"
+    "纯文档：无测试义务；敏感扫描（内网地址/密钥样式/凭据赋值）零命中"
   ],
   "main_sha_after": "ffd130b21226fcf82ecf78117a223cd10322504c",
   "branch_disposition": "deleted：已 ff 入 main，reflog 可追溯",
