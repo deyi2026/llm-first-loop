@@ -441,6 +441,9 @@ class BrowserDispatchResult:
     # M2 B-01 (T-16): input pipeline marker for fill dispatches
     # (insert_text | legacy_degraded); None for verbs without a pipeline.
     input_pipeline: str | None = None
+    # M2 B-05: scoped scroll fact (scope/before/after/max) so the receipt
+    # carries the actual scrolling target instead of a silent page no-op.
+    scroll_fact: dict[str, Any] | None = None
     # M2 B-01: honest readback verification fact when the landed DOM value
     # differs from the intended one (maxlength truncation, controlled
     # component reversion). None means verified-equal (or not applicable).
@@ -1497,6 +1500,8 @@ class BrowserActionAdapter:
                 terminal["input_pipeline"] = dispatch_result.input_pipeline
             if dispatch_result.readback is not None:
                 terminal["readback"] = dict(dispatch_result.readback)
+            if dispatch_result.scroll_fact is not None:
+                terminal["scroll"] = dict(dispatch_result.scroll_fact)
         if guard_verdict is not None:
             # FR-1: persist the guard verdict (pass or the exemption it earned)
             # on the terminal receipt alongside the version it adjudicated.

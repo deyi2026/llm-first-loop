@@ -262,6 +262,37 @@ def _fill_input_pipeline_enabled() -> bool:
     raw = os.getenv("LFL_BROWSER_INPUT_PIPELINE", "on").strip().lower()
     return raw not in {"off", "legacy", "0", "false", "no"}
 
+
+# M2 B-05 (audit §5.6/§405, FR-08/T-12): scrolling targets the object's OWN
+# scrollable container (nearest scrollable ancestor) instead of blindly
+# calling window.scrollBy, which used to move the global page while the
+# container stayed put (PR10). The fixed script reports the actual scope,
+# before/after position and the container boundary so the receipt carries
+# observable facts instead of a silent no-op.
+_SCROLL_SCOPED_JS = (
+    "function(pages){"
+    " const d = Number(pages);"
+    " let el = this;"
+    " while (el){"
+    "  const s = getComputedStyle(el);"
+    "  const scrolls = /(auto|scroll|overlay)/.test((s.overflow||'') + (s.overflowY||''));"
+    "  if (scrolls && el.scrollHeight > el.clientHeight + 1){"
+    "   const before = el.scrollTop;"
+    "   el.scrollTop = before + d * el.clientHeight;"
+    "   return {scope: 'container', node: el.tagName,"
+    "           before: Math.round(before), after: Math.round(el.scrollTop),"
+    "           max: el.scrollHeight - el.clientHeight};"
+    "  }"
+    "  el = el.parentElement;"
+    " }"
+    " const b = window.scrollY;"
+    " window.scrollBy(0, d * window.innerHeight);"
+    " return {scope: 'page', before: Math.round(b),"
+    "         after: Math.round(window.scrollY),"
+    "         max: document.documentElement.scrollHeight - window.innerHeight};"
+    " }"
+)
+
 # M2-A B4 (DESIGN-20261027 §5.1): scroll the exact element into view, then read
 # its post-scroll bounding rect in ONE fixed predicate call (scrollIntoView
 # forces synchronous layout, so the rect reflects the scrolled position).
@@ -1261,6 +1292,8 @@ class CdpBrowserMutationActuator:
         # M2 B-01 (T-16): input pipeline facts flow to the dispatch receipt.
         input_pipeline: str | None = None
         readback: dict[str, Any] | None = None
+        # M2 B-05: scoped scroll fact (scope/before/after/max).
+        scroll_fact: dict[str, Any] | None = None
         if verb == "click":
             try:
                 self._call(session, object_id, "function(){ this.click(); }", early_return_on_dialog=True)
@@ -1328,10 +1361,11 @@ class CdpBrowserMutationActuator:
                 [{"value": str(args["value"])}],
             )
         elif verb == "scroll":
-            self._call(
-                session,
-                object_id,
-                "function(pages){ this.scrollIntoView({block:'center',inline:'nearest'}); window.scrollBy(0, Number(pages)*window.innerHeight); }",
+            # M2 B-05: scoped scrolling - the object's own scrollable
+            # container first, the page only as fallback; the fact flows to
+            # the receipt (scope/before/after/max).
+            scroll_fact = self._call_value(
+                session, object_id, _SCROLL_SCOPED_JS,
                 [{"value": float(args["delta_pages"])}],
             )
         elif verb == "upload":
@@ -1366,6 +1400,7 @@ class CdpBrowserMutationActuator:
             completeness_reasons=("boundary_detector_non_exhaustive",),
             input_pipeline=input_pipeline,
             readback=readback,
+            scroll_fact=scroll_fact if isinstance(scroll_fact, dict) else None,
         )
 
     def close(self) -> None:

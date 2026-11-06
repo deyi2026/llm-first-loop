@@ -887,7 +887,14 @@ class BrowserSemanticOperationTool:
                 "do": {"type": "string", "enum": ["scroll"]},
                 "target_id": {"type": "string", "minLength": 1},
                 "target": _SHORT_TARGET_SCHEMA,
-                "delta_pages": {"type": "number"},
+                "delta_pages": {
+                    "type": "number",
+                    "description": (
+                        "M2 B-05：滚动页数（可为负）。优先作用于目标的最近可滚容器"
+                        "（scrollTop += delta*容器客户区高），无容器祖先才回退全局页面；"
+                        "回执 scroll.{scope,before,after,max} 报告实际作用域与边界事实"
+                    ),
+                },
             },
             "required": ["do", "target", "delta_pages"],
             "additionalProperties": False,
