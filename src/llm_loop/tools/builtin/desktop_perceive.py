@@ -39,7 +39,12 @@ from llm_loop.desktop.models import (
 )
 from llm_loop.desktop.paging import PagedNodes, decode_cursor, paginate, tree_fingerprint
 from llm_loop.desktop.privacy import PrivacyPolicy, SeeAllowlist
-from llm_loop.desktop.waiting import MAX_WAIT_POLLS, WaitPredicate, wait_for
+from llm_loop.desktop.waiting import (
+    MAX_WAIT_POLLS,
+    ObservationFrame,
+    WaitPredicate,
+    wait_for,
+)
 from llm_loop.timekeeping import system_local_now
 
 _ACTIONS = ("status", "apps", "windows", "snapshot", "wait")
@@ -804,13 +809,20 @@ class DesktopPerceiveTool:
         ax_ref = str(options["ax_ref"])
         observed_failures: list[str] = []
 
-        def snapshot() -> Any:
+        def snapshot() -> ObservationFrame:
             view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT)
             if not view.available and "ax_unavailable" not in observed_failures:
                 observed_failures.append("ax_unavailable")
             if view.truncated and "ax_traversal_truncated" not in observed_failures:
                 observed_failures.append("ax_traversal_truncated")
-            return view.nodes
+            # 目标比遍历深度更深时这一轮根本没走到目标那层——必须按截断帧
+            # 上报，否则 absent 会被"没走到"误证为"已消失"（§5.2 否定域）。
+            target_deeper = len(ax_ref.split(".")) > depth
+            return ObservationFrame(
+                nodes=view.nodes,
+                available=view.available,
+                truncated=view.truncated or target_deeper,
+            )
 
         outcome = wait_for(
             snapshot,
@@ -823,13 +835,20 @@ class DesktopPerceiveTool:
         degraded.extend(observed_failures)
         guidance: str | None = None
         if not outcome.satisfied:
-            guidance = (
-                f"[desktop_perceive:wait] 超时：{outcome.elapsed_ms}ms 内未观察到谓词成立"
-                f"（kind={predicate.kind}）。超时≠对象不存在——只代表这个窗口内没等到，"
-                "不要据此判定操作失败；可加长 within_ms，或直接用 snapshot 看当前状态。"
-            )
+            if outcome.state == "unavailable":
+                guidance = (
+                    f"[desktop_perceive:wait] 观测不可用：{outcome.elapsed_ms}ms 内没有"
+                    f"一帧可读的 AX（kind={predicate.kind}）。本回执不可解释为否定——"
+                    "先恢复观测能力（辅助功能授权/目标窗口存活）再重试。"
+                )
+            else:
+                guidance = (
+                    f"[desktop_perceive:wait] 超时：{outcome.elapsed_ms}ms 内未观察到谓词成立"
+                    f"（kind={predicate.kind}）。超时≠对象不存在——只代表这个窗口内没等到，"
+                    "不要据此判定操作失败；可加长 within_ms，或直接用 snapshot 看当前状态。"
+                )
         if "ax_unavailable" in degraded:
-            degraded.append("wait_without_ax: 谓词永不成立，本次等待的结果不可解释")
+            degraded.append("wait_without_ax: 不可用帧按 unknown 处理，不参与否定证明")
         return self._envelope(
             action="wait",
             ok=True,
@@ -852,6 +871,7 @@ class DesktopPerceiveTool:
                     "state": outcome.state,
                     "satisfied": outcome.satisfied,
                     "observed": outcome.observed,
+                    "scope": outcome.scope,
                     "clipped_depth": bool(clipped),
                 },
                 "degraded": degraded,

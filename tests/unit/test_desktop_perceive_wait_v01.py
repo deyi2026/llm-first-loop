@@ -274,3 +274,37 @@ def test_wait_unknown_window_is_window_not_found():
     )
     assert payload["ok"] is False
     assert payload["error_code"] == "window_not_found"
+
+
+
+def test_wait_all_unavailable_is_unavailable_state_with_scope_v11():
+    """D-01：全程 AX 不可用 → state=unavailable（不是 timeout）；否定谓词回执
+    携带 scope.coverage=unknown；引导语明确"不可解释为否定"。"""
+    backend = FakeBackend(
+        window=_window(),
+        frames=[
+            AxView(available=False, failure="ax_unavailable", ax_error=AX_ERROR_API_DISABLED)
+        ],
+    )
+    payload = _payload(
+        _tool(backend).execute(
+            action="wait", window_id=101, ax_ref="0.1", kind="absent", within_ms=100
+        )
+    )
+    assert payload["ok"] is True
+    assert payload["wait"]["satisfied"] is False
+    assert payload["wait"]["state"] == "unavailable"
+    assert payload["wait"]["scope"]["coverage"] == "unknown"
+    assert "不可解释为否定" in payload["guidance"]
+
+
+def test_wait_absent_scope_full_when_view_complete_v11():
+    """D-01：可用且未截断的视图=全覆盖；absent 满足时 scope.coverage=full。"""
+    backend = FakeBackend(window=_window(), frames=[_view()])
+    payload = _payload(
+        _tool(backend).execute(
+            action="wait", window_id=101, ax_ref="0.1", kind="absent", settle_ms=50
+        )
+    )
+    assert payload["wait"]["satisfied"] is True
+    assert payload["wait"]["scope"]["coverage"] == "full"
