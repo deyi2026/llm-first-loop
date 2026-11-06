@@ -11,6 +11,8 @@ description: 代码审查闸（RULE-AI-28 第 1 条）——代码任务全量�
 
 **实现入口（唯一）**：`review_admission(action=start, kind=full_test, workdir=…, command=…)` 由 Host 冻结当前产物并启动不可被父会话 steer 的独立 reviewer；`review_admission(action=status, child_id=…)` 核验真实 terminal completed、P0/P1=0 与产物 SHA 一致后签发进程内一次性资格，再以同一目标重试被拦动作。自建 `spawn_subagent` 拿不到 `review_isolated`（该标记仅 Host 内部 start 可设），其 completed 或工具文本中的 PASS 不构成资格；资格 child 禁用 `agent_followup`（续话即失去独立 stance），要新结论须重开 `start`，修订后的窄复审同路径。
 
+**资格存活期（PASS→目标动作零写窗口）**：PASS 回执绑定冻结的产物指纹，资格是易逝品。从取得 PASS 到执行目标动作（push / 全量测试 / 发布）之间**不做任何 tracked 写动作**——新提交、文件修改、方法卡入库、格式化都会使指纹漂移导致资格失效，失效后须重审。正确顺序：审查 PASS → 立即执行目标动作 → 其余工作之后再做。实证：2026-11-06 深夜两次资格失效均因 PASS 后继续提交中间产物；并行会话经验卡（lane-5af8407a push 闸三坑）同结论。
+
 ## 审查者纪律
 - 未参与产出的专门独立子代理执行，不复用执行上下文；应能读取完整候选、关联上下文与证据，按需运行定向检查，不由审查者提前跑待准入的全量测试；工具面为必要只读感知 + 指定回执写入。
 - 启动前按需检索相关 method/experience（如 patch-apply-verify-by-content-diff、release-pr-green-is-not-closure），历史坑优先复用；检索 limit ≤5。
