@@ -8,6 +8,7 @@ from typing import Any
 from llm_loop.desktop.models import AxNode
 from llm_loop.desktop.waiting import (
     MAX_WAIT_POLLS,
+    ObservationFrame,
     WaitPredicate,
     evaluate,
     observe,
@@ -127,7 +128,17 @@ def test_timeout_is_not_an_error_and_respects_within_ms():
 def test_absent_requires_sustained_settle_not_instant_hit():
     """消失一帧不算消失：重绘空窗会误判。必须持续 settle_ms。"""
     clock = FakeClock(step_ms=50)
-    frames = [[_node()], [_node()], [_node()], [], [], [], [], []]
+    # D-01 后 absent 需要"可证明覆盖"的帧：显式全覆盖空帧（§5.2 否定域）。
+    frames = [
+        ObservationFrame(nodes=[_node()]),
+        ObservationFrame(nodes=[_node()]),
+        ObservationFrame(nodes=[_node()]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+    ]
     outcome = wait_for(
         _seq(*frames),
         "0.1",
@@ -145,7 +156,17 @@ def test_absent_requires_sustained_settle_not_instant_hit():
 def test_absent_flicker_resets_settle_window():
     """中途回闪必须重置计时，否则"闪一下又回来"会被判成已消失。"""
     clock = FakeClock(step_ms=50)
-    frames = [[], [], [_node()], [], [], [], [], [], []]
+    frames = [
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[_node()]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+        ObservationFrame(nodes=[]),
+    ]
     outcome = wait_for(
         _seq(*frames),
         "0.1",
@@ -185,8 +206,13 @@ def test_value_contains_hit_and_miss():
 
 
 def test_enabled_unknown_is_not_treated_as_true():
-    """AXEnabled 读不到（None）绝不能当成可用：否则会在真不可用时继续点。"""
-    assert evaluate(_node(enabled=None), WaitPredicate(kind="enabled")) is False
+    """AXEnabled 读不到（None）是 unknown：不当 True（真不可用时继续点），
+    也不折叠成 False（§5.8，D-01 三态化迁移）。"""
+    assert evaluate(_node(enabled=None), WaitPredicate(kind="enabled")) is None
+    assert (
+        evaluate(_node(enabled=None), WaitPredicate(kind="enabled", expected=False))
+        is None
+    )
     assert evaluate(_node(enabled=True), WaitPredicate(kind="enabled")) is True
     assert evaluate(_node(enabled=False), WaitPredicate(kind="enabled")) is False
 

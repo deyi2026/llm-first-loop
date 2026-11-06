@@ -378,13 +378,15 @@ def cg_post_key(keycode: int, flags: int) -> None:
 def act_outcome_from_ax_err(err: int, what: str) -> ActOutcome:
     """AX err → 确定性 ActOutcome（未知码按 backend_error，带原始原因文本）。"""
     if err == 0:
-        return ActOutcome(ok=True)
+        return ActOutcome(ok=True, dispatch_state="dispatched")
     reason = ax_error_reason(err)
     return ActOutcome(
         ok=False,
         error=DesktopErrorCode.AX_UNAVAILABLE,
         detail=f"{what} 未投递成功：{reason}",
         ax_error=err,
+        dispatch_state="unknown",  # AX 返回错误码：已尝试、结果不可判定（§5.3）
+        effect_state="unknown",
     )
 
 

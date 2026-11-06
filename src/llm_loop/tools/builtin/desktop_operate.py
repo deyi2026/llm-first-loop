@@ -1383,44 +1383,89 @@ class DesktopOperateTool:
             self._gate.mark_force_consumed(session_id)
         outcome = self._deliver(do, options, backend, fresh_window)
         if not outcome.ok:
+            # D-02（§5.3）：投递已发生但未确认（如回读不一致）不得再报
+            # applied=false——不可判定按 null 上报，序列化边界不得折叠为 false。
+            applied = False if outcome.dispatch_state == "not_dispatched" else None
             audit.update(
                 {"error_code": (outcome.error or DesktopErrorCode.BACKEND_ERROR).value,
-                 "applied": False}
+                 "applied": applied,
+                 "dispatch_state": outcome.dispatch_state,
+                 "effect_state": outcome.effect_state,
+                 "verification_state": outcome.verification_state,
+                 "verification_reason": outcome.verification_reason}
             )
             self._audit_event(audit)
+            failure_payload: dict[str, Any] = {
+                "applied": applied,
+                "needs_confirmation": False,
+                "risk_class": risk_class,
+                "hid_idle_ms": idle_ms,
+                "dispatch_state": outcome.dispatch_state,
+                "effect_state": outcome.effect_state,
+                "verification": {
+                    "state": outcome.verification_state,
+                    "reason": outcome.verification_reason,
+                },
+            }
+            if applied is None:
+                failure_payload["recovery"] = {
+                    "action": "observe_target",
+                    "automatic_retry": False,
+                }
             return self._envelope(
                 do=do, ok=False,
                 error_code=(outcome.error or DesktopErrorCode.BACKEND_ERROR),
                 guidance=outcome.detail, started=started, base=base,
-                payload={"applied": False, "needs_confirmation": False,
-                         "risk_class": risk_class, "hid_idle_ms": idle_ms},
+                payload=failure_payload,
             )
 
-        post_window = backend.get_window(int(options["window_id"]))
-        if post_window is None:
-            post_sha = window_gone_fingerprint(window.window_id)
-            post_nodes: tuple = ()
-            post_target_node = None
-        else:
-            post_view = backend.ax_snapshot(post_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
-            post_nodes = post_view.nodes if post_view.available else ()
-            post_target_node = next(
-                (n for n in post_nodes if n.ax_ref == target_identity.get("ax_ref")), None
-            ) if target_identity["kind"] == "ax_ref" else None
-            post_sha = world_fingerprint(
-                post_window, post_nodes, frontmost_before, include_value=True,
-                target_node=post_target_node,
-            )
-        # R5：前台口径 = 前台 app bundle（lsappinfo）。post 观测失败 → None（如实
-        # 报告），不把已投递的动作误报成 backend_error——前台门控在投递前已完成。
-        foreground_after = backend.frontmost_app_bundle()
+        # D-02（T-05）：post 观测异常不得把已投递动作改写成"从未发生"——
+        # 观测失败只降级 effect_state=unknown，投递证据保留。
+        post_sha: str | None = None
+        foreground_after: str | None = None
+        effect_state = "unknown"
+        try:
+            post_window = backend.get_window(int(options["window_id"]))
+            if post_window is None:
+                post_sha = window_gone_fingerprint(window.window_id)
+                post_nodes: tuple = ()
+                post_target_node = None
+            else:
+                post_view = backend.ax_snapshot(post_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
+                post_nodes = post_view.nodes if post_view.available else ()
+                post_target_node = next(
+                    (n for n in post_nodes if n.ax_ref == target_identity.get("ax_ref")), None
+                ) if target_identity["kind"] == "ax_ref" else None
+                post_sha = world_fingerprint(
+                    post_window, post_nodes, frontmost_before, include_value=True,
+                    target_node=post_target_node,
+                )
+            # R5：前台口径 = 前台 app bundle（lsappinfo）。post 观测失败 → None（如实
+            # 报告），不把已投递的动作误报成 backend_error——前台门控在投递前已完成。
+            foreground_after = backend.frontmost_app_bundle()
+            effect_state = "confirmed"
+        except Exception as exc:  # noqa: BLE001 - 观测异常 ≠ 动作未发生（§5.3/T-05）
+            post_sha = None
+            foreground_after = None
+            effect_state = "unknown"
+            audit["post_observation_error"] = type(exc).__name__
         # M1：point 通道与 irreversible 永不进会话放行（免令牌路径不得弱化）；
         # P2-1（R6）：记账维度 (app, do) → (app, do, 目标身份键)。
         if risk_class == "act" and not channel_token_required:
             self._gate.mark_approved(session_id, bundle, do, target_key=flow.target_key)
+        # D-02（§5.3）：三段贯通回执与审计；verified 旧字段保留（消费方兼容）。
+        verification_state = (
+            "passed" if outcome.verified is True
+            else "failed" if outcome.verified is False
+            else outcome.verification_state
+        )
         audit.update(
             {"applied": True, "post_sha256": post_sha, "foreground_after": foreground_after,
-             "error_code": None}
+             "error_code": None,
+             "dispatch_state": "dispatched",
+             "effect_state": effect_state,
+             "verification_state": verification_state,
+             "verification_reason": outcome.verification_reason}
         )
         self._audit_event(audit)
         payload: dict[str, Any] = {
@@ -1436,6 +1481,12 @@ class DesktopOperateTool:
             "foreground_before": frontmost_before,
             "foreground_after": foreground_after,
             "force_used": force_used,
+            "dispatch_state": "dispatched",
+            "effect_state": effect_state,
+            "verification": {
+                "state": verification_state,
+                "reason": outcome.verification_reason,
+            },
         }
         if outcome.verified is not None:
             payload["verified"] = outcome.verified
@@ -1456,7 +1507,9 @@ class DesktopOperateTool:
                 from llm_loop.desktop.models import ActOutcome
 
                 return ActOutcome(
-                    ok=False, error=DesktopErrorCode.BACKEND_ERROR, detail="target 缺失（入口校验被绕过）"
+                    ok=False, error=DesktopErrorCode.BACKEND_ERROR,
+                    detail="target 缺失（入口校验被绕过）",
+                    dispatch_state="not_dispatched",
                 )
         if do == "click":
             if "ax_ref" in target:
@@ -1470,7 +1523,10 @@ class DesktopOperateTool:
             if status != "ok":  # pragma: no cover - 入口已校验
                 from llm_loop.desktop.models import ActOutcome
 
-                return ActOutcome(ok=False, error=DesktopErrorCode.KEY_NOT_ALLOWED, detail=canonical)
+                return ActOutcome(
+            ok=False, error=DesktopErrorCode.KEY_NOT_ALLOWED, detail=canonical,
+            dispatch_state="not_dispatched",  # 键策略拒绝：零投递（RULE-AI-35）
+        )
             from llm_loop.desktop.operate import KEY_KEYCODES
 
             return backend.act_key(KEY_KEYCODES[canonical.rsplit("+", 1)[-1]], flags)
@@ -1480,4 +1536,7 @@ class DesktopOperateTool:
             return backend.act_scroll_into_view(window, str(target["ax_ref"]))
         from llm_loop.desktop.models import ActOutcome
 
-        return ActOutcome(ok=False, error=DesktopErrorCode.BACKEND_ERROR, detail=f"未知动作: {do}")
+        return ActOutcome(
+            ok=False, error=DesktopErrorCode.BACKEND_ERROR, detail=f"未知动作: {do}",
+            dispatch_state="not_dispatched",
+        )
