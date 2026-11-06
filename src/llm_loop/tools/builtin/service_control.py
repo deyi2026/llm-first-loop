@@ -422,6 +422,15 @@ class ServiceControlTool:
                     "desired 代，无需先调 status 记录"
                 ),
             },
+            "auto_verify": {
+                "type": "boolean",
+                "description": (
+                    "可选（restart/update，EVO-20261106-fbcfb3e6）：true 时 worker 物理重启"
+                    "终态后自动复核一次并落 auto_verify_receipt（verified_at/desired_generation/"
+                    "verdict/converged/summary）；复核失败只发事件+保留 verify_acknowledge，"
+                    "不自动重试。false/省略=旧行为零回归。"
+                ),
+            },
             "code_root": {
                 "type": "string",
                 "description": (
@@ -561,6 +570,7 @@ class ServiceControlTool:
                 expected_generation=expected_generation,
                 requester_session_id=self._session_id_getter(),
                 origin="restart",
+                auto_verify=bool(kwargs.get("auto_verify") or False),
             )
         except (
             DeploymentGenerationConflictError,
@@ -965,6 +975,7 @@ class ServiceControlTool:
                 expected_generation=deployment.generation,
                 requester_session_id=self._session_id_getter(),
                 origin="update",
+                auto_verify=bool(kwargs.get("auto_verify") or False),
             )
         except (
             DeploymentGenerationConflictError,

@@ -105,6 +105,9 @@ _ACTION_OPTIONAL_FIELDS = frozenset(
         # 生命周期加固（GOAL-20261008-f143e051）：执行 worker pid；旧记录缺失即 0
         # （未知，reaper 回退旧 2100s 时窗）。
         "worker_pid",
+        # EVO-20261106-fbcfb3e6: 自动复核（可选参数字段；旧记录缺失即默认）。
+        "auto_verify",
+        "auto_verify_receipt",
     }
 )
 _MANAGED_SERVICES = ("web", "feishu", "wecom", "learning")
@@ -526,6 +529,11 @@ class ServiceControlAction:
     # 生命周期加固（GOAL-20261008-f143e051）：执行 worker pid（0 = 未知/旧记录）。
     # reaper 据此按进程存活判定 waiting 回收，替代纯时间窗。
     worker_pid: int = 0
+    # EVO-20261106-fbcfb3e6: 终态后自动复核收敛（false=旧行为零回归）。
+    auto_verify: bool = False
+    # 自动复核回执（JSON 文本；空=未请求或未到终态）：
+    # {"verified_at","desired_generation","verdict","converged","summary"}
+    auto_verify_receipt: str = ""
 
     def __post_init__(self) -> None:
         if self.schema != _ACTION_SCHEMA:
@@ -574,6 +582,8 @@ class ServiceControlAction:
             next_step=str(raw.get("next_step") or ""),
             acknowledged_at=str(raw.get("acknowledged_at") or ""),
             worker_pid=int(raw.get("worker_pid") or 0),
+            auto_verify=bool(raw.get("auto_verify") or False),
+            auto_verify_receipt=str(raw.get("auto_verify_receipt") or ""),
         )
 
 
@@ -1285,6 +1295,7 @@ class ManagedServiceDeploymentStore:
         expected_generation: int,
         requester_session_id: str,
         origin: str = "",
+        auto_verify: bool = False,
     ) -> ServiceControlAction:
         if target not in _ACTION_TARGETS:
             raise ValueError(f"unsupported restart target: {target}")
@@ -1313,6 +1324,7 @@ class ManagedServiceDeploymentStore:
                 detail="",
                 # svc_deploy 5.3：审计可区分动作来源（update = publish+restart 单语义）。
                 origin=origin,
+                auto_verify=bool(auto_verify),
             )
             self._write_action_unlocked(action)
             # §8.2-4：受理与屏障建立原子化——屏障建立失败时受理一并失败，
@@ -3424,6 +3436,7 @@ def _mark_action(
     model_override: str | None = None,
     next_step: str | None = None,
     acknowledged_at: str | None = None,
+    auto_verify_receipt: str | None = None,
 ) -> ServiceControlAction:
     with store.lease():
         detail_text, reason_ref = _durable_detail(store, detail)
@@ -3442,6 +3455,11 @@ def _mark_action(
             ),
             model_override=(
                 action.model_override if model_override is None else model_override
+            ),
+            auto_verify_receipt=(
+                action.auto_verify_receipt
+                if auto_verify_receipt is None
+                else auto_verify_receipt
             ),
             next_step=action.next_step if next_step is None else next_step,
             acknowledged_at=(
@@ -3719,6 +3737,19 @@ def _wait_for(
             )
             return True
         if time.monotonic() >= deadline:
+            # EVO-20261106-fbcfb3e6: requester 退场超时 → 结构化 suggested_next，
+            # 免去人工推断"run 结束后重发 restart(expected_generation=desired 代)"。
+            timeout_next: str | None = None
+            if gate == "waiting_for_requester_exit":
+                timeout_next = json.dumps(
+                    {
+                        "kind": "requester_exit_timeout",
+                        "suggestion": "requester run 结束后重发 restart",
+                        "action": "restart",
+                        "params": {"expected_generation": action.deployment_generation},
+                    },
+                    ensure_ascii=False,
+                )
             _mark_action(
                 store,
                 action,
@@ -3729,6 +3760,7 @@ def _wait_for(
                     f"gate={gate or '<gate>'}, evidence_level=E1|E2|E3, evidence=..., "
                     "reason=...) 附证据推进"
                 ),
+                next_step=timeout_next,
             )
             return False
         time.sleep(poll_s)
@@ -4246,9 +4278,14 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             detail=f"restart_mirror rc=0; {identity}; {summary}{batch_note}",
             verify_evidence=summary,
             verify_verdict=verdict,
+            auto_verify_receipt=_auto_verify_receipt(
+                final, verdict, converged=True, summary=summary
+            ),
         )
         return 0
     if verdict == "confirmed_fail":
+        if final.auto_verify:
+            _emit_auto_verify_failed_event(store, final, summary)
         _mark_action(
             store,
             final,
@@ -4262,6 +4299,9 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
             # §8.3: 按服务粒度恢复准入——明确判 [ok] 的服务释放屏障；未确认的
             # 服务保留屏障，交给模型覆盖出口或后续动作接管。
             release_barriers=healthy,
+            auto_verify_receipt=_auto_verify_receipt(
+                final, verdict, converged=False, summary=summary
+            ),
         )
         return 5
     # criterion_absent: 判据缺失/未确认 ≠ 失败，不得据此否决（spec 5.4.3-1）。
@@ -4278,8 +4318,55 @@ def run_action_worker(store: ManagedServiceDeploymentStore, action_id: str) -> i
         verify_evidence=summary,
         verify_verdict=verdict,
         release_barriers="keep",
+        auto_verify_receipt=_auto_verify_receipt(
+            final, verdict, converged=None, summary=summary
+        ),
     )
     return 6
+
+
+def _auto_verify_receipt(
+    action: ServiceControlAction, verdict: str, *, converged: bool | None, summary: str
+) -> str | None:
+    """EVO-20261106-fbcfb3e6: 终态自动复核回执（未请求 auto_verify 时返回 None）."""
+    if not action.auto_verify:
+        return None
+    return json.dumps(
+        {
+            "verified_at": _local_now(),
+            "desired_generation": action.deployment_generation,
+            "verdict": verdict,
+            "converged": converged,
+            "summary": str(summary or "")[:500],
+        },
+        ensure_ascii=False,
+    )
+
+
+def _emit_auto_verify_failed_event(
+    store: ManagedServiceDeploymentStore, action: ServiceControlAction, summary: str
+) -> None:
+    """EVO-20261106-fbcfb3e6: 自动复核失败事件（fail-open，不自动重试）."""
+    sid = str(action.requester_session_id or "").strip()
+    if not sid:
+        return
+    try:
+        from llm_loop.event_log.store import EventStore
+
+        event_store = EventStore(store.data_dir / "event_logs", enabled=True)
+        event_store.append(
+            sid,
+            "service_action_auto_verify_failed",
+            {
+                "action_id": action.action_id,
+                "target": action.target,
+                "generation": action.deployment_generation,
+                "summary": str(summary or "")[:500],
+                "hint": "自动复核未收敛；保留 verify_acknowledge 待确认，不自动重试",
+            },
+        )
+    except Exception:  # noqa: BLE001 — 事件写入失败不得阻断终态转移
+        return
 
 
 def _restart_log_path(runtime_root: str, action_id: str) -> Path:
