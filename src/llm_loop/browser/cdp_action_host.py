@@ -321,10 +321,32 @@ _MAX_BUFFERED_EVENTS = 256
 _BOUNDARY_CRITICAL_EVENT_METHODS = frozenset(_BOUNDARY_EVENT_METHODS)
 
 
+class _PressKeyPartialDispatchError(RuntimeError):
+    """B-04（DESIGN v1.1 §3.7/T-11）：组合键部分投递失败。
+
+    已在同一原始目标连接上逆序尽力 keyUp 释放；cleanup 报告
+    （pressed/released/status/cause[/recovery]）随异常携带，回执可见。
+    死连接时 status=input_state_unknown（输入状态不可知，需重观测）。
+    只清理输入状态——绝不重演业务快捷键。
+    """
+
+    def __init__(self, cleanup: dict[str, Any]) -> None:
+        self.cleanup = cleanup
+        super().__init__(
+            "press_key partial dispatch: "
+            f"released={cleanup.get('released')}/{cleanup.get('pressed')} "
+            f"cleanup_status={cleanup.get('status')} cause={cleanup.get('cause')}"
+        )
+
+
 class _WebSocketLike(Protocol):
     def send(self, payload: str) -> None: ...
     def recv(self, timeout: float | None = None) -> str | bytes: ...
     def close(self) -> None: ...
+
+
+def _same_key_chord_event(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return a.get("key") == b.get("key") and a.get("code") == b.get("code")
 
 
 def _default_ws_connect(url: str, *, max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES) -> _WebSocketLike:
@@ -621,6 +643,46 @@ class CdpBrowserMutationActuator:
         # when unchanged); must precede any dispatch that could start one.
         self._sync_download_behavior(self._session)
         return self._session
+
+    def _release_pressed_keys(
+        self,
+        session: _MutationCdpSession,
+        pressed: list[dict[str, Any]],
+        *,
+        cause: BaseException,
+    ) -> dict[str, Any]:
+        """B-04（§3.7/T-11）：逆序尽力 keyUp 释放，只清输入状态。
+
+        连接已死（dead）时不投递任何事件：显式 input_state_unknown +
+        重观测路径；释放本身失败则如实报 partial_release_failed。
+        """
+        cleanup: dict[str, Any] = {
+            "pressed": len(pressed),
+            "released": 0,
+            "status": "released",
+            "cause": type(cause).__name__,
+        }
+        if getattr(session, "dead", False):
+            cleanup["status"] = "input_state_unknown"
+            cleanup["recovery"] = "reconnect_then_snapshot"
+            return cleanup
+        for event in reversed(pressed):
+            release: dict[str, Any] = {
+                "type": "keyUp",
+                "key": event.get("key"),
+                "code": event.get("code"),
+                "modifiers": event.get("modifiers", 0),
+            }
+            if "windowsVirtualKeyCode" in event:
+                release["windowsVirtualKeyCode"] = event["windowsVirtualKeyCode"]
+                release["nativeVirtualKeyCode"] = event["windowsVirtualKeyCode"]
+            try:
+                session.send("Input.dispatchKeyEvent", release)
+                cleanup["released"] += 1
+            except Exception:  # noqa: BLE001 - 释放是尽力而为，失败如实报
+                cleanup["status"] = "partial_release_failed"
+                break
+        return cleanup
 
     def _page_target_ids(self) -> set[str]:
         return {
@@ -1074,8 +1136,25 @@ class CdpBrowserMutationActuator:
             policy_error = press_key_policy_error(keys)
             if policy_error is not None:
                 raise _ActuatorContractError(policy_error)
-            for event in key_events_for_chord(keys):
-                session.send("Input.dispatchKeyEvent", event)
+            # B-04（§3.7/T-11）：跟踪已按下集合；任一投递异常时在同一原始
+            # 连接上逆序尽力 keyUp 释放，cleanup 状态随异常上抛——只清理
+            # 输入状态，绝不重演业务快捷键。
+            pressed_stack: list[dict[str, Any]] = []
+            try:
+                for event in key_events_for_chord(keys):
+                    session.send("Input.dispatchKeyEvent", event)
+                    if event.get("type") == "keyDown":
+                        pressed_stack.append(event)
+                    else:
+                        pressed_stack = [
+                            held
+                            for held in pressed_stack
+                            if not _same_key_chord_event(held, event)
+                        ]
+            except Exception as exc:
+                raise _PressKeyPartialDispatchError(
+                    self._release_pressed_keys(session, pressed_stack, cause=exc)
+                ) from exc
             return self._acknowledged(session, before_page_ids)
 
         if verb == "dialog":
