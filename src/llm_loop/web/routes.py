@@ -2857,9 +2857,9 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
     try:
         items = store.list(status=status or "", limit=limit)
         pending = store.pending_count()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):  # noqa: PERF203 — 统一 503 出口
         # ESC-08（FR-08）: 存储损坏/权限/IO 错误必须如实 503——伪装成 200 空列表
-        # 会让审批者误以为"没有待审"，静默漏批/漏拒。
+        # 会让审批者误以为"没有待审"，静默漏批/漏拒。路径/IO 细节只入服务端日志。
         logger.warning("提权审批存储读取失败", exc_info=True)
         return JSONResponse(
             content={"error": "审批存储读取失败（详情见服务端日志）", "requests": None, "pending_count": None},
@@ -2895,8 +2895,8 @@ def escalation_detail(request: Request, id: str = "") -> Response:
     store = EscalationStore(base / "audit" / "escalation_requests.json")
     try:
         rec = store.get(rid)
-    except (OSError, ValueError) as exc:
-        # ESC-08 同语义：存储故障如实 503，不伪装"不存在"。
+    except (OSError, ValueError):  # noqa: PERF203 — 统一 503 出口
+        # ESC-08 同语义：存储故障如实 503，不伪装"不存在"；细节只入日志。
         logger.warning("提权审批存储读取失败（detail）", exc_info=True)
         return JSONResponse(content={"error": "审批存储读取失败（详情见服务端日志）"}, status_code=503)
     if rec is None:

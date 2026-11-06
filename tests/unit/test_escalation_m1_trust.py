@@ -11,8 +11,8 @@ from __future__ import annotations
 import secrets
 from datetime import timedelta
 
-from llm_loop.tools.escalation import EscalationStore, system_local_now
 from llm_loop.tools import escalation as escalation_module
+from llm_loop.tools.escalation import EscalationStore, system_local_now
 
 _CMD = ["bash", "-lc", "echo probe"]
 _CMD_STR = "bash -lc 'echo probe'"
