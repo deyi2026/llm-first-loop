@@ -35,6 +35,9 @@ class _FakeWs:
             result = {}
         elif method == "Page.navigate":
             result = {"frameId": "main"}
+        elif method == "Input.insertText":
+            # M2 B-01: fill goes through the real input pipeline.
+            result = {}
         else:
             raise AssertionError(method)
         self.pending.append(json.dumps({"id": req["id"], "result": result}))
@@ -76,10 +79,12 @@ def test_click_fill_select_scroll_are_fixed_internal_calls_not_model_scripts() -
     host.dispatch(verb="select", physical_target="dom:2", args={"value": "v"})
     host.dispatch(verb="scroll", physical_target="dom:2", args={"delta_pages": 1})
     methods = [req["method"] for req in ws.requests]
+    # M2 B-01: fill = before-read + (focus+select) + Input.insertText + readback.
     assert methods == [
         "Page.enable",
         "DOM.resolveNode", "Runtime.callFunctionOn",
-        "DOM.resolveNode", "Runtime.callFunctionOn",
+        "DOM.resolveNode", "Runtime.callFunctionOn", "Runtime.callFunctionOn",
+        "Input.insertText", "Runtime.callFunctionOn",
         "DOM.resolveNode", "Runtime.callFunctionOn",
         "DOM.resolveNode", "Runtime.callFunctionOn",
     ]

@@ -438,6 +438,13 @@ class BrowserDispatchResult:
     acknowledged: bool
     boundary_events: tuple[dict[str, Any], ...] = ()
     completeness_reasons: tuple[str, ...] = ("boundary_detector_non_exhaustive",)
+    # M2 B-01 (T-16): input pipeline marker for fill dispatches
+    # (insert_text | legacy_degraded); None for verbs without a pipeline.
+    input_pipeline: str | None = None
+    # M2 B-01: honest readback verification fact when the landed DOM value
+    # differs from the intended one (maxlength truncation, controlled
+    # component reversion). None means verified-equal (or not applicable).
+    readback: dict[str, Any] | None = None
 
 
 class BrowserCaptureBackend(Protocol):
@@ -1481,6 +1488,15 @@ class BrowserActionAdapter:
                 semantic_diff, cap=self.receipt_diff_summary_cap
             )
         terminal["observed_effects"] = observed_effects
+        if dispatch_result is not None and dispatch_result.acknowledged:
+            # M2 B-01 (T-16): pipeline marker + honest readback fact ride the
+            # terminal receipt so the caller can tell the real input pipeline
+            # from the legacy degraded path and never mistake a mismatch for
+            # success.
+            if dispatch_result.input_pipeline is not None:
+                terminal["input_pipeline"] = dispatch_result.input_pipeline
+            if dispatch_result.readback is not None:
+                terminal["readback"] = dict(dispatch_result.readback)
         if guard_verdict is not None:
             # FR-1: persist the guard verdict (pass or the exemption it earned)
             # on the terminal receipt alongside the version it adjudicated.

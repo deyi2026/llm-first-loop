@@ -229,6 +229,39 @@ def key_events_for_chord(keys: str) -> list[dict[str, Any]]:
 # script replaces the PR2-era ``this.value`` assignment for the new verb only.
 _TYPE_FOCUS_JS = "function(){ this.focus(); }"
 
+# M2 B-01 (audit §5.5/§405, FR-04): set_text/append_text go through the REAL
+# input pipeline - focus + selection establishment + Input.insertText - never
+# the legacy this.value assignment with synthesized input/change events
+# (PR2: controlled components revert the DOM value on re-render, and the
+# synthetic events bypass the framework's onChange chain, so the legacy path
+# reported fake successes). Readback after insertText verifies the landed
+# value; maxlength truncation and controlled reversion surface as an honest
+# set_text_readback_mismatch fact instead of a fake success.
+_FILL_BEFORE_JS = "function(){ return String(this.value==null?'':this.value); }"
+_FILL_REPLACE_JS = "function(){ this.focus(); this.select(); }"
+_FILL_APPEND_JS = (
+    "function(){ this.focus(); const n=String(this.value==null?'':this.value).length;"
+    " this.setSelectionRange(n,n); }"
+)
+_FILL_READBACK_JS = (
+    "function(expected){ const actual=String(this.value==null?'':this.value);"
+    " return actual===String(expected) ? null : actual; }"
+)
+# T-16 (audit §402/§405): LFL_BROWSER_INPUT_PIPELINE=off keeps the legacy
+# assignment path reachable for A/B verification; every fill dispatch receipt
+# carries input_pipeline=insert_text|legacy_degraded so the paths are never
+# confused. Default on (the M2 landing).
+_FILL_LEGACY_VALUE_JS = (
+    "function(value,mode){ const next=mode==='append' ? String(this.value||'')+value : value;"
+    " this.value=next; this.dispatchEvent(new Event('input',{bubbles:true}));"
+    " this.dispatchEvent(new Event('change',{bubbles:true})); }"
+)
+
+
+def _fill_input_pipeline_enabled() -> bool:
+    raw = os.getenv("LFL_BROWSER_INPUT_PIPELINE", "on").strip().lower()
+    return raw not in {"off", "legacy", "0", "false", "no"}
+
 # M2-A B4 (DESIGN-20261027 §5.1): scroll the exact element into view, then read
 # its post-scroll bounding rect in ONE fixed predicate call (scrollIntoView
 # forces synchronous layout, so the rect reflects the scrolled position).
@@ -927,6 +960,33 @@ class CdpBrowserMutationActuator:
         if result.get("exceptionDetails"):
             raise RuntimeError("fixed Browser actuator function raised")
 
+    @staticmethod
+    def _call_value(
+        session: _MutationCdpSession,
+        object_id: str,
+        function: str,
+        arguments: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        """M2 B-01: fixed actuator script whose return value is consumed.
+
+        Same allowlist/exception discipline as _call; the callFunctionOn
+        result value (readback verification) is returned to the caller.
+        """
+        result = session.send(
+            "Runtime.callFunctionOn",
+            {
+                "objectId": object_id,
+                "functionDeclaration": function,
+                "arguments": arguments or [],
+                "returnByValue": True,
+                "awaitPromise": False,
+            },
+        )
+        if result.get("exceptionDetails"):
+            raise RuntimeError("fixed Browser actuator function raised")
+        inner = result.get("result") or {}
+        return inner.get("value")
+
     def _drop_session(self) -> None:
         # EVO-20260918-753b4a91: same-target reconnect only — bound target identity
         # stays pinned; page events must be re-enabled on the new connection.
@@ -1198,6 +1258,9 @@ class CdpBrowserMutationActuator:
             return self._dispatch_dialog(session, args, before_page_ids, dialog_blind_handled)
 
         object_id = self._object_id(session, physical_target)
+        # M2 B-01 (T-16): input pipeline facts flow to the dispatch receipt.
+        input_pipeline: str | None = None
+        readback: dict[str, Any] | None = None
         if verb == "click":
             try:
                 self._call(session, object_id, "function(){ this.click(); }", early_return_on_dialog=True)
@@ -1220,12 +1283,43 @@ class CdpBrowserMutationActuator:
             # M2-A B4: pointer-only hover, never a click (see _hover_center).
             self._hover_center(session, object_id)
         elif verb == "fill":
-            self._call(
-                session,
-                object_id,
-                "function(value,mode){ const next=mode==='append' ? String(this.value||'')+value : value; this.value=next; this.dispatchEvent(new Event('input',{bubbles:true})); this.dispatchEvent(new Event('change',{bubbles:true})); }",
-                [{"value": str(args["text"])}, {"value": str(args["mode"])}],
-            )
+            text = str(args["text"])
+            mode = str(args["mode"])
+            if not _fill_input_pipeline_enabled():
+                # T-16: legacy assignment path (controlled components may
+                # revert; receipt marks the degradation honestly).
+                self._call(
+                    session,
+                    object_id,
+                    _FILL_LEGACY_VALUE_JS,
+                    [{"value": text}, {"value": mode}],
+                )
+                input_pipeline = "legacy_degraded"
+            else:
+                # M2 B-01: focus + selection establishment + Input.insertText,
+                # then readback verification (maxlength truncation and
+                # controlled reversion surface as a mismatch fact, never a
+                # fake success).
+                before = self._call_value(session, object_id, _FILL_BEFORE_JS)
+                base = before if isinstance(before, str) else ""
+                self._call(
+                    session,
+                    object_id,
+                    _FILL_REPLACE_JS if mode == "replace" else _FILL_APPEND_JS,
+                )
+                session.send("Input.insertText", {"text": text})
+                expected = text if mode == "replace" else base + text
+                actual = self._call_value(
+                    session, object_id, _FILL_READBACK_JS, [{"value": expected}]
+                )
+                input_pipeline = "insert_text"
+                if actual is not None:
+                    readback = {
+                        "check": "set_text_readback_mismatch",
+                        "mode": mode,
+                        "expected": expected,
+                        "actual": actual if isinstance(actual, str) else str(actual),
+                    }
         elif verb == "select":
             self._call(
                 session,
@@ -1270,6 +1364,8 @@ class CdpBrowserMutationActuator:
             acknowledged=True,
             boundary_events=detected,
             completeness_reasons=("boundary_detector_non_exhaustive",),
+            input_pipeline=input_pipeline,
+            readback=readback,
         )
 
     def close(self) -> None:
