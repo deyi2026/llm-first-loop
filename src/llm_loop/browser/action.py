@@ -133,6 +133,18 @@ _PRESS_KEY_META_BLOCKED_KEYS = frozenset(
 )
 
 
+#: B-03（DESIGN v1.1 §3.6）：命名键闭集——策略层与 CDP 键表共用同一真值。
+#: token 一律小写；单字符（字母/数字/可打印符号）不在本表也合法；
+#: 闭集之外的多字符键名不允许（投递前确定性拒绝，零 CDP）。
+PRESS_KEY_NAMED_TOKENS: frozenset[str] = frozenset({
+    "`", "backquote", "backtick",
+    "backspace", "delete", "enter", "escape", "tab", "space",
+    "arrowleft", "arrowup", "arrowright", "arrowdown",
+    "home", "end", "pageup", "pagedown",
+    *(f"f{i}" for i in range(1, 13)),
+})
+
+
 def parse_key_chord(raw: Any) -> tuple[tuple[str, ...], str] | tuple[None, None]:
     """Split "Meta+A" into canonical modifiers + key; (None, None) = invalid.
 
@@ -178,6 +190,10 @@ def press_key_policy_error(keys: Any) -> str | None:
     if "meta" in modifiers and key == "escape":
         # Escape+Meta-class system chords (incl. Meta+Alt+Esc) close app-level
         # UI irreversibly from the page's point of view.
+        return "key_not_allowed"
+    if len(key) != 1 and key not in PRESS_KEY_NAMED_TOKENS:
+        # B-03（§3.6）：闭集外多字符键名（如 notakey）不允许——键表无法
+        # 产出规范 DOM 键值，投递前确定性拒绝（零 CDP 请求）。
         return "key_not_allowed"
     return None
 

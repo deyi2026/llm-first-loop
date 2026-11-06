@@ -12,12 +12,14 @@ import json
 import logging
 import os
 import threading
+import time
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 from websockets.sync.client import connect as websocket_connect
 
 from llm_loop.browser.action import (
+    PRESS_KEY_NAMED_TOKENS,
     BrowserDispatchResult,
     parse_key_chord,
     press_key_policy_error,
@@ -145,6 +147,16 @@ for _fn in range(1, 13):
 # actions (form submit on Enter, focus traversal on Tab) actually fire.
 _KEY_TEXT_BY_KEY = {"enter": "\r", "tab": "\t"}
 
+# B-03（DESIGN v1.1 §3.6）：DOM KeyboardEvent.key 规范值与 code 不同形的
+# 命名键——Space 是字面空格 U+0020；backtick 家族是 ` 字符本身。
+# 其余命名键的规范 key 与 code 同形（Enter/Escape/Tab/Arrow*/F1-F12/…）。
+_KEY_DOM_KEY_EXCEPTIONS = {"space": " ", "backquote": "`", "backtick": "`", "`": "`"}
+# 策略闭集与 CDP 键表失同步 = 导入期即失败（单一真值源，B-03）。
+_KEY_TOKENS_MISSING_FROM_TABLE = PRESS_KEY_NAMED_TOKENS - set(_KEY_NAMED_CODES)
+assert not _KEY_TOKENS_MISSING_FROM_TABLE, (
+    "PRESS_KEY_NAMED_TOKENS 与 _KEY_NAMED_CODES 失同步（B-03）"
+)
+
 
 def _key_code(key: str) -> tuple[str, int | None]:
     if len(key) == 1 and key.isalpha():
@@ -184,15 +196,20 @@ def key_events_for_chord(keys: str) -> list[dict[str, Any]]:
     modifiers, key = parse_key_chord(keys)
     if modifiers is None or not key:
         raise _ActuatorContractError("key_args_invalid")
+    if len(key) != 1 and key not in PRESS_KEY_NAMED_TOKENS:
+        # 纵深防御：闭集外键名即使绕过上游策略也在此拦截（零 CDP）。
+        raise _ActuatorContractError("key_not_allowed")
     code, vk = _key_code(key)
+    # B-03：event.key 必须是 DOM 规范值（单字符原样；命名键按 §3.6 表）。
+    canonical_key = key if len(key) == 1 else _KEY_DOM_KEY_EXCEPTIONS.get(key, code)
     bitmask = 0
     events: list[dict[str, Any]] = []
     for mod in modifiers:
         events.append(_key_event("keyDown", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
         bitmask |= _CDP_MODIFIER_BITS[mod]
     text = _KEY_TEXT_BY_KEY.get(key, "")
-    events.append(_key_event("keyDown", key, code, vk, modifiers=bitmask, text=text))
-    events.append(_key_event("keyUp", key, code, vk, modifiers=bitmask))
+    events.append(_key_event("keyDown", canonical_key, code, vk, modifiers=bitmask, text=text))
+    events.append(_key_event("keyUp", canonical_key, code, vk, modifiers=bitmask))
     for mod in reversed(modifiers):
         events.append(_key_event("keyUp", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
         bitmask &= ~_CDP_MODIFIER_BITS[mod]
@@ -297,11 +314,39 @@ _BOUNDARY_EVENT_METHODS = {
     "Page.javascriptDialogOpening": "dialog_opened",
 }
 
+# B-02（DESIGN v1.1 §3.5/§5.6）：事件缓存上界——弹窗关键事件（对话框/
+# 下载/新窗口）永不因界被丢，界满时最旧者让位；非关键新事件丢弃并计数
+# （不静默）。256 条对边界状态机绰绰有余（pop_events 每次清空）。
+_MAX_BUFFERED_EVENTS = 256
+_BOUNDARY_CRITICAL_EVENT_METHODS = frozenset(_BOUNDARY_EVENT_METHODS)
+
+
+class _PressKeyPartialDispatchError(RuntimeError):
+    """B-04（DESIGN v1.1 §3.7/T-11）：组合键部分投递失败。
+
+    已在同一原始目标连接上逆序尽力 keyUp 释放；cleanup 报告
+    （pressed/released/status/cause[/recovery]）随异常携带，回执可见。
+    死连接时 status=input_state_unknown（输入状态不可知，需重观测）。
+    只清理输入状态——绝不重演业务快捷键。
+    """
+
+    def __init__(self, cleanup: dict[str, Any]) -> None:
+        self.cleanup = cleanup
+        super().__init__(
+            "press_key partial dispatch: "
+            f"released={cleanup.get('released')}/{cleanup.get('pressed')} "
+            f"cleanup_status={cleanup.get('status')} cause={cleanup.get('cause')}"
+        )
+
 
 class _WebSocketLike(Protocol):
     def send(self, payload: str) -> None: ...
     def recv(self, timeout: float | None = None) -> str | bytes: ...
     def close(self) -> None: ...
+
+
+def _same_key_chord_event(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return a.get("key") == b.get("key") and a.get("code") == b.get("code")
 
 
 def _default_ws_connect(url: str, *, max_frame_bytes: int = DEFAULT_CDP_MAX_FRAME_BYTES) -> _WebSocketLike:
@@ -318,6 +363,30 @@ class _MutationCdpSession:
         self._request_id = 0
         self._lock = threading.Lock()
         self._events: list[dict[str, Any]] = []
+        # B-02：有界缓存丢弃计数 / 迟到旧 id 响应计数 / 超时死亡标记
+        # （诊断字段，不静默；dead 会话由 actuator 关闭重建，不静默复用）。
+        self.events_dropped = 0
+        self.late_responses = 0
+        self.dead = False
+
+    def diag(self) -> dict[str, Any]:
+        """B-02 诊断字段：缓存丢弃/迟到响应/死亡标记（§5.6）。"""
+        return {
+            "events_buffered": len(self._events),
+            "events_dropped": self.events_dropped,
+            "late_responses": self.late_responses,
+            "dead": self.dead,
+        }
+
+    def _buffer_event(self, message: dict[str, Any]) -> None:
+        """有界缓存：界满时弹窗关键事件让最旧者让位；非关键新事件丢弃并计数。"""
+        if len(self._events) >= _MAX_BUFFERED_EVENTS:
+            if message.get("method") not in _BOUNDARY_CRITICAL_EVENT_METHODS:
+                self.events_dropped += 1
+                return
+            self._events.pop(0)
+            self.events_dropped += 1  # 让位者同样计入丢弃计数（如实报）
+        self._events.append(message)
 
     def send(
         self,
@@ -340,14 +409,27 @@ class _MutationCdpSession:
             self._request_id += 1
             request_id = self._request_id
             self._websocket.send(json.dumps({"id": request_id, "method": method, "params": params or {}}, separators=(",", ":")))
+            # B-02（§3.5/T-09）：monotonic 总 deadline——事件到达不延长预算。
+            deadline = time.monotonic() + self._timeout_s
             while True:
-                raw = self._websocket.recv(timeout=self._timeout_s)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.dead = True  # §5.6：超时会话标记死亡，不静默复用
+                    raise TimeoutError(
+                        f"CDP mutation response budget exhausted after {self._timeout_s}s "
+                        f"(method={method})"
+                    )
+                try:
+                    raw = self._websocket.recv(timeout=remaining)
+                except TimeoutError:
+                    self.dead = True  # §5.6：超时会话标记死亡，不静默复用
+                    raise
                 message = json.loads(raw)
                 if not isinstance(message, dict):
                     continue
                 if message.get("id") != request_id:
                     if isinstance(message.get("method"), str):
-                        self._events.append(message)
+                        self._buffer_event(message)
                         if (
                             early_return_on_dialog
                             and message.get("method") == "Page.javascriptDialogOpening"
@@ -356,6 +438,10 @@ class _MutationCdpSession:
                             raise _DialogOpeningInterruptedError(
                                 opening_params if isinstance(opening_params, dict) else {}
                             )
+                    elif "id" in message:
+                        # B-02（§5.6）：迟到旧 id 响应——显式失效计数，
+                        # 不静默丢弃、不串号（id 匹配保证永不误配）。
+                        self.late_responses += 1
                     continue
                 if "error" in message:
                     error = message.get("error") or {}
@@ -388,7 +474,7 @@ class _MutationCdpSession:
                     break
                 message = json.loads(raw)
                 if isinstance(message, dict) and isinstance(message.get("method"), str):
-                    self._events.append(message)
+                    self._buffer_event(message)
 
 
 class CdpBrowserMutationActuator:
@@ -511,6 +597,14 @@ class CdpBrowserMutationActuator:
             raise RuntimeError("Browser target identity changed; no silent rebind")
         elif websocket_url != self._bound_websocket_url:
             raise RuntimeError("bound Browser target websocket changed; recreate actuator explicitly")
+        if self._session is not None and getattr(self._session, "dead", False):
+            # B-02（§5.6）：上一轮超时标记死亡的会话不静默复用——关闭重建。
+            stale_ws = self._websocket
+            with contextlib.suppress(Exception):
+                if stale_ws is not None:
+                    stale_ws.close()
+            self._session = None
+            self._page_events_enabled = False
         if self._session is None:
             # S3b attestation（S0 结论 ②）：绑定前 host 侧进程证据判定；deny-real 默认
             # fail-closed（shadow 模式只记录不拒绝）。先判后连——拒绝路径零连接成本。
@@ -551,6 +645,46 @@ class CdpBrowserMutationActuator:
         # when unchanged); must precede any dispatch that could start one.
         self._sync_download_behavior(self._session)
         return self._session
+
+    def _release_pressed_keys(
+        self,
+        session: _MutationCdpSession,
+        pressed: list[dict[str, Any]],
+        *,
+        cause: BaseException,
+    ) -> dict[str, Any]:
+        """B-04（§3.7/T-11）：逆序尽力 keyUp 释放，只清输入状态。
+
+        连接已死（dead）时不投递任何事件：显式 input_state_unknown +
+        重观测路径；释放本身失败则如实报 partial_release_failed。
+        """
+        cleanup: dict[str, Any] = {
+            "pressed": len(pressed),
+            "released": 0,
+            "status": "released",
+            "cause": type(cause).__name__,
+        }
+        if getattr(session, "dead", False):
+            cleanup["status"] = "input_state_unknown"
+            cleanup["recovery"] = "reconnect_then_snapshot"
+            return cleanup
+        for event in reversed(pressed):
+            release: dict[str, Any] = {
+                "type": "keyUp",
+                "key": event.get("key"),
+                "code": event.get("code"),
+                "modifiers": event.get("modifiers", 0),
+            }
+            if "windowsVirtualKeyCode" in event:
+                release["windowsVirtualKeyCode"] = event["windowsVirtualKeyCode"]
+                release["nativeVirtualKeyCode"] = event["windowsVirtualKeyCode"]
+            try:
+                session.send("Input.dispatchKeyEvent", release)
+                cleanup["released"] += 1
+            except Exception:  # noqa: BLE001 - 释放是尽力而为，失败如实报
+                cleanup["status"] = "partial_release_failed"
+                break
+        return cleanup
 
     def _page_target_ids(self) -> set[str]:
         return {
@@ -1004,8 +1138,25 @@ class CdpBrowserMutationActuator:
             policy_error = press_key_policy_error(keys)
             if policy_error is not None:
                 raise _ActuatorContractError(policy_error)
-            for event in key_events_for_chord(keys):
-                session.send("Input.dispatchKeyEvent", event)
+            # B-04（§3.7/T-11）：跟踪已按下集合；任一投递异常时在同一原始
+            # 连接上逆序尽力 keyUp 释放，cleanup 状态随异常上抛——只清理
+            # 输入状态，绝不重演业务快捷键。
+            pressed_stack: list[dict[str, Any]] = []
+            try:
+                for event in key_events_for_chord(keys):
+                    session.send("Input.dispatchKeyEvent", event)
+                    if event.get("type") == "keyDown":
+                        pressed_stack.append(event)
+                    else:
+                        pressed_stack = [
+                            held
+                            for held in pressed_stack
+                            if not _same_key_chord_event(held, event)
+                        ]
+            except Exception as exc:
+                raise _PressKeyPartialDispatchError(
+                    self._release_pressed_keys(session, pressed_stack, cause=exc)
+                ) from exc
             return self._acknowledged(session, before_page_ids)
 
         if verb == "dialog":
