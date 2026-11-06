@@ -514,6 +514,8 @@ k3（Kimi，经 model_catalog 回执核验）"。
 **规则**：每个有实质工作量的任务（需要工具执行、多步推进、修改产物或排查问题），形成**检索 → 使用 →（可选）留痕 → 处置**的循环，使经验/方法库随真实使用被校准。RULE-AI-18 管"用前核适用性"、RULE-AI-29 管"卡片有错就修或弃"。检索是发现方法的前提；留痕与评分不是使用的前提。
 
 1. **任务前检索（开局）**：动手前对经验/方法库做一次有界检索——`search_records(kind=method|experience|lesson)`，≤2 类、每类 limit≤5，query 用当前任务关键词；命中后按 RULE-AI-18/22 双闸（来源时间/新鲜度 + 当前任务适用性）裁决是否采用。零命中时如实记"无可用经验"后正常推进，不为凑命中反复换词检索。**豁免**（防格式税）：单步明确问答、闲聊、纯复述类不触发；同一连续任务窗口内不重复检索。
+
+1b. **开工三步状态核查（2026-11-06 用户指示，防重复执行）**：接手/继续任务前先核当前事实——①`grep` 代码库内任务/演进 ID 痕迹（是否已实现）；②查 `evolution_exec_log`/任务台账末条（是否已 claimed/executed）；③确认演进状态（仅 pending_review 才做实现；executing/executed 直接核对现状）。任一步显示"已完成/已实现"即以现状为准，不重复实现（2026-11-06 两次重复派单的代价）。
 2. **任务后评分（可选，不再强制）**：若你对本次使用做了留痕，按 `record_use` 计分：`applied`/`adapted` 且任务结果验证有效 = **+1**（必须附非空 `evidence_refs`，否则落账失败——采纳证据强制）；`not_applicable` = **-1**；`rejected` = **-1**；`not_adopted` = **0**（experience 侧第三态：卡适用且正确、但本轮未执行，与「卡不适用」「卡错误引导」三义分离，锚 EVO-20261104-e5f79db8；method/rule 侧不接受该值）。不记录则不评分——评分是留痕的副产品，不是任务义务，零记录不构成违规。note 一句本次观察（何场景/何效果/何偏差）。净分只覆盖已记录的使用，是机械汇总事实，不另建平行账本文件（单一数据源，锚 RULE-AI-20(6)）。
 3. **处置评估（仅针对已留痕的负反馈）**：
    - **+1**：无需额外动作；可选 `annotate_freshness` 刷新时效锚。
@@ -578,6 +580,12 @@ k3（Kimi，经 model_catalog 回执核验）"。
 
 **正例**：分支任务全部完成 → spawn merge-review-gate 审查 → 发现 main 已前进 → rebase + focused gate 复跑 → PASS → ff 合并 → 回执落盘 → Goal complete（evidence 引用 merge 回执）。
 **反例**：分支任务做完即 Goal complete，成果留分支数日不合并；以"迟早要合并"跳过审查直接 merge；把用户"先不 push"曲解为"先不合并"绕开本闸。
+
+**并行会话纪律（2026-11-06 用户指示，建议①/②落地）**：多会话共享同一仓库时——
+
+1. **lane 先行登记**：开始任何可合并改动前，先 `lane_open`（分支+基线+路径面）再 `git commit`；`main` 直写仅在无他人 active lane 时允许（一次性小修），push 前按 RULE-AI-28(3) 统一审查。
+2. **机械门（已生效）**：`execute_command` 检测到「存在他人 active lane 且命令为 `git commit`/`git push` 目标 main」时返回 `error_type=lane_main_write_denied` 拒绝执行（无冲突/无法判定时放行，零回归）。应拦/放行双向实测见 `tests/unit/test_lane_main_write_guard.py`（RULE-AI-35）。
+3. **统一 push 收敛**：多方在 main 排队时，本地合并为线性历史后一次性 push（单次整树审查），不在他人合并闸在途时抢推。
 
 ---
 

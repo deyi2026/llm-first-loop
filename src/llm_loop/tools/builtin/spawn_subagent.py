@@ -142,6 +142,15 @@ class SpawnSubAgentTool:
                     "模型注册表校验/路由，程序不替模型选择厂家。"
                 ),
             },
+            "max_rounds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "description": (
+                    "可选轮次预算（1..200）：child 超过该轮数后被运行时终止，防上下文/"
+                    "token 烧尽；省略=不限。建议复杂实现类任务显式设置。"
+                ),
+            },
             "acceptance": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -253,6 +262,23 @@ class SpawnSubAgentTool:
         from llm_loop.tools.arg_coerce import coerce_str_list
         acceptance = coerce_str_list(kwargs.get("acceptance"))
         model = str(kwargs.get("model", "") or "").strip()
+        # 2026-11-06 并行处理完善建议④：子代理轮次预算（防上下文/token 烧尽）。
+        # None=不限（零回归）；1..200 整数，超界确定性拒绝。
+        max_rounds_raw = kwargs.get("max_rounds")
+        max_rounds: int | None = None
+        if max_rounds_raw is not None:
+            try:
+                max_rounds_val = int(max_rounds_raw)
+            except (TypeError, ValueError):
+                max_rounds_val = -1
+            if not (1 <= max_rounds_val <= 200):
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[参数错误] max_rounds 须为 1..200 的整数（轮次预算），省略=不限",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            max_rounds = max_rounds_val
 
         if not task:
             return ToolResult(
@@ -356,6 +382,7 @@ class SpawnSubAgentTool:
                     else None
                 ),
                 fs_isolation=bool(reqs.fs_isolation) if reqs is not None else False,
+                max_rounds=max_rounds,
                 **_required_write_scope_kwargs(reqs, write_scope_declared),
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传

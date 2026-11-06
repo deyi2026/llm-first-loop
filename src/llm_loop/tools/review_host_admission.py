@@ -3983,11 +3983,21 @@ class HostReviewAdmission:
                     # Fail closed, but say *why*: rate limited vs bad
                     # credentials vs plain refusal need different fixes.
                     self._audit_reviewer_unavailable(parent, kind, label, last_failure)
-                    return {
+                    failure = {
                         "accepted": False,
                         "reason": f"{label}:{last_failure[:200]}",
                         "reviewer_failure": label,
                     }
+                    if label == "reviewer_rate_limited":
+                        # 2026-11-06 并行处理完善建议⑤：配额类失败给结构化重试面，
+                        # 便于调用方排程重试（不伪造精确时刻——供应商未提供）。
+                        failure["retry_after_s"] = None
+                        failure["retry_hint"] = (
+                            "reviewer_rate_limited：上游配额窗口重置后重试"
+                            "（供应商未给精确时刻，本回执不伪造数字）；"
+                            "可用 schedule 在窗口重置后重试同一 target"
+                        )
+                    return failure
                 time.sleep(delay)
                 slept += delay
         finally:

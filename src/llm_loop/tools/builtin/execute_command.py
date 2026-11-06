@@ -1169,6 +1169,46 @@ class ExecuteCommandTool:
             raw_observation=raw_observation,
         )
 
+    def _lane_main_write_gate(self, command: str, workdir: str | None) -> ToolResult | None:
+        """RULE-AI-34 补充（2026-11-06）: main 直写机械门。
+
+        存在他人 active lane 时拒绝 git commit/push main（并行会话合并闸竞争
+        防护）；无冲突/无法判定时放行（拒绝必须基于已证事实）。
+        """
+        try:
+            from llm_loop.config import load_settings
+
+            audit_dir = str(load_settings().audit_dir)
+        except Exception:  # noqa: BLE001 — 取不到审计目录 → 无法判定 → 放行
+            return None
+        try:
+            from llm_loop.core.run_context import current_session_id as _sid
+
+            sid = str(_sid() or "")
+        except Exception:  # noqa: BLE001 — 无会话上下文（测试/独立进程）→ 保守按空会话
+            sid = ""
+        try:
+            from llm_loop.core.lane_main_write_guard import check_git_main_write
+
+            decision = check_git_main_write(
+                command,
+                audit_dir=audit_dir,
+                session_id=sid,
+                workdir=workdir,
+            )
+        except Exception:  # noqa: BLE001 — 守卫自身异常不连坐命令执行（拒绝需已证事实）
+            return None
+        if decision is None:
+            return None
+        return ToolResult(
+            status=ToolResultStatus.ERROR,
+            content=f"[main 直写拒绝] {decision['reason']}：{decision['detail']}",
+            tool_call_id="",
+            tool_name=self.name,
+            error_type="lane_main_write_denied",
+            error_detail=decision["reason"],
+        )
+
     def _write_scope_command_gate(
         self,
         command: str,
@@ -1265,6 +1305,11 @@ class ExecuteCommandTool:
         if workdir is None:
 
             workdir = workspace_base()
+        # RULE-AI-34 补充（2026-11-06）: main 直写机械门——存在他人 active lane 时
+        # 拒绝 git commit/push main（并行会话合并闸竞争防护；无冲突时零行为变化）。
+        _lane_gate = self._lane_main_write_gate(command, workdir)
+        if _lane_gate is not None:
+            return _lane_gate
         # EVO-20261016-96abc163: 命令级 worktree 隔离租约（opt-in）。prepare fail-fast
         # 即整条拒绝——绝不降级共享工作区执行（无声丢隔离比失败更糟）。
         # 释放协调（try 内联终态回执 / finally 兜底，恰好一次）见 _WorktreeRelease。
