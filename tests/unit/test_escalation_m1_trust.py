@@ -183,3 +183,39 @@ def test_wait_tool_fails_fast_on_unverified_record(tmp_path):
 
     assert result.status == "failure", "失效申请应快速失败而非静默等待"
     assert "重新申请" in result.content or "失效" in result.content, result.content
+
+
+def test_projection_expired_when_expiry_missing_or_corrupt(tmp_path):
+    """P2-2 复审意见采纳：approved+到期时间缺失/不可解析 → 投影 expired（与 consume 同语义）。"""
+    s = _store(tmp_path)
+    rid = _mk_pending(s)
+    s.decide(rid, "approved", note="ok")
+    _force_field(s, rid, "token_expires_at", "")
+    items = {r["id"]: r for r in s.list()}
+    assert items[rid]["status"] == "expired", "缺失到期时间的 approved 投影应 expired"
+    assert s.get(rid)["status"] == "expired"
+
+    _force_field(s, rid, "token_expires_at", "garbage-ts")
+    rec = s.wait_for_decision(rid, 0.1)
+    assert rec is not None and rec["status"] == "expired", "不可解析到期时间投影 expired"
+
+
+def test_pending_filter_excludes_unverified_records(tmp_path):
+    """FR-03/FR-07: 待审专用查询排除跨进程失效 pending（面板无法审批）。"""
+    s = _store(tmp_path)
+    rec1 = s.create(
+        tool_name="execute_command",
+        command=_CMD_STR,
+        justification="失效排除" * 3,
+        session_id="s1",
+    )
+    old_key = escalation_module._STATE_SIGNING_KEY
+    escalation_module._STATE_SIGNING_KEY = secrets.token_bytes(32)
+    try:
+        s2 = _store(tmp_path)
+        assert s2.list(status="pending") == [], "失效 pending 不得出现在待审查询"
+        assert s2.pending_count() == 0, "失效 pending 不计入待审计数"
+        # 历史视图（无过滤）仍如实呈现
+        assert any(r.get("id") == rec1["id"] for r in s2.list())
+    finally:
+        escalation_module._STATE_SIGNING_KEY = old_key

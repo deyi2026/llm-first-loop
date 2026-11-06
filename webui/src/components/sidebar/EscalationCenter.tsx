@@ -23,6 +23,9 @@ export interface EscalationRequest {
   command_sha256?: string;
   command_len?: number;
   command_truncated?: boolean;
+  /** FR-03: 跨进程签名失效标记（存储层投影保留）——失效 pending 不入待审队列，
+   * 历史视图显示"已失效"。 */
+  _sig_unverified?: boolean;
 }
 
 interface ListResp {
@@ -38,7 +41,7 @@ interface DetailResp {
   command: string; // 完整原文，不截断（ESC-05 / FR-05）
   command_sha256?: string;
   command_len?: number;
-  error?: string;
+  // 注意：失败语义走联合类型另一支 { error; status }；成功响应不含 error。
 }
 
 const POLL_MS = 5000;
@@ -67,9 +70,17 @@ async function fetchEscalations(): Promise<ListResp | null> {
 async function fetchEscalationDetail(id: string): Promise<DetailResp | { error: string; status: number }> {
   try {
     const r = await fetch(`/api/v1/escalation/detail?id=${encodeURIComponent(id)}`);
-    const d = (await r.json().catch(() => ({}))) as DetailResp;
-    if (!r.ok) return { error: d?.error || `失败(${r.status})`, status: r.status };
-    return d;
+    const d = (await r.json().catch(() => ({}))) as Partial<DetailResp> & { error?: string };
+    // 注意：后端 detail 成功响应含 escalation 的 status 字段（approved/pending/…），
+    // 失败判别只能用 error 字段/HTTP 码，不得用 "status" in d（否则成功永远被判失败）。
+    if (!r.ok || typeof d.error === "string") {
+      return { error: d?.error || `失败(${r.status})`, status: r.status };
+    }
+    if (typeof d.command !== "string") {
+      // 畸形 200（缺 command）不得解锁批准门——显式按失败处理。
+      return { error: "响应缺少完整命令字段", status: r.status };
+    }
+    return { id: d.id || id, command: d.command, command_sha256: d.command_sha256, command_len: d.command_len };
   } catch (err) {
     return { error: `请求失败: ${String(err)}`, status: 0 };
   }
@@ -165,8 +176,14 @@ function PendingCard({
   const loadFull = () => {
     setViewErr("");
     void fetchEscalationDetail(req.id).then((d) => {
-      if ("status" in d) {
+      if ("error" in d) {
         setViewErr(`完整命令加载失败: ${d.error}`);
+        return;
+      }
+      // TOCTOU 防线：详情原文指纹必须与列表展示时绑定的指纹一致，不一致说明
+      // 列表数据已过期，禁止用新原文解锁对旧卡片的批准。
+      if (d.command_sha256 && req.command_sha256 && d.command_sha256 !== req.command_sha256) {
+        setViewErr("命令指纹不一致（待审内容已变化），请刷新列表后重试");
         return;
       }
       setFullCmd(d.command);
@@ -364,7 +381,12 @@ export function EscalationPanel() {
         <div className="v2-esc-sec">最近记录</div>
         {history.length === 0 && <div className="v2-tree-loading">（无历史）</div>}
         {history.map((r) => {
-          const badge = statusBadge(r.status);
+          // FR-03: 跨进程失效的 pending 已被待审专用查询排除，历史视图里
+          // 仍如实呈现但标记"已失效"——面板永远无法审批它们（签名校验拒绝）。
+          const badge =
+            r._sig_unverified && r.status === "pending"
+              ? { cls: "denied", text: "已失效" }
+              : statusBadge(r.status);
           return (
             <div key={r.id} className="v2-evo-item">
               <div className="v2-evo-row">

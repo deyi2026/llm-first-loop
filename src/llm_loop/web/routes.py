@@ -2862,7 +2862,7 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
         # 会让审批者误以为"没有待审"，静默漏批/漏拒。
         logger.warning("提权审批存储读取失败", exc_info=True)
         return JSONResponse(
-            content={"error": f"审批存储读取失败: {exc}", "requests": None, "pending_count": None},
+            content={"error": "审批存储读取失败（详情见服务端日志）", "requests": None, "pending_count": None},
             status_code=503,
         )
     for item in items:
@@ -2898,7 +2898,7 @@ def escalation_detail(request: Request, id: str = "") -> Response:
     except (OSError, ValueError) as exc:
         # ESC-08 同语义：存储故障如实 503，不伪装"不存在"。
         logger.warning("提权审批存储读取失败（detail）", exc_info=True)
-        return JSONResponse(content={"error": f"审批存储读取失败: {exc}"}, status_code=503)
+        return JSONResponse(content={"error": "审批存储读取失败（详情见服务端日志）"}, status_code=503)
     if rec is None:
         return JSONResponse(content={"error": f"请求不存在: {rid}"}, status_code=404)
     return JSONResponse(

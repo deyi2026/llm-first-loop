@@ -80,17 +80,18 @@ def _effective_status(rec: dict) -> str:
     """统一状态投影（FR-09 / ESC-09）：approved 且令牌到期 → expired.
 
     list/get/wait_for_decision/consume 所有读取路径共用本函数，杜绝
-    "面板 approved、AI 消费报过期"的边界翻转投影。到期时间缺失/不可
-    解析时投影保持 approved——消费路径在 consume/consume_for_execution
-    内单独 fail-closed（FR-04），投影层不做隐式改判。
+    "面板 approved、AI 消费报过期"的边界翻转投影。与消费路径的
+    fail-closed（FR-04）同语义：到期时间缺失/不可解析的 approved 记录
+    一律投影为 expired——合法 decide() 必写 token_expires_at，缺失只可能
+    来自损坏/手工改写，投影与 consume 三层一致拒绝，不再各自表述。
     """
     if rec.get("status") != "approved":
         return str(rec.get("status") or "")
     exp = str(rec.get("token_expires_at") or "")
     if not exp:
-        return "approved"
+        return "expired"
     exp_dt = _parse_ts(exp)
-    if exp_dt is not None and exp_dt < system_local_now():
+    if exp_dt is None or exp_dt < system_local_now():
         return "expired"
     return "approved"
 
@@ -334,7 +335,12 @@ class EscalationStore:
     def list(self, status: str = "", limit: int = 50) -> list[dict]:
         out = []
         for r in reversed(self._load()):  # 新→旧
-            if status and _effective_status(r) != status:
+            eff = _effective_status(r)
+            # FR-03/FR-07: 待审专用查询排除跨进程失效记录——面板永远无法
+            # 审批它们（decide 会拒绝签名失效），出现在待审队列只会误导。
+            if status == "pending" and r.get("_sig_unverified"):
+                continue
+            if status and eff != status:
                 continue  # FR-09: 过滤按统一投影状态，过期记录不再匹配 approved
             out.append(_public(r))
             if len(out) >= limit:

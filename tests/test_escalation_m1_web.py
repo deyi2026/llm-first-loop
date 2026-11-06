@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -101,6 +103,10 @@ def test_corrupt_store_returns_503_not_empty_200(client, store, isolated_data_di
     assert resp.json().get("error"), "错误响应必须带 error 字段"
 
 
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root 无视读权限位，chmod 000 不产生 PermissionError",
+)
 def test_unreadable_store_returns_503(client, store, isolated_data_dir):
     _login(client)
     path = isolated_data_dir / "audit" / "escalation_requests.json"
