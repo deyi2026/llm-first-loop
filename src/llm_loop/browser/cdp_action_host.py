@@ -599,8 +599,10 @@ class CdpBrowserMutationActuator:
             raise RuntimeError("bound Browser target websocket changed; recreate actuator explicitly")
         if self._session is not None and getattr(self._session, "dead", False):
             # B-02（§5.6）：上一轮超时标记死亡的会话不静默复用——关闭重建。
+            stale_ws = self._websocket
             with contextlib.suppress(Exception):
-                self._websocket.close()
+                if stale_ws is not None:
+                    stale_ws.close()
             self._session = None
             self._page_events_enabled = False
         if self._session is None:
