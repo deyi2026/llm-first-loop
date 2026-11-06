@@ -14,8 +14,8 @@ import pytest
 
 from llm_loop.browser.profile_policy import (
     AckRecord,
-    annotation_for,
     ack_digest,
+    annotation_for,
     evaluate_profile_class,
 )
 from llm_loop.tools.builtin.browser_perceive import BrowserPerceiveTool
@@ -155,6 +155,17 @@ def _engine(tmp_path, **browser_kw):
     return build_engine(settings)  # type: ignore[no-any-return]
 
 
+def _ack_from_real_today(delta_days: int) -> str:
+    """相对真实时钟构造 ACK：工厂门（build_engine）不注入 today，按 date.today() 判过期。
+
+    根因（TASK-8e22c083-001）：原 VALID_ACK 硬编码过期日 2026-11-05（测试写于
+    2026-10-06），墙上时钟越过该日后工厂门 fail-closed 拒绝注册——base 与 HEAD
+    同败的根因即此时间腐烂，非生产码回归。纯逻辑测试显式注入 today=TODAY，不受
+    真实时钟影响，保持固定日期不变。
+    """
+    return f"yyj|main-profile|{(date.today() + timedelta(days=delta_days)).strftime('%Y-%m-%d')}"
+
+
 def test_factory_gate_three_states(tmp_path):
     # 默认档：注册（行为与 S2 之前一致）
     names = set(_engine(tmp_path).registry.names())
@@ -170,7 +181,7 @@ def test_factory_gate_three_states(tmp_path):
         _engine(
             tmp_path,
             browser_profile_class="real",
-            browser_real_profile_ack=VALID_ACK,
+            browser_real_profile_ack=_ack_from_real_today(30),
         ).registry.names()
     )
     assert "browser_perceive" in names_ack and "browser_operate" in names_ack
