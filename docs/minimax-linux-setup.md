@@ -47,8 +47,12 @@ WorkingDirectory=/home/<user>/.local/share/lfl
 Environment=LFL_HOME=/home/<user>/.local/share/lfl
 Environment=PATH=/home/<user>/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
+# ExecStart 按版本目录写死：升级流程会用 sed 把它改写到新版本目录。
+# 不要手工改成 ~/.local/bin/lfl —— 升级脚本第 3 步会校验版本路径，改了就会回滚。
 ExecStart=/home/<user>/.local/share/lfl/releases/<VERSION>/venv/bin/lfl start
-Restart=on-failure
+# 必须是 always：uvicorn 优雅关闭超时后以 exit 0 退出，
+# Restart=on-failure 不覆盖「干净退出」→ 服务静默消失且不自愈。
+Restart=always
 RestartSec=5s
 KillSignal=SIGTERM
 TimeoutStopSec=20s
@@ -75,6 +79,10 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8903/health
 ~~~
 
 `NRestarts` 递增且 `/health` 返回 200，即崩溃自愈生效。切换时先停掉旧的无守护进程，否则新单元会因端口占用启动失败。
+
+> **实测坑（2026-11-06）**：`Restart=on-failure` 不覆盖**干净退出**。uvicorn 收到 SIGTERM 后若优雅关闭超时，会以 exit 0 结束 → systemd 判定 success → 不重启 → `/health` 直接 000、服务无声消失。这就是本机踩到的一次静默中断，故单元用 `Restart=always`。
+>
+> 升级/安装流程会先 `systemctl --user stop lfl.service` 再装新版本、装完再 start：装的过程中服务是停的，属预期流程，不是崩溃；显式 stop 同样不会被 `Restart=always` 拉起。
 
 ## 4. 额度 / 限流巡检（可选）
 
@@ -149,12 +157,43 @@ WantedBy=timers.target
 
 **上游修复**：`runtime/paths.py` 增加 package bundle 回退（显式 env > 代码根 > 随包 bundle），并新增 `docs_source` / `skills_source` / `method_seed_source` 标明来源；升级到含该修复的版本后，软链与 `.env` 里的三项路径都不再需要。
 
-## 6. 上线核验清单
+**每次版本切换后都要重指向**：官方安装器不维护这条软链（实测 `install_linux.sh` 里无相关逻辑），版本目录换了软链仍指向旧版本：
 
 ~~~bash
-lfl doctor --online                 # 在线体检：应报 状态：ready（模型名不再假报 unknown model）
+ln -sfn ~/.local/share/lfl/releases/LFL-$(cat ~/.local/share/lfl/.LFL-active-version)/venv/lib/python3.13/site-packages/llm_loop/_bundled ~/.local/share/lfl/assets
+systemctl --user restart lfl.service
+lfl doctor | grep 上下文资产   # 规则索引 / 方法 / 技能 计数应对应当前版本
+~~~
+
+## 6. 主机出网与包索引（uv 与 pip 是两套）
+
+`uv` **不读** `~/.pip/pip.conf`。若 pip.conf 指向的镜像在本机不可达、默认 PyPI 也不可达，`uv pip install` 会一直挂着（CPU 占用≈0、新 venv 的 site-packages 为空），把升级流程拖死——而升级流程在这之前已经先把服务 `stop` 了，结果是**服务长时间中断**。
+
+2026-11-06 本机实测：清华镜像与 pypi.org 均不可达，阿里云镜像可达（HTTP 200）。修法（两侧都改）：
+
+~~~bash
+mkdir -p ~/.config/uv
+cat > ~/.config/uv/uv.toml <<'EOF'
+[[index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
+EOF
+~~~
+
+`~/.pip/pip.conf` 的 `index-url` 也改成同一个可达镜像。改完先验证可达性再动升级：
+
+~~~bash
+timeout 8 curl -s -o /dev/null -w '%{http_code}\n' https://mirrors.aliyun.com/pypi/simple/
+~~~
+
+## 7. 上线核验清单
+
+~~~bash
+lfl doctor --online                 # 在线体检：应报 状态：ready（模型名不再假报 unknown model；需版本含上游修复）
 lfl paths                            # 确认 DOCS_DIR / SKILLS_DIR / METHOD_SEED_DIR 指向存在的目录
 systemctl --user status lfl.service  # active (running) + MainPID
+systemctl --user show lfl.service -p Restart   # 应为 always（不是 on-failure）
+ls -l ~/.local/share/lfl/assets      # 应指向当前活动版本的 _bundled
 curl -s http://127.0.0.1:8903/health # 200
 ~~~
 
