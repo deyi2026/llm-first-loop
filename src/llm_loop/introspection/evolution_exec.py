@@ -31,7 +31,7 @@ from __future__ import annotations
 import contextlib
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -160,6 +160,8 @@ class ExecutionOutcome:
     error: str = ""  # M19 FIX-01: 状态未推进如实标注（如"状态未推进（建议不存在）"；不影响审计）
     ts_start: str = ""
     ts_end: str = ""
+    # EVO-20261106-b0806c32: 完成登记的 evidence 引用（审计可见；默认空）。
+    evidence_refs: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -173,6 +175,7 @@ class ExecutionOutcome:
             "verify_result": self.verify_result,
             "rollback_result": self.rollback_result,
             "note": self.note,
+            "evidence_refs": list(self.evidence_refs),
         }
 
 
@@ -285,6 +288,7 @@ class EvolutionExecutor:
         actions: list[dict] | None = None,
         note: str = "",
         owner_session_id: str | None = None,
+        evidence_refs: list[str] | None = None,
     ) -> ExecutionOutcome:
         """AI 执行完成登记（executor=ai）: executing→executed + 审计.
 
@@ -327,6 +331,7 @@ class EvolutionExecutor:
             note=note or "AI 执行完成登记（验证结论见 AI 汇报，RULE-AI-06）",
             ts_start="",
             ts_end=ts_end,
+            evidence_refs=[str(r) for r in (evidence_refs or [])],
         )
         outcome.error = error  # M19 FIX-01: 状态未推进如实标注（不影响 status/审计落盘）
         self._audit_exec(outcome, boundary={"touches_boundary": False, "reason": "ai-complete"})

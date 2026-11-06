@@ -155,6 +155,8 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
     args, consumed_handoff, handoff_existed = _fill_args_from_handoff(
         store, suggestion_id, args
     )
+    if not note:
+        note = str(args.get("note", "")).strip()
     # 调 EvolutionExecutor.complete()（状态推进 executing→executed + evolution_exec_log 审计）
     try:
         outcome = executor.complete(
@@ -164,6 +166,9 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
             else [],
             note=note,
             owner_session_id=owner_session_id or None,
+            evidence_refs=[str(r) for r in args.get("evidence_refs") or []]
+            if isinstance(args.get("evidence_refs"), list)
+            else [],
         )
     except Exception as exc:  # noqa: BLE001 — 登记异常如实降级（fail-open）
         return ToolResult(
@@ -198,7 +203,7 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
             tool_name="evolution_complete",
         )
     # 登记成功 → 清除暂存条目（无条件清，防僵尸条目；幂等）；消耗了暂存则注明
-    handoff_cleared = _clear_handoff_if_existed(store, suggestion_id, handoff_existed)
+    handoff_cleared = _clear_handoff(store, suggestion_id) if handoff_existed else False
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
@@ -277,17 +282,23 @@ def _fill_args_from_handoff(store, suggestion_id: str, args: dict) -> tuple[dict
         _h = load_completion_handoff(store.dir, suggestion_id)
         if _h is not None:
             existed = True
+            args = dict(args)
+            changed = False
             if not (isinstance(args.get("actions"), list) and args.get("actions")):
-                args = dict(args)
                 args["actions"] = [str(a) for a in (_h.get("actions") or [])]
-                consumed = True
+                changed = True
+            if not (isinstance(args.get("evidence_refs"), list) and args.get("evidence_refs")):
+                args["evidence_refs"] = [str(r) for r in (_h.get("evidence_refs") or [])]
+                changed = True
+            if not str(args.get("note") or "").strip():
+                args["note"] = str(_h.get("note") or "")
+                changed = changed or bool(args["note"])
+            consumed = changed
     return args, consumed, existed
 
 
-def _clear_handoff_if_existed(store, suggestion_id: str, existed: bool) -> bool:
-    """登记成功后清除暂存条目（无条件清，防僵尸；幂等）."""
-    if not existed:
-        return False
+def _clear_handoff(store, suggestion_id: str) -> bool:
+    """登记成功后清除暂存条目（幂等；竞态期间新出现的条目也可被清掉）."""
     with contextlib.suppress(Exception):
         from llm_loop.introspection.evolution_handoff import clear_completion_handoff
 

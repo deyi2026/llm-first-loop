@@ -151,3 +151,44 @@ def test_tool_gate_allows_branch_worktree(tmp_path, monkeypatch):
     )
     tool = ExecuteCommandTool()
     assert tool._lane_main_write_gate("git commit -m x", str(repo)) is None
+
+
+# --- review P2#1 覆盖补强：push 无 refspec / --all / --mirror ---
+
+
+def test_push_remote_only_uses_current_branch(tmp_path):
+    repo = _git_repo(tmp_path / "r")
+    audit = _ledger(tmp_path / "a", [_lane("l1", "active", "other-sess")])
+    verdict = check_git_main_write(
+        "git push origin", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert verdict is not None and "lane" in verdict.get("reason", "")
+
+
+def test_push_all_denied_with_other_lane(tmp_path):
+    repo = _git_repo(tmp_path / "r")
+    audit = _ledger(tmp_path / "a", [_lane("l1", "active", "other-sess")])
+    verdict = check_git_main_write(
+        "git push --all", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert verdict is not None
+
+
+def test_push_mirror_denied_with_other_lane(tmp_path):
+    repo = _git_repo(tmp_path / "r")
+    audit = _ledger(tmp_path / "a", [_lane("l1", "merging", "other-sess")])
+    verdict = check_git_main_write(
+        "git push origin --mirror", audit_dir=audit, session_id="me", workdir=str(repo)
+    )
+    assert verdict is not None
+
+
+def test_push_feature_branch_allowed(tmp_path):
+    repo = _git_repo(tmp_path / "r")
+    audit = _ledger(tmp_path / "a", [_lane("l1", "active", "other-sess")])
+    assert (
+        check_git_main_write(
+            "git push origin feat/x", audit_dir=audit, session_id="me", workdir=str(repo)
+        )
+        is None
+    )

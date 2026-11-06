@@ -79,15 +79,24 @@ def _current_branch(workdir: str | None) -> str | None:
 
 
 def _push_targets(verb_refspecs: list[str]) -> list[str]:
-    """push 参数中的分支目标（首 token 是 remote，其余为 refspec）。"""
+    """push 参数中的分支目标（首 token 是 remote，其余为 refspec）。
+
+    - ``--all``/``--mirror`` → ``["__ALL__"]``（推全部分支，含 main）；
+    - 仅 remote 无 refspec（``git push origin``）→ ``[]``（由调用方按当前分支判定）；
+    - 其余：remote 之后每个 token 取 ``src:dst`` 的 dst。
+    """
+    flags = [t for t in verb_refspecs if t.startswith("-")]
+    if any(f in ("--all", "--mirror") for f in flags):
+        return ["__ALL__"]
+    nonflags = [t for t in verb_refspecs if not t.startswith("-")]
+    if len(nonflags) <= 1:
+        return []
     targets: list[str] = []
-    for tok in verb_refspecs:
-        if tok.startswith("-"):
-            continue
+    for tok in nonflags[1:]:
         name = tok.split(":")[-1] if ":" in tok else tok
         if name:
             targets.append(name)
-    return targets[1:] if len(targets) > 1 else targets
+    return targets
 
 
 def _main_target(verb: str, refspecs: list[str], workdir: str | None) -> bool:
@@ -96,7 +105,9 @@ def _main_target(verb: str, refspecs: list[str], workdir: str | None) -> bool:
         branch = _current_branch(workdir)
         return branch in _MAIN_BRANCHES if branch else False
     targets = _push_targets(refspecs)
-    if not targets:  # git push 无参数 → 当前分支
+    if targets == ["__ALL__"]:
+        return True  # --all/--mirror 必然推 main
+    if not targets:  # git push 无 refspec → 当前分支
         branch = _current_branch(workdir)
         return branch in _MAIN_BRANCHES if branch else False
     return any(t in _MAIN_BRANCHES for t in targets)

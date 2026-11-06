@@ -55,3 +55,13 @@ def test_review_rate_limited_returns_structured_retry(monkeypatch):
     assert out["reviewer_failure"] == "reviewer_rate_limited"
     assert out["retry_after_s"] is None
     assert "retry_hint" in out and "窗口" in out["retry_hint"]
+
+def test_runner_start_accepts_max_rounds_kwarg():
+    """P1 证据：SubAgentRunner.start 的签名接受 max_rounds（None 透传安全）。"""
+    import inspect
+
+    from llm_loop.subagent.runner import SubAgentRunner
+
+    params = inspect.signature(SubAgentRunner.start).parameters
+    assert "max_rounds" in params
+    assert params["max_rounds"].default is None
