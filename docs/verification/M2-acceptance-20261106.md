@@ -47,3 +47,12 @@ T-16 关闭方向（legacy_degraded 不可达验证）：离线已按 RULE-AI-35
 2. fill 在不支持选区的元素（contenteditable 等）上错误信息晦涩 → **已修**：选区建立失败时抛带指引的可行动消息（contenteditable 属 M3，legacy 开关路径明示）。
 3. desktop subtree 释放语义仅有 fake 组合层验证，无真实 CF 子项现场 → 如实记为**验证缺口**：现场需新 runtime 部署 + TCC 授权进程，随 M3 集成验收补（与既有「现场回读」边界一致）。
 4. `deepest_covered_ref` 派生自过滤后节点，尾随节点被 node_kinds 过滤时恢复提示可能指向偏宽父级 → 次要，**M3 跟进**（候选：分页时记录未过滤边界索引）。
+
+## 第三轮审查跟进（subagent_0e24d2e7ae29，P1=2/P2=4）
+
+1. **P1-1 分支滞后 → 已修**：rebase browser-m2-batch 至 e01699e37（含 main 后续全部安全/治理内容），消除 tree 视角的"回退"假象。
+2. **P1-2 R9 函数大小 → 已修**：`_dispatch_locked` 拆出 `_verb_fill`/`_verb_scroll` 回落登记值内；`_snapshot_action`(108→124) 与 `action.execute`(395→406) 为功能性增长，随 guard(r9) 提交 596bd9d19 逐条可见重登记。
+3. P2-3 fill 空 text 的 replace 语义未定义（select 后 insertText('') 不清空选区）→ **M3 跟进**：定义空文本=清空语义（setRangeText('') 或 Delete 键路径），schema 同步说明。
+4. P2-4 subtree 预算共享与 visible_served 语义 → 已在 §5.4 设计确认：subtree 换根即重开预算，本批按设计实现。
+5. P2-5 dispatch 后 snapshot 的 non_exhaustive 空间标签完整性 → **M3 跟进**（boundary_events 枚举核对）。
+6. P2-6 跨 16 次提交的树级审计已由本轮全链复审覆盖。
