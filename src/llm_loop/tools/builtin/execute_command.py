@@ -1184,7 +1184,7 @@ class ExecuteCommandTool:
         try:
             from llm_loop.core.run_context import current_session_id as _sid
 
-            sid = str(_sid() or "")
+            sid = str(_sid.get() or "")
         except Exception:  # noqa: BLE001 — 无会话上下文（测试/独立进程）→ 保守按空会话
             sid = ""
         try:
