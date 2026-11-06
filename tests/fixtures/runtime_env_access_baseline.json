@@ -1,13 +1,13 @@
 {
   "access_class_counts": {
     "bootstrap_os": 3,
-    "business_config": 131,
+    "business_config": 132,
     "debug_test": 12,
     "dynamic_or_bulk": 64,
     "dynamic_secret": 9,
     "secret": 9
   },
-  "access_count": 206,
+  "access_count": 207,
   "baseline_context": {
     "alias_recovered_direct_access_count": 8,
     "corrected_direct_access_count": 134,
@@ -126,7 +126,7 @@
     "dynamic_secret": 1,
     "secret": 6
   },
-  "direct_access_count": 206,
+  "direct_access_count": 207,
   "dynamic_helper_access_count": 3,
   "dynamic_secret_signatures": [
     "src/llm_loop/llm/providers.py|ProviderRegistry/client_params|read|<dynamic>",
@@ -137,7 +137,7 @@
     "src/llm_loop/web/vision.py|_pick_provider_model|read|<dynamic>",
     "src/llm_loop/wecom/config.py|load_wecom_config|read|<dynamic>"
   ],
-  "effective_access_count": 228,
+  "effective_access_count": 229,
   "effective_file_count": 70,
   "file_count": 70,
   "helper_class_key_counts": {
@@ -865,7 +865,7 @@
         "src/llm_loop/web/routes.py"
       ],
       "module_import_reads": 0,
-      "reads": 8,
+      "reads": 9,
       "writes": 0
     },
     "LFL_ENV_FILE": {
@@ -1666,6 +1666,35 @@
       "parent_commit": "ba08911eb51f",
       "reason": "DESIGN-20261103 PR-1 新增 claim 策略与 per-parent fanout 闸的配置面（LFL_CLAIM_TTL_S/MAX_TTL_S/MAX_PER_HOLDER/ALLOW_UNBOUNDED/ENFORCEMENT + LFL_MAX_RUNNING_CHILDREN）；均为新增功能的配置读取，不改变任何既有 env 语义，读取点集中在 policy_from_env 与 _resolve_max_running_children 两处并经 clamp 收敛",
       "relaxations": true
+    },
+    {
+      "added_helper_signatures": {},
+      "added_keys": [],
+      "added_module_import_signatures": {},
+      "added_signatures": {
+        "src/llm_loop/web/routes.py|escalation_detail|read|LFL_DATA_DIR": 1
+      },
+      "at": "2026-11-06T06:08:52+00:00",
+      "cap_changes": {
+        "access_count": {
+          "delta": 1,
+          "from": 206,
+          "to": 207
+        },
+        "direct_access_count": {
+          "delta": 1,
+          "from": 206,
+          "to": 207
+        },
+        "effective_access_count": {
+          "delta": 1,
+          "from": 228,
+          "to": 229
+        }
+      },
+      "parent_commit": "a844cafa7b4e",
+      "reason": "M1 ESC-05 新增审批详情端点 escalation_detail：与同文件 escalation_list/escalation_review 等 7 个既有端点完全同模式直读 LFL_DATA_DIR 构造 audit 存储（独立全量审查 PASS 记录见 data/review_admission/subagent_a7971b7afcdd-full_test.md）",
+      "relaxations": true
     }
   ],
   "schema_version": 2,
@@ -1828,6 +1857,7 @@
     "src/llm_loop/web/provider_admin.py|_set_dotenv_value|write|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|discover_models|read|<dynamic>": 1,
     "src/llm_loop/web/provider_admin.py|env_file_path|read|LFL_ENV_FILE": 1,
+    "src/llm_loop/web/routes.py|escalation_detail|read|LFL_DATA_DIR": 1,
     "src/llm_loop/web/routes.py|escalation_list|read|LFL_DATA_DIR": 1,
     "src/llm_loop/web/routes.py|escalation_review|read|LFL_DATA_DIR": 1,
     "src/llm_loop/web/routes.py|evolution_detail|read|LFL_DATA_DIR": 1,
