@@ -89,6 +89,56 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8903/health
 
 配合 `~/.config/systemd/user/lfl-quota-watch.{service,timer}`（`OnUnitActiveSec=30min`）定时执行，命中数进 journald（tag `lfl-quota-watch`）。这是观测手段，不替代控制台的额度看板。
 
+脚本与单元文件的完整内容（便于在其它主机复现）：
+
+~~~bash
+#!/usr/bin/env bash
+# LFL MiniMax 额度/限流巡检：只读扫描 lfl.service 日志，不改业务状态。
+set -uo pipefail
+SINCE="${1:-30min}"
+UNIT="lfl.service"
+HOME_DIR="${LFL_HOME:-$HOME/.local/share/lfl}"
+OUT="$HOME_DIR/data/quota_watch.json"
+LOG="$(journalctl --user -u "$UNIT" --since "-$SINCE" --no-pager 2>/dev/null || true)"
+lines=$(printf "%s\n" "$LOG" | grep -c "" || true)
+rate=$(printf "%s\n" "$LOG" | grep -c -i -E "429|rate[ _-]?limit|限流|too many requests|quota exhausted" || true)
+quota=$(printf "%s\n" "$LOG" | grep -c -i -E "quota|insufficient|配额|billing|balance" || true)
+errs=$(printf "%s\n" "$LOG" | grep -c -i -E "llmhttperror|llmnetworkerror|traceback" || true)
+ts=$(date -Iseconds)
+mkdir -p "$(dirname "$OUT")"
+printf "{\"checked_at\":\"%s\",\"window\":\"%s\",\"journal_lines\":%s,\"rate_limit_hits\":%s,\"quota_hits\":%s,\"error_lines\":%s}\n" "$ts" "$SINCE" "$lines" "$rate" "$quota" "$errs" > "$OUT"
+logger -t lfl-quota-watch "window=$SINCE lines=$lines rate_limit=$rate quota=$quota errors=$errs" 2>/dev/null || true
+cat "$OUT"
+~~~
+
+~~~ini
+# ~/.config/systemd/user/lfl-quota-watch.service
+[Unit]
+Description=LFL MiniMax quota/rate-limit watch (oneshot)
+After=lfl.service
+
+[Service]
+Type=oneshot
+ExecStart=<HOME>/.local/share/lfl/scripts/quota_watch.sh 30min
+~~~
+
+~~~ini
+# ~/.config/systemd/user/lfl-quota-watch.timer
+[Unit]
+Description=LFL MiniMax quota/rate-limit watch (periodic)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Unit=lfl-quota-watch.service
+
+[Install]
+WantedBy=timers.target
+~~~
+
+启用：`systemctl --user enable --now lfl-quota-watch.timer`。
+
 ## 5. wheel 安装的资产路径坑（0.6.37）
 
 **现象**：wheel 安装的主机上，`lfl doctor` 报「规则索引 0 条、方法 0 条、技能 0 个」，会话实际在裸跑通用提示。
