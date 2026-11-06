@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "head_commit": "cf7d2f4ba",
+    "head_commit": "67ed59966",
     "head_compare": true,
     "ratchet": "only-decrease",
     "schema": 2,
@@ -1168,7 +1168,7 @@
     "src/llm_loop/introspection/goal_coordination.py::coordination_snapshot": 129,
     "src/llm_loop/introspection/task_store.py::update": 139,
     "src/llm_loop/browser/cdp_action_host.py::_dispatch_locked": 130,
-    "src/llm_loop/tools/builtin/desktop_operate.py::_deliver_and_receipt": 132
+    "src/llm_loop/tools/builtin/desktop_operate.py::_deliver_and_receipt": 148
   },
   "kernel_import_edges": [
     "core/loop->cache_guard",
@@ -1195,7 +1195,7 @@
   ],
   "known_cycles": [],
   "legacy_super_functions": {
-    "src/llm_loop/browser/action.py::execute": 383,
+    "src/llm_loop/browser/action.py::execute": 395,
     "src/llm_loop/cli.py::application_main": 323,
     "src/llm_loop/config.py::load_settings": 369,
     "src/llm_loop/core/history.py::build_history_messages": 745,
