@@ -148,72 +148,13 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
         except Exception:  # noqa: BLE001 — owner 语义缺失必须 fail-closed
             owner_session_id = ""
         if not entry_session_id or entry_session_id != owner_session_id:
-            # R3-MR: 结构化拒绝事实留痕（audit 面归因，content 为模型可见对账）
-            with contextlib.suppress(Exception):
-                audit(
-                    "evolution_complete",
-                    {
-                        "suggestion_id": suggestion_id,
-                        "denial": "unauthorized",
-                        "reason_code": "cross_session_owner",
-                        "owner_session": entry_session_id,
-                        "current_session": owner_session_id,
-                    },
-                    "denied_cross_session_owner",
-                )
-            # EVO-20261106-b0806c32: 归属拒绝时生成结构化「完成待登记」暂存条目，
-            # 供归属会话一键落账（替代 help_request 自然语言人工转交）。
-            # 写失败不阻断拒绝回执（拒绝事实仍如实返回）。
-            handoff_note = ""
-            with contextlib.suppress(Exception):
-                from llm_loop.introspection.evolution_handoff import (
-                    stage_completion_handoff,
-                )
-
-                _hp = stage_completion_handoff(
-                    store.dir,
-                    suggestion_id=suggestion_id,
-                    owner_session=entry_session_id,
-                    implementing_session=owner_session_id,
-                    actions=list(args.get("actions") or [])
-                    if isinstance(args.get("actions"), list)
-                    else [],
-                    evidence_refs=[str(r) for r in args.get("evidence_refs") or []]
-                    if isinstance(args.get("evidence_refs"), list)
-                    else [],
-                    note=note,
-                )
-                handoff_note = (
-                    "已生成「完成待登记」暂存条目（"
-                    f"{_hp.name}，evidence/参数程序组装防转写失真）：归属会话重调 "
-                    "evolution_complete 时程序自动取用一键落账；coordination 视图可见。"
-                )
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=(
-                    f"[跨会话归属拒绝] 事实: 建议 {suggestion_id} 归属会话 "
-                    f"'{entry_session_id or '<legacy-unbound>'}'，当前会话 '{owner_session_id}'，不可代为登记完成。"
-                    "原因: 演进完成登记须由归属会话执行（spec §5.8.1-1d / §6.5-2）。"
-                    "建议: 确认建议归属；如确属本会话演进，请用正确 suggestion_id 重试。"
-                    + (f" {handoff_note}" if handoff_note else "")
-                ),
-                tool_call_id="",
-                tool_name="evolution_complete",
+            return _cross_session_denial_result(
+                store, audit, suggestion_id, entry_session_id, owner_session_id, args, note
             )
-    # EVO-20261106-b0806c32（owner 侧）: 存在「完成待登记」暂存条目且调用方未自带
-    # actions 时，程序取用暂存参数（防人工转写失真）；登记成功后清除条目。
-    consumed_handoff = False
-    handoff_existed = False
-    with contextlib.suppress(Exception):
-        from llm_loop.introspection.evolution_handoff import load_completion_handoff
-
-        _h = load_completion_handoff(store.dir, suggestion_id)
-        if _h is not None:
-            handoff_existed = True
-            if not (isinstance(args.get("actions"), list) and args.get("actions")):
-                args = dict(args)
-                args["actions"] = [str(a) for a in (_h.get("actions") or [])]
-                consumed_handoff = True
+    # EVO-20261106-b0806c32（owner 侧）: 无自带 actions 时取用暂存参数一键落账
+    args, consumed_handoff, handoff_existed = _fill_args_from_handoff(
+        store, suggestion_id, args
+    )
     # 调 EvolutionExecutor.complete()（状态推进 executing→executed + evolution_exec_log 审计）
     try:
         outcome = executor.complete(
@@ -257,12 +198,7 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
             tool_name="evolution_complete",
         )
     # 登记成功 → 清除暂存条目（无条件清，防僵尸条目；幂等）；消耗了暂存则注明
-    handoff_cleared = False
-    if handoff_existed:
-        with contextlib.suppress(Exception):
-            from llm_loop.introspection.evolution_handoff import clear_completion_handoff
-
-            handoff_cleared = clear_completion_handoff(store.dir, suggestion_id)
+    handoff_cleared = _clear_handoff_if_existed(store, suggestion_id, handoff_existed)
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
@@ -277,3 +213,83 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
         tool_call_id="",
         tool_name="evolution_complete",
     )
+
+
+def _cross_session_denial_result(
+    store, audit, suggestion_id, entry_session_id, owner_session_id, args, note
+) -> ToolResult:
+    """跨会话归属拒绝回执（R3-MR 留痕 + EVO-20261106-b0806c32 暂存条目）."""
+    with contextlib.suppress(Exception):
+        audit(
+            "evolution_complete",
+            {
+                "suggestion_id": suggestion_id,
+                "denial": "unauthorized",
+                "reason_code": "cross_session_owner",
+                "owner_session": entry_session_id,
+                "current_session": owner_session_id,
+            },
+            "denied_cross_session_owner",
+        )
+    # EVO-20261106-b0806c32: 拒绝时生成结构化「完成待登记」暂存条目供 owner 一键
+    # 落账（替代 help_request 自然语言人工转交）；写失败不阻断拒绝回执。
+    handoff_note = ""
+    with contextlib.suppress(Exception):
+        from llm_loop.introspection.evolution_handoff import stage_completion_handoff
+
+        _hp = stage_completion_handoff(
+            store.dir,
+            suggestion_id=suggestion_id,
+            owner_session=entry_session_id,
+            implementing_session=owner_session_id,
+            actions=list(args.get("actions") or []) if isinstance(args.get("actions"), list) else [],
+            evidence_refs=[str(r) for r in args.get("evidence_refs") or []]
+            if isinstance(args.get("evidence_refs"), list)
+            else [],
+            note=note,
+        )
+        handoff_note = (
+            "已生成「完成待登记」暂存条目（"
+            f"{_hp.name}，evidence/参数程序组装防转写失真）：归属会话重调 "
+            "evolution_complete 时程序自动取用一键落账；coordination 视图可见。"
+        )
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=(
+            f"[跨会话归属拒绝] 事实: 建议 {suggestion_id} 归属会话 "
+            f"'{entry_session_id or '<legacy-unbound>'}'，当前会话 '{owner_session_id}'，不可代为登记完成。"
+            "原因: 演进完成登记须由归属会话执行（spec §5.8.1-1d / §6.5-2）。"
+            "建议: 确认建议归属；如确属本会话演进，请用正确 suggestion_id 重试。"
+            + (f" {handoff_note}" if handoff_note else "")
+        ),
+        tool_call_id="",
+        tool_name="evolution_complete",
+    )
+
+
+def _fill_args_from_handoff(store, suggestion_id: str, args: dict) -> tuple[dict, bool, bool]:
+    """owner 侧取用暂存参数（无自带 actions 时）；fail-open 不阻断登记."""
+    consumed = False
+    existed = False
+    with contextlib.suppress(Exception):
+        from llm_loop.introspection.evolution_handoff import load_completion_handoff
+
+        _h = load_completion_handoff(store.dir, suggestion_id)
+        if _h is not None:
+            existed = True
+            if not (isinstance(args.get("actions"), list) and args.get("actions")):
+                args = dict(args)
+                args["actions"] = [str(a) for a in (_h.get("actions") or [])]
+                consumed = True
+    return args, consumed, existed
+
+
+def _clear_handoff_if_existed(store, suggestion_id: str, existed: bool) -> bool:
+    """登记成功后清除暂存条目（无条件清，防僵尸；幂等）."""
+    if not existed:
+        return False
+    with contextlib.suppress(Exception):
+        from llm_loop.introspection.evolution_handoff import clear_completion_handoff
+
+        return clear_completion_handoff(store.dir, suggestion_id)
+    return False

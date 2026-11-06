@@ -830,31 +830,13 @@ def coordination_snapshot(
         _rollup_session(sessions, entry, sid=sid)
 
     if not goals_out:
-        # 空视图必须自证：区分「真没有」与「被窗口滤掉」（E9）。本仓库 90 个
-        # active goal 全部超过 24h 窗口，不标注会让空视图看起来像故障。
-        outside_active = -1
-        try:
-            all_goals = goal_store.list(limit=max(total_goals, 1)) if goal_store else []
-            outside_active = sum(1 for g in all_goals if str(g.get("status") or "") == "active")
-        except Exception:  # noqa: BLE001 — 计数失败不影响空视图本身
-            outside_active = -1
-        if outside_active > 0:
-            hint = "（传 window_hours=0 查看全部）" if int(window_hours) else ""
-            degraded.append(
-                f"window_empty: 最近 {int(window_hours)}h 内无活动 goal；"
-                f"账本内仍有 {outside_active} 个 active goal 未进入窗口{hint}"
-            )
-        elif outside_active == 0:
-            degraded.append(f"window_empty: 无 active goal（最近 {int(window_hours)}h 内亦无活动）")
+        # 空视图必须自证（E9）：区分「真没有」与「被窗口滤掉」——见 _window_empty_note
+        _note = _window_empty_note(goal_store, total_goals, window_hours)
+        if _note:
+            degraded.append(_note)
 
     # EVO-20261106-b0806c32: 跨会话 EVO 完成待登记聚合可见（不静默失败）。
-    evolution_handoffs: list[dict] = []
-    try:
-        from llm_loop.introspection.evolution_handoff import list_pending_handoffs
-
-        evolution_handoffs = list_pending_handoffs(audit_dir)
-    except Exception:  # noqa: BLE001 — handoff 视图失败不连坐主视图
-        evolution_handoffs = []
+    evolution_handoffs = _pending_evolution_handoffs(audit_dir)
 
     return {
         "ok": True,
@@ -977,3 +959,35 @@ def render_coordination(snapshot: dict) -> str:
     for note in snapshot.get("degraded") or []:
         lines.append(f"  ⚠ degraded: {note}")
     return "\n".join(lines)
+
+
+def _pending_evolution_handoffs(audit_dir: str | Path) -> list[dict]:
+    """跨会话 EVO 完成待登记条目（EVO-20261106-b0806c32 聚合可见）.
+
+    fail-open：handoff 视图失败不连坐 coordination 主视图。
+    """
+    try:
+        from llm_loop.introspection.evolution_handoff import list_pending_handoffs
+
+        return list_pending_handoffs(audit_dir)
+    except Exception:  # noqa: BLE001 — handoff 视图失败不连坐主视图
+        return []
+
+
+def _window_empty_note(goal_store: Any, total_goals: int, window_hours: Any) -> str:
+    """空视图自证注记（E9）：区分「真没有」与「被窗口滤掉」（coordination_snapshot 内联抽离）."""
+    outside_active = -1
+    try:
+        all_goals = goal_store.list(limit=max(total_goals, 1)) if goal_store else []
+        outside_active = sum(1 for g in all_goals if str(g.get("status") or "") == "active")
+    except Exception:  # noqa: BLE001 — 计数失败不影响空视图本身
+        outside_active = -1
+    if outside_active > 0:
+        hint = "（传 window_hours=0 查看全部）" if int(window_hours) else ""
+        return (
+            f"window_empty: 最近 {int(window_hours)}h 内无活动 goal；"
+            f"账本内仍有 {outside_active} 个 active goal 未进入窗口{hint}"
+        )
+    if outside_active == 0:
+        return f"window_empty: 无 active goal（最近 {int(window_hours)}h 内亦无活动）"
+    return ""
