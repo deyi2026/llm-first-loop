@@ -13,7 +13,7 @@ from llm_loop.desktop.models import WindowInfo
 
 class FakeEl:
     def __init__(self, role: str, title: str | None = None,
-                 children: list["FakeEl"] | None = None, bounds=(10.0, 20.0, 300.0, 200.0)):
+                 children: list[FakeEl] | None = None, bounds=(10.0, 20.0, 300.0, 200.0)):
         self.role, self.title, self.children = role, title, children or []
         self.bounds = bounds
         self.releases = 0
