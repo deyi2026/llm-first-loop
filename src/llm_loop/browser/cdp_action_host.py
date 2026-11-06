@@ -270,7 +270,11 @@ _FILL_LEGACY_VALUE_JS = (
 
 
 def _fill_input_pipeline_enabled() -> bool:
-    raw = os.getenv("LFL_BROWSER_INPUT_PIPELINE", "on").strip().lower()
+    # env access funneled through config._raw_env (same pattern as
+    # browser/action.py: no direct os.environ reads - runtime env gate).
+    from llm_loop.config import _raw_env
+
+    raw = _raw_env("LFL_BROWSER_INPUT_PIPELINE").strip().lower() or "on"
     return raw not in {"off", "legacy", "0", "false", "no"}
 
 
