@@ -282,11 +282,13 @@ main() {
     [[ "$MODE" == "--range" ]] && rl_args=("${RANGE_BASE}..${RANGE_HEAD}")
     local seen="" key
     while IFS= read -r c; do
-      # --root 覆盖无父提交；diff-tree 对 merge 默认无输出（冲突解决引入的内容会漏）——
-      # 输出为空时退化为该提交全树扫描（重复扫无害，安全优先）
-      list="$(git -c core.quotePath=false diff-tree --root --no-commit-id --name-only -r --diff-filter=ACM "$c" 2>/dev/null)"
-      if [[ -z "$list" ]]; then
-        list="$(git -c core.quotePath=false ls-tree -r --name-only "$c" 2>/dev/null)"
+      # EVO-20261106-26e3a505：merge 提交不再退化全树扫描（实测含 merge 的
+      # push 段 >60s 必超时）。-m --first-parent = merge 相对第一父的实际变更
+      # （冲突解决引入的内容包含其中）；分支侧内容已由 range 内的分支提交自身
+      # 覆盖。树与第一父相同的 merge（ours 策略）真实无新增 → 空集正确。
+      # fail-closed：diff-tree 失败（坏对象等）→ 拒扫，不静默降级。
+      if ! list="$(git -c core.quotePath=false diff-tree --root -m --first-parent --no-commit-id --name-only -r --diff-filter=ACM "$c" 2>/dev/null)"; then
+        _fail "range 扫描 diff-tree 失败: $c（fail-closed，不降级全树）" "(refs)"
       fi
       while IFS= read -r f_line; do
         [[ -z "$f_line" ]] && continue

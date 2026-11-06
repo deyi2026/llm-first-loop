@@ -112,6 +112,55 @@ def test_range_clean_passes(repo):
     assert run_scan(repo, "--range", base, head).returncode == 0
 
 
+def test_range_merge_commit_blocks_secret(repo):
+    """EVO-20261106-26e3a505 / RULE-AI-35 应拦实测：敏感内容只经 merge 提交进入树
+    （分支侧干净、merge --no-commit 后 amend 塞入）——必须仍被拦。
+    隔离设计：分支提交自身无敏感内容，唯一检出路径是 merge 的 first-parent diff。
+    """
+    base = rev(repo)
+    # 分支侧：干净内容
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "side"], check=True, capture_output=True)
+    commit_file(repo, "side_clean.md", "clean content\\n", "side clean")
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-"], check=True, capture_output=True)
+    # 主干侧：无关提交，迫使真实 merge（非 ff）
+    commit_file(repo, "main_ok.md", "fine\\n", "main ok")
+    subprocess.run(["git", "-C", str(repo), "merge", "--no-commit", "--no-ff", "side"],
+                   check=True, capture_output=True)
+    # 敏感内容仅在 merge 提交自身引入（模拟冲突解决产物/合并期塞入）
+    commit_file(repo, "merged_only.md", "ip 10.77.88.99\\n", "merge commit")
+    subprocess.run(["git", "-C", str(repo), "commit", "--amend", "--no-edit", "-q", "--no-verify"],
+                   check=True, capture_output=True)
+    head = rev(repo)
+    assert run_scan(repo, "--range", base, head).returncode == 1
+
+
+def test_range_clean_ours_merge_passes(repo):
+    """EVO-20261106-26e3a505：ours 策略 merge（树==第一父，first-parent diff 为空）
+    真实无新增 → 空集正确，不误拦、不再退化全树扫描。"""
+    base = rev(repo)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "side2"], check=True, capture_output=True)
+    commit_file(repo, "side2_clean.md", "also clean\\n", "side2 clean")
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-"], check=True, capture_output=True)
+    commit_file(repo, "main_ok2.md", "fine\\n", "main ok2")
+    subprocess.run(["git", "-C", str(repo), "merge", "-s", "ours", "side2", "-m", "ours merge"],
+                   check=True, capture_output=True)
+    head = rev(repo)
+    assert run_scan(repo, "--range", base, head).returncode == 0
+
+
+def test_range_clean_no_ff_merge_passes(repo):
+    """普通干净 merge（first-parent diff 非空但内容干净）→ 通过。"""
+    base = rev(repo)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "side3"], check=True, capture_output=True)
+    commit_file(repo, "side3_clean.md", "clean 3\\n", "side3 clean")
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-"], check=True, capture_output=True)
+    commit_file(repo, "main_ok3.md", "fine\\n", "main ok3")
+    subprocess.run(["git", "-C", str(repo), "merge", "--no-ff", "side3", "-m", "merge side3"],
+                   check=True, capture_output=True)
+    head = rev(repo)
+    assert run_scan(repo, "--range", base, head).returncode == 0
+
+
 def test_commit_mode_scans_full_history(repo):
     """--commit=SHA 扫该提交可达的完整历史（首推语义）：中间泄露必须拦。"""
     commit_file(repo, "leak.md", "server 172.16.5.5\\n", "dirty")
