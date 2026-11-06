@@ -2837,7 +2837,7 @@ def _escalation_reviewer_identity(request: Request) -> tuple[str, str, str]:
 
 
 @router.get("/api/v1/escalation/list")
-def escalation_list(request: Request, limit: int = 50, status: str = "") -> Response:
+def escalation_list(request: Request, limit: int = 50, status: str = "", before_id: str = "") -> Response:
     """提权申请列表（只读；EVO-20260923-c58a0bb1 提权闭环 web 端）.
 
     status 可选过滤（pending/approved/denied/consumed/expired）；响应**永不
@@ -2847,6 +2847,8 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
     P0-5 展示-审批绑定: 每条含 command_sha256 / command_len；超长命令截断
     展示时置 command_truncated=true，审批时 review 仍按完整原文的 sha256
     绑定（expected_sha256 必须等于 command_sha256）。
+    R4（M1.1 复审）: before_id 稳定游标——返回比该记录更旧的记录，待审
+    超过窗口（limit）时可单调读完；游标记录已消失时从头读（调用方去重）。
     """
     from pathlib import Path
 
@@ -2855,7 +2857,7 @@ def escalation_list(request: Request, limit: int = 50, status: str = "") -> Resp
     base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
     store = EscalationStore(base / "audit" / "escalation_requests.json")
     try:
-        items = store.list(status=status or "", limit=limit)
+        items = store.list(status=status or "", limit=limit, before_id=before_id)
         pending = store.pending_count()
     except (OSError, ValueError):  # noqa: PERF203 — 统一 503 出口
         # ESC-08（FR-08）: 存储损坏/权限/IO 错误必须如实 503——伪装成 200 空列表

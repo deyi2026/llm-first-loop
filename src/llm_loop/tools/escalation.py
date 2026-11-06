@@ -65,6 +65,29 @@ def _record_mac(rec: dict) -> str:
     return hmac.new(_STATE_SIGNING_KEY, raw, hashlib.sha256).hexdigest()
 
 
+# R1（M1.1 复审）: 派生失效标记常量——只允许存在于内存视图，不允许进入持久层。
+_UNVERIFIED_FLAG = "_sig_unverified"
+
+
+class _ForeignRecord(dict):
+    """他进程签名记录的只读视图（R1 / M1.1 复审）.
+
+    读路径以 `_sig_unverified=True` 内存标记呈现（create 幂等复用 / list
+    投影 / decide / consume 各门控据此拒绝，P0-5 防线不回退）；持久层写回
+    时按磁盘原样恢复——不代理签名、不混入任何派生字段，防止本进程写回
+    改变原签名者的 MAC 覆盖载荷（旧版缺陷：标记混入载荷 → 原签名进程
+    自己的记录也验签失败）。就地修改视图不落盘：本进程无权变更他进程
+    记录状态。
+    """
+
+    __slots__ = ("_disk_rec",)
+
+    def __init__(self, disk_rec: dict) -> None:
+        super().__init__(disk_rec)
+        super().__setitem__(_UNVERIFIED_FLAG, True)
+        self._disk_rec = disk_rec
+
+
 def _parse_ts(value: str) -> datetime | None:
     """ISO 时间解析；naive 时间按本地时区补齐（防 naive/aware 比较 TypeError）."""
     try:
@@ -175,15 +198,18 @@ class EscalationStore:
             if not isinstance(rec, dict):
                 dropped += 1
                 continue
-            if hmac.compare_digest(str(rec.get("sig") or ""), _record_mac(rec)):
-                valid.append(rec)
+            # R1（M1.1 复审）: 磁盘载荷里的 _sig_unverified 是旧版写回污染的
+            # 派生标记——旧版 _save 从不重签标记记录，故盘上任何有效 sig 均
+            # 覆盖「无标记载荷」。剥离标记后按 MAC 受控验证：
+            #   匹配   → 本进程签名记录曾被污染，恢复为可验证记录（受控迁移）；
+            #   不匹配 → 真他进程/伪造记录 → 只读视图（审批/消费拒绝不回退）。
+            # 准入审核P1-1(2026-10-25): 跨进程记录原样保留展示，不再静默丢弃；
+            # 重启后本进程旧记录同样按不可验证处理（fail-closed：未决需重新发起）。
+            probe = {k: v for k, v in rec.items() if k != _UNVERIFIED_FLAG}
+            if hmac.compare_digest(str(probe.get("sig") or ""), _record_mac(probe)):
+                valid.append(probe)
                 continue
-            # 准入审核P1-1(2026-10-25): 跨进程记录（他进程以其进程内密钥所签）
-            # 原样保留+标记，不再静默丢弃——否则 _save 写回即销毁他进程 pending。
-            # 审批/消费类状态变更对未验证记录拒绝（防伪造，P0-5 防线不回退）；
-            # 重启后本进程旧记录同样带标记（fail-closed：未决请求需重新发起）。
-            rec["_sig_unverified"] = True
-            valid.append(rec)
+            valid.append(_ForeignRecord(probe))
             cross_process += 1
         if dropped:
             logger.warning(
@@ -198,13 +224,19 @@ class EscalationStore:
 
     def _save(self, records: list[dict]) -> None:
         self._private_parent()
+        # R1（M1.1 复审）: 持久层零派生字段——他进程签名记录按磁盘原样写回
+        # （不重签、不丢弃、不混入 _sig_unverified），本进程写回不得改变原
+        # 签名者的 MAC 覆盖载荷；本进程记录剥离标记后重签。视图层就地修改
+        # 他进程记录一律不落盘。
+        out_records: list[dict] = []
         for rec in records:
+            if isinstance(rec, _ForeignRecord):
+                out_records.append(dict(rec._disk_rec))
+                continue
             if isinstance(rec, dict):
-                if rec.get("_sig_unverified"):
-                    # 他进程签名记录原样写回（保留原 sig）：防销毁且不代签。
-                    continue
-                rec.pop("_sig_unverified", None)
+                rec.pop(_UNVERIFIED_FLAG, None)
                 rec["sig"] = _record_mac(rec)
+                out_records.append(rec)
         # Explicit O_EXCL | O_NOFOLLOW durable-create primitive is both
         # race-safe and visible to the repository durability-write scanner.
         tmp = self._path.with_name(
@@ -214,7 +246,7 @@ class EscalationStore:
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(json.dumps(records, ensure_ascii=False, indent=1))
+                f.write(json.dumps(out_records, ensure_ascii=False, indent=1))
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self._path)
@@ -332,9 +364,18 @@ class EscalationStore:
                 return out
         return None
 
-    def list(self, status: str = "", limit: int = 50) -> list[dict]:
+    def list(self, status: str = "", limit: int = 50, before_id: str = "") -> list[dict]:
+        # R4（M1.1 复审）: before_id 稳定游标——返回比该记录更旧的记录，待审
+        # 队列可单调读完且新记录到达不使页偏移。游标记录已不在列表（被消费/
+        # 挤出保留窗口）时降级从头读取，由调用方按 id 去重合并，不静默吞页。
+        records = self._load()
+        if before_id:
+            for i, rec in enumerate(records):
+                if rec.get("id") == before_id:
+                    records = records[:i]
+                    break
         out = []
-        for r in reversed(self._load()):  # 新→旧
+        for r in reversed(records):  # 新→旧
             eff = _effective_status(r)
             # FR-03/FR-07: 待审专用查询排除跨进程失效记录——面板永远无法
             # 审批它们（decide 会拒绝签名失效），出现在待审队列只会误导。

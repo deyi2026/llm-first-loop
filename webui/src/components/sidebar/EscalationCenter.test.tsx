@@ -4,7 +4,7 @@
 // - ESC-07（FR-07）: 待审走 status=pending 专用查询，不被最新 50 条历史挤出
 // - 409 stale_review 提示重新打开并刷新列表；400 missing_expected_sha256 兜底提示
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EscalationPanel, EscalationWatcher, type EscalationRequest } from "./EscalationCenter";
 
 const SHA = "1f2e3d4c5b6a79880f1e2d3c4b5a69781f2e3d4c5b6a79880f1e2d3c4b5a6978";
@@ -207,5 +207,156 @@ describe("ESC-08 存储故障前端如实呈现", () => {
     await waitFor(() => expect(screen.getByTestId("esc-store-error")).toBeInTheDocument());
     expect(screen.getByTestId("esc-store-error")).toHaveTextContent("审批存储读取失败");
     expect(screen.getByTestId("esc-store-error")).toHaveTextContent("勿据此判断");
+  });
+});
+
+// ── M1.1 复审修复批（LFL_Sandbox_Escalation_Implementation_Review_2026-11-06）──
+
+describe("M1.1 R2 错误态保留最后成功快照", () => {
+  it("先成功后 503 → 旧快照保留 + 横幅标注可能已过期", async () => {
+    vi.useFakeTimers();
+    try {
+      const req = makeReq();
+      let round = 0;
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        round += 1;
+        if (round <= 2) return listMock([req])(input);
+        return ok({ error: "审批存储读取失败", requests: null, pending_count: null }, 503);
+      }));
+      render(<EscalationPanel />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5100);
+      });
+      // R2: 503 不得清空旧快照（未知 ≠ 空）
+      expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument();
+      expect(screen.getByTestId("esc-store-error")).toHaveTextContent("过期");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("首屏 503 → 不显示『（无待审批提权申请）』", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok({ error: "审批存储读取失败" }, 503)));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-store-error")).toBeInTheDocument());
+    expect(screen.queryByText("（无待审批提权申请）")).toBeNull();
+  });
+
+  it("Watcher 不可见态 503 → 全局错误 chip 出现", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok({ error: "审批存储读取失败" }, 503)));
+    render(<EscalationWatcher />);
+    await waitFor(() => expect(screen.getByTestId("esc-watch-error")).toBeInTheDocument());
+  });
+});
+
+describe("M1.1 R3 失效历史可见", () => {
+  it("失效（_sig_unverified）pending 在历史区显示『已失效』而非消失", async () => {
+    const dead = makeReq({
+      id: "esc-dead",
+      command: "dead-cmd",
+      command_truncated: false,
+      _sig_unverified: true,
+    });
+    vi.stubGlobal("fetch", vi.fn(listMock([], [dead])));
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByText("已失效")).toBeInTheDocument());
+    expect(screen.getByText("dead-cmd")).toBeInTheDocument();
+  });
+});
+
+describe("M1.1 R4 真实计数与游标分页", () => {
+  it("pending_count 超过已加载 → 显示真实总数 + 加载更多稳定游标续读", async () => {
+    const all = Array.from({ length: 60 }, (_, i) =>
+      makeReq({ id: `esc-p${i}`, command: `p-cmd-${i}`, command_truncated: false }),
+    );
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("status=pending")) {
+          calls.push(url);
+          if (url.includes("before_id=esc-p10")) return ok({ requests: all.slice(0, 10).reverse(), pending_count: 60 });
+          return ok({ requests: all.slice(10).reverse(), pending_count: 60 });
+        }
+        if (url.includes("/api/v1/escalation/list")) return ok({ requests: [] });
+        return ok({}, 404);
+      }),
+    );
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-item-esc-p59")).toBeInTheDocument());
+    // R4: 标题显示权威 pending_count（60），而非窗口内数组长度（50）
+    expect(screen.getByText(/待审批 \(60\)/)).toBeInTheDocument();
+    expect(screen.queryByTestId("esc-item-esc-p0")).toBeNull();
+    // R4: 加载更多 → before_id 稳定游标（以已加载最旧 id 定位）
+    fireEvent.click(screen.getByTestId("esc-load-more"));
+    await waitFor(() => expect(screen.getByTestId("esc-item-esc-p0")).toBeInTheDocument());
+    expect(calls.some((u) => u.includes("before_id=esc-p10"))).toBe(true);
+    expect(screen.queryByTestId("esc-load-more")).toBeNull();
+  });
+});
+
+describe("M1.1 R5 查看资格绑定命令指纹", () => {
+  it("detail 响应缺 command_sha256 → 原文不展示且批准保持禁用（防降级旁路）", async () => {
+    const req = makeReq();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/v1/escalation/detail")) {
+          return ok({ id: "esc-1", command: FULL_CMD, command_len: FULL_CMD.length }); // 无指纹
+        }
+        const base = await listMock([req])(input);
+        if (base.status !== 404) return base;
+        return ok({}, 404);
+      }),
+    );
+    render(<EscalationPanel />);
+    await waitFor(() => expect(screen.getByTestId("esc-item-esc-1")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("esc-view-full-esc-1"));
+    // R5: 缺指纹（降级旁路）→ 原文不展示（fail-closed 防钓鱼）+ 批准保持禁用
+    await waitFor(() => expect(screen.getByText(/指纹缺失或不一致/)).toBeInTheDocument());
+    expect(screen.queryByTestId("esc-fullcmd-esc-1")).toBeNull();
+    expect(screen.getByTestId("esc-approve-esc-1")).toBeDisabled();
+  });
+
+  it("解锁后待审命令指纹变化（新一轮列表）→ 重新锁定", async () => {
+    vi.useFakeTimers();
+    try {
+      let curSha = SHA;
+      const SHA2 = "cd".repeat(32);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.includes("/api/v1/escalation/detail")) {
+            return ok({ id: "esc-1", command: FULL_CMD, command_sha256: curSha, command_len: FULL_CMD.length });
+          }
+          const base = await listMock([makeReq({ command_sha256: curSha })])(input);
+          if (base.status !== 404) return base;
+          return ok({}, 404);
+        }),
+      );
+      render(<EscalationPanel />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(screen.getByTestId("esc-view-full-esc-1"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByTestId("esc-approve-esc-1")).toBeEnabled();
+      curSha = SHA2; // 新一轮轮询：同 id、不同指纹
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5100);
+      });
+      expect(screen.getByTestId("esc-approve-esc-1")).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

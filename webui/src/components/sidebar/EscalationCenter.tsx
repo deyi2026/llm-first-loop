@@ -130,13 +130,23 @@ async function reviewEscalation(
 
 function useEscalations(enabled = true) {
   const [data, setData] = useState<ListResp | null>(null);
-  const [loadErr, setLoadErr] = useState(false);
   const load = useCallback(() => {
     // ESC-08: fetchEscalations 永不返回 null（失败态内联 error 字段），
     // 503/网络错误以横幅呈现而非静默空列表。
     void fetchEscalations().then((d) => {
-      setData(d);
-      setLoadErr(false);
+      setData((prev) =>
+        d.error && prev
+          ? // R2（M1.1 复审）: 未知 ≠ 空——读取失败保留最后一次成功快照
+            // （待审卡片与审批备注态不丢，横幅标注"可能已过期"）；首屏即
+            // 失败（prev=null）仍如实呈现错误横幅 + 空态不冒充"无待审"。
+            {
+              ...d,
+              requests: prev.requests,
+              pendingRequests: prev.pendingRequests,
+              pending_count: prev.pending_count,
+            }
+          : d
+      );
     });
   }, []);
   useEffect(() => {
@@ -145,7 +155,7 @@ function useEscalations(enabled = true) {
     const t = window.setInterval(load, POLL_MS);
     return () => window.clearInterval(t);
   }, [enabled, load]);
-  return { data, loadErr, reload: load };
+  return { data, reload: load };
 }
 
 function fmtTime(iso: string): string {
@@ -182,10 +192,22 @@ function PendingCard({
   // ESC-05（FR-05）: 截断命令必须先看完整原文才能批准——
   // "看到多少"决定"能否负责任地点批准"。
   const [fullCmd, setFullCmd] = useState<string | null>(null);
+  // R5（M1.1 复审）: 查看资格绑定 (request_id, command_sha256)——只有详情
+  // 响应携带非空指纹且与当前待审命令指纹一致时才解锁批准；缺指纹（畸形/
+  // 降级/旧回包）不解锁也不展示原文（fail-closed，防钓鱼展示）。材料变化
+  // （新一轮轮询指纹更新）即重新锁定。
+  const [viewedSha, setViewedSha] = useState("");
   const [viewErr, setViewErr] = useState("");
   const mustReadFull = !!req.command_truncated;
-  const viewedFull = !mustReadFull || fullCmd !== null;
+  const viewedFull = !mustReadFull || (viewedSha !== "" && viewedSha === req.command_sha256);
   const badge = statusBadge(req.status);
+  useEffect(() => {
+    // 待审命令指纹变化（新一轮列表）→ 查看资格失效，原文与解锁一并重置
+    if (viewedSha !== "" && viewedSha !== req.command_sha256) {
+      setViewedSha("");
+      setFullCmd(null);
+    }
+  }, [req.command_sha256, viewedSha]);
   const loadFull = () => {
     setViewErr("");
     void fetchEscalationDetail(req.id).then((d) => {
@@ -193,13 +215,15 @@ function PendingCard({
         setViewErr(`完整命令加载失败: ${d.error}`);
         return;
       }
-      // TOCTOU 防线：详情原文指纹必须与列表展示时绑定的指纹一致，不一致说明
-      // 列表数据已过期，禁止用新原文解锁对旧卡片的批准。
-      if (d.command_sha256 && req.command_sha256 && d.command_sha256 !== req.command_sha256) {
-        setViewErr("命令指纹不一致（待审内容已变化），请刷新列表后重试");
+      // TOCTOU 防线（R5 强化）: 详情原文指纹必须非空且与列表展示时绑定的
+      // 指纹一致——不一致说明列表数据已过期，缺失说明响应降级/畸形；两种
+      // 情况都禁止用该原文解锁批准（fail-closed）。
+      if (!d.command_sha256 || !req.command_sha256 || d.command_sha256 !== req.command_sha256) {
+        setViewErr("命令指纹缺失或不一致（待审内容可能已变化），请刷新列表后重试");
         return;
       }
       setFullCmd(d.command);
+      setViewedSha(d.command_sha256);
     });
   };
   return (
@@ -311,6 +335,15 @@ export function EscalationWatcher() {
   };
 
   if (!visible) {
+    // R2（M1.1 复审）: 通道读取失败时弹窗不可见 → 必须以全局 chip 告警，
+    // 否则审批者会把"读取失败"误读为"无待审"（503 ≠ 空队列）。
+    if (data?.error) {
+      return (
+        <div className="v2-esc-watcher-chip" data-testid="esc-watch-error">
+          ⚠️ 提权审批通道不可用（{data.error}）——请勿据此判断"无待审"
+        </div>
+      );
+    }
     return mutedPending.length > 0 ? (
       <div className="v2-esc-watcher-chip" data-testid="esc-watcher-muted">
         🔕 有 {mutedPending.length} 条提权申请被稍后处理（侧栏"提权"页可查看）
@@ -361,7 +394,7 @@ export function EscalationWatcher() {
 
 // ── 侧栏面板 ──
 export function EscalationPanel() {
-  const { data, loadErr, reload } = useEscalations(true);
+  const { data, reload } = useEscalations(true);
   const [busy, setBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
   const decide = (id: string, decision: "approved" | "denied", note: string, expectedSha256: string) => {
@@ -373,21 +406,47 @@ export function EscalationPanel() {
     });
   };
   // ESC-07（FR-07）: 待审走专用 pending 查询；历史保持"最新 50 条"窗口。
-  const pending = data?.pendingRequests || [];
-  const history = (data?.requests || []).filter((r) => r.status !== "pending");
+  const basePending = data?.pendingRequests || [];
+  // R4（M1.1 复审）: 权威计数用 pending_count——待审超过窗口（50）时不再被
+  // 截断显示为 50；配合 before_id 稳定游标"加载更多"可单调读完整个队列。
+  const pendingCount = data?.pending_count ?? basePending.length;
+  const [extraPages, setExtraPages] = useState<EscalationRequest[]>([]);
+  const pending = useMemo(() => {
+    const seen = new Set(basePending.map((r) => r.id));
+    return [...basePending, ...extraPages.filter((r) => !seen.has(r.id))];
+  }, [basePending, extraPages]);
+  // 待审总数缩水（记录已决/失效离开队列）→ 丢弃续读页防已决残留；用户可重新加载。
+  useEffect(() => {
+    if (pendingCount < pending.length) setExtraPages([]);
+  }, [pendingCount, pending.length]);
+  const hasMore = pendingCount > pending.length;
+  const loadMore = () => {
+    const oldest = pending[pending.length - 1];
+    if (!oldest) return;
+    void fetch(`/api/v1/escalation/list?status=pending&limit=50&before_id=${encodeURIComponent(oldest.id)}`)
+      .then((r) => r.json())
+      .then((d: { requests?: EscalationRequest[] }) => {
+        if (Array.isArray(d.requests)) setExtraPages((prev) => [...prev, ...d.requests!]);
+      })
+      .catch(() => {
+        /* 网络异常：保持现状，下一轮轮询恢复 */
+      });
+  };
+  // R3（M1.1 复审）: 跨进程失效 pending 被待审专用查询排除，但历史区必须
+  // 如实呈现（标记"已失效"）——不能因投影状态是 pending 就让它整体消失。
+  const history = (data?.requests || []).filter((r) => r.status !== "pending" || r._sig_unverified);
   return (
     <div className="v2-evo" data-testid="escalation-panel">
       <div className="v2-evo-head">
         <span className="v2-evo-title">🔓 {zh.escalationTitle}</span>
-        {pending.length > 0 && <span className="v2-evo-pending-badge">{pending.length} 待审批</span>}
+        {pendingCount > 0 && <span className="v2-evo-pending-badge">{pendingCount} 待审批</span>}
         <button type="button" className="v2-icon-btn" title={zh.refresh} onClick={() => reload()}>
           ⟳
         </button>
       </div>
-      {loadErr && <div className="v2-sidebar-error">提权列表加载失败</div>}
       {data?.error && (
         <div className="v2-esc-hash warn" data-testid="esc-store-error">
-          ⚠️ {data.error}——待审列表当前不可用，请勿据此判断"无待审"
+          ⚠️ {data.error}——待审列表当前不可用；下方列表为最后一次成功读取，可能已过期，请勿据此判断"无待审"
         </div>
       )}
       {actionMsg && (
@@ -396,11 +455,17 @@ export function EscalationPanel() {
         </div>
       )}
       <div className="v2-evo-body">
-        <div className="v2-esc-sec">待审批 ({pending.length})</div>
-        {pending.length === 0 && <div className="v2-tree-loading">（无待审批提权申请）</div>}
+        <div className="v2-esc-sec">待审批 ({pendingCount})</div>
+        {/* R2: 只有确认无待审（非错误态且权威计数为 0）才显示空态提示 */}
+        {!data?.error && pendingCount === 0 && <div className="v2-tree-loading">（无待审批提权申请）</div>}
         {pending.map((r) => (
           <PendingCard key={r.id} req={r} busy={busy} onDecide={decide} />
         ))}
+        {hasMore && (
+          <button type="button" className="v2-evo-btn" data-testid="esc-load-more" onClick={loadMore}>
+            加载更多（还有 {pendingCount - pending.length} 条待审）
+          </button>
+        )}
         <div className="v2-esc-sec">最近记录</div>
         {history.length === 0 && <div className="v2-tree-loading">（无历史）</div>}
         {history.map((r) => {
