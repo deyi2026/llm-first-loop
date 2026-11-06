@@ -32,11 +32,12 @@ def test_spawn_max_rounds_passthrough():
     assert result.content
 
 
-def test_spawn_without_max_rounds_passes_none():
+def test_spawn_without_max_rounds_keeps_callface():
+    # 既有调用面零变化：未声明 max_rounds 时该键不出现（tests/test_write_scope_spawn.py 契约）。
     runner = _FakeRunner()
     tool = SpawnSubAgentTool(runner)
     tool.execute(task="do something")
-    assert runner.calls and runner.calls[0]["max_rounds"] is None
+    assert runner.calls and "max_rounds" not in runner.calls[0]
 
 
 def test_review_rate_limited_returns_structured_retry(monkeypatch):

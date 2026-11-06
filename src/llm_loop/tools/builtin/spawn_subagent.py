@@ -348,23 +348,28 @@ class SpawnSubAgentTool:
         try:
             # E4 (EVO-20261012-bb3022f4): 声明的 requires.tools 作为强制白名单
             # 传入 runner——child 的发现面与执行面都被程序截断到该集合。
-            started = self._runner.start(
-                task=task,
-                context=context,
-                depth=depth,
-                inherit=inherit,
-                acceptance=acceptance,
-                model=model,
-                required_tools=(
+            start_kwargs: dict[str, Any] = {
+                "task": task,
+                "context": context,
+                "depth": depth,
+                "inherit": inherit,
+                "acceptance": acceptance,
+                "model": model,
+                "required_tools": (
                     list(reqs.tools)
                     if reqs is not None
                     and isinstance(requires_raw, dict)
                     and "tools" in requires_raw
                     else None
                 ),
-                fs_isolation=bool(reqs.fs_isolation) if reqs is not None else False,
-                max_rounds=max_rounds,
-                **_required_write_scope_kwargs(reqs, write_scope_declared),
+                "fs_isolation": bool(reqs.fs_isolation) if reqs is not None else False,
+            }
+            # EVO-20261106-97358baf: 仅显式提供时透传 max_rounds，
+            # 未声明保持既有调用面零变化（tests/test_write_scope_spawn.py 契约）。
+            if max_rounds is not None:
+                start_kwargs["max_rounds"] = max_rounds
+            started = self._runner.start(
+                **start_kwargs, **_required_write_scope_kwargs(reqs, write_scope_declared)
             )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(
