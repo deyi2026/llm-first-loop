@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import threading
+import time
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
@@ -313,6 +314,12 @@ _BOUNDARY_EVENT_METHODS = {
     "Page.javascriptDialogOpening": "dialog_opened",
 }
 
+# B-02（DESIGN v1.1 §3.5/§5.6）：事件缓存上界——弹窗关键事件（对话框/
+# 下载/新窗口）永不因界被丢，界满时最旧者让位；非关键新事件丢弃并计数
+# （不静默）。256 条对边界状态机绰绰有余（pop_events 每次清空）。
+_MAX_BUFFERED_EVENTS = 256
+_BOUNDARY_CRITICAL_EVENT_METHODS = frozenset(_BOUNDARY_EVENT_METHODS)
+
 
 class _WebSocketLike(Protocol):
     def send(self, payload: str) -> None: ...
@@ -334,6 +341,30 @@ class _MutationCdpSession:
         self._request_id = 0
         self._lock = threading.Lock()
         self._events: list[dict[str, Any]] = []
+        # B-02：有界缓存丢弃计数 / 迟到旧 id 响应计数 / 超时死亡标记
+        # （诊断字段，不静默；dead 会话由 actuator 关闭重建，不静默复用）。
+        self.events_dropped = 0
+        self.late_responses = 0
+        self.dead = False
+
+    def diag(self) -> dict[str, Any]:
+        """B-02 诊断字段：缓存丢弃/迟到响应/死亡标记（§5.6）。"""
+        return {
+            "events_buffered": len(self._events),
+            "events_dropped": self.events_dropped,
+            "late_responses": self.late_responses,
+            "dead": self.dead,
+        }
+
+    def _buffer_event(self, message: dict[str, Any]) -> None:
+        """有界缓存：界满时弹窗关键事件让最旧者让位；非关键新事件丢弃并计数。"""
+        if len(self._events) >= _MAX_BUFFERED_EVENTS:
+            if message.get("method") not in _BOUNDARY_CRITICAL_EVENT_METHODS:
+                self.events_dropped += 1
+                return
+            self._events.pop(0)
+            self.events_dropped += 1  # 让位者同样计入丢弃计数（如实报）
+        self._events.append(message)
 
     def send(
         self,
@@ -356,14 +387,27 @@ class _MutationCdpSession:
             self._request_id += 1
             request_id = self._request_id
             self._websocket.send(json.dumps({"id": request_id, "method": method, "params": params or {}}, separators=(",", ":")))
+            # B-02（§3.5/T-09）：monotonic 总 deadline——事件到达不延长预算。
+            deadline = time.monotonic() + self._timeout_s
             while True:
-                raw = self._websocket.recv(timeout=self._timeout_s)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.dead = True  # §5.6：超时会话标记死亡，不静默复用
+                    raise TimeoutError(
+                        f"CDP mutation response budget exhausted after {self._timeout_s}s "
+                        f"(method={method})"
+                    )
+                try:
+                    raw = self._websocket.recv(timeout=remaining)
+                except TimeoutError:
+                    self.dead = True  # §5.6：超时会话标记死亡，不静默复用
+                    raise
                 message = json.loads(raw)
                 if not isinstance(message, dict):
                     continue
                 if message.get("id") != request_id:
                     if isinstance(message.get("method"), str):
-                        self._events.append(message)
+                        self._buffer_event(message)
                         if (
                             early_return_on_dialog
                             and message.get("method") == "Page.javascriptDialogOpening"
@@ -372,6 +416,10 @@ class _MutationCdpSession:
                             raise _DialogOpeningInterruptedError(
                                 opening_params if isinstance(opening_params, dict) else {}
                             )
+                    elif "id" in message:
+                        # B-02（§5.6）：迟到旧 id 响应——显式失效计数，
+                        # 不静默丢弃、不串号（id 匹配保证永不误配）。
+                        self.late_responses += 1
                     continue
                 if "error" in message:
                     error = message.get("error") or {}
@@ -404,7 +452,7 @@ class _MutationCdpSession:
                     break
                 message = json.loads(raw)
                 if isinstance(message, dict) and isinstance(message.get("method"), str):
-                    self._events.append(message)
+                    self._buffer_event(message)
 
 
 class CdpBrowserMutationActuator:
@@ -527,6 +575,12 @@ class CdpBrowserMutationActuator:
             raise RuntimeError("Browser target identity changed; no silent rebind")
         elif websocket_url != self._bound_websocket_url:
             raise RuntimeError("bound Browser target websocket changed; recreate actuator explicitly")
+        if self._session is not None and getattr(self._session, "dead", False):
+            # B-02（§5.6）：上一轮超时标记死亡的会话不静默复用——关闭重建。
+            with contextlib.suppress(Exception):
+                self._websocket.close()
+            self._session = None
+            self._page_events_enabled = False
         if self._session is None:
             # S3b attestation（S0 结论 ②）：绑定前 host 侧进程证据判定；deny-real 默认
             # fail-closed（shadow 模式只记录不拒绝）。先判后连——拒绝路径零连接成本。

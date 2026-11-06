@@ -232,6 +232,9 @@ class _ReadOnlyCdpSession:
     def _request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
             started = time.monotonic()
+            # B-02（DESIGN v1.1 §3.5/T-09）：monotonic 总 deadline——事件
+            # 到达不延长预算；每轮 recv 只拿剩余时长。
+            deadline = started + self._timeout_s
             self._request_id += 1
             request_id = self._request_id
             self._websocket.send(
@@ -241,7 +244,13 @@ class _ReadOnlyCdpSession:
                 )
             )
             while True:
-                raw = self._websocket.recv(timeout=self._timeout_s)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"CDP observation response budget exhausted after "
+                        f"{self._timeout_s}s (method={method})"
+                    )
+                raw = self._websocket.recv(timeout=remaining)
                 message = json.loads(raw)
                 if not isinstance(message, dict) or message.get("id") != request_id:
                     continue
