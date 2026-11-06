@@ -4,6 +4,8 @@
   G1 任务账本不可读 → BLOCKED probe_unavailable（fail-closed: 不写终局，非照写）
   G2 open>0 → 既有 FAILURE 拒绝（保留）
   G3 evidence_required 任务 evidence_verification_status != verified → BLOCKED evidence_unverified
+     （EVO-20261105-b86bda1c: status=cancelled 的任务豁免——supersede 语义无
+      "完成证据"可言，且 verifier 只在 →done 置位；done 路径语义不变）
   G4 done=0（空任务图/全非 done）→ 需自报 evidence_refs 且 verifier 校验 verified
      - 无 refs → BLOCKED no_finality_evidence
      - verifier 未装配 → BLOCKED probe_unavailable
@@ -15,8 +17,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-
-import pytest
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.introspection.goal import GoalStore
@@ -135,6 +135,77 @@ def test_complete_passes_when_required_task_verified(tmp_path):
     ts.update(gid, t.task_id, status="done", evidence_refs=["evidence://v1/x"])
     result = _complete(host, gid)
     assert result.status == ToolResultStatus.SUCCESS
+
+
+# ---------- G3 豁免（EVO-20261105-b86bda1c）: cancelled 任务 ----------
+
+
+def _cancelled_required_task(tmp_path, gid) -> str:
+    """evidence_required=True 且终态 cancelled（not_checked）的任务。"""
+    ts = TaskStore(str(tmp_path))
+    t = ts.create(gid, "被取代的任务", acceptance=["验收1"], evidence_required=True)
+    ts.update(gid, t.task_id, status="in_progress")
+    ts.update(gid, t.task_id, status="cancelled", evidence_refs=[])
+    return t.task_id
+
+
+def test_cancelled_required_task_with_selfreport_refs_passes(tmp_path):
+    """EVO 正例: cancelled+not_checked 不再逐任务拦；goal 级自报证据过 G4 门。"""
+    verifier = _FakeVerifier("verified")
+    host = _host(tmp_path, verifier=verifier)
+    gid = _goal(tmp_path)
+    _cancelled_required_task(tmp_path, gid)
+    result = _complete(host, gid, evidence_refs=["evidence://v1/verdict"])
+    assert result.status == ToolResultStatus.SUCCESS
+    assert verifier.calls and verifier.calls[0] == ["evidence://v1/verdict"]
+
+
+def test_cancelled_required_task_without_refs_still_blocked(tmp_path):
+    """应拦（RULE-AI-35）: 豁免不得放开无证据收口——零 done 仍须自报 refs。"""
+    host = _host(tmp_path, verifier=_FakeVerifier("verified"))
+    gid = _goal(tmp_path)
+    _cancelled_required_task(tmp_path, gid)
+    result = _complete(host, gid)
+    assert result.status == ToolResultStatus.BLOCKED
+    assert "reason_code=no_finality_evidence" in result.content
+
+
+def test_cancelled_required_task_with_failing_refs_still_blocked(tmp_path):
+    """应拦: 自报 refs 未过 verifier 仍拒（evidence_below_threshold）。"""
+    host = _host(tmp_path, verifier=_FakeVerifier("blob_missing"))
+    gid = _goal(tmp_path)
+    _cancelled_required_task(tmp_path, gid)
+    result = _complete(host, gid, evidence_refs=["evidence://v1/gone"])
+    assert result.status == ToolResultStatus.BLOCKED
+    assert "reason_code=evidence_below_threshold" in result.content
+
+
+def test_mixed_cancelled_and_unverified_done_still_blocked(tmp_path):
+    """应拦: done+not_checked 的 G3 语义不因 cancelled 豁免而松动。"""
+    host = _host(tmp_path, verifier=_FakeVerifier("verified"))
+    gid = _goal(tmp_path)
+    cancelled_tid = _cancelled_required_task(tmp_path, gid)
+    # done 但 not_checked（存量数据模拟，同 test_complete_blocked_by_unverified_required_task）
+    import json as _json
+    from pathlib import Path as _Path
+
+    ts = TaskStore(str(tmp_path))
+    t2 = ts.create(gid, "done 未验证任务", acceptance=["验收2"], evidence_required=True)
+    ts.update(gid, t2.task_id, status="in_progress")
+    stale = t2.to_dict()
+    stale.update(
+        status="done",
+        evidence_refs=["evidence://v1/y"],
+        evidence_verification_status="not_checked",
+    )
+    ledger = _Path(str(tmp_path)) / "tasks" / f"{gid}.jsonl"
+    with ledger.open("a", encoding="utf-8") as f:
+        f.write(_json.dumps(stale, ensure_ascii=False) + "\n")
+    result = _complete(host, gid)
+    assert result.status == ToolResultStatus.BLOCKED
+    assert "reason_code=evidence_unverified" in result.content
+    assert t2.task_id in result.content
+    assert cancelled_tid not in result.content  # cancelled 任务不得出现在拦单
 
 
 # ---------- G1: 账本不可读 fail-closed ----------

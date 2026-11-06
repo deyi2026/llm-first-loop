@@ -30,10 +30,19 @@ def complete_gate(host: Any, gid: str, args: dict) -> ToolResult | None:
                 "update_goal",
             )
         _tasks = _ts.list_for_goal(gid)
+        # EVO-20261105-b86bda1c（人工批准 executing）: cancelled 任务豁免
+        # evidence verified 要求——supersede/放弃语义下被取代任务本无"完成
+        # 证据"可言，且验证器只在 →done 时置位（task_store），对 cancelled
+        # 恒为 not_checked，旧逻辑造成 owner 死亡后 goal 永久 open 的死角。
+        # 防漏网不变：done 任务仍须 verified（G3 语义保留）；零 done 终局仍走
+        # 自报 evidence_refs 过 verifier 的 G4 门——豁免只解除"不可能满足"的
+        # 逐任务要求，不放开无证据收口。
         _unverified = [
             t.task_id
             for t in _tasks
-            if t.evidence_required and t.evidence_verification_status != "verified"
+            if t.evidence_required
+            and t.status != "cancelled"
+            and t.evidence_verification_status != "verified"
         ]
         if _unverified:
             return ToolResult(
