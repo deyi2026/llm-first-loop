@@ -311,8 +311,19 @@ class MacOSDesktopBackend:
                     ),
                     ax_error=None,
                     verified=False,
+                    # D-02（§5.3）：写入已发生（dispatched）、影响未知、验证失败。
+                    dispatch_state="dispatched",
+                    effect_state="unknown",
+                    verification_state="failed",
+                    verification_reason="readback_mismatch",
                 )
-            return ActOutcome(ok=True, verified=True)
+            return ActOutcome(
+                ok=True,
+                verified=True,
+                dispatch_state="dispatched",
+                effect_state="confirmed",
+                verification_state="passed",
+            )
         finally:
             el.release()
 
@@ -329,8 +340,10 @@ class MacOSDesktopBackend:
                 ok=False,
                 error=DesktopErrorCode.BACKEND_ERROR,
                 detail=f"CGEvent 点击投递失败: {type(exc).__name__}: {exc}",
+                dispatch_state="unknown",  # CGEvent 抛异常：投递结果不可观测（§5.3）
+                effect_state="unknown",
             )
-        return ActOutcome(ok=True)
+        return ActOutcome(ok=True, dispatch_state="dispatched")
 
     def act_key(self, keycode: int, flags: int) -> ActOutcome:
         """press_key：CGEvent 命名键 down+up（闭合键集；字母通道被 IME 污染，不提供）。"""
@@ -341,8 +354,10 @@ class MacOSDesktopBackend:
                 ok=False,
                 error=DesktopErrorCode.BACKEND_ERROR,
                 detail=f"CGEvent 按键投递失败: {type(exc).__name__}: {exc}",
+                dispatch_state="unknown",
+                effect_state="unknown",
             )
-        return ActOutcome(ok=True)
+        return ActOutcome(ok=True, dispatch_state="dispatched")
 
     def act_scroll(self, window: WindowInfo, signed_lines: int) -> ActOutcome:
         """scroll：滚轮事件定向投递到窗口所属 pid（不挪动用户光标）。"""
@@ -353,8 +368,10 @@ class MacOSDesktopBackend:
                 ok=False,
                 error=DesktopErrorCode.BACKEND_ERROR,
                 detail=f"CGEvent 滚轮投递失败: {type(exc).__name__}",
+                dispatch_state="unknown",
+                effect_state="unknown",
             )
-        return ActOutcome(ok=True)
+        return ActOutcome(ok=True, dispatch_state="dispatched")
 
     @staticmethod
     def _resolution_failure(failure: str | None) -> ActOutcome:
@@ -380,5 +397,6 @@ class MacOSDesktopBackend:
                 else DesktopErrorCode.AX_UNAVAILABLE
             ),
             detail=detail,
+            dispatch_state="not_dispatched",  # 元素解析失败：根本未尝试投递（§5.3）
         )
 

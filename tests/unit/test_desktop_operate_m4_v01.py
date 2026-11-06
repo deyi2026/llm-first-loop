@@ -1682,10 +1682,13 @@ def test_r2_failed_click_delivery_marked_in_audit():
     payload = _dispatch(reg, do="click", window_id=101, target=point, dry_run=False,
                         confirm_token=dry["confirm_token"])
     assert payload["error_code"] == "backend_error"
-    assert payload["applied"] is False
-    # P2-6：部分失败在审计行有明确错误码标记（applied=false + backend_error）
+    # D-02（§5.3）：CGEvent 投递抛异常=投递结果不可判定 → applied=null，
+    # 不再折叠成 false；回执与审计行携带 dispatch_state=unknown。
+    assert payload["applied"] is None
+    assert payload["dispatch_state"] == "unknown"
     assert any(
-        r.get("error_code") == "backend_error" and r.get("applied") is False for r in rows
+        r.get("error_code") == "backend_error" and r.get("applied") is None
+        and r.get("dispatch_state") == "unknown" for r in rows
     )
 
 

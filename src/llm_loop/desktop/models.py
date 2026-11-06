@@ -257,6 +257,16 @@ class ActOutcome:
     detail: str | None = None
     ax_error: int | None = None
     verified: bool | None = None  # type 动作写入后回读校验结果（None=不适用）
+    # D-02（§5.3）三段字段——投递/影响/验证分开，unknown 不折叠：
+    # dispatch_state: not_dispatched|dispatched|unknown（是否已把动作交给系统）；
+    # effect_state: confirmed|unknown|not_observed（backend 层通常 not_observed，
+    #   post 指纹观测在工具层补 confirmed）；
+    # verification_state: passed|failed|unavailable|not_requested（验证通道；
+    #   verification_reason 携带失败原因如 readback_mismatch）。
+    dispatch_state: str = "unknown"
+    effect_state: str = "not_observed"
+    verification_state: str = "not_requested"
+    verification_reason: str | None = None
 
 
 @dataclass(frozen=True)
