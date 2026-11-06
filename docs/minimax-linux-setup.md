@@ -25,7 +25,7 @@ LLM_WIRE_PROTOCOL=openai
 
 要点：
 
-- **`LLM_MODEL` 写裸模型名**。写全限定 `minimax/MiniMax-M3.1-Flash` 时，运行时客户端发的仍是裸名（OpenAI 兼容端点不接受全限定形式），但 LFL 0.6.37 的 `lfl doctor --online` 会把全限定名原样发出，报 `model_not_found` 假阴性——配置本身是好的。上游已修：doctor 与客户端现在共用同一套 wire 名映射，且只有"已知 provider id"才剥前缀（模型名本身含 `/` 的写法不受影响）。
+- **`LLM_MODEL` 写裸模型名**。写全限定 `minimax/MiniMax-M3.1-Flash` 时，运行时客户端发的仍是裸名（OpenAI 兼容端点不接受全限定形式），但 LFL 0.6.37 的 `lfl doctor --online` 会把全限定名原样发出：实测服务端回 `400 unknown model 'minimax/minimax-m3.1-flash'`，doctor 判 `状态：error`——而同一份配置下真实请求是通的，属体检假阴性。上游已修：doctor 与客户端按同一规则解析 wire 名（全限定形式仅在 provider id 已知时剥前缀；模型名本身含 `/` 的写法不受影响）。
 - **限额在控制台看**。官方速率限制：MiniMax-M3.1-Flash / M3 免费用户 RPM 20、TPM 1,000,000；充值用户 RPM 200、TPM 10,000,000。订阅（TokenPlan）档位与用量在「管理订阅」页。
 - 改完配置后 CLI 直接生效；常驻服务（Web / 飞书）需重启进程。
 
@@ -152,7 +152,7 @@ WantedBy=timers.target
 ## 6. 上线核验清单
 
 ~~~bash
-lfl doctor --online                 # 在线体检：应报 ok（模型名不再假报 model_not_found）
+lfl doctor --online                 # 在线体检：应报 状态：ready（模型名不再假报 unknown model）
 lfl paths                            # 确认 DOCS_DIR / SKILLS_DIR / METHOD_SEED_DIR 指向存在的目录
 systemctl --user status lfl.service  # active (running) + MainPID
 curl -s http://127.0.0.1:8903/health # 200
