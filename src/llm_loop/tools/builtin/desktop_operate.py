@@ -1424,12 +1424,14 @@ class DesktopOperateTool:
         post_sha: str | None = None
         foreground_after: str | None = None
         effect_state = "unknown"
+        post_observation = "unknown"  # R-01（M1 修订）：post 观测可用性独立标注
         try:
             post_window = backend.get_window(int(options["window_id"]))
             if post_window is None:
                 post_sha = window_gone_fingerprint(window.window_id)
                 post_nodes: tuple = ()
                 post_target_node = None
+                post_observation = "window_gone"
             else:
                 post_view = backend.ax_snapshot(post_window, MAX_AX_DEPTH, AX_NODE_LIMIT_DEFAULT)
                 post_nodes = post_view.nodes if post_view.available else ()
@@ -1440,14 +1442,26 @@ class DesktopOperateTool:
                     post_window, post_nodes, frontmost_before, include_value=True,
                     target_node=post_target_node,
                 )
+                post_observation = "available" if post_view.available else "unavailable"
             # R5：前台口径 = 前台 app bundle（lsappinfo）。post 观测失败 → None（如实
             # 报告），不把已投递的动作误报成 backend_error——前台门控在投递前已完成。
             foreground_after = backend.frontmost_app_bundle()
-            effect_state = "confirmed"
+            # R-01（M1 修订批次，外部审查 §4）：读取 post 状态完成 ≠ 动作影响已确认。
+            # confirmed 仅在有动作相关后置证明（精确回读 verified=True）时给出；
+            # post 失效（异常/unavailable）→ unknown，与 T-05 异常口径统一，已确立的
+            # 回读证据保留在 verification.state，不因 post 失效抹掉；post 可读但无
+            # 动作级验证（click/scroll/press_key 无回读机制）→ not_observed。
+            if post_observation == "unavailable":
+                effect_state = "unknown"
+            elif outcome.verified is True:
+                effect_state = "confirmed"
+            else:
+                effect_state = "not_observed"
         except Exception as exc:  # noqa: BLE001 - 观测异常 ≠ 动作未发生（§5.3/T-05）
             post_sha = None
             foreground_after = None
             effect_state = "unknown"
+            post_observation = "error"
             audit["post_observation_error"] = type(exc).__name__
         # M1：point 通道与 irreversible 永不进会话放行（免令牌路径不得弱化）；
         # P2-1（R6）：记账维度 (app, do) → (app, do, 目标身份键)。
@@ -1464,6 +1478,7 @@ class DesktopOperateTool:
              "error_code": None,
              "dispatch_state": "dispatched",
              "effect_state": effect_state,
+             "post_observation": post_observation,
              "verification_state": verification_state,
              "verification_reason": outcome.verification_reason}
         )
@@ -1483,6 +1498,7 @@ class DesktopOperateTool:
             "force_used": force_used,
             "dispatch_state": "dispatched",
             "effect_state": effect_state,
+            "post_observation": post_observation,
             "verification": {
                 "state": verification_state,
                 "reason": outcome.verification_reason,

@@ -601,6 +601,13 @@ def _lift_m1_compact_echoes(compact: dict[str, Any], last: dict[str, Any], statu
         retry_reason = (blocked_receipt.get("retry") or {}).get("reason")
         if isinstance(retry_reason, str) and retry_reason:
             compact["reject_reason"] = retry_reason
+            # R-02（M1 修订批次，外部审查 §4）：press_key 部分投递失败时，清理
+            # 状态（released/unknown/partial）必须与 reject_reason 同层可达——
+            # 模型要凭它决定是否 reconnect_then_snapshot，而非盲猜。
+            if last.get("verb") == "press_key":
+                input_cleanup = blocked_receipt.get("input_cleanup")
+                if isinstance(input_cleanup, dict) and input_cleanup:
+                    compact["input_cleanup"] = dict(input_cleanup)
             # M2-A B5 (§5.1 guidance): dialog_not_open is only actionable
             # with a next step; attach it so the model does not retry blind.
             if retry_reason == "dialog_not_open":

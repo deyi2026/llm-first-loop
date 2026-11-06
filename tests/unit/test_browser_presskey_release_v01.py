@@ -34,19 +34,22 @@ _TARGETS = [
 
 class _FlakyWs:
     """成功请求按序回复；第 N 个 Input.dispatchKeyEvent 一次性抛错；
-    或第 M 次 recv 起 TimeoutError（模拟超时死连接）。
+    或第 M 次 recv 起 TimeoutError（请求无响应，传输未断）；
+    或第 K 次 recv 起 ConnectionError（传输真断线）。
 
     recv 的 id 用 send 尝试总数（含失败那次）：session 在 send 前已自增 id。
     """
 
     def __init__(self, *, fail_input_once_at: int | None = None,
-                 recv_timeout_at: int | None = None) -> None:
+                 recv_timeout_at: int | None = None,
+                 recv_died_at: int | None = None) -> None:
         self.requests: list[dict[str, Any]] = []
         self._send_attempts = 0
         self._input_calls = 0
         self._fail_input_once_at = fail_input_once_at
         self._recv_calls = 0
         self._recv_timeout_at = recv_timeout_at
+        self._recv_died_at = recv_died_at
 
     def send(self, payload: str) -> None:
         self._send_attempts += 1
@@ -60,6 +63,10 @@ class _FlakyWs:
 
     def recv(self, timeout: float | None = None) -> str:
         self._recv_calls += 1
+        # R-03（M1 修订）：ConnectionError=传输死亡证据（session.dead）；
+        # TimeoutError=请求无响应（会话保留）。二者语义分离。
+        if self._recv_died_at is not None and self._recv_calls >= self._recv_died_at:
+            raise ConnectionError("scripted-connection-lost")
         if self._recv_timeout_at is not None and self._recv_calls >= self._recv_timeout_at:
             raise TimeoutError("scripted-recv-timeout")
         return json.dumps({"id": self._send_attempts, "result": {}})
@@ -105,12 +112,14 @@ def test_t11_partial_chord_releases_in_reverse_on_same_connection():
 
 
 def test_t11_dead_session_reports_input_state_unknown_without_further_sends():
-    """recv 超时（死连接）→ 显式 input_state_unknown + 重观测路径，不再投递。"""
+    """连接真断开（R-03 语义分离后）→ 显式 input_state_unknown + 重观测路径，不再投递。"""
     from llm_loop.browser.cdp_action_host import _PressKeyPartialDispatchError
 
-    # 第 4 次 recv＝a↑ 的应答等待中超时：a↑ 已发出但未确认（这正是
+    # 第 4 次 recv＝a↑ 的应答等待中连接断开：a↑ 已发出但未确认（这正是
     # input_state_unknown 要表达的不可知性），Meta↑ 未发出。
-    ws = _FlakyWs(recv_timeout_at=4)
+    # R-03（M1 修订）：dead 的证据从"recv 超时"改为真传输异常——超时不再
+    # 等于死亡，本契约限定于"连接确实断了"。
+    ws = _FlakyWs(recv_died_at=4)
     with pytest.raises(_PressKeyPartialDispatchError) as excinfo:
         _host(ws).dispatch(verb="press_key", physical_target=None, args={"keys": "Meta+A"})
     cleanup = excinfo.value.cleanup
@@ -120,6 +129,29 @@ def test_t11_dead_session_reports_input_state_unknown_without_further_sends():
     # 死连接后没有任何新的 Input.* 投递：两次 down + 一次未确认 up，无 Meta↑
     events = _input_events(ws)
     assert events == [("keyDown", "Meta"), ("keyDown", "a"), ("keyUp", "a")]
+
+
+def test_r03_keyup_timeout_with_live_connection_best_effort_release():
+    """R-03 语义修正的红线：应答超时但传输未断 ≠ 死连接。
+
+    a↑ 应答超时（弹窗/渲染阻塞）→ 会话保留 → 尽力投递 Meta↑（旧语义会因
+    dead 直接跳过并误报 input_state_unknown）。释放投递的应答同样超时 →
+    如实报 partial_release_failed；事件已尽力发出。
+    """
+    from llm_loop.browser.cdp_action_host import _PressKeyPartialDispatchError
+
+    ws = _FlakyWs(recv_timeout_at=4)
+    with pytest.raises(_PressKeyPartialDispatchError) as excinfo:
+        _host(ws).dispatch(verb="press_key", physical_target=None, args={"keys": "Meta+A"})
+    cleanup = excinfo.value.cleanup
+    assert cleanup["status"] != "input_state_unknown"
+    assert cleanup["status"] == "partial_release_failed"  # 释放应答超时，如实报
+    assert cleanup["pressed"] == 2
+    # 尽力释放：a↑ 重试投递已发出（与死连接场景的"零投递"形成对照）；
+    # 其应答仍超时 → break，Meta↑ 不再盲试。
+    assert _input_events(ws) == [
+        ("keyDown", "Meta"), ("keyDown", "a"), ("keyUp", "a"), ("keyUp", "a"),
+    ]
 
 
 def test_t11_success_path_has_no_cleanup_side_effects():

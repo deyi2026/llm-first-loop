@@ -365,27 +365,45 @@ class _MutationCdpSession:
         self._events: list[dict[str, Any]] = []
         # B-02：有界缓存丢弃计数 / 迟到旧 id 响应计数 / 超时死亡标记
         # （诊断字段，不静默；dead 会话由 actuator 关闭重建，不静默复用）。
+        # R-04（M1 修订批次，外部审查 §4）：关键事件被挤出的历史单独计数——
+        # "关键历史覆盖丢失"与"普通事件丢弃"是两种不同严重度的观测损失。
         self.events_dropped = 0
+        self.critical_events_evicted = 0
         self.late_responses = 0
         self.dead = False
 
     def diag(self) -> dict[str, Any]:
-        """B-02 诊断字段：缓存丢弃/迟到响应/死亡标记（§5.6）。"""
+        """B-02 诊断字段：缓存丢弃/迟到响应/死亡标记（§5.6）。
+
+        R-04：接入 dispatch 超时回执（见 dispatch 的 timeout 分支），
+        不再只是可调用的内部方法。
+        """
         return {
             "events_buffered": len(self._events),
             "events_dropped": self.events_dropped,
+            "critical_events_evicted": self.critical_events_evicted,
             "late_responses": self.late_responses,
             "dead": self.dead,
         }
 
     def _buffer_event(self, message: dict[str, Any]) -> None:
-        """有界缓存：界满时弹窗关键事件让最旧者让位；非关键新事件丢弃并计数。"""
+        """有界缓存（R-04 修订）：界满时关键事件优先淘汰最旧的非关键事件，
+        先入队的关键事件（如 dialog-opening）不得被普通事件流挤掉；全部为
+        关键事件时才淘汰最旧关键事件，并单独计数如实标注覆盖丢失。
+        """
+        critical = message.get("method") in _BOUNDARY_CRITICAL_EVENT_METHODS
         if len(self._events) >= _MAX_BUFFERED_EVENTS:
-            if message.get("method") not in _BOUNDARY_CRITICAL_EVENT_METHODS:
+            if not critical:
                 self.events_dropped += 1
                 return
-            self._events.pop(0)
-            self.events_dropped += 1  # 让位者同样计入丢弃计数（如实报）
+            for index, buffered in enumerate(self._events):
+                if buffered.get("method") not in _BOUNDARY_CRITICAL_EVENT_METHODS:
+                    del self._events[index]
+                    self.events_dropped += 1  # 让位的非关键事件计入丢弃（如实报）
+                    break
+            else:
+                self._events.pop(0)
+                self.critical_events_evicted += 1  # 关键历史覆盖丢失，单独计数
         self._events.append(message)
 
     def send(
@@ -414,7 +432,11 @@ class _MutationCdpSession:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    self.dead = True  # §5.6：超时会话标记死亡，不静默复用
+                    # R-03（M1 修订批次，外部审查 §4）：请求超时 ≠ 传输死亡。
+                    # 弹窗持有 renderer 时本连接的 Page.handleJavaScriptDialog
+                    # 是唯一恢复出口——副作用按 unknown（TimeoutError 抛出，
+                    # 调用方不自动重发），会话保留给受限恢复路径；迟到响应由
+                    # request id 匹配隔离（下方 late_responses）。
                     raise TimeoutError(
                         f"CDP mutation response budget exhausted after {self._timeout_s}s "
                         f"(method={method})"
@@ -422,7 +444,13 @@ class _MutationCdpSession:
                 try:
                     raw = self._websocket.recv(timeout=remaining)
                 except TimeoutError:
-                    self.dead = True  # §5.6：超时会话标记死亡，不静默复用
+                    # R-03：同上——预算耗尽是"本请求未获响应"，不是断线。
+                    raise
+                except Exception:
+                    # R-03：传输层异常（断线/关闭/帧损坏）才是连接死亡证据，
+                    # 标记后由 _ensure_session/_drop_session 走重建；B-04 的
+                    # input_state_unknown 判定依赖本标记的"真死亡"语义。
+                    self.dead = True
                     raise
                 message = json.loads(raw)
                 if not isinstance(message, dict):
@@ -930,9 +958,16 @@ class CdpBrowserMutationActuator:
                     # dialog (click → alert → 5s timeout → drop → tab
                     # permanently dead, verdict §4.4). Keep the session; only
                     # frame_too_large / connection still drop.
+                    # R-04（M1 修订批次）：诊断字段接入实际回执——超时消息携带
+                    # 会话观测诊断（缓存丢弃/关键事件挤出/迟到响应），模型可据此
+                    # 判断"弹窗阻塞"还是"页面死重"。
+                    diag_summary = (
+                        self._session.diag() if self._session is not None else {"session": "absent"}
+                    )
                     raise RuntimeError(
                         "CDP mutation timed out; session kept for same-target retry"
                         f"; error_type={type(exc).__name__}"
+                        f"; diag={diag_summary}"
                     ) from exc
                 self._drop_session()
                 raise RuntimeError(

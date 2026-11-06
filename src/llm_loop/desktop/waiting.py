@@ -206,12 +206,21 @@ def wait_for(
         saw_available = saw_available or frame.available
         last_frame = frame
         observed = observe(frame.nodes, ax_ref)
-        node = find_node(frame.nodes, ax_ref)
-        verdict = evaluate(node, predicate)
-        if verdict is True and node is None and not frame.proves_absence(ax_ref):
-            # "没找到"不等于"已消失"：这帧没覆盖到目标所在子树就什么都
-            # 不证明（§5.2 否定域），按 unknown 处理并重置 settle。
+        if not frame.available:
+            # R-05（M1 修订批次，外部审查 §4）：available=False 的帧整体什么都不
+            # 证明（ObservationFrame 公开说明）——残留/部分节点不得产生新的成功
+            # 结论，absent 也不行（D-01 同源：不可观测不得误证消失）。observed
+            # 保留残留数据但标 stale；unknown 由下方分支重置 settle。
+            observed["stale"] = True
+            node = None
             verdict = None
+        else:
+            node = find_node(frame.nodes, ax_ref)
+            verdict = evaluate(node, predicate)
+            if verdict is True and node is None and not frame.proves_absence(ax_ref):
+                # "没找到"不等于"已消失"：这帧没覆盖到目标所在子树就什么都
+                # 不证明（§5.2 否定域），按 unknown 处理并重置 settle。
+                verdict = None
         now = clock()
 
         if verdict is True and not predicate.needs_settle:

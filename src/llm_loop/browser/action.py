@@ -1522,6 +1522,18 @@ class BrowserActionAdapter:
         elif dispatch_error is not None:
             terminal["status"] = "failed"
             terminal["retry"]["reason"] = _dispatch_error_reason(dispatch_error, reasons)
+            # R-02（M1 修订批次，外部审查 §4）：组合键部分投递的清理结果不得停留
+            # 在异常对象里。白名单化提升 input_cleanup（B-04 执行器契约字段），
+            # 不把异常字符串/dict 整个当结构化契约。
+            cleanup = getattr(dispatch_error, "cleanup", None)
+            if isinstance(cleanup, dict):
+                lifted = {
+                    k: cleanup[k]
+                    for k in ("pressed", "released", "status", "cause", "recovery")
+                    if k in cleanup
+                }
+                if lifted:
+                    terminal["input_cleanup"] = lifted
         elif dispatch_result is None or not dispatch_result.acknowledged:
             terminal["status"] = "failed"
             reasons.append("dispatch_not_acknowledged")
