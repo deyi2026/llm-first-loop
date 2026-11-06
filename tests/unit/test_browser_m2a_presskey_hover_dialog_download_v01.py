@@ -186,7 +186,8 @@ def test_b3_enter_chord_builds_exactly_one_keydown_keyup_pair() -> None:
     events = key_events_for_chord("Enter")
     assert [event["type"] for event in events] == ["keyDown", "keyUp"]
     for event in events:
-        assert event["key"] == "enter"
+        # B-03（§3.6）：key 是 DOM KeyboardEvent.key 规范值 "Enter"。
+        assert event["key"] == "Enter"
         assert event["code"] == "Enter"
         assert event["windowsVirtualKeyCode"] == 13
     assert events[0]["text"] == "\r"  # Enter default action (form submit) parity

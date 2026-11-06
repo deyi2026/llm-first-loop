@@ -18,6 +18,7 @@ from typing import Any, Protocol, cast
 from websockets.sync.client import connect as websocket_connect
 
 from llm_loop.browser.action import (
+    PRESS_KEY_NAMED_TOKENS,
     BrowserDispatchResult,
     parse_key_chord,
     press_key_policy_error,
@@ -145,6 +146,16 @@ for _fn in range(1, 13):
 # actions (form submit on Enter, focus traversal on Tab) actually fire.
 _KEY_TEXT_BY_KEY = {"enter": "\r", "tab": "\t"}
 
+# B-03（DESIGN v1.1 §3.6）：DOM KeyboardEvent.key 规范值与 code 不同形的
+# 命名键——Space 是字面空格 U+0020；backtick 家族是 ` 字符本身。
+# 其余命名键的规范 key 与 code 同形（Enter/Escape/Tab/Arrow*/F1-F12/…）。
+_KEY_DOM_KEY_EXCEPTIONS = {"space": " ", "backquote": "`", "backtick": "`", "`": "`"}
+# 策略闭集与 CDP 键表失同步 = 导入期即失败（单一真值源，B-03）。
+_KEY_TOKENS_MISSING_FROM_TABLE = PRESS_KEY_NAMED_TOKENS - set(_KEY_NAMED_CODES)
+assert not _KEY_TOKENS_MISSING_FROM_TABLE, (
+    "PRESS_KEY_NAMED_TOKENS 与 _KEY_NAMED_CODES 失同步（B-03）"
+)
+
 
 def _key_code(key: str) -> tuple[str, int | None]:
     if len(key) == 1 and key.isalpha():
@@ -184,15 +195,20 @@ def key_events_for_chord(keys: str) -> list[dict[str, Any]]:
     modifiers, key = parse_key_chord(keys)
     if modifiers is None or not key:
         raise _ActuatorContractError("key_args_invalid")
+    if len(key) != 1 and key not in PRESS_KEY_NAMED_TOKENS:
+        # 纵深防御：闭集外键名即使绕过上游策略也在此拦截（零 CDP）。
+        raise _ActuatorContractError("key_not_allowed")
     code, vk = _key_code(key)
+    # B-03：event.key 必须是 DOM 规范值（单字符原样；命名键按 §3.6 表）。
+    canonical_key = key if len(key) == 1 else _KEY_DOM_KEY_EXCEPTIONS.get(key, code)
     bitmask = 0
     events: list[dict[str, Any]] = []
     for mod in modifiers:
         events.append(_key_event("keyDown", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
         bitmask |= _CDP_MODIFIER_BITS[mod]
     text = _KEY_TEXT_BY_KEY.get(key, "")
-    events.append(_key_event("keyDown", key, code, vk, modifiers=bitmask, text=text))
-    events.append(_key_event("keyUp", key, code, vk, modifiers=bitmask))
+    events.append(_key_event("keyDown", canonical_key, code, vk, modifiers=bitmask, text=text))
+    events.append(_key_event("keyUp", canonical_key, code, vk, modifiers=bitmask))
     for mod in reversed(modifiers):
         events.append(_key_event("keyUp", *_MODIFIER_EVENT_PROPS[mod], modifiers=bitmask))
         bitmask &= ~_CDP_MODIFIER_BITS[mod]
