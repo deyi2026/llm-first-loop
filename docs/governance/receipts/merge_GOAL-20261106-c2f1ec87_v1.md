@@ -28,8 +28,8 @@
     "R-05": "waiting.py wait_for() 209-216：not frame.available → observed 标 stale、node=None、verdict=None——残留节点不得满足 exists/focused/enabled 肯定谓词，absent 亦不证明（D-01 同源）",
     "R-01": "desktop_operate.py 1427/1445/1449-1459：post_observation 独立标注；unavailable→effect_state=unknown（已确立的 verification.state 保留不抹）、verified=True→confirmed、其余→not_observed；观测异常→unknown+post_observation=error（T-05 口径统一）"
   },
-  "main_sha_after": "pending（父会话 git checkout main && git merge --ff-only fix/m1-revision-r01-r05 后回填；合并后应 == 763ff42129ee2c1fa3a36ecb3864e41cf43d50a1）",
-  "branch_disposition": "父会话按 lane-b5000927 契约处置（建议 merged 后删除分支）",
+  "main_sha_after": "76beb138fe5fd2c9a04020c2e04f6f454668a966",
+  "branch_disposition": "已删除；越轨提交 38b57e12c 备份于 evo-fead950b-b0806c32-handoff-backup 供并行会话认领",
   "verify_receipt_id": "PASS 后父会话按 EVO-20261106-7782d438 签发（scripts/issue_verify_receipt.py --apply --lane-id lane-b5000927 --base-sha 5e295e1e0 → lane-b5000927:5e295e1e0）",
   "notes": [
     "【计数勘误 1·提交数】委派与提交信息均称『分支含 3 提交（fix/lint amend/guard）』，实际 main..branch=2 提交：lint 修正经 commit --amend 并入 fix 提交（reflog 96dcfb589→67ed59966 commit(amend) 实证）。三项声明变更内容全部在案、无多余提交、无夹带——表述失真不构成阻断，建议收口时小步勘误。",
