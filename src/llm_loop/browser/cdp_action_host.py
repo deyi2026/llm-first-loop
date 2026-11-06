@@ -1246,6 +1246,68 @@ class CdpBrowserMutationActuator:
             completeness_reasons=result.completeness_reasons + (cleared_reason,),
         )
 
+    def _verb_fill(
+        self, session: _MutationCdpSession, object_id: str, args: dict[str, Any],
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """M2 B-01: set_text/append_text through the real input pipeline.
+
+        focus + selection establishment + Input.insertText, then readback
+        verification: maxlength truncation and controlled reversion surface
+        as an honest mismatch fact (never a fake success). Returns
+        (input_pipeline, readback) for the dispatch receipt (T-16).
+        """
+        text = str(args["text"])
+        mode = str(args["mode"])
+        if not _fill_input_pipeline_enabled():
+            # T-16: legacy assignment path (controlled components may
+            # revert; receipt marks the degradation honestly).
+            self._call(
+                session, object_id, _FILL_LEGACY_VALUE_JS,
+                [{"value": text}, {"value": mode}],
+            )
+            return "legacy_degraded", None
+        before = self._call_value(session, object_id, _FILL_BEFORE_JS)
+        base = before if isinstance(before, str) else ""
+        # review P2-2: actionable message when the element does not support
+        # selection APIs (contenteditable / some input types).
+        try:
+            self._call(
+                session, object_id,
+                _FILL_REPLACE_JS if mode == "replace" else _FILL_APPEND_JS,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "fill selection establishment failed on this element "
+                "(select()/setSelectionRange unsupported: contenteditable "
+                "or non-text input); contenteditable is deferred to M3 - "
+                "see LFL_BROWSER_INPUT_PIPELINE=off for the legacy path"
+            ) from exc
+        session.send("Input.insertText", {"text": text})
+        expected = text if mode == "replace" else base + text
+        actual = self._call_value(
+            session, object_id, _FILL_READBACK_JS, [{"value": expected}],
+            await_promise=True,
+        )
+        if actual is None:
+            return "insert_text", None
+        return "insert_text", {
+            "check": "set_text_readback_mismatch",
+            "mode": mode,
+            "expected": expected,
+            "actual": actual if isinstance(actual, str) else str(actual),
+        }
+
+    def _verb_scroll(
+        self, session: _MutationCdpSession, object_id: str, args: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """M2 B-05: scoped scrolling - nearest scrollable container first,
+        page only as fallback; returns the scope/before/after/max fact."""
+        fact = self._call_value(
+            session, object_id, _SCROLL_SCOPED_JS,
+            [{"value": float(args["delta_pages"])}],
+        )
+        return fact if isinstance(fact, dict) else None
+
     def _dispatch_locked(
         self, *, verb: str, physical_target: str | None, args: dict[str, Any]
     ) -> BrowserDispatchResult:
@@ -1330,55 +1392,8 @@ class CdpBrowserMutationActuator:
             # M2-A B4: pointer-only hover, never a click (see _hover_center).
             self._hover_center(session, object_id)
         elif verb == "fill":
-            text = str(args["text"])
-            mode = str(args["mode"])
-            if not _fill_input_pipeline_enabled():
-                # T-16: legacy assignment path (controlled components may
-                # revert; receipt marks the degradation honestly).
-                self._call(
-                    session,
-                    object_id,
-                    _FILL_LEGACY_VALUE_JS,
-                    [{"value": text}, {"value": mode}],
-                )
-                input_pipeline = "legacy_degraded"
-            else:
-                # M2 B-01: focus + selection establishment + Input.insertText,
-                # then readback verification (maxlength truncation and
-                # controlled reversion surface as a mismatch fact, never a
-                # fake success).
-                before = self._call_value(session, object_id, _FILL_BEFORE_JS)
-                base = before if isinstance(before, str) else ""
-                # review P2-2: surface an actionable message when the element
-                # does not support selection APIs (contenteditable / some
-                # input types) instead of a bare actuator error string.
-                try:
-                    self._call(
-                        session,
-                        object_id,
-                        _FILL_REPLACE_JS if mode == "replace" else _FILL_APPEND_JS,
-                    )
-                except RuntimeError as exc:
-                    raise RuntimeError(
-                        "fill selection establishment failed on this element "
-                        "(select()/setSelectionRange unsupported: contenteditable "
-                        "or non-text input); contenteditable is deferred to M3 - "
-                        "see LFL_BROWSER_INPUT_PIPELINE=off for the legacy path"
-                    ) from exc
-                session.send("Input.insertText", {"text": text})
-                expected = text if mode == "replace" else base + text
-                actual = self._call_value(
-                    session, object_id, _FILL_READBACK_JS, [{"value": expected}],
-                    await_promise=True,
-                )
-                input_pipeline = "insert_text"
-                if actual is not None:
-                    readback = {
-                        "check": "set_text_readback_mismatch",
-                        "mode": mode,
-                        "expected": expected,
-                        "actual": actual if isinstance(actual, str) else str(actual),
-                    }
+            # M2 B-01: real input pipeline + readback verification (T-16).
+            input_pipeline, readback = self._verb_fill(session, object_id, args)
         elif verb == "select":
             self._call(
                 session,
@@ -1387,13 +1402,8 @@ class CdpBrowserMutationActuator:
                 [{"value": str(args["value"])}],
             )
         elif verb == "scroll":
-            # M2 B-05: scoped scrolling - the object's own scrollable
-            # container first, the page only as fallback; the fact flows to
-            # the receipt (scope/before/after/max).
-            scroll_fact = self._call_value(
-                session, object_id, _SCROLL_SCOPED_JS,
-                [{"value": float(args["delta_pages"])}],
-            )
+            # M2 B-05: scoped scroll fact (scope/before/after/max).
+            scroll_fact = self._verb_scroll(session, object_id, args)
         elif verb == "upload":
             # M1 B1: resolved absolute paths arrive from the contract layer
             # (action.py validated realpath/allow_roots/size/count BEFORE any
