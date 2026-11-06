@@ -334,12 +334,24 @@ def ax_readable_probe(pid: int) -> int | None:
     return err
 
 
+def _release_axref_element(el: Any) -> None:
+    """subtree 下潜时释放中间层元素（fake 元素无 release() 则跳过）。"""
+    release = getattr(el, "release", None)
+    if callable(release):
+        release()
+
+
 def ax_windows_view(
     window: WindowInfo,
     depth: int,
     node_limit: int,
+    subtree: str | None = None,
 ) -> AxView:
-    """后端用组合函数：建 app 元素 → AXWindows → D4 匹配 → traverse。"""
+    """后端用组合函数：建 app 元素 → AXWindows → D4 匹配 → traverse。
+
+    subtree（D-03）：给定 ax_ref 时从该节点重开一条遍历链（refs 保持全局编码，
+    path[0] 为窗口根标记）；解析失败返回 failure="ax_ref_not_found"。
+    """
     app = app_element(window.pid)
     if app is None:
         return AxView(available=False, failure="ax_unavailable", ax_error=AX_ERROR_API_DISABLED)
@@ -379,7 +391,43 @@ def ax_windows_view(
         bound = elements[bound_index]
         # root_role 必须在 traverse 前读：traverse 结束时会释放 bound（所有权移交）
         root_role = _opt_str(bound.attr("AXRole")) or "AXWindow"
-        nodes, truncated = traverse(bound, depth, node_limit, root_ref=str(bound_index))
+        if subtree is not None:
+            # D-03 定向续读：从 bound 沿 ax_ref 路径下潜（path[0] 是窗口根标记，
+            # 其值不参与解析——与 act 通道 _parse_ax_ref 同语义）。解析失败确定性
+            # 返回 ax_ref_not_found；成功后 traverse 接管子树根元素的所有权。
+            # 所有权：中间层元素在下行时释放；bound 不移交给 traverse（由本函数
+            # finally 按窗口候选幂等释放）。
+            try:
+                segs = [int(part) for part in str(subtree).split(".")]
+            except ValueError:
+                return AxView(available=False, failure="ax_ref_not_found")
+            if not segs or any(seg < 0 for seg in segs):
+                return AxView(available=False, failure="ax_ref_not_found")
+            if len(segs) == 1:
+                # 根即窗口自身：重开整树链（新预算）。refs 根仍用 bound_index
+                # 保持全局编码一致（receipt 的 subtree_root 记录调用方请求值）。
+                nodes, truncated = traverse(
+                    bound, depth, node_limit, root_ref=str(bound_index)
+                )
+            else:
+                el: Any = bound
+                for idx in segs[1:]:
+                    kids = el.attr("AXChildren")
+                    kids = kids if isinstance(kids, list) else []
+                    if idx >= len(kids):
+                        # miss 返回前释放当前中间层（bound 由 finally 候选释放
+                        # 负责），否则路径中断留下悬垂 CF 引用
+                        if el is not bound:
+                            _release_axref_element(el)
+                        return AxView(available=False, failure="ax_ref_not_found")
+                    nxt = kids[idx]
+                    if el is not bound:
+                        _release_axref_element(el)
+                    el = nxt
+                root_role = _opt_str(el.attr("AXRole")) or "AXGroup"
+                nodes, truncated = traverse(el, depth, node_limit, root_ref=str(subtree))
+        else:
+            nodes, truncated = traverse(bound, depth, node_limit, root_ref=str(bound_index))
         view = AxView(
             available=True,
             root_role=root_role,

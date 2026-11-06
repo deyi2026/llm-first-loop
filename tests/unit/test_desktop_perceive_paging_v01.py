@@ -245,22 +245,43 @@ def test_node_kinds_filters_before_paging():
 
 
 def test_page_budget_exhausted_after_offset_cap():
-    """全树枚举不是本工具用途：额度耗尽要明确拒绝，而不是无声继续烧上下文。"""
+    """全树枚举不是本工具用途：预算边界要明确停止，而不是无声继续烧上下文。
+
+    D-03（审计 §3.3 FR-03）后语义更新：合法链路在累计服务上限处停止
+    （stop_reason=budget、不发游标、coverage 明示余量）；手造越界游标仍确定性
+    page_budget_exhausted。旧断言（页宽 500 先读到 1000 才被拒）固化了
+    「页宽改变可达性」的不一致行为，按审计要求废弃。
+    """
     backend = FakeBackend(windows=[_window()], ax_view=_view(_nodes(1200)))
     tool = _tool(backend)
 
     cursor: str | None = None
-    for _ in range(2):  # offset 0 / 500，第三次 offset=1000 触达 600 上限
+    seen = 0
+    for _ in range(3):  # 500 + 100 即触累计上限 600
         kwargs: dict[str, Any] = {"action": "snapshot", "window_id": 101, "node_limit": 500}
         if cursor is not None:
             kwargs["node_cursor"] = cursor
         payload = _payload(tool.execute(**kwargs))
         assert payload["ok"] is True
+        seen += len(payload["ax"]["nodes"])
         cursor = payload["ax"]["page"]["next_cursor"]
-        assert cursor
+        if cursor is None:
+            page = payload["ax"]["page"]
+            assert page["stop_reason"] == "budget"
+            assert page["coverage"] == {"served": 600, "total": 1200}
+            break
+    else:
+        raise AssertionError("3 轮内未在预算边界停止")
+    assert seen == 600
 
+    # 手造 offset=1000 的游标（合法链路不再产生）：确定性拒绝而非静默服务
+    from llm_loop.desktop.paging import PageCursor, encode_cursor, tree_fingerprint
+
+    fp = tree_fingerprint(101, 3, _nodes(1200))
+    crafted = encode_cursor(PageCursor(
+        window_id=101, depth=3, offset=1000, total=1200, tree_fp=fp))
     exhausted = _payload(
-        tool.execute(action="snapshot", window_id=101, node_limit=500, node_cursor=cursor)
+        tool.execute(action="snapshot", window_id=101, node_limit=500, node_cursor=crafted)
     )
     assert exhausted["ok"] is False
     assert exhausted["error_code"] == "page_budget_exhausted"

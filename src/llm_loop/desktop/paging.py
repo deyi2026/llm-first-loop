@@ -39,13 +39,18 @@ class PageCursor:
 
 @dataclass(frozen=True)
 class PagedNodes:
-    """paginate 结果：本页节点与分页元数据。"""
+    """paginate 结果：本页节点与分页元数据。
+
+    ``stop_reason`` 仅在累计服务上限触发时为 ``"budget"``——此时
+    ``next_cursor`` 必为 None：预算停止绝不发出下一请求必被拒绝的游标（D-03）。
+    """
 
     nodes: tuple[AxNode, ...]
     index: int  # 本页起始偏移（0-based）
     total: int  # 参与分页的节点总数（调用方已过滤后的）
     remaining: int  # total - (index + len(nodes))，不小于 0
-    next_cursor: str | None  # 还有剩余则非 None
+    next_cursor: str | None  # 还有剩余且未触预算上限则非 None
+    stop_reason: str | None = None  # None | "budget"（累计服务上限）
 
 
 def tree_fingerprint(window_id: int, depth: int, nodes: Sequence[AxNode]) -> str:
@@ -131,6 +136,7 @@ def paginate(
     depth: int,
     cursor: str | None = None,
     page_limit: int = 200,
+    total_cap: int | None = None,
 ) -> PagedNodes:
     """按 page_limit 切页；游标失效/越界/参数非法抛 ValueError（唯一异常）。
 
@@ -142,6 +148,10 @@ def paginate(
     - page_limit <= 0 → ValueError。
     - nodes 为空 → 全零空页（nodes=(), index=0, total=0, remaining=0,
       next_cursor=None）。
+    - total_cap（D-03）：整条续读链的累计服务上限（绝对下标边界）。服务窗口
+      被钳制在 [index, min(index+page_limit, total_cap))：不同页宽最终累计
+      可达节点数一致；触限时 remaining>0 也不发 next_cursor，改
+      stop_reason="budget"，由调用方在回执给出 coverage 与恢复路径。
     """
     total = len(nodes)
     tree_fp = tree_fingerprint(window_id, depth, nodes)
@@ -158,10 +168,16 @@ def paginate(
         index = c.offset
     if page_limit <= 0:
         raise ValueError("page_limit 必须为正整数")
-    page = tuple(nodes[index : index + page_limit])
+    end = min(index + page_limit, total)
+    if total_cap is not None:
+        end = min(end, total_cap)
+    page = tuple(nodes[index:end])
     remaining = max(0, total - index - len(page))
+    stop_reason: str | None = None
+    if remaining > 0 and total_cap is not None and (index + len(page)) >= total_cap:
+        stop_reason = "budget"
     next_cursor = None
-    if remaining > 0:
+    if remaining > 0 and stop_reason is None:
         next_cursor = encode_cursor(
             PageCursor(
                 window_id=window_id,
@@ -177,6 +193,7 @@ def paginate(
         total=total,
         remaining=remaining,
         next_cursor=next_cursor,
+        stop_reason=stop_reason,
     )
 
 

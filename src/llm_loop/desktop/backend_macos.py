@@ -234,8 +234,11 @@ class MacOSDesktopBackend:
         window: WindowInfo,
         depth: int,
         node_limit: int = AX_NODE_LIMIT_DEFAULT,
+        subtree: str | None = None,
     ) -> AxView:
-        return macos_ax.ax_windows_view(window, depth, node_limit)
+        # D-03：subtree=None 走原整树链路（兼容既有调用/测试 fake 签名）；
+        # 非 None 时先解析 ax_ref 再从该节点起遍历（refs 保持全局编码）。
+        return macos_ax.ax_windows_view(window, depth, node_limit, subtree=subtree)
 
     def capture_window(self, window: WindowInfo) -> CaptureOutcome:
         scale = macos_windows.display_scale_for_bounds(

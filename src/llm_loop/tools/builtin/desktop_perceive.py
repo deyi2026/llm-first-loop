@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import json
 import platform as _platform
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -135,6 +136,9 @@ _ALLOWED_FIELDS: dict[str, set[str]] = {
         # FR-01 续读：过滤在分页之前做（先按 role 收敛再切片，否则分页只是把
         # 同一批噪声切成多页）。
         "node_cursor", "node_limit", "node_kinds",
+        # D-03 定向续读：subtree=<ax_ref> 从该节点重开一条遍历链（全局 ref 不变），
+        # 用于 traversal 截断/分页预算停止后的尾部恢复。
+        "subtree",
         # FR-02 渲染档位：sparse 丢 None/false；geometry=none 丢 pos_pt/size_pt
         # （point 寻址随之失效，回执显式标注）。
         "render", "geometry",
@@ -259,7 +263,9 @@ class DesktopPerceiveTool:
                 "maximum": 500,
                 "description": (
                     "snapshot：每页节点上限，默认 200（1..500，越界确定性拒绝 invalid_args，不做静默限幅）。"
-                    "节点总数超过它时回执 page.next_cursor 非空。"
+                    "节点总数超过它时回执 page.next_cursor 非空。注意（D-03）：单棵树的续读链"
+                    "有累计服务上限（page.stop_reason=budget 时停止且不发游标）——"
+                    "页宽不改变整链可达节点数，读尾部改用 subtree 定向续读。"
                 ),
             },
             "node_cursor": {
@@ -269,7 +275,20 @@ class DesktopPerceiveTool:
                     "snapshot：续读游标，取上一次回执的 page.next_cursor。"
                     "游标绑定（window_id, depth, 过滤后树的 fingerprint）；树变了返回 "
                     "cursor_stale、游标不可解析返回 cursor_invalid——两者都不静默重来。"
-                    "单棵树可续读节点总量有上限，超过返回 page_budget_exhausted。"
+                    "累计服务上限触发时本页回执 stop_reason=budget 且 next_cursor=None"
+                    "（合法链路不再发出必被拒绝的游标；手造越界游标仍返回 page_budget_exhausted）。"
+                ),
+            },
+            "subtree": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[0-9]+(\\.[0-9]+)*$",
+                "description": (
+                    "snapshot（D-03）：定向续读——从指定 ax_ref 节点重开一条遍历链"
+                    "（refs 保持全局编码，回执 page.subtree_root 标注根）。"
+                    "用于 traversal 截断尾部（page.traversal_truncated=true）或分页预算停止"
+                    "（stop_reason=budget）后读取剩余内容；depth 相对该子树根。"
+                    "未命中返回 ax_ref_not_found（树可能已变化，请先无 subtree 重新取页）。"
                 ),
             },
             # ── FR-02 渲染档位（§6.2）─────────────────────────────────────
@@ -494,6 +513,15 @@ class DesktopPerceiveTool:
                     "（取上次回执的 page.next_cursor）。"
                 )
             options["node_cursor"] = cursor.strip()
+        # D-03 定向续读：subtree 必须是 ax_ref 索引路径（^\d+(\.\d+)*$）。
+        subtree = kwargs.get("subtree")
+        if subtree is not None:
+            if not isinstance(subtree, str) or not re.fullmatch(r"\d+(?:\.\d+)*", subtree.strip()):
+                return self._fail(
+                    "[desktop_perceive:snapshot] invalid_args: subtree 必须是 ax_ref "
+                    "索引路径（如 \"0\"、\"0.1.3\"，取自本窗口快照回执的 ax_ref）。"
+                )
+            options["subtree"] = subtree.strip()
 
     def _validate(self, kwargs: dict[str, Any]) -> tuple[str, dict[str, Any], ToolResult | None]:
         action = str(kwargs.get("action") or "").strip()
@@ -917,11 +945,15 @@ class DesktopPerceiveTool:
     def _build_ax_payload(self, *, ax_view: Any, all_nodes: tuple[AxNode, ...],
                           filtered: tuple[AxNode, ...], page: PagedNodes, render: str,
                           geometry: str, page_limit: int, kinds: tuple[str, ...],
-                          clipped: bool, degraded: list[str]) -> dict[str, Any]:
+                          clipped: bool, degraded: list[str],
+                          subtree: str | None = None) -> dict[str, Any]:
         """本页节点行 + 分页元信息 + 焦点摘要 → ax payload。
 
         纯数据整形，不碰门控也不回执；抽出来是为了让 `_snapshot_action` 回到
         R9 棘轮登记的 121 行以内（加大分页/渲染/焦点三块后它一度 178 行）。
+
+        D-03：page 块新增 stop_reason/coverage/stop_hint（预算停止不发死游标）、
+        subtree_root（定向续读链标注）与 recovery（traversal 截断的可调用恢复路径）。
         """
         page_rows = [_node_row(node, render=render, geometry=geometry) for node in page.nodes]
         page_refs = {str(row["ax_ref"]) for row in page_rows}
@@ -930,9 +962,49 @@ class DesktopPerceiveTool:
         focus_node = next((node for node in all_nodes if node.focused), None)
         if ax_view.truncated:
             # 遍历本身被 AX_NODE_LIMIT_DEFAULT 截断 ⇒ total 只是"已遍历部分"的总量，
-            # 余下节点翻页也拿不到，只能降 depth / 加过滤。必须显式，否则调用方会把
-            # remaining=0 误读成"整棵树都看完了"。
+            # 余下节点翻页拿不到。D-03 前只有"降 depth / 加过滤"提示（加过滤并不
+            # 能恢复未遍历区域）；现在 recovery 给出可调用的 subtree 定向续读路径。
             degraded.append("ax_traversal_truncated")
+        page_block: dict[str, Any] = {
+            "index": page.index,
+            "returned": len(page.nodes),
+            "total": page.total,
+            "remaining": page.remaining,
+            "next_cursor": page.next_cursor,
+            "page_limit": page_limit,
+            "render": render,
+            "geometry": geometry,
+            "geometry_dropped": geometry == "none",
+            "traversal_truncated": bool(ax_view.truncated),
+            # D-03：预算停止（stop_reason="budget"）时 next_cursor 必为 None——
+            # 绝不发出下一请求必被拒的游标；coverage 明示还剩多少。
+            "stop_reason": page.stop_reason,
+            "coverage": (
+                {"served": page.index + len(page.nodes), "total": page.total}
+                if page.stop_reason == "budget"
+                else None
+            ),
+        }
+        if page.stop_reason == "budget":
+            page_block["stop_hint"] = (
+                f"单次读取累计服务上限 {MAX_PAGED_NODES} 已达（剩余 {page.remaining} 节点未服务）。"
+                "恢复路径：subtree=<容器 ax_ref> 定向续读该子树（独立预算、全局 ref 不变）；"
+                "或 node_kinds 过滤收敛输出、或降 depth 重取整棵树。"
+            )
+        if subtree is not None:
+            page_block["subtree_root"] = subtree
+        if ax_view.truncated and filtered:
+            deepest = str(filtered[-1].ax_ref)
+            parent_ref = deepest.rsplit(".", 1)[0] if "." in deepest else deepest
+            page_block["recovery"] = {
+                "deepest_covered_ref": deepest,
+                "parent_ref": parent_ref,
+                "hint": (
+                    f"遍历在 {deepest} 处截断，未遍历区域翻页拿不到。"
+                    f"定向续读：subtree={parent_ref} 从该容器重开遍历链"
+                    "（覆盖与已读部分有重叠，自行判重）；必要时加 node_kinds 或降 depth。"
+                ),
+            }
         ax_payload: dict[str, Any] = {
             "available": bool(ax_view.available),
             "root_role": ax_view.root_role,
@@ -942,18 +1014,7 @@ class DesktopPerceiveTool:
             "nodes": page_rows,
             "filtered_count": len(filtered),
             "node_kinds": list(kinds),
-            "page": {
-                "index": page.index,
-                "returned": len(page.nodes),
-                "total": page.total,
-                "remaining": page.remaining,
-                "next_cursor": page.next_cursor,
-                "page_limit": page_limit,
-                "render": render,
-                "geometry": geometry,
-                "geometry_dropped": geometry == "none",
-                "traversal_truncated": bool(ax_view.truncated),
-            },
+            "page": page_block,
             "focused": (
                 _focused_block(focus_node, page_refs=page_refs)
                 if focus_node is not None
@@ -1024,8 +1085,10 @@ class DesktopPerceiveTool:
                     guidance=(
                         f"[desktop_perceive:snapshot] page_budget_exhausted: 单棵树已续读到 "
                         f"{decoded.offset} 节点，上限 {MAX_PAGED_NODES}。"
-                        "全树枚举不是本工具的用途：请用 node_kinds 收敛 role，"
-                        "或降低 depth 重新取第一页。"
+                        "D-03 后合法链路在预算边界即停止（stop_reason=budget，不发游标），"
+                        "到达此错误说明游标是手工构造或跨链路混用的。"
+                        "恢复路径：subtree=<容器 ax_ref> 定向续读子树（独立预算、全局 ref 不变），"
+                        "或用 node_kinds 收敛 role、或降低 depth 重新取第一页。"
                     ),
                     started=started, perms=perms, platform=platform, session=session,
                 )
@@ -1036,6 +1099,9 @@ class DesktopPerceiveTool:
                 depth=depth,
                 cursor=(str(cursor_raw) if cursor_raw is not None else None),
                 page_limit=page_limit,
+                # D-03：整条续读链的累计服务上限——页宽不再改变可达节点数；
+                # 触限时 paginate 停止并置 stop_reason="budget"（不发死游标）。
+                total_cap=MAX_PAGED_NODES,
             )
         except ValueError as exc:
             # decode 已通过，能走到这里只剩两种可能：树变了，或游标越过了当前树尾。
@@ -1124,7 +1190,13 @@ class DesktopPerceiveTool:
         geometry = str(options.get("geometry") or "full")
         kinds = tuple(options.get("node_kinds") or ())
         page_limit = int(options.get("node_limit") or DEFAULT_PAGE_LIMIT)
-        ax_view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT)
+        subtree = options.get("subtree")
+        # D-03：subtree 走独立遍历链（backend 内解析 ref 并从该节点起遍历，
+        # refs 保持全局编码）。仅在显式传入时透传 kw，保持既有 backend 兼容。
+        if subtree is not None:
+            ax_view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT, subtree=subtree)
+        else:
+            ax_view = backend.ax_snapshot(window, depth, AX_NODE_LIMIT_DEFAULT)
         degraded: list[str] = []
         all_nodes = tuple(ax_view.nodes)
         # FR-01：过滤**先于**分页。翻页只解决"单页太大"；把树收敛得靠过滤。
@@ -1159,6 +1231,7 @@ class DesktopPerceiveTool:
             kinds=kinds,
             clipped=clipped,
             degraded=degraded,
+            subtree=subtree,
         )
         error_code: DesktopErrorCode | None = None
         guidance: str | None = None
@@ -1172,7 +1245,16 @@ class DesktopPerceiveTool:
         if not ax_view.available:
             failure = str(ax_view.failure or "ax_unavailable")
             degraded.append(failure)
-            if failure == "window_ambiguous":
+            if subtree is not None and failure == "ax_ref_not_found":
+                # D-03：subtree 解析失败确定性报告（不落回通用 AX 失败指引，
+                # 否则调用方会误以为是 AX 权限/绑定问题）。
+                error_code = DesktopErrorCode.AX_REF_NOT_FOUND
+                guidance = (
+                    f"[desktop_perceive:snapshot] ax_ref_not_found: subtree={subtree} "
+                    "在当前窗口未命中（树可能已变化）。请省略 subtree 重新取第一页获取"
+                    "当前 refs，再选容器节点定向续读。"
+                )
+            elif failure == "window_ambiguous":
                 error_code = DesktopErrorCode.WINDOW_AMBIGUOUS
                 guidance = (
                     "AX 侧存在多个 (标题相等且 bounds 差≤2pt) 的候选窗口，绑定歧义；"
