@@ -1144,7 +1144,7 @@
   "src/llm_loop/tools/builtin/service_control.py::execute": 80,
   "src/llm_loop/tools/builtin/service_control.py::_update": 120,
   "src/llm_loop/tools/builtin/smx_perceive.py::_diff": 122,
-  "src/llm_loop/tools/builtin/spawn_subagent.py::execute": 164,
+  "src/llm_loop/tools/builtin/spawn_subagent.py::execute": 168,
   "src/llm_loop/tools/builtin/subagent_result.py::execute": 124,
   "src/llm_loop/tools/builtin/task_state.py::execute": 125,
   "src/llm_loop/tools/builtin/web_fetch.py::execute": 209,
