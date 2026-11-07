@@ -52,12 +52,22 @@ PAIR-CONFIRM 的 `link_secret` 由**控制端**生成（32 随机字节 base64�
   "inject_click=true + screenshot=false" 会被拒绝（不是只改不断言）。
   `scripts/verify_peer_schemas.py` 修复后仍 `RESULT: PASS (30 checks, 1 skipped)`。
 
+## live 冒烟（真实 HTTP + 真实签名，2026-11-07）
+`scripts/peer_serve.py`（独立 uvicorn 入口，未配对则拒启动）已跑通：
+manifest 200 / 无签名 401 `peer_bad_signature` / 提交 fs.read → `succeeded` /
+按 ref 取回产物字节完全一致 / 重放同 nonce 401 `peer_replay_detected` /
+过期时间戳 401 `peer_stale_signature` / `/etc/hosts` 读取请求 return `denied` +
+`path_outside_allowed_paths`。脚本在 `/tmp`（一次性冒烟，不进仓库），
+仓库内可复核的是 125 条单测（含 TestClient 端到端 10 条）。
+
 ## 下一步
-1. ~~T3 auth/pair~~（已完成）；`web/peer_routes.py`（build_router，GET `/api/peer/manifest` 四头 HMAC；store 鸭子类型：read_secret/get_node/node_state/list_grants/touch_node）挪到挂载那一步一起做。
-2. T4：`peer/policy.py`（闸2/3）、`executor.py`、`artifacts.py`；fs.read 首切片，复用 write_scope/sandbox。
-3. T5：`tools/builtin/peer_tools.py`（peer_list/dispatch/task/fetch）。
-4. 挂载：`web/routes.py` `include_router`（不带 require_api_key，认证由 peer HMAC 承担）+ `web/peer_routes.py`；共享大文件单独提交并 rebase。
-5. T6：T1–T10/U1–U10 应拦输入实测 + 全量 pytest + RULE-AI-28 独立审查 → lane 合并。
+1. ~~T3 auth/pair/manifest~~ / ~~T4 闸2-3 + artifact + 只读执行器~~ / ~~编排层 + HTTP 面 + live 冒烟~~（已完成）。
+2. T5 客户端工具：`tools/builtin/peer_tools.py`（peer_list / peer_dispatch / peer_task / peer_fetch），
+   与 `auth.sign_request` 共用签名，产物按 ref 取回并校验 sha256。
+3. 挂载进主 app：`web/__init__.py` 装配 peer store/service/authenticator（需 settings 增加节点名与
+   数据目录），`include_router(build_peer_router(...))` 不带 require_api_key；共享大文件单独提交 + rebase。
+4. T9 `fs.write` + 闸4 write_scope 集成（有人在场路径）。
+5. T6：T1–T10/U1–U10 应拦输入实测 + 全量 pytest + RULE-AI-28 独立审查 → T8 lane 合并。
 
 ## 运行时限制（实测）
 子代理上下文预检在 `tokens_in≈180k` 时直接失败且无 `search_archive` 兜底。委派时只给 ≤3 个小文件、

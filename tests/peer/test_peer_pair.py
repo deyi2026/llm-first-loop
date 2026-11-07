@@ -219,3 +219,14 @@ def test_fingerprint_of_b64_rejects_wrong_length():
     with pytest.raises(PeerError) as err:
         fingerprint_of_b64(base64.b64encode(b"x" * 16).decode("ascii"))
     assert err.value.reason_code == "pair_fingerprint_mismatch"
+
+
+def test_secret_key_from_store_accepts_base64_and_plaintext():
+    from llm_loop.peer.pair import secret_key_from_store
+
+    raw, _ = new_link_secret()
+    assert secret_key_from_store(raw) == base64.b64decode(raw)
+    assert len(secret_key_from_store("p" * 32)) == 32
+    with pytest.raises(PeerError) as err:
+        secret_key_from_store("short")
+    assert err.value.reason_code == "peer_not_paired"

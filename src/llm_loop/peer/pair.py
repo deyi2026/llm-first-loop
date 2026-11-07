@@ -166,6 +166,24 @@ def _require_exact_fields(payload: Mapping[str, Any], expected: frozenset[str], 
         raise PeerError("params_schema_invalid", f"{what} fields missing={missing} extra={extra}")
 
 
+def secret_key_from_store(stored: str) -> bytes:
+    """把落盘字符串还原成 HMAC 密钥字节：优先 base64(32B)，否则用 utf-8 原文（>=32 字节）。
+
+    落盘格式来自 PAIR-CONFIRM 的 ``link_secret``（base64 32 字节），但历史/手工
+    写入的明文也接受——两条路径都必须能起服务，否则配对成功却认证失败最难查。
+    """
+    try:
+        raw = base64.b64decode(stored, validate=True)
+    except Exception:
+        raw = b""
+    if len(raw) == 32:
+        return raw
+    data = stored.encode("utf-8")
+    if len(data) < 32:
+        raise PeerError("peer_not_paired", "stored secret shorter than 32 bytes")
+    return data
+
+
 def build_offer(
     *,
     node_id: str,
