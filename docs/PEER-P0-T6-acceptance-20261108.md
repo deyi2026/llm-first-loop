@@ -99,4 +99,28 @@ U5 验证的是"非幂等记录 + 真实重启 → `unknown_outcome` 且不自�
 
 - 本文件只声明：**上文列出的 25 条在真实进程/端口/HMAC 下断言命中**。
 - "闸已生效"仅对这些条目成立；U4/U7/U9b/U8b 与 U5 的副作用前提**未覆盖**。
-- 全量 pytest 结论见同批提交记录；独立审查（RULE-AI-28）结论见 review 回执。
+- 独立审查（RULE-AI-28）：审查子代理 PASS（candidate `a41d58a9…`，scope=patch，9 条声明路径）。
+
+## 6. 执行记录（2026-11-08）
+
+| 项 | 结果 |
+| --- | --- |
+| 验收脚本 | `python scripts/peer_acceptance.py` → 29 条，PASS 25 / FAIL 0 / NOT_APPLICABLE 4，退出码 0 |
+| 单元测试 | `pytest tests/peer -q` → 163 passed, 3 skipped |
+| 全量测试 | `pytest -q` → **14120 passed, 159 skipped, 16 deselected, 3 xfailed**，912.55s，退出码 0 |
+| 代码提交 | `01fd9b526`（验收脚本 + 8 处闸修复）、`bf45b3224`（guard(r9)：4 处守卫漂移 + 本地时区） |
+
+全量首轮（`01fd9b526`）曾 exit=1，暴露 4 类**只跑 `tests/peer` 看不见**的问题，已修：
+
+1. `peer/models.py` 用 `datetime.now(UTC)` 序列化，违反宿主本地时区契约（RULE-AI-26）→ `system_local_now()`，
+   `iso()` 输出本地偏移，`utcnow` 全量更名 `now_local`（名实相符）。
+2. `src/llm_loop/peer/` 未登记 `top_level_units.packages` → 登记 plane=Action。
+3. `peer/store.py`、`peer/admission.py`、`peer_tools.py` 未登记持久化写入面 → 登记
+   `peer_channel_state`(T2/partial) 与 `peer_artifact_delivery`(T1/observe)，rationale 写明"缺父目录 fsync"。
+4. 函数红线：`config.py::load_settings` 369→376、`web/__init__.py::build_app` 146→150，
+   按 `scripts/regen_function_size_baseline.py` 逐条抬高（红线条目可见）。
+
+环境事实（不是代码问题，登记以免误判）：本轮验收在 **git worktree** 内跑，
+worktree 原本没有 `.venv`，导致 `test_env_preflight` 的"实测版本"断言拿不到版本号而失败。
+补 `.venv` 软链（`.gitignore` 已忽略，不入库）后转绿；主仓直接跑不受影响。
+
