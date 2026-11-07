@@ -1,76 +1,70 @@
-"""Peer 请求认证：四头 HMAC-SHA256 + 时钟窗 + nonce 重放窗（lfl.peer.v1）。
+"""Peer 请求认证：四头 HMAC-SHA256 + 时钟窗 + nonce 重放窗（DESIGN §5.8.3）。
 
-契约（两侧必须逐字一致，改动=契约变更）：
+契约逐字取自设计（两侧必须一致，改动=契约变更）：
 
-    头：X-LFL-Peer-Node / X-LFL-Peer-Timestamp / X-LFL-Peer-Nonce / X-LFL-Peer-Signature
-    ts：整数 epoch 秒（字符串形式）
-    nonce：32 位小写 hex（16 字节随机），窗内单次使用
-    body_sha256：请求体原始字节的 sha256 hexdigest；无体请求用空字节的摘要
-                 （而不是省略该行——省略会让"空体"与"无体"两种请求共用签名）
-    canonical：8 行，用 "\\n" 连接，字段内禁止出现 "\\n"
-                "lfl.peer.v1" / METHOD(大写) / path / query(原始串) / node_id / ts / nonce / body_sha256
-    signature：HMAC-SHA256(link_secret, canonical) 的小写 hexdigest（64 字符）
+    X-Peer-Node-Id: <node_id>
+    X-Peer-Ts:      <epoch 秒，十进制>
+    X-Peer-Nonce:   <32 位小写 hex>
+    X-Peer-Sig:     base64(HMAC-SHA256(K_oe, canonical))
 
-校验顺序（顺序本身是安全属性）：头齐全 → 节点已知 → 时间窗 → 签名 → nonce 落账。
+    canonical = METHOD + "\\n" + PATH + "\\n" + SHA256_HEX(BODY) + "\\n" + TS + "\\n" + NONCE
+
+- METHOD 大写；PATH **含 query、不含 host**；BODY 为空时对空串求 SHA256。
+- 时间窗 ±300s → ``peer_stale_signature``；nonce 缓存 600s、按 node_id 分桶、
+  LRU 上限 10000 → 重复即 ``peer_replay_detected``。
+- 签名比较用常量时间比较（``hmac.compare_digest``）。
+
+校验顺序（顺序本身是安全属性）：头齐全 → 节点已知 → 时间窗 → 验签 → nonce 落账。
 先验签后落 nonce，避免未认证方用垃圾 nonce 污染重放窗（nonce 中毒）。
 
 已知边界（不隐瞒）：
-- 这是对称密钥认证（HMAC），不是公钥签名。Ed25519 公钥只用于身份展示与短指纹，
-  请求真实性由 link_secret 保证——link_secret 泄露=该节点可被完全冒充。
+- 对称密钥认证，不是公钥签名；Ed25519 公钥只用于身份表达（公钥/短指纹）。
+  ``K_oe`` 泄露=该方向可被完全冒充。
 - 重放窗是进程内内存态：重启后窗清空，此时仅剩 ±300s 时间窗约束。
-- query 按原始串参与签名，两侧不得重排/重编码参数；需要规范化就改契约。
+- PATH 中含换行即拒绝（防 canonical 行注入）；query 不重排、不重编码。
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import re
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
 from .errors import PeerError
 
-SCHEMA_VERSION = "lfl.peer.v1"
-
-HEADER_NODE = "X-LFL-Peer-Node"
-HEADER_TIMESTAMP = "X-LFL-Peer-Timestamp"
-HEADER_NONCE = "X-LFL-Peer-Nonce"
-HEADER_SIGNATURE = "X-LFL-Peer-Signature"
+HEADER_NODE = "X-Peer-Node-Id"
+HEADER_TIMESTAMP = "X-Peer-Ts"
+HEADER_NONCE = "X-Peer-Nonce"
+HEADER_SIGNATURE = "X-Peer-Sig"
 AUTH_HEADERS: tuple[str, ...] = (HEADER_NODE, HEADER_TIMESTAMP, HEADER_NONCE, HEADER_SIGNATURE)
 
 MAX_SKEW_SECONDS = 300
+NONCE_WINDOW_SECONDS = 600
+NONCE_MAX_ENTRIES = 10_000
 _NONCE_RE = re.compile(r"^[a-f0-9]{32}$")
 
 
 def body_digest(body: bytes | None) -> str:
-    """请求体摘要；None 与 b"" 等价（空体也必须有摘要行）。"""
+    """请求体摘要；None 与 b"" 等价（设计：BODY 为空时对空串求 SHA256）。"""
     return hashlib.sha256(body or b"").hexdigest()
 
 
-def build_canonical(
-    *,
-    method: str,
-    path: str,
-    query: str,
-    node_id: str,
-    timestamp: str,
-    nonce: str,
-    body_sha256: str,
-) -> str:
-    """拼 canonical 串。任何字段含换行即拒绝（防 canonical 注入/歧义）。"""
-    fields = (
-        SCHEMA_VERSION,
-        method.upper(),
-        path,
-        query,
-        node_id,
-        timestamp,
-        nonce,
-        body_sha256,
-    )
+def compose_path(path: str, query: str = "") -> str:
+    """PATH 含 query、不含 host。query 为空时不补 '?'（两侧同规则）。"""
+    if query and query.startswith("?"):
+        query = query[1:]
+    return f"{path}?{query}" if query else path
+
+
+def build_canonical(*, method: str, path: str, body_sha256: str, timestamp: str, nonce: str) -> str:
+    """5 行 canonical。任一字段含换行即拒绝（防 canonical 行注入）。"""
+    fields = (method.upper(), path, body_sha256, timestamp, nonce)
     for field in fields:
         if "\n" in field or "\r" in field:
             raise PeerError("peer_bad_signature", "canonical field contains newline")
@@ -78,7 +72,9 @@ def build_canonical(
 
 
 def sign(secret: bytes, canonical: str) -> str:
-    return hmac.new(secret, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    """返回 base64(HMAC-SHA256(K_oe, canonical))。"""
+    digest = hmac.new(secret, canonical.encode("utf-8"), hashlib.sha256).digest()
+    return base64.b64encode(digest).decode("ascii")
 
 
 def sign_request(
@@ -92,16 +88,14 @@ def sign_request(
     timestamp: int,
     body: bytes | None = None,
 ) -> dict[str, str]:
-    """生成四头（客户端侧；服务端侧用 verify_request 对称校验）。"""
+    """生成四头（客户端侧；服务端侧用 PeerAuthenticator 对称校验）。"""
     ts = str(int(timestamp))
     canonical = build_canonical(
         method=method,
-        path=path,
-        query=query,
-        node_id=node_id,
+        path=compose_path(path, query),
+        body_sha256=body_digest(body),
         timestamp=ts,
         nonce=nonce,
-        body_sha256=body_digest(body),
     )
     return {
         HEADER_NODE: node_id,
@@ -112,60 +106,47 @@ def sign_request(
 
 
 class NonceCache:
-    """进程内重放窗：node_id → {nonce: 过期时刻}。
+    """进程内重放窗：node_id → OrderedDict{nonce: 过期时刻}（LRU 语义）。
 
-    容量有界：插入前先清过期项；仍超限时按最早过期优先淘汰（只影响窗内保护强度，
-    不放宽时间窗）。线程安全（Web 侧多线程 handler）。
+    容量有界（全局 LRU 上限 ``max_entries``）；插入前先清过期项，仍超限时淘汰
+    最久未使用项（只影响窗内保护强度，不放宽时间窗）。线程安全。
     """
 
     def __init__(
         self,
         *,
-        window_seconds: int = MAX_SKEW_SECONDS,
-        max_entries: int = 8192,
+        window_seconds: int = NONCE_WINDOW_SECONDS,
+        max_entries: int = NONCE_MAX_ENTRIES,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._window = int(window_seconds)
         self._max_entries = int(max_entries)
         self._clock = clock
-        self._seen: dict[str, dict[str, float]] = {}
+        self._seen: OrderedDict[tuple[str, str], float] = OrderedDict()
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
         with self._lock:
-            return sum(len(bucket) for bucket in self._seen.values())
+            return len(self._seen)
 
     def check_and_store(self, node_id: str, nonce: str, *, now: float | None = None) -> bool:
         """首次见到 → True；窗内重复 → False（重放）。"""
         now_ts = self._clock() if now is None else now
+        key = (node_id, nonce)
         with self._lock:
             self._purge(now_ts)
-            bucket = self._seen.setdefault(node_id, {})
-            if nonce in bucket:
+            if key in self._seen:
+                self._seen.move_to_end(key)
                 return False
-            bucket[nonce] = now_ts + self._window
-            self._enforce_capacity()
+            self._seen[key] = now_ts + self._window
+            while len(self._seen) > self._max_entries:
+                self._seen.popitem(last=False)
             return True
 
     def _purge(self, now_ts: float) -> None:
-        for node_id in list(self._seen):
-            bucket = self._seen[node_id]
-            for nonce in [n for n, exp in bucket.items() if exp <= now_ts]:
-                del bucket[nonce]
-            if not bucket:
-                del self._seen[node_id]
-
-    def _enforce_capacity(self) -> None:
-        total = sum(len(b) for b in self._seen.values())
-        if total <= self._max_entries:
-            return
-        flat = sorted(
-            ((exp, node_id, nonce) for node_id, bucket in self._seen.items() for nonce, exp in bucket.items())
-        )
-        for _exp, node_id, nonce in flat[: total - self._max_entries]:
-            self._seen[node_id].pop(nonce, None)
-            if not self._seen[node_id]:
-                del self._seen[node_id]
+        expired = [key for key, exp in self._seen.items() if exp <= now_ts]
+        for key in expired:
+            del self._seen[key]
 
 
 def _header_value(headers: Any, name: str) -> str:
@@ -188,7 +169,7 @@ class PeerAuthenticator:
         max_skew_seconds: int = MAX_SKEW_SECONDS,
     ) -> None:
         self._secret_for = secret_for
-        self._nonces = nonce_cache or NonceCache(window_seconds=max_skew_seconds, clock=clock)
+        self._nonces = nonce_cache or NonceCache(clock=clock)
         self._clock = clock
         self._max_skew = int(max_skew_seconds)
 
@@ -222,7 +203,6 @@ class PeerAuthenticator:
         secret = self._secret_for(node_id)
         if not secret:
             raise PeerError("peer_unknown_node", node_id)
-
         if not _NONCE_RE.match(nonce):
             raise PeerError("peer_bad_signature", "malformed nonce")
         try:
@@ -235,12 +215,10 @@ class PeerAuthenticator:
 
         canonical = build_canonical(
             method=method,
-            path=path,
-            query=query,
-            node_id=node_id,
+            path=compose_path(path, query),
+            body_sha256=body_digest(body),
             timestamp=raw_ts,
             nonce=nonce,
-            body_sha256=body_digest(body),
         )
         if not hmac.compare_digest(sign(secret, canonical), signature):
             raise PeerError("peer_bad_signature", "digest mismatch")

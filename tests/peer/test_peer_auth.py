@@ -1,6 +1,8 @@
 """认证层：四头 HMAC 通过/拒绝路径、时钟窗、nonce 重放、nonce 中毒防护。"""
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from llm_loop.peer.auth import (
@@ -9,9 +11,14 @@ from llm_loop.peer.auth import (
     HEADER_SIGNATURE,
     HEADER_TIMESTAMP,
     MAX_SKEW_SECONDS,
+    NONCE_MAX_ENTRIES,
+    NONCE_WINDOW_SECONDS,
     NonceCache,
     PeerAuthenticator,
+    body_digest,
     build_canonical,
+    compose_path,
+    sign,
     sign_request,
 )
 from llm_loop.peer.errors import PeerError
@@ -148,18 +155,62 @@ def test_malformed_nonce_and_timestamp_rejected():
         assert err.value.reason_code == "peer_bad_signature"
 
 
+def test_canonical_is_exactly_five_lines_in_design_order():
+    """契约逐字：METHOD\nPATH(含query)\nSHA256_HEX(BODY)\nTS\nNONCE。"""
+    digest = body_digest(b'{"k":1}')
+    canonical = build_canonical(
+        method="post",
+        path=compose_path("/peer/v1/tasks", "a=1&b=2"),
+        body_sha256=digest,
+        timestamp="1794028800",
+        nonce="9c4f2a7b1d8e3f506a2c9b4d7e1f8203",
+    )
+    assert canonical.split("\n") == [
+        "POST",
+        "/peer/v1/tasks?a=1&b=2",
+        digest,
+        "1794028800",
+        "9c4f2a7b1d8e3f506a2c9b4d7e1f8203",
+    ]
+
+
+def test_empty_body_uses_empty_string_digest():
+    assert body_digest(None) == body_digest(b"")
+    assert body_digest(b"") == (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+
+def test_compose_path_keeps_query_and_omits_empty():
+    assert compose_path("/peer/v1/manifest") == "/peer/v1/manifest"
+    assert compose_path("/peer/v1/manifest", "?a=1") == "/peer/v1/manifest?a=1"
+    assert compose_path("/peer/v1/tasks", "a=1") == "/peer/v1/tasks?a=1"
+
+
+def test_signature_is_base64_not_hex():
+    sig = sign(SECRET, "X")
+    assert len(sig) == 44 and sig.endswith("=")
+    assert re.fullmatch(r"[A-Za-z0-9+/]{43}=", sig)
+
+
 def test_canonical_rejects_newline_injection():
     with pytest.raises(PeerError) as err:
         build_canonical(
             method="GET",
             path="/a\nnode-x",
-            query="",
-            node_id="node-a",
+            body_sha256="0" * 64,
             timestamp=str(NOW),
             nonce="c" * 32,
-            body_sha256="0" * 64,
         )
     assert err.value.reason_code == "peer_bad_signature"
+
+
+def test_nonce_window_and_capacity_match_design():
+    assert NONCE_WINDOW_SECONDS == 600
+    assert NONCE_MAX_ENTRIES == 10_000
+    cache = NonceCache(window_seconds=NONCE_WINDOW_SECONDS, clock=lambda: 0.0)
+    assert cache.check_and_store("node-a", "d" * 32, now=0.0) is True
+    assert cache.check_and_store("node-a", "d" * 32, now=599.0) is False
 
 
 def test_nonce_cache_purges_expired_entries():

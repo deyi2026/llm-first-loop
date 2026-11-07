@@ -16,14 +16,19 @@
 - `46cf7a562` 存储测试（`pytest tests/peer -q` = 15 passed，ruff 干净）
 - T3 `peer/auth.py` + `peer/pair.py` + 41 条测试（`pytest tests/peer -q` = 56 passed, 2 skipped）
 
-## 认证契约（两侧必须逐字一致；改=契约变更）
-头：`X-LFL-Peer-Node` / `X-LFL-Peer-Timestamp` / `X-LFL-Peer-Nonce` / `X-LFL-Peer-Signature`。
-canonical（8 行，`\n` 连接，字段含换行即拒）：
-`lfl.peer.v1` / METHOD(大写) / path / **原始 query 串** / node_id / ts(epoch 秒) / nonce(32 hex) / sha256_hex(body)。
-signature = `HMAC-SHA256(link_secret, canonical)` 小写 hex。
-校验顺序（本身是安全属性）：头齐全 → 节点已知 → |now-ts|≤300 → 验签 → nonce 落账
+## 认证契约（逐字取自 DESIGN §5.8.3；改=契约变更）
+头：`X-Peer-Node-Id` / `X-Peer-Ts` / `X-Peer-Nonce` / `X-Peer-Sig`。
+canonical（5 行，`\n` 连接，字段含换行即拒）：
+`METHOD(大写)` / `PATH(含 query、不含 host)` / `SHA256_HEX(BODY)` / `TS(epoch 秒)` / `NONCE(32 hex)`。
+signature = `base64(HMAC-SHA256(K_oe, canonical))`。
+时间窗 ±300s；nonce 缓存 600s、按 node_id 分桶、LRU 上限 10000。
+校验顺序（本身是安全属性）：头齐全 → 节点已知 → 时间窗 → 验签 → nonce 落账
 （先验签再落账，防未认证方用垃圾 nonce 污染重放窗）。
-边界：重放窗为进程内内存（重启清空，仅剩时间窗）；对称密钥认证，link_secret 泄露=该节点可被完全冒充。
+边界：对称密钥认证（K_oe 泄露=该方向可被完全冒充）；重放窗为进程内内存（重启清空，仅剩时间窗）。
+
+> 勘误（2026-11-07 晚）：本文件上一版把四头名与 canonical 写成了自创形式
+> （`X-LFL-Peer-*` / 8 行 / hex 签名 / 300s 窗）。实现已按 §5.8.3 改正，测试覆盖
+> 5 行布局、base64 形态、600s/LRU 上限。教训：写代码前先读定契约的那一节。
 
 ## 短指纹派生（两侧必须一致）
 `base64.b32encode(sha256(ed25519_pubkey_raw).digest()[:20])` → 32 字符（A-Z2-7）→ 每 4 字符 `-` 连接。
