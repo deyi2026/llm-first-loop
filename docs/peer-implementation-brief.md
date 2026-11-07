@@ -14,6 +14,21 @@
 - `3fe488d21` kinds 注册表 + 契约不变量测试
 - `d5bf6eb01` store/admission（flock + 原子替换 + generation；admission O_EXCL 不可覆盖）
 - `46cf7a562` 存储测试（`pytest tests/peer -q` = 15 passed，ruff 干净）
+- T3 `peer/auth.py` + `peer/pair.py` + 41 条测试（`pytest tests/peer -q` = 56 passed, 2 skipped）
+
+## 认证契约（两侧必须逐字一致；改=契约变更）
+头：`X-LFL-Peer-Node` / `X-LFL-Peer-Timestamp` / `X-LFL-Peer-Nonce` / `X-LFL-Peer-Signature`。
+canonical（8 行，`\n` 连接，字段含换行即拒）：
+`lfl.peer.v1` / METHOD(大写) / path / **原始 query 串** / node_id / ts(epoch 秒) / nonce(32 hex) / sha256_hex(body)。
+signature = `HMAC-SHA256(link_secret, canonical)` 小写 hex。
+校验顺序（本身是安全属性）：头齐全 → 节点已知 → |now-ts|≤300 → 验签 → nonce 落账
+（先验签再落账，防未认证方用垃圾 nonce 污染重放窗）。
+边界：重放窗为进程内内存（重启清空，仅剩时间窗）；对称密钥认证，link_secret 泄露=该节点可被完全冒充。
+
+## 短指纹派生（两侧必须一致）
+`base64.b32encode(sha256(ed25519_pubkey_raw).digest()[:20])` → 32 字符（A-Z2-7）→ 每 4 字符 `-` 连接。
+PAIR-CONFIRM 的 `link_secret` 由**控制端**生成（32 随机字节 base64），受控端 0600 落盘。
+`build_offer`/`build_confirm` 输出已用 jsonschema 实测过 `pair-offer` / `pair-confirm` schema（非仅形状自检）。
 
 ## 不变量（改代码前必读）
 1. `non_idempotent` ⇒ `supervised_only`（`test_peer_contract.py` 强制）。
@@ -23,10 +38,10 @@
 5. manifest 不含文件内容/密钥/系统信息；`inject_type != none` ⇒ `capture_only=True`。
 
 ## 下一步
-1. T3：`peer/auth.py`（canonical_string/sign/NonceCache/verify_request）、`peer/pair.py`（fingerprint/verify_pair_confirm/build_manifest）、`web/peer_routes.py`（build_router，GET `/api/peer/manifest` 四头 HMAC；store 鸭子类型：read_secret/get_node/node_state/list_grants/touch_node）。
+1. ~~T3 auth/pair~~（已完成）；`web/peer_routes.py`（build_router，GET `/api/peer/manifest` 四头 HMAC；store 鸭子类型：read_secret/get_node/node_state/list_grants/touch_node）挪到挂载那一步一起做。
 2. T4：`peer/policy.py`（闸2/3）、`executor.py`、`artifacts.py`；fs.read 首切片，复用 write_scope/sandbox。
 3. T5：`tools/builtin/peer_tools.py`（peer_list/dispatch/task/fetch）。
-4. 挂载：`web/routes.py` `include_router`（不带 require_api_key，认证由 peer HMAC 承担）；共享大文件单独提交并 rebase。
+4. 挂载：`web/routes.py` `include_router`（不带 require_api_key，认证由 peer HMAC 承担）+ `web/peer_routes.py`；共享大文件单独提交并 rebase。
 5. T6：T1–T10/U1–U10 应拦输入实测 + 全量 pytest + RULE-AI-28 独立审查 → lane 合并。
 
 ## 运行时限制（实测）
