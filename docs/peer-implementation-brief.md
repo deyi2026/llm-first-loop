@@ -15,6 +15,8 @@
 - `d5bf6eb01` store/admission（flock + 原子替换 + generation；admission O_EXCL 不可覆盖）
 - `46cf7a562` 存储测试（`pytest tests/peer -q` = 15 passed，ruff 干净）
 - T3 `peer/auth.py` + `peer/pair.py` + 41 条测试（`pytest tests/peer -q` = 56 passed, 2 skipped）
+- T4 `peer/service.py` + `web/peer_routes.py` + `scripts/peer_serve.py`（独立 uvicorn + live 冒烟 19 项）
+- T5 `20bae4dd4` 控制端四工具 + `web/_mount_peer_routes` 挂主 app；修 T4 回执可见性缺陷（`pytest tests/peer -q` = 137 passed, 3 skipped）
 
 ## 认证契约（逐字取自 DESIGN §5.8.3；改=契约变更）
 头：`X-Peer-Node-Id` / `X-Peer-Ts` / `X-Peer-Nonce` / `X-Peer-Sig`。
@@ -60,14 +62,48 @@ manifest 200 / 无签名 401 `peer_bad_signature` / 提交 fs.read → `succeede
 `path_outside_allowed_paths`。脚本在 `/tmp`（一次性冒烟，不进仓库），
 仓库内可复核的是 125 条单测（含 TestClient 端到端 10 条）。
 
+## T5 控制端四工具 + 主 app 挂载（commit 20bae4dd4）
+
+**工具面**（`tools/builtin/peer_tools.py`，仅 `LFL_PEER_ENABLED=1` 注册；关闭时工具面与既有行为零变化）：
+- `peer_list() -> {local_node_id, peers[]}`：逐个 GET manifest；`kinds` 原样保留 KindSpec 对象
+  （`{kind, idempotency_class, supervised_only, params_schema_hint}`），不可达节点带
+  `health=unreachable` + `reason_code`，不伪造在线。
+- `peer_dispatch(peer_id, kind, params, expect?, deadline_s?)`：派单前**本地前置校验**
+  `kind ∈ manifest.kinds`（缺失或不匹配即 `policy_task_kind_not_allowed`，fail-closed，不盲发）；
+  `effect_id` 由 `sha256(run_key + canonical(peer,kind,params))` 派生（`eff_`+40 hex），
+  同一 run 幂等、换参数即新任务——模型不需要记 effect_id。
+- `peer_task(peer_id, task_id)`：取回执；`peer_fetch(peer_id, ref, to_path?)`：按 ref 取字节，
+  重算 sha256 与 ref 不符即 `artifact_digest_mismatch`；默认落 `<peer_data_dir>/inbox/<sha256>`，
+  给 `to_path` 才写工作区且必须先过 `current_write_scope`（拒绝 → `path_outside_allowed_paths`）。
+- 传输层 `peer/client.py`：`base_url` 强制纯 origin（带路径/query 拒绝——canonical PATH 与
+  服务端 `request.url.path` 必须逐字节一致）；所有非 2xx 映射封闭 reason_code；不重试。
+
+**主 app 挂载**（`web/__init__.py::_mount_peer_routes`）：`LFL_PEER_ENABLED=1` 时挂
+`build_peer_router`（不套 `require_api_key`，只认四头 HMAC）。配置六项：
+`LFL_PEER_NODE_ID`（空则 `lfl-<hostname>`）/ `LFL_PEER_DISPLAY_NAME` / `LFL_PEER_DATA_DIR`
+（空则 `<data_dir>/peer`）/ `LFL_PEER_TIMEOUT_S` / `LFL_PEER_KINDS`（空集=不开放任何 kind）/
+`LFL_PEER_ENABLED`。`secret_for` 必须经 `secret_key_from_store` 转 bytes（`auth.sign` 直接把
+secret 当 HMAC key 用）。
+
+**修 T4 遗留缺陷（T5 联调暴露）**：T4 的 `get_receipt` 只比对 `task.node_id`（= 执行节点），
+导致跨节点派单方永远读不到自己的回执（同 node_id 自测才通过）。改正：
+- `post_task` 的 `requested_by` 由服务端按认证身份写入（payload 同名字段可伪造，不采信）；
+- `get_task_for(node_id, task_id)` 与 `artifact_visible_to` 以 `requested_by`（旧数据回退
+  `node_id`）判可见性。
+
+**测试事实**：`tests/peer/test_peer_client.py` 11 条，用 TestClient 扮远端 + monkeypatch
+`httpx.request`，签名/nonce/幂等/白名单/写侧拒绝全走真实路由栈；`pytest tests/peer -q` =
+137 passed, 3 skipped；ruff 干净。**真实网络形态（独立进程 + 真端口）的应拦实测在 T6 做**，
+本切片不宣称"闸已生效"。
+
 ## 下一步
 1. ~~T3 auth/pair/manifest~~ / ~~T4 闸2-3 + artifact + 只读执行器~~ / ~~编排层 + HTTP 面 + live 冒烟~~（已完成）。
-2. T5 客户端工具：`tools/builtin/peer_tools.py`（peer_list / peer_dispatch / peer_task / peer_fetch），
-   与 `auth.sign_request` 共用签名，产物按 ref 取回并校验 sha256。
-3. 挂载进主 app：`web/__init__.py` 装配 peer store/service/authenticator（需 settings 增加节点名与
-   数据目录），`include_router(build_peer_router(...))` 不带 require_api_key；共享大文件单独提交 + rebase。
-4. T9 `fs.write` + 闸4 write_scope 集成（有人在场路径）。
-5. T6：T1–T10/U1–U10 应拦输入实测 + 全量 pytest + RULE-AI-28 独立审查 → T8 lane 合并。
+2. ~~T5 客户端工具 + 挂载主 app~~（已完成，见上节）。
+3. T7：deepin runbook（**用户 2026-11-07 确认：写完 + 如实标注"未实测"即可结项**，不需实机接入）。
+4. T9 `fs.write` + 闸4 write_scope 集成（有人在场路径）；`peer_fetch.to_path` 已接
+   `current_write_scope`，但写类工具面尚未开放。
+5. T6：T1–T10/U1–U10 应拦输入实测（**必须真实网络/独立进程**，不能只用 TestClient 证明）
+   + 全量 pytest + RULE-AI-28 独立审查 → T8 lane 合并。
 
 ## 运行时限制（实测）
 子代理上下文预检在 `tokens_in≈180k` 时直接失败且无 `search_archive` 兜底。委派时只给 ≤3 个小文件、
