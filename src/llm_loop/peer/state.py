@@ -48,6 +48,15 @@ def can_transition(src: str, dst: str) -> bool:
     return dst in _TRANSITIONS[src]
 
 
+# 唯一允许"改写终局"的边：产物被篡改后 succeeded → failed（DESIGN T8）。
+# 刻意只开这一条：其它终局态仍然不可改写，避免"事后改历史"变成常态。
+_QUARANTINE: dict[str, frozenset[str]] = {"succeeded": frozenset({"failed"})}
+
+
+def can_quarantine(src: str, dst: str) -> bool:
+    return dst in _QUARANTINE.get(src, frozenset())
+
+
 def require_transition(src: str, dst: str) -> None:
     if not can_transition(src, dst):
         raise InvalidTaskTransitionError(f"illegal peer task transition: {src} -> {dst}")

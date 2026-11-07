@@ -53,6 +53,23 @@ class AdmissionStore:
             raise PeerError("executor_internal_error", f"admission 不可读: {exc}") from exc
         return AdmissionRecord.from_dict(raw)
 
+    def count_admitted(self) -> int:
+        """已准入次数（≈ 执行尝试次数，单调不减）。
+
+        由审计目录派生而不另起计数器：单一真值，不会与审计漂移。读不出的记录
+        按"已准入"计（fail-closed：宁可高报执行次数，也不让一次执行从统计里消失）。
+        """
+        total = 0
+        for path in self.dir.glob("*.json"):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                total += 1
+                continue
+            if raw.get("verdict") == "admitted":
+                total += 1
+        return total
+
     def get(self, admission_id: str) -> AdmissionRecord | None:
         for path in self.dir.glob("*.json"):
             try:

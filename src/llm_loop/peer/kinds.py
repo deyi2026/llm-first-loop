@@ -46,6 +46,12 @@ DEFAULT_KINDS: tuple[KindSpec, ...] = (
 
 KINDS: dict[str, KindSpec] = {spec.kind: spec for spec in DEFAULT_KINDS}
 
+# 本切片真正有执行器 handler 的 kind。**manifest 只播报这里面的 kind**：
+# 能力声明是控制端的路由依据，播报一个没有 handler 的 kind，等于让对端按"可用"
+# 排期，最后在执行期拿到 handler_missing —— 额度已经被消耗、审计已落"已准入"，
+# 是"宣称有、实际没有"的典型形态。故不变量为 ``advertised ⊆ executable``。
+EXECUTABLE_KINDS: frozenset[str] = frozenset({"fs.read", "fs.list"})
+
 
 def get_kind(kind: str) -> KindSpec | None:
     return KINDS.get(kind)
@@ -56,8 +62,13 @@ def known_kinds() -> tuple[str, ...]:
 
 
 def manifest_kinds(enabled: set[str] | None = None) -> list[dict[str, object]]:
-    """manifest.kinds 载荷：默认只暴露 default_enabled 的 kind。"""
+    """manifest.kinds 载荷：``default_enabled`` ∩ ``EXECUTABLE_KINDS``。
+
+    注册表仍保留未实现 kind 的契约（idempotency_class / supervised_only 供 policy
+    判定），但不会出现在 manifest 里。
+    """
     allowed = enabled if enabled is not None else {k for k, s in KINDS.items() if s.default_enabled}
+    executable = allowed & EXECUTABLE_KINDS
     return [
         {
             "kind": spec.kind,
@@ -66,5 +77,5 @@ def manifest_kinds(enabled: set[str] | None = None) -> list[dict[str, object]]:
             "params_schema_hint": spec.params_schema_hint,
         }
         for spec in DEFAULT_KINDS
-        if spec.kind in allowed
+        if spec.kind in executable
     ]

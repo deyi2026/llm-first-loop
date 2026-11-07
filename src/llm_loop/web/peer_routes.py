@@ -113,7 +113,13 @@ def build_peer_router(*, service: PeerService, authenticator: PeerAuthenticator)
         allowed = await run_in_threadpool(service.artifact_visible_to, node_id, full_ref)
         if not allowed:
             raise PeerError("artifact_missing", full_ref)
-        data = await run_in_threadpool(service.read_artifact, full_ref)
+        try:
+            data = await run_in_threadpool(service.read_artifact, full_ref)
+        except PeerError as exc:
+            if exc.reason_code == "artifact_digest_mismatch":
+                # 篡改检测到就把引用它的任务收敛为 failed：不把已不可信的产物当成功
+                await run_in_threadpool(service.quarantine_artifact, full_ref)
+            raise
         return Response(content=data, media_type="application/octet-stream")
 
     return router

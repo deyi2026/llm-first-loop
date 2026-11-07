@@ -96,10 +96,30 @@ def test_fs_list_entry_cap(tmp_path, env):
     assert listing["truncated"] is True
 
 
-@pytest.mark.parametrize("kind", ["fs.write", "shell.exec", "desktop.screenshot", "desktop.click"])
+@pytest.mark.parametrize("kind", ["fs.write", "shell.exec"])
 def test_unimplemented_kinds_refuse_loudly(tmp_path, env, kind):
     _root, ex = env
     with pytest.raises(PeerError) as err:
         ex.run(kind=kind, params={}, allowed_paths=(str(tmp_path),))
+    assert err.value.reason_code == "policy_task_kind_not_allowed"
+    assert "handler_missing" in err.value.detail
+
+
+@pytest.mark.parametrize("kind", ["desktop.screenshot", "desktop.click", "desktop.focus_probe"])
+@pytest.mark.parametrize("protocol", ["none", "wayland"])
+def test_desktop_kinds_require_x11(tmp_path, env, kind, protocol):
+    """非 X11 一律协议级拒绝：不把"协议不支持"伪装成"执行失败"。"""
+    _root, ex = env
+    with pytest.raises(PeerError) as err:
+        ex.run(kind=kind, params={}, allowed_paths=(str(tmp_path),), display_protocol=protocol)
+    assert err.value.reason_code == "unsupported_display_protocol"
+
+
+@pytest.mark.parametrize("kind", ["desktop.screenshot", "desktop.click", "desktop.focus_probe"])
+def test_desktop_kinds_on_x11_still_refuse_handler_missing(tmp_path, env, kind):
+    """X11 只是必要条件：handler 没实现就不假装成功。"""
+    _root, ex = env
+    with pytest.raises(PeerError) as err:
+        ex.run(kind=kind, params={}, allowed_paths=(str(tmp_path),), display_protocol="x11")
     assert err.value.reason_code == "policy_task_kind_not_allowed"
     assert "handler_missing" in err.value.detail

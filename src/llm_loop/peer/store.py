@@ -28,7 +28,7 @@ from llm_loop.peer.models import (
     iso,
     utcnow,
 )
-from llm_loop.peer.state import TERMINAL_STATES, require_transition
+from llm_loop.peer.state import TERMINAL_STATES, can_quarantine, require_transition
 
 _LOCK_NAME = ".peer.lock"
 _DOC_NAMES = ("nodes", "grants", "tasks")
@@ -310,7 +310,14 @@ class PeerStore:
         tasks.sort(key=lambda task: task.created_at, reverse=True)
         return tasks[:limit]
 
-    def put_task(self, task: TaskRecord, *, expected_state: str | None = None) -> TaskRecord:
+    def put_task(
+        self,
+        task: TaskRecord,
+        *,
+        expected_state: str | None = None,
+        allow_terminal_rewrite: bool = False,
+    ) -> TaskRecord:
+        """落盘任务；终局不可改写，唯一例外是产物篡改隔离（``succeeded → failed``）。"""
         if expected_state is None and task.state != "submitted":
             raise PeerError("idempotency_conflict", "新任务只能以 submitted 落盘")
         with self._lock(exclusive=True):
@@ -322,8 +329,10 @@ class PeerStore:
                 if expected_state is not None and current.state != expected_state:
                     raise PeerError("idempotency_conflict", f"task {task.task_id} CAS 失败")
                 if current.state in TERMINAL_STATES:
-                    raise PeerError("idempotency_conflict", f"task {task.task_id} 已终局")
-                require_transition(current.state, task.state)
+                    if not (allow_terminal_rewrite and can_quarantine(current.state, task.state)):
+                        raise PeerError("idempotency_conflict", f"task {task.task_id} 已终局")
+                else:
+                    require_transition(current.state, task.state)
                 payload["items"][index] = task.to_dict()
                 self._write("tasks", payload)
                 return task

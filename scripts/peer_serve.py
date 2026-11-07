@@ -8,6 +8,7 @@
 未配对时进程直接退出并提示，不会以"无密钥但可访问"的状态起服务（fail-closed）。
 
 边界：本脚本只起 peer 面；QR/headless 显示与 PAIR-OFFER 的飞书确认通道不在本切片。
+明文监听只允许回环（LAN 走 SSH 隧道，DESIGN §7 禁裸 HTTP）；非回环 host 直接拒启。
 """
 
 from __future__ import annotations
@@ -31,7 +32,18 @@ from llm_loop.peer.store import PeerStore  # noqa: E402
 from llm_loop.web.peer_routes import create_peer_app  # noqa: E402
 
 
-def build_app(*, data_dir: Path, node_id: str, display_name: str | None) -> object:
+def build_app(
+    *,
+    data_dir: Path,
+    node_id: str,
+    display_name: str | None,
+    display_protocol: str = "none",
+    audit_watermark_pct: int = 90,
+    max_concurrency: int = 1,
+    enabled_kinds: set[str] | None = None,
+    health: str | None = None,
+    recover: bool = True,
+) -> object:
     store = PeerStore(data_dir)
     # 独立审查第 4 轮 P1-2（2026-11-08）：身份拓扑对齐主 app/测试约定——
     # executor 端 secrets/ 下存的是**对端（controller）**的密钥，HMAC 按
@@ -51,6 +63,11 @@ def build_app(*, data_dir: Path, node_id: str, display_name: str | None) -> obje
         artifacts=ArtifactStore(data_dir / "artifacts"),
         node_id=node_id,
         display_name=display_name,
+        display_protocol=display_protocol,
+        audit_watermark_pct=audit_watermark_pct,
+        max_concurrency=max_concurrency,
+        enabled_kinds=enabled_kinds,
+        health=health,
     )
     def _secret_for(candidate: str):
         # P1-2（2026-11-08）：与主 app _mount_peer_routes._secret_for 同构——
@@ -68,6 +85,7 @@ def build_app(*, data_dir: Path, node_id: str, display_name: str | None) -> obje
 
 
 def _is_loopback(host: str) -> bool:
+    """明文监听只允许回环：TLS 未实现，非回环等于把 HMAC 签名暴露在链路上。"""
     if host in {"localhost", ""}:
         return host == "localhost"
     try:
@@ -83,6 +101,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--display-name", default=None)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8791)
+    parser.add_argument(
+        "--display-protocol",
+        default="none",
+        choices=["none", "x11", "wayland"],
+        help="desktop.* kind 的显示协议事实；非 x11 一律 unsupported_display_protocol",
+    )
+    parser.add_argument("--audit-watermark-pct", type=int, default=90)
+    parser.add_argument(
+        "--health",
+        default=None,
+        choices=["ok", "degraded"],
+        help="运维覆盖（演练/维护期）；缺省按磁盘水位自动判定",
+    )
+    parser.add_argument("--max-concurrency", type=int, default=1)
+    parser.add_argument(
+        "--enabled-kinds",
+        default=None,
+        help="逗号分隔的 kind 白名单；缺省用注册表 default_enabled",
+    )
     args = parser.parse_args(argv)
 
     # D15（独立审查第 4 轮 P1，2026-11-08）：与主 app _mount_peer_routes 同一
@@ -95,9 +132,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    enabled = None
+    if args.enabled_kinds is not None:
+        enabled = {k.strip() for k in args.enabled_kinds.split(",") if k.strip()}
+
     import uvicorn
 
-    app = build_app(data_dir=args.data_dir, node_id=args.node_id, display_name=args.display_name)
+    app = build_app(
+        data_dir=args.data_dir,
+        node_id=args.node_id,
+        display_name=args.display_name,
+        display_protocol=args.display_protocol,
+        audit_watermark_pct=args.audit_watermark_pct,
+        max_concurrency=args.max_concurrency,
+        enabled_kinds=enabled,
+        health=args.health,
+    )
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

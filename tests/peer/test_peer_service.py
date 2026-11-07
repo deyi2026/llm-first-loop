@@ -164,13 +164,39 @@ def test_executor_failure_becomes_failed_receipt(env):
     assert receipt["reason_code"] == "params_schema_invalid"
 
 
-def test_unimplemented_kind_fails_with_handler_missing(env):
+def test_desktop_kind_without_x11_fails_unsupported_display_protocol(env):
+    """非 X11 是协议级拒绝，不是"执行失败"：控制端据此可改派，不必猜重试。"""
     service, store, allowed, _tmp = env
     store.issue_grant(make_grant(allowed, allowed_kinds=("desktop.focus_probe",)))
     receipt = service.submit(
         {
             "schema": "lfl.peer.v1",
             "effect_id": "eff_focusprobe",
+            "kind": "desktop.focus_probe",
+            "params": {},
+            "deadline_s": 5,
+        }
+    )
+    assert receipt["state"] == "failed"
+    assert receipt["reason_code"] == "unsupported_display_protocol"
+
+
+def test_desktop_kind_on_x11_still_fails_handler_missing(tmp_path):
+    """X11 只是必要条件：handler 缺了照样明确拒绝。"""
+    allowed = tmp_path / "work" / "allowed"
+    allowed.mkdir(parents=True)
+    service = PeerService(
+        store=PeerStore(tmp_path / "peer"),
+        admissions=AdmissionStore(tmp_path / "peer"),
+        artifacts=ArtifactStore(tmp_path / "artifacts"),
+        node_id="deepin-01",
+        display_protocol="x11",
+    )
+    service._store.issue_grant(make_grant(allowed, allowed_kinds=("desktop.focus_probe",)))
+    receipt = service.submit(
+        {
+            "schema": "lfl.peer.v1",
+            "effect_id": "eff_focusx11",
             "kind": "desktop.focus_probe",
             "params": {},
             "deadline_s": 5,
