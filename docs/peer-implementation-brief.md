@@ -17,6 +17,7 @@
 - T3 `peer/auth.py` + `peer/pair.py` + 41 条测试（`pytest tests/peer -q` = 56 passed, 2 skipped）
 - T4 `peer/service.py` + `web/peer_routes.py` + `scripts/peer_serve.py`（独立 uvicorn + live 冒烟 19 项）
 - T5 `20bae4dd4` 控制端四工具 + `web/_mount_peer_routes` 挂主 app；修 T4 回执可见性缺陷（`pytest tests/peer -q` = 137 passed, 3 skipped）
+- T7 `2b27f475a`/`de8c933a9` `docs/playbooks/PEER-P0-session-takeover-runbook.md`（P0 会话接管 SOP + U8/U9 处置；**未在 deepin 实机实测**，文首与 §7/§8 逐项标注）
 
 ## 认证契约（逐字取自 DESIGN §5.8.3；改=契约变更）
 头：`X-Peer-Node-Id` / `X-Peer-Ts` / `X-Peer-Nonce` / `X-Peer-Sig`。
@@ -99,7 +100,7 @@ secret 当 HMAC key 用）。
 ## 下一步
 1. ~~T3 auth/pair/manifest~~ / ~~T4 闸2-3 + artifact + 只读执行器~~ / ~~编排层 + HTTP 面 + live 冒烟~~（已完成）。
 2. ~~T5 客户端工具 + 挂载主 app~~（已完成，见上节）。
-3. T7：deepin runbook（**用户 2026-11-07 确认：写完 + 如实标注"未实测"即可结项**，不需实机接入）。
+3. ~~T7 deepin runbook~~（已完成：`docs/playbooks/PEER-P0-session-takeover-runbook.md`，未实测已标注）。
 4. T9 `fs.write` + 闸4 write_scope 集成（有人在场路径）；`peer_fetch.to_path` 已接
    `current_write_scope`，但写类工具面尚未开放。
 5. T6：T1–T10/U1–U10 应拦输入实测（**必须真实网络/独立进程**，不能只用 TestClient 证明）
