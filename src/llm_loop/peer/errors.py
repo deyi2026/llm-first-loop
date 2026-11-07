@@ -60,7 +60,7 @@ class PeerError(Exception):
         super().__init__(f"{reason_code}: {detail}" if detail else reason_code)
 
 
-class InvalidTaskTransition(RuntimeError):
+class InvalidTaskTransitionError(RuntimeError):
     """状态机非法迁移。属程序缺陷，不映射为线上 reason_code。"""
 
 

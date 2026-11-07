@@ -5,12 +5,12 @@
 """
 from __future__ import annotations
 
-from llm_loop.peer.errors import REASON_CODES, InvalidTaskTransition, PeerError
+from llm_loop.peer.errors import REASON_CODES, InvalidTaskTransitionError, PeerError
 from llm_loop.peer.models import (
+    SCHEMA,
     AdmissionRecord,
     GrantRecord,
     NodeRecord,
-    SCHEMA,
     TaskRecord,
     iso,
     parse_ts,
@@ -22,7 +22,7 @@ __all__ = [
     "SCHEMA",
     "AdmissionRecord",
     "GrantRecord",
-    "InvalidTaskTransition",
+    "InvalidTaskTransitionError",
     "NodeRecord",
     "PeerError",
     "TaskRecord",

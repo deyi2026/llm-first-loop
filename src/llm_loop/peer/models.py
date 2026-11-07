@@ -5,8 +5,8 @@
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 SCHEMA = "lfl.peer.v1"
@@ -17,11 +17,11 @@ IDEMPOTENCY_CLASSES: tuple[str, ...] = ("idempotent", "non_idempotent")
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def iso(ts: datetime) -> str:
-    return ts.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return ts.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def parse_ts(raw: str) -> datetime:
@@ -31,7 +31,7 @@ def parse_ts(raw: str) -> datetime:
     parsed = datetime.fromisoformat(text)
     if parsed.tzinfo is None:
         raise ValueError(f"timestamp without timezone: {raw}")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _drop_none(raw: dict[str, Any]) -> dict[str, Any]:

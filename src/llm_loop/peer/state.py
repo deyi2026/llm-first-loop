@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from llm_loop.peer.errors import InvalidTaskTransition
+from llm_loop.peer.errors import InvalidTaskTransitionError
 from llm_loop.peer.models import GrantRecord, parse_ts
 
 TASK_STATES: tuple[str, ...] = (
@@ -44,13 +44,13 @@ _TRANSITIONS: dict[str, frozenset[str]] = {
 
 def can_transition(src: str, dst: str) -> bool:
     if src not in _TRANSITIONS:
-        raise InvalidTaskTransition(f"unknown source state: {src}")
+        raise InvalidTaskTransitionError(f"unknown source state: {src}")
     return dst in _TRANSITIONS[src]
 
 
 def require_transition(src: str, dst: str) -> None:
     if not can_transition(src, dst):
-        raise InvalidTaskTransition(f"illegal peer task transition: {src} -> {dst}")
+        raise InvalidTaskTransitionError(f"illegal peer task transition: {src} -> {dst}")
 
 
 def is_terminal(state: str) -> bool:
