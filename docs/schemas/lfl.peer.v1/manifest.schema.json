@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lfl.local/schemas/lfl.peer.v1/manifest.schema.json",
+  "title": "LFL Peer Manifest (lfl.peer.v1)",
+  "description": "受控端能力与策略摘要。能力声明是路由依据，不是权限；权限在 PeerGrant。inject_type 首版恒为 false（D11），放开需升 lfl.peer.v2，不得原地放宽。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "peer_api", "node_id", "role", "health", "display_protocol", "desktop", "kinds", "limits", "observed_at"],
+  "properties": {
+    "schema": { "const": "lfl.peer.v1" },
+    "peer_api": { "const": "1" },
+    "node_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
+    "display_name": { "type": "string", "maxLength": 100 },
+    "role": { "enum": ["orchestrator", "executor"] },
+    "health": { "enum": ["ok", "degraded", "failing"] },
+    "health_detail": { "type": "string", "maxLength": 300 },
+    "display_protocol": { "enum": ["x11", "wayland", "none"] },
+    "desktop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["screenshot", "inject_click", "inject_type", "focus_probe"],
+      "properties": {
+        "screenshot": { "type": "boolean" },
+        "inject_click": { "type": "boolean" },
+        "inject_type": { "const": false },
+        "focus_probe": { "type": "boolean" }
+      }
+    },
+    "kinds": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "idempotency_class", "supervised_only"],
+        "properties": {
+          "kind": { "type": "string", "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+          "idempotency_class": { "enum": ["idempotent", "non_idempotent"] },
+          "supervised_only": { "type": "boolean" },
+          "params_schema_hint": { "type": "string", "maxLength": 200 }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_concurrency", "audit_watermark_pct"],
+      "properties": {
+        "max_concurrency": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "audit_watermark_pct": { "type": "integer", "minimum": 50, "maximum": 99 }
+      }
+    },
+    "grant": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["grant_id", "expires_at", "tasks_remaining"],
+          "properties": {
+            "grant_id": { "type": "string", "pattern": "^gr_[A-Za-z0-9]{8,40}$" },
+            "expires_at": { "type": "string", "format": "date-time" },
+            "tasks_remaining": { "type": "integer", "minimum": 0 }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "observed_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "inject_click": { "const": true } }, "required": ["desktop"] },
+      "then": { "properties": { "desktop": { "properties": { "screenshot": { "const": true } } } } }
+    }
+  ]
+}
