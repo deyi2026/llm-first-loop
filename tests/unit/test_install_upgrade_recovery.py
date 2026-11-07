@@ -1148,10 +1148,13 @@ def test_service_launcher_real_shell_blocks_without_recovery_ok(
     result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
     assert result.returncode != 0
     assert "recovery_incomplete" in result.stderr
-    # 放行标记存在时不因 recovery 门拒绝（后续 release 校验不属本测试范围）。
+    # 绑定正确的 marker（Stage 3-C 语义）放行 recovery 门；无 release 目录
+    # → 仍拒绝，但拒绝原因必须是 release 缺失而非 recovery 门。
     (root / "state").mkdir()
     (root / "state" / "recovery-ok").write_text(
-        "journal_id=none\ndecision=no_pending_transaction\n", encoding="utf-8"
+        "journal_id=none\ndecision=no_pending_transaction\n"
+        "active_version=0.6.40\ntx_fingerprint=none\nts=2026-11-07T00:00:00Z\n",
+        encoding="utf-8",
     )
     result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
     # 无 release 目录 → 仍拒绝，但拒绝原因必须是 release 缺失而非 recovery 门。
@@ -1179,3 +1182,233 @@ def test_recovery_launcher_terminal_states_match_python_single_source(
     assert match is not None, "terminal-state case clause not found in launcher"
     shell_states = {s.strip() for s in re.split(r"[|\n]", match.group(1)) if s.strip()}
     assert shell_states == set(TX_TERMINAL_STATES)
+
+
+# ── Stage 3-C（2026-11-07）：recovery fail-open 最小修复的 RED→GREEN 契约 ──
+# 背景矩阵（OrbStack Ubuntu22.04 真实 shell，7 组=5 fail-open+2 正确）：
+#   ①no marker+observed→拒(对) ②stale marker+observed→放行(错) ③stale+settled非终态→放行(错)
+#   ④stale+损坏JSON→放行(错) ⑤no marker+孤儿tx缺journal→放行+写marker(错)
+#   ⑥no marker+TX_DIR symlink→放行+写marker(错) ⑦no marker+committed→放行(对)
+
+
+def _stale_marker(root: Path) -> None:
+    """构造一个'看起来合法'的旧 recovery-ok（绕过存在性检查的最强对手输入）。"""
+    (root / "state").mkdir(exist_ok=True)
+    (root / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n"
+        "active_version=0.6.40\ntx_fingerprint=none\nts=2026-11-07T00:00:00Z\n",
+        encoding="utf-8",
+    )
+
+
+def test_recovery_gate_stale_marker_does_not_bypass_journal_check(tmp_path: Path) -> None:
+    """矩阵②③④：stale marker 存在时 recovery 仍必须真实核对 journal。"""
+    import json
+
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    for name, payload in (
+        ("observed", {"state": "observed"}),
+        ("settled-nonterminal", {"state": "settled"}),
+        ("corrupt", None),  # 损坏 JSON 由下方单独写入
+    ):
+        case = tmp_path / name
+        root = _fake_lfl_home(case)
+        tx = root / "upgrade-transactions" / "tx0000000000000000000000aa"
+        tx.mkdir(parents=True)
+        if payload is None:
+            (tx / "journal.json").write_text('{"state": "committed', encoding="utf-8")
+        else:
+            (tx / "journal.json").write_text(json.dumps(payload), encoding="utf-8")
+        _stale_marker(root)
+        result = _run_launcher(render_lfl_recovery_launcher(root), case)
+        assert result.returncode != 0, (name, result.stderr)
+        assert "recovery_incomplete" in result.stderr
+
+
+def test_recovery_gate_reruns_full_validation_when_marker_present(tmp_path: Path) -> None:
+    """marker 合法写入后 journal 被篡改为非终态：重跑 recovery 必须再 fail。"""
+    import json
+
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    case = tmp_path / "tamper"
+    root = _fake_lfl_home(case)
+    tx = root / "upgrade-transactions" / "tx0000000000000000000000bb"
+    tx.mkdir(parents=True)
+    (tx / "journal.json").write_text(json.dumps({"state": "committed"}), encoding="utf-8")
+    first = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert first.returncode == 0, first.stderr
+    assert (root / "state" / "recovery-ok").is_file()
+    # 篡改：终态 → 非终态。recovery 不允许凭既有 marker 短路放行。
+    (tx / "journal.json").write_text(json.dumps({"state": "observed"}), encoding="utf-8")
+    second = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert second.returncode != 0, second.stderr
+    assert "recovery_incomplete" in second.stderr
+
+
+def test_recovery_gate_orphan_tx_dir_without_journal_fails_closed(tmp_path: Path) -> None:
+    """矩阵⑤：tx 子目录存在但 journal.json 缺失 → fail-closed，不写 marker。"""
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    case = tmp_path / "orphan"
+    root = _fake_lfl_home(case)
+    (root / "upgrade-transactions" / "tx0000000000000000000000cc").mkdir(parents=True)
+    result = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert result.returncode != 0, result.stderr
+    assert not (root / "state" / "recovery-ok").exists()
+
+
+def test_recovery_gate_txdir_symlink_fails_closed(tmp_path: Path) -> None:
+    """矩阵⑥：upgrade-transactions 是 symlink → fail-closed（无论 marker）。"""
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    real_tx = tmp_path / "real-tx"
+    real_tx.mkdir()
+    (real_tx / "tx0000000000000000000000dd").mkdir()
+    (real_tx / "tx0000000000000000000000dd" / "journal.json").write_text(
+        '{"state": "observed"}', encoding="utf-8"
+    )
+    for with_marker in (False, True):
+        case = tmp_path / f"symlink-mk{int(with_marker)}"
+        root = _fake_lfl_home(case)
+        (root / "upgrade-transactions").symlink_to(real_tx, target_is_directory=True)
+        if with_marker:
+            _stale_marker(root)
+        result = _run_launcher(render_lfl_recovery_launcher(root), case)
+        assert result.returncode != 0, (with_marker, result.stderr)
+        # fail-closed：不新写 marker。预置的 stale marker 由 service 侧绑定
+        # 核对兜底拒绝（recovery 不做删除等破坏性动作）。
+        if not with_marker:
+            assert not (root / "state" / "recovery-ok").exists()
+
+
+def test_recovery_marker_written_with_binding_fields(tmp_path: Path) -> None:
+    """放行 marker 必须绑定 active_version 与 tx_fingerprint（供 service 侧核对）。"""
+    from llm_loop.runtime.installation import render_lfl_recovery_launcher
+
+    case = tmp_path / "binding"
+    root = _fake_lfl_home(case)  # active=0.6.40，无事务目录
+    result = _run_launcher(render_lfl_recovery_launcher(root), case)
+    assert result.returncode == 0, result.stderr
+    marker = (root / "state" / "recovery-ok").read_text(encoding="utf-8")
+    assert "active_version=0.6.40" in marker
+    assert "tx_fingerprint=none" in marker
+
+
+def test_service_launcher_stale_marker_with_pending_journal_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """矩阵②的 service 面：marker 存在但存在未完成事务 → 拒绝启动。"""
+    import json
+
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+
+    case = tmp_path / "svc-stale"
+    root = _fake_lfl_home(case)
+    tx = root / "upgrade-transactions" / "tx0000000000000000000000ee"
+    tx.mkdir(parents=True)
+    (tx / "journal.json").write_text(json.dumps({"state": "observed"}), encoding="utf-8")
+    _stale_marker(root)
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    assert result.returncode != 0, result.stderr
+    assert "recovery_incomplete" in result.stderr
+
+
+def test_service_launcher_marker_must_bind_current_state(tmp_path: Path) -> None:
+    """marker 的 active_version / tx_fingerprint 必须与当前磁盘一致。"""
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+
+    # active_version 不一致（marker 记 0.6.39，指针是 0.6.40；无事务→指纹 none）。
+    case = tmp_path / "svc-bind-av"
+    root = _fake_lfl_home(case)
+    (root / "state").mkdir()
+    (root / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n"
+        "active_version=0.6.39\ntx_fingerprint=none\nts=2026-11-07T00:00:00Z\n",
+        encoding="utf-8",
+    )
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    assert result.returncode != 0
+    assert "recovery_incomplete" in result.stderr
+
+    # tx_fingerprint 不一致（磁盘出现新事务目录，marker 仍记 none）。
+    import json
+
+    case2 = tmp_path / "svc-bind-fp"
+    root2 = _fake_lfl_home(case2)
+    tx = root2 / "upgrade-transactions" / "tx0000000000000000000000fa"
+    tx.mkdir(parents=True)
+    (tx / "journal.json").write_text(json.dumps({"state": "observed"}), encoding="utf-8")
+    _stale_marker(root2)
+    result2 = _run_launcher(render_lfl_service_launcher(root2), case2, args=["web"])
+    assert result2.returncode != 0
+    assert "recovery_incomplete" in result2.stderr
+
+
+def test_service_launcher_marker_without_binding_fields_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """无绑定字段的 marker（Stage2 旧格式/手工伪造）不得凭存在放行。"""
+    from llm_loop.runtime.installation import render_lfl_service_launcher
+
+    case = tmp_path / "svc-unbound"
+    root = _fake_lfl_home(case)
+    (root / "state").mkdir()
+    (root / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n", encoding="utf-8"
+    )
+    result = _run_launcher(render_lfl_service_launcher(root), case, args=["web"])
+    assert result.returncode != 0
+    assert "recovery_incomplete" in result.stderr
+
+
+def test_create_transaction_invalidates_recovery_marker(tmp_path: Path) -> None:
+    """设计 §4.4：新事务创建前旧 recovery-ok 必须失效（升级侧接线）。"""
+    from llm_loop.runtime import upgrade_stage
+
+    home = tmp_path / "home"
+    (home / "state").mkdir(parents=True)
+    (home / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n", encoding="utf-8"
+    )
+    payload = upgrade_stage.create_transaction(
+        home,
+        idempotency_key="stage3c-red",
+        old_version="0.6.40",
+        candidate_version="0.6.41",
+        wheel_sha256="a" * 64,
+        expected_generation=1,
+        target_generation=2,
+    )
+    assert payload["state"] == "observed"
+    assert not (home / "state" / "recovery-ok").exists()
+
+
+def test_advance_transaction_invalidates_recovery_marker(tmp_path: Path) -> None:
+    """事务推进同样使旧判定失效：任何可达时序不残留有效旧标记。"""
+    from llm_loop.runtime import upgrade_stage
+
+    home = tmp_path / "home"
+    payload = upgrade_stage.create_transaction(
+        home,
+        idempotency_key="stage3c-red-adv",
+        old_version="0.6.40",
+        candidate_version="0.6.41",
+        wheel_sha256="a" * 64,
+        expected_generation=1,
+        target_generation=2,
+    )
+    # 模拟事务推进间隙被写入的 marker（例如 recovery 在 commit 前一瞬放行）。
+    (home / "state").mkdir(parents=True, exist_ok=True)
+    (home / "state" / "recovery-ok").write_text(
+        "journal_id=none\ndecision=no_pending_transaction\n", encoding="utf-8"
+    )
+    advanced = upgrade_stage.advance_transaction(
+        home,
+        payload["transaction_id"],
+        from_state="observed",
+        to_state="candidate_resolved",
+    )
+    assert advanced["state"] == "candidate_resolved"
+    assert not (home / "state" / "recovery-ok").exists()

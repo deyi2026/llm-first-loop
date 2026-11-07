@@ -180,6 +180,44 @@ _MANAGED_UNIT_FILES: tuple[str, ...] = (
     "lfl-learning.service",
     _RECOVERY_UNIT_NAME,
 )
+# Stage 3-C：journal gate 的单一 shell 实现，recovery 与 service launcher 共用。
+# 语义（fail-closed）：TX_DIR symlink / 存在无 journal 的子目录 / journal 不可读
+# 或破损 / state 非三个真实终态 → return 1；无 TX_DIR 或全部终态 → return 0。
+_JOURNAL_GATE_SH = """
+# ── §4.4 journal gate（Stage 3-C 单一实现，两个 launcher 共用）──
+__lfl_journal_gate() {
+  if [ -L "$1" ]; then return 1; fi
+  if [ ! -d "$1" ]; then return 0; fi
+  for d in "$1"/*/; do
+    [ -d "$d" ] || continue
+    j="$d/journal.json"
+    if [ ! -f "$j" ] || [ -L "$j" ]; then return 1; fi
+    # 精确提取 JSON 顶层 state 值（P1-3，b7691f4e）：只接受三个真实终态；
+    # 解析失败/意外类型同样 fail-closed。
+    state_value="$(python3 -c 'import json,sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    print("unreadable_journal")
+    raise SystemExit(0)
+value = data.get("state") if isinstance(data, dict) else None
+print(value if isinstance(value, str) and value else "unreadable_journal")' "$j" 2>/dev/null || printf 'unreadable_journal')"
+    case "$state_value" in
+      committed|aborted_before_cutover|rolled_back) : ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+__lfl_tx_fingerprint() {
+  __txd="$1"
+  if [ -L "$__txd" ] || [ ! -d "$__txd" ]; then printf 'none\\n'; return 0; fi
+  set -- "$__txd"/*/journal.json
+  if [ ! -f "$1" ]; then printf 'none\\n'; return 0; fi
+  sha256sum "$@" 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+"""
 _UNIT_INSTALL_SCHEMA = "lfl.service-units-install/v1"
 # §4.1：自定义安装根不得落在系统目录的裸路径上。
 _SYSTEM_BARE_ROOTS = frozenset({"/", "/usr", "/etc", "/var", "/home"})
@@ -301,14 +339,54 @@ def render_recovery_unit_text(service: str, lfl_home: str | Path, *, home: str |
     return "\n".join(lines) + "\n"
 
 
+# lfl-service 的 release 完整性门（§4.2 步骤 3）：纯 shell、无 Python 插值，
+# 自 render_lfl_service_launcher 原样抽出（普通三引号串，单花括号）。
+_SERVICE_LAUNCHER_RELEASE_GATE = '''APP="$INSTALL_ROOT/releases/LFL-$VERSION"
+if [ ! -d "$APP" ] || [ -L "$APP" ] || [ -L "$INSTALL_ROOT/releases" ]; then
+  echo "LFL release $VERSION directory is missing or unsafe." >&2; exit 1
+fi
+case "$(cd "$APP" && pwd -P)" in
+  "$APP") : ;;
+  *) echo "LFL release path resolves outside itself (symlink escape)." >&2; exit 1 ;;
+esac
+if [ -e "$APP/.installer-incomplete" ]; then
+  echo "LFL release $VERSION is marked incomplete; refusing to start it." >&2
+  exit 1
+fi
+CHECKSUM="$APP/.installer-wheel.sha256"
+WHEEL_NAME="llm_first_loop-$VERSION-py3-none-any.whl"
+if [ ! -f "$CHECKSUM" ] || [ -L "$CHECKSUM" ]; then
+  echo "LFL release $VERSION lacks its wheel integrity record." >&2
+  exit 1
+fi
+if [ "$(wc -l < "$CHECKSUM")" != "1" ] || [ "$(wc -c < "$CHECKSUM")" -eq 0 ]; then
+  echo "LFL release $VERSION wheel manifest must list exactly one file." >&2
+  exit 1
+fi
+case "$(cat "$CHECKSUM")" in
+  *"  $WHEEL_NAME") : ;;
+  *) echo "LFL release $VERSION wheel manifest names an unexpected file." >&2
+     exit 1 ;;
+esac
+case "$WHEEL_NAME" in
+  *../*|*/..*|*/*../*) echo "unsafe wheel name in manifest." >&2; exit 1 ;;
+esac
+(cd "$APP" && sha256sum --check --status .installer-wheel.sha256) || {
+  echo "LFL release $VERSION wheel checksum failed." >&2; exit 1
+}
+'''
+
+
 def render_lfl_service_launcher(lfl_home: str | Path) -> str:
     """渲染稳定启动器 ``LFL_HOME/bin/lfl-service``（§4.2/§4.4）。
 
     门（全部通过才 exec）：
     1. 安装根与活动指针真实且无 symlink 逃逸（``pwd -P`` 归一后仍等于自身）；
        版本格式严格校验；``releases/``、``releases/LFL-*`` 不接受 symlink。
-    2. ``state/recovery-ok`` 标记存在（§4.4 fail-closed：recovery 未放行即以
-       ``recovery_incomplete`` 拒绝启动，不猜测）。
+    2. ``state/recovery-ok`` 存在且**绑定当前磁盘状态**（§4.4/Stage 3-C）：
+       marker 携带 ``active_version``/``tx_fingerprint``、与活动指针和当前
+       事务集合指纹一致，且 journal gate 本身通过；stale/缺绑定字段/存在
+       未完成事务一律 ``recovery_incomplete`` 拒绝。
     3. 目标 release 无 ``.installer-incomplete``；wheel 清单唯一（恰好一行）
        且文件名即当前 release 的 wheel 名；``sha256sum --check`` 通过。
     4. 显式 ``DATA_DIR`` 与 ``LFL_DATA_DIR`` 同设且不等即拒绝（§2.4，不被
@@ -327,7 +405,9 @@ set -eu
 INSTALL_ROOT={quoted}
 ACTIVE_FILE="$INSTALL_ROOT/.LFL-active-version"
 RECOVERY_OK="$INSTALL_ROOT/state/recovery-ok"
+TX_DIR="$INSTALL_ROOT/upgrade-transactions"
 SERVICE="${{1:-}}"
+{_JOURNAL_GATE_SH}
 case "$SERVICE" in
   web|feishu|learning) ;;
   *) echo "usage: lfl-service web|feishu|learning" >&2; exit 64 ;;
@@ -366,39 +446,31 @@ if [ ! -f "$RECOVERY_OK" ] || [ -L "$RECOVERY_OK" ]; then
   echo "recovery_incomplete: $RECOVERY_OK missing; run lfl-recovery.service first." >&2
   exit 1
 fi
-APP="$INSTALL_ROOT/releases/LFL-$VERSION"
-if [ ! -d "$APP" ] || [ -L "$APP" ] || [ -L "$INSTALL_ROOT/releases" ]; then
-  echo "LFL release $VERSION directory is missing or unsafe." >&2; exit 1
-fi
-case "$(cd "$APP" && pwd -P)" in
-  "$APP") : ;;
-  *) echo "LFL release path resolves outside itself (symlink escape)." >&2; exit 1 ;;
-esac
-if [ -e "$APP/.installer-incomplete" ]; then
-  echo "LFL release $VERSION is marked incomplete; refusing to start it." >&2
+# Stage 3-C：marker 必须绑定当前磁盘状态——存在性本身不构成放行。
+# ①marker 缺绑定字段（Stage2 旧格式/手工伪造）→ 拒绝；
+# ②active_version 与当前活动指针不一致（stale）→ 拒绝；
+# ③journal gate 本身必须通过（存在未完成/不可读/孤儿/symlink 事务 → 拒绝）；
+# ④tx_fingerprint 与当前事务集合指纹不一致（marker 之后事务集变化）→ 拒绝。
+MARKER_AV="$(sed -n 's/^active_version=//p' "$RECOVERY_OK" | head -n 1)"
+MARKER_FP="$(sed -n 's/^tx_fingerprint=//p' "$RECOVERY_OK" | head -n 1)"
+if [ -z "$MARKER_AV" ] || [ -z "$MARKER_FP" ]; then
+  echo "recovery_incomplete: $RECOVERY_OK lacks binding fields (active_version/tx_fingerprint)." >&2
   exit 1
 fi
-CHECKSUM="$APP/.installer-wheel.sha256"
-WHEEL_NAME="llm_first_loop-$VERSION-py3-none-any.whl"
-if [ ! -f "$CHECKSUM" ] || [ -L "$CHECKSUM" ]; then
-  echo "LFL release $VERSION lacks its wheel integrity record." >&2
+if [ "$MARKER_AV" != "$VERSION" ]; then
+  echo "recovery_incomplete: marker active_version=$MARKER_AV != active pointer $VERSION." >&2
   exit 1
 fi
-if [ "$(wc -l < "$CHECKSUM")" != "1" ] || [ "$(wc -c < "$CHECKSUM")" -eq 0 ]; then
-  echo "LFL release $VERSION wheel manifest must list exactly one file." >&2
+if ! __lfl_journal_gate "$TX_DIR"; then
+  echo "recovery_incomplete: pending or unreadable upgrade journal under $TX_DIR." >&2
   exit 1
 fi
-case "$(cat "$CHECKSUM")" in
-  *"  $WHEEL_NAME") : ;;
-  *) echo "LFL release $VERSION wheel manifest names an unexpected file." >&2
-     exit 1 ;;
-esac
-case "$WHEEL_NAME" in
-  *../*|*/..*|*/*../*) echo "unsafe wheel name in manifest." >&2; exit 1 ;;
-esac
-(cd "$APP" && sha256sum --check --status .installer-wheel.sha256) || {{
-  echo "LFL release $VERSION wheel checksum failed." >&2; exit 1
-}}
+CURRENT_FP="$(__lfl_tx_fingerprint "$TX_DIR")"
+if [ "$MARKER_FP" != "$CURRENT_FP" ]; then
+  echo "recovery_incomplete: marker tx_fingerprint does not match current transactions." >&2
+  exit 1
+fi
+{_SERVICE_LAUNCHER_RELEASE_GATE}
 echo "lfl-service: release=$VERSION service=$SERVICE root=$INSTALL_ROOT" >&2
 case "$SERVICE" in
   web)      exec "$APP/venv/bin/lfl" start ;;
@@ -409,14 +481,17 @@ esac
 
 
 def render_lfl_recovery_launcher(lfl_home: str | Path) -> str:
-    """渲染 ``LFL_HOME/bin/lfl-recovery``（§4.4 单一恢复协调器，最小实现）。
+    """渲染 ``LFL_HOME/bin/lfl-recovery``（§4.4 单一恢复协调器）。
 
-    判定（fail-closed）：
-    - ``state/recovery-ok`` 已存在且非 symlink → 幂等放行。
-    - 无 ``upgrade-transactions/`` 或其中无未完成 journal → 写 recovery-ok
-      （``journal_id=none decision=no_pending_transaction``）放行。
-    - 存在未 settled 的 upgrade journal → 维护状态退出非零（真实恢复推进
-      由升级事务模块负责，本启动器不猜测、不自动重试）。
+    Stage 3-C 修正（fail-closed）：
+    - **marker 从不短路**：``state/recovery-ok`` 已存在时仍重做全量 journal
+      核对（旧 marker 可能是事务创建前写入的 stale 判定，见探针矩阵②③④）。
+    - ``upgrade-transactions`` 是 symlink、子目录缺 ``journal.json``（孤儿事务）、
+      journal 不可读/破损 JSON/state 非三个真实终态 → 退出非零，不写 marker
+      （矩阵⑤⑥）。
+    - 全部终态或无事务目录 → 原子写 marker，内容绑定 ``active_version`` 与
+      ``tx_fingerprint``（当前事务集合的 sha256 组合指纹），供 lfl-service
+      启动时核对——marker 只能由对当前磁盘状态的 recovery 判定产生。
     """
     root = Path(str(lfl_home))
     validate_install_root_for_units(root)
@@ -424,49 +499,119 @@ def render_lfl_recovery_launcher(lfl_home: str | Path) -> str:
     return f"""#!/bin/sh
 # LFL_LINUX_RECOVERY_LAUNCHER_V1
 # LFL_LINUX_INSTALL_ROOT: {root}
-# Generated by llm_loop.runtime.installation (DESIGN-20261107 §4.4).
+# Generated by llm_loop.runtime.installation (DESIGN-20261107 §4.4, Stage 3-C).
 set -eu
 INSTALL_ROOT={quoted}
 STATE_DIR="$INSTALL_ROOT/state"
 RECOVERY_OK="$STATE_DIR/recovery-ok"
 TX_DIR="$INSTALL_ROOT/upgrade-transactions"
 mkdir -p -- "$STATE_DIR"
-if [ -f "$RECOVERY_OK" ] && [ ! -L "$RECOVERY_OK" ]; then
-  echo "lfl-recovery: recovery-ok present; allowing services." >&2
-  exit 0
+{_JOURNAL_GATE_SH}
+if ! __lfl_journal_gate "$TX_DIR"; then
+  echo "recovery_incomplete: pending or unreadable upgrade journal under $TX_DIR; manual recovery required." >&2
+  exit 1
 fi
-if [ ! -d "$TX_DIR" ] || [ -L "$TX_DIR" ]; then
-  printf 'journal_id=none\\ndecision=no_pending_transaction\\nts=%s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$RECOVERY_OK"
-  echo "lfl-recovery: no pending upgrade journal; services allowed." >&2
-  exit 0
-fi
-for journal in "$TX_DIR"/*/journal.json; do
-  [ -f "$journal" ] || continue
-  # P1-3（审查 b7691f4e）：精确提取 JSON 顶层 state 值，只接受
-  # upgrade_stage.TX_TERMINAL_STATES 的三个真实终态；禁止对整行做子串匹配
-  # （"settled" 是 handover.phase 值而非终态；state=observed+handover.phase=settled
-  # 的可达状态必须 fail-closed）。解析失败同样拒绝。
-  state_value="$(python3 -c 'import json,sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as f:
-        data = json.load(f)
-except Exception:
-    print("unreadable_journal")
-    raise SystemExit(0)
-value = data.get("state") if isinstance(data, dict) else None
-print(value if isinstance(value, str) and value else "unreadable_journal")' "$journal" 2>/dev/null || printf 'unreadable_journal')"
-  case "$state_value" in
-    committed|aborted_before_cutover|rolled_back) : ;;
-    *)
-      echo "recovery_incomplete: journal $journal state=$state_value; manual recovery required." >&2
-      exit 1
-      ;;
+__av="none"
+if [ -f "$INSTALL_ROOT/.LFL-active-version" ] && [ ! -L "$INSTALL_ROOT/.LFL-active-version" ]; then
+  IFS= read -r __av < "$INSTALL_ROOT/.LFL-active-version" || __av="none"
+  case "$__av" in
+    [0-9]*.[0-9]*.[0-9]*) : ;;
+    *) __av="none" ;;
   esac
-done
-printf 'journal_id=none\\ndecision=no_pending_transaction\\nts=%s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$RECOVERY_OK"
-echo "lfl-recovery: all journals settled; services allowed." >&2
+fi
+__fp="$(__lfl_tx_fingerprint "$TX_DIR")"
+printf 'journal_id=none\\ndecision=no_pending_transaction\\nactive_version=%s\\ntx_fingerprint=%s\\nts=%s\\n' \\
+  "$__av" "$__fp" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$RECOVERY_OK.tmp.$$"
+mv -f "$RECOVERY_OK.tmp.$$" "$RECOVERY_OK"
+echo "lfl-recovery: journals verified; services allowed." >&2
 exit 0
 """
+
+
+def _checked_runner(runner):
+    """父会话自检 ②：每个子进程调用都检查返回码并设超时；异常等同失败。
+
+    返回 ``run_checked(argv) -> (ok, detail)``；timeout/OSError/非零返回码
+    统一折叠为 ``(False, detail)``，调用方不再自行判码。
+    """
+    import subprocess as _sp
+
+    def run_checked(argv: list[str]) -> tuple[bool, str]:
+        try:
+            result = runner(argv, capture_output=True, text=True, timeout=30)
+        except _sp.TimeoutExpired:
+            return False, f"timeout after 30s: {' '.join(argv)}"
+        except OSError as exc:
+            return False, f"failed to execute {argv[0]}: {exc}"
+        if getattr(result, "returncode", 1) != 0:
+            detail = (
+                getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
+            ).strip()
+            return False, detail
+        return True, ""
+
+    return run_checked
+
+
+def _restore_unit_files(
+    unit_path: Path, original: dict[str, tuple[bytes | None, int | None]]
+) -> None:
+    """恢复写入前的 unit 磁盘状态（内容+mode），不留半状态。"""
+    from .service_control import atomic_write_bytes_file
+
+    for restore_name, (payload, mode) in original.items():
+        target = unit_path / restore_name
+        if payload is None:
+            target.unlink(missing_ok=True)
+        else:
+            atomic_write_bytes_file(target, payload, mode=mode)
+
+
+def _stage_unit_texts(
+    unit_path: Path,
+    unit_texts: dict[str, str],
+    run_checked,
+) -> tuple[dict[str, tuple[bytes | None, int | None]], dict[str, bool], dict[str, str]]:
+    """unit preparation + verify 责任段（自 ``install_service_units`` 原样抽出）。
+
+    原子写入全部 unit 文本（保留原内容与 mode 供恢复），随后对每个 unit 跑
+    ``systemd-analyze --user verify``；任一失败即恢复写入前磁盘状态并抛
+    :class:`UnitInstallError`（fail-closed：不留下会被下次 daemon-reload
+    加载的半状态）。返回 ``(original, changed, digests)`` 供后续
+    try-restart/enable 与回执使用。
+    """
+    import hashlib as _hl
+
+    original: dict[str, tuple[bytes | None, int | None]] = {}
+    changed: dict[str, bool] = {}
+    digests: dict[str, str] = {}
+
+    for name, text in unit_texts.items():
+        target = unit_path / name
+        digests[name] = _hl.sha256(text.encode("utf-8")).hexdigest()
+        try:
+            prev = target.read_bytes()
+            prev_mode = target.stat().st_mode & 0o777
+        except OSError:
+            prev, prev_mode = None, None
+        original[name] = (prev, prev_mode)
+        changed[name] = prev != text.encode("utf-8")
+        # 写盘委托 service_control 的已登记原子写助手（durability surface：
+        # service_control_state），本模块不散落未登记写原语；③ 保留原 mode。
+        from .service_control import atomic_write_bytes_file
+
+        atomic_write_bytes_file(target, text.encode("utf-8"), mode=prev_mode)
+
+    for name in unit_texts:
+        ok, detail = run_checked(
+            ["systemd-analyze", "--user", "verify", str(unit_path / name)]
+        )
+        if not ok:
+            _restore_unit_files(unit_path, original)
+            raise UnitInstallError(
+                f"systemd-analyze verify failed for {name}: {detail}"
+            )
+    return original, changed, digests
 
 
 def install_service_units(
@@ -513,21 +658,7 @@ def install_service_units(
     unit_path.mkdir(parents=True, exist_ok=True)
 
     failures: list[dict[str, str]] = []
-
-    def _run_checked(argv: list[str]) -> tuple[bool, str]:
-        """父会话自检 ②：每个调用都检查返回码并设超时；异常等同失败。"""
-        try:
-            result = runner(argv, capture_output=True, text=True, timeout=30)
-        except _sp.TimeoutExpired:
-            return False, f"timeout after 30s: {' '.join(argv)}"
-        except OSError as exc:
-            return False, f"failed to execute {argv[0]}: {exc}"
-        if getattr(result, "returncode", 1) != 0:
-            detail = (
-                getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
-            ).strip()
-            return False, detail
-        return True, ""
+    run_checked = _checked_runner(runner)
 
     # ① launcher 先原子安装并回读校验，units 之后才 verify/enable：
     # enable --now 触发时 ExecStart 必须已可执行。
@@ -548,11 +679,6 @@ def install_service_units(
             )
         launchers[launcher_name] = target
 
-    original: dict[str, tuple[bytes | None, int | None]] = {}
-    changed: dict[str, bool] = {}
-    digests: dict[str, str] = {}
-    import hashlib as _hl
-
     unit_texts: dict[str, str] = {}
     for svc, name in _MANAGED_UNIT_NAMES.items():
         unit_texts[name] = render_unit_text(svc, root, home=home_path)
@@ -560,53 +686,17 @@ def install_service_units(
         "recovery", root, home=home_path
     )
 
-    def _restore_units() -> None:
-        """恢复写入前的 unit 磁盘状态（内容+mode），不留半状态。"""
-        from .service_control import atomic_write_bytes_file
+    # ② unit 写入 + verify（失败恢复原盘态并抛 UnitInstallError）。
+    original, changed, digests = _stage_unit_texts(unit_path, unit_texts, run_checked)
 
-        for restore_name, (payload, mode) in original.items():
-            target = unit_path / restore_name
-            if payload is None:
-                target.unlink(missing_ok=True)
-            else:
-                atomic_write_bytes_file(target, payload, mode=mode)
-
-    for name, text in unit_texts.items():
-        target = unit_path / name
-        digests[name] = _hl.sha256(text.encode("utf-8")).hexdigest()
-        try:
-            prev = target.read_bytes()
-            prev_mode = target.stat().st_mode & 0o777
-        except OSError:
-            prev, prev_mode = None, None
-        original[name] = (prev, prev_mode)
-        changed[name] = prev != text.encode("utf-8")
-        # 写盘委托 service_control 的已登记原子写助手（durability surface：
-        # service_control_state），本模块不散落未登记写原语；③ 保留原 mode。
-        from .service_control import atomic_write_bytes_file
-
-        atomic_write_bytes_file(
-            target, text.encode("utf-8"), mode=prev_mode
-        )
-
-    for name in unit_texts:
-        ok, detail = _run_checked(
-            ["systemd-analyze", "--user", "verify", str(unit_path / name)]
-        )
-        if not ok:
-            _restore_units()
-            raise UnitInstallError(
-                f"systemd-analyze verify failed for {name}: {detail}"
-            )
-
-    ok, detail = _run_checked(["systemctl", "--user", "daemon-reload"])
+    ok, detail = run_checked(["systemctl", "--user", "daemon-reload"])
     if not ok:
-        _restore_units()
+        _restore_unit_files(unit_path, original)
         raise UnitInstallError(f"systemctl --user daemon-reload failed: {detail}")
 
     for name in unit_texts:
         if changed[name] and original[name][0] is not None:
-            ok, detail = _run_checked(["systemctl", "--user", "try-restart", name])
+            ok, detail = run_checked(["systemctl", "--user", "try-restart", name])
             if not ok:
                 failures.append(
                     {"step": "try-restart", "unit": name, "detail": detail}
@@ -616,7 +706,7 @@ def install_service_units(
     enable_order = [_RECOVERY_UNIT_NAME, *_MANAGED_UNIT_NAMES.values()]
     enabled: list[str] = []
     for name in enable_order:
-        ok, detail = _run_checked(["systemctl", "--user", "enable", "--now", name])
+        ok, detail = run_checked(["systemctl", "--user", "enable", "--now", name])
         if ok:
             enabled.append(name)
         else:

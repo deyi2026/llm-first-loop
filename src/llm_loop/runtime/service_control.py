@@ -2415,6 +2415,99 @@ def _receipt_stable_view(
     return stable
 
 
+def _live_service_identity(
+    service: str,
+    manifest_path: Path,
+    deployment: ManagedServiceDeployment | None,
+) -> dict[str, Any]:
+    """单服务 live 身份事实（自 ``compose_service_identity_view`` 原样抽出）。
+
+    职责：manifest 读取（pid/started_at/git_head/build/release_version 等）
+    → web 端口兜底（manifest pid 死但端口有监听者时以端口为准）→
+    desired 代次到达性推断（wheel 比对 release_version、source 比对
+    git_head；推断显式标注 inferred，并列原始证据）。
+    """
+    live: dict[str, Any] = {"manifest_present": manifest_path.is_file()}
+    if live["manifest_present"]:
+        try:
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            pid = int(raw.get("pid") or 0)
+            live.update(
+                {
+                    "pid": pid or None,
+                    "pid_alive": _pid_alive(pid),
+                    "started_at": raw.get("started_at"),
+                    "git_head": raw.get("git_head"),
+                    "build": raw.get("build_identity") or {},
+                    # P1-1（审查 b7691f4e）：wheel 比对键的扁平镜像，
+                    # 与 _verify_restart_targets 同源于 _manifest_release_version。
+                    "release_version": _manifest_release_version(raw),
+                    "model_ref": raw.get("model_ref"),
+                    "provider_id": raw.get("provider_id"),
+                    "config_hash": raw.get("config_hash"),
+                    "semantic_scopes": raw.get("semantic_scopes") or {},
+                    "semantic_scope_sources": raw.get("semantic_scope_sources") or {},
+                }
+            )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            live["manifest_error"] = True
+    # 2026-09-24 13:08 端口兜底：manifest pid 死但端口有 llm_loop 监听者 →
+    # 以端口监听者为准（pid_source=port_listener），manifest 原值降级为
+    # manifest_pid 保留展示。只修 web（feishu/learning 无统一端口口径），
+    # 只在"manifest 声称的 pid 已死"时触发——活 pid 仍以 manifest 为准，
+    # 不引入常态双探针抖动。
+    if (
+        service == "web"
+        and live.get("pid")
+        and not live.get("pid_alive")
+        and not live.get("manifest_error")
+    ):
+        port_pid = _web_port_listener_pid()
+        if port_pid is not None:
+            live["manifest_pid"] = live.get("pid")
+            live["manifest_pid_alive"] = False
+            live["pid"] = port_pid
+            live["pid_alive"] = True
+            live["pid_source"] = "port_listener"
+    if deployment is not None and not live.get("manifest_error"):
+        # L8: live 代探测——runtime manifest 不携带 generation，只能用
+        # 身份键与 desired 的相等性**推断**"live 是否已达到期望代"。
+        # 这是推断而非身份事实：显式标注 inferred 并并列原始证据（pid/
+        # manifest/head/started_at），由模型自行判断，不以推断冒充身份。
+        # DESIGN-20261107 §3.2：wheel deployment 没有 git_head——比对键
+        # 是 manifest build_identity.release_version == desired.version；
+        # source checkout（v1/v2）仍比对精确 git_head。
+        if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
+            live_release = str(live.get("release_version") or "")
+            identity_matches = bool(live_release) and live_release == deployment.version
+            desired_evidence: dict[str, Any] = {
+                "artifact_kind": _ARTIFACT_KIND_WHEEL,
+                "desired_version": deployment.version,
+                "live_release_version": live_release,
+            }
+        else:
+            identity_matches = str(live.get("git_head") or "") == deployment.git_head
+            desired_evidence = {
+                "artifact_kind": _ARTIFACT_KIND_SOURCE,
+                "desired_git_head": deployment.git_head,
+            }
+        live["matches_desired_generation"] = bool(live.get("pid_alive")) and identity_matches
+        # design 2.2.2.6: live 代次只是推断事实，显式标注 inferred。
+        live["inferred"] = True
+        live["matches_desired_generation_inferred"] = True
+        live["matches_desired_generation_evidence"] = {
+            "pid": live.get("pid"),
+            "pid_alive": live.get("pid_alive"),
+            "git_head": live.get("git_head"),
+            "started_at": live.get("started_at"),
+            # 只暴露文件名，不落绝对私有路径到模型可读产物（spec 4.3-3）。
+            "manifest": manifest_path.name,
+            "manifest_present": bool(live.get("manifest_present")),
+            **desired_evidence,
+        }
+    return live
+
+
 def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[str, Any]:
     """Desired/live/stable identity view per managed service (read-only).
 
@@ -2432,84 +2525,7 @@ def compose_service_identity_view(store: ManagedServiceDeploymentStore) -> dict[
     services: dict[str, Any] = {}
     for service in _MANAGED_SERVICES:
         manifest_path = store.runtime_dir / f"runtime_manifest.{service}.json"
-        live: dict[str, Any] = {"manifest_present": manifest_path.is_file()}
-        if live["manifest_present"]:
-            try:
-                raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-                pid = int(raw.get("pid") or 0)
-                live.update(
-                    {
-                        "pid": pid or None,
-                        "pid_alive": _pid_alive(pid),
-                        "started_at": raw.get("started_at"),
-                        "git_head": raw.get("git_head"),
-                        "build": raw.get("build_identity") or {},
-                        # P1-1（审查 b7691f4e）：wheel 比对键的扁平镜像，
-                        # 与 _verify_restart_targets 同源于 _manifest_release_version。
-                        "release_version": _manifest_release_version(raw),
-                        "model_ref": raw.get("model_ref"),
-                        "provider_id": raw.get("provider_id"),
-                        "config_hash": raw.get("config_hash"),
-                        "semantic_scopes": raw.get("semantic_scopes") or {},
-                        "semantic_scope_sources": raw.get("semantic_scope_sources") or {},
-                    }
-                )
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                live["manifest_error"] = True
-        # 2026-09-24 13:08 端口兜底：manifest pid 死但端口有 llm_loop 监听者 →
-        # 以端口监听者为准（pid_source=port_listener），manifest 原值降级为
-        # manifest_pid 保留展示。只修 web（feishu/learning 无统一端口口径），
-        # 只在"manifest 声称的 pid 已死"时触发——活 pid 仍以 manifest 为准，
-        # 不引入常态双探针抖动。
-        if (
-            service == "web"
-            and live.get("pid")
-            and not live.get("pid_alive")
-            and not live.get("manifest_error")
-        ):
-            port_pid = _web_port_listener_pid()
-            if port_pid is not None:
-                live["manifest_pid"] = live.get("pid")
-                live["manifest_pid_alive"] = False
-                live["pid"] = port_pid
-                live["pid_alive"] = True
-                live["pid_source"] = "port_listener"
-        if deployment is not None and not live.get("manifest_error"):
-            # L8: live 代探测——runtime manifest 不携带 generation，只能用
-            # 身份键与 desired 的相等性**推断**"live 是否已达到期望代"。
-            # 这是推断而非身份事实：显式标注 inferred 并并列原始证据（pid/
-            # manifest/head/started_at），由模型自行判断，不以推断冒充身份。
-            # DESIGN-20261107 §3.2：wheel deployment 没有 git_head——比对键
-            # 是 manifest build_identity.release_version == desired.version；
-            # source checkout（v1/v2）仍比对精确 git_head。
-            if _deployment_kind(deployment) == _ARTIFACT_KIND_WHEEL:
-                live_release = str(live.get("release_version") or "")
-                identity_matches = bool(live_release) and live_release == deployment.version
-                desired_evidence: dict[str, Any] = {
-                    "artifact_kind": _ARTIFACT_KIND_WHEEL,
-                    "desired_version": deployment.version,
-                    "live_release_version": live_release,
-                }
-            else:
-                identity_matches = str(live.get("git_head") or "") == deployment.git_head
-                desired_evidence = {
-                    "artifact_kind": _ARTIFACT_KIND_SOURCE,
-                    "desired_git_head": deployment.git_head,
-                }
-            live["matches_desired_generation"] = bool(live.get("pid_alive")) and identity_matches
-            # design 2.2.2.6: live 代次只是推断事实，显式标注 inferred。
-            live["inferred"] = True
-            live["matches_desired_generation_inferred"] = True
-            live["matches_desired_generation_evidence"] = {
-                "pid": live.get("pid"),
-                "pid_alive": live.get("pid_alive"),
-                "git_head": live.get("git_head"),
-                "started_at": live.get("started_at"),
-                # 只暴露文件名，不落绝对私有路径到模型可读产物（spec 4.3-3）。
-                "manifest": manifest_path.name,
-                "manifest_present": bool(live.get("manifest_present")),
-                **desired_evidence,
-            }
+        live = _live_service_identity(service, manifest_path, deployment)
         stable = _receipt_stable_view(succeeded, service, deployment, live)
         # 最近一次**核验**（可能来自整单判 failed 的复合动作分支证据）。与 stable
         # 并列而不是替换：stable 是 durable 回执事实，verify 是动作证据事实。
@@ -4703,6 +4719,54 @@ def _wheel_release_webui_dist(release: Path) -> Path | None:
     return None
 
 
+def _wheel_webui_binding_problems(
+    deployment: ManagedServiceDeployment, release: Path
+) -> list[BindingProblem]:
+    """wheel release 的 WebUI 资产绑定核验段（自 ``_wheel_binding_problems`` 原样抽出）。
+
+    dist 树缺失/不可读 → WEBUI_ARTIFACT_UNAVAILABLE；树摘要与 desired
+    webui_artifact_sha256 不等 → WEBUI_ARTIFACT_MISMATCH。
+    """
+    problems: list[BindingProblem] = []
+    dist = _wheel_release_webui_dist(release)
+    if dist is None:
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
+                text="webui artifact unavailable: wheel release has no webui dist tree",
+                desired="",
+                actual="",
+            )
+        )
+        return problems
+    try:
+        artifact = _tree_sha256(dist)
+    except (OSError, ValueError):
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
+                text="webui artifact unavailable: dist tree unreadable or empty",
+                desired="",
+                actual="",
+            )
+        )
+        return problems
+    if artifact != deployment.webui_artifact_sha256:
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
+                text=(
+                    f"webui_artifact_mismatch desired="
+                    f"{deployment.webui_artifact_sha256[:12]} "
+                    f"actual={artifact[:12]}"
+                ),
+                desired=deployment.webui_artifact_sha256,
+                actual=artifact,
+            )
+        )
+    return problems
+
+
 def _wheel_binding_problems(
     deployment: ManagedServiceDeployment,
     *,
@@ -4789,42 +4853,44 @@ def _wheel_binding_problems(
                 )
             )
     if verify_webui:
-        dist = _wheel_release_webui_dist(release)
-        if dist is None:
-            problems.append(
-                BindingProblem(
-                    kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
-                    text="webui artifact unavailable: wheel release has no webui dist tree",
-                    desired="",
-                    actual="",
-                )
+        problems.extend(_wheel_webui_binding_problems(deployment, release))
+    return problems
+
+
+def _git_head_binding_problems(
+    code: Path, deployment: ManagedServiceDeployment
+) -> list[BindingProblem]:
+    """git HEAD 绑定核验段（自 ``_binding_problems_structured`` 原样抽出）。
+
+    判定与 git 子进程调用（次数/超时）保持不变：HEAD 不可得记
+    GIT_HEAD_UNAVAILABLE；可得但不等记 GIT_HEAD_MISMATCH。
+    """
+    problems: list[BindingProblem] = []
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(code), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.GIT_HEAD_UNAVAILABLE,
+                text=f"git_head unavailable: {type(exc).__name__}",
             )
-        else:
-            try:
-                artifact = _tree_sha256(dist)
-            except (OSError, ValueError):
-                problems.append(
-                    BindingProblem(
-                        kind=BindingProblemKind.WEBUI_ARTIFACT_UNAVAILABLE,
-                        text="webui artifact unavailable: dist tree unreadable or empty",
-                        desired="",
-                        actual="",
-                    )
-                )
-            else:
-                if artifact != deployment.webui_artifact_sha256:
-                    problems.append(
-                        BindingProblem(
-                            kind=BindingProblemKind.WEBUI_ARTIFACT_MISMATCH,
-                            text=(
-                                f"webui_artifact_mismatch desired="
-                                f"{deployment.webui_artifact_sha256[:12]} "
-                                f"actual={artifact[:12]}"
-                            ),
-                            desired=deployment.webui_artifact_sha256,
-                            actual=artifact,
-                        )
-                    )
+        )
+        head = ""
+    if head and head != deployment.git_head:
+        problems.append(
+            BindingProblem(
+                kind=BindingProblemKind.GIT_HEAD_MISMATCH,
+                text=f"git_head mismatch desired={deployment.git_head} actual={head}",
+                desired=deployment.git_head,
+                actual=head,
+            )
+        )
     return problems
 
 
@@ -4870,31 +4936,7 @@ def _binding_problems_structured(
                 actual=str(runtime),
             )
         )
-    try:
-        head = subprocess.run(
-            ["git", "-C", str(code), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError) as exc:
-        problems.append(
-            BindingProblem(
-                kind=BindingProblemKind.GIT_HEAD_UNAVAILABLE,
-                text=f"git_head unavailable: {type(exc).__name__}",
-            )
-        )
-        head = ""
-    if head and head != deployment.git_head:
-        problems.append(
-            BindingProblem(
-                kind=BindingProblemKind.GIT_HEAD_MISMATCH,
-                text=f"git_head mismatch desired={deployment.git_head} actual={head}",
-                desired=deployment.git_head,
-                actual=head,
-            )
-        )
+    problems.extend(_git_head_binding_problems(code, deployment))
     try:
         dirty = subprocess.run(
             ["git", "-C", str(code), "status", "--porcelain", "--untracked-files=no"],

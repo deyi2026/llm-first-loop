@@ -6,6 +6,7 @@ trusted-source attestation, an installed version, or approval for a cutover.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -339,6 +340,19 @@ def create_transaction(
         )
 
 
+def _invalidate_recovery_marker(home: Path) -> None:
+    """§4.4 / Stage 3-C：事务创建/推进使旧 recovery 判定失效。
+
+    必须在 ``_TX_LOCK`` 持锁路径内调用（与 journal 写入同临界区），保证
+    "存在未完成事务 ⇒ recovery-ok 不在或必然 stale" 的时序不变量；
+    lfl-recovery / lfl-service 侧的绑定核对（active_version + tx_fingerprint
+    + journal gate）将拒绝任何残留的 stale marker。
+    """
+    marker = home / "state" / "recovery-ok"
+    with contextlib.suppress(FileNotFoundError):
+        marker.unlink()
+
+
 def _create_transaction_locked(
     home: Path,
     *,
@@ -355,6 +369,10 @@ def _create_transaction_locked(
         raise TransactionError(
             f"transaction_already_active: {active[0]}"
         )
+    # §4.4：新事务创建前先删除旧 recovery-ok（设计原文"每次新事务推进前
+    # 先删除该标记"）。删除先于 tx 目录创建：并发窗口内 recovery 若运行，
+    # 会因孤儿/未完成事务 fail-closed，方向安全。
+    _invalidate_recovery_marker(home)
     tx_id = secrets.token_hex(12)
     tx_dir = root / tx_id
     tx_dir.mkdir(mode=0o700)
@@ -443,6 +461,10 @@ def _advance_transaction_locked(
         payload["failure_reason"] = failure_reason
     payload.update(extra_fields)
     _atomic_write_journal(tx_dir / "journal.json", payload)
+    # §4.4 / Stage 3-C：journal 状态推进后旧 recovery 判定立即失效。删除在
+    # 原子写入之后：并发 recovery 若在写后删前运行，读到的是新状态并按其
+    # fail-closed；删除本身与 journal 写入同临界区，无双写者竞态。
+    _invalidate_recovery_marker(home)
     return payload
 
 
