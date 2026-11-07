@@ -346,3 +346,333 @@ def test_cross_process_token_not_consumable(tmp_path, monkeypatch):
     other = esc.EscalationStore(tmp_path / "esc.json")
     result, reason = other.consume(token, "tool_x", "dangerous --cmd")
     assert result is None and ("其他进程" in reason or "无法验证" in reason)
+
+
+# ── HostCapabilityGrant（DESIGN-20261107 §6.2/§6.2.1/§6.3）──────────────────
+# 独立于 EscalationStore：宿主能力授权精确到 canonical path + 操作 + 工具 +
+# 会话；持久化单条一文件 + append-only 审计哈希链；fail-closed 安全校验。
+
+
+def _grant_store(tmp_path: Path) -> Path:
+
+    return tmp_path / "grants-home"
+
+
+def test_grant_issue_and_consume_one_shot(tmp_path: Path) -> None:
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "outside" / "notes.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("x", encoding="utf-8")
+    store = esc.HostCapabilityGrantStore(_grant_store(tmp_path))
+    grant = store.issue(
+        tool_name="read_file",
+        canonical_path=target,
+        operation="read",
+        requester_session_id="sess-1",
+        max_uses=1,
+        ttl_s=600,
+    )
+    assert grant["schema"] == "lfl.host-capability-grant/v1"
+    assert grant["status"] == "approved"
+    ok, reason = store.check(
+        grant["grant_id"], tool_name="read_file", canonical_path=target,
+        operation="read", requester_session_id="sess-1",
+    )
+    assert ok is True, reason
+    consumed = store.consume(grant["grant_id"], tool_name="read_file",
+                             canonical_path=target, operation="read",
+                             requester_session_id="sess-1")
+    assert consumed is not None
+    # one-shot：第二次消费 deny(consumed)。
+    again, reason = store.check(
+        grant["grant_id"], tool_name="read_file", canonical_path=target,
+        operation="read", requester_session_id="sess-1",
+    )
+    assert again is False and "consumed" in reason
+
+
+def test_grant_scope_mismatch_and_path_traversal(tmp_path: Path) -> None:
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "outside" / "notes.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("x", encoding="utf-8")
+    store = esc.HostCapabilityGrantStore(_grant_store(tmp_path))
+    grant = store.issue(
+        tool_name="read_file", canonical_path=target, operation="read",
+        requester_session_id="sess-1", max_uses=1, ttl_s=600,
+    )
+    gid = grant["grant_id"]
+    # 工具不匹配拒绝。
+    ok, reason = store.check(gid, tool_name="edit_file", canonical_path=target,
+                             operation="read", requester_session_id="sess-1")
+    assert ok is False and "scope" in reason
+    # 操作不匹配（read grant 不得写）。
+    ok, reason = store.check(gid, tool_name="read_file", canonical_path=target,
+                             operation="write", requester_session_id="sess-1")
+    assert ok is False and "scope" in reason
+    # 路径不匹配（授权外路径）。
+    ok, reason = store.check(gid, tool_name="read_file",
+                             canonical_path=tmp_path / "outside" / "other.txt",
+                             operation="read", requester_session_id="sess-1")
+    assert ok is False and "scope" in reason
+    # 会话不匹配拒绝。
+    ok, reason = store.check(gid, tool_name="read_file", canonical_path=target,
+                             operation="read", requester_session_id="sess-2")
+    assert ok is False and "scope" in reason
+    # 穿越路径（.. 形态）在 issue 阶段即拒绝。
+    with pytest.raises(esc.HostGrantError):
+        store.issue(tool_name="read_file",
+                    canonical_path=tmp_path / "a" / ".." / "b",
+                    operation="read", requester_session_id="s", max_uses=1, ttl_s=60)
+
+
+def test_grant_expires_and_revoke_is_immediate(tmp_path: Path) -> None:
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    store = esc.HostCapabilityGrantStore(_grant_store(tmp_path))
+    short = store.issue(tool_name="read_file", canonical_path=target,
+                        operation="read", requester_session_id="s1",
+                        max_uses=1, ttl_s=1)
+    import time as _t
+
+    _t.sleep(1.1)
+    ok, reason = store.check(short["grant_id"], tool_name="read_file",
+                             canonical_path=target, operation="read",
+                             requester_session_id="s1")
+    assert ok is False and "expired" in reason
+    other = store.issue(tool_name="read_file", canonical_path=target,
+                        operation="read", requester_session_id="s1",
+                        max_uses=1, ttl_s=600)
+    store.revoke(other["grant_id"], revoked_by="tester")
+    ok, reason = store.check(other["grant_id"], tool_name="read_file",
+                             canonical_path=target, operation="read",
+                             requester_session_id="s1")
+    assert ok is False and "revoked" in reason
+
+
+def test_grant_store_insecure_file_is_rejected_not_repaired(tmp_path: Path) -> None:
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    home = _grant_store(tmp_path)
+    store = esc.HostCapabilityGrantStore(home)
+    grant = store.issue(tool_name="read_file", canonical_path=target,
+                        operation="read", requester_session_id="s",
+                        max_uses=1, ttl_s=600)
+    gid = grant["grant_id"]
+    grant_file = home / "grants" / f"{gid}.json"
+    # 改成 0777 → grant_store_insecure（拒绝该 grant，不"顺手修权限"）。
+    grant_file.chmod(0o777)
+    ok, reason = store.check(gid, tool_name="read_file", canonical_path=target,
+                             operation="read", requester_session_id="s")
+    assert ok is False and "grant_store_insecure" in reason
+    grant_file.chmod(0o600)
+    # 换成 symlink → 同样拒绝。
+    link = home / "grants" / "link.json"
+    link.symlink_to(grant_file)
+    link_id = link.stem
+    with pytest.raises(esc.HostGrantError):
+        store.issue(tool_name="read_file", canonical_path=target,
+                    operation="read", requester_session_id="s",
+                    max_uses=1, ttl_s=600, grant_id=link_id)
+
+
+def test_grant_audit_chain_broken_stops_new_issues(tmp_path: Path) -> None:
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    home = _grant_store(tmp_path)
+    store = esc.HostCapabilityGrantStore(home)
+    store.issue(tool_name="read_file", canonical_path=target,
+                operation="read", requester_session_id="s",
+                max_uses=1, ttl_s=600)
+    store.issue(tool_name="read_file", canonical_path=target,
+                operation="read", requester_session_id="s",
+                max_uses=1, ttl_s=600)
+    audit = home / "grants" / "audit.jsonl"
+    lines = audit.read_text(encoding="utf-8").splitlines()
+    assert len(lines) >= 2
+    # 篡改第一行（历史被改写 → 第二行 prev_hash 无法对账 → 链断）。
+    first = __import__("json").loads(lines[0])
+    first["event"] = "tampered"
+    lines[0] = __import__("json").dumps(first, ensure_ascii=False)
+    audit.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(esc.HostGrantError) as exc:
+        store.issue(tool_name="read_file", canonical_path=target,
+                    operation="read", requester_session_id="s",
+                    max_uses=1, ttl_s=600)
+    assert "audit_chain_broken" in str(exc.value)
+
+
+def test_grant_concurrent_consume_single_winner(tmp_path: Path) -> None:
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    store = esc.HostCapabilityGrantStore(_grant_store(tmp_path))
+    grant = store.issue(tool_name="read_file", canonical_path=target,
+                        operation="read", requester_session_id="s",
+                        max_uses=1, ttl_s=600)
+    gid = grant["grant_id"]
+    from concurrent.futures import ThreadPoolExecutor
+
+    def attempt(_: int) -> bool:
+        s = esc.HostCapabilityGrantStore(_grant_store(tmp_path))
+        got = s.consume(gid, tool_name="read_file", canonical_path=target,
+                        operation="read", requester_session_id="s")
+        return got is not None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(attempt, range(2)))
+    assert results.count(True) == 1  # 仅一个成功，另一个 deny(consumed)
+
+
+def test_grant_survives_process_restart_and_rechecks_path(tmp_path: Path) -> None:
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    home = _grant_store(tmp_path)
+    first = esc.HostCapabilityGrantStore(home)
+    grant = first.issue(tool_name="read_file", canonical_path=target,
+                        operation="read", requester_session_id="s",
+                        max_uses=1, ttl_s=600)
+    # 新进程（新实例）：按磁盘重新加载并复核 canonical path。
+    second = esc.HostCapabilityGrantStore(home)
+    ok, reason = second.check(grant["grant_id"], tool_name="read_file",
+                              canonical_path=target, operation="read",
+                              requester_session_id="s")
+    assert ok is True, reason
+    # 授权目标被替换为 symlink 指向别处 → 拒绝（不跟随新链接逃逸）。
+    moved = tmp_path / "moved-elsewhere.txt"
+    moved.write_text("secret", encoding="utf-8")
+    target.unlink()
+    target.symlink_to(moved)
+    ok, reason = second.check(grant["grant_id"], tool_name="read_file",
+                              canonical_path=target, operation="read",
+                              requester_session_id="s")
+    assert ok is False and ("escaped" in reason or "symlink" in reason or "scope" in reason)
+
+
+# ── P1-2（审查 b7691f4e）：revoke 必须与 consume 同 flock+version-CAS 语义 ──
+
+
+def test_revoke_advances_version_so_stale_consume_cannot_win(tmp_path: Path) -> None:
+    """确定性时序：consume 已打开 grant fd 后 revoke 发生 → consume 必须失败。
+
+    时序注入点：store_a._open_private 以 O_RDWR 打开 grant 文件之后、flock 之前，
+    由 store_b（独立实例=独立进程锁域）执行 revoke。修复前 revoke 走
+    tmp+rename（换 inode、version 不变）：consume 在 stale fd 上 CAS 通过并
+    返回成功——被撤销的授权被"复活"消费。修复后 revoke 在同一 inode 上
+    flock 内递增 version：consume 的 CAS 必然失败，磁盘终态 revoked。
+    """
+    import json as _json
+
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    home = _grant_store(tmp_path)
+    store_a = esc.HostCapabilityGrantStore(home)
+    store_b = esc.HostCapabilityGrantStore(home)  # 另一"进程"
+    grant = store_a.issue(tool_name="read_file", canonical_path=target,
+                          operation="read", requester_session_id="s",
+                          max_uses=1, ttl_s=600)
+    gid = grant["grant_id"]
+    stale_version = int(grant["version"])
+
+    real_open = store_a._open_private
+    fired: list[str] = []
+
+    def hooked_open(path: Path, flags: int) -> int:
+        fd = real_open(path, flags)
+        if (
+            "race" not in fired
+            and path.name == f"{gid}.json"
+            and (flags & os.O_RDWR)
+        ):
+            fired.append("race")
+            # consume 持有 fd、尚未 flock 的窗口内完成 revoke。
+            store_b.revoke(gid, revoked_by="host")
+        return fd
+
+    store_a._open_private = hooked_open  # type: ignore[method-assign]
+    try:
+        result = store_a.consume(
+            gid, tool_name="read_file", canonical_path=target,
+            operation="read", requester_session_id="s",
+        )
+    finally:
+        store_a._open_private = real_open  # type: ignore[method-assign]
+
+    assert result is None, "stale consume must not succeed after revoke"
+    on_disk = _json.loads((home / "grants" / f"{gid}.json").read_text(encoding="utf-8"))
+    assert on_disk["status"] == "revoked"
+    assert int(on_disk["version"]) == stale_version + 1
+    # revoke 之后的 check 必须立即拒绝。
+    ok, reason = store_b.check(gid, tool_name="read_file", canonical_path=target,
+                               operation="read", requester_session_id="s")
+    assert ok is False and "revoked" in reason
+
+
+def test_revoke_is_idempotent_and_records_audit(tmp_path: Path) -> None:
+    import json as _json
+
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    home = _grant_store(tmp_path)
+    store = esc.HostCapabilityGrantStore(home)
+    grant = store.issue(tool_name="read_file", canonical_path=target,
+                        operation="read", requester_session_id="s",
+                        max_uses=1, ttl_s=600)
+    gid = grant["grant_id"]
+    store.revoke(gid, revoked_by="host")
+    # 幂等：二次 revoke 不抛（已 revoked 仍 revoked，version 只再推进一次）。
+    store.revoke(gid, revoked_by="host-again")
+    on_disk = _json.loads((home / "grants" / f"{gid}.json").read_text(encoding="utf-8"))
+    assert on_disk["status"] == "revoked"
+    audit = (home / "grants" / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    assert sum(1 for line in audit if _json.loads(line).get("event") == "revoke") == 2
+
+
+# ── P2-4（审查 b7691f4e）：symlink 子例必须到达 is_symlink() 生产分支 ──
+
+
+def test_issue_rejects_dangling_symlink_grant_id_reaching_symlink_branch(
+    tmp_path: Path,
+) -> None:
+    """dangling symlink（exists()=False）只有 is_symlink() 检查能拦。
+
+    用有效 24-hex grant id + 指向不存在目标的 symlink：ID regex 与
+    exists() 都放行，唯一拦截点是 issue 的 grant_path.is_symlink()。
+    删除该生产检查时 os.replace 会覆盖 symlink 落盘 → 本测试失败。
+    """
+    import llm_loop.tools.escalation as esc
+
+    target = tmp_path / "t.txt"
+    target.write_text("x", encoding="utf-8")
+    home = _grant_store(tmp_path)
+    store = esc.HostCapabilityGrantStore(home)
+    gid = "c" * 24  # 有效 24-hex，通过 _GRANT_ID_RE
+    grants_dir = home / "grants"
+    grants_dir.mkdir(parents=True, exist_ok=True)
+    grants_dir.chmod(0o700)  # 与 _ensure_layout 同标准，避免 mode 检查先触发
+    dangling = grants_dir / f"{gid}.json"
+    # macOS pathlib.symlink_to 对不存在目标会预检失败；os.symlink 原生支持 dangling。
+    os.symlink(str(grants_dir / "nonexistent-target.json"), str(dangling))
+    assert dangling.is_symlink() and not dangling.exists()  # 前置：确实 dangling
+    with pytest.raises(esc.HostGrantError) as excinfo:
+        store.issue(tool_name="read_file", canonical_path=target,
+                    operation="read", requester_session_id="s",
+                    max_uses=1, ttl_s=600, grant_id=gid)
+    assert "grant_store_insecure" in str(excinfo.value)
+    # symlink 本身未被覆盖/修复。
+    assert dangling.is_symlink()

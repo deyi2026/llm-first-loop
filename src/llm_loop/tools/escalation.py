@@ -26,12 +26,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import stat
 import threading
@@ -616,3 +618,428 @@ class EscalationStore:
 
         self._mutate(_fn)
         return (_public(result) if result is not None else None), reason
+
+
+# ── HostCapabilityGrant（DESIGN-20261107 §6.2/§6.2.1/§6.3）─────────────────
+# 独立于 EscalationStore 的宿主能力授权：精确绑定 canonical path + 操作 +
+# 工具 + 会话；磁盘持久化（单条一文件 + append-only 索引 + 审计哈希链）；
+# fail-closed 安全校验（O_NOFOLLOW / 属主 / 权限），不"顺手修复后放行"。
+# Host grant 不能突破父会话 write-scope（§6.3-9）；本模块只裁决 grant 本身。
+
+GRANT_SCHEMA = "lfl.host-capability-grant/v1"
+_GRANT_OPERATIONS = frozenset({"read", "write", "create", "delete"})
+_GRANT_AUDIT_EVENTS = frozenset(
+    {"issue", "consume", "deny", "expire", "revoke", "error"}
+)
+_GRANT_ID_RE = re.compile(r"[0-9a-f]{24}\Z")
+_GRANT_UNSAFE_PATH_CHARS = re.compile(r"[*?\[\]]")
+
+
+class HostGrantError(Exception):
+    """有界 reason（invalid_path / invalid_grant / grant_store_insecure /
+    audit_chain_broken / store_io_failed）。"""
+
+
+def _grant_line_hash(record: dict) -> str:
+    payload = {k: v for k, v in record.items() if k != "prev_hash"}
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                     separators=(",", ":")).encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
+class HostCapabilityGrantStore:
+    """``<home>/grants`` 布局的宿主能力授权 store（§6.2.1）。
+
+    - ``grants/<grant_id>.json`` 单条一文件（0600，原子写 + fsync + 目录 fsync）。
+    - ``grants/audit.jsonl`` append-only 审计，``prev_hash`` 串成哈希链；
+      链断 → ``audit_chain_broken``，停止签发新 grant。
+    - 消费（consume）用 flock + 写前重读 version（CAS），两进程并发消费同一
+      grant 只有一个成功，后到者 ``deny(consumed)``。
+    - 过期由读取方判定（check/consume 时比对 ``expires_at``），无清理定时器。
+    - 授权以磁盘为准：每次判定重读 grant 文件并复核 canonical path。
+    """
+
+    def __init__(self, home: str | Path) -> None:
+        self._home = Path(home).expanduser()
+        self._grants_dir = self._home / "grants"
+        self._audit_path = self._grants_dir / "audit.jsonl"
+        self._index_path = self._grants_dir / "index.jsonl"
+        self._proc_lock = threading.Lock()
+
+    # ── 布局与安全基线 ────────────────────────────────────────────────
+
+    def _ensure_layout(self) -> None:
+        if self._home.exists() and self._home.is_symlink():
+            raise HostGrantError("grant_store_insecure: home is a symlink")
+        self._grants_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        mode = stat.S_IMODE(self._grants_dir.stat().st_mode)
+        if mode & 0o077:
+            raise HostGrantError(
+                f"grant_store_insecure: grants dir mode {oct(mode)}"
+            )
+
+    def _open_private(self, path: Path, flags: int) -> int:
+        """O_NOFOLLOW 打开 + fstat 属主/权限复核；不满足即拒绝，不修复。"""
+        try:
+            fd = os.open(path, flags | os.O_NOFOLLOW, 0o600)
+        except OSError as exc:
+            raise HostGrantError(f"grant_store_insecure: cannot open {path.name}") from exc
+        try:
+            info = os.fstat(fd)
+            if info.st_uid != os.getuid():
+                raise HostGrantError(
+                    f"grant_store_insecure: owner mismatch on {path.name}"
+                )
+            if stat.S_ISLNK(info.st_mode) or not (
+                stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)
+            ):
+                raise HostGrantError(
+                    f"grant_store_insecure: non-regular file {path.name}"
+                )
+            if stat.S_IMODE(info.st_mode) & 0o077:
+                raise HostGrantError(
+                    f"grant_store_insecure: mode {oct(stat.S_IMODE(info.st_mode))} on {path.name}"
+                )
+        except HostGrantError:
+            os.close(fd)
+            raise
+        except OSError as exc:
+            os.close(fd)
+            raise HostGrantError("grant_store_insecure: fstat failed") from exc
+        return fd
+
+    def _audit_chain_intact(self) -> bool:
+        if not self._audit_path.exists():
+            return True
+        try:
+            fd = self._open_private(self._audit_path, os.O_RDONLY)
+        except HostGrantError:
+            return False
+        prev = ""
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                for line in stream:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        return False
+                    if record.get("prev_hash") != prev:
+                        return False
+                    prev = _grant_line_hash(record)
+            return True
+        except (OSError, ValueError):
+            return False
+
+    def _last_audit_prev(self) -> str:
+        if not self._audit_path.exists():
+            return ""
+        fd = self._open_private(self._audit_path, os.O_RDONLY)
+        prev = ""
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                for line in stream:
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    if record.get("prev_hash") != prev:
+                        return ""  # 链不完整：由 _audit_chain_intact 把关
+                    prev = _grant_line_hash(record)
+            return prev
+        except (OSError, ValueError):
+            return ""
+
+    def _append_audit(self, event: str, grant: dict, reason: str = "") -> None:
+        assert event in _GRANT_AUDIT_EVENTS
+        prev = self._last_audit_prev()
+        fd = self._open_private(
+            self._audit_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        )
+        try:
+            record = {
+                "grant_id": grant.get("grant_id", ""),
+                "event": event,
+                "tool": grant.get("tool_name", ""),
+                "canonical_path": grant.get("canonical_path", ""),
+                "operation": grant.get("operation", ""),
+                "session_id": grant.get("requester_session_id", ""),
+                "ts": _now(),
+                "reason": reason,
+            }
+            record["prev_hash"] = prev
+            line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+            os.write(fd, line.encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    def _append_audit_safe(self, event: str, grant: dict, reason: str = "") -> None:
+        with contextlib.suppress(HostGrantError):
+            self._append_audit(event, grant, reason)
+
+    def _append_index(self, grant: dict) -> None:
+        fd = self._open_private(
+            self._index_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        )
+        try:
+            digest = {
+                "grant_id": grant["grant_id"],
+                "tool_name": grant["tool_name"],
+                "operation": grant["operation"],
+                "canonical_path": grant["canonical_path"],
+                "expires_at": grant["expires_at"],
+                "ts": grant["issued_at"],
+            }
+            os.write(fd, (json.dumps(digest, ensure_ascii=False) + "\n").encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    # ── 校验辅助 ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _validate_canonical_path(raw: str | Path) -> str:
+        path = Path(str(raw))
+        if not str(raw).strip():
+            raise HostGrantError("invalid_path: empty")
+        if not path.is_absolute():
+            raise HostGrantError("invalid_path: must be absolute")
+        if ".." in path.parts:
+            raise HostGrantError("invalid_path: '..' segments refused")
+        if _GRANT_UNSAFE_PATH_CHARS.search(str(raw)):
+            raise HostGrantError("invalid_path: glob/wildcard refused")
+        return str(os.path.realpath(path))
+
+    def _read_grant(self, grant_id: str) -> dict:
+        if not _GRANT_ID_RE.fullmatch(grant_id or ""):
+            raise HostGrantError("invalid_grant: bad grant id")
+        path = self._grants_dir / f"{grant_id}.json"
+        if path.is_symlink() or not path.is_file():
+            raise HostGrantError(f"invalid_grant: {grant_id} missing")
+        fd = self._open_private(path, os.O_RDONLY)
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                data = json.loads(stream.read())
+        except (OSError, ValueError) as exc:
+            raise HostGrantError("invalid_grant: unreadable") from exc
+        if data.get("schema") != GRANT_SCHEMA:
+            raise HostGrantError("invalid_grant: schema mismatch")
+        return data
+
+    def _scope_decision(
+        self,
+        grant: dict,
+        *,
+        tool_name: str,
+        canonical_path: str | Path,
+        operation: str,
+        requester_session_id: str,
+    ) -> tuple[bool, str]:
+        try:
+            resolved = self._validate_canonical_path(canonical_path)
+        except HostGrantError as exc:
+            return False, f"grant_scope_mismatch: {exc}"
+        if grant.get("status") == "revoked":
+            return False, "grant_revoked"
+        if grant.get("status") == "consumed":
+            return False, "grant_consumed"
+        if grant.get("tool_name") != tool_name:
+            return False, "grant_scope_mismatch: tool"
+        if grant.get("operation") != operation:
+            return False, "grant_scope_mismatch: operation"
+        if grant.get("requester_session_id") != requester_session_id:
+            return False, "grant_scope_mismatch: session"
+        if grant.get("canonical_path") != resolved:
+            # 授权目标可能已被替换（symlink/改名/重定向）——一律按 scope
+            # 失配拒绝，不跟随新目标逃逸（§6.3-3/4）。
+            return False, "grant_scope_mismatch: canonical path escaped"
+        expires = _parse_ts(str(grant.get("expires_at") or ""))
+        if expires is None or expires <= system_local_now():
+            return False, "grant_expired"
+        return True, ""
+
+    # ── 公开 API ──────────────────────────────────────────────────────
+
+    def issue(
+        self,
+        *,
+        tool_name: str,
+        canonical_path: str | Path,
+        operation: str,
+        requester_session_id: str,
+        max_uses: int = 1,
+        ttl_s: int,
+        approver_identity: str = "authenticated-local-user",
+        grant_id: str | None = None,
+    ) -> dict:
+        if operation not in _GRANT_OPERATIONS:
+            raise HostGrantError("invalid_grant: unknown operation")
+        if max_uses < 1:
+            raise HostGrantError("invalid_grant: max_uses must be >= 1")
+        if ttl_s <= 0:
+            raise HostGrantError("invalid_grant: ttl must be positive")
+        resolved = self._validate_canonical_path(canonical_path)
+        with self._proc_lock:
+            self._ensure_layout()
+            if not self._audit_chain_intact():
+                raise HostGrantError(
+                    "audit_chain_broken: refusing to issue new grants"
+                )
+            gid = grant_id or secrets.token_hex(12)
+            if not _GRANT_ID_RE.fullmatch(gid):
+                raise HostGrantError("invalid_grant: bad grant id")
+            grant_path = self._grants_dir / f"{gid}.json"
+            if grant_path.is_symlink() or grant_path.exists():
+                raise HostGrantError(
+                    "grant_store_insecure: grant file exists or is a symlink"
+                )
+            now = system_local_now()
+            grant = {
+                "schema": GRANT_SCHEMA,
+                "grant_id": gid,
+                "requester_session_id": requester_session_id,
+                "agent_id": "",
+                "tool_name": tool_name,
+                "resource_type": "filesystem",
+                "canonical_path": resolved,
+                "operation": operation,
+                "recursive": False,
+                "max_uses": max_uses,
+                "uses": 0,
+                "version": 1,
+                "expires_at": (now + timedelta(seconds=ttl_s)).isoformat(),
+                "policy_hash": "",
+                "approver_identity": approver_identity,
+                "status": "approved",
+                "issued_at": now.isoformat(),
+            }
+            self._write_grant_atomic(grant_path, grant)
+            self._append_audit("issue", grant)
+            self._append_index(grant)
+            return dict(grant)
+
+    def _write_grant_atomic(self, path: Path, grant: dict) -> None:
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(grant, ensure_ascii=False, sort_keys=True))
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise HostGrantError("store_io_failed") from exc
+        os.replace(tmp, path)
+        dir_fd = os.open(self._grants_dir, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    def check(
+        self,
+        grant_id: str,
+        *,
+        tool_name: str,
+        canonical_path: str | Path,
+        operation: str,
+        requester_session_id: str,
+    ) -> tuple[bool, str]:
+        """只读判定（不消费）。grant 文件安全态不满足即 grant_store_insecure。"""
+        try:
+            grant = self._read_grant(grant_id)
+        except HostGrantError as exc:
+            if "grant_store_insecure" in str(exc):
+                return False, str(exc)
+            raise
+        ok, reason = self._scope_decision(
+            grant, tool_name=tool_name, canonical_path=canonical_path,
+            operation=operation, requester_session_id=requester_session_id,
+        )
+        if not ok and "expired" in reason:
+            # 审查 P2-4：审计追加必须与消费侧同锁，防止并发 append 交错破坏
+            # 哈希链（链断会停签发——伤及无关 issuance）。
+            with self._proc_lock:
+                self._append_audit_safe("expire", grant, reason)
+        return ok, reason
+
+    def consume(
+        self,
+        grant_id: str,
+        *,
+        tool_name: str,
+        canonical_path: str | Path,
+        operation: str,
+        requester_session_id: str,
+    ) -> dict | None:
+        """消费一次使用额度（flock + version CAS）；并发只允许一个赢家。"""
+        with self._proc_lock:
+            self._ensure_layout()
+            grant = self._read_grant(grant_id)
+            ok, reason = self._scope_decision(
+                grant, tool_name=tool_name, canonical_path=canonical_path,
+                operation=operation, requester_session_id=requester_session_id,
+            )
+            if not ok:
+                event = "deny" if "consumed" in reason else "error"
+                self._append_audit_safe(event, grant, reason)
+                return None
+            path = self._grants_dir / f"{grant_id}.json"
+            fd = self._open_private(path, os.O_RDWR)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                with os.fdopen(os.dup(fd), "r", encoding="utf-8") as back:
+                    fresh = json.loads(back.read())
+                if fresh.get("version") != grant["version"]:
+                    # CAS 失败：另一消费者已推进版本 → 本方落败。
+                    self._append_audit_safe("deny", fresh, "consumed")
+                    return None
+                fresh["uses"] = int(fresh.get("uses", 0)) + 1
+                fresh["version"] = int(fresh["version"]) + 1
+                if fresh["uses"] >= int(fresh["max_uses"]):
+                    fresh["status"] = "consumed"
+                # 同一 flock fd 原地重写：先截断，防止旧内容残留（JSON "Extra data"）。
+                os.ftruncate(fd, 0)
+                os.lseek(fd, 0, os.SEEK_SET)
+                with os.fdopen(os.dup(fd), "w", encoding="utf-8") as writer:
+                    writer.write(
+                        json.dumps(fresh, ensure_ascii=False, sort_keys=True)
+                    )
+                    writer.flush()
+                    os.fsync(writer.fileno())
+                self._append_audit_safe("consume", fresh)
+                return dict(fresh)
+            finally:
+                os.close(fd)
+
+    def revoke(self, grant_id: str, *, revoked_by: str) -> None:
+        """撤销授权；与 consume 同一 flock+version 语义（审查 b7691f4e P1-2）。
+
+        在 grant 文件**同一 inode** 上 flock → 重读 fresh → 置 revoked 并递增
+        version → 原地重写。任何在 revoke 之前完成首读的并发 consume，其
+        version CAS 必然失败（version 已被推进），不会在 stale fd 上"复活"
+        已撤销授权；也不再经 tmp+rename 换 inode 绕开锁域。
+        """
+        with self._proc_lock:
+            self._ensure_layout()
+            self._read_grant(grant_id)  # 安全校验（schema/属主/权限），写入以锁内 fresh 为准
+            path = self._grants_dir / f"{grant_id}.json"
+            fd = self._open_private(path, os.O_RDWR)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                with os.fdopen(os.dup(fd), "r", encoding="utf-8") as back:
+                    fresh = json.loads(back.read())
+                fresh["status"] = "revoked"
+                fresh["version"] = int(fresh.get("version", 0)) + 1
+                os.ftruncate(fd, 0)
+                os.lseek(fd, 0, os.SEEK_SET)
+                with os.fdopen(os.dup(fd), "w", encoding="utf-8") as writer:
+                    writer.write(
+                        json.dumps(fresh, ensure_ascii=False, sort_keys=True)
+                    )
+                    writer.flush()
+                    os.fsync(writer.fileno())
+                self._append_audit("revoke", fresh, revoked_by)
+            finally:
+                os.close(fd)

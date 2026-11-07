@@ -1,0 +1,13 @@
+[Unit]
+Description=LFL boot recovery gate
+Before=lfl.service lfl-feishu.service lfl-learning.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Restart=no
+TimeoutStartSec=120
+ExecStart=%h/.local/share/lfl/bin/lfl-recovery
+
+[Install]
+WantedBy=default.target

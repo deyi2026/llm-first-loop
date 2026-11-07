@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from llm_loop.runtime.service_control import (
     ServiceControlAction,
     build_deployment,
     build_restart_plan,
+    build_wheel_deployment,
+    deployment_identity_key,
     verify_deployment_binding,
 )
 from llm_loop.tools.builtin.service_control import ServiceControlTool
@@ -830,4 +833,360 @@ def test_restart_receipt_text_also_discloses_provenance(tmp_path: Path) -> None:
     assert result.status == ToolResultStatus.SUCCESS
     assert spawned, "受理后必须真的派发 worker"
     assert "本回执由本次部署之前的进程生成" in result.content
+
+
+# ── DESIGN-20261107 §3.2（v0.2）：deployment schema v2 双部署身份 ──────────
+# wheel_release 身份：version + wheel_sha256 + release_dir + package manifest，
+# 绝不伪造 git_head；source checkout 语义与 v1 完全一致（保留原逻辑）。
+
+
+def _wheel_release_layout(tmp_path: Path, version: str = "0.6.40", name: str = "lfl-home") -> Path:
+    """构造最小可核验的 LFL_HOME wheel release 布局（安装器产物形态）。"""
+    import hashlib as _hl
+
+    lfl_home = (tmp_path / name).resolve()
+    release = lfl_home / "releases" / f"LFL-{version}"
+    release.mkdir(parents=True, exist_ok=True)
+    wheel_name = f"llm_first_loop-{version}-py3-none-any.whl"
+    payload = b"fake-wheel-bytes-for-layout"
+    (release / wheel_name).write_bytes(payload)
+    digest = _hl.sha256(payload).hexdigest()
+    (release / ".installer-wheel.sha256").write_text(
+        f"{digest}  {wheel_name}\n", encoding="ascii"
+    )
+    (lfl_home / ".LFL-active-version").write_text(version + "\n", encoding="ascii")
+    return lfl_home
+
+
+def test_deployment_v2_wheel_release_identity_roundtrip(tmp_path: Path) -> None:
+    lfl_home = _wheel_release_layout(tmp_path)
+    dep = build_wheel_deployment(
+        lfl_home,
+        data_dir=lfl_home / "data",
+        webui_artifact_sha256="c" * 64,
+        generation=3,
+    )
+    assert dep.schema == "lfl.managed-service-deployment/v2"
+    assert dep.artifact_kind == "wheel_release"
+    assert dep.version == "0.6.40"
+    assert dep.wheel_sha256 and len(dep.wheel_sha256) == 64
+    assert dep.release_dir == str(lfl_home / "releases" / "LFL-0.6.40")
+    assert dep.runtime_root == str(lfl_home)
+    assert dep.data_dir == str(lfl_home / "data")
+    # git_head 不参与 wheel 身份（空），且不伪造。
+    assert dep.git_head == ""
+    # v2 是 closed schema：roundtrip 稳定、unknown 字段拒绝。
+    raw = dep.to_dict()
+    assert ManagedServiceDeployment.from_dict(raw) == dep
+    with pytest.raises(ValueError):
+        ManagedServiceDeployment.from_dict({**raw, "git_head": "a" * 40})
+    with pytest.raises(ValueError):
+        ManagedServiceDeployment.from_dict({**raw, "extra": "x"})
+
+
+def test_deployment_v2_wheel_release_rejects_incomplete_identity(
+    tmp_path: Path,
+) -> None:
+    lfl_home = _wheel_release_layout(tmp_path)
+    dep = build_wheel_deployment(
+        lfl_home,
+        data_dir=lfl_home / "data",
+        webui_artifact_sha256="c" * 64,
+        generation=1,
+    )
+    raw = dep.to_dict()
+    for missing in ("version", "wheel_sha256", "release_dir", "artifact_kind", "data_dir"):
+        stripped = {k: v for k, v in raw.items() if k != missing}
+        with pytest.raises(ValueError):
+            ManagedServiceDeployment.from_dict(stripped)
+    bad_sha = {**raw, "wheel_sha256": "not-hex"}
+    with pytest.raises(ValueError):
+        ManagedServiceDeployment.from_dict(bad_sha)
+    bad_release = {**raw, "release_dir": "relative/path"}
+    with pytest.raises(ValueError):
+        ManagedServiceDeployment.from_dict(bad_release)
+    bad_version = {**raw, "version": "0.6"}
+    with pytest.raises(ValueError):
+        ManagedServiceDeployment.from_dict(bad_version)
+    with_code_root = {**raw, "code_root": "/somewhere"}
+    with pytest.raises(ValueError):
+        ManagedServiceDeployment.from_dict(with_code_root)
+
+
+def test_deployment_v2_source_checkout_keeps_v1_semantics_plus_data_dir(
+    tmp_path: Path,
+) -> None:
+    dep = _deployment(tmp_path, generation=2)
+    assert dep.schema == "managed-service-deployment/v1"
+    assert dep.artifact_kind == "source_checkout"  # v1 读入默认 source 身份
+    # v1 序列化保持逐字节兼容（磁盘既有状态零回归）。
+    assert set(dep.to_dict()) == {
+        "schema", "deployment_id", "generation", "git_head",
+        "code_root", "runtime_root", "webui_artifact_sha256",
+    }
+    # v2 source：v1 字段 + artifact_kind + data_dir；git_head 仍强制 40hex。
+    v2 = ManagedServiceDeployment.from_dict(
+        {
+            **dep.to_dict(),
+            "schema": "lfl.managed-service-deployment/v2",
+            "artifact_kind": "source_checkout",
+            "data_dir": str(tmp_path / "data"),
+        }
+    )
+    assert v2.artifact_kind == "source_checkout"
+    assert v2.data_dir == str(tmp_path / "data")
+    assert v2.git_head == dep.git_head
+    with pytest.raises(ValueError):
+        ManagedServiceDeployment.from_dict(
+            {
+                **dep.to_dict(),
+                "schema": "lfl.managed-service-deployment/v2",
+                "artifact_kind": "source_checkout",
+                "data_dir": str(tmp_path / "data"),
+                "git_head": "zz",
+            }
+        )
+
+
+def test_build_wheel_deployment_reads_real_lfl_home_identity(tmp_path: Path) -> None:
+    lfl_home = _wheel_release_layout(tmp_path)
+    dep = build_wheel_deployment(
+        lfl_home, data_dir=lfl_home / "data", webui_artifact_sha256="c" * 64, generation=1
+    )
+    # wheel_sha256 等于清单记录且文件实际摘要一致。
+    import hashlib as _hl
+
+    wheel = lfl_home / "releases/LFL-0.6.40/llm_first_loop-0.6.40-py3-none-any.whl"
+    assert dep.wheel_sha256 == _hl.sha256(wheel.read_bytes()).hexdigest()
+
+
+def test_build_wheel_deployment_fails_closed_on_broken_layout(tmp_path: Path) -> None:
+    # 指针损坏 → 拒绝，不猜版本。
+    lfl_home = _wheel_release_layout(tmp_path, name="bad-pointer")
+    (lfl_home / ".LFL-active-version").write_text("garbage\n", encoding="ascii")
+    with pytest.raises(ValueError):
+        build_wheel_deployment(
+            lfl_home, data_dir=lfl_home / "data", webui_artifact_sha256="c" * 64, generation=1
+        )
+    # 清单摘要与实际字节不符 → 拒绝（完整性失败）。
+    lfl_home2 = _wheel_release_layout(tmp_path, name="tampered-wheel")
+    wheel = lfl_home2 / "releases/LFL-0.6.40/llm_first_loop-0.6.40-py3-none-any.whl"
+    wheel.write_bytes(b"tampered-bytes")
+    with pytest.raises(ValueError):
+        build_wheel_deployment(
+            lfl_home2, data_dir=lfl_home2 / "data", webui_artifact_sha256="c" * 64, generation=1
+        )
+    # release 目录缺失（指针指向不存在版本）→ 拒绝。
+    lfl_home3 = _wheel_release_layout(tmp_path, name="missing-release")
+    (lfl_home3 / ".LFL-active-version").write_text("9.9.9\n", encoding="ascii")
+    with pytest.raises(ValueError):
+        build_wheel_deployment(
+            lfl_home3, data_dir=lfl_home3 / "data", webui_artifact_sha256="c" * 64, generation=1
+        )
+
+
+def test_deployment_identity_key_separates_source_and_wheel(tmp_path: Path) -> None:
+    lfl_home = _wheel_release_layout(tmp_path)
+    wheel_dep = build_wheel_deployment(
+        lfl_home, data_dir=lfl_home / "data", webui_artifact_sha256="c" * 64, generation=1
+    )
+    source_dep = _deployment(tmp_path)
+    assert deployment_identity_key(source_dep) == "a" * 40
+    key = deployment_identity_key(wheel_dep)
+    assert key.startswith("wheel:0.6.40@")
+    assert wheel_dep.wheel_sha256[:12] in key
+    # source 与 wheel 的身份键永不碰撞为同一形态。
+    assert deployment_identity_key(source_dep) != key
+
+
+def _wheel_binding_layout(tmp_path: Path, name: str) -> tuple[Path, str]:
+    """构造带 site-packages WebUI dist 树的 wheel 布局，返回 (lfl_home, webui_sha)。"""
+    from llm_loop.runtime.service_control import _tree_sha256
+
+    lfl_home = _wheel_release_layout(tmp_path, name=name)
+    dist = (
+        lfl_home
+        / "releases/LFL-0.6.40/venv/lib/python3.13/site-packages/llm_loop/webui/dist"
+    )
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html>ok</html>", encoding="utf-8")
+    return lfl_home, _tree_sha256(dist)
+
+
+def test_verify_deployment_binding_accepts_intact_wheel_release(tmp_path: Path) -> None:
+    lfl_home, webui_sha = _wheel_binding_layout(tmp_path, "binding-ok")
+    dep = build_wheel_deployment(
+        lfl_home, data_dir=lfl_home / "data", webui_artifact_sha256=webui_sha, generation=1
+    )
+    problems = verify_deployment_binding(
+        dep, code_root=lfl_home, runtime_root=lfl_home
+    )
+    assert problems == []
+
+
+def test_verify_deployment_binding_reports_wheel_failures_precisely(
+    tmp_path: Path,
+) -> None:
+    lfl_home, webui_sha = _wheel_binding_layout(tmp_path, "binding-bad")
+    dep = build_wheel_deployment(
+        lfl_home, data_dir=lfl_home / "data", webui_artifact_sha256=webui_sha, generation=1
+    )
+    # wheel 字节被替换 → 完整性失配（不静默通过）。
+    wheel = lfl_home / "releases/LFL-0.6.40/llm_first_loop-0.6.40-py3-none-any.whl"
+    original = wheel.read_bytes()
+    wheel.write_bytes(original + b"x")
+    problems = verify_deployment_binding(
+        dep, code_root=lfl_home, runtime_root=lfl_home
+    )
+    assert any("wheel_sha256_mismatch" in p for p in problems)
+    wheel.write_bytes(original)
+    # 活动指针漂移 → 指针失配。
+    (lfl_home / ".LFL-active-version").write_text("0.0.1\n", encoding="ascii")
+    problems = verify_deployment_binding(
+        dep, code_root=lfl_home, runtime_root=lfl_home
+    )
+    assert any("active_pointer_mismatch" in p for p in problems)
+    (lfl_home / ".LFL-active-version").write_text("0.6.40\n", encoding="ascii")
+    # WebUI 资产树失配 → 资产失配（wheel 布局同样不豁免 WebUI 绑定）。
+    dist_index = (
+        lfl_home
+        / "releases/LFL-0.6.40/venv/lib/python3.13/site-packages/llm_loop/webui/dist/index.html"
+    )
+    dist_index.write_text("<html>tampered</html>", encoding="utf-8")
+    problems = verify_deployment_binding(
+        dep, code_root=lfl_home, runtime_root=lfl_home
+    )
+    assert any("webui_artifact_mismatch" in p for p in problems)
+
+
+def test_store_roundtrips_wheel_deployment_with_generation_cas(tmp_path: Path) -> None:
+    """publish/update 通路对 v2 wheel deployment 零差别开放（CAS 语义不变）。"""
+    lfl_home = _wheel_release_layout(tmp_path, name="store-roundtrip")
+    dep = build_wheel_deployment(
+        lfl_home, data_dir=lfl_home / "data", webui_artifact_sha256="c" * 64, generation=1
+    )
+    store = ManagedServiceDeploymentStore(tmp_path / "data")
+    store.compare_and_swap(dep, expected_generation=0)
+    assert store.read() == dep
+    # 期望代不匹配依旧拒绝（generation CAS 语义对 wheel 一致）。
+    with pytest.raises(DeploymentGenerationConflictError):
+        store.compare_and_swap(
+            dataclasses.replace(dep, generation=2, deployment_id=dep.deployment_id),
+            expected_generation=5,
+        )
+
+
+# ── P1-1（审查 b7691f4e）：两个 wheel 比较分支的 live release_version 语义 ──
+# 审查定性纠正：live["build"] 在 base 即映射自 manifest build_identity（base
+# L2223），两个分支功能上同源；真实缺陷是零测试+隐式跨行耦合。以下测试锁定
+# 统一语义（manifest build_identity.release_version == desired.version），并
+# 支撑单一 helper 重构后保持绿。
+
+
+def _write_wheel_live_manifest(
+    data_dir: Path, service: str, pid: int, release_version: str | None
+) -> None:
+    runtime = data_dir / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    payload: dict = {
+        "service": service,
+        "pid": pid,
+        "started_at": "2026-11-07T10:00:00+00:00",
+        "workspace_root": "/lfl-home",
+        "identity_ok": True,
+    }
+    if release_version is not None:
+        payload["build_identity"] = {"release_version": release_version}
+    (runtime / f"runtime_manifest.{service}.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
+def _wheel_store_with_desired(tmp_path: Path, name: str = "p1-1"):
+    lfl_home = _wheel_release_layout(tmp_path, name=name)
+    dep = build_wheel_deployment(
+        lfl_home, data_dir=lfl_home / "data", webui_artifact_sha256="c" * 64, generation=1
+    )
+    store = ManagedServiceDeploymentStore(lfl_home / "data")
+    store.compare_and_swap(dep, expected_generation=0)
+    return store, dep
+
+
+def test_compose_identity_view_wheel_branch_uses_manifest_release_version(
+    tmp_path: Path,
+) -> None:
+    """compose wheel 分支：live 版本取 manifest build_identity.release_version。"""
+    import os
+
+    from llm_loop.runtime.service_control import compose_service_identity_view
+
+    store, dep = _wheel_store_with_desired(tmp_path)
+    live_pid = os.getpid()  # pytest 进程自身，保证 pid_alive
+    _write_wheel_live_manifest(tmp_path / "p1-1" / "data", "web", live_pid, "0.6.40")
+    view = compose_service_identity_view(store)
+    web = view["services"]["web"]
+    assert web["live"]["matches_desired_generation"] is True
+    evidence = web["live"]["matches_desired_generation_evidence"]
+    assert evidence["artifact_kind"] == "wheel_release"
+    assert evidence["desired_version"] == dep.version == "0.6.40"
+    assert evidence["live_release_version"] == "0.6.40"
+    assert web["restart_required"] is False
+
+
+def test_compose_identity_view_wheel_branch_missing_and_mismatch_release(
+    tmp_path: Path,
+) -> None:
+    """缺 build_identity → live_release_version_missing；不等 → mismatch。"""
+    from llm_loop.runtime.service_control import compose_service_identity_view
+
+    store, _ = _wheel_store_with_desired(tmp_path)
+    data_dir = tmp_path / "p1-1" / "data"
+    # manifest 存在但无 build_identity（source 风格 manifest 落在 wheel 部署下）。
+    _write_wheel_live_manifest(data_dir, "feishu", 4_194_303, None)
+    view = compose_service_identity_view(store)
+    feishu = view["services"]["feishu"]
+    assert any("live_release_version_missing" in r for r in feishu["reasons"])
+    # 有 build_identity 但版本不等于 desired。
+    _write_wheel_live_manifest(data_dir, "feishu", 4_194_303, "0.6.39")
+    view = compose_service_identity_view(store)
+    feishu = view["services"]["feishu"]
+    assert any(
+        "live_release_version_mismatch" in r and "0.6.39" in r and "0.6.40" in r
+        for r in feishu["reasons"]
+    )
+
+
+def test_verify_restart_targets_wheel_branch_compares_release_version(
+    tmp_path: Path,
+) -> None:
+    """_verify_restart_targets wheel 分支：与 compose 同源比对 release_version。"""
+    import os
+
+    from llm_loop.runtime.service_control import _verify_restart_targets
+
+    store, dep = _wheel_store_with_desired(tmp_path, name="p1-1-verify")
+    data_dir = tmp_path / "p1-1-verify" / "data"
+    live_pid = os.getpid()
+    restarted_at = "2026-11-07T09:00:00+00:00"
+    # 版本一致 → confirmed_ok。
+    _write_wheel_live_manifest(data_dir, "web", live_pid, "0.6.40")
+    verdict, summary, healthy = _verify_restart_targets(
+        store, dep, ["web"], restarted_at
+    )
+    assert verdict == "confirmed_ok"
+    assert "web" in healthy
+    # 缺 build_identity → 明确失败证据（release_version_missing）。
+    _write_wheel_live_manifest(data_dir, "web", live_pid, None)
+    verdict, summary, healthy = _verify_restart_targets(
+        store, dep, ["web"], restarted_at
+    )
+    assert verdict == "confirmed_fail"
+    assert "release_version_missing" in summary
+    # 版本不等于 desired → release_version_mismatch。
+    _write_wheel_live_manifest(data_dir, "web", live_pid, "0.6.39")
+    verdict, summary, healthy = _verify_restart_targets(
+        store, dep, ["web"], restarted_at
+    )
+    assert verdict == "confirmed_fail"
+    assert "release_version_mismatch" in summary and "0.6.39" in summary
 

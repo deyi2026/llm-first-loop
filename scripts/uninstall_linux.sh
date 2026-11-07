@@ -22,6 +22,35 @@ EOF
 }
 
 die() { printf 'LFL uninstaller: %s\n' "$*" >&2; exit 1; }
+
+remove_system_units() {
+  # DESIGN-20261107 §4.1/§4.4：只清理本安装根自己的 user units 与启动器；
+  # ExecStart 归属不匹配的单元一律保留，绝不触碰无关服务。
+  # 默认根安装的 unit 用 %h 宏（安装器 Python 侧 render_unit_text 规则），
+  # 自定义根用绝对路径——按本安装根解析出正确 marker 再匹配（审查 P1 修复）。
+  local path marker
+  command -v systemctl >/dev/null 2>&1 || return 0
+  marker="ExecStart=$ROOT/bin/lfl-"
+  if [[ "$ROOT" == "$HOME/.local/share/lfl" ]]; then
+    marker="ExecStart=%h/.local/share/lfl/bin/lfl-"
+  fi
+  for path in \
+    "$HOME/.config/systemd/user/lfl.service" \
+    "$HOME/.config/systemd/user/lfl-feishu.service" \
+    "$HOME/.config/systemd/user/lfl-learning.service" \
+    "$HOME/.config/systemd/user/lfl-recovery.service"; do
+    [[ -f "$path" && ! -L "$path" ]] || continue
+    if grep -Fq "$marker" "$path" 2>/dev/null; then
+      systemctl --user disable --now "$(basename -- "$path")" >/dev/null 2>&1 || true
+      rm -f -- "$path"
+    else
+      printf 'LFL uninstaller: keeping %s (ExecStart does not match this install root)\n' "$path"
+    fi
+  done
+  rm -f -- "$ROOT/bin/lfl-service" "$ROOT/bin/lfl-recovery"
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+}
+
 YES="0"
 while (($#)); do
   case "$1" in
@@ -87,6 +116,9 @@ while IFS= read -r line; do
       ;;
   esac
 done <<< "$process_list"
+
+# 进程确认已停后清理本安装根的 systemd user units 与启动器（§4.1/§4.4）。
+remove_system_units
 
 python3 - "$ROOT" "$LAUNCHER" "$LEGACY_LAUNCHER" <<'PY'
 import os, re, shutil, sys
