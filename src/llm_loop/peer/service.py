@@ -30,7 +30,7 @@ from .artifacts import ArtifactStore
 from .errors import PeerError
 from .executor import ExecOutcome, Executor
 from .kinds import get_kind, manifest_kinds
-from .models import AdmissionRecord, GrantRecord, TaskRecord, iso, utcnow
+from .models import AdmissionRecord, GrantRecord, TaskRecord, iso, now_local
 from .policy import evaluate
 from .suggestions import REASON_SUGGESTIONS
 
@@ -73,7 +73,7 @@ class PeerService:
         max_concurrency: int = 1,
         audit_watermark_pct: int = 90,
         enabled_kinds: set[str] | None = None,
-        clock: Any = utcnow,
+        clock: Any = now_local,
     ) -> None:
         self._store = store
         self._admissions = admissions

@@ -37,7 +37,7 @@ from llm_loop.peer.client import (
     origin_of,
 )
 from llm_loop.peer.errors import PeerError
-from llm_loop.peer.models import GrantRecord, NodeRecord, iso, utcnow
+from llm_loop.peer.models import GrantRecord, NodeRecord, iso, now_local
 from llm_loop.peer.pair import secret_key_from_store
 from llm_loop.peer.service import PeerService
 from llm_loop.peer.store import PeerStore
@@ -56,8 +56,8 @@ def _grant(allowed: str) -> GrantRecord:
         grant_id="gr_CLIENTTEST01",
         node_id=PEER_NODE,
         issued_by={"ingress": "feishu", "human": "lfl"},
-        issued_at=iso(utcnow()),
-        expires_at=iso(utcnow() + timedelta(hours=1)),
+        issued_at=iso(now_local()),
+        expires_at=iso(now_local() + timedelta(hours=1)),
         state="active",
         allowed_kinds=KINDS,
         allowed_paths=(allowed,),
@@ -114,7 +114,7 @@ def world(tmp_path, monkeypatch):
             base_url="https://testserver",
             display_protocol="none",
             state="paired",
-            paired_at=iso(utcnow()),
+            paired_at=iso(now_local()),
         )
     )
     client_store.write_secret(PEER_NODE, SECRET.hex())

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from llm_loop.peer.errors import PeerError
-from llm_loop.peer.models import utcnow
+from llm_loop.peer.models import now_local
 from llm_loop.peer.pair import (
     CONFIRM_PHRASE,
     Identity,
@@ -116,10 +116,10 @@ def test_offer_with_substituted_public_key_rejected():
 
 def test_expired_offer_rejected():
     ident = _identity()
-    issued = utcnow() - timedelta(seconds=400)
+    issued = now_local() - timedelta(seconds=400)
     offer = build_offer(node_id="deepin-01", public_key_b64=ident.public_key_b64, now=issued)
     with pytest.raises(PeerError) as err:
-        verify_offer(offer, now=utcnow())
+        verify_offer(offer, now=now_local())
     assert err.value.reason_code == "pair_nonce_expired"
 
 
@@ -150,7 +150,7 @@ def test_confirm_happy_path_returns_secret_bytes():
         nonce=offer["nonce"],
         link_secret_b64=secret_b64,
     )
-    assert verify_confirm(confirm, offer=offer, now=utcnow()) == raw
+    assert verify_confirm(confirm, offer=offer, now=now_local()) == raw
 
 
 def test_confirm_nonce_mismatch_rejected():
@@ -164,7 +164,7 @@ def test_confirm_nonce_mismatch_rejected():
         link_secret_b64=secret_b64,
     )
     with pytest.raises(PeerError) as err:
-        verify_confirm(confirm, offer=offer, now=utcnow())
+        verify_confirm(confirm, offer=offer, now=now_local())
     assert err.value.reason_code == "pair_nonce_expired"
 
 
@@ -179,7 +179,7 @@ def test_confirm_phrase_and_secret_validation():
         link_secret_b64=secret_b64,
     )
     with pytest.raises(PeerError) as err:
-        verify_confirm(dict(good, confirm_phrase="YES"), offer=offer, now=utcnow())
+        verify_confirm(dict(good, confirm_phrase="YES"), offer=offer, now=now_local())
     assert err.value.reason_code == "params_schema_invalid"
 
     short_secret = base64.b64encode(b"too-short").decode("ascii")
@@ -195,7 +195,7 @@ def test_confirm_phrase_and_secret_validation():
 
 def test_confirm_for_expired_offer_rejected():
     executor = _identity()
-    issued = utcnow() - timedelta(seconds=400)
+    issued = now_local() - timedelta(seconds=400)
     offer = build_offer(node_id="deepin-01", public_key_b64=executor.public_key_b64, now=issued)
     secret_b64, _ = new_link_secret()
     confirm = build_confirm(
@@ -205,7 +205,7 @@ def test_confirm_for_expired_offer_rejected():
         link_secret_b64=secret_b64,
     )
     with pytest.raises(PeerError) as err:
-        verify_confirm(confirm, offer=offer, now=utcnow())
+        verify_confirm(confirm, offer=offer, now=now_local())
     assert err.value.reason_code == "pair_nonce_expired"
 
 

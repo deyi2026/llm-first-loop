@@ -9,10 +9,17 @@ import pytest
 
 from llm_loop.peer.admission import AdmissionStore
 from llm_loop.peer.errors import InvalidTaskTransitionError, PeerError
-from llm_loop.peer.models import AdmissionRecord, GrantRecord, NodeRecord, TaskRecord, iso, utcnow
+from llm_loop.peer.models import (
+    AdmissionRecord,
+    GrantRecord,
+    NodeRecord,
+    TaskRecord,
+    iso,
+    now_local,
+)
 from llm_loop.peer.store import PeerStore
 
-NOW = iso(utcnow())
+NOW = iso(now_local())
 
 
 def _node(node_id: str) -> NodeRecord:
