@@ -244,12 +244,26 @@ class PeerService:
     def get_task(self, task_id: str) -> TaskRecord | None:
         return self._store.get_task(task_id)
 
+    def get_task_for(self, node_id: str, task_id: str) -> TaskRecord:
+        """回执可见性：请求方（requested_by）或执行节点本人可读，其余按不存在处理。
+
+        T4 实现只比对 ``task.node_id``（= 执行节点），导致跨节点派单方永远读不到
+        自己的回执（T5 客户端联调暴露）。这里以服务端权威写入的 requested_by 为准；
+        旧数据没有 requested_by 时退化为执行节点，保持单节点自测语义。
+        """
+        task = self._store.get_task(task_id)
+        if task is None or (task.requested_by or task.node_id) != node_id:
+            raise PeerError("params_schema_invalid", f"unknown task_id: {task_id}")
+        return task
+
     def read_artifact(self, ref: str) -> bytes:
         return self._artifacts.read(ref)
 
     def artifact_visible_to(self, node_id: str, ref: str) -> bool:
-        """只有本节点任务的回执引用过的 ref 才可见（防按 digest 拉别人产物）。"""
-        for task in self._store.list_tasks(node_id=node_id, limit=10_000):
+        """只有本请求方任务的回执引用过的 ref 才可见（防按 digest 拉别人产物）。"""
+        for task in self._store.list_tasks(limit=10_000):
+            if (task.requested_by or task.node_id) != node_id:
+                continue
             result = task.result or {}
             for artifact in result.get("artifacts", []) if isinstance(result, dict) else []:
                 if artifact.get("ref") == ref:

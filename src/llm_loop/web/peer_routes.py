@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -83,23 +84,26 @@ def build_peer_router(*, service: PeerService, authenticator: PeerAuthenticator)
 
     @router.post("/tasks")
     async def post_task(request: Request) -> JSONResponse:
-        await _authenticate(request)
+        node_id = await _authenticate(request)
         raw = await request.body()
         try:
             payload = json.loads(raw or b"{}")
         except json.JSONDecodeError:
             raise PeerError("params_schema_invalid", "body is not valid JSON") from None
-        receipt = await run_in_threadpool(service.submit, payload)
+        # requested_by 由服务端按认证身份写入：payload 同名字段可伪造，不能采信（T5 修）
+        receipt = await run_in_threadpool(
+            partial(service.submit, payload, requested_by=node_id)
+        )
         status = 202 if receipt.get("state") in _NON_TERMINAL else 200
         return JSONResponse(status_code=status, content=receipt)
 
     @router.get("/tasks/{task_id}/receipt")
     async def get_receipt(task_id: str, request: Request) -> JSONResponse:
         node_id = await _authenticate(request)
-        task = await run_in_threadpool(service.get_task, task_id)
-        if task is None or task.node_id != node_id:
-            missing = PeerError("params_schema_invalid", f"unknown task_id: {task_id}")
-            return JSONResponse(status_code=404, content=error_body(missing))
+        try:
+            task = await run_in_threadpool(service.get_task_for, node_id, task_id)
+        except PeerError as exc:
+            return JSONResponse(status_code=404, content=error_body(exc))
         return JSONResponse(await run_in_threadpool(service.receipt, task))
 
     @router.get("/artifacts/{ref:path}")
