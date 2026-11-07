@@ -42,6 +42,16 @@ PAIR-CONFIRM 的 `link_secret` 由**控制端**生成（32 随机字节 base64�
 4. 错误码封闭：只用 `errors.REASON_CODES`（36 个）；新增=改契约+升版本。
 5. manifest 不含文件内容/密钥/系统信息；`inject_type != none` ⇒ `capture_only=True`。
 
+## 编排层（service.py）与一次契约缺陷修复
+- `service.py`：manifest 构建 + submit 编排（形状校验 → 幂等查账 → 选租约 → 闸2/闸3 →
+  落 submitted → 落 admitted 准入 → CAS 消耗额度 → queued/running/执行 → 回执）。
+  拒绝与失败都返回带封闭 `reason_code` + `suggested_next` 的回执，不抛到 HTTP 层。
+- `suggestions.py` 是 `reason-codes.json` 的生成物（测试断言键集合一致，防两处漂移）。
+- 缺陷：`manifest.schema.json` 的 `allOf[0].if` 把 `inject_click` 写在了顶层而非 `desktop` 内，
+  导致条件恒真、**任何 manifest 都被强制 `screenshot: true`**。已修正嵌套，并实测
+  "inject_click=true + screenshot=false" 会被拒绝（不是只改不断言）。
+  `scripts/verify_peer_schemas.py` 修复后仍 `RESULT: PASS (30 checks, 1 skipped)`。
+
 ## 下一步
 1. ~~T3 auth/pair~~（已完成）；`web/peer_routes.py`（build_router，GET `/api/peer/manifest` 四头 HMAC；store 鸭子类型：read_secret/get_node/node_state/list_grants/touch_node）挪到挂载那一步一起做。
 2. T4：`peer/policy.py`（闸2/3）、`executor.py`、`artifacts.py`；fs.read 首切片，复用 write_scope/sandbox。
